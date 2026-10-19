@@ -50,6 +50,7 @@ const DEFAULT_SANDBOX_CONFIG = {
   ports: [],
   limits: { cpus: null, memory: null, pids: null, shmSize: null },
   platform: null,
+  relay: false,
 };
 
 const SANDBOX_PLATFORMS = ['linux/amd64', 'linux/arm64'];
@@ -352,6 +353,7 @@ function sanitizeSandbox(raw) {
     ports: sanitizeSandboxPorts(raw.ports),
     limits: sanitizeSandboxLimits(raw.limits),
     platform: SANDBOX_PLATFORMS.includes(raw.platform) ? raw.platform : null,
+    relay: raw.relay === true,
   };
 }
 

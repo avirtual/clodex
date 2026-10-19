@@ -18,6 +18,7 @@ blocks a release.
 - Sandbox: app ports, limits and platform now survive a save — the settings sanitizer dropped them, so 'Ports saved but not applied: no such service' answered every port added from the panel.
 - A message injected into an idle Claude seat that sits in its composer without starting a turn now gets one Enter from Clodex after a few seconds of silence, at any time, not only in the seat's first 20 s after boot; if that still starts no turn the seat is flagged `inject-stuck` on the Requests list and in `[agent:who]`, with the stuck text, instead of waiting for the operator to notice and press Enter by hand.
 - Ticket worktrees minted inside a sandbox box now live under `<root>/.clodex-wt/<branch>` on the persisted work bind instead of beside the root on the box's small `/` overlay, which ran out of space on the second ticket; a desktop team can opt in with `[agent:team worktrees in-root]`.
+- A team lead inside its sandbox box can now publish its app port itself: `[agent:team sandbox port add 18080 proto:http]` is relayed to the desktop Clodex that owns the box, which applies it with the same rules as the panel and answers with the URL; `sandbox status` works the same way. The box needs the relay grant (on by default when a team starts its own box; Sandbox panel ▸ Advanced).
 
 ## 5.131.6 — 2026-10-19
 

@@ -3696,7 +3696,7 @@ test('uiSettings: boxes defaults to one seed box on a fresh install (no top-leve
     assert.deepStrictEqual(s.boxes[0].config, {
       workDir: null, webPort: 7810, wirescopePort: 7811, wirePort: 7820,
       autoStart: false, image: null, ref: null, mounts: [],
-      ports: [], limits: { cpus: null, memory: null, pids: null, shmSize: null }, platform: null,
+      ports: [], limits: { cpus: null, memory: null, pids: null, shmSize: null }, platform: null, relay: false,
     });
   } finally { cleanup(); }
 });
@@ -3744,13 +3744,13 @@ test('uiSettings: a multi-box registry round-trips each box config verbatim', ()
       workDir: '/Users/me/work', webPort: 7830, wirescopePort: 7831,
       wirePort: 7840, autoStart: true, image: 'my/img:tag', ref: 'feature/x',
       mounts: [{ host: '/Users/me/ref', ro: true, container: '/home/clodex/ref' }],
-      ports: [], limits: { cpus: null, memory: null, pids: null, shmSize: null }, platform: null,
+      ports: [], limits: { cpus: null, memory: null, pids: null, shmSize: null }, platform: null, relay: false,
     });
     // The shared box's blank config fills to DEFAULT_SANDBOX_CONFIG.
     assert.deepStrictEqual(boxes.sandbox.config, {
       workDir: null, webPort: 7810, wirescopePort: 7811, wirePort: 7820,
       autoStart: false, image: null, ref: null, mounts: [],
-      ports: [], limits: { cpus: null, memory: null, pids: null, shmSize: null }, platform: null,
+      ports: [], limits: { cpus: null, memory: null, pids: null, shmSize: null }, platform: null, relay: false,
     });
   } finally { cleanup(); }
 });
@@ -3820,6 +3820,7 @@ test('uiSettings: a box config\'s ports, limits and platform survive the sanitiz
       ],
       limits: { cpus: 2, memory: '4g', pids: 512, shmSize: '1g' },
       platform: 'linux/amd64',
+      relay: true,
     };
     uiSettings.set({ boxes: [{ id: 'sandbox', label: 'sandbox', config }] });
     assert.deepStrictEqual(uiSettings.get().boxes[0].config, config);
@@ -3892,7 +3893,7 @@ test('uiSettings: a box config sanitizer bounds junk fields + coerces mount rows
         { host: '/b', ro: false },
         { host: '/c', ro: true, container: '/home/clodex/c' },
       ],
-      ports: [], limits: { cpus: null, memory: null, pids: null, shmSize: null }, platform: null,
+      ports: [], limits: { cpus: null, memory: null, pids: null, shmSize: null }, platform: null, relay: false,
     });
   } finally { cleanup(); }
 });

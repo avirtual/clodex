@@ -132,7 +132,7 @@ const { fmtAge } = require('./memory-store');
 const { pasteModeSignal, strictMcpReason, mcpArgvPlan, PROXY_AGENT_PREFIX, PASTE_START, PASTE_END, stampServedAge } = require('./proxy-util');
 const {
   RELAY_ROSTER_TTL_MS, RELAY_MAX_HOPS,
-  buildRelayEnvelope, buildTerminalDm, isRelayEnvelope, hopRule, relayVersionOk, isDoneTaskEnvelope,
+  buildRelayEnvelope, buildTerminalDm, isRelayEnvelope, hopRule, relayVersionOk, isDoneTaskEnvelope, isSandboxEnvelope,
 } = require('./relay-protocol');
 const { formatTeamBlock, matchSeatRole, formatRoster, formatCompositionDelta } = require('./team-manifest');
 const { SYSTEM_SENDERS } = require('./system-senders');
@@ -7764,7 +7764,7 @@ function createSessionManager(deps) {
         return { queued: true, ref };
       }
       const via = this._relayViaForOrigin(origin);
-      if (via && task) return fail('task done cannot cross a relay — the board\'s host must be a direct peer.');
+      if (via && task) return fail('a task envelope cannot cross a relay — the board\'s host must be a direct peer.');
       if (via) {
         const qualifiedFrom = `${senderName}@${SELF_LABEL}`;
         const env = buildRelayEnvelope({
@@ -7850,10 +7850,26 @@ function createSessionManager(deps) {
         const senderTag = `${m.from || 'peer'}@${origin}`;
         const refKey = typeof m.ref === 'string' && m.ref ? `c\n${peerId}\n${m.from}\n${m.ref}` : null;
         const answer = (text) => this._sendToFederatedTarget('board', `${m.from}@${origin}`, `[agent:task] ${text}`, false, {});
+        const answerTeam = (text) => this._sendToFederatedTarget('board', `${m.from}@${origin}`, `[agent:team] ${text}`, false, {});
         const seen = refKey ? this._dmRefRepeat(refKey) : null;
         if (seen) {
           log.info('peer', `dm ref ${m.ref} from ${senderTag} repeated — not redelivered`);
           if (m.task && seen.resp && seen.resp.task) answer(`the board already answered ref ${m.ref}: ${seen.resp.task.reply}`);
+          if (m.task && seen.resp && seen.resp.sandbox && seen.resp.sandbox.reply != null) answerTeam(`already applied: ${seen.resp.sandbox.reply}`);
+          continue;
+        }
+        if (m.task != null && isSandboxEnvelope(m.task)) {
+          const task = m.task;
+          if (refKey) this._dmRefRemember(refKey, { delivered: true, sandbox: { reply: null } });
+          Promise.resolve()
+            .then(() => this._remoteSandboxVerb({ peerId, origin, from: m.from, verb: task.verb, args: task.args }))
+            .catch((e) => ({ reply: `error: ${(e && e.message) || e}` }))
+            .then((r) => {
+              const reply = String((r && r.reply) || 'error: the host gave no answer');
+              if (refKey) this._dmRefRemember(refKey, { delivered: true, sandbox: { reply } });
+              this._broadcast('ipc-message', { type: 'task', from: senderTag, to: 'board', body: `WIRE←${origin} sandbox ${task.verb}: ${reply}` });
+              answerTeam(reply);
+            });
           continue;
         }
         if (m.task != null) {

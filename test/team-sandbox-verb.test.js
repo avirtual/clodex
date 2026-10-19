@@ -144,6 +144,7 @@ function mkBox(opts = {}) {
     getPeerManager: opts.getPeerManager || (() => null),
     fetch: net.fetch,
     log: { info() {}, warn() {}, error() {} },
+    ...(opts.env ? { env: opts.env } : {}),
   }, {});
   const injected = [];
   const m = Object.create(methods);
@@ -192,7 +193,7 @@ test('up creates box team-<name>, sets ref + workDir, and writes sandbox.json', 
   // overwrite the operator's GUI override, which t807 made precedence-bearing.
   // A bare `up` on a box with no ref seeds the default — the LITERAL 'master',
   // applied here in the handler and no longer by the parser.
-  assert.deepStrictEqual(b.calls.setConfig, [{ workDir: '/proj', ref: 'master' }]);
+  assert.deepStrictEqual(b.calls.setConfig, [{ relay: true }, { workDir: '/proj', ref: 'master' }]);
   assert.strictEqual(b.calls.up, 1);
 
   assert.ok(exists(b.file), 'sandbox.json landed');
@@ -261,7 +262,7 @@ test('rebuild goes through rebuild(), not up(), and still writes the file', asyn
   await fire(b, b.lead, { action: 'rebuild', ref: 't9-x' });
   assert.strictEqual(b.calls.rebuild, 1);
   assert.strictEqual(b.calls.up, 0);
-  assert.deepStrictEqual(b.calls.setConfig, [{ workDir: '/proj', ref: 't9-x' }]);
+  assert.deepStrictEqual(b.calls.setConfig, [{ relay: true }, { workDir: '/proj', ref: 't9-x' }]);
   assert.ok(exists(b.file));
 });
 
@@ -380,11 +381,11 @@ test('status ignores a peer row whose id is not the box id', async () => {
 test('status after `rebuild ref:t9-x` does not touch config — the tracked ref survives', async () => {
   const b = mkBox();
   await fire(b, b.lead, { action: 'rebuild', ref: 't9-x' });
-  assert.deepStrictEqual(b.calls.setConfig, [{ workDir: '/proj', ref: 't9-x' }], 'ENTER: rebuild configured the box');
+  assert.deepStrictEqual(b.calls.setConfig, [{ relay: true }, { workDir: '/proj', ref: 't9-x' }], 'ENTER: rebuild configured the box');
 
   await fire(b, b.lead, { action: 'status' });
 
-  assert.strictEqual(b.calls.setConfig.length, 1, 'status configured nothing — the rebuild patch is still the only one');
+  assert.strictEqual(b.calls.setConfig.length, 2, 'status configured nothing — the rebuild patches are still the only ones');
   assert.strictEqual(b.box().getConfig().ref, 't9-x', 'the box still tracks the ref it was built from');
   assert.match(b.last(), /\(ref t9-x\)/, 'and the status line reports that ref, not the default');
 });
@@ -393,7 +394,7 @@ test('down touches no config either', async () => {
   const b = mkBox();
   await fire(b, b.lead, { action: 'rebuild', ref: 't9-x' });
   await fire(b, b.lead, { action: 'down' });
-  assert.strictEqual(b.calls.setConfig.length, 1, 'down configured nothing');
+  assert.strictEqual(b.calls.setConfig.length, 2, 'down configured nothing');
   assert.strictEqual(b.box().getConfig().ref, 't9-x');
 });
 
@@ -402,7 +403,7 @@ test('down touches no config either', async () => {
 test('a bare `up` keeps an existing ref rather than reseeding master', async () => {
   const b = mkBox({ config: { ref: 't9-x' } });
   await fire(b, b.lead, { action: 'up' });
-  assert.deepStrictEqual(b.calls.setConfig, [{ workDir: '/proj' }], 'no ref key at all — the box keeps t9-x');
+  assert.deepStrictEqual(b.calls.setConfig, [{ relay: true }, { workDir: '/proj' }], 'no ref key at all — the box keeps t9-x');
   assert.strictEqual(b.box().getConfig().ref, 't9-x');
 });
 
@@ -775,4 +776,94 @@ test('status asks the box for its live figures', async () => {
   box.status = async (opts) => { seen.push(opts); return orig.call(box, opts); };
   await fire(b, b.lead, { action: 'status' });
   assert.deepStrictEqual(seen, [{ live: true }]);
+});
+
+const IN_BOX = { CLODEX_IN_SANDBOX: '1', CLODEX_HOST_LABEL: 'mac' };
+
+function mkInBox(env) {
+  const b = mkBox({ noManager: true, env });
+  const sent = [];
+  b.m._sendToFederatedTarget = (from, target, body, urgent, opts) => {
+    sent.push({ from, target, task: opts.task });
+    return { queued: true, ref: 'r1' };
+  };
+  return { ...b, sent };
+}
+
+test('in-box port add is sent to the host board as a sandbox envelope', async () => {
+  const b = mkInBox(IN_BOX);
+  await fire(b, b.lead, port('add', '18080', { label: 'http' }));
+  assert.deepStrictEqual(b.sent, [{ from: 'lead', target: 'board@mac', task: { kind: 'sandbox', verb: 'port', args: 'add 18080 http' } }]);
+  assert.strictEqual(b.last(), '[agent:team] sandbox port sent to the host — its answer follows');
+});
+
+test('in-box port add proto:http carries the proto token in args', async () => {
+  const b = mkInBox(IN_BOX);
+  await fire(b, b.lead, port('add', '18080', { proto: 'http' }));
+  assert.deepStrictEqual(b.sent.map((x) => x.task), [{ kind: 'sandbox', verb: 'port', args: 'add 18080 proto:http' }]);
+});
+
+test('in-box status is sent with empty args', async () => {
+  const b = mkInBox(IN_BOX);
+  await fire(b, b.lead, { action: 'status' });
+  assert.deepStrictEqual(b.sent.map((x) => x.task), [{ kind: 'sandbox', verb: 'status', args: '' }]);
+});
+
+test('in-box rebuild keeps the old refusal and sends nothing', async () => {
+  const b = mkInBox(IN_BOX);
+  await fire(b, b.lead, { action: 'rebuild' });
+  assert.match(b.last(), /error: sandboxes are not enabled on this host/);
+  assert.deepStrictEqual(b.sent, []);
+});
+
+test('in-box with no host label keeps the old refusal and sends nothing', async () => {
+  const b = mkInBox({ CLODEX_IN_SANDBOX: '1' });
+  await fire(b, b.lead, port('add', '18080'));
+  assert.match(b.last(), /error: sandboxes are not enabled on this host/);
+  assert.deepStrictEqual(b.sent, []);
+});
+
+test('an up that creates the team box grants it the relay as the host writer, before docker', async () => {
+  const b = mkBox();
+  await fire(b, b.lead, { action: 'up' });
+  assert.deepStrictEqual(b.calls.setConfig[0], { relay: true });
+  assert.deepStrictEqual(b.calls.setConfigOpts[0], { writer: 'host' });
+  assert.strictEqual(b.calls.up, 1);
+});
+
+test('an up on an existing box leaves its relay setting alone', async () => {
+  const b = mkBox({ boxes: ['team-clodex'], config: { relay: false } });
+  await fire(b, b.lead, { action: 'up' });
+  assert.deepStrictEqual(b.calls.setConfig, [{ workDir: '/proj', ref: 'master' }]);
+  assert.strictEqual(b.box().getConfig().relay, false);
+});
+
+function realBox(written) {
+  const { createSandbox } = require('../sandbox');
+  return createSandbox({
+    id: 'team-clodex',
+    label: 'clodex team',
+    getUserDataPath: () => mkTmpRoot('t1893-ud-'),
+    getUiSettings: () => ({ get: () => ({}), set: () => {} }),
+    syncPeerManager: () => {},
+    registryDir: mkTmpRoot('t1893-reg-'),
+    log: { info() {}, warn() {}, error() {} },
+    readBoxConfig: () => written[written.length - 1] || {},
+    writeBoxConfig: (next) => { written.push(next); },
+  });
+}
+
+test('the REAL setConfig refuses relay from the intent writer and stores nothing', () => {
+  const written = [];
+  const res = realBox(written).setConfig({ relay: true }, { writer: 'intent' });
+  assert.deepStrictEqual(res, { ok: false, error: 'relay is a host setting' });
+  assert.deepStrictEqual(written, []);
+});
+
+test('the REAL setConfig stores relay from the host and the panel writers', () => {
+  const written = [];
+  const box = realBox(written);
+  assert.strictEqual(box.setConfig({ relay: true }, { writer: 'host' }).relay, true);
+  assert.strictEqual(box.setConfig({ relay: false }, { writer: 'panel' }).relay, false);
+  assert.deepStrictEqual(written.map((w) => w.relay), [true, false]);
 });

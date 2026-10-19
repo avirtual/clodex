@@ -683,6 +683,7 @@ function createRemoteWiring(deps) {
             log.info('peer', `dm ref ${ref} from ${senderTag} repeated — not redelivered`);
             return { ...seen.resp, duplicate: true };
           }
+          if (task && task.kind === 'sandbox') return { ok: false, error: 'a sandbox envelope rides the claim path only' };
           if (task) {
             const t = manager._remoteTaskDone({ senderTag, origin, ticketId: task.id, report: body });
             const tresp = { ok: t.ok, delivered: t.ok, task: { id: task.id, reply: t.reply }, ...(t.ok ? {} : { error: t.reply }) };

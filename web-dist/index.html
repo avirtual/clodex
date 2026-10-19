@@ -11396,6 +11396,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           </select>
           <p class="hint-text">amd64 on Apple Silicon runs under emulation: slower, but it is how a 2008 stack runs at all. Applies on Rebuild.</p>
         </div>
+        <label class="sandbox-check"><input id="sandbox-relay" type="checkbox" /> Allow the team lead inside the box to publish ports (relay)</label>
       </details>
       <div class="sandbox-field" id="sandbox-ports-field">
         <div class="sandbox-ports-row">
@@ -58595,6 +58596,7 @@ ${res.stderr}` : "");
       var sbLimitsSave = document.getElementById("sandbox-limits-save");
       var sbLimitsLine = document.getElementById("sandbox-limits-line");
       var sbPlatform = document.getElementById("sandbox-platform");
+      var sbRelay = document.getElementById("sandbox-relay");
       var sbPollTimer = null;
       var sbRunning = false;
       var sbBusy = false;
@@ -58960,6 +58962,7 @@ ${res.stderr}` : "");
         loadAppPorts(cfg);
         applyTokenState(!!cfg.hasToken);
         applyLimitsConfig(cfg);
+        sbRelay.checked = cfg.relay === true;
         sbLimitsLine.textContent = sandboxLimitsLineText(null);
         refreshSandboxFigures();
       }
@@ -59008,6 +59011,13 @@ ${res.stderr}` : "");
         sbPlatform,
         (r) => {
           sbPlatform.value = r.platform || "";
+        }
+      ));
+      sbRelay.addEventListener("change", () => saveSandboxAdvanced(
+        { relay: sbRelay.checked },
+        sbRelay,
+        (r) => {
+          sbRelay.checked = r.relay === true;
         }
       ));
       function showDetail(show) {
