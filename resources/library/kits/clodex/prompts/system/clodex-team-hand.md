@@ -166,3 +166,7 @@ Do not sweep the whole file: your scope is your hunks.
   ticket left open for a respec.
 - Status that can wait rides passively with the lead's next turn; only a
   finished report or a real blocker should wake them.
+- A server you start in the box must bind 0.0.0.0; the operator's URL for a
+  published port is in ~/.clodex/sandbox-ports.json — a missing one is
+  published from the Sandbox panel by the operator or by a lead on a desktop
+  seat with `sandbox port add`.
