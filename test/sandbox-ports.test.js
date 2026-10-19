@@ -182,6 +182,11 @@ test('generateCompose: app ports add a locked-down gateway service after the box
     '    cap_drop:',
     '      - ALL',
     '    restart: unless-stopped',
+    '    deploy:',
+    '      resources:',
+    '        limits:',
+    '          cpus: "0.5"',
+    '          memory: 256m',
     '',
   ].join('\n'));
   const bare = generateCompose({ ...COMPOSE_ARGS, image: { kind: 'image', image: 'ghcr.io/avirtual/clodex:9.9.9' } });
