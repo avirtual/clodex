@@ -31387,7 +31387,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
         function assemble(workspaceId) {
           const at = now();
           const live = seats().filter((s) => workspaceId == null || s.workspaceId === workspaceId);
-          const requests = live.filter((s) => s.attn && s.attn.kind === "permission").map((s) => ({
+          const requests = live.filter((s) => s.attn && (s.attn.kind === "permission" || s.attn.kind === "inject-stuck")).map((s) => ({
+            ...s.attn.kind === "permission" ? {} : { kind: s.attn.kind },
             name: s.name,
             workspaceId: s.workspaceId == null ? null : s.workspaceId,
             ts: s.attn.ts,
@@ -31547,7 +31548,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           const el = document.createElement("div");
           el.className = "inbox-item request";
           const head = rowHead({
-            kind: "permission",
+            kind: req.kind || "permission",
             from: String(req.name),
             wsLabel,
             ago: `since ${hhmm(req.ts)} \xB7 ${fmtAgo(req.ts)}`

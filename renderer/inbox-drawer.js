@@ -135,7 +135,7 @@ function createInboxDrawer({ openFilePeek, showToast, focusSeat }) {
     const el = document.createElement('div');
     el.className = 'inbox-item request';
     const head = rowHead({
-      kind: 'permission',
+      kind: req.kind || 'permission',
       from: String(req.name),
       wsLabel,
       ago: `since ${hhmm(req.ts)} · ${fmtAgo(req.ts)}`,

@@ -177,7 +177,7 @@
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| `write` | operator keystrokes into a PTY seat: for human input on a live PTY seat stamps clocks, tracks paste/submit edges, clears attention, folds the draft | `this._lastOperatorInputAt`, `s.lastUserInputTs`, `s.lastUserSubmitTs`, `s._inPaste`, `s.needsAttention` | `_foldDraft` `_setAttention` `isHumanPtyInput` | hint-arm.test.js injected-turn-bit.test.js dictated-draft-protection.test.js |
+| `write` | operator keystrokes into a PTY seat: for human input on a live PTY seat stamps clocks, tracks paste/submit edges, ends a pending submit nudge and the stuck marker, clears attention, folds the draft | `this._lastOperatorInputAt`, `s.lastUserInputTs`, `s.lastUserSubmitTs`, `s._inPaste`, `s._injectStuck`, `s.needsAttention` | `_foldDraft` `_setAttention` `_clearSubmitNudge` `isHumanPtyInput` | hint-arm.test.js injected-turn-bit.test.js dictated-draft-protection.test.js |
 | `_foldDraft` | carries the PTY draft as line-editor state and drives the hint arm: disarm on clear, submit on Enter, onDraft otherwise | `s._draftState`, `s._draft` | `foldDraft` `_armSubmit` `_armCtx` | unpinned |
 | `_armSubmit` | submit edge shared by PTY and stream seats: final onDraft plus onSubmit, retires the selection queue, returns the arm's landed value | none (hint-arm and selection-arm module state) | `_armCtx` `_sendToSession` | unpinned |
 | `_armCtx` | the one hint-routing context {agent, base, route} every hint path is built from | none | `resolveProxyBase` | hint-arm.test.js selection-arm.test.js session-manager.test.js |
@@ -329,7 +329,7 @@
 |---|---|---|---|---|
 | `_cleanup` | tears down every per-seat timer, watcher, wire registration, hook file and map entry once the process exits, so nothing fires into a same-named successor; clears a held needs-attention fact before the map delete so its open-request row leaves | `this.sessions`, `s.needsAttention`, ~20 `s._*Timer` fields, `s._compactPending`, `s._postClearContinuation`, `this._intentDeduper`, `this._activity`, `this._reportCache` | `_onCompactEnd`, `_armCtx`, `_setAttention`, registry.unregister | open-requests-manager.test.js session-manager.test.js dm-delivery-latch.test.js ipc-prompt-cache-rework.test.js wire-spill-shown-store.test.js |
 | `_scanPtyOutput` | line-at-a-time intent scan over raw PTY output (the non-transcript path), handing each parsed intent except escape and end to the router | `session.lineBuffer` (tail capped at 64KB) | parseIntent, `_handleIntent` | session-manager.test.js |
-| `_emitActivity` | the single activity-edge sink: stamps state, clears turn latches on a non-idle edge, flushes held injects and drains mail on idle, notifies renderer, remote and OS | `s.activityState`, `s.activityTs`, `s._turnStartedAt`, `s.lastMainStop`, `s._specUnconfirmed`, `s._bootNudgeTimer`, `s._reviewStartTimer` | `_clearDmConfirm`, `_setAttention`, `_maybeFlushInjectQueue`, `_drainPendingAtIdle` | session-manager.test.js dm-delivery-latch.test.js jsonl-activity-turnend.test.js ticket-replay.test.js |
+| `_emitActivity` | the single activity-edge sink: stamps state, clears turn latches on a non-idle edge, flushes held injects and drains mail on idle, notifies renderer, remote and OS | `s.activityState`, `s.activityTs`, `s._turnStartedAt`, `s.lastMainStop`, `s._specUnconfirmed`, `s._bootNudgeTimer`, `s._injectStuck`, `s._reviewStartTimer` | `_clearDmConfirm`, `_clearSubmitNudge`, `_clearInjectStuck`, `_setAttention`, `_maybeFlushInjectQueue`, `_drainPendingAtIdle` | session-manager.test.js dm-delivery-latch.test.js jsonl-activity-turnend.test.js ticket-replay.test.js |
 | `_onAttention` | classifies a hook notification (idle dropped), sets attention, broadcasts it and OS-notifies when the owning window is unfocused | `session.needsAttention` | `_setAttention`, `_broadcast`, notifyOS | compact-indicator.test.js |
 | `_onCompactStart` | on every PreCompact re-arms the compacting valve; on the first sets the compacting state and announces compact started | `session.compacting`, `session._compactingValveTimer` | `_onCompactEnd`, `_sendToSession` | compact-indicator.test.js |
 | `_onCompactEnd` | idempotently clears compacting; outside exit appends a capped notice, bumps the rev and announces compact finished on done | `session.compacting`, `session._compactNotices`, `session._compactNoticeRev` | `_sendToSession`, `_broadcast` | compact-indicator.test.js |
@@ -356,7 +356,7 @@
 - `_fireCompactContinuation` must reset memLoad and the hint-offer ledger side by side and must not rewrite the frozen prompt file, which the CLI would not re-read.
 - `_firePostClearContinuation` must stay on the sessionId-change edge, since a timer would inject into whatever conversation is current.
 
-## Inject valves, queue flush and the boot nudge — _armPostClearValve … _armBootNudge
+## Inject valves, queue flush and the submit nudge — _armPostClearValve … _armSubmitNudge
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
@@ -365,17 +365,21 @@
 | `_flushInjectRun` | writes one run of plain texts and producers as a single inject, turning the whole run into a producer when any entry is one | none | `_injectText` | unpinned |
 | `_drainPendingAtIdle` | on idle, enqueues a parkable late-claiming producer that drains an idle claude seat's active parked mail at write time | pending store under PENDING_DIR (claimed in the producer) | `_anyDraftOpen`, `_bornFor`, `_injectText` | session-manager.test.js dictated-draft-protection.test.js |
 | `_drainPendingAtBootReady` | boot-ready twin of the idle drain: peeks, then enqueues a late-claiming producer straight onto the PTY inject queue with the park divert | pending store under PENDING_DIR | `_anyDraftOpen`, `_injectQueueFor`, `_parkDivertFor`, `_bornFor` | session-manager.test.js dm-delivery-latch.test.js parked-drain-fallback.test.js dictated-draft-protection.test.js |
-| `_recordBootNudgeProbe` | records once the first visible line (up to 32 chars) of a boot-window write as the echo probe and starts the echo buffer | `session._bootNudgeProbe`, `session._bootNudgeEcho` | `bootNudgeProbeOf` | unpinned |
+| `_recordBootNudgeProbe` | records the first visible line (up to 32 chars) of an injected write as the echo probe, replacing an earlier unit's, and restarts the echo buffer | `session._bootNudgeProbe`, `session._bootNudgeEcho` | `bootNudgeProbeOf` | unpinned |
 | `_bootNudgeEchoed` | predicate: has the pane echoed the probe (or the paste placeholder) since the write | `session._bootNudgeProbe`, `session._bootNudgeEcho` | `inkVisibleText` | unpinned |
-| `_armBootNudge` | once per claude seat, after a boot-window write, sends a bare Enter if no turn starts within BOOT_NUDGE_MS and the echo is seen on a quiet, draft-free pane | `session._bootNudgeArmed`, `session._bootNudgeTimer`, `session._bootReadyAt`, `session._lastPtyDataAt`, `session.firstInputAt` | `_recordBootNudgeProbe`, `_bootNudgeEchoed`, `_anyDraftOpen` | session-manager.test.js |
+| `_clearSubmitNudge` | ends a submit-nudge episode: both timers, the armed flag, the probe and the echo buffer | `session._bootNudgeTimer`, `session._submitStuckTimer`, `session._bootNudgeArmed`, `session._bootNudgeProbe`, `session._bootNudgeEcho` | none | session-manager.test.js |
+| `_clearInjectStuck` | drops the stuck marker and an `inject-stuck` attention | `session._injectStuck`, `session.needsAttention` | `_setAttention` | session-manager.test.js |
+| `_submitNudgesRecent` | counts nudges fired within SUBMIT_NUDGE_WHO_WINDOW_MS, for the who line | `session._submitNudgeTimes` | none | session-manager.test.js |
+| `_markInjectStuck` | marks a seat whose nudge gave up or whose Enter started no turn: counter, WARN, `inject-stuck` broadcast and attention unless a permission dialog holds it | `session._injectStuck`, `session._submitNudges`, `session._submitStuckTimer` | `_broadcast`, `_setAttention` | session-manager.test.js |
+| `_armSubmitNudge` | after an injected write on an idle claude seat, sends a bare Enter if no turn starts within BOOT_NUDGE_MS and the echo is seen on a quiet, draft-free pane, then marks the seat stuck if no turn follows within BOOT_NUDGE_MS more | `session._bootNudgeArmed`, `session._bootNudgeTimer`, `session._submitStuckTimer`, `session._submitNudges`, `session._submitNudgeTimes`, `session._lastPtyDataAt`, `session.firstInputAt` | `_recordBootNudgeProbe`, `_bootNudgeEchoed`, `_anyDraftOpen`, `_clearSubmitNudge`, `_markInjectStuck` | session-manager.test.js |
 
 ### Invariants
 
 - `_flushInjectRun` turns a mixed run into one producer so the destructive claim still happens at write time, never eagerly on the hold-release path.
 - `_drainPendingAtIdle` and `_drainPendingAtBootReady` claim parked mail only inside the producer, so a seat that dies or opens a draft before the write leaves the delivery parked.
 - `_armPostClearValve` expires a continuation without retry, because a later manual clear must not receive a stale briefing.
-- `_armBootNudge` only fires when `_bootNudgeEchoed` is true, the pane has been quiet for BOOT_NUDGE_QUIET_MS and no draft is open, otherwise it re-arms every quiet interval until BOOT_NUDGE_MAXWAIT_MS after the write.
-- `_armBootNudge` arms only within INJECT_BOOT_MAXWAIT of `_bootReadyAt` and at most once per session, and any non-idle edge in `_emitActivity` cancels its timer.
+- `_armSubmitNudge` only fires when `_bootNudgeEchoed` is true, the pane has been quiet for BOOT_NUDGE_QUIET_MS and no draft is open, otherwise it re-arms every quiet interval until BOOT_NUDGE_MAXWAIT_MS after the write.
+- `_armSubmitNudge` arms only on a seat idle at write time, sends at most one Enter per episode, and any non-idle edge in `_emitActivity` or human pty input in `write` ends the episode and the stuck marker.
 
 ### Hazards
 
@@ -383,7 +387,7 @@
 - `_drainPendingAtBootReady` logs its claimed-but-empty bail apart from the silent deferred bails, and that split is the only evidence left when a boot-window delivery goes missing.
 - `_maybeFlushInjectQueue` with force set skips `_injectHoldReason`, so the inject-hold valve writes into a seat that may still be busy or behind a dialog.
 - `_recordBootNudgeProbe` depends on the PTY onData handler in `_createReserved` appending to the echo buffer only while it is a string, so nulling it early disables the echo gate and the nudge never fires.
-- `_armBootNudge` declares a local arm closure that shadows the factory-scope hint arm used by `_cleanup` and `_fireCompactContinuation`.
+- `_armSubmitNudge` declares a local arm closure that shadows the factory-scope hint arm used by `_cleanup` and `_fireCompactContinuation`.
 
 ## Intent extraction and agent-text publication — _pointerStubOf … _maybeSpeak
 
@@ -571,7 +575,7 @@
 | `_injectText` | Single PTY write path: stream enqueue, hold as an entry, or enqueue with an optional fire-time park divert and producer | `s._injectQueue`, `s._injectPtyQueue` | _streamEnqueueSystem, _injectHoldReason, _parkDivertFor, _injectQueueFor | dictated-draft-protection.test.js injected-turn-bit.test.js parked-drain-fallback.test.js session-manager.test.js |
 | `_turnStartPending` | Predicate: an injected submit into this claude seat has not started its turn within TURN_START_WINDOW_MS | `s._awaitingTurnSince` | none | unpinned |
 | `_parkDivertFor` | Builds the write-time divert that parks the text when a turn start is pending or a typed or dictated draft is open | pending/<name>/ | _turnStartPending, _anyDraftOpen, parkDelivery, _armParkCap | dictated-draft-protection.test.js dm-delivery-latch.test.js |
-| `_injectQueueFor` | Lazily builds the seat's InjectQueue with quiet, speaking, boot-ready and dead gates and the re-park of undelivered text | `s._injectPtyQueue`, `s._bootReadySeen`, `s._awaitingTurnSince` | inject-queue.InjectQueue, parkDelivery, _armBootNudge | injected-turn-bit.test.js speaking-defers-inject.test.js dictated-draft-protection.test.js session-manager.test.js |
+| `_injectQueueFor` | Lazily builds the seat's InjectQueue with quiet, speaking, boot-ready and dead gates and the re-park of undelivered text | `s._injectPtyQueue`, `s._bootReadySeen`, `s._awaitingTurnSince` | inject-queue.InjectQueue, parkDelivery, _armSubmitNudge | injected-turn-bit.test.js speaking-defers-inject.test.js dictated-draft-protection.test.js session-manager.test.js |
 | `_onIncoming` | Socket dispatcher: passive delivery, box-wide voice and team-retire requests, else a normal delivery | none | _deliverPassive, voiceTap, _handleTeamRetire, _deliverMessage | external-tap-trigger.test.js session-manager.test.js |
 | `_deliverPassive` | Parks a never-turn-earning passive entry for a claude seat, falling back to normal delivery | pending/<name>/ | _buildDeliveryText, parkDelivery, _deliverMessage | dm-delivery-latch.test.js session-move.test.js session-manager.test.js |
 | `_deliverParkedActive` | Parks a turn-earning entry for a booting claude seat so the boot-ready edge drains it, arming the fallback timer | pending/<name>/ | parkDelivery, _armParkedDrainFallback, _deliverMessage | parked-drain-fallback.test.js review-scope-in-prompt.test.js session-manager.test.js |
