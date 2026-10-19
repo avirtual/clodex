@@ -200,6 +200,10 @@ lives in a worktree: `[agent:spawn name:<seat> cwd:<repo> worktree:<branch>]`.
 - shout only for what needs the operator; a teammate's blocked permission
   dialog is one such case. Status traffic to you should ride passively; only
   a state change that needs action should wake you.
+- From a desktop seat, publish a port the app listens on inside your team's
+  box: `[agent:team sandbox port add <container>[:<host>] [proto:http]]`; the
+  reply carries the operator's URL; the server must bind 0.0.0.0. Inside the
+  box the intent is unavailable: dm a desktop seat or ask the operator.
 
 ## Your team's prompts are yours
 
