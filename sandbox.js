@@ -515,7 +515,7 @@ function probeChild(spawn, args, onSpawnError, onTimeout, onError, onExit) {
     let settled = false;
     const done = (r) => { if (!settled) { settled = true; resolve(r); } };
     const timer = setTimeout(() => {
-      try { child.kill(); } catch { /* already gone */ }
+      try { child.kill(); } catch {}
       done(onTimeout());
     }, DETECT_TIMEOUT_MS);
     child.on('error', (e) => {
@@ -555,7 +555,7 @@ function probeDockerLocal(spawn, env) {
     let settled = false;
     const done = (r) => { if (!settled) { settled = true; clearTimeout(timer); resolve(r); } };
     const timer = setTimeout(() => {
-      try { child.kill(); } catch { /* already gone */ }
+      try { child.kill(); } catch {}
       done({ local: false });
     }, DETECT_TIMEOUT_MS);
     if (child.stdout) child.stdout.on('data', (d) => { out += d; });
@@ -682,7 +682,7 @@ function createSandbox(deps = {}) {
     const out = new Set([c.webPort, c.wirescopePort, c.wirePort]);
     try {
       for (const p of Object.values(parseOwnPortMap(fs.readFileSync(composePath(), 'utf8')))) out.add(p);
-    } catch { /* no prior file */ }
+    } catch {}
     return out;
   }
 
@@ -1044,7 +1044,7 @@ function createSandbox(deps = {}) {
       const r = await runSteps(gen);
       const appPorts = normalizePorts(config.ports).ports || [];
       if (appPorts.length || fs.existsSync(portsRecordPath())) {
-        try { await recordPorts(appPorts, r); } catch { /* the record is advisory */ }
+        try { await recordPorts(appPorts, r); } catch {}
       }
       if (!r.ok) {
         const gone = dockerUnavailableError(r.stderr);
@@ -1087,7 +1087,7 @@ function createSandbox(deps = {}) {
       if (gone) { invalidateDetect(); return { ok: false, error: gone }; }
       return { ok: false, error: r.stderr.trim() || `docker compose down exited ${r.code}` };
     }
-    try { fs.rmSync(portsRecordPath(), { force: true }); } catch { /* the record is advisory */ }
+    try { fs.rmSync(portsRecordPath(), { force: true }); } catch {}
     return { ok: true };
   }
 
