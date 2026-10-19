@@ -338,7 +338,7 @@ test('status names the clodex version the box reports on its wire', async () => 
     getPeerManager: () => ({ statuses: () => [{ id: 'team-clodex', online: true, version: '5.64.4' }] }),
   });
   await fire(b, b.lead, { action: 'status' });
-  assert.match(b.last(), / · clodex 5\.64\.4$/);
+  assert.match(b.last(), / · clodex 5\.64\.4\nports: none$/);
 });
 
 test('status marks the version as last seen when the box wire is offline', async () => {
@@ -508,7 +508,7 @@ test('no sandbox manager on this host → the "not enabled" error, and nothing i
 test('an unknown action is refused before any box is touched', async () => {
   const b = mkBox();
   await fire(b, b.lead, { action: 'restart' });
-  assert.match(b.last(), /error: sandbox action must be up \| rebuild \| down \| status \(got "restart"\)/);
+  assert.match(b.last(), /error: sandbox action must be up \| rebuild \| down \| status \| port \(got "restart"\)/);
   assert.strictEqual(b.calls.create.length, 0);
   assert.strictEqual(b.calls.get.length, 0);
 });

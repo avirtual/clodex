@@ -45,3 +45,9 @@ test('R3: the reviewer scope arrives from ticket-loop', () => {
 test('C2: the reviewer prompt no longer says the lead spawned it', () => {
   assert.ok(!reviewer.includes('The lead spawned you'));
 });
+
+test('the shipped lead and hand prompts both name `sandbox port add`', () => {
+  const lead = fs.readFileSync(path.join(DIR, 'clodex-team-lead.md'), 'utf-8');
+  assert.match(lead, /\[agent:team sandbox port add <container>\[:<host>\] \[proto:http\]/);
+  assert.match(hand, /ask your lead to\s+`sandbox port add` one that is missing/);
+});
