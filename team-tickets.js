@@ -30,7 +30,7 @@ const { ctxThresholdsFor } = require('./ctx-reminder');
 const { formatGatherReport } = require('./team-gather');
 const { expandTeamRoot } = require('./team-root-expand');
 const { CLAUDE_TOOLS } = require('./catalogs');
-const { BOX_ID_RE, sizeToBytes } = require('./sandbox');
+const { BOX_ID_RE, sizeToBytes, runningInSandboxBox } = require('./sandbox');
 const { ensureDir: ensureDirMode700, atomicWriteFileSync } = require('./fs-util');
 const { seedSandboxSessions } = require('./sandbox-seeds');
 const RUNNER_OWNER = require('crypto').randomUUID();
@@ -2481,12 +2481,16 @@ function createTicketMethods(deps, shared) {
             this._handleTeamTrunk(team, intent, reply).catch((err) => reply(`error: ${(err && err.message) || err}`));
             return;
           }
+          case 'worktrees': {
+            this._handleTeamWorktrees(team, intent, reply);
+            return;
+          }
           case 'sandbox': {
             this._handleTeamSandbox(team, intent, reply).catch((err) => reply(`error: ${(err && err.message) || err}`));
             return;
           }
           default:
-            reply(`error: unknown team verb "${intent.sub}" — use role-add | role-set | role-rm | role-rename | set-lead | watchdog | gather | template-save | template-rm | prompt-save | prompt-rm | sandbox | trunk`);
+            reply(`error: unknown team verb "${intent.sub}" — use role-add | role-set | role-rm | role-rename | set-lead | watchdog | gather | template-save | template-rm | prompt-save | prompt-rm | sandbox | trunk | worktrees`);
         }
       } catch (err) {
         reply(`error: ${err.message}`);
@@ -2519,6 +2523,25 @@ function createTicketMethods(deps, shared) {
       }
       const m = setTeamTrunk(team.name, intent.branch);
       reply(`trunk of ${team.name} set to "${m.trunk}" — accepted tickets now merge into it`);
+    },
+
+    _handleTeamWorktrees(team, intent, reply) {
+      if (!intent.value) {
+        const where = (v) => (v === 'in-root' ? `in-root (${path.join(team.root, '.clodex-wt', '<branch>')})` : 'sibling (beside the root)');
+        if (team.worktrees) {
+          reply(`worktrees of ${team.name}: ${where(team.worktrees)} — set in team.json`);
+          return;
+        }
+        const derived = this._treesInRoot(team) ? 'in-root' : 'sibling';
+        reply(`worktrees of ${team.name}: ${where(derived)} — not set; derived from ${derived === 'in-root' ? 'running inside a sandbox box' : 'running outside a sandbox box'} — [agent:team worktrees sibling|in-root] sets it`);
+        return;
+      }
+      if (!['sibling', 'in-root'].includes(intent.value)) {
+        reply(`error: worktrees must be sibling or in-root, not "${intent.value}"`);
+        return;
+      }
+      const m = deps.setTeamWorktrees(team.name, intent.value);
+      reply(`worktrees of ${team.name} set to ${m.worktrees} — new ticket trees are minted ${m.worktrees === 'in-root' ? `under ${path.join(team.root, '.clodex-wt')}` : 'beside the root'}; existing trees stay where they are`);
     },
 
     _teamSandboxFile(team) {
@@ -4183,7 +4206,8 @@ function createTicketMethods(deps, shared) {
               reply(base.error);
               return;
             }
-            const r = await gitWorktree.createWorktree(team.root, seat.branch, { base: 'HEAD' });
+            const inRoot = this._treesInRoot(team) ? this._inRootTreeTarget(team, seat.branch) : null;
+            const r = await gitWorktree.createWorktree(team.root, seat.branch, { base: 'HEAD', ...(inRoot ? { targetPath: inRoot.targetPath } : {}) });
             if (!r || !r.ok) {
               getPersistence().remove(seat.name);
               // Un-pin only when the ticket names no tree: with one, a role-assigned ticket's live WORK IN: pointer is replayed into every seat filling the role.
@@ -4502,7 +4526,13 @@ function createTicketMethods(deps, shared) {
       dispatch(tickets, ticket);
     },
 
-    async _mintRemoteTicketTree(team, ticketId, branch, reply, assignee) {
+    _treesInRoot(team) {
+      if (team && team.worktrees === 'in-root') return true;
+      if (team && team.worktrees === 'sibling') return false;
+      return runningInSandboxBox(deps.env || process.env);
+    },
+
+    _inRootTreeTarget(team, branch) {
       const targetPath = path.join(team.root, '.clodex-wt', branch);
       try {
         const exclude = path.join(team.root, '.git', 'info', 'exclude');
@@ -4514,6 +4544,11 @@ function createTicketMethods(deps, shared) {
           }
         }
       } catch (e) { log.warn('worktree', `could not add .clodex-wt/ to ${team.root}/.git/info/exclude: ${e.message}`); }
+      return { targetPath };
+    },
+
+    async _mintRemoteTicketTree(team, ticketId, branch, reply, assignee) {
+      const { targetPath } = this._inRootTreeTarget(team, branch);
       const base = await this._rootBaseBranch(team);
       if (base.error) {
         const all = ticketsStore.load(team.root);
