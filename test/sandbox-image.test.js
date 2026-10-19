@@ -125,8 +125,9 @@ test('entrypoint: not root or no host ids → execs the command unchanged, befor
   const lines = ENTRYPOINT.split('\n');
   const guard = lines.indexOf('if [ "$(id -u)" != 0 ] || [ -z "$CLODEX_HOST_UID" ] || [ -z "$CLODEX_HOST_GID" ]; then');
   assert.ok(guard >= 0);
-  assert.strictEqual(lines[guard + 1].trim(), 'exec "$@"');
-  assert.match(ENTRYPOINT, /case "\$CLODEX_HOST_UID\$CLODEX_HOST_GID" in\n {2}\*\[!0-9\]\*\) exec "\$@" ;;\nesac/);
+  assert.strictEqual(lines[guard + 1].trim(), 'clodex_run_hooks');
+  assert.strictEqual(lines[guard + 2].trim(), 'exec "$@"');
+  assert.match(ENTRYPOINT, /case "\$CLODEX_HOST_UID\$CLODEX_HOST_GID" in\n {2}\*\[!0-9\]\*\) clodex_run_hooks; exec "\$@" ;;\nesac/);
   const firstMutation = Math.min(...['groupmod', 'sed -i', 'chown', 'setpriv'].map((w) => ENTRYPOINT.indexOf(w)));
   assert.ok(ENTRYPOINT.indexOf('exec "$@"') < firstMutation);
 });
@@ -161,11 +162,21 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 const HOOKS_PATH = path.join(__dirname, '..', 'docker', 'web', 'clodex-hooks.sh');
 const HOOKS = fs.readFileSync(HOOKS_PATH, 'utf8');
 
-test('entrypoint: sources clodex-hooks.sh in the root path, after the chown loop and before the setpriv exec', () => {
-  const source = ENTRYPOINT.indexOf('. /usr/local/bin/clodex-hooks.sh');
-  assert.ok(source > ENTRYPOINT.indexOf('done'), 'after the re-own loop');
-  assert.ok(source < ENTRYPOINT.indexOf('exec setpriv'), 'before the Clodex process starts');
-  assert.ok(source > ENTRYPOINT.lastIndexOf('exec "$@"'), 'the non-root paths exec before the hooks');
+test('entrypoint: every exec of the Clodex process is preceded by the hooks, on the non-root and the root path', () => {
+  const lines = ENTRYPOINT.split('\n');
+  const def = lines.indexOf('clodex_run_hooks() {');
+  assert.ok(def >= 0 && lines[def + 2].trim() === '. /usr/local/bin/clodex-hooks.sh', 'the function sources the hooks file');
+  const execs = lines.map((l, i) => [l.trim(), i]).filter(([l]) => /(^|; |\) )exec /.test(l));
+  assert.deepStrictEqual(execs.map(([l]) => l), [
+    'exec "$@"',
+    '*[!0-9]*) clodex_run_hooks; exec "$@" ;;',
+    'exec setpriv --reuid="$CLODEX_HOST_UID" --regid="$CLODEX_HOST_GID" --init-groups "$@"',
+  ]);
+  for (const [l, i] of execs) {
+    const call = l.includes('clodex_run_hooks; exec') || lines[i - 1].trim() === 'clodex_run_hooks';
+    assert.ok(call && i > def, `hooks run before: ${l}`);
+  }
+  assert.ok(lines.indexOf('clodex_run_hooks', lines.indexOf('done')) > lines.indexOf('done'), 'the root path runs them after the re-own loop');
 });
 
 test('docker/web/Dockerfile ships the hooks beside the entrypoint, the marker and bind dirs, and wget', () => {
@@ -178,6 +189,7 @@ test('docker/web/Dockerfile ships the hooks beside the entrypoint, the marker an
   const apt = all.find((i) => /^RUN apt-get update && apt-get install\b/.test(i) && /\bsudo\b/.test(i));
   assert.match(apt, /\sfindutils\s/);
   assert.match(apt, /\swget\s/, 'the start watcher polls healthz with wget');
+  assert.match(mk[0], /&& chown clodex:clodex \/var\/lib\/clodex-setup(\s|$)/, 'a non-root box writes its own setup markers');
   const ignore = fs.readFileSync(path.join(__dirname, '..', '.dockerignore'), 'utf8').split('\n');
   assert.ok(ignore.indexOf('!docker/web/clodex-hooks.sh') > ignore.indexOf('docker'));
 });
@@ -199,6 +211,7 @@ function hooksSandbox(setupText) {
   stub('setpriv', 'while [ $# -gt 0 ]; do case "$1" in --*) shift ;; *) break ;; esac; done\nexec "$@"');
   stub('sha256sum', `echo "${FAKE_SHA}  $1"`);
   stub('wget', 'exit 0');
+  stub('sudo', `printf '%s\\n' "$*" >> "${path.join(root, 'sudo-calls')}"\n[ "$1" = -n ] && shift\nexec "$@"`);
   if (setupText != null) fs.writeFileSync(path.join(dirs.hooks, 'setup.sh'), setupText);
   const run = (extraEnv = {}) => execFileSync('sh', ['-c', '. "$0"; echo "FAILED=${CLODEX_SETUP_FAILED:-}"', HOOKS_PATH], {
     env: {
@@ -208,7 +221,8 @@ function hooksSandbox(setupText) {
     },
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
   });
-  return { root, dirs, run, ranCount: () => { try { return fs.readFileSync(path.join(root, 'ran'), 'utf8').split('\n').filter(Boolean).length; } catch { return 0; } } };
+  const sudoCalls = () => { try { return fs.readFileSync(path.join(root, 'sudo-calls'), 'utf8').split('\n').filter(Boolean); } catch { return []; } };
+  return { root, dirs, run, sudoCalls, ranCount: () => { try { return fs.readFileSync(path.join(root, 'ran'), 'utf8').split('\n').filter(Boolean).length; } catch { return 0; } } };
 }
 
 test('clodex-hooks.sh: a setup runs once, leaves the marker, and a second boot skips it', () => {
@@ -217,6 +231,7 @@ test('clodex-hooks.sh: a setup runs once, leaves the marker, and a second boot s
     assert.strictEqual(box.run().trim(), 'FAILED=');
     assert.strictEqual(box.ranCount(), 1);
     assert.ok(fs.existsSync(path.join(box.dirs.marks, FAKE_SHA)), 'the marker is named by the script sha');
+    assert.deepStrictEqual(box.sudoCalls(), [`-n sh ${path.join(box.dirs.hooks, 'setup.sh')}`], 'a non-root box runs setup through sudo -n');
     const last = JSON.parse(fs.readFileSync(path.join(box.dirs.data, '.clodex-setup', 'last.json'), 'utf8'));
     assert.deepStrictEqual({ ...last, at: null }, { sha: FAKE_SHA, exit: 0, at: null, timedOut: false });
     box.run();

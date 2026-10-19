@@ -10,7 +10,16 @@ _ch_start_out=$_ch_data/.clodex-start
 
 _ch_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
+_ch_root() { [ "$(id -u)" = 0 ]; }
+
+_ch_as_root() {
+  if _ch_root; then "$@"; else sudo -n "$@"; fi
+}
+
+_ch_alive() { kill -0 "$1" 2>/dev/null || [ -d "/proc/$1" ]; }
+
 _ch_own() {
+  _ch_root || return 0
   [ -n "$CLODEX_HOST_UID" ] && [ -n "$CLODEX_HOST_GID" ] || return 0
   for _ch_p in "$@"; do
     [ -e "$_ch_p" ] && chown -R "$CLODEX_HOST_UID:$CLODEX_HOST_GID" "$_ch_p" 2>/dev/null || true
@@ -32,24 +41,28 @@ _ch_setup() {
   echo "clodex: setup $_ch_sha8: running (timeout ${_ch_timeout}s)" >&2
   _ch_flag="$_ch_setup_out/.timed-out"
   rm -f "$_ch_flag"
-  setsid sh "$_ch_dir/setup.sh" </dev/null >"$_ch_setup_out/last.log" 2>&1 &
+  if _ch_root; then
+    setsid sh "$_ch_dir/setup.sh" </dev/null >"$_ch_setup_out/last.log" 2>&1 &
+  else
+    setsid sudo -n sh "$_ch_dir/setup.sh" </dev/null >"$_ch_setup_out/last.log" 2>&1 &
+  fi
   _ch_pid=$!
   (
     _ch_n=0
     while [ "$_ch_n" -lt "$_ch_timeout" ]; do
       sleep 1
-      kill -0 "$_ch_pid" 2>/dev/null || exit 0
+      _ch_alive "$_ch_pid" || exit 0
       _ch_n=$((_ch_n + 1))
     done
     : > "$_ch_flag"
-    kill -TERM -- "-$_ch_pid" 2>/dev/null || kill -TERM "$_ch_pid" 2>/dev/null
+    _ch_as_root kill -TERM -- "-$_ch_pid" 2>/dev/null || _ch_as_root kill -TERM "$_ch_pid" 2>/dev/null
     _ch_n=0
     while [ "$_ch_n" -lt 10 ]; do
       sleep 1
-      kill -0 "$_ch_pid" 2>/dev/null || exit 0
+      _ch_alive "$_ch_pid" || exit 0
       _ch_n=$((_ch_n + 1))
     done
-    kill -9 -- "-$_ch_pid" 2>/dev/null || kill -9 "$_ch_pid" 2>/dev/null
+    _ch_as_root kill -9 -- "-$_ch_pid" 2>/dev/null || _ch_as_root kill -9 "$_ch_pid" 2>/dev/null
   ) </dev/null >/dev/null 2>&1 &
   if wait "$_ch_pid"; then _ch_rc=0; else _ch_rc=$?; fi
   _ch_timed=false
@@ -83,7 +96,11 @@ _ch_start_watch() {
     fi
     sleep 2
   done
-  setsid setpriv --reuid="$CLODEX_HOST_UID" --regid="$CLODEX_HOST_GID" --init-groups sh "$_ch_dir/start.sh" </dev/null >"$_ch_start_out/last.log" 2>&1 &
+  if _ch_root && [ -n "$CLODEX_HOST_UID" ] && [ -n "$CLODEX_HOST_GID" ]; then
+    setsid setpriv --reuid="$CLODEX_HOST_UID" --regid="$CLODEX_HOST_GID" --init-groups sh "$_ch_dir/start.sh" </dev/null >"$_ch_start_out/last.log" 2>&1 &
+  else
+    setsid sh "$_ch_dir/start.sh" </dev/null >"$_ch_start_out/last.log" 2>&1 &
+  fi
   _ch_spid=$!
   _ch_at=$(_ch_now)
   printf '{"pid":%s,"at":"%s","exit":null}\n' "$_ch_spid" "$_ch_at" > "$_ch_start_out/last.json"

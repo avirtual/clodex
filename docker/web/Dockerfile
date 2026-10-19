@@ -89,7 +89,8 @@ COPY docker/web/entrypoint.sh /usr/local/bin/clodex-entrypoint
 COPY docker/web/clodex-hooks.sh /usr/local/bin/clodex-hooks.sh
 RUN chmod 0755 /usr/local/bin/clodex-entrypoint \
  && chmod 0644 /usr/local/bin/clodex-hooks.sh \
- && mkdir -p /var/lib/clodex-setup /etc/clodex/bootstrap
+ && mkdir -p /var/lib/clodex-setup /etc/clodex/bootstrap \
+ && chown clodex:clodex /var/lib/clodex-setup
 
 # Mount points owned by clodex so the named volumes come up writable by the user
 # (Docker seeds an empty named volume from the image path's ownership).
