@@ -140,6 +140,21 @@ counting it would hold the chip permanently loud over a segment it does not
 render. A payload with no `windows` map (an older wirescope) falls back to the
 single-window statement, `week (all models) quota 80% used · resets in 40m`.
 
+The level rule runs in order: a `rejected` window or a 429 under five minutes
+old is `loud`; an `allowed_warning` window is `warn`; otherwise any shown window
+at `QUOTA_NEAR_PCT` (80%) or more is `warn` too, with one tooltip line per such
+window, `nearing the week (all models) limit — resets in 18h 32m`, so a window
+climbing under `allowed` is visible before it is gone. Below that, nothing. The
+host side pairs it with operator-inbox notes: `QuotaStore.note` runs
+`quotaCrossings` (wire/quota.js) on the previous and new reading and queues one
+crossing per window per threshold crossed upward — 80, 95 and 100 (100 is
+utilization ≥ 1.0 or a `rejected` window or top-level status) — deduped in the
+entry's `notified` map on `(window, threshold, reset)`, so a reset re-arms it and
+a repeat reading does not. `_noteQuotaCrossings` (session-manager.js) adds each
+as an inbox note from `clodex` naming the reset and the seats on the account; an
+exhaustion also dms each lead of a team with a live seat on it, once per
+`(account, reset)`. A 429 carries no headers and never produces a note.
+
 `proxy.auth_refresh.stalled` on `/_status` (wirescope v0.6.59+) means the
 OAuth refresh token itself is dead — the proxy cannot renew and a human
 must run `claude login`. It rides every payload as `authRefresh` beside
@@ -269,6 +284,12 @@ surviving intent is restored on the seat's next main-line turn. The 401 is why:
 an overnight rejection is transient, and erasing an explicit operator setting on
 it was permanent and silent. Only the operator (`wire:hold`, Settings) withdraws
 an intent.
+
+A 429 ping is a decline in `pingOutcome`, not a strike, and a decline sets
+`urgent`, so a rate-limited account was re-pinged every 15 s indefinitely
+(measured: 16 in a row). `_onHoldLifecycle` therefore disarms the live hold on a
+429 ping and reopens the re-arm gate; the persisted intent stays, and the next
+main-line turn re-arms it.
 
 A ping no longer replays the captured `authorization` bearer. An OAuth token
 lives ~8h and the CLI refreshes it only on a turn, so the header snapshot taken

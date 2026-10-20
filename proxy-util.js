@@ -487,6 +487,7 @@ function pickQuota(entries, nowMs = Date.now()) {
 const QUOTA_STALE_S = 120;
 // A 429 this recent outranks whatever `status` says, for the header reason above.
 const QUOTA_429_RECENT_S = 300;
+const QUOTA_NEAR_PCT = 80;
 
 function fmtQuotaReset(s) {
   if (typeof s !== 'number' || !Number.isFinite(s) || s <= 0) return null;
@@ -553,11 +554,10 @@ function quotaChip(q, clientAgeS = 0) {
   const shown = quotaWindows(q);
   const statuses = shown.length ? shown.map((w) => w.status) : [q.status];
   let level = null;
+  const near = shown.filter((w) => w.usedPct >= QUOTA_NEAR_PCT);
   if (statuses.includes('rejected') || hot429) level = 'loud';
   else if (statuses.includes('allowed_warning')) level = 'warn';
-  // 'allowed', an unknown status, or no status at all → nothing. Degrading an
-  // unrecognized value to silence keeps a vocabulary change from inventing a
-  // permanent chip nobody can dismiss.
+  else if (near.length) level = 'warn';
   if (!level) return null;
 
   const age = hot429 ? fmtQuotaAge(q.last429AgeS) : null;
@@ -572,6 +572,10 @@ function quotaChip(q, clientAgeS = 0) {
       const r = fmtQuotaReset(w.resetsInS);
       return `${quotaWindowLabel(w.key).long}: ${Math.round(w.usedPct)}% used${r ? `, resets in ${r}` : ''}`;
     });
+    for (const w of near.filter((x) => x.status !== 'rejected' && x.usedPct < 100)) {
+      const r = fmtQuotaReset(w.resetsInS);
+      tipLines.push(`nearing the ${quotaWindowLabel(w.key).long} limit${r ? ` — resets in ${r}` : ''}`);
+    }
   } else {
     const pct = q.usedPct != null ? `${Math.round(q.usedPct)}%` : null;
     const reset = fmtQuotaReset(q.resetsInS);
@@ -692,7 +696,7 @@ function proxyReceivedAt(p, now = Date.now()) {
 module.exports = {
   PROXY_AGENT_PREFIX, mintProxyAgent, resolveProxyAgentId, pickProxyRecord, shapeProxyRecord, shapeSubagent,
   stampServedAge, proxyReceivedAt,
-  shapeQuota, quotaChip, quotaChips, pickQuota, fmtQuotaReset, fmtQuotaResetTight, QUOTA_STALE_S, QUOTA_429_RECENT_S,
+  shapeQuota, quotaChip, quotaChips, pickQuota, fmtQuotaReset, fmtQuotaResetTight, QUOTA_STALE_S, QUOTA_429_RECENT_S, QUOTA_NEAR_PCT,
   QUOTA_WINDOW_LABEL,
   boxWirescopeView, strictMcpReason, STRICT_MCP_EXPLANATION, mcpArgvPlan,
   AUTO_COMPACT, headroomBand, shouldAutoCompact, autoCompactDecision, isHumanPtyInput,

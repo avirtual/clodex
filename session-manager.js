@@ -130,7 +130,8 @@ const voiceEngineSpec = require('./voice-engine');
 const { CTRLU_SETTLE_MS } = require('./inject-queue');
 const { VOICE_MODES, voiceModeOf } = require('./voice-settings');
 const { fmtAge } = require('./memory-store');
-const { pasteModeSignal, strictMcpReason, mcpArgvPlan, PROXY_AGENT_PREFIX, PASTE_START, PASTE_END, stampServedAge } = require('./proxy-util');
+const { pasteModeSignal, strictMcpReason, mcpArgvPlan, PROXY_AGENT_PREFIX, PASTE_START, PASTE_END, stampServedAge, fmtQuotaReset } = require('./proxy-util');
+const QUOTA_WINDOW_LONG = { '5h': '5-hour window', '7d': 'weekly window (all models)', '7d_oi': 'weekly window (Fable)', overage: 'overage window' };
 const {
   RELAY_ROSTER_TTL_MS, RELAY_MAX_HOPS,
   buildRelayEnvelope, buildTerminalDm, isRelayEnvelope, hopRule, relayVersionOk, isDoneTaskEnvelope, isSandboxEnvelope,
@@ -946,15 +947,7 @@ function createSessionManager(deps) {
         if (!store) return;
         // Deferred: the store's write is a synchronous disk sync and this event fires
         // before the response head goes downstream, so inline it delays time-to-first-token.
-        setImmediate(() => {
-          try {
-            const account = this._accountForWireAgent(ev.agent);
-            const snap = store.note(ev.headers, { status: ev.status, account });
-            if (snap) this._broadcast('wire-quota', this._quotaPayload(store));
-          } catch (e) {
-            this._shadowLog({ type: 'wire-quota-error', error: e.message });
-          }
-        });
+        setImmediate(() => this._noteQuotaResponse(store, ev));
       });
       wire.on('spill', (ev) => {
         this._shadowLog({ type: 'wire-spill', ...ev });
@@ -1295,6 +1288,12 @@ function createSessionManager(deps) {
             const why = r.reason || r.status_code || 'error';
             log.warn('keepwarm', `ping FAILED ${name || ev.session}: ${why}`);
             this._keepwarmRow(name, ev.session, `keep-warm ping FAILED: ${why}`);
+            if (r.status_code === 429) {
+              const s = name ? this.sessions.get(name) : null;
+              if (s) s._holdRearmed = false;
+              if (this._holdKeeper) this._holdKeeper.disarm(ev.session);
+              log.info('keepwarm', `disarmed ${name || ev.session} (429 — the account is rate-limited; the next organic turn re-arms)`);
+            }
           } else if (r.ok === true) {
             this._keepwarmRow(name, ev.session, keepwarmPingBody(ev.pings, r));
           }
@@ -1357,6 +1356,71 @@ function createSessionManager(deps) {
         this._quotaStore = null;
       }
       return this._quotaStore;
+    }
+
+    _noteQuotaResponse(store, ev) {
+      try {
+        const account = this._accountForWireAgent(ev.agent);
+        const snap = store.note(ev.headers, { status: ev.status, account });
+        if (snap) this._broadcast('wire-quota', this._quotaPayload(store));
+        if (typeof store.takeCrossings === 'function') this._noteQuotaCrossings(store.takeCrossings());
+      } catch (e) {
+        this._shadowLog({ type: 'wire-quota-error', error: e.message });
+      }
+    }
+
+    _quotaSeats(label) {
+      const resolve = this._accountResolver();
+      const seats = [];
+      for (const s of this.sessions.values()) {
+        if (!s || s._dead || s.agentType !== 'claude') continue;
+        if (this.accountFor(s.name, resolve) === label) seats.push(s);
+      }
+      return seats;
+    }
+
+    _noteQuotaCrossings(crossings, nowMs = Date.now()) {
+      if (!Array.isArray(crossings) || !crossings.length) return;
+      for (const c of crossings) {
+        try {
+          const seats = this._quotaSeats(c.account);
+          const names = seats.map((s) => s.name);
+          const shown = names.length > 8 ? `${names.slice(0, 8).join(', ')}, +${names.length - 8} more` : (names.join(', ') || 'none');
+          const win = QUOTA_WINDOW_LONG[c.window] || `${c.window} window`;
+          const at = typeof c.reset === 'number' ? new Date(c.reset * 1000).toTimeString().slice(0, 5) : '?';
+          const left = typeof c.reset === 'number' ? fmtQuotaReset(c.reset - nowMs / 1000) : null;
+          const resets = `resets ${at}${left ? ` (in ${left})` : ''}`;
+          const body = c.threshold >= 100
+            ? `Claude plan (account ${c.account}): ${win} EXHAUSTED — ${resets}. Seats on this account will fail until then: ${shown}.`
+            : `Claude plan (account ${c.account}): ${win} at ${Math.round(c.used_pct)}% — ${resets}. Seats on this account: ${shown}.`;
+          const store = getNotifications && getNotifications();
+          if (store) store.add({ from: 'clodex', workspaceId: null, body });
+          log.warn('quota', `account ${c.account}: ${c.window} crossed ${c.threshold}%`);
+          if (c.threshold >= 100) this._dmLeadsQuotaExhausted(c, seats, win, at);
+        } catch (e) {
+          this._shadowLog({ type: 'wire-quota-note-error', error: e.message });
+        }
+      }
+    }
+
+    _dmLeadsQuotaExhausted(c, seats, win, at) {
+      const sent = this._quotaLeadDms || (this._quotaLeadDms = new Set());
+      const key = `${c.account}\0${c.reset}`;
+      if (sent.has(key)) return;
+      sent.add(key);
+      const byLead = new Map();
+      for (const s of seats) {
+        let team; try { team = resolveTeam(s.cwd); } catch { team = null; }
+        if (!team || !team.lead) continue;
+        if (!byLead.has(team.lead)) byLead.set(team.lead, []);
+        byLead.get(team.lead).push(s.name);
+      }
+      for (const [lead, names] of byLead) {
+        if (!this.sessions.has(lead)) continue;
+        this._deliverMessage(lead, 'clodex',
+          `[quota] account ${c.account}: ${win} exhausted, resets ${at} — seats on it (${names.join(', ')}) will fail until then; `
+          + 'move the role ([agent:team role-set <role> account:<other>]) or wait.', 'dm');
+      }
     }
 
     _quotaPayload(store) {

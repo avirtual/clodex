@@ -89,6 +89,45 @@ function parseQuotaHeaders(headers) {
   return { fields, windows, unmapped };
 }
 
+const QUOTA_THRESHOLDS = [80, 95, 100];
+
+function windowLevels(snap) {
+  const out = new Map();
+  if (!snap || !snap.windows) return out;
+  const topRejected = snap.status === 'rejected';
+  let topWindow = null;
+  if (topRejected) {
+    const rep = snap.representative_window;
+    if (rep && snap.windows[rep] && snap.windows[rep].utilization != null) topWindow = rep;
+    else {
+      let best = -Infinity;
+      for (const [k, w] of Object.entries(snap.windows)) {
+        if (w && w.utilization != null && w.utilization > best) { best = w.utilization; topWindow = k; }
+      }
+    }
+  }
+  for (const [k, w] of Object.entries(snap.windows)) {
+    if (!w || w.utilization == null) continue;
+    const exhausted = w.utilization >= 1 || w.status === 'rejected' || k === topWindow;
+    out.set(k, { pct: w.utilization * 100, exhausted });
+  }
+  return out;
+}
+
+function quotaCrossings(prevSnap, snap) {
+  const before = windowLevels(prevSnap);
+  const after = windowLevels(snap);
+  const out = [];
+  const reached = (lv, threshold) => !!lv && (threshold >= 100 ? lv.exhausted : lv.pct >= threshold);
+  for (const [window, level] of after) {
+    const was = before.get(window);
+    for (const threshold of QUOTA_THRESHOLDS) {
+      if (!reached(was, threshold) && reached(level, threshold)) out.push({ window, threshold });
+    }
+  }
+  return out;
+}
+
 function windowView(name, raw) {
   const util = num(raw.utilization);
   const reset = num(raw.reset);
@@ -169,6 +208,7 @@ class QuotaStore {
   // nothing here should hand a logger an object it might serialize whole.
   constructor({ path: dbPath = null, onError = null } = {}) {
     this._byAccount = new Map();
+    this._crossings = [];
     this._lastAccount = null;
     this._onError = typeof onError === 'function' ? onError : null;
     this._db = null;
@@ -244,10 +284,26 @@ class QuotaStore {
     // survive the good response that follows it, or the chip would stop
     // reporting refusals the moment one turn got through.
     if (prev && prev.last_429) entry.last_429 = prev.last_429;
+    const notified = { ...((prev && prev.notified) || {}) };
+    const nextSnap = snapshotFrom(entry, 1, now);
+    for (const c of quotaCrossings(prev ? snapshotFrom(prev, 1, now) : null, nextSnap)) {
+      const w = nextSnap.windows[c.window];
+      const key = `${c.window}:${c.threshold}`;
+      if (notified[key] === w.reset) continue;
+      notified[key] = w.reset;
+      this._crossings.push({ account: acct, ...c, used_pct: w.used_pct, reset: w.reset });
+    }
+    if (Object.keys(notified).length) entry.notified = notified;
     this._byAccount.set(acct, entry);
     this._lastAccount = acct;
     this._persist(acct, entry);
     return this.snapshot(now);
+  }
+
+  takeCrossings() {
+    const out = this._crossings;
+    this._crossings = [];
+    return out;
   }
 
   // The most recently seen account's numbers, display-ready. Null when nothing
@@ -325,4 +381,4 @@ class QuotaStore {
   }
 }
 
-module.exports = { QuotaStore, parseQuotaHeaders, snapshotFrom, CLAIM_WINDOW };
+module.exports = { QuotaStore, parseQuotaHeaders, snapshotFrom, quotaCrossings, CLAIM_WINDOW };
