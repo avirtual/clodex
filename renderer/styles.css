@@ -1635,7 +1635,6 @@ html, body {
 .team-lead-hint { font-size: 10px; color: var(--text-dim); margin-top: 6px; }
 /* Draggable-by-title affordance (shared helper). */
 .draggable-title { cursor: move; }
-.draggable-title button { cursor: pointer; }
 .draggable-title.dragging { cursor: grabbing; }
 /* The roster block is one toggleable unit (hidden for a provider with no skill
    roster), so it sits between the popover's flex column and the scrolling list:
@@ -2759,15 +2758,6 @@ body.drawer-dragging #drawer, body.drawer-dragging #work-row { transition: none;
 .sandbox-dot.idle { background: var(--text-dim); }
 .sandbox-field { margin: 10px 0; }
 .sandbox-field label { display: block; font-size: 12px; opacity: 0.75; margin-bottom: 4px; }
-.sandbox-field input {
-  box-sizing: border-box;
-  background: var(--input-bg, var(--active-bg));
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 8px;
-}
-.sandbox-field input:focus { outline: none; border-color: var(--accent); }
 .sandbox-field input:disabled { opacity: 0.5; }
 .sandbox-workdir-row { display: flex; gap: 6px; }
 .sandbox-workdir-row input { flex: 1; }
@@ -5363,6 +5353,34 @@ html, body {
   -webkit-font-smoothing: antialiased;
 }
 button, input, select, textarea { font-family: inherit; }
+button {
+  height: var(--control-h);
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  font-size: var(--fs-md);
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+}
+button:where(:hover) { background: var(--surface-selected); }
+select,
+textarea:where(:not(.xterm-helper-textarea):not(.seat-composer)),
+input:where(:not([type="checkbox"]):not([type="radio"]):not([type="range"])) {
+  box-sizing: border-box;
+  background: var(--input-bg, var(--active-bg));
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: var(--fs-md);
+}
+select:where(:focus),
+textarea:where(:not(.xterm-helper-textarea):not(.seat-composer)):where(:focus),
+input:where(:not([type="checkbox"]):not([type="radio"]):not([type="range"])):where(:focus) { outline: none; border-color: var(--accent); }
+textarea:where(:not(.xterm-helper-textarea):not(.seat-composer)) { resize: vertical; min-height: 64px; }
 
 button:focus-visible,
 input:focus-visible,
@@ -5438,6 +5456,7 @@ body.web-frontend #sidebar-header {
 #btn-new, #btn-new-sandbox, #btn-add-peer, #btn-discover, #sidebar-header #btn-prompts {
   width: 26px;
   height: 26px;
+  padding: 0;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: transparent;
@@ -5671,6 +5690,7 @@ body.web-frontend #sidebar-header {
 
 #sidebar-footer { padding: var(--sp-2); border-top: 1px solid var(--border); }
 #files-toggle, #inbox-open, #sidebar-footer [data-plugin-footer] {
+  height: auto;
   padding: 6px var(--sp-2);
   font-size: var(--fs-sm);
   color: var(--text-secondary);
@@ -6514,6 +6534,7 @@ body.web-frontend #sidebar-header {
   text-overflow: ellipsis;
   font: inherit;
   font-size: var(--fs-xs);
+  height: auto;
   padding: 2px 7px;
   border-radius: var(--radius-pill);
   background: var(--surface-raised);
@@ -6523,10 +6544,6 @@ body.web-frontend #sidebar-header {
 
 .seat-status-chip[data-chip="mode"] {
   flex-shrink: 0;
-}
-
-button.seat-status-chip {
-  cursor: pointer;
 }
 
 .seat-status-chip[data-tone="danger"] {
@@ -6858,6 +6875,7 @@ button.seat-status-chip {
 #sidebar-fold {
   width: 26px;
   height: 26px;
+  padding: 0;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: transparent;

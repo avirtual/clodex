@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Every button, text field, select and textarea in the app now gets the theme's chrome by default — a new control can no longer appear in the browser's grey default look (the Sandbox panel's Advanced fold did).
+
 ## 5.131.7 — 2026-10-20
 
 - Sandbox image: git inside the box no longer fails `git merge` with `fatal: stash failed` on a clean repo under the work volume — the image sets `core.checkStat=minimal` and `core.trustctime=false` system-wide, since virtiofs stat fields never matched git's index. Takes effect on the next sandbox rebuild.
