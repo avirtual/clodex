@@ -452,3 +452,88 @@ test('bootstrapHistoryRows: newest first, a null seat reads as a dash', () => {
   ]);
   assert.deepStrictEqual(bootstrapHistoryRows({}), []);
 });
+
+test('advancedDirty: compares each group field-wise after the patch builders\' normalisation', () => {
+  const { advancedDirty } = require('../renderer/lib/sandbox-view');
+  const limits = { cpus: 4, memory: '4g', pids: null, shmSize: null };
+  const bootstrap = { packages: ['a', 'b'], setup: 'apt update', start: 'run.sh' };
+  const rows = [
+    [{ limits, bootstrap }, { limits: { ...limits }, bootstrap: { ...bootstrap } }, { limits: false, bootstrap: false }],
+    [{ limits, bootstrap }, { limits, bootstrap: { ...bootstrap, packages: 'a  b' } }, { limits: false, bootstrap: false }],
+    [{ limits, bootstrap }, { limits: { cpus: '4', memory: '4g', pids: null, shmSize: null }, bootstrap }, { limits: false, bootstrap: false }],
+    [{ limits, bootstrap }, { limits, bootstrap: { ...bootstrap, start: 'run.sh2' } }, { limits: false, bootstrap: true }],
+    [{ limits, bootstrap }, { limits: { ...limits, pids: '64' }, bootstrap }, { limits: true, bootstrap: false }],
+    [{ limits: null, bootstrap: null }, { limits: { cpus: null, memory: null, pids: null, shmSize: null }, bootstrap: { packages: [], setup: '', start: '' } }, { limits: false, bootstrap: false }],
+  ];
+  for (const [applied, editors, want] of rows) assert.deepStrictEqual(advancedDirty(applied, editors), want);
+});
+
+test('saveLabel: a dirty editor marks its Save button with a dot', () => {
+  const { saveLabel } = require('../renderer/lib/sandbox-view');
+  assert.strictEqual(saveLabel('Save Bootstrap', true), 'Save Bootstrap •');
+  assert.strictEqual(saveLabel('Save Bootstrap', false), 'Save Bootstrap');
+  assert.strictEqual(saveLabel('Save Limits', true), 'Save Limits •');
+});
+
+function sandboxActionHarness({ bootStart, advancedResponse, action }) {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const vm = require('node:vm');
+  const { advancedDirty, saveLabel } = require('../renderer/lib/sandbox-view');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const slice = (head) => {
+    const start = src.indexOf(`\n${head}`);
+    assert.ok(start > 0, `ENTER: ${head} was located`);
+    return src.slice(start + 1, src.indexOf('\n}\n', start) + 2);
+  };
+  const calls = [];
+  const toasts = [];
+  const el = (value) => ({ value, disabled: false, textContent: '' });
+  const ctx = {
+    sbWorkdir: el(''), sbRef: el(''), sbAutoStart: { checked: false },
+    sbWebPort: { value: '', disabled: true }, sbWirescopePort: { value: '', disabled: true }, sbWirePort: { value: '', disabled: true },
+    sbLimitCpus: el(''), sbLimitMemory: el(''), sbLimitPids: el(''), sbLimitShm: el(''),
+    sbBootPackages: el('git'), sbBootSetup: el(''), sbBootStart: el(bootStart),
+    sbLimitsSave: el(''), sbBootSave: el(''), sbToggleBtn: el(''), sbRebuildBtn: el(''),
+    sbCurrentBox: 'b', sbBusy: false, sbRunning: false, sbMountsDirty: false, sbAskedPorts: null,
+    sbAdvancedApplied: { limits: {}, platform: null, bootstrap: { packages: ['git'], setup: '', start: 'old' }, relay: false },
+    sandboxAdvancedDirty: advancedDirty, sandboxSaveLabel: saveLabel, sandboxValidatePorts: validatePorts,
+    sandboxRebuiltLine: () => 'rebuilt',
+    showToast: (text) => toasts.push(text),
+    applyActionGate() {}, refreshSandboxStatus: async () => {}, applyLimitsConfig() {}, applyBootstrapConfig() {},
+    window: { api: {
+      sandboxSetConfig: async (patch, id) => {
+        calls.push(['set', Object.keys(patch).join(','), id]);
+        return 'bootstrap' in patch || 'limits' in patch ? advancedResponse : { ok: true };
+      },
+      sandboxRebuild: async (id) => { calls.push(['rebuild', id]); return { ok: true }; },
+      sandboxUp: async (id) => { calls.push(['up', id]); return { ok: true }; },
+    } },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(['function applyAskedPorts(', 'function portInputValue(', 'function collectSandboxConfig(', 'async function saveSandboxConfig(',
+    'function limitsPatch(', 'function bootstrapPatch(', 'function advancedDirtyNow(', 'async function saveSandboxAdvanced(',
+    'async function saveDirtyAdvanced(', `async function ${action}(`].map(slice).join('\n'), ctx);
+  return { ctx, calls, toasts };
+}
+
+for (const [action, verb] of [['rebuildSandbox', 'rebuild'], ['startSandbox', 'up']]) {
+  test(`${action}: a refused unsaved bootstrap stops the ${verb} and the toast carries the host's sentence`, async () => {
+    const { ctx, calls, toasts } = sandboxActionHarness({ bootStart: 'new', advancedResponse: { ok: false, error: 'nope' }, action });
+    await ctx[action]();
+    assert.deepStrictEqual(calls, [['set', 'workDir,ref,autoStart', 'b'], ['set', 'bootstrap', 'b']]);
+    assert.deepStrictEqual(toasts, ['nope']);
+  });
+
+  test(`${action}: an unsaved bootstrap is saved before the ${verb}`, async () => {
+    const { ctx, calls } = sandboxActionHarness({ bootStart: 'new', advancedResponse: { ok: true }, action });
+    await ctx[action]();
+    assert.deepStrictEqual(calls, [['set', 'workDir,ref,autoStart', 'b'], ['set', 'bootstrap', 'b'], [verb, 'b']]);
+  });
+
+  test(`${action}: with nothing unsaved only the base config is saved before the ${verb}`, async () => {
+    const { ctx, calls } = sandboxActionHarness({ bootStart: 'old', advancedResponse: { ok: true }, action });
+    await ctx[action]();
+    assert.deepStrictEqual(calls, [['set', 'workDir,ref,autoStart', 'b'], [verb, 'b']]);
+  });
+}
