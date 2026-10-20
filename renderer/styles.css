@@ -1432,6 +1432,7 @@ html, body {
 .team-role-owed.warn { color: var(--warn); }
 .team-role-owed.note { color: var(--text-dim); }
 .team-role-disclose {
+  height: auto;
   flex: 0 0 auto;
   background: none;
   border: none;
@@ -1812,6 +1813,7 @@ html, body {
 }
 .history-menu .history-empty { font-size: 12px; color: var(--text-dim); padding: 8px; }
 .history-menu .history-item {
+  height: auto;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -2128,7 +2130,7 @@ body.drawer-dragging #drawer, body.drawer-dragging #work-row { transition: none;
 .side-tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .side-tab-stale { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--info); }
 .side-tab-close {
-  flex: none; background: none; border: 0; padding: 0 2px; cursor: pointer;
+  height: auto; flex: none; background: none; border: 0; padding: 0 2px; cursor: pointer;
   color: var(--text-dim); font-size: 13px; line-height: 1;
 }
 .side-tab-close:hover { color: var(--text); }
@@ -3746,6 +3748,7 @@ input.env-locked { opacity: 0.6; cursor: not-allowed; }
 }
 
 .inbox-delete {
+  height: auto;
   margin-left: 6px;
   background: none;
   border: 0;
@@ -3776,6 +3779,7 @@ input.env-locked { opacity: 0.6; cursor: not-allowed; }
    inherited by buttons). */
 .inbox-link,
 .inbox-path {
+  height: auto;
   color: var(--accent);
   cursor: pointer;
   text-decoration: underline;
@@ -5379,7 +5383,7 @@ input:where(:not([type="checkbox"]):not([type="radio"]):not([type="range"])) {
 }
 select:where(:focus),
 textarea:where(:not(.xterm-helper-textarea):not(.seat-composer)):where(:focus),
-input:where(:not([type="checkbox"]):not([type="radio"]):not([type="range"])):where(:focus) { outline: none; border-color: var(--accent); }
+input:where(:not([type="checkbox"]):not([type="radio"]):not([type="range"])):where(:focus) { border-color: var(--accent); }
 textarea:where(:not(.xterm-helper-textarea):not(.seat-composer)) { resize: vertical; min-height: 64px; }
 
 button:focus-visible,
@@ -6199,13 +6203,13 @@ body.web-frontend #sidebar-header {
   color: var(--text-tertiary);
 }
 .transcript-mode { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
-.transcript-mode-btn { font: inherit; color: var(--text-tertiary); background: transparent; border: 0; padding: 0 var(--sp-2); cursor: pointer; }
+.transcript-mode-btn { height: auto; font: inherit; color: var(--text-tertiary); background: transparent; border: 0; padding: 0 var(--sp-2); cursor: pointer; }
 .transcript-mode-btn[aria-pressed="true"] { color: var(--text-primary); background: var(--surface-raised); }
 .transcript-mode-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 .transcript-bar-chips { display: flex; flex-wrap: nowrap; gap: var(--sp-2); align-items: center; min-width: 0; overflow: hidden; white-space: nowrap; }
 .transcript-bar-chips[hidden] { display: flex; visibility: hidden; }
 .transcript-bar-views { display: inline-flex; align-items: center; gap: var(--sp-2); flex: none; }
-.transcript-help-btn, .transcript-terminal-btn { font: inherit; color: var(--text-tertiary); background: transparent; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 var(--sp-2); cursor: pointer; }
+.transcript-help-btn, .transcript-terminal-btn { height: auto; font: inherit; color: var(--text-tertiary); background: transparent; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 var(--sp-2); cursor: pointer; }
 .transcript-help-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 .transcript-pane[data-raw] { height: auto; overflow: hidden; }
 .transcript-pane[data-raw] > :not(.transcript-bar) { display: none; }

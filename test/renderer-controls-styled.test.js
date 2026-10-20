@@ -107,6 +107,16 @@ const GLYPHS = [
   ['#files-toggle', [{ tag: 'div', id: 'sidebar-footer' }, { tag: 'button', id: 'files-toggle' }], 'height', 'auto'],
   ['#inbox-open', [{ tag: 'div', id: 'sidebar-footer' }, { tag: 'button', id: 'inbox-open' }], 'height', 'auto'],
   ['.seat-status-chip', [{ tag: 'button', classes: ['seat-status-chip'] }], 'height', 'auto'],
+  ['.history-item', [{ tag: 'div', classes: ['history-menu'] }, { tag: 'button', classes: ['history-item'] }], 'height', 'auto'],
+  ['.transcript-mode-btn', [{ tag: 'button', classes: ['transcript-mode-btn'] }], 'height', 'auto'],
+  ['.transcript-help-btn', [{ tag: 'button', classes: ['transcript-help-btn'] }], 'height', 'auto'],
+  ['.transcript-terminal-btn', [{ tag: 'button', classes: ['transcript-terminal-btn'] }], 'height', 'auto'],
+  ['.side-tab-close', [{ tag: 'button', classes: ['side-tab-close'] }], 'height', 'auto'],
+  ['.team-role-disclose', [{ tag: 'button', classes: ['team-role-disclose'] }], 'height', 'auto'],
+  ['.session-close', [{ tag: 'button', classes: ['session-close'] }], 'height', '20px'],
+  ['.inbox-delete', [{ tag: 'button', classes: ['inbox-delete'] }], 'height', 'auto'],
+  ['.inbox-link', [{ tag: 'button', classes: ['inbox-link'] }], 'height', 'auto'],
+  ['.inbox-path', [{ tag: 'button', classes: ['inbox-path'] }], 'height', 'auto'],
 ];
 
 for (const [name, chain, prop, value] of GLYPHS) {
