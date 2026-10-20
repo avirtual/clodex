@@ -18,6 +18,12 @@ is advertised only when the operator marked Y too, and the hub is not a third
 party but the operator's own instance doing the pushing; applying it would
 require the hub to appear in its own allow-list, which nothing sets.
 
+A peer's roster origin is its label, else its host, else its id — the first
+that passes the name rule — which is the same `peerOriginSuffix` rule `_relayDm`
+stamps on a relayed sender. The destination resolves that sender's suffix
+through `findPeerByOrigin`, so a roster entry under any other origin would not
+match it and the dm would arrive with no reply path.
+
 The type filter is the one gate whose failure would be a privacy leak rather
 than a routing bug. Bash sessions are private by design — no registry, no
 socket, invisible to `[agent:who]`, not DM-able — so a bash session reaching a
