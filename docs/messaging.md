@@ -579,6 +579,10 @@ stdin message.
 - The UserPromptSubmit drains (§7) still fire under `-p` and are not copied into
   the outbox. Passive notices and held (cold-seat) dms still park to
   `pending/<name>/`; the idle edge drains active parks into the outbox.
+- A parked-active delivery (`_deliverParkedActive`) on a stream seat is a
+  stream enqueue; there is no composer to park for. Active parks already on
+  disk drain into the outbox at the stream `init` event
+  (`_drainPendingAtStreamInit`).
 - The composer shows queued items as dimmed `.seat-outbox-row`s, fed by
   `transcript:pull` (`outbox`) and refreshed on `transcript-changed`.
 

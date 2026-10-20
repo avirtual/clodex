@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A reviewer or lead running in stream mode now receives its start line: the parked-active delivery used for the review begin line, the kickstart opener and the review re-nudge had no stream branch, so every loop-spawned stream reviewer sat idle until someone dm'd it by hand.
+
 ## 5.131.7 — 2026-10-20
 
 - Sandbox image: git inside the box no longer fails `git merge` with `fatal: stash failed` on a clean repo under the work volume — the image sets `core.checkStat=minimal` and `core.trustctime=false` system-wide, since virtiofs stat fields never matched git's index. Takes effect on the next sandbox rebuild.

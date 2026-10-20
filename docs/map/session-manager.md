@@ -365,6 +365,7 @@
 | `_flushInjectRun` | writes one run of plain texts and producers as a single inject, turning the whole run into a producer when any entry is one | none | `_injectText` | unpinned |
 | `_drainPendingAtIdle` | on idle, enqueues a parkable late-claiming producer that drains an idle claude seat's active parked mail at write time | pending store under PENDING_DIR (claimed in the producer) | `_anyDraftOpen`, `_bornFor`, `_injectText` | session-manager.test.js dictated-draft-protection.test.js |
 | `_drainPendingAtBootReady` | boot-ready twin of the idle drain: peeks, then enqueues a late-claiming producer straight onto the PTY inject queue with the park divert | pending store under PENDING_DIR | `_anyDraftOpen`, `_injectQueueFor`, `_parkDivertFor`, `_bornFor` | session-manager.test.js dm-delivery-latch.test.js parked-drain-fallback.test.js dictated-draft-protection.test.js |
+| `_drainPendingAtStreamInit` | stream-seat twin of the boot-ready drain, run at each stream `init`: peeks, then enqueues a late-claiming producer onto the stream outbox | pending store under PENDING_DIR (claimed in the producer) | `_streamEnqueueSystem`, `_bornFor` | stream-parked-active.test.js |
 | `_recordBootNudgeProbe` | records the first visible line (up to 32 chars) of an injected write as the echo probe, replacing an earlier unit's, and restarts the echo buffer | `session._bootNudgeProbe`, `session._bootNudgeEcho` | `bootNudgeProbeOf` | unpinned |
 | `_bootNudgeEchoed` | predicate: has the pane echoed the probe (or the paste placeholder) since the write | `session._bootNudgeProbe`, `session._bootNudgeEcho` | `inkVisibleText` | unpinned |
 | `_clearSubmitNudge` | ends a submit-nudge episode: both timers, the armed flag, the probe and the echo buffer | `session._bootNudgeTimer`, `session._submitStuckTimer`, `session._bootNudgeArmed`, `session._bootNudgeProbe`, `session._bootNudgeEcho` | none | unpinned |
@@ -578,7 +579,7 @@
 | `_injectQueueFor` | Lazily builds the seat's InjectQueue with quiet, speaking, boot-ready and dead gates and the re-park of undelivered text | `s._injectPtyQueue`, `s._bootReadySeen`, `s._awaitingTurnSince` | inject-queue.InjectQueue, parkDelivery, _armSubmitNudge | injected-turn-bit.test.js speaking-defers-inject.test.js dictated-draft-protection.test.js session-manager.test.js |
 | `_onIncoming` | Socket dispatcher: passive delivery, box-wide voice and team-retire requests, else a normal delivery | none | _deliverPassive, voiceTap, _handleTeamRetire, _deliverMessage | external-tap-trigger.test.js session-manager.test.js |
 | `_deliverPassive` | Parks a never-turn-earning passive entry for a claude seat, falling back to normal delivery | pending/<name>/ | _buildDeliveryText, parkDelivery, _deliverMessage | dm-delivery-latch.test.js session-move.test.js session-manager.test.js |
-| `_deliverParkedActive` | Parks a turn-earning entry for a booting claude seat so the boot-ready edge drains it, arming the fallback timer | pending/<name>/ | parkDelivery, _armParkedDrainFallback, _deliverMessage | parked-drain-fallback.test.js review-scope-in-prompt.test.js session-manager.test.js |
+| `_deliverParkedActive` | Parks a turn-earning entry for a booting pty claude seat so the boot-ready edge drains it, arming the fallback timer; a stream seat gets `_deliverMessage` | pending/<name>/ | parkDelivery, _armParkedDrainFallback, _deliverMessage | parked-drain-fallback.test.js review-scope-in-prompt.test.js session-manager.test.js stream-parked-active.test.js |
 | `_armParkedDrainFallback` | Second drain edge for an active park whose boot-ready drain never fired, re-checking until the file is claimed | `s._parkedDrainFallbackTimer`, `s._parkedDrainFallbackFiles`, `s._bootDrainTimer` | _drainPendingAtBootReady | parked-drain-fallback.test.js |
 
 ### Invariants
@@ -593,7 +594,7 @@
 
 ### Hazards
 
-- `_deliverPassive` and `_deliverParkedActive` exclude dead and non-claude seats but not stream seats, so a claude stream seat gets a pending-store park instead of a stream enqueue.
+- `_deliverPassive` excludes dead and non-claude seats but not stream seats, so a claude stream seat gets a pending-store park instead of a stream enqueue.
 - `_armParkedDrainFallback` falls through to a forced drain once its deadline passes even while the boot-ready latch is still missing.
 - `_maybeParkDelivery` and `_parkDivertFor` arm `_armParkCap`, which forces the park through `_flushParkedNow` after INJECT_QUIET_MAXWAIT with no submit, so a draft left open that long is spliced subject only to the queue's own gates.
 
