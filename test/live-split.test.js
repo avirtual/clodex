@@ -248,6 +248,7 @@ const MENU_SPLITS = [
   ['claude-arrow-down@100', 6, 'split'],
   ['claude-arrow-up@100', 6, 'split'],
   ['claude-backspace@100', 6, 'split'],
+  ['claude-co@100', 6, 'split'],
   ['claude-idle-slash@100', 6, 'split'],
   ['claude-one-char@100', 6, 'split'],
   ['claude-paste@100', 6, 'split'],
