@@ -3061,6 +3061,7 @@ function createSessionManager(deps) {
             this._replayTicketsOnce(s);
             s._replayAtInit = !!s._replayTicketsPending;
           }
+          this._drainPendingAtStreamInit(s);
           if (rec.turnEnd) this._streamTurnEnd(s);
           break;
         case 'result':
@@ -5146,8 +5147,20 @@ function createSessionManager(deps) {
       });
     }
 
+    _drainPendingAtStreamInit(s) {
+      if (!s || s.io !== 'stream' || s._dead) return;
+      if (!hasActivePending(PENDING_DIR, s.name)) return;
+      const produce = () => {
+        if (s._dead) return null;
+        let texts = [];
+        try { texts = drainPending(PENDING_DIR, s.name, `stream.${process.pid}`, this._bornFor(s.name)); } catch { return null; }
+        return texts.length ? texts.join('\n\n') : null;
+      };
+      this._streamEnqueueSystem(s, '', produce, 'parked drain at stream init');
+    }
+
     _drainPendingAtBootReady(session) {
-      if (!session || session.agentType !== 'claude' || session._dead) return;
+      if (!session || session.agentType !== 'claude' || session._dead || session.io === 'stream') return;
       if (this._anyDraftOpen(session)) return;
       if (!hasActivePending(PENDING_DIR, session.name)) return;
       const produce = () => {
@@ -8447,7 +8460,8 @@ function createSessionManager(deps) {
     _deliverParkedActive(targetName, senderName, body, mtype) {
       const target = this.sessions.get(targetName);
       if (!target) return;
-      if (target.agentType !== 'claude' || target._dead) {
+      if (target.agentType !== 'claude' || target._dead || target.io === 'stream') {
+        if (target.io === 'stream') log.debug('inject', `parked-active → stream enqueue for ${target.name}`);
         this._deliverMessage(targetName, senderName, body, mtype);
         return;
       }
@@ -8468,7 +8482,7 @@ function createSessionManager(deps) {
     }
 
     _armParkedDrainFallback(session, file, periodMs, deadline, drained = false) {
-      if (!session || session.agentType !== 'claude') return;
+      if (!session || session.agentType !== 'claude' || session.io === 'stream') return;
       const armed = session._parkedDrainFallbackFiles || (session._parkedDrainFallbackFiles = new Map());
       if (!armed.has(file)) armed.set(file, { periodMs, deadline });
       if (session._parkedDrainFallbackTimer) return;
