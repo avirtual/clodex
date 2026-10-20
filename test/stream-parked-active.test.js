@@ -225,18 +225,14 @@ test('team-review onto a stream reviewer enqueues the begin line, and the re-nud
   } finally { app.stop(); }
 });
 
-test('_drainPendingAtStreamInit: stream init drains files parked before it through the stream outbox, in seq order', async () => {
+test('_drainPendingAtStreamInit: a stream seat spawned over two parked files sends both in seq order and removes them', async () => {
   const app = boot();
   try {
+    pendingStore.parkDelivery(app.PENDING_DIR, 'sd', 'first-parked-4410', 1, null, false, null);
+    pendingStore.parkDelivery(app.PENDING_DIR, 'sd', 'second-parked-4411', 2, null, false, null);
+    assert.strictEqual(app.parkedFiles('sd').length, 2, 'ENTER: two active files are parked before spawn');
     const s = await app.spawn('sd', 'stream');
-    pendingStore.parkDelivery(app.PENDING_DIR, 'sd', 'first-parked-4410', 1, null, false, app.m._bornFor('sd'));
-    pendingStore.parkDelivery(app.PENDING_DIR, 'sd', 'second-parked-4411', 2, null, false, app.m._bornFor('sd'));
-    assert.strictEqual(app.parkedFiles('sd').length, 2, 'ENTER: two active files are parked');
-    app.enqueued.length = 0;
-    app.emit('sd', { type: 'system', subtype: 'init', session_id: 'sess-sd' });
-    assert.strictEqual(app.enqueued.filter((e) => e.seat === 'sd' && e.produce).length, 1);
-    s.streamBusy = false;
-    app.m._streamTurnEnd(s);
+    assert.strictEqual(s.io, 'stream', 'ENTER: the seat spawned with stream io');
     const text = JSON.stringify(app.sends.get('sd'));
     const a = text.indexOf('first-parked-4410');
     const b = text.indexOf('second-parked-4411');

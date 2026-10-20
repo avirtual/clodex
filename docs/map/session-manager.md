@@ -365,7 +365,7 @@
 | `_flushInjectRun` | writes one run of plain texts and producers as a single inject, turning the whole run into a producer when any entry is one | none | `_injectText` | unpinned |
 | `_drainPendingAtIdle` | on idle, enqueues a parkable late-claiming producer that drains an idle claude seat's active parked mail at write time | pending store under PENDING_DIR (claimed in the producer) | `_anyDraftOpen`, `_bornFor`, `_injectText` | session-manager.test.js dictated-draft-protection.test.js |
 | `_drainPendingAtBootReady` | boot-ready twin of the idle drain: peeks, then enqueues a late-claiming producer straight onto the PTY inject queue with the park divert | pending store under PENDING_DIR | `_anyDraftOpen`, `_injectQueueFor`, `_parkDivertFor`, `_bornFor` | session-manager.test.js dm-delivery-latch.test.js parked-drain-fallback.test.js dictated-draft-protection.test.js |
-| `_drainPendingAtStreamInit` | stream-seat twin of the boot-ready drain, run at each stream `init`: peeks, then enqueues a late-claiming producer onto the stream outbox | pending store under PENDING_DIR (claimed in the producer) | `_streamEnqueueSystem`, `_bornFor` | stream-parked-active.test.js |
+| `_drainPendingAtStreamInit` | stream-seat twin of the boot-ready drain, run at spawn for a codec with no handshake and at each stream `init`: peeks, then enqueues a late-claiming producer onto the stream outbox under PENDING_DRAIN_KEY | pending store under PENDING_DIR (claimed in the producer) | `_streamEnqueueSystem`, `_bornFor` | stream-parked-active.test.js |
 | `_recordBootNudgeProbe` | records the first visible line (up to 32 chars) of an injected write as the echo probe, replacing an earlier unit's, and restarts the echo buffer | `session._bootNudgeProbe`, `session._bootNudgeEcho` | `bootNudgeProbeOf` | unpinned |
 | `_bootNudgeEchoed` | predicate: has the pane echoed the probe (or the paste placeholder) since the write | `session._bootNudgeProbe`, `session._bootNudgeEcho` | `inkVisibleText` | unpinned |
 | `_clearSubmitNudge` | ends a submit-nudge episode: both timers, the armed flag, the probe and the echo buffer | `session._bootNudgeTimer`, `session._submitStuckTimer`, `session._bootNudgeArmed`, `session._bootNudgeProbe`, `session._bootNudgeEcho` | none | unpinned |
@@ -377,7 +377,7 @@
 ### Invariants
 
 - `_flushInjectRun` turns a mixed run into one producer so the destructive claim still happens at write time, never eagerly on the hold-release path.
-- `_drainPendingAtIdle` and `_drainPendingAtBootReady` claim parked mail only inside the producer, so a seat that dies or opens a draft before the write leaves the delivery parked.
+- `_drainPendingAtIdle`, `_drainPendingAtBootReady` and `_drainPendingAtStreamInit` claim parked mail only inside the producer, so a seat that dies or opens a draft before the write leaves the delivery parked.
 - `_armPostClearValve` expires a continuation without retry, because a later manual clear must not receive a stale briefing.
 - `_armSubmitNudge` only fires when `_bootNudgeEchoed` is true, the pane has been quiet for BOOT_NUDGE_QUIET_MS and no draft is open, otherwise it re-arms every quiet interval until BOOT_NUDGE_MAXWAIT_MS after the write.
 - `_armSubmitNudge` arms only on a seat idle at write time, sends at most one Enter per episode, and any non-idle edge in `_emitActivity` or human pty input in `write` ends the episode and the stuck marker.

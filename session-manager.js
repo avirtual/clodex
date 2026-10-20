@@ -2459,6 +2459,7 @@ function createSessionManager(deps) {
         }
         streamRoute = (ev) => this._onStreamEvent(session, ev, onSessionId, onProcExit);
         for (const ev of streamEarly.splice(0)) streamRoute(ev);
+        if (!(Array.isArray(opening) && opening.length)) this._drainPendingAtStreamInit(session);
       }
       const procPid = ptyProc ? ptyProc.pid : streamSeat.pid;
 
@@ -5156,7 +5157,7 @@ function createSessionManager(deps) {
         try { texts = drainPending(PENDING_DIR, s.name, `stream.${process.pid}`, this._bornFor(s.name)); } catch { return null; }
         return texts.length ? texts.join('\n\n') : null;
       };
-      this._streamEnqueueSystem(s, '', produce, 'parked drain at stream init');
+      this._streamEnqueueSystem(s, '', produce, 'parked drain at stream init', null, PENDING_DRAIN_KEY);
     }
 
     _drainPendingAtBootReady(session) {
