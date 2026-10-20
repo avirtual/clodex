@@ -1398,6 +1398,49 @@ test('the UNBRIEFED escalation KEEPS the hold, because the seat can still answer
     'in-flight is the property that actually matters: it is what lets a verdict land');
 });
 
+test('t1905: a red suite whose rework is refused stamps a hand hold the lead can re-enter', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'red' });
+  f.m._rejectTicketFromLoop = () => ({ ok: false, error: 'no live seat holds hand to send the rework to' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const t = f.one();
+  assert.strictEqual(t.state, 'done');
+  assert.strictEqual(t.loopStep, 'verify');
+  assert.strictEqual(t.verifyHold && t.verifyHold.recovery, 'hand');
+  assert.strictEqual(t.verifyHold.step, 'verify: suite');
+  assert.match(t.verifyHold.evidence, /no live seat holds hand/);
+
+  const replies = [];
+  await f.m._taskDone(f.seat('lead'), f.team, { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed the branch' }, (x) => replies.push(x));
+  assert.strictEqual(replies.length > 0, true, 'ENTER: the close answered');
+  assert.doesNotMatch(replies.join('\n'), /checks have not reported/);
+  assert.doesNotMatch(replies.join('\n'), /^error:/m);
+  assert.strictEqual(f.one().rounds[0].report, 'fixed the branch');
+});
+
+test('t1905: a red suite whose rework is delivered writes no hold and leaves the ticket open', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'red' });
+  const real = f.m._rejectTicketFromLoop;
+  const results = [];
+  f.m._rejectTicketFromLoop = (...args) => { const r = real.apply(f.m, args); results.push(r); return r; };
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.deepStrictEqual(results, [{ ok: true }]);
+  const t = f.one();
+  assert.strictEqual(t.state, 'open');
+  assert.strictEqual('verifyHold' in t, false);
+});
+
 test('a verify escalation with no live seat behind it is HELD, not finished', async () => {
   // OVERTURNED BY t345, and this subject's original reasoning is the defect
   // stated as an intention: "nothing can ever land a verdict on that ticket, so

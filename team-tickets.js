@@ -5302,7 +5302,7 @@ function createTicketMethods(deps, shared) {
               ? `the suite's slow gate tripped on ${branch} (${suite.summary}, 0 failing) over ${slowOwned.join('; ')} and the rework could not be sent back: ${rejected.error}`
               : `the suite fails on ${branch} (${suite.summary}) and the rework could not be sent back: ${rejected.error}`,
               `ran the suite (exit ${suite.code}); no reviewer spawned; failing: ${suite.failing || 'unnamed'}`
-              + `${kept.ok ? ` Full output preserved at ${kept.path}.` : ` The failing output could not be preserved (${kept.error}).`}`, 'reopened');
+              + `${kept.ok ? ` Full output preserved at ${kept.path}.` : ` The failing output could not be preserved (${kept.error}).`}`, 'hand');
           }
           return;
         }
