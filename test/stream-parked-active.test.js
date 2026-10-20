@@ -225,7 +225,7 @@ test('team-review onto a stream reviewer enqueues the begin line, and the re-nud
   } finally { app.stop(); }
 });
 
-test('stream init drains files parked before it through the stream outbox, in seq order', async () => {
+test('_drainPendingAtStreamInit: stream init drains files parked before it through the stream outbox, in seq order', async () => {
   const app = boot();
   try {
     const s = await app.spawn('sd', 'stream');
