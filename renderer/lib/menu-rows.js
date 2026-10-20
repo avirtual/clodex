@@ -2,14 +2,14 @@
 
 const CELL_RUN_KEYS = ['x', 'n', 'fg', 'bg', 'bold', 'dim', 'inverse'];
 const CLAUDE_SELECTED_FG = '#5769f7';
-const LABEL_AT = 2;
 
 const PROMPT_COMPOSER = /^❯[  ]\//u;
 const CODEX_COMPOSER = /^›[  ]\//u;
 const CODEX_STATUS_ROW = /^\s{2}(?:Context \d+% used\b|\? for shortcuts)/u;
 const RULE = /^─{3,}/u;
 const LABELED_RULE = /^──/u;
-const ENTRY = /^(?:›|\s)\s\/\S/u;
+const ENTRY = /^(?:›|\s)\s(?:❯ |\s\s)?\/\S/u;
+const CLAUDE_MARKER = /^\s\s❯ \//u;
 const isBlank = (row) => !/\S/u.test(row || '');
 
 function isCellRun(run) {
@@ -20,14 +20,15 @@ function isCellRun(run) {
 
 function parseEntry(row) {
   if (typeof row !== 'string' || !ENTRY.test(row)) return null;
-  const rest = row.slice(LABEL_AT).trimEnd();
+  const nameAt = row.indexOf('/');
+  const rest = row.slice(nameAt).trimEnd();
   const gap = /\s{2,}/u.exec(rest);
-  if (!gap) return { name: rest, description: '', nameAt: LABEL_AT, descAt: -1 };
+  if (!gap) return { name: rest, description: '', nameAt, descAt: -1 };
   return {
     name: rest.slice(0, gap.index),
     description: rest.slice(gap.index + gap[0].length),
-    nameAt: LABEL_AT,
-    descAt: LABEL_AT + gap.index + gap[0].length,
+    nameAt,
+    descAt: nameAt + gap.index + gap[0].length,
   };
 }
 
@@ -97,7 +98,7 @@ function nameRuns(runs, entry) {
 function isSelected(row, runs, entry, platform) {
   if (platform === 'codex') return row.startsWith('›');
   const onName = nameRuns(runs, entry);
-  if (platform === 'claude') return onName.some((r) => r.fg === CLAUDE_SELECTED_FG);
+  if (platform === 'claude') return CLAUDE_MARKER.test(row) || onName.some((r) => r.fg === CLAUDE_SELECTED_FG);
   if (platform === 'muse') return onName.some((r) => r.bold);
   return false;
 }

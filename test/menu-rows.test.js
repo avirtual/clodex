@@ -15,19 +15,21 @@ function load(name) {
   return { rows, cells };
 }
 
-const platformOf = (name) => name.split('-')[0];
+const platformOf = (name) => name.split('-')[0].replace(/\d+$/u, '');
 
 const FIXTURES = [
-  ['claude-arrow-down-2@100', 6, 1, ['/schedule', '/ultrareview', '/remote-env', '/web-setup', '/teleport', '/built-in-browser', '/computer-use'], [{field: 'description', start: 39, end: 42}]],
-  ['claude-arrow-down@100', 6, 0, ['/schedule', '/ultrareview', '/remote-env', '/web-setup', '/teleport', '/built-in-browser', '/computer-use'], [{field: 'description', start: 39, end: 42}]],
-  ['claude-arrow-up@100', 6, 0, ['/schedule', '/ultrareview', '/remote-env', '/web-setup', '/teleport', '/built-in-browser', '/computer-use'], [{field: 'description', start: 39, end: 42}]],
-  ['claude-backspace@100', 6, 0, ['/clear', '/docs', '/update-config', '/statusline', '/schedule', '/insights', '/fewer-permission-prompts', '/run', '/init', '/doctor', '/built-in-browser'], [{field: 'name', start: 1, end: 3}]],
+  ['claude-arrow-down-2@100', 6, 1, ['/remote-env', '/web-setup', '/teleport'], [{field: 'description', start: 35, end: 38}]],
+  ['claude-arrow-down@100', 6, 0, ['/remote-env', '/web-setup', '/teleport'], [{field: 'description', start: 35, end: 38}]],
+  ['claude-arrow-up@100', 6, 0, ['/remote-env', '/web-setup', '/teleport'], [{field: 'description', start: 35, end: 38}]],
+  ['claude-backspace@100', 6, 0, ['/clear', '/doctor', '/copy', '/teleport', '/plugin-authoring', '/init', '/memory', '/design-login', '/docs', '/docx', '/google-workspace', '/import-memory'], [{field: 'name', start: 1, end: 3}]],
+  ['claude-co@100', 6, 0, ['/copy', '/color', '/config', '/compact', '/context', '/usage (cost)', '/resume (continue)', '/autocompact', '/doctor', '/docs', '/docx', '/google-workspace', '/pptx', '/xlsx'], [{field: 'name', start: 1, end: 3}, {field: 'description', start: 0, end: 2}]],
   ['claude-escape@100', null],
-  ['claude-idle-slash@100', 6, 0, ['/debug', '/loop', '/docs', '/update-config', '/statusline', '/add-dir', '/advisor', '/artifacts', '/auto-mode-setup', '/autocompact', '/autofix-pr', '/background', '/branch', '/btw', '/bug', '/cd'], []],
-  ['claude-one-char@100', 6, 0, ['/cd', '/copy', '/clear', '/color', '/chrome', '/config', '/context', '/compact', '/computer-use', '/chrome-browser', '/usage (cost)', '/doctor (checkup)', '/resume (continue)', '/rewind (checkpoint)'], [{field: 'name', start: 1, end: 2}, {field: 'description', start: 39, end: 40}]],
-  ['claude-paste@100', 6, -1, ['/schedule', '/ultrareview', '/remote-env', '/web-setup', '/teleport', '/built-in-browser', '/computer-use'], [{field: 'description', start: 39, end: 42}]],
+  ['claude-idle-slash@100', 6, 0, ['/add-dir', '/advisor', '/artifacts', '/auto-mode-setup', '/autocompact', '/autofix-pr', '/background', '/branch', '/btw', '/bug', '/cd', '/chrome', '/clear', '/color', '/compact', '/config', '/context', '/copy'], []],
+  ['claude-one-char@100', 6, 0, ['/cd', '/copy', '/clear', '/color', '/chrome', '/config', '/compact', '/context', '/usage (cost)', '/doctor (checkup)', '/resume (continue)', '/rewind (checkpoint)', '/usage-credits', '/skill-creator', '/mcp', '/privacy-settings'], [{field: 'name', start: 1, end: 2}, {field: 'description', start: 39, end: 40}]],
+  ['claude-paste@100', 6, -1, ['/remote-env', '/web-setup', '/teleport'], [{field: 'description', start: 35, end: 38}]],
   ['claude-tab@100', null],
-  ['claude-three-chars@100', 6, -1, ['/schedule', '/ultrareview', '/remote-env', '/web-setup', '/teleport', '/built-in-browser', '/computer-use'], [{field: 'description', start: 39, end: 42}]],
+  ['claude-three-chars@100', 6, -1, ['/remote-env', '/web-setup', '/teleport'], [{field: 'description', start: 35, end: 38}]],
+  ['claude283-one-char@100', 6, 0, ['/cd', '/copy', '/clear', '/color', '/chrome', '/config', '/context', '/compact', '/computer-use', '/chrome-browser', '/usage (cost)', '/doctor (checkup)', '/resume (continue)', '/rewind (checkpoint)'], [{field: 'name', start: 1, end: 2}, {field: 'description', start: 39, end: 40}]],
   ['codex-arrow-down-2@100', 36, 0, ['/compact', '/copy'], []],
   ['codex-arrow-down@100', 36, 1, ['/compact', '/copy'], [{field: 'name', start: 1, end: 3}]],
   ['codex-arrow-up@100', 36, 1, ['/compact', '/copy'], [{field: 'name', start: 1, end: 3}]],
@@ -94,19 +96,17 @@ test('isCellRun accepts only the pinned keys with a non-negative x and positive 
   assert.ok(!isCellRun(null));
 });
 
-test('claude /clo matches descriptions: every bold span reads clo, a row matched only past its … carries none', () => {
+test('claude /clo matches descriptions: every bold span reads clo', () => {
   const { rows, cells } = load('claude-three-chars@100');
   const got = readMenuRows(rows, cells, 'claude');
-  assert.strictEqual(got.rows[0].description, 'Create, update, list, or run scheduled cloud agents (routines) that execute on a cron schedule.');
+  assert.strictEqual(got.rows[0].description, 'Choose the default environment for cloud agents');
   const read = got.rows.flatMap((r) => r.matchSpans.map((s) => r[s.field].slice(s.start, s.end).toLowerCase()));
-  assert.strictEqual(read.length, 6);
-  assert.deepStrictEqual(got.rows.slice(5).map((r) => [r.matchSpans, r.description.endsWith('…')]), [[[], true], [[], true]]);
+  assert.strictEqual(read.length, 3);
   assert.ok(read.every((t) => t === 'clo'), read.join(','));
-  assert.ok(got.rows[1].matchSpans.some((s) => s.field === 'description' && s.start > 60));
 });
 
-test('claude one-char bold marks the name and description characters', () => {
-  const { rows, cells } = load('claude-one-char@100');
+test('claude 2.1.283 one-char bold marks the name and description characters', () => {
+  const { rows, cells } = load('claude283-one-char@100');
   const got = readMenuRows(rows, cells, 'claude');
   assert.deepStrictEqual(got.rows[0], {
     name: '/cd',
@@ -114,6 +114,42 @@ test('claude one-char bold marks the name and description characters', () => {
     selected: true,
     matchSpans: [{ field: 'name', start: 1, end: 2 }, { field: 'description', start: 39, end: 40 }],
   });
+});
+
+test('claude 2.1.304 /co reads past the marker column: /copy selected with name-relative spans', () => {
+  const { rows, cells } = load('claude-co@100');
+  assert.ok(rows[8].startsWith('  ❯ /copy '));
+  assert.ok(rows[9].startsWith('    /color '));
+  const got = readMenuRows(rows, cells, 'claude');
+  assert.deepStrictEqual(got.rows.slice(0, 2), [
+    { name: '/copy', description: "Copy Claude's last response to clipboard (or /copy N for the Nth-latest)", selected: true, matchSpans: [{ field: 'name', start: 1, end: 3 }, { field: 'description', start: 0, end: 2 }] },
+    { name: '/color', description: 'Set the prompt bar color for this session', selected: false, matchSpans: [{ field: 'name', start: 1, end: 3 }, { field: 'description', start: 19, end: 21 }] },
+  ]);
+  const doctor = got.rows.find((r) => r.name === '/doctor');
+  assert.ok(doctor.matchSpans.some((s) => s.field === 'description' && s.start === 135 && s.end === 137), JSON.stringify(doctor.matchSpans));
+  assert.strictEqual(doctor.description.slice(135, 137), 'co');
+});
+
+test('claude 2.1.304 marker and selection colour agree on every recorded row', () => {
+  const marked = [];
+  for (const [name, anchor] of FIXTURES) {
+    if (!name.startsWith('claude-') || anchor === null) continue;
+    const { rows, cells } = load(name);
+    rows.forEach((row, i) => {
+      if (!/^\s{2}(?:❯ |\s{2})\//u.test(row)) return;
+      const coloured = cells[i].some((r) => r.fg === '#5769f7' && r.x <= 4 && r.x + r.n > 4);
+      assert.strictEqual(row.startsWith('  ❯ '), coloured, `${name} row ${i}`);
+      if (coloured) marked.push(name);
+    });
+  }
+  assert.ok(marked.includes('claude-co@100'), marked.join(','));
+});
+
+test('claude marker wins over a row whose name carries no selection colour', () => {
+  const rule = '─'.repeat(20);
+  const rows = [rule, '❯ /co', rule, '  ❯ /copy   Copy it', '    /color  Set colour', ''];
+  const got = readMenuRows(rows, rows.map(() => []), 'claude');
+  assert.deepStrictEqual(got.rows.map((r) => [r.name, r.description, r.selected]), [['/copy', 'Copy it', true], ['/color', 'Set colour', false]]);
 });
 
 test('codex marks matches bold only on unselected rows', () => {
@@ -153,5 +189,9 @@ test('unknown platform and non-array rows read as no menu', () => {
   const { rows, cells } = load('claude-idle-slash@100');
   assert.strictEqual(readMenuRows(rows, cells, 'gemini'), null);
   assert.strictEqual(readMenuRows(null, cells, 'claude'), null);
-  assert.ok(readMenuRows(rows, null, 'claude').rows.every((r) => !r.selected && r.matchSpans.length === 0));
+  const bare = readMenuRows(rows, null, 'claude').rows;
+  assert.ok(bare.every((r) => r.matchSpans.length === 0));
+  assert.deepStrictEqual(bare.map((r) => r.selected).indexOf(true), 0);
+  const old = load('claude283-one-char@100');
+  assert.ok(readMenuRows(old.rows, null, 'claude').rows.every((r) => !r.selected && r.matchSpans.length === 0));
 });

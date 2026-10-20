@@ -19,6 +19,7 @@ blocks a release.
 - Plan quota is now visible before it runs out: the status-bar chip turns on at 80% of any window, the operator inbox gets one note per account when a window crosses 80%, 95% and exhaustion (with the reset time and the seats on that account), team leads with seats on an exhausted account are told once, and keep-warm stops pinging a rate-limited account.
 - A Claude seat with credential hardening can no longer retry a command outside the sandbox: a sandboxed command that fails now fails, and the seat reports which restriction it hit, instead of raising a permission dialog that an unattended hand would wait on for hours.
 - A dm relayed through a hub from a peer whose label has a space (every `<name> team` sandbox box) can be answered again: the hub's relay roster now advertises that peer under its host or id, the same origin the message's sender line carries, so the far seat no longer sees `(no reply path)`.
+- The slash-command list on a Claude seat is back on Claude Code 2.1.304 and later: the CLI added a selection-marker column to its menu, which the list reader did not recognise (issue #11).
 
 ## 5.131.7 — 2026-10-20
 

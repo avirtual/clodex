@@ -1,12 +1,12 @@
-▗ ▗   ▖ ▖  Claude Code v2.1.283
-           Opus 5.5 (1M context) · Claude Max
- ▘▘   ▝▝   ~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/t-slash-menu-transport/cwd
+▗ ▗   ▖ ▖  Claude Code v2.1.304
+           Fable 5.1 with high effort · Claude Max
+ ▘▘   ▝▝   ~/projects/tmux/wb-wrap-ui-t1902-issue-11-the-pty-slash-command-list-is
 
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-❯ /schedule
+❯ /remote-env
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-  Opus 5.5 (1M context) 0%                                                      ◐ medium · /effort
+  Fable 5.1 0%                                                                    ● high · /effort
   ⏵⏵ auto mode on (shift+tab to cycle)
 
 

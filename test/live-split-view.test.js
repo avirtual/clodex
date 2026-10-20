@@ -966,7 +966,7 @@ test('while the mirror is ON each evaluate reads the CLI menu into the slash lis
     assert.strictEqual(m.menuEl.hidden, false);
     assert.strictEqual(m.menuMirror.hasRows(), true);
     const items = itemsOf(m.menuEl);
-    assert.strictEqual(items.length, 14);
+    assert.strictEqual(items.length, 16);
     assert.deepStrictEqual(items[0], ['seat-slash-item active', ['seat-slash-name', '/<b>c</b>d'], ['seat-slash-desc', 'Move this session to a new working dire<b>c</b>tory']]);
     assert.strictEqual(items.filter((r) => r[0] === 'seat-slash-item active').length, 1);
     assert.strictEqual(m.menuEl.style.bottom, `${COMPOSER_PX + 8}px`);
@@ -979,7 +979,7 @@ test('a claude menu with no selected row renders no active row', async () => {
     m.menuMirror.draft('/clo');
     await m.enter();
     const items = itemsOf(m.menuEl);
-    assert.strictEqual(items.length, 7);
+    assert.strictEqual(items.length, 3);
     assert.deepStrictEqual(items.filter((r) => r[0] !== 'seat-slash-item'), []);
   } finally { m.view.dispose(); m.restore(); }
 });
@@ -1690,7 +1690,7 @@ test('the slash list sits above the composer', async () => {
     await m.enter();
     assert.strictEqual(m.menuMirror.on(), true);
     assert.strictEqual(m.menuEl.hidden, false);
-    assert.strictEqual(itemsOf(m.menuEl).length, 14);
+    assert.strictEqual(itemsOf(m.menuEl).length, 16);
     assert.strictEqual(m.menuEl.style.bottom, `${COMPOSER_PX + 8}px`);
   } finally { m.view.dispose(); m.restore(); }
 });

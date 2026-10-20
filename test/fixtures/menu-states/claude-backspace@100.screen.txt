@@ -1,31 +1,31 @@
-▗ ▗   ▖ ▖  Claude Code v2.1.283
-           Opus 5.5 (1M context) · Claude Max
- ▘▘   ▝▝   ~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/t-slash-menu-transport/cwd
+▗ ▗   ▖ ▖  Claude Code v2.1.304
+           Fable 5.1 with high effort · Claude Max
+ ▘▘   ▝▝   ~/projects/tmux/wb-wrap-ui-t1902-issue-11-the-pty-slash-command-list-is
 
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────
 ❯ /cl
 ────────────────────────────────────────────────────────────────────────────────────────────────────
-  /clear                        Start a new session with empty context; previous session stays on
-                                disk (resumable with /resume)
-  /docs                         docs (living docs people share, comment on and edit; use only when
-                                the user asks for one: names a doc, document, page, memo, spec, P…
-  /update-config                Use this skill to configure the Claude Code harness via
-                                settings.json. Automated behaviors ("from now on when X", "each t…
-  /statusline                   Set up Claude Code's status line UI
-  /schedule                     Create, update, list, or run scheduled cloud agents (routines)
-                                that execute on a cron schedule.
-  /insights                     Generate a report analyzing your Claude Code sessions
-  /fewer-permission-prompts     Scan your transcripts for common read-only Bash and MCP tool
-                                calls, then add a prioritized allowlist to project .claude/settin…
-  /run                          Launch and drive this project's app to see a change working. Use
-                                when asked to run, start, or screenshot the app, or to confirm a …
-  /init                         Initialize a new CLAUDE.md file with codebase documentation
-  /doctor                       Health-check the user's Claude Code setup and fix issues: diagnose
-                                installation health — what the `claude doctor` terminal diagnosti…
-  /built-in-browser             Read this skill before the first step that uses the built-in
-                                browser, the browser pane inside the Claude desktop app (also cal…
-
+  ❯ /clear                Start a new session with empty context; previous session stays on disk
+                          (resumable with /resume)
+    /doctor               Health-check the user's Claude Code setup and fix issues: diagnose
+                          installation health — what the `claude doctor` terminal diagnostics cov…
+    /copy                 Copy Claude's last response to clipboard (or /copy N for the Nth-latest)
+    /teleport             Send this session to the cloud, or resume one from claude.ai
+    /plugin-authoring     Make a mod: a change to Claude's own interface or behaviour, such as a
+                          panel or pane that stays beside the chat and updates, a band, status li…
+    /init                 Initialize a new CLAUDE.md file with codebase documentation
+    /memory               Edit CLAUDE.md files and memory settings
+    /design-login         Authorize design-system access for /design-sync with your claude.ai
+                          account
+    /docs                 docs (editable docs people share and comment on; the default for any
+                          document, named as a doc or not: a document, report, proposal, resume, …
+    /docx                 Use this skill whenever the user wants to create, read, edit, or
+                          manipulate Word documents (.docx) or Word templates (.dotx). Triggers i…
+    /google-workspace     Read this before the first Google Drive, Docs, Sheets or Slides
+                          connector call whenever the task creates or changes a Google file. Use …
+    /import-memory        Import a memory export from another AI assistant into Claude's memory —
+                          conversationally, additively, and with the content treated as data. (cl…
 
 
 
