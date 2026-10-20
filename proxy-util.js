@@ -572,7 +572,7 @@ function quotaChip(q, clientAgeS = 0) {
       const r = fmtQuotaReset(w.resetsInS);
       return `${quotaWindowLabel(w.key).long}: ${Math.round(w.usedPct)}% used${r ? `, resets in ${r}` : ''}`;
     });
-    for (const w of near) {
+    for (const w of near.filter((x) => x.status !== 'rejected' && x.usedPct < 100)) {
       const r = fmtQuotaReset(w.resetsInS);
       tipLines.push(`nearing the ${quotaWindowLabel(w.key).long} limit${r ? ` — resets in ${r}` : ''}`);
     }

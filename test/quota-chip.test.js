@@ -274,6 +274,7 @@ test('quotaChip: one window at rejected takes the whole chip loud', () => {
   const chip = quotaChip(q);
   assert.strictEqual(chip.level, 'loud');
   assert.strictEqual(chip.text, '5h 0% (4h52m) · 7d 76% (18h32m) · 7d Fable 100% (18h32m)');
+  assert.ok(!chip.tip.includes('nearing the week (Fable)'), chip.tip);
 });
 
 test('quotaChip: a window with no percentage neither renders nor votes on the level', () => {

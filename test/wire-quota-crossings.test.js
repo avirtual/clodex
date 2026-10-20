@@ -70,7 +70,10 @@ function mkHost() {
     getUiSettings: () => ({ get: () => ({}) }),
     getPersistence: () => ({ list: () => [], get: () => null }),
     getNotifications: () => ({ add: (n) => { notes.push(n); return n; } }),
-    resolveTeam: (cwd) => (cwd && cwd.startsWith(root) ? team : null),
+    resolveTeam: (cwd) => {
+      if (cwd && cwd.startsWith('/codexteam')) return { name: 'codexteam', root: '/codexteam', lead: 'codex-lead', roles: {} };
+      return cwd && cwd.startsWith(root) ? team : null;
+    },
     log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
   });
   const m = new SessionManager();
@@ -80,6 +83,8 @@ function mkHost() {
   for (const name of ['lead', 'team-hand-1', 'other']) {
     m.sessions.set(name, { name, agentType: 'claude', cwd: name === 'other' ? '/elsewhere' : `${root}/x` });
   }
+  m.sessions.set('team-codex-1', { name: 'team-codex-1', agentType: 'codex', cwd: `${root}/y` });
+  m.sessions.set('codex-lead', { name: 'codex-lead', agentType: 'codex', cwd: '/codexteam/z' });
   m.accountFor = (name) => (name === 'other' ? 'personal' : ACCT);
   m._accountForWireAgent = () => ACCT;
   const store = new QuotaStore();
@@ -114,6 +119,7 @@ test('host: exhaustion notes and dms each lead once per (account, reset), naming
     'Claude plan (account opsguru): 5-hour window EXHAUSTED — res',
   ]);
   assert.match(h.notes[2].body, /Seats on this account will fail until then: lead, team-hand-1\.$/);
+  assert.ok(h.notes.every((n) => !n.body.includes('codex')), 'a codex seat is not on the Claude plan');
   assert.deepStrictEqual(h.dms, [{
     to: 'lead', from: 'clodex', kind: 'dm',
     body: '[quota] account opsguru: 5-hour window exhausted, resets 19:00 — seats on it (lead, team-hand-1) will fail until then; move the role ([agent:team role-set <role> account:<other>]) or wait.',

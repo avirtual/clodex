@@ -1373,7 +1373,7 @@ function createSessionManager(deps) {
       const resolve = this._accountResolver();
       const seats = [];
       for (const s of this.sessions.values()) {
-        if (!s || s._dead || !s.agentType) continue;
+        if (!s || s._dead || s.agentType !== 'claude') continue;
         if (this.accountFor(s.name, resolve) === label) seats.push(s);
       }
       return seats;

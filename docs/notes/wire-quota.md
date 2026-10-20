@@ -20,4 +20,5 @@ Thresholds below 100 compare utilization only; 100 is the exhausted flag. A
 `rejected` status at 40% is one exhaustion note, not three. Windows with no
 utilization never vote: an org with overage disabled publishes `overage` at
 `rejected` with a null percentage on every response. The dedupe key includes the
-reset epoch, so a window that rolls over and climbs again notifies again.
+reset epoch, so a window that rolls over and climbs again notifies again. A
+window that publishes no reset keys on null and notifies each threshold once.
