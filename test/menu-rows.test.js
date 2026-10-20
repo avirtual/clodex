@@ -125,6 +125,9 @@ test('claude 2.1.304 /co reads past the marker column: /copy selected with name-
     { name: '/copy', description: "Copy Claude's last response to clipboard (or /copy N for the Nth-latest)", selected: true, matchSpans: [{ field: 'name', start: 1, end: 3 }, { field: 'description', start: 0, end: 2 }] },
     { name: '/color', description: 'Set the prompt bar color for this session', selected: false, matchSpans: [{ field: 'name', start: 1, end: 3 }, { field: 'description', start: 19, end: 21 }] },
   ]);
+  const doctor = got.rows.find((r) => r.name === '/doctor');
+  assert.ok(doctor.matchSpans.some((s) => s.field === 'description' && s.start === 135 && s.end === 137), JSON.stringify(doctor.matchSpans));
+  assert.strictEqual(doctor.description.slice(135, 137), 'co');
 });
 
 test('claude 2.1.304 marker and selection colour agree on every recorded row', () => {
