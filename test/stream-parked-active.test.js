@@ -255,6 +255,7 @@ test('_armParkedDrainFallback and _drainPendingAtBootReady are no-ops on a strea
     assert.ok(!s._parkedDrainFallbackTimer);
     assert.strictEqual(s._parkedDrainFallbackFiles, undefined);
     app.m._drainPendingAtBootReady(s);
+    assert.strictEqual(s._injectPtyQueue, undefined);
     assert.strictEqual(app.parkedFiles('sf').length, 1);
     assert.deepStrictEqual(app.logs.slice(before), []);
   } finally { app.stop(); }
