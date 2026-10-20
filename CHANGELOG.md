@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- When a ticket's suite fails and the hand has already been retired, the loop now records a verify hold the lead can re-enter with `task done` after fixing the branch, instead of a done-at-verify ticket that refuses every re-entry as 'checks have not reported yet'.
+
 ## 5.131.8 — 2026-10-21
 
 - A reviewer or lead running in stream mode now receives its start line: the parked-active delivery used for the review begin line, the kickstart opener and the review re-nudge had no stream branch, so every loop-spawned stream reviewer sat idle until someone dm'd it by hand.

@@ -1398,6 +1398,89 @@ test('the UNBRIEFED escalation KEEPS the hold, because the seat can still answer
     'in-flight is the property that actually matters: it is what lets a verdict land');
 });
 
+test('t1905: a red suite whose rework is refused stamps a hand hold the lead can re-enter', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'red' });
+  f.m._rejectTicketFromLoop = () => ({ ok: false, error: 'no live seat holds hand to send the rework to' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const t = f.one();
+  assert.strictEqual(t.state, 'done');
+  assert.strictEqual(t.loopStep, 'verify');
+  assert.strictEqual(t.verifyHold && t.verifyHold.recovery, 'hand');
+  assert.strictEqual(t.verifyHold.step, 'verify: suite');
+  assert.match(t.verifyHold.evidence, /no live seat holds hand/);
+
+  const replies = [];
+  await f.m._taskDone(f.seat('lead'), f.team, { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed the branch' }, (x) => replies.push(x));
+  assert.strictEqual(replies.length > 0, true, 'ENTER: the close answered');
+  assert.doesNotMatch(replies.join('\n'), /checks have not reported/);
+  assert.doesNotMatch(replies.join('\n'), /^error:/m);
+  assert.strictEqual(f.one().rounds[0].report, 'fixed the branch');
+});
+
+test('t1905: a red suite whose rework is delivered writes no hold and leaves the ticket open', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'red' });
+  const real = f.m._rejectTicketFromLoop;
+  const results = [];
+  f.m._rejectTicketFromLoop = (...args) => { const r = real.apply(f.m, args); results.push(r); return r; };
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(results.length, 1, 'ENTER: the loop reached the reject');
+  assert.strictEqual(results[0].ok, true);
+  const t = f.one();
+  assert.strictEqual(t.state, 'open');
+  assert.strictEqual('verifyHold' in t, false);
+});
+
+test('t1905: a red suite reopened but undelivered writes no hold on the open ticket', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'red' });
+  const inner = f.m._gatedDeliver;
+  f.m._gatedDeliver = (target, ...rest) => (target === 'team-hand' ? { error: 'pty write failed' } : inner.call(f.m, target, ...rest));
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const t = f.one();
+  assert.strictEqual(t.state, 'open', 'ENTER: the reject reopened the ticket');
+  assert.strictEqual(f.esc().length, 1, 'ENTER: the undelivered rework escalated');
+  assert.match(f.esc()[0].body, /the ticket was reopened but the rework message did not reach team-hand/);
+  assert.strictEqual('verifyHold' in t, false);
+});
+
+test('t1905: a reject that throws after the reopen writes no hold on the open ticket', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'red' });
+  const real = f.m._rejectTicketFromLoop;
+  const results = [];
+  f.m._rejectTicketFromLoop = (...args) => { const r = real.apply(f.m, args); results.push(r); return r; };
+  f.m._reconcileTickets = () => { throw new Error('reconcile blew up'); };
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(results.length, 1, 'ENTER: the loop reached the reject');
+  assert.strictEqual(results[0].error, 'reconcile blew up', 'ENTER: it returned through the catch');
+  const t = f.one();
+  assert.strictEqual(t.state, 'open');
+  assert.strictEqual('verifyHold' in t, false);
+  assert.deepStrictEqual(f.gated.filter((g) => /HELD/.test(g.body)), []);
+});
+
 test('a verify escalation with no live seat behind it is HELD, not finished', async () => {
   // OVERTURNED BY t345, and this subject's original reasoning is the defect
   // stated as an intention: "nothing can ever land a verdict on that ticket, so
@@ -5444,17 +5527,11 @@ test('t345 r5 MF2: a VERIFY-step throw still DOES carry its recovery', async () 
   assert.strictEqual(f.one().verifyHold.recovery, 'infra', 'and is stamped infra');
 });
 
-test('t345 r5 nit2: an UNDELIVERABLE rework does not tell the seat "no rework round was counted"', async () => {
-  // This arm is reached BECAUSE the reject succeeded and only its delivery
-  // failed: the ticket is `open`, `reworkRound` is up, `loopStep` is gone. The
-  // hand notice would say the opposite of all three — to a seat that could not be
-  // reached anyway — and the stamp would write a `verifyHold` onto an open ticket,
-  // a state no reader is written for.
+test('t345 r5 nit2: a refused reject with no seat stamps a hand hold and tells no seat it was HELD', async () => {
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
   const f = mkLoop({ repo, suite: 'red' });
   f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
-  // No seat holds the role, so _rejectTicketFromLoop cannot deliver.
   f.m.sessions.delete('team-hand');
 
   await f.m._runTicketLoop(f.team, 't1');
@@ -5463,7 +5540,8 @@ test('t345 r5 nit2: an UNDELIVERABLE rework does not tell the seat "no rework ro
   assert.strictEqual(f.esc().length, 1, 'ENTER: the lead was told, which is the whole recovery here');
   assert.match(f.esc()[0].body, /rework could not be sent back/, 'ENTER: and it is THIS arm');
   const t = f.one();
-  assert.ok(!('verifyHold' in t), 'no hold is stamped on a ticket the reject already reopened');
+  assert.strictEqual(t.state, 'done', 'the refused reject left the ticket closed');
+  assert.strictEqual(t.verifyHold && t.verifyHold.recovery, 'hand', 'so it is held for a re-entry');
   assert.deepStrictEqual(f.gated.filter((g) => /HELD/.test(g.body)), [],
     'and no seat is told the ticket was not rejected when it was');
 });
