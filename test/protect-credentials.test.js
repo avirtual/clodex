@@ -124,7 +124,7 @@ test('protectCredentials inside a sandbox box: no sandbox block, file-tool denie
     assert.ok(s.permissions.deny.includes('Read(~/.aws/**)'));
     assert.ok(s.permissions.deny.includes('Edit(~/.claude/**)'));
     assert.strictEqual(Object.prototype.hasOwnProperty.call(s.permissions, 'ask'), false);
-    assert.deepStrictEqual(buildCredentialSandbox({ registryDir: seededRoot(), list: ['~/.aws'], home: HOME }).ask, []);
+    assert.deepStrictEqual(buildCredentialSandbox({ registryDir: seededRoot(), list: ['~/.aws'], home: HOME, inBox: true }).ask, []);
   });
 });
 
