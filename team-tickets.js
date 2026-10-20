@@ -2577,7 +2577,7 @@ function createTicketMethods(deps, shared) {
     _handleTeamHands(session, team, intent, reply) {
       if (!intent.value) {
         const { cap, source } = this._handCap(team);
-        reply(`hand cap of ${team.name}: ${cap == null ? 'off' : `${cap} — ${source}`} — [agent:team hands <n|off>] sets it`);
+        reply(`hand cap of ${team.name}: ${cap == null ? 'off' : `${cap} (${source})`} — [agent:team hands <n|off>] sets it`);
         return;
       }
       const n = intent.value === 'off' ? null : (/^[0-9]+$/.test(intent.value) ? Number(intent.value) : NaN);
@@ -2586,7 +2586,9 @@ function createTicketMethods(deps, shared) {
         return;
       }
       const m = deps.setTeamMaxHands(team.name, n);
-      reply(`hand cap of ${team.name} set to ${m.maxHands == null ? 'off' : m.maxHands} — a task start past it parks the ticket until a hand retires`);
+      reply(m.maxHands == null
+        ? `hand cap of ${team.name} set to off — task start no longer parks for a cap`
+        : `hand cap of ${team.name} set to ${m.maxHands} — a task start past it parks the ticket until a hand retires`);
       this._startCapParked(m, session);
     },
 
@@ -2595,7 +2597,7 @@ function createTicketMethods(deps, shared) {
       let cpuMax = null;
       let cpus = 1;
       if (inBox && team.maxHands === undefined) {
-        try { cpuMax = fs.readFileSync('/sys/fs/cgroup/cpu.max', 'utf8'); } catch { cpuMax = null; }
+        try { cpuMax = fs.readFileSync(deps.cpuMaxFile || '/sys/fs/cgroup/cpu.max', 'utf8'); } catch { cpuMax = null; }
         try { cpus = os.cpus().length; } catch { cpus = 1; }
       }
       return effectiveHandCap({ maxHands: team.maxHands, inBox, cpuMax, cpus });
