@@ -219,4 +219,30 @@ function bootstrapHistoryRows(config) {
     .map((h) => `${h.at} ${h.writer}/${h.seat || '-'} ${h.field} ${h.sha}`);
 }
 
-module.exports = { bootstrapLineText, bootstrapHistoryRows, limitsLineText, figuresHint, sandboxRebuiltLine, detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, foreignNotice, refLineText, openUrl, portsLineText, validatePorts };
+function normLimits(l) {
+  const v = (x) => (x == null ? '' : String(x).trim()) || null;
+  const o = l || {};
+  return [v(o.cpus), v(o.memory), v(o.pids), v(o.shmSize)];
+}
+
+function normBootstrap(b) {
+  const o = b || {};
+  const pk = Array.isArray(o.packages) ? o.packages.join(' ') : String(o.packages || '');
+  return [pk.trim().split(/\s+/).filter(Boolean).join(' '), o.setup || '', o.start || ''];
+}
+
+function advancedDirty(applied, editors) {
+  const a = applied || {};
+  const e = editors || {};
+  const differ = (x, y) => x.some((v, i) => v !== y[i]);
+  return {
+    limits: differ(normLimits(a.limits), normLimits(e.limits)),
+    bootstrap: differ(normBootstrap(a.bootstrap), normBootstrap(e.bootstrap)),
+  };
+}
+
+function saveLabel(base, dirty) {
+  return dirty ? `${base} •` : base;
+}
+
+module.exports = { advancedDirty, saveLabel, bootstrapLineText, bootstrapHistoryRows, limitsLineText, figuresHint, sandboxRebuiltLine, detectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice, foreignNotice, refLineText, openUrl, portsLineText, validatePorts };

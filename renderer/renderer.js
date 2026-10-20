@@ -29,7 +29,7 @@ const { expandTeamRoot, usesTeamRoot } = require('../team-root-expand');
 const { altChordAction } = require('./lib/web-shortcuts');
 const { filterSummary, setFilterFolded } = require('./lib/sidebar-filter-fold');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
-const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, foreignNotice: sandboxForeignNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText, validatePorts: sandboxValidatePorts, sandboxRebuiltLine, limitsLineText: sandboxLimitsLineText, figuresHint: sandboxFiguresHint, bootstrapLineText: sandboxBootstrapLineText, bootstrapHistoryRows: sandboxBootstrapHistoryRows } = require('./lib/sandbox-view');
+const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, foreignNotice: sandboxForeignNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText, validatePorts: sandboxValidatePorts, sandboxRebuiltLine, limitsLineText: sandboxLimitsLineText, figuresHint: sandboxFiguresHint, bootstrapLineText: sandboxBootstrapLineText, bootstrapHistoryRows: sandboxBootstrapHistoryRows, advancedDirty: sandboxAdvancedDirty, saveLabel: sandboxSaveLabel } = require('./lib/sandbox-view');
 const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require('./lib/tool-gate');
 const { bumpDefaultName, teamNamePrefill } = require('./lib/name-suggest');
 const { reservedSets, reservedUnion, nameFieldState, createButtonState, paintNameField, applyCreateResult } = require('./lib/name-validity');
@@ -7906,6 +7906,7 @@ let sbForeign = null;
 let sbEffectivePorts = null;
 let sbAskedPorts = null;
 let sbCurrentBox = 'sandbox';
+let sbAdvancedApplied = { limits: null, platform: null, bootstrap: null, relay: null };
 let sbBoxes = [];
 let sbMounts = [];
 let sbMountsDirty = false;
@@ -8251,6 +8252,7 @@ async function renderBoxList() {
 }
 
 async function loadBoxDetail() {
+  sbAdvancedApplied = { limits: null, platform: null, bootstrap: null, relay: null };
   // Switching boxes: drop the previous box's effective ports so its link/hint can't
   // apply here — the next status poll (refreshSandboxStatus) repopulates them.
   sbEffectivePorts = null;
@@ -8269,6 +8271,7 @@ async function loadBoxDetail() {
   applyTokenState(!!cfg.hasToken);
   applyLimitsConfig(cfg);
   sbRelay.checked = cfg.relay === true;
+  sbAdvancedApplied.relay = cfg.relay === true;
   sbLimitsLine.textContent = sandboxLimitsLineText(null);
   applyBootstrapConfig(cfg);
   sbBootLine.textContent = sandboxBootstrapLineText(null);
@@ -8279,6 +8282,7 @@ async function loadBoxDetail() {
 
 function applyBootstrapConfig(cfg) {
   const b = cfg.bootstrap || {};
+  sbAdvancedApplied.bootstrap = b;
   sbBootPackages.value = Array.isArray(b.packages) ? b.packages.join(' ') : '';
   sbBootSetup.value = b.setup || '';
   sbBootStart.value = b.start || '';
@@ -8287,6 +8291,7 @@ function applyBootstrapConfig(cfg) {
     div.textContent = row;
     return div;
   }));
+  refreshAdvancedMarkers();
 }
 
 function applyLimitsConfig(cfg) {
@@ -8296,6 +8301,40 @@ function applyLimitsConfig(cfg) {
   sbLimitPids.value = l.pids != null ? String(l.pids) : '';
   sbLimitShm.value = l.shmSize || '';
   sbPlatform.value = cfg.platform || '';
+  sbAdvancedApplied.limits = l;
+  sbAdvancedApplied.platform = cfg.platform || null;
+  refreshAdvancedMarkers();
+}
+
+function limitsPatch() {
+  return { limits: {
+    cpus: sbLimitCpus.value.trim() || null,
+    memory: sbLimitMemory.value.trim() || null,
+    pids: sbLimitPids.value.trim() || null,
+    shmSize: sbLimitShm.value.trim() || null,
+  } };
+}
+
+function bootstrapPatch() {
+  return { bootstrap: {
+    packages: sbBootPackages.value.trim().split(/\s+/).filter(Boolean),
+    setup: sbBootSetup.value,
+    start: sbBootStart.value,
+  } };
+}
+
+function advancedDirtyNow() {
+  return sandboxAdvancedDirty(sbAdvancedApplied, { limits: limitsPatch().limits, bootstrap: bootstrapPatch().bootstrap });
+}
+
+function refreshAdvancedMarkers() {
+  const dirty = advancedDirtyNow();
+  sbLimitsSave.textContent = sandboxSaveLabel('Save Limits', dirty.limits);
+  sbBootSave.textContent = sandboxSaveLabel('Save Bootstrap', dirty.bootstrap);
+}
+
+for (const el of [sbLimitCpus, sbLimitMemory, sbLimitPids, sbLimitShm, sbBootPackages, sbBootSetup, sbBootStart]) {
+  el.addEventListener('input', refreshAdvancedMarkers);
 }
 
 async function refreshSandboxFigures() {
@@ -8315,32 +8354,31 @@ async function saveSandboxAdvanced(patch, control, apply) {
   } finally {
     control.disabled = false;
   }
-  if (box !== sbCurrentBox) return;
+  if (box !== sbCurrentBox) return false;
   if (!r || r.ok === false) {
     showToast((r && r.error) || 'Sandbox settings were rejected.', { kind: 'error', duration: 10000 });
-    return;
+    return false;
   }
   apply(r);
+  return true;
 }
 
-sbLimitsSave.addEventListener('click', () => saveSandboxAdvanced({ limits: {
-  cpus: sbLimitCpus.value.trim() || null,
-  memory: sbLimitMemory.value.trim() || null,
-  pids: sbLimitPids.value.trim() || null,
-  shmSize: sbLimitShm.value.trim() || null,
-} }, sbLimitsSave, applyLimitsConfig));
+async function saveDirtyAdvanced() {
+  const dirty = advancedDirtyNow();
+  if (dirty.limits && !await saveSandboxAdvanced(limitsPatch(), sbLimitsSave, applyLimitsConfig)) return false;
+  if (dirty.bootstrap && !await saveSandboxAdvanced(bootstrapPatch(), sbBootSave, applyBootstrapConfig)) return false;
+  return true;
+}
+
+sbLimitsSave.addEventListener('click', () => saveSandboxAdvanced(limitsPatch(), sbLimitsSave, applyLimitsConfig));
 
 sbPlatform.addEventListener('change', () => saveSandboxAdvanced({ platform: sbPlatform.value || null }, sbPlatform,
   (r) => { sbPlatform.value = r.platform || ''; }));
 
 sbRelay.addEventListener('change', () => saveSandboxAdvanced({ relay: sbRelay.checked }, sbRelay,
-  (r) => { sbRelay.checked = r.relay === true; }));
+  (r) => { sbRelay.checked = r.relay === true; sbAdvancedApplied.relay = r.relay === true; }));
 
-sbBootSave.addEventListener('click', () => saveSandboxAdvanced({ bootstrap: {
-  packages: sbBootPackages.value.trim().split(/\s+/).filter(Boolean),
-  setup: sbBootSetup.value,
-  start: sbBootStart.value,
-} }, sbBootSave, applyBootstrapConfig));
+sbBootSave.addEventListener('click', () => saveSandboxAdvanced(bootstrapPatch(), sbBootSave, applyBootstrapConfig));
 
 sbBootLogBtn.addEventListener('click', async () => {
   const box = sbCurrentBox;
@@ -8486,7 +8524,7 @@ sbTokenClear.addEventListener('click', async () => {
   showToast('Claude auth token cleared.', { kind: 'peer-ui' });
 });
 
-sbToggleBtn.addEventListener('click', async () => {
+async function startSandbox() {
   if (sbBusy) return;
   sbBusy = true;
   const wasRunning = sbRunning;
@@ -8496,6 +8534,7 @@ sbToggleBtn.addEventListener('click', async () => {
   try {
     const saved = await saveSandboxConfig();
     if (!saved && !wasRunning) return;
+    if (!wasRunning && !await saveDirtyAdvanced()) return;
     const r = wasRunning ? await window.api.sandboxDown(sbCurrentBox) : await window.api.sandboxUp(sbCurrentBox);
     if (!r || r.ok === false) {
       showToast(`Sandbox ${wasRunning ? 'stop' : 'start'} failed: ${(r && r.error) || 'unknown error'}`, { kind: 'error', duration: 12000 });
@@ -8509,9 +8548,11 @@ sbToggleBtn.addEventListener('click', async () => {
     applyActionGate();   // re-apply the docker gate (not a blanket enable)
     await refreshSandboxStatus();
   }
-});
+}
 
-sbRebuildBtn.addEventListener('click', async () => {
+sbToggleBtn.addEventListener('click', startSandbox);
+
+async function rebuildSandbox() {
   if (sbBusy) return;
   sbBusy = true;
   sbToggleBtn.disabled = true;
@@ -8519,6 +8560,7 @@ sbRebuildBtn.addEventListener('click', async () => {
   sbRebuildBtn.textContent = 'Rebuilding…';
   try {
     if (!await saveSandboxConfig()) return;
+    if (!await saveDirtyAdvanced()) return;
     const r = await window.api.sandboxRebuild(sbCurrentBox);
     if (!r || r.ok === false) {
       showToast(`Sandbox rebuild failed: ${(r && r.error) || 'unknown error'}`, { kind: 'error', duration: 12000 });
@@ -8534,7 +8576,9 @@ sbRebuildBtn.addEventListener('click', async () => {
     applyActionGate();   // re-apply the docker gate (not a blanket enable)
     await refreshSandboxStatus();
   }
-});
+}
+
+sbRebuildBtn.addEventListener('click', rebuildSandbox);
 
 sbBoxCreate.addEventListener('click', async () => {
   if (sbBusy) return;
