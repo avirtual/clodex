@@ -8,7 +8,7 @@ const assert = require('node:assert');
 const {
   RELAY_ENVELOPE_V, RELAY_MAX_HOPS,
   relayVersionOk, isQualifiedSender, isRelayEnvelope,
-  buildRelayEnvelope, hopRule, buildTerminalDm, computeRosterFor,
+  buildRelayEnvelope, hopRule, buildTerminalDm, computeRosterFor, peerOriginSuffix,
 } = require('../relay-protocol');
 
 test('constants are the committed values', () => {
@@ -222,4 +222,26 @@ test('isSandboxEnvelope accepts port, status and bootstrap, refuses other verbs,
   ];
   for (const [name, task, want] of rows) assert.strictEqual(isSandboxEnvelope(task), want, name);
   assert.strictEqual(isDoneTaskEnvelope({ kind: 'done', id: 't7' }), true, 'kind done still ok');
+});
+
+test('computeRosterFor: a peer whose label fails the name rule is advertised under its host, else its id', () => {
+  const statuses = [
+    { id: 'dk', label: 'docker', online: true, caps: ['dm'], sessions: [{ name: 'd1', type: 'claude' }] },
+    { id: 'team-avh', label: 'avh team', host: 'team-avh', online: true, caps: ['dm'], sessions: [{ name: 'avh-lead', type: 'claude' }] },
+    { id: 'p-1', label: 'x y', host: 'no good', online: true, caps: ['dm'], sessions: [{ name: 'w1', type: 'claude' }] },
+    { id: 'bad id', label: 'bad label', host: 'bad host', online: true, caps: ['dm'], sessions: [{ name: 'w2', type: 'claude' }] },
+  ];
+  const allowed = new Set(['dk', 'team-avh', 'p-1', 'bad id']);
+  assert.deepStrictEqual(
+    computeRosterFor('dk', statuses, allowed),
+    [{ name: 'avh-lead', origin: 'team-avh', type: 'claude' }, { name: 'w1', origin: 'p-1', type: 'claude' }],
+  );
+});
+
+test('peerOriginSuffix: label, else host, else id, else null', () => {
+  assert.strictEqual(peerOriginSuffix({ label: 'lab', host: 'hst', id: 'pid' }), 'lab');
+  assert.strictEqual(peerOriginSuffix({ label: 'avh team', host: 'hst', id: 'pid' }), 'hst');
+  assert.strictEqual(peerOriginSuffix({ label: 'x y', host: 'no good', id: 'p-1' }), 'p-1');
+  assert.strictEqual(peerOriginSuffix({ label: 'x y', host: 'no good', id: 'bad id' }), null);
+  assert.strictEqual(peerOriginSuffix(null), null);
 });

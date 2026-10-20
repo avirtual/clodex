@@ -117,6 +117,14 @@ function hopRule(hops) {
   return { relay: true, hops: h - 1 };
 }
 
+function peerOriginSuffix(p, nameRe = RELAY_NAME_RE) {
+  if (!p) return null;
+  for (const v of [p.label, p.host, p.id]) {
+    if (v && nameRe.test(String(v))) return String(v);
+  }
+  return null;
+}
+
 // Compute the relay roster the HUB pushes to one spoke `targetId` — the agents
 // it may reach on the hub's OTHER peers and on the HUB ITSELF. Pure: takes the
 // hub's peer statuses (PeerManager.statuses() shape: {id,label,online,caps,
@@ -126,7 +134,7 @@ function hopRule(hops) {
 //     the mesh at all → empty roster.
 //   * split-horizon — never advertise the target's own agents back to it.
 //   * both-endpoints gate — only include peer Y where Y is relayAllowed too.
-//   * liveness — only online peers with a routable label.
+//   * liveness — only online peers.
 //   * type filter — only claude/codex; bash can't process intents and a bash
 //     session is private by design, so it must never reach a spoke's roster.
 // Returns [{name, origin, type}]. Dedup guards a duplicate name on one origin.
@@ -147,8 +155,9 @@ function computeRosterFor(targetId, statuses, relayAllowedIds, localSessions, se
     if (!st || String(st.id) === String(targetId)) continue;   // split-horizon
     if (!st.online) continue;                                   // liveness
     if (!allowed.has(String(st.id))) continue;                 // both-endpoints gate
-    if (!st.label || !RELAY_NAME_RE.test(st.label)) continue;  // routable origin only
-    for (const sess of (st.sessions || [])) admit(sess, st.label);
+    const origin = peerOriginSuffix(st, RELAY_NAME_RE);
+    if (!origin) continue;
+    for (const sess of (st.sessions || [])) admit(sess, origin);
   }
   if (selfLabel && RELAY_NAME_RE.test(String(selfLabel))) {
     for (const sess of (localSessions || [])) admit(sess, String(selfLabel));
@@ -206,4 +215,5 @@ module.exports = {
   hopRule,
   buildTerminalDm,
   computeRosterFor,
+  peerOriginSuffix,
 };

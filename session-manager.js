@@ -134,7 +134,7 @@ const { pasteModeSignal, strictMcpReason, mcpArgvPlan, PROXY_AGENT_PREFIX, PASTE
 const QUOTA_WINDOW_LONG = { '5h': '5-hour window', '7d': 'weekly window (all models)', '7d_oi': 'weekly window (Fable)', overage: 'overage window' };
 const {
   RELAY_ROSTER_TTL_MS, RELAY_MAX_HOPS,
-  buildRelayEnvelope, buildTerminalDm, isRelayEnvelope, hopRule, relayVersionOk, isDoneTaskEnvelope, isSandboxEnvelope,
+  buildRelayEnvelope, buildTerminalDm, isRelayEnvelope, hopRule, relayVersionOk, isDoneTaskEnvelope, isSandboxEnvelope, peerOriginSuffix,
 } = require('./relay-protocol');
 const { formatTeamBlock, matchSeatRole, formatRoster, formatCompositionDelta } = require('./team-manifest');
 const { SYSTEM_SENDERS } = require('./system-senders');
@@ -462,8 +462,6 @@ function keepwarmPingBody(pings, r) {
   return `${head} — ${parts.join(', ')}`;
 }
 
-const { AGENT_NAME_RE: ORIGIN_NAME_RE } = require('./catalogs');
-
 function findPeerByOrigin(peers, origin) {
   if (!origin) return undefined;
   const want = String(origin).toLowerCase();
@@ -473,14 +471,6 @@ function findPeerByOrigin(peers, origin) {
     if (hit) return hit;
   }
   return undefined;
-}
-
-function peerOriginSuffix(p, nameRe = ORIGIN_NAME_RE) {
-  if (!p) return null;
-  for (const v of [p.label, p.host, p.id]) {
-    if (v && nameRe.test(String(v))) return String(v);
-  }
-  return null;
 }
 
 const { speakable } = require('./speakable');
