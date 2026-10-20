@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.131.8 — 2026-10-21
+
 - A reviewer or lead running in stream mode now receives its start line: the parked-active delivery used for the review begin line, the kickstart opener and the review re-nudge had no stream branch, so every loop-spawned stream reviewer sat idle until someone dm'd it by hand.
 - Every button, text field, select and textarea in the app now gets the theme's chrome by default — a new control can no longer appear in the browser's grey default look (the Sandbox panel's Advanced fold did).
 - The Sandbox panel's Start and Rebuild buttons now save unsaved Limits and Bootstrap editors first (a refusal stops the start), and an unsaved editor marks its Save button with a dot — a rebuild can no longer run with a bootstrap that was typed but never saved.
