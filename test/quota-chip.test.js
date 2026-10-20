@@ -7,7 +7,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
-const { shapeQuota, quotaChip, quotaChips, fmtQuotaReset, fmtQuotaResetTight, QUOTA_429_RECENT_S, QUOTA_WINDOW_LABEL } = require('../proxy-util');
+const { shapeQuota, quotaChip, quotaChips, fmtQuotaReset, fmtQuotaResetTight, QUOTA_429_RECENT_S, QUOTA_NEAR_PCT, QUOTA_WINDOW_LABEL } = require('../proxy-util');
 const { CLAIM_WINDOW } = require('../wire/quota');
 
 // Measured verbatim off this box's wirescope v0.6.53 /_status at 95% weekly.
@@ -225,19 +225,42 @@ test('quotaChip: a recent refusal stays last after the window bar', () => {
   assert.strictEqual(chip.text, '5h 0% (4h52m) · 7d 76% (18h32m) · 7d Fable 86% (18h32m) · rate-limited 2m ago');
 });
 
-test('quotaChip: every window allowed and no refusal → nothing rendered at all', () => {
+test('quotaChip: every window allowed, all below 80%, and no refusal → nothing rendered at all', () => {
   const q = THREE({
     status: 'allowed',
-    primary: { window: '7d_oi', used_pct: 86, status: 'allowed', resets_in_s: 66720 },
+    primary: { window: '7d_oi', used_pct: 79, status: 'allowed', resets_in_s: 66720 },
     windows: {
       '5h': { used_pct: 0, status: 'allowed', resets_in_s: 17520 },
       '7d': { used_pct: 76, status: 'allowed', resets_in_s: 66720 },
-      '7d_oi': { used_pct: 86, status: 'allowed', resets_in_s: 66720 },
+      '7d_oi': { used_pct: 79, status: 'allowed', resets_in_s: 66720 },
     },
   });
   assert.strictEqual(Object.keys(q.windows).length, 3,
     'ENTER: the fixture must really carry three windows, or this asserts the empty-map branch');
   assert.strictEqual(quotaChip(q), null);
+});
+
+const ALL_ALLOWED = (pct7d) => THREE({
+  status: 'allowed',
+  primary: { window: '7d', used_pct: pct7d, status: 'allowed', resets_in_s: 66720 },
+  windows: {
+    '5h': { used_pct: 10, status: 'allowed', resets_in_s: 17520 },
+    '7d': { used_pct: pct7d, status: 'allowed', resets_in_s: 66720 },
+    '7d_oi': { used_pct: 40, status: 'allowed', resets_in_s: 66720 },
+  },
+});
+
+test('quotaChip: every window allowed but 7d at 82% → warn, with the nearing line', () => {
+  assert.strictEqual(QUOTA_NEAR_PCT, 80);
+  const chip = quotaChip(ALL_ALLOWED(82));
+  assert.ok(chip, 'a window at 82% renders');
+  assert.strictEqual(chip.level, 'warn');
+  assert.strictEqual(chip.text, '5h 10% (4h52m) · 7d 82% (18h32m) · 7d Fable 40% (18h32m)');
+  assert.ok(chip.tip.includes('nearing the week (all models) limit — resets in 18h 32m'), chip.tip);
+});
+
+test('quotaChip: every window allowed and 7d at 79% → nothing', () => {
+  assert.strictEqual(quotaChip(ALL_ALLOWED(79)), null);
 });
 
 test('quotaChip: one window at rejected takes the whole chip loud', () => {
@@ -361,7 +384,7 @@ const CALM = {
   primary: { ...LIVE.primary, status: 'allowed' },
   windows: {
     ...LIVE.windows,
-    '7d': { ...LIVE.windows['7d'], status: 'allowed' },
+    '7d': { ...LIVE.windows['7d'], status: 'allowed', utilization: 0.7, used_pct: 70.0, remaining_pct: 30.0 },
   },
 };
 
