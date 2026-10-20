@@ -27,6 +27,8 @@ function mkProbe() {
     REGISTRY_DIR: root,
     MSG_DIR: pathReal.join(root, 'messages'),
     PENDING_DIR: pathReal.join(root, 'pending'),
+    hasActivePending: require('../pending-store').hasActivePending,
+    drainPending: require('../pending-store').drainPending,
     fs: fsReal, path: pathReal, os: osReal,
     pathFor: pathForReal, runDirFor: runDirForReal,
     ensureDir: (d) => fsReal.mkdirSync(d, { recursive: true }),
