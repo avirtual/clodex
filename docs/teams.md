@@ -780,7 +780,9 @@ desktop and, inside a sandbox box, half the box's vCPUs (at least 1) — the
 cgroup `cpu.max` quota when bounded, else the CPU count. A `task start` (or
 `task add … start`) past the cap parks the ticket with `parkedBy: cap`; `task
 list` marks it `(parked: cap n/n)`, and when a one-shot hand retires or dies
-the oldest cap-parked ticket starts, its ack prefixed `cap freed:`. A ticket the
+the oldest cap-parked ticket starts, its ack prefixed `cap freed:`; the
+minute ticket sweep retries too, so a failed spawn, a restart or a lead that was
+down when the hand left does not strand it. A ticket the
 lead parked with `task park` is never auto-started. `[agent:team hands <n|off>]`
 (lead only) sets it and starts any cap-parked tickets the new value allows; bare
 `[agent:team hands]` shows the effective value and its source.
