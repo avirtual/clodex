@@ -18,7 +18,6 @@ const HOME_WRITE_DENY = [
 
 const APP_BUNDLE = '/Applications/Clodex.app';
 const DATA_WRITE_OPEN = new Set(['projects']);
-const RETRY_ASK_RULE = 'Bash(dangerouslyDisableSandbox:true)';
 const GLOB_RE = /[*?[]/;
 
 function normalizeList(list) {
@@ -99,12 +98,11 @@ function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = o
 
   const out = { deny: [...new Set(deny)], ask: [], sandbox: null };
   if (inBox) return out;
-  out.ask = [RETRY_ASK_RULE];
   const credentials = { files: denyRead.map((p) => ({ path: p, mode: 'deny' })) };
   if (envNames.length) credentials.envVars = envNames.map((name) => ({ name, mode: 'deny' }));
   out.sandbox = {
     enabled: true,
-    allowUnsandboxedCommands: true,
+    allowUnsandboxedCommands: false,
     filesystem: { allowWrite: ['/'], denyRead, denyWrite },
     credentials,
   };
@@ -112,4 +110,4 @@ function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = o
   return out;
 }
 
-module.exports = { buildCredentialSandbox, RETRY_ASK_RULE, HOME_WRITE_DENY, APP_BUNDLE };
+module.exports = { buildCredentialSandbox, HOME_WRITE_DENY, APP_BUNDLE };

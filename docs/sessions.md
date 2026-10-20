@@ -307,12 +307,12 @@ with `/` or `~/`; anything else is dropped.
 - **File tools.** Read, Edit and Write run outside the sandbox, so every read
   path also gets `Read(…)` and `Edit(…)` deny rules and every write path an
   `Edit(…)` rule, merged into `permissions.deny`.
-- **Retries.** `allowUnsandboxedCommands` stays true and `permissions.ask`
-  carries `Bash(dangerouslyDisableSandbox:true)`, so a command retried outside
-  the sandbox prompts the operator even under bypass permissions. An approved
-  unsandboxed retry runs that command with no sandbox at all, denied reads
-  included: approving it is leaving credential hardening for that command, not
-  granting only the requested operation.
+- **Retries.** `allowUnsandboxedCommands` is false and no `permissions.ask`
+  rule is written, so a command the sandbox refuses fails and cannot be retried
+  outside it. A retry would raise a permission dialog even under bypass
+  permissions, and an unattended seat holds every dm until the operator answers
+  it. The seat reports which restriction it hit; the operator widens the
+  template's list or runs the command in a terminal.
 - **Boxes.** Inside a sandbox box (`CLODEX_IN_SANDBOX=1`) no `sandbox` block is
   written: Linux boxes have no bubblewrap and the container is the perimeter.
   The Read/Edit deny rules stay.
