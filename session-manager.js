@@ -2440,7 +2440,9 @@ function createSessionManager(deps) {
         }
         try { getPluginHooks && getPluginHooks() && getPluginHooks().fireExit(name); } catch {}
         this._cleanup(name);
-        try { this._handSeatGone(session); } catch (e) { log.warn('ticket', `hand cap auto-start after ${name} exit failed: ${e.message}`); }
+        if (!session._shuttingDown && !session._moving && !session.clone) {
+          try { this._handSeatGone(session); } catch (e) { log.warn('ticket', `hand cap auto-start after ${name} exit failed: ${e.message}`); }
+        }
         if (typeof refreshTrayMenu === 'function') refreshTrayMenu();
         if (typeof refreshAppMenu === 'function') refreshAppMenu();
       };

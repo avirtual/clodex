@@ -5161,6 +5161,22 @@ test('a pty that exits during the registry and transport awaits still sends sess
   assert.ok(sent.some((a) => a[1] === 'session-exit'), 'the exit fired inside the start-up window still reaches the renderer');
 });
 
+for (const [label, flag, want] of [['a plain exit', null, ['seat']], ['an exit during shutdown', '_shuttingDown', []], ['an exit during a move', '_moving', []]]) {
+  test(`pty exit hands the seat to the hand-cap hook: ${label}`, async () => {
+    let exitCb = null;
+    const { m, spawn } = mkHintProbe({ ptySpawn: () => ({ pid: 999, onData() {}, onExit(cb) { exitCb = cb; }, kill() {} }) });
+    const gone = [];
+    m._handSeatGone = (sess) => { gone.push(sess.name); };
+    m._sendToSession = () => {};
+    await spawn('seat', {});
+    assert.ok(exitCb, 'ENTER: the exit callback was captured');
+    if (flag) m.sessions.get('seat')[flag] = true;
+    exitCb({ exitCode: 0 });
+    assert.deepStrictEqual(gone, want);
+    assert.strictEqual(m.sessions.has('seat'), false, 'the hook runs after cleanup removed the seat');
+  });
+}
+
 test('a pty that exits synchronously inside its own spawn reports create before exit', async () => {
   const events = [];
   const { m, spawn } = mkHintProbe({

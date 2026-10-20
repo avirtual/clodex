@@ -94,7 +94,7 @@ function mkFixture({ maxHands, env = {}, cpus = 6, extraRoles = {} } = {}) {
     m._handSeatGone(s);
   };
   const one = (id) => tstore.load(root).find((t) => t.id === id);
-  return { m, team, root, seat, add, start, retire, one, injected, acks, spawned };
+  return { m, team, root, tstore, seat, add, start, retire, one, injected, acks, spawned };
 }
 
 const PARK_REPLY = '[agent:task] ticket t1 parked: hand cap reached (3/3 live hands) — it starts when one retires';
@@ -131,6 +131,35 @@ test('retiring one of the three hands auto-starts the cap-parked ticket through 
   assert.strictEqual(t.parked, undefined);
   assert.strictEqual(t.parkedBy, undefined);
   assert.ok(t.startedAt, 'the ticket is started');
+});
+
+test('a spawn rollback frees its slot and the next ticket sweep starts the cap-parked ticket', async () => {
+  const f = mkFixture({ maxHands: 1 });
+  f.add({ body: 'first' });
+  f.add({ body: 'second' });
+  f.start('t1');
+  f.start('t2');
+  assert.strictEqual(f.one('t2').parkedBy, 'cap', 'ENTER: t2 parked behind the in-flight t1');
+  const all = f.tstore.load(f.root);
+  const t1 = all.find((t) => t.id === 't1');
+  t1.assignee = 'hand';
+  delete t1.role;
+  t1.startedAt = null;
+  f.tstore.save(f.root, all);
+  f.acks.length = 0;
+  await f.m._sweepTickets();
+  assert.deepStrictEqual(f.spawned.map((x) => x.id), ['t1', 't2']);
+  assert.match(f.acks[0], /^\[agent:task\] cap freed: ticket t2 \(unparked\) → spawning team-hand-2 /);
+});
+
+test('a hand retiring while the lead is down is caught by the sweep once the lead is back', async () => {
+  const f = capped();
+  f.m.sessions.delete('lead');
+  f.retire('team-hand-91');
+  assert.deepStrictEqual(f.spawned, [], 'ENTER: no lead, no auto-start at the exit');
+  f.seat('lead');
+  await f.m._sweepTickets();
+  assert.deepStrictEqual(f.spawned, [{ id: 't1', name: 'team-hand-1' }]);
 });
 
 test('a lead-parked ticket is not auto-started when a hand retires', () => {

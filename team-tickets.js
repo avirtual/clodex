@@ -2621,7 +2621,7 @@ function createTicketMethods(deps, shared) {
     },
 
     _handSeatGone(session) {
-      if (!session || session._shuttingDown || session._moving || session.clone) return;
+      if (!session) return;
       if (this._capInflight) this._capInflight.delete(session.name);
       let team;
       try { team = resolveTeam(session.cwd); } catch { team = null; }
@@ -7136,6 +7136,7 @@ function createTicketMethods(deps, shared) {
           reconciledTeams.add(team.file);
           this._reconcileTickets(team);
           this._resumeOrphanedVerify(team);
+          this._startCapParked(team, this.sessions.get(team.lead));
         }
       }
       return Promise.all(sweeps);
