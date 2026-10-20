@@ -54,7 +54,7 @@ test('protectCredentials null: settings are those of a call without the paramete
   });
 });
 
-test('protectCredentials [~/.aws]: sandbox block, env scrub, file-tool denies and the retry ask', () => {
+test('protectCredentials [~/.aws]: sandbox block, env scrub, file-tool denies', () => {
   withBoxEnv(undefined, () => {
     const root = seededRoot();
     const s = settingsFor(root, 'seat-b', ['~/.aws']);
@@ -64,7 +64,7 @@ test('protectCredentials [~/.aws]: sandbox block, env scrub, file-tool denies an
       path.join(root, 'boxes'),
     ];
     assert.strictEqual(s.sandbox.enabled, true);
-    assert.strictEqual(s.sandbox.allowUnsandboxedCommands, true);
+    assert.strictEqual(s.sandbox.allowUnsandboxedCommands, false);
     assert.deepStrictEqual(s.sandbox.filesystem.allowWrite, ['/']);
     assert.deepStrictEqual(s.sandbox.network, { allowUnixSockets: [path.join(fs.realpathSync(path.join(root, 'run', 'seat-b')), 'intent.sock')] });
     const denyRead = s.sandbox.filesystem.denyRead;
@@ -92,14 +92,18 @@ test('protectCredentials [~/.aws]: sandbox block, env scrub, file-tool denies an
     }
     assert.ok(!deny.some((r) => r.startsWith('Write(')), 'Write path rules are never consulted by the CLI');
     assert.ok(!deny.some((r) => r.includes(path.join(root, 'projects'))));
-    assert.deepStrictEqual(s.permissions.ask, ['Bash(dangerouslyDisableSandbox:true)']);
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(s.permissions, 'ask'), false);
+    assert.deepStrictEqual(buildCredentialSandbox({ registryDir: root, list: ['~/.aws'], home: HOME }).ask, []);
   });
 });
 
 test('protectCredentials []: the T0 paths alone, no env scrub', () => {
   withBoxEnv(undefined, () => {
-    const s = settingsFor(seededRoot(), 'seat-c', []);
+    const root = seededRoot();
+    const s = settingsFor(root, 'seat-c', []);
     assert.ok(s.sandbox.enabled);
+    assert.strictEqual(Object.prototype.hasOwnProperty.call(s.permissions, 'ask'), false);
+    assert.deepStrictEqual(buildCredentialSandbox({ registryDir: root, list: [], home: HOME }).ask, []);
     assert.strictEqual(Object.prototype.hasOwnProperty.call(s.sandbox.credentials, 'envVars'), false);
   });
 });
@@ -120,6 +124,7 @@ test('protectCredentials inside a sandbox box: no sandbox block, file-tool denie
     assert.ok(s.permissions.deny.includes('Read(~/.aws/**)'));
     assert.ok(s.permissions.deny.includes('Edit(~/.claude/**)'));
     assert.strictEqual(Object.prototype.hasOwnProperty.call(s.permissions, 'ask'), false);
+    assert.deepStrictEqual(buildCredentialSandbox({ registryDir: seededRoot(), list: ['~/.aws'], home: HOME, inBox: true }).ask, []);
   });
 });
 
