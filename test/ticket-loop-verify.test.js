@@ -1460,6 +1460,27 @@ test('t1905: a red suite reopened but undelivered writes no hold on the open tic
   assert.strictEqual('verifyHold' in t, false);
 });
 
+test('t1905: a reject that throws after the reopen writes no hold on the open ticket', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'red' });
+  const real = f.m._rejectTicketFromLoop;
+  const results = [];
+  f.m._rejectTicketFromLoop = (...args) => { const r = real.apply(f.m, args); results.push(r); return r; };
+  f.m._reconcileTickets = () => { throw new Error('reconcile blew up'); };
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(results.length, 1, 'ENTER: the loop reached the reject');
+  assert.strictEqual(results[0].error, 'reconcile blew up', 'ENTER: it returned through the catch');
+  const t = f.one();
+  assert.strictEqual(t.state, 'open');
+  assert.strictEqual('verifyHold' in t, false);
+  assert.deepStrictEqual(f.gated.filter((g) => /HELD/.test(g.body)), []);
+});
+
 test('a verify escalation with no live seat behind it is HELD, not finished', async () => {
   // OVERTURNED BY t345, and this subject's original reasoning is the defect
   // stated as an intention: "nothing can ever land a verdict on that ticket, so
@@ -5506,12 +5527,11 @@ test('t345 r5 MF2: a VERIFY-step throw still DOES carry its recovery', async () 
   assert.strictEqual(f.one().verifyHold.recovery, 'infra', 'and is stamped infra');
 });
 
-test('t345 r5 nit2: an UNDELIVERABLE rework does not tell the seat "no rework round was counted"', async () => {
+test('t345 r5 nit2: a refused reject with no seat stamps a hand hold and tells no seat it was HELD', async () => {
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
   const f = mkLoop({ repo, suite: 'red' });
   f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
-  // No seat holds the role, so _rejectTicketFromLoop cannot deliver.
   f.m.sessions.delete('team-hand');
 
   await f.m._runTicketLoop(f.team, 't1');
