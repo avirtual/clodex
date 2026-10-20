@@ -2535,6 +2535,33 @@ test('setTeamWorktrees writes in-root and sibling and refuses anything else', ()
   assert.strictEqual(tm.setTeamWorktrees('shop', 'sibling').worktrees, 'sibling');
 });
 
+for (const [raw, want] of [[3, 3], [null, null], [0, undefined], [-2, undefined], [2.5, undefined], ['3', undefined]]) {
+  test(`maxHands ${JSON.stringify(raw)} loads as ${JSON.stringify(want)}`, () => {
+    const home = mkHome();
+    const root = mkTmpRoot('proj-');
+    mkTeam(home, 'shop', { ...validManifest(root), maxHands: raw });
+    const team = createTeamManifest({ fs, clodexHome: home }).loadManifest('shop');
+    assert.strictEqual(team.maxHands, want);
+    assert.strictEqual('maxHands' in team, want !== undefined);
+  });
+}
+
+test('setTeamMaxHands round-trips a positive integer and null, and refuses anything else', () => {
+  const home = mkHome();
+  const root = mkTmpRoot('proj-');
+  mkTeam(home, 'shop', validManifest(root));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  assert.strictEqual('maxHands' in tm.loadManifest('shop'), false, 'ENTER: unset before the write');
+  assert.strictEqual(tm.setTeamMaxHands('shop', 3).maxHands, 3);
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(home, 'teams', 'shop', 'team.json'), 'utf8')).maxHands, 3);
+  for (const bad of [0, -1, 1.5, 'x']) {
+    assert.throws(() => tm.setTeamMaxHands('shop', bad), /maxHands must be a positive integer, or null for off/);
+  }
+  assert.strictEqual(tm.loadManifest('shop').maxHands, 3, 'a refused write leaves the stored value');
+  assert.strictEqual(tm.setTeamMaxHands('shop', null).maxHands, null);
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(home, 'teams', 'shop', 'team.json'), 'utf8')).maxHands, null);
+});
+
 test('role cwd: a child directory named ..cache is inside the root and is stored', () => {
   const { tm, root, file } = teamForCwd();
   fs.mkdirSync(path.join(root, '..cache'));

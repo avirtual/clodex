@@ -5161,6 +5161,22 @@ test('a pty that exits during the registry and transport awaits still sends sess
   assert.ok(sent.some((a) => a[1] === 'session-exit'), 'the exit fired inside the start-up window still reaches the renderer');
 });
 
+for (const [label, flag, want] of [['a plain exit', null, ['seat']], ['an exit during shutdown', '_shuttingDown', []], ['an exit during a move', '_moving', []]]) {
+  test(`pty exit hands the seat to the hand-cap hook: ${label}`, async () => {
+    let exitCb = null;
+    const { m, spawn } = mkHintProbe({ ptySpawn: () => ({ pid: 999, onData() {}, onExit(cb) { exitCb = cb; }, kill() {} }) });
+    const gone = [];
+    m._handSeatGone = (sess) => { gone.push(sess.name); };
+    m._sendToSession = () => {};
+    await spawn('seat', {});
+    assert.ok(exitCb, 'ENTER: the exit callback was captured');
+    if (flag) m.sessions.get('seat')[flag] = true;
+    exitCb({ exitCode: 0 });
+    assert.deepStrictEqual(gone, want);
+    assert.strictEqual(m.sessions.has('seat'), false, 'the hook runs after cleanup removed the seat');
+  });
+}
+
 test('a pty that exits synchronously inside its own spawn reports create before exit', async () => {
   const events = [];
   const { m, spawn } = mkHintProbe({
@@ -10905,7 +10921,7 @@ test('t400 a wedged-confirmed REVIEW seat is never written to by the sweep', asy
 // Scanned from SOURCE rather than driven through eleven handlers: the property
 // is "no site anywhere clears the stamp without moving the clock", and a
 // behavioural test can only cover the sites someone remembered to write.
-test('t400 all THIRTEEN `nudgedAt = null` sites also move lastActivityAt, so `wakeAt` needs no clearing site', () => {
+test('t400 all FOURTEEN `nudgedAt = null` sites also move lastActivityAt, so `wakeAt` needs no clearing site', () => {
   const src = fsReal.readFileSync(pathReal.join(__dirname, '..', 'team-tickets.js'), 'utf-8');
   const lines = src.split('\n');
   const sites = [];
@@ -10925,8 +10941,8 @@ test('t400 all THIRTEEN `nudgedAt = null` sites also move lastActivityAt, so `wa
   // `_stampVerifyHold`'s escalation arm, which stamps `lastActivityAt` on the line
   // immediately above the clear (a new escalation is a new stall episode, so the
   // ladder must time from the moment the lead was told).
-  assert.strictEqual(sites.length, 13,
-    `ENTER: exactly THIRTEEN clearing sites (found ${sites.length} at ${sites.join(', ')}). A different count means a `
+  assert.strictEqual(sites.length, 14,
+    `ENTER: exactly FOURTEEN clearing sites (found ${sites.length} at ${sites.join(', ')}). A different count means a `
     + 'site was added or removed, and the new one has NOT been audited — that is what this test is for');
   // Scoped to the ENCLOSING METHOD, not a fixed line count. A fixed window has to
   // be tuned to the widest real gap (23 lines, at the `_taskDone` loop-eligible

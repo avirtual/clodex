@@ -416,7 +416,7 @@ function parityBoard() {
     // merge was deferred — rare, but it is the shape `row` renders, and without
     // a carrier here the two implementations render t16 identically whether or
     // not both copy the mark.
-    { id: 't16', title: 'held back', assignee: 'hand', state: 'open', parked: true, openedAt: now - 40 * HOUR, closedAt: null,
+    { id: 't16', title: 'held back', assignee: 'hand', state: 'open', parked: true, parkedBy: 'cap', parkedCap: '3/3', openedAt: now - 40 * HOUR, closedAt: null,
       mergeWaiting: 'suite-in-flight' },
   ];
   for (let i = 0; i < 12; i++) {

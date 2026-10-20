@@ -17,7 +17,7 @@ const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const {
   matchSeatRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
-  DEFAULT_ROLE_DISPATCH, TRUNK_HEAD,
+  DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap,
 } = require('./team-manifest');
 const {
   readTeamJson, teamTemplatePath, teamTemplateSave, teamTemplateRemove, teamPromptSave, teamPromptRemove,
@@ -2511,12 +2511,16 @@ function createTicketMethods(deps, shared) {
             this._handleTeamWorktrees(team, intent, reply);
             return;
           }
+          case 'hands': {
+            this._handleTeamHands(session, team, intent, reply);
+            return;
+          }
           case 'sandbox': {
             this._handleTeamSandbox(team, intent, reply, session).catch((err) => reply(`error: ${(err && err.message) || err}`));
             return;
           }
           default:
-            reply(`error: unknown team verb "${intent.sub}" — use role-add | role-set | role-rm | role-rename | set-lead | watchdog | gather | template-save | template-rm | prompt-save | prompt-rm | sandbox | trunk | worktrees`);
+            reply(`error: unknown team verb "${intent.sub}" — use role-add | role-set | role-rm | role-rename | set-lead | watchdog | gather | template-save | template-rm | prompt-save | prompt-rm | sandbox | trunk | worktrees | hands`);
         }
       } catch (err) {
         reply(`error: ${err.message}`);
@@ -2568,6 +2572,78 @@ function createTicketMethods(deps, shared) {
       }
       const m = deps.setTeamWorktrees(team.name, intent.value);
       reply(`worktrees of ${team.name} set to ${m.worktrees} — new ticket trees are minted ${m.worktrees === 'in-root' ? `under ${path.join(team.root, '.clodex-wt')}` : 'beside the root'}; existing trees stay where they are`);
+    },
+
+    _handleTeamHands(session, team, intent, reply) {
+      if (!intent.value) {
+        const { cap, source } = this._handCap(team);
+        reply(`hand cap of ${team.name}: ${cap == null ? 'off' : `${cap} (${source})`} — [agent:team hands <n|off>] sets it`);
+        return;
+      }
+      const n = intent.value === 'off' ? null : (/^[0-9]+$/.test(intent.value) ? Number(intent.value) : NaN);
+      if (n !== null && !(Number.isInteger(n) && n > 0)) {
+        reply(`error: hands must be a positive integer or off, not "${intent.value}"`);
+        return;
+      }
+      const m = deps.setTeamMaxHands(team.name, n);
+      reply(m.maxHands == null
+        ? `hand cap of ${team.name} set to off — task start no longer parks for a cap`
+        : `hand cap of ${team.name} set to ${m.maxHands} — a task start past it parks the ticket until a hand retires`);
+      this._startCapParked(m, session);
+    },
+
+    _handCap(team) {
+      const inBox = runningInSandboxBox(deps.env || process.env);
+      let cpuMax = null;
+      let cpus = 1;
+      if (inBox && team.maxHands === undefined) {
+        try { cpuMax = fs.readFileSync(deps.cpuMaxFile || '/sys/fs/cgroup/cpu.max', 'utf8'); } catch { cpuMax = null; }
+        try { cpus = os.cpus().length; } catch { cpus = 1; }
+      }
+      return effectiveHandCap({ maxHands: team.maxHands, inBox, cpuMax, cpus });
+    },
+
+    _liveHandCount(team) {
+      const inflight = this._capInflight || (this._capInflight = new Set());
+      const names = new Set();
+      for (const s of this.sessions.values()) {
+        if (!s || s._dead) continue;
+        const role = matchSeatRole(team, s.name);
+        if (role && this._ticketDispatchMode(team, role).mode !== 'standing') names.add(s.name);
+      }
+      const tickets = inflight.size ? ticketsStore.load(team.root) : [];
+      for (const name of [...inflight]) {
+        if (this.sessions.has(name)) { inflight.delete(name); continue; }
+        if (tickets.some((t) => t.state === 'open' && t.assignee === name && t.startedAt)) names.add(name);
+        else inflight.delete(name);
+      }
+      return names.size;
+    },
+
+    _handSeatGone(session) {
+      if (!session) return;
+      if (this._capInflight) this._capInflight.delete(session.name);
+      let team;
+      try { team = resolveTeam(session.cwd); } catch { team = null; }
+      if (!team || team.solo) return;
+      const role = matchSeatRole(team, session.name);
+      if (!role || this._ticketDispatchMode(team, role).mode === 'standing') return;
+      this._startCapParked(team, this.sessions.get(team.lead));
+    },
+
+    _startCapParked(team, lead) {
+      if (!lead || lead.name !== team.lead) return;
+      const num = (t) => Number(String(t.id).replace(/^t/, '')) || 0;
+      const queue = ticketsStore.load(team.root)
+        .filter((t) => t.state === 'open' && t.parked && t.parkedBy === 'cap')
+        .sort((a, b) => num(a) - num(b));
+      const reply = (msg) => this._injectText(lead, `[agent:task] cap freed: ${msg}`, { parkable: true });
+      const ack = (msg) => this._taskAck(lead, `[agent:task] cap freed: ${msg}`);
+      for (const t of queue) {
+        const { cap } = this._handCap(team);
+        if (cap != null && this._liveHandCount(team) >= cap) return;
+        this._taskStart(lead, team, { id: t.id, reviewer: null }, reply, ack);
+      }
     },
 
     _teamSandboxFile(team) {
@@ -4553,6 +4629,10 @@ function createTicketMethods(deps, shared) {
         late = true;
         const after = (ticketsStore.load(team.root) || []).find((t) => t.id === ticket.id);
         const raw = startMsgs.join(' ').trim();
+        if (after && after.parkedBy === 'cap') {
+          ack(`ticket ${ticket.id} created and ${raw.replace(new RegExp(`^ticket ${ticket.id}\\s*`), '').trim()}${rvNote}`);
+          return;
+        }
         if (after && ticketStarted(after)) {
           const tail = raw
             ? raw.replace(new RegExp(`^ticket ${ticket.id}\\s*`), '').trim()
@@ -4624,9 +4704,28 @@ function createTicketMethods(deps, shared) {
           return;
         }
       }
+      if (oneShot && minted.ok) {
+        const { cap } = this._handCap(team);
+        const live = cap == null ? 0 : this._liveHandCount(team);
+        if (cap != null && live >= cap) {
+          ticket.parked = true;
+          ticket.parkedBy = 'cap';
+          ticket.parkedCap = `${live}/${cap}`;
+          if (startReviewer) ticket.reviewerTemplate = startReviewer;
+          ticket.lastActivityAt = Date.now();
+          ticket.nudgedAt = null;
+          ticketsStore.save(team.root, tickets);
+          this._reconcileTickets(team);
+          log.info('intent', `task start by ${session.name}: ${ticket.id} parked — hand cap ${live}/${cap}`);
+          ack(`ticket ${ticket.id} parked: hand cap reached (${live}/${cap} live hands) — it starts when one retires`);
+          return;
+        }
+      }
       // Start is the dispatch, so it unparks: a started ticket left flagged is exempt from the stall watchdog, the backstop for a dead loop step.
       const wasParked = !!ticket.parked;
       delete ticket.parked;
+      delete ticket.parkedBy;
+      delete ticket.parkedCap;
       ticket.lastActivityAt = Date.now();
       ticket.nudgedAt = null;
       delete ticket.undeliveredAt;
@@ -4642,6 +4741,7 @@ function createTicketMethods(deps, shared) {
         ticket.role = roleKey;
         ticket.assignee = minted.name;
         ticketsStore.save(team.root, tickets);
+        (this._capInflight || (this._capInflight = new Set())).add(minted.name);
         this._spawnTicketSeat(session, team, ticket, roleKey, minted, dispatchMode);
         this._reconcileTickets(team);
         this._broadcast('ipc-message', { type: 'task', from: session.name, to: minted.name, body: `ticket ${ticket.id} started` });
@@ -4796,6 +4896,8 @@ function createTicketMethods(deps, shared) {
       // Assign is the dispatch, so it unparks: a delivered ticket left parked is invisible to advance, replay and the badge.
       const wasParked = !!ticket.parked;
       delete ticket.parked;
+      delete ticket.parkedBy;
+      delete ticket.parkedCap;
       delete ticket.undeliveredAt;
       // Recorded for the same reason start does: an unstamped assigned ticket is still `start`able and would mint a second seat onto this tree.
       // Not re-stamped when already set: a re-send must not restate when work first started.
@@ -6890,6 +6992,8 @@ function createTicketMethods(deps, shared) {
       const parking = !ticket.parked;
       if (parking) ticket.parked = true;
       else delete ticket.parked;
+      delete ticket.parkedBy;
+      delete ticket.parkedCap;
       ticket.lastActivityAt = Date.now();
       // A parked ticket is exempt from the watchdog, so a stamp left behind
       // would spend the one nudge of the episode that starts when it unparks.
@@ -6932,8 +7036,9 @@ function createTicketMethods(deps, shared) {
       // Shaped unlike the parenthetical marks beside it on purpose: "needs me" must be told apart from "waiting its turn" without reading words.
       // The stored step renders verbatim, on both row shapes.
       const mergeErrorMark = (t) => (t.mergeError ? ` !! MERGE FAILED: ${t.mergeError}` : '');
+      const capMark = (t) => (t.parked && t.parkedBy === 'cap' ? ` (parked: cap ${t.parkedCap || '?'})` : '');
       const row = (t) =>
-        `${t.id} [${t.state}${t.parked ? ' parked' : ''}] ${shownFor(t)} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}${respecMark(t)}${mergeWaitingMark(t)}${mergeErrorMark(t)}`;
+        `${t.id} [${t.state}${t.parked ? ' parked' : ''}] ${shownFor(t)} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}${capMark(t)}${respecMark(t)}${mergeWaitingMark(t)}${mergeErrorMark(t)}`;
       const verifyMark = (t) => {
         if (t.state !== 'done' || t.verifyHold || (t.loopStep !== 'verify' && t.loopStep !== 'review')) return '';
         const vp = t.verifyPhase && typeof t.verifyPhase === 'object' ? t.verifyPhase : null;
@@ -7031,6 +7136,7 @@ function createTicketMethods(deps, shared) {
           reconciledTeams.add(team.file);
           this._reconcileTickets(team);
           this._resumeOrphanedVerify(team);
+          this._startCapParked(team, this.sessions.get(team.lead));
         }
       }
       return Promise.all(sweeps);

@@ -174,6 +174,26 @@ function normalizeWorktrees(v) {
   return WORKTREES_VALUES.includes(v) ? v : null;
 }
 
+function normalizeMaxHands(v) {
+  return (typeof v === 'number' && Number.isInteger(v) && v > 0) ? v : null;
+}
+
+function boxCpus(cpuMax, cpus) {
+  const [quota, period] = String(cpuMax == null ? '' : cpuMax).trim().split(/\s+/).map(Number);
+  if (Number.isFinite(quota) && quota > 0 && Number.isFinite(period) && period > 0) return quota / period;
+  return cpus;
+}
+
+function effectiveHandCap({ maxHands, inBox, cpuMax, cpus } = {}) {
+  if (maxHands === null) return { cap: null, source: 'off' };
+  const set = normalizeMaxHands(maxHands);
+  if (set) return { cap: set, source: 'set' };
+  if (!inBox) return { cap: null, source: 'off' };
+  const vcpu = boxCpus(cpuMax, Number(cpus) || 1);
+  const cap = Math.max(1, Math.floor(vcpu / 2));
+  return { cap, source: `box default (${vcpu} vCPU → ${cap})` };
+}
+
 function createTeamManifest({ fs, clodexHome } = {}) {
   const home = clodexHome || defaultClodexHome();
   const teamsDir = path.join(home, 'teams');
@@ -540,7 +560,8 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     const kit = (typeof m.kit === 'string' && !badStem(m.kit) && TEAM_STEM_RE.test(m.kit)) ? m.kit : LEGACY_KIT;
     const trunk = normalizeTrunk(m.trunk);
     const worktrees = normalizeWorktrees(m.worktrees);
-    return { name, root: path.resolve(root), sandboxed: m.sandboxed === true, lead, roles, kit, file, dir: path.dirname(file), watchdogMs, trunk, ...(worktrees ? { worktrees } : {}), version, droppedFields };
+    const maxHands = m.maxHands === null ? null : (normalizeMaxHands(m.maxHands) || undefined);
+    return { name, root: path.resolve(root), sandboxed: m.sandboxed === true, lead, roles, kit, file, dir: path.dirname(file), watchdogMs, trunk, ...(worktrees ? { worktrees } : {}), ...(maxHands !== undefined ? { maxHands } : {}), version, droppedFields };
   }
 
   function containsPath(root, cwd) {
@@ -1073,9 +1094,19 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     return loadManifest(teamName);
   }
 
+  function setTeamMaxHands(teamName, value) {
+    const team = loadManifest(teamName);
+    const n = value === null ? null : normalizeMaxHands(value);
+    if (value !== null && !n) throw new Error(`maxHands must be a positive integer, or null for off (${team.file})`);
+    const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
+    raw.maxHands = n;
+    atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
+    return loadManifest(teamName);
+  }
+
   return {
     resolveTeam, findProjectRoot, loadManifest, listTeams, cwdInProject,
-    createTeam, deleteTeam, addRole, setRole, removeRole, renameRole, setTeamWatchdog, setTeamTrunk, setTeamWorktrees, setLead,
+    createTeam, deleteTeam, addRole, setRole, removeRole, renameRole, setTeamWatchdog, setTeamTrunk, setTeamWorktrees, setTeamMaxHands, setLead,
     listKits, kitCatalog, resolveKit,
     teamsDir, TEAM_FILE,
   };
@@ -1242,6 +1273,6 @@ module.exports = {
   // Exported so the retired-field warn test iterates the REAL list — a copy in
   // the test would keep passing over a field added here and never warned about.
   ROLE_KEYS, CUT_ROLE_FIELDS, HONORED_CUT_FIELDS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, MANIFEST_VERSION,
-  ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH, normalizeTrunk, TRUNK_HEAD, WORKTREES_VALUES, normalizeWorktrees,
+  ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH, normalizeTrunk, TRUNK_HEAD, WORKTREES_VALUES, normalizeWorktrees, normalizeMaxHands, effectiveHandCap,
   ROLE_RE, RESERVED_ROLE_KEYS, RESERVED_ROLE_PATCH_FIELDS, NAME_RE,
 };
