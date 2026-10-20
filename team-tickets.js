@@ -5302,7 +5302,7 @@ function createTicketMethods(deps, shared) {
               ? `the suite's slow gate tripped on ${branch} (${suite.summary}, 0 failing) over ${slowOwned.join('; ')} and the rework could not be sent back: ${rejected.error}`
               : `the suite fails on ${branch} (${suite.summary}) and the rework could not be sent back: ${rejected.error}`,
               `ran the suite (exit ${suite.code}); no reviewer spawned; failing: ${suite.failing || 'unnamed'}`
-              + `${kept.ok ? ` Full output preserved at ${kept.path}.` : ` The failing output could not be preserved (${kept.error}).`}`, 'hand');
+              + `${kept.ok ? ` Full output preserved at ${kept.path}.` : ` The failing output could not be preserved (${kept.error}).`}`, rejected.reopened ? 'reopened' : 'hand');
           }
           return;
         }
@@ -5655,7 +5655,7 @@ function createTicketMethods(deps, shared) {
         this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: ticket.assignee || rework.seat, body: `ticket ${ticket.id} rejected: ${cause}${replaced}` });
         log.info('intent', `ticket ${ticket.id} rejected by the loop (${cause}) → ${rework.seat}${replaced}`);
         if (!(r && (r.queued || r.parked))) {
-          return { ok: false, error: `the ticket was reopened but the rework message did not reach ${rework.seat} (${(r && (r.error || r.held)) || 'unknown delivery failure'})` };
+          return { ok: false, reopened: true, error: `the ticket was reopened but the rework message did not reach ${rework.seat} (${(r && (r.error || r.held)) || 'unknown delivery failure'})` };
         }
         // Delivered arm only: the undelivered return above is escalated by the caller, and notifying here too would report one rejection twice.
         if (notifyLead) this._notifyLeadOfLoopRejection(team, ticket, rework.seat, reason, replaced);

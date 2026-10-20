@@ -1435,9 +1435,28 @@ test('t1905: a red suite whose rework is delivered writes no hold and leaves the
   await f.m._runTicketLoop(f.team, 't1');
   await new Promise((r) => setImmediate(r));
 
-  assert.deepStrictEqual(results, [{ ok: true }]);
+  assert.strictEqual(results.length, 1, 'ENTER: the loop reached the reject');
+  assert.strictEqual(results[0].ok, true);
   const t = f.one();
   assert.strictEqual(t.state, 'open');
+  assert.strictEqual('verifyHold' in t, false);
+});
+
+test('t1905: a red suite reopened but undelivered writes no hold on the open ticket', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'red' });
+  const inner = f.m._gatedDeliver;
+  f.m._gatedDeliver = (target, ...rest) => (target === 'team-hand' ? { error: 'pty write failed' } : inner.call(f.m, target, ...rest));
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  const t = f.one();
+  assert.strictEqual(t.state, 'open', 'ENTER: the reject reopened the ticket');
+  assert.strictEqual(f.esc().length, 1, 'ENTER: the undelivered rework escalated');
+  assert.match(f.esc()[0].body, /the ticket was reopened but the rework message did not reach team-hand/);
   assert.strictEqual('verifyHold' in t, false);
 });
 
