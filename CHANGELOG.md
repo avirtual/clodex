@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - A reviewer or lead running in stream mode now receives its start line: the parked-active delivery used for the review begin line, the kickstart opener and the review re-nudge had no stream branch, so every loop-spawned stream reviewer sat idle until someone dm'd it by hand.
+- Every button, text field, select and textarea in the app now gets the theme's chrome by default — a new control can no longer appear in the browser's grey default look (the Sandbox panel's Advanced fold did).
 
 ## 5.131.7 — 2026-10-20
 
