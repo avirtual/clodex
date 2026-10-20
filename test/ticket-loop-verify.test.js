@@ -5507,11 +5507,6 @@ test('t345 r5 MF2: a VERIFY-step throw still DOES carry its recovery', async () 
 });
 
 test('t345 r5 nit2: an UNDELIVERABLE rework does not tell the seat "no rework round was counted"', async () => {
-  // This arm is reached BECAUSE the reject succeeded and only its delivery
-  // failed: the ticket is `open`, `reworkRound` is up, `loopStep` is gone. The
-  // hand notice would say the opposite of all three — to a seat that could not be
-  // reached anyway — and the stamp would write a `verifyHold` onto an open ticket,
-  // a state no reader is written for.
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
   const f = mkLoop({ repo, suite: 'red' });
@@ -5525,7 +5520,8 @@ test('t345 r5 nit2: an UNDELIVERABLE rework does not tell the seat "no rework ro
   assert.strictEqual(f.esc().length, 1, 'ENTER: the lead was told, which is the whole recovery here');
   assert.match(f.esc()[0].body, /rework could not be sent back/, 'ENTER: and it is THIS arm');
   const t = f.one();
-  assert.ok(!('verifyHold' in t), 'no hold is stamped on a ticket the reject already reopened');
+  assert.strictEqual(t.state, 'done', 'the refused reject left the ticket closed');
+  assert.strictEqual(t.verifyHold && t.verifyHold.recovery, 'hand', 'so it is held for a re-entry');
   assert.deepStrictEqual(f.gated.filter((g) => /HELD/.test(g.body)), [],
     'and no seat is told the ticket was not rejected when it was');
 });
