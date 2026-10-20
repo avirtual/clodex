@@ -17,6 +17,7 @@ blocks a release.
 - Every button, text field, select and textarea in the app now gets the theme's chrome by default — a new control can no longer appear in the browser's grey default look (the Sandbox panel's Advanced fold did).
 - The Sandbox panel's Start and Rebuild buttons now save unsaved Limits and Bootstrap editors first (a refusal stops the start), and an unsaved editor marks its Save button with a dot — a rebuild can no longer run with a bootstrap that was typed but never saved.
 - Plan quota is now visible before it runs out: the status-bar chip turns on at 80% of any window, the operator inbox gets one note per account when a window crosses 80%, 95% and exhaustion (with the reset time and the seats on that account), team leads with seats on an exhausted account are told once, and keep-warm stops pinging a rate-limited account.
+- The slash-command list on a Claude seat is back on Claude Code 2.1.304 and later: the CLI added a selection-marker column to its menu, which the list reader did not recognise (issue #11).
 
 ## 5.131.7 — 2026-10-20
 

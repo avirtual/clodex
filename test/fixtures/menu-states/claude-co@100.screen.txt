@@ -1,0 +1,40 @@
+▗ ▗   ▖ ▖  Claude Code v2.1.304
+           Fable 5.1 with high effort · Claude Max
+ ▘▘   ▝▝   ~/projects/tmux/wb-wrap-ui-t1902-issue-11-the-pty-slash-command-list-is
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ /co
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  ❯ /copy                 Copy Claude's last response to clipboard (or /copy N for the Nth-latest)
+    /color                Set the prompt bar color for this session
+    /config               Open settings
+    /compact              Free up context by summarizing the conversation so far
+    /context              Visualize current context usage as a colored grid
+    /usage (cost)         Show session cost, plan usage, and activity stats
+    /resume (continue)    Resume a previous conversation
+    /autocompact          Set how full the context gets before auto-summarizing
+    /doctor               Health-check the user's Claude Code setup and fix issues: diagnose
+                          installation health — what the `claude doctor` terminal diagnostics cov…
+    /docs                 docs (editable docs people share and comment on; the default for any
+                          document, named as a doc or not: a document, report, proposal, resume, …
+    /docx                 Use this skill whenever the user wants to create, read, edit, or
+                          manipulate Word documents (.docx) or Word templates (.dotx). Triggers i…
+    /google-workspace     Read this before the first Google Drive, Docs, Sheets or Slides
+                          connector call whenever the task creates or changes a Google file. Use …
+    /pptx                 Use this skill any time a .pptx or .potx file is involved in any way —
+                          as input, output, or both. This includes: creating slide decks, pitch d…
+    /xlsx                 Use this skill any time a spreadsheet file is the primary input or
+                          output. This means any task where the user wants to: open, read, edit, …
+
+
+
+
+
+
+
+
+
+
+
+
