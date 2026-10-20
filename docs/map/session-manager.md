@@ -69,7 +69,7 @@
 | `_startWire` | constructs, listens and subscribes the WireProxy: quota, spill family, turn start and completion, telemetry and failure recovery | `this._wire`, `this._shadow`, `this._wireTelemetry`, `s.lastMainStop` | _handleIntent, _onWireSessionRotated, _maybeRearmHold, quotaStore | unpinned |
 | `_onWireSessionRotated` | backstop conversation handover when a wire turn is the first news of a /clear: ends the old hold and moves the seat onto the new sessionId | `s.sessionId`, `s._holdRearmed`, `s._leftSessionIds`, `sessions.json` | _noteSessionLeft, _wireSessionCorroborated, _noteConversationForDigest | clear-continuation.test.js session-manager.test.js |
 | `_maybeRearmHold` | restores a persisted keep-warm intent onto the seat's current wire id, retried every main-line turn until an arm lands | `s._holdRearmed`, `sessions.json` holdUntil | wire/hold.rearmPlan | keepwarm-restart-preserve.test.js clear-continuation.test.js session-manager.test.js |
-| `_onHoldLifecycle` | the hold keeper's event sink: writes re-anchored deadlines, reopens the re-arm gate on a failures disarm, and reports disarms and pings | `sessions.json` holdUntil, `s._holdRearmed` | _nameForWireSession, _keepwarmRow, keepwarmPingBody | clear-continuation.test.js session-manager.test.js |
+| `_onHoldLifecycle` | the hold keeper's event sink: writes re-anchored deadlines, reopens the re-arm gate on a failures disarm, disarms on a 429 ping and reopens the gate, and reports disarms and pings | `sessions.json` holdUntil, `s._holdRearmed` | _nameForWireSession, _keepwarmRow, keepwarmPingBody | clear-continuation.test.js session-manager.test.js keepwarm-quota.test.js |
 
 ### Invariants
 
@@ -78,7 +78,7 @@
 - `constructor` keeps `_micTarget` separate from `_focusedSession` and starts `_appFocused` false, so no seat arms the microphone before a host has reported focus.
 - `_startWire` keeps a per-batch fired Set on the wire path because the deduper allows wire-after-wire, while exempting exec from that intra-turn dedup.
 - `_onWireSessionRotated` ends the old sessionId's hold before reassigning `s.sessionId`, refuses ids in `s._leftSessionIds`, and resets `_holdRearmed` itself.
-- `_onHoldLifecycle` never erases a persisted keep-warm intent on a ping failure, and only a failures disarm reopens the re-arm gate.
+- `_onHoldLifecycle` never erases a persisted keep-warm intent on a ping failure, and only a failures disarm or a 429 ping reopens the re-arm gate.
 - `constructor` stamps `activityTs` from the ActivityTracker `onEvent` callback with Math.max, because `_emitActivity` fires only on a label change and an out-of-order event must not drag idleMs back into the hold band.
 
 ### Hazards
@@ -96,6 +96,10 @@
 | `workspaceForWindow` | reverse lookup of a handle's workspace id by `===` identity, null when not registered | `this.windows` | none | session-manager.test.js |
 | `windowForSession` | the live handle of a session's workspace window, null once the session has left the map or its window is destroyed | `this.sessions`, `this.windows` | windowForWorkspace | external-tap-trigger.test.js session-manager.test.js |
 | `quotaStore` | the account plan-quota store, built on first use so the startup read restores from disk before any wire or session exists | `this._quotaStore`, wire-quota.sqlite | wire/quota.QuotaStore, _shadowLog | wire-quota-seam.test.js |
+| `_noteQuotaResponse` | the deferred body of the wire's anthropic `response` handler: files the reading, broadcasts `wire-quota`, then hands the store's threshold crossings on | none | _accountForWireAgent, _quotaPayload, _noteQuotaCrossings | wire-quota-crossings.test.js |
+| `_quotaSeats` | the live seats whose account resolves to a label | `this.sessions` | accountFor | wire-quota-crossings.test.js |
+| `_noteQuotaCrossings` | one operator-inbox note per 80/95/100% crossing, naming the window, the reset and up to eight seats on the account; exhaustion also tells the leads | notifications store | _quotaSeats, _dmLeadsQuotaExhausted, proxy-util.fmtQuotaReset | wire-quota-crossings.test.js |
+| `_dmLeadsQuotaExhausted` | dms each lead of a team with a live seat on an exhausted account, once per (account, reset) | `this._quotaLeadDms` | _deliverMessage | wire-quota-crossings.test.js |
 | `_sendToSession` | sends one channel event to the session's workspace window, buffering pty-data into pendingOutput (2MB cap, cut by escapeSafeTail) when no window is live | `s.pendingOutput` | windowForSession, escapeSafeTail | session-manager.test.js exited-seat-row.test.js session-move-workspace.test.js web-host.test.js |
 | `_broadcast` | sends one channel event to every live window handle, the fan-out for keep-warm rows, quota and ipc-message lines | `this.windows` | allLiveWindows | session-manager.test.js wire-quota-seam.test.js proxy-poller-quota.test.js |
 
