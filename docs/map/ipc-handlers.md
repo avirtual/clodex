@@ -500,13 +500,13 @@
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
 | `on:pty-input` | fire-and-forget keystrokes into a local seat's PTY | pty via manager | manager.write | api-shim.test.js |
-| `handle:seat:send` | sends a stream seat a turn with validated images; desktop surface and sender workspace only | stream seat via manager | validateSeatImages, manager.seatSend | seat-send-images.test.js |
+| `handle:seat:send` | sends a stream seat a turn with validated images; sender workspace only | stream seat via manager | validateSeatImages, manager.seatSend | seat-send-images.test.js transcript-pull-outbox.test.js |
 | `handle:seat:image-upload` | writes validated images for an agent seat in the sender's workspace, returning their paths | seat image files | validateSeatImages, manager._writeImageFiles | api-shim.test.js seat-image-upload.test.js |
-| `handle:seat:commands` | a stream seat's slash commands; desktop only | none | manager.seatCommands | transcript-pull-outbox.test.js |
-| `handle:seat:control` | sends a stream seat a control subcommand; desktop only | stream seat via manager | manager.seatControl | transcript-pull-outbox.test.js |
-| `handle:seat:permission` | answers a stream seat's permission prompt; desktop only | stream seat via manager | manager.seatPermission | transcript-pull-outbox.test.js renderer-source-pins.test.js |
-| `handle:seat:interrupt` | interrupts a stream seat's turn; desktop only | stream seat via manager | manager.seatInterrupt | transcript-pull-outbox.test.js |
-| `on:seat:draft` | reports a stream seat's composer draft; desktop only, dropped otherwise | seat draft via manager | manager.seatDraft | session-manager.test.js |
+| `handle:seat:commands` | a stream seat's slash commands | none | manager.seatCommands | transcript-pull-outbox.test.js |
+| `handle:seat:control` | sends a stream seat a control subcommand | stream seat via manager | manager.seatControl | transcript-pull-outbox.test.js |
+| `handle:seat:permission` | answers a stream seat's permission prompt | stream seat via manager | manager.seatPermission | transcript-pull-outbox.test.js renderer-source-pins.test.js |
+| `handle:seat:interrupt` | interrupts a stream seat's turn | stream seat via manager | manager.seatInterrupt | transcript-pull-outbox.test.js |
+| `on:seat:draft` | reports a stream seat's composer draft; dropped outside the sender's workspace | seat draft via manager | manager.seatDraft | session-manager.test.js transcript-pull-outbox.test.js |
 | `handle:voice:record` | starts, stops or toggles recording for a seat in the sender's workspace | voice recorder via manager | manager.voiceRecord | voice-engine.test.js |
 | `on:log:voice` | appends one bounded voice log line | log | log.info | unpinned |
 | `on:voice:markOrigin` | arms the voice-origin hint for a seat's next submit | voice origin via manager | manager.markVoiceOrigin | unpinned |
@@ -516,7 +516,7 @@
 | `on:session:focused` | records the seat the operator is looking at, with the strictly resolved sender window | focused seat via manager | manager.noteFocusedSession, manager.windowForWorkspace | external-tap-trigger.test.js |
 
 ### Invariants
-- `handle:seat:send`, `handle:seat:commands`, `handle:seat:control`, `handle:seat:permission`, `handle:seat:interrupt` and `on:seat:draft` refuse unless `surfaceOfSender` answers desktop, and every one also checks the seat is in the sender's workspace; `handle:seat:image-upload` drops only the surface gate — it keeps the workspace and agent-type checks — because the web shim uploads through it.
+- `handle:seat:send`, `handle:seat:commands`, `handle:seat:control`, `handle:seat:permission`, `handle:seat:interrupt` and `on:seat:draft` check the seat is in the sender's workspace and serve every surface; `handle:seat:image-upload` also checks the agent type.
 - `on:voice:markOrigin` and `on:voice:unmarkOrigin` carry no text or id, so a doctored payload cannot choose what the agent is told or which hint is cleared.
 - `on:voice:recording` and `on:voice:draft` carry no timestamp; main stamps its own clock so a renderer cannot hold injection open.
 - `on:session:focused` resolves the sender strictly, so a dying window's last report maps to no window instead of the default workspace's.

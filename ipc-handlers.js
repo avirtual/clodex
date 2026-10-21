@@ -2220,8 +2220,6 @@ function registerIpcHandlers(deps) {
   });
 
   handle('seat:send', (e, name, text, images) => {
-    const surface = typeof surfaceOfSender === 'function' ? surfaceOfSender(e) : undefined;
-    if (surface !== 'desktop') return { ok: false, error: 'seat:send is local only' };
     const s = manager.sessions.get(String(name || ''));
     if (!s || s.workspaceId !== workspaceOfSender(e)) return { ok: false, error: 'no such session in this workspace' };
     const checked = validateSeatImages(images);
@@ -2240,40 +2238,30 @@ function registerIpcHandlers(deps) {
   });
 
   handle('seat:commands', (e, name) => {
-    const surface = typeof surfaceOfSender === 'function' ? surfaceOfSender(e) : undefined;
-    if (surface !== 'desktop') return { ok: false, error: 'seat:commands is local only' };
     const s = manager.sessions.get(String(name || ''));
     if (!s || s.workspaceId !== workspaceOfSender(e)) return { ok: false, error: 'no such session in this workspace' };
     return manager.seatCommands(s.name);
   });
 
   handle('seat:control', (e, name, sub) => {
-    const surface = typeof surfaceOfSender === 'function' ? surfaceOfSender(e) : undefined;
-    if (surface !== 'desktop') return { ok: false, error: 'seat:control is local only' };
     const s = manager.sessions.get(String(name || ''));
     if (!s || s.workspaceId !== workspaceOfSender(e)) return { ok: false, error: 'no such session in this workspace' };
     return manager.seatControl(s.name, String(sub || ''));
   });
 
   handle('seat:permission', (e, name, id, choiceId) => {
-    const surface = typeof surfaceOfSender === 'function' ? surfaceOfSender(e) : undefined;
-    if (surface !== 'desktop') return { ok: false, error: 'seat:permission is local only' };
     const s = manager.sessions.get(String(name || ''));
     if (!s || s.workspaceId !== workspaceOfSender(e)) return { ok: false, error: 'no such session in this workspace' };
     return manager.seatPermission(s.name, String(id), String(choiceId));
   });
 
   handle('seat:interrupt', (e, name) => {
-    const surface = typeof surfaceOfSender === 'function' ? surfaceOfSender(e) : undefined;
-    if (surface !== 'desktop') return { ok: false, error: 'seat:interrupt is local only' };
     const s = manager.sessions.get(String(name || ''));
     if (!s || s.workspaceId !== workspaceOfSender(e)) return { ok: false, error: 'no such session in this workspace' };
     return manager.seatInterrupt(s.name);
   });
 
   on('seat:draft', (e, name, text) => {
-    const surface = typeof surfaceOfSender === 'function' ? surfaceOfSender(e) : undefined;
-    if (surface !== 'desktop') return;
     const s = manager.sessions.get(String(name || ''));
     if (!s || s.workspaceId !== workspaceOfSender(e)) return;
     manager.seatDraft(s.name, typeof text === 'string' ? text : '');
