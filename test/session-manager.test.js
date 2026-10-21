@@ -23317,6 +23317,8 @@ function t1912CapParked(f, stallMs, now, props = {}) {
   const arr = f.load();
   Object.assign(arr[0], { state: 'open', parked: true, parkedBy: 'cap', parkedCap: '2/2', lastActivityAt: now - stallMs - 1, nudgedAt: null }, props);
   f.tstore.save(f.team.root, arr);
+  f.team.maxHands = 2;
+  f.m._liveHandCount = () => 2;
   f.gated.length = 0;
 }
 
@@ -23332,7 +23334,9 @@ test('t1912 watchdog: a cap-parked ticket past the stall interval alarms the lea
   assert.strictEqual(f.gated[0].sender, 'ticket-watchdog');
   assert.strictEqual(f.gated[0].body,
     '[ticket t1] parked by the hand cap for 30m (2/2): no hand has retired since. Retire a finished hand, raise the cap ([agent:team hands 3]), or park it on purpose ([agent:task park t1]).');
+  assert.strictEqual(f.one('t1').nudgedAt, now, 'the alarm latched the episode');
   await f.m._sweepTickets(now + 60e3);
+  assert.strictEqual(f.one('t1').parkedBy, 'cap', 'ENTER: still cap-parked at the second sweep');
   assert.strictEqual(f.gated.length, 1, 'a second sweep is silent');
   const arr = f.load();
   arr[0].lastActivityAt = now + 60e3 - stallMs - 1;
@@ -23340,6 +23344,7 @@ test('t1912 watchdog: a cap-parked ticket past the stall interval alarms the lea
   f.tstore.save(f.team.root, arr);
   await f.m._sweepTickets(now + 60e3);
   assert.strictEqual(f.gated.length, 2, 'a re-park re-arms the alarm');
+  assert.match(f.gated[1].body, /^\[ticket t1\] parked by the hand cap for 30m \(2\/2\)/);
 });
 
 test('t1912 watchdog: a lead-parked ticket stays exempt', async () => {
