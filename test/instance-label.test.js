@@ -67,6 +67,7 @@ test('a value the outbox guard rejects: the hostname, plus one warn naming it', 
 test('wireSafeHostname: unset CLODEX_LABEL and a spaced hostname, made wire-safe, else clodex with one warn', () => {
   const log = mkLog();
   assert.strictEqual(resolveSelfLabel({}, 'my host', log), 'my-host');
+  assert.strictEqual(resolveSelfLabel({}, 'build--01', log), 'build--01');
   assert.deepStrictEqual(log.warns, []);
   assert.strictEqual(resolveSelfLabel({}, '  ', log), 'clodex');
   assert.strictEqual(log.warns.length, 1);

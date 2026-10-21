@@ -54,6 +54,7 @@
 
 - `reapPtyDescendants` must run while the pty is still alive, because after it exits its children reparent, `ptyOwnership` reports gone and nothing is reaped.
 - `isStaleRegistration` returns true for any own-pid record although its comment scopes that clause to a session this process is not running, so a new caller passing a live seat's agent.json would force-clean a running registration.
+- `findPeerByOrigin` returns the first of several peers advertised under the same suffix (e.g. tunnelled peers sharing 127.0.0.1).
 - `seatRelFiles` skips unreadable dirs and symlinks without a word, so a move-to-peer shipment silently omits them.
 
 ## createSessionManager factory, constructor and the wire runtime — createSessionManager … _onHoldLifecycle

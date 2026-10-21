@@ -142,6 +142,7 @@ function resolveRegistryDir(seams) {
 
 function wireSafeHostname(hostname, log) {
   const raw = String(hostname || '').replace(/\.local$/, '');
+  if (validOrigin(raw)) return raw;
   const safe = boxLabel(raw, '');
   if (validOrigin(safe)) return safe;
   if (log && typeof log.warn === 'function') {
