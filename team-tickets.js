@@ -7559,6 +7559,7 @@ function createTicketMethods(deps, shared) {
               dialog: wakeSeat && wakeSeat.needsAttention && wakeSeat.needsAttention.kind === 'permission'
                 ? { message: wakeSeat.needsAttention.message, age: humanizeAge(now - wakeSeat.needsAttention.ts) }
                 : null,
+              compacting: wakeSeat && wakeSeat.compacting ? { age: humanizeAge(now - wakeSeat.compacting.since) } : null,
             });
         }
         this._gatedDeliver(team.lead, 'ticket-watchdog',

@@ -17,6 +17,7 @@ blocks a release.
 - The ticket watchdog now says when a hand is waiting on a permission dialog — which dialog, for how long, and that only the operator can answer — and the operator inbox gets one note per dialog on a ticket seat, instead of a 'quiet 31m, wedged or slow' alarm to the lead.
 - A team sandbox is now registered as peer `<name>-team` instead of `<name> team`, and an existing spaced label is normalised at startup: a label with a space could not be carried by any `name@origin` address, so seats inside a box could not be answered across a hub and `clodexctl import` skipped the box.
 - A reply to `name@origin` now reaches the peer advertised under that origin even when another peer's id or host collides with it, and a hub whose hostname has a space no longer vanishes from every spoke's roster.
+- The ticket watchdog's stall alarm now says when a quiet hand is compacting or running a harness subagent, instead of the one 'wedged or slow' verdict for every pending call.
 
 ## 5.131.8 — 2026-10-21
 
