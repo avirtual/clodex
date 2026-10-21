@@ -64,6 +64,23 @@ test('a value the outbox guard rejects: the hostname, plus one warn naming it', 
   }
 });
 
+test('wireSafeHostname: unset CLODEX_LABEL and a spaced hostname, made wire-safe, else clodex with one warn', () => {
+  const log = mkLog();
+  assert.strictEqual(resolveSelfLabel({}, 'my host', log), 'my-host');
+  assert.strictEqual(resolveSelfLabel({}, 'build--01', log), 'build--01');
+  assert.deepStrictEqual(log.warns, []);
+  assert.strictEqual(resolveSelfLabel({}, '  ', log), 'clodex');
+  assert.strictEqual(log.warns.length, 1);
+});
+
+test('a hub whose hostname has a space still lists its own sessions in a spoke roster', () => {
+  const { computeRosterFor } = require('../relay-protocol');
+  const selfLabel = resolveSelfLabel({}, 'hub team', mkLog());
+  const statuses = [{ id: 'dk', label: 'docker', online: true, sessions: [] }];
+  const roster = computeRosterFor('dk', statuses, new Set(['dk']), [{ name: 'lead', type: 'claude' }], selfLabel);
+  assert.deepStrictEqual(roster, [{ name: 'lead', origin: 'hub-team', type: 'claude' }]);
+});
+
 // ── the wiring: the const the whole peer wire reads ──────────────────────────
 
 // SELF_LABEL is not on createEngine's return object, so drive the real path:

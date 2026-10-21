@@ -27,6 +27,7 @@ const { readVoiceCapabilityCached } = require('./voice-capability');
 const { createSpeaker, createVoiceCatalog } = require('./speaker');
 const { runTicketsMigration } = require('./tickets-migrate');
 const { validOrigin } = require('./peer-outbox');
+const { boxLabel } = require('./sandbox');
 const { materializeExecScripts, materializeSeatVerb } = require('./bin-materialize');
 const { loadHelpCorpus } = require('./help-corpus');
 // Module-level, not inside createEngine: sweepSpilledMessages is module-level and a
@@ -139,12 +140,23 @@ function resolveRegistryDir(seams) {
   return defaultClodexHome();
 }
 
+function wireSafeHostname(hostname, log) {
+  const raw = String(hostname || '').replace(/\.local$/, '');
+  if (validOrigin(raw)) return raw;
+  const safe = boxLabel(raw, '');
+  if (validOrigin(safe)) return safe;
+  if (log && typeof log.warn === 'function') {
+    log.warn('peer', `hostname ${JSON.stringify(raw)} is not a usable wire label; using clodex`);
+  }
+  return 'clodex';
+}
+
 function resolveSelfLabel(env, hostname, log) {
-  const fallback = String(hostname || '').replace(/\.local$/, '');
   const raw = env ? env.CLODEX_LABEL : undefined;
   const trimmed = typeof raw === 'string' ? raw.trim() : '';
-  if (!trimmed) return fallback;
+  if (!trimmed) return wireSafeHostname(hostname, log);
   if (!validOrigin(trimmed)) {
+    const fallback = wireSafeHostname(hostname, log);
     if (log && typeof log.warn === 'function') {
       log.warn('peer', `CLODEX_LABEL ${JSON.stringify(trimmed)} is not a usable wire label; using ${fallback}`);
     }

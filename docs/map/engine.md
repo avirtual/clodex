@@ -6,7 +6,8 @@
 |---|---|---|---|---|
 | `createEngine` | builds the whole electron-free module graph from `{ userDataPath, seams, log }` and returns the flat engine handle a host adapter drives | every engine singleton (closure) | resolveRegistryDir, session-manager.createSessionManager, stores.initStores, shutdown | engine-registry-dir-seam.test.js drawer-services-seam.test.js engine-sandbox-seam.test.js |
 | `resolveRegistryDir` | the `~/.clodex` root: `seams.registryDir` if given, a throw under `node --test`, else `defaultClodexHome()` | none (pure; reads NODE_TEST_CONTEXT) | clodex-paths.defaultClodexHome | engine-registry-dir-seam.test.js |
-| `resolveSelfLabel` | this box's peer wire label: a trimmed `CLODEX_LABEL` that `validOrigin` accepts, else the hostname minus `.local` | none (pure) | peer-outbox.validOrigin | instance-label.test.js |
+| `wireSafeHostname` | the hostname minus `.local` if `validOrigin` accepts it, else normalised by `boxLabel`; `clodex` plus one warn when `validOrigin` still rejects it | none (pure) | sandbox.boxLabel, peer-outbox.validOrigin | instance-label.test.js |
+| `resolveSelfLabel` | this box's peer wire label: a trimmed `CLODEX_LABEL` that `validOrigin` accepts, else `wireSafeHostname` | none (pure) | wireSafeHostname, peer-outbox.validOrigin | instance-label.test.js |
 | `diagWarning` | the single highest-priority startup banner text for a diagnostics object, or null | none (pure) | none | diag-tools.test.js |
 | `diagLines` | the diagnostics object rendered as the console block, ending with the `diagWarning` text | none (pure) | diagWarning | deploy-visible.test.js |
 

@@ -466,6 +466,11 @@ function findPeerByOrigin(peers, origin) {
   if (!origin) return undefined;
   const want = String(origin).toLowerCase();
   const list = Array.isArray(peers) ? peers : [];
+  const advertised = list.find((p) => {
+    const suffix = peerOriginSuffix(p);
+    return suffix != null && suffix.toLowerCase() === want;
+  });
+  if (advertised) return advertised;
   for (const field of ['label', 'id', 'host']) {
     const hit = list.find((p) => p && p[field] && String(p[field]).toLowerCase() === want);
     if (hit) return hit;

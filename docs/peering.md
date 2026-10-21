@@ -499,6 +499,9 @@ anything else leaves it running.
   `from`'s local part is sacred, but the hub restamps its origin suffix to its
   own label for the source spoke on the terminal leg; that leg also strips relay
   fields (loop-prevention) and `RELAY_MAX_HOPS=1` is the belt.
+- A peer is addressed by its origin (label, else host, else id — the first that
+  is a valid node name), and the hub's own label is its `CLODEX_LABEL` or its
+  hostname made wire-safe.
 - A ticket assigned over the wire is still owned by the board that filed it;
   no board state crosses.
 - A task envelope closes a ticket only when the board's recorded assignee
