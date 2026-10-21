@@ -226,7 +226,7 @@ function oneLineError(text) {
 // seat on "an API error was seen" would mostly burn a turn re-hitting the same
 // guard. The error text classifies itself in its own first words, so the lead
 // reads which class it is; nothing here decides.
-function formatStallBody({ ticketId, who, age, repeat = 0, tool = null, commits = null, dirty = null, dmLatch = null, wake = null, apiError = null, dialog = null }) {
+function formatStallBody({ ticketId, who, age, repeat = 0, tool = null, commits = null, dirty = null, dmLatch = null, wake = null, apiError = null, dialog = null, compacting = null, ptyDead = false }) {
   if (dialog) {
     const flat = String(dialog.message || '').replace(/\s+/g, ' ').trim();
     const msg = flat.length > 120 ? `${flat.slice(0, 119)}…` : flat;
@@ -266,7 +266,12 @@ function formatStallBody({ ticketId, who, age, repeat = 0, tool = null, commits 
   // dirty tree alone; naming which way the evidence points is what makes the
   // alarm cheaper to act on than a hand probe.
   let verdict = '';
-  if (tool && tool.outcome === 'pending') verdict = ' — wedged mid-call, or a legitimately slow one';
+  if (tool && tool.outcome === 'pending') {
+    if (ptyDead) verdict = ' — its CLI process has exited; the pending call will never return. Respawn the seat onto the same ticket.';
+    else if (compacting) verdict = ` — compacting for ${compacting.age}; the call resumes when the summary lands. Wait one more interval before acting.`;
+    else if (tool.tool === 'Agent') verdict = ' — a harness subagent is still running; this is not a wedge unless it outlives the task.';
+    else verdict = ' — wedged mid-call, or a legitimately slow one';
+  }
   else if (tool && tool.outcome === 'error') verdict = ' — the last call failed; a killed turn looks like this';
   return `${head} (${bits.join(', ')})${verdict}${stopped}${cause}${woke}`;
 }

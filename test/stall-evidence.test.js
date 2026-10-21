@@ -966,6 +966,46 @@ test('t1908: dialog null leaves the evidence body byte-identical', () => {
   assert.strictEqual(body, '[ticket t1] stalled: hand quiet 31m (last tool Bash never returned, no commits, tree clean) — wedged mid-call, or a legitimately slow one');
 });
 
+const T1911_HEAD = '[ticket t1] stalled: hand quiet 31m (last tool Bash never returned, no commits, tree clean)';
+const t1911 = (extra) => formatStallBody({
+  ticketId: 't1', who: 'hand', age: '31m', tool: { tool: 'Bash', outcome: 'pending' }, commits: 0, dirty: false, ...extra,
+});
+
+test('t1911: a dead pty names the respawn, not a wedge', () => {
+  assert.strictEqual(t1911({ ptyDead: true }),
+    `${T1911_HEAD} — its CLI process has exited; the pending call will never return. Respawn the seat onto the same ticket.`);
+});
+
+test('t1911: a compacting seat names the compaction and its age', () => {
+  assert.strictEqual(t1911({ compacting: { age: '4m' } }),
+    `${T1911_HEAD} — compacting for 4m; the call resumes when the summary lands. Wait one more interval before acting.`);
+});
+
+test('t1911: a pending Agent call names a running harness subagent', () => {
+  assert.strictEqual(t1911({ tool: { tool: 'Agent', outcome: 'pending' } }),
+    '[ticket t1] stalled: hand quiet 31m (last tool Agent never returned, no commits, tree clean) — a harness subagent is still running; this is not a wedge unless it outlives the task.');
+});
+
+test('t1911: precedence is ptyDead, then compacting, then Agent', () => {
+  assert.match(t1911({ ptyDead: true, compacting: { age: '4m' } }), /CLI process has exited/);
+  assert.ok(!/compacting/.test(t1911({ ptyDead: true, compacting: { age: '4m' } })));
+  const agentCompacting = t1911({ tool: { tool: 'Agent', outcome: 'pending' }, compacting: { age: '4m' } });
+  assert.match(agentCompacting, /compacting for 4m/);
+  assert.ok(!/subagent/.test(agentCompacting));
+});
+
+test('t1911: null/false fields leave the wedged body byte-identical', () => {
+  assert.strictEqual(t1911({ compacting: null, ptyDead: false }),
+    `${T1911_HEAD} — wedged mid-call, or a legitimately slow one`);
+});
+
+test('t1911: the dialog branch still wins over a dead pty', () => {
+  const body = t1911({ ptyDead: true, compacting: { age: '4m' }, dialog: { message: 'Bash: node scripts/x.js', age: '31m' } });
+  assert.strictEqual(body,
+    '[ticket t1] stalled: hand waiting on a permission dialog since 31m — Bash: node scripts/x.js. '
+    + 'Only the operator can answer it (Requests list in the attention view). Deny leaves the hand to report the refusal; a respec is yours if the command was wrong.');
+});
+
 test('t1908: the dialog form keeps the repeat head, flattens newlines and cuts a long message to 120', () => {
   const long = 'Bash: ' + 'x'.repeat(194);
   const body = formatStallBody({ ticketId: 't1', who: 'hand', age: '1h', repeat: 2, dialog: { message: long, age: '1h' } });

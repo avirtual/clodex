@@ -23298,6 +23298,20 @@ test('t1908 watchdog: a seat held by a permission dialog alarms as waiting on it
   assert.match(f.gated[0].body, /^\[ticket t1\] stalled: hand waiting on a permission dialog since 31m — Bash: node scripts\/x\.js\. Only the operator can answer/);
 });
 
+test('t1911 watchdog: a compacting seat with a pending call alarms as compacting, not wedged', async () => {
+  const f = mkTasks();
+  const stallMs = 30 * 60 * 1000;
+  f.team.watchdogMs = stallMs;
+  f.seat('lead');
+  const now = Date.now();
+  f.seat('team-hand-1', '/proj', { compacting: { since: now - 4 * 60e3, trigger: 'auto' } });
+  orphanedTicket(f, { stallMs });
+  f.m._stallEvidence = async () => ({ tool: { tool: 'Bash', outcome: 'pending' }, commits: 0, dirty: false, apiError: null });
+  await f.m._sweepTickets(now);
+  assert.strictEqual(f.gated.length, 1, 'ENTER: exactly one alarm to inspect');
+  assert.match(f.gated[0].body, /compacting for 4m/);
+});
+
 test('t1908 inbox: one note per permission dialog on a ticket seat, none on a seat with no ticket', async () => {
   const added = [];
   const records = { 'team-hand-1': { name: 'team-hand-1', ticketId: 't1' }, solo: { name: 'solo' } };
