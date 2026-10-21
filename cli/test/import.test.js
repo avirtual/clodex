@@ -197,11 +197,11 @@ test('applyImport: collision skips by default, --force overwrites, current untou
   assert.strictEqual(forced.store.current, 'local');
 });
 
-test('import refuses a peer whose label is not a valid node name, with a visible skip row', () => {
+test('import refuses a peer whose label, host and id are all unusable, with a visible skip row', () => {
   const dir = fixture({ ui: { peers: [
-    { id: 'p1', label: 'My Box', sshHost: 'box1' },
-    { id: 'p2', label: '__proto__', url: 'http://x' },
-    { id: 'p3', label: 'constructor', url: 'http://y' },
+    { id: 'bad id', label: 'My Box', host: 'my box', sshHost: 'box1' },
+    { id: 'prototype', label: '__proto__', url: 'http://x' },
+    { label: 'constructor', url: 'http://y' },
   ] } });
   const cands = imp.collectCandidates(dir, { env: {} });
   for (const n of ['My Box', '__proto__', 'constructor']) {
@@ -211,6 +211,22 @@ test('import refuses a peer whose label is not a valid node name, with a visible
     assert.match(row.reason, /node name/);
     assert.strictEqual(row.entry, undefined);
   }
+});
+
+test('a peer with a spaced label is keyed on its host, then its id', () => {
+  const dir = fixture({ ui: { peers: [
+    { id: 'team-avh', label: 'avh team', host: 'team-avh', url: 'http://127.0.0.1:7830' },
+    { id: 'team-x', label: 'x team', host: 'x box', url: 'http://127.0.0.1:7840' },
+  ] } });
+  const cands = imp.collectCandidates(dir, { env: {} });
+  const avh = cands.find((c) => c.name === 'team-avh');
+  assert.ok(avh, 'ENTER: a row keyed team-avh');
+  assert.strictEqual(avh.action, 'add');
+  assert.deepStrictEqual(avh.entry, { url: 'http://127.0.0.1:7830' });
+  const x = cands.find((c) => c.name === 'team-x');
+  assert.ok(x, 'ENTER: a row keyed team-x');
+  assert.strictEqual(x.action, 'add');
+  assert.ok(!cands.some((c) => c.name === 'avh team' || c.name === 'x team'));
 });
 
 test('a peer with no string label and an argv sshHost still yields a visible refused skip row', () => {

@@ -110,6 +110,13 @@ function validNodeName(name) {
   return NODE_NAME_RE.test(name) && !RESERVED_NAMES.has(name);
 }
 
+function peerOrigin(p) {
+  for (const v of [p.label, p.host, p.id]) {
+    if (typeof v === 'string' && validNodeName(v)) return v;
+  }
+  return null;
+}
+
 function localEngine(dataDir, ui = readJson(path.join(dataDir, 'ui-settings.json')) || {}, env = process.env) {
   const remotePort = Number.isInteger(ui.remotePort) ? ui.remotePort : DEFAULT_REMOTE_PORT;
   const envToken = env[SANDBOX_TOKEN_KEY] && String(env[SANDBOX_TOKEN_KEY]).trim();
@@ -143,13 +150,14 @@ function collectCandidates(dataDir, { env = process.env } = {}) {
   // 2) Peers → one per label.
   for (const p of Array.isArray(ui.peers) ? ui.peers : []) {
     if (!p || typeof p !== 'object') continue;
-    const label = typeof p.label === 'string' && p.label ? p.label : (p.sshHost || p.url || p.id);
-    if (!safeTransport(label)) {
-      out.push({ name: '(unnamed peer)', action: 'skip', reason: 'no usable name/transport (refused)', tokenState: 'none' });
-      continue;
-    }
-    if (!validNodeName(label)) {
-      out.push({ name: String(label), action: 'skip', reason: 'label is not a valid node name', tokenState: 'none' });
+    const label = peerOrigin(p);
+    if (!label) {
+      const shown = typeof p.label === 'string' && p.label ? p.label : (p.sshHost || p.url || p.id);
+      if (!safeTransport(shown)) {
+        out.push({ name: '(unnamed peer)', action: 'skip', reason: 'no usable name/transport (refused)', tokenState: 'none' });
+      } else {
+        out.push({ name: String(shown), action: 'skip', reason: 'label is not a valid node name', tokenState: 'none' });
+      }
       continue;
     }
     if (p.disabled === true) {

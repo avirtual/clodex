@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - When a ticket's suite fails and the hand has already been retired, the loop now records a verify hold the lead can re-enter with `task done` after fixing the branch, instead of a done-at-verify ticket that refuses every re-entry as 'checks have not reported yet'.
+- A team sandbox is now registered as peer `<name>-team` instead of `<name> team`, and an existing spaced label is normalised at startup: a label with a space could not be carried by any `name@origin` address, so seats inside a box could not be answered across a hub and `clodexctl import` skipped the box.
 
 ## 5.131.8 — 2026-10-21
 

@@ -151,7 +151,7 @@ function registerIpcHandlers(deps) {
   async function createBareTeamBox(team, mgr, boxId, lines) {
     let box = mgr.get(boxId);
     if (!box) {
-      const made = mgr.create(boxId, `${team.name} team`);
+      const made = mgr.create(boxId, `${team.name}-team`);
       if (made && made.ok === false) return { ok: false, team, webUrl: null, lines, error: made.error };
       box = mgr.get(boxId);
       if (!box) return { ok: false, team, webUrl: null, lines, error: `sandbox ${boxId} could not be created` };

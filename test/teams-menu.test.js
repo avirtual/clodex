@@ -426,6 +426,16 @@ test('a THROWING box phase is reported, not propagated to the renderer as a reje
   assert.deepStrictEqual(res.lines, []);
 });
 
+test('a sandboxed create registers the team box under a hyphenated label', async () => {
+  const home = mkHome();
+  const { handlers, mgrCalls } = sandboxHandlers(home, { mgrBoxes: [] });
+
+  const res = await handlers['team:createBare']({}, { name: 'avh', root: '/proj/avh', sandboxed: true });
+
+  assert.strictEqual(res.ok, true, res.error);
+  assert.deepStrictEqual(mgrCalls, [['team-avh', 'avh-team']]);
+});
+
 test('an unsandboxed create never reaches the sandbox manager', async () => {
   const home = mkHome();
   const { handlers, upCalls, mgrCalls, createArgs } = sandboxHandlers(home);
