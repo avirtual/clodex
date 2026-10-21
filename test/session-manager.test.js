@@ -23312,13 +23312,13 @@ test('t1911 watchdog: a compacting seat with a pending call alarms as compacting
   assert.match(f.gated[0].body, /compacting for 4m/);
 });
 
-function t1912CapParked(f, stallMs, now, props = {}) {
+function t1912CapParked(f, stallMs, now, props = {}, live = 2) {
   f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
   const arr = f.load();
   Object.assign(arr[0], { state: 'open', parked: true, parkedBy: 'cap', parkedCap: '2/2', lastActivityAt: now - stallMs - 1, nudgedAt: null }, props);
   f.tstore.save(f.team.root, arr);
   f.team.maxHands = 2;
-  f.m._liveHandCount = () => 2;
+  if (live != null) f.m._liveHandCount = () => live;
   f.gated.length = 0;
 }
 
@@ -23345,6 +23345,18 @@ test('t1912 watchdog: a cap-parked ticket past the stall interval alarms the lea
   await f.m._sweepTickets(now + 60e3);
   assert.strictEqual(f.gated.length, 2, 'a re-park re-arms the alarm');
   assert.match(f.gated[1].body, /^\[ticket t1\] parked by the hand cap for 30m \(2\/2\)/);
+});
+
+test('t1912 watchdog: a cap-parked ticket with a free slot is started, not alarmed', async () => {
+  const f = mkTasks();
+  const stallMs = 30 * 60 * 1000;
+  f.team.watchdogMs = stallMs;
+  const now = Date.now();
+  t1912CapParked(f, stallMs, now, {}, null);
+  assert.strictEqual(f.one('t1').parkedBy, 'cap', 'ENTER: the fixture is cap-parked');
+  await f.m._sweepTickets(now);
+  assert.strictEqual(f.gated.length, 0);
+  assert.ok(!f.one('t1').parked, 'the sweep released it into a free slot');
 });
 
 test('t1912 watchdog: a lead-parked ticket stays exempt', async () => {

@@ -7427,16 +7427,18 @@ function createTicketMethods(deps, shared) {
       }
     },
 
-    _alarmCapParked(team, t, now, stallMs) {
+    _alarmCapParked(team, ticket, now, stallMs) {
+      const tid = ticket.id;
+      const t = ticketsStore.load(team.root).find((x) => x.id === tid);
+      if (!t || t.state !== 'open' || !t.parked || t.parkedBy !== 'cap') return;
       const last = t.lastActivityAt || t.openedAt || now;
       if (now - last < stallMs) return;
       if (t.nudgedAt && t.nudgedAt >= last) return;
-      const tid = t.id;
+      const { cap } = this._handCap(team);
+      if (cap == null || this._liveHandCount(team) < cap) return;
       const seenAt = t.lastActivityAt || null;
-      const capN = Number(String(t.parkedCap || '').split('/')[1]);
-      const more = Number.isFinite(capN) && capN > 0 ? capN + 1 : '<n>';
       const body = `[ticket ${tid}] parked by the hand cap for ${humanizeAge(now - last)} (${t.parkedCap || 'cap'}): no hand has retired since. `
-        + `Retire a finished hand, raise the cap ([agent:team hands ${more}]), or park it on purpose ([agent:task park ${tid}]).`;
+        + `Retire a finished hand, raise the cap ([agent:team hands ${cap + 1}]), or park it on purpose ([agent:task park ${tid}]).`;
       this._gatedDeliver(team.lead, 'ticket-watchdog', body, false, '', () => {
         try {
           const fresh = ticketsStore.load(team.root);
@@ -7464,7 +7466,9 @@ function createTicketMethods(deps, shared) {
       const live = this._teamLiveSeatNames(team.root);
       for (const t of tickets) {
         if (t.state === 'open' && t.parked && t.parkedBy === 'cap') {
-          this._alarmCapParked(team, t, now, stallMs);
+          try { this._alarmCapParked(team, t, now, stallMs); } catch (e) {
+            log.error('ticket', `cap-parked alarm for ${t.id} failed: ${e.message}`);
+          }
           continue;
         }
         if (!ticketInFlight(t) || t.assignee == null || !ticketStarted(t) || t.parked) continue;
