@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The browser UI can now send to a stream seat — composer, slash commands, control, permission answers, interrupt and draft — instead of every send bouncing with 'seat:send is local only'.
+
 ## 5.131.9 — 2026-10-21
 
 - When a ticket's suite fails and the hand has already been retired, the loop now records a verify hold the lead can re-enter with `task done` after fixing the branch, instead of a done-at-verify ticket that refuses every re-entry as 'checks have not reported yet'.
