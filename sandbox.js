@@ -13,6 +13,7 @@ const fs = require('fs');
 const { readEnvFile, writeEnvFile } = require('./env-file');
 const { defaultClodexHome } = require('./clodex-paths');
 const { createDetectCache } = require('./detect-cache');
+const { validOrigin } = require('./peer-outbox');
 const { repoToplevel, checkoutDetached, headSha, removeWorktree } = require('./git-worktree');
 
 const DEFAULT_PORTS = { web: 7810, wirescope: 7811, wire: 7820 };
@@ -302,6 +303,17 @@ const GHCR_REPO = 'ghcr.io/avirtual/clodex';
 
 const SANDBOX_PEER_ID = 'sandbox';
 const SANDBOX_PEER_LABEL = 'sandbox';
+
+function boxLabel(raw, boxId) {
+  const label = String(raw == null ? '' : raw).trim()
+    .replace(/\s+/g, '-')
+    .replace(/[^A-Za-z0-9._-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64)
+    .replace(/-+$/, '');
+  return label && !/^\.+$/.test(label) ? label : boxId;
+}
 
 const SANDBOX_BOX_ENV = 'CLODEX_IN_SANDBOX';
 
@@ -1584,8 +1596,37 @@ function createSandbox(deps = {}) {
 
 function createSandboxManager(deps = {}) {
   const getUiSettings = deps.getUiSettings;
-  const listBoxes = deps.listBoxes
+  const managerLog = deps.log || { info() {}, warn() {}, error() {} };
+  const readBoxes = deps.listBoxes
     || (() => { try { return getUiSettings().get().boxes || []; } catch { return []; } });
+  let labelsMigrated = false;
+  function migrateLabels() {
+    if (labelsMigrated || typeof getUiSettings !== 'function') return;
+    let store;
+    try { store = getUiSettings(); } catch { return; }
+    if (!store) return;
+    labelsMigrated = true;
+    try {
+      const state = store.get() || {};
+      const renamed = new Map();
+      const boxes = (state.boxes || []).map((b) => {
+        if (!b || !b.id || b.label == null || validOrigin(b.label)) return b;
+        const label = boxLabel(b.label, b.id);
+        renamed.set(b.id, label);
+        managerLog.info('sandbox', `box ${b.id}: label "${b.label}" is not a usable origin; renamed to "${label}"`);
+        return { ...b, label };
+      });
+      if (!renamed.size) return;
+      const patch = { boxes };
+      if (Array.isArray(state.peers) && state.peers.some((p) => p && renamed.has(p.id))) {
+        patch.peers = state.peers.map((p) => (p && renamed.has(p.id) ? { ...p, label: renamed.get(p.id) } : p));
+      }
+      store.set(patch);
+    } catch (e) {
+      managerLog.warn('sandbox', `box label migration failed: ${e.message}`);
+    }
+  }
+  const listBoxes = () => { migrateLabels(); return readBoxes(); };
 
   const managerSpawn = deps.spawn || cp.spawn;
   const now = deps.now || Date.now;
@@ -1671,7 +1712,7 @@ function createSandboxManager(deps = {}) {
     }
     const boxes = listBoxes().map((b) => ({ ...b }));
     if (boxes.some((b) => b && b.id === boxId)) return { ok: false, error: `A sandbox named "${boxId}" already exists.` };
-    const label = String(rawLabel || '').trim().slice(0, 64) || boxId;
+    const label = boxLabel(rawLabel, boxId);
     boxes.push({ id: boxId, label, config: { ...DEFAULT_CONFIG } });
     getUiSettings().set({ boxes });
     return { ok: true, box: { id: boxId, label } };
@@ -1724,7 +1765,7 @@ function defaultIsPortInUse(port) {
 }
 
 module.exports = {
-  createSandbox, createSandboxManager,
+  createSandbox, createSandboxManager, boxLabel,
   // Pure parts, exported for the unit suite.
   createDetectCache, dockerUnavailableError, probeDocker, probeDockerFigures, parseFigures, parseComposePlatform, parseStatsLine, parseAppliedLimits,
   validateLimitsForSave, normalizePlatform, sizeToBytes, OPERATOR_ONLY_MSG,

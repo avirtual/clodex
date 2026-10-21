@@ -600,6 +600,7 @@ only reports. `rebuild` always recreates the container (a restart even at an
 unchanged sha); `up` on a running box changes nothing and says so. Lead-only,
 like every `[agent:team …]` verb, and refused with `sandboxes are not enabled
 on this host` where the host has no sandbox support.
+The box's peer label is `<name>-team`: a label must be a usable origin (no spaces), so a stored label that is not one is normalised when the boxes are first read.
 
 Only `up` and `rebuild` change the box's configuration, and they patch `ref`
 only when you actually typed `ref:`. Omit it and the box keeps the ref it is

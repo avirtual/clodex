@@ -2726,7 +2726,7 @@ function createTicketMethods(deps, shared) {
         return;
       }
       if (!box) {
-        const made = mgr.create(boxId, `${team.name} team`);
+        const made = mgr.create(boxId, `${team.name}-team`);
         if (made && made.ok === false) { reply(`error: ${made.error}`); return; }
         box = mgr.get(boxId);
         if (!box) { reply(`error: sandbox ${boxId} could not be created`); return; }

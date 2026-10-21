@@ -190,7 +190,7 @@ test('up creates box team-<name>, sets ref + workDir, and writes sandbox.json', 
   const b = mkBox();
   await fire(b, b.lead, { action: 'up' });
 
-  assert.deepStrictEqual(b.calls.create, [['team-clodex', 'clodex team']]);
+  assert.deepStrictEqual(b.calls.create, [['team-clodex', 'clodex-team']]);
   // Whole-object compare: a patch that also carried `image` would silently
   // overwrite the operator's GUI override, which t807 made precedence-bearing.
   // A bare `up` on a box with no ref seeds the default — the LITERAL 'master',
@@ -255,7 +255,7 @@ test('a second up does NOT create the box again', async () => {
   const b = mkBox();
   await fire(b, b.lead, { action: 'up' });
   await fire(b, b.lead, { action: 'up' });
-  assert.deepStrictEqual(b.calls.create, [['team-clodex', 'clodex team']]);
+  assert.deepStrictEqual(b.calls.create, [['team-clodex', 'clodex-team']]);
   assert.strictEqual(b.calls.up, 2);
 });
 

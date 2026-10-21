@@ -19,7 +19,7 @@ process.on('exit', () => { try { fs.rmSync(TMP_USERDATA, { recursive: true, forc
 process.on('exit', () => { try { fs.rmSync(TMP_REGISTRY, { recursive: true, force: true }); } catch {} });
 
 const {
-  createSandbox, createSandboxManager,
+  createSandbox, createSandboxManager, boxLabel,
   createDetectCache, dockerUnavailableError, probeDocker,
   DOCKER_ABSENT_MSG, DOCKER_DOWN_MSG, DOCKER_NO_COMPOSE_MSG,
   resolveImage, resolvePorts, nextFreePort, generateCompose,
@@ -1722,12 +1722,12 @@ test('manager: get() returns null for an unknown box id', () => {
 test('manager: list() reports every registry row as { id, label }', () => {
   const settings = fakeBoxSettings([
     { id: 'sandbox', label: 'sandbox', config: {} },
-    { id: 'proj', label: 'My Project', config: {} },
+    { id: 'proj', label: 'My-Project', config: {} },
   ]);
   const mgr = createSandboxManager({ registryDir: TMP_REGISTRY, getUiSettings: () => settings, getUserDataPath: () => TMP_USERDATA });
   assert.deepStrictEqual(mgr.list(), [
     { id: 'sandbox', label: 'sandbox' },
-    { id: 'proj', label: 'My Project' },
+    { id: 'proj', label: 'My-Project' },
   ]);
 });
 
@@ -1801,13 +1801,57 @@ test('manager: two boxes up() → two managed peer rows, isolated auth.env + hos
   assert.match(fs.readFileSync(path.join(ud, 'sandbox-proj', 'compose.yaml'), 'utf8'), /^ {4}hostname: proj$/m);
 });
 
+test('boxLabel: a label becomes a usable origin, falling back to the box id', () => {
+  assert.strictEqual(boxLabel('avh team', 'team-avh'), 'avh-team');
+  assert.strictEqual(boxLabel('  ', 'team-x'), 'team-x');
+  assert.strictEqual(boxLabel('a  b/c', 'x'), 'a-b-c');
+  assert.strictEqual(boxLabel('..', 'x'), 'x');
+  assert.strictEqual(boxLabel('sandbox', 'sandbox'), 'sandbox');
+});
+
+test('manager: a spaced stored box label is normalised once, mirroring peer row included', () => {
+  const settings = fakeBoxSettings([
+    { id: 'team-avh', label: 'avh team', config: { webPort: 7830 } },
+    { id: 'sandbox', label: 'sandbox', config: {} },
+  ]);
+  settings.set({ peers: [
+    { id: 'team-avh', label: 'avh team', url: 'http://127.0.0.1:7831', inbox: 'claim' },
+    { id: 'other', label: 'other host', url: 'http://h' },
+  ] });
+  const writes = [];
+  const origSet = settings.set;
+  settings.set = (partial) => { writes.push(partial); return origSet(partial); };
+  const lines = [];
+  const log = { info: (...a) => lines.push(a.join(' ')), warn() {}, error() {} };
+  const mgr = createSandboxManager({ registryDir: TMP_REGISTRY, getUiSettings: () => settings, getUserDataPath: () => TMP_USERDATA, log });
+  assert.deepStrictEqual(mgr.list(), [
+    { id: 'team-avh', label: 'avh-team' },
+    { id: 'sandbox', label: 'sandbox' },
+  ]);
+  assert.strictEqual(writes.length, 1);
+  assert.deepStrictEqual(settings._state().boxes, [
+    { id: 'team-avh', label: 'avh-team', config: { webPort: 7830 } },
+    { id: 'sandbox', label: 'sandbox', config: {} },
+  ]);
+  assert.deepStrictEqual(settings._state().peers, [
+    { id: 'team-avh', label: 'avh-team', url: 'http://127.0.0.1:7831', inbox: 'claim' },
+    { id: 'other', label: 'other host', url: 'http://h' },
+  ]);
+  assert.deepStrictEqual(lines, ['sandbox box team-avh: label "avh team" is not a usable origin; renamed to "avh-team"']);
+  mgr.list();
+  const again = createSandboxManager({ registryDir: TMP_REGISTRY, getUiSettings: () => settings, getUserDataPath: () => TMP_USERDATA, log });
+  again.list();
+  assert.strictEqual(writes.length, 1, 'a second load writes nothing');
+  assert.strictEqual(lines.length, 1);
+});
+
 test('manager: create() mints a box row from DEFAULT_CONFIG, gated to the tight charset', () => {
   const settings = fakeBoxSettings([{ id: 'sandbox', label: 'sandbox', config: {} }]);
   const mgr = createSandboxManager({ registryDir: TMP_REGISTRY, getUiSettings: () => settings, getUserDataPath: () => TMP_USERDATA });
   const r = mgr.create('proj-1', 'My Project');
-  assert.deepStrictEqual(r, { ok: true, box: { id: 'proj-1', label: 'My Project' } });
+  assert.deepStrictEqual(r, { ok: true, box: { id: 'proj-1', label: 'My-Project' } });
   const row = settings._state().boxes.find((b) => b.id === 'proj-1');
-  assert.strictEqual(row.label, 'My Project');
+  assert.strictEqual(row.label, 'My-Project');
   assert.deepStrictEqual(row.config, DEFAULT_CONFIG);
   // Now resolvable through get().
   assert.strictEqual(mgr.get('proj-1').id, 'proj-1');
