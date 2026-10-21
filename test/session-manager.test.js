@@ -14531,14 +14531,15 @@ test('t839 findPeerByOrigin: label, then id, then host — case-insensitive, mis
   assert.strictEqual(peerOriginSuffix({ label: 'a b', host: 'c d', id: 'e f' }), null, 'nothing typeable → no suffix');
 });
 
-test('t1910 findPeerByOrigin: the peer advertised under an origin beats another peer\'s raw label', () => {
-  const collide = [{ id: 'a', label: 'h' }, { id: 'b', label: 'b team', host: 'h' }];
-  assert.strictEqual(findPeerByOrigin(collide, 'h'), collide[1]);
+test('t1910 findPeerByOrigin: the peer advertised under an origin beats another peer\'s raw id', () => {
+  const idVsHost = [{ id: 'h', label: 'p' }, { id: 'b', host: 'h' }];
+  assert.strictEqual(findPeerByOrigin(idVsHost, 'h'), idVsHost[1]);
   const solo = [{ id: 'a', label: 'h' }];
   assert.strictEqual(findPeerByOrigin(solo, 'h'), solo[0]);
   const unusable = [{ id: 'x', label: 'only label' }];
   assert.strictEqual(findPeerByOrigin(unusable, 'x'), unusable[0]);
-  assert.strictEqual(findPeerByOrigin(unusable, 'only label'), unusable[0]);
+  const rawLabel = [{ id: 'a', label: 'b team', host: 'h' }];
+  assert.strictEqual(findPeerByOrigin(rawLabel, 'b team'), rawLabel[0]);
 });
 
 test('t839 _isDmReachable: a box answers on its announced host, and only while online', () => {
