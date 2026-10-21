@@ -787,6 +787,8 @@ lead parked with `task park` is never auto-started. `[agent:team hands <n|off>]`
 (lead only) sets it and starts any cap-parked tickets the new value allows; bare
 `[agent:team hands]` shows the effective value and its source.
 
+A ticket whose seat stays quiet past the team's watchdog interval alarms the lead as `stalled: <who> quiet <age>` with the seat's evidence; a seat held by a permission dialog is reported instead as `waiting on a permission dialog since <age> — <message>`, naming the operator as the only one who can answer, and the operator inbox gets one note per dialog on a ticket seat.
+
 The lead's team roster spells out the reachable actions for whatever roles exist,
 so you do not have to teach it the vocabulary.
 A ticket seat (hand, scout, reviewer) gets the two-line brief form instead: its own role and its lead, in both its SessionStart digest and its spawn message.

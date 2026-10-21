@@ -23273,3 +23273,43 @@ test('t1703 the seat socket\'s reply wait: term is 130 s, a plugin row answers i
     require.cache[fxPath] = saved.fx;
   }
 });
+
+test('t1908 watchdog: a seat held by a permission dialog alarms as waiting on it, not as quiet', async () => {
+  const f = mkTasks();
+  const stallMs = 30 * 60 * 1000;
+  f.team.watchdogMs = stallMs;
+  f.seat('lead');
+  const now = Date.now();
+  f.seat('team-hand-1', '/proj', { needsAttention: { kind: 'permission', ts: now - 31 * 60 * 1000, message: 'Bash: node scripts/x.js' } });
+  orphanedTicket(f, { stallMs });
+  await f.m._sweepTickets(now);
+  assert.strictEqual(f.gated.length, 1, 'ENTER: exactly one alarm to inspect');
+  assert.match(f.gated[0].body, /^\[ticket t1\] stalled: hand waiting on a permission dialog since 31m — Bash: node scripts\/x\.js\. Only the operator can answer/);
+});
+
+test('t1908 inbox: one note per permission dialog on a ticket seat, none on a seat with no ticket', async () => {
+  const added = [];
+  const records = { 'team-hand-1': { name: 'team-hand-1', ticketId: 't1' }, solo: { name: 'solo' } };
+  const f = mkTasks({
+    getPersistence: () => ({ list: () => Object.values(records), get: (n) => records[n] || null }),
+    getNotifications: () => ({ add: (rec) => { added.push(rec); return { id: 'nt', ...rec }; } }),
+  });
+  const stallMs = 30 * 60 * 1000;
+  f.team.watchdogMs = stallMs;
+  f.seat('lead');
+  const now = Date.now();
+  const attn = { kind: 'permission', ts: now - 31 * 60 * 1000, message: 'Bash: node scripts/x.js' };
+  const hand = f.seat('team-hand-1');
+  const solo = f.seat('solo');
+  orphanedTicket(f, { stallMs });
+  f.m._setAttention(hand, attn);
+  await f.m._sweepTickets(now);
+  f.m._setAttention(hand, { ...attn });
+  await f.m._sweepTickets(now + stallMs * 3);
+  f.m._setAttention(solo, { kind: 'permission', ts: now, message: 'Bash: ls' });
+  assert.ok(f.gated.length >= 1 && /waiting on a permission dialog/.test(f.gated[0].body), 'ENTER: the sweeps saw the dialog');
+  assert.deepStrictEqual(added, [{
+    from: 'clodex', workspaceId: null,
+    body: 'Seat team-hand-1 (ticket t1) is waiting on a permission dialog: Bash: node scripts/x.js. Allow or deny it in the attention view; it holds the ticket until you do.',
+  }]);
+});
