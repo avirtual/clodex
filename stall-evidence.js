@@ -226,7 +226,16 @@ function oneLineError(text) {
 // seat on "an API error was seen" would mostly burn a turn re-hitting the same
 // guard. The error text classifies itself in its own first words, so the lead
 // reads which class it is; nothing here decides.
-function formatStallBody({ ticketId, who, age, repeat = 0, tool = null, commits = null, dirty = null, dmLatch = null, wake = null, apiError = null }) {
+function formatStallBody({ ticketId, who, age, repeat = 0, tool = null, commits = null, dirty = null, dmLatch = null, wake = null, apiError = null, dialog = null }) {
+  if (dialog) {
+    const flat = String(dialog.message || '').replace(/\s+/g, ' ').trim();
+    const msg = flat.length > 120 ? `${flat.slice(0, 119)}…` : flat;
+    const lead = repeat > 0
+      ? `[ticket ${ticketId}] STILL stalled (repeat ${repeat}): ${who}`
+      : `[ticket ${ticketId}] stalled: ${who}`;
+    return `${lead} waiting on a permission dialog since ${dialog.age} — ${msg}. `
+      + 'Only the operator can answer it (Requests list in the attention view). Deny leaves the hand to report the refusal; a respec is yours if the command was wrong.';
+  }
   const head = repeat > 0
     ? `[ticket ${ticketId}] STILL stalled (repeat ${repeat}): ${who} quiet ${age}`
     : `[ticket ${ticketId}] stalled: ${who} quiet ${age}`;

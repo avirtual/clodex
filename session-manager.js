@@ -4986,6 +4986,25 @@ function createSessionManager(deps) {
       try { const remote = getRemoteServer && getRemoteServer(); if (remote) remote.notifyAttention(session.name, workspaceId, attn); } catch {}
       if (typeof scheduleTrayRefresh === 'function') scheduleTrayRefresh();
       if (!attn) this._maybeFlushInjectQueue(session);
+      if (attn && attn.kind === 'permission') this._notePermissionInbox(session, attn);
+    }
+
+    _notePermissionInbox(session, attn) {
+      try {
+        if (session._permInboxTs === attn.ts) return;
+        const rec = getPersistence && getPersistence().get(session.name);
+        const ticketId = rec && rec.ticketId;
+        if (!ticketId) return;
+        const store = getNotifications && getNotifications();
+        if (!store) return;
+        session._permInboxTs = attn.ts;
+        store.add({
+          from: 'clodex', workspaceId: session.workspaceId || null,
+          body: `Seat ${session.name} (ticket ${ticketId}) is waiting on a permission dialog: ${attn.message || '(no message)'}. Allow or deny it in the attention view; it holds the ticket until you do.`,
+        });
+      } catch (e) {
+        this._shadowLog({ type: 'permission-inbox-error', error: e.message });
+      }
     }
 
     _fireCompactContinuation(session) {

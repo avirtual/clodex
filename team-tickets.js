@@ -7556,6 +7556,9 @@ function createTicketMethods(deps, shared) {
               // wakeAge, not the raw field, so an earlier episode's wake is not reported as evidence.
               wake: wakeAge > 0 ? { age: humanizeAge(now - after.wakeAt) } : null,
               apiError: ev.apiError,
+              dialog: wakeSeat && wakeSeat.needsAttention && wakeSeat.needsAttention.kind === 'permission'
+                ? { message: wakeSeat.needsAttention.message, age: humanizeAge(now - wakeSeat.needsAttention.ts) }
+                : null,
             });
         }
         this._gatedDeliver(team.lead, 'ticket-watchdog',

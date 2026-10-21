@@ -945,3 +945,35 @@ test('t389: the ORPHAN alarm never grows a cause clause', () => {
   const body = formatOrphanBody({ ticketId: 't1', who: 'hand', age: '1h', commits: 2, dirty: true, apiError: { text: E529 } });
   assert.ok(!/API error/.test(body), 'an unknown extra field is ignored, not rendered');
 });
+
+test('t1908: a permission dialog replaces the quiet head and the verdict with the operator sentence', () => {
+  const body = formatStallBody({
+    ticketId: 't1', who: 'hand', age: '31m',
+    tool: { tool: 'Bash', outcome: 'pending' }, commits: 0, dirty: false,
+    dialog: { message: 'Bash: node scripts/x.js', age: '31m' },
+  });
+  assert.strictEqual(body,
+    '[ticket t1] stalled: hand waiting on a permission dialog since 31m — Bash: node scripts/x.js. '
+    + 'Only the operator can answer it (Requests list in the attention view). Deny leaves the hand to report the refusal; a respec is yours if the command was wrong.');
+  assert.ok(!/wedged|quiet/.test(body), 'the pending-tool verdict is gone');
+});
+
+test('t1908: dialog null leaves the evidence body byte-identical', () => {
+  const body = formatStallBody({
+    ticketId: 't1', who: 'hand', age: '31m',
+    tool: { tool: 'Bash', outcome: 'pending' }, commits: 0, dirty: false, dialog: null,
+  });
+  assert.strictEqual(body, '[ticket t1] stalled: hand quiet 31m (last tool Bash never returned, no commits, tree clean) — wedged mid-call, or a legitimately slow one');
+});
+
+test('t1908: the dialog form keeps the repeat head, flattens newlines and cuts a long message to 120', () => {
+  const long = 'Bash: ' + 'x'.repeat(194);
+  const body = formatStallBody({ ticketId: 't1', who: 'hand', age: '1h', repeat: 2, dialog: { message: long, age: '1h' } });
+  assert.ok(body.startsWith('[ticket t1] STILL stalled (repeat 2): hand waiting on a permission dialog since 1h — '), body);
+  const msg = body.split(' — ')[1].split('. Only')[0];
+  assert.strictEqual(msg.length, 120);
+  assert.ok(msg.endsWith('…'));
+  const multi = formatStallBody({ ticketId: 't1', who: 'hand', age: '1h', dialog: { message: 'Bash:\n  ls\n-la', age: '1h' } });
+  assert.ok(multi.includes('— Bash: ls -la. Only the operator can answer'), multi);
+  assert.ok(!multi.includes('\n'));
+});
