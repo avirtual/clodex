@@ -7560,7 +7560,6 @@ function createTicketMethods(deps, shared) {
                 ? { message: wakeSeat.needsAttention.message, age: humanizeAge(now - wakeSeat.needsAttention.ts) }
                 : null,
               compacting: wakeSeat && wakeSeat.compacting ? { age: humanizeAge(now - wakeSeat.compacting.since) } : null,
-              ptyDead: !!(wakeSeat && wakeSeat._dead),
             });
         }
         this._gatedDeliver(team.lead, 'ticket-watchdog',

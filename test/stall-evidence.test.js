@@ -984,6 +984,7 @@ test('t1911: a compacting seat names the compaction and its age', () => {
 test('t1911: a pending Agent call names a running harness subagent', () => {
   assert.strictEqual(t1911({ tool: { tool: 'Agent', outcome: 'pending' } }),
     '[ticket t1] stalled: hand quiet 31m (last tool Agent never returned, no commits, tree clean) — a harness subagent is still running; this is not a wedge unless it outlives the task.');
+  assert.match(t1911({ tool: { tool: 'Task', outcome: 'pending' } }), /last tool Task never returned, no commits, tree clean\) — a harness subagent is still running/);
 });
 
 test('t1911: precedence is ptyDead, then compacting, then Agent', () => {

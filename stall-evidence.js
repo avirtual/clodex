@@ -269,7 +269,7 @@ function formatStallBody({ ticketId, who, age, repeat = 0, tool = null, commits 
   if (tool && tool.outcome === 'pending') {
     if (ptyDead) verdict = ' — its CLI process has exited; the pending call will never return. Respawn the seat onto the same ticket.';
     else if (compacting) verdict = ` — compacting for ${compacting.age}; the call resumes when the summary lands. Wait one more interval before acting.`;
-    else if (tool.tool === 'Agent') verdict = ' — a harness subagent is still running; this is not a wedge unless it outlives the task.';
+    else if (tool.tool === 'Agent' || tool.tool === 'Task') verdict = ' — a harness subagent is still running; this is not a wedge unless it outlives the task.';
     else verdict = ' — wedged mid-call, or a legitimately slow one';
   }
   else if (tool && tool.outcome === 'error') verdict = ' — the last call failed; a killed turn looks like this';
