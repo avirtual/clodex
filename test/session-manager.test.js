@@ -23385,7 +23385,7 @@ test('t1912 watchdog: a stalled seat with parked dms counts them in the alarm', 
   f.m._stallEvidence = async () => ({ tool: { tool: 'Bash', outcome: 'pending' }, commits: 0, dirty: false, apiError: null });
   await f.m._sweepTickets(now);
   assert.strictEqual(f.gated.length, 1, 'ENTER: exactly one alarm to inspect');
-  assert.match(f.gated[0].body, / — 2 dms parked for it, undelivered until its next turn: deliver one urgent \(\[agent:dm hand urgent\]\)/);
+  assert.match(f.gated[0].body, / — 2 dms parked for it, undelivered until its next turn: deliver one urgent \(\[agent:dm team-hand-1 urgent\]\)/);
 });
 
 test('t1908 inbox: one note per permission dialog on a ticket seat, none on a seat with no ticket', async () => {

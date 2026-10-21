@@ -7592,6 +7592,7 @@ function createTicketMethods(deps, shared) {
                 : null,
               compacting: wakeSeat && wakeSeat.compacting ? { age: humanizeAge(now - wakeSeat.compacting.since) } : null,
               parkedDms: seatNow ? this.pendingCountFor(seatNow) : null,
+              seat: seatNow || null,
             });
         }
         this._gatedDeliver(team.lead, 'ticket-watchdog',

@@ -1004,6 +1004,7 @@ test('t1912: parked dms are counted after the verdict, singular and plural', () 
   assert.strictEqual(t1911({ parkedDms: 3 }),
     `${T1911_HEAD} — wedged mid-call, or a legitimately slow one — 3 dms parked for it, undelivered until its next turn: deliver one urgent ([agent:dm hand urgent]) before reading this as a wedge`);
   assert.match(t1911({ parkedDms: 1 }), / — 1 dm parked for it, undelivered until its next turn/);
+  assert.match(t1911({ parkedDms: 1, seat: 'team-hand-1' }), /\[agent:dm team-hand-1 urgent\]/);
 });
 
 test('t1912: parkedDms 0 and null leave the body byte-identical', () => {

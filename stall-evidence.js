@@ -226,7 +226,7 @@ function oneLineError(text) {
 // seat on "an API error was seen" would mostly burn a turn re-hitting the same
 // guard. The error text classifies itself in its own first words, so the lead
 // reads which class it is; nothing here decides.
-function formatStallBody({ ticketId, who, age, repeat = 0, tool = null, commits = null, dirty = null, dmLatch = null, wake = null, apiError = null, dialog = null, compacting = null, parkedDms = null }) {
+function formatStallBody({ ticketId, who, age, repeat = 0, tool = null, commits = null, dirty = null, dmLatch = null, wake = null, apiError = null, dialog = null, compacting = null, parkedDms = null, seat = null }) {
   if (dialog) {
     const flat = String(dialog.message || '').replace(/\s+/g, ' ').trim();
     const msg = flat.length > 120 ? `${flat.slice(0, 119)}…` : flat;
@@ -259,7 +259,7 @@ function formatStallBody({ ticketId, who, age, repeat = 0, tool = null, commits 
   // changes what an unanswered wake means.
   const woke = wake ? ` — an automated wake was injected ${wake.age} ago and produced no turn` : '';
   const parked = parkedDms > 0
-    ? ` — ${parkedDms} dm${parkedDms === 1 ? '' : 's'} parked for it, undelivered until its next turn: deliver one urgent ([agent:dm ${who} urgent]) before reading this as a wedge`
+    ? ` — ${parkedDms} dm${parkedDms === 1 ? '' : 's'} parked for it, undelivered until its next turn: deliver one urgent ([agent:dm ${seat || who} urgent]) before reading this as a wedge`
     : '';
   const stopped = apiError && apiError.text
     ? ` — its transcript ends on an API error: "${oneLineError(apiError.text)}"`
