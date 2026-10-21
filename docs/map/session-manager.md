@@ -39,7 +39,7 @@
 | `missingToolOnExit` | names the missing binary when an exit looks like node-pty's silent execvp failure (unexpected code 1, no signal, within 5s) | none (pure) | none | diag-tools.test.js |
 | `nameConflict` | live, persisted or null for a name being minted at the spawn front door | none (pure) | none | session-manager.test.js ipc-handlers-team.test.js |
 | `deniedBodyDisposition` | spill, note or none for the body of an intent the gate refused, with the label used in the report | none (pure) | none | session-manager.test.js |
-| `findPeerByOrigin` | the peer record whose label, then id, then host matches a DM origin case-insensitively | none (pure) | none | relay-roster-intake.test.js session-manager.test.js |
+| `findPeerByOrigin` | the peer advertised under a DM origin (`peerOriginSuffix`), else the one whose label, then id, then host matches, case-insensitively | none (pure) | relay-protocol.peerOriginSuffix | relay-roster-intake.test.js session-manager.test.js |
 | `seatRelFiles` | a name-sorted list of relative regular-file paths under a seat dir, the file list for a move-to-peer shipment | none (reads fs) | none | unpinned |
 
 ### Invariants
@@ -54,7 +54,6 @@
 
 - `reapPtyDescendants` must run while the pty is still alive, because after it exits its children reparent, `ptyOwnership` reports gone and nothing is reaped.
 - `isStaleRegistration` returns true for any own-pid record although its comment scopes that clause to a session this process is not running, so a new caller passing a live seat's agent.json would force-clean a running registration.
-- `findPeerByOrigin` looks up label, id, host while `peerOriginSuffix` emits label, host, id, so a peer whose suffix is a shared host (tunnelled peers on 127.0.0.1) resolves to the first peer with that host.
 - `seatRelFiles` skips unreadable dirs and symlinks without a word, so a move-to-peer shipment silently omits them.
 
 ## createSessionManager factory, constructor and the wire runtime — createSessionManager … _onHoldLifecycle
