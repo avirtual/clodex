@@ -23312,6 +23312,65 @@ test('t1911 watchdog: a compacting seat with a pending call alarms as compacting
   assert.match(f.gated[0].body, /compacting for 4m/);
 });
 
+function t1912CapParked(f, stallMs, now, props = {}) {
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+  const arr = f.load();
+  Object.assign(arr[0], { state: 'open', parked: true, parkedBy: 'cap', parkedCap: '2/2', lastActivityAt: now - stallMs - 1, nudgedAt: null }, props);
+  f.tstore.save(f.team.root, arr);
+  f.gated.length = 0;
+}
+
+test('t1912 watchdog: a cap-parked ticket past the stall interval alarms the lead once', async () => {
+  const f = mkTasks();
+  const stallMs = 30 * 60 * 1000;
+  f.team.watchdogMs = stallMs;
+  const now = Date.now();
+  t1912CapParked(f, stallMs, now);
+  await f.m._sweepTickets(now);
+  assert.strictEqual(f.gated.length, 1, 'ENTER: exactly one alarm to inspect');
+  assert.strictEqual(f.gated[0].target, 'lead');
+  assert.strictEqual(f.gated[0].sender, 'ticket-watchdog');
+  assert.strictEqual(f.gated[0].body,
+    '[ticket t1] parked by the hand cap for 30m (2/2): no hand has retired since. Retire a finished hand, raise the cap ([agent:team hands 3]), or park it on purpose ([agent:task park t1]).');
+  await f.m._sweepTickets(now + 60e3);
+  assert.strictEqual(f.gated.length, 1, 'a second sweep is silent');
+  const arr = f.load();
+  arr[0].lastActivityAt = now + 60e3 - stallMs - 1;
+  arr[0].nudgedAt = null;
+  f.tstore.save(f.team.root, arr);
+  await f.m._sweepTickets(now + 60e3);
+  assert.strictEqual(f.gated.length, 2, 'a re-park re-arms the alarm');
+});
+
+test('t1912 watchdog: a lead-parked ticket stays exempt', async () => {
+  const f = mkTasks();
+  const stallMs = 30 * 60 * 1000;
+  f.team.watchdogMs = stallMs;
+  const now = Date.now();
+  t1912CapParked(f, stallMs, now, { parkedBy: undefined });
+  assert.strictEqual(f.one('t1').parkedBy, undefined, 'ENTER: the fixture has no parkedBy');
+  assert.strictEqual(f.one('t1').parked, true, 'ENTER: the fixture is parked');
+  await f.m._sweepTickets(now);
+  assert.strictEqual(f.gated.length, 0);
+});
+
+test('t1912 watchdog: a stalled seat with parked dms counts them in the alarm', async () => {
+  const dir = mkTmpRoot('clodex-pend-');
+  const f = mkTasks({ PENDING_DIR: dir });
+  const stallMs = 30 * 60 * 1000;
+  f.team.watchdogMs = stallMs;
+  f.seat('lead');
+  const now = Date.now();
+  f.seat('team-hand-1');
+  orphanedTicket(f, { stallMs });
+  parkDelivery(dir, 'team-hand-1', '[agent:from x] one', '1');
+  parkDelivery(dir, 'team-hand-1', '[agent:from x] two', '2');
+  f.m._stallEvidence = async () => ({ tool: { tool: 'Bash', outcome: 'pending' }, commits: 0, dirty: false, apiError: null });
+  await f.m._sweepTickets(now);
+  assert.strictEqual(f.gated.length, 1, 'ENTER: exactly one alarm to inspect');
+  assert.match(f.gated[0].body, / — 2 dms parked for it, undelivered until its next turn: deliver one urgent \(\[agent:dm hand urgent\]\)/);
+});
+
 test('t1908 inbox: one note per permission dialog on a ticket seat, none on a seat with no ticket', async () => {
   const added = [];
   const records = { 'team-hand-1': { name: 'team-hand-1', ticketId: 't1' }, solo: { name: 'solo' } };

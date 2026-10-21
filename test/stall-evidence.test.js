@@ -971,11 +971,6 @@ const t1911 = (extra) => formatStallBody({
   ticketId: 't1', who: 'hand', age: '31m', tool: { tool: 'Bash', outcome: 'pending' }, commits: 0, dirty: false, ...extra,
 });
 
-test('t1911: a dead pty names the respawn, not a wedge', () => {
-  assert.strictEqual(t1911({ ptyDead: true }),
-    `${T1911_HEAD} — its CLI process has exited; the pending call will never return. Respawn the seat onto the same ticket.`);
-});
-
 test('t1911: a compacting seat names the compaction and its age', () => {
   assert.strictEqual(t1911({ compacting: { age: '4m' } }),
     `${T1911_HEAD} — compacting for 4m; the call resumes when the summary lands. Wait one more interval before acting.`);
@@ -987,24 +982,39 @@ test('t1911: a pending Agent call names a running harness subagent', () => {
   assert.match(t1911({ tool: { tool: 'Task', outcome: 'pending' } }), /last tool Task never returned, no commits, tree clean\) — a harness subagent is still running/);
 });
 
-test('t1911: precedence is ptyDead, then compacting, then Agent', () => {
-  assert.match(t1911({ ptyDead: true, compacting: { age: '4m' } }), /CLI process has exited/);
-  assert.ok(!/compacting/.test(t1911({ ptyDead: true, compacting: { age: '4m' } })));
+test('t1911: compacting takes precedence over a pending Agent call', () => {
   const agentCompacting = t1911({ tool: { tool: 'Agent', outcome: 'pending' }, compacting: { age: '4m' } });
   assert.match(agentCompacting, /compacting for 4m/);
   assert.ok(!/subagent/.test(agentCompacting));
 });
 
 test('t1911: null/false fields leave the wedged body byte-identical', () => {
-  assert.strictEqual(t1911({ compacting: null, ptyDead: false }),
+  assert.strictEqual(t1911({ compacting: null }),
     `${T1911_HEAD} — wedged mid-call, or a legitimately slow one`);
 });
 
-test('t1911: the dialog branch still wins over a dead pty', () => {
-  const body = t1911({ ptyDead: true, compacting: { age: '4m' }, dialog: { message: 'Bash: node scripts/x.js', age: '31m' } });
+test('t1911: the dialog branch still wins over compacting', () => {
+  const body = t1911({ compacting: { age: '4m' }, dialog: { message: 'Bash: node scripts/x.js', age: '31m' } });
   assert.strictEqual(body,
     '[ticket t1] stalled: hand waiting on a permission dialog since 31m — Bash: node scripts/x.js. '
     + 'Only the operator can answer it (Requests list in the attention view). Deny leaves the hand to report the refusal; a respec is yours if the command was wrong.');
+});
+
+test('t1912: parked dms are counted after the verdict, singular and plural', () => {
+  assert.strictEqual(t1911({ parkedDms: 3 }),
+    `${T1911_HEAD} — wedged mid-call, or a legitimately slow one — 3 dms parked for it, undelivered until its next turn: deliver one urgent ([agent:dm hand urgent]) before reading this as a wedge`);
+  assert.match(t1911({ parkedDms: 1 }), / — 1 dm parked for it, undelivered until its next turn/);
+});
+
+test('t1912: parkedDms 0 and null leave the body byte-identical', () => {
+  const plain = `${T1911_HEAD} — wedged mid-call, or a legitimately slow one`;
+  assert.strictEqual(t1911({ parkedDms: 0 }), plain);
+  assert.strictEqual(t1911({ parkedDms: null }), plain);
+});
+
+test('t1912: the bare head carries the parked-dm count too', () => {
+  assert.strictEqual(formatStallBody({ ticketId: 't1', who: 'hand', age: '31m', parkedDms: 2 }),
+    '[ticket t1] stalled: hand quiet 31m — 2 dms parked for it, undelivered until its next turn: deliver one urgent ([agent:dm hand urgent]) before reading this as a wedge');
 });
 
 test('t1908: the dialog form keeps the repeat head, flattens newlines and cuts a long message to 120', () => {

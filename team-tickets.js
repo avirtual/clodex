@@ -7427,6 +7427,29 @@ function createTicketMethods(deps, shared) {
       }
     },
 
+    _alarmCapParked(team, t, now, stallMs) {
+      const last = t.lastActivityAt || t.openedAt || now;
+      if (now - last < stallMs) return;
+      if (t.nudgedAt && t.nudgedAt >= last) return;
+      const tid = t.id;
+      const seenAt = t.lastActivityAt || null;
+      const capN = Number(String(t.parkedCap || '').split('/')[1]);
+      const more = Number.isFinite(capN) && capN > 0 ? capN + 1 : '<n>';
+      const body = `[ticket ${tid}] parked by the hand cap for ${humanizeAge(now - last)} (${t.parkedCap || 'cap'}): no hand has retired since. `
+        + `Retire a finished hand, raise the cap ([agent:team hands ${more}]), or park it on purpose ([agent:task park ${tid}]).`;
+      this._gatedDeliver(team.lead, 'ticket-watchdog', body, false, '', () => {
+        try {
+          const fresh = ticketsStore.load(team.root);
+          const rec = fresh.find((x) => x.id === tid);
+          if (!rec || !rec.parked || rec.parkedBy !== 'cap') return;
+          if ((rec.lastActivityAt || null) !== seenAt) return;
+          rec.nudgedAt = now;
+          recordEvent(rec, { at: now, kind: 'nudge', by: 'ticket-loop' });
+          ticketsStore.save(team.root, fresh);
+        } catch (e) { log.error('ticket', `cap-parked nudge stamp for ${tid} failed: ${e.message}`); }
+      });
+    },
+
     async _sweepTeamTickets(team, now) {
       const stallMs = (typeof team.watchdogMs === 'number' && team.watchdogMs > 0) ? team.watchdogMs : TICKET_STALL_MS;
       const tickets = ticketsStore.load(team.root);
@@ -7440,6 +7463,10 @@ function createTicketMethods(deps, shared) {
       // otherwise re-walk the run directory.
       const live = this._teamLiveSeatNames(team.root);
       for (const t of tickets) {
+        if (t.state === 'open' && t.parked && t.parkedBy === 'cap') {
+          this._alarmCapParked(team, t, now, stallMs);
+          continue;
+        }
         if (!ticketInFlight(t) || t.assignee == null || !ticketStarted(t) || t.parked) continue;
         const last = t.lastActivityAt || t.openedAt || now;
         if (now - last < stallMs) continue;
@@ -7560,6 +7587,7 @@ function createTicketMethods(deps, shared) {
                 ? { message: wakeSeat.needsAttention.message, age: humanizeAge(now - wakeSeat.needsAttention.ts) }
                 : null,
               compacting: wakeSeat && wakeSeat.compacting ? { age: humanizeAge(now - wakeSeat.compacting.since) } : null,
+              parkedDms: seatNow ? this.pendingCountFor(seatNow) : null,
             });
         }
         this._gatedDeliver(team.lead, 'ticket-watchdog',
