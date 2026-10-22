@@ -56,9 +56,20 @@ role has no `lead.template` line and reaches `clodex-team-lead` by default. Want
 another shape: set `lead.template` in the app's team editor, or pass an explicit
 `template:` on the spawn, which always wins.
 
-A seat binds to a role by its NAME — `<team>-<role>`, or the team's `lead` — and
-the template is a shape, not a binding: spawning `helm-hand` on the `hand`
-template leaves it off the roster, and the spawn reply says so.
+A seat's team and role are a row in the team's `roster.json`. The loop writes the
+row for every seat it mints, `team create` and `set-lead` write the lead's, and a
+spawn by name — `<team>-<role>`, or the team's `lead` — writes one when the
+spawner is on that team or the root's team is unique. The template is a shape,
+not a binding: spawning `helm-hand` on the `hand` template binds no role, and the
+spawn reply says so. A lead adopts an existing seat with
+`[agent:team bind <seat> <role>]`; that needs the operator's team-create grant on
+the lead, and binding never changes the seat's exec grants, template or
+credentials — it adds a row. `[agent:team unbind <seat>]` drops the row (refused
+for the lead and for a seat holding an open ticket), and `[agent:team roster]`
+lists the rows and any quarantined file. A seat is on one roster at a time: a
+bind refuses a seat another team holds, naming that team and role. A malformed
+`roster.json`, or a row naming a role team.json no longer has, is renamed
+`roster.json.bad-<ts>` and every seat it named is on no team until bound again.
 
 With that file alone you have a working loop: the lead writes a ticket with
 `[agent:task add hand] <spec>`, `[agent:task start <id>]` mints a branch and a
@@ -79,6 +90,7 @@ Everything below is what you add so that loop is *productive* on your code.
 ```
 ~/.clodex/teams/<name>/
   team.json                 lead, root, roles
+  roster.json               which seats are on the team, and as what role
   prompts/system/<stem>.md  role prompts the team owns
   prompts/append/<stem>.md  project knowledge the team owns
   templates/<stem>.json     seat templates the team owns
@@ -787,6 +799,15 @@ down when the hand left does not strand it. A ticket the
 lead parked with `task park` is never auto-started. `[agent:team hands <n|off>]`
 (lead only) sets it and starts any cap-parked tickets the new value allows; bare
 `[agent:team hands]` shows the effective value and its source.
+
+Five things here are deliberate simplifications, not gaps. `lead` and `reviewer` are reserved role keys
+(team-manifest.js RESERVED_ROLE_KEYS): the dispatch and verdict protocol is keyed on them, so they cannot be renamed.
+The cold reviewer is spawned by the loop, never by hand: a hand-spawned one has no tools cap and its verdict lands
+nowhere. The board is keyed to the project, not the team: two teams on one root share one backlog, and a row's `team`
+says who dispatches it. The hand cap counts ephemeral one-shot seats only; it is worker concurrency, not WIP — a
+standing seat with ten tickets is one seat. A session belongs to at most one team's roster; a seat that serves two
+teams is messaging, not matrix membership. The roster (`roster.json`) is the membership record; the root is where the
+team works by default, and a seat keeps its row when it moves.
 
 A ticket whose seat stays quiet past the team's watchdog interval alarms the lead as `stalled: <who> quiet <age>` with the seat's evidence; a seat held by a permission dialog is reported instead as `waiting on a permission dialog since <age> — <message>`, naming the operator as the only one who can answer, and the operator inbox gets one note per dialog on a ticket seat; a pending call on a seat that is compacting or running a harness subagent is named as that class instead of `wedged mid-call, or a legitimately slow one`; a ticket parked by the hand cap past the interval alarms the lead once as `parked by the hand cap for <age>`.
 

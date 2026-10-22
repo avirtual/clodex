@@ -771,12 +771,13 @@ const { parkDelivery, drainPending, hasPending, hasActivePending, countPending, 
 const { createTeamDelete } = require('./team-delete');
 const { createTeamManifest } = require('./team-manifest');
 const {
-  findProjectRoot, resolveTeam, createTeam, addRole, listTeams, loadManifest,
+  findProjectRoot, resolveTeam, teamOf, teamsOfCwd, bindSeat, unbindSeat, renameSeatRow, rosterOf, pruneStaleRows, synthesiseRosters, setSeatLookup,
+  createTeam, addRole, listTeams, loadManifest,
   setRole, removeRole, renameRole, setTeamWatchdog, setLead, setTeamTrunk, setTeamWorktrees, setTeamMaxHands, teamsDir, deleteTeam,
   kitCatalog, resolveKit,
   // clodexHome is passed, not defaulted: defaultClodexHome reads CLODEX_HOME and
   // would put teams on a different tree than every other subsystem.
-} = createTeamManifest({ fs, clodexHome: REGISTRY_DIR });
+} = createTeamManifest({ fs, clodexHome: REGISTRY_DIR, log });
 const { enqueueOutbox, claimOutbox, outboxKnowsOrigin, markOutboxOrigin, listOutboxOrigins } = require('./peer-outbox');
 const { parseIntent, fencedLines, looksLikeIntent, shadowIntentKey } = require('./intent-scanner');
 const { intentEnabled } = require('./intent-catalog');
@@ -1157,6 +1158,13 @@ const SessionManager = createSessionManager({
     findProjectRoot,
     gitWorktree,
     resolveTeam,
+    teamOf,
+    teamsOfCwd,
+    bindSeat,
+    unbindSeat,
+    renameSeatRow,
+    rosterOf,
+    pruneStaleRows,
     createTeam,
     kitCatalog,
     resolveKit,
@@ -1563,7 +1571,7 @@ function readSessionArgs(name) {
     execCommands: Array.isArray(entry.execCommands) ? entry.execCommands : [],
     env: (entry.env && typeof entry.env === 'object') ? entry.env : {},
     agentCatalog: agentLibrary.listFor(sessionScopeCtx(name)),
-    team: (() => { try { const t = resolveTeam(entry.cwd); return t ? t.name : null; } catch { return null; } })(),
+    team: manager.teamNameOf(name, entry.cwd),
     stripLevel: stripLevelOf(entry),
     io: entry.io === 'stream' ? 'stream' : 'pty',
     effort: (typeof entry.effort === 'string' && entry.effort) ? entry.effort : null,
@@ -2133,6 +2141,8 @@ const toolCache = createToolCache({ whichBin });
   const accounts = createAccounts({ fs, path, os, clodexHome: REGISTRY_DIR });
 
   try { materializeExecScripts({ root: REGISTRY_DIR, srcDir: __dirname, log }); } catch {}
+  setSeatLookup({ record: (seat) => persistence.get(seat), live: (seat) => !!(manager && manager.sessions.has(seat)) });
+  try { synthesiseRosters(persistence.list()); } catch (e) { log.error('team', `roster synthesis failed: ${e.message}`); }
   try { materializeSeatVerb({ root: REGISTRY_DIR, srcDir: __dirname, log }); } catch {}
 
   proxyPoller.start();
@@ -2345,7 +2355,7 @@ const toolCache = createToolCache({ whichBin });
     listAllTemplates,
     listAllPrompts,
     resolveSystemPromptFile, readAppendBodies, readSystemPromptBody,
-    createTeam, addRole, resolveTeam, listTeams, loadManifest,
+    createTeam, addRole, resolveTeam, teamsOfCwd, listTeams, loadManifest,
     setRole, removeRole, renameRole, setTeamWatchdog, setLead, setTeamTrunk, gatherTeam, teamsDir,
     teamDeleteCheck, teamDeleteGated,
     CLAUDE_SKILLS, CLAUDE_SL_COMPONENTS, CLAUDE_TOOLS, CODEX_SL_COMPONENTS,

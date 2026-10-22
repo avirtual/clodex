@@ -633,6 +633,9 @@ function createSessionManager(deps) {
     findProjectRoot,
     gitWorktree,
     resolveTeam,
+    teamOf,
+    teamsOfCwd,
+    renameSeatRow,
     addRole,
     setRole,
     removeRole,
@@ -1405,7 +1408,7 @@ function createSessionManager(deps) {
       sent.add(key);
       const byLead = new Map();
       for (const s of seats) {
-        let team; try { team = resolveTeam(s.cwd); } catch { team = null; }
+        let team; try { team = this._teamOf(s); } catch { team = null; }
         if (!team || !team.lead) continue;
         if (!byLead.has(team.lead)) byLead.set(team.lead, []);
         byLead.get(team.lead).push(s.name);
@@ -3593,7 +3596,7 @@ function createSessionManager(deps) {
       if (entry.ephemeral) {
         return { ok: false, error: `${name} is an ephemeral seat minted by the ticket loop, which keys it by name — it cannot be renamed.` };
       }
-      const team = (() => { try { return resolveTeam(entry.cwd); } catch { return null; } })();
+      const team = (() => { try { return this._teamOf(entry); } catch { return null; } })();
       if (team) {
         let ids;
         try {
@@ -3626,7 +3629,7 @@ function createSessionManager(deps) {
             return {
               ok: false, kept: true,
               error: 'old process did not exit in time — session not renamed',
-              name, type: entry.type, cwd: entry.cwd, team: this.teamNameFor(entry.cwd),
+              name, type: entry.type, cwd: entry.cwd, team: this.teamNameOf(name, entry.cwd),
             };
           }
         }
@@ -3634,8 +3637,13 @@ function createSessionManager(deps) {
           return {
             ok: false, kept: true,
             error: `${newName} was taken while ${name} was stopping — session kept as ${name}; retry from the sidebar row, or forget it.`,
-            name, type: entry.type, cwd: entry.cwd, team: this.teamNameFor(entry.cwd),
+            name, type: entry.type, cwd: entry.cwd, team: this.teamNameOf(name, entry.cwd),
           };
+        }
+        if (typeof renameSeatRow === 'function') {
+          try { await renameSeatRow(name, newName); } catch (e) {
+            log.warn('session', `rename ${name} → ${newName}: roster row not moved (${e.message})`);
+          }
         }
         const sched = getRemindScheduler && getRemindScheduler();
         if (sched && typeof sched.renameAgent === 'function') {
@@ -3691,7 +3699,7 @@ function createSessionManager(deps) {
           return {
             ok: false, kept: true,
             error: `${err.message} — session kept as ${newName}; retry from the sidebar row, or forget it.`,
-            name: newName, type: entry.type, cwd: entry.cwd, team: this.teamNameFor(entry.cwd),
+            name: newName, type: entry.type, cwd: entry.cwd, team: this.teamNameOf(newName, entry.cwd),
           };
         }
         return {
@@ -3701,7 +3709,7 @@ function createSessionManager(deps) {
           cwd: entry.cwd,
           backend: (this.sessions.get(newName) || {}).backend || null,
           noWire: entry.noWire === true,
-          team: this.teamNameFor(entry.cwd),
+          team: this.teamNameOf(newName, entry.cwd),
         };
       } finally {
         this._movingNames.delete(name);
@@ -3737,11 +3745,11 @@ function createSessionManager(deps) {
             return {
               ok: false, kept: true,
               error: 'old process did not exit in time — session not moved',
-              type: entry.type, cwd: entry.cwd, team: this.teamNameFor(entry.cwd),
+              type: entry.type, cwd: entry.cwd, team: this.teamNameOf(name, entry.cwd),
             };
           }
         }
-        const teamChanged = this.teamNameFor(entry.cwd) !== this.teamNameFor(newCwd);
+        const teamChanged = this.teamNameOf(name, entry.cwd) !== this.teamNameOf(name, newCwd);
         const departing = s || {
           name,
           agentType: isAgentType(entry.type) ? entry.type : null,
@@ -3774,7 +3782,7 @@ function createSessionManager(deps) {
           return {
             ok: false, kept: true,
             error: `${err.message} — session kept; retry from the sidebar row, or forget it.`,
-            type: entry.type, cwd: newCwd, team: this.teamNameFor(newCwd),
+            type: entry.type, cwd: newCwd, team: this.teamNameOf(name, newCwd),
           };
         }
         if (teamChanged) {
@@ -3786,7 +3794,7 @@ function createSessionManager(deps) {
           cwd: newCwd,
           type: entry.type,
           backend: (this.sessions.get(name) || {}).backend || null,
-          team: this.teamNameFor(newCwd),
+          team: this.teamNameOf(name, newCwd),
         };
       } finally {
         this._movingNames.delete(name);
@@ -3948,7 +3956,7 @@ function createSessionManager(deps) {
             return {
               ok: false, kept: true,
               error: 'old process did not exit in time — session not moved',
-              type: entry.type, cwd: entry.cwd, team: this.teamNameFor(entry.cwd),
+              type: entry.type, cwd: entry.cwd, team: this.teamNameOf(name, entry.cwd),
             };
           }
         }
@@ -3984,7 +3992,7 @@ function createSessionManager(deps) {
           const movedTo = { peer: peerId, peerLabel, farCwd: destCwd, at: Date.now(), sessionId: entry.sessionId };
           getPersistence().upsert({ name, movedTo });
           getPersistence().setArchived(name, true);
-          if (this.teamNameFor(entry.cwd)) this._notifyComposition(departing, 'moved out');
+          if (this.teamNameOf(name, entry.cwd)) this._notifyComposition(departing, 'moved out');
           return {
             ok: true, name, peer: peerLabel, farCwd: destCwd,
             sessionId: entry.sessionId,
@@ -3998,7 +4006,7 @@ function createSessionManager(deps) {
             ok: false, kept: true, error: farError,
             installed: (out && out.installed) || null,
             peer: peerLabel,
-            type: entry.type, cwd: entry.cwd, team: this.teamNameFor(entry.cwd),
+            type: entry.type, cwd: entry.cwd, team: this.teamNameOf(name, entry.cwd),
           };
         }
         const workspaceId = entry.workspaceId || DEFAULT_WORKSPACE_ID;
@@ -4026,14 +4034,14 @@ function createSessionManager(deps) {
             ok: false, kept: true,
             error: `${err.message} — session kept; retry from the sidebar row, or forget it.`,
             installed: (out && out.installed) || null,
-            type: entry.type, cwd: entry.cwd, team: this.teamNameFor(entry.cwd),
+            type: entry.type, cwd: entry.cwd, team: this.teamNameOf(name, entry.cwd),
           };
         }
         return {
           ok: false, kept: true, respawned: true, error: farError,
           installed: (out && out.installed) || null,
           peer: peerLabel,
-          type: entry.type, cwd: entry.cwd, team: this.teamNameFor(entry.cwd),
+          type: entry.type, cwd: entry.cwd, team: this.teamNameOf(name, entry.cwd),
         };
       } catch (e) {
         if (stagingId) { try { await conn.importAbort(stagingId); } catch {} }
@@ -4065,7 +4073,7 @@ function createSessionManager(deps) {
       let missingPrompt = null;
       if (agentType) {
         try {
-          const team = resolveTeam(cwd);
+          const team = this._teamOf({ name, cwd });
           if (team) {
             resolvedTeam = team;
             teamName = team.name;
@@ -4160,38 +4168,61 @@ function createSessionManager(deps) {
       return null;
     }
 
-    teamNameFor(cwd) {
-      if (!cwd) return null;
-      try { const t = resolveTeam(cwd); return t ? t.name : null; } catch { return null; }
+    _teamOf(session) {
+      const name = session && session.name;
+      const cwd = session && session.cwd;
+      if (typeof teamOf === 'function') return teamOf({ name, cwd });
+      return cwd ? resolveTeam(cwd) : null;
+    }
+
+    _teamsOf(session) {
+      const cwd = session && session.cwd;
+      if (!cwd || typeof teamsOfCwd !== 'function') return [];
+      try { return teamsOfCwd(cwd); } catch { return []; }
+    }
+
+    teamNameOf(name, cwd) {
+      if (!cwd && !name) return null;
+      try { const t = this._teamOf({ name, cwd }); return t ? t.name : null; } catch { return null; }
+    }
+
+    teamNameFor(cwd, name = null) {
+      return this.teamNameOf(name, cwd);
     }
 
     // Sole board-key / live-seat scope derivation: team root unchanged, else the repo root.
     // Handlers must not reach for team.root or findProjectRoot; a solo and a team seat would split boards.
-    _projectRootFor(cwd) {
+    _projectRootFor(session) {
       let team = null;
-      try { team = resolveTeam(cwd); } catch { team = null; }
+      try { team = this._teamOf(session); } catch { team = null; }
       if (team) return team.root;
-      try { return findRepoRoot(cwd, { fs }); } catch { return null; }
+      try { return findRepoRoot(session && session.cwd, { fs }); } catch { return null; }
     }
 
     // A stand-in team as a value, not a second code path: roles null makes matchSeatRole and
     // _ticketDispatchMode bail, and lead is the sender so lead-only gates no-op.
     _soloContext(session) {
-      const root = this._projectRootFor(session && session.cwd);
+      const root = this._projectRootFor(session);
       if (!root) return null;
       return { name: path.basename(root), root, lead: session.name, roles: null, solo: true };
     }
 
     // Warmth label computed here: team-manifest is a pure leaf and warmth is a wire-layer
     // property, so it crosses as data.
-    _teamLiveSeats(teamRoot) {
+    _teamLiveSeats(team) {
       const seats = [];
       for (const s of this.sessions.values()) {
         if (!s.agentType || s._dead || s.clone) continue;
-        // `_projectRootFor`, not `findProjectRoot`: that answers null for a teamless seat and
-        // leaves a solo board with no live seats.
-        let root; try { root = this._projectRootFor(s.cwd); } catch { root = null; }
-        if (!root || root !== teamRoot) continue;
+        if (!team) continue;
+        if (team.solo) {
+          // `_projectRootFor`, not `findProjectRoot`: that answers null for a teamless seat and
+          // leaves a solo board with no live seats.
+          let root; try { root = this._projectRootFor(s); } catch { root = null; }
+          if (!root || root !== team.root) continue;
+        } else {
+          let t; try { t = this._teamOf(s); } catch { t = null; }
+          if (!t || t.name !== team.name) continue;
+        }
         let label = null;
         try {
           label = peerStatusLabel({
@@ -4207,8 +4238,8 @@ function createSessionManager(deps) {
       return seats;
     }
 
-    _teamLiveSeatNames(teamRoot) {
-      return this._teamLiveSeats(teamRoot).map((s) => s.name);
+    _teamLiveSeatNames(team) {
+      return this._teamLiveSeats(team).map((s) => s.name);
     }
 
     _seatGrants(name) {
@@ -4227,9 +4258,9 @@ function createSessionManager(deps) {
       if (s && s.cwd) cwd = s.cwd;
       else { try { const e = getPersistence().get(name); if (e) cwd = e.cwd; } catch { cwd = null; } }
       if (!cwd) return null;
-      let team; try { team = resolveTeam(cwd); } catch { return null; }
+      let team; try { team = this._teamOf({ name, cwd }); } catch { return null; }
       if (!team) return null;
-      return formatRoster(team, this._teamLiveSeats(team.root), { seat: name, grants: this._seatGrants(name), efforts: this._teamRoleEfforts(team), brief: this._isEphemeralSeat(name) });
+      return formatRoster(team, this._teamLiveSeats(team), { seat: name, grants: this._seatGrants(name), efforts: this._teamRoleEfforts(team), brief: this._isEphemeralSeat(name) });
     }
 
     _isEphemeralSeat(name) {
@@ -4306,7 +4337,7 @@ function createSessionManager(deps) {
     _injectRoster(session, team) {
       try {
         if (session.agentType === 'claude') {
-          this._deliverPassive(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root), { seat: session.name, grants: this._seatGrants(session.name), efforts: this._teamRoleEfforts(team), brief: this._isEphemeralSeat(session.name) }), 'dm');
+          this._deliverPassive(session.name, 'team', formatRoster(team, this._teamLiveSeats(team), { seat: session.name, grants: this._seatGrants(session.name), efforts: this._teamRoleEfforts(team), brief: this._isEphemeralSeat(session.name) }), 'dm');
           // The message is the first conversation's roster; the re-bake is what every conversation
           // after a context reset gets, since the message is discarded with the history.
           this._rebakeDigest(session.name);
@@ -4339,7 +4370,7 @@ function createSessionManager(deps) {
       if (team) {
         session._pendingRoster = null;
         try {
-          this._deliverMessage(session.name, 'team', formatRoster(team, this._teamLiveSeats(team.root), { seat: session.name, grants: this._seatGrants(session.name), efforts: this._teamRoleEfforts(team), brief: this._isEphemeralSeat(session.name) }), 'dm',
+          this._deliverMessage(session.name, 'team', formatRoster(team, this._teamLiveSeats(team), { seat: session.name, grants: this._seatGrants(session.name), efforts: this._teamRoleEfforts(team), brief: this._isEphemeralSeat(session.name) }), 'dm',
             '', () => this._markRosterSent(session));
         } catch (e) {
           log.error('inject', `roster flush failed for ${session.name}: ${e.message}`);
@@ -4351,7 +4382,7 @@ function createSessionManager(deps) {
     _notifyComposition(session, verb) {
       if (!session || !session.agentType || session.clone) return;
       let team;
-      try { team = resolveTeam(session.cwd); } catch { return; }
+      try { team = this._teamOf(session); } catch { return; }
       if (!team) return;
       const role = matchSeatRole(team, session.name);
       if (!role) return;
@@ -4359,8 +4390,8 @@ function createSessionManager(deps) {
       for (const s of this.sessions.values()) {
         if (!s.agentType || s._dead || s.name === session.name) continue;
         if (s._bootSettling) continue;   // booting codex seat: drop the delta, a miss is harmless
-        let root; try { root = findProjectRoot(s.cwd); } catch { root = null; }
-        if (!root || root !== team.root) continue;
+        let st; try { st = this._teamOf(s); } catch { st = null; }
+        if (!st || st.name !== team.name) continue;
         // Lead alone: a sibling restart is not actionable for other seats and only wakes a working
         // one; independent of whether the changed seat was ephemeral.
         if (s.name === team.lead) this._deliverPassive(s.name, 'team', body, 'dm');
@@ -4411,21 +4442,21 @@ function createSessionManager(deps) {
     }
 
     list() {
-      const teamByCwd = new Map();
-      const resolvedTeamFor = (cwd) => {
-        if (!cwd) return null;
-        if (teamByCwd.has(cwd)) return teamByCwd.get(cwd);
+      const teamBySeat = new Map();
+      const resolvedTeamFor = (s) => {
+        if (!s || !s.cwd) return null;
+        if (teamBySeat.has(s.name)) return teamBySeat.get(s.name);
         let t = null;
-        try { t = resolveTeam(cwd); } catch { t = null; }
-        teamByCwd.set(cwd, t);
+        try { t = this._teamOf(s); } catch { t = null; }
+        teamBySeat.set(s.name, t);
         return t;
       };
-      const teamFor = (cwd) => { const t = resolvedTeamFor(cwd); return t ? t.name : null; };
+      const teamFor = (s) => { const t = resolvedTeamFor(s); return t ? t.name : null; };
       const ticketsByRoot = new Map();
-      const liveByRoot = new Map();
+      const liveByTeam = new Map();
       const liveSeatsFor = (t) => {
-        if (!liveByRoot.has(t.root)) liveByRoot.set(t.root, this._teamLiveSeatNames(t.root));
-        return liveByRoot.get(t.root);
+        if (!liveByTeam.has(t.name)) liveByTeam.set(t.name, this._teamLiveSeatNames(t));
+        return liveByTeam.get(t.name);
       };
       // Sole place this row resolves a role: the renderer cannot recompute it, matchSeatRole strips
       // a review tail, guards with hasOwnProperty and short-circuits on the lead pointer.
@@ -4434,7 +4465,7 @@ function createSessionManager(deps) {
         if (roleByName.has(s.name)) return roleByName.get(s.name);
         let role = null;
         try {
-          const t = resolvedTeamFor(s.cwd);
+          const t = resolvedTeamFor(s);
           role = t ? matchSeatRole(t, s.name) : null;
         } catch { role = null; }
         roleByName.set(s.name, role);
@@ -4442,7 +4473,7 @@ function createSessionManager(deps) {
       };
       const openTicketFor = (s) => {
         try {
-          const t = resolvedTeamFor(s.cwd);
+          const t = resolvedTeamFor(s);
           if (!t || !t.root) return null;
           if (!ticketsByRoot.has(t.root)) ticketsByRoot.set(t.root, ticketsStore.load(t.root));
           const role = roleFor(s);
@@ -4469,7 +4500,7 @@ function createSessionManager(deps) {
         posture: postureOf(adapterFor(s.type), records.get(s.name)?.extraArgs || []),
         cwd: s.cwd,
         workspaceId: s.workspaceId,
-        team: teamFor(s.cwd),
+        team: teamFor(s),
         role: s.agentType ? roleFor(s) : null,
         ticket: s.agentType ? openTicketFor(s) : null,
         backend: s.backend || null,
@@ -6490,7 +6521,7 @@ function createSessionManager(deps) {
 
       if (parsed.ticket) {
         let team = null;
-        try { team = resolveTeam(session.cwd); } catch { team = null; }
+        try { team = this._teamOf(session); } catch { team = null; }
         if (!team) {
           const e = `no team here — a "for ${parsed.ticket}" binding needs a team board`;
           this.recordMisfire(session, 'bounce', intent, e);
@@ -6591,7 +6622,7 @@ function createSessionManager(deps) {
         return;
       }
       let team;
-      try { team = resolveTeam(session.cwd); } catch { team = null; }
+      try { team = this._teamOf(session); } catch { team = null; }
       let entry = readTeamJson({ fs, path }, team, 'exec', cmd);
       if (!entry) {
         const entryPath = path.join(REGISTRY_DIR, 'library', 'exec', `${cmd}.json`);
@@ -7476,13 +7507,13 @@ function createSessionManager(deps) {
     _resumeSnapshot(session, now = Date.now()) {
       const head = [`State at resume (generated by Clodex, ${new Date(now).toISOString()}; not the author's words):`];
       let root = null;
-      try { root = this._projectRootFor(session && session.cwd); } catch { root = null; }
+      try { root = this._projectRootFor(session); } catch { root = null; }
       let log = null;
       try {
         if (root && gitWorktree && typeof gitWorktree.headLogSync === 'function') log = gitWorktree.headLogSync(root);
       } catch { log = null; }
       let team = null;
-      try { team = resolveTeam(session && session.cwd); } catch { team = null; }
+      try { team = this._teamOf(session); } catch { team = null; }
       let seatTicket = null;
       if (team) {
         try {
@@ -7499,7 +7530,7 @@ function createSessionManager(deps) {
       let board = '';
       if (team) {
         const role = matchSeatRole(team, session.name) || 'none';
-        const seats = this._teamLiveSeats(team.root)
+        const seats = this._teamLiveSeats(team)
           .map((s) => `${s.name}${s.label ? ` (${s.label})` : ''}`);
         head.push(`team ${team.name}, role ${role}: ${seats.length ? seats.join(', ') : '(no live seats)'}`);
         try { board = this._taskListText(team, 'open', now) || ''; } catch { board = ''; }

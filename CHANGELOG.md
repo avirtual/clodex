@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Team membership is an explicit roster (`teams/<name>/roster.json`): the loop binds the seats it mints, a lead binds an existing seat with `[agent:team bind <seat> <role>]`, a seat is on one roster at a time, and a seat keeps its team when it moves. Existing teams get their roster synthesised from live seats at first launch.
+
 ## 5.132.0 — 2026-10-22
 
 - The browser UI can now send to a stream seat — composer, slash commands, control, permission answers, interrupt and draft — instead of every send bouncing with 'seat:send is local only'.
