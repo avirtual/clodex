@@ -395,7 +395,7 @@ test('t700: session-manager threads the seat\'s team into both def resolutions',
   assert.ok(/this\._resolveExecDefs\(recipe\.execCommands, team\)/.test(src),
     'and the rebake passes the team the refresh resolved — a rebake that dropped it '
     + 'would rewrite a live seat\'s prompt with the library\'s descriptions');
-  assert.ok(/let team;\s*\n\s*try \{ team = resolveTeam\(session\.cwd\); \} catch \{ team = null; \}\s*\n\s*let entry = readTeamJson\(\{ fs, path \}, team, 'exec', cmd\);/.test(src),
+  assert.ok(/let team;\s*\n\s*try \{ team = this\._teamOf\(session\); \} catch \{ team = null; \}\s*\n\s*let entry = readTeamJson\(\{ fs, path \}, team, 'exec', cmd\);/.test(src),
     'the runner resolves the team ONCE, above the def read, and the team def is what it reads first');
   assert.ok(/const teamRoot = \(team && team\.root\) \|\| '';/.test(src),
     'and ${TEAM_ROOT} is derived from that same resolution rather than a second one');
@@ -409,7 +409,7 @@ test('t700: team-tickets threads the seat\'s team into both template resolutions
     'and reads the team copy before the list');
   assert.ok(/: \(def && def\.template\),\s*\n\s*team,\s*\n\s*\);/.test(src),
     'resolveSeatShape hands it the team it already holds');
-  assert.ok(/try \{ spawnerTeam = resolveTeam\(spawner\.cwd\); \} catch \{ spawnerTeam = null; \}/.test(src),
+  assert.ok(/try \{ spawnerTeam = this\._teamOf\(spawner\); \} catch \{ spawnerTeam = null; \}/.test(src),
     'the spawn intent resolves the spawner\'s team once');
   assert.ok(/const own = readTeamJson\(\{ fs, path \}, spawnerTeam, 'templates', v\);/.test(src),
     'and tries it before the by-name list match');

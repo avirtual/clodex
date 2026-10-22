@@ -552,8 +552,7 @@ test('mkLoop injects every dep team-tickets.js reads', () => {
     // The team-metadata deps are optional in that same sense: createTeam,
     // kitCatalog and resolveKit are read only by _handleTeamCreate, setLead only
     // by _handleTeam's set-lead case, teamsDir and listTeams only by its four
-    // template/prompt file verbs, loadManifest only by the read-only
-    // teamActivity channel (t785), and no subject here drives any of them.
+    // template/prompt file verbs, and no subject here drives any of them.
     // refreshAppMenu is optional in a STRONGER sense — the call site guards on
     // typeof, because a headless host wires no Electron menu at all.
       // getSandboxManager is optional in that same sense: it is read only by
@@ -561,7 +560,7 @@ test('mkLoop injects every dep team-tickets.js reads', () => {
       // that DID inject one would have to fake docker to say anything. `fetch`
       // and getPeerManager ride with it for the same reason: their only reader is
       // that case, seeding the box's starting seats and naming its clodex version.
-    optional: ['ticketSuiteTimeoutMs', 'resolveSystemPromptFile', 'gatherTeam',
+    optional: ['ticketSuiteTimeoutMs', 'teamOf', 'teamOfSeat', 'teamsOfCwd', 'bindSeat', 'unbindSeat', 'rosterOf', 'pruneStaleRows', 'resolveSystemPromptFile', 'gatherTeam',
       'createTeam', 'kitCatalog', 'resolveKit', 'setLead', 'teamsDir', 'listTeams', 'loadManifest', 'refreshAppMenu',
         'getSandboxManager', 'getPeerManager', 'fetch'],
   });
@@ -4531,7 +4530,9 @@ test('t384 r2 MUST-FIX: another project\'s reviewer cannot suppress THIS board\'
   // not about a seat that failed to qualify for some other reason.
   assert.ok(f.m.sessions.get(name) && !f.m.sessions.get(name)._dead, 'ENTER: the other project\'s reviewer is live');
   assert.strictEqual(f.persistence.get(name).reviewTicket, 't1', 'ENTER: and it claims the same ticket id');
-  assert.notStrictEqual(f.m._projectRootFor(other.dir), f.team.root, 'ENTER: but it belongs to another project');
+  const otherRoot = f.m._projectRootFor(f.m.sessions.get(name));
+  assert.ok(otherRoot, 'ENTER: the foreign seat resolves to a project root at all');
+  assert.notStrictEqual(otherRoot, f.team.root, 'ENTER: but it belongs to another project');
   assert.deepStrictEqual(f.m._liveReviewSeatsFor(f.team, 't1'), [],
     'the resolver refuses it — this board has no reviewer seat');
 

@@ -9,6 +9,10 @@ const { badStem, TEAM_STEM_RE } = require('./team-prompt-dir');
 const { LISTING_KEYS } = require('./team-template-derive');
 
 const TEAM_FILE = 'team.json';
+const ROSTER_FILE = 'roster.json';
+const ROSTER_VERSION = 1;
+const ROSTER_BAD_PREFIX = `${ROSTER_FILE}.bad-`;
+const ROSTER_PRUNE_MIN_AGE_MS = 60 * 1000;
 const ROLE_RE = /^[a-zA-Z0-9._-]{1,32}$/;
 // A team name is BOTH a directory name AND the `<team>-` seat-name prefix, so it
 // must satisfy the session-name grammar (CLAUDE.md).
@@ -194,10 +198,25 @@ function effectiveHandCap({ maxHands, inBox, cpuMax, cpus } = {}) {
   return { cap, source: `box default (${vcpu} vCPU → ${cap})` };
 }
 
-function createTeamManifest({ fs, clodexHome } = {}) {
+function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now() } = {}) {
   const home = clodexHome || defaultClodexHome();
   const teamsDir = path.join(home, 'teams');
   const kitsDir = path.join(home, 'library', 'kits');
+  let seatLookup = null;
+  const loggedOnce = new Set();
+  const inferPending = new Set();
+  let rosterChain = Promise.resolve();
+  let staleSeen = new Set();
+
+  function logLine(level, msg, onceKey = null) {
+    if (onceKey) {
+      if (loggedOnce.has(onceKey)) return;
+      loggedOnce.add(onceKey);
+    }
+    if (log && typeof log[level] === 'function') log[level]('team', msg);
+    else if (level === 'error') console.error(msg);
+    else console.log(msg);
+  }
 
   function listKits() {
     let ents;
@@ -435,6 +454,10 @@ function createTeamManifest({ fs, clodexHome } = {}) {
   }
 
   function loadManifest(name) {
+    return loadManifestFull(name).team;
+  }
+
+  function loadManifestFull(name) {
     const file = path.join(teamsDir, name, TEAM_FILE);
     let raw;
     try {
@@ -561,7 +584,205 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     const trunk = normalizeTrunk(m.trunk);
     const worktrees = normalizeWorktrees(m.worktrees);
     const maxHands = m.maxHands === null ? null : (normalizeMaxHands(m.maxHands) || undefined);
-    return { name, root: path.resolve(root), sandboxed: m.sandboxed === true, lead, roles, kit, file, dir: path.dirname(file), watchdogMs, trunk, ...(worktrees ? { worktrees } : {}), ...(maxHands !== undefined ? { maxHands } : {}), version, droppedFields };
+    const rosterState = readRoster(name, roles, lead);
+    const team = { name, root: path.resolve(root), sandboxed: m.sandboxed === true, lead, roles, kit, file, dir: path.dirname(file), watchdogMs, trunk, ...(worktrees ? { worktrees } : {}), ...(maxHands !== undefined ? { maxHands } : {}), version, droppedFields, roster: rosterState.rows };
+    return { team, rosterState };
+  }
+
+  function rosterPath(teamName) {
+    return path.join(teamsDir, teamName, ROSTER_FILE);
+  }
+
+  function seatsNamedIn(text) {
+    const out = [];
+    const add = (x) => { if (typeof x === 'string' && NAME_RE.test(x) && !out.includes(x)) out.push(x); };
+    const src = String(text || '');
+    const re = /"seat"\s*:\s*"([^"\\]{1,64})"/g;
+    let m;
+    while ((m = re.exec(src))) add(m[1]);
+    let held = null;
+    try {
+      const obj = JSON.parse(src);
+      held = obj && obj.quarantine && Array.isArray(obj.quarantine.seats) ? obj.quarantine.seats : null;
+    } catch {}
+    if (held) held.forEach(add);
+    else {
+      const q = /"quarantine"\s*:\s*\{[^}]*?"seats"\s*:\s*\[([^\]]*)\]/.exec(src);
+      if (q) for (const n of q[1].matchAll(/"([^"\\]{1,64})"/g)) add(n[1]);
+    }
+    return out;
+  }
+
+  function parseRoster(text, roles) {
+    let obj;
+    try { obj = JSON.parse(text); } catch (err) { return { bad: `not valid JSON (${err.message})` }; }
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj) || !Array.isArray(obj.seats)) {
+      return { bad: 'not an object with a "seats" array' };
+    }
+    const rows = [];
+    for (const r of obj.seats) {
+      if (!r || typeof r !== 'object' || typeof r.seat !== 'string' || !NAME_RE.test(r.seat) || typeof r.role !== 'string') {
+        return { bad: `malformed row ${JSON.stringify(r)}` };
+      }
+      if (!Object.prototype.hasOwnProperty.call(roles, r.role)) {
+        return { bad: `seat ${r.seat} names role "${r.role}", which is not in team.roles` };
+      }
+      if (rows.some((x) => x.seat === r.seat)) return { bad: `seat ${r.seat} has two rows` };
+      rows.push({
+        seat: r.seat,
+        role: r.role,
+        gen: typeof r.gen === 'number' ? r.gen : null,
+        since: typeof r.since === 'number' ? r.since : 0,
+        by: typeof r.by === 'string' ? r.by : 'unknown',
+        ...(typeof r.ticket === 'string' && r.ticket ? { ticket: r.ticket } : {}),
+      });
+    }
+    const q = obj.quarantine;
+    if (q !== undefined && (!q || typeof q.file !== 'string' || !Array.isArray(q.seats) || !q.seats.every((x) => typeof x === 'string' && NAME_RE.test(x)))) {
+      return { bad: 'malformed "quarantine" record' };
+    }
+    const held = q ? q.seats.filter((x) => !rows.some((r) => r.seat === x)) : [];
+    return { rows, quarantine: held.length ? { file: q.file, seats: held } : null };
+  }
+
+  function quarantineFiles(teamName) {
+    let names = [];
+    try { names = fs.readdirSync(path.join(teamsDir, teamName)); } catch { return []; }
+    return names.filter((n) => n.startsWith(ROSTER_BAD_PREFIX)).sort();
+  }
+
+  function readRoster(teamName, roles, lead) {
+    const st = readRosterRaw(teamName, roles);
+    if (st.quarantine) {
+      const seats = st.quarantine.seats.filter((x) => x !== lead);
+      st.quarantine = seats.length ? { ...st.quarantine, seats } : null;
+    }
+    return st;
+  }
+
+  function readRosterRaw(teamName, roles) {
+    const file = rosterPath(teamName);
+    let text;
+    try {
+      text = fs.readFileSync(file, 'utf-8');
+    } catch {
+      const bad = quarantineFiles(teamName);
+      if (!bad.length) return { rows: [], quarantine: null, absent: true };
+      const badFile = path.join(teamsDir, teamName, bad[bad.length - 1]);
+      let badText = '';
+      try { badText = fs.readFileSync(badFile, 'utf-8'); } catch {}
+      return { rows: [], quarantine: { file: badFile, seats: seatsNamedIn(badText) }, absent: false };
+    }
+    const parsed = parseRoster(text, roles);
+    if (parsed.rows) return { rows: parsed.rows, quarantine: parsed.quarantine, absent: false };
+    const badFile = `${file}.bad-${now()}`;
+    let moved = true;
+    try { fs.renameSync(file, badFile); } catch { moved = false; }
+    const where = moved ? badFile : file;
+    logLine('error', `team "${teamName}": roster quarantined — ${parsed.bad}; ${moved ? `moved to ${badFile}` : `could not move ${file}`}; every seat it named is on no team until a lead binds it again`, moved ? null : `quarantine|${file}|${text.length}`);
+    return { rows: [], quarantine: { file: where, seats: seatsNamedIn(text) }, absent: false };
+  }
+
+  function rewriteRosterRows(teamName, fn) {
+    let obj;
+    try { obj = JSON.parse(fs.readFileSync(rosterPath(teamName), 'utf-8')); } catch { return; }
+    if (!obj || !Array.isArray(obj.seats)) return;
+    writeRoster(teamName, fn(obj.seats));
+  }
+
+  function heldQuarantine(teamName) {
+    try {
+      const obj = JSON.parse(fs.readFileSync(rosterPath(teamName), 'utf-8'));
+      return obj && obj.quarantine && Array.isArray(obj.quarantine.seats) ? obj.quarantine : null;
+    } catch {}
+    const bad = quarantineFiles(teamName);
+    if (!bad.length) return null;
+    const file = path.join(teamsDir, teamName, bad[bad.length - 1]);
+    let text = '';
+    try { text = fs.readFileSync(file, 'utf-8'); } catch {}
+    return { file, seats: seatsNamedIn(text) };
+  }
+
+  function leadOf(teamName) {
+    try { return JSON.parse(fs.readFileSync(path.join(teamsDir, teamName, TEAM_FILE), 'utf-8')).lead; } catch { return null; }
+  }
+
+  function writeRoster(teamName, rows, carried) {
+    const q = carried !== undefined ? carried : heldQuarantine(teamName);
+    const lead = leadOf(teamName);
+    const held = q ? q.seats.filter((x) => x !== lead && !rows.some((r) => r.seat === x)) : [];
+    atomicWrite(rosterPath(teamName), JSON.stringify({
+      version: ROSTER_VERSION, seats: rows, ...(held.length ? { quarantine: { file: q.file, seats: held } } : {}),
+    }, null, 2));
+  }
+
+  function setSeatLookup(lookup) {
+    seatLookup = lookup && typeof lookup.record === 'function' ? lookup : null;
+  }
+
+  function seatRecord(seat) {
+    if (!seatLookup) return undefined;
+    try { return seatLookup.record(seat) || null; } catch { return null; }
+  }
+
+  function genOf(seat) {
+    const rec = seatRecord(seat);
+    return rec && typeof rec.createdAt === 'number' ? rec.createdAt : null;
+  }
+
+  function seatExists(seat) {
+    if (!seatLookup) return true;
+    if (seatRecord(seat)) return true;
+    try { return !!(seatLookup.live && seatLookup.live(seat)); } catch { return false; }
+  }
+
+  function rowState(row) {
+    if (!seatLookup) return 'live';
+    const rec = seatRecord(row.seat);
+    if (rec) {
+      const gen = typeof rec.createdAt === 'number' ? rec.createdAt : null;
+      return (row.gen != null && gen != null && row.gen !== gen) ? 'replaced' : 'live';
+    }
+    let live = false;
+    try { live = !!(seatLookup.live && seatLookup.live(row.seat)); } catch { live = false; }
+    if (live || now() - row.since < ROSTER_PRUNE_MIN_AGE_MS) return 'live';
+    return 'stale';
+  }
+
+  function loadAll() {
+    const out = [];
+    for (const name of listTeams()) {
+      try { out.push(loadManifestFull(name)); } catch {}
+    }
+    return out;
+  }
+
+  function onChain(fn) {
+    const p = rosterChain.then(fn);
+    rosterChain = p.catch(() => {});
+    return p;
+  }
+
+  function seatClaim(seat, loaded) {
+    for (const { team } of loaded) {
+      if (team.lead === seat) return { team, row: team.roster.find((r) => r.seat === seat) || null, lead: true };
+    }
+    let quarantined = null;
+    for (const { team, rosterState } of loaded) {
+      const row = team.roster.find((r) => r.seat === seat);
+      if (!row) {
+        if (!quarantined && rosterState.quarantine && rosterState.quarantine.seats.includes(seat)) quarantined = team;
+        continue;
+      }
+      const st = rowState(row);
+      if (st === 'live') return { team, row };
+      if (st === 'replaced') {
+        logLine('info', `team ${team.name}: seat ${seat} was recreated (record ${genOf(seat)} ≠ row ${row.gen}) — on no team until a lead binds it again`, `replaced|${team.name}|${seat}|${genOf(seat)}`);
+        return { team: null, blocked: 'replaced', holder: team.name, row };
+      }
+    }
+    if (quarantined) return { team: null, blocked: 'quarantine', holder: quarantined.name };
+    return null;
   }
 
   function containsPath(root, cwd) {
@@ -673,25 +894,231 @@ function createTeamManifest({ fs, clodexHome } = {}) {
 
   // Deepest root wins: a containing pair is always ancestor/descendant, so the
   // longer resolved root is the descendant. One broken manifest must not throw.
-  function resolveTeam(cwd) {
-    if (!cwd) return null;
-    let best = null;
-    for (const name of listTeams()) {
-      let m;
-      try {
-        m = loadManifest(name);
-      } catch {
-        continue; // broken/invalid team — not a candidate
-      }
+  function cwdCandidates(cwd, loaded = loadAll()) {
+    if (!cwd) return [];
+    let best = [];
+    for (const { team: m } of loaded) {
       if (m.sandboxed) continue;
       if (!cwdInProject(cwd, m.root)) continue;
-      if (!best || m.root.length > best.root.length) best = m;
+      if (!best.length || m.root.length > best[0].root.length) best = [m];
+      else if (m.root.length === best[0].root.length) best.push(m);
     }
     return best;
   }
 
+  function teamOfCwd(cwd) {
+    const c = cwdCandidates(cwd);
+    return c.length === 1 ? c[0] : null;
+  }
+
+  function teamsOfCwd(cwd) {
+    return cwdCandidates(cwd).map((t) => t.name);
+  }
+
+  function teamOfSeat(seat) {
+    if (!seat) return null;
+    const claim = seatClaim(seat, loadAll());
+    return claim && claim.team ? claim.team : null;
+  }
+
+  function teamOf({ name, cwd } = {}) {
+    const loaded = loadAll();
+    if (name) {
+      const claim = seatClaim(name, loaded);
+      if (claim) {
+        const gen = claim.team ? genOf(name) : null;
+        if (claim.row && gen != null && (claim.row.gen == null || (claim.lead && claim.row.gen !== gen))) stampGen(claim.team.name, name);
+        return claim.team || null;
+      }
+    }
+    const cands = cwdCandidates(cwd, loaded);
+    if (cands.length !== 1) return null;
+    const team = cands[0];
+    if (name) inferSeat(team, name, loaded);
+    return team;
+  }
+
+  function inferSeat(team, seat, loaded) {
+    if (!seatLookup || inferPending.has(seat)) return;
+    const own = loaded.find((l) => l.team.name === team.name);
+    if (!own || own.rosterState.quarantine) return;
+    const role = nameRole(team, seat);
+    if (!role || !seatExists(seat)) return;
+    inferPending.add(seat);
+    bindSeat(team.name, seat, role, { by: 'inferred' })
+      .then((r) => { if (r && r.ok && !r.unchanged) logLine('info', `team ${team.name}: seat ${seat} inferred as ${role} from its name`); })
+      .catch(() => {})
+      .finally(() => inferPending.delete(seat));
+  }
+
+  function stampGen(teamName, seat) {
+    onChain(() => {
+      let team;
+      try { team = loadManifest(teamName); } catch { return; }
+      const gen = genOf(seat);
+      const row = team.roster.find((r) => r.seat === seat);
+      if (!row || gen == null || row.gen === gen || (row.gen != null && team.lead !== seat)) return;
+      writeRoster(teamName, team.roster.map((r) => (r.seat === seat ? { ...r, gen } : r)));
+    }).catch(() => {});
+  }
+
+  function liveHolder(seat, exceptTeam) {
+    for (const { team } of loadAll()) {
+      if (team.name === exceptTeam) continue;
+      if (team.lead === seat) return { team: team.name, role: 'lead' };
+      const row = team.roster.find((r) => r.seat === seat);
+      if (row && rowState(row) === 'live') return { team: team.name, role: row.role };
+    }
+    return null;
+  }
+
+  function bindNow(teamName, seat, role, { by = 'unknown', ticket = null, gen } = {}) {
+    if (typeof seat !== 'string' || !NAME_RE.test(seat)) return { ok: false, error: `seat name "${seat}" must match ${NAME_RE}` };
+    const loaded = loadAll();
+    const own = loaded.find((l) => l.team.name === teamName);
+    if (!own) return { ok: false, error: `no team "${teamName}"` };
+    if (!Object.prototype.hasOwnProperty.call(own.team.roles, role)) {
+      return { ok: false, error: `role "${role}" is not on team ${teamName} (roles: ${Object.keys(own.team.roles).join(', ')})` };
+    }
+    const mine = own.team.roster.find((r) => r.seat === seat);
+    if (by === 'inferred') {
+      if (own.rosterState.quarantine) return { ok: false, error: `team ${teamName}'s roster is quarantined (${own.rosterState.quarantine.file}) — a lead binds ${seat} with [agent:team bind ${seat} ${role}]` };
+      if (mine && rowState(mine) === 'live') return { ok: true, team: teamName, row: mine, unchanged: true };
+    }
+    const leads = loaded.find((l) => l.team.name !== teamName && l.team.lead === seat);
+    if (leads) return { ok: false, error: `${seat} is team ${leads.team.name}'s lead — set another lead there first`, holder: leads.team.name, role: 'lead' };
+    const drops = [];
+    for (const { team } of loaded) {
+      if (team.name === teamName) continue;
+      const held = team.roster.find((r) => r.seat === seat);
+      if (!held) continue;
+      const st = rowState(held);
+      if (st === 'live') return { ok: false, error: `${seat} is on team ${team.name}'s roster (role ${held.role}) — unbind it there first`, holder: team.name, role: held.role };
+      drops.push({ team, held, st });
+    }
+    for (const { team, held, st } of drops) {
+      writeRoster(team.name, team.roster.filter((r) => r.seat !== seat));
+      logLine('info', `team ${team.name}: ${st} row ${seat} (role ${held.role}) dropped — ${seat} now bound to ${teamName}`);
+    }
+    const prior = mine;
+    if (prior && rowState(prior) !== 'live') {
+      logLine('info', `team ${teamName}: ${rowState(prior)} row ${seat} (role ${prior.role}) overwritten by ${by}`);
+    }
+    const row = {
+      seat, role, gen: gen !== undefined ? gen : genOf(seat), since: now(), by,
+      ...(ticket ? { ticket } : {}),
+    };
+    writeRoster(teamName, [...own.team.roster.filter((r) => r.seat !== seat), row]);
+    return { ok: true, team: teamName, row };
+  }
+
+  function bindSeat(teamName, seat, role, opts = {}) {
+    return onChain(() => bindNow(teamName, seat, role, opts));
+  }
+
+  function unbindSeat(teamName, seat) {
+    return onChain(() => {
+      let team;
+      try { team = loadManifest(teamName); } catch (err) { return { ok: false, error: err.message }; }
+      if (seat === team.lead) return { ok: false, error: `${seat} is team ${teamName}'s lead — set-lead another seat first` };
+      const row = team.roster.find((r) => r.seat === seat);
+      if (!row) return { ok: false, error: `${seat} is not on team ${teamName}'s roster` };
+      writeRoster(teamName, team.roster.filter((r) => r.seat !== seat));
+      return { ok: true, team: teamName, row };
+    });
+  }
+
+  function renameSeatRow(oldName, newName) {
+    return onChain(() => {
+      const moved = [];
+      for (const { team } of loadAll()) {
+        const q = heldQuarantine(team.name);
+        const held = !!(q && q.seats.includes(oldName));
+        if (!held && !team.roster.some((r) => r.seat === oldName)) continue;
+        const carried = q ? { file: q.file, seats: q.seats.map((x) => (x === oldName ? newName : x)) } : null;
+        writeRoster(team.name, team.roster.filter((r) => r.seat !== newName).map((r) => (r.seat === oldName ? { ...r, seat: newName } : r)), carried);
+        moved.push(team.name);
+      }
+      return { ok: true, teams: moved };
+    });
+  }
+
+  function rosterOf(teamName) {
+    const { team, rosterState } = loadManifestFull(teamName);
+    return {
+      team,
+      rows: team.roster.map((r) => ({ ...r, state: rowState(r) })),
+      quarantine: rosterState.quarantine,
+    };
+  }
+
+  function pruneStaleRows() {
+    return onChain(() => {
+      const pruned = [];
+      const seenNow = new Set();
+      for (const { team } of loadAll()) {
+        const stale = team.roster.filter((r) => r.seat !== team.lead && rowState(r) === 'stale');
+        for (const r of stale) seenNow.add(`${team.name}\0${r.seat}`);
+        const drop = stale.filter((r) => staleSeen.has(`${team.name}\0${r.seat}`));
+        if (!drop.length) continue;
+        writeRoster(team.name, team.roster.filter((r) => !drop.includes(r)));
+        for (const r of drop) {
+          pruned.push({ team: team.name, seat: r.seat });
+          logLine('info', `team ${team.name}: stale row ${r.seat} (role ${r.role}) pruned — no record, no session`);
+        }
+      }
+      staleSeen = seenNow;
+      return pruned;
+    });
+  }
+
+  function synthesiseRosters(records, { dryRun = false } = {}) {
+    const loaded = loadAll();
+    const lines = [];
+    const fresh = new Map();
+    for (const l of loaded) if (l.rosterState.absent) fresh.set(l.team.name, []);
+    if (!fresh.size) return { lines, rosters: {} };
+    const claimed = new Map();
+    for (const { team } of loaded) for (const r of team.roster) claimed.set(r.seat, team.name);
+    const at = now();
+    const recs = (Array.isArray(records) ? records : []).filter((r) => r && typeof r.name === 'string' && NAME_RE.test(r.name));
+    const recGen = (seat) => {
+      const r = recs.find((x) => x.name === seat);
+      return r && typeof r.createdAt === 'number' ? r.createdAt : null;
+    };
+    const add = (teamName, seat, role) => {
+      if (claimed.has(seat)) {
+        if (claimed.get(seat) !== teamName) lines.push(`ambiguous: ${seat} → ${claimed.get(seat)} (already claimed; not added to ${teamName})`);
+        return;
+      }
+      claimed.set(seat, teamName);
+      fresh.get(teamName).push({ seat, role, gen: recGen(seat), since: at, by: 'migration' });
+      lines.push(`team ${teamName}: roster synthesised — ${seat} as ${role}`);
+    };
+    for (const { team } of loaded) if (fresh.has(team.name)) add(team.name, team.lead, 'lead');
+    for (const rec of recs) {
+      if (typeof rec.cwd !== 'string' || !rec.cwd) continue;
+      const cands = loaded.map((l) => l.team)
+        .filter((t) => !t.sandboxed && cwdInProject(rec.cwd, t.root))
+        .sort((a, b) => (b.root.length - a.root.length) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+      if (!cands.length) continue;
+      const pick = cands[0];
+      if (!fresh.has(pick.name) || rec.name === pick.lead) continue;
+      const role = nameRole(pick, rec.name);
+      if (!role) continue;
+      if (cands.length > 1) lines.push(`ambiguous: ${rec.name} → ${pick.name} (deepest root)`);
+      add(pick.name, rec.name, role);
+    }
+    const rosters = Object.fromEntries(fresh);
+    if (!dryRun) {
+      for (const [teamName, rows] of fresh) writeRoster(teamName, rows);
+      for (const l of lines) logLine('info', l);
+    }
+    return { lines, rosters };
+  }
+
   function findProjectRoot(cwd) {
-    const team = resolveTeam(cwd);
+    const team = teamOfCwd(cwd);
     return team ? team.root : null;
   }
 
@@ -728,6 +1155,8 @@ function createTeamManifest({ fs, clodexHome } = {}) {
         throw new Error(`team "${other}" already owns root ${resolvedRoot}`);
       }
     }
+    const holder = liveHolder(lead, name);
+    if (holder) throw new Error(`${lead} is on team ${holder.team}'s roster (role ${holder.role}) — unbind it there first`);
     if (dryRun) return null;
     const kitRoles = resolvedKit && Object.keys(resolvedKit.roles).length ? resolvedKit.roles : null;
     const defaultRoles = kitRoles || {
@@ -777,8 +1206,11 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     let loaded;
     try {
       atomicWrite(file, JSON.stringify(manifest, null, 2));
+      const leadBind = bindNow(name, lead, 'lead', { by: 'create' });
+      if (!leadBind.ok) logLine('warn', `team ${name}: lead row not written — ${leadBind.error}`);
       loaded = loadManifest(name);
     } catch (err) {
+      try { fs.unlinkSync(rosterPath(name)); } catch {}
       try { fs.unlinkSync(file); } catch {}
       unwindTemplateCopies(name, templatesCopied);
       unwindPromptCopies(name, promptsCopied);
@@ -978,6 +1410,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     }
     if (raw.roles) delete raw.roles[roleName];
     atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
+    rewriteRosterRows(teamName, (rows) => rows.filter((r) => !(r && r.role === roleName)));
     return loadManifest(teamName);
   }
 
@@ -1032,6 +1465,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
       raw.roles[toName] = def;
       delete raw.roles[fromName];
       atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
+      rewriteRosterRows(teamName, (rows) => rows.map((r) => (r && r.role === fromName ? { ...r, role: toName } : r)));
     } catch (err) {
       for (const mv of moved.reverse()) {
         try { fs.renameSync(mv.to, mv.from); } catch {}
@@ -1049,9 +1483,20 @@ function createTeamManifest({ fs, clodexHome } = {}) {
     if (typeof seatName !== 'string' || !NAME_RE.test(seatName)) {
       throw new Error(`team "${teamName}" lead must be a seat name matching ${NAME_RE} (${team.file})`);
     }
+    const holder = liveHolder(seatName, teamName);
+    if (holder) throw new Error(`${seatName} is on team ${holder.team}'s roster (role ${holder.role}) — unbind it there first`);
     const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
     raw.lead = seatName;
     atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
+    const prior = team.lead;
+    onChain(() => {
+      let cur;
+      try { cur = loadManifest(teamName); } catch { return; }
+      const rows = cur.roster.filter((r) => !(r.seat === prior && r.role === 'lead' && prior !== seatName));
+      if (rows.length !== cur.roster.length) writeRoster(teamName, rows);
+      const r = bindNow(teamName, seatName, 'lead', { by: 'set-lead' });
+      if (!r.ok) logLine('warn', `team ${teamName}: lead row for ${seatName} not written — ${r.error}`);
+    }).catch(() => {});
     return loadManifest(teamName);
   }
 
@@ -1105,11 +1550,20 @@ function createTeamManifest({ fs, clodexHome } = {}) {
   }
 
   return {
-    resolveTeam, findProjectRoot, loadManifest, listTeams, cwdInProject,
+    resolveTeam: teamOfCwd, teamOfCwd, teamsOfCwd, teamOfSeat, teamOf, findProjectRoot, loadManifest, listTeams, cwdInProject,
+    bindSeat, unbindSeat, renameSeatRow, rosterOf, pruneStaleRows, synthesiseRosters, setSeatLookup,
     createTeam, deleteTeam, addRole, setRole, removeRole, renameRole, setTeamWatchdog, setTeamTrunk, setTeamWorktrees, setTeamMaxHands, setLead,
     listKits, kitCatalog, resolveKit,
-    teamsDir, TEAM_FILE,
+    teamsDir, TEAM_FILE, ROSTER_FILE,
   };
+}
+
+function matchSeatRole(team, seatName) {
+  if (!team || !seatName || !team.roles) return null;
+  if (seatName === team.lead) return 'lead' in team.roles ? 'lead' : null;
+  const row = Array.isArray(team.roster) ? team.roster.find((r) => r && r.seat === seatName) : null;
+  if (row && Object.prototype.hasOwnProperty.call(team.roles, row.role)) return row.role;
+  return nameRole(team, seatName);
 }
 
 // A name this cannot decompose resolves to no role at all — off the roster, no
@@ -1120,7 +1574,7 @@ function createTeamManifest({ fs, clodexHome } = {}) {
 // suffixes strip. `-rN` is the one lettered tail, stripped ahead of the numeric
 // one — a ticket's reviewer is `<team>-reviewer-<ticket>-r<round>` and both tails
 // must go or the key keeps the ticket number.
-function matchSeatRole(team, seatName) {
+function nameRole(team, seatName) {
   if (!team || !seatName || !team.roles) return null;
   if (seatName === team.lead) return 'lead' in team.roles ? 'lead' : null;
   const prefix = `${team.name}-`;
@@ -1268,8 +1722,8 @@ function formatCompositionDelta(teamName, verb, { seat = null, role = null } = {
 }
 
 module.exports = {
-  createTeamManifest, matchSeatRole, formatTeamBlock, formatRoster,
-  formatCompositionDelta, defaultLeadSeat, ROSTER_DEFINITIONS_LINE, SEAT_NAME_MAX, STOCK_ROLE_DEFS, TEAM_FILE,
+  createTeamManifest, matchSeatRole, nameRole, formatTeamBlock, formatRoster,
+  formatCompositionDelta, defaultLeadSeat, ROSTER_DEFINITIONS_LINE, SEAT_NAME_MAX, STOCK_ROLE_DEFS, TEAM_FILE, ROSTER_FILE, ROSTER_PRUNE_MIN_AGE_MS,
   // Exported so the retired-field warn test iterates the REAL list — a copy in
   // the test would keep passing over a field added here and never warned about.
   ROLE_KEYS, CUT_ROLE_FIELDS, HONORED_CUT_FIELDS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, MANIFEST_VERSION,

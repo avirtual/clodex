@@ -1246,7 +1246,7 @@ test('createTeam honors caller-supplied roles over the default scaffold', () => 
   assert.ok(!('reviewer' in team.roles), 'scaffold reviewer not injected when caller supplies roles');
   // An empty roles map falls back to the default scaffold (not honored as "no roles").
   const root2 = mkTmpRoot('proj-');
-  const team2 = tm.createTeam({ name: 'shop2', root: root2, lead: 'clodex', roles: {} });
+  const team2 = tm.createTeam({ name: 'shop2', root: root2, lead: 'clodex2', roles: {} });
   assert.strictEqual(team2.roles.hand.prompt, 'clodex-team-hand', 'empty roles → default scaffold');
 });
 
@@ -2567,4 +2567,17 @@ test('role cwd: a child directory named ..cache is inside the root and is stored
   fs.mkdirSync(path.join(root, '..cache'));
   tm.addRole('shop', 'api-hand', { brief: 'b', cwd: '..cache' });
   assert.strictEqual(JSON.parse(fs.readFileSync(file, 'utf-8')).roles['api-hand'].cwd, '..cache');
+});
+
+test('loadManifest carries the roster rows: [] with no roster.json, the normalised rows with one', () => {
+  const home = mkHome();
+  mkTeam(home, 'shop', validManifest('/p/shop'));
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  assert.deepStrictEqual(tm.loadManifest('shop').roster, []);
+  fs.writeFileSync(path.join(home, 'teams', 'shop', 'roster.json'), JSON.stringify({ version: 1, seats: [
+    { seat: 'shop-runner-2', role: 'runner', since: 5, by: 'ticket-loop', ticket: 't9', extra: 'dropped' },
+  ] }));
+  assert.deepStrictEqual(tm.loadManifest('shop').roster, [
+    { seat: 'shop-runner-2', role: 'runner', gen: null, since: 5, by: 'ticket-loop', ticket: 't9' },
+  ]);
 });

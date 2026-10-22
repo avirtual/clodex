@@ -170,7 +170,7 @@ function parseIntentLegacy(rawLine) {
     };
   }
 
-  const teamMatch = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|template-save|template-rm|prompt-save|prompt-rm|sandbox|trunk|worktrees|hands)\b([^\]]*)\]\s*(.*)/s);
+  const teamMatch = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|bind|unbind|roster|template-save|template-rm|prompt-save|prompt-rm|sandbox|trunk|worktrees|hands)\b([^\]]*)\]\s*(.*)/s);
   if (teamMatch) {
     const sub = teamMatch[1];
     const argStr = teamMatch[2];
@@ -186,7 +186,9 @@ function parseIntentLegacy(rawLine) {
     if (sub === 'role-add' || sub === 'role-set') {
       return { type: 'team', sub, name: positional[0] || null, prompt: promptM ? promptM[1] : null, template: templateM ? templateM[1] : null, dispatch: dispatchM ? dispatchM[1] : null, cwd: cwdM ? cwdM[1] : null, model: modelM ? modelM[1] : null, account: accountM ? accountM[1] : null, effort: effortM ? effortM[1] : null, body };
     }
-    if (sub === 'role-rm' || sub === 'set-lead') return { type: 'team', sub, name: positional[0] || null, body: '' };
+    if (sub === 'role-rm' || sub === 'set-lead' || sub === 'unbind') return { type: 'team', sub, name: positional[0] || null, body: '' };
+    if (sub === 'bind') return { type: 'team', sub, name: positional[0] || null, role: positional[1] || null, body: '' };
+    if (sub === 'roster') return { type: 'team', sub, body: '' };
     if (sub === 'trunk') return { type: 'team', sub, branch: positional[0] || null, body: '' };
     if (sub === 'worktrees') return { type: 'team', sub, value: positional[0] || null, body: '' };
     if (sub === 'hands') return { type: 'team', sub, value: positional[0] || null, body: '' };
@@ -434,6 +436,8 @@ const ADVERSARIAL = [
   '[agent:team gather]', '[agent:team gather dry]', '[agent:team gather junk]',
   '[agent:team gatherx]',
   '[agent:team set-lead bob]', '[agent:team set-lead]', '[agent:team set-lead a b]',
+  '[agent:team bind bob hand]', '[agent:team bind bob]', '[agent:team bind]', '[agent:team bindx bob]',
+  '[agent:team unbind bob]', '[agent:team unbind]', '[agent:team roster]', '[agent:team roster extra]',
   '[agent:team trunk main]', '[agent:team trunk]',
   '[agent:team worktrees in-root]', '[agent:team worktrees]', '[agent:team worktreesx]',
   '[agent:team hands 3]', '[agent:team hands off]', '[agent:team hands]', '[agent:team handsx]',

@@ -169,6 +169,7 @@ const GRAMMAR_LINES = [
   [agent:team template-rm <stem>]  Delete that template. Refused while any role in team.json still names it: repoint the role with [agent:team role-set …] first, since nothing else tells you the role would break.
   [agent:team prompt-rm system|append <stem>]  Delete that prompt. A system stem a role still names is refused the same way; an append stem is named by no role, so it is not.
   [agent:team sandbox [up|rebuild|down|status|port add|rm|list …] [ref:<ref>]]  Build or rebuild your OWN team's docker box \`team-<name>\` from that git ref (default action up; ref defaults to master only when the box tracks none yet, and status/down never change it) and write its URLs and peer-wire token to ~/.clodex/teams/<name>/sandbox.json (mode 0600) — that FILE is where your seats read the token; the reply never carries it. down stops the box and deletes the file; status reports state without writing.
+  [agent:team bind <seat> <role>]  Put an existing seat on your team's roster (needs team-create; refused while another team holds it); its grants do not change. [agent:team unbind <seat>] drops it; [agent:team roster] lists rows.
   [agent:team trunk <branch>]      Set the branch accepted tickets merge into (the team's trunk; must exist in the root repo). Bare [agent:team trunk] shows the effective value and whether it is set or derived from the repo's default branch (origin/HEAD, else main or master).` },
 ];
 

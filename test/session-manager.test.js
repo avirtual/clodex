@@ -3397,7 +3397,7 @@ function mkRetire(rootByName, rolesByRoot, extraDeps) {
     resolveTeam: (cwd) => {
       const root = rootByName[cwd];
       if (!root) return null;
-      return { name: 'team', root, lead: 'lead', roles: normalize(roles(root)), file: `${root}/team.json` };
+      return { name: root === '/p2' ? 'team-p2' : 'team', root, lead: 'lead', roles: normalize(roles(root)), file: `${root}/team.json` };
     },
     ...(extraDeps || {}),
   });
@@ -4917,7 +4917,8 @@ function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpaw
 test('t1407: create() bakes the [agent:team …] rows into the team lead\'s prompt and not into a hand\'s', async () => {
   const team = { name: 'acme', root: osReal.tmpdir(), lead: 'acme-lead',
     roles: { lead: { instantiate: 'session', brief: 'the lead' }, hand: { instantiate: 'session', brief: 'the hand' } } };
-  const { spawn, root } = mkHintProbe({ resolveTeam: () => team, buildIpcPrompt: require('../ipc-prompt').buildIpcPrompt });
+  const { spawn, root, m } = mkHintProbe({ resolveTeam: () => team, buildIpcPrompt: require('../ipc-prompt').buildIpcPrompt });
+  m._deliverPassive = () => {};
   await spawn('acme-lead');
   await spawn('acme-hand');
   const baked = (n) => fsReal.readFileSync(pathForReal(root, n, 'appendPrompt'), 'utf8');
@@ -11938,7 +11939,8 @@ test('t773 create: a brief that cannot be saved leaves NO team behind', async ()
     type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, body: 'the brief',
   });
   const teamJson = pathReal.join(f.home, 'teams', 'shop', 'team.json');
-  assert.deepStrictEqual(unlinked.map((u) => u.p), [teamJson], 'the undo unlinked exactly the manifest');
+  assert.deepStrictEqual(unlinked.map((u) => u.p), [teamJson, pathReal.join(f.home, 'teams', 'shop', 'roster.json')],
+    'the undo unlinked exactly the manifest and the roster create wrote beside it');
   assert.strictEqual(unlinked[0].existedAtCall, true,
     'ENTER: the team really existed between the two writes — this is the window the undo closes');
   assert.strictEqual(f.teamExists('shop'), false, 'and it does not exist afterwards');
@@ -12430,7 +12432,7 @@ test('list: each row carries the approval posture its record argv implies', () =
   assert.strictEqual(byName.plain.posture, 'default');
 });
 
-test('list: resolveTeam is memoized per cwd within one call (seats sharing a dir share one scan)', () => {
+test('list: the team is resolved once per seat within one call, not once per field', () => {
   let calls = 0;
   const m = mk({ resolveTeam: (cwd) => { calls++; return cwd.startsWith('/proj') ? { name: 'shop' } : null; } });
   m.sessions.set('a', fakeSession('a', '/proj/x'));
@@ -12438,7 +12440,7 @@ test('list: resolveTeam is memoized per cwd within one call (seats sharing a dir
   m.sessions.set('c', fakeSession('c', '/proj/y')); // distinct cwd
   const rows = m.list();
   assert.ok(rows.every((r) => r.team === 'shop'), 'all three resolve to the team');
-  assert.strictEqual(calls, 2, 'resolveTeam runs once per DISTINCT cwd, not once per session');
+  assert.strictEqual(calls, 3, 'one resolution per seat: membership is keyed by the seat, so two seats in one dir resolve apart');
 });
 
 test('list: a resolveTeam throw degrades to team:null, never breaks the list', () => {

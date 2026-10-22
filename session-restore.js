@@ -30,7 +30,7 @@ function archivedSnapshotFor({ manager, entry }) {
     label: entry.label || null,
     backend: entry.backend || null,
     // Team name owning this cwd (sidebar group-by-project key), or null.
-    team: manager.teamNameFor(entry.cwd),
+    team: manager.teamNameFor(entry.cwd, entry.name),
     archived: true,
     archivedAt: entry.archivedAt,
     createdAt: entry.createdAt || null,
@@ -45,7 +45,7 @@ function exitedSnapshotFor({ manager, entry }) {
     cwd: entry.cwd,
     label: entry.label || null,
     backend: entry.backend || null,
-    team: manager.teamNameFor(entry.cwd),
+    team: manager.teamNameFor(entry.cwd, entry.name),
     exited: true,
     exitedAt: entry.exitedAt,
     exitCode: typeof entry.exitCode === 'number' ? entry.exitCode : null,
@@ -65,7 +65,7 @@ function liveSnapshotFor({ manager, entry, session, readCtxFor, proxyPoller }) {
     effort: typeof entry.effort === 'string' && entry.effort ? entry.effort : null,
     posture: postureOf(adapterFor(entry.type), Array.isArray(entry.extraArgs) ? entry.extraArgs : []),
     backend: session.backend || null,
-    team: manager.teamNameFor(entry.cwd),
+    team: manager.teamNameFor(entry.cwd, entry.name),
     replay,
     // Seed the sidebar dot with the CURRENT state — activity events
     // while detached were dropped, so without this a busy or blocked
@@ -159,7 +159,7 @@ async function restoreSessionsForWorkspace({
         cwd,
         label: entry.label || null,
         backend: (manager.sessions.get(entry.name) || {}).backend || null,
-        team: manager.teamNameFor(cwd),
+        team: manager.teamNameFor(cwd, entry.name),
         createdAt: entry.createdAt || null,
         ...readCtxFor(entry.name),
         proxy: proxyPoller.snapshot(entry.name),
@@ -175,7 +175,7 @@ async function restoreSessionsForWorkspace({
         type: entry.type,
         cwd: entry.cwd,
         label: entry.label || null,
-        team: manager.teamNameFor(entry.cwd),
+        team: manager.teamNameFor(entry.cwd, entry.name),
         failed: true,
         error: err.message,
       });

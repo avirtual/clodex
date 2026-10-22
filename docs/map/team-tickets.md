@@ -48,8 +48,17 @@
 |---|---|---|---|---|
 | `createTicketMethods` | factory taking deps and shared that returns every ticket, team and merge verb, grafted onto SessionManager.prototype | none in closure; borrows shared.ticketsStore, nameConflict, SPEC_CONFIRM_MS | accountStore, allTemplates | ticket-mixin-surface.test.js tickets-viewer-path-parity.test.js |
 | `_handleSpawnIntent` | the agent spawn intent: resolves a template, expands TEAM_ROOT, optionally cuts a worktree, mints the seat with privileged intents stripped | this.sessions, sessions.json (setWorktree), git worktree | _validateSeatName, _templateShape, filterTemplateEnv, _applyTemplatePersistence | spawn-template-env.test.js spawn-template-team-root.test.js spawn-template-plugin.test.js |
-| `teamActivity` | read-only snapshot of one team: per-role seats and tickets, reviewer live and last, open and landed rows, 24h counts | none (reads manifest, tickets.json, this.sessions) | ticketsStore.load, matchSeatRole | ticket-loop-verify.test.js accept-standing-seat.test.js reviewer-round-end.test.js |
-| `_forgetTeam` | drops every ticket-watch entry whose root matches a deleted team and returns the count | this._ticketWatch | none | teams-menu.test.js ipc-handlers-team.test.js |
+| `teamActivity` | read-only snapshot of one team: per-role seats and tickets, reviewer live and last, open and landed rows, 24h counts | none (reads manifest, tickets.json, this.sessions) | ticketsStore.load, matchSeatRole | ipc-handlers-team.test.js |
+| `_teamOf` | the seat's team: roster row first, then the unique root team (teamOf), else the cwd resolver when no roster dep is wired | roster.json (inference write via teamOf) | teamOf, resolveTeam | team-roster.test.js |
+| `_teamOfOrNull` | `_teamOf` with a throw read as no team | none | _teamOf | unpinned |
+| `_teamsOf` | the team names tied on the seat's cwd, for the ambiguity refusals | none | teamsOfCwd | unpinned |
+| `_teamsOfRoot` | the team names owning a root, empty when none | none | teamsOfCwd, resolveTeam | ipc-handlers-team.test.js |
+| `_noTeamError` | the no-team refusal, naming both teams when a shared root leaves the seat on neither roster | none | _teamsOf | unpinned |
+| `_bindRosterSeat` | fire-and-log bindSeat for the loop's own binds (ticket seat, reviewer, spawn) | roster.json | bindSeat | unpinned |
+| `_rosterText` | the team roster verb's reply: rows with state, and any quarantined file | none (reads roster.json) | rosterOf | unpinned |
+| `_teamBind` | team bind verb: team-create grant, reserved roles and an existing record gate a bindSeat row; grants untouched | roster.json | bindSeat, intentEnabledForSeat | unpinned |
+| `_teamUnbind` | team unbind verb: refused while the seat holds an open ticket, then unbindSeat | roster.json | unbindSeat, _openTicketsFor | unpinned |
+| `_forgetTeam` | drops every ticket-watch entry whose root matches a deleted team, or whose root no team owns any more, and returns the count | this._ticketWatch | _teamsOfRoot | teams-menu.test.js ipc-handlers-team.test.js |
 
 ### Invariants
 - `createTicketMethods` keeps ticket state on the manager instance, never in a factory closure, because a closure leaks across managers in one process.
@@ -439,6 +448,7 @@
 | `_closeOutMergedTicket.seatClause` | the reply fragment saying what happened to the seat, split on one-shot first, then liveness, then record | none | none | accept-standing-seat.test.js |
 | `_taskPark` | lead toggle of parked on an open ticket, never re-delivering the spec on unpark | tickets.json parked, nudgedAt | _reconcileTickets, _resolvableAssignTarget | task-start.test.js |
 | `_taskList` | task list verb: validate the filter and reply with the rendered board | none | _taskListText | clodex-team.test.js |
+| `_sharedTaskList` | the read-only board an unbound seat on a shared root gets, headed by both team names | none | _taskListText | unpinned |
 | `_taskListText` | render the board: filtered rows by numeric id, plus a capped recently-closed block and done and cancelled counts on the open view | none (reads tickets.json) | ticketsStore.load, humanizeAge | clodex-team.test.js |
 
 ### Invariants
@@ -461,9 +471,9 @@
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
 | `_reconcileTickets` | per-team pass setting each live seat's ticket watch and session-ticket badge from its first open unparked ticket, no-op on solo | `this._ticketWatch`, session-ticket broadcast | _teamLiveSeatNames, _ticketAssigneeSeat, matchSeatRole | session-manager.test.js ticket-reminder-binding.test.js |
-| `_touchTicketActivity` | on a watched seat's activity edge, stamp lastActivityAt and clear nudgedAt on every open ticket it holds | tickets.json lastActivityAt, nudgedAt | _ticketAssigneeSeat, resolveTeam | ticket-mixin-surface.test.js session-manager.test.js |
+| `_touchTicketActivity` | on a watched seat's activity edge, stamp lastActivityAt and clear nudgedAt on every open ticket it holds | tickets.json lastActivityAt, nudgedAt | _ticketAssigneeSeat, loadManifest (watch row's team), resolveTeam | ticket-mixin-surface.test.js session-manager.test.js |
 | `startTicketWatchdog` | idempotently start the unref'd sweep interval and the boot requeue of waiting merges | `this._ticketWatchdogTimer`, `this._bootRequeue` | _sweepTickets, _requeueWaitingMerges | ticket-auto-merge.test.js |
-| `_sweepTickets` | one watchdog pass: stall sweep once per board root, reconcile and orphaned-verify resume once per team file | none directly | _sweepTeamTickets, _reconcileTickets, _resumeOrphanedVerify | team-manifest.test.js ticket-loop-verify.test.js session-manager.test.js |
+| `_sweepTickets` | one watchdog pass: stale roster rows pruned, stall sweep once per board root, reconcile and orphaned-verify resume once per team file | roster.json (prune) | pruneStaleRows, _sweepTeamTickets, _reconcileTickets, _resumeOrphanedVerify | team-manifest.test.js ticket-loop-verify.test.js session-manager.test.js |
 | `_stallEvidence` | gather last tool, API error, branch commit count and tree dirtiness for a stall alarm, dropping any field whose probe fails | none | readTail, gitWorktree.commitsOnBranch, gitWorktree.isDirty | session-manager.test.js |
 | `_liveReviewSeatsFor` | every live ephemeral reviewer seat for a ticket id, scoped to the team's project root | none | _projectRootFor, getPersistence | reviewer-round-end.test.js review-cost-durable.test.js |
 | `_retireReviewSeatsFor` | book and discard-retire live reviewer seats when the lead ends a round by reject or accept, never throwing | review-cost ledger, kills reviewer sessions | _liveReviewSeatsFor, _writeReviewCost, kill | rework-context-gate.test.js accept-standing-seat.test.js review-cost-durable.test.js |
@@ -474,7 +484,7 @@
 | `_sweepUndeliveredMergeErrors` | re-send a merge-error escalation stamped undelivered and clear the stamp once it queued or parked | tickets.json escalationUndelivered | _gatedDeliver | unpinned |
 | `_sweepMergedUnaccepted` | nudge the lead once when a merged done ticket sits unaccepted past the nudge window, stamping only from the delivery callback | tickets.json mergedNudgedAt | _gatedDeliver | rework-context-gate.test.js |
 | `_sweepTeamTickets` | per-team stall pass: run both sub-sweeps, then stay silent, wake the seat, or alarm the lead on a geometric ladder | `this._stallProbing`, tickets.json nudgedAt, orphanNudgedAt | _stallEvidence, _probeReviewSeat, _wakeStalledSeat, _gatedDeliver | merged-notice-owes-accept.test.js ticket-loop-verify.test.js session-manager.test.js |
-| `_handleTeamRetire` | team-retire handler: decide discard or archive from manifest and record, downgrade on a dirty tree, book reviewer cost, tear down | seat worktree and record via destroy or archive, review-cost ledger, revival stamp | matchSeatRole, gitWorktree.isDirty, _stampTicketRevival, _writeReviewCost | accept-standing-seat.test.js review-cost-durable.test.js |
+| `_handleTeamRetire` | team-retire handler: refuse unless both seats resolve to one team, decide discard or archive from manifest and record, downgrade on a dirty tree, book reviewer cost, tear down | seat worktree and record via destroy or archive, review-cost ledger, revival stamp | matchSeatRole, gitWorktree.isDirty, _stampTicketRevival, _writeReviewCost | accept-standing-seat.test.js review-cost-durable.test.js |
 
 ### Invariants
 - `_sweepTickets` dedups the stall sweep per board root and the reconcile per team file, because collapsing them under one key breaks whichever loses.

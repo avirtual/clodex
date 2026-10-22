@@ -163,6 +163,8 @@ function mkRename({ entries = [], reminderRows = [], teamHome = null, createThro
     path: pathReal,
     DEFAULT_WORKSPACE_ID: 'default',
     resolveTeam: tm ? tm.resolveTeam : () => null,
+    teamOf: tm ? tm.teamOf : undefined,
+    renameSeatRow: tm ? tm.renameSeatRow : undefined,
     findProjectRoot: tm ? tm.findProjectRoot : () => null,
     setLead: tm ? tm.setLead : () => {},
     loadManifest: tm ? tm.loadManifest : () => null,
@@ -659,6 +661,21 @@ test('rename re-points the team lead when the renamed seat IS the lead', async (
   const manifest = JSON.parse(fsReal.readFileSync(pathReal.join(root, 'teams', 'shop', 'team.json'), 'utf8'));
   assert.strictEqual(manifest.lead, 'newseat',
     'a team whose lead pointer still names the old seat has no lead at all');
+});
+
+test('rename moves the seat\'s roster row, so the new name keeps its team and role outside the root', async () => {
+  const root = mkTmpRoot('clodex-rename-');
+  const { projectRoot } = mkTeam(root, { lead: 'boss' });
+  const tm = createTeamManifest({ fs: fsReal, clodexHome: root });
+  assert.strictEqual((await tm.bindSeat('shop', 'seat', 'scout', { by: 'boss', gen: 42 })).ok, true);
+  seedDirs(root, 'seat');
+  const { m } = mkRename({ root, teamHome: root, entries: [{ ...BASE, cwd: projectRoot }] });
+  const r = await m.rename('seat', 'newseat');
+  assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
+  const rows = JSON.parse(fsReal.readFileSync(pathReal.join(root, 'teams', 'shop', 'roster.json'), 'utf8')).seats;
+  assert.deepStrictEqual(rows.filter((x) => x.seat !== 'boss').map((x) => [x.seat, x.role, x.gen]), [['newseat', 'scout', 42]]);
+  const team = m._teamOf({ name: 'newseat', cwd: '/elsewhere' });
+  assert.strictEqual(team && team.name, 'shop');
 });
 
 test('rename leaves the lead pointer alone when the renamed seat is NOT the lead', async () => {

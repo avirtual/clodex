@@ -16,7 +16,7 @@ const { resolveAccountLabel, accountMissingError } = require('./accounts');
 const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const {
-  matchSeatRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
+  matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
   DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap,
 } = require('./team-manifest');
 const {
@@ -419,6 +419,14 @@ function createTicketMethods(deps, shared) {
     refreshAppMenu,
     gatherTeam,
     resolveTeam,
+    teamOf,
+    teamOfSeat,
+    teamsOfCwd,
+    bindSeat,
+    unbindSeat,
+    rosterOf,
+    pruneStaleRows,
+    intentEnabledForSeat,
     resolveSystemPromptFile,
     childProcess,
     ensureDir,
@@ -517,7 +525,7 @@ function createTicketMethods(deps, shared) {
       if (!seatName.ok) { reply(`error: ${seatName.error}`); return; }
 
       let spawnerTeam = null;
-      try { spawnerTeam = resolveTeam(spawner.cwd); } catch { spawnerTeam = null; }
+      try { spawnerTeam = this._teamOf(spawner); } catch { spawnerTeam = null; }
 
       let tpl = null;
       if (intent.template) {
@@ -580,7 +588,7 @@ function createTicketMethods(deps, shared) {
 
       let leadNote = '';
       let targetTeam = null;
-      try { targetTeam = resolveTeam(cwd); } catch { targetTeam = null; }
+      try { targetTeam = this._teamOf({ name, cwd }); } catch { targetTeam = null; }
       if (!tpl && targetTeam && name === targetTeam.lead) {
         const stem = (targetTeam.roles && targetTeam.roles.lead && targetTeam.roles.lead.template)
           || DEFAULT_LEAD_TEMPLATE;
@@ -627,9 +635,28 @@ function createTicketMethods(deps, shared) {
         : '';
 
       let roleNote = '';
+      let bindTo = null;
       {
-        let seatTeam = null;
-        try { seatTeam = resolveTeam(cwd); } catch { seatTeam = null; }
+        let seatTeam = targetTeam;
+        const onRoster = (t, seat) => {
+          if (!t) return false;
+          if (typeof teamOfSeat !== 'function') return t.lead === seat || (t.roster || []).some((r) => r.seat === seat);
+          const held = teamOfSeat(seat);
+          return !!(held && held.name === t.name);
+        };
+        if (!onRoster(seatTeam, name)) {
+          const viaSpawner = onRoster(spawnerTeam, spawner.name) ? nameRole(spawnerTeam, name) : null;
+          if (viaSpawner) {
+            seatTeam = spawnerTeam;
+            bindTo = { team: spawnerTeam.name, role: viaSpawner, by: spawner.name };
+          } else if (seatTeam && nameRole(seatTeam, name)) {
+            bindTo = { team: seatTeam.name, role: nameRole(seatTeam, name), by: 'inferred' };
+          }
+        }
+        if (!seatTeam) {
+          const shared = this._teamsOf({ cwd });
+          if (shared.length > 1) roleNote = ` — WARNING: root shared by ${shared.join(', ')}: seat joins neither — a lead binds it with [agent:team bind ${name} <role>]`;
+        }
         if (seatTeam && matchSeatRole(seatTeam, name) === null) {
           const roles = seatTeam.roles || {};
           const has = (k) => Object.prototype.hasOwnProperty.call(roles, k);
@@ -651,6 +678,7 @@ function createTicketMethods(deps, shared) {
         let wt = null;
         let spawnCwd = cwd;
         try {
+          if (bindTo) await this._bindRosterSeat(bindTo.team, name, bindTo.role, { by: bindTo.by });
           if (branch) {
             const r = await gitWorktree.createWorktree(cwd, branch);
             if (!r || !r.ok) {
@@ -907,14 +935,119 @@ function createTicketMethods(deps, shared) {
       return { ok: true, team: team.name, roles, reviewer, counts, tickets: { open, landed } };
     },
 
+    _teamOf(session) {
+      const name = session && session.name;
+      const cwd = session && session.cwd;
+      if (typeof teamOf === 'function') return teamOf({ name, cwd });
+      return cwd ? resolveTeam(cwd) : null;
+    },
+
+    _teamOfOrNull(session) {
+      try { return this._teamOf(session); } catch { return null; }
+    },
+
+    _teamsOf(session) {
+      const cwd = session && session.cwd;
+      if (!cwd || typeof teamsOfCwd !== 'function') return [];
+      try { return teamsOfCwd(cwd); } catch { return []; }
+    },
+
+    _teamsOfRoot(root) {
+      try {
+        if (typeof teamsOfCwd === 'function') return teamsOfCwd(root);
+        const t = resolveTeam(root);
+        return t ? [t.name] : [];
+      } catch { return []; }
+    },
+
+    _noTeamError(session) {
+      const shared = this._teamsOf(session);
+      const seat = session && session.name;
+      if (shared.length > 1) {
+        return `error: teams ${shared.join(', ')} share this root and ${seat} is on neither roster — a lead binds it with [agent:team bind ${seat} <role>]`;
+      }
+      return 'error: this session is not on a team (no team.json owns its cwd)';
+    },
+
+    _bindRosterSeat(teamName, seat, role, opts = {}) {
+      if (typeof bindSeat !== 'function' || !teamName) return Promise.resolve(null);
+      return bindSeat(teamName, seat, role, opts).then((r) => {
+        if (r && !r.ok) log.warn('team', `roster bind ${seat} → ${teamName} (${role}) refused: ${r.error}`);
+        else if (r && !r.unchanged && opts.by === 'inferred') log.info('team', `team ${teamName}: seat ${seat} inferred as ${role} from its name`);
+        return r;
+      }).catch((e) => {
+        log.warn('team', `roster bind ${seat} → ${teamName} (${role}) failed: ${e.message}`);
+        return null;
+      });
+    },
+
+    _rosterText(team) {
+      let r;
+      try { r = rosterOf(team.name); } catch (e) { return `error: roster of ${team.name} unreadable: ${e.message}`; }
+      const lines = [`[team ${team.name}] roster.json — ${r.rows.length} row${r.rows.length === 1 ? '' : 's'}`];
+      for (const row of r.rows) {
+        const since = row.since ? new Date(row.since).toISOString() : 'unknown';
+        lines.push(`- ${row.seat} · ${row.role} · by ${row.by}${row.ticket ? ` (${row.ticket})` : ''} · since ${since}${row.state !== 'live' ? ` · ${row.state}` : ''}`);
+      }
+      if (r.quarantine) {
+        const held = r.quarantine.seats.filter((x) => x !== team.lead);
+        lines.push(`QUARANTINED: ${r.quarantine.file} — on no team until a lead binds them: ${held.join(', ') || '(no seat names readable)'}`);
+      } else if (!r.rows.length) {
+        lines.push('no rows — a seat here resolves by root and name until it is bound');
+      }
+      return lines.join('\n');
+    },
+
+    _teamBind(session, team, intent, reply) {
+      const seat = intent.name || null;
+      const role = intent.role || null;
+      if (!seat || !role) { reply('error: bind needs a seat and a role — [agent:team bind <seat> <role>]'); return; }
+      let senderRec = null;
+      try { senderRec = getPersistence().get(session.name); } catch { senderRec = null; }
+      if (typeof intentEnabledForSeat !== 'function' || !intentEnabledForSeat('team-create', senderRec)) {
+        reply(`error: bind needs the operator's team-create grant on ${session.name} — adopting an existing seat into a team is operator-authorised`);
+        return;
+      }
+      if (RESERVED_ROLE_KEYS.has(role)) {
+        reply(`error: role "${role}" is reserved — the lead moves with [agent:team set-lead <seat>], and reviewers are bound by the loop`);
+        return;
+      }
+      let rec = null;
+      try { rec = getPersistence().get(seat); } catch { rec = null; }
+      if (!rec) { reply(`error: no saved seat "${seat}" — bind adopts an existing seat; spawn it first`); return; }
+      if (typeof bindSeat !== 'function') { reply('error: the roster is unavailable on this host'); return; }
+      bindSeat(team.name, seat, role, { by: session.name }).then((r) => {
+        if (!r || !r.ok) { reply(`error: ${(r && r.error) || 'bind failed'}`); return; }
+        log.info('team', `team ${team.name}: ${session.name} bound ${seat} as ${role}`);
+        reply(`bound ${seat} to team ${team.name} as ${role} — its exec grants, template and credentials are unchanged`);
+      }).catch((e) => reply(`error: bind failed: ${e.message}`));
+    },
+
+    _teamUnbind(session, team, intent, reply) {
+      const seat = intent.name || null;
+      if (!seat) { reply('error: unbind needs a seat — [agent:team unbind <seat>]'); return; }
+      let ids = [];
+      try {
+        const board = ticketsStore.load(team.root);
+        ids = board.filter((t) => t && t.state === 'open' && t.assignee === seat).map((t) => t.id);
+        ids = [...new Set([...ids, ...this._openTicketsFor(team, seat).map((t) => t.id)])];
+      } catch { ids = ['<ticket check unavailable>']; }
+      if (ids.length) { reply(`error: ${seat} holds open ticket${ids.length > 1 ? 's' : ''} ${ids.join(', ')} — close or reassign before unbinding`); return; }
+      if (typeof unbindSeat !== 'function') { reply('error: the roster is unavailable on this host'); return; }
+      unbindSeat(team.name, seat).then((r) => {
+        if (!r || !r.ok) { reply(`error: ${(r && r.error) || 'unbind failed'}`); return; }
+        log.info('team', `team ${team.name}: ${session.name} unbound ${seat} (was ${r.row.role})`);
+        reply(`unbound ${seat} from team ${team.name} (was ${r.row.role})`);
+      }).catch((e) => reply(`error: unbind failed: ${e.message}`));
+    },
+
     _forgetTeam(teamName, root) {
       let dropped = 0;
       for (const [name, w] of this._ticketWatch) {
         if (!w) continue;
         let gone = w.root === root;
         if (root == null) {
-          let team = null; try { team = resolveTeam(w.root || ''); } catch { team = null; }
-          gone = !team;
+          gone = this._teamsOfRoot(w.root || '').length === 0;
         }
         if (gone) { this._ticketWatch.delete(name); dropped += 1; }
       }
@@ -934,8 +1067,8 @@ function createTicketMethods(deps, shared) {
       if (!scope) { reply('error: a review scope is required — [agent:team-review] <what to review>'); return; }
 
       let team;
-      try { team = resolveTeam(session.cwd); } catch { team = null; }
-      if (!team) { reply('error: this session is not on a team (no team.json owns its cwd)'); return; }
+      try { team = this._teamOf(session); } catch { team = null; }
+      if (!team) { reply(this._noTeamError(session)); return; }
       if (team.lead !== session.name) {
         reply(`error: only the team lead (${team.lead}) can request a review`);
         return;
@@ -1064,6 +1197,7 @@ function createTicketMethods(deps, shared) {
         ...(reviewLabel ? { wireLabel: reviewLabel } : {}),
         reviewerTemplate: shape.tpl ? shape.tpl.name : DEFAULT_REVIEWER_TEMPLATE,
       });
+      this._bindRosterSeat(team.name, name, 'reviewer', { by: reviewTicket ? 'ticket-loop' : session.name, ticket: reviewTicket });
 
       let promptWarn = '';
       if (reviewerSystemPrompt) {
@@ -1131,8 +1265,7 @@ function createTicketMethods(deps, shared) {
       // Bullets and bold are allowed as decoration; `>` is deliberately not, since it is the decoration that marks a quoted line.
       const m = /^[ \t]*(?:[-*][ \t]*)?(?:\*\*|__)?[ \t]*\bVERDICT\b\W*\b(ACCEPT|REWORK)\b/im.exec(verdict);
       if (!m) return null;
-      let team;
-      try { team = resolveTeam(session.cwd); } catch { team = null; }
+      const team = this._teamOfOrNull(session);
       if (!team) return null;
       let tickets;
       try { tickets = ticketsStore.load(team.root); } catch { return null; }
@@ -1182,8 +1315,7 @@ function createTicketMethods(deps, shared) {
 
     // Reads the round off the already-stamped record: this runs after the save, unlike _writeTicketDiff, which runs before it and adds one.
     _writeVerdictBody(session, ticketId, landedOn, fullVerdict) {
-      let team;
-      try { team = resolveTeam(session.cwd); } catch { team = null; }
+      const team = this._teamOfOrNull(session);
       if (!team) return { ok: false, path: null, error: 'no team' };
       const ticket = this._loadTicket(team, ticketId);
       if (!ticket) return { ok: false, path: null, error: `no ticket ${ticketId}` };
@@ -1287,7 +1419,7 @@ function createTicketMethods(deps, shared) {
         if (!name) return { ok: false, error: 'no seat' };
         if (session.clone) return { ok: false, error: 'scratch clone' };
         let team = null;
-        try { team = resolveTeam(session.cwd); } catch { team = null; }
+        try { team = this._teamOf(session); } catch { team = null; }
         if (!team) return { ok: false, error: 'no team' };
         const entry = getPersistence().get(name) || null;
         if (!entry) return { ok: false, error: 'no record' };
@@ -2026,8 +2158,7 @@ function createTicketMethods(deps, shared) {
         try {
           if (booked || !rec.reviewTicket) return;
           booked = true;
-          let team = null;
-          try { team = resolveTeam(session.cwd); } catch { team = null; }
+          const team = this._teamOfOrNull(session);
           const ticket = team ? this._loadTicket(team, rec.reviewTicket) : null;
           const round = landedOn
             ? Number(landedOn.reviewRound)
@@ -2052,8 +2183,7 @@ function createTicketMethods(deps, shared) {
         } catch (e) {
           written = { ok: false, path: null, error: `the verdict body write threw: ${e && e.message ? e.message : String(e)}` };
         }
-        let team = null;
-        try { team = resolveTeam(session.cwd); } catch { team = null; }
+        const team = this._teamOfOrNull(session);
         if (!rework) this._notifyLeadOfVerdict(session, lead, rec.reviewTicket, landedOn, verdict, written);
         this._broadcast('ipc-message', {
           type: 'review-done', from: session.name, to: rec.reviewTicket, body: `verdict → ticket ${rec.reviewTicket}`,
@@ -2219,6 +2349,7 @@ function createTicketMethods(deps, shared) {
         const res = teamPromptSave(this._teamFileDeps(), team.name, 'append', 'team-project', brief);
         if (!res.ok) {
           try { fs.unlinkSync(nodePath.join(dir, 'team.json')); } catch {}
+          try { fs.unlinkSync(nodePath.join(dir, 'roster.json')); } catch {}
           try { fs.rmdirSync(nodePath.join(dir, 'prompts', 'append')); } catch {}
           for (const r of (Array.isArray(team.promptsCopied) ? team.promptsCopied : [])) {
             try { fs.unlinkSync(nodePath.join(dir, 'prompts', 'system', `${r}.md`)); } catch {}
@@ -2292,8 +2423,8 @@ function createTicketMethods(deps, shared) {
         this._injectText(session, `[agent:team] ${msg}`, { parkable: true });
       };
       let team;
-      try { team = resolveTeam(session.cwd); } catch { team = null; }
-      if (!team) { reply('error: this session is not on a team (no team.json owns its cwd)'); return; }
+      try { team = this._teamOf(session); } catch { team = null; }
+      if (!team) { reply(this._noTeamError(session)); return; }
       if (team.lead !== session.name) {
         reply(`error: only the team lead (${team.lead}) can edit team metadata`);
         return;
@@ -2434,6 +2565,18 @@ function createTicketMethods(deps, shared) {
             if (!name) { reply('error: set-lead needs a seat name — [agent:team set-lead <seat>]'); return; }
             setLead(team.name, name);
             reply(`lead of ${team.name} is now "${name}"`);
+            return;
+          }
+          case 'roster': {
+            reply(this._rosterText(team));
+            return;
+          }
+          case 'bind': {
+            this._teamBind(session, team, intent, reply);
+            return;
+          }
+          case 'unbind': {
+            this._teamUnbind(session, team, intent, reply);
             return;
           }
           case 'watchdog': {
@@ -2624,7 +2767,7 @@ function createTicketMethods(deps, shared) {
       if (!session) return;
       if (this._capInflight) this._capInflight.delete(session.name);
       let team;
-      try { team = resolveTeam(session.cwd); } catch { team = null; }
+      try { team = this._teamOf(session); } catch { team = null; }
       if (!team || team.solo) return;
       const role = matchSeatRole(team, session.name);
       if (!role || this._ticketDispatchMode(team, role).mode === 'standing') return;
@@ -3111,7 +3254,13 @@ function createTicketMethods(deps, shared) {
         return;
       }
       let team;
-      try { team = resolveTeam(session.cwd); } catch { team = null; }
+      try { team = this._teamOf(session); } catch { team = null; }
+      const shared = team ? [] : this._teamsOf(session);
+      if (shared.length > 1) {
+        if (intent.sub === 'list') { this._sharedTaskList(session, shared, intent, reply); return; }
+        reply(`${this._noTeamError(session)}${this._spillRejectedPayload(session, `task ${intent.sub}`, String(intent.body == null ? '' : intent.body).trim())}`);
+        return;
+      }
       // This is the only rejecting return reached before the verb runs, so the payload spill lives here
       // rather than in each verb.
       if (!team) {
@@ -3209,7 +3358,7 @@ function createTicketMethods(deps, shared) {
       if (!who) return null;
       if (this._isRemoteSeat(who)) return this._resolveRemoteAssignee(who);
       if (team.roles && Object.prototype.hasOwnProperty.call(team.roles, who)) return who;
-      if (this._teamLiveSeatNames(team.root).includes(who)) return who;
+      if (this._teamLiveSeatNames(team).includes(who)) return who;
       return null;
     },
 
@@ -3224,7 +3373,7 @@ function createTicketMethods(deps, shared) {
       const a = ticket && ticket.assignee;
       if (!a) return null;
       if (this._isRemoteSeat(a)) return a;
-      const live = liveNames || this._teamLiveSeatNames(team.root);
+      const live = liveNames || this._teamLiveSeatNames(team);
       const isRoleKey = (k) => !!(k && team.roles && Object.prototype.hasOwnProperty.call(team.roles, k));
       const firstSeatFor = (roleKey) => {
         for (const name of live) {
@@ -3255,7 +3404,7 @@ function createTicketMethods(deps, shared) {
       // ticket.role; leaving the latter pinned to a dead name re-degrades it on every resolution.
       const role = isRoleKey(a) ? a : (ticket.role || null);
       if (!isRoleKey(role)) return null;
-      if (a !== role && this._teamLiveSeatNames(team.root).includes(a)) return null;
+      if (a !== role && this._teamLiveSeatNames(team).includes(a)) return null;
       const seat = this._ticketAssigneeSeat(team, ticket);
       if (!seat || seat === team.lead || seat === a) return null;
       ticket.role = role;
@@ -3469,7 +3618,7 @@ function createTicketMethods(deps, shared) {
       const what = prior.kind === 'redirect'
         ? `${prior.label || 'rejection'} for ${prior.ticketId}` : `spec for ${prior.ticketId}`;
       if (spent) {
-        let team; try { team = resolveTeam(session.cwd) || this._soloContext(session); } catch { team = null; }
+        let team; try { team = this._teamOf(session) || this._soloContext(session); } catch { team = null; }
         if (team && team.solo) team = this._soloOpenerTeam(team, ticketsStore.load(team.root).find((t) => t.id === prior.ticketId));
         log.error('intent', `${what} was displaced on ${session.name} with its redelivery budget spent — escalating`);
         if (team) {
@@ -3525,7 +3674,7 @@ function createTicketMethods(deps, shared) {
       const isRedirect = u.kind === 'redirect';
       const step = isRedirect ? 'redirect-undelivered' : 'spec-undelivered';
       const what = isRedirect ? `${u.label || 'rejection'} for ${u.ticketId}` : `spec for ${u.ticketId}`;
-      let team; try { team = resolveTeam(session.cwd) || this._soloContext(session); } catch { team = null; }
+      let team; try { team = this._teamOf(session) || this._soloContext(session); } catch { team = null; }
       if (!team) { this._armSpecOwedTimer(session); return; }
       queue.shift();
       const ticket = ticketsStore.load(team.root).find((t) => t.id === u.ticketId);
@@ -3717,7 +3866,7 @@ function createTicketMethods(deps, shared) {
         session._specUnconfirmed = null;
         return;
       }
-      let team; try { team = resolveTeam(session.cwd) || this._soloContext(session); } catch { return; }
+      let team; try { team = this._teamOf(session) || this._soloContext(session); } catch { return; }
       if (!team) return;
       const ticket = ticketsStore.load(team.root).find((t) => t.id === u.ticketId);
       team = this._soloOpenerTeam(team, ticket);
@@ -3839,7 +3988,7 @@ function createTicketMethods(deps, shared) {
 
     _openTicketsFor(team, seatName, excludeId = null) {
       const role = matchSeatRole(team, seatName);
-      const live = this._teamLiveSeatNames(team.root);
+      const live = this._teamLiveSeatNames(team);
       return ticketsStore.load(team.root)
         .filter((t) => t.state === 'open' && t.id !== excludeId && t.assignee != null && !t.parked
           && ticketStarted(t)
@@ -3900,7 +4049,7 @@ function createTicketMethods(deps, shared) {
     // its one-shot armed.
     _replayOpenTickets(session) {
       if (!session || !session.agentType || session._dead) return true;
-      let team; try { team = resolveTeam(session.cwd) || this._soloContext(session); } catch { return true; }
+      let team; try { team = this._teamOf(session) || this._soloContext(session); } catch { return true; }
       if (!team) return true;
       const open = this._openTicketsFor(team, session.name);
       if (!open.length) return true;
@@ -4371,6 +4520,7 @@ function createTicketMethods(deps, shared) {
         wireLabel: seatLabel || null,
         ticketId: ticket.id,
       });
+      if (!team.solo) this._bindRosterSeat(team.name, seat.name, roleKey, { by: 'ticket-loop', ticket: ticket.id });
       // Reloaded from the store, not the caller's array, which may no longer be what is on disk.
       const unpin = () => {
         try {
@@ -7020,6 +7170,17 @@ function createTicketMethods(deps, shared) {
       reply(this._taskListText(team, filter, Date.now()));
     },
 
+    _sharedTaskList(session, names, intent, reply) {
+      const filter = intent.filter || 'open';
+      if (!TICKET_FILTERS.includes(filter)) {
+        reply(`error: unknown filter "${filter}" — use one of: ${TICKET_FILTERS.join(', ')}`);
+        return;
+      }
+      let team;
+      try { team = loadManifest(names[0]); } catch (e) { reply(`error: ${e.message}`); return; }
+      reply(`[teams ${names.join(', ')} share this board — read-only: ${session.name} is on neither roster]\n${this._taskListText(team, filter, Date.now())}`);
+    },
+
     _taskListText(team, filter, now) {
       const tickets = ticketsStore.load(team.root).slice().sort((a, b) => {
         const na = Number(String(a.id).replace(/^t/, '')) || 0;
@@ -7079,13 +7240,13 @@ function createTicketMethods(deps, shared) {
     _reconcileTickets(team) {
       if (team && team.solo) return;
       const tickets = ticketsStore.load(team.root);
-      const live = this._teamLiveSeatNames(team.root);
+      const live = this._teamLiveSeatNames(team);
       for (const name of live) {
         const role = matchSeatRole(team, name);
         const open = tickets.find((t) => t.state === 'open' && t.assignee != null && !t.parked
           && (t.assignee === name || t.assignee === role
             || this._ticketAssigneeSeat(team, t, live) === name));
-        if (open) this._ticketWatch.set(name, { root: team.root, role });
+        if (open) this._ticketWatch.set(name, { root: team.root, team: team.name, role });
         else this._ticketWatch.delete(name);
         this._broadcast('session-ticket', { name, ticket: open ? open.id : null });
       }
@@ -7097,10 +7258,11 @@ function createTicketMethods(deps, shared) {
       const tickets = ticketsStore.load(w.root);
       let changed = false;
       const now = Date.now();
-      let team = null; try { team = resolveTeam(w.root || ''); } catch { team = null; }
+      let team = null;
+      try { team = (w.team && typeof loadManifest === 'function') ? loadManifest(w.team) : resolveTeam(w.root || ''); } catch { team = null; }
       // Walk live seats once outside the loop: this runs on every non-idle edge and
       // the team resolve and seat walk are filesystem work.
-      const live = team ? this._teamLiveSeatNames(team.root) : null;
+      const live = team ? this._teamLiveSeatNames(team) : null;
       for (const t of tickets) {
         if (t.state !== 'open') continue;
         if (t.assignee === name || (w.role && t.assignee === w.role)
@@ -7121,12 +7283,13 @@ function createTicketMethods(deps, shared) {
     },
 
     _sweepTickets(now = Date.now()) {
+      if (typeof pruneStaleRows === 'function') pruneStaleRows().catch((e) => log.error('team', `roster prune failed: ${e.message}`));
       const sweptBoards = new Set();
       const reconciledTeams = new Set();
       const sweeps = [];
       for (const s of this.sessions.values()) {
         if (!s.agentType || s._dead) continue;
-        let team; try { team = resolveTeam(s.cwd); } catch { team = null; }
+        let team; try { team = this._teamOf(s); } catch { team = null; }
         if (!team) continue;
         if (!sweptBoards.has(team.root)) {
           sweptBoards.add(team.root);
@@ -7179,7 +7342,7 @@ function createTicketMethods(deps, shared) {
       const out = [];
       for (const s of this.sessions.values()) {
         if (!s.agentType || s._dead) continue;
-        let root; try { root = this._projectRootFor(s.cwd); } catch { root = null; }
+        let root; try { root = this._projectRootFor(s); } catch { root = null; }
         if (!root || root !== team.root) continue;
         let rec = null;
         try { rec = getPersistence().get(s.name); } catch { rec = null; }
@@ -7463,7 +7626,7 @@ function createTicketMethods(deps, shared) {
       }
       // Walk live seats once per board: each `_ticketAssigneeSeat` resolution would
       // otherwise re-walk the run directory.
-      const live = this._teamLiveSeatNames(team.root);
+      const live = this._teamLiveSeatNames(team);
       for (const t of tickets) {
         if (t.state === 'open' && t.parked && t.parkedBy === 'cap') {
           try { this._alarmCapParked(team, t, now, stallMs); } catch (e) {
@@ -7631,15 +7794,18 @@ function createTicketMethods(deps, shared) {
       if (!target) return;
       if (!requester) { fail(`requester "${requesterName}" is not a running session`); return; }
       if (targetName === requesterName) { fail('self-retire is not allowed'); return; }
-      const targetRoot = findProjectRoot(target.cwd);
-      const requesterRoot = findProjectRoot(requester.cwd);
-      if (!requesterRoot || requesterRoot !== targetRoot) {
-        fail(`"${requesterName}" and "${targetName}" are not in the same project (no shared team.json root)`);
+      let targetTeam = null;
+      let requesterTeam = null;
+      try { targetTeam = this._teamOf(target); } catch { targetTeam = null; }
+      try { requesterTeam = this._teamOf(requester); } catch { requesterTeam = null; }
+      if (!requesterTeam || !targetTeam || requesterTeam.name !== targetTeam.name) {
+        fail(`"${requesterName}" and "${targetName}" are not in the same project (not on one team's roster)`);
         return;
       }
+      const targetRoot = targetTeam.root;
       let discard = false;
       try {
-        const team = resolveTeam(target.cwd);
+        const team = targetTeam;
         if (team) {
           const role = matchSeatRole(team, targetName);
           const roleMatch = role ? team.roles[role] : null;
@@ -7672,7 +7838,7 @@ function createTicketMethods(deps, shared) {
         try {
           const rec = getPersistence().get(targetName);
           if (rec && rec.ephemeral && rec.reviewTicket) {
-            const t = resolveTeam(target.cwd);
+            const t = targetTeam;
             const ticket = t ? this._loadTicket(t, rec.reviewTicket) : null;
             if (t && ticket) {
               const round = (Number(ticket.reviewRound) || 0) + 1;
@@ -7690,7 +7856,7 @@ function createTicketMethods(deps, shared) {
       }
       // Before teardown: destroy() drops the record that links the ticket to the session.
       try {
-        const t = resolveTeam(target.cwd);
+        const t = targetTeam;
         if (t) this._stampTicketRevival(t, targetName, { disposition });
       } catch { /* the stamp is a convenience; a retire must not fail on it */ }
       this._sendToSession(targetName, 'session:context-action', { action: 'retired', name: targetName, disposition });

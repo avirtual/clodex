@@ -215,7 +215,7 @@
 | `destroy` | end a seat for good: kill it, remove the worktree its record names, then drop record and seat dir only when nothing is stranded | sessions.json record, REGISTRY_DIR seat dir, worktree on disk | `kill` `_waitForExit` `clearHintForRecord` `gitWorktree.removeWorktree` | worktree-restart-preserve.test.js session-manager.test.js |
 | `archive` | stop a live seat but KEEP its record stamped archivedAt, so the row resumes with --resume | `s._archived`, sessions.json archivedAt | `_notifyComposition` `sigkillPid` `reapPtyDescendants` | reap-seat-descendants.test.js sigkill-pid-guard.test.js |
 | `_stopForRespawn` | the record-keeping stop shared by rename, move and moveToPeer: stream kill, or captured-pid SIGKILL timer plus descendant reap | none (the process only) | `sigkillPid` `reapPtyDescendants` | unpinned |
-| `rename` | give a seat a new name: refuse ticket/assignee seats and collisions, stop it, move name-keyed state, respawn with --resume | `this._movingNames`, `s._moving`, sessions.json key, seat dirs, pending/<name>, library/memory-loadlog/<name>.jsonl, team lead pointer | `_stopForRespawn` `_waitForExit` `_renameDirs` `create` | session-rename.test.js |
+| `rename` | give a seat a new name: refuse ticket/assignee seats and collisions, stop it, move name-keyed state, respawn with --resume | `this._movingNames`, `s._moving`, sessions.json key, seat dirs, pending/<name>, library/memory-loadlog/<name>.jsonl, team lead pointer, roster row | `_stopForRespawn` `_waitForExit` `_renameDirs` `renameSeatRow` `create` | session-rename.test.js |
 
 ### Invariants
 
@@ -263,12 +263,13 @@
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
 | `clearHintForRecord` | clears the proxy spawner-hint row a dropped record set, for exits with no live session to read spawnerHintSet from | remote proxy hint table (via HTTP) | `resolveProxyBase` `ProxyClient.spawnerHint` | session-forget-ipc.test.js |
-| `_teamBlockFor` | the team half of the IPC prompt (team block plus role prompt unless it rides as system file), reporting a missing role prompt | none (reads team.json and prompt files each call) | `resolveTeam` `formatTeamBlock` `matchSeatRole` `readSystemPromptBody` | prompt-refresh-recipe.test.js team-prompt-dir.test.js team-preflight.test.js resolve-seat-shape.test.js |
+| `_teamBlockFor` | the team half of the IPC prompt (team block plus role prompt unless it rides as system file), reporting a missing role prompt | none (reads team.json and prompt files each call) | `_teamOf` `formatTeamBlock` `matchSeatRole` `readSystemPromptBody` | prompt-refresh-recipe.test.js team-prompt-dir.test.js team-preflight.test.js resolve-seat-shape.test.js |
 | `_realIpcFor` | the one recipe for append-prompt bytes, built from the recipe captured at create() plus a freshly resolved team block | none | `_resolveExecDefs` `buildIpcPrompt` `mergeClaudeSystemPrompt` | prompt-refresh-recipe.test.js plugin-scope.test.js team-prompt-dir.test.js |
 | `refreshPrompt` | at a clear or compact of a live claude seat, re-stages the snapshot-to-current prompt gap as a delta without rewriting append-prompt.md | staged delta under run/<name>/, shadow log | `_teamBlockFor` `_realIpcFor` `_snapshotBlockFor` `restageAtReset` | prompt-refresh-recipe.test.js prompt-regen-at-clear.test.js prompt-regen-at-compact.test.js prompt-snapshot-baseline.test.js |
-| `teamNameFor` | the team name owning a cwd, or null, swallowing resolveTeam throws | none | `resolveTeam` | session-move.test.js session-restore.test.js session-manager.test.js |
-| `_teamLiveSeats` | {name, label} for every live agent seat whose `_projectRootFor` equals the given root, with a warmth label | `this.sessions`, `this._proxyPoller` | `_projectRootFor` `peerStatusLabel` | session-manager.test.js |
-| `composeRosterFor` | a seat's roster body, reading cwd from persistence when the seat is not in the map yet; null when teamless | sessions.json (read) | `resolveTeam` `formatRoster` `_teamLiveSeats` `_seatGrants` `_isEphemeralSeat` | session-manager.test.js |
+| `teamNameOf` | the team name of a seat (name + cwd), or null, swallowing resolver throws | none | `_teamOf` | unpinned |
+| `teamNameFor` | cwd-first spelling of `teamNameOf`, kept for session-restore and ipc-handlers callers | none | `teamNameOf` | session-move.test.js session-restore.test.js session-manager.test.js |
+| `_teamLiveSeats` | {name, label} for every live agent seat on the given team (by `_teamOf`), or under a solo board's root, with a warmth label | `this.sessions`, `this._proxyPoller` | `_teamOf` `_projectRootFor` `peerStatusLabel` | session-manager.test.js |
+| `composeRosterFor` | a seat's roster body, reading cwd from persistence when the seat is not in the map yet; null when teamless | sessions.json (read) | `_teamOf` `formatRoster` `_teamLiveSeats` `_seatGrants` `_isEphemeralSeat` | session-manager.test.js |
 | `_isEphemeralSeat` | true when the seat's persistence record marks it ephemeral; read lazily by composeRosterFor, _injectRoster, _settleBoot | sessions.json (read), `session._ephemeralSeat` (memo) | none | session-manager.test.js |
 | `_stripClaimedTree` | a pre-kill snapshot with its worktree pointer removed iff a different live seat now holds that checkout | none | `_ticketTreeHolder` (team-tickets) | preserve-across-restart.test.js |
 | `resumeCwdOf` | the cwd to resume a record in, falling back to the worktree's main (and rewriting the record) when the tree is gone | sessions.json cwd and worktree | none | resume-cwd-tree-fallback.test.js session-restore.test.js |
@@ -291,7 +292,6 @@
 ### Hazards
 
 - `clearHintForRecord` must run before the record is removed and keep its spawnerHintSet gate, or a blind clear wipes an operator's out-of-band /_hint override.
-- `_notifyComposition` scopes teammates with findProjectRoot while `_teamLiveSeats` and `_projectRootFor` call themselves the one live-seat scope, so a teamless-repo divergence is possible.
 - `_preserveAcrossRestart` returns before the ALWAYS_PRESERVE loop when fields is not an array, so a caller omitting the list loses sessionIds although ALWAYS_PRESERVE exists to carry them.
 - `_injectRoster` writing actively into a booting non-claude TUI leaves the roster as an unsubmitted draft; only the stashed team ref rendered by `_settleBoot` is safe.
 - `_stripClaimedTree` guards the kill-to-exit window in which a restarting seat is live but named by no record; a wholesale snapshot write-back there puts a second record on a tree another seat is committing in.
@@ -322,10 +322,10 @@
 ### Hazards
 
 - `purgeWorkspace` is a record-dropper behind the Delete Workspace… menu: it calls getPersistence().remove on every row tagged with the workspace, archived and saved rows included, with no undo.
-- `list` keys its ticket badge on the team root from resolveTeam, while `_projectRootFor` says a solo seat's board is the repo root, so a teamless seat's open ticket may be missing from first paint.
+- `list` keys its ticket badge on the seat's `_teamOf` team, while `_projectRootFor` says a solo seat's board is the repo root, so a teamless seat's open ticket may be missing from first paint.
 - `killAll` calls s.stream.kill() and reapFromSnapshot outside any try, so a throw for one seat skips every later seat's kill and `killVoiceEngine`.
 - `_spawnVoiceEngine` sends pty-data straight to a window's webContents, so any use of a window handle beyond webContents.send there breaks web-host clients only at runtime.
-- `list` must keep its live-seat lookup memoized per root, because it runs per session times ticket and `_teamLiveSeatNames` rebuilds a proxy snapshot per live seat.
+- `list` must keep its live-seat lookup memoized per team and built from its own per-seat memo, because it runs per session times ticket and a second resolution could disagree with the row's own.
 
 ## _cleanup, PTY output scan, activity, attention and compaction — _cleanup … _firePostClearContinuation
 

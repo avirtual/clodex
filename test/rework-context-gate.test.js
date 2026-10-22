@@ -274,7 +274,7 @@ test('mkFixture injects every dep team-tickets.js reads', () => {
   const repo = real(mkTmpRoot('clodex-t827-repo-'));
   const f = mkFixture({ home: mkTmpRoot('clodex-t827-home-'), userData: mkTmpRoot('clodex-t827-ud-'), repo, treePath: `${repo}-wt` });
   assertTicketDepsCovered(assert, f.deps, {
-    optional: ['ticketSuiteTimeoutMs', 'resolveSystemPromptFile', 'gatherTeam',
+    optional: ['ticketSuiteTimeoutMs', 'teamOf', 'teamOfSeat', 'teamsOfCwd', 'bindSeat', 'unbindSeat', 'rosterOf', 'pruneStaleRows', 'resolveSystemPromptFile', 'gatherTeam',
       'createTeam', 'kitCatalog', 'resolveKit', 'setLead', 'teamsDir', 'listTeams', 'loadManifest',
       'refreshAppMenu', 'getSandboxManager', 'getPeerManager', 'fetch'],
   });

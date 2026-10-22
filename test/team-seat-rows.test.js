@@ -113,26 +113,17 @@ test('list(): a resolveTeam that THROWS leaves the row null rather than failing 
   assert.strictEqual(rows['shop-hand'].role, null);
 });
 
-test('list(): every row of a listing reads ONE team snapshot — role, team and badge cannot disagree', () => {
-  // `role`, `team` and the ticket badge each need the manifest, and all three go
-  // through the listing's per-cwd memo. So a manifest that changes (or becomes
-  // unreadable) partway through a listing cannot give the badge one answer and
-  // the row another: after the first resolution nothing re-reads it.
-  //
-  // Counting calls is NOT the instrument here — `_projectRootFor` resolves the
-  // team again for its own reasons, once per seat, so a call count measures that
-  // and not this. Making every resolution AFTER the first throw is what isolates
-  // the row projection: if any part of it re-resolved, the row would go null.
-  let n = 0;
-  const rows = mkRows([{ name: 'shop-hand' }, { name: 'shop-reviewer' }], {
+test('list(): every field of a row reads ONE team resolution — role, team and badge cannot disagree', () => {
+  const seen = new Set();
+  const rows = mkRows([{ name: 'shop-hand', cwd: '/proj/a' }, { name: 'shop-reviewer', cwd: '/proj/b' }], {
     resolveTeam: (cwd) => {
-      n += 1;
-      if (n > 1) throw new Error('team.json vanished mid-listing');
-      return cwd === '/proj' ? TEAM : null;
+      if (seen.has(cwd)) throw new Error('team.json vanished mid-listing');
+      seen.add(cwd);
+      return cwd.startsWith('/proj') ? TEAM : null;
     },
   });
-  assert.ok(n > 1, 'ENTER: the listing did resolve more than once, or this pins nothing');
+  assert.strictEqual(seen.size, 2, 'ENTER: both seats resolved');
   assert.strictEqual(rows['shop-hand'].role, 'hand', 'the first row resolved');
-  assert.strictEqual(rows['shop-reviewer'].role, 'reviewer', 'and so did the second, off the same snapshot');
+  assert.strictEqual(rows['shop-reviewer'].role, 'reviewer', 'and the second, off its own single resolution');
   assert.strictEqual(rows['shop-reviewer'].team, 'shop', 'team agrees with role — same resolution');
 });

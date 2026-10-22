@@ -78,7 +78,7 @@ function registerIpcHandlers(deps) {
     path, persistence, probePeer, proxyPoller,
     pty, readEffectiveToolState, readVoiceCapability, readSessionMeta,
     rebuildAllStatusScripts, refreshAppMenu, refreshTrayMenu, rememberPeerControlled,
-    createTeam, addRole, resolveTeam, listTeams, loadManifest,
+    createTeam, addRole, resolveTeam, teamsOfCwd, listTeams, loadManifest,
     setRole, removeRole, renameRole, setTeamWatchdog, setLead, setTeamTrunk, gatherTeam, teamsDir,
     teamDeleteCheck, teamDeleteGated,
     resolveDeployFolder, restartSession, restoreSessionsForWorkspace,
@@ -385,8 +385,12 @@ function registerIpcHandlers(deps) {
   });
 
   handle('team:forCwd', (_e, cwd) => {
-    try { const t = resolveTeam(cwd); return { team: t ? t.name : null, root: t ? t.root : null }; }
-    catch { return { team: null, root: null }; }
+    try {
+      const t = resolveTeam(cwd);
+      if (t) return { team: t.name, root: t.root };
+      const candidates = typeof teamsOfCwd === 'function' ? teamsOfCwd(cwd) : [];
+      return candidates.length > 1 ? { team: null, root: null, candidates } : { team: null, root: null };
+    } catch { return { team: null, root: null }; }
   });
 
   handle('team:get', (_e, name) => {
@@ -1008,15 +1012,13 @@ function registerIpcHandlers(deps) {
     const includePr = !opts || opts.includePr !== false;
     try {
       const meta = await sessionMeta.metaFor(sessions, { includePr });
-      const teamByCwd = new Map();
       for (const s of list) {
         if (!meta[s.name]) meta[s.name] = {};
         // A new array, never a push: metaFor shares one frozen instance across every row.
         meta[s.name]._tiers = [...(meta[s.name]._tiers || []), 'record'];
         meta[s.name].createdAt = s.createdAt || null;
         meta[s.name].archivedAt = s.archivedAt || null;
-        if (!teamByCwd.has(s.cwd)) teamByCwd.set(s.cwd, manager.teamNameFor(s.cwd));
-        meta[s.name].team = teamByCwd.get(s.cwd);
+        meta[s.name].team = manager.teamNameFor(s.cwd, s.name);
         // Omitted on a revoke: the `record` tier claim makes absence mean none granted.
         if (Array.isArray(s.pluginGrants) && s.pluginGrants.length) {
           meta[s.name].pluginGrants = [...s.pluginGrants];
