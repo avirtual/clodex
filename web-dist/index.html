@@ -35653,7 +35653,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const pres = [];
         const walk = (n) => {
           for (const k of n.childNodes || []) {
-            if (k.tagName === "PRE") pres.push(k);
+            if (k.nodeName === "PRE") pres.push(k);
             else walk(k);
           }
         };

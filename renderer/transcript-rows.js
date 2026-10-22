@@ -580,7 +580,7 @@ const FENCE_FOLD_LINES = 6;
 
 function foldFences(doc, parent, rec, ctx) {
   const pres = [];
-  const walk = (n) => { for (const k of n.childNodes || []) { if (k.tagName === 'PRE') pres.push(k); else walk(k); } };
+  const walk = (n) => { for (const k of n.childNodes || []) { if (k.nodeName === 'PRE') pres.push(k); else walk(k); } };
   walk(parent);
   pres.forEach((pre, k) => {
     const code = pre.childNodes[0];
