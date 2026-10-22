@@ -47,10 +47,11 @@ definition a re-add mints has no account.
 
 ## readRoster
 
-Quarantine lasts while `roster.json` is absent and a `roster.json.bad-<ts>` sits
-beside it: the seats named in the newest bad file resolve to no team, and
-`synthesiseRosters` skips the team. The first bind writes a fresh `roster.json`,
-which ends the quarantine for every seat; the bad file stays for the operator.
+A quarantine outlives the next write: `writeRoster` carries the bad file's seats
+into the new `roster.json` as `quarantine`, and a seat leaves that list only when
+it gets its own row. `bindNow` refuses `by: 'inferred'` on a quarantined team, so
+name inference never re-adopts a quarantined seat. The team's lead is exempt:
+`seatClaim` resolves `team.lead` before any row or quarantine check.
 
 ## rowState
 
@@ -58,6 +59,8 @@ A row's `gen` is the seat record's `createdAt`, which `_preserveAcrossRestart`
 carries through kill-and-recreate restarts and `persistence.rename` keeps on the
 renamed record. A ticket seat is bound at its reservation, before `create()`
 stamps `createdAt`, so its row starts with `gen: null` and `teamOf` backfills it.
+The lead's row is re-stamped whenever its record's `createdAt` changes: a kill
+drops the record, and a respawned lead must not read as `replaced`.
 
 ## onChain
 
@@ -69,4 +72,5 @@ not a lock against another process writing `~/.clodex/teams`.
 A row with no record and no session counts as live in `rowState` until it is
 `ROSTER_PRUNE_MIN_AGE_MS` old: a spawn binds the seat before `create()` persists
 its record, and both the minute prune and the one-claim scan must treat that
-reservation as held.
+reservation as held. A row is pruned only when two consecutive sweeps found it
+stale, which covers the gap between a restart's kill and `_preserveAcrossRestart`.

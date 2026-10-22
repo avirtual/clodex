@@ -206,6 +206,7 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
   const loggedOnce = new Set();
   const inferPending = new Set();
   let rosterChain = Promise.resolve();
+  let staleSeen = new Set();
 
   function logLine(level, msg, onceKey = null) {
     if (onceKey) {
@@ -624,7 +625,12 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
         ...(typeof r.ticket === 'string' && r.ticket ? { ticket: r.ticket } : {}),
       });
     }
-    return { rows };
+    const q = obj.quarantine;
+    if (q !== undefined && (!q || typeof q.file !== 'string' || !Array.isArray(q.seats) || !q.seats.every((x) => typeof x === 'string' && NAME_RE.test(x)))) {
+      return { bad: 'malformed "quarantine" record' };
+    }
+    const held = q ? q.seats.filter((x) => !rows.some((r) => r.seat === x)) : [];
+    return { rows, quarantine: held.length ? { file: q.file, seats: held } : null };
   }
 
   function quarantineFiles(teamName) {
@@ -647,7 +653,7 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
       return { rows: [], quarantine: { file: badFile, seats: seatsNamedIn(badText) }, absent: false };
     }
     const parsed = parseRoster(text, roles);
-    if (parsed.rows) return { rows: parsed.rows, quarantine: null, absent: false };
+    if (parsed.rows) return { rows: parsed.rows, quarantine: parsed.quarantine, absent: false };
     const badFile = `${file}.bad-${now()}`;
     let moved = true;
     try { fs.renameSync(file, badFile); } catch { moved = false; }
@@ -663,8 +669,25 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
     writeRoster(teamName, fn(obj.seats));
   }
 
+  function heldQuarantine(teamName) {
+    try {
+      const obj = JSON.parse(fs.readFileSync(rosterPath(teamName), 'utf-8'));
+      return obj && obj.quarantine && Array.isArray(obj.quarantine.seats) ? obj.quarantine : null;
+    } catch {}
+    const bad = quarantineFiles(teamName);
+    if (!bad.length) return null;
+    const file = path.join(teamsDir, teamName, bad[bad.length - 1]);
+    let text = '';
+    try { text = fs.readFileSync(file, 'utf-8'); } catch {}
+    return { file, seats: seatsNamedIn(text) };
+  }
+
   function writeRoster(teamName, rows) {
-    atomicWrite(rosterPath(teamName), JSON.stringify({ version: ROSTER_VERSION, seats: rows }, null, 2));
+    const q = heldQuarantine(teamName);
+    const held = q ? q.seats.filter((x) => !rows.some((r) => r.seat === x)) : [];
+    atomicWrite(rosterPath(teamName), JSON.stringify({
+      version: ROSTER_VERSION, seats: rows, ...(held.length ? { quarantine: { file: q.file, seats: held } } : {}),
+    }, null, 2));
   }
 
   function setSeatLookup(lookup) {
@@ -715,6 +738,9 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
   }
 
   function seatClaim(seat, loaded) {
+    for (const { team } of loaded) {
+      if (team.lead === seat) return { team, row: team.roster.find((r) => r.seat === seat) || null, lead: true };
+    }
     let quarantined = null;
     for (const { team, rosterState } of loaded) {
       const row = team.roster.find((r) => r.seat === seat);
@@ -874,7 +900,8 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
     if (name) {
       const claim = seatClaim(name, loaded);
       if (claim) {
-        if (claim.team && claim.row.gen == null && genOf(name) != null) stampGen(claim.team.name, name);
+        const gen = claim.team ? genOf(name) : null;
+        if (claim.row && gen != null && (claim.row.gen == null || (claim.lead && claim.row.gen !== gen))) stampGen(claim.team.name, name);
         return claim.team || null;
       }
     }
@@ -893,7 +920,7 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
     if (!role || !seatExists(seat)) return;
     inferPending.add(seat);
     bindSeat(team.name, seat, role, { by: 'inferred' })
-      .then((r) => { if (r && r.ok) logLine('info', `team ${team.name}: seat ${seat} inferred as ${role} from its name`); })
+      .then((r) => { if (r && r.ok && !r.unchanged) logLine('info', `team ${team.name}: seat ${seat} inferred as ${role} from its name`); })
       .catch(() => {})
       .finally(() => inferPending.delete(seat));
   }
@@ -904,9 +931,18 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
       try { team = loadManifest(teamName); } catch { return; }
       const gen = genOf(seat);
       const row = team.roster.find((r) => r.seat === seat);
-      if (!row || row.gen != null || gen == null) return;
+      if (!row || gen == null || row.gen === gen || (row.gen != null && team.lead !== seat)) return;
       writeRoster(teamName, team.roster.map((r) => (r.seat === seat ? { ...r, gen } : r)));
     }).catch(() => {});
+  }
+
+  function liveHolder(seat, exceptTeam) {
+    for (const { team } of loadAll()) {
+      if (team.name === exceptTeam) continue;
+      const row = team.roster.find((r) => r.seat === seat);
+      if (row && rowState(row) === 'live') return { team: team.name, role: row.role };
+    }
+    return null;
   }
 
   function bindNow(teamName, seat, role, { by = 'unknown', ticket = null, gen } = {}) {
@@ -916,6 +952,11 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
     if (!own) return { ok: false, error: `no team "${teamName}"` };
     if (!Object.prototype.hasOwnProperty.call(own.team.roles, role)) {
       return { ok: false, error: `role "${role}" is not on team ${teamName} (roles: ${Object.keys(own.team.roles).join(', ')})` };
+    }
+    const mine = own.team.roster.find((r) => r.seat === seat);
+    if (by === 'inferred') {
+      if (own.rosterState.quarantine) return { ok: false, error: `team ${teamName}'s roster is quarantined (${own.rosterState.quarantine.file}) — a lead binds ${seat} with [agent:team bind ${seat} ${role}]` };
+      if (mine && rowState(mine) === 'live') return { ok: true, team: teamName, row: mine, unchanged: true };
     }
     const drops = [];
     for (const { team } of loaded) {
@@ -930,7 +971,7 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
       writeRoster(team.name, team.roster.filter((r) => r.seat !== seat));
       logLine('info', `team ${team.name}: ${st} row ${seat} (role ${held.role}) dropped — ${seat} now bound to ${teamName}`);
     }
-    const prior = own.team.roster.find((r) => r.seat === seat);
+    const prior = mine;
     if (prior && rowState(prior) !== 'live') {
       logLine('info', `team ${teamName}: ${rowState(prior)} row ${seat} (role ${prior.role}) overwritten by ${by}`);
     }
@@ -982,8 +1023,11 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
   function pruneStaleRows() {
     return onChain(() => {
       const pruned = [];
+      const seenNow = new Set();
       for (const { team } of loadAll()) {
-        const drop = team.roster.filter((r) => r.seat !== team.lead && rowState(r) === 'stale');
+        const stale = team.roster.filter((r) => r.seat !== team.lead && rowState(r) === 'stale');
+        for (const r of stale) seenNow.add(`${team.name}\0${r.seat}`);
+        const drop = stale.filter((r) => staleSeen.has(`${team.name}\0${r.seat}`));
         if (!drop.length) continue;
         writeRoster(team.name, team.roster.filter((r) => !drop.includes(r)));
         for (const r of drop) {
@@ -991,6 +1035,7 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
           logLine('info', `team ${team.name}: stale row ${r.seat} (role ${r.role}) pruned — no record, no session`);
         }
       }
+      staleSeen = seenNow;
       return pruned;
     });
   }
@@ -1078,6 +1123,8 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
         throw new Error(`team "${other}" already owns root ${resolvedRoot}`);
       }
     }
+    const holder = liveHolder(lead, name);
+    if (holder) throw new Error(`${lead} is on team ${holder.team}'s roster (role ${holder.role}) — unbind it there first`);
     if (dryRun) return null;
     const kitRoles = resolvedKit && Object.keys(resolvedKit.roles).length ? resolvedKit.roles : null;
     const defaultRoles = kitRoles || {
@@ -1404,6 +1451,8 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
     if (typeof seatName !== 'string' || !NAME_RE.test(seatName)) {
       throw new Error(`team "${teamName}" lead must be a seat name matching ${NAME_RE} (${team.file})`);
     }
+    const holder = liveHolder(seatName, teamName);
+    if (holder) throw new Error(`${seatName} is on team ${holder.team}'s roster (role ${holder.role}) — unbind it there first`);
     const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
     raw.lead = seatName;
     atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
@@ -1477,14 +1526,6 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
   };
 }
 
-// A name this cannot decompose resolves to no role at all — off the roster, no
-// role prompt, and past the fail-CLOSED `_roleInUse` guard in session-manager.js.
-//
-// The collision suffix is not only `-N`: `shop-hand2` must strip too. EXACT MATCH
-// WINS before any stripping, since a role may be named `hand2`. Only digit
-// suffixes strip. `-rN` is the one lettered tail, stripped ahead of the numeric
-// one — a ticket's reviewer is `<team>-reviewer-<ticket>-r<round>` and both tails
-// must go or the key keeps the ticket number.
 function matchSeatRole(team, seatName) {
   if (!team || !seatName || !team.roles) return null;
   if (seatName === team.lead) return 'lead' in team.roles ? 'lead' : null;
@@ -1493,6 +1534,14 @@ function matchSeatRole(team, seatName) {
   return nameRole(team, seatName);
 }
 
+// A name this cannot decompose resolves to no role at all — off the roster, no
+// role prompt, and past the fail-CLOSED `_roleInUse` guard in session-manager.js.
+//
+// The collision suffix is not only `-N`: `shop-hand2` must strip too. EXACT MATCH
+// WINS before any stripping, since a role may be named `hand2`. Only digit
+// suffixes strip. `-rN` is the one lettered tail, stripped ahead of the numeric
+// one — a ticket's reviewer is `<team>-reviewer-<ticket>-r<round>` and both tails
+// must go or the key keeps the ticket number.
 function nameRole(team, seatName) {
   if (!team || !seatName || !team.roles) return null;
   if (seatName === team.lead) return 'lead' in team.roles ? 'lead' : null;

@@ -420,6 +420,7 @@ function createTicketMethods(deps, shared) {
     gatherTeam,
     resolveTeam,
     teamOf,
+    teamOfSeat,
     teamsOfCwd,
     bindSeat,
     unbindSeat,
@@ -637,7 +638,12 @@ function createTicketMethods(deps, shared) {
       let bindTo = null;
       {
         let seatTeam = targetTeam;
-        const onRoster = (t, seat) => !!(t && (t.lead === seat || (t.roster || []).some((r) => r.seat === seat)));
+        const onRoster = (t, seat) => {
+          if (!t) return false;
+          if (typeof teamOfSeat !== 'function') return t.lead === seat || (t.roster || []).some((r) => r.seat === seat);
+          const held = teamOfSeat(seat);
+          return !!(held && held.name === t.name);
+        };
         if (!onRoster(seatTeam, name)) {
           const viaSpawner = onRoster(spawnerTeam, spawner.name) ? nameRole(spawnerTeam, name) : null;
           if (viaSpawner) {
@@ -967,7 +973,7 @@ function createTicketMethods(deps, shared) {
       if (typeof bindSeat !== 'function' || !teamName) return Promise.resolve(null);
       return bindSeat(teamName, seat, role, opts).then((r) => {
         if (r && !r.ok) log.warn('team', `roster bind ${seat} → ${teamName} (${role}) refused: ${r.error}`);
-        else if (r && opts.by === 'inferred') log.info('team', `team ${teamName}: seat ${seat} inferred as ${role} from its name`);
+        else if (r && !r.unchanged && opts.by === 'inferred') log.info('team', `team ${teamName}: seat ${seat} inferred as ${role} from its name`);
         return r;
       }).catch((e) => {
         log.warn('team', `roster bind ${seat} → ${teamName} (${role}) failed: ${e.message}`);
@@ -7252,7 +7258,7 @@ function createTicketMethods(deps, shared) {
       let changed = false;
       const now = Date.now();
       let team = null;
-      try { team = w.team ? loadManifest(w.team) : resolveTeam(w.root || ''); } catch { team = null; }
+      try { team = (w.team && typeof loadManifest === 'function') ? loadManifest(w.team) : resolveTeam(w.root || ''); } catch { team = null; }
       // Walk live seats once outside the loop: this runs on every non-idle edge and
       // the team resolve and seat walk are filesystem work.
       const live = team ? this._teamLiveSeatNames(team) : null;

@@ -121,7 +121,7 @@ test('a row naming a role team.json no longer has quarantines the roster instead
   assert.deepStrictEqual(r.quarantine.seats, ['a-hand-1']);
 });
 
-test('two concurrent binds of one seat on two teams: exactly one wins, the other gets the refusal', async (t) => {
+test('two binds of one seat on two teams fired together: exactly one wins, the other gets the one-claim refusal', async (t) => {
   const h = mkHome(t);
   h.writeTeam('a', h.rootA, 'a-lead');
   h.writeTeam('b', h.rootB, 'b-lead');
@@ -134,13 +134,15 @@ test('two concurrent binds of one seat on two teams: exactly one wins, the other
   assert.strictEqual(rb.error, "x is on team a's roster (role hand) — unbind it there first");
 });
 
-test('the stale-row prune skips a row younger than 60 s', async (t) => {
+test('the stale-row prune skips a row younger than 60 s, and drops a row only on its second stale sweep', async (t) => {
   const h = mkHome(t);
   h.writeTeam('a', h.rootA, 'a-lead');
   h.writeRoster('a', [
     { seat: 'young', role: 'hand', gen: null, since: h.now() - 1000, by: 'ticket-loop' },
     { seat: 'old', role: 'hand', gen: null, since: h.now() - 61_000, by: 'ticket-loop' },
   ]);
+  assert.deepStrictEqual(await h.tm.pruneStaleRows(), [], 'the first stale sighting prunes nothing');
+  assert.deepStrictEqual(h.readRoster('a').map((r) => r.seat), ['young', 'old']);
   const pruned = await h.tm.pruneStaleRows();
   assert.deepStrictEqual(pruned, [{ team: 'a', seat: 'old' }]);
   assert.deepStrictEqual(h.readRoster('a').map((r) => r.seat), ['young']);
@@ -236,4 +238,72 @@ test('team bind needs the team-create grant, and binding leaves the seat\'s exec
   assert.deepStrictEqual(h.readRoster('a').map((r) => [r.seat, r.role]), [['a-lead', 'lead'], ['helper', 'scout']]);
   assert.strictEqual(JSON.stringify(h.records.get('helper').execCommands), before);
   assert.strictEqual(m._teamOf(m.sessions.get('helper')).name, 'a', 'the bound seat is on the team from outside its root');
+});
+
+test('a quarantine survives the next bind: inferred binds are refused, and a lead bind keeps the other named seats teamless', async (t) => {
+  const h = mkHome(t);
+  h.writeTeam('a', h.rootA, 'a-lead');
+  for (const n of ['a-hand-1', 'a-scout']) h.records.set(n, { name: n, cwd: h.rootA, createdAt: 1 });
+  fs.writeFileSync(path.join(h.home, 'teams', 'a', ROSTER_FILE), '{"seats":[{"seat":"a-hand-1","role":"hand"},{"seat":"a-scout"');
+  assert.strictEqual(h.tm.teamOf({ name: 'a-hand-1', cwd: h.rootA }), null, 'ENTER: quarantined');
+  const inferred = await h.tm.bindSeat('a', 'a-scout', 'scout', { by: 'inferred' });
+  assert.strictEqual(inferred.ok, false);
+  assert.match(inferred.error, /roster is quarantined/);
+  assert.strictEqual((await h.tm.bindSeat('a', 'a-scout', 'scout', { by: 'a-lead' })).ok, true);
+  assert.strictEqual(h.tm.teamOf({ name: 'a-scout', cwd: h.rootA }).name, 'a', 'the bound seat is back');
+  assert.strictEqual(h.tm.teamOf({ name: 'a-hand-1', cwd: h.rootA }), null, 'the other named seat stays teamless');
+  assert.deepStrictEqual(h.tm.rosterOf('a').quarantine.seats, ['a-hand-1']);
+});
+
+test('the lead resolves to its team through a quarantine and through a recreated record, and its row gen is re-stamped', async (t) => {
+  const h = mkHome(t);
+  h.writeTeam('a', h.rootA, 'a-lead');
+  h.writeRoster('a', [{ seat: 'a-lead', role: 'lead', gen: 100, since: 1, by: 'create' }]);
+  h.records.set('a-lead', { name: 'a-lead', cwd: '/elsewhere', createdAt: 200 });
+  assert.strictEqual(h.tm.teamOf({ name: 'a-lead', cwd: '/elsewhere' }).name, 'a', 'a recreated lead record keeps the team');
+  await h.tm.pruneStaleRows();
+  assert.strictEqual(h.readRoster('a')[0].gen, 200, 'the lead row follows the new record');
+  fs.writeFileSync(path.join(h.home, 'teams', 'a', ROSTER_FILE), '{"seats":[{"seat":"a-lead","role":"lead"');
+  assert.strictEqual(h.tm.teamOf({ name: 'a-lead', cwd: '/elsewhere' }).name, 'a', 'a quarantine naming the lead does not unseat it');
+});
+
+test('a quarantined team\'s lead can still run [agent:team roster], which shows the quarantine', (t) => {
+  const { h, m, injected, seat } = mkSeats(t);
+  const lead = seat('a-lead', h.rootA);
+  fs.writeFileSync(path.join(h.home, 'teams', 'a', ROSTER_FILE), '{"seats":[{"seat":"a-lead","role":"lead"},{"seat":"a-hand-1"');
+  m._handleTeam(lead, { type: 'team', sub: 'roster' });
+  assert.strictEqual(injected.length, 1);
+  assert.match(injected[0], /^\[agent:team\] \[team a\] roster\.json — 0 rows\nQUARANTINED: .*roster\.json\.bad-\d+ — on no team until a lead binds them: a-lead, a-hand-1$/);
+});
+
+test('respawning a seat whose row went stale rebinds it to the spawner\'s team', async (t) => {
+  const { h, m, seat } = mkSeats(t);
+  h.writeRoster('a', [
+    { seat: 'a-lead', role: 'lead', gen: 1, since: 1, by: 'create' },
+    { seat: 'a-scout', role: 'scout', gen: 7, since: 1, by: 'old-binder' },
+  ]);
+  const lead = seat('a-lead', h.rootA);
+  m.create = async (name, type, cwd) => {
+    h.records.set(name, { name, cwd, createdAt: 900 });
+    m.sessions.set(name, { name, type, agentType: type, cwd });
+    return {};
+  };
+  m._handleSpawnIntent(lead, { type: 'spawn', name: 'a-scout', cwd: h.rootB });
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  const row = h.readRoster('a').find((r) => r.seat === 'a-scout');
+  assert.strictEqual(row.by, 'a-lead', 'the stale row was overwritten by the spawner\'s bind');
+  assert.strictEqual(m._teamOf(m.sessions.get('a-scout')).name, 'a', 'and the respawned seat is on the team');
+});
+
+test('createTeam and setLead refuse a lead another team holds, before writing anything', async (t) => {
+  const h = mkHome(t);
+  h.writeTeam('a', h.rootA, 'a-lead');
+  h.records.set('x', { name: 'x', cwd: h.rootA, createdAt: 1 });
+  assert.strictEqual((await h.tm.bindSeat('a', 'x', 'hand', { by: 'a-lead' })).ok, true);
+  assert.throws(() => h.tm.createTeam({ name: 'c', root: h.rootB, lead: 'x' }), /x is on team a's roster \(role hand\)/);
+  assert.ok(!fs.existsSync(path.join(h.home, 'teams', 'c', 'team.json')));
+  h.writeTeam('b', h.rootB, 'b-lead');
+  assert.throws(() => h.tm.setLead('b', 'x'), /x is on team a's roster \(role hand\)/);
+  assert.strictEqual(h.tm.loadManifest('b').lead, 'b-lead');
 });

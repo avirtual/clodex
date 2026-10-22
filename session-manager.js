@@ -6646,8 +6646,6 @@ function createSessionManager(deps) {
       }
 
       const CLODEX_BIN = path.join(REGISTRY_DIR, 'bin');
-      // Resolved per calling session so one def serves every team; empty outside any team root, where
-      // a wrong root would run another team's script, so a def using the token fails instead.
       const teamRoot = (team && team.root) || '';
       const expandVars = (s) => String(s)
         .split('${CLODEX_BIN}').join(CLODEX_BIN)
@@ -6655,7 +6653,8 @@ function createSessionManager(deps) {
         .split('${TEAM_ROOT}').join(teamRoot);
       const argv = entry.argv.map(expandVars);
       if (!teamRoot && [...entry.argv, entry.cwd || ''].some((a) => String(a).includes('${TEAM_ROOT}'))) {
-        fail('refused: ${TEAM_ROOT} is unresolved — this seat\'s cwd is in no team\'s root, so the def has no root to run in', 'exec-refused');
+        const shared = this._teamsOf(session);
+        fail(`refused: \${TEAM_ROOT} is unresolved — this seat is on no team${shared.length > 1 ? ` (teams ${shared.join(', ')} share its root; a lead binds it with [agent:team bind ${who} <role>])` : ''}, so the def has no root to run in`, 'exec-refused');
         return;
       }
       const runCwd = entry.cwd ? expandVars(entry.cwd) : (session.cwd || os.homedir());

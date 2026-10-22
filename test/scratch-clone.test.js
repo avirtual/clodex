@@ -286,7 +286,8 @@ test('t1539 mute: a roster push, a reminder and a dm addressed to the clone neve
   assert.strictEqual(f.injected.filter((i) => i.to === clone.name).length, before);
   assert.deepStrictEqual(f.parked.filter((p) => p.name === clone.name), []);
   assert.match(f.replies().at(-1), new RegExp(`^\\[agent:dm\\] ${clone.name} is a scratch clone — not addressable`));
-  assert.ok(!f.m._teamLiveSeats(f.root).some((x) => x.name === clone.name), 'not in the roster');
+  assert.ok(f.m._teamLiveSeats(f.team).some((x) => x.name === 'lead'), 'ENTER: a non-clone seat on the team IS listed');
+  assert.ok(!f.m._teamLiveSeats(f.team).some((x) => x.name === clone.name), 'not in the roster');
   assert.match(f.m._gatedDeliver(clone.name, 'x', 'y', false).error, /not addressable/);
 });
 

@@ -325,7 +325,7 @@
 - `list` keys its ticket badge on the seat's `_teamOf` team, while `_projectRootFor` says a solo seat's board is the repo root, so a teamless seat's open ticket may be missing from first paint.
 - `killAll` calls s.stream.kill() and reapFromSnapshot outside any try, so a throw for one seat skips every later seat's kill and `killVoiceEngine`.
 - `_spawnVoiceEngine` sends pty-data straight to a window's webContents, so any use of a window handle beyond webContents.send there breaks web-host clients only at runtime.
-- `list` must keep its live-seat lookup memoized per root, because it runs per session times ticket and `_teamLiveSeatNames` rebuilds a proxy snapshot per live seat.
+- `list` must keep its live-seat lookup memoized per team and built from its own per-seat memo, because it runs per session times ticket and a second resolution could disagree with the row's own.
 
 ## _cleanup, PTY output scan, activity, attention and compaction — _cleanup … _firePostClearContinuation
 

@@ -144,7 +144,10 @@ test('the voice engine is a private claude pty: wire-sunk, never listed, never r
   assert.deepEqual(h.wireCalls[0], ['register', VOICE_ENGINE_NAME, { voiceSink: true }]);
   assert.equal(h.m.sessions.has(VOICE_ENGINE_NAME), false);
   assert.ok(!h.m.list().some((r) => r.name === VOICE_ENGINE_NAME), 'absent from list()');
-  assert.ok(!h.m._teamLiveSeatNames('/proj').includes(VOICE_ENGINE_NAME), 'absent from the roster');
+  const team = { name: 'proj', root: '/proj', lead: 'st', roles: {} };
+  h.m._teamOf = (s) => (s && s.cwd === '/proj' ? team : null);
+  assert.ok(h.m._teamLiveSeatNames(team).includes('st'), 'ENTER: a seat on the team IS listed');
+  assert.ok(!h.m._teamLiveSeatNames(team).includes(VOICE_ENGINE_NAME), 'absent from the roster');
   assert.deepEqual(h.registered, [], 'no registry record, so no socket and no [agent:who] row');
   const trusted = JSON.parse(fs.readFileSync(path.join(h.home, '.claude.json'), 'utf8'));
   assert.equal(trusted.projects[h.userData].hasTrustDialogAccepted, true);
