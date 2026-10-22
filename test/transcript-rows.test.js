@@ -713,6 +713,10 @@ test('an inbound from user folds a 10-line fence to one head line with a chevron
   assert.notStrictEqual(again, box, 'ENTER: the row was rebuilt');
   assert.strictEqual(again.className, 'tr-fence');
   assert.strictEqual(findCls(again, 'tr-box-chevron')[0].textContent, '▾');
+  m.render([{ ...rec, text: `${rec.text}\nmore\nstill` }]);
+  const third = findCls(inboundCard(m), 'tr-fence')[0];
+  assert.notStrictEqual(third, again, 'ENTER: the row was rebuilt twice');
+  assert.strictEqual(third.className, 'tr-fence');
 });
 
 test('an inbound from user keeps a 3-line fence inline, unfolded', () => {
