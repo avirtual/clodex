@@ -50,13 +50,13 @@
 | `_handleSpawnIntent` | the agent spawn intent: resolves a template, expands TEAM_ROOT, optionally cuts a worktree, mints the seat with privileged intents stripped | this.sessions, sessions.json (setWorktree), git worktree | _validateSeatName, _templateShape, filterTemplateEnv, _applyTemplatePersistence | spawn-template-env.test.js spawn-template-team-root.test.js spawn-template-plugin.test.js |
 | `teamActivity` | read-only snapshot of one team: per-role seats and tickets, reviewer live and last, open and landed rows, 24h counts | none (reads manifest, tickets.json, this.sessions) | ticketsStore.load, matchSeatRole | ticket-loop-verify.test.js accept-standing-seat.test.js reviewer-round-end.test.js |
 | `_teamOf` | the seat's team: roster row first, then the unique root team (teamOf), else the cwd resolver when no roster dep is wired | roster.json (inference write via teamOf) | teamOf, resolveTeam | team-roster.test.js |
-| `_teamOfOrNull` | `_teamOf` with a throw read as no team | none | _teamOf | review-verdict-ticket.test.js |
-| `_teamsOf` | the team names tied on the seat's cwd, for the ambiguity refusals | none | teamsOfCwd | team-roster.test.js |
+| `_teamOfOrNull` | `_teamOf` with a throw read as no team | none | _teamOf | unpinned |
+| `_teamsOf` | the team names tied on the seat's cwd, for the ambiguity refusals | none | teamsOfCwd | unpinned |
 | `_teamsOfRoot` | the team names owning a root, empty when none | none | teamsOfCwd, resolveTeam | ipc-handlers-team.test.js |
-| `_noTeamError` | the no-team refusal, naming both teams when a shared root leaves the seat on neither roster | none | _teamsOf | team-roster.test.js |
-| `_bindRosterSeat` | fire-and-log bindSeat for the loop's own binds (ticket seat, reviewer, spawn) | roster.json | bindSeat | team-roster.test.js |
+| `_noTeamError` | the no-team refusal, naming both teams when a shared root leaves the seat on neither roster | none | _teamsOf | unpinned |
+| `_bindRosterSeat` | fire-and-log bindSeat for the loop's own binds (ticket seat, reviewer, spawn) | roster.json | bindSeat | unpinned |
 | `_rosterText` | the team roster verb's reply: rows with state, and any quarantined file | none (reads roster.json) | rosterOf | unpinned |
-| `_teamBind` | team bind verb: team-create grant, reserved roles and an existing record gate a bindSeat row; grants untouched | roster.json | bindSeat, intentEnabledForSeat | team-roster.test.js |
+| `_teamBind` | team bind verb: team-create grant, reserved roles and an existing record gate a bindSeat row; grants untouched | roster.json | bindSeat, intentEnabledForSeat | unpinned |
 | `_teamUnbind` | team unbind verb: refused while the seat holds an open ticket, then unbindSeat | roster.json | unbindSeat, _openTicketsFor | unpinned |
 | `_forgetTeam` | drops every ticket-watch entry whose root matches a deleted team, or whose root no team owns any more, and returns the count | this._ticketWatch | _teamsOfRoot | teams-menu.test.js ipc-handlers-team.test.js |
 
@@ -448,7 +448,7 @@
 | `_closeOutMergedTicket.seatClause` | the reply fragment saying what happened to the seat, split on one-shot first, then liveness, then record | none | none | accept-standing-seat.test.js |
 | `_taskPark` | lead toggle of parked on an open ticket, never re-delivering the spec on unpark | tickets.json parked, nudgedAt | _reconcileTickets, _resolvableAssignTarget | task-start.test.js |
 | `_taskList` | task list verb: validate the filter and reply with the rendered board | none | _taskListText | clodex-team.test.js |
-| `_sharedTaskList` | the read-only board an unbound seat on a shared root gets, headed by both team names | none | _taskListText | team-roster.test.js |
+| `_sharedTaskList` | the read-only board an unbound seat on a shared root gets, headed by both team names | none | _taskListText | unpinned |
 | `_taskListText` | render the board: filtered rows by numeric id, plus a capped recently-closed block and done and cancelled counts on the open view | none (reads tickets.json) | ticketsStore.load, humanizeAge | clodex-team.test.js |
 
 ### Invariants
