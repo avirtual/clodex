@@ -454,6 +454,7 @@ const ADVERSARIAL = [
   '[agent:team sandbox bootstrap packages smbclient mariadb-server]', '[agent:team sandbox bootstrap setup] echo hi',
   '[agent:team sandbox bootstrap show setup]', '[agent:team sandbox bootstrap clear]', '[agent:team sandbox restart]',
   '[agent:team create shop root:/proj/shop]',
+  '[agent:team create shop root:/proj/shop share-root:yes]', '[agent:team create share-root:no shop root:/proj/shop]',
   '[agent:team create shop root:/proj/shop lead:boss]',
   '[agent:team create lead:boss root:/proj/shop shop]',
   '[agent:team create shop]', '[agent:team create root:/proj/shop]',
@@ -1674,4 +1675,11 @@ test('C1b (a) parseTask done takes tN@origin; other subs keep the token whole', 
   const add = parseIntent('[agent:task add t7@laptop] spec');
   assert.strictEqual(add.who, 't7@laptop');
   assert.strictEqual('board' in add, false);
+});
+
+test('team create: share-root:yes sets shareRoot, any other value is a parse error naming the accepted value', () => {
+  assert.deepStrictEqual(parseIntent('[agent:team create shop root:/p share-root:yes]'),
+    { type: 'team-create', name: 'shop', root: '/p', lead: null, mode: null, kit: null, shareRoot: true, body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:team create share-root:no shop root:/p]'),
+    { type: 'team-create', name: 'shop', root: '/p', lead: null, mode: null, kit: null, shareRootError: 'share-root:no — the only accepted value is share-root:yes', body: '' });
 });
