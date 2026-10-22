@@ -44,3 +44,29 @@ own. That same cleanup unwinds these over `team.promptsCopied`.
 `removedRoleAccounts` is a per-role stash on the manifest, written here and
 consumed by the next `addRole` of that name; it exists because the stock
 definition a re-add mints has no account.
+
+## readRoster
+
+Quarantine lasts while `roster.json` is absent and a `roster.json.bad-<ts>` sits
+beside it: the seats named in the newest bad file resolve to no team, and
+`synthesiseRosters` skips the team. The first bind writes a fresh `roster.json`,
+which ends the quarantine for every seat; the bad file stays for the operator.
+
+## rowState
+
+A row's `gen` is the seat record's `createdAt`, which `_preserveAcrossRestart`
+carries through kill-and-recreate restarts and `persistence.rename` keeps on the
+renamed record. A ticket seat is bound at its reservation, before `create()`
+stamps `createdAt`, so its row starts with `gen: null` and `teamOf` backfills it.
+
+## onChain
+
+Every roster mutation body is synchronous, so the chain only orders them; it is
+not a lock against another process writing `~/.clodex/teams`.
+
+## pruneStaleRows
+
+A row with no record and no session counts as live in `rowState` until it is
+`ROSTER_PRUNE_MIN_AGE_MS` old: a spawn binds the seat before `create()` persists
+its record, and both the minute prune and the one-claim scan must treat that
+reservation as held.

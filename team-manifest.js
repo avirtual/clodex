@@ -696,7 +696,8 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
     }
     let live = false;
     try { live = !!(seatLookup.live && seatLookup.live(row.seat)); } catch { live = false; }
-    return live ? 'live' : 'stale';
+    if (live || now() - row.since < ROSTER_PRUNE_MIN_AGE_MS) return 'live';
+    return 'stale';
   }
 
   function loadAll() {
@@ -978,12 +979,11 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
     };
   }
 
-  function pruneStaleRows({ minAgeMs = ROSTER_PRUNE_MIN_AGE_MS } = {}) {
+  function pruneStaleRows() {
     return onChain(() => {
       const pruned = [];
-      const cutoff = now() - minAgeMs;
       for (const { team } of loadAll()) {
-        const drop = team.roster.filter((r) => r.since <= cutoff && r.seat !== team.lead && rowState(r) === 'stale');
+        const drop = team.roster.filter((r) => r.seat !== team.lead && rowState(r) === 'stale');
         if (!drop.length) continue;
         writeRoster(team.name, team.roster.filter((r) => !drop.includes(r)));
         for (const r of drop) {
