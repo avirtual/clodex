@@ -810,12 +810,12 @@ teams is messaging, not matrix membership. The roster (`roster.json`) is the mem
 team works by default, and a seat keeps its row when it moves.
 
 One team per root by default: `team create` refuses a root another team owns. `share-root:yes` on the head line (or
-"Share the root with team <x>" in the New Session dialog) lets a second team share it, and the new `team.json` records
+"Create a new team sharing this root with team <x>" in the New Session dialog) lets a second team share it, and the new `team.json` records
 `sharedRoot: true`; it is refused while the board holds a row without `team`, which the owning team's board stamps on
 its next reconcile while it is alone on the root. Every row carries its `team`: a lead dispatches only its own rows
 (any other `task` verb on another team's row is refused naming that team's lead, and so is a hand's `task done`),
 `task list` and `clodex-team tickets` show the caller's rows and end with `(+n rows of team <x>)`, and retire is
-same-team. Both teams' merges queue on the one process-wide merge chain; each team's `trunk` may differ. A seat on
+same-team; a row whose team no longer exists is the caller's. Both teams' merges queue on the one process-wide merge chain; each team's `trunk` may differ. A seat on
 neither roster gets the labelled read-only board.
 
 A ticket whose seat stays quiet past the team's watchdog interval alarms the lead as `stalled: <who> quiet <age>` with the seat's evidence; a seat held by a permission dialog is reported instead as `waiting on a permission dialog since <age> — <message>`, naming the operator as the only one who can answer, and the operator inbox gets one note per dialog on a ticket seat; a pending call on a seat that is compacting or running a harness subagent is named as that class instead of `wedged mid-call, or a legitimately slow one`; a ticket parked by the hand cap past the interval alarms the lead once as `parked by the hand cap for <age>`.
