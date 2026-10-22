@@ -339,7 +339,7 @@ test('mkFixture injects every dep team-tickets.js reads', () => {
         // that DID inject one would have to fake docker to say anything. `fetch`
       // and getPeerManager ride with it for the same reason: their only reader is
       // that case, seeding the box's starting seats and naming its clodex version.
-      optional: ['ticketSuiteTimeoutMs', 'resolveSystemPromptFile', 'gatherTeam',
+      optional: ['ticketSuiteTimeoutMs', 'teamOf', 'teamsOfCwd', 'bindSeat', 'unbindSeat', 'rosterOf', 'pruneStaleRows', 'resolveSystemPromptFile', 'gatherTeam',
         'createTeam', 'kitCatalog', 'resolveKit', 'setLead', 'teamsDir', 'listTeams', 'loadManifest', 'refreshAppMenu',
           'getSandboxManager', 'getPeerManager', 'fetch'],
     });

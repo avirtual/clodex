@@ -419,6 +419,7 @@ function createTicketMethods(deps, shared) {
     refreshAppMenu,
     gatherTeam,
     resolveTeam,
+    teamOf,
     teamsOfCwd,
     bindSeat,
     unbindSeat,
@@ -928,6 +929,23 @@ function createTicketMethods(deps, shared) {
       return { ok: true, team: team.name, roles, reviewer, counts, tickets: { open, landed } };
     },
 
+    _teamOf(session) {
+      const name = session && session.name;
+      const cwd = session && session.cwd;
+      if (typeof teamOf === 'function') return teamOf({ name, cwd });
+      return cwd ? resolveTeam(cwd) : null;
+    }
+
+    _teamOfOrNull(session) {
+      try { return this._teamOf(session); } catch { return null; }
+    },
+
+    _teamsOf(session) {
+      const cwd = session && session.cwd;
+      if (!cwd || typeof teamsOfCwd !== 'function') return [];
+      try { return teamsOfCwd(cwd); } catch { return []; }
+    }
+
     _teamsOfRoot(root) {
       try {
         if (typeof teamsOfCwd === 'function') return teamsOfCwd(root);
@@ -943,15 +961,6 @@ function createTicketMethods(deps, shared) {
         return `error: teams ${shared.join(', ')} share this root and ${seat} is on neither roster — a lead binds it with [agent:team bind ${seat} <role>]`;
       }
       return 'error: this session is not on a team (no team.json owns its cwd)';
-    },
-
-    _reviewTeamOf(session) {
-      let rec = null;
-      try { rec = getPersistence().get(session && session.name); } catch { rec = null; }
-      if (rec && typeof rec.team === 'string' && rec.team) {
-        try { return loadManifest(rec.team); } catch { return null; }
-      }
-      try { return this._teamOf(session); } catch { return null; }
     },
 
     _bindRosterSeat(teamName, seat, role, opts = {}) {
@@ -1180,7 +1189,6 @@ function createTicketMethods(deps, shared) {
         ...(reviewTicket ? { reviewTicket } : {}),
         ...(reviewLabel ? { wireLabel: reviewLabel } : {}),
         reviewerTemplate: shape.tpl ? shape.tpl.name : DEFAULT_REVIEWER_TEMPLATE,
-        team: team.name,
       });
       this._bindRosterSeat(team.name, name, 'reviewer', { by: reviewTicket ? 'ticket-loop' : session.name, ticket: reviewTicket });
 
@@ -1250,7 +1258,7 @@ function createTicketMethods(deps, shared) {
       // Bullets and bold are allowed as decoration; `>` is deliberately not, since it is the decoration that marks a quoted line.
       const m = /^[ \t]*(?:[-*][ \t]*)?(?:\*\*|__)?[ \t]*\bVERDICT\b\W*\b(ACCEPT|REWORK)\b/im.exec(verdict);
       if (!m) return null;
-      const team = this._reviewTeamOf(session);
+      const team = this._teamOfOrNull(session);
       if (!team) return null;
       let tickets;
       try { tickets = ticketsStore.load(team.root); } catch { return null; }
@@ -1300,7 +1308,7 @@ function createTicketMethods(deps, shared) {
 
     // Reads the round off the already-stamped record: this runs after the save, unlike _writeTicketDiff, which runs before it and adds one.
     _writeVerdictBody(session, ticketId, landedOn, fullVerdict) {
-      const team = this._reviewTeamOf(session);
+      const team = this._teamOfOrNull(session);
       if (!team) return { ok: false, path: null, error: 'no team' };
       const ticket = this._loadTicket(team, ticketId);
       if (!ticket) return { ok: false, path: null, error: `no ticket ${ticketId}` };
@@ -2143,7 +2151,7 @@ function createTicketMethods(deps, shared) {
         try {
           if (booked || !rec.reviewTicket) return;
           booked = true;
-          const team = this._reviewTeamOf(session);
+          const team = this._teamOfOrNull(session);
           const ticket = team ? this._loadTicket(team, rec.reviewTicket) : null;
           const round = landedOn
             ? Number(landedOn.reviewRound)
@@ -2168,7 +2176,7 @@ function createTicketMethods(deps, shared) {
         } catch (e) {
           written = { ok: false, path: null, error: `the verdict body write threw: ${e && e.message ? e.message : String(e)}` };
         }
-        const team = this._reviewTeamOf(session);
+        const team = this._teamOfOrNull(session);
         if (!rework) this._notifyLeadOfVerdict(session, lead, rec.reviewTicket, landedOn, verdict, written);
         this._broadcast('ipc-message', {
           type: 'review-done', from: session.name, to: rec.reviewTicket, body: `verdict → ticket ${rec.reviewTicket}`,
@@ -2334,6 +2342,7 @@ function createTicketMethods(deps, shared) {
         const res = teamPromptSave(this._teamFileDeps(), team.name, 'append', 'team-project', brief);
         if (!res.ok) {
           try { fs.unlinkSync(nodePath.join(dir, 'team.json')); } catch {}
+          try { fs.unlinkSync(nodePath.join(dir, 'roster.json')); } catch {}
           try { fs.rmdirSync(nodePath.join(dir, 'prompts', 'append')); } catch {}
           for (const r of (Array.isArray(team.promptsCopied) ? team.promptsCopied : [])) {
             try { fs.unlinkSync(nodePath.join(dir, 'prompts', 'system', `${r}.md`)); } catch {}

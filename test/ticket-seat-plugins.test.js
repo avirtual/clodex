@@ -257,7 +257,7 @@ function mkWorld({ tplPlugins } = {}) {
       // that DID inject one would have to fake docker to say anything. `fetch`
       // and getPeerManager ride with it for the same reason: their only reader is
       // that case, seeding the box's starting seats and naming its clodex version.
-    optional: ['ticketSuiteTimeoutMs', 'createTeam', 'kitCatalog', 'resolveKit', 'setLead', 'teamsDir', 'listTeams', 'loadManifest', 'refreshAppMenu',
+    optional: ['ticketSuiteTimeoutMs', 'teamOf', 'teamsOfCwd', 'bindSeat', 'unbindSeat', 'rosterOf', 'pruneStaleRows', 'createTeam', 'kitCatalog', 'resolveKit', 'setLead', 'teamsDir', 'listTeams', 'loadManifest', 'refreshAppMenu',
         'getSandboxManager', 'getPeerManager', 'fetch'],
   });
 

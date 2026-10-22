@@ -633,8 +633,6 @@ function createSessionManager(deps) {
     findProjectRoot,
     gitWorktree,
     resolveTeam,
-    teamOf,
-    teamsOfCwd,
     renameSeatRow,
     addRole,
     setRole,
@@ -4166,19 +4164,6 @@ function createSessionManager(deps) {
         if (found) return found.clodexBlock;
       }
       return null;
-    }
-
-    _teamOf(session) {
-      const name = session && session.name;
-      const cwd = session && session.cwd;
-      if (typeof teamOf === 'function') return teamOf({ name, cwd });
-      return cwd ? resolveTeam(cwd) : null;
-    }
-
-    _teamsOf(session) {
-      const cwd = session && session.cwd;
-      if (!cwd || typeof teamsOfCwd !== 'function') return [];
-      try { return teamsOfCwd(cwd); } catch { return []; }
     }
 
     teamNameOf(name, cwd) {

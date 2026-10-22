@@ -257,6 +257,7 @@ test('t699: loadManifest and resolveTeam both carry `dir`, the directory holding
     trunk: null,
     version: 3,
     droppedFields: [],
+    roster: [{ seat: 't-lead', role: 'lead', gen: null, since: m.roster[0].since, by: 'create' }],
   }, 'the WHOLE object, so a field that stops being carried cannot pass unnoticed');
   assert.strictEqual(m.dir, teamDir(home), 'and `dir` is teams/<name>/, where prompts/ lives beside team.json');
 

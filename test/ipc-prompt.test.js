@@ -570,12 +570,13 @@ test('t1407: the [agent:team …] rows render ONLY when the caller says the seat
   assert.strictEqual(buildIpcPrompt(null, undefined, undefined, {}), IPC_PROMPT, 'and so is an opts without the flag');
 });
 
-test('t1407: the lead variant is IPC_PROMPT plus the seven team rows, first role-add and last trunk', () => {
+test('t1407: the lead variant is IPC_PROMPT plus the eight team rows, first role-add and last trunk', () => {
   const lead = leadPrompt(null);
   const rows = lead.split('\n').filter((l) => l.startsWith('  [agent:team '));
-  assert.strictEqual(rows.length, 7, 'role-add, template-save, prompt-save, template-rm, prompt-rm, sandbox, trunk');
+  assert.strictEqual(rows.length, 8, 'role-add, template-save, prompt-save, template-rm, prompt-rm, sandbox, bind, trunk');
   assert.match(rows[0], /^ {2}\[agent:team role-add <role> \[prompt:<stem>\] \[template:<stem>\]/);
-  assert.match(rows[6], /^ {2}\[agent:team trunk <branch>\] {6}Set the branch accepted tickets merge into/);
+  assert.match(rows[6], /^ {2}\[agent:team bind <seat> <role>\] {2}Put an existing seat on your team's roster/);
+  assert.match(rows[7], /^ {2}\[agent:team trunk <branch>\] {6}Set the branch accepted tickets merge into/);
   assert.strictEqual(lead.split('\n').filter((l) => !l.startsWith('  [agent:team ')).join('\n'), IPC_PROMPT,
     'removing the team rows gives back the non-lead prompt byte for byte');
   assert.ok(!lead.includes('(team lead only; every team verb is)'), 'a row only the lead reads does not repeat that it is lead-only');
@@ -587,13 +588,13 @@ test('t1407: the team rows sit after team-create and before plugin rows, where t
   const first = lines.findIndex((l) => l.startsWith('  [agent:team role-add '));
   const last = lines.findIndex((l) => l.startsWith('  [agent:team trunk '));
   assert.ok(lines[first - 1].startsWith('  [agent:team create <name> root:<abs-path>'), 'team-create is directly above');
-  assert.strictEqual(last - first, 6, 'the seven rows are contiguous');
+  assert.strictEqual(last - first, 7, 'the eight rows are contiguous');
   assert.strictEqual(lines[last + 1], plugin, 'the plugin row is directly below');
   const plain = leadPrompt(null).split('\n');
   const at = plain.findIndex((l) => l.startsWith('  [agent:team role-add '));
   assert.ok(plain[at - 1].startsWith('  [agent:file open PATH]'), 'with no privileged grant the file rows are directly above');
-  assert.strictEqual(plain[at + 7], '', 'and the grammar block ends at trunk');
-  assert.ok(plain[at + 8].startsWith('Replies arrive later'), 'before the replies line');
+  assert.strictEqual(plain[at + 8], '', 'and the grammar block ends at trunk');
+  assert.ok(plain[at + 9].startsWith('Replies arrive later'), 'before the replies line');
 });
 
 // t798. The line is the ONLY description of the create a granted seat reads, so
