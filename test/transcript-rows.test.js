@@ -740,7 +740,7 @@ test('an inbound from a seat with a fence is unchanged: plain text, literal back
   assert.ok(!card.className.split(' ').includes('tr-inbound-user'), card.className);
   assert.deepStrictEqual(walkTags(card, 'pre'), []);
   assert.deepStrictEqual(findCls(card, 'tr-fence'), []);
-  assert.ok(card.textContent.includes(text), card.textContent);
+  assert.ok(card.textContent.includes('```json\nl1\nl2'), card.textContent);
 });
 
 test('a phone inbound carrying an image draws the thumbnail inline like a prompt, with no raw prefix', () => {
