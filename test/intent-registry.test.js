@@ -154,7 +154,7 @@ function parseIntentLegacy(rawLine) {
   const teamCreateMatch = cleaned.match(/^\[agent:team\s+create\b([^\]]*)\]\s*(.*)/s);
   if (teamCreateMatch) {
     const argStr = teamCreateMatch[1];
-    const rootM = argStr.match(/\broot:(\S+)/);
+    const rootM = argStr.match(/(?:^|\s)root:(\S+)/);
     const leadM = argStr.match(/\blead:(\S+)/);
     const modeM = argStr.match(/\bmode:(\S+)/);
     const kitM = argStr.match(/\bkit:(\S+)/);
