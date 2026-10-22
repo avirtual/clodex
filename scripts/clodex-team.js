@@ -273,13 +273,19 @@ function doTickets(payload) {
     const arr = JSON.parse(fs.readFileSync(path.join(projectDirFor(CLODEX_HOME, team.root), 'tickets.json'), 'utf-8'));
     if (Array.isArray(arr)) tickets = arr;
   } catch { /* no registry yet — empty */ }
+  const known = new Map();
+  const mine = (t) => {
+    if (!t || !t.team || t.team === team.name) return true;
+    if (!known.has(t.team)) known.set(t.team, fs.existsSync(path.join(TEAMS_DIR, t.team)));
+    return !known.get(t.team);
+  };
   const others = new Map();
   for (const t of tickets) {
-    if (!t || !t.team || t.team === team.name || (filter !== 'all' && t.state !== filter)) continue;
+    if (mine(t) || (filter !== 'all' && t.state !== filter)) continue;
     others.set(t.team, (others.get(t.team) || 0) + 1);
   }
   const othersLine = [...others].map(([name, n]) => `\n(+${n} rows of team ${name})`).join('');
-  tickets = tickets.filter((t) => t && (!t.team || t.team === team.name));
+  tickets = tickets.filter((t) => t && mine(t));
   if (!tickets.length) say(`team ${team.name}: no tickets${othersLine}`);
   tickets.sort((a, b) => {
     const na = Number(String(a.id).replace(/^t/, '')) || 0;

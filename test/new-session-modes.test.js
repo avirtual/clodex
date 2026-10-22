@@ -962,7 +962,7 @@ test('a stale cwd refresh landing after a newer one does not overwrite the team 
     'expandPath', 'homeDir',
     `let dialogMode = 'create'; let dialogTeamMode = null; let dialogTeamName = null; let dialogTeamNames = [];
      let teamForCwdToken = 0; let lastTeamNameAuto = null;
-     const teamToggle = null, teamFields = null, teamToggleLabel = null, teamJoinFields = null, teamCreateFields = null, teamShareRootRow = null, teamShareRootInput = null, teamShareRootLabel = null;
+     const teamToggle = null, teamFields = null, teamToggleLabel = null, teamJoinFields = null, teamCreateFields = null, teamShareRootRow = null, teamShareRootInput = null, teamShareRootLabel = null, teamShareNewRow = null, teamShareNewInput = null, teamShareNewLabel = null;
      ${slug}\n${dedupe}\n${fn}\nreturn refreshTeamForCwd;`)(
     window, inputCwd, teamNameInput, { style: {} }, { value: 'claude' }, () => true, () => 'host', (p) => p, '/Users/u');
   const a = refresh();
@@ -989,7 +989,7 @@ test('the Create team name follows the folder picked after the home-dir prefill'
     'expandPath', 'homeDir',
     `let dialogMode = 'create'; let dialogTeamMode = null; let dialogTeamName = null; let dialogTeamNames = [];
      let teamForCwdToken = 0; let lastTeamNameAuto = null;
-     const teamToggle = null, teamFields = null, teamToggleLabel = null, teamJoinFields = null, teamCreateFields = null, teamShareRootRow = null, teamShareRootInput = null, teamShareRootLabel = null;
+     const teamToggle = null, teamFields = null, teamToggleLabel = null, teamJoinFields = null, teamCreateFields = null, teamShareRootRow = null, teamShareRootInput = null, teamShareRootLabel = null, teamShareNewRow = null, teamShareNewInput = null, teamShareNewLabel = null;
      ${slug}\n${dedupe}\n${fn}\nreturn refreshTeamForCwd;`)(
     window, inputCwd, teamNameInput, { style: {} }, { value: 'claude' }, () => true, () => 'host', (p) => p, '/Users/u');
   await refresh();

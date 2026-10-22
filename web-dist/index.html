@@ -10627,6 +10627,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           <span id="team-toggle-label" class="hint-text" style="margin: 0;">Create a team here — this session becomes its lead.</span>
         </label>
         <div id="team-fields" style="display:none; margin-top:4px;">
+          <label id="team-share-new-row" style="display:none; margin-bottom:4px; font-weight: normal;"><input type="checkbox" id="input-team-share-new"> <span id="team-share-new-label">Create a new team sharing this root</span></label>
           <div id="team-create-fields">
             <input type="text" id="input-team-name" placeholder="team name" spellcheck="false" autocomplete="off">
             <span id="team-name-hint" class="hint-text" style="margin: 0;">A new team rooted at the working directory above. Adds a reviewer role (a subagent) out of the box.</span>
@@ -32821,7 +32822,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const leadM = argStr.match(/\blead:(\S+)/);
         const modeM = argStr.match(/\bmode:(\S+)/);
         const kitM = argStr.match(/\bkit:(\S+)/);
-        const shareM = argStr.match(/\bshare-root:(\S+)/);
+        const shareM = argStr.match(/\bshare-root:(\S*)/);
         const positional = argStr.trim().split(/\s+/).filter((t) => t && !/^[\w-]+:/.test(t));
         return {
           type: "team-create",
@@ -51509,6 +51510,9 @@ ${detail}` });
       var teamShareRootRow = document.getElementById("team-share-root-row");
       var teamShareRootInput = document.getElementById("input-team-share-root");
       var teamShareRootLabel = document.getElementById("team-share-root-label");
+      var teamShareNewRow = document.getElementById("team-share-new-row");
+      var teamShareNewInput = document.getElementById("input-team-share-new");
+      var teamShareNewLabel = document.getElementById("team-share-new-label");
       var teamRoleSelect = document.getElementById("input-team-role");
       var teamRolePromptRow = document.getElementById("team-role-prompt-row");
       var teamRolePromptSelect = document.getElementById("input-team-role-prompt");
@@ -54465,8 +54469,24 @@ ${detail}` });
           dialogTeamMode = "join";
           dialogTeamName = res.team;
           if (teamToggleLabel) teamToggleLabel.textContent = `Join team ${res.team}`;
+          if (teamShareRootRow) teamShareRootRow.style.display = "none";
+          if (teamShareRootInput) teamShareRootInput.checked = false;
+          if (teamShareNewRow) teamShareNewRow.style.display = "";
+          if (teamShareNewLabel) teamShareNewLabel.textContent = `Create a new team sharing this root with team ${res.team}`;
+          if (teamShareNewInput) teamShareNewInput.checked = false;
           if (teamCreateFields) teamCreateFields.style.display = "none";
           if (teamJoinFields) teamJoinFields.style.display = "";
+          try {
+            const r = await window.api.teamNames();
+            dialogTeamNames = r && r.names || [];
+          } catch {
+            dialogTeamNames = [];
+          }
+          if (token !== teamForCwdToken) return;
+          if (teamNameInput && (!teamNameInput.value.trim() || teamNameInput.value === lastTeamNameAuto)) {
+            teamNameInput.value = dedupeTeamName(slugifyTeamName(pathBasename(cwd)));
+            lastTeamNameAuto = teamNameInput.value;
+          }
           await populateTeamRolePrompts();
           if (teamRolePromptRow) teamRolePromptRow.style.display = teamRoleSelect.value === "custom" ? "" : "none";
           if (teamToggle && teamToggle.checked) updateTeamJoinNameSuggestion();
@@ -54474,6 +54494,8 @@ ${detail}` });
           dialogTeamMode = "create";
           dialogTeamName = null;
           if (teamToggleLabel) teamToggleLabel.textContent = "Create a team here \u2014 this session becomes its lead.";
+          if (teamShareNewRow) teamShareNewRow.style.display = "none";
+          if (teamShareNewInput) teamShareNewInput.checked = false;
           if (teamJoinFields) teamJoinFields.style.display = "none";
           if (teamCreateFields) teamCreateFields.style.display = "";
           const sharers = res && Array.isArray(res.candidates) ? res.candidates : [];
@@ -54666,6 +54688,15 @@ ${detail}` });
         teamToggle.addEventListener("change", () => {
           if (teamFields) teamFields.style.display = teamToggle.checked ? "" : "none";
           if (teamToggle.checked && dialogTeamMode === "join") updateTeamJoinNameSuggestion();
+        });
+      }
+      if (teamShareNewInput) {
+        teamShareNewInput.addEventListener("change", () => {
+          const sharing = teamShareNewInput.checked;
+          dialogTeamMode = sharing ? "create" : "join";
+          if (teamCreateFields) teamCreateFields.style.display = sharing ? "" : "none";
+          if (teamJoinFields) teamJoinFields.style.display = sharing ? "none" : "";
+          if (!sharing && teamToggle && teamToggle.checked) updateTeamJoinNameSuggestion();
         });
       }
       if (teamRoleSelect) {
@@ -54941,7 +54972,7 @@ ${detail}` });
           let result;
           if (teamOn && dialogTeamMode === "create") {
             const teamName = slugifyTeamName(teamNameInput.value.trim() || pathBasename(cwd));
-            const shareRoot = !!(teamShareRootInput && teamShareRootInput.checked && teamShareRootRow && teamShareRootRow.style.display !== "none");
+            const shareRoot = !!(teamShareRootInput && teamShareRootInput.checked && teamShareRootRow && teamShareRootRow.style.display !== "none" || teamShareNewInput && teamShareNewInput.checked && teamShareNewRow && teamShareNewRow.style.display !== "none");
             result = await window.api.teamCreate({ teamName, shareRoot, ...seatParams });
           } else if (teamOn && dialogTeamMode === "join") {
             const role = roleKeyForJoin();

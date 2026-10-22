@@ -199,3 +199,59 @@ test('two teams\' merges on one root serialise on the merge chain, in order', as
   await second;
   assert.deepStrictEqual(events, ['start a/t1', 'end a/t1', 'start b/t2', 'end b/t2']);
 });
+
+test('a hand closing its ticket is advanced only onto its own team\'s rows, never the other team\'s same-role row', (t) => {
+  const { h, m, seat } = mkShared(t);
+  h.writeRoster('a', [['a-hand-1', 'hand']]);
+  seat('a-hand-1');
+  h.store.save(h.root, [row('t1', 'a', { startedAt: 2 }), row('t2', 'b', { startedAt: 2 })]);
+  assert.deepStrictEqual(m._openTicketsFor(h.tm.loadManifest('a'), 'a-hand-1').map((r) => r.id), ['t1']);
+});
+
+test('the cap-freed restart starts only the lead\'s own cap-parked rows and sends it nothing about the other team\'s', (t) => {
+  const { h, m, injected, seat } = mkShared(t);
+  const leadA = seat('a-lead');
+  h.store.save(h.root, [
+    row('t1', 'a', { parked: true, parkedBy: 'cap', parkedCap: '1/1' }),
+    row('t2', 'b', { parked: true, parkedBy: 'cap', parkedCap: '1/1' }),
+  ]);
+  const started = [];
+  m._handCap = () => ({ cap: null });
+  m._taskStart = (_s, team, intent) => started.push([team.name, intent.id]);
+  m._startCapParked(h.tm.loadManifest('a'), leadA);
+  assert.deepStrictEqual(started, [['a', 't1']]);
+  assert.deepStrictEqual(injected, []);
+});
+
+test('after a restart each team requeues and resumes only its own rows on a shared root', async (t) => {
+  const { h, m } = mkShared(t);
+  for (const [n, trunk] of [['a', 'main'], ['b', 'mods']]) {
+    fs.writeFileSync(path.join(h.home, 'teams', n, 'team.json'), JSON.stringify({ version: 3, lead: `${n}-lead`, root: h.root, roles: ROLES, trunk }));
+  }
+  const waiting = { state: 'done', mergeWaiting: 'suite-in-flight', verdict: 'ACCEPT', worktree: { branch: 'x' } };
+  h.store.save(h.root, [row('t1', 'a', waiting), row('t2', 'b', { ...waiting, worktree: { branch: 'y' } })]);
+  const requeued = [];
+  m._awaitBootLeads = async () => {};
+  m._requeueOneWaiting = async (team, id) => { requeued.push([team.name, team.trunk, id]); };
+  await m._requeueWaitingMerges();
+  assert.deepStrictEqual(requeued.sort(), [['a', 'main', 't1'], ['b', 'mods', 't2']]);
+
+  h.store.save(h.root, [row('t1', 'a', { state: 'done', loopStep: 'verify' }), row('t2', 'b', { state: 'done', loopStep: 'verify' })]);
+  const resumed = [];
+  m._liveReviewerSeat = () => null;
+  m._runTicketLoop = (team, id) => resumed.push([team.name, id]);
+  m._resumeOrphanedVerify(h.tm.loadManifest('a'));
+  assert.deepStrictEqual(resumed, [['a', 't1']]);
+});
+
+test('a row whose team no longer exists is the caller\'s: listed as its own and cancellable', (t) => {
+  const { h, m, injected, acks, seat } = mkShared(t);
+  h.store.save(h.root, [row('t1', 'gone'), row('t2', 'b')]);
+  const leadA = seat('a-lead');
+  m._handleTask(leadA, { type: 'task', sub: 'list' });
+  const lines = injected[0].split('\n');
+  assert.deepStrictEqual(lines.slice(1, -1).map((l) => l.split(' ')[0]), ['t1']);
+  assert.strictEqual(lines[lines.length - 1], '(+1 rows of team b)');
+  m._handleTask(leadA, { type: 'task', sub: 'cancel', id: 't1', body: '' });
+  assert.strictEqual(h.store.load(h.root).find((r) => r.id === 't1').state, 'cancelled', JSON.stringify([injected, acks]));
+});

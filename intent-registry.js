@@ -207,7 +207,7 @@ function parseTeamCreate(cleaned) {
   const leadM = argStr.match(/\blead:(\S+)/);
   const modeM = argStr.match(/\bmode:(\S+)/);
   const kitM = argStr.match(/\bkit:(\S+)/);
-  const shareM = argStr.match(/\bshare-root:(\S+)/);
+  const shareM = argStr.match(/\bshare-root:(\S*)/);
   const positional = argStr.trim().split(/\s+/).filter((t) => t && !/^[\w-]+:/.test(t));
   return {
     type: 'team-create',

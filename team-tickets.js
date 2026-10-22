@@ -1638,8 +1638,9 @@ function createTicketMethods(deps, shared) {
         if (!team || !team.root) continue;
         let tickets;
         try { tickets = ticketsStore.load(team.root); } catch { continue; }
+        const own = this._ownRowFilter(team);
         for (const t of tickets) {
-          if (!isWaiting(t)) continue;
+          if (!isWaiting(t) || !own(t)) continue;
           const key = `${team.root}\n${t.id}`;
           if (seen.has(key)) continue;
           seen.add(key);
@@ -2782,8 +2783,9 @@ function createTicketMethods(deps, shared) {
     _startCapParked(team, lead) {
       if (!lead || lead.name !== team.lead) return;
       const num = (t) => Number(String(t.id).replace(/^t/, '')) || 0;
+      const own = this._ownRowFilter(team);
       const queue = ticketsStore.load(team.root)
-        .filter((t) => t.state === 'open' && t.parked && t.parkedBy === 'cap')
+        .filter((t) => own(t) && t.state === 'open' && t.parked && t.parkedBy === 'cap')
         .sort((a, b) => num(a) - num(b));
       const reply = (msg) => this._injectText(lead, `[agent:task] cap freed: ${msg}`, { parkable: true });
       const ack = (msg) => this._taskAck(lead, `[agent:task] cap freed: ${msg}`);
@@ -3327,9 +3329,27 @@ function createTicketMethods(deps, shared) {
 
     _foreignRowRefusal(team, ticket) {
       if (!team || team.solo || !ticket || !ticket.team || ticket.team === team.name) return null;
-      let lead = null;
-      try { lead = loadManifest(ticket.team).lead; } catch { lead = null; }
-      return `error: ${ticket.id} belongs to team ${ticket.team} — its lead (${lead || 'unknown'}) dispatches it`;
+      let owner;
+      try { owner = loadManifest(ticket.team); } catch { return null; }
+      return `error: ${ticket.id} belongs to team ${ticket.team} — its lead (${(owner && owner.lead) || 'unknown'}) dispatches it`;
+    },
+
+    _ownRowFilter(team) {
+      if (!team || team.solo) return () => true;
+      let names = null;
+      return (t) => {
+        if (!t || !t.team || t.team === team.name) return true;
+        if (!names) {
+          try { names = new Set(typeof listTeams === 'function' ? listTeams() : []); } catch { names = new Set(); }
+        }
+        return !names.has(t.team);
+      };
+    },
+
+    _teamsOnRoot(root) {
+      let names = [];
+      try { names = typeof listTeams === 'function' ? listTeams() : []; } catch { names = []; }
+      return names.filter((n) => { try { return loadManifest(n).root === root; } catch { return false; } });
     },
 
     _isRemoteSeat(name) {
@@ -4001,8 +4021,9 @@ function createTicketMethods(deps, shared) {
     _openTicketsFor(team, seatName, excludeId = null) {
       const role = matchSeatRole(team, seatName);
       const live = this._teamLiveSeatNames(team);
+      const own = this._ownRowFilter(team);
       return ticketsStore.load(team.root)
-        .filter((t) => t.state === 'open' && t.id !== excludeId && t.assignee != null && !t.parked
+        .filter((t) => own(t) && t.state === 'open' && t.id !== excludeId && t.assignee != null && !t.parked
           && ticketStarted(t)
           && (t.assignee === seatName || (role && t.assignee === role)
             || this._ticketAssigneeSeat(team, t, live) === seatName))
@@ -5261,7 +5282,9 @@ function createTicketMethods(deps, shared) {
       let tickets; try { tickets = ticketsStore.load(team.root); } catch { return; }
       const resume = [];
       let cleared = false;
+      const own = this._ownRowFilter(team);
       for (const t of tickets) {
+        if (!own(t)) continue;
         const key = `${team.root}\0${t.id}`;
         if (t.state === 'done' && t.loopStep === 'review' && t.verifyPhase
           && !this._verifyLooped.has(key) && !this._liveReviewerSeat(team, t)) {
@@ -7216,11 +7239,12 @@ function createTicketMethods(deps, shared) {
         const nb = Number(String(b.id).replace(/^t/, '')) || 0;
         return na - nb;
       });
-      const tickets = own ? board.filter((t) => !t.team || t.team === own) : board;
+      const mine = own ? this._ownRowFilter({ ...team, name: own }) : () => true;
+      const tickets = board.filter(mine);
       const others = new Map();
       if (own) {
         for (const t of board) {
-          if (!t.team || t.team === own || (filter !== 'all' && t.state !== filter)) continue;
+          if (mine(t) || (filter !== 'all' && t.state !== filter)) continue;
           others.set(t.team, (others.get(t.team) || 0) + 1);
         }
       }
@@ -7279,14 +7303,15 @@ function createTicketMethods(deps, shared) {
       if (team && team.solo) return;
       const tickets = ticketsStore.load(team.root);
       const unstamped = tickets.filter((t) => t && typeof t === 'object' && !t.team);
-      if (unstamped.length && this._teamsOfRoot(team.root).length === 1) {
+      if (unstamped.length && this._teamsOnRoot(team.root).length === 1) {
         for (const t of unstamped) t.team = team.name;
         try { ticketsStore.save(team.root, tickets); } catch (e) { log.error('ticket', `team stamp on ${team.name}'s board failed: ${e.message}`); }
       }
       const live = this._teamLiveSeatNames(team);
+      const own = this._ownRowFilter(team);
       for (const name of live) {
         const role = matchSeatRole(team, name);
-        const open = tickets.find((t) => t.state === 'open' && t.assignee != null && !t.parked
+        const open = tickets.find((t) => own(t) && t.state === 'open' && t.assignee != null && !t.parked
           && (t.assignee === name || t.assignee === role
             || this._ticketAssigneeSeat(team, t, live) === name));
         if (open) this._ticketWatch.set(name, { root: team.root, team: team.name, role });
@@ -7306,8 +7331,9 @@ function createTicketMethods(deps, shared) {
       // Walk live seats once outside the loop: this runs on every non-idle edge and
       // the team resolve and seat walk are filesystem work.
       const live = team ? this._teamLiveSeatNames(team) : null;
+      const own = this._ownRowFilter(team);
       for (const t of tickets) {
-        if (t.state !== 'open') continue;
+        if (t.state !== 'open' || !own(t)) continue;
         if (t.assignee === name || (w.role && t.assignee === w.role)
           || (team && this._ticketAssigneeSeat(team, t, live) === name)) {
           t.lastActivityAt = now;
@@ -7334,8 +7360,8 @@ function createTicketMethods(deps, shared) {
         if (!s.agentType || s._dead) continue;
         let team; try { team = this._teamOf(s); } catch { team = null; }
         if (!team) continue;
-        if (!sweptBoards.has(team.root)) {
-          sweptBoards.add(team.root);
+        if (!sweptBoards.has(team.file)) {
+          sweptBoards.add(team.file);
           // Not awaited: a slow git probe must not hold up the badge reconcile;
           // overlap is handled by _stallProbing.
           sweeps.push(this._sweepTeamTickets(team, now).catch((e) => log.error('ticket', `stall sweep failed: ${e.message}`)));
@@ -7660,7 +7686,7 @@ function createTicketMethods(deps, shared) {
 
     async _sweepTeamTickets(team, now) {
       const stallMs = (typeof team.watchdogMs === 'number' && team.watchdogMs > 0) ? team.watchdogMs : TICKET_STALL_MS;
-      const tickets = ticketsStore.load(team.root);
+      const tickets = ticketsStore.load(team.root).filter(this._ownRowFilter(team));
       try { this._sweepMergedUnaccepted(team, tickets, now); } catch (e) {
         log.error('ticket', `merged-unaccepted sweep failed: ${e.message}`);
       }

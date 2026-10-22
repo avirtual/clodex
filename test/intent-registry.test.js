@@ -158,7 +158,7 @@ function parseIntentLegacy(rawLine) {
     const leadM = argStr.match(/\blead:(\S+)/);
     const modeM = argStr.match(/\bmode:(\S+)/);
     const kitM = argStr.match(/\bkit:(\S+)/);
-    const shareM = argStr.match(/\bshare-root:(\S+)/);
+    const shareM = argStr.match(/\bshare-root:(\S*)/);
     const positional = argStr.trim().split(/\s+/).filter((t) => t && !/^[\w-]+:/.test(t));
     return {
       type: 'team-create',
@@ -1682,4 +1682,6 @@ test('team create: share-root:yes sets shareRoot, any other value is a parse err
     { type: 'team-create', name: 'shop', root: '/p', lead: null, mode: null, kit: null, shareRoot: true, body: '' });
   assert.deepStrictEqual(parseIntent('[agent:team create share-root:no shop root:/p]'),
     { type: 'team-create', name: 'shop', root: '/p', lead: null, mode: null, kit: null, shareRootError: 'share-root:no — the only accepted value is share-root:yes', body: '' });
+  assert.strictEqual(parseIntent('[agent:team create shop root:/p share-root:]').shareRootError,
+    'share-root: — the only accepted value is share-root:yes');
 });
