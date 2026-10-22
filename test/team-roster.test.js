@@ -348,15 +348,17 @@ test('bind refuses another team\'s lead, and renaming a quarantined seat keeps t
   assert.strictEqual(h.tm.teamOf({ name: 'a-hand-9', cwd: h.rootA }), null);
 });
 
-test('setLead is undone when a bind queued ahead of it claimed the seat first', async (t) => {
+test('a bind queued ahead of setLead loses to the new lead pointer: the seat is claimed once', async (t) => {
   const h = mkHome(t);
   h.writeTeam('a', h.rootA, 'a-lead');
   h.writeTeam('b', h.rootB, 'b-lead');
   h.records.set('x', { name: 'x', cwd: h.rootA, createdAt: 1 });
   const queued = h.tm.bindSeat('a', 'x', 'hand', { by: 'a-lead' });
   h.tm.setLead('b', 'x');
-  assert.strictEqual((await queued).ok, true);
+  const r = await queued;
+  assert.deepStrictEqual([r.ok, r.error], [false, "x is team b's lead — set another lead there first"]);
   await h.tm.pruneStaleRows();
-  assert.strictEqual(h.tm.loadManifest('b').lead, 'b-lead');
-  assert.ok(h.logs.some(([lvl, m]) => lvl === 'warn' && /set-lead x undone, lead is b-lead again/.test(m)), JSON.stringify(h.logs));
+  assert.strictEqual(h.tm.loadManifest('b').lead, 'x');
+  assert.ok(!h.readRoster('a').some((row) => row.seat === 'x'), 'team a holds no row for x');
+  assert.deepStrictEqual(h.readRoster('b').map((row) => [row.seat, row.role]), [['x', 'lead']]);
 });

@@ -1495,15 +1495,7 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
       const rows = cur.roster.filter((r) => !(r.seat === prior && r.role === 'lead' && prior !== seatName));
       if (rows.length !== cur.roster.length) writeRoster(teamName, rows);
       const r = bindNow(teamName, seatName, 'lead', { by: 'set-lead' });
-      if (r.ok) return;
-      try {
-        const back = JSON.parse(fs.readFileSync(cur.file, 'utf-8'));
-        if (back.lead === seatName) {
-          back.lead = prior;
-          atomicWrite(cur.file, JSON.stringify(migrateRoles(back), null, 2));
-        }
-      } catch {}
-      logLine('warn', `team ${teamName}: set-lead ${seatName} undone, lead is ${prior} again — ${r.error}`);
+      if (!r.ok) logLine('warn', `team ${teamName}: lead row for ${seatName} not written — ${r.error}`);
     }).catch(() => {});
     return loadManifest(teamName);
   }
