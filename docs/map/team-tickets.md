@@ -48,7 +48,7 @@
 |---|---|---|---|---|
 | `createTicketMethods` | factory taking deps and shared that returns every ticket, team and merge verb, grafted onto SessionManager.prototype | none in closure; borrows shared.ticketsStore, nameConflict, SPEC_CONFIRM_MS | accountStore, allTemplates | ticket-mixin-surface.test.js tickets-viewer-path-parity.test.js |
 | `_handleSpawnIntent` | the agent spawn intent: resolves a template, expands TEAM_ROOT, optionally cuts a worktree, mints the seat with privileged intents stripped | this.sessions, sessions.json (setWorktree), git worktree | _validateSeatName, _templateShape, filterTemplateEnv, _applyTemplatePersistence | spawn-template-env.test.js spawn-template-team-root.test.js spawn-template-plugin.test.js |
-| `teamActivity` | read-only snapshot of one team: per-role seats and tickets, reviewer live and last, open and landed rows, 24h counts | none (reads manifest, tickets.json, this.sessions) | ticketsStore.load, matchSeatRole | ticket-loop-verify.test.js accept-standing-seat.test.js reviewer-round-end.test.js |
+| `teamActivity` | read-only snapshot of one team: per-role seats and tickets, reviewer live and last, open and landed rows, 24h counts | none (reads manifest, tickets.json, this.sessions) | ticketsStore.load, matchSeatRole | ipc-handlers-team.test.js |
 | `_teamOf` | the seat's team: roster row first, then the unique root team (teamOf), else the cwd resolver when no roster dep is wired | roster.json (inference write via teamOf) | teamOf, resolveTeam | team-roster.test.js |
 | `_teamOfOrNull` | `_teamOf` with a throw read as no team | none | _teamOf | unpinned |
 | `_teamsOf` | the team names tied on the seat's cwd, for the ambiguity refusals | none | teamsOfCwd | unpinned |

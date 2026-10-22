@@ -1246,7 +1246,7 @@ test('createTeam honors caller-supplied roles over the default scaffold', () => 
   assert.ok(!('reviewer' in team.roles), 'scaffold reviewer not injected when caller supplies roles');
   // An empty roles map falls back to the default scaffold (not honored as "no roles").
   const root2 = mkTmpRoot('proj-');
-  const team2 = tm.createTeam({ name: 'shop2', root: root2, lead: 'clodex', roles: {} });
+  const team2 = tm.createTeam({ name: 'shop2', root: root2, lead: 'clodex2', roles: {} });
   assert.strictEqual(team2.roles.hand.prompt, 'clodex-team-hand', 'empty roles → default scaffold');
 });
 
