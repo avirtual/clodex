@@ -606,7 +606,7 @@ function inboundRow(doc, rec, ctx, boxed) {
   const text = el(doc, 'span', 'tr-head-text');
   if (rec.via === 'subagent') row.dataset.via = 'subagent';
   if (rec.unverified) row.dataset.unverified = '1';
-  if (!boxed) text.appendChild(inboundBadge(doc, rec));
+  if (!boxed) (user ? row : text).appendChild(inboundBadge(doc, rec));
   if (rec.attached) {
     const lead = attachedLead(rec).trim();
     if (lead) appendProse(doc, text, `${lead} `, ctx);
@@ -1386,7 +1386,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
     }
     reconcile(paneEl, turnCache, items, deps.lead);
     for (const r of list) for (const seg of r.segments || []) if (seg.spill && seg.spill.path) live.add(`spill:${seg.spill.path}`);
-    for (const r of list) if (r.kind === 'inbound' && r.from === 'user') for (const k of opened) if (k.startsWith(`${r.id}:fence:`)) live.add(k);
+    for (const r of list) if (r.kind === 'inbound' && r.from === 'user' && !r.attached) for (const k of opened) if (k.startsWith(`${r.id}:fence:`)) live.add(k);
     for (const k of [...opened]) if (!live.has(k)) opened.delete(k);
     for (const k of [...shut]) if (!live.has(k)) shut.delete(k);
     if (working) paintWorking();
