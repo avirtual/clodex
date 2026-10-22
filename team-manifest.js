@@ -584,7 +584,7 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
     const trunk = normalizeTrunk(m.trunk);
     const worktrees = normalizeWorktrees(m.worktrees);
     const maxHands = m.maxHands === null ? null : (normalizeMaxHands(m.maxHands) || undefined);
-    const rosterState = readRoster(name, roles);
+    const rosterState = readRoster(name, roles, lead);
     const team = { name, root: path.resolve(root), sandboxed: m.sandboxed === true, lead, roles, kit, file, dir: path.dirname(file), watchdogMs, trunk, ...(worktrees ? { worktrees } : {}), ...(maxHands !== undefined ? { maxHands } : {}), version, droppedFields, roster: rosterState.rows };
     return { team, rosterState };
   }
@@ -595,9 +595,21 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
 
   function seatsNamedIn(text) {
     const out = [];
+    const add = (x) => { if (typeof x === 'string' && NAME_RE.test(x) && !out.includes(x)) out.push(x); };
+    const src = String(text || '');
     const re = /"seat"\s*:\s*"([^"\\]{1,64})"/g;
     let m;
-    while ((m = re.exec(String(text || '')))) if (NAME_RE.test(m[1]) && !out.includes(m[1])) out.push(m[1]);
+    while ((m = re.exec(src))) add(m[1]);
+    let held = null;
+    try {
+      const obj = JSON.parse(src);
+      held = obj && obj.quarantine && Array.isArray(obj.quarantine.seats) ? obj.quarantine.seats : null;
+    } catch {}
+    if (held) held.forEach(add);
+    else {
+      const q = /"quarantine"\s*:\s*\{[^}]*?"seats"\s*:\s*\[([^\]]*)\]/.exec(src);
+      if (q) for (const n of q[1].matchAll(/"([^"\\]{1,64})"/g)) add(n[1]);
+    }
     return out;
   }
 
@@ -639,7 +651,16 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
     return names.filter((n) => n.startsWith(ROSTER_BAD_PREFIX)).sort();
   }
 
-  function readRoster(teamName, roles) {
+  function readRoster(teamName, roles, lead) {
+    const st = readRosterRaw(teamName, roles);
+    if (st.quarantine) {
+      const seats = st.quarantine.seats.filter((x) => x !== lead);
+      st.quarantine = seats.length ? { ...st.quarantine, seats } : null;
+    }
+    return st;
+  }
+
+  function readRosterRaw(teamName, roles) {
     const file = rosterPath(teamName);
     let text;
     try {
@@ -682,9 +703,14 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
     return { file, seats: seatsNamedIn(text) };
   }
 
-  function writeRoster(teamName, rows) {
-    const q = heldQuarantine(teamName);
-    const held = q ? q.seats.filter((x) => !rows.some((r) => r.seat === x)) : [];
+  function leadOf(teamName) {
+    try { return JSON.parse(fs.readFileSync(path.join(teamsDir, teamName, TEAM_FILE), 'utf-8')).lead; } catch { return null; }
+  }
+
+  function writeRoster(teamName, rows, carried) {
+    const q = carried !== undefined ? carried : heldQuarantine(teamName);
+    const lead = leadOf(teamName);
+    const held = q ? q.seats.filter((x) => x !== lead && !rows.some((r) => r.seat === x)) : [];
     atomicWrite(rosterPath(teamName), JSON.stringify({
       version: ROSTER_VERSION, seats: rows, ...(held.length ? { quarantine: { file: q.file, seats: held } } : {}),
     }, null, 2));
@@ -939,6 +965,7 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
   function liveHolder(seat, exceptTeam) {
     for (const { team } of loadAll()) {
       if (team.name === exceptTeam) continue;
+      if (team.lead === seat) return { team: team.name, role: 'lead' };
       const row = team.roster.find((r) => r.seat === seat);
       if (row && rowState(row) === 'live') return { team: team.name, role: row.role };
     }
@@ -958,6 +985,8 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
       if (own.rosterState.quarantine) return { ok: false, error: `team ${teamName}'s roster is quarantined (${own.rosterState.quarantine.file}) — a lead binds ${seat} with [agent:team bind ${seat} ${role}]` };
       if (mine && rowState(mine) === 'live') return { ok: true, team: teamName, row: mine, unchanged: true };
     }
+    const leads = loaded.find((l) => l.team.name !== teamName && l.team.lead === seat);
+    if (leads) return { ok: false, error: `${seat} is team ${leads.team.name}'s lead — set another lead there first`, holder: leads.team.name, role: 'lead' };
     const drops = [];
     for (const { team } of loaded) {
       if (team.name === teamName) continue;
@@ -1003,8 +1032,11 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
     return onChain(() => {
       const moved = [];
       for (const { team } of loadAll()) {
-        if (!team.roster.some((r) => r.seat === oldName)) continue;
-        writeRoster(team.name, team.roster.filter((r) => r.seat !== newName).map((r) => (r.seat === oldName ? { ...r, seat: newName } : r)));
+        const q = heldQuarantine(team.name);
+        const held = !!(q && q.seats.includes(oldName));
+        if (!held && !team.roster.some((r) => r.seat === oldName)) continue;
+        const carried = q ? { file: q.file, seats: q.seats.map((x) => (x === oldName ? newName : x)) } : null;
+        writeRoster(team.name, team.roster.filter((r) => r.seat !== newName).map((r) => (r.seat === oldName ? { ...r, seat: newName } : r)), carried);
         moved.push(team.name);
       }
       return { ok: true, teams: moved };
@@ -1463,7 +1495,15 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
       const rows = cur.roster.filter((r) => !(r.seat === prior && r.role === 'lead' && prior !== seatName));
       if (rows.length !== cur.roster.length) writeRoster(teamName, rows);
       const r = bindNow(teamName, seatName, 'lead', { by: 'set-lead' });
-      if (!r.ok) logLine('warn', `team ${teamName}: lead row for ${seatName} not written — ${r.error}`);
+      if (r.ok) return;
+      try {
+        const back = JSON.parse(fs.readFileSync(cur.file, 'utf-8'));
+        if (back.lead === seatName) {
+          back.lead = prior;
+          atomicWrite(cur.file, JSON.stringify(migrateRoles(back), null, 2));
+        }
+      } catch {}
+      logLine('warn', `team ${teamName}: set-lead ${seatName} undone, lead is ${prior} again — ${r.error}`);
     }).catch(() => {});
     return loadManifest(teamName);
   }

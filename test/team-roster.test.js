@@ -309,3 +309,54 @@ test('createTeam and setLead refuse a lead another team holds, before writing an
   assert.throws(() => h.tm.setLead('b', 'x'), /x is on team a's roster \(role hand\)/);
   assert.strictEqual(h.tm.loadManifest('b').lead, 'b-lead');
 });
+
+test('a second quarantine keeps the seats the first one still held', async (t) => {
+  const h = mkHome(t);
+  h.writeTeam('a', h.rootA, 'a-lead');
+  for (const n of ['a-hand-1', 'a-scout']) h.records.set(n, { name: n, cwd: h.rootA, createdAt: 1 });
+  fs.writeFileSync(path.join(h.home, 'teams', 'a', ROSTER_FILE), '{"seats":[{"seat":"a-hand-1","role":"hand"},{"seat":"a-scout"');
+  assert.strictEqual(h.tm.teamOf({ name: 'a-hand-1', cwd: h.rootA }), null, 'ENTER: quarantined');
+  assert.strictEqual((await h.tm.bindSeat('a', 'a-scout', 'scout', { by: 'a-lead' })).ok, true);
+  h.tick(1000);
+  const carried = fs.readFileSync(path.join(h.home, 'teams', 'a', ROSTER_FILE), 'utf-8');
+  fs.writeFileSync(path.join(h.home, 'teams', 'a', ROSTER_FILE), carried.slice(0, -3));
+  assert.strictEqual(h.tm.teamOf({ name: 'a-hand-1', cwd: h.rootA }), null, 'the held seat stays teamless');
+  assert.ok(h.tm.rosterOf('a').quarantine.seats.includes('a-hand-1'));
+});
+
+test('a quarantine that named only the lead and seats since bound clears, so inferred binds work again', async (t) => {
+  const h = mkHome(t);
+  h.writeTeam('a', h.rootA, 'a-lead');
+  for (const n of ['a-hand-1', 'a-scout']) h.records.set(n, { name: n, cwd: h.rootA, createdAt: 1 });
+  fs.writeFileSync(path.join(h.home, 'teams', 'a', ROSTER_FILE), '{"seats":[{"seat":"a-lead","role":"lead"},{"seat":"a-hand-1"');
+  assert.deepStrictEqual(h.tm.rosterOf('a').quarantine.seats, ['a-hand-1'], 'ENTER: the lead is not held');
+  assert.strictEqual((await h.tm.bindSeat('a', 'a-hand-1', 'hand', { by: 'a-lead' })).ok, true);
+  assert.strictEqual(h.tm.rosterOf('a').quarantine, null);
+  assert.strictEqual((await h.tm.bindSeat('a', 'a-scout', 'scout', { by: 'inferred' })).ok, true);
+});
+
+test('bind refuses another team\'s lead, and renaming a quarantined seat keeps the new name held', async (t) => {
+  const h = mkHome(t);
+  h.writeTeam('a', h.rootA, 'a-lead');
+  h.writeTeam('b', h.rootB, 'b-lead');
+  const r = await h.tm.bindSeat('b', 'a-lead', 'hand', { by: 'b-lead' });
+  assert.deepStrictEqual([r.ok, r.error], [false, "a-lead is team a's lead — set another lead there first"]);
+  fs.writeFileSync(path.join(h.home, 'teams', 'a', ROSTER_FILE), '{"seats":[{"seat":"a-hand-1"');
+  assert.deepStrictEqual(h.tm.rosterOf('a').quarantine.seats, ['a-hand-1'], 'ENTER: held');
+  await h.tm.renameSeatRow('a-hand-1', 'a-hand-9');
+  assert.deepStrictEqual(h.tm.rosterOf('a').quarantine.seats, ['a-hand-9']);
+  assert.strictEqual(h.tm.teamOf({ name: 'a-hand-9', cwd: h.rootA }), null);
+});
+
+test('setLead is undone when a bind queued ahead of it claimed the seat first', async (t) => {
+  const h = mkHome(t);
+  h.writeTeam('a', h.rootA, 'a-lead');
+  h.writeTeam('b', h.rootB, 'b-lead');
+  h.records.set('x', { name: 'x', cwd: h.rootA, createdAt: 1 });
+  const queued = h.tm.bindSeat('a', 'x', 'hand', { by: 'a-lead' });
+  h.tm.setLead('b', 'x');
+  assert.strictEqual((await queued).ok, true);
+  await h.tm.pruneStaleRows();
+  assert.strictEqual(h.tm.loadManifest('b').lead, 'b-lead');
+  assert.ok(h.logs.some(([lvl, m]) => lvl === 'warn' && /set-lead x undone, lead is b-lead again/.test(m)), JSON.stringify(h.logs));
+});
