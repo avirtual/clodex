@@ -576,8 +576,33 @@ function attachedLead(rec) {
   return cut < 0 ? rec.text : rec.text.slice(0, cut);
 }
 
+const FENCE_FOLD_LINES = 6;
+
+function foldFences(doc, parent, rec, ctx) {
+  const pres = [];
+  const walk = (n) => { for (const k of n.childNodes || []) { if (k.tagName === 'PRE') pres.push(k); else walk(k); } };
+  walk(parent);
+  pres.forEach((pre, k) => {
+    const code = pre.childNodes[0];
+    const lines = code ? code.textContent.split('\n').length : 0;
+    if (lines <= FENCE_FOLD_LINES) return;
+    const box = el(doc, 'div', 'tr-fence');
+    const head = el(doc, 'div', 'tr-box-head');
+    head.appendChild(el(doc, 'span', 'tr-box-preview', `${code.getAttribute('data-lang') || 'text'} · ${lines} lines`));
+    const chevron = el(doc, 'span', 'tr-box-chevron');
+    head.appendChild(chevron);
+    pre.parentNode.replaceChild(box, pre);
+    const body = el(doc, 'div', 'tr-box-body');
+    body.appendChild(pre);
+    box.appendChild(head);
+    box.appendChild(body);
+    wireHead(doc, head, box, chevron, ctx.opened, `${rec.id}:fence:${k}`);
+  });
+}
+
 function inboundRow(doc, rec, ctx, boxed) {
-  const row = headRow(doc, 'tr-inbound', rec);
+  const user = rec.from === 'user' && !rec.attached;
+  const row = headRow(doc, `tr-inbound${user ? ' tr-inbound-user' : ''}`, rec);
   const text = el(doc, 'span', 'tr-head-text');
   if (rec.via === 'subagent') row.dataset.via = 'subagent';
   if (rec.unverified) row.dataset.unverified = '1';
@@ -589,7 +614,10 @@ function inboundRow(doc, rec, ctx, boxed) {
     text.appendChild(linkNode(doc, { kind: 'path', text: baseName(rec.attached.path), path: rec.attached.path }, '', ctx));
   } else {
     if (rec.pastes || rec.images) appendPrompt(doc, text, rec, ctx);
-    else appendProse(doc, text, rec.text, ctx);
+    else if (user && !hasIntentMarks(rec.text)) {
+      appendMarkdown(doc, text, rec.text, ctx);
+      foldFences(doc, text, rec, ctx);
+    } else appendProse(doc, text, rec.text, ctx);
     cutMark(doc, text, rec);
   }
   row.appendChild(text);
@@ -1358,6 +1386,7 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
     }
     reconcile(paneEl, turnCache, items, deps.lead);
     for (const r of list) for (const seg of r.segments || []) if (seg.spill && seg.spill.path) live.add(`spill:${seg.spill.path}`);
+    for (const r of list) if (r.kind === 'inbound' && r.from === 'user') for (const k of opened) if (k.startsWith(`${r.id}:fence:`)) live.add(k);
     for (const k of [...opened]) if (!live.has(k)) opened.delete(k);
     for (const k of [...shut]) if (!live.has(k)) shut.delete(k);
     if (working) paintWorking();
