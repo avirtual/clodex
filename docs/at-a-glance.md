@@ -16,6 +16,7 @@ An agent seat shows one of three views:
 
 A stream seat has Conversation and Internals only; there is no terminal to fall back to.
 The agent's replies render their markdown — bold, italic, inline code, links by their label, headings, and pipe tables as real tables (prompts and tool output are always raw).
+A message the operator sends through the API shows in full like a typed prompt, but renders its markdown; a fenced block over six lines folds to one line with a chevron.
 When the CLI shows a menu, a picker or a dialog, its terminal opens under the conversation;
 answer it there. Preferences ▸ Appearance ▸ "Agent seats open in" sets where new seats start.
 

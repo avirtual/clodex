@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Transcript: a message the operator sends through the API (phone app, a game or script using the dm endpoint) now reads like a typed prompt — full text, markdown, fenced blocks as code; a fence over six lines folds to one line with a chevron. Before, it was clamped to three lines with the fence shown literally.
+
 ## 5.132.0 — 2026-10-22
 
 - The browser UI can now send to a stream seat — composer, slash commands, control, permission answers, interrupt and draft — instead of every send bouncing with 'seat:send is local only'.

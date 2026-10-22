@@ -57,6 +57,7 @@ function makeElement(tag) {
   const node = makeNode({
     nodeType: 1,
     tag,
+    nodeName: String(tag).toUpperCase(),
     className: '',
     dataset: {},
     style: {},

@@ -662,7 +662,8 @@ test('an inbound from user carries the remote glyph alone, the words in its titl
   const m = mount();
   m.render([{ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'user', text: 'from the phone' }]);
   const card = unbox(m.pane.childNodes[0].childNodes[0]);
-  const badge = card.childNodes[0].childNodes[0];
+  const badge = card.childNodes[0];
+  assert.deepStrictEqual([card.childNodes[1].className, card.childNodes[1].childNodes[0].tag], ['tr-head-text', 'p']);
   assert.strictEqual(badge.className, 'tr-sender tr-sender-operator');
   assert.deepStrictEqual(badge.childNodes.map((n) => n.textContent), ['◎']);
   assert.strictEqual(badge.title, 'Sent through the remote API');
@@ -671,10 +672,92 @@ test('an inbound from user carries the remote glyph alone, the words in its titl
 test('an inbound from user sent by the phone app draws the phone glyph alone', () => {
   const m = mount();
   m.render([{ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'user', client: 'ios', text: 'from the phone' }]);
-  const badge = unbox(m.pane.childNodes[0].childNodes[0]).childNodes[0].childNodes[0];
+  const card = unbox(m.pane.childNodes[0].childNodes[0]);
+  const badge = card.childNodes[0];
+  assert.deepStrictEqual([card.childNodes[1].className, card.childNodes[1].childNodes[0].tag], ['tr-head-text', 'p']);
   assert.strictEqual(badge.className, 'tr-sender tr-sender-operator');
   assert.deepStrictEqual(badge.childNodes.map((n) => n.textContent), ['▯']);
   assert.strictEqual(badge.title, 'Sent from the phone app');
+});
+
+const userInbound = (text, extra = {}) => ({ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'user', client: 'avh-game', text, ...extra });
+const fenceText = (n) => `AVH chat watch\n` + '```json\n' + Array.from({ length: n }, (_, i) => `l${i + 1}`).join('\n') + '\n```';
+const inboundCard = (m) => m.pane.childNodes[0].childNodes[0];
+const walkTags = (node, tag) => (node.tag === tag ? [node] : []).concat((node.childNodes || []).flatMap((k) => walkTags(k, tag)));
+
+test('an inbound from user renders its markdown like a typed prompt: unclamped row class, the fence as code', () => {
+  const m = mount();
+  m.render([userInbound('head\n```json\n[1,\n2]\n```')]);
+  const card = inboundCard(m);
+  assert.ok(card.className.split(' ').includes('tr-inbound-user'), card.className);
+  const [pre] = walkTags(card, 'pre');
+  assert.ok(pre, 'ENTER: a pre is rendered');
+  const code = pre.childNodes[0];
+  assert.strictEqual(code.tag, 'code');
+  assert.strictEqual(code.getAttribute('data-lang'), 'json');
+  assert.strictEqual(code.textContent, '[1,\n2]');
+  assert.doesNotMatch(card.textContent, /```/);
+});
+
+test('an inbound from user folds a 10-line fence to one head line with a chevron; a click opens it and a rebuilt row stays open', () => {
+  const m = mount();
+  const rec = userInbound(fenceText(10));
+  m.render([rec]);
+  const [box] = findCls(inboundCard(m), 'tr-fence');
+  assert.ok(box, 'ENTER: the fence is boxed');
+  const [head] = findCls(box, 'tr-box-head');
+  assert.deepStrictEqual(head.childNodes.map((n) => [n.className, n.textContent]), [['tr-box-preview', 'json · 10 lines'], ['tr-box-chevron', '▸']]);
+  assert.ok(box.className.split(' ').includes('tr-box-folded'));
+  head.listeners.click();
+  assert.strictEqual(box.className, 'tr-fence');
+  assert.strictEqual(head.childNodes[1].textContent, '▾');
+  m.render([{ ...rec, text: `${rec.text}\nmore` }]);
+  const [again] = findCls(inboundCard(m), 'tr-fence');
+  assert.notStrictEqual(again, box, 'ENTER: the row was rebuilt');
+  assert.strictEqual(again.className, 'tr-fence');
+  assert.strictEqual(findCls(again, 'tr-box-chevron')[0].textContent, '▾');
+  m.render([{ ...rec, text: `${rec.text}\nmore\nstill` }]);
+  const third = findCls(inboundCard(m), 'tr-fence')[0];
+  assert.notStrictEqual(third, again, 'ENTER: the row was rebuilt twice');
+  assert.strictEqual(third.className, 'tr-fence');
+});
+
+for (const n of [3, 6]) {
+  test(`an inbound from user keeps a ${n}-line fence inline, unfolded`, () => {
+    const m = mount();
+    m.render([userInbound(fenceText(n))]);
+    const card = inboundCard(m);
+    assert.strictEqual(walkTags(card, 'pre').length, 1, 'ENTER: the fence rendered as code');
+    assert.deepStrictEqual(findCls(card, 'tr-fence'), []);
+  });
+}
+
+test('an inbound from user folds a 7-line fence, the first count past the limit', () => {
+  const m = mount();
+  m.render([userInbound(fenceText(7))]);
+  const [box] = findCls(inboundCard(m), 'tr-fence');
+  assert.ok(box, 'ENTER: the fence is boxed');
+  assert.strictEqual(findCls(box, 'tr-box-preview')[0].textContent, 'json · 7 lines');
+});
+
+test('an inbound from user carrying an intent mark stays prose: the mark is drawn and no markdown runs', () => {
+  const m = mount();
+  m.render([userInbound('[agent:dm x] hi\n**bold**')]);
+  const card = inboundCard(m);
+  assert.strictEqual(findCls(card, 'intent-mark').length, 1);
+  assert.deepStrictEqual(walkTags(card, 'strong'), []);
+  assert.match(card.textContent, /\*\*bold\*\*/);
+});
+
+test('an inbound from a seat with a fence is unchanged: plain text, literal backticks', () => {
+  const m = mount();
+  const text = fenceText(10);
+  m.render([{ id: 'i1', kind: 'inbound', ts: null, turn: 1, from: 'clodex-hand-1', text }]);
+  const card = unbox(inboundCard(m));
+  assert.ok(!card.className.split(' ').includes('tr-inbound-user'), card.className);
+  assert.deepStrictEqual(walkTags(card, 'pre'), []);
+  assert.deepStrictEqual(findCls(card, 'tr-fence'), []);
+  assert.ok(card.textContent.includes('```json\nl1\nl2'), card.textContent);
 });
 
 test('a phone inbound carrying an image draws the thumbnail inline like a prompt, with no raw prefix', () => {
