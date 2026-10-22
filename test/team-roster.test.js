@@ -359,6 +359,6 @@ test('a bind queued ahead of setLead loses to the new lead pointer: the seat is 
   assert.deepStrictEqual([r.ok, r.error], [false, "x is team b's lead — set another lead there first"]);
   await h.tm.pruneStaleRows();
   assert.strictEqual(h.tm.loadManifest('b').lead, 'x');
-  assert.ok(!h.readRoster('a').some((row) => row.seat === 'x'), 'team a holds no row for x');
+  assert.ok(!fs.existsSync(path.join(h.home, 'teams', 'a', ROSTER_FILE)), 'team a wrote no row for x');
   assert.deepStrictEqual(h.readRoster('b').map((row) => [row.seat, row.role]), [['x', 'lead']]);
 });
