@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.133.0 — 2026-10-23
+
 - Transcript: a message the operator sends through the API (phone app, a game or script using the dm endpoint) now reads like a typed prompt — full text, markdown, fenced blocks as code; a fence over six lines folds to one line with a chevron. Before, it was clamped to three lines with the fence shown literally.
 - Team membership is an explicit roster (`teams/<name>/roster.json`): the loop binds the seats it mints, a lead binds an existing seat with `[agent:team bind <seat> <role>]`, a seat is on one roster at a time, and a seat keeps its team when it moves. Existing teams get their roster synthesised from live seats at first launch.
 
