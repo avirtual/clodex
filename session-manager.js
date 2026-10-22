@@ -6661,6 +6661,7 @@ function createSessionManager(deps) {
       const timeoutMs = (typeof entry.timeoutMs === 'number' && entry.timeoutMs > 0) ? entry.timeoutMs : 10000;
       const payloadJson = JSON.stringify(v.value);
 
+      const execTeam = this._teamOfOrNull(session);
       setImmediate(() => {
         let child;
         try {
@@ -6676,6 +6677,8 @@ function createSessionManager(deps) {
               CLODEX_SEAT: who,
               CLODEX_NODE: process.execPath,
               CLODEX_CTL: path.join(__dirname, 'cli', 'bin', 'clodexctl.js'),
+              CLODEX_TEAM: execTeam ? execTeam.name : '',
+              CLODEX_TEAM_ROOT: execTeam ? execTeam.root : '',
             },
             stdio: ['pipe', 'ignore', 'pipe'],
           });

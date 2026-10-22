@@ -1,9 +1,7 @@
 'use strict';
 
 // clodex-team.js: teams control plane over the exec intent
-// (teams-design.md [internal design doc, not in this repo], docs/exec-tools.md). Roster derivation (registry cwd
-// join + manifest under ~/.clodex/teams/<name>/, resolved by root-containment)
-// and the retire envelope contract (target socket, from=requester,
+// (teams-design.md [internal design doc, not in this repo], docs/exec-tools.md). The retire envelope contract (target socket, from=requester,
 // type=team-retire, byte-silent success; failures loud). Fake CLODEX_HOME;
 // real unix sockets (peer/wire tests set the socket precedent).
 //
@@ -58,10 +56,15 @@ function mkTeam(home, name, root, manifest) {
   fs.writeFileSync(path.join(dir, 'team.json'), JSON.stringify({ root, ...manifest }));
 }
 
-function launch(home, payload) {
+function mkRoster(home, team, seats) {
+  fs.writeFileSync(path.join(home, 'teams', team, 'roster.json'),
+    JSON.stringify({ version: 1, seats: seats.map(([seat, role]) => ({ seat, role, gen: 1, since: 1, by: 'test' })) }));
+}
+
+function launch(home, payload, team = '') {
   return new Promise((resolve) => {
     const ch = cp.spawn(process.execPath, [SCRIPT], {
-      env: { ...process.env, CLODEX_HOME: home },
+      env: { ...process.env, CLODEX_HOME: home, CLODEX_TEAM: team, CLODEX_TEAM_ROOT: '' },
       stdio: ['pipe', 'ignore', 'pipe'],
     });
     let err = '';
@@ -71,20 +74,21 @@ function launch(home, payload) {
   });
 }
 
-test('roster: resolves team by cwd, lists roles + live-in-project', async () => {
+test('roster: live is the roster rows that hold a run registration, wherever their cwd is', async () => {
   const home = mkHome();
   const proj = path.join(home, 'proj');
   mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {}, dev: {}, reviewer: {} } });
+  mkRoster(home, 'proj', [['alead', 'lead'], ['helper', 'dev'], ['gone', 'reviewer']]);
   reg(home, 'alead', path.join(proj, 'sub'));
-  reg(home, 'adev', proj);
-  reg(home, 'outsider', path.join(home, 'elsewhere'));
+  reg(home, 'helper', path.join(home, 'elsewhere'));
+  reg(home, 'squatter', proj);
 
-  const r1 = await launch(home, { action: 'roster', agent: 'alead' });
+  const r1 = await launch(home, { action: 'roster', agent: 'alead' }, 'proj');
   assert.strictEqual(r1.code, 0, `roster exits 0: ${r1.err}`);
   assert.match(r1.err, /team proj \(root /, `names the team: ${r1.err}`);
-  // Space-separated roles; lead starred; a role with no template is just its name.
   assert.match(r1.err, /roles: lead\* dev reviewer \(\*=lead\)/, `roles annotated: ${r1.err}`);
-  assert.match(r1.err, /live: adev,alead/, `live join by cwd (sorted, no outsider): ${r1.err}`);
+  assert.match(r1.err, /live: alead,helper(\n|$)/, `ENTER: the bound seat outside the root is listed, the unbound one inside is not: ${r1.err}`);
+  assert.ok(!r1.err.includes('squatter') && !r1.err.includes('gone'), r1.err);
 });
 
 test('roster: per-role template annotation (spawn-by-template)', async () => {
@@ -103,7 +107,7 @@ test('roster: per-role template annotation (spawn-by-template)', async () => {
     runner: { template: 'haiku-run' },
   } });
   reg(home, 'alead', proj);
-  const r = await launch(home, { action: 'roster', agent: 'alead' });
+  const r = await launch(home, { action: 'roster', agent: 'alead' }, 'proj');
   assert.strictEqual(r.code, 0, r.err);
   assert.match(r.err, /roles: lead\* worker\(tmpl=hand\) reviewer runner\(tmpl=haiku-run\) \(\*=lead\)/, r.err);
 });
@@ -117,7 +121,7 @@ test('t1222: roster names a role\'s effort from its team template, the reviewer\
   fs.writeFileSync(path.join(tdir, 'hand.json'), JSON.stringify({ type: 'claude', effort: 'high' }));
   fs.writeFileSync(path.join(tdir, 'clodex-team-reviewer.json'), JSON.stringify({ type: 'claude', effort: 'xhigh' }));
   reg(home, 'alead', proj);
-  const r = await launch(home, { action: 'roster', agent: 'alead' });
+  const r = await launch(home, { action: 'roster', agent: 'alead' }, 'proj');
   assert.strictEqual(r.code, 0, r.err);
   assert.match(r.err, /roles: lead\* worker\(tmpl=hand,effort=high\) reviewer\(effort=xhigh\) \(\*=lead\)/, r.err);
 });
@@ -140,7 +144,7 @@ test('roster: a role carrying cut schema fields renders with NO annotation', asy
     reviewer: { instantiate: 'subagent', tools: ['Read', 'Grep'] },
   } });
   reg(home, 'alead', proj);
-  const r = await launch(home, { action: 'roster', agent: 'alead' });
+  const r = await launch(home, { action: 'roster', agent: 'alead' }, 'proj');
   assert.strictEqual(r.code, 0, r.err);
   // ENTER: the fixture reached the roster line at all. Without this the absence
   // assertions below are equally true of a roster that printed no roles.
@@ -149,43 +153,38 @@ test('roster: a role carrying cut schema fields renders with NO annotation', asy
   assert.doesNotMatch(r.err, /subagent|Read|Grep/, `no cut field's VALUE leaks into the line: ${r.err}`);
 });
 
-test('roster: no team containing cwd replies honestly, exit 0', async () => {
+test('roster: an empty CLODEX_TEAM is the no-team reply, exit 0, even beside a team whose root holds the seat', async () => {
   const home = mkHome();
   const proj = path.join(home, 'proj');
   mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {} } });
-  reg(home, 'outsider', path.join(home, 'elsewhere'));
-  const r = await launch(home, { action: 'roster', agent: 'outsider' });
-  assert.strictEqual(r.code, 0);
-  assert.match(r.err, /no project/, r.err);
-});
-
-test('roster: unregistered agent with no cwd is loud', async () => {
-  const home = mkHome();
-  const r = await launch(home, { action: 'roster', agent: 'ghost' });
-  assert.strictEqual(r.code, 1);
-  assert.match(r.err, /cannot resolve your cwd/, r.err);
-});
-
-test('roster: payload cwd fallback works when registry lacks one', async () => {
-  const home = mkHome();
-  const proj = path.join(home, 'proj');
-  mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {} } });
-  const r = await launch(home, { action: 'roster', agent: 'ghost', cwd: proj });
-  assert.strictEqual(r.code, 0);
-  assert.match(r.err, /roles: lead\*/, r.err);
-});
-
-test('roster: deepest root wins on nested teams', async () => {
-  const home = mkHome();
-  const outer = path.join(home, 'mono');
-  const inner = path.join(outer, 'packages', 'app');
-  mkTeam(home, 'mono', outer, { lead: 'lead', roles: { lead: {} } });
-  mkTeam(home, 'app', inner, { lead: 'boss', roles: { boss: {} } });
-  reg(home, 'aworker', path.join(inner, 'src'));
-  const r = await launch(home, { action: 'roster', agent: 'aworker' });
+  mkRoster(home, 'proj', [['alead', 'lead']]);
+  reg(home, 'alead', proj);
+  const r = await launch(home, { action: 'roster', agent: 'alead' }, '');
   assert.strictEqual(r.code, 0, r.err);
-  assert.match(r.err, /team app \(/, `deepest team chosen: ${r.err}`);
-  assert.match(r.err, /roles: boss\*/, r.err);
+  assert.strictEqual(r.err, 'no team: this seat is on no roster — a lead binds it with [agent:team bind <seat> <role>]');
+});
+
+test('roster: a malformed roster.json is one line naming the file, non-zero exit', async () => {
+  const home = mkHome();
+  const proj = path.join(home, 'proj');
+  mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {} } });
+  const file = path.join(home, 'teams', 'proj', 'roster.json');
+  fs.writeFileSync(file, '{"seats": nope');
+  reg(home, 'alead', proj);
+  const r = await launch(home, { action: 'roster', agent: 'alead' }, 'proj');
+  assert.strictEqual(r.code, 1, r.err);
+  assert.strictEqual(r.err.split('\n').length, 1, r.err);
+  assert.ok(r.err.includes(file), r.err);
+});
+
+test('roster: a team with no roster.json lists no live seats', async () => {
+  const home = mkHome();
+  const proj = path.join(home, 'proj');
+  mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {} } });
+  reg(home, 'alead', proj);
+  const r = await launch(home, { action: 'roster', agent: 'alead' }, 'proj');
+  assert.strictEqual(r.code, 0, r.err);
+  assert.match(r.err, /roles: lead\* .*live: \(none\)/, r.err);
 });
 
 test('retire: envelope lands on the target socket with the contract shape', async () => {
@@ -469,7 +468,7 @@ test('listing parity: the two implementations RENDER the same board (t100 — no
   const rows = parityBoard();
   mkTicketRegistry(home, proj, rows);
 
-  const r = await launch(home, { action: 'tickets', agent: 'alead' });
+  const r = await launch(home, { action: 'tickets', agent: 'alead' }, 'proj');
   assert.strictEqual(r.code, 0, `tickets exits 0: ${r.err}`);
   const theirs = listingFacts(r.err);
   const mine = listingFacts(intentListing(home, proj, "proj", null));
@@ -598,7 +597,7 @@ test('listing parity: holds on each explicit filter too', async () => {
   mkTicketRegistry(home, proj, parityBoard());
 
   for (const filter of ['done', 'cancelled', 'all']) {
-    const r = await launch(home, { action: 'tickets', agent: 'alead', filter });
+    const r = await launch(home, { action: 'tickets', agent: 'alead', filter }, 'proj');
     assert.strictEqual(r.code, 0, `${filter}: exits 0: ${r.err}`);
     const mine = listingFacts(intentListing(home, proj, "proj", filter));
     assert.ok(mine.length, `ENTER: ${filter} renders something`);
@@ -631,7 +630,7 @@ test('tickets: the stale-host notice does not displace the tail as the delivered
     dir: path.join(__dirname, '..'), digest: 'stale-digest-from-boot',
   }));
 
-  const r = await launch(home, { action: 'tickets', agent: 'alead' });
+  const r = await launch(home, { action: 'tickets', agent: 'alead' }, 'proj');
   assert.strictEqual(r.code, 0, r.err);
   assert.match(r.err, /STALE HOST/, 'ENTER: the fixture really is on the stale path');
 
@@ -658,7 +657,7 @@ test('listing parity: holds on a board with nothing open', async () => {
   const mine = listingFacts(intentListing(home, proj, "proj", null));
   assert.ok(mine.includes('NO-OPEN'), 'ENTER: the no-open branch is the one under test');
   assert.ok(mine.includes('SECTION'), 'ENTER: and it still carries the recent section');
-  const r = await launch(home, { action: 'tickets', agent: 'alead' });
+  const r = await launch(home, { action: 'tickets', agent: 'alead' }, 'proj');
   assert.strictEqual(r.code, 0, r.err);
   assert.deepStrictEqual(listingFacts(r.err), mine, 'the no-open reply paths drifted');
 });
@@ -810,7 +809,7 @@ test('cost: one line for the team, excluding what it could not attribute', async
   reg(home, 'alead', proj);
   mkLedger(home, 'proj', COST_LEDGER, ['this line is not JSON']);
 
-  const r = await launch(home, { action: 'cost', agent: 'alead' });
+  const r = await launch(home, { action: 'cost', agent: 'alead' }, 'proj');
   assert.strictEqual(r.code, 0, `cost exits 0: ${r.err}`);
   // $21.64 + $3.10 + $27 — and NOT the $594.98 seat-lifetime row, which is the
   // number t478 stopped publishing as this ticket's.
@@ -832,18 +831,18 @@ test('cost target: one ticket, its hand and each review round', async () => {
   reg(home, 'alead', proj);
   mkLedger(home, 'proj', COST_LEDGER);
 
-  const hit = await launch(home, { action: 'cost', agent: 'alead', target: 't803' });
+  const hit = await launch(home, { action: 'cost', agent: 'alead', target: 't803' }, 'proj');
   assert.strictEqual(hit.code, 0, hit.err);
   assert.strictEqual(hit.err, 't803: $21.64 hand (218 req) + $3.10 review r1 = $24.74');
 
   // A ticket the ledger could not attribute reports UNKNOWN rather than a total
   // it cannot stand behind.
-  const lifetime = await launch(home, { action: 'cost', agent: 'alead', target: 't900' });
+  const lifetime = await launch(home, { action: 'cost', agent: 'alead', target: 't900' }, 'proj');
   assert.match(lifetime.err, /t900: hand unattributed \(seat-lifetime\) = unknown/, lifetime.err);
   assert.ok(!lifetime.err.includes('594'), `not even as a parenthetical: ${lifetime.err}`);
 
   // And one with no rows at all says so, rather than answering $0.00.
-  const missing = await launch(home, { action: 'cost', agent: 'alead', target: 't555' });
+  const missing = await launch(home, { action: 'cost', agent: 'alead', target: 't555' }, 'proj');
   assert.strictEqual(missing.code, 0, missing.err);
   assert.match(missing.err, /t555: nothing booked/, missing.err);
 });
@@ -854,7 +853,7 @@ test('cost: a team that has spent nothing yet is not an error, and not $0', asyn
   mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {} } });
   reg(home, 'alead', proj);
 
-  const r = await launch(home, { action: 'cost', agent: 'alead' });
+  const r = await launch(home, { action: 'cost', agent: 'alead' }, 'proj');
   assert.strictEqual(r.code, 0, `a missing ledger is a normal state for a new team: ${r.err}`);
   assert.match(r.err, /nothing in .*cost\.jsonl yet/, r.err);
   assert.ok(!/\$/.test(r.err), `and it must not print a figure it does not have: ${r.err}`);

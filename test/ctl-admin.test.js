@@ -369,7 +369,7 @@ test('A12 + launcher refusals: env guard, payload, ctx, verb, record', async () 
   assert.ok(!fs.existsSync(path.join(f.runs, '1.json')), 'no refused call allocated a run');
 });
 
-test('A13: the exec dispatcher passes seat, interpreter and CLI script to the child', async () => {
+async function execEnvProbe(deps = {}) {
   const { mk: mkBase } = require('./lib/session-fixtures');
   const { isFilenameToken, parseAndValidate, clampReplyBody } = require('../exec-schema');
   const REGISTRY_DIR = mkTmpRoot('clx-ctl-exec-');
@@ -386,15 +386,53 @@ test('A13: the exec dispatcher passes seat, interpreter and CLI script to the ch
     resolveTeam: () => null,
     getPersistence: () => ({ list: () => [], get: () => ({ name: 'a', execCommands: ['probe'] }) }),
     childProcess: { spawn: (cmd, args, opts) => { spawned.push(opts); throw new Error('stop'); } },
+    ...deps,
   });
   m._injectText = () => {};
   m._broadcast = () => {};
   await m._handleExecIntent({ name: 'a', agentType: 'claude', workspaceId: 'ws1', cwd: '/tmp' }, 'probe', '{"x":"y"}');
   await new Promise((r) => setImmediate(r));
   assert.strictEqual(spawned.length, 1, 'ENTER: the dispatcher reached spawn');
-  const env = spawned[0].env;
+  return { env: spawned[0].env, REGISTRY_DIR };
+}
+
+function hostEnv(REGISTRY_DIR, team) {
+  return {
+    ...process.env,
+    CLODEX_HOME: REGISTRY_DIR,
+    CLODEX_SEAT: 'a',
+    CLODEX_NODE: process.execPath,
+    CLODEX_CTL: path.join(__dirname, '..', 'cli', 'bin', 'clodexctl.js'),
+    CLODEX_TEAM: team ? team.name : '',
+    CLODEX_TEAM_ROOT: team ? team.root : '',
+  };
+}
+
+test('A13: the exec dispatcher passes seat, interpreter and CLI script to the child', async () => {
+  const { env, REGISTRY_DIR } = await execEnvProbe();
   assert.strictEqual(env.CLODEX_SEAT, 'a');
   assert.strictEqual(env.CLODEX_NODE, process.execPath);
   assert.ok(path.isAbsolute(env.CLODEX_CTL) && env.CLODEX_CTL.endsWith(path.join('cli', 'bin', 'clodexctl.js')), env.CLODEX_CTL);
   assert.strictEqual(env.CLODEX_HOME, REGISTRY_DIR);
+});
+
+test('A13: a seat on a team gets its team name and root in CLODEX_TEAM / CLODEX_TEAM_ROOT', async () => {
+  const team = { name: 'tm', root: '/srv/tm-root' };
+  const { env, REGISTRY_DIR } = await execEnvProbe({ teamOf: ({ name }) => (name === 'a' ? team : null) });
+  assert.deepStrictEqual(env, hostEnv(REGISTRY_DIR, team));
+});
+
+test('A13: a seat on no team gets CLODEX_TEAM / CLODEX_TEAM_ROOT as empty strings, never the app env', async () => {
+  const saved = { t: process.env.CLODEX_TEAM, r: process.env.CLODEX_TEAM_ROOT };
+  process.env.CLODEX_TEAM = 'decoy';
+  process.env.CLODEX_TEAM_ROOT = '/decoy';
+  try {
+    const { env, REGISTRY_DIR } = await execEnvProbe({ teamOf: () => null });
+    assert.deepStrictEqual(env, hostEnv(REGISTRY_DIR, null));
+    assert.strictEqual(env.CLODEX_TEAM, '');
+    assert.strictEqual(env.CLODEX_TEAM_ROOT, '');
+  } finally {
+    if (saved.t === undefined) delete process.env.CLODEX_TEAM; else process.env.CLODEX_TEAM = saved.t;
+    if (saved.r === undefined) delete process.env.CLODEX_TEAM_ROOT; else process.env.CLODEX_TEAM_ROOT = saved.r;
+  }
 });
