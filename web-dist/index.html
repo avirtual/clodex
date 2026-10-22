@@ -32817,7 +32817,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const m = cleaned.match(/^\[agent:team\s+create\b([^\]]*)\]\s*(.*)/s);
         if (!m) return null;
         const argStr = m[1];
-        const rootM = argStr.match(/\broot:(\S+)/);
+        const rootM = argStr.match(/(?:^|\s)root:(\S+)/);
         const leadM = argStr.match(/\blead:(\S+)/);
         const modeM = argStr.match(/\bmode:(\S+)/);
         const kitM = argStr.match(/\bkit:(\S+)/);

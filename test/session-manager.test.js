@@ -3894,7 +3894,7 @@ test('team-retire: refusals wake the requester and never archive', async () => {
     m.sessions.set('dev', { name: 'dev', agentType: 'claude', cwd: '/p2/y' });
     m._onIncoming('dev', { from: 'lead', body: '', type: 'team-retire' });
     assert.deepStrictEqual(archived, []);
-    assert.match(delivered[0].body, /not in the same project/);
+    assert.match(delivered[0].body, /dev is on team team-p2, not yours/);
   }
   // requester not running
   {

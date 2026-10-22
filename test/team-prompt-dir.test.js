@@ -255,6 +255,7 @@ test('t699: loadManifest and resolveTeam both carry `dir`, the directory holding
     dir: path.dirname(file),
     watchdogMs: null,
     trunk: null,
+    sharedRoot: false,
     version: 3,
     droppedFields: [],
     roster: [{ seat: 't-lead', role: 'lead', gen: null, since: m.roster[0].since, by: 'create' }],

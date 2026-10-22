@@ -118,8 +118,3 @@ line is never slowOnly: that is a real defect the hand must clear.
 Ownership is read out of GIT (`diffNames` + `fileAt` against the branch), not off
 the worktree: the merge arm asks after the branch has landed, and a torn-down
 tree would answer "nothing owned" for a branch that owns everything.
-
-## _foreignRowRefusal
-
-A solo board neither stamps `team` on its rows (`_taskAdd`) nor refuses on it: a solo context is named after the root's
-basename, which a team created at that root later need not share, so a stamp would lock its own rows away from it.
