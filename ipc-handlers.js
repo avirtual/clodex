@@ -138,7 +138,7 @@ function registerIpcHandlers(deps) {
     let written = false;
     let res;
     try {
-      createTeam({ name: teamName, root: p.cwd, lead: p.name, kit: p.kit });
+      createTeam({ name: teamName, root: p.cwd, lead: p.name, kit: p.kit, shareRoot: p.shareRoot === true });
       written = true;
       res = await spawnFromParams(e, p);
     } catch (err) {

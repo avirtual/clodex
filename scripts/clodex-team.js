@@ -273,7 +273,14 @@ function doTickets(payload) {
     const arr = JSON.parse(fs.readFileSync(path.join(projectDirFor(CLODEX_HOME, team.root), 'tickets.json'), 'utf-8'));
     if (Array.isArray(arr)) tickets = arr;
   } catch { /* no registry yet — empty */ }
-  if (!tickets.length) say(`team ${team.name}: no tickets`);
+  const others = new Map();
+  for (const t of tickets) {
+    if (!t || !t.team || t.team === team.name || (filter !== 'all' && t.state !== filter)) continue;
+    others.set(t.team, (others.get(t.team) || 0) + 1);
+  }
+  const othersLine = [...others].map(([name, n]) => `\n(+${n} rows of team ${name})`).join('');
+  tickets = tickets.filter((t) => t && (!t.team || t.team === team.name));
+  if (!tickets.length) say(`team ${team.name}: no tickets${othersLine}`);
   tickets.sort((a, b) => {
     const na = Number(String(a.id).replace(/^t/, '')) || 0;
     const nb = Number(String(b.id).replace(/^t/, '')) || 0;
@@ -329,10 +336,10 @@ function doTickets(payload) {
   const stale = staleHostLine();
   if (!shown.length) {
     say(closed.length
-      ? `team ${team.name}: no open tickets${recentBlock}${stale}${tail}`
-      : `team ${team.name}: no ${filter} tickets${stale}`);
+      ? `team ${team.name}: no open tickets${recentBlock}${stale}${tail}${othersLine}`
+      : `team ${team.name}: no ${filter} tickets${stale}${othersLine}`);
   }
-  say(`${head}:\n${lines.join('\n')}${recentBlock}${stale}${tail}`);
+  say(`${head}:\n${lines.join('\n')}${recentBlock}${stale}${tail}${othersLine}`);
 }
 
 const TEAM_LEDGER_FILE = 'cost.jsonl';

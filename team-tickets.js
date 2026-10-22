@@ -2261,6 +2261,11 @@ function createTicketMethods(deps, shared) {
         reply(`error: mode "${intent.mode}" is not kickstart or interview — no team was created`);
         return;
       }
+      if (intent.shareRootError) {
+        reply(`error: ${intent.shareRootError} — no team was created`);
+        return;
+      }
+      const shareRoot = intent.shareRoot === true;
       let kitDef = null;
       try { kitDef = resolveKit(intent.kit); } catch (err) {
         reply(`error: ${err.message} — no team was created. Kits:${kitList()}`);
@@ -2306,7 +2311,7 @@ function createTicketMethods(deps, shared) {
         }
       }
       try {
-        createTeam({ name, root, lead, kit: intent.kit, dryRun: true });
+        createTeam({ name, root, lead, kit: intent.kit, shareRoot, dryRun: true });
       } catch (err) {
         reply(`error: ${err.message}`);
         return;
@@ -2332,7 +2337,7 @@ function createTicketMethods(deps, shared) {
       } : undefined;
       let team;
       try {
-        team = createTeam({ name, root, lead, roles, kit: intent.kit });
+        team = createTeam({ name, root, lead, roles, kit: intent.kit, shareRoot });
       } catch (err) {
         reply(`error: ${err.message}`);
         return;
@@ -3299,7 +3304,7 @@ function createTicketMethods(deps, shared) {
         if (!team || !team.root || team.sandboxed) continue;
         let tickets;
         try { tickets = ticketsStore.load(team.root); } catch { continue; }
-        if (!tickets.some((t) => t.id === ticketId && t.assignee === senderTag)) continue;
+        if (!tickets.some((t) => t.id === ticketId && t.assignee === senderTag && (!t.team || t.team === team.name))) continue;
         const pseudo = { name: senderTag, cwd: team.root, agentType: null, remote: true };
         let captured = null;
         this._taskDone(pseudo, team, { sub: 'done', id: ticketId, body: report }, (msg) => { captured = msg; });
@@ -3318,6 +3323,13 @@ function createTicketMethods(deps, shared) {
         ? `"${who}" is not a live session in ${team.name} — with no team, an assignee is a live session name`
         : `"${who}" is neither a team role nor a live seat on ${team.name}`)
         + (String(who).includes('@') ? ' (name@peer needs that peer online with dm federation)' : '');
+    },
+
+    _foreignRowRefusal(team, ticket) {
+      if (!team || team.solo || !ticket || !ticket.team || ticket.team === team.name) return null;
+      let lead = null;
+      try { lead = loadManifest(ticket.team).lead; } catch { lead = null; }
+      return `error: ${ticket.id} belongs to team ${ticket.team} — its lead (${lead || 'unknown'}) dispatches it`;
     },
 
     _isRemoteSeat(name) {
@@ -4753,6 +4765,7 @@ function createTicketMethods(deps, shared) {
         // Explicit null, unlike `parked`: `ticketStarted` reads an absent key as a pre-upgrade record that was dispatched,
         // so omitting it would file every new ticket as already started.
         startedAt: null,
+        ...(team.solo ? {} : { team: team.name }),
         ...(parked ? { parked: true } : {}),
         ...(reviewerTemplate ? { reviewerTemplate } : {}),
       };
@@ -4805,6 +4818,8 @@ function createTicketMethods(deps, shared) {
       const tickets = ticketsStore.load(team.root);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}`); return; }
+      const foreign = this._foreignRowRefusal(team, ticket);
+      if (foreign) { reply(foreign); return; }
       if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open — only an open ticket can be started`); return; }
       if (!ticket.assignee) { reply(`error: ticket ${intent.id} is backlog (no assignee) — [agent:task assign ${intent.id} <role|name>] files AND dispatches it`); return; }
       const noTaskDir = this._ticketTaskDirRefusal(team, ticket, 'start', ticketStarted(ticket));
@@ -4992,6 +5007,8 @@ function createTicketMethods(deps, shared) {
       const tickets = ticketsStore.load(team.root);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}`); return; }
+      const foreign = this._foreignRowRefusal(team, ticket);
+      if (foreign) { reply(foreign); return; }
       if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open — cannot assign`); return; }
       const assignee = this._resolveAssignee(team, intent.who);
       if (!assignee) { reply(`error: ${this._assigneeMissText(team, intent.who)}`); return; }
@@ -5105,6 +5122,8 @@ function createTicketMethods(deps, shared) {
       const tickets = ticketsStore.load(team.root);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task done', report)}`); return; }
+      const foreign = this._foreignRowRefusal(team, ticket);
+      if (foreign) { reply(`${foreign}${this._spillRejectedPayload(session, 'task done', report)}`); return; }
       // Re-entry closes a ticket already `done` and held at verify; it is not a reopen, which via `reject` would bump reworkRound
       // and record a rejection that never happened.
       const reentry = ticket.state === 'done' && ticket.loopStep === 'verify' && !!ticket.verifyHold;
@@ -6521,6 +6540,8 @@ function createTicketMethods(deps, shared) {
       const tickets = ticketsStore.load(team.root);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task reject', reason)}`); return; }
+      const foreign = this._foreignRowRefusal(team, ticket);
+      if (foreign) { reply(`${foreign}${this._spillRejectedPayload(session, 'task reject', reason)}`); return; }
       if (ticket.state !== 'done') {
         if (ticket.state === 'open' && Number(ticket.reworkRound) > 0) {
           this._taskRejectFollowUp(session, team, tickets, ticket, reason, reply);
@@ -6595,6 +6616,8 @@ function createTicketMethods(deps, shared) {
       const tickets = ticketsStore.load(team.root);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task respec', spec)}`); return; }
+      const foreign = this._foreignRowRefusal(team, ticket);
+      if (foreign) { reply(`${foreign}${this._spillRejectedPayload(session, 'task respec', spec)}`); return; }
       if (ticket.state !== 'open') {
         // The advice reads the hold's recovery class, not its presence: reject-then-respec is the false rejection for a `hand` hold
         // and the only route for a `spec` one.
@@ -6654,6 +6677,8 @@ function createTicketMethods(deps, shared) {
       const tickets = ticketsStore.load(team.root);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task cancel', reason)}`); return; }
+      const foreign = this._foreignRowRefusal(team, ticket);
+      if (foreign) { reply(`${foreign}${this._spillRejectedPayload(session, 'task cancel', reason)}`); return; }
       if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open — cannot cancel${this._spillRejectedPayload(session, 'task cancel', reason)}`); return; }
       ticket.state = 'cancelled';
       ticket.closedAt = Date.now();
@@ -6837,6 +6862,8 @@ function createTicketMethods(deps, shared) {
       const tickets = ticketsStore.load(team.root);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task accept', note)}`); return; }
+      const foreign = this._foreignRowRefusal(team, ticket);
+      if (foreign) { reply(`${foreign}${this._spillRejectedPayload(session, 'task accept', note)}`); return; }
       if (ticket.state !== 'done') { reply(`error: accept closes out a DONE ticket; ${intent.id} is ${ticket.state} — it has not been reported yet${this._spillRejectedPayload(session, 'task accept', note)}`); return; }
 
       // Gated on `loopClosedOut`, not `closedOut && acceptedBy`, which also hold for the dirty-tree downgrade whose reply asks for a second accept.
@@ -7140,6 +7167,8 @@ function createTicketMethods(deps, shared) {
       const tickets = ticketsStore.load(team.root);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}`); return; }
+      const foreign = this._foreignRowRefusal(team, ticket);
+      if (foreign) { reply(foreign); return; }
       if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open — only an open ticket can be parked`); return; }
       const parking = !ticket.parked;
       if (parking) ticket.parked = true;
@@ -7167,7 +7196,7 @@ function createTicketMethods(deps, shared) {
         reply(`error: unknown filter "${filter}" — use one of: ${TICKET_FILTERS.join(', ')}`);
         return;
       }
-      reply(this._taskListText(team, filter, Date.now()));
+      reply(this._taskListText(team, filter, Date.now(), team.solo ? null : team.name));
     },
 
     _sharedTaskList(session, names, intent, reply) {
@@ -7181,13 +7210,22 @@ function createTicketMethods(deps, shared) {
       reply(`[teams ${names.join(', ')} share this board — read-only: ${session.name} is on neither roster]\n${this._taskListText(team, filter, Date.now())}`);
     },
 
-    _taskListText(team, filter, now) {
-      const tickets = ticketsStore.load(team.root).slice().sort((a, b) => {
+    _taskListText(team, filter, now, own = null) {
+      const board = ticketsStore.load(team.root).slice().sort((a, b) => {
         const na = Number(String(a.id).replace(/^t/, '')) || 0;
         const nb = Number(String(b.id).replace(/^t/, '')) || 0;
         return na - nb;
       });
-      if (!tickets.length) return `no tickets on ${team.name}`;
+      const tickets = own ? board.filter((t) => !t.team || t.team === own) : board;
+      const others = new Map();
+      if (own) {
+        for (const t of board) {
+          if (!t.team || t.team === own || (filter !== 'all' && t.state !== filter)) continue;
+          others.set(t.team, (others.get(t.team) || 0) + 1);
+        }
+      }
+      const othersLine = [...others].map(([name, n]) => `\n(+${n} rows of team ${name})`).join('');
+      if (!tickets.length) return `no tickets on ${team.name}${othersLine}`;
       const shown = filter === 'all' ? tickets : tickets.filter((t) => t.state === filter);
       // The board shows the role the lead filed the ticket under; `assignee` is a delivery-time pin to a concrete seat,
       // not the name the lead is looking for.
@@ -7229,10 +7267,10 @@ function createTicketMethods(deps, shared) {
         : '';
       if (!shown.length) {
         return closed.length
-          ? `no open tickets on ${team.name}${recentBlock}${tail}`
-          : `no ${filter} tickets on ${team.name}`;
+          ? `no open tickets on ${team.name}${recentBlock}${tail}${othersLine}`
+          : `no ${filter} tickets on ${team.name}${othersLine}`;
       }
-      return `${head}:\n${lines.join('\n')}${recentBlock}${tail}`;
+      return `${head}:\n${lines.join('\n')}${recentBlock}${tail}${othersLine}`;
     },
 
     // Solo boards no-op: their live seats are every agent session in the repo, none
@@ -7240,6 +7278,11 @@ function createTicketMethods(deps, shared) {
     _reconcileTickets(team) {
       if (team && team.solo) return;
       const tickets = ticketsStore.load(team.root);
+      const unstamped = tickets.filter((t) => t && typeof t === 'object' && !t.team);
+      if (unstamped.length && this._teamsOfRoot(team.root).length === 1) {
+        for (const t of unstamped) t.team = team.name;
+        try { ticketsStore.save(team.root, tickets); } catch (e) { log.error('ticket', `team stamp on ${team.name}'s board failed: ${e.message}`); }
+      }
       const live = this._teamLiveSeatNames(team);
       for (const name of live) {
         const role = matchSeatRole(team, name);
@@ -7798,7 +7841,11 @@ function createTicketMethods(deps, shared) {
       let requesterTeam = null;
       try { targetTeam = this._teamOf(target); } catch { targetTeam = null; }
       try { requesterTeam = this._teamOf(requester); } catch { requesterTeam = null; }
-      if (!requesterTeam || !targetTeam || requesterTeam.name !== targetTeam.name) {
+      if (requesterTeam && targetTeam && requesterTeam.name !== targetTeam.name) {
+        fail(`${targetName} is on team ${targetTeam.name}, not yours`);
+        return;
+      }
+      if (!requesterTeam || !targetTeam) {
         fail(`"${requesterName}" and "${targetName}" are not in the same project (not on one team's roster)`);
         return;
       }

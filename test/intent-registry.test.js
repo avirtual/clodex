@@ -158,7 +158,8 @@ function parseIntentLegacy(rawLine) {
     const leadM = argStr.match(/\blead:(\S+)/);
     const modeM = argStr.match(/\bmode:(\S+)/);
     const kitM = argStr.match(/\bkit:(\S+)/);
-    const positional = argStr.trim().split(/\s+/).filter((t) => t && !/^\w+:/.test(t));
+    const shareM = argStr.match(/\bshare-root:(\S+)/);
+    const positional = argStr.trim().split(/\s+/).filter((t) => t && !/^[\w-]+:/.test(t));
     return {
       type: 'team-create',
       name: positional[0] || null,
@@ -166,6 +167,7 @@ function parseIntentLegacy(rawLine) {
       lead: leadM ? leadM[1] : null,
       mode: modeM ? modeM[1] : null,
       kit: kitM ? kitM[1] : null,
+      ...(shareM ? (shareM[1] === 'yes' ? { shareRoot: true } : { shareRootError: `share-root:${shareM[1]} — the only accepted value is share-root:yes` }) : {}),
       body: teamCreateMatch[2],
     };
   }

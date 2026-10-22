@@ -355,6 +355,9 @@ const teamFields = document.getElementById('team-fields');
 const teamCreateFields = document.getElementById('team-create-fields');
 const teamJoinFields = document.getElementById('team-join-fields');
 const teamNameInput = document.getElementById('input-team-name');
+const teamShareRootRow = document.getElementById('team-share-root-row');
+const teamShareRootInput = document.getElementById('input-team-share-root');
+const teamShareRootLabel = document.getElementById('team-share-root-label');
 const teamRoleSelect = document.getElementById('input-team-role');
 const teamRolePromptRow = document.getElementById('team-role-prompt-row');
 const teamRolePromptSelect = document.getElementById('input-team-role-prompt');
@@ -3409,6 +3412,10 @@ async function refreshTeamForCwd() {
     if (teamToggleLabel) teamToggleLabel.textContent = 'Create a team here — this session becomes its lead.';
     if (teamJoinFields) teamJoinFields.style.display = 'none';
     if (teamCreateFields) teamCreateFields.style.display = '';
+    const sharers = (res && Array.isArray(res.candidates)) ? res.candidates : [];
+    if (teamShareRootRow) teamShareRootRow.style.display = sharers.length ? '' : 'none';
+    if (teamShareRootLabel) teamShareRootLabel.textContent = `Share the root with team ${sharers.join(', ')}`;
+    if (teamShareRootInput && !sharers.length) teamShareRootInput.checked = false;
     try { const r = await window.api.teamNames(); dialogTeamNames = (r && r.names) || []; } catch { dialogTeamNames = []; }
     if (token !== teamForCwdToken) return;
     if (teamNameInput && (!teamNameInput.value.trim() || teamNameInput.value === lastTeamNameAuto)) {
@@ -3908,7 +3915,8 @@ async function doCreate() {
     let result;
     if (teamOn && dialogTeamMode === 'create') {
       const teamName = slugifyTeamName(teamNameInput.value.trim() || pathBasename(cwd));
-      result = await window.api.teamCreate({ teamName, ...seatParams });
+      const shareRoot = !!(teamShareRootInput && teamShareRootInput.checked && teamShareRootRow && teamShareRootRow.style.display !== 'none');
+      result = await window.api.teamCreate({ teamName, shareRoot, ...seatParams });
     } else if (teamOn && dialogTeamMode === 'join') {
       const role = roleKeyForJoin();
       const prompt = (teamRoleSelect && teamRoleSelect.value === 'hand') ? null : ((teamRolePromptSelect && teamRolePromptSelect.value) || null);

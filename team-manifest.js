@@ -5,6 +5,7 @@
 const path = require('path');
 const { ensureDir, atomicWriteFileSync } = require('./fs-util');
 const { defaultClodexHome } = require('./clodex-paths');
+const { createTicketsStore } = require('./tickets-store');
 const { badStem, TEAM_STEM_RE } = require('./team-prompt-dir');
 const { LISTING_KEYS } = require('./team-template-derive');
 
@@ -582,10 +583,11 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
       : null;
     const kit = (typeof m.kit === 'string' && !badStem(m.kit) && TEAM_STEM_RE.test(m.kit)) ? m.kit : LEGACY_KIT;
     const trunk = normalizeTrunk(m.trunk);
+    const sharedRoot = m.sharedRoot === true;
     const worktrees = normalizeWorktrees(m.worktrees);
     const maxHands = m.maxHands === null ? null : (normalizeMaxHands(m.maxHands) || undefined);
     const rosterState = readRoster(name, roles, lead);
-    const team = { name, root: path.resolve(root), sandboxed: m.sandboxed === true, lead, roles, kit, file, dir: path.dirname(file), watchdogMs, trunk, ...(worktrees ? { worktrees } : {}), ...(maxHands !== undefined ? { maxHands } : {}), version, droppedFields, roster: rosterState.rows };
+    const team = { name, root: path.resolve(root), sandboxed: m.sandboxed === true, lead, roles, kit, file, dir: path.dirname(file), watchdogMs, trunk, sharedRoot, ...(worktrees ? { worktrees } : {}), ...(maxHands !== undefined ? { maxHands } : {}), version, droppedFields, roster: rosterState.rows };
     return { team, rosterState };
   }
 
@@ -1134,7 +1136,7 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
     }
   }
 
-  function createTeam({ name, root, lead, roles, kit, sandboxed, dryRun } = {}) {
+  function createTeam({ name, root, lead, roles, kit, sandboxed, shareRoot, dryRun } = {}) {
     assertTeamName(name);
     const resolvedKit = resolveKit(kit);
     if (typeof root !== 'string' || !path.isAbsolute(root)) {
@@ -1148,11 +1150,20 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
     try { fs.readFileSync(file, 'utf-8'); exists = true; } catch {}
     if (exists) throw new Error(`team "${name}" already exists`);
     const resolvedRoot = path.resolve(root);
+    const owners = [];
     for (const other of listTeams()) {
       let m;
       try { m = loadManifest(other); } catch { continue; }
-      if (m.root === resolvedRoot) {
-        throw new Error(`team "${other}" already owns root ${resolvedRoot}`);
+      if (m.root === resolvedRoot) owners.push(other);
+    }
+    if (owners.length && shareRoot !== true) {
+      throw new Error(`team "${owners[0]}" already owns root ${resolvedRoot} — add share-root:yes to share it`);
+    }
+    if (owners.length) {
+      const unstamped = createTicketsStore({ fs, clodexHome: home }).load(resolvedRoot)
+        .filter((t) => t && typeof t === 'object' && !t.team).length;
+      if (unstamped) {
+        throw new Error(`team "${owners[0]}" owns root ${resolvedRoot} and its board holds ${unstamped} ticket row(s) without a team — the root cannot be shared until team ${owners[0]}'s board reconciles and stamps them`);
       }
     }
     const holder = liveHolder(lead, name);
@@ -1200,6 +1211,7 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
       lead,
       root: resolvedRoot,
       ...(sandboxed === true ? { sandboxed: true } : {}),
+      ...(owners.length ? { sharedRoot: true } : {}),
       ...(resolvedKit ? { kit: resolvedKit.name } : {}),
       roles: seedRoles,
     };
