@@ -123,6 +123,22 @@ test('task-ledger resolves a team by --project root containment (deepest wins)',
   assert.strictEqual(out.project, inner);
 });
 
+test('task-ledger exits naming every team on a tied root, and hints --team', () => {
+  const home = mkTmpRoot('tl-tie-');
+  const root = mkTmpRoot('tl-tie-root-');
+  for (const name of ['alpha', 'beta']) {
+    fs.mkdirSync(path.join(home, 'teams', name, 'tasks'), { recursive: true });
+    fs.writeFileSync(path.join(home, 'teams', name, 'team.json'),
+      JSON.stringify({ root, lead: 'lead', roles: { lead: {} } }));
+  }
+  let err = null;
+  try { run(['--project', path.join(root, 'src'), '--json'], home); } catch (e) { err = e; }
+  assert.ok(err, 'ENTER: the tie is a failure, not a pick');
+  assert.strictEqual(err.status, 1);
+  assert.match(String(err.stderr), /alpha, beta/);
+  assert.match(String(err.stderr), /--team/);
+});
+
 test('task-ledger errors when no team root contains --project', () => {
   const home = mkTmpRoot('tl-none-');
   fs.mkdirSync(path.join(home, 'teams'), { recursive: true });
