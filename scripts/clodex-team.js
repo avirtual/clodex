@@ -43,30 +43,31 @@ function registryEntry(agent) {
   return JSON.parse(fs.readFileSync(regPath, 'utf-8'));
 }
 
-function cwdInProject(cwd, root) {
-  if (!cwd || !root) return false;
-  const rel = path.relative(path.resolve(root), path.resolve(cwd));
-  return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
-}
-
-function resolveTeam(cwd) {
-  if (!cwd) return null;
-  let names;
-  try { names = fs.readdirSync(TEAMS_DIR); } catch { return null; }
-  let best = null;
-  for (const name of names) {
-    if (name.startsWith('.')) continue;
-    let manifest;
-    try {
-      manifest = JSON.parse(fs.readFileSync(path.join(TEAMS_DIR, name, 'team.json'), 'utf-8'));
-    } catch { continue; } // absent/unreadable/invalid — not a candidate
-    const root = manifest && manifest.root;
-    if (typeof root !== 'string' || !path.isAbsolute(root)) continue;
-    if (cwdInProject(cwd, root) && (!best || root.length > best.root.length)) {
-      best = { name, root, manifest };
-    }
+function teamFromEnv() {
+  const name = process.env.CLODEX_TEAM || '';
+  if (!name) say('no team: this seat is on no roster — a lead binds it with [agent:team bind <seat> <role>]');
+  const dir = path.join(TEAMS_DIR, name);
+  const manifestFile = path.join(dir, 'team.json');
+  let manifest;
+  try {
+    manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf-8'));
+  } catch (e) {
+    die(`team ${name}: cannot read ${manifestFile}: ${e.message}`);
   }
-  return best;
+  if (!manifest || typeof manifest.root !== 'string' || !path.isAbsolute(manifest.root)) {
+    die(`team ${name}: "root" must be an absolute path (${manifestFile})`);
+  }
+  const rosterFile = path.join(dir, 'roster.json');
+  let text = null;
+  try { text = fs.readFileSync(rosterFile, 'utf-8'); } catch {}
+  let seats = [];
+  if (text !== null) {
+    let parsed;
+    try { parsed = JSON.parse(text); } catch { parsed = null; }
+    if (!parsed || !Array.isArray(parsed.seats)) die(`team ${name}: malformed roster ${rosterFile}`);
+    seats = parsed.seats.map((r) => r && r.seat).filter((x) => typeof x === 'string' && x);
+  }
+  return { name, root: path.resolve(manifest.root), manifest, seats };
 }
 
 // Deliver one envelope to an agent's socket. Envelope shape must match what
@@ -82,14 +83,6 @@ function sendEnvelope(socketPath, envelope) {
 }
 
 
-function requesterCwd(payload) {
-  try {
-    const cwd = registryEntry(payload.agent).cwd;
-    if (cwd) return cwd;
-  } catch { /* fall through */ }
-  return payload.cwd || null;
-}
-
 function roleEffort(teamName, stem) {
   if (!stem || !/^[A-Za-z0-9._-]+$/.test(stem)) return null;
   try {
@@ -99,10 +92,7 @@ function roleEffort(teamName, stem) {
 }
 
 function doRoster(payload) {
-  const cwd = requesterCwd(payload);
-  if (!cwd) die(`cannot resolve your cwd — registry has no cwd field (app predates it); pass "cwd" in the payload`);
-  const team = resolveTeam(cwd);
-  if (!team) say(`no project: no team under ${TEAMS_DIR} has a root containing ${cwd}`);
+  const team = teamFromEnv();
   const manifest = team.manifest;
   const roles = Object.entries(manifest.roles || {})
     .map(([r, def]) => {
@@ -114,14 +104,12 @@ function doRoster(payload) {
     })
     .join(' ') || '(none)';
   const live = [];
-  let runDirs = [];
-  try { runDirs = fs.readdirSync(path.join(CLODEX_HOME, 'run')); } catch {}
-  for (const name of runDirs) {
-    if (name.startsWith('.')) continue;
+  for (const seat of new Set(team.seats)) {
+    if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(seat)) continue;
     try {
-      const info = registryEntry(name);
-      if (info.cwd && cwdInProject(info.cwd, team.root)) live.push(info.name);
-    } catch { /* not a registration */ }
+      registryEntry(seat);
+      live.push(seat);
+    } catch {}
   }
   say(`team ${team.name} (root ${team.root}) — roles: ${roles} (*=lead) — live: ${live.length ? live.sort().join(',') : '(none)'}${staleHostLine()}`);
 }
@@ -275,10 +263,7 @@ function staleHostLineFor(host) {
 // Cited by NAME, not by line: this comment carried a line range for exactly one
 // commit before the range pointed at unrelated code (t105).
 function doTickets(payload) {
-  const cwd = requesterCwd(payload);
-  if (!cwd) die(`cannot resolve your cwd — registry has no cwd field (app predates it); pass "cwd" in the payload`);
-  const team = resolveTeam(cwd);
-  if (!team) say(`no project: no team under ${TEAMS_DIR} has a root containing ${cwd}`);
+  const team = teamFromEnv();
   const filter = payload.filter || 'open';
   if (!TICKET_FILTERS.includes(filter)) {
     die(`unknown filter "${filter}" — use one of: ${TICKET_FILTERS.join(', ')}`);
@@ -446,10 +431,7 @@ function isoDay(ms) {
 }
 
 function doCost(payload) {
-  const cwd = requesterCwd(payload);
-  if (!cwd) die(`cannot resolve your cwd — registry has no cwd field (app predates it); pass "cwd" in the payload`);
-  const team = resolveTeam(cwd);
-  if (!team) say(`no project: no team under ${TEAMS_DIR} has a root containing ${cwd}`);
+  const team = teamFromEnv();
   const dir = path.join(TEAMS_DIR, team.name);
   const read = readTeamLedger(dir);
   if (read.error) die(`could not read ${path.join(dir, TEAM_LEDGER_FILE)}: ${read.error}`);

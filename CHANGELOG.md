@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- `clodex-team` and `task-ledger` no longer carry their own copy of the team-by-cwd rule: the host hands the exec its team (`CLODEX_TEAM`), and task-ledger uses the app's resolver (sandboxed teams and worktree checkouts now resolve the same way everywhere).
+
 ## 5.133.0 — 2026-10-23
 
 - Transcript: a message the operator sends through the API (phone app, a game or script using the dm endpoint) now reads like a typed prompt — full text, markdown, fenced blocks as code; a fence over six lines folds to one line with a chevron. Before, it was clamped to three lines with the fence shown literally.

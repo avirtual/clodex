@@ -11,7 +11,7 @@
 // report.md, verdict.md, notes …). A directory under tasks/ = a task exists;
 // its name = the task id. The team's manifest (team.json) carries a REQUIRED
 // absolute `root` — the project path it manages; the ledger picks the team by
-// matching --project against that root (deepest wins), or takes --team.
+// matching --project against that root, or takes --team.
 //
 // Attribution v1 — the simplest honest thing: a transcript (a session OR a
 // subagent context) counts toward task <id> if any of its tool inputs mention
@@ -49,6 +49,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const readline = require('readline');
+const { createTeamManifest } = require('../team-manifest');
 
 const CLODEX_HOME = process.env.CLODEX_HOME || path.join(os.homedir(), '.clodex');
 const TEAMS_DIR = path.join(CLODEX_HOME, 'teams');
@@ -91,48 +92,29 @@ function defaultTranscriptsDir(cwd) {
   return path.join(os.homedir(), '.claude', 'projects', cwd.replace(/[/.]/g, '-'));
 }
 
-// --- team resolution --------------------------------------------------------
-// Kept dependency-free (matches the sibling exec/analysis scripts, which don't
-// require() app modules); mirrors team-manifest.resolveTeam.
+const stderrLine = (_tag, msg) => console.error(msg);
+const teamManifest = createTeamManifest({
+  fs, clodexHome: CLODEX_HOME, log: { info: stderrLine, warn: stderrLine, error: stderrLine, debug() {} },
+});
 
-function readManifest(name) {
-  return JSON.parse(fs.readFileSync(path.join(TEAMS_DIR, name, 'team.json'), 'utf-8'));
-}
-
-function cwdInProject(cwd, root) {
-  if (!cwd || !root) return false;
-  const rel = path.relative(path.resolve(root), path.resolve(cwd));
-  return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel));
-}
-
-// Resolve by explicit --team, else the team whose absolute `root` contains
-// `project` (deepest wins). Returns { name, root } or null.
 function resolveTeam(opts) {
   if (opts.team) {
     let m;
-    try { m = readManifest(opts.team); } catch (e) {
-      console.error(`--team ${opts.team}: cannot read ${path.join(TEAMS_DIR, opts.team, 'team.json')}: ${e.message}`);
+    try { m = teamManifest.loadManifest(opts.team); } catch (e) {
+      console.error(`--team ${opts.team}: ${e.message}`);
       process.exit(1);
     }
-    if (typeof m.root !== 'string' || !path.isAbsolute(m.root)) {
-      console.error(`--team ${opts.team}: team.json "root" must be an absolute path`);
-      process.exit(1);
-    }
-    return { name: opts.team, root: m.root };
+    return { name: m.name, root: m.root };
   }
   const project = path.resolve(opts.project);
-  let names;
-  try { names = fs.readdirSync(TEAMS_DIR); } catch { return null; }
-  let best = null;
-  for (const name of names) {
-    if (name.startsWith('.')) continue;
-    let m;
-    try { m = readManifest(name); } catch { continue; }
-    const root = m && m.root;
-    if (typeof root !== 'string' || !path.isAbsolute(root)) continue;
-    if (cwdInProject(project, root) && (!best || root.length > best.root.length)) best = { name, root };
+  const team = teamManifest.teamOfCwd(project);
+  if (team) return { name: team.name, root: team.root };
+  const tied = teamManifest.teamsOfCwd(project);
+  if (tied.length > 1) {
+    console.error(`Ambiguous team: ${tied.join(', ')} all claim ${project} (pass --team NAME)`);
+    process.exit(1);
   }
-  return best;
+  return null;
 }
 
 // --- task discovery ---------------------------------------------------------

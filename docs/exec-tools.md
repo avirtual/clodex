@@ -139,13 +139,15 @@ one file). Registry: `~/.clodex/library/exec/clodex-monitor.json`.
 Teams control plane. `scripts/clodex-team.js`, registry
 `~/.clodex/library/exec/clodex-team.json`.
 
-- `roster` (query → replies): resolves the team from the requester's
-  registered cwd (registry entries now carry `cwd`; payload `cwd` is the
-  old-core fallback) by scanning `~/.clodex/teams/*/team.json` for the one
-  whose `root` contains that cwd (deepest wins), and answers one line: team
-  name, roles (lead starred) + live agents joined by cwd-in-root. Manifests
-  live entirely under `~/.clodex/teams/` — zero clodex droppings in project
-  repos.
+- `roster` (query → replies): the host passes the seat's team to every exec
+  child in `CLODEX_TEAM` / `CLODEX_TEAM_ROOT` (from the core resolver; both
+  empty strings for a seat on no team, never inherited and never
+  payload-overridable). The script reads `teams/<name>/team.json` and
+  `roster.json` and answers one line: team name, roles (lead starred) + live
+  seats — the roster rows that hold a `run/<seat>/agent.json` registration,
+  wherever their cwd is. An unbound seat gets the "no team" reply; a malformed
+  `roster.json` is one error line naming the file. Manifests live entirely
+  under `~/.clodex/teams/` — zero clodex droppings in project repos.
 - `retire` (command → silent success): delivers a `team-retire` envelope to
   the TARGET's own socket. The core (`_handleTeamRetire`) authorizes —
   requester running, same team root, no self-retire — then disposes of the
