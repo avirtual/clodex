@@ -8922,6 +8922,11 @@ body.web-frontend #sidebar-header {
   -webkit-line-clamp: unset;
   overflow: visible;
 }
+.tr-inbound-user > .tr-head-text {
+  display: block;
+  -webkit-line-clamp: unset;
+  overflow: visible;
+}
 .tr-prompt-mid {
   border-left: 2px dashed var(--text-tertiary);
 }
@@ -9126,13 +9131,15 @@ body.web-frontend #sidebar-header {
   font-weight: 600;
   background: var(--surface-raised, transparent);
 }
-.tr-prose code {
+.tr-prose code,
+.tr-inbound-user code {
   font-family: var(--font-mono, monospace);
   background: var(--surface-raised, transparent);
   border-radius: var(--radius-sm, 4px);
   padding: 0 0.2em;
 }
-.tr-prose pre {
+.tr-prose pre,
+.tr-inbound-user pre {
   white-space: pre;
   overflow-x: auto;
   margin: var(--sp-1, 4px) 0 var(--sp-2, 8px);
@@ -9141,7 +9148,8 @@ body.web-frontend #sidebar-header {
   background: var(--surface-raised, transparent);
   border-radius: var(--radius-sm, 4px);
 }
-.tr-prose pre code {
+.tr-prose pre code,
+.tr-inbound-user pre code {
   background: none;
   padding: 0;
 }
@@ -35640,8 +35648,36 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const cut = rec.attached ? rec.text.indexOf("Message (") : -1;
         return cut < 0 ? rec.text : rec.text.slice(0, cut);
       }
+      var FENCE_FOLD_LINES = 6;
+      function foldFences(doc, parent, rec, ctx) {
+        const pres = [];
+        const walk = (n) => {
+          for (const k of n.childNodes || []) {
+            if (k.tagName === "PRE") pres.push(k);
+            else walk(k);
+          }
+        };
+        walk(parent);
+        pres.forEach((pre, k) => {
+          const code = pre.childNodes[0];
+          const lines = code ? code.textContent.split("\n").length : 0;
+          if (lines <= FENCE_FOLD_LINES) return;
+          const box = el(doc, "div", "tr-fence");
+          const head = el(doc, "div", "tr-box-head");
+          head.appendChild(el(doc, "span", "tr-box-preview", `${code.getAttribute("data-lang") || "text"} \xB7 ${lines} lines`));
+          const chevron = el(doc, "span", "tr-box-chevron");
+          head.appendChild(chevron);
+          pre.parentNode.replaceChild(box, pre);
+          const body = el(doc, "div", "tr-box-body");
+          body.appendChild(pre);
+          box.appendChild(head);
+          box.appendChild(body);
+          wireHead(doc, head, box, chevron, ctx.opened, `${rec.id}:fence:${k}`);
+        });
+      }
       function inboundRow(doc, rec, ctx, boxed) {
-        const row = headRow(doc, "tr-inbound", rec);
+        const user = rec.from === "user" && !rec.attached;
+        const row = headRow(doc, `tr-inbound${user ? " tr-inbound-user" : ""}`, rec);
         const text = el(doc, "span", "tr-head-text");
         if (rec.via === "subagent") row.dataset.via = "subagent";
         if (rec.unverified) row.dataset.unverified = "1";
@@ -35653,7 +35689,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
           text.appendChild(linkNode(doc, { kind: "path", text: baseName(rec.attached.path), path: rec.attached.path }, "", ctx));
         } else {
           if (rec.pastes || rec.images) appendPrompt(doc, text, rec, ctx);
-          else appendProse(doc, text, rec.text, ctx);
+          else if (user && !hasIntentMarks(rec.text)) {
+            appendMarkdown(doc, text, rec.text, ctx);
+            foldFences(doc, text, rec, ctx);
+          } else appendProse(doc, text, rec.text, ctx);
           cutMark(doc, text, rec);
         }
         row.appendChild(text);
@@ -36383,6 +36422,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           reconcile(paneEl, turnCache, items, deps.lead);
           for (const r of list) for (const seg of r.segments || []) if (seg.spill && seg.spill.path) live.add(`spill:${seg.spill.path}`);
+          for (const r of list) if (r.kind === "inbound" && r.from === "user") {
+            for (const k of opened) if (k.startsWith(`${r.id}:fence:`)) live.add(k);
+          }
           for (const k of [...opened]) if (!live.has(k)) opened.delete(k);
           for (const k of [...shut]) if (!live.has(k)) shut.delete(k);
           if (working) paintWorking();
