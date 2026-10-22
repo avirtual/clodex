@@ -784,6 +784,8 @@ function mkManager(root, team) {
     REGISTRY_DIR: root, fs, path, os,
     knownSkillNames: () => [],
     resolveTeam: () => team,
+    teamOf: () => team,
+    teamsOfCwd: () => (team ? [team.name] : []),
     readSystemPromptBody: (stem, _plugins, t) => {
       const own = teamPromptFile({ fs, path }, t, 'system', stem);
       const file = own || path.join(root, 'library', 'prompts', 'system', `${stem}.md`);

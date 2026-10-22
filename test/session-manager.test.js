@@ -11939,7 +11939,8 @@ test('t773 create: a brief that cannot be saved leaves NO team behind', async ()
     type: 'team-create', name: 'shop', root: f.projectRoot, lead: null, body: 'the brief',
   });
   const teamJson = pathReal.join(f.home, 'teams', 'shop', 'team.json');
-  assert.deepStrictEqual(unlinked.map((u) => u.p), [teamJson], 'the undo unlinked exactly the manifest');
+  assert.deepStrictEqual(unlinked.map((u) => u.p), [teamJson, pathReal.join(f.home, 'teams', 'shop', 'roster.json')],
+    'the undo unlinked exactly the manifest and the roster create wrote beside it');
   assert.strictEqual(unlinked[0].existedAtCall, true,
     'ENTER: the team really existed between the two writes — this is the window the undo closes');
   assert.strictEqual(f.teamExists('shop'), false, 'and it does not exist afterwards');

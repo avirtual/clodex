@@ -4440,7 +4440,11 @@ function createSessionManager(deps) {
       const ticketsByRoot = new Map();
       const liveByTeam = new Map();
       const liveSeatsFor = (t) => {
-        if (!liveByTeam.has(t.name)) liveByTeam.set(t.name, this._teamLiveSeatNames(t));
+        if (!liveByTeam.has(t.name)) {
+          liveByTeam.set(t.name, [...this.sessions.values()]
+            .filter((x) => x.agentType && !x._dead && !x.clone && (resolvedTeamFor(x) || {}).name === t.name)
+            .map((x) => x.name));
+        }
         return liveByTeam.get(t.name);
       };
       // Sole place this row resolves a role: the renderer cannot recompute it, matchSeatRole strips

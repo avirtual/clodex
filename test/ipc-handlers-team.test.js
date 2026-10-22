@@ -278,6 +278,7 @@ function mkDeleteDoor({
     _ticketWatch: new Map(),
     _teamInUse: methods._teamInUse,
     _forgetTeam: methods._forgetTeam,
+    _teamsOfRoot: methods._teamsOfRoot,
   };
 
   const calls = [];
