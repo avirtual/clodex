@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - `clodex-team` and `task-ledger` no longer carry their own copy of the team-by-cwd rule: the host hands the exec its team (`CLODEX_TEAM`), and task-ledger uses the app's resolver (sandboxed teams and worktree checkouts now resolve the same way everywhere).
+- Two teams can share one root: `team create … share-root:yes` (or the checkbox in the New Session dialog). Board rows carry their team, a lead dispatches only its own rows, retire is same-team, and merges from both teams queue on the one merge chain. A seat on neither roster sees a read-only, team-labelled board.
 
 ## 5.133.0 — 2026-10-23
 

@@ -148,6 +148,7 @@ function reconcileBoard(board, source, teamName) {
     // `formerId`/`migratedAt` carried on the SOURCE cannot leak in as provenance.
     if ('formerId' in dest) rec.formerId = dest.formerId; else delete rec.formerId;
     if ('migratedAt' in dest) rec.migratedAt = dest.migratedAt; else delete rec.migratedAt;
+    if ('team' in dest) rec.team = dest.team;
     return rec;
   });
   return { board: out, reconciled };
