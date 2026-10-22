@@ -990,7 +990,8 @@ function createTicketMethods(deps, shared) {
         lines.push(`- ${row.seat} · ${row.role} · by ${row.by}${row.ticket ? ` (${row.ticket})` : ''} · since ${since}${row.state !== 'live' ? ` · ${row.state}` : ''}`);
       }
       if (r.quarantine) {
-        lines.push(`QUARANTINED: ${r.quarantine.file} — on no team until a lead binds them: ${r.quarantine.seats.join(', ') || '(no seat names readable)'}`);
+        const held = r.quarantine.seats.filter((x) => x !== team.lead);
+        lines.push(`QUARANTINED: ${r.quarantine.file} — on no team until a lead binds them: ${held.join(', ') || '(no seat names readable)'}`);
       } else if (!r.rows.length) {
         lines.push('no rows — a seat here resolves by root and name until it is bound');
       }

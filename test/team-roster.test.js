@@ -194,12 +194,14 @@ function mkSeats(t, { sharedRoot = false } = {}) {
     upsert: (e) => h.records.set(e.name, { ...(h.records.get(e.name) || {}), ...e }),
   };
   const { m, injected } = mkPark({
-    fs, path, REGISTRY_DIR: h.home,
+    fs, path, os: require('node:os'), REGISTRY_DIR: h.home,
+    AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/, DEFAULT_WORKSPACE_ID: 'default', ensureDir: () => {},
     getPersistence: () => persistence,
     resolveTeam: h.tm.resolveTeam, teamOf: h.tm.teamOf, teamsOfCwd: h.tm.teamsOfCwd,
     bindSeat: h.tm.bindSeat, unbindSeat: h.tm.unbindSeat, rosterOf: h.tm.rosterOf,
-    loadManifest: h.tm.loadManifest, listTeams: h.tm.listTeams,
+    loadManifest: h.tm.loadManifest, listTeams: h.tm.listTeams, teamOfSeat: h.tm.teamOfSeat,
   });
+  m._sendToSession = () => {};
   const seat = (name, cwd, rec = {}) => {
     h.records.set(name, { name, cwd, createdAt: 1, ...rec });
     const s = { name, type: 'claude', agentType: 'claude', cwd, activityState: 'idle', workspaceId: 'default' };
@@ -273,7 +275,7 @@ test('a quarantined team\'s lead can still run [agent:team roster], which shows 
   fs.writeFileSync(path.join(h.home, 'teams', 'a', ROSTER_FILE), '{"seats":[{"seat":"a-lead","role":"lead"},{"seat":"a-hand-1"');
   m._handleTeam(lead, { type: 'team', sub: 'roster' });
   assert.strictEqual(injected.length, 1);
-  assert.match(injected[0], /^\[agent:team\] \[team a\] roster\.json — 0 rows\nQUARANTINED: .*roster\.json\.bad-\d+ — on no team until a lead binds them: a-lead, a-hand-1$/);
+  assert.match(injected[0], /^\[agent:team\] \[team a\] roster\.json — 0 rows\nQUARANTINED: .*roster\.json\.bad-\d+ — on no team until a lead binds them: a-hand-1$/);
 });
 
 test('respawning a seat whose row went stale rebinds it to the spawner\'s team', async (t) => {
@@ -288,7 +290,7 @@ test('respawning a seat whose row went stale rebinds it to the spawner\'s team',
     m.sessions.set(name, { name, type, agentType: type, cwd });
     return {};
   };
-  m._handleSpawnIntent(lead, { type: 'spawn', name: 'a-scout', cwd: h.rootB });
+  m._handleSpawnIntent(lead, { type: 'spawn', name: 'a-scout', cwd: h.rootA });
   await new Promise((r) => setImmediate(r));
   await new Promise((r) => setImmediate(r));
   const row = h.readRoster('a').find((r) => r.seat === 'a-scout');
