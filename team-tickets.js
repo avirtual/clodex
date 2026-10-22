@@ -934,7 +934,7 @@ function createTicketMethods(deps, shared) {
       const cwd = session && session.cwd;
       if (typeof teamOf === 'function') return teamOf({ name, cwd });
       return cwd ? resolveTeam(cwd) : null;
-    }
+    },
 
     _teamOfOrNull(session) {
       try { return this._teamOf(session); } catch { return null; }
@@ -944,7 +944,7 @@ function createTicketMethods(deps, shared) {
       const cwd = session && session.cwd;
       if (!cwd || typeof teamsOfCwd !== 'function') return [];
       try { return teamsOfCwd(cwd); } catch { return []; }
-    }
+    },
 
     _teamsOfRoot(root) {
       try {
