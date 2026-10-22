@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.132.0 — 2026-10-22
+
 - The browser UI can now send to a stream seat — composer, slash commands, control, permission answers, interrupt and draft — instead of every send bouncing with 'seat:send is local only'.
 
 ## 5.131.9 — 2026-10-21
