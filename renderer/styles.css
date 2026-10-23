@@ -6813,6 +6813,7 @@ body.web-frontend #sidebar-header {
 
 .seat-composer.seat-composer-attach {
   padding-right: 32px;
+  scrollbar-gutter: stable;
 }
 
 .seat-attach-btn {

@@ -29,7 +29,7 @@ One row per gate site, in source order. Symbols, not line numbers; `test/web-par
 | renderer/dock.js | `render` | a narrow viewport shows the dock as a sheet | KEPT: layout |
 | renderer/dock.js | `sidePaneFits` | no "widen the window" toast | KEPT: layout — the sheet row above replaces it |
 
-Counts: 22 sites audited — 20 kept with a named reason (inability, substitute, layout, wording or host refusal), 2 removed.
+Counts: 23 sites audited — 21 kept with a named reason (inability, substitute, layout, wording or host refusal), 2 removed.
 
 Removed (the gate is gone, so the rows above no longer carry it):
 

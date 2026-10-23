@@ -2444,8 +2444,11 @@ function createTerminal(name, peer = null) {
     },
   } : null;
   let ptyPicker = null;
-  const attachPtyFiles = (files) => Promise.all(files.map((f) => readImageFile(f, FileReader)))
-    .then((read) => attachImages({ ...ptyImageSink, images: read.filter(Boolean) }));
+  const attachPtyFiles = (files) => {
+    if (files.length > SEAT_IMAGE_MAX) ptyImageSink.toast(`${files.length - SEAT_IMAGE_MAX} image(s) not attached — at most ${SEAT_IMAGE_MAX} per message.`);
+    return Promise.all(files.slice(0, SEAT_IMAGE_MAX).map((f) => readImageFile(f, FileReader)))
+      .then((read) => attachImages({ ...ptyImageSink, images: read.filter(Boolean) }));
+  };
   const onMenuKey = (e) => {
     const hit = menuMirror.key(e);
     if (!hit) return false;
@@ -2502,9 +2505,7 @@ function createTerminal(name, peer = null) {
     }));
     composerEl.classList.add('seat-composer-attach');
     ptyPicker = attachPicker({ doc: document, parent: wrapperEl, onFiles: attachPtyFiles, toast: ptyImageSink.toast });
-    const attachBtn = attachButton(document, () => ptyPicker.open());
-    attachBtn.hidden = !isAgentType(sessionTypeOf(name));
-    wrapperEl.appendChild(attachBtn);
+    wrapperEl.appendChild(attachButton(document, () => ptyPicker.open()));
   }
   const agentSeat = !peer;
   const seat = agentSeat ? createSeatView(initialViewFor(name)) : {};
@@ -2556,7 +2557,8 @@ terminalContainer.addEventListener('drop', (e) => {
     const { images, rejected } = imageFilesOf(files);
     const sink = entry && entry.attachImageFiles && (entry.stream || ptyComposerShown(entry)) ? entry.attachImageFiles : null;
     if (sink && images.length) sink(images);
-    if (!sink || rejected.length) showToast('Dropping files needs the desktop app — browsers don’t expose file paths.', { kind: 'peer-ui' });
+    if (!sink && images.length && entry && entry.attachImageFiles) showToast('Switch to the composer view to attach images.', { kind: 'peer-ui' });
+    else if (!sink || rejected.length) showToast('Dropping files needs the desktop app — browsers don’t expose file paths.', { kind: 'peer-ui' });
     return;
   }
   if (!entry) return;

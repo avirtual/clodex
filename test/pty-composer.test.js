@@ -366,6 +366,7 @@ function composerHarness(opts = {}) {
   } };
   const uploads = [];
   const writes = [];
+  const toasts = [];
   const env = {
     composerEl: { value: '', offsetHeight: 40, setSelectionRange() {} },
     document,
@@ -379,7 +380,8 @@ function composerHarness(opts = {}) {
     readImageFile,
     attachImages,
     FileReader: FakeReader,
-    showToast() {},
+    showToast: (m) => toasts.push(m),
+    SEAT_IMAGE_MAX: 5,
     name: 'seat',
     ptyImagePasteHandler, chippedImages, renderImageStrip, removeImageChip, ptyComposerWrites, expandImageChips,
   };
@@ -395,7 +397,7 @@ function composerHarness(opts = {}) {
     preventDefault() {},
   };
   const paste = () => out.handler(event);
-  return { ...out, el: env.composerEl, uploads, writes, paste };
+  return { ...out, el: env.composerEl, uploads, writes, toasts, paste };
 }
 
 test('ENTER: a late upload failure from a sent draft leaves the next draft\'s [Image #1] chip in place', async () => {
@@ -533,7 +535,9 @@ test('both composers mount the paperclip and the web drop on terminalContainer a
   assert.match(stream, /wrapperEl\.appendChild\(attachButton\(document, \(\) => streamPicker\.open\(\)\)\);/u);
   assert.match(stream, /attachImageFiles: attachFiles,/u);
   assert.match(src, /ptyPicker = attachPicker\(\{ doc: document, parent: wrapperEl, onFiles: attachPtyFiles,/u);
-  assert.match(src, /const attachBtn = attachButton\(document, \(\) => ptyPicker\.open\(\)\);[\s\S]{0,120}wrapperEl\.appendChild\(attachBtn\);/u);
+  assert.match(src, /wrapperEl\.appendChild\(attachButton\(document, \(\) => ptyPicker\.open\(\)\)\);/u);
+  assert.doesNotMatch(src, /attachBtn\.hidden = /u, 'the pty paperclip is never hidden at build time, when the sidebar row does not exist yet');
+  assert.doesNotMatch(src.slice(src.indexOf('function createTerminal('), src.indexOf("terminalContainer.addEventListener('drop'")), /\.seat-attach-btn|attachButton\([^)]*\)\.hidden/u);
   assert.match(src, /attachImages\(\{ \.\.\.ptyImageSink, images: read\.filter\(Boolean\) \}\)/u);
   assert.match(src, /syncMenuMirror, attachImageFiles: composerEl \? attachPtyFiles : null \}/u);
   assert.match(src, /stream, liveSplit: null, attachImageFiles: stream\.attachImageFiles \}/u);
@@ -544,4 +548,17 @@ test('both composers mount the paperclip and the web drop on terminalContainer a
   const css = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
   assert.match(css, /\.seat-composer\.seat-composer-attach \{\n {2}padding-right: 32px;\n\}/u);
   assert.match(css, /\.seat-composer\[hidden\] ~ \.seat-attach-btn \{\n {2}display: none;\n\}/u);
+});
+
+test('a pick of more than five images uploads the first five and toasts the overflow up front', async () => {
+  const h = composerHarness({ web: false });
+  const files = ['QUFB', 'QkJC', 'Q0ND', 'RERE', 'RUVF', 'RkZG', 'R0dH'].map((d) => ({ url: `data:image/png;base64,${d}` }));
+  const done = h.attachFiles(files);
+  assert.deepStrictEqual(h.toasts, ['2 image(s) not attached — at most 5 per message.']);
+  await new Promise(setImmediate);
+  assert.strictEqual(h.uploads.length, 1);
+  assert.deepStrictEqual(h.uploads[0].images.map((i) => i.data), ['QUFB', 'QkJC', 'Q0ND', 'RERE', 'RUVF']);
+  h.uploads[0].resolve({ ok: true, paths: ['/1', '/2', '/3', '/4', '/5'] });
+  await done;
+  assert.strictEqual(h.el.value, '[Image #1] [Image #2] [Image #3] [Image #4] [Image #5] ');
 });
