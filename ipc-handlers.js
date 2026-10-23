@@ -16,7 +16,7 @@ const {
 } = require('./team-prompt-dir');
 const { appendRailPrompts } = require('./prompt-rails');
 const { validateExecDef } = require('./exec-schema');
-const { discoverMcpSources, normaliseDiscovered, resolveMcpEntry, secretRefs, cliShape, mcpDigest } = require('./mcp-plan');
+const { discoverMcpSources, normaliseDiscovered, resolveMcpEntry, secretRefs, digestShape, mcpDigest } = require('./mcp-plan');
 const { validateSeatImages } = require('./seat-images');
 const { BOX_ID_RE, runningInSandboxBox } = require('./sandbox');
 const { SETUP_CHOICES } = require('./stores');
@@ -787,7 +787,7 @@ function registerIpcHandlers(deps) {
       const shapes = {};
       for (const n of applied.names) {
         if (!lib.has(n)) { stale = true; break; }
-        shapes[n] = cliShape(lib.get(n));
+        shapes[n] = digestShape(lib.get(n));
       }
       if (!stale) stale = mcpDigest(shapes) !== applied.digest;
     }

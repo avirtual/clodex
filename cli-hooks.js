@@ -64,7 +64,7 @@ function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp, 
     return !!digest;
   }
 
-  function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], wireBase = null, createdAt = null, extraDenyRules = [], stream = false, effort = null, protectCredentials = null, mcpSecretNames = []) {
+  function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], wireBase = null, createdAt = null, extraDenyRules = [], stream = false, effort = null, protectCredentials = null, mcpSecretNames = [], mcpDenyRules = []) {
     ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'run', fs });
     ensureDir(runDirFor(REGISTRY_DIR, name));
     const linkPath = pathFor(REGISTRY_DIR, name, 'transcript');
@@ -857,6 +857,7 @@ exit 0
       ...denyAgentRules(denyBuiltins),
       ...(Array.isArray(disabledTools) ? disabledTools : []).filter((t) => toolSet.has(t)),
       ...(Array.isArray(extraDenyRules) ? extraDenyRules : []).filter(Boolean),
+      ...(Array.isArray(mcpDenyRules) ? mcpDenyRules : []).filter((r) => typeof r === 'string' && r),
       ...(guard ? guard.deny : []),
     ])];
     if (denyRules.length) settings.permissions = { deny: denyRules };

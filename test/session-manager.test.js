@@ -21356,6 +21356,28 @@ test('MCP library at create(): servers reach mcp.json, warnings are system rows,
   assert.deepStrictEqual(back.mcpApplied.names, ['docs', 'jira']);
 });
 
+test('MCP library at create(): an entry's denyTools land in the seat settings permissions.deny; an omitted server lands none', async (t) => {
+  const fsReal = require('node:fs');
+  const saved = Object.fromEntries(['CLAUDE_CONFIG_DIR', 'JIRA_TOKEN'].map((k) => [k, process.env[k]]));
+  t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
+  process.env.CLAUDE_CONFIG_DIR = mkTmpRoot('clx-mcp-deny-cfg-');
+  delete process.env.JIRA_TOKEN;
+  const lib = [
+    { name: 'atlassian', entry: { type: 'http', url: 'https://mcp.atlassian.com/v2/mcp', denyTools: ['createJiraIssue'] } },
+    { name: 'jira', entry: { command: 'npx', env: { JIRA_TOKEN: '${JIRA_TOKEN}' }, denyTools: ['editJiraIssue'] } },
+  ];
+  const h = mkStreamSeatManager({ extraDeps: { getMcpLibrary: () => ({ list: () => lib }) } });
+  t.after(() => h.stopAll());
+  await h.m.create('st1', 'claude', require('node:os').tmpdir(), [], null, 'ws', null, false, null,
+    [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, 'stream', null, null, ['atlassian', 'jira']);
+  const { args } = h.spawns[0];
+  const settings = JSON.parse(fsReal.readFileSync(args[args.indexOf('--settings') + 1], 'utf8'));
+  const deny = settings.permissions.deny;
+  assert.ok(deny.includes('mcp__atlassian__createJiraIssue'), JSON.stringify(deny));
+  assert.deepStrictEqual(deny.filter((r) => r.startsWith('mcp__')), ['mcp__atlassian__createJiraIssue']);
+  assert.deepStrictEqual(h.store.get('st1').mcpApplied.denied, { atlassian: ['createJiraIssue'] });
+});
+
 test('stream seat (g): a restore with io:stream reaps the persisted streamPid BEFORE spawning --resume <id>', async (t) => {
   const h = mkStreamSeatManager({ persisted: { st2: { io: 'stream', sessionId: 'sid-old', streamPid: { pid: 6001, startTime: 1780000000000 } } } });
   t.after(() => h.stopAll());
