@@ -942,3 +942,23 @@ test('_taskListText answers the empty board with the same sentence the reply doe
   assert.strictEqual(reply, 'no tickets on proj');
   assert.strictEqual(m._taskListText(team, 'open', Date.now()), reply);
 });
+
+test('tickets: on a shared root CLODEX_TEAM picks the caller\'s rows and the last line counts the other team\'s, as the intent list does', async () => {
+  const home = mkHome();
+  const proj = path.join(home, 'proj');
+  mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {}, hand: {} } });
+  mkTeam(home, 'mods', proj, { lead: 'mlead', roles: { lead: {}, hand: {} } });
+  reg(home, 'alead', proj);
+  const now = Date.now();
+  const r0 = (id, team) => ({ id, title: `${id} title`, assignee: 'hand', state: 'open', openedAt: now, team });
+  mkTicketRegistry(home, proj, [r0('t1', 'proj'), r0('t2', 'mods'), r0('t3', 'proj')]);
+  const r = await launch(home, { action: 'tickets', agent: 'alead' }, 'proj');
+  assert.strictEqual(r.code, 0, r.err);
+  const lines = r.err.split('\n');
+  assert.deepStrictEqual(lines.filter((l) => /^t\d+ /.test(l)).map((l) => l.split(' ')[0]), ['t1', 't3']);
+  assert.strictEqual(lines[lines.length - 1], '(+1 rows of team mods)');
+  const SM = createSessionManager({ fs, path, REGISTRY_DIR: home, knownSkillNames: () => [] });
+  let out = '';
+  new SM()._taskList({ name: 'lead' }, { name: 'proj', root: proj, lead: 'lead' }, {}, (s) => { out = s; });
+  assert.deepStrictEqual(listingFacts(r.err), listingFacts(out));
+});

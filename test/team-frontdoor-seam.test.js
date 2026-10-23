@@ -63,7 +63,7 @@ test('team:create reaches createTeam with {name,root,lead} then spawns', async (
   });
   const res = await handlers['team:create']({}, { teamName: 'shop', name: 'clodex', type: 'claude', cwd: '/proj', kit: 'default' });
   // The handler REACHED the writer with the right shape — not a swallowed failure.
-  assert.deepStrictEqual(writes, [['createTeam', { name: 'shop', root: '/proj', lead: 'clodex', kit: 'default' }]]);
+  assert.deepStrictEqual(writes, [['createTeam', { name: 'shop', root: '/proj', lead: 'clodex', kit: 'default', shareRoot: false }]]);
   assert.strictEqual(res.ok, true, 'handler returns ok after a successful write+spawn');
 
   assert.strictEqual(created.length, 1, 'falls through to the normal spawn');
@@ -74,7 +74,10 @@ test('team:create reaches createTeam with {name,root,lead} then spawns', async (
   // createTeam, and a second copy here is what would let the two disagree.
   writes.length = 0;
   await handlers['team:create']({}, { teamName: 'shop2', name: 'clodex2', type: 'claude', cwd: '/proj2' });
-  assert.deepStrictEqual(writes, [['createTeam', { name: 'shop2', root: '/proj2', lead: 'clodex2', kit: undefined }]]);
+  assert.deepStrictEqual(writes, [['createTeam', { name: 'shop2', root: '/proj2', lead: 'clodex2', kit: undefined, shareRoot: false }]]);
+  writes.length = 0;
+  await handlers['team:create']({}, { teamName: 'shop3', name: 'clodex3', type: 'claude', cwd: '/proj', shareRoot: true });
+  assert.deepStrictEqual(writes, [['createTeam', { name: 'shop3', root: '/proj', lead: 'clodex3', kit: undefined, shareRoot: true }]]);
 });
 
 function joinSeam(seedRoles = {}) {

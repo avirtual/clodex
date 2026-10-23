@@ -355,6 +355,12 @@ const teamFields = document.getElementById('team-fields');
 const teamCreateFields = document.getElementById('team-create-fields');
 const teamJoinFields = document.getElementById('team-join-fields');
 const teamNameInput = document.getElementById('input-team-name');
+const teamShareRootRow = document.getElementById('team-share-root-row');
+const teamShareRootInput = document.getElementById('input-team-share-root');
+const teamShareRootLabel = document.getElementById('team-share-root-label');
+const teamShareNewRow = document.getElementById('team-share-new-row');
+const teamShareNewInput = document.getElementById('input-team-share-new');
+const teamShareNewLabel = document.getElementById('team-share-new-label');
 const teamRoleSelect = document.getElementById('input-team-role');
 const teamRolePromptRow = document.getElementById('team-role-prompt-row');
 const teamRolePromptSelect = document.getElementById('input-team-role-prompt');
@@ -3398,8 +3404,19 @@ async function refreshTeamForCwd() {
     dialogTeamMode = 'join';
     dialogTeamName = res.team;
     if (teamToggleLabel) teamToggleLabel.textContent = `Join team ${res.team}`;
+    if (teamShareRootRow) teamShareRootRow.style.display = 'none';
+    if (teamShareRootInput) teamShareRootInput.checked = false;
+    if (teamShareNewRow) teamShareNewRow.style.display = '';
+    if (teamShareNewLabel) teamShareNewLabel.textContent = `Create a new team sharing this root with team ${res.team}`;
+    if (teamShareNewInput) teamShareNewInput.checked = false;
     if (teamCreateFields) teamCreateFields.style.display = 'none';
     if (teamJoinFields) teamJoinFields.style.display = '';
+    try { const r = await window.api.teamNames(); dialogTeamNames = (r && r.names) || []; } catch { dialogTeamNames = []; }
+    if (token !== teamForCwdToken) return;
+    if (teamNameInput && (!teamNameInput.value.trim() || teamNameInput.value === lastTeamNameAuto)) {
+      teamNameInput.value = dedupeTeamName(slugifyTeamName(pathBasename(cwd)));
+      lastTeamNameAuto = teamNameInput.value;
+    }
     await populateTeamRolePrompts();
     if (teamRolePromptRow) teamRolePromptRow.style.display = teamRoleSelect.value === 'custom' ? '' : 'none';
     if (teamToggle && teamToggle.checked) updateTeamJoinNameSuggestion();
@@ -3407,8 +3424,14 @@ async function refreshTeamForCwd() {
     dialogTeamMode = 'create';
     dialogTeamName = null;
     if (teamToggleLabel) teamToggleLabel.textContent = 'Create a team here — this session becomes its lead.';
+    if (teamShareNewRow) teamShareNewRow.style.display = 'none';
+    if (teamShareNewInput) teamShareNewInput.checked = false;
     if (teamJoinFields) teamJoinFields.style.display = 'none';
     if (teamCreateFields) teamCreateFields.style.display = '';
+    const sharers = (res && Array.isArray(res.candidates)) ? res.candidates : [];
+    if (teamShareRootRow) teamShareRootRow.style.display = sharers.length ? '' : 'none';
+    if (teamShareRootLabel) teamShareRootLabel.textContent = `Share the root with team ${sharers.join(', ')}`;
+    if (teamShareRootInput && !sharers.length) teamShareRootInput.checked = false;
     try { const r = await window.api.teamNames(); dialogTeamNames = (r && r.names) || []; } catch { dialogTeamNames = []; }
     if (token !== teamForCwdToken) return;
     if (teamNameInput && (!teamNameInput.value.trim() || teamNameInput.value === lastTeamNameAuto)) {
@@ -3596,6 +3619,15 @@ if (teamToggle) {
   teamToggle.addEventListener('change', () => {
     if (teamFields) teamFields.style.display = teamToggle.checked ? '' : 'none';
     if (teamToggle.checked && dialogTeamMode === 'join') updateTeamJoinNameSuggestion();
+  });
+}
+if (teamShareNewInput) {
+  teamShareNewInput.addEventListener('change', () => {
+    const sharing = teamShareNewInput.checked;
+    dialogTeamMode = sharing ? 'create' : 'join';
+    if (teamCreateFields) teamCreateFields.style.display = sharing ? '' : 'none';
+    if (teamJoinFields) teamJoinFields.style.display = sharing ? 'none' : '';
+    if (!sharing && teamToggle && teamToggle.checked) updateTeamJoinNameSuggestion();
   });
 }
 if (teamRoleSelect) {
@@ -3908,7 +3940,9 @@ async function doCreate() {
     let result;
     if (teamOn && dialogTeamMode === 'create') {
       const teamName = slugifyTeamName(teamNameInput.value.trim() || pathBasename(cwd));
-      result = await window.api.teamCreate({ teamName, ...seatParams });
+      const shareRoot = !!((teamShareRootInput && teamShareRootInput.checked && teamShareRootRow && teamShareRootRow.style.display !== 'none')
+        || (teamShareNewInput && teamShareNewInput.checked && teamShareNewRow && teamShareNewRow.style.display !== 'none'));
+      result = await window.api.teamCreate({ teamName, shareRoot, ...seatParams });
     } else if (teamOn && dialogTeamMode === 'join') {
       const role = roleKeyForJoin();
       const prompt = (teamRoleSelect && teamRoleSelect.value === 'hand') ? null : ((teamRolePromptSelect && teamRolePromptSelect.value) || null);

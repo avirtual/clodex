@@ -7524,7 +7524,7 @@ function createSessionManager(deps) {
         const seats = this._teamLiveSeats(team)
           .map((s) => `${s.name}${s.label ? ` (${s.label})` : ''}`);
         head.push(`team ${team.name}, role ${role}: ${seats.length ? seats.join(', ') : '(no live seats)'}`);
-        try { board = this._taskListText(team, 'open', now) || ''; } catch { board = ''; }
+        try { board = this._taskListText(team, 'open', now, team.solo ? null : team.name) || ''; } catch { board = ''; }
       }
       return capResumeSnapshot(`---\n${head.join('\n')}`, board);
     }

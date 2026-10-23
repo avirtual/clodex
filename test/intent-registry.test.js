@@ -154,11 +154,12 @@ function parseIntentLegacy(rawLine) {
   const teamCreateMatch = cleaned.match(/^\[agent:team\s+create\b([^\]]*)\]\s*(.*)/s);
   if (teamCreateMatch) {
     const argStr = teamCreateMatch[1];
-    const rootM = argStr.match(/\broot:(\S+)/);
+    const rootM = argStr.match(/(?:^|\s)root:(\S+)/);
     const leadM = argStr.match(/\blead:(\S+)/);
     const modeM = argStr.match(/\bmode:(\S+)/);
     const kitM = argStr.match(/\bkit:(\S+)/);
-    const positional = argStr.trim().split(/\s+/).filter((t) => t && !/^\w+:/.test(t));
+    const shareM = argStr.match(/\bshare-root:(\S*)/);
+    const positional = argStr.trim().split(/\s+/).filter((t) => t && !/^[\w-]+:/.test(t));
     return {
       type: 'team-create',
       name: positional[0] || null,
@@ -166,6 +167,7 @@ function parseIntentLegacy(rawLine) {
       lead: leadM ? leadM[1] : null,
       mode: modeM ? modeM[1] : null,
       kit: kitM ? kitM[1] : null,
+      ...(shareM ? (shareM[1] === 'yes' ? { shareRoot: true } : { shareRootError: `share-root:${shareM[1]} — the only accepted value is share-root:yes` }) : {}),
       body: teamCreateMatch[2],
     };
   }
@@ -452,6 +454,7 @@ const ADVERSARIAL = [
   '[agent:team sandbox bootstrap packages smbclient mariadb-server]', '[agent:team sandbox bootstrap setup] echo hi',
   '[agent:team sandbox bootstrap show setup]', '[agent:team sandbox bootstrap clear]', '[agent:team sandbox restart]',
   '[agent:team create shop root:/proj/shop]',
+  '[agent:team create shop root:/proj/shop share-root:yes]', '[agent:team create share-root:no shop root:/proj/shop]',
   '[agent:team create shop root:/proj/shop lead:boss]',
   '[agent:team create lead:boss root:/proj/shop shop]',
   '[agent:team create shop]', '[agent:team create root:/proj/shop]',
@@ -1672,4 +1675,13 @@ test('C1b (a) parseTask done takes tN@origin; other subs keep the token whole', 
   const add = parseIntent('[agent:task add t7@laptop] spec');
   assert.strictEqual(add.who, 't7@laptop');
   assert.strictEqual('board' in add, false);
+});
+
+test('team create: share-root:yes sets shareRoot, any other value is a parse error naming the accepted value', () => {
+  assert.deepStrictEqual(parseIntent('[agent:team create shop root:/p share-root:yes]'),
+    { type: 'team-create', name: 'shop', root: '/p', lead: null, mode: null, kit: null, shareRoot: true, body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:team create share-root:no shop root:/p]'),
+    { type: 'team-create', name: 'shop', root: '/p', lead: null, mode: null, kit: null, shareRootError: 'share-root:no — the only accepted value is share-root:yes', body: '' });
+  assert.strictEqual(parseIntent('[agent:team create shop root:/p share-root:]').shareRootError,
+    'share-root: — the only accepted value is share-root:yes');
 });

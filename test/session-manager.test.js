@@ -3894,7 +3894,7 @@ test('team-retire: refusals wake the requester and never archive', async () => {
     m.sessions.set('dev', { name: 'dev', agentType: 'claude', cwd: '/p2/y' });
     m._onIncoming('dev', { from: 'lead', body: '', type: 'team-retire' });
     assert.deepStrictEqual(archived, []);
-    assert.match(delivered[0].body, /not in the same project/);
+    assert.match(delivered[0].body, /dev is on team team-p2, not yours/);
   }
   // requester not running
   {
@@ -19970,9 +19970,9 @@ test('t295: an inherited ticket gives the sibling a badge and keeps its stall cl
     'the sibling\'s activity refreshes the inherited ticket — otherwise the watchdog nudges over live work');
 });
 
-// Two teams rooted at ONE project. The board is the project's, so the SWEEP must
-// collapse to one pass (nudging twice about one stalled ticket is the bug that
-// collapse fixes) — but RECONCILE must not, because it resolves roles against a
+// Two teams rooted at ONE project. The board is the project's, so its UNSTAMPED
+// rows are swept once (nudging twice about one stalled ticket is the bug) —
+// and RECONCILE runs per team, because it resolves roles against a
 // specific manifest. Deduping reconcile by root as well leaves the second team
 // unreconciled, and since _teamLiveSeatNames is project-scoped it has already
 // returned that team's seats: they resolve to no role against the FIRST team's
@@ -20018,13 +20018,13 @@ test('sweep: two teams on one project sweep the board ONCE but reconcile SEPARAT
     { id: 't2', state: 'open', assignee: 'scout', role: 'scout', openedAt: Date.now(), lastActivityAt: Date.now() },
   ]);
 
-  let sweeps = 0;
+  const sweeps = [];
   const realSweep = m._sweepTeamTickets.bind(m);
-  m._sweepTeamTickets = (team, now) => { sweeps += 1; return realSweep(team, now); };
+  m._sweepTeamTickets = (team, now, opts) => { sweeps.push([team.name, opts.unstamped]); return realSweep(team, now, opts); };
 
   await m._sweepTickets(Date.now());
 
-  assert.strictEqual(sweeps, 1, 'the shared board is swept once, not once per team');
+  assert.deepStrictEqual(sweeps, [['alpha', true], ['beta', false]], 'each team sweeps; only the first on the root takes the unstamped rows');
   // ENTER: the reduction below is a filter on a broadcast channel. If reconcile
   // never ran for either team the list would be empty, and "no seat was stripped"
   // is vacuously true of an empty list.

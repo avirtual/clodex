@@ -1638,8 +1638,9 @@ function createTicketMethods(deps, shared) {
         if (!team || !team.root) continue;
         let tickets;
         try { tickets = ticketsStore.load(team.root); } catch { continue; }
+        const own = this._ownRowFilter(team);
         for (const t of tickets) {
-          if (!isWaiting(t)) continue;
+          if (!isWaiting(t) || !own(t)) continue;
           const key = `${team.root}\n${t.id}`;
           if (seen.has(key)) continue;
           seen.add(key);
@@ -2261,6 +2262,11 @@ function createTicketMethods(deps, shared) {
         reply(`error: mode "${intent.mode}" is not kickstart or interview — no team was created`);
         return;
       }
+      if (intent.shareRootError) {
+        reply(`error: ${intent.shareRootError} — no team was created`);
+        return;
+      }
+      const shareRoot = intent.shareRoot === true;
       let kitDef = null;
       try { kitDef = resolveKit(intent.kit); } catch (err) {
         reply(`error: ${err.message} — no team was created. Kits:${kitList()}`);
@@ -2306,7 +2312,7 @@ function createTicketMethods(deps, shared) {
         }
       }
       try {
-        createTeam({ name, root, lead, kit: intent.kit, dryRun: true });
+        createTeam({ name, root, lead, kit: intent.kit, shareRoot, dryRun: true });
       } catch (err) {
         reply(`error: ${err.message}`);
         return;
@@ -2332,7 +2338,7 @@ function createTicketMethods(deps, shared) {
       } : undefined;
       let team;
       try {
-        team = createTeam({ name, root, lead, roles, kit: intent.kit });
+        team = createTeam({ name, root, lead, roles, kit: intent.kit, shareRoot });
       } catch (err) {
         reply(`error: ${err.message}`);
         return;
@@ -2777,8 +2783,9 @@ function createTicketMethods(deps, shared) {
     _startCapParked(team, lead) {
       if (!lead || lead.name !== team.lead) return;
       const num = (t) => Number(String(t.id).replace(/^t/, '')) || 0;
+      const own = this._ownRowFilter(team);
       const queue = ticketsStore.load(team.root)
-        .filter((t) => t.state === 'open' && t.parked && t.parkedBy === 'cap')
+        .filter((t) => own(t) && t.state === 'open' && t.parked && t.parkedBy === 'cap')
         .sort((a, b) => num(a) - num(b));
       const reply = (msg) => this._injectText(lead, `[agent:task] cap freed: ${msg}`, { parkable: true });
       const ack = (msg) => this._taskAck(lead, `[agent:task] cap freed: ${msg}`);
@@ -3299,7 +3306,7 @@ function createTicketMethods(deps, shared) {
         if (!team || !team.root || team.sandboxed) continue;
         let tickets;
         try { tickets = ticketsStore.load(team.root); } catch { continue; }
-        if (!tickets.some((t) => t.id === ticketId && t.assignee === senderTag)) continue;
+        if (!tickets.some((t) => t.id === ticketId && t.assignee === senderTag && (!t.team || t.team === team.name))) continue;
         const pseudo = { name: senderTag, cwd: team.root, agentType: null, remote: true };
         let captured = null;
         this._taskDone(pseudo, team, { sub: 'done', id: ticketId, body: report }, (msg) => { captured = msg; });
@@ -3318,6 +3325,32 @@ function createTicketMethods(deps, shared) {
         ? `"${who}" is not a live session in ${team.name} — with no team, an assignee is a live session name`
         : `"${who}" is neither a team role nor a live seat on ${team.name}`)
         + (String(who).includes('@') ? ' (name@peer needs that peer online with dm federation)' : '');
+    },
+
+    _foreignRowRefusal(team, ticket) {
+      if (!team || team.solo || !ticket || !ticket.team || ticket.team === team.name) return null;
+      let owner;
+      try { owner = loadManifest(ticket.team); } catch { return null; }
+      return `error: ${ticket.id} belongs to team ${ticket.team} — its lead (${(owner && owner.lead) || 'unknown'}) dispatches it`;
+    },
+
+    _ownRowFilter(team) {
+      if (!team || team.solo) return () => true;
+      let names = null;
+      return (t) => {
+        if (!t || !t.team || t.team === team.name) return true;
+        if (!names) {
+          try { names = typeof listTeams === 'function' ? new Set(listTeams()) : null; } catch { names = null; }
+          if (!names) return false;
+        }
+        return !names.has(t.team);
+      };
+    },
+
+    _teamsOnRoot(root) {
+      let names = [];
+      try { names = typeof listTeams === 'function' ? listTeams() : []; } catch { names = []; }
+      return names.filter((n) => { try { return loadManifest(n).root === root; } catch { return false; } });
     },
 
     _isRemoteSeat(name) {
@@ -3989,8 +4022,9 @@ function createTicketMethods(deps, shared) {
     _openTicketsFor(team, seatName, excludeId = null) {
       const role = matchSeatRole(team, seatName);
       const live = this._teamLiveSeatNames(team);
+      const own = this._ownRowFilter(team);
       return ticketsStore.load(team.root)
-        .filter((t) => t.state === 'open' && t.id !== excludeId && t.assignee != null && !t.parked
+        .filter((t) => own(t) && t.state === 'open' && t.id !== excludeId && t.assignee != null && !t.parked
           && ticketStarted(t)
           && (t.assignee === seatName || (role && t.assignee === role)
             || this._ticketAssigneeSeat(team, t, live) === seatName))
@@ -4753,6 +4787,7 @@ function createTicketMethods(deps, shared) {
         // Explicit null, unlike `parked`: `ticketStarted` reads an absent key as a pre-upgrade record that was dispatched,
         // so omitting it would file every new ticket as already started.
         startedAt: null,
+        ...(team.solo ? {} : { team: team.name }),
         ...(parked ? { parked: true } : {}),
         ...(reviewerTemplate ? { reviewerTemplate } : {}),
       };
@@ -4805,6 +4840,8 @@ function createTicketMethods(deps, shared) {
       const tickets = ticketsStore.load(team.root);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}`); return; }
+      const foreign = this._foreignRowRefusal(team, ticket);
+      if (foreign) { reply(foreign); return; }
       if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open — only an open ticket can be started`); return; }
       if (!ticket.assignee) { reply(`error: ticket ${intent.id} is backlog (no assignee) — [agent:task assign ${intent.id} <role|name>] files AND dispatches it`); return; }
       const noTaskDir = this._ticketTaskDirRefusal(team, ticket, 'start', ticketStarted(ticket));
@@ -4992,6 +5029,8 @@ function createTicketMethods(deps, shared) {
       const tickets = ticketsStore.load(team.root);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}`); return; }
+      const foreign = this._foreignRowRefusal(team, ticket);
+      if (foreign) { reply(foreign); return; }
       if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open — cannot assign`); return; }
       const assignee = this._resolveAssignee(team, intent.who);
       if (!assignee) { reply(`error: ${this._assigneeMissText(team, intent.who)}`); return; }
@@ -5105,6 +5144,8 @@ function createTicketMethods(deps, shared) {
       const tickets = ticketsStore.load(team.root);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task done', report)}`); return; }
+      const foreign = this._foreignRowRefusal(team, ticket);
+      if (foreign) { reply(`${foreign}${this._spillRejectedPayload(session, 'task done', report)}`); return; }
       // Re-entry closes a ticket already `done` and held at verify; it is not a reopen, which via `reject` would bump reworkRound
       // and record a rejection that never happened.
       const reentry = ticket.state === 'done' && ticket.loopStep === 'verify' && !!ticket.verifyHold;
@@ -5242,7 +5283,9 @@ function createTicketMethods(deps, shared) {
       let tickets; try { tickets = ticketsStore.load(team.root); } catch { return; }
       const resume = [];
       let cleared = false;
+      const own = this._ownRowFilter(team);
       for (const t of tickets) {
+        if (!own(t)) continue;
         const key = `${team.root}\0${t.id}`;
         if (t.state === 'done' && t.loopStep === 'review' && t.verifyPhase
           && !this._verifyLooped.has(key) && !this._liveReviewerSeat(team, t)) {
@@ -6521,6 +6564,8 @@ function createTicketMethods(deps, shared) {
       const tickets = ticketsStore.load(team.root);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task reject', reason)}`); return; }
+      const foreign = this._foreignRowRefusal(team, ticket);
+      if (foreign) { reply(`${foreign}${this._spillRejectedPayload(session, 'task reject', reason)}`); return; }
       if (ticket.state !== 'done') {
         if (ticket.state === 'open' && Number(ticket.reworkRound) > 0) {
           this._taskRejectFollowUp(session, team, tickets, ticket, reason, reply);
@@ -6595,6 +6640,8 @@ function createTicketMethods(deps, shared) {
       const tickets = ticketsStore.load(team.root);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task respec', spec)}`); return; }
+      const foreign = this._foreignRowRefusal(team, ticket);
+      if (foreign) { reply(`${foreign}${this._spillRejectedPayload(session, 'task respec', spec)}`); return; }
       if (ticket.state !== 'open') {
         // The advice reads the hold's recovery class, not its presence: reject-then-respec is the false rejection for a `hand` hold
         // and the only route for a `spec` one.
@@ -6654,6 +6701,8 @@ function createTicketMethods(deps, shared) {
       const tickets = ticketsStore.load(team.root);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task cancel', reason)}`); return; }
+      const foreign = this._foreignRowRefusal(team, ticket);
+      if (foreign) { reply(`${foreign}${this._spillRejectedPayload(session, 'task cancel', reason)}`); return; }
       if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open — cannot cancel${this._spillRejectedPayload(session, 'task cancel', reason)}`); return; }
       ticket.state = 'cancelled';
       ticket.closedAt = Date.now();
@@ -6837,6 +6886,8 @@ function createTicketMethods(deps, shared) {
       const tickets = ticketsStore.load(team.root);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task accept', note)}`); return; }
+      const foreign = this._foreignRowRefusal(team, ticket);
+      if (foreign) { reply(`${foreign}${this._spillRejectedPayload(session, 'task accept', note)}`); return; }
       if (ticket.state !== 'done') { reply(`error: accept closes out a DONE ticket; ${intent.id} is ${ticket.state} — it has not been reported yet${this._spillRejectedPayload(session, 'task accept', note)}`); return; }
 
       // Gated on `loopClosedOut`, not `closedOut && acceptedBy`, which also hold for the dirty-tree downgrade whose reply asks for a second accept.
@@ -7140,6 +7191,8 @@ function createTicketMethods(deps, shared) {
       const tickets = ticketsStore.load(team.root);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}`); return; }
+      const foreign = this._foreignRowRefusal(team, ticket);
+      if (foreign) { reply(foreign); return; }
       if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open — only an open ticket can be parked`); return; }
       const parking = !ticket.parked;
       if (parking) ticket.parked = true;
@@ -7167,7 +7220,7 @@ function createTicketMethods(deps, shared) {
         reply(`error: unknown filter "${filter}" — use one of: ${TICKET_FILTERS.join(', ')}`);
         return;
       }
-      reply(this._taskListText(team, filter, Date.now()));
+      reply(this._taskListText(team, filter, Date.now(), team.solo ? null : team.name));
     },
 
     _sharedTaskList(session, names, intent, reply) {
@@ -7181,13 +7234,23 @@ function createTicketMethods(deps, shared) {
       reply(`[teams ${names.join(', ')} share this board — read-only: ${session.name} is on neither roster]\n${this._taskListText(team, filter, Date.now())}`);
     },
 
-    _taskListText(team, filter, now) {
-      const tickets = ticketsStore.load(team.root).slice().sort((a, b) => {
+    _taskListText(team, filter, now, own = null) {
+      const board = ticketsStore.load(team.root).slice().sort((a, b) => {
         const na = Number(String(a.id).replace(/^t/, '')) || 0;
         const nb = Number(String(b.id).replace(/^t/, '')) || 0;
         return na - nb;
       });
-      if (!tickets.length) return `no tickets on ${team.name}`;
+      const mine = own ? this._ownRowFilter({ ...team, name: own }) : () => true;
+      const tickets = board.filter(mine);
+      const others = new Map();
+      if (own) {
+        for (const t of board) {
+          if (mine(t) || (filter !== 'all' && t.state !== filter)) continue;
+          others.set(t.team, (others.get(t.team) || 0) + 1);
+        }
+      }
+      const othersLine = [...others].map(([name, n]) => `\n(+${n} rows of team ${name})`).join('');
+      if (!tickets.length) return `no tickets on ${team.name}${othersLine}`;
       const shown = filter === 'all' ? tickets : tickets.filter((t) => t.state === filter);
       // The board shows the role the lead filed the ticket under; `assignee` is a delivery-time pin to a concrete seat,
       // not the name the lead is looking for.
@@ -7229,10 +7292,10 @@ function createTicketMethods(deps, shared) {
         : '';
       if (!shown.length) {
         return closed.length
-          ? `no open tickets on ${team.name}${recentBlock}${tail}`
-          : `no ${filter} tickets on ${team.name}`;
+          ? `no open tickets on ${team.name}${recentBlock}${tail}${othersLine}`
+          : `no ${filter} tickets on ${team.name}${othersLine}`;
       }
-      return `${head}:\n${lines.join('\n')}${recentBlock}${tail}`;
+      return `${head}:\n${lines.join('\n')}${recentBlock}${tail}${othersLine}`;
     },
 
     // Solo boards no-op: their live seats are every agent session in the repo, none
@@ -7240,10 +7303,16 @@ function createTicketMethods(deps, shared) {
     _reconcileTickets(team) {
       if (team && team.solo) return;
       const tickets = ticketsStore.load(team.root);
+      const unstamped = tickets.filter((t) => t && typeof t === 'object' && !t.team);
+      if (unstamped.length && this._teamsOnRoot(team.root).length === 1) {
+        for (const t of unstamped) t.team = team.name;
+        try { ticketsStore.save(team.root, tickets); } catch (e) { log.error('ticket', `team stamp on ${team.name}'s board failed: ${e.message}`); }
+      }
       const live = this._teamLiveSeatNames(team);
+      const own = this._ownRowFilter(team);
       for (const name of live) {
         const role = matchSeatRole(team, name);
-        const open = tickets.find((t) => t.state === 'open' && t.assignee != null && !t.parked
+        const open = tickets.find((t) => own(t) && t.state === 'open' && t.assignee != null && !t.parked
           && (t.assignee === name || t.assignee === role
             || this._ticketAssigneeSeat(team, t, live) === name));
         if (open) this._ticketWatch.set(name, { root: team.root, team: team.name, role });
@@ -7263,8 +7332,9 @@ function createTicketMethods(deps, shared) {
       // Walk live seats once outside the loop: this runs on every non-idle edge and
       // the team resolve and seat walk are filesystem work.
       const live = team ? this._teamLiveSeatNames(team) : null;
+      const own = this._ownRowFilter(team);
       for (const t of tickets) {
-        if (t.state !== 'open') continue;
+        if (t.state !== 'open' || !own(t)) continue;
         if (t.assignee === name || (w.role && t.assignee === w.role)
           || (team && this._ticketAssigneeSeat(team, t, live) === name)) {
           t.lastActivityAt = now;
@@ -7285,17 +7355,20 @@ function createTicketMethods(deps, shared) {
     _sweepTickets(now = Date.now()) {
       if (typeof pruneStaleRows === 'function') pruneStaleRows().catch((e) => log.error('team', `roster prune failed: ${e.message}`));
       const sweptBoards = new Set();
+      const sweptTeams = new Set();
       const reconciledTeams = new Set();
       const sweeps = [];
       for (const s of this.sessions.values()) {
         if (!s.agentType || s._dead) continue;
         let team; try { team = this._teamOf(s); } catch { team = null; }
         if (!team) continue;
-        if (!sweptBoards.has(team.root)) {
+        if (!sweptTeams.has(team.file)) {
+          sweptTeams.add(team.file);
+          const unstamped = !sweptBoards.has(team.root);
           sweptBoards.add(team.root);
           // Not awaited: a slow git probe must not hold up the badge reconcile;
           // overlap is handled by _stallProbing.
-          sweeps.push(this._sweepTeamTickets(team, now).catch((e) => log.error('ticket', `stall sweep failed: ${e.message}`)));
+          sweeps.push(this._sweepTeamTickets(team, now, { unstamped }).catch((e) => log.error('ticket', `stall sweep failed: ${e.message}`)));
         }
         if (!reconciledTeams.has(team.file)) {
           reconciledTeams.add(team.file);
@@ -7615,9 +7688,10 @@ function createTicketMethods(deps, shared) {
       });
     },
 
-    async _sweepTeamTickets(team, now) {
+    async _sweepTeamTickets(team, now, { unstamped = true } = {}) {
       const stallMs = (typeof team.watchdogMs === 'number' && team.watchdogMs > 0) ? team.watchdogMs : TICKET_STALL_MS;
-      const tickets = ticketsStore.load(team.root);
+      const own = this._ownRowFilter(team);
+      const tickets = ticketsStore.load(team.root).filter((t) => (t && t.team === team.name) || (unstamped && own(t)));
       try { this._sweepMergedUnaccepted(team, tickets, now); } catch (e) {
         log.error('ticket', `merged-unaccepted sweep failed: ${e.message}`);
       }
@@ -7798,7 +7872,11 @@ function createTicketMethods(deps, shared) {
       let requesterTeam = null;
       try { targetTeam = this._teamOf(target); } catch { targetTeam = null; }
       try { requesterTeam = this._teamOf(requester); } catch { requesterTeam = null; }
-      if (!requesterTeam || !targetTeam || requesterTeam.name !== targetTeam.name) {
+      if (requesterTeam && targetTeam && requesterTeam.name !== targetTeam.name) {
+        fail(`${targetName} is on team ${targetTeam.name}, not yours`);
+        return;
+      }
+      if (!requesterTeam || !targetTeam) {
         fail(`"${requesterName}" and "${targetName}" are not in the same project (not on one team's roster)`);
         return;
       }
