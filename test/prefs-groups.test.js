@@ -41,7 +41,7 @@ const CONTROLS = [
   'prefs-env-secret', 'prefs-env-add', 'prefs-env-restore-row', 'prefs-env-restore', 'prefs-env-state',
   'prefs-accounts-list', 'prefs-account-label', 'prefs-account-email', 'prefs-account-plan',
   'prefs-account-dir', 'prefs-account-add', 'prefs-account-model', 'prefs-accounts-state',
-  'prefs-default-mode', 'prefs-run-setup', 'prefs-discover-on-startup', 'prefs-disable-design-mcp',
+  'prefs-default-mode', 'prefs-run-setup', 'prefs-discover-on-startup',
   'prefs-tools-row', 'prefs-tools-list',
   'prefs-skills-row', 'prefs-skills-list',
   'prefs-agents-row', 'prefs-agents-list',

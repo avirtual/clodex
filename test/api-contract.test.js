@@ -38,7 +38,7 @@ const PINNED_NAMES = [
   'getAgent', 'saveAgent', 'removeAgent', 'listSkillLib',
   'getSkillLib', 'saveSkillLib', 'removeSkillLib', 'listExecCommands',
   'getExecCommand', 'saveExecCommand', 'removeExecCommand', 'listMcpServers', 'getMcpServer', 'saveMcpServer',
-  'removeMcpServer', 'discoverMcpServers', 'importMcpServer', 'mcpReadiness', 'listNotifications', 'pageNotifications',
+  'removeMcpServer', 'discoverMcpServers', 'importMcpServer', 'mcpReadiness', 'mcpAppliedStale', 'listNotifications', 'pageNotifications',
   'markNotificationRead', 'markAllNotificationsRead', 'removeNotification', 'notificationUnreadCount',
   // t806: any inbox mutation from any surface, phone included — the desktop
   // badge's only signal for a read that happened off-box.
@@ -69,7 +69,7 @@ const PINNED_NAMES = [
   'wireHold', 'setStripLevel', 'setAutoCompact',
   'onSessionMention', 'onRequestSwitchSession', 'onRequestOpenNewDialog', 'onRequestOpenDiscovery', 'onRequestRenameWorkspace',
   'onRequestOpenPreferences', 'onRequestOpenHelp', 'onRequestOpenPeersDialog', 'onRequestOpenPeerSession', 'onRequestOpenAgentsDrawer',
-  'onRequestOpenSkillsDrawer', 'onRequestOpenExecDrawer', 'onRequestOpenInboxDrawer', 'onRequestOpenPromptsDrawer',
+  'onRequestOpenSkillsDrawer', 'onRequestOpenExecDrawer', 'onRequestOpenMcpDrawer', 'onRequestOpenInboxDrawer', 'onRequestOpenPromptsDrawer',
   'onRequestOpenTemplatesDrawer', 'onRequestOpenIpcLog', 'onRequestToggleRawTerminal', 'getSettings', 'setTheme',
   'onSetTheme', 'setSettings', 'getSetupState', 'completeSetup', 'onZoomNudge', 'setDefaultToolDeny',
   'setDefaultSkillDeny', 'setDefaultBuiltinDeny',

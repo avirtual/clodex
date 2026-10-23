@@ -1084,16 +1084,10 @@
           <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
           <div id="prefs-agents-list" class="agent-checklist"></div>
         </label>
-        <h5>Claude MCP</h5>
-        <p class="hint-text">Claude Code auto-injects the built-in <code>claude_design</code> connector (~20 tools, ~4k tokens every turn) with no global opt-out. A routed session is usually handled by the proxy: the built-in wirescope strips <code>claude_design</code> by default and keeps your real MCPs. The fallback below is for the sessions it never sees — one you route nowhere, or one whose wire is unreachable at spawn. The fallback uses <code>--strict-mcp-config</code>, which is all-or-nothing: it disables <strong>every</strong> MCP server, including project/user ones. The IPC log says whenever it is used, and why. Leave it off unless your unrouted agents use no MCP.</p>
-        <label class="prefs-check">
-          <input type="checkbox" id="prefs-disable-design-mcp">
-          <span>Disable <code>claude_design</code> MCP</span>
-        </label>
       </details>
       <details class="prefs-group" data-group="env">
         <summary><h4>Environment variables</h4><span class="prefs-group-sub">Extra variables for every session this app spawns</span></summary>
-        <p class="hint-text">Extra environment variables merged into every wrapper session's process (claude, codex, and bash), on top of the machine environment. Precedence is machine &lt; <strong>Global</strong> &lt; <strong>This workspace</strong> &lt; per-session (set in the New Session dialog). Mark a value <strong>Secret</strong> to store it write-only — it's kept on disk with <code>0600</code> permissions and never shown again after you save (the row shows only that a value is set). <code>CLODEX_REMOTE_TOKEN</code> is reserved and can't be set here. Applied at spawn — restart a session to pick up changes.</p>
+        <p class="hint-text">Extra environment variables merged into every wrapper session's process (claude, codex, and bash), on top of the machine environment. Precedence is machine &lt; <strong>Global</strong> &lt; <strong>This workspace</strong> &lt; per-session (set in the New Session dialog). Mark a value <strong>Secret</strong> to store it write-only — it's kept on disk with <code>0600</code> permissions and never shown again after you save (the row shows only that a value is set). <code>CLODEX_REMOTE_TOKEN</code> is reserved and can't be set here. Applied at spawn — restart a session to pick up changes. MCP servers reference secrets as <code>${NAME}</code>; mark those values Secret here.</p>
         <div class="prefs-row" style="margin-top: 4px;">
           <span>Scope</span>
           <select id="prefs-env-scope" style="flex: none;">

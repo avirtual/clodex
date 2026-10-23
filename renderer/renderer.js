@@ -6020,7 +6020,6 @@ const prefsClaudeBox = document.getElementById('prefs-claude-components');
 const prefsClaudeCmd = document.getElementById('prefs-claude-sl-cmd');
 const prefsCodexBox = document.getElementById('prefs-codex-components');
 const prefsProxyEnabled = document.getElementById('prefs-proxy-enabled');
-const prefsDisableDesignMcp = document.getElementById('prefs-disable-design-mcp');
 const prefsTerminalWebgl = document.getElementById('prefs-terminal-webgl');
 const prefsSeatView = document.getElementById('prefs-seat-view');
 const prefsShowThinking = document.getElementById('prefs-show-thinking');
@@ -8844,7 +8843,6 @@ async function openPrefs() {
   prefsClaudeCmd.value = s.statusline.claudeCommand || '';
   renderPrefsCheckboxes(prefsCodexBox, s.codexComponents, s.statusline.codex, CODEX_LABELS);
   prefsProxyEnabled.checked = !!s.proxyEnabled;
-  prefsDisableDesignMcp.checked = s.disableClaudeDesignMcp !== false;
   if (prefsTerminalWebgl) prefsTerminalWebgl.checked = s.terminalWebgl === true;
   if (prefsShowThinking) prefsShowThinking.checked = s.showThinking !== false;
   if (prefsSeatView) prefsSeatView.value = initialSeatView({ transcriptPane: s.transcriptPane !== false, transcriptPaneMode: s.transcriptPaneMode, io: 'pty' });
@@ -8952,7 +8950,6 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
       codex: collectChecked(prefsCodexBox),
     },
     proxyEnabled: prefsProxyEnabled.checked,
-    disableClaudeDesignMcp: prefsDisableDesignMcp.checked,
     terminalWebgl: prefsTerminalWebgl ? prefsTerminalWebgl.checked : false,
     ...(prefsShowThinking ? { showThinking: prefsShowThinking.checked } : {}),
     ...(seatView || {}),
