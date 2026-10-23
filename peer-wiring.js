@@ -387,8 +387,8 @@ function createPeerWiring(deps) {
         // link permanently, since only a fresh ↗ click re-raises it.
         if (status && (status.state === 'gave-up' || status.state === 'closed')) closePeerWirescope(id);
         // firstUp rides ONE emit, on the once-per-tunnel first success — so the
-        // browser opens once and a respawn after a wifi blip does not pop a
-        // second window (the pinned port means the existing tab just works).
+        // window opens once and a respawn after a wifi blip does not pop a
+        // second window (the pinned port means the existing window just works).
         // The pop lives here, not in the supervisor, which stays electron-free.
         //
         // Since t37 that emit waits for the local port to ACCEPT, not merely for
@@ -402,7 +402,7 @@ function createPeerWiring(deps) {
             log.info('peer', status.ready === false
               ? `web view up for ${id} → ${status.url} (port never confirmed — opening anyway)`
               : `web view up for ${id} → ${status.url}`);
-            // The page URL is the ONLY channel into a tab the BOX served, so the
+            // The page URL is the ONLY channel into a page the BOX served, so the
             // wirescope port rides it here — read at pop time, since the forward
             // was raised moments ago and may only just have picked its port.
             // Logged as the bare URL above: the param is plumbing, and the

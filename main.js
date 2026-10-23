@@ -453,9 +453,12 @@ function openRemoteWindow(key, url, opts = {}) {
   const bg = (typeof opts.backgroundColor === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(opts.backgroundColor.trim()))
     ? opts.backgroundColor.trim()
     : '#1a1a2e';
+  const title = typeof opts.title === 'string' && opts.title ? opts.title : null;
+  const lockTitle = !!title && opts.lockTitle !== false;
   const existing = remoteWindows.get(key);
   if (existing && !existing.isDestroyed()) {
     existing.setBackgroundColor(bg);
+    if (title) existing.setTitle(title);
     existing.loadURL(url);
     existing.show();
     existing.focus();
@@ -473,10 +476,11 @@ function openRemoteWindow(key, url, opts = {}) {
     minWidth: 600,
     minHeight: 400,
     backgroundColor: bg,
-    title: typeof opts.title === 'string' && opts.title ? opts.title : 'Clodex',
+    title: title || 'Clodex',
     webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true },
   });
   remoteWindows.set(key, win);
+  if (lockTitle) win.on('page-title-updated', (e) => e.preventDefault());
   // A link inside the remote page should open in the system browser, not a
   // nested child window. No will-navigate guard here: this window is SUPPOSED
   // to navigate between remote URLs (unlike the main window, which only ever
@@ -497,6 +501,7 @@ function openRemoteWindow(key, url, opts = {}) {
 
 function closeRemoteWindow(key) {
   const win = remoteWindows.get(key);
+  remoteWindows.delete(key);
   if (win && !win.isDestroyed()) win.close();
 }
 
@@ -505,7 +510,7 @@ function onRemoteWindowClosed(cb) {
 }
 
 function openWirescopeWindow(url, backgroundColor) {
-  openRemoteWindow('wirescope', url, { title: 'wirescope', backgroundColor });
+  openRemoteWindow('wirescope', url, { title: 'wirescope', backgroundColor, lockTitle: false });
 }
 
 function workspaceOfSender(e) {
