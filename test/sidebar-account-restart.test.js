@@ -51,6 +51,7 @@ test('every restart path snapshots the account and passes it to the rebuild', ()
   const env = {
     streamSeatNames: new Set(), sidebarMeta: new Map(),
     markSeatIo() {}, createTerminal() {}, markSeatEffort() {}, markSeatPosture() {},
+    refreshSeatMcp() {},
     addSessionToSidebar: (...a) => added.push(a),
   };
   const names = Object.keys(env);
@@ -105,6 +106,7 @@ test('a checklist-popover restart rebuilds the row with its label, effort and ac
     streamSeatNames: new Set(), sidebarMeta: new Map(),
     markSeatIo() {}, createTerminal() {}, markSeatPosture() {},
     markSeatEffort: (n, e) => efforts.push(e),
+    refreshSeatMcp() {},
     addSessionToSidebar: (...a) => added.push(a),
   };
   const names = Object.keys(env);
