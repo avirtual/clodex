@@ -232,12 +232,12 @@ function buildReviewScope({ ticket, diffPath = null, deltaPath = null, taskDir =
   }
   out.push('');
 
-  // Round 2+: the settled ground is stated so the reviewer does not re-open it.
-  // An unbounded re-review is how a two-round loop turns into a lead escalation
-  // over work round 1 already accepted.
   const round = Number(t.reviewRound) || 0;
   if (round >= 1 && artifact) {
-    out.push(`THIS IS ROUND ${round + 1}. The artifact set changed after round ${round}'s snapshot; review every changed file in full — nothing in a changed file is settled ground.`);
+    const unchanged = Array.isArray(artifact.changed) && !artifact.changed.length;
+    out.push(unchanged
+      ? `THIS IS ROUND ${round + 1}. Nothing changed since round ${round}'s snapshot.`
+      : `THIS IS ROUND ${round + 1}. The artifact set changed after round ${round}'s snapshot; review every changed file in full — nothing in a changed file is settled ground.`);
     out.push('');
     if (text(t.verdict).toUpperCase() === 'REWORK') {
       out.push(`The MUST-FIX items on record from round ${round} were, verbatim — check each is fixed:`);
@@ -246,6 +246,9 @@ function buildReviewScope({ ticket, diffPath = null, deltaPath = null, taskDir =
       out.push('');
     }
   } else if (round >= 1) {
+    // Round 2+: the settled ground is stated so the reviewer does not re-open it.
+    // An unbounded re-review is how a two-round loop turns into a lead escalation
+    // over work round 1 already accepted.
     const mustFix = text(t.mustFix);
     // Derived, never assumed: a round 2 can follow an ACCEPT the lead rejected
     // anyway. Stating "returned REWORK" unconditionally opens the scope with a

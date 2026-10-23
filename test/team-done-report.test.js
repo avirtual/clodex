@@ -336,6 +336,8 @@ test('_artifactScope: a REWORK round renders the must-fix verbatim under the art
     artifact: { dir: '/d', round: 2, digest: 'abc', count: 1, files: [{ path: 'findings.md', bytes: 3, sha256: 'ff' }], changed: [] },
   });
   assert.ok(scope.includes("CHANGED since round 1's snapshot: nothing\n"));
+  assert.ok(scope.includes("THIS IS ROUND 2. Nothing changed since round 1's snapshot.\n"));
+  assert.ok(!scope.includes('The artifact set changed after round 1'), 'no contradiction with the empty CHANGED list');
   assert.ok(scope.includes('The MUST-FIX items on record from round 1 were, verbatim — check each is fixed:\n\n1. findings.md names no player\n'));
   assert.ok(!scope.includes('Do not re-open'));
 });
@@ -366,4 +368,46 @@ test('_writeVerdictBody: a no-taskDir report ticket keeps its verdict file in th
   const dir = path.join(f.projectDir, 'tasks', 't1');
   assert.ok(fs.existsSync(path.join(dir, 'review-t1-r1.verdict.md')));
   assert.strictEqual(f.one('t1').closedOut, true, 'the verdict file did not count as an artifact change');
+});
+
+test('_artifactScope: a round-1 snapshot another ticket overwrote in a shared dir is not diffed against', async () => {
+  const { f, dir, reviewer } = await acceptFixture();
+  fs.writeFileSync(path.join(dir, 'findings.md'), 'v2 — edited under review\n');
+  setReviewerRecord(f, reviewer.name, { ephemeral: true, reviewFor: 'lead', reviewTicket: 't1' });
+  f.m._handleReviewDone(reviewer, '- **VERDICT**: ACCEPT\n- **MUST-FIX**: (none)');
+  for (let i = 0; i < 20; i++) await f.settle();
+  assert.strictEqual(f.one('t1').verifyHold.step, 'verify: artifact', 'ENTER: held after the changed ACCEPT');
+  const foreign = path.join(dir, '.artifact-r1.json');
+  const snap = JSON.parse(fs.readFileSync(foreign, 'utf8'));
+  fs.writeFileSync(foreign, JSON.stringify({ ...snap, ticket: 't2' }));
+  f.doneBy('t1', 'see findings, v2');
+  await loopSettled(f, 't1');
+  const { scope } = f.reviews[1];
+  assert.ok(scope.includes("CHANGED since round 1: that round's snapshot is not on disk, so every file counts as changed."), scope);
+  assert.ok(!scope.includes("CHANGED since round 1's snapshot:"));
+});
+
+test('_taskStart: a report ticket on a worktree hand role starts as a spawn seat, minting no tree', () => {
+  const f = mkFixture();
+  f.team.roles.hand = { brief: 'the hand', dispatch: 'worktree' };
+  const modes = [];
+  f.m._spawnTicketSeat = (opener, t, ticket, roleKey, minted, mode) => { modes.push(mode); };
+  f.m._handleTask(f.lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'moderate\ntasks/mod-5/SPEC.md' });
+  f.m._handleTask(f.lead, { type: 'task', sub: 'start', who: null, id: 't1', reviewer: null, body: '' });
+  assert.deepStrictEqual(modes, ['spawn']);
+  assert.strictEqual(f.one('t1').worktree, undefined);
+  assert.deepStrictEqual(f.gitCalls, [], 'no worktree was created');
+});
+
+test('_snapshotArtifacts: a tree nested past the depth cap holds as the hand class', async () => {
+  const f = mkFixture();
+  f.add('write the moderation report\ntasks/mod-6/SPEC.md');
+  const dir = path.join(f.projectDir, 'tasks', 'mod-6');
+  fs.mkdirSync(path.join(dir, 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'), { recursive: true });
+  f.doneBy('t1', 'see the tree');
+  await loopSettled(f, 't1');
+  const t = f.one('t1');
+  assert.strictEqual(t.verifyHold && t.verifyHold.step, 'verify: artifact');
+  assert.strictEqual(t.verifyHold.recovery, 'hand', t.verifyHold.evidence);
+  assert.match(t.verifyHold.evidence, /nested deeper than 8 levels/);
 });

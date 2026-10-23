@@ -2346,7 +2346,7 @@ function createTicketMethods(deps, shared) {
       const kitRoles = (kitDef && Object.keys(kitDef.roles).length) ? kitDef.roles : STOCK_ROLE_DEFS;
       const roles = hasBrief ? {
         ...kitRoles,
-        hand: { ...kitRoles.hand, dispatch: intent.done === 'report' ? 'spawn' : 'worktree' },
+        hand: { ...kitRoles.hand, dispatch: 'worktree' },
       } : undefined;
       let team;
       try {
@@ -6374,12 +6374,12 @@ function createTicketMethods(deps, shared) {
           const relPath = rel ? `${rel}/${name}` : name;
           const st = fs.lstatSync(full);
           if (st.isDirectory()) {
-            if (depth >= 8) throw new Error(`${relPath} is nested deeper than 8 levels under ${dir}`);
+            if (depth >= 8) throw Object.assign(new Error(`${relPath} is nested deeper than 8 levels under ${dir}`), { hand: true });
             walk(full, relPath, depth + 1);
             continue;
           }
           if (!st.isFile() || (!rel && ARTIFACT_LOOP_FILE_RE.test(name))) continue;
-          if (out.length >= ARTIFACT_MAX_FILES) throw new Error(`more than ${ARTIFACT_MAX_FILES} files under ${dir}`);
+          if (out.length >= ARTIFACT_MAX_FILES) throw Object.assign(new Error(`more than ${ARTIFACT_MAX_FILES} files under ${dir}`), { hand: true });
           const bytes = fs.readFileSync(full);
           out.push({ path: relPath, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') });
         }
@@ -6409,7 +6409,7 @@ function createTicketMethods(deps, shared) {
       }
       let files;
       try { files = this._artifactFiles(dir); } catch (e) {
-        return { ok: false, recovery: 'infra', error: `the artifact set under ${dir} could not be read: ${e.message}`,
+        return { ok: false, recovery: e.hand ? 'hand' : 'infra', error: `the artifact set under ${dir} could not be read: ${e.message}`,
           tried: 'walked the artifact dir; no reviewer spawned' };
       }
       if (!files.length) {
@@ -6440,7 +6440,10 @@ function createTicketMethods(deps, shared) {
       const a = ticket.artifact;
       if (!a || !a.dir) return null;
       const read = (round) => {
-        try { return JSON.parse(fs.readFileSync(path.join(a.dir, `.artifact-r${round}.json`), 'utf8')).files || []; } catch { return null; }
+        try {
+          const snap = JSON.parse(fs.readFileSync(path.join(a.dir, `.artifact-r${round}.json`), 'utf8'));
+          return snap && snap.ticket === ticket.id ? (snap.files || []) : null;
+        } catch { return null; }
       };
       const files = read(a.round) || [];
       let changed;
