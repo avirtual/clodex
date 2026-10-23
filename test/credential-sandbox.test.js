@@ -64,6 +64,6 @@ test('setupClaudeHook hands mcpSecretNames to the sandbox only for a protected s
 test('session-manager derives mcpSecretNames from the applied selection and passes it to setupClaudeHook', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf8');
   assert.ok(src.includes('mcpLib.filter((r) => mcpSel.applied.names.includes(r.name)).flatMap((r) => secretRefs(r.entry))'));
-  assert.ok(/setupClaudeHook\([^;]*Array\.isArray\(protectCredentials\) \? protectCredentials : null, mcpSecretNames\);/.test(src));
+  assert.ok(/setupClaudeHook\([^;]*Array\.isArray\(protectCredentials\) \? protectCredentials : null, mcpSecretNames, mcpSel \? mcpSel\.applied\.denyRules : \[\]\);/.test(src));
   assert.ok(src.indexOf('const mcpSecretNames') < src.indexOf('setupClaudeHook(name,'));
 });

@@ -204,14 +204,21 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     if (type === 'muse') return 'Muse: selection not applied on this CLI yet';
     return '';
   }
-  function mcpRowNote(server, mcp) {
+  function mcpDeniedNote(server, mcp, name) {
+    const denied = mcp.applied && mcp.applied.denied && Array.isArray(mcp.applied.denied[server]) ? mcp.applied.denied[server].length : 0;
+    if (!denied) return '';
+    const off = sessionTypeOf(name) !== 'claude' ? ' (deny list not enforced on this CLI)'
+      : (mcp.applied.denyUnenforced ? ' (not enforced: the seat\'s own --settings)' : '');
+    return ` · ${denied} tool${denied === 1 ? '' : 's'} denied${off}`;
+  }
+  function mcpRowNote(server, mcp, name = null) {
     if (!mcp) return '';
     if (server === 'clodex') return 'built-in';
     if ((mcp.leaks || []).includes(server)) {
       return '⚠ not in this seat\'s selection — reached the CLI outside Clodex (own --mcp-config in Extra args, '
         + 'a CLI plugin, or a CLI build that ignores --strict-mcp-config)';
     }
-    if ((mcp.selected || []).includes(server)) return 'library · selected';
+    if ((mcp.selected || []).includes(server)) return `library · selected${mcpDeniedNote(server, mcp, name)}`;
     return '';
   }
   // The MCP block renders NOTHING AT ALL when there are no MCP tools — not an
@@ -250,7 +257,7 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
         : (g.usedTotal > 0
           ? ` · ${g.usedTotal}×`
           : (conclusive ? ' · <b>unused</b>' : ' · idle'));
-      const note = mcpRowNote(g.server, mcp);
+      const note = mcpRowNote(g.server, mcp, name);
       return `<div class="ctx-row${(conclusive && g.usedTotal === 0) ? ' ctx-dead' : ''}">` +
         `<div class="ctx-row-top"><span class="ctx-cat">${esc(g.server)}</span>` +
         `<span class="ctx-nums">~${fmtTokens(g.estTokens)} · ${g.toolCount} tool${g.toolCount === 1 ? '' : 's'}${usage}</span>` +

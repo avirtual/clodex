@@ -213,6 +213,56 @@ test('MCP editor: an http form with every platform ticked omits platforms', asyn
   } finally { r.restore(); }
 });
 
+test('MCP editor: the deny-tools textarea saves an array from lines or commas, and blank leaves the key absent', async () => {
+  const r = await mcpEditorRig();
+  try {
+    r.byId('mcp-name').value = 'atlassian';
+    r.byId('mcp-type').value = 'http';
+    r.byId('mcp-url').value = 'https://mcp.atlassian.com/v2/mcp';
+    r.byId('mcp-deny-tools').value = 'createJiraIssue, editJiraIssue\n\n transitionJiraIssue \n';
+    await r.byId('mcp-save').fire('click');
+    await flush();
+    r.byId('mcp-name').value = 'docs';
+    r.byId('mcp-url').value = 'https://docs/mcp';
+    r.byId('mcp-deny-tools').value = ' \n , ';
+    await r.byId('mcp-save').fire('click');
+    await flush();
+    assert.deepStrictEqual(r.saved, [
+      ['atlassian', { type: 'http', url: 'https://mcp.atlassian.com/v2/mcp', denyTools: ['createJiraIssue', 'editJiraIssue', 'transitionJiraIssue'] }],
+      ['docs', { type: 'http', url: 'https://docs/mcp' }],
+    ]);
+  } finally { r.restore(); }
+});
+
+test('MCP editor: an entry opened with denyTools fills the textarea, and clearing it drops the key on save; the row says read-only', async () => {
+  const saved = [];
+  const r = await rig({
+    saveMcpServer: async (n, entry) => { saved.push([n, entry]); return { ok: true }; },
+    getMcpServer: async () => JSON.stringify({ type: 'http', url: 'https://a/mcp', denyTools: ['createJiraIssue', 'editJiraIssue'] }),
+    listMcpServers: async () => [{ name: 'atlassian', type: 'http', entry: { type: 'http', url: 'https://a/mcp', denyTools: ['createJiraIssue', 'editJiraIssue'] }, secrets: [] }],
+  });
+  try {
+    const plain = global.document.createElement;
+    global.document.createElement = () => {
+      const x = plain();
+      let t = '';
+      Object.defineProperty(x, 'textContent', { get: () => t, set(v) { t = String(v); x.innerHTML = t; } });
+      return x;
+    };
+    await r.opens.mcp('atlassian');
+    await flush();
+    assert.strictEqual(r.byId('mcp-deny-tools').value, 'createJiraIssue\neditJiraIssue');
+    const listed = r.byId('mcp-list').children;
+    assert.strictEqual(listed.length, 1, 'ENTER: the library row rendered');
+    assert.match(listed[0].innerHTML, /https:\/\/a\/mcp · read-only: 2 tools denied<\/div>/);
+    for (const p of ['claude', 'codex', 'muse']) r.byId(`mcp-platform-${p}`).checked = true;
+    r.byId('mcp-deny-tools').value = '';
+    await r.byId('mcp-save').fire('click');
+    await flush();
+    assert.deepStrictEqual(saved, [['atlassian', { type: 'http', url: 'https://a/mcp' }]]);
+  } finally { r.restore(); }
+});
+
 test('MCP editor: a validation error from main shows inline, not as an alert, and the editor stays open', async () => {
   let closed = 0;
   const r = await mcpEditorRig({
