@@ -13,7 +13,7 @@ blocks a release.
 
 ## Unreleased
 
-- MCP servers are now a Clodex library: a seat loads only the `~/.clodex/library/mcp` entries you select for it, every Claude seat runs `--strict-mcp-config`, and a one-time notice names servers from your Claude config that need importing. `claude_design` is no longer loaded into managed seats (the 'Disable claude_design MCP' preference is retired). Credential-protected seats cannot read any seat's resolved MCP file. Whether servers bundled in CLI plugins are excluded is not yet verified.
+- MCP servers are now a Clodex library: a seat loads only the `~/.clodex/library/mcp` entries you select for it, every Claude seat runs `--strict-mcp-config`, and a notice at each spawn names servers from your Claude config that need importing. `claude_design` is no longer loaded into managed seats (the 'Disable claude_design MCP' preference is retired). Credential-protected seats cannot read any seat's resolved MCP file. Whether servers bundled in CLI plugins are excluded is not yet verified.
 
 ## 5.134.0 — 2026-10-23
 

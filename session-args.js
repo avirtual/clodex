@@ -88,9 +88,6 @@ function resolveSessionArgsPatch(patch = {}, prev = null) {
 // Exec grants are a LOCAL-ONLY capability — they must never cross the peer wire
 // in either direction (a viewer editing a box session can't read the box's grants
 // nor set them; grants ride operator-authored spawn templates on the owning box).
-// This returns a shallow clone with `execCommands` removed, used to sanitize BOTH
-// the readSessionArgs result the box hands out AND the patch a peer POSTs back
-// (belt and suspenders — the renderer already hides the section on a peer row).
 // A nullish input passes through unchanged.
 function withoutExecGrants(obj) {
   if (!obj || typeof obj !== 'object') return obj;
@@ -98,9 +95,7 @@ function withoutExecGrants(obj) {
   return rest;
 }
 
-// Drop EVERY local-only capability before it crosses the peer wire: exec grants
-// (see above) AND per-session env (T46b — values may be credentials and session
-// env has no secret masking). Applied by remote-wiring in BOTH directions
+// Drop EVERY local-only capability before it crosses the peer wire. Applied by remote-wiring in BOTH directions
 // (readSessionArgs result outbound, peer patch inbound), so a viewer can neither
 // read nor set the box's env. This is a NAMED barrier on purpose: the outbound
 // strip is the only thing between a peer viewer and credential values, so a

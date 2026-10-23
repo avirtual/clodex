@@ -131,6 +131,7 @@ const { CTRLU_SETTLE_MS } = require('./inject-queue');
 const { VOICE_MODES, voiceModeOf } = require('./voice-settings');
 const { fmtAge } = require('./memory-store');
 const { mcpArgvPlan, claudeMcpServers, secretRefs, discoverMcpSources } = require('./mcp-plan');
+const MCP_AMBIENT_ENV = new Set(['HOME', 'PATH', 'USER', 'SHELL', 'TMPDIR', 'LOGNAME', 'PWD']);
 const { pasteModeSignal, PROXY_AGENT_PREFIX, PASTE_START, PASTE_END, stampServedAge, fmtQuotaReset } = require('./proxy-util');
 const QUOTA_WINDOW_LONG = { '5h': '5-hour window', '7d': 'weekly window (all models)', '7d_oi': 'weekly window (Fable)', overage: 'overage window' };
 const {
@@ -1726,6 +1727,7 @@ function createSessionManager(deps) {
             : null;
           const mcpSecretNames = mcpSel
             ? [...new Set(mcpLib.filter((r) => mcpSel.applied.names.includes(r.name)).flatMap((r) => secretRefs(r.entry)))]
+              .filter((n) => !MCP_AMBIENT_ENV.has(n))
             : [];
           mcpRecord = { mcpUnmanaged: plan.unmanaged, mcpApplied: mcpSel ? mcpSel.applied : null };
           // A user-supplied --settings in extraArgs replaces the whole hooks block, so ipcdelta.sh and every other drain is absent
@@ -1753,6 +1755,9 @@ function createSessionManager(deps) {
           if (plan.writeConfig) {
             writeMcpConfig(name, mcpSel.servers);
             warnings.push(...mcpSel.warnings);
+            for (const w of mcpSel.warnings) this._broadcast('ipc-message', { type: 'system', from: name, to: name, body: w });
+          } else {
+            try { fs.unlinkSync(pathFor(REGISTRY_DIR, name, 'mcpConfig')); } catch {}
           }
           writeMcpCatalog(name, subagentCatalogFor({
             intents: Array.isArray(intents) ? intents.map(String) : undefined,
@@ -6583,11 +6588,16 @@ function createSessionManager(deps) {
     _mcpMigrationNotice(cwd, env, library) {
       if (typeof getMcpLibrary !== 'function' || !getMcpLibrary()) return null;
       const have = new Set((Array.isArray(library) ? library : []).map((r) => r.name));
-      let found;
-      try {
-        found = discoverMcpSources({ home: os.homedir(), cwd: cwd || null, claudeConfigDir: (env && env.CLAUDE_CONFIG_DIR) || null });
-      } catch { return null; }
-      const names = [...new Set(found.map((f) => f.name))].filter((n) => !have.has(n) && n !== 'clodex').sort();
+      const where = { home: os.homedir(), cwd: cwd || null, claudeConfigDir: (env && env.CLAUDE_CONFIG_DIR) || null };
+      const stamp = (f) => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } };
+      const key = JSON.stringify([where, stamp(path.join(where.claudeConfigDir || where.home, '.claude.json')),
+        where.cwd ? stamp(path.join(where.cwd, '.mcp.json')) : 0]);
+      if (!this._mcpDiscoverMemo || this._mcpDiscoverMemo.key !== key) {
+        let found;
+        try { found = discoverMcpSources(where); } catch { return null; }
+        this._mcpDiscoverMemo = { key, names: [...new Set(found.map((f) => f.name))] };
+      }
+      const names = this._mcpDiscoverMemo.names.filter((n) => !have.has(n) && n !== 'clodex').sort();
       if (!names.length) return null;
       return `MCP: ${names.length} server(s) in your Claude config are no longer loaded into seats: ${names.join(', ')} — import them in Library ▸ MCP Servers (claude_design is not loaded into managed seats either)`;
     }

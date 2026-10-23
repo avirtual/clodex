@@ -768,8 +768,9 @@ userData, derived by
 `grep -n "path.join(userDataPath, '" stores.js`: sessions, workspaces,
 agent-defaults, ui-settings, reminders, notifications, env-scopes, plus
 migration-only prompts.json and templates.json. Three markdown libraries
-under `~/.clodex/` (prompt/agent/skill libraries — `execLibrary` is the
-fourth library object but is JSON, not markdown).
+under `~/.clodex/` (prompt/agent/skill libraries — `execLibrary` and `mcpLibrary`
+(`library/mcp/<name>.json`, 0600) are the fourth and fifth library objects but
+are JSON, not markdown).
 
 sessions.json entries carry the full respawn recipe (type/cwd/extraArgs/
 sessionId/workspaceId/prompt refs/proxy tri-state/agents/deny/tools/skills)

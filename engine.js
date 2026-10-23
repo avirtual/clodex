@@ -1572,6 +1572,7 @@ function readSessionArgs(name) {
     intents: Array.isArray(entry.intents) ? entry.intents : null, // gate allowlist (null = all-enabled)
     plugins: Array.isArray(entry.plugins) ? entry.plugins : null,
     execCommands: Array.isArray(entry.execCommands) ? entry.execCommands : [],
+    mcpServers: Array.isArray(entry.mcpServers) ? entry.mcpServers : [],
     env: (entry.env && typeof entry.env === 'object') ? entry.env : {},
     agentCatalog: agentLibrary.listFor(sessionScopeCtx(name)),
     team: manager.teamNameOf(name, entry.cwd),

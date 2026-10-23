@@ -84,7 +84,7 @@ function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = o
   const kindOf = new Map(dataEntries.map((e) => [e.p, e.dir]));
   kindOf.set(t0[0], false);
   kindOf.set(t0[2], true);
-  if (t0[3]) kindOf.set(t0[3], false);
+  kindOf.set(path.join(home, '.clodex', 'cli', 'contexts.json'), false);
   kindOf.set(APP_BUNDLE, true);
 
   const deny = [];
