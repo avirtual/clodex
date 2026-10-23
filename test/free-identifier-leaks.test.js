@@ -349,6 +349,7 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/lib/composer-slash.js',
   'renderer/lib/pty-composer.js',
   'renderer/lib/clipboard-images.js',
+  'renderer/lib/attach-files.js',
   // The Preferences ▸ Env row builder (t676). It takes `document` as a parameter
   // precisely so the row's classes and titles are assertable without a browser;
   // reaching for renderer.js's ambient `document` instead would put it straight

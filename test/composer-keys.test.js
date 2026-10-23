@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { composerReadlineEdit, composerHeightFor } = require('../renderer/lib/composer-keys');
+const { composerReadlineEdit, composerHeightFor, isAttachKey } = require('../renderer/lib/composer-keys');
 
 const ROWS = [
   { name: 'u mid-line deletes before the cursor', key: 'u', value: 'hello world', start: 5, end: 5, want: { value: ' world', cursor: 0 } },
@@ -70,4 +70,29 @@ test('global textarea focus-visible ring excludes the stream composer', () => {
   const css = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
   assert.ok(css.includes('textarea:not(.xterm-helper-textarea):not(.seat-composer):focus-visible'));
   assert.ok(!css.includes('textarea:not(.xterm-helper-textarea):focus-visible'));
+});
+
+const ATTACH_ROWS = [
+  { name: 'Cmd+Shift+U', ev: { key: 'U', metaKey: true, shiftKey: true }, want: true },
+  { name: 'Ctrl+Shift+U', ev: { key: 'U', ctrlKey: true, shiftKey: true }, want: true },
+  { name: 'Ctrl+Shift+u lowercase', ev: { key: 'u', ctrlKey: true, shiftKey: true }, want: true },
+  { name: 'Ctrl+U without shift stays the readline kill', ev: { key: 'u', ctrlKey: true }, want: false },
+  { name: 'Shift+U alone is typing', ev: { key: 'U', shiftKey: true }, want: false },
+  { name: 'Cmd+Alt+Shift+U', ev: { key: 'U', metaKey: true, shiftKey: true, altKey: true }, want: false },
+  { name: 'Cmd+Shift+K', ev: { key: 'K', metaKey: true, shiftKey: true }, want: false },
+];
+
+for (const r of ATTACH_ROWS) {
+  test(`isAttachKey: ${r.name} -> ${r.want}`, () => {
+    assert.strictEqual(isAttachKey({ ctrlKey: false, metaKey: false, shiftKey: false, altKey: false, ...r.ev }), r.want);
+  });
+}
+
+test('attachComposer checks the attach key before the readline edit, so Ctrl+Shift+U never kills the line', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const body = src.slice(src.indexOf('function attachComposer('), src.indexOf('function createStreamSeatPane('));
+  const attachAt = body.indexOf('if (onAttach && !e.isComposing && isAttachKey(e)) {');
+  assert.ok(attachAt > 0, 'attachComposer routes isAttachKey to onAttach');
+  assert.ok(attachAt < body.indexOf('composerReadlineEdit({'));
+  assert.strictEqual((src.match(/onAttach: \(\) => (?:streamPicker\.open\(\)|\{ if \(ptyPicker\) ptyPicker\.open\(\); \})/gu) || []).length, 2, 'both composers pass onAttach');
 });

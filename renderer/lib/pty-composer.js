@@ -27,9 +27,38 @@ function expandImageChips(text, paths) {
   });
 }
 
+const STRIPPED_PASTE_NOTICE = 'Your browser did not hand over the clipboard image — use the paperclip to attach it.';
+
+function pasteStripped(items, web) {
+  return web && Array.from(items || []).length === 0;
+}
+
+async function attachImages({ images, upload, toast, nextImage, append, attached, drop }) {
+  if (!images.length) {
+    toast('No readable image.');
+    return;
+  }
+  const added = images.map((image) => {
+    const n = nextImage();
+    return { n, chip: imageChip(n), path: null, image, pending: true };
+  });
+  append(added);
+  const r = await Promise.resolve().then(() => upload(images)).catch((err) => ({ ok: false, error: String((err && err.message) || err) }));
+  if (!r || !r.ok) {
+    drop(added);
+    toast(String((r && r.error) || 'Image upload failed.'));
+    return;
+  }
+  attached(added.map((a, i) => ({ ...a, path: (r.paths && r.paths[i]) || null, pending: false })));
+}
+
 function ptyImagePasteHandler({ isWeb, readImages, upload, toast, nextImage, append, attached, drop, writePty }) {
   return async (e) => {
     const items = e.clipboardData && e.clipboardData.items;
+    if (pasteStripped(items, isWeb())) {
+      toast(STRIPPED_PASTE_NOTICE);
+      return;
+    }
     if (pasteKind(items) !== 'image') return;
     e.preventDefault();
     const web = isWeb();
@@ -45,18 +74,7 @@ function ptyImagePasteHandler({ isWeb, readImages, upload, toast, nextImage, app
       toast('No readable image on the clipboard.');
       return;
     }
-    const added = images.map((image) => {
-      const n = nextImage();
-      return { n, chip: imageChip(n), path: null, image, pending: true };
-    });
-    append(added);
-    const r = await Promise.resolve().then(() => upload(images)).catch((err) => ({ ok: false, error: String((err && err.message) || err) }));
-    if (!r || !r.ok) {
-      drop(added);
-      toast(String((r && r.error) || 'Image upload failed.'));
-      return;
-    }
-    attached(added.map((a, i) => ({ ...a, path: (r.paths && r.paths[i]) || null, pending: false })));
+    await attachImages({ images, upload, toast, nextImage, append, attached, drop });
   };
 }
 
@@ -90,4 +108,4 @@ function renderImageStrip(el, items, onRemove) {
   }
 }
 
-module.exports = { ptyComposerWrites, pasteKind, imageChip, expandImageChips, ptyImagePasteHandler, removeImageChip, chippedImages, renderImageStrip };
+module.exports = { ptyComposerWrites, pasteKind, imageChip, expandImageChips, ptyImagePasteHandler, attachImages, pasteStripped, STRIPPED_PASTE_NOTICE, removeImageChip, chippedImages, renderImageStrip };
