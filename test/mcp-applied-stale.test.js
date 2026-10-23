@@ -53,9 +53,9 @@ test('mcp:appliedStale: a selection saved without a restart, or a server skipped
   const lib = { jira: JIRA, docs: DOCS };
   const applied = appliedFor(lib, ['docs']);
   assert.deepStrictEqual(applied.names, ['docs'], 'ENTER: only docs was applied');
-  const ask = door({ name: 's', mcpServers: ['jira', 'docs'], mcpApplied: applied }, lib);
+  const ask = door({ name: 's', type: 'claude', mcpServers: ['jira', 'docs'], mcpApplied: applied }, lib);
   assert.strictEqual(ask('s').stale, true);
-  const none = door({ name: 'n', mcpServers: ['jira'] }, lib);
+  const none = door({ name: 'n', type: 'claude', mcpServers: ['jira'] }, lib);
   assert.strictEqual(none('n').stale, true, 'selected with nothing applied');
 });
 
@@ -76,4 +76,13 @@ test('mcp:appliedStale: an array of names answers each seat from one library rea
     gone: { ok: false, error: 'Session not found' },
   });
   assert.strictEqual(reads, 1);
+});
+
+test('mcp:appliedStale: a selection Clodex never applies — Codex, unmanaged Claude, a server not on claude — is not stale', () => {
+  const lib = { jira: JIRA, codexOnly: { ...DOCS, platforms: ['codex'] } };
+  assert.strictEqual(door({ name: 'c', type: 'codex', mcpServers: ['jira'] }, lib)('c').stale, false);
+  assert.strictEqual(door({ name: 'u', type: 'claude', mcpUnmanaged: true, mcpServers: ['jira'] }, lib)('u').stale, false);
+  const applied = appliedFor(lib, ['jira', 'codexOnly']);
+  assert.deepStrictEqual(applied.names, ['jira'], 'ENTER: the codex-only server was skipped at spawn');
+  assert.strictEqual(door({ name: 'p', type: 'claude', mcpServers: ['jira', 'codexOnly'], mcpApplied: applied }, lib)('p').stale, false);
 });

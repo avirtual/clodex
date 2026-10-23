@@ -777,7 +777,12 @@ function registerIpcHandlers(deps) {
     const servers = Array.isArray(entry.mcpServers) ? entry.mcpServers : [];
     const applied = entry.mcpApplied && Array.isArray(entry.mcpApplied.names) ? entry.mcpApplied : null;
     const appliedNames = applied ? applied.names : [];
-    let stale = JSON.stringify([...servers].sort()) !== JSON.stringify([...appliedNames].sort());
+    const loadable = servers.filter((n) => {
+      const e = lib.get(n);
+      return !(e && Array.isArray(e.platforms) && !e.platforms.includes('claude'));
+    });
+    let stale = entry.type === 'claude' && entry.mcpUnmanaged !== true
+      && JSON.stringify([...loadable].sort()) !== JSON.stringify([...appliedNames].sort());
     if (!stale && applied) {
       const shapes = {};
       for (const n of applied.names) {
