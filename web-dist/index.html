@@ -5316,6 +5316,7 @@ input.env-locked {
 #skills-drawer,
 #templates-drawer,
 #exec-drawer,
+#mcp-drawer,
 #inbox-drawer {
   position: fixed;
   top: 0;
@@ -5340,6 +5341,7 @@ input.env-locked {
 #skills-drawer.hidden,
 #templates-drawer.hidden,
 #exec-drawer.hidden,
+#mcp-drawer.hidden,
 #inbox-drawer.hidden {
   display: none;
 }
@@ -5360,6 +5362,7 @@ input.env-locked {
 #skills-header,
 #templates-header,
 #exec-header,
+#mcp-header,
 #inbox-header {
   display: flex;
   align-items: center;
@@ -5370,7 +5373,8 @@ input.env-locked {
 #agents-new,
 #skills-new,
 #templates-new,
-#exec-new {
+#exec-new,
+#mcp-new {
   background: var(--accent);
   color: white;
   border: none;
@@ -5383,13 +5387,15 @@ input.env-locked {
 #agents-new:hover,
 #skills-new:hover,
 #templates-new:hover,
-#exec-new:hover {
+#exec-new:hover,
+#mcp-new:hover {
   opacity: 0.85;
 }
 #agents-close,
 #skills-close,
 #templates-close,
 #exec-close,
+#mcp-close,
 #inbox-close {
   background: transparent;
   border: none;
@@ -5405,6 +5411,7 @@ input.env-locked {
 #skills-close:hover,
 #templates-close:hover,
 #exec-close:hover,
+#mcp-close:hover,
 #inbox-close:hover {
   background: var(--sidebar-hover);
   color: var(--text);
@@ -5413,6 +5420,7 @@ input.env-locked {
 #skills-list,
 #templates-list,
 #exec-list,
+#mcp-list,
 #inbox-list {
   flex: 1;
   overflow-y: auto;
@@ -5614,7 +5622,8 @@ input.env-locked {
 }
 #agent-editor,
 #skill-editor,
-#exec-editor {
+#exec-editor,
+#mcp-editor {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.5);
@@ -5625,7 +5634,8 @@ input.env-locked {
 }
 #agent-editor.hidden,
 #skill-editor.hidden,
-#exec-editor.hidden {
+#exec-editor.hidden,
+#mcp-editor.hidden {
   display: none;
 }
 .agent-checklist {
@@ -7322,6 +7332,7 @@ textarea:not(.xterm-helper-textarea):not(.seat-composer):focus-visible,
   height: 8px;
 }
 #exec-list::-webkit-scrollbar,
+#mcp-list::-webkit-scrollbar,
 #prompts-list::-webkit-scrollbar,
 .activity-body::-webkit-scrollbar,
 .agent-checklist::-webkit-scrollbar,
@@ -7347,6 +7358,7 @@ textarea:not(.xterm-helper-textarea):not(.seat-composer):focus-visible,
   background-clip: padding-box;
 }
 #exec-list::-webkit-scrollbar-thumb,
+#mcp-list::-webkit-scrollbar-thumb,
 #prompts-list::-webkit-scrollbar-thumb,
 .activity-body::-webkit-scrollbar-thumb,
 .agent-checklist::-webkit-scrollbar-thumb,
@@ -8204,6 +8216,7 @@ body.web-frontend #sidebar-header {
 #agent-editor,
 #skill-editor,
 #exec-editor,
+#mcp-editor,
 .prompt-modal-overlay,
 .plugin-overlay {
   background: var(--scrim);
@@ -8499,6 +8512,7 @@ body.web-frontend #sidebar-header {
 #skills-new,
 #templates-new,
 #exec-new,
+#mcp-new,
 #prompts-new {
   height: 24px;
   padding: 0 10px;
@@ -8569,6 +8583,7 @@ body.web-frontend #sidebar-header {
 #skills-drawer,
 #templates-drawer,
 #exec-drawer,
+#mcp-drawer,
 #inbox-drawer,
 #prompts-drawer {
   background: var(--surface-raised);
@@ -8579,6 +8594,7 @@ body.web-frontend #sidebar-header {
 #skills-header,
 #templates-header,
 #exec-header,
+#mcp-header,
 #inbox-header,
 #prompts-header {
   padding: 40px var(--sp-4) 10px;
@@ -8593,6 +8609,7 @@ body.web-frontend #sidebar-header {
 #skills-close,
 #templates-close,
 #exec-close,
+#mcp-close,
 #inbox-close,
 #prompts-close {
   width: 24px;
@@ -8627,6 +8644,7 @@ body.web-frontend #sidebar-header {
 #skills-list,
 #templates-list,
 #exec-list,
+#mcp-list,
 #inbox-list {
   padding: var(--sp-2);
 }
@@ -10283,6 +10301,85 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
     </div>
   </div>
 
+  <div id="mcp-drawer" class="hidden">
+    <div id="mcp-header">
+      <span class="prompts-title">MCP Servers</span>
+      <button id="mcp-new" title="New MCP server" type="button">+ New</button>
+      <button id="mcp-close" title="Close" type="button">×</button>
+    </div>
+    <div id="mcp-discover" class="mcp-discover">
+      <div class="popover-subhead">Discover</div>
+      <div class="prefs-row">
+        <input type="text" id="mcp-discover-cwd" placeholder="Project folder (optional)" spellcheck="false">
+        <button id="mcp-discover-scan" class="secondary" type="button">Scan</button>
+      </div>
+      <div id="mcp-discover-list"></div>
+      <span class="hint-text">Servers your Claude config already knows (<code>~/.claude.json</code> and the folder's <code>.mcp.json</code>). Import copies one into the library with any secret written as <code>${NAME}</code>; set the value in Preferences ▸ Environment.</span>
+    </div>
+    <div id="mcp-list"></div>
+    <div id="mcp-empty" class="hint">
+      No MCP servers yet. Click <strong>+ New</strong>, or import one above.<br><br>
+      Stored as JSON in <code>~/.clodex/library/mcp/</code>. A seat loads only the servers you pick for it in the New / Edit Session dialog; the built-in <code>clodex</code> server is always on.
+    </div>
+  </div>
+
+  <div id="mcp-editor" class="hidden">
+    <div class="prompt-editor-box">
+      <div class="dialog-head">
+        <h3 id="mcp-editor-title">New MCP Server</h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
+      <label>Name
+        <input type="text" id="mcp-name" placeholder="e.g. jira" spellcheck="false">
+      </label>
+      <label>Type
+        <select id="mcp-type">
+          <option value="stdio">stdio</option>
+          <option value="http">http</option>
+          <option value="sse">sse</option>
+        </select>
+      </label>
+      <div id="mcp-stdio-fields">
+        <label>Command
+          <input type="text" id="mcp-command" placeholder="e.g. npx" spellcheck="false">
+        </label>
+        <label>Arguments (one per line)
+          <textarea id="mcp-args" rows="3" spellcheck="false"></textarea>
+        </label>
+        <label>Environment (KEY=value per line)
+          <textarea id="mcp-env" rows="3" spellcheck="false"></textarea>
+        </label>
+      </div>
+      <div id="mcp-http-fields">
+        <label>URL
+          <input type="text" id="mcp-url" placeholder="https://…" spellcheck="false">
+        </label>
+        <label>Headers (Name: value per line)
+          <textarea id="mcp-headers" rows="3" spellcheck="false"></textarea>
+        </label>
+      </div>
+      <span class="hint-text">Write secrets as ${NAME}; set the value in Preferences ▸ Environment (mark it Secret)</span>
+      <label>Description
+        <input type="text" id="mcp-description" spellcheck="false">
+      </label>
+      <label>Tags (comma-separated)
+        <input type="text" id="mcp-tags" spellcheck="false">
+      </label>
+      <div class="prefs-row" id="mcp-platforms">
+        <span>Platforms</span>
+        <label class="prefs-check"><input type="checkbox" id="mcp-platform-claude" value="claude" checked><span>claude</span></label>
+        <label class="prefs-check"><input type="checkbox" id="mcp-platform-codex" value="codex" checked><span>codex</span></label>
+        <label class="prefs-check"><input type="checkbox" id="mcp-platform-muse" value="muse" checked><span>muse</span></label>
+      </div>
+      <div id="mcp-error" class="hint-text mcp-error"></div>
+      <div class="dialog-actions">
+        <button id="mcp-delete" class="secondary" type="button" style="margin-right: auto;">Delete</button>
+        <button id="mcp-cancel" class="secondary" type="button">Cancel</button>
+        <button id="mcp-save" type="button">Save</button>
+      </div>
+    </div>
+  </div>
+
   <div id="inbox-drawer" class="hidden">
     <div id="inbox-header">
       <span class="prompts-title">Requests for you</span>
@@ -10697,6 +10794,10 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
             <div id="input-exec-list" class="agent-checklist"></div>
             <span class="hint-text">Grant this seat the registered commands it may run via <code>[agent:exec &lt;name&gt;]</code>. Checked = granted. Commands are authored in File ▸ Exec Commands…; a grant only lets the seat run a fixed command with a schema-validated payload — it never lets the agent register or change one.</span>
           </label>
+          <label id="mcp-row">MCP servers
+            <div id="input-mcp-list" class="agent-checklist"></div>
+            <span class="hint-text">Which <strong>Library ▸ MCP Servers</strong> entries this seat loads; the built-in <code>clodex</code> server is always on and not listed. Applies at spawn; changing it on a running seat needs a restart.</span>
+          </label>
           <label id="plugins-row">Plugins
             <div id="input-plugin-list" class="agent-checklist"></div>
             <span class="hint-text">Which plugins this seat HAS. An unticked plugin contributes nothing to it — no intents below, no grammar in its prompt, no turn feed. New seats start with the plugins shipped with Clodex ticked; one you installed yourself is off until you tick it here.</span>
@@ -10939,6 +11040,13 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           <span class="hint-text">Grant this seat the registered commands it may run via <code>[agent:exec &lt;name&gt;]</code>. Checked = granted. The grant is checked fresh on every invocation, so a change applies to the <em>next</em> exec immediately — no restart needed (restarting only refreshes the seat's prompt). Grants only bite when the <code>exec</code> intent is also enabled (see Intents). Commands are authored in File ▸ Exec Commands…; a grant only lets the seat run a fixed command with a schema-validated payload — it never lets the agent register or change one. Local sessions only.</span>
         </label>
       </details>
+      <details id="args-mcp-section" class="dialog-section">
+        <summary>MCP servers</summary>
+        <label id="args-mcp-row">
+          <div id="args-mcp-list" class="agent-checklist"></div>
+          <span class="hint-text">Which <strong>Library ▸ MCP Servers</strong> entries this seat loads; the built-in <code>clodex</code> server is always on and not listed. The CLI reads its MCP set at start: restart to apply — tick "Restart session now" below. Local sessions only.</span>
+        </label>
+      </details>
       <details id="args-plugins-section" class="dialog-section">
         <summary>Plugins</summary>
         <label id="args-plugins-row">
@@ -11096,16 +11204,10 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
           <div id="prefs-agents-list" class="agent-checklist"></div>
         </label>
-        <h5>Claude MCP</h5>
-        <p class="hint-text">Claude Code auto-injects the built-in <code>claude_design</code> connector (~20 tools, ~4k tokens every turn) with no global opt-out. A routed session is usually handled by the proxy: the built-in wirescope strips <code>claude_design</code> by default and keeps your real MCPs. The fallback below is for the sessions it never sees — one you route nowhere, or one whose wire is unreachable at spawn. The fallback uses <code>--strict-mcp-config</code>, which is all-or-nothing: it disables <strong>every</strong> MCP server, including project/user ones. The IPC log says whenever it is used, and why. Leave it off unless your unrouted agents use no MCP.</p>
-        <label class="prefs-check">
-          <input type="checkbox" id="prefs-disable-design-mcp">
-          <span>Disable <code>claude_design</code> MCP</span>
-        </label>
       </details>
       <details class="prefs-group" data-group="env">
         <summary><h4>Environment variables</h4><span class="prefs-group-sub">Extra variables for every session this app spawns</span></summary>
-        <p class="hint-text">Extra environment variables merged into every wrapper session's process (claude, codex, and bash), on top of the machine environment. Precedence is machine &lt; <strong>Global</strong> &lt; <strong>This workspace</strong> &lt; per-session (set in the New Session dialog). Mark a value <strong>Secret</strong> to store it write-only — it's kept on disk with <code>0600</code> permissions and never shown again after you save (the row shows only that a value is set). <code>CLODEX_REMOTE_TOKEN</code> is reserved and can't be set here. Applied at spawn — restart a session to pick up changes.</p>
+        <p class="hint-text">Extra environment variables merged into every wrapper session's process (claude, codex, and bash), on top of the machine environment. Precedence is machine &lt; <strong>Global</strong> &lt; <strong>This workspace</strong> &lt; per-session (set in the New Session dialog). Mark a value <strong>Secret</strong> to store it write-only — it's kept on disk with <code>0600</code> permissions and never shown again after you save (the row shows only that a value is set). <code>CLODEX_REMOTE_TOKEN</code> is reserved and can't be set here. Applied at spawn — restart a session to pick up changes. MCP servers reference secrets as <code>${NAME}</code>; mark those values Secret here.</p>
         <div class="prefs-row" style="margin-top: 4px;">
           <span>Scope</span>
           <select id="prefs-env-scope" style="flex: none;">
@@ -11657,6 +11759,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "discoverMcpServers", kind: "invoke", channel: "mcp:discover" },
         { name: "importMcpServer", kind: "invoke", channel: "mcp:import" },
         { name: "mcpReadiness", kind: "invoke", channel: "mcp:readiness" },
+        { name: "mcpAppliedStale", kind: "invoke", channel: "mcp:appliedStale" },
         { name: "listNotifications", kind: "invoke", channel: "notifications:list" },
         { name: "pageNotifications", kind: "invoke", channel: "notifications:page" },
         { name: "markNotificationRead", kind: "invoke", channel: "notifications:markRead" },
@@ -11771,6 +11874,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "onRequestOpenAgentsDrawer", kind: "on", channel: "request-open-agents-drawer" },
         { name: "onRequestOpenSkillsDrawer", kind: "on", channel: "request-open-skills-drawer" },
         { name: "onRequestOpenExecDrawer", kind: "on", channel: "request-open-exec-drawer" },
+        { name: "onRequestOpenMcpDrawer", kind: "on", channel: "request-open-mcp-drawer" },
         { name: "onRequestOpenInboxDrawer", kind: "on", channel: "request-open-inbox-drawer" },
         { name: "onRequestOpenPromptsDrawer", kind: "on", channel: "request-open-prompts-drawer" },
         { name: "onRequestOpenTemplatesDrawer", kind: "on", channel: "request-open-templates-drawer" },
@@ -12875,6 +12979,18 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
                   pluginEntries: () => [],
                   newLabel: "New Exec Command\u2026",
                   manageLabel: "Manage Exec Commands\u2026",
+                  bundles
+                })
+              },
+              {
+                label: "MCP Servers",
+                submenu: async () => kindRows({
+                  channel: "request-open-mcp-drawer",
+                  library: (await read(api.listMcpServers)).map((m) => ({ label: trunc(m.name), run: () => emit("request-open-mcp-drawer", m.name) })),
+                  empty: "(no MCP servers in library)",
+                  pluginEntries: () => [],
+                  newLabel: "New MCP Server\u2026",
+                  manageLabel: "Manage MCP Servers\u2026",
                   bundles
                 })
               },
@@ -29222,7 +29338,8 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         "prompt-editor",
         "agent-editor",
         "skill-editor",
-        "exec-editor"
+        "exec-editor",
+        "mcp-editor"
       ];
       var MODAL_OVERLAY_CLASSES = [
         "prompt-modal-overlay",
@@ -29931,6 +30048,7 @@ ${String(body || "").trim()}
       var agentLibCache = [];
       var skillLibCache = [];
       var execLibCache = [];
+      var mcpLibCache = [];
       var intentCatalogCache = [];
       var pluginCatalogCache = [];
       var claudeToolsCache = [];
@@ -29955,6 +30073,9 @@ ${String(body || "").trim()}
       }
       function setExecLibCache(v) {
         execLibCache = v;
+      }
+      function setMcpLibCache(v) {
+        mcpLibCache = Array.isArray(v) ? v : [];
       }
       function setIntentCatalogCache(v) {
         intentCatalogCache = Array.isArray(v) ? v : [];
@@ -30164,6 +30285,38 @@ ${String(body || "").trim()}
         }
       }
       function collectExecChecklist(container) {
+        return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
+      }
+      function mcpBadges(row, cli, ready) {
+        const out = [];
+        const platforms = row.entry && Array.isArray(row.entry.platforms) ? row.entry.platforms : null;
+        if (cli && platforms && !platforms.includes(cli)) out.push(`not on ${cli}`);
+        if (ready && Array.isArray(ready.missing) && ready.missing.length) out.push(`needs ${ready.missing.join(", ")}`);
+        return out;
+      }
+      function renderMcpChecklist(container, enabledSet, { cli = null, readiness = {} } = {}) {
+        container.innerHTML = "";
+        const rows = mcpLibCache.filter((m) => m && m.name !== "clodex");
+        if (!rows.length) {
+          container.innerHTML = '<span class="hint-text">No MCP servers in library \u2014 add or import some via Library \u25B8 MCP Servers\u2026.</span>';
+          return;
+        }
+        for (const m of rows) {
+          const row = document.createElement("label");
+          row.className = "agent-check";
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.value = m.name;
+          cb.checked = enabledSet.has(m.name);
+          const txt = document.createElement("span");
+          const badges = mcpBadges(m, cli, readiness[m.name]);
+          txt.innerHTML = `<strong>${esc(m.name)}</strong>${m.description ? " \u2014 " + esc(m.description) : ""}` + badges.map((b) => ` <span class="auto-flag mcp-badge">${esc(b)}</span>`).join("");
+          row.appendChild(cb);
+          row.appendChild(txt);
+          container.appendChild(row);
+        }
+      }
+      function collectMcpChecklist(container) {
         return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
       }
       var LEGACY_INTENT_KEYS = { "notify-user": "shout" };
@@ -30393,6 +30546,8 @@ ${String(body || "").trim()}
         repaintBundleSections,
         renderExecChecklist,
         collectExecChecklist,
+        renderMcpChecklist,
+        collectMcpChecklist,
         renderIntentChecklist,
         collectIntentChecklist,
         intentRowChecked,
@@ -30416,6 +30571,7 @@ ${String(body || "").trim()}
         setAgentLibCache,
         setSkillLibCache,
         setExecLibCache,
+        setMcpLibCache,
         setIntentCatalogCache,
         setPluginCatalogCache,
         getPluginCatalogCache,
@@ -37760,7 +37916,7 @@ helper=${d.helperPath}`;
           }
         }
       }
-      function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCache, openTemplateEditor, showToast, bundleSectionsOf, refreshPluginCatalog }) {
+      function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCache, openTemplateEditor, showToast, bundleSectionsOf, refreshPluginCatalog, getActiveCwd, openEnvPreferences }) {
         const bundleGroups = (kind) => typeof bundleSectionsOf === "function" ? bundleSectionsOf(kind) : [];
         const revealBundle = (sec) => {
           if (!sec.dir || !window.api.fileReveal) return;
@@ -38429,9 +38585,277 @@ Opening it here and saving would overwrite the file with what this editor could 
         execNameInput.addEventListener("input", () => {
           execNameInput.style.borderColor = "";
         });
+        const MCP_NAME_RE = /^(?!.*__)[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
+        const MCP_PLATFORMS = ["claude", "codex", "muse"];
+        const mcpEl = (id) => document.getElementById(id);
+        const mcpDrawer = mcpEl("mcp-drawer");
+        const mcpListEl = mcpEl("mcp-list");
+        const mcpEmpty = mcpEl("mcp-empty");
+        const mcpEditor = mcpEl("mcp-editor");
+        const mcpEditorTitle = mcpEl("mcp-editor-title");
+        const mcpNameInput = mcpEl("mcp-name");
+        const mcpType = mcpEl("mcp-type");
+        const mcpStdioFields = mcpEl("mcp-stdio-fields");
+        const mcpHttpFields = mcpEl("mcp-http-fields");
+        const mcpCommand = mcpEl("mcp-command");
+        const mcpArgs = mcpEl("mcp-args");
+        const mcpEnv = mcpEl("mcp-env");
+        const mcpUrl = mcpEl("mcp-url");
+        const mcpHeaders = mcpEl("mcp-headers");
+        const mcpDescription = mcpEl("mcp-description");
+        const mcpTags = mcpEl("mcp-tags");
+        const mcpPlatformBoxes = MCP_PLATFORMS.map((p) => mcpEl(`mcp-platform-${p}`));
+        const mcpError = mcpEl("mcp-error");
+        const mcpSave = mcpEl("mcp-save");
+        const mcpCancel = mcpEl("mcp-cancel");
+        const mcpDelete = mcpEl("mcp-delete");
+        const mcpNew = mcpEl("mcp-new");
+        const mcpClose = mcpEl("mcp-close");
+        const mcpDiscoverCwd = mcpEl("mcp-discover-cwd");
+        const mcpDiscoverScan = mcpEl("mcp-discover-scan");
+        const mcpDiscoverList = mcpEl("mcp-discover-list");
+        let editingMcpName = null;
+        let editingMcpRest = {};
+        function mcpPreview(entry) {
+          const e = entry || {};
+          if (e.type === "http" || e.type === "sse") return e.url || "(no url)";
+          return [e.command, ...Array.isArray(e.args) ? e.args : []].filter(Boolean).join(" ") || "(no command)";
+        }
+        async function refreshMcpList() {
+          const items = await window.api.listMcpServers() || [];
+          mcpListEl.innerHTML = "";
+          if (!items.length) {
+            mcpEmpty.style.display = "";
+            return;
+          }
+          mcpEmpty.style.display = "none";
+          for (const m of items) {
+            const secrets = (m.secrets || []).length ? ` \xB7 needs ${m.secrets.join(", ")}` : "";
+            const el = document.createElement("div");
+            el.className = "prompt-item";
+            el.innerHTML = `
+        <div class="prompt-item-title">${esc(m.name)} <span class="auto-flag">${esc(m.type || "stdio")}</span></div>
+        <div class="prompt-item-preview">${esc(m.description || mcpPreview(m.entry))}${esc(secrets)}</div>
+        <div class="prompt-item-actions">
+          <button data-action="edit">Edit</button>
+        </div>
+      `;
+            el.querySelector('[data-action="edit"]').addEventListener("click", (e) => {
+              e.stopPropagation();
+              openMcpEditor(m);
+            });
+            el.addEventListener("click", () => openMcpEditor(m));
+            mcpListEl.appendChild(el);
+          }
+        }
+        function mcpSourceLabel(source) {
+          const [kind, ...rest] = String(source || "").split(" ");
+          const file = rest.join(" ");
+          if (kind === "claude:user") return `${file} \u2014 user`;
+          if (kind === "claude:local") return `${file} \u2014 project ${mcpDiscoverCwd.value.trim()}`;
+          return file || source;
+        }
+        async function refreshMcpDiscover() {
+          const cwd = mcpDiscoverCwd.value.trim() || null;
+          const found = await window.api.discoverMcpServers(cwd) || [];
+          mcpDiscoverList.innerHTML = "";
+          if (!found.length) {
+            mcpDiscoverList.innerHTML = '<span class="hint-text">No MCP servers found in your Claude config.</span>';
+            return;
+          }
+          const bySource = /* @__PURE__ */ new Map();
+          for (const c of found) {
+            if (!bySource.has(c.source)) bySource.set(c.source, []);
+            bySource.get(c.source).push(c);
+          }
+          for (const [source, rows] of bySource) {
+            const head = document.createElement("div");
+            head.className = "popover-subhead";
+            head.textContent = mcpSourceLabel(source);
+            mcpDiscoverList.appendChild(head);
+            for (const c of rows) mcpDiscoverList.appendChild(mcpCandidateRow(c));
+          }
+        }
+        function mcpCandidateRow(c) {
+          const el = document.createElement("div");
+          el.className = "prompt-item mcp-candidate";
+          const type = c.entry && c.entry.type || "stdio";
+          const needs = (c.secrets || []).length ? `<div class="prompt-item-preview">needs ${esc(c.secrets.map((n) => `\${${n}}`).join(", "))} \u2014 set them in <a href="#" data-action="prefs">Preferences \u25B8 Environment</a></div>` : "";
+          const action = c.inLibrary ? '<span class="auto-flag">in library</span>' : '<button data-action="import">Import</button>';
+          el.innerHTML = `
+      <div class="prompt-item-title">${esc(c.name)} <span class="auto-flag">${esc(type)}</span></div>
+      <div class="prompt-item-preview">${esc(mcpPreview(c.entry))}</div>
+      ${needs}
+      <div class="prompt-item-actions">${action}</div>
+    `;
+          const imp = el.querySelector('[data-action="import"]');
+          if (imp && !c.inLibrary) {
+            imp.addEventListener("click", async (e) => {
+              e.stopPropagation();
+              const res = await window.api.importMcpServer(c.name, c.entry);
+              if (!res || !res.ok) {
+                alert(`Import failed: ${res && res.error || "unknown error"}`);
+                return;
+              }
+              refreshMcpList();
+              refreshMcpDiscover();
+            });
+          }
+          const prefs = el.querySelector('[data-action="prefs"]');
+          if (prefs && c.secrets && c.secrets.length) {
+            prefs.addEventListener("click", (e) => {
+              if (e.preventDefault) e.preventDefault();
+              closeMcpDrawer();
+              if (openEnvPreferences) openEnvPreferences();
+            });
+          }
+          return el;
+        }
+        function openMcpDrawer(name) {
+          mcpDrawer.classList.remove("hidden");
+          if (getActiveCwd && !mcpDiscoverCwd.value) mcpDiscoverCwd.value = getActiveCwd() || "";
+          refreshMcpList();
+          refreshMcpDiscover();
+          if (name === ":new") openMcpEditor(null);
+          else if (name) openMcpEditor({ name });
+        }
+        function closeMcpDrawer() {
+          mcpDrawer.classList.add("hidden");
+        }
+        function linesOf(text) {
+          return String(text || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+        }
+        function pairsOf(text, sep) {
+          const out = {};
+          for (const line of linesOf(text)) {
+            const i = line.indexOf(sep);
+            if (i <= 0) continue;
+            out[line.slice(0, i).trim()] = line.slice(i + sep.length).trim();
+          }
+          return out;
+        }
+        function showMcpType() {
+          const stdio = mcpType.value === "stdio";
+          mcpStdioFields.style.display = stdio ? "" : "none";
+          mcpHttpFields.style.display = stdio ? "none" : "";
+        }
+        function fillMcpEditor(entry) {
+          const { type, command, args, env, url, headers, description, tags, platforms, ...rest } = entry || {};
+          editingMcpRest = rest;
+          mcpType.value = type === "http" || type === "sse" ? type : "stdio";
+          mcpCommand.value = command || "";
+          mcpArgs.value = (Array.isArray(args) ? args : []).join("\n");
+          mcpEnv.value = Object.entries(env || {}).map(([k, v]) => `${k}=${v}`).join("\n");
+          mcpUrl.value = url || "";
+          mcpHeaders.value = Object.entries(headers || {}).map(([k, v]) => `${k}: ${v}`).join("\n");
+          mcpDescription.value = description || "";
+          mcpTags.value = (Array.isArray(tags) ? tags : []).join(", ");
+          const on = Array.isArray(platforms) ? platforms : MCP_PLATFORMS;
+          MCP_PLATFORMS.forEach((p, i) => {
+            mcpPlatformBoxes[i].checked = on.includes(p);
+          });
+          showMcpType();
+        }
+        function collectMcpEntry() {
+          const type = mcpType.value;
+          const entry = { ...editingMcpRest, type };
+          if (type === "stdio") {
+            entry.command = mcpCommand.value.trim();
+            const args = linesOf(mcpArgs.value);
+            if (args.length) entry.args = args;
+            const env = pairsOf(mcpEnv.value, "=");
+            if (Object.keys(env).length) entry.env = env;
+          } else {
+            entry.url = mcpUrl.value.trim();
+            const headers = pairsOf(mcpHeaders.value, ":");
+            if (Object.keys(headers).length) entry.headers = headers;
+          }
+          const description = mcpDescription.value.trim();
+          if (description) entry.description = description;
+          const tags = mcpTags.value.split(",").map((t) => t.trim()).filter(Boolean);
+          if (tags.length) entry.tags = tags;
+          const platforms = MCP_PLATFORMS.filter((_p, i) => mcpPlatformBoxes[i].checked);
+          if (platforms.length !== MCP_PLATFORMS.length) entry.platforms = platforms;
+          return entry;
+        }
+        async function openMcpEditor(row = null) {
+          mcpError.textContent = "";
+          if (row) {
+            editingMcpName = row.name;
+            mcpEditorTitle.textContent = "Edit MCP Server";
+            mcpNameInput.value = row.name;
+            let entry = {};
+            try {
+              entry = JSON.parse(await window.api.getMcpServer(row.name) || "{}");
+            } catch {
+              entry = {};
+            }
+            fillMcpEditor(entry);
+            mcpDelete.style.display = "";
+          } else {
+            editingMcpName = null;
+            mcpEditorTitle.textContent = "New MCP Server";
+            mcpNameInput.value = "";
+            fillMcpEditor({});
+            mcpDelete.style.display = "none";
+          }
+          mcpNameInput.style.borderColor = "";
+          mcpEditor.classList.remove("hidden");
+          setTimeout(() => mcpNameInput.focus(), 50);
+        }
+        function closeMcpEditor() {
+          mcpEditor.classList.add("hidden");
+          editingMcpName = null;
+          editingMcpRest = {};
+        }
+        mcpClose.addEventListener("click", closeMcpDrawer);
+        mcpNew.addEventListener("click", () => openMcpEditor(null));
+        mcpType.addEventListener("change", showMcpType);
+        mcpDiscoverScan.addEventListener("click", () => refreshMcpDiscover());
+        mcpSave.addEventListener("click", async () => {
+          const name = mcpNameInput.value.trim();
+          if (!MCP_NAME_RE.test(name)) {
+            mcpNameInput.style.borderColor = "#e94560";
+            mcpError.textContent = 'Name: letters, digits, - and _ (no "__", no dot), starting with a letter or digit, up to 64 characters.';
+            return;
+          }
+          const res = await window.api.saveMcpServer(name, collectMcpEntry());
+          if (!res || !res.ok) {
+            mcpError.textContent = res && res.error || "Save failed: unknown error";
+            return;
+          }
+          if (editingMcpName && editingMcpName.toLowerCase() !== name.toLowerCase()) {
+            const gone = await window.api.removeMcpServer(editingMcpName);
+            if (gone && gone.ok === false) alert(`Saved as "${name}", but could not remove "${editingMcpName}": ${gone.error || "unknown error"}`);
+          }
+          closeMcpEditor();
+          refreshMcpList();
+          refreshMcpDiscover();
+        });
+        mcpCancel.addEventListener("click", closeMcpEditor);
+        mcpDelete.addEventListener("click", async () => {
+          if (!editingMcpName) return;
+          if (!confirm(`Delete MCP server "${editingMcpName}"?`)) return;
+          const res = await window.api.removeMcpServer(editingMcpName);
+          if (res && res.ok === false) {
+            alert(`Could not delete it: ${res.error || "unknown error"}`);
+            return;
+          }
+          closeMcpEditor();
+          refreshMcpList();
+          refreshMcpDiscover();
+        });
+        for (const input of [mcpNameInput, mcpCommand, mcpArgs, mcpEnv, mcpUrl, mcpHeaders, mcpDescription, mcpTags, mcpDiscoverCwd]) {
+          input.addEventListener("keydown", (e) => e.stopPropagation());
+        }
+        mcpNameInput.addEventListener("input", () => {
+          mcpNameInput.style.borderColor = "";
+          mcpError.textContent = "";
+        });
         window.api.onRequestOpenSkillsDrawer((name) => openSkillsDrawer(name));
         window.api.onRequestOpenAgentsDrawer((name) => openAgentsDrawer(name));
         window.api.onRequestOpenExecDrawer((name) => openExecDrawer(name));
+        window.api.onRequestOpenMcpDrawer((name) => openMcpDrawer(name));
         window.api.onRequestOpenPromptsDrawer((arg) => openPromptsDrawer(arg));
         const templatesDrawer = document.getElementById("templates-drawer");
         const templatesListEl = document.getElementById("templates-list");
@@ -38612,7 +39036,8 @@ Opening it here and saving would overwrite the file with what this editor could 
           closePromptEditor,
           closeAgentEditor,
           closeSkillEditor,
-          closeExecEditor
+          closeExecEditor,
+          closeMcpEditor
         };
       }
       module.exports = { initLibraryDrawers };
@@ -41906,6 +42331,10 @@ void main() {
           const ctx = contextText(name, p && p.linked ? p : null);
           if (ctx) rows.push(statRow("context", esc(ctx)));
           if (AGENT_TYPES.has(type)) rows.push(statRow("effort", esc(item.dataset.effort || "default")));
+          if (AGENT_TYPES.has(type)) {
+            const mcp = [item.dataset.mcp, item.dataset.mcpUnmanaged ? "unmanaged" : "", item.dataset.mcp && item.dataset.mcpStale ? "changed since spawn" : ""].filter(Boolean).join(" \xB7 ");
+            if (mcp) rows.push(statRow("mcp", esc(mcp)));
+          }
           if (AGENT_TYPES.has(type)) rows.push(statRow("posture", esc(item.dataset.posture || "default")));
           if (p && p.linked) {
             if (p.model) rows.push(statRow("model", esc(p.model)));
@@ -47853,20 +48282,55 @@ You can add it back from this popover.` : "";
           }
           return `<div class="ctx-util">${head}${conf}${body}</div>`;
         }
-        function renderMcpServers(a) {
+        function mcpStatusLine(name) {
+          const type = sessionTypeOf(name);
+          if (type === "claude") return "Claude: partially managed \u2014 CLI plugins unverified";
+          if (type === "codex") return "Codex: selection not applied on this CLI yet";
+          if (type === "muse") return "Muse: selection not applied on this CLI yet";
+          return "";
+        }
+        function mcpRowNote(server, mcp) {
+          if (!mcp) return "";
+          if (server === "clodex") return "built-in";
+          if ((mcp.leaks || []).includes(server)) {
+            return "\u26A0 not in this seat's selection \u2014 reached the CLI outside Clodex (own --mcp-config in Extra args, a CLI plugin, or a CLI build that ignores --strict-mcp-config)";
+          }
+          if ((mcp.selected || []).includes(server)) return "library \xB7 selected";
+          return "";
+        }
+        function renderMcpServers(a, mcp = null, name = null) {
           const groups = groupMcpTools(a.tools && a.tools.per_tool);
           if (!groups.length) return "";
           const total = mcpTotalTokens(groups);
           const turns = a.utilization && a.utilization.evaluable_turns || 0;
           const conclusive = turns >= UTIL_MIN_TURNS;
           const head = `<div class="ctx-util-head"><span>MCP servers</span><span class="ctx-util-stat" title="Char-based estimate (\u2248chars/4); a tokenizer reads ~25% higher.">${groups.length} loaded \xB7 <b>~${fmtTokens(total)}/turn</b></span></div>`;
-          const rows = groups.map((g) => {
+          const status = mcp ? mcpStatusLine(name) : "";
+          const meta = (mcp && mcp.managed === false ? `<div class="ctx-util-conf">unmanaged: this seat's Extra args carry its own MCP config</div>` : "") + (status ? `<div class="ctx-util-conf">${esc(status)}</div>` : "");
+          const row = (g) => {
             const usage = turns === 0 ? "" : g.usedTotal > 0 ? ` \xB7 ${g.usedTotal}\xD7` : conclusive ? " \xB7 <b>unused</b>" : " \xB7 idle";
-            return `<div class="ctx-row${conclusive && g.usedTotal === 0 ? " ctx-dead" : ""}"><div class="ctx-row-top"><span class="ctx-cat">${esc(g.server)}</span><span class="ctx-nums">~${fmtTokens(g.estTokens)} \xB7 ${g.toolCount} tool${g.toolCount === 1 ? "" : "s"}${usage}</span></div></div>`;
-          }).join("");
-          const deadServers = conclusive ? groups.filter((g) => g.usedTotal === 0) : [];
-          const hint = deadServers.length ? `<div class="ctx-util-conf">Unused over ${turns} turns. To remove one, run <code>claude mcp remove ${esc(deadServers[0].server)}</code> yourself \u2014 Clodex never edits your MCP config. It removes from whichever scope defines the server; for project <code>.mcp.json</code> approvals see <code>claude mcp reset-project-choices</code>.</div>` : "";
-          return `<div class="ctx-util">${head}${rows}${hint}</div>`;
+            const note = mcpRowNote(g.server, mcp);
+            return `<div class="ctx-row${conclusive && g.usedTotal === 0 ? " ctx-dead" : ""}"><div class="ctx-row-top"><span class="ctx-cat">${esc(g.server)}</span><span class="ctx-nums">~${fmtTokens(g.estTokens)} \xB7 ${g.toolCount} tool${g.toolCount === 1 ? "" : "s"}${usage}</span></div>${note ? `<div class="ctx-util-conf">${esc(note)}</div>` : ""}</div>`;
+          };
+          let rows;
+          if (mcp) {
+            const builtIn = groups.filter((g) => g.server === "clodex");
+            const library = groups.filter((g) => g.server !== "clodex");
+            rows = (builtIn.length ? `<div class="ctx-util-group">Built-in</div>${builtIn.map(row).join("")}` : "") + (library.length ? `<div class="ctx-util-group">Library</div>${library.map(row).join("")}` : "");
+          } else {
+            rows = groups.map(row).join("");
+          }
+          const deadServers = conclusive ? groups.filter((g) => g.usedTotal === 0 && (!mcp || g.server !== "clodex")) : [];
+          const removeHint = (server) => `<div class="ctx-util-conf">Unused over ${turns} turns. To remove one, run <code>claude mcp remove ${esc(server)}</code> yourself \u2014 Clodex never edits your MCP config. It removes from whichever scope defines the server; for project <code>.mcp.json</code> approvals see <code>claude mcp reset-project-choices</code>.</div>`;
+          let hint = "";
+          if (deadServers.length && !mcp) hint = removeHint(deadServers[0].server);
+          else if (deadServers.length) {
+            const leak = deadServers.find((g) => (mcp.leaks || []).includes(g.server));
+            const managed = deadServers.find((g) => (mcp.selected || []).includes(g.server));
+            if (managed) hint += `<div class="ctx-util-conf">Unused over ${turns} turns. To drop ${esc(managed.server)}, untick it in Edit settings and restart.</div>`;
+            if (leak) hint += removeHint(leak.server);
+          }
+          return `<div class="ctx-util">${head}${meta}${rows}${hint}</div>`;
         }
         function renderUtilization(a) {
           return renderUtilBlock(a.utilization, a.tools && a.tools.per_tool, "Tool utilization");
@@ -47889,10 +48353,10 @@ You can add it back from this popover.` : "";
           }
           return '<div class="ctx-note">No breakdown available.</div>';
         }
-        function renderUtilHalf(agents) {
+        function renderUtilHalf(agents, mcp = null, name = null) {
           const withComp = agents.filter((a) => a.composition && Array.isArray(a.composition.by_category));
           withComp.sort((a, b) => a.line === "main" ? -1 : b.line === "main" ? 1 : 0);
-          return withComp.map((a) => renderMcpServers(a) + renderUtilization(a) + renderSkillUtilization(a)).join("");
+          return withComp.map((a) => renderMcpServers(a, mcp, name) + renderUtilization(a) + renderSkillUtilization(a)).join("");
         }
         function renderCtxLinks(name, agents, caps, peerQueries) {
           let html = "";
@@ -47972,7 +48436,7 @@ You can add it back from this popover.` : "";
           }
           const compHtml = renderCompositionHalf(name, agents);
           const links = `<div id="ctx-links">${renderCtxLinks(name, agents, caps, peerQueries)}</div>`;
-          const plainCol = renderUtilHalf(agents);
+          const plainCol = renderUtilHalf(agents, res.data.clodex_mcp || null, name);
           const cols = (right) => `<div class="ctx-cols"><div class="ctx-col">${compHtml}</div>${right}</div>`;
           if (!wantUtil) {
             paintCtxBody(name, (plainCol.trim() ? cols(`<div class="ctx-col">${plainCol}</div>`) : compHtml) + links);
@@ -47998,7 +48462,7 @@ You can add it back from this popover.` : "";
             return;
           }
           const uAgents = ures.data && Array.isArray(ures.data.agents) ? ures.data.agents : [];
-          const utilCol = uAgents.length ? renderUtilHalf(uAgents) : "";
+          const utilCol = uAgents.length ? renderUtilHalf(uAgents, ures.data.clodex_mcp || null, name) : "";
           paintRight(utilCol.trim() ? utilCol : plainCol.trim() || '<div class="ctx-note">no utilization data yet</div>');
           const linkBox = document.getElementById("ctx-links");
           if (linkBox && uAgents.length) linkBox.innerHTML = renderCtxLinks(name, uAgents, caps, peerQueries);
@@ -51153,7 +51617,7 @@ ${detail}` });
       var { composerReadlineEdit, composerHeightFor } = require_composer_keys();
       var { slashQuery, filterCommands, slashMenuKey } = require_composer_slash();
       var { turnSeg, reqSeg, costSeg } = require_turn_stat();
-      var { renderAppendChecklist, collectAppendChecklist, appendRepaintTicks, mergeUnrendered, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require_checklists();
+      var { renderAppendChecklist, collectAppendChecklist, appendRepaintTicks, mergeUnrendered, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderMcpChecklist, collectMcpChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setMcpLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require_checklists();
       var { autoEnabledFor, reconcilePartialSelection } = require_scope_util();
       var { parseSkillFrontmatter } = require_skills_util();
       var skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
@@ -51227,6 +51691,26 @@ ${detail}` });
         else delete item.dataset.effort;
         const seat = sessions.get(name);
         if (seat && seat.liveSplit) seat.liveSplit.refreshStatus();
+      }
+      function markSeatMcp(name, state) {
+        const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+        if (!item) return;
+        const servers = state && Array.isArray(state.servers) ? state.servers : [];
+        if (servers.length) item.dataset.mcp = servers.join(", ");
+        else delete item.dataset.mcp;
+        if (state && state.unmanaged) item.dataset.mcpUnmanaged = "1";
+        else delete item.dataset.mcpUnmanaged;
+        if (state && state.stale) item.dataset.mcpStale = "1";
+        else delete item.dataset.mcpStale;
+      }
+      async function refreshSeatMcp(name) {
+        let state = null;
+        try {
+          state = await window.api.mcpAppliedStale(name);
+        } catch {
+          state = null;
+        }
+        if (state && state.ok) markSeatMcp(name, state);
       }
       function markSeatPosture(name, posture) {
         const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
@@ -51586,6 +52070,8 @@ ${detail}` });
       };
       var closeExecEditor = () => {
       };
+      var closeMcpEditor = () => {
+      };
       function promptText(title, initial = "") {
         return new Promise((resolve) => {
           const overlay = document.createElement("div");
@@ -51749,6 +52235,7 @@ ${detail}` });
         if (entry.backend) item.dataset.backend = entry.backend;
         item.dataset.io = seatIoKind(entry.io);
         if (entry.effort) item.dataset.effort = entry.effort;
+        if (Array.isArray(entry.mcpServers) && entry.mcpServers.length) item.dataset.mcp = entry.mcpServers.join(", ");
         if (entry.posture && entry.posture !== "default") item.dataset.posture = entry.posture;
         const displayName = entry.label || entry.name;
         item.innerHTML = `
@@ -51875,6 +52362,7 @@ ${detail}` });
           snap.fixFor || null
         );
         markSeatEffort(name, snap.effort);
+        refreshSeatMcp(name);
         markSeatPosture(name, snap.posture);
         if (res.clone) applyCloneChip(sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`), res.clone);
         if (snap.createdAt) sidebarMeta.set(name, { ...sidebarMeta.get(name) || {}, createdAt: snap.createdAt });
@@ -52669,6 +53157,7 @@ ${detail}` });
             applyAccountChip(s.name, s.account || null);
             markSeatVoice(s.name, s.voice);
             markSeatEffort(s.name, s.effort);
+            refreshSeatMcp(s.name);
             markSeatPosture(s.name, s.posture);
             if (s.clone) applyCloneChip(sessionList.querySelector(`[data-name="${CSS.escape(s.name)}"]`), s.clone);
           }
@@ -53837,6 +54326,7 @@ ${detail}` });
         }
         if (agentType && !skipAsyncRefresh) {
           refreshNewSessionExecCommands();
+          refreshNewSessionMcpServers();
           refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
         }
         resumeRow.style.display = agentType && !authoring ? "" : "none";
@@ -54020,6 +54510,7 @@ ${detail}` });
       }
       async function applyPlacement() {
         const placement = currentPlacement();
+        if (mcpRow) mcpRow.style.display = placement === "host" ? "" : "none";
         inputCwd.value = placementNextCwd(placement, inputCwd.value.trim(), homeDir);
         refreshTeamForCwd();
         if (placement !== "host") {
@@ -54164,6 +54655,8 @@ ${detail}` });
       var inputAgentsList = document.getElementById("input-agents-list");
       var inputBuiltinsList = document.getElementById("input-builtins-list");
       var inputExecList = document.getElementById("input-exec-list");
+      var mcpRow = document.getElementById("mcp-row");
+      var inputMcpList = document.getElementById("input-mcp-list");
       var inputIntentList = document.getElementById("input-intent-list");
       var inputPluginList = document.getElementById("input-plugin-list");
       if (inputPluginList) {
@@ -54277,6 +54770,18 @@ ${detail}` });
         if (!newSessionIsAgent()) return;
         setExecLibCache(await window.api.listExecCommands() || []);
         renderExecChecklist(inputExecList, enabledSet);
+      }
+      async function mcpChecklistData(workspaceId) {
+        const lib = await window.api.listMcpServers() || [];
+        const names = lib.map((m) => m.name);
+        const readiness = names.length ? await window.api.mcpReadiness(workspaceId, names) || {} : {};
+        return { lib, readiness };
+      }
+      async function refreshNewSessionMcpServers(enabledSet = /* @__PURE__ */ new Set()) {
+        if (!newSessionIsAgent() || !inputMcpList) return;
+        const { lib, readiness } = await mcpChecklistData(currentWorkspaceId);
+        setMcpLibCache(lib);
+        renderMcpChecklist(inputMcpList, enabledSet, { cli: inputType.value, readiness });
       }
       var newSessionPluginsPersisted = null;
       var newSessionPluginsRendered = [];
@@ -54629,6 +55134,7 @@ ${detail}` });
         setAgentLibCache(agentLib || []);
         renderAgentChecklist(inputAgentsList, /* @__PURE__ */ new Set(), null, newSessionSeat());
         refreshNewSessionExecCommands();
+        refreshNewSessionMcpServers();
         refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
         setClaudeToolsCache(settings?.claudeTools || []);
         setDefaultToolDenyCache(settings?.defaultToolDeny || []);
@@ -54728,6 +55234,7 @@ ${detail}` });
         const agentType = isAgentType(t.type);
         if (agentType) {
           await refreshNewSessionExecCommands(new Set(t.execCommands || []));
+          await refreshNewSessionMcpServers(new Set(t.mcpServers || []));
           await refreshNewSessionPlugins(t.plugins);
           await refreshNewSessionIntents(t.intents);
         }
@@ -54832,6 +55339,7 @@ ${detail}` });
           proxy: agentType ? proxyValueFromControls(inputProxyMode, inputProxyUrl) : null,
           agents: caps.agents ? collectAgentChecklist(inputAgentsList) : [],
           execCommands: agentType ? collectExecChecklist(inputExecList) : [],
+          mcpServers: agentType ? collectMcpChecklist(inputMcpList) : [],
           ...Array.isArray(intents) ? { intents } : {},
           plugins,
           ...autoCompactOff ? { autoCompact: false } : {},
@@ -54862,6 +55370,7 @@ ${detail}` });
           proxy,
           agents,
           execCommands,
+          mcpServers,
           denyBuiltins,
           disabledTools,
           disabledSkills,
@@ -54946,7 +55455,7 @@ ${detail}` });
           window.api.noteCwd(cwd);
           if (typeof proxy === "string") window.api.setSettings({ lastCustomProxyUrl: proxy });
           const teamOn = teamToggle && teamToggle.checked && teamRow && teamRow.style.display !== "none";
-          const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire: noWire === true, plugins, io, effort: effort || null };
+          const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire: noWire === true, plugins, io, effort: effort || null, mcpServers };
           let result;
           if (teamOn && dialogTeamMode === "create") {
             const teamName = slugifyTeamName(teamNameInput.value.trim() || pathBasename(cwd));
@@ -54957,7 +55466,7 @@ ${detail}` });
             const prompt2 = teamRoleSelect && teamRoleSelect.value === "hand" ? null : teamRolePromptSelect && teamRolePromptSelect.value || null;
             result = await window.api.teamJoin({ team: dialogTeamName, role, prompt: prompt2, ...seatParams });
           } else {
-            result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire === true, plugins, io, effort || null);
+            result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire === true, plugins, io, effort || null, mcpServers);
           }
           if (!applyCreateResult(nameFieldEls(), result)) {
             if (worktree) {
@@ -54978,8 +55487,9 @@ ${detail}` });
           markSeatIo(name, result.session && result.session.io);
           createTerminal(name);
           addSessionToSidebar(name, type, spawnCwd, null, result.session && result.session.backend || null, result.session && result.session.team || null, (result.session && result.session.noWire) === true);
+          refreshSeatMcp(name);
           await switchToNewSession(name, { agentInitiated: false });
-          const warnings = result.session && result.session.warnings || [];
+          const warnings = (result.session && result.session.warnings || []).filter((w) => !String(w).startsWith("MCP "));
           for (const w of warnings) showToast(w, { kind: "warn", duration: 15e3, name });
         } finally {
           createInFlight = false;
@@ -55084,6 +55594,7 @@ ${detail}` });
           newSessionAppendOpened = tpl && tpl.appendPromptFiles || [];
           renderAppendChecklist(inputAppendList, new Set(newSessionAppendOpened), newSessionSeat(), teamAppendRows);
           await refreshNewSessionExecCommands(new Set(tpl && tpl.execCommands || []));
+          await refreshNewSessionMcpServers(new Set(tpl && tpl.mcpServers || []));
           await refreshNewSessionIntents(tpl && tpl.intents);
         }
         if (tplCaps.agents) {
@@ -56550,6 +57061,7 @@ Click for live activity`;
         ["agent-editor", () => closeAgentEditor()],
         ["skill-editor", () => closeSkillEditor()],
         ["exec-editor", () => closeExecEditor()],
+        ["mcp-editor", () => closeMcpEditor()],
         ["help-overlay", () => closeHelpPanel()]
       ];
       document.addEventListener("keydown", (e) => {
@@ -56845,7 +57357,6 @@ Click for live activity`;
       var prefsClaudeCmd = document.getElementById("prefs-claude-sl-cmd");
       var prefsCodexBox = document.getElementById("prefs-codex-components");
       var prefsProxyEnabled = document.getElementById("prefs-proxy-enabled");
-      var prefsDisableDesignMcp = document.getElementById("prefs-disable-design-mcp");
       var prefsTerminalWebgl = document.getElementById("prefs-terminal-webgl");
       var prefsSeatView = document.getElementById("prefs-seat-view");
       var prefsShowThinking = document.getElementById("prefs-show-thinking");
@@ -59713,13 +60224,12 @@ ${res.stderr}` : "");
         const carried = prefsSkillDenyStored.filter((n) => !toggleable.has(n));
         return [.../* @__PURE__ */ new Set([...off, ...carried])];
       }
-      async function openPrefs() {
+      async function openPrefs(group = null) {
         const s = await window.api.getSettings();
         renderPrefsCheckboxes(prefsClaudeBox, s.claudeComponents, s.statusline.claude, CLAUDE_LABELS);
         prefsClaudeCmd.value = s.statusline.claudeCommand || "";
         renderPrefsCheckboxes(prefsCodexBox, s.codexComponents, s.statusline.codex, CODEX_LABELS);
         prefsProxyEnabled.checked = !!s.proxyEnabled;
-        prefsDisableDesignMcp.checked = s.disableClaudeDesignMcp !== false;
         if (prefsTerminalWebgl) prefsTerminalWebgl.checked = s.terminalWebgl === true;
         if (prefsShowThinking) prefsShowThinking.checked = s.showThinking !== false;
         if (prefsSeatView) prefsSeatView.value = initialSeatView({ transcriptPane: s.transcriptPane !== false, transcriptPaneMode: s.transcriptPaneMode, io: "pty" });
@@ -59739,6 +60249,9 @@ ${res.stderr}` : "");
         if (prefsDefaultMode) prefsDefaultMode.value = defaultSessionMode(s);
         if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
         restorePrefsGroups();
+        if (group) for (const g of prefsGroups()) {
+          if (g.dataset.group === group) g.open = true;
+        }
         applyPrefsGate();
         prefsRemoteEnabled.checked = !!s.remoteEnabled;
         prefsEnvLocked = s && s.envLockedSettings || {};
@@ -59830,7 +60343,6 @@ ${res.stderr}` : "");
             codex: collectChecked(prefsCodexBox)
           },
           proxyEnabled: prefsProxyEnabled.checked,
-          disableClaudeDesignMcp: prefsDisableDesignMcp.checked,
           terminalWebgl: prefsTerminalWebgl ? prefsTerminalWebgl.checked : false,
           ...prefsShowThinking ? { showThinking: prefsShowThinking.checked } : {},
           ...seatView || {},
@@ -59979,6 +60491,8 @@ ${res.stderr}` : "");
       }
       var argsExecList = document.getElementById("args-exec-list");
       var argsExecSection = document.getElementById("args-exec-section");
+      var argsMcpList = document.getElementById("args-mcp-list");
+      var argsMcpSection = document.getElementById("args-mcp-section");
       var argsSkillsRow = document.getElementById("args-skills-row");
       var argsSkillsList = document.getElementById("args-skills-list");
       var argsSkillsSection = document.getElementById("args-skills-section");
@@ -60092,6 +60606,12 @@ ${res.stderr}` : "");
           setExecLibCache(await window.api.listExecCommands() || []);
           renderExecChecklist(argsExecList, new Set(res.execCommands || []));
         }
+        argsMcpSection.style.display = isExecEditable ? "" : "none";
+        if (isExecEditable) {
+          const { lib, readiness } = await mcpChecklistData(currentWorkspaceId);
+          setMcpLibCache(lib);
+          renderMcpChecklist(argsMcpList, new Set(res.mcpServers || []), { cli: res.type, readiness });
+        }
         const isSkillsEditable = (caps.injectSkills || caps.skillRoster) && !!skillCatalog;
         argsSkillsSection.style.display = isSkillsEditable ? "" : "none";
         argsSkillsRow.style.display = isSkillsEditable && caps.skillRoster ? "" : "none";
@@ -60138,7 +60658,7 @@ ${res.stderr}` : "");
           argsEnv.value = "";
           renderEnvHint(argsEnv, argsEnvHint);
         }
-        for (const sec of [argsAppendSection, argsToolsSection, argsOtherSection, argsSkillsSection, argsExecSection, argsIntentsSection, argsEnvSection]) sec.open = false;
+        for (const sec of [argsAppendSection, argsToolsSection, argsOtherSection, argsSkillsSection, argsExecSection, argsMcpSection, argsIntentsSection, argsEnvSection]) sec.open = false;
         argsRestart.checked = false;
         argsOverlay.classList.remove("hidden");
         setTimeout(() => argsInput.focus(), 50);
@@ -60175,6 +60695,7 @@ ${res.stderr}` : "");
           pluginsForUnlistedPlugins(argsPluginsPersisted, argsPluginsRendered)
         );
         const execCommandsGrant = argsExecSection.style.display === "none" ? void 0 : collectExecChecklist(argsExecList);
+        const mcpServers = argsMcpSection.style.display === "none" ? void 0 : collectMcpChecklist(argsMcpList);
         const io = !argsStreamIoRow || argsStreamIoRow.style.display === "none" || !argsStreamIo ? void 0 : argsStreamIo.checked ? "stream" : "pty";
         const env = argsEnvSection.style.display === "none" ? void 0 : parseEnvLines(argsEnv.value || "").env;
         const skillsShown = argsSkillsSection.style.display !== "none";
@@ -60207,11 +60728,12 @@ ${res.stderr}` : "");
           systemPromptFile,
           appendPromptFiles,
           intents
-        }) : await window.api.setSessionArgs(name, parsed, restart, proxy, void 0, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env, plugins, io, effort);
+        }) : await window.api.setSessionArgs(name, parsed, restart, proxy, void 0, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env, plugins, io, effort, mcpServers);
         if (!res || !res.ok) {
           alert(`Save settings failed: ${res && res.error ? res.error : "unknown error"}`);
           return;
         }
+        if (!source) refreshSeatMcp(name);
         if (res.restarted) {
           if (source) source.onRestarted();
           else if (snap.type) {
@@ -60226,6 +60748,7 @@ ${res.stderr}` : "");
         closeAgentEditor,
         closeSkillEditor,
         closeExecEditor,
+        closeMcpEditor,
         openTeamTemplate: templatesDrawerOpenTeam
       } = initLibraryDrawers({
         getActiveSession: () => activeSession,
@@ -60239,7 +60762,12 @@ ${res.stderr}` : "");
             setPluginCatalogCache(await window.api.pluginCatalog() || []);
           } catch {
           }
-        }
+        },
+        getActiveCwd: () => {
+          const row = activeSession ? sessionList.querySelector(`[data-name="${CSS.escape(activeSession)}"]`) : null;
+          return row && row.dataset.cwd || "";
+        },
+        openEnvPreferences: () => openPrefs("env")
       }));
       function mountRestoredSession(entry) {
         markSeatIo(entry.name, entry.io);
@@ -60247,6 +60775,7 @@ ${res.stderr}` : "");
         const { terminal, fitAddon, echoRewrite } = createTerminal(entry.name);
         addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true, null, entry.fixFor || null);
         markSeatEffort(entry.name, entry.effort);
+        refreshSeatMcp(entry.name);
         markSeatPosture(entry.name, entry.posture);
         if (entry.createdAt) sidebarMeta.set(entry.name, { ...sidebarMeta.get(entry.name) || {}, createdAt: entry.createdAt });
         const item = sessionList.querySelector(`[data-name="${CSS.escape(entry.name)}"]`);

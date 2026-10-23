@@ -243,6 +243,7 @@ function mkRenderer({ api = {}, confirmAnswer = true } = {}) {
     showToast: rec('showToast'),
     markSeatIo: rec('markSeatIo'),
     markSeatEffort: rec('markSeatEffort'),
+    refreshSeatMcp: rec('refreshSeatMcp'),
     markSeatPosture: rec('markSeatPosture'),
     createTerminal: rec('createTerminal'),
     addSessionToSidebar: rec('addSessionToSidebar'),
@@ -317,9 +318,10 @@ test('clicking the exited row resumes through retrySpawnSession and mounts the s
   assert.deepStrictEqual(retried, ['cx']);
   assert.deepStrictEqual(h.rows, [], 'the exited row is replaced');
   assert.deepStrictEqual(h.calls.map((c) => c[0]),
-    ['markSeatIo', 'createTerminal', 'addSessionToSidebar', 'markSeatEffort', 'markSeatPosture', 'switchSession', 'refreshSidebarView']);
+    ['markSeatIo', 'createTerminal', 'addSessionToSidebar', 'markSeatEffort', 'refreshSeatMcp', 'markSeatPosture', 'switchSession', 'refreshSidebarView']);
   assert.deepStrictEqual(h.calls[3], ['markSeatEffort', 'cx', 'high']);
-  assert.deepStrictEqual(h.calls[4], ['markSeatPosture', 'cx', 'bypass']);
+  assert.deepStrictEqual(h.calls[4], ['refreshSeatMcp', 'cx']);
+  assert.deepStrictEqual(h.calls[5], ['markSeatPosture', 'cx', 'bypass']);
   assert.deepStrictEqual(h.calls[0], ['markSeatIo', 'cx', 'stream']);
   assert.deepStrictEqual(h.calls[2], ['addSessionToSidebar', 'cx', 'codex', '/w/c', null, null, 'T', false, null, null]);
 });
