@@ -21309,12 +21309,15 @@ test('MCP library at create(): servers reach mcp.json, warnings are system rows,
   const fsReal = require('node:fs');
   const cfgDir = mkTmpRoot('clx-mcp-cfg-');
   fsReal.writeFileSync(p.join(cfgDir, '.claude.json'), JSON.stringify({ mcpServers: { jira: {}, legacy: { command: 'x' } } }));
-  let env = { CLAUDE_CONFIG_DIR: cfgDir, DOCS_KEY: 'k1' };
+  const saved = Object.fromEntries(['CLAUDE_CONFIG_DIR', 'DOCS_KEY', 'JIRA_TOKEN'].map((k) => [k, process.env[k]]));
+  t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
+  Object.assign(process.env, { CLAUDE_CONFIG_DIR: cfgDir, DOCS_KEY: 'k1' });
+  delete process.env.JIRA_TOKEN;
   const lib = [
     { name: 'jira', entry: { command: 'npx', args: ['jira'], env: { JIRA_TOKEN: '${JIRA_TOKEN}' } } },
     { name: 'docs', entry: { type: 'http', url: 'https://docs/mcp', headers: { 'X-API-Key': '${DOCS_KEY}' } } },
   ];
-  const h = mkStreamSeatManager({ extraDeps: { getMcpLibrary: () => ({ list: () => lib }), mergeSessionEnv: () => ({ ...env }) } });
+  const h = mkStreamSeatManager({ extraDeps: { getMcpLibrary: () => ({ list: () => lib }) } });
   t.after(() => h.stopAll());
   const rows = [];
   h.m._broadcast = (channel, msg) => { if (msg && msg.type === 'system') rows.push(msg.body); };
@@ -21334,6 +21337,7 @@ test('MCP library at create(): servers reach mcp.json, warnings are system rows,
   assert.match(rec.mcpApplied.digest, /^[0-9a-f]{64}$/);
   assert.strictEqual('mcpUnmanaged' in rec, false);
 
+  h.stopAll();
   h.m.sessions.delete('st1');
   rows.length = 0;
   await spawn(['--mcp-config', '/x/own.json']);
@@ -21343,8 +21347,9 @@ test('MCP library at create(): servers reach mcp.json, warnings are system rows,
   assert.strictEqual(fsReal.existsSync(file), false, 'the resolved file from the managed spawn is removed');
   assert.ok(!rows.some((r) => r.startsWith('MCP: 1 server(s)')), 'an unmanaged seat gets no migration row');
 
+  h.stopAll();
   h.m.sessions.delete('st1');
-  env = { CLAUDE_CONFIG_DIR: cfgDir, DOCS_KEY: 'k1', JIRA_TOKEN: 't' };
+  process.env.JIRA_TOKEN = 't';
   await spawn([]);
   const back = h.store.get('st1');
   assert.strictEqual(back.mcpUnmanaged, undefined);
