@@ -849,6 +849,7 @@ function collectFor(type) {
     inputStreamIo: { checked: true },
     inputAgentsList: {}, collectAgentChecklist: () => ['agent-a'],
     inputExecList: {}, collectExecChecklist: () => ['exec-a'],
+    inputMcpList: {}, collectMcpChecklist: () => ['mcp-a'],
     inputBuiltinsList: {}, collectBuiltinChecklist: () => ['Plan'],
     inputToolsList: {}, collectToolChecklist: () => ['Bash'],
     newSessionSkillDenyList: () => ['skill-a'],
@@ -869,6 +870,7 @@ test('t1077: a CLAUDE form collects every field the stubs offer (ENTER for the c
     proxy: { mode: 'off' },
     agents: ['agent-a'],
     execCommands: ['exec-a'],
+    mcpServers: ['mcp-a'],
     intents: ['dm'],
     plugins: ['p1'],
     autoCompact: false,
@@ -894,6 +896,7 @@ test('t1077: a CODEX form emits every EDITOR_OWNED key its platform lacks WITH i
     proxy: { mode: 'off' },
     agents: [],
     execCommands: ['exec-a'],
+    mcpServers: ['mcp-a'],
     intents: ['dm'],
     plugins: ['p1'],
     io: 'stream',
@@ -915,6 +918,7 @@ test('t1077: a BASH form is not an agent — no prompts, no intents, and the plu
   assert.ok(!('intents' in cfg));
   assert.deepStrictEqual(cfg.plugins, ['default']);
   assert.deepStrictEqual(cfg.agents, []);
+  assert.deepStrictEqual(cfg.mcpServers, [], 'a bash seat carries no MCP selection');
   assert.strictEqual(cfg.stripLevel, 0);
 });
 
@@ -1113,4 +1117,67 @@ test('t1375: saveTemplateFromForm reports ok:false on both library arms instead 
     assert.match(arms.slice(at), /^[^\n]*\n\s*if \(res && res\.ok === false\) \{\n\s*alert\(`Could not save template: \$\{res\.error\}`\);\n\s*return;/,
       `${call} failure alerts and leaves the dialog open`);
   }
+});
+
+test('the MCP servers row sits under Exec inside #other-section, which only an agent type shows', () => {
+  const open = htmlSrc.indexOf('<details id="other-section"');
+  const close = htmlSrc.indexOf('</details>', open);
+  const exec = htmlSrc.indexOf('id="exec-row"');
+  const mcp = htmlSrc.indexOf('id="mcp-row"');
+  assert.ok(open > 0 && exec > open && mcp > exec && mcp < close, 'ENTER: #mcp-row follows #exec-row inside #other-section');
+  assert.match(htmlSrc.slice(mcp, close), /^id="mcp-row">MCP servers\s*<div id="input-mcp-list" class="agent-checklist"><\/div>/);
+  assert.match(htmlSrc.slice(mcp, close), /Applies at spawn; changing it on a running seat needs a restart\./);
+  const visibility = extract(/\n(  if \(otherSection\) otherSection\.style\.display = .*;)\n/, "applyTypeDefaults' other-section toggle");
+  const shown = (type) => {
+    const otherSection = { style: {} };
+    new Function('otherSection', 'agentType', visibility)(otherSection, ['claude', 'codex', 'muse'].includes(type));
+    return otherSection.style.display;
+  };
+  assert.deepStrictEqual(['claude', 'codex', 'muse', 'bash'].map(shown), ['', '', '', 'none']);
+});
+
+function fnBody(name) {
+  const at = rendererSrc.search(new RegExp(`\\n(async )?function ${name}\\(`));
+  assert.ok(at >= 0, `ENTER: ${name} is in renderer.js`);
+  return rendererSrc.slice(at + 1, rendererSrc.indexOf('\n}\n', at) + 2);
+}
+
+function placementRig() {
+  const env = {
+    mcpRow: { style: { display: '' } },
+    placementRow: { style: { display: '' } },
+    inputPlacement: { value: 'host' },
+    showPlacementSelector: () => true,
+    boxes: [{ id: 'box1' }],
+  };
+  const names = Object.keys(env);
+  const run = (stmts) => new Function(...names, `${fnBody('currentPlacement')}\n${fnBody('syncMcpRow')}\n${stmts}`)(...names.map((n) => env[n]));
+  return { env, run };
+}
+
+test('a sandbox placement hides #mcp-row, and the next New Session open on host shows it again', () => {
+  const { env, run } = placementRig();
+  env.inputPlacement.value = 'box1';
+  run('syncMcpRow();');
+  assert.strictEqual(env.mcpRow.style.display, 'none', 'ENTER: a sandbox placement hides the row');
+  const reset = /\n(  inputPlacement\.value = 'host';\n  placementRow\.style\.display = showPlacementSelector\(boxes\) \? '' : 'none';\n  syncMcpRow\(\);)\n/.exec(fnBody('openDialog'));
+  assert.ok(reset, "openDialog re-syncs the MCP row right after it resets the placement to host");
+  run(reset[1]);
+  assert.strictEqual(env.mcpRow.style.display, '');
+});
+
+test('the template editor hides the placement row and shows #mcp-row', () => {
+  const { env, run } = placementRig();
+  env.inputPlacement.value = 'box1';
+  env.mcpRow.style.display = 'none';
+  const authoring = /\n(    placementRow\.style\.display = 'none';\n    syncMcpRow\(\);)\n/.exec(fnBody('setDialogMode'));
+  assert.ok(authoring, "setDialogMode's authoring branch re-syncs the MCP row after hiding placement");
+  run(authoring[1]);
+  assert.strictEqual(env.mcpRow.style.display, '');
+});
+
+test('a create toasts every warning but the MCP rows, which already arrive as system rows', () => {
+  const toastable = new Function(`${fnBody('toastableWarnings')}\nreturn toastableWarnings;`)();
+  assert.deepStrictEqual(toastable(['MCP jira: not in the library', 'MCP: the clodex tools are unavailable', 'proxy unreachable', 'MCPX odd']),
+    ['MCP: the clodex tools are unavailable', 'proxy unreachable', 'MCPX odd']);
 });

@@ -30,6 +30,7 @@ const { validOrigin } = require('./peer-outbox');
 const { boxLabel } = require('./sandbox');
 const { materializeExecScripts, materializeSeatVerb } = require('./bin-materialize');
 const { loadHelpCorpus } = require('./help-corpus');
+const { mcpLeaks, mcpServerOf } = require('./mcp-plan');
 // Module-level, not inside createEngine: sweepSpilledMessages is module-level and a
 // closure require would not be in scope there.
 const { allParkedTexts } = require('./pending-store');
@@ -1302,6 +1303,28 @@ manager._proxyPoller = proxyPoller;
 
 
 
+function attachClodexMcp(session, name, data) {
+  if (!data || typeof data !== 'object' || !Array.isArray(data.agents)) return;
+  const record = persistence.get(name) || {};
+  const selected = Array.isArray(record.mcpServers) ? record.mcpServers : [];
+  const rosterServers = [];
+  for (const a of data.agents) {
+    const tools = a && a.tools && Array.isArray(a.tools.per_tool) ? a.tools.per_tool : [];
+    for (const t of tools) {
+      const server = mcpServerOf(t && t.name);
+      if (server && !rosterServers.includes(server)) rosterServers.push(server);
+    }
+  }
+  const leaks = session.type === 'claude' ? mcpLeaks({ rosterServers, selected, implicit: ['clodex'] }) : [];
+  if (!session._mcpLeakLogged) session._mcpLeakLogged = new Set();
+  for (const server of leaks) {
+    if (session._mcpLeakLogged.has(server)) continue;
+    session._mcpLeakLogged.add(server);
+    log.warn('mcp', `${name}: MCP server ${server} is on the roster but not in the seat's selection`);
+  }
+  data.clodex_mcp = { managed: !record.mcpUnmanaged, selected, applied: record.mcpApplied || null, leaks };
+}
+
 async function fetchProxyContext(name, opts) {
   const s = manager.sessions.get(name);
   if (!s || !s.proxyBase) return { ok: false, error: 'Session is not routed through a proxy' };
@@ -1315,6 +1338,7 @@ async function fetchProxyContext(name, opts) {
     if (wantUtil) q += '&utilization=1';
     const r = await ProxyClient._getJson(s.proxyBase, q, wantUtil ? PROXY_REPORT_TIMEOUT : undefined);
     if (r.status !== 200 || !r.json) return { ok: false, error: `proxy returned ${r.status}` };
+    attachClodexMcp(s, name, r.json);
     return { ok: true, data: r.json };
   } catch (e) {
     const msg = String((e && e.message) || e);

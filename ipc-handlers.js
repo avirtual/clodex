@@ -16,7 +16,7 @@ const {
 } = require('./team-prompt-dir');
 const { appendRailPrompts } = require('./prompt-rails');
 const { validateExecDef } = require('./exec-schema');
-const { discoverMcpSources, normaliseDiscovered, resolveMcpEntry, secretRefs } = require('./mcp-plan');
+const { discoverMcpSources, normaliseDiscovered, resolveMcpEntry, secretRefs, cliShape, mcpDigest } = require('./mcp-plan');
 const { validateSeatImages } = require('./seat-images');
 const { BOX_ID_RE, runningInSandboxBox } = require('./sandbox');
 const { SETUP_CHOICES } = require('./stores');
@@ -771,6 +771,33 @@ function registerIpcHandlers(deps) {
     }
     return out;
   });
+  const mcpSeatState = (name, lib) => {
+    const entry = persistence.get(name);
+    if (!entry) return { ok: false, error: 'Session not found' };
+    const servers = Array.isArray(entry.mcpServers) ? entry.mcpServers : [];
+    const applied = entry.mcpApplied && Array.isArray(entry.mcpApplied.names) ? entry.mcpApplied : null;
+    const appliedNames = applied ? applied.names : [];
+    const loadable = servers.filter((n) => {
+      const e = lib.get(n);
+      return !(e && Array.isArray(e.platforms) && !e.platforms.includes('claude'));
+    });
+    let stale = entry.type === 'claude' && entry.mcpUnmanaged !== true
+      && JSON.stringify([...loadable].sort()) !== JSON.stringify([...appliedNames].sort());
+    if (!stale && applied) {
+      const shapes = {};
+      for (const n of applied.names) {
+        if (!lib.has(n)) { stale = true; break; }
+        shapes[n] = cliShape(lib.get(n));
+      }
+      if (!stale) stale = mcpDigest(shapes) !== applied.digest;
+    }
+    return { ok: true, servers, unmanaged: entry.mcpUnmanaged === true, stale };
+  };
+  handle('mcp:appliedStale', (_e, name) => {
+    const lib = new Map(mcpLibrary.list().map((r) => [r.name, r.entry]));
+    if (Array.isArray(name)) return Object.fromEntries(name.map((n) => [n, mcpSeatState(n, lib)]));
+    return mcpSeatState(name, lib);
+  });
 
   handle('notifications:list', () => notifications.list());
   handle('notifications:page', (_e, opts) => notifications.page(opts || {}));
@@ -1183,7 +1210,6 @@ function registerIpcHandlers(deps) {
       lastCustomProxyUrl: s.lastCustomProxyUrl,
       wirescopeDir: s.wirescopeDir,
       wirescopePort: s.wirescopePort,
-      disableClaudeDesignMcp: s.disableClaudeDesignMcp,
       compactOnResume: s.compactOnResume,
       ctxReminderThresholds: s.ctxReminderThresholds,
       ctxThresholdDefaults: {

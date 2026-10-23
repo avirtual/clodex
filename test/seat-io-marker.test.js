@@ -69,6 +69,7 @@ function mkRenderer(extra = {}) {
     openPeerSessionDialog() {},
     seatViewMemory: new Map(),
     alert() {},
+    refreshSeatMcp() {},
     ...extra,
   };
   const names = Object.keys(env);

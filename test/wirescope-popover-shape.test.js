@@ -63,7 +63,7 @@ test('the right column is built from the plain read, not gated on the scan', () 
   assert.ok(noScan, 'ENTER: the no-scan arm must still be an early return on !wantUtil');
   assert.ok(/plainCol/.test(noScan[0]),
     'the NO-SCAN arm must still build the right column: peerProxyView withholds capabilities, so every peer session has wantUtil false while the owner side answers with tools.per_tool and often utilization anyway — gating the column on the scan silently dropped the MCP block for all of them');
-  assert.ok(/const plainCol = renderUtilHalf\(agents\);/.test(src),
+  assert.ok(/const plainCol = renderUtilHalf\(agents, res\.data\.clodex_mcp \|\| null, name\);/.test(src),
     'and it comes from the plain response both paths share, built once rather than re-derived per arm');
   assert.ok(/\$\{plainCol\}\$\{scanning\}/.test(src),
     'and the scanning placeholder must sit BELOW what the 13ms read already paid for, not replace it');

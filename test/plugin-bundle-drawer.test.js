@@ -79,6 +79,7 @@ async function openDrawer(kind, { flat = true, sections = SECTIONS } = {}) {
       onRequestOpenSkillsDrawer: (cb) => { opens.skills = cb; },
       onRequestOpenAgentsDrawer: (cb) => { opens.agents = cb; },
       onRequestOpenExecDrawer() {},
+      onRequestOpenMcpDrawer() {},
       onRequestOpenPromptsDrawer() {},
       onRequestOpenTemplatesDrawer() {},
     },

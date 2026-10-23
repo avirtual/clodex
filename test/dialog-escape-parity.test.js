@@ -77,6 +77,7 @@ const KEYBOARD_ONLY = [
   { label: 'Agent editor', id: 'agent-editor', close: 'closeAgentEditor' },
   { label: 'Skill editor', id: 'skill-editor', close: 'closeSkillEditor' },
   { label: 'Exec editor', id: 'exec-editor', close: 'closeExecEditor' },
+  { label: 'MCP editor', id: 'mcp-editor', close: 'closeMcpEditor' },
   { label: 'Help panel', id: 'help-overlay', close: 'closeHelpPanel' },
 ];
 

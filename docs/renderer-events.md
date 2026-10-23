@@ -1,12 +1,12 @@
 # Renderer event push surface — the other half of the browser contract
 
 The contract map for every event the main process pushes at a renderer.
-`preload.js` invoke/send is the request half of `window.api` (271 endpoints);
+`preload.js` invoke/send is the request half of `window.api` (272 endpoints);
 THIS is the push half. A browser frontend must receive each of these over WS
 exactly as the Electron renderer receives them over `ipcRenderer.on`.
 
 **Authoritative receiver list**: the `ipcRenderer.on(channel, …)` calls in
-`preload.js` (73 channels). This doc maps each to its emission point, its
+`preload.js` (74 channels). This doc maps each to its emission point, its
 payload shape (field NAMES, not full types), and the interception point a web
 host subscribes to.
 
@@ -170,7 +170,7 @@ them.
 - **Menu → open a drawer/dialog** (app-menus.js): `request-open-new-dialog`,
   `request-open-preferences`, `request-open-peers-dialog`,
   `request-open-peer-session` (`id, name`), `request-open-exec-drawer`
-  (`name`), `request-open-inbox-drawer`, `request-open-ipc-log`,
+  (`name`), `request-open-mcp-drawer` (`name`), `request-open-inbox-drawer`, `request-open-ipc-log`,
   `request-rename-workspace`, `request-switch-session` (`name` — session-manager
   `voiceSelect` sends this one too, ahead of the tap, so the named seat is on
   screen before its recorder lights),

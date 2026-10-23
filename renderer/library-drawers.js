@@ -84,7 +84,7 @@ function appendBundleGroups(listEl, sections, { onEdit = null, onReveal = null }
   }
 }
 
-function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCache, openTemplateEditor, showToast, bundleSectionsOf, refreshPluginCatalog }) {
+function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCache, openTemplateEditor, showToast, bundleSectionsOf, refreshPluginCatalog, getActiveCwd, openEnvPreferences }) {
   const bundleGroups = (kind) => (typeof bundleSectionsOf === 'function' ? bundleSectionsOf(kind) : []);
 
   const revealBundle = (sec) => {
@@ -796,9 +796,281 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
   execContent.addEventListener('keydown', (e) => e.stopPropagation());
   execNameInput.addEventListener('input', () => { execNameInput.style.borderColor = ''; });
 
+  const MCP_NAME_RE = /^(?!.*__)[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
+  const MCP_PLATFORMS = ['claude', 'codex', 'muse'];
+  const mcpEl = (id) => document.getElementById(id);
+  const mcpDrawer = mcpEl('mcp-drawer');
+  const mcpListEl = mcpEl('mcp-list');
+  const mcpEmpty = mcpEl('mcp-empty');
+  const mcpEditor = mcpEl('mcp-editor');
+  const mcpEditorTitle = mcpEl('mcp-editor-title');
+  const mcpNameInput = mcpEl('mcp-name');
+  const mcpType = mcpEl('mcp-type');
+  const mcpStdioFields = mcpEl('mcp-stdio-fields');
+  const mcpHttpFields = mcpEl('mcp-http-fields');
+  const mcpCommand = mcpEl('mcp-command');
+  const mcpArgs = mcpEl('mcp-args');
+  const mcpEnv = mcpEl('mcp-env');
+  const mcpUrl = mcpEl('mcp-url');
+  const mcpHeaders = mcpEl('mcp-headers');
+  const mcpDescription = mcpEl('mcp-description');
+  const mcpTags = mcpEl('mcp-tags');
+  const mcpPlatformBoxes = MCP_PLATFORMS.map((p) => mcpEl(`mcp-platform-${p}`));
+  const mcpError = mcpEl('mcp-error');
+  const mcpSave = mcpEl('mcp-save');
+  const mcpCancel = mcpEl('mcp-cancel');
+  const mcpDelete = mcpEl('mcp-delete');
+  const mcpNew = mcpEl('mcp-new');
+  const mcpClose = mcpEl('mcp-close');
+  const mcpDiscoverCwd = mcpEl('mcp-discover-cwd');
+  const mcpDiscoverScan = mcpEl('mcp-discover-scan');
+  const mcpDiscoverList = mcpEl('mcp-discover-list');
+
+  let editingMcpName = null;
+  let editingMcpRest = {};
+  let mcpScannedCwd = null;
+
+  function mcpPreview(entry) {
+    const e = entry || {};
+    if (e.type === 'http' || e.type === 'sse') return e.url || '(no url)';
+    return [e.command, ...(Array.isArray(e.args) ? e.args : [])].filter(Boolean).join(' ') || '(no command)';
+  }
+
+  async function refreshMcpList() {
+    const items = (await window.api.listMcpServers()) || [];
+    mcpListEl.innerHTML = '';
+    if (!items.length) { mcpEmpty.style.display = ''; return; }
+    mcpEmpty.style.display = 'none';
+    for (const m of items) {
+      const secrets = (m.secrets || []).length ? ` · uses ${m.secrets.map((n) => `\${${n}}`).join(', ')}` : '';
+      const el = document.createElement('div');
+      el.className = 'prompt-item';
+      el.innerHTML = `
+        <div class="prompt-item-title">${esc(m.name)} <span class="auto-flag">${esc(m.type || 'stdio')}</span></div>
+        <div class="prompt-item-preview">${esc(m.description || mcpPreview(m.entry))}${esc(secrets)}</div>
+        <div class="prompt-item-actions">
+          <button data-action="edit">Edit</button>
+        </div>
+      `;
+      el.querySelector('[data-action="edit"]').addEventListener('click', (e) => {
+        e.stopPropagation();
+        openMcpEditor(m);
+      });
+      el.addEventListener('click', () => openMcpEditor(m));
+      mcpListEl.appendChild(el);
+    }
+  }
+
+  function mcpSourceLabel(source) {
+    const [kind, ...rest] = String(source || '').split(' ');
+    const file = rest.join(' ');
+    if (kind === 'claude:user') return `${file} — user`;
+    if (kind === 'claude:local') return `${file} — project ${mcpScannedCwd || ''}`;
+    return file || source;
+  }
+
+  async function refreshMcpDiscover() {
+    const cwd = mcpDiscoverCwd.value.trim() || null;
+    const found = (await window.api.discoverMcpServers(cwd)) || [];
+    mcpScannedCwd = cwd;
+    mcpDiscoverList.innerHTML = '';
+    if (!found.length) {
+      mcpDiscoverList.innerHTML = '<span class="hint-text">No MCP servers found in your Claude config.</span>';
+      return;
+    }
+    const bySource = new Map();
+    for (const c of found) {
+      if (!bySource.has(c.source)) bySource.set(c.source, []);
+      bySource.get(c.source).push(c);
+    }
+    for (const [source, rows] of bySource) {
+      const head = document.createElement('div');
+      head.className = 'popover-subhead';
+      head.textContent = mcpSourceLabel(source);
+      mcpDiscoverList.appendChild(head);
+      for (const c of rows) mcpDiscoverList.appendChild(mcpCandidateRow(c));
+    }
+  }
+
+  function mcpCandidateRow(c) {
+    const el = document.createElement('div');
+    el.className = 'prompt-item mcp-candidate';
+    const type = (c.entry && c.entry.type) || 'stdio';
+    const needs = (c.secrets || []).length
+      ? `<div class="prompt-item-preview">needs ${esc(c.secrets.map((n) => `\${${n}}`).join(', '))} — set them in <a href="#" data-action="prefs">Preferences ▸ Environment</a></div>`
+      : '';
+    const action = c.inLibrary
+      ? '<span class="auto-flag">in library</span>'
+      : '<button data-action="import">Import</button>';
+    el.innerHTML = `
+      <div class="prompt-item-title">${esc(c.name)} <span class="auto-flag">${esc(type)}</span></div>
+      <div class="prompt-item-preview">${esc(mcpPreview(c.entry))}</div>
+      ${needs}
+      <div class="prompt-item-actions">${action}</div>
+    `;
+    const imp = el.querySelector('[data-action="import"]');
+    if (imp && !c.inLibrary) {
+      imp.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const res = await window.api.importMcpServer(c.name, c.entry);
+        if (!res || !res.ok) { alert(`Import failed: ${(res && res.error) || 'unknown error'}`); return; }
+        refreshMcpList();
+        refreshMcpDiscover();
+      });
+    }
+    const prefs = el.querySelector('[data-action="prefs"]');
+    if (prefs && c.secrets && c.secrets.length) {
+      prefs.addEventListener('click', (e) => {
+        if (e.preventDefault) e.preventDefault();
+        closeMcpDrawer();
+        if (openEnvPreferences) openEnvPreferences();
+      });
+    }
+    return el;
+  }
+
+  function openMcpDrawer(name) {
+    mcpDrawer.classList.remove('hidden');
+    if (getActiveCwd && !mcpDiscoverCwd.value) mcpDiscoverCwd.value = getActiveCwd() || '';
+    refreshMcpList();
+    refreshMcpDiscover();
+    if (name === ':new') openMcpEditor(null);
+    else if (name) openMcpEditor({ name });
+  }
+  function closeMcpDrawer() {
+    mcpDrawer.classList.add('hidden');
+  }
+
+  function linesOf(text) {
+    return String(text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  }
+  function pairsOf(text, sep) {
+    const out = {};
+    for (const line of linesOf(text)) {
+      const i = line.indexOf(sep);
+      if (i <= 0) continue;
+      out[line.slice(0, i).trim()] = line.slice(i + sep.length).trim();
+    }
+    return out;
+  }
+  function showMcpType() {
+    const stdio = mcpType.value === 'stdio';
+    mcpStdioFields.style.display = stdio ? '' : 'none';
+    mcpHttpFields.style.display = stdio ? 'none' : '';
+  }
+
+  function fillMcpEditor(entry) {
+    const { type, command, args, env, url, headers, description, tags, platforms, ...rest } = entry || {};
+    editingMcpRest = rest;
+    mcpType.value = type === 'http' || type === 'sse' ? type : 'stdio';
+    mcpCommand.value = command || '';
+    mcpArgs.value = (Array.isArray(args) ? args : []).join('\n');
+    mcpEnv.value = Object.entries(env || {}).map(([k, v]) => `${k}=${v}`).join('\n');
+    mcpUrl.value = url || '';
+    mcpHeaders.value = Object.entries(headers || {}).map(([k, v]) => `${k}: ${v}`).join('\n');
+    mcpDescription.value = description || '';
+    mcpTags.value = (Array.isArray(tags) ? tags : []).join(', ');
+    const on = Array.isArray(platforms) ? platforms : MCP_PLATFORMS;
+    MCP_PLATFORMS.forEach((p, i) => { mcpPlatformBoxes[i].checked = on.includes(p); });
+    showMcpType();
+  }
+
+  function collectMcpEntry() {
+    const type = mcpType.value;
+    const entry = { ...editingMcpRest, type };
+    if (type === 'stdio') {
+      entry.command = mcpCommand.value.trim();
+      const args = linesOf(mcpArgs.value);
+      if (args.length) entry.args = args;
+      const env = pairsOf(mcpEnv.value, '=');
+      if (Object.keys(env).length) entry.env = env;
+    } else {
+      entry.url = mcpUrl.value.trim();
+      const headers = pairsOf(mcpHeaders.value, ':');
+      if (Object.keys(headers).length) entry.headers = headers;
+    }
+    const description = mcpDescription.value.trim();
+    if (description) entry.description = description;
+    const tags = mcpTags.value.split(',').map((t) => t.trim()).filter(Boolean);
+    if (tags.length) entry.tags = tags;
+    const platforms = MCP_PLATFORMS.filter((_p, i) => mcpPlatformBoxes[i].checked);
+    if (platforms.length !== MCP_PLATFORMS.length) entry.platforms = platforms;
+    return entry;
+  }
+
+  async function openMcpEditor(row = null) {
+    mcpError.textContent = '';
+    if (row) {
+      editingMcpName = row.name;
+      mcpEditorTitle.textContent = 'Edit MCP Server';
+      mcpNameInput.value = row.name;
+      let entry = {};
+      try { entry = JSON.parse((await window.api.getMcpServer(row.name)) || '{}'); } catch { entry = {}; }
+      fillMcpEditor(entry);
+      mcpDelete.style.display = '';
+    } else {
+      editingMcpName = null;
+      mcpEditorTitle.textContent = 'New MCP Server';
+      mcpNameInput.value = '';
+      fillMcpEditor({});
+      mcpDelete.style.display = 'none';
+    }
+    mcpNameInput.style.borderColor = '';
+    mcpEditor.classList.remove('hidden');
+    setTimeout(() => mcpNameInput.focus(), 50);
+  }
+  function closeMcpEditor() {
+    mcpEditor.classList.add('hidden');
+    editingMcpName = null;
+    editingMcpRest = {};
+  }
+
+  mcpClose.addEventListener('click', closeMcpDrawer);
+  mcpNew.addEventListener('click', () => openMcpEditor(null));
+  mcpType.addEventListener('change', showMcpType);
+  mcpDiscoverScan.addEventListener('click', () => refreshMcpDiscover());
+
+  mcpSave.addEventListener('click', async () => {
+    const name = mcpNameInput.value.trim();
+    if (!MCP_NAME_RE.test(name)) {
+      mcpNameInput.style.borderColor = '#e94560';
+      mcpError.textContent = 'Name: letters, digits, - and _ (no "__", no dot), starting with a letter or digit, up to 64 characters.';
+      return;
+    }
+    const res = await window.api.saveMcpServer(name, collectMcpEntry());
+    if (!res || !res.ok) {
+      mcpError.textContent = (res && res.error) || 'Save failed: unknown error';
+      return;
+    }
+    if (editingMcpName && editingMcpName.toLowerCase() !== name.toLowerCase()) {
+      const gone = await window.api.removeMcpServer(editingMcpName);
+      if (gone && gone.ok === false) alert(`Saved as "${name}", but could not remove "${editingMcpName}": ${gone.error || 'unknown error'}`);
+    }
+    closeMcpEditor();
+    refreshMcpList();
+    refreshMcpDiscover();
+  });
+
+  mcpCancel.addEventListener('click', closeMcpEditor);
+  mcpDelete.addEventListener('click', async () => {
+    if (!editingMcpName) return;
+    if (!confirm(`Delete MCP server "${editingMcpName}"?`)) return;
+    const res = await window.api.removeMcpServer(editingMcpName);
+    if (res && res.ok === false) { alert(`Could not delete it: ${res.error || 'unknown error'}`); return; }
+    closeMcpEditor();
+    refreshMcpList();
+    refreshMcpDiscover();
+  });
+
+  for (const input of [mcpNameInput, mcpCommand, mcpArgs, mcpEnv, mcpUrl, mcpHeaders, mcpDescription, mcpTags, mcpDiscoverCwd]) {
+    input.addEventListener('keydown', (e) => e.stopPropagation());
+  }
+  mcpNameInput.addEventListener('input', () => { mcpNameInput.style.borderColor = ''; mcpError.textContent = ''; });
+
   window.api.onRequestOpenSkillsDrawer((name) => openSkillsDrawer(name));
   window.api.onRequestOpenAgentsDrawer((name) => openAgentsDrawer(name));
   window.api.onRequestOpenExecDrawer((name) => openExecDrawer(name));
+  window.api.onRequestOpenMcpDrawer((name) => openMcpDrawer(name));
   window.api.onRequestOpenPromptsDrawer((arg) => openPromptsDrawer(arg));
 
   // ---------------------------------------------------------------------------
@@ -985,7 +1257,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
 
   return {
     refreshTemplatesList, openTeamTemplate,
-    closePromptEditor, closeAgentEditor, closeSkillEditor, closeExecEditor,
+    closePromptEditor, closeAgentEditor, closeSkillEditor, closeExecEditor, closeMcpEditor,
   };
 }
 

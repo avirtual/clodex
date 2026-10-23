@@ -54,7 +54,7 @@ const { dropText } = require('./lib/drop-paths');
 const { composerReadlineEdit, composerHeightFor } = require('./lib/composer-keys');
 const { slashQuery, filterCommands, slashMenuKey } = require('./lib/composer-slash');
 const { turnSeg, reqSeg, costSeg } = require('./lib/turn-stat');
-const { renderAppendChecklist, collectAppendChecklist, appendRepaintTicks, mergeUnrendered, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require('./lib/checklists');
+const { renderAppendChecklist, collectAppendChecklist, appendRepaintTicks, mergeUnrendered, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderMcpChecklist, collectMcpChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setMcpLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require('./lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../scope-util');
 const { parseSkillFrontmatter } = require('../skills-util');
 const skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
@@ -125,6 +125,28 @@ function markSeatEffort(name, effort) {
   else delete item.dataset.effort;
   const seat = sessions.get(name);
   if (seat && seat.liveSplit) seat.liveSplit.refreshStatus();
+}
+function markSeatMcp(name, state) {
+  const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  if (!item) return;
+  const servers = state && Array.isArray(state.servers) ? state.servers : [];
+  if (servers.length) item.dataset.mcp = servers.join(', ');
+  else delete item.dataset.mcp;
+  if (state && state.unmanaged) item.dataset.mcpUnmanaged = '1';
+  else delete item.dataset.mcpUnmanaged;
+  if (state && state.stale) item.dataset.mcpStale = '1';
+  else delete item.dataset.mcpStale;
+}
+async function refreshSeatsMcp(names) {
+  let states = null;
+  try { states = await window.api.mcpAppliedStale(names); } catch { states = null; }
+  if (!states || typeof states !== 'object') return;
+  for (const n of names) { if (states[n] && states[n].ok) markSeatMcp(n, states[n]); }
+}
+async function refreshSeatMcp(name) {
+  let state = null;
+  try { state = await window.api.mcpAppliedStale(name); } catch { state = null; }
+  if (state && state.ok) markSeatMcp(name, state);
 }
 function markSeatPosture(name, posture) {
   const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
@@ -462,6 +484,7 @@ let closePromptEditor = () => {};
 let closeAgentEditor = () => {};
 let closeSkillEditor = () => {};
 let closeExecEditor = () => {};
+let closeMcpEditor = () => {};
 
 function promptText(title, initial = '') {
   return new Promise((resolve) => {
@@ -645,6 +668,7 @@ function addFailedSessionToSidebar(entry) {
   if (entry.backend) item.dataset.backend = entry.backend;
   item.dataset.io = seatIoKind(entry.io);
   if (entry.effort) item.dataset.effort = entry.effort;
+  if (Array.isArray(entry.mcpServers) && entry.mcpServers.length) item.dataset.mcp = entry.mcpServers.join(', ');
   if (entry.posture && entry.posture !== 'default') item.dataset.posture = entry.posture;
   const displayName = entry.label || entry.name;
   item.innerHTML = `
@@ -772,6 +796,7 @@ function rebuildLiveRow(name, snap, res = {}) {
     res.backend ?? snap.backend ?? null, res.team !== undefined ? res.team || null : snap.team || null,
     (res.noWire ?? snap.noWire) === true, snap.account || null, snap.fixFor || null);
   markSeatEffort(name, snap.effort);
+  refreshSeatMcp(name);
   markSeatPosture(name, snap.posture);
   if (res.clone) applyCloneChip(sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`), res.clone);
   if (snap.createdAt) sidebarMeta.set(name, { ...(sidebarMeta.get(name) || {}), createdAt: snap.createdAt });
@@ -1590,6 +1615,7 @@ async function refreshSidebarMeta({ includePr = true } = {}) {
   }
   try {
     const live = await window.api.listSessions();
+    if (Array.isArray(live)) refreshSeatsMcp(live.map((s) => s.name));
     if (Array.isArray(live)) for (const s of live) { applyAccountChip(s.name, s.account || null); markSeatVoice(s.name, s.voice); markSeatEffort(s.name, s.effort); markSeatPosture(s.name, s.posture); if (s.clone) applyCloneChip(sessionList.querySelector(`[data-name="${CSS.escape(s.name)}"]`), s.clone); }
   } catch {}
   refreshSidebarView();
@@ -2795,7 +2821,7 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
     if (caps.injectSkills) refreshNewSessionInjectSkills();
     if (caps.tools) refreshNewSessionTools(modeToolDenySet());
   }
-  if (agentType && !skipAsyncRefresh) { refreshNewSessionExecCommands(); refreshNewSessionPlugins().then(() => refreshNewSessionIntents()); }
+  if (agentType && !skipAsyncRefresh) { refreshNewSessionExecCommands(); refreshNewSessionMcpServers(); refreshNewSessionPlugins().then(() => refreshNewSessionIntents()); }
   resumeRow.style.display = (agentType && !authoring) ? '' : 'none';
   if (!agentType) {
     inputResume.value = '';
@@ -2968,11 +2994,16 @@ function populatePlacementOptions(boxes) {
 
 async function applyPlacement() {
   const placement = currentPlacement();
+  syncMcpRow();
   inputCwd.value = placementNextCwd(placement, inputCwd.value.trim(), homeDir);
   refreshTeamForCwd();
   if (placement !== 'host') { await applySandboxState(); return; }
   greyRichFields(false);
   await restoreHostCatalogs();
+}
+
+function syncMcpRow() {
+  if (mcpRow) mcpRow.style.display = currentPlacement() === 'host' ? '' : 'none';
 }
 
 async function applySandboxState() {
@@ -3112,6 +3143,8 @@ const agentsRow = document.getElementById('agents-row');
 const inputAgentsList = document.getElementById('input-agents-list');
 const inputBuiltinsList = document.getElementById('input-builtins-list');
 const inputExecList = document.getElementById('input-exec-list');
+const mcpRow = document.getElementById('mcp-row');
+const inputMcpList = document.getElementById('input-mcp-list');
 const inputIntentList = document.getElementById('input-intent-list');
 const inputPluginList = document.getElementById('input-plugin-list');
 // Re-reads the checked set: a newly appearing verb row must arrive UNTICKED.
@@ -3240,6 +3273,20 @@ async function refreshNewSessionExecCommands(enabledSet = new Set()) {
   if (!newSessionIsAgent()) return;
   setExecLibCache((await window.api.listExecCommands()) || []);
   renderExecChecklist(inputExecList, enabledSet);
+}
+
+async function mcpChecklistData(workspaceId) {
+  const lib = (await window.api.listMcpServers()) || [];
+  const names = lib.map((m) => m.name);
+  const readiness = names.length ? ((await window.api.mcpReadiness(workspaceId, names)) || {}) : {};
+  return { lib, readiness };
+}
+
+async function refreshNewSessionMcpServers(enabledSet = new Set()) {
+  if (!newSessionIsAgent() || !inputMcpList) return;
+  const { lib, readiness } = await mcpChecklistData(currentWorkspaceId);
+  setMcpLibCache(lib);
+  renderMcpChecklist(inputMcpList, enabledSet, { cli: inputType.value, readiness });
 }
 
 let newSessionPluginsPersisted = null;
@@ -3571,6 +3618,7 @@ async function openDialog(prefill = null) {
   populatePlacementOptions(boxes);
   inputPlacement.value = 'host';
   placementRow.style.display = showPlacementSelector(boxes) ? '' : 'none';
+  syncMcpRow();
   greyRichFields(false);
   if (prefill && prefill.resumeId) dialogTitle.textContent = 'Adopt Session';
   dialogOverlay.classList.remove('hidden');
@@ -3582,6 +3630,7 @@ function populateHostCatalogs(settings, agentLib) {
   setAgentLibCache(agentLib || []);
   renderAgentChecklist(inputAgentsList, new Set(), null, newSessionSeat());
   refreshNewSessionExecCommands();
+  refreshNewSessionMcpServers();
   refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
   setClaudeToolsCache(settings?.claudeTools || []);
   setDefaultToolDenyCache(settings?.defaultToolDeny || []);
@@ -3704,6 +3753,7 @@ inputTemplate.addEventListener('change', async () => {
   const agentType = isAgentType(t.type);
   if (agentType) {
     await refreshNewSessionExecCommands(new Set(t.execCommands || []));
+    await refreshNewSessionMcpServers(new Set(t.mcpServers || []));
     await refreshNewSessionPlugins(t.plugins);
     await refreshNewSessionIntents(t.intents);
   }
@@ -3825,6 +3875,7 @@ function collectFormConfig() {
     proxy: agentType ? proxyValueFromControls(inputProxyMode, inputProxyUrl) : null,
     agents: caps.agents ? collectAgentChecklist(inputAgentsList) : [],
     execCommands: agentType ? collectExecChecklist(inputExecList) : [],
+    mcpServers: agentType ? collectMcpChecklist(inputMcpList) : [],
     ...(Array.isArray(intents) ? { intents } : {}),
     plugins,
     ...(autoCompactOff ? { autoCompact: false } : {}),
@@ -3850,7 +3901,7 @@ function collectDialogEnv() {
 async function doCreate() {
   const name = inputName.value.trim();
   const cfg = collectFormConfig();
-  const { type, cwd, extraArgs, proxy, agents, execCommands, denyBuiltins,
+  const { type, cwd, extraArgs, proxy, agents, execCommands, mcpServers, denyBuiltins,
           disabledTools, disabledSkills, injectSkills, stripLevel,
           systemPromptFile, appendPromptFiles, intents, noWire, plugins, effort } = cfg;
   const io = capsFor(type).streamIo && inputStreamIo && inputStreamIo.checked ? 'stream' : 'pty';
@@ -3936,7 +3987,7 @@ async function doCreate() {
     // could abandon the managed wirescope when the port stops matching).
     if (typeof proxy === 'string') window.api.setSettings({ lastCustomProxyUrl: proxy });
     const teamOn = teamToggle && teamToggle.checked && teamRow && teamRow.style.display !== 'none';
-    const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire: noWire === true, plugins, io, effort: effort || null };
+    const seatParams = { name, type, cwd: spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire: noWire === true, plugins, io, effort: effort || null, mcpServers };
     let result;
     if (teamOn && dialogTeamMode === 'create') {
       const teamName = slugifyTeamName(teamNameInput.value.trim() || pathBasename(cwd));
@@ -3948,7 +3999,7 @@ async function doCreate() {
       const prompt = (teamRoleSelect && teamRoleSelect.value === 'hand') ? null : ((teamRolePromptSelect && teamRolePromptSelect.value) || null);
       result = await window.api.teamJoin({ team: dialogTeamName, role, prompt, ...seatParams });
     } else {
-      result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire === true, plugins, io, effort || null);
+      result = await window.api.createSession(name, type, spawnCwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire === true, plugins, io, effort || null, mcpServers);
     }
     if (!applyCreateResult(nameFieldEls(), result)) {
       if (worktree) {
@@ -3971,16 +4022,21 @@ async function doCreate() {
     markSeatIo(name, result.session && result.session.io);
     createTerminal(name);
     addSessionToSidebar(name, type, spawnCwd, null, (result.session && result.session.backend) || null, (result.session && result.session.team) || null, (result.session && result.session.noWire) === true);
+    refreshSeatMcp(name);
     // Manual, so it focuses as it always has — unless the operator has a line
     // open in the session they were on, which vetoes regardless of provenance.
     await switchToNewSession(name, { agentInitiated: false });
 
-    const warnings = (result.session && result.session.warnings) || [];
+    const warnings = toastableWarnings((result.session && result.session.warnings) || []);
     for (const w of warnings) showToast(w, { kind: 'warn', duration: 15000, name });
   } finally {
     createInFlight = false;
     refreshCreateButton();
   }
+}
+
+function toastableWarnings(warnings) {
+  return warnings.filter((w) => !String(w).startsWith('MCP '));
 }
 
 function submitDialog() {
@@ -4032,6 +4088,7 @@ function setDialogMode(mode) {
   if (authoring) {
     templateRow.style.display = 'none'; // create-mode: refreshTemplatesDropdown owns it
     placementRow.style.display = 'none';
+    syncMcpRow();
     greyRichFields(false);
     dialogNameState = { ok: true, kind: 'free', message: '' };
     paintNameField(nameFieldEls(), dialogNameState);
@@ -4087,6 +4144,7 @@ async function openTemplateEditor(tpl = null, bundle = null, teamOwner = null) {
     newSessionAppendOpened = (tpl && tpl.appendPromptFiles) || [];
     renderAppendChecklist(inputAppendList, new Set(newSessionAppendOpened), newSessionSeat(), teamAppendRows);
     await refreshNewSessionExecCommands(new Set((tpl && tpl.execCommands) || []));
+    await refreshNewSessionMcpServers(new Set((tpl && tpl.mcpServers) || []));
     await refreshNewSessionIntents(tpl && tpl.intents);
   }
   if (tplCaps.agents) {
@@ -5690,6 +5748,7 @@ const ESCAPE_CLOSES = [
   ['agent-editor', () => closeAgentEditor()],
   ['skill-editor', () => closeSkillEditor()],
   ['exec-editor', () => closeExecEditor()],
+  ['mcp-editor', () => closeMcpEditor()],
   ['help-overlay', () => closeHelpPanel()],
 ];
 
@@ -6020,7 +6079,6 @@ const prefsClaudeBox = document.getElementById('prefs-claude-components');
 const prefsClaudeCmd = document.getElementById('prefs-claude-sl-cmd');
 const prefsCodexBox = document.getElementById('prefs-codex-components');
 const prefsProxyEnabled = document.getElementById('prefs-proxy-enabled');
-const prefsDisableDesignMcp = document.getElementById('prefs-disable-design-mcp');
 const prefsTerminalWebgl = document.getElementById('prefs-terminal-webgl');
 const prefsSeatView = document.getElementById('prefs-seat-view');
 const prefsShowThinking = document.getElementById('prefs-show-thinking');
@@ -8838,13 +8896,12 @@ function collectPrefsSkillDefaults() {
   return [...new Set([...off, ...carried])];
 }
 
-async function openPrefs() {
+async function openPrefs(group = null) {
   const s = await window.api.getSettings();
   renderPrefsCheckboxes(prefsClaudeBox, s.claudeComponents, s.statusline.claude, CLAUDE_LABELS);
   prefsClaudeCmd.value = s.statusline.claudeCommand || '';
   renderPrefsCheckboxes(prefsCodexBox, s.codexComponents, s.statusline.codex, CODEX_LABELS);
   prefsProxyEnabled.checked = !!s.proxyEnabled;
-  prefsDisableDesignMcp.checked = s.disableClaudeDesignMcp !== false;
   if (prefsTerminalWebgl) prefsTerminalWebgl.checked = s.terminalWebgl === true;
   if (prefsShowThinking) prefsShowThinking.checked = s.showThinking !== false;
   if (prefsSeatView) prefsSeatView.value = initialSeatView({ transcriptPane: s.transcriptPane !== false, transcriptPaneMode: s.transcriptPaneMode, io: 'pty' });
@@ -8866,6 +8923,7 @@ async function openPrefs() {
   if (prefsDefaultMode) prefsDefaultMode.value = defaultSessionMode(s);
   if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
   restorePrefsGroups();
+  if (group) for (const g of prefsGroups()) { if (g.dataset.group === group) g.open = true; }
   applyPrefsGate();
   prefsRemoteEnabled.checked = !!s.remoteEnabled;
   prefsEnvLocked = (s && s.envLockedSettings) || {};
@@ -8952,7 +9010,6 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
       codex: collectChecked(prefsCodexBox),
     },
     proxyEnabled: prefsProxyEnabled.checked,
-    disableClaudeDesignMcp: prefsDisableDesignMcp.checked,
     terminalWebgl: prefsTerminalWebgl ? prefsTerminalWebgl.checked : false,
     ...(prefsShowThinking ? { showThinking: prefsShowThinking.checked } : {}),
     ...(seatView || {}),
@@ -9114,6 +9171,8 @@ if (argsPluginList) {
 }
 const argsExecList = document.getElementById('args-exec-list');
 const argsExecSection = document.getElementById('args-exec-section');
+const argsMcpList = document.getElementById('args-mcp-list');
+const argsMcpSection = document.getElementById('args-mcp-section');
 const argsSkillsRow = document.getElementById('args-skills-row');
 const argsSkillsList = document.getElementById('args-skills-list');
 const argsSkillsSection = document.getElementById('args-skills-section');
@@ -9232,6 +9291,12 @@ async function openArgsDialog(name, argsSource = null) {
     setExecLibCache((await window.api.listExecCommands()) || []);
     renderExecChecklist(argsExecList, new Set(res.execCommands || []));
   }
+  argsMcpSection.style.display = isExecEditable ? '' : 'none';
+  if (isExecEditable) {
+    const { lib, readiness } = await mcpChecklistData(currentWorkspaceId);
+    setMcpLibCache(lib);
+    renderMcpChecklist(argsMcpList, new Set(res.mcpServers || []), { cli: res.type, readiness });
+  }
   const isSkillsEditable = (caps.injectSkills || caps.skillRoster) && !!skillCatalog;
   argsSkillsSection.style.display = isSkillsEditable ? '' : 'none';
   argsSkillsRow.style.display = (isSkillsEditable && caps.skillRoster) ? '' : 'none';
@@ -9269,7 +9334,7 @@ async function openArgsDialog(name, argsSource = null) {
     argsEnv.value = '';
     renderEnvHint(argsEnv, argsEnvHint);
   }
-  for (const sec of [argsAppendSection, argsToolsSection, argsOtherSection, argsSkillsSection, argsExecSection, argsIntentsSection, argsEnvSection]) sec.open = false;
+  for (const sec of [argsAppendSection, argsToolsSection, argsOtherSection, argsSkillsSection, argsExecSection, argsMcpSection, argsIntentsSection, argsEnvSection]) sec.open = false;
   argsRestart.checked = false;
   argsOverlay.classList.remove('hidden');
   setTimeout(() => argsInput.focus(), 50);
@@ -9309,6 +9374,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
     : mergePlugins(collectPluginChecklist(argsPluginList),
       pluginsForUnlistedPlugins(argsPluginsPersisted, argsPluginsRendered));
   const execCommandsGrant = argsExecSection.style.display === 'none' ? undefined : collectExecChecklist(argsExecList);
+  const mcpServers = argsMcpSection.style.display === 'none' ? undefined : collectMcpChecklist(argsMcpList);
   const io = (!argsStreamIoRow || argsStreamIoRow.style.display === 'none' || !argsStreamIo)
     ? undefined : (argsStreamIo.checked ? 'stream' : 'pty');
   // LOCAL-only: a hidden section (peer row) leaves env untouched via `undefined`. Locally the
@@ -9344,11 +9410,12 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
         extraArgs: parsed, restart, proxy, systemPrompt: undefined, agents, denyBuiltins,
         disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents,
       })
-    : await window.api.setSessionArgs(name, parsed, restart, proxy, undefined, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env, plugins, io, effort);
+    : await window.api.setSessionArgs(name, parsed, restart, proxy, undefined, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env, plugins, io, effort, mcpServers);
   if (!res || !res.ok) {
     alert(`Save settings failed: ${res && res.error ? res.error : 'unknown error'}`);
     return;
   }
+  if (!source) refreshSeatMcp(name);
   if (res.restarted) {
     if (source) source.onRestarted();
     else if (snap.type) {
@@ -9360,7 +9427,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
 
 
 ({ refreshTemplatesList: templatesDrawerRefresh,
-  closePromptEditor, closeAgentEditor, closeSkillEditor, closeExecEditor,
+  closePromptEditor, closeAgentEditor, closeSkillEditor, closeExecEditor, closeMcpEditor,
   openTeamTemplate: templatesDrawerOpenTeam } = initLibraryDrawers({
   getActiveSession: () => activeSession,
   setAgentLibCache, setSkillLibCache,
@@ -9370,6 +9437,11 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   refreshPluginCatalog: async () => {
     try { setPluginCatalogCache((await window.api.pluginCatalog()) || []); } catch {}
   },
+  getActiveCwd: () => {
+    const row = activeSession ? sessionList.querySelector(`[data-name="${CSS.escape(activeSession)}"]`) : null;
+    return (row && row.dataset.cwd) || '';
+  },
+  openEnvPreferences: () => openPrefs('env'),
 }));
 
 
@@ -9379,6 +9451,7 @@ function mountRestoredSession(entry) {
   const { terminal, fitAddon, echoRewrite } = createTerminal(entry.name);
   addSessionToSidebar(entry.name, entry.type, entry.cwd, entry.label, entry.backend || null, entry.team || null, entry.noWire === true, null, entry.fixFor || null);
   markSeatEffort(entry.name, entry.effort);
+  refreshSeatMcp(entry.name);
   markSeatPosture(entry.name, entry.posture);
   if (entry.createdAt) sidebarMeta.set(entry.name, { ...(sidebarMeta.get(entry.name) || {}), createdAt: entry.createdAt });
   const item = sessionList.querySelector(`[data-name="${CSS.escape(entry.name)}"]`);

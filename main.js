@@ -121,7 +121,7 @@ const log = {
 // live reconciliation stops being visible here.
 let engine = null;
 let manager = null;
-let workspaces, uiSettings, agentLibrary, skillLibrary, envScopes, promptLibrary, templates, execLibrary;
+let workspaces, uiSettings, agentLibrary, skillLibrary, envScopes, promptLibrary, templates, execLibrary, mcpLibrary;
 
 
 
@@ -266,6 +266,7 @@ const {
   listAllTemplates: () => (engine ? engine.listAllTemplates() : []),
   listAllPrompts: () => (engine ? engine.listAllPrompts() : []),
   getExecLibrary: () => execLibrary,
+  getMcpLibrary: () => mcpLibrary,
   getEnvScopes: () => envScopes,
   getPluginHost: () => (engine ? engine.getPluginHost() : null),
   getHelpCorpus: () => (engine ? engine.getHelpCorpus() : null),
@@ -587,7 +588,7 @@ app.whenReady().then(() => {
     },
   });
   manager = engine.manager;
-  ({ workspaces, uiSettings, agentLibrary, skillLibrary, envScopes, promptLibrary, templates, execLibrary } = engine.stores);
+  ({ workspaces, uiSettings, agentLibrary, skillLibrary, envScopes, promptLibrary, templates, execLibrary, mcpLibrary } = engine.stores);
 
   // WHETHER CLODEX IS FRONTMOST, which gates the automatic microphone re-arm.
   // Only this process can answer it: `app.isFocused()` is about the

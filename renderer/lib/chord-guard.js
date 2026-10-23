@@ -16,6 +16,7 @@ const MODAL_OVERLAY_IDS = [
   'agent-editor',
   'skill-editor',
   'exec-editor',
+  'mcp-editor',
 ];
 
 const MODAL_OVERLAY_CLASSES = [

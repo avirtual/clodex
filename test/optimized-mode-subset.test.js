@@ -154,6 +154,7 @@ async function runDialog(settings, { type = 'claude', openIn, switchTo } = {}) {
       newSessionSkillsAsked: [],
       renderAgentChecklist: () => {},
       refreshNewSessionExecCommands: () => {},
+      refreshNewSessionMcpServers: () => {},
       refreshNewSessionPlugins: () => Promise.resolve(),
       refreshNewSessionIntents: () => {},
       refreshNewSessionInjectSkills: () => {},

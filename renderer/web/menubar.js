@@ -354,6 +354,18 @@ function buildLibraryMenu(ctx) {
             bundles,
           }),
         },
+        {
+          label: 'MCP Servers',
+          submenu: async () => kindRows({
+            channel: 'request-open-mcp-drawer',
+            library: (await read(api.listMcpServers)).map((m) => ({ label: trunc(m.name), run: () => emit('request-open-mcp-drawer', m.name) })),
+            empty: '(no MCP servers in library)',
+            pluginEntries: () => [],
+            newLabel: 'New MCP Server…',
+            manageLabel: 'Manage MCP Servers…',
+            bundles,
+          }),
+        },
         { sep: true },
         { label: 'Requests…', run: () => emit('request-open-inbox-drawer') },
       ];

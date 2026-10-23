@@ -271,6 +271,85 @@
     </div>
   </div>
 
+  <div id="mcp-drawer" class="hidden">
+    <div id="mcp-header">
+      <span class="prompts-title">MCP Servers</span>
+      <button id="mcp-new" title="New MCP server" type="button">+ New</button>
+      <button id="mcp-close" title="Close" type="button">×</button>
+    </div>
+    <div id="mcp-discover" class="mcp-discover">
+      <div class="popover-subhead">Discover</div>
+      <div class="prefs-row">
+        <input type="text" id="mcp-discover-cwd" placeholder="Project folder (optional)" spellcheck="false">
+        <button id="mcp-discover-scan" class="secondary" type="button">Scan</button>
+      </div>
+      <div id="mcp-discover-list"></div>
+      <span class="hint-text">Servers your Claude config already knows (<code>~/.claude.json</code> and the folder's <code>.mcp.json</code>). Import copies one into the library with any secret written as <code>${NAME}</code>; set the value in Preferences ▸ Environment.</span>
+    </div>
+    <div id="mcp-list"></div>
+    <div id="mcp-empty" class="hint">
+      No MCP servers yet. Click <strong>+ New</strong>, or import one above.<br><br>
+      Stored as JSON in <code>~/.clodex/library/mcp/</code>. A seat loads only the servers you pick for it in the New / Edit Session dialog; the built-in <code>clodex</code> server is always on.
+    </div>
+  </div>
+
+  <div id="mcp-editor" class="hidden">
+    <div class="prompt-editor-box">
+      <div class="dialog-head">
+        <h3 id="mcp-editor-title">New MCP Server</h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
+      <label>Name
+        <input type="text" id="mcp-name" placeholder="e.g. jira" spellcheck="false">
+      </label>
+      <label>Type
+        <select id="mcp-type">
+          <option value="stdio">stdio</option>
+          <option value="http">http</option>
+          <option value="sse">sse</option>
+        </select>
+      </label>
+      <div id="mcp-stdio-fields">
+        <label>Command
+          <input type="text" id="mcp-command" placeholder="e.g. npx" spellcheck="false">
+        </label>
+        <label>Arguments (one per line)
+          <textarea id="mcp-args" rows="3" spellcheck="false"></textarea>
+        </label>
+        <label>Environment (KEY=value per line)
+          <textarea id="mcp-env" rows="3" spellcheck="false"></textarea>
+        </label>
+      </div>
+      <div id="mcp-http-fields">
+        <label>URL
+          <input type="text" id="mcp-url" placeholder="https://…" spellcheck="false">
+        </label>
+        <label>Headers (Name: value per line)
+          <textarea id="mcp-headers" rows="3" spellcheck="false"></textarea>
+        </label>
+      </div>
+      <span class="hint-text">Write secrets as ${NAME}; set the value in Preferences ▸ Environment (mark it Secret)</span>
+      <label>Description
+        <input type="text" id="mcp-description" spellcheck="false">
+      </label>
+      <label>Tags (comma-separated)
+        <input type="text" id="mcp-tags" spellcheck="false">
+      </label>
+      <div class="prefs-row" id="mcp-platforms">
+        <span>Platforms</span>
+        <label class="prefs-check"><input type="checkbox" id="mcp-platform-claude" value="claude" checked><span>claude</span></label>
+        <label class="prefs-check"><input type="checkbox" id="mcp-platform-codex" value="codex" checked><span>codex</span></label>
+        <label class="prefs-check"><input type="checkbox" id="mcp-platform-muse" value="muse" checked><span>muse</span></label>
+      </div>
+      <div id="mcp-error" class="hint-text mcp-error"></div>
+      <div class="dialog-actions">
+        <button id="mcp-delete" class="secondary" type="button" style="margin-right: auto;">Delete</button>
+        <button id="mcp-cancel" class="secondary" type="button">Cancel</button>
+        <button id="mcp-save" type="button">Save</button>
+      </div>
+    </div>
+  </div>
+
   <div id="inbox-drawer" class="hidden">
     <div id="inbox-header">
       <span class="prompts-title">Requests for you</span>
@@ -685,6 +764,10 @@
             <div id="input-exec-list" class="agent-checklist"></div>
             <span class="hint-text">Grant this seat the registered commands it may run via <code>[agent:exec &lt;name&gt;]</code>. Checked = granted. Commands are authored in File ▸ Exec Commands…; a grant only lets the seat run a fixed command with a schema-validated payload — it never lets the agent register or change one.</span>
           </label>
+          <label id="mcp-row">MCP servers
+            <div id="input-mcp-list" class="agent-checklist"></div>
+            <span class="hint-text">Which <strong>Library ▸ MCP Servers</strong> entries this seat loads; the built-in <code>clodex</code> server is always on and not listed. Applies at spawn; changing it on a running seat needs a restart.</span>
+          </label>
           <label id="plugins-row">Plugins
             <div id="input-plugin-list" class="agent-checklist"></div>
             <span class="hint-text">Which plugins this seat HAS. An unticked plugin contributes nothing to it — no intents below, no grammar in its prompt, no turn feed. New seats start with the plugins shipped with Clodex ticked; one you installed yourself is off until you tick it here.</span>
@@ -927,6 +1010,13 @@
           <span class="hint-text">Grant this seat the registered commands it may run via <code>[agent:exec &lt;name&gt;]</code>. Checked = granted. The grant is checked fresh on every invocation, so a change applies to the <em>next</em> exec immediately — no restart needed (restarting only refreshes the seat's prompt). Grants only bite when the <code>exec</code> intent is also enabled (see Intents). Commands are authored in File ▸ Exec Commands…; a grant only lets the seat run a fixed command with a schema-validated payload — it never lets the agent register or change one. Local sessions only.</span>
         </label>
       </details>
+      <details id="args-mcp-section" class="dialog-section">
+        <summary>MCP servers</summary>
+        <label id="args-mcp-row">
+          <div id="args-mcp-list" class="agent-checklist"></div>
+          <span class="hint-text">Which <strong>Library ▸ MCP Servers</strong> entries this seat loads; the built-in <code>clodex</code> server is always on and not listed. The CLI reads its MCP set at start: restart to apply — tick "Restart session now" below. Local sessions only.</span>
+        </label>
+      </details>
       <details id="args-plugins-section" class="dialog-section">
         <summary>Plugins</summary>
         <label id="args-plugins-row">
@@ -1084,16 +1174,10 @@
           <div class="popover-bulk"><button type="button" data-bulk="all">Check All</button><button type="button" data-bulk="none">Uncheck All</button></div>
           <div id="prefs-agents-list" class="agent-checklist"></div>
         </label>
-        <h5>Claude MCP</h5>
-        <p class="hint-text">Claude Code auto-injects the built-in <code>claude_design</code> connector (~20 tools, ~4k tokens every turn) with no global opt-out. A routed session is usually handled by the proxy: the built-in wirescope strips <code>claude_design</code> by default and keeps your real MCPs. The fallback below is for the sessions it never sees — one you route nowhere, or one whose wire is unreachable at spawn. The fallback uses <code>--strict-mcp-config</code>, which is all-or-nothing: it disables <strong>every</strong> MCP server, including project/user ones. The IPC log says whenever it is used, and why. Leave it off unless your unrouted agents use no MCP.</p>
-        <label class="prefs-check">
-          <input type="checkbox" id="prefs-disable-design-mcp">
-          <span>Disable <code>claude_design</code> MCP</span>
-        </label>
       </details>
       <details class="prefs-group" data-group="env">
         <summary><h4>Environment variables</h4><span class="prefs-group-sub">Extra variables for every session this app spawns</span></summary>
-        <p class="hint-text">Extra environment variables merged into every wrapper session's process (claude, codex, and bash), on top of the machine environment. Precedence is machine &lt; <strong>Global</strong> &lt; <strong>This workspace</strong> &lt; per-session (set in the New Session dialog). Mark a value <strong>Secret</strong> to store it write-only — it's kept on disk with <code>0600</code> permissions and never shown again after you save (the row shows only that a value is set). <code>CLODEX_REMOTE_TOKEN</code> is reserved and can't be set here. Applied at spawn — restart a session to pick up changes.</p>
+        <p class="hint-text">Extra environment variables merged into every wrapper session's process (claude, codex, and bash), on top of the machine environment. Precedence is machine &lt; <strong>Global</strong> &lt; <strong>This workspace</strong> &lt; per-session (set in the New Session dialog). Mark a value <strong>Secret</strong> to store it write-only — it's kept on disk with <code>0600</code> permissions and never shown again after you save (the row shows only that a value is set). <code>CLODEX_REMOTE_TOKEN</code> is reserved and can't be set here. Applied at spawn — restart a session to pick up changes. MCP servers reference secrets as <code>${NAME}</code>; mark those values Secret here.</p>
         <div class="prefs-row" style="margin-top: 4px;">
           <span>Scope</span>
           <select id="prefs-env-scope" style="flex: none;">
