@@ -1717,8 +1717,6 @@ function createSessionManager(deps) {
             if (backend) this._shadowLog({ type: 'wire-tee-blind', agent: name, backend });
             else intentSource = 'wire';
           }
-          // A user-supplied --settings in extraArgs replaces the whole hooks block, so ipcdelta.sh and every other drain is absent
-          // for that seat, which the frozen-prompt decision below depends on.
           const userMcp = args.some((a) => /^--mcp-config(=|$)/.test(a));
           const userStrict = args.some((a) => /^--strict-mcp-config(=|$)/.test(a));
           const plan = mcpArgvPlan({ userMcp, userStrict, mcpPath: pathFor(REGISTRY_DIR, name, 'mcpConfig') });
@@ -1730,6 +1728,8 @@ function createSessionManager(deps) {
             ? [...new Set(mcpLib.filter((r) => mcpSel.applied.names.includes(r.name)).flatMap((r) => secretRefs(r.entry)))]
             : [];
           mcpRecord = { mcpUnmanaged: plan.unmanaged, mcpApplied: mcpSel ? mcpSel.applied : null };
+          // A user-supplied --settings in extraArgs replaces the whole hooks block, so ipcdelta.sh and every other drain is absent
+          // for that seat, which the frozen-prompt decision below depends on.
           let hookInstalled = false;
           if (!args.includes('--settings')) {
             if (Array.isArray(disabledSkills) && disabledSkills.includes('*')
