@@ -815,6 +815,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
   const mcpHeaders = mcpEl('mcp-headers');
   const mcpDescription = mcpEl('mcp-description');
   const mcpTags = mcpEl('mcp-tags');
+  const mcpDenyTools = mcpEl('mcp-deny-tools');
   const mcpPlatformBoxes = MCP_PLATFORMS.map((p) => mcpEl(`mcp-platform-${p}`));
   const mcpError = mcpEl('mcp-error');
   const mcpSave = mcpEl('mcp-save');
@@ -843,11 +844,13 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     mcpEmpty.style.display = 'none';
     for (const m of items) {
       const secrets = (m.secrets || []).length ? ` · uses ${m.secrets.map((n) => `\${${n}}`).join(', ')}` : '';
+      const denyCount = m.entry && Array.isArray(m.entry.denyTools) ? new Set(m.entry.denyTools).size : 0;
+      const denied = denyCount ? ` · read-only: ${denyCount} tool${denyCount === 1 ? '' : 's'} denied` : '';
       const el = document.createElement('div');
       el.className = 'prompt-item';
       el.innerHTML = `
         <div class="prompt-item-title">${esc(m.name)} <span class="auto-flag">${esc(m.type || 'stdio')}</span></div>
-        <div class="prompt-item-preview">${esc(m.description || mcpPreview(m.entry))}${esc(secrets)}</div>
+        <div class="prompt-item-preview">${esc(m.description || mcpPreview(m.entry))}${esc(secrets)}${esc(denied)}</div>
         <div class="prompt-item-actions">
           <button data-action="edit">Edit</button>
         </div>
@@ -960,7 +963,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
   }
 
   function fillMcpEditor(entry) {
-    const { type, command, args, env, url, headers, description, tags, platforms, ...rest } = entry || {};
+    const { type, command, args, env, url, headers, description, tags, platforms, denyTools, ...rest } = entry || {};
     editingMcpRest = rest;
     mcpType.value = type === 'http' || type === 'sse' ? type : 'stdio';
     mcpCommand.value = command || '';
@@ -970,6 +973,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     mcpHeaders.value = Object.entries(headers || {}).map(([k, v]) => `${k}: ${v}`).join('\n');
     mcpDescription.value = description || '';
     mcpTags.value = (Array.isArray(tags) ? tags : []).join(', ');
+    mcpDenyTools.value = (Array.isArray(denyTools) ? denyTools : []).join('\n');
     const on = Array.isArray(platforms) ? platforms : MCP_PLATFORMS;
     MCP_PLATFORMS.forEach((p, i) => { mcpPlatformBoxes[i].checked = on.includes(p); });
     showMcpType();
@@ -993,6 +997,8 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     if (description) entry.description = description;
     const tags = mcpTags.value.split(',').map((t) => t.trim()).filter(Boolean);
     if (tags.length) entry.tags = tags;
+    const denyTools = mcpDenyTools.value.split(/[\n,]/).map((t) => t.trim()).filter(Boolean);
+    if (denyTools.length) entry.denyTools = denyTools;
     const platforms = MCP_PLATFORMS.filter((_p, i) => mcpPlatformBoxes[i].checked);
     if (platforms.length !== MCP_PLATFORMS.length) entry.platforms = platforms;
     return entry;
