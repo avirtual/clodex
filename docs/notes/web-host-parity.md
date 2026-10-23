@@ -7,8 +7,9 @@ One row per gate site, in source order. Symbols, not line numbers; `test/web-par
 | file | symbol | what differs on web | verdict |
 |---|---|---|---|
 | renderer/renderer.js | `updateWindowTitle` | tab title carries the attention count | KEPT: substitute — the desktop window hides its title bar (`titleBarStyle: 'hiddenInset'`), so only a browser tab ever shows the title |
+| renderer/renderer.js | `pasteStripped` | a stream-composer paste with no clipboard items toasts that the browser withheld the image and points at the paperclip | KEPT: inability — a browser may hand the page an empty clipboard for an image paste; desktop always gets the items |
 | renderer/renderer.js | `composerEl` | an image paste into the pty composer uploads the image to the host and hands the seat its file path instead of sending Ctrl-V | KEPT: inability — Ctrl-V makes the CLI read the HOST's clipboard, not the browser's, so the web paste uploads and the seat gets the path |
-| renderer/renderer.js | `terminalContainer` | dropping files onto the terminal shows a toast instead of pasting paths | KEPT: inability — no `webUtils.getPathForFile`, a browser never exposes a dropped file's path |
+| renderer/renderer.js | `terminalContainer` | dropped images are attached through the seat's upload path; other dropped files show a toast instead of pasting paths | KEPT: inability — no `webUtils.getPathForFile`, a browser never exposes a dropped file's path |
 | renderer/renderer.js | `webNotifier` | attention raises a browser `Notification` while the tab is unfocused | KEPT: substitute — desktop notifies through the main process `notifyOS`, which cannot reach a browser |
 | renderer/renderer.js | `updateWindowTitle` | attention change repaints the tab title badge | KEPT: substitute — same as the first row |
 | renderer/renderer.js | `activatePluginRenderer` | asks `renderer.info` for the renderer module's source text | KEPT: inability — no `window.require`, the module is evaluated from source |
