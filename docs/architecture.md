@@ -415,6 +415,14 @@ bundle), whose packaged form is the Docker image under
   Deliberately tiny (type/required/maxLength/enum + `array` items/bounds + the
   `filename` token guard + a raw-body size cap) so it stays auditable; a full
   ajv would not be.
+- **mcp-plan.js** — the pure MCP-library leaf: the server-name grammar
+  (`MCP_NAME_RE`), `validateMcpEntry` and its literal-secret lint, `${NAME}`
+  resolution against a seat's merged env (`resolveMcpEntry`, fail closed),
+  the Claude server set and applied digest (`claudeMcpServers`), the
+  always-strict argv plan (`mcpArgvPlan`), the leak set (`mcpLeaks`) and the
+  Claude-config discovery behind the migration notice (`discoverMcpSources`,
+  `normaliseDiscovered`). The store is `mcpLibrary` in stores.js
+  (`~/.clodex/library/mcp/<name>.json`); docs/notes/mcp-plan.md has the facts.
 - **seat-images.js** — `validateSeatImages`, the one image rule set for a seat
   message (≤5, png/jpeg/gif/webp, base64, 5 MB decoded each), shared by the
   desktop `seat:send` IPC and the phone `POST /api/sessions/:name/dm` route. Pure

@@ -288,7 +288,10 @@ with `/` or `~/`; anything else is dropped.
   elsewhere), `<data>/teams/*/sandbox.json`, `<data>/boxes`. Listing `~/.aws`
   also unsets `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and
   `AWS_SESSION_TOKEN` for every sandboxed command; `~/.config/gh` unsets
-  `GITHUB_TOKEN` and `GH_TOKEN`.
+  `GITHUB_TOKEN` and `GH_TOKEN`. Every seat's resolved MCP file
+  (`<data>/run/*/mcp.json` and its seat-layout twin
+  `<data>/sessions/*/run/mcp.json`) is read-denied too, and each `${NAME}` the
+  seat's applied MCP selection references is unset like the AWS names.
 - **A narrow write deny.** Writes are otherwise open (`allowWrite: ["/"]`; the
   sandbox's default would confine them to the cwd). `denyWrite` covers config
   that an unsandboxed process runs later: the template's own paths (a
@@ -772,8 +775,14 @@ sessions.json entries carry the full respawn recipe (type/cwd/extraArgs/
 sessionId/workspaceId/prompt refs/proxy tri-state/agents/deny/tools/skills)
 plus setter-added `sessionIds[]` history, label, stripLevel, `createdAt`,
 `worktree` provenance (`setWorktree`, removed with the record on delete),
-`archivedAt` (`setArchived`, present only while archived), and `autoCompact`
-(stored only as `false` to opt out). `.bak` is a LAUNCH SNAPSHOT, not a mirror:
+`archivedAt` (`setArchived`, present only while archived), `autoCompact`
+(stored only as `false` to opt out), and three MCP fields: `mcpServers` (the
+seat's library selection, create() positional 28, omitted when empty; cleared
+by `setMcpServers`, never sent over the peer wire), `mcpApplied`
+(`{names, digest}` of what the last Claude spawn actually loaded — the digest
+covers the unresolved shape, never a secret value; present only when a server
+loaded) and `mcpUnmanaged` (`true` when the seat's own extra args carry
+`--mcp-config` or `--strict-mcp-config`, so Clodex injected nothing). `.bak` is a LAUNCH SNAPSHOT, not a mirror:
 the first `_save` of a process copies the on-disk file to `.bak` and no later
 save touches it, so it holds the pre-launch state for the whole session — which
 is what survives an upgrade or a bug in the running build. It is only written
