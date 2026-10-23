@@ -169,6 +169,9 @@ function resolveSelfLabel(env, hostname, log) {
 function createEngine({ userDataPath, seams = {}, log }) {
   const openPath = seams.openPath || (() => {});
   const openExternalSeam = seams.openExternal || ((url) => { log.info('seam', `openExternal (no host browser): ${String(url).split(/[?#]/)[0]}`); });
+  const openRemoteWindow = seams.openRemoteWindow || ((_key, url) => openExternalSeam(url));
+  const closeRemoteWindow = seams.closeRemoteWindow || (() => {});
+  const onRemoteWindowClosed = seams.onRemoteWindowClosed || (() => {});
   const notifyOS = seams.notifyOS || (() => {});
   const setAppQuitting = seams.setAppQuitting || (() => {});
   const appVersion = seams.appVersion || require('./package.json').version;
@@ -1880,7 +1883,7 @@ const {
   setTunnelManager: (v) => { tunnelManager = v; },
   getWebTunnelManager: () => webTunnelManager,
   setWebTunnelManager: (v) => { webTunnelManager = v; },
-  openExternal: (url) => openExternalSeam(url),
+  openRemoteWindow, closeRemoteWindow, onRemoteWindowClosed,
 });
 
 const { createSandboxManager } = require('./sandbox');
@@ -2364,7 +2367,7 @@ const toolCache = createToolCache({ whichBin });
     getPeerManager: () => peerManager,
     getTunnelManager: () => tunnelManager,
     getWebTunnelManager: () => webTunnelManager,
-    openPeerWeb, closePeerWeb,
+    openPeerWeb, closePeerWeb, openRemoteWindow,
     getSandbox: (boxId) => (sandboxManager ? sandboxManager.get(boxId) : null),
     getSandboxManager: () => sandboxManager,
     enableDrawerServices,

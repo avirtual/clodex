@@ -237,6 +237,7 @@ function createWebHost({ engine, log, port, host, token, insecure = false, userD
     getUpdateInfo: () => null, getReleasesCache: () => null,
     createWindow: () => {},                   // browser tabs self-navigate; workspace:new persists the record before calling this
     openWirescopeWindow: (url) => openExternal(url),
+    openRemoteWindow: (_key, url) => openExternal(url),
     refreshAppMenu: () => {}, refreshTrayMenu: () => {}, setUiTheme: () => {},
     workspaceOfSender: (e) => (e && e.sender && e.sender.conn && e.sender.conn.workspaceId) || DEFAULT_WORKSPACE_ID,
     // The same resolution WITHOUT the default fallback, for the `wterm:*`

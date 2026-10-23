@@ -37,7 +37,11 @@ const { createPeerWiring } = require('../peer-wiring');
 function makeWiring({ peers = [], statuses = {}, localPort = 45501, openThrows = false, webOpenRefuses = false, webOpenThrows = false } = {}) {
   const store = { peers, peerAttached: {}, peerControlled: {}, peerVisible: {} };
   const uiSettings = { get: () => store, set: (p) => Object.assign(store, p) };
-  const externals = [];      // every URL handed to the operator's browser
+  const externals = [];      // every URL handed to a peer window
+  const windows = [];
+  const closedWindows = [];
+  const browser = [];
+  const windowClosedListeners = [];
   const logs = [];
   const mgrs = [];           // one recorder per WebTunnelManager construction
 
@@ -99,13 +103,16 @@ function makeWiring({ peers = [], statuses = {}, localPort = 45501, openThrows =
     setTunnelManager: () => {},
     getWebTunnelManager: () => webTunnelManager,
     setWebTunnelManager: (v) => { webTunnelManager = v; },
-    openExternal: (url) => externals.push(url),
+    openRemoteWindow: (key, url, opts) => { externals.push(url); windows.push({ key, url, opts }); },
+    closeRemoteWindow: (key) => closedWindows.push(key),
+    onRemoteWindowClosed: (cb) => windowClosedListeners.push(cb),
+    openExternal: (url) => browser.push(url),
   });
 
   const byRole = (role) => mgrs.find((m) => m.role === role) || null;
 
   return {
-    wiring, externals, logs, mgrs, byRole,
+    wiring, externals, logs, mgrs, byRole, windows, closedWindows, browser, windowClosedListeners,
     web: () => byRole('web'),
     wirescope: () => byRole('wirescope'),
     // What the WEB supervisor fires on its first successful up — the emit the
@@ -476,4 +483,53 @@ test('t445: the mark survives a URL that already carries a query, alongside the 
     assert.equal(u.searchParams.get('wirescope'), '45502');
     assert.equal(u.searchParams.get('via'), 'tunnel');
   } finally { h.restore(); }
+});
+
+test('t1927: the first-up pop opens a Clodex window keyed by peer, never the system browser', () => {
+  const h = makeWiring({ peers: [SSH], statuses: { p1: BOTH }, localPort: 45501 });
+  try {
+    h.wiring.openPeerWeb('p1');
+    h.emitWebUp('p1', 'http://127.0.0.1:45001');
+    assert.deepEqual(h.windows, [{
+      key: 'peer:p1',
+      url: 'http://127.0.0.1:45001?wirescope=45501&via=tunnel',
+      opts: { title: 'box — Clodex' },
+    }]);
+    assert.deepEqual(h.browser, []);
+  } finally { h.restore(); }
+});
+
+test('t1927: closePeerWeb closes the peer window along with the tunnel', () => {
+  const h = makeWiring({ peers: [SSH], statuses: { p1: BOTH } });
+  try {
+    h.wiring.openPeerWeb('p1');
+    h.wiring.closePeerWeb('p1');
+    assert.deepEqual(h.closedWindows, ['peer:p1']);
+    assert.deepEqual(h.web().closed, ['p1']);
+  } finally { h.restore(); }
+});
+
+test('t1927: the operator closing the peer window closes the tunnel, and a repeat close is a no-op', () => {
+  const h = makeWiring({ peers: [SSH], statuses: { p1: BOTH } });
+  try {
+    assert.equal(h.windowClosedListeners.length, 1);
+    h.wiring.openPeerWeb('p1');
+    h.windowClosedListeners[0]('peer:p1');
+    assert.deepEqual(h.web().closed, ['p1']);
+    assert.deepEqual(h.wirescope().closed, ['p1']);
+    h.windowClosedListeners[0]('peer:p1');
+    h.windowClosedListeners[0]('wirescope');
+    h.windowClosedListeners[0]('sandbox:p1');
+    assert.deepEqual(h.web().closed, ['p1', 'p1'], 'only the repeat peer key reached the manager');
+    h.emitWebUp('p1', 'http://127.0.0.1:45001');
+    assert.deepEqual(h.windows, [], 'the pop permission went with the first close');
+  } finally { h.restore(); }
+});
+
+test('t1927: the real web manager closing an unknown id answers ok and emits nothing', () => {
+  const { WebTunnelManager } = require('../web-tunnel');
+  const states = [];
+  const mgr = new WebTunnelManager({ onState: (...a) => states.push(a) });
+  assert.deepEqual(mgr.close('p1'), { ok: true });
+  assert.deepEqual(states, []);
 });

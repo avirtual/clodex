@@ -45,3 +45,17 @@ test('seams.noSeed throws outside node --test', () => {
 });
 
 after(() => { setImmediate(() => process.exit(0)); });
+
+test('t1927: with no openRemoteWindow seam, a remote window falls through to openExternal', () => {
+  const tmp = mkTmpRoot('clx-engine-seams-');
+  const opened = [];
+  const engine = createEngine({
+    userDataPath: tmp,
+    seams: { noSeed: true, registryDir: path.join(tmp, 'clodex-home'), openExternal: (url) => opened.push(url) },
+    log: quiet,
+  });
+  try {
+    engine.openRemoteWindow('peer:p1', 'http://127.0.0.1:45001?via=tunnel', { title: 'box — Clodex' });
+    assert.deepEqual(opened, ['http://127.0.0.1:45001?via=tunnel']);
+  } finally { try { engine.shutdown(); } catch {} }
+});

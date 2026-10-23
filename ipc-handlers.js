@@ -75,7 +75,7 @@ function registerIpcHandlers(deps) {
     fetchProxyContext, fetchProxyReport, fetchSessionFiles, fixSessionName,
     forgetPeerAttached, forgetPeerControlled, fs, https,
     jsonlToMarkdown, log, manager,
-    openWirescopeWindow, os,
+    openWirescopeWindow, openRemoteWindow, os,
     path, persistence, probePeer, proxyPoller,
     pty, readEffectiveToolState, readVoiceCapability, readSessionMeta,
     rebuildAllStatusScripts, refreshAppMenu, refreshTrayMenu, rememberPeerControlled,
@@ -1903,7 +1903,8 @@ function registerIpcHandlers(deps) {
     if (!port) return { ok: false, error: 'box is not serving a web UI' };
     const tok = s.webToken();
     const url = `http://localhost:${port}` + (tok ? `?token=${encodeURIComponent(tok)}` : '');
-    openExternal(url);
+    const id = s.id || boxId;
+    openRemoteWindow(`sandbox:${id}`, url, { title: `${s.label || id} — Clodex` });
     return { ok: true };
   }));
   handle('sandbox:getConfig', (_e, boxId) => withBox(boxId, (s) => s.getConfig()));

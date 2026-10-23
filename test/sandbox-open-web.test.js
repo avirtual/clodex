@@ -6,23 +6,27 @@ const { registerIpcHandlers } = require('../ipc-handlers');
 
 function fixture(boxes) {
   const opened = [];
+  const windows = [];
   const handlers = new Map();
   registerIpcHandlers({
     handle: (ch, fn) => handlers.set(ch, fn),
     on: (ch, fn) => handlers.set(ch, fn),
     manager: {},
     persistence: {},
-    openExternal: (url) => opened.push(url),
+    openExternal: () => { throw new Error('a box web UI must not open in the system browser'); },
+    openRemoteWindow: (key, url, opts) => { opened.push(url); windows.push({ key, opts }); },
     getSandbox: (id) => boxes[id] || null,
     log: { info() {}, error() {} },
   });
-  return { opened, openWeb: (id) => handlers.get('sandbox:openWeb')(null, id) };
+  return { opened, windows, openWeb: (id) => handlers.get('sandbox:openWeb')(null, id) };
 }
 
 test('sandbox:openWeb opens the box console with its own web token, and the token never crosses IPC', async () => {
   const statusCalls = [];
   const boxes = {
     b1: {
+      id: 'b1',
+      label: 'Box One',
       async status() { statusCalls.push('b1'); return { state: 'running', ports: { web: 7812, wirescope: 7813, wire: 7820 } }; },
       webToken: () => 'ab cd&ef',
     },
@@ -35,7 +39,7 @@ test('sandbox:openWeb opens the box console with its own web token, and the toke
       webToken: () => 'never-used',
     },
   };
-  const { opened, openWeb } = fixture(boxes);
+  const { opened, windows, openWeb } = fixture(boxes);
 
   const r = await openWeb('b1');
   assert.deepStrictEqual(r, { ok: true }, 'the reply carries no url and no token');
@@ -44,6 +48,10 @@ test('sandbox:openWeb opens the box console with its own web token, and the toke
 
   await openWeb('legacy');
   assert.strictEqual(opened[1], 'http://localhost:7830', 'a box minted before the web token existed opens plain');
+  assert.deepStrictEqual(windows, [
+    { key: 'sandbox:b1', opts: { title: 'Box One — Clodex' } },
+    { key: 'sandbox:legacy', opts: { title: 'legacy — Clodex' } },
+  ]);
 
   const off = await openWeb('stopped');
   assert.strictEqual(off.ok, false);
