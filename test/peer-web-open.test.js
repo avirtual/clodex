@@ -36,7 +36,7 @@ function makeWiring({ peers = [], statuses = {} } = {}) {
   const uiSettings = { get: () => store, set: (p) => Object.assign(store, p) };
   const opened = [];
   const closed = [];
-  const externals = [];      // every URL handed to the operator's browser
+  const externals = [];      // every URL handed to a peer window
   const broadcasts = [];
   const logs = [];           // ops-log lines, so a FALLBACK pop is distinguishable
   let onState = () => {};
@@ -71,7 +71,8 @@ function makeWiring({ peers = [], statuses = {} } = {}) {
     setTunnelManager: () => {},
     getWebTunnelManager: () => webTunnelManager,
     setWebTunnelManager: (v) => { webTunnelManager = v; },
-    openExternal: (url) => externals.push(url),
+    openRemoteWindow: (_key, url) => externals.push(url),
+    closeRemoteWindow: () => {},
   });
 
   return {
@@ -452,7 +453,8 @@ test('syncPeerManager does NOT build a web manager for a peer nobody looked at',
       getTunnelManager: () => ({ sync() {}, urlFor: () => null, statuses: () => [] }), setTunnelManager: () => {},
       getWebTunnelManager: () => webTunnelManager,
       setWebTunnelManager: (v) => { webTunnelManager = v; },
-      openExternal: () => {},
+      openRemoteWindow: () => {},
+      closeRemoteWindow: () => {},
     });
     wiring.syncPeerManager();
     wiring.syncPeerManager();

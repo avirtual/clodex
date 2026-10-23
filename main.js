@@ -446,44 +446,66 @@ function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
 
 // Loads REMOTE content: must not inherit the main window's
 // nodeIntegration/contextIsolation:false.
-let wirescopeWindow = null;
-function openWirescopeWindow(url, backgroundColor) {
+const remoteWindows = new Map();
+const remoteWindowClosedListeners = [];
+function openRemoteWindow(key, url, opts = {}) {
   if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return;
-  const bg = (typeof backgroundColor === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(backgroundColor.trim()))
-    ? backgroundColor.trim()
+  const bg = (typeof opts.backgroundColor === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(opts.backgroundColor.trim()))
+    ? opts.backgroundColor.trim()
     : '#1a1a2e';
-  if (wirescopeWindow && !wirescopeWindow.isDestroyed()) {
-    wirescopeWindow.setBackgroundColor(bg);
-    wirescopeWindow.loadURL(url);
-    wirescopeWindow.show();
-    wirescopeWindow.focus();
+  const existing = remoteWindows.get(key);
+  if (existing && !existing.isDestroyed()) {
+    existing.setBackgroundColor(bg);
+    existing.loadURL(url);
+    existing.show();
+    existing.focus();
     return;
   }
   // Not mergeable with createWindow's BrowserWindow: the webPreferences below
-  // are its exact inverse, and deliberately. This one loads REMOTE wirescope
-  // pages, so it is sandboxed with no preload; the main window loads our own
+  // are its exact inverse, and deliberately. This one loads REMOTE pages, so
+  // it is sandboxed with no preload; the main window loads our own
   // index.html and needs nodeIntegration for the renderer's require(). Factoring
   // out a shared builder converges the two postures and hands remote content the
   // privileged one.
-  wirescopeWindow = new BrowserWindow({
+  const win = new BrowserWindow({
     width: 1100,
     height: 800,
     minWidth: 600,
     minHeight: 400,
     backgroundColor: bg,
-    title: 'wirescope',
+    title: typeof opts.title === 'string' && opts.title ? opts.title : 'Clodex',
     webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true },
   });
+  remoteWindows.set(key, win);
   // A link inside the remote page should open in the system browser, not a
   // nested child window. No will-navigate guard here: this window is SUPPOSED
-  // to navigate between wirescope URLs (unlike the main window, which only ever
+  // to navigate between remote URLs (unlike the main window, which only ever
   // loads our own index.html).
-  wirescopeWindow.webContents.setWindowOpenHandler(({ url: u }) => {
+  win.webContents.setWindowOpenHandler(({ url: u }) => {
     if (isExternallyOpenable(u)) shell.openExternal(u);
     return { action: 'deny' };
   });
-  wirescopeWindow.on('closed', () => { wirescopeWindow = null; });
-  wirescopeWindow.loadURL(url);
+  win.on('closed', () => {
+    if (remoteWindows.get(key) !== win) return;
+    remoteWindows.delete(key);
+    for (const cb of remoteWindowClosedListeners) {
+      try { cb(key); } catch (e) { log.error('window', `remote window close handler failed: ${e.message}`); }
+    }
+  });
+  win.loadURL(url);
+}
+
+function closeRemoteWindow(key) {
+  const win = remoteWindows.get(key);
+  if (win && !win.isDestroyed()) win.close();
+}
+
+function onRemoteWindowClosed(cb) {
+  if (typeof cb === 'function') remoteWindowClosedListeners.push(cb);
+}
+
+function openWirescopeWindow(url, backgroundColor) {
+  openRemoteWindow('wirescope', url, { title: 'wirescope', backgroundColor });
 }
 
 function workspaceOfSender(e) {
@@ -537,6 +559,7 @@ app.whenReady().then(() => {
     seams: {
       openPath: (p) => shell.openPath(p),
       openExternal: (url) => shell.openExternal(url),
+      openRemoteWindow, closeRemoteWindow, onRemoteWindowClosed,
       notifyOS: (opts) => {
         try {
           if (!Notification.isSupported()) return;

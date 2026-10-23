@@ -280,7 +280,8 @@ test('peer-wiring routes a peer-inbox emit to the session manager and never to t
       setTunnelManager: () => {},
       getWebTunnelManager: () => null,
       setWebTunnelManager: () => {},
-      openExternal: () => {},
+      openRemoteWindow: () => {},
+      closeRemoteWindow: () => {},
     });
     wiring.syncPeerManager();
     assert.strictEqual(typeof capturedEmit, 'function');

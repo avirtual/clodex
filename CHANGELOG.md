@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A peer's web view and a sandbox box's web UI open in their own Clodex window (sandboxed, like the wirescope window) instead of a browser tab; closing the window closes the peer's tunnel.
+
 ## 5.136.0 — 2026-10-23
 
 - A library MCP entry may list tools to deny (`denyTools`); a Claude seat that loads the server gets them refused through its permission rules, so a hosted server with no read-only consent scope — Atlassian's, for one — can still go to a seat read-only. The MCP editor now says to leave headers empty for OAuth servers and log in once with /mcp.

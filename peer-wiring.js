@@ -22,7 +22,7 @@ function createPeerWiring(deps) {
     getPeerManager, setPeerManager,
     getTunnelManager, setTunnelManager,
     getWebTunnelManager, setWebTunnelManager,
-    openExternal,
+    openRemoteWindow, closeRemoteWindow, onRemoteWindowClosed,
   } = deps;
 
   // Last-logged online state per peer id — the ops log records online/offline
@@ -407,7 +407,7 @@ function createPeerWiring(deps) {
             // was raised moments ago and may only just have picked its port.
             // Logged as the bare URL above: the param is plumbing, and the
             // operator's line should stay the address they can paste.
-            try { openExternal(pageUrl(status.url, wirescopeLocalPort(id))); }
+            try { openPeerWindow(String(id), pageUrl(status.url, wirescopeLocalPort(id))); }
             catch (e) { log.error('peer', `web view open failed: ${e.message}`); }
           } else {
             log.info('peer', `web view up for ${id} → ${status.url} (token required — not opened)`);
@@ -416,6 +416,12 @@ function createPeerWiring(deps) {
       },
     }));
     return getWebTunnelManager();
+  }
+
+  function openPeerWindow(key, url, rec) {
+    const r = rec || (getUiSettings().get().peers || []).find((p) => p && String(p.id) === key);
+    const label = (r && r.label) || key;
+    openRemoteWindow(`peer:${key}`, url, { title: `${label} — Clodex` });
   }
 
   function openPeerWebDirect(key, rec, webHost, tokenGated) {
@@ -427,7 +433,7 @@ function createPeerWiring(deps) {
       };
     }
     if (!tokenGated) {
-      try { openExternal(url); } catch (e) { log.error('peer', `web view open failed: ${e.message}`); }
+      try { openPeerWindow(key, url, rec); } catch (e) { log.error('peer', `web view open failed: ${e.message}`); }
       log.info('peer', `web view for ${key} opened directly at ${url} — no tunnel needed`);
     } else {
       log.info('peer', `web view for ${key} is at ${url} (token required — not opened)`);
@@ -497,8 +503,13 @@ function createPeerWiring(deps) {
     // when the view goes. Unconditionally, before the early return — a web
     // manager that was never built does not imply the wirescope one wasn't.
     closePeerWirescope(id);
+    closeRemoteWindow(`peer:${id}`);
     if (!getWebTunnelManager()) return { ok: true };
     return getWebTunnelManager().close(String(id));
+  }
+
+  if (onRemoteWindowClosed) {
+    onRemoteWindowClosed((k) => { if (typeof k === 'string' && k.startsWith('peer:')) closePeerWeb(k.slice(5)); });
   }
 
   return {
