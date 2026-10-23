@@ -43,6 +43,7 @@ let skillLibCache = [];
 // Exec-command registry (opt-in grant checklist; checked names become the
 // session's `execCommands` allowlist — which commands its seat may run).
 let execLibCache = [];
+let mcpLibCache = [];
 // Gateable-intent catalog, served by the engine (`intents:catalog`). Rows are
 // `{ type, label, privileged }` — core rows in catalog order, then any plugin
 // verbs. Empty until the first fetch, which is fine: every render path awaits a
@@ -69,6 +70,7 @@ function setPromptLibCache(v) { promptLibCache = v; }
 function setAgentLibCache(v) { agentLibCache = v; }
 function setSkillLibCache(v) { skillLibCache = v; }
 function setExecLibCache(v) { execLibCache = v; }
+function setMcpLibCache(v) { mcpLibCache = Array.isArray(v) ? v : []; }
 function setIntentCatalogCache(v) { intentCatalogCache = Array.isArray(v) ? v : []; }
 function setPluginCatalogCache(v) { pluginCatalogCache = Array.isArray(v) ? v : []; }
 function getPluginCatalogCache() { return pluginCatalogCache; }
@@ -273,6 +275,40 @@ function renderExecChecklist(container, enabledSet) {
   }
 }
 function collectExecChecklist(container) {
+  return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+}
+
+function mcpBadges(row, cli, ready) {
+  const out = [];
+  const platforms = row.entry && Array.isArray(row.entry.platforms) ? row.entry.platforms : null;
+  if (cli && platforms && !platforms.includes(cli)) out.push(`not on ${cli}`);
+  if (ready && Array.isArray(ready.missing) && ready.missing.length) out.push(`needs ${ready.missing.join(', ')}`);
+  return out;
+}
+function renderMcpChecklist(container, enabledSet, { cli = null, readiness = {} } = {}) {
+  container.innerHTML = '';
+  const rows = mcpLibCache.filter((m) => m && m.name !== 'clodex');
+  if (!rows.length) {
+    container.innerHTML = '<span class="hint-text">No MCP servers in library — add or import some via Library ▸ MCP Servers….</span>';
+    return;
+  }
+  for (const m of rows) {
+    const row = document.createElement('label');
+    row.className = 'agent-check';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = m.name;
+    cb.checked = enabledSet.has(m.name);
+    const txt = document.createElement('span');
+    const badges = mcpBadges(m, cli, readiness[m.name]);
+    txt.innerHTML = `<strong>${esc(m.name)}</strong>${m.description ? ' — ' + esc(m.description) : ''}`
+      + badges.map((b) => ` <span class="auto-flag mcp-badge">${esc(b)}</span>`).join('');
+    row.appendChild(cb);
+    row.appendChild(txt);
+    container.appendChild(row);
+  }
+}
+function collectMcpChecklist(container) {
   return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
 }
 
@@ -570,6 +606,7 @@ module.exports = {
   renderAgentChecklist, collectAgentChecklist,
   bundleSectionsOf, repaintBundleSections,
   renderExecChecklist, collectExecChecklist,
+  renderMcpChecklist, collectMcpChecklist,
   renderIntentChecklist, collectIntentChecklist, intentRowChecked,
   renderPluginChecklist, collectPluginChecklist, defaultPluginTicks,
   renderBuiltinChecklist, collectBuiltinChecklist,
@@ -579,7 +616,7 @@ module.exports = {
   renderSkillChecklist, collectSkillChecklist,
   setChecklistAll, wireBulkToggles,
   libraryPromptCache,
-  setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache,
+  setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setMcpLibCache,
   setIntentCatalogCache,
   setPluginCatalogCache,
   getPluginCatalogCache,

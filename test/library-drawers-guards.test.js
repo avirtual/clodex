@@ -48,6 +48,7 @@ async function rig(apiOver = {}) {
       onRequestOpenSkillsDrawer: (cb) => { opens.skills = cb; },
       onRequestOpenAgentsDrawer: (cb) => { opens.agents = cb; },
       onRequestOpenExecDrawer: (cb) => { opens.exec = cb; },
+      onRequestOpenMcpDrawer: (cb) => { opens.mcp = cb; },
       onRequestOpenPromptsDrawer: (cb) => { opens.prompts = cb; },
       onRequestOpenTemplatesDrawer() {},
       ...apiOver,

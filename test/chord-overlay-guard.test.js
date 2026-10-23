@@ -240,7 +240,7 @@ test('each library editor blocks the archive', () => {
   // `-editor`, so the id census's own token predicate could not see them. Each
   // is position:fixed inset:0 at z-index 200 — a full-screen modal over the
   // session the chord would archive.
-  for (const id of ['prompt-editor', 'agent-editor', 'skill-editor', 'exec-editor']) {
+  for (const id of ['prompt-editor', 'agent-editor', 'skill-editor', 'exec-editor', 'mcp-editor']) {
     assert.ok(MODAL_OVERLAY_IDS.includes(id), `${id} must be consulted`);
     const [calls, actions] = spies();
     performCloseChord({ ...localSession, ...fakeDom([id]) }, actions);

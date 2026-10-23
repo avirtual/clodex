@@ -111,7 +111,7 @@ function createAppMenus(deps) {
     // getter deps (TDZ / whenReady-assigned when this factory runs)
     getManager, getPeerManager, getSandboxManager, getUpdateInfo,
     getUiSettings, getWorkspaces, getAgentLibrary, getSkillLibrary, getEnvScopes,
-    getPromptLibrary, getTemplates, getExecLibrary, getPluginUpdates, getHelpCorpus,
+    getPromptLibrary, getTemplates, getExecLibrary, getMcpLibrary, getPluginUpdates, getHelpCorpus,
     // The plugin host (T5) — null under CLODEX_PLUGINS=0 or a failed
     // construction, in which case the Plugins menu is absent rather than empty.
     getPluginHost,
@@ -498,6 +498,20 @@ function createAppMenus(deps) {
             pluginEntries: () => [],
             newLabel: 'New Exec Command…',
             manageLabel: 'Manage Exec Commands…',
+          }),
+        },
+        {
+          label: 'MCP Servers',
+          submenu: kindMenu({
+            channel: 'request-open-mcp-drawer',
+            library: listOf(getMcpLibrary).map((m) => ({
+              label: truncate(m.name),
+              click: () => sendToFocused('request-open-mcp-drawer', m.name),
+            })),
+            empty: '(no MCP servers in library)',
+            pluginEntries: () => [],
+            newLabel: 'New MCP Server…',
+            manageLabel: 'Manage MCP Servers…',
           }),
         },
         { type: 'separator' },

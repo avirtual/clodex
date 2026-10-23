@@ -197,6 +197,23 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     }
     return `<div class="ctx-util">${head}${conf}${body}</div>`;
   }
+  function mcpStatusLine(name) {
+    const type = sessionTypeOf(name);
+    if (type === 'claude') return 'Claude: partially managed — CLI plugins unverified';
+    if (type === 'codex') return 'Codex: selection not applied on this CLI yet';
+    if (type === 'muse') return 'Muse: selection not applied on this CLI yet';
+    return '';
+  }
+  function mcpRowNote(server, mcp) {
+    if (!mcp) return '';
+    if (server === 'clodex') return 'built-in';
+    if ((mcp.leaks || []).includes(server)) {
+      return '⚠ not in this seat\'s selection — reached the CLI outside Clodex (own --mcp-config in Extra args, '
+        + 'a CLI plugin, or a CLI build that ignores --strict-mcp-config)';
+    }
+    if ((mcp.selected || []).includes(server)) return 'library · selected';
+    return '';
+  }
   // The MCP block renders NOTHING AT ALL when there are no MCP tools — not an
   // empty section, not a zero row. "Surface them when they are there" is the requirement, and a user
   // with no MCP servers must see no new UI whatsoever.
@@ -212,7 +229,7 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
   // `claude mcp remove <name>` resolves the scope itself when none is given
   // ("removes from whichever scope it exists in", verified from --help), so the
   // generic form is correct rather than a hedge.
-  function renderMcpServers(a) {
+  function renderMcpServers(a, mcp = null, name = null) {
     const groups = groupMcpTools(a.tools && a.tools.per_tool);
     if (!groups.length) return '';
     const total = mcpTotalTokens(groups);
@@ -222,32 +239,47 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     const head = `<div class="ctx-util-head"><span>MCP servers</span>` +
       `<span class="ctx-util-stat" title="Char-based estimate (≈chars/4); a tokenizer reads ~25% higher.">` +
       `${groups.length} loaded · <b>~${fmtTokens(total)}/turn</b></span></div>`;
+    const status = mcp ? mcpStatusLine(name) : '';
+    const meta = (mcp && mcp.managed === false
+      ? `<div class="ctx-util-conf">unmanaged: this seat's Extra args carry its own MCP config</div>` : '')
+      + (status ? `<div class="ctx-util-conf">${esc(status)}</div>` : '');
 
-    const rows = groups.map((g) => {
-      // Usage is only a verdict once enough turns back it — same floor the tool
-      // and skill blocks use, and the same vocabulary.
+    const row = (g) => {
       const usage = turns === 0
         ? ''
         : (g.usedTotal > 0
           ? ` · ${g.usedTotal}×`
           : (conclusive ? ' · <b>unused</b>' : ' · idle'));
+      const note = mcpRowNote(g.server, mcp);
       return `<div class="ctx-row${(conclusive && g.usedTotal === 0) ? ' ctx-dead' : ''}">` +
         `<div class="ctx-row-top"><span class="ctx-cat">${esc(g.server)}</span>` +
         `<span class="ctx-nums">~${fmtTokens(g.estTokens)} · ${g.toolCount} tool${g.toolCount === 1 ? '' : 's'}${usage}</span>` +
-        `</div></div>`;
-    }).join('');
+        `</div>${note ? `<div class="ctx-util-conf">${esc(note)}</div>` : ''}</div>`;
+    };
+    let rows;
+    if (mcp) {
+      const builtIn = groups.filter((g) => g.server === 'clodex');
+      const library = groups.filter((g) => g.server !== 'clodex');
+      rows = (builtIn.length ? `<div class="ctx-util-group">Built-in</div>${builtIn.map(row).join('')}` : '')
+        + (library.length ? `<div class="ctx-util-group">Library</div>${library.map(row).join('')}` : '');
+    } else {
+      rows = groups.map(row).join('');
+    }
 
-    // Only offer the removal hint once a server is CONCLUSIVELY unused —
-    // telling someone to remove a server they simply have not called yet is
-    // worse than saying nothing.
-    const deadServers = conclusive ? groups.filter((g) => g.usedTotal === 0) : [];
-    const hint = deadServers.length
-      ? `<div class="ctx-util-conf">Unused over ${turns} turns. To remove one, run ` +
-        `<code>claude mcp remove ${esc(deadServers[0].server)}</code> yourself — Clodex never edits your MCP config. ` +
-        `It removes from whichever scope defines the server; for project <code>.mcp.json</code> approvals see ` +
-        `<code>claude mcp reset-project-choices</code>.</div>`
-      : '';
-    return `<div class="ctx-util">${head}${rows}${hint}</div>`;
+    const deadServers = conclusive ? groups.filter((g) => g.usedTotal === 0 && (!mcp || g.server !== 'clodex')) : [];
+    const removeHint = (server) => `<div class="ctx-util-conf">Unused over ${turns} turns. To remove one, run ` +
+      `<code>claude mcp remove ${esc(server)}</code> yourself — Clodex never edits your MCP config. ` +
+      `It removes from whichever scope defines the server; for project <code>.mcp.json</code> approvals see ` +
+      `<code>claude mcp reset-project-choices</code>.</div>`;
+    let hint = '';
+    if (deadServers.length && !mcp) hint = removeHint(deadServers[0].server);
+    else if (deadServers.length) {
+      const leak = deadServers.find((g) => (mcp.leaks || []).includes(g.server));
+      const managed = deadServers.find((g) => (mcp.selected || []).includes(g.server));
+      if (managed) hint += `<div class="ctx-util-conf">Unused over ${turns} turns. To drop ${esc(managed.server)}, untick it in Edit settings and restart.</div>`;
+      if (leak) hint += removeHint(leak.server);
+    }
+    return `<div class="ctx-util">${head}${meta}${rows}${hint}</div>`;
   }
 
   // Tool + skill utilization for one agent line. Mirror shapes (a.tools.per_tool +
@@ -282,10 +314,10 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
   // single addition to a user's per-turn carriage, and it renders to '' when the
   // line carries no MCP tools — so on a session without MCP the column is
   // byte-identical to before this feature existed.
-  function renderUtilHalf(agents) {
+  function renderUtilHalf(agents, mcp = null, name = null) {
     const withComp = agents.filter((a) => a.composition && Array.isArray(a.composition.by_category));
     withComp.sort((a, b) => (a.line === 'main' ? -1 : b.line === 'main' ? 1 : 0));
-    return withComp.map((a) => renderMcpServers(a) + renderUtilization(a) + renderSkillUtilization(a)).join('');
+    return withComp.map((a) => renderMcpServers(a, mcp, name) + renderUtilization(a) + renderSkillUtilization(a)).join('');
   }
 
   function renderCtxLinks(name, agents, caps, peerQueries) {
@@ -386,7 +418,7 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     }
     const compHtml = renderCompositionHalf(name, agents);
     const links = `<div id="ctx-links">${renderCtxLinks(name, agents, caps, peerQueries)}</div>`;
-    const plainCol = renderUtilHalf(agents);
+    const plainCol = renderUtilHalf(agents, res.data.clodex_mcp || null, name);
     const cols = (right) => `<div class="ctx-cols"><div class="ctx-col">${compHtml}</div>${right}</div>`;
     if (!wantUtil) {
       paintCtxBody(name, (plainCol.trim() ? cols(`<div class="ctx-col">${plainCol}</div>`) : compHtml) + links);
@@ -409,7 +441,7 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
       placeCtxPopover(anchor); return;
     }
     const uAgents = (ures.data && Array.isArray(ures.data.agents)) ? ures.data.agents : [];
-    const utilCol = uAgents.length ? renderUtilHalf(uAgents) : '';
+    const utilCol = uAgents.length ? renderUtilHalf(uAgents, ures.data.clodex_mcp || null, name) : '';
     paintRight(utilCol.trim() ? utilCol
       : (plainCol.trim() || '<div class="ctx-note">no utilization data yet</div>'));
     const linkBox = document.getElementById('ctx-links');

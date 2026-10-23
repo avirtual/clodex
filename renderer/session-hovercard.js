@@ -110,6 +110,11 @@ function initSessionHovercard({ sessionList, proxyState, ctxPct, ctxTokens, prox
     const ctx = contextText(name, p && p.linked ? p : null);
     if (ctx) rows.push(statRow('context', esc(ctx)));
     if (AGENT_TYPES.has(type)) rows.push(statRow('effort', esc(item.dataset.effort || 'default')));
+    if (AGENT_TYPES.has(type)) {
+      const mcp = [item.dataset.mcp, item.dataset.mcpUnmanaged ? 'unmanaged' : '', item.dataset.mcp && item.dataset.mcpStale ? 'changed since spawn' : '']
+        .filter(Boolean).join(' · ');
+      if (mcp) rows.push(statRow('mcp', esc(mcp)));
+    }
     if (AGENT_TYPES.has(type)) rows.push(statRow('posture', esc(item.dataset.posture || 'default')));
     if (p && p.linked) {
       if (p.model) rows.push(statRow('model', esc(p.model)));
