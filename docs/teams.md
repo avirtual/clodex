@@ -827,7 +827,9 @@ qualifies as the artifact; an empty set holds the ticket at `verify: artifact`. 
 ticket is accepted and a one-shot seat archived; changed under review, it is held at `verify: artifact` naming both
 digests, and the hand's next `task done` re-reviews. The policy is pinned on each ticket when it is filed, so
 `[agent:team done code|report]` (lead only; bare shows it) or `done:report` on `team create` affects only tickets filed
-afterwards; `task list` marks report rows `[report]`.
+afterwards; `task list` marks report rows `[report]`. A report ticket mints no tree even on a `worktree` role: its seat is a
+one-shot spawn in the shared checkout. Give each report ticket its own task dir — another ticket's file landing in a
+shared one during review reads as a change and holds the ACCEPT.
 
 A ticket whose seat stays quiet past the team's watchdog interval alarms the lead as `stalled: <who> quiet <age>` with the seat's evidence; a seat held by a permission dialog is reported instead as `waiting on a permission dialog since <age> — <message>`, naming the operator as the only one who can answer, and the operator inbox gets one note per dialog on a ticket seat; a pending call on a seat that is compacting or running a harness subagent is named as that class instead of `wedged mid-call, or a legitimately slow one`; a ticket parked by the hand cap past the interval alarms the lead once as `parked by the hand cap for <age>`.
 

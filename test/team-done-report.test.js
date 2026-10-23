@@ -307,3 +307,63 @@ test('_landArtifactAccept: ACCEPT after the artifact changed holds at verify: ar
   assert.strictEqual(t.closedOut, undefined);
   assert.strictEqual(t.acceptedAt, undefined);
 });
+
+test('_artifactScope: a held ticket re-entered by task done gets a round-2 scope naming what changed, not settled ground', async () => {
+  const { f, dir, reviewer } = await acceptFixture();
+  fs.writeFileSync(path.join(dir, 'findings.md'), 'v2 — edited under review\n');
+  setReviewerRecord(f, reviewer.name, { ephemeral: true, reviewFor: 'lead', reviewTicket: 't1' });
+  f.m._handleReviewDone(reviewer, '- **VERDICT**: ACCEPT\n- **MUST-FIX**: (none)');
+  for (let i = 0; i < 20; i++) await f.settle();
+  assert.strictEqual(f.one('t1').verifyHold.step, 'verify: artifact', 'ENTER: held after the changed ACCEPT');
+  f.doneBy('t1', 'see findings, v2');
+  await loopSettled(f, 't1');
+  assert.strictEqual(f.reviews.length, 2, 'the re-entry spawned a second reviewer');
+  const t = f.one('t1');
+  assert.strictEqual(t.artifact.round, 2);
+  const { scope } = f.reviews[1];
+  assert.ok(scope.includes("CHANGED since round 1's snapshot:\n  modified  findings.md\n  added  REPORT-t1-r2.md\n"), scope);
+  assert.ok(scope.includes("THIS IS ROUND 2. The artifact set changed after round 1's snapshot; review every changed file in full"));
+  assert.ok(!scope.includes('sent it back anyway'));
+  assert.ok(!scope.includes('settled ground.'), 'no settled-ground framing on an artifact round');
+  assert.ok(!scope.includes('Do not re-open'));
+});
+
+test('_artifactScope: a REWORK round renders the must-fix verbatim under the artifact framing', () => {
+  const { buildReviewScope } = require('../ticket-review-scope');
+  const scope = buildReviewScope({
+    ticket: { id: 't9', reviewRound: 1, verdict: 'REWORK', mustFix: '1. findings.md names no player' },
+    taskDir: '/d',
+    artifact: { dir: '/d', round: 2, digest: 'abc', count: 1, files: [{ path: 'findings.md', bytes: 3, sha256: 'ff' }], changed: [] },
+  });
+  assert.ok(scope.includes("CHANGED since round 1's snapshot: nothing\n"));
+  assert.ok(scope.includes('The MUST-FIX items on record from round 1 were, verbatim — check each is fixed:\n\n1. findings.md names no player\n'));
+  assert.ok(!scope.includes('Do not re-open'));
+});
+
+test('_ticketDispatchMode: a report ticket on a worktree role dispatches as a spawn, a code ticket keeps its tree', () => {
+  const f = mkFixture();
+  const team = { ...f.team, roles: { ...f.team.roles, hand: { brief: 'h', dispatch: 'worktree' } } };
+  assert.strictEqual(f.m._ticketDispatchMode(team, 'hand', { done: 'report' }).mode, 'spawn');
+  assert.strictEqual(f.m._ticketDispatchMode(team, 'hand', { done: 'code' }).mode, 'worktree');
+  assert.strictEqual(f.m._ticketDispatchMode(team, 'hand', {}).mode, 'worktree', 'a legacy row reads as code');
+  assert.strictEqual(f.m._ticketDispatchMode(team, 'hand').mode, 'worktree');
+});
+
+test('_writeVerdictBody: a no-taskDir report ticket keeps its verdict file in the artifact dir', async () => {
+  const f = mkFixture();
+  f.add('moderate the lobby tonight');
+  f.doneBy('t1', 'lobby was quiet');
+  await loopSettled(f, 't1');
+  assert.strictEqual(f.one('t1').loopStep, 'review', 'ENTER: under review');
+  const name = 'team-reviewer-1-r1';
+  f.m.sessions.set(name, { name, type: 'claude', agentType: 'claude', cwd: f.root, pty: { pid: 3 } });
+  f.m.kill = () => {};
+  f.m._writeReviewCost = () => ({ ok: true });
+  f.m._notifyLeadOfVerdict = () => {};
+  setReviewerRecord(f, name, { ephemeral: true, reviewFor: 'lead', reviewTicket: 't1' });
+  f.m._handleReviewDone(f.m.sessions.get(name), '- **VERDICT**: ACCEPT\n- **MUST-FIX**: (none)');
+  for (let i = 0; i < 20; i++) await f.settle();
+  const dir = path.join(f.projectDir, 'tasks', 't1');
+  assert.ok(fs.existsSync(path.join(dir, 'review-t1-r1.verdict.md')));
+  assert.strictEqual(f.one('t1').closedOut, true, 'the verdict file did not count as an artifact change');
+});

@@ -163,6 +163,16 @@ function buildReviewScope({ ticket, diffPath = null, deltaPath = null, taskDir =
     for (const f of files) out.push(`  ${defuseSenderLines(text(f && f.path))}  ${Number(f && f.bytes) || 0} bytes  sha256 ${text(f && f.sha256)}`);
     if (count > files.length) out.push(`  … ${count - files.length} more, listed in ${text(artifact.dir)}/.artifact-r${Number(artifact.round) || 1}.json`);
     out.push('');
+    const prevRound = (Number(artifact.round) || 1) - 1;
+    if (prevRound >= 1) {
+      if (Array.isArray(artifact.changed)) {
+        out.push(`CHANGED since round ${prevRound}'s snapshot:${artifact.changed.length ? '' : ' nothing'}`);
+        for (const c of artifact.changed) out.push(`  ${text(c && c.kind)}  ${defuseSenderLines(text(c && c.path))}`);
+      } else {
+        out.push(`CHANGED since round ${prevRound}: that round's snapshot is not on disk, so every file counts as changed.`);
+      }
+      out.push('');
+    }
   }
 
   const spec = text(t.spec);
@@ -182,7 +192,7 @@ function buildReviewScope({ ticket, diffPath = null, deltaPath = null, taskDir =
     out.push(`IMPLEMENTER'S REPORT — ${who ? `${who}'s` : 'the implementer\'s'} own account of the work, unedited except that any line posing as a sender line is quoted. `
       + `It is a claim, not evidence: verify it against the ${artifact ? 'artifacts' : 'diff'}. Pay particular attention to anywhere it says it `
       + 'guessed, deviated from the spec, assumed, or deferred — those are the author telling you where to look, '
-      + 'and they are not recoverable from the diff alone.');
+      + `and they are not recoverable from the ${artifact ? 'artifacts' : 'diff'} alone.`);
     out.push('');
     out.push(defuseSenderLines(report));
     out.push('');
@@ -226,7 +236,16 @@ function buildReviewScope({ ticket, diffPath = null, deltaPath = null, taskDir =
   // An unbounded re-review is how a two-round loop turns into a lead escalation
   // over work round 1 already accepted.
   const round = Number(t.reviewRound) || 0;
-  if (round >= 1) {
+  if (round >= 1 && artifact) {
+    out.push(`THIS IS ROUND ${round + 1}. The artifact set changed after round ${round}'s snapshot; review every changed file in full — nothing in a changed file is settled ground.`);
+    out.push('');
+    if (text(t.verdict).toUpperCase() === 'REWORK') {
+      out.push(`The MUST-FIX items on record from round ${round} were, verbatim — check each is fixed:`);
+      out.push('');
+      out.push(text(t.mustFix) || `(round ${round} recorded no MUST-FIX text)`);
+      out.push('');
+    }
+  } else if (round >= 1) {
     const mustFix = text(t.mustFix);
     // Derived, never assumed: a round 2 can follow an ACCEPT the lead rejected
     // anyway. Stating "returned REWORK" unconditionally opens the scope with a

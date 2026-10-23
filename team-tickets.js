@@ -17,7 +17,7 @@ const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
-  DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap,
+  DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone,
 } = require('./team-manifest');
 const {
   readTeamJson, teamTemplatePath, teamTemplateSave, teamTemplateRemove, teamPromptSave, teamPromptRemove,
@@ -1324,7 +1324,7 @@ function createTicketMethods(deps, shared) {
       if (!team) return { ok: false, path: null, error: 'no team' };
       const ticket = this._loadTicket(team, ticketId);
       if (!ticket) return { ok: false, path: null, error: `no ticket ${ticketId}` };
-      const dest = this._ticketDiffDest(team, ticket);
+      const dest = ticket.done === 'report' ? this._artifactDir(team, ticket) : this._ticketDiffDest(team, ticket);
       if (!dest.ok) return { ok: false, path: null, error: dest.error };
       const round = Number(landedOn.reviewRound) || Number(ticket.reviewRound) || 1;
       const file = path.join(dest.dir, `review-${ticketId}-r${round}.verdict.md`);
@@ -2346,7 +2346,7 @@ function createTicketMethods(deps, shared) {
       const kitRoles = (kitDef && Object.keys(kitDef.roles).length) ? kitDef.roles : STOCK_ROLE_DEFS;
       const roles = hasBrief ? {
         ...kitRoles,
-        hand: { ...kitRoles.hand, dispatch: 'worktree' },
+        hand: { ...kitRoles.hand, dispatch: intent.done === 'report' ? 'spawn' : 'worktree' },
       } : undefined;
       let team;
       try {
@@ -2729,8 +2729,8 @@ function createTicketMethods(deps, shared) {
         reply(`done of ${team.name}: ${what(current)} — [agent:team done code|report] sets it`);
         return;
       }
-      if (!['code', 'report'].includes(intent.mode)) {
-        reply(`error: done must be code or report, not "${intent.mode}"`);
+      if (!normalizeDone(intent.mode)) {
+        reply(`error: done must be ${DONE_VALUES.join(' or ')}, not "${intent.mode}"`);
         return;
       }
       const m = deps.setTeamDone(team.name, intent.mode);
@@ -3551,7 +3551,7 @@ function createTicketMethods(deps, shared) {
         : '';
       // The tree check is a second condition: a role edited to `spawn` mid-flight, or a mint failure, can leave a
       // real worktree on the record, and the text must yield to that pointer.
-      const sharedLine = (roleDef && roleDef.dispatch === 'spawn'
+      const sharedLine = (roleDef && (roleDef.dispatch === 'spawn' || (roleDef.dispatch === 'worktree' && ticket && ticket.done === 'report'))
         && !(ticket && ticket.worktree && ticket.worktree.path))
         ? `You are working in the SHARED checkout alongside other seats — you have no worktree and no branch of your own, `
           + `so do tree work only and leave committing to the lead.\n`
@@ -4167,7 +4167,7 @@ function createTicketMethods(deps, shared) {
 
     // Only a role-addressed ticket qualifies for a one-shot mode: a seat-addressed one names a session whose cwd is fixed at spawn,
     // so it can be neither moved into a worktree nor made one-shot.
-    _ticketDispatchMode(team, assignee) {
+    _ticketDispatchMode(team, assignee, ticket = null) {
       const standing = { mode: 'standing', def: null };
       if (!team || !assignee || !team.roles) return standing;
       if (!Object.prototype.hasOwnProperty.call(team.roles, assignee)) return standing;
@@ -4176,6 +4176,7 @@ function createTicketMethods(deps, shared) {
       if (def.dispatch !== 'spawn' && def.dispatch !== 'worktree') return standing;
       // team.json is hand-editable and can predate the manifest's write-time refusal, so the resolver repeats it.
       if (assignee === 'lead' || assignee === 'reviewer') return standing;
+      if (def.dispatch === 'worktree' && ticket && ticket.done === 'report') return { mode: 'spawn', def };
       return { mode: def.dispatch, def };
     },
 
@@ -4885,7 +4886,7 @@ function createTicketMethods(deps, shared) {
       const assignee = ticket.assignee;
       // The role the ticket was filed under mints the seat name; `role` is only written once a dispatch re-pins, so `assignee` still holds it here.
       const roleKey = ticket.role || assignee;
-      const { mode: dispatchMode } = this._ticketDispatchMode(team, roleKey);
+      const { mode: dispatchMode } = this._ticketDispatchMode(team, roleKey, ticket);
       // One mint serves both modes (only `worktree` uses the branch): splitting it would put a second name-derivation rule beside the one matchSeatRole depends on.
       const oneShot = dispatchMode !== 'standing';
       const minted = oneShot ? this._mintTicketSeat(team, roleKey, ticket) : null;
@@ -5073,7 +5074,7 @@ function createTicketMethods(deps, shared) {
       const prevRole = ticket.role || null;
       // Assign mints like _taskStart: a parked ticket released for an opted-in role must still get its own branch,
       // or the hand works in the shared checkout on a spec written for an isolated tree.
-      const { mode: dispatchMode } = this._ticketDispatchMode(team, assignee);
+      const { mode: dispatchMode } = this._ticketDispatchMode(team, assignee, ticket);
       const oneShot = dispatchMode !== 'standing';
       const minted = oneShot ? this._mintTicketSeat(team, assignee, ticket) : null;
       // `taken` by the ticket's current assignee means it already has a seat, but a record outlives an archive or exit,
@@ -5253,7 +5254,7 @@ function createTicketMethods(deps, shared) {
       // On re-entry lastActivityAt is re-timed, not left at `closedAt`, which may be hours old: a hold outlasts TICKET_STALL_MS,
       // so the next sweep would alarm "stuck at verify" about a loop that started seconds ago.
       ticket.lastActivityAt = reentry ? Date.now() : ticket.closedAt;
-      // The loop runs only on a ticket with its own tree (its checks are branch questions), and loopStep is stamped in the same write that closes it:
+      // loopStep is stamped in the same write that closes it:
       // a process dying between close and a later stamp would leave a done ticket nothing ever nudges.
       const loopEligible = ticket.done === 'report' ? true : !!(ticket.worktree && ticket.worktree.branch && ticket.worktree.baseSha);
       if (loopEligible) {
@@ -6372,8 +6373,12 @@ function createTicketMethods(deps, shared) {
           const full = path.join(abs, name);
           const relPath = rel ? `${rel}/${name}` : name;
           const st = fs.lstatSync(full);
-          if (st.isDirectory()) { if (depth < 8) walk(full, relPath, depth + 1); continue; }
-          if (!st.isFile() || ARTIFACT_LOOP_FILE_RE.test(name)) continue;
+          if (st.isDirectory()) {
+            if (depth >= 8) throw new Error(`${relPath} is nested deeper than 8 levels under ${dir}`);
+            walk(full, relPath, depth + 1);
+            continue;
+          }
+          if (!st.isFile() || (!rel && ARTIFACT_LOOP_FILE_RE.test(name))) continue;
           if (out.length >= ARTIFACT_MAX_FILES) throw new Error(`more than ${ARTIFACT_MAX_FILES} files under ${dir}`);
           const bytes = fs.readFileSync(full);
           out.push({ path: relPath, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') });
@@ -6434,9 +6439,23 @@ function createTicketMethods(deps, shared) {
     _artifactScope(ticket) {
       const a = ticket.artifact;
       if (!a || !a.dir) return null;
-      let files = [];
-      try { files = JSON.parse(fs.readFileSync(path.join(a.dir, `.artifact-r${a.round}.json`), 'utf8')).files || []; } catch { files = []; }
-      return { dir: a.dir, round: a.round, digest: a.digest, count: a.files, files: files.slice(0, ARTIFACT_SCOPE_LIST_MAX) };
+      const read = (round) => {
+        try { return JSON.parse(fs.readFileSync(path.join(a.dir, `.artifact-r${round}.json`), 'utf8')).files || []; } catch { return null; }
+      };
+      const files = read(a.round) || [];
+      let changed;
+      if (Number(a.round) > 1) {
+        const prev = read(Number(a.round) - 1);
+        if (prev) {
+          const before = new Map(prev.map((f) => [f.path, f.sha256]));
+          const now = new Set(files.map((f) => f.path));
+          changed = [
+            ...files.filter((f) => before.get(f.path) !== f.sha256).map((f) => ({ path: f.path, kind: before.has(f.path) ? 'modified' : 'added' })),
+            ...prev.filter((f) => !now.has(f.path)).map((f) => ({ path: f.path, kind: 'removed' })),
+          ];
+        } else changed = null;
+      }
+      return { dir: a.dir, round: a.round, digest: a.digest, count: a.files, files: files.slice(0, ARTIFACT_SCOPE_LIST_MAX), ...(changed !== undefined ? { changed } : {}) };
     },
 
     _holdArtifact(team, ticketId, evidence) {
