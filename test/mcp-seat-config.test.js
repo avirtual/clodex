@@ -5,63 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createCliHooks } = require('../cli-hooks');
 const { pathFor } = require('../clodex-paths');
-const { mcpArgvPlan } = require('../proxy-util');
 const { mkTmpRoot } = require('./lib/tmp-roots');
-
-const P = '/run/seat/mcp.json';
-const N_USER_MCP = "MCP: the clodex MCP tools are not available to this session — the seat's extra args carry their own --mcp-config.";
-const N_USER_STRICT = "MCP: the clodex MCP tools are not available to this session — the seat's extra args carry --strict-mcp-config with no config, which is the empty set.";
-const N_UNROUTED = 'MCP: all MCP servers disabled for this session (--strict-mcp-config) — this session is not routed through wirescope, so Clodex could not remove only the claude_design MCP server; to keep your other MCP servers, route the session through wirescope or turn off Settings ▸ Disable claude_design MCP. The clodex MCP tools stay available.';
-const N_NO_STRIP = 'MCP: all MCP servers disabled for this session (--strict-mcp-config) — the wirescope this session uses is not configured to strip claude_design, so Clodex could not remove only that MCP server; to keep your other MCP servers, set STRIP_MCP_SERVERS=claude_design on that wirescope or turn off Settings ▸ Disable claude_design MCP. The clodex MCP tools stay available.';
-const N_PROBE = 'MCP: all MCP servers disabled for this session (--strict-mcp-config) — wirescope did not answer when the session started; restart the session to retry, or turn off Settings ▸ Disable claude_design MCP. The clodex MCP tools stay available.';
-
-const OURS = { push: ['--mcp-config', P], notice: null, writeConfig: true };
-const USER_MCP = { push: [], notice: N_USER_MCP, writeConfig: false };
-const USER_STRICT = { push: [], notice: N_USER_STRICT, writeConfig: false };
-const STRICT_OURS = (notice) => ({ push: ['--strict-mcp-config', '--mcp-config', P], notice, writeConfig: true });
-
-const ROWS = [
-  [0, 0, null, 0, OURS],
-  [0, 0, null, 1, OURS],
-  [0, 0, 'unrouted', 0, OURS],
-  [0, 0, 'unrouted', 1, STRICT_OURS(N_UNROUTED)],
-  [0, 0, 'wire-no-strip', 0, OURS],
-  [0, 0, 'wire-no-strip', 1, STRICT_OURS(N_NO_STRIP)],
-  [0, 0, 'probe-failed', 0, OURS],
-  [0, 0, 'probe-failed', 1, STRICT_OURS(N_PROBE)],
-  [0, 1, null, 0, USER_STRICT],
-  [0, 1, null, 1, USER_STRICT],
-  [0, 1, 'unrouted', 0, USER_STRICT],
-  [0, 1, 'unrouted', 1, USER_STRICT],
-  [0, 1, 'wire-no-strip', 0, USER_STRICT],
-  [0, 1, 'wire-no-strip', 1, USER_STRICT],
-  [0, 1, 'probe-failed', 0, USER_STRICT],
-  [0, 1, 'probe-failed', 1, USER_STRICT],
-  [1, 0, null, 0, USER_MCP],
-  [1, 0, null, 1, USER_MCP],
-  [1, 0, 'unrouted', 0, USER_MCP],
-  [1, 0, 'unrouted', 1, USER_MCP],
-  [1, 0, 'wire-no-strip', 0, USER_MCP],
-  [1, 0, 'wire-no-strip', 1, USER_MCP],
-  [1, 0, 'probe-failed', 0, USER_MCP],
-  [1, 0, 'probe-failed', 1, USER_MCP],
-  [1, 1, null, 0, USER_MCP],
-  [1, 1, null, 1, USER_MCP],
-  [1, 1, 'unrouted', 0, USER_MCP],
-  [1, 1, 'unrouted', 1, USER_MCP],
-  [1, 1, 'wire-no-strip', 0, USER_MCP],
-  [1, 1, 'wire-no-strip', 1, USER_MCP],
-  [1, 1, 'probe-failed', 0, USER_MCP],
-  [1, 1, 'probe-failed', 1, USER_MCP],
-];
-
-test('mcpArgvPlan: the 32-row matrix of user flags × reason × claude_design setting', () => {
-  assert.strictEqual(ROWS.length, 32);
-  for (const [userMcp, userStrict, reason, disableDesign, expected] of ROWS) {
-    const got = mcpArgvPlan({ userMcp: !!userMcp, userStrict: !!userStrict, disableDesign: !!disableDesign, reason, mcpPath: P });
-    assert.deepStrictEqual(got, expected, JSON.stringify({ userMcp, userStrict, reason, disableDesign }));
-  }
-});
 
 test('writeMcpConfig: one clodex server under the hooks interpreter, mode 0600, no seat env', () => {
   const root = mkTmpRoot('clodex-hooks-');
@@ -108,6 +52,23 @@ test('session-manager samples the user MCP flags before the plan and its push', 
   assert.strictEqual(src.split('/^--mcp-config(=|$)/').length, 2);
   assert.strictEqual(src.split('/^--strict-mcp-config(=|$)/').length, 2);
   const block = src.slice(mcp, src.indexOf('const userPluginDir', mcp));
-  assert.ok(block.includes('if (plan.writeConfig) writeMcpConfig(name);'));
+  assert.ok(block.includes('writeMcpConfig(name, mcpSel.servers);'));
   assert.ok(block.includes("mcpPath: pathFor(REGISTRY_DIR, name, 'mcpConfig')"));
+});
+
+test('writeMcpConfig: library servers sit beside clodex, and clodex wins a clash', () => {
+  const root = mkTmpRoot('clodex-hooks-');
+  const h = createCliHooks({
+    REGISTRY_DIR: root,
+    memoryStore: { list: () => [] },
+    getUiSettings: () => ({ get: () => ({}) }),
+    nodeInterp: '/opt/app/Clodex',
+  });
+  const jira = { type: 'stdio', command: 'npx', args: ['jira'], env: { JIRA_TOKEN: 't' } };
+  const out = h.writeMcpConfig('seat2', { jira, clodex: { command: '/evil' } });
+  assert.strictEqual(fs.statSync(out).mode & 0o777, 0o600);
+  const cfg = JSON.parse(fs.readFileSync(out, 'utf8'));
+  assert.deepStrictEqual(Object.keys(cfg.mcpServers).sort(), ['clodex', 'jira']);
+  assert.deepStrictEqual(cfg.mcpServers.jira, jira);
+  assert.strictEqual(cfg.mcpServers.clodex.command, '/opt/app/Clodex');
 });

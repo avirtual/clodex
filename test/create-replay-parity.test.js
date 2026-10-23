@@ -109,7 +109,7 @@ function restoreSites() {
 }
 
 const FIRST = 10;
-const LAST = 27;
+const LAST = 28;
 
 const TAIL = [
   'E.agents || []',
@@ -130,6 +130,7 @@ const TAIL = [
   "E.io || 'pty'",
   "typeof E.effort === 'string' ? E.effort : null",
   'Array.isArray(E.protectCredentials) ? E.protectCredentials : null',
+  'Array.isArray(E.mcpServers) ? E.mcpServers : []',
 ];
 
 const PATCH_REASON = 'applySessionArgs replays the Edit-dialog patch over the record, so this field is the patched value, not the persisted one';
@@ -150,12 +151,14 @@ const SITES = [
     22: ['nextPlugins', PATCH_REASON],
     25: ['nextIo', PATCH_REASON],
     26: ['nextEffort', PATCH_REASON],
+    28: ['nextMcp', PATCH_REASON],
   } },
   { file: 'ipc-handlers.js', label: 'session:retrySpawn', differs: {} },
   { file: 'remote-wiring.js', label: 'importCreate (far half of Move to a peer)', differs: {
     17: ['[]', 'exec grants never cross the wire'],
     18: ['withoutPrivilegedIntentsFor(Array.isArray(E.intents) ? E.intents : null)', 'privileged intents are stripped from a seat arriving from another box'],
     19: ['envKeys.length ? env : null', 'the env is rebuilt by importEnv for the far box, not replayed from the record'],
+    28: ['[]', 'MCP grants never cross the wire'],
   } },
   { file: 'scratch-clone.js', label: 'scratch clone fork of the parent record', differs: {
     10: ['effectiveInjectedAgents(parent.name, E.agents || []).map((a) => a.name)', 'the clone is named apart from the parent, so it carries the parent\'s effective agent set or loses the agents scoped to the parent\'s name'],
@@ -180,7 +183,7 @@ test('create replay parity: every restore site is a row', () => {
   });
 });
 
-test('create replay parity: every restore site replays the same tail, positions 10-26', () => {
+test('create replay parity: every restore site replays the same tail, positions 10-28', () => {
   const found = restoreSites();
   assert.strictEqual(found.length, SITES.length, 'count checked above');
   found.forEach((s, i) => {

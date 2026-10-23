@@ -44,6 +44,7 @@ const MAIN_SCOPE = ['main.js', 'engine.js'];
 // remote-wiring, peer-wiring, app-menus).
 const SCANNED_MODULES = [
   'dev-reload.js',
+  'mcp-plan.js',
   'open-requests.js',
   'session-manager.js',
   'app-menus.js',

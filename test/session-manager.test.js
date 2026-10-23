@@ -21277,7 +21277,7 @@ test('stream seat (f): create(io:stream) builds the -p stream-json argv with a f
     ...STREAM_HEAD, '--session-id', '<uuid>', '--permission-prompt-tool', 'stdio',
     '--settings', require('node:path').join(h.root, 'settings.json'),
     '--add-dir', require('node:path').join(h.root, 'messages'),
-    '--mcp-config', require('node:path').join(h.root, 'run', 'st1', 'mcp.json'),
+    '--strict-mcp-config', '--mcp-config', require('node:path').join(h.root, 'run', 'st1', 'mcp.json'),
     '--append-system-prompt-file', promptPath,
   ]);
   assert.deepStrictEqual(h.hookCalls.map((c) => c.slice(0, 3)), [['st1', 'http://127.0.0.1:9999', 'agent-x']]);
@@ -21302,6 +21302,58 @@ test('stream seat: extra args spelling --mcp-config=<path> get no clodex mcp.jso
   assert.ok(!args.some((a) => a.includes(require('node:path').join('run', 'st1', 'mcp.json'))));
   assert.ok(!args.includes('--mcp-config'));
   assert.ok(notices.includes("MCP: the clodex MCP tools are not available to this session — the seat's extra args carry their own --mcp-config."));
+});
+
+test('MCP library at create(): servers reach mcp.json, warnings are system rows, the record and the migration notice', async (t) => {
+  const p = require('node:path');
+  const fsReal = require('node:fs');
+  const cfgDir = mkTmpRoot('clx-mcp-cfg-');
+  fsReal.writeFileSync(p.join(cfgDir, '.claude.json'), JSON.stringify({ mcpServers: { jira: {}, legacy: { command: 'x' } } }));
+  const saved = Object.fromEntries(['CLAUDE_CONFIG_DIR', 'DOCS_KEY', 'JIRA_TOKEN'].map((k) => [k, process.env[k]]));
+  t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
+  Object.assign(process.env, { CLAUDE_CONFIG_DIR: cfgDir, DOCS_KEY: 'k1' });
+  delete process.env.JIRA_TOKEN;
+  const lib = [
+    { name: 'jira', entry: { command: 'npx', args: ['jira'], env: { JIRA_TOKEN: '${JIRA_TOKEN}' } } },
+    { name: 'docs', entry: { type: 'http', url: 'https://docs/mcp', headers: { 'X-API-Key': '${DOCS_KEY}' } } },
+  ];
+  const h = mkStreamSeatManager({ extraDeps: { getMcpLibrary: () => ({ list: () => lib }) } });
+  t.after(() => h.stopAll());
+  const rows = [];
+  h.m._broadcast = (channel, msg) => { if (msg && msg.type === 'system') rows.push(msg.body); };
+  const spawn = (extra) => h.m.create('st1', 'claude', require('node:os').tmpdir(), extra, null, 'ws', null, false, null,
+    [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, 'stream', null, null, ['jira', 'docs']);
+  const res = await spawn([]);
+  const file = p.join(h.root, 'run', 'st1', 'mcp.json');
+  const cfg = JSON.parse(fsReal.readFileSync(file, 'utf8'));
+  assert.deepStrictEqual(Object.keys(cfg.mcpServers).sort(), ['clodex', 'docs']);
+  assert.deepStrictEqual(cfg.mcpServers.docs, { type: 'http', url: 'https://docs/mcp', headers: { 'X-API-Key': 'k1' } });
+  assert.ok(rows.includes('MCP jira: not loaded — JIRA_TOKEN is not set (Preferences ▸ Environment)'), JSON.stringify(rows));
+  assert.ok(res.warnings.includes('MCP jira: not loaded — JIRA_TOKEN is not set (Preferences ▸ Environment)'));
+  assert.ok(rows.includes('MCP: 1 server(s) in your Claude config are no longer loaded into seats: legacy — import them in Library ▸ MCP Servers (claude_design is not loaded into managed seats either)'), JSON.stringify(rows));
+  const rec = h.store.get('st1');
+  assert.deepStrictEqual(rec.mcpServers, ['jira', 'docs']);
+  assert.deepStrictEqual(rec.mcpApplied.names, ['docs']);
+  assert.match(rec.mcpApplied.digest, /^[0-9a-f]{64}$/);
+  assert.strictEqual('mcpUnmanaged' in rec, false);
+
+  h.stopAll();
+  h.m.sessions.delete('st1');
+  rows.length = 0;
+  await spawn(['--mcp-config', '/x/own.json']);
+  const after = h.store.get('st1');
+  assert.strictEqual(after.mcpUnmanaged, true);
+  assert.strictEqual(after.mcpApplied, undefined, 'the stale applied set is cleared through the undefined spread');
+  assert.strictEqual(fsReal.existsSync(file), false, 'the resolved file from the managed spawn is removed');
+  assert.ok(!rows.some((r) => r.startsWith('MCP: 1 server(s)')), 'an unmanaged seat gets no migration row');
+
+  h.stopAll();
+  h.m.sessions.delete('st1');
+  process.env.JIRA_TOKEN = 't';
+  await spawn([]);
+  const back = h.store.get('st1');
+  assert.strictEqual(back.mcpUnmanaged, undefined);
+  assert.deepStrictEqual(back.mcpApplied.names, ['docs', 'jira']);
 });
 
 test('stream seat (g): a restore with io:stream reaps the persisted streamPid BEFORE spawning --resume <id>', async (t) => {

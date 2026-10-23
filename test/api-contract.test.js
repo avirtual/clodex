@@ -37,7 +37,8 @@ const PINNED_NAMES = [
   'savePrompt', 'removePrompt', 'saveTeamPrompt', 'removeTeamPrompt', 'injectPrompt', 'listAgents',
   'getAgent', 'saveAgent', 'removeAgent', 'listSkillLib',
   'getSkillLib', 'saveSkillLib', 'removeSkillLib', 'listExecCommands',
-  'getExecCommand', 'saveExecCommand', 'removeExecCommand', 'listNotifications', 'pageNotifications',
+  'getExecCommand', 'saveExecCommand', 'removeExecCommand', 'listMcpServers', 'getMcpServer', 'saveMcpServer',
+  'removeMcpServer', 'discoverMcpServers', 'importMcpServer', 'mcpReadiness', 'listNotifications', 'pageNotifications',
   'markNotificationRead', 'markAllNotificationsRead', 'removeNotification', 'notificationUnreadCount',
   // t806: any inbox mutation from any surface, phone included — the desktop
   // badge's only signal for a read that happened off-box.
@@ -254,8 +255,8 @@ test('no duplicate names and no duplicate channels', () => {
   assert.equal(new Set(channels).size, channels.length, 'channels are unique');
 });
 
-test('contract covers exactly the pinned 336-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 337, 'pinned list is the full 337-method surface');
+test('contract covers exactly the pinned 344-method surface', () => {
+  assert.equal(PINNED_NAMES.length, 344, 'pinned list is the full 344-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -279,7 +280,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 337, 'window.api has exactly 337 methods');
+    assert.equal(generated.length, 344, 'window.api has exactly 344 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);

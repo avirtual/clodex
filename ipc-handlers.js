@@ -16,6 +16,7 @@ const {
 } = require('./team-prompt-dir');
 const { appendRailPrompts } = require('./prompt-rails');
 const { validateExecDef } = require('./exec-schema');
+const { discoverMcpSources, normaliseDiscovered, resolveMcpEntry, secretRefs } = require('./mcp-plan');
 const { validateSeatImages } = require('./seat-images');
 const { BOX_ID_RE, runningInSandboxBox } = require('./sandbox');
 const { SETUP_CHOICES } = require('./stores');
@@ -89,7 +90,7 @@ function registerIpcHandlers(deps) {
     wirescope, workspaceOfSender,
     sessionScopeCtx, renameWorkspaceScope,
     templates, workspaces, promptLibrary, agentDefaults,
-    agentLibrary, skillLibrary, execLibrary, notifications, uiSettings, envScopes, envDefaults, setupMarker,
+    agentLibrary, skillLibrary, execLibrary, mcpLibrary, notifications, uiSettings, envScopes, envDefaults, setupMarker,
     getRemoteServer, getRemoteError, getPeerManager, getTunnelManager,
     getUpdateInfo, getReleasesCache,
     getWebTunnelManager, openPeerWeb, closePeerWeb,
@@ -119,15 +120,15 @@ function registerIpcHandlers(deps) {
     const seedTools = (p.disabledTools === undefined) ? agentDefaults.getDefaultDeny() : p.disabledTools;
     const seedSkills = (p.disabledSkills === undefined) ? agentDefaults.getDefaultSkillDeny() : p.disabledSkills;
     const seedBuiltins = (p.denyBuiltins === undefined) ? agentDefaults.getDefaultBuiltinDeny() : p.denyBuiltins;
-    const session = await manager.create(p.name, p.type, p.cwd, p.extraArgs, p.resumeId || null, workspaceId, p.systemPromptBody || null, !!p.fork, p.proxy ?? null, p.agents || [], seedBuiltins || [], seedTools || [], seedSkills || [], p.injectSkills || [], p.systemPromptFile || null, p.appendPromptFiles || [], Array.isArray(p.execCommands) ? p.execCommands : [], Array.isArray(p.intents) ? p.intents : null, (p.env && typeof p.env === 'object') ? p.env : null, true, p.noWire === true, Array.isArray(p.plugins) ? p.plugins : null, null, null, p.io === 'stream' ? 'stream' : 'pty', (typeof p.effort === 'string' && p.effort.trim()) ? p.effort.trim() : null);
+    const session = await manager.create(p.name, p.type, p.cwd, p.extraArgs, p.resumeId || null, workspaceId, p.systemPromptBody || null, !!p.fork, p.proxy ?? null, p.agents || [], seedBuiltins || [], seedTools || [], seedSkills || [], p.injectSkills || [], p.systemPromptFile || null, p.appendPromptFiles || [], Array.isArray(p.execCommands) ? p.execCommands : [], Array.isArray(p.intents) ? p.intents : null, (p.env && typeof p.env === 'object') ? p.env : null, true, p.noWire === true, Array.isArray(p.plugins) ? p.plugins : null, null, null, p.io === 'stream' ? 'stream' : 'pty', (typeof p.effort === 'string' && p.effort.trim()) ? p.effort.trim() : null, null, Array.isArray(p.mcpServers) ? p.mcpServers.map(String) : []);
     const seedStrip = (p.stripLevel === undefined || p.stripLevel === null) ? agentDefaults.getStrip(p.name) : p.stripLevel;
     if (seedStrip === 1 || seedStrip === 2) persistence.setStripLevel(p.name, seedStrip);
     return { ok: true, session };
   }
 
-  handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire, plugins, io, effort) => {
+  handle('session:create', async (e, name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire, plugins, io, effort, mcpServers) => {
     try {
-      return await spawnFromParams(e, { name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire, plugins, io, effort });
+      return await spawnFromParams(e, { name, type, cwd, extraArgs, systemPromptBody, resumeId, fork, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, stripLevel, systemPromptFile, appendPromptFiles, execCommands, intents, env, noWire, plugins, io, effort, mcpServers });
     } catch (err) {
       return { ok: false, error: err.message };
     }
@@ -583,7 +584,7 @@ function registerIpcHandlers(deps) {
   const teamTemplateList = () => (listAllTemplates ? listAllTemplates() : templates.list());
 
   handle('templates:saveTeam', (_e, team, stem, body) => {
-    const res = teamTemplateSave(teamFileDeps, team, stem, body);
+    const res = teamTemplateSave(teamFileDeps, team, stem, body, { operator: true });
     if (!res.ok) return { ok: false, error: res.error, templates: teamTemplateList() };
     refreshAppMenu();
     return { ok: true, templates: teamTemplateList() };
@@ -625,6 +626,7 @@ function registerIpcHandlers(deps) {
     if (entry.io === 'stream') t.io = 'stream';
     if (typeof entry.effort === 'string' && entry.effort) t.effort = entry.effort;
     if (Array.isArray(entry.plugins)) t.plugins = [...entry.plugins];
+    if (Array.isArray(entry.mcpServers) && entry.mcpServers.length) t.mcpServers = [...entry.mcpServers];
     try { templates.saveByName(t); }
     catch (e) { return { ok: false, error: e.message, templates: templates.list() }; }
     refreshAppMenu();
@@ -719,6 +721,55 @@ function registerIpcHandlers(deps) {
     catch (err) { return { ok: false, error: err.message, commands: execLibrary.list() }; }
     refreshAppMenu();
     return { ok: true, commands };
+  });
+
+  handle('mcp:list', () => mcpLibrary.list());
+  handle('mcp:get', (_e, name) => mcpLibrary.raw(name));
+  const saveMcp = (name, content) => {
+    let entry = content;
+    if (typeof content === 'string') {
+      try { entry = JSON.parse(content); } catch (err) { return { ok: false, error: `invalid JSON: ${err.message}` }; }
+    }
+    let servers;
+    try { servers = mcpLibrary.save(name, entry); }
+    catch (err) { return { ok: false, error: err.message }; }
+    refreshAppMenu();
+    return { ok: true, servers };
+  };
+  handle('mcp:save', (_e, name, content) => saveMcp(name, content));
+  handle('mcp:import', (_e, name, entry) => saveMcp(name, entry));
+  handle('mcp:remove', (_e, name) => {
+    let servers;
+    try { servers = mcpLibrary.remove(name); }
+    catch (err) { return { ok: false, error: err.message, servers: mcpLibrary.list() }; }
+    refreshAppMenu();
+    return { ok: true, servers };
+  });
+  handle('mcp:discover', (_e, cwd) => {
+    const have = new Set(mcpLibrary.list().map((r) => r.name));
+    const found = discoverMcpSources({
+      home: os.homedir(), cwd: typeof cwd === 'string' && cwd ? cwd : null, claudeConfigDir: process.env.CLAUDE_CONFIG_DIR || null,
+    });
+    return found.map(({ source, name, entry }) => {
+      const { entry: normalised, secrets } = normaliseDiscovered(entry);
+      return { source, name, entry: normalised, secrets: Object.keys(secrets).sort(), inLibrary: have.has(name) };
+    });
+  });
+  handle('mcp:readiness', (_e, workspaceId, names) => {
+    const all = envScopes ? envScopes.all() : { global: {}, workspaces: {} };
+    const flat = (scope) => Object.fromEntries(Object.entries(scope || {})
+      .map(([k, rec]) => [k, rec && typeof rec === 'object' ? rec.value : rec])
+      .filter(([, v]) => typeof v === 'string'));
+    const env = { ...flat(all.global), ...flat(all.workspaces && all.workspaces[workspaceId]) };
+    const lib = new Map(mcpLibrary.list().map((r) => [r.name, r.entry]));
+    const out = {};
+    for (const n of Array.isArray(names) ? names : []) {
+      const entry = lib.get(n);
+      if (!entry) { out[n] = { ok: false, missing: [], error: 'not in the library' }; continue; }
+      const { missing } = resolveMcpEntry(entry, env);
+      out[n] = { ok: missing.length === 0, missing, secrets: secretRefs(entry) };
+    }
+    return out;
   });
 
   handle('notifications:list', () => notifications.list());
@@ -1107,11 +1158,11 @@ function registerIpcHandlers(deps) {
     return { ok: true, effective: readEffectiveToolState(cwd || null).overrides };
   });
 
-  handle('session:setArgs', async (e, name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommands, env, plugins, io, effort) =>
+  handle('session:setArgs', async (e, name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommands, env, plugins, io, effort, mcpServers) =>
     applySessionArgs(name, {
       extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins,
       disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommands, env,
-      plugins, io, effort,
+      plugins, io, effort, mcpServers,
     }, workspaceOfSender(e)));
 
   handle('session:restart', async (e, name, opts = {}) =>
@@ -2345,6 +2396,7 @@ function registerIpcHandlers(deps) {
         entry.io || 'pty',
         typeof entry.effort === 'string' ? entry.effort : null,
         Array.isArray(entry.protectCredentials) ? entry.protectCredentials : null,
+        Array.isArray(entry.mcpServers) ? entry.mcpServers : [],
       );
       return { ok: true, io: entry.io || 'pty' };
     } catch (err) {

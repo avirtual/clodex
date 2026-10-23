@@ -19,6 +19,7 @@ const { visibleTo } = require('./scope-util');
 const { clampSidebarWidth } = require('./sidebar-width');
 const { sanitizeCtxThresholds } = require('./ctx-reminder');
 const { confineOrThrow } = require('./path-confine');
+const { validateMcpEntry, mcpNameError, secretRefs } = require('./mcp-plan');
 const { resolveWirescopePort, resolveRemotePort, resolveProxyUrl } = require('./service-ports');
 const { coerceRemoteBasePath, resolveRemoteBasePathSetting } = require('./remote');
 const {
@@ -529,6 +530,7 @@ function initStores(userDataPath, {
   const AGENTS_DIR = path.join(registryDir, 'agents');
   const SKILLS_LIB_DIR = path.join(registryDir, 'skills');
   const EXEC_DIR = path.join(registryDir, 'library', 'exec');
+  const MCP_DIR = path.join(registryDir, 'library', 'mcp');
 
   let launchBakTaken = false;
 
@@ -903,6 +905,15 @@ function initStores(userDataPath, {
         this._save(all, name);
       }
     },
+    setMcpServers(name, mcpServers) {
+      const all = this._load();
+      const entry = all.find(s => s.name === name);
+      if (entry) {
+        if (Array.isArray(mcpServers) && mcpServers.length) entry.mcpServers = mcpServers.map(String);
+        else delete entry.mcpServers;
+        this._save(all, name);
+      }
+    },
     setEnv(name, env) {
       const all = this._load();
       const entry = all.find(s => s.name === name);
@@ -963,7 +974,7 @@ function initStores(userDataPath, {
     'type', 'cwd', 'extraArgs', 'proxy', 'agents', 'execCommands', 'intents',
     'autoCompact', 'noWire', 'denyBuiltins', 'disabledTools', 'disabledSkills',
     'injectSkills', 'stripLevel', 'systemPromptFile', 'appendPromptFiles',
-    'plugins', 'tools', 'io', 'effort',
+    'plugins', 'tools', 'io', 'effort', 'mcpServers',
   ]);
   const templates = {
     // Confines the SUFFIXED basename, not the bare name: `${name}.json` is what
@@ -1448,6 +1459,56 @@ function initStores(userDataPath, {
       // propagate, while a missing FILE stays silent (delete is idempotent).
       // Folding both into one catch is what made a rejected name and a
       // successful delete return the same value.
+      const file = this._file(name);
+      try { fs.unlinkSync(file); } catch {}
+      return this.list();
+    },
+  };
+
+  const mcpLibrary = {
+    _file(name) {
+      const err = mcpNameError(name);
+      if (err) throw new Error(err);
+      return confineOrThrow(MCP_DIR, `${name}.json`, 'MCP server name');
+    },
+    list() {
+      let files;
+      try { files = fs.readdirSync(MCP_DIR); }
+      catch { return []; }
+      const out = [];
+      for (const f of files) {
+        if (!f.endsWith('.json')) continue;
+        const name = f.replace(/\.json$/, '');
+        if (mcpNameError(name)) continue;
+        try {
+          const entry = JSON.parse(fs.readFileSync(path.join(MCP_DIR, f), 'utf-8'));
+          if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+          out.push({
+            name,
+            entry,
+            type: typeof entry.type === 'string' ? entry.type : 'stdio',
+            description: typeof entry.description === 'string' ? entry.description : '',
+            secrets: secretRefs(entry),
+            file: f,
+          });
+        } catch {}
+      }
+      return out.sort((a, b) => a.name.localeCompare(b.name));
+    },
+    raw(name) {
+      try { return fs.readFileSync(this._file(name), 'utf-8'); } catch { return null; }
+    },
+    save(name, content) {
+      const file = this._file(name);
+      const entry = typeof content === 'string' ? JSON.parse(content) : content;
+      const check = validateMcpEntry(entry);
+      if (!check.ok) throw new Error(`invalid MCP server ${name}: ${check.errors.join('; ')}`);
+      ensureDir(MCP_DIR);
+      fs.writeFileSync(file, JSON.stringify(entry, null, 2), { mode: 0o600 });
+      fs.chmodSync(file, 0o600);
+      return this.list();
+    },
+    remove(name) {
       const file = this._file(name);
       try { fs.unlinkSync(file); } catch {}
       return this.list();
@@ -2334,7 +2395,7 @@ function initStores(userDataPath, {
 
   return {
     persistence, templates, workspaces, promptLibrary,
-    agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, misfires, notifications, uiSettings,
+    agentDefaults, agentLibrary, skillLibrary, execLibrary, mcpLibrary, reminders, misfires, notifications, uiSettings,
     envScopes, envDefaults, setupMarker, skillsSeen,
     renameWorkspaceScope,
   };

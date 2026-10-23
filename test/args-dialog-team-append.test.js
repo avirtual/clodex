@@ -88,3 +88,11 @@ test('readSessionArgs reports null for a cwd outside every team root', () => {
   assert.strictEqual(res.team, null,
     'null, not undefined and not a stray team — an unteamed seat must draw the library alone');
 });
+
+test('readSessionArgs returns the seat\'s MCP selection, [] when absent', () => {
+  const { eng, repo } = mkHome();
+  eng.stores.persistence.upsert({ name: 'm1', type: 'claude', cwd: repo, mcpServers: ['jira'] });
+  eng.stores.persistence.upsert({ name: 'm2', type: 'claude', cwd: repo });
+  assert.deepStrictEqual(eng.readSessionArgs('m1').mcpServers, ['jira']);
+  assert.deepStrictEqual(eng.readSessionArgs('m2').mcpServers, []);
+});

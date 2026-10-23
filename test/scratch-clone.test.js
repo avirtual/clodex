@@ -39,6 +39,7 @@ function respawnFromRecord(m, name, entry) {
     entry.io || 'pty',
     typeof entry.effort === 'string' ? entry.effort : null,
     Array.isArray(entry.protectCredentials) ? entry.protectCredentials : null,
+    Array.isArray(entry.mcpServers) ? entry.mcpServers : [],
   );
 }
 

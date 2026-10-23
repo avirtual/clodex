@@ -45,6 +45,8 @@ function t0ReadPaths(registryDir, home) {
   ];
   const ctlContexts = path.join(home, '.clodex', 'cli', 'contexts.json');
   if (!out.includes(ctlContexts)) out.push(ctlContexts);
+  out.push(path.join(registryDir, 'run', '*', 'mcp.json'));
+  out.push(path.join(registryDir, 'sessions', '*', 'run', 'mcp.json'));
   return out;
 }
 
@@ -72,7 +74,7 @@ function rulesFor(tool, p, dir) {
   return [`${tool}(${anchor})`, `${tool}(${anchor}/**)`];
 }
 
-function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = os.homedir(), inBox = false, fsImpl = fs }) {
+function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = os.homedir(), inBox = false, fsImpl = fs, mcpSecretNames = [] }) {
   const listed = normalizeList(list);
   const t0 = t0ReadPaths(registryDir, home);
   const denyRead = [...t0, ...listed.filter((p) => !t0.includes(p))];
@@ -82,7 +84,7 @@ function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = o
   const kindOf = new Map(dataEntries.map((e) => [e.p, e.dir]));
   kindOf.set(t0[0], false);
   kindOf.set(t0[2], true);
-  if (t0[3]) kindOf.set(t0[3], false);
+  kindOf.set(path.join(home, '.clodex', 'cli', 'contexts.json'), false);
   kindOf.set(APP_BUNDLE, true);
 
   const deny = [];
@@ -94,7 +96,9 @@ function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = o
   const listedHome = new Set(listed.map((p) => expandHome(p, home)));
   const envNames = ENV_GROUPS
     .filter((g) => listedHome.has(expandHome(g.dir, home)))
-    .flatMap((g) => g.names);
+    .flatMap((g) => g.names)
+    .concat((Array.isArray(mcpSecretNames) ? mcpSecretNames : []).filter((n) => typeof n === 'string' && n))
+    .filter((n, i, all) => all.indexOf(n) === i);
 
   const out = { deny: [...new Set(deny)], ask: [], sandbox: null };
   if (inBox) return out;

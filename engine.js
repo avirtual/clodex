@@ -1273,6 +1273,7 @@ const SessionManager = createSessionManager({
   getWorkspaces: () => workspaces,
   readCtxFor: (n) => readCtxFor(n),
   getEnvScopes: () => envScopes,
+  getMcpLibrary: () => mcpLibrary,
   getAccounts: () => accounts,
   getPromptLibrary: () => promptLibrary,
   getAgentLibrary: () => agentLibrary,
@@ -1500,7 +1501,7 @@ async function restartSession(name, opts = {}, wsId = DEFAULT_WORKSPACE_ID) {
     const preserveFields = ['ephemeral', 'reviewFor', 'reviewTicket', 'createdAt'];
     if (!(opts && opts.fresh)) preserveFields.push('rosterSentAt');
     manager._preserveAcrossRestart(name, entry, preserveFields);
-    const created = await manager.create(name, entry.type, manager.resumeCwdOf(entry), entry.extraArgs || [], resumeId, wsId, entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [], entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [], entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [], Array.isArray(entry.execCommands) ? entry.execCommands : [], Array.isArray(entry.intents) ? entry.intents : null, (entry.env && typeof entry.env === 'object') ? entry.env : null, false, entry.noWire === true, Array.isArray(entry.plugins) ? entry.plugins : null, Array.isArray(entry.shellDeny) ? entry.shellDeny : null, typeof entry.fixFor === 'string' ? entry.fixFor : null, entry.io || 'pty', typeof entry.effort === 'string' ? entry.effort : null, Array.isArray(entry.protectCredentials) ? entry.protectCredentials : null);
+    const created = await manager.create(name, entry.type, manager.resumeCwdOf(entry), entry.extraArgs || [], resumeId, wsId, entry.systemPrompt || null, false, entry.proxy ?? null, entry.agents || [], entry.denyBuiltins || [], entry.disabledTools || [], entry.disabledSkills || [], entry.injectSkills || [], entry.systemPromptFile || null, entry.appendPromptFiles || [], Array.isArray(entry.execCommands) ? entry.execCommands : [], Array.isArray(entry.intents) ? entry.intents : null, (entry.env && typeof entry.env === 'object') ? entry.env : null, false, entry.noWire === true, Array.isArray(entry.plugins) ? entry.plugins : null, Array.isArray(entry.shellDeny) ? entry.shellDeny : null, typeof entry.fixFor === 'string' ? entry.fixFor : null, entry.io || 'pty', typeof entry.effort === 'string' ? entry.effort : null, Array.isArray(entry.protectCredentials) ? entry.protectCredentials : null, Array.isArray(entry.mcpServers) ? entry.mcpServers : []);
     // create() re-writes the entry from spawn args only, so re-assert the seat's own
     // strip level or a restart silently turns stripping off.
     const restartLvl = stripLevelOf(entry);
@@ -1571,6 +1572,7 @@ function readSessionArgs(name) {
     intents: Array.isArray(entry.intents) ? entry.intents : null, // gate allowlist (null = all-enabled)
     plugins: Array.isArray(entry.plugins) ? entry.plugins : null,
     execCommands: Array.isArray(entry.execCommands) ? entry.execCommands : [],
+    mcpServers: Array.isArray(entry.mcpServers) ? entry.mcpServers : [],
     env: (entry.env && typeof entry.env === 'object') ? entry.env : {},
     agentCatalog: agentLibrary.listFor(sessionScopeCtx(name)),
     team: manager.teamNameOf(name, entry.cwd),
@@ -1595,7 +1597,7 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
     agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools,
     disabledSkills: nextSkills, injectSkills: nextInject,
     systemPrompt: nextInline, systemPromptFile: nextSysFile, appendPromptFiles: nextAppend,
-    intents: nextIntents, execCommands: nextExec, env: nextEnv, plugins: nextPlugins,
+    intents: nextIntents, execCommands: nextExec, env: nextEnv, plugins: nextPlugins, mcpServers: nextMcp,
   } = resolveSessionArgsPatch(patch, beforeKill);
   if (!beforeKill) return { ok: false, error: 'Session not found in persistence' };
   const priorIo = beforeKill.io || 'pty';
@@ -1631,6 +1633,7 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
     persistence.setPluginGrants(name, prunedArgs.pluginGrants);
   }
   persistence.setExecCommands(name, nextExec);
+  persistence.setMcpServers(name, nextMcp);
   persistence.setEnv(name, nextEnv);
   if (nextIo !== priorIo) persistence.setIo(name, nextIo);
   if (nextEffort !== priorEffort) persistence.setEffort(name, nextEffort);
@@ -1648,7 +1651,7 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
       if (!await waitForSessionExit(name)) throw new Error('old process did not exit in time');
     }
     manager._preserveAcrossRestart(name, preservable, ['rosterSentAt', 'ephemeral', 'reviewFor', 'reviewTicket', 'createdAt']);
-    const created = await manager.create(name, beforeKill.type, manager.resumeCwdOf(beforeKill), extraArgs, beforeKill.sessionId || null, wsId, nextInline, false, proxy ?? null, nextAgents, nextDeny, nextTools, nextSkills, nextInject, nextSysFile, nextAppend, nextExec, restartIntents, (nextEnv && Object.keys(nextEnv).length) ? nextEnv : null, false, beforeKill.noWire === true, nextPlugins, Array.isArray(beforeKill.shellDeny) ? beforeKill.shellDeny : null, typeof beforeKill.fixFor === 'string' ? beforeKill.fixFor : null, nextIo, nextEffort, Array.isArray(beforeKill.protectCredentials) ? beforeKill.protectCredentials : null);
+    const created = await manager.create(name, beforeKill.type, manager.resumeCwdOf(beforeKill), extraArgs, beforeKill.sessionId || null, wsId, nextInline, false, proxy ?? null, nextAgents, nextDeny, nextTools, nextSkills, nextInject, nextSysFile, nextAppend, nextExec, restartIntents, (nextEnv && Object.keys(nextEnv).length) ? nextEnv : null, false, beforeKill.noWire === true, nextPlugins, Array.isArray(beforeKill.shellDeny) ? beforeKill.shellDeny : null, typeof beforeKill.fixFor === 'string' ? beforeKill.fixFor : null, nextIo, nextEffort, Array.isArray(beforeKill.protectCredentials) ? beforeKill.protectCredentials : null, nextMcp);
     const argsLvl = stripLevelOf(beforeKill);
     if (argsLvl >= 1) persistence.setStripLevel(name, argsLvl);
     if (beforeKill.label) persistence.setLabel(name, beforeKill.label);
@@ -1656,7 +1659,7 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
   } catch (err) {
     // Strip the assembled object, not `beforeKill`: the spread is what reaches the
     // store, so stripping the source would be undone by it.
-    persistence.upsert(manager._stripClaimedTree({ ...beforeKill, extraArgs, proxy: proxy ?? null, systemPrompt: nextInline, systemPromptFile: nextSysFile, appendPromptFiles: nextAppend, agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools, disabledSkills: nextSkills, injectSkills: nextInject, intents: Array.isArray(nextIntents) ? prunedArgs.intents : undefined, pluginGrants: prunedGrants, plugins: nextPlugins, execCommands: nextExec.length ? nextExec : undefined, env: (nextEnv && Object.keys(nextEnv).length) ? nextEnv : undefined, io: nextIo, effort: nextEffort }));
+    persistence.upsert(manager._stripClaimedTree({ ...beforeKill, extraArgs, proxy: proxy ?? null, systemPrompt: nextInline, systemPromptFile: nextSysFile, appendPromptFiles: nextAppend, agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools, disabledSkills: nextSkills, injectSkills: nextInject, intents: Array.isArray(nextIntents) ? prunedArgs.intents : undefined, pluginGrants: prunedGrants, plugins: nextPlugins, execCommands: nextExec.length ? nextExec : undefined, mcpServers: nextMcp.length ? nextMcp : undefined, env: (nextEnv && Object.keys(nextEnv).length) ? nextEnv : undefined, io: nextIo, effort: nextEffort }));
     return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };
   }
 }
@@ -2138,7 +2141,7 @@ const toolCache = createToolCache({ whichBin });
       envDefaultsFile: path.join(REGISTRY_DIR, '__no_env_defaults__.json'),
     } : {}) });
   const { persistence, templates, workspaces, promptLibrary,
-    agentDefaults, agentLibrary, skillLibrary, execLibrary, reminders, misfires, notifications, uiSettings, envScopes, skillsSeen, renameWorkspaceScope } = stores;
+    agentDefaults, agentLibrary, skillLibrary, execLibrary, mcpLibrary, reminders, misfires, notifications, uiSettings, envScopes, skillsSeen, renameWorkspaceScope } = stores;
 
   const accounts = createAccounts({ fs, path, os, clodexHome: REGISTRY_DIR });
 
