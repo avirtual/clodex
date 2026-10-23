@@ -105,13 +105,13 @@ function budgetEntries(chunks) {
 // when resolution is REFUSED, the raw escaping string is what would be shown.
 // Naming no task dir is the correct degradation; the caller resolves or the
 // scope says nothing.
-function buildReviewScope({ ticket, diffPath = null, deltaPath = null, taskDir = null, taskDirRule = '' } = {}) {
+function buildReviewScope({ ticket, diffPath = null, deltaPath = null, taskDir = null, taskDirRule = '', artifact = null } = {}) {
   const t = ticket || {};
   const id = text(t.id) || '(unknown)';
   const wt = t.worktree || {};
   const branch = text(wt.branch);
-  const wtPath = text(wt.path);
-  const baseSha = text(wt.baseSha);
+  const wtPath = artifact ? '' : text(wt.path);
+  const baseSha = artifact ? '' : text(wt.baseSha);
   const dir = text(taskDir);
   const out = [];
 
@@ -152,6 +152,19 @@ function buildReviewScope({ ticket, diffPath = null, deltaPath = null, taskDir =
     out.push('');
   }
 
+  if (artifact) {
+    const files = Array.isArray(artifact.files) ? artifact.files : [];
+    const count = Number(artifact.count) || files.length;
+    out.push(`ARTIFACT: this ticket closes on its artifacts, not a branch — there is no diff, no suite run and no merge. `
+      + `Review the ${count} file(s) below under ${text(artifact.dir)}; read only, edit nothing. `
+      + `Your verdict binds to snapshot ${text(artifact.digest)} (round ${Number(artifact.round) || 1}): an ACCEPT closes the ticket only if the set still hashes to it, `
+      + 'so a file changed after this snapshot sends the ticket back to the implementer instead.');
+    out.push('');
+    for (const f of files) out.push(`  ${defuseSenderLines(text(f && f.path))}  ${Number(f && f.bytes) || 0} bytes  sha256 ${text(f && f.sha256)}`);
+    if (count > files.length) out.push(`  … ${count - files.length} more, listed in ${text(artifact.dir)}/.artifact-r${Number(artifact.round) || 1}.json`);
+    out.push('');
+  }
+
   const spec = text(t.spec);
   if (spec) {
     out.push('SPEC — what this ticket was asked to do (this is the whole spec; it is not in a file):');
@@ -167,7 +180,7 @@ function buildReviewScope({ ticket, diffPath = null, deltaPath = null, taskDir =
   if (report) {
     const who = text(t.reportedBy);
     out.push(`IMPLEMENTER'S REPORT — ${who ? `${who}'s` : 'the implementer\'s'} own account of the work, unedited except that any line posing as a sender line is quoted. `
-      + 'It is a claim, not evidence: verify it against the diff. Pay particular attention to anywhere it says it '
+      + `It is a claim, not evidence: verify it against the ${artifact ? 'artifacts' : 'diff'}. Pay particular attention to anywhere it says it `
       + 'guessed, deviated from the spec, assumed, or deferred — those are the author telling you where to look, '
       + 'and they are not recoverable from the diff alone.');
     out.push('');
@@ -187,20 +200,20 @@ function buildReviewScope({ ticket, diffPath = null, deltaPath = null, taskDir =
   // against every ticket. What replaces it is the half a green suite cannot
   // reach — a passing test that asserts nothing, or that passes against unfixed
   // code, is invisible to the runner and visible only to a reader.
-  out.push('SUITE: the loop RAN the full test suite on this branch and it was GREEN before you were '
+  if (!artifact) out.push('SUITE: the loop RAN the full test suite on this branch and it was GREEN before you were '
     + 'spawned — a red suite is rejected to the implementer and never reaches a reviewer. So do NOT '
     + 'ask for a suite digest, and do NOT treat a missing or stale one in the report as a fault: that '
     + 'claim is already verified and is not yours to re-check. What a green suite does NOT prove is '
     + 'yours: whether each new test measures what it claims, whether it would still pass against the '
     + 'unfixed code, and whether the change is the right one. A test that passes while asserting '
     + 'nothing is green and worthless, and the run cannot tell you which it was.');
-  const remeasured = t.suiteRemeasured;
+  const remeasured = artifact ? null : t.suiteRemeasured;
   if (remeasured) {
     out.push(`SUITE RE-MEASURED: the first run was ${text(remeasured.first) || '(unrecorded)'} `
       + `(${defuseSenderLines(text(remeasured.firstFailing)) || 'no names recorded'}); the second run, on the same commit, `
       + 'was green. Treat that as a box-contention flake unless the diff touches those tests.');
   }
-  const slow = Array.isArray(t.suiteSlow) ? t.suiteSlow.map((n) => text(n)).filter(Boolean).map(defuseSenderLines) : [];
+  const slow = !artifact && Array.isArray(t.suiteSlow) ? t.suiteSlow.map((n) => text(n)).filter(Boolean).map(defuseSenderLines) : [];
   if (slow.length) {
     out.push(`SLOW GATE (not a failure, outside this diff): ${slow.join('; ')}. `
       + 'Those tests crossed the suite\'s six-second duration bar on a loaded box, which exits the runner '

@@ -36,6 +36,11 @@ const { parseWithRegistry } = require('./intent-registry');
 const { ensureDir: ensureDirMode700, atomicWriteFileSync } = require('./fs-util');
 const { seedSandboxSessions } = require('./sandbox-seeds');
 const RUNNER_OWNER = require('crypto').randomUUID();
+const { createHash } = require('crypto');
+
+const ARTIFACT_LOOP_FILE_RE = /^(?:\.artifact-r\d+\.json|review-.+\.(?:diff|verdict\.md)|suite-failure-.+|merge-.+\.msg|COST\.json|REVIEW-COST\.jsonl)$/;
+const ARTIFACT_MAX_FILES = 500;
+const ARTIFACT_SCOPE_LIST_MAX = 200;
 
 const SANDBOX_ACTIONS = ['up', 'rebuild', 'down', 'status', 'port', 'bootstrap', 'restart'];
 const SANDBOX_BOOTSTRAP_FIELDS = ['packages', 'setup', 'start'];
@@ -411,6 +416,7 @@ function createTicketMethods(deps, shared) {
     renameRole,
     setTeamWatchdog,
     setTeamTrunk,
+    setTeamDone,
     setLead,
     createTeam,
     kitCatalog,
@@ -2195,8 +2201,14 @@ function createTicketMethods(deps, shared) {
         });
         bookReview();
         this.kill(session.name);
-        if (landedOn.verdict === 'ACCEPT') {
-          if (team) this._queueAutoMerge(team, rec.reviewTicket, landedOn, verdict);
+        if (landedOn.verdict === 'ACCEPT' && team) {
+          const accepted = this._loadTicket(team, rec.reviewTicket);
+          if (accepted && accepted.done === 'report') {
+            this._landArtifactAccept(team, rec.reviewTicket)
+              .catch((e) => log.error('ticket', `ticket ${rec.reviewTicket}: artifact accept failed: ${e && e.message ? e.message : String(e)}`));
+          } else {
+            this._queueAutoMerge(team, rec.reviewTicket, landedOn, verdict);
+          }
         }
         if (rework) {
           const dispatch = this._dispatchReworkFromVerdict(team, rec.reviewTicket, landedOn, written);
@@ -2267,6 +2279,7 @@ function createTicketMethods(deps, shared) {
         return;
       }
       const shareRoot = intent.shareRoot === true;
+      const doneOpt = intent.done !== undefined ? { done: intent.done } : {};
       let kitDef = null;
       try { kitDef = resolveKit(intent.kit); } catch (err) {
         reply(`error: ${err.message} — no team was created. Kits:${kitList()}`);
@@ -2312,7 +2325,7 @@ function createTicketMethods(deps, shared) {
         }
       }
       try {
-        createTeam({ name, root, lead, kit: intent.kit, shareRoot, dryRun: true });
+        createTeam({ name, root, lead, kit: intent.kit, shareRoot, ...doneOpt, dryRun: true });
       } catch (err) {
         reply(`error: ${err.message}`);
         return;
@@ -2338,7 +2351,7 @@ function createTicketMethods(deps, shared) {
       } : undefined;
       let team;
       try {
-        team = createTeam({ name, root, lead, roles, kit: intent.kit, shareRoot });
+        team = createTeam({ name, root, lead, roles, kit: intent.kit, shareRoot, ...doneOpt });
       } catch (err) {
         reply(`error: ${err.message}`);
         return;
@@ -2656,6 +2669,10 @@ function createTicketMethods(deps, shared) {
             this._handleTeamTrunk(team, intent, reply).catch((err) => reply(`error: ${(err && err.message) || err}`));
             return;
           }
+          case 'done': {
+            this._handleTeamDone(team, intent, reply);
+            return;
+          }
           case 'worktrees': {
             this._handleTeamWorktrees(team, intent, reply);
             return;
@@ -2669,7 +2686,7 @@ function createTicketMethods(deps, shared) {
             return;
           }
           default:
-            reply(`error: unknown team verb "${intent.sub}" — use role-add | role-set | role-rm | role-rename | set-lead | watchdog | gather | template-save | template-rm | prompt-save | prompt-rm | sandbox | trunk | worktrees | hands`);
+            reply(`error: unknown team verb "${intent.sub}" — use role-add | role-set | role-rm | role-rename | set-lead | watchdog | gather | template-save | template-rm | prompt-save | prompt-rm | sandbox | trunk | done | worktrees | hands`);
         }
       } catch (err) {
         reply(`error: ${err.message}`);
@@ -2702,6 +2719,23 @@ function createTicketMethods(deps, shared) {
       }
       const m = setTeamTrunk(team.name, intent.branch);
       reply(`trunk of ${team.name} set to "${m.trunk}" — accepted tickets now merge into it`);
+    },
+
+    _handleTeamDone(team, intent, reply) {
+      const current = team.done || 'code';
+      const what = (v) => (v === 'report'
+        ? 'report — a ticket closes through a cold review of its snapshotted task-dir artifacts; no suite, no merge'
+        : 'code — a ticket closes through its branch, the suite, a cold diff review and a merge');
+      if (!intent.mode) {
+        reply(`done of ${team.name}: ${what(current)} — [agent:team done code|report] sets it`);
+        return;
+      }
+      if (!['code', 'report'].includes(intent.mode)) {
+        reply(`error: done must be code or report, not "${intent.mode}"`);
+        return;
+      }
+      const m = setTeamDone(team.name, intent.mode);
+      reply(`done of ${team.name} set to ${what(m.done)} — tickets filed from now on take it; open tickets keep the policy they were filed under`);
     },
 
     _handleTeamWorktrees(team, intent, reply) {
@@ -4179,6 +4213,7 @@ function createTicketMethods(deps, shared) {
     // Not in `_deliverTicketSpec`, whose funnel also carries the replays a respawned seat depends on.
     _ticketTaskDirRefusal(team, ticket, verb, reSend) {
       if (ticket.taskDir) return null;
+      if (ticket.done === 'report') return null;
       // Solo boards mint no worktree and get no loop step, so they never reach the verify-time refusal this gate avoids.
       if (team && team.solo) return null;
       // A re-send is the redelivery a respawned seat recovers through and stays ungated; assign must not derive it from
@@ -4790,6 +4825,7 @@ function createTicketMethods(deps, shared) {
         ...(team.solo ? {} : { team: team.name }),
         ...(parked ? { parked: true } : {}),
         ...(reviewerTemplate ? { reviewerTemplate } : {}),
+        ...(team.solo || !team.done ? {} : { done: team.done }),
       };
       recordEvent(ticket, { at: now, kind: 'add', by: session.name });
       const taskDir = extractTaskDir(spec);
@@ -5220,7 +5256,7 @@ function createTicketMethods(deps, shared) {
       ticket.lastActivityAt = reentry ? Date.now() : ticket.closedAt;
       // The loop runs only on a ticket with its own tree (its checks are branch questions), and loopStep is stamped in the same write that closes it:
       // a process dying between close and a later stamp would leave a done ticket nothing ever nudges.
-      const loopEligible = !!(ticket.worktree && ticket.worktree.branch && ticket.worktree.baseSha);
+      const loopEligible = ticket.done === 'report' ? true : !!(ticket.worktree && ticket.worktree.branch && ticket.worktree.baseSha);
       if (loopEligible) {
         if (ticket.runnerPid && ticket.runnerOwner === RUNNER_OWNER) this._reapRunner(ticket.id, ticket.runnerPid);
         delete ticket.runnerPid;
@@ -5346,6 +5382,21 @@ function createTicketMethods(deps, shared) {
           if (!ok) superseded = true;
           return ok;
         };
+        if (ticket.done === 'report') {
+          atStep = 'verify: artifact';
+          this._stampVerifyPhase(team, ticketId, { phase: 'artifact', since: Date.now() });
+          const snap = this._snapshotArtifacts(team, ticket, { write: true });
+          if (!snap.ok) {
+            fail('verify: artifact', snap.error, snap.tried, snap.recovery);
+            return;
+          }
+          if (!current(this._loadTicket(team, ticketId))) return;
+          this._stampVerifyPhase(team, ticketId, { phase: 'reviewer', since: Date.now() });
+          this._setLoopStep(team, ticketId, 'review');
+          atStep = 'review';
+          this._spawnTicketReview(team, ticketId, null, null);
+          return;
+        }
         const wt = ticket.worktree || {};
         const branch = wt.branch;
         const baseSha = wt.baseSha;
@@ -6303,6 +6354,117 @@ function createTicketMethods(deps, shared) {
       return { ok: true, path: file };
     },
 
+    _artifactDir(team, ticket) {
+      if (ticket.taskDir) {
+        const dest = this._ticketDiffDest(team, ticket);
+        return dest.ok ? { ok: true, dir: dest.dir } : { ok: false, error: dest.error };
+      }
+      const id = String(ticket.id || '');
+      if (!/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(id)) return { ok: false, error: `ticket id "${id}" cannot name a directory` };
+      return { ok: true, dir: path.join(projectDirFor(REGISTRY_DIR, team.root), 'tasks', id) };
+    },
+
+    _artifactFiles(dir) {
+      const out = [];
+      const walk = (abs, rel, depth) => {
+        let names;
+        try { names = fs.readdirSync(abs); } catch (e) { if (e.code === 'ENOENT') return; throw e; }
+        for (const name of names) {
+          const full = path.join(abs, name);
+          const relPath = rel ? `${rel}/${name}` : name;
+          const st = fs.lstatSync(full);
+          if (st.isDirectory()) { if (depth < 8) walk(full, relPath, depth + 1); continue; }
+          if (!st.isFile() || ARTIFACT_LOOP_FILE_RE.test(name)) continue;
+          if (out.length >= ARTIFACT_MAX_FILES) throw new Error(`more than ${ARTIFACT_MAX_FILES} files under ${dir}`);
+          const bytes = fs.readFileSync(full);
+          out.push({ path: relPath, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') });
+        }
+      };
+      walk(dir, '', 0);
+      return out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    },
+
+    _snapshotArtifacts(team, ticket, { write = false } = {}) {
+      const round = (Number(ticket.reviewRound) || 0) + 1;
+      const where = this._artifactDir(team, ticket);
+      if (!where.ok) {
+        return { ok: false, recovery: 'spec', error: `ticket ${ticket.id} has no usable artifact dir (taskDir: ${ticket.taskDir || 'none'}): ${where.error}`,
+          tried: 'resolved the artifact dir; nothing snapshotted, no reviewer spawned' };
+      }
+      const dir = where.dir;
+      const report = String(ticket.report == null ? '' : ticket.report).trim();
+      const reportFile = path.join(dir, `REPORT-${ticket.id}-r${round}.md`);
+      if (write && report) {
+        try {
+          ensureDir(dir);
+          fs.writeFileSync(reportFile, `${report}\n`);
+        } catch (e) {
+          return { ok: false, recovery: 'infra', error: `the report could not be written as the artifact ${reportFile}: ${e.message}`,
+            tried: 'tried to write the task done report into the artifact dir; no reviewer spawned' };
+        }
+      }
+      let files;
+      try { files = this._artifactFiles(dir); } catch (e) {
+        return { ok: false, recovery: 'infra', error: `the artifact set under ${dir} could not be read: ${e.message}`,
+          tried: 'walked the artifact dir; no reviewer spawned' };
+      }
+      if (!files.length) {
+        return { ok: false, recovery: 'hand', error: `no artifact to review: ${dir} holds no file and the report text is blank`,
+          tried: 'snapshotted the artifact dir; nothing closed, no reviewer spawned' };
+      }
+      const digest = createHash('sha256').update(files.map((f) => `${f.path}\0${f.sha256}\n`).join('')).digest('hex');
+      if (write) {
+        const manifest = path.join(dir, `.artifact-r${round}.json`);
+        try {
+          fs.writeFileSync(manifest, JSON.stringify({ ticket: ticket.id, round, dir, digest, files }, null, 2));
+        } catch (e) {
+          return { ok: false, recovery: 'infra', error: `the artifact snapshot ${manifest} could not be written: ${e.message}`,
+            tried: 'hashed the artifact set; no reviewer spawned' };
+        }
+        const tickets = ticketsStore.load(team.root);
+        const row = tickets.find((t) => t.id === ticket.id);
+        if (row) {
+          row.artifact = { dir, round, files: files.length, digest };
+          ticketsStore.save(team.root, tickets);
+        }
+        ticket.artifact = { dir, round, files: files.length, digest };
+      }
+      return { ok: true, dir, round, files, digest };
+    },
+
+    _artifactScope(ticket) {
+      const a = ticket.artifact;
+      if (!a || !a.dir) return null;
+      let files = [];
+      try { files = JSON.parse(fs.readFileSync(path.join(a.dir, `.artifact-r${a.round}.json`), 'utf8')).files || []; } catch { files = []; }
+      return { dir: a.dir, round: a.round, digest: a.digest, count: a.files, files: files.slice(0, ARTIFACT_SCOPE_LIST_MAX) };
+    },
+
+    _holdArtifact(team, ticketId, evidence) {
+      this._setLoopStep(team, ticketId, 'verify');
+      this._stampVerifyHold(team, ticketId, { step: 'verify: artifact', at: Date.now(), evidence: String(evidence), recovery: 'hand' });
+      this._escalateTicket(team, ticketId, 'verify: artifact', evidence,
+        'the reviewer returned ACCEPT; the artifact set was re-hashed before closing and nothing was closed',
+        { keepHold: true, recovery: holdRecoveryText('hand', ticketId) });
+      this._notifyHandOfHold(team, ticketId, 'verify: artifact', evidence);
+    },
+
+    _landArtifactAccept(team, ticketId) {
+      const tickets = ticketsStore.load(team.root);
+      const ticket = tickets.find((t) => t.id === ticketId);
+      if (!ticket) return Promise.resolve(null);
+      const was = ticket.artifact && ticket.artifact.digest ? ticket.artifact : null;
+      const snap = this._snapshotArtifacts(team, ticket);
+      const now = snap.ok ? snap.digest : null;
+      if (!was || now !== was.digest) {
+        this._holdArtifact(team, ticketId, was
+          ? `artifact changed during review (${was.digest.slice(0, 8)} → ${now ? now.slice(0, 8) : 'none'}) — task done again to re-review`
+          : 'no artifact snapshot is recorded on this ticket, so the ACCEPT binds to nothing — task done again to re-review');
+        return Promise.resolve(null);
+      }
+      return this._closeOutBranchless(team, ticket, tickets, { by: 'ticket-loop', note: `artifact ${now.slice(0, 8)} reviewed` });
+    },
+
     // Spawn through `_handleTeamReview`, never hand-rolled: the reviewTicket seed that routes the verdict back lives there.
     _spawnTicketReview(team, ticketId, diffPath, deltaPath = null) {
       const ticket = this._loadTicket(team, ticketId);
@@ -6318,11 +6480,14 @@ function createTicketMethods(deps, shared) {
       // Uses the hand's renderer: a raw relative taskDir lands in the stale `tasks/` decoy of the reviewer's checkout,
       // and `buildReviewScope` has no raw fallback by design.
       const taskDirRender = this._ticketTaskDirRender(team, ticket);
-      const scope = buildReviewScope({ ticket, diffPath, deltaPath, taskDir: taskDirRender.dir, taskDirRule: taskDirRender.rule });
+      const artifact = ticket.done === 'report' ? this._artifactScope(ticket) : null;
+      const scope = artifact
+        ? buildReviewScope({ ticket, taskDir: artifact.dir, artifact })
+        : buildReviewScope({ ticket, diffPath, deltaPath, taskDir: taskDirRender.dir, taskDirRule: taskDirRender.rule });
       this._handleTeamReview(leadSession, scope, {
         ticketId,
-        addDirs: [path.dirname(diffPath)],
-        attach: [diffPath, ...(deltaPath ? [deltaPath] : [])],
+        addDirs: [artifact ? artifact.dir : path.dirname(diffPath)],
+        attach: artifact ? [] : [diffPath, ...(deltaPath ? [deltaPath] : [])],
         template: ticket.reviewerTemplate || null,
         onReply: (msg) => {
           const m = String(msg == null ? '' : msg);
@@ -7264,17 +7429,19 @@ function createTicketMethods(deps, shared) {
       const mergeErrorMark = (t) => (t.mergeError ? ` !! MERGE FAILED: ${t.mergeError}` : '');
       const capMark = (t) => (t.parked && t.parkedBy === 'cap' ? ` (parked: cap ${t.parkedCap || '?'})` : '');
       const row = (t) =>
-        `${t.id} [${t.state}${t.parked ? ' parked' : ''}] ${shownFor(t)} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}${capMark(t)}${respecMark(t)}${mergeWaitingMark(t)}${mergeErrorMark(t)}`;
+        `${t.id} [${t.state}${t.parked ? ' parked' : ''}]${reportMark(t)} ${shownFor(t)} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}${capMark(t)}${respecMark(t)}${mergeWaitingMark(t)}${mergeErrorMark(t)}`;
+      const reportMark = (t) => (t.done === 'report' ? ' [report]' : '');
       const verifyMark = (t) => {
         if (t.state !== 'done' || t.verifyHold || (t.loopStep !== 'verify' && t.loopStep !== 'review')) return '';
         const vp = t.verifyPhase && typeof t.verifyPhase === 'object' ? t.verifyPhase : null;
         const age = vp && typeof vp.since === 'number' ? ` (${humanizeAge(now - vp.since)})` : '';
         if (vp && vp.phase === 'suite') return Number(vp.run) === 2 ? ` in verify: re-measuring${age}` : ` in verify: suite run 1${age}`;
         if (vp && vp.phase === 'reviewer') return ' in verify: spawning reviewer';
+        if (vp && vp.phase === 'artifact') return ' in verify: artifact review';
         return ` in verify: review round ${(Number(t.reviewRound) || 0) + 1}`;
       };
       const closedRow = (t) =>
-        `${t.id} [${t.state}]${verifyMark(t)} ${shownFor(t)} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}${respecMark(t)}${mergeWaitingMark(t)}${mergeErrorMark(t)}`;
+        `${t.id} [${t.state}]${reportMark(t)}${verifyMark(t)} ${shownFor(t)} closed ${humanizeAge(now - t.closedAt)} ago — ${t.title || '(untitled)'}${respecMark(t)}${mergeWaitingMark(t)}${mergeErrorMark(t)}`;
       const lines = shown.map(row);
       const head = filter === 'open' ? `tickets on ${team.name}` : `tickets on ${team.name} [${filter}]`;
       const closed = filter === 'open' ? tickets.filter((t) => t.state !== 'open') : [];

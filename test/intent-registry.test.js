@@ -159,6 +159,7 @@ function parseIntentLegacy(rawLine) {
     const modeM = argStr.match(/\bmode:(\S+)/);
     const kitM = argStr.match(/\bkit:(\S+)/);
     const shareM = argStr.match(/\bshare-root:(\S*)/);
+    const doneM = argStr.match(/\bdone:(\S+)/);
     const positional = argStr.trim().split(/\s+/).filter((t) => t && !/^[\w-]+:/.test(t));
     return {
       type: 'team-create',
@@ -167,12 +168,13 @@ function parseIntentLegacy(rawLine) {
       lead: leadM ? leadM[1] : null,
       mode: modeM ? modeM[1] : null,
       kit: kitM ? kitM[1] : null,
+      ...(doneM ? { done: doneM[1] } : {}),
       ...(shareM ? (shareM[1] === 'yes' ? { shareRoot: true } : { shareRootError: `share-root:${shareM[1]} — the only accepted value is share-root:yes` }) : {}),
       body: teamCreateMatch[2],
     };
   }
 
-  const teamMatch = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|bind|unbind|roster|template-save|template-rm|prompt-save|prompt-rm|sandbox|trunk|worktrees|hands)\b([^\]]*)\]\s*(.*)/s);
+  const teamMatch = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|bind|unbind|roster|template-save|template-rm|prompt-save|prompt-rm|sandbox|trunk|done|worktrees|hands)\b([^\]]*)\]\s*(.*)/s);
   if (teamMatch) {
     const sub = teamMatch[1];
     const argStr = teamMatch[2];
@@ -192,6 +194,7 @@ function parseIntentLegacy(rawLine) {
     if (sub === 'bind') return { type: 'team', sub, name: positional[0] || null, role: positional[1] || null, body: '' };
     if (sub === 'roster') return { type: 'team', sub, body: '' };
     if (sub === 'trunk') return { type: 'team', sub, branch: positional[0] || null, body: '' };
+    if (sub === 'done') return { type: 'team', sub, mode: positional[0] || null, body: '' };
     if (sub === 'worktrees') return { type: 'team', sub, value: positional[0] || null, body: '' };
     if (sub === 'hands') return { type: 'team', sub, value: positional[0] || null, body: '' };
     if (sub === 'role-rename') return { type: 'team', sub, name: positional[0] || null, to: positional[1] || null, body: '' };
