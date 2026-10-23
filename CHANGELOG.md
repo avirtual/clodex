@@ -10,6 +10,7 @@ opens a fresh empty one — so anything missing from it is missing from the
 release. Text after `## Unreleased —` becomes the release subtitle. An empty or
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
+- Both seat composers gain a paperclip: pick an image (or several) from disk or the phone's camera roll and it is attached exactly as a pasted one — the fix for browsers that ignore Cmd/Ctrl+V for images. Dropping an image onto a seat now works in the browser too, and a paste the browser strips of its image says so instead of doing nothing.
 
 ## Unreleased
 

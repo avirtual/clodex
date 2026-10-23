@@ -9829,6 +9829,41 @@ body.web-frontend #sidebar-header {
 .seat-attachments-pty .seat-attachment {
   pointer-events: auto;
 }
+.seat-composer.seat-composer-attach {
+  padding-right: 32px;
+}
+.seat-attach-btn {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 3;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  filter: grayscale(1);
+  opacity: 0.6;
+}
+.seat-attach-btn:hover,
+.seat-attach-btn:focus-visible {
+  opacity: 1;
+  filter: none;
+  border-color: var(--accent, var(--border));
+  color: var(--accent, var(--text-primary));
+}
+.seat-attach-btn[hidden],
+.seat-composer[hidden] ~ .seat-attach-btn {
+  display: none;
+}
 .seat-attachment {
   position: relative;
   width: 48px;
@@ -29692,11 +29727,14 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         }
         return { value: text.slice(0, from) + text.slice(to), cursor: from };
       }
+      function isAttachKey({ key, ctrlKey, metaKey, shiftKey, altKey }) {
+        return Boolean((ctrlKey || metaKey) && shiftKey && !altKey && typeof key === "string" && key.toLowerCase() === "u");
+      }
       function composerHeightFor({ scrollHeight, offsetHeight, clientHeight }) {
         if (!(scrollHeight > 0)) return null;
         return scrollHeight + Math.max(0, (offsetHeight || 0) - (clientHeight || 0));
       }
-      module.exports = { composerReadlineEdit, composerHeightFor };
+      module.exports = { composerReadlineEdit, composerHeightFor, isAttachKey };
     }
   });
 
@@ -34408,9 +34446,35 @@ ${m[2].replace(/^\r?\n/, "")}`;
           return map[n] ? `Image: ${map[n]} ` : "";
         });
       }
+      var STRIPPED_PASTE_NOTICE = "Your browser did not hand over the clipboard image \u2014 use the paperclip to attach it.";
+      function pasteStripped(items, web) {
+        return web && Array.from(items || []).length === 0;
+      }
+      async function attachImages({ images, upload, toast, nextImage, append, attached, drop }) {
+        if (!images.length) {
+          toast("No readable image.");
+          return;
+        }
+        const added = images.map((image) => {
+          const n = nextImage();
+          return { n, chip: imageChip(n), path: null, image, pending: true };
+        });
+        append(added);
+        const r = await Promise.resolve().then(() => upload(images)).catch((err) => ({ ok: false, error: String(err && err.message || err) }));
+        if (!r || !r.ok) {
+          drop(added);
+          toast(String(r && r.error || "Image upload failed."));
+          return;
+        }
+        attached(added.map((a, i) => ({ ...a, path: r.paths && r.paths[i] || null, pending: false })));
+      }
       function ptyImagePasteHandler({ isWeb, readImages, upload, toast, nextImage, append, attached, drop, writePty }) {
         return async (e) => {
           const items = e.clipboardData && e.clipboardData.items;
+          if (pasteStripped(items, isWeb())) {
+            toast(STRIPPED_PASTE_NOTICE);
+            return;
+          }
           if (pasteKind(items) !== "image") return;
           e.preventDefault();
           const web = isWeb();
@@ -34430,18 +34494,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             toast("No readable image on the clipboard.");
             return;
           }
-          const added = images.map((image) => {
-            const n = nextImage();
-            return { n, chip: imageChip(n), path: null, image, pending: true };
-          });
-          append(added);
-          const r = await Promise.resolve().then(() => upload(images)).catch((err) => ({ ok: false, error: String(err && err.message || err) }));
-          if (!r || !r.ok) {
-            drop(added);
-            toast(String(r && r.error || "Image upload failed."));
-            return;
-          }
-          attached(added.map((a, i) => ({ ...a, path: r.paths && r.paths[i] || null, pending: false })));
+          await attachImages({ images, upload, toast, nextImage, append, attached, drop });
         };
       }
       function removeImageChip(text, n) {
@@ -34471,7 +34524,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           el.appendChild(thumb);
         }
       }
-      module.exports = { ptyComposerWrites, pasteKind, imageChip, expandImageChips, ptyImagePasteHandler, removeImageChip, chippedImages, renderImageStrip };
+      module.exports = { ptyComposerWrites, pasteKind, imageChip, expandImageChips, ptyImagePasteHandler, attachImages, pasteStripped, STRIPPED_PASTE_NOTICE, removeImageChip, chippedImages, renderImageStrip };
     }
   });
 
@@ -34497,6 +34550,99 @@ ${m[2].replace(/^\r?\n/, "")}`;
         return read.filter(Boolean);
       }
       module.exports = { dataUrlImage, readImageFile, clipboardImages };
+    }
+  });
+
+  // seat-images.js
+  var require_seat_images = __commonJS({
+    "seat-images.js"(exports, module) {
+      "use strict";
+      var SEAT_IMAGE_TYPES = /* @__PURE__ */ new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+      var SEAT_IMAGE_MAX = 5;
+      var SEAT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+      var SEAT_IMAGE_EXT = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" };
+      var SEAT_IMAGE_FILE_PATTERN = `img-\\d+-\\d+\\.(?:${Object.values(SEAT_IMAGE_EXT).join("|")})`;
+      function seatImageFileName(stamp, n, mediaType) {
+        return `img-${stamp}-${n}.${SEAT_IMAGE_EXT[mediaType] || "png"}`;
+      }
+      var SEAT_IMAGE_TYPE_BY_EXT = Object.fromEntries(Object.entries(SEAT_IMAGE_EXT).map(([t, e]) => [e, t]));
+      var SEAT_IMAGE_NAME_RE = new RegExp(`^img-\\d+-(\\d+)\\.(${Object.values(SEAT_IMAGE_EXT).join("|")})$`);
+      function seatImageHead(fileName) {
+        const m = SEAT_IMAGE_NAME_RE.exec(String(fileName == null ? "" : fileName));
+        return m ? `Image #${Number(m[1])} (${SEAT_IMAGE_TYPE_BY_EXT[m[2]]})` : null;
+      }
+      function validateSeatImages(images) {
+        if (images === void 0 || images === null) return { ok: true, images: [] };
+        if (!Array.isArray(images)) return { ok: false, error: "images must be an array" };
+        if (images.length > SEAT_IMAGE_MAX) return { ok: false, error: `at most ${SEAT_IMAGE_MAX} images per message` };
+        const out = [];
+        for (const img of images) {
+          if (!img || typeof img !== "object") return { ok: false, error: "image must be { mediaType, data }" };
+          if (!SEAT_IMAGE_TYPES.has(img.mediaType)) return { ok: false, error: `unsupported image type: ${String(img.mediaType)}` };
+          if (typeof img.data !== "string" || !img.data || !/^[A-Za-z0-9+/]*={0,2}$/.test(img.data)) return { ok: false, error: "image data must be base64" };
+          const padding = img.data.endsWith("==") ? 2 : img.data.endsWith("=") ? 1 : 0;
+          if (Math.floor(img.data.length * 3 / 4) - padding > SEAT_IMAGE_MAX_BYTES) return { ok: false, error: "image larger than 5 MB" };
+          out.push({ mediaType: img.mediaType, data: img.data });
+        }
+        return { ok: true, images: out };
+      }
+      module.exports = {
+        validateSeatImages,
+        seatImageFileName,
+        seatImageHead,
+        SEAT_IMAGE_FILE_PATTERN,
+        SEAT_IMAGE_TYPES,
+        SEAT_IMAGE_MAX,
+        SEAT_IMAGE_MAX_BYTES,
+        SEAT_IMAGE_EXT
+      };
+    }
+  });
+
+  // renderer/lib/attach-files.js
+  var require_attach_files = __commonJS({
+    "renderer/lib/attach-files.js"(exports, module) {
+      "use strict";
+      var { SEAT_IMAGE_TYPES } = require_seat_images();
+      var ATTACH_ACCEPT = [...SEAT_IMAGE_TYPES].join(",");
+      function imageFilesOf(fileList, types = SEAT_IMAGE_TYPES) {
+        const files = Array.from(fileList || []).filter(Boolean);
+        const images = files.filter((f) => types.has(f.type));
+        const rejected = files.filter((f) => !types.has(f.type));
+        return { images, rejected };
+      }
+      function rejectedNotice(rejected) {
+        const named = rejected.map((f) => `${f.name || "file"} (${f.type || "unknown type"})`).join(", ");
+        return `Not attached: ${named} \u2014 png, jpeg, gif or webp only.`;
+      }
+      function attachPicker({ doc, parent, accept = ATTACH_ACCEPT, multiple = true, onFiles, toast, types = SEAT_IMAGE_TYPES }) {
+        const input = doc.createElement("input");
+        input.type = "file";
+        input.className = "seat-attach-input";
+        input.accept = accept;
+        input.multiple = !!multiple;
+        input.hidden = true;
+        input.addEventListener("change", () => {
+          const { images, rejected } = imageFilesOf(input.files, types);
+          input.value = "";
+          if (rejected.length) toast(rejectedNotice(rejected));
+          if (images.length) onFiles(images);
+        });
+        parent.appendChild(input);
+        return { input, open: () => input.click() };
+      }
+      function attachButton(doc, onClick) {
+        const btn = doc.createElement("button");
+        btn.type = "button";
+        btn.className = "seat-attach-btn";
+        btn.title = "Attach image (png, jpeg, gif, webp; up to 5, 5 MB each)";
+        btn.setAttribute("aria-label", "Attach image");
+        btn.textContent = "\u{1F4CE}";
+        btn.addEventListener("mousedown", (e) => e.preventDefault());
+        btn.addEventListener("click", onClick);
+        return btn;
+      }
+      module.exports = { ATTACH_ACCEPT, imageFilesOf, rejectedNotice, attachPicker, attachButton };
     }
   });
 
@@ -51150,7 +51296,7 @@ ${detail}` });
       var { isToolInstallSession } = require_tool_doctor();
       var { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require_placement();
       var { dropText } = require_drop_paths();
-      var { composerReadlineEdit, composerHeightFor } = require_composer_keys();
+      var { composerReadlineEdit, composerHeightFor, isAttachKey } = require_composer_keys();
       var { slashQuery, filterCommands, slashMenuKey } = require_composer_slash();
       var { turnSeg, reqSeg, costSeg } = require_turn_stat();
       var { renderAppendChecklist, collectAppendChecklist, appendRepaintTicks, mergeUnrendered, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require_checklists();
@@ -51169,8 +51315,10 @@ ${detail}` });
       var { createIntentHighlight } = require_intent_highlight();
       var { createVoiceMirror, engineObserved } = require_voice_mirror();
       var { attachTriggerSubmit, createPtyVoiceDraft, VOICE_QUIET_MS, VOICE_RELEASE_MS } = require_composer_voice();
-      var { ptyComposerWrites, expandImageChips, ptyImagePasteHandler, removeImageChip, chippedImages, renderImageStrip } = require_pty_composer();
+      var { ptyComposerWrites, expandImageChips, ptyImagePasteHandler, attachImages, pasteStripped, STRIPPED_PASTE_NOTICE, removeImageChip, chippedImages, renderImageStrip } = require_pty_composer();
       var { readImageFile, clipboardImages } = require_clipboard_images();
+      var { imageFilesOf, attachPicker, attachButton } = require_attach_files();
+      var { SEAT_IMAGE_MAX } = require_seat_images();
       var { createMenuMirror } = require_menu_mirror();
       var { VOICE_ENGINE_NAME } = require_voice_engine();
       var {
@@ -52741,7 +52889,7 @@ ${detail}` });
       var SEAT_DRAFT_DEBOUNCE_MS = 300;
       var COMPOSER_PLACEHOLDER = "Message \u2014 Enter sends, Shift+Enter for a new line";
       var COMPOSER_RUNNING_PLACEHOLDER = "Message \u2014 Enter sends, Esc interrupts the turn";
-      function attachComposer(composer, { onSend, onSlash = null, onEscape, onEmptySpace = null }) {
+      function attachComposer(composer, { onSend, onSlash = null, onEscape, onEmptySpace = null, onAttach = null }) {
         composer.className = "seat-composer";
         composer.rows = 1;
         composer.placeholder = COMPOSER_PLACEHOLDER;
@@ -52755,6 +52903,11 @@ ${detail}` });
           if (e.key === "Escape" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing) {
             e.preventDefault();
             onEscape();
+            return;
+          }
+          if (onAttach && !e.isComposing && isAttachKey(e)) {
+            e.preventDefault();
+            onAttach();
             return;
           }
           const edit = !e.isComposing && composerReadlineEdit({
@@ -52809,7 +52962,8 @@ ${detail}` });
             if (!seatVoiceMode(name, "tap")) return false;
             seatVoiceRecord(name, voiceRecordingSeat === name ? "stop" : "start");
             return true;
-          }
+          },
+          onAttach: () => streamPicker.open()
         });
         const attachEl = document.createElement("div");
         attachEl.className = "seat-attachments";
@@ -52828,6 +52982,9 @@ ${detail}` });
         slashEl.hidden = true;
         wrapperEl.appendChild(slashEl);
         wrapperEl.appendChild(composer);
+        const streamPicker = attachPicker({ doc: document, parent: wrapperEl, onFiles: (files) => attachFiles(files), toast: (message) => showToast(message, { kind: "error", name }) });
+        composer.classList.add("seat-composer-attach");
+        wrapperEl.appendChild(attachButton(document, () => streamPicker.open()));
         const fitComposer = composerKit.fit;
         const SEAT_PERMISSION_INPUT_MAX = 600;
         let permKey = "";
@@ -52939,11 +53096,9 @@ ${detail}` });
             attachEl.appendChild(thumb);
           });
         };
-        const SEAT_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
-        const SEAT_IMAGE_MAX = 5;
         let reading = 0;
         const attachFiles = (files) => {
-          const allowed = files.filter((f) => SEAT_IMAGE_TYPES.includes(f.type));
+          const allowed = imageFilesOf(files).images;
           const room = Math.max(0, SEAT_IMAGE_MAX - pending.length - reading);
           const taken = allowed.slice(0, room);
           if (taken.length < files.length) {
@@ -52961,6 +53116,10 @@ ${detail}` });
         };
         composer.addEventListener("paste", (e) => {
           const items = Array.from(e.clipboardData && e.clipboardData.items || []);
+          if (pasteStripped(items, Boolean(window.__CLODEX_WEB__ || !window.require))) {
+            showToast(STRIPPED_PASTE_NOTICE, { kind: "error", name });
+            return;
+          }
           const files = items.filter((it) => it.kind === "file" && /^image\//.test(it.type)).map((it) => it.getAsFile()).filter(Boolean);
           if (!files.length) return;
           e.preventDefault();
@@ -52969,7 +53128,7 @@ ${detail}` });
         wrapperEl.addEventListener("drop", (e) => {
           const files = Array.from(e.dataTransfer && e.dataTransfer.files || []);
           if (!files.length || !files.every((f) => /^image\//.test(f.type))) return;
-          if (!files.some((f) => SEAT_IMAGE_TYPES.includes(f.type))) return;
+          if (!imageFilesOf(files).images.length) return;
           e.preventDefault();
           e.stopPropagation();
           attachFiles(files);
@@ -53209,6 +53368,7 @@ ${detail}` });
         });
         fitComposer();
         return {
+          attachImageFiles: attachFiles,
           focus: () => {
             composer.focus();
             fitComposer();
@@ -53266,7 +53426,7 @@ ${detail}` });
           const stream = createStreamSeatPane(name, wrapperEl2, seat2);
           const row = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
           if (row && (row.dataset.attention || row.dataset.activity)) stream.setTurnRunning(seatActivity(row), Number(row.dataset.thinkingSince) || null);
-          sessions.set(name, Object.assign(seat2, { terminal: null, fitAddon: null, searchAddon: null, wrapperEl: wrapperEl2, peer: null, stream, liveSplit: null }));
+          sessions.set(name, Object.assign(seat2, { terminal: null, fitAddon: null, searchAddon: null, wrapperEl: wrapperEl2, peer: null, stream, liveSplit: null, attachImageFiles: stream.attachImageFiles }));
           updateWindowTitle();
           return { terminal: null, fitAddon: null, searchAddon: null, wrapperEl: wrapperEl2, echoRewrite: (chunk) => chunk };
         }
@@ -53456,6 +53616,50 @@ ${detail}` });
           if (menuMirror.on() && (composerEl.selectionStart !== end || composerEl.selectionEnd !== end)) composerEl.setSelectionRange(end, end);
           if (writes.length && !menuMirror.on() && liveSplit) liveSplit.refresh();
         };
+        const ptyImageSink = composerEl ? {
+          upload: (images) => window.api.seatImageUpload(name, images),
+          toast: (message) => showToast(message, { kind: "error", name }),
+          nextImage: () => {
+            pastedImages += 1;
+            return pastedImages;
+          },
+          append: (added) => {
+            for (const { n, chip, path, image, pending } of added) {
+              composerEl.value += chip;
+              pastedImagePaths[n] = path || null;
+              if (image) pastedThumbs.push({ n, image, path, pending });
+            }
+            if (menuMirror.on()) syncMenuMirror();
+            const end = composerEl.value.length;
+            composerEl.setSelectionRange(end, end);
+            composerKit.fit();
+            syncImageStrip();
+          },
+          attached: (done) => {
+            for (const { n, path, image } of done) {
+              const thumb = pastedThumbs.find((t) => t.n === n && t.image === image);
+              if (!thumb) continue;
+              thumb.path = path;
+              thumb.pending = false;
+              pastedImagePaths[n] = path;
+            }
+            syncImageStrip();
+          },
+          drop: (items) => {
+            for (const { n, image } of items) {
+              const thumb = pastedThumbs.find((t) => t.n === n && t.image === image);
+              if (!thumb) continue;
+              composerEl.value = removeImageChip(composerEl.value, n);
+              delete pastedImagePaths[n];
+              pastedThumbs = pastedThumbs.filter((t) => t !== thumb);
+            }
+            if (menuMirror.on()) syncMenuMirror();
+            composerKit.fit();
+            syncImageStrip();
+          }
+        } : null;
+        let ptyPicker = null;
+        const attachPtyFiles = (files) => Promise.all(files.map((f) => readImageFile(f, FileReader))).then((read) => attachImages({ ...ptyImageSink, images: read.filter(Boolean) }));
         const onMenuKey = (e) => {
           const hit = menuMirror.key(e);
           if (!hit) return false;
@@ -53480,6 +53684,9 @@ ${detail}` });
             if (!seatVoiceMode(name, "tap")) return false;
             seatVoiceRecord(name, voiceRecordingSeat === name ? "stop" : "start");
             return true;
+          },
+          onAttach: () => {
+            if (ptyPicker) ptyPicker.open();
           }
         }) : null;
         const composerTrigger = composerEl ? attachTriggerSubmit(composerEl, {
@@ -53504,50 +53711,16 @@ ${detail}` });
           composerEl.addEventListener("input", syncMenuMirror);
           composerEl.addEventListener("input", pruneImageStrip);
           composerEl.addEventListener("paste", ptyImagePasteHandler({
+            ...ptyImageSink,
             isWeb: () => Boolean(window.__CLODEX_WEB__ || !window.require),
             readImages: (items) => clipboardImages(items, FileReader),
-            upload: (images) => window.api.seatImageUpload(name, images),
-            toast: (message) => showToast(message, { kind: "error", name }),
-            nextImage: () => {
-              pastedImages += 1;
-              return pastedImages;
-            },
-            append: (added) => {
-              for (const { n, chip, path, image, pending } of added) {
-                composerEl.value += chip;
-                pastedImagePaths[n] = path || null;
-                if (image) pastedThumbs.push({ n, image, path, pending });
-              }
-              if (menuMirror.on()) syncMenuMirror();
-              const end = composerEl.value.length;
-              composerEl.setSelectionRange(end, end);
-              composerKit.fit();
-              syncImageStrip();
-            },
-            attached: (done) => {
-              for (const { n, path, image } of done) {
-                const thumb = pastedThumbs.find((t) => t.n === n && t.image === image);
-                if (!thumb) continue;
-                thumb.path = path;
-                thumb.pending = false;
-                pastedImagePaths[n] = path;
-              }
-              syncImageStrip();
-            },
-            drop: (items) => {
-              for (const { n, image } of items) {
-                const thumb = pastedThumbs.find((t) => t.n === n && t.image === image);
-                if (!thumb) continue;
-                composerEl.value = removeImageChip(composerEl.value, n);
-                delete pastedImagePaths[n];
-                pastedThumbs = pastedThumbs.filter((t) => t !== thumb);
-              }
-              if (menuMirror.on()) syncMenuMirror();
-              composerKit.fit();
-              syncImageStrip();
-            },
             writePty
           }));
+          composerEl.classList.add("seat-composer-attach");
+          ptyPicker = attachPicker({ doc: document, parent: wrapperEl, onFiles: attachPtyFiles, toast: ptyImageSink.toast });
+          const attachBtn = attachButton(document, () => ptyPicker.open());
+          attachBtn.hidden = !isAgentType(sessionTypeOf(name));
+          wrapperEl.appendChild(attachBtn);
         }
         const agentSeat = !peer;
         const seat = agentSeat ? createSeatView(initialViewFor(name)) : {};
@@ -53592,7 +53765,7 @@ ${detail}` });
           if (liveSplit) liveSplit.setTurnRunning(activity, Number(activityRow.dataset.thinkingSince) || null);
           if (composerEl && activity !== "idle") composerEl.placeholder = COMPOSER_RUNNING_PLACEHOLDER;
         }
-        sessions.set(name, Object.assign(seat, { terminal, fitAddon, searchAddon, intentHighlight, ptyVoice, webgl, wrapperEl, peer, echoRewrite, liveSplit, composerEl, composerKit, composerTrigger, menuMirror, syncMenuMirror }));
+        sessions.set(name, Object.assign(seat, { terminal, fitAddon, searchAddon, intentHighlight, ptyVoice, webgl, wrapperEl, peer, echoRewrite, liveSplit, composerEl, composerKit, composerTrigger, menuMirror, syncMenuMirror, attachImageFiles: composerEl ? attachPtyFiles : null }));
         if (seat.view === "terminal" && liveSplit) liveSplit.setRaw(true);
         updateWindowTitle();
         return { terminal, fitAddon, searchAddon, wrapperEl, echoRewrite };
@@ -53603,11 +53776,14 @@ ${detail}` });
         e.preventDefault();
         const files = Array.from(e.dataTransfer && e.dataTransfer.files || []);
         if (!files.length || !activeSession) return;
+        const entry = sessions.get(activeSession);
         if (window.__CLODEX_WEB__ || !window.require) {
-          showToast("Dropping files needs the desktop app \u2014 browsers don\u2019t expose file paths.", { kind: "peer-ui" });
+          const { images, rejected } = imageFilesOf(files);
+          const sink = entry && entry.attachImageFiles && (entry.stream || ptyComposerShown(entry)) ? entry.attachImageFiles : null;
+          if (sink && images.length) sink(images);
+          if (!sink || rejected.length) showToast("Dropping files needs the desktop app \u2014 browsers don\u2019t expose file paths.", { kind: "peer-ui" });
           return;
         }
-        const entry = sessions.get(activeSession);
         if (!entry) return;
         if (entry.peer) {
           showToast(`"${activeSession}" runs on a peer \u2014 its filesystem doesn\u2019t have this file.`, { kind: "peer-ui" });
