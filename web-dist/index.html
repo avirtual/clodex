@@ -10396,6 +10396,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         <label>Headers (Name: value per line)
           <textarea id="mcp-headers" rows="3" spellcheck="false"></textarea>
         </label>
+        <span class="hint-text">Hosted servers that use OAuth (Atlassian, GitHub…): leave headers EMPTY and run /mcp in the seat once — a Bearer header here disables the CLI's own login.</span>
       </div>
       <span class="hint-text">Write secrets as ${NAME}; set the value in Preferences ▸ Environment (mark it Secret)</span>
       <label>Description
@@ -10404,6 +10405,10 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
       <label>Tags (comma-separated)
         <input type="text" id="mcp-tags" spellcheck="false">
       </label>
+      <label>Deny tools (one per line or comma-separated)
+        <textarea id="mcp-deny-tools" rows="3" spellcheck="false"></textarea>
+      </label>
+      <span class="hint-text">Tool names from the server, without the mcp__&lt;name&gt;__ prefix. Denied tools are refused when a seat calls them (they still appear in the seat's tool list).</span>
       <div class="prefs-row" id="mcp-platforms">
         <span>Platforms</span>
         <label class="prefs-check"><input type="checkbox" id="mcp-platform-claude" value="claude" checked><span>claude</span></label>
@@ -38754,6 +38759,7 @@ Opening it here and saving would overwrite the file with what this editor could 
         const mcpHeaders = mcpEl("mcp-headers");
         const mcpDescription = mcpEl("mcp-description");
         const mcpTags = mcpEl("mcp-tags");
+        const mcpDenyTools = mcpEl("mcp-deny-tools");
         const mcpPlatformBoxes = MCP_PLATFORMS.map((p) => mcpEl(`mcp-platform-${p}`));
         const mcpError = mcpEl("mcp-error");
         const mcpSave = mcpEl("mcp-save");
@@ -38782,11 +38788,13 @@ Opening it here and saving would overwrite the file with what this editor could 
           mcpEmpty.style.display = "none";
           for (const m of items) {
             const secrets = (m.secrets || []).length ? ` \xB7 uses ${m.secrets.map((n) => `\${${n}}`).join(", ")}` : "";
+            const denyCount = m.entry && Array.isArray(m.entry.denyTools) ? m.entry.denyTools.length : 0;
+            const denied = denyCount ? ` \xB7 read-only: ${denyCount} tool${denyCount === 1 ? "" : "s"} denied` : "";
             const el = document.createElement("div");
             el.className = "prompt-item";
             el.innerHTML = `
         <div class="prompt-item-title">${esc(m.name)} <span class="auto-flag">${esc(m.type || "stdio")}</span></div>
-        <div class="prompt-item-preview">${esc(m.description || mcpPreview(m.entry))}${esc(secrets)}</div>
+        <div class="prompt-item-preview">${esc(m.description || mcpPreview(m.entry))}${esc(secrets)}${esc(denied)}</div>
         <div class="prompt-item-actions">
           <button data-action="edit">Edit</button>
         </div>
@@ -38892,7 +38900,7 @@ Opening it here and saving would overwrite the file with what this editor could 
           mcpHttpFields.style.display = stdio ? "none" : "";
         }
         function fillMcpEditor(entry) {
-          const { type, command, args, env, url, headers, description, tags, platforms, ...rest } = entry || {};
+          const { type, command, args, env, url, headers, description, tags, platforms, denyTools, ...rest } = entry || {};
           editingMcpRest = rest;
           mcpType.value = type === "http" || type === "sse" ? type : "stdio";
           mcpCommand.value = command || "";
@@ -38902,6 +38910,7 @@ Opening it here and saving would overwrite the file with what this editor could 
           mcpHeaders.value = Object.entries(headers || {}).map(([k, v]) => `${k}: ${v}`).join("\n");
           mcpDescription.value = description || "";
           mcpTags.value = (Array.isArray(tags) ? tags : []).join(", ");
+          mcpDenyTools.value = (Array.isArray(denyTools) ? denyTools : []).join("\n");
           const on = Array.isArray(platforms) ? platforms : MCP_PLATFORMS;
           MCP_PLATFORMS.forEach((p, i) => {
             mcpPlatformBoxes[i].checked = on.includes(p);
@@ -38926,6 +38935,8 @@ Opening it here and saving would overwrite the file with what this editor could 
           if (description) entry.description = description;
           const tags = mcpTags.value.split(",").map((t) => t.trim()).filter(Boolean);
           if (tags.length) entry.tags = tags;
+          const denyTools = mcpDenyTools.value.split(/[\n,]/).map((t) => t.trim()).filter(Boolean);
+          if (denyTools.length) entry.denyTools = denyTools;
           const platforms = MCP_PLATFORMS.filter((_p, i) => mcpPlatformBoxes[i].checked);
           if (platforms.length !== MCP_PLATFORMS.length) entry.platforms = platforms;
           return entry;
@@ -48441,13 +48452,19 @@ You can add it back from this popover.` : "";
           if (type === "muse") return "Muse: selection not applied on this CLI yet";
           return "";
         }
-        function mcpRowNote(server, mcp) {
+        function mcpDeniedNote(server, mcp, name) {
+          const denied = mcp.applied && mcp.applied.denied && Array.isArray(mcp.applied.denied[server]) ? mcp.applied.denied[server].length : 0;
+          if (!denied) return "";
+          const off = sessionTypeOf(name) === "claude" ? "" : " (deny list not enforced on this CLI)";
+          return ` \xB7 ${denied} tool${denied === 1 ? "" : "s"} denied${off}`;
+        }
+        function mcpRowNote(server, mcp, name = null) {
           if (!mcp) return "";
           if (server === "clodex") return "built-in";
           if ((mcp.leaks || []).includes(server)) {
             return "\u26A0 not in this seat's selection \u2014 reached the CLI outside Clodex (own --mcp-config in Extra args, a CLI plugin, or a CLI build that ignores --strict-mcp-config)";
           }
-          if ((mcp.selected || []).includes(server)) return "library \xB7 selected";
+          if ((mcp.selected || []).includes(server)) return `library \xB7 selected${mcpDeniedNote(server, mcp, name)}`;
           return "";
         }
         function renderMcpServers(a, mcp = null, name = null) {
@@ -48461,7 +48478,7 @@ You can add it back from this popover.` : "";
           const meta = (mcp && mcp.managed === false ? `<div class="ctx-util-conf">unmanaged: this seat's Extra args carry its own MCP config</div>` : "") + (status ? `<div class="ctx-util-conf">${esc(status)}</div>` : "");
           const row = (g) => {
             const usage = turns === 0 ? "" : g.usedTotal > 0 ? ` \xB7 ${g.usedTotal}\xD7` : conclusive ? " \xB7 <b>unused</b>" : " \xB7 idle";
-            const note = mcpRowNote(g.server, mcp);
+            const note = mcpRowNote(g.server, mcp, name);
             return `<div class="ctx-row${conclusive && g.usedTotal === 0 ? " ctx-dead" : ""}"><div class="ctx-row-top"><span class="ctx-cat">${esc(g.server)}</span><span class="ctx-nums">~${fmtTokens(g.estTokens)} \xB7 ${g.toolCount} tool${g.toolCount === 1 ? "" : "s"}${usage}</span></div>${note ? `<div class="ctx-util-conf">${esc(note)}</div>` : ""}</div>`;
           };
           let rows;

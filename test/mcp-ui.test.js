@@ -192,6 +192,15 @@ test('context popover: built-in, library-selected and leak rows, built-in listed
   assert.doesNotMatch(body, /unmanaged:/);
 });
 
+test('context popover: a selected server with a deny list says how many tools are denied, from the record\'s applied set', async () => {
+  const mcp = { managed: true, selected: ['jira'], applied: { names: ['jira'], digest: 'd', denyRules: [], denied: { jira: ['createJiraIssue', 'editJiraIssue'] } }, leaks: ['rogue'] };
+  assert.strictEqual(note(await popoverBody({ agents: [AGENT], clodex_mcp: mcp }), 'jira'), 'library · selected · 2 tools denied');
+  assert.strictEqual(note(await popoverBody({ agents: [AGENT], clodex_mcp: mcp }, 'codex'), 'jira'),
+    'library · selected · 2 tools denied (deny list not enforced on this CLI)');
+  const one = { ...mcp, applied: { ...mcp.applied, denied: { jira: ['createJiraIssue'] } } };
+  assert.strictEqual(note(await popoverBody({ agents: [AGENT], clodex_mcp: one }), 'jira'), 'library · selected · 1 tool denied');
+});
+
 test('context popover: an unmanaged seat carries the header line, and a Codex seat says the selection is not applied', async () => {
   const body = await popoverBody({ agents: [AGENT], clodex_mcp: { managed: false, selected: [], applied: null, leaks: ['jira', 'rogue'] } }, 'codex');
   assert.match(body, /unmanaged: this seat's Extra args carry its own MCP config/);
