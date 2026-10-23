@@ -197,6 +197,9 @@ test('context popover: a selected server with a deny list says how many tools ar
   assert.strictEqual(note(await popoverBody({ agents: [AGENT], clodex_mcp: mcp }), 'jira'), 'library · selected · 2 tools denied');
   assert.strictEqual(note(await popoverBody({ agents: [AGENT], clodex_mcp: mcp }, 'codex'), 'jira'),
     'library · selected · 2 tools denied (deny list not enforced on this CLI)');
+  const own = { ...mcp, applied: { ...mcp.applied, denyUnenforced: true } };
+  assert.strictEqual(note(await popoverBody({ agents: [AGENT], clodex_mcp: own }), 'jira'),
+    'library · selected · 2 tools denied (not enforced: the seat&#39;s own --settings)');
   const one = { ...mcp, applied: { ...mcp.applied, denied: { jira: ['createJiraIssue'] } } };
   assert.strictEqual(note(await popoverBody({ agents: [AGENT], clodex_mcp: one }), 'jira'), 'library · selected · 1 tool denied');
 });

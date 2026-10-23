@@ -207,7 +207,8 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
   function mcpDeniedNote(server, mcp, name) {
     const denied = mcp.applied && mcp.applied.denied && Array.isArray(mcp.applied.denied[server]) ? mcp.applied.denied[server].length : 0;
     if (!denied) return '';
-    const off = sessionTypeOf(name) === 'claude' ? '' : ' (deny list not enforced on this CLI)';
+    const off = sessionTypeOf(name) !== 'claude' ? ' (deny list not enforced on this CLI)'
+      : (mcp.applied.denyUnenforced ? ' (not enforced: the seat\'s own --settings)' : '');
     return ` · ${denied} tool${denied === 1 ? '' : 's'} denied${off}`;
   }
   function mcpRowNote(server, mcp, name = null) {

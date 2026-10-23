@@ -142,6 +142,9 @@ test('validateMcpEntry: denyTools rows, each refusal naming the field', () => {
     [['__a'], false],
     [['create issue'], false],
     [['tab\tname'], false],
+    [['foo(x)'], false],
+    [['a.b'], false],
+    [['mcp__*'], false],
     [[''], false],
     [[7], false],
     ['createJiraIssue', false],
@@ -150,7 +153,7 @@ test('validateMcpEntry: denyTools rows, each refusal naming the field', () => {
   for (const [denyTools, ok] of rows) {
     const r = validateMcpEntry({ type: 'http', url: 'https://x/mcp', denyTools });
     assert.strictEqual(r.ok, ok, JSON.stringify(denyTools));
-    if (!ok) assert.deepStrictEqual(r.errors, ['denyTools must be an array of tool names without whitespace or __']);
+    if (!ok) assert.deepStrictEqual(r.errors, ['denyTools must be an array of tool names of letters, digits, _ and -, without __']);
   }
 });
 
@@ -189,6 +192,7 @@ test('claudeMcpServers: the digest moves when denyTools changes and matches dige
   assert.notStrictEqual(at(['createJiraIssue', 'editJiraIssue']), base);
   assert.notStrictEqual(at(undefined), base);
   assert.strictEqual(at([]), at(undefined));
+  assert.strictEqual(at(['editJiraIssue', 'createJiraIssue', 'editJiraIssue']), at(['createJiraIssue', 'editJiraIssue']));
   assert.strictEqual(base, mcpDigest({ atlassian: digestShape({ ...DENY_LIB[0].entry, denyTools: ['createJiraIssue'] }) }));
 });
 

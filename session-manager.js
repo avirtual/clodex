@@ -1748,6 +1748,10 @@ function createSessionManager(deps) {
             hookInstalled = true;
           }
           if (!hookInstalled && effortLevel) warnings.push(`effort ${effortLevel} not applied: the seat's extra args carry their own --settings.`);
+          if (!hookInstalled && mcpSel && mcpSel.applied.denyRules.length) {
+            warnings.push('MCP deny list not applied: the seat\'s extra args carry their own --settings.');
+            mcpRecord.mcpApplied = { ...mcpSel.applied, denyUnenforced: true };
+          }
           ensureDir(MSG_DIR);
           if (!args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
           const seatMsgDir = seatPathFor(REGISTRY_DIR, name, 'messages');

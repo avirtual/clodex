@@ -17,7 +17,7 @@ const SECRET_ENV_RE = /(TOKEN|SECRET|PASSWORD|API_KEY)$/i;
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const isStrMap = (v) => isObj(v) && Object.values(v).every((x) => typeof x === 'string');
 const isStrList = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
-const DENY_TOOL_RE = /^(?!.*__)\S+$/;
+const DENY_TOOL_RE = /^(?!.*__)[A-Za-z0-9_-]+$/;
 
 function mcpNameError(name) {
   if (typeof name !== 'string' || !MCP_NAME_RE.test(name)) return `invalid MCP server name: ${name}`;
@@ -72,7 +72,7 @@ function validateMcpEntry(entry) {
   }
   if (entry.denyTools !== undefined
     && !(isStrList(entry.denyTools) && entry.denyTools.every((t) => DENY_TOOL_RE.test(t)))) {
-    errors.push('denyTools must be an array of tool names without whitespace or __');
+    errors.push('denyTools must be an array of tool names of letters, digits, _ and -, without __');
   }
   errors.push(...secretLintErrors(entry));
   return { ok: errors.length === 0, errors };
@@ -121,7 +121,7 @@ function resolveMcpEntry(entry, env) {
 }
 
 function denyToolsOf(entry) {
-  return isObj(entry) && isStrList(entry.denyTools) ? [...new Set(entry.denyTools)] : [];
+  return isObj(entry) && isStrList(entry.denyTools) ? [...new Set(entry.denyTools)].sort() : [];
 }
 
 function digestShape(entry) {

@@ -38788,7 +38788,7 @@ Opening it here and saving would overwrite the file with what this editor could 
           mcpEmpty.style.display = "none";
           for (const m of items) {
             const secrets = (m.secrets || []).length ? ` \xB7 uses ${m.secrets.map((n) => `\${${n}}`).join(", ")}` : "";
-            const denyCount = m.entry && Array.isArray(m.entry.denyTools) ? m.entry.denyTools.length : 0;
+            const denyCount = m.entry && Array.isArray(m.entry.denyTools) ? new Set(m.entry.denyTools).size : 0;
             const denied = denyCount ? ` \xB7 read-only: ${denyCount} tool${denyCount === 1 ? "" : "s"} denied` : "";
             const el = document.createElement("div");
             el.className = "prompt-item";
@@ -48455,7 +48455,7 @@ You can add it back from this popover.` : "";
         function mcpDeniedNote(server, mcp, name) {
           const denied = mcp.applied && mcp.applied.denied && Array.isArray(mcp.applied.denied[server]) ? mcp.applied.denied[server].length : 0;
           if (!denied) return "";
-          const off = sessionTypeOf(name) === "claude" ? "" : " (deny list not enforced on this CLI)";
+          const off = sessionTypeOf(name) !== "claude" ? " (deny list not enforced on this CLI)" : mcp.applied.denyUnenforced ? " (not enforced: the seat's own --settings)" : "";
           return ` \xB7 ${denied} tool${denied === 1 ? "" : "s"} denied${off}`;
         }
         function mcpRowNote(server, mcp, name = null) {

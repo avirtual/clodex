@@ -844,7 +844,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     mcpEmpty.style.display = 'none';
     for (const m of items) {
       const secrets = (m.secrets || []).length ? ` · uses ${m.secrets.map((n) => `\${${n}}`).join(', ')}` : '';
-      const denyCount = m.entry && Array.isArray(m.entry.denyTools) ? m.entry.denyTools.length : 0;
+      const denyCount = m.entry && Array.isArray(m.entry.denyTools) ? new Set(m.entry.denyTools).size : 0;
       const denied = denyCount ? ` · read-only: ${denyCount} tool${denyCount === 1 ? '' : 's'} denied` : '';
       const el = document.createElement('div');
       el.className = 'prompt-item';
