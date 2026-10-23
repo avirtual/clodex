@@ -28,7 +28,7 @@ const { isValidPluginId } = require('./plugin-api');
 function resolveSessionArgsPatch(patch = {}, prev = null) {
   const {
     agents, denyBuiltins, disabledTools, disabledSkills, injectSkills,
-    systemPrompt, systemPromptFile, appendPromptFiles, intents, execCommands, env, plugins,
+    systemPrompt, systemPromptFile, appendPromptFiles, intents, execCommands, env, plugins, mcpServers,
   } = patch;
   return {
     agents: agents !== undefined ? (agents || []) : (prev?.agents || []),
@@ -79,6 +79,9 @@ function resolveSessionArgsPatch(patch = {}, prev = null) {
     plugins: plugins !== undefined
       ? (Array.isArray(plugins) ? plugins.filter(isValidPluginId) : null)
       : (Array.isArray(prev?.plugins) ? prev.plugins : null),
+    mcpServers: mcpServers !== undefined
+      ? (Array.isArray(mcpServers) ? mcpServers.map(String) : [])
+      : (Array.isArray(prev?.mcpServers) ? prev.mcpServers : []),
   };
 }
 
@@ -91,7 +94,7 @@ function resolveSessionArgsPatch(patch = {}, prev = null) {
 // A nullish input passes through unchanged.
 function withoutExecGrants(obj) {
   if (!obj || typeof obj !== 'object') return obj;
-  const { execCommands, ...rest } = obj;
+  const { execCommands, mcpServers, ...rest } = obj;
   return rest;
 }
 
@@ -106,7 +109,7 @@ function withoutExecGrants(obj) {
 // passes through unchanged.
 function withoutLocalOnly(obj) {
   if (!obj || typeof obj !== 'object') return obj;
-  const { execCommands, env, ...rest } = obj;
+  const { execCommands, env, mcpServers, ...rest } = obj;
   return rest;
 }
 

@@ -97,6 +97,7 @@ function createScratchCloneMethods(deps, shared) {
           entry.io || 'pty',
           typeof entry.effort === 'string' ? entry.effort : null,
           Array.isArray(entry.protectCredentials) ? entry.protectCredentials : null,
+          Array.isArray(entry.mcpServers) ? entry.mcpServers : [],
         );
       } catch (e) {
         parent._scratchClone = null;

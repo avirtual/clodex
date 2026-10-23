@@ -64,7 +64,7 @@ function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp, 
     return !!digest;
   }
 
-  function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], wireBase = null, createdAt = null, extraDenyRules = [], stream = false, effort = null, protectCredentials = null) {
+  function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], wireBase = null, createdAt = null, extraDenyRules = [], stream = false, effort = null, protectCredentials = null, mcpSecretNames = []) {
     ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'run', fs });
     ensureDir(runDirFor(REGISTRY_DIR, name));
     const linkPath = pathFor(REGISTRY_DIR, name, 'transcript');
@@ -850,7 +850,7 @@ exit 0
     const toolSet = new Set(CLAUDE_TOOLS);
     const guard = Array.isArray(protectCredentials)
       ? buildCredentialSandbox({
-        registryDir: REGISTRY_DIR, list: protectCredentials, seatSocket: pathFor(REGISTRY_DIR, name, 'intentSocket'), inBox: runningInSandboxBox(process.env),
+        registryDir: REGISTRY_DIR, list: protectCredentials, seatSocket: pathFor(REGISTRY_DIR, name, 'intentSocket'), inBox: runningInSandboxBox(process.env), mcpSecretNames,
       })
       : null;
     const denyRules = [...new Set([
@@ -982,12 +982,13 @@ OUTPUT="\${RUNDIR}/hook-output.json"
     }
   }
 
-  function writeMcpConfig(name) {
+  function writeMcpConfig(name, servers = {}) {
     ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'run', fs });
     ensureDir(runDirFor(REGISTRY_DIR, name));
     const mcpPath = pathFor(REGISTRY_DIR, name, 'mcpConfig');
     const config = {
       mcpServers: {
+        ...(servers && typeof servers === 'object' ? servers : {}),
         clodex: {
           command: nodeInterp,
           args: [require.resolve('./cli/bin/clodex-mcp.js')],

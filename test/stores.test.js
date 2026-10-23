@@ -4303,3 +4303,36 @@ test('agentDefaults: getDefaultSkillDeny on an unreadable agent-defaults.json re
     cleanup();
   }
 });
+
+test('mcpLibrary: save validates, writes 0600 under library/mcp, list/raw/remove round-trip', () => {
+  const { registryDir, stores, cleanup } = freshStores();
+  try {
+    assert.deepStrictEqual(stores.mcpLibrary.list(), []);
+    const entry = { description: 'Jira', command: 'npx', args: ['jira'], env: { JIRA_TOKEN: '${JIRA_TOKEN}' } };
+    const listed = stores.mcpLibrary.save('jira', entry);
+    const file = path.join(registryDir, 'library', 'mcp', 'jira.json');
+    assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), entry);
+    assert.deepStrictEqual(listed, [{ name: 'jira', entry, type: 'stdio', description: 'Jira', secrets: ['JIRA_TOKEN'], file: 'jira.json' }]);
+    assert.deepStrictEqual(JSON.parse(stores.mcpLibrary.raw('jira')), entry);
+    stores.mcpLibrary.save('docs', JSON.stringify({ type: 'http', url: 'https://d/mcp' }));
+    assert.deepStrictEqual(stores.mcpLibrary.list().map((r) => r.name), ['docs', 'jira']);
+    assert.deepStrictEqual(stores.mcpLibrary.remove('jira').map((r) => r.name), ['docs']);
+    assert.deepStrictEqual(stores.mcpLibrary.remove('jira').map((r) => r.name), ['docs']);
+  } finally { cleanup(); }
+});
+
+test('mcpLibrary: an invalid entry, a literal secret, a reserved or path-shaped name is refused and nothing lands', () => {
+  const { registryDir, stores, cleanup } = freshStores();
+  try {
+    const dir = path.join(registryDir, 'library', 'mcp');
+    assert.throws(() => stores.mcpLibrary.save('bad', { type: 'stdio' }), /invalid MCP server bad: stdio needs a command string/);
+    assert.throws(() => stores.mcpLibrary.save('lit', { command: 'c', env: { JIRA_TOKEN: 'hunter2' } }), /env JIRA_TOKEN carries a literal value/);
+    for (const name of ['clodex', 'claude_design', '../evil', 'a__b', 'a.b']) {
+      assert.throws(() => stores.mcpLibrary.save(name, { command: 'c' }), /MCP server name/, name);
+      assert.throws(() => stores.mcpLibrary.remove(name), /MCP server name/, name);
+    }
+    assert.strictEqual(fs.existsSync(path.join(registryDir, 'library', 'evil.json')), false);
+    assert.deepStrictEqual(fs.existsSync(dir) ? fs.readdirSync(dir) : [], []);
+  } finally { cleanup(); }
+});

@@ -130,7 +130,8 @@ const voiceEngineSpec = require('./voice-engine');
 const { CTRLU_SETTLE_MS } = require('./inject-queue');
 const { VOICE_MODES, voiceModeOf } = require('./voice-settings');
 const { fmtAge } = require('./memory-store');
-const { pasteModeSignal, strictMcpReason, mcpArgvPlan, PROXY_AGENT_PREFIX, PASTE_START, PASTE_END, stampServedAge, fmtQuotaReset } = require('./proxy-util');
+const { mcpArgvPlan, claudeMcpServers, secretRefs, discoverMcpSources } = require('./mcp-plan');
+const { pasteModeSignal, PROXY_AGENT_PREFIX, PASTE_START, PASTE_END, stampServedAge, fmtQuotaReset } = require('./proxy-util');
 const QUOTA_WINDOW_LONG = { '5h': '5-hour window', '7d': 'weekly window (all models)', '7d_oi': 'weekly window (Fable)', overage: 'overage window' };
 const {
   RELAY_ROSTER_TTL_MS, RELAY_MAX_HOPS,
@@ -533,7 +534,7 @@ function dmContentKey(senderTag, body) {
 const MOVE_TO_PEER_OMIT = [
   'execCommands', 'worktree', 'archivedAt', 'exitedAt', 'exitCode', 'exitSignal', 'failed', 'movedTo',
   'ephemeral', 'reviewFor', 'reviewTicket', 'reviewerTemplate', 'pluginGrants',
-  'wireLabel', 'ticketId', 'rosterSentAt', 'streamPid',
+  'wireLabel', 'ticketId', 'rosterSentAt', 'streamPid', 'mcpServers', 'mcpApplied', 'mcpUnmanaged',
 ];
 
 function moveFileBytes(fs, f) {
@@ -721,14 +722,14 @@ function createSessionManager(deps) {
     writeBundlePlugins,
     getPluginBundles,
     readSystemPromptBody,
-    getPersistence, getTemplates, getUiSettings, getEnvScopes, getAccounts, getPromptLibrary, getAgentLibrary, getRemoteServer, getPeerManager, getRemindScheduler, getReminders, getMisfires, getNotifications,
+    getPersistence, getTemplates, getUiSettings, getEnvScopes, getMcpLibrary, getAccounts, getPromptLibrary, getAgentLibrary, getRemoteServer, getPeerManager, getRemindScheduler, getReminders, getMisfires, getNotifications,
     getWorkspaces, readCtxFor,
     getPluginHooks,
     getUserDataPath, openPath, notifyOS, setAppQuitting, relaunchApp, relaunchUnavailable,
   } = deps;
   const spawnStreamSeat = deps.spawnStreamSeat || streamSeatLib.spawnStreamSeat;
   const writeMcpConfig = deps.writeMcpConfig
-    || ((n) => require('./cli-hooks').createCliHooks({ REGISTRY_DIR, nodeInterp: process.execPath }).writeMcpConfig(n));
+    || ((n, servers) => require('./cli-hooks').createCliHooks({ REGISTRY_DIR, nodeInterp: process.execPath }).writeMcpConfig(n, servers));
   const writeMcpCatalog = deps.writeMcpCatalog
     || ((n, c) => require('./cli-hooks').createCliHooks({ REGISTRY_DIR, nodeInterp: process.execPath }).writeMcpCatalog(n, c));
   const reapBeforeResume = deps.reapBeforeResume || streamReap.reapBeforeResume;
@@ -1460,7 +1461,7 @@ function createSessionManager(deps) {
       }
     }
 
-    async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellDeny = null, fixFor = null, io = 'pty', effort = null, protectCredentials = null) {
+    async create(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellDeny = null, fixFor = null, io = 'pty', effort = null, protectCredentials = null, mcpServers = []) {
       if (this.sessions.has(name) || this._creating.has(name)) {
         throw new Error(`Session "${name}" already exists`);
       }
@@ -1473,7 +1474,7 @@ function createSessionManager(deps) {
       }
     }
 
-    async _createReserved(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellDeny = null, fixFor = null, io = 'pty', effort = null, protectCredentials = null) {
+    async _createReserved(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellDeny = null, fixFor = null, io = 'pty', effort = null, protectCredentials = null, mcpServers = []) {
       const freshBake = this._freshBakeOnce.delete(name);
       if (cwd) {
         let st = null;
@@ -1577,6 +1578,7 @@ function createSessionManager(deps) {
       let cmd, args;
       const shell = process.env.SHELL || '/bin/bash';
       const warnings = [];
+      let mcpRecord = null;
       const agentType = isAgentType(type) ? type : null;
       const effortResolved = agentType ? resolveEffort(type, effort) : null;
       if (effortResolved && typeof effortResolved === 'object') warnings.push(`${effortResolved.error}; spawned at the CLI's default effort.`);
@@ -1717,6 +1719,17 @@ function createSessionManager(deps) {
           }
           // A user-supplied --settings in extraArgs replaces the whole hooks block, so ipcdelta.sh and every other drain is absent
           // for that seat, which the frozen-prompt decision below depends on.
+          const userMcp = args.some((a) => /^--mcp-config(=|$)/.test(a));
+          const userStrict = args.some((a) => /^--strict-mcp-config(=|$)/.test(a));
+          const plan = mcpArgvPlan({ userMcp, userStrict, mcpPath: pathFor(REGISTRY_DIR, name, 'mcpConfig') });
+          const mcpLib = plan.writeConfig ? this._mcpLibraryRows() : [];
+          const mcpSel = plan.writeConfig
+            ? claudeMcpServers({ selected: Array.isArray(mcpServers) ? mcpServers : [], library: mcpLib, env: mergedEnv, cli: 'claude' })
+            : null;
+          const mcpSecretNames = mcpSel
+            ? [...new Set(mcpLib.filter((r) => mcpSel.applied.names.includes(r.name)).flatMap((r) => secretRefs(r.entry)))]
+            : [];
+          mcpRecord = { mcpUnmanaged: plan.unmanaged, mcpApplied: mcpSel ? mcpSel.applied : null };
           let hookInstalled = false;
           if (!args.includes('--settings')) {
             if (Array.isArray(disabledSkills) && disabledSkills.includes('*')
@@ -1728,7 +1741,7 @@ function createSessionManager(deps) {
               known: Array.isArray(disabledSkills) && disabledSkills.includes('*') ? knownSkillNames() : [],
               injectSkills,
             });
-            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, skillsOff, wireBase, createdAt, Array.isArray(shellDeny) ? shellDeny : [], streamIo, effortLevel, Array.isArray(protectCredentials) ? protectCredentials : null);
+            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, skillsOff, wireBase, createdAt, Array.isArray(shellDeny) ? shellDeny : [], streamIo, effortLevel, Array.isArray(protectCredentials) ? protectCredentials : null, mcpSecretNames);
             args.push('--settings', settingsPath);
             hookInstalled = true;
           }
@@ -1737,19 +1750,10 @@ function createSessionManager(deps) {
           if (!args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
           const seatMsgDir = seatPathFor(REGISTRY_DIR, name, 'messages');
           if (ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'messages', fs, log }) && !args.includes(seatMsgDir)) args.push('--add-dir', seatMsgDir);
-          const userMcp = args.some((a) => /^--mcp-config(=|$)/.test(a));
-          const userStrict = args.some((a) => /^--strict-mcp-config(=|$)/.test(a));
-          const disableDesign = !!getUiSettings().get().disableClaudeDesignMcp;
-          let reason = null;
-          if (disableDesign && !userStrict && !userMcp) {
-            let probe = null;
-            if (proxyBase) {
-              try { probe = await ProxyClient.probe(proxyBase); } catch {}
-            }
-            reason = strictMcpReason(proxyBase, probe);
+          if (plan.writeConfig) {
+            writeMcpConfig(name, mcpSel.servers);
+            warnings.push(...mcpSel.warnings);
           }
-          const plan = mcpArgvPlan({ userMcp, userStrict, disableDesign, reason, mcpPath: pathFor(REGISTRY_DIR, name, 'mcpConfig') });
-          if (plan.writeConfig) writeMcpConfig(name);
           writeMcpCatalog(name, subagentCatalogFor({
             intents: Array.isArray(intents) ? intents.map(String) : undefined,
             plugins: Array.isArray(plugins) ? plugins.map(String) : undefined,
@@ -1758,6 +1762,8 @@ function createSessionManager(deps) {
           if (plan.notice) {
             this._broadcast('ipc-message', { type: 'system', from: name, to: name, body: plan.notice });
           }
+          const migration = plan.writeConfig ? this._mcpMigrationNotice(cwd, mergedEnv, mcpLib) : null;
+          if (migration) this._broadcast('ipc-message', { type: 'system', from: name, to: name, body: migration });
           // Sample before the agents block pushes its own --plugin-dir, or the skills gate reads our push as the user's
           // and drops every injected skill; a user plugin dir replaces the skills scaffold but must not drop the agent library.
           const userPluginDir = args.includes('--plugin-dir');
@@ -2198,6 +2204,16 @@ function createSessionManager(deps) {
         // Same conditional-omit rule as `intents`: an absent plugins list means core-shipped only, never freeze `null`.
         ...(Array.isArray(plugins) ? { plugins: plugins.map(String) } : {}),
         ...(Array.isArray(execCommands) && execCommands.length ? { execCommands: execCommands.map(String) } : {}),
+        ...(Array.isArray(mcpServers) && mcpServers.length ? { mcpServers: mcpServers.map(String) } : {}),
+        ...(() => {
+          const out = {};
+          const applied = mcpRecord && mcpRecord.mcpApplied && mcpRecord.mcpApplied.names.length ? mcpRecord.mcpApplied : null;
+          if (applied) out.mcpApplied = applied;
+          else if (existingEntry && existingEntry.mcpApplied !== undefined) out.mcpApplied = undefined;
+          if (mcpRecord && mcpRecord.mcpUnmanaged) out.mcpUnmanaged = true;
+          else if (existingEntry && existingEntry.mcpUnmanaged !== undefined) out.mcpUnmanaged = undefined;
+          return out;
+        })(),
         // Persisted so --resume respawns with the same env (a wrong AWS identity would be silent); sanitizeFlat re-applies the
         // key/deny/newline gate at the persistence door so a junk key or value never lands on sessions.json.
         ...(() => {
@@ -3689,6 +3705,7 @@ function createSessionManager(deps) {
             entry.io || 'pty',
             typeof entry.effort === 'string' ? entry.effort : null,
             Array.isArray(entry.protectCredentials) ? entry.protectCredentials : null,
+            Array.isArray(entry.mcpServers) ? entry.mcpServers : [],
           );
         } catch (err) {
           const kept = { ...entry, name: newName };
@@ -3773,6 +3790,7 @@ function createSessionManager(deps) {
             entry.io || 'pty',
             typeof entry.effort === 'string' ? entry.effort : null,
             Array.isArray(entry.protectCredentials) ? entry.protectCredentials : null,
+            Array.isArray(entry.mcpServers) ? entry.mcpServers : [],
           );
         } catch (err) {
           getPersistence().upsert(this._stripClaimedTree({ ...entry, cwd: newCwd }));
@@ -4025,6 +4043,7 @@ function createSessionManager(deps) {
             entry.io || 'pty',
             typeof entry.effort === 'string' ? entry.effort : null,
             Array.isArray(entry.protectCredentials) ? entry.protectCredentials : null,
+            Array.isArray(entry.mcpServers) ? entry.mcpServers : [],
           );
         } catch (err) {
           getPersistence().upsert(this._stripClaimedTree({ ...entry }));
@@ -6555,6 +6574,24 @@ function createSessionManager(deps) {
       this._broadcast('ipc-message', { type: 'remind', from: who, to: who, body: `scheduled ${r.record.id} (${spec})` });
     }
 
+    _mcpLibraryRows() {
+      const lib = typeof getMcpLibrary === 'function' ? getMcpLibrary() : null;
+      if (!lib) return [];
+      try { return lib.list(); } catch { return []; }
+    }
+
+    _mcpMigrationNotice(cwd, env, library) {
+      if (typeof getMcpLibrary !== 'function' || !getMcpLibrary()) return null;
+      const have = new Set((Array.isArray(library) ? library : []).map((r) => r.name));
+      let found;
+      try {
+        found = discoverMcpSources({ home: os.homedir(), cwd: cwd || null, claudeConfigDir: (env && env.CLAUDE_CONFIG_DIR) || null });
+      } catch { return null; }
+      const names = [...new Set(found.map((f) => f.name))].filter((n) => !have.has(n) && n !== 'clodex').sort();
+      if (!names.length) return null;
+      return `MCP: ${names.length} server(s) in your Claude config are no longer loaded into seats: ${names.join(', ')} — import them in Library ▸ MCP Servers (claude_design is not loaded into managed seats either)`;
+    }
+
     // A malformed def degrades to the bare id string so it never fails a spawn; argv and cwd are
     // dropped because they can carry absolute paths that must not reach a prompt.
     _resolveExecDefs(execCommands, team) {
@@ -7275,6 +7312,7 @@ function createSessionManager(deps) {
             entry.io || 'pty',
             typeof entry.effort === 'string' ? entry.effort : null,
             Array.isArray(entry.protectCredentials) ? entry.protectCredentials : null,
+            Array.isArray(entry.mcpServers) ? entry.mcpServers : [],
           );
           const lvl = stripLevelOf(entry);
           if (lvl >= 1) getPersistence().setStripLevel(name, lvl);

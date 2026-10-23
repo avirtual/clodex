@@ -89,17 +89,32 @@ function noTeamOrStem(team, stem, what) {
   return `no team "${team}" or bad ${what} name "${stem}"`;
 }
 
-function teamTemplateSave(deps, team, stem, body) {
+function priorMcpServers(deps, file) {
+  try {
+    const prior = JSON.parse(deps.fs.readFileSync(file, 'utf-8'));
+    return prior && Array.isArray(prior.mcpServers) ? prior.mcpServers : null;
+  } catch { return null; }
+}
+
+function teamTemplateSave(deps, team, stem, body, opts = {}) {
   const file = teamTemplatePath(deps, team, stem);
   if (!file) return { ok: false, error: noTeamOrStem(team, stem, 'template') };
   if (!body || typeof body !== 'object' || Array.isArray(body) || typeof body.type !== 'string') {
     return { ok: false, error: 'a template body must be an object with a string type' };
   }
+  let out = body;
+  let mcpIgnored = false;
+  if (!(opts && opts.operator === true)) {
+    const { mcpServers, ...rest } = body;
+    mcpIgnored = mcpServers !== undefined;
+    const kept = priorMcpServers(deps, file);
+    out = kept ? { ...rest, mcpServers: kept } : rest;
+  }
   try {
     ensureDir(deps.path.dirname(file));
-    atomicWriteFileSync(file, `${JSON.stringify(body, null, 2)}\n`);
+    atomicWriteFileSync(file, `${JSON.stringify(out, null, 2)}\n`);
   } catch (err) { return { ok: false, error: err.message }; }
-  return { ok: true, file };
+  return mcpIgnored ? { ok: true, file, mcpIgnored } : { ok: true, file };
 }
 
 function teamTemplateRemove(deps, team, stem) {
