@@ -444,6 +444,7 @@ const ADVERSARIAL = [
   '[agent:team bind bob hand]', '[agent:team bind bob]', '[agent:team bind]', '[agent:team bindx bob]',
   '[agent:team unbind bob]', '[agent:team unbind]', '[agent:team roster]', '[agent:team roster extra]',
   '[agent:team trunk main]', '[agent:team trunk]',
+  '[agent:team done report]', '[agent:team done]', '[agent:team donex]',
   '[agent:team worktrees in-root]', '[agent:team worktrees]', '[agent:team worktreesx]',
   '[agent:team hands 3]', '[agent:team hands off]', '[agent:team hands]', '[agent:team handsx]',
   '[agent:team template-save hand-seat] {"type":"claude"}', '[agent:team template-save]',
@@ -458,6 +459,7 @@ const ADVERSARIAL = [
   '[agent:team sandbox bootstrap show setup]', '[agent:team sandbox bootstrap clear]', '[agent:team sandbox restart]',
   '[agent:team create shop root:/proj/shop]',
   '[agent:team create shop root:/proj/shop share-root:yes]', '[agent:team create share-root:no shop root:/proj/shop]',
+  '[agent:team create shop root:/proj/shop done:report]',
   '[agent:team create shop root:/proj/shop lead:boss]',
   '[agent:team create lead:boss root:/proj/shop shop]',
   '[agent:team create shop]', '[agent:team create root:/proj/shop]',
@@ -1678,6 +1680,13 @@ test('C1b (a) parseTask done takes tN@origin; other subs keep the token whole', 
   const add = parseIntent('[agent:task add t7@laptop] spec');
   assert.strictEqual(add.who, 't7@laptop');
   assert.strictEqual('board' in add, false);
+});
+
+test('team done: the mode is the positional, bare is null; done:report on create rides the create intent', () => {
+  assert.deepStrictEqual(parseIntent('[agent:team done report]'), { type: 'team', sub: 'done', mode: 'report', body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:team done]'), { type: 'team', sub: 'done', mode: null, body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:team create shop root:/p done:report]'),
+    { type: 'team-create', name: 'shop', root: '/p', lead: null, mode: null, kit: null, done: 'report', body: '' });
 });
 
 test('team create: share-root:yes sets shareRoot, any other value is a parse error naming the accepted value', () => {

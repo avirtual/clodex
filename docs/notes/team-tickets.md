@@ -118,3 +118,12 @@ line is never slowOnly: that is a real defect the hand must clear.
 Ownership is read out of GIT (`diffNames` + `fileAt` against the branch), not off
 the worktree: the merge arm asks after the branch has landed, and a torn-down
 tree would answer "nothing owned" for a branch that owns everything.
+
+## ARTIFACT_LOOP_FILE_RE
+
+The digest is sha256 over the sorted `<relative path>\0<file sha256>\n` lines of
+the set. Files the loop writes into a task dir (snapshots, diffs, verdicts,
+suite failures, merge messages, COST.json, REVIEW-COST.jsonl) are outside it,
+or the verdict write before an ACCEPT would itself read as a change. A task dir
+shared by several tickets still counts their hand-written files, so another
+ticket's report landing mid-review holds this one.

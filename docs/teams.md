@@ -818,6 +818,17 @@ its next reconcile while it is alone on the root. Every row carries its `team`: 
 same-team; a row whose team no longer exists is the caller's. Both teams' merges queue on the one process-wide merge chain; each team's `trunk` may differ. A seat on
 neither roster gets the labelled read-only board.
 
+**Definition of done.** `done` in team.json picks how a ticket closes. `code` (the default) is the branch loop: commits on
+the ticket branch, the suite, a cold review of the diff, and a merge into the trunk. `report` is for a team that produces
+reports, not branches: on `task done` the loop writes the report text to `REPORT-<id>-r<round>.md` in the ticket's task
+dir (or, with no `tasks/…` pointer in the spec, under the project's `tasks/<id>/`), hashes every file there into
+`.artifact-r<round>.json`, and spawns a cold reviewer on that snapshot — no suite, no merge. The report text alone
+qualifies as the artifact; an empty set holds the ticket at `verify: artifact`. An ACCEPT re-hashes the set: unchanged, the
+ticket is accepted and a one-shot seat archived; changed under review, it is held at `verify: artifact` naming both
+digests, and the hand's next `task done` re-reviews. The policy is pinned on each ticket when it is filed, so
+`[agent:team done code|report]` (lead only; bare shows it) or `done:report` on `team create` affects only tickets filed
+afterwards; `task list` marks report rows `[report]`.
+
 A ticket whose seat stays quiet past the team's watchdog interval alarms the lead as `stalled: <who> quiet <age>` with the seat's evidence; a seat held by a permission dialog is reported instead as `waiting on a permission dialog since <age> — <message>`, naming the operator as the only one who can answer, and the operator inbox gets one note per dialog on a ticket seat; a pending call on a seat that is compacting or running a harness subagent is named as that class instead of `wedged mid-call, or a legitimately slow one`; a ticket parked by the hand cap past the interval alarms the lead once as `parked by the hand cap for <age>`.
 
 The lead's team roster spells out the reachable actions for whatever roles exist,
