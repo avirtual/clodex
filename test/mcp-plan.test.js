@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {
   MCP_NAME_RE, mcpNameError, validateMcpEntry, secretRefs, resolveMcpEntry,
-  claudeMcpServers, mcpArgvPlan, mcpDigest, digestShape, mcpServerOf, mcpLeaks, discoverMcpSources, normaliseDiscovered,
+  claudeMcpServers, mcpArgvPlan, mcpServerOf, mcpLeaks, discoverMcpSources, normaliseDiscovered,
 } = require('../mcp-plan');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -132,68 +132,6 @@ test('claudeMcpServers: the digest ignores secret values and moves with the shap
   const changed = [{ ...LIB[0], entry: { ...LIB[0].entry, args: ['jira', '--v2'] } }, LIB[1]];
   assert.notStrictEqual(at({ JIRA_TOKEN: 'one' }, changed), base);
   assert.notStrictEqual(claudeMcpServers({ selected: ['docs'], library: LIB, env: {} }).applied.digest, base);
-});
-
-test('validateMcpEntry: denyTools rows, each refusal naming the field', () => {
-  const rows = [
-    [['createJiraIssue', 'edit-page'], true],
-    [[], true],
-    [['a__b'], false],
-    [['__a'], false],
-    [['create issue'], false],
-    [['tab\tname'], false],
-    [['foo(x)'], false],
-    [['a.b'], false],
-    [['mcp__*'], false],
-    [[''], false],
-    [[7], false],
-    ['createJiraIssue', false],
-    [{ a: 'b' }, false],
-  ];
-  for (const [denyTools, ok] of rows) {
-    const r = validateMcpEntry({ type: 'http', url: 'https://x/mcp', denyTools });
-    assert.strictEqual(r.ok, ok, JSON.stringify(denyTools));
-    if (!ok) assert.deepStrictEqual(r.errors, ['denyTools must be an array of tool names of letters, digits, _ and -, without __']);
-  }
-});
-
-const DENY_LIB = [
-  { name: 'atlassian', entry: { type: 'http', url: 'https://mcp.atlassian.com/v2/mcp', denyTools: ['createJiraIssue', 'editJiraIssue'] } },
-  { name: 'jira', entry: { command: 'npx', env: { JIRA_TOKEN: '${JIRA_TOKEN}' }, denyTools: ['transitionJiraIssue'] } },
-  { name: 'docs', entry: { type: 'http', url: 'https://docs/mcp' } },
-];
-
-test('claudeMcpServers: denyRules prefix every denied tool of a loaded server; an omitted server contributes none', () => {
-  const r = claudeMcpServers({ selected: ['atlassian', 'jira', 'docs'], library: DENY_LIB, env: {}, cli: 'claude' });
-  assert.deepStrictEqual(r.applied.names, ['atlassian', 'docs']);
-  assert.deepStrictEqual(r.applied.denyRules, ['mcp__atlassian__createJiraIssue', 'mcp__atlassian__editJiraIssue']);
-  assert.deepStrictEqual(r.applied.denied, { atlassian: ['createJiraIssue', 'editJiraIssue'] });
-  assert.strictEqual('denyTools' in r.servers.atlassian, false);
-  const loaded = claudeMcpServers({ selected: ['atlassian', 'jira'], library: DENY_LIB, env: { JIRA_TOKEN: 't' }, cli: 'claude' });
-  assert.deepStrictEqual(loaded.applied.denyRules,
-    ['mcp__atlassian__createJiraIssue', 'mcp__atlassian__editJiraIssue', 'mcp__jira__transitionJiraIssue']);
-  const none = claudeMcpServers({ selected: ['docs'], library: DENY_LIB, env: {}, cli: 'claude' });
-  assert.deepStrictEqual(none.applied, { names: ['docs'], digest: none.applied.digest, denyRules: [] });
-});
-
-test('claudeMcpServers: cli codex computes the same denyRules for the codex arm to map', () => {
-  const claude = claudeMcpServers({ selected: ['atlassian', 'jira'], library: DENY_LIB, env: { JIRA_TOKEN: 't' }, cli: 'claude' });
-  const codex = claudeMcpServers({ selected: ['atlassian', 'jira'], library: DENY_LIB, env: { JIRA_TOKEN: 't' }, cli: 'codex' });
-  assert.deepStrictEqual(codex.applied.denyRules,
-    ['mcp__atlassian__createJiraIssue', 'mcp__atlassian__editJiraIssue', 'mcp__jira__transitionJiraIssue']);
-  assert.deepStrictEqual(codex.applied.denyRules, claude.applied.denyRules);
-});
-
-test('claudeMcpServers: the digest moves when denyTools changes and matches digestShape', () => {
-  const at = (deny) => claudeMcpServers({
-    selected: ['atlassian'], library: [{ name: 'atlassian', entry: { ...DENY_LIB[0].entry, denyTools: deny } }], env: {},
-  }).applied.digest;
-  const base = at(['createJiraIssue']);
-  assert.notStrictEqual(at(['createJiraIssue', 'editJiraIssue']), base);
-  assert.notStrictEqual(at(undefined), base);
-  assert.strictEqual(at([]), at(undefined));
-  assert.strictEqual(at(['editJiraIssue', 'createJiraIssue', 'editJiraIssue']), at(['createJiraIssue', 'editJiraIssue']));
-  assert.strictEqual(base, mcpDigest({ atlassian: digestShape({ ...DENY_LIB[0].entry, denyTools: ['createJiraIssue'] }) }));
 });
 
 test('mcpArgvPlan: three arms with the exact push arrays; both user arms are unmanaged', () => {

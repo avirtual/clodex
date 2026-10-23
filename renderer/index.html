@@ -327,7 +327,6 @@
         <label>Headers (Name: value per line)
           <textarea id="mcp-headers" rows="3" spellcheck="false"></textarea>
         </label>
-        <span class="hint-text">Hosted servers that use OAuth (Atlassian, GitHub…): leave headers EMPTY and run /mcp in the seat once — a Bearer header here disables the CLI's own login.</span>
       </div>
       <span class="hint-text">Write secrets as ${NAME}; set the value in Preferences ▸ Environment (mark it Secret)</span>
       <label>Description
@@ -336,10 +335,6 @@
       <label>Tags (comma-separated)
         <input type="text" id="mcp-tags" spellcheck="false">
       </label>
-      <label>Deny tools (one per line or comma-separated)
-        <textarea id="mcp-deny-tools" rows="3" spellcheck="false"></textarea>
-      </label>
-      <span class="hint-text">Tool names from the server, without the mcp__&lt;name&gt;__ prefix. Denied tools are refused when a seat calls them (they still appear in the seat's tool list).</span>
       <div class="prefs-row" id="mcp-platforms">
         <span>Platforms</span>
         <label class="prefs-check"><input type="checkbox" id="mcp-platform-claude" value="claude" checked><span>claude</span></label>

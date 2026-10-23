@@ -28,20 +28,6 @@ the Claude CLI expands `${VAR}` inside an `--mcp-config` file is unmeasured, so 
 Hashes the unresolved CLI shape (with `${NAME}` placeholders), never a resolved value, so `mcpApplied.digest` on a
 record changes when a definition changes and stays put when only a secret rotates.
 
-## denyToolsOf
-
-`denyTools` is enforcement at call time, not removal: `claudeMcpServers` turns each name into an
-`mcp__<server>__<tool>` rule that `setupClaudeHook` writes to the seat's `permissions.deny`, so a denied tool still
-appears in tools/list and still costs its tokens. Stripping it from the roster is a wirescope concern
-(`STRIP_MCP_SERVERS` has no per-tool form) and out of scope. Codex and Muse get the same `denyRules` from
-`claudeMcpServers` but nothing enforces them yet.
-
-Measured on claude 2.1.309, 2026-10-24: the hosted Atlassian server (`https://mcp.atlassian.com/v2/mcp`) is
-OAuth-only. A library entry with `Authorization: Bearer ${TOKEN}` gets 401 and disables the CLI's own OAuth
-fallback; a header-less `{type:http,url}` entry under `--strict-mcp-config` reports `status: needs-auth` in
-`system/init`. The CLI documents `/mcp` as the login path, keeping the token keyed by server name (unmeasured
-here).
-
 ## mcpArgvPlan
 
 Measured on claude 2.1.309, 2026-10-23: a throwaway `--plugin-dir` plugin carrying a stdio server (once as

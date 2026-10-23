@@ -780,11 +780,9 @@ plus setter-added `sessionIds[]` history, label, stripLevel, `createdAt`,
 (stored only as `false` to opt out), and three MCP fields: `mcpServers` (the
 seat's library selection, create() positional 28, omitted when empty; cleared
 by `setMcpServers`, never sent over the peer wire), `mcpApplied`
-(`{names, digest, denyRules}` of what the last Claude spawn actually loaded,
-plus `denied: {server: [tools]}` when a loaded server carries `denyTools` and
-`denyUnenforced: true` when the seat's own `--settings` kept those rules out —
-the digest covers the unresolved shape and the deny list, never a secret value;
-present only when a server loaded) and `mcpUnmanaged` (`true` when the seat's own extra args carry
+(`{names, digest}` of what the last Claude spawn actually loaded — the digest
+covers the unresolved shape, never a secret value; present only when a server
+loaded) and `mcpUnmanaged` (`true` when the seat's own extra args carry
 `--mcp-config` or `--strict-mcp-config`, so Clodex injected nothing). `.bak` is a LAUNCH SNAPSHOT, not a mirror:
 the first `_save` of a process copies the on-disk file to `.bak` and no later
 save touches it, so it holds the pre-launch state for the whole session — which

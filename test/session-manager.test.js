@@ -21356,47 +21356,6 @@ test('MCP library at create(): servers reach mcp.json, warnings are system rows,
   assert.deepStrictEqual(back.mcpApplied.names, ['docs', 'jira']);
 });
 
-test('MCP library at create(): a library entry with denyTools lands them in the seat settings permissions.deny; an omitted server lands none', async (t) => {
-  const fsReal = require('node:fs');
-  const saved = Object.fromEntries(['CLAUDE_CONFIG_DIR', 'JIRA_TOKEN'].map((k) => [k, process.env[k]]));
-  t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
-  process.env.CLAUDE_CONFIG_DIR = mkTmpRoot('clx-mcp-deny-cfg-');
-  delete process.env.JIRA_TOKEN;
-  const lib = [
-    { name: 'atlassian', entry: { type: 'http', url: 'https://mcp.atlassian.com/v2/mcp', denyTools: ['createJiraIssue'] } },
-    { name: 'jira', entry: { command: 'npx', env: { JIRA_TOKEN: '${JIRA_TOKEN}' }, denyTools: ['editJiraIssue'] } },
-  ];
-  const { createCliHooks } = require('../cli-hooks');
-  const h = mkStreamSeatManager({
-    extraDeps: (root) => ({
-      getMcpLibrary: () => ({ list: () => lib }),
-      setupClaudeHook: createCliHooks({
-        REGISTRY_DIR: root, memoryStore: { list: () => [] }, nodeInterp: process.execPath,
-        getUiSettings: () => ({ get: () => ({ statusline: { claude: [], claudeCommand: '' } }) }),
-      }).setupClaudeHook,
-    }),
-  });
-  t.after(() => h.stopAll());
-  const spawn = (extra) => h.m.create('st1', 'claude', require('node:os').tmpdir(), extra, null, 'ws', null, false, null,
-    [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, 'stream', null, null, ['atlassian', 'jira']);
-  const first = await spawn([]);
-  const { args } = h.spawns[0];
-  const settings = JSON.parse(fsReal.readFileSync(args[args.indexOf('--settings') + 1], 'utf8'));
-  const deny = settings.permissions.deny;
-  assert.ok(deny.includes('mcp__atlassian__createJiraIssue'), JSON.stringify(deny));
-  assert.deepStrictEqual(deny.filter((r) => r.startsWith('mcp__')), ['mcp__atlassian__createJiraIssue']);
-  assert.deepStrictEqual(h.store.get('st1').mcpApplied.denied, { atlassian: ['createJiraIssue'] });
-  assert.strictEqual('denyUnenforced' in h.store.get('st1').mcpApplied, false);
-  assert.ok(!first.warnings.some((w) => w.startsWith('MCP deny list')));
-
-  h.stopAll();
-  h.m.sessions.delete('st1');
-  const own = await spawn(['--settings', '/x/own-settings.json']);
-  assert.ok(own.warnings.includes('MCP deny list not applied: the seat\'s extra args carry their own --settings.'), JSON.stringify(own.warnings));
-  const rec = h.store.get('st1').mcpApplied;
-  assert.deepStrictEqual({ denied: rec.denied, denyUnenforced: rec.denyUnenforced }, { denied: { atlassian: ['createJiraIssue'] }, denyUnenforced: true });
-});
-
 test('stream seat (g): a restore with io:stream reaps the persisted streamPid BEFORE spawning --resume <id>', async (t) => {
   const h = mkStreamSeatManager({ persisted: { st2: { io: 'stream', sessionId: 'sid-old', streamPid: { pid: 6001, startTime: 1780000000000 } } } });
   t.after(() => h.stopAll());

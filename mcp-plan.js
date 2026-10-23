@@ -17,7 +17,6 @@ const SECRET_ENV_RE = /(TOKEN|SECRET|PASSWORD|API_KEY)$/i;
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const isStrMap = (v) => isObj(v) && Object.values(v).every((x) => typeof x === 'string');
 const isStrList = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
-const DENY_TOOL_RE = /^(?!.*__)[A-Za-z0-9_-]+$/;
 
 function mcpNameError(name) {
   if (typeof name !== 'string' || !MCP_NAME_RE.test(name)) return `invalid MCP server name: ${name}`;
@@ -70,10 +69,6 @@ function validateMcpEntry(entry) {
     && !(isStrList(entry.platforms) && entry.platforms.every((p) => MCP_PLATFORMS.includes(p)))) {
     errors.push(`platforms must be a subset of ${MCP_PLATFORMS.join('|')}`);
   }
-  if (entry.denyTools !== undefined
-    && !(isStrList(entry.denyTools) && entry.denyTools.every((t) => DENY_TOOL_RE.test(t)))) {
-    errors.push('denyTools must be an array of tool names of letters, digits, _ and -, without __');
-  }
   errors.push(...secretLintErrors(entry));
   return { ok: errors.length === 0, errors };
 }
@@ -120,16 +115,6 @@ function resolveMcpEntry(entry, env) {
   return { resolved: shape, missing: [] };
 }
 
-function denyToolsOf(entry) {
-  return isObj(entry) && isStrList(entry.denyTools) ? [...new Set(entry.denyTools)].sort() : [];
-}
-
-function digestShape(entry) {
-  const shape = cliShape(entry);
-  const deny = denyToolsOf(entry);
-  return deny.length ? { ...shape, denyTools: deny } : shape;
-}
-
 function canonical(value) {
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
   if (isObj(value)) return `{${Object.keys(value).sort().map((k) => `${JSON.stringify(k)}:${canonical(value[k])}`).join(',')}}`;
@@ -153,10 +138,9 @@ function claudeMcpServers({ selected, library, env, cli = 'claude' } = {}) {
   const servers = {};
   const shapes = {};
   const warnings = [];
-  const denied = {};
   const lib = libraryMap(library);
-  const picked = [...new Set((Array.isArray(selected) ? selected : []).filter((n) => typeof n === 'string'))];
-  for (const n of picked) {
+  const names = [...new Set((Array.isArray(selected) ? selected : []).filter((n) => typeof n === 'string'))];
+  for (const n of names) {
     const nameErr = mcpNameError(n);
     if (nameErr) { warnings.push(`MCP ${n}: ${nameErr}`); continue; }
     const entry = lib.get(n);
@@ -173,15 +157,9 @@ function claudeMcpServers({ selected, library, env, cli = 'claude' } = {}) {
       continue;
     }
     servers[n] = resolved;
-    shapes[n] = digestShape(entry);
-    const deny = denyToolsOf(entry);
-    if (deny.length) denied[n] = deny;
+    shapes[n] = cliShape(entry);
   }
-  const names = Object.keys(servers).sort();
-  const denyRules = names.flatMap((n) => (denied[n] || []).map((t) => `mcp__${n}__${t}`));
-  const applied = { names, digest: mcpDigest(shapes), denyRules };
-  if (Object.keys(denied).length) applied.denied = denied;
-  return { servers, warnings, applied };
+  return { servers, warnings, applied: { names: Object.keys(servers).sort(), digest: mcpDigest(shapes) } };
 }
 
 function mcpArgvPlan({ userMcp, userStrict, mcpPath }) {
@@ -272,6 +250,6 @@ function normaliseDiscovered(entry) {
 
 module.exports = {
   MCP_NAME_RE, RESERVED_MCP_NAMES, MCP_TYPES, MCP_PLATFORMS, MCP_TOOL_RE,
-  mcpNameError, validateMcpEntry, secretRefs, resolveMcpEntry, cliShape, digestShape, mcpDigest,
+  mcpNameError, validateMcpEntry, secretRefs, resolveMcpEntry, cliShape, mcpDigest,
   claudeMcpServers, mcpArgvPlan, mcpServerOf, mcpLeaks, discoverMcpSources, normaliseDiscovered,
 };

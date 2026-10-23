@@ -43,15 +43,6 @@ test('mcp:appliedStale: an edited or deleted library entry since spawn reads sta
   assert.strictEqual(gone('s').stale, true, 'a deleted entry is not what the seat loaded');
 });
 
-test('mcp:appliedStale: a denyTools entry is fresh as spawned and stale once its deny list changes', () => {
-  const lib = { docs: { ...DOCS, denyTools: ['write'] } };
-  const applied = appliedFor(lib, ['docs']);
-  assert.deepStrictEqual(applied.denied, { docs: ['write'] }, 'ENTER: the deny list was applied at spawn');
-  assert.strictEqual(door({ name: 's', type: 'claude', mcpServers: ['docs'], mcpApplied: applied }, lib)('s').stale, false);
-  const edited = door({ name: 's', type: 'claude', mcpServers: ['docs'], mcpApplied: applied }, { docs: { ...DOCS, denyTools: ['write', 'delete'] } });
-  assert.strictEqual(edited('s').stale, true);
-});
-
 test('mcp:appliedStale: an unmanaged record with nothing applied, and an unknown seat', () => {
   const ask = door({ name: 'u', mcpUnmanaged: true }, {});
   assert.deepStrictEqual(ask('u'), { ok: true, servers: [], unmanaged: true, stale: false });
