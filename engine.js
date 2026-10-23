@@ -172,6 +172,7 @@ function createEngine({ userDataPath, seams = {}, log }) {
   const openRemoteWindow = seams.openRemoteWindow || ((_key, url) => openExternalSeam(url));
   const closeRemoteWindow = seams.closeRemoteWindow || (() => {});
   const onRemoteWindowClosed = seams.onRemoteWindowClosed || (() => {});
+  const onRemoteWindowBounds = seams.onRemoteWindowBounds || (() => {});
   const notifyOS = seams.notifyOS || (() => {});
   const setAppQuitting = seams.setAppQuitting || (() => {});
   const appVersion = seams.appVersion || require('./package.json').version;
@@ -1883,7 +1884,7 @@ const {
   setTunnelManager: (v) => { tunnelManager = v; },
   getWebTunnelManager: () => webTunnelManager,
   setWebTunnelManager: (v) => { webTunnelManager = v; },
-  openRemoteWindow, closeRemoteWindow, onRemoteWindowClosed,
+  openRemoteWindow, closeRemoteWindow, onRemoteWindowClosed, onRemoteWindowBounds,
 });
 
 const { createSandboxManager } = require('./sandbox');

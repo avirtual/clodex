@@ -3190,6 +3190,35 @@ test('uiSettings: sanitizePeerNameMap drops bad names; an emptied list is droppe
   }
 });
 
+test('uiSettings: sanitizePeerWebOpen drops bad ids and bad bounds, round-trips a good record through the file', () => {
+  const rows = [
+    [{ 'p-1': { bounds: { x: -20, y: 30, width: 900, height: 700 } } }, { 'p-1': { bounds: { x: -20, y: 30, width: 900, height: 700 } } }],
+    [{ p1: { bounds: { x: 1.5, y: 0, width: 900, height: 700 } } }, { p1: {} }],
+    [{ p1: { bounds: { x: 0, y: 0, width: 900 } } }, { p1: {} }],
+    [{ p1: { bounds: { x: 0, y: 0, width: Infinity, height: 700 } } }, { p1: {} }],
+    [{ 'a/b': {}, 'has space': {}, '': {}, p1: 'yes' }, {}],
+  ];
+  for (const [input, want] of rows) {
+    const { stores, cleanup } = freshStores();
+    try {
+      stores.uiSettings.set({ peerWebOpen: input });
+      assert.deepStrictEqual(stores.uiSettings.get().peerWebOpen, want, JSON.stringify(input));
+    } finally { cleanup(); }
+  }
+  const { stores, userData, cleanup } = freshStores();
+  try {
+    const good = { 'a1b2-c3': { bounds: { x: 5, y: 6, width: 800, height: 600 } } };
+    stores.uiSettings.set({ peerWebOpen: good });
+    const file = path.join(userData, 'ui-settings.json');
+    const onDisk = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    assert.deepStrictEqual(onDisk.peerWebOpen, good);
+    fs.writeFileSync(file, JSON.stringify({ ...onDisk, peerWebOpen: { ...good, 'x y': {} } }));
+    assert.deepStrictEqual(stores.uiSettings.get().peerWebOpen, good);
+    stores.uiSettings.set({ lastRebootAt: 1 });
+    assert.deepStrictEqual(stores.uiSettings.get().peerWebOpen, good);
+  } finally { cleanup(); }
+});
+
 test('uiSettings: peer disabled flag round-trips (strict true only)', () => {
   const { stores, cleanup } = freshStores();
   try {
