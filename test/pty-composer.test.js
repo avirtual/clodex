@@ -544,6 +544,7 @@ test('both composers mount the paperclip and the web drop on terminalContainer a
   const drop = src.slice(src.indexOf("terminalContainer.addEventListener('drop'"), src.indexOf("const { webUtils } = window.require('electron');"));
   assert.match(drop, /if \(window\.__CLODEX_WEB__ \|\| !window\.require\) \{\n\s*const \{ images, rejected \} = imageFilesOf\(files\);/u);
   assert.match(drop, /if \(sink && images\.length\) sink\(images\);/u);
+  assert.match(drop, /if \(!sink && images\.length && entry && entry\.attachImageFiles\) showToast\('Switch to the composer view to attach images\.'/u);
   assert.match(drop, /if \(!sink \|\| rejected\.length\) showToast\('Dropping files needs the desktop app/u);
   const css = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
   assert.match(css, /\.seat-composer\.seat-composer-attach \{\n {2}padding-right: 32px;\n\}/u);
