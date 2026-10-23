@@ -10,11 +10,11 @@ opens a fresh empty one — so anything missing from it is missing from the
 release. Text after `## Unreleased —` becomes the release subtitle. An empty or
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
-- Library ▸ MCP Servers manages entries and imports the ones your Claude config already knows (secrets stay in Preferences ▸ Environment, never in the library); New Session and Edit settings pick a seat's servers (restart applies); the seat hovercard shows the set, and the context popover marks each server built-in, selected, or a leak that reached the seat outside its selection.
 
 ## Unreleased
 
 - MCP servers are now a Clodex library: a seat loads only the `~/.clodex/library/mcp` entries you select for it, every Claude seat runs `--strict-mcp-config`, and a notice at each spawn names servers from your Claude config that need importing. `claude_design` is no longer loaded into managed seats (the 'Disable claude_design MCP' preference is gone). Credential-protected seats cannot read any seat's resolved MCP file. Whether servers bundled in CLI plugins are excluded is not yet verified.
+- Library ▸ MCP Servers manages entries and imports the ones your Claude config already knows (secrets stay in Preferences ▸ Environment, never in the library); New Session and Edit settings pick a seat's servers (restart applies); the seat hovercard shows the set, and the context popover marks each server built-in, selected, or a leak that reached the seat outside its selection.
 
 ## 5.134.0 — 2026-10-23
 
