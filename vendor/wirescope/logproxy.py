@@ -20,7 +20,7 @@ owning module instead, e.g. `lp.warmth.WARMTH_LEDGER = False`.
 from proxylab.server import app  # noqa: F401  (eager: uvicorn logproxy:app)
 from proxylab import (core, store, accounts, codex, muse, transforms, canary, writer, warmth,  # noqa: F401
                       subs, meta, pinger, hold, billing, quota, receipts, report,
-                      prune, restore, spill, status, views, server,
+                      prune, costs, restore, spill, status, views, server,
                       fold, hints, hints_native, tokest, bake_session)
 
 # Fixed search order for __getattr__ (original file order; server last). Names
@@ -35,7 +35,7 @@ from proxylab import (core, store, accounts, codex, muse, transforms, canary, wr
 # are what let this drift in the first place.
 _SUBMODULES = (core, store, accounts, codex, muse, transforms, canary, writer, warmth, subs,
                meta, pinger, hold, billing, quota, receipts, report, prune,
-               restore, spill, status, views, server,
+               costs, restore, spill, status, views, server,
                fold, hints, hints_native, tokest, bake_session)
 
 

@@ -23,6 +23,7 @@ import time
 from proxylab import billing as billing_mod
 from proxylab import codex as codex_mod
 from proxylab import core as core_mod
+from proxylab import costs as costs_mod
 from proxylab import hints as hints_mod
 from proxylab import hints_native as hints_native_mod
 from proxylab import meta as meta_mod
@@ -138,6 +139,10 @@ def anthropic(blob, *, n, ts, agent, role, model, session_id, session_key,
     line = ("main" if role in ("parent", "unknown", None)
             else (agent_header_id or role))
     cum = billing_mod._accumulate(bill, session_key, stop, line=line)
+    writer_mod._enqueue_cost(costs_mod.live_row(
+        agent=agent, session_id=session_id, provider="anthropic", bill=bill,
+        stop=stop, role=role, sidecall=sidecall, keepwarm=keepwarm,
+        agent_type=agent_type, model=model))
     writer_mod._enqueue_json(out_dir / f"{stem}.response.json",
         {"seq": n, "agent": agent, "role": role, "model": model,
          "session_id": session_id,
@@ -247,6 +252,9 @@ def openai(blob, *, n, ts, agent, model, session_id, session_key,
     # kind is its own line
     cum = billing_mod._accumulate(bill, session_key, stop,
                                   line=sidecall or "main")
+    writer_mod._enqueue_cost(costs_mod.live_row(
+        agent=agent, session_id=session_id, provider=provider, bill=bill,
+        stop=stop, sidecall=sidecall, model=model))
     writer_mod._enqueue_json(out_dir / f"{stem}.response.json",
         {"seq": n, "agent": agent, "provider": provider,
          "model": model, "session_id": session_id,

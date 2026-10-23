@@ -5,6 +5,7 @@ import os
 import re
 import threading
 import time
+import urllib.parse
 
 from starlette.applications import Starlette
 from starlette.concurrency import run_in_threadpool
@@ -18,6 +19,7 @@ from proxylab import billing as billing_mod
 from proxylab import canary as canary_mod
 from proxylab import codex as codex_mod
 from proxylab import core as core_mod
+from proxylab import costs as costs_mod
 from proxylab import fold as fold_mod
 from proxylab import hints as hints_mod
 from proxylab import hints_native as hints_native_mod
@@ -644,6 +646,16 @@ def _session_filters(q):
             "hide_ended": q.get("ended") in ("0", "no", "false")}
 
 
+def _costs_error_html(params, err):
+    return views_mod._render_costs_html(params, None, error=str(err),
+                                        presets=costs_mod.presets())
+
+
+async def _costs_error_page(params, err):
+    return Response(await run_in_threadpool(_costs_error_html, params, err),
+                    status_code=400, media_type="text/html; charset=utf-8")
+
+
 async def handler(request: Request) -> Response:
     # ---- HEAD preflight (CLI >= Bun-1.4 builds, 2026-07-20) -------------------
     # Newer claude CLIs HEAD the ANTHROPIC_BASE_URL once at startup as a
@@ -891,6 +903,63 @@ async def handler(request: Request) -> Response:
                       f"({res['sessions_pruned']} sessions)", flush=True)
             return Response(json.dumps(res, indent=2),
                             media_type="application/json")
+
+    if request.method == "GET" and request.url.path.rstrip("/") == "/_costs":
+        params = dict(request.query_params)
+        page = params.get("html") in ("1", "yes", "true")
+        try:
+            res = await run_in_threadpool(costs_mod.query, params)
+        except ValueError as e:
+            if page:
+                return await _costs_error_page(params, e)
+            return Response(json.dumps({"error": str(e)}), status_code=400,
+                            media_type="application/json")
+        if page:
+            return Response(await run_in_threadpool(views_mod._render_costs_html,
+                                                    params, res, res["presets"]),
+                            media_type="text/html; charset=utf-8")
+        return Response(json.dumps(res, indent=2), media_type="application/json")
+
+    if (request.url.path.rstrip("/") == "/_costs/presets"
+            and request.method in ("POST", "DELETE")):
+        if request.method == "DELETE":
+            try:
+                removed = await run_in_threadpool(costs_mod.delete_preset,
+                                                  request.query_params.get("name"))
+            except ValueError as e:
+                return Response(json.dumps({"error": str(e)}), status_code=400,
+                                media_type="application/json")
+            return Response(json.dumps({"ok": True, "removed": removed}),
+                            media_type="application/json")
+        raw = await request.body()
+        try:
+            body = json.loads(raw or b"null")
+        except ValueError:
+            body = None
+        form = not isinstance(body, dict) and request.headers.get(
+            "content-type", "").startswith("application/x-www-form-urlencoded")
+        if form:
+            body = dict(urllib.parse.parse_qsl(raw.decode("utf-8", "replace")))
+        tok = request.query_params.get("token")
+        try:
+            if not isinstance(body, dict):
+                raise ValueError('body: expected JSON {"name": ..., "params": ...}')
+            row = await run_in_threadpool(costs_mod.save_preset, body.get("name"),
+                                          body.get("params"))
+        except ValueError as e:
+            if form:
+                echo = dict(urllib.parse.parse_qsl(str(body.get("params") or "")))
+                if tok:
+                    echo["token"] = tok
+                return await _costs_error_page(echo, e)
+            return Response(json.dumps({"error": str(e)}), status_code=400,
+                            media_type="application/json")
+        if form:
+            return Response(status_code=303, headers={
+                "location": views_mod._costs_page_href(row["params"],
+                                                       {"token": tok})})
+        return Response(json.dumps({"ok": True, "preset": row}),
+                        media_type="application/json")
 
     # ---- timeline page: per-request cost evolution, for humans -----------------
     # GET /_timeline?session=<id> — read-only HTML render of the cost-over-time
@@ -2123,6 +2192,7 @@ async def _lifespan(app):
     # is a cache warm, and the scan is correct without it either way.
     threading.Thread(target=prune_mod.warm_stats_memo,
                      name="prune-memo-warm", daemon=True).start()
+    costs_mod.start_backfill()
     yield
 
 

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from proxylab import billing as billing_mod
 from proxylab import codex as codex_mod
+from proxylab import costs as costs_mod
 from proxylab import muse as muse_mod
 from proxylab import core as core_mod
 from proxylab import hold as hold_mod
@@ -282,7 +283,7 @@ def _render_admin_html(snap, host="", show=60, by="state"):
     head = (
         f'<h1>wirescope <small>· {e(p.get("version") or "?")} '
         f'· {e(p["log_dir"])} @ {e(host or "localhost")} '
-        f'&rarr; {e(p["upstream"])}</small></h1>'
+        f'&rarr; {e(p["upstream"])} · <a href="/_costs?html=1">costs</a></small></h1>'
         f'<p class="kv">'
         f'<span>up <b>{e(_fmt_dur(p["uptime_s"]))}</b></span>'
         f'<span>{flags}</span>'
@@ -2191,3 +2192,293 @@ _TL_CSS = """
   .crumb a{color:#5b8def;text-decoration:none}
   .crumb a:hover{text-decoration:underline}
 """
+
+
+_COSTS_CSS = """
+table.costs{table-layout:auto}
+table.costs th,table.costs td{width:auto}
+table.costs td.n,table.costs th.n{text-align:right;white-space:nowrap}
+table.costs details ul{margin:.3em 0 .2em 1.2em;padding:0}
+table.costs summary{cursor:pointer}
+form.costs input[type=text]{background:#191c21;color:#cdd3dd;border:1px solid #2a2e36;
+     font:inherit;padding:.15em .4em}
+form.costs input.wide{width:34em}
+form.costs select,form.costs button{background:#191c21;color:#cdd3dd;
+     border:1px solid #2a2e36;font:inherit}
+form.costs label{margin-right:1em;white-space:nowrap}
+.banner{border:1px solid #2a2e36;border-radius:3px;padding:.4em .7em}
+.chart{border:1px solid #2a2e36;border-radius:3px;padding:.6em;margin:.8em 0}
+.chart svg{width:100%;height:auto}
+.chart .grid{stroke:#2a2e36;stroke-width:1}
+.chart .yl{fill:#69707d;font-size:10px;text-anchor:end}
+.chart .xl{fill:#69707d;font-size:10px;text-anchor:middle}
+.legend span{margin-right:1.2em;white-space:nowrap}
+.legend i{display:inline-block;width:.8em;height:.8em;margin-right:.35em}
+"""
+_COSTS_PALETTE = ("#5b8def", "#e0794b", "#46c08a", "#d4b14a", "#b97fe0",
+                  "#e06c75", "#56b6c2", "#c8a0e0")
+_COSTS_OTHER = "#4b525e"
+_COSTS_SPLIT_TOP = 6
+_COSTS_TABLE_MAX = 300
+_COSTS_CHART_MAX = 400
+_COSTS_COARSER = {"hour": "day", "day": "week"}
+_COSTS_EXAMPLES = (
+    ("strip a trailing 8-hex suffix", r"^(.*?)(?:-[0-9a-f]{8})?$"),
+    ("first dash-separated token", r"^([^-]+)"),
+    ("drop a trailing date", r"^(.*?)(?:-\d{4}-\d{2}-\d{2})?$"),
+    ("by line", "@line"),
+    ("by model", "@model"),
+    ("by provider", "@provider"),
+)
+
+
+def _costs_usd(v):
+    v = v or 0.0
+    return f"${v:,.2f}" if v == 0 or abs(v) >= 0.01 else f"${v:.4f}"
+
+
+def _costs_qs(params, **override):
+    merged = {k: params.get(k) for k in costs_mod.PARAM_KEYS}
+    merged.update(override)
+    return urllib.parse.urlencode([(k, merged[k]) for k in costs_mod.PARAM_KEYS
+                                   if merged.get(k)])
+
+
+def _costs_tok(params):
+    tok = params.get("token")
+    return urllib.parse.urlencode({"token": tok}) if tok else ""
+
+
+def _costs_href(path, *parts):
+    qs = "&".join(p for p in parts if p)
+    return path + ("?" + qs if qs else "")
+
+
+def _costs_page_href(qs, params):
+    return _costs_href("/_costs", "html=1", qs, _costs_tok(params))
+
+
+def _costs_key_cell(v):
+    e = html.escape
+    if v is None:
+        return '<span class="dim">—</span>'
+    return e(v) if v else '<span class="dim">(none)</span>'
+
+
+def _costs_axis(rng, bucket):
+    coarser = _COSTS_COARSER.get(bucket)
+    starts = []
+    b = costs_mod._bucket_start(rng["hour_from"], bucket)
+    while b < rng["hour_to"]:
+        if coarser and len(starts) == _COSTS_CHART_MAX:
+            return _costs_axis(rng, coarser)
+        starts.append(b)
+        b = costs_mod._bucket_next(b, bucket)
+    return bucket, starts
+
+
+def _costs_chart(series, rng):
+    e = html.escape
+    series = series or {}
+    labels = series.get("groups") or []
+    asked = series.get("bucket") or "day"
+    bucket, starts = _costs_axis(rng, asked)
+    vals = {}
+    for pt in series.get("points") or ():
+        b = pt["start"] if bucket == asked else costs_mod._bucket_start(pt["start"], bucket)
+        acc = vals.setdefault(b, [0.0] * len(pt["est_usd"]))
+        for j, v in enumerate(pt["est_usd"]):
+            acc[j] += v
+    if not vals:
+        return '<p class="dim">no cost recorded in this range</p>'
+    colors = [_COSTS_PALETTE[i % len(_COSTS_PALETTE)] for i in range(len(labels) - 1)]
+    colors.append(_COSTS_OTHER)
+    n = len(starts)
+    fmt = "%Y-%m-%dT%H:%M" if bucket == "hour" else "%Y-%m-%d"
+    ymax = max(sum(v) for v in vals.values()) * 1.08 or 1
+    inner = _TL_W - 2 * _TL_PAD
+    slot = inner / n
+    g = []
+    for i in range(5):
+        y = _TL_PAD + (_TL_H - 2 * _TL_PAD) * i / 4
+        g.append(f'<line x1="{_TL_PAD}" y1="{y:.1f}" x2="{_TL_W - _TL_PAD}" '
+                 f'y2="{y:.1f}" class="grid"/>'
+                 f'<text x="{_TL_PAD - 6}" y="{y + 3:.1f}" class="yl">'
+                 f'{e(_costs_usd(ymax * (1 - i / 4)))}</text>')
+    every = max(1, math.ceil(n / 12))
+    for i, b in enumerate(starts):
+        x = _TL_PAD + i * slot + slot * 0.1
+        w = max(slot * 0.8, 0.5)
+        lbl = costs_mod._iso(b, fmt)
+        cum = 0.0
+        for j, v in enumerate(vals.get(b, ())):
+            if v <= 0:
+                continue
+            y0, y1 = _tl_y(cum, ymax), _tl_y(cum + v, ymax)
+            cum += v
+            g.append(f'<rect x="{x:.1f}" y="{y1:.1f}" width="{w:.1f}" '
+                     f'height="{max(y0 - y1, 0.5):.1f}" fill="{colors[j]}">'
+                     f'<title>{e(labels[j])} · {e(lbl)} · '
+                     f'{e(_costs_usd(v))}</title></rect>')
+        if i % every == 0:
+            g.append(f'<text x="{x + w / 2:.1f}" y="{_TL_H - _TL_PAD + 16}" '
+                     f'class="xl">{e(lbl)}</text>')
+    legend = "".join(f'<span><i style="background:{c}"></i>{e(lbl)}</span>'
+                     for lbl, c in zip(labels, colors))
+    note = (f'<p class="dim">chart drawn by {e(bucket)}: the range holds over '
+            f'{_COSTS_CHART_MAX} {e(asked)} buckets</p>' if bucket != asked else "")
+    return (f'<div class="chart"><svg viewBox="0 0 {_TL_W} {_TL_H}">{"".join(g)}'
+            f'</svg><p class="legend">{legend}</p>{note}</div>')
+
+
+def _costs_form(params):
+    e = html.escape
+    def text(k, wide=False, ph=""):
+        return (f'<label>{k} <input type="text" name="{k}" value="{e(params.get(k) or "")}"'
+                f'{" class=wide" if wide else ""} placeholder="{e(ph)}"></label>')
+    def select(k, options):
+        cur = params.get(k) or ""
+        opts = "".join(f'<option value="{e(o)}"{" selected" if o == cur else ""}>'
+                       f'{e(o or "—")}</option>' for o in options)
+        return f'<label>{k} <select name="{k}">{opts}</select></label>'
+    tok = params.get("token")
+    return ('<form class="costs" method="get" action="/_costs">'
+            '<input type="hidden" name="html" value="1">'
+            + (f'<input type="hidden" name="token" value="{e(tok)}">' if tok else "") +
+            f'<p>{text("since", ph="30d")}{text("until", ph="now")}'
+            f'{select("split", ("",) + costs_mod.SPLITS)}'
+            f'{select("bucket", costs_mod.BUCKETS)}</p>'
+            f'<p>{text("match", wide=True, ph="regex: only these agents")}</p>'
+            f'<p>{text("group", wide=True, ph="regex or @agent / @line / @model")} '
+            '<button type="submit">show</button></p></form>')
+
+
+def _costs_examples(params):
+    e = html.escape
+    links = "".join(
+        f'<a class="chip" href="{e(_costs_page_href(_costs_qs(params, group=pat), params))}"'
+        f' title="group={e(pat)}">{e(lbl)}</a>' for lbl, pat in _COSTS_EXAMPLES)
+    return f'<p class="kv filters"><span class="dim">group examples</span>{links}</p>'
+
+
+def _costs_presets(params, presets):
+    e = html.escape
+    links = "".join(
+        f'<a class="chip" href="{e(_costs_page_href(pr["params"], params))}" '
+        f'title="{e(pr["params"])}">{e(pr["name"])}</a>' for pr in presets or ())
+    if not links:
+        links = '<span class="dim">none saved</span>'
+    save = ('<form class="costs" method="post" '
+            f'action="{e(_costs_href("/_costs/presets", _costs_tok(params)))}">'
+            f'<input type="hidden" name="params" value="{e(_costs_qs(params))}">'
+            f'<input type="text" name="name" maxlength="{costs_mod.MAX_PRESET_NAME}" '
+            'placeholder="preset name"> <button type="submit">save current as preset'
+            '</button></form>')
+    return f'<p class="kv filters"><span class="dim">presets</span>{links}</p>{save}'
+
+
+def _costs_agents(top):
+    e = html.escape
+    items = []
+    for a in top or ():
+        name = a["agent"]
+        who = (f'<a href="/_admin?agent={e(urllib.parse.quote(name, safe=""))}">{e(name)}</a>'
+               if name else '<span class="dim">(unrouted)</span>')
+        items.append(f'<li>{who} <b>{e(_costs_usd(a["est_usd"]))}</b> '
+                     f'<span class="dim">· {a["sessions"]} sessions</span></li>')
+    return "<ul>" + "".join(items) + "</ul>"
+
+
+def _costs_table(res):
+    e = html.escape
+    cols = res["group"]["columns"]
+    groups = res["groups"]
+    split_cols = []
+    if res.get("split"):
+        tot = {}
+        for g in groups:
+            for v, u in (g.get("split") or {}).items():
+                tot[v] = tot.get(v, 0.0) + u
+        split_cols = [v for v, _ in sorted(tot.items(), key=lambda kv: (-kv[1], kv[0]))
+                      ][:_COSTS_SPLIT_TOP]
+    other = res.get("split") and len(split_cols) < len(
+        {v for g in groups for v in (g.get("split") or {})})
+    head = ("".join(f"<th>{e(c)}</th>" for c in cols)
+            + '<th class="n">$</th><th class="n">%</th><th class="n">sessions</th>'
+            '<th class="n">requests</th><th class="n">$/session</th>'
+            + "".join(f'<th class="n">{e(res["split"])}={_costs_key_cell(v)}</th>'
+                      for v in split_cols)
+            + (f'<th class="n">{e(res["split"])}=other</th>' if other else ""))
+    rows = []
+    for g in groups[:_COSTS_TABLE_MAX]:
+        key = g["key"]
+        first = (f'<details><summary>{_costs_key_cell(key.get(cols[0]))}</summary>'
+                 f'{_costs_agents(g.get("top_agents"))}</details>')
+        cells = [f"<td>{first}</td>"] + [f"<td>{_costs_key_cell(key.get(c))}</td>"
+                                        for c in cols[1:]]
+        ups = g.get("usd_per_session")
+        cells.append(f'<td class="n"><b>{e(_costs_usd(g["est_usd"]))}</b></td>'
+                     f'<td class="n">{g["pct"]:.1f}%</td>'
+                     f'<td class="n">{g["sessions"]}</td><td class="n">{g["requests"]}</td>'
+                     f'<td class="n">{"—" if ups is None else e(_costs_usd(ups))}</td>')
+        sp = g.get("split") or {}
+        for v in split_cols:
+            cells.append(f'<td class="n">{e(_costs_usd(sp.get(v, 0.0)))}</td>')
+        if other:
+            rest = sum(u for v, u in sp.items() if v not in split_cols)
+            cells.append(f'<td class="n">{e(_costs_usd(rest))}</td>')
+        rows.append("<tr>" + "".join(cells) + "</tr>")
+    if not rows:
+        return '<p class="dim">no rows in this range</p>'
+    rest = groups[_COSTS_TABLE_MAX:]
+    more = (f'<p class="dim">{len(rest)} more groups, '
+            f'{e(_costs_usd(sum(g["est_usd"] for g in rest)))}</p>' if rest else "")
+    return (f'<table class="costs"><thead><tr>{head}</tr></thead>'
+            f'<tbody>{"".join(rows)}</tbody></table>{more}')
+
+
+def _render_costs_html(params, res, presets=(), error=None):
+    e = html.escape
+    params = params or {}
+    qs = _costs_qs(params)
+    head = ('<h1>wirescope <small>· cost history · '
+            '<a href="/_admin">sessions</a> · '
+            f'<a href="{e(_costs_href("/_costs", qs, _costs_tok(params)))}">json</a></small></h1>')
+    parts = [head]
+    if error is not None:
+        parts.append(f'<p class="banner bad">400 · {e(error)}</p>')
+    bf = (res or {}).get("backfill") or {}
+    if res is not None and bf.get("state") != "done":
+        parts.append(
+            f'<p class="banner warn">backfill {e(str(bf.get("state")))}: '
+            f'{bf.get("dirs_done") or 0}/{bf.get("dirs_total") or 0} dirs — totals '
+            'before the cutoff '
+            f'{e(costs_mod._iso(bf.get("cutoff")) or "")} are partial until it '
+            'finishes</p>')
+    parts += [_costs_form(params), _costs_examples(params),
+              _costs_presets(params, presets)]
+    if res is not None:
+        t, rg, cov = res["totals"], res["range"], res["coverage"]
+        unp = t.get("unpriced_requests") or 0
+        parts.append(
+            '<p class="kv">'
+            f'<span>{e(rg["since_local"])} &rarr; {e(rg["until_local"])}</span>'
+            f'<span>est <b>{e(_costs_usd(t["est_usd"]))}</b>'
+            f'{f" <span class=warn>(+{unp} unpriced)</span>" if unp else ""}</span>'
+            f'<span>requests <b>{t["requests"]}</b></span>'
+            f'<span>turns <b>{t["turns"]}</b></span>'
+            f'<span>sessions <b>{t["sessions"]}</b></span>'
+            f'<span>agents <b>{t["agents"]}</b></span>'
+            f'<span>in <b>{e(_fmt_tok(t["input_tokens"]))}</b></span>'
+            f'<span>out <b>{e(_fmt_tok(t["output_tokens"]))}</b></span>'
+            f'<span>cache r/w <b>{e(_fmt_tok(t["cache_read_tokens"]))}/'
+            f'{e(_fmt_tok(t["cache_write_tokens"]))}</b></span></p>')
+        parts.append(_costs_chart(res.get("series"), rg))
+        parts.append(_costs_table(res))
+        parts.append(
+            f'<p class="dim">basis: {e(res["basis"])} · data from '
+            f'{e(cov.get("first_local") or "—")} to {e(cov.get("last_local") or "—")}</p>')
+    return ('<!doctype html><html><head><meta charset="utf-8">'
+            '<title>wirescope · costs</title>'
+            f'<style>{_ADMIN_CSS}{_COSTS_CSS}</style></head><body>'
+            + "".join(parts) + "</body></html>")

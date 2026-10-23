@@ -41,6 +41,8 @@ def _writer_loop():
                 proxylab.pinger._persist_last_request_row(*data)
             elif kind == "lastreq_del":
                 proxylab.pinger._delete_last_request_row(data)
+            elif kind == "cost":
+                proxylab.costs._add_rows([data])
             elif kind == "bytes":
                 path.write_bytes(data)
             elif kind == "append":  # one JSON object per line (canary change-log)
@@ -123,6 +125,10 @@ def _enqueue_last_request(session_id, account_uuid, path, ts, obj, safe_headers)
 
 def _enqueue_last_request_delete(session_id):
     _WRITE_Q.put((None, "lastreq_del", session_id))
+
+
+def _enqueue_cost(row):
+    _WRITE_Q.put((None, "cost", row))
 
 
 def _session_ids(obj):
