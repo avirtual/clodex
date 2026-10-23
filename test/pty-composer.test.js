@@ -4,8 +4,8 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { ptyComposerWrites, pasteKind, imageChip, expandImageChips, ptyImagePasteHandler, removeImageChip, chippedImages, renderImageStrip } = require('../renderer/lib/pty-composer');
-const { clipboardImages } = require('../renderer/lib/clipboard-images');
+const { ptyComposerWrites, pasteKind, imageChip, expandImageChips, ptyImagePasteHandler, attachImages, STRIPPED_PASTE_NOTICE, removeImageChip, chippedImages, renderImageStrip } = require('../renderer/lib/pty-composer');
+const { clipboardImages, readImageFile } = require('../renderer/lib/clipboard-images');
 const { PASTE_OPEN, PASTE_CLOSE, bracketPaste } = require('../renderer/lib/composer-voice');
 
 test('a draft is written as a bracketed paste then a carriage return', () => {
@@ -184,11 +184,14 @@ test('on the desktop a pasted image writes Ctrl-V, appends the chip and never up
 
 test('the pty composer wires its paste listener through ptyImagePasteHandler and expands chips on send', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
-  const m = src.match(/composerEl\.addEventListener\('paste', ptyImagePasteHandler\(\{([\s\S]*?)\n {4}\}\)\);/u);
-  assert.ok(m, 'renderer.js registers the shared paste handler on composerEl');
-  assert.match(m[1], /isWeb: \(\) => Boolean\(window\.__CLODEX_WEB__ \|\| !window\.require\)/u);
+  const p = src.match(/composerEl\.addEventListener\('paste', ptyImagePasteHandler\(\{([\s\S]*?)\n {4}\}\)\);/u);
+  assert.ok(p, 'renderer.js registers the shared paste handler on composerEl');
+  assert.match(p[1], /\.\.\.ptyImageSink,/u);
+  assert.match(p[1], /isWeb: \(\) => Boolean\(window\.__CLODEX_WEB__ \|\| !window\.require\)/u);
+  assert.match(p[1], /readImages: \(items\) => clipboardImages\(items, FileReader\)/u);
+  const m = src.match(/const ptyImageSink = composerEl \? \{([\s\S]*?)\n {2}\} : null;/u);
+  assert.ok(m, 'renderer.js builds the image sink the paste handler and the paperclip share');
   assert.match(m[1], /upload: \(images\) => window\.api\.seatImageUpload\(name, images\)/u);
-  assert.match(m[1], /readImages: \(items\) => clipboardImages\(items, FileReader\)/u);
   assert.match(m[1], /if \(menuMirror\.on\(\)\) syncMenuMirror\(\);/u);
   assert.match(m[1], /pastedImagePaths\[n\] = path \|\| null;/u);
   assert.match(src, /ptyComposerWrites\(expandImageChips\(text, imagePaths\)\)/u);
@@ -341,7 +344,7 @@ test('a pending thumb is drawn dimmed', () => {
   assert.match(css, /\.seat-attachment-pending \{\n {2}opacity: 0\.5;\n\}/u);
 });
 
-function composerHarness() {
+function composerHarness(opts = {}) {
   const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
   const slice = (from, to) => {
     const i = src.indexOf(from);
@@ -352,6 +355,7 @@ function composerHarness() {
     return src.slice(i, j);
   };
   const start = src.indexOf('ptyImagePasteHandler({', src.indexOf("composerEl.addEventListener('paste', "));
+  const web = opts.web !== false;
   const handlerSrc = src.slice(start, src.indexOf('\n    }));', start) + '\n    })'.length);
   const document = { createElement: (tag) => {
     const node = fakeNode(tag);
@@ -362,6 +366,7 @@ function composerHarness() {
   } };
   const uploads = [];
   const writes = [];
+  const toasts = [];
   const env = {
     composerEl: { value: '', offsetHeight: 40, setSelectionRange() {} },
     document,
@@ -370,10 +375,13 @@ function composerHarness() {
     composerTrigger: { resetSpan() {} },
     liveSplit: null,
     writePty: (d) => writes.push(d),
-    window: { __CLODEX_WEB__: true, api: { seatImageUpload: () => { const d = deferred(); uploads.push(d); return d.promise; } } },
+    window: { __CLODEX_WEB__: web, require: web ? undefined : () => ({}), api: { seatImageUpload: (_name, images) => { const d = deferred(); d.images = images; uploads.push(d); return d.promise; } } },
     clipboardImages,
+    readImageFile,
+    attachImages,
     FileReader: FakeReader,
-    showToast() {},
+    showToast: (m) => toasts.push(m),
+    SEAT_IMAGE_MAX: 5,
     name: 'seat',
     ptyImagePasteHandler, chippedImages, renderImageStrip, removeImageChip, ptyComposerWrites, expandImageChips,
   };
@@ -381,7 +389,7 @@ function composerHarness() {
   const body = [
     slice('let pastedImages = 0;', '  const onMenuKey'),
     `const handler = ${handlerSrc};`,
-    'return { handler, send: sendPtyComposer, prune: pruneImageStrip, paths: () => pastedImagePaths, strip: imageStripEl };',
+    'return { handler, attachFiles: attachPtyFiles, send: sendPtyComposer, prune: pruneImageStrip, paths: () => pastedImagePaths, strip: imageStripEl };',
   ].join('\n');
   const out = new Function(...names, body)(...names.map((n) => env[n]));
   const event = {
@@ -389,7 +397,7 @@ function composerHarness() {
     preventDefault() {},
   };
   const paste = () => out.handler(event);
-  return { ...out, el: env.composerEl, uploads, writes, paste };
+  return { ...out, el: env.composerEl, uploads, writes, toasts, paste };
 }
 
 test('ENTER: a late upload failure from a sent draft leaves the next draft\'s [Image #1] chip in place', async () => {
@@ -438,4 +446,120 @@ test('ENTER: a pending chip typed over still binds its path when the upload land
   await again;
   assert.ok(!Object.hasOwn(h.paths(), 1));
   assert.strictEqual(h.strip.children.length, 0);
+});
+
+function attachRig(upload) {
+  const log = { toasts: [], order: [], added: [], attached: [], dropped: [], draft: '' };
+  let n = 0;
+  const deps = {
+    upload,
+    toast: (m) => log.toasts.push(m),
+    nextImage: () => { n += 1; return n; },
+    append: (added) => { log.order.push('append'); log.added.push(...added); for (const a of added) log.draft += a.chip; },
+    attached: (done) => { log.order.push('attached'); log.attached.push(...done); },
+    drop: (items) => { log.order.push('drop'); log.dropped.push(...items); for (const { n: k } of items) log.draft = removeImageChip(log.draft, k); },
+  };
+  return { log, deps };
+}
+
+test('attachImages appends every image pending, uploads them once, then attaches each with its path', async () => {
+  const uploads = [];
+  const { log, deps } = attachRig(async (images) => { log.order.push('upload'); uploads.push(images); return { ok: true, paths: ['/h/img-1.png', '/h/img-2.jpg'] }; });
+  const a = { mediaType: 'image/png', data: 'QUJD' };
+  const b = { mediaType: 'image/jpeg', data: 'REVG' };
+  await attachImages({ ...deps, images: [a, b] });
+  assert.deepStrictEqual(uploads, [[a, b]]);
+  assert.deepStrictEqual(log.order, ['append', 'upload', 'attached']);
+  assert.deepStrictEqual(log.added.map((x) => [x.n, x.chip, x.path, x.pending]), [[1, '[Image #1] ', null, true], [2, '[Image #2] ', null, true]]);
+  assert.deepStrictEqual(log.attached.map((x) => [x.n, x.path, x.pending]), [[1, '/h/img-1.png', false], [2, '/h/img-2.jpg', false]]);
+  assert.strictEqual(log.draft, '[Image #1] [Image #2] ');
+  assert.deepStrictEqual(log.toasts, []);
+});
+
+test('attachImages on a failed upload drops the chips it appended and toasts the error', async () => {
+  const { log, deps } = attachRig(async () => ({ ok: false, error: 'at most 5 images per message' }));
+  await attachImages({ ...deps, images: [{ mediaType: 'image/png', data: 'QUJD' }] });
+  assert.deepStrictEqual(log.order, ['append', 'drop']);
+  assert.strictEqual(log.dropped[0], log.added[0]);
+  assert.strictEqual(log.draft, '');
+  assert.deepStrictEqual(log.toasts, ['at most 5 images per message']);
+  assert.deepStrictEqual(log.attached, []);
+});
+
+test('attachImages with nothing readable toasts and never uploads', async () => {
+  const { log, deps } = attachRig(async () => { throw new Error('never'); });
+  await attachImages({ ...deps, images: [] });
+  assert.deepStrictEqual(log.toasts, ['No readable image.']);
+  assert.deepStrictEqual(log.order, []);
+});
+
+for (const [label, web, items, want] of [
+  ['an empty web paste names the paperclip', true, [], ['Your browser did not hand over the clipboard image — use the paperclip to attach it.']],
+  ['an empty desktop paste stays silent', false, [], []],
+  ['a web text paste stays silent', true, [{ kind: 'string', type: 'text/plain' }], []],
+]) {
+  test(`paste handler: ${label}`, async () => {
+    const toasts = [];
+    let prevented = 0;
+    const handler = ptyImagePasteHandler({
+      isWeb: () => web, readImages: async () => [], upload: async () => ({ ok: true }), toast: (m) => toasts.push(m),
+      nextImage: () => 1, append: () => {}, attached: () => {}, drop: () => {}, writePty: () => {},
+    });
+    await handler({ clipboardData: { items }, preventDefault: () => { prevented += 1; } });
+    assert.deepStrictEqual(toasts, want);
+    assert.strictEqual(prevented, 0);
+  });
+}
+
+test('STRIPPED_PASTE_NOTICE is the exported toast text', () => {
+  assert.strictEqual(STRIPPED_PASTE_NOTICE, 'Your browser did not hand over the clipboard image — use the paperclip to attach it.');
+});
+
+test('ENTER: on the desktop a picked file uploads through seatImageUpload, never Ctrl-V, and its chip binds the uploaded path', async () => {
+  const h = composerHarness({ web: false });
+  const done = h.attachFiles([{ url: 'data:image/png;base64,QUJD' }]);
+  await new Promise(setImmediate);
+  assert.strictEqual(h.el.value, '[Image #1] ');
+  assert.strictEqual(h.uploads.length, 1);
+  assert.deepStrictEqual(h.uploads[0].images, [{ mediaType: 'image/png', data: 'QUJD' }]);
+  h.uploads[0].resolve({ ok: true, paths: ['/h/img-1.png'] });
+  await done;
+  assert.deepStrictEqual(h.paths(), { 1: '/h/img-1.png' });
+  assert.deepStrictEqual(h.writes, []);
+});
+
+test('both composers mount the paperclip and the web drop on terminalContainer attaches images through the seat entry', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const stream = src.slice(src.indexOf('function createStreamSeatPane('), src.indexOf('function createTerminal('));
+  assert.match(stream, /attachPicker\(\{ doc: document, parent: wrapperEl, onFiles: \(files\) => attachFiles\(files\),/u);
+  assert.match(stream, /wrapperEl\.appendChild\(attachButton\(document, \(\) => streamPicker\.open\(\)\)\);/u);
+  assert.match(stream, /attachImageFiles: attachFiles,/u);
+  assert.match(src, /ptyPicker = attachPicker\(\{ doc: document, parent: wrapperEl, onFiles: attachPtyFiles,/u);
+  assert.match(src, /wrapperEl\.appendChild\(attachButton\(document, \(\) => ptyPicker\.open\(\)\)\);/u);
+  assert.doesNotMatch(src, /attachBtn\.hidden = /u, 'the pty paperclip is never hidden at build time, when the sidebar row does not exist yet');
+  assert.doesNotMatch(src.slice(src.indexOf('function createTerminal('), src.indexOf("terminalContainer.addEventListener('drop'")), /\.seat-attach-btn|attachButton\([^)]*\)\.hidden/u);
+  assert.match(src, /attachImages\(\{ \.\.\.ptyImageSink, images: read\.filter\(Boolean\) \}\)/u);
+  assert.match(src, /syncMenuMirror, attachImageFiles: composerEl \? attachPtyFiles : null \}/u);
+  assert.match(src, /stream, liveSplit: null, attachImageFiles: stream\.attachImageFiles \}/u);
+  const drop = src.slice(src.indexOf("terminalContainer.addEventListener('drop'"), src.indexOf("const { webUtils } = window.require('electron');"));
+  assert.match(drop, /if \(window\.__CLODEX_WEB__ \|\| !window\.require\) \{\n\s*const \{ images, rejected \} = imageFilesOf\(files\);/u);
+  assert.match(drop, /if \(sink && images\.length\) sink\(images\);/u);
+  assert.match(drop, /if \(!sink && images\.length && entry && entry\.attachImageFiles\) showToast\('Switch to the composer view to attach images\.'/u);
+  assert.match(drop, /if \(!sink \|\| rejected\.length\) showToast\('Dropping files needs the desktop app/u);
+  const css = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
+  assert.match(css, /\.seat-composer\.seat-composer-attach \{\n {2}padding-right: 32px;\n {2}scrollbar-gutter: stable;\n\}/u);
+  assert.match(css, /\.seat-composer\[hidden\] ~ \.seat-attach-btn \{\n {2}display: none;\n\}/u);
+});
+
+test('a pick of more than five images uploads the first five and toasts the overflow up front', async () => {
+  const h = composerHarness({ web: false });
+  const files = ['QUFB', 'QkJC', 'Q0ND', 'RERE', 'RUVF', 'RkZG', 'R0dH'].map((d) => ({ url: `data:image/png;base64,${d}` }));
+  const done = h.attachFiles(files);
+  assert.deepStrictEqual(h.toasts, ['2 image(s) not attached — at most 5 per message.']);
+  await new Promise(setImmediate);
+  assert.strictEqual(h.uploads.length, 1);
+  assert.deepStrictEqual(h.uploads[0].images.map((i) => i.data), ['QUFB', 'QkJC', 'Q0ND', 'RERE', 'RUVF']);
+  h.uploads[0].resolve({ ok: true, paths: ['/1', '/2', '/3', '/4', '/5'] });
+  await done;
+  assert.strictEqual(h.el.value, '[Image #1] [Image #2] [Image #3] [Image #4] [Image #5] ');
 });

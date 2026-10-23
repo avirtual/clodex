@@ -1581,6 +1581,7 @@ and are not, which is why the judgement worth testing is pushed down here.
   session: each path shell-quoted, space-joined, one trailing space.
 - **composer-keys.js** — `composerReadlineEdit`: Ctrl-U/K/W/A/E on the stream
   seat composer as the new value and cursor, per line of a multi-line draft. Pure.
+  `isAttachKey`: Cmd/Ctrl+Shift+U, which opens either composer's image picker.
 - **composer-slash.js** — the stream seat composer's slash menu: `slashQuery` (is the
   cursor in a leading `/token`), `filterCommands` (prefix then substring) and
   `slashMenuKey` (arrow/Tab/Enter/Escape while the menu is open). Pure.
@@ -1589,6 +1590,12 @@ and are not, which is why the judgement worth testing is pushed down here.
 - **clipboard-images.js** — `readImageFile` / `clipboardImages`: a file or the clipboard's image
   items read into `{ mediaType, data }` base64 through an injected FileReader; `readImageFile`
   serves the stream-seat attach, `clipboardImages` the pty-composer paste.
+- **attach-files.js** — the composer paperclip: `attachPicker` (one hidden
+  `<input type=file>` per composer; picked files filtered by `imageFilesOf` to
+  seat-images.js's `SEAT_IMAGE_TYPES`, the rest toasted by name and type) and
+  `attachButton` (`.seat-attach-btn`). The pty composer feeds picked files to
+  pty-composer.js's `attachImages`, the upload path its web paste uses; the
+  stream composer to its own `attachFiles`.
 - **prompt-echo.js** — recolour the CLI's submitted-prompt echo on the wire,
   before `terminal.write`. The echo is truecolor SGR, which xterm renders as
   inline styles that `options.theme` cannot reach, so the bytes are rewritten

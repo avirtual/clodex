@@ -51,7 +51,7 @@ const { accountRowView, buildAccountRow, modelOptions } = require('./lib/account
 const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { dropText } = require('./lib/drop-paths');
-const { composerReadlineEdit, composerHeightFor } = require('./lib/composer-keys');
+const { composerReadlineEdit, composerHeightFor, isAttachKey } = require('./lib/composer-keys');
 const { slashQuery, filterCommands, slashMenuKey } = require('./lib/composer-slash');
 const { turnSeg, reqSeg, costSeg } = require('./lib/turn-stat');
 const { renderAppendChecklist, collectAppendChecklist, appendRepaintTicks, mergeUnrendered, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderMcpChecklist, collectMcpChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setMcpLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require('./lib/checklists');
@@ -68,8 +68,10 @@ const { createTermSearch } = require('./term-search');
 const { createIntentHighlight } = require('./intent-highlight');
 const { createVoiceMirror, engineObserved } = require('./voice-mirror');
 const { attachTriggerSubmit, createPtyVoiceDraft, VOICE_QUIET_MS, VOICE_RELEASE_MS } = require('./lib/composer-voice');
-const { ptyComposerWrites, expandImageChips, ptyImagePasteHandler, removeImageChip, chippedImages, renderImageStrip } = require('./lib/pty-composer');
+const { ptyComposerWrites, expandImageChips, ptyImagePasteHandler, attachImages, pasteStripped, STRIPPED_PASTE_NOTICE, removeImageChip, chippedImages, renderImageStrip } = require('./lib/pty-composer');
 const { readImageFile, clipboardImages } = require('./lib/clipboard-images');
+const { imageFilesOf, attachPicker, attachButton } = require('./lib/attach-files');
+const { SEAT_IMAGE_MAX } = require('../seat-images');
 const { createMenuMirror } = require('./lib/menu-mirror');
 const { VOICE_ENGINE_NAME } = require('../voice-engine');
 const {
@@ -1694,7 +1696,7 @@ const SEAT_DRAFT_DEBOUNCE_MS = 300;
 const COMPOSER_PLACEHOLDER = 'Message — Enter sends, Shift+Enter for a new line';
 const COMPOSER_RUNNING_PLACEHOLDER = 'Message — Enter sends, Esc interrupts the turn';
 
-function attachComposer(composer, { onSend, onSlash = null, onEscape, onEmptySpace = null }) {
+function attachComposer(composer, { onSend, onSlash = null, onEscape, onEmptySpace = null, onAttach = null }) {
   composer.className = 'seat-composer';
   composer.rows = 1;
   composer.placeholder = COMPOSER_PLACEHOLDER;
@@ -1708,6 +1710,11 @@ function attachComposer(composer, { onSend, onSlash = null, onEscape, onEmptySpa
     if (e.key === 'Escape' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing) {
       e.preventDefault();
       onEscape();
+      return;
+    }
+    if (onAttach && !e.isComposing && isAttachKey(e)) {
+      e.preventDefault();
+      onAttach();
       return;
     }
     const edit = !e.isComposing && composerReadlineEdit({
@@ -1756,6 +1763,7 @@ function createStreamSeatPane(name, wrapperEl, seat) {
       seatVoiceRecord(name, voiceRecordingSeat === name ? 'stop' : 'start');
       return true;
     },
+    onAttach: () => streamPicker.open(),
   });
   const attachEl = document.createElement('div');
   attachEl.className = 'seat-attachments';
@@ -1774,6 +1782,9 @@ function createStreamSeatPane(name, wrapperEl, seat) {
   slashEl.hidden = true;
   wrapperEl.appendChild(slashEl);
   wrapperEl.appendChild(composer);
+  const streamPicker = attachPicker({ doc: document, parent: wrapperEl, onFiles: (files) => attachFiles(files), toast: (message) => showToast(message, { kind: 'error', name }) });
+  composer.classList.add('seat-composer-attach');
+  wrapperEl.appendChild(attachButton(document, () => streamPicker.open()));
   const fitComposer = composerKit.fit;
   const SEAT_PERMISSION_INPUT_MAX = 600;
   let permKey = '';
@@ -1885,11 +1896,9 @@ function createStreamSeatPane(name, wrapperEl, seat) {
       attachEl.appendChild(thumb);
     });
   };
-  const SEAT_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
-  const SEAT_IMAGE_MAX = 5;
   let reading = 0;
   const attachFiles = (files) => {
-    const allowed = files.filter((f) => SEAT_IMAGE_TYPES.includes(f.type));
+    const allowed = imageFilesOf(files).images;
     const room = Math.max(0, SEAT_IMAGE_MAX - pending.length - reading);
     const taken = allowed.slice(0, room);
     if (taken.length < files.length) {
@@ -1907,6 +1916,10 @@ function createStreamSeatPane(name, wrapperEl, seat) {
   };
   composer.addEventListener('paste', (e) => {
     const items = Array.from((e.clipboardData && e.clipboardData.items) || []);
+    if (pasteStripped(items, Boolean(window.__CLODEX_WEB__ || !window.require))) {
+      showToast(STRIPPED_PASTE_NOTICE, { kind: 'error', name });
+      return;
+    }
     const files = items.filter((it) => it.kind === 'file' && /^image\//.test(it.type)).map((it) => it.getAsFile()).filter(Boolean);
     if (!files.length) return;
     e.preventDefault();
@@ -1915,7 +1928,7 @@ function createStreamSeatPane(name, wrapperEl, seat) {
   wrapperEl.addEventListener('drop', (e) => {
     const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
     if (!files.length || !files.every((f) => /^image\//.test(f.type))) return;
-    if (!files.some((f) => SEAT_IMAGE_TYPES.includes(f.type))) return;
+    if (!imageFilesOf(files).images.length) return;
     e.preventDefault();
     e.stopPropagation();
     attachFiles(files);
@@ -2140,6 +2153,7 @@ function createStreamSeatPane(name, wrapperEl, seat) {
   });
   fitComposer();
   return {
+    attachImageFiles: attachFiles,
     focus: () => { composer.focus(); fitComposer(); },
     refresh: () => pull(true),
     voiceDraft(text) { triggerSubmit.draft(text); fitComposer(); },
@@ -2187,7 +2201,7 @@ function createTerminal(name, peer = null) {
     const stream = createStreamSeatPane(name, wrapperEl, seat);
     const row = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
     if (row && (row.dataset.attention || row.dataset.activity)) stream.setTurnRunning(seatActivity(row), Number(row.dataset.thinkingSince) || null);
-    sessions.set(name, Object.assign(seat, { terminal: null, fitAddon: null, searchAddon: null, wrapperEl, peer: null, stream, liveSplit: null }));
+    sessions.set(name, Object.assign(seat, { terminal: null, fitAddon: null, searchAddon: null, wrapperEl, peer: null, stream, liveSplit: null, attachImageFiles: stream.attachImageFiles }));
     updateWindowTitle();
     return { terminal: null, fitAddon: null, searchAddon: null, wrapperEl, echoRewrite: (chunk) => chunk };
   }
@@ -2416,6 +2430,51 @@ function createTerminal(name, peer = null) {
     if (menuMirror.on() && (composerEl.selectionStart !== end || composerEl.selectionEnd !== end)) composerEl.setSelectionRange(end, end);
     if (writes.length && !menuMirror.on() && liveSplit) liveSplit.refresh();
   };
+  const ptyImageSink = composerEl ? {
+    upload: (images) => window.api.seatImageUpload(name, images),
+    toast: (message) => showToast(message, { kind: 'error', name }),
+    nextImage: () => { pastedImages += 1; return pastedImages; },
+    append: (added) => {
+      for (const { n, chip, path, image, pending } of added) {
+        composerEl.value += chip;
+        pastedImagePaths[n] = path || null;
+        if (image) pastedThumbs.push({ n, image, path, pending });
+      }
+      if (menuMirror.on()) syncMenuMirror();
+      const end = composerEl.value.length;
+      composerEl.setSelectionRange(end, end);
+      composerKit.fit();
+      syncImageStrip();
+    },
+    attached: (done) => {
+      for (const { n, path, image } of done) {
+        const thumb = pastedThumbs.find((t) => t.n === n && t.image === image);
+        if (!thumb) continue;
+        thumb.path = path;
+        thumb.pending = false;
+        pastedImagePaths[n] = path;
+      }
+      syncImageStrip();
+    },
+    drop: (items) => {
+      for (const { n, image } of items) {
+        const thumb = pastedThumbs.find((t) => t.n === n && t.image === image);
+        if (!thumb) continue;
+        composerEl.value = removeImageChip(composerEl.value, n);
+        delete pastedImagePaths[n];
+        pastedThumbs = pastedThumbs.filter((t) => t !== thumb);
+      }
+      if (menuMirror.on()) syncMenuMirror();
+      composerKit.fit();
+      syncImageStrip();
+    },
+  } : null;
+  let ptyPicker = null;
+  const attachPtyFiles = (files) => {
+    if (files.length > SEAT_IMAGE_MAX) ptyImageSink.toast(`${files.length - SEAT_IMAGE_MAX} image(s) not attached — at most ${SEAT_IMAGE_MAX} per message.`);
+    return Promise.all(files.slice(0, SEAT_IMAGE_MAX).map((f) => readImageFile(f, FileReader)))
+      .then((read) => attachImages({ ...ptyImageSink, images: read.filter(Boolean) }));
+  };
   const onMenuKey = (e) => {
     const hit = menuMirror.key(e);
     if (!hit) return false;
@@ -2441,6 +2500,7 @@ function createTerminal(name, peer = null) {
       seatVoiceRecord(name, voiceRecordingSeat === name ? 'stop' : 'start');
       return true;
     },
+    onAttach: () => { if (ptyPicker) ptyPicker.open(); },
   }) : null;
   const composerTrigger = composerEl ? attachTriggerSubmit(composerEl, {
     getConfig: () => voiceSubmitConfig,
@@ -2464,47 +2524,14 @@ function createTerminal(name, peer = null) {
     composerEl.addEventListener('input', syncMenuMirror);
     composerEl.addEventListener('input', pruneImageStrip);
     composerEl.addEventListener('paste', ptyImagePasteHandler({
+      ...ptyImageSink,
       isWeb: () => Boolean(window.__CLODEX_WEB__ || !window.require),
       readImages: (items) => clipboardImages(items, FileReader),
-      upload: (images) => window.api.seatImageUpload(name, images),
-      toast: (message) => showToast(message, { kind: 'error', name }),
-      nextImage: () => { pastedImages += 1; return pastedImages; },
-      append: (added) => {
-        for (const { n, chip, path, image, pending } of added) {
-          composerEl.value += chip;
-          pastedImagePaths[n] = path || null;
-          if (image) pastedThumbs.push({ n, image, path, pending });
-        }
-        if (menuMirror.on()) syncMenuMirror();
-        const end = composerEl.value.length;
-        composerEl.setSelectionRange(end, end);
-        composerKit.fit();
-        syncImageStrip();
-      },
-      attached: (done) => {
-        for (const { n, path, image } of done) {
-          const thumb = pastedThumbs.find((t) => t.n === n && t.image === image);
-          if (!thumb) continue;
-          thumb.path = path;
-          thumb.pending = false;
-          pastedImagePaths[n] = path;
-        }
-        syncImageStrip();
-      },
-      drop: (items) => {
-        for (const { n, image } of items) {
-          const thumb = pastedThumbs.find((t) => t.n === n && t.image === image);
-          if (!thumb) continue;
-          composerEl.value = removeImageChip(composerEl.value, n);
-          delete pastedImagePaths[n];
-          pastedThumbs = pastedThumbs.filter((t) => t !== thumb);
-        }
-        if (menuMirror.on()) syncMenuMirror();
-        composerKit.fit();
-        syncImageStrip();
-      },
       writePty,
     }));
+    composerEl.classList.add('seat-composer-attach');
+    ptyPicker = attachPicker({ doc: document, parent: wrapperEl, onFiles: attachPtyFiles, toast: ptyImageSink.toast });
+    wrapperEl.appendChild(attachButton(document, () => ptyPicker.open()));
   }
   const agentSeat = !peer;
   const seat = agentSeat ? createSeatView(initialViewFor(name)) : {};
@@ -2536,7 +2563,7 @@ function createTerminal(name, peer = null) {
     if (liveSplit) liveSplit.setTurnRunning(activity, Number(activityRow.dataset.thinkingSince) || null);
     if (composerEl && activity !== 'idle') composerEl.placeholder = COMPOSER_RUNNING_PLACEHOLDER;
   }
-  sessions.set(name, Object.assign(seat, { terminal, fitAddon, searchAddon, intentHighlight, ptyVoice, webgl, wrapperEl, peer, echoRewrite, liveSplit, composerEl, composerKit, composerTrigger, menuMirror, syncMenuMirror }));
+  sessions.set(name, Object.assign(seat, { terminal, fitAddon, searchAddon, intentHighlight, ptyVoice, webgl, wrapperEl, peer, echoRewrite, liveSplit, composerEl, composerKit, composerTrigger, menuMirror, syncMenuMirror, attachImageFiles: composerEl ? attachPtyFiles : null }));
   if (seat.view === 'terminal' && liveSplit) liveSplit.setRaw(true);
   updateWindowTitle();
   return { terminal, fitAddon, searchAddon, wrapperEl, echoRewrite };
@@ -2551,11 +2578,15 @@ terminalContainer.addEventListener('drop', (e) => {
   e.preventDefault();
   const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
   if (!files.length || !activeSession) return;
+  const entry = sessions.get(activeSession);
   if (window.__CLODEX_WEB__ || !window.require) {
-    showToast('Dropping files needs the desktop app — browsers don’t expose file paths.', { kind: 'peer-ui' });
+    const { images, rejected } = imageFilesOf(files);
+    const sink = entry && entry.attachImageFiles && (entry.stream || ptyComposerShown(entry)) ? entry.attachImageFiles : null;
+    if (sink && images.length) sink(images);
+    if (!sink && images.length && entry && entry.attachImageFiles) showToast('Switch to the composer view to attach images.', { kind: 'peer-ui' });
+    else if (!sink || rejected.length) showToast('Dropping files needs the desktop app — browsers don’t expose file paths.', { kind: 'peer-ui' });
     return;
   }
-  const entry = sessions.get(activeSession);
   if (!entry) return;
   if (entry.peer) {
     showToast(`"${activeSession}" runs on a peer — its filesystem doesn’t have this file.`, { kind: 'peer-ui' });

@@ -6811,6 +6811,46 @@ body.web-frontend #sidebar-header {
   pointer-events: auto;
 }
 
+.seat-composer.seat-composer-attach {
+  padding-right: 32px;
+  scrollbar-gutter: stable;
+}
+
+.seat-attach-btn {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 3;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  filter: grayscale(1);
+  opacity: 0.6;
+}
+
+.seat-attach-btn:hover,
+.seat-attach-btn:focus-visible {
+  opacity: 1;
+  filter: none;
+  border-color: var(--accent, var(--border));
+  color: var(--accent, var(--text-primary));
+}
+
+.seat-attach-btn[hidden],
+.seat-composer[hidden] ~ .seat-attach-btn {
+  display: none;
+}
+
 .seat-attachment {
   position: relative;
   width: 48px;

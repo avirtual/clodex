@@ -191,6 +191,15 @@ them.
 - **`update-available`** (`info`) — main.js desktop update banner; the container
   image has its own update story (out of scope, Phase 4).
 
+## Composer attach (renderer-only, no channel)
+
+Both seat composers carry a paperclip (`.seat-attach-btn`, renderer/lib/attach-files.js)
+and open the same image picker on Cmd/Ctrl+Shift+U (`isAttachKey`, composer-keys.js).
+A picked or browser-dropped image reaches the host through the existing
+`seatImageUpload` invoke (pty composer) or the stream seat's send payload — no new
+event. On a web surface a paste whose clipboard items are empty toasts
+`STRIPPED_PASTE_NOTICE` instead of being ignored.
+
 ## Bottom line
 
 No seam work is forced by this phase. Categories A/B route through the two
