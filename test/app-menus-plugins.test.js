@@ -450,7 +450,7 @@ test('t680: Library replaces Agents and Skills at their position, with one subme
   const iEdit = labels.indexOf('Edit');
   assert.ok(iFile >= 0 && iLibrary === iFile + 1 && iEdit === iLibrary + 1, `File → Library → Edit, got ${labels}`);
   assert.deepStrictEqual(shape(template[iLibrary].submenu),
-    ['Prompts ▸', 'Templates ▸', 'Agents ▸', 'Skills ▸', 'Exec Commands ▸', '—', 'Requests…']);
+    ['Prompts ▸', 'Templates ▸', 'Agents ▸', 'Skills ▸', 'Exec Commands ▸', 'MCP Servers ▸', '—', 'Requests…']);
 
   const win = template.find((m) => m.label === 'Window').submenu.map((i) => i.label).filter(Boolean);
   for (const gone of ['Prompts…', 'Templates…', 'Exec Commands…', 'Requests…']) {

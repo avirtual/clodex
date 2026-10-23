@@ -192,7 +192,7 @@ test('context popover: built-in, library-selected and leak rows, built-in listed
 
 test('context popover: an unmanaged seat carries the header line, and a Codex seat says the selection is not applied', async () => {
   const body = await popoverBody({ agents: [AGENT], clodex_mcp: { managed: false, selected: [], applied: null, leaks: ['jira', 'rogue'] } }, 'codex');
-  assert.match(body, /unmanaged: this seat&#39;s Extra args carry its own MCP config/);
+  assert.match(body, /unmanaged: this seat's Extra args carry its own MCP config/);
   assert.match(body, /Codex: selection not applied on this CLI yet/);
 });
 

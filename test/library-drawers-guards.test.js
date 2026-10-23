@@ -254,6 +254,16 @@ test('MCP discover: candidates group by source, an in-library one has no Import,
     ],
     importMcpServer: async (n, entry) => { imported.push([n, entry]); return { ok: true }; },
   });
+  const plain = global.document.createElement;
+  global.document.createElement = () => {
+    const x = plain();
+    let t = '';
+    Object.defineProperty(x, 'textContent', {
+      get: () => t,
+      set(v) { t = String(v); x.innerHTML = t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); },
+    });
+    return x;
+  };
   try {
     r.opens.mcp();
     await flush();
