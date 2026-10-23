@@ -1,6 +1,6 @@
 'use strict';
 
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const { createEngine } = require('../engine');
@@ -61,3 +61,5 @@ test('a selected server is not a leak, and an unmanaged record reads managed:fal
   assert.deepStrictEqual(a.data.clodex_mcp, { managed: false, selected: ['jira'], applied, leaks: [] });
   assert.deepStrictEqual(r.warns.filter(([tag]) => tag === 'mcp'), []);
 });
+
+after(() => { setImmediate(() => process.exit(0)); });
