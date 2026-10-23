@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.135.0 — 2026-10-23
+
 - Wirescope v0.6.85 vendored: `GET /_costs` (JSON, or `?html=1` for a page) reports historic cost from a durable hourly ledger grouped by a name regex, with saved presets; the ledger backfills once from existing receipts on first boot.
 - MCP servers are now a Clodex library: a seat loads only the `~/.clodex/library/mcp` entries you select for it, every Claude seat runs `--strict-mcp-config`, and a notice at each spawn names servers from your Claude config that need importing. `claude_design` is no longer loaded into managed seats (the 'Disable claude_design MCP' preference is gone). Credential-protected seats cannot read any seat's resolved MCP file. Whether servers bundled in CLI plugins are excluded is not yet verified.
 - Library ▸ MCP Servers manages entries and imports the ones your Claude config already knows (secrets stay in Preferences ▸ Environment, never in the library); New Session and Edit settings pick a seat's servers (restart applies); the seat hovercard shows the set, and the context popover marks each server built-in, selected, or a leak that reached the seat outside its selection.
