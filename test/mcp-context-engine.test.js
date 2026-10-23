@@ -7,7 +7,7 @@ const { createEngine } = require('../engine');
 const { ProxyClient } = require('../wirescope-proxy');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
-function rig(record) {
+function rig(record, type = 'claude') {
   const tmp = mkTmpRoot('clx-mcp-ctx-');
   const warns = [];
   const engine = createEngine({
@@ -17,7 +17,7 @@ function rig(record) {
   });
   const name = record.name;
   engine.stores.persistence.upsert(record);
-  engine.manager.sessions.set(name, { name, proxyBase: 'http://127.0.0.1:7999' });
+  engine.manager.sessions.set(name, { name, type, proxyBase: 'http://127.0.0.1:7999' });
   engine.proxyPoller.snapshot = () => ({ linked: true, sessionId: 'sid-1' });
   return { engine, name, warns };
 }
@@ -59,6 +59,14 @@ test('a selected server is not a leak, and an unmanaged record reads managed:fal
   const r = rig({ name: 'picked', type: 'claude', cwd: '/tmp', mcpServers: ['jira'], mcpApplied: applied, mcpUnmanaged: true });
   const [a] = await fetchTwice(r);
   assert.deepStrictEqual(a.data.clodex_mcp, { managed: false, selected: ['jira'], applied, leaks: [] });
+  assert.deepStrictEqual(r.warns.filter(([tag]) => tag === 'mcp'), []);
+});
+
+test('a Codex seat reports no leaks and warns nothing: its selection is not applied on that CLI yet', async () => {
+  const r = rig({ name: 'cx', type: 'codex', cwd: '/tmp' }, 'codex');
+  const [a] = await fetchTwice(r);
+  assert.strictEqual(a.ok, true, 'ENTER: the fetch reached the proxy stub');
+  assert.deepStrictEqual(a.data.clodex_mcp.leaks, []);
   assert.deepStrictEqual(r.warns.filter(([tag]) => tag === 'mcp'), []);
 });
 

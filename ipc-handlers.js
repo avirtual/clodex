@@ -771,14 +771,14 @@ function registerIpcHandlers(deps) {
     }
     return out;
   });
-  handle('mcp:appliedStale', (_e, name) => {
+  const mcpSeatState = (name, lib) => {
     const entry = persistence.get(name);
     if (!entry) return { ok: false, error: 'Session not found' };
     const servers = Array.isArray(entry.mcpServers) ? entry.mcpServers : [];
     const applied = entry.mcpApplied && Array.isArray(entry.mcpApplied.names) ? entry.mcpApplied : null;
-    let stale = false;
-    if (applied) {
-      const lib = new Map(mcpLibrary.list().map((r) => [r.name, r.entry]));
+    const appliedNames = applied ? applied.names : [];
+    let stale = JSON.stringify([...servers].sort()) !== JSON.stringify([...appliedNames].sort());
+    if (!stale && applied) {
       const shapes = {};
       for (const n of applied.names) {
         if (!lib.has(n)) { stale = true; break; }
@@ -787,6 +787,11 @@ function registerIpcHandlers(deps) {
       if (!stale) stale = mcpDigest(shapes) !== applied.digest;
     }
     return { ok: true, servers, unmanaged: entry.mcpUnmanaged === true, stale };
+  };
+  handle('mcp:appliedStale', (_e, name) => {
+    const lib = new Map(mcpLibrary.list().map((r) => [r.name, r.entry]));
+    if (Array.isArray(name)) return Object.fromEntries(name.map((n) => [n, mcpSeatState(n, lib)]));
+    return mcpSeatState(name, lib);
   });
 
   handle('notifications:list', () => notifications.list());

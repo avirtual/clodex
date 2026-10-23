@@ -1135,3 +1135,49 @@ test('the MCP servers row sits under Exec inside #other-section, which only an a
   };
   assert.deepStrictEqual(['claude', 'codex', 'muse', 'bash'].map(shown), ['', '', '', 'none']);
 });
+
+function fnBody(name) {
+  const at = rendererSrc.search(new RegExp(`\\n(async )?function ${name}\\(`));
+  assert.ok(at >= 0, `ENTER: ${name} is in renderer.js`);
+  return rendererSrc.slice(at + 1, rendererSrc.indexOf('\n}\n', at) + 2);
+}
+
+function placementRig() {
+  const env = {
+    mcpRow: { style: { display: '' } },
+    placementRow: { style: { display: '' } },
+    inputPlacement: { value: 'host' },
+    showPlacementSelector: () => true,
+    boxes: [{ id: 'box1' }],
+  };
+  const names = Object.keys(env);
+  const run = (stmts) => new Function(...names, `${fnBody('currentPlacement')}\n${fnBody('syncMcpRow')}\n${stmts}`)(...names.map((n) => env[n]));
+  return { env, run };
+}
+
+test('a sandbox placement hides #mcp-row, and the next New Session open on host shows it again', () => {
+  const { env, run } = placementRig();
+  env.inputPlacement.value = 'box1';
+  run('syncMcpRow();');
+  assert.strictEqual(env.mcpRow.style.display, 'none', 'ENTER: a sandbox placement hides the row');
+  const reset = /\n(  inputPlacement\.value = 'host';\n  placementRow\.style\.display = showPlacementSelector\(boxes\) \? '' : 'none';\n  syncMcpRow\(\);)\n/.exec(fnBody('openDialog'));
+  assert.ok(reset, "openDialog re-syncs the MCP row right after it resets the placement to host");
+  run(reset[1]);
+  assert.strictEqual(env.mcpRow.style.display, '');
+});
+
+test('the template editor hides the placement row and shows #mcp-row', () => {
+  const { env, run } = placementRig();
+  env.inputPlacement.value = 'box1';
+  env.mcpRow.style.display = 'none';
+  const authoring = /\n(    placementRow\.style\.display = 'none';\n    syncMcpRow\(\);)\n/.exec(fnBody('setDialogMode'));
+  assert.ok(authoring, "setDialogMode's authoring branch re-syncs the MCP row after hiding placement");
+  run(authoring[1]);
+  assert.strictEqual(env.mcpRow.style.display, '');
+});
+
+test('a create toasts every warning but the MCP rows, which already arrive as system rows', () => {
+  const toastable = new Function(`${fnBody('toastableWarnings')}\nreturn toastableWarnings;`)();
+  assert.deepStrictEqual(toastable(['MCP jira: not in the library', 'MCP: the clodex tools are unavailable', 'proxy unreachable', 'MCPX odd']),
+    ['MCP: the clodex tools are unavailable', 'proxy unreachable', 'MCPX odd']);
+});

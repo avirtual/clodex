@@ -9996,6 +9996,9 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
   min-width: 0;
   padding: 1px 4px;
 }
+#mcp-error.mcp-error {
+  color: #e94560;
+}
 
 /* renderer/web/app.css */
 /*! Bundled license information:
@@ -38616,6 +38619,7 @@ Opening it here and saving would overwrite the file with what this editor could 
         const mcpDiscoverList = mcpEl("mcp-discover-list");
         let editingMcpName = null;
         let editingMcpRest = {};
+        let mcpScannedCwd = null;
         function mcpPreview(entry) {
           const e = entry || {};
           if (e.type === "http" || e.type === "sse") return e.url || "(no url)";
@@ -38630,7 +38634,7 @@ Opening it here and saving would overwrite the file with what this editor could 
           }
           mcpEmpty.style.display = "none";
           for (const m of items) {
-            const secrets = (m.secrets || []).length ? ` \xB7 needs ${m.secrets.join(", ")}` : "";
+            const secrets = (m.secrets || []).length ? ` \xB7 uses ${m.secrets.map((n) => `\${${n}}`).join(", ")}` : "";
             const el = document.createElement("div");
             el.className = "prompt-item";
             el.innerHTML = `
@@ -38652,12 +38656,13 @@ Opening it here and saving would overwrite the file with what this editor could 
           const [kind, ...rest] = String(source || "").split(" ");
           const file = rest.join(" ");
           if (kind === "claude:user") return `${file} \u2014 user`;
-          if (kind === "claude:local") return `${file} \u2014 project ${mcpDiscoverCwd.value.trim()}`;
+          if (kind === "claude:local") return `${file} \u2014 project ${mcpScannedCwd || ""}`;
           return file || source;
         }
         async function refreshMcpDiscover() {
           const cwd = mcpDiscoverCwd.value.trim() || null;
           const found = await window.api.discoverMcpServers(cwd) || [];
+          mcpScannedCwd = cwd;
           mcpDiscoverList.innerHTML = "";
           if (!found.length) {
             mcpDiscoverList.innerHTML = '<span class="hint-text">No MCP servers found in your Claude config.</span>';
@@ -48314,9 +48319,12 @@ You can add it back from this popover.` : "";
           };
           let rows;
           if (mcp) {
+            const leaked = (g) => (mcp.leaks || []).includes(g.server);
             const builtIn = groups.filter((g) => g.server === "clodex");
-            const library = groups.filter((g) => g.server !== "clodex");
-            rows = (builtIn.length ? `<div class="ctx-util-group">Built-in</div>${builtIn.map(row).join("")}` : "") + (library.length ? `<div class="ctx-util-group">Library</div>${library.map(row).join("")}` : "");
+            const library = groups.filter((g) => g.server !== "clodex" && !leaked(g));
+            const outside = groups.filter((g) => g.server !== "clodex" && leaked(g));
+            const section = (label, list) => list.length ? `<div class="ctx-util-group">${label}</div>${list.map(row).join("")}` : "";
+            rows = section("Built-in", builtIn) + section("Library", library) + section("Outside selection", outside);
           } else {
             rows = groups.map(row).join("");
           }
@@ -51703,6 +51711,18 @@ ${detail}` });
         if (state && state.stale) item.dataset.mcpStale = "1";
         else delete item.dataset.mcpStale;
       }
+      async function refreshSeatsMcp(names) {
+        let states = null;
+        try {
+          states = await window.api.mcpAppliedStale(names);
+        } catch {
+          states = null;
+        }
+        if (!states || typeof states !== "object") return;
+        for (const n of names) {
+          if (states[n] && states[n].ok) markSeatMcp(n, states[n]);
+        }
+      }
       async function refreshSeatMcp(name) {
         let state = null;
         try {
@@ -53153,11 +53173,11 @@ ${detail}` });
         }
         try {
           const live = await window.api.listSessions();
+          if (Array.isArray(live)) refreshSeatsMcp(live.map((s) => s.name));
           if (Array.isArray(live)) for (const s of live) {
             applyAccountChip(s.name, s.account || null);
             markSeatVoice(s.name, s.voice);
             markSeatEffort(s.name, s.effort);
-            refreshSeatMcp(s.name);
             markSeatPosture(s.name, s.posture);
             if (s.clone) applyCloneChip(sessionList.querySelector(`[data-name="${CSS.escape(s.name)}"]`), s.clone);
           }
@@ -54510,7 +54530,7 @@ ${detail}` });
       }
       async function applyPlacement() {
         const placement = currentPlacement();
-        if (mcpRow) mcpRow.style.display = placement === "host" ? "" : "none";
+        syncMcpRow();
         inputCwd.value = placementNextCwd(placement, inputCwd.value.trim(), homeDir);
         refreshTeamForCwd();
         if (placement !== "host") {
@@ -54519,6 +54539,9 @@ ${detail}` });
         }
         greyRichFields(false);
         await restoreHostCatalogs();
+      }
+      function syncMcpRow() {
+        if (mcpRow) mcpRow.style.display = currentPlacement() === "host" ? "" : "none";
       }
       async function applySandboxState() {
         const placement = currentPlacement();
@@ -55124,6 +55147,7 @@ ${detail}` });
         populatePlacementOptions(boxes);
         inputPlacement.value = "host";
         placementRow.style.display = showPlacementSelector(boxes) ? "" : "none";
+        syncMcpRow();
         greyRichFields(false);
         if (prefill && prefill.resumeId) dialogTitle.textContent = "Adopt Session";
         dialogOverlay.classList.remove("hidden");
@@ -55489,12 +55513,15 @@ ${detail}` });
           addSessionToSidebar(name, type, spawnCwd, null, result.session && result.session.backend || null, result.session && result.session.team || null, (result.session && result.session.noWire) === true);
           refreshSeatMcp(name);
           await switchToNewSession(name, { agentInitiated: false });
-          const warnings = (result.session && result.session.warnings || []).filter((w) => !String(w).startsWith("MCP "));
+          const warnings = toastableWarnings(result.session && result.session.warnings || []);
           for (const w of warnings) showToast(w, { kind: "warn", duration: 15e3, name });
         } finally {
           createInFlight = false;
           refreshCreateButton();
         }
+      }
+      function toastableWarnings(warnings) {
+        return warnings.filter((w) => !String(w).startsWith("MCP "));
       }
       function submitDialog() {
         if (dialogMode === "template") {
@@ -55545,6 +55572,7 @@ ${detail}` });
         if (authoring) {
           templateRow.style.display = "none";
           placementRow.style.display = "none";
+          syncMcpRow();
           greyRichFields(false);
           dialogNameState = { ok: true, kind: "free", message: "" };
           paintNameField(nameFieldEls(), dialogNameState);

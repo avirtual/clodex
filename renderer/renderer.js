@@ -137,6 +137,12 @@ function markSeatMcp(name, state) {
   if (state && state.stale) item.dataset.mcpStale = '1';
   else delete item.dataset.mcpStale;
 }
+async function refreshSeatsMcp(names) {
+  let states = null;
+  try { states = await window.api.mcpAppliedStale(names); } catch { states = null; }
+  if (!states || typeof states !== 'object') return;
+  for (const n of names) { if (states[n] && states[n].ok) markSeatMcp(n, states[n]); }
+}
 async function refreshSeatMcp(name) {
   let state = null;
   try { state = await window.api.mcpAppliedStale(name); } catch { state = null; }
@@ -1609,7 +1615,8 @@ async function refreshSidebarMeta({ includePr = true } = {}) {
   }
   try {
     const live = await window.api.listSessions();
-    if (Array.isArray(live)) for (const s of live) { applyAccountChip(s.name, s.account || null); markSeatVoice(s.name, s.voice); markSeatEffort(s.name, s.effort); refreshSeatMcp(s.name); markSeatPosture(s.name, s.posture); if (s.clone) applyCloneChip(sessionList.querySelector(`[data-name="${CSS.escape(s.name)}"]`), s.clone); }
+    if (Array.isArray(live)) refreshSeatsMcp(live.map((s) => s.name));
+    if (Array.isArray(live)) for (const s of live) { applyAccountChip(s.name, s.account || null); markSeatVoice(s.name, s.voice); markSeatEffort(s.name, s.effort); markSeatPosture(s.name, s.posture); if (s.clone) applyCloneChip(sessionList.querySelector(`[data-name="${CSS.escape(s.name)}"]`), s.clone); }
   } catch {}
   refreshSidebarView();
   // Which footer buttons show is answered off sidebarMeta, which does not exist
@@ -2987,12 +2994,16 @@ function populatePlacementOptions(boxes) {
 
 async function applyPlacement() {
   const placement = currentPlacement();
-  if (mcpRow) mcpRow.style.display = placement === 'host' ? '' : 'none';
+  syncMcpRow();
   inputCwd.value = placementNextCwd(placement, inputCwd.value.trim(), homeDir);
   refreshTeamForCwd();
   if (placement !== 'host') { await applySandboxState(); return; }
   greyRichFields(false);
   await restoreHostCatalogs();
+}
+
+function syncMcpRow() {
+  if (mcpRow) mcpRow.style.display = currentPlacement() === 'host' ? '' : 'none';
 }
 
 async function applySandboxState() {
@@ -3607,6 +3618,7 @@ async function openDialog(prefill = null) {
   populatePlacementOptions(boxes);
   inputPlacement.value = 'host';
   placementRow.style.display = showPlacementSelector(boxes) ? '' : 'none';
+  syncMcpRow();
   greyRichFields(false);
   if (prefill && prefill.resumeId) dialogTitle.textContent = 'Adopt Session';
   dialogOverlay.classList.remove('hidden');
@@ -4015,12 +4027,16 @@ async function doCreate() {
     // open in the session they were on, which vetoes regardless of provenance.
     await switchToNewSession(name, { agentInitiated: false });
 
-    const warnings = ((result.session && result.session.warnings) || []).filter((w) => !String(w).startsWith('MCP '));
+    const warnings = toastableWarnings((result.session && result.session.warnings) || []);
     for (const w of warnings) showToast(w, { kind: 'warn', duration: 15000, name });
   } finally {
     createInFlight = false;
     refreshCreateButton();
   }
+}
+
+function toastableWarnings(warnings) {
+  return warnings.filter((w) => !String(w).startsWith('MCP '));
 }
 
 function submitDialog() {
@@ -4072,6 +4088,7 @@ function setDialogMode(mode) {
   if (authoring) {
     templateRow.style.display = 'none'; // create-mode: refreshTemplatesDropdown owns it
     placementRow.style.display = 'none';
+    syncMcpRow();
     greyRichFields(false);
     dialogNameState = { ok: true, kind: 'free', message: '' };
     paintNameField(nameFieldEls(), dialogNameState);

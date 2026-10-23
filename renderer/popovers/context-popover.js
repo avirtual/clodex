@@ -258,10 +258,12 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     };
     let rows;
     if (mcp) {
+      const leaked = (g) => (mcp.leaks || []).includes(g.server);
       const builtIn = groups.filter((g) => g.server === 'clodex');
-      const library = groups.filter((g) => g.server !== 'clodex');
-      rows = (builtIn.length ? `<div class="ctx-util-group">Built-in</div>${builtIn.map(row).join('')}` : '')
-        + (library.length ? `<div class="ctx-util-group">Library</div>${library.map(row).join('')}` : '');
+      const library = groups.filter((g) => g.server !== 'clodex' && !leaked(g));
+      const outside = groups.filter((g) => g.server !== 'clodex' && leaked(g));
+      const section = (label, list) => (list.length ? `<div class="ctx-util-group">${label}</div>${list.map(row).join('')}` : '');
+      rows = section('Built-in', builtIn) + section('Library', library) + section('Outside selection', outside);
     } else {
       rows = groups.map(row).join('');
     }

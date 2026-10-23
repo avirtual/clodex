@@ -48,3 +48,32 @@ test('mcp:appliedStale: an unmanaged record with nothing applied, and an unknown
   assert.deepStrictEqual(ask('u'), { ok: true, servers: [], unmanaged: true, stale: false });
   assert.deepStrictEqual(ask('nope'), { ok: false, error: 'Session not found' });
 });
+
+test('mcp:appliedStale: a selection saved without a restart, or a server skipped at spawn, reads stale', () => {
+  const lib = { jira: JIRA, docs: DOCS };
+  const applied = appliedFor(lib, ['docs']);
+  assert.deepStrictEqual(applied.names, ['docs'], 'ENTER: only docs was applied');
+  const ask = door({ name: 's', mcpServers: ['jira', 'docs'], mcpApplied: applied }, lib);
+  assert.strictEqual(ask('s').stale, true);
+  const none = door({ name: 'n', mcpServers: ['jira'] }, lib);
+  assert.strictEqual(none('n').stale, true, 'selected with nothing applied');
+});
+
+test('mcp:appliedStale: an array of names answers each seat from one library read', () => {
+  let reads = 0;
+  const { registerIpcHandlers } = require('../ipc-handlers');
+  const handlers = {};
+  const records = { a: { name: 'a' }, b: { name: 'b', mcpUnmanaged: true } };
+  const deps = new Proxy({
+    handle: (ch, fn) => { handlers[ch] = fn; }, on: () => {},
+    persistence: { get: (n) => records[n] || null },
+    mcpLibrary: { list: () => { reads++; return []; } },
+  }, { get(t, k) { return k in t ? t[k] : () => () => {}; } });
+  registerIpcHandlers(deps);
+  assert.deepStrictEqual(handlers['mcp:appliedStale']({}, ['a', 'b', 'gone']), {
+    a: { ok: true, servers: [], unmanaged: false, stale: false },
+    b: { ok: true, servers: [], unmanaged: true, stale: false },
+    gone: { ok: false, error: 'Session not found' },
+  });
+  assert.strictEqual(reads, 1);
+});

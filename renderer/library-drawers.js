@@ -828,6 +828,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
 
   let editingMcpName = null;
   let editingMcpRest = {};
+  let mcpScannedCwd = null;
 
   function mcpPreview(entry) {
     const e = entry || {};
@@ -841,7 +842,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     if (!items.length) { mcpEmpty.style.display = ''; return; }
     mcpEmpty.style.display = 'none';
     for (const m of items) {
-      const secrets = (m.secrets || []).length ? ` · needs ${m.secrets.join(', ')}` : '';
+      const secrets = (m.secrets || []).length ? ` · uses ${m.secrets.map((n) => `\${${n}}`).join(', ')}` : '';
       const el = document.createElement('div');
       el.className = 'prompt-item';
       el.innerHTML = `
@@ -864,13 +865,14 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
     const [kind, ...rest] = String(source || '').split(' ');
     const file = rest.join(' ');
     if (kind === 'claude:user') return `${file} — user`;
-    if (kind === 'claude:local') return `${file} — project ${mcpDiscoverCwd.value.trim()}`;
+    if (kind === 'claude:local') return `${file} — project ${mcpScannedCwd || ''}`;
     return file || source;
   }
 
   async function refreshMcpDiscover() {
     const cwd = mcpDiscoverCwd.value.trim() || null;
     const found = (await window.api.discoverMcpServers(cwd)) || [];
+    mcpScannedCwd = cwd;
     mcpDiscoverList.innerHTML = '';
     if (!found.length) {
       mcpDiscoverList.innerHTML = '<span class="hint-text">No MCP servers found in your Claude config.</span>';

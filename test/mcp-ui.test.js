@@ -186,6 +186,8 @@ test('context popover: built-in, library-selected and leak rows, built-in listed
   assert.ok(body.indexOf('<div class="ctx-util-group">Built-in</div>') < body.indexOf('<span class="ctx-cat">clodex</span>'));
   assert.ok(body.indexOf('<span class="ctx-cat">clodex</span>') < body.indexOf('<div class="ctx-util-group">Library</div>'));
   assert.ok(body.indexOf('<div class="ctx-util-group">Library</div>') < body.indexOf('<span class="ctx-cat">jira</span>'));
+  assert.ok(body.indexOf('<span class="ctx-cat">jira</span>') < body.indexOf('<div class="ctx-util-group">Outside selection</div>'));
+  assert.ok(body.indexOf('<div class="ctx-util-group">Outside selection</div>') < body.indexOf('<span class="ctx-cat">rogue</span>'));
   assert.match(body, /Claude: partially managed — CLI plugins unverified/);
   assert.doesNotMatch(body, /unmanaged:/);
 });
