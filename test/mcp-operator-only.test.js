@@ -131,7 +131,7 @@ async function spawnVia(tpl, body) {
   const { m, calls, tmpl } = spawnHarness(tpl);
   m._handleSpawnIntent(
     { name: 'lead', cwd: os.tmpdir(), workspaceId: 'default', type: 'claude' },
-    { name: 'child', template: tpl ? tmpl : null, body },
+    { name: 'child', template: tpl ? tmpl : null, cwd: tpl ? null : os.tmpdir(), body },
   );
   await new Promise((r) => setImmediate(r));
   await new Promise((r) => setImmediate(r));
