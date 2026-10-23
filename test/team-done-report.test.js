@@ -321,7 +321,7 @@ test('_artifactScope: a held ticket re-entered by task done gets a round-2 scope
   const t = f.one('t1');
   assert.strictEqual(t.artifact.round, 2);
   const { scope } = f.reviews[1];
-  assert.ok(scope.includes("CHANGED since round 1's snapshot:\n  modified  findings.md\n  added  REPORT-t1-r2.md\n"), scope);
+  assert.ok(scope.includes("CHANGED since round 1's snapshot:\n  added  REPORT-t1-r2.md\n  modified  findings.md\n"), scope);
   assert.ok(scope.includes("THIS IS ROUND 2. The artifact set changed after round 1's snapshot; review every changed file in full"));
   assert.ok(!scope.includes('sent it back anyway'));
   assert.ok(!scope.includes('settled ground.'), 'no settled-ground framing on an artifact round');
