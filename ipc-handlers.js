@@ -1903,7 +1903,8 @@ function registerIpcHandlers(deps) {
     if (!port) return { ok: false, error: 'box is not serving a web UI' };
     const tok = s.webToken();
     const url = `http://localhost:${port}` + (tok ? `?token=${encodeURIComponent(tok)}` : '');
-    openRemoteWindow(`sandbox:${s.id}`, url, { title: `${s.label || s.id} — Clodex` });
+    const id = s.id || boxId;
+    openRemoteWindow(`sandbox:${id}`, url, { title: `${s.label || id} — Clodex` });
     return { ok: true };
   }));
   handle('sandbox:getConfig', (_e, boxId) => withBox(boxId, (s) => s.getConfig()));
