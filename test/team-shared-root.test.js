@@ -255,3 +255,21 @@ test('a row whose team no longer exists is the caller\'s: listed as its own and 
   m._handleTask(leadA, { type: 'task', sub: 'cancel', id: 't1', body: '' });
   assert.strictEqual(h.store.load(h.root).find((r) => r.id === 't1').state, 'cancelled', JSON.stringify([injected, acks]));
 });
+
+test('the minute sweep runs per team on a shared root: each takes its own rows, and only the first takes unstamped ones', async (t) => {
+  const { h, m, seat } = mkShared(t);
+  seat('a-lead');
+  seat('b-lead');
+  h.store.save(h.root, [
+    row('t1', null, { parked: true, parkedBy: 'cap' }),
+    row('t2', 'b', { parked: true, parkedBy: 'cap' }),
+    row('t3', 'a', { parked: true, parkedBy: 'cap' }),
+  ]);
+  const alarmed = [];
+  m._alarmCapParked = (team, tk) => alarmed.push([team.name, tk.id]);
+  m._startCapParked = () => {};
+  m._reconcileTickets = () => {};
+  m._resumeOrphanedVerify = () => {};
+  await m._sweepTickets(Date.now());
+  assert.deepStrictEqual(alarmed.sort(), [['a', 't1'], ['a', 't3'], ['b', 't2']]);
+});

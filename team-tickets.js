@@ -3340,7 +3340,8 @@ function createTicketMethods(deps, shared) {
       return (t) => {
         if (!t || !t.team || t.team === team.name) return true;
         if (!names) {
-          try { names = new Set(typeof listTeams === 'function' ? listTeams() : []); } catch { names = new Set(); }
+          try { names = typeof listTeams === 'function' ? new Set(listTeams()) : null; } catch { names = null; }
+          if (!names) return false;
         }
         return !names.has(t.team);
       };
@@ -7354,17 +7355,20 @@ function createTicketMethods(deps, shared) {
     _sweepTickets(now = Date.now()) {
       if (typeof pruneStaleRows === 'function') pruneStaleRows().catch((e) => log.error('team', `roster prune failed: ${e.message}`));
       const sweptBoards = new Set();
+      const sweptTeams = new Set();
       const reconciledTeams = new Set();
       const sweeps = [];
       for (const s of this.sessions.values()) {
         if (!s.agentType || s._dead) continue;
         let team; try { team = this._teamOf(s); } catch { team = null; }
         if (!team) continue;
-        if (!sweptBoards.has(team.file)) {
-          sweptBoards.add(team.file);
+        if (!sweptTeams.has(team.file)) {
+          sweptTeams.add(team.file);
+          const unstamped = !sweptBoards.has(team.root);
+          sweptBoards.add(team.root);
           // Not awaited: a slow git probe must not hold up the badge reconcile;
           // overlap is handled by _stallProbing.
-          sweeps.push(this._sweepTeamTickets(team, now).catch((e) => log.error('ticket', `stall sweep failed: ${e.message}`)));
+          sweeps.push(this._sweepTeamTickets(team, now, { unstamped }).catch((e) => log.error('ticket', `stall sweep failed: ${e.message}`)));
         }
         if (!reconciledTeams.has(team.file)) {
           reconciledTeams.add(team.file);
@@ -7684,9 +7688,10 @@ function createTicketMethods(deps, shared) {
       });
     },
 
-    async _sweepTeamTickets(team, now) {
+    async _sweepTeamTickets(team, now, { unstamped = true } = {}) {
       const stallMs = (typeof team.watchdogMs === 'number' && team.watchdogMs > 0) ? team.watchdogMs : TICKET_STALL_MS;
-      const tickets = ticketsStore.load(team.root).filter(this._ownRowFilter(team));
+      const own = this._ownRowFilter(team);
+      const tickets = ticketsStore.load(team.root).filter((t) => (t && t.team === team.name) || (unstamped && own(t)));
       try { this._sweepMergedUnaccepted(team, tickets, now); } catch (e) {
         log.error('ticket', `merged-unaccepted sweep failed: ${e.message}`);
       }
