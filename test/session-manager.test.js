@@ -21356,7 +21356,7 @@ test('MCP library at create(): servers reach mcp.json, warnings are system rows,
   assert.deepStrictEqual(back.mcpApplied.names, ['docs', 'jira']);
 });
 
-test('MCP library at create(): an entry's denyTools land in the seat settings permissions.deny; an omitted server lands none', async (t) => {
+test('MCP library at create(): a library entry with denyTools lands them in the seat settings permissions.deny; an omitted server lands none', async (t) => {
   const fsReal = require('node:fs');
   const saved = Object.fromEntries(['CLAUDE_CONFIG_DIR', 'JIRA_TOKEN'].map((k) => [k, process.env[k]]));
   t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
@@ -21366,7 +21366,16 @@ test('MCP library at create(): an entry's denyTools land in the seat settings pe
     { name: 'atlassian', entry: { type: 'http', url: 'https://mcp.atlassian.com/v2/mcp', denyTools: ['createJiraIssue'] } },
     { name: 'jira', entry: { command: 'npx', env: { JIRA_TOKEN: '${JIRA_TOKEN}' }, denyTools: ['editJiraIssue'] } },
   ];
-  const h = mkStreamSeatManager({ extraDeps: { getMcpLibrary: () => ({ list: () => lib }) } });
+  const { createCliHooks } = require('../cli-hooks');
+  const h = mkStreamSeatManager({
+    extraDeps: (root) => ({
+      getMcpLibrary: () => ({ list: () => lib }),
+      setupClaudeHook: createCliHooks({
+        REGISTRY_DIR: root, memoryStore: { list: () => [] }, nodeInterp: process.execPath,
+        getUiSettings: () => ({ get: () => ({ statusline: { claude: [], claudeCommand: '' } }) }),
+      }).setupClaudeHook,
+    }),
+  });
   t.after(() => h.stopAll());
   await h.m.create('st1', 'claude', require('node:os').tmpdir(), [], null, 'ws', null, false, null,
     [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, 'stream', null, null, ['atlassian', 'jira']);

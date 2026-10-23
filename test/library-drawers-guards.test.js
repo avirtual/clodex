@@ -242,6 +242,13 @@ test('MCP editor: an entry opened with denyTools fills the textarea, and clearin
     listMcpServers: async () => [{ name: 'atlassian', type: 'http', entry: { type: 'http', url: 'https://a/mcp', denyTools: ['createJiraIssue', 'editJiraIssue'] }, secrets: [] }],
   });
   try {
+    const plain = global.document.createElement;
+    global.document.createElement = () => {
+      const x = plain();
+      let t = '';
+      Object.defineProperty(x, 'textContent', { get: () => t, set(v) { t = String(v); x.innerHTML = t; } });
+      return x;
+    };
     await r.opens.mcp('atlassian');
     await flush();
     assert.strictEqual(r.byId('mcp-deny-tools').value, 'createJiraIssue\neditJiraIssue');
