@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.134.0 — 2026-10-23
+
 - `clodex-team` and `task-ledger` no longer carry their own copy of the team-by-cwd rule: the host hands the exec its team (`CLODEX_TEAM`), and task-ledger uses the app's resolver (sandboxed teams and worktree checkouts now resolve the same way everywhere).
 - Two teams can share one root: `team create … share-root:yes` (or the checkbox in the New Session dialog). Board rows carry their team, a lead dispatches only its own rows, retire is same-team, and merges from both teams queue on the one merge chain. A seat on neither roster sees a read-only, team-labelled board.
 - A team can set `done: report` (`[agent:team done report]`, or `done:report` on create): a ticket then closes through a cold review of its task-dir artifacts — snapshotted and hashed, so the verdict binds to one revision — with no suite and no merge; accept archives the seat. The policy is pinned on each ticket when it is filed.
