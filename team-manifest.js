@@ -179,6 +179,13 @@ function normalizeWorktrees(v) {
   return WORKTREES_VALUES.includes(v) ? v : null;
 }
 
+const DONE_VALUES = ['code', 'report'];
+const DEFAULT_DONE = 'code';
+
+function normalizeDone(v) {
+  return DONE_VALUES.includes(v) ? v : null;
+}
+
 function normalizeMaxHands(v) {
   return (typeof v === 'number' && Number.isInteger(v) && v > 0) ? v : null;
 }
@@ -583,11 +590,15 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
       : null;
     const kit = (typeof m.kit === 'string' && !badStem(m.kit) && TEAM_STEM_RE.test(m.kit)) ? m.kit : LEGACY_KIT;
     const trunk = normalizeTrunk(m.trunk);
+    const done = m.done === undefined ? DEFAULT_DONE : normalizeDone(m.done);
+    if (!done) {
+      throw new Error(`team.json "done" must be one of ${DONE_VALUES.join(' | ')} (${file})`);
+    }
     const sharedRoot = m.sharedRoot === true;
     const worktrees = normalizeWorktrees(m.worktrees);
     const maxHands = m.maxHands === null ? null : (normalizeMaxHands(m.maxHands) || undefined);
     const rosterState = readRoster(name, roles, lead);
-    const team = { name, root: path.resolve(root), sandboxed: m.sandboxed === true, lead, roles, kit, file, dir: path.dirname(file), watchdogMs, trunk, sharedRoot, ...(worktrees ? { worktrees } : {}), ...(maxHands !== undefined ? { maxHands } : {}), version, droppedFields, roster: rosterState.rows };
+    const team = { name, root: path.resolve(root), sandboxed: m.sandboxed === true, lead, roles, kit, file, dir: path.dirname(file), watchdogMs, trunk, done, sharedRoot, ...(worktrees ? { worktrees } : {}), ...(maxHands !== undefined ? { maxHands } : {}), version, droppedFields, roster: rosterState.rows };
     return { team, rosterState };
   }
 
@@ -1136,7 +1147,7 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
     }
   }
 
-  function createTeam({ name, root, lead, roles, kit, sandboxed, shareRoot, dryRun } = {}) {
+  function createTeam({ name, root, lead, roles, kit, sandboxed, shareRoot, done, dryRun } = {}) {
     assertTeamName(name);
     const resolvedKit = resolveKit(kit);
     if (typeof root !== 'string' || !path.isAbsolute(root)) {
@@ -1144,6 +1155,9 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
     }
     if (typeof lead !== 'string' || !NAME_RE.test(lead)) {
       throw new Error(`team "${name}" lead must be a seat name matching ${NAME_RE}`);
+    }
+    if (done !== undefined && !normalizeDone(done)) {
+      throw new Error(`team "${name}" done must be one of ${DONE_VALUES.join(' | ')}`);
     }
     const file = path.join(teamsDir, name, TEAM_FILE);
     let exists = false;
@@ -1213,6 +1227,7 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
       ...(sandboxed === true ? { sandboxed: true } : {}),
       ...(owners.length ? { sharedRoot: true } : {}),
       ...(resolvedKit ? { kit: resolvedKit.name } : {}),
+      ...(done === 'report' ? { done } : {}),
       roles: seedRoles,
     };
     let loaded;
@@ -1541,6 +1556,16 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
     return loadManifest(teamName);
   }
 
+  function setTeamDone(teamName, mode) {
+    const team = loadManifest(teamName);
+    const v = normalizeDone(mode);
+    if (!v) throw new Error(`done must be one of ${DONE_VALUES.join(' | ')} (${team.file})`);
+    const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
+    raw.done = v;
+    atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
+    return loadManifest(teamName);
+  }
+
   function setTeamWorktrees(teamName, value) {
     const team = loadManifest(teamName);
     const v = normalizeWorktrees(value);
@@ -1564,7 +1589,7 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
   return {
     resolveTeam: teamOfCwd, teamOfCwd, teamsOfCwd, teamOfSeat, teamOf, findProjectRoot, loadManifest, listTeams, cwdInProject,
     bindSeat, unbindSeat, renameSeatRow, rosterOf, pruneStaleRows, synthesiseRosters, setSeatLookup,
-    createTeam, deleteTeam, addRole, setRole, removeRole, renameRole, setTeamWatchdog, setTeamTrunk, setTeamWorktrees, setTeamMaxHands, setLead,
+    createTeam, deleteTeam, addRole, setRole, removeRole, renameRole, setTeamWatchdog, setTeamTrunk, setTeamDone, setTeamWorktrees, setTeamMaxHands, setLead,
     listKits, kitCatalog, resolveKit,
     teamsDir, TEAM_FILE, ROSTER_FILE,
   };
@@ -1739,6 +1764,6 @@ module.exports = {
   // Exported so the retired-field warn test iterates the REAL list — a copy in
   // the test would keep passing over a field added here and never warned about.
   ROLE_KEYS, CUT_ROLE_FIELDS, HONORED_CUT_FIELDS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, MANIFEST_VERSION,
-  ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH, normalizeTrunk, TRUNK_HEAD, WORKTREES_VALUES, normalizeWorktrees, normalizeMaxHands, effectiveHandCap,
+  ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH, normalizeTrunk, TRUNK_HEAD, DONE_VALUES, DEFAULT_DONE, normalizeDone, WORKTREES_VALUES, normalizeWorktrees, normalizeMaxHands, effectiveHandCap,
   ROLE_RE, RESERVED_ROLE_KEYS, RESERVED_ROLE_PATCH_FIELDS, NAME_RE,
 };

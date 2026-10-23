@@ -159,6 +159,7 @@ function parseIntentLegacy(rawLine) {
     const modeM = argStr.match(/\bmode:(\S+)/);
     const kitM = argStr.match(/\bkit:(\S+)/);
     const shareM = argStr.match(/\bshare-root:(\S*)/);
+    const doneM = argStr.match(/\bdone:(\S+)/);
     const positional = argStr.trim().split(/\s+/).filter((t) => t && !/^[\w-]+:/.test(t));
     return {
       type: 'team-create',
@@ -167,12 +168,13 @@ function parseIntentLegacy(rawLine) {
       lead: leadM ? leadM[1] : null,
       mode: modeM ? modeM[1] : null,
       kit: kitM ? kitM[1] : null,
+      ...(doneM ? { done: doneM[1] } : {}),
       ...(shareM ? (shareM[1] === 'yes' ? { shareRoot: true } : { shareRootError: `share-root:${shareM[1]} — the only accepted value is share-root:yes` }) : {}),
       body: teamCreateMatch[2],
     };
   }
 
-  const teamMatch = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|bind|unbind|roster|template-save|template-rm|prompt-save|prompt-rm|sandbox|trunk|worktrees|hands)\b([^\]]*)\]\s*(.*)/s);
+  const teamMatch = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|bind|unbind|roster|template-save|template-rm|prompt-save|prompt-rm|sandbox|trunk|done|worktrees|hands)\b([^\]]*)\]\s*(.*)/s);
   if (teamMatch) {
     const sub = teamMatch[1];
     const argStr = teamMatch[2];
@@ -192,6 +194,7 @@ function parseIntentLegacy(rawLine) {
     if (sub === 'bind') return { type: 'team', sub, name: positional[0] || null, role: positional[1] || null, body: '' };
     if (sub === 'roster') return { type: 'team', sub, body: '' };
     if (sub === 'trunk') return { type: 'team', sub, branch: positional[0] || null, body: '' };
+    if (sub === 'done') return { type: 'team', sub, mode: positional[0] || null, body: '' };
     if (sub === 'worktrees') return { type: 'team', sub, value: positional[0] || null, body: '' };
     if (sub === 'hands') return { type: 'team', sub, value: positional[0] || null, body: '' };
     if (sub === 'role-rename') return { type: 'team', sub, name: positional[0] || null, to: positional[1] || null, body: '' };
@@ -441,6 +444,7 @@ const ADVERSARIAL = [
   '[agent:team bind bob hand]', '[agent:team bind bob]', '[agent:team bind]', '[agent:team bindx bob]',
   '[agent:team unbind bob]', '[agent:team unbind]', '[agent:team roster]', '[agent:team roster extra]',
   '[agent:team trunk main]', '[agent:team trunk]',
+  '[agent:team done report]', '[agent:team done]', '[agent:team donex]',
   '[agent:team worktrees in-root]', '[agent:team worktrees]', '[agent:team worktreesx]',
   '[agent:team hands 3]', '[agent:team hands off]', '[agent:team hands]', '[agent:team handsx]',
   '[agent:team template-save hand-seat] {"type":"claude"}', '[agent:team template-save]',
@@ -455,6 +459,7 @@ const ADVERSARIAL = [
   '[agent:team sandbox bootstrap show setup]', '[agent:team sandbox bootstrap clear]', '[agent:team sandbox restart]',
   '[agent:team create shop root:/proj/shop]',
   '[agent:team create shop root:/proj/shop share-root:yes]', '[agent:team create share-root:no shop root:/proj/shop]',
+  '[agent:team create shop root:/proj/shop done:report]',
   '[agent:team create shop root:/proj/shop lead:boss]',
   '[agent:team create lead:boss root:/proj/shop shop]',
   '[agent:team create shop]', '[agent:team create root:/proj/shop]',
@@ -1675,6 +1680,13 @@ test('C1b (a) parseTask done takes tN@origin; other subs keep the token whole', 
   const add = parseIntent('[agent:task add t7@laptop] spec');
   assert.strictEqual(add.who, 't7@laptop');
   assert.strictEqual('board' in add, false);
+});
+
+test('team done: the mode is the positional, bare is null; done:report on create rides the create intent', () => {
+  assert.deepStrictEqual(parseIntent('[agent:team done report]'), { type: 'team', sub: 'done', mode: 'report', body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:team done]'), { type: 'team', sub: 'done', mode: null, body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:team create shop root:/p done:report]'),
+    { type: 'team-create', name: 'shop', root: '/p', lead: null, mode: null, kit: null, done: 'report', body: '' });
 });
 
 test('team create: share-root:yes sets shareRoot, any other value is a parse error naming the accepted value', () => {

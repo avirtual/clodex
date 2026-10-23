@@ -377,6 +377,8 @@
 | `_setLoopStep` | re-load, set or clear the loop step and end the stall episode | tickets.json loopStep, lastActivityAt, nudgedAt | none | ticket-loop-verify.test.js |
 | `_writeTicketSuiteFailure` | preserves a red run's output as a per-ticket per-round stamped file in the task dir, written aside and renamed | task dir suite-failure file | _ticketDiffDest, ensureDir | ticket-loop-verify.test.js ticket-auto-merge.test.js |
 | `_writeTicketDiff` | writes the round's review diff into the confined task dir and stamps it on the round | task dir review diff, tickets.json rounds | _ticketDiffDest, _stampRoundFile | review-verdict-ticket.test.js ticket-loop-verify.test.js |
+| `_snapshotArtifacts` | a report ticket's artifact set: writes the report as REPORT-<id>-r<round>.md, hashes every non-loop file under the artifact dir, and with write stamps .artifact-r<round>.json and the row's artifact digest | task dir report and snapshot files, tickets.json artifact | _artifactDir, _artifactFiles, ensureDir | team-done-report.test.js |
+| `_landArtifactAccept` | a report ticket's ACCEPT: re-hashes the set and closes out branchless on an equal digest, else holds at verify: artifact | tickets.json via the close-out or the hold | _snapshotArtifacts, _closeOutBranchless, _holdArtifact | team-done-report.test.js |
 | `_spawnTicketReview` | spawns the loop's reviewer as the lead through the team-review path with a built scope, turning refusals into escalations | none | buildReviewScope, _ticketTaskDirRender, _handleTeamReview, _escalateTicket | review-verdict-ticket.test.js ticket-loop-verify.test.js review-cost-durable.test.js |
 
 ### Invariants
@@ -384,12 +386,14 @@
 - `_rejectTicketFromLoop` keeps its reopen field-for-field with the lead's reject, bumping the round before filing the reason.
 - `_taskRejectFollowUp` bumps nothing that implies a fresh review round and stamps activity only once the follow-up is away.
 - `_spawnTicketReview` diverts rather than suppresses the team-review reply, so an unbriefed or refused reviewer becomes an escalation.
+- `_snapshotArtifacts` skips the files the loop itself writes into a task dir (snapshots, diffs, verdicts, cost), so an ACCEPT's re-hash compares only what the hand submitted.
 
 ### Hazards
 - Hoisting `_notifyLeadOfLoopRejection` above the save, or unwrapping it, lets a notice throw unwind a rejection.
 - Merging `_stampVerifyHold` into the loop step or saving a caller's snapshot across the loop's awaits loses the hold or overwrites fresher writes.
 - `_reworkSeatFor` discards the `_spawnTicketSeat` result after detaching and archiving the old seat, so a failed replacement spawn is still reported as queued.
 - Sending `_notifyHandOfHold` to the lead or arming the spec-confirm latch invites the wrong action on a done ticket.
+- Reading `team.done` instead of the ticket's own `done` stamp in `_taskDone`, `_runTicketLoop` or the verdict landing lets a policy flip mid-flight skip or swap a ticket's gate.
 - `_writeTicketSuiteFailure` compares pre-run and post-run HEAD by sha, gates the moved line on the carried `suite.head` rather than the fallback re-read, and labels neither sha as the measured one, because the suite lock wait sits between both reads.
 
 ## Escalation and ticket cost — _escalateTicket … _writeTicketCost

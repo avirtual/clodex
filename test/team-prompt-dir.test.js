@@ -255,6 +255,7 @@ test('t699: loadManifest and resolveTeam both carry `dir`, the directory holding
     dir: path.dirname(file),
     watchdogMs: null,
     trunk: null,
+    done: 'code',
     sharedRoot: false,
     version: 3,
     droppedFields: [],
