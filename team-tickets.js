@@ -416,7 +416,6 @@ function createTicketMethods(deps, shared) {
     renameRole,
     setTeamWatchdog,
     setTeamTrunk,
-    setTeamDone,
     setLead,
     createTeam,
     kitCatalog,
@@ -2734,7 +2733,7 @@ function createTicketMethods(deps, shared) {
         reply(`error: done must be code or report, not "${intent.mode}"`);
         return;
       }
-      const m = setTeamDone(team.name, intent.mode);
+      const m = deps.setTeamDone(team.name, intent.mode);
       reply(`done of ${team.name} set to ${what(m.done)} — tickets filed from now on take it; open tickets keep the policy they were filed under`);
     },
 

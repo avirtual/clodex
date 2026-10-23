@@ -577,7 +577,7 @@ test('t1407: the lead variant is IPC_PROMPT plus the nine team rows, first role-
   assert.match(rows[0], /^ {2}\[agent:team role-add <role> \[prompt:<stem>\] \[template:<stem>\]/);
   assert.match(rows[6], /^ {2}\[agent:team bind <seat> <role>\] {2}Put an existing seat on your team's roster/);
   assert.match(rows[7], /^ {2}\[agent:team trunk <branch>\] {6}Set the branch accepted tickets merge into/);
-  assert.match(rows[8], /^ {2}\[agent:team done code\|report\] {4}Set how a ticket filed from now on closes: code \(the default\)/);
+  assert.match(rows[8], /^ {2}\[agent:team done code\|report\] {4}How tickets filed from now on close: code \(default\) = branch/);
   assert.strictEqual(lead.split('\n').filter((l) => !l.startsWith('  [agent:team ')).join('\n'), IPC_PROMPT,
     'removing the team rows gives back the non-lead prompt byte for byte');
   assert.ok(!lead.includes('(team lead only; every team verb is)'), 'a row only the lead reads does not repeat that it is lead-only');
