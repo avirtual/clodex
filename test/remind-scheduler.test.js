@@ -359,3 +359,73 @@ test('reminderLibraryKinds.add: parser errors verbatim, unknown seat refused, go
     assert.strictEqual(store.get(good.id).by, 'operator');
   } finally { cleanup(); }
 });
+
+function fireNowEngine(startMs) {
+  const userData = mkTmpRoot('remsched-fire-ud-');
+  const registryDir = mkTmpRoot('remsched-fire-reg-');
+  const stores = initStores(userData, { log: console, registryDir });
+  const clock = fakeClock(startMs);
+  const delivered = [];
+  const scheduler = createRemindScheduler({
+    now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer,
+    store: stores.reminders, deliver: (agent, id, spec, body, by) => delivered.push({ agent, id, spec, body, by }),
+  });
+  return {
+    scheduler, clock, delivered, store: stores.reminders,
+    cleanup() {
+      scheduler.stop();
+      fs.rmSync(userData, { recursive: true, force: true });
+      fs.rmSync(registryDir, { recursive: true, force: true });
+    },
+  };
+}
+
+test('fireNow: a one-shot delivers once and is spent', () => {
+  const { scheduler, clock, delivered, store, cleanup } = fireNowEngine(T0);
+  try {
+    const r = scheduler.add('t1', 'in 30m', 'ping', { by: 'operator' });
+    clock.set(T0 + 5 * MIN);
+    assert.deepStrictEqual(scheduler.fireNow('t1', r.record.id), { ok: true, kept: false });
+    assert.deepStrictEqual(delivered, [{ agent: 't1', id: r.record.id, spec: 'in 30m', body: 'ping', by: 'operator' }]);
+    assert.strictEqual(store.get(r.record.id), null);
+    clock.advance(HOUR);
+    assert.strictEqual(delivered.length, 1);
+  } finally { cleanup(); }
+});
+
+test('fireNow: an every row delivers once and re-times its period from now', () => {
+  const { scheduler, clock, delivered, store, cleanup } = fireNowEngine(T0);
+  try {
+    const r = scheduler.add('t1', 'every 30m', 'clear your context');
+    const t = T0 + 10 * MIN;
+    clock.set(t);
+    assert.deepStrictEqual(scheduler.fireNow('t1', r.record.id), { ok: true, kept: true });
+    assert.deepStrictEqual(delivered, [{ agent: 't1', id: r.record.id, spec: 'every 30m', body: 'clear your context', by: undefined }]);
+    const after = store.get(r.record.id);
+    assert.strictEqual(after.lastFiredAt, t);
+    assert.strictEqual(after.nextFireAt, t + 30 * MIN);
+  } finally { cleanup(); }
+});
+
+test('fireNow: an on compact row delivers once and stays event-only', () => {
+  const { scheduler, delivered, store, cleanup } = fireNowEngine(T0);
+  try {
+    const r = scheduler.add('t1', 'on compact', 'reassess');
+    assert.deepStrictEqual(scheduler.fireNow('t1', r.record.id), { ok: true, kept: true });
+    assert.strictEqual(delivered.length, 1);
+    const after = store.get(r.record.id);
+    assert.strictEqual(after.nextFireAt, null);
+    assert.strictEqual(after.lastFiredAt, T0);
+  } finally { cleanup(); }
+});
+
+test('fireNow: an agent mismatch or unknown id is no such reminder and delivers nothing', () => {
+  const { scheduler, delivered, store, cleanup } = fireNowEngine(T0);
+  try {
+    const r = scheduler.add('t1', 'in 30m', 'x');
+    assert.deepStrictEqual(scheduler.fireNow('t2', r.record.id), { ok: false, error: 'no such reminder' });
+    assert.deepStrictEqual(scheduler.fireNow('t1', 'nope'), { ok: false, error: 'no such reminder' });
+    assert.strictEqual(delivered.length, 0);
+    assert.ok(store.get(r.record.id));
+  } finally { cleanup(); }
+});

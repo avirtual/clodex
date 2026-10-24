@@ -56,3 +56,7 @@ The toast says "Schedule cancelled", not that a message was recalled: a nudge
 that already fired and is queued for delivery may still land. A row that was
 already gone (fired for the last time, or cancelled by its agent) refreshes the
 table without an error.
+
+## Firing
+
+Each row's Fire goes through `host.library.fire('reminder', { agent, id })`, which delivers the reminder now through the scheduler's own fire path: a one-shot is spent, a recurring one keeps its schedule (an `every` restarts its period from now), and an `on compact` one stays armed.

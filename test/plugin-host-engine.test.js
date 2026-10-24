@@ -42,7 +42,7 @@ function makeManager(sessions = []) {
 // `notifications: null` is how a test asks for the store-absent branch, so the
 // default cannot be reached by omission — undefined must still mean "present".
 function makeHost({ manager = makeManager(), settings = {}, loader = null, libraryKinds, libraryPinKinds,
-  libraryAddKinds, libraryEditKinds,
+  libraryAddKinds, libraryEditKinds, libraryFireKinds,
   notifications = undefined, notifyOS = undefined, getPluginUpdates = undefined,
   refreshPluginUpdates = undefined, onPluginUpdated = undefined, electronChild = undefined } = {}) {
   const dir = mkTmpRoot('clodex-plugin-test-');
@@ -67,6 +67,7 @@ function makeHost({ manager = makeManager(), settings = {}, loader = null, libra
     libraryPinKinds: libraryPinKinds || { memory: (ref, on) => { pins.push([ref, on]); return { ok: true }; } },
     libraryAddKinds: libraryAddKinds || { memory: (ref, payload) => { writes.push(['add', ref, payload]); return { ok: true, id: 'mem-1-new', extra: 'x' }; } },
     libraryEditKinds: libraryEditKinds || { memory: (ref, payload) => { writes.push(['edit', ref, payload]); return { ok: true }; } },
+    libraryFireKinds: libraryFireKinds || { reminder: (ref) => { writes.push(['fire', ref]); return { ok: true, kept: true, extra: 'x' }; } },
     telemetrySnapshot: (name) => (name === 'a' ? { tok: 42 } : null),
     getLoader: () => loader,
     getPluginUpdates,
@@ -401,6 +402,30 @@ test('library.add/edit forward ref and payload, rebuild the envelope, and refuse
     { ok: false, error: 'no unit mem-9-zzzzzz' });
 });
 
+test('library.fire routes to the injected kind, passes kept through, and refuses bad input', async () => {
+  const { engine, writes } = makeHost();
+  const host = engine.register('demo', { activate() {} });
+  const ref = { agent: 'clodex', id: 'r7' };
+  assert.deepEqual(host.library.fire('reminder', ref), { ok: true, kept: true });
+  assert.deepEqual(writes, [['fire', ref]]);
+  assert.deepEqual(host.library.fire('x', ref), { ok: false, error: 'unknown library kind: x' });
+  for (const bad of [null, undefined, 'r7', 7]) {
+    assert.deepEqual(host.library.fire('reminder', bad), { ok: false, error: 'library.fire: ref must be an object' });
+  }
+  assert.equal(writes.length, 1, 'no handler ran for refused input');
+  const spent = makeHost({ libraryFireKinds: { reminder: () => ({ ok: true, kept: false }) } });
+  assert.deepEqual(spent.engine.register('demo', { activate() {} }).library.fire('reminder', ref), { ok: true, kept: false });
+  const missing = makeHost({ libraryFireKinds: { reminder: () => ({ ok: false, error: 'no such reminder' }) } });
+  assert.deepEqual(missing.engine.register('demo', { activate() {} }).library.fire('reminder', ref), { ok: false, error: 'no such reminder' });
+  let rejected = null;
+  process.once('unhandledRejection', (e) => { rejected = e; });
+  const asyncHost = makeHost({ libraryFireKinds: { reminder: async () => { throw new Error('async boom'); } } });
+  const res = asyncHost.engine.register('demo', { activate() {} }).library.fire('reminder', ref);
+  assert.deepEqual(res, { ok: false, error: 'library.fire: handler for reminder must be synchronous' });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(rejected, null);
+});
+
 test('library.setPin surfaces the cap refusal as TEXT, not a bare false', () => {
   // The refusal names the limit and the remedy ("unpin one first"). A boolean
   // would leave the operator with a button that silently does nothing.
@@ -457,7 +482,7 @@ test('the library kind table cannot be repointed from plugin land', () => {
   // The whole published surface, asserted exactly. A new verb here is a new
   // mutation a plugin can perform, so it must be a deliberate edit to this line
   // rather than something that lands unnoticed.
-  assert.deepEqual(Object.keys(host.library), ['add', 'edit', 'remove', 'setPin']);
+  assert.deepEqual(Object.keys(host.library), ['add', 'edit', 'remove', 'fire', 'setPin']);
 
   // The injected table is a live object the façade's freeze does not reach, so
   // the wrappers close over the handler captured at construction. Mutating the

@@ -14,6 +14,8 @@ blocks a release.
 ## Unreleased
 - The ticket loop sets the lead's per-ticket watch itself on every dispatch and rework round (team.json `watchMs`, default 60 min) and drops it when the ticket closes, so leads no longer hand-set reminders that fire stale after the merge; the Reminders panel shows them with a `loop` chip; a round the loop itself sends back re-arms it.
 
+- The Reminders panel gains a Fire button: it delivers a reminder now through the scheduled path (a one-shot is spent, a recurring one keeps its schedule), so an operator can test or force a nudge without waiting.
+
 ## 5.138.0 — 2026-10-24
 
 - The shadow log records each injected delivery's written size and the prompt size the CLI's next request carried, so a truncated inbound message is diagnosable after the fact.

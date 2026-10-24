@@ -20,6 +20,7 @@ function fileStore(file) {
     get: (id) => load().find((r) => r.id === id) || null,
     listForAgent: (agent) => load().filter((r) => r.agent === agent),
     remove: (id) => { const all = load(); save(all.filter((r) => r.id !== id)); return all.some((r) => r.id === id); },
+    markFired: (id, at, next) => { save(load().map((r) => (r.id === id ? { ...r, lastFiredAt: at, nextFireAt: next } : r))); },
   };
 }
 
@@ -54,6 +55,10 @@ function boot({ records, live = [], saved = [], libraryKinds } = {}) {
   const addKinds = {
     reminder: (ref, payload) => { adds.push({ ref, payload }); return { ok: true, id: 'new111' }; },
   };
+  const fires = [];
+  const fireKinds = {
+    reminder: (ref) => { fires.push(ref); return prod.fire(ref); },
+  };
   const host = createPluginHostEngine({
     manager,
     getUiSettings: () => ({ get: () => ({}), set: () => {} }),
@@ -63,11 +68,13 @@ function boot({ records, live = [], saved = [], libraryKinds } = {}) {
     gitWorktree: {},
     libraryKinds: kinds,
     libraryAddKinds: addKinds,
+    libraryFireKinds: fireKinds,
   });
   delete require.cache[ENGINE_PATH];
-  host.register('reminders-viewer', require(ENGINE_PATH), { hostApi: HOST_API_VERSION });
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugins', 'reminders-viewer', 'manifest.json'), 'utf8'));
+  host.register('reminders-viewer', require(ENGINE_PATH), { ...manifest, hostApi: HOST_API_VERSION });
   const cleanup = () => { fs.rmSync(dir, { recursive: true, force: true }); };
-  return { host, file, removals, adds, calls, cleanup };
+  return { host, file, removals, adds, fires, calls, cleanup };
 }
 
 const LIVE = [
@@ -187,6 +194,41 @@ test('reminders-viewer: malformed cancel refs never reach the library seam', asy
       { ok: false, error: 'a valid reminder id is required' });
     assert.deepStrictEqual(removals, []);
   } finally { cleanup(); }
+});
+
+test('reminders-viewer: fire routes agent+id to library.fire and passes kept through', async () => {
+  const { host, file, fires, cleanup } = boot({
+    live: LIVE, records: [rec({ id: 'aaa111', agent: 'lead' }), rec({ id: 'bbb222', agent: 'lead', kind: 'in', spec: 'in 5m', nextFireAt: 1700000300000 })],
+  });
+  try {
+    assert.deepStrictEqual(await host.dispatch('reminders-viewer', 'fire', [{ agent: 'lead', id: 'aaa111' }], 'desktop'), { ok: true, kept: true });
+    assert.deepStrictEqual(await host.dispatch('reminders-viewer', 'fire', [{ agent: 'lead', id: 'bbb222' }], 'desktop'), { ok: true, kept: false });
+    assert.deepStrictEqual(await host.dispatch('reminders-viewer', 'fire', [{ agent: 'lead', id: 'aaa111' }], 'web'), { ok: true, kept: true });
+    assert.deepStrictEqual(fires, [{ agent: 'lead', id: 'aaa111' }, { agent: 'lead', id: 'bbb222' }, { agent: 'lead', id: 'aaa111' }]);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')).map((r) => r.id), ['aaa111']);
+  } finally { cleanup(); }
+});
+
+test('reminders-viewer: malformed fire refs never reach the library seam', async () => {
+  const { host, fires, cleanup } = boot({ live: LIVE, records: [] });
+  try {
+    assert.deepStrictEqual(await host.dispatch('reminders-viewer', 'fire', [{ agent: '..', id: 'aaa111' }], 'desktop'),
+      { ok: false, error: 'a valid agent name is required' });
+    assert.deepStrictEqual(await host.dispatch('reminders-viewer', 'fire', [{ agent: 'lead', id: '../x' }], 'desktop'),
+      { ok: false, error: 'a valid reminder id is required' });
+    assert.deepStrictEqual(fires, []);
+  } finally { cleanup(); }
+});
+
+test('reminders-viewer renderer offers a Fire button that invokes fire', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'plugins', 'reminders-viewer', 'renderer.js'), 'utf8');
+  assert.match(src, /el\('button', 'rv-fire', 'Fire'\)/);
+  assert.match(src, /rhost\.invoke\('fire', \{ agent: r\.agent, id: r\.id \}\)/);
+});
+
+test('engine.js wires the reminder fire kind to reminderLibraryKinds', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
+  assert.match(src, /libraryFireKinds: \{ reminder: \(ref\) => reminderKinds\.fire\(ref\) \},/);
 });
 
 test('host.sessions.listSavedWorkspace projects saved records to name/type/cwd/workspaceId', () => {

@@ -29,7 +29,8 @@
 }
 
 .rv-toggle,
-.rv-cancel {
+.rv-cancel,
+.rv-fire {
   background: none;
   color: inherit;
   border: 1px solid rgba(128, 128, 128, 0.4);
@@ -43,12 +44,22 @@
   margin-left: auto;
 }
 
+.rv-actions {
+  white-space: nowrap;
+}
+
+.rv-fire {
+  margin-right: 4px;
+}
+
 .rv-toggle:hover,
-.rv-cancel:hover {
+.rv-cancel:hover,
+.rv-fire:hover {
   border-color: rgba(128, 128, 128, 0.8);
 }
 
-.rv-cancel:disabled {
+.rv-cancel:disabled,
+.rv-fire:disabled {
   opacity: 0.4;
   cursor: default;
 }

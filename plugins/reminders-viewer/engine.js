@@ -91,6 +91,17 @@ function cancel(payload) {
   return { ...(res || { ok: false }), ok: false, gone };
 }
 
+function fire(payload) {
+  const { agent, id } = payload || {};
+  if (typeof agent !== 'string' || !AGENT_NAME_RE.test(agent)) {
+    return { ok: false, error: 'a valid agent name is required' };
+  }
+  if (typeof id !== 'string' || !ID_RE.test(id)) {
+    return { ok: false, error: 'a valid reminder id is required' };
+  }
+  return host.library.fire('reminder', { agent, id });
+}
+
 function seats(wsId) {
   if (typeof wsId !== 'string' || !wsId) {
     return { ok: false, error: 'a workspace id is required' };
@@ -121,6 +132,7 @@ module.exports.activate = (h) => {
   host.ipc.handle('cancel', (payload) => cancel(payload));
   host.ipc.handle('seats', (wsId) => seats(wsId));
   host.ipc.handle('add', (payload) => add(payload));
+  host.ipc.handle('fire', (payload) => fire(payload));
   host.log.info('activated');
 };
 

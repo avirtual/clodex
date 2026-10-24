@@ -141,8 +141,11 @@ module.exports.activate = (rhost) => {
       tr.appendChild(text);
       tr.appendChild(el('td', 'rv-ticket', r.ticket || ''));
       const cell = el('td', 'rv-actions');
+      const fireBtn = el('button', 'rv-fire', 'Fire');
       const btn = el('button', 'rv-cancel', 'Cancel');
+      fireBtn.addEventListener('click', () => fireRow(r, fireBtn, btn));
       btn.addEventListener('click', () => cancelRow(r, btn));
+      cell.appendChild(fireBtn);
       cell.appendChild(btn);
       tr.appendChild(cell);
       return tr;
@@ -170,6 +173,29 @@ module.exports.activate = (rhost) => {
       } finally {
         if (alive() && btn.isConnected) btn.disabled = false;
       }
+    }
+
+    async function fireRow(r, fireBtn, cancelBtn) {
+      if (fireBtn.disabled) return;
+      fireBtn.disabled = true;
+      cancelBtn.disabled = true;
+      let res;
+      try {
+        res = await rhost.invoke('fire', { agent: r.agent, id: r.id });
+      } catch (e) {
+        rhost.log.error('fire failed', e);
+        res = null;
+      }
+      if (!alive()) return;
+      if (res && res.ok === true) {
+        rhost.ui.showToast(res.kept ? 'Reminder delivered' : 'Reminder delivered and spent');
+        await reload();
+        return;
+      }
+      rhost.ui.showToast(`Could not fire: ${(res && res.error) || 'unknown error'}`, { kind: 'error' });
+      if (fireBtn.isConnected) fireBtn.disabled = false;
+      if (cancelBtn.isConnected) cancelBtn.disabled = false;
+      await reload();
     }
 
     async function loadSeats() {
