@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { WireProxy } = require('../wire/proxy');
+const { WireProxy, lastUserPrompt } = require('../wire/proxy');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // Synthetic Anthropic SSE turn: usage on message_start, an intent split
@@ -261,6 +261,7 @@ test('e2e: byte-exact pass-through + turn.completed/session/usage events', async
   assert.equal(turn.sideCall, false);
   assert.equal(turn.usage.input_tokens, 10);
   assert.equal(turn.usage.output_tokens, 42);
+  assert.deepStrictEqual(turn.prompt, { len: 2, head: 'hi', tail: 'hi' });
   // Touched-files observer: the Edit tool_use streamed alongside the text
   // (path split across input_json_delta fragments, path key not first).
   assert.deepEqual(turn.files, [{ tool: 'Edit', path: '/tmp/wire-touched.js' }]);
@@ -697,4 +698,31 @@ test('malformed SSE degrades to an empty receipt, session unbroken', async (tc) 
   assert.equal(events['stream-end'].length, 1);
   assert.equal(events['proxy-error'].length, 0);
 
+});
+
+test('lastUserPrompt: string content reports length, head and tail only', () => {
+  const text = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  assert.deepStrictEqual(lastUserPrompt({ messages: [
+    { role: 'user', content: 'older' }, { role: 'assistant', content: 'reply' }, { role: 'user', content: text },
+  ] }), { len: 36, head: 'abcdefghijklmnopqrstuvwx', tail: 'mnopqrstuvwxyz0123456789' });
+});
+
+test('lastUserPrompt: array content takes its text block', () => {
+  assert.deepStrictEqual(lastUserPrompt({ messages: [
+    { role: 'user', content: [{ type: 'image', source: {} }, { type: 'text', text: 'hello there' }] },
+  ] }), { len: 11, head: 'hello there', tail: 'hello there' });
+});
+
+test('lastUserPrompt: a first tool_result block is a tool-loop hop and reports null without walking back', () => {
+  assert.strictEqual(lastUserPrompt({ messages: [
+    { role: 'user', content: 'the human prompt' },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'x', name: 'Bash', input: {} }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'x', content: 'ok' }, { type: 'text', text: 'trailing' }] },
+  ] }), null);
+});
+
+test('lastUserPrompt: a <system-reminder> text block is skipped for the next text block', () => {
+  assert.deepStrictEqual(lastUserPrompt({ messages: [
+    { role: 'user', content: [{ type: 'text', text: '<system-reminder>ctx</system-reminder>' }, { type: 'text', text: 'real prompt' }] },
+  ] }), { len: 11, head: 'real prompt', tail: 'real prompt' });
 });

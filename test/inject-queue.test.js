@@ -135,6 +135,41 @@ test('InjectQueue: newlines become carriage returns; length tracks drain', async
   assert.deepStrictEqual(writes, ['\x15', 'line1\rline2', '\r']);
 });
 
+test('InjectQueue: onWritten reports a bracketed multi-line write with its marker bytes', async () => {
+  const writes = [];
+  const seen = [];
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: () => 7,
+    quietMs: 0, maxWaitMs: 0, ctrlUSettleMs: 0,
+    lastHumanInputAt: () => 0,
+    isDead: () => false,
+    sleep: async () => {},
+    bracketedPaste: () => true,
+    onWritten: (text, meta) => { writes.push('WRITTEN'); seen.push({ text, meta }); },
+  });
+  const text = 'body line\n(reply trailer)';
+  await q.enqueue(text);
+  assert.deepStrictEqual(writes, ['\x15', `${PASTE_START}body line\r(reply trailer)${PASTE_END}`, '\r', 'WRITTEN']);
+  assert.deepStrictEqual(seen, [{ text, meta: { bytes: text.length + 12, bracketed: true, pasteOn: true, settleMs: 7 } }]);
+});
+
+test('InjectQueue: onWritten reports an unwrapped single-line write at its own length', async () => {
+  const seen = [];
+  const q = new InjectQueue({
+    write: () => {},
+    settleMsFor: () => 3,
+    quietMs: 0, maxWaitMs: 0, ctrlUSettleMs: 0,
+    lastHumanInputAt: () => 0,
+    isDead: () => false,
+    sleep: async () => {},
+    bracketedPaste: () => true,
+    onWritten: (text, meta) => seen.push({ text, meta }),
+  });
+  await q.enqueue('one line only');
+  assert.deepStrictEqual(seen, [{ text: 'one line only', meta: { bytes: 13, bracketed: false, pasteOn: true, settleMs: 3 } }]);
+});
+
 test('InjectQueue: a dead session mid-drain skips the Enter (no write into a closed fd)', async () => {
   const writes = [];
   let dead = false;

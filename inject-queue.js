@@ -64,11 +64,12 @@ class InjectQueue {
   // ready(): a BOOT gate, not a liveness gate — the caller latches it.
   // readyMaxWaitMs / maxWaitMs: caps so a seat that never signals ready, or an
   // operator who walked away mid-draft, cannot strand a delivery.
-  constructor({ write, settleMsFor, quietMs, maxWaitMs, lastHumanInputAt, isDead, now, sleep, onCapFire, ctrlUSettleMs, bracketedPaste, ready, readyMaxWaitMs, readyPollMs, onReadyCapFire, pasteMaxWaitMs, onPasteCapFire, hintHeld, speaking, onSubmitted, onUndelivered, reviewGate, onDefanged }) {
+  constructor({ write, settleMsFor, quietMs, maxWaitMs, lastHumanInputAt, isDead, now, sleep, onCapFire, ctrlUSettleMs, bracketedPaste, ready, readyMaxWaitMs, readyPollMs, onReadyCapFire, pasteMaxWaitMs, onPasteCapFire, hintHeld, speaking, onSubmitted, onWritten, onUndelivered, reviewGate, onDefanged }) {
     this._write = write;
     this._onDefanged = typeof onDefanged === 'function' ? onDefanged : null;
     this._reviewGate = !!reviewGate;
     this._onSubmitted = typeof onSubmitted === 'function' ? onSubmitted : null;
+    this._onWritten = typeof onWritten === 'function' ? onWritten : null;
     this._onUndelivered = typeof onUndelivered === 'function' ? onUndelivered : null;
     this._settleMsFor = settleMsFor;
     this._quietMs = quietMs;
@@ -210,11 +211,15 @@ class InjectQueue {
     // prompt. Wrapping in 200~/201~ makes interior \r literal, but only while the
     // CLI actually has mode 2004 on; otherwise the markers land as literal text.
     let out = text.replace(/\n/g, '\r');               // the text (\n→\r)
-    if (text.includes('\n') && (forceBracket || this._pasteOn())) out = PASTE_START + out + PASTE_END;
+    const pasteOn = this._pasteOn();
+    const bracketed = text.includes('\n') && (forceBracket || pasteOn);
+    if (bracketed) out = PASTE_START + out + PASTE_END;
     this._write(out);
-    await this._sleep(this._settleMsFor(text));
+    const settleMs = this._settleMsFor(text);
+    await this._sleep(settleMs);
     if (this._isDead()) { if (parkable) this._undelivered(text); return; }
     this._write('\r');                                 // Enter — closes the unit
+    if (this._onWritten) { try { this._onWritten(text, { bytes: Buffer.byteLength(out), bracketed, pasteOn, settleMs }); } catch {} }
     if (this._onSubmitted) { try { this._onSubmitted(text, { human }); } catch {} }
   }
 }

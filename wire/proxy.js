@@ -118,6 +118,24 @@ function sessionIdFrom(obj) {
   }
 }
 
+function lastUserPrompt(obj) {
+  const msgs = obj && Array.isArray(obj.messages) ? obj.messages : null;
+  if (!msgs) return null;
+  let last = null;
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i] && msgs[i].role === 'user') { last = msgs[i]; break; }
+  }
+  if (!last) return null;
+  let text = null;
+  if (typeof last.content === 'string') text = last.content;
+  else if (Array.isArray(last.content)) {
+    if (last.content[0] && last.content[0].type === 'tool_result') return null;
+    const block = last.content.find((b) => b && b.type === 'text' && typeof b.text === 'string' && !b.text.startsWith('<'));
+    if (block) text = block.text;
+  }
+  if (text == null) return null;
+  return { len: text.length, head: text.slice(0, 24), tail: text.slice(-24) };
+}
 
 function spillFlagsOf(v) {
   if (v === true) return { tickets: true, messages: true, prose: true };
@@ -396,9 +414,11 @@ class WireProxy extends EventEmitter {
     // Hoisted out of the parse block: the subagent feed keys on this, and it
     // must reach turn.completed even when classification says nothing useful.
     let agentId = null;
+    let prompt = null;
     if (body && req.method === 'POST') {
       try {
         const obj = JSON.parse(body.toString('utf8'));
+        if (provider === 'anthropic') prompt = lastUserPrompt(obj);
         if (provider === 'anthropic' && Array.isArray(obj.messages) && this.spillCut()) {
           let r = null;
           let sticky = 0;
@@ -531,7 +551,7 @@ class WireProxy extends EventEmitter {
         this.on('stream-end', onEnd);
         try {
           tee = this._buildTee(
-            { agent, provider, reqId, sessionId, role, sideCall, compactCall, model, bodyObj, agentId, requestClass,
+            { agent, provider, reqId, sessionId, role, sideCall, compactCall, model, bodyObj, agentId, requestClass, prompt,
               requestId: upRes.headers['request-id'] || null,
               status: upRes.statusCode },
             upRes.headers['content-encoding']);
@@ -542,7 +562,7 @@ class WireProxy extends EventEmitter {
         if (isCount || base.endsWith('/v1/messages')) {
           try {
             tee = this._buildJsonTee(
-              { agent, provider, reqId, sessionId, role, sideCall, model, agentId, requestClass,
+              { agent, provider, reqId, sessionId, role, sideCall, model, agentId, requestClass, prompt,
                 requestId: upRes.headers['request-id'] || null,
                 status: upRes.statusCode },
               upRes.headers['content-encoding'], isCount);
@@ -643,7 +663,7 @@ class WireProxy extends EventEmitter {
   // Emission order on close: 'usage' → 'turn.completed' → 'stream-end', all
   // strictly after the client's final byte.
   _buildTee(turnCtx, contentEncoding) {
-    const { agent, provider, reqId, sessionId, role, sideCall, compactCall, model, bodyObj, agentId, requestClass, requestId, status } = turnCtx;
+    const { agent, provider, reqId, sessionId, role, sideCall, compactCall, model, bodyObj, agentId, requestClass, prompt, requestId, status } = turnCtx;
     const usage = provider === 'anthropic' ? new UsageCollector() : new OpenAIUsageCollector();
     const extract = provider === 'anthropic' ? anthropicDelta : openaiDelta;
     const ftools = provider === 'anthropic' ? new FileToolCollector() : null;
@@ -758,7 +778,7 @@ class WireProxy extends EventEmitter {
               this.emit('turn.completed', {
                 agent, provider, reqId, sessionId, role, sideCall, ...(requestClass ? { requestClass } : {}), compact: compactCall === true, text,
                 usage: usageRecord, truncated, model, status, billing: bill,
-                stop, sessionTotals, warmth: warmthRec,
+                stop, sessionTotals, warmth: warmthRec, prompt,
                 files: ftools ? ftools.files : [],
                 reads: ftools ? ftools.reads : [],
                 // Subagent feed inputs. `agentId` is the x-claude-code-agent-id
@@ -793,7 +813,7 @@ class WireProxy extends EventEmitter {
   }
 
   _buildJsonTee(turnCtx, contentEncoding, isCount) {
-    const { agent, provider, reqId, sessionId, role, sideCall, model, agentId, requestClass, requestId, status } = turnCtx;
+    const { agent, provider, reqId, sessionId, role, sideCall, model, agentId, requestClass, prompt, requestId, status } = turnCtx;
     const chunks = [];
     let size = 0;
     let dead = false;
@@ -836,7 +856,7 @@ class WireProxy extends EventEmitter {
                 agent, provider, reqId, sessionId, role, sideCall, ...(requestClass ? { requestClass } : {}), text: '',
                 usage: null, truncated: false, model, status, billing: bill,
                 stop, sessionTotals: { ...this.billing.session(sessionKey) },
-                warmth: null, files: [], reads: [],
+                warmth: null, prompt, files: [], reads: [],
                 agentId: agentId || null, toolUses: [],
                 thinking: null, thinkingTruncated: false,
               });
@@ -848,7 +868,7 @@ class WireProxy extends EventEmitter {
   }
 }
 
-module.exports = { WireProxy, detectSse };
+module.exports = { WireProxy, detectSse, lastUserPrompt };
 
 
 if (require.main === module) {

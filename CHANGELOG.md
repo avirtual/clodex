@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The shadow log records each injected delivery's written size and the prompt size the CLI's next request carried, so a truncated inbound message is diagnosable after the fact.
+
 ## 5.137.0 — 2026-10-24
 
 - A peer's web view and a sandbox box's web UI open in their own Clodex window (sandboxed, like the wirescope window) instead of a browser tab; closing the window closes the peer's tunnel.
