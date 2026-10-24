@@ -32807,6 +32807,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if ("replyStderr" in entry && typeof entry.replyStderr !== "boolean") {
           return { ok: false, error: "replyStderr: must be a boolean" };
         }
+        if ("wake" in entry && !["always", "error", "never"].includes(entry.wake)) {
+          return { ok: false, error: "wake: must be 'always', 'error' or 'never'" };
+        }
         if ("replyMaxBytes" in entry && !(typeof entry.replyMaxBytes === "number" && entry.replyMaxBytes > 0)) {
           return { ok: false, error: "replyMaxBytes: must be a positive number" };
         }

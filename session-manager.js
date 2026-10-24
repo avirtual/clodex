@@ -6856,8 +6856,19 @@ function createSessionManager(deps) {
                 : lastStderrLine().slice(0, 200);
             endRun('ok', body ? `${runTag}${body}` : '');
             if (body) {
-              reply(`${cmd}: ${runTag}${body}`);
-              log.info('intent', `exec ${cmd} by ${who}: ok (stderr replied)`);
+              const wake = entry.wake === 'error' || entry.wake === 'never' ? entry.wake : 'always';
+              const line = `${cmd}: ${runTag}${body}`;
+              if (wake === 'always') {
+                reply(line);
+                log.info('intent', `exec ${cmd} by ${who}: ok (stderr replied)`);
+              } else if (capture && capture(`[agent:exec] ${line}`)) {
+                log.info('intent', `exec ${cmd} by ${who}: ok (stderr replied)`);
+              } else if (wake === 'error') {
+                notice(line);
+                log.info('intent', `exec ${cmd} by ${who}: ok (stderr replied passively)`);
+              } else {
+                log.info('intent', `exec ${cmd} by ${who}: ok (reply dropped: wake never)`);
+              }
               const shown = body.length > 200 ? `${body.slice(0, 200)}…` : body;
               this._broadcast('ipc-message', { type: 'exec', from: who, to: cmd, body: `ok: ${shown}` });
             } else {

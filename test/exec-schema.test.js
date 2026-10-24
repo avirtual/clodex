@@ -69,6 +69,17 @@ test('validateExecDef: replyStderr must be boolean if present (truthy strings re
   assert.strictEqual(validateExecDef(num, 'c').ok, false);
 });
 
+test('validateExecDef: wake must be always, error or never if present', () => {
+  for (const v of ['always', 'error', 'never']) {
+    const d = goodDef(); d.wake = v;
+    assert.deepStrictEqual(validateExecDef(d, 'c'), { ok: true }, v);
+  }
+  for (const v of ['ERROR', '', true, null]) {
+    const d = goodDef(); d.wake = v;
+    assert.deepStrictEqual(validateExecDef(d, 'c'), { ok: false, error: "wake: must be 'always', 'error' or 'never'" }, String(v));
+  }
+});
+
 test('validateExecDef: replyMaxBytes must be a positive number if present', () => {
   const on = goodDef(); on.replyMaxBytes = 6000;
   assert.deepStrictEqual(validateExecDef(on, 'c'), { ok: true });
