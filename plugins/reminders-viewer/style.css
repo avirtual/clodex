@@ -115,3 +115,69 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.rv-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 14px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+}
+
+.rv-compose-row {
+  display: flex;
+  gap: 8px;
+}
+
+.rv-compose-seat,
+.rv-compose-spec,
+.rv-compose-text {
+  background: none;
+  color: inherit;
+  border: 1px solid rgba(128, 128, 128, 0.4);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 0.85em;
+}
+
+.rv-compose-spec {
+  flex: 1;
+}
+
+.rv-compose-text {
+  min-height: 3em;
+  resize: vertical;
+}
+
+.rv-compose-error {
+  color: #e06c75;
+  font-size: 0.85em;
+}
+
+.rv-compose-error:empty {
+  display: none;
+}
+
+.rv-add {
+  background: none;
+  color: inherit;
+  border: 1px solid rgba(128, 128, 128, 0.4);
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 0.85em;
+}
+
+.rv-add:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.rv-chip {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 8px;
+  font-size: 0.75em;
+  background: rgba(128, 128, 128, 0.25);
+}

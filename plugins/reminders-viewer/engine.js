@@ -50,6 +50,7 @@ function toRow(r, live) {
     lastFiredAt: typeof r.lastFiredAt === 'number' ? r.lastFiredAt : null,
     ticket: r.ticket ? String(r.ticket) : null,
     live,
+    ...(r.by === 'operator' ? { by: 'operator' } : {}),
   };
 }
 
@@ -90,10 +91,36 @@ function cancel(payload) {
   return { ...(res || { ok: false }), ok: false, gone };
 }
 
+function seats(wsId) {
+  if (typeof wsId !== 'string' || !wsId) {
+    return { ok: false, error: 'a workspace id is required' };
+  }
+  const out = [...seatsOf(wsId)].map(([name, live]) => ({ name, live }));
+  out.sort((a, b) => (a.live !== b.live ? (a.live ? -1 : 1) : a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return { ok: true, seats: out };
+}
+
+function add(payload) {
+  const { wsId, agent, spec, body } = payload || {};
+  if (typeof wsId !== 'string' || !wsId) {
+    return { ok: false, error: 'a workspace id is required' };
+  }
+  if (typeof agent !== 'string' || !AGENT_NAME_RE.test(agent)) {
+    return { ok: false, error: 'a valid agent name is required' };
+  }
+  if (!seatsOf(wsId).has(agent)) return { ok: false, error: 'no such seat' };
+  if (typeof spec !== 'string' || !spec.trim()) {
+    return { ok: false, error: 'a schedule is required' };
+  }
+  return host.library.add('reminder', { agent }, { spec: spec.trim(), body: typeof body === 'string' ? body : '' });
+}
+
 module.exports.activate = (h) => {
   host = h;
   host.ipc.handle('list', (wsId) => list(wsId));
   host.ipc.handle('cancel', (payload) => cancel(payload));
+  host.ipc.handle('seats', (wsId) => seats(wsId));
+  host.ipc.handle('add', (payload) => add(payload));
   host.log.info('activated');
 };
 

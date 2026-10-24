@@ -443,7 +443,10 @@ bundle), whose packaged form is the Docker image under
   injected `now`.
 - **remind-scheduler.js** — the durable-schedule ENGINE that ties that math to
   the `reminders` store and drives delivery. The only piece with timers; clock
-  and timer primitives are injected.
+  and timer primitives are injected. A reminder the operator adds from the
+  Reminders panel is stored with `by: 'operator'`, fires whether or not the seat
+  holds the remind intent, arrives as `[<id> <spec>, set by your operator] <text>`,
+  and only the panel can cancel it (`[agent:remind cancel]` bounces).
 - **verdict-nudge.js** — the pure predicate behind the prose-verdict nudge: a
   reviewer seat's flushed turn reads as a verdict but carries no
   `[agent:review-done]`, so the loop tells it once to re-emit through the

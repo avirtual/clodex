@@ -789,7 +789,7 @@ const { intentEnabled } = require('./intent-catalog');
 const { bodyModeFor, intentEnabledFor, intentEnabledForSeat, withoutPrivilegedIntentsFor, pluginGrammarLines, pluginRowFor, pruneForPlugins, validIntentNames } = require('./intent-registry');
 const { isFilenameToken, parseAndValidate, clampReplyBody, DEFAULT_MAX_BYTES } = require('./exec-schema');
 const { parseRemindSpec } = require('./remind-schedule');
-const { createRemindScheduler } = require('./remind-scheduler');
+const { createRemindScheduler, reminderText, reminderLibraryKinds } = require('./remind-scheduler');
 const { mergeClaudeSystemPrompt, mergeCodexInstructions, mergeInstructionBodies, parseCtxFile } = require('./argv-merge');
 const { renderClaudeStatusScript, codexStatusLineArg, normalizeProxyBase, resolveProxyBase } = require('./statusline');
 const { jsonlToMarkdown, cachedMessages, sliceSince, extractText } = require('./transcript');
@@ -2189,9 +2189,8 @@ const toolCache = createToolCache({ whichBin });
     setTimer: (fn, ms) => setTimeout(fn, ms),
     clearTimer: (h) => clearTimeout(h),
     store: reminders,
-    deliver: (agent, id, spec, body) => {
-      const prefix = `[${id} ${spec}]`;
-      const status = manager._deliverReminder(agent, body ? `${prefix} ${body}` : prefix);
+    deliver: (agent, id, spec, body, by) => {
+      const status = manager._deliverReminder(agent, reminderText(id, spec, body, by));
       if (status === 'gone') reminders.remove(id);
     },
   });
@@ -2272,6 +2271,15 @@ const toolCache = createToolCache({ whichBin });
   // Constructed last, before the handle returns, so a plugin's activate() runs before
   // the renderer-driven restore can create a session.
   if (pluginsEnabled(process.env)) {
+    const reminderKinds = reminderLibraryKinds({
+      scheduler: remindScheduler,
+      seatExists: (name) => {
+        const live = manager.sessions.get(name);
+        if (live) return !!live.agentType;
+        const saved = persistence.get(name);
+        return !!(saved && saved.type && saved.type !== 'bash');
+      },
+    });
     try {
       pluginHost = createPluginHostEngine({
         manager,
@@ -2282,13 +2290,13 @@ const toolCache = createToolCache({ whichBin });
         gitWorktree,
         libraryKinds: {
           memory: (ref) => manager.removeMemoryUnit(ref.agent, ref.id),
-          reminder: (ref) => {
-            const ok = remindScheduler.cancel(ref.agent, ref.id);
-            return ok ? { ok: true } : { ok: false, error: 'no such reminder for that agent' };
-          },
+          reminder: (ref) => reminderKinds.remove(ref),
         },
         libraryPinKinds: { memory: (ref, on) => manager.setOperatorPin(ref.agent, ref.id, on) },
-        libraryAddKinds: { memory: (ref, payload) => manager.addMemoryUnit(ref.agent, payload) },
+        libraryAddKinds: {
+          memory: (ref, payload) => manager.addMemoryUnit(ref.agent, payload),
+          reminder: (ref, payload) => reminderKinds.add(ref, payload),
+        },
         libraryEditKinds: { memory: (ref, payload) => manager.editMemoryUnit(ref.agent, ref.id, payload.text) },
         telemetrySnapshot: (name) => proxyPoller.snapshot(name),
         getLoader: () => pluginLoader,
