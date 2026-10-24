@@ -101,10 +101,14 @@ function seats(wsId) {
 }
 
 function add(payload) {
-  const { agent, spec, body } = payload || {};
+  const { wsId, agent, spec, body } = payload || {};
+  if (typeof wsId !== 'string' || !wsId) {
+    return { ok: false, error: 'a workspace id is required' };
+  }
   if (typeof agent !== 'string' || !AGENT_NAME_RE.test(agent)) {
     return { ok: false, error: 'a valid agent name is required' };
   }
+  if (!seatsOf(wsId).has(agent)) return { ok: false, error: 'no such seat' };
   if (typeof spec !== 'string' || !spec.trim()) {
     return { ok: false, error: 'a schedule is required' };
   }

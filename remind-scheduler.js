@@ -166,11 +166,6 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
     // or cancel, NOT done: a reject reopens a done ticket and the reminder is
     // still wanted through the rework round).
     //
-    // Same-agent ownership is enforced exactly as cancel() does, and for the
-    // same reason: a bound reminder is still its owner's reminder. The natural
-    // owner is the lead who armed it, and both terminal verbs are lead-gated, so
-    // the lead's own bound reminders are the ones this reaches.
-    //
     // Returns the ids removed (possibly none) so the caller can say so; one
     // _rearm at the end rather than per-record, since a cancelled fire may have
     // been the nearest.
@@ -219,9 +214,11 @@ function reminderLibraryKinds({ scheduler, seatExists }) {
   return {
     remove: (ref) => (scheduler.cancel(ref.agent, ref.id, { force: true })
       ? { ok: true }
-      : { ok: false, error: 'no such reminder for that agent' }),
+      : { ok: false, error: 'no such reminder' }),
     add: (ref, payload) => {
       if (!seatExists(ref.agent)) return { ok: false, error: 'no such seat' };
+      const parsed = parseRemindSpec(payload.spec);
+      if (parsed.ok && parsed.ticket) return { ok: false, error: 'a ticket binding is not available from the panel' };
       const res = scheduler.add(ref.agent, payload.spec, payload.body || '', { by: 'operator' });
       return res.ok ? { ok: true, id: res.record.id } : { ok: false, error: res.error };
     },

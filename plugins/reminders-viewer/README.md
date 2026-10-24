@@ -32,10 +32,11 @@ list; an unparseable one is reported, not shown as empty.
 
 The "+ reminder" form above the table picks a seat of this workspace (running
 seats first, then saved ones), a schedule (`every 1h`, `in 45m`, `at 14:30`,
-`cron 0 9 * * *`) and the text. The engine half's `add` checks the agent name and
+`cron 0 9 * * *`) and the text. The engine half's `add` takes the window's
+workspace id, refuses a seat outside that workspace (the same `list` scope) and
 calls `host.library.add('reminder', { agent }, { spec, body })`; core arms it
-through the scheduler with `by: 'operator'`. A bad schedule or an unknown seat
-comes back as the inline error.
+through the scheduler with `by: 'operator'`. A bad schedule, an unknown seat or a
+`for <id>` ticket binding comes back as the inline error.
 
 An operator-set reminder fires whether or not the seat holds the remind intent,
 and arrives as a dm from `reminder`:

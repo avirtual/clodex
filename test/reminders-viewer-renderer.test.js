@@ -177,7 +177,7 @@ test('renderer: + reminder invokes add with seat, spec and text, then refreshes'
     m.buttons('rv-add')[0].click();
     await settle(); await settle();
     const adds = m.invokes.filter((i) => i.method === 'add');
-    assert.deepStrictEqual(adds, [{ method: 'add', args: [{ agent: 'lead', spec: 'every 1h', body: '[agent:context clear] Fresh start' }] }]);
+    assert.deepStrictEqual(adds, [{ method: 'add', args: [{ wsId: 'ws-1', agent: 'lead', spec: 'every 1h', body: '[agent:context clear] Fresh start' }] }]);
     assert.deepStrictEqual(m.invokes.map((i) => i.method), ['list', 'seats', 'add', 'list']);
     assert.strictEqual(spec.value, '');
   } finally { m.done(); }

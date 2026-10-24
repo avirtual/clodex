@@ -197,7 +197,7 @@ module.exports.activate = (rhost) => {
       try {
         let res;
         try {
-          res = await rhost.invoke('add', { agent: seatSel.value, spec: String(specIn.value ?? ''), body: String(textIn.value ?? '') });
+          res = await rhost.invoke('add', { wsId: rhost.workspaceId, agent: seatSel.value, spec: String(specIn.value ?? ''), body: String(textIn.value ?? '') });
         } catch (e) {
           rhost.log.error('add failed', e);
           res = null;

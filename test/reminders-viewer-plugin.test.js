@@ -146,13 +146,17 @@ test('reminders-viewer: list marks an operator-set row with by', async () => {
   } finally { cleanup(); }
 });
 
-test('reminders-viewer: add routes agent + { spec, body } to library.add; a bad agent never reaches it', async () => {
+test('reminders-viewer: add routes agent + { spec, body } to library.add; a bad agent, missing workspace or foreign seat never reaches it', async () => {
   const { host, adds, cleanup } = boot({ live: LIVE, records: [] });
   try {
-    assert.deepStrictEqual(await host.dispatch('reminders-viewer', 'add', [{ agent: '..', spec: 'every 1h', body: 'x' }], 'desktop'),
+    assert.deepStrictEqual(await host.dispatch('reminders-viewer', 'add', [{ wsId: 'ws-1', agent: '..', spec: 'every 1h', body: 'x' }], 'desktop'),
       { ok: false, error: 'a valid agent name is required' });
+    assert.deepStrictEqual(await host.dispatch('reminders-viewer', 'add', [{ agent: 'lead', spec: 'every 1h', body: 'x' }], 'desktop'),
+      { ok: false, error: 'a workspace id is required' });
+    assert.deepStrictEqual(await host.dispatch('reminders-viewer', 'add', [{ wsId: 'ws-1', agent: 'stranger', spec: 'every 1h', body: 'x' }], 'desktop'),
+      { ok: false, error: 'no such seat' });
     assert.deepStrictEqual(adds, []);
-    const res = await host.dispatch('reminders-viewer', 'add', [{ agent: 'lead', spec: ' every 1h ', body: '[agent:context clear] Fresh start' }], 'desktop');
+    const res = await host.dispatch('reminders-viewer', 'add', [{ wsId: 'ws-1', agent: 'lead', spec: ' every 1h ', body: '[agent:context clear] Fresh start' }], 'desktop');
     assert.deepStrictEqual(res, { ok: true, id: 'new111' });
     assert.deepStrictEqual(adds, [{ ref: { agent: 'lead' }, payload: { spec: 'every 1h', body: '[agent:context clear] Fresh start' } }]);
   } finally { cleanup(); }
@@ -170,7 +174,7 @@ test('reminders-viewer: cancelling an already-gone row reports gone', async () =
   const { host, cleanup } = boot({ live: LIVE, records: [] });
   try {
     const res = await host.dispatch('reminders-viewer', 'cancel', [{ agent: 'lead', id: 'aaa111' }], 'desktop');
-    assert.deepStrictEqual(res, { ok: false, error: 'no such reminder for that agent', gone: true });
+    assert.deepStrictEqual(res, { ok: false, error: 'no such reminder', gone: true });
   } finally { cleanup(); }
 });
 

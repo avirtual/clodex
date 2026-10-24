@@ -351,6 +351,8 @@ test('reminderLibraryKinds.add: parser errors verbatim, unknown seat refused, go
     assert.ok(parserError, 'ENTER: the parser refuses every 10s');
     assert.deepStrictEqual(bad, { ok: false, error: parserError });
     assert.deepStrictEqual(kinds.add({ agent: 'ghost' }, { spec: 'every 1h', body: 'x' }), { ok: false, error: 'no such seat' });
+    assert.deepStrictEqual(kinds.add({ agent: 't1' }, { spec: 'for t999 every 1h', body: 'x' }),
+      { ok: false, error: 'a ticket binding is not available from the panel' });
     assert.strictEqual(store.list().length, 0);
     const good = kinds.add({ agent: 't1' }, { spec: 'every 1h', body: 'reset' });
     assert.strictEqual(good.ok, true);
