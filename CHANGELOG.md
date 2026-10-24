@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The Reminders panel gains a Fire button: it delivers a reminder now through the scheduled path (a one-shot is spent, a recurring one keeps its schedule), so an operator can test or force a nudge without waiting.
+
 ## 5.138.0 — 2026-10-24
 
 - The shadow log records each injected delivery's written size and the prompt size the CLI's next request carried, so a truncated inbound message is diagnosable after the fact.

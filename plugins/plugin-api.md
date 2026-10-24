@@ -1105,7 +1105,7 @@ the day you copy it.
 
 ### `host.library`
 
-Mutation of a Clodex library file. Four members in `"1"`:
+Mutation of a Clodex library file. Five members in `"1"`:
 
 ```js
 const a = host.library.add('memory', { agent: 'clodex' }, { text: '…', scope: 'operator', tags: '', operatorPinned: true });
@@ -1119,6 +1119,9 @@ const res = host.library.remove('memory', { agent: 'clodex', id: 'mem-…' });
 
 const p = host.library.setPin('memory', { agent: 'clodex', id: 'mem-…' }, true);
 // { ok: true } | { ok: false, error: 'operator pin limit reached (3) — unpin one first' }
+
+const f = host.library.fire('reminder', { agent: 'clodex', id: 'ab12' });
+// { ok: true, kept: true } | { ok: false, error: 'no such reminder' }
 ```
 
 `setPin` sets the **operator** pin, which is what guarantees a unit rides the
@@ -1130,6 +1133,9 @@ field and is not settable from here; it only orders the recent tier.
 
 Two verbs rather than one flagged verb because the obligations differ: a remove
 is terminal, while a pin is refusable and reversible.
+
+`fire` delivers a reminder now through the scheduler's fire path; `kept` says
+whether the row survives (false for a spent one-shot). `reminder` is its only kind.
 
 `add` writes a new unit with `source: operator`; with `operatorPinned` it takes
 an operator pin slot and is refused past the same cap. `edit` replaces a unit's

@@ -49,7 +49,7 @@ const HOST_CONTRACT = [
   { name: 'intents', kind: 'ns', members: ['register'] },
   { name: 'events', kind: 'ns', members: ['emit'] },
   { name: 'lib', kind: 'ns', members: ['gitWorktree'] },
-  { name: 'library', kind: 'ns', members: ['add', 'edit', 'remove', 'setPin'] },
+  { name: 'library', kind: 'ns', members: ['add', 'edit', 'fire', 'remove', 'setPin'] },
   { name: 'telemetry', kind: 'ns', members: ['snapshot'] },
   // Present even in this fixture, which injects none of the three notify deps:
   // the member is published unconditionally and refuses at CALL time, so a host

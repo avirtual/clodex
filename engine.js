@@ -2293,6 +2293,7 @@ const toolCache = createToolCache({ whichBin });
           reminder: (ref) => reminderKinds.remove(ref),
         },
         libraryPinKinds: { memory: (ref, on) => manager.setOperatorPin(ref.agent, ref.id, on) },
+        libraryFireKinds: { reminder: (ref) => reminderKinds.fire(ref) },
         libraryAddKinds: {
           memory: (ref, payload) => manager.addMemoryUnit(ref.agent, payload),
           reminder: (ref, payload) => reminderKinds.add(ref, payload),

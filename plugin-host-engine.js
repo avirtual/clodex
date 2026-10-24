@@ -29,6 +29,7 @@ function createPluginHostEngine(deps) {
     libraryPinKinds,  // kind -> handler for host.library.setPin; same refusal rule
     libraryAddKinds,
     libraryEditKinds,
+    libraryFireKinds,
     telemetrySnapshot, // proxyPoller.snapshot passthrough — read-only, may be null
     getLoader,        // getter: the plugin loader (Phase 2). Absent ⇒ Phase-1
     getPluginUpdates,
@@ -102,6 +103,12 @@ function createPluginHostEngine(deps) {
     Object.entries(libraryPinKinds || {})
       .filter(([, fn]) => typeof fn === 'function')
       .map(([k, fn]) => [k, (ref, on) => fn(ref, on)]),
+  ));
+
+  const libraryFireHandlers = Object.freeze(Object.fromEntries(
+    Object.entries(libraryFireKinds || {})
+      .filter(([, fn]) => typeof fn === 'function')
+      .map(([k, fn]) => [k, (ref) => fn(ref)]),
   ));
 
   const libraryWriteTable = (kinds) => Object.freeze(Object.fromEntries(
@@ -516,6 +523,27 @@ function createPluginHostEngine(deps) {
             // sanitize the error, which still passes through as the handler
             // wrote it.
             return res.ok ? { ok: true } : { ok: false, error: String(res.error ?? 'library.remove failed') };
+          } catch (e) {
+            return { ok: false, error: e && e.message ? e.message : String(e) };
+          }
+        },
+        fire: (kind, ref) => {
+          if (typeof kind !== 'string' || !Object.prototype.hasOwnProperty.call(libraryFireHandlers, kind)) {
+            return { ok: false, error: `unknown library kind: ${String(kind)}` };
+          }
+          if (!ref || typeof ref !== 'object') {
+            return { ok: false, error: 'library.fire: ref must be an object' };
+          }
+          try {
+            const res = libraryFireHandlers[kind](ref);
+            if (!res || typeof res !== 'object') {
+              return { ok: false, error: 'library.fire: handler returned no result' };
+            }
+            if (typeof res.then === 'function') {
+              try { res.then(() => {}, () => {}); } catch {}
+              return { ok: false, error: `library.fire: handler for ${kind} must be synchronous` };
+            }
+            return res.ok ? { ok: true, kept: !!res.kept } : { ok: false, error: String(res.error ?? 'library.fire failed') };
           } catch (e) {
             return { ok: false, error: e && e.message ? e.message : String(e) };
           }

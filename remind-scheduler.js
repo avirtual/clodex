@@ -202,6 +202,25 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
       }
       return recs.length;
     },
+
+    fireNow(agent, id) {
+      const rec = store.get(id);
+      if (!rec || rec.agent !== agent) return { ok: false, error: 'no such reminder' };
+      if (!this._schedFor(rec)) {
+        store.remove(rec.id);
+        this._rearm();
+        return { ok: false, error: 'no such reminder' };
+      }
+      const nowMs = now();
+      if (rec.kind === 'oncompact') {
+        try { deliver(rec.agent, rec.id, rec.spec, rec.body, rec.by); } catch {}
+        store.markFired(rec.id, nowMs, null);
+      } else {
+        this._fireRecord(rec, nowMs);
+      }
+      this._rearm();
+      return { ok: true, kept: !!store.get(rec.id) };
+    },
   };
 }
 
@@ -215,6 +234,7 @@ function reminderLibraryKinds({ scheduler, seatExists }) {
     remove: (ref) => (scheduler.cancel(ref.agent, ref.id, { force: true })
       ? { ok: true }
       : { ok: false, error: 'no such reminder' }),
+    fire: (ref) => scheduler.fireNow(ref.agent, ref.id),
     add: (ref, payload) => {
       if (!seatExists(ref.agent)) return { ok: false, error: 'no such seat' };
       const parsed = parseRemindSpec(payload.spec);
