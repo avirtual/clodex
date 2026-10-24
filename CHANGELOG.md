@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- The ticket loop sets the lead's per-ticket watch itself on every dispatch and rework round (team.json `watchMs`, default 60 min) and drops it when the ticket closes, so leads no longer hand-set reminders that fire stale after the merge; the Reminders panel shows them with a `loop` chip.
 
 ## 5.138.0 — 2026-10-24
 
