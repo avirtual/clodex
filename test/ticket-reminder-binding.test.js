@@ -986,7 +986,7 @@ test('a lead reject and a follow-up reject each re-time the one watch for the re
   } finally { f.cleanup(); }
 });
 
-test('done drops the loop watch and keeps the lead\'s own bound reminder', () => {
+test('done drops the loop watch (_dropLoopWatch) and keeps the lead\'s own bound reminder', () => {
   const f = mkFixture();
   try {
     addFreshTicket(f, 't3');
