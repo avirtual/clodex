@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - The shadow log records each injected delivery's written size and the prompt size the CLI's next request carried, so a truncated inbound message is diagnosable after the fact.
+- An exec definition may set `wake: error` (or `never`): a successful run's one-line result rides passively with the seat's next turn instead of waking it, so a chat seat answering through an exec no longer pays a second full-context turn per answer; failures always wake (requested by the avh team).
 
 ## 5.137.0 — 2026-10-24
 

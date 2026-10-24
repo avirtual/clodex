@@ -24,6 +24,15 @@ complete, the LAST stderr line kept as a footer. Opt-in per def, because the
 default is what keeps a chatty command from billing its progress log into the
 caller's prompt on every call.
 
+`wake` (`always` | `error` | `never`, default `always`) decides whether a
+successful reply wakes the seat. `always` injects it as a new turn; `error`
+delivers an exit-0 result passively, riding with the seat's next turn; `never`
+drops it (the operator's message log still shows `ok: …`). Failures — non-zero
+exit, kill, timeout, spawn error, refusal — always wake. Under a reply scope
+(the MCP exec tool, a probe) the result is the call's return value, so `wake`
+does not apply. There is no per-call override: the def is operator-authored,
+and a payload field would let the seat choose its own wake policy.
+
 That makes exec an excellent **control plane** and a useless **data plane** —
 which is the exact split most "tools" want. The trick, for any tool that
 produces ongoing output, is to run the real work in a **detached worker** and
