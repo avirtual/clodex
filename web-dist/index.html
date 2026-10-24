@@ -48542,21 +48542,21 @@ You can add it back from this popover.` : "";
             const n = mcpResidue(mcp).length;
             return `Codex: config.toml servers disabled${n ? `; ${n} plugin server(s) not controllable on this CLI` : ""}`;
           }
-          if (type === "muse") return "Muse: selection not applied on this CLI yet";
+          if (type === "muse") return "Muse: settings replaced for this seat; agent-declared servers are residue";
           return "";
         }
         function mcpDeniedNote(server, mcp, name) {
           const denied = mcp.applied && mcp.applied.denied && Array.isArray(mcp.applied.denied[server]) ? mcp.applied.denied[server].length : 0;
           if (!denied) return "";
           const type = sessionTypeOf(name);
-          const off = type === "codex" ? " (disabled_tools)" : type !== "claude" ? " (deny list not enforced on this CLI)" : mcp.applied.denyUnenforced ? " (not enforced: the seat's own --settings)" : "";
+          const off = type === "codex" ? " (disabled_tools \u2014 enforcement unverified on Codex)" : type !== "claude" ? " (deny list not enforced on this CLI)" : mcp.applied.denyUnenforced ? " (not enforced: the seat's own --settings)" : "";
           return ` \xB7 ${denied} tool${denied === 1 ? "" : "s"} denied${off}`;
         }
         function mcpRowNote(server, mcp, name = null) {
           if (!mcp) return "";
           if (server === "clodex") return "built-in";
           if ((mcp.leaks || []).includes(server) && sessionTypeOf(name) === "codex") {
-            return "\u26A0 not in this seat's selection \u2014 reached the CLI outside Clodex (own -c mcp_servers in Extra args, or a config.toml or plugin server added after spawn)";
+            return "\u26A0 not in this seat's selection \u2014 reached the CLI outside Clodex (own -c mcp_servers in Extra args, or a config.toml or plugin server Clodex did not detect at spawn)";
           }
           if ((mcp.leaks || []).includes(server)) {
             return "\u26A0 not in this seat's selection \u2014 reached the CLI outside Clodex (own --mcp-config in Extra args, a CLI plugin, or a CLI build that ignores --strict-mcp-config)";
