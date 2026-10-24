@@ -100,6 +100,30 @@ test('bootstrapSeatConfig: no merge copies settings verbatim; a missing settings
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(seatDir2, 'muse', 'settings.json'), 'utf-8')), { schema_version: 1 });
 });
 
+test('bootstrapSeatConfig: settingsReplace replaces mcpServers whole while settingsMerge still deep-merges the rest; null keeps the user key', () => {
+  const settings = { schema_version: 1, mcpServers: { old: { type: 'stdio', command: 'old-mcp' } }, other: { a: 1 } };
+  const jira = { type: 'stdio', command: 'jira-mcp', env: { JIRA_TOKEN: 'hunter2' } };
+  const root = mkTmpRoot('clx-seatcfg-');
+  const source = fixtureConfig(root, { settings });
+  const seatDir = path.join(root, 'xdg');
+  bootstrapSeatConfig(deps, { source, seatDir, settingsMerge: { other: { b: 2 } }, settingsReplace: { mcpServers: { jira } } });
+  const out = JSON.parse(fs.readFileSync(path.join(seatDir, 'muse', 'settings.json'), 'utf-8'));
+  assert.deepStrictEqual(out.mcpServers, { jira });
+  assert.deepStrictEqual(out.other, { a: 1, b: 2 });
+
+  const seatDir2 = path.join(root, 'xdg2');
+  bootstrapSeatConfig(deps, { source, seatDir: seatDir2, settingsMerge: { other: { b: 2 } }, settingsReplace: null });
+  const out2 = JSON.parse(fs.readFileSync(path.join(seatDir2, 'muse', 'settings.json'), 'utf-8'));
+  assert.deepStrictEqual(out2.mcpServers, { old: { type: 'stdio', command: 'old-mcp' } });
+
+  const root3 = mkTmpRoot('clx-seatcfg-');
+  const source3 = fixtureConfig(root3, { withSettings: false });
+  bootstrapSeatConfig(deps, { source: source3, seatDir: path.join(root3, 'xdg'), settingsReplace: { mcpServers: {} } });
+  bootstrapSeatConfig(deps, { source: source3, seatDir: path.join(root3, 'xdg2') });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(root3, 'xdg2', 'muse', 'settings.json'), 'utf-8')), { schema_version: 1 },
+    'the replace never lands on the shared default');
+});
+
 test('bootstrapSeatConfig: a missing auth.json or trust.json throws before anything is written', () => {
   for (const missing of ['withAuth', 'withTrust']) {
     const root = mkTmpRoot('clx-seatcfg-');

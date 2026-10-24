@@ -68,6 +68,16 @@ then withheld is unverified — `debug prompt-input` does not list a config serv
 Follow-up: on a `protectCredentials` seat the alias keys `codexMcpArgs` puts in `seatEnv` (e.g. `API_TOKEN`) are not
 added to the credential deny list; only the Claude arm feeds `mcpSecretNames`.
 
+## claudeMcpServers
+
+Muse (1.4.13) reads servers from `$XDG_CONFIG_HOME/muse/settings.json`: `{"schema_version":1,"mcpServers":{…}}`. The seat's
+`servers` REPLACE that key in the per-seat overlay (`bootstrapSeatConfig` `settingsReplace`), never deep-merge, with
+secrets resolved into the 0600 file; an `sse` entry is omitted with a warning. OAuth (`muse mcp login <server>`,
+streamable-HTTP only): unverified — login inside the seat. No MCP credential file under `~/.config/muse` or
+`~/.local/share/muse`; the binary names only settings.json and the Keychain ("No OAuth credentials are stored for MCP
+server …"), and this box's Keychain holds no MCP item (service `ai.meta.dev.credentials` carries only
+`handoff-own-encryption-key`); no login was run (browser OAuth, no network in the probe).
+
 ## mcpArgvPlan
 
 Measured on claude 2.1.309, 2026-10-23: a throwaway `--plugin-dir` plugin carrying a stdio server (once as
@@ -89,7 +99,7 @@ Clodex controls the configured selection; the CLI's own sources are excluded whe
 |---|---|---|
 | Claude | `~/.claude.json` user and local scopes, `.mcp.json`, `claude mcp add` scopes — by `--strict-mcp-config` | CLI plugins: unverified (see `mcpArgvPlan`); `claude_design` is shed by strict |
 | Codex | `~/.codex/config.toml` servers — disabled by name with `-c mcp_servers.<n>.enabled=false` (see `codexMcpArgs`) | plugin-bundled servers are residue: `codex mcp list --json` rows outside config.toml and the selection, labelled not controllable |
-| Muse | T-C | T-C |
+| Muse | `~/.config/muse/settings.json` `mcpServers` — replaced in the seat overlay (see `claudeMcpServers`) | agent-definition `mcp_servers` declarations: observe-only |
 
 ## normaliseDiscovered
 

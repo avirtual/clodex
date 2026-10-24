@@ -780,9 +780,10 @@ function registerIpcHandlers(deps) {
     const loadable = servers.filter((n) => {
       const e = lib.get(n);
       return !!e && !(Array.isArray(e.platforms) && !e.platforms.includes(entry.type))
-        && (entry.type !== 'codex' || codexExpressible(e));
+        && (entry.type !== 'codex' || codexExpressible(e))
+        && (entry.type !== 'muse' || e.type !== 'sse');
     });
-    let stale = ['claude', 'codex'].includes(entry.type) && entry.mcpUnmanaged !== true
+    let stale = ['claude', 'codex', 'muse'].includes(entry.type) && entry.mcpUnmanaged !== true
       && JSON.stringify([...loadable].sort()) !== JSON.stringify([...appliedNames].sort());
     if (!stale && applied) {
       const shapes = {};

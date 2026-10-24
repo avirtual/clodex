@@ -114,3 +114,19 @@ test('mcp:appliedStale: a selection Clodex never applies — unmanaged Claude, a
   assert.deepStrictEqual(applied.names, ['jira'], 'ENTER: the codex-only server was skipped at spawn');
   assert.strictEqual(door({ name: 'p', type: 'claude', mcpServers: ['jira', 'codexOnly'], mcpApplied: applied }, lib)('p').stale, false);
 });
+
+test('mcp:appliedStale: a muse seat reads stale once a selected library entry changes, and an sse entry is never loadable there', () => {
+  const lib = { jira: JIRA, old: { type: 'sse', url: 'https://s/sse' } };
+  const applied = appliedFor({ jira: JIRA }, ['jira']);
+  assert.deepStrictEqual(applied.names, ['jira'], 'ENTER: only jira was applied');
+  const rec = { name: 'm', type: 'muse', mcpServers: ['jira', 'old'], mcpApplied: applied };
+  assert.strictEqual(door(rec, lib)('m').stale, false);
+  assert.strictEqual(door(rec, { ...lib, jira: { ...JIRA, command: 'jira-mcp-2' } })('m').stale, true);
+  assert.strictEqual(door({ name: 'm', type: 'muse', mcpServers: ['jira'] }, lib)('m').stale, true);
+});
+
+test('mcp:appliedStale: a Codex seat spawned with an empty selection carries an empty applied record and reads fresh', () => {
+  const applied = { ...appliedFor({}, []), residue: [] };
+  assert.deepStrictEqual(applied.names, [], 'ENTER: nothing applied');
+  assert.strictEqual(door({ name: 'c', type: 'codex', mcpApplied: applied }, { jira: JIRA })('c').stale, false);
+});

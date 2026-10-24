@@ -206,14 +206,14 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
       const n = mcpResidue(mcp).length;
       return `Codex: config.toml servers disabled${n ? `; ${n} plugin server(s) not controllable on this CLI` : ''}`;
     }
-    if (type === 'muse') return 'Muse: selection not applied on this CLI yet';
+    if (type === 'muse') return 'Muse: settings replaced for this seat; agent-declared servers are residue';
     return '';
   }
   function mcpDeniedNote(server, mcp, name) {
     const denied = mcp.applied && mcp.applied.denied && Array.isArray(mcp.applied.denied[server]) ? mcp.applied.denied[server].length : 0;
     if (!denied) return '';
     const type = sessionTypeOf(name);
-    const off = type === 'codex' ? ' (disabled_tools)'
+    const off = type === 'codex' ? ' (disabled_tools — enforcement unverified on Codex)'
       : type !== 'claude' ? ' (deny list not enforced on this CLI)'
       : (mcp.applied.denyUnenforced ? ' (not enforced: the seat\'s own --settings)' : '');
     return ` · ${denied} tool${denied === 1 ? '' : 's'} denied${off}`;
@@ -223,7 +223,7 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     if (server === 'clodex') return 'built-in';
     if ((mcp.leaks || []).includes(server) && sessionTypeOf(name) === 'codex') {
       return '⚠ not in this seat\'s selection — reached the CLI outside Clodex (own -c mcp_servers in Extra args, '
-        + 'or a config.toml or plugin server added after spawn)';
+        + 'or a config.toml or plugin server Clodex did not detect at spawn)';
     }
     if ((mcp.leaks || []).includes(server)) {
       return '⚠ not in this seat\'s selection — reached the CLI outside Clodex (own --mcp-config in Extra args, '

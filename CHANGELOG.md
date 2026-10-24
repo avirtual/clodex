@@ -12,7 +12,8 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
-- Codex seats take the MCP selection too: Clodex pushes `-c mcp_servers.*` overrides that carry env-var names, never values (aliases and composites are resolved into the seat's environment), disables by name the servers in your `~/.codex/config.toml`, maps `denyTools` to Codex's `disabled_tools`, and labels plugin-bundled servers it cannot control; the Muse arm follows separately.
+- Codex seats take the MCP selection too: Clodex pushes `-c mcp_servers.*` overrides that carry env-var names, never values (aliases and composites are resolved into the seat's environment), disables by name the servers in your `~/.codex/config.toml`, maps `denyTools` to Codex's `disabled_tools`, and labels plugin-bundled servers it cannot control.
+- Muse seats take the MCP selection through their per-seat settings file, which replaces your `~/.config/muse` server list for that seat; Codex popover wording now says `disabled_tools` enforcement is unverified.
 
 ## 5.139.0 — 2026-10-24
 - The ticket loop sets the lead's per-ticket watch itself on every dispatch and rework round (team.json `watchMs`, default 60 min) and drops it when the ticket closes, so leads no longer hand-set reminders that fire stale after the merge; the Reminders panel shows them with a `loop` chip; a round the loop itself sends back re-arms it.
