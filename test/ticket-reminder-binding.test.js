@@ -916,7 +916,7 @@ const loopRows = (store, ticketId) => store.listForAgent('lead').filter((r) => r
 
 function addFreshTicket(f, id) {
   const all = f.tstore.load(f.team.root);
-  all.push({ id, state: 'open', spec: `spec for ${id}`, assignee: 'hand', role: 'hand', openedAt: T0, lastActivityAt: T0 });
+  all.push({ id, state: 'open', spec: `spec for ${id}`, assignee: 'hand', taskDir: pathReal.join(f.team.root, 'tasks', id), openedAt: T0, lastActivityAt: T0, startedAt: null });
   f.tstore.save(f.team.root, all);
 }
 
