@@ -9,3 +9,7 @@ Measured on claude 2.1.286 (tasks/paste-mode-off/MEASURE.md): mode 2004 never dr
 A multi-line claude write waits for mode 2004 up to INJECT_PASTE_MAXWAIT, then parks (`onUndelivered`) or writes bracketed (`onPasteCapFire`); a raw multi-line write is held unsent by the composer (tasks/paste-wrap-threshold/MEASURE.md).
 The wait releases on paste-on AND boot-ready (see `shouldWaitForReady`), and it runs before the fire-time divert so the draft check stays at write time.
 The quiet gate is re-checked after a paste wait that slept, so a draft typed during the wait is not wiped.
+
+## onWritten
+session-manager.js logs each delivery as an `inject-written` record (chars, bytes written, bracketed, pasteOn, settleMs, 24-char head/tail) to `diagPath()` (`wire-shadow-diag.jsonl` under the registry dir), while the CLI's next request lands as a `wire-turn` record with `promptLen`/`promptHead`/`promptTail` (wire/proxy.js `lastUserPrompt`) in `bulkPath()` (`wire-shadow.jsonl`, 14-day retention).
+Correlate by agent and time: the first `wire-turn` after an `inject-written` whose `promptTail` matches its `tail` should have `promptLen` equal to `chars`; a shorter `promptLen` is the truncation signature.

@@ -1029,6 +1029,7 @@ function createSessionManager(deps) {
             type: 'wire-turn', agent: t.agent, sessionId: t.sessionId,
             role: t.role, reqId: t.reqId, textLen: t.text.length,
             intents: intents.length,
+            ...(t.prompt ? { promptLen: t.prompt.len, promptHead: t.prompt.head, promptTail: t.prompt.tail } : {}),
           });
           const s = this.sessions.get(t.agent);
           if (s) s.lastMainStop = { isTurn: !!(t.stop && t.stop.is_turn), ts: Date.now() };
@@ -8500,6 +8501,10 @@ function createSessionManager(deps) {
             }
           },
           bracketedPaste: () => !!session._pasteModeOn,
+          onWritten: (text, { bytes, bracketed, pasteOn, settleMs }) => this._shadowLog({
+            type: 'inject-written', agent: session.name, chars: text.length, bytes, bracketed, pasteOn, settleMs,
+            head: text.slice(0, 24), tail: text.slice(-24),
+          }),
           onSubmitted: (_t, meta) => {
             session.lastSubmitInjected = !(meta && meta.human);
             if (isClaude && session.activityState === 'idle') session._awaitingTurnSince = Date.now();
