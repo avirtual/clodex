@@ -71,7 +71,8 @@ function boot({ records, live = [], saved = [], libraryKinds } = {}) {
     libraryFireKinds: fireKinds,
   });
   delete require.cache[ENGINE_PATH];
-  host.register('reminders-viewer', require(ENGINE_PATH), { hostApi: HOST_API_VERSION });
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugins', 'reminders-viewer', 'manifest.json'), 'utf8'));
+  host.register('reminders-viewer', require(ENGINE_PATH), { ...manifest, hostApi: HOST_API_VERSION });
   const cleanup = () => { fs.rmSync(dir, { recursive: true, force: true }); };
   return { host, file, removals, adds, fires, calls, cleanup };
 }
