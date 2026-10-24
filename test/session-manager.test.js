@@ -22636,7 +22636,7 @@ test('MCP on a codex seat: a failed codex mcp list is cached until config.toml c
   await c.create('cxm4');
   await c.create('cxm5');
   assert.strictEqual(calls, 1);
-  assert.strictEqual(c.h.store.get('cxm5').mcpApplied, undefined);
+  assert.deepStrictEqual(c.h.store.get('cxm5').mcpApplied.names, []);
 });
 
 test('MCP on a codex seat: an own -c mcp_servers in extra args makes it unmanaged; Clodex pushes no pair', async (t) => {
