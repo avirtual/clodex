@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - The shadow log records each injected delivery's written size and the prompt size the CLI's next request carried, so a truncated inbound message is diagnosable after the fact.
+- The Reminders panel can add a reminder for any seat; an operator-set reminder fires even when the seat has no remind intent (it arrives as `[<id> <spec>, set by your operator] <text>`) and only the panel can cancel it — e.g. nudge a chat seat to clear its context every hour.
 
 ## 5.137.0 — 2026-10-24
 

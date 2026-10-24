@@ -13,10 +13,7 @@
 //   - clearTimer(handle)  — cancel one (clearTimeout)
 //   - store               — the reminders store (add/list/listForAgent/remove/
 //                           markFired/get/renameAgent); the durable source of truth
-//   - deliver(agent, id, spec, body) — hand ONE fire to the DM pipeline. The
-//                           engine passes raw fields; the caller (main.js) owns
-//                           the `reminder`-sender tagging + `[<id> <spec>]` body
-//                           prefix, so no message formatting leaks in here.
+//   - deliver(agent, id, spec, body, by) — hand ONE fire to the DM pipeline.
 // remind-schedule is a pure sibling leaf, required directly (like exec-schema in
 // session-manager) — nothing to inject.
 //
@@ -81,7 +78,7 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
     _fireRecord(rec, nowMs) {
       const sched = this._schedFor(rec);
       if (!sched) { store.remove(rec.id); return; } // corrupt row → silent drop
-      try { deliver(rec.agent, rec.id, rec.spec, rec.body); } catch {}
+      try { deliver(rec.agent, rec.id, rec.spec, rec.body, rec.by); } catch {}
       if (RECURRING.has(rec.kind)) {
         const next = nextFireAt(sched, nowMs);
         if (typeof next === 'number') store.markFired(rec.id, nowMs, next);
@@ -132,12 +129,11 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
       if (this._timer !== null) { try { clearTimer(this._timer); } catch {} this._timer = null; }
     },
 
-    // Schedule a new self-reminder. `spec` is the raw bracket-interior string;
-    // parsed here (the authority that a schedule is valid) and stored verbatim
+    // `spec` is the raw bracket-interior string; parsed here (the authority that a schedule is valid) and stored verbatim
     // for `list` + reload. Returns { ok: true, record } or { ok: false, error }
     // with the loud-bounce message. list/cancel are dispatched by the handler,
     // not here — reaching add() with one is a caller bug, reported as such.
-    add(agent, spec, body = '') {
+    add(agent, spec, body = '', { by } = {}) {
       const sched = parseRemindSpec(spec);
       if (!sched.ok) return { ok: false, error: sched.error };
       if (sched.kind === 'list' || sched.kind === 'cancel') {
@@ -151,17 +147,15 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
           return { ok: false, error: 'that time is already in the past' };
         }
       }
-      const record = store.add({ agent, kind: sched.kind, spec, body, nextFireAt: first, ticket: sched.ticket || null });
+      const record = store.add({ agent, kind: sched.kind, spec, body, nextFireAt: first, ticket: sched.ticket || null, by: by || null });
       this._rearm();
       return { ok: true, record };
     },
 
-    // Cancel one of the AGENT'S OWN schedules by id (self-reminders — an agent
-    // can't cancel another's). Unknown id, or an id owned by a different agent,
-    // returns false so the handler bounces loudly; a real cancel is silent.
-    cancel(agent, id) {
+    cancel(agent, id, { force = false } = {}) {
       const rec = store.get(id);
-      if (!rec || rec.agent !== agent) return false;
+      if (!rec) return false;
+      if (!force && (rec.agent !== agent || rec.by === 'operator')) return false;
       store.remove(id);
       this._rearm();
       return true;
@@ -208,7 +202,7 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
       const nowMs = now();
       const recs = store.listForAgent(agent).filter((r) => r.kind === 'oncompact');
       for (const rec of recs) {
-        try { deliver(rec.agent, rec.id, rec.spec, rec.body); } catch {}
+        try { deliver(rec.agent, rec.id, rec.spec, rec.body, rec.by); } catch {}
         store.markFired(rec.id, nowMs, null);
       }
       return recs.length;
@@ -216,4 +210,22 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
   };
 }
 
-module.exports = { createRemindScheduler, MAX_TIMER_MS };
+function reminderText(id, spec, body, by) {
+  const prefix = by === 'operator' ? `[${id} ${spec}, set by your operator]` : `[${id} ${spec}]`;
+  return body ? `${prefix} ${body}` : prefix;
+}
+
+function reminderLibraryKinds({ scheduler, seatExists }) {
+  return {
+    remove: (ref) => (scheduler.cancel(ref.agent, ref.id, { force: true })
+      ? { ok: true }
+      : { ok: false, error: 'no such reminder for that agent' }),
+    add: (ref, payload) => {
+      if (!seatExists(ref.agent)) return { ok: false, error: 'no such seat' };
+      const res = scheduler.add(ref.agent, payload.spec, payload.body || '', { by: 'operator' });
+      return res.ok ? { ok: true, id: res.record.id } : { ok: false, error: res.error };
+    },
+  };
+}
+
+module.exports = { createRemindScheduler, MAX_TIMER_MS, reminderText, reminderLibraryKinds };

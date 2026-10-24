@@ -14146,6 +14146,22 @@ test('_handleRemindIntent: cancel of an unknown id bounces loudly', () => {
   assert.match(replies.at(-1), /^\[agent:remind\] no reminder zz99/);
 });
 
+test('_handleRemindIntent: list marks an operator-set row (operator)', () => {
+  const { m, session, replies } = mkRemind({ listResult: [
+    { id: 'ab12', spec: 'every 1h', body: 'reset', by: 'operator' },
+    { id: 'cd34', spec: 'every 30m', body: 'check' },
+  ] });
+  m._handleRemindIntent(session, 'list', '');
+  assert.match(replies.at(-1), /ab12  every 1h \(operator\) — reset/);
+  assert.match(replies.at(-1), /cd34  every 30m — check/);
+});
+
+test('_handleRemindIntent: cancel of an operator-set row bounces toward the Reminders panel', () => {
+  const { m, session, replies } = mkRemind({ cancelResult: false, listResult: [{ id: 'ab12', spec: 'every 1h', body: '', by: 'operator' }] });
+  m._handleRemindIntent(session, 'cancel ab12', '');
+  assert.deepStrictEqual(replies, ['[agent:remind] reminder ab12 was set by the operator — cancel it from the Reminders panel']);
+});
+
 test('_handleRemindIntent: scheduler add failure (past at) bounces with its error', () => {
   const { m, session, replies } = mkRemind({ addResult: { ok: false, error: 'that time is already in the past' } });
   m._handleRemindIntent(session, 'at 2020-01-01T00:00:00', 'nope');

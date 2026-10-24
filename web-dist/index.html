@@ -14839,6 +14839,21 @@ Its login, last page and downloads are deleted and it leaves this list.`;
           closeBtn.addEventListener("click", () => surface.close());
           topbar.appendChild(closeBtn);
           modal.appendChild(topbar);
+          const compose = el("div", "rv-compose");
+          const seatSel = el("select", "rv-compose-seat");
+          const specIn = el("input", "rv-compose-spec");
+          specIn.placeholder = "every 1h | in 45m | at 14:30 | cron 0 9 * * *";
+          const textIn = el("textarea", "rv-compose-text");
+          textIn.placeholder = "[agent:context clear] Fresh start: \u2026";
+          const addBtn = el("button", "rv-add", "+ reminder");
+          const addErr = el("div", "rv-compose-error", "");
+          const composeRow = el("div", "rv-compose-row");
+          for (const n of [seatSel, specIn, addBtn]) composeRow.appendChild(n);
+          for (const n of [composeRow, textIn, addErr]) compose.appendChild(n);
+          addBtn.addEventListener("click", () => {
+            submitReminder().catch((e) => rhost.log.error("add failed", e));
+          });
+          modal.appendChild(compose);
           const body = el("div", "rv-body");
           modal.appendChild(body);
           rootEl.appendChild(modal);
@@ -14872,7 +14887,9 @@ Its login, last page and downloads are deleted and it leaves this list.`;
             const seat = el("td", r.live ? "rv-seat" : "rv-seat rv-seat-inactive", r.agent);
             if (!r.live) seat.title = "Seat not running";
             tr.appendChild(seat);
-            tr.appendChild(el("td", "rv-kind", r.kind));
+            const kind = el("td", "rv-kind", r.kind);
+            if (r.by === "operator") kind.appendChild(el("span", "rv-chip", "operator"));
+            tr.appendChild(kind);
             tr.appendChild(el("td", "rv-spec", r.spec));
             tr.appendChild(el("td", "rv-next", fmtNextFire(r)));
             const text = el("td", "rv-text", preview(r.body));
@@ -14909,6 +14926,48 @@ Its login, last page and downloads are deleted and it leaves this list.`;
               if (alive() && btn.isConnected) btn.disabled = false;
             }
           }
+          async function loadSeats() {
+            let res;
+            try {
+              res = await rhost.invoke("seats", rhost.workspaceId);
+            } catch (e) {
+              rhost.log.error("seats failed", e);
+              res = null;
+            }
+            if (!alive() || !res || res.ok !== true || !Array.isArray(res.seats)) return;
+            const keep = seatSel.value || rhost.sessions.active() || "";
+            seatSel.innerHTML = "";
+            for (const s of res.seats) {
+              const opt = el("option", "", s.live ? s.name : `${s.name} (saved)`);
+              opt.value = s.name;
+              seatSel.appendChild(opt);
+            }
+            if (res.seats.some((s) => s.name === keep)) seatSel.value = keep;
+          }
+          async function submitReminder() {
+            if (addBtn.disabled) return;
+            addBtn.disabled = true;
+            addErr.textContent = "";
+            try {
+              let res;
+              try {
+                res = await rhost.invoke("add", { agent: seatSel.value, spec: String(specIn.value ?? ""), body: String(textIn.value ?? "") });
+              } catch (e) {
+                rhost.log.error("add failed", e);
+                res = null;
+              }
+              if (!alive()) return;
+              if (!res || res.ok !== true) {
+                addErr.textContent = res && res.error || "Could not add the reminder";
+                return;
+              }
+              specIn.value = "";
+              textIn.value = "";
+              await reload();
+            } finally {
+              if (alive() && addBtn.isConnected) addBtn.disabled = false;
+            }
+          }
           async function reload() {
             const my = ++seq;
             body.innerHTML = "";
@@ -14924,7 +14983,7 @@ Its login, last page and downloads are deleted and it leaves this list.`;
             rows = got.rows;
             render();
           }
-          return reload;
+          return () => reload().then(() => loadSeats());
         }
         rhost.ui.sidebar.footerButton({
           id: "open",

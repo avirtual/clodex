@@ -7,7 +7,7 @@ const path = require('node:path');
 
 const { createPluginHostEngine } = require('../plugin-host-engine');
 const { HOST_API_VERSION } = require('../plugin-api');
-const { createRemindScheduler } = require('../remind-scheduler');
+const { createRemindScheduler, reminderLibraryKinds } = require('../remind-scheduler');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const ENGINE_PATH = require.resolve('../plugins/reminders-viewer/engine');
@@ -46,12 +46,13 @@ function boot({ records, live = [], saved = [], libraryKinds } = {}) {
     store: fileStore(file), deliver: () => {},
   });
   const removals = [];
+  const adds = [];
+  const prod = reminderLibraryKinds({ scheduler: sched, seatExists: () => true });
   const kinds = libraryKinds || {
-    reminder: (ref) => {
-      removals.push(ref);
-      const ok = sched.cancel(ref.agent, ref.id);
-      return ok ? { ok: true } : { ok: false, error: 'no such reminder for that agent' };
-    },
+    reminder: (ref) => { removals.push(ref); return prod.remove(ref); },
+  };
+  const addKinds = {
+    reminder: (ref, payload) => { adds.push({ ref, payload }); return { ok: true, id: 'new111' }; },
   };
   const host = createPluginHostEngine({
     manager,
@@ -61,11 +62,12 @@ function boot({ records, live = [], saved = [], libraryKinds } = {}) {
     fs, path,
     gitWorktree: {},
     libraryKinds: kinds,
+    libraryAddKinds: addKinds,
   });
   delete require.cache[ENGINE_PATH];
   host.register('reminders-viewer', require(ENGINE_PATH), { hostApi: HOST_API_VERSION });
   const cleanup = () => { fs.rmSync(dir, { recursive: true, force: true }); };
-  return { host, file, removals, calls, cleanup };
+  return { host, file, removals, adds, calls, cleanup };
 }
 
 const LIVE = [
@@ -126,13 +128,41 @@ test('reminders-viewer: cancel routes agent+id to library.remove and the record 
   } finally { cleanup(); }
 });
 
-test('reminders-viewer: a foreign-agent cancel is refused by the scheduler and the record survives', async () => {
-  const { host, file, removals, cleanup } = boot({ live: LIVE, records: [rec({ id: 'aaa111', agent: 'lead' })] });
+test('reminders-viewer: the panel cancels an operator-set row its seat cannot', async () => {
+  const { host, file, removals, cleanup } = boot({ live: LIVE, records: [rec({ id: 'aaa111', agent: 'lead', by: 'operator' })] });
   try {
-    const res = await host.dispatch('reminders-viewer', 'cancel', [{ agent: 'stranger', id: 'aaa111' }], 'desktop');
-    assert.deepStrictEqual(res, { ok: false, error: 'no such reminder for that agent', gone: false });
-    assert.deepStrictEqual(removals, [{ agent: 'stranger', id: 'aaa111' }]);
-    assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')).map((r) => r.id), ['aaa111']);
+    const res = await host.dispatch('reminders-viewer', 'cancel', [{ agent: 'lead', id: 'aaa111' }], 'desktop');
+    assert.deepStrictEqual(res, { ok: true });
+    assert.deepStrictEqual(removals, [{ agent: 'lead', id: 'aaa111' }]);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), []);
+  } finally { cleanup(); }
+});
+
+test('reminders-viewer: list marks an operator-set row with by', async () => {
+  const { host, cleanup } = boot({ live: LIVE, records: [rec({ id: 'aaa111', agent: 'lead', by: 'operator' })] });
+  try {
+    const res = await host.dispatch('reminders-viewer', 'list', ['ws-1'], 'desktop');
+    assert.deepStrictEqual(res.rows.map((r) => [r.id, r.by]), [['aaa111', 'operator']]);
+  } finally { cleanup(); }
+});
+
+test('reminders-viewer: add routes agent + { spec, body } to library.add; a bad agent never reaches it', async () => {
+  const { host, adds, cleanup } = boot({ live: LIVE, records: [] });
+  try {
+    assert.deepStrictEqual(await host.dispatch('reminders-viewer', 'add', [{ agent: '..', spec: 'every 1h', body: 'x' }], 'desktop'),
+      { ok: false, error: 'a valid agent name is required' });
+    assert.deepStrictEqual(adds, []);
+    const res = await host.dispatch('reminders-viewer', 'add', [{ agent: 'lead', spec: ' every 1h ', body: '[agent:context clear] Fresh start' }], 'desktop');
+    assert.deepStrictEqual(res, { ok: true, id: 'new111' });
+    assert.deepStrictEqual(adds, [{ ref: { agent: 'lead' }, payload: { spec: 'every 1h', body: '[agent:context clear] Fresh start' } }]);
+  } finally { cleanup(); }
+});
+
+test('reminders-viewer: seats lists the workspace seats, live first then saved', async () => {
+  const { host, cleanup } = boot({ live: LIVE, saved: SAVED });
+  try {
+    assert.deepStrictEqual(await host.dispatch('reminders-viewer', 'seats', ['ws-1'], 'desktop'),
+      { ok: true, seats: [{ name: 'lead', live: true }, { name: 'sleeper', live: false }] });
   } finally { cleanup(); }
 });
 
@@ -164,12 +194,17 @@ test('host.sessions.listSavedWorkspace projects saved records to name/type/cwd/w
   } finally { cleanup(); }
 });
 
-test('engine.js wires the reminder library kind to remindScheduler.cancel, after the scheduler exists', () => {
+test('engine.js wires the reminder remove and add kinds to reminderLibraryKinds, after the scheduler exists', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
   const kinds = src.match(/libraryKinds: \{([\s\S]*?)\n {8}\},\n/);
   assert.ok(kinds, 'libraryKinds block found');
-  assert.match(kinds[1], /reminder: \(ref\) => \{\s*const ok = remindScheduler\.cancel\(ref\.agent, ref\.id\);\s*return ok \? \{ ok: true \} : \{ ok: false, error: 'no such reminder for that agent' \};/);
+  assert.match(kinds[1], /reminder: \(ref\) => reminderKinds\.remove\(ref\),/);
+  const addKinds = src.match(/libraryAddKinds: \{([\s\S]*?)\n {8}\},\n/);
+  assert.ok(addKinds, 'libraryAddKinds block found');
+  assert.match(addKinds[1], /reminder: \(ref, payload\) => reminderKinds\.add\(ref, payload\),/);
   const built = src.indexOf('remindScheduler = createRemindScheduler(');
+  const wired = src.indexOf('reminderLibraryKinds({\n      scheduler: remindScheduler,');
   const host = src.indexOf('pluginHost = createPluginHostEngine(');
-  assert.ok(built !== -1 && host !== -1 && built < host, 'the scheduler is built before the plugin host');
+  assert.ok(built !== -1 && wired !== -1 && host !== -1 && built < wired && wired < host, 'scheduler, then kinds, then plugin host');
+  assert.match(src, /deliver: \(agent, id, spec, body, by\) => \{\s*const status = manager\._deliverReminder\(agent, reminderText\(id, spec, body, by\)\);/);
 });

@@ -6519,7 +6519,7 @@ function createSessionManager(deps) {
         if (!mine.length) { reply('no reminders scheduled'); return; }
         const lines = mine.map((r) => {
           const preview = previewLine(r.body, 60);
-          return `  ${r.id}  ${r.spec}${preview ? ` — ${preview}` : ''}`;
+          return `  ${r.id}  ${r.spec}${r.by === 'operator' ? ' (operator)' : ''}${preview ? ` — ${preview}` : ''}`;
         });
         reply(`${mine.length} reminder(s):\n${lines.join('\n')}`);
         return;
@@ -6530,9 +6530,13 @@ function createSessionManager(deps) {
           log.info('intent', `remind cancel ${parsed.id} by ${who}: ok`);
           this._broadcast('ipc-message', { type: 'remind', from: who, to: who, body: `cancel ${parsed.id}: ok` });
         } else {
-          this.recordMisfire(session, 'bounce', intent, `no reminder ${parsed.id}`);
-          reply(`no reminder ${parsed.id}`); // unknown or not this agent's — loud, identical bounce
-          this._broadcast('ipc-message', { type: 'remind', from: who, to: who, body: `err: no reminder ${parsed.id}` });
+          const operatorRow = sched.listForAgent(who).some((r) => r.id === parsed.id && r.by === 'operator');
+          const e = operatorRow
+            ? `reminder ${parsed.id} was set by the operator — cancel it from the Reminders panel`
+            : `no reminder ${parsed.id}`;
+          this.recordMisfire(session, 'bounce', intent, e);
+          reply(e);
+          this._broadcast('ipc-message', { type: 'remind', from: who, to: who, body: `err: ${e}` });
         }
         return;
       }

@@ -10,7 +10,7 @@ const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const { initStores } = require('../stores');
-const { createRemindScheduler, MAX_TIMER_MS } = require('../remind-scheduler');
+const { createRemindScheduler, MAX_TIMER_MS, reminderText, reminderLibraryKinds } = require('../remind-scheduler');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // Fake clock + timer wheel. `now` is a mutable epoch; setTimer records a due
@@ -277,4 +277,83 @@ test('renameAgent is a no-op for a missing agent, an empty name, or the same nam
 
 test('MAX_TIMER_MS is the 32-bit signed setTimeout clamp', () => {
   assert.strictEqual(MAX_TIMER_MS, 2147483647);
+});
+
+test('operator add: the record carries by:operator; a self-minted one has no by key', () => {
+  const { scheduler, store, cleanup } = freshEngine(T0);
+  try {
+    const op = scheduler.add('t1', 'every 1h', 'reset', { by: 'operator' });
+    const self = scheduler.add('t1', 'in 30m', 'ping');
+    assert.deepStrictEqual(store.get(op.record.id), {
+      id: op.record.id, agent: 't1', kind: 'every', spec: 'every 1h', body: 'reset',
+      nextFireAt: T0 + HOUR, createdAt: op.record.createdAt, lastFiredAt: null, by: 'operator',
+    });
+    assert.deepStrictEqual(store.get(self.record.id), {
+      id: self.record.id, agent: 't1', kind: 'in', spec: 'in 30m', body: 'ping',
+      nextFireAt: T0 + 30 * MIN, createdAt: self.record.createdAt, lastFiredAt: null,
+    });
+  } finally { cleanup(); }
+});
+
+test('operator row: the seat cannot cancel it; force (the panel path) can', () => {
+  const { scheduler, store, cleanup } = freshEngine(T0);
+  try {
+    const op = scheduler.add('t1', 'every 1h', 'reset', { by: 'operator' });
+    assert.strictEqual(scheduler.cancel('t1', op.record.id), false);
+    assert.ok(store.get(op.record.id), 'ENTER: still armed after the seat cancel');
+    const kinds = reminderLibraryKinds({ scheduler, seatExists: () => true });
+    assert.deepStrictEqual(kinds.remove({ agent: 't1', id: op.record.id }), { ok: true });
+    assert.strictEqual(store.get(op.record.id), null);
+    assert.strictEqual(scheduler.listForAgent('t1').length, 0);
+  } finally { cleanup(); }
+});
+
+test('operator row: listForAgent still returns it for [agent:remind list]', () => {
+  const { scheduler, cleanup } = freshEngine(T0);
+  try {
+    const op = scheduler.add('t1', 'every 1h', 'reset', { by: 'operator' });
+    assert.deepStrictEqual(scheduler.listForAgent('t1').map((r) => [r.id, r.by]), [[op.record.id, 'operator']]);
+  } finally { cleanup(); }
+});
+
+test('operator row: the fire hands by to deliver, and reminderText marks it as the operator\'s', () => {
+  const userData = mkTmpRoot('remsched-ud-');
+  const registryDir = mkTmpRoot('remsched-reg-');
+  const stores = initStores(userData, { log: console, registryDir });
+  const clock = fakeClock(T0);
+  const texts = [];
+  const scheduler = createRemindScheduler({
+    now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer, store: stores.reminders,
+    deliver: (agent, id, spec, body, by) => texts.push(reminderText(id, spec, body, by)),
+  });
+  try {
+    const op = scheduler.add('t1', 'every 1h', '[agent:context clear] Fresh start', { by: 'operator' });
+    const self = scheduler.add('t1', 'in 30m', 'ping');
+    clock.advance(HOUR);
+    assert.deepStrictEqual(texts, [
+      `[${self.record.id} in 30m] ping`,
+      `[${op.record.id} every 1h, set by your operator] [agent:context clear] Fresh start`,
+    ]);
+    assert.strictEqual(reminderText('ab12', 'every 1h', '', 'operator'), '[ab12 every 1h, set by your operator]');
+  } finally {
+    scheduler.stop();
+    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(registryDir, { recursive: true, force: true });
+  }
+});
+
+test('reminderLibraryKinds.add: parser errors verbatim, unknown seat refused, good spec armed as operator', () => {
+  const { scheduler, store, cleanup } = freshEngine(T0);
+  try {
+    const kinds = reminderLibraryKinds({ scheduler, seatExists: (n) => n === 't1' });
+    const bad = kinds.add({ agent: 't1' }, { spec: 'every 10s', body: 'x' });
+    const parserError = scheduler.add('t1', 'every 10s', 'x').error;
+    assert.ok(parserError, 'ENTER: the parser refuses every 10s');
+    assert.deepStrictEqual(bad, { ok: false, error: parserError });
+    assert.deepStrictEqual(kinds.add({ agent: 'ghost' }, { spec: 'every 1h', body: 'x' }), { ok: false, error: 'no such seat' });
+    assert.strictEqual(store.list().length, 0);
+    const good = kinds.add({ agent: 't1' }, { spec: 'every 1h', body: 'reset' });
+    assert.strictEqual(good.ok, true);
+    assert.strictEqual(store.get(good.id).by, 'operator');
+  } finally { cleanup(); }
 });

@@ -55,7 +55,7 @@ function find(node, pred, out = []) {
 
 const settle = () => new Promise((r) => setImmediate(r));
 
-async function mount({ rows, active = 'lead', cancelRes = { ok: true } }) {
+async function mount({ rows, active = 'lead', cancelRes = { ok: true }, seatsRes = { ok: true, seats: [] }, addRes = { ok: true, id: 'new1' } }) {
   const invokes = [];
   const toasts = [];
   let current = rows.slice();
@@ -68,6 +68,8 @@ async function mount({ rows, active = 'lead', cancelRes = { ok: true } }) {
         current = current.filter((r) => r.id !== args[0].id);
         return Promise.resolve(cancelRes);
       }
+      if (method === 'seats') return Promise.resolve(seatsRes);
+      if (method === 'add') return Promise.resolve(addRes);
       return Promise.resolve({ ok: false });
     },
     sessions: { active: () => active },
@@ -118,8 +120,8 @@ test('renderer: Cancel invokes cancel with agent+id, toasts "Schedule cancelled"
   try {
     m.buttons('rv-cancel')[0].click();
     await settle(); await settle();
-    assert.deepStrictEqual(m.invokes.map((i) => i.method), ['list', 'cancel', 'list']);
-    assert.deepStrictEqual(m.invokes[1].args, [{ agent: 'lead', id: 'a1' }]);
+    assert.deepStrictEqual(m.invokes.map((i) => i.method), ['list', 'seats', 'cancel', 'list']);
+    assert.deepStrictEqual(m.invokes[2].args, [{ agent: 'lead', id: 'a1' }]);
     assert.deepStrictEqual(m.toasts, [{ msg: 'Schedule cancelled', opts: undefined }]);
     assert.strictEqual(m.buttons('rv-cancel').length, 0);
   } finally { m.done(); }
@@ -130,7 +132,7 @@ test('renderer: an already-gone row refreshes without an error toast', async () 
   try {
     m.buttons('rv-cancel')[0].click();
     await settle(); await settle();
-    assert.deepStrictEqual(m.invokes.map((i) => i.method), ['list', 'cancel', 'list']);
+    assert.deepStrictEqual(m.invokes.map((i) => i.method), ['list', 'seats', 'cancel', 'list']);
     assert.deepStrictEqual(m.toasts, []);
   } finally { m.done(); }
 });
@@ -140,7 +142,55 @@ test('renderer: a refused cancel raises an error toast and does not refresh', as
   try {
     m.buttons('rv-cancel')[0].click();
     await settle(); await settle();
-    assert.deepStrictEqual(m.invokes.map((i) => i.method), ['list', 'cancel']);
+    assert.deepStrictEqual(m.invokes.map((i) => i.method), ['list', 'seats', 'cancel']);
     assert.deepStrictEqual(m.toasts, [{ msg: 'Could not cancel: no such reminder for that agent', opts: { kind: 'error' } }]);
+  } finally { m.done(); }
+});
+
+test('renderer: an operator-set row carries an operator chip beside its kind', async () => {
+  const m = await mount({ rows: [row({ id: 'a1', by: 'operator' }), row({ id: 'b2' })] });
+  try {
+    const kinds = find(m.root, (n) => n.tag === 'td' && n.className === 'rv-kind');
+    assert.deepStrictEqual(kinds.map((k) => k.children.map((c) => [c.className, c.textContent])),
+      [[['rv-chip', 'operator']], []]);
+  } finally { m.done(); }
+});
+
+test('renderer: the seat select lists live seats then saved ones, preselecting the active seat', async () => {
+  const m = await mount({ rows: [], active: 'hand',
+    seatsRes: { ok: true, seats: [{ name: 'hand', live: true }, { name: 'lead', live: true }, { name: 'sleeper', live: false }] } });
+  try {
+    const sel = find(m.root, (n) => n.tag === 'select')[0];
+    assert.deepStrictEqual(sel.children.map((o) => [o.value, o.textContent]),
+      [['hand', 'hand'], ['lead', 'lead'], ['sleeper', 'sleeper (saved)']]);
+    assert.strictEqual(sel.value, 'hand');
+  } finally { m.done(); }
+});
+
+test('renderer: + reminder invokes add with seat, spec and text, then refreshes', async () => {
+  const m = await mount({ rows: [] });
+  try {
+    const sel = find(m.root, (n) => n.tag === 'select')[0];
+    const spec = find(m.root, (n) => n.tag === 'input')[0];
+    const text = find(m.root, (n) => n.tag === 'textarea')[0];
+    sel.value = 'lead'; spec.value = 'every 1h'; text.value = '[agent:context clear] Fresh start';
+    m.buttons('rv-add')[0].click();
+    await settle(); await settle();
+    const adds = m.invokes.filter((i) => i.method === 'add');
+    assert.deepStrictEqual(adds, [{ method: 'add', args: [{ agent: 'lead', spec: 'every 1h', body: '[agent:context clear] Fresh start' }] }]);
+    assert.deepStrictEqual(m.invokes.map((i) => i.method), ['list', 'seats', 'add', 'list']);
+    assert.strictEqual(spec.value, '');
+  } finally { m.done(); }
+});
+
+test('renderer: a refused add shows its error inline and does not refresh', async () => {
+  const m = await mount({ rows: [], addRes: { ok: false, error: 'no such seat' } });
+  try {
+    find(m.root, (n) => n.tag === 'input')[0].value = 'every 1h';
+    m.buttons('rv-add')[0].click();
+    await settle(); await settle();
+    assert.strictEqual(find(m.root, (n) => n.className === 'rv-compose-error')[0].textContent, 'no such seat');
+    assert.deepStrictEqual(m.invokes.map((i) => i.method), ['list', 'seats', 'add']);
+    assert.deepStrictEqual(m.toasts, []);
   } finally { m.done(); }
 });
