@@ -202,7 +202,7 @@ test('m2: a fresh muse seat spawns at once; the registry poller links its transc
       'You are the clodex agent named \'seat\'.\n\nIPC\n\n\nAPPEND');
     assert.strictEqual(fsReal.statSync(pathReal.join(seatDir, 'muse', 'AGENTS.md')).mode & 0o777, 0o600);
     assert.deepStrictEqual(JSON.parse(fsReal.readFileSync(pathReal.join(seatDir, 'muse', 'settings.json'), 'utf-8')), {
-      schema_version: 1,
+      schema_version: 1, mcpServers: {},
       provider: 'meta',
       permissions: {
         schema_version: 1,
@@ -641,7 +641,7 @@ test('m3: the profile merge is a deepMerge — a permissions.profiles.other entr
   try {
     const seatDir = pathForReal(f.root, 'seat', 'seatConfig');
     assert.deepStrictEqual(JSON.parse(fsReal.readFileSync(pathReal.join(seatDir, 'muse', 'settings.json'), 'utf-8')), {
-      schema_version: 1,
+      schema_version: 1, mcpServers: {},
       provider: 'meta',
       permissions: {
         schema_version: 1,
@@ -690,7 +690,7 @@ test('t1090: disabledSkills becomes skills.activation in the overlay, beside the
     assert.deepStrictEqual(f.rosterCalls, [{ id: 'muse', configDir: f.source }],
       'the roster is read once, from the SOURCE config the seat copies, never the overlay');
     assert.deepStrictEqual(JSON.parse(fsReal.readFileSync(pathReal.join(seatDir, 'muse', 'settings.json'), 'utf-8')), {
-      schema_version: 1,
+      schema_version: 1, mcpServers: {},
       provider: 'meta',
       permissions: {
         schema_version: 1,
@@ -721,7 +721,7 @@ test('t1090: "*" sweeps every listed skill except the injected ones; the source 
   try {
     const seatDir = pathForReal(f.root, 'seat', 'seatConfig');
     assert.deepStrictEqual(JSON.parse(fsReal.readFileSync(pathReal.join(seatDir, 'muse', 'settings.json'), 'utf-8')), {
-      schema_version: 1,
+      schema_version: 1, mcpServers: {},
       provider: 'meta',
       permissions: {
         schema_version: 1,
@@ -752,7 +752,7 @@ test('t1090: disabledSkills [] writes no skills key at all, and never asks for t
   try {
     const seatDir = pathForReal(f.root, 'seat', 'seatConfig');
     const parsed = JSON.parse(fsReal.readFileSync(pathReal.join(seatDir, 'muse', 'settings.json'), 'utf-8'));
-    assert.deepStrictEqual(Object.keys(parsed).sort(), ['permissions', 'provider', 'run', 'schema_version']);
+    assert.deepStrictEqual(Object.keys(parsed).sort(), ['mcpServers', 'permissions', 'provider', 'run', 'schema_version']);
     assert.deepStrictEqual(f.rosterCalls, []);
   } finally { await f.stop('seat'); }
 });
