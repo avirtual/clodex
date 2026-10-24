@@ -27,7 +27,7 @@ function exists(fs, p) {
   try { fs.statSync(p); return true; } catch { return false; }
 }
 
-function bootstrapSeatConfig(deps, { source, seatDir, settingsMerge = null }) {
+function bootstrapSeatConfig(deps, { source, seatDir, settingsMerge = null, settingsReplace = null }) {
   const { fs, path } = deps;
   const museSrc = path.join(source, 'muse');
   for (const f of REQUIRED_MUSE_FILES) {
@@ -54,7 +54,8 @@ function bootstrapSeatConfig(deps, { source, seatDir, settingsMerge = null }) {
   } catch (e) {
     if (!e || e.code !== 'ENOENT') throw e;
   }
-  const merged = settingsMerge ? deepMerge(settings, settingsMerge) : settings;
+  const deep = settingsMerge ? deepMerge(settings, settingsMerge) : settings;
+  const merged = settingsReplace ? { ...deep, ...settingsReplace } : deep;
   fs.writeFileSync(path.join(museDir, 'settings.json'), `${JSON.stringify(merged, null, 2)}\n`, { mode: 0o600 });
   return { seatDir, museDir };
 }

@@ -22612,6 +22612,19 @@ test('MCP on a codex seat with nothing selected still records its plugin residue
   assert.deepStrictEqual(rec.mcpApplied.residue, ['cua_repl']);
 });
 
+test('MCP on a codex seat with nothing selected and no residue still persists its applied record', async (t) => {
+  const saved = process.env.CODEX_HOME;
+  t.after(() => { if (saved === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = saved; });
+  process.env.CODEX_HOME = mkTmpRoot('clx-codex-home-');
+  const childProcess = { execFileSync: () => JSON.stringify([]) };
+  const c = mkCodexStreamSeat({ deps: { getMcpLibrary: () => ({ list: () => [] }), childProcess } });
+  t.after(() => c.h.stopAll());
+  await c.create('cxm6');
+  const rec = c.h.store.get('cxm6');
+  assert.deepStrictEqual(rec.mcpApplied.names, []);
+  assert.deepStrictEqual(rec.mcpApplied.residue, []);
+});
+
 test('MCP on a codex seat: a failed codex mcp list is cached until config.toml changes', async (t) => {
   const saved = process.env.CODEX_HOME;
   t.after(() => { if (saved === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = saved; });
@@ -22717,7 +22730,7 @@ test('t1172: on a codex stream seat the codec\'s compact record fires the compac
   s._dead = true;
 });
 
-function mkMuseStreamSeat({ extraArgs = [] } = {}) {
+function mkMuseStreamSeat({ extraArgs = [], mcpServers = null, deps = null } = {}) {
   const { streamFor: realStreamFor } = require('../cli-adapters');
   const created = [];
   const calls = { encodeContext: [] };
@@ -22732,21 +22745,84 @@ function mkMuseStreamSeat({ extraArgs = [] } = {}) {
   const h = mkStreamSeatManager({
     streamFor: (type) => (type === 'muse' ? realStreamFor('muse') : null),
     loadStreamCodec: () => mod,
-    extraDeps: {
+    extraDeps: (root) => ({
       isInjectInFlight: require('../inject-queue').isInjectInFlight,
       mergeInstructionBodies: require('../argv-merge').mergeInstructionBodies,
-    },
+      ...(deps ? deps(root) : {}),
+    }),
   });
   h.m._museLinkPollMs = 1;
   const os = require('node:os');
   const create = (name, resumeId = null) => h.m.create(name, 'muse', os.tmpdir(), extraArgs, resumeId, 'ws', null, false, null,
-    [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, 'stream');
+    [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, 'stream', null, null, mcpServers);
   const sent = () => h.handles[h.handles.length - 1].sent;
   const clearTimers = (s) => {
     for (const k of ['_compactValveTimer', '_injectHoldTimer', '_postClearValveTimer', '_compactingValveTimer', '_resultHold']) clearTimeout(s[k]);
   };
   return { h, create, created, inst, calls, sent, clearTimers };
 }
+
+function museMcpSource(root, env) {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const source = path.join(root, 'src-config');
+  fs.mkdirSync(path.join(source, 'muse'), { recursive: true });
+  fs.writeFileSync(path.join(source, 'muse', 'auth.json'), '{}\n');
+  fs.writeFileSync(path.join(source, 'muse', 'trust.json'), '{}\n');
+  fs.writeFileSync(path.join(source, 'muse', 'settings.json'),
+    `${JSON.stringify({ schema_version: 1, theme: 'dark', mcpServers: { mine: { type: 'stdio', command: 'own-mcp' } } })}\n`);
+  return {
+    getEnvScopes: () => ({ all: () => ({ global: { XDG_CONFIG_HOME: source, ...env }, workspaces: {} }) }),
+    ProxyClient: { spawnerHint: () => Promise.resolve(), probe: () => Promise.resolve({ capabilities: { muse: true } }) },
+  };
+}
+
+test('MCP on a muse seat: the selection replaces mcpServers in the overlay settings with resolved secrets; the stream patch carries none', async (t) => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const lib = [
+    { name: 'jira', entry: { type: 'stdio', command: 'jira-mcp', args: ['--x'], env: { JIRA_TOKEN: '${JIRA_TOKEN}' } } },
+    { name: 'docs', entry: { type: 'http', url: 'https://docs/mcp', headers: { 'X-API-Key': '${DOCS_KEY}' } } },
+    { name: 'old', entry: { type: 'sse', url: 'https://s/sse' } },
+  ];
+  const c = mkMuseStreamSeat({
+    mcpServers: ['jira', 'docs', 'old'],
+    deps: (root) => ({ ...museMcpSource(root, { JIRA_TOKEN: 'hunter2', DOCS_KEY: 'k1' }), getMcpLibrary: () => ({ list: () => lib }) }),
+  });
+  t.after(() => c.h.stopAll());
+  const rows = [];
+  c.h.m._broadcast = (channel, msg) => { if (msg && msg.type === 'system') rows.push(msg.body); };
+  const writes = [];
+  const realWrite = fs.writeFileSync;
+  fs.writeFileSync = function (f, data, ...rest) { if (String(f).endsWith(path.join('muse', 'settings.json'))) writes.push(String(data)); return realWrite.call(this, f, data, ...rest); };
+  t.after(() => { fs.writeFileSync = realWrite; });
+  const res = await c.create('mum1');
+  fs.writeFileSync = realWrite;
+  const settings = JSON.parse(fs.readFileSync(path.join(c.h.m.sessions.get('mum1').accountDir, 'muse', 'settings.json'), 'utf-8'));
+  assert.deepStrictEqual(settings.mcpServers, {
+    jira: { type: 'stdio', command: 'jira-mcp', args: ['--x'], env: { JIRA_TOKEN: 'hunter2' } },
+    docs: { type: 'http', url: 'https://docs/mcp', headers: { 'X-API-Key': 'k1' } },
+  });
+  assert.strictEqual(settings.schema_version, 1);
+  assert.strictEqual(settings.theme, 'dark');
+  assert.ok(settings.endpoint_transport, 'ENTER: the stream patch was written');
+  assert.strictEqual(writes.length, 2, 'ENTER: bootstrap then the stream patch');
+  assert.deepStrictEqual(JSON.parse(writes[1]).mcpServers, JSON.parse(writes[0]).mcpServers);
+  assert.deepStrictEqual(rows, ['MCP old: not available on muse (sse)']);
+  assert.ok(res.warnings.includes('MCP old: not available on muse (sse)'));
+  const rec = c.h.store.get('mum1');
+  assert.deepStrictEqual(rec.mcpApplied.names, ['docs', 'jira']);
+  assert.match(rec.mcpApplied.digest, /^[0-9a-f]{64}$/);
+  assert.strictEqual('mcpUnmanaged' in rec, false);
+});
+
+test('MCP on a muse seat: the stream patch object never names mcpServers', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'session-manager.js'), 'utf-8');
+  const m = src.match(/const museSeatPatch = \{([\s\S]*?)\n {12}\};/);
+  assert.ok(m, 'ENTER: the patch literal is found');
+  assert.match(m[1], /endpoint_transport/);
+  assert.doesNotMatch(m[1], /mcpServers/);
+});
 
 test('t1174: a muse stream argv is serve with its flags after it and no resume positional; posture rides the argv and ctx', async (t) => {
   const c = mkMuseStreamSeat({ extraArgs: ['--approval-mode', 'never', '--disable-sandbox', '--model', 'muse-spark-1.2'] });

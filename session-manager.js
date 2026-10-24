@@ -1540,6 +1540,8 @@ function createSessionManager(deps) {
       let museSid = null;
       let museData = null;
       let codexLink = null;
+      let museSel = null;
+      const museSseWarnings = [];
       if (adapterFor(type)?.account.bootstrap === 'xdg-overlay') {
         seatConfigDir = pathFor(REGISTRY_DIR, name, 'seatConfig');
         const sourceConfig = accountDir || path.join(os.homedir(), '.config');
@@ -1553,12 +1555,20 @@ function createSessionManager(deps) {
         }
         const seatSettings = adapterFor(type).seatSettings || null;
         const profileMerge = adapterFor(type).readOnlyCap?.settings || null;
+        if (type === 'muse') {
+          const museLib = this._mcpLibraryRows();
+          const sseNames = new Set(museLib.filter((r) => r.entry && r.entry.type === 'sse').map((r) => r.name));
+          const picked = Array.isArray(mcpServers) ? mcpServers : [];
+          for (const n of picked) if (sseNames.has(n)) museSseWarnings.push(`MCP ${n}: not available on muse (sse)`);
+          museSel = claudeMcpServers({ selected: picked.filter((n) => !sseNames.has(n)), library: museLib, env: mergedEnv, cli: 'muse' });
+        }
         bootstrapSeatConfig({ fs, path }, {
           source: sourceConfig,
           seatDir: seatConfigDir,
           settingsMerge: (seatSettings || profileMerge || skillsMerge)
             ? deepMerge(deepMerge(seatSettings || {}, profileMerge || {}), skillsMerge || {})
             : null,
+          settingsReplace: museSel ? { mcpServers: museSel.servers } : null,
         });
         mergedEnv.XDG_CONFIG_HOME = seatConfigDir;
       }
@@ -1581,6 +1591,12 @@ function createSessionManager(deps) {
       const shell = process.env.SHELL || '/bin/bash';
       const warnings = [];
       let mcpRecord = null;
+      if (museSel) {
+        const museWarnings = [...museSseWarnings, ...museSel.warnings];
+        warnings.push(...museWarnings);
+        for (const w of museWarnings) this._broadcast('ipc-message', { type: 'system', from: name, to: name, body: w });
+        mcpRecord = { mcpUnmanaged: false, mcpApplied: museSel.applied };
+      }
       const agentType = isAgentType(type) ? type : null;
       const effortResolved = agentType ? resolveEffort(type, effort) : null;
       if (effortResolved && typeof effortResolved === 'object') warnings.push(`${effortResolved.error}; spawned at the CLI's default effort.`);
@@ -2236,8 +2252,7 @@ function createSessionManager(deps) {
         ...(Array.isArray(mcpServers) && mcpServers.length ? { mcpServers: mcpServers.map(String) } : {}),
         ...(() => {
           const out = {};
-          const applied = mcpRecord && mcpRecord.mcpApplied
-            && (mcpRecord.mcpApplied.names.length || (mcpRecord.mcpApplied.residue || []).length) ? mcpRecord.mcpApplied : null;
+          const applied = mcpRecord && mcpRecord.mcpApplied ? mcpRecord.mcpApplied : null;
           if (applied) out.mcpApplied = applied;
           else if (existingEntry && existingEntry.mcpApplied !== undefined) out.mcpApplied = undefined;
           if (mcpRecord && mcpRecord.mcpUnmanaged) out.mcpUnmanaged = true;

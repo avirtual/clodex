@@ -196,7 +196,7 @@ test('context popover: a selected server with a deny list says how many tools ar
   const mcp = { managed: true, selected: ['jira'], applied: { names: ['jira'], digest: 'd', denyRules: [], denied: { jira: ['createJiraIssue', 'editJiraIssue'] } }, leaks: ['rogue'] };
   assert.strictEqual(note(await popoverBody({ agents: [AGENT], clodex_mcp: mcp }), 'jira'), 'library · selected · 2 tools denied');
   assert.strictEqual(note(await popoverBody({ agents: [AGENT], clodex_mcp: mcp }, 'codex'), 'jira'),
-    'library · selected · 2 tools denied (disabled_tools)');
+    'library · selected · 2 tools denied (disabled_tools — enforcement unverified on Codex)');
   assert.strictEqual(note(await popoverBody({ agents: [AGENT], clodex_mcp: mcp }, 'muse'), 'jira'),
     'library · selected · 2 tools denied (deny list not enforced on this CLI)');
   const own = { ...mcp, applied: { ...mcp.applied, denyUnenforced: true } };
@@ -217,11 +217,17 @@ test('context popover: an unmanaged Codex seat, or one spawned with nothing appl
   assert.match(fresh, /<div class="ctx-util-conf">Codex: config.toml servers disabled<\/div>/);
 });
 
+test('context popover: a Muse seat says its settings were replaced and agent-declared servers are residue', async () => {
+  const body = await popoverBody({ agents: [AGENT], clodex_mcp: { managed: true, selected: ['jira'], applied: { names: ['jira'], digest: 'd', denyRules: [] }, leaks: [] } }, 'muse');
+  assert.match(body, /<div class="ctx-util-conf">Muse: settings replaced for this seat; agent-declared servers are residue<\/div>/);
+  assert.doesNotMatch(body, /not applied on this CLI yet/);
+});
+
 test('context popover: a Codex leak names Codex\'s own sources, and its remove hint is codex mcp remove', async () => {
   const mcp = { managed: true, selected: ['jira'], applied: { names: ['jira'], digest: 'd', denyRules: [], residue: [] }, leaks: ['rogue'] };
   const body = await popoverBody({ agents: [{ ...AGENT, utilization: { evaluable_turns: 50 } }], clodex_mcp: mcp }, 'codex');
   assert.strictEqual(note(body, 'rogue'),
-    '⚠ not in this seat&#39;s selection — reached the CLI outside Clodex (own -c mcp_servers in Extra args, or a config.toml or plugin server added after spawn)');
+    '⚠ not in this seat&#39;s selection — reached the CLI outside Clodex (own -c mcp_servers in Extra args, or a config.toml or plugin server Clodex did not detect at spawn)');
   assert.match(body, /<code>codex mcp remove rogue<\/code>/);
   assert.doesNotMatch(body, /claude mcp remove/);
 });
