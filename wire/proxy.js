@@ -551,7 +551,7 @@ class WireProxy extends EventEmitter {
         this.on('stream-end', onEnd);
         try {
           tee = this._buildTee(
-            { agent, provider, reqId, sessionId, role, sideCall, compactCall, model, bodyObj, agentId, requestClass,
+            { agent, provider, reqId, sessionId, role, sideCall, compactCall, model, bodyObj, agentId, requestClass, prompt,
               requestId: upRes.headers['request-id'] || null,
               status: upRes.statusCode },
             upRes.headers['content-encoding']);
@@ -562,7 +562,7 @@ class WireProxy extends EventEmitter {
         if (isCount || base.endsWith('/v1/messages')) {
           try {
             tee = this._buildJsonTee(
-              { agent, provider, reqId, sessionId, role, sideCall, model, agentId, requestClass,
+              { agent, provider, reqId, sessionId, role, sideCall, model, agentId, requestClass, prompt,
                 requestId: upRes.headers['request-id'] || null,
                 status: upRes.statusCode },
               upRes.headers['content-encoding'], isCount);
@@ -663,7 +663,7 @@ class WireProxy extends EventEmitter {
   // Emission order on close: 'usage' → 'turn.completed' → 'stream-end', all
   // strictly after the client's final byte.
   _buildTee(turnCtx, contentEncoding) {
-    const { agent, provider, reqId, sessionId, role, sideCall, compactCall, model, bodyObj, agentId, requestClass, requestId, status } = turnCtx;
+    const { agent, provider, reqId, sessionId, role, sideCall, compactCall, model, bodyObj, agentId, requestClass, prompt, requestId, status } = turnCtx;
     const usage = provider === 'anthropic' ? new UsageCollector() : new OpenAIUsageCollector();
     const extract = provider === 'anthropic' ? anthropicDelta : openaiDelta;
     const ftools = provider === 'anthropic' ? new FileToolCollector() : null;
@@ -813,7 +813,7 @@ class WireProxy extends EventEmitter {
   }
 
   _buildJsonTee(turnCtx, contentEncoding, isCount) {
-    const { agent, provider, reqId, sessionId, role, sideCall, model, agentId, requestClass, requestId, status } = turnCtx;
+    const { agent, provider, reqId, sessionId, role, sideCall, model, agentId, requestClass, prompt, requestId, status } = turnCtx;
     const chunks = [];
     let size = 0;
     let dead = false;

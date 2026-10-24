@@ -261,6 +261,7 @@ test('e2e: byte-exact pass-through + turn.completed/session/usage events', async
   assert.equal(turn.sideCall, false);
   assert.equal(turn.usage.input_tokens, 10);
   assert.equal(turn.usage.output_tokens, 42);
+  assert.deepStrictEqual(turn.prompt, { len: 2, head: 'hi', tail: 'hi' });
   // Touched-files observer: the Edit tool_use streamed alongside the text
   // (path split across input_json_delta fragments, path key not first).
   assert.deepEqual(turn.files, [{ tool: 'Edit', path: '/tmp/wire-touched.js' }]);
