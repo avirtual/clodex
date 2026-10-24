@@ -132,6 +132,7 @@ module.exports.activate = (rhost) => {
       tr.appendChild(seat);
       const kind = el('td', 'rv-kind', r.kind);
       if (r.by === 'operator') kind.appendChild(el('span', 'rv-chip', 'operator'));
+      if (r.by === 'ticket-loop') kind.appendChild(el('span', 'rv-chip', 'loop'));
       tr.appendChild(kind);
       tr.appendChild(el('td', 'rv-spec', r.spec));
       tr.appendChild(el('td', 'rv-next', fmtNextFire(r)));

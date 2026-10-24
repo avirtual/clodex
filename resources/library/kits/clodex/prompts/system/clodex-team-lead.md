@@ -36,11 +36,11 @@ carried context.
 - Size every task to fit one worker context: spec in, work, report out, no
   mid-task compact. A worker under context pressure is a task that needed
   splitting.
-- On dispatch, set a self-reminder sized to the task, ticket-bound so a
-  close-out or cancel drops it: `[agent:remind for <ticketId> in <interval>] …`;
-  if it fires before the report lands, check the seat and respawn from the
-  artifact — the loop's stall nudge catches only a seat gone quiet, not one
-  busy going nowhere.
+- The loop sets a ticket watch for you on every dispatch and rework round
+  (`watchMs` in team.json, default 60 min): it fires as a reminder if the hand
+  has not closed by then, and the loop drops it on done, accept or cancel. Set
+  your own `remind` only for something the watch does not cover, and cancel the
+  watch (`[agent:remind cancel <id>]`) when you know a round is long.
 - Before a spec that cites more than a handful of coordinates, file a scout
   ticket first: `[agent:task add scout start]` with the commit, the symbols and
   the questions (which line, which callers, which pins), and an output table

@@ -722,7 +722,7 @@ test('a REJECT after a closed-out accept makes the ticket bindable again', async
     f.m._taskReject(f.lead, f.team, { id: 't1', body: 'one more pass' }, f.reply);
     assert.strictEqual(f.one('t1').state, 'open', 'ENTER: the reject reopened it');
 
-    const mine = f.arm('for t1 in 40m', 'check the rework');
+    const mine = f.arm('for t1 in 40m', 'check the rework').filter((r) => r.by !== 'ticket-loop');
 
     // The failure this pins is an over-REFUSAL, so asserting no-throw would pass
     // against the defect. The binding has to actually land.
@@ -909,5 +909,172 @@ test('several reminders bound to one ticket all go, in one close', async () => {
     assert.deepStrictEqual(f.store.listForAgent('lead').map((r) => r.body).sort(),
       ['other ticket', 'unbound'], 'exactly the two t1-bound records left');
     assert.match(f.replies.join('\n'), /2 bound reminder\(s\) cancelled/);
+  } finally { f.cleanup(); }
+});
+
+const loopRows = (store, ticketId) => store.listForAgent('lead').filter((r) => r.ticket === ticketId && r.by === 'ticket-loop');
+
+function addFreshTicket(f, id) {
+  const all = f.tstore.load(f.team.root);
+  all.push({ id, state: 'open', spec: `spec for ${id}`, assignee: 'hand', taskDir: pathReal.join(f.team.root, 'tasks', id), openedAt: T0, lastActivityAt: T0, startedAt: null });
+  f.tstore.save(f.team.root, all);
+}
+
+test('task start arms one ticket-loop watch on the lead, bound to the ticket', () => {
+  const f = mkFixture();
+  try {
+    addFreshTicket(f, 't3');
+    f.m._taskStart(f.lead, f.team, { id: 't3' }, f.reply);
+    assert.ok(f.one('t3').startedAt, `ENTER: the start landed (${f.replies.join(' | ')})`);
+    const rows = loopRows(f.store, 't3');
+    assert.strictEqual(rows.length, 1);
+    const [w] = rows;
+    assert.strictEqual(w.agent, 'lead');
+    assert.strictEqual(w.ticket, 't3');
+    assert.strictEqual(w.by, 'ticket-loop');
+    assert.strictEqual(w.spec, 'for t3 in 60m');
+    assert.strictEqual(w.nextFireAt, T0 + 60 * MIN);
+    assert.match(w.body, /^ticket t3 started \d\d:\d\dZ to team-hand \(round 1\); no report after 60m/);
+  } finally { f.cleanup(); }
+});
+
+test('task assign arms the watch too', () => {
+  const f = mkFixture();
+  try {
+    addFreshTicket(f, 't3');
+    f.m._taskAssign(f.lead, f.team, { id: 't3', who: 'team-hand' }, f.reply);
+    const rows = loopRows(f.store, 't3');
+    assert.strictEqual(rows.length, 1, `one watch after assign (${f.replies.join(' | ')})`);
+    assert.match(rows[0].body, /^ticket t3 assigned .* to team-hand \(round 1\)/);
+  } finally { f.cleanup(); }
+});
+
+test('team watchMs sets the watch interval', () => {
+  const f = mkFixture();
+  try {
+    addFreshTicket(f, 't3');
+    f.m._taskStart(f.lead, { ...f.team, watchMs: 45 * MIN }, { id: 't3' }, f.reply);
+    assert.deepStrictEqual(loopRows(f.store, 't3').map((r) => r.spec), ['for t3 in 45m']);
+  } finally { f.cleanup(); }
+});
+
+test('a lead reject and a follow-up reject each re-time the one watch for the rework round', () => {
+  const f = mkFixture();
+  try {
+    addFreshTicket(f, 't3');
+    f.m._taskStart(f.lead, f.team, { id: 't3' }, f.reply);
+    assert.strictEqual(loopRows(f.store, 't3').length, 1, 'ENTER: start armed a watch');
+    f.m._taskDone(f.m.sessions.get('team-hand'), f.team, { id: 't3', body: 'done.' }, f.reply);
+    assert.strictEqual(f.one('t3').state, 'done', 'ENTER: done landed');
+
+    f.clock.advance(10 * MIN);
+    f.m._taskReject(f.lead, f.team, { id: 't3', body: 'fix it' }, f.reply);
+    assert.strictEqual(Number(f.one('t3').reworkRound), 1, 'ENTER: the reject opened a rework round');
+    let rows = loopRows(f.store, 't3');
+    assert.strictEqual(rows.length, 1);
+    assert.strictEqual(rows[0].spec, 'for t3 in 60m');
+    assert.strictEqual(rows[0].nextFireAt, T0 + 70 * MIN);
+    assert.match(rows[0].body, /^ticket t3 rework delivered .* to team-hand \(round 2\)/);
+
+    f.clock.advance(5 * MIN);
+    f.m._taskReject(f.lead, f.team, { id: 't3', body: 'and this' }, f.reply);
+    assert.match(f.replies.join('\n'), /as a follow-up/, 'ENTER: the second reject took the follow-up arm');
+    rows = loopRows(f.store, 't3');
+    assert.strictEqual(rows.length, 1);
+    assert.strictEqual(rows[0].nextFireAt, T0 + 75 * MIN);
+    assert.match(rows[0].body, /rework delivered .* \(round 2\)/);
+  } finally { f.cleanup(); }
+});
+
+test('done drops the loop watch (_dropLoopWatch) and keeps the lead\'s own bound reminder', () => {
+  const f = mkFixture();
+  try {
+    addFreshTicket(f, 't3');
+    f.m._taskStart(f.lead, f.team, { id: 't3' }, f.reply);
+    f.arm('for t3 in 40m', 'mine');
+    const own = f.store.listForAgent('lead').find((r) => r.ticket === 't3' && r.by !== 'ticket-loop');
+    assert.ok(own, 'ENTER: the lead\'s own bound reminder exists');
+    assert.strictEqual(loopRows(f.store, 't3').length, 1, 'ENTER: the loop watch exists');
+
+    f.m._taskDone(f.m.sessions.get('team-hand'), f.team, { id: 't3', body: 'done.' }, f.reply);
+    assert.strictEqual(f.one('t3').state, 'done', 'ENTER: done landed');
+    assert.deepStrictEqual(f.store.listForAgent('lead').filter((r) => r.ticket === 't3').map((r) => r.id), [own.id]);
+  } finally { f.cleanup(); }
+});
+
+test('accept drops the loop watch and the lead\'s bound reminder alike', async () => {
+  const f = mkFixture();
+  try {
+    f.arm('for t1 in 40m', 'mine');
+    f.m._armLoopWatch(f.team, f.one('t1'), 'started', 'team-hand');
+    assert.strictEqual(f.store.listForAgent('lead').filter((r) => r.ticket === 't1').length, 2, 'ENTER: both rows exist');
+    f.setState('t1', { state: 'done', report: 'did it' });
+    await f.m._taskAccept(f.lead, f.team, { id: 't1' }, f.reply);
+    assert.deepStrictEqual(f.store.listForAgent('lead'), []);
+  } finally { f.cleanup(); }
+});
+
+test('cancel drops the loop watch and the lead\'s bound reminder alike', () => {
+  const f = mkFixture();
+  try {
+    f.arm('for t1 in 40m', 'mine');
+    f.m._armLoopWatch(f.team, f.one('t1'), 'started', 'team-hand');
+    assert.strictEqual(f.store.listForAgent('lead').filter((r) => r.ticket === 't1').length, 2, 'ENTER: both rows exist');
+    f.m._taskCancel(f.lead, f.team, { id: 't1', body: 'dropped' }, f.reply);
+    assert.strictEqual(f.one('t1').state, 'cancelled', 'ENTER: the cancel landed');
+    assert.deepStrictEqual(f.store.listForAgent('lead'), []);
+  } finally { f.cleanup(); }
+});
+
+test('the loop\'s own merge-step reopen arms no watch', () => {
+  const f = mkFixture();
+  try {
+    f.setState('t1', { state: 'done', report: 'did it', closedAt: T0 });
+    const res = f.m._rejectTicketFromLoop(f.team, 't1', 'suite red');
+    assert.strictEqual(f.one('t1').state, 'open', `ENTER: the loop reopened t1 (${JSON.stringify(res)})`);
+    assert.deepStrictEqual(loopRows(f.store, 't1'), []);
+  } finally { f.cleanup(); }
+});
+
+test('a lead may cancel a loop watch without force, unlike an operator row', () => {
+  const f = mkFixture();
+  try {
+    const w = f.m._armLoopWatch(f.team, f.one('t1'), 'started', 'team-hand');
+    assert.ok(w, 'ENTER: the watch was armed');
+    assert.strictEqual(f.scheduler.cancel('lead', w.id), true);
+    assert.strictEqual(f.store.get(w.id), null);
+  } finally { f.cleanup(); }
+});
+
+test('reminderText marks a loop watch as set by the ticket loop', () => {
+  const { reminderText } = require('../remind-scheduler');
+  assert.strictEqual(reminderText('r1', 'for t1 in 60m', 'x', 'ticket-loop'), '[r1 for t1 in 60m, set by the ticket loop] x');
+});
+
+test('team.json watchMs: a number is carried, null is absent, a non-positive value throws', () => {
+  const home = mkTmpRoot('clodex-watchms-');
+  try {
+    const dir = pathReal.join(home, 'teams', 'shop');
+    fsReal.mkdirSync(dir, { recursive: true });
+    const tm = createTeamManifest({ fs: fsReal, clodexHome: home });
+    const write = (extra) => fsReal.writeFileSync(pathReal.join(dir, 'team.json'),
+      JSON.stringify({ root: '/r', lead: 'boss', roles: { lead: { prompt: 'clodex-team-lead' } }, ...extra }));
+    write({ watchMs: 45 * MIN });
+    assert.strictEqual(tm.loadManifest('shop').watchMs, 45 * MIN);
+    write({ watchMs: null });
+    assert.strictEqual(tm.loadManifest('shop').watchMs, undefined);
+    write({ watchMs: 0 });
+    assert.throws(() => tm.loadManifest('shop'), /"watchMs" must be positive, or null to clear it/);
+    write({ watchMs: 'soon' });
+    assert.throws(() => tm.loadManifest('shop'), /"watchMs" must be a finite number or null/);
+  } finally { fsReal.rmSync(home, { recursive: true, force: true }); }
+});
+
+test('a null watchMs falls back to a 60-minute watch', () => {
+  const f = mkFixture();
+  try {
+    addFreshTicket(f, 't3');
+    f.m._taskStart(f.lead, { ...f.team, watchMs: null }, { id: 't3' }, f.reply);
+    assert.deepStrictEqual(loopRows(f.store, 't3').map((r) => r.spec), ['for t3 in 60m']);
   } finally { f.cleanup(); }
 });

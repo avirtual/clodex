@@ -178,6 +178,15 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
       return doomed.map((r) => r.id);
     },
 
+    cancelLoopWatch(agent, ticketId) {
+      if (!agent || !ticketId) return [];
+      const want = String(ticketId).toLowerCase();
+      const doomed = store.listForAgent(agent).filter((r) => r.by === 'ticket-loop' && r.ticket && String(r.ticket).toLowerCase() === want);
+      for (const rec of doomed) store.remove(rec.id);
+      if (doomed.length) this._rearm();
+      return doomed.map((r) => r.id);
+    },
+
     // Every schedule this agent owns (for `remind list`). Verbatim records —
     // the handler renders id + spec.
     listForAgent(agent) {
@@ -206,7 +215,9 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
 }
 
 function reminderText(id, spec, body, by) {
-  const prefix = by === 'operator' ? `[${id} ${spec}, set by your operator]` : `[${id} ${spec}]`;
+  const prefix = by === 'operator' ? `[${id} ${spec}, set by your operator]`
+    : by === 'ticket-loop' ? `[${id} ${spec}, set by the ticket loop]`
+      : `[${id} ${spec}]`;
   return body ? `${prefix} ${body}` : prefix;
 }
 

@@ -50,7 +50,7 @@ function toRow(r, live) {
     lastFiredAt: typeof r.lastFiredAt === 'number' ? r.lastFiredAt : null,
     ticket: r.ticket ? String(r.ticket) : null,
     live,
-    ...(r.by === 'operator' ? { by: 'operator' } : {}),
+    ...(r.by === 'operator' || r.by === 'ticket-loop' ? { by: r.by } : {}),
   };
 }
 
