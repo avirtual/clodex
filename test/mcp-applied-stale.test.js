@@ -87,9 +87,28 @@ test('mcp:appliedStale: an array of names answers each seat from one library rea
   assert.strictEqual(reads, 1);
 });
 
-test('mcp:appliedStale: a selection Clodex never applies — Codex, unmanaged Claude, a server not on claude — is not stale', () => {
+test('mcp:appliedStale: a Codex seat with a selection it never applied reads stale', () => {
+  const lib = { jira: JIRA };
+  assert.strictEqual(door({ name: 'c', type: 'codex', mcpServers: ['jira'] }, lib)('c').stale, true);
+  const applied = { ...appliedFor(lib, ['jira']), residue: ['cua_repl'] };
+  assert.strictEqual(door({ name: 'c', type: 'codex', mcpServers: ['jira'], mcpApplied: applied }, lib)('c').stale, false);
+});
+
+test('mcp:appliedStale: a server Codex cannot express is not loadable there, so selecting it does not read stale forever', () => {
+  const lib = { jira: JIRA, old: { type: 'sse', url: 'https://s/sse' } };
+  const applied = { ...appliedFor({ jira: JIRA }, ['jira']), residue: [] };
+  assert.deepStrictEqual(applied.names, ['jira'], 'ENTER: only jira was applied');
+  assert.strictEqual(door({ name: 'c', type: 'codex', mcpServers: ['jira', 'old'], mcpApplied: applied }, lib)('c').stale, false);
+});
+
+test('mcp:appliedStale: a selected name no longer in the library is not loadable, so it does not read stale', () => {
+  const applied = appliedFor({ jira: JIRA }, ['jira']);
+  assert.deepStrictEqual(applied.names, ['jira'], 'ENTER: jira was applied');
+  assert.strictEqual(door({ name: 'g', type: 'claude', mcpServers: ['jira', 'gone'], mcpApplied: applied }, { jira: JIRA })('g').stale, false);
+});
+
+test('mcp:appliedStale: a selection Clodex never applies — unmanaged Claude, a server not on claude — is not stale', () => {
   const lib = { jira: JIRA, codexOnly: { ...DOCS, platforms: ['codex'] } };
-  assert.strictEqual(door({ name: 'c', type: 'codex', mcpServers: ['jira'] }, lib)('c').stale, false);
   assert.strictEqual(door({ name: 'u', type: 'claude', mcpUnmanaged: true, mcpServers: ['jira'] }, lib)('u').stale, false);
   const applied = appliedFor(lib, ['jira', 'codexOnly']);
   assert.deepStrictEqual(applied.names, ['jira'], 'ENTER: the codex-only server was skipped at spawn');

@@ -1319,7 +1319,10 @@ function attachClodexMcp(session, name, data) {
       if (server && !rosterServers.includes(server)) rosterServers.push(server);
     }
   }
-  const leaks = session.type === 'claude' ? mcpLeaks({ rosterServers, selected, implicit: ['clodex'] }) : [];
+  const implicit = session.type === 'codex'
+    ? ['clodex', ...(record.mcpApplied && Array.isArray(record.mcpApplied.residue) ? record.mcpApplied.residue : [])]
+    : ['clodex'];
+  const leaks = ['claude', 'codex'].includes(session.type) ? mcpLeaks({ rosterServers, selected, implicit }) : [];
   if (!session._mcpLeakLogged) session._mcpLeakLogged = new Set();
   for (const server of leaks) {
     if (session._mcpLeakLogged.has(server)) continue;

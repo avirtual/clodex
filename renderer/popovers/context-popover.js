@@ -197,27 +197,39 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     }
     return `<div class="ctx-util">${head}${conf}${body}</div>`;
   }
-  function mcpStatusLine(name) {
+  const mcpResidue = (mcp) => (mcp && mcp.applied && Array.isArray(mcp.applied.residue) ? mcp.applied.residue : []);
+  function mcpStatusLine(name, mcp) {
     const type = sessionTypeOf(name);
     if (type === 'claude') return 'Claude: partially managed — CLI plugins unverified';
-    if (type === 'codex') return 'Codex: selection not applied on this CLI yet';
+    if (type === 'codex') {
+      if (!mcp || mcp.managed === false || !mcp.applied) return 'Codex: MCP selection not applied to this seat';
+      const n = mcpResidue(mcp).length;
+      return `Codex: config.toml servers disabled${n ? `; ${n} plugin server(s) not controllable on this CLI` : ''}`;
+    }
     if (type === 'muse') return 'Muse: selection not applied on this CLI yet';
     return '';
   }
   function mcpDeniedNote(server, mcp, name) {
     const denied = mcp.applied && mcp.applied.denied && Array.isArray(mcp.applied.denied[server]) ? mcp.applied.denied[server].length : 0;
     if (!denied) return '';
-    const off = sessionTypeOf(name) !== 'claude' ? ' (deny list not enforced on this CLI)'
+    const type = sessionTypeOf(name);
+    const off = type === 'codex' ? ' (disabled_tools)'
+      : type !== 'claude' ? ' (deny list not enforced on this CLI)'
       : (mcp.applied.denyUnenforced ? ' (not enforced: the seat\'s own --settings)' : '');
     return ` · ${denied} tool${denied === 1 ? '' : 's'} denied${off}`;
   }
   function mcpRowNote(server, mcp, name = null) {
     if (!mcp) return '';
     if (server === 'clodex') return 'built-in';
+    if ((mcp.leaks || []).includes(server) && sessionTypeOf(name) === 'codex') {
+      return '⚠ not in this seat\'s selection — reached the CLI outside Clodex (own -c mcp_servers in Extra args, '
+        + 'or a config.toml or plugin server added after spawn)';
+    }
     if ((mcp.leaks || []).includes(server)) {
       return '⚠ not in this seat\'s selection — reached the CLI outside Clodex (own --mcp-config in Extra args, '
         + 'a CLI plugin, or a CLI build that ignores --strict-mcp-config)';
     }
+    if (mcpResidue(mcp).includes(server)) return 'plugin-bundled — not controllable on this CLI';
     if ((mcp.selected || []).includes(server)) return `library · selected${mcpDeniedNote(server, mcp, name)}`;
     return '';
   }
@@ -246,7 +258,7 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     const head = `<div class="ctx-util-head"><span>MCP servers</span>` +
       `<span class="ctx-util-stat" title="Char-based estimate (≈chars/4); a tokenizer reads ~25% higher.">` +
       `${groups.length} loaded · <b>~${fmtTokens(total)}/turn</b></span></div>`;
-    const status = mcp ? mcpStatusLine(name) : '';
+    const status = mcp ? mcpStatusLine(name, mcp) : '';
     const meta = (mcp && mcp.managed === false
       ? `<div class="ctx-util-conf">unmanaged: this seat's Extra args carry its own MCP config</div>` : '')
       + (status ? `<div class="ctx-util-conf">${esc(status)}</div>` : '');
@@ -265,7 +277,7 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     };
     let rows;
     if (mcp) {
-      const leaked = (g) => (mcp.leaks || []).includes(g.server);
+      const leaked = (g) => (mcp.leaks || []).includes(g.server) || mcpResidue(mcp).includes(g.server);
       const builtIn = groups.filter((g) => g.server === 'clodex');
       const library = groups.filter((g) => g.server !== 'clodex' && !leaked(g));
       const outside = groups.filter((g) => g.server !== 'clodex' && leaked(g));
@@ -276,10 +288,13 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     }
 
     const deadServers = conclusive ? groups.filter((g) => g.usedTotal === 0 && (!mcp || g.server !== 'clodex')) : [];
-    const removeHint = (server) => `<div class="ctx-util-conf">Unused over ${turns} turns. To remove one, run ` +
+    const removeHint = (server) => (sessionTypeOf(name) === 'codex'
+      ? `<div class="ctx-util-conf">Unused over ${turns} turns. To remove one, run ` +
+        `<code>codex mcp remove ${esc(server)}</code> yourself — Clodex never edits your MCP config.</div>`
+      : `<div class="ctx-util-conf">Unused over ${turns} turns. To remove one, run ` +
       `<code>claude mcp remove ${esc(server)}</code> yourself — Clodex never edits your MCP config. ` +
       `It removes from whichever scope defines the server; for project <code>.mcp.json</code> approvals see ` +
-      `<code>claude mcp reset-project-choices</code>.</div>`;
+      `<code>claude mcp reset-project-choices</code>.</div>`);
     let hint = '';
     if (deadServers.length && !mcp) hint = removeHint(deadServers[0].server);
     else if (deadServers.length) {

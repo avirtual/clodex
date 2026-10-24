@@ -184,6 +184,133 @@ function claudeMcpServers({ selected, library, env, cli = 'claude' } = {}) {
   return { servers, warnings, applied };
 }
 
+function tomlString(s) {
+  return `"${String(s).replace(/[\\"\u0000-\u001f\u007f]/g, (c) => {
+    if (c === '\\') return '\\\\';
+    if (c === '"') return '\\"';
+    if (c === '\n') return '\\n';
+    if (c === '\r') return '\\r';
+    if (c === '\t') return '\\t';
+    return `\\u${c.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}`;
+  })}"`;
+}
+
+const TOML_BARE_KEY_RE = /^[A-Za-z0-9_-]+$/;
+const tomlKey = (k) => (TOML_BARE_KEY_RE.test(k) ? k : tomlString(k));
+const tomlArray = (list) => `[${list.map(tomlString).join(',')}]`;
+const tomlTable = (rows) => `{${rows.map(([k, v]) => `${tomlKey(k)}=${tomlString(v)}`).join(',')}}`;
+const BEARER_REF_RE = /^Bearer \$\{([A-Za-z_][A-Za-z0-9_]*)\}$/;
+const WHOLE_REF_RE = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/;
+
+function codexBlocker(entry) {
+  const type = entryType(entry);
+  if (type === 'sse') return { sse: true };
+  if (type === 'stdio') {
+    return Array.isArray(entry.args) && entry.args.some((a) => typeof a === 'string' && a.includes('${'))
+      ? { why: 'args reference an env var' } : null;
+  }
+  if (typeof entry.url === 'string' && entry.url.includes('${')) return { why: 'url references an env var' };
+  for (const h of Object.keys(isObj(entry.headers) ? entry.headers : {}).sort()) {
+    const v = entry.headers[h];
+    if (typeof v !== 'string' || !v.includes('${')) continue;
+    if (h.toLowerCase() === 'authorization' && BEARER_REF_RE.test(v)) continue;
+    if (WHOLE_REF_RE.test(v)) continue;
+    return { why: `header ${h} mixes text and an env var` };
+  }
+  return null;
+}
+
+function codexExpressible(entry) {
+  return isObj(entry) && codexBlocker(entry) === null;
+}
+
+function codexServerPairs(n, entry, resolved, env) {
+  const blocker = codexBlocker(entry);
+  if (blocker && blocker.sse) return { omit: `MCP ${n}: not available on codex (sse)` };
+  if (blocker) return { omit: `MCP ${n}: not expressible on Codex — ${blocker.why}` };
+  const type = entryType(entry);
+  const pairs = [];
+  const seatEnv = {};
+  if (type === 'stdio') {
+    const args = Array.isArray(entry.args) ? entry.args : [];
+    pairs.push(['command', tomlString(resolved.command)]);
+    pairs.push(['args', tomlArray(args)]);
+    if (resolved.cwd) pairs.push(['cwd', tomlString(resolved.cwd)]);
+    const plain = [];
+    const names = [];
+    for (const k of Object.keys(isObj(entry.env) ? entry.env : {}).sort()) {
+      if (entry.env[k].includes('${')) {
+        seatEnv[k] = resolved.env[k];
+        names.push(k);
+      } else plain.push([k, entry.env[k]]);
+    }
+    if (plain.length) pairs.push(['env', tomlTable(plain)]);
+    if (names.length) pairs.push(['env_vars', tomlArray(names)]);
+  } else {
+    pairs.push(['url', tomlString(entry.url)]);
+    const literal = [];
+    const fromEnv = [];
+    for (const h of Object.keys(isObj(entry.headers) ? entry.headers : {}).sort()) {
+      const v = entry.headers[h];
+      const bearer = h.toLowerCase() === 'authorization' ? BEARER_REF_RE.exec(v) : null;
+      const whole = WHOLE_REF_RE.exec(v);
+      if (bearer) {
+        pairs.push(['bearer_token_env_var', tomlString(bearer[1])]);
+        seatEnv[bearer[1]] = env[bearer[1]];
+      } else if (whole) {
+        fromEnv.push([h, whole[1]]);
+        seatEnv[whole[1]] = env[whole[1]];
+      } else literal.push([h, v]);
+    }
+    if (literal.length) pairs.push(['http_headers', tomlTable(literal)]);
+    if (fromEnv.length) pairs.push(['env_http_headers', tomlTable(fromEnv)]);
+  }
+  const deny = denyToolsOf(entry);
+  if (deny.length) pairs.push(['disabled_tools', tomlArray(deny)]);
+  pairs.push(['enabled', 'true']);
+  return { pairs, seatEnv };
+}
+
+function codexMcpArgs({ servers, library, env, userOwn, configNames } = {}) {
+  if (userOwn) {
+    return { args: [], seatEnv: {}, warnings: ["MCP: selection not applied — the seat's extra args carry their own -c mcp_servers"], applied: null };
+  }
+  const lib = libraryMap(library);
+  const vars = isObj(env) ? env : {};
+  const args = [];
+  const seatEnv = {};
+  const warnings = [];
+  const shapes = {};
+  const denied = {};
+  const inConfig = new Set(Array.isArray(configNames) ? configNames : []);
+  for (const n of Object.keys(isObj(servers) ? servers : {}).sort()) {
+    const entry = lib.get(n);
+    if (!entry) continue;
+    const out = codexServerPairs(n, entry, servers[n], vars);
+    if (out.omit) { warnings.push(out.omit); continue; }
+    const clash = Object.keys(out.seatEnv).find((k) => (k in seatEnv && seatEnv[k] !== out.seatEnv[k])
+      || (typeof vars[k] === 'string' && vars[k] !== out.seatEnv[k]));
+    if (clash) {
+      warnings.push(`MCP ${n}: not expressible on Codex — env ${clash} collides with another server's or the seat's value`);
+      continue;
+    }
+    for (const [k, v] of out.pairs) args.push('-c', `mcp_servers.${n}.${k}=${v}`);
+    Object.assign(seatEnv, out.seatEnv);
+    shapes[n] = digestShape(entry);
+    const deny = denyToolsOf(entry);
+    if (deny.length) denied[n] = deny;
+    if (inConfig.has(n)) warnings.push(`MCP ${n}: also in config.toml — Codex merges Clodex's keys over it; stale keys survive`);
+  }
+  for (const c of [...inConfig].sort()) {
+    if (!shapes[c]) args.push('-c', `mcp_servers.${c}.enabled=false`);
+  }
+  const names = Object.keys(shapes).sort();
+  const applied = { names, digest: mcpDigest(shapes), denyRules: names.flatMap((n) => (denied[n] || []).map((t) => `mcp__${n}__${t}`)) };
+  if (Object.keys(denied).length) applied.denied = denied;
+  applied.residue = [];
+  return { args, seatEnv, warnings, applied };
+}
+
 function mcpArgvPlan({ userMcp, userStrict, mcpPath }) {
   const unavailable = 'MCP: the clodex MCP tools are not available to this session — ';
   if (userMcp) {
@@ -273,5 +400,5 @@ function normaliseDiscovered(entry) {
 module.exports = {
   MCP_NAME_RE, RESERVED_MCP_NAMES, MCP_TYPES, MCP_PLATFORMS, MCP_TOOL_RE,
   mcpNameError, validateMcpEntry, secretRefs, resolveMcpEntry, cliShape, digestShape, mcpDigest,
-  claudeMcpServers, mcpArgvPlan, mcpServerOf, mcpLeaks, discoverMcpSources, normaliseDiscovered,
+  claudeMcpServers, tomlString, codexMcpArgs, codexExpressible, mcpArgvPlan, mcpServerOf, mcpLeaks, discoverMcpSources, normaliseDiscovered,
 };
