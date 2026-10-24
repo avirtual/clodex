@@ -196,6 +196,8 @@ test('context popover: a selected server with a deny list says how many tools ar
   const mcp = { managed: true, selected: ['jira'], applied: { names: ['jira'], digest: 'd', denyRules: [], denied: { jira: ['createJiraIssue', 'editJiraIssue'] } }, leaks: ['rogue'] };
   assert.strictEqual(note(await popoverBody({ agents: [AGENT], clodex_mcp: mcp }), 'jira'), 'library · selected · 2 tools denied');
   assert.strictEqual(note(await popoverBody({ agents: [AGENT], clodex_mcp: mcp }, 'codex'), 'jira'),
+    'library · selected · 2 tools denied (disabled_tools)');
+  assert.strictEqual(note(await popoverBody({ agents: [AGENT], clodex_mcp: mcp }, 'muse'), 'jira'),
     'library · selected · 2 tools denied (deny list not enforced on this CLI)');
   const own = { ...mcp, applied: { ...mcp.applied, denyUnenforced: true } };
   assert.strictEqual(note(await popoverBody({ agents: [AGENT], clodex_mcp: own }), 'jira'),
@@ -204,10 +206,19 @@ test('context popover: a selected server with a deny list says how many tools ar
   assert.strictEqual(note(await popoverBody({ agents: [AGENT], clodex_mcp: one }), 'jira'), 'library · selected · 1 tool denied');
 });
 
-test('context popover: an unmanaged seat carries the header line, and a Codex seat says the selection is not applied', async () => {
+test('context popover: an unmanaged Codex seat carries the header line and the Codex status without a residue clause', async () => {
   const body = await popoverBody({ agents: [AGENT], clodex_mcp: { managed: false, selected: [], applied: null, leaks: ['jira', 'rogue'] } }, 'codex');
   assert.match(body, /unmanaged: this seat's Extra args carry its own MCP config/);
-  assert.match(body, /Codex: selection not applied on this CLI yet/);
+  assert.match(body, /<div class="ctx-util-conf">Codex: config.toml servers disabled<\/div>/);
+});
+
+test('context popover: a Codex seat counts its plugin residue in the status line and labels the residue row', async () => {
+  const mcp = { managed: true, selected: ['jira'], applied: { names: ['jira'], digest: 'd', denyRules: [], residue: ['rogue', 'cua_repl'] }, leaks: [] };
+  const body = await popoverBody({ agents: [AGENT], clodex_mcp: mcp }, 'codex');
+  assert.match(body, /Codex: config.toml servers disabled; 2 plugin server\(s\) not controllable on this CLI/);
+  assert.strictEqual(note(body, 'rogue'), 'plugin-bundled — not controllable on this CLI');
+  assert.strictEqual(note(body, 'jira'), 'library · selected');
+  assert.ok(body.indexOf('<div class="ctx-util-group">Outside selection</div>') < body.indexOf('<span class="ctx-cat">rogue</span>'));
 });
 
 test('context popover: a payload without clodex_mcp renders the rows bare, as before', async () => {

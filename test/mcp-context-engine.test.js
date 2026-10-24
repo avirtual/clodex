@@ -62,12 +62,16 @@ test('a selected server is not a leak, and an unmanaged record reads managed:fal
   assert.deepStrictEqual(r.warns.filter(([tag]) => tag === 'mcp'), []);
 });
 
-test('a Codex seat reports no leaks and warns nothing: its selection is not applied on that CLI yet', async () => {
-  const r = rig({ name: 'cx', type: 'codex', cwd: '/tmp' }, 'codex');
+test('a Codex seat: a plugin residue server on the roster is not a leak; one outside residue and selection is', async () => {
+  const applied = { names: [], digest: 'd0', denyRules: [], residue: ['jira'] };
+  const r = rig({ name: 'cx', type: 'codex', cwd: '/tmp', mcpApplied: applied }, 'codex');
   const [a] = await fetchTwice(r);
   assert.strictEqual(a.ok, true, 'ENTER: the fetch reached the proxy stub');
   assert.deepStrictEqual(a.data.clodex_mcp.leaks, []);
   assert.deepStrictEqual(r.warns.filter(([tag]) => tag === 'mcp'), []);
+  const bare = rig({ name: 'cx2', type: 'codex', cwd: '/tmp' }, 'codex');
+  const [b] = await fetchTwice(bare);
+  assert.deepStrictEqual(b.data.clodex_mcp.leaks, ['jira']);
 });
 
 after(() => { setImmediate(() => process.exit(0)); });
