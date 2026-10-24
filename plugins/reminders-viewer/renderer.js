@@ -194,6 +194,7 @@ module.exports.activate = (rhost) => {
       rhost.ui.showToast(`Could not fire: ${(res && res.error) || 'unknown error'}`, { kind: 'error' });
       if (fireBtn.isConnected) fireBtn.disabled = false;
       if (cancelBtn.isConnected) cancelBtn.disabled = false;
+      await reload();
     }
 
     async function loadSeats() {

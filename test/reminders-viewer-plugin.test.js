@@ -202,7 +202,8 @@ test('reminders-viewer: fire routes agent+id to library.fire and passes kept thr
   try {
     assert.deepStrictEqual(await host.dispatch('reminders-viewer', 'fire', [{ agent: 'lead', id: 'aaa111' }], 'desktop'), { ok: true, kept: true });
     assert.deepStrictEqual(await host.dispatch('reminders-viewer', 'fire', [{ agent: 'lead', id: 'bbb222' }], 'desktop'), { ok: true, kept: false });
-    assert.deepStrictEqual(fires, [{ agent: 'lead', id: 'aaa111' }, { agent: 'lead', id: 'bbb222' }]);
+    assert.deepStrictEqual(await host.dispatch('reminders-viewer', 'fire', [{ agent: 'lead', id: 'aaa111' }], 'web'), { ok: true, kept: true });
+    assert.deepStrictEqual(fires, [{ agent: 'lead', id: 'aaa111' }, { agent: 'lead', id: 'bbb222' }, { agent: 'lead', id: 'aaa111' }]);
     assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')).map((r) => r.id), ['aaa111']);
   } finally { cleanup(); }
 });

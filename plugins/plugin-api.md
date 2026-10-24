@@ -1145,7 +1145,7 @@ it is forwarded to the handler like `ref`.
 
 Generic in shape, per-kind in implementation. Core owns a `kind -> handler`
 table and **a kind with no registered handler is refused** — there is no
-fallback to a path unlink. `memory` is the only registered kind.
+fallback to a path unlink.
 
 That refusal is the point of the design rather than a limitation of it. The
 library's kinds do not mean the same thing when deleted, and most break
