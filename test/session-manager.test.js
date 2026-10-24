@@ -22598,6 +22598,20 @@ test('MCP on a codex seat: -c mcp_servers pairs after the effort, alias in the s
   assert.deepStrictEqual(rows, []);
 });
 
+test('MCP on a codex seat with nothing selected still records its plugin residue', async (t) => {
+  const saved = process.env.CODEX_HOME;
+  t.after(() => { if (saved === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = saved; });
+  process.env.CODEX_HOME = mkTmpRoot('clx-codex-home-');
+  const childProcess = { execFileSync: () => JSON.stringify([{ name: 'cua_repl', enabled: true }]) };
+  const c = mkCodexStreamSeat({ deps: { getMcpLibrary: () => ({ list: () => [] }), childProcess } });
+  t.after(() => c.h.stopAll());
+  await c.create('cxm3');
+  assert.ok(!c.h.spawns[0].args.some((a) => /^mcp_servers/.test(a)), 'ENTER: nothing selected, nothing pushed');
+  const rec = c.h.store.get('cxm3');
+  assert.deepStrictEqual(rec.mcpApplied.names, []);
+  assert.deepStrictEqual(rec.mcpApplied.residue, ['cua_repl']);
+});
+
 test('MCP on a codex seat: an own -c mcp_servers in extra args makes it unmanaged; Clodex pushes no pair', async (t) => {
   const c = mkCodexStreamSeat({ extraArgs: ['-c', 'mcp_servers.x.command="own"'], mcpServers: ['jira'], deps: { getMcpLibrary: () => ({ list: () => [] }) } });
   t.after(() => c.h.stopAll());

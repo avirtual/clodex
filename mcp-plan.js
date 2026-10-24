@@ -202,15 +202,37 @@ const tomlTable = (rows) => `{${rows.map(([k, v]) => `${tomlKey(k)}=${tomlString
 const BEARER_REF_RE = /^Bearer \$\{([A-Za-z_][A-Za-z0-9_]*)\}$/;
 const WHOLE_REF_RE = /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/;
 
-function codexServerPairs(n, entry, resolved, env) {
-  const notExpressible = (why) => ({ omit: `MCP ${n}: not expressible on Codex — ${why}` });
+function codexBlocker(entry) {
   const type = entryType(entry);
-  if (type === 'sse') return { omit: `MCP ${n}: not available on codex (sse)` };
+  if (type === 'sse') return { sse: true };
+  if (type === 'stdio') {
+    return Array.isArray(entry.args) && entry.args.some((a) => typeof a === 'string' && a.includes('${'))
+      ? { why: 'args reference an env var' } : null;
+  }
+  if (typeof entry.url === 'string' && entry.url.includes('${')) return { why: 'url references an env var' };
+  for (const h of Object.keys(isObj(entry.headers) ? entry.headers : {}).sort()) {
+    const v = entry.headers[h];
+    if (typeof v !== 'string' || !v.includes('${')) continue;
+    if (h.toLowerCase() === 'authorization' && BEARER_REF_RE.test(v)) continue;
+    if (WHOLE_REF_RE.test(v)) continue;
+    return { why: `header ${h} mixes text and an env var` };
+  }
+  return null;
+}
+
+function codexExpressible(entry) {
+  return isObj(entry) && codexBlocker(entry) === null;
+}
+
+function codexServerPairs(n, entry, resolved, env) {
+  const blocker = codexBlocker(entry);
+  if (blocker && blocker.sse) return { omit: `MCP ${n}: not available on codex (sse)` };
+  if (blocker) return { omit: `MCP ${n}: not expressible on Codex — ${blocker.why}` };
+  const type = entryType(entry);
   const pairs = [];
   const seatEnv = {};
   if (type === 'stdio') {
     const args = Array.isArray(entry.args) ? entry.args : [];
-    if (args.some((a) => a.includes('${'))) return notExpressible('args reference an env var');
     pairs.push(['command', tomlString(resolved.command)]);
     pairs.push(['args', tomlArray(args)]);
     if (resolved.cwd) pairs.push(['cwd', tomlString(resolved.cwd)]);
@@ -225,7 +247,6 @@ function codexServerPairs(n, entry, resolved, env) {
     if (plain.length) pairs.push(['env', tomlTable(plain)]);
     if (names.length) pairs.push(['env_vars', tomlArray(names)]);
   } else {
-    if (entry.url.includes('${')) return notExpressible('url references an env var');
     pairs.push(['url', tomlString(entry.url)]);
     const literal = [];
     const fromEnv = [];
@@ -239,8 +260,7 @@ function codexServerPairs(n, entry, resolved, env) {
       } else if (whole) {
         fromEnv.push([h, whole[1]]);
         seatEnv[whole[1]] = env[whole[1]];
-      } else if (!v.includes('${')) literal.push([h, v]);
-      else return notExpressible(`header ${h} mixes text and an env var`);
+      } else literal.push([h, v]);
     }
     if (literal.length) pairs.push(['http_headers', tomlTable(literal)]);
     if (fromEnv.length) pairs.push(['env_http_headers', tomlTable(fromEnv)]);
@@ -268,6 +288,12 @@ function codexMcpArgs({ servers, library, env, userOwn, configNames } = {}) {
     if (!entry) continue;
     const out = codexServerPairs(n, entry, servers[n], vars);
     if (out.omit) { warnings.push(out.omit); continue; }
+    const clash = Object.keys(out.seatEnv).find((k) => (k in seatEnv && seatEnv[k] !== out.seatEnv[k])
+      || (typeof vars[k] === 'string' && vars[k] !== out.seatEnv[k]));
+    if (clash) {
+      warnings.push(`MCP ${n}: not expressible on Codex — env ${clash} collides with another server's or the seat's value`);
+      continue;
+    }
     for (const [k, v] of out.pairs) args.push('-c', `mcp_servers.${n}.${k}=${v}`);
     Object.assign(seatEnv, out.seatEnv);
     shapes[n] = digestShape(entry);
@@ -374,5 +400,5 @@ function normaliseDiscovered(entry) {
 module.exports = {
   MCP_NAME_RE, RESERVED_MCP_NAMES, MCP_TYPES, MCP_PLATFORMS, MCP_TOOL_RE,
   mcpNameError, validateMcpEntry, secretRefs, resolveMcpEntry, cliShape, digestShape, mcpDigest,
-  claudeMcpServers, tomlString, codexMcpArgs, mcpArgvPlan, mcpServerOf, mcpLeaks, discoverMcpSources, normaliseDiscovered,
+  claudeMcpServers, tomlString, codexMcpArgs, codexExpressible, mcpArgvPlan, mcpServerOf, mcpLeaks, discoverMcpSources, normaliseDiscovered,
 };

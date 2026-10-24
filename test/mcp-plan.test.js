@@ -6,7 +6,7 @@ const path = require('node:path');
 const {
   MCP_NAME_RE, mcpNameError, validateMcpEntry, secretRefs, resolveMcpEntry,
   claudeMcpServers, mcpArgvPlan, mcpDigest, digestShape, mcpServerOf, mcpLeaks, discoverMcpSources, normaliseDiscovered,
-  tomlString, codexMcpArgs,
+  tomlString, codexMcpArgs, codexExpressible,
 } = require('../mcp-plan');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -351,4 +351,47 @@ test('codexMcpArgs: config.toml servers outside the selection are disabled by na
   assert.deepStrictEqual(cxPairs(cx).slice(-2), ['mcp_servers.legacy.enabled=false', 'mcp_servers.my-srv.enabled=false']);
   assert.ok(!cxPairs(cx).includes('mcp_servers.jira.enabled=false'));
   assert.deepStrictEqual(cx.warnings, ["MCP jira: also in config.toml — Codex merges Clodex's keys over it; stale keys survive"]);
+});
+
+test('codexMcpArgs: two servers aliasing one env key to different values cannot share the codex env; the later one is omitted', () => {
+  const lib = [
+    { name: 'gh-home', entry: { command: 'gh-mcp', env: { GITHUB_TOKEN: '${GH_HOME}' } } },
+    { name: 'gh-work', entry: { command: 'gh-mcp', env: { GITHUB_TOKEN: '${GH_WORK}' } } },
+    { name: 'gh-same', entry: { command: 'gh-mcp', env: { GITHUB_TOKEN: '${GH_HOME}' } } },
+  ];
+  const env = { GH_HOME: 'home-tok', GH_WORK: 'work-tok' };
+  const plan = claudeMcpServers({ selected: ['gh-home', 'gh-work', 'gh-same'], library: lib, env, cli: 'codex' });
+  const cx = codexMcpArgs({ servers: plan.servers, library: lib, env, configNames: [] });
+  assert.deepStrictEqual(cx.applied.names, ['gh-home', 'gh-same']);
+  assert.deepStrictEqual(cx.seatEnv, { GITHUB_TOKEN: 'home-tok' });
+  assert.deepStrictEqual(cx.warnings, ["MCP gh-work: not expressible on Codex — env GITHUB_TOKEN collides with another server's or the seat's value"]);
+  assert.ok(!cxPairs(cx).some((p) => p.startsWith('mcp_servers.gh-work.')));
+});
+
+test('codexMcpArgs: an alias key the seat already holds with another value is omitted; the same value is fine', () => {
+  const lib = [{ name: 'oa', entry: { command: 'x', env: { OPENAI_API_KEY: '${OTHER_KEY}' } } }];
+  const run = (env) => {
+    const plan = claudeMcpServers({ selected: ['oa'], library: lib, env, cli: 'codex' });
+    return codexMcpArgs({ servers: plan.servers, library: lib, env, configNames: [] });
+  };
+  const clash = run({ OTHER_KEY: 'o', OPENAI_API_KEY: 'seat' });
+  assert.deepStrictEqual(clash.applied.names, []);
+  assert.deepStrictEqual(clash.seatEnv, {});
+  assert.deepStrictEqual(clash.warnings, ["MCP oa: not expressible on Codex — env OPENAI_API_KEY collides with another server's or the seat's value"]);
+  assert.deepStrictEqual(run({ OTHER_KEY: 'o', OPENAI_API_KEY: 'o' }).applied.names, ['oa']);
+  assert.deepStrictEqual(run({ OTHER_KEY: 'o' }).seatEnv, { OPENAI_API_KEY: 'o' });
+});
+
+test('codexExpressible: the static half of codexMcpArgs, row by row', () => {
+  const rows = [
+    [{ command: 'a', env: { K: '${X}' } }, true],
+    [{ command: 'a', args: ['--t=${X}'] }, false],
+    [{ type: 'sse', url: 'https://s' }, false],
+    [{ type: 'http', url: 'https://u/${X}' }, false],
+    [{ type: 'http', url: 'https://u', headers: { Authorization: 'Bearer ${X}' } }, true],
+    [{ type: 'http', url: 'https://u', headers: { 'X-Key': '${X}' } }, true],
+    [{ type: 'http', url: 'https://u', headers: { 'X-Key': 'Bearer ${X}' } }, false],
+    [{ type: 'http', url: 'https://u', headers: { 'X-Key': 'k=${X}' } }, false],
+  ];
+  for (const [entry, ok] of rows) assert.strictEqual(codexExpressible(entry), ok, JSON.stringify(entry));
 });

@@ -94,6 +94,13 @@ test('mcp:appliedStale: a Codex seat with a selection it never applied reads sta
   assert.strictEqual(door({ name: 'c', type: 'codex', mcpServers: ['jira'], mcpApplied: applied }, lib)('c').stale, false);
 });
 
+test('mcp:appliedStale: a server Codex cannot express is not loadable there, so selecting it does not read stale forever', () => {
+  const lib = { jira: JIRA, old: { type: 'sse', url: 'https://s/sse' } };
+  const applied = { ...appliedFor({ jira: JIRA }, ['jira']), residue: [] };
+  assert.deepStrictEqual(applied.names, ['jira'], 'ENTER: only jira was applied');
+  assert.strictEqual(door({ name: 'c', type: 'codex', mcpServers: ['jira', 'old'], mcpApplied: applied }, lib)('c').stale, false);
+});
+
 test('mcp:appliedStale: a selected name no longer in the library is not loadable, so it does not read stale', () => {
   const applied = appliedFor({ jira: JIRA }, ['jira']);
   assert.deepStrictEqual(applied.names, ['jira'], 'ENTER: jira was applied');

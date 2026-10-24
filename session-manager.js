@@ -2236,7 +2236,8 @@ function createSessionManager(deps) {
         ...(Array.isArray(mcpServers) && mcpServers.length ? { mcpServers: mcpServers.map(String) } : {}),
         ...(() => {
           const out = {};
-          const applied = mcpRecord && mcpRecord.mcpApplied && mcpRecord.mcpApplied.names.length ? mcpRecord.mcpApplied : null;
+          const applied = mcpRecord && mcpRecord.mcpApplied
+            && (mcpRecord.mcpApplied.names.length || (mcpRecord.mcpApplied.residue || []).length) ? mcpRecord.mcpApplied : null;
           if (applied) out.mcpApplied = applied;
           else if (existingEntry && existingEntry.mcpApplied !== undefined) out.mcpApplied = undefined;
           if (mcpRecord && mcpRecord.mcpUnmanaged) out.mcpUnmanaged = true;
@@ -6639,7 +6640,7 @@ function createSessionManager(deps) {
         names = (Array.isArray(rows) ? rows : [])
           .filter((r) => r && typeof r.name === 'string' && r.enabled !== false)
           .map((r) => r.name);
-      } catch { return []; }
+      } catch { names = []; }
       this._codexResidueMemo = { key, names };
       return names;
     }

@@ -202,6 +202,7 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     const type = sessionTypeOf(name);
     if (type === 'claude') return 'Claude: partially managed — CLI plugins unverified';
     if (type === 'codex') {
+      if (!mcp || mcp.managed === false || !mcp.applied) return 'Codex: MCP selection not applied to this seat';
       const n = mcpResidue(mcp).length;
       return `Codex: config.toml servers disabled${n ? `; ${n} plugin server(s) not controllable on this CLI` : ''}`;
     }
@@ -220,6 +221,10 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
   function mcpRowNote(server, mcp, name = null) {
     if (!mcp) return '';
     if (server === 'clodex') return 'built-in';
+    if ((mcp.leaks || []).includes(server) && sessionTypeOf(name) === 'codex') {
+      return '⚠ not in this seat\'s selection — reached the CLI outside Clodex (own -c mcp_servers in Extra args, '
+        + 'or a config.toml or plugin server added after spawn)';
+    }
     if ((mcp.leaks || []).includes(server)) {
       return '⚠ not in this seat\'s selection — reached the CLI outside Clodex (own --mcp-config in Extra args, '
         + 'a CLI plugin, or a CLI build that ignores --strict-mcp-config)';
@@ -283,10 +288,13 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     }
 
     const deadServers = conclusive ? groups.filter((g) => g.usedTotal === 0 && (!mcp || g.server !== 'clodex')) : [];
-    const removeHint = (server) => `<div class="ctx-util-conf">Unused over ${turns} turns. To remove one, run ` +
+    const removeHint = (server) => (sessionTypeOf(name) === 'codex'
+      ? `<div class="ctx-util-conf">Unused over ${turns} turns. To remove one, run ` +
+        `<code>codex mcp remove ${esc(server)}</code> yourself — Clodex never edits your MCP config.</div>`
+      : `<div class="ctx-util-conf">Unused over ${turns} turns. To remove one, run ` +
       `<code>claude mcp remove ${esc(server)}</code> yourself — Clodex never edits your MCP config. ` +
       `It removes from whichever scope defines the server; for project <code>.mcp.json</code> approvals see ` +
-      `<code>claude mcp reset-project-choices</code>.</div>`;
+      `<code>claude mcp reset-project-choices</code>.</div>`);
     let hint = '';
     if (deadServers.length && !mcp) hint = removeHint(deadServers[0].server);
     else if (deadServers.length) {
