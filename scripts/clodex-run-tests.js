@@ -47,6 +47,16 @@ function failureSections(lines) {
   return at === -1 ? null : { diag: lines.slice(0, at), fails: lines.slice(at) };
 }
 
+function failureRows(lines) {
+  const rows = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!/^(FAIL\b|not ok\b|\s*✖)/.test(lines[i])) continue;
+    rows.push(lines[i]);
+    while (i + 1 < lines.length && /^\s/.test(lines[i + 1])) rows.push(lines[++i]);
+  }
+  return rows;
+}
+
 function gitRead(measure, args) {
   try {
     return execFileSync('git', ['-C', measure, ...args], {
@@ -86,6 +96,12 @@ function preserve({
     out.push('## top-level diagnostics (test stdout and the summary)');
     out.push(...midCap(sections.diag, DIAG_CAP));
   } else {
+    const rows = failureRows(lines);
+    if (rows.length) {
+      out.push('## failing rows (every FAIL / not ok / ✖ line, with its indented continuation, wherever it sat in the stream)');
+      out.push(...headCap(rows, FAIL_CAP));
+      out.push('');
+    }
     if (structured) out.push('## no `Failed tests:` block matched — raw tail follows');
     out.push(...tailCap(lines, RAW_CAP));
   }
@@ -342,7 +358,7 @@ function reexecInMeasured(measure, rawStdin) {
   process.exit(res.status);
 }
 
-module.exports = { TEST_ROOTS };
+module.exports = { TEST_ROOTS, failureRows };
 if (require.main !== module) return;
 
 const rawStdin = readStdin();

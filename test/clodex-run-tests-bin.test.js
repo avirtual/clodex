@@ -579,6 +579,66 @@ test('keep: output with no `Failed tests:` block falls back to a raw tail, never
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+function rawTailOf(kept) {
+  const at = kept.indexOf('raw tail follows');
+  assert.ok(at !== -1, 'ENTER: this is not the raw-fallback arm');
+  return kept.slice(at);
+}
+
+test('keep: a FAIL row far above the raw tail survives, with its indented continuation', () => {
+  const root = mkRoot();
+  try {
+    writeStub(root, {
+      body: [
+        "for (let i = 0; i < 1200; i += 1) console.log('ok ' + i);",
+        "console.log('FAIL test/a.test.js :: volume path');",
+        "console.log('     -> 10k inserts took 1014 ms');",
+        "for (let i = 1200; i < 2400; i += 1) console.log('ok ' + i);",
+        "console.log('TOTALS: 2400 pass, 1 fail, 2401 tests');",
+      ].join('\n'),
+      exit: 1,
+    });
+    const r = run(root, '{}');
+    assert.ok(r.kept !== null, 'ENTER: nothing was preserved');
+    const tail = rawTailOf(r.kept);
+    assert.ok(!tail.includes('FAIL test/a.test.js'), 'ENTER: the row sits inside the tail window');
+    assert.match(r.kept, /^FAIL test\/a\.test\.js :: volume path$/m,
+      'the FAIL row was lost: a failing digest that names no failure is a confident silence');
+    assert.match(r.kept, /^ {5}-> 10k inserts took 1014 ms$/m,
+      'the continuation line carrying the failure detail was dropped');
+    assert.match(tail, /^TOTALS: 2400 pass, 1 fail, 2401 tests$/m, 'the raw tail lost its TOTALS line');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('keep: a `not ok` row 1000 lines above the raw tail survives in the failing-rows section', () => {
+  const root = mkRoot();
+  try {
+    writeStub(root, {
+      body: [
+        "console.log('not ok 7 - name');",
+        "for (let i = 0; i < 1400; i += 1) console.log('ok ' + i);",
+        "console.log('TOTALS: 1400 pass, 1 fail, 1401 tests');",
+      ].join('\n'),
+      exit: 1,
+    });
+    const r = run(root, '{}');
+    assert.ok(r.kept !== null, 'ENTER: nothing was preserved');
+    const tail = rawTailOf(r.kept);
+    assert.ok(!tail.includes('not ok 7 - name'), 'ENTER: the row sits inside the tail window');
+    assert.match(r.kept, /^not ok 7 - name$/m, 'the `not ok` row far above the tail was lost');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('failureRows: a row keeps its indented continuation, stops at the next flush line', () => {
+  const { failureRows } = require(SCRIPT);
+  assert.deepStrictEqual(
+    failureRows(['ok 1', 'FAIL test/a.test.js :: x', '  -> one', '\tthen two', 'ok 2', '  stray']),
+    ['FAIL test/a.test.js :: x', '  -> one', '\tthen two'],
+  );
+  assert.deepStrictEqual(failureRows(['ok 1', 'ok 2']), []);
+  assert.deepStrictEqual(failureRows(['ok 1', '  -> orphan continuation', 'ok 2']), []);
+});
+
 const OVER_CAP_FAILS = 2100;
 
 test('keep: an over-cap failing section is CUT, and what survives is its EARLIEST rows', () => {
