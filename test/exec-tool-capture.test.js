@@ -271,3 +271,69 @@ test('_startIntentSocket waits for exec: the socket intent form returns the ctl 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+const WAKE = (wake) => ({ argv: ['/bin/true'], timeoutMs: 10000, replyStderr: true, schema: { type: 'object' }, ...(wake ? { wake } : {}) });
+
+test('wake error: an exit-0 result rides passively and does not wake the seat', async () => {
+  const { m, session, injected, passive, children, cleanup } = argvHarness(WAKE('error'));
+  try {
+    m._handleExecIntent(session, 'digest', '{}');
+    await turns();
+    children[0].stderr.emit('data', 'answer ok\n');
+    children[0].emit('close', 0, null);
+    assert.deepStrictEqual(passive, ['[agent:exec] digest: answer ok']);
+    assert.deepStrictEqual(injected, []);
+  } finally { cleanup(); }
+});
+
+test('wake error: a non-zero exit still wakes the seat', async () => {
+  const { m, session, injected, passive, children, cleanup } = argvHarness(WAKE('error'));
+  try {
+    m._handleExecIntent(session, 'digest', '{}');
+    await turns();
+    children[0].stderr.emit('data', 'boom\n');
+    children[0].emit('close', 2, null);
+    assert.deepStrictEqual(injected, ['[agent:exec] digest: exit 2: boom']);
+    assert.deepStrictEqual(passive, []);
+  } finally { cleanup(); }
+});
+
+test('wake never: an exit-0 result injects nothing but the message log still carries it', async () => {
+  const { m, session, injected, passive, broadcasts, children, cleanup } = argvHarness(WAKE('never'));
+  try {
+    m._handleExecIntent(session, 'digest', '{}');
+    await turns();
+    children[0].stderr.emit('data', 'answer ok\n');
+    children[0].emit('close', 0, null);
+    assert.deepStrictEqual(injected, []);
+    assert.deepStrictEqual(passive, []);
+    assert.ok(broadcasts.includes('ok: answer ok'), JSON.stringify(broadcasts));
+  } finally { cleanup(); }
+});
+
+test('wake absent: an exit-0 result wakes the seat as before', async () => {
+  const { m, session, injected, passive, children, cleanup } = argvHarness(WAKE(null));
+  try {
+    m._handleExecIntent(session, 'digest', '{}');
+    await turns();
+    children[0].stderr.emit('data', 'answer ok\n');
+    children[0].emit('close', 0, null);
+    assert.deepStrictEqual(injected, ['[agent:exec] digest: answer ok']);
+    assert.deepStrictEqual(passive, []);
+  } finally { cleanup(); }
+});
+
+test('wake error under a reply scope: the scope captures the result line', async () => {
+  const { m, injected, passive, children, cleanup } = argvHarness(WAKE('error'));
+  try {
+    const S = scopeOf();
+    const p = m._handleIntent('a', { type: 'exec', cmd: 'digest', body: '{}' }, { replyTo: S.replyTo });
+    await turns();
+    children[0].stderr.emit('data', 'answer ok\n');
+    children[0].emit('close', 0, null);
+    await p;
+    assert.deepStrictEqual(S.lines, ['[agent:exec] digest: answer ok']);
+    assert.deepStrictEqual(passive, []);
+    assert.deepStrictEqual(injected, []);
+  } finally { cleanup(); }
+});

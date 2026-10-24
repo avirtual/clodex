@@ -227,6 +227,9 @@ function validateExecDef(entry, name) {
   if ('replyStderr' in entry && typeof entry.replyStderr !== 'boolean') {
     return { ok: false, error: 'replyStderr: must be a boolean' };
   }
+  if ('wake' in entry && !['always', 'error', 'never'].includes(entry.wake)) {
+    return { ok: false, error: "wake: must be 'always', 'error' or 'never'" };
+  }
   // Widens the success reply from the last stderr LINE to the last N BYTES of
   // stderr, line breaks intact. Opt-in per def because the default exists for
   // token economy: a command that logs progress to stderr would otherwise start
