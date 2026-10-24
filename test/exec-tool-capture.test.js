@@ -337,3 +337,15 @@ test('wake error under a reply scope: the scope captures the result line', async
     assert.deepStrictEqual(injected, []);
   } finally { cleanup(); }
 });
+
+test('wake with an unknown value: an exit-0 result wakes the seat', async () => {
+  const { m, session, injected, passive, children, cleanup } = argvHarness(WAKE('bogus'));
+  try {
+    m._handleExecIntent(session, 'digest', '{}');
+    await turns();
+    children[0].stderr.emit('data', 'answer ok\n');
+    children[0].emit('close', 0, null);
+    assert.deepStrictEqual(injected, ['[agent:exec] digest: answer ok']);
+    assert.deepStrictEqual(passive, []);
+  } finally { cleanup(); }
+});

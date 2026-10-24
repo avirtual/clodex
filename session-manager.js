@@ -6852,7 +6852,7 @@ function createSessionManager(deps) {
                 : lastStderrLine().slice(0, 200);
             endRun('ok', body ? `${runTag}${body}` : '');
             if (body) {
-              const wake = entry.wake || 'always';
+              const wake = entry.wake === 'error' || entry.wake === 'never' ? entry.wake : 'always';
               const line = `${cmd}: ${runTag}${body}`;
               if (wake === 'always') {
                 reply(line);
