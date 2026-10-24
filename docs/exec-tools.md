@@ -30,7 +30,9 @@ delivers an exit-0 result passively, riding with the seat's next turn; `never`
 drops it (the operator's message log still shows `ok: …`). Failures — non-zero
 exit, kill, timeout, spawn error, refusal — always wake. Under a reply scope
 (the MCP exec tool, a probe) the result is the call's return value, so `wake`
-does not apply. There is no per-call override: the def is operator-authored,
+does not apply. An unrecognised value behaves as `always`. `error` and `never`
+suit short commands: a long tracked run's success under them reaches the seat
+passively or not at all, whatever its started ack says. There is no per-call override: the def is operator-authored,
 and a payload field would let the seat choose its own wake policy.
 
 That makes exec an excellent **control plane** and a useless **data plane** —
