@@ -64,6 +64,7 @@ const DEFAULT_KIT = 'default';
 const LEGACY_KIT = 'clodex';
 
 const WATCHDOG_MIN_MS = 5 * 60 * 1000;
+const WATCH_MIN_MS = 60 * 1000;
 const WATCHDOG_MAX_MS = 7 * 24 * 60 * 60 * 1000;
 
 const STOCK_ROLE_DEFS = {
@@ -589,13 +590,9 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
       ? Math.min(WATCHDOG_MAX_MS, Math.max(WATCHDOG_MIN_MS, rawWatchdog))
       : null;
     const rawWatch = m.watchMs;
-    if (rawWatch != null && (typeof rawWatch !== 'number' || !Number.isFinite(rawWatch))) {
-      throw new Error(`team.json "watchMs" must be a finite number or null (${file})`);
-    }
-    if (rawWatch != null && rawWatch <= 0) {
-      throw new Error(`team.json "watchMs" must be positive, or null to clear it (${file})`);
-    }
-    const watchMs = rawWatch == null ? null : rawWatch;
+    const watchMs = (typeof rawWatch === 'number' && Number.isFinite(rawWatch) && rawWatch > 0)
+      ? Math.min(WATCHDOG_MAX_MS, Math.max(WATCH_MIN_MS, rawWatch))
+      : null;
     const kit = (typeof m.kit === 'string' && !badStem(m.kit) && TEAM_STEM_RE.test(m.kit)) ? m.kit : LEGACY_KIT;
     const trunk = normalizeTrunk(m.trunk);
     const done = m.done === undefined ? DEFAULT_DONE : normalizeDone(m.done);
