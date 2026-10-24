@@ -5,7 +5,7 @@ const assert = require('node:assert');
 
 const { createPeerWiring } = require('../peer-wiring');
 
-function makeWiring({ peers, statuses = {}, peerWebOpen = {} }) {
+function makeWiring({ peers, statuses = {}, peerWebOpen = {}, persistWebWindows = true }) {
   const store = { peers, peerAttached: {}, peerControlled: {}, peerVisible: {}, peerWebOpen };
   const uiSettings = { get: () => store, set: (p) => Object.assign(store, p) };
   const windows = [];
@@ -40,6 +40,7 @@ function makeWiring({ peers, statuses = {}, peerWebOpen = {} }) {
     closeRemoteWindow: () => {},
     onRemoteWindowClosed: (cb) => closedListeners.push(cb),
     onRemoteWindowBounds: (cb) => boundsListeners.push(cb),
+    persistWebWindows,
   });
   return {
     wiring, store, windows,
@@ -116,5 +117,27 @@ test('the bounds listener stores bounds under the peer id and the next open carr
     h.wiring.openPeerWeb('p1');
     assert.deepStrictEqual(h.windows[1].opts, { title: 'box — Clodex', bounds });
     assert.deepStrictEqual(h.store.peerWebOpen, { p1: { bounds } });
+  } finally { h.restore(); }
+});
+
+test('an operator open this boot uses up the restore slot: the next peer-state does not reopen it', () => {
+  const h = makeWiring({ peers: [DIRECT], statuses: { p1: OPEN } });
+  try {
+    h.sync();
+    h.wiring.openPeerWeb('p1');
+    h.peerState('p1', OPEN);
+    assert.equal(h.windows.length, 1);
+  } finally { h.restore(); }
+});
+
+test('a host without windows records nothing and restores nothing', () => {
+  const h = makeWiring({ peers: [DIRECT, { id: 'p2', label: 'b2', sshHost: 'b2' }], statuses: { p1: OPEN, p2: OPEN }, peerWebOpen: { p1: {} }, persistWebWindows: false });
+  try {
+    h.sync();
+    h.peerState('p1', OPEN);
+    assert.deepStrictEqual(h.windows, []);
+    h.wiring.openPeerWeb('p2');
+    h.fireBounds('peer:p1', { x: 1, y: 2, width: 800, height: 600 });
+    assert.deepStrictEqual(h.store.peerWebOpen, { p1: {} });
   } finally { h.restore(); }
 });

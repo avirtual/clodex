@@ -1885,6 +1885,7 @@ const {
   getWebTunnelManager: () => webTunnelManager,
   setWebTunnelManager: (v) => { webTunnelManager = v; },
   openRemoteWindow, closeRemoteWindow, onRemoteWindowClosed, onRemoteWindowBounds,
+  persistWebWindows: !!seams.openRemoteWindow,
 });
 
 const { createSandboxManager } = require('./sandbox');

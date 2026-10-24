@@ -23,6 +23,7 @@ function createPeerWiring(deps) {
     getTunnelManager, setTunnelManager,
     getWebTunnelManager, setWebTunnelManager,
     openRemoteWindow, closeRemoteWindow, onRemoteWindowClosed, onRemoteWindowBounds,
+    persistWebWindows = false,
   } = deps;
 
   // Last-logged online state per peer id — the ops log records online/offline
@@ -61,6 +62,7 @@ function createPeerWiring(deps) {
   }
 
   function rememberPeerWebOpen(id, bounds) {
+    if (!persistWebWindows) return;
     const map = { ...(getUiSettings().get().peerWebOpen || {}) };
     const prev = map[id] || {};
     if (!bounds && map[id]) return;
@@ -116,7 +118,7 @@ function createPeerWiring(deps) {
             try { manager._flushPeerHeld(args[0]); } catch (e) { log.error('peer', `held dm flush failed: ${e.message}`); }
             const wid = String(args[0]);
             const saved = getUiSettings().get().peerWebOpen || {};
-            if (args[1].webHost && Object.prototype.hasOwnProperty.call(saved, wid) && !webRestored.has(wid)) {
+            if (persistWebWindows && args[1].webHost && Object.prototype.hasOwnProperty.call(saved, wid) && !webRestored.has(wid)) {
               webRestored.add(wid);
               try { openPeerWeb(wid); } catch (e) { log.error('peer', `web view restore failed: ${e.message}`); }
             }
@@ -481,6 +483,7 @@ function createPeerWiring(deps) {
   // the record and lets the module that owns the kind table decide.
   function openPeerWeb(id) {
     const key = String(id);
+    webRestored.add(key);
     const rec = (getUiSettings().get().peers || []).find((p) => p && String(p.id) === key);
     if (!rec) return { ok: false, error: 'no such peer' };
     const conn = getPeerManager() && getPeerManager().get(key);
@@ -518,7 +521,7 @@ function createPeerWiring(deps) {
     // still return here are all caught earlier in this function — but the
     // ordering is what creates the window, so it is closed where the ordering
     // lives rather than trusted to stay unreachable.
-    if (!res || res.ok === false) closePeerWirescope(key);
+    if (!res || res.ok === false) { closePeerWirescope(key); forgetPeerWebOpen(key); }
     // tokenGated rides the result so the renderer can say "this box wants a
     // token" rather than implying a link is coming.
     return { ...res, tokenGated };
