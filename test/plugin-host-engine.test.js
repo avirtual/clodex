@@ -482,7 +482,7 @@ test('the library kind table cannot be repointed from plugin land', () => {
   // The whole published surface, asserted exactly. A new verb here is a new
   // mutation a plugin can perform, so it must be a deliberate edit to this line
   // rather than something that lands unnoticed.
-  assert.deepEqual(Object.keys(host.library), ['add', 'edit', 'remove', 'setPin']);
+  assert.deepEqual(Object.keys(host.library), ['add', 'edit', 'remove', 'fire', 'setPin']);
 
   // The injected table is a live object the façade's freeze does not reach, so
   // the wrappers close over the handler captured at construction. Mutating the

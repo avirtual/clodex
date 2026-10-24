@@ -20,6 +20,7 @@ function fileStore(file) {
     get: (id) => load().find((r) => r.id === id) || null,
     listForAgent: (agent) => load().filter((r) => r.agent === agent),
     remove: (id) => { const all = load(); save(all.filter((r) => r.id !== id)); return all.some((r) => r.id === id); },
+    markFired: (id, at, next) => { save(load().map((r) => (r.id === id ? { ...r, lastFiredAt: at, nextFireAt: next } : r))); },
   };
 }
 

@@ -400,7 +400,7 @@ test('fireNow: an every row delivers once and re-times its period from now', () 
     const t = T0 + 10 * MIN;
     clock.set(t);
     assert.deepStrictEqual(scheduler.fireNow('t1', r.record.id), { ok: true, kept: true });
-    assert.deepStrictEqual(delivered, [{ agent: 't1', id: r.record.id, spec: 'every 30m', body: 'clear your context', by: null }]);
+    assert.deepStrictEqual(delivered, [{ agent: 't1', id: r.record.id, spec: 'every 30m', body: 'clear your context', by: undefined }]);
     const after = store.get(r.record.id);
     assert.strictEqual(after.lastFiredAt, t);
     assert.strictEqual(after.nextFireAt, t + 30 * MIN);
