@@ -130,7 +130,7 @@ const voiceEngineSpec = require('./voice-engine');
 const { CTRLU_SETTLE_MS } = require('./inject-queue');
 const { VOICE_MODES, voiceModeOf } = require('./voice-settings');
 const { fmtAge } = require('./memory-store');
-const { mcpArgvPlan, claudeMcpServers, secretRefs, discoverMcpSources } = require('./mcp-plan');
+const { mcpArgvPlan, claudeMcpServers, codexMcpArgs, secretRefs, discoverMcpSources } = require('./mcp-plan');
 const MCP_AMBIENT_ENV = new Set(['HOME', 'PATH', 'USER', 'SHELL', 'TMPDIR', 'LOGNAME', 'PWD']);
 const { pasteModeSignal, PROXY_AGENT_PREFIX, PASTE_START, PASTE_END, stampServedAge, fmtQuotaReset } = require('./proxy-util');
 const QUOTA_WINDOW_LONG = { '5h': '5-hour window', '7d': 'weekly window (all models)', '7d_oi': 'weekly window (Fable)', overage: 'overage window' };
@@ -1892,6 +1892,25 @@ function createSessionManager(deps) {
           }
           if (effortLevel && !args.some((a) => typeof a === 'string' && a.startsWith('model_reasoning_effort='))) {
             args.push('-c', `model_reasoning_effort="${effortLevel}"`);
+          }
+          {
+            const userOwn = args.some((a) => typeof a === 'string' && /^mcp_servers[.=]/.test(a));
+            const codexHome = mergedEnv.CODEX_HOME || path.join(os.homedir(), '.codex');
+            const configNames = userOwn ? [] : this._codexConfigMcpNames(codexHome);
+            const mcpLib = userOwn ? [] : this._mcpLibraryRows();
+            const sel = userOwn
+              ? null
+              : claudeMcpServers({ selected: Array.isArray(mcpServers) ? mcpServers : [], library: mcpLib, env: mergedEnv, cli: 'codex' });
+            const cx = codexMcpArgs({ servers: sel ? sel.servers : {}, library: mcpLib, env: mergedEnv, userOwn, configNames });
+            args.push(...cx.args);
+            Object.assign(mergedEnv, cx.seatEnv);
+            const mcpWarnings = [...(sel ? sel.warnings : []), ...cx.warnings];
+            warnings.push(...mcpWarnings);
+            for (const w of mcpWarnings) this._broadcast('ipc-message', { type: 'system', from: name, to: name, body: w });
+            const residue = cx.applied
+              ? this._codexMcpResidue(codexHome, mergedEnv).filter((n) => !configNames.includes(n) && !cx.applied.names.includes(n))
+              : [];
+            mcpRecord = { mcpUnmanaged: userOwn, mcpApplied: cx.applied && { ...cx.applied, residue } };
           }
           ensureDir(MSG_DIR);
           if (!streamIo && !args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
@@ -6592,6 +6611,37 @@ function createSessionManager(deps) {
       const lib = typeof getMcpLibrary === 'function' ? getMcpLibrary() : null;
       if (!lib) return [];
       try { return lib.list(); } catch { return []; }
+    }
+
+    _codexConfigMcpNames(codexHome) {
+      let text;
+      try { text = fs.readFileSync(path.join(codexHome, 'config.toml'), 'utf8'); } catch { return []; }
+      const names = [];
+      for (const m of text.matchAll(/^\[mcp_servers\.([A-Za-z0-9_-]+)(\.[^\]]*)?\]/gm)) {
+        if (!names.includes(m[1])) names.push(m[1]);
+      }
+      return names;
+    }
+
+    _codexMcpResidue(codexHome, env) {
+      if (!childProcess || typeof childProcess.execFileSync !== 'function') return [];
+      let stamp = 0;
+      try { stamp = fs.statSync(path.join(codexHome, 'config.toml')).mtimeMs; } catch {}
+      const key = JSON.stringify([codexHome, stamp]);
+      if (this._codexResidueMemo && this._codexResidueMemo.key === key) return this._codexResidueMemo.names;
+      let names;
+      try {
+        const out = childProcess.execFileSync('codex', ['mcp', 'list', '--json'], {
+          env: { ...env, CODEX_HOME: codexHome }, encoding: 'utf8', timeout: 15000, maxBuffer: 4 * 1024 * 1024,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        const rows = JSON.parse(out);
+        names = (Array.isArray(rows) ? rows : [])
+          .filter((r) => r && typeof r.name === 'string' && r.enabled !== false)
+          .map((r) => r.name);
+      } catch { return []; }
+      this._codexResidueMemo = { key, names };
+      return names;
     }
 
     _mcpMigrationNotice(cwd, env, library) {

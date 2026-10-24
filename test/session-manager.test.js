@@ -21112,8 +21112,8 @@ function mkStreamSeatManager({ persisted = {}, fakePty = null, team = null, hold
     },
     WIRE_SHADOW: false,
     WIRE_INTENTS_LIVE: false,
-    setupClaudeHook: (n, proxyBase, proxyAgent) => {
-      hookCalls.push([n, proxyBase, proxyAgent]);
+    setupClaudeHook: (n, proxyBase, proxyAgent, ...rest) => {
+      hookCalls.push([n, proxyBase, proxyAgent, rest[9]]);
       fs.mkdirSync(runDirFor(root, n), { recursive: true });
       return path.join(root, 'settings.json');
     },
@@ -21370,6 +21370,19 @@ test('MCP library at create(): servers reach mcp.json, warnings are system rows,
   const back = h.store.get('st1');
   assert.strictEqual(back.mcpUnmanaged, undefined);
   assert.deepStrictEqual(back.mcpApplied.names, ['docs', 'jira']);
+});
+
+test('MCP library at create(): a protectCredentials seat denies the selection\'s secret names, never an ambient one', async (t) => {
+  const saved = Object.fromEntries(['CLAUDE_CONFIG_DIR', 'T'].map((k) => [k, process.env[k]]));
+  t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
+  Object.assign(process.env, { CLAUDE_CONFIG_DIR: mkTmpRoot('clx-mcp-ambient-cfg-'), T: 'tv' });
+  const lib = [{ name: 'amb', entry: { command: 'srv', args: ['${HOME}/x'], env: { T: '${T}' } } }];
+  const h = mkStreamSeatManager({ extraDeps: { getMcpLibrary: () => ({ list: () => lib }) } });
+  t.after(() => h.stopAll());
+  await h.m.create('st1', 'claude', require('node:os').tmpdir(), [], null, 'ws', null, false, null,
+    [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, 'stream', null, ['x'], ['amb']);
+  assert.deepStrictEqual(h.store.get('st1').mcpApplied.names, ['amb']);
+  assert.deepStrictEqual(h.hookCalls.map((c) => c[3]), [['T']]);
 });
 
 test('MCP library at create(): a library entry with denyTools lands them in the seat settings permissions.deny; an omitted server lands none', async (t) => {
@@ -22234,7 +22247,7 @@ test('t1171: _streamWrite and _onStreamEvent go through the seat codec the adapt
   assert.deepStrictEqual(claudeCalls, []);
 });
 
-function mkCodexStreamSeat({ extraArgs = [], spec = null, deps = {}, effort = null } = {}) {
+function mkCodexStreamSeat({ extraArgs = [], spec = null, deps = {}, effort = null, mcpServers = null } = {}) {
   const { streamFor: realStreamFor } = require('../cli-adapters');
   const created = [];
   const inst = {
@@ -22257,7 +22270,7 @@ function mkCodexStreamSeat({ extraArgs = [], spec = null, deps = {}, effort = nu
   });
   const os = require('node:os');
   const create = (name) => h.m.create(name, 'codex', os.tmpdir(), extraArgs, null, 'ws', null, false, null,
-    [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, 'stream', effort);
+    [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, 'stream', effort, null, mcpServers);
   const sent = () => h.handles[h.handles.length - 1].sent;
   const clearTimers = (s) => {
     for (const k of ['_compactValveTimer', '_injectHoldTimer', '_postClearValveTimer', '_compactingValveTimer', '_resultHold']) clearTimeout(s[k]);
@@ -22540,6 +22553,63 @@ test('t1222: an operator\'s own -c model_reasoning_effort= in extraArgs wins ove
   await c.create('cxe3');
   const got = c.h.spawns[0].args.filter((a) => /model_reasoning_effort/.test(a));
   assert.deepStrictEqual(got, ['model_reasoning_effort=low']);
+});
+
+test('MCP on a codex seat: -c mcp_servers pairs after the effort, alias in the spawn env, config.toml disabled, residue recorded', async (t) => {
+  const p = require('node:path');
+  const fsReal = require('node:fs');
+  const home = mkTmpRoot('clx-codex-home-');
+  fsReal.writeFileSync(p.join(home, 'config.toml'), '[mcp_servers.legacy]\ncommand = "x"\n\n[mcp_servers.legacy.env]\nA = "b"\n');
+  const saved = Object.fromEntries(['CODEX_HOME', 'JIRA_TOKEN'].map((k) => [k, process.env[k]]));
+  t.after(() => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
+  Object.assign(process.env, { CODEX_HOME: home, JIRA_TOKEN: 'hunter2' });
+  const lib = [{ name: 'jira', entry: { command: 'npx', args: ['jira'], env: { API_TOKEN: '${JIRA_TOKEN}' } } }];
+  const listed = [];
+  const childProcess = {
+    execFileSync: (cmd, argv, opts) => {
+      listed.push([cmd, argv, opts.env.CODEX_HOME]);
+      return JSON.stringify([
+        { name: 'legacy', enabled: true }, { name: 'jira', enabled: true },
+        { name: 'cua_repl', enabled: true }, { name: 'codex_app', enabled: false },
+      ]);
+    },
+  };
+  const c = mkCodexStreamSeat({ effort: 'high', mcpServers: ['jira'], deps: { getMcpLibrary: () => ({ list: () => lib }), childProcess } });
+  t.after(() => c.h.stopAll());
+  const rows = [];
+  c.h.m._broadcast = (channel, msg) => { if (msg && msg.type === 'system') rows.push(msg.body); };
+  await c.create('cxm1');
+  const { args } = c.h.spawns[0];
+  const at = args.indexOf('model_reasoning_effort="high"');
+  assert.deepStrictEqual(args.slice(at + 1, at + 11), [
+    '-c', 'mcp_servers.jira.command="npx"',
+    '-c', 'mcp_servers.jira.args=["jira"]',
+    '-c', 'mcp_servers.jira.env_vars=["API_TOKEN"]',
+    '-c', 'mcp_servers.jira.enabled=true',
+    '-c', 'mcp_servers.legacy.enabled=false',
+  ]);
+  assert.ok(!args.join(' ').includes('hunter2'));
+  assert.strictEqual(c.h.handles[0].opts.env.API_TOKEN, 'hunter2');
+  assert.deepStrictEqual(listed, [['codex', ['mcp', 'list', '--json'], home]]);
+  const rec = c.h.store.get('cxm1');
+  assert.deepStrictEqual(rec.mcpApplied.names, ['jira']);
+  assert.deepStrictEqual(rec.mcpApplied.residue, ['cua_repl']);
+  assert.strictEqual('mcpUnmanaged' in rec, false);
+  assert.deepStrictEqual(rows, []);
+});
+
+test('MCP on a codex seat: an own -c mcp_servers in extra args makes it unmanaged; Clodex pushes no pair', async (t) => {
+  const c = mkCodexStreamSeat({ extraArgs: ['-c', 'mcp_servers.x.command="own"'], mcpServers: ['jira'], deps: { getMcpLibrary: () => ({ list: () => [] }) } });
+  t.after(() => c.h.stopAll());
+  const rows = [];
+  c.h.m._broadcast = (channel, msg) => { if (msg && msg.type === 'system') rows.push(msg.body); };
+  await c.create('cxm2');
+  const { args } = c.h.spawns[0];
+  assert.deepStrictEqual(args.filter((a) => /^mcp_servers/.test(a)), ['mcp_servers.x.command="own"']);
+  const rec = c.h.store.get('cxm2');
+  assert.strictEqual(rec.mcpUnmanaged, true);
+  assert.strictEqual(rec.mcpApplied, undefined);
+  assert.deepStrictEqual(rows, ["MCP: selection not applied — the seat's extra args carry their own -c mcp_servers"]);
 });
 
 test('t1172: a decoded record\'s send objects are written in order before its kind is acted on', async (t) => {
