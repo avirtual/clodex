@@ -22612,6 +22612,20 @@ test('MCP on a codex seat with nothing selected still records its plugin residue
   assert.deepStrictEqual(rec.mcpApplied.residue, ['cua_repl']);
 });
 
+test('MCP on a codex seat: a failed codex mcp list is cached until config.toml changes', async (t) => {
+  const saved = process.env.CODEX_HOME;
+  t.after(() => { if (saved === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = saved; });
+  process.env.CODEX_HOME = mkTmpRoot('clx-codex-home-');
+  let calls = 0;
+  const childProcess = { execFileSync: () => { calls++; throw new Error('timed out'); } };
+  const c = mkCodexStreamSeat({ deps: { getMcpLibrary: () => ({ list: () => [] }), childProcess } });
+  t.after(() => c.h.stopAll());
+  await c.create('cxm4');
+  await c.create('cxm5');
+  assert.strictEqual(calls, 1);
+  assert.strictEqual(c.h.store.get('cxm5').mcpApplied, undefined);
+});
+
 test('MCP on a codex seat: an own -c mcp_servers in extra args makes it unmanaged; Clodex pushes no pair', async (t) => {
   const c = mkCodexStreamSeat({ extraArgs: ['-c', 'mcp_servers.x.command="own"'], mcpServers: ['jira'], deps: { getMcpLibrary: () => ({ list: () => [] }) } });
   t.after(() => c.h.stopAll());
