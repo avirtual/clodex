@@ -448,6 +448,7 @@ function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
 // nodeIntegration/contextIsolation:false.
 const remoteWindows = new Map();
 const remoteWindowClosedListeners = [];
+const remoteWindowBoundsListeners = [];
 function openRemoteWindow(key, url, opts = {}) {
   if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return;
   const bg = (typeof opts.backgroundColor === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(opts.backgroundColor.trim()))
@@ -470,9 +471,12 @@ function openRemoteWindow(key, url, opts = {}) {
   // index.html and needs nodeIntegration for the renderer's require(). Factoring
   // out a shared builder converges the two postures and hands remote content the
   // privileged one.
+  const b = opts.bounds;
+  const placed = b && ['x', 'y', 'width', 'height'].every((k) => Number.isInteger(b[k]));
   const win = new BrowserWindow({
-    width: 1100,
-    height: 800,
+    ...(placed ? { x: b.x, y: b.y } : {}),
+    width: placed ? b.width : 1100,
+    height: placed ? b.height : 800,
     minWidth: 600,
     minHeight: 400,
     backgroundColor: bg,
@@ -489,9 +493,24 @@ function openRemoteWindow(key, url, opts = {}) {
     if (isExternallyOpenable(u)) shell.openExternal(u);
     return { action: 'deny' };
   });
+  let boundsTimer = null;
+  const emitBounds = () => {
+    clearTimeout(boundsTimer);
+    boundsTimer = setTimeout(() => {
+      if (win.isDestroyed() || remoteWindows.get(key) !== win) return;
+      const bounds = win.getBounds();
+      for (const cb of remoteWindowBoundsListeners) {
+        try { cb(key, bounds); } catch (e) { log.error('window', `remote window bounds handler failed: ${e.message}`); }
+      }
+    }, 500);
+  };
+  win.on('resize', emitBounds);
+  win.on('move', emitBounds);
   win.on('closed', () => {
+    clearTimeout(boundsTimer);
     if (remoteWindows.get(key) !== win) return;
     remoteWindows.delete(key);
+    if (appQuitting) return;
     for (const cb of remoteWindowClosedListeners) {
       try { cb(key); } catch (e) { log.error('window', `remote window close handler failed: ${e.message}`); }
     }
@@ -507,6 +526,10 @@ function closeRemoteWindow(key) {
 
 function onRemoteWindowClosed(cb) {
   if (typeof cb === 'function') remoteWindowClosedListeners.push(cb);
+}
+
+function onRemoteWindowBounds(cb) {
+  if (typeof cb === 'function') remoteWindowBoundsListeners.push(cb);
 }
 
 function openWirescopeWindow(url, backgroundColor) {
@@ -564,7 +587,7 @@ app.whenReady().then(() => {
     seams: {
       openPath: (p) => shell.openPath(p),
       openExternal: (url) => shell.openExternal(url),
-      openRemoteWindow, closeRemoteWindow, onRemoteWindowClosed,
+      openRemoteWindow, closeRemoteWindow, onRemoteWindowClosed, onRemoteWindowBounds,
       notifyOS: (opts) => {
         try {
           if (!Notification.isSupported()) return;

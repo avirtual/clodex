@@ -265,7 +265,9 @@ either degrades to "no forward" — never to a default port.
 `web-tunnel.js` policy (pinned local port, TCP-accept probe, give-up cap):
 the web view, and a companion one to the box's wirescope. The web view opens
 in its own sandboxed Clodex window (`openRemoteWindow`, key `peer:<id>`), and
-closing that window closes the tunnel.
+closing that window closes the tunnel. An open window is recorded in
+ui-settings `peerWebOpen` with its last bounds, and reopens once per boot on
+the peer's first online `peer-state`; a quit does not count as closing it.
 
 The companion exists because the page is served BY the box, so its dashboard
 links are built against the box's loopback wirescope. Unforwarded, the

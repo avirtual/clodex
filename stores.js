@@ -149,6 +149,7 @@ const DEFAULT_UI_SETTINGS = {
   peerAttached: {},
   peerVisible: {},
   peerControlled: {},
+  peerWebOpen: {},
   boxes: [{ id: 'sandbox', label: 'sandbox', config: { ...DEFAULT_SANDBOX_CONFIG } }],
   lastRebootAt: 0,
   pendingRebootNotice: null,
@@ -334,6 +335,18 @@ function sanitizePeerVisible(raw) {
 
 function sanitizePeerControlled(raw) {
   return sanitizePeerNameMap(raw, { keepEmpty: false });
+}
+
+function sanitizePeerWebOpen(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const out = {};
+  for (const [id, rec] of Object.entries(raw)) {
+    if (!/^[A-Za-z0-9._:-]{1,128}$/.test(id) || !rec || typeof rec !== 'object' || Array.isArray(rec)) continue;
+    const b = rec.bounds;
+    const ok = b && typeof b === 'object' && ['x', 'y', 'width', 'height'].every((k) => Number.isInteger(b[k]));
+    out[id] = ok ? { bounds: { x: b.x, y: b.y, width: b.width, height: b.height } } : {};
+  }
+  return out;
 }
 
 // CRITICAL: this store is a WHITELIST — any key NOT reconstructed here is
@@ -1852,6 +1865,7 @@ function initStores(userDataPath, {
           peerAttached: sanitizePeerAttached(raw?.peerAttached) ?? {},
           peerVisible: sanitizePeerVisible(raw?.peerVisible) ?? {},
           peerControlled: sanitizePeerControlled(raw?.peerControlled) ?? {},
+          peerWebOpen: sanitizePeerWebOpen(raw?.peerWebOpen) ?? {},
           boxes: sanitizeBoxes(raw?.boxes) ?? defaultUiSettings().boxes,
           lastRebootAt: Number.isFinite(raw?.lastRebootAt) ? raw.lastRebootAt : DEFAULT_UI_SETTINGS.lastRebootAt,
           pendingRebootNotice: sanitizeRebootNotice(raw?.pendingRebootNotice),
@@ -1949,6 +1963,7 @@ function initStores(userDataPath, {
         peerAttached: sanitizePeerAttached(partial?.peerAttached) ?? cur.peerAttached,
         peerVisible: sanitizePeerVisible(partial?.peerVisible) ?? cur.peerVisible,
         peerControlled: sanitizePeerControlled(partial?.peerControlled) ?? cur.peerControlled,
+        peerWebOpen: sanitizePeerWebOpen(partial?.peerWebOpen) ?? cur.peerWebOpen,
         boxes: sanitizeBoxes(partial?.boxes ?? cur.boxes) ?? cur.boxes,
         lastRebootAt: Number.isFinite(partial?.lastRebootAt) ? partial.lastRebootAt : cur.lastRebootAt,
         // null is a REAL value here (the one-shot clear), so undefined-means-keep

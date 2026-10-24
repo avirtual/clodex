@@ -22,7 +22,8 @@ function createPeerWiring(deps) {
     getPeerManager, setPeerManager,
     getTunnelManager, setTunnelManager,
     getWebTunnelManager, setWebTunnelManager,
-    openRemoteWindow, closeRemoteWindow, onRemoteWindowClosed,
+    openRemoteWindow, closeRemoteWindow, onRemoteWindowClosed, onRemoteWindowBounds,
+    persistWebWindows = false,
   } = deps;
 
   // Last-logged online state per peer id — the ops log records online/offline
@@ -59,6 +60,24 @@ function createPeerWiring(deps) {
     map[id] = [...list, name];
     getUiSettings().set({ peerControlled: map });
   }
+
+  function rememberPeerWebOpen(id, bounds) {
+    if (!persistWebWindows) return;
+    const map = { ...(getUiSettings().get().peerWebOpen || {}) };
+    const prev = map[id] || {};
+    if (!bounds && map[id]) return;
+    map[id] = bounds ? { ...prev, bounds } : prev;
+    getUiSettings().set({ peerWebOpen: map });
+  }
+
+  function forgetPeerWebOpen(id) {
+    const map = { ...(getUiSettings().get().peerWebOpen || {}) };
+    if (!(id in map)) return;
+    delete map[id];
+    getUiSettings().set({ peerWebOpen: map });
+  }
+
+  const webRestored = new Set();
 
   function syncPeerManager() {
     const s = getUiSettings().get();
@@ -97,6 +116,12 @@ function createPeerWiring(deps) {
           try { manager._broadcast(channel, ...args); } catch {}
           if (channel === 'peer-state' && args[1] && args[1].online) {
             try { manager._flushPeerHeld(args[0]); } catch (e) { log.error('peer', `held dm flush failed: ${e.message}`); }
+            const wid = String(args[0]);
+            const saved = getUiSettings().get().peerWebOpen || {};
+            if (persistWebWindows && args[1].webHost && Object.prototype.hasOwnProperty.call(saved, wid) && !webRestored.has(wid)) {
+              webRestored.add(wid);
+              try { openPeerWeb(wid); } catch (e) { log.error('peer', `web view restore failed: ${e.message}`); }
+            }
           }
           // Keep the Window > Peers menu's indicators + session lists fresh.
           if (channel === 'peer-state' || channel === 'peer-removed') scheduleAppMenuRefresh();
@@ -421,7 +446,9 @@ function createPeerWiring(deps) {
   function openPeerWindow(key, url, rec) {
     const r = rec || (getUiSettings().get().peers || []).find((p) => p && String(p.id) === key);
     const label = (r && r.label) || key;
-    openRemoteWindow(`peer:${key}`, url, { title: `${label} — Clodex` });
+    const saved = (getUiSettings().get().peerWebOpen || {})[key];
+    const bounds = saved && saved.bounds;
+    openRemoteWindow(`peer:${key}`, url, { title: `${label} — Clodex`, ...(bounds ? { bounds } : {}) });
   }
 
   function openPeerWebDirect(key, rec, webHost, tokenGated) {
@@ -433,9 +460,11 @@ function createPeerWiring(deps) {
       };
     }
     if (!tokenGated) {
+      rememberPeerWebOpen(key);
       try { openPeerWindow(key, url, rec); } catch (e) { log.error('peer', `web view open failed: ${e.message}`); }
       log.info('peer', `web view for ${key} opened directly at ${url} — no tunnel needed`);
     } else {
+      forgetPeerWebOpen(key);
       log.info('peer', `web view for ${key} is at ${url} (token required — not opened)`);
     }
     return { ok: true, direct: true, url, tokenGated };
@@ -454,6 +483,7 @@ function createPeerWiring(deps) {
   // the record and lets the module that owns the kind table decide.
   function openPeerWeb(id) {
     const key = String(id);
+    webRestored.add(key);
     const rec = (getUiSettings().get().peers || []).find((p) => p && String(p.id) === key);
     if (!rec) return { ok: false, error: 'no such peer' };
     const conn = getPeerManager() && getPeerManager().get(key);
@@ -469,7 +499,7 @@ function createPeerWiring(deps) {
     if (!dest) return openPeerWebDirect(key, rec, webHost, tokenGated);
     // Decided BEFORE the tunnel starts, so the once-per-tunnel firstUp emit can
     // never race ahead of the decision and pop a 401 at the operator.
-    if (tokenGated) webPopAllowed.delete(key); else webPopAllowed.add(key);
+    if (tokenGated) { webPopAllowed.delete(key); forgetPeerWebOpen(key); } else { webPopAllowed.add(key); rememberPeerWebOpen(key); }
     // The companion forward, raised BEFORE the web one so its pinned port exists
     // when the pop composes the URL. Skipped for a token-gated box: no pop means
     // no URL is ever composed, so a forward for it would be one nothing can use
@@ -491,7 +521,7 @@ function createPeerWiring(deps) {
     // still return here are all caught earlier in this function — but the
     // ordering is what creates the window, so it is closed where the ordering
     // lives rather than trusted to stay unreachable.
-    if (!res || res.ok === false) closePeerWirescope(key);
+    if (!res || res.ok === false) { closePeerWirescope(key); forgetPeerWebOpen(key); }
     // tokenGated rides the result so the renderer can say "this box wants a
     // token" rather than implying a link is coming.
     return { ...res, tokenGated };
@@ -499,6 +529,7 @@ function createPeerWiring(deps) {
 
   function closePeerWeb(id) {
     webPopAllowed.delete(String(id));
+    forgetPeerWebOpen(String(id));
     // Subordinate to the web view in BOTH directions: the companion forward goes
     // when the view goes. Unconditionally, before the early return — a web
     // manager that was never built does not imply the wirescope one wasn't.
@@ -510,6 +541,9 @@ function createPeerWiring(deps) {
 
   if (onRemoteWindowClosed) {
     onRemoteWindowClosed((k) => { if (typeof k === 'string' && k.startsWith('peer:')) closePeerWeb(k.slice(5)); });
+  }
+  if (onRemoteWindowBounds) {
+    onRemoteWindowBounds((k, bounds) => { if (typeof k === 'string' && k.startsWith('peer:') && bounds) rememberPeerWebOpen(k.slice(5), bounds); });
   }
 
   return {
