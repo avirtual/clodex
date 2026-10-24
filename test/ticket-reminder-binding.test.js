@@ -722,7 +722,7 @@ test('a REJECT after a closed-out accept makes the ticket bindable again', async
     f.m._taskReject(f.lead, f.team, { id: 't1', body: 'one more pass' }, f.reply);
     assert.strictEqual(f.one('t1').state, 'open', 'ENTER: the reject reopened it');
 
-    const mine = f.arm('for t1 in 40m', 'check the rework');
+    const mine = f.arm('for t1 in 40m', 'check the rework').filter((r) => r.by !== 'ticket-loop');
 
     // The failure this pins is an over-REFUSAL, so asserting no-throw would pass
     // against the defect. The binding has to actually land.
@@ -916,7 +916,7 @@ const loopRows = (store, ticketId) => store.listForAgent('lead').filter((r) => r
 
 function addFreshTicket(f, id) {
   const all = f.tstore.load(f.team.root);
-  all.push({ id, state: 'open', spec: `spec for ${id}`, assignee: 'team-hand', role: 'hand', openedAt: T0, lastActivityAt: T0 });
+  all.push({ id, state: 'open', spec: `spec for ${id}`, assignee: 'hand', role: 'hand', openedAt: T0, lastActivityAt: T0 });
   f.tstore.save(f.team.root, all);
 }
 
@@ -942,7 +942,7 @@ test('task assign arms the watch too', () => {
   const f = mkFixture();
   try {
     addFreshTicket(f, 't3');
-    f.m._taskAssign(f.lead, f.team, { id: 't3', assignee: 'team-hand' }, f.reply);
+    f.m._taskAssign(f.lead, f.team, { id: 't3', who: 'team-hand' }, f.reply);
     const rows = loopRows(f.store, 't3');
     assert.strictEqual(rows.length, 1, `one watch after assign (${f.replies.join(' | ')})`);
     assert.match(rows[0].body, /^ticket t3 assigned .* to team-hand \(round 1\)/);

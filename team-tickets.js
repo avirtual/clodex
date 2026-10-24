@@ -4957,7 +4957,7 @@ function createTicketMethods(deps, shared) {
       // Stamped above both arms and every save, so no path dispatches unrecorded: an unstamped dispatched ticket is startable twice and collides on the tree.
       ticket.startedAt = ticket.lastActivityAt;
       recordEvent(ticket, { at: ticket.startedAt, kind: 'start', by: session.name, to: (minted && minted.ok) ? minted.name : assignee });
-      this._armLoopWatch(team, ticket, 'started', (minted && minted.ok) ? minted.name : assignee);
+      this._armLoopWatch(team, ticket, 'started', (minted && minted.ok) ? minted.name : (this._ticketAssigneeSeat(team, ticket) || assignee));
       if (startReviewer) ticket.reviewerTemplate = startReviewer;
       const rvNote = startReviewer ? ` — reviewer template: ${startReviewer}` : '';
       const unparked = wasParked ? ' (unparked)' : '';
