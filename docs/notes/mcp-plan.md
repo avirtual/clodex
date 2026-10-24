@@ -56,6 +56,8 @@ mcp_servers.cua_repl") for a plugin-bundled one;
 
 So a server is built key by key, a value carrying `${…}` is resolved by Clodex into the codex process env and only
 its key travels in argv (`env_vars`), and plugin servers are never disabled (that would fail the load).
+The codex process has one env, so an alias key two servers (or the seat itself) hold with different values cannot be
+expressed: the later server is omitted rather than handed another service's secret.
 `test/mcp-codex-env-probe.test.js` reruns the stdio case against the installed binary; on 0.164.0 the child's env
 keys were `API_TOKEN EMPTY FIXED HOME LANG LOGNAME PATH PROBE_OUT Q SHELL TERM TMPDIR UNI URL USER
 __CF_USER_TEXT_ENCODING` (the source `JIRA_TOKEN` absent). With an empty `CODEX_HOME` the probe needs no login.
