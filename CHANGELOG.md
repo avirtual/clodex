@@ -12,6 +12,8 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+
+## 5.139.0 — 2026-10-24
 - The ticket loop sets the lead's per-ticket watch itself on every dispatch and rework round (team.json `watchMs`, default 60 min) and drops it when the ticket closes, so leads no longer hand-set reminders that fire stale after the merge; the Reminders panel shows them with a `loop` chip; a round the loop itself sends back re-arms it.
 
 - The Reminders panel gains a Fire button: it delivers a reminder now through the scheduled path (a one-shot is spent, a recurring one keeps its schedule), so an operator can test or force a nudge without waiting.
