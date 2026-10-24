@@ -339,6 +339,7 @@ function reviewerModelArgs(extraArgs, adapter) {
 }
 
 const TICKET_STALL_MS = 30 * 60 * 1000;
+const TICKET_WATCH_MS = 60 * 60 * 1000;
 
 // Bounds the rung-2 wake's deferral of the first alarm (sweeps plus jitter take 2-3 minutes),
 // so a probe stuck at `unknown` alarms rather than deferring forever.
@@ -4956,6 +4957,7 @@ function createTicketMethods(deps, shared) {
       // Stamped above both arms and every save, so no path dispatches unrecorded: an unstamped dispatched ticket is startable twice and collides on the tree.
       ticket.startedAt = ticket.lastActivityAt;
       recordEvent(ticket, { at: ticket.startedAt, kind: 'start', by: session.name, to: (minted && minted.ok) ? minted.name : assignee });
+      this._armLoopWatch(team, ticket, 'started', (minted && minted.ok) ? minted.name : assignee);
       if (startReviewer) ticket.reviewerTemplate = startReviewer;
       const rvNote = startReviewer ? ` — reviewer template: ${startReviewer}` : '';
       const unparked = wasParked ? ' (unparked)' : '';
@@ -5118,6 +5120,7 @@ function createTicketMethods(deps, shared) {
       ticket.assignee = assignee;
       ticket.lastActivityAt = Date.now();
       recordEvent(ticket, { at: ticket.lastActivityAt, kind: 'assign', by: session.name, to: assignee });
+      this._armLoopWatch(team, ticket, 'assigned', assignee);
       ticket.nudgedAt = null;
       // Assign is the dispatch, so it unparks: a delivered ticket left parked is invisible to advance, replay and the badge.
       const wasParked = !!ticket.parked;
@@ -5231,6 +5234,7 @@ function createTicketMethods(deps, shared) {
       const reportedAt = reentry ? Date.now() : ticket.closedAt;
       const roundNo = (Number(ticket.reviewRound) || 0) + 1;
       if (!reentry) recordEvent(ticket, { at: ticket.closedAt, kind: 'done', by: session.name, round: roundNo });
+      if (!reentry) this._dropLoopWatch(team, ticket.id);
       if (!Array.isArray(ticket.rounds)) ticket.rounds = [];
       const lastRound = ticket.rounds[ticket.rounds.length - 1];
       if (lastRound && Number(lastRound.round) === roundNo && lastRound.verdict === null) {
@@ -5993,6 +5997,7 @@ function createTicketMethods(deps, shared) {
       // reviewer it was sent back once more than it was.
       appendReworkReason(ticket, { round: Number(ticket.reworkRound) || 1, by: session.name, reason });
       recordEvent(ticket, { at: ticket.lastActivityAt, kind: 'reject', by: session.name, followUp: true });
+      this._armLoopWatch(team, ticket, 'rework delivered', rework.seat);
       ticketsStore.save(team.root, tickets);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || rework.seat, body: `ticket ${ticket.id} follow-up must-fixes${replaced}` });
       log.info('intent', `task reject ${ticket.id} by ${session.name} → follow-up to ${rework.seat} (already open for rework)${replaced}`);
@@ -6803,6 +6808,7 @@ function createTicketMethods(deps, shared) {
             { label: 'rejected', reason, from: session.name }, why));
       }
       const replaced = this._seatReplacedClause(rework);
+      if (rework.seat && rework.seat !== team.lead) this._armLoopWatch(team, ticket, 'rework delivered', rework.seat);
       this._reconcileTickets(team);
       this._broadcast('ipc-message', { type: 'task', from: session.name, to: ticket.assignee || '(unassigned)', body: `ticket ${ticket.id} rejected${replaced}` });
       log.info('intent', `task reject ${ticket.id} by ${session.name} → reopened${replaced}`);
@@ -6921,6 +6927,32 @@ function createTicketMethods(deps, shared) {
       if (!ids.length) return '';
       log.info('intent', `ticket ${ticketId} closed — cancelled ${ids.length} bound reminder(s): ${ids.join(', ')}`);
       return `— ${ids.length} bound reminder(s) cancelled (${ids.join(', ')}).`;
+    },
+
+    _armLoopWatch(team, ticket, verb, seat) {
+      if (!team || !team.lead || !ticket || !ticket.id || !seat || seat === team.lead) return null;
+      let sched = null;
+      try { sched = getRemindScheduler && getRemindScheduler(); } catch { sched = null; }
+      if (!sched || typeof sched.add !== 'function') return null;
+      try {
+        if (typeof sched.cancelLoopWatch === 'function') sched.cancelLoopWatch(team.lead, ticket.id);
+        const ms = (typeof team.watchMs === 'number' && team.watchMs > 0) ? team.watchMs : TICKET_WATCH_MS;
+        const mins = Math.max(1, Math.round(ms / 60000));
+        const at = `${new Date().toISOString().slice(11, 16)}Z`;
+        const round = (Number(ticket.reworkRound) || 0) + 1;
+        const body = `ticket ${ticket.id} ${verb} ${at} to ${seat} (round ${round}); no report after ${mins}m — check the seat (clodex-team roster), `
+          + 'then respawn from its artifact or reassign. Cancelled by the loop when the ticket closes.';
+        const res = sched.add(team.lead, `for ${ticket.id} in ${mins}m`, body, { by: 'ticket-loop' });
+        return res && res.ok ? res.record : null;
+      } catch { return null; }
+    },
+
+    _dropLoopWatch(team, ticketId) {
+      if (!team || !team.lead || !ticketId) return [];
+      let sched = null;
+      try { sched = getRemindScheduler && getRemindScheduler(); } catch { sched = null; }
+      if (!sched || typeof sched.cancelLoopWatch !== 'function') return [];
+      try { return sched.cancelLoopWatch(team.lead, ticketId) || []; } catch { return []; }
     },
 
     _stampTicketRevival(team, seatName, extra = null, ticketId = null) {

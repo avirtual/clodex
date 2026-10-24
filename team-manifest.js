@@ -588,6 +588,14 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
     const watchdogMs = (typeof rawWatchdog === 'number' && Number.isFinite(rawWatchdog) && rawWatchdog > 0)
       ? Math.min(WATCHDOG_MAX_MS, Math.max(WATCHDOG_MIN_MS, rawWatchdog))
       : null;
+    const rawWatch = m.watchMs;
+    if (rawWatch != null && (typeof rawWatch !== 'number' || !Number.isFinite(rawWatch))) {
+      throw new Error(`team.json "watchMs" must be a finite number or null (${file})`);
+    }
+    if (rawWatch != null && rawWatch <= 0) {
+      throw new Error(`team.json "watchMs" must be positive, or null to clear it (${file})`);
+    }
+    const watchMs = rawWatch == null ? null : rawWatch;
     const kit = (typeof m.kit === 'string' && !badStem(m.kit) && TEAM_STEM_RE.test(m.kit)) ? m.kit : LEGACY_KIT;
     const trunk = normalizeTrunk(m.trunk);
     const done = m.done === undefined ? DEFAULT_DONE : normalizeDone(m.done);
@@ -598,7 +606,7 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
     const worktrees = normalizeWorktrees(m.worktrees);
     const maxHands = m.maxHands === null ? null : (normalizeMaxHands(m.maxHands) || undefined);
     const rosterState = readRoster(name, roles, lead);
-    const team = { name, root: path.resolve(root), sandboxed: m.sandboxed === true, lead, roles, kit, file, dir: path.dirname(file), watchdogMs, trunk, done, sharedRoot, ...(worktrees ? { worktrees } : {}), ...(maxHands !== undefined ? { maxHands } : {}), version, droppedFields, roster: rosterState.rows };
+    const team = { name, root: path.resolve(root), sandboxed: m.sandboxed === true, lead, roles, kit, file, dir: path.dirname(file), watchdogMs, ...(watchMs != null ? { watchMs } : {}), trunk, done, sharedRoot, ...(worktrees ? { worktrees } : {}), ...(maxHands !== undefined ? { maxHands } : {}), version, droppedFields, roster: rosterState.rows };
     return { team, rosterState };
   }
 

@@ -446,7 +446,9 @@ bundle), whose packaged form is the Docker image under
   and timer primitives are injected. A reminder the operator adds from the
   Reminders panel is stored with `by: 'operator'`, fires whether or not the seat
   holds the remind intent, arrives as `[<id> <spec>, set by your operator] <text>`,
-  and only the panel can cancel it (`[agent:remind cancel]` bounces).
+  and only the panel can cancel it (`[agent:remind cancel]` bounces). A ticket
+  watch the loop arms for the lead is stored with `by: 'ticket-loop'`, arrives as
+  `[<id> <spec>, set by the ticket loop] <text>`, and the lead may cancel it.
 - **verdict-nudge.js** — the pure predicate behind the prose-verdict nudge: a
   reviewer seat's flushed turn reads as a verdict but carries no
   `[agent:review-done]`, so the loop tells it once to re-emit through the

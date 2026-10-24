@@ -833,6 +833,8 @@ shared one during review reads as a change and holds the ACCEPT.
 
 A ticket whose seat stays quiet past the team's watchdog interval alarms the lead as `stalled: <who> quiet <age>` with the seat's evidence; a seat held by a permission dialog is reported instead as `waiting on a permission dialog since <age> — <message>`, naming the operator as the only one who can answer, and the operator inbox gets one note per dialog on a ticket seat; a pending call on a seat that is compacting or running a harness subagent is named as that class instead of `wedged mid-call, or a legitimately slow one`; a ticket parked by the hand cap past the interval alarms the lead once as `parked by the hand cap for <age>`.
 
+The ticket watch is separate from that watchdog: `watchdogMs` measures how long a seat has been quiet, while `watchMs` (team.json, default 60 min) is wall-clock time since the step. On every `task start`, `task assign` and lead rework round (a reject or a follow-up reject), the loop drops any earlier watch it set for that ticket and arms one `for <id> in <N>m` reminder on the lead, stored with `by: 'ticket-loop'`, so a seat that stays busy without closing still reaches the lead. `task done` drops that watch and leaves the lead's own `for <id>` reminders alone; accept and cancel drop every reminder bound to the ticket. The loop's own merge-step reopen arms no watch, since the lead is already escalated there.
+
 The lead's team roster spells out the reachable actions for whatever roles exist,
 so you do not have to teach it the vocabulary.
 A ticket seat (hand, scout, reviewer) gets the two-line brief form instead: its own role and its lead, in both its SessionStart digest and its spawn message.
