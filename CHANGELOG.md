@@ -15,6 +15,7 @@ blocks a release.
 
 - A peer's web view and a sandbox box's web UI open in their own Clodex window (sandboxed, like the wirescope window) instead of a browser tab; closing the window closes the peer's tunnel.
 - Peer web windows reopen after a Clodex restart, at their last position, like workspace windows.
+- The preserved suite-failure digest keeps every `FAIL` / `not ok` row and its continuation lines even when the project's runner prints no `Failed tests:` block and the row sat far above the 400-line tail (reported by the avh team).
 
 ## 5.136.0 — 2026-10-23
 
