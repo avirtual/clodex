@@ -1026,13 +1026,55 @@ test('cancel drops the loop watch and the lead\'s bound reminder alike', () => {
   } finally { f.cleanup(); }
 });
 
-test('the loop\'s own merge-step reopen arms no watch', () => {
+test('the loop\'s own reopen re-arms the watch', () => {
   const f = mkFixture();
   try {
     f.setState('t1', { state: 'done', report: 'did it', closedAt: T0 });
+    f.m._armLoopWatch(f.team, f.one('t1'), 'started', 'team-hand');
+    assert.strictEqual(loopRows(f.store, 't1').length, 1, 'ENTER: an earlier watch exists');
     const res = f.m._rejectTicketFromLoop(f.team, 't1', 'suite red');
     assert.strictEqual(f.one('t1').state, 'open', `ENTER: the loop reopened t1 (${JSON.stringify(res)})`);
-    assert.deepStrictEqual(loopRows(f.store, 't1'), []);
+    assert.strictEqual(res.ok, true, `ENTER: the rework was delivered (${JSON.stringify(res)})`);
+    const rows = loopRows(f.store, 't1');
+    assert.strictEqual(rows.length, 1);
+    assert.match(rows[0].body, /^ticket t1 rework delivered \d\d:\d\dZ to team-hand \(round 2\)/);
+    assert.strictEqual(Number(f.one('t1').reworkRound), 1);
+  } finally { f.cleanup(); }
+});
+
+test('a review REWORK verdict dispatched by the loop arms the watch', () => {
+  const f = mkFixture();
+  try {
+    f.setState('t1', { state: 'done', report: 'did it', closedAt: T0 });
+    const res = f.m._dispatchReworkFromVerdict(f.team, 't1', { mustFix: '- fix x', reviewRound: 1 }, { ok: true, path: '/v.md' });
+    assert.strictEqual(res.ok, true, `ENTER: the rework was dispatched (${JSON.stringify(res)})`);
+    const rows = loopRows(f.store, 't1');
+    assert.strictEqual(rows.length, 1);
+    assert.match(rows[0].body, /^ticket t1 rework delivered .* to team-hand \(round 2\)/);
+  } finally { f.cleanup(); }
+});
+
+test('an undelivered loop rejection leaves the earlier watch untouched', () => {
+  const f = mkFixture();
+  try {
+    f.setState('t1', { state: 'done', report: 'did it', closedAt: T0 });
+    const w = f.m._armLoopWatch(f.team, f.one('t1'), 'started', 'team-hand');
+    assert.ok(w, 'ENTER: an earlier watch exists');
+    f.m._gatedDeliver = () => ({ error: 'seat gone' });
+    const res = f.m._rejectTicketFromLoop(f.team, 't1', 'suite red');
+    assert.strictEqual(res.ok, false, `ENTER: the delivery failed (${JSON.stringify(res)})`);
+    assert.strictEqual(res.reopened, true, 'ENTER: the ticket was reopened');
+    assert.deepStrictEqual(loopRows(f.store, 't1').map((r) => r.id), [w.id]);
+  } finally { f.cleanup(); }
+});
+
+test('a watch the scheduler refuses is logged with the ticket id and the error', () => {
+  const f = mkFixture();
+  try {
+    f.scheduler.add = () => ({ ok: false, error: 'x-refused' });
+    assert.strictEqual(f.m._armLoopWatch(f.team, f.one('t1'), 'started', 'team-hand'), null);
+    const warns = f.logs.filter((l) => l.level === 'warn' && /t1/.test(l.msg) && /x-refused/.test(l.msg));
+    assert.strictEqual(warns.length, 1);
   } finally { f.cleanup(); }
 });
 
@@ -1051,7 +1093,7 @@ test('reminderText marks a loop watch as set by the ticket loop', () => {
   assert.strictEqual(reminderText('r1', 'for t1 in 60m', 'x', 'ticket-loop'), '[r1 for t1 in 60m, set by the ticket loop] x');
 });
 
-test('team.json watchMs: a number is carried, null is absent, a non-positive value throws', () => {
+test('team.json watchMs: a number is carried, null is absent, a bad value loads as absent, an out-of-range one clamps', () => {
   const home = mkTmpRoot('clodex-watchms-');
   try {
     const dir = pathReal.join(home, 'teams', 'shop');
@@ -1064,9 +1106,15 @@ test('team.json watchMs: a number is carried, null is absent, a non-positive val
     write({ watchMs: null });
     assert.strictEqual(tm.loadManifest('shop').watchMs, undefined);
     write({ watchMs: 0 });
-    assert.throws(() => tm.loadManifest('shop'), /"watchMs" must be positive, or null to clear it/);
+    assert.strictEqual(tm.loadManifest('shop').watchMs, undefined);
+    write({ watchMs: -5 });
+    assert.strictEqual(tm.loadManifest('shop').watchMs, undefined);
     write({ watchMs: 'soon' });
-    assert.throws(() => tm.loadManifest('shop'), /"watchMs" must be a finite number or null/);
+    assert.strictEqual(tm.loadManifest('shop').watchMs, undefined);
+    write({ watchMs: 1000 });
+    assert.strictEqual(tm.loadManifest('shop').watchMs, 60000);
+    write({ watchMs: 30 * 24 * 60 * MIN });
+    assert.strictEqual(tm.loadManifest('shop').watchMs, 7 * 24 * 60 * MIN);
   } finally { fsReal.rmSync(home, { recursive: true, force: true }); }
 });
 

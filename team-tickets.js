@@ -5910,6 +5910,7 @@ function createTicketMethods(deps, shared) {
         }
         // Delivered arm only: the undelivered return above is escalated by the caller, and notifying here too would report one rejection twice.
         if (notifyLead) this._notifyLeadOfLoopRejection(team, ticket, rework.seat, reason, replaced);
+        this._armLoopWatch(team, ticket, 'rework delivered', rework.seat);
         return {
           ok: true, error: null, seat: rework.seat, round: ticket.reworkRound,
           replaced: rework.replaced ? rework : null,
@@ -6943,8 +6944,15 @@ function createTicketMethods(deps, shared) {
         const body = `ticket ${ticket.id} ${verb} ${at} to ${seat} (round ${round}); no report after ${mins}m — check the seat (clodex-team roster), `
           + 'then respawn from its artifact or reassign. Cancelled by the loop when the ticket closes.';
         const res = sched.add(team.lead, `for ${ticket.id} in ${mins}m`, body, { by: 'ticket-loop' });
-        return res && res.ok ? res.record : null;
-      } catch { return null; }
+        if (!(res && res.ok)) {
+          log.warn('intent', `ticket ${ticket.id} watch not armed for ${team.lead}: ${(res && res.error) || 'unknown error'}`);
+          return null;
+        }
+        return res.record;
+      } catch (e) {
+        log.warn('intent', `ticket ${ticket.id} watch not armed for ${team.lead}: ${e.message}`);
+        return null;
+      }
     },
 
     _dropLoopWatch(team, ticketId) {
