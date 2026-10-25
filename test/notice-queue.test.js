@@ -32,7 +32,7 @@ const { promptCacheDir } = require('../ipc-prompt-cache');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const {
   NOTICE_MAX_DEPTH, NOTICE_MAX_AGE_MS,
-  noticeDir, noticePath, enqueueNotice, parseNotices, versionNoticeFor, clearNotices,
+  noticeDir, noticePath, enqueueNotice, parseNotices, versionNoticeFor, releaseReviewNoticeFor, clearNotices,
 } = require('../notice-queue');
 
 function tmp() { return mkTmpRoot('clodex-t240-'); }
@@ -139,6 +139,25 @@ test('versionNoticeFor: same version, or either side missing, says nothing', () 
     'a record with no baseline (written before this feature) is silent by construction — we cannot name a version we never stored, and a floor would be a lie');
   assert.strictEqual(versionNoticeFor('5.2.0', null), null);
   assert.strictEqual(versionNoticeFor('  ', '5.3.0'), null);
+});
+
+const RELEASE_REVIEW_5_144 = '<system-reminder>Release review owed: the host moved from v5.143.0 to v5.144.0 while this conversation was away. Run the release-review ritual on the tag range v5.143.0..v5.144.0 — a cold reviewer (Agent tool, isolation "remote") on the public repo, briefed to verify every CHANGELOG bullet against the diff, cross-ticket interactions and dropped security properties, and to open ONE GitHub issue titled "Release review v5.144.0: <VERDICT>" only when it has findings. Never open a test issue. Triage the findings into FOLLOWUPS before the next ticket.</system-reminder>';
+
+test('releaseReviewNoticeFor: equal or empty inputs say nothing', () => {
+  assert.strictEqual(releaseReviewNoticeFor('5.144.0', '5.144.0'), null);
+  assert.strictEqual(releaseReviewNoticeFor('v5.144.0', '5.144.0'), null);
+  assert.strictEqual(releaseReviewNoticeFor(null, '5.144.0'), null);
+  assert.strictEqual(releaseReviewNoticeFor('5.143.0', ''), null);
+  assert.strictEqual(releaseReviewNoticeFor('  ', '5.144.0'), null);
+});
+
+test('releaseReviewNoticeFor: a difference names the tag range last..host, verbatim', () => {
+  assert.strictEqual(releaseReviewNoticeFor('5.143.0', '5.144.0'), RELEASE_REVIEW_5_144);
+});
+
+test('releaseReviewNoticeFor: a leading v on either input is stripped, never doubled', () => {
+  assert.strictEqual(releaseReviewNoticeFor('v5.143.0', 'v5.144.0'), RELEASE_REVIEW_5_144);
+  assert.strictEqual(releaseReviewNoticeFor('v5.143.0', '5.144.0'), RELEASE_REVIEW_5_144);
 });
 
 test('versionNoticeFor renders NO changelog prose — just the two versions and what they imply', () => {
@@ -284,7 +303,7 @@ test('the horizon in the generated script is the module constant, not a second l
 // `!!resumeId && !mint && hookInstalled` as it SHIPS — an earlier file in this
 // repo learned the hard way that recomputing it in the harness pins a copy, and
 // reverting the product line left everything green.
-function producerHarness({ appVersion, entry = null, resumeId = null, mint = false, extraArgs = [] } = {}) {
+function producerHarness({ appVersion, entry = null, resumeId = null, mint = false, extraArgs = [], team = null } = {}) {
   const root = tmp();
   const enqueued = [];
   const cleared = [];
@@ -300,6 +319,7 @@ function producerHarness({ appVersion, entry = null, resumeId = null, mint = fal
     // The real producer decision, with the real notice text. Only the sink is a
     // spy, so what is recorded is what would have hit the queue.
     versionNoticeFor,
+    releaseReviewNoticeFor,
     enqueueNotice: (r, n, text) => { enqueued.push({ root: r, name: n, text }); return true; },
     // The boundary clear DELEGATES to the real one rather than being a pure
     // spy: its whole job is that the file is gone afterwards, and a spy that
@@ -312,7 +332,7 @@ function producerHarness({ appVersion, entry = null, resumeId = null, mint = fal
       return path.join(root, 'settings.json');
     },
     resolveProxyAgentId: ({ name }) => name,
-    resolveTeam: () => null,
+    resolveTeam: () => team,
     formatTeamBlock: () => '',
     matchSeatRole: () => null,
     resolveSystemPromptFile: () => null,
@@ -517,4 +537,39 @@ test('NO CHANNEL, NO NOTICE: a user --settings session enqueues nothing', async 
   assert.ok(versionNoticeFor('5.2.0', '5.3.0'), 'ENTER: these two versions do differ');
   assert.deepStrictEqual(h.enqueued, [],
     'their --settings replaces the whole hooks block, so notices.sh was never installed and a queued notice could never be delivered');
+});
+
+test('a RESUMED team LEAD under a newer host enqueues the version notice, then the release-review notice', async () => {
+  const h = producerHarness({
+    appVersion: '5.144.0',
+    entry: { name: 'boss', type: 'claude', appVersion: '5.143.0', createdAt: 1 },
+    resumeId: 'sid-1',
+    team: { name: 'crew', lead: 'boss' },
+  });
+  await h.spawn('boss');
+  assert.deepStrictEqual(h.enqueued.map((e) => e.text), [
+    versionNoticeFor('5.143.0', '5.144.0'),
+    RELEASE_REVIEW_5_144,
+  ]);
+});
+
+test('a RESUMED non-lead seat on a team gets only the version notice', async () => {
+  const h = producerHarness({
+    appVersion: '5.144.0',
+    entry: { name: 'hand', type: 'claude', appVersion: '5.143.0', createdAt: 1 },
+    resumeId: 'sid-1',
+    team: { name: 'crew', lead: 'boss' },
+  });
+  await h.spawn('hand');
+  assert.deepStrictEqual(h.enqueued.map((e) => e.text), [versionNoticeFor('5.143.0', '5.144.0')]);
+});
+
+test('a RESUMED seat with no team gets only the version notice', async () => {
+  const h = producerHarness({
+    appVersion: '5.144.0',
+    entry: { name: 'boss', type: 'claude', appVersion: '5.143.0', createdAt: 1 },
+    resumeId: 'sid-1',
+  });
+  await h.spawn('boss');
+  assert.deepStrictEqual(h.enqueued.map((e) => e.text), [versionNoticeFor('5.143.0', '5.144.0')]);
 });

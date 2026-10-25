@@ -190,9 +190,22 @@ function versionNoticeFor(lastVersion, hostVersion) {
     + '</system-reminder>';
 }
 
+function releaseReviewNoticeFor(lastVersion, hostVersion) {
+  const last = String(lastVersion == null ? '' : lastVersion).trim().replace(/^v/, '');
+  const host = String(hostVersion == null ? '' : hostVersion).trim().replace(/^v/, '');
+  if (!last || !host || last === host) return null;
+  return '<system-reminder>'
+    + `Release review owed: the host moved from v${last} to v${host} while this conversation was away. `
+    + `Run the release-review ritual on the tag range v${last}..v${host} — a cold reviewer (Agent tool, isolation "remote") on the public repo, `
+    + 'briefed to verify every CHANGELOG bullet against the diff, cross-ticket interactions and dropped security properties, '
+    + `and to open ONE GitHub issue titled "Release review v${host}: <VERDICT>" only when it has findings. `
+    + 'Never open a test issue. Triage the findings into FOLLOWUPS before the next ticket.'
+    + '</system-reminder>';
+}
+
 module.exports = {
   NOTICE_MAX_DEPTH, NOTICE_MAX_AGE_MS,
   noticeDir, noticePath,
   enqueueNotice, trimNotices, parseNotices, clearNotices,
-  versionNoticeFor,
+  versionNoticeFor, releaseReviewNoticeFor,
 };
