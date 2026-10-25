@@ -199,7 +199,7 @@ function createRemoteWiring(deps) {
 
   function assistantFields(entry) {
     if (!entry || entry.class !== 'assistant') return {};
-    return { class: 'assistant', state: 'awake', template: entry.template || null, sleep: entry.sleep || null, cost: entry.cost || null, wakes: entry.wakes || 0 };
+    return { class: 'assistant', state: entry.archivedAt ? 'sleeping' : 'awake', template: entry.template || null, sleep: entry.sleep || null, cost: entry.cost || null, wakes: entry.wakes || 0 };
   }
 
   function isSleeper(entry) {
@@ -225,6 +225,14 @@ function createRemoteWiring(deps) {
       wakes: entry.wakes || 0,
       stats: { model: null, cost: null, requests: null, ctxTok: null, ctxSize: null, ctxPct: null },
     };
+  }
+
+  const wakesInFlight = new Map();
+  function wakeOnce(name, reason) {
+    if (wakesInFlight.has(name)) return wakesInFlight.get(name);
+    const p = Promise.resolve().then(() => manager.wake(name, { reason })).finally(() => wakesInFlight.delete(name));
+    wakesInFlight.set(name, p);
+    return p;
   }
 
   function notifySessions() {
@@ -359,6 +367,15 @@ function createRemoteWiring(deps) {
     if (out.ok) notifySessions();
     log.info('session', `create ${name} from template ${template} via peer${out.ok ? '' : ` failed: ${out.error}`}`);
     return out;
+  }
+
+  function exportMemory(name) {
+    const entry = getPersistence().get(name);
+    if (!entry) return { ok: false, code: 404, error: 'Session not found' };
+    if (entry.class !== 'assistant') return { ok: false, error: 'not an assistant seat' };
+    let brief = null;
+    try { brief = fs.readFileSync(briefPathFor(REGISTRY_DIR, name), 'utf8'); } catch {}
+    return { ok: true, name, units: getMemoryStore().list(name), brief };
   }
 
   async function destroyAssistant(name, entry) {
@@ -575,7 +592,7 @@ function createRemoteWiring(deps) {
             const entry = getPersistence().get(name);
             if (entry && entry.class === 'assistant') {
               log.info('session', `wake ${name} on dm via ${client || 'peer'}`);
-              const w = await manager.wake(name, { reason: 'message' });
+              const w = await wakeOnce(name, 'message');
               if (!w || !w.ok) return { ok: false, code: w && w.code ? w.code : 503, error: (w && w.error) || 'wake failed' };
               sess = manager.sessions.get(name);
               notifySessions();
@@ -585,7 +602,16 @@ function createRemoteWiring(deps) {
           const tag = clientTag(client);
           let onWrite = null;
           const armed = awaitMs > 0 && sess.io === 'stream'
-            ? new Promise((r) => { onWrite = () => { r(manager.awaitTurn(name, { timeoutMs: awaitMs })); }; })
+            ? new Promise((r) => {
+              const deadline = Date.now() + awaitMs;
+              const unwritten = setTimeout(() => r(null), awaitMs);
+              if (typeof unwritten.unref === 'function') unwritten.unref();
+              onWrite = () => {
+                clearTimeout(unwritten);
+                const left = deadline - Date.now();
+                r(left > 0 ? manager.awaitTurn(name, { timeoutMs: left }) : null);
+              };
+            })
             : null;
           try {
             if (images && images.length) manager._deliverMessage(name, 'user', text, 'dm', tag, onWrite, null, images);
@@ -707,7 +733,7 @@ function createRemoteWiring(deps) {
           if (entry && entry.class === 'assistant') return destroyAssistant(name, entry);
           if (!sess) return { ok: false, error: `no such session "${name}"` };
           await manager.kill(name);
-          if (getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
+          notifySessions();
           log.info('session', `kill ${name} via peer`);
           return { ok: true, name };
         },
@@ -724,24 +750,17 @@ function createRemoteWiring(deps) {
         },
         wakeSession: async (name) => {
           if (!getPersistence().get(name) && !manager.sessions.has(name)) return { ok: false, code: 404, error: 'Session not found' };
-          const out = await manager.wake(name, { reason: 'operator' });
+          const out = await wakeOnce(name, 'operator');
           if (out && out.ok) notifySessions();
           return out;
         },
-        exportMemory: (name) => {
-          const entry = getPersistence().get(name);
-          if (!entry) return { ok: false, code: 404, error: 'Session not found' };
-          if (entry.class !== 'assistant') return { ok: false, error: 'not an assistant seat' };
-          let brief = null;
-          try { brief = fs.readFileSync(briefPathFor(REGISTRY_DIR, name), 'utf8'); } catch {}
-          return { ok: true, name, units: getMemoryStore().list(name), brief };
-        },
+        ...(typeof getMemoryStore === 'function' ? { exportMemory } : {}),
         restartSession: async (name, opts = {}) => {
           name = String(name || '').trim();
           const entry = getPersistence().get(name);
           const wsId = (entry && entry.workspaceId) || DEFAULT_WORKSPACE_ID;
           const out = await restartSession(name, { fresh: !!(opts && opts.fresh) }, wsId);
-          if (out && out.ok && getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
+          if (out && out.ok) notifySessions();
           log.info('session', `restart ${name} via peer (${opts && opts.fresh ? 'fresh' : 'resume'})${out && out.ok ? '' : ` failed: ${out && out.error}`}`);
           return out;
         },

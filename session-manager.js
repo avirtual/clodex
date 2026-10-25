@@ -5977,7 +5977,6 @@ function createSessionManager(deps) {
             if (session) this._injectText(session, `[agent:dm] ${intent.target} is a scratch clone — not addressable; its summary goes to ${localTarget.clone}.`, { parkable: true });
             break;
           }
-          if (this._assistantPolicy(intent.target)) { refuseAssistant(intent.target); break; }
           let sup = null;
           if (localTarget && localTarget.agentType) {
             // Armed here, not in _gatedDeliver: this is the one site with a live sender to tell.

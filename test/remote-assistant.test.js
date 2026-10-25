@@ -157,13 +157,39 @@ test('send with await: arms at the write and answers the turn, or queued on null
   assert.deepStrictEqual(await opts.send('avh-7', 'yo', [], 'avh', 5000), { ok: true, turn });
   assert.strictEqual(typeof h.deliverCalls[0].args[5], 'function');
   assert.strictEqual(h.deliverCalls[0].awaitsBefore, 0, 'awaitTurn is armed by the write, never at enqueue');
-  assert.deepStrictEqual(h.awaitCalls, [['avh-7', { timeoutMs: 5000 }]]);
+  assert.deepStrictEqual(h.awaitCalls.map(([n]) => n), ['avh-7']);
+  const left = h.awaitCalls[0][1].timeoutMs;
+  assert.ok(left > 0 && left <= 5000, `the turn wait is what is left of the 5000 ms budget, got ${left}`);
   const q = makeDeps({ sessions: live, turn: null });
   assert.deepStrictEqual(await captureOptions(q.deps).send('avh-7', 'yo', [], 'avh', 5000), { ok: true, queued: true });
   const z = makeDeps({ sessions: live, turn });
   assert.deepStrictEqual(await captureOptions(z.deps).send('avh-7', 'yo', [], 'avh', 0), { ok: true });
   assert.strictEqual(z.deliverCalls[0].args[5], undefined);
   assert.deepStrictEqual(z.awaitCalls, []);
+});
+
+test('send with await: a dm never written answers queued at the deadline instead of hanging', async (t) => {
+  const { mock } = require('node:test');
+  const h = makeDeps({ sessions: { 'avh-7': { name: 'avh-7', agentType: 'claude', io: 'stream' } }, turn: { text: 'x', intents: [] } });
+  h.manager._deliverMessage = (...args) => { h.deliverCalls.push({ args }); };
+  const opts = captureOptions(h.deps);
+  mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  t.after(() => mock.timers.reset());
+  const p = opts.send('avh-7', 'yo', [], 'avh', 10);
+  assert.strictEqual(h.deliverCalls.length, 1, 'ENTER: delivered without a write');
+  mock.timers.tick(10);
+  const out = await Promise.race([p, new Promise((r) => setImmediate(() => r('hung')))]);
+  assert.deepStrictEqual(out, { ok: true, queued: true });
+  assert.deepStrictEqual(h.awaitCalls, []);
+});
+
+test('send: two dms racing to a sleeper share one wake', async () => {
+  const h = makeDeps({ records: { 'avh-7': ASLEEP } });
+  const opts = captureOptions(h.deps);
+  const outs = await Promise.all([opts.send('avh-7', 'a', [], 'avh'), opts.send('avh-7', 'b', [], 'avh'), opts.wakeSession('avh-7')]);
+  assert.deepStrictEqual(outs, [{ ok: true }, { ok: true }, { ok: true, state: 'awake' }]);
+  assert.deepStrictEqual(h.wakeCalls, [['avh-7', { reason: 'message' }]]);
+  assert.strictEqual(h.deliverCalls.length, 2);
 });
 
 test('createSession: a template body spawns through the handler; a path-shaped template or a taken name never spawns', async () => {
@@ -219,6 +245,7 @@ test('listSleepers / getSessions: only an archived, unmapped assistant is a slee
   const co = captureOptions(closing.deps);
   assert.deepStrictEqual(co.listSleepers(), [], 'an archived assistant still in the map is closing, not asleep');
   assert.strictEqual(co.getSleeper('avh-7'), null);
+  assert.strictEqual(co.getSessions()[0].state, 'sleeping', 'a closing assistant is not reported awake');
   assert.deepStrictEqual(opts.getSessions(), [
     { name: 'a1', type: 'claude', io: 'stream', cwd: '/a', workspace: '', workspaceId: null, activityTs: null, class: 'assistant', state: 'awake', template: null, sleep: null, cost: null, wakes: 2, stats: STATS },
     { name: 'w1', type: 'codex', io: 'pty', cwd: '/q', workspace: '', workspaceId: null, activityTs: null, stats: STATS },
@@ -235,6 +262,9 @@ test('exportMemory: units and brief for an assistant; brief null when absent; re
   assert.deepStrictEqual(captureOptions(nb.deps).exportMemory('avh-7'), { ok: true, name: 'avh-7', units, brief: null });
   assert.deepStrictEqual(opts.exportMemory('p1'), { ok: false, error: 'not an assistant seat' });
   assert.deepStrictEqual(opts.exportMemory('nobody'), { ok: false, code: 404, error: 'Session not found' });
+  const bare = makeDeps({ records: { 'avh-7': ASLEEP } });
+  delete bare.deps.getMemoryStore;
+  assert.ok(!('exportMemory' in captureOptions(bare.deps)), 'a host without a memory store wires no memory route');
 });
 
 function req(port, pathname, { method = 'GET', body } = {}) {

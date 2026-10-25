@@ -2,7 +2,7 @@
 
 ## _handleDm
 
-`await` (ms) holds the reply for the turn's `result`, capped at `DM_AWAIT_MAX_MS`; the wait starts when the dm is written, not when it queues. A timeout or a seat that dies first answers `202 { queued: true }`.
+`await` (ms) holds the reply for the turn's `result`, capped at `DM_AWAIT_MAX_MS`; the turn waiter arms when the dm is written, not when it queues, and the whole wait, queueing included, stays within `await`. A timeout, including a dm never written because its seat died first, answers `202 { queued: true }`.
 
 ## _handleSessionGet
 
