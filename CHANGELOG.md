@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.142.0 — 2026-10-25
+
 - The composer paperclip now takes any file (up to 5, 10 MB each), not only images: it is copied beside the seat's messages and announced as `File: <path>`, which the agent reads with its own tools — from the browser too — on terminal and conversation seats alike.
 
 ## 5.141.0 — 2026-10-25
