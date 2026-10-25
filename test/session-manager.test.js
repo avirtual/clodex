@@ -22043,11 +22043,18 @@ test('assistant wake: restarts fresh in the record\'s workspace and clears the s
 
 const CAP_ROW = (template) => ({ class: 'assistant', template, sleep: { idleMs: 600000, maxAwake: 2 } });
 
-function capHarness(siblings) {
+function capHarness(siblings, sleepers = ['asst']) {
   const calls = [];
-  const persisted = { asst: { ...CAP_ROW('tpl-a'), archivedAt: 1, asleepAt: 2 } };
+  const persisted = {};
+  for (const n of sleepers) persisted[n] = { ...CAP_ROW('tpl-a'), archivedAt: 1, asleepAt: 2 };
   for (const [name, template] of Object.entries(siblings)) persisted[name] = CAP_ROW(template);
-  const h = mkStreamSeatManager({ persisted, extraDeps: { restartSession: async (...a) => { calls.push(a); return { ok: true }; } } });
+  const restartSession = async (...a) => {
+    calls.push(a);
+    await new Promise((r) => setImmediate(r));
+    h.m.sessions.set(a[0], { name: a[0], activityTs: 900 });
+    return { ok: true };
+  };
+  const h = mkStreamSeatManager({ persisted, extraDeps: { restartSession } });
   const slept = [];
   h.m._sleepNow = async (s, reason) => { slept.push([s.name, reason]); return { ok: true, state: 'asleep' }; };
   return { h, calls, slept };
@@ -22084,6 +22091,34 @@ test('assistant wake: a sibling of another template does not count toward the ca
   assert.deepStrictEqual(await h.m.wake('asst'), { ok: true, state: 'awake' });
   assert.deepStrictEqual(slept, []);
   assert.strictEqual(calls.length, 1);
+});
+
+test('assistant wake: makeAwakeRoom reserves a granted seat until it is live, so two wakes at cap-1 cannot both enter', async (t) => {
+  const busy = capHarness({ s1: 'tpl-a' }, ['x', 'y']);
+  t.after(() => busy.h.stopAll());
+  busy.h.m.sessions.set('s1', { name: 's1', activityTs: 100, streamBusy: true });
+  assert.strictEqual(busy.h.m._awakeAssistantRows('tpl-a').length, 1, 'ENTER: one awake sibling, cap 2');
+  assert.deepStrictEqual(await Promise.all([busy.h.m.wake('x'), busy.h.m.wake('y')]),
+    [{ ok: true, state: 'awake' }, { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000 }]);
+  assert.strictEqual(busy.calls.length, 1);
+  assert.strictEqual(busy.h.m._awakeReserved.size, 0, 'a live seat releases its reservation');
+  const idle = capHarness({ s1: 'tpl-a' }, ['x', 'y']);
+  t.after(() => idle.h.stopAll());
+  idle.h.m.sessions.set('s1', { name: 's1', activityTs: 100, outbox: [] });
+  assert.deepStrictEqual(await Promise.all([idle.h.m.wake('x'), idle.h.m.wake('y')]),
+    [{ ok: true, state: 'awake' }, { ok: true, state: 'awake' }]);
+  assert.deepStrictEqual(idle.slept, [['s1', 'evicted']]);
+});
+
+test('assistant wake: a sibling with queued input or a pending permission is busy, never evicted', async (t) => {
+  for (const extra of [{ outbox: ['hi'] }, { streamPermissions: new Map([['p', {}]]) }]) {
+    const { h, calls, slept } = capHarness({ s1: 'tpl-a', s2: 'tpl-a' });
+    t.after(() => h.stopAll());
+    h.m.sessions.set('s1', { name: 's1', activityTs: 500, streamBusy: true });
+    h.m.sessions.set('s2', { name: 's2', activityTs: 100, ...extra });
+    assert.strictEqual((await h.m.wake('asst')).code, 503, Object.keys(extra)[0]);
+    assert.deepStrictEqual([slept, calls], [[], []]);
+  }
 });
 
 test('assistant awake time: sleep adds now - awokeAt to cost.awakeMs, a later cost fold keeps it, wake stamps awokeAt', async (t) => {

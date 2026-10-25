@@ -3774,14 +3774,16 @@ function createSessionManager(deps) {
       if (live && !live._dead && !live._archived) return { ok: true, state: 'awake' };
       if (live && !await this._waitForExit(name)) return { ok: false, error: 'still stopping' };
       const cap = entry.sleep && Number(entry.sleep.maxAwake) > 0 ? Number(entry.sleep.maxAwake) : 0;
-      const full = cap ? await this.makeAwakeRoom(entry.template || null, cap) : null;
+      const full = cap ? await this.makeAwakeRoom(entry.template || null, cap, name) : null;
       if (full) return full;
       const p = getPersistence();
       p.setArchived(name, false);
       p.setExited(name, null);
       p.upsert({ name, asleepAt: null, sleepReason: null, wakes: (entry.wakes || 0) + 1, awokeAt: Date.now() });
       log.info('session', `wake ${name} (${reason})`);
-      const r = await restartSession(name, { fresh: true }, entry.workspaceId);
+      let r;
+      try { r = await restartSession(name, { fresh: true }, entry.workspaceId); }
+      finally { if (cap) this.releaseAwakeRoom(entry.template || null, name); }
       if (!r || !r.ok) {
         p.setArchived(name, true);
         p.upsert({ name, asleepAt: entry.asleepAt || Date.now(), sleepReason: entry.sleepReason || null });
@@ -3794,21 +3796,39 @@ function createSessionManager(deps) {
       const p = getPersistence();
       const rows = [];
       for (const s of this.sessions.values()) {
-        if (s._dead || s._archived) continue;
+        if (s._dead || s._archived || (this._awakeEvicting && this._awakeEvicting.has(s.name))) continue;
         const rec = p.get(s.name);
         if (!rec || rec.class !== 'assistant' || (rec.template || null) !== (template || null)) continue;
-        rows.push({ name: s.name, activityTs: s.activityTs || 0, busy: !!(s.streamBusy || s.thinking) });
+        rows.push({ name: s.name, activityTs: s.activityTs || 0, busy: !!(s.streamBusy || s.thinking || (s.outbox && s.outbox.length) || (s.streamPermissions && s.streamPermissions.size)) });
       }
       return rows;
     }
 
-    async makeAwakeRoom(template, cap) {
-      const rows = this._awakeAssistantRows(template);
-      if (rows.length < cap) return null;
-      const victim = pickMaxAwakeVictim(rows, cap);
-      if (!victim) return { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000 };
-      await this._sleepNow(this.sessions.get(victim), 'evicted');
+    async makeAwakeRoom(template, cap, holder) {
+      const key = template || null;
+      const reservedAll = this._awakeReserved || (this._awakeReserved = new Map());
+      const evicting = this._awakeEvicting || (this._awakeEvicting = new Set());
+      const rows = this._awakeAssistantRows(key);
+      const live = new Set(rows.map((r) => r.name));
+      const reserved = reservedAll.get(key) || new Set();
+      const pending = [...reserved].filter((n) => !live.has(n)).length;
+      const victim = rows.length + pending < cap ? null : pickMaxAwakeVictim(rows, cap - pending);
+      if (rows.length + pending >= cap && !victim) return { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000 };
+      reservedAll.set(key, reserved.add(holder));
+      if (!victim) return null;
+      evicting.add(victim);
+      try { await this._sleepNow(this.sessions.get(victim), 'evicted'); }
+      catch (e) { this.releaseAwakeRoom(key, holder); throw e; }
+      finally { evicting.delete(victim); }
       return null;
+    }
+
+    releaseAwakeRoom(template, holder) {
+      const key = template || null;
+      const reserved = this._awakeReserved && this._awakeReserved.get(key);
+      if (!reserved) return;
+      reserved.delete(holder);
+      if (!reserved.size) this._awakeReserved.delete(key);
     }
 
     startAssistantSweep(intervalMs = 60000) {

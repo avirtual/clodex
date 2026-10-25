@@ -359,16 +359,20 @@ function createRemoteWiring(deps) {
 
   async function spawnFromTemplate(name, template, rawCwd) {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(template)) return { ok: false, error: 'template must be a library template name' };
+    if (!AGENT_NAME_RE.test(name)) return { ok: false, error: `invalid name "${name}" — allowed [a-zA-Z0-9._-], 1-64 chars` };
     if (manager.sessions.has(name) || getPersistence().get(name)) return { ok: false, error: `name taken "${name}"` };
     const resolved = manager._resolveSpawnTemplate({ name: 'wire', cwd: rawCwd || os.homedir() }, template);
     const tpl = resolved && resolved.ok ? resolved.tpl : null;
     const cap = tpl && tpl.class === 'assistant' && tpl.sleep && Number(tpl.sleep.maxAwake) > 0 ? Number(tpl.sleep.maxAwake) : 0;
-    const full = cap ? await manager.makeAwakeRoom(tpl.name || null, cap) : null;
+    const full = cap ? await manager.makeAwakeRoom(tpl.name || null, cap, name) : null;
     if (full) return full;
-    const out = await spawnViaHandler({ name, ...(rawCwd ? { cwd: rawCwd } : {}), template }, rawCwd || os.homedir(), (reply) => {
-      const m = /\((\w+)\)/.exec(reply);
-      return { ok: true, name, type: m ? m[1] : 'claude', template };
-    }, 'template spawn');
+    let out;
+    try {
+      out = await spawnViaHandler({ name, ...(rawCwd ? { cwd: rawCwd } : {}), template }, rawCwd || os.homedir(), (reply) => {
+        const m = /\((\w+)\)/.exec(reply);
+        return { ok: true, name, type: m ? m[1] : 'claude', template };
+      }, 'template spawn');
+    } finally { if (cap) manager.releaseAwakeRoom(tpl.name || null, name); }
     if (out.ok) notifySessions();
     log.info('session', `create ${name} from template ${template} via peer${out.ok ? '' : ` failed: ${out.error}`}`);
     return out;

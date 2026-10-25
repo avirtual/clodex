@@ -48,7 +48,8 @@ function makeDeps(overrides = {}) {
       const tpl = (overrides.templates || {})[v];
       return tpl ? { ok: true, tpl } : { ok: false, error: `no template named "${v}"` };
     },
-    makeAwakeRoom: async (template, cap) => { roomCalls.push([template, cap]); return overrides.roomOut || null; },
+    makeAwakeRoom: async (template, cap, holder) => { roomCalls.push(['room', template, cap, holder]); return overrides.roomOut || null; },
+    releaseAwakeRoom: (template, holder) => { roomCalls.push(['release', template, holder, spawnCalls.length]); },
     sleep: async (name, opts) => { sleepCalls.push([name, opts]); return overrides.sleepOut || { ok: true, state: 'asleep' }; },
     destroy: async (name) => { destroyCalls.push(name); records.delete(name); manager.sessions.delete(name); return { ok: true }; },
     kill: async (name) => { killCalls.push(name); },
@@ -530,12 +531,15 @@ test('createSession: an assistant template makes room under its maxAwake first; 
   const h = makeDeps({ templates: { 'clodex-assistant': ASSISTANT_TPL } });
   const opts = captureOptions(h.deps);
   assert.strictEqual((await opts.createSession({ name: 'avh-1', template: 'clodex-assistant' })).ok, true);
-  assert.deepStrictEqual(h.roomCalls, [['clodex-assistant', 20]]);
+  assert.deepStrictEqual(h.roomCalls, [['room', 'clodex-assistant', 20, 'avh-1'], ['release', 'clodex-assistant', 'avh-1', 1]]);
   assert.strictEqual(h.spawnCalls.length, 1);
   const full = makeDeps({ templates: { 'clodex-assistant': ASSISTANT_TPL }, roomOut: { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000 } });
   assert.deepStrictEqual(await captureOptions(full.deps).createSession({ name: 'avh-2', template: 'clodex-assistant' }),
     { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000 });
   assert.deepStrictEqual(full.spawnCalls, []);
+  const bad = makeDeps({ templates: { 'clodex-assistant': ASSISTANT_TPL } });
+  assert.strictEqual((await captureOptions(bad.deps).createSession({ name: 'bad name', template: 'clodex-assistant' })).ok, false);
+  assert.deepStrictEqual([bad.roomCalls, bad.spawnCalls], [[], []], 'an invalid name evicts nobody');
   const plain = makeDeps({ templates: { worker: { name: 'worker', type: 'claude' } } });
   assert.strictEqual((await captureOptions(plain.deps).createSession({ name: 'w2', template: 'worker' })).ok, true);
   assert.deepStrictEqual(plain.roomCalls, [], 'a template without the class has no cap');
