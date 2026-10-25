@@ -572,7 +572,7 @@ test('both composers mount the paperclip and the web drop on terminalContainer a
   assert.match(stream, /attachPicker\(\{ doc: document, parent: wrapperEl, onFiles: \(files\) => attachFiles\(files\) \}\);/u);
   assert.match(stream, /wrapperEl\.appendChild\(attachButton\(document, \(\) => streamPicker\.open\(\)\)\);/u);
   assert.match(stream, /attachPickedFiles: attachFiles,/u);
-  assert.match(src, /ptyPicker = attachPicker\(\{ doc: document, parent: wrapperEl, onFiles: attachPtyFiles,/u);
+  assert.match(src, /ptyPicker = attachPicker\(\{ doc: document, parent: wrapperEl, onFiles: attachPtyFiles \}\);/u);
   assert.match(src, /wrapperEl\.appendChild\(attachButton\(document, \(\) => ptyPicker\.open\(\)\)\);/u);
   assert.doesNotMatch(src, /attachBtn\.hidden = /u, 'the pty paperclip is never hidden at build time, when the sidebar row does not exist yet');
   assert.doesNotMatch(src.slice(src.indexOf('function createTerminal('), src.indexOf("terminalContainer.addEventListener('drop'")), /\.seat-attach-btn|attachButton\([^)]*\)\.hidden/u);
