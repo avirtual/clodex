@@ -21,6 +21,20 @@ function proseOf(text) {
   return kept.join('\n').trim();
 }
 
+function splitTurnText(text) {
+  const lines = String(text || '').split('\n');
+  const kept = [];
+  const intents = [];
+  for (const seg of scanIntentLines(lines)) {
+    if (seg.kind === 'prose') kept.push(...lines.slice(seg.from, seg.to));
+    else if (seg.kind === 'intent') {
+      const { type, sub, cmd } = seg.intent;
+      intents.push({ type, ...(sub ? { sub } : {}), ...(cmd ? { cmd } : {}) });
+    }
+  }
+  return { text: kept.join('\n').trim(), intents };
+}
+
 function cutHead(text, maxBytes) {
   const buf = Buffer.from(text, 'utf8');
   if (buf.length <= maxBytes) return text;
@@ -73,4 +87,4 @@ function pickMaxAwakeVictim(rows, maxAwake) {
   return victim ? victim.name : null;
 }
 
-module.exports = { BRIEF_MAX_BYTES, BRIEF_TAIL, briefPathFor, composeBrief, idleDecision, pickMaxAwakeVictim };
+module.exports = { BRIEF_MAX_BYTES, BRIEF_TAIL, briefPathFor, composeBrief, idleDecision, pickMaxAwakeVictim, splitTurnText };

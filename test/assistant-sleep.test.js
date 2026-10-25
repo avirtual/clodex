@@ -3,7 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
-const { BRIEF_MAX_BYTES, BRIEF_TAIL, briefPathFor, composeBrief, idleDecision, pickMaxAwakeVictim } = require('../assistant-sleep');
+const { BRIEF_MAX_BYTES, BRIEF_TAIL, briefPathFor, composeBrief, idleDecision, pickMaxAwakeVictim, splitTurnText } = require('../assistant-sleep');
 
 const pairs = (n) => {
   const rows = [];
@@ -77,4 +77,9 @@ test('pickMaxAwakeVictim picks the idlest non-busy seat only at the cap', () => 
   assert.strictEqual(pickMaxAwakeVictim(rows, 3), 'b');
   assert.strictEqual(pickMaxAwakeVictim(rows, 4), null);
   assert.strictEqual(pickMaxAwakeVictim(rows.map((r) => ({ ...r, busy: true })), 3), null);
+});
+
+test('splitTurnText splits prose from intent heads and never keeps a body', () => {
+  assert.deepStrictEqual(splitTurnText('a\n[agent:exec avh-game] {"verb":"standings"}\nb'), { text: 'a\nb', intents: [{ type: 'exec', cmd: 'avh-game' }] });
+  assert.deepStrictEqual(splitTurnText(''), { text: '', intents: [] });
 });
