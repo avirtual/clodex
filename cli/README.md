@@ -157,8 +157,9 @@ and offers node entries:
   the wire is off in Preferences),
 - each peer in the GUI's peers list → an `ssh`/`url` context by label
   (disabled peers reported as skipped; a tokenless peer imports fine),
-- each managed sandbox box → a `url` context to its wire port + the box's
-  `auth.env` token (a box with no wire token is skipped with a reason).
+- each managed sandbox box → a `url` context to its PUBLISHED wire port (read
+  from the box's compose.yaml; the box config's `wirePort` is only the first
+  port tried) + the box's `auth.env` token (a box with no wire token is skipped with a reason).
 
 ```
 clodexctl create node --import [--data-dir DIR] [--dry-run] [--force]
@@ -166,7 +167,8 @@ clodexctl create node --import [--data-dir DIR] [--dry-run] [--force]
 
 `--data-dir` overrides userData discovery (else `CLODEX_DATA_DIR`, else the
 platform default for `Clodex`/`clodex`). Collisions **skip** unless `--force`;
-`current` is never touched; `--dry-run` writes nothing. Tokens flow file→file
+an entry whose url moved under the same token (a sandbox whose wire port
+moved since the last import) is refreshed without `--force`. `current` is never touched; `--dry-run` writes nothing. Tokens flow file→file
 and are never printed — report lines say `(token set)` / `(no token)`. Imported
 entries only ever carry `url`/`ssh` + token, never a tunnel argv.
 
