@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Dropping or pasting a file onto a seat attaches it in the browser; on the desktop a drop onto a terminal seat still types the path.
+- Stream seats keep the CLI's cumulative cost on their record.
 
 ## 5.142.0 — 2026-10-25
 

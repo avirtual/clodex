@@ -13,3 +13,7 @@ An unbracketed multi-line write is held for a review Enter (the composer strips 
 Evidence: ~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/paste-wrap-threshold/MEASURE.md.
 
 `SYSTEM_SENDERS` bodies skip the `> ` defuse here; the loop's notices defuse the hand- and reviewer-authored spans they embed before interpolation (team-tickets.js, `defuseSenderLines`). The match runs on the strip-reduced line so a character the inject strip deletes cannot hide the marker.
+
+## _foldSeatCost
+
+Fold before the `onSessionId` reset, or the old CLI session's cumulative `total_cost_usd` double-counts. Restart paths snapshot the record before `kill()`, so one fold window's tail can miss the re-seeded record.
