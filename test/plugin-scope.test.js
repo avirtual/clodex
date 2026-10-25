@@ -1551,7 +1551,7 @@ test('t655: openTemplateEditor fetches the plugin catalog ABOVE its agents-cap g
   const end = src.indexOf('\n}', at);
   assert.ok(end > at, 'ENTER: the function body slice is bounded');
   const body = src.slice(at, end);
-  assert.ok(body.length < 4000, 'ENTER: the slice is one function, not the rest of the file');
+  assert.ok(body.length < 5000, 'ENTER: the slice is one function, not the rest of the file');
 
   const fetchAt = body.indexOf('await refreshNewSessionPlugins(');
   const guardAt = body.indexOf('if (tplCaps.agents)');

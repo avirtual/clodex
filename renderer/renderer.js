@@ -3137,8 +3137,8 @@ function populateChecklistsFromCatalogs(cat) {
   resetNewSessionSkillCollector(modeSkillDenySet());
   renderSkillChecklist(inputSkillsList, [], modeSkillDenySet());
   setClaudeToolsCache(cat.claudeTools || []);
-  formRendered.disabledTools = renderToolChecklist(inputToolsList, modeToolDenySet());
-  formRendered.denyBuiltins = renderBuiltinChecklist(inputBuiltinsList, modeBuiltinDenySet());
+  renderToolChecklist(inputToolsList, modeToolDenySet());
+  renderBuiltinChecklist(inputBuiltinsList, modeBuiltinDenySet());
   refreshNewSessionExecCommands();  // exec grants never cross, but the box has its own
   refreshNewSessionPlugins().then(() => refreshNewSessionIntents()); // LOCAL engine, box-independent
   setPromptLibCache(libraryPromptCache(cat.prompts));
@@ -3322,7 +3322,7 @@ function applyModeFields(mode, { catalogsFresh = false } = {}) {
     if (caps.injectSkills) refreshNewSessionInjectSkills();
     if (caps.plugins) refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
   }
-  if (caps.agents) formRendered.denyBuiltins = renderBuiltinChecklist(inputBuiltinsList, optimized ? new Set(getDefaultBuiltinDenyCache()) : new Set());
+  if (caps.agents) renderBuiltinChecklist(inputBuiltinsList, optimized ? new Set(getDefaultBuiltinDenyCache()) : new Set());
   if (caps.strip && inputStripLevel) inputStripLevel.value = '2';
   if (caps.autoCompact && inputAutoCompact) inputAutoCompact.checked = true;
   if (caps.noWire && inputNoWire) inputNoWire.checked = false;
@@ -3733,8 +3733,8 @@ function populateHostCatalogs(settings, agentLib) {
   setDefaultToolDenyCache(settings?.defaultToolDeny || []);
   setDefaultSkillDenyCache(settings?.defaultSkillDeny || []);
   setDefaultBuiltinDenyCache(settings?.defaultBuiltinDeny || []);
-  formRendered.denyBuiltins = renderBuiltinChecklist(inputBuiltinsList, modeBuiltinDenySet());
-  formRendered.disabledTools = renderToolChecklist(inputToolsList, modeToolDenySet());
+  renderBuiltinChecklist(inputBuiltinsList, modeBuiltinDenySet());
+  renderToolChecklist(inputToolsList, modeToolDenySet());
   refreshNewSessionSkills(modeSkillDenySet());
   refreshNewSessionTools(modeToolDenySet());
   setProxyControls(inputProxyMode, inputProxyUrl, null, settings?.lastCustomProxyUrl || settings?.proxyUrl);
