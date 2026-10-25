@@ -37,6 +37,7 @@ const MISFIRE_KINDS = Object.freeze(['unclosed-body', 'empty-body', 'disabled', 
 const MISFIRE_KEEP = 5000;
 const MISFIRE_PRUNE_AT = 6000;
 const MISFIRE_DETAIL_MAX = 200;
+const SESSION_IDS_CAP = 20;
 const PROMPT_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/; // mirrors session/agent name rule
 
 const DEFAULT_SANDBOX_CONFIG = {
@@ -686,9 +687,17 @@ function initStores(userDataPath, {
         entry.sessionId = sessionId;
         const hist = (Array.isArray(entry.sessionIds) ? entry.sessionIds : []).filter((id) => id !== sessionId);
         hist.push(sessionId);
+        if (entry.class === 'assistant' && hist.length > SESSION_IDS_CAP) hist.splice(0, hist.length - SESSION_IDS_CAP);
         entry.sessionIds = hist;
         this._save(all, name);
       }
+    },
+    clearSessionId(name) {
+      const all = this._load();
+      const entry = all.find(s => s.name === name);
+      if (!entry || entry.sessionId === null) return;
+      entry.sessionId = null;
+      this._save(all, name);
     },
     setHoldUntil(name, holdUntil) {
       const all = this._load();
