@@ -34713,6 +34713,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const list = Array.from(items || []);
         if (list.some((it) => it && it.kind === "string" && it.type === "text/plain")) return "text";
         if (list.some((it) => it && it.kind === "file" && /^image\//u.test(String(it.type)))) return "image";
+        if (list.some((it) => it && it.kind === "file")) return "file";
         return "none";
       }
       function imageChip(n) {
@@ -34768,14 +34769,20 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         attached(added.map((a, i) => ({ ...a, path: r.paths && r.paths[i] || null, pending: false })));
       }
-      function ptyImagePasteHandler({ isWeb, readImages, upload, toast, nextImage, append, attached, drop, writePty }) {
+      function ptyImagePasteHandler({ isWeb, readImages, upload, toast, nextImage, append, attached, drop, writePty, pickFiles }) {
         return async (e) => {
           const items = e.clipboardData && e.clipboardData.items;
           if (pasteStripped(items, isWeb())) {
             toast(STRIPPED_PASTE_NOTICE);
             return;
           }
-          if (pasteKind(items) !== "image") return;
+          const kind = pasteKind(items);
+          if (kind === "file") {
+            e.preventDefault();
+            await pickFiles(Array.from(items).filter((it) => it.kind === "file").map((it) => it.getAsFile()).filter(Boolean));
+            return;
+          }
+          if (kind !== "image") return;
           e.preventDefault();
           const web = isWeb();
           let images;
@@ -34944,12 +34951,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var { fmtBytes } = require_format();
       var SEAT_FILE_MAX = 5;
       var SEAT_FILE_MAX_BYTES = 10 * 1024 * 1024;
-      function imageFilesOf(fileList, types = SEAT_IMAGE_TYPES) {
-        const files = Array.from(fileList || []).filter(Boolean);
-        const images = files.filter((f) => types.has(f.type));
-        const rejected = files.filter((f) => !types.has(f.type));
-        return { images, rejected };
-      }
       function splitAttachable(fileList) {
         const images = [];
         const files = [];
@@ -35008,7 +35009,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         btn.addEventListener("click", onClick);
         return btn;
       }
-      module.exports = { SEAT_FILE_MAX, SEAT_FILE_MAX_BYTES, imageFilesOf, splitAttachable, rejectedNotice, attachPicker, attachButton };
+      module.exports = { SEAT_FILE_MAX, SEAT_FILE_MAX_BYTES, splitAttachable, rejectedNotice, attachPicker, attachButton };
     }
   });
 
@@ -52018,7 +52019,7 @@ ${detail}` });
       var { attachTriggerSubmit, createPtyVoiceDraft, VOICE_QUIET_MS, VOICE_RELEASE_MS } = require_composer_voice();
       var { ptyComposerWrites, expandAttachChips, ptyImagePasteHandler, attachImages, attachFiles, pasteStripped, STRIPPED_PASTE_NOTICE, removeChip, chippedAttachments, fileTile, renderAttachStrip } = require_pty_composer();
       var { readImageFile, readAttachFile, clipboardImages } = require_clipboard_images();
-      var { SEAT_FILE_MAX, imageFilesOf, splitAttachable, rejectedNotice, attachPicker, attachButton } = require_attach_files();
+      var { SEAT_FILE_MAX, splitAttachable, rejectedNotice, attachPicker, attachButton } = require_attach_files();
       var { SEAT_IMAGE_MAX } = require_seat_images();
       var { createMenuMirror } = require_menu_mirror();
       var { VOICE_ENGINE_NAME } = require_voice_engine();
@@ -53908,17 +53909,9 @@ ${detail}` });
             showToast(STRIPPED_PASTE_NOTICE, { kind: "error", name });
             return;
           }
-          const files = items.filter((it) => it.kind === "file" && /^image\//.test(it.type)).map((it) => it.getAsFile()).filter(Boolean);
+          const files = items.filter((it) => it.kind === "file").map((it) => it.getAsFile()).filter(Boolean);
           if (!files.length) return;
           e.preventDefault();
-          attachStreamFiles(files);
-        });
-        wrapperEl.addEventListener("drop", (e) => {
-          const files = Array.from(e.dataTransfer && e.dataTransfer.files || []);
-          if (!files.length || !files.every((f) => /^image\//.test(f.type))) return;
-          if (!imageFilesOf(files).images.length) return;
-          e.preventDefault();
-          e.stopPropagation();
           attachStreamFiles(files);
         });
         let rev = -1;
@@ -53997,11 +53990,10 @@ ${detail}` });
             if (!composer.value) composer.value = text;
             fitComposer();
             if (!pending.length && images.length) pending = images;
-            if (!pendingFiles.length && files.length) pendingFiles = files;
+            if (!pendingFiles.length && files.length) pendingFiles = files.filter((t) => t.path);
             renderAttachments();
           };
-          const body = text + paths.map((p) => `
-File: ${p}`).join("");
+          const body = [text, ...paths.map((p) => `File: ${p}`)].filter((s) => s.trim()).join("\n");
           Promise.resolve(window.api.seatSend(name, body, images)).then((res) => {
             if (res && res.ok === false) {
               showToast(`Send failed: ${res.error || "unknown error"}`, { kind: "error", name });
@@ -54529,7 +54521,8 @@ File: ${p}`).join("");
             ...ptyImageSink,
             isWeb: () => Boolean(window.__CLODEX_WEB__ || !window.require),
             readImages: (items) => clipboardImages(items, FileReader),
-            writePty
+            writePty,
+            pickFiles: attachPtyFiles
           }));
           composerEl.classList.add("seat-composer-attach");
           ptyPicker = attachPicker({ doc: document, parent: wrapperEl, onFiles: attachPtyFiles });
@@ -54591,14 +54584,17 @@ File: ${p}`).join("");
         if (!files.length || !activeSession) return;
         const entry = sessions.get(activeSession);
         if (window.__CLODEX_WEB__ || !window.require) {
-          const { images, rejected } = imageFilesOf(files);
           const sink = entry && entry.attachPickedFiles && (entry.stream || ptyComposerShown(entry)) ? entry.attachPickedFiles : null;
-          if (sink && images.length) sink(images);
-          if (!sink && images.length && entry && entry.attachPickedFiles) showToast("Switch to the composer view to attach images.", { kind: "peer-ui" });
-          else if (!sink || rejected.length) showToast("Dropping files needs the desktop app \u2014 browsers don\u2019t expose file paths.", { kind: "peer-ui" });
+          if (sink) sink(files);
+          else if (entry && entry.attachPickedFiles) showToast("Switch to the composer view to attach files.", { kind: "peer-ui" });
+          else showToast("Dropping files needs the desktop app \u2014 browsers don\u2019t expose file paths.", { kind: "peer-ui" });
           return;
         }
         if (!entry) return;
+        if (entry.stream) {
+          entry.attachPickedFiles(files);
+          return;
+        }
         if (entry.peer) {
           showToast(`"${activeSession}" runs on a peer \u2014 its filesystem doesn\u2019t have this file.`, { kind: "peer-ui" });
           return;

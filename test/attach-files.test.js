@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { imageFilesOf, splitAttachable, rejectedNotice, attachPicker, attachButton, SEAT_FILE_MAX, SEAT_FILE_MAX_BYTES } = require('../renderer/lib/attach-files');
+const { splitAttachable, rejectedNotice, attachPicker, attachButton, SEAT_FILE_MAX, SEAT_FILE_MAX_BYTES } = require('../renderer/lib/attach-files');
 const seatFiles = require('../seat-files');
 const { SEAT_IMAGE_TYPES } = require('../seat-images');
 
@@ -31,14 +31,6 @@ test('the seat image types are png, jpeg, gif and webp, and the picker sets no a
   assert.deepStrictEqual([...SEAT_IMAGE_TYPES], ['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
   const picker = attachPicker({ doc: fakeDoc(), parent: fakeParent(), onFiles: () => {} });
   assert.strictEqual(picker.input.accept, undefined);
-});
-
-test('imageFilesOf splits a FileList into seat images and the rest', () => {
-  const png = { name: 'a.png', type: 'image/png' };
-  const svg = { name: 'b.svg', type: 'image/svg+xml' };
-  const pdf = { name: 'c.pdf', type: 'application/pdf' };
-  assert.deepStrictEqual(imageFilesOf([png, svg, pdf]), { images: [png], rejected: [svg, pdf] });
-  assert.deepStrictEqual(imageFilesOf(null), { images: [], rejected: [] });
 });
 
 test('ENTER: attachPicker mounts one hidden input, opens it on demand, and hands over every pick', () => {

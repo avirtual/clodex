@@ -70,7 +70,7 @@ const { createVoiceMirror, engineObserved } = require('./voice-mirror');
 const { attachTriggerSubmit, createPtyVoiceDraft, VOICE_QUIET_MS, VOICE_RELEASE_MS } = require('./lib/composer-voice');
 const { ptyComposerWrites, expandAttachChips, ptyImagePasteHandler, attachImages, attachFiles, pasteStripped, STRIPPED_PASTE_NOTICE, removeChip, chippedAttachments, fileTile, renderAttachStrip } = require('./lib/pty-composer');
 const { readImageFile, readAttachFile, clipboardImages } = require('./lib/clipboard-images');
-const { SEAT_FILE_MAX, imageFilesOf, splitAttachable, rejectedNotice, attachPicker, attachButton } = require('./lib/attach-files');
+const { SEAT_FILE_MAX, splitAttachable, rejectedNotice, attachPicker, attachButton } = require('./lib/attach-files');
 const { SEAT_IMAGE_MAX } = require('../seat-images');
 const { createMenuMirror } = require('./lib/menu-mirror');
 const { VOICE_ENGINE_NAME } = require('../voice-engine');
@@ -1970,17 +1970,9 @@ function createStreamSeatPane(name, wrapperEl, seat) {
       showToast(STRIPPED_PASTE_NOTICE, { kind: 'error', name });
       return;
     }
-    const files = items.filter((it) => it.kind === 'file' && /^image\//.test(it.type)).map((it) => it.getAsFile()).filter(Boolean);
+    const files = items.filter((it) => it.kind === 'file').map((it) => it.getAsFile()).filter(Boolean);
     if (!files.length) return;
     e.preventDefault();
-    attachStreamFiles(files);
-  });
-  wrapperEl.addEventListener('drop', (e) => {
-    const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
-    if (!files.length || !files.every((f) => /^image\//.test(f.type))) return;
-    if (!imageFilesOf(files).images.length) return;
-    e.preventDefault();
-    e.stopPropagation();
     attachStreamFiles(files);
   });
   let rev = -1;
@@ -2050,10 +2042,10 @@ function createStreamSeatPane(name, wrapperEl, seat) {
       if (!composer.value) composer.value = text;
       fitComposer();
       if (!pending.length && images.length) pending = images;
-      if (!pendingFiles.length && files.length) pendingFiles = files;
+      if (!pendingFiles.length && files.length) pendingFiles = files.filter((t) => t.path);
       renderAttachments();
     };
-    const body = text + paths.map((p) => `\nFile: ${p}`).join('');
+    const body = [text, ...paths.map((p) => `File: ${p}`)].filter((s) => s.trim()).join('\n');
     Promise.resolve(window.api.seatSend(name, body, images)).then((res) => {
       if (res && res.ok === false) {
         showToast(`Send failed: ${res.error || 'unknown error'}`, { kind: 'error', name });
@@ -2599,6 +2591,7 @@ function createTerminal(name, peer = null) {
       isWeb: () => Boolean(window.__CLODEX_WEB__ || !window.require),
       readImages: (items) => clipboardImages(items, FileReader),
       writePty,
+      pickFiles: attachPtyFiles,
     }));
     composerEl.classList.add('seat-composer-attach');
     ptyPicker = attachPicker({ doc: document, parent: wrapperEl, onFiles: attachPtyFiles });
@@ -2651,14 +2644,14 @@ terminalContainer.addEventListener('drop', (e) => {
   if (!files.length || !activeSession) return;
   const entry = sessions.get(activeSession);
   if (window.__CLODEX_WEB__ || !window.require) {
-    const { images, rejected } = imageFilesOf(files);
     const sink = entry && entry.attachPickedFiles && (entry.stream || ptyComposerShown(entry)) ? entry.attachPickedFiles : null;
-    if (sink && images.length) sink(images);
-    if (!sink && images.length && entry && entry.attachPickedFiles) showToast('Switch to the composer view to attach images.', { kind: 'peer-ui' });
-    else if (!sink || rejected.length) showToast('Dropping files needs the desktop app — browsers don’t expose file paths.', { kind: 'peer-ui' });
+    if (sink) sink(files);
+    else if (entry && entry.attachPickedFiles) showToast('Switch to the composer view to attach files.', { kind: 'peer-ui' });
+    else showToast('Dropping files needs the desktop app — browsers don’t expose file paths.', { kind: 'peer-ui' });
     return;
   }
   if (!entry) return;
+  if (entry.stream) { entry.attachPickedFiles(files); return; }
   if (entry.peer) {
     showToast(`"${activeSession}" runs on a peer — its filesystem doesn’t have this file.`, { kind: 'peer-ui' });
     return;

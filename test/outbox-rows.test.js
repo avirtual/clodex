@@ -23,16 +23,23 @@ test('outboxRowOf hides File: lines from the row text and counts them', () => {
     { origin: 'operator', badge: null, text: '', images: 0, files: 1 });
 });
 
-test('renderOutbox in renderer.js tags every outbox row with a literal queued state', () => {
+const { textOf } = require('./lib/fake-dom');
+
+function renderOutboxOf() {
   const fs = require('node:fs');
   const path = require('node:path');
-  const { fakeDocument, textOf } = require('./lib/fake-dom');
+  const { fakeDocument } = require('./lib/fake-dom');
   const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
   const body = src.match(/const renderOutbox = (\(items\) => \{[\s\S]*?\n  \});\n/);
   assert.ok(body, 'ENTER: renderOutbox is still found by this anchor');
   const document = fakeDocument();
   const outboxEl = document.createElement('div');
   const renderOutbox = new Function('document', 'outboxEl', 'outboxRowOf', `return ${body[1]};`)(document, outboxEl, outboxRowOf);
+  return { renderOutbox, outboxEl };
+}
+
+test('renderOutbox in renderer.js tags every outbox row with a literal queued state', () => {
+  const { renderOutbox, outboxEl } = renderOutboxOf();
   renderOutbox([{ text: 'typed', origin: 'operator', images: 0 }, { text: '[agent:from lead] hi', origin: 'system', images: 0 }]);
   assert.strictEqual(outboxEl.childNodes.length, 2);
   for (const row of outboxEl.childNodes) {
@@ -43,15 +50,7 @@ test('renderOutbox in renderer.js tags every outbox row with a literal queued st
 });
 
 test('renderOutbox tags a row with its image and file counts', () => {
-  const fs = require('node:fs');
-  const path = require('node:path');
-  const { fakeDocument, textOf } = require('./lib/fake-dom');
-  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
-  const body = src.match(/const renderOutbox = (\(items\) => \{[\s\S]*?\n  \});\n/);
-  assert.ok(body, 'ENTER: renderOutbox is still found by this anchor');
-  const document = fakeDocument();
-  const outboxEl = document.createElement('div');
-  const renderOutbox = new Function('document', 'outboxEl', 'outboxRowOf', `return ${body[1]};`)(document, outboxEl, outboxRowOf);
+  const { renderOutbox, outboxEl } = renderOutboxOf();
   renderOutbox([{ text: 'typed\nFile: /m/st/a.pdf\nFile: /m/st/b.zip', origin: 'operator', images: 1 }]);
   const text = outboxEl.childNodes[0].childNodes.find((n) => n.className === 'seat-outbox-text');
   assert.strictEqual(textOf(text), 'typed [1 image, 2 files]');
