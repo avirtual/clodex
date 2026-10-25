@@ -22,7 +22,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const sessionManagerModule = require('../session-manager');
-const { enqueueNotice, versionNoticeFor, clearNotices } = require('../notice-queue');
+const { enqueueNotice, versionNoticeFor, releaseReviewNoticeFor, clearNotices } = require('../notice-queue');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // Wrap, don't replace: capture the deps and delegate, so the engine is built
@@ -59,12 +59,14 @@ test('the engine hands session-manager a live notice-queue seam and its own vers
     {
       enqueueNotice: deps.enqueueNotice,
       versionNoticeFor: deps.versionNoticeFor,
+      releaseReviewNoticeFor: deps.releaseReviewNoticeFor,
       clearNotices: deps.clearNotices,
       appVersionType: typeof deps.appVersion,
     },
     {
       enqueueNotice,
       versionNoticeFor,
+      releaseReviewNoticeFor,
       clearNotices,
       appVersionType: 'string',
     },
