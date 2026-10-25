@@ -35,6 +35,8 @@ record changes when a definition changes and stays put when only a secret rotate
 appears in tools/list and still costs its tokens. Stripping it from the roster is a wirescope concern
 (`STRIP_MCP_SERVERS` has no per-tool form) and out of scope. Codex maps the list to `disabled_tools` (`codexMcpArgs`); Muse gets the same `denyRules` from `claudeMcpServers` but
 nothing enforces them yet.
+A seat whose own extra args carry `--settings` keeps those rules out: the servers load, the spawn warns, and the
+record carries `denyUnenforced: true`.
 
 Measured on claude 2.1.309, 2026-10-24: the hosted Atlassian server (`https://mcp.atlassian.com/v2/mcp`) is
 OAuth-only. A library entry with `Authorization: Bearer ${TOKEN}` gets 401 and disables the CLI's own OAuth
@@ -70,8 +72,9 @@ added to the credential deny list; only the Claude arm feeds `mcpSecretNames`.
 
 ## claudeMcpServers
 
-Muse (1.4.13) reads servers from `$XDG_CONFIG_HOME/muse/settings.json`: `{"schema_version":1,"mcpServers":{…}}`. The seat's
-`servers` REPLACE that key in the per-seat overlay (`bootstrapSeatConfig` `settingsReplace`), never deep-merge, with
+On a muse seat, `claudeMcpServers(…, cli:'muse')` output replaces the `mcpServers` key of
+`$XDG_CONFIG_HOME/muse/settings.json` (`{"schema_version":1,"mcpServers":{…}}`, Muse 1.4.13) in the per-seat overlay
+(`bootstrapSeatConfig` `settingsReplace`), never deep-merge, with
 secrets resolved into the 0600 file; an `sse` entry is omitted with a warning. OAuth (`muse mcp login <server>`,
 streamable-HTTP only): unverified — login inside the seat. No MCP credential file under `~/.config/muse` or
 `~/.local/share/muse`; the binary names only settings.json and the Keychain ("No OAuth credentials are stored for MCP
