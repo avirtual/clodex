@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.143.0 — 2026-10-25
+
 - Dropping or pasting a file onto a seat attaches it in the browser; on the desktop a drop onto a terminal seat still types the path.
 - Stream seats keep the CLI's cumulative cost on their record.
 - `clodexctl create node --import` registers a sandbox at the wire port Docker actually published, and refreshes a box whose port moved; before, three boxes configured on the same port all imported as the first one.
