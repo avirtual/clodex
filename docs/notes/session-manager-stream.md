@@ -22,3 +22,7 @@ Fold before the `onSessionId` reset, or the old CLI session's unfolded tail is l
 ## _onStreamPermission
 
 An assistant seat has no operator watching its pane, so a permission request is denied on the wire at once and raises no attention, broadcast or OS notification; a codec that cannot encode the deny falls through to the held prompt.
+
+## _gatedDeliver
+
+The assistant-class guard runs before the live-session lookup, so mail to a sleeping assistant bounces with the class error instead of `no such agent`.

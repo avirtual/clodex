@@ -118,7 +118,3 @@ the engine would reach them.
 ## _handleShoutIntent
 
 The DEPLOY OK self-archive sends `session:context-action` `retired` BEFORE `archive()`: archive kills the pty, and the renderer rebuilds a row as archived only for a name already stamped into `archivingSessions`. Sent late or not at all, the row is REMOVED. Precedent: `team-tickets.js` retire.
-
-## _gatedDeliver
-
-The assistant-class guard runs before the live-session lookup, so mail to a sleeping assistant bounces with the class error instead of `no such agent`.
