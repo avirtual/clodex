@@ -167,8 +167,8 @@ clodexctl create node --import [--data-dir DIR] [--dry-run] [--force]
 
 `--data-dir` overrides userData discovery (else `CLODEX_DATA_DIR`, else the
 platform default for `Clodex`/`clodex`). Collisions **skip** unless `--force`;
-a sandbox whose wire port moved since the last import (same token, new url) is
-refreshed without `--force`. `current` is never touched; `--dry-run` writes nothing. Tokens flow file→file
+an entry whose url moved under the same token (a sandbox whose wire port
+moved since the last import) is refreshed without `--force`. `current` is never touched; `--dry-run` writes nothing. Tokens flow file→file
 and are never printed — report lines say `(token set)` / `(no token)`. Imported
 entries only ever carry `url`/`ssh` + token, never a tunnel argv.
 

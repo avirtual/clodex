@@ -1085,7 +1085,7 @@ function nodeImport({ store, saveStore, printer, flags, env }) {
   const { store: nextStore, results } = imp.applyImport(store, candidates, { force: !!flags.force });
   const dryRun = !!flags['dry-run'];
   if (!dryRun) {
-    if (results.some((r) => r.result === 'added' || r.result === 'overwritten')) saveStore(nextStore);
+    if (results.some(imp.wrote)) saveStore(nextStore);
   }
   if (flags.json) {
     printer.json({

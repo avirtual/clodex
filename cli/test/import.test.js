@@ -412,6 +412,22 @@ test('create node --import: collision skipped, --force overwrites (e2e)', async 
   assert.strictEqual(saved.contexts.local.token, 't2');
 });
 
+test('create node --import: a sandbox whose published wire port moved is refreshed and saved without --force (e2e)', async () => {
+  const dir = fixture({
+    ui: { boxes: [{ id: 'b', label: 'b', config: { wirePort: 7820 } }] },
+    sandboxTokens: { 'sandbox-b': 'TB' },
+    composeWire: { 'sandbox-b': 7820 },
+  });
+  const cf = tmpCtxFile();
+  await cli(['create', 'node', '--import', '--data-dir', dir], cf);
+  assert.strictEqual(JSON.parse(fs.readFileSync(cf, 'utf8')).contexts.b.url, 'http://127.0.0.1:7820');
+  const compose = path.join(dir, 'sandbox-b', 'compose.yaml');
+  fs.writeFileSync(compose, fs.readFileSync(compose, 'utf8').replace('"127.0.0.1:7820:7900"', '"127.0.0.1:7821:7900"'));
+  const r = await cli(['create', 'node', '--import', '--data-dir', dir], cf);
+  assert.match(r.stdout, /refreshed\s+b/);
+  assert.strictEqual(JSON.parse(fs.readFileSync(cf, 'utf8')).contexts.b.url, 'http://127.0.0.1:7821');
+});
+
 test('create node --import: no userData found → exit 5', async () => {
   const r = await cli(['create', 'node', '--import', '--data-dir', '/definitely/not/here'], tmpCtxFile());
   assert.strictEqual(r.code, 5);

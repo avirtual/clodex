@@ -210,6 +210,9 @@ function collectCandidates(dataDir, { env = process.env } = {}) {
   return out;
 }
 
+const WROTE = new Set(['added', 'overwritten', 'refreshed']);
+const wrote = (r) => WROTE.has(r.result);
+
 function publishedWirePort(dataDir, subdir) {
   let text;
   try { text = fs.readFileSync(path.join(dataDir, subdir, 'compose.yaml'), 'utf8'); } catch { return null; }
@@ -226,8 +229,7 @@ function urlDriftOnly(existing, entry) {
 }
 
 // Apply collected candidates against the existing store. Mutates a COPY of the
-// store and returns { store, results }. `current` is
-// never touched. Skipped candidates (disabled/tokenless) pass through as-is.
+// store and returns { store, results }. `current` is never touched. Skipped candidates (disabled/tokenless) pass through as-is.
 function applyImport(store, candidates, { force = false } = {}) {
   const onEntry = store.contexts || {};
   const next = { current: store.current || null, contexts: { ...onEntry } };
@@ -267,7 +269,7 @@ function renderReport(results, meta) {
     const tail = r.reason ? ` — ${r.reason}` : '';
     lines.push(`  ${r.result.padEnd(11)} ${r.name}  (${tok})${tail}`);
   }
-  const added = results.filter((r) => r.result === 'added' || r.result === 'overwritten' || r.result === 'refreshed').length;
+  const added = results.filter(wrote).length;
   lines.push(`${added} context(s) ${meta.dryRun ? 'would be written' : 'written'}, ${results.length - added} skipped`);
   return lines.join('\n');
 }
@@ -275,5 +277,5 @@ function renderReport(results, meta) {
 module.exports = {
   DEFAULT_REMOTE_PORT, DEFAULT_SANDBOX_WIRE_PORT, SANDBOX_TOKEN_KEY,
   parseEnvFile, publishedWirePort, platformDataDirs, resolveDataDir, localEngine, collectCandidates,
-  applyImport, renderReport, safeTransport,
+  applyImport, renderReport, safeTransport, wrote,
 };
