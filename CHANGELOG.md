@@ -8,11 +8,13 @@ Keep `Unreleased` current as work lands. `scripts/release.sh` publishes it
 verbatim as the release notes, then stamps it with the version and date and
 opens a fresh empty one — so anything missing from it is missing from the
 release. Text after `## Unreleased —` becomes the release subtitle. An empty or
+
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
-- Assistant-class seats auto-deny permission prompts, are hidden from `[agent:who]` and refuse seat-to-seat dms; the stream cost fold is Claude-only; a ticket with no task dir writes COST.json under the project's tasks dir (all shipped in 5.143.0, unlisted there).
 
 ## Unreleased
+- Assistant-class seats auto-deny permission prompts, are hidden from `[agent:who]` and refuse seat-to-seat dms; the stream cost fold is Claude-only; a ticket with no task dir writes COST.json under the project's tasks dir (all shipped in 5.143.0, unlisted there).
+- Phone-access API also gained `GET /api/sessions?state=asleep|all`, a `turn` SSE event, single-flight wake, the `assistant` hello cap, `RESOURCES_VERSION` 3 and 403/503 codes on create (shipped in 5.144.0, unlisted there).
 
 ## 5.144.0 — 2026-10-25
 - Phone-access API: create from a template, sleep and wake, a dm that waits for the reply, memory export.
