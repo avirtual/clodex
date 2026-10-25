@@ -16,7 +16,7 @@ const {
 } = require('./team-prompt-dir');
 const { appendRailPrompts } = require('./prompt-rails');
 const { validateExecDef } = require('./exec-schema');
-const { discoverMcpSources, normaliseDiscovered, resolveMcpEntry, secretRefs, digestShape, mcpDigest, codexExpressible } = require('./mcp-plan');
+const { discoverMcpSources, normaliseDiscovered, resolveMcpEntry, secretRefs, digestShape, mcpDigest, codexExpressible, museExpressible } = require('./mcp-plan');
 const { validateSeatImages } = require('./seat-images');
 const { BOX_ID_RE, runningInSandboxBox } = require('./sandbox');
 const { SETUP_CHOICES } = require('./stores');
@@ -782,7 +782,7 @@ function registerIpcHandlers(deps) {
       const e = lib.get(n);
       return !!e && !(Array.isArray(e.platforms) && !e.platforms.includes(entry.type))
         && (entry.type !== 'codex' || codexExpressible(e))
-        && (entry.type !== 'muse' || e.type !== 'sse');
+        && (entry.type !== 'muse' || museExpressible(e));
     });
     let stale = ['claude', 'codex', 'muse'].includes(entry.type) && entry.mcpUnmanaged !== true
       && JSON.stringify([...loadable].sort()) !== JSON.stringify([...appliedNames].sort());

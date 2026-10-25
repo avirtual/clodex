@@ -130,7 +130,7 @@ const voiceEngineSpec = require('./voice-engine');
 const { CTRLU_SETTLE_MS } = require('./inject-queue');
 const { VOICE_MODES, voiceModeOf } = require('./voice-settings');
 const { fmtAge } = require('./memory-store');
-const { mcpArgvPlan, claudeMcpServers, codexMcpArgs, secretRefs, discoverMcpSources } = require('./mcp-plan');
+const { mcpArgvPlan, claudeMcpServers, codexMcpArgs, museExpressible, secretRefs, discoverMcpSources } = require('./mcp-plan');
 const MCP_AMBIENT_ENV = new Set(['HOME', 'PATH', 'USER', 'SHELL', 'TMPDIR', 'LOGNAME', 'PWD']);
 const { pasteModeSignal, PROXY_AGENT_PREFIX, PASTE_START, PASTE_END, stampServedAge, fmtQuotaReset } = require('./proxy-util');
 const QUOTA_WINDOW_LONG = { '5h': '5-hour window', '7d': 'weekly window (all models)', '7d_oi': 'weekly window (Fable)', overage: 'overage window' };
@@ -1557,10 +1557,14 @@ function createSessionManager(deps) {
         const profileMerge = adapterFor(type).readOnlyCap?.settings || null;
         if (type === 'muse') {
           const museLib = this._mcpLibraryRows();
-          const sseNames = new Set(museLib.filter((r) => r.entry && r.entry.type === 'sse').map((r) => r.name));
-          const picked = Array.isArray(mcpServers) ? mcpServers : [];
-          for (const n of picked) if (sseNames.has(n)) museSseWarnings.push(`MCP ${n}: not available on muse (sse)`);
-          museSel = claudeMcpServers({ selected: picked.filter((n) => !sseNames.has(n)), library: museLib, env: mergedEnv, cli: 'muse' });
+          const museEntries = new Map(museLib.map((r) => [r.name, r.entry]));
+          const picked = [...new Set((Array.isArray(mcpServers) ? mcpServers : []).filter((n) => typeof n === 'string'))];
+          const unexpressible = new Set(picked.filter((n) => {
+            const e = museEntries.get(n);
+            return !!e && (!Array.isArray(e.platforms) || e.platforms.includes('muse')) && !museExpressible(e);
+          }));
+          for (const n of unexpressible) museSseWarnings.push(`MCP ${n}: not available on muse (sse)`);
+          museSel = claudeMcpServers({ selected: picked.filter((n) => !unexpressible.has(n)), library: museLib, env: mergedEnv, cli: 'muse' });
         }
         bootstrapSeatConfig({ fs, path }, {
           source: sourceConfig,

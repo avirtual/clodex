@@ -224,6 +224,14 @@ function codexExpressible(entry) {
   return isObj(entry) && codexBlocker(entry) === null;
 }
 
+function museBlocker(entry) {
+  return entryType(entry) === 'sse' ? { sse: true } : null;
+}
+
+function museExpressible(entry) {
+  return isObj(entry) && museBlocker(entry) === null;
+}
+
 function codexServerPairs(n, entry, resolved, env) {
   const blocker = codexBlocker(entry);
   if (blocker && blocker.sse) return { omit: `MCP ${n}: not available on codex (sse)` };
@@ -400,5 +408,5 @@ function normaliseDiscovered(entry) {
 module.exports = {
   MCP_NAME_RE, RESERVED_MCP_NAMES, MCP_TYPES, MCP_PLATFORMS, MCP_TOOL_RE,
   mcpNameError, validateMcpEntry, secretRefs, resolveMcpEntry, cliShape, digestShape, mcpDigest,
-  claudeMcpServers, tomlString, codexMcpArgs, codexExpressible, mcpArgvPlan, mcpServerOf, mcpLeaks, discoverMcpSources, normaliseDiscovered,
+  claudeMcpServers, tomlString, codexMcpArgs, codexExpressible, museExpressible, mcpArgvPlan, mcpServerOf, mcpLeaks, discoverMcpSources, normaliseDiscovered,
 };
