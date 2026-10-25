@@ -794,7 +794,7 @@ const { parseRemindSpec } = require('./remind-schedule');
 const { createRemindScheduler, reminderText, reminderLibraryKinds } = require('./remind-scheduler');
 const { mergeClaudeSystemPrompt, mergeCodexInstructions, mergeInstructionBodies, parseCtxFile } = require('./argv-merge');
 const { renderClaudeStatusScript, codexStatusLineArg, normalizeProxyBase, resolveProxyBase } = require('./statusline');
-const { jsonlToMarkdown, cachedMessages, sliceSince, extractText } = require('./transcript');
+const { jsonlToMarkdown, cachedMessages, sliceSince, jsonlToMessages, extractText } = require('./transcript');
 const { initStores } = require('./stores');
 const { createAccounts, sweepAccountMove } = require('./accounts');
 const { restoreSessionsForWorkspace: restoreSessionsCore } = require('./session-restore');
@@ -1829,7 +1829,7 @@ const { readRemoteEnvToken, writeRemoteEnvToken, hasRemoteEnvToken, resolveRemot
 const { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer } = createRemoteWiring({
   path, fs, os, log,
   DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, REGISTRY_DIR, MSG_DIR, OUTBOX_DIR, SELF_LABEL,
-  parseCtxFile, cachedMessages, sliceSince, ensureDir, homeRelativize,
+  parseCtxFile, cachedMessages, sliceSince, jsonlToMessages, ensureDir, homeRelativize,
   claimOutbox, listOutboxOrigins,
   manager, proxyPoller, loadManifest, listTeams, gitWorktree,
   getPeerManager: () => peerManager,

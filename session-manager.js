@@ -2883,14 +2883,14 @@ function createSessionManager(deps) {
       const idle = !s.streamBusy && !held;
       if (idle && !s.outbox.length && item.wire) {
         this._streamDeliver(s, { text: '', images: [], wire: item.wire });
-        this._streamSent([item]);
+        this._streamSent(s, [item]);
         return 0;
       }
       if (idle && !s.outbox.length) {
         const payload = this._streamJoin([item]);
         if (!payload.text.trim() && !payload.images.length) return 0;
         this._streamDeliver(s, payload);
-        this._streamSent([item]);
+        this._streamSent(s, [item]);
         return 0;
       }
       const same = parkKey ? s.outbox.findIndex((q) => q.parkKey === parkKey) : -1;
@@ -2929,10 +2929,12 @@ function createSessionManager(deps) {
       };
     }
 
-    _streamSent(items) {
+    _streamSent(s, items) {
       for (const q of items) {
         if (typeof q.onSend === 'function') { try { q.onSend(); } catch {} }
       }
+      const refs = items.map((q) => q.ref).filter((r) => typeof r === 'string');
+      if (refs.length) s._turnRefs = (s._turnRefs || []).concat(refs);
     }
 
     _streamOutboxChanged(s) {
@@ -2961,7 +2963,7 @@ function createSessionManager(deps) {
       const payload = this._streamJoin(sys);
       if (payload.text.trim() || payload.images.length) {
         this._streamWrite(s, payload);
-        this._streamSent(sys);
+        this._streamSent(s, sys);
         s._toolDrainedInTurn = true;
       }
       this._streamOutboxChanged(s);
@@ -3080,7 +3082,9 @@ function createSessionManager(deps) {
     }
 
     _resolveTurnWaiters(s, rec) {
-      const turn = { ...splitTurnText(rec.text || ''), costUsd: rec.costUsd, durationMs: rec.durationMs, isError: !!rec.isError, ts: Date.now() };
+      const refs = s._turnRefs || [];
+      s._turnRefs = [];
+      const turn = { ...splitTurnText(rec.text || ''), refs, costUsd: rec.costUsd, durationMs: rec.durationMs, isError: !!rec.isError, ts: Date.now() };
       this._dropTurnWaiters(s, turn);
       if (this._assistantPolicy(s.name) && getRemoteServer()) { try { getRemoteServer().notifyTurn(s.name, turn); } catch {} }
     }
@@ -3088,6 +3092,7 @@ function createSessionManager(deps) {
     _dropTurnWaiters(s, turn = null) {
       const waiters = s._turnWaiters || [];
       s._turnWaiters = [];
+      s._turnRefs = [];
       for (const w of waiters) { clearTimeout(w.timer); w.resolve(turn); }
     }
 
@@ -3131,7 +3136,7 @@ function createSessionManager(deps) {
       let delivered = false;
       if (payload && (payload.wire || payload.text.trim() || payload.images.length)) {
         delivered = this._streamDeliver(s, payload);
-        this._streamSent(queued);
+        this._streamSent(s, queued);
       }
       if (!delivered) this._emitActivity(s.name, 'idle', true);
     }
@@ -3751,7 +3756,15 @@ function createSessionManager(deps) {
       return { ok: true, state: 'asleep' };
     }
 
-    async wake(name, { reason = 'operator' } = {}) {
+    wake(name, opts) {
+      const inflight = this._wakesInFlight || (this._wakesInFlight = new Map());
+      if (inflight.has(name)) return inflight.get(name);
+      const p = this._wakeNow(name, opts).finally(() => inflight.delete(name));
+      inflight.set(name, p);
+      return p;
+    }
+
+    async _wakeNow(name, { reason = 'operator' } = {}) {
       const entry = this._assistantPolicy(name);
       if (!entry) return { ok: false, error: 'not an assistant seat' };
       const live = this.sessions.get(name);
@@ -8457,7 +8470,7 @@ function createSessionManager(deps) {
       return `${prefix}${inline} ${body}${trailer ? ' ' + trailer : ''}`;
     }
 
-    _deliverMessage(targetName, senderName, body, mtype, tag = '', onWrite = null, parkKey = null, images = null, rebody = null) {
+    _deliverMessage(targetName, senderName, body, mtype, tag = '', onWrite = null, parkKey = null, images = null, rebody = null, ref = null) {
       const target = this.sessions.get(targetName);
       if (!target || target.clone) return;
       if (this._refuseStreamInject(target, body, `${mtype || 'message'} from ${senderName}`)) return;
@@ -8478,8 +8491,9 @@ function createSessionManager(deps) {
           : plainText();
       };
       if (target.io === 'stream') {
-        this._streamEnqueue(target, { text: defangTeammateTag(plainText()), images: pics, origin: senderName === 'user' ? 'operator' : 'system' },
-          fire ? () => fire('injected') : null, null, parkKey);
+        const item = { text: defangTeammateTag(plainText()), images: pics, origin: senderName === 'user' ? 'operator' : 'system' };
+        if (typeof ref === 'string' && ref) Object.defineProperty(item, 'ref', { value: ref, enumerable: false });
+        this._streamEnqueue(target, item, fire ? () => fire('injected') : null, null, parkKey);
       } else if (!this._maybeParkDelivery(target, () => textFor('parked'), parkKey)) {
         this._injectText(target, fire && rebody ? '' : plainText(), {
           parkable: true,
@@ -8536,7 +8550,7 @@ function createSessionManager(deps) {
 
     _deliverReminder(agent, body) {
       const target = this.sessions.get(agent);
-      if (target && target.agentType) {
+      if (target && target.agentType && !target._dead && !target._archived) {
         this._deliverMessage(agent, 'reminder', body, 'dm');
         return 'delivered';
       }
@@ -8549,6 +8563,15 @@ function createSessionManager(deps) {
       try {
         parkDelivery(PENDING_DIR, agent, finalText, this._nextParkSeq(), null, false, this._bornFor(agent));
         log.info('intent', `remind fire for ${agent} parked (offline) — drains on resume`);
+        const policy = this._assistantPolicy(agent);
+        const wakeOn = policy && policy.sleep && Array.isArray(policy.sleep.wakeOn) ? policy.sleep.wakeOn : [];
+        if (policy && wakeOn.includes('reminder')) {
+          log.info('intent', `remind fire for ${agent} parked — waking (wakeOn reminder)`);
+          this.wake(agent, { reason: 'reminder' }).then((w) => {
+            if (!w || !w.ok) log.warn('intent', `remind wake for ${agent} failed: ${(w && w.error) || 'unknown'}`);
+          }).catch((e) => log.warn('intent', `remind wake for ${agent} failed: ${e && e.message}`));
+          return 'waking';
+        }
         return 'parked';
       } catch (e) {
         log.error('intent', `remind park for ${agent} failed: ${e.message}`);
