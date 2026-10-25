@@ -22104,7 +22104,7 @@ test('assistant awake time: sleep adds now - awokeAt to cost.awakeMs, a later co
   s._costFolded = { usd: 1, turns: 1 };
   h.m._foldSeatCost(s);
   assert.deepStrictEqual(h.store.get('asst').cost, { usd: 3, turns: 2, at: 4000, awakeMs: 3500 });
-  h.m.sessions.delete('asst');
+  h.m._waitForExit = async () => true;
   mock.timers.setTime(9000);
   assert.deepStrictEqual(await h.m.wake('asst'), { ok: true, state: 'awake' });
   assert.strictEqual(h.store.get('asst').awokeAt, 9000);
