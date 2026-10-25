@@ -1654,3 +1654,33 @@ test('t655 r1: closing the LAST seat repaints the footer, so nothing stays hidde
     'with no active seat every button goes live again; this branch is not a switch, '
     + 'so onSeatSwitched never runs for it and nothing else would un-hide them');
 });
+
+test('t1954: unlistedOf / mergeLists are the generic carry, and the plugin names alias them', () => {
+  const { unlistedOf, mergeLists, pluginsForUnlistedPlugins, mergePlugins } = require('../plugin-api');
+  assert.deepStrictEqual(unlistedOf(['avh-chat', 'drawn'], ['drawn']), ['avh-chat'],
+    'a persisted id the list did not render is kept, one it did render is dropped');
+  assert.deepStrictEqual(unlistedOf('avh-chat', []), []);
+  assert.deepStrictEqual(unlistedOf(undefined, ['x']), []);
+  assert.deepStrictEqual(mergeLists(['a', 'b'], ['b', 'c']), ['a', 'b', 'c']);
+  assert.deepStrictEqual(mergeLists([], ['Agent']), ['Agent']);
+  assert.strictEqual(pluginsForUnlistedPlugins, unlistedOf);
+  assert.strictEqual(mergePlugins, mergeLists);
+});
+
+test('t1954: the Edit Settings save carries unlisted exec, MCP, builtin and tool ids', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const at = src.indexOf("document.getElementById('btn-args-save')");
+  assert.ok(at > 0, 'ENTER: the Edit Settings save handler was located');
+  const body = src.slice(at, src.indexOf('\n});', at));
+  for (const [collect, list, persisted, rendered] of [
+    ['collectExecChecklist', 'argsExecList', 'argsExecPersisted', 'argsExecRendered'],
+    ['collectMcpChecklist', 'argsMcpList', 'argsMcpPersisted', 'argsMcpRendered'],
+    ['collectBuiltinChecklist', 'argsBuiltinsList', 'argsBuiltinsPersisted', 'argsBuiltinsRendered'],
+    ['collectToolChecklist', 'argsToolsList', 'argsToolsPersisted', 'argsToolsRendered'],
+  ]) {
+    assert.ok(body.includes(`mergeLists(${collect}(${list}), unlistedOf(${persisted}, ${rendered}))`),
+      `${collect} must carry what the library did not render`);
+    assert.ok(src.includes(`${rendered} = render`), `${rendered} is the ids its checklist drew`);
+    assert.ok(new RegExp(`${persisted} = res\\.\\w+ \\|\\| \\[\\];`).test(src), `${persisted} is the loaded list`);
+  }
+});

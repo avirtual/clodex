@@ -823,7 +823,8 @@ test('t1077: the model hint reads the adapter aliases', () => {
 
 const COLLECT_FN = extract(/\n(function collectFormConfig\([\s\S]*?)\nfunction collectDialogEnv\(/, 'collectFormConfig');
 
-function collectFor(type) {
+function collectFor(type, overrides = {}) {
+  const { unlistedOf, mergeLists } = require('../plugin-api');
   const env = {
     inputType: { value: type },
     dialogMode: 'template',
@@ -857,6 +858,9 @@ function collectFor(type) {
     inputStripLevel: { value: '2' },
     inputSystemPrompt: { value: 'sys' },
     collectAppendPromptFiles: () => ['app-a'],
+    unlistedOf, mergeLists,
+    formPersisted: {}, formRendered: {},
+    ...overrides,
   };
   const names = Object.keys(env);
   return new Function(...names, `${COLLECT_FN}\nreturn collectFormConfig();`)(...names.map((n) => env[n]));
@@ -909,6 +913,19 @@ test('t1077: a CODEX form emits every EDITOR_OWNED key its platform lacks WITH i
     systemPromptFile: 'sys',
     appendPromptFiles: ['app-a'],
   });
+});
+
+test('t1954: a template save carries the exec grant and disabled tool this library did not draw', () => {
+  const cfg = collectFor('claude', {
+    collectExecChecklist: () => [], collectToolChecklist: () => [],
+    collectMcpChecklist: () => [], collectBuiltinChecklist: () => [],
+    formPersisted: { execCommands: ['avh-chat'], disabledTools: ['Agent'], mcpServers: ['drawn-mcp'], denyBuiltins: ['Explore'] },
+    formRendered: { execCommands: [], disabledTools: ['Bash'], mcpServers: ['drawn-mcp'], denyBuiltins: ['Plan'] },
+  });
+  assert.deepStrictEqual(cfg.execCommands, ['avh-chat']);
+  assert.deepStrictEqual(cfg.disabledTools, ['Agent']);
+  assert.deepStrictEqual(cfg.denyBuiltins, ['Explore']);
+  assert.deepStrictEqual(cfg.mcpServers, [], 'a drawn row left unticked is the operator\'s answer');
 });
 
 test('t1077: a BASH form is not an agent — no prompts, no intents, and the plugin default', () => {
@@ -1180,4 +1197,23 @@ test('a create toasts every warning but the MCP rows, which already arrive as sy
   const toastable = new Function(`${fnBody('toastableWarnings')}\nreturn toastableWarnings;`)();
   assert.deepStrictEqual(toastable(['MCP jira: not in the library', 'MCP: the clodex tools are unavailable', 'proxy unreachable', 'MCPX odd']),
     ['MCP: the clodex tools are unavailable', 'proxy unreachable', 'MCPX odd']);
+});
+
+test('t1954: each grant checklist returns the ids it drew', () => {
+  const { BUILTIN_AGENTS } = require('../agents-util');
+  withDom(() => {
+    checklists.setClaudeToolsCache([...TOOL_NAMES]);
+    assert.deepStrictEqual(checklists.renderToolChecklist(el('div'), new Set(), {}), TOOL_NAMES);
+    checklists.setClaudeToolsCache([]);
+    assert.deepStrictEqual(checklists.renderToolChecklist(el('div'), new Set(), {}), []);
+    assert.deepStrictEqual(checklists.renderBuiltinChecklist(el('div'), new Set()), [...BUILTIN_AGENTS]);
+    checklists.setExecLibCache([{ name: 'avh-chat', argv: ['x'] }]);
+    assert.deepStrictEqual(checklists.renderExecChecklist(el('div'), new Set()), ['avh-chat']);
+    checklists.setExecLibCache([]);
+    assert.deepStrictEqual(checklists.renderExecChecklist(el('div'), new Set()), []);
+    checklists.setMcpLibCache([{ name: 'clodex' }, { name: 'docs' }]);
+    assert.deepStrictEqual(checklists.renderMcpChecklist(el('div'), new Set()), ['docs']);
+    checklists.setMcpLibCache([]);
+    assert.deepStrictEqual(checklists.renderMcpChecklist(el('div'), new Set()), []);
+  });
 });
