@@ -226,8 +226,7 @@ function urlDriftOnly(existing, entry) {
 }
 
 // Apply collected candidates against the existing store. Mutates a COPY of the
-// store and returns { store, results }. results mirror candidates but resolve
-// add→'added'/'skipped'(exists)/'overwritten' against collisions. `current` is
+// store and returns { store, results }. `current` is
 // never touched. Skipped candidates (disabled/tokenless) pass through as-is.
 function applyImport(store, candidates, { force = false } = {}) {
   const onEntry = store.contexts || {};
