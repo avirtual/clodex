@@ -21614,14 +21614,11 @@ test('stream seat cost: the exit path folds the unfolded tail with no tick', asy
   mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 7000 });
   t.after(() => mock.timers.reset());
   const upserts = [];
-  const real = h.m._foldSeatCost.bind(h.m);
   h.line('sk2', costResult(0.5));
   assert.strictEqual(h.store.get('sk2').cost, undefined, 'ENTER: nothing folded before the close');
-  const store = h.store;
-  const origSet = store.set.bind(store);
-  store.set = (k, v) => { if (v && v.cost) upserts.push(v.cost); return origSet(k, v); };
+  const origSet = h.store.set.bind(h.store);
+  h.store.set = (k, v) => { if (v && v.cost) upserts.push(v.cost); return origSet(k, v); };
   h.handles[0].opts.onClose(0, null);
-  assert.ok(real, 'ENTER: the fold exists');
   assert.deepStrictEqual(upserts, [{ usd: 0.5, turns: 1, at: 7000 }]);
 });
 
