@@ -21782,6 +21782,49 @@ test('assistant _gatedDeliver: seat mail to an assistant bounces, awake or aslee
   assert.deepStrictEqual(h.handles[0].sent, []);
 });
 
+for (const [label, live] of [['awake', true], ['asleep', false]]) {
+  test(`assistant dm intent: a seat's dm to an ${label} assistant is refused to the sender, never broadcast as sent`, async (t) => {
+    const h = mkStreamSeatManager({ persisted: { snd: {}, asst: { ...ASSISTANT_ROW, ...(live ? {} : { archivedAt: 1, asleepAt: 2 }) } } });
+    t.after(() => h.stopAll());
+    await h.create('snd');
+    if (live) await h.create('asst');
+    assert.strictEqual(h.m.sessions.has('asst'), live, 'ENTER: the target is ' + label);
+    const injected = [];
+    const bcast = [];
+    h.m._injectText = (sess, text) => injected.push([sess.name, text]);
+    h.m._broadcast = (ch, msg) => bcast.push(msg);
+    await h.m._handleIntent('snd', { type: 'dm', target: 'asst', body: 'hi' });
+    assert.deepStrictEqual(injected, [['snd', '[agent:dm] NOT delivered to asst: asst takes messages only from its operator client.']]);
+    assert.deepStrictEqual(bcast.filter((b) => b && b.type === 'dm'), [{ type: 'dm', from: 'snd', to: 'asst', body: 'UNDELIVERED (operator client only): hi' }]);
+  });
+}
+
+test('assistant _gatedDeliver: a system sender reaches the assistant, a seat wearing a system name does not', async (t) => {
+  const h = mkStreamSeatManager({ persisted: { asst: { ...ASSISTANT_ROW }, clodex: {} } });
+  t.after(() => h.stopAll());
+  await h.create('asst');
+  const r = h.m._gatedDeliver('asst', 'terminal', 'exec done', true);
+  assert.strictEqual(r.error, undefined, JSON.stringify(r));
+  assert.deepStrictEqual(h.m._gatedDeliver('asst', 'clodex', 'hi'), { error: 'asst takes messages only from its operator client' });
+});
+
+test('assistant sleep and wake: a seat still closing after its sleep is not awake', async (t) => {
+  const calls = [];
+  const h = mkStreamSeatManager({
+    persisted: { asst: { ...ASSISTANT_ROW, workspaceId: 'ws' } },
+    extraDeps: { restartSession: async (...a) => { calls.push(a); return { ok: true }; } },
+  });
+  t.after(() => h.stopAll());
+  await h.create('asst');
+  h.m.sessions.get('asst')._archived = true;
+  assert.deepStrictEqual(await h.m.sleep('asst'), { ok: false, error: 'not awake' });
+  const waited = [];
+  h.m._waitForExit = async (n) => { waited.push(n); h.m.sessions.delete(n); return true; };
+  assert.deepStrictEqual(await h.m.wake('asst'), { ok: true, state: 'awake' });
+  assert.deepStrictEqual(waited, ['asst']);
+  assert.deepStrictEqual(calls, [['asst', { fresh: true }, 'ws']]);
+});
+
 test('assistant wake: restarts fresh in the record\'s workspace and clears the sleep stamps', async (t) => {
   const calls = [];
   const h = mkStreamSeatManager({

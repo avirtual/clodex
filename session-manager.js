@@ -350,7 +350,7 @@ function nearMissFormHint(text) {
 
 // Add a field only if no caller can regrow it and none re-asserts it after create(), else two writers own it; keepWarmAlways and holdUntil stay a pair.
 // An absent worktree pointer is the dangerous state: destroy() would drop the record and orphan the checkout.
-const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants', 'wireLabel', 'ticketId', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested', 'voice', 'reviewerTemplate', 'class', 'sleep', 'template', 'cost'];
+const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants', 'wireLabel', 'ticketId', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested', 'voice', 'reviewerTemplate', 'class', 'sleep', 'template', 'cost', 'wakes'];
 
 function sigkillPid(pid, name, log) {
   if (!(pid > 0)) {
@@ -3690,7 +3690,7 @@ function createSessionManager(deps) {
     async sleep(name, { reason = 'operator' } = {}) {
       if (!this._assistantPolicy(name)) return { ok: false, error: 'not an assistant seat' };
       const s = this.sessions.get(name);
-      if (!s || s._dead) return { ok: false, error: 'not awake' };
+      if (!s || s._dead || s._archived) return { ok: false, error: 'not awake' };
       if (s.streamBusy) {
         s._sleepRequested = reason;
         return { ok: true, state: 'sleeping' };
@@ -3724,7 +3724,9 @@ function createSessionManager(deps) {
     async wake(name, { reason = 'operator' } = {}) {
       const entry = this._assistantPolicy(name);
       if (!entry) return { ok: false, error: 'not an assistant seat' };
-      if (this.sessions.has(name)) return { ok: true, state: 'awake' };
+      const live = this.sessions.get(name);
+      if (live && !live._dead && !live._archived) return { ok: true, state: 'awake' };
+      if (live && !await this._waitForExit(name)) return { ok: false, error: 'still stopping' };
       const p = getPersistence();
       p.setArchived(name, false);
       p.setExited(name, null);
@@ -5940,6 +5942,11 @@ function createSessionManager(deps) {
             if (session) this._injectText(session, `[agent:dm] ${intent.target} is a scratch clone — not addressable; its summary goes to ${localTarget.clone}.`, { parkable: true });
             break;
           }
+          if (this._assistantPolicy(intent.target)) {
+            if (session) this._injectText(session, `[agent:dm] NOT delivered to ${intent.target}: ${intent.target} takes messages only from its operator client.`, { parkable: true });
+            this._broadcast('ipc-message', { type: 'dm', from: fromTag, to: intent.target, body: `UNDELIVERED (operator client only): ${intent.body}` });
+            break;
+          }
           let sup = null;
           if (localTarget && localTarget.agentType) {
             // Armed here, not in _gatedDeliver: this is the one site with a live sender to tell.
@@ -7855,7 +7862,7 @@ function createSessionManager(deps) {
         if (!r.error && typeof onWrite === 'function') { try { onWrite('queued', 'federated'); } catch {} }
         return r;
       }
-      if (this._assistantPolicy(targetName)) return { error: `${targetName} takes messages only from its operator client` };
+      if (this._assistantPolicy(targetName) && !(SYSTEM_SENDERS.has(senderTag) && !this.sessions.has(senderTag) && !getPersistence().get(senderTag))) return { error: `${targetName} takes messages only from its operator client` };
       const target = this.sessions.get(targetName);
       if (!target || !target.agentType) return { error: `no such agent "${targetName}"` };
       if (target.clone) return { error: `${targetName} is a scratch clone — not addressable` };

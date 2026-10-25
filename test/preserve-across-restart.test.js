@@ -107,7 +107,7 @@ test('DISCOVERY: every restart call site preserves the seat-identity fields', ()
   // as the operator's standing seat and accept skips its teardown, leaks the
   // worktree, and says "it is not a one-shot ticket seat" — false. `reviewFor`
   // and `reviewTicket` are the same fact for reviewer seats.
-  const REQUIRED = ['ephemeral', 'reviewFor', 'reviewTicket', 'createdAt', 'reviewerTemplate', 'class', 'sleep', 'template', 'cost'];
+  const REQUIRED = ['ephemeral', 'reviewFor', 'reviewTicket', 'createdAt', 'reviewerTemplate', 'class', 'sleep', 'template', 'cost', 'wakes'];
   const sites = callSites();
   const always = /const ALWAYS_PRESERVE = \[([^\]]*)\]/.exec(fs.readFileSync(path.join(ROOT, 'session-manager.js'), 'utf8'));
   assert.ok(always, 'ENTER: ALWAYS_PRESERVE is readable from session-manager.js');
@@ -278,10 +278,10 @@ test('BEHAVIOUR: an empty field list still carries the history', () => {
 test('BEHAVIOUR: assistant policy and the folded cost ride every restart unasked', () => {
   const p = mkPersistence();
   const m = mkManager(p);
-  m._preserveAcrossRestart('cx', { name: 'cx', class: 'assistant', sleep: { idleMs: 600000 }, template: 'avh-assistant', cost: { usd: 1, turns: 2, at: 3 } }, []);
+  m._preserveAcrossRestart('cx', { name: 'cx', class: 'assistant', sleep: { idleMs: 600000 }, template: 'avh-assistant', cost: { usd: 1, turns: 2, at: 3 }, wakes: 4 }, []);
   const e = p.get('cx');
-  assert.deepStrictEqual({ class: e.class, sleep: e.sleep, template: e.template, cost: e.cost },
-    { class: 'assistant', sleep: { idleMs: 600000 }, template: 'avh-assistant', cost: { usd: 1, turns: 2, at: 3 } });
+  assert.deepStrictEqual({ class: e.class, sleep: e.sleep, template: e.template, cost: e.cost, wakes: e.wakes },
+    { class: 'assistant', sleep: { idleMs: 600000 }, template: 'avh-assistant', cost: { usd: 1, turns: 2, at: 3 }, wakes: 4 });
 });
 
 test('BEHAVIOUR: a prior without assistant policy or cost seeds none of them', () => {
@@ -290,7 +290,7 @@ test('BEHAVIOUR: a prior without assistant policy or cost seeds none of them', (
   m._preserveAcrossRestart('cx', { name: 'cx', createdAt: 1 }, ['createdAt']);
   const e = p.get('cx');
   assert.strictEqual(e.createdAt, 1, 'ENTER: the requested field still seeded the record');
-  assert.deepStrictEqual(['class', 'sleep', 'template', 'cost'].filter((k) => k in e), []);
+  assert.deepStrictEqual(['class', 'sleep', 'template', 'cost', 'wakes'].filter((k) => k in e), []);
 });
 
 test('BEHAVIOUR: a seat with no history is still not seeded', () => {
