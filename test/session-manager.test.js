@@ -21824,7 +21824,7 @@ test('assistant dm intent: a dm to a running subagent of an assistant is refused
   assert.deepStrictEqual(bcast.filter((b) => b && b.type === 'dm'), [{ type: 'dm', from: 'snd', to: 'asst', body: 'UNDELIVERED (operator client only): hi' }]);
 });
 
-test('awaitTurn: the next result resolves the armed waiter with its prose and intent heads', async (t) => {
+test('awaitTurn + _resolveTurnWaiters: the next result resolves the armed waiter with its prose and intent heads', async (t) => {
   const turns = [];
   const remote = { notifyTurn: (n, turn) => turns.push([n, turn]) };
   const h = mkStreamSeatManager({ persisted: { asst: { ...ASSISTANT_ROW }, plain: {} }, extraDeps: { getRemoteServer: () => remote } });
@@ -21847,7 +21847,7 @@ test('awaitTurn: the next result resolves the armed waiter with its prose and in
   assert.strictEqual(turns.length, 1);
 });
 
-test('awaitTurn: a timeout or the seat closing answers null; a pty seat is never armed', async (t) => {
+test('awaitTurn + _dropTurnWaiters: a timeout or the seat closing answers null; a pty seat is never armed', async (t) => {
   const { mock } = require('node:test');
   const h = mkStreamSeatManager({ persisted: { asst: { ...ASSISTANT_ROW } } });
   t.after(() => h.stopAll());

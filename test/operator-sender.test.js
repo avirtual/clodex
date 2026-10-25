@@ -91,27 +91,27 @@ function wireDoors({ seatIntents = undefined } = {}) {
   return { m, injected, send: opts.send, deliverDm: opts.deliverDm, replyNote: opts.replyNote, openRequests: opts.openRequests };
 }
 
-test('t886: the operator door (POST /api/sessions/:name/dm) delivers the canonical [agent:from user] shape', () => {
+test('t886: the operator door (POST /api/sessions/:name/dm) delivers the canonical [agent:from user] shape', async () => {
   const { injected, send } = wireDoors();
-  const out = send('seat', 'ship it');
+  const out = await send('seat', 'ship it');
   assert.deepStrictEqual(out, { ok: true });
   assert.strictEqual(injected.length, 1, 'exactly one delivery reached the seat');
   assert.strictEqual(injected[0], '[agent:from user] ship it',
     'the operator door produces the canonical shape, and nothing else rides it');
 });
 
-test('the operator door refuses a dm to a bash session by saying it is a bash session', () => {
+test('the operator door refuses a dm to a bash session by saying it is a bash session', async () => {
   const { m, injected, send } = wireDoors();
   m.sessions.set('sh', { name: 'sh', type: 'bash', agentType: null });
   const before = injected.length;
-  assert.deepStrictEqual(send('sh', 'ls'), {
+  assert.deepStrictEqual(await send('sh', 'ls'), {
     ok: false, code: 409,
     error: '"sh" is a bash session — only agent sessions receive dms (run a command in it with: exec sh <command>)',
   });
   assert.strictEqual(injected.length, before, 'nothing was delivered');
-  assert.deepStrictEqual(send('ghost', 'hi'), { ok: false, error: 'Session not found' });
+  assert.deepStrictEqual(await send('ghost', 'hi'), { ok: false, error: 'Session not found' });
   m.sessions.set('deadsh', { name: 'deadsh', type: 'bash', agentType: null, _dead: true });
-  assert.deepStrictEqual(send('deadsh', 'ls'), { ok: false, error: 'Session not found' });
+  assert.deepStrictEqual(await send('deadsh', 'ls'), { ok: false, error: 'Session not found' });
   assert.strictEqual(injected.length, before, 'nothing was delivered');
 });
 
