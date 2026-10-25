@@ -1237,7 +1237,7 @@ function createTicketMethods(deps, shared) {
             reviewBrief, false, session.proxy ?? null, shape.agents, shape.denyBuiltins, shape.disabledTools,
             shape.disabledSkills, shape.injectSkills,
             reviewerSystemPrompt, shape.appendPromptFiles, shape.execCommands, shape.intents, shape.env, true,
-            false, shape.plugins, shape.shellDeny, null, shape.io || 'pty', shape.effort || null, shape.protectCredentials || null, [],
+            false, shape.plugins, shape.shellDeny, null, shape.io || 'pty', shape.effort || null, shape.protectCredentials || null, shape.mcpServers,
           );
           // Report a missing prompt once: suppress create()'s finding when `promptWarn` is already carried; the two texts are worded
           // differently on purpose, so suppression keys on the warn, not on matching text.
@@ -4302,6 +4302,7 @@ function createTicketMethods(deps, shared) {
         systemPromptFile: tpl.systemPromptFile || null,
         appendPromptFiles: tpl.appendPromptFiles || [],
         execCommands: Array.isArray(tpl.execCommands) ? tpl.execCommands : [],
+        mcpServers: Array.isArray(tpl.mcpServers) ? tpl.mcpServers.filter((s) => typeof s === 'string') : [],
         intents: withoutPrivilegedIntentsFor(Array.isArray(tpl.intents) ? tpl.intents : null),
         sessionEnv,
         envDropped: dropped,
@@ -4463,6 +4464,7 @@ function createTicketMethods(deps, shared) {
             || (shape && shape.systemPromptFile) || (def && def.prompt) || null,
           appendPromptFiles: (shape && shape.appendPromptFiles) || [],
           execCommands: (shape && shape.execCommands) || [],
+          mcpServers: (shape && shape.mcpServers) || [],
           // `[]` (everything gated) must apply; null keeps the all-enabled default.
           intents: shape ? shape.intents : null,
           plugins: shape ? shape.plugins : null,
@@ -4546,6 +4548,7 @@ function createTicketMethods(deps, shared) {
         systemPromptFile,
         appendPromptFiles: [],
         execCommands: [],
+        mcpServers: [],
         // `[]`, not null: the reviewer's fallback gates every intent, where null would leave create() all-enabled.
         intents: (shape && Array.isArray(shape.intents)) ? shape.intents : [],
         plugins: shape ? shape.plugins : null,
@@ -4714,7 +4717,7 @@ function createTicketMethods(deps, shared) {
             // The `false` is noWire, a literal and never `shape.noWire`: an agent-writable template could blind the wire that measures this seat's cost;
             // it also cannot be dropped, since the plugin list after it is positional.
             { ...shape.env, CLODEX_TICKET: ticket.id }, true,
-            false, shape.plugins, null, null, shape.io || 'pty', shape.effort || null, shape.protectCredentials || null, [],
+            false, shape.plugins, null, null, shape.io || 'pty', shape.effort || null, shape.protectCredentials || null, shape.mcpServers,
           );
           // First, before anything that can throw: until claimed the seat lives in a tree no record names, so _ticketTreeHolder is blind
           // to it and session:kill orphans the checkout.
