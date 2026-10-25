@@ -1587,8 +1587,8 @@ and are not, which is why the judgement worth testing is pushed down here.
   dimmed row above the composer (first line, origin, and for a runtime reply the
   intent reply glyph). Pure.
 - **drop-paths.js** — the string typed at the prompt when files are dropped on a
-  pty seat on the desktop; every other drop attaches through attach-files.js:
-  each path shell-quoted, space-joined, one trailing space.
+  pty seat on the desktop: each path shell-quoted, space-joined, one trailing
+  space. Every other drop attaches through attach-files.js.
 - **composer-keys.js** — `composerReadlineEdit`: Ctrl-U/K/W/A/E on the stream
   seat composer as the new value and cursor, per line of a multi-line draft. Pure.
   `isAttachKey`: Cmd/Ctrl+Shift+U, which opens either composer's image picker.

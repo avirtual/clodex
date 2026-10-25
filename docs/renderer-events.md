@@ -201,8 +201,9 @@ takes any file. On both composers a non-image file reaches the host through the
 and appends one `File: <path>` line per uploaded file to the text it hands
 `seatSend` — no new event. A `terminalContainer` drop reaches the active seat's
 `attachPickedFiles` in the browser and, on the desktop, on a stream seat; a
-desktop pty seat still types the paths. A paste with a file item and no
-`text/plain` (`pasteKind` `'file'`) goes to the same sink on both composers. On a
+desktop pty seat still types the paths. On the pty composer a paste with a
+file item and no `text/plain` goes to the same sink; the stream composer attaches
+every file item, `text/plain` present or not. On a
 web surface a paste whose clipboard items are empty still toasts
 `STRIPPED_PASTE_NOTICE` instead of being ignored.
 

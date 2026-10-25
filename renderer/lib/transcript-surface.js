@@ -6,6 +6,7 @@ const CONVERSATION = 'conversation';
 const INTERNALS = 'internals';
 
 const TALK_VERBS = new Set(['dm', 'shout', 'file', 'review-done']);
+const MEMORY_TALK = new Set(['remember', 'forget', 'pin', 'unpin']);
 const ALWAYS_TALK = new Set(['prompt', 'command', 'command-output', 'boundary']);
 const LOUD_LEVELS = new Set(['warning', 'error']);
 const MERGED_NAG_RE = /^merged\b.*not accepted$/;
@@ -17,7 +18,8 @@ function isNagTag(tag) {
 
 function isTalkIntent(seg) {
   return Boolean(seg) && seg.kind === 'intent'
-    && (TALK_VERBS.has(seg.verb) || (seg.verb === 'task' && seg.sub !== 'list'));
+    && (TALK_VERBS.has(seg.verb) || (seg.verb === 'task' && seg.sub !== 'list')
+      || (seg.verb === 'memory' && MEMORY_TALK.has(seg.sub)));
 }
 
 function segmentSurface(seg) {

@@ -1161,8 +1161,9 @@ happen when this file goes away?" — and registering the handler that does it.
 validation is the handler's job. As with `host.lib`, you receive bound wrappers:
 the table cannot be repointed from plugin land.
 
-The return is always rebuilt as `{ ok: true }` or `{ ok: false, error }` — you
-never receive the handler's own object. Handlers are synchronous; an async one
+The return is rebuilt, never the handler's own object: `{ ok: false, error }` on
+refusal; `{ ok: true }` from `remove`, `setPin` and `edit`; `{ ok: true, kept }`
+from `fire`; `{ ok: true, id }` from `add`. Handlers are synchronous; an async one
 is refused rather than handing you a pending promise. `remove` does not throw.
 
 Deletion is **permanent** — no archive, no trash. Confirm with the user first;

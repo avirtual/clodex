@@ -108,6 +108,7 @@ module.exports.activate = (rhost) => {
 
     function render() {
       const active = rhost.sessions.active();
+      toggle.disabled = !active;
       const all = showAll || !active;
       toggle.textContent = showAll ? 'Selected Seat' : 'All Seats';
       hint.textContent = all ? 'All seats in this workspace' : `Showing ${active}`;

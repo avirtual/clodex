@@ -88,8 +88,9 @@ function patchJson(dir, fn) {
 }
 
 let failures = 0;
+const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-control-'));
 for (const mut of MUTANTS) {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-control-'));
+  const tmp = fs.mkdtempSync(path.join(root, 'm-'));
   const dir = path.join(tmp, 'git-branches');
   fs.mkdirSync(dir, { recursive: true });
   for (const f of fs.readdirSync(GOOD)) fs.copyFileSync(path.join(GOOD, f), path.join(dir, f));
@@ -108,5 +109,6 @@ for (const mut of MUTANTS) {
   if (!ok) console.log(out.split('\n').filter((l) => l.includes('FAIL') || l.includes('checks passed')).join('\n'));
 }
 
+fs.rmSync(root, { recursive: true, force: true });
 console.log(`\ncontrol: ${MUTANTS.length - failures}/${MUTANTS.length} mutants handled correctly`);
 process.exit(failures ? 1 : 0);
