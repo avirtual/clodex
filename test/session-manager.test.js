@@ -21784,7 +21784,10 @@ test('assistant _gatedDeliver: seat mail to an assistant bounces, awake or aslee
 
 for (const [label, live] of [['awake', true], ['asleep', false]]) {
   test(`assistant dm intent: a seat's dm to an ${label} assistant is refused to the sender, never broadcast as sent`, async (t) => {
-    const h = mkStreamSeatManager({ persisted: { snd: {}, asst: { ...ASSISTANT_ROW, ...(live ? {} : { archivedAt: 1, asleepAt: 2 }) } } });
+    const h = mkStreamSeatManager({
+      persisted: { snd: {}, asst: { ...ASSISTANT_ROW, ...(live ? {} : { archivedAt: 1, asleepAt: 2 }) } },
+      extraDeps: { intentEnabledForSeat: require('../intent-registry').intentEnabledForSeat },
+    });
     t.after(() => h.stopAll());
     await h.create('snd');
     if (live) await h.create('asst');
@@ -21819,7 +21822,7 @@ test('assistant sleep and wake: a seat still closing after its sleep is not awak
   h.m.sessions.get('asst')._archived = true;
   assert.deepStrictEqual(await h.m.sleep('asst'), { ok: false, error: 'not awake' });
   const waited = [];
-  h.m._waitForExit = async (n) => { waited.push(n); h.m.sessions.delete(n); return true; };
+  h.m._waitForExit = async (n) => { waited.push(n); return true; };
   assert.deepStrictEqual(await h.m.wake('asst'), { ok: true, state: 'awake' });
   assert.deepStrictEqual(waited, ['asst']);
   assert.deepStrictEqual(calls, [['asst', { fresh: true }, 'ws']]);
