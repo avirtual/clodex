@@ -119,6 +119,7 @@ const VERB_CALLBACK = {
 const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const TICKET_ID_RE = /^t\d+$/;
 const DM_CLIENT_RE = /^[a-z][a-z0-9-]{0,15}$/;
+const DM_CLIENT_REF_RE = /^[A-Za-z0-9._:-]{1,128}$/;
 const REPLY_STATUS = { empty: 400, 'too-long': 400, 'not-replyable': 400, unknown: 404 };
 const TICKET_STATES = ['open', 'done', 'cancelled', 'all'];
 const MAX_BODY = 64 * 1024;          // matches the IPC message cap
@@ -127,6 +128,7 @@ const IMPORT_ID_RE = /^[0-9a-f]{16}$/;
 const CONTENT_RANGE_RE = /^bytes\s+(\d+)-(\d+)\/\*$/i;
 const SSE_HEARTBEAT_MS = 25000;
 const DM_AWAIT_MAX_MS = 60000;
+const DM_REF_MAX = 128;
 const ATTACH_MAX_BUFFERED = 4 * 1024 * 1024;
 const RESIZE_DEBOUNCE_MS = 80;
 
@@ -849,10 +851,15 @@ class RemoteServer {
       const text = String((msg && msg.text) || '').trim();
       if (!text && !checked.images.length) return this._json(res, 400, { ok: false, error: 'empty message' });
       const client = msg && typeof msg.client === 'string' && DM_CLIENT_RE.test(msg.client) ? msg.client : null;
+      const ref = msg && msg.ref != null ? msg.ref : null;
+      if (ref !== null && (typeof ref !== 'string' || !DM_CLIENT_REF_RE.test(ref))) return this._json(res, 400, { ok: false, error: 'bad ref' });
       const awaitMs = Number.isFinite(+msg.await) && +msg.await > 0 ? Math.min(+msg.await, DM_AWAIT_MAX_MS) : 0;
       return Promise.resolve()
-        .then(() => this._send(name, text, checked.images, client, awaitMs))
-        .then((out) => this._json(res, out.turn ? 200 : out.queued ? 202 : out.ok ? 200 : (out.code || 404), out))
+        .then(() => this._send(name, text, checked.images, client, awaitMs, ref))
+        .then((out) => {
+          const body = ref ? { ...out, ref } : out;
+          this._json(res, out.turn ? 200 : out.queued ? 202 : out.ok ? 200 : (out.code || 404), body);
+        })
         .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
     }, DM_MAX_BODY);
   }

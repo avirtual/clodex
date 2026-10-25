@@ -121,7 +121,7 @@ function createRemoteWiring(deps) {
   const {
     path, fs, os, log,
     DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, REGISTRY_DIR, MSG_DIR, OUTBOX_DIR, SELF_LABEL,
-    parseCtxFile, cachedMessages, sliceSince, ensureDir, homeRelativize,
+    parseCtxFile, cachedMessages, sliceSince, jsonlToMessages, ensureDir, homeRelativize,
     claimOutbox, listOutboxOrigins,
     manager, proxyPoller, loadManifest, listTeams, gitWorktree,
     getPeerManager, getTunnelManager, getWebTunnelManager, getSandboxManager,
@@ -378,12 +378,27 @@ function createRemoteWiring(deps) {
     return { ok: true, name, units: getMemoryStore().list(name), brief };
   }
 
+  function claudeTranscriptFile(entry, id) {
+    const root = (entry.env && typeof entry.env.CLAUDE_CONFIG_DIR === 'string' && entry.env.CLAUDE_CONFIG_DIR) || path.join(os.homedir(), '.claude');
+    return path.join(root, 'projects', claudeProjectSlug(entry.cwd), `${id}.jsonl`);
+  }
+
+  function sleeperMessages(entry) {
+    const all = [];
+    for (const id of trackedSessionIds(entry).filter((id) => SESSION_ID_RE.test(id))) {
+      let rows;
+      try { rows = jsonlToMessages(claudeTranscriptFile(entry, id), Infinity); } catch { continue; }
+      for (const m of rows) all.push(m);
+    }
+    all.forEach((m, i) => { m.seq = i; });
+    return all;
+  }
+
   async function destroyAssistant(name, entry) {
     const ids = trackedSessionIds(entry).filter((id) => SESSION_ID_RE.test(id));
-    const dir = entry.cwd ? path.join(os.homedir(), '.claude', 'projects', claudeProjectSlug(entry.cwd)) : null;
     const out = await manager.destroy(name);
     if (!out || !out.ok) return out;
-    if (dir) for (const id of ids) { try { fs.unlinkSync(path.join(dir, `${id}.jsonl`)); } catch {} }
+    if (entry.cwd) for (const id of ids) { try { fs.unlinkSync(claudeTranscriptFile(entry, id)); } catch {} }
     try { fs.rmSync(path.join(REGISTRY_DIR, 'pending', name), { recursive: true, force: true }); } catch {}
     notifySessions();
     log.info('session', `destroy ${name} via peer (${ids.length} transcript(s))`);
@@ -573,7 +588,14 @@ function createRemoteWiring(deps) {
         ...resourceCallbacks(),
         getTranscript: async (name, limit, since, after = null) => {
           const sess = manager.sessions.get(name);
-          if (!sess || !sess.agentType) return { ok: false, error: 'Session not found' };
+          if (!sess || !sess.agentType) {
+            const entry = getPersistence().get(name);
+            if (!entry || entry.class !== 'assistant') return { ok: false, error: 'Session not found' };
+            let page;
+            try { page = sliceSince(sleeperMessages(entry), since, limit, after); }
+            catch (e) { return { ok: false, error: e.message }; }
+            return { ok: true, ...page, messages: await thumbPage(page.messages) };
+          }
           const linkPath = pathFor(REGISTRY_DIR, name, 'transcript');
           let jsonlPath;
           try { jsonlPath = fs.realpathSync(linkPath); }
@@ -583,7 +605,7 @@ function createRemoteWiring(deps) {
           catch (e) { return { ok: false, error: e.message }; }
           return { ok: true, ...page, messages: await thumbPage(page.messages) };
         },
-        send: async (name, text, images, client = null, awaitMs = 0) => {
+        send: async (name, text, images, client = null, awaitMs = 0, ref = null) => {
           let sess = manager.sessions.get(name);
           if (sess && !sess._dead && !sess.agentType) {
             return { ok: false, code: 409, error: `"${name}" is a ${sess.type || 'non-agent'} session — only agent sessions receive dms${sess.type === 'bash' ? ` (run a command in it with: exec ${name} <command>)` : ''}` };
@@ -614,7 +636,8 @@ function createRemoteWiring(deps) {
             })
             : null;
           try {
-            if (images && images.length) manager._deliverMessage(name, 'user', text, 'dm', tag, onWrite, null, images);
+            if (typeof ref === 'string' && ref) manager._deliverMessage(name, 'user', text, 'dm', tag, onWrite, null, images && images.length ? images : null, null, ref);
+            else if (images && images.length) manager._deliverMessage(name, 'user', text, 'dm', tag, onWrite, null, images);
             else if (onWrite) manager._deliverMessage(name, 'user', text, 'dm', tag, onWrite);
             else manager._deliverMessage(name, 'user', text, 'dm', ...(tag ? [tag] : []));
           } catch (e) {

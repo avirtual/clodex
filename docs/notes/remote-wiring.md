@@ -56,7 +56,12 @@ it left; before t1519 it stopped at `shellDeny` and came back pty at default eff
 
 ## send
 
-Wake-on-dm calls `manager.wake` and then `_deliverMessage` as `'user'`, so it never enters `_gatedDeliver` and the assistant-class guard does not see it. `_archived` covers a seat still closing after `archive()` while it sits in the map; `wake` waits for its exit, so the wiring never calls `restartSession` itself. `manager.wake` is not single-flight, so `wakeOnce` makes concurrent dms and `POST /wake` share one in-flight wake per name.
+Wake-on-dm calls `manager.wake` and then `_deliverMessage` as `'user'`, so it never enters `_gatedDeliver` and the assistant-class guard does not see it. `_archived` covers a seat still closing after `archive()` while it sits in the map; `wake` waits for its exit, so the wiring never calls `restartSession` itself.
+The ref rides the full-arity `_deliverMessage` call only when set, because the three shorter call forms are argument-list pins.
+
+## sleeperMessages
+
+Not `cachedMessages`: its one-entry cache belongs to the live path, and a sleeper read would evict it. `claudeTranscriptFile` honours `env.CLAUDE_CONFIG_DIR` because an account seat's `projects/` sits under its config dir (`_claudeTranscriptPath` in session-manager.js).
 
 ## spawnFromTemplate
 

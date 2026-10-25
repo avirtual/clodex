@@ -30,3 +30,15 @@ The assistant-class guard runs before the live-session lookup, so seat mail to a
 ## awaitTurn
 
 A waiter is armed when the dm is written to the CLI (the item's `onSend`), never at enqueue: a `result` that lands while the item still queues belongs to the previous turn. The next `result` resolves it; a close or the timeout resolves `null`. The text is the CLI's final `result` string, so prose emitted before a tool call in the same turn is not in it; the transcript route has the whole turn.
+
+## _resolveTurnWaiters
+
+The `result` arm must call it before `_streamTurnEnd`, or the next batch's refs are credited to this turn. `_turnRefs` is appended at `_streamSent` (the write), never at enqueue, for the same reason `awaitTurn` arms at the write.
+
+## _deliverReminder
+
+Park before wake: the parked file is what the fresh seat drains at init. A closing seat parks like an absent one, since a closing stream seat drops an enqueue.
+
+## wake
+
+Single-flight because a reminder and a dm can race, and the loser's failure arm would re-stamp `asleepAt` on a running seat.

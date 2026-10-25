@@ -40,7 +40,7 @@ injected callbacks actually serve; advertised as the `resources` cap, which is
 unconditional),
 `GET /api/sessions/:name` (one session, `{ok, session}`; 404 unknown or dead; every
 session row carries `io: 'stream'|'pty'`),
-`GET /api/sessions/:name/transcript?limit&since` (the message list; a user message with attached images carries `images: [{n, mediaType, data}|{n, mediaType, bytes}]`, thumbnailed to 256px on a desktop host, advertised as the unconditional `transcript-images` cap),
+`GET /api/sessions/:name/transcript?limit&since&after` — `limit` 1..500 (default 100, clamped), `since` a `seq` floor (int ≥ 0), `after` an ISO-8601 instant (rows with a `ts` before it drop, rows without `ts` stay; a malformed value is `400 {ok:false, error:'bad after (expected an ISO-8601 instant)'}`); answers `{ok, messages, cursor, complete}` where `messages` are `{role, text, ts, seq, interim?, images?, client?}` (the last `limit` after the filters), `cursor` the `seq` of the last user message; a live seat serves its current CLI transcript; a sleeping assistant serves the concatenation of every recorded awake period's transcript (its `sessionIds`, oldest first, `seq` renumbered), so a `202 {queued}` reply is fetchable after the seat sleeps without holding SSE; `seq` restarts when a seat wakes (one CLI file per awake period) — `after=<iso>` is the cursor that spans sleeps (a user message with attached images carries `images: [{n, mediaType, data}|{n, mediaType, bytes}]`, thumbnailed to 256px on a desktop host, advertised as the unconditional `transcript-images` cap),
 and `GET /api/sessions?workspace=<name or id>` (the list narrowed to one
 workspace; an unknown value is an empty list), `GET /api/workspaces` (this
 node's workspaces — `{id, name, open, lastFocusedAt}`, no window geometry),
@@ -107,7 +107,7 @@ attachment marker in front of the text in the transcript it writes, so a
 client confirming delivery by transcript must match the text, not the path
 line; advertised as
 the unconditional `images` cap; a delivery that fails on the box is a 500
-`{ok:false, error}`, and only a missing seat is a 404; body `await: <ms>`
+`{ok:false, error}`, and only a missing seat is a 404; optional `ref` (≤128 chars of `[A-Za-z0-9._:-]`, else `400 {ok:false, error:'bad ref'}`) echoed top-level on the answer and returned in `turn.refs`; body `await: <ms>`
 (capped at 60000) holds the reply for the turn: `200 {ok, turn}` with the turn
 below, or `202 {ok, queued: true}` on timeout or seat death; a dm to a sleeping
 assistant wakes it first, a refused wake forwards its `code`, 503 by default),
@@ -117,13 +117,13 @@ them to the live rows, anything else is a 400) and `GET /api/sessions/:name`
 answer a sleeper row from its record (`class: 'assistant', state: 'asleep',
 activity: 'asleep', asleepAt, sleepReason, template, sleep, cost, wakes`, a
 null `activityTs` and null stats); a live assistant row adds `class: 'assistant',
-state: 'awake', template, sleep, cost, wakes`; `POST /api/sessions/:name/sleep`
+state: 'awake'|'sleeping'` (sleeping = still closing after sleep), `template, sleep, cost, wakes`; `POST /api/sessions/:name/sleep`
 (200 asleep, 202 sleeping when mid-turn, 409 not an assistant / not awake),
 `POST /api/sessions/:name/wake` (200 awake, 409, `code` forwarded),
 `GET /api/sessions/:name/memory` (`{ok, name, units, brief}`; 404 unknown, 409
-not an assistant); SSE `turn` `{name, text, intents, costUsd, durationMs,
+not an assistant); SSE `turn` `{name, text, intents, refs, costUsd, durationMs,
 isError, ts}` after each assistant turn (`text` is the prose of the CLI's final
-result, `intents` the `{type, sub?, cmd?}` heads, never bodies); create
+result, `intents` the `{type, sub?, cmd?}` heads, never bodies, `refs` every dm `ref` written since the previous turn, always a list); a reminder firing on a sleeper whose `sleep.wakeOn` lists `'reminder'` wakes it and the reply arrives as an unsolicited `turn`; create
 `{name, template, cwd?}` spawns from a library template name only; DELETE on
 an assistant destroys it (record, seat dir with memory and brief, the CLI
 transcripts for its session ids, `pending/<name>`), `POST /api/restart` (app relaunch —

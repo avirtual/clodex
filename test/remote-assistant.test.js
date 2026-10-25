@@ -7,6 +7,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { createRemoteWiring } = require('../remote-wiring');
 const { RemoteServer } = require('../remote');
+const { sliceSince } = require('../transcript');
 
 const HOME = '/h';
 const SID = '11111111-1111-4111-8111-111111111111';
@@ -64,6 +65,7 @@ function makeDeps(overrides = {}) {
       if (files.has(p)) return files.get(p);
       const e = new Error('ENOENT'); e.code = 'ENOENT'; throw e;
     },
+    realpathSync: (p) => (overrides.realpath ? overrides.realpath(p) : realFs.realpathSync(p)),
     unlinkSync: (p) => { unlinkCalls.push(p); },
     rmSync: (p, o) => { rmCalls.push([p, o]); },
   };
@@ -74,7 +76,9 @@ function makeDeps(overrides = {}) {
     DEFAULT_WORKSPACE_ID: 'default',
     AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
     REGISTRY_DIR: '/tmp/reg', OUTBOX_DIR: '/tmp/outbox', SELF_LABEL: 'testbox',
-    parseCtxFile: () => null, jsonlToMessages: () => [], ensureDir: () => {}, homeRelativize: (x) => x,
+    parseCtxFile: () => null, ensureDir: () => {}, homeRelativize: (x) => x,
+    jsonlToMessages: overrides.jsonlToMessages || (() => []),
+    cachedMessages: overrides.cachedMessages || (() => []), sliceSince,
     claimOutbox: () => [], listOutboxOrigins: () => [],
     manager, proxyPoller: { snapshot: () => null },
     loadManifest: (n) => { throw new Error(`no such team "${n}"`); },
@@ -380,4 +384,133 @@ test('notifyTurn: an /api/events subscriber gets an event: turn frame carrying t
     });
     assert.match(frames, /event: turn\ndata: \{"name":"avh-7","text":"hi","intents":\[\],"costUsd":0\.001,"durationMs":5,"isError":false,"ts":9\}\n\n/);
   });
+});
+
+test('send with ref: the full-arity delivery carries the ref as the 10th positional', async () => {
+  const h = makeDeps({ sessions: { 'avh-7': { name: 'avh-7', agentType: 'claude', io: 'stream' } } });
+  const opts = captureOptions(h.deps);
+  assert.deepStrictEqual(await opts.send('avh-7', 'hi', [], 'avh', 0, 'm-1'), { ok: true });
+  assert.deepStrictEqual(h.deliverCalls.map((c) => c.args), [['avh-7', 'user', 'hi', 'dm', '(via avh)', null, null, null, null, 'm-1']]);
+});
+
+test('POST /api/sessions/:name/dm: ref is validated, passed as the 6th positional and echoed top-level on every answer', async () => {
+  const seen = [];
+  let answer = { ok: true };
+  const send = (name, text, images, client, awaitMs, ref) => { seen.push(ref); return answer; };
+  await withServer({ send }, async (port) => {
+    const post = (body) => req(port, '/api/sessions/avh-7/dm', { method: 'POST', body });
+    const plain = await post({ text: 'hi', client: 'avh', ref: 'm-1' });
+    assert.deepStrictEqual([plain.status, plain.json, seen], [200, { ok: true, ref: 'm-1' }, ['m-1']]);
+    const turn = { text: 'x', intents: [], refs: ['m-1'] };
+    answer = { ok: true, turn };
+    const t = await post({ text: 'hi', client: 'avh', ref: 'm-1', await: 10 });
+    assert.deepStrictEqual([t.status, t.json], [200, { ok: true, turn, ref: 'm-1' }]);
+    answer = { ok: true, queued: true };
+    const q = await post({ text: 'hi', client: 'avh', ref: 'm-1', await: 10 });
+    assert.deepStrictEqual([q.status, q.json], [202, { ok: true, queued: true, ref: 'm-1' }]);
+    answer = { ok: false, code: 409, error: 'nope' };
+    const refused = await post({ text: 'hi', ref: 'm-1' });
+    assert.deepStrictEqual([refused.status, refused.json], [409, { ok: false, code: 409, error: 'nope', ref: 'm-1' }]);
+    answer = { ok: true };
+    seen.length = 0;
+    for (const ref of ['a'.repeat(129), 42]) {
+      const bad = await post({ text: 'hi', ref });
+      assert.deepStrictEqual([bad.status, bad.json], [400, { ok: false, error: 'bad ref' }]);
+    }
+    assert.deepStrictEqual(seen, [], 'a bad ref never sends');
+    const none = await post({ text: 'hi', client: 'avh' });
+    assert.deepStrictEqual([none.json, seen], [{ ok: true }, [null]]);
+    const wide = await post({ text: 'hi', ref: 'id:7.x-y_z' });
+    assert.deepStrictEqual([wide.status, wide.json], [200, { ok: true, ref: 'id:7.x-y_z' }]);
+    const max = await post({ text: 'hi', ref: 'b'.repeat(128) });
+    assert.strictEqual(max.status, 200);
+  });
+});
+
+const SID_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const SID_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const SLEEPER_REC = { class: 'assistant', archivedAt: 1, type: 'claude', cwd: '/w', sessionId: null, sessionIds: [SID_A, SID_B, 'bad/../id'] };
+
+function stubJsonl(rowsByFile, asked) {
+  return (file, limit) => {
+    asked.push([file, limit]);
+    const rows = rowsByFile[path.basename(file)];
+    if (!rows) { const e = new Error('ENOENT'); e.code = 'ENOENT'; throw e; }
+    return rows.map((r) => ({ ...r }));
+  };
+}
+
+test('getTranscript: a sleeping assistant reads every recorded awake period, oldest first, seq renumbered', async () => {
+  const rows = {
+    [`${SID_A}.jsonl`]: [{ role: 'user', text: 'q1', ts: '2026-10-25T10:00:00.000Z', seq: 0 }, { role: 'assistant', text: 'a1', ts: '2026-10-25T10:00:05.000Z', seq: 1 }],
+    [`${SID_B}.jsonl`]: [{ role: 'assistant', text: 'b1', ts: '2026-10-25T12:00:00.000Z', seq: 0 }],
+  };
+  const asked = [];
+  const h = makeDeps({ records: { 'avh-7': SLEEPER_REC }, jsonlToMessages: stubJsonl(rows, asked) });
+  const opts = captureOptions(h.deps);
+  const all = await opts.getTranscript('avh-7', 100, null, null);
+  assert.deepStrictEqual(all, {
+    ok: true,
+    messages: [
+      { role: 'user', text: 'q1', ts: '2026-10-25T10:00:00.000Z', seq: 0 },
+      { role: 'assistant', text: 'a1', ts: '2026-10-25T10:00:05.000Z', seq: 1 },
+      { role: 'assistant', text: 'b1', ts: '2026-10-25T12:00:00.000Z', seq: 2 },
+    ],
+    cursor: 0, complete: true,
+  });
+  assert.deepStrictEqual(asked, [
+    [path.join(HOME, '.claude', 'projects', '-w', `${SID_A}.jsonl`), Infinity],
+    [path.join(HOME, '.claude', 'projects', '-w', `${SID_B}.jsonl`), Infinity],
+  ]);
+  const since = await opts.getTranscript('avh-7', 100, 2, null);
+  assert.deepStrictEqual(since.messages.map((m) => [m.text, m.seq]), [['b1', 2]]);
+  const after = await opts.getTranscript('avh-7', 100, null, '2026-10-25T11:00:00.000Z');
+  assert.deepStrictEqual(after.messages.map((m) => m.ts), ['2026-10-25T12:00:00.000Z']);
+  const last = await opts.getTranscript('avh-7', 1, null, null);
+  assert.deepStrictEqual(last.messages.map((m) => m.text), ['b1']);
+
+  const acctAsked = [];
+  const acct = makeDeps({ records: { 'avh-7': { ...SLEEPER_REC, env: { CLAUDE_CONFIG_DIR: '/acct' } } }, jsonlToMessages: stubJsonl(rows, acctAsked) });
+  await captureOptions(acct.deps).getTranscript('avh-7', 100, null, null);
+  assert.deepStrictEqual(acctAsked.map(([f]) => f), [
+    path.join('/acct', 'projects', '-w', `${SID_A}.jsonl`),
+    path.join('/acct', 'projects', '-w', `${SID_B}.jsonl`),
+  ]);
+});
+
+test('getTranscript: a sleeper skips an unreadable period, answers an empty page with no files, and a plain or live seat keeps its old path', async () => {
+  const onlyB = makeDeps({ records: { 'avh-7': SLEEPER_REC }, jsonlToMessages: stubJsonl({ [`${SID_B}.jsonl`]: [{ role: 'assistant', text: 'b1', seq: 4 }] }, []) });
+  assert.deepStrictEqual(await captureOptions(onlyB.deps).getTranscript('avh-7', 100, null, null),
+    { ok: true, messages: [{ role: 'assistant', text: 'b1', seq: 0 }], cursor: 0, complete: true });
+  const none = makeDeps({ records: { 'avh-7': SLEEPER_REC }, jsonlToMessages: stubJsonl({}, []) });
+  assert.deepStrictEqual(await captureOptions(none.deps).getTranscript('avh-7', 100, null, null),
+    { ok: true, messages: [], cursor: 0, complete: true });
+
+  const plainAsked = [];
+  const plain = makeDeps({ records: { p1: { archivedAt: 1, type: 'claude', cwd: '/w', sessionIds: [SID_A] } }, jsonlToMessages: stubJsonl({}, plainAsked) });
+  assert.deepStrictEqual(await captureOptions(plain.deps).getTranscript('p1', 100, null, null), { ok: false, error: 'Session not found' });
+  assert.deepStrictEqual(plainAsked, []);
+
+  const liveAsked = [];
+  const cached = [];
+  const live = makeDeps({
+    records: { 'avh-7': SLEEPER_REC },
+    sessions: { 'avh-7': { name: 'avh-7', agentType: 'claude', io: 'stream' } },
+    jsonlToMessages: stubJsonl({}, liveAsked),
+    realpath: (p) => (p === path.join('/tmp/reg', 'run', 'avh-7', 'transcript.jsonl') ? '/live.jsonl' : p),
+    cachedMessages: (p) => { cached.push(p); return [{ role: 'user', text: 'now', seq: 0 }]; },
+  });
+  assert.deepStrictEqual(await captureOptions(live.deps).getTranscript('avh-7', 100, null, null),
+    { ok: true, messages: [{ role: 'user', text: 'now', seq: 0 }], cursor: 0, complete: true });
+  assert.deepStrictEqual([cached, liveAsked], [['/live.jsonl'], []]);
+});
+
+test('killSession: an account assistant unlinks its transcripts under its CLAUDE_CONFIG_DIR', async () => {
+  const h = makeDeps({ records: { 'avh-7': { ...SLEEPER_REC, env: { CLAUDE_CONFIG_DIR: '/acct' } } } });
+  const opts = captureOptions(h.deps);
+  assert.deepStrictEqual(await opts.killSession('avh-7'), { ok: true, name: 'avh-7', destroyed: true, transcripts: 2 });
+  assert.deepStrictEqual(h.unlinkCalls, [
+    path.join('/acct', 'projects', '-w', `${SID_A}.jsonl`),
+    path.join('/acct', 'projects', '-w', `${SID_B}.jsonl`),
+  ]);
 });

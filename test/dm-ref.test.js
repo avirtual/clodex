@@ -21,7 +21,7 @@ function captureDeliverDm(manager) {
     DEFAULT_WORKSPACE_ID: 'default',
     AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
     REGISTRY_DIR: '/tmp/reg', OUTBOX_DIR: '/tmp/outbox', SELF_LABEL: 'box',
-    parseCtxFile: () => null, cachedMessages: () => [], sliceSince: () => ({ messages: [] }),
+    parseCtxFile: () => null, cachedMessages: () => [], jsonlToMessages: () => [], sliceSince: () => ({ messages: [] }),
     ensureDir: () => {}, homeRelativize: (x) => x,
     claimOutbox: () => [], listOutboxOrigins: () => [],
     manager, proxyPoller: { snapshot: () => null },

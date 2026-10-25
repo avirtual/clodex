@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 - Phone-access API: create from a template, sleep and wake, a dm that waits for the reply, memory export.
+- Phone-access API: a dm can carry a correlation ref that comes back on its turn, a sleeping assistant's transcript stays readable, and a reminder can wake an assistant.
 
 ## 5.143.0 — 2026-10-25
 
