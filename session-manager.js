@@ -8352,14 +8352,14 @@ function createSessionManager(deps) {
           const name = seatFileFileName(stamp, i + 1, f.name);
           const file = path.join(dir, name);
           fs.writeFileSync(file, Buffer.from(f.data, 'base64'), { flag: 'wx', mode: 0o600 });
-          written.push(file);
-          this._noteFiled(seatName, filedEntry(file, 'message', seatFileHead(name)));
+          written.push({ file, name });
         });
       } catch (err) {
-        for (const file of written) { try { fs.unlinkSync(file); } catch {} }
+        for (const w of written) { try { fs.unlinkSync(w.file); } catch {} }
         throw err;
       }
-      return written;
+      for (const w of written) this._noteFiled(seatName, filedEntry(w.file, 'message', seatFileHead(w.name)));
+      return written.map((w) => w.file);
     }
 
     _deliverReminder(agent, body) {

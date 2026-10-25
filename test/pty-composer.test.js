@@ -569,9 +569,9 @@ test('ENTER: on the desktop a picked file uploads through seatImageUpload, never
 test('both composers mount the paperclip and the web drop on terminalContainer attaches images through the seat entry', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
   const stream = src.slice(src.indexOf('function createStreamSeatPane('), src.indexOf('function createTerminal('));
-  assert.match(stream, /attachPicker\(\{ doc: document, parent: wrapperEl, onFiles: \(files\) => attachFiles\(files\) \}\);/u);
+  assert.match(stream, /attachPicker\(\{ doc: document, parent: wrapperEl, onFiles: \(files\) => attachStreamFiles\(files\) \}\);/u);
   assert.match(stream, /wrapperEl\.appendChild\(attachButton\(document, \(\) => streamPicker\.open\(\)\)\);/u);
-  assert.match(stream, /attachPickedFiles: attachFiles,/u);
+  assert.match(stream, /attachPickedFiles: attachStreamFiles,/u);
   assert.match(src, /ptyPicker = attachPicker\(\{ doc: document, parent: wrapperEl, onFiles: attachPtyFiles \}\);/u);
   assert.match(src, /wrapperEl\.appendChild\(attachButton\(document, \(\) => ptyPicker\.open\(\)\)\);/u);
   assert.doesNotMatch(src, /attachBtn\.hidden = /u, 'the pty paperclip is never hidden at build time, when the sidebar row does not exist yet');

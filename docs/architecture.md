@@ -1600,11 +1600,12 @@ and are not, which is why the judgement worth testing is pushed down here.
   items read into `{ mediaType, data }` base64 through an injected FileReader; `readImageFile`
   serves the stream-seat attach, `clipboardImages` the pty-composer paste.
 - **attach-files.js** — the composer paperclip: `attachPicker` (one hidden
-  `<input type=file>` per composer; picked files filtered by `imageFilesOf` to
-  seat-images.js's `SEAT_IMAGE_TYPES`, the rest toasted by name and type) and
-  `attachButton` (`.seat-attach-btn`). The pty composer feeds picked files to
-  pty-composer.js's `attachImages`, the upload path its web paste uses; the
-  stream composer to its own `attachFiles`.
+  `<input type=file>` per composer; it hands over every pick), `splitAttachable`
+  (a pick split into seat images, other files up to 5 at 10 MB, and the rejects
+  `rejectedNotice` toasts) and `attachButton` (`.seat-attach-btn`). Both
+  composers upload the files through pty-composer.js's `attachFiles`; the pty
+  composer uploads images through `attachImages`, the stream composer
+  (`attachStreamFiles`) reads them into its send payload.
 - **prompt-echo.js** — recolour the CLI's submitted-prompt echo on the wire,
   before `terminal.write`. The echo is truecolor SGR, which xterm renders as
   inline styles that `options.theme` cannot reach, so the bytes are rewritten
