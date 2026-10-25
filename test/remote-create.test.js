@@ -323,6 +323,26 @@ test('createSession: a handler error line comes back as the ack error', async ()
   assert.deepStrictEqual(ack, { ok: false, error: 'error: template "x" not installed' });
 });
 
+test('createSession: a {name, template} body spawns through the handler and never reaches create()', async () => {
+  const { deps, createCalls, spawnCalls } = makeDeps({ spawnReply: 'ok: spawned "avh-7" (claude) @ /w via template "avh-assistant"' });
+  const opts = captureOptions(deps);
+  const ack = await opts.createSession({ name: 'avh-7', template: 'avh-assistant', cwd: '/w', type: 'codex', extraArgs: ['--x'] });
+  assert.deepStrictEqual(ack, { ok: true, name: 'avh-7', type: 'claude', template: 'avh-assistant' });
+  assert.deepStrictEqual(spawnCalls.map((c) => c.intent), [{ name: 'avh-7', cwd: '/w', template: 'avh-assistant' }]);
+  assert.deepStrictEqual(createCalls, []);
+});
+
+test('createSession: a blank template leaves the bare body mapping byte-identical', async () => {
+  const { deps, createCalls, spawnCalls } = makeDeps();
+  const opts = captureOptions(deps);
+  await opts.createSession({ name: 'worker', type: 'claude', cwd: '/tmp/w', template: '  ' });
+  assert.deepStrictEqual(spawnCalls, []);
+  assert.deepStrictEqual(createCalls[0], [
+    'worker', 'claude', path.resolve('/tmp/w'),
+    [], null, 'default', null, false, null, [], [], [], [], [], null, [], [], null, null, true,
+  ]);
+});
+
 test('createSession: a live seat of that name is name-taken, and never spawns', async () => {
   const { deps, manager, spawnCalls } = leadDeps();
   manager.sessions.set('clodex-lead', { name: 'clodex-lead' });
