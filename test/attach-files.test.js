@@ -74,6 +74,11 @@ test('attachPicker honours multiple, and an empty pick never calls onFiles', () 
 const png = (name = 'a.png') => ({ name, type: 'image/png', size: 10 });
 const pdf = (name = 'r.pdf') => ({ name, type: 'application/pdf', size: 10 });
 
+test('rejectedNotice on a 6 png + 6 pdf pick names one overflow of each', () => {
+  const pick = [...['1', '2', '3', '4', '5', '6'].map((n) => png(`${n}.png`)), ...['1', '2', '3', '4', '5', '6'].map((n) => pdf(`${n}.pdf`))];
+  assert.deepStrictEqual(rejectedNotice(splitAttachable(pick).rejected), ['1 image(s) not attached — at most 5 per message.', '1 file(s) not attached — at most 5 per message.']);
+});
+
 for (const [label, pick, want] of [
   ['a png is an image', [{ name: 'a.png', type: 'image/png', size: 10 }], { images: ['a.png'], files: [], rejected: [] }],
   ['an untyped 14.2 MB zip is refused for size', [{ name: 'a.zip', type: '', size: 14889779 }], { images: [], files: [], rejected: [['a.zip', 'size']] }],

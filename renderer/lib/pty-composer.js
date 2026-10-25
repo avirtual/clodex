@@ -162,4 +162,4 @@ function renderAttachStrip(el, items, onRemove) {
   }
 }
 
-module.exports = { ptyComposerWrites, pasteKind, imageChip, fileChip, expandAttachChips, ptyImagePasteHandler, attachImages, attachFiles, pasteStripped, STRIPPED_PASTE_NOTICE, removeChip, chippedAttachments, renderAttachStrip };
+module.exports = { ptyComposerWrites, pasteKind, imageChip, fileChip, expandAttachChips, ptyImagePasteHandler, attachImages, attachFiles, pasteStripped, STRIPPED_PASTE_NOTICE, removeChip, chippedAttachments, fileTile, renderAttachStrip };

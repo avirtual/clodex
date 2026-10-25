@@ -68,9 +68,9 @@ const { createTermSearch } = require('./term-search');
 const { createIntentHighlight } = require('./intent-highlight');
 const { createVoiceMirror, engineObserved } = require('./voice-mirror');
 const { attachTriggerSubmit, createPtyVoiceDraft, VOICE_QUIET_MS, VOICE_RELEASE_MS } = require('./lib/composer-voice');
-const { ptyComposerWrites, expandAttachChips, ptyImagePasteHandler, attachImages, attachFiles, pasteStripped, STRIPPED_PASTE_NOTICE, removeChip, chippedAttachments, renderAttachStrip } = require('./lib/pty-composer');
+const { ptyComposerWrites, expandAttachChips, ptyImagePasteHandler, attachImages, attachFiles, pasteStripped, STRIPPED_PASTE_NOTICE, removeChip, chippedAttachments, fileTile, renderAttachStrip } = require('./lib/pty-composer');
 const { readImageFile, readAttachFile, clipboardImages } = require('./lib/clipboard-images');
-const { imageFilesOf, splitAttachable, rejectedNotice, attachPicker, attachButton } = require('./lib/attach-files');
+const { SEAT_FILE_MAX, imageFilesOf, splitAttachable, rejectedNotice, attachPicker, attachButton } = require('./lib/attach-files');
 const { SEAT_IMAGE_MAX } = require('../seat-images');
 const { createMenuMirror } = require('./lib/menu-mirror');
 const { VOICE_ENGINE_NAME } = require('../voice-engine');
@@ -1782,7 +1782,7 @@ function createStreamSeatPane(name, wrapperEl, seat) {
   slashEl.hidden = true;
   wrapperEl.appendChild(slashEl);
   wrapperEl.appendChild(composer);
-  const streamPicker = attachPicker({ doc: document, parent: wrapperEl, onFiles: (files) => attachFiles(files) });
+  const streamPicker = attachPicker({ doc: document, parent: wrapperEl, onFiles: (files) => attachStreamFiles(files) });
   composer.classList.add('seat-composer-attach');
   wrapperEl.appendChild(attachButton(document, () => streamPicker.open()));
   const fitComposer = composerKit.fit;
@@ -1864,7 +1864,10 @@ function createStreamSeatPane(name, wrapperEl, seat) {
       }
       const body = document.createElement('span');
       body.className = 'seat-outbox-text';
-      body.textContent = row.images ? `${row.text} [${row.images} image${row.images === 1 ? '' : 's'}]` : row.text;
+      const tags = [];
+      if (row.images) tags.push(`${row.images} image${row.images === 1 ? '' : 's'}`);
+      if (row.files) tags.push(`${row.files} file${row.files === 1 ? '' : 's'}`);
+      body.textContent = tags.length ? `${row.text} [${tags.join(', ')}]` : row.text;
       el.appendChild(body);
       const state = document.createElement('span');
       state.className = 'seat-outbox-state';
@@ -1874,9 +1877,10 @@ function createStreamSeatPane(name, wrapperEl, seat) {
     }
   };
   let pending = [];
+  let pendingFiles = [];
   const renderAttachments = () => {
     attachEl.replaceChildren();
-    attachEl.hidden = pending.length === 0;
+    attachEl.hidden = pending.length === 0 && pendingFiles.length === 0;
     pending.forEach((img, i) => {
       const thumb = document.createElement('div');
       thumb.className = 'seat-attachment';
@@ -1895,14 +1899,60 @@ function createStreamSeatPane(name, wrapperEl, seat) {
       thumb.append(pic, rm);
       attachEl.appendChild(thumb);
     });
+    for (const it of pendingFiles) {
+      const tile = fileTile(document, it);
+      const rm = document.createElement('button');
+      rm.type = 'button';
+      rm.className = 'seat-attachment-remove';
+      rm.textContent = '×';
+      rm.addEventListener('click', () => {
+        pendingFiles = pendingFiles.filter((t) => t !== it);
+        renderAttachments();
+      });
+      tile.append(rm);
+      attachEl.appendChild(tile);
+    }
   };
   let reading = 0;
-  const attachFiles = (files) => {
-    const allowed = imageFilesOf(files).images;
-    const room = Math.max(0, SEAT_IMAGE_MAX - pending.length - reading);
-    const taken = allowed.slice(0, room);
-    if (taken.length < files.length) {
-      showToast(`${files.length - taken.length} image(s) not attached — png, jpeg, gif or webp only, at most ${SEAT_IMAGE_MAX} per message.`, { kind: 'error', name });
+  let readingFiles = 0;
+  const streamFileSink = {
+    upload: (files) => window.api.seatFileUpload(name, files),
+    toast: (m) => showToast(m, { kind: 'error', name }),
+    nextFile: () => 0,
+    append: (added) => {
+      if (disposed) return;
+      pendingFiles = pendingFiles.concat(added);
+      renderAttachments();
+    },
+    attached: (done) => {
+      for (const d of done) {
+        const tile = pendingFiles.find((t) => t.file === d.file);
+        if (!tile) continue;
+        tile.path = d.path;
+        tile.pending = false;
+      }
+      renderAttachments();
+    },
+    drop: (items) => {
+      pendingFiles = pendingFiles.filter((t) => !items.some((d) => d.file === t.file));
+      renderAttachments();
+    },
+  };
+  const attachStreamFiles = (picked) => {
+    const { images, files, rejected } = splitAttachable(picked);
+    const imgRoom = Math.max(0, SEAT_IMAGE_MAX - pending.length - reading);
+    const fileRoom = Math.max(0, SEAT_FILE_MAX - pendingFiles.length - readingFiles);
+    const taken = images.slice(0, imgRoom);
+    const takenFiles = files.slice(0, fileRoom);
+    for (const file of images.slice(imgRoom)) rejected.push({ file, reason: 'images' });
+    for (const file of files.slice(fileRoom)) rejected.push({ file, reason: 'files' });
+    for (const notice of rejectedNotice(rejected)) showToast(notice, { kind: 'error', name });
+    if (takenFiles.length) {
+      readingFiles += takenFiles.length;
+      Promise.all(takenFiles.map((f) => readAttachFile(f, FileReader))).then((read) => {
+        readingFiles -= takenFiles.length;
+        return attachFiles({ ...streamFileSink, files: read.filter(Boolean) });
+      });
     }
     for (const file of taken) {
       reading += 1;
@@ -1923,7 +1973,7 @@ function createStreamSeatPane(name, wrapperEl, seat) {
     const files = items.filter((it) => it.kind === 'file' && /^image\//.test(it.type)).map((it) => it.getAsFile()).filter(Boolean);
     if (!files.length) return;
     e.preventDefault();
-    attachFiles(files);
+    attachStreamFiles(files);
   });
   wrapperEl.addEventListener('drop', (e) => {
     const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
@@ -1931,7 +1981,7 @@ function createStreamSeatPane(name, wrapperEl, seat) {
     if (!imageFilesOf(files).images.length) return;
     e.preventDefault();
     e.stopPropagation();
-    attachFiles(files);
+    attachStreamFiles(files);
   });
   let rev = -1;
   let pulling = false;
@@ -1984,24 +2034,27 @@ function createStreamSeatPane(name, wrapperEl, seat) {
   const sendComposer = () => {
     const text = composer.value;
     const images = pending;
-    if (!text.trim() && !images.length) return;
+    const files = pendingFiles;
+    const paths = files.map((t) => t.path).filter(Boolean);
+    if (!text.trim() && !images.length && !paths.length) return;
     clearTimeout(draftTimer);
     draftTimer = null;
     composer.value = '';
     fitComposer();
     triggerSubmit.resetSpan();
     pending = [];
+    pendingFiles = [];
     renderAttachments();
     follow = true;
     const restore = () => {
       if (!composer.value) composer.value = text;
       fitComposer();
-      if (!pending.length && images.length) {
-        pending = images;
-        renderAttachments();
-      }
+      if (!pending.length && images.length) pending = images;
+      if (!pendingFiles.length && files.length) pendingFiles = files;
+      renderAttachments();
     };
-    Promise.resolve(window.api.seatSend(name, text, images)).then((res) => {
+    const body = text + paths.map((p) => `\nFile: ${p}`).join('');
+    Promise.resolve(window.api.seatSend(name, body, images)).then((res) => {
       if (res && res.ok === false) {
         showToast(`Send failed: ${res.error || 'unknown error'}`, { kind: 'error', name });
         restore();
@@ -2143,7 +2196,7 @@ function createStreamSeatPane(name, wrapperEl, seat) {
     getConfig: () => voiceSubmitConfig,
     markOrigin: () => window.api.markVoiceOrigin(name),
     send: sendComposer,
-    hasImages: () => pending.length > 0,
+    hasImages: () => pending.length > 0 || pendingFiles.length > 0,
     onVoiceFire: () => seatVoiceFired(name),
     holdsFire: () => voiceRecordingOn && seatVoiceMode(name, 'tap'),
     onVoiceStop: () => seatVoiceRecord(name, 'stop'),
@@ -2153,7 +2206,7 @@ function createStreamSeatPane(name, wrapperEl, seat) {
   });
   fitComposer();
   return {
-    attachPickedFiles: attachFiles,
+    attachPickedFiles: attachStreamFiles,
     focus: () => { composer.focus(); fitComposer(); },
     refresh: () => pull(true),
     voiceDraft(text) { triggerSubmit.draft(text); fitComposer(); },

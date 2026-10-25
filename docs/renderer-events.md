@@ -195,10 +195,11 @@ them.
 
 Both seat composers carry a paperclip (`.seat-attach-btn`, renderer/lib/attach-files.js)
 and open the same picker on Cmd/Ctrl+Shift+U (`isAttachKey`, composer-keys.js); it
-takes any file. On the pty composer a picked image reaches the host through the
-`seatImageUpload` invoke and any other file through `seatFileUpload`; the stream
-composer still attaches images only, carried in the seat's send payload — no new
-event. On a web surface a paste whose clipboard items are empty toasts
+takes any file. On both composers a non-image file reaches the host through the
+`seatFileUpload` invoke. On the pty composer a picked image goes through
+`seatImageUpload`; the stream composer carries images in the seat's send payload
+and appends one `File: <path>` line per uploaded file to the text it hands
+`seatSend` — no new event. On a web surface a paste whose clipboard items are empty toasts
 `STRIPPED_PASTE_NOTICE` instead of being ignored.
 
 ## Bottom line
