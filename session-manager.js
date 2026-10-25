@@ -164,7 +164,7 @@ function dupIdentity(intent) {
 const { createTicketsStore, ticketTerminalReason } = require('./tickets-store');
 const { findRepoRoot } = require('./project-root');
 const { atomicWriteFileSync } = require('./fs-util');
-const { composeBrief, idleDecision, briefPathFor, splitTurnText, BRIEF_TAIL, BRIEF_MAX_BYTES } = require('./assistant-sleep');
+const { composeBrief, idleDecision, briefPathFor, pickMaxAwakeVictim, splitTurnText, BRIEF_TAIL, BRIEF_MAX_BYTES } = require('./assistant-sleep');
 const { cachedMessages } = require('./transcript');
 const { isAgentType, adapterFor, streamFor: adapterStreamFor, hasBypass, hasReadOnlyCap, postureOf, resolveModelId, resolveEffort } = require('./cli-adapters');
 
@@ -350,7 +350,7 @@ function nearMissFormHint(text) {
 
 // Add a field only if no caller can regrow it and none re-asserts it after create(), else two writers own it; keepWarmAlways and holdUntil stay a pair.
 // An absent worktree pointer is the dangerous state: destroy() would drop the record and orphan the checkout.
-const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants', 'wireLabel', 'ticketId', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested', 'voice', 'reviewerTemplate', 'class', 'sleep', 'template', 'cost', 'wakes'];
+const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants', 'wireLabel', 'ticketId', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested', 'voice', 'reviewerTemplate', 'class', 'sleep', 'template', 'cost', 'wakes', 'awokeAt'];
 
 function sigkillPid(pid, name, log) {
   if (!(pid > 0)) {
@@ -3108,7 +3108,7 @@ function createSessionManager(deps) {
       const entry = p && p.get(s.name);
       if (!entry) return { ok: false };
       const prev = entry.cost || { usd: 0, turns: 0 };
-      p.upsert({ name: s.name, cost: { usd: prev.usd + dUsd, turns: prev.turns + dTurns, at: Date.now() } });
+      p.upsert({ name: s.name, cost: { ...prev, usd: prev.usd + dUsd, turns: prev.turns + dTurns, at: Date.now() } });
       s._costFolded = seen;
       return { ok: true };
     }
@@ -3746,9 +3746,13 @@ function createSessionManager(deps) {
           atomicWriteFileSync(briefPath, brief);
         } catch (e) { log.warn('session', `sleep ${name}: brief write failed: ${e.message}`); }
       }
-      this._foldSeatCost(s);
       const p = getPersistence();
-      p.upsert({ name, asleepAt: Date.now(), sleepReason: reason });
+      const entry = p.get(name) || {};
+      const awokeAt = entry.awokeAt || entry.createdAt || null;
+      this._foldSeatCost(s);
+      const cost = (p.get(name) || {}).cost || { usd: 0, turns: 0 };
+      const now = Date.now();
+      p.upsert({ name, asleepAt: now, sleepReason: reason, cost: { ...cost, awakeMs: (cost.awakeMs || 0) + (awokeAt ? Math.max(0, now - awokeAt) : 0) } });
       p.clearSessionId(name);
       log.info('session', `sleep ${name} (${reason})`);
       await this.archive(name);
@@ -3769,10 +3773,13 @@ function createSessionManager(deps) {
       const live = this.sessions.get(name);
       if (live && !live._dead && !live._archived) return { ok: true, state: 'awake' };
       if (live && !await this._waitForExit(name)) return { ok: false, error: 'still stopping' };
+      const cap = entry.sleep && Number(entry.sleep.maxAwake) > 0 ? Number(entry.sleep.maxAwake) : 0;
+      const full = cap ? await this.makeAwakeRoom(entry.template || null, cap) : null;
+      if (full) return full;
       const p = getPersistence();
       p.setArchived(name, false);
       p.setExited(name, null);
-      p.upsert({ name, asleepAt: null, sleepReason: null, wakes: (entry.wakes || 0) + 1 });
+      p.upsert({ name, asleepAt: null, sleepReason: null, wakes: (entry.wakes || 0) + 1, awokeAt: Date.now() });
       log.info('session', `wake ${name} (${reason})`);
       const r = await restartSession(name, { fresh: true }, entry.workspaceId);
       if (!r || !r.ok) {
@@ -3781,6 +3788,27 @@ function createSessionManager(deps) {
         return r || { ok: false, error: 'restart failed' };
       }
       return { ok: true, state: 'awake' };
+    }
+
+    _awakeAssistantRows(template) {
+      const p = getPersistence();
+      const rows = [];
+      for (const s of this.sessions.values()) {
+        if (s._dead || s._archived) continue;
+        const rec = p.get(s.name);
+        if (!rec || rec.class !== 'assistant' || (rec.template || null) !== (template || null)) continue;
+        rows.push({ name: s.name, activityTs: s.activityTs || 0, busy: !!(s.streamBusy || s.thinking) });
+      }
+      return rows;
+    }
+
+    async makeAwakeRoom(template, cap) {
+      const rows = this._awakeAssistantRows(template);
+      if (rows.length < cap) return null;
+      const victim = pickMaxAwakeVictim(rows, cap);
+      if (!victim) return { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000 };
+      await this._sleepNow(this.sessions.get(victim), 'evicted');
+      return null;
     }
 
     startAssistantSweep(intervalMs = 60000) {

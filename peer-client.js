@@ -113,6 +113,10 @@ function isSecureBase(raw) {
   try { return new URL(raw).protocol === 'https:'; } catch { return false; }
 }
 
+function withoutAssistants(rows) {
+  return (Array.isArray(rows) ? rows : []).filter((s) => !s || s.class !== 'assistant');
+}
+
 class PeerConnection {
   constructor({ id, label, url, token, emit, selfLabel, helloIntervalMs, computeRoster, staleMs, timers, sseMaxBufferBytes, claimInbox, direct }) {
     this.id = id;
@@ -351,7 +355,7 @@ class PeerConnection {
   _refreshSessions() {
     this._request('GET', '/api/sessions', null, (err, body) => {
       if (err || !body || !body.ok) return;
-      this.sessions = body.sessions || [];
+      this.sessions = withoutAssistants(body.sessions);
       this._emit('peer-state', this.id, this.status());
     });
   }

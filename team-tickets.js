@@ -519,6 +519,38 @@ function createTicketMethods(deps, shared) {
       return { ok: true };
     },
 
+    _resolveSpawnTemplate(spawner, v, spawnerTeam = this._teamOfOrNull(spawner)) {
+      if (v.includes('/') || v.startsWith('~') || v.startsWith('.')) {
+        let p = v.replace(/^~(?=$|\/)/, os.homedir());
+        if (!path.isAbsolute(p)) p = path.resolve(spawner.cwd || os.homedir(), p);
+        let obj;
+        try {
+          obj = JSON.parse(fs.readFileSync(p, 'utf-8'));
+        } catch (e) {
+          const why = e.code === 'ENOENT' ? 'not found'
+            : (e instanceof SyntaxError ? `invalid JSON (${e.message})` : e.message);
+          return { ok: false, error: `template file ${v}: ${why}` };
+        }
+        if (!obj || typeof obj !== 'object' || Array.isArray(obj) || !obj.type) {
+          return { ok: false, error: `template file ${v}: not a template object (needs a "type")` };
+        }
+        return { ok: true, tpl: obj };
+      }
+      const own = readTeamJson({ fs, path }, spawnerTeam, 'templates', v);
+      if (own) return { ok: true, tpl: { ...own, name: v, id: v } };
+      const wanted = v.toLowerCase();
+      const all = allTemplates();
+      const matches = all.filter(t => (t.name || '').toLowerCase() === wanted);
+      if (matches.length === 0) {
+        const names = all.map(t => t.name).filter(Boolean);
+        return { ok: false, error: `no template named "${v}"${names.length ? ` — available: ${names.join(', ')}` : ' — none saved'}` };
+      }
+      if (matches.length > 1) {
+        return { ok: false, error: `ambiguous — ${matches.length} templates named "${v}", rename to disambiguate` };
+      }
+      return { ok: true, tpl: matches[0] };
+    },
+
     _handleSpawnIntent(spawner, intent, opts = {}) {
       const reply = typeof opts.onReply === 'function'
         ? (msg) => opts.onReply(msg)
@@ -535,44 +567,9 @@ function createTicketMethods(deps, shared) {
 
       let tpl = null;
       if (intent.template) {
-        const v = intent.template;
-        if (v.includes('/') || v.startsWith('~') || v.startsWith('.')) {
-          let p = v.replace(/^~(?=$|\/)/, os.homedir());
-          if (!path.isAbsolute(p)) p = path.resolve(spawner.cwd || os.homedir(), p);
-          let obj;
-          try {
-            obj = JSON.parse(fs.readFileSync(p, 'utf-8'));
-          } catch (e) {
-            const why = e.code === 'ENOENT' ? 'not found'
-              : (e instanceof SyntaxError ? `invalid JSON (${e.message})` : e.message);
-            reply(`error: template file ${v}: ${why}`);
-            return;
-          }
-          if (!obj || typeof obj !== 'object' || Array.isArray(obj) || !obj.type) {
-            reply(`error: template file ${v}: not a template object (needs a "type")`);
-            return;
-          }
-          tpl = obj;
-        } else {
-          const own = readTeamJson({ fs, path }, spawnerTeam, 'templates', v);
-          if (own) {
-            tpl = { ...own, name: v, id: v };
-          } else {
-            const wanted = v.toLowerCase();
-            const all = allTemplates();
-            const matches = all.filter(t => (t.name || '').toLowerCase() === wanted);
-            if (matches.length === 0) {
-              const names = all.map(t => t.name).filter(Boolean);
-              reply(`error: no template named "${v}"${names.length ? ` — available: ${names.join(', ')}` : ' — none saved'}`);
-              return;
-            }
-            if (matches.length > 1) {
-              reply(`error: ambiguous — ${matches.length} templates named "${v}", rename to disambiguate`);
-              return;
-            }
-            tpl = matches[0];
-          }
-        }
+        const resolved = this._resolveSpawnTemplate(spawner, intent.template, spawnerTeam);
+        if (!resolved.ok) { reply(`error: ${resolved.error}`); return; }
+        tpl = resolved.tpl;
       }
       let tplLabel = tpl ? (tpl.name || intent.template) : null;
 
@@ -4577,7 +4574,7 @@ function createTicketMethods(deps, shared) {
       if (tpl.stripLevel === 1 || tpl.stripLevel === 2) getPersistence().setStripLevel(name, tpl.stripLevel);
       if (tpl.autoCompact === false) getPersistence().setAutoCompact(name, false);
       if (Array.isArray(tpl.plugins)) getPersistence().setPlugins(name, tpl.plugins);
-      if (tpl.class === 'assistant') getPersistence().upsert({ name, class: 'assistant', template: tpl.name || null, ...(tpl.sleep && typeof tpl.sleep === 'object' ? { sleep: { ...tpl.sleep } } : {}) });
+      if (tpl.class === 'assistant') getPersistence().upsert({ name, class: 'assistant', template: tpl.name || null, awokeAt: Date.now(), ...(tpl.sleep && typeof tpl.sleep === 'object' ? { sleep: { ...tpl.sleep } } : {}) });
     },
 
     // `mode` defaults to 'worktree', never 'spawn', so a path that never asked for one cannot put a seat in the operator's checkout.
