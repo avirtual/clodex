@@ -4577,6 +4577,7 @@ function createTicketMethods(deps, shared) {
       if (tpl.stripLevel === 1 || tpl.stripLevel === 2) getPersistence().setStripLevel(name, tpl.stripLevel);
       if (tpl.autoCompact === false) getPersistence().setAutoCompact(name, false);
       if (Array.isArray(tpl.plugins)) getPersistence().setPlugins(name, tpl.plugins);
+      if (tpl.class === 'assistant') getPersistence().upsert({ name, class: 'assistant', template: tpl.name || null, ...(tpl.sleep && typeof tpl.sleep === 'object' ? { sleep: tpl.sleep } : {}) });
     },
 
     // `mode` defaults to 'worktree', never 'spawn', so a path that never asked for one cannot put a seat in the operator's checkout.

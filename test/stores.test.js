@@ -318,6 +318,54 @@ test('persistence: setSessionId accumulates a dedup move-to-end history', () => 
   } finally { cleanup(); }
 });
 
+test('persistence: setSessionId caps an assistant-class history at 20, oldest resume evicted first', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    stores.persistence.upsert({ name: 'a', workspaceId: 'default', class: 'assistant' });
+    for (let i = 1; i <= 25; i++) stores.persistence.setSessionId('a', `s${i}`);
+    const e = stores.persistence.get('a');
+    assert.strictEqual(e.sessionId, 's25');
+    assert.deepStrictEqual(e.sessionIds, ['s6', 's7', 's8', 's9', 's10', 's11', 's12', 's13', 's14', 's15',
+      's16', 's17', 's18', 's19', 's20', 's21', 's22', 's23', 's24', 's25']);
+  } finally { cleanup(); }
+});
+
+test('persistence: setSessionId keeps the whole history on a seat without a class', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    stores.persistence.upsert({ name: 'a', workspaceId: 'default' });
+    for (let i = 1; i <= 25; i++) stores.persistence.setSessionId('a', `s${i}`);
+    const e = stores.persistence.get('a');
+    assert.strictEqual(e.sessionIds.length, 25);
+    assert.strictEqual(e.sessionIds[0], 's1');
+  } finally { cleanup(); }
+});
+
+test('persistence: clearSessionId nulls the live id, keeps the history, and mirrors seat.json', () => {
+  const { stores, registryDir, cleanup } = freshStores();
+  try {
+    stores.persistence.upsert({ name: 'a', type: 'claude', workspaceId: 'default' });
+    migrateSeatLayout({ root: registryDir, names: ['a'], fs });
+    stores.persistence.upsert({ name: 'a', type: 'claude' });
+    stores.persistence.setSessionId('a', 's1');
+    stores.persistence.setSessionId('a', 's2');
+    const seatFile = path.join(registryDir, 'sessions', 'a', 'seat.json');
+    assert.strictEqual(JSON.parse(fs.readFileSync(seatFile, 'utf8')).sessionId, 's2', 'ENTER: live id mirrored');
+    stores.persistence.clearSessionId('a');
+    const e = stores.persistence.get('a');
+    assert.strictEqual(e.sessionId, null);
+    assert.deepStrictEqual(e.sessionIds, ['s1', 's2']);
+    assert.strictEqual(JSON.parse(fs.readFileSync(seatFile, 'utf8')).sessionId, null);
+    assert.doesNotThrow(() => stores.persistence.clearSessionId('nobody'));
+    const orig = stores.persistence._save;
+    let saves = 0;
+    stores.persistence._save = function (...a) { saves++; return orig.apply(this, a); };
+    stores.persistence.clearSessionId('a');
+    stores.persistence._save = orig;
+    assert.strictEqual(saves, 0, 'an already-null id writes nothing');
+  } finally { cleanup(); }
+});
+
 // get() hands its result to callers that edit it in place, so a default returned
 // by reference outlives the caller that mutated it: the corruption lands on a
 // LATER read, in code that never touched settings, with nothing linking the two.

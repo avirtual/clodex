@@ -21583,6 +21583,74 @@ test('phone dm images: _deliverMessage with images to a pty seat writes one file
 });
 
 const RESULT = { type: 'result', subtype: 'success', duration_ms: 1, total_cost_usd: 0, is_error: false };
+
+const costResult = (usd) => ({ ...RESULT, total_cost_usd: usd });
+
+test('stream seat cost: cumulative results fold onto the record once SEAT_COST_FOLD_MS passes, and a new CLI session restarts the counter', async (t) => {
+  const { mock } = require('node:test');
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sk1');
+  mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 5000 });
+  t.after(() => mock.timers.reset());
+  h.line('sk1', { type: 'system', subtype: 'init', session_id: 'sid-a', model: 'm', slash_commands: [] });
+  for (const usd of [0.004, 0.009, 0.012]) h.line('sk1', costResult(usd));
+  assert.ok(h.store.get('sk1'), 'ENTER: the seat has a record');
+  mock.timers.tick(59999);
+  assert.strictEqual(h.store.get('sk1').cost, undefined);
+  mock.timers.tick(1);
+  assert.deepStrictEqual(h.store.get('sk1').cost, { usd: 0.012, turns: 3, at: 65000 });
+  h.line('sk1', { type: 'system', subtype: 'init', session_id: 'sid-b', model: 'm', slash_commands: [] });
+  h.line('sk1', costResult(0.002));
+  mock.timers.tick(60000);
+  assert.deepStrictEqual(h.store.get('sk1').cost, { usd: 0.014, turns: 4, at: 125000 });
+});
+
+test('stream seat cost: the exit path folds the unfolded tail with no tick', async (t) => {
+  const { mock } = require('node:test');
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sk2');
+  mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 7000 });
+  t.after(() => mock.timers.reset());
+  const upserts = [];
+  h.line('sk2', costResult(0.5));
+  assert.strictEqual(h.store.get('sk2').cost, undefined, 'ENTER: nothing folded before the close');
+  const origSet = h.store.set.bind(h.store);
+  h.store.set = (k, v) => { if (v && v.cost) upserts.push(v.cost); return origSet(k, v); };
+  h.handles[0].opts.onClose(0, null);
+  assert.deepStrictEqual(upserts, [{ usd: 0.5, turns: 1, at: 7000 }]);
+});
+
+test('stream seat cost: a result with no total_cost_usd arms nothing and writes no cost', async (t) => {
+  const { mock } = require('node:test');
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sk3');
+  mock.timers.enable({ apis: ['setTimeout'] });
+  t.after(() => mock.timers.reset());
+  const { total_cost_usd: _drop, ...bare } = RESULT;
+  h.line('sk3', bare);
+  const s = h.m.sessions.get('sk3');
+  assert.ok(h.store.get('sk3'), 'ENTER: the seat has a record');
+  assert.strictEqual(s._costFoldTimer || null, null);
+  mock.timers.tick(60000);
+  assert.strictEqual(h.store.get('sk3').cost, undefined);
+});
+
+test('stream seat cost: a clone seat never writes cost', async (t) => {
+  const { mock } = require('node:test');
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sk4');
+  mock.timers.enable({ apis: ['setTimeout'] });
+  t.after(() => mock.timers.reset());
+  h.m.sessions.get('sk4').clone = true;
+  h.line('sk4', costResult(0.3));
+  mock.timers.tick(60000);
+  assert.ok(h.store.get('sk4'), 'ENTER: the seat has a record');
+  assert.strictEqual(h.store.get('sk4').cost, undefined);
+});
 const userMsg = (content) => ({ type: 'user', message: { role: 'user', content } });
 
 test('stream seat (j): a dm to a seat with no stream is refused and the log carries the byte count and the first 80 bytes', async (t) => {

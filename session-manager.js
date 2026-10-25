@@ -275,6 +275,7 @@ const { liveSnapshotFor, archivedSnapshotFor, exitedSnapshotFor, stampConfigFlag
 const { COMPACTING_VALVE_MS, COMPACT_NOTICE_CAP, noticeTextFor } = require('./compact-notices');
 const STREAM_TOOL_DRAIN_MIN_MS = 2000;
 const STREAM_RESULT_HOLD_MS = 400;
+const SEAT_COST_FOLD_MS = 60000;
 const STREAM_ARM_WAIT_MS = 1000;
 const SEAT_CONTROL_COMMANDS = Object.freeze([
   { name: '/compact', kind: 'control', description: 'Compact the context' },
@@ -347,7 +348,7 @@ function nearMissFormHint(text) {
 
 // Add a field only if no caller can regrow it and none re-asserts it after create(), else two writers own it; keepWarmAlways and holdUntil stay a pair.
 // An absent worktree pointer is the dangerous state: destroy() would drop the record and orphan the checkout.
-const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants', 'wireLabel', 'ticketId', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested', 'voice', 'reviewerTemplate'];
+const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants', 'wireLabel', 'ticketId', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested', 'voice', 'reviewerTemplate', 'class', 'sleep', 'template', 'cost'];
 
 function sigkillPid(pid, name, log) {
   if (!(pid > 0)) {
@@ -2279,6 +2280,7 @@ function createSessionManager(deps) {
         const priorSid = session.sessionId;
         const reseed = !!(priorSid && sessionId && priorSid !== sessionId && !session.forked && session.agentType === 'claude');
         if (priorSid && sessionId && priorSid !== sessionId) {
+          this._foldSeatCost(session);
           try { this._stampSeatCost(session, 'clear'); } catch {}
         }
         session.sessionId = sessionId;
@@ -2287,6 +2289,8 @@ function createSessionManager(deps) {
         // Must run before memLoad.noteSession, which owns the same transition but reports nothing back; the first id
         // (attach, resume) is not a clear and must not reset.
         if (priorSid && sessionId && priorSid !== sessionId) {
+          session._costSeen = null;
+          session._costFolded = null;
           this._noteSessionLeft(session, priorSid);
           try { clearSubq(subqDirFor(name)); } catch {}
           try { if (this._holdKeeper) this._holdKeeper.endSession(priorSid); } catch { /* observer-grade */ }
@@ -2557,6 +2561,7 @@ function createSessionManager(deps) {
           body: `code=${exitCode}${signal ? ` signal=${signal}` : ''}${expected ? '' : ' unexpected'}`,
         });
         if (getRemoteServer()) { try { getRemoteServer().notifyExit(name, exitCode); } catch {} }
+        this._foldSeatCost(session);
         try { this._stampSeatCost(session, 'exit'); } catch {}
         if (dropRecord) {
           getPersistence().remove(name);
@@ -3048,6 +3053,30 @@ function createSessionManager(deps) {
       s._resultHold = null;
     }
 
+    _noteSeatCost(s, usd) {
+      s._costSeen = { usd, turns: (s._costSeen?.turns || 0) + 1 };
+      if (s._costFoldTimer) return;
+      s._costFoldTimer = setTimeout(() => this._foldSeatCost(s), SEAT_COST_FOLD_MS);
+      if (typeof s._costFoldTimer.unref === 'function') s._costFoldTimer.unref();
+    }
+
+    _foldSeatCost(s) {
+      if (s._costFoldTimer) { clearTimeout(s._costFoldTimer); s._costFoldTimer = null; }
+      const seen = s._costSeen;
+      const folded = s._costFolded || { usd: 0, turns: 0 };
+      if (!seen || s.clone) return { ok: false };
+      const dUsd = seen.usd - folded.usd;
+      const dTurns = seen.turns - folded.turns;
+      if (!(dTurns > 0) && !dUsd) return { ok: false };
+      const p = getPersistence();
+      const entry = p && p.get(s.name);
+      if (!entry) return { ok: false };
+      const prev = entry.cost || { usd: 0, turns: 0 };
+      p.upsert({ name: s.name, cost: { usd: prev.usd + dUsd, turns: prev.turns + dTurns, at: Date.now() } });
+      s._costFolded = seen;
+      return { ok: true };
+    }
+
     _streamTurnEnd(s) {
       this._clearStreamInitWatchdog(s);
       s.streamBusy = false;
@@ -3194,6 +3223,7 @@ function createSessionManager(deps) {
         case 'result':
           this._clearStreamResultHold(s);
           this._dropStreamPermissions(s);
+          if (typeof rec.costUsd === 'number') this._noteSeatCost(s, rec.costUsd);
           if (s._toolDrainedInTurn) {
             s._toolDrainedInTurn = false;
             s._resultHold = setTimeout(() => {
@@ -3547,6 +3577,7 @@ function createSessionManager(deps) {
           log.warn('session', `spawner-hint(clear) skipped: ${e.message}`);
         }
       }
+      this._foldSeatCost(s);
       try { this._stampSeatCost(s, 'kill'); } catch {}
       getPersistence().remove(name);
       if (s.stream) { s.stream.kill(); return; }
@@ -4837,6 +4868,7 @@ function createSessionManager(deps) {
       if (!s) return;
       clearTimeout(s._injectHoldTimer);
       clearTimeout(s._injectFlushRetry);
+      clearTimeout(s._costFoldTimer);
       clearTimeout(s._compactValveTimer);
       this._onCompactEnd(s, 'exit');
       clearTimeout(s._postClearValveTimer);
@@ -5103,6 +5135,7 @@ function createSessionManager(deps) {
 
     _fireCompactContinuation(session) {
       this._onCompactEnd(session);
+      this._foldSeatCost(session);
       try { this._stampSeatCost(session, 'compact'); } catch {}
       // Reset the live set to empty rather than model what the summarizer kept: possibly-evicted
       // must read as not loaded.

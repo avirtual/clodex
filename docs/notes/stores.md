@@ -72,3 +72,7 @@ kill()/the exit path/destroy() and keepwarm callbacks write it outside any IPC h
 A `.seed-state.json` value of `adopted:<sha256>` marks a file that was already present, unstamped, when a ship first carried its path: the bytes are the operator's, so it is never overwritten and is reported as stranded whenever the shipped bytes differ, while a plain-hash stamp still means bytes Clodex wrote and still permits the upgrade overwrite.
 An adopted file whose bytes equal the ship is re-stamped with the plain hash (no content write), which puts it on the upgrade path; a build from before `adopted:` reads such a value as a diverged stamp, which also never overwrites.
 A destination `fs.accessSync` cannot write (EROFS/EACCES) is skipped with an info line and no stranded report, its seed-state left untouched: the sandbox box mounts the host library `:ro` and runs its own seed-state, so the host reconciles those files.
+
+## clearSessionId
+
+`setSessionId(name, null)` would push `null` into the `sessionIds` history.
