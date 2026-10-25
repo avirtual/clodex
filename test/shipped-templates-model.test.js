@@ -17,6 +17,7 @@ const KNOWN = [
   'kits/default/templates/lead.json',
   'kits/default/templates/page-scout.json',
   'kits/default/templates/scout.json',
+  'templates/clodex-assistant.json',
   'templates/clodex-team-hand.json',
   'templates/clodex-team-lead.json',
   'templates/clodex-team-page-scout.json',
@@ -84,4 +85,14 @@ test('every shipped claude-type library template pins a 1M-context model', () =>
       `resources/library/${rel} pins --model ${model}, which is not a 1M-context id. A bare alias like opus or sonnet resolves to the 200k window; the ruling is 1M everywhere, so the id must carry the [1m] suffix.`,
     );
   }
+});
+
+test('the shipped assistant template is a toolless, dm-less assistant with a wake policy and an awake cap', () => {
+  const tpl = JSON.parse(fs.readFileSync(path.join(LIB, 'templates', 'clodex-assistant.json'), 'utf-8'));
+  assert.strictEqual(tpl.class, 'assistant');
+  assert.deepStrictEqual(tpl.intents, ['remind']);
+  assert.deepStrictEqual(tpl.tools, []);
+  assert.ok(tpl.sleep.maxAwake > 0);
+  assert.deepStrictEqual(tpl.sleep.wakeOn, ['message', 'reminder']);
+  assert.ok(fs.existsSync(path.join(LIB, 'prompts', 'system', `${tpl.systemPromptFile}.md`)));
 });

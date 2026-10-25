@@ -778,7 +778,7 @@ are JSON, not markdown).
 sessions.json entries carry the full respawn recipe (type/cwd/extraArgs/
 sessionId/workspaceId/prompt refs/proxy tri-state/agents/deny/tools/skills)
 plus setter-added `sessionIds[]` history, label, stripLevel, `createdAt`,
-`class`/`sleep`/`template` (assistant policy copied from the template, carried by every restart; `sleep.wakeOn` is `['message']` by default, `'reminder'` opts into reminder wake), `cost` `{usd, turns, at}` (the CLI's `total_cost_usd` folded per `SEAT_COST_FOLD_MS` and at clear/exit/kill/compact; `sessionIds` keeps the last 20 on assistant-class seats; `clearSessionId` nulls the live id),
+`class`/`sleep`/`template` (assistant policy copied from the template, carried by every restart; `sleep.wakeOn` is `['message']` by default, `'reminder'` opts into reminder wake), `awokeAt` (stamped at create and every wake), `cost` `{usd, turns, at, awakeMs}` (`awakeMs` adds `asleepAt - awokeAt` at each sleep; the CLI's `total_cost_usd` folded per `SEAT_COST_FOLD_MS` and at clear/exit/kill/compact; `sessionIds` keeps the last 20 on assistant-class seats; `clearSessionId` nulls the live id),
 `worktree` provenance (`setWorktree`, removed with the record on delete),
 `archivedAt` (`setArchived`, present only while archived), `autoCompact`
 (stored only as `false` to opt out), and three MCP fields: `mcpServers` (the

@@ -22041,6 +22041,75 @@ test('assistant wake: restarts fresh in the record\'s workspace and clears the s
   assert.strictEqual(rec.wakes, 1);
 });
 
+const CAP_ROW = (template) => ({ class: 'assistant', template, sleep: { idleMs: 600000, maxAwake: 2 } });
+
+function capHarness(siblings) {
+  const calls = [];
+  const persisted = { asst: { ...CAP_ROW('tpl-a'), archivedAt: 1, asleepAt: 2 } };
+  for (const [name, template] of Object.entries(siblings)) persisted[name] = CAP_ROW(template);
+  const h = mkStreamSeatManager({ persisted, extraDeps: { restartSession: async (...a) => { calls.push(a); return { ok: true }; } } });
+  const slept = [];
+  h.m._sleepNow = async (s, reason) => { slept.push([s.name, reason]); return { ok: true, state: 'asleep' }; };
+  return { h, calls, slept };
+}
+
+test('assistant wake at maxAwake: the idlest idle sibling of the same template is evicted, then the wake proceeds', async (t) => {
+  const { h, calls, slept } = capHarness({ s1: 'tpl-a', s2: 'tpl-a' });
+  t.after(() => h.stopAll());
+  h.m.sessions.set('s1', { name: 's1', activityTs: 500 });
+  h.m.sessions.set('s2', { name: 's2', activityTs: 100 });
+  assert.strictEqual(h.m._awakeAssistantRows('tpl-a').length, 2, 'ENTER: two awake siblings fill the cap');
+  assert.deepStrictEqual(await h.m.wake('asst'), { ok: true, state: 'awake' });
+  assert.deepStrictEqual(slept, [['s2', 'evicted']]);
+  assert.strictEqual(calls.length, 1);
+});
+
+test('assistant wake at maxAwake with every sibling busy answers 503 and never unarchives', async (t) => {
+  const { h, calls, slept } = capHarness({ s1: 'tpl-a', s2: 'tpl-a' });
+  t.after(() => h.stopAll());
+  h.m.sessions.set('s1', { name: 's1', activityTs: 500, streamBusy: true });
+  h.m.sessions.set('s2', { name: 's2', activityTs: 100, thinking: true });
+  assert.deepStrictEqual(await h.m.wake('asst'), { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000 });
+  assert.deepStrictEqual(slept, []);
+  assert.deepStrictEqual(calls, []);
+  assert.strictEqual(h.store.get('asst').archivedAt, 1);
+});
+
+test('assistant wake: a sibling of another template does not count toward the cap', async (t) => {
+  const { h, calls, slept } = capHarness({ s1: 'tpl-a', o1: 'tpl-b' });
+  t.after(() => h.stopAll());
+  h.m.sessions.set('s1', { name: 's1', activityTs: 500, streamBusy: true });
+  h.m.sessions.set('o1', { name: 'o1', activityTs: 100, streamBusy: true });
+  assert.strictEqual([...h.m.sessions.keys()].length, 2, 'ENTER: two awake assistants');
+  assert.deepStrictEqual(await h.m.wake('asst'), { ok: true, state: 'awake' });
+  assert.deepStrictEqual(slept, []);
+  assert.strictEqual(calls.length, 1);
+});
+
+test('assistant awake time: sleep adds now - awokeAt to cost.awakeMs, a later cost fold keeps it, wake stamps awokeAt', async (t) => {
+  const { mock } = require('node:test');
+  const calls = [];
+  const h = mkStreamSeatManager({
+    persisted: { asst: { ...ASSISTANT_ROW, awokeAt: 1000, cost: { usd: 1, turns: 1, at: 5, awakeMs: 500 } } },
+    extraDeps: { restartSession: async (...a) => { calls.push(a); return { ok: true }; } },
+  });
+  t.after(() => h.stopAll());
+  await h.create('asst');
+  const s = h.m.sessions.get('asst');
+  mock.timers.enable({ apis: ['Date'], now: 4000 });
+  t.after(() => mock.timers.reset());
+  assert.deepStrictEqual(await h.m.sleep('asst'), { ok: true, state: 'asleep' });
+  assert.deepStrictEqual(h.store.get('asst').cost, { usd: 1, turns: 1, at: 5, awakeMs: 3500 });
+  s._costSeen = { usd: 3, turns: 2 };
+  s._costFolded = { usd: 1, turns: 1 };
+  h.m._foldSeatCost(s);
+  assert.deepStrictEqual(h.store.get('asst').cost, { usd: 3, turns: 2, at: 4000, awakeMs: 3500 });
+  h.m.sessions.delete('asst');
+  mock.timers.setTime(9000);
+  assert.deepStrictEqual(await h.m.wake('asst'), { ok: true, state: 'awake' });
+  assert.strictEqual(h.store.get('asst').awokeAt, 9000);
+});
+
 test('assistant wake: a failed restart re-archives and keeps the sleep stamp', async (t) => {
   const h = mkStreamSeatManager({
     persisted: { asst: { ...ASSISTANT_ROW, workspaceId: 'ws', archivedAt: 1, asleepAt: 2, sleepReason: 'idle' } },
