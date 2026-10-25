@@ -591,8 +591,8 @@ stdin message.
 Both doors take bytes only, never a path, and write beside each other under
 `MSG_DIR/<seat>/`: `img-<stamp>-<n>.<ext>` (`seat-images.js`) and
 `file-<stamp>-<n>-<safe name>` mode 0600, `wx` (`seat-files.js`, `safeFileStem`).
-An image reaches the seat as one `Image: <abs path>` line per image, a file as
-one `File: <abs path>` line per file; the seat reads the path itself.
+A file reaches the seat as one `File: <abs path>` line per file; the seat reads
+the path itself.
 `MSG_DIR` is a 24 h conduit, not storage: `sweepSpilledMessages` keeps both
 classes 24 h unless a parked delivery names them.
 

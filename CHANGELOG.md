@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The composer paperclip now takes any file (up to 5, 10 MB each), not only images: it is copied beside the seat's messages and announced as `File: <path>`, which the agent reads with its own tools — from the browser too.
+
 ## 5.141.0 — 2026-10-25
 
 - A team role's template may carry an MCP server list, set only from the app: ticket seats spawned for the role load it, reviewer seats never do, and a lead's `template-save` or `role-set` can neither grant nor revoke one. The team roster's preflight flags a role whose template names an MCP server the library lacks. Muse seats no longer warn about an `sse` entry twice, or when its `platforms` already exclude Muse.

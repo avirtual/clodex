@@ -7,11 +7,12 @@ const path = require('node:path');
 const { registerIpcHandlers } = require('../ipc-handlers');
 const { mk } = require('./lib/session-fixtures');
 const { mkTmpRoot } = require('./lib/tmp-roots');
+const { createFiledRing } = require('../filed-ring');
 
 function fixture({ workspace = 'ws-1' } = {}) {
   const MSG_DIR = path.join(mkTmpRoot('clx-file-upload-'), 'messages');
   const manager = mk({ MSG_DIR, path });
-  manager.sessions.set('st', { name: 'st', workspaceId: 'ws-1', agentType: 'claude', io: 'pty' });
+  manager.sessions.set('st', { name: 'st', workspaceId: 'ws-1', agentType: 'claude', io: 'pty', filedRing: createFiledRing() });
   manager.sessions.set('sh', { name: 'sh', workspaceId: 'ws-1', agentType: null });
   const handlers = new Map();
   registerIpcHandlers({
@@ -44,6 +45,7 @@ test('seat:file-upload writes file-<stamp>-<n>-<safe name> 0600 under MSG_DIR/<s
   assert.match(path.basename(q), /^file-\d+-2-passwd$/);
   assert.strictEqual(fs.statSync(p).size, BYTES.length, 'ENTER: the upload really wrote the decoded bytes');
   assert.deepStrictEqual(fs.readFileSync(p), BYTES);
+  assert.deepStrictEqual(f.manager.sessions.get('st').filedRing.list().map((e) => e.head), ['File: passwd', 'File: report.pdf']);
 });
 
 test('seat:file-upload refuses a foreign workspace, a missing seat, a non-agent seat, an empty list and an oversize file, writing nothing', () => {
@@ -80,4 +82,16 @@ test('seat:file-upload over a planted file at the minted name is { ok:false } wi
   assert.match(r.error, /EEXIST/);
   assert.strictEqual(fs.readFileSync(planted, 'utf8'), 'PLANTED');
   assert.deepStrictEqual(listing(dir), ['file-9000000000001-1-report.pdf']);
+});
+
+test('seat:file-upload that fails partway removes the files it already wrote', () => {
+  const f = fixture();
+  f.manager._imgStamp = 9000000000000;
+  const dir = path.join(f.MSG_DIR, 'st');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'file-9000000000001-2-passwd'), 'PLANTED');
+  const r = f.upload('st', [pdf(), pdf('../../etc/passwd')]);
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /EEXIST/);
+  assert.deepStrictEqual(listing(dir), ['file-9000000000001-2-passwd']);
 });

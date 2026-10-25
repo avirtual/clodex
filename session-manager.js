@@ -8346,13 +8346,20 @@ function createSessionManager(deps) {
       const dir = path.join(MSG_DIR, seatName);
       fs.mkdirSync(dir, { recursive: true });
       const stamp = this._imgStamp = Math.max(Date.now(), (this._imgStamp || 0) + 1);
-      return files.map((f, i) => {
-        const name = seatFileFileName(stamp, i + 1, f.name);
-        const file = path.join(dir, name);
-        fs.writeFileSync(file, Buffer.from(f.data, 'base64'), { flag: 'wx', mode: 0o600 });
-        this._noteFiled(seatName, filedEntry(file, 'message', seatFileHead(name)));
-        return file;
-      });
+      const written = [];
+      try {
+        files.forEach((f, i) => {
+          const name = seatFileFileName(stamp, i + 1, f.name);
+          const file = path.join(dir, name);
+          fs.writeFileSync(file, Buffer.from(f.data, 'base64'), { flag: 'wx', mode: 0o600 });
+          written.push(file);
+          this._noteFiled(seatName, filedEntry(file, 'message', seatFileHead(name)));
+        });
+      } catch (err) {
+        for (const file of written) { try { fs.unlinkSync(file); } catch {} }
+        throw err;
+      }
+      return written;
     }
 
     _deliverReminder(agent, body) {
