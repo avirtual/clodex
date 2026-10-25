@@ -146,7 +146,7 @@ function createRemoteWiring(deps) {
   function clientTag(client) {
     if (!client) return '';
     const spoof = [...manager.sessions.keys()].some((k) => k.toLowerCase() === client) || SYSTEM_SENDERS.has(client) || /-(loop|watchdog)$/.test(client);
-    if (spoof) { log.info('remote', `dm client tag refused: ${client}`); return ''; }
+    if (spoof) { log.info('remote', `client tag refused: ${client}`); return ''; }
     return `(via ${client})`;
   }
 

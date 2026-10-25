@@ -447,6 +447,7 @@ function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
 // Loads REMOTE content: must not inherit the main window's
 // nodeIntegration/contextIsolation:false.
 const remoteWindows = new Map();
+const held = new Set();
 const remoteWindowClosedListeners = [];
 const remoteWindowBoundsListeners = [];
 function openRemoteWindow(key, url, opts = {}) {
@@ -459,7 +460,7 @@ function openRemoteWindow(key, url, opts = {}) {
   const existing = remoteWindows.get(key);
   if (existing && !existing.isDestroyed()) {
     existing.setBackgroundColor(bg);
-    if (title) existing.setTitle(title);
+    if (lockTitle) existing.setTitle(title);
     existing.loadURL(url);
     existing.show();
     existing.focus();
@@ -592,10 +593,12 @@ app.whenReady().then(() => {
         try {
           if (!Notification.isSupported()) return;
           const n = new Notification(opts);
+          held.add(n);
+          n.on('close', () => held.delete(n));
           n.on('click', () => {
             try {
               const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
-              if (win) { win.show(); win.focus(); }
+              if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
               sendToFocused('request-open-inbox-drawer');
             } catch {}
           });

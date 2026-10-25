@@ -1537,7 +1537,6 @@ class RemoteServer {
       const id = decodeSeg(p.slice('/api/inbox/reply/'.length));
       if (id == null) return this._json(res, 400, { ok: false, error: 'bad path' });
       return this._readBody(req, res, (body) => {
-        if (!this._replyNote) return this._json(res, 501, { ok: false, error: 'reply not available' });
         const msg = parseJsonObject(body);
         if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
         const text = typeof msg.text === 'string' ? msg.text : '';

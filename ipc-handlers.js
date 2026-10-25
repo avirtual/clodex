@@ -376,7 +376,7 @@ function registerIpcHandlers(deps) {
           ? 'team'
           : (promptLibrary.raw(kind, stem) == null ? null : 'library')),
         readTeamTemplate: (stem) => readTeamJson({ fs, path }, team, 'templates', stem),
-        readMcpEntry: (n) => mcpLibrary.raw(n) != null,
+        readMcpEntry: (n) => mcpLibrary.list().some((r) => r.name === n),
       });
       return { ok: true, findings };
     } catch (err) { return { ok: false, error: err.message, findings: [] }; }

@@ -6687,21 +6687,10 @@ function createTicketMethods(deps, shared) {
     // Written even with an empty ledger: the waste counters must record a ticket that burned a worktree and produced nothing.
     // The taskDir is resolved, not trusted: written verbatim, a literal `~` is mkdir -p'd under the process cwd.
     _writeTicketCost(team, ticket) {
-      if (!ticket || !ticket.taskDir) return;
-      let taskDir = null;
-      try {
-        taskDir = teamCost.resolveTaskDir({
-          taskDir: ticket.taskDir,
-          projectDir: projectDirFor(REGISTRY_DIR, team.root),
-          projectsRoot: path.join(REGISTRY_DIR, 'projects'),
-          homedir: os.homedir(),
-        });
-      } catch (e) {
-        // An escaping taskDir is refused, not redirected to a safer path where nobody looks.
-        log.info('intent', `COST.json refused for ${ticket.id}: ${e.message}`);
-        return;
-      }
-      if (!taskDir) return;
+      if (!ticket) return;
+      const dest = this._artifactDir(team, ticket);
+      if (!dest.ok) { log.info('intent', `COST.json refused for ${ticket.id}: ${dest.error}`); return; }
+      const taskDir = dest.dir;
       setImmediate(async () => {
         try {
           const { seatName, entry, attribution, sessionIds } = this._costSeatFor(team, ticket);
