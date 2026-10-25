@@ -215,6 +215,10 @@ test('listSleepers / getSessions: only an archived, unmapped assistant is a slee
   assert.deepStrictEqual(opts.getSleeper('avh-7'), sleeper);
   assert.strictEqual(opts.getSleeper('a1'), null);
   assert.strictEqual(opts.getSleeper('p1'), null);
+  const closing = makeDeps({ records: { 'avh-7': ASLEEP }, sessions: { 'avh-7': { name: 'avh-7', type: 'claude', io: 'stream', _archived: true } } });
+  const co = captureOptions(closing.deps);
+  assert.deepStrictEqual(co.listSleepers(), [], 'an archived assistant still in the map is closing, not asleep');
+  assert.strictEqual(co.getSleeper('avh-7'), null);
   assert.deepStrictEqual(opts.getSessions(), [
     { name: 'a1', type: 'claude', io: 'stream', cwd: '/a', workspace: '', workspaceId: null, activityTs: null, class: 'assistant', state: 'awake', template: null, sleep: null, cost: null, wakes: 2, stats: STATS },
     { name: 'w1', type: 'codex', io: 'pty', cwd: '/q', workspace: '', workspaceId: null, activityTs: null, stats: STATS },
