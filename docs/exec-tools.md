@@ -244,6 +244,8 @@ survives app updates (the seeder never overwrites an edited file).
 exec path does not need `ctl` in the seat's `intents`; the `[agent:ctl]` row is
 a separate privileged intent for templates that opt in, with no verb tier of its
 own.
+A settings or template save carries a granted id this host's exec library does
+not list, so editing a seat on one host never revokes a grant minted on another.
 
 ### The admin tier (clodex-ctl-admin)
 

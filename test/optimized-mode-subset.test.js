@@ -121,6 +121,7 @@ async function runDialog(settings, { type = 'claude', openIn, switchTo } = {}) {
       homeDir: '/home/x',
       inputToolsList, inputSkillsList, inputBuiltinsList,
       inputAgentsList: el('div'),
+      formRendered: {},
       modeHint: { textContent: '' },
       advancedSection: { open: false },
       MODE_HINTS: { optimized: 'o', standard: 's', custom: 'c' },

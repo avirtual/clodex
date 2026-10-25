@@ -157,16 +157,18 @@ function mergeGrants(checked, unlisted) {
 // globally-enabled plugins, so a quarantined or globally-off one has no row, and
 // saving the checked set alone drops it from the seat — the server then prunes
 // its verbs and grants too, and re-enabling the plugin brings none of it back.
-function pluginsForUnlistedPlugins(persisted, listedPluginIds) {
+function unlistedOf(persisted, listedIds) {
   if (!Array.isArray(persisted)) return [];
-  const listed = new Set((listedPluginIds || []).map(String));
+  const listed = new Set((listedIds || []).map(String));
   return persisted.filter((id) => typeof id === 'string' && !listed.has(id));
 }
+const pluginsForUnlistedPlugins = unlistedOf;
 
 // The union half, in the leaf for the reason mergeGrants states.
-function mergePlugins(checked, unlisted) {
+function mergeLists(checked, unlisted) {
   return [...new Set([...(checked || []).map(String), ...(unlisted || []).map(String)])];
 }
+const mergePlugins = mergeLists;
 
 // The ONE resolution of the absent case, so the readers cannot disagree.
 // `shipped` is threaded by the caller and anything but `true` withholds: an
@@ -261,6 +263,8 @@ module.exports = {
   grantsForUnlistedPlugins,
   pluginsForUnlistedPlugins,
   mergePlugins,
+  unlistedOf,
+  mergeLists,
   mergeGrants,
   pluginGranted,
   seatHasPlugin,
