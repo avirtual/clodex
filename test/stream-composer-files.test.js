@@ -111,7 +111,7 @@ test('two landed files ride as two File: lines in pick order; empty text with a 
   assert.deepStrictEqual(h.sends[0].args, ['seat', 'both\nFile: /m/st/file-1-1-a.pdf\nFile: /m/st/file-1-2-b.pdf', []]);
   await landed(h, [pdfFile()], ['/m/st/file-2-1-report.pdf']);
   h.send();
-  assert.deepStrictEqual(h.sends[1].args, ['seat', '\nFile: /m/st/file-2-1-report.pdf', []]);
+  assert.deepStrictEqual(h.sends[1].args, ['seat', 'File: /m/st/file-2-1-report.pdf', []]);
 });
 
 test('a tile still uploading at send is dropped, so empty text and only that tile sends nothing', async () => {
@@ -120,6 +120,32 @@ test('a tile still uploading at send is dropped, so empty text and only that til
   await settle();
   h.send();
   assert.strictEqual(h.sends.length, 0);
+});
+
+test('a failed send does not restore a tile that was still uploading at send', async () => {
+  const h = streamHarness();
+  h.attach([pdfFile()]);
+  await settle();
+  h.composer.value = 'go';
+  h.send();
+  assert.deepStrictEqual(h.sends[0].args, ['seat', 'go', []]);
+  h.uploads[0].resolve({ ok: true, paths: ['/m/st/file-1-1-report.pdf'] });
+  await settle();
+  h.sends[0].resolve({ ok: false, error: 'busy' });
+  await settle();
+  assert.deepStrictEqual(h.toasts, ['Send failed: busy']);
+  assert.strictEqual(h.composer.value, 'go');
+  assert.deepStrictEqual(h.files(), []);
+  assert.deepStrictEqual(h.strip.childNodes, []);
+});
+
+test('two picks before either is read share the five-file room', async () => {
+  const h = streamHarness();
+  h.attach([pdfFile('a.pdf'), pdfFile('b.pdf'), pdfFile('c.pdf')]);
+  h.attach([pdfFile('d.pdf'), pdfFile('e.pdf'), pdfFile('f.pdf')]);
+  assert.deepStrictEqual(h.toasts, ['1 file(s) not attached — at most 5 per message.']);
+  await settle();
+  assert.deepStrictEqual(h.uploads.map((u) => u.files.length), [3, 2]);
 });
 
 test('a failed send toasts, puts the text back and restores the same tile with its path', async () => {

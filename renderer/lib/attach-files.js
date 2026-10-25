@@ -6,13 +6,6 @@ const { fmtBytes } = require('./format');
 const SEAT_FILE_MAX = 5;
 const SEAT_FILE_MAX_BYTES = 10 * 1024 * 1024;
 
-function imageFilesOf(fileList, types = SEAT_IMAGE_TYPES) {
-  const files = Array.from(fileList || []).filter(Boolean);
-  const images = files.filter((f) => types.has(f.type));
-  const rejected = files.filter((f) => !types.has(f.type));
-  return { images, rejected };
-}
-
 function splitAttachable(fileList) {
   const images = [];
   const files = [];
@@ -75,4 +68,4 @@ function attachButton(doc, onClick) {
   return btn;
 }
 
-module.exports = { SEAT_FILE_MAX, SEAT_FILE_MAX_BYTES, imageFilesOf, splitAttachable, rejectedNotice, attachPicker, attachButton };
+module.exports = { SEAT_FILE_MAX, SEAT_FILE_MAX_BYTES, splitAttachable, rejectedNotice, attachPicker, attachButton };

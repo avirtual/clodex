@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Dropping or pasting a file onto a seat attaches it in the browser; on the desktop a drop onto a terminal seat still types the path.
+
 ## 5.142.0 — 2026-10-25
 
 - The composer paperclip now takes any file (up to 5, 10 MB each), not only images: it is copied beside the seat's messages and announced as `File: <path>`, which the agent reads with its own tools — from the browser too — on terminal and conversation seats alike.

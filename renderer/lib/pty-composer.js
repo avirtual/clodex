@@ -15,6 +15,7 @@ function pasteKind(items) {
   const list = Array.from(items || []);
   if (list.some((it) => it && it.kind === 'string' && it.type === 'text/plain')) return 'text';
   if (list.some((it) => it && it.kind === 'file' && /^image\//u.test(String(it.type)))) return 'image';
+  if (list.some((it) => it && it.kind === 'file')) return 'file';
   return 'none';
 }
 
@@ -78,14 +79,20 @@ async function attachFiles({ files, upload, toast, nextFile, append, attached, d
   attached(added.map((a, i) => ({ ...a, path: (r.paths && r.paths[i]) || null, pending: false })));
 }
 
-function ptyImagePasteHandler({ isWeb, readImages, upload, toast, nextImage, append, attached, drop, writePty }) {
+function ptyImagePasteHandler({ isWeb, readImages, upload, toast, nextImage, append, attached, drop, writePty, pickFiles }) {
   return async (e) => {
     const items = e.clipboardData && e.clipboardData.items;
     if (pasteStripped(items, isWeb())) {
       toast(STRIPPED_PASTE_NOTICE);
       return;
     }
-    if (pasteKind(items) !== 'image') return;
+    const kind = pasteKind(items);
+    if (kind === 'file') {
+      e.preventDefault();
+      await pickFiles(Array.from(items).filter((it) => it.kind === 'file').map((it) => it.getAsFile()).filter(Boolean));
+      return;
+    }
+    if (kind !== 'image') return;
     e.preventDefault();
     const web = isWeb();
     let images;

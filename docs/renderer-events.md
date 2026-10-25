@@ -199,7 +199,11 @@ takes any file. On both composers a non-image file reaches the host through the
 `seatFileUpload` invoke. On the pty composer a picked image goes through
 `seatImageUpload`; the stream composer carries images in the seat's send payload
 and appends one `File: <path>` line per uploaded file to the text it hands
-`seatSend` — no new event. On a web surface a paste whose clipboard items are empty toasts
+`seatSend` — no new event. A `terminalContainer` drop reaches the active seat's
+`attachPickedFiles` in the browser and, on the desktop, on a stream seat; a
+desktop pty seat still types the paths. A paste with a file item and no
+`text/plain` (`pasteKind` `'file'`) goes to the same sink on both composers. On a
+web surface a paste whose clipboard items are empty still toasts
 `STRIPPED_PASTE_NOTICE` instead of being ignored.
 
 ## Bottom line

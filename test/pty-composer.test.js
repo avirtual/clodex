@@ -60,6 +60,7 @@ test('an empty draft still yields the two writes', () => {
 });
 
 const png = { kind: 'file', type: 'image/png' };
+const pdf = { kind: 'file', type: 'application/pdf' };
 const plain = { kind: 'string', type: 'text/plain' };
 const html = { kind: 'string', type: 'text/html' };
 
@@ -68,7 +69,10 @@ for (const [label, items, want] of [
   ['an image with a text copy is a text paste', [html, plain, png], 'text'],
   ['a browser Copy Image (html plus png) is an image paste', [html, png], 'image'],
   ['plain text is a text paste', [plain], 'text'],
-  ['a non-image file is nothing', [{ kind: 'file', type: 'application/pdf' }], 'none'],
+  ['a non-image file is a file paste', [pdf], 'file'],
+  ['a file with a text copy is a text paste', [plain, pdf], 'text'],
+  ['an image beside a file is an image paste', [png, pdf], 'image'],
+  ['a file of unknown type is a file paste', [{ kind: 'file', type: '' }], 'file'],
   ['html without plain text is nothing', [html], 'none'],
   ['an empty clipboard is nothing', [], 'none'],
   ['a missing item list is nothing', undefined, 'none'],
@@ -148,6 +152,7 @@ function pasteRig({ web, reply, upload = null, readImages = null }) {
     attached: (done) => { log.order.push('attached'); log.attached.push(...done); for (const a of done) log.paths[a.n] = a.path; },
     drop: (items) => { log.order.push('drop'); log.dropped.push(...items); for (const { n } of items) { log.draft = removeChip(log.draft, 'image', n); delete log.paths[n]; } },
     writePty: (d) => { log.order.push('write'); log.writes.push(d); },
+    pickFiles: async (files) => { log.order.push('pick'); log.picked = files; },
   });
   const event = {
     clipboardData: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => { log.files += 1; return { url: 'data:image/png;base64,QUJD' }; } }] },
@@ -201,6 +206,7 @@ test('the pty composer wires its paste listener through ptyImagePasteHandler and
   assert.match(p[1], /\.\.\.ptyImageSink,/u);
   assert.match(p[1], /isWeb: \(\) => Boolean\(window\.__CLODEX_WEB__ \|\| !window\.require\)/u);
   assert.match(p[1], /readImages: \(items\) => clipboardImages\(items, FileReader\)/u);
+  assert.match(p[1], /pickFiles: attachPtyFiles,/u);
   const m = src.match(/const ptyImageSink = composerEl \? \{([\s\S]*?)\n {2}\} : null;/u);
   assert.ok(m, 'renderer.js builds the image sink the paste handler and the paperclip share');
   assert.match(m[1], /upload: \(images\) => window\.api\.seatImageUpload\(name, images\)/u);
@@ -435,7 +441,7 @@ function composerHarness(opts = {}) {
     preventDefault() {},
   };
   const paste = () => out.handler(event);
-  return { ...out, el: env.composerEl, uploads, writes, toasts, paste };
+  return { ...out, el: env.composerEl, uploads, writes, toasts, paste, pasteItems: (items) => out.handler({ clipboardData: { items }, preventDefault() {} }) };
 }
 
 test('ENTER: a late upload failure from a sent draft leaves the next draft\'s [Image #1] chip in place', async () => {
@@ -581,11 +587,15 @@ test('both composers mount the paperclip and the web drop on terminalContainer a
   assert.match(src, /syncMenuMirror, attachPickedFiles: composerEl \? attachPtyFiles : null \}/u);
   assert.match(src, /stream, liveSplit: null, attachPickedFiles: stream\.attachPickedFiles \}/u);
   const drop = src.slice(src.indexOf("terminalContainer.addEventListener('drop'"), src.indexOf("const { webUtils } = window.require('electron');"));
-  assert.match(drop, /if \(window\.__CLODEX_WEB__ \|\| !window\.require\) \{\n\s*const \{ images, rejected \} = imageFilesOf\(files\);/u);
-  assert.match(drop, /if \(sink && images\.length\) sink\(images\);/u);
+  assert.match(drop, /if \(window\.__CLODEX_WEB__ \|\| !window\.require\) \{\n\s*const sink = /u);
+  assert.match(drop, /if \(sink\) sink\(files\);/u);
   assert.match(drop, /const sink = entry && entry\.attachPickedFiles && \(entry\.stream \|\| ptyComposerShown\(entry\)\) \? entry\.attachPickedFiles : null;/u);
-  assert.match(drop, /if \(!sink && images\.length && entry && entry\.attachPickedFiles\) showToast\('Switch to the composer view to attach images\.'/u);
-  assert.match(drop, /if \(!sink \|\| rejected\.length\) showToast\('Dropping files needs the desktop app/u);
+  assert.match(drop, /else if \(entry && entry\.attachPickedFiles\) showToast\('Switch to the composer view to attach files\.'/u);
+  assert.match(drop, /else showToast\('Dropping files needs the desktop app/u);
+  assert.match(drop, /if \(!entry\) return;\n {2}if \(entry\.stream\) \{ entry\.attachPickedFiles\(files\); return; \}/u);
+  assert.match(stream, /items\.filter\(\(it\) => it\.kind === 'file'\)/u);
+  assert.doesNotMatch(stream, /addEventListener\('drop'/u);
+  assert.doesNotMatch(src, /imageFilesOf/u);
   const css = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
   assert.match(css, /\.seat-composer\.seat-composer-attach \{\n {2}padding-right: 32px;\n {2}scrollbar-gutter: stable;\n\}/u);
   assert.match(css, /\.seat-composer\[hidden\] ~ \.seat-attach-btn \{\n {2}display: none;\n\}/u);
@@ -623,6 +633,21 @@ test('ENTER: a picked pdf uploads once through seatFileUpload as { name, data },
   assert.deepStrictEqual(h.writes, ptyComposerWrites('hi Image: /h/i.png File: /h/f.pdf '));
   assert.deepStrictEqual(h.toasts, []);
 });
+
+for (const web of [true, false]) {
+  test(`${web ? 'ENTER: on the web' : 'on the desktop'} a pasted pdf uploads through seatFileUpload, chips [File #1] and binds its path`, async () => {
+    const h = composerHarness({ web });
+    const done = h.pasteItems([{ kind: 'file', type: 'application/pdf', getAsFile: () => pdfFile() }]);
+    await new Promise(setImmediate);
+    assert.deepStrictEqual(h.uploads.map((u) => u.kind), ['file']);
+    assert.deepStrictEqual(h.uploads[0].files, [{ name: 'report.pdf', data: 'JVBERg==' }]);
+    assert.strictEqual(h.el.value, '[File #1] ');
+    h.uploads[0].resolve({ ok: true, paths: ['/h/f.pdf'] });
+    await done;
+    assert.deepStrictEqual(h.filePaths(), { 1: '/h/f.pdf' });
+    assert.deepStrictEqual(h.writes, []);
+  });
+}
 
 test('a failed file upload drops its chip and toasts the error', async () => {
   const h = composerHarness({ web: false });
