@@ -171,6 +171,7 @@ function makeDeps() {
     getHelpCorpus: () => fakeCorpus(),
     getSkillLibrary: () => ({ list: () => [] }),
     getPersistence: () => ({ get: () => undefined, setStripLevel: () => {} }),
+    getMemoryStore: () => ({ list: () => [] }),
     getUiSettings: () => uiSettings,
     getWorkspaces: () => workspaces,
     getNotifications: () => null,
