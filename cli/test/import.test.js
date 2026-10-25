@@ -14,13 +14,23 @@ const { run } = require('../src/main');
 const { mkTmpRoot } = require('../../test/lib/tmp-roots');
 
 // Build a fixture userData dir with a ui-settings.json and optional env files.
-function fixture({ ui = {}, remoteToken = null, sandboxTokens = {} } = {}) {
+function fixture({ ui = {}, remoteToken = null, sandboxTokens = {}, composeWire = {} } = {}) {
   const dir = mkTmpRoot('clx-ud-');
   fs.writeFileSync(path.join(dir, 'ui-settings.json'), JSON.stringify(ui));
   if (remoteToken != null) fs.writeFileSync(path.join(dir, 'remote.env'), `CLODEX_REMOTE_TOKEN=${remoteToken}\n`, { mode: 0o600 });
   for (const [subdir, tok] of Object.entries(sandboxTokens)) {
     fs.mkdirSync(path.join(dir, subdir), { recursive: true });
     fs.writeFileSync(path.join(dir, subdir, 'auth.env'), `CLODEX_REMOTE_TOKEN=${tok}\n`, { mode: 0o600 });
+  }
+  for (const [subdir, port] of Object.entries(composeWire)) {
+    fs.mkdirSync(path.join(dir, subdir), { recursive: true });
+    fs.writeFileSync(path.join(dir, subdir, 'compose.yaml'), [
+      'services:', '  box:', '    ports:',
+      `      - "127.0.0.1:${port - 7820 + 8080}:8080"`,
+      `      - "127.0.0.1:${port - 7820 + 7800}:7800"`,
+      `      - "127.0.0.1:${port}:7900"`,
+      '    environment:', '',
+    ].join('\n'));
   }
   return dir;
 }
@@ -176,6 +186,62 @@ test('collect: sandboxes from the boxes registry — per-box wirePort + auth.env
   assert.deepStrictEqual(by('solo').entry, { url: 'http://127.0.0.1:7830', token: 'boxTokB' });
   assert.strictEqual(by('notoken').action, 'skip');
   assert.match(by('notoken').reason, /no auth\.env/);
+});
+
+test('collect: a sandbox takes its PUBLISHED wire port from compose.yaml, not config.wirePort', () => {
+  const dir = fixture({
+    ui: { boxes: [
+      { id: 'a', label: 'a', config: { wirePort: 7820 } },
+      { id: 'b', label: 'b', config: { wirePort: 7820 } },
+      { id: 'c', label: 'c', config: { wirePort: 7840 } },
+    ] },
+    sandboxTokens: { 'sandbox-a': 'TA', 'sandbox-b': 'TB', 'sandbox-c': 'TC' },
+    composeWire: { 'sandbox-a': 7820, 'sandbox-b': 7821 },
+  });
+  const cands = imp.collectCandidates(dir, { env: {} });
+  const by = (n) => cands.find((c) => c.name === n);
+  assert.ok(by('b'), 'ENTER: a row for b');
+  assert.deepStrictEqual(by('b').entry, { url: 'http://127.0.0.1:7821', token: 'TB' });
+  assert.match(by('b').reason, /from compose\.yaml/);
+  assert.deepStrictEqual(by('a').entry, { url: 'http://127.0.0.1:7820', token: 'TA' });
+  assert.deepStrictEqual(by('c').entry, { url: 'http://127.0.0.1:7840', token: 'TC' });
+  assert.match(by('c').reason, /compose\.yaml absent/);
+});
+
+test('collect: a non-loopback wire publish in compose.yaml is ignored, config port kept', () => {
+  const dir = fixture({
+    ui: { boxes: [{ id: 'open', label: 'open', config: { wirePort: 7830 } }] },
+    sandboxTokens: { 'sandbox-open': 'TO' },
+  });
+  fs.writeFileSync(path.join(dir, 'sandbox-open', 'compose.yaml'),
+    'services:\n  box:\n    ports:\n      - "0.0.0.0:7821:7900"\n');
+  const row = imp.collectCandidates(dir, { env: {} }).find((c) => c.name === 'open');
+  assert.ok(row, 'ENTER: a row for open');
+  assert.deepStrictEqual(row.entry, { url: 'http://127.0.0.1:7830', token: 'TO' });
+  assert.strictEqual(imp.publishedWirePort(dir, 'sandbox-open'), null);
+});
+
+test('applyImport: same token, drifted url → refreshed without --force; any other collision skips', () => {
+  const store = { current: 'local', contexts: { box: { url: 'http://127.0.0.1:7820', token: 'T' } } };
+  const drift = imp.applyImport(store, [
+    { name: 'box', entry: { url: 'http://127.0.0.1:7821', token: 'T' }, action: 'add', tokenState: 'set' },
+  ], { force: false });
+  const r = drift.results.find((x) => x.name === 'box');
+  assert.strictEqual(r.result, 'refreshed');
+  assert.strictEqual(r.reason, 'url drifted http://127.0.0.1:7820 → http://127.0.0.1:7821');
+  assert.deepStrictEqual(drift.store, { current: 'local', contexts: { box: { url: 'http://127.0.0.1:7821', token: 'T' } } });
+  assert.match(imp.renderReport(drift.results, { dir: '/x', source: 'flag' }), /1 context\(s\) written, 0 skipped/);
+
+  for (const entry of [
+    { url: 'http://127.0.0.1:7820', token: 'U' },
+    { url: 'http://127.0.0.1:7821', token: 'U' },
+  ]) {
+    const out = imp.applyImport(store, [{ name: 'box', entry, action: 'add', tokenState: 'set' }], { force: false });
+    const row = out.results.find((x) => x.name === 'box');
+    assert.strictEqual(row.result, 'skipped');
+    assert.match(row.reason, /--force to overwrite/);
+    assert.deepStrictEqual(out.store.contexts.box, { url: 'http://127.0.0.1:7820', token: 'T' });
+  }
 });
 
 // ── applyImport: collisions, force, current untouched ────────────────────────

@@ -190,8 +190,9 @@ function collectCandidates(dataDir, { env = process.env } = {}) {
       continue;
     }
     const cfg = (box.config && typeof box.config === 'object') ? box.config : {};
-    const wirePort = Number.isInteger(cfg.wirePort) ? cfg.wirePort : DEFAULT_SANDBOX_WIRE_PORT;
     const subdir = id === 'sandbox' ? 'sandbox' : `sandbox-${id}`;
+    const published = publishedWirePort(dataDir, subdir);
+    const wirePort = published ?? (Number.isInteger(cfg.wirePort) ? cfg.wirePort : DEFAULT_SANDBOX_WIRE_PORT);
     const token = parseEnvFile(path.join(dataDir, subdir, 'auth.env'))[SANDBOX_TOKEN_KEY] || null;
     if (!token) {
       out.push({ name: String(id), action: 'skip', reason: 'no auth.env wire token', tokenState: 'none' });
@@ -200,11 +201,28 @@ function collectCandidates(dataDir, { env = process.env } = {}) {
     out.push({
       name: String(id),
       entry: { url: `http://127.0.0.1:${wirePort}`, token },
-      action: 'add', reason: null, tokenState: 'set',
+      action: 'add',
+      reason: published !== null ? 'wire port from compose.yaml' : 'wire port from box config (compose.yaml absent — box never started?)',
+      tokenState: 'set',
     });
   }
 
   return out;
+}
+
+function publishedWirePort(dataDir, subdir) {
+  let text;
+  try { text = fs.readFileSync(path.join(dataDir, subdir, 'compose.yaml'), 'utf8'); } catch { return null; }
+  const m = /^\s*-\s*"127\.0\.0\.1:(\d+):7900"\s*$/m.exec(text);
+  return m ? Number(m[1]) : null;
+}
+
+function urlDriftOnly(existing, entry) {
+  if (!existing || typeof existing !== 'object' || !entry) return false;
+  const a = Object.keys(existing).sort();
+  const b = Object.keys(entry).sort();
+  if (a.join(',') !== 'token,url' || b.join(',') !== 'token,url') return false;
+  return existing.token === entry.token && existing.url !== entry.url;
 }
 
 // Apply collected candidates against the existing store. Mutates a COPY of the
@@ -224,6 +242,11 @@ function applyImport(store, candidates, { force = false } = {}) {
     }
     seen.add(c.name);
     const exists = Object.prototype.hasOwnProperty.call(onEntry, c.name);
+    if (exists && !force && urlDriftOnly(onEntry[c.name], c.entry)) {
+      next.contexts[c.name] = c.entry;
+      results.push({ ...c, result: 'refreshed', reason: `url drifted ${onEntry[c.name].url} → ${c.entry.url}` });
+      continue;
+    }
     if (exists && !force) {
       results.push({ ...c, result: 'skipped', reason: 'exists, skipped — --force to overwrite' });
       continue;
@@ -245,13 +268,13 @@ function renderReport(results, meta) {
     const tail = r.reason ? ` — ${r.reason}` : '';
     lines.push(`  ${r.result.padEnd(11)} ${r.name}  (${tok})${tail}`);
   }
-  const added = results.filter((r) => r.result === 'added' || r.result === 'overwritten').length;
+  const added = results.filter((r) => r.result === 'added' || r.result === 'overwritten' || r.result === 'refreshed').length;
   lines.push(`${added} context(s) ${meta.dryRun ? 'would be written' : 'written'}, ${results.length - added} skipped`);
   return lines.join('\n');
 }
 
 module.exports = {
   DEFAULT_REMOTE_PORT, DEFAULT_SANDBOX_WIRE_PORT, SANDBOX_TOKEN_KEY,
-  parseEnvFile, platformDataDirs, resolveDataDir, localEngine, collectCandidates,
+  parseEnvFile, publishedWirePort, platformDataDirs, resolveDataDir, localEngine, collectCandidates,
   applyImport, renderReport, safeTransport,
 };
