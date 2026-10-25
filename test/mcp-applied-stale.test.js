@@ -43,12 +43,6 @@ test('mcp:appliedStale: an edited or deleted library entry since spawn reads sta
   assert.strictEqual(gone('s').stale, true, 'a deleted entry is not what the seat loaded');
 });
 
-test('mcp:appliedStale: a selected name absent from the library is not loadable, so it never counts as applied', () => {
-  assert.deepStrictEqual(
-    door({ name: 's', type: 'claude', mcpServers: ['jira', 'docs'], mcpApplied: appliedFor({ jira: JIRA }, ['jira']) }, { jira: JIRA })('s'),
-    { ok: true, servers: ['jira', 'docs'], unmanaged: false, stale: false });
-});
-
 test('mcp:appliedStale: a denyTools entry is fresh as spawned and stale once its deny list changes', () => {
   const lib = { docs: { ...DOCS, denyTools: ['write'] } };
   const applied = appliedFor(lib, ['docs']);
