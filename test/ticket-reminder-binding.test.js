@@ -1078,6 +1078,16 @@ test('a watch the scheduler refuses is logged with the ticket id and the error',
   } finally { f.cleanup(); }
 });
 
+test('a watch the scheduler throws on is logged with the ticket id and the error', () => {
+  const f = mkFixture();
+  try {
+    f.scheduler.add = () => { throw new Error('x-threw'); };
+    assert.strictEqual(f.m._armLoopWatch(f.team, f.one('t1'), 'started', 'team-hand'), null);
+    const warns = f.logs.filter((l) => l.level === 'warn' && /t1/.test(l.msg) && /x-threw/.test(l.msg));
+    assert.strictEqual(warns.length, 1);
+  } finally { f.cleanup(); }
+});
+
 test('a lead may cancel a loop watch without force, unlike an operator row', () => {
   const f = mkFixture();
   try {

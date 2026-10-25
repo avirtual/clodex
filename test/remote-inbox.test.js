@@ -420,6 +420,11 @@ test('without replyNote the reply route answers 501 and the store-backed routes 
   });
 });
 
+test('remote.js answers reply-not-available from one guard only', () => {
+  const src = require('node:fs').readFileSync(path.join(__dirname, '..', 'remote.js'), 'utf8');
+  assert.strictEqual(src.split('reply not available').length - 1, 1);
+});
+
 test('a phone reply yields exactly one inbox/replied frame, from the store, and no attention frame', async () => {
   const store = fakeStore([mkNote('a', 100)]);
   const replyNote = (id, text) => {

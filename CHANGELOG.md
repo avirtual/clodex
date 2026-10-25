@@ -16,6 +16,7 @@ blocks a release.
 - Dropping or pasting a file onto a seat attaches it in the browser; on the desktop a drop onto a terminal seat still types the path.
 - Stream seats keep the CLI's cumulative cost on their record.
 - `clodexctl create node --import` registers a sandbox at the wire port Docker actually published, and refreshes a box whose port moved; before, three boxes configured on the same port all imported as the first one.
+- clodexctl `get nodes --current` under `--ctx` names that context; attention broadcasts drop the tool preview; an OS notification click restores a minimized window; a reused wirescope window keeps its page title; a refused peer web click keeps the peer's restore slot.
 
 ## 5.142.0 — 2026-10-25
 

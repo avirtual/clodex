@@ -431,6 +431,20 @@ test('team:preflight resolves against the stores rather than reporting everythin
   assert.deepStrictEqual(handlers['team:preflight']({}, 'shop'), { ok: true, findings: [] });
 });
 
+test('team:preflight reads an unparseable mcp library entry as missing', () => {
+  const handlers = registerWith({
+    loadManifest: () => ({ name: 'shop', root: '/repo/shop', roles: { hand: { template: 'hand-seat' } } }),
+    templates: { list: () => [{ name: 'hand-seat', mcpServers: ['good', 'broken'] }] },
+    mcpLibrary: { list: () => [{ name: 'good' }], raw: () => '{' },
+  });
+  const res = handlers['team:preflight']({}, 'shop');
+  assert.strictEqual(res.ok, true);
+  const mcp = res.findings.filter((x) => x.kind === 'mcp');
+  assert.strictEqual(mcp.length, 1);
+  assert.strictEqual(mcp[0].level, 'warn');
+  assert.strictEqual(mcp[0].ref, 'broken');
+});
+
 test('team:preflight surfaces an unreadable manifest as an error with an EMPTY findings array', () => {
   const handlers = registerWith({
     loadManifest: () => { throw new Error('no team manifest at ghost'); },

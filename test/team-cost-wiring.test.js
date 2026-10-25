@@ -803,7 +803,7 @@ test('a taskDir that escapes the projects root writes nothing at all', async () 
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-test('a ticket with no taskDir writes nothing, and a broken ledger still records waste', async () => {
+test('a ticket with no taskDir writes under tasks/<id>, and a broken ledger still records waste', async () => {
   const userData = mkTmpRoot('clodex-ud-');
   const repo = mkTmpRoot('clodex-repo-');
   const { home, registryDir } = mkHome();
@@ -823,7 +823,7 @@ test('a ticket with no taskDir writes nothing, and a broken ledger still records
 
   m._writeTicketCost({ name: 'team', root: repo }, { id: 't8', assignee: 's', state: 'done' });
   await settle();
-  assert.ok(!fs.existsSync(projDir), 'no taskDir ⇒ no artifact anywhere');
+  assert.ok(fs.existsSync(path.join(projDir, 'tasks', 't8', 'COST.json')), 'no taskDir ⇒ the tasks/<id> fallback');
 
   m._writeTicketCost({ name: 'team', root: repo }, {
     id: 't9', role: 'hand', assignee: 's', state: 'done', taskDir: 'tasks/broken-ledger',

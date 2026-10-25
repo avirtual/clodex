@@ -324,6 +324,8 @@ test('the exec line shape: bare singular describe/get node under --ctx answer fo
   const missing = await svc.run('--ctx nope get node');
   assert.notStrictEqual(missing.exitCode, 0);
   assert.match(missing.output, /no such node: nope/);
+  assert.strictEqual((await svc.run('--ctx ios get nodes --current')).output, 'ios\n');
+  assert.strictEqual((await svc.run('get nodes --current')).output, 'home\n');
 });
 
 // ---------------------------------------------------------------------------
