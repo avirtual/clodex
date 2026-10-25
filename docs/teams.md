@@ -45,7 +45,9 @@ shapes the seat: model, tools, grants, cwd — resolved against
 (one line about the role, shown in the roster) and `dispatch` (what a ticket for this role
 does: `standing` delivers to the live seat, `spawn` mints a one-shot seat in
 the shared checkout, `worktree` mints a one-shot seat on its own branch in its
-own git worktree).
+own git worktree). The template may also carry `mcpServers`, set only in the
+app's template editor (`templates:saveTeam`), never by `role-set` or
+`template-save`; reviewer seats load none.
 
 `[agent:spawn name:<name>-lead cwd:<root>]` with no `template:` boots the lead
 on the lead role's template, which the kit picks (`clodex-team-lead` in the
@@ -309,7 +311,9 @@ runs under Codex's OS-enforced read-only sandbox with approvals off;
 `clodex-team-reviewer-muse` is the shipped Muse option, and it runs under a
 `:read-only`-derived permission profile (`reviewer`, written into the seat's own
 settings.json) with approvals off; a platform without a cap is refused before a
-seat is minted.
+seat is minted. A reviewer gets no library MCP server on any platform; on a
+Codex reviewer plugin-bundled servers stay as residue the selection cannot
+control.
 
 The stock hand and lead templates keep eight tools — Read, Edit, Write, Glob,
 Grep, Bash, Agent, SendMessage — and deny the rest of the catalog; the list is

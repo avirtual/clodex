@@ -200,6 +200,10 @@ Two spawn-time grants (both ride templates / persisted config):
 1. add `"exec"` to the seat's `intents` (enables the exec grammar line);
 2. add `"clodex-monitor"` to the seat's `execCommands` allowlist.
 
+MCP servers are the third spawn-time grant: `mcpServers` on the template,
+operator-set like the two above (docs/sessions.md record fields;
+docs/notes/mcp-plan.md).
+
 The coarse intent gate and the fine per-command `execCommands` gate must both
 allow — a seat with `exec` but not the command id is refused, and vice versa.
 
