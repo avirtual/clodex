@@ -253,3 +253,32 @@ for (const [ch, want] of [['é', 6400], ['a', 3200]]) {
 
 const { after } = require('node:test');
 after(() => { setImmediate(() => process.exit(0)); });
+
+test('seat file attachments: older than MSG_MAX_AGE but younger than IMG_MAX_AGE survive sweepSeatMessages beside a collected text of the same age', () => {
+  const { msgDir, pendingDir } = tmpDirs();
+  const file = spill(msgDir, 'alice', 'file-1700000000000-1-report.pdf', OLD);
+  const txt = spill(msgDir, 'alice', 'msg-55910-42.txt', OLD);
+  sweepSeatMessages(msgDir, pendingDir, NOW);
+  assert.strictEqual(fs.existsSync(txt), false, 'ENTER: a text spill file of this age is collected by the same call');
+  assert.strictEqual(fs.existsSync(file), true);
+});
+
+test('seat file attachments older than IMG_MAX_AGE are collected', () => {
+  const { msgDir, pendingDir } = tmpDirs();
+  const file = spill(msgDir, 'alice', 'file-1700000000000-1-report.pdf', NOW - (24 * 3600 + 60) * 1000);
+  sweepSeatMessages(msgDir, pendingDir, NOW);
+  assert.strictEqual(fs.existsSync(file), false);
+});
+
+test('a parked delivery naming file-1-1-report.pdf protects it past both ages; unreferenced it is collected', () => {
+  const ANCIENT = NOW - (24 * 3600 + 60) * 1000;
+  const { msgDir, pendingDir } = tmpDirs();
+  const fpath = spill(msgDir, 'alice', 'file-1-1-report.pdf', ANCIENT);
+  parkDelivery(pendingDir, 'alice', `[agent:from user] x\nFile: ${fpath}`, '0001');
+  const { msgDir: ctlMsg, pendingDir: ctlPending } = tmpDirs();
+  const ctl = spill(ctlMsg, 'alice', 'file-1-1-report.pdf', ANCIENT);
+  sweepSeatMessages(ctlMsg, ctlPending, NOW);
+  assert.strictEqual(fs.existsSync(ctl), false, 'control: an unreferenced file of this age is collected');
+  sweepSeatMessages(msgDir, pendingDir, NOW);
+  assert.strictEqual(fs.existsSync(fpath), true);
+});

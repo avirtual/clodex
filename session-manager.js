@@ -120,6 +120,7 @@ const { scanIntentLines } = require('./intent-segments');
 const { deepMerge, bootstrapSeatConfig, museDataHome, findMuseTranscript, oldestMuseTranscript, findCodexRollout, museRegistryFor, linkTranscript } = require('./seat-config');
 const { activationSettings } = require('./muse-skills');
 const { seatImageFileName, seatImageHead } = require('./seat-images');
+const { seatFileFileName, seatFileHead } = require('./seat-files');
 const MUSE_LINK_POLL_MS = 250;
 const MUSE_LINK_DEADLINE_MS = 60000;
 const CODEX_LINK_POLL_MS = 250;
@@ -8337,6 +8338,19 @@ function createSessionManager(deps) {
         const file = path.join(dir, name);
         fs.writeFileSync(file, Buffer.from(img.data, 'base64'));
         this._noteFiled(seatName, filedEntry(file, 'message', seatImageHead(name)));
+        return file;
+      });
+    }
+
+    _writeSeatFiles(seatName, files) {
+      const dir = path.join(MSG_DIR, seatName);
+      fs.mkdirSync(dir, { recursive: true });
+      const stamp = this._imgStamp = Math.max(Date.now(), (this._imgStamp || 0) + 1);
+      return files.map((f, i) => {
+        const name = seatFileFileName(stamp, i + 1, f.name);
+        const file = path.join(dir, name);
+        fs.writeFileSync(file, Buffer.from(f.data, 'base64'), { flag: 'wx', mode: 0o600 });
+        this._noteFiled(seatName, filedEntry(file, 'message', seatFileHead(name)));
         return file;
       });
     }

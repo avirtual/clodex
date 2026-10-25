@@ -111,6 +111,7 @@ token is an ordinary path miss. Pinned by `test/engine-spill-resolve.test.js`.
 
 Seat image files (`img-<stamp>-<n>.<ext>`) age out after 24 h because a browser draft holds an uploaded image with nothing on disk naming it until send, so no parked pointer protects it.
 Text spill files keep the 30-minute age.
+Seat file attachments (`file-<stamp>-<n>-<name>`) share the image 24 h class and the parked-delivery reference rule.
 
 ## createEngine
 

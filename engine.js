@@ -12,6 +12,7 @@ const pty = require('node-pty');
 const { ensureDir, atomicWriteFileSync, readJsonSafe } = require('./fs-util');
 const { pathFor, runDirFor, defaultClodexHome, seatPathFor, claudeProjectSlug } = require('./clodex-paths');
 const { SEAT_IMAGE_FILE_PATTERN } = require('./seat-images');
+const { SEAT_FILE_FILE_PATTERN } = require('./seat-files');
 const { confine } = require('./path-confine');
 const { createSkillDelivery } = require('./skill-delivery');
 const { createSkillLister, skillAliases } = require('./muse-skills');
@@ -82,8 +83,9 @@ function diagLines(d = {}) {
   return lines;
 }
 
-const SPILL_NAME_RE = new RegExp(`msg-\\d+-\\d+\\.txt|${SEAT_IMAGE_FILE_PATTERN}`, 'g');
+const SPILL_NAME_RE = new RegExp(`msg-\\d+-\\d+\\.txt|${SEAT_IMAGE_FILE_PATTERN}|${SEAT_FILE_FILE_PATTERN}`, 'g');
 const SEAT_IMAGE_FILE_RE = new RegExp(`^${SEAT_IMAGE_FILE_PATTERN}$`);
+const SEAT_FILE_FILE_RE = new RegExp(`^${SEAT_FILE_FILE_PATTERN}$`);
 const IMG_MAX_AGE = 24 * 3600;
 const MSG_MAX_AGE = 1800;
 
@@ -115,7 +117,7 @@ function sweepSpilledMessages(msgDir, pendingDir, maxAgeSec, now = Date.now(), i
           try {
             if (referenced.has(fname)) continue;
             const fpath = path.join(epath, fname);
-            const limit = SEAT_IMAGE_FILE_RE.test(fname) ? imgMaxAgeSec : maxAgeSec;
+            const limit = SEAT_IMAGE_FILE_RE.test(fname) || SEAT_FILE_FILE_RE.test(fname) ? imgMaxAgeSec : maxAgeSec;
             if ((now - fs.statSync(fpath).mtimeMs) / 1000 > limit) fs.unlinkSync(fpath);
           } catch {}
         }

@@ -18,6 +18,7 @@ const { appendRailPrompts } = require('./prompt-rails');
 const { validateExecDef } = require('./exec-schema');
 const { discoverMcpSources, normaliseDiscovered, resolveMcpEntry, secretRefs, digestShape, mcpDigest, codexExpressible, museExpressible } = require('./mcp-plan');
 const { validateSeatImages } = require('./seat-images');
+const { validateSeatFiles } = require('./seat-files');
 const { BOX_ID_RE, runningInSandboxBox } = require('./sandbox');
 const { SETUP_CHOICES } = require('./stores');
 const sessionDiscovery = require('./session-discovery');
@@ -2318,6 +2319,20 @@ function registerIpcHandlers(deps) {
     const checked = validateSeatImages(images);
     if (!checked.ok) return checked;
     return { ok: true, paths: manager._writeImageFiles(s.name, checked.images) };
+  });
+
+  handle('seat:file-upload', (e, name, files) => {
+    const s = manager.sessions.get(String(name || ''));
+    if (!s || s.workspaceId !== workspaceOfSender(e)) return { ok: false, error: 'no such session in this workspace' };
+    if (!isAgentType(s.agentType)) return { ok: false, error: 'not an agent session' };
+    if (!Array.isArray(files) || !files.length) return { ok: false, error: 'no file to upload' };
+    const checked = validateSeatFiles(files);
+    if (!checked.ok) return checked;
+    try {
+      return { ok: true, paths: manager._writeSeatFiles(s.name, checked.files) };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
   });
 
   handle('seat:commands', (e, name) => {

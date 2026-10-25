@@ -86,6 +86,17 @@ test('seedFiledRing names a phone image by its seat-image head, never its raw by
   assert.ok(ring.has(img) && ring.has(txt));
 });
 
+test('seedFiledRing names a seat file attachment File: <original stem>, never its bytes', () => {
+  const root = mkTmpRoot('clx-fileview-');
+  const msgs = path.join(root, 'messages', 'seat');
+  fs.mkdirSync(msgs, { recursive: true });
+  const file = path.join(msgs, 'file-1800000000000-1-report.pdf');
+  fs.writeFileSync(file, Buffer.from('%PDF-1.7\nbinary'));
+  const ring = createFiledRing();
+  assert.strictEqual(seedFiledRing(ring, [{ dir: msgs, kind: 'message' }]), 1);
+  assert.deepStrictEqual(ring.list().map((e) => [path.basename(e.path), e.head]), [['file-1800000000000-1-report.pdf', 'File: report.pdf']]);
+});
+
 test('head is at most 120 UTF-8 bytes, cut back to a character boundary, never a replacement character', () => {
   const head = `${'é'.repeat(59)}日本`;
   assert.ok(Buffer.byteLength(head) > HEAD_MAX_BYTES, 'ENTER: the head overflows the cap');
