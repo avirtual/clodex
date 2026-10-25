@@ -43,3 +43,7 @@ is async, so on the hello that follows an upgrade the `wasOffline` re-open loop 
 `_helloLoop` runs while the flag is still true and is refused; without this edge
 the pane stays blank until the user detaches and re-attaches, because `attach()`
 returns early for an already-wanted entry.
+
+## withoutAssistants
+
+An assistant host is also a peer of the operator's desktop; unfiltered, every awake assistant becomes a sidebar row there. The filter is client-side because the wire list must still show them to the game.

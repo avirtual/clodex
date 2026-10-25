@@ -119,7 +119,7 @@ activity: 'asleep', asleepAt, sleepReason, template, sleep, cost, wakes`, a
 null `activityTs` and null stats); a live assistant row adds `class: 'assistant',
 state: 'awake'|'sleeping'` (sleeping = still closing after sleep), `template, sleep, cost, wakes`; `POST /api/sessions/:name/sleep`
 (200 asleep, 202 sleeping when mid-turn, 409 not an assistant / not awake),
-`POST /api/sessions/:name/wake` (200 awake, 409, `code` forwarded),
+`POST /api/sessions/:name/wake` (200 awake, 409, `code` forwarded; at the template's `sleep.maxAwake` with no idle sibling to evict, `503 {ok:false, code:503, error:'at capacity', retryAfterMs:30000}`),
 `GET /api/sessions/:name/memory` (`{ok, name, units, brief}`; 404 unknown, 409
 not an assistant); SSE `turn` `{name, text, intents, refs, costUsd, durationMs,
 isError, ts}` after each assistant turn (`text` is the prose of the CLI's final
@@ -209,6 +209,13 @@ but **peer-visible** (attach/control/create work; DM and query don't).
   intents all come from the host's disk. Nothing else in the body is read (no
   `cwd`, `extraArgs`, `env`, `intents`, `execCommands`), and a `name` other than
   the manifest's lead is refused.
+- A body of `{ name, template }` spawns from a library template through the same
+  handler. The shipped one for game assistants is `clodex-assistant`; an
+  assistant template with `sleep.maxAwake` first makes room like a wake does,
+  else answers `503 {ok:false, code:503, error:'at capacity', retryAfterMs:30000}`.
+- `CLODEX_REMOTE_CREATE=template` on the host refuses every create that names no
+  template: `403 {ok:false, code:403, error:'create: this host accepts template creates only'}`.
+  Unset, or any other value, keeps bare and team creates.
 
 ## 3. Consumer side (peer-client.js)
 

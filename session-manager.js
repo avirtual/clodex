@@ -164,7 +164,7 @@ function dupIdentity(intent) {
 const { createTicketsStore, ticketTerminalReason } = require('./tickets-store');
 const { findRepoRoot } = require('./project-root');
 const { atomicWriteFileSync } = require('./fs-util');
-const { composeBrief, idleDecision, briefPathFor, splitTurnText, BRIEF_TAIL, BRIEF_MAX_BYTES } = require('./assistant-sleep');
+const { composeBrief, idleDecision, briefPathFor, pickMaxAwakeVictim, splitTurnText, BRIEF_TAIL, BRIEF_MAX_BYTES } = require('./assistant-sleep');
 const { cachedMessages } = require('./transcript');
 const { isAgentType, adapterFor, streamFor: adapterStreamFor, hasBypass, hasReadOnlyCap, postureOf, resolveModelId, resolveEffort } = require('./cli-adapters');
 
@@ -350,7 +350,7 @@ function nearMissFormHint(text) {
 
 // Add a field only if no caller can regrow it and none re-asserts it after create(), else two writers own it; keepWarmAlways and holdUntil stay a pair.
 // An absent worktree pointer is the dangerous state: destroy() would drop the record and orphan the checkout.
-const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants', 'wireLabel', 'ticketId', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested', 'voice', 'reviewerTemplate', 'class', 'sleep', 'template', 'cost', 'wakes'];
+const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants', 'wireLabel', 'ticketId', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested', 'voice', 'reviewerTemplate', 'class', 'sleep', 'template', 'cost', 'wakes', 'awokeAt'];
 
 function sigkillPid(pid, name, log) {
   if (!(pid > 0)) {
@@ -3115,7 +3115,7 @@ function createSessionManager(deps) {
       const entry = p && p.get(s.name);
       if (!entry) return { ok: false };
       const prev = entry.cost || { usd: 0, turns: 0 };
-      p.upsert({ name: s.name, cost: { usd: prev.usd + dUsd, turns: prev.turns + dTurns, at: Date.now() } });
+      p.upsert({ name: s.name, cost: { ...prev, usd: prev.usd + dUsd, turns: prev.turns + dTurns, at: Date.now() } });
       s._costFolded = seen;
       return { ok: true };
     }
@@ -3753,9 +3753,13 @@ function createSessionManager(deps) {
           atomicWriteFileSync(briefPath, brief);
         } catch (e) { log.warn('session', `sleep ${name}: brief write failed: ${e.message}`); }
       }
-      this._foldSeatCost(s);
       const p = getPersistence();
-      p.upsert({ name, asleepAt: Date.now(), sleepReason: reason });
+      const entry = p.get(name) || {};
+      const awokeAt = entry.awokeAt || entry.createdAt || null;
+      this._foldSeatCost(s);
+      const cost = (p.get(name) || {}).cost || { usd: 0, turns: 0 };
+      const now = Date.now();
+      p.upsert({ name, asleepAt: now, sleepReason: reason, cost: { ...cost, awakeMs: (cost.awakeMs || 0) + (awokeAt ? Math.max(0, now - awokeAt) : 0) } });
       p.clearSessionId(name);
       log.info('session', `sleep ${name} (${reason})`);
       await this.archive(name);
@@ -3776,18 +3780,62 @@ function createSessionManager(deps) {
       const live = this.sessions.get(name);
       if (live && !live._dead && !live._archived) return { ok: true, state: 'awake' };
       if (live && !await this._waitForExit(name)) return { ok: false, error: 'still stopping' };
+      const cap = entry.sleep && Number(entry.sleep.maxAwake) > 0 ? Number(entry.sleep.maxAwake) : 0;
+      const full = cap ? await this.makeAwakeRoom(entry.template || null, cap, name) : null;
+      if (full) return full;
       const p = getPersistence();
       p.setArchived(name, false);
       p.setExited(name, null);
-      p.upsert({ name, asleepAt: null, sleepReason: null, wakes: (entry.wakes || 0) + 1 });
+      p.upsert({ name, asleepAt: null, sleepReason: null, wakes: (entry.wakes || 0) + 1, awokeAt: Date.now() });
       log.info('session', `wake ${name} (${reason})`);
-      const r = await restartSession(name, { fresh: true }, entry.workspaceId);
+      let r;
+      try { r = await restartSession(name, { fresh: true }, entry.workspaceId); }
+      finally { if (cap) this.releaseAwakeRoom(entry.template || null, name); }
       if (!r || !r.ok) {
         p.setArchived(name, true);
         p.upsert({ name, asleepAt: entry.asleepAt || Date.now(), sleepReason: entry.sleepReason || null });
         return r || { ok: false, error: 'restart failed' };
       }
       return { ok: true, state: 'awake' };
+    }
+
+    _awakeAssistantRows(template) {
+      const p = getPersistence();
+      const rows = [];
+      for (const s of this.sessions.values()) {
+        if (s._dead || s._archived || (this._awakeEvicting && this._awakeEvicting.has(s.name))) continue;
+        const rec = p.get(s.name);
+        if (!rec || rec.class !== 'assistant' || (rec.template || null) !== (template || null)) continue;
+        rows.push({ name: s.name, activityTs: s.activityTs || 0, busy: !!(s.streamBusy || s.thinking || (s.outbox && s.outbox.length) || (s.streamPermissions && s.streamPermissions.size)) });
+      }
+      return rows;
+    }
+
+    async makeAwakeRoom(template, cap, holder) {
+      const key = template || null;
+      const reservedAll = this._awakeReserved || (this._awakeReserved = new Map());
+      const evicting = this._awakeEvicting || (this._awakeEvicting = new Set());
+      const rows = this._awakeAssistantRows(key);
+      const live = new Set(rows.map((r) => r.name));
+      const reserved = reservedAll.get(key) || new Set();
+      const pending = [...reserved].filter((n) => !live.has(n)).length;
+      const victim = rows.length + pending < cap ? null : pickMaxAwakeVictim(rows, cap - pending);
+      if (rows.length + pending >= cap && !victim) return { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000 };
+      reservedAll.set(key, reserved.add(holder));
+      if (!victim) return null;
+      evicting.add(victim);
+      try { await this._sleepNow(this.sessions.get(victim), 'evicted'); }
+      catch (e) { this.releaseAwakeRoom(key, holder); throw e; }
+      finally { evicting.delete(victim); }
+      return null;
+    }
+
+    releaseAwakeRoom(template, holder) {
+      const key = template || null;
+      const reserved = this._awakeReserved && this._awakeReserved.get(key);
+      if (!reserved) return;
+      reserved.delete(holder);
+      if (!reserved.size) this._awakeReserved.delete(key);
     }
 
     startAssistantSweep(intervalMs = 60000) {

@@ -110,3 +110,15 @@ test('two openEvents calls before the first 200 open one stream, not two', async
   assert.strictEqual(calls[1].p, '/api/events', 'a failed open is retried on backoff');
   conn.stop();
 });
+
+test('a refreshed peer session list drops assistant-class rows', () => {
+  const payload = [{ name: 'a' }, { name: 'avh-1', class: 'assistant' }, { name: 'b' }];
+  const conn = new PeerConnection({
+    id: 'box', label: 'box', url: 'http://127.0.0.1:1', emit: () => {}, helloIntervalMs: 10000,
+  });
+  conn._request = (method, p, body, cb) => cb(null, { ok: true, sessions: payload });
+  conn._refreshSessions();
+  assert.ok(payload.some((s) => s.name === 'avh-1'), 'ENTER: the server listed the assistant');
+  assert.deepStrictEqual(conn.status().sessions.map((s) => s.name), ['a', 'b']);
+  conn.stop();
+});

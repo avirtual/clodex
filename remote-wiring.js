@@ -359,11 +359,20 @@ function createRemoteWiring(deps) {
 
   async function spawnFromTemplate(name, template, rawCwd) {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(template)) return { ok: false, error: 'template must be a library template name' };
+    if (!AGENT_NAME_RE.test(name)) return { ok: false, error: `invalid name "${name}" — allowed [a-zA-Z0-9._-], 1-64 chars` };
     if (manager.sessions.has(name) || getPersistence().get(name)) return { ok: false, error: `name taken "${name}"` };
-    const out = await spawnViaHandler({ name, ...(rawCwd ? { cwd: rawCwd } : {}), template }, rawCwd || os.homedir(), (reply) => {
-      const m = /\((\w+)\)/.exec(reply);
-      return { ok: true, name, type: m ? m[1] : 'claude', template };
-    }, 'template spawn');
+    const resolved = manager._resolveSpawnTemplate({ name: 'wire', cwd: rawCwd || os.homedir() }, template);
+    const tpl = resolved && resolved.ok ? resolved.tpl : null;
+    const cap = tpl && tpl.class === 'assistant' && tpl.sleep && Number(tpl.sleep.maxAwake) > 0 ? Number(tpl.sleep.maxAwake) : 0;
+    const full = cap ? await manager.makeAwakeRoom(tpl.name || null, cap, name) : null;
+    if (full) return full;
+    let out;
+    try {
+      out = await spawnViaHandler({ name, ...(rawCwd ? { cwd: rawCwd } : {}), template }, rawCwd || os.homedir(), (reply) => {
+        const m = /\((\w+)\)/.exec(reply);
+        return { ok: true, name, type: m ? m[1] : 'claude', template };
+      }, 'template spawn');
+    } finally { if (cap) manager.releaseAwakeRoom(tpl.name || null, name); }
     if (out.ok) notifySessions();
     log.info('session', `create ${name} from template ${template} via peer${out.ok ? '' : ` failed: ${out.error}`}`);
     return out;
@@ -615,7 +624,7 @@ function createRemoteWiring(deps) {
             if (entry && entry.class === 'assistant') {
               log.info('session', `wake ${name} on dm via ${client || 'peer'}`);
               const w = await wakeOnce(name, 'message');
-              if (!w || !w.ok) return { ok: false, code: w && w.code ? w.code : 503, error: (w && w.error) || 'wake failed' };
+              if (!w || !w.ok) return { ok: false, code: w && w.code ? w.code : 503, error: (w && w.error) || 'wake failed', ...(w && w.retryAfterMs ? { retryAfterMs: w.retryAfterMs } : {}) };
               sess = manager.sessions.get(name);
               notifySessions();
             }
@@ -666,6 +675,8 @@ function createRemoteWiring(deps) {
           const b = withoutExecGrants(body) || {};
           const name = String(b.name || '').trim();
           const rawCwd = String(b.cwd || '').trim();
+          const mode = String(process.env.CLODEX_REMOTE_CREATE || '').trim();
+          if (mode === 'template' && !(typeof b.template === 'string' && b.template.trim())) return { ok: false, code: 403, error: 'create: this host accepts template creates only' };
           if (typeof b.template === 'string' && b.template.trim()) return spawnFromTemplate(name, b.template.trim(), rawCwd);
           if (typeof b.team === 'string' && b.team.trim()) return spawnTeamLead(name, b.team.trim());
           const type = b.type;

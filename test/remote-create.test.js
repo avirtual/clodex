@@ -47,6 +47,7 @@ function makeDeps(overrides = {}) {
         || 'ok: spawned "clodex-lead" (claude) @ /r (lead of team clodex) via template "clodex-team-lead"';
       setImmediate(() => opts.onReply(line));
     },
+    _resolveSpawnTemplate: () => ({ ok: false, error: 'no template' }),
   };
   const persistence = { get: () => undefined, setStripLevel: (n, l) => stripCalls.push([n, l]) };
   const argsCalls = [];

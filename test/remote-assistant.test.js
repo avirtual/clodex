@@ -27,6 +27,7 @@ function makeDeps(overrides = {}) {
   const awaitCalls = [];
   const unlinkCalls = [];
   const rmCalls = [];
+  const roomCalls = [];
   const order = [];
   const files = new Map(Object.entries(overrides.files || {}));
   const manager = {
@@ -43,6 +44,12 @@ function makeDeps(overrides = {}) {
       if (out.ok) manager.sessions.set(name, { name, agentType: 'claude', type: 'claude', io: 'stream' });
       return out;
     },
+    _resolveSpawnTemplate: (spawner, v) => {
+      const tpl = (overrides.templates || {})[v];
+      return tpl ? { ok: true, tpl } : { ok: false, error: `no template named "${v}"` };
+    },
+    makeAwakeRoom: async (template, cap, holder) => { roomCalls.push(['room', template, cap, holder]); return overrides.roomOut || null; },
+    releaseAwakeRoom: (template, holder) => { roomCalls.push(['release', template, holder, spawnCalls.length]); },
     sleep: async (name, opts) => { sleepCalls.push([name, opts]); return overrides.sleepOut || { ok: true, state: 'asleep' }; },
     destroy: async (name) => { destroyCalls.push(name); records.delete(name); manager.sessions.delete(name); return { ok: true }; },
     kill: async (name) => { killCalls.push(name); },
@@ -101,7 +108,7 @@ function makeDeps(overrides = {}) {
   };
   return {
     deps, manager, records, createCalls, spawnCalls, wakeCalls, sleepCalls, destroyCalls, killCalls,
-    deliverCalls, awaitCalls, unlinkCalls, rmCalls, order,
+    deliverCalls, awaitCalls, unlinkCalls, rmCalls, roomCalls, order,
   };
 }
 
@@ -134,10 +141,10 @@ test('send: a dm to an asleep assistant wakes it, then delivers as the operator 
   assert.strictEqual(opts.notifyCalls.length, 1);
 });
 
-test('send: a refused wake forwards its code and delivers nothing', async () => {
-  const h = makeDeps({ records: { 'avh-7': ASLEEP }, wakeOut: { ok: false, code: 503, error: 'at capacity' } });
+test('send: a refused wake forwards its code and retryAfterMs and delivers nothing', async () => {
+  const h = makeDeps({ records: { 'avh-7': ASLEEP }, wakeOut: { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000 } });
   const opts = captureOptions(h.deps);
-  assert.deepStrictEqual(await opts.send('avh-7', 'hi', [], 'avh'), { ok: false, code: 503, error: 'at capacity' });
+  assert.deepStrictEqual(await opts.send('avh-7', 'hi', [], 'avh'), { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000 });
   assert.deepStrictEqual(h.deliverCalls, []);
 });
 
@@ -233,7 +240,7 @@ test('killSession: an assistant record is destroyed with its vetted transcripts 
 
 test('listSleepers / getSessions: only an archived, unmapped assistant is a sleeper; an awake assistant row says so; a plain row is unchanged', () => {
   const h = makeDeps({
-    records: { a1: { class: 'assistant', type: 'claude', cwd: '/a', wakes: 2 }, 'avh-7': ASLEEP, p1: { archivedAt: 1, type: 'claude', cwd: '/p' }, w1: { type: 'codex', cwd: '/q' } },
+    records: { a1: { class: 'assistant', type: 'claude', cwd: '/a', wakes: 2, cost: { usd: 0.5, turns: 3, at: 9, awakeMs: 7000 } }, 'avh-7': ASLEEP, p1: { archivedAt: 1, type: 'claude', cwd: '/p' }, w1: { type: 'codex', cwd: '/q' } },
     sessions: { a1: { name: 'a1', type: 'claude', io: 'stream', cwd: '/a', agentType: 'claude' }, w1: { name: 'w1', type: 'codex', cwd: '/q', agentType: 'codex' } },
   });
   const opts = captureOptions(h.deps);
@@ -251,7 +258,7 @@ test('listSleepers / getSessions: only an archived, unmapped assistant is a slee
   assert.strictEqual(co.getSleeper('avh-7'), null);
   assert.strictEqual(co.getSessions()[0].state, 'sleeping', 'a closing assistant is not reported awake');
   assert.deepStrictEqual(opts.getSessions(), [
-    { name: 'a1', type: 'claude', io: 'stream', cwd: '/a', workspace: '', workspaceId: null, activityTs: null, class: 'assistant', state: 'awake', template: null, sleep: null, cost: null, wakes: 2, stats: STATS },
+    { name: 'a1', type: 'claude', io: 'stream', cwd: '/a', workspace: '', workspaceId: null, activityTs: null, class: 'assistant', state: 'awake', template: null, sleep: null, cost: { usd: 0.5, turns: 3, at: 9, awakeMs: 7000 }, wakes: 2, stats: STATS },
     { name: 'w1', type: 'codex', io: 'pty', cwd: '/q', workspace: '', workspaceId: null, activityTs: null, stats: STATS },
   ]);
 });
@@ -288,7 +295,7 @@ const LIVE_ROW = { name: 'w1', type: 'claude', io: 'pty', cwd: '/q', workspace: 
 const SLEEPER_ROW = { name: 'avh-7', type: 'claude', io: 'stream', cwd: '/w', workspace: '', workspaceId: null, activityTs: null, class: 'assistant', state: 'asleep', stats: STATS };
 const BY_NAME = {
   sleep: { 'avh-7': { ok: true, state: 'asleep' }, busy: { ok: true, state: 'sleeping' }, w1: { ok: false, error: 'not an assistant seat' } },
-  wake: { 'avh-7': { ok: true, state: 'awake' }, w1: { ok: false, error: 'not an assistant seat' }, full: { ok: false, code: 503, error: 'at capacity', retryAfterMs: 1000 } },
+  wake: { 'avh-7': { ok: true, state: 'awake' }, w1: { ok: false, error: 'not an assistant seat' }, full: { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000 } },
   memory: { 'avh-7': { ok: true, name: 'avh-7', units: [], brief: null }, nobody: { ok: false, code: 404, error: 'Session not found' } },
 };
 
@@ -347,7 +354,7 @@ test('POST sleep / wake and GET memory: status per answer, code forwarded, 501 w
     assert.deepStrictEqual(await st('/api/sessions/w1/sleep'), [409, { ok: false, error: 'not an assistant seat' }]);
     assert.deepStrictEqual(await st('/api/sessions/avh-7/wake'), [200, { ok: true, state: 'awake' }]);
     assert.deepStrictEqual(await st('/api/sessions/w1/wake'), [409, { ok: false, error: 'not an assistant seat' }]);
-    assert.deepStrictEqual(await st('/api/sessions/full/wake'), [503, { ok: false, code: 503, error: 'at capacity', retryAfterMs: 1000 }]);
+    assert.deepStrictEqual(await st('/api/sessions/full/wake'), [503, { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000 }]);
     assert.deepStrictEqual(await st('/api/sessions/avh-7/memory', 'GET'), [200, { ok: true, name: 'avh-7', units: [], brief: null }]);
     assert.deepStrictEqual(await st('/api/sessions/nobody/memory', 'GET'), [404, { ok: false, code: 404, error: 'Session not found' }]);
   });
@@ -411,6 +418,9 @@ test('POST /api/sessions/:name/dm: ref is validated, passed as the 6th positiona
     answer = { ok: false, code: 409, error: 'nope' };
     const refused = await post({ text: 'hi', ref: 'm-1' });
     assert.deepStrictEqual([refused.status, refused.json], [409, { ok: false, code: 409, error: 'nope', ref: 'm-1' }]);
+    answer = { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000 };
+    const full = await post({ text: 'hi', ref: 'm-2' });
+    assert.deepStrictEqual([full.status, full.json], [503, { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000, ref: 'm-2' }]);
     answer = { ok: true };
     seen.length = 0;
     for (const ref of ['a'.repeat(129), 42]) {
@@ -513,4 +523,61 @@ test('killSession: an account assistant unlinks its transcripts under its CLAUDE
     path.join('/acct', 'projects', '-w', `${SID_A}.jsonl`),
     path.join('/acct', 'projects', '-w', `${SID_B}.jsonl`),
   ]);
+});
+
+const ASSISTANT_TPL = { name: 'clodex-assistant', type: 'claude', class: 'assistant', sleep: { idleMs: 600000, maxAwake: 20, wakeOn: ['message', 'reminder'], briefTail: 10 } };
+
+test('createSession: an assistant template makes room under its maxAwake first; at capacity it answers 503 and never spawns', async () => {
+  const h = makeDeps({ templates: { 'clodex-assistant': ASSISTANT_TPL } });
+  const opts = captureOptions(h.deps);
+  assert.strictEqual((await opts.createSession({ name: 'avh-1', template: 'clodex-assistant' })).ok, true);
+  assert.deepStrictEqual(h.roomCalls, [['room', 'clodex-assistant', 20, 'avh-1'], ['release', 'clodex-assistant', 'avh-1', 1]]);
+  assert.strictEqual(h.spawnCalls.length, 1);
+  const full = makeDeps({ templates: { 'clodex-assistant': ASSISTANT_TPL }, roomOut: { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000 } });
+  assert.deepStrictEqual(await captureOptions(full.deps).createSession({ name: 'avh-2', template: 'clodex-assistant' }),
+    { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000 });
+  assert.deepStrictEqual(full.spawnCalls, []);
+  const bad = makeDeps({ templates: { 'clodex-assistant': ASSISTANT_TPL } });
+  assert.strictEqual((await captureOptions(bad.deps).createSession({ name: 'bad name', template: 'clodex-assistant' })).ok, false);
+  assert.deepStrictEqual([bad.roomCalls, bad.spawnCalls], [[], []], 'an invalid name evicts nobody');
+  const plain = makeDeps({ templates: { worker: { name: 'worker', type: 'claude' } } });
+  assert.strictEqual((await captureOptions(plain.deps).createSession({ name: 'w2', template: 'worker' })).ok, true);
+  assert.deepStrictEqual(plain.roomCalls, [], 'a template without the class has no cap');
+});
+
+test('createSession: CLODEX_REMOTE_CREATE=template refuses a bare create with 403 and still spawns a template; unset keeps bare creates', async () => {
+  const prev = process.env.CLODEX_REMOTE_CREATE;
+  try {
+    process.env.CLODEX_REMOTE_CREATE = 'template';
+    const h = makeDeps();
+    const opts = captureOptions(h.deps);
+    assert.deepStrictEqual(await opts.createSession({ name: 'w1', type: 'claude', cwd: '/w' }),
+      { ok: false, code: 403, error: 'create: this host accepts template creates only' });
+    assert.deepStrictEqual(h.createCalls, []);
+    assert.strictEqual((await opts.createSession({ name: 'avh-7', template: 'avh-assistant' })).ok, true);
+    assert.strictEqual(h.spawnCalls.length, 1);
+    delete process.env.CLODEX_REMOTE_CREATE;
+    const u = makeDeps();
+    assert.strictEqual((await captureOptions(u.deps).createSession({ name: 'w1', type: 'claude', cwd: '/w' })).ok, true);
+    assert.strictEqual(u.createCalls.length, 1);
+  } finally {
+    if (prev === undefined) delete process.env.CLODEX_REMOTE_CREATE;
+    else process.env.CLODEX_REMOTE_CREATE = prev;
+  }
+});
+
+test('POST /api/sessions: a create answer\'s code is the status, else 400', async () => {
+  let answer = { ok: false, code: 403, error: 'create: this host accepts template creates only' };
+  await withServer({ createSession: () => answer }, async (port) => {
+    const r = await req(port, '/api/sessions', { method: 'POST', body: { name: 'w1', type: 'claude', cwd: '/w' } });
+    assert.deepStrictEqual([r.status, r.json], [403, answer]);
+    answer = { ok: false, error: 'cwd required' };
+    assert.strictEqual((await req(port, '/api/sessions', { method: 'POST', body: { name: 'w1' } })).status, 400);
+  });
+});
+
+test('remote.js builds the dm ref pattern from DM_REF_MAX', () => {
+  const src = require('fs').readFileSync(path.join(__dirname, '..', 'remote.js'), 'utf8');
+  assert.match(src, /const DM_REF_MAX = 128;\nconst DM_CLIENT_REF_RE = new RegExp\(`\^\[A-Za-z0-9\._:-\]\{1,\$\{DM_REF_MAX\}\}\$`\);/);
+  assert.ok(!src.includes('{1,128}'));
 });

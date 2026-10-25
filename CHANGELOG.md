@@ -16,6 +16,7 @@ blocks a release.
 - Phone-access API: a dm can carry a correlation ref that comes back on its turn, a sleeping assistant's transcript stays readable, and a reminder can wake an assistant.
 - A team lead resumed under a newer Clodex gets a notice naming the release range it owes a cold review for.
 - Editing a seat or template no longer drops exec grants, MCP servers, denied builtins or disabled tools that this host's library does not list.
+- Assistants ship with a library template (clodex-assistant); a per-template awake cap sleeps the idlest one first and answers 503 at capacity; awake time is accounted on the record; a peered desktop no longer lists assistant seats; CLODEX_REMOTE_CREATE=template limits wire creates to templates.
 
 ## 5.143.0 — 2026-10-25
 

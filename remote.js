@@ -119,7 +119,8 @@ const VERB_CALLBACK = {
 const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const TICKET_ID_RE = /^t\d+$/;
 const DM_CLIENT_RE = /^[a-z][a-z0-9-]{0,15}$/;
-const DM_CLIENT_REF_RE = /^[A-Za-z0-9._:-]{1,128}$/;
+const DM_REF_MAX = 128;
+const DM_CLIENT_REF_RE = new RegExp(`^[A-Za-z0-9._:-]{1,${DM_REF_MAX}}$`);
 const REPLY_STATUS = { empty: 400, 'too-long': 400, 'not-replyable': 400, unknown: 404 };
 const TICKET_STATES = ['open', 'done', 'cancelled', 'all'];
 const MAX_BODY = 64 * 1024;          // matches the IPC message cap
@@ -128,7 +129,6 @@ const IMPORT_ID_RE = /^[0-9a-f]{16}$/;
 const CONTENT_RANGE_RE = /^bytes\s+(\d+)-(\d+)\/\*$/i;
 const SSE_HEARTBEAT_MS = 25000;
 const DM_AWAIT_MAX_MS = 60000;
-const DM_REF_MAX = 128;
 const ATTACH_MAX_BUFFERED = 4 * 1024 * 1024;
 const RESIZE_DEBOUNCE_MS = 80;
 
@@ -1281,7 +1281,7 @@ class RemoteServer {
         try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
         Promise.resolve()
           .then(() => this._createSession(msg))
-          .then((out) => this._json(res, out && out.ok ? 200 : 400, out || { ok: false, error: 'create failed' }))
+          .then((out) => this._json(res, out && out.ok ? 200 : (out && out.code) || 400, out || { ok: false, error: 'create failed' }))
           .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
       });
     }
