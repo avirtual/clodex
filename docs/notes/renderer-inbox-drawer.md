@@ -12,6 +12,4 @@ cleared.
 ## onAttentionChanged
 
 `attention:changed` is a refresh signal only: the handler takes no argument and
-re-pulls `openRequests`. Its payload carries a seat's `message` across
-workspaces, so rendering it would leak another workspace's dialog text into a
-web tab scoped to its own.
+re-pulls `openRequests`.

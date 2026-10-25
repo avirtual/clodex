@@ -6685,7 +6685,6 @@ function createTicketMethods(deps, shared) {
     },
 
     // Written even with an empty ledger: the waste counters must record a ticket that burned a worktree and produced nothing.
-    // The taskDir is resolved, not trusted: written verbatim, a literal `~` is mkdir -p'd under the process cwd.
     _writeTicketCost(team, ticket) {
       if (!ticket) return;
       const dest = this._artifactDir(team, ticket);
