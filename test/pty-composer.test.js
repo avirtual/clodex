@@ -139,7 +139,7 @@ test('clipboardImages reads each clipboard image item into { mediaType, data } b
   assert.deepStrictEqual(await clipboardImages(undefined, FakeReader), []);
 });
 
-function pasteRig({ web, reply, upload = null, readImages = null }) {
+function pasteRig({ web, reply, upload = null, readImages = null, items = null }) {
   const log = { uploads: [], toasts: [], writes: [], draft: '', paths: {}, prevented: 0, order: [], added: [], attached: [], dropped: [], files: 0 };
   let n = 0;
   const handler = ptyImagePasteHandler({
@@ -155,11 +155,25 @@ function pasteRig({ web, reply, upload = null, readImages = null }) {
     pickFiles: async (files) => { log.order.push('pick'); log.picked = files; },
   });
   const event = {
-    clipboardData: { items: [{ kind: 'file', type: 'image/png', getAsFile: () => { log.files += 1; return { url: 'data:image/png;base64,QUJD' }; } }] },
+    clipboardData: { items: items || [{ kind: 'file', type: 'image/png', getAsFile: () => { log.files += 1; return { url: 'data:image/png;base64,QUJD' }; } }] },
     preventDefault: () => { log.prevented += 1; },
   };
   return { log, paste: () => handler(event) };
 }
+
+const PDF = { name: 'r.pdf' };
+const FILE_PASTE_ROWS = [
+  ['a file item with no readable file falls through to a normal paste', () => null, [0, undefined, []]],
+  ['a readable file item is picked and the paste prevented', () => PDF, [1, [PDF], ['pick']]],
+];
+
+test('pty paste of a file item: picks only what getAsFile returns', async () => {
+  for (const [name, getAsFile, want] of FILE_PASTE_ROWS) {
+    const { log, paste } = pasteRig({ web: false, items: [{ kind: 'file', type: 'application/pdf', getAsFile }] });
+    await paste();
+    assert.deepStrictEqual([log.prevented, log.picked, log.order], want, name);
+  }
+});
 
 test('ENTER: on the web a pasted image uploads once and appends [Image #1] mapped to the returned path', async () => {
   const { log, paste } = pasteRig({ web: true, reply: { ok: true, paths: ['/h/messages/st/img-1-1.png'] } });

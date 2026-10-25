@@ -490,6 +490,19 @@ test('[agent:memory forget] routes through removeMemoryUnit rather than a second
     'the branch keeps its own error text');
 });
 
+test('[agent:memory pin|unpin] sets the store pin per sub and acks with the trimmed id', () => {
+  const pins = [];
+  const m = mk({ memoryStore: { setPinned: (a, id, on) => pins.push([a, id, on]) }, writeClaudeDigestFile: () => true });
+  const acked = [];
+  m._memoryAck = (s, line) => acked.push(line);
+  m._injectText = (s, line) => { throw new Error(line); };
+  const session = { name: 'a', agentType: 'claude' };
+  m._handleMemoryIntent(session, 'pin', ' mem-1-aaaaaa ');
+  m._handleMemoryIntent(session, 'unpin', ' mem-1-aaaaaa ');
+  assert.deepStrictEqual(pins, [['a', 'mem-1-aaaaaa', true], ['a', 'mem-1-aaaaaa', false]]);
+  assert.deepStrictEqual(acked, ['[agent:memory] pinned mem-1-aaaaaa', '[agent:memory] unpinned mem-1-aaaaaa']);
+});
+
 test('[agent:memory remember] parses tags=, and a pin BEHIND tags= still lands', () => {
   // The regression: the prefix loop halted on the first unrecognised key, so
   // `tags=a,b pinned=true` set neither — the pin was stranded in the body as

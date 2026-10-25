@@ -135,6 +135,17 @@ test('reminders-viewer: cancel routes agent+id to library.remove and the record 
   } finally { cleanup(); }
 });
 
+test('reminders-viewer: cancel is desktop-only; the manifest lists every other method as any', async () => {
+  const { host, removals, cleanup } = boot({ live: LIVE, records: [rec({ id: 'aaa111', agent: 'lead' })] });
+  try {
+    assert.deepStrictEqual(await host.dispatch('reminders-viewer', 'cancel', [{ agent: 'lead', id: 'aaa111' }], 'web'),
+      { ok: false, error: 'plugin method not available on this surface' });
+    assert.deepStrictEqual(removals, []);
+    const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugins', 'reminders-viewer', 'manifest.json'), 'utf8'));
+    assert.deepStrictEqual(manifest.surfaces, { list: 'any', seats: 'any', add: 'any', fire: 'any' });
+  } finally { cleanup(); }
+});
+
 test('reminders-viewer: the panel cancels an operator-set row its seat cannot', async () => {
   const { host, file, removals, cleanup } = boot({ live: LIVE, records: [rec({ id: 'aaa111', agent: 'lead', by: 'operator' })] });
   try {
