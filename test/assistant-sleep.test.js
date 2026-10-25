@@ -49,8 +49,8 @@ test('composeBrief over maxBytes drops the oldest rows, then cuts the last row\'
   assert.ok(dropped.endsWith('**you:** answer 12'), dropped);
   assert.ok(!dropped.includes('question 3'), dropped);
   const long = 'é'.repeat(300) + ' omega';
-  const cut = composeBrief({ messages: [{ role: 'user', text: 'q', interim: false }, { role: 'assistant', text: long, interim: false }], tail: 10, maxBytes: 200 });
-  assert.ok(Buffer.byteLength(cut, 'utf8') <= 200, cut);
+  const cut = composeBrief({ messages: [{ role: 'user', text: 'q', interim: false }, { role: 'assistant', text: long, interim: false }], tail: 10, maxBytes: 201 });
+  assert.ok(Buffer.byteLength(cut, 'utf8') <= 201, cut);
   assert.ok(cut.startsWith('## Before you slept\n\n**you:** é'), cut);
   assert.ok(cut.endsWith(' omega'), cut);
   assert.ok(!cut.includes('�'), 'cut at a code point');

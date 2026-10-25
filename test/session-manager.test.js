@@ -21706,6 +21706,8 @@ test('assistant sweep: an idle assistant sleeps at idleMs, not a millisecond bef
   const h = mkStreamSeatManager({ persisted: { asst: { ...ASSISTANT_ROW } } });
   t.after(() => h.stopAll());
   await h.create('asst');
+  h.line('asst', { type: 'system', subtype: 'init', session_id: 'sid-a', model: 'm', slash_commands: [] });
+  assert.strictEqual(h.store.get('asst').sessionId, 'sid-a', 'ENTER: the seat has a CLI session id');
   const s = h.m.sessions.get('asst');
   s.activityTs = 1_000_000;
   s.activityState = 'idle';
