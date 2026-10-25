@@ -21744,7 +21744,7 @@ test('stream seat outbox: a queued producer item projects to a non-empty labelle
   h.m._drainPendingAtIdle(h.m.sessions.get('sh8p'));
   const rows = h.m.seatOutbox('sh8p').items.map(outboxRowOf);
   assert.strictEqual(rows.length, 1, 'ENTER: the producer row is queued');
-  assert.deepStrictEqual(rows, [{ origin: 'system', badge: { glyph: null, label: 'system' }, text: 'pending mail', images: 0 }]);
+  assert.deepStrictEqual(rows, [{ origin: 'system', badge: { glyph: null, label: 'system' }, text: 'pending mail', images: 0, files: 0 }]);
   assert.strictEqual(hasActivePending(PENDING, 'sh8p'), true, 'projecting the row claims nothing');
 });
 
