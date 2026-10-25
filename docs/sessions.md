@@ -577,7 +577,7 @@ worktree-removal failure is toasted by the renderer while the row goes.
 | Move to peer (right-click "Move to Peer…" ▸ peer) | entry kept, `movedTo` stamped, `archivedAt` set (the local backup; a click resumes a fork) — untouched on failure | killed (`_moving`); transcript + seat dirs shipped via `importSeat`, far box restores it with `mint=false`; not respawned (failure → respawned like Move) | archived row "moved to <peer>" |
 | Move to workspace (right-click "Move to Workspace…" ▸ name) | entry kept, only `workspaceId` rewritten | untouched — keeps running; output buffered until the new window attaches | tab leaves this window, appears in the other (or when it next opens) |
 | Sleep (assistant class: idle sweep, or `manager.sleep`) | kept, `archivedAt` + `asleepAt`/`sleepReason` stamped, `sessionId` cleared, cost folded; `sessions/<name>/brief.md` written from the transcript tail | killed as Archive; mid-turn it waits for the turn's result | dimmed archived row |
-| Wake (`manager.wake`) | kept, `archivedAt`/`asleepAt` cleared, `wakes` counted | respawned fresh (`restartSession` `fresh`, no `--resume`); SessionStart context carries the brief | tab rebuilt |
+| Wake (`manager.wake`) | kept, `archivedAt`/`asleepAt` cleared, `wakes` counted | respawned fresh (`restartSession` `fresh`, no `--resume`); SessionStart context carries the brief; also woken by a reminder when `sleep.wakeOn` has `'reminder'` (the fire is parked first and drains at init) | tab rebuilt |
 
 Which CLIs support the stream transport is declared per adapter (`stream` block
 in cli-adapters.js): `streamFor(type)` gives the argv, the codec module and the
@@ -778,7 +778,7 @@ are JSON, not markdown).
 sessions.json entries carry the full respawn recipe (type/cwd/extraArgs/
 sessionId/workspaceId/prompt refs/proxy tri-state/agents/deny/tools/skills)
 plus setter-added `sessionIds[]` history, label, stripLevel, `createdAt`,
-`class`/`sleep`/`template` (assistant policy copied from the template, carried by every restart), `cost` `{usd, turns, at}` (the CLI's `total_cost_usd` folded per `SEAT_COST_FOLD_MS` and at clear/exit/kill/compact; `sessionIds` keeps the last 20 on assistant-class seats; `clearSessionId` nulls the live id),
+`class`/`sleep`/`template` (assistant policy copied from the template, carried by every restart; `sleep.wakeOn` is `['message']` by default, `'reminder'` opts into reminder wake), `cost` `{usd, turns, at}` (the CLI's `total_cost_usd` folded per `SEAT_COST_FOLD_MS` and at clear/exit/kill/compact; `sessionIds` keeps the last 20 on assistant-class seats; `clearSessionId` nulls the live id),
 `worktree` provenance (`setWorktree`, removed with the record on delete),
 `archivedAt` (`setArchived`, present only while archived), `autoCompact`
 (stored only as `false` to opt out), and three MCP fields: `mcpServers` (the

@@ -160,8 +160,8 @@
 | `listSeatAttention` | one row per live agent seat (not dead, not a clone): name, workspace, agent type, io, the needs-attention fact or null, pending stream permission count | `this.sessions`, `s.needsAttention`, `s.streamPermissions` | none | open-requests-manager.test.js |
 | `_onStreamEvent` | stream seat event pump: close tears down holds and reports exit, else decodes one line and dispatches by kind | `s._slashCommands`, `s._streamInitStalled`, `s._toolDrainedInTurn`, `s._resultHold` | `_streamTurnEnd` `_repointStreamTranscript` `_onStreamToolBoundary` `_onStreamPermission` | session-manager.test.js |
 | `awaitTurn` | a Promise for the next turn of a live stream seat, null for any other; the waiter rides `s._turnWaiters` and resolves null at `timeoutMs` | `s._turnWaiters` | none | session-manager.test.js |
-| `_resolveTurnWaiters` | on a `result`: builds the turn (`splitTurnText` of the result text, cost, duration, error flag, ts), resolves every waiter, and sends an assistant seat's turn to the remote server | `s._turnWaiters` | `splitTurnText` `_dropTurnWaiters` `_assistantPolicy` | session-manager.test.js |
-| `_dropTurnWaiters` | resolves and clears every turn waiter with the given turn, null on a close | `s._turnWaiters` | none | session-manager.test.js |
+| `_resolveTurnWaiters` | on a `result`: builds the turn (`splitTurnText` of the result text, the refs written since the last result, cost, duration, error flag, ts), resolves every waiter, and sends an assistant seat's turn to the remote server | `s._turnWaiters` `s._turnRefs` | `splitTurnText` `_dropTurnWaiters` `_assistantPolicy` | session-manager.test.js |
+| `_dropTurnWaiters` | resolves and clears every turn waiter with the given turn, null on a close, and drops the pending refs | `s._turnWaiters` `s._turnRefs` | none | session-manager.test.js |
 | `_repointStreamTranscript` | keeps run/<name>/transcript on the live stream transcript: record mode links the reported path, claude mode relinks to <sid>.jsonl | run/<name>/transcript symlink, `s._repointSkipLogged` | `_claudeTranscriptPath` `linkTranscript` `streamFor` | session-manager.test.js |
 | `_refuseStreamInject` | true (with a warn and 80-byte preview) when a stream seat is dead or streamless so callers drop the inject; false for PTY | none | none | unpinned |
 
@@ -220,7 +220,8 @@
 | `_assistantPolicy` | the persisted record iff its `class` is `'assistant'`, else null; the one class test sleep, wake, the sweep and the guards share | none (reads sessions.json) | none | unpinned |
 | `sleep` | stop an awake assistant to a brief: refuse a non-assistant or a seat not live or already archiving, defer a mid-turn seat to its result via `s._sleepRequested`, else `_sleepNow` | `s._sleepRequested` | `_assistantPolicy` `_sleepNow` | session-manager.test.js |
 | `_sleepNow` | write `brief.md` from the transcript tail (a null brief keeps the old file), fold cost, stamp asleepAt/sleepReason, clear the sessionId, then `archive` | seat-dir brief.md, sessions.json asleepAt sleepReason sessionId | `composeBrief` `_foldSeatCost` `archive` | unpinned |
-| `wake` | respawn a sleeping assistant fresh: wait out a seat still closing, unarchive, clear the sleep stamps, count `wakes`, `restartSession` fresh; a failed restart re-archives and restores the stamps | sessions.json archivedAt asleepAt sleepReason wakes | `_assistantPolicy` `_waitForExit` `restartSession` | session-manager.test.js stream-seat-restart.test.js |
+| `wake` | single-flight per name: concurrent callers share one in-flight `_wakeNow`, the slot clears when it settles | `this._wakesInFlight` | `_wakeNow` | session-manager.test.js |
+| `_wakeNow` | respawn a sleeping assistant fresh: wait out a seat still closing, unarchive, clear the sleep stamps, count `wakes`, `restartSession` fresh; a failed restart re-archives and restores the stamps | sessions.json archivedAt asleepAt sleepReason wakes | `_assistantPolicy` `_waitForExit` `restartSession` | session-manager.test.js stream-seat-restart.test.js |
 | `startAssistantSweep` | arm the unref'd idle-sweep interval once | `this._assistantSweepTimer` | `_assistantSweep` | unpinned |
 | `_assistantSweep` | sleep every live non-clone assistant stream seat `idleDecision` calls idle | none | `idleDecision` `sleep` | session-manager.test.js |
 | `_stopForRespawn` | the record-keeping stop shared by rename, move and moveToPeer: stream kill, or captured-pid SIGKILL timer plus descendant reap | none (the process only) | `sigkillPid` `reapPtyDescendants` | unpinned |
@@ -555,7 +556,7 @@
 | `_buildDeliveryText` | Builds the [agent:from] delivery line, spilling bodies over MSG_SPILL_THRESHOLD to an @pointer and marking unanswerable dms | messages dir, `s.filedRing` | _isDmReachable, spillToFile, _noteFiled | messaging-spill-receipt.test.js file-view-api.test.js ticket-replay.test.js session-manager.test.js |
 | `_deliverMessage` | Universal delivery: stream enqueue, busy/draft park, or parkable inject, reporting injected or parked to onWrite | pending/<name>/, `target._injectPtyQueue` | _refuseStreamInject, _maybeParkDelivery, _injectText, _writeImageFiles | messaging-spill-receipt.test.js dm-delivery-latch.test.js injected-turn-bit.test.js session-manager.test.js |
 | `_writeImageFiles` | Decodes base64 image attachments into the seat's messages dir and files them | `this._imgStamp`, messages dir | seatImageFileName, _noteFiled | unpinned |
-| `_deliverReminder` | Fires a reminder to a live seat or parks it for an offline persisted seat; returns delivered, parked, gone or error | pending/<name>/, persistence | _deliverMessage, _buildDeliveryText, _bornFor | session-manager.test.js |
+| `_deliverReminder` | Fires a reminder to a live seat or parks it for an offline, dead or closing persisted seat, then wakes an assistant whose `sleep.wakeOn` lists reminder; returns delivered, parked, waking, gone or error | pending/<name>/, persistence | _deliverMessage, _buildDeliveryText, _bornFor, _assistantPolicy, wake | session-manager.test.js |
 
 ### Invariants
 
@@ -574,7 +575,6 @@
 - `_gatedDeliver` parks the raw body on the parkBehindQueue branch without consulting rebody, unlike its hold branch.
 - `_deliverMessage` honours rebody on the inject path only when onWrite is also passed, and never on a stream seat.
 - `_isDmReachable` splits at the last @ while `_sendToFederatedTarget` splits at the first, so a two-@ relay sender reads reachable but its reply bounces.
-- `_deliverReminder` checks agentType but not _dead, so a dead seat still in the map drops the reminder while reporting delivered.
 
 ## Parking and the inject queue — _nextParkSeq … _armParkedDrainFallback
 
