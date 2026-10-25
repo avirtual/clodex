@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.141.0 — 2026-10-25
+
 - A team role's template may carry an MCP server list, set only from the app: ticket seats spawned for the role load it, reviewer seats never do, and a lead's `template-save` or `role-set` can neither grant nor revoke one. The team roster's preflight flags a role whose template names an MCP server the library lacks. Muse seats no longer warn about an `sse` entry twice, or when its `platforms` already exclude Muse.
 
 ## 5.140.0 — 2026-10-25
