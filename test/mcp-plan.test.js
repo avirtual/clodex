@@ -6,7 +6,7 @@ const path = require('node:path');
 const {
   MCP_NAME_RE, mcpNameError, validateMcpEntry, secretRefs, resolveMcpEntry,
   claudeMcpServers, mcpArgvPlan, mcpDigest, digestShape, mcpServerOf, mcpLeaks, discoverMcpSources, normaliseDiscovered,
-  tomlString, codexMcpArgs, codexExpressible,
+  tomlString, codexMcpArgs, codexExpressible, museExpressible,
 } = require('../mcp-plan');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -394,4 +394,14 @@ test('codexExpressible: the static half of codexMcpArgs, row by row', () => {
     [{ type: 'http', url: 'https://u', headers: { 'X-Key': 'k=${X}' } }, false],
   ];
   for (const [entry, ok] of rows) assert.strictEqual(codexExpressible(entry), ok, JSON.stringify(entry));
+});
+
+test('museExpressible: only an sse entry or a non-object is refused', () => {
+  const rows = [
+    [{ type: 'sse', url: 'https://s' }, false],
+    [{ type: 'http', url: 'https://u' }, true],
+    [{ command: 'a' }, true],
+    [null, false],
+  ];
+  for (const [entry, ok] of rows) assert.strictEqual(museExpressible(entry), ok, JSON.stringify(entry));
 });

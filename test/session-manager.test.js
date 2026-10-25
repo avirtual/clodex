@@ -22784,9 +22784,10 @@ test('MCP on a muse seat: the selection replaces mcpServers in the overlay setti
     { name: 'jira', entry: { type: 'stdio', command: 'jira-mcp', args: ['--x'], env: { JIRA_TOKEN: '${JIRA_TOKEN}' } } },
     { name: 'docs', entry: { type: 'http', url: 'https://docs/mcp', headers: { 'X-API-Key': '${DOCS_KEY}' } } },
     { name: 'old', entry: { type: 'sse', url: 'https://s/sse' } },
+    { name: 'legacy', entry: { type: 'sse', url: 'https://l/sse', platforms: ['claude'] } },
   ];
   const c = mkMuseStreamSeat({
-    mcpServers: ['jira', 'docs', 'old'],
+    mcpServers: ['jira', 'docs', 'old', 'old', 'legacy'],
     deps: (root) => ({ ...museMcpSource(root, { JIRA_TOKEN: 'hunter2', DOCS_KEY: 'k1' }), getMcpLibrary: () => ({ list: () => lib }) }),
   });
   t.after(() => c.h.stopAll());
@@ -22808,7 +22809,7 @@ test('MCP on a muse seat: the selection replaces mcpServers in the overlay setti
   assert.ok(settings.endpoint_transport, 'ENTER: the stream patch was written');
   assert.strictEqual(writes.length, 2, 'ENTER: bootstrap then the stream patch');
   assert.deepStrictEqual(JSON.parse(writes[1]).mcpServers, JSON.parse(writes[0]).mcpServers);
-  assert.deepStrictEqual(rows, ['MCP old: not available on muse (sse)']);
+  assert.deepStrictEqual(rows, ['MCP old: not available on muse (sse)', 'MCP legacy: not available on muse']);
   assert.ok(res.warnings.includes('MCP old: not available on muse (sse)'));
   const rec = c.h.store.get('mum1');
   assert.deepStrictEqual(rec.mcpApplied.names, ['docs', 'jira']);
@@ -23698,4 +23699,14 @@ test('t1908 inbox: one note per permission dialog on a ticket seat, none on a se
     from: 'clodex', workspaceId: null,
     body: 'Seat team-hand-1 (ticket t1) is waiting on a permission dialog: Bash: node scripts/x.js. Allow or deny it in the attention view; it holds the ticket until you do.',
   }]);
+});
+
+test('the muse sse rule lives in mcp-plan museExpressible, not as a type literal in session-manager or ipc-handlers', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  for (const f of ['session-manager.js', 'ipc-handlers.js']) {
+    const src = fs.readFileSync(path.join(__dirname, '..', f), 'utf8');
+    assert.ok(src.includes('museExpressible('), `ENTER: ${f} calls museExpressible`);
+    assert.ok(!src.includes("'sse'"), `${f} carries no 'sse' literal`);
+  }
 });

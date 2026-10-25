@@ -85,10 +85,6 @@ function resolveSessionArgsPatch(patch = {}, prev = null) {
   };
 }
 
-// Exec grants are a LOCAL-ONLY capability — they must never cross the peer wire
-// in either direction (a viewer editing a box session can't read the box's grants
-// nor set them; grants ride operator-authored spawn templates on the owning box).
-// A nullish input passes through unchanged.
 function withoutExecGrants(obj) {
   if (!obj || typeof obj !== 'object') return obj;
   const { execCommands, mcpServers, ...rest } = obj;

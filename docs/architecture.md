@@ -418,8 +418,9 @@ bundle), whose packaged form is the Docker image under
 - **mcp-plan.js** — the pure MCP-library leaf: the server-name grammar
   (`MCP_NAME_RE`), `validateMcpEntry` and its literal-secret lint, `${NAME}`
   resolution against a seat's merged env (`resolveMcpEntry`, fail closed),
-  the Claude server set and applied digest (`claudeMcpServers`), the
-  always-strict argv plan (`mcpArgvPlan`), the leak set (`mcpLeaks`) and the
+  the Claude server set and applied digest (`claudeMcpServers`), the Codex
+  `-c` pairs (`codexMcpArgs`, `tomlString`), the Muse sse rule
+  (`museExpressible`), the always-strict argv plan (`mcpArgvPlan`), the leak set (`mcpLeaks`) and the
   Claude-config discovery behind the migration notice (`discoverMcpSources`,
   `normaliseDiscovered`). The store is `mcpLibrary` in stores.js
   (`~/.clodex/library/mcp/<name>.json`); docs/notes/mcp-plan.md has the facts.

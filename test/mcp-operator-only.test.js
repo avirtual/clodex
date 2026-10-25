@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { teamTemplateSave } = require('../team-prompt-dir');
+const { deriveModelTemplate } = require('../team-template-derive');
 const { parseIntent } = require('../intent-scanner');
 const { withoutLocalOnly, withoutExecGrants } = require('../session-args');
 const { createSessionManager } = require('../session-manager');
@@ -164,4 +165,16 @@ test('part 5: the dialog door spawns exactly the list it was handed', async () =
   await create({}, ...args(undefined));
   assert.deepStrictEqual(calls.map((c) => c[MCP_ARG]), [['jira'], []]);
   assert.deepStrictEqual(calls.map((c) => c.length), [28, 28]);
+});
+
+test('part 6: a derived template saved without operator neither grants nor revokes mcpServers', () => {
+  const { deps, file } = teamDeps();
+  const derived = deriveModelTemplate({ type: 'claude', mcpServers: ['jira'] }, 'pm', 'id');
+  assert.deepStrictEqual(derived.mcpServers, ['jira'], 'ENTER: the derive copies the base list');
+  teamTemplateSave(deps, 'core', 'pm', derived);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { type: 'claude', name: 'pm', extraArgs: ['--model', 'id'] });
+
+  fs.writeFileSync(file, JSON.stringify({ type: 'claude', mcpServers: ['docs'] }));
+  teamTemplateSave(deps, 'core', 'pm', derived);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { type: 'claude', name: 'pm', extraArgs: ['--model', 'id'], mcpServers: ['docs'] });
 });

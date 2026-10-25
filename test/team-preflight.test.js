@@ -27,8 +27,9 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 // A probe set where EVERYTHING resolves. Individual tests remove one thing, so
 // the finding under test is the only difference from a known-empty baseline —
 // which is what makes an emptiness assertion elsewhere mean something.
-function probes({ prompts = [], appends = [], templates = [], execs = {}, files = [] } = {}) {
+function probes({ prompts = [], appends = [], templates = [], execs = {}, files = [], mcps = [] } = {}) {
   return {
+    readMcpEntry: (n) => (mcps.includes(n) ? { name: n } : null),
     exists: (abs) => files.includes(abs),
     listTemplates: () => templates,
     readExecDef: (id) => (id in execs ? execs[id] : null),
@@ -52,12 +53,38 @@ test('a fully-resolving team produces NO findings — problems only, absence is 
   const findings = teamPreflight(TEAM, probes({
     prompts: ['clodex-team-lead', 'clodex-team-hand'],
     appends: ['team-project'],
-    templates: [{ name: 'hand-seat', execCommands: ['run-tests'], appendPromptFiles: ['team-project'] }],
+    templates: [{ name: 'hand-seat', execCommands: ['run-tests'], appendPromptFiles: ['team-project'], mcpServers: ['jira'] }],
     execs: { 'run-tests': { argv: ['bash', '${TEAM_ROOT}/scripts/t.sh'] } },
     files: ['/repo/shop/scripts/t.sh'],
+    mcps: ['jira'],
   }));
   // The green baseline every other case in this file is a one-thing delta from.
   assert.deepStrictEqual(findings, []);
+});
+
+test('a template naming an MCP server the library lacks yields one warn', () => {
+  const findings = teamPreflight(TEAM, probes({
+    prompts: ['clodex-team-lead', 'clodex-team-hand'],
+    templates: [{ name: 'hand-seat', mcpServers: ['jira'] }],
+    mcps: [],
+  }));
+  assert.deepStrictEqual(findings, [{
+    level: 'warn', kind: 'mcp', role: 'hand', ref: 'jira', resolvedFrom: null,
+    message: 'role "hand": template "hand-seat" selects MCP server "jira", which has no entry under library/mcp — add it in Library ▸ MCP Servers, or drop it from the template',
+  }]);
+});
+
+test('a reviewer template naming an MCP server yields a note that the seat never loads it', () => {
+  const team = { name: 'shop', root: '/repo/shop', roles: { reviewer: { prompt: 'rv', template: 'rv-seat' } } };
+  const findings = teamPreflight(team, probes({
+    prompts: ['rv'],
+    templates: [{ name: 'rv-seat', mcpServers: ['jira'] }],
+    mcps: ['jira'],
+  }));
+  assert.deepStrictEqual(findings, [{
+    level: 'note', kind: 'mcp', role: 'reviewer', ref: 'jira', resolvedFrom: null,
+    message: 'role "reviewer": template "rv-seat" selects MCP server "jira", which a reviewer seat never loads',
+  }]);
 });
 
 test('an unresolved role prompt is a warn naming the role, the ref and the consequence', () => {

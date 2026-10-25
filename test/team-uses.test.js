@@ -364,7 +364,7 @@ test('t702 preflight is untouched: LEVELS and KINDS are the arrays ~20 whole-arr
   // the tables are module constants with no runtime accessor.
   const src = fs.readFileSync(path.join(__dirname, '..', 'team-preflight.js'), 'utf8');
   assert.ok(/const LEVELS = \['warn', 'note'\];/.test(src), 'LEVELS is unchanged');
-  assert.ok(/const KINDS = \['prompt', 'append', 'template', 'exec', 'verify'\];/.test(src), 'KINDS is unchanged');
+  assert.ok(/const KINDS = \['prompt', 'append', 'template', 'exec', 'verify', 'mcp'\];/.test(src), 'KINDS is unchanged');
 });
 
 // ── group 5: the renderer's copy ────────────────────────────────────────────
