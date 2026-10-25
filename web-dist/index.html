@@ -9894,6 +9894,25 @@ body.web-frontend #sidebar-header {
 .seat-attachment-pending {
   opacity: 0.5;
 }
+.seat-attachment.seat-attachment-file {
+  width: auto;
+  max-width: 160px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 4px 20px 4px 6px;
+  box-sizing: border-box;
+  font-size: 11px;
+}
+.seat-attachment-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+}
+.seat-attachment-size {
+  color: var(--text-dim);
+}
 .seat-attachment img {
   width: 100%;
   height: 100%;
@@ -34680,7 +34699,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
     "renderer/lib/pty-composer.js"(exports, module) {
       "use strict";
       var { bracketPaste } = require_composer_voice();
-      var IMAGE_CHIP_RE = /\[Image #(\d+)\] ?/gu;
+      var { fmtBytes } = require_format();
+      var ATTACH_CHIP_RE = /\[(Image|File) #(\d+)\] ?/gu;
+      var CHIP_LABEL = { image: "Image", file: "File" };
+      var FILE_NAME_MAX = 24;
       function ptyComposerWrites(text) {
         return [bracketPaste(text), "\r"];
       }
@@ -34693,11 +34715,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
       function imageChip(n) {
         return `[Image #${n}] `;
       }
-      function expandImageChips(text, paths) {
-        const map = paths || {};
-        return String(text).replace(IMAGE_CHIP_RE, (chip, n) => {
+      function fileChip(n) {
+        return `[File #${n}] `;
+      }
+      function expandAttachChips(text, { images, files } = {}) {
+        return String(text).replace(ATTACH_CHIP_RE, (chip, label, n) => {
+          const map = (label === "File" ? files : images) || {};
           if (!Object.hasOwn(map, n)) return chip;
-          return map[n] ? `Image: ${map[n]} ` : "";
+          return map[n] ? `${label}: ${map[n]} ` : "";
         });
       }
       var STRIPPED_PASTE_NOTICE = "Your browser did not hand over the clipboard image \u2014 use the paperclip to attach it.";
@@ -34718,6 +34743,24 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (!r || !r.ok) {
           drop(added);
           toast(String(r && r.error || "Image upload failed."));
+          return;
+        }
+        attached(added.map((a, i) => ({ ...a, path: r.paths && r.paths[i] || null, pending: false })));
+      }
+      async function attachFiles({ files, upload, toast, nextFile, append, attached, drop }) {
+        if (!files.length) {
+          toast("No readable file.");
+          return;
+        }
+        const added = files.map((file) => {
+          const n = nextFile();
+          return { n, chip: fileChip(n), path: null, file, pending: true };
+        });
+        append(added);
+        const r = await Promise.resolve().then(() => upload(files.map(({ name, data }) => ({ name, data })))).catch((err) => ({ ok: false, error: String(err && err.message || err) }));
+        if (!r || !r.ok) {
+          drop(added);
+          toast(String(r && r.error || "File upload failed."));
           return;
         }
         attached(added.map((a, i) => ({ ...a, path: r.paths && r.paths[i] || null, pending: false })));
@@ -34751,34 +34794,60 @@ ${m[2].replace(/^\r?\n/, "")}`;
           await attachImages({ images, upload, toast, nextImage, append, attached, drop });
         };
       }
-      function removeImageChip(text, n) {
-        return String(text).replace(new RegExp(`\\[Image #${Number(n)}\\] ?`, "gu"), "");
+      function removeChip(text, kind, n) {
+        return String(text).replace(new RegExp(`\\[${CHIP_LABEL[kind]} #${Number(n)}\\] ?`, "gu"), "");
       }
-      function chippedImages(items, text) {
+      function chippedAttachments(items, text) {
         const value = String(text);
-        return (items || []).filter((it) => it && it.image && value.includes(imageChip(it.n).trim()));
+        return (items || []).filter((it) => it && (it.image || it.file) && it.chip && value.includes(it.chip.trim()));
       }
-      function renderImageStrip(el, items, onRemove) {
+      function midTruncate(name, max) {
+        const s = String(name);
+        if (s.length <= max) return s;
+        const tail = Math.floor((max - 1) / 2);
+        return `${s.slice(0, max - 1 - tail)}\u2026${s.slice(s.length - tail)}`;
+      }
+      function fileTile(doc, it) {
+        const tile = doc.createElement("div");
+        tile.className = it.pending ? "seat-attachment seat-attachment-file seat-attachment-pending" : "seat-attachment seat-attachment-file";
+        tile.title = it.pending ? "Uploading\u2026" : "Remove file";
+        const label = doc.createElement("span");
+        label.className = "seat-attachment-name";
+        label.textContent = `\u{1F4C4} ${midTruncate(it.file.name, FILE_NAME_MAX)}`;
+        label.title = it.file.name;
+        const size = doc.createElement("span");
+        size.className = "seat-attachment-size";
+        size.textContent = fmtBytes(it.file.size);
+        tile.append(label, size);
+        return tile;
+      }
+      function renderAttachStrip(el, items, onRemove) {
         const doc = el.ownerDocument;
         el.replaceChildren();
         el.hidden = items.length === 0;
         for (const it of items) {
+          const rm = doc.createElement("button");
+          rm.type = "button";
+          rm.className = "seat-attachment-remove";
+          rm.textContent = "\xD7";
+          rm.addEventListener("click", () => onRemove(it));
+          if (it.file) {
+            const tile = fileTile(doc, it);
+            tile.append(rm);
+            el.appendChild(tile);
+            continue;
+          }
           const thumb = doc.createElement("div");
           thumb.className = it.pending ? "seat-attachment seat-attachment-pending" : "seat-attachment";
           thumb.title = it.pending ? "Uploading\u2026" : it.path ? "Remove image" : "Removes the mark; the CLI keeps the pasted image";
           const pic = doc.createElement("img");
           pic.src = `data:${it.image.mediaType};base64,${it.image.data}`;
           pic.alt = imageChip(it.n).trim();
-          const rm = doc.createElement("button");
-          rm.type = "button";
-          rm.className = "seat-attachment-remove";
-          rm.textContent = "\xD7";
-          rm.addEventListener("click", () => onRemove(it.n, it.image));
           thumb.append(pic, rm);
           el.appendChild(thumb);
         }
       }
-      module.exports = { ptyComposerWrites, pasteKind, imageChip, expandImageChips, ptyImagePasteHandler, attachImages, pasteStripped, STRIPPED_PASTE_NOTICE, removeImageChip, chippedImages, renderImageStrip };
+      module.exports = { ptyComposerWrites, pasteKind, imageChip, fileChip, expandAttachChips, ptyImagePasteHandler, attachImages, attachFiles, pasteStripped, STRIPPED_PASTE_NOTICE, removeChip, chippedAttachments, renderAttachStrip };
     }
   });
 
@@ -34798,12 +34867,23 @@ ${m[2].replace(/^\r?\n/, "")}`;
           reader.readAsDataURL(file);
         });
       }
+      function readAttachFile(file, Reader) {
+        return new Promise((resolve) => {
+          const reader = new Reader();
+          reader.onload = () => {
+            const m = /^data:([^,]*?);base64,(.*)$/su.exec(String(reader.result || ""));
+            resolve(m ? { name: file.name, size: file.size, mediaType: m[1] || file.type || "application/octet-stream", data: m[2] } : null);
+          };
+          reader.onerror = () => resolve(null);
+          reader.readAsDataURL(file);
+        });
+      }
       async function clipboardImages(items, Reader) {
         const files = Array.from(items || []).filter((it) => it && it.kind === "file" && /^image\//u.test(String(it.type))).map((it) => it.getAsFile()).filter(Boolean);
         const read = await Promise.all(files.map((f) => readImageFile(f, Reader)));
         return read.filter(Boolean);
       }
-      module.exports = { dataUrlImage, readImageFile, clipboardImages };
+      module.exports = { dataUrlImage, readImageFile, readAttachFile, clipboardImages };
     }
   });
 
@@ -34857,30 +34937,59 @@ ${m[2].replace(/^\r?\n/, "")}`;
   var require_attach_files = __commonJS({
     "renderer/lib/attach-files.js"(exports, module) {
       "use strict";
-      var { SEAT_IMAGE_TYPES } = require_seat_images();
-      var ATTACH_ACCEPT = [...SEAT_IMAGE_TYPES].join(",");
+      var { SEAT_IMAGE_TYPES, SEAT_IMAGE_MAX } = require_seat_images();
+      var { fmtBytes } = require_format();
+      var SEAT_FILE_MAX = 5;
+      var SEAT_FILE_MAX_BYTES = 10 * 1024 * 1024;
       function imageFilesOf(fileList, types = SEAT_IMAGE_TYPES) {
         const files = Array.from(fileList || []).filter(Boolean);
         const images = files.filter((f) => types.has(f.type));
         const rejected = files.filter((f) => !types.has(f.type));
         return { images, rejected };
       }
-      function rejectedNotice(rejected) {
-        const named = rejected.map((f) => `${f.name || "file"} (${f.type || "unknown type"})`).join(", ");
-        return `Not attached: ${named} \u2014 png, jpeg, gif or webp only.`;
+      function splitAttachable(fileList) {
+        const images = [];
+        const files = [];
+        const rejected = [];
+        for (const file of Array.from(fileList || []).filter(Boolean)) {
+          if (SEAT_IMAGE_TYPES.has(file.type)) {
+            if (images.length < SEAT_IMAGE_MAX) images.push(file);
+            else rejected.push({ file, reason: "images" });
+          } else if (file.size === 0) {
+            rejected.push({ file, reason: "empty" });
+          } else if (file.size > SEAT_FILE_MAX_BYTES) {
+            rejected.push({ file, reason: "size" });
+          } else if (files.length < SEAT_FILE_MAX) {
+            files.push(file);
+          } else {
+            rejected.push({ file, reason: "files" });
+          }
+        }
+        return { images, files, rejected };
       }
-      function attachPicker({ doc, parent, accept = ATTACH_ACCEPT, multiple = true, onFiles, toast, types = SEAT_IMAGE_TYPES }) {
+      function rejectedNotice(rejected) {
+        const notices = [];
+        const count = { images: 0, files: 0 };
+        for (const { file, reason } of rejected || []) {
+          const name = file && file.name || "file";
+          if (reason === "size") notices.push(`Not attached: ${name} (${fmtBytes(file.size)}) \u2014 files up to 10 MB.`);
+          else if (reason === "empty") notices.push(`Not attached: ${name} \u2014 empty file.`);
+          else if (Object.hasOwn(count, reason)) count[reason] += 1;
+        }
+        if (count.images) notices.push(`${count.images} image(s) not attached \u2014 at most ${SEAT_IMAGE_MAX} per message.`);
+        if (count.files) notices.push(`${count.files} file(s) not attached \u2014 at most ${SEAT_FILE_MAX} per message.`);
+        return notices;
+      }
+      function attachPicker({ doc, parent, multiple = true, onFiles }) {
         const input = doc.createElement("input");
         input.type = "file";
         input.className = "seat-attach-input";
-        input.accept = accept;
         input.multiple = !!multiple;
         input.hidden = true;
         input.addEventListener("change", () => {
-          const { images, rejected } = imageFilesOf(input.files, types);
+          const files = Array.from(input.files || []);
           input.value = "";
-          if (rejected.length) toast(rejectedNotice(rejected));
-          if (images.length) onFiles(images);
+          if (files.length) onFiles(files);
         });
         parent.appendChild(input);
         return { input, open: () => input.click() };
@@ -34889,14 +34998,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const btn = doc.createElement("button");
         btn.type = "button";
         btn.className = "seat-attach-btn";
-        btn.title = "Attach image (png, jpeg, gif, webp; up to 5, 5 MB each)";
-        btn.setAttribute("aria-label", "Attach image");
+        btn.title = "Attach image or file (up to 5 each; images 5 MB, files 10 MB)";
+        btn.setAttribute("aria-label", "Attach image or file");
         btn.textContent = "\u{1F4CE}";
         btn.addEventListener("mousedown", (e) => e.preventDefault());
         btn.addEventListener("click", onClick);
         return btn;
       }
-      module.exports = { ATTACH_ACCEPT, imageFilesOf, rejectedNotice, attachPicker, attachButton };
+      module.exports = { SEAT_FILE_MAX, SEAT_FILE_MAX_BYTES, imageFilesOf, splitAttachable, rejectedNotice, attachPicker, attachButton };
     }
   });
 
@@ -51904,9 +52013,9 @@ ${detail}` });
       var { createIntentHighlight } = require_intent_highlight();
       var { createVoiceMirror, engineObserved } = require_voice_mirror();
       var { attachTriggerSubmit, createPtyVoiceDraft, VOICE_QUIET_MS, VOICE_RELEASE_MS } = require_composer_voice();
-      var { ptyComposerWrites, expandImageChips, ptyImagePasteHandler, attachImages, pasteStripped, STRIPPED_PASTE_NOTICE, removeImageChip, chippedImages, renderImageStrip } = require_pty_composer();
-      var { readImageFile, clipboardImages } = require_clipboard_images();
-      var { imageFilesOf, attachPicker, attachButton } = require_attach_files();
+      var { ptyComposerWrites, expandAttachChips, ptyImagePasteHandler, attachImages, attachFiles, pasteStripped, STRIPPED_PASTE_NOTICE, removeChip, chippedAttachments, renderAttachStrip } = require_pty_composer();
+      var { readImageFile, readAttachFile, clipboardImages } = require_clipboard_images();
+      var { imageFilesOf, splitAttachable, rejectedNotice, attachPicker, attachButton } = require_attach_files();
       var { SEAT_IMAGE_MAX } = require_seat_images();
       var { createMenuMirror } = require_menu_mirror();
       var { VOICE_ENGINE_NAME } = require_voice_engine();
@@ -53608,7 +53717,7 @@ ${detail}` });
         slashEl.hidden = true;
         wrapperEl.appendChild(slashEl);
         wrapperEl.appendChild(composer);
-        const streamPicker = attachPicker({ doc: document, parent: wrapperEl, onFiles: (files) => attachFiles(files), toast: (message) => showToast(message, { kind: "error", name }) });
+        const streamPicker = attachPicker({ doc: document, parent: wrapperEl, onFiles: (files) => attachFiles2(files) });
         composer.classList.add("seat-composer-attach");
         wrapperEl.appendChild(attachButton(document, () => streamPicker.open()));
         const fitComposer = composerKit.fit;
@@ -53723,7 +53832,7 @@ ${detail}` });
           });
         };
         let reading = 0;
-        const attachFiles = (files) => {
+        const attachFiles2 = (files) => {
           const allowed = imageFilesOf(files).images;
           const room = Math.max(0, SEAT_IMAGE_MAX - pending.length - reading);
           const taken = allowed.slice(0, room);
@@ -53749,7 +53858,7 @@ ${detail}` });
           const files = items.filter((it) => it.kind === "file" && /^image\//.test(it.type)).map((it) => it.getAsFile()).filter(Boolean);
           if (!files.length) return;
           e.preventDefault();
-          attachFiles(files);
+          attachFiles2(files);
         });
         wrapperEl.addEventListener("drop", (e) => {
           const files = Array.from(e.dataTransfer && e.dataTransfer.files || []);
@@ -53757,7 +53866,7 @@ ${detail}` });
           if (!imageFilesOf(files).images.length) return;
           e.preventDefault();
           e.stopPropagation();
-          attachFiles(files);
+          attachFiles2(files);
         });
         let rev = -1;
         let pulling = false;
@@ -53994,7 +54103,7 @@ ${detail}` });
         });
         fitComposer();
         return {
-          attachImageFiles: attachFiles,
+          attachPickedFiles: attachFiles2,
           focus: () => {
             composer.focus();
             fitComposer();
@@ -54052,7 +54161,7 @@ ${detail}` });
           const stream = createStreamSeatPane(name, wrapperEl2, seat2);
           const row = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
           if (row && (row.dataset.attention || row.dataset.activity)) stream.setTurnRunning(seatActivity(row), Number(row.dataset.thinkingSince) || null);
-          sessions.set(name, Object.assign(seat2, { terminal: null, fitAddon: null, searchAddon: null, wrapperEl: wrapperEl2, peer: null, stream, liveSplit: null, attachImageFiles: stream.attachImageFiles }));
+          sessions.set(name, Object.assign(seat2, { terminal: null, fitAddon: null, searchAddon: null, wrapperEl: wrapperEl2, peer: null, stream, liveSplit: null, attachPickedFiles: stream.attachPickedFiles }));
           updateWindowTitle();
           return { terminal: null, fitAddon: null, searchAddon: null, wrapperEl: wrapperEl2, echoRewrite: (chunk) => chunk };
         }
@@ -54198,17 +54307,20 @@ ${detail}` });
         const composerEl = splitOn ? document.createElement("textarea") : null;
         const menuMirror = composerEl ? createMenuMirror() : null;
         let pastedImages = 0;
+        let pastedFiles = 0;
         let pastedImagePaths = {};
+        let pastedFilePaths = {};
         let pastedThumbs = [];
+        const attachPathsOf = (kind) => kind === "file" ? pastedFilePaths : pastedImagePaths;
         const imageStripEl = composerEl ? document.createElement("div") : null;
         const placeImageStrip = () => {
           imageStripEl.style.bottom = `${composerEl.offsetHeight + 8}px`;
         };
         const syncImageStrip = () => {
-          renderImageStrip(imageStripEl, chippedImages(pastedThumbs, composerEl.value), (n, image) => {
-            composerEl.value = removeImageChip(composerEl.value, n);
-            delete pastedImagePaths[n];
-            pastedThumbs = pastedThumbs.filter((t) => !(t.n === n && t.image === image));
+          renderAttachStrip(imageStripEl, chippedAttachments(pastedThumbs, composerEl.value), (it) => {
+            composerEl.value = removeChip(composerEl.value, it.kind, it.n);
+            delete attachPathsOf(it.kind)[it.n];
+            pastedThumbs = pastedThumbs.filter((t) => t !== it);
             if (menuMirror.on()) syncMenuMirror();
             composerKit.fit();
             syncImageStrip();
@@ -54216,21 +54328,24 @@ ${detail}` });
           placeImageStrip();
         };
         const pruneImageStrip = () => {
-          if (chippedImages(pastedThumbs, composerEl.value).length !== imageStripEl.childElementCount) syncImageStrip();
+          if (chippedAttachments(pastedThumbs, composerEl.value).length !== imageStripEl.childElementCount) syncImageStrip();
         };
         const sendPtyComposer = () => {
           const text = composerEl.value;
           if (!text.trim()) return;
           composerEl.value = "";
           pastedImages = 0;
+          pastedFiles = 0;
           const imagePaths = pastedImagePaths;
+          const filePaths = pastedFilePaths;
           pastedImagePaths = {};
+          pastedFilePaths = {};
           pastedThumbs = [];
           syncImageStrip();
           composerKit.fit();
           composerTrigger.resetSpan();
           const mirrored = menuMirror.on() ? menuMirror.draft(text) : [];
-          const writes = menuMirror.on() ? menuMirror.submit() : ptyComposerWrites(expandImageChips(text, imagePaths));
+          const writes = menuMirror.on() ? menuMirror.submit() : ptyComposerWrites(expandAttachChips(text, { images: imagePaths, files: filePaths }));
           for (const w of [...mirrored, ...writes]) writePty(w);
           if (liveSplit) liveSplit.composerSent(text);
         };
@@ -54244,16 +54359,22 @@ ${detail}` });
         };
         const ptyImageSink = composerEl ? {
           upload: (images) => window.api.seatImageUpload(name, images),
+          uploadFiles: (files) => window.api.seatFileUpload(name, files),
           toast: (message) => showToast(message, { kind: "error", name }),
           nextImage: () => {
             pastedImages += 1;
             return pastedImages;
           },
+          nextFile: () => {
+            pastedFiles += 1;
+            return pastedFiles;
+          },
           append: (added) => {
-            for (const { n, chip, path, image, pending } of added) {
+            for (const { n, chip, path, image, file, pending } of added) {
+              const kind = file ? "file" : "image";
               composerEl.value += chip;
-              pastedImagePaths[n] = path || null;
-              if (image) pastedThumbs.push({ n, image, path, pending });
+              attachPathsOf(kind)[n] = path || null;
+              if (image || file) pastedThumbs.push({ n, chip, kind, image, file, path, pending });
             }
             if (menuMirror.on()) syncMenuMirror();
             const end = composerEl.value.length;
@@ -54262,21 +54383,21 @@ ${detail}` });
             syncImageStrip();
           },
           attached: (done) => {
-            for (const { n, path, image } of done) {
-              const thumb = pastedThumbs.find((t) => t.n === n && t.image === image);
+            for (const { chip, path, image, file } of done) {
+              const thumb = pastedThumbs.find((t) => t.chip === chip && t.image === image && t.file === file);
               if (!thumb) continue;
               thumb.path = path;
               thumb.pending = false;
-              pastedImagePaths[n] = path;
+              attachPathsOf(thumb.kind)[thumb.n] = path;
             }
             syncImageStrip();
           },
           drop: (items) => {
-            for (const { n, image } of items) {
-              const thumb = pastedThumbs.find((t) => t.n === n && t.image === image);
+            for (const { chip, image, file } of items) {
+              const thumb = pastedThumbs.find((t) => t.chip === chip && t.image === image && t.file === file);
               if (!thumb) continue;
-              composerEl.value = removeImageChip(composerEl.value, n);
-              delete pastedImagePaths[n];
+              composerEl.value = removeChip(composerEl.value, thumb.kind, thumb.n);
+              delete attachPathsOf(thumb.kind)[thumb.n];
               pastedThumbs = pastedThumbs.filter((t) => t !== thumb);
             }
             if (menuMirror.on()) syncMenuMirror();
@@ -54285,9 +54406,17 @@ ${detail}` });
           }
         } : null;
         let ptyPicker = null;
-        const attachPtyFiles = (files) => {
-          if (files.length > SEAT_IMAGE_MAX) ptyImageSink.toast(`${files.length - SEAT_IMAGE_MAX} image(s) not attached \u2014 at most ${SEAT_IMAGE_MAX} per message.`);
-          return Promise.all(files.slice(0, SEAT_IMAGE_MAX).map((f) => readImageFile(f, FileReader))).then((read) => attachImages({ ...ptyImageSink, images: read.filter(Boolean) }));
+        const attachPtyFiles = (picked) => {
+          const { images, files, rejected } = splitAttachable(picked);
+          for (const notice of rejectedNotice(rejected)) ptyImageSink.toast(notice);
+          const jobs = [];
+          if (images.length) {
+            jobs.push(Promise.all(images.map((f) => readImageFile(f, FileReader))).then((read) => attachImages({ ...ptyImageSink, images: read.filter(Boolean) })));
+          }
+          if (files.length) {
+            jobs.push(Promise.all(files.map((f) => readAttachFile(f, FileReader))).then((read) => attachFiles({ ...ptyImageSink, upload: ptyImageSink.uploadFiles, files: read.filter(Boolean) })));
+          }
+          return Promise.all(jobs);
         };
         const onMenuKey = (e) => {
           const hit = menuMirror.key(e);
@@ -54346,7 +54475,7 @@ ${detail}` });
             writePty
           }));
           composerEl.classList.add("seat-composer-attach");
-          ptyPicker = attachPicker({ doc: document, parent: wrapperEl, onFiles: attachPtyFiles, toast: ptyImageSink.toast });
+          ptyPicker = attachPicker({ doc: document, parent: wrapperEl, onFiles: attachPtyFiles });
           wrapperEl.appendChild(attachButton(document, () => ptyPicker.open()));
         }
         const agentSeat = !peer;
@@ -54392,7 +54521,7 @@ ${detail}` });
           if (liveSplit) liveSplit.setTurnRunning(activity, Number(activityRow.dataset.thinkingSince) || null);
           if (composerEl && activity !== "idle") composerEl.placeholder = COMPOSER_RUNNING_PLACEHOLDER;
         }
-        sessions.set(name, Object.assign(seat, { terminal, fitAddon, searchAddon, intentHighlight, ptyVoice, webgl, wrapperEl, peer, echoRewrite, liveSplit, composerEl, composerKit, composerTrigger, menuMirror, syncMenuMirror, attachImageFiles: composerEl ? attachPtyFiles : null }));
+        sessions.set(name, Object.assign(seat, { terminal, fitAddon, searchAddon, intentHighlight, ptyVoice, webgl, wrapperEl, peer, echoRewrite, liveSplit, composerEl, composerKit, composerTrigger, menuMirror, syncMenuMirror, attachPickedFiles: composerEl ? attachPtyFiles : null }));
         if (seat.view === "terminal" && liveSplit) liveSplit.setRaw(true);
         updateWindowTitle();
         return { terminal, fitAddon, searchAddon, wrapperEl, echoRewrite };
@@ -54406,9 +54535,9 @@ ${detail}` });
         const entry = sessions.get(activeSession);
         if (window.__CLODEX_WEB__ || !window.require) {
           const { images, rejected } = imageFilesOf(files);
-          const sink = entry && entry.attachImageFiles && (entry.stream || ptyComposerShown(entry)) ? entry.attachImageFiles : null;
+          const sink = entry && entry.attachPickedFiles && (entry.stream || ptyComposerShown(entry)) ? entry.attachPickedFiles : null;
           if (sink && images.length) sink(images);
-          if (!sink && images.length && entry && entry.attachImageFiles) showToast("Switch to the composer view to attach images.", { kind: "peer-ui" });
+          if (!sink && images.length && entry && entry.attachPickedFiles) showToast("Switch to the composer view to attach images.", { kind: "peer-ui" });
           else if (!sink || rejected.length) showToast("Dropping files needs the desktop app \u2014 browsers don\u2019t expose file paths.", { kind: "peer-ui" });
           return;
         }

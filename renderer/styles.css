@@ -6864,6 +6864,28 @@ body.web-frontend #sidebar-header {
   opacity: 0.5;
 }
 
+.seat-attachment.seat-attachment-file {
+  width: auto;
+  max-width: 160px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 4px 20px 4px 6px;
+  box-sizing: border-box;
+  font-size: 11px;
+}
+
+.seat-attachment-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+.seat-attachment-size {
+  color: var(--text-dim);
+}
+
 .seat-attachment img {
   width: 100%;
   height: 100%;

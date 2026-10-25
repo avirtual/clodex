@@ -1,8 +1,10 @@
 'use strict';
 
-const { SEAT_IMAGE_TYPES } = require('../../seat-images');
+const { SEAT_IMAGE_TYPES, SEAT_IMAGE_MAX } = require('../../seat-images');
+const { fmtBytes } = require('./format');
 
-const ATTACH_ACCEPT = [...SEAT_IMAGE_TYPES].join(',');
+const SEAT_FILE_MAX = 5;
+const SEAT_FILE_MAX_BYTES = 10 * 1024 * 1024;
 
 function imageFilesOf(fileList, types = SEAT_IMAGE_TYPES) {
   const files = Array.from(fileList || []).filter(Boolean);
@@ -11,23 +13,51 @@ function imageFilesOf(fileList, types = SEAT_IMAGE_TYPES) {
   return { images, rejected };
 }
 
-function rejectedNotice(rejected) {
-  const named = rejected.map((f) => `${f.name || 'file'} (${f.type || 'unknown type'})`).join(', ');
-  return `Not attached: ${named} — png, jpeg, gif or webp only.`;
+function splitAttachable(fileList) {
+  const images = [];
+  const files = [];
+  const rejected = [];
+  for (const file of Array.from(fileList || []).filter(Boolean)) {
+    if (SEAT_IMAGE_TYPES.has(file.type)) {
+      if (images.length < SEAT_IMAGE_MAX) images.push(file);
+      else rejected.push({ file, reason: 'images' });
+    } else if (file.size === 0) {
+      rejected.push({ file, reason: 'empty' });
+    } else if (file.size > SEAT_FILE_MAX_BYTES) {
+      rejected.push({ file, reason: 'size' });
+    } else if (files.length < SEAT_FILE_MAX) {
+      files.push(file);
+    } else {
+      rejected.push({ file, reason: 'files' });
+    }
+  }
+  return { images, files, rejected };
 }
 
-function attachPicker({ doc, parent, accept = ATTACH_ACCEPT, multiple = true, onFiles, toast, types = SEAT_IMAGE_TYPES }) {
+function rejectedNotice(rejected) {
+  const notices = [];
+  const count = { images: 0, files: 0 };
+  for (const { file, reason } of rejected || []) {
+    const name = (file && file.name) || 'file';
+    if (reason === 'size') notices.push(`Not attached: ${name} (${fmtBytes(file.size)}) — files up to 10 MB.`);
+    else if (reason === 'empty') notices.push(`Not attached: ${name} — empty file.`);
+    else if (Object.hasOwn(count, reason)) count[reason] += 1;
+  }
+  if (count.images) notices.push(`${count.images} image(s) not attached — at most ${SEAT_IMAGE_MAX} per message.`);
+  if (count.files) notices.push(`${count.files} file(s) not attached — at most ${SEAT_FILE_MAX} per message.`);
+  return notices;
+}
+
+function attachPicker({ doc, parent, multiple = true, onFiles }) {
   const input = doc.createElement('input');
   input.type = 'file';
   input.className = 'seat-attach-input';
-  input.accept = accept;
   input.multiple = !!multiple;
   input.hidden = true;
   input.addEventListener('change', () => {
-    const { images, rejected } = imageFilesOf(input.files, types);
+    const files = Array.from(input.files || []);
     input.value = '';
-    if (rejected.length) toast(rejectedNotice(rejected));
-    if (images.length) onFiles(images);
+    if (files.length) onFiles(files);
   });
   parent.appendChild(input);
   return { input, open: () => input.click() };
@@ -37,12 +67,12 @@ function attachButton(doc, onClick) {
   const btn = doc.createElement('button');
   btn.type = 'button';
   btn.className = 'seat-attach-btn';
-  btn.title = 'Attach image (png, jpeg, gif, webp; up to 5, 5 MB each)';
-  btn.setAttribute('aria-label', 'Attach image');
+  btn.title = 'Attach image or file (up to 5 each; images 5 MB, files 10 MB)';
+  btn.setAttribute('aria-label', 'Attach image or file');
   btn.textContent = '📎';
   btn.addEventListener('mousedown', (e) => e.preventDefault());
   btn.addEventListener('click', onClick);
   return btn;
 }
 
-module.exports = { ATTACH_ACCEPT, imageFilesOf, rejectedNotice, attachPicker, attachButton };
+module.exports = { SEAT_FILE_MAX, SEAT_FILE_MAX_BYTES, imageFilesOf, splitAttachable, rejectedNotice, attachPicker, attachButton };

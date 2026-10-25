@@ -4,8 +4,9 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { ptyComposerWrites, pasteKind, imageChip, expandImageChips, ptyImagePasteHandler, attachImages, STRIPPED_PASTE_NOTICE, removeImageChip, chippedImages, renderImageStrip } = require('../renderer/lib/pty-composer');
-const { clipboardImages, readImageFile } = require('../renderer/lib/clipboard-images');
+const { ptyComposerWrites, pasteKind, imageChip, fileChip, expandAttachChips, ptyImagePasteHandler, attachImages, attachFiles, STRIPPED_PASTE_NOTICE, removeChip, chippedAttachments, renderAttachStrip } = require('../renderer/lib/pty-composer');
+const { clipboardImages, readImageFile, readAttachFile } = require('../renderer/lib/clipboard-images');
+const { splitAttachable, rejectedNotice } = require('../renderer/lib/attach-files');
 const { PASTE_OPEN, PASTE_CLOSE, bracketPaste } = require('../renderer/lib/composer-voice');
 
 test('a draft is written as a bracketed paste then a carriage return', () => {
@@ -97,8 +98,19 @@ for (const [label, text, paths, want] of [
   ['a typed chip beside an inserted one is kept', '[Image #1] see [Image #2] above', { 1: null }, 'see [Image #2] above'],
   ['a chip sent while its web upload is still pending is dropped', 'look [Image #1] [Image #2] ', { 1: '/h/img-1.png', 2: null }, 'look Image: /h/img-1.png '],
 ]) {
-  test(`expandImageChips: ${label}`, () => {
-    assert.strictEqual(expandImageChips(text, paths), want);
+  test(`expandAttachChips: ${label}`, () => {
+    assert.strictEqual(expandAttachChips(text, { images: paths }), want);
+  });
+}
+
+for (const [label, text, maps, want] of [
+  ['a file chip becomes its File: line', `see ${fileChip(1)}`, { files: { 1: '/h/f.pdf' } }, 'see File: /h/f.pdf '],
+  ['a file chip whose upload failed is dropped', `${fileChip(2)}x`, { files: { 2: null } }, 'x'],
+  ['image and file chips of the same number expand from their own maps', '[Image #1] [File #1] ', { images: { 1: '/h/i.png' }, files: { 1: '/h/f.pdf' } }, 'Image: /h/i.png File: /h/f.pdf '],
+  ['a file chip with only an image map stays', '[File #1] ok', { images: { 1: '/h/i.png' } }, '[File #1] ok'],
+]) {
+  test(`expandAttachChips: ${label}`, () => {
+    assert.strictEqual(expandAttachChips(text, maps), want);
   });
 }
 
@@ -134,7 +146,7 @@ function pasteRig({ web, reply, upload = null, readImages = null }) {
     nextImage: () => { n += 1; return n; },
     append: (added) => { log.order.push('append'); log.added.push(...added); for (const a of added) { log.draft += a.chip; log.paths[a.n] = a.path || null; } },
     attached: (done) => { log.order.push('attached'); log.attached.push(...done); for (const a of done) log.paths[a.n] = a.path; },
-    drop: (items) => { log.order.push('drop'); log.dropped.push(...items); for (const { n } of items) { log.draft = removeImageChip(log.draft, n); delete log.paths[n]; } },
+    drop: (items) => { log.order.push('drop'); log.dropped.push(...items); for (const { n } of items) { log.draft = removeChip(log.draft, 'image', n); delete log.paths[n]; } },
     writePty: (d) => { log.order.push('write'); log.writes.push(d); },
   });
   const event = {
@@ -192,13 +204,14 @@ test('the pty composer wires its paste listener through ptyImagePasteHandler and
   const m = src.match(/const ptyImageSink = composerEl \? \{([\s\S]*?)\n {2}\} : null;/u);
   assert.ok(m, 'renderer.js builds the image sink the paste handler and the paperclip share');
   assert.match(m[1], /upload: \(images\) => window\.api\.seatImageUpload\(name, images\)/u);
+  assert.match(m[1], /uploadFiles: \(files\) => window\.api\.seatFileUpload\(name, files\)/u);
   assert.match(m[1], /if \(menuMirror\.on\(\)\) syncMenuMirror\(\);/u);
-  assert.match(m[1], /pastedImagePaths\[n\] = path \|\| null;/u);
-  assert.match(src, /ptyComposerWrites\(expandImageChips\(text, imagePaths\)\)/u);
-  assert.match(src, /pastedImagePaths = \{\};\n\s*pastedThumbs = \[\];\n\s*syncImageStrip\(\);/u, 'sending clears the thumbnail strip');
-  assert.match(m[1], /if \(image\) pastedThumbs\.push\(\{ n, image, path, pending \}\);/u);
-  assert.match(m[1], /attached: \(done\) => \{[\s\S]*?t\.n === n && t\.image === image[\s\S]*?pastedImagePaths\[n\] = path;/u, 'attached binds only the thumb it appended');
-  assert.match(m[1], /drop: \(items\) => \{[\s\S]*?t\.n === n && t\.image === image[\s\S]*?if \(!thumb\) continue;\n\s*composerEl\.value = removeImageChip\(composerEl\.value, n\);\n\s*delete pastedImagePaths\[n\];[\s\S]*?syncImageStrip\(\);/u, 'drop removes only the chip whose thumb it appended');
+  assert.match(m[1], /attachPathsOf\(kind\)\[n\] = path \|\| null;/u);
+  assert.match(src, /ptyComposerWrites\(expandAttachChips\(text, \{ images: imagePaths, files: filePaths \}\)\)/u);
+  assert.match(src, /pastedImagePaths = \{\};\n\s*pastedFilePaths = \{\};\n\s*pastedThumbs = \[\];\n\s*syncImageStrip\(\);/u, 'sending clears the thumbnail strip');
+  assert.match(m[1], /if \(image \|\| file\) pastedThumbs\.push\(\{ n, chip, kind, image, file, path, pending \}\);/u);
+  assert.match(m[1], /attached: \(done\) => \{[\s\S]*?t\.chip === chip && t\.image === image && t\.file === file[\s\S]*?attachPathsOf\(thumb\.kind\)\[thumb\.n\] = path;/u, 'attached binds only the tile it appended');
+  assert.match(m[1], /drop: \(items\) => \{[\s\S]*?t\.chip === chip && t\.image === image && t\.file === file[\s\S]*?if \(!thumb\) continue;\n\s*composerEl\.value = removeChip\(composerEl\.value, thumb\.kind, thumb\.n\);\n\s*delete attachPathsOf\(thumb\.kind\)\[thumb\.n\];[\s\S]*?syncImageStrip\(\);/u, 'drop removes only the chip whose tile it appended');
   assert.match(src, /composerEl\.addEventListener\('input', pruneImageStrip\);/u, 'typing over a chip prunes its thumb');
 });
 
@@ -294,16 +307,18 @@ for (const [label, readImages] of [
   });
 }
 
-test('removeImageChip drops that chip only and leaves its neighbours', () => {
-  assert.strictEqual(removeImageChip('a [Image #1] b [Image #2] c', 1), 'a b [Image #2] c');
-  assert.strictEqual(removeImageChip('[Image #12] x', 1), '[Image #12] x');
+test('removeChip drops that chip of that kind only and leaves its neighbours', () => {
+  assert.strictEqual(removeChip('a [Image #1] b [Image #2] c', 'image', 1), 'a b [Image #2] c');
+  assert.strictEqual(removeChip('[Image #12] x', 'image', 1), '[Image #12] x');
+  assert.strictEqual(removeChip('[Image #1] [File #1] x', 'file', 1), '[Image #1] x');
 });
 
-test('chippedImages keeps only thumbs whose chip is still in the draft', () => {
+test('chippedAttachments keeps only tiles whose chip is still in the draft', () => {
   const img = { mediaType: 'image/png', data: 'QUJD' };
-  const items = [{ n: 1, image: img }, { n: 2, image: img }, { n: 3, image: null }];
-  assert.deepStrictEqual(chippedImages(items, '[Image #2] [Image #3] hi'), [{ n: 2, image: img }]);
-  assert.deepStrictEqual(chippedImages(items, ''), []);
+  const file = { name: 'r.pdf', size: 3, mediaType: 'application/pdf', data: 'QUJD' };
+  const items = [{ n: 1, chip: '[Image #1] ', image: img }, { n: 2, chip: '[Image #2] ', image: img }, { n: 3, chip: '[Image #3] ', image: null }, { n: 1, chip: '[File #1] ', file }];
+  assert.deepStrictEqual(chippedAttachments(items, '[Image #2] [Image #3] [File #1] hi'), [items[1], items[3]]);
+  assert.deepStrictEqual(chippedAttachments(items, ''), []);
 });
 
 function fakeNode(tag) {
@@ -315,12 +330,12 @@ function fakeNode(tag) {
   return node;
 }
 
-test('renderImageStrip draws one removable thumb per image, titled by where the image lives, and hides when empty', () => {
+test('renderAttachStrip draws one removable thumb per image, titled by where the image lives, and hides when empty', () => {
   const el = fakeNode('div');
   el.ownerDocument = { createElement: fakeNode };
   const removed = [];
   const items = [{ n: 1, image: { mediaType: 'image/png', data: 'QUJD' }, path: null }, { n: 3, image: { mediaType: 'image/jpeg', data: 'REVG' }, path: '/h/img-3.jpg' }, { n: 4, image: { mediaType: 'image/png', data: 'R0hJ' }, path: null, pending: true }];
-  renderImageStrip(el, items, (n) => removed.push(n));
+  renderAttachStrip(el, items, (it) => removed.push(it.n));
   assert.strictEqual(el.hidden, false);
   assert.deepStrictEqual(el.children.map((t) => [t.className, t.title, t.children[0].src]), [
     ['seat-attachment', 'Removes the mark; the CLI keeps the pasted image', 'data:image/png;base64,QUJD'],
@@ -334,9 +349,28 @@ test('renderImageStrip draws one removable thumb per image, titled by where the 
   assert.strictEqual(rm.className, 'seat-attachment-remove');
   rm.listeners.click();
   assert.deepStrictEqual(removed, [3]);
-  renderImageStrip(el, [], () => {});
+  renderAttachStrip(el, [], () => {});
   assert.strictEqual(el.hidden, true);
   assert.deepStrictEqual(el.children, []);
+});
+
+test('renderAttachStrip draws a file tile with its name, mid-truncated, and its size, dimmed while uploading', () => {
+  const el = fakeNode('div');
+  el.ownerDocument = { createElement: fakeNode };
+  const removed = [];
+  const done = { n: 1, chip: '[File #1] ', file: { name: 'report.pdf', size: 12288 }, path: '/h/f.pdf' };
+  const pending = { n: 2, chip: '[File #2] ', file: { name: 'a-very-long-quarterly-report-name.pdf', size: 900 }, path: null, pending: true };
+  renderAttachStrip(el, [done, pending], (it) => removed.push(it));
+  assert.deepStrictEqual(el.children.map((t) => [t.className, t.title]), [
+    ['seat-attachment seat-attachment-file', 'Remove file'],
+    ['seat-attachment seat-attachment-file seat-attachment-pending', 'Uploading…'],
+  ]);
+  assert.deepStrictEqual(el.children.map((t) => t.children.map((c) => [c.className, c.textContent, c.title])), [
+    [['seat-attachment-name', '📄 report.pdf', 'report.pdf'], ['seat-attachment-size', '12.0 KB', ''], ['seat-attachment-remove', '×', '']],
+    [['seat-attachment-name', '📄 a-very-long-…rt-name.pdf', 'a-very-long-quarterly-report-name.pdf'], ['seat-attachment-size', '900 B', ''], ['seat-attachment-remove', '×', '']],
+  ]);
+  el.children[0].children[2].listeners.click();
+  assert.deepStrictEqual(removed, [done]);
 });
 
 test('a pending thumb is drawn dimmed', () => {
@@ -375,7 +409,10 @@ function composerHarness(opts = {}) {
     composerTrigger: { resetSpan() {} },
     liveSplit: null,
     writePty: (d) => writes.push(d),
-    window: { __CLODEX_WEB__: web, require: web ? undefined : () => ({}), api: { seatImageUpload: (_name, images) => { const d = deferred(); d.images = images; uploads.push(d); return d.promise; } } },
+    window: { __CLODEX_WEB__: web, require: web ? undefined : () => ({}), api: {
+      seatImageUpload: (_name, images) => { const d = deferred(); d.images = images; d.kind = 'image'; uploads.push(d); return d.promise; },
+      seatFileUpload: (_name, files) => { const d = deferred(); d.files = files; d.kind = 'file'; uploads.push(d); return d.promise; },
+    } },
     clipboardImages,
     readImageFile,
     attachImages,
@@ -383,13 +420,14 @@ function composerHarness(opts = {}) {
     showToast: (m) => toasts.push(m),
     SEAT_IMAGE_MAX: 5,
     name: 'seat',
-    ptyImagePasteHandler, chippedImages, renderImageStrip, removeImageChip, ptyComposerWrites, expandImageChips,
+    ptyImagePasteHandler, chippedAttachments, renderAttachStrip, removeChip, ptyComposerWrites, expandAttachChips,
+    splitAttachable, rejectedNotice, readAttachFile, attachFiles,
   };
   const names = Object.keys(env);
   const body = [
     slice('let pastedImages = 0;', '  const onMenuKey'),
     `const handler = ${handlerSrc};`,
-    'return { handler, attachFiles: attachPtyFiles, send: sendPtyComposer, prune: pruneImageStrip, paths: () => pastedImagePaths, strip: imageStripEl };',
+    'return { handler, attachFiles: attachPtyFiles, send: sendPtyComposer, prune: pruneImageStrip, paths: () => pastedImagePaths, filePaths: () => pastedFilePaths, strip: imageStripEl };',
   ].join('\n');
   const out = new Function(...names, body)(...names.map((n) => env[n]));
   const event = {
@@ -457,7 +495,7 @@ function attachRig(upload) {
     nextImage: () => { n += 1; return n; },
     append: (added) => { log.order.push('append'); log.added.push(...added); for (const a of added) log.draft += a.chip; },
     attached: (done) => { log.order.push('attached'); log.attached.push(...done); },
-    drop: (items) => { log.order.push('drop'); log.dropped.push(...items); for (const { n: k } of items) log.draft = removeImageChip(log.draft, k); },
+    drop: (items) => { log.order.push('drop'); log.dropped.push(...items); for (const { n: k, file } of items) log.draft = removeChip(log.draft, file ? 'file' : 'image', k); },
   };
   return { log, deps };
 }
@@ -517,7 +555,7 @@ test('STRIPPED_PASTE_NOTICE is the exported toast text', () => {
 
 test('ENTER: on the desktop a picked file uploads through seatImageUpload, never Ctrl-V, and its chip binds the uploaded path', async () => {
   const h = composerHarness({ web: false });
-  const done = h.attachFiles([{ url: 'data:image/png;base64,QUJD' }]);
+  const done = h.attachFiles([{ type: 'image/png', size: 3, url: 'data:image/png;base64,QUJD' }]);
   await new Promise(setImmediate);
   assert.strictEqual(h.el.value, '[Image #1] ');
   assert.strictEqual(h.uploads.length, 1);
@@ -533,18 +571,20 @@ test('both composers mount the paperclip and the web drop on terminalContainer a
   const stream = src.slice(src.indexOf('function createStreamSeatPane('), src.indexOf('function createTerminal('));
   assert.match(stream, /attachPicker\(\{ doc: document, parent: wrapperEl, onFiles: \(files\) => attachFiles\(files\),/u);
   assert.match(stream, /wrapperEl\.appendChild\(attachButton\(document, \(\) => streamPicker\.open\(\)\)\);/u);
-  assert.match(stream, /attachImageFiles: attachFiles,/u);
+  assert.match(stream, /attachPickedFiles: attachFiles,/u);
   assert.match(src, /ptyPicker = attachPicker\(\{ doc: document, parent: wrapperEl, onFiles: attachPtyFiles,/u);
   assert.match(src, /wrapperEl\.appendChild\(attachButton\(document, \(\) => ptyPicker\.open\(\)\)\);/u);
   assert.doesNotMatch(src, /attachBtn\.hidden = /u, 'the pty paperclip is never hidden at build time, when the sidebar row does not exist yet');
   assert.doesNotMatch(src.slice(src.indexOf('function createTerminal('), src.indexOf("terminalContainer.addEventListener('drop'")), /\.seat-attach-btn|attachButton\([^)]*\)\.hidden/u);
   assert.match(src, /attachImages\(\{ \.\.\.ptyImageSink, images: read\.filter\(Boolean\) \}\)/u);
-  assert.match(src, /syncMenuMirror, attachImageFiles: composerEl \? attachPtyFiles : null \}/u);
-  assert.match(src, /stream, liveSplit: null, attachImageFiles: stream\.attachImageFiles \}/u);
+  assert.match(src, /attachFiles\(\{ \.\.\.ptyImageSink, upload: ptyImageSink\.uploadFiles, files: read\.filter\(Boolean\) \}\)/u);
+  assert.match(src, /syncMenuMirror, attachPickedFiles: composerEl \? attachPtyFiles : null \}/u);
+  assert.match(src, /stream, liveSplit: null, attachPickedFiles: stream\.attachPickedFiles \}/u);
   const drop = src.slice(src.indexOf("terminalContainer.addEventListener('drop'"), src.indexOf("const { webUtils } = window.require('electron');"));
   assert.match(drop, /if \(window\.__CLODEX_WEB__ \|\| !window\.require\) \{\n\s*const \{ images, rejected \} = imageFilesOf\(files\);/u);
   assert.match(drop, /if \(sink && images\.length\) sink\(images\);/u);
-  assert.match(drop, /if \(!sink && images\.length && entry && entry\.attachImageFiles\) showToast\('Switch to the composer view to attach images\.'/u);
+  assert.match(drop, /const sink = entry && entry\.attachPickedFiles && \(entry\.stream \|\| ptyComposerShown\(entry\)\) \? entry\.attachPickedFiles : null;/u);
+  assert.match(drop, /if \(!sink && images\.length && entry && entry\.attachPickedFiles\) showToast\('Switch to the composer view to attach images\.'/u);
   assert.match(drop, /if \(!sink \|\| rejected\.length\) showToast\('Dropping files needs the desktop app/u);
   const css = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
   assert.match(css, /\.seat-composer\.seat-composer-attach \{\n {2}padding-right: 32px;\n {2}scrollbar-gutter: stable;\n\}/u);
@@ -553,7 +593,7 @@ test('both composers mount the paperclip and the web drop on terminalContainer a
 
 test('a pick of more than five images uploads the first five and toasts the overflow up front', async () => {
   const h = composerHarness({ web: false });
-  const files = ['QUFB', 'QkJC', 'Q0ND', 'RERE', 'RUVF', 'RkZG', 'R0dH'].map((d) => ({ url: `data:image/png;base64,${d}` }));
+  const files = ['QUFB', 'QkJC', 'Q0ND', 'RERE', 'RUVF', 'RkZG', 'R0dH'].map((d) => ({ type: 'image/png', size: 3, url: `data:image/png;base64,${d}` }));
   const done = h.attachFiles(files);
   assert.deepStrictEqual(h.toasts, ['2 image(s) not attached — at most 5 per message.']);
   await new Promise(setImmediate);
@@ -562,4 +602,100 @@ test('a pick of more than five images uploads the first five and toasts the over
   h.uploads[0].resolve({ ok: true, paths: ['/1', '/2', '/3', '/4', '/5'] });
   await done;
   assert.strictEqual(h.el.value, '[Image #1] [Image #2] [Image #3] [Image #4] [Image #5] ');
+});
+
+const pdfFile = (name = 'report.pdf', url = 'data:application/pdf;base64,JVBERg==') => ({ name, size: 12288, type: 'application/pdf', url });
+
+test('ENTER: a picked pdf uploads once through seatFileUpload as { name, data }, chips [File #1], binds its path, and sends beside an image', async () => {
+  const h = composerHarness({ web: false });
+  const done = h.attachFiles([{ name: 'i.png', type: 'image/png', size: 3, url: 'data:image/png;base64,QUJD' }, pdfFile()]);
+  await new Promise(setImmediate);
+  assert.deepStrictEqual(h.uploads.map((u) => u.kind), ['image', 'file']);
+  assert.deepStrictEqual(h.uploads[1].files, [{ name: 'report.pdf', data: 'JVBERg==' }]);
+  assert.strictEqual(h.el.value, '[Image #1] [File #1] ');
+  assert.deepStrictEqual(h.strip.children.map((t) => t.className), ['seat-attachment seat-attachment-pending', 'seat-attachment seat-attachment-file seat-attachment-pending']);
+  h.uploads[0].resolve({ ok: true, paths: ['/h/i.png'] });
+  h.uploads[1].resolve({ ok: true, paths: ['/h/f.pdf'] });
+  await done;
+  assert.deepStrictEqual([h.paths(), h.filePaths()], [{ 1: '/h/i.png' }, { 1: '/h/f.pdf' }]);
+  h.el.value = `hi ${h.el.value}`;
+  h.send();
+  assert.deepStrictEqual(h.writes, ptyComposerWrites('hi Image: /h/i.png File: /h/f.pdf '));
+  assert.deepStrictEqual(h.toasts, []);
+});
+
+test('a failed file upload drops its chip and toasts the error', async () => {
+  const h = composerHarness({ web: false });
+  const done = h.attachFiles([pdfFile()]);
+  await new Promise(setImmediate);
+  assert.strictEqual(h.el.value, '[File #1] ');
+  h.uploads[0].resolve({ ok: false, error: 'file larger than 10 MB: report.pdf' });
+  await done;
+  assert.strictEqual(h.el.value, '');
+  assert.deepStrictEqual(h.filePaths(), {});
+  assert.deepStrictEqual(h.toasts, ['file larger than 10 MB: report.pdf']);
+  assert.strictEqual(h.strip.children.length, 0);
+});
+
+test('2 png + 1 pdf reach both uploads, counters start at 1 each', async () => {
+  const h = composerHarness({ web: false });
+  const done = h.attachFiles([
+    { name: 'a.png', type: 'image/png', size: 3, url: 'data:image/png;base64,QUFB' },
+    { name: 'b.png', type: 'image/png', size: 3, url: 'data:image/png;base64,QkJC' },
+    pdfFile(),
+  ]);
+  await new Promise(setImmediate);
+  assert.deepStrictEqual(h.uploads.map((u) => [u.kind, (u.images || u.files).length]), [['image', 2], ['file', 1]]);
+  assert.strictEqual(h.el.value, '[Image #1] [Image #2] [File #1] ');
+  h.uploads[0].resolve({ ok: true, paths: ['/h/a.png', '/h/b.png'] });
+  h.uploads[1].resolve({ ok: true, paths: ['/h/f.pdf'] });
+  await done;
+});
+
+test('a pick of seven pdfs toasts the overflow before any read and uploads five', async () => {
+  const h = composerHarness({ web: false });
+  const files = ['1', '2', '3', '4', '5', '6', '7'].map((n) => pdfFile(`${n}.pdf`));
+  const done = h.attachFiles(files);
+  assert.deepStrictEqual(h.toasts, ['2 file(s) not attached — at most 5 per message.']);
+  assert.strictEqual(h.uploads.length, 0);
+  await new Promise(setImmediate);
+  assert.deepStrictEqual(h.uploads[0].files.map((f) => f.name), ['1.pdf', '2.pdf', '3.pdf', '4.pdf', '5.pdf']);
+  h.uploads[0].resolve({ ok: true, paths: ['/1', '/2', '/3', '/4', '/5'] });
+  await done;
+  assert.strictEqual(h.el.value, '[File #1] [File #2] [File #3] [File #4] [File #5] ');
+});
+
+test('× on a file tile clears its chip and its path', async () => {
+  const h = composerHarness({ web: false });
+  const done = h.attachFiles([pdfFile()]);
+  await new Promise(setImmediate);
+  h.uploads[0].resolve({ ok: true, paths: ['/h/f.pdf'] });
+  await done;
+  assert.deepStrictEqual(h.filePaths(), { 1: '/h/f.pdf' });
+  const tile = h.strip.children[0];
+  assert.strictEqual(tile.className, 'seat-attachment seat-attachment-file');
+  tile.children[2].listeners.click();
+  assert.strictEqual(h.el.value, '');
+  assert.deepStrictEqual(h.filePaths(), {});
+  assert.strictEqual(h.strip.children.length, 0);
+});
+
+test('attachFiles with nothing readable toasts and never uploads', async () => {
+  const { log, deps } = attachRig(async () => { throw new Error('never'); });
+  await attachFiles({ ...deps, nextFile: () => 1, files: [] });
+  assert.deepStrictEqual(log.toasts, ['No readable file.']);
+  assert.deepStrictEqual(log.order, []);
+});
+
+test('attachFiles with a falsy reply drops and toasts the default', async () => {
+  const { log, deps } = attachRig(async () => null);
+  await attachFiles({ ...deps, nextFile: () => 1, files: [{ name: 'r.pdf', size: 3, mediaType: 'application/pdf', data: 'QUJD' }] });
+  assert.deepStrictEqual(log.order, ['append', 'drop']);
+  assert.deepStrictEqual(log.added.map((a) => [a.n, a.chip, a.path, a.pending]), [[1, '[File #1] ', null, true]]);
+  assert.deepStrictEqual(log.toasts, ['File upload failed.']);
+});
+
+test('readAttachFile reads { name, size, mediaType, data }, and an unreadable file is null', async () => {
+  assert.deepStrictEqual(await readAttachFile(pdfFile(), FakeReader), { name: 'report.pdf', size: 12288, mediaType: 'application/pdf', data: 'JVBERg==' });
+  assert.strictEqual(await readAttachFile({ name: 'x', size: 1 }, FakeReader), null);
 });

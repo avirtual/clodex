@@ -68,9 +68,9 @@ const { createTermSearch } = require('./term-search');
 const { createIntentHighlight } = require('./intent-highlight');
 const { createVoiceMirror, engineObserved } = require('./voice-mirror');
 const { attachTriggerSubmit, createPtyVoiceDraft, VOICE_QUIET_MS, VOICE_RELEASE_MS } = require('./lib/composer-voice');
-const { ptyComposerWrites, expandImageChips, ptyImagePasteHandler, attachImages, pasteStripped, STRIPPED_PASTE_NOTICE, removeImageChip, chippedImages, renderImageStrip } = require('./lib/pty-composer');
-const { readImageFile, clipboardImages } = require('./lib/clipboard-images');
-const { imageFilesOf, attachPicker, attachButton } = require('./lib/attach-files');
+const { ptyComposerWrites, expandAttachChips, ptyImagePasteHandler, attachImages, attachFiles, pasteStripped, STRIPPED_PASTE_NOTICE, removeChip, chippedAttachments, renderAttachStrip } = require('./lib/pty-composer');
+const { readImageFile, readAttachFile, clipboardImages } = require('./lib/clipboard-images');
+const { imageFilesOf, splitAttachable, rejectedNotice, attachPicker, attachButton } = require('./lib/attach-files');
 const { SEAT_IMAGE_MAX } = require('../seat-images');
 const { createMenuMirror } = require('./lib/menu-mirror');
 const { VOICE_ENGINE_NAME } = require('../voice-engine');
@@ -1782,7 +1782,7 @@ function createStreamSeatPane(name, wrapperEl, seat) {
   slashEl.hidden = true;
   wrapperEl.appendChild(slashEl);
   wrapperEl.appendChild(composer);
-  const streamPicker = attachPicker({ doc: document, parent: wrapperEl, onFiles: (files) => attachFiles(files), toast: (message) => showToast(message, { kind: 'error', name }) });
+  const streamPicker = attachPicker({ doc: document, parent: wrapperEl, onFiles: (files) => attachFiles(files) });
   composer.classList.add('seat-composer-attach');
   wrapperEl.appendChild(attachButton(document, () => streamPicker.open()));
   const fitComposer = composerKit.fit;
@@ -2153,7 +2153,7 @@ function createStreamSeatPane(name, wrapperEl, seat) {
   });
   fitComposer();
   return {
-    attachImageFiles: attachFiles,
+    attachPickedFiles: attachFiles,
     focus: () => { composer.focus(); fitComposer(); },
     refresh: () => pull(true),
     voiceDraft(text) { triggerSubmit.draft(text); fitComposer(); },
@@ -2201,7 +2201,7 @@ function createTerminal(name, peer = null) {
     const stream = createStreamSeatPane(name, wrapperEl, seat);
     const row = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
     if (row && (row.dataset.attention || row.dataset.activity)) stream.setTurnRunning(seatActivity(row), Number(row.dataset.thinkingSince) || null);
-    sessions.set(name, Object.assign(seat, { terminal: null, fitAddon: null, searchAddon: null, wrapperEl, peer: null, stream, liveSplit: null, attachImageFiles: stream.attachImageFiles }));
+    sessions.set(name, Object.assign(seat, { terminal: null, fitAddon: null, searchAddon: null, wrapperEl, peer: null, stream, liveSplit: null, attachPickedFiles: stream.attachPickedFiles }));
     updateWindowTitle();
     return { terminal: null, fitAddon: null, searchAddon: null, wrapperEl, echoRewrite: (chunk) => chunk };
   }
@@ -2388,15 +2388,18 @@ function createTerminal(name, peer = null) {
   const composerEl = splitOn ? document.createElement('textarea') : null;
   const menuMirror = composerEl ? createMenuMirror() : null;
   let pastedImages = 0;
+  let pastedFiles = 0;
   let pastedImagePaths = {};
+  let pastedFilePaths = {};
   let pastedThumbs = [];
+  const attachPathsOf = (kind) => (kind === 'file' ? pastedFilePaths : pastedImagePaths);
   const imageStripEl = composerEl ? document.createElement('div') : null;
   const placeImageStrip = () => { imageStripEl.style.bottom = `${composerEl.offsetHeight + 8}px`; };
   const syncImageStrip = () => {
-    renderImageStrip(imageStripEl, chippedImages(pastedThumbs, composerEl.value), (n, image) => {
-      composerEl.value = removeImageChip(composerEl.value, n);
-      delete pastedImagePaths[n];
-      pastedThumbs = pastedThumbs.filter((t) => !(t.n === n && t.image === image));
+    renderAttachStrip(imageStripEl, chippedAttachments(pastedThumbs, composerEl.value), (it) => {
+      composerEl.value = removeChip(composerEl.value, it.kind, it.n);
+      delete attachPathsOf(it.kind)[it.n];
+      pastedThumbs = pastedThumbs.filter((t) => t !== it);
       if (menuMirror.on()) syncMenuMirror();
       composerKit.fit();
       syncImageStrip();
@@ -2404,21 +2407,24 @@ function createTerminal(name, peer = null) {
     placeImageStrip();
   };
   const pruneImageStrip = () => {
-    if (chippedImages(pastedThumbs, composerEl.value).length !== imageStripEl.childElementCount) syncImageStrip();
+    if (chippedAttachments(pastedThumbs, composerEl.value).length !== imageStripEl.childElementCount) syncImageStrip();
   };
   const sendPtyComposer = () => {
     const text = composerEl.value;
     if (!text.trim()) return;
     composerEl.value = '';
     pastedImages = 0;
+    pastedFiles = 0;
     const imagePaths = pastedImagePaths;
+    const filePaths = pastedFilePaths;
     pastedImagePaths = {};
+    pastedFilePaths = {};
     pastedThumbs = [];
     syncImageStrip();
     composerKit.fit();
     composerTrigger.resetSpan();
     const mirrored = menuMirror.on() ? menuMirror.draft(text) : [];
-    const writes = menuMirror.on() ? menuMirror.submit() : ptyComposerWrites(expandImageChips(text, imagePaths));
+    const writes = menuMirror.on() ? menuMirror.submit() : ptyComposerWrites(expandAttachChips(text, { images: imagePaths, files: filePaths }));
     for (const w of [...mirrored, ...writes]) writePty(w);
     if (liveSplit) liveSplit.composerSent(text);
   };
@@ -2432,13 +2438,16 @@ function createTerminal(name, peer = null) {
   };
   const ptyImageSink = composerEl ? {
     upload: (images) => window.api.seatImageUpload(name, images),
+    uploadFiles: (files) => window.api.seatFileUpload(name, files),
     toast: (message) => showToast(message, { kind: 'error', name }),
     nextImage: () => { pastedImages += 1; return pastedImages; },
+    nextFile: () => { pastedFiles += 1; return pastedFiles; },
     append: (added) => {
-      for (const { n, chip, path, image, pending } of added) {
+      for (const { n, chip, path, image, file, pending } of added) {
+        const kind = file ? 'file' : 'image';
         composerEl.value += chip;
-        pastedImagePaths[n] = path || null;
-        if (image) pastedThumbs.push({ n, image, path, pending });
+        attachPathsOf(kind)[n] = path || null;
+        if (image || file) pastedThumbs.push({ n, chip, kind, image, file, path, pending });
       }
       if (menuMirror.on()) syncMenuMirror();
       const end = composerEl.value.length;
@@ -2447,21 +2456,21 @@ function createTerminal(name, peer = null) {
       syncImageStrip();
     },
     attached: (done) => {
-      for (const { n, path, image } of done) {
-        const thumb = pastedThumbs.find((t) => t.n === n && t.image === image);
+      for (const { chip, path, image, file } of done) {
+        const thumb = pastedThumbs.find((t) => t.chip === chip && t.image === image && t.file === file);
         if (!thumb) continue;
         thumb.path = path;
         thumb.pending = false;
-        pastedImagePaths[n] = path;
+        attachPathsOf(thumb.kind)[thumb.n] = path;
       }
       syncImageStrip();
     },
     drop: (items) => {
-      for (const { n, image } of items) {
-        const thumb = pastedThumbs.find((t) => t.n === n && t.image === image);
+      for (const { chip, image, file } of items) {
+        const thumb = pastedThumbs.find((t) => t.chip === chip && t.image === image && t.file === file);
         if (!thumb) continue;
-        composerEl.value = removeImageChip(composerEl.value, n);
-        delete pastedImagePaths[n];
+        composerEl.value = removeChip(composerEl.value, thumb.kind, thumb.n);
+        delete attachPathsOf(thumb.kind)[thumb.n];
         pastedThumbs = pastedThumbs.filter((t) => t !== thumb);
       }
       if (menuMirror.on()) syncMenuMirror();
@@ -2470,10 +2479,19 @@ function createTerminal(name, peer = null) {
     },
   } : null;
   let ptyPicker = null;
-  const attachPtyFiles = (files) => {
-    if (files.length > SEAT_IMAGE_MAX) ptyImageSink.toast(`${files.length - SEAT_IMAGE_MAX} image(s) not attached — at most ${SEAT_IMAGE_MAX} per message.`);
-    return Promise.all(files.slice(0, SEAT_IMAGE_MAX).map((f) => readImageFile(f, FileReader)))
-      .then((read) => attachImages({ ...ptyImageSink, images: read.filter(Boolean) }));
+  const attachPtyFiles = (picked) => {
+    const { images, files, rejected } = splitAttachable(picked);
+    for (const notice of rejectedNotice(rejected)) ptyImageSink.toast(notice);
+    const jobs = [];
+    if (images.length) {
+      jobs.push(Promise.all(images.map((f) => readImageFile(f, FileReader)))
+        .then((read) => attachImages({ ...ptyImageSink, images: read.filter(Boolean) })));
+    }
+    if (files.length) {
+      jobs.push(Promise.all(files.map((f) => readAttachFile(f, FileReader)))
+        .then((read) => attachFiles({ ...ptyImageSink, upload: ptyImageSink.uploadFiles, files: read.filter(Boolean) })));
+    }
+    return Promise.all(jobs);
   };
   const onMenuKey = (e) => {
     const hit = menuMirror.key(e);
@@ -2530,7 +2548,7 @@ function createTerminal(name, peer = null) {
       writePty,
     }));
     composerEl.classList.add('seat-composer-attach');
-    ptyPicker = attachPicker({ doc: document, parent: wrapperEl, onFiles: attachPtyFiles, toast: ptyImageSink.toast });
+    ptyPicker = attachPicker({ doc: document, parent: wrapperEl, onFiles: attachPtyFiles });
     wrapperEl.appendChild(attachButton(document, () => ptyPicker.open()));
   }
   const agentSeat = !peer;
@@ -2563,7 +2581,7 @@ function createTerminal(name, peer = null) {
     if (liveSplit) liveSplit.setTurnRunning(activity, Number(activityRow.dataset.thinkingSince) || null);
     if (composerEl && activity !== 'idle') composerEl.placeholder = COMPOSER_RUNNING_PLACEHOLDER;
   }
-  sessions.set(name, Object.assign(seat, { terminal, fitAddon, searchAddon, intentHighlight, ptyVoice, webgl, wrapperEl, peer, echoRewrite, liveSplit, composerEl, composerKit, composerTrigger, menuMirror, syncMenuMirror, attachImageFiles: composerEl ? attachPtyFiles : null }));
+  sessions.set(name, Object.assign(seat, { terminal, fitAddon, searchAddon, intentHighlight, ptyVoice, webgl, wrapperEl, peer, echoRewrite, liveSplit, composerEl, composerKit, composerTrigger, menuMirror, syncMenuMirror, attachPickedFiles: composerEl ? attachPtyFiles : null }));
   if (seat.view === 'terminal' && liveSplit) liveSplit.setRaw(true);
   updateWindowTitle();
   return { terminal, fitAddon, searchAddon, wrapperEl, echoRewrite };
@@ -2581,9 +2599,9 @@ terminalContainer.addEventListener('drop', (e) => {
   const entry = sessions.get(activeSession);
   if (window.__CLODEX_WEB__ || !window.require) {
     const { images, rejected } = imageFilesOf(files);
-    const sink = entry && entry.attachImageFiles && (entry.stream || ptyComposerShown(entry)) ? entry.attachImageFiles : null;
+    const sink = entry && entry.attachPickedFiles && (entry.stream || ptyComposerShown(entry)) ? entry.attachPickedFiles : null;
     if (sink && images.length) sink(images);
-    if (!sink && images.length && entry && entry.attachImageFiles) showToast('Switch to the composer view to attach images.', { kind: 'peer-ui' });
+    if (!sink && images.length && entry && entry.attachPickedFiles) showToast('Switch to the composer view to attach images.', { kind: 'peer-ui' });
     else if (!sink || rejected.length) showToast('Dropping files needs the desktop app — browsers don’t expose file paths.', { kind: 'peer-ui' });
     return;
   }
