@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Phone-access API: create from a template, sleep and wake, a dm that waits for the reply, memory export.
 
 ## 5.143.0 — 2026-10-25
 

@@ -53,3 +53,15 @@ things on the source box.
 The call carries `fixFor`, `io` and `effort` (positions 24-26) like every other
 restore site, so a stream seat or an effort-pinned seat lands on the far box as
 it left; before t1519 it stopped at `shellDeny` and came back pty at default effort.
+
+## send
+
+Wake-on-dm calls `manager.wake` and then `_deliverMessage` as `'user'`, so it never enters `_gatedDeliver` and the assistant-class guard does not see it. `_archived` covers a seat still closing after `archive()` while it sits in the map; `wake` waits for its exit, so the wiring never calls `restartSession` itself. `manager.wake` is not single-flight, so `wakeOnce` makes concurrent dms and `POST /wake` share one in-flight wake per name.
+
+## spawnFromTemplate
+
+Only a library template name crosses: `_handleSpawnIntent` reads a `/`, `~` or `.`-led value as a JSON file path, and that file's `execCommands` would become grants.
+
+## killSession
+
+Only an assistant-class record is destroyed (record, seat dir, transcripts, `pending/<name>`); any other seat's DELETE stays `kill`, so a peer cannot erase a desktop seat's memory or worktree. Transcript paths compose from the record's own `cwd` and `SESSION_ID_RE`-vetted ids only.

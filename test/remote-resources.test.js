@@ -171,6 +171,7 @@ function makeDeps() {
     getHelpCorpus: () => fakeCorpus(),
     getSkillLibrary: () => ({ list: () => [] }),
     getPersistence: () => ({ get: () => undefined, setStripLevel: () => {} }),
+    getMemoryStore: () => ({ list: () => [] }),
     getUiSettings: () => uiSettings,
     getWorkspaces: () => workspaces,
     getNotifications: () => null,
@@ -314,6 +315,18 @@ function subresourceFixture() {
         calls.push({ route: 'skillsSet', name, disabledSkills, injectSkills });
         return name === 'ghost' ? { ok: false, error: 'Session not found in persistence' } : { ok: true };
       },
+      sleepSession: (name) => {
+        calls.push({ route: 'sleep', name });
+        return name === 'ghost' ? { ok: false, code: 404, error: 'Session not found' } : { ok: true, state: 'asleep' };
+      },
+      wakeSession: (name) => {
+        calls.push({ route: 'wake', name });
+        return name === 'ghost' ? { ok: false, code: 404, error: 'Session not found' } : { ok: true, state: 'awake' };
+      },
+      exportMemory: (name) => {
+        calls.push({ route: 'memory', name });
+        return name === 'ghost' ? { ok: false, code: 404, error: 'Session not found' } : { ok: true, name, units: [], brief: null };
+      },
     },
   };
 }
@@ -329,6 +342,9 @@ const SUB_WALK = {
   restart: { post: { method: 'POST', body: () => JSON.stringify({ fresh: false }) } },
   args: { get: { method: 'GET' }, patch: { method: 'PATCH', body: () => JSON.stringify({ extraArgs: ['--y'] }) } },
   skills: { get: { method: 'GET' }, patch: { method: 'PATCH', body: () => JSON.stringify({ disabledSkills: [] }) } },
+  sleep: { post: { method: 'POST' } },
+  wake: { post: { method: 'POST' } },
+  memory: { get: { method: 'GET' } },
 };
 
 const VERB_WALK = { list: 'GET', get: 'GET', delete: 'DELETE' };
@@ -380,13 +396,14 @@ test('RESOURCES: every (resource, verb) answers on a fully-injected node, and ev
     'sessions.list', 'sessions.get', 'sessions.delete', 'sessions/transcript.get', 'sessions/query.post',
     'sessions/control.post', 'sessions/input.post', 'sessions/resize.post', 'sessions/dm.post',
     'sessions/restart.post', 'sessions/args.get', 'sessions/args.patch', 'sessions/skills.get',
-    'sessions/skills.patch', 'sessions/attach.get', 'workspaces.list',
+    'sessions/skills.patch', 'sessions/sleep.post', 'sessions/wake.post', 'sessions/memory.get',
+    'sessions/attach.get', 'workspaces.list',
     'peers.list', 'peers.get', 'teams.list', 'teams.get', 'tickets.list', 'tickets.get',
     'sandboxes.list', 'sandboxes.get', 'agents.list', 'agents.get',
     'docs.list', 'docs.get', 'worktrees.list', 'catalogs.get',
     'node/logs.get',
   ], 'the walk must visit every shipped row — an empty or shortened walk passes vacuously');
-  assert.strictEqual(seen.length, 31, 'the walk entered 18 resource verbs, the sessions delete, and the 12 session subresource verbs');
+  assert.strictEqual(seen.length, 34, 'the walk entered 18 resource verbs, the sessions delete, and the 15 session subresource verbs');
   assert.strictEqual(RESOURCES.length, 11, 'the walk covered fewer than the 11 shipped resources');
 });
 
@@ -820,7 +837,7 @@ test('subresource gating: a node with the attach/control callbacks nulled omits 
     const doc = JSON.parse((await req(port, '/api/resources')).body);
     const sessions = doc.resources.find((r) => r.name === 'sessions');
     assert.deepStrictEqual(
-      Object.keys(sessions.subresources), ['transcript', 'query', 'dm', 'restart', 'args', 'skills'],
+      Object.keys(sessions.subresources), ['transcript', 'query', 'dm', 'restart', 'args', 'skills', 'sleep', 'wake', 'memory'],
       'the document advertises a subresource this node cannot serve',
     );
     assert.strictEqual((await req(port, '/api/sessions/alice/attach')).status, 501);
@@ -836,6 +853,19 @@ test('subresource gating: a node with the attach/control callbacks nulled omits 
         assert.strictEqual(res.status, 200, `served ${sub}.${verb} answered ${res.status}: ${res.body}`);
       }
     }
+  });
+});
+
+test('subresource gating: a node with sleepSession nulled omits sleep from the document AND 501s the route', async () => {
+  const fixture = subresourceFixture();
+  await withNode({ ...fixture.opts, sleepSession: null }, async (port) => {
+    const doc = JSON.parse((await req(port, '/api/resources')).body);
+    const sessions = doc.resources.find((r) => r.name === 'sessions');
+    assert.ok('wake' in sessions.subresources, 'ENTER: the sibling stays advertised');
+    assert.ok(!('sleep' in sessions.subresources), 'the document advertises sleep on a node that cannot serve it');
+    const res = await req(port, '/api/sessions/alice/sleep', { method: 'POST' });
+    assert.strictEqual(res.status, 501);
+    assert.deepStrictEqual(JSON.parse(res.body), { ok: false, error: 'sleep not available' });
   });
 });
 
@@ -867,7 +897,7 @@ test('GET /api/resources: the document a fully-injected node serves', async () =
   await withNode({}, async (port) => {
     const r = await req(port, '/api/resources');
     assert.strictEqual(r.status, 200);
-    assert.deepStrictEqual(JSON.parse(r.body), { ok: true, version: 2, resources: RESOURCES });
+    assert.deepStrictEqual(JSON.parse(r.body), { ok: true, version: 3, resources: RESOURCES });
   });
 });
 
@@ -1566,17 +1596,17 @@ test('sendInput refuses a stream seat instead of writing bytes the manager would
   assert.deepStrictEqual(writes, [['alice', 'hi']]);
 });
 
-test('remote-wiring send threads dm images onto _deliverMessage, and a text-only send keeps its old call shape', () => {
+test('remote-wiring send threads dm images onto _deliverMessage, and a text-only send keeps its old call shape', async () => {
   const { deps } = makeDeps();
   const delivered = [];
   deps.manager.sessions.set('carol', { name: 'carol', type: 'claude', agentType: 'claude', workspaceId: 'ws-alpha' });
   deps.manager._deliverMessage = (...a) => { delivered.push(a); };
   const opts = captureOptions(deps);
   const png = { mediaType: 'image/png', data: 'UE5H' };
-  assert.deepStrictEqual(opts.send('carol', 'look', [png]), { ok: true });
-  assert.deepStrictEqual(opts.send('carol', 'plain', []), { ok: true });
-  assert.deepStrictEqual(opts.send('carol', 'look', [png], 'ios'), { ok: true });
-  assert.deepStrictEqual(opts.send('carol', 'plain', [], 'ios'), { ok: true });
+  assert.deepStrictEqual(await opts.send('carol', 'look', [png]), { ok: true });
+  assert.deepStrictEqual(await opts.send('carol', 'plain', []), { ok: true });
+  assert.deepStrictEqual(await opts.send('carol', 'look', [png], 'ios'), { ok: true });
+  assert.deepStrictEqual(await opts.send('carol', 'plain', [], 'ios'), { ok: true });
   assert.deepStrictEqual(delivered, [
     ['carol', 'user', 'look', 'dm', '', null, null, [png]],
     ['carol', 'user', 'plain', 'dm'],
@@ -1584,10 +1614,10 @@ test('remote-wiring send threads dm images onto _deliverMessage, and a text-only
     ['carol', 'user', 'plain', 'dm', '(via ios)'],
   ]);
   deps.manager._deliverMessage = () => { throw new Error('ENOSPC: no space left on device'); };
-  assert.deepStrictEqual(opts.send('carol', 'look', [png]), { ok: false, code: 500, error: 'delivery failed: ENOSPC: no space left on device' });
+  assert.deepStrictEqual(await opts.send('carol', 'look', [png]), { ok: false, code: 500, error: 'delivery failed: ENOSPC: no space left on device' });
 });
 
-test('remote-wiring send drops a dm client tag that names a live seat or a system sender, and logs it', () => {
+test('remote-wiring send drops a dm client tag that names a live seat or a system sender, and logs it', async () => {
   const { deps } = makeDeps();
   const delivered = [];
   const logged = [];
@@ -1595,7 +1625,7 @@ test('remote-wiring send drops a dm client tag that names a live seat or a syste
   deps.manager._deliverMessage = (...a) => { delivered.push(a); };
   deps.log.info = (...a) => { logged.push(a); };
   const opts = captureOptions(deps);
-  for (const client of ['ios', 'team', 'carol', 'x-loop']) assert.deepStrictEqual(opts.send('carol', 'plain', [], client), { ok: true });
+  for (const client of ['ios', 'team', 'carol', 'x-loop']) assert.deepStrictEqual(await opts.send('carol', 'plain', [], client), { ok: true });
   assert.deepStrictEqual(delivered, [
     ['carol', 'user', 'plain', 'dm', '(via ios)'],
     ['carol', 'user', 'plain', 'dm'],
@@ -1609,7 +1639,7 @@ test('remote-wiring send drops a dm client tag that names a live seat or a syste
   ]);
 });
 
-test('remote-wiring send refuses a dm client tag that names a live seat in another case', () => {
+test('remote-wiring send refuses a dm client tag that names a live seat in another case', async () => {
   const { deps } = makeDeps();
   const delivered = [];
   const logged = [];
@@ -1618,7 +1648,7 @@ test('remote-wiring send refuses a dm client tag that names a live seat in anoth
   deps.manager._deliverMessage = (...a) => { delivered.push(a); };
   deps.log.info = (...a) => { logged.push(a); };
   const opts = captureOptions(deps);
-  assert.deepStrictEqual(opts.send('carol', 'plain', [], 'codex'), { ok: true });
+  assert.deepStrictEqual(await opts.send('carol', 'plain', [], 'codex'), { ok: true });
   assert.deepStrictEqual(delivered, [['carol', 'user', 'plain', 'dm']]);
   assert.deepStrictEqual(logged.filter((l) => /client tag/.test(l[1])), [['remote', 'client tag refused: codex']]);
 });

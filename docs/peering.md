@@ -35,7 +35,7 @@ disk is the source of truth — SSE signals "changed", clients refetch.
 
 Endpoints: phone page (`/`), `GET /api/sessions|events`
 (global SSE), `GET /api/resources` (the node's resource/verb document —
-`{ok, version, resources}`, now `version: 2`, filtered to what this node's
+`{ok, version, resources}`, now `version: 3`, filtered to what this node's
 injected callbacks actually serve; advertised as the `resources` cap, which is
 unconditional),
 `GET /api/sessions/:name` (one session, `{ok, session}`; 404 unknown or dead; every
@@ -107,7 +107,26 @@ attachment marker in front of the text in the transcript it writes, so a
 client confirming delivery by transcript must match the text, not the path
 line; advertised as
 the unconditional `images` cap; a delivery that fails on the box is a 500
-`{ok:false, error}`, and only a missing seat is a 404), `POST /api/restart` (app relaunch —
+`{ok:false, error}`, and only a missing seat is a 404; body `await: <ms>`
+(capped at 60000) holds the reply for the turn: `200 {ok, turn}` with the turn
+below, or `202 {ok, queued: true}` on timeout or seat death; a dm to a sleeping
+assistant wakes it first, a refused wake forwards its `code`, 503 by default),
+assistant-class seats under the `assistant` hello cap (sleep + wake wired):
+`GET /api/sessions?state=asleep|all` (asleep lists only sleepers, all appends
+them to the live rows, anything else is a 400) and `GET /api/sessions/:name`
+answer a sleeper row from its record (`class: 'assistant', state: 'asleep',
+activity: 'asleep', asleepAt, sleepReason, template, sleep, cost, wakes`, a
+null `activityTs` and null stats); a live assistant row adds `class: 'assistant',
+state: 'awake', template, sleep, cost, wakes`; `POST /api/sessions/:name/sleep`
+(200 asleep, 202 sleeping when mid-turn, 409 not an assistant / not awake),
+`POST /api/sessions/:name/wake` (200 awake, 409, `code` forwarded),
+`GET /api/sessions/:name/memory` (`{ok, name, units, brief}`; 404 unknown, 409
+not an assistant); SSE `turn` `{name, text, intents, costUsd, durationMs,
+isError, ts}` after each assistant turn (`text` is the prose of the CLI's final
+result, `intents` the `{type, sub?, cmd?}` heads, never bodies); create
+`{name, template, cwd?}` spawns from a library template name only; DELETE on
+an assistant destroys it (record, seat dir with memory and brief, the CLI
+transcripts for its session ids, `pending/<name>`), `POST /api/restart` (app relaunch —
 response written before the restart fires), `POST /api/sessions`,
 `DELETE /api/sessions/:name`, `POST /api/sessions/:name/restart` (remote
 create/kill/restart — all under the `create` cap, shipped together),

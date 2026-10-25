@@ -25,4 +25,8 @@ An assistant seat has no operator watching its pane, so a permission request is 
 
 ## _gatedDeliver
 
-The assistant-class guard runs before the live-session lookup, so mail to a sleeping assistant bounces with the class error instead of `no such agent`.
+The assistant-class guard runs before the live-session lookup, so seat mail to a sleeping assistant bounces with the class error instead of `no such agent`.
+
+## awaitTurn
+
+A waiter is armed when the dm is written to the CLI (the item's `onSend`), never at enqueue: a `result` that lands while the item still queues belongs to the previous turn. The next `result` resolves it; a close or the timeout resolves `null`. The text is the CLI's final `result` string, so prose emitted before a tool call in the same turn is not in it; the transcript route has the whole turn.

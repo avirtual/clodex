@@ -21802,6 +21802,74 @@ for (const [label, live] of [['awake', true], ['asleep', false]]) {
   });
 }
 
+test('assistant dm intent: a dm to a running subagent of an assistant is refused like the seat itself', async (t) => {
+  const h = mkStreamSeatManager({
+    persisted: { snd: {}, asst: { ...ASSISTANT_ROW } },
+    extraDeps: { intentEnabledForSeat: require('../intent-registry').intentEnabledForSeat },
+  });
+  t.after(() => h.stopAll());
+  await h.create('snd');
+  await h.create('asst');
+  const { pathFor } = require('../clodex-paths');
+  const subq = require('node:path').join(require('node:path').dirname(pathFor(h.root, 'asst', 'intentSocket')), 'subq');
+  require('node:fs').mkdirSync(subq, { recursive: true });
+  require('node:fs').writeFileSync(require('node:path').join(subq, 'sub.nonce'), 'n');
+  assert.strictEqual(require('../subq').resolveSubagent(subq, 'sub'), 'sub', 'ENTER: the subagent resolves');
+  const injected = [];
+  const bcast = [];
+  h.m._injectText = (sess, text) => injected.push([sess.name, text]);
+  h.m._broadcast = (ch, msg) => bcast.push(msg);
+  await h.m._handleIntent('snd', { type: 'dm', target: 'asst/sub', body: 'hi' });
+  assert.deepStrictEqual(injected, [['snd', '[agent:dm] NOT delivered to asst: asst takes messages only from its operator client.']]);
+  assert.deepStrictEqual(bcast.filter((b) => b && b.type === 'dm'), [{ type: 'dm', from: 'snd', to: 'asst', body: 'UNDELIVERED (operator client only): hi' }]);
+});
+
+test('awaitTurn + _resolveTurnWaiters: the next result resolves the armed waiter with its prose and intent heads', async (t) => {
+  const turns = [];
+  const remote = { notifyTurn: (n, turn) => turns.push([n, turn]) };
+  const h = mkStreamSeatManager({ persisted: { asst: { ...ASSISTANT_ROW }, plain: {} }, extraDeps: { getRemoteServer: () => remote } });
+  t.after(() => h.stopAll());
+  await h.create('asst');
+  const p = h.m.awaitTurn('asst', { timeoutMs: 5000 });
+  assert.ok(p instanceof Promise, 'ENTER: armed');
+  h.line('asst', { ...RESULT, result: 'ok\n[agent:memory remember] x\nbye' });
+  const turn = await p;
+  assert.strictEqual(typeof turn.ts, 'number');
+  assert.deepStrictEqual(turn, { text: 'ok\nbye', intents: [{ type: 'memory', sub: 'remember' }], costUsd: 0, durationMs: 1, isError: false, ts: turn.ts });
+  assert.deepStrictEqual(turns, [['asst', turn]]);
+  let late = 'pending';
+  h.m.awaitTurn('asst', { timeoutMs: 5000 }).then((v) => { late = v; });
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(late, 'pending');
+  assert.strictEqual(h.m.sessions.get('asst')._turnWaiters.length, 1);
+  await h.create('plain');
+  h.line('plain', { ...RESULT, result: 'x' });
+  assert.strictEqual(turns.length, 1);
+});
+
+test('awaitTurn + _dropTurnWaiters: a timeout or the seat closing answers null; a pty seat is never armed', async (t) => {
+  const { mock } = require('node:test');
+  const h = mkStreamSeatManager({ persisted: { asst: { ...ASSISTANT_ROW } } });
+  t.after(() => h.stopAll());
+  await h.create('asst');
+  mock.timers.enable({ apis: ['setTimeout'] });
+  t.after(() => mock.timers.reset());
+  const timed = h.m.awaitTurn('asst', { timeoutMs: 10 });
+  mock.timers.tick(10);
+  assert.strictEqual(await timed, null);
+  assert.deepStrictEqual(h.m.sessions.get('asst')._turnWaiters, []);
+  const s = h.m.sessions.get('asst');
+  const closing = h.m.awaitTurn('asst', { timeoutMs: 5000 });
+  let closed = 'pending';
+  closing.then((v) => { closed = v; });
+  h.m._onStreamEvent(s, { close: { code: 0 } }, () => {}, () => {});
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(closed, null);
+  h.m.sessions.set('p', { name: 'p', io: 'pty' });
+  assert.strictEqual(h.m.awaitTurn('p', { timeoutMs: 10 }), null);
+  assert.strictEqual(h.m.awaitTurn('nobody', { timeoutMs: 10 }), null);
+});
+
 test('assistant _gatedDeliver: a system sender reaches the assistant, a seat wearing a system name does not', async (t) => {
   const h = mkStreamSeatManager({ persisted: { asst: { ...ASSISTANT_ROW }, clodex: {} } });
   t.after(() => h.stopAll());

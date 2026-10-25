@@ -1850,6 +1850,7 @@ const { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer } = createRem
   getWorkspaces: () => workspaces,
   getNotifications: () => notifications,
   openRequests,
+  getMemoryStore: () => memoryStore,
   getReminders: () => reminders,
   getAccounts: () => accounts,
   getRemoteServer: () => remoteServer,

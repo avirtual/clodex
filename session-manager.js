@@ -164,7 +164,7 @@ function dupIdentity(intent) {
 const { createTicketsStore, ticketTerminalReason } = require('./tickets-store');
 const { findRepoRoot } = require('./project-root');
 const { atomicWriteFileSync } = require('./fs-util');
-const { composeBrief, idleDecision, briefPathFor, BRIEF_TAIL, BRIEF_MAX_BYTES } = require('./assistant-sleep');
+const { composeBrief, idleDecision, briefPathFor, splitTurnText, BRIEF_TAIL, BRIEF_MAX_BYTES } = require('./assistant-sleep');
 const { cachedMessages } = require('./transcript');
 const { isAgentType, adapterFor, streamFor: adapterStreamFor, hasBypass, hasReadOnlyCap, postureOf, resolveModelId, resolveEffort } = require('./cli-adapters');
 
@@ -3063,6 +3063,34 @@ function createSessionManager(deps) {
       if (typeof s._costFoldTimer.unref === 'function') s._costFoldTimer.unref();
     }
 
+    awaitTurn(name, { timeoutMs } = {}) {
+      const s = this.sessions.get(name);
+      if (!s || s.io !== 'stream' || s._dead || !s.stream) return null;
+      return new Promise((resolve) => {
+        const waiter = { resolve, timer: null };
+        waiter.timer = setTimeout(() => {
+          const i = (s._turnWaiters || []).indexOf(waiter);
+          if (i >= 0) s._turnWaiters.splice(i, 1);
+          resolve(null);
+        }, timeoutMs);
+        if (typeof waiter.timer.unref === 'function') waiter.timer.unref();
+        s._turnWaiters = s._turnWaiters || [];
+        s._turnWaiters.push(waiter);
+      });
+    }
+
+    _resolveTurnWaiters(s, rec) {
+      const turn = { ...splitTurnText(rec.text || ''), costUsd: rec.costUsd, durationMs: rec.durationMs, isError: !!rec.isError, ts: Date.now() };
+      this._dropTurnWaiters(s, turn);
+      if (this._assistantPolicy(s.name) && getRemoteServer()) { try { getRemoteServer().notifyTurn(s.name, turn); } catch {} }
+    }
+
+    _dropTurnWaiters(s, turn = null) {
+      const waiters = s._turnWaiters || [];
+      s._turnWaiters = [];
+      for (const w of waiters) { clearTimeout(w.timer); w.resolve(turn); }
+    }
+
     _foldSeatCost(s) {
       if (s._costFoldTimer) { clearTimeout(s._costFoldTimer); s._costFoldTimer = null; }
       const seen = s._costSeen;
@@ -3204,6 +3232,7 @@ function createSessionManager(deps) {
         if (s.stream && s.stream.stderrTail && code) {
           log.warn('session', `stream ${s.name} stderr: ${s.stream.stderrTail.slice(-400)}`);
         }
+        this._dropTurnWaiters(s);
         onProcExit({ exitCode: code, signal: signal || undefined });
         return;
       }
@@ -3243,6 +3272,7 @@ function createSessionManager(deps) {
           this._clearStreamResultHold(s);
           this._dropStreamPermissions(s);
           if (typeof rec.costUsd === 'number') this._noteSeatCost(s, rec.costUsd);
+          this._resolveTurnWaiters(s, rec);
           if (s._toolDrainedInTurn) {
             s._toolDrainedInTurn = false;
             s._resultHold = setTimeout(() => {
@@ -5919,6 +5949,11 @@ function createSessionManager(deps) {
           const fromTag = (fromIdent && fromIdent.label) || (replyScope && replyScope.fromLabel) || senderName;
           const split = splitAgentTarget(intent.target);
           let routedNotice = null;
+          const refuseAssistant = (target) => {
+            if (session) this._injectText(session, `[agent:dm] NOT delivered to ${target}: ${target} takes messages only from its operator client.`, { parkable: true });
+            this._broadcast('ipc-message', { type: 'dm', from: fromTag, to: target, body: `UNDELIVERED (operator client only): ${intent.body}` });
+          };
+          if (this._assistantPolicy(split.seat)) { refuseAssistant(split.seat); break; }
           if (split.sub) {
             const host = this.sessions.get(split.seat);
             const live = host && host.agentType === 'claude' && !host._dead && !host.clone;
@@ -5940,11 +5975,6 @@ function createSessionManager(deps) {
           const localTarget = this.sessions.get(intent.target);
           if (localTarget && localTarget.clone) {
             if (session) this._injectText(session, `[agent:dm] ${intent.target} is a scratch clone — not addressable; its summary goes to ${localTarget.clone}.`, { parkable: true });
-            break;
-          }
-          if (this._assistantPolicy(intent.target)) {
-            if (session) this._injectText(session, `[agent:dm] NOT delivered to ${intent.target}: ${intent.target} takes messages only from its operator client.`, { parkable: true });
-            this._broadcast('ipc-message', { type: 'dm', from: fromTag, to: intent.target, body: `UNDELIVERED (operator client only): ${intent.body}` });
             break;
           }
           let sup = null;

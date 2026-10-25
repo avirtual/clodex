@@ -49,6 +49,7 @@ function decode(obj) {
       durationMs: typeof obj.duration_ms === 'number' ? obj.duration_ms : null,
       costUsd: typeof obj.total_cost_usd === 'number' ? obj.total_cost_usd : null,
       isError: obj.is_error === true,
+      text: typeof obj.result === 'string' ? obj.result : null,
     };
   }
   if (obj.type === 'conversation_reset') {

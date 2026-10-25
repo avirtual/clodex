@@ -24,6 +24,10 @@ const { createSeatImport } = require('./seat-import');
 // renderer so the three cannot disagree about what the operator granted.
 const { shellCapGranted } = require('./peer-shell');
 const { readVoiceCapabilityCached } = require('./voice-capability');
+const { trackedSessionIds } = require('./session-info');
+const { SESSION_ID_RE } = require('./seat-import');
+const { briefPathFor } = require('./assistant-sleep');
+const { claudeProjectSlug } = require('./clodex-paths');
 
 const crypto = require('crypto');
 
@@ -127,7 +131,7 @@ function createRemoteWiring(deps) {
     fetchProxyContext, fetchProxyReport, fetchProxyBust,
     fetchSessionFiles, fetchFilePeek, fetchFileDiff,
     CLAUDE_TOOLS, getPromptLibrary, getAgentLibrary, getSkillLibrary, getHelpCorpus,
-    getPersistence, getUiSettings, getWorkspaces, getNotifications, openRequests,
+    getPersistence, getUiSettings, getWorkspaces, getNotifications, openRequests, getMemoryStore,
     getReminders, getAccounts,
     getRemoteServer, setRemoteServer, setRemoteError, getDrawerPtys,
     readRemoteEnvToken, resolveRemoteToken,
@@ -180,6 +184,7 @@ function createRemoteWiring(deps) {
       workspace: (getWorkspaces().get(sess.workspaceId) || {}).name || '',
       workspaceId: sess.workspaceId || null,
       activityTs: typeof sess.activityTs === 'number' ? sess.activityTs : null,
+      ...assistantFields(getPersistence().get(sess.name)),
       ...(sess._submitNudges ? { submitNudges: { fired: sess._submitNudges.fired, exhausted: sess._submitNudges.exhausted } } : {}),
       stats: {
         model: (p && p.model) || null,
@@ -190,6 +195,48 @@ function createRemoteWiring(deps) {
         ctxPct: (ctx && ctx.pct != null) ? ctx.pct : null,
       },
     };
+  }
+
+  function assistantFields(entry) {
+    if (!entry || entry.class !== 'assistant') return {};
+    return { class: 'assistant', state: entry.archivedAt ? 'sleeping' : 'awake', template: entry.template || null, sleep: entry.sleep || null, cost: entry.cost || null, wakes: entry.wakes || 0 };
+  }
+
+  function isSleeper(entry) {
+    return !!(entry && entry.class === 'assistant' && entry.archivedAt && !manager.sessions.has(entry.name));
+  }
+
+  function sleeperRow(entry) {
+    return {
+      name: entry.name,
+      type: entry.type,
+      io: 'stream',
+      cwd: entry.cwd,
+      workspace: (getWorkspaces().get(entry.workspaceId) || {}).name || '',
+      workspaceId: entry.workspaceId || null,
+      activityTs: null,
+      class: 'assistant',
+      state: 'asleep',
+      asleepAt: entry.asleepAt || null,
+      sleepReason: entry.sleepReason || null,
+      template: entry.template || null,
+      sleep: entry.sleep || null,
+      cost: entry.cost || null,
+      wakes: entry.wakes || 0,
+      stats: { model: null, cost: null, requests: null, ctxTok: null, ctxSize: null, ctxPct: null },
+    };
+  }
+
+  const wakesInFlight = new Map();
+  function wakeOnce(name, reason) {
+    if (wakesInFlight.has(name)) return wakesInFlight.get(name);
+    const p = Promise.resolve().then(() => manager.wake(name, { reason })).finally(() => wakesInFlight.delete(name));
+    wakesInFlight.set(name, p);
+    return p;
+  }
+
+  function notifySessions() {
+    if (getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
   }
 
   const ticketsStore = createTicketsStore({ fs, path, clodexHome: REGISTRY_DIR });
@@ -276,6 +323,28 @@ function createRemoteWiring(deps) {
     return cbs;
   }
 
+  function spawnViaHandler(intent, cwd, onOk, label) {
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (out) => { if (settled) return; settled = true; clearTimeout(timer); resolve(out); };
+      const timer = setTimeout(
+        () => finish({ ok: false, error: `${label}: no reply from the spawn handler` }),
+        60000,
+      );
+      if (typeof timer.unref === 'function') timer.unref();
+      const onReply = (msg) => {
+        const reply = String(msg || '');
+        if (/^ok: spawned/.test(reply)) finish(onOk(reply));
+        else finish({ ok: false, error: reply });
+      };
+      manager._handleSpawnIntent(
+        { name: 'wire', type: 'claude', cwd, proxy: null },
+        intent,
+        { onReply },
+      );
+    });
+  }
+
   function spawnTeamLead(name, teamName) {
     let team;
     try { team = loadManifest(teamName); }
@@ -284,25 +353,41 @@ function createRemoteWiring(deps) {
       return { ok: false, error: `team spawn: only the lead of team "${teamName}" (${team.lead}) can be spawned by team` };
     }
     if (manager.sessions.has(name)) return { ok: false, error: `name taken "${name}"` };
-    return new Promise((resolve) => {
-      let settled = false;
-      const finish = (out) => { if (settled) return; settled = true; clearTimeout(timer); resolve(out); };
-      const timer = setTimeout(
-        () => finish({ ok: false, error: 'team spawn: no reply from the spawn handler' }),
-        60000,
-      );
-      if (typeof timer.unref === 'function') timer.unref();
-      const onReply = (msg) => {
-        const reply = String(msg || '');
-        if (/^ok: spawned/.test(reply)) finish({ ok: true, name, type: 'claude', team: teamName, lead: true });
-        else finish({ ok: false, error: reply });
-      };
-      manager._handleSpawnIntent(
-        { name: 'wire', type: 'claude', cwd: team.root, proxy: null },
-        { name, cwd: team.root },
-        { onReply },
-      );
-    });
+    return spawnViaHandler({ name, cwd: team.root }, team.root,
+      () => ({ ok: true, name, type: 'claude', team: teamName, lead: true }), 'team spawn');
+  }
+
+  async function spawnFromTemplate(name, template, rawCwd) {
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(template)) return { ok: false, error: 'template must be a library template name' };
+    if (manager.sessions.has(name) || getPersistence().get(name)) return { ok: false, error: `name taken "${name}"` };
+    const out = await spawnViaHandler({ name, ...(rawCwd ? { cwd: rawCwd } : {}), template }, rawCwd || os.homedir(), (reply) => {
+      const m = /\((\w+)\)/.exec(reply);
+      return { ok: true, name, type: m ? m[1] : 'claude', template };
+    }, 'template spawn');
+    if (out.ok) notifySessions();
+    log.info('session', `create ${name} from template ${template} via peer${out.ok ? '' : ` failed: ${out.error}`}`);
+    return out;
+  }
+
+  function exportMemory(name) {
+    const entry = getPersistence().get(name);
+    if (!entry) return { ok: false, code: 404, error: 'Session not found' };
+    if (entry.class !== 'assistant') return { ok: false, error: 'not an assistant seat' };
+    let brief = null;
+    try { brief = fs.readFileSync(briefPathFor(REGISTRY_DIR, name), 'utf8'); } catch {}
+    return { ok: true, name, units: getMemoryStore().list(name), brief };
+  }
+
+  async function destroyAssistant(name, entry) {
+    const ids = trackedSessionIds(entry).filter((id) => SESSION_ID_RE.test(id));
+    const dir = entry.cwd ? path.join(os.homedir(), '.claude', 'projects', claudeProjectSlug(entry.cwd)) : null;
+    const out = await manager.destroy(name);
+    if (!out || !out.ok) return out;
+    if (dir) for (const id of ids) { try { fs.unlinkSync(path.join(dir, `${id}.jsonl`)); } catch {} }
+    try { fs.rmSync(path.join(REGISTRY_DIR, 'pending', name), { recursive: true, force: true }); } catch {}
+    notifySessions();
+    log.info('session', `destroy ${name} via peer (${ids.length} transcript(s))`);
+    return { ok: true, name, destroyed: true, transcripts: ids.length };
   }
 
   let seatImport = null;
@@ -498,21 +583,47 @@ function createRemoteWiring(deps) {
           catch (e) { return { ok: false, error: e.message }; }
           return { ok: true, ...page, messages: await thumbPage(page.messages) };
         },
-        send: (name, text, images, client = null) => {
-          const sess = manager.sessions.get(name);
+        send: async (name, text, images, client = null, awaitMs = 0) => {
+          let sess = manager.sessions.get(name);
           if (sess && !sess._dead && !sess.agentType) {
             return { ok: false, code: 409, error: `"${name}" is a ${sess.type || 'non-agent'} session — only agent sessions receive dms${sess.type === 'bash' ? ` (run a command in it with: exec ${name} <command>)` : ''}` };
           }
+          if (!sess || sess._dead || sess._archived) {
+            const entry = getPersistence().get(name);
+            if (entry && entry.class === 'assistant') {
+              log.info('session', `wake ${name} on dm via ${client || 'peer'}`);
+              const w = await wakeOnce(name, 'message');
+              if (!w || !w.ok) return { ok: false, code: w && w.code ? w.code : 503, error: (w && w.error) || 'wake failed' };
+              sess = manager.sessions.get(name);
+              notifySessions();
+            }
+          }
           if (!sess || !sess.agentType || sess._dead) return { ok: false, error: 'Session not found' };
           const tag = clientTag(client);
+          let onWrite = null;
+          const armed = awaitMs > 0 && sess.io === 'stream'
+            ? new Promise((r) => {
+              const deadline = Date.now() + awaitMs;
+              const unwritten = setTimeout(() => r(null), awaitMs);
+              if (typeof unwritten.unref === 'function') unwritten.unref();
+              onWrite = () => {
+                clearTimeout(unwritten);
+                const left = deadline - Date.now();
+                r(left > 0 ? manager.awaitTurn(name, { timeoutMs: left }) : null);
+              };
+            })
+            : null;
           try {
-            if (images && images.length) manager._deliverMessage(name, 'user', text, 'dm', tag, null, null, images);
+            if (images && images.length) manager._deliverMessage(name, 'user', text, 'dm', tag, onWrite, null, images);
+            else if (onWrite) manager._deliverMessage(name, 'user', text, 'dm', tag, onWrite);
             else manager._deliverMessage(name, 'user', text, 'dm', ...(tag ? [tag] : []));
           } catch (e) {
             log.error('remote', `dm to ${name} failed: ${e.message}`);
             return { ok: false, code: 500, error: `delivery failed: ${e.message}` };
           }
-          return { ok: true };
+          if (!armed) return { ok: true };
+          const turn = await armed;
+          return turn ? { ok: true, turn } : { ok: true, queued: true };
         },
         restartApp: () => {
           const why = restartUnavailable ? restartUnavailable() : null;
@@ -531,10 +642,11 @@ function createRemoteWiring(deps) {
           // execCommands [] into create() regardless. The renderer never sends them.
           const b = withoutExecGrants(body) || {};
           const name = String(b.name || '').trim();
+          const rawCwd = String(b.cwd || '').trim();
+          if (typeof b.template === 'string' && b.template.trim()) return spawnFromTemplate(name, b.template.trim(), rawCwd);
           if (typeof b.team === 'string' && b.team.trim()) return spawnTeamLead(name, b.team.trim());
           const type = b.type;
           const t = (type === 'codex') ? 'codex' : (type === 'claude') ? 'claude' : (type === 'bash') ? 'bash' : null;
-          const rawCwd = String(b.cwd || '').trim();
           if (!AGENT_NAME_RE.test(name)) {
             return { ok: false, error: `invalid name "${name}" — allowed [a-zA-Z0-9._-], 1-64 chars` };
           }
@@ -616,18 +728,39 @@ function createRemoteWiring(deps) {
         killSession: async (name) => {
           name = String(name || '').trim();
           const sess = manager.sessions.get(name);
+          const entry = getPersistence().get(name);
+          if (!sess && !entry) return { ok: false, error: `no such session "${name}"` };
+          if (entry && entry.class === 'assistant') return destroyAssistant(name, entry);
           if (!sess) return { ok: false, error: `no such session "${name}"` };
           await manager.kill(name);
-          if (getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
+          notifySessions();
           log.info('session', `kill ${name} via peer`);
           return { ok: true, name };
         },
+        listSleepers: () => getPersistence().list().filter(isSleeper).map(sleeperRow),
+        getSleeper: (name) => {
+          const entry = getPersistence().get(name);
+          return isSleeper(entry) ? sleeperRow(entry) : null;
+        },
+        sleepSession: async (name) => {
+          if (!getPersistence().get(name) && !manager.sessions.has(name)) return { ok: false, code: 404, error: 'Session not found' };
+          const out = await manager.sleep(name, { reason: 'operator' });
+          if (out && out.ok) notifySessions();
+          return out;
+        },
+        wakeSession: async (name) => {
+          if (!getPersistence().get(name) && !manager.sessions.has(name)) return { ok: false, code: 404, error: 'Session not found' };
+          const out = await wakeOnce(name, 'operator');
+          if (out && out.ok) notifySessions();
+          return out;
+        },
+        ...(typeof getMemoryStore === 'function' ? { exportMemory } : {}),
         restartSession: async (name, opts = {}) => {
           name = String(name || '').trim();
           const entry = getPersistence().get(name);
           const wsId = (entry && entry.workspaceId) || DEFAULT_WORKSPACE_ID;
           const out = await restartSession(name, { fresh: !!(opts && opts.fresh) }, wsId);
-          if (out && out.ok && getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
+          if (out && out.ok) notifySessions();
           log.info('session', `restart ${name} via peer (${opts && opts.fresh ? 'fresh' : 'resume'})${out && out.ok ? '' : ` failed: ${out && out.error}`}`);
           return out;
         },

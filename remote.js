@@ -68,7 +68,7 @@ function resolveRemoteBasePathSetting(settings, env = process.env, warn) {
 }
 
 const RESOURCES = [
-  { name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get', 'delete'], subresources: { transcript: ['get'], query: ['post'], attach: ['get'], control: ['post'], input: ['post'], resize: ['post'], dm: ['post'], restart: ['post'], args: ['get', 'patch'], skills: ['get', 'patch'] } },
+  { name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get', 'delete'], subresources: { transcript: ['get'], query: ['post'], attach: ['get'], control: ['post'], input: ['post'], resize: ['post'], dm: ['post'], restart: ['post'], args: ['get', 'patch'], skills: ['get', 'patch'], sleep: ['post'], wake: ['post'], memory: ['get'] } },
   { name: 'workspaces', singular: 'workspace', scope: 'node', verbs: ['list'] },
   { name: 'peers', singular: 'peer', scope: 'node', verbs: ['list', 'get'] },
   { name: 'teams', singular: 'team', scope: 'node', verbs: ['list', 'get'] },
@@ -81,7 +81,7 @@ const RESOURCES = [
   { name: 'node/logs', singular: 'node/logs', scope: 'node', verbs: ['get'] },
 ];
 
-const RESOURCES_VERSION = 2;
+const RESOURCES_VERSION = 3;
 
 const RESOURCE_CALLBACK = {
   'node/logs': '_nodeLogFile',
@@ -106,6 +106,9 @@ const SUBRESOURCE_CALLBACK = {
     restart: '_restartSession',
     args: { get: '_getSessionArgs', patch: '_setSessionArgs' },
     skills: { get: '_getSkillCatalog', patch: '_setSessionSkills' },
+    sleep: '_sleepSession',
+    wake: '_wakeSession',
+    memory: '_exportMemory',
   },
 };
 
@@ -123,6 +126,7 @@ const DM_MAX_BODY = SEAT_IMAGE_MAX * Math.ceil(SEAT_IMAGE_MAX_BYTES / 3) * 4 + M
 const IMPORT_ID_RE = /^[0-9a-f]{16}$/;
 const CONTENT_RANGE_RE = /^bytes\s+(\d+)-(\d+)\/\*$/i;
 const SSE_HEARTBEAT_MS = 25000;
+const DM_AWAIT_MAX_MS = 60000;
 const ATTACH_MAX_BUFFERED = 4 * 1024 * 1024;
 const RESIZE_DEBOUNCE_MS = 80;
 
@@ -164,6 +168,7 @@ class RemoteServer {
                 listDocs, getDoc, getDocSection, searchDocs,
                 getSessionArgs, setSessionArgs,
                 getSkillCatalog, setSessionSkills,
+                listSleepers, getSleeper, sleepSession, wakeSession, exportMemory,
                 deliverDm, claimDms, listDmOrigins, receiveRoster, notifications, openRequests, replyNote,
                 wtermOpen, wtermInput, wtermResize, wtermClose, onWtermStreams,
                 token, insecure }) {
@@ -220,6 +225,11 @@ class RemoteServer {
     this._setSessionArgs = setSessionArgs || null;
     this._getSkillCatalog = getSkillCatalog || null;
     this._setSessionSkills = setSessionSkills || null;
+    this._listSleepers = listSleepers || null;
+    this._getSleeper = getSleeper || null;
+    this._sleepSession = sleepSession || null;
+    this._wakeSession = wakeSession || null;
+    this._exportMemory = exportMemory || null;
     this._deliverDm = deliverDm || null;
     this._claimDms = claimDms || null;
     this._listDmOrigins = listDmOrigins || null;
@@ -383,6 +393,10 @@ class RemoteServer {
   notifyActivity(name, state, turnEnd, ts) {
     this._activity.set(name, state);
     this._broadcast('activity', { name, state, turnEnd: !!turnEnd, ts: typeof ts === 'number' ? ts : null });
+  }
+
+  notifyTurn(name, turn) {
+    this._broadcast('turn', { name, ...turn });
   }
 
   notifyProgress(name) {
@@ -707,8 +721,10 @@ class RemoteServer {
 
   _handleSessionGet(name, res) {
     const row = this._getSession(name);
-    if (!row) return this._json(res, 404, { ok: false, error: 'Session not found' });
-    return this._json(res, 200, { ok: true, session: { ...row, activity: this.activityFor(name) } });
+    if (row) return this._json(res, 200, { ok: true, session: { ...row, activity: this.activityFor(name) } });
+    const sleeper = this._getSleeper ? this._getSleeper(name) : null;
+    if (sleeper) return this._json(res, 200, { ok: true, session: { ...sleeper, activity: 'asleep' } });
+    return this._json(res, 404, { ok: false, error: 'Session not found' });
   }
 
   _handleTranscript(name, url, res) {
@@ -833,8 +849,11 @@ class RemoteServer {
       const text = String((msg && msg.text) || '').trim();
       if (!text && !checked.images.length) return this._json(res, 400, { ok: false, error: 'empty message' });
       const client = msg && typeof msg.client === 'string' && DM_CLIENT_RE.test(msg.client) ? msg.client : null;
-      const out = this._send(name, text, checked.images, client);
-      return this._json(res, out.ok ? 200 : (out.code || 404), out);
+      const awaitMs = Number.isFinite(+msg.await) && +msg.await > 0 ? Math.min(+msg.await, DM_AWAIT_MAX_MS) : 0;
+      return Promise.resolve()
+        .then(() => this._send(name, text, checked.images, client, awaitMs))
+        .then((out) => this._json(res, out.turn ? 200 : out.queued ? 202 : out.ok ? 200 : (out.code || 404), out))
+        .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
     }, DM_MAX_BODY);
   }
 
@@ -844,6 +863,26 @@ class RemoteServer {
       .then(() => this._killSession(name))
       .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'kill failed' }))
       .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
+  }
+
+  _handleAssistantVerb(cb, verb, name, res) {
+    if (!cb) return this._json(res, 501, { ok: false, error: `${verb} not available` });
+    return Promise.resolve()
+      .then(() => cb(name))
+      .then((out) => this._json(res, out && out.ok ? (out.state === 'sleeping' ? 202 : 200) : (out && out.code) || 409, out || { ok: false, error: `${verb} failed` }))
+      .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
+  }
+
+  _handleSleep(name, res) {
+    return this._handleAssistantVerb(this._sleepSession, 'sleep', name, res);
+  }
+
+  _handleWake(name, res) {
+    return this._handleAssistantVerb(this._wakeSession, 'wake', name, res);
+  }
+
+  _handleMemory(name, res) {
+    return this._handleAssistantVerb(this._exportMemory, 'memory', name, res);
   }
 
   _handleRestartSession(name, req, res) {
@@ -1003,10 +1042,13 @@ class RemoteServer {
       return this._json(res, 200, { ok: true, version: RESOURCES_VERSION, resources: this._resources() });
     }
     if (req.method === 'GET' && p === '/api/sessions') {
+      const state = url.searchParams.get('state');
+      if (state !== null && state !== 'asleep' && state !== 'all') return this._json(res, 400, { ok: false, error: 'bad state (expected asleep or all)' });
       const want = url.searchParams.get('workspace');
-      let rows = (this._getSessions() || []);
-      if (want) rows = rows.filter(s => s && (s.workspace === want || s.workspaceId === want));
-      const sessions = rows.map(s => ({ ...s, activity: this.activityFor(s.name) }));
+      const live = state === 'asleep' ? [] : (this._getSessions() || []).map(s => ({ ...s, activity: this.activityFor(s.name) }));
+      const asleep = state === null ? [] : ((this._listSleepers && this._listSleepers()) || []).map(s => ({ ...s, activity: 'asleep' }));
+      let sessions = live.concat(asleep);
+      if (want) sessions = sessions.filter(s => s && (s.workspace === want || s.workspaceId === want));
       return this._json(res, 200, { ok: true, sessions });
     }
     if (p.startsWith('/api/sessions/')) {
@@ -1030,6 +1072,9 @@ class RemoteServer {
       if (req.method === 'PATCH' && sub === 'args') return this._handleArgsPatch(name, req, res);
       if (req.method === 'GET' && sub === 'skills') return this._handleSkillsGet(name, res);
       if (req.method === 'PATCH' && sub === 'skills') return this._handleSkillsPatch(name, req, res);
+      if (req.method === 'POST' && sub === 'sleep') return this._handleSleep(name, res);
+      if (req.method === 'POST' && sub === 'wake') return this._handleWake(name, res);
+      if (req.method === 'GET' && sub === 'memory') return this._handleMemory(name, res);
       return this._json(res, 404, { ok: false, error: 'not found' });
     }
     if (req.method === 'GET' && p === '/api/workspaces') {
@@ -1066,6 +1111,7 @@ class RemoteServer {
       if (this._notifications && this._openRequests && this._replyNote) caps.push('requests');
       if (this._voiceCapable) caps.push('voice');
       if (this._seatImport && this._importCreate) caps.push('import');
+      if (this._sleepSession && this._wakeSession) caps.push('assistant');
       caps.push('resources');
       caps.push('images');
       caps.push('transcript-images');
