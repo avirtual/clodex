@@ -497,7 +497,7 @@ test('getTranscript: a sleeper skips an unreadable period, answers an empty page
     records: { 'avh-7': SLEEPER_REC },
     sessions: { 'avh-7': { name: 'avh-7', agentType: 'claude', io: 'stream' } },
     jsonlToMessages: stubJsonl({}, liveAsked),
-    realpath: (p) => (p.includes('avh-7') && p.endsWith('transcript') ? '/live.jsonl' : p),
+    realpath: (p) => (p === path.join('/tmp/reg', 'run', 'avh-7', 'transcript.jsonl') ? '/live.jsonl' : p),
     cachedMessages: (p) => { cached.push(p); return [{ role: 'user', text: 'now', seq: 0 }]; },
   });
   assert.deepStrictEqual(await captureOptions(live.deps).getTranscript('avh-7', 100, null, null),
