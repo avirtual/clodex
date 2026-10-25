@@ -14886,6 +14886,7 @@ Its login, last page and downloads are deleted and it leaves this list.`;
           });
           function render() {
             const active = rhost.sessions.active();
+            toggle.disabled = !active;
             const all = showAll || !active;
             toggle.textContent = showAll ? "Selected Seat" : "All Seats";
             hint.textContent = all ? "All seats in this workspace" : `Showing ${active}`;
@@ -34778,9 +34779,12 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           const kind = pasteKind(items);
           if (kind === "file") {
-            e.preventDefault();
-            await pickFiles(Array.from(items).filter((it) => it.kind === "file").map((it) => it.getAsFile()).filter(Boolean));
-            return;
+            const files = Array.from(items).filter((it) => it.kind === "file").map((it) => it.getAsFile()).filter(Boolean);
+            if (files.length) {
+              e.preventDefault();
+              await pickFiles(files);
+              return;
+            }
           }
           if (kind !== "image") return;
           e.preventDefault();
@@ -35536,6 +35540,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var CONVERSATION = "conversation";
       var INTERNALS = "internals";
       var TALK_VERBS = /* @__PURE__ */ new Set(["dm", "shout", "file", "review-done"]);
+      var MEMORY_TALK = /* @__PURE__ */ new Set(["remember", "forget", "pin", "unpin"]);
       var ALWAYS_TALK = /* @__PURE__ */ new Set(["prompt", "command", "command-output", "boundary"]);
       var LOUD_LEVELS = /* @__PURE__ */ new Set(["warning", "error"]);
       var MERGED_NAG_RE = /^merged\b.*not accepted$/;
@@ -35544,7 +35549,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         return tag === "REPLAY" || tag === "wake" || tag.endsWith(" REDELIVERY") || MERGED_NAG_RE.test(tag);
       }
       function isTalkIntent(seg) {
-        return Boolean(seg) && seg.kind === "intent" && (TALK_VERBS.has(seg.verb) || seg.verb === "task" && seg.sub !== "list");
+        return Boolean(seg) && seg.kind === "intent" && (TALK_VERBS.has(seg.verb) || seg.verb === "task" && seg.sub !== "list" || seg.verb === "memory" && MEMORY_TALK.has(seg.sub));
       }
       function segmentSurface(seg) {
         if (!seg || typeof seg !== "object") return INTERNALS;
