@@ -3083,7 +3083,6 @@ function createSessionManager(deps) {
 
     _resolveTurnWaiters(s, rec) {
       const refs = s._turnRefs || [];
-      s._turnRefs = [];
       const turn = { ...splitTurnText(rec.text || ''), refs, costUsd: rec.costUsd, durationMs: rec.durationMs, isError: !!rec.isError, ts: Date.now() };
       this._dropTurnWaiters(s, turn);
       if (this._assistantPolicy(s.name) && getRemoteServer()) { try { getRemoteServer().notifyTurn(s.name, turn); } catch {} }
