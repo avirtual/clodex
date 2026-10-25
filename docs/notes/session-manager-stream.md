@@ -16,4 +16,13 @@ Evidence: ~/.clodex/projects/wb-wrap-ui-5bc8ce0a/tasks/paste-wrap-threshold/MEAS
 
 ## _foldSeatCost
 
-Fold before the `onSessionId` reset, or the old CLI session's cumulative `total_cost_usd` double-counts. Restart paths snapshot the record before `kill()`, so one fold window's tail can miss the re-seeded record.
+Measured on claude 2.1.310: a stream `/clear` emits an `init` under a new `session_id` plus a `result` with `total_cost_usd: 0, num_turns: 0`, and the next result carries only its own cost, so the counter is per CLI session and the `onSessionId` reset holds; the `/clear` result is a zero-cost `num_turns: 0` row and counts one turn.
+Fold before the `onSessionId` reset, or the old CLI session's unfolded tail is lost. Restart paths snapshot the record before `kill()`, so one fold window's tail can miss the re-seeded record.
+
+## _onStreamPermission
+
+An assistant seat has no operator watching its pane, so a permission request is denied on the wire at once and raises no attention, broadcast or OS notification; a codec that cannot encode the deny falls through to the held prompt.
+
+## _gatedDeliver
+
+The assistant-class guard runs before the live-session lookup, so mail to a sleeping assistant bounces with the class error instead of `no such agent`.

@@ -164,6 +164,8 @@ function dupIdentity(intent) {
 const { createTicketsStore, ticketTerminalReason } = require('./tickets-store');
 const { findRepoRoot } = require('./project-root');
 const { atomicWriteFileSync } = require('./fs-util');
+const { composeBrief, idleDecision, briefPathFor, BRIEF_TAIL, BRIEF_MAX_BYTES } = require('./assistant-sleep');
+const { cachedMessages } = require('./transcript');
 const { isAgentType, adapterFor, streamFor: adapterStreamFor, hasBypass, hasReadOnlyCap, postureOf, resolveModelId, resolveEffort } = require('./cli-adapters');
 
 function streamCodecCtx(type, extraArgs) {
@@ -348,7 +350,7 @@ function nearMissFormHint(text) {
 
 // Add a field only if no caller can regrow it and none re-asserts it after create(), else two writers own it; keepWarmAlways and holdUntil stay a pair.
 // An absent worktree pointer is the dangerous state: destroy() would drop the record and orphan the checkout.
-const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants', 'wireLabel', 'ticketId', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested', 'voice', 'reviewerTemplate', 'class', 'sleep', 'template', 'cost'];
+const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants', 'wireLabel', 'ticketId', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested', 'voice', 'reviewerTemplate', 'class', 'sleep', 'template', 'cost', 'wakes'];
 
 function sigkillPid(pid, name, log) {
   if (!(pid > 0)) {
@@ -729,6 +731,7 @@ function createSessionManager(deps) {
     getWorkspaces, readCtxFor,
     getPluginHooks,
     getUserDataPath, openPath, notifyOS, setAppQuitting, relaunchApp, relaunchUnavailable,
+    restartSession,
   } = deps;
   const spawnStreamSeat = deps.spawnStreamSeat || streamSeatLib.spawnStreamSeat;
   const writeMcpConfig = deps.writeMcpConfig
@@ -3066,6 +3069,7 @@ function createSessionManager(deps) {
       const folded = s._costFolded || { usd: 0, turns: 0 };
       if (!seen || s.clone) return { ok: false };
       const dUsd = seen.usd - folded.usd;
+      if (dUsd < 0) { s._costFolded = { usd: 0, turns: folded.turns }; return this._foldSeatCost(s); }
       const dTurns = seen.turns - folded.turns;
       if (!(dTurns > 0) && !dUsd) return { ok: false };
       const p = getPersistence();
@@ -3080,6 +3084,12 @@ function createSessionManager(deps) {
     _streamTurnEnd(s) {
       this._clearStreamInitWatchdog(s);
       s.streamBusy = false;
+      if (s._sleepRequested && !s.outbox.length) {
+        const reason = s._sleepRequested;
+        s._sleepRequested = null;
+        this._sleepNow(s, reason).catch((e) => log.warn('session', `sleep ${s.name} failed: ${e && e.message}`));
+        return;
+      }
       if (s.outbox.length && this._streamHintHeld(s)) {
         this._emitActivity(s.name, 'idle', true);
         this._streamHoldPoll(s);
@@ -3099,6 +3109,15 @@ function createSessionManager(deps) {
     }
 
     _onStreamPermission(s, rec) {
+      if (this._assistantPolicy(s.name) && s.streamCodec && typeof s.streamCodec.encodePermission === 'function') {
+        const wire = s.streamCodec.encodePermission(rec.id, 'deny');
+        if (wire != null) {
+          for (const obj of Array.isArray(wire) ? wire : [wire]) this._streamSend(s, obj);
+          s._streamPermRev = (s._streamPermRev || 0) + 1;
+          log.warn('session', `${s.name}: auto-denied ${rec.displayName || rec.toolName || 'a permission request'} on an assistant seat`);
+          return;
+        }
+      }
       if (!s.streamPermissions) s.streamPermissions = new Map();
       const ts = Date.now();
       s.streamPermissions.set(rec.id, { ...rec, ts });
@@ -3660,6 +3679,90 @@ function createSessionManager(deps) {
       setTimeout(() => { sigkillPid(ptyPid, name, log); }, 5000);
       await reapPtyDescendants({ ptyPid, name, log, childProcess });
       try { s.pty.kill(); } catch {}
+    }
+
+    _assistantPolicy(name) {
+      const p = getPersistence();
+      const entry = p && p.get(name);
+      return entry && entry.class === 'assistant' ? entry : null;
+    }
+
+    async sleep(name, { reason = 'operator' } = {}) {
+      if (!this._assistantPolicy(name)) return { ok: false, error: 'not an assistant seat' };
+      const s = this.sessions.get(name);
+      if (!s || s._dead || s._archived) return { ok: false, error: 'not awake' };
+      if (s.streamBusy) {
+        s._sleepRequested = reason;
+        return { ok: true, state: 'sleeping' };
+      }
+      return this._sleepNow(s, reason);
+    }
+
+    async _sleepNow(s, reason) {
+      const name = s.name;
+      let brief = null;
+      try {
+        const messages = cachedMessages(fs.realpathSync(pathFor(REGISTRY_DIR, name, 'transcript')));
+        brief = composeBrief({ messages, tail: BRIEF_TAIL, maxBytes: BRIEF_MAX_BYTES });
+      } catch { brief = null; }
+      if (typeof brief === 'string') {
+        const briefPath = briefPathFor(REGISTRY_DIR, name);
+        try {
+          ensureDir(path.dirname(briefPath));
+          atomicWriteFileSync(briefPath, brief);
+        } catch (e) { log.warn('session', `sleep ${name}: brief write failed: ${e.message}`); }
+      }
+      this._foldSeatCost(s);
+      const p = getPersistence();
+      p.upsert({ name, asleepAt: Date.now(), sleepReason: reason });
+      p.clearSessionId(name);
+      log.info('session', `sleep ${name} (${reason})`);
+      await this.archive(name);
+      return { ok: true, state: 'asleep' };
+    }
+
+    async wake(name, { reason = 'operator' } = {}) {
+      const entry = this._assistantPolicy(name);
+      if (!entry) return { ok: false, error: 'not an assistant seat' };
+      const live = this.sessions.get(name);
+      if (live && !live._dead && !live._archived) return { ok: true, state: 'awake' };
+      if (live && !await this._waitForExit(name)) return { ok: false, error: 'still stopping' };
+      const p = getPersistence();
+      p.setArchived(name, false);
+      p.setExited(name, null);
+      p.upsert({ name, asleepAt: null, sleepReason: null, wakes: (entry.wakes || 0) + 1 });
+      log.info('session', `wake ${name} (${reason})`);
+      const r = await restartSession(name, { fresh: true }, entry.workspaceId);
+      if (!r || !r.ok) {
+        p.setArchived(name, true);
+        p.upsert({ name, asleepAt: entry.asleepAt || Date.now(), sleepReason: entry.sleepReason || null });
+        return r || { ok: false, error: 'restart failed' };
+      }
+      return { ok: true, state: 'awake' };
+    }
+
+    startAssistantSweep(intervalMs = 60000) {
+      if (this._assistantSweepTimer) return;
+      this._assistantSweepTimer = setInterval(() => this._assistantSweep(Date.now()), intervalMs);
+      if (typeof this._assistantSweepTimer.unref === 'function') this._assistantSweepTimer.unref();
+    }
+
+    _assistantSweep(now) {
+      for (const s of [...this.sessions.values()]) {
+        if (s._dead || s.clone || s.io !== 'stream' || !s.stream) continue;
+        const policy = this._assistantPolicy(s.name);
+        if (!policy) continue;
+        const verdict = idleDecision({
+          now,
+          activityTs: s.activityTs || now,
+          idleMs: policy.sleep && Number(policy.sleep.idleMs) > 0 ? Number(policy.sleep.idleMs) : 0,
+          state: s.activityState || 'idle',
+          outbox: s.outbox ? s.outbox.length : 0,
+          permissions: s.streamPermissions ? s.streamPermissions.size : 0,
+        });
+        if (verdict !== 'sleep') continue;
+        this.sleep(s.name, { reason: 'idle' }).catch((e) => log.warn('session', `idle sleep ${s.name} failed: ${e && e.message}`));
+      }
     }
 
     async _stopForRespawn(s, name) {
@@ -5839,6 +5942,11 @@ function createSessionManager(deps) {
             if (session) this._injectText(session, `[agent:dm] ${intent.target} is a scratch clone — not addressable; its summary goes to ${localTarget.clone}.`, { parkable: true });
             break;
           }
+          if (this._assistantPolicy(intent.target)) {
+            if (session) this._injectText(session, `[agent:dm] NOT delivered to ${intent.target}: ${intent.target} takes messages only from its operator client.`, { parkable: true });
+            this._broadcast('ipc-message', { type: 'dm', from: fromTag, to: intent.target, body: `UNDELIVERED (operator client only): ${intent.body}` });
+            break;
+          }
           let sup = null;
           if (localTarget && localTarget.agentType) {
             // Armed here, not in _gatedDeliver: this is the one site with a live sender to tell.
@@ -5972,7 +6080,7 @@ function createSessionManager(deps) {
         }
         case 'who': {
           const localAgents = Array.from(this.sessions.values())
-            .filter(s => s.agentType && !s.clone)
+            .filter(s => s.agentType && !s.clone && !this._assistantPolicy(s.name))
             .map(s => ({ name: s.name, label: peerStatusLabel({
               state: s.activityState || 'idle',
               idleMs: Date.now() - (s.activityTs || Date.now()),
@@ -7754,6 +7862,7 @@ function createSessionManager(deps) {
         if (!r.error && typeof onWrite === 'function') { try { onWrite('queued', 'federated'); } catch {} }
         return r;
       }
+      if (this._assistantPolicy(targetName) && !(SYSTEM_SENDERS.has(senderTag) && !this.sessions.has(senderTag) && !getPersistence().get(senderTag))) return { error: `${targetName} takes messages only from its operator client` };
       const target = this.sessions.get(targetName);
       if (!target || !target.agentType) return { error: `no such agent "${targetName}"` };
       if (target.clone) return { error: `${targetName} is a scratch clone — not addressable` };

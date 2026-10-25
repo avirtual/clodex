@@ -6,6 +6,7 @@ const { ensureDir, atomicWriteFileSync } = require('./fs-util');
 const { pathFor, runDirFor, seatPathFor } = require('./clodex-paths');
 const { ensureSeatLink } = require('./seat-layout');
 const { composeDigest } = require('./memory-store');
+const { briefPathFor } = require('./assistant-sleep');
 const { renderClaudeStatusScript } = require('./statusline');
 const { CLAUDE_TOOLS } = require('./catalogs');
 const { denyAgentRules } = require('./agents-util');
@@ -55,9 +56,12 @@ function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp, 
     const digest = composeDigest(memoryStore.list(name));
     let roster = null;
     try { roster = composeRoster ? composeRoster(name) : null; } catch { roster = null; }
+    let brief = null;
+    try { brief = fs.readFileSync(briefPathFor(REGISTRY_DIR, name), 'utf-8'); } catch { brief = null; }
     const ctx = `You are the clodex agent named '${name}'.`
       + (digest ? `\n\n${digest}` : '')
-      + (roster ? `\n\n${roster}` : '');
+      + (roster ? `\n\n${roster}` : '')
+      + (brief ? `\n\n${brief}` : '');
     atomicWriteFileSync(pathFor(REGISTRY_DIR, name, 'hookDigest'), JSON.stringify({
       hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: ctx }
     }) + '\n');

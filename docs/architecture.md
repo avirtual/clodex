@@ -198,6 +198,11 @@ bundle), whose packaged form is the Docker image under
   5-minute display valve, the transcript-pane notice text, and
   `mergeCompactNotices`, which splices the main-side notice records into
   `transcript:pull` by timestamp.
+- **assistant-sleep.js** — pure helpers behind assistant-class sleep: `composeBrief`
+  (the transcript tail as a capped `brief.md`, intent lines dropped),
+  `idleDecision` (the idle sweep's verdict), `pickMaxAwakeVictim`, and
+  `briefPathFor`. SessionManager's `sleep`/`wake`/`_assistantSweep` and
+  cli-hooks' `writeClaudeDigestFile` are its callers.
 - **stream-seat.js** — the electron-free child-process owner behind a stream
   seat (`io: 'stream'`, `claude -p` over stream-json): spawns detached in its
   own process group, splits stdout into JSON lines with no length cap, writes

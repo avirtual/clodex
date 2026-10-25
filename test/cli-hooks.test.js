@@ -617,6 +617,26 @@ test('writeClaudeDigestFile: the roster is a THIRD block, and a seat with no tea
   assert.doesNotMatch(early, /roster/);
 });
 
+test('writeClaudeDigestFile: a sleeper\'s brief.md rides after the roster, and no brief adds nothing', () => {
+  const { briefPathFor } = require('../assistant-sleep');
+  const REGISTRY_DIR = tmp();
+  const hooks = createCliHooks({
+    REGISTRY_DIR,
+    memoryStore: { list: () => [] },
+    getUiSettings: () => ({ get: () => ({ statusline: { claude: [], claudeCommand: '' } }) }),
+    nodeInterp: process.execPath,
+    composeRoster: (n) => `[team t] roster for ${n}`,
+  });
+  const read = (n) => JSON.parse(fs.readFileSync(pathFor(REGISTRY_DIR, n, 'hookDigest'), 'utf-8')).hookSpecificOutput.additionalContext;
+  const brief = '## Before you slept\n\n**player:** hi\n\n**you:** hello';
+  fs.mkdirSync(path.dirname(briefPathFor(REGISTRY_DIR, 'asl')), { recursive: true });
+  fs.writeFileSync(briefPathFor(REGISTRY_DIR, 'asl'), brief);
+  hooks.writeClaudeDigestFile('asl');
+  assert.strictEqual(read('asl'), `You are the clodex agent named 'asl'.\n\n[team t] roster for asl\n\n${brief}`);
+  hooks.writeClaudeDigestFile('awake');
+  assert.strictEqual(read('awake'), `You are the clodex agent named 'awake'.\n\n[team t] roster for awake`);
+});
+
 // The drawer's Copy button writes JSONL into the seat's run dir; this script is
 // what turns it into transcript content. It CONSUMES what it reads — unlike
 // ctxwarn, which re-emits every turn — because a hard copy that re-delivered
