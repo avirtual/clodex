@@ -112,7 +112,7 @@ function mkBundleWriter(skillPluginsDir, bundlesSubdir, ensureDir) {
 // `tplPlugins === undefined` means the template carries NO plugins key, which is
 // a third value distinct from `[]` — never collapse the two here, that identity
 // is the thing under test.
-function mkWorld({ tplPlugins } = {}) {
+function mkWorld({ tplPlugins, tplExtra = {} } = {}) {
   const home = mkTmpRoot('clx-t738-home-');
   const userData = mkTmpRoot('clx-t738-ud-');
   const repo = mkRepo();
@@ -122,8 +122,8 @@ function mkWorld({ tplPlugins } = {}) {
   const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
 
   const tplBase = { type: 'claude', cwd: repo, tools: ['Read', 'Grep', 'Glob'], intents: [] };
-  const handTpl = { name: 'hand-tpl', ...tplBase, ...(tplPlugins === undefined ? {} : { plugins: tplPlugins }) };
-  const rvTpl = { name: 'rv-tpl', ...tplBase, systemPromptFile: 'rv-brief', ...(tplPlugins === undefined ? {} : { plugins: tplPlugins }) };
+  const handTpl = { name: 'hand-tpl', ...tplBase, ...tplExtra, ...(tplPlugins === undefined ? {} : { plugins: tplPlugins }) };
+  const rvTpl = { name: 'rv-tpl', ...tplBase, systemPromptFile: 'rv-brief', ...tplExtra, ...(tplPlugins === undefined ? {} : { plugins: tplPlugins }) };
   ensureDir(path.join(home, 'library', 'prompts', 'system'));
   fs.writeFileSync(path.join(home, 'library', 'prompts', 'system', 'rv-brief.md'), 'review it\n');
 
@@ -319,8 +319,8 @@ async function spawnReviewer(w) {
 }
 
 const ENTRY = [
-  { label: 'ticket seat (_spawnTicketSeat)', spawn: spawnHand },
-  { label: 'reviewer (_handleTeamReview)', spawn: spawnReviewer },
+  { label: 'ticket seat (_spawnTicketSeat)', spawn: spawnHand, tplName: 'hand-tpl' },
+  { label: 'reviewer (_handleTeamReview)', spawn: spawnReviewer, tplName: 'rv-tpl' },
 ];
 
 for (const entry of ENTRY) {
@@ -375,6 +375,28 @@ for (const entry of ENTRY) {
         'the grants editor reads this record — a record disagreeing with the argv shows checkboxes the seat did not boot with');
       assert.deepStrictEqual(w.setPluginsCalls, [[seat, ['github']]],
         '_applyTemplatePersistence writes it too, so a caller that does not thread the list still leaves record and argv agreeing');
+    } finally { w.stop(); }
+  });
+
+  test(`${entry.label} — an assistant-class template puts class, template and sleep on the record`, async () => {
+    const w = mkWorld({ tplExtra: { class: 'assistant', sleep: { idleMs: 1 } } });
+    try {
+      const seat = await entry.spawn(w);
+      assert.ok(w.spawns.length === 1 && w.m.sessions.has(seat), `ENTER: exactly one spawn named ${seat} was expected`);
+      const rec = w.persistence.get(seat) || {};
+      assert.deepStrictEqual({ class: rec.class, template: rec.template, sleep: rec.sleep },
+        { class: 'assistant', template: entry.tplName, sleep: { idleMs: 1 } });
+    } finally { w.stop(); }
+  });
+
+  test(`${entry.label} — a template without class writes no assistant policy`, async () => {
+    const w = mkWorld({ tplExtra: { sleep: { idleMs: 1 } } });
+    try {
+      const seat = await entry.spawn(w);
+      assert.ok(w.spawns.length === 1 && w.m.sessions.has(seat), `ENTER: exactly one spawn named ${seat} was expected`);
+      const rec = w.persistence.get(seat) || {};
+      assert.deepStrictEqual({ class: rec.class, template: rec.template, sleep: rec.sleep },
+        { class: undefined, template: undefined, sleep: undefined });
     } finally { w.stop(); }
   });
 }
