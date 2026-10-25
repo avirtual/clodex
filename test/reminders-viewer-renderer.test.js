@@ -103,6 +103,13 @@ test('renderer: lists for the window workspace, filtered to the selected seat, A
   } finally { m.done(); }
 });
 
+test('renderer: All Seats is disabled with no seat selected and enabled with one', async () => {
+  const none = await mount({ rows: [row()], active: null });
+  try { assert.strictEqual(none.buttons('rv-toggle')[0].disabled, true); } finally { none.done(); }
+  const some = await mount({ rows: [row()] });
+  try { assert.strictEqual(some.buttons('rv-toggle')[0].disabled, false); } finally { some.done(); }
+});
+
 test('renderer: a row shows on compact, the preview, full text on hover and the ticket', async () => {
   const long = 'z'.repeat(80);
   const m = await mount({ rows: [row({ kind: 'oncompact', spec: 'on compact', nextFireAt: null, body: long, ticket: 't42' })] });

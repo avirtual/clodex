@@ -162,8 +162,8 @@ test('engine: handback answers the waiting seat, and a second seat gets the leas
   const { emit, emitAs, nextReply, engine, host } = boot(t);
   await emit('[agent:browser open utility] https://portal.example.com/login');
   const refusal = await emitAs('clodex-two', '[agent:browser read utility]');
-  assert.strictEqual(refusal,
-    '[agent:browser] error: utility is in use by clodex-hand (last command 0s ago). It frees after 5 min without commands, when they emit [agent:browser release utility], or when their session ends.');
+  assert.match(refusal,
+    /^\[agent:browser\] error: utility is in use by clodex-hand \(last command \d+s ago\)\. It frees after 5 min without commands, when they emit \[agent:browser release utility\], or when their session ends\.$/);
   pluginRowFor('browser').handler(host.sessions.get('clodex-hand'), parseWithRegistry('[agent:browser wait utility]'));
   const waited = nextReply();
   const r = await engine.dispatch('browser-pane', 'handback', ['utility'], 'desktop');

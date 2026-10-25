@@ -12,7 +12,6 @@
   "announce": "Every reminder the seats in this workspace have armed: kind, next fire, text and ticket binding. Can add a reminder for any seat (operator-set reminders fire even when the seat has no remind intent), fire one now, or cancel one.",
   "surfaces": {
     "list": "any",
-    "cancel": "any",
     "seats": "any",
     "add": "any",
     "fire": "any"

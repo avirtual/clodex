@@ -49,6 +49,7 @@ The persisted homes, each a bind from the box state dir: `/data`, `~/work`,
 `~/.clodex`, `~/.claude`, `~/.config` (with `~/.config/muse` nested), `~/.codex`
 and `~/.local/share`. A path an agent writes credentials to is a bind, not
 overlay: the overlay is discarded on every box recreate.
+`/` in the box is the overlay on the Docker VM disk: `df /` reports the VM's usage, not the box's, and it is lost on recreate — state goes on `/data`, control scripts in the repo.
 
 ## generateCompose
 

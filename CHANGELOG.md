@@ -16,6 +16,7 @@ blocks a release.
 - Dropping or pasting a file onto a seat attaches it in the browser; on the desktop a drop onto a terminal seat still types the path.
 - Stream seats keep the CLI's cumulative cost on their record.
 - `clodexctl create node --import` registers a sandbox at the wire port Docker actually published, and refreshes a box whose port moved; before, three boxes configured on the same port all imported as the first one.
+- Reminders panel: Cancel is desktop-only and All Seats is disabled with no seat selected; the conversation view shows memory remember/forget/pin/unpin; a pasted file item with no readable file falls through to a normal paste.
 
 ## 5.142.0 — 2026-10-25
 

@@ -90,6 +90,12 @@ test('segmentSurface: every CORE intent verb, literally', () => {
   for (const [verb, want] of VERB_ROWS) assert.strictEqual(segmentSurface(intent(verb)), want, verb);
 });
 
+const MEMORY_ROWS = [['remember', C], ['forget', C], ['pin', C], ['unpin', C], ['list', I], ['recall', I]];
+
+test('segmentSurface: memory talks for remember/forget/pin/unpin and stays internal for list/recall', () => {
+  for (const [sub, want] of MEMORY_ROWS) assert.strictEqual(segmentSurface(intent('memory', sub)), want, sub);
+});
+
 test('ENTER: the verb table is exactly the CORE verbs in intent-glyphs.js', () => {
   assert.deepStrictEqual(VERB_ROWS.map(([v]) => v).sort(), keysOf(block(src('intent-glyphs.js'), 'const CORE = {')).sort());
 });

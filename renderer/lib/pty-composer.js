@@ -88,9 +88,12 @@ function ptyImagePasteHandler({ isWeb, readImages, upload, toast, nextImage, app
     }
     const kind = pasteKind(items);
     if (kind === 'file') {
-      e.preventDefault();
-      await pickFiles(Array.from(items).filter((it) => it.kind === 'file').map((it) => it.getAsFile()).filter(Boolean));
-      return;
+      const files = Array.from(items).filter((it) => it.kind === 'file').map((it) => it.getAsFile()).filter(Boolean);
+      if (files.length) {
+        e.preventDefault();
+        await pickFiles(files);
+        return;
+      }
     }
     if (kind !== 'image') return;
     e.preventDefault();

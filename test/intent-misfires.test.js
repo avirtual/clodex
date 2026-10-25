@@ -26,8 +26,8 @@ function freshStores() {
   return {
     userData, stores,
     cleanup() {
-      fs.rmSync(userData, { recursive: true, force: true });
-      fs.rmSync(registryDir, { recursive: true, force: true });
+      fs.rmSync(userData, { recursive: true, force: true, maxRetries: 3 });
+      fs.rmSync(registryDir, { recursive: true, force: true, maxRetries: 3 });
     },
   };
 }
@@ -108,7 +108,7 @@ function mkSite(extra = {}) {
   m._spillRejectedPayload = () => '';
   const session = { name: 'seat', agentType: 'claude', cwd: REGISTRY_DIR, ctxInfo: { tok: 123456 } };
   m.sessions.set('seat', session);
-  return { m, session, rows, injected, cleanup: () => fs.rmSync(REGISTRY_DIR, { recursive: true, force: true }) };
+  return { m, session, rows, injected, cleanup: () => fs.rmSync(REGISTRY_DIR, { recursive: true, force: true, maxRetries: 3 }) };
 }
 
 const SITES = [
