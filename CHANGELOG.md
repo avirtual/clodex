@@ -13,6 +13,8 @@ blocks a release.
 - Assistant-class seats auto-deny permission prompts, are hidden from `[agent:who]` and refuse seat-to-seat dms; the stream cost fold is Claude-only; a ticket with no task dir writes COST.json under the project's tasks dir (all shipped in 5.143.0, unlisted there).
 
 ## Unreleased
+
+## 5.144.0 — 2026-10-25
 - Phone-access API: create from a template, sleep and wake, a dm that waits for the reply, memory export.
 - Phone-access API: a dm can carry a correlation ref that comes back on its turn, a sleeping assistant's transcript stays readable, and a reminder can wake an assistant.
 - A team lead resumed under a newer Clodex gets a notice naming the release range it owes a cold review for.
