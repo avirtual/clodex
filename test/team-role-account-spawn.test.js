@@ -387,3 +387,19 @@ test('t1842: a reviewer template protectCredentials list reaches the reviewer cr
   assert.strictEqual(f.created.length, 1, 'ENTER: the reviewer seat must have spawned');
   assert.deepStrictEqual(f.created[0][26], ['~/.kube']);
 });
+
+test('a hand template mcpServers list reaches the ticket seat create() as the 28th positional', async () => {
+  const f = mkFixture({ templates: [{ ...HAND_TEMPLATE, mcpServers: ['jira'] }, SHIPPED_REVIEWER_TEMPLATE] });
+  await dispatchTicket(f);
+  assert.strictEqual(f.created.length, 1, 'ENTER: the ticket seat must have spawned');
+  assert.deepStrictEqual([f.created[0].length, f.created[0][27]], [28, ['jira']]);
+});
+
+test('a reviewer template mcpServers list never reaches the reviewer create()', async () => {
+  const f = mkFixture({ templates: [HAND_TEMPLATE, { ...SHIPPED_REVIEWER_TEMPLATE, mcpServers: ['jira'] }] });
+  f.seat('lead');
+  f.m._handleTeamReview(f.m.sessions.get('lead'), 'review the diff');
+  await settle();
+  assert.strictEqual(f.created.length, 1, 'ENTER: the reviewer seat must have spawned');
+  assert.deepStrictEqual(f.created[0][27], []);
+});

@@ -88,6 +88,7 @@ test('ticket purpose: the whole shape, with no template', () => {
     systemPromptFile: 'hand-brief',
     appendPromptFiles: [],
     execCommands: [],
+    mcpServers: [],
     // null, NOT []: create() treats [] as "every intent gated" and null as
     // "omit, keep the all-enabled default". The review arm's fallback is [],
     // and collapsing the two would silently gate or ungate a seat.
@@ -134,6 +135,7 @@ test('review purpose: the whole shape, with no template', () => {
     systemPromptFile: 'clodex-team-reviewer',
     appendPromptFiles: [],
     execCommands: [],
+    mcpServers: [],
     intents: [],
     plugins: null,
     protectCredentials: null,
@@ -189,7 +191,7 @@ test('review purpose: the whole shape, WITH a template (the production config)',
     // shape is a code-level ceiling, not a template's wish list. disabledSkills
     // is the exception — it can only subtract from what the seat may run.
     agents: ['a'], denyBuiltins: ['d'], disabledSkills: ['s'], injectSkills: ['i'],
-    appendPromptFiles: ['ap'], execCommands: ['ec'], extraArgs: ['--foo'],
+    appendPromptFiles: ['ap'], execCommands: ['ec'], mcpServers: ['jira'], extraArgs: ['--foo'],
   }], { leadArgs: ['--dangerously-skip-permissions'] });
   const team = teamWith({ reviewer: { template: 'rv' } });
   const shape = m.resolveSeatShape(team, 'reviewer', 'review', LEAD);
@@ -213,6 +215,7 @@ test('review purpose: the whole shape, WITH a template (the production config)',
     systemPromptFile: 'rv-brief',
     appendPromptFiles: [],
     execCommands: [],
+    mcpServers: [],
     intents: ['dm'],
     plugins: null,
     protectCredentials: null,
@@ -246,7 +249,7 @@ test('ticket purpose: the whole shape, WITH a template', () => {
     systemPromptFile: 'tpl-brief',
     agents: ['a'], denyBuiltins: ['d'], disabledTools: ['X'],
     disabledSkills: ['s'], injectSkills: ['i'],
-    appendPromptFiles: ['ap'], execCommands: ['ec'], extraArgs: ['--foo'],
+    appendPromptFiles: ['ap'], execCommands: ['ec'], mcpServers: ['jira'], extraArgs: ['--foo'],
   }], { leadArgs: ['--dangerously-skip-permissions'] });
   const team = teamWith({ hand: { worktree: true, template: 'ht', prompt: 'role-brief' } });
   const shape = m.resolveSeatShape(team, 'hand', 'ticket', LEAD);
@@ -278,6 +281,7 @@ test('ticket purpose: the whole shape, WITH a template', () => {
     systemPromptFile: 'tpl-brief',
     appendPromptFiles: ['ap'],
     execCommands: ['ec'],
+    mcpServers: ['jira'],
     intents: ['dm'],
     plugins: null,
     protectCredentials: null,
@@ -1086,6 +1090,7 @@ test('role cwd: the ticket arm resolves the role subdirectory of the main checko
     systemPromptFile: 'hand-brief',
     appendPromptFiles: [],
     execCommands: [],
+    mcpServers: [],
     intents: null,
     plugins: null,
     protectCredentials: null,
@@ -1130,6 +1135,7 @@ test('role cwd: a role WITHOUT one still resolves to the team root — whole sha
     systemPromptFile: 'hand-brief',
     appendPromptFiles: [],
     execCommands: [],
+    mcpServers: [],
     intents: null,
     plugins: null,
     protectCredentials: null,
@@ -1177,6 +1183,7 @@ test('role cwd: the REVIEW arm honors it too (D4) — whole shape', () => {
     systemPromptFile: 'clodex-team-reviewer',
     appendPromptFiles: [],
     execCommands: [],
+    mcpServers: [],
     intents: [],
     plugins: null,
     protectCredentials: null,
