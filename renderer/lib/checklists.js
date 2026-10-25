@@ -256,7 +256,7 @@ function renderExecChecklist(container, enabledSet) {
   container.innerHTML = '';
   if (!execLibCache.length) {
     container.innerHTML = '<span class="hint-text">No exec commands in library — register some via File ▸ Exec Commands….</span>';
-    return;
+    return [];
   }
   for (const c of execLibCache) {
     const row = document.createElement('label');
@@ -273,6 +273,7 @@ function renderExecChecklist(container, enabledSet) {
     row.appendChild(txt);
     container.appendChild(row);
   }
+  return execLibCache.map((c) => c.name);
 }
 function collectExecChecklist(container) {
   return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
@@ -290,7 +291,7 @@ function renderMcpChecklist(container, enabledSet, { cli = null, readiness = {} 
   const rows = mcpLibCache.filter((m) => m && m.name !== 'clodex');
   if (!rows.length) {
     container.innerHTML = '<span class="hint-text">No MCP servers in library — add or import some via Library ▸ MCP Servers….</span>';
-    return;
+    return [];
   }
   for (const m of rows) {
     const row = document.createElement('label');
@@ -307,6 +308,7 @@ function renderMcpChecklist(container, enabledSet, { cli = null, readiness = {} 
     row.appendChild(txt);
     container.appendChild(row);
   }
+  return rows.map((m) => m.name);
 }
 function collectMcpChecklist(container) {
   return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
@@ -424,6 +426,7 @@ function renderBuiltinChecklist(container, deniedSet) {
     row.appendChild(txt);
     container.appendChild(row);
   }
+  return [...BUILTIN_AGENTS];
 }
 function collectBuiltinChecklist(container) {
   return Array.from(container.querySelectorAll('input[type="checkbox"]:not(:checked)')).map(cb => cb.value);
@@ -480,13 +483,10 @@ function collectInjectChecklist(container) {
 function renderToolChecklist(container, disabledSet, effective) {
   effective = effective || {};
   container.innerHTML = '';
-  // Catalog is authoritative: render only known tools. A stale name in
-  // disabledSet (removed from the catalog, or persisted before our time) is
-  // intentionally NOT shown — it falls out of the deny on the next Apply.
   const names = [...claudeToolsCache];
   if (!names.length) {
     container.innerHTML = '<span class="hint-text">No tool catalog available.</span>';
-    return;
+    return [];
   }
   for (const name of names) {
     const eff = effective[name];
@@ -510,6 +510,7 @@ function renderToolChecklist(container, disabledSet, effective) {
     row.appendChild(txt);
     container.appendChild(row);
   }
+  return names;
 }
 // Returns the UNCHECKED, toggleable tools (clodex's off list). A read-only row
 // is owned by a lower settings layer / policy, not clodex, so it's excluded.

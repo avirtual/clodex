@@ -3,7 +3,7 @@ const { FitAddon } = require('@xterm/addon-fit');
 const { SearchAddon } = require('@xterm/addon-search');
 const { WebLinksAddon } = require('@xterm/addon-web-links');
 const { isExternallyOpenable } = require('../external-link');
-const { seatHasPlugin, pluginsForUnlistedPlugins, mergePlugins } = require('../plugin-api');
+const { seatHasPlugin, pluginsForUnlistedPlugins, mergePlugins, unlistedOf, mergeLists } = require('../plugin-api');
 const { clampSidebarWidth, effectiveSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require('../sidebar-width');
 const { mergeMeta } = require('../meta-tiers');
 const { PendingInput } = require('../peer-input-queue');
@@ -475,6 +475,8 @@ const dialogTitle = document.getElementById('dialog-title');
 const nameFieldLabel = document.getElementById('name-field-label');
 
 let dialogMode = 'create';
+let formPersisted = {};
+let formRendered = {};
 let editingTemplateId = null;
 let editingTemplateBundle = null;
 let editingTemplateTeam = null;
@@ -3135,8 +3137,8 @@ function populateChecklistsFromCatalogs(cat) {
   resetNewSessionSkillCollector(modeSkillDenySet());
   renderSkillChecklist(inputSkillsList, [], modeSkillDenySet());
   setClaudeToolsCache(cat.claudeTools || []);
-  renderToolChecklist(inputToolsList, modeToolDenySet());
-  renderBuiltinChecklist(inputBuiltinsList, modeBuiltinDenySet());
+  formRendered.disabledTools = renderToolChecklist(inputToolsList, modeToolDenySet());
+  formRendered.denyBuiltins = renderBuiltinChecklist(inputBuiltinsList, modeBuiltinDenySet());
   refreshNewSessionExecCommands();  // exec grants never cross, but the box has its own
   refreshNewSessionPlugins().then(() => refreshNewSessionIntents()); // LOCAL engine, box-independent
   setPromptLibCache(libraryPromptCache(cat.prompts));
@@ -3320,7 +3322,7 @@ function applyModeFields(mode, { catalogsFresh = false } = {}) {
     if (caps.injectSkills) refreshNewSessionInjectSkills();
     if (caps.plugins) refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
   }
-  if (caps.agents) renderBuiltinChecklist(inputBuiltinsList, optimized ? new Set(getDefaultBuiltinDenyCache()) : new Set());
+  if (caps.agents) formRendered.denyBuiltins = renderBuiltinChecklist(inputBuiltinsList, optimized ? new Set(getDefaultBuiltinDenyCache()) : new Set());
   if (caps.strip && inputStripLevel) inputStripLevel.value = '2';
   if (caps.autoCompact && inputAutoCompact) inputAutoCompact.checked = true;
   if (caps.noWire && inputNoWire) inputNoWire.checked = false;
@@ -3367,7 +3369,7 @@ function newSessionPluginTicks() {
 async function refreshNewSessionExecCommands(enabledSet = new Set()) {
   if (!newSessionIsAgent()) return;
   setExecLibCache((await window.api.listExecCommands()) || []);
-  renderExecChecklist(inputExecList, enabledSet);
+  formRendered.execCommands = renderExecChecklist(inputExecList, enabledSet);
 }
 
 async function mcpChecklistData(workspaceId) {
@@ -3381,7 +3383,7 @@ async function refreshNewSessionMcpServers(enabledSet = new Set()) {
   if (!newSessionIsAgent() || !inputMcpList) return;
   const { lib, readiness } = await mcpChecklistData(currentWorkspaceId);
   setMcpLibCache(lib);
-  renderMcpChecklist(inputMcpList, enabledSet, { cli: inputType.value, readiness });
+  formRendered.mcpServers = renderMcpChecklist(inputMcpList, enabledSet, { cli: inputType.value, readiness });
 }
 
 let newSessionPluginsPersisted = null;
@@ -3467,7 +3469,7 @@ async function refreshNewSessionTools(disabledSet = null, { forTemplate = false 
   const cwd = expandPath(inputCwd.value.trim()) || homeDir;
   const res = await window.api.getToolCatalogFor(cwd);
   const disabled = disabledSet || new Set(getDefaultToolDenyCache());
-  renderToolChecklist(inputToolsList, disabled,
+  formRendered.disabledTools = renderToolChecklist(inputToolsList, disabled,
     advisoryEffective((res && res.ok && res.effective) || {}, forTemplate));
 }
 
@@ -3731,8 +3733,8 @@ function populateHostCatalogs(settings, agentLib) {
   setDefaultToolDenyCache(settings?.defaultToolDeny || []);
   setDefaultSkillDenyCache(settings?.defaultSkillDeny || []);
   setDefaultBuiltinDenyCache(settings?.defaultBuiltinDeny || []);
-  renderBuiltinChecklist(inputBuiltinsList, modeBuiltinDenySet());
-  renderToolChecklist(inputToolsList, modeToolDenySet());
+  formRendered.denyBuiltins = renderBuiltinChecklist(inputBuiltinsList, modeBuiltinDenySet());
+  formRendered.disabledTools = renderToolChecklist(inputToolsList, modeToolDenySet());
   refreshNewSessionSkills(modeSkillDenySet());
   refreshNewSessionTools(modeToolDenySet());
   setProxyControls(inputProxyMode, inputProxyUrl, null, settings?.lastCustomProxyUrl || settings?.proxyUrl);
@@ -3834,6 +3836,7 @@ inputTemplate.addEventListener('change', async () => {
   const resolved = await cwdFromTemplate(t);
   if (inputTemplate.value !== id) return; // a newer template won the race
   if (resolved.warn) showToast(resolved.warn, { kind: 'warn', duration: 12000 });
+  formPersisted = formPersistedOf(t);
   setModeSelect('custom');
   inputType.value = t.type;
   inputCwd.value = resolved.cwd;
@@ -3861,7 +3864,7 @@ inputTemplate.addEventListener('change', async () => {
   }
   if (tplCaps.agents) {
     renderAgentChecklist(inputAgentsList, new Set(t.agents || []), null, newSessionSeat());
-    renderBuiltinChecklist(inputBuiltinsList, new Set(t.denyBuiltins || []));
+    formRendered.denyBuiltins = renderBuiltinChecklist(inputBuiltinsList, new Set(t.denyBuiltins || []));
   }
   if (tplCaps.tools) await refreshNewSessionTools(new Set(t.disabledTools || []));
   if (tplCaps.skillRoster) await refreshNewSessionSkills(new Set(t.disabledSkills || []));
@@ -3969,8 +3972,8 @@ function collectFormConfig() {
     extraArgs: withModelArg(parseArgs(inputArgs.value || ''), inputModel.value),
     proxy: agentType ? proxyValueFromControls(inputProxyMode, inputProxyUrl) : null,
     agents: caps.agents ? collectAgentChecklist(inputAgentsList) : [],
-    execCommands: agentType ? collectExecChecklist(inputExecList) : [],
-    mcpServers: agentType ? collectMcpChecklist(inputMcpList) : [],
+    execCommands: agentType ? formCarry('execCommands', collectExecChecklist(inputExecList)) : [],
+    mcpServers: agentType ? formCarry('mcpServers', collectMcpChecklist(inputMcpList)) : [],
     ...(Array.isArray(intents) ? { intents } : {}),
     plugins,
     ...(autoCompactOff ? { autoCompact: false } : {}),
@@ -3978,14 +3981,27 @@ function collectFormConfig() {
     ...(streamIoOn ? { io: 'stream' } : {}),
     ...(effortVal ? { effort: effortVal } : {}),
     ...(toolsAllow.length ? { tools: toolsAllow } : {}),
-    denyBuiltins: caps.agents ? collectBuiltinChecklist(inputBuiltinsList) : [],
-    disabledTools: caps.tools ? collectToolChecklist(inputToolsList) : [],
+    denyBuiltins: caps.agents ? formCarry('denyBuiltins', collectBuiltinChecklist(inputBuiltinsList)) : [],
+    disabledTools: caps.tools ? formCarry('disabledTools', collectToolChecklist(inputToolsList)) : [],
     disabledSkills: caps.skillRoster ? newSessionSkillDenyList() : [],
     injectSkills: caps.injectSkills ? collectInjectChecklist(inputInjectSkillsList) : [],
     stripLevel: caps.strip ? (Number(inputStripLevel && inputStripLevel.value) || 0) : 0,
     systemPromptFile: agentType ? (inputSystemPrompt.value || null) : null,
     appendPromptFiles: agentType ? collectAppendPromptFiles() : [],
   };
+}
+
+function formPersistedOf(t) {
+  return {
+    execCommands: t && t.execCommands,
+    mcpServers: t && t.mcpServers,
+    denyBuiltins: t && t.denyBuiltins,
+    disabledTools: t && t.disabledTools,
+  };
+}
+
+function formCarry(key, checked) {
+  return mergeLists(checked, unlistedOf(formPersisted[key], formRendered[key]));
 }
 
 function collectDialogEnv() {
@@ -4175,6 +4191,7 @@ dialogOverlay.addEventListener('mousedown', (e) => { if (e.target === dialogOver
 
 function setDialogMode(mode) {
   dialogMode = mode;
+  formPersisted = {};
   const authoring = mode === 'template';
   dialogTitle.textContent = authoring ? (editingTemplateId ? 'Edit Template' : 'New Template') : 'New Session';
   nameFieldLabel.textContent = authoring ? 'Template name' : 'Name';
@@ -4215,6 +4232,7 @@ async function openTemplateEditor(tpl = null, bundle = null, teamOwner = null) {
   for (const sec of [toolsSection, skillsSection, otherSection]) { if (sec) sec.open = false; }
   setModeSelect('custom');
   setDialogMode('template');
+  formPersisted = formPersistedOf(tpl);
   applyTypeDefaults({ skipAsyncRefresh: true });
   const settings = await window.api.getSettings();
   setClaudeToolsCache(settings?.claudeTools || []);
@@ -4244,7 +4262,7 @@ async function openTemplateEditor(tpl = null, bundle = null, teamOwner = null) {
   }
   if (tplCaps.agents) {
     renderAgentChecklist(inputAgentsList, new Set((tpl && tpl.agents) || []), null, newSessionSeat());
-    renderBuiltinChecklist(inputBuiltinsList, new Set((tpl && tpl.denyBuiltins) || []));
+    formRendered.denyBuiltins = renderBuiltinChecklist(inputBuiltinsList, new Set((tpl && tpl.denyBuiltins) || []));
   }
   if (tplCaps.tools) {
     renderToolAllowChecklist(inputToolsAllowList, new Set(Array.isArray(tpl && tpl.tools) ? tpl.tools : []));
@@ -9295,6 +9313,14 @@ let argsAppendPersisted = [];
 let argsAppendRendered = [];
 let argsPluginsPersisted = null;
 let argsPluginsRendered = [];
+let argsExecPersisted = [];
+let argsExecRendered = [];
+let argsMcpPersisted = [];
+let argsMcpRendered = [];
+let argsBuiltinsPersisted = [];
+let argsBuiltinsRendered = [];
+let argsToolsPersisted = [];
+let argsToolsRendered = [];
 let argsSkillsDisabledPersisted = [];
 let argsSkillsInjectPersisted = [];
 let argsSkillsInjectRendered = [];
@@ -9370,11 +9396,13 @@ async function openArgsDialog(name, argsSource = null) {
   argsAgentsPersisted = res.agents || [];
   argsAgentsRendered = (agentLib || []).map((a) => a.name);
   argsAgentsAuto = [...argsAuto];
-  renderBuiltinChecklist(argsBuiltinsList, new Set(res.denyBuiltins || []));
+  argsBuiltinsPersisted = res.denyBuiltins || [];
+  argsBuiltinsRendered = renderBuiltinChecklist(argsBuiltinsList, new Set(res.denyBuiltins || []));
   argsToolsRow.style.display = caps.tools ? '' : 'none';
   argsToolsSection.style.display = caps.tools ? '' : 'none';
   setClaudeToolsCache(settings?.claudeTools || []);
-  renderToolChecklist(argsToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
+  argsToolsPersisted = res.disabledTools || [];
+  argsToolsRendered = renderToolChecklist(argsToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
   argsIntentsSection.style.display = isAgent ? '' : 'none';
   // Keyed on the list this dialog just painted: the override is what makes a
   // live untick repaint the verbs.
@@ -9384,13 +9412,15 @@ async function openArgsDialog(name, argsSource = null) {
   argsExecSection.style.display = isExecEditable ? '' : 'none';
   if (isExecEditable) {
     setExecLibCache((await window.api.listExecCommands()) || []);
-    renderExecChecklist(argsExecList, new Set(res.execCommands || []));
+    argsExecPersisted = res.execCommands || [];
+    argsExecRendered = renderExecChecklist(argsExecList, new Set(res.execCommands || []));
   }
   argsMcpSection.style.display = isExecEditable ? '' : 'none';
   if (isExecEditable) {
     const { lib, readiness } = await mcpChecklistData(currentWorkspaceId);
     setMcpLibCache(lib);
-    renderMcpChecklist(argsMcpList, new Set(res.mcpServers || []), { cli: res.type, readiness });
+    argsMcpPersisted = res.mcpServers || [];
+    argsMcpRendered = renderMcpChecklist(argsMcpList, new Set(res.mcpServers || []), { cli: res.type, readiness });
   }
   const isSkillsEditable = (caps.injectSkills || caps.skillRoster) && !!skillCatalog;
   argsSkillsSection.style.display = isSkillsEditable ? '' : 'none';
@@ -9458,8 +9488,9 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   const agents = argsAgentsRow.style.display === 'none' ? [] : reconcilePartialSelection(
     argsAgentsPersisted, argsAgentsRendered, collectAgentChecklist(argsAgentsList), argsAgentsAuto);
   const denyBuiltins = argsAgentsRow.style.display === 'none'
-    ? [] : collectBuiltinChecklist(argsBuiltinsList);
-  const disabledTools = argsToolsRow.style.display === 'none' ? [] : collectToolChecklist(argsToolsList);
+    ? [] : mergeLists(collectBuiltinChecklist(argsBuiltinsList), unlistedOf(argsBuiltinsPersisted, argsBuiltinsRendered));
+  const disabledTools = argsToolsRow.style.display === 'none'
+    ? [] : mergeLists(collectToolChecklist(argsToolsList), unlistedOf(argsToolsPersisted, argsToolsRendered));
   // null here reaches session-args as an explicit clear of the allowlist; a hidden section must send undefined (untouched), as plugins below.
   const intents = argsIntentsSection.style.display === 'none' ? undefined : collectIntentChecklist(argsIntentsList);
   // plugins: undefined = "untouched", never []: a hidden section or a checklist that drew
@@ -9468,8 +9499,10 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
     ? undefined
     : mergePlugins(collectPluginChecklist(argsPluginList),
       pluginsForUnlistedPlugins(argsPluginsPersisted, argsPluginsRendered));
-  const execCommandsGrant = argsExecSection.style.display === 'none' ? undefined : collectExecChecklist(argsExecList);
-  const mcpServers = argsMcpSection.style.display === 'none' ? undefined : collectMcpChecklist(argsMcpList);
+  const execCommandsGrant = argsExecSection.style.display === 'none'
+    ? undefined : mergeLists(collectExecChecklist(argsExecList), unlistedOf(argsExecPersisted, argsExecRendered));
+  const mcpServers = argsMcpSection.style.display === 'none'
+    ? undefined : mergeLists(collectMcpChecklist(argsMcpList), unlistedOf(argsMcpPersisted, argsMcpRendered));
   const io = (!argsStreamIoRow || argsStreamIoRow.style.display === 'none' || !argsStreamIo)
     ? undefined : (argsStreamIo.checked ? 'stream' : 'pty');
   // LOCAL-only: a hidden section (peer row) leaves env untouched via `undefined`. Locally the
