@@ -389,6 +389,18 @@ for (const entry of ENTRY) {
     } finally { w.stop(); }
   });
 
+  test(`${entry.label} — the record's sleep policy is a copy, not the template's object`, async () => {
+    const sleep = { idleMs: 1 };
+    const w = mkWorld({ tplExtra: { class: 'assistant', sleep } });
+    try {
+      const seat = await entry.spawn(w);
+      const rec = w.persistence.get(seat) || {};
+      assert.deepStrictEqual(rec.sleep, { idleMs: 1 }, 'ENTER: the record carries the policy');
+      sleep.idleMs = 99;
+      assert.deepStrictEqual((w.persistence.get(seat) || {}).sleep, { idleMs: 1 });
+    } finally { w.stop(); }
+  });
+
   test(`${entry.label} — a template without class writes no assistant policy`, async () => {
     const w = mkWorld({ tplExtra: { sleep: { idleMs: 1 } } });
     try {

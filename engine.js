@@ -1297,6 +1297,7 @@ const SessionManager = createSessionManager({
   setAppQuitting,
   relaunchApp: restartHostWhenIdle,
   relaunchUnavailable: restartUnavailable,
+  restartSession: (...a) => restartSession(...a),
   getPluginHooks: () => (pluginHost ? pluginHost.hooks : null),
 });
 const manager = new SessionManager();
@@ -2186,6 +2187,7 @@ const toolCache = createToolCache({ whichBin });
 
   proxyPoller.start();
   manager.startPendingPoll();
+  manager.startAssistantSweep(60000);
   manager.startTicketWatchdog();
 
 

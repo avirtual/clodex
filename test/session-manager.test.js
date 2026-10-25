@@ -1039,6 +1039,22 @@ test('who: lists agent sessions from all workspaces, flat, self excluded', async
   assert.strictEqual(injected[0], '[agent:peers] b (idle)');
 });
 
+test('who: an assistant-class seat is not listed', async () => {
+  const injected = [];
+  const m = mk({
+    registry: { listPeers: () => [] },
+    getPeerManager: () => null,
+    peerStatusLabel: () => 'idle',
+    getPersistence: () => ({ list: () => [], get: (n) => (n === 'asst' ? { name: 'asst', class: 'assistant' } : null) }),
+  });
+  m._injectText = (s, text) => injected.push(text);
+  m.sessions.set('a', { name: 'a', agentType: 'claude', workspaceId: 'ws1' });
+  m.sessions.set('b', { name: 'b', agentType: 'claude', workspaceId: 'ws1' });
+  m.sessions.set('asst', { name: 'asst', agentType: 'claude', workspaceId: 'ws1' });
+  await m._handleIntent('a', { type: 'who' });
+  assert.deepStrictEqual(injected, ['[agent:peers] b (idle)']);
+});
+
 // --- Fire-time intent gate (per-session `intents` allowlist) ------------------
 // _handleIntent reads the SENDER's persisted `intents` FRESH on every fire and
 // bounces a disabled intent before the switch — send-side only. Absent list =
@@ -21088,6 +21104,8 @@ function mkStreamSeatManager({ persisted = {}, fakePty = null, team = null, hold
       remove: (n) => store.delete(n),
       setSessionId: (n, id) => { sessionIds.push([n, id]); const e = store.get(n); if (e) e.sessionId = id; },
       setExited: (n, v) => { const e = store.get(n); if (e && v === null) delete e.exitedAt; },
+      setArchived: (n, on) => { const e = store.get(n); if (!e) return; if (on) e.archivedAt = Date.now(); else delete e.archivedAt; },
+      clearSessionId: (n) => { const e = store.get(n); if (e) e.sessionId = null; },
     }),
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
@@ -21663,6 +21681,140 @@ test('stream seat cost: a clone seat never writes cost', async (t) => {
   mock.timers.tick(60000);
   assert.ok(h.store.get('sk4'), 'ENTER: the seat has a record');
   assert.strictEqual(h.store.get('sk4').cost, undefined);
+});
+
+test('stream seat cost: a cumulative total that drops with no new init is a counter restart, not a refund', async (t) => {
+  const { mock } = require('node:test');
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sk5');
+  mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 5000 });
+  t.after(() => mock.timers.reset());
+  h.line('sk5', { type: 'system', subtype: 'init', session_id: 'sid-a', model: 'm', slash_commands: [] });
+  for (const usd of [0.004, 0.009, 0.012]) h.line('sk5', costResult(usd));
+  mock.timers.tick(60000);
+  assert.deepStrictEqual(h.store.get('sk5').cost, { usd: 0.012, turns: 3, at: 65000 }, 'ENTER: the first window folded');
+  h.line('sk5', costResult(0.002));
+  mock.timers.tick(60000);
+  const { usd, turns } = h.store.get('sk5').cost;
+  assert.deepStrictEqual({ usd, turns }, { usd: 0.014, turns: 4 });
+});
+
+const ASSISTANT_ROW = { class: 'assistant', sleep: { idleMs: 600000 } };
+
+test('assistant sweep: an idle assistant sleeps at idleMs, not a millisecond before', async (t) => {
+  const h = mkStreamSeatManager({ persisted: { asst: { ...ASSISTANT_ROW } } });
+  t.after(() => h.stopAll());
+  await h.create('asst');
+  const s = h.m.sessions.get('asst');
+  s.activityTs = 1_000_000;
+  s.activityState = 'idle';
+  h.m._assistantSweep(s.activityTs + 599999);
+  await new Promise(setImmediate);
+  assert.strictEqual(h.handles[0].killed, 0);
+  assert.strictEqual(h.store.get('asst').asleepAt, undefined);
+  h.m._assistantSweep(s.activityTs + 600000);
+  await new Promise(setImmediate);
+  const rec = h.store.get('asst');
+  assert.strictEqual(h.handles[0].killed, 1);
+  assert.strictEqual(typeof rec.archivedAt, 'number');
+  assert.strictEqual(typeof rec.asleepAt, 'number');
+  assert.strictEqual(rec.sleepReason, 'idle');
+  assert.strictEqual(rec.sessionId, null);
+});
+
+test('assistant sleep: the transcript tail becomes sessions/<name>/brief.md', async (t) => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { pathFor } = require('../clodex-paths');
+  const { briefPathFor } = require('../assistant-sleep');
+  const h = mkStreamSeatManager({ persisted: { asst: { ...ASSISTANT_ROW } } });
+  t.after(() => h.stopAll());
+  await h.create('asst');
+  const jsonl = path.join(h.root, 'conv.jsonl');
+  const turn = (q, a) => [
+    { type: 'user', message: { role: 'user', content: q } },
+    { type: 'assistant', message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: a }] } },
+  ];
+  fs.writeFileSync(jsonl, [...turn('where is the ball', 'midfield'), ...turn('score?', 'two nil')].map((o) => JSON.stringify(o)).join('\n') + '\n');
+  const link = pathFor(h.root, 'asst', 'transcript');
+  fs.mkdirSync(path.dirname(link), { recursive: true });
+  try { fs.unlinkSync(link); } catch {}
+  fs.symlinkSync(jsonl, link);
+  assert.deepStrictEqual(await h.m.sleep('asst', { reason: 'logout' }), { ok: true, state: 'asleep' });
+  const brief = fs.readFileSync(briefPathFor(h.root, 'asst'), 'utf8');
+  assert.ok(brief.startsWith('## Before you slept'), brief);
+  assert.ok(brief.includes('**player:** score?\n\n**you:** two nil'), brief);
+  assert.strictEqual(h.store.get('asst').sleepReason, 'logout');
+});
+
+test('assistant sleep: a mid-turn sleep waits for the result, then stops the seat', async (t) => {
+  const h = mkStreamSeatManager({ persisted: { asst: { ...ASSISTANT_ROW } } });
+  t.after(() => h.stopAll());
+  await h.create('asst');
+  h.m.seatSend('asst', 'go');
+  assert.strictEqual(h.m.sessions.get('asst').streamBusy, true, 'ENTER: the seat is mid-turn');
+  assert.deepStrictEqual(await h.m.sleep('asst'), { ok: true, state: 'sleeping' });
+  assert.strictEqual(h.handles[0].killed, 0);
+  h.line('asst', RESULT);
+  assert.strictEqual(h.handles[0].killed, 1);
+  assert.strictEqual(typeof h.store.get('asst').asleepAt, 'number');
+});
+
+test('assistant sleep and wake refuse a seat without the class', async (t) => {
+  const h = mkStreamSeatManager({ persisted: { plain: {} } });
+  t.after(() => h.stopAll());
+  await h.create('plain');
+  assert.deepStrictEqual(await h.m.sleep('plain'), { ok: false, error: 'not an assistant seat' });
+  assert.deepStrictEqual(await h.m.wake('plain'), { ok: false, error: 'not an assistant seat' });
+  assert.strictEqual(h.handles[0].killed, 0);
+});
+
+test('assistant _gatedDeliver: seat mail to an assistant bounces, awake or asleep', async (t) => {
+  const h = mkStreamSeatManager({ persisted: { asst: { ...ASSISTANT_ROW }, zz: { ...ASSISTANT_ROW, archivedAt: 1, asleepAt: 2 } } });
+  t.after(() => h.stopAll());
+  await h.create('asst');
+  assert.ok(h.m.sessions.has('asst') && !h.m.sessions.has('zz'), 'ENTER: one live, one asleep');
+  assert.deepStrictEqual(h.m._gatedDeliver('asst', 'lead', 'hi'), { error: 'asst takes messages only from its operator client' });
+  assert.deepStrictEqual(h.m._gatedDeliver('zz', 'lead', 'hi'), { error: 'zz takes messages only from its operator client' });
+  assert.deepStrictEqual(h.handles[0].sent, []);
+});
+
+test('assistant wake: restarts fresh in the record\'s workspace and clears the sleep stamps', async (t) => {
+  const calls = [];
+  const h = mkStreamSeatManager({
+    persisted: { asst: { ...ASSISTANT_ROW, workspaceId: 'ws', archivedAt: 1, asleepAt: 2, sleepReason: 'idle' } },
+    extraDeps: { restartSession: async (...a) => { calls.push(a); return { ok: true }; } },
+  });
+  t.after(() => h.stopAll());
+  assert.deepStrictEqual(await h.m.wake('asst', { reason: 'dm' }), { ok: true, state: 'awake' });
+  assert.deepStrictEqual(calls, [['asst', { fresh: true }, 'ws']]);
+  const rec = h.store.get('asst');
+  assert.strictEqual('archivedAt' in rec, false);
+  assert.strictEqual(rec.asleepAt, null);
+  assert.strictEqual(rec.sleepReason, null);
+  assert.strictEqual(rec.wakes, 1);
+});
+
+test('assistant wake: a failed restart re-archives and keeps the sleep stamp', async (t) => {
+  const h = mkStreamSeatManager({
+    persisted: { asst: { ...ASSISTANT_ROW, workspaceId: 'ws', archivedAt: 1, asleepAt: 2, sleepReason: 'idle' } },
+    extraDeps: { restartSession: async () => ({ ok: false, error: 'boom' }) },
+  });
+  t.after(() => h.stopAll());
+  assert.deepStrictEqual(await h.m.wake('asst'), { ok: false, error: 'boom' });
+  const rec = h.store.get('asst');
+  assert.strictEqual(typeof rec.archivedAt, 'number');
+  assert.strictEqual(rec.asleepAt, 2);
+  assert.strictEqual(rec.sleepReason, 'idle');
+});
+
+test('assistant wake: a bare claude wake arms no init watchdog before the first message', async (t) => {
+  const h = mkStreamSeatManager({ persisted: { asst: { ...ASSISTANT_ROW } } });
+  t.after(() => h.stopAll());
+  await h.create('asst');
+  assert.ok(h.m.sessions.get('asst').stream, 'ENTER: the stream seat is up');
+  assert.strictEqual(h.m.sessions.get('asst')._streamInitTimer, undefined);
 });
 const userMsg = (content) => ({ type: 'user', message: { role: 'user', content } });
 
@@ -23093,6 +23245,25 @@ test('t1180: a permission-request record holds the prompt, raises a permission a
   c.h.line('pm1', { rec: c.rec('r2', { preview: null }) });
   assert.strictEqual(s.needsAttention.message, 'Run command');
   assert.strictEqual(c.h.m.seatPermissions('pm1').rev, 2);
+});
+
+test('assistant seat: a permission request is auto-denied with no attention and no held prompt', async (t) => {
+  const c = mkPermStreamSeat();
+  t.after(() => c.h.stopAll());
+  await c.create('pa1');
+  const s = c.h.m.sessions.get('pa1');
+  t.after(() => { c.clearTimers(s); s._dead = true; });
+  c.h.store.set('pa1', { ...c.h.store.get('pa1'), class: 'assistant' });
+  const bcast = [];
+  c.h.m._broadcast = (ch, msg) => bcast.push([ch, msg]);
+  c.h.line('pa1', { rec: { kind: 'init', sessionId: 'ms-1', turnEnd: true } });
+  const sentBefore = c.sent().length;
+  c.h.line('pa1', { rec: c.rec('r1') });
+  assert.deepStrictEqual(c.encoded, [['r1', 'deny']]);
+  assert.deepStrictEqual(c.sent().slice(sentBefore), [{ id: 9, result: { id: 'r1', choiceId: 'deny' } }, { method: 'perm/ack', id: 'r1' }]);
+  assert.strictEqual(s.needsAttention, null);
+  assert.deepStrictEqual(c.h.m.seatPermissions('pa1'), { rev: 1, items: [] });
+  assert.deepStrictEqual(bcast.filter((b) => b[1] && b[1].type === 'attention'), []);
 });
 
 test('t1180: an activity tick while a stream permission is pending does not clear its attention', async (t) => {

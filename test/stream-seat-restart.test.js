@@ -95,6 +95,17 @@ test('a plain restartSession of a pty seat keeps pty', async () => {
   assert.strictEqual(res.io, 'pty');
 });
 
+test('wake respawns a sleeping assistant fresh, with no resumeId, and unarchives it', async () => {
+  const eng = mkEngine();
+  eng.stores.persistence.upsert({ ...entryOf('asl'), class: 'assistant', archivedAt: 1, asleepAt: 2 });
+  const { seen } = probe(eng);
+  const res = await eng.manager.wake('asl');
+  assert.deepStrictEqual(res, { ok: true, state: 'awake' });
+  assert.strictEqual(seen.length, 1, 'ENTER: create() was reached');
+  assert.strictEqual(seen[0][4], null);
+  assert.strictEqual(eng.stores.persistence.get('asl').archivedAt, undefined);
+});
+
 test('applySessionArgs with io:stream persists it and the restart spawns a stream seat', async () => {
   const eng = mkEngine();
   eng.stores.persistence.upsert(PTY_ENTRY('io-edit'));
