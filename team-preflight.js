@@ -57,7 +57,7 @@ const { splitPluginPromptRef } = require('./plugin-prompt-refs');
 //          append stem the operator supplies, so this reads as "here is the named
 //          thing to write". Promote it and every fresh team looks broken.
 const LEVELS = ['warn', 'note'];
-const KINDS = ['prompt', 'append', 'template', 'exec', 'verify'];
+const KINDS = ['prompt', 'append', 'template', 'exec', 'verify', 'mcp'];
 
 // Only `${TEAM_ROOT}` is expandable from a manifest alone. The exec runner also
 // substitutes ${CLODEX_BIN} and ${CLODEX_HOME} (session-manager, _handleExecIntent),
@@ -76,7 +76,7 @@ function isPluginRef(stem) {
 }
 
 // A role's prompt/template/exec/append names, checked against what is installed.
-// Order within a role is prompt → template → exec → append: severity-descending
+// Order within a role is prompt → template → exec → mcp → append: severity-descending
 // and stable, so a surface can render findings in arrival order without sorting.
 function teamPreflight(team, probes) {
   const findings = [];
@@ -91,6 +91,7 @@ function teamPreflight(team, probes) {
   const readExecDef = typeof p.readExecDef === 'function' ? p.readExecDef : () => null;
   const readTeamTemplate = typeof p.readTeamTemplate === 'function' ? p.readTeamTemplate : () => null;
   const exists = typeof p.exists === 'function' ? p.exists : () => false;
+  const readMcpEntry = typeof p.readMcpEntry === 'function' ? p.readMcpEntry : () => null;
 
   // Listed ONCE for the whole run, not per role: a team whose roles all name the
   // same template would otherwise re-read the template directory per role, and
@@ -251,6 +252,24 @@ function teamPreflight(team, probes) {
           // runs the wrong project's script for every other team, silently.
           level: 'warn', kind: 'exec', role, ref: raw, resolvedFrom: from,
           message: `role "${role}": exec command "${raw}" ${verb} ${abs}, which does not exist under this team's root`,
+        });
+      }
+    }
+
+    for (const raw of Array.isArray(tpl.mcpServers) ? tpl.mcpServers : []) {
+      if (!isNonEmptyString(raw)) continue;
+      let entry = null;
+      try { entry = readMcpEntry(raw); } catch { entry = null; }
+      if (!entry) {
+        findings.push({
+          level: 'warn', kind: 'mcp', role, ref: raw, resolvedFrom: null,
+          message: `role "${role}": template "${def.template}" selects MCP server "${raw}", which has no entry under library/mcp — add it in Library ▸ MCP Servers, or drop it from the template`,
+        });
+      }
+      if (role === 'reviewer') {
+        findings.push({
+          level: 'note', kind: 'mcp', role, ref: raw, resolvedFrom: null,
+          message: `role "reviewer": template "${def.template}" selects MCP server "${raw}", which a reviewer seat never loads`,
         });
       }
     }
