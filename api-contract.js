@@ -155,6 +155,7 @@ const API_CONTRACT = [
   { name: 'writeToSession', kind: 'send', channel: 'pty-input' },
   { name: 'seatSend', kind: 'invoke', channel: 'seat:send' },
   { name: 'seatImageUpload', kind: 'invoke', channel: 'seat:image-upload' },
+  { name: 'seatFileUpload', kind: 'invoke', channel: 'seat:file-upload' },
   { name: 'seatPermission', kind: 'invoke', channel: 'seat:permission' },
   { name: 'seatInterrupt', kind: 'invoke', channel: 'seat:interrupt' },
   { name: 'seatDraft', kind: 'send', channel: 'seat:draft' },

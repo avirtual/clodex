@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { utf8CutAt } = require('./file-peek');
 const { seatImageHead } = require('./seat-images');
+const { seatFileHead } = require('./seat-files');
 const { durableMessageCopyOf } = require('./file-resolve');
 
 const FILED_CAP = 50;
@@ -99,7 +100,7 @@ function seedFiledRing(ring, dirs) {
   }
   const sorted = [...found.values()].sort((a, b) => a.ts - b.ts);
   const take = sorted.slice(Math.max(0, sorted.length - ring.cap));
-  for (const e of take) ring.note({ ...e, head: seatImageHead(path.basename(e.path)) || firstLineOf(e.src) });
+  for (const e of take) ring.note({ ...e, head: seatImageHead(path.basename(e.path)) || seatFileHead(path.basename(e.path)) || firstLineOf(e.src) });
   return take.length;
 }
 
