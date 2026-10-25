@@ -130,6 +130,18 @@ test('an operator open this boot uses up the restore slot: the next peer-state d
   } finally { h.restore(); }
 });
 
+test('a refused operator open keeps the restore slot: the next peer-state still reopens it', () => {
+  const statuses = { p1: { online: true, webHost: null } };
+  const h = makeWiring({ peers: [DIRECT], statuses, peerWebOpen: { p1: {} } });
+  try {
+    h.sync();
+    assert.deepStrictEqual(h.wiring.openPeerWeb('p1'), { ok: false, error: 'this peer reports no web frontend' });
+    statuses.p1 = OPEN;
+    h.peerState('p1', OPEN);
+    assert.deepStrictEqual(h.windows.map((w) => w.key), ['peer:p1']);
+  } finally { h.restore(); }
+});
+
 test('a host without windows records nothing and restores nothing', () => {
   const h = makeWiring({ peers: [DIRECT, { id: 'p2', label: 'b2', sshHost: 'b2' }], statuses: { p1: OPEN, p2: OPEN }, peerWebOpen: { p1: {} }, persistWebWindows: false });
   try {

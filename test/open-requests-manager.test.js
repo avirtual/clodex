@@ -55,7 +55,7 @@ test('_setAttention broadcasts attention:changed on set and null on clear, keeps
   m._setAttention(s, PERM);
   m._setAttention(s, null);
   assert.deepStrictEqual(broadcasts, [
-    ['attention:changed', { name: 'alice', workspaceId: 'w1', attn: PERM }],
+    ['attention:changed', { name: 'alice', workspaceId: 'w1', attn: { kind: 'permission', ts: 7 } }],
     ['attention:changed', { name: 'alice', workspaceId: 'w1', attn: null }],
   ]);
   assert.deepStrictEqual(sent, [

@@ -483,13 +483,13 @@ function createPeerWiring(deps) {
   // the record and lets the module that owns the kind table decide.
   function openPeerWeb(id) {
     const key = String(id);
-    webRestored.add(key);
     const rec = (getUiSettings().get().peers || []).find((p) => p && String(p.id) === key);
     if (!rec) return { ok: false, error: 'no such peer' };
     const conn = getPeerManager() && getPeerManager().get(key);
     const st = conn ? conn.status() : null;
     const webHost = st && st.webHost;
     if (!webHost) return { ok: false, error: 'this peer reports no web frontend' };
+    webRestored.add(key);
     const tokenGated = webHost.tokenGated === true;
     // Asked of the supervisor, which owns the kind table — not re-derived here
     // from a `rec.sshHost || rec.ssm || …` chain, which is a list to forget a

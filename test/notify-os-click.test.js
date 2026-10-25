@@ -18,12 +18,14 @@ function notifySeam() {
 test('every operator OS notification click shows a window and opens the Requests list', () => {
   const seam = notifySeam();
   assert.match(seam, /const n = new Notification\(opts\);/);
+  assert.match(seam, /held\.add\(n\);/);
+  assert.match(seam, /n\.on\('close', \(\) => held\.delete\(n\)\);/);
   const click = seam.indexOf("n.on('click', () => {");
   const show = seam.search(/^\s*n\.show\(\);/m);
   assert.ok(click >= 0, 'a click handler is attached');
   assert.ok(show > click, 'the handler is attached before the notification is shown');
   const handler = seam.slice(click, show);
   assert.match(handler, /const win = BrowserWindow\.getFocusedWindow\(\) \|\| BrowserWindow\.getAllWindows\(\)\[0\];/);
-  assert.match(handler, /if \(win\) \{ win\.show\(\); win\.focus\(\); \}/, 'no window means no show/focus call, not a throw');
+  assert.match(handler, /if \(win\) \{ if \(win\.isMinimized\(\)\) win\.restore\(\); win\.show\(\); win\.focus\(\); \}/, 'no window means no show/focus call, not a throw');
   assert.match(handler, /sendToFocused\('request-open-inbox-drawer'\);/);
 });

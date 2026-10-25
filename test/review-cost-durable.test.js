@@ -843,6 +843,26 @@ test('an unwritable destination costs the row, not the verdict', async () => {
     'and the loss is logged: the seat is gone, so this round can never be priced again');
 });
 
+test('a report ticket with no taskDir writes COST.json under its tasks/<id> fallback; an escaping taskDir is refused', async () => {
+  const f = mkFixture({
+    gitWorktree: { listWorktrees: async () => ({ ok: false, worktrees: [] }), commitsOnBranch: async () => ({ ok: true, count: 0 }) },
+  });
+  const t = reviewingTicket(f);
+  delete t.taskDir;
+  t.done = 'report';
+  f.m._writeTicketCost(f.team, t);
+  const written = pathReal.join(clodexPaths.projectDirFor(f.home, f.team.root), 'tasks', 't1', 'COST.json');
+  for (let i = 0; i < 1000 && !fsReal.existsSync(written); i++) await new Promise((r) => setImmediate(r));
+  assert.ok(fsReal.existsSync(written), `COST.json must exist at ${written}`);
+  assert.strictEqual(JSON.parse(fsReal.readFileSync(written, 'utf8')).ticket, 't1');
+
+  const escaped = { ...t, id: 't2', taskDir: '../../../../etc/nope' };
+  f.m._writeTicketCost(f.team, escaped);
+  for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+  assert.ok(f.logs.some((l) => /COST\.json refused for t2/.test(l.msg)));
+  assert.ok(!fsReal.existsSync(pathReal.join(clodexPaths.projectDirFor(f.home, f.team.root), 'tasks', 't2')));
+});
+
 // --- t673: the A/B fields, end to end ----------------------------------------
 //
 // `template` and `wallMs` are read off the SAME captured record as `wireLabel`,

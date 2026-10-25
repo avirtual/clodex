@@ -75,3 +75,9 @@ test('BOTH edges that end the window drop that window\'s peer terminal wants', (
   assert.match(nav, /isMainFrame/, 'and only for the main frame');
   assert.match(nav, /isSameDocument/, 'and only across documents, so an in-page navigation cannot shed a live renderer\'s streams');
 });
+
+test('openRemoteWindow retitles a reused window only when the title is locked', () => {
+  const body = handlerBody(SRC, 'function openRemoteWindow(key, url, opts = {}) {');
+  assert.match(body, /if \(lockTitle\) existing\.setTitle\(title\);/);
+  assert.doesNotMatch(body, /if \(title\) existing\.setTitle/);
+});

@@ -1603,9 +1603,9 @@ test('remote-wiring send drops a dm client tag that names a live seat or a syste
     ['carol', 'user', 'plain', 'dm'],
   ]);
   assert.deepStrictEqual(logged.filter((l) => /client tag/.test(l[1])), [
-    ['remote', 'dm client tag refused: team'],
-    ['remote', 'dm client tag refused: carol'],
-    ['remote', 'dm client tag refused: x-loop'],
+    ['remote', 'client tag refused: team'],
+    ['remote', 'client tag refused: carol'],
+    ['remote', 'client tag refused: x-loop'],
   ]);
 });
 
@@ -1620,7 +1620,7 @@ test('remote-wiring send refuses a dm client tag that names a live seat in anoth
   const opts = captureOptions(deps);
   assert.deepStrictEqual(opts.send('carol', 'plain', [], 'codex'), { ok: true });
   assert.deepStrictEqual(delivered, [['carol', 'user', 'plain', 'dm']]);
-  assert.deepStrictEqual(logged.filter((l) => /client tag/.test(l[1])), [['remote', 'dm client tag refused: codex']]);
+  assert.deepStrictEqual(logged.filter((l) => /client tag/.test(l[1])), [['remote', 'client tag refused: codex']]);
 });
 
 test('POST /api/sessions/:name/dm: a delivery that throws on the box answers 500, and only an unknown seat is 404', async () => {

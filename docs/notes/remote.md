@@ -54,8 +54,7 @@ answer with its ORIGINAL `readAt`, which is what makes the route idempotent in
 the sense the app relies on.
 
 The same holds for `POST /api/inbox/reply/:id`: its `replied` frame comes from
-the store's `markReplied` emit, and its `attention` frames only from
-`notifyAttention`.
+the store's `markReplied` emit.
 
 ## notifyAttention
 
