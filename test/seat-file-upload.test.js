@@ -94,5 +94,5 @@ test('seat:file-upload that fails partway removes the files it already wrote', (
   assert.strictEqual(r.ok, false);
   assert.match(r.error, /EEXIST/);
   assert.deepStrictEqual(listing(dir), ['file-9000000000001-2-passwd']);
-  assert.deepStrictEqual(f.manager.sessions.get('st').filedRing.list(), []);
+  assert.strictEqual(f.manager.sessions.get('st').filedRing.size(), 0);
 });
