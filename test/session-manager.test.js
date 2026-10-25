@@ -22093,7 +22093,7 @@ test('assistant wake: a sibling of another template does not count toward the ca
   assert.strictEqual(calls.length, 1);
 });
 
-test('assistant wake: makeAwakeRoom reserves a granted seat until it is live, so two wakes at cap-1 cannot both enter', async (t) => {
+test('assistant wake: makeAwakeRoom reserves a granted seat until it is live and releaseAwakeRoom frees it, so two wakes at cap-1 cannot both enter', async (t) => {
   const busy = capHarness({ s1: 'tpl-a' }, ['x', 'y']);
   t.after(() => busy.h.stopAll());
   busy.h.m.sessions.set('s1', { name: 's1', activityTs: 100, streamBusy: true });
