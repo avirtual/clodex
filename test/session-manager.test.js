@@ -14405,6 +14405,73 @@ test('_deliverReminder: live session → injected via the DM path, returns "deli
   assert.strictEqual(hasPending(PENDING_DIR, 't1'), false); // live → not parked
 });
 
+function mkReminderWake(persisted, { wakeImpl = null } = {}) {
+  const order = [];
+  const warns = [];
+  const wakeCalls = [];
+  const h = mkDeliver({
+    persisted,
+    deps: {
+      parkDelivery: (...a) => { order.push('park'); return parkDelivery(...a); },
+      log: { info: () => {}, warn: (...a) => warns.push(a.join(' ')), error: () => {} },
+    },
+  });
+  let pendingAtWake = null;
+  h.m.wake = (...a) => {
+    wakeCalls.push(a);
+    order.push('wake');
+    pendingAtWake = hasPending(h.PENDING_DIR, 't1');
+    return wakeImpl ? wakeImpl() : Promise.resolve({ ok: true, state: 'awake' });
+  };
+  return { ...h, order, warns, wakeCalls, pendingAtWake: () => pendingAtWake };
+}
+
+const WAKE_REC = { name: 't1', type: 'claude', class: 'assistant', sleep: { idleMs: 1, wakeOn: ['message', 'reminder'] } };
+
+test('_deliverReminder: an asleep assistant with wakeOn reminder parks first, then wakes', () => {
+  const h = mkReminderWake(WAKE_REC);
+  assert.strictEqual(h.m._deliverReminder('t1', '[ab12 in 1h] mail'), 'waking');
+  assert.deepStrictEqual(h.order, ['park', 'wake']);
+  assert.strictEqual(h.pendingAtWake(), true);
+  assert.deepStrictEqual(h.wakeCalls, [['t1', { reason: 'reminder' }]]);
+});
+
+test('_deliverReminder: without wakeOn reminder, or without the class, a sleeper only parks', () => {
+  const rows = [
+    { ...WAKE_REC, sleep: { idleMs: 1, wakeOn: ['message'] } },
+    { ...WAKE_REC, sleep: { idleMs: 1 } },
+    { name: 't1', type: 'claude', sleep: { wakeOn: ['reminder'] } },
+  ];
+  for (const rec of rows) {
+    const h = mkReminderWake(rec);
+    assert.strictEqual(h.m._deliverReminder('t1', '[ab12 in 1h] mail'), 'parked', JSON.stringify(rec));
+    assert.deepStrictEqual(h.wakeCalls, []);
+    assert.strictEqual(hasPending(h.PENDING_DIR, 't1'), true);
+  }
+});
+
+test('_deliverReminder: a closing assistant seat parks and wakes; a dead plain seat parks; nothing is injected', () => {
+  const closing = mkReminderWake(WAKE_REC);
+  closing.m.sessions.set('t1', { name: 't1', agentType: 'claude', io: 'stream', _archived: true });
+  assert.strictEqual(closing.m._deliverReminder('t1', '[ab12 in 1h] mail'), 'waking');
+  assert.deepStrictEqual(closing.injected, []);
+  const dead = mkReminderWake({ name: 't1', type: 'claude' });
+  dead.m.sessions.set('t1', { name: 't1', agentType: 'claude', _dead: true });
+  assert.strictEqual(dead.m._deliverReminder('t1', '[ab12 in 1h] mail'), 'parked');
+  assert.deepStrictEqual(dead.injected, []);
+});
+
+test('_deliverReminder: a rejected wake still answers waking and only logs', async () => {
+  const h = mkReminderWake(WAKE_REC, { wakeImpl: () => Promise.reject(new Error('no slot')) });
+  assert.strictEqual(h.m._deliverReminder('t1', '[ab12 in 1h] mail'), 'waking');
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(h.warns, ['intent remind wake for t1 failed: no slot']);
+  const refused = mkReminderWake(WAKE_REC, { wakeImpl: () => Promise.resolve({ ok: false, error: 'at capacity' }) });
+  refused.m._deliverReminder('t1', '[ab12 in 1h] mail');
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(refused.warns, ['intent remind wake for t1 failed: at capacity']);
+});
+
 test('_deliverReminder: offline WITH a persistence entry → parked (drains on resume)', () => {
   const { m, PENDING_DIR } = mkDeliver({ persisted: { name: 't1', type: 'claude' } });
   // sessions map is EMPTY (agent exited naturally / not yet restored).
@@ -21835,7 +21902,7 @@ test('awaitTurn + _resolveTurnWaiters: the next result resolves the armed waiter
   h.line('asst', { ...RESULT, result: 'ok\n[agent:memory remember] x\nbye' });
   const turn = await p;
   assert.strictEqual(typeof turn.ts, 'number');
-  assert.deepStrictEqual(turn, { text: 'ok\nbye', intents: [{ type: 'memory', sub: 'remember' }], costUsd: 0, durationMs: 1, isError: false, ts: turn.ts });
+  assert.deepStrictEqual(turn, { text: 'ok\nbye', intents: [{ type: 'memory', sub: 'remember' }], refs: [], costUsd: 0, durationMs: 1, isError: false, ts: turn.ts });
   assert.deepStrictEqual(turns, [['asst', turn]]);
   let late = 'pending';
   h.m.awaitTurn('asst', { timeoutMs: 5000 }).then((v) => { late = v; });
@@ -21845,6 +21912,68 @@ test('awaitTurn + _resolveTurnWaiters: the next result resolves the armed waiter
   await h.create('plain');
   h.line('plain', { ...RESULT, result: 'x' });
   assert.strictEqual(turns.length, 1);
+});
+
+test('turn refs: a turn answers every ref written since the previous result, joined writes share one turn', async (t) => {
+  const turns = [];
+  const remote = { notifyTurn: (n, turn) => turns.push(turn.refs) };
+  const h = mkStreamSeatManager({ persisted: { asst: { ...ASSISTANT_ROW } }, extraDeps: { getRemoteServer: () => remote } });
+  t.after(() => h.stopAll());
+  await h.create('asst');
+  const s = h.m.sessions.get('asst');
+  h.m._deliverMessage('asst', 'user', 'a', 'dm', '(via avh)', null, null, null, null, 'r1');
+  assert.strictEqual(h.handles[0].sent.length, 1, 'ENTER: written at once');
+  const armed = h.m.awaitTurn('asst', { timeoutMs: 5000 });
+  h.line('asst', { ...RESULT, result: 'one' });
+  assert.deepStrictEqual((await armed).refs, ['r1']);
+  h.line('asst', { ...RESULT, result: 'unsolicited' });
+  assert.deepStrictEqual(turns, [['r1'], []]);
+  turns.length = 0;
+  h.m._deliverMessage('asst', 'user', 'b', 'dm', '(via avh)', null, null, null, null, 'r1');
+  h.m._deliverMessage('asst', 'user', 'c', 'dm', '(via avh)', null, null, null, null, 'r2');
+  h.m._deliverMessage('asst', 'user', 'd', 'dm', '(via avh)', null, null, null, null, 'r3');
+  assert.strictEqual(s.outbox.length, 2, 'ENTER: two dms queue behind the running turn');
+  h.line('asst', { ...RESULT, result: 'two' });
+  assert.strictEqual(s.outbox.length, 0, 'the drain wrote both');
+  h.line('asst', { ...RESULT, result: 'three' });
+  assert.deepStrictEqual(turns, [['r1'], ['r2', 'r3']]);
+});
+
+test('turn refs: an item without a ref has no own key, and the close drops pending refs', async (t) => {
+  const h = mkStreamSeatManager({ persisted: { asst: { ...ASSISTANT_ROW } } });
+  t.after(() => h.stopAll());
+  await h.create('asst');
+  const s = h.m.sessions.get('asst');
+  h.m._deliverMessage('asst', 'user', 'a', 'dm', '(via avh)', null, null, null, null, 'r1');
+  h.m._deliverMessage('asst', 'user', 'b', 'dm', '(via avh)');
+  h.m._deliverMessage('asst', 'user', 'c', 'dm', '(via avh)', null, null, null, null, 'r2');
+  assert.deepStrictEqual(Object.keys(s.outbox[0]), ['text', 'images', 'origin']);
+  assert.strictEqual(s.outbox[1].ref, 'r2', 'ENTER: the ref rides the queued item');
+  assert.deepStrictEqual(Object.keys(s.outbox[1]), ['text', 'images', 'origin']);
+  assert.deepStrictEqual(s._turnRefs, ['r1']);
+  h.m._onStreamEvent(s, { close: { code: 0 } }, () => {}, () => {});
+  assert.deepStrictEqual(s._turnRefs, []);
+});
+
+test('assistant wake: single-flight — racing callers share one restart, a settled or rejected wake clears the slot', async (t) => {
+  const calls = [];
+  const h = mkStreamSeatManager({
+    persisted: { asst: { ...ASSISTANT_ROW, archivedAt: 1, asleepAt: 2 } },
+    extraDeps: { restartSession: async (...a) => { calls.push(a); await new Promise((r) => setImmediate(r)); return { ok: true }; } },
+  });
+  t.after(() => h.stopAll());
+  const outs = await Promise.all([h.m.wake('asst'), h.m.wake('asst')]);
+  assert.deepStrictEqual(outs, [{ ok: true, state: 'awake' }, { ok: true, state: 'awake' }]);
+  assert.strictEqual(calls.length, 1);
+  assert.deepStrictEqual(await h.m.wake('asst'), { ok: true, state: 'awake' });
+  assert.strictEqual(calls.length, 2, 'a settled wake leaves no slot behind');
+  const real = h.m._wakeNow;
+  h.m._wakeNow = async () => { throw new Error('boom'); };
+  await assert.rejects(h.m.wake('asst'), /boom/);
+  assert.strictEqual(h.m._wakesInFlight.has('asst'), false);
+  h.m._wakeNow = real;
+  await h.m.wake('asst');
+  assert.strictEqual(calls.length, 3);
 });
 
 test('awaitTurn + _dropTurnWaiters: a timeout or the seat closing answers null; a pty seat is never armed', async (t) => {

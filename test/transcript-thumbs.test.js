@@ -32,7 +32,7 @@ function wiredTranscript({ thumbnail, messages }) {
     DEFAULT_WORKSPACE_ID: 'default',
     AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
     REGISTRY_DIR, OUTBOX_DIR: path.join(tmp, 'outbox'), SELF_LABEL: 'testbox',
-    parseCtxFile: () => null, cachedMessages: () => messages, sliceSince,
+    parseCtxFile: () => null, cachedMessages: () => messages, jsonlToMessages: () => [], sliceSince,
     ensureDir: () => {}, homeRelativize: (x) => x,
     claimOutbox: () => [], listOutboxOrigins: () => [],
     manager: { sessions: new Map([['alice', { agentType: 'claude' }]]), create: async () => ({}) },

@@ -31,7 +31,7 @@ function wireDoors({ seatIntents = undefined } = {}) {
     OUTBOX_DIR: '/tmp/outbox',
     SELF_LABEL: 'testbox',
     parseCtxFile: () => null,
-    cachedMessages: () => [],
+    cachedMessages: () => [], jsonlToMessages: () => [],
     sliceSince: () => ({ messages: [] }),
     ensureDir: () => {},
     homeRelativize: (x) => x,
