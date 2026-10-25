@@ -1595,17 +1595,17 @@ test('sendInput refuses a stream seat instead of writing bytes the manager would
   assert.deepStrictEqual(writes, [['alice', 'hi']]);
 });
 
-test('remote-wiring send threads dm images onto _deliverMessage, and a text-only send keeps its old call shape', () => {
+test('remote-wiring send threads dm images onto _deliverMessage, and a text-only send keeps its old call shape', async () => {
   const { deps } = makeDeps();
   const delivered = [];
   deps.manager.sessions.set('carol', { name: 'carol', type: 'claude', agentType: 'claude', workspaceId: 'ws-alpha' });
   deps.manager._deliverMessage = (...a) => { delivered.push(a); };
   const opts = captureOptions(deps);
   const png = { mediaType: 'image/png', data: 'UE5H' };
-  assert.deepStrictEqual(opts.send('carol', 'look', [png]), { ok: true });
-  assert.deepStrictEqual(opts.send('carol', 'plain', []), { ok: true });
-  assert.deepStrictEqual(opts.send('carol', 'look', [png], 'ios'), { ok: true });
-  assert.deepStrictEqual(opts.send('carol', 'plain', [], 'ios'), { ok: true });
+  assert.deepStrictEqual(await opts.send('carol', 'look', [png]), { ok: true });
+  assert.deepStrictEqual(await opts.send('carol', 'plain', []), { ok: true });
+  assert.deepStrictEqual(await opts.send('carol', 'look', [png], 'ios'), { ok: true });
+  assert.deepStrictEqual(await opts.send('carol', 'plain', [], 'ios'), { ok: true });
   assert.deepStrictEqual(delivered, [
     ['carol', 'user', 'look', 'dm', '', null, null, [png]],
     ['carol', 'user', 'plain', 'dm'],
@@ -1613,10 +1613,10 @@ test('remote-wiring send threads dm images onto _deliverMessage, and a text-only
     ['carol', 'user', 'plain', 'dm', '(via ios)'],
   ]);
   deps.manager._deliverMessage = () => { throw new Error('ENOSPC: no space left on device'); };
-  assert.deepStrictEqual(opts.send('carol', 'look', [png]), { ok: false, code: 500, error: 'delivery failed: ENOSPC: no space left on device' });
+  assert.deepStrictEqual(await opts.send('carol', 'look', [png]), { ok: false, code: 500, error: 'delivery failed: ENOSPC: no space left on device' });
 });
 
-test('remote-wiring send drops a dm client tag that names a live seat or a system sender, and logs it', () => {
+test('remote-wiring send drops a dm client tag that names a live seat or a system sender, and logs it', async () => {
   const { deps } = makeDeps();
   const delivered = [];
   const logged = [];
@@ -1624,7 +1624,7 @@ test('remote-wiring send drops a dm client tag that names a live seat or a syste
   deps.manager._deliverMessage = (...a) => { delivered.push(a); };
   deps.log.info = (...a) => { logged.push(a); };
   const opts = captureOptions(deps);
-  for (const client of ['ios', 'team', 'carol', 'x-loop']) assert.deepStrictEqual(opts.send('carol', 'plain', [], client), { ok: true });
+  for (const client of ['ios', 'team', 'carol', 'x-loop']) assert.deepStrictEqual(await opts.send('carol', 'plain', [], client), { ok: true });
   assert.deepStrictEqual(delivered, [
     ['carol', 'user', 'plain', 'dm', '(via ios)'],
     ['carol', 'user', 'plain', 'dm'],
@@ -1638,7 +1638,7 @@ test('remote-wiring send drops a dm client tag that names a live seat or a syste
   ]);
 });
 
-test('remote-wiring send refuses a dm client tag that names a live seat in another case', () => {
+test('remote-wiring send refuses a dm client tag that names a live seat in another case', async () => {
   const { deps } = makeDeps();
   const delivered = [];
   const logged = [];
@@ -1647,7 +1647,7 @@ test('remote-wiring send refuses a dm client tag that names a live seat in anoth
   deps.manager._deliverMessage = (...a) => { delivered.push(a); };
   deps.log.info = (...a) => { logged.push(a); };
   const opts = captureOptions(deps);
-  assert.deepStrictEqual(opts.send('carol', 'plain', [], 'codex'), { ok: true });
+  assert.deepStrictEqual(await opts.send('carol', 'plain', [], 'codex'), { ok: true });
   assert.deepStrictEqual(delivered, [['carol', 'user', 'plain', 'dm']]);
   assert.deepStrictEqual(logged.filter((l) => /client tag/.test(l[1])), [['remote', 'client tag refused: codex']]);
 });
