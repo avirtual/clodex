@@ -17,6 +17,18 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 const { processStubs } = require('./lib/process-stubs');
 const { mk, mkPark, mkTeamCreate } = require('./lib/session-fixtures');
 
+const realProcessKill = process.kill;
+const strayKills = [];
+const spawnedByThisRun = (target) => {
+  try { return Number(require('node:child_process').execFileSync('ps', ['-o', 'ppid=', '-p', String(target)], { encoding: 'utf8' }).trim()) === process.pid; } catch { return false; }
+};
+process.kill = function guardedKill(pid, sig) {
+  const target = Math.abs(Number(pid));
+  if (sig === 0 || (target > 0 && target !== process.pid && spawnedByThisRun(target))) return realProcessKill.call(process, pid, sig);
+  strayKills.push({ pid, sig });
+  return true;
+};
+
 function fakeWin({ destroyed = false, focused = false } = {}) {
   const win = {
     sent: [], shown: false, focusedCalled: false,
@@ -24549,4 +24561,9 @@ test('_awakeAssistantRows: a live seat without the assistant flag costs no recor
   h.store.get = (n) => { gets.push(n); return realGet(n); };
   assert.deepStrictEqual(h.m._awakeAssistantRows(null), []);
   assert.deepStrictEqual(gets, ['a1'], 'ENTER: the flagged seat was looked up');
+});
+
+test('no test in this file signalled a pid it did not spawn', () => {
+  process.kill = realProcessKill;
+  assert.deepStrictEqual(strayKills, []);
 });
