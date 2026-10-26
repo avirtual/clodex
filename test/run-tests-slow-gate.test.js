@@ -332,6 +332,17 @@ test('slow gate: the re-time cap defaults to twelve, and the knob never reaches 
     'a cap exported to the outer run would otherwise shrink the re-time sample of every nested runner');
 });
 
+test('slow gate: past the cap, when the run deadline skips every sample the summary says none were re-timed', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'scripts', 'run-tests.js'), 'utf8');
+  const m = src.match(/^function retimedSummary\(cap, expiredCount, cleared\) \{\n[\s\S]*?\n\}$/m);
+  assert.ok(m, 'ENTER: the summary phrase is built by retimedSummary');
+  const retimedSummary = new Function(`${m[0]}\nreturn retimedSummary;`)();
+  assert.strictEqual(retimedSummary(2, 2, 0), 're-timed none of the 2 slowest alone (the run deadline had passed)');
+  assert.strictEqual(retimedSummary(12, 12, 0), 're-timed none of the 12 slowest alone (the run deadline had passed)');
+  assert.strictEqual(retimedSummary(2, 1, 0),
+    're-timed 1 of the 2 slowest alone (the rest hit the run deadline) and 0 of 1 cleared');
+});
+
 test('slow gate: past the cap, the slowest clear alone and the run passes', () => {
   const rows = [['crowd a', 200], ['crowd b', 250], ['crowd m', 40]];
   const r = runRunner({

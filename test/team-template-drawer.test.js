@@ -203,7 +203,3 @@ test('the by-name template consumers fence team rows out', () => {
   assert.ok(/listTemplates: \(\) => \(listAllTemplates \? listAllTemplates\(\)\.filter\(\(t\) => !t\.team\)/.test(ipc),
     'team:preflight is handed library+plugin rows only; its team copy comes from readTeamTemplate');
 });
-
-// createEngine starts background timers that keep the loop alive.
-const { after } = require('node:test');
-after(() => { setImmediate(() => process.exit(0)); });
