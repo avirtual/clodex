@@ -808,7 +808,7 @@ function randBase36(len) {
 }
 const { ctxReminderFor, ctxThresholdsFor, CTX_THRESHOLD_MIN } = require('./ctx-reminder');
 const { bakePrompt, promptCacheDir, readCache, ipcDelta } = require('./ipc-prompt-cache');
-const { enqueueNotice, versionNoticeFor, releaseReviewNoticeFor, clearNotices } = require('./notice-queue');
+const { enqueueNotice, versionNoticeFor, releaseReviewNoticeFor, releasesClodex, clearNotices } = require('./notice-queue');
 const { buildSkillPlugin, skillMd, parseSkillFrontmatter, unresolvedSubagentRefs } = require('./skills-util');
 const { classifySkillRoster, emptyRoster, listedRosterNames } = require('./skill-roster');
 // Must stay below the skills-util require: the deps read buildSkillPlugin and
@@ -1150,6 +1150,7 @@ const SessionManager = createSessionManager({
     enqueueNotice,
     versionNoticeFor,
     releaseReviewNoticeFor,
+    releasesClodex,
     clearNotices,
     appVersion,
     diagSummary,

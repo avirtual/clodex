@@ -625,6 +625,7 @@ function createSessionManager(deps) {
     enqueueNotice,
     versionNoticeFor,
     releaseReviewNoticeFor,
+    releasesClodex,
     clearNotices,
     appVersion,
     diagSummary,
@@ -1880,7 +1881,7 @@ function createSessionManager(deps) {
               if (notice) enqueueNotice(REGISTRY_DIR, name, notice);
               const team = (() => { try { return this._teamOf({ name, cwd }); } catch { return null; } })();
               const isLead = !!(team && team.lead === name);
-              if (isLead) {
+              if (isLead && releasesClodex(team.root)) {
                 const review = releaseReviewNoticeFor(existingEntry && existingEntry.appVersion, appVersion);
                 if (review) enqueueNotice(REGISTRY_DIR, name, review);
               }
