@@ -15,7 +15,6 @@ blocks a release.
 ## Unreleased
 - In the New Session and template dialogs, changing the CLI type, placement or folder keeps the grants you ticked or unticked, instead of restoring the template's saved ones.
 - The slow-test gate no longer fails a green run when more than 12 tests ran slow on a busy machine: it re-times the 12 slowest alone, and if all of them pass, the run passes.
-
 - Forgetting an assistant seat, or purging its workspace, now removes its client token, brief and memory, so a later seat with the same name starts clean. A create without a client token clears any stale one.
 - Retrying an exited or failed assistant from the sidebar resumes its conversation again (5.145.0 restarted it fresh). The phone restart route wakes a sleeping assistant properly and respects the awake cap.
 
