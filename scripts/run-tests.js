@@ -464,6 +464,7 @@ const retime = process.env.CLODEX_TEST_SLOW_RETIME !== '0';
 const timed = advisory ? [] : offenders;
 const load = [];
 let unsampled = [];
+let sampled = 0;
 if (retime && timed.length) {
   const sample = timed.length <= RETIME_CAP
     ? timed
@@ -475,9 +476,8 @@ if (retime && timed.length) {
     const alone = retimeAlone(o, i, files, deadline);
     if (alone !== null && alone <= slowLimit) load.push({ o, alone });
   });
-  if (sample !== timed && load.length === sample.length) {
-    unsampled = timed.filter((o) => !sample.includes(o));
-  }
+  sampled = sample.length;
+  if (sample !== timed) unsampled = timed.filter((o) => !sample.includes(o));
 }
 const enforced = timed.filter((o) => !load.some((l) => l.o === o) && !unsampled.includes(o));
 
@@ -561,7 +561,8 @@ for (const o of unsampled) {
 }
 if (unsampled.length) {
   console.log(`SLOW (load): ${timed.length} offenders over the cap of ${RETIME_CAP}; `
-    + `re-timed the ${load.length} slowest alone and all ${load.length} cleared, so the rest are not enforced`);
+    + `re-timed the ${sampled} slowest alone and ${load.length === sampled ? 'all ' : ''}${load.length}`
+    + `${load.length === sampled ? '' : ` of ${sampled}`} cleared; the rest are not re-timed (over cap), so not enforced`);
 }
 
 console.log(`\nTOTALS: ${pass} pass, ${fail} fail, ${tests} tests`);

@@ -350,7 +350,7 @@ test('slow gate: past the cap, the slowest clear alone and the run passes', () =
   assert.ok(!/^SLOW: /m.test(stdout), 'nothing is enforced');
 });
 
-test('slow gate: past the cap, one sampled offender slow alone enforces the unsampled ones too', () => {
+test('slow gate: past the cap, one sampled offender slow alone is enforced alone, the unsampled stay on the load line', () => {
   const rows = [['crowd a', 200], ['crowd m', 40]];
   const r = runRunner({
     files: {
@@ -364,8 +364,9 @@ test('slow gate: past the cap, one sampled offender slow alone enforces the unsa
   assert.match(stdout, /TOTALS: 4 pass, 0 fail/, 'ENTER: the run itself must be green');
   assert.notStrictEqual(r.code, 0, 'a sampled test slow on its own fails the run');
   assert.match(stdout, /^SLOW: \d+ms crowd always slow$/m);
-  assert.match(stdout, /^SLOW: \d+ms crowd m$/m, 'the unsampled offender is enforced, not excused');
-  assert.ok(!/not re-timed/.test(stdout), 'nothing is excused unsampled');
+  assert.strictEqual((stdout.match(/^SLOW: \d+ms /gm) || []).length, 1, 'only the failed sample is enforced');
+  assert.match(stdout, /^SLOW \(load, not re-timed\): \d+ms crowd m$/m, 'the unsampled offender is not enforced');
+  assert.match(stdout, /^SLOW \(load\): 3 offenders over the cap of 2; re-timed the 2 slowest alone and 1 of 2 cleared; the rest are not re-timed \(over cap\)/m);
   assert.match(stdout, /^SLOW \(load, re-timed alone\): \d+ms → \d+ms crowd a$/m,
     'ENTER: the sampled first-run-only offender still cleared');
 });
