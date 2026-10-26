@@ -57,6 +57,7 @@ function git(cwd, args) {
 // The shapes are the ones ticket-loop-verify copied off a real run of
 // scripts/run-tests.js; only the three this file needs are here.
 const MERGE_SLOW = 'composite: pooling lets a big corpus SILENCE a small one, merging does not';
+const MERGE_SLOW_OTHER = 'peering: a cold handshake retries once before it gives up';
 
 const SUITE_STUBS = {
   green: 'console.log("TOTALS: 5 pass, 0 fail, 5 tests");\nprocess.exit(0);\n',
@@ -64,6 +65,18 @@ const SUITE_STUBS = {
     + 'console.log("SLOW: inject the clock or constant through a seam, or list the test in test/slow-tests.json with the mechanism it waits on");\n'
     + 'console.log("TOTALS: 8050 pass, 0 fail, 8050 tests");\n'
     + `console.error(" \\u2716 ${MERGE_SLOW} (6042ms)");\n`
+    + 'process.exit(1);\n',
+  slowgateTwo: `console.log("SLOW: 6042ms ${MERGE_SLOW}");\n`
+    + `console.log("SLOW: 6100ms ${MERGE_SLOW_OTHER}");\n`
+    + 'console.log("TOTALS: 8050 pass, 0 fail, 8050 tests");\n'
+    + `console.error(" \\u2716 ${MERGE_SLOW} (6042ms)");\n`
+    + `console.error(" \\u2716 ${MERGE_SLOW_OTHER} (6100ms)");\n`
+    + 'process.exit(1);\n',
+  redslow: `console.log("SLOW: 6042ms ${MERGE_SLOW}");\n`
+    + 'console.log("Failed tests:");\n'
+    + 'console.log("\\u2716 the merge broke this (1.15ms)");\n'
+    + `console.log("\\u2716 ${MERGE_SLOW} (6042ms)");\n`
+    + 'console.log("TOTALS: 8048 pass, 2 fail, 8050 tests");\n'
     + 'process.exit(1);\n',
   red: 'console.log(".XX");\nconsole.log("");\nconsole.log("Failed tests:");\nconsole.log("");\n'
     + 'console.log("\\u2716 the merge broke this (1.15ms)");\n'
@@ -2007,7 +2020,7 @@ test('an UNOWNED slow gate after the merge does NOT revert: the merge stands and
   assert.ok(notes[0].body.includes(MERGE_SLOW), 'naming the test');
 });
 
-test('an OWNED slow gate after the merge still reverts', async () => {
+test('an OWNED slow gate after the merge does NOT revert: the merge stands and the notice names the owned test', async () => {
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
   commitOnBranch(repo.dir, 'tl-1', 'test/mine.test.js', `test('${MERGE_SLOW}', () => {});\n`);
@@ -2015,12 +2028,46 @@ test('an OWNED slow gate after the merge still reverts', async () => {
 
   await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
 
+  assert.ok(fsReal.existsSync(pathReal.join(repo.dir, 'work.txt')), 'the merge stands');
+  assert.ok(fsReal.existsSync(pathReal.join(repo.dir, 'test', 'mine.test.js')), 'including the owned test');
+  assert.deepStrictEqual(f.esc(), [], 'and no escalation is spent on it');
+  const notes = f.landed();
+  assert.strictEqual(notes.length, 1, 'ENTER: the MERGED notice went out');
+  assert.ok(notes[0].body.includes(
+    `slow gate tripped by tests this diff touched (load-only, 0 failing; merge kept): ${MERGE_SLOW}`), notes[0].body);
+  assert.ok(!/slow gate tripped by tests outside this diff/.test(notes[0].body), 'no unowned line when none is unowned');
+});
+
+test('a slow gate with owned AND unowned names keeps the merge and names each on its own line', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  commitOnBranch(repo.dir, 'tl-1', 'test/mine.test.js', `test('${MERGE_SLOW}', () => {});\n`);
+  const f = mkMerge({ repo, suite: 'slowgateTwo' });
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.ok(fsReal.existsSync(pathReal.join(repo.dir, 'work.txt')), 'the merge stands');
+  assert.deepStrictEqual(f.esc(), []);
+  const notes = f.landed();
+  assert.strictEqual(notes.length, 1, 'ENTER: the MERGED notice went out');
+  const lines = notes[0].body.split('\n');
+  assert.ok(lines.includes(
+    `slow gate tripped by tests this diff touched (load-only, 0 failing; merge kept): ${MERGE_SLOW}`), notes[0].body);
+  assert.ok(lines.includes(`slow gate tripped by tests outside this diff: ${MERGE_SLOW_OTHER}`), notes[0].body);
+});
+
+test('a failing test plus SLOW lines after the merge still reverts', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, suite: 'redslow' });
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
   assert.ok(!fsReal.existsSync(pathReal.join(repo.dir, 'work.txt')), 'the merge is reverted');
-  assert.ok(!fsReal.existsSync(pathReal.join(repo.dir, 'test', 'mine.test.js')), 'including the owned test');
   const esc = f.esc();
   assert.strictEqual(esc.length, 1, 'ENTER: exactly one escalation');
-  assert.match(esc[0].body, /SLOW GATE/);
-  assert.ok(esc[0].body.includes(MERGE_SLOW), 'naming the owned test');
+  assert.match(esc[0].body, /the merge broke this/);
+  assert.match(esc[0].body, /REVERTED/);
   assert.deepStrictEqual(f.landed(), [], 'a reverted merge is never announced as landed');
 });
 
