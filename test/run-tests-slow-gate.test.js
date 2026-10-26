@@ -34,6 +34,7 @@ function runRunner({
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
   delete env.CLODEX_TEST_SLOW_ADVISORY;
+  delete env.CLODEX_TEST_SLOW_RETIME;
   if (slowMs !== null) env.CLODEX_TEST_SLOW_MS = String(slowMs);
   if (extraEnv) Object.assign(env, extraEnv);
   try {
@@ -248,4 +249,102 @@ test('slow gate: test/slow-tests.json carries the instance-label engine entry ve
     + 'stale entry on a sweeping run and the test it was meant to exempt still fails the gate');
   assert.match(String(raw[key]), /createEngine/,
     'the value is the mechanism the test genuinely waits on, which is what the next reader judges');
+});
+
+const firstRunOnly = (name, ms, marker) => `require('node:test').test(${JSON.stringify(name)}, () => {\n`
+  + `  const m = require('node:path').join(__dirname, ${JSON.stringify(marker)});\n`
+  + '  if (require(\'node:fs\').existsSync(m)) return;\n'
+  + '  require(\'node:fs\').writeFileSync(m, \'\');\n'
+  + `  ${block(ms)}});\n`;
+
+const stdoutOf = (r) => r.out.slice(0, r.out.length - r.stderr.length);
+
+test('slow gate: a test slow only on its first run is re-timed alone and does not fail the run', () => {
+  const r = runRunner({
+    files: { 'test/once.test.js': firstRunOnly('the loaded subject', 400, '.once') },
+    slowMs: 150,
+  });
+  const stdout = stdoutOf(r);
+  assert.match(stdout, /TOTALS: 2 pass, 0 fail/, 'ENTER: the run itself must be green');
+  assert.strictEqual(r.code, 0, 'a test that is fast on its own was slow because of the box');
+  assert.match(stdout, /^SLOW \(load, re-timed alone\): \d+ms → \d+ms the loaded subject$/m,
+    'the re-timed test is named with both durations');
+  assert.ok(!/^SLOW: /m.test(stdout), 'nothing is enforced');
+  assert.ok(!/✖ the loaded subject/.test(r.stderr), 'and the digest sees no failing test');
+  const lines = stdout.split('\n');
+  const totals = lines.map((l, i) => (/^TOTALS: \d+ pass, \d+ fail, \d+ tests$/.test(l) ? i : -1))
+    .filter((i) => i >= 0);
+  assert.strictEqual(lines[totals[totals.length - 1]], 'TOTALS: 2 pass, 0 fail, 2 tests',
+    'the last TOTALS line is the main run\'s, which the merge gate reads');
+  assert.ok(lines.findIndex((l) => l.startsWith('SLOW (load')) < totals[totals.length - 1],
+    'the re-time output sits above the TOTALS line');
+});
+
+test('slow gate: a test slow on every run is still enforced after its re-time', () => {
+  const r = runRunner({
+    files: { 'test/slow.test.js': sleeper('the slow subject', 400) },
+    slowMs: 150,
+  });
+  assert.match(r.out, /TOTALS: 2 pass, 0 fail/, 'ENTER: the run itself must be green');
+  assert.notStrictEqual(r.code, 0, 'a test slow on its own is a slow test');
+  assert.match(r.out, /^SLOW: \d+ms the slow subject$/m, 'and is named on the enforcing line');
+  assert.ok(!/re-timed alone/.test(r.out), 'it is not excused as load');
+});
+
+test('slow gate: CLODEX_TEST_SLOW_RETIME=0 enforces a first-run-only slow test', () => {
+  const r = runRunner({
+    files: { 'test/once.test.js': firstRunOnly('the loaded subject', 400, '.once') },
+    slowMs: 150,
+    extraEnv: { CLODEX_TEST_SLOW_RETIME: '0' },
+  });
+  assert.match(r.out, /TOTALS: 2 pass, 0 fail/, 'ENTER: the run itself must be green');
+  assert.notStrictEqual(r.code, 0, 'with the re-time off the gate behaves as before it existed');
+  assert.match(r.out, /^SLOW: \d+ms the loaded subject$/m);
+  assert.ok(!/re-timed alone/.test(r.out));
+});
+
+test('slow gate: offenders in two files are each re-timed against their own file', () => {
+  const r = runRunner({
+    files: {
+      'test/one.test.js': `${FAST}${firstRunOnly('subject in one', 400, '.one')}`,
+      'test/two.test.js': firstRunOnly('subject in two', 400, '.two'),
+    },
+    slowMs: 150,
+  });
+  assert.match(r.out, /TOTALS: 4 pass, 0 fail/, 'ENTER: the run itself must be green');
+  assert.strictEqual(r.code, 0, r.out.slice(-800));
+  assert.match(r.out, /^SLOW \(load, re-timed alone\): \d+ms → \d+ms subject in one$/m);
+  assert.match(r.out, /^SLOW \(load, re-timed alone\): \d+ms → \d+ms subject in two$/m);
+});
+
+test('slow gate: more than twelve offenders skips the re-time and enforces them all', () => {
+  const names = Array.from({ length: 13 }, (_, i) => `crowd ${i}`);
+  const r = runRunner({
+    files: { 'test/crowd.test.js': names.map((n, i) => firstRunOnly(n, 150, `.crowd${i}`)).join('') },
+    slowMs: 100,
+  });
+  assert.match(r.out, /TOTALS: 14 pass, 0 fail/, 'ENTER: the run itself must be green');
+  assert.notStrictEqual(r.code, 0, 'thirteen slow tests at once is a regression or a broken box');
+  assert.ok(!/re-timed alone/.test(r.out), 'nothing was re-timed');
+  for (const n of names) assert.match(r.out, new RegExp(`^SLOW: \\d+ms ${n}$`, 'm'));
+});
+
+test('slow gate: a re-run that hangs is cut at the run deadline, prints TOTALS and stays enforced', () => {
+  const body = 'require(\'node:test\').test(\'the hanging subject\', () => {\n'
+    + '  const m = require(\'node:path\').join(__dirname, \'.hang\');\n'
+    + '  const again = require(\'node:fs\').existsSync(m);\n'
+    + '  require(\'node:fs\').writeFileSync(m, \'\');\n'
+    + `  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, again ? 15000 : 400);\n});\n`;
+  const started = Date.now();
+  const r = runRunner({
+    files: { 'test/hang.test.js': body },
+    slowMs: 150,
+    extraEnv: { CLODEX_TEST_RUN_TIMEOUT_MS: '3000' },
+  });
+  assert.match(r.out, /^TOTALS: 2 pass, 0 fail, 2 tests$/m,
+    'ENTER: the main run finished inside the deadline and its totals were printed');
+  assert.ok(Date.now() - started < 12000, 'the re-run was cut at the run deadline, not its own long timeout');
+  assert.notStrictEqual(r.code, 0, 'a re-run that never finished excuses nothing');
+  assert.match(r.out, /^SLOW: \d+ms the hanging subject$/m);
+  assert.ok(!/re-timed alone/.test(r.out));
 });

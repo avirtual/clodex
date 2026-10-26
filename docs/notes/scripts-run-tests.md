@@ -94,6 +94,20 @@ must not inherit this process's lock variables: `test/test-digest-lock.test.js`,
 above `childEnv` in the source names the first two; the list lives here because
 the suite's comment ratchet refuses new comment lines.
 
+## RETIME_CAP
+
+Past 12 offenders the re-time (`retimeAlone`) is skipped and all are enforced: that
+many at once is a real regression or a broken box. The phase shares the main run's `runTimeoutMs` deadline, and each
+re-run gets at most `slowLimit + 30000`: TOTALS prints after it, so a phase that
+outran the exec ceiling would leave a green branch with no TOTALS line.
+
+## junitFiles
+
+Node's TAP reporter names no file for a test that ran: a file appears as a point
+only when it executed nothing (measured on node 25.8.1), so the offender's file
+comes from the junit reporter's `file` attribute, matched on name and duration.
+That reporter double-escapes `"` as `&amp;quot;`, hence `&amp;` decoded first.
+
 ## RUN_TIMEOUT_MS
 
 20 minutes. The `clodex-run-tests` exec ceiling (36 minutes) exceeds the wrapper's
