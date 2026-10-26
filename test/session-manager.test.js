@@ -15583,10 +15583,12 @@ test('T35 wiring: a claude seat with the boot latch already set injects immediat
   assert.deepStrictEqual(writes, ['\x15', 'scope', '\r']);
 });
 
-test('t1963: a claude seat built by mkBoot escalates an exhausted submit nudge instead of throwing on log.warn', () => {
-  const m = mkBoot();
-  const { s } = bootSession({ _bootReadySeen: true });
-  m._markInjectStuck(s, 'scope', Date.now() - 1000, false);
+test('t1963: a claude seat built by mkBoot escalates an exhausted submit nudge instead of throwing on log.warn', async () => {
+  const m = mkBoot({ bootNudgeMs: 1, bootNudgeQuietMs: 1, bootNudgeMaxWaitMs: 5 });
+  const { s, writes } = bootSession({ _bootReadySeen: true });
+  await m._injectQueueFor(s).enqueue('scope');
+  assert.deepStrictEqual(writes, ['\x15', 'scope', '\r'], 'ENTER: the unit was written through the queue');
+  for (let i = 0; i < 200 && !s.needsAttention; i++) await new Promise((r) => setTimeout(r, 10));
   assert.strictEqual(s._injectStuck.probe, 'scope');
   assert.strictEqual(s.needsAttention.kind, 'inject-stuck');
 });

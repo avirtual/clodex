@@ -285,6 +285,7 @@ delete childEnv.CLODEX_TEST_LOCK;
 delete childEnv.CLODEX_TEST_LOCK_NOTE_FD;
 delete childEnv.CLODEX_TEST_SLOW_ADVISORY;
 delete childEnv.CLODEX_TEST_SLOW_RETIME;
+delete childEnv.CLODEX_TEST_RETIME_CAP;
 
 const RUN_TIMEOUT_MS = 20 * 60 * 1000;
 const runTimeoutMs = Number(process.env.CLODEX_TEST_RUN_TIMEOUT_MS) > 0
@@ -458,7 +459,7 @@ const stale = sweeping && !filters.length
   : [];
 
 const advisory = process.env.CLODEX_TEST_SLOW_ADVISORY === '1' && !lockHeld;
-const RETIME_CAP = 12;
+const RETIME_CAP = Number(process.env.CLODEX_TEST_RETIME_CAP) || 12;
 const retime = process.env.CLODEX_TEST_SLOW_RETIME !== '0';
 const timed = advisory ? [] : offenders;
 const load = [];
