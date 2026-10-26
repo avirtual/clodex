@@ -558,14 +558,17 @@ for (const l of load) {
 for (const o of [...expired, ...unsampled]) {
   console.log(`SLOW (load, not re-timed): ${Math.round(o.ms)}ms ${o.name}`);
 }
+function retimedSummary(cap, expiredCount, cleared) {
+  const tally = cleared === cap;
+  const tried = cap - expiredCount;
+  if (tried === 0) return `re-timed none of the ${cap} slowest alone (the run deadline had passed)`;
+  return expiredCount
+    ? `re-timed ${tried} of the ${cap} slowest alone (the rest hit the run deadline) and ${cleared} of ${tried} cleared`
+    : `re-timed the ${cap} slowest alone and ${tally ? 'all ' : ''}${cleared}${tally ? '' : ` of ${cap}`} cleared`;
+}
 if (unsampled.length) {
-  const tally = load.length === RETIME_CAP;
-  const tried = RETIME_CAP - expired.length;
-  const retimed = expired.length
-    ? `re-timed ${tried} of the ${RETIME_CAP} slowest alone (the rest hit the run deadline) and ${load.length} of ${tried}`
-    : `re-timed the ${RETIME_CAP} slowest alone and ${tally ? 'all ' : ''}${load.length}${tally ? '' : ` of ${RETIME_CAP}`}`;
   console.log(`SLOW (load): ${timed.length} offenders over the cap of ${RETIME_CAP}; `
-    + `${retimed} cleared; the rest are not re-timed (over cap), so not enforced`);
+    + `${retimedSummary(RETIME_CAP, expired.length, load.length)}; the rest are not re-timed (over cap), so not enforced`);
 }
 
 console.log(`\nTOTALS: ${pass} pass, ${fail} fail, ${tests} tests`);
