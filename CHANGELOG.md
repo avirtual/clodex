@@ -15,6 +15,7 @@ blocks a release.
 ## Unreleased
 - Assistant-class seats auto-deny permission prompts, are hidden from `[agent:who]` and refuse seat-to-seat dms; the stream cost fold is Claude-only; a ticket with no task dir writes COST.json under the project's tasks dir (all shipped in 5.143.0, unlisted there).
 - Phone-access API also gained `GET /api/sessions?state=asleep|all`, a `turn` SSE event, single-flight wake, the `assistant` hello cap, `RESOURCES_VERSION` 3 and 403/503 codes on create (shipped in 5.144.0, unlisted there).
+- The release-review notice reaches only the lead of the Clodex source repo, and never fires on a downgrade.
 
 ## 5.144.0 — 2026-10-25
 - Phone-access API: create from a template, sleep and wake, a dm that waits for the reply, memory export.

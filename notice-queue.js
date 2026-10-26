@@ -190,10 +190,31 @@ function versionNoticeFor(lastVersion, hostVersion) {
     + '</system-reminder>';
 }
 
+function compareSemver(a, b) {
+  const pa = a.split('.');
+  const pb = b.split('.');
+  if (pa.length !== 3 || pb.length !== 3) return null;
+  if (![...pa, ...pb].every((p) => /^\d+$/.test(p))) return null;
+  for (let i = 0; i < 3; i++) {
+    const d = Number(pa[i]) - Number(pb[i]);
+    if (d) return d;
+  }
+  return 0;
+}
+
+function releasesClodex(root, fsImpl = fs) {
+  try {
+    const pkg = JSON.parse(fsImpl.readFileSync(path.join(root, 'package.json'), 'utf8'));
+    return !!(pkg && pkg.name === 'clodex') && fsImpl.existsSync(path.join(root, 'scripts', 'release.sh'));
+  } catch { return false; }
+}
+
 function releaseReviewNoticeFor(lastVersion, hostVersion) {
   const last = String(lastVersion == null ? '' : lastVersion).trim().replace(/^v/, '');
   const host = String(hostVersion == null ? '' : hostVersion).trim().replace(/^v/, '');
-  if (!last || !host || last === host) return null;
+  if (!last || !host) return null;
+  const cmp = compareSemver(host, last);
+  if (cmp === null || cmp <= 0) return null;
   return '<system-reminder>'
     + `Release review owed: the host moved from v${last} to v${host} while this conversation was away. `
     + `Run the release-review ritual on the tag range v${last}..v${host} — a cold reviewer (Agent tool, isolation "remote") on the public repo, `
@@ -207,5 +228,5 @@ module.exports = {
   NOTICE_MAX_DEPTH, NOTICE_MAX_AGE_MS,
   noticeDir, noticePath,
   enqueueNotice, trimNotices, parseNotices, clearNotices,
-  versionNoticeFor, releaseReviewNoticeFor,
+  versionNoticeFor, releaseReviewNoticeFor, releasesClodex,
 };

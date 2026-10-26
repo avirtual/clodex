@@ -32,7 +32,7 @@ const { promptCacheDir } = require('../ipc-prompt-cache');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const {
   NOTICE_MAX_DEPTH, NOTICE_MAX_AGE_MS,
-  noticeDir, noticePath, enqueueNotice, parseNotices, versionNoticeFor, releaseReviewNoticeFor, clearNotices,
+  noticeDir, noticePath, enqueueNotice, parseNotices, versionNoticeFor, releaseReviewNoticeFor, releasesClodex, clearNotices,
 } = require('../notice-queue');
 
 function tmp() { return mkTmpRoot('clodex-t240-'); }
@@ -153,6 +153,36 @@ test('releaseReviewNoticeFor: equal or empty inputs say nothing', () => {
 
 test('releaseReviewNoticeFor: a difference names the tag range last..host, verbatim', () => {
   assert.strictEqual(releaseReviewNoticeFor('5.143.0', '5.144.0'), RELEASE_REVIEW_5_144);
+});
+
+test('releaseReviewNoticeFor: a downgrade says nothing, and the compare is numeric not string order', () => {
+  assert.strictEqual(releaseReviewNoticeFor('5.144.0', '5.143.0'), null);
+  assert.strictEqual(releaseReviewNoticeFor('5.10.0', '5.9.0'), null);
+  assert.match(releaseReviewNoticeFor('5.9.0', '5.10.0'), /v5\.9\.0\.\.v5\.10\.0/);
+});
+
+test('releaseReviewNoticeFor: a non-numeric version part says nothing', () => {
+  assert.strictEqual(releaseReviewNoticeFor('5.143.x', '5.144.0'), null);
+  assert.strictEqual(releaseReviewNoticeFor('5.143.0', '5.144'), null);
+});
+
+function clodexRoot({ name = 'clodex', release = true, raw = null } = {}) {
+  const root = tmp();
+  fs.writeFileSync(path.join(root, 'package.json'), raw != null ? raw : JSON.stringify({ name }));
+  if (release) {
+    fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'scripts', 'release.sh'), '#!/bin/sh\n');
+  }
+  return root;
+}
+
+test('releasesClodex: true only for package name clodex plus scripts/release.sh', () => {
+  assert.strictEqual(releasesClodex(clodexRoot()), true);
+  assert.strictEqual(releasesClodex(clodexRoot({ release: false })), false);
+  assert.strictEqual(releasesClodex(clodexRoot({ name: 'avh' })), false);
+  assert.strictEqual(releasesClodex(clodexRoot({ raw: '{not json' })), false);
+  assert.strictEqual(releasesClodex(path.join(tmp(), 'missing')), false);
+  assert.strictEqual(releasesClodex(undefined), false);
 });
 
 test('releaseReviewNoticeFor: a leading v on either input is stripped, never doubled', () => {
@@ -320,6 +350,7 @@ function producerHarness({ appVersion, entry = null, resumeId = null, mint = fal
     // spy, so what is recorded is what would have hit the queue.
     versionNoticeFor,
     releaseReviewNoticeFor,
+    releasesClodex,
     enqueueNotice: (r, n, text) => { enqueued.push({ root: r, name: n, text }); return true; },
     // The boundary clear DELEGATES to the real one rather than being a pure
     // spy: its whole job is that the file is gone afterwards, and a spy that
@@ -544,7 +575,7 @@ test('a RESUMED team LEAD under a newer host enqueues the version notice, then t
     appVersion: '5.144.0',
     entry: { name: 'boss', type: 'claude', appVersion: '5.143.0', createdAt: 1 },
     resumeId: 'sid-1',
-    team: { name: 'crew', lead: 'boss' },
+    team: { name: 'crew', lead: 'boss', root: clodexRoot() },
   });
   await h.spawn('boss');
   assert.deepStrictEqual(h.enqueued.map((e) => e.text), [
@@ -553,12 +584,23 @@ test('a RESUMED team LEAD under a newer host enqueues the version notice, then t
   ]);
 });
 
+test('a RESUMED team LEAD whose team root does not release Clodex gets only the version notice', async () => {
+  const h = producerHarness({
+    appVersion: '5.144.0',
+    entry: { name: 'boss', type: 'claude', appVersion: '5.143.0', createdAt: 1 },
+    resumeId: 'sid-1',
+    team: { name: 'crew', lead: 'boss', root: clodexRoot({ name: 'murmurfi' }) },
+  });
+  await h.spawn('boss');
+  assert.deepStrictEqual(h.enqueued.map((e) => e.text), [versionNoticeFor('5.143.0', '5.144.0')]);
+});
+
 test('a RESUMED non-lead seat on a team gets only the version notice', async () => {
   const h = producerHarness({
     appVersion: '5.144.0',
     entry: { name: 'hand', type: 'claude', appVersion: '5.143.0', createdAt: 1 },
     resumeId: 'sid-1',
-    team: { name: 'crew', lead: 'boss' },
+    team: { name: 'crew', lead: 'boss', root: clodexRoot() },
   });
   await h.spawn('hand');
   assert.deepStrictEqual(h.enqueued.map((e) => e.text), [versionNoticeFor('5.143.0', '5.144.0')]);

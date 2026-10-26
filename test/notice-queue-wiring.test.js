@@ -22,7 +22,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const sessionManagerModule = require('../session-manager');
-const { enqueueNotice, versionNoticeFor, releaseReviewNoticeFor, clearNotices } = require('../notice-queue');
+const { enqueueNotice, versionNoticeFor, releaseReviewNoticeFor, releasesClodex, clearNotices } = require('../notice-queue');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // Wrap, don't replace: capture the deps and delegate, so the engine is built
@@ -60,6 +60,7 @@ test('the engine hands session-manager a live notice-queue seam and its own vers
       enqueueNotice: deps.enqueueNotice,
       versionNoticeFor: deps.versionNoticeFor,
       releaseReviewNoticeFor: deps.releaseReviewNoticeFor,
+      releasesClodex: deps.releasesClodex,
       clearNotices: deps.clearNotices,
       appVersionType: typeof deps.appVersion,
     },
@@ -67,10 +68,11 @@ test('the engine hands session-manager a live notice-queue seam and its own vers
       enqueueNotice,
       versionNoticeFor,
       releaseReviewNoticeFor,
+      releasesClodex,
       clearNotices,
       appVersionType: 'string',
     },
-    'the engine must pass the real producer, the real decision, the boundary clear and a version string — all four run inside the same try/catch, so an undefined here is a silently skipped notice or an uncleared queue, not a crash',
+    'the engine must pass the real producer, the real decision, the boundary clear and a version string — they all run inside the same try/catch, so an undefined here is a silently skipped notice or an uncleared queue, not a crash',
   );
 
   // And the version must be the app's own, not a placeholder: comparing a seat's
