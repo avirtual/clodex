@@ -322,8 +322,12 @@ const SMALL_CAP = { CLODEX_TEST_RETIME_CAP: '2' };
 
 test('slow gate: the re-time cap defaults to twelve, and the knob never reaches a child', () => {
   const src = fs.readFileSync(path.join(ROOT, 'scripts', 'run-tests.js'), 'utf8');
-  assert.match(src, /^const RETIME_CAP = Number\(process\.env\.CLODEX_TEST_RETIME_CAP\) \|\| 12;$/m,
-    'the over-cap pins run at a cap of 2, so only this pin holds the shipped default');
+  const m = src.match(/^const RETIME_CAP = (.+);$/m);
+  assert.ok(m, 'the over-cap pins run at a cap of 2, so only this pin holds the shipped default');
+  const capFor = (v) => new Function('process', `return ${m[1]};`)({ env: v === undefined ? {} : { CLODEX_TEST_RETIME_CAP: v } });
+  assert.deepStrictEqual(
+    [capFor(undefined), capFor(''), capFor('-1'), capFor('1.5'), capFor('0'), capFor('abc'), capFor('2')],
+    [12, 12, 12, 12, 12, 12, 2]);
   assert.match(src, /^delete childEnv\.CLODEX_TEST_RETIME_CAP;$/m,
     'a cap exported to the outer run would otherwise shrink the re-time sample of every nested runner');
 });
