@@ -18,7 +18,7 @@ const path = require('node:path');
 
 const { usesByRole, planGather } = require('../team-gather');
 const { registerIpcHandlers } = require('../ipc-handlers');
-const { createEngine } = require('../engine');
+const { createEngine } = require('./lib/engine-isolation');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const silent = { info() {}, warn() {}, error() {} };

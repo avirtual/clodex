@@ -383,7 +383,7 @@ test('every censused guard literal is still present in the file it guards', () =
     const src = codeOf(row.file);
     assert.ok(src.includes(row.guard),
       `${row.file} no longer contains its censused guard:\n    ${row.guard}\n`
-      + `  It covers process.kill(${row.pid}, ${row.sig}) — ${row.why}.\n`
+      + `  It covers ${row.via || 'process.kill'}(${row.pid}, ${row.sig}) — ${row.why}.\n`
       + '  Without it a non-positive pid reaches process.kill and becomes a broadcast. If the guard moved or '
       + 'was rewritten, this row must be updated to the new literal AND the new form must still refuse 0 and '
       + 'every negative — `> 0`, not a truthiness test: `-1` is truthy.');
@@ -514,7 +514,7 @@ test('no comment leaks through the strip un-blanked', () => {
       // just as readable-as-code and passes here unseen. No scanned file has one today,
       // so this is an unclosed hole rather than a live one — a leaked block comment is
       // the case to extend this predicate for, not a reason to distrust a green run.
-      if (t.startsWith('//') && t.includes('process.kill')) {
+      if (t.startsWith('//') && (t.includes('process.kill') || t.includes('killPid('))) {
         suspect.push(`${f}: ${t.slice(0, 60)}`);
         if (code.slice(off, off + line.length).trim() !== '') leaked.push(`${f}: ${t.slice(0, 60)}`);
       }

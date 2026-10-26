@@ -20,7 +20,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
-const { createEngine } = require('../engine');
+const { createEngine } = require('./lib/engine-isolation');
 const { registerIpcHandlers } = require('../ipc-handlers');
 const { CLAUDE_TOOLS } = require('../catalogs');
 const { mkTmpRoot } = require('./lib/tmp-roots');

@@ -12,6 +12,7 @@
 'use strict';
 
 const { test, after } = require('node:test');
+require('./lib/engine-isolation');
 const assert = require('node:assert');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -467,7 +468,7 @@ test('createEngine returns the front-door writers on the seam ipc-handlers sprea
   const home = mkTmpRoot('clodex-t416-');
   const prevHome = process.env.HOME;
   process.env.HOME = home;
-  const { createEngine } = require('../engine');
+  const { createEngine } = require('./lib/engine-isolation');
   const eng = createEngine({
     userDataPath: mkTmpRoot('clodex-t416-ud-'),
     seams: { noSeed: true, registryDir: path.join(home, '.clodex') },

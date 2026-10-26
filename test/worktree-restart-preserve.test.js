@@ -39,7 +39,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { mkTmpRoot } = require('./lib/tmp-roots');
-const { createEngine } = require('../engine');
+const { createEngine } = require('./lib/engine-isolation');
 const gitWorktree = require('../git-worktree');
 const { createMemoryStore } = require('../memory-store');
 

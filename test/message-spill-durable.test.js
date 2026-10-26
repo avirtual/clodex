@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { createEngine, sweepSeatMessages } = require('../engine');
+const { createEngine, sweepSeatMessages } = require('./lib/engine-isolation');
 const { createFiledRing } = require('../filed-ring');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
