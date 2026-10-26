@@ -32842,7 +32842,13 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if ("inProcess" in entry && entry.inProcess !== "ctl") {
           return { ok: false, error: 'inProcess: must be "ctl"' };
         }
-        if (!("inProcess" in entry) && (!Array.isArray(entry.argv) || entry.argv.length === 0)) {
+        if ("proposal" in entry && typeof entry.proposal !== "boolean") {
+          return { ok: false, error: "proposal: must be a boolean" };
+        }
+        if (entry.proposal === true && "inProcess" in entry) {
+          return { ok: false, error: "proposal: cannot combine with inProcess" };
+        }
+        if (!("inProcess" in entry) && entry.proposal !== true && (!Array.isArray(entry.argv) || entry.argv.length === 0)) {
           return { ok: false, error: "argv: required non-empty array" };
         }
         if ("argv" in entry && !Array.isArray(entry.argv)) {

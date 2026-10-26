@@ -586,10 +586,11 @@ test('remote.js builds the dm ref pattern from DM_REF_MAX', () => {
 });
 
 const realFs = require('fs');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 const TOKEN = 't'.repeat(16);
 
 function withTokenRoot(h) {
-  const root = realFs.mkdtempSync(path.join(os.tmpdir(), 'clx-client-token-'));
+  const root = mkTmpRoot('clx-client-token-');
   h.deps.REGISTRY_DIR = root;
   h.deps.ensureDir = (d) => realFs.mkdirSync(d, { recursive: true });
   h.deps.fs.unlinkSync = realFs.unlinkSync;
