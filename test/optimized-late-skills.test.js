@@ -12,7 +12,7 @@
 // test/optimized-mode-subset.test.js does: a re-typed copy of the collect would
 // assert only that this file agrees with itself.
 
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const { intentEnabled } = require('../intent-catalog');
 const fs = require('node:fs');
@@ -31,6 +31,9 @@ const { pathFor, runDirFor } = require('../clodex-paths');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const silent = { info() {}, warn() {}, error() {} };
+process.env.CLODEX_WIRESCOPE = 'off';
+const engines = [];
+after(() => { for (const e of engines) { e.shutdown(); clearInterval(e.manager._pendingPollTimer); } });
 
 function el(tag) {
   const e = {
@@ -253,7 +256,7 @@ function mkSpawner(registryRoot, knownSkillNames) {
   });
   const SessionManager = createSessionManager({
     REGISTRY_DIR: registryRoot,
-    fs, path, os, pathFor, runDirFor,
+    fs, path, os: { ...os, homedir: () => registryRoot }, pathFor, runDirFor,
     PENDING_DIR: path.join(registryRoot, 'pending'),
     MSG_DIR: path.join(registryRoot, 'messages'),
     ensureDir: (d) => fs.mkdirSync(d, { recursive: true }),
@@ -346,6 +349,7 @@ function freshBox() {
   fs.cpSync(SEEDED_REGISTRY, registryDir, { recursive: true });
   fs.mkdirSync(path.join(registryDir, 'run'), { recursive: true });
   const engine = createEngine({ userDataPath: tmp, seams: { registryDir }, log: silent });
+  engines.push(engine);
   assert.ok(!fs.existsSync(path.join(tmp, 'agent-defaults.json')),
     'ENTER: no stored defaults — otherwise this is not the shipped-floor case');
   assert.ok(!fs.existsSync(path.join(tmp, 'skills-seen.json')),
