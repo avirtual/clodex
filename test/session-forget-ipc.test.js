@@ -187,3 +187,13 @@ test('_bindHold: purgeWorkspace drops a dropped record\'s keep-warm hold binding
   assert.deepStrictEqual(manager.purgeWorkspace('ws-1'), { killed: [], dropped: ['plain'] });
   assert.strictEqual(manager._wireTelemetry.sessionFor('plain'), null);
 });
+
+test('_bindHold: session:forget drops the forgotten record\'s keep-warm hold binding', () => {
+  const { WireTelemetry } = require('../wire-telemetry');
+  const { forget, persistence, manager } = fixture([{ name: 'x', type: 'claude', keepWarmAlways: true, archivedAt: 1, proxy: false }]);
+  manager._wireTelemetry = new WireTelemetry({});
+  manager._wireTelemetry.noteSession('x', 'old-sid');
+  assert.strictEqual(forget('x'), true);
+  assert.strictEqual(persistence.get('x'), null, 'ENTER: the record was dropped');
+  assert.strictEqual(manager._wireTelemetry.sessionFor('x'), null);
+});

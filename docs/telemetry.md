@@ -315,7 +315,7 @@ Arming either one clears the other, as does an explicit disarm — a seat must
 never carry both. After an app restart a perpetual hold re-arms at startup
 (`_restorePerpetualHolds`), and `_bindHeldSessions` binds the seat into
 wire telemetry, so the payload carries the hold and `wire:hold` off
-disarms it before the seat's first turn. The binding follows the seat: create rebinds or forgets it (`_bindHold`), every record drop forgets it, and a rename moves it (`WireTelemetry.renameSession`), so a new seat reusing a name never arms the old conversation. For a timed hold the first main-line wire turn
+disarms it before the seat's first turn. The binding follows the seat: create rebinds or forgets it (`_bindHold`), SessionManager's drops and `session:forget` forget it (the spawn-failure rollbacks, `sweepReviewerGraveyard` and the scratch-clone retire rely on create's rebind), and a rename moves it (`WireTelemetry.renameSession`), so a new seat reusing a name never arms the old conversation. For a timed hold the first main-line wire turn
 re-arms the remaining window — retried each turn until the warm-gated
 `arm()` accepts (a strict once-per-spawn guard would silently re-lose the
 hold on a first-turn decline). Failure-disarm detection keys on the
