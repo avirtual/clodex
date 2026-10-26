@@ -15,6 +15,8 @@ blocks a release.
 ## Unreleased
 - The cloud release review now opens and closes its issue through GitHub's REST API with `gh api`, the one route a cloud session allows, so it no longer stalls looking for GitHub tools or asking for push access.
 
+- A deleted or renamed seat no longer leaves its keep-warm hold behind: a new seat reusing the name cannot arm the old conversation, and a renamed seat kept warm "Always" keeps its hold visible and stoppable before its first turn.
+
 ## 5.146.0 — 2026-10-26
 - The release script now launches the post-release cloud review itself, on the default Claude login, so every release gets reviewed without a manual step; findings arrive as one GitHub issue.
 - The release-review notice a Clodex lead gets after an upgrade now points at the cloud review the release script launched, instead of asking the lead to run a local review.

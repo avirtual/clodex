@@ -482,3 +482,20 @@ test('a restored perpetual hold is visible and stoppable before the seat takes a
   assert.strictEqual(unknown.ok, false);
   assert.match(unknown.error, /has not seen a turn/);
 });
+
+test('starting the wire binds a persisted seat to its held conversation before any turn', async (t) => {
+  const eng = mkEngine();
+  const p = eng.stores.persistence;
+  p.upsert({ name: 'w', type: 'claude', cwd: '/tmp', workspaceId: 'default' });
+  p.setSessionId('w', 'B');
+  p.setKeepWarmAlways('w', true);
+  const { keeper } = keeperOverBoth();
+  eng.manager._restorePerpetualHolds(keeper);
+  assert.strictEqual(keeper.holds().B.always, true, 'ENTER: the startup restore armed B perpetually');
+  const wire = await eng.manager._startWire(null, keeper);
+  t.after(() => wire.close());
+  const tel = eng.manager._wireTelemetry;
+  assert.strictEqual(tel.payload('w'), null, 'ENTER: the wire has seen no turn for w');
+  assert.strictEqual(tel.sessionFor('w'), 'B');
+  assert.strictEqual(tel.overlay('w', { linked: true, sessionId: 'B' }).holdSource, 'wire');
+});

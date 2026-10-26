@@ -876,3 +876,17 @@ test('two concurrent renames to one name: one wins and the other\'s record is un
   assert.strictEqual(x[0].sessionId, `sess-${winner}`);
   assert.ok(store.some((e) => e.name === loser), `the loser's own record (${loser}) still exists`);
 });
+
+test('rename carries a turnless keep-warm hold binding to the new name and drops the old one', async () => {
+  const { WireTelemetry } = require('../wire-telemetry');
+  const root = mkTmpRoot('clodex-rename-');
+  seedDirs(root, 'seat');
+  const { m, created } = mkRename({ root, entries: [BASE] });
+  m._wireTelemetry = new WireTelemetry({});
+  m._wireTelemetry.noteSession('seat', 'sess-abc');
+  assert.strictEqual(m._wireTelemetry.sessionFor('seat'), 'sess-abc', 'ENTER: the seat is bound before the rename');
+  const r = await m.rename('seat', 'newseat');
+  assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
+  assert.strictEqual(created.length, 1, 'ENTER: the respawn was reached');
+  assert.deepStrictEqual([m._wireTelemetry.sessionFor('newseat'), m._wireTelemetry.sessionFor('seat')], ['sess-abc', null]);
+});

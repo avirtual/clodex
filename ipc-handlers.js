@@ -2472,6 +2472,7 @@ function registerIpcHandlers(deps) {
     manager.clearHintForRecord(name);
     const rec = persistence.get(name);
     persistence.remove(name);
+    manager._bindHold(name);
     if (rec) manager.forgetSeatFiles(name, rec);
     try {
       const w = getDrawerPtys();

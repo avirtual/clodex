@@ -155,6 +155,13 @@ class WireTelemetry {
     this._bound.delete(name);
   }
 
+  renameSession(from, to) {
+    const sid = this._bound.get(from);
+    this._bound.delete(from);
+    if (sid) this._bound.set(to, sid);
+    else this._bound.delete(to);
+  }
+
   sessionFor(name) {
     const a = this._agents.get(name);
     return (a && a.sessionId) || this._bound.get(name) || null;

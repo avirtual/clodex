@@ -24577,3 +24577,86 @@ test('a wire rotation drops the turnless hold binding for the old conversation',
   assert.strictEqual(s.sessionId, 'new-sid', 'ENTER: the rotation landed');
   assert.strictEqual(m._wireTelemetry.sessionFor('a'), null);
 });
+
+function holdBindRig(t, held) {
+  const { WireTelemetry } = require('../wire-telemetry');
+  const fakePty = { pid: 8001, onData: () => {}, onExit: () => {}, write: () => {}, resize: () => {}, kill: () => {} };
+  const h = mkStreamSeatManager({ fakePty });
+  t.after(() => h.stopAll());
+  const armed = [];
+  h.m._holdKeeper = {
+    holds: () => Object.fromEntries(held.map((sid) => [sid, { always: true }])),
+    endSession: (sid) => ({ session: sid }),
+    arm: (sid) => { armed.push(sid); return { armed: true, always: true }; },
+    disarm: (sid) => ({ session: sid }),
+  };
+  h.m._wireTelemetry = new WireTelemetry({ hold: h.m._holdKeeper });
+  const create = (name, resumeId, io = 'stream') => h.create(name, resumeId, io);
+  return { h, armed, tel: h.m._wireTelemetry, create };
+}
+
+test('a destroyed seat leaves no keep-warm hold binding for a new seat that reuses its name', async (t) => {
+  const { registerIpcHandlers } = require('../ipc-handlers');
+  const { h, armed, tel, create } = holdBindRig(t, ['old-sid']);
+  await create('kw', 'old-sid');
+  assert.strictEqual(tel.sessionFor('kw'), 'old-sid', 'ENTER: create bound the held conversation');
+  await h.m.destroy('kw');
+  assert.strictEqual(h.store.has('kw'), false, 'ENTER: the record was dropped');
+  assert.strictEqual(tel.sessionFor('kw'), null, 'the drop forgets the binding');
+  h.stopAll();
+  h.m.sessions.delete('kw');
+  await create('kw', 'new-sid');
+  assert.strictEqual(h.m.sessions.get('kw').sessionId, 'new-sid', 'ENTER: the new seat is up on its own conversation');
+  assert.strictEqual(tel.sessionFor('kw'), null);
+  const handlers = new Map();
+  registerIpcHandlers({
+    handle: (ch, fn) => handlers.set(ch, fn), on: () => {},
+    log: { info() {}, warn() {}, error() {} },
+    manager: h.m,
+    persistence: { list: () => [...h.store.values()], get: (n) => h.store.get(n) || null, setKeepWarmAlways() {}, setHoldUntil() {} },
+    workspaceOfSender: () => 'ws',
+  });
+  const r = handlers.get('wire:hold')(null, 'kw', 0, false, true);
+  assert.strictEqual(r.ok, false);
+  assert.deepStrictEqual(armed, []);
+});
+
+test('a fresh restart leaves no keep-warm hold binding on the old conversation', async (t) => {
+  const { h, tel, create } = holdBindRig(t, ['old-sid']);
+  await create('kw', 'old-sid');
+  assert.strictEqual(tel.sessionFor('kw'), 'old-sid', 'ENTER: create bound the held conversation');
+  await h.m.kill('kw');
+  h.stopAll();
+  h.m.sessions.delete('kw');
+  await create('kw', null);
+  assert.strictEqual(h.m.sessions.has('kw'), true, 'ENTER: the restart created the seat again');
+  assert.strictEqual(tel.sessionFor('kw'), null);
+});
+
+test('create drops a stale keep-warm hold binding when its conversation is not held', async (t) => {
+  const { tel, create } = holdBindRig(t, ['old-sid']);
+  tel.noteSession('kw', 'old-sid');
+  await create('kw', 'other-sid');
+  assert.strictEqual(tel.sessionFor('kw'), null);
+});
+
+test('a /clear on a pty seat drops the turnless hold binding for the prior conversation', async (t) => {
+  const { h, tel, create } = holdBindRig(t, ['sid-a']);
+  await create('kw', null, 'pty');
+  const onSessionId = h.watchers[0][2];
+  onSessionId('sid-a');
+  tel.noteSession('kw', 'sid-a');
+  assert.strictEqual(tel.sessionFor('kw'), 'sid-a', 'ENTER: the seat is bound to its prior id');
+  onSessionId('sid-b');
+  assert.strictEqual(h.m.sessions.get('kw').sessionId, 'sid-b', 'ENTER: the clear reached the seat');
+  assert.strictEqual(tel.sessionFor('kw'), null);
+});
+
+test('_bindHold: destroying a dead seat\'s record drops its keep-warm hold binding', async (t) => {
+  const { h, tel } = holdBindRig(t, ['old-sid']);
+  h.store.set('kw', { name: 'kw', type: 'claude', sessionId: 'old-sid' });
+  tel.noteSession('kw', 'old-sid');
+  assert.deepStrictEqual(await h.m.destroy('kw'), { ok: true, live: false });
+  assert.strictEqual(h.store.has('kw'), false, 'ENTER: the record was dropped');
+  assert.strictEqual(tel.sessionFor('kw'), null);
+});
