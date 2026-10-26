@@ -13,6 +13,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- The cloud release review now opens and closes its issue through GitHub's REST API with `gh api`, the one route a cloud session allows, so it no longer stalls looking for GitHub tools or asking for push access.
 
 ## 5.146.0 — 2026-10-26
 - The release script now launches the post-release cloud review itself, on the default Claude login, so every release gets reviewed without a manual step; findings arrive as one GitHub issue.
