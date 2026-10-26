@@ -19,7 +19,7 @@ blocks a release.
 - The release-review notice reaches only the lead of the Clodex source repo, and never fires on a downgrade.
 - Assistant seats can act in a game with the game's own client token: set at create (`client.token`) or with `PUT /api/sessions/:name/client-token`, it reaches exec children as `CLODEX_CLIENT_TOKEN` and nowhere else. An exec def marked `proposal` emits a `proposal` event for the player to confirm instead of running.
 - With `CLODEX_REMOTE_CREATE=template`, a host also refuses seat import and accepts only assistant templates. The awake cap now applies to local spawns of an assistant template, and a sleeper whose `wakeOn` omits `message` refuses a dm instead of waking.
-- The test suite's slow-test gate re-times a slow test on its own before failing the run, so a busy machine no longer fails a branch whose tests all pass.
+- The test suite's slow-test gate re-times up to 12 slow tests on their own before failing the run, so a briefly busy machine no longer fails a branch whose tests all pass.
 - Restoring an archived assistant seat from the sidebar wakes it properly. An assistant template's `sleep.briefTail` now sets how many turns the sleep brief keeps. Assistant seats can no longer be moved to a peer, or back a ticket or review seat.
 - A create whose client token could not be stored now answers with a warning so the game can set it again, and a team-lead create refuses a client token instead of dropping it.
 
