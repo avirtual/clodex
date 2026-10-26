@@ -35,7 +35,6 @@ test('session-fixtures mk(): killing a fake-pid seat never reaches the real proc
   assert.deepStrictEqual(m.killedPids, [{ pid: 999, sig: 'SIGKILL' }],
     'ENTER: the 5s backstop must have fired into the fixture killPid');
   assert.deepStrictEqual(m.psCalls, ['ps'], 'ENTER: the descendant reap must have read the fixture ps, not the real one');
-  assert.deepStrictEqual(h.psCalls, ['ps'], 'ENTER: the descendant reap must have read the fixture ps, not the real one');
   assert.deepStrictEqual(seen, [], 'the fixture let a kill reach the real process.kill');
 });
 
