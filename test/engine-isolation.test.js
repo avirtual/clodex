@@ -13,6 +13,8 @@ after(() => { setImmediate(() => process.exit(0)); });
 
 const HELPER = path.join(__dirname, 'lib', 'engine-isolation.js');
 
+const DIRECT_ENGINE_REQUIRE = /^[^'"`\n]*\brequire\(\s*['"](\.\.\/)+engine(\.js)?['"]\s*\)/m;
+
 function testJsFiles(dir) {
   const out = [];
   for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -35,15 +37,13 @@ test('every test file that builds an engine gets createEngine from test/lib/engi
     const rel = path.relative(__dirname, f);
     const helperSpec = path.relative(path.dirname(f), HELPER).replace(/\.js$/, '').replace(/^(?!\.)/, './');
     const viaHelper = new RegExp(`^(const [^=]+= )?require\\('${helperSpec.replace(/[./]/g, '\\$&')}'\\)`, 'm').test(src);
-    const direct = /require\(\s*['"](\.\.\/)+engine(\.js)?['"]\s*\)/.test(src);
+    const direct = DIRECT_ENGINE_REQUIRE.test(src);
     if (!viaHelper || direct) offenders.push(`${rel}${viaHelper ? '' : ' (no top-level helper require)'}${direct ? ' (requires engine directly)' : ''}`);
   }
   assert.deepStrictEqual(offenders, [],
     'a test that builds an engine must require ./lib/engine-isolation at top level and take createEngine from it: a bare engine autostarts '
     + 'wirescope (python3 -m venv + pip install) and preseeds the real ~/.claude.json on every claude spawn');
 });
-
-const DIRECT_ENGINE_REQUIRE = /^[^'"`\n]*\brequire\(\s*['"](\.\.\/)+engine(\.js)?['"]\s*\)/m;
 
 test('the direct-engine-require scanner flags a real require and passes a quoted fixture string', () => {
   assert.strictEqual(DIRECT_ENGINE_REQUIRE.test("const { diagLines } = require('../engine');\n"), true);
