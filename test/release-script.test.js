@@ -299,3 +299,15 @@ test('release: the DMG child probe runs right after the pty probe, before anythi
   assert.ok(commit > 0 && child < commit, 'the child probe must run before the release commit');
   assert.ok(tag > 0 && child < tag, 'the child probe must run before the tag');
 });
+
+test('release: the cloud review launches after the image publish and before Done', () => {
+  const src = fs.readFileSync(SCRIPT, 'utf-8');
+  const publish = src.indexOf('run "$(dirname "$0")/publish-image.sh"');
+  const review = src.indexOf('run "$(dirname "$0")/cloud-review.sh" "$PREV_TAG" "$TAG" || say "warn: ');
+  const done = src.indexOf('step "Done"');
+  assert.ok(publish > 0, 'the image publish step is gone');
+  assert.ok(review > 0, 'the cloud review launch is gone, or no longer non-fatal');
+  assert.ok(src.includes('step "Launching cloud release review"'), 'the review has no step header');
+  assert.ok(review > publish, 'the review launches after the image publish');
+  assert.ok(done > 0 && review < done, 'the review launches before Done');
+});

@@ -301,6 +301,9 @@ else
   say "warn: image publish failed (GitHub release is fine); run scripts/publish-image.sh $NEW_VERSION manually"
 fi
 
+step "Launching cloud release review"
+run "$(dirname "$0")/cloud-review.sh" "$PREV_TAG" "$TAG" || say "warn: cloud review launch failed; run scripts/cloud-review.sh $PREV_TAG $TAG manually"
+
 step "Done"
 say "released $TAG"
 say "$(gh release view "$TAG" --json url -q .url)"
