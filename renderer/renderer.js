@@ -3139,7 +3139,7 @@ function populateChecklistsFromCatalogs(cat) {
   setClaudeToolsCache(cat.claudeTools || []);
   formRendered.disabledTools = renderToolChecklist(inputToolsList, persistedOr('disabledTools', modeToolDenySet()));
   formRendered.denyBuiltins = renderBuiltinChecklist(inputBuiltinsList, persistedOr('denyBuiltins', modeBuiltinDenySet()));
-  refreshNewSessionExecCommands(persistedOr('execCommands', new Set()));  // exec grants never cross, but the box has its own
+  refreshNewSessionExecCommands(persistedOr('execCommands', new Set()));
   refreshNewSessionPlugins().then(() => refreshNewSessionIntents()); // LOCAL engine, box-independent
   setPromptLibCache(libraryPromptCache(cat.prompts));
   fillSystemPromptSelect(inputSystemPrompt, '', newSessionSeat());
@@ -3730,17 +3730,17 @@ async function openDialog(prefill = null) {
 function populateHostCatalogs(settings, agentLib) {
   setAgentLibCache(agentLib || []);
   renderAgentChecklist(inputAgentsList, new Set(), null, newSessionSeat());
-  refreshNewSessionExecCommands();
-  refreshNewSessionMcpServers();
+  refreshNewSessionExecCommands(persistedOr('execCommands', new Set()));
+  refreshNewSessionMcpServers(persistedOr('mcpServers', new Set()));
   refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
   setClaudeToolsCache(settings?.claudeTools || []);
   setDefaultToolDenyCache(settings?.defaultToolDeny || []);
   setDefaultSkillDenyCache(settings?.defaultSkillDeny || []);
   setDefaultBuiltinDenyCache(settings?.defaultBuiltinDeny || []);
-  renderBuiltinChecklist(inputBuiltinsList, modeBuiltinDenySet());
-  renderToolChecklist(inputToolsList, modeToolDenySet());
+  formRendered.denyBuiltins = renderBuiltinChecklist(inputBuiltinsList, persistedOr('denyBuiltins', modeBuiltinDenySet()));
+  formRendered.disabledTools = renderToolChecklist(inputToolsList, persistedOr('disabledTools', modeToolDenySet()));
   refreshNewSessionSkills(modeSkillDenySet());
-  refreshNewSessionTools(modeToolDenySet());
+  refreshNewSessionTools(persistedOr('disabledTools', modeToolDenySet()));
   setProxyControls(inputProxyMode, inputProxyUrl, null, settings?.lastCustomProxyUrl || settings?.proxyUrl);
   labelProxyDefault(inputProxyMode, settings);
 }
@@ -3759,7 +3759,7 @@ function redrawGatesForCwd() {
   refreshNewSessionSkills(
     opts.forTemplate ? new Set(newSessionSkillDenyList()) : modeSkillDenySet(), opts);
   refreshNewSessionTools(
-    opts.forTemplate ? new Set(collectToolChecklist(inputToolsList)) : modeToolDenySet(), opts);
+    opts.forTemplate ? new Set(collectToolChecklist(inputToolsList)) : persistedOr('disabledTools', modeToolDenySet()), opts);
 }
 inputCwd.addEventListener('change', () => redrawGatesForCwd());
 inputCwd.addEventListener('change', () => refreshWorktreeForCwd());
@@ -6085,7 +6085,7 @@ function adoptSession(rec) {
     inputResume.value = prefill.resumeId;
     inputFork.checked = false;
     refreshNewSessionSkills(modeSkillDenySet());
-    refreshNewSessionTools(modeToolDenySet());
+    refreshNewSessionTools(persistedOr('disabledTools', modeToolDenySet()));
     refreshWorktreeForCwd();
     dialogTitle.textContent = 'Adopt Session';
     setTimeout(() => inputName.select(), 50);

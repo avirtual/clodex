@@ -470,7 +470,7 @@ test('every tool-checklist draw in the dialog goes through modeToolDenySet()', (
     'a box-placed seat must honour the selected mode like a host one');
   const host = slice('function populateHostCatalogs(', "\ninputName.addEventListener('input'",
     'the host catalog fill');
-  assert.match(host, /renderToolChecklist\(inputToolsList, modeToolDenySet\(\)\)/);
+  assert.match(host, /renderToolChecklist\(inputToolsList, persistedOr\('disabledTools', modeToolDenySet\(\)\)\)/);
 });
 
 // --- programmatic populates ----------------------------------------------
