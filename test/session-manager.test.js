@@ -24685,6 +24685,7 @@ async function forkedPtySeat(t) {
   const s = h.m.sessions.get('fk');
   assert.strictEqual(s.forked, true, 'ENTER: a forked seat');
   assert.strictEqual(s.sessionId, 'parent-sid', 'ENTER: it starts under the parent\'s id');
+  calls.length = 0;
   return { s, calls, onSessionId: h.watchers[0][2] };
 }
 
