@@ -1963,15 +1963,11 @@ function createTicketMethods(deps, shared) {
         const mergeSlowOwned = suite.ran && suite.slowOnly
           ? await this._slowTestsOwned(team, ticket, suite.slow, ownBase && ownBase.ok ? ownBase.sha : null)
           : [];
-        const slowPass = suite.ran && suite.slowOnly && !mergeSlowOwned.length;
+        const slowPass = suite.ran && suite.slowOnly;
         if ((!suite.ran || !suite.green) && !slowPass) {
-          const why = mergeSlowOwned.length
-            ? `the suite's slow gate tripped on ${target} after the merge — ${suite.summary}, 0 failing\n`
-              + `SLOW GATE: ${mergeSlowOwned.join('; ')}\nThese are tests a file this branch changed contains, so they are this `
-              + 'ticket\'s to fix with a seam or a test/slow-tests.json entry — verify should have caught it before the merge.'
-            : suite.ran
-              ? `the suite FAILS on ${target} after the merge — ${suite.summary}\nFAILING: ${suite.failing || '(the runner reported no test names)'}`
-              : `the suite could not be RUN on ${target} after the merge: ${suite.error}`;
+          const why = suite.ran
+            ? `the suite FAILS on ${target} after the merge — ${suite.summary}\nFAILING: ${suite.failing || '(the runner reported no test names)'}`
+            : `the suite could not be RUN on ${target} after the merge: ${suite.error}`;
 
           let kept;
           try {
@@ -2054,7 +2050,8 @@ function createTicketMethods(deps, shared) {
         const branchTip = await gitWorktree.revParse(team.root, branch).catch(() => null);
         this._notifyMergeLanded(team, ticketId, {
           branch, target, sha: merged.sha, rounds, summary: suite.summary, changelog, unioned: merged.unioned, closeOut, mergedTip, branchTip,
-          slow: slowPass ? suite.slow : null,
+          slow: slowPass ? suite.slow.filter((n) => !mergeSlowOwned.includes(n)) : null,
+          slowOwned: slowPass ? mergeSlowOwned : null,
         });
       } catch (e) {
         fail('unexpected', `the auto-merge threw: ${e && e.message ? e.message : String(e)}`,
@@ -2090,7 +2087,7 @@ function createTicketMethods(deps, shared) {
       }
     },
 
-    _notifyMergeLanded(team, ticketId, { branch, target = null, sha, rounds, summary, changelog, unioned, closeOut = null, slow = null, mergedTip = null, branchTip = null }) {
+    _notifyMergeLanded(team, ticketId, { branch, target = null, sha, rounds, summary, changelog, unioned, closeOut = null, slow = null, slowOwned = null, mergedTip = null, branchTip = null }) {
       try {
         const into = target || gitWorktree.mergeTargetForSync(team, this._loadTicket(team, ticketId));
         const collapse = (v, max) => String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, max);
@@ -2121,7 +2118,7 @@ function createTicketMethods(deps, shared) {
               + `The loop could not close it out: ${wideLine(closeOutDetail(ticketId, (closeOut && closeOut.text) || 'it did not run'))}`;
         const quiet = closedOutOk && !closeOut.already
           && !(mergedTip && branchTip && mergedTip !== branchTip)
-          && !(slow && slow.length) && !unioned && !stamp
+          && !(slow && slow.length) && !(slowOwned && slowOwned.length) && !unioned && !stamp
           && measured && (changelog.touched === true || changelog.present === false);
         const body = quiet
           ? `[ticket ${ticketId} MERGED] ${branch} → ${into} as ${sha} — closed out (${closeOut.remote ? 'standing remote seat not retired' : 'seat retired'}, tree removed, branch deleted); ${rounds} review round(s); suite ${defuseSenderLines(oneLine(summary))}.`
@@ -2134,6 +2131,7 @@ function createTicketMethods(deps, shared) {
           stepLine,
           '',
           `Review rounds: ${rounds}. Suite on ${into} after the merge: ${defuseSenderLines(summary)}.`,
+          ...(slowOwned && slowOwned.length ? [`slow gate tripped by tests this diff touched (load-only, 0 failing; merge kept): ${defuseSenderLines(wideLine(slowOwned.join('; ')))}`] : []),
           ...(slow && slow.length ? [`slow gate tripped by tests outside this diff: ${defuseSenderLines(wideLine(slow.join('; ')))}`] : []),
           ...(unioned ? [`${unioned} conflicted with a bullet another ticket merged first; the loop kept BOTH (the earlier one above this ticket's). Read ## Unreleased once before the next release.`] : []),
           ...(stamp ? [`Verify suite was re-measured. First run: ${defuseSenderLines(oneLine(stamp.first)) || 'unrecorded'} (${defuseSenderLines(wideLine(stamp.firstFailing)) || 'no names recorded'}).`] : []),

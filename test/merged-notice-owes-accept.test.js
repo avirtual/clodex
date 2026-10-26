@@ -291,6 +291,7 @@ const LOUD = [
   ['reopened', { closeOut: { ok: false, closedOut: false, reopened: true, state: 'open', text: 'reopened' } }, 'Reopened by rework'],
   ['non-tip merge', { mergedTip: 'aaaa1111aaaa', branchTip: 'bbbb2222bbbb' }, 'NOT its tip'],
   ['slow', { slow: ['test/x.test.js 7000ms'] }, 'slow gate tripped'],
+  ['slow owned', { slowOwned: ['test/y.test.js 7000ms'] }, 'slow gate tripped by tests this diff touched (load-only, 0 failing; merge kept): test/y.test.js 7000ms'],
   ['unioned', { unioned: 'CHANGELOG.md' }, 'kept BOTH'],
   ['stamp', { ticket: { suiteRemeasured: { first: '1 failing', firstFailing: 'x' } } }, 're-measured'],
   ['accepted by someone else', { closeOut: { ok: true, closedOut: true, already: true, text: 'ticket t1 accepted — lead accepted it while the post-merge suite ran' } }, 'Closed out: lead accepted it'],
