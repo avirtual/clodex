@@ -24564,6 +24564,5 @@ test('_awakeAssistantRows: a live seat without the assistant flag costs no recor
 });
 
 test('no test in this file signalled a pid it did not spawn', () => {
-  process.kill = realProcessKill;
   assert.deepStrictEqual(strayKills, []);
 });
