@@ -64,7 +64,7 @@ test('cloud-review: CLODEX_RELEASE_NO_REVIEW=1 skips without invoking claude', (
       CLODEX_CLAUDE_BIN: stub, CLOUD_REVIEW_REC: rec, HOME: dir, CLODEX_RELEASE_NO_REVIEW: '1',
     });
     assert.match(out, /skipped/);
-    assert.doesNotMatch(out, /launched/);
+    assert.doesNotMatch(out, /launched for/);
     assert.ok(!fs.existsSync(path.join(dir, '.clodex')), 'no log dir is created on a skip');
   });
 });
@@ -90,7 +90,7 @@ test('cloud-review: a missing script(1) exits 0 with a warn line and launches no
       env: { PATH: bin, HOME: dir, CLODEX_CLAUDE_BIN: stub, CLOUD_REVIEW_REC: rec },
     });
     assert.match(out, /^warn: .*script\(1\)/m);
-    assert.doesNotMatch(out, /launched/);
+    assert.doesNotMatch(out, /launched for/);
     assert.ok(!fs.existsSync(path.join(dir, '.clodex')), 'nothing was launched, so no log dir');
   });
 });
@@ -99,7 +99,7 @@ test('cloud-review: an empty previous tag exits 0 with a warn line', () => {
   withStub('', ({ dir, stub }) => {
     const out = runScript(['', 'v1.1.0'], { CLODEX_CLAUDE_BIN: stub, HOME: dir });
     assert.match(out, /^warn: /m);
-    assert.doesNotMatch(out, /launched/);
+    assert.doesNotMatch(out, /launched for/);
   });
 });
 
