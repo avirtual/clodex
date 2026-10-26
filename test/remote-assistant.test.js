@@ -66,6 +66,7 @@ function makeDeps(overrides = {}) {
     get: (n) => records.get(n),
     list: () => [...records.values()],
     setStripLevel: () => {},
+    upsert: (e) => records.set(e.name, { ...(records.get(e.name) || {}), ...e }),
   };
   const realFs = require('fs');
   const fs = {
@@ -792,7 +793,7 @@ test('restartSession (wire): an asleep assistant goes through wake, never engine
   const restarts = [];
   h.deps.restartSession = async (...a) => { restarts.push(a); return { ok: true }; };
   const out = await captureOptions(h.deps).restartSession('avh-7', { fresh: false });
-  assert.deepStrictEqual(out, { ok: true, state: 'awake' });
+  assert.deepStrictEqual(out, { ok: true, state: 'awake', io: 'stream' });
   assert.deepStrictEqual([h.wakeCalls, restarts], [[['avh-7', { reason: 'operator' }]], []]);
   const refused = makeDeps({ records: { 'avh-7': ASLEEP }, wakeOut: { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000 } });
   assert.deepStrictEqual(await captureOptions(refused.deps).restartSession('avh-7'),
@@ -807,9 +808,21 @@ test('restartSession (wire): an awake assistant reserves under its maxAwake; at 
   h.deps.restartSession = async (...a) => { restarts.push(a); return { ok: true }; };
   assert.deepStrictEqual(await captureOptions(h.deps).restartSession('avh-7'), full);
   assert.deepStrictEqual([h.roomCalls, restarts, h.wakeCalls], [[['room', 'avh-tpl', 1, 'avh-7']], [], []]);
-  const ok = makeDeps({ records: { 'avh-7': AWAKE } });
+  const ok = makeDeps({ records: { 'avh-7': { ...AWAKE, awokeAt: 1 } } });
   ok.deps.restartSession = async (...a) => { restarts.push(a); return { ok: true }; };
+  const before = Date.now();
   assert.strictEqual((await captureOptions(ok.deps).restartSession('avh-7')).ok, true);
+  assert.ok(ok.records.get('avh-7').awokeAt >= before, 'a restarted assistant restarts its awake clock');
   assert.deepStrictEqual(ok.roomCalls, [['room', 'avh-tpl', 1, 'avh-7'], ['release', 'avh-tpl', 'avh-7', 0]]);
   assert.deepStrictEqual(restarts, [['avh-7', { fresh: false }, 'default']]);
+});
+
+test('POST /api/sessions/:name/restart: a refusal carrying a code is sent with that status, else 404', async () => {
+  const full = { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000 };
+  await withServer({ restartSession: (n) => (n === 'avh-7' ? full : { ok: false, error: 'Session not found in persistence' }) }, async (port) => {
+    const r = await req(port, '/api/sessions/avh-7/restart', { method: 'POST', body: {} });
+    assert.deepStrictEqual([r.status, r.json], [503, full]);
+    const gone = await req(port, '/api/sessions/nobody/restart', { method: 'POST', body: {} });
+    assert.deepStrictEqual([gone.status, gone.json], [404, { ok: false, error: 'Session not found in persistence' }]);
+  });
 });

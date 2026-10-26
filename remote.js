@@ -905,7 +905,7 @@ class RemoteServer {
       if (body) { try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); } }
       Promise.resolve()
         .then(() => this._restartSession(name, { fresh: !!msg.fresh }))
-        .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'restart failed' }))
+        .then((out) => this._json(res, out && out.ok ? 200 : (Number.isInteger(out && out.code) ? out.code : 404), out || { ok: false, error: 'restart failed' }))
         .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
     });
   }

@@ -867,15 +867,15 @@ function createRemoteWiring(deps) {
             if (!w || !w.ok) return { ok: false, code: w && w.code ? w.code : 503, error: (w && w.error) || 'wake failed', ...(w && w.retryAfterMs ? { retryAfterMs: w.retryAfterMs } : {}) };
             notifySessions();
             log.info('session', `restart ${name} via peer: woke the sleeping assistant`);
-            return w;
+            return { ...w, io: 'stream' };
           }
-          const live = manager.sessions.get(name);
-          const cap = entry && entry.class === 'assistant' && !(live && !live._dead && !live._archived) && entry.sleep && Number(entry.sleep.maxAwake) > 0 ? Number(entry.sleep.maxAwake) : 0;
+          const cap = entry && entry.class === 'assistant' && entry.sleep && Number(entry.sleep.maxAwake) > 0 ? Number(entry.sleep.maxAwake) : 0;
           const full = cap ? await manager.makeAwakeRoom(entry.template || null, cap, name) : null;
           if (full) return full;
           let out;
           try { out = await restartSession(name, { fresh: !!(opts && opts.fresh) }, wsId); }
           finally { if (cap) manager.releaseAwakeRoom(entry.template || null, name); }
+          if (out && out.ok && entry && entry.class === 'assistant') getPersistence().upsert({ name, awokeAt: Date.now() });
           if (out && out.ok) notifySessions();
           log.info('session', `restart ${name} via peer (${opts && opts.fresh ? 'fresh' : 'resume'})${out && out.ok ? '' : ` failed: ${out && out.error}`}`);
           return out;
