@@ -24471,8 +24471,11 @@ test('s._assistant: create() flags a seat from its assistant record, and _applyT
   await h.create('plain');
   assert.deepStrictEqual([h.m.sessions.get('asst')._assistant, h.m.sessions.get('plain')._assistant], [true, false]);
   h.m.sessions.set('fresh', { name: 'fresh' });
-  h.m._applyTemplatePersistence('fresh', { name: 'tpl', class: 'assistant' });
-  assert.strictEqual(h.store.get('fresh').class, 'assistant', 'ENTER: the class was stamped');
+  const sleep = { idleMs: 1 };
+  h.m._applyTemplatePersistence('fresh', { name: 'tpl', class: 'assistant', sleep });
+  assert.deepStrictEqual([h.store.get('fresh').class, h.store.get('fresh').template, h.store.get('fresh').sleep], ['assistant', 'tpl', { idleMs: 1 }], 'ENTER: the class was stamped');
+  sleep.idleMs = 99;
+  assert.deepStrictEqual(h.store.get('fresh').sleep, { idleMs: 1 }, 'the record keeps a copy of the policy');
   assert.strictEqual(h.m.sessions.get('fresh')._assistant, true);
 });
 
