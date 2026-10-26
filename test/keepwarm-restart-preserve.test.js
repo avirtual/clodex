@@ -449,6 +449,7 @@ test('a restored perpetual hold is visible and stoppable before the seat takes a
   const { keeper } = keeperOverBoth();
   eng.manager._restorePerpetualHolds(keeper);
   assert.strictEqual(keeper.holds().B.always, true, 'ENTER: the startup restore armed B perpetually');
+  assert.strictEqual(p.get('w').keepWarmAlways, true, 'ENTER: the seat flag is set going in');
 
   const tel = new WireTelemetry({ hold: keeper });
   eng.manager._holdKeeper = keeper;
@@ -474,7 +475,7 @@ test('a restored perpetual hold is visible and stoppable before the seat takes a
   const r = handlers.get('wire:hold')(null, 'w', 0, false, false);
   assert.strictEqual(r.ok, true, `wire:hold off must reach the keeper: ${JSON.stringify(r)}`);
   assert.strictEqual(keeper.holds().B, undefined);
-  assert.strictEqual(p.get('w').keepWarmAlways, false);
+  assert.strictEqual(p.get('w').keepWarmAlways, undefined, 'off deletes the seat flag');
 
   const unknown = handlers.get('wire:hold')(null, 'nobody', 0, false, false);
   assert.strictEqual(unknown.ok, false);
