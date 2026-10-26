@@ -444,7 +444,7 @@ test('slow gate: past the cap, a sample the run deadline skips is not counted as
     slowMs: 150,
     extraEnv: { CLODEX_TEST_RUN_TIMEOUT_MS: '8000', ...SMALL_CAP },
   });
-  assert.match(r.out, /^TOTALS: 3 pass, 0 fail, 3 tests$/m,
+  assert.match(r.out, /^TOTALS: 4 pass, 0 fail, 4 tests$/m,
     'ENTER: the main run finished inside the deadline and its totals were printed');
   assert.match(r.out, /^SLOW: \d+ms the deadline eater$/m,
     'ENTER: the first sample was re-timed, cut at the deadline, and stays enforced');
