@@ -4012,7 +4012,9 @@ function persistedOr(key, fallback) {
 
 function currentOr(key, collector, list, fallback) {
   if (!(key in formPersisted) || !(key in formRendered)) return persistedOr(key, fallback);
-  return new Set(mergeLists(collector(list), unlistedOf(formPersisted[key], formRendered[key])));
+  const locked = new Set(Array.from(list.querySelectorAll('input[type="checkbox"]:disabled'), (cb) => cb.value));
+  const keptLocked = (formPersisted[key] || []).filter((id) => locked.has(id));
+  return new Set(mergeLists(collector(list), [...unlistedOf(formPersisted[key], formRendered[key]), ...keptLocked]));
 }
 
 function formCarry(key, checked) {

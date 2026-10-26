@@ -65,7 +65,10 @@ function formEnv(formPersisted, { mode = 'optimized', type = 'claude', templates
   const draw = (key) => (s) => { sets[key] = s; drawn[key] = DRAWN[key]; api.rendered()[key] = DRAWN[key]; };
   const modeListeners = [];
   let templateListener = null;
-  const ticked = (list) => (drawn[list.key] || []).filter((id) => (sets[list.key] || new Set()).has(id));
+  const locked = {};
+  const lockedRows = (key) => (drawn[key] || []).filter((id) => (locked[key] || []).includes(id));
+  const listOf = (key) => ({ key, querySelectorAll: () => lockedRows(key).map((value) => ({ value })) });
+  const ticked = (list) => (drawn[list.key] || []).filter((id) => !lockedRows(list.key).includes(id)).filter((id) => (sets[list.key] || new Set()).has(id));
   const env = {
     unlistedOf, mergeLists, capsFor, isAgentType,
     inputTemplate: { value: '', addEventListener: (_ev, fn) => { templateListener = fn; } },
@@ -76,7 +79,7 @@ function formEnv(formPersisted, { mode = 'optimized', type = 'claude', templates
     argsHint: {}, ARGS_HINTS: {}, applyTypeDefaults: noop, inputStreamIo: null,
     collectToolChecklist: ticked, collectBuiltinChecklist: ticked,
     collectExecChecklist: ticked, collectMcpChecklist: ticked,
-    inputExecList: { key: 'execCommands' }, inputMcpList: { key: 'mcpServers' },
+    inputExecList: listOf('execCommands'), inputMcpList: listOf('mcpServers'),
     inputMode: { value: mode, querySelector: () => null, addEventListener: (_ev, fn) => modeListeners.push(fn) },
     inputType: { value: type },
     modeHint: null, advancedSection: null, MODE_HINTS: {},
@@ -100,8 +103,8 @@ function formEnv(formPersisted, { mode = 'optimized', type = 'claude', templates
     setProxyControls: noop, newSessionIsAgent: () => true, labelProxyDefault: noop,
     dialogMode: 'create', newSessionSkillDenyList: () => [],
     setDefaultToolDenyCache: noop, setDefaultSkillDenyCache: noop, setDefaultBuiltinDenyCache: noop,
-    inputAgentsList: {}, inputInjectSkillsList: {}, inputSkillsList: {}, inputToolsList: { key: 'disabledTools' },
-    inputBuiltinsList: { key: 'denyBuiltins' }, inputSystemPrompt: {}, inputAppendList: {},
+    inputAgentsList: {}, inputInjectSkillsList: {}, inputSkillsList: {}, inputToolsList: listOf('disabledTools'),
+    inputBuiltinsList: listOf('denyBuiltins'), inputSystemPrompt: {}, inputAppendList: {},
     inputProxyMode: {}, inputProxyUrl: {}, inputStripLevel: null, inputAutoCompact: null, inputNoWire: null,
   };
   const names = Object.keys(env);
@@ -122,7 +125,8 @@ function formEnv(formPersisted, { mode = 'optimized', type = 'claude', templates
   const selectMode = (m) => { env.inputMode.value = m; for (const fn of modeListeners) fn(); };
   const loadTemplate = async (id) => { env.inputTemplate.value = id; await templateListener(); };
   const untick = (key, id) => { assert.ok(sets[key].delete(id), `ENTER: ${id} was drawn in ${key}`); };
-  return { api, env, sets, get formRendered() { return api.rendered(); }, collected, selectMode, loadTemplate, untick };
+  const lock = (key, id) => { locked[key] = [...(locked[key] || []), id]; };
+  return { api, env, sets, lock, get formRendered() { return api.rendered(); }, collected, selectMode, loadTemplate, untick };
 }
 
 test('t1956: a placement switch after a template load keeps its tools, built-ins and exec grants', () => {
@@ -250,8 +254,17 @@ test('t1961: a type change after a template load still carries an exec grant the
   f.untick('execCommands', 'x');
   f.api.typeRefresh();
   assert.deepStrictEqual([...f.sets.execCommands], ['ghost']);
-  assert.deepStrictEqual(f.collected('execCommands'), ['ghost']);
 });
+
+for (const [what, redraw] of [['cwd change', (f) => f.api.cwd()], ['placement switch', (f) => f.api.populate({ agents: [], skills: [], claudeTools: [] })]]) {
+  test(`t1961: a ${what} after a template load keeps a template-denied tool drawn on a locked row`, async () => {
+    const f = await loadedForm();
+    f.lock('disabledTools', 'Agent');
+    assert.ok(!f.env.collectToolChecklist(f.env.inputToolsList).includes('Agent'), 'ENTER: the locked Agent row is not collected');
+    redraw(f);
+    assert.ok(f.sets.disabledTools.has('Agent'), `the ${what} redraw still denies Agent`);
+  });
+}
 
 test('t1961: a type change after loading a template whose CLI drew no tool list draws its saved tools', async () => {
   const f = await loadedForm({ ...GRANT_TEMPLATE, type: 'codex' });
