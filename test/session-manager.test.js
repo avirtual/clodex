@@ -24475,3 +24475,15 @@ test('s._assistant: create() flags a seat from its assistant record, and _applyT
   assert.strictEqual(h.store.get('fresh').class, 'assistant', 'ENTER: the class was stamped');
   assert.strictEqual(h.m.sessions.get('fresh')._assistant, true);
 });
+
+test('_awakeAssistantRows: a live seat without the assistant flag costs no record lookup', (t) => {
+  const h = mkStreamSeatManager({ persisted: { p1: {} } });
+  t.after(() => h.stopAll());
+  h.m.sessions.set('p1', { name: 'p1', activityTs: 1 });
+  h.m.sessions.set('a1', { name: 'a1', _assistant: true, activityTs: 1 });
+  const gets = [];
+  const realGet = h.store.get.bind(h.store);
+  h.store.get = (n) => { gets.push(n); return realGet(n); };
+  assert.deepStrictEqual(h.m._awakeAssistantRows(null), []);
+  assert.deepStrictEqual(gets, ['a1'], 'ENTER: the flagged seat was looked up');
+});
