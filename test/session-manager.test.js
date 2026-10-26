@@ -904,6 +904,25 @@ test('a stale wire turn cannot rotate the seat BACK onto a conversation it has l
   assert.strictEqual(s.sessionId, 'new-sid', 'and the seat stays on the conversation it moved to');
 });
 
+test('t1983 the wire backstop on a forked seat leaves the parent\'s hold alone and spends the fork flag', () => {
+  const { m, s, calls } = rotationRig({ sessionId: 'parent-sid' });
+  s.forked = true;
+  m._onWireSessionRotated(s, 'a', 'child-sid');
+  assert.deepStrictEqual(calls.filter((c) => c[0] === 'setSessionId'), [['setSessionId', 'a', 'child-sid']],
+    'ENTER: the rotation ran');
+  assert.deepStrictEqual(calls.filter((c) => c[0] === 'endSession'), []);
+  assert.strictEqual(s.forked, false);
+});
+
+test('t1983 after a fork\'s first wire rotation, its next rotation ends the fork\'s own hold', () => {
+  const { m, s, calls } = rotationRig({ sessionId: 'parent-sid' });
+  s.forked = true;
+  m._onWireSessionRotated(s, 'a', 'child-sid');
+  m._onWireSessionRotated(s, 'a', 'child-sid-2');
+  assert.strictEqual(s.sessionId, 'child-sid-2', 'ENTER: the second rotation landed');
+  assert.deepStrictEqual(calls.filter((c) => c[0] === 'endSession'), [['endSession', 'child-sid']]);
+});
+
 test('a stray child-claude sessionId rotates nothing and ends no hold', () => {
   // Corroboration-gated: the wire attributes by proxy route, so a child claude
   // mints main-line-looking ids on the session's own route. Acting on one would
@@ -24650,6 +24669,38 @@ test('a /clear on a pty seat drops the turnless hold binding for the prior conve
   onSessionId('sid-b');
   assert.strictEqual(h.m.sessions.get('kw').sessionId, 'sid-b', 'ENTER: the clear reached the seat');
   assert.strictEqual(tel.sessionFor('kw'), null);
+});
+
+async function forkedPtySeat(t) {
+  const os = require('node:os');
+  const fakePty = { pid: 8001, onData: () => {}, onExit: () => {}, write: () => {}, resize: () => {}, kill: () => {} };
+  const h = mkStreamSeatManager({ fakePty });
+  t.after(() => h.stopAll());
+  const calls = [];
+  h.m._holdKeeper = { endSession: (sid) => { calls.push(['endSession', sid]); return { session: sid }; } };
+  h.m._wireTelemetry = { forgetSession: (n) => calls.push(['forgetSession', n]) };
+  h.m._injectText = () => {};
+  await h.m.create('fk', 'claude', os.tmpdir(), [], 'parent-sid', 'ws', null, false, null,
+    [], [], [], [], [], null, [], [], null, null, true, false, null, null, null, null);
+  const s = h.m.sessions.get('fk');
+  assert.strictEqual(s.forked, true, 'ENTER: a forked seat');
+  assert.strictEqual(s.sessionId, 'parent-sid', 'ENTER: it starts under the parent\'s id');
+  return { s, calls, onSessionId: h.watchers[0][2] };
+}
+
+test('t1983 a forked seat\'s first session id runs the clear branch without ending the parent\'s hold', async (t) => {
+  const { s, calls, onSessionId } = await forkedPtySeat(t);
+  onSessionId('child-sid');
+  assert.strictEqual(s.sessionId, 'child-sid');
+  assert.deepStrictEqual(calls, [['forgetSession', 'fk']], 'the clear branch ran and ended no hold');
+  assert.strictEqual(s.forked, false);
+});
+
+test('t1983 after a fork\'s first session id, a real /clear ends the fork\'s own hold', async (t) => {
+  const { calls, onSessionId } = await forkedPtySeat(t);
+  onSessionId('child-sid');
+  onSessionId('child-sid-2');
+  assert.deepStrictEqual(calls, [['forgetSession', 'fk'], ['endSession', 'child-sid'], ['forgetSession', 'fk']]);
 });
 
 test('_bindHold: destroying a dead seat\'s record drops its keep-warm hold binding', async (t) => {

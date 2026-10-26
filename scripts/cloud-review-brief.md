@@ -8,7 +8,7 @@ You are a cold reviewer of the public repo avirtual/clodex. Review the release r
 Reporting:
 - The session already has avirtual/clodex and a GitHub connection. Do not call add_repo or ask for any repo access; nothing in this task needs push.
 - Reach GitHub only with `gh api` against the REST API; it goes through the session's proxy credentials. GraphQL is blocked in cloud sessions, so `gh issue create/close/list` fail with 403. Do not use them, and do not use curl or any other credential.
-- Before reviewing, check access with `gh api repos/avirtual/clodex/issues?per_page=1`. If it fails, review anyway, put the full findings in your final message, and say the check failed with its exact error.
+- Before reviewing, check access with `gh api 'repos/avirtual/clodex/issues?per_page=1'`. If it fails, review anyway, put the full findings in your final message, and say the check failed with its exact error.
 - Never open a test issue.
 - With findings: write the body to a file in your scratchpad, then
   `gh api repos/avirtual/clodex/issues -X POST -f title="Release review {{NEW}}: <VERDICT>" -F body=@<file>`

@@ -1204,7 +1204,8 @@ function createSessionManager(deps) {
       this._noteSessionLeft(s, oldSid);
       // Before the reassignment, or the old id's perpetual hold is unreachable and re-hashes forever;
       // endSession's 'session-ended' cause leaves the re-arm gate to the reset below.
-      if (this._holdKeeper && oldSid) this._holdKeeper.endSession(oldSid);
+      if (this._holdKeeper && oldSid && !s.forked) this._holdKeeper.endSession(oldSid);
+      s.forked = false;
       if (this._wireTelemetry) this._wireTelemetry.forgetSession(agent);
       s.sessionId = newSessionId;
       s._holdRearmed = false;
@@ -2333,7 +2334,7 @@ function createSessionManager(deps) {
           session._costFolded = null;
           this._noteSessionLeft(session, priorSid);
           try { clearSubq(subqDirFor(name)); } catch {}
-          try { if (this._holdKeeper) this._holdKeeper.endSession(priorSid); } catch { /* observer-grade */ }
+          try { if (this._holdKeeper && !session.forked) this._holdKeeper.endSession(priorSid); } catch { /* observer-grade */ }
           if (this._wireTelemetry) this._wireTelemetry.forgetSession(name);
           session._holdRearmed = false;
           try { arm.onContextReset(name); } catch { /* observer-grade */ }
