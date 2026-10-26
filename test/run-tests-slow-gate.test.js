@@ -35,6 +35,7 @@ function runRunner({
   delete env.NODE_TEST_CONTEXT;
   delete env.CLODEX_TEST_SLOW_ADVISORY;
   delete env.CLODEX_TEST_SLOW_RETIME;
+  delete env.CLODEX_TEST_RETIME_CAP;
   if (slowMs !== null) env.CLODEX_TEST_SLOW_MS = String(slowMs);
   if (extraEnv) Object.assign(env, extraEnv);
   try {
@@ -317,69 +318,71 @@ test('slow gate: offenders in two files are each re-timed against their own file
   assert.match(r.out, /^SLOW \(load, re-timed alone\): \d+ms → \d+ms subject in two$/m);
 });
 
-test('slow gate: past the cap, the twelve slowest clear alone and the run passes', () => {
-  const rows = [
-    ['crowd a', 100], ['crowd b', 110], ['crowd c', 120], ['crowd d', 130], ['crowd e', 140],
-    ['crowd f', 150], ['crowd g', 160], ['crowd h', 170], ['crowd i', 180], ['crowd j', 190],
-    ['crowd k', 200], ['crowd l', 210], ['crowd m', 40],
-  ];
+const SMALL_CAP = { CLODEX_TEST_RETIME_CAP: '2' };
+
+test('slow gate: the re-time cap defaults to twelve, and the knob never reaches a child', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'scripts', 'run-tests.js'), 'utf8');
+  assert.match(src, /^const RETIME_CAP = Number\(process\.env\.CLODEX_TEST_RETIME_CAP\) \|\| 12;$/m,
+    'the over-cap pins run at a cap of 2, so only this pin holds the shipped default');
+  assert.match(src, /^delete childEnv\.CLODEX_TEST_RETIME_CAP;$/m,
+    'a cap exported to the outer run would otherwise shrink the re-time sample of every nested runner');
+});
+
+test('slow gate: past the cap, the slowest clear alone and the run passes', () => {
+  const rows = [['crowd a', 200], ['crowd b', 250], ['crowd m', 40]];
   const r = runRunner({
     files: { 'test/crowd.test.js': rows.map(([n, ms], i) => firstRunOnly(n, ms, `.crowd${i}`)).join('') },
     slowMs: 30,
+    extraEnv: SMALL_CAP,
   });
   const stdout = stdoutOf(r);
-  assert.match(stdout, /TOTALS: 14 pass, 0 fail/, 'ENTER: the run itself must be green');
+  assert.match(stdout, /TOTALS: 4 pass, 0 fail/, 'ENTER: the run itself must be green');
   assert.strictEqual(r.code, 0, stdout.slice(-1200));
   assert.match(stdout, /^SLOW \(load, not re-timed\): \d+ms crowd m$/m,
     'the one offender outside the sample is named as not re-timed');
   assert.strictEqual((stdout.match(/^SLOW \(load, not re-timed\)/gm) || []).length, 1);
-  assert.strictEqual((stdout.match(/^SLOW \(load, re-timed alone\)/gm) || []).length, 12);
-  assert.match(stdout, /^SLOW \(load\): 13 offenders over the cap of 12; re-timed the 12 slowest alone and all 12 cleared/m);
+  assert.strictEqual((stdout.match(/^SLOW \(load, re-timed alone\)/gm) || []).length, 2);
+  assert.match(stdout, /^SLOW \(load\): 3 offenders over the cap of 2; re-timed the 2 slowest alone and all 2 cleared/m);
   assert.ok(!/^SLOW: /m.test(stdout), 'nothing is enforced');
 });
 
 test('slow gate: past the cap, one sampled offender slow alone enforces the unsampled ones too', () => {
-  const rows = [
-    ['crowd a', 100], ['crowd b', 110], ['crowd c', 120], ['crowd d', 130], ['crowd e', 140],
-    ['crowd f', 150], ['crowd g', 160], ['crowd h', 170], ['crowd i', 180], ['crowd j', 190],
-    ['crowd k', 200], ['crowd m', 40],
-  ];
+  const rows = [['crowd a', 200], ['crowd m', 40]];
   const r = runRunner({
     files: {
       'test/crowd.test.js': rows.map(([n, ms], i) => firstRunOnly(n, ms, `.crowd${i}`)).join('')
-        + sleeper('crowd always slow', 220),
+        + sleeper('crowd always slow', 250),
     },
     slowMs: 30,
+    extraEnv: SMALL_CAP,
   });
   const stdout = stdoutOf(r);
-  assert.match(stdout, /TOTALS: 14 pass, 0 fail/, 'ENTER: the run itself must be green');
+  assert.match(stdout, /TOTALS: 4 pass, 0 fail/, 'ENTER: the run itself must be green');
   assert.notStrictEqual(r.code, 0, 'a sampled test slow on its own fails the run');
   assert.match(stdout, /^SLOW: \d+ms crowd always slow$/m);
   assert.match(stdout, /^SLOW: \d+ms crowd m$/m, 'the unsampled offender is enforced, not excused');
   assert.ok(!/not re-timed/.test(stdout), 'nothing is excused unsampled');
   assert.match(stdout, /^SLOW \(load, re-timed alone\): \d+ms → \d+ms crowd a$/m,
-    'ENTER: the sampled first-run-only offenders still cleared');
+    'ENTER: the sampled first-run-only offender still cleared');
 });
 
 test('slow gate: past the cap, the sample is the slowest offenders, not the first in file order', () => {
-  const rows = [
-    ['crowd a', 100], ['crowd b', 110], ['crowd c', 120], ['crowd d', 130], ['crowd e', 140],
-    ['crowd f', 150], ['crowd g', 160], ['crowd h', 170], ['crowd i', 180], ['crowd j', 190],
-    ['crowd k', 200], ['crowd l', 210],
-  ];
+  const rows = [['crowd k', 200], ['crowd l', 250]];
   const r = runRunner({
     files: {
       'test/crowd.test.js': sleeper('crowd first and least slow', 40)
         + rows.map(([n, ms], i) => firstRunOnly(n, ms, `.crowd${i}`)).join(''),
     },
     slowMs: 30,
+    extraEnv: SMALL_CAP,
   });
   const stdout = stdoutOf(r);
-  assert.match(stdout, /TOTALS: 14 pass, 0 fail/, 'ENTER: the run itself must be green');
+  assert.match(stdout, /TOTALS: 4 pass, 0 fail/, 'ENTER: the run itself must be green');
   assert.strictEqual(r.code, 0, stdout.slice(-1200));
   assert.match(stdout, /^SLOW \(load, not re-timed\): \d+ms crowd first and least slow$/m,
     'the first test in the file is the least slow, so it is the one left out of the sample');
   assert.match(stdout, /^SLOW \(load, re-timed alone\): \d+ms → \d+ms crowd l$/m);
+  assert.match(stdout, /^SLOW \(load, re-timed alone\): \d+ms → \d+ms crowd k$/m);
 });
 
 test('slow gate: a re-run that hangs is cut at the run deadline, prints TOTALS and stays enforced', () => {
@@ -387,16 +390,16 @@ test('slow gate: a re-run that hangs is cut at the run deadline, prints TOTALS a
     + '  const m = require(\'node:path\').join(__dirname, \'.hang\');\n'
     + '  const again = require(\'node:fs\').existsSync(m);\n'
     + '  require(\'node:fs\').writeFileSync(m, \'\');\n'
-    + `  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, again ? 15000 : 400);\n});\n`;
+    + `  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, again ? 40000 : 400);\n});\n`;
   const started = Date.now();
   const r = runRunner({
     files: { 'test/hang.test.js': body },
     slowMs: 150,
-    extraEnv: { CLODEX_TEST_RUN_TIMEOUT_MS: '3000' },
+    extraEnv: { CLODEX_TEST_RUN_TIMEOUT_MS: '8000' },
   });
   assert.match(r.out, /^TOTALS: 2 pass, 0 fail, 2 tests$/m,
     'ENTER: the main run finished inside the deadline and its totals were printed');
-  assert.ok(Date.now() - started < 12000, 'the re-run was cut at the run deadline, not its own long timeout');
+  assert.ok(Date.now() - started < 25000, 'the re-run was cut at the run deadline, not its own long timeout');
   assert.notStrictEqual(r.code, 0, 'a re-run that never finished excuses nothing');
   assert.match(r.out, /^SLOW: \d+ms the hanging subject$/m);
   assert.ok(!/re-timed alone/.test(r.out));
