@@ -38,7 +38,6 @@ const { createEngine } = require('./lib/engine-isolation');
 
 function mkEngine() {
   const tmp = mkTmpRoot('clx-notice-wiring-');
-  // registryDir or the engine seeds the operator's live ~/.clodex (t359).
   return createEngine({
     userDataPath: tmp,
     seams: { noSeed: true, registryDir: path.join(tmp, 'clodex-home') },

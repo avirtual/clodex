@@ -7,7 +7,7 @@ const path = require('node:path');
 
 const { registerIpcHandlers } = require('../ipc-handlers');
 const { fixDirFor } = require('../clodex-paths');
-const { diagLines } = require('../engine');
+const { diagLines } = require('./lib/engine-isolation');
 const { mk } = require('./lib/session-fixtures');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 

@@ -8,7 +8,7 @@
 // Rationale for the declared (never detected) capability:
 // docs/notes/headless-restart.md.
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -70,7 +70,6 @@ function mkHeadlessHost({ env = {}, startMs = 1_000_000 } = {}) {
   const eng = createEngine({
     userDataPath: tmp,
     log: quietLog,
-    // registryDir or the engine seeds the operator's live ~/.clodex (t359).
     seams: {
       noSeed: true,
       registryDir: path.join(tmp, 'clodex-home'),
@@ -289,8 +288,6 @@ test('both hosts defer the agent restart; only headless gates it on a declared s
     'headless declares the gate, because exit-64 is a contract only a supervisor holds');
 });
 
-// createEngine starts background timers with no host to stop them.
-after(() => { setImmediate(() => process.exit(0)); });
 
 test('supervised headless: an in-flight exec run holds the exit until it ends', () => {
   const clock = fakeClock(1_000_000);

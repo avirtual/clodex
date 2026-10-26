@@ -10,7 +10,7 @@ const {
 const { runDirFor, seatPathFor, legacySeatPathFor, SEAT_KINDS } = require('../clodex-paths');
 const { createCliHooks } = require('../cli-hooks');
 const { createMemoryStore } = require('../memory-store');
-const { sweepSpilledMessages } = require('../engine');
+const { sweepSpilledMessages } = require('./lib/engine-isolation');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function tmp() { return mkTmpRoot('clodex-seatlayout-'); }

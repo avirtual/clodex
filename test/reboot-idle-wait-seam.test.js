@@ -39,7 +39,6 @@ function engineSeamTargets(seams) {
     require('./lib/engine-isolation').createEngine({
       userDataPath: tmp,
       log: { info() {}, warn() {}, error() {} },
-      // registryDir or the engine seeds the operator's live ~/.clodex (t359).
       seams: { noSeed: true, registryDir: path.join(tmp, 'clodex-home'), ...seams },
     });
   } finally {

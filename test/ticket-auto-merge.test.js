@@ -55,7 +55,7 @@ function git(cwd, args) {
 }
 
 // The shapes are the ones ticket-loop-verify copied off a real run of
-// scripts/run-tests.js; only the three this file needs are here.
+// scripts/run-tests.js.
 const MERGE_SLOW = 'composite: pooling lets a big corpus SILENCE a small one, merging does not';
 const MERGE_SLOW_OTHER = 'peering: a cold handshake retries once before it gives up';
 
