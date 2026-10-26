@@ -6,13 +6,8 @@ You are a cold reviewer of the public repo avirtual/clodex. Review the release r
 4. Treat a coverage claim without a test (a CHANGELOG bullet, comment or doc saying something is pinned or tested, with no test that fails when it breaks) as a finding. To check such a claim, you may run `npm ci --ignore-scripts` once and then single test files with `node --test test/<file>`; never the full suite.
 
 Reporting:
-- The session already has avirtual/clodex and a GitHub connection. Do not call add_repo or ask for any repo access; nothing in this task needs push.
-- Reach GitHub only with `gh api` against the REST API; it goes through the session's proxy credentials. GraphQL is blocked in cloud sessions, so `gh issue create/close/list` fail with 403. Do not use them, and do not use curl or any other credential.
-- Before reviewing, check access with `gh api 'repos/avirtual/clodex/issues?per_page=1'`. If it fails, review anyway, put the full findings in your final message, and say the check failed with its exact error.
-- Never open a test issue.
-- With findings: write the body to a file in your scratchpad, then
-  `gh api repos/avirtual/clodex/issues -X POST -f title="Release review {{NEW}}: <VERDICT>" -F body=@<file>`
-  where <VERDICT> is a one-line summary of the worst finding. Leave it open. The body lists each finding with file, symbol and evidence.
-- With no findings: open "Release review {{NEW}}: CLEAN" the same way with a body listing what you checked, then close it with
-  `gh api repos/avirtual/clodex/issues/<number> -X PATCH -f state=closed`.
-- End by printing the issue URL.
+- The repo is already cloned and git can push through the session's proxy. You have no GitHub API access: do not run gh, do not call add_repo, do not ask for any access, and do not use curl or any credential.
+- Write your report to `.review/{{NEW}}.md`. Its first line is the issue title, "Release review {{NEW}}: <VERDICT>" where <VERDICT> is a one-line summary of the worst finding, or "Release review {{NEW}}: CLEAN" when you have none. Then one blank line, then the body: each finding with file, symbol and evidence, or with no findings, what you checked.
+- Commit only that file, on a new branch made from the commit you reviewed: `git checkout -b claude/review-{{NEW}}`, `git add .review/{{NEW}}.md`, `git commit -m "Release review {{NEW}}"`, `git push origin claude/review-{{NEW}}`. Push no other branch and never push to master.
+- If the push fails, put the full report in your final message and say the push failed with its exact error.
+- End by printing the pushed commit sha.
