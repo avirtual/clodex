@@ -3978,8 +3978,8 @@ function collectFormConfig() {
     extraArgs: withModelArg(parseArgs(inputArgs.value || ''), inputModel.value),
     proxy: agentType ? proxyValueFromControls(inputProxyMode, inputProxyUrl) : null,
     agents: caps.agents ? collectAgentChecklist(inputAgentsList) : [],
-    execCommands: agentType ? formCarry('execCommands', collectExecChecklist, inputExecList) : [],
-    mcpServers: agentType ? formCarry('mcpServers', collectMcpChecklist, inputMcpList) : [],
+    execCommands: agentType ? formCarry('execCommands', collectExecChecklist(inputExecList)) : [],
+    mcpServers: agentType ? formCarry('mcpServers', collectMcpChecklist(inputMcpList)) : [],
     ...(Array.isArray(intents) ? { intents } : {}),
     plugins,
     ...(autoCompactOff ? { autoCompact: false } : {}),
@@ -3987,8 +3987,8 @@ function collectFormConfig() {
     ...(streamIoOn ? { io: 'stream' } : {}),
     ...(effortVal ? { effort: effortVal } : {}),
     ...(toolsAllow.length ? { tools: toolsAllow } : {}),
-    denyBuiltins: caps.agents ? formCarry('denyBuiltins', collectBuiltinChecklist, inputBuiltinsList) : [],
-    disabledTools: caps.tools ? formCarry('disabledTools', collectToolChecklist, inputToolsList) : [],
+    denyBuiltins: caps.agents ? formCarry('denyBuiltins', collectBuiltinChecklist(inputBuiltinsList)) : [],
+    disabledTools: caps.tools ? formCarry('disabledTools', collectToolChecklist(inputToolsList)) : [],
     disabledSkills: caps.skillRoster ? newSessionSkillDenyList() : [],
     injectSkills: caps.injectSkills ? collectInjectChecklist(inputInjectSkillsList) : [],
     stripLevel: caps.strip ? (Number(inputStripLevel && inputStripLevel.value) || 0) : 0,
@@ -4012,16 +4012,13 @@ function persistedOr(key, fallback) {
 
 function currentOr(key, collector, list, fallback) {
   if (!(key in formPersisted) || !(key in formRendered)) return persistedOr(key, fallback);
-  return new Set(mergeLists(collector(list), [...unlistedOf(formPersisted[key], formRendered[key]), ...keptLockedOf(key, list)]));
-}
-
-function keptLockedOf(key, list) {
   const locked = new Set(Array.from(list.querySelectorAll('input[type="checkbox"]:disabled'), (cb) => cb.value));
-  return (formPersisted[key] || []).filter((id) => locked.has(id));
+  const keptLocked = (formPersisted[key] || []).filter((id) => locked.has(id));
+  return new Set(mergeLists(collector(list), [...unlistedOf(formPersisted[key], formRendered[key]), ...keptLocked]));
 }
 
-function formCarry(key, collector, list) {
-  return mergeLists(collector(list), [...unlistedOf(formPersisted[key], formRendered[key]), ...keptLockedOf(key, list)]);
+function formCarry(key, checked) {
+  return mergeLists(checked, unlistedOf(formPersisted[key], formRendered[key]));
 }
 
 function collectDialogEnv() {

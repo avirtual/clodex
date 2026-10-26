@@ -303,7 +303,7 @@ test('t717: collectFormConfig collects intents and exec grants for both agent ty
 
   assert.match(fn, /const intents = agentType \? collectIntentChecklist\(inputIntentList\)/,
     'a codex seat must be able to save an intent allowlist from the New Session dialog');
-  assert.match(fn, /execCommands: agentType \? formCarry\('execCommands', collectExecChecklist, inputExecList\)/,
+  assert.match(fn, /execCommands: agentType \? formCarry\('execCommands', collectExecChecklist\(inputExecList\)\)/,
     'and its exec grants, which its spawn arm already resolves');
   assert.ok(!/type === 'claude' \? collectIntentChecklist/.test(fn));
   assert.ok(!/type === 'claude' \? collectExecChecklist/.test(fn));
@@ -312,7 +312,7 @@ test('t717: collectFormConfig collects intents and exec grants for both agent ty
   // widening them would pretend to enforce something.
   for (const [claudeOnly, cap] of [['collectAgentChecklist', 'agents'], ['collectBuiltinChecklist', 'agents'],
     ['collectToolChecklist', 'tools'], ['newSessionSkillDenyList', 'skillRoster']]) {
-    assert.ok(new RegExp(`caps\\.${cap} \\? (formCarry\\('\\w+', ${claudeOnly}, |${claudeOnly}\\()`).test(fn),
+    assert.ok(new RegExp(`caps\\.${cap} \\? (formCarry\\('\\w+', )?${claudeOnly}\\(`).test(fn),
       `${claudeOnly} must stay gated on the ${cap} cap, which only claude carries`);
   }
   assert.match(fn, /stripLevel: caps\.strip \?/, 'wire stripping stays behind the strip cap');

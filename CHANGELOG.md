@@ -16,7 +16,6 @@ blocks a release.
 - The release script now launches the post-release cloud review itself, on the default Claude login, so every release gets reviewed without a manual step; findings arrive as one GitHub issue.
 - The release-review notice a Clodex lead gets after an upgrade now points at the cloud review the release script launched, instead of asking the lead to run a local review.
 - The cloud release review now runs unattended and always leaves a GitHub issue: findings stay open, and a clean review opens and closes a CLEAN issue, so a missing issue means the review failed.
-- Saving a template or session no longer drops a tool you denied when a lower settings layer also locks that tool off; the deny survives if that layer later changes.
 
 ## 5.145.1 — 2026-10-26
 - In the New Session and template dialogs, changing the CLI type, placement or folder keeps the grants you ticked or unticked, instead of restoring the template's saved ones.
