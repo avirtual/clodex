@@ -1,6 +1,6 @@
 'use strict';
 
-const { test } = require('node:test');
+const { test, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const os = require('node:os');
@@ -11,6 +11,9 @@ const { createRemoteWiring } = require('../remote-wiring');
 const SID_A = 'aaaaaaaa-1111-4111-8111-111111111111';
 const SID_B = 'bbbbbbbb-2222-4222-8222-222222222222';
 const QUIET = { info() {}, warn() {}, error() {}, debug() {} };
+
+beforeEach(() => { mock.timers.enable({ apis: ['setTimeout'] }); });
+afterEach(() => { mock.timers.reset(); });
 
 function fakeKeeper(sids) {
   const held = new Set(sids);
