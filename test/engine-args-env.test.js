@@ -122,8 +122,6 @@ test('args-edit with env omitted preserves the persisted env (no-restart save)',
     'omitting env leaves the persisted env untouched');
 });
 
-// createEngine's background timers keep the loop alive; exit once results flush.
-
 for (const row of [
   { label: 'revoke', before: ['old-grant'], patch: [], want: [] },
   { label: 'add', before: undefined, patch: ['new-grant'], want: ['new-grant'] },
