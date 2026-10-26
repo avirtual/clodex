@@ -284,6 +284,7 @@ delete childEnv.CLODEX_TEST_LOCK_WAIT_MS;
 delete childEnv.CLODEX_TEST_LOCK;
 delete childEnv.CLODEX_TEST_LOCK_NOTE_FD;
 delete childEnv.CLODEX_TEST_SLOW_ADVISORY;
+delete childEnv.CLODEX_TEST_SLOW_RETIME;
 
 const RUN_TIMEOUT_MS = 20 * 60 * 1000;
 const runTimeoutMs = Number(process.env.CLODEX_TEST_RUN_TIMEOUT_MS) > 0
@@ -463,8 +464,10 @@ const timed = advisory ? [] : offenders;
 const load = [];
 if (retime && timed.length && timed.length <= RETIME_CAP) {
   const files = junitFiles();
+  const deadline = runStart + runTimeoutMs;
   timed.forEach((o, i) => {
-    const alone = retimeAlone(o, i, files);
+    if (Date.now() >= deadline) return;
+    const alone = retimeAlone(o, i, files, deadline);
     if (alone !== null && alone <= slowLimit) load.push({ o, alone });
   });
 }
@@ -506,7 +509,7 @@ function junitFiles() {
   return out;
 }
 
-function retimeAlone(o, i, files) {
+function retimeAlone(o, i, files, deadline) {
   const name = tapUnescape(o.name);
   const hits = files.filter((f) => f.file && f.name === name && Math.abs(f.ms - o.ms) < 1);
   const owners = new Set(hits.map((f) => f.file));
@@ -521,11 +524,12 @@ function retimeAlone(o, i, files) {
     `--test-name-pattern=^${escaped}$`,
     '--test-reporter=tap', `--test-reporter-destination=${retap}`,
     file,
-  ], { cwd: ROOT, stdio: 'ignore', env: childEnv, timeout: perTestMs * 2, killSignal: 'SIGTERM' });
+  ], { cwd: ROOT, stdio: 'ignore', env: childEnv, timeout: Math.max(1, Math.min(slowLimit + 30000, deadline - Date.now())), killSignal: 'SIGTERM' });
   if (res.error || res.status !== 0) return null;
   let text = '';
   try { text = fs.readFileSync(retap, 'utf8'); } catch { return null; }
   let hit = false;
+  const durations = [];
   for (const line of text.split('\n')) {
     const point = /^ *(?:not )?ok \d+ - (.*)$/.exec(line);
     if (point) {
@@ -533,9 +537,12 @@ function retimeAlone(o, i, files) {
       continue;
     }
     const dur = /^ *duration_ms: *([\d.]+) *$/.exec(line);
-    if (dur && hit) return Number(dur[1]);
+    if (dur && hit) {
+      durations.push(Number(dur[1]));
+      hit = false;
+    }
   }
-  return null;
+  return durations.length === 1 ? durations[0] : null;
 }
 
 for (const l of load) {

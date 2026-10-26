@@ -34,6 +34,7 @@ function runRunner({
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
   delete env.CLODEX_TEST_SLOW_ADVISORY;
+  delete env.CLODEX_TEST_SLOW_RETIME;
   if (slowMs !== null) env.CLODEX_TEST_SLOW_MS = String(slowMs);
   if (extraEnv) Object.assign(env, extraEnv);
   try {
@@ -326,4 +327,24 @@ test('slow gate: more than twelve offenders skips the re-time and enforces them 
   assert.notStrictEqual(r.code, 0, 'thirteen slow tests at once is a regression or a broken box');
   assert.ok(!/re-timed alone/.test(r.out), 'nothing was re-timed');
   for (const n of names) assert.match(r.out, new RegExp(`^SLOW: \\d+ms ${n}$`, 'm'));
+});
+
+test('slow gate: a re-run that hangs is cut at the run deadline, prints TOTALS and stays enforced', () => {
+  const body = 'require(\'node:test\').test(\'the hanging subject\', () => {\n'
+    + '  const m = require(\'node:path\').join(__dirname, \'.hang\');\n'
+    + '  const again = require(\'node:fs\').existsSync(m);\n'
+    + '  require(\'node:fs\').writeFileSync(m, \'\');\n'
+    + `  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, again ? 15000 : 400);\n});\n`;
+  const started = Date.now();
+  const r = runRunner({
+    files: { 'test/hang.test.js': body },
+    slowMs: 150,
+    extraEnv: { CLODEX_TEST_RUN_TIMEOUT_MS: '3500' },
+  });
+  assert.match(r.out, /^TOTALS: 2 pass, 0 fail, 2 tests$/m,
+    'ENTER: the main run finished inside the deadline and its totals were printed');
+  assert.ok(Date.now() - started < 12000, 'the re-run was cut at the run deadline, not its own long timeout');
+  assert.notStrictEqual(r.code, 0, 'a re-run that never finished excuses nothing');
+  assert.match(r.out, /^SLOW: \d+ms the hanging subject$/m);
+  assert.ok(!/re-timed alone/.test(r.out));
 });
