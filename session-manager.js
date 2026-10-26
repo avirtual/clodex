@@ -1244,6 +1244,17 @@ function createSessionManager(deps) {
       }
     }
 
+    _bindHold(name, sid = null) {
+      const tel = this._wireTelemetry;
+      if (!tel) return;
+      try {
+        if (sid && this._holdKeeper && this._holdKeeper.holds()[sid]) tel.noteSession(name, sid);
+        else tel.forgetSession(name);
+      } catch (e) {
+        this._shadowLog({ type: 'wire-hold-bind-error', error: e.message });
+      }
+    }
+
     // Retried every main-line turn until an arm lands, not latched once per spawn:
     // arm() is warm-gated, so a first-turn decline would otherwise lose the hold silently.
     _maybeRearmHold(s, agent) {
@@ -2239,6 +2250,7 @@ function createSessionManager(deps) {
         digestNonEmpty: agentType === 'claude' && composeDigest(memoryStore.list(name)) !== null,
       };
       this.sessions.set(name, session);
+      this._bindHold(name, fork ? null : session.sessionId);
       if (intentChannel) await this._startIntentSocket(session, intentChannel);
 
       // Recomposed here: the hook cats the digest only for source startup|clear|compact, so a resumed session gets none;
@@ -2594,6 +2606,7 @@ function createSessionManager(deps) {
         try { this._stampSeatCost(session, 'exit'); } catch {}
         if (dropRecord) {
           getPersistence().remove(name);
+          this._bindHold(name);
         }
         if (stampExited) {
           try { getPersistence().setExited(name, { exitCode, signal: signal || null }); } catch {}
@@ -3660,6 +3673,7 @@ function createSessionManager(deps) {
       this._foldSeatCost(s);
       try { this._stampSeatCost(s, 'kill'); } catch {}
       getPersistence().remove(name);
+      this._bindHold(name);
       if (s.stream) { s.stream.kill(); return; }
       const ptyPid = s.pty.pid;
       setTimeout(() => { sigkillPid(ptyPid, name, log, killPid); }, 5000);
@@ -3689,6 +3703,7 @@ function createSessionManager(deps) {
         if (wasLive) return;
         this.clearHintForRecord(name);
         getPersistence().remove(name);
+        this._bindHold(name);
       };
       const dropSeatDir = () => {
         try {
@@ -3955,6 +3970,7 @@ function createSessionManager(deps) {
             name, type: entry.type, cwd: entry.cwd, team: this.teamNameOf(name, entry.cwd),
           };
         }
+        if (this._wireTelemetry) this._wireTelemetry.renameSession(name, newName);
         if (typeof renameSeatRow === 'function') {
           try { await renameSeatRow(name, newName); } catch (e) {
             log.warn('session', `rename ${name} → ${newName}: roster row not moved (${e.message})`);
@@ -4842,6 +4858,7 @@ function createSessionManager(deps) {
         if (!e || !e.name) continue;
         this.clearHintForRecord(e.name);
         getPersistence().remove(e.name);
+        this._bindHold(e.name);
         this.forgetSeatFiles(e.name, e);
         dropped.push(e.name);
       }
