@@ -158,7 +158,9 @@ test('releaseReviewNoticeFor: a difference names the tag range last..host, verba
 test('releaseReviewNoticeFor: the notice never asks for an Agent-tool remote review', () => {
   const notice = releaseReviewNoticeFor('5.143.0', '5.144.0');
   assert.ok(notice.includes('cloud-review.sh'));
-  assert.ok(!/Agent tool,|isolation/.test(notice), notice);
+  assert.ok(notice.includes('Do not run a review yourself'), notice);
+  assert.ok(!notice.includes('isolation'), notice);
+  assert.ok(!notice.includes('cold reviewer (Agent tool'), notice);
 });
 
 test('releaseReviewNoticeFor: a downgrade says nothing, and the compare is numeric not string order', () => {

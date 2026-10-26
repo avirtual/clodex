@@ -303,10 +303,10 @@ test('release: the DMG child probe runs right after the pty probe, before anythi
 test('release: the cloud review launches after the image publish and before Done', () => {
   const src = fs.readFileSync(SCRIPT, 'utf-8');
   const publish = src.indexOf('run "$(dirname "$0")/publish-image.sh"');
-  const review = src.indexOf('run "$(dirname "$0")/cloud-review.sh" "$PREV_TAG" "$TAG" || say "warn: ');
+  const review = src.indexOf('if run "$(dirname "$0")/cloud-review.sh" "$PREV_TAG" "$TAG"; then\n  if [ -n "$LOG" ]; then say "$(tail -n 1 "$LOG")"; fi\nelse\n  say "warn: ');
   const done = src.indexOf('step "Done"');
   assert.ok(publish > 0, 'the image publish step is gone');
-  assert.ok(review > 0, 'the cloud review launch is gone, or no longer non-fatal');
+  assert.ok(review > 0, 'the cloud review launch is gone, no longer non-fatal, or no longer says its last line under --quiet');
   assert.ok(src.includes('step "Launching cloud release review"'), 'the review has no step header');
   assert.ok(review > publish, 'the review launches after the image publish');
   assert.ok(done > 0 && review < done, 'the review launches before Done');
