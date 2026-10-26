@@ -278,10 +278,10 @@ bundle), whose packaged form is the Docker image under
   what the frozen prompt cannot: AT-MOST-ONCE (claim by rename, consume on
   read), and **must not be merged with the prompt delta**, which is
   at-least-once.
-  A resumed seat under a newer host gets the version notice; a resumed team
-  lead also gets a release-review notice naming the tag range release.sh
-  launched the cloud review for, whose issue the lead triages
-  (`releaseReviewNoticeFor`).
+  A resumed seat under a newer host gets the version notice; a resumed lead
+  of the team whose root releases Clodex (`releasesClodex`) also gets a
+  release-review notice naming the tag range release.sh launched the cloud
+  review for, whose issue the lead triages (`releaseReviewNoticeFor`).
 - **bash-live.js** — the in-flight half of the Console tab, and a different file
   class from the one below: a FOREGROUND Bash call's output file is unlinked at
   completion, which is exactly why `PostToolUse` cannot see it. A PreToolUse
