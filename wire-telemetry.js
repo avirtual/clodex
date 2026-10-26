@@ -151,6 +151,10 @@ class WireTelemetry {
     if (typeof name === 'string' && typeof sessionId === 'string' && sessionId) this._bound.set(name, sessionId);
   }
 
+  forgetSession(name) {
+    this._bound.delete(name);
+  }
+
   sessionFor(name) {
     const a = this._agents.get(name);
     return (a && a.sessionId) || this._bound.get(name) || null;
@@ -281,10 +285,6 @@ class WireTelemetry {
   // Known semantic change, deliberate: wire cost/requests/turns totals are
   // per-app-launch (in-process ledger), not wirescope's persisted session-
   // lifetime totals.
-  //
-  // Returns the poll payload untouched when the wire has no main-line
-  // identity for the agent yet (Codex sessions, pre-first-turn) — degradation
-  // is per-agent, never partial within an agent tick. Never throws.
   overlay(name, poll) {
     try {
       if (!poll || !poll.linked) return poll;
@@ -398,7 +398,6 @@ class WireTelemetry {
           this._agents.delete(name); this._lastDiff.delete(name); this._baseline.delete(name);
         }
       }
-      for (const name of this._bound.keys()) if (!liveNames.has(name)) this._bound.delete(name);
     } catch { /* never breaks the tick */ }
   }
 }

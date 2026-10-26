@@ -456,6 +456,7 @@ test('a restored perpetual hold is visible and stoppable before the seat takes a
   eng.manager._wireTelemetry = tel;
   eng.manager._bindHeldSessions(keeper);
   assert.strictEqual(tel.payload('w'), null, 'ENTER: the wire has seen no turn for w');
+  tel.prune(new Set());
 
   const out = tel.overlay('w', { linked: true, sessionId: 'B', cost: { usd: 1.5, requests: 3 }, turns: 2 });
   assert.strictEqual(out.holdSource, 'wire');

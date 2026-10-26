@@ -1205,6 +1205,7 @@ function createSessionManager(deps) {
       // Before the reassignment, or the old id's perpetual hold is unreachable and re-hashes forever;
       // endSession's 'session-ended' cause leaves the re-arm gate to the reset below.
       if (this._holdKeeper && oldSid) this._holdKeeper.endSession(oldSid);
+      if (this._wireTelemetry) this._wireTelemetry.forgetSession(agent);
       s.sessionId = newSessionId;
       s._holdRearmed = false;
       getPersistence().setSessionId(agent, newSessionId);
@@ -2321,6 +2322,7 @@ function createSessionManager(deps) {
           this._noteSessionLeft(session, priorSid);
           try { clearSubq(subqDirFor(name)); } catch {}
           try { if (this._holdKeeper) this._holdKeeper.endSession(priorSid); } catch { /* observer-grade */ }
+          if (this._wireTelemetry) this._wireTelemetry.forgetSession(name);
           session._holdRearmed = false;
           try { arm.onContextReset(name); } catch { /* observer-grade */ }
           // Refresh before the continuation: the clear discarded every delivered delta, so the gap is re-staged for the new
