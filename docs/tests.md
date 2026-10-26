@@ -85,6 +85,12 @@ otherwise hangs the whole suite, not the one test. t1470 gave every hook spawn
 in `cli-hooks.test.js` a 30s SIGKILL timeout, so its ARG_MAX drain case now
 fails as one ETIMEDOUT test instead of stalling the run.
 
+## A slow test is timed on its own before it fails
+
+A test over six seconds fails the run unless `test/slow-tests.json` lists it; a slow
+test is re-timed alone before it fails the run, so a loaded box does not fail a
+green branch.
+
 ## Scratch directories live under one root
 
 The suite mints its scratch directories under `$TMPDIR/clodex-suite`, through
