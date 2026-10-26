@@ -462,16 +462,23 @@ const RETIME_CAP = 12;
 const retime = process.env.CLODEX_TEST_SLOW_RETIME !== '0';
 const timed = advisory ? [] : offenders;
 const load = [];
-if (retime && timed.length && timed.length <= RETIME_CAP) {
+let unsampled = [];
+if (retime && timed.length) {
+  const sample = timed.length <= RETIME_CAP
+    ? timed
+    : [...timed].sort((a, b) => b.ms - a.ms).slice(0, RETIME_CAP);
   const files = junitFiles();
   const deadline = runStart + runTimeoutMs;
-  timed.forEach((o, i) => {
+  sample.forEach((o, i) => {
     if (Date.now() >= deadline) return;
     const alone = retimeAlone(o, i, files, deadline);
     if (alone !== null && alone <= slowLimit) load.push({ o, alone });
   });
+  if (sample !== timed && load.length === sample.length) {
+    unsampled = timed.filter((o) => !sample.includes(o));
+  }
 }
-const enforced = timed.filter((o) => !load.some((l) => l.o === o));
+const enforced = timed.filter((o) => !load.some((l) => l.o === o) && !unsampled.includes(o));
 
 function tapUnescape(s) {
   const map = { n: '\n', t: '\t', r: '\r', b: '\b', f: '\f', v: '\v' };
@@ -547,6 +554,13 @@ function retimeAlone(o, i, files, deadline) {
 
 for (const l of load) {
   console.log(`SLOW (load, re-timed alone): ${Math.round(l.o.ms)}ms → ${Math.round(l.alone)}ms ${l.o.name}`);
+}
+for (const o of unsampled) {
+  console.log(`SLOW (load, not re-timed): ${Math.round(o.ms)}ms ${o.name}`);
+}
+if (unsampled.length) {
+  console.log(`SLOW (load): ${timed.length} offenders over the cap of ${RETIME_CAP}; `
+    + `re-timed the ${load.length} slowest alone and all ${load.length} cleared, so the rest are not enforced`);
 }
 
 console.log(`\nTOTALS: ${pass} pass, ${fail} fail, ${tests} tests`);
