@@ -14,6 +14,7 @@ const { intentEnabled } = require('../intent-catalog');
 const { createSessionManager, deniedBodyDisposition, findPeerByOrigin, isStaleRegistration, nameConflict, peerOriginSuffix } = require('../session-manager');
 const { canFireCompact } = require('../inject-queue');
 const { mkTmpRoot } = require('./lib/tmp-roots');
+const { processStubs } = require('./lib/process-stubs');
 const { mk, mkPark, mkTeamCreate } = require('./lib/session-fixtures');
 
 function fakeWin({ destroyed = false, focused = false } = {}) {
@@ -4859,6 +4860,7 @@ function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpaw
   // WITHOUT a session (forget, reviewer sweep) read the hint flag back out of.
   const upserts = [];
   const SessionManager = createSessionManager({
+    killPid: processStubs().killPid,
     knownSkillNames,
     REGISTRY_DIR: root,
     MSG_DIR: pathReal.join(root, 'messages'),

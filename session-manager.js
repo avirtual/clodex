@@ -352,12 +352,14 @@ function nearMissFormHint(text) {
 // An absent worktree pointer is the dangerous state: destroy() would drop the record and orphan the checkout.
 const ALWAYS_PRESERVE = ['sessionIds', 'pluginGrants', 'wireLabel', 'ticketId', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested', 'voice', 'reviewerTemplate', 'class', 'sleep', 'template', 'cost', 'wakes', 'awokeAt'];
 
-function sigkillPid(pid, name, log) {
+const defaultKillPid = (pid, sig) => process.kill(pid, sig);
+
+function sigkillPid(pid, name, log, killPid = defaultKillPid) {
   if (!(pid > 0)) {
     if (log) log.warn('session', `refusing SIGKILL for ${name}: pid is ${pid}, which would broadcast rather than target`);
     return;
   }
-  try { process.kill(pid, 'SIGKILL'); } catch {}
+  try { killPid(pid, 'SIGKILL'); } catch {}
 }
 
 function psSnapshotSync(childProcess) {
@@ -384,7 +386,7 @@ function ptyOwnership(rows, ptyPid, ownerPid) {
   return row.ppid === ownerPid ? 'ours' : 'foreign';
 }
 
-function reapFromSnapshot({ rows, ptyPid, name, log, ownerPid = process.pid }) {
+function reapFromSnapshot({ rows, ptyPid, name, log, killPid, ownerPid = process.pid }) {
   if (!rows || !(ptyPid > 0)) return 0;
   const owned = ptyOwnership(rows, ptyPid, ownerPid);
   if (owned !== 'ours') {
@@ -396,14 +398,14 @@ function reapFromSnapshot({ rows, ptyPid, name, log, ownerPid = process.pid }) {
     return 0;
   }
   const pids = descendantPids(rows, ptyPid);
-  for (const pid of pids) sigkillPid(pid, `${name} descendant`, log);
+  for (const pid of pids) sigkillPid(pid, `${name} descendant`, log, killPid);
   if (pids.length && log) log.info('session', `reaped ${pids.length} descendant(s) of ${name} pid=${ptyPid}`);
   return pids.length;
 }
 
-async function reapPtyDescendants({ ptyPid, name, log, childProcess }) {
+async function reapPtyDescendants({ ptyPid, name, log, childProcess, killPid }) {
   if (!(ptyPid > 0)) return 0;
-  return reapFromSnapshot({ rows: await psSnapshot(childProcess), ptyPid, name, log });
+  return reapFromSnapshot({ rows: await psSnapshot(childProcess), ptyPid, name, log, killPid });
 }
 
 // A blocking agent.json naming our own pid is stale (Docker reuses one pid every boot), but only once the caller has ruled out a live session of that name.
@@ -599,6 +601,7 @@ function createSessionManager(deps) {
     qualifiedAgentName,
     buildIpcPrompt,
     childProcess,
+    killPid,
     claimParkedById,
     claimParkedByKey,
     classifyNotification,
@@ -3645,8 +3648,8 @@ function createSessionManager(deps) {
       getPersistence().remove(name);
       if (s.stream) { s.stream.kill(); return; }
       const ptyPid = s.pty.pid;
-      setTimeout(() => { sigkillPid(ptyPid, name, log); }, 5000);
-      await reapPtyDescendants({ ptyPid, name, log, childProcess });
+      setTimeout(() => { sigkillPid(ptyPid, name, log, killPid); }, 5000);
+      await reapPtyDescendants({ ptyPid, name, log, childProcess, killPid });
       try { s.pty.kill(); } catch {}
     }
 
@@ -3720,8 +3723,8 @@ function createSessionManager(deps) {
       s._archived = true;
       if (s.stream) { s.stream.kill(); return; }
       const ptyPid = s.pty.pid;
-      setTimeout(() => { sigkillPid(ptyPid, name, log); }, 5000);
-      await reapPtyDescendants({ ptyPid, name, log, childProcess });
+      setTimeout(() => { sigkillPid(ptyPid, name, log, killPid); }, 5000);
+      await reapPtyDescendants({ ptyPid, name, log, childProcess, killPid });
       try { s.pty.kill(); } catch {}
     }
 
@@ -3868,8 +3871,8 @@ function createSessionManager(deps) {
     async _stopForRespawn(s, name) {
       if (s.stream) { s.stream.kill(); return; }
       const ptyPid = s.pty && s.pty.pid;
-      if (ptyPid) setTimeout(() => { sigkillPid(ptyPid, name, log); }, 5000);
-      await reapPtyDescendants({ ptyPid, name, log, childProcess });
+      if (ptyPid) setTimeout(() => { sigkillPid(ptyPid, name, log, killPid); }, 5000);
+      await reapPtyDescendants({ ptyPid, name, log, childProcess, killPid });
       try { s.pty.kill(); } catch {}
     }
 
@@ -4909,7 +4912,7 @@ function createSessionManager(deps) {
       for (const [name] of this.sessions) {
         const s = this.sessions.get(name);
         if (s.stream) { s.stream.kill(); continue; }
-        if (s.pty && Number.isInteger(s.pty.pid)) reapFromSnapshot({ rows, ptyPid: s.pty.pid, name, log });
+        if (s.pty && Number.isInteger(s.pty.pid)) reapFromSnapshot({ rows, ptyPid: s.pty.pid, name, log, killPid });
         try { s.pty.kill(); } catch {}
       }
       this.killVoiceEngine();
@@ -9080,4 +9083,4 @@ function createSessionManager(deps) {
   return SessionManager;
 }
 
-module.exports = { EXEC_ACK_MIN_TIMEOUT_MS, EXEC_REPLY_WAIT_MS, SANDBOX_RELAY_TIMEOUT_MS, createSessionManager, deniedBodyDisposition, escapeSafeTail, exitDisposition, findPeerByOrigin, isStaleRegistration, missingToolOnExit, nameConflict, peerOriginSuffix, preseedClaudeOnboarding, spillAckLine, ticketCloseLine, ticketTaskDirLine };
+module.exports = { EXEC_ACK_MIN_TIMEOUT_MS, defaultKillPid, EXEC_REPLY_WAIT_MS, SANDBOX_RELAY_TIMEOUT_MS, createSessionManager, deniedBodyDisposition, escapeSafeTail, exitDisposition, findPeerByOrigin, isStaleRegistration, missingToolOnExit, nameConflict, peerOriginSuffix, preseedClaudeOnboarding, spillAckLine, ticketCloseLine, ticketTaskDirLine };

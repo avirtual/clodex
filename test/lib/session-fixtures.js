@@ -19,6 +19,7 @@ const { mkTmpRoot } = require('./tmp-roots');
 const { execFileSync } = require('child_process');
 const { parkDelivery, drainPending, hasPending, hasActivePending, countPending: countPendingReal, parkIdInUse } = require('../../pending-store');
 const { isDraftOpen: isDraftOpenReal } = require('../../proxy-util');
+const { processStubs } = require('./process-stubs');
 
 let OUTBOX_PARENT = null;
 let OUTBOX_N = 0;
@@ -30,7 +31,10 @@ function sharedOutboxRoot() {
 // Minimal fake deps: only what the PTY-free methods touch. Everything else is
 // undefined, which the destructure tolerates (those methods aren't reached).
 function mk(overrides = {}) {
+  const stubs = processStubs();
   const deps = {
+    killPid: stubs.killPid,
+    childProcess: stubs.childProcess,
     knownSkillNames: () => [],
     getRemoteServer: () => null,
     getUiSettings: () => ({ get: () => ({}) }),
@@ -88,7 +92,10 @@ function mk(overrides = {}) {
     ...overrides,
   };
   const SessionManager = createSessionManager(deps);
-  return new SessionManager();
+  const m = new SessionManager();
+  m.killedPids = stubs.killed;
+  m.psCalls = stubs.psCalls;
+  return m;
 }
 
 // A busy agent's DM parks to the on-disk pending store (where the out-of-process

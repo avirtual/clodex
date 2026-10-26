@@ -26,13 +26,14 @@
 
 - `preseedClaudeOnboarding` writes through a tmp file and a rename, which replaces a symlinked `~/.claude.json` with a regular file instead of writing through the link.
 
-## Process reaping, exit disposition and peer keys — sigkillPid … seatRelFiles
+## Process reaping, exit disposition and peer keys — defaultKillPid … seatRelFiles
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
+| `defaultKillPid` | the production killPid dep engine.js injects: a plain process.kill, reached only through sigkillPid's guard | OS processes | none | sigkill-pid-guard.test.js sigkill-pid-census.test.js |
 | `sigkillPid` | SIGKILLs a pid only when it is positive, and warns and refuses otherwise because non-positive pids broadcast | OS processes | none | sigkill-pid-guard.test.js sigkill-pid-census.test.js reap-seat-descendants.test.js session-move.test.js |
 | `ptyOwnership` | classifies a pty pid in a ps snapshot as gone, ours (direct child of the owner pid) or foreign | none (pure) | none | term-marks-bash.test.js |
-| `reapFromSnapshot` | SIGKILLs every descendant of a pty pid, but only when that pty is our direct child, and returns the count | OS processes | ptyOwnership, stall-evidence.descendantPids, sigkillPid | reap-seat-descendants.test.js |
+| `reapFromSnapshot` | SIGKILLs every descendant of a pty pid through the injected killPid, but only when that pty is our direct child, and returns the count | OS processes | ptyOwnership, stall-evidence.descendantPids, sigkillPid | reap-seat-descendants.test.js |
 | `reapPtyDescendants` | async entry point that takes a fresh ps snapshot and reaps beneath a pty with the owner pid set to process.pid | OS processes | psSnapshot, reapFromSnapshot | unpinned |
 | `isStaleRegistration` | whether a blocking agent.json may be force-cleaned: its pid is dead or is our own pid (the fixed-pid Docker case) | none (pure) | none | session-manager.test.js |
 | `exitDisposition` | `{expected, dropRecord, stampExited}` for a process exit, from agentType and the kill/shutdown/archive/move flags | none (pure) | none | session-move.test.js |

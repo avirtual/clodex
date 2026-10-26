@@ -218,9 +218,9 @@ test('every process.kill in session-manager.js is guarded against a broadcast pi
     + 'mis-paired has blanked the tail, so the allowlist below is scanning a truncated file and '
     + 'passes over anything in the eaten span; or the final `module.exports` line was reformatted');
 
-  const calls = [...code.matchAll(/process\.kill\(([^,)]+)/g)].map((m) => m[1].trim());
-  assert.ok(calls.length >= 1,
-    `found ${calls.length} process.kill call sites — the scan has stopped matching and this pin is vacuous`);
+  const calls = [...code.matchAll(/(?:process\.kill|\bkillPid)\(([^,)]+)/g)].map((m) => m[1].trim());
+  assert.ok(calls.length >= 2,
+    `found ${calls.length} signal call sites — the scan has stopped matching and this pin is vacuous`);
 
   // The ONLY argument any process.kill in this file may take is the helper's
   // own already-checked `pid`. A raw `s.pty.pid` reaching process.kill directly
@@ -230,11 +230,11 @@ test('every process.kill in session-manager.js is guarded against a broadcast pi
   // fails closed on a spelling nobody predicted.
   const unguarded = calls.filter((arg) => arg !== 'pid');
   assert.deepStrictEqual(unguarded, [],
-    `these process.kill call sites do not go through the guard: ${unguarded.join(', ')}. Route them via `
+    `these signal call sites do not go through the guard: ${unguarded.join(', ')}. Route them via `
     + 'sigkillPid(), which refuses a non-positive pid. A raw `s.pty.pid` here is the incident that took the '
     + 'desktop down three times — the pty seam does not guarantee a real pid.');
 
-  assert.match(code, /function sigkillPid\(pid, name, log\)\s*\{\s*if \(!\(pid > 0\)\)/,
+  assert.match(code, /function sigkillPid\(pid, name, log, killPid = defaultKillPid\)\s*\{\s*if \(!\(pid > 0\)\)/,
     'sigkillPid must open with the `pid > 0` refusal — that single check is the entire safety property, and a '
     + 'rewrite that moves or softens it puts the broadcast back');
 });

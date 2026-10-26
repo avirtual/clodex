@@ -190,9 +190,9 @@ const CENSUS = [
     why: 'FILE provenance — read back from the watcher state JSON, so it really can be non-positive',
   },
   {
-    file: 'session-manager.js', pid: 'pid', sig: "'SIGKILL'", count: 1,
+    file: 'session-manager.js', pid: 'pid', sig: 'sig', count: 1,
     guard: 'if (!(pid > 0)) {',
-    why: "sigkillPid, the funnel both the kill() and archive() backstops go through (12ec89d)",
+    why: "defaultKillPid, called only from sigkillPid after its refusal — the funnel both the kill() and archive() backstops go through (12ec89d)",
   },
   {
     file: 'stream-seat.js', pid: '-pid', sig: 'sig', count: 1,

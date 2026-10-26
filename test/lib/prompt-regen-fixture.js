@@ -9,6 +9,7 @@ const { createCliHooks } = require('../../cli-hooks');
 const { pathFor, runDirFor } = require('../../clodex-paths');
 const { bakePrompt, promptCacheDir, readCache, ipcDelta } = require('../../ipc-prompt-cache');
 const { mergeSessionEnv } = require('../../env-scopes');
+const { processStubs } = require('./process-stubs');
 
 function mkManager(root, overrides = {}) {
   const persisted = new Map();
@@ -16,7 +17,10 @@ function mkManager(root, overrides = {}) {
   const watchers = [];
   let sids = 0;
   let mgr = null;
+  const stubs = processStubs();
   const SessionManager = createSessionManager({
+    killPid: stubs.killPid,
+    childProcess: stubs.childProcess,
     knownSkillNames: () => [],
     REGISTRY_DIR: root,
     PENDING_DIR: path.join(root, 'pending'),
@@ -160,7 +164,7 @@ function mkManager(root, overrides = {}) {
     clearTimeout(s._compactValveTimer);
     clearTimeout(s._postClearValveTimer);
   };
-  return { m, spawns, watchers, typed, handoffs, refreshes, shadow, msgs, stop, persisted };
+  return { m, spawns, watchers, typed, handoffs, refreshes, shadow, msgs, stop, persisted, killed: stubs.killed, psCalls: stubs.psCalls };
 }
 
 async function spawn(h, name) {

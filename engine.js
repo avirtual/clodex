@@ -1039,7 +1039,7 @@ function spillToFile(sender, body, recipient) {
 // `termAvailableFor` eagerly, and a later const destructure is still in its TDZ.
 const { termAvailableFor, vetTermCommand, sanitizeName, TERM_EXEC_TIMEOUT_MS } = require('./drawer-avail');
 
-const { createSessionManager } = require('./session-manager');
+const { createSessionManager, defaultKillPid } = require('./session-manager');
 
 const { createPluginHostEngine } = require('./plugin-host-engine');
 const { pluginsEnabled } = require('./plugin-api');
@@ -1124,6 +1124,7 @@ const SessionManager = createSessionManager({
     qualifiedAgentName,
     buildIpcPrompt,
     childProcess: require('child_process'),
+    killPid: defaultKillPid,
     claimParkedById,
     claimParkedByKey,
     classifyNotification,
