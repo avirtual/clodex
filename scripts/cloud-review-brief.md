@@ -6,7 +6,7 @@ You are a cold reviewer of the public repo avirtual/clodex. Review the release r
 4. Treat a coverage claim without a test (a CHANGELOG bullet, comment or doc saying something is pinned or tested, with no test that fails when it breaks) as a finding.
 
 Reporting:
-- Report through this session's GitHub integration (its GitHub tools), never the gh CLI; do not run gh. Before reviewing, confirm the integration can read issues on avirtual/clodex. If it cannot, review anyway and put the full findings in your final message.
+- Report through this session's GitHub tools first (mcp__github* or equivalent) when they exist. Otherwise use the gh CLI, wrapping every gh call as `timeout 60 gh …`; never probe gh auth, and retry a failed or timed-out gh call at most once. If neither route works, review anyway and put the full findings, plus the exact error, in your final message.
 - Never open a test issue.
 - With findings, open ONE GitHub issue on avirtual/clodex titled "Release review {{NEW}}: <VERDICT>", where <VERDICT> is a one-line summary of the worst finding, and leave it open. The body lists each finding with file, symbol and the evidence.
 - With no findings, open ONE issue on avirtual/clodex titled "Release review {{NEW}}: CLEAN", whose body lists what you checked, then close it at once.

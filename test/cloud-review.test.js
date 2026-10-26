@@ -74,10 +74,14 @@ test('cloud-review: CLAUDE_CODE_OAUTH_TOKEN from the parent never reaches claude
   assert.doesNotMatch(env, /^CLAUDE_CODE_OAUTH_TOKEN=/m);
 });
 
-test('cloud-review: the brief reports a clean review as a CLEAN issue and never probes gh', () => {
+test('cloud-review: the brief reports a clean review as a CLEAN issue, tries GitHub tools, then gh under a timeout, and never probes gh auth', () => {
   const brief = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'cloud-review-brief.md'), 'utf-8');
   assert.ok(brief.includes('"Release review {{NEW}}: CLEAN"'), brief);
   assert.ok(!brief.includes('gh auth status'), brief);
+  assert.ok(brief.includes("this session's GitHub tools first"), brief);
+  assert.ok(brief.includes('timeout 60 gh'), brief);
+  assert.ok(!brief.includes('do not run gh'), brief);
+  assert.ok(!brief.includes('never the gh CLI'), brief);
 });
 
 test('cloud-review: CLODEX_RELEASE_NO_REVIEW=1 skips without invoking claude', () => {

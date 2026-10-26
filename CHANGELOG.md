@@ -13,6 +13,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- The cloud release review now opens its issue with the gh CLI when its cloud session has no GitHub tools, instead of leaving its findings only in the session.
 
 ## 5.146.0 — 2026-10-26
 - The release script now launches the post-release cloud review itself, on the default Claude login, so every release gets reviewed without a manual step; findings arrive as one GitHub issue.
