@@ -162,3 +162,15 @@ test('the peer killSession of a plain seat disarms its hold', async () => {
   assert.strictEqual(recs.get('w1'), undefined, 'ENTER: the peer path dropped the record');
   assert.deepStrictEqual(keeper.disarmed, [SID_A]);
 });
+
+test('_holdSidFor prefers the live sid and _disarmHoldFor survives a throwing keeper', () => {
+  const { m } = rig({ records: { a: { cwd: '/p', sessionId: SID_B } } });
+  assert.strictEqual(m._holdSidFor('a'), SID_B, 'a record-only seat answers by its persisted sid');
+  live(m, 'a', SID_A);
+  assert.strictEqual(m._holdSidFor('a'), SID_A, 'a live seat answers by its live sid');
+  const logged = [];
+  m._shadowLog = (rec) => logged.push(rec);
+  m._holdKeeper = { disarm() { throw new Error('boom'); } };
+  m._disarmHoldFor('a', SID_A);
+  assert.deepStrictEqual(logged, [{ type: 'wire-hold-disarm-error', agent: 'a', error: 'boom' }]);
+});
