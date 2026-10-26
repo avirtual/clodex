@@ -16,7 +16,7 @@
 // "the copy was made" and "the file was already there" are the same observation,
 // and a gather that did nothing would pass.
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -444,6 +444,3 @@ test('t701 confinement: a traversing prompt and a separator-bearing template are
   applyGather({ items }, { write: (...a) => wrote.push(a) });
   assert.deepStrictEqual(wrote, [], 'and apply writes nothing for a skipped item');
 });
-
-// createEngine starts background timers that keep the loop alive.
-after(() => { setImmediate(() => process.exit(0)); });
