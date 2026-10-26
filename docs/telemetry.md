@@ -313,7 +313,9 @@ failing alongside.
 
 Arming either one clears the other, as does an explicit disarm — a seat must
 never carry both. After an app restart a perpetual hold re-arms at startup
-(`_restorePerpetualHolds`); for a timed hold the first main-line wire turn
+(`_restorePerpetualHolds`), and `_bindHeldSessions` binds the seat into
+wire telemetry, so the payload carries the hold and `wire:hold` off
+disarms it before the seat's first turn; for a timed hold the first main-line wire turn
 re-arms the remaining window — retried each turn until the warm-gated
 `arm()` accepts (a strict once-per-spawn guard would silently re-lose the
 hold on a first-turn decline). Failure-disarm detection keys on the

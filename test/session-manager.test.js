@@ -24566,3 +24566,14 @@ test('_awakeAssistantRows: a live seat without the assistant flag costs no recor
 test('no test in this file signalled a pid it did not spawn', () => {
   assert.deepStrictEqual(strayKills, []);
 });
+
+test('a wire rotation drops the turnless hold binding for the old conversation', () => {
+  const { WireTelemetry } = require('../wire-telemetry');
+  const { m, s } = rotationRig({ rec: { name: 'a', keepWarmAlways: true } });
+  m._wireTelemetry = new WireTelemetry({});
+  m._wireTelemetry.noteSession('a', 'old-sid');
+  assert.strictEqual(m._wireTelemetry.sessionFor('a'), 'old-sid', 'ENTER: the seat is bound to its old id');
+  m._onWireSessionRotated(s, 'a', 'new-sid');
+  assert.strictEqual(s.sessionId, 'new-sid', 'ENTER: the rotation landed');
+  assert.strictEqual(m._wireTelemetry.sessionFor('a'), null);
+});

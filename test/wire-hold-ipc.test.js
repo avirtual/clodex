@@ -48,7 +48,7 @@ function rig({ warm = true, seen = true } = {}) {
     on: () => {},
     manager: {
       _holdKeeper: keeper,
-      _wireTelemetry: { payload: () => (seen ? { sessionId: SID } : null) },
+      _wireTelemetry: { sessionFor: () => (seen ? SID : null) },
     },
     persistence: {
       setHoldUntil: (name, v) => calls.push(['setHoldUntil', name, v]),
