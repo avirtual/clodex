@@ -385,11 +385,11 @@ function createRemoteWiring(deps) {
   }
 
   function storeCreateToken(name, token, out) {
-    try { writeClientToken(name, token); return out; }
+    try { writeClientToken(name, token); return { ...out, clientToken: true }; }
     catch (e) {
       log.error('session', `create ${name}: cannot write client token: ${e.message}`);
       try { fs.unlinkSync(clientTokenPathFor(REGISTRY_DIR, name)); } catch {}
-      return { ...out, warnings: [...(Array.isArray(out.warnings) ? out.warnings : []), 'client token not stored'] };
+      return { ...out, clientToken: false, warnings: [...(Array.isArray(out.warnings) ? out.warnings : []), 'client token not stored'] };
     }
   }
 

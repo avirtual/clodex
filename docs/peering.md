@@ -125,9 +125,9 @@ not an assistant); `PUT /api/sessions/:name/client-token` with `{token: string|n
 sets the seat's game client token (`[\x21-\x7e]{16,512}`, written 0600 to
 `sessions/<name>/client-token`; 200 `{ok, set:true}`), clears it on null or `''`
 (200 `{ok, set:false}`), 404 for an unknown seat, 400 `bad client token`; a create
-body's `client.token` sets it the same way after the spawn (a bad one is a 400 and
+body's `client.token` sets it the same way after the spawn, answering `clientToken: true` (a bad one is a 400 and
 nothing spawns; a team-lead create refuses any token with a 400; a write that fails after
-the spawn answers ok with `warnings: ['client token not stored']`, so set it again with this
+the spawn answers ok with `clientToken: false` and `warnings: ['client token not stored']`, so set it again with this
 PUT); the token reaches only exec children, as `CLODEX_CLIENT_TOKEN`, never
 an answer, the record or the CLI env; SSE `proposal` `{name, cmd, id, payload}` when
 the seat runs an exec def marked `proposal` (the player confirms it in the game;
