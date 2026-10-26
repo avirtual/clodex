@@ -24680,8 +24680,8 @@ async function forkedPtySeat(t) {
   h.m._holdKeeper = { endSession: (sid) => { calls.push(['endSession', sid]); return { session: sid }; } };
   h.m._wireTelemetry = { forgetSession: (n) => calls.push(['forgetSession', n]) };
   h.m._injectText = () => {};
-  await h.m.create('fk', 'claude', os.tmpdir(), [], 'parent-sid', 'ws', null, false, null,
-    [], [], [], [], [], null, [], [], null, null, true, false, null, null, null, null);
+  await h.m.create('fk', 'claude', os.tmpdir(), [], 'parent-sid', 'ws', null, true, null,
+    [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, null);
   const s = h.m.sessions.get('fk');
   assert.strictEqual(s.forked, true, 'ENTER: a forked seat');
   assert.strictEqual(s.sessionId, 'parent-sid', 'ENTER: it starts under the parent\'s id');
