@@ -15560,6 +15560,7 @@ function mkBoot(over = {}) {
     INJECT_QUIET_MS: 0,
     INJECT_QUIET_MAXWAIT: 0,
     LONG_TEXT_THRESHOLD: 100000, LONG_TEXT_DELAY: 0, SHORT_TEXT_DELAY: 0,
+    log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
     ...over,
   });
 }
@@ -15580,6 +15581,14 @@ test('T35 wiring: a claude seat with the boot latch already set injects immediat
   const { s, writes } = bootSession({ _bootReadySeen: true });
   await m._injectQueueFor(s).enqueue('scope');
   assert.deepStrictEqual(writes, ['\x15', 'scope', '\r']);
+});
+
+test('t1963: a claude seat built by mkBoot escalates an exhausted submit nudge instead of throwing on log.warn', () => {
+  const m = mkBoot();
+  const { s } = bootSession({ _bootReadySeen: true });
+  m._markInjectStuck(s, 'scope', Date.now() - 1000, false);
+  assert.strictEqual(s._injectStuck.probe, 'scope');
+  assert.strictEqual(s.needsAttention.kind, 'inject-stuck');
 });
 
 test('t1506 wiring: a claude seat gets the paste-mode wait cap and its cap callback; a codex seat gets neither', () => {
