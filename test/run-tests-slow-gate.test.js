@@ -317,16 +317,69 @@ test('slow gate: offenders in two files are each re-timed against their own file
   assert.match(r.out, /^SLOW \(load, re-timed alone\): \d+ms → \d+ms subject in two$/m);
 });
 
-test('slow gate: more than twelve offenders skips the re-time and enforces them all', () => {
-  const names = Array.from({ length: 13 }, (_, i) => `crowd ${i}`);
+test('slow gate: past the cap, the twelve slowest clear alone and the run passes', () => {
+  const rows = [
+    ['crowd a', 100], ['crowd b', 110], ['crowd c', 120], ['crowd d', 130], ['crowd e', 140],
+    ['crowd f', 150], ['crowd g', 160], ['crowd h', 170], ['crowd i', 180], ['crowd j', 190],
+    ['crowd k', 200], ['crowd l', 210], ['crowd m', 40],
+  ];
   const r = runRunner({
-    files: { 'test/crowd.test.js': names.map((n, i) => firstRunOnly(n, 150, `.crowd${i}`)).join('') },
-    slowMs: 100,
+    files: { 'test/crowd.test.js': rows.map(([n, ms], i) => firstRunOnly(n, ms, `.crowd${i}`)).join('') },
+    slowMs: 30,
   });
-  assert.match(r.out, /TOTALS: 14 pass, 0 fail/, 'ENTER: the run itself must be green');
-  assert.notStrictEqual(r.code, 0, 'thirteen slow tests at once is a regression or a broken box');
-  assert.ok(!/re-timed alone/.test(r.out), 'nothing was re-timed');
-  for (const n of names) assert.match(r.out, new RegExp(`^SLOW: \\d+ms ${n}$`, 'm'));
+  const stdout = stdoutOf(r);
+  assert.match(stdout, /TOTALS: 14 pass, 0 fail/, 'ENTER: the run itself must be green');
+  assert.strictEqual(r.code, 0, stdout.slice(-1200));
+  assert.match(stdout, /^SLOW \(load, not re-timed\): \d+ms crowd m$/m,
+    'the one offender outside the sample is named as not re-timed');
+  assert.strictEqual((stdout.match(/^SLOW \(load, not re-timed\)/gm) || []).length, 1);
+  assert.strictEqual((stdout.match(/^SLOW \(load, re-timed alone\)/gm) || []).length, 12);
+  assert.match(stdout, /^SLOW \(load\): 13 offenders over the cap of 12; re-timed the 12 slowest alone and all 12 cleared/m);
+  assert.ok(!/^SLOW: /m.test(stdout), 'nothing is enforced');
+});
+
+test('slow gate: past the cap, one sampled offender slow alone enforces the unsampled ones too', () => {
+  const rows = [
+    ['crowd a', 100], ['crowd b', 110], ['crowd c', 120], ['crowd d', 130], ['crowd e', 140],
+    ['crowd f', 150], ['crowd g', 160], ['crowd h', 170], ['crowd i', 180], ['crowd j', 190],
+    ['crowd k', 200], ['crowd m', 40],
+  ];
+  const r = runRunner({
+    files: {
+      'test/crowd.test.js': rows.map(([n, ms], i) => firstRunOnly(n, ms, `.crowd${i}`)).join('')
+        + sleeper('crowd always slow', 220),
+    },
+    slowMs: 30,
+  });
+  const stdout = stdoutOf(r);
+  assert.match(stdout, /TOTALS: 14 pass, 0 fail/, 'ENTER: the run itself must be green');
+  assert.notStrictEqual(r.code, 0, 'a sampled test slow on its own fails the run');
+  assert.match(stdout, /^SLOW: \d+ms crowd always slow$/m);
+  assert.match(stdout, /^SLOW: \d+ms crowd m$/m, 'the unsampled offender is enforced, not excused');
+  assert.ok(!/not re-timed/.test(stdout), 'nothing is excused unsampled');
+  assert.match(stdout, /^SLOW \(load, re-timed alone\): \d+ms → \d+ms crowd a$/m,
+    'ENTER: the sampled first-run-only offenders still cleared');
+});
+
+test('slow gate: past the cap, the sample is the slowest offenders, not the first in file order', () => {
+  const rows = [
+    ['crowd a', 100], ['crowd b', 110], ['crowd c', 120], ['crowd d', 130], ['crowd e', 140],
+    ['crowd f', 150], ['crowd g', 160], ['crowd h', 170], ['crowd i', 180], ['crowd j', 190],
+    ['crowd k', 200], ['crowd l', 210],
+  ];
+  const r = runRunner({
+    files: {
+      'test/crowd.test.js': sleeper('crowd first and least slow', 40)
+        + rows.map(([n, ms], i) => firstRunOnly(n, ms, `.crowd${i}`)).join(''),
+    },
+    slowMs: 30,
+  });
+  const stdout = stdoutOf(r);
+  assert.match(stdout, /TOTALS: 14 pass, 0 fail/, 'ENTER: the run itself must be green');
+  assert.strictEqual(r.code, 0, stdout.slice(-1200));
+  assert.match(stdout, /^SLOW \(load, not re-timed\): \d+ms crowd first and least slow$/m,
+    'the first test in the file is the least slow, so it is the one left out of the sample');
+  assert.match(stdout, /^SLOW \(load, re-timed alone\): \d+ms → \d+ms crowd l$/m);
 });
 
 test('slow gate: a re-run that hangs is cut at the run deadline, prints TOTALS and stays enforced', () => {
