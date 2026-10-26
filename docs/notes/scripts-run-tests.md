@@ -96,10 +96,8 @@ the suite's comment ratchet refuses new comment lines.
 
 ## RETIME_CAP
 
-Before an enforced offender fails the run it is re-run alone (`retimeAlone`), and
-one that comes back at or under the bar is reported as load. Past 12 offenders the
-re-time is skipped and all are enforced: that many at once is a real regression or
-a broken box. The phase shares the main run's `runTimeoutMs` deadline, and each
+Past 12 offenders the re-time (`retimeAlone`) is skipped and all are enforced: that
+many at once is a real regression or a broken box. The phase shares the main run's `runTimeoutMs` deadline, and each
 re-run gets at most `slowLimit + 30000`: TOTALS prints after it, so a phase that
 outran the exec ceiling would leave a green branch with no TOTALS line.
 
