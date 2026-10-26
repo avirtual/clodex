@@ -14,7 +14,7 @@
 // agent race comes back, the other way an operator's phone tap silently does
 // nothing for up to half an hour.
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 require('./lib/engine-isolation');
 const assert = require('node:assert');
 const os = require('node:os');
@@ -211,6 +211,3 @@ test('main.js: the give-up notification delegates its copy to the tested builder
     + 'so that word would be false on every render');
   assert.match(t[1], /drop/i, 'it says what actually happened, in the body\'s own vocabulary');
 });
-
-// createEngine's background timers keep the loop alive; exit once results flush.
-after(() => { setImmediate(() => process.exit(0)); });

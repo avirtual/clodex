@@ -8,7 +8,7 @@
 // forever. These pin that end to end: engine's default, remote-wiring's
 // pass-through into the RemoteServer, and the headless closure's own shape.
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const os = require('node:os');
 const fs = require('node:fs');
@@ -186,9 +186,6 @@ test('seams.thumbnail reaches the remote wiring as its thumbnail dep, null when 
   }
   assert.deepStrictEqual(seen, [thumbnail, null]);
 });
-
-// createEngine's background timers keep the loop alive; exit once results flush.
-after(() => { setImmediate(() => process.exit(0)); });
 
 // ── t443: the wirescope seam takes the SAME path, one field over ─────────────
 

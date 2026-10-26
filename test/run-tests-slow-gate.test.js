@@ -372,7 +372,7 @@ test('slow gate: past the cap, one sampled offender slow alone is enforced alone
 });
 
 test('slow gate: past the cap, the sample is the slowest offenders, not the first in file order', () => {
-  const rows = [['crowd k', 200], ['crowd l', 250]];
+  const rows = [['crowd k', 600], ['crowd l', 700]];
   const r = runRunner({
     files: {
       'test/crowd.test.js': sleeper('crowd first and least slow', 40)
@@ -429,4 +429,26 @@ test('slow gate: a sample the run deadline skips is reported not re-timed and is
   assert.match(r.out, /^SLOW \(load, not re-timed\): \d+ms the skipped sample$/m);
   assert.ok(!/^SLOW: \d+ms the skipped sample$/m.test(r.out), 'a sample never re-timed is not enforced');
   assert.ok(!/^SLOW \(load\): /m.test(r.out), 'under the cap there is no over-cap summary');
+});
+
+test('slow gate: past the cap, a sample the run deadline skips is not counted as re-timed in the summary', () => {
+  const body = 'require(\'node:test\').test(\'the deadline eater\', () => {\n'
+    + '  const m = require(\'node:path\').join(__dirname, \'.hang\');\n'
+    + '  const again = require(\'node:fs\').existsSync(m);\n'
+    + '  require(\'node:fs\').writeFileSync(m, \'\');\n'
+    + `  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, again ? 40000 : 1500);\n});\n`
+    + sleeper('the skipped sample', 600)
+    + sleeper('the unsampled tail', 200);
+  const r = runRunner({
+    files: { 'test/hang.test.js': body },
+    slowMs: 150,
+    extraEnv: { CLODEX_TEST_RUN_TIMEOUT_MS: '8000', ...SMALL_CAP },
+  });
+  assert.match(r.out, /^TOTALS: 4 pass, 0 fail, 4 tests$/m,
+    'ENTER: the main run finished inside the deadline and its totals were printed');
+  assert.match(r.out, /^SLOW: \d+ms the deadline eater$/m,
+    'ENTER: the first sample was re-timed, cut at the deadline, and stays enforced');
+  assert.match(r.out, /^SLOW \(load, not re-timed\): \d+ms the skipped sample$/m);
+  assert.match(r.out, /^SLOW \(load, not re-timed\): \d+ms the unsampled tail$/m);
+  assert.match(r.out, /^SLOW \(load\): 3 offenders over the cap of 2; re-timed 1 of the 2 slowest alone \(the rest hit the run deadline\) and 0 of 1 cleared; the rest are not re-timed \(over cap\), so not enforced$/m);
 });

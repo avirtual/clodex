@@ -288,7 +288,6 @@ test('both hosts defer the agent restart; only headless gates it on a declared s
     'headless declares the gate, because exit-64 is a contract only a supervisor holds');
 });
 
-
 test('supervised headless: an in-flight exec run holds the exit until it ends', () => {
   const clock = fakeClock(1_000_000);
   const exits = [];

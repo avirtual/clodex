@@ -13,7 +13,7 @@
 // the RemoteServer's `hostLabel`, so that is where a const still hard-coding
 // os.hostname() shows up.
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const os = require('node:os');
 const path = require('node:path');
@@ -131,6 +131,3 @@ test('the engine const reads the env: CLODEX_LABEL reaches the wire as hostLabel
   assert.strictEqual(bad.hostLabel, hostname);
   assert.strictEqual(bad.warns.filter((w) => w.includes('CLODEX_LABEL')).length, 1);
 });
-
-// createEngine's background timers keep the loop alive; exit once results flush.
-after(() => { setImmediate(() => process.exit(0)); });

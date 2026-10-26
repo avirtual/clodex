@@ -275,6 +275,3 @@ test('t732: writeBundlePlugins writes a skill\'s companion files under its dir',
   assert.deepStrictEqual(written[0].skills, [{ name: 'foo', content: row.skills[0].content, files: row.skills[0].files }],
     'and the returned record still carries the map — session-manager reads skills off it');
 });
-
-// createEngine's background timers keep the loop alive; exit once results flush.
-test.after(() => { setImmediate(() => process.exit(0)); });
