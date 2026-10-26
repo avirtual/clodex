@@ -2916,9 +2916,9 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
   if (!skipAsyncRefresh) {
     if (caps.skillRoster) refreshNewSessionSkills(modeSkillDenySet());
     if (caps.injectSkills) refreshNewSessionInjectSkills();
-    if (caps.tools) refreshNewSessionTools(modeToolDenySet());
+    if (caps.tools) refreshNewSessionTools(persistedOr('disabledTools', modeToolDenySet()));
   }
-  if (agentType && !skipAsyncRefresh) { refreshNewSessionExecCommands(); refreshNewSessionMcpServers(); refreshNewSessionPlugins().then(() => refreshNewSessionIntents()); }
+  if (agentType && !skipAsyncRefresh) { refreshNewSessionExecCommands(persistedOr('execCommands', new Set())); refreshNewSessionMcpServers(persistedOr('mcpServers', new Set())); refreshNewSessionPlugins().then(() => refreshNewSessionIntents()); }
   resumeRow.style.display = (agentType && !authoring) ? '' : 'none';
   if (!agentType) {
     inputResume.value = '';
@@ -3137,9 +3137,9 @@ function populateChecklistsFromCatalogs(cat) {
   resetNewSessionSkillCollector(modeSkillDenySet());
   renderSkillChecklist(inputSkillsList, [], modeSkillDenySet());
   setClaudeToolsCache(cat.claudeTools || []);
-  renderToolChecklist(inputToolsList, modeToolDenySet());
-  renderBuiltinChecklist(inputBuiltinsList, modeBuiltinDenySet());
-  refreshNewSessionExecCommands();  // exec grants never cross, but the box has its own
+  formRendered.disabledTools = renderToolChecklist(inputToolsList, persistedOr('disabledTools', modeToolDenySet()));
+  formRendered.denyBuiltins = renderBuiltinChecklist(inputBuiltinsList, persistedOr('denyBuiltins', modeBuiltinDenySet()));
+  refreshNewSessionExecCommands(persistedOr('execCommands', new Set()));
   refreshNewSessionPlugins().then(() => refreshNewSessionIntents()); // LOCAL engine, box-independent
   setPromptLibCache(libraryPromptCache(cat.prompts));
   fillSystemPromptSelect(inputSystemPrompt, '', newSessionSeat());
@@ -3317,12 +3317,12 @@ function applyModeFields(mode, { catalogsFresh = false } = {}) {
   const optimized = mode === 'optimized';
   const caps = capsFor(inputType.value);
   if (!catalogsFresh) {
-    if (caps.tools) refreshNewSessionTools(optimized ? new Set(getDefaultToolDenyCache()) : new Set());
+    if (caps.tools) refreshNewSessionTools(persistedOr('disabledTools', optimized ? new Set(getDefaultToolDenyCache()) : new Set()));
     if (caps.skillRoster) refreshNewSessionSkills(optimized ? new Set(getDefaultSkillDenyCache()) : new Set());
     if (caps.injectSkills) refreshNewSessionInjectSkills();
     if (caps.plugins) refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
   }
-  if (caps.agents) renderBuiltinChecklist(inputBuiltinsList, optimized ? new Set(getDefaultBuiltinDenyCache()) : new Set());
+  if (caps.agents) formRendered.denyBuiltins = renderBuiltinChecklist(inputBuiltinsList, persistedOr('denyBuiltins', optimized ? new Set(getDefaultBuiltinDenyCache()) : new Set()));
   if (caps.strip && inputStripLevel) inputStripLevel.value = '2';
   if (caps.autoCompact && inputAutoCompact) inputAutoCompact.checked = true;
   if (caps.noWire && inputNoWire) inputNoWire.checked = false;
@@ -3344,6 +3344,10 @@ if (advancedSection) {
 if (inputMode) {
   inputMode.addEventListener('change', () => {
     setModeSelect(inputMode.value);
+    if (inputMode.value === 'standard' || inputMode.value === 'optimized') {
+      delete formPersisted.disabledTools;
+      delete formPersisted.denyBuiltins;
+    }
     applyModeFields(inputMode.value);
   });
 }
@@ -3726,17 +3730,17 @@ async function openDialog(prefill = null) {
 function populateHostCatalogs(settings, agentLib) {
   setAgentLibCache(agentLib || []);
   renderAgentChecklist(inputAgentsList, new Set(), null, newSessionSeat());
-  refreshNewSessionExecCommands();
-  refreshNewSessionMcpServers();
+  refreshNewSessionExecCommands(persistedOr('execCommands', new Set()));
+  refreshNewSessionMcpServers(persistedOr('mcpServers', new Set()));
   refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
   setClaudeToolsCache(settings?.claudeTools || []);
   setDefaultToolDenyCache(settings?.defaultToolDeny || []);
   setDefaultSkillDenyCache(settings?.defaultSkillDeny || []);
   setDefaultBuiltinDenyCache(settings?.defaultBuiltinDeny || []);
-  renderBuiltinChecklist(inputBuiltinsList, modeBuiltinDenySet());
-  renderToolChecklist(inputToolsList, modeToolDenySet());
+  formRendered.denyBuiltins = renderBuiltinChecklist(inputBuiltinsList, persistedOr('denyBuiltins', modeBuiltinDenySet()));
+  formRendered.disabledTools = renderToolChecklist(inputToolsList, persistedOr('disabledTools', modeToolDenySet()));
   refreshNewSessionSkills(modeSkillDenySet());
-  refreshNewSessionTools(modeToolDenySet());
+  refreshNewSessionTools(persistedOr('disabledTools', modeToolDenySet()));
   setProxyControls(inputProxyMode, inputProxyUrl, null, settings?.lastCustomProxyUrl || settings?.proxyUrl);
   labelProxyDefault(inputProxyMode, settings);
 }
@@ -3755,7 +3759,7 @@ function redrawGatesForCwd() {
   refreshNewSessionSkills(
     opts.forTemplate ? new Set(newSessionSkillDenyList()) : modeSkillDenySet(), opts);
   refreshNewSessionTools(
-    opts.forTemplate ? new Set(collectToolChecklist(inputToolsList)) : modeToolDenySet(), opts);
+    opts.forTemplate ? new Set(collectToolChecklist(inputToolsList)) : persistedOr('disabledTools', modeToolDenySet()), opts);
 }
 inputCwd.addEventListener('change', () => redrawGatesForCwd());
 inputCwd.addEventListener('change', () => refreshWorktreeForCwd());
@@ -3820,7 +3824,7 @@ async function cwdFromTemplate(t) {
 
 inputTemplate.addEventListener('change', async () => {
   const id = inputTemplate.value;
-  if (!id) return;
+  if (!id) { formPersisted = {}; return; }
   const list = await window.api.listTemplates();
   const t = list.find(x => x.id === id);
   if (!t) return;
@@ -3998,6 +4002,10 @@ function formPersistedOf(t) {
     denyBuiltins: t && t.denyBuiltins,
     disabledTools: t && t.disabledTools,
   };
+}
+
+function persistedOr(key, fallback) {
+  return key in formPersisted ? new Set(formPersisted[key] || []) : fallback;
 }
 
 function formCarry(key, checked) {
@@ -6077,7 +6085,7 @@ function adoptSession(rec) {
     inputResume.value = prefill.resumeId;
     inputFork.checked = false;
     refreshNewSessionSkills(modeSkillDenySet());
-    refreshNewSessionTools(modeToolDenySet());
+    refreshNewSessionTools(persistedOr('disabledTools', modeToolDenySet()));
     refreshWorktreeForCwd();
     dialogTitle.textContent = 'Adopt Session';
     setTimeout(() => inputName.select(), 50);

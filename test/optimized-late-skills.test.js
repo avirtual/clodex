@@ -77,6 +77,7 @@ const SHIPPED = [
   extract(/\n(async function refreshNewSessionSkills\([\s\S]*?\n\})\n/, 'refreshNewSessionSkills'),
   extract(/\n(function newSessionSkillDenyList\([\s\S]*?\n\})\n/, 'newSessionSkillDenyList'),
   extract(/\n(function populateChecklistsFromCatalogs\([\s\S]*?\n\})\n/, 'populateChecklistsFromCatalogs'),
+  extract(/\n(function persistedOr\([\s\S]*?\n\})\n/, 'persistedOr'),
 ].join('\n');
 
 // What the New Session dialog would persist as `disabledSkills` for a claude
@@ -152,6 +153,7 @@ async function dialogDisabledSkills(engine, mode, {
       inputAppendList: el('div'), inputSystemPrompt: { value: '' },
       inputProxyMode: { value: '' }, inputProxyUrl: { value: '' },
       afterRender: afterRender || noop,
+      formPersisted: {}, formRendered: {},
     };
     const names = Object.keys(env);
     const run = new Function(...names, `${SHIPPED}

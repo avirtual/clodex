@@ -357,7 +357,7 @@ test('t717: the New Session type-change handler paints both checklists for codex
 
   // A section widened but never repainted is worse than a hidden one: it shows
   // whatever a previous claude selection left in the container.
-  assert.match(fn, /if \(agentType && !skipAsyncRefresh\) \{ refreshNewSessionExecCommands\(\); refreshNewSessionMcpServers\(\); refreshNewSessionPlugins\(\)\.then\(\(\) => refreshNewSessionIntents\(\)\); \}/,
+  assert.match(fn, /if \(agentType && !skipAsyncRefresh\) \{ refreshNewSessionExecCommands\(persistedOr\('execCommands', new Set\(\)\)\); refreshNewSessionMcpServers\(persistedOr\('mcpServers', new Set\(\)\)\); refreshNewSessionPlugins\(\)\.then\(\(\) => refreshNewSessionIntents\(\)\); \}/,
     'both checklists repaint on a change to EITHER agent type');
   assert.ok(!/claudeOnly/.test(fn),
     'and no longer only for claude');
