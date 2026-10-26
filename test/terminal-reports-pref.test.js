@@ -12,6 +12,7 @@
 // separate, and a single condition serving both is the regression to catch.
 
 const { test, after } = require('node:test');
+require('./lib/engine-isolation');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -233,7 +234,7 @@ function bootEngine() {
   const home = mkTmpRoot('clodex-termreports-home-');
   const prevHome = process.env.HOME;
   process.env.HOME = home;
-  const { createEngine } = require('../engine');
+  const { createEngine } = require('./lib/engine-isolation');
   const userData = mkDir();
   // registryDir or the engine seeds the operator's live ~/.clodex (t359).
   // Overriding HOME above is NOT enough on its own: engine.js resolves the root

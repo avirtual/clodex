@@ -26,7 +26,7 @@ const assert = require('node:assert');
 const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createEngine } = require('../engine');
+const { createEngine } = require('./lib/engine-isolation');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // Fixed points, never relative offsets: a re-mint lands on the real Date.now()

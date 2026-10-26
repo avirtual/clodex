@@ -4,6 +4,7 @@
 // and discoverAdoptable's tracked-id subtraction. Live-process detection is not
 // exercised here (it shells out to pgrep/lsof); its Windows short-circuit is.
 const { test } = require('node:test');
+require('./lib/engine-isolation');
 const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
@@ -129,7 +130,7 @@ test('discoverLiveProcesses: empty on win32 (no pgrep/lsof)', async () => {
 });
 
 test('readSessionMeta counts operator prompts, not tool_result lines', () => {
-  const { createEngine } = require('../engine');
+  const { createEngine } = require('./lib/engine-isolation');
   const tmp = mkTmpRoot('clodex-meta-turns-');
   const eng = createEngine({
     userDataPath: tmp,
@@ -154,7 +155,7 @@ test('readSessionMeta counts operator prompts, not tool_result lines', () => {
 });
 
 test('readSessionMeta parses only user lines that mention tool_result', () => {
-  const { createEngine } = require('../engine');
+  const { createEngine } = require('./lib/engine-isolation');
   const tmp = mkTmpRoot('clodex-meta-turns-');
   const eng = createEngine({
     userDataPath: tmp,

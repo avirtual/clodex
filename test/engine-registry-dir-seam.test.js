@@ -31,7 +31,7 @@ const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { createEngine, resolveRegistryDir } = require('../engine');
+const { createEngine, resolveRegistryDir } = require('./lib/engine-isolation');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const silent = { info() {}, warn() {}, error() {} };

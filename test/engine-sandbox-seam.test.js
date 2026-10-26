@@ -18,7 +18,7 @@ const { EventEmitter } = require('node:events');
 const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createEngine } = require('../engine');
+const { createEngine } = require('./lib/engine-isolation');
 const { createSandboxManager, runningInSandboxBox, SANDBOX_BOX_ENV } = require('../sandbox');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 

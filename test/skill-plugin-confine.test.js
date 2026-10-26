@@ -40,7 +40,7 @@ sessionManagerModule.createSessionManager = (deps) => {
   capturedDeps.push(deps);
   return realSessionManagerFactory(deps);
 };
-const { createEngine } = require('../engine');
+const { createEngine } = require('./lib/engine-isolation');
 
 const srcCache = new Map();
 function srcOf(file) {

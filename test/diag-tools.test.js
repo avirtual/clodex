@@ -8,7 +8,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { diagWarning, diagLines } = require('../engine');
+const { diagWarning, diagLines } = require('./lib/engine-isolation');
 const { missingToolOnExit } = require('../session-manager');
 
 // A healthy-helper darwin base so the fatal-helper block passes and control reaches
@@ -116,7 +116,7 @@ test('missingToolOnExit: an explicit path the probe rejects → names the cmd', 
 test('a directory named claude on PATH is not an installed CLI', () => {
   const fs = require('node:fs');
   const path = require('node:path');
-  const { createEngine } = require('../engine');
+  const { createEngine } = require('./lib/engine-isolation');
   const { mkTmpRoot } = require('./lib/tmp-roots');
   const tmp = mkTmpRoot('clx-diag-dir-');
   const eng = createEngine({
@@ -139,7 +139,7 @@ test('a directory named claude on PATH is not an installed CLI', () => {
 test('whichBin: an explicit path to a directory is not a binary', () => {
   const fs = require('node:fs');
   const path = require('node:path');
-  const { createEngine } = require('../engine');
+  const { createEngine } = require('./lib/engine-isolation');
   const { mkTmpRoot } = require('./lib/tmp-roots');
   const tmp = mkTmpRoot('clx-diag-dir-');
   const { whichBin } = createEngine({
