@@ -1257,6 +1257,25 @@ function createSessionManager(deps) {
       }
     }
 
+    _holdSidFor(name) {
+      const s = this.sessions.get(name);
+      const entry = getPersistence().get(name);
+      const sid = s ? (s.forked ? null : s.sessionId) : (entry && entry.sessionId);
+      if (!sid) return null;
+      for (const [other, o] of this.sessions) if (other !== name && o.sessionId === sid) return null;
+      for (const rec of getPersistence().list()) if (rec && rec.name !== name && rec.sessionId === sid) return null;
+      return sid;
+    }
+
+    _disarmHoldFor(name, sid) {
+      if (!sid || !this._holdKeeper) return;
+      try {
+        this._holdKeeper.disarm(sid);
+      } catch (e) {
+        this._shadowLog({ type: 'wire-hold-disarm-error', agent: name, error: e.message });
+      }
+    }
+
     // Retried every main-line turn until an arm lands, not latched once per spawn:
     // arm() is warm-gated, so a first-turn decline would otherwise lose the hold silently.
     _maybeRearmHold(s, agent) {
@@ -3657,9 +3676,10 @@ function createSessionManager(deps) {
       }
     }
 
-    async kill(name) {
+    async kill(name, { endHold = false } = {}) {
       const s = this.sessions.get(name);
       if (!s) return;
+      if (endHold) this._disarmHoldFor(name, this._holdSidFor(name));
       log.info('session', `kill ${name} (user-initiated) pid=${this._procPid(s)}`);
       s._userKilled = true;
       this._scratchCloneOnExit(s);
@@ -3697,6 +3717,7 @@ function createSessionManager(deps) {
     // and _waitForExit's 8s timeout keeps the tree.
     async destroy(name) {
       const entry = getPersistence().get(name);
+      const holdSid = this._holdSidFor(name);
       const worktree = entry && entry.worktree && entry.worktree.path ? entry.worktree : null;
       const wasLive = this.sessions.has(name);
       // clearHintForRecord before remove: the record is the last place the route id exists and the hint
@@ -3716,6 +3737,7 @@ function createSessionManager(deps) {
         }
       };
       await this.kill(name);
+      this._disarmHoldFor(name, holdSid);
       if (!worktree) { dropRecord(); dropSeatDir(); return { ok: true, live: wasLive }; }
       const keepRecord = () => {
         if (!wasLive) return;
@@ -3749,6 +3771,7 @@ function createSessionManager(deps) {
       const s = this.sessions.get(name);
       if (!s) return;
       log.info('session', `archive ${name} pid=${this._procPid(s)}`);
+      this._disarmHoldFor(name, this._holdSidFor(name));
       this._notifyComposition(s, 'archived');
       getPersistence().setArchived(name, true);
       s._archived = true;

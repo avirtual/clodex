@@ -834,7 +834,7 @@ function createRemoteWiring(deps) {
           if (!sess && !entry) return { ok: false, error: `no such session "${name}"` };
           if (entry && entry.class === 'assistant') return destroyAssistant(name, entry);
           if (!sess) return { ok: false, error: `no such session "${name}"` };
-          await manager.kill(name);
+          await manager.kill(name, { endHold: true });
           notifySessions();
           log.info('session', `kill ${name} via peer`);
           return { ok: true, name };
