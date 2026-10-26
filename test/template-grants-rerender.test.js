@@ -69,7 +69,7 @@ function formEnv(formPersisted, { mode = 'optimized', type = 'claude' } = {}) {
     setAgentLibCache: noop, renderAgentChecklist: noop, setSkillLibCache: noop,
     renderInjectChecklist: noop, resetNewSessionSkillCollector: noop, renderSkillChecklist: noop,
     modeSkillDenySet: () => new Set(), setClaudeToolsCache: noop,
-    renderToolChecklist: (_el, s) => { sets.disabledTools = s; return DRAWN.disabledTools; },
+    renderToolChecklist: (_el, s) => { sets.disabledTools = s; sets.toolsSync = s; return DRAWN.disabledTools; },
     renderBuiltinChecklist: (_el, s) => { sets.denyBuiltins = s; return DRAWN.denyBuiltins; },
     modeToolDenySet: () => new Set(TOOL_DENY),
     modeBuiltinDenySet: () => new Set(BUILTIN_DENY),
@@ -126,6 +126,7 @@ test('t1956: switching placement back to host after a template load keeps all th
   assert.deepStrictEqual(f.collected('denyBuiltins'), ['Explore']);
   assert.deepStrictEqual(f.collected('execCommands'), ['x']);
   assert.deepStrictEqual(f.collected('mcpServers'), ['m1']);
+  assert.deepStrictEqual([...f.sets.toolsSync], ['Agent'], 'the synchronous tool draw, before the async refresh lands');
 });
 
 test('t1956: a cwd change in the New Session dialog after a template load keeps its disabled tools', () => {
