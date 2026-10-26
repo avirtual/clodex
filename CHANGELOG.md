@@ -13,6 +13,8 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+
+## 5.146.1 — 2026-10-26
 - The cloud release review now opens and closes its issue through GitHub's REST API with `gh api`, the one route a cloud session allows, so it no longer stalls looking for GitHub tools or asking for push access.
 
 - A deleted or renamed seat no longer leaves its keep-warm hold behind: a new seat reusing the name cannot arm the old conversation, and a renamed seat kept warm "Always" keeps its hold visible and stoppable before its first turn.
