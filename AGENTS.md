@@ -44,7 +44,8 @@ It preflights (clean tree, on master, in sync, gh authed, the Electron smoke tes
 and proves the packaged app can spawn a shell through node-pty (the DMG pty
 probe, `scripts/dmg-pty-probe.sh`), commits +
 tags + pushes, runs `gh release create`, prunes old release assets, and
-publishes the container image (`scripts/publish-image.sh`).
+publishes the container image (`scripts/publish-image.sh`), then launches the cloud
+release review (`scripts/cloud-review.sh`).
 Non-interactive; stops at the first error. No CI; `gh` is logged in as
 `avirtual`. arm64 only — Intel users build from source.
 
