@@ -216,11 +216,12 @@ function releaseReviewNoticeFor(lastVersion, hostVersion) {
   const cmp = compareSemver(host, last);
   if (cmp === null || cmp <= 0) return null;
   return '<system-reminder>'
-    + `Release review owed: the host moved from v${last} to v${host} while this conversation was away. `
-    + `Run the release-review ritual on the tag range v${last}..v${host} — a cold reviewer (Agent tool, isolation "remote") on the public repo, `
-    + 'briefed to verify every CHANGELOG bullet against the diff, cross-ticket interactions and dropped security properties, '
-    + `and to open ONE GitHub issue titled "Release review v${host}: <VERDICT>" only when it has findings. `
-    + 'Never open a test issue. Triage the findings into FOLLOWUPS before the next ticket.'
+    + `Release review: the host moved from v${last} to v${host}. `
+    + `scripts/release.sh launched a cloud review of v${last}..v${host} (scripts/cloud-review.sh, a detached \`claude --cloud\` session); `
+    + `its only output is ONE GitHub issue titled "Release review v${host}: <VERDICT>", opened only on findings. `
+    + 'Do not run a review yourself, locally or through the Agent tool. '
+    + 'When that issue arrives, triage its findings into FOLLOWUPS before the next ticket; '
+    + `if the release was cut without the script, run scripts/cloud-review.sh v${last} v${host}.`
     + '</system-reminder>';
 }
 

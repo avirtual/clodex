@@ -14,6 +14,8 @@ blocks a release.
 
 ## Unreleased
 
+- The release-review notice a Clodex lead gets after an upgrade now points at the cloud review the release script launched, instead of asking the lead to run a local review.
+
 ## 5.145.1 — 2026-10-26
 - In the New Session and template dialogs, changing the CLI type, placement or folder keeps the grants you ticked or unticked, instead of restoring the template's saved ones.
 - The slow-test gate no longer fails a green run when more than 12 tests ran slow on a busy machine: it re-times the 12 slowest alone, and if all of them pass, the run passes.

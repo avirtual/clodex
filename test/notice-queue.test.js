@@ -141,7 +141,7 @@ test('versionNoticeFor: same version, or either side missing, says nothing', () 
   assert.strictEqual(versionNoticeFor('  ', '5.3.0'), null);
 });
 
-const RELEASE_REVIEW_5_144 = '<system-reminder>Release review owed: the host moved from v5.143.0 to v5.144.0 while this conversation was away. Run the release-review ritual on the tag range v5.143.0..v5.144.0 — a cold reviewer (Agent tool, isolation "remote") on the public repo, briefed to verify every CHANGELOG bullet against the diff, cross-ticket interactions and dropped security properties, and to open ONE GitHub issue titled "Release review v5.144.0: <VERDICT>" only when it has findings. Never open a test issue. Triage the findings into FOLLOWUPS before the next ticket.</system-reminder>';
+const RELEASE_REVIEW_5_144 = '<system-reminder>Release review: the host moved from v5.143.0 to v5.144.0. scripts/release.sh launched a cloud review of v5.143.0..v5.144.0 (scripts/cloud-review.sh, a detached `claude --cloud` session); its only output is ONE GitHub issue titled "Release review v5.144.0: <VERDICT>", opened only on findings. Do not run a review yourself, locally or through the Agent tool. When that issue arrives, triage its findings into FOLLOWUPS before the next ticket; if the release was cut without the script, run scripts/cloud-review.sh v5.143.0 v5.144.0.</system-reminder>';
 
 test('releaseReviewNoticeFor: equal or empty inputs say nothing', () => {
   assert.strictEqual(releaseReviewNoticeFor('5.144.0', '5.144.0'), null);
@@ -153,6 +153,12 @@ test('releaseReviewNoticeFor: equal or empty inputs say nothing', () => {
 
 test('releaseReviewNoticeFor: a difference names the tag range last..host, verbatim', () => {
   assert.strictEqual(releaseReviewNoticeFor('5.143.0', '5.144.0'), RELEASE_REVIEW_5_144);
+});
+
+test('releaseReviewNoticeFor: the notice never asks for an Agent-tool remote review', () => {
+  const notice = releaseReviewNoticeFor('5.143.0', '5.144.0');
+  assert.ok(notice.includes('cloud-review.sh'));
+  assert.ok(!/Agent tool,|isolation/.test(notice), notice);
 });
 
 test('releaseReviewNoticeFor: a downgrade says nothing, and the compare is numeric not string order', () => {
