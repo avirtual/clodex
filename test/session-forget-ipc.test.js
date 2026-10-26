@@ -176,3 +176,14 @@ test('purgeWorkspace removes an assistant record\'s seat dir and a plain record\
   assert.strictEqual(r.fs.existsSync(r.seat('asst')), false);
   assert.deepStrictEqual(r.fs.readdirSync(r.seat('plain')), ['brief.md']);
 });
+
+test('purgeWorkspace drops a dropped record\'s keep-warm hold binding', () => {
+  const { WireTelemetry } = require('../wire-telemetry');
+  const r = seatRoot();
+  const { manager, persistence } = fixture([{ name: 'plain', type: 'claude', workspaceId: 'ws-1', proxy: false }], r.deps);
+  persistence.listForWorkspace = (ws) => persistence.list().filter((e) => e.workspaceId === ws);
+  manager._wireTelemetry = new WireTelemetry({});
+  manager._wireTelemetry.noteSession('plain', 'sid-p');
+  assert.deepStrictEqual(manager.purgeWorkspace('ws-1'), { killed: [], dropped: ['plain'] });
+  assert.strictEqual(manager._wireTelemetry.sessionFor('plain'), null);
+});

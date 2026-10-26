@@ -24651,3 +24651,12 @@ test('a /clear on a pty seat drops the turnless hold binding for the prior conve
   assert.strictEqual(h.m.sessions.get('kw').sessionId, 'sid-b', 'ENTER: the clear reached the seat');
   assert.strictEqual(tel.sessionFor('kw'), null);
 });
+
+test('destroying a dead seat\'s record drops its keep-warm hold binding', async (t) => {
+  const { h, tel } = holdBindRig(t, ['old-sid']);
+  h.store.set('kw', { name: 'kw', type: 'claude', sessionId: 'old-sid' });
+  tel.noteSession('kw', 'old-sid');
+  assert.deepStrictEqual(await h.m.destroy('kw'), { ok: true, live: false });
+  assert.strictEqual(h.store.has('kw'), false, 'ENTER: the record was dropped');
+  assert.strictEqual(tel.sessionFor('kw'), null);
+});
