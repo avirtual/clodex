@@ -1251,6 +1251,7 @@ function createSessionManager(deps) {
       try {
         if (sid && this._holdKeeper && this._holdKeeper.holds()[sid]) tel.noteSession(name, sid);
         else tel.forgetSession(name);
+        tel.dropAgent(name, sid);
       } catch (e) {
         this._shadowLog({ type: 'wire-hold-bind-error', error: e.message });
       }

@@ -82,6 +82,8 @@ test('cloud-review: the brief reports through gh api REST only (create, CLEAN cl
   assert.ok(brief.includes('-X PATCH -f state=closed'), brief);
   assert.ok(brief.includes("gh api 'repos/avirtual/clodex/issues?per_page=1'"), brief);
   assert.ok(brief.includes('GraphQL is blocked'), brief);
+  assert.ok(brief.includes('call add_repo for avirtual/clodex once'), brief);
+  assert.ok(brief.includes('never push'), brief);
   assert.ok(brief.includes('npm ci --ignore-scripts'), brief);
   assert.ok(!brief.includes('GitHub tools'), brief);
   assert.ok(!brief.includes('timeout 60 gh'), brief);
