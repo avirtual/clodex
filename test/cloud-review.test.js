@@ -36,7 +36,7 @@ function launchAndRecord(extraEnv) {
     try {
       recorded = execFileSync('cat', [rec], { encoding: 'utf-8', timeout: FIFO_BOUND_MS });
     } catch (err) {
-      const pids = spawnSync('pgrep', ['-f', stub], { encoding: 'utf-8' }).stdout.split('\n').filter(Boolean);
+      const pids = (spawnSync('pgrep', ['-f', stub], { encoding: 'utf-8' }).stdout || '').split('\n').filter(Boolean);
       for (const pid of pids) { try { process.kill(Number(pid), 'SIGKILL'); } catch {} }
       throw err;
     }

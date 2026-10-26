@@ -82,9 +82,8 @@ mounts the built DMG and runs `scripts/dmg-pty-probe.sh`, which spawns a shell
 through the packaged node-pty under the bundle's own Electron. After publishing it
 launches a detached cloud review of the release range (`scripts/cloud-review.sh`),
 which leaves one GitHub issue: open with its findings, or a closed CLEAN issue
-when it has none. That is not a user
-step: to run Clodex from source you want `npm start`, and to ship it to a
-server you want a headless node.
+when it has none. That is not a user step: to run Clodex from source you want
+`npm start`, and to ship it to a server you want a headless node.
 
 ## Run a headless node locally
 
