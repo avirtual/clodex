@@ -110,11 +110,8 @@ block on stderr — so exit code and `✖` names alone report a green branch as 
 escaped; `green` still reads false, and the ARMS decide. An UNOWNED slow-only run
 (no test file the branch changed contains the name) passes the verify arm to the
 reviewer with the names on the ticket's `suiteSlow`; an OWNED one rejects, saying
-`slow gate` rather than FAILS — the fix it names is a seam or a
-`test/slow-tests.json` entry, not a broken assertion. The post-merge arm never
-reverts a slow-only run, owned or not: it measures the same tests under heavier
-load on trunk, and ownership is computed there only to split the MERGED notice's
-slow lines. A `stale allowlist entry`
+`slow gate` rather than FAILS. The post-merge arm never reverts a slow-only run:
+it is the same measurement under trunk load; ownership only splits the notice. A `stale allowlist entry`
 line is never slowOnly: that is a real defect the hand must clear.
 
 Ownership is read out of GIT (`diffNames` + `fileAt` against the branch), not off
