@@ -29,6 +29,7 @@ const PERSISTED_OR_FN = extract(/\n(function persistedOr\([\s\S]*?\n\})\n/, 'per
 const CURRENT_OR_FN = extract(/\n(function currentOr\([\s\S]*?\n\})\n/, 'currentOr');
 const FORM_PERSISTED_OF_FN = extract(/\n(function formPersistedOf\([\s\S]*?\n\})\n/, 'formPersistedOf');
 const FORM_CARRY_FN = extract(/\n(function formCarry\([\s\S]*?\n\})\n/, 'formCarry');
+const KEPT_LOCKED_FN = extract(/\n(function keptLockedOf\([\s\S]*?\n\})\n/, 'keptLockedOf');
 const POPULATE_FN = extract(/\n(function populateChecklistsFromCatalogs\([\s\S]*?\n\})\n/, 'populateChecklistsFromCatalogs');
 const HOST_FN = extract(/\n(function populateHostCatalogs\([\s\S]*?\n\})\n/, 'populateHostCatalogs');
 const CWD_FN = extract(/\n(function redrawGatesForCwd\([\s\S]*?\n\})\n/, 'redrawGatesForCwd');
@@ -117,18 +118,18 @@ function formEnv(formPersisted, { mode = 'optimized', type = 'claude', templates
   const names = Object.keys(env);
   api = new Function(...names, 'formPersistedInit', `let formPersisted = formPersistedInit;
     let formRendered = {};
-    ${PERSISTED_OR_FN}\n${CURRENT_OR_FN}\n${FORM_PERSISTED_OF_FN}\n${FORM_CARRY_FN}\n${POPULATE_FN}\n${HOST_FN}\n${CWD_FN}\n${APPLY_FN}\n${SET_MODE_FN}\n${SELECT_WIRING}\n${TEMPLATE_HANDLER}
+    ${PERSISTED_OR_FN}\n${CURRENT_OR_FN}\n${KEPT_LOCKED_FN}\n${FORM_PERSISTED_OF_FN}\n${FORM_CARRY_FN}\n${POPULATE_FN}\n${HOST_FN}\n${CWD_FN}\n${APPLY_FN}\n${SET_MODE_FN}\n${SELECT_WIRING}\n${TEMPLATE_HANDLER}
     return {
       populate: (cat) => populateChecklistsFromCatalogs(cat),
       host: () => populateHostCatalogs({}, []),
       cwd: () => redrawGatesForCwd(),
       applyMode: (mode, opts) => applyModeFields(mode, opts),
       typeRefresh: () => { const skipAsyncRefresh = false; const caps = capsFor(inputType.value); const agentType = true; ${TYPE_REFRESH} },
-      carry: (key, checked) => formCarry(key, checked),
+      carry: (key, list) => formCarry(key, ticked, list),
       persisted: () => formPersisted,
       rendered: () => formRendered,
     };`)(...names.map((n) => env[n]), formPersisted);
-  const collected = (key) => api.carry(key, ticked({ key }));
+  const collected = (key) => api.carry(key, listOf(key));
   const selectMode = (m) => { env.inputMode.value = m; for (const fn of modeListeners) fn(); };
   const loadTemplate = async (id) => { env.inputTemplate.value = id; await templateListener(); };
   const untick = (key, id) => { assert.ok(sets[key].delete(id), `ENTER: ${id} was drawn in ${key}`); };
@@ -211,7 +212,7 @@ test("t1956: an explicit mode select resets tools and built-ins to the mode's de
   assert.deepStrictEqual(f.collected('denyBuiltins'), BUILTIN_DENY);
   assert.deepStrictEqual(f.collected('disabledTools'), TOOL_DENY);
   f.formRendered.execCommands = ['y'];
-  assert.deepStrictEqual(f.api.carry('execCommands', []), ['x']);
+  assert.deepStrictEqual(f.api.carry('execCommands', { key: 'undrawn', querySelectorAll: () => [] }), ['x']);
   assert.deepStrictEqual(Object.keys(f.api.persisted()).sort(), ['execCommands', 'mcpServers']);
 });
 
@@ -273,6 +274,21 @@ for (const [what, redraw] of [['cwd change', (f) => f.api.cwd()], ['placement sw
   });
 }
 
+test('t1970: saving keeps a template-denied tool whose row a lower layer locks off', async () => {
+  const f = await loadedForm({ ...GRANT_TEMPLATE, disabledTools: ['Agent', 'Bash'] });
+  f.lock('disabledTools', 'Bash');
+  assert.ok(!f.env.collectToolChecklist(f.env.inputToolsList).includes('Bash'), 'ENTER: the locked Bash row is not collected');
+  assert.ok(f.formRendered.disabledTools.includes('Bash'), 'ENTER: Bash was rendered, so it is not carried as unlisted');
+  assert.deepStrictEqual(f.collected('disabledTools'), ['Agent', 'Bash']);
+});
+
+test('t1970: saving does not add a locked tool row the template never denied', async () => {
+  const f = await loadedForm({ ...GRANT_TEMPLATE, disabledTools: ['Agent'] });
+  f.lock('disabledTools', 'Read');
+  assert.ok(f.formRendered.disabledTools.includes('Read'), 'ENTER: Read was rendered');
+  assert.deepStrictEqual(f.collected('disabledTools'), ['Agent']);
+});
+
 test('t1961: a type change after loading a template whose CLI drew no tool list draws its saved tools', async () => {
   const f = await loadedForm({ ...GRANT_TEMPLATE, type: 'codex' });
   f.env.inputType.value = 'claude';
@@ -286,15 +302,15 @@ test('t1956: choosing "(none)" after a template empties formPersisted', async ()
   const formRendered = { disabledTools: [], denyBuiltins: [], execCommands: [] };
   const api = new Function('inputTemplate', 'formRendered', 'unlistedOf', 'mergeLists', 'window',
     `let formPersisted = { disabledTools: ['Agent'], denyBuiltins: ['Explore'], execCommands: ['x'] };
-    ${FORM_CARRY_FN}\n${TEMPLATE_HANDLER}
-    return { persisted: () => formPersisted, carry: (k, c) => formCarry(k, c) };`)(
+    ${FORM_CARRY_FN}\n${KEPT_LOCKED_FN}\n${TEMPLATE_HANDLER}
+    return { persisted: () => formPersisted, carry: (k) => formCarry(k, () => [], { querySelectorAll: () => [] }) };`)(
     inputTemplate, formRendered, unlistedOf, mergeLists,
     { api: { listTemplates: async () => { throw new Error('a "(none)" pick must not list templates'); } } });
   assert.ok(listener, 'ENTER: the template handler registered');
   await listener();
   assert.deepStrictEqual(api.persisted(), {});
   for (const key of ['disabledTools', 'denyBuiltins', 'execCommands']) {
-    assert.deepStrictEqual(api.carry(key, []), [], `${key} carries nothing from the old template`);
+    assert.deepStrictEqual(api.carry(key), [], `${key} carries nothing from the old template`);
   }
 });
 
