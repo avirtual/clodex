@@ -46295,7 +46295,7 @@ void main() {
       var { makeDraggable, resetDrag } = require_popover_drag();
       var { placeAboveAnchor } = require_popover_place();
       var BAR_ANCHOR = '#proxy-bar [data-act="session-menu"]';
-      var { grantsForUnlistedPlugins, mergeGrants, pluginsForUnlistedPlugins, mergePlugins } = require_plugin_api();
+      var { grantsForUnlistedPlugins, mergeGrants, pluginsForUnlistedPlugins, mergePlugins, unlistedOf, mergeLists } = require_plugin_api();
       var CAPABILITY_LABELS = {
         turns: "Turn text \u2014 what the agent writes",
         thinking: "Thinking blocks \u2014 its reasoning, not just its answers",
@@ -46319,6 +46319,8 @@ void main() {
         const toolsPopoverName = document.getElementById("tools-popover-name");
         const popoverToolsList = document.getElementById("popover-tools-list");
         const toolsPopoverRestart = document.getElementById("tools-popover-restart");
+        let toolsPersisted = [];
+        let toolsRendered = [];
         function closeToolsPopover() {
           toolsPopover.classList.add("hidden");
           toolsPopover.dataset.name = "";
@@ -46333,7 +46335,8 @@ void main() {
             return;
           }
           setClaudeToolsCache(settings?.claudeTools || []);
-          renderToolChecklist(popoverToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
+          toolsPersisted = res.disabledTools || [];
+          toolsRendered = renderToolChecklist(popoverToolsList, new Set(toolsPersisted), res.effectiveTools || {});
           toolsPopoverRestart.checked = false;
           toolsPopoverName.textContent = name;
           toolsPopover.dataset.name = name;
@@ -46345,7 +46348,7 @@ void main() {
         document.getElementById("tools-popover-apply").addEventListener("click", async () => {
           const name = toolsPopover.dataset.name;
           if (!name) return closeToolsPopover();
-          const disabledTools = collectToolChecklist(popoverToolsList);
+          const disabledTools = mergeLists(collectToolChecklist(popoverToolsList), unlistedOf(toolsPersisted, toolsRendered));
           const restart = toolsPopoverRestart.checked;
           closeToolsPopover();
           const r = await window.api.setSessionTools(name, disabledTools);
@@ -46493,6 +46496,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         let agentsPersisted = [];
         let agentsRendered = [];
         let agentsAuto = [];
+        let builtinsPersisted = [];
+        let builtinsRendered = [];
         function closeAgentsPopover() {
           agentsPopover.classList.add("hidden");
           agentsPopover.dataset.name = "";
@@ -46510,7 +46515,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           agentsPersisted = res.enabled || [];
           agentsRendered = (res.agents || []).map((a) => a.name);
           agentsAuto = [...auto];
-          renderBuiltinChecklist(popoverBuiltinsList, new Set(res.denyBuiltins || []));
+          builtinsPersisted = res.denyBuiltins || [];
+          builtinsRendered = renderBuiltinChecklist(popoverBuiltinsList, new Set(builtinsPersisted));
           agentsPopoverRestart.checked = false;
           agentsPopoverName.textContent = name;
           agentsPopover.dataset.name = name;
@@ -46529,7 +46535,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             collectAgentChecklist(popoverAgentsList),
             agentsAuto
           );
-          const denyBuiltins = collectBuiltinChecklist(popoverBuiltinsList);
+          const denyBuiltins = mergeLists(collectBuiltinChecklist(popoverBuiltinsList), unlistedOf(builtinsPersisted, builtinsRendered));
           const restart = agentsPopoverRestart.checked;
           if (restart && !confirm(`Apply agent changes to "${name}" now?
 
@@ -54834,11 +54840,11 @@ ${detail}` });
         if (!skipAsyncRefresh) {
           if (caps.skillRoster) refreshNewSessionSkills(modeSkillDenySet());
           if (caps.injectSkills) refreshNewSessionInjectSkills();
-          if (caps.tools) refreshNewSessionTools(modeToolDenySet());
+          if (caps.tools) refreshNewSessionTools(persistedOr("disabledTools", modeToolDenySet()));
         }
         if (agentType && !skipAsyncRefresh) {
-          refreshNewSessionExecCommands();
-          refreshNewSessionMcpServers();
+          refreshNewSessionExecCommands(persistedOr("execCommands", /* @__PURE__ */ new Set()));
+          refreshNewSessionMcpServers(persistedOr("mcpServers", /* @__PURE__ */ new Set()));
           refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
         }
         resumeRow.style.display = agentType && !authoring ? "" : "none";
@@ -55084,9 +55090,9 @@ ${detail}` });
         resetNewSessionSkillCollector(modeSkillDenySet());
         renderSkillChecklist(inputSkillsList, [], modeSkillDenySet());
         setClaudeToolsCache(cat.claudeTools || []);
-        renderToolChecklist(inputToolsList, modeToolDenySet());
-        renderBuiltinChecklist(inputBuiltinsList, modeBuiltinDenySet());
-        refreshNewSessionExecCommands();
+        formRendered.disabledTools = renderToolChecklist(inputToolsList, persistedOr("disabledTools", modeToolDenySet()));
+        formRendered.denyBuiltins = renderBuiltinChecklist(inputBuiltinsList, persistedOr("denyBuiltins", modeBuiltinDenySet()));
+        refreshNewSessionExecCommands(persistedOr("execCommands", /* @__PURE__ */ new Set()));
         refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
         setPromptLibCache(libraryPromptCache(cat.prompts));
         fillSystemPromptSelect(inputSystemPrompt, "", newSessionSeat());
@@ -55238,12 +55244,12 @@ ${detail}` });
         const optimized = mode === "optimized";
         const caps = capsFor(inputType.value);
         if (!catalogsFresh) {
-          if (caps.tools) refreshNewSessionTools(optimized ? new Set(getDefaultToolDenyCache()) : /* @__PURE__ */ new Set());
+          if (caps.tools) refreshNewSessionTools(persistedOr("disabledTools", optimized ? new Set(getDefaultToolDenyCache()) : /* @__PURE__ */ new Set()));
           if (caps.skillRoster) refreshNewSessionSkills(optimized ? new Set(getDefaultSkillDenyCache()) : /* @__PURE__ */ new Set());
           if (caps.injectSkills) refreshNewSessionInjectSkills();
           if (caps.plugins) refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
         }
-        if (caps.agents) renderBuiltinChecklist(inputBuiltinsList, optimized ? new Set(getDefaultBuiltinDenyCache()) : /* @__PURE__ */ new Set());
+        if (caps.agents) formRendered.denyBuiltins = renderBuiltinChecklist(inputBuiltinsList, persistedOr("denyBuiltins", optimized ? new Set(getDefaultBuiltinDenyCache()) : /* @__PURE__ */ new Set()));
         if (caps.strip && inputStripLevel) inputStripLevel.value = "2";
         if (caps.autoCompact && inputAutoCompact) inputAutoCompact.checked = true;
         if (caps.noWire && inputNoWire) inputNoWire.checked = false;
@@ -55264,6 +55270,10 @@ ${detail}` });
       if (inputMode) {
         inputMode.addEventListener("change", () => {
           setModeSelect(inputMode.value);
+          if (inputMode.value === "standard" || inputMode.value === "optimized") {
+            delete formPersisted.disabledTools;
+            delete formPersisted.denyBuiltins;
+          }
           applyModeFields(inputMode.value);
         });
       }
@@ -55729,7 +55739,10 @@ ${detail}` });
       }
       inputTemplate.addEventListener("change", async () => {
         const id = inputTemplate.value;
-        if (!id) return;
+        if (!id) {
+          formPersisted = {};
+          return;
+        }
         const list = await window.api.listTemplates();
         const t = list.find((x) => x.id === id);
         if (!t) return;
@@ -55880,6 +55893,9 @@ ${detail}` });
           denyBuiltins: t && t.denyBuiltins,
           disabledTools: t && t.disabledTools
         };
+      }
+      function persistedOr(key, fallback) {
+        return key in formPersisted ? new Set(formPersisted[key] || []) : fallback;
       }
       function formCarry(key, checked) {
         return mergeLists(checked, unlistedOf(formPersisted[key], formRendered[key]));
