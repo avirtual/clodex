@@ -82,6 +82,7 @@ const SHIPPED = [
   extract(/\n(function applyModeFields\([\s\S]*?\n\})\n/, 'applyModeFields'),
   extract(/\n(function persistedOr\([\s\S]*?\n\})\n/, 'persistedOr'),
   extract(/\n(function currentOr\([\s\S]*?\n\})\n/, 'currentOr'),
+  extract(/\n(function keptLockedOf\([\s\S]*?\n\})\n/, 'keptLockedOf'),
   extract(/\n(function populateHostCatalogs\([\s\S]*?\n\})\n/, 'populateHostCatalogs'),
   extract(/\n(function resetNewSessionSkillCollector\([\s\S]*?\n\})\n/, 'resetNewSessionSkillCollector'),
   extract(/\n(async function refreshNewSessionSkills\([\s\S]*?\n\})\n/, 'refreshNewSessionSkills'),
