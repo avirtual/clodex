@@ -29,6 +29,7 @@ const PERSISTED_OR_FN = extract(/\n(function persistedOr\([\s\S]*?\n\})\n/, 'per
 const FORM_CARRY_FN = extract(/\n(function formCarry\([\s\S]*?\n\})\n/, 'formCarry');
 const POPULATE_FN = extract(/\n(function populateChecklistsFromCatalogs\([\s\S]*?\n\})\n/, 'populateChecklistsFromCatalogs');
 const HOST_FN = extract(/\n(function populateHostCatalogs\([\s\S]*?\n\})\n/, 'populateHostCatalogs');
+const CWD_FN = extract(/\n(function redrawGatesForCwd\([\s\S]*?\n\})\n/, 'redrawGatesForCwd');
 const APPLY_FN = extract(/\n(function applyModeFields\([\s\S]*?\n\})\n/, 'applyModeFields');
 const SET_MODE_FN = extract(/\n(function setModeSelect\([\s\S]*?\n\})\n/, 'setModeSelect');
 const SELECT_WIRING = extract(/\n(if \(inputMode\) \{\n  inputMode\.addEventListener[\s\S]*?\n\})\n/, "the mode select's change listener");
@@ -83,6 +84,7 @@ function formEnv(formPersisted, { mode = 'optimized', type = 'claude' } = {}) {
     setPromptLibCache: noop, libraryPromptCache: (p) => p, fillSystemPromptSelect: noop,
     newSessionSeat: () => ({ plugins: [] }), newSessionAppendOpened: [], renderAppendChecklist: noop,
     setProxyControls: noop, newSessionIsAgent: () => true, labelProxyDefault: noop,
+    dialogMode: 'create', newSessionSkillDenyList: () => [], collectToolChecklist: () => [],
     setDefaultToolDenyCache: noop, setDefaultSkillDenyCache: noop, setDefaultBuiltinDenyCache: noop,
     inputAgentsList: {}, inputInjectSkillsList: {}, inputSkillsList: {}, inputToolsList: {},
     inputBuiltinsList: {}, inputSystemPrompt: {}, inputAppendList: {},
@@ -90,10 +92,11 @@ function formEnv(formPersisted, { mode = 'optimized', type = 'claude' } = {}) {
   };
   const names = Object.keys(env);
   const api = new Function(...names, 'formPersistedInit', `let formPersisted = formPersistedInit;
-    ${PERSISTED_OR_FN}\n${FORM_CARRY_FN}\n${POPULATE_FN}\n${HOST_FN}\n${APPLY_FN}\n${SET_MODE_FN}\n${SELECT_WIRING}
+    ${PERSISTED_OR_FN}\n${FORM_CARRY_FN}\n${POPULATE_FN}\n${HOST_FN}\n${CWD_FN}\n${APPLY_FN}\n${SET_MODE_FN}\n${SELECT_WIRING}
     return {
       populate: (cat) => populateChecklistsFromCatalogs(cat),
       host: () => populateHostCatalogs({}, []),
+      cwd: () => redrawGatesForCwd(),
       applyMode: (mode, opts) => applyModeFields(mode, opts),
       typeRefresh: () => { const skipAsyncRefresh = false; const caps = capsFor(inputType.value); const agentType = true; ${TYPE_REFRESH} },
       carry: (key, checked) => formCarry(key, checked),
@@ -114,7 +117,7 @@ test('t1956: a placement switch after a template load keeps its tools, built-ins
 });
 
 test('t1956: switching placement back to host after a template load keeps all three lists', () => {
-  const f = formEnv(loadedTemplate(), { mode: 'custom' });
+  const f = formEnv({ ...loadedTemplate(), mcpServers: ['m1'] }, { mode: 'custom' });
   f.api.populate({ agents: [], skills: [], claudeTools: [] });
   f.api.host();
   assert.ok(f.sets.disabledTools && f.sets.denyBuiltins && f.sets.execCommands && f.sets.mcpServers,
@@ -122,6 +125,14 @@ test('t1956: switching placement back to host after a template load keeps all th
   assert.deepStrictEqual(f.collected('disabledTools'), ['Agent']);
   assert.deepStrictEqual(f.collected('denyBuiltins'), ['Explore']);
   assert.deepStrictEqual(f.collected('execCommands'), ['x']);
+  assert.deepStrictEqual(f.collected('mcpServers'), ['m1']);
+});
+
+test('t1956: a cwd change in the New Session dialog after a template load keeps its disabled tools', () => {
+  const f = formEnv(loadedTemplate(), { mode: 'custom' });
+  f.api.cwd();
+  assert.ok(f.sets.disabledTools, 'ENTER: the cwd change redrew the tool list');
+  assert.deepStrictEqual(f.collected('disabledTools'), ['Agent']);
 });
 
 test('t1956: the host fill on a blank form still draws the mode defaults', () => {
