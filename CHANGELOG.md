@@ -14,6 +14,8 @@ blocks a release.
 
 ## Unreleased
 
+- Deleting or archiving a seat kept warm "Always" now stops its keep-warm pings at once; they used to continue until Clodex was restarted.
+
 ## 5.146.2 — 2026-10-27
 
 - Forking a seat that is kept warm no longer ends the parent's keep-warm hold when the fork starts its own conversation.
