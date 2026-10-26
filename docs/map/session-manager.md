@@ -30,7 +30,7 @@
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| `defaultKillPid` | the production killPid dep engine.js injects: a plain process.kill, reached only through sigkillPid's guard | OS processes | none | no-real-kill-in-fixtures.test.js |
+| `defaultKillPid` | the production killPid dep engine.js injects: a plain process.kill, reached only through sigkillPid's guard | OS processes | none | sigkill-pid-guard.test.js sigkill-pid-census.test.js |
 | `sigkillPid` | SIGKILLs a pid only when it is positive, and warns and refuses otherwise because non-positive pids broadcast | OS processes | none | sigkill-pid-guard.test.js sigkill-pid-census.test.js reap-seat-descendants.test.js session-move.test.js |
 | `ptyOwnership` | classifies a pty pid in a ps snapshot as gone, ours (direct child of the owner pid) or foreign | none (pure) | none | term-marks-bash.test.js |
 | `reapFromSnapshot` | SIGKILLs every descendant of a pty pid through the injected killPid, but only when that pty is our direct child, and returns the count | OS processes | ptyOwnership, stall-evidence.descendantPids, sigkillPid | reap-seat-descendants.test.js |
