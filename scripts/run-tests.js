@@ -251,6 +251,7 @@ const suiteTmp = path.join(os.tmpdir(), 'clodex-suite');
 fs.mkdirSync(suiteTmp, { recursive: true });
 const tmpDir = fs.mkdtempSync(path.join(suiteTmp, 'clodex-test-'));
 const tapFile = path.join(tmpDir, 'run.tap');
+const junitFile = path.join(tmpDir, 'run.junit.xml');
 // Unconditional, because the refusal paths between here and the analysis below
 // exit through die() -> process.exit and would otherwise each leak this dir: a
 // missing tap file and a spawn failure both do, and the suite DRIVES those
@@ -300,6 +301,7 @@ const run = spawnSync(process.execPath, [
   `--test-timeout=${perTestMs}`,
   `--test-reporter=${reporter}`, '--test-reporter-destination=stdout',
   '--test-reporter=tap', `--test-reporter-destination=${tapFile}`,
+  '--test-reporter=junit', `--test-reporter-destination=${junitFile}`,
   ...passthrough,
 ], { cwd: ROOT, stdio: 'inherit', env: childEnv, timeout: runTimeoutMs, killSignal: 'SIGTERM' });
 const runMs = Date.now() - runStart;
@@ -411,9 +413,6 @@ try {
   die(`escape analysis threw (${e.message}) — refusing to report on this run`);
 }
 
-console.log(`\nTOTALS: ${pass} pass, ${fail} fail, ${tests} tests`);
-console.log(formatEscapes(escapes));
-
 const SLOW_MS = 6000;
 const slowLimit = Number(process.env.CLODEX_TEST_SLOW_MS) > 0
   ? Number(process.env.CLODEX_TEST_SLOW_MS)
@@ -458,7 +457,93 @@ const stale = sweeping && !filters.length
   : [];
 
 const advisory = process.env.CLODEX_TEST_SLOW_ADVISORY === '1' && !lockHeld;
-const enforced = advisory ? [] : offenders;
+const RETIME_CAP = 12;
+const retime = process.env.CLODEX_TEST_SLOW_RETIME !== '0';
+const timed = advisory ? [] : offenders;
+const load = [];
+if (retime && timed.length && timed.length <= RETIME_CAP) {
+  const files = junitFiles();
+  timed.forEach((o, i) => {
+    const alone = retimeAlone(o, i, files);
+    if (alone !== null && alone <= slowLimit) load.push({ o, alone });
+  });
+}
+const enforced = timed.filter((o) => !load.some((l) => l.o === o));
+
+function tapUnescape(s) {
+  const map = { n: '\n', t: '\t', r: '\r', b: '\b', f: '\f', v: '\v' };
+  return s.replace(/\\(.)/g, (_, c) => (Object.hasOwn(map, c) ? map[c] : c));
+}
+
+function xmlUnescape(s) {
+  return s.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+}
+
+function junitFiles() {
+  let xml = '';
+  try { xml = fs.readFileSync(junitFile, 'utf8'); } catch { return []; }
+  const out = [];
+  const open = [];
+  for (const m of xml.matchAll(/<(\/?)(testsuite|testcase)\b([^>]*?)(\/?)>/g)) {
+    const [, close, tag, attrs, self] = m;
+    if (close) {
+      if (tag === 'testsuite') open.pop();
+      continue;
+    }
+    const attr = (k) => {
+      const a = new RegExp(`\\s${k}="([^"]*)"`).exec(attrs);
+      return a ? xmlUnescape(a[1]) : null;
+    };
+    const entry = { name: attr('name'), ms: Number(attr('time')) * 1000, file: attr('file') };
+    out.push(entry);
+    if (tag === 'testsuite') {
+      if (!self) open.push(entry);
+    } else if (entry.file) {
+      for (const s of open) if (!s.file) s.file = entry.file;
+    }
+  }
+  return out;
+}
+
+function retimeAlone(o, i, files) {
+  const name = tapUnescape(o.name);
+  const hits = files.filter((f) => f.file && f.name === name && Math.abs(f.ms - o.ms) < 1);
+  const owners = new Set(hits.map((f) => f.file));
+  if (owners.size !== 1) return null;
+  const [file] = owners;
+  const retap = path.join(tmpDir, `retime-${i}.tap`);
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const res = spawnSync(process.execPath, [
+    '--test',
+    `--test-timeout=${perTestMs}`,
+    '--test-concurrency=1',
+    `--test-name-pattern=^${escaped}$`,
+    '--test-reporter=tap', `--test-reporter-destination=${retap}`,
+    file,
+  ], { cwd: ROOT, stdio: 'ignore', env: childEnv, timeout: perTestMs * 2, killSignal: 'SIGTERM' });
+  if (res.error || res.status !== 0) return null;
+  let text = '';
+  try { text = fs.readFileSync(retap, 'utf8'); } catch { return null; }
+  let hit = false;
+  for (const line of text.split('\n')) {
+    const point = /^ *(?:not )?ok \d+ - (.*)$/.exec(line);
+    if (point) {
+      hit = point[1].replace(/ +# +(SKIP|TODO)\b.*$/i, '').trim() === o.name;
+      continue;
+    }
+    const dur = /^ *duration_ms: *([\d.]+) *$/.exec(line);
+    if (dur && hit) return Number(dur[1]);
+  }
+  return null;
+}
+
+for (const l of load) {
+  console.log(`SLOW (load, re-timed alone): ${Math.round(l.o.ms)}ms → ${Math.round(l.alone)}ms ${l.o.name}`);
+}
+
+console.log(`\nTOTALS: ${pass} pass, ${fail} fail, ${tests} tests`);
+console.log(formatEscapes(escapes));
 
 if (advisory && offenders.length) {
   const lines = [];
