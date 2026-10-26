@@ -7,12 +7,8 @@
 //     `getSandboxManager() ? .list() : []` path then yields [] → showPlacementSelector([])
 //     is false → the "Run in" row hides; renderer half is pinned in placement.test.js).
 //   - seam omitted (the Electron path) → the manager is created exactly as today.
-//
-// createEngine constructs electron-free against a temp userData and starts
-// background timers that keep the loop alive; force-exit once assertions flush
-// (node --test isolates each file's process).
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const { EventEmitter } = require('node:events');
 const os = require('node:os');
@@ -212,6 +208,3 @@ test('sandbox:self reports a read-only library templates dir inside a box, and w
   fs.rmSync(dir, { recursive: true, force: true });
   assert.strictEqual(withBoxEnv('1', () => self()).libraryWritable, true, 'a missing dir counts writable');
 });
-
-// createEngine's background timers keep the loop alive; exit once results flush.
-after(() => { setImmediate(() => process.exit(0)); });

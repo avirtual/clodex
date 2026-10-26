@@ -15,7 +15,7 @@
 // actually hands createSessionManager, by wrapping the factory in the module
 // exports before the engine destructures it. The engine gets the real manager
 // back, so nothing else about it changes.
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const os = require('node:os');
 const fs = require('node:fs');
@@ -79,6 +79,3 @@ test('the engine hands session-manager a live notice-queue seam and its own vers
   // upgrades that never happened, or none that did.
   assert.strictEqual(deps.appVersion, require('../package.json').version);
 });
-
-// createEngine's background timers keep the loop alive; exit once results flush.
-after(() => { setImmediate(() => process.exit(0)); });

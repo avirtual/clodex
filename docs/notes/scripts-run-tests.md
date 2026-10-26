@@ -51,14 +51,14 @@ inherited the declaration would block on the lock its parent already holds.
 
 ## SLOW_MS
 
-The per-test duration gate. A test point over `SLOW_MS` (6000; `CLODEX_TEST_SLOW_MS`
-overrides it, for the gate's own pins) fails the run unless `test/slow-tests.json`
-names it, and an allowlist entry matching no point in the run is stale and fails
-too — the stale check runs only on an UNFILTERED sweeping run, because a
-named-file or filtered run cannot see every test, and every unlisted entry would
-then read as stale on a run where nothing failed. `sweeping` alone is not that
-question: it means only that no positional argument was given, which a
-`--test-name-pattern` run satisfies while executing a handful of tests.
+A test point over `SLOW_MS` (6000; `CLODEX_TEST_SLOW_MS` overrides it, for the
+gate's own pins) fails the run unless `test/slow-tests.json` names it, and an
+allowlist entry matching no point in the run is stale and fails too — the stale
+check runs only on an UNFILTERED sweeping run, because a named-file or
+filtered run cannot see every test, and every unlisted entry would then read as
+stale on a run where nothing failed. `sweeping` alone is not that question: it
+means only that no positional argument was given, which a `--test-name-pattern`
+run satisfies while executing a handful of tests.
 
 The threshold still applies to a narrowed run: a test that is slow is slow
 however the run reached it.
@@ -96,11 +96,12 @@ the suite's comment ratchet refuses new comment lines.
 
 ## RETIME_CAP
 
-Past 12 offenders (`CLODEX_TEST_RETIME_CAP` overrides, for the fixtures) only the
-slowest 12 are re-timed (`retimeAlone`), each enforced on its own result; the faster
-rest are never enforced (three green loaded full runs each tripped more than 12). The phase
-shares the main run's `runTimeoutMs` deadline, each re-run capped at `slowLimit + 30000`:
-TOTALS prints after it, so outrunning the exec ceiling leaves a green run untotalled.
+Past 12 offenders (`CLODEX_TEST_RETIME_CAP` overrides) only the slowest 12 are
+re-timed (`retimeAlone`), each enforced on its own result; the faster rest are
+never enforced (three green loaded full runs each tripped more than 12). The
+phase shares the main run's `runTimeoutMs` deadline, each re-run capped at
+`slowLimit + 30000`: TOTALS prints after it, so outrunning the exec ceiling
+leaves a green run untotalled.
 
 ## junitFiles
 
@@ -111,10 +112,9 @@ That reporter double-escapes `"` as `&amp;quot;`, hence `&amp;` decoded first.
 
 ## RUN_TIMEOUT_MS
 
-20 minutes. The `clodex-run-tests` exec ceiling (36 minutes) exceeds the wrapper's
-15-minute lock wait plus these 20, pinned in test/test-digest-lock.test.js, so
-a wedged run must end in this runner's own `TIMEOUT after <m>m in <file>` line
-(the file comes from node's `# Interrupted while running:` tap line on SIGTERM;
-a one-file run killed before node wrote that line names the file it was given)
-rather than be killed from outside with no file named. `CLODEX_TEST_RUN_TIMEOUT_MS`
-overrides it for the runner's own tests only.
+20 minutes. The `clodex-run-tests` exec ceiling (36 minutes) exceeds the
+wrapper's 15-minute lock wait plus these 20 (test/test-digest-lock.test.js), so
+a wedged run ends in this runner's own `TIMEOUT after <m>m in <file>` line (the
+file from node's `# Interrupted while running:` tap line on SIGTERM; a one-file
+run killed before node wrote it names its given file), not an outside kill.
+`CLODEX_TEST_RUN_TIMEOUT_MS` overrides it for the runner's own tests.

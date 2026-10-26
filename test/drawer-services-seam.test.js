@@ -31,7 +31,7 @@
 // Every gated prefix has handlers behind it, so the absence assertion is not
 // vacuous — it fails the moment one is registered ungated.
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const os = require('node:os');
 const fs = require('node:fs');
@@ -659,9 +659,6 @@ test('peer:wterm* refuse a key whose seat half fails the wire grammar', async ()
 
   assert.deepStrictEqual(calls, [], 'nothing reached any peer connection at all');
 });
-
-// createEngine's background timers keep the loop alive; exit once results flush.
-after(() => { setImmediate(() => process.exit(0)); });
 
 // t379: the peer half of the refusal above, and the reason it is not merely
 // symmetry. A want is dropped by WORKSPACE ID — main's navigation and close
