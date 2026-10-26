@@ -4012,16 +4012,16 @@ function persistedOr(key, fallback) {
 
 function currentOr(key, collector, list, fallback) {
   if (!(key in formPersisted) || !(key in formRendered)) return persistedOr(key, fallback);
-  return new Set(mergeLists(collector(list), [...unlistedOf(formPersisted[key], formRendered[key]), ...keptLockedOf(key, list)]));
+  return new Set(mergeLists(collector(list), [...unlistedOf(formPersisted[key], formRendered[key]), ...keptLockedOf(formPersisted[key], list)]));
 }
 
-function keptLockedOf(key, list) {
+function keptLockedOf(persisted, list) {
   const locked = new Set(Array.from(list.querySelectorAll('input[type="checkbox"]:disabled'), (cb) => cb.value));
-  return (formPersisted[key] || []).filter((id) => locked.has(id));
+  return (persisted || []).filter((id) => locked.has(id));
 }
 
 function formCarry(key, collector, list) {
-  return mergeLists(collector(list), [...unlistedOf(formPersisted[key], formRendered[key]), ...keptLockedOf(key, list)]);
+  return mergeLists(collector(list), [...unlistedOf(formPersisted[key], formRendered[key]), ...keptLockedOf(formPersisted[key], list)]);
 }
 
 function collectDialogEnv() {
@@ -9512,7 +9512,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   const denyBuiltins = argsAgentsRow.style.display === 'none'
     ? [] : mergeLists(collectBuiltinChecklist(argsBuiltinsList), unlistedOf(argsBuiltinsPersisted, argsBuiltinsRendered));
   const disabledTools = argsToolsRow.style.display === 'none'
-    ? [] : mergeLists(collectToolChecklist(argsToolsList), unlistedOf(argsToolsPersisted, argsToolsRendered));
+    ? [] : mergeLists(collectToolChecklist(argsToolsList), [...unlistedOf(argsToolsPersisted, argsToolsRendered), ...keptLockedOf(argsToolsPersisted, argsToolsList)]);
   // null here reaches session-args as an explicit clear of the allowlist; a hidden section must send undefined (untouched), as plugins below.
   const intents = argsIntentsSection.style.display === 'none' ? undefined : collectIntentChecklist(argsIntentsList);
   // plugins: undefined = "untouched", never []: a hidden section or a checklist that drew

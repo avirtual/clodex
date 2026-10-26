@@ -1678,9 +1678,38 @@ test('t1954: the Edit Settings save carries unlisted exec, MCP, builtin and tool
     ['collectBuiltinChecklist', 'argsBuiltinsList', 'argsBuiltinsPersisted', 'argsBuiltinsRendered', 'denyBuiltins'],
     ['collectToolChecklist', 'argsToolsList', 'argsToolsPersisted', 'argsToolsRendered', 'disabledTools'],
   ]) {
-    assert.ok(body.includes(`mergeLists(${collect}(${list}), unlistedOf(${persisted}, ${rendered}))`),
-      `${collect} must carry what the library did not render`);
+    const carried = field === 'disabledTools'
+      ? `mergeLists(${collect}(${list}), [...unlistedOf(${persisted}, ${rendered}), ...keptLockedOf(${persisted}, ${list})])`
+      : `mergeLists(${collect}(${list}), unlistedOf(${persisted}, ${rendered}))`;
+    assert.ok(body.includes(carried), `${collect} must carry what the library did not render`);
     assert.ok(src.includes(`${rendered} = render`), `${rendered} is the ids its checklist drew`);
     assert.ok(src.includes(`${persisted} = res.${field} || [];`), `${persisted} is the loaded ${field} list`);
   }
+  assert.ok(body.includes('keptLockedOf(argsToolsPersisted, argsToolsList)'), 'the tools row keeps a saved deny on a locked row');
+});
+
+test('t1971: the Edit Settings save keeps a saved tool deny on a locked row and adds no unsaved locked row', () => {
+  const { unlistedOf, mergeLists } = require('../plugin-api');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const at = src.indexOf("document.getElementById('btn-args-save')");
+  assert.ok(at > 0, 'ENTER: the Edit Settings save handler was located');
+  const body = src.slice(at, src.indexOf('\n});', at));
+  const stmt = /\n\s*(const disabledTools = [\s\S]*?;)\n/.exec(body);
+  assert.ok(stmt, 'ENTER: the disabledTools statement was located');
+  const kept = /\n(function keptLockedOf\([\s\S]*?\n\})\n/.exec(src);
+  assert.ok(kept, 'ENTER: keptLockedOf was located');
+  const rows = [
+    { value: 'Agent', disabled: true }, { value: 'WebFetch', disabled: true },
+    { value: 'Bash', disabled: false, checked: true }, { value: 'Read', disabled: false, checked: false },
+  ];
+  const argsToolsList = {
+    querySelectorAll: (sel) => rows.filter((r) => (sel.includes(':disabled') ? r.disabled : true)),
+  };
+  const collectToolChecklist = () => rows.filter((r) => !r.disabled && r.checked).map((r) => r.value);
+  const disabledTools = new Function('mergeLists', 'unlistedOf', 'collectToolChecklist', 'argsToolsList',
+    'argsToolsRow', 'argsToolsPersisted', 'argsToolsRendered',
+    `${kept[1]}\n${stmt[1]}\nreturn disabledTools;`)(
+    mergeLists, unlistedOf, collectToolChecklist, argsToolsList, { style: { display: '' } },
+    ['Agent', 'Bash', 'Gone'], ['Agent', 'WebFetch', 'Bash', 'Read']);
+  assert.deepStrictEqual(disabledTools.slice().sort(), ['Agent', 'Bash', 'Gone']);
 });

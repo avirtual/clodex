@@ -55908,14 +55908,14 @@ ${detail}` });
       }
       function currentOr(key, collector, list, fallback) {
         if (!(key in formPersisted) || !(key in formRendered)) return persistedOr(key, fallback);
-        return new Set(mergeLists(collector(list), [...unlistedOf(formPersisted[key], formRendered[key]), ...keptLockedOf(key, list)]));
+        return new Set(mergeLists(collector(list), [...unlistedOf(formPersisted[key], formRendered[key]), ...keptLockedOf(formPersisted[key], list)]));
       }
-      function keptLockedOf(key, list) {
+      function keptLockedOf(persisted, list) {
         const locked = new Set(Array.from(list.querySelectorAll('input[type="checkbox"]:disabled'), (cb) => cb.value));
-        return (formPersisted[key] || []).filter((id) => locked.has(id));
+        return (persisted || []).filter((id) => locked.has(id));
       }
       function formCarry(key, collector, list) {
-        return mergeLists(collector(list), [...unlistedOf(formPersisted[key], formRendered[key]), ...keptLockedOf(key, list)]);
+        return mergeLists(collector(list), [...unlistedOf(formPersisted[key], formRendered[key]), ...keptLockedOf(formPersisted[key], list)]);
       }
       function collectDialogEnv() {
         const { env } = parseEnvLines(inputEnv ? inputEnv.value : "");
@@ -61269,7 +61269,7 @@ ${res.stderr}` : "");
           argsAgentsAuto
         );
         const denyBuiltins = argsAgentsRow.style.display === "none" ? [] : mergeLists(collectBuiltinChecklist(argsBuiltinsList), unlistedOf(argsBuiltinsPersisted, argsBuiltinsRendered));
-        const disabledTools = argsToolsRow.style.display === "none" ? [] : mergeLists(collectToolChecklist(argsToolsList), unlistedOf(argsToolsPersisted, argsToolsRendered));
+        const disabledTools = argsToolsRow.style.display === "none" ? [] : mergeLists(collectToolChecklist(argsToolsList), [...unlistedOf(argsToolsPersisted, argsToolsRendered), ...keptLockedOf(argsToolsPersisted, argsToolsList)]);
         const intents = argsIntentsSection.style.display === "none" ? void 0 : collectIntentChecklist(argsIntentsList);
         const plugins = argsPluginsSection.style.display === "none" || !argsPluginsRendered.length ? void 0 : mergePlugins(
           collectPluginChecklist(argsPluginList),

@@ -125,7 +125,7 @@ function formEnv(formPersisted, { mode = 'optimized', type = 'claude', templates
       cwd: () => redrawGatesForCwd(),
       applyMode: (mode, opts) => applyModeFields(mode, opts),
       typeRefresh: () => { const skipAsyncRefresh = false; const caps = capsFor(inputType.value); const agentType = true; ${TYPE_REFRESH} },
-      carry: (key, list) => formCarry(key, collectExecChecklist, list),
+      carry: (key, list) => formCarry(key, { disabledTools: collectToolChecklist, denyBuiltins: collectBuiltinChecklist, execCommands: collectExecChecklist, mcpServers: collectMcpChecklist }[key], list),
       persisted: () => formPersisted,
       rendered: () => formRendered,
     };`)(...names.map((n) => env[n]), formPersisted);
