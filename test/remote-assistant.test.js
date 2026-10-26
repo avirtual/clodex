@@ -803,12 +803,14 @@ test('restartSession (wire): an asleep assistant goes through wake, never engine
 test('restartSession (wire): an awake assistant reserves under its maxAwake; at capacity it is refused and never restarts', async () => {
   const AWAKE = { class: 'assistant', template: 'avh-tpl', sleep: { maxAwake: 1 }, type: 'claude', cwd: '/w', exitedAt: 5 };
   const full = { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000 };
-  const h = makeDeps({ records: { 'avh-7': AWAKE }, roomOut: full });
+  const LIVE = { 'avh-7': { name: 'avh-7', type: 'claude', _dead: false } };
+  const h = makeDeps({ records: { 'avh-7': AWAKE }, sessions: LIVE, roomOut: full });
   const restarts = [];
   h.deps.restartSession = async (...a) => { restarts.push(a); return { ok: true }; };
+  assert.ok(h.manager.sessions.get('avh-7') && !h.manager.sessions.get('avh-7')._dead, 'ENTER: the name has a live holder');
   assert.deepStrictEqual(await captureOptions(h.deps).restartSession('avh-7'), full);
   assert.deepStrictEqual([h.roomCalls, restarts, h.wakeCalls], [[['room', 'avh-tpl', 1, 'avh-7']], [], []]);
-  const ok = makeDeps({ records: { 'avh-7': { ...AWAKE, awokeAt: 1 } } });
+  const ok = makeDeps({ records: { 'avh-7': { ...AWAKE, awokeAt: 1 } }, sessions: LIVE });
   ok.deps.restartSession = async (...a) => { restarts.push(a); return { ok: true }; };
   const before = Date.now();
   assert.strictEqual((await captureOptions(ok.deps).restartSession('avh-7')).ok, true);

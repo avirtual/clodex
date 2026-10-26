@@ -67,7 +67,14 @@ function formEnv(formPersisted, { mode = 'optimized', type = 'claude', templates
   let templateListener = null;
   const locked = {};
   const lockedRows = (key) => (drawn[key] || []).filter((id) => (locked[key] || []).includes(id));
-  const listOf = (key) => ({ key, querySelectorAll: () => lockedRows(key).map((value) => ({ value })) });
+  const listOf = (key) => ({
+    key,
+    querySelectorAll: (sel) => {
+      if (!sel.startsWith('input[type="checkbox"]')) return [];
+      const asksLocked = sel.replace(/:not\(:disabled\)/g, '').includes(':disabled');
+      return (drawn[key] || []).filter((id) => lockedRows(key).includes(id) === asksLocked).map((value) => ({ value }));
+    },
+  });
   const ticked = (list) => (drawn[list.key] || []).filter((id) => !lockedRows(list.key).includes(id)).filter((id) => (sets[list.key] || new Set()).has(id));
   const env = {
     unlistedOf, mergeLists, capsFor, isAgentType,

@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'cloud-review.sh');
@@ -32,7 +32,14 @@ function launchAndRecord(extraEnv) {
     const out = runScript(['v1.0.0', 'v1.1.0'], {
       CLODEX_CLAUDE_BIN: stub, CLOUD_REVIEW_REC: rec, HOME: dir, ...extraEnv,
     });
-    const recorded = execFileSync('cat', [rec], { encoding: 'utf-8', timeout: FIFO_BOUND_MS });
+    let recorded;
+    try {
+      recorded = execFileSync('cat', [rec], { encoding: 'utf-8', timeout: FIFO_BOUND_MS });
+    } catch (err) {
+      const pids = spawnSync('pgrep', ['-f', stub], { encoding: 'utf-8' }).stdout.split('\n').filter(Boolean);
+      for (const pid of pids) { try { process.kill(Number(pid), 'SIGKILL'); } catch {} }
+      throw err;
+    }
     const [argv, env] = recorded.split('--ENV--\n');
     return { out, argv, env, logExists: fs.existsSync(path.join(dir, '.clodex', 'logs', 'cloud-review-v1.1.0.log')) };
   });

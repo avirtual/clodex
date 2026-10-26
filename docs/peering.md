@@ -188,7 +188,8 @@ socket dies, which is success, not a transport fault. It is destructive to
 every live seat on the box, so the CLI gates it behind `--force` in
 `-o json|yaml`/non-interactive mode. The per-session cousin,
 `POST /api/sessions/:name/restart`, restarts one seat and rides the `create`
-cap instead.
+cap instead; it wakes a sleeping assistant, and an assistant at its awake cap
+answers 503 with `retryAfterMs`.
 
 `version` in the resources document is a DOCUMENT revision, bumped when routes
 move under existing rows — it went to `2` for the route moves that

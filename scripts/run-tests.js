@@ -459,7 +459,7 @@ const stale = sweeping && !filters.length
   : [];
 
 const advisory = process.env.CLODEX_TEST_SLOW_ADVISORY === '1' && !lockHeld;
-const RETIME_CAP = Number(process.env.CLODEX_TEST_RETIME_CAP) || 12;
+const RETIME_CAP = ((n) => (Number.isInteger(n) && n > 0 ? n : 12))(Number(process.env.CLODEX_TEST_RETIME_CAP));
 const retime = process.env.CLODEX_TEST_SLOW_RETIME !== '0';
 const timed = advisory ? [] : offenders;
 const load = [];
