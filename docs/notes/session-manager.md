@@ -118,7 +118,3 @@ The DEPLOY OK self-archive sends `session:context-action` `retired` BEFORE `arch
 ## _awakeAssistantRows
 
 An evicted victim needs no exclusion set: `archive` sets `s._archived` synchronously before its first await, and `_sleepNow` reaches `archive` without awaiting anything first, so the `s._archived` test already drops the victim before a second `makeAwakeRoom` counts rows.
-
-## makeAwakeRoom
-
-A holder that is already live is reserved without a capacity check: a restart of an awake assistant kills and respawns it, and the reservation keeps its slot through the dead gap. Checking capacity instead counts the holder in its own rows and can pick it as the eviction victim.
