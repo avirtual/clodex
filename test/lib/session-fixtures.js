@@ -94,6 +94,7 @@ function mk(overrides = {}) {
   const SessionManager = createSessionManager(deps);
   const m = new SessionManager();
   m.killedPids = stubs.killed;
+  m.psCalls = stubs.psCalls;
   return m;
 }
 

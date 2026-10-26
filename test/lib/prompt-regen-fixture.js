@@ -164,7 +164,7 @@ function mkManager(root, overrides = {}) {
     clearTimeout(s._compactValveTimer);
     clearTimeout(s._postClearValveTimer);
   };
-  return { m, spawns, watchers, typed, handoffs, refreshes, shadow, msgs, stop, persisted, killed: stubs.killed };
+  return { m, spawns, watchers, typed, handoffs, refreshes, shadow, msgs, stop, persisted, killed: stubs.killed, psCalls: stubs.psCalls };
 }
 
 async function spawn(h, name) {
