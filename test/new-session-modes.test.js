@@ -124,6 +124,7 @@ test('all three "Clodex optimized" surfaces promise the three default sets, and 
 
 const APPLY_FN = extract(/\n(function applyModeFields\([\s\S]*?\n\})\n/, 'applyModeFields');
 const SET_PROXY_FN = extract(/\n(function setProxyControls\([\s\S]*?\n\})\n/, 'setProxyControls');
+const PERSISTED_OR_FN = extract(/\n(function persistedOr\([\s\S]*?\n\})\n/, 'persistedOr');
 
 const DENY_CACHE = ['Bash', 'WebFetch', 'NotebookEdit'];
 const SKILL_DENY_CACHE = ['code-review', 'deep-research'];
@@ -159,11 +160,12 @@ function runApply(mode, { type = 'claude', catalogsFresh = false } = {}) {
     // row's answer, so stubbing it would assert only that this file agrees
     // with itself — and the codex subject below would stop meaning anything.
     capsFor,
+    formPersisted: {}, formRendered: {},
   };
   const names = Object.keys(env);
   const opts = JSON.stringify({ catalogsFresh });
   new Function(...names,
-    `${SET_PROXY_FN}\n${APPLY_FN}\napplyModeFields(${JSON.stringify(mode)}, ${opts});`)(
+    `${SET_PROXY_FN}\n${PERSISTED_OR_FN}\n${APPLY_FN}\napplyModeFields(${JSON.stringify(mode)}, ${opts});`)(
     ...names.map((n) => env[n]));
   return { calls, inputStripLevel, inputAutoCompact, inputNoWire, inputProxyMode, inputProxyUrl };
 }
@@ -463,7 +465,7 @@ test('every tool-checklist draw in the dialog goes through modeToolDenySet()', (
   // `new Set()` there ships an untrimmed roster under a label promising a trim.
   const sandbox = slice('function populateChecklistsFromCatalogs(', '\nasync function restoreHostCatalogs(',
     'the sandbox catalog fill');
-  assert.match(sandbox, /renderToolChecklist\(inputToolsList, modeToolDenySet\(\)\)/,
+  assert.match(sandbox, /renderToolChecklist\(inputToolsList, persistedOr\('disabledTools', modeToolDenySet\(\)\)\)/,
     'a box-placed seat must honour the selected mode like a host one');
   const host = slice('function populateHostCatalogs(', "\ninputName.addEventListener('input'",
     'the host catalog fill');

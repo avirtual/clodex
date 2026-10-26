@@ -1672,15 +1672,15 @@ test('t1954: the Edit Settings save carries unlisted exec, MCP, builtin and tool
   const at = src.indexOf("document.getElementById('btn-args-save')");
   assert.ok(at > 0, 'ENTER: the Edit Settings save handler was located');
   const body = src.slice(at, src.indexOf('\n});', at));
-  for (const [collect, list, persisted, rendered] of [
-    ['collectExecChecklist', 'argsExecList', 'argsExecPersisted', 'argsExecRendered'],
-    ['collectMcpChecklist', 'argsMcpList', 'argsMcpPersisted', 'argsMcpRendered'],
-    ['collectBuiltinChecklist', 'argsBuiltinsList', 'argsBuiltinsPersisted', 'argsBuiltinsRendered'],
-    ['collectToolChecklist', 'argsToolsList', 'argsToolsPersisted', 'argsToolsRendered'],
+  for (const [collect, list, persisted, rendered, field] of [
+    ['collectExecChecklist', 'argsExecList', 'argsExecPersisted', 'argsExecRendered', 'execCommands'],
+    ['collectMcpChecklist', 'argsMcpList', 'argsMcpPersisted', 'argsMcpRendered', 'mcpServers'],
+    ['collectBuiltinChecklist', 'argsBuiltinsList', 'argsBuiltinsPersisted', 'argsBuiltinsRendered', 'denyBuiltins'],
+    ['collectToolChecklist', 'argsToolsList', 'argsToolsPersisted', 'argsToolsRendered', 'disabledTools'],
   ]) {
     assert.ok(body.includes(`mergeLists(${collect}(${list}), unlistedOf(${persisted}, ${rendered}))`),
       `${collect} must carry what the library did not render`);
     assert.ok(src.includes(`${rendered} = render`), `${rendered} is the ids its checklist drew`);
-    assert.ok(new RegExp(`${persisted} = res\\.\\w+ \\|\\| \\[\\];`).test(src), `${persisted} is the loaded list`);
+    assert.ok(src.includes(`${persisted} = res.${field} || [];`), `${persisted} is the loaded ${field} list`);
   }
 });
