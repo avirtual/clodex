@@ -530,7 +530,7 @@
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
 | `handle:app:restore-sessions` | restores the persisted sessions of the sender's workspace | sessions via manager | restoreSessionsForWorkspace | session-restore.test.js |
-| `handle:session:retrySpawn` | re-spawns a persisted record (not a mint) in the record's own workspace, the sender's only for a record without one, returning its io | sessions via manager | manager.create, manager.resumeCwdOf | resume-cwd-tree-fallback.test.js exited-seat-row.test.js renderer-source-pins.test.js ipc-workspace-trio.test.js |
+| `handle:session:retrySpawn` | wakes an assistant record (reason restore); else re-spawns a persisted record (not a mint) in the record's own workspace, the sender's only for a record without one, returning its io | sessions via manager | manager.wake, manager.create, manager.resumeCwdOf | resume-cwd-tree-fallback.test.js exited-seat-row.test.js renderer-source-pins.test.js ipc-workspace-trio.test.js |
 | `handle:session:forget` | drops a session record and kills its workbench shell | sessions.json, drawer ptys | persistence.get, persistence.remove, manager.clearHintForRecord | session-forget-ipc.test.js peer-shell-attached.test.js session-manager.test.js ipc-workspace-trio.test.js |
 | `handle:workspace:list` | every workspace | workspaces.json (read) | workspaces.list | unpinned |
 | `handle:workspace:current` | the sender's workspace id | none | workspaceOfSender | unpinned |

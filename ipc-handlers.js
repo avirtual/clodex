@@ -2411,6 +2411,14 @@ function registerIpcHandlers(deps) {
   handle('session:retrySpawn', async (e, name) => {
     const entry = persistence.list().find(s => s.name === name);
     if (!entry) return { ok: false, error: 'No saved entry found' };
+    if (entry.class === 'assistant') {
+      try {
+        const r = await manager.wake(name, { reason: 'restore' });
+        return r && r.ok ? { ok: true, io: 'stream' } : (r || { ok: false, error: 'wake failed' });
+      } catch (err) {
+        return { ok: false, error: err.message };
+      }
+    }
     const workspaceId = entry.workspaceId || workspaceOfSender(e);
     try {
       await manager.create(
