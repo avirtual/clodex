@@ -9,6 +9,7 @@ const pathReal = require('node:path');
 const { intentEnabled } = require('../intent-catalog');
 const { createSessionManager } = require('../session-manager');
 const { mkTmpRoot } = require('./lib/tmp-roots');
+const { processStubs } = require('./lib/process-stubs');
 const { pathFor: pathForReal, runDirFor: runDirForReal } = require('../clodex-paths');
 const { mergeInstructionBodies } = require('../argv-merge');
 const { adapterFor } = require('../cli-adapters');
@@ -69,6 +70,7 @@ function mkMuse({ proxyBase = PROXY, probeAnswer = { capabilities: { muse: true 
     },
   };
   const SessionManager = createSessionManager({
+    killPid: processStubs().killPid,
     knownSkillNames: () => [],
     platformSkills: (adapter, opts) => { rosterCalls.push({ id: adapter.id, ...opts }); return roster || []; },
     REGISTRY_DIR: root,
