@@ -327,6 +327,10 @@ function subresourceFixture() {
         calls.push({ route: 'memory', name });
         return name === 'ghost' ? { ok: false, code: 404, error: 'Session not found' } : { ok: true, name, units: [], brief: null };
       },
+      setClientToken: (name, token) => {
+        calls.push({ route: 'client-token', name });
+        return name === 'ghost' ? { ok: false, code: 404, error: 'Session not found' } : { ok: true, set: token != null };
+      },
     },
   };
 }
@@ -345,6 +349,7 @@ const SUB_WALK = {
   sleep: { post: { method: 'POST' } },
   wake: { post: { method: 'POST' } },
   memory: { get: { method: 'GET' } },
+  'client-token': { put: { method: 'PUT', body: () => JSON.stringify({ token: 'k'.repeat(16) }) } },
 };
 
 const VERB_WALK = { list: 'GET', get: 'GET', delete: 'DELETE' };
@@ -397,13 +402,13 @@ test('RESOURCES: every (resource, verb) answers on a fully-injected node, and ev
     'sessions/control.post', 'sessions/input.post', 'sessions/resize.post', 'sessions/dm.post',
     'sessions/restart.post', 'sessions/args.get', 'sessions/args.patch', 'sessions/skills.get',
     'sessions/skills.patch', 'sessions/sleep.post', 'sessions/wake.post', 'sessions/memory.get',
-    'sessions/attach.get', 'workspaces.list',
+    'sessions/client-token.put', 'sessions/attach.get', 'workspaces.list',
     'peers.list', 'peers.get', 'teams.list', 'teams.get', 'tickets.list', 'tickets.get',
     'sandboxes.list', 'sandboxes.get', 'agents.list', 'agents.get',
     'docs.list', 'docs.get', 'worktrees.list', 'catalogs.get',
     'node/logs.get',
   ], 'the walk must visit every shipped row — an empty or shortened walk passes vacuously');
-  assert.strictEqual(seen.length, 34, 'the walk entered 18 resource verbs, the sessions delete, and the 15 session subresource verbs');
+  assert.strictEqual(seen.length, 35, 'the walk entered 18 resource verbs, the sessions delete, and the 16 session subresource verbs');
   assert.strictEqual(RESOURCES.length, 11, 'the walk covered fewer than the 11 shipped resources');
 });
 
@@ -837,7 +842,7 @@ test('subresource gating: a node with the attach/control callbacks nulled omits 
     const doc = JSON.parse((await req(port, '/api/resources')).body);
     const sessions = doc.resources.find((r) => r.name === 'sessions');
     assert.deepStrictEqual(
-      Object.keys(sessions.subresources), ['transcript', 'query', 'dm', 'restart', 'args', 'skills', 'sleep', 'wake', 'memory'],
+      Object.keys(sessions.subresources), ['transcript', 'query', 'dm', 'restart', 'args', 'skills', 'sleep', 'wake', 'memory', 'client-token'],
       'the document advertises a subresource this node cannot serve',
     );
     assert.strictEqual((await req(port, '/api/sessions/alice/attach')).status, 501);
@@ -897,7 +902,9 @@ test('GET /api/resources: the document a fully-injected node serves', async () =
   await withNode({}, async (port) => {
     const r = await req(port, '/api/resources');
     assert.strictEqual(r.status, 200);
-    assert.deepStrictEqual(JSON.parse(r.body), { ok: true, version: 3, resources: RESOURCES });
+    const doc = JSON.parse(r.body);
+    assert.deepStrictEqual(doc, { ok: true, version: 4, resources: RESOURCES });
+    assert.deepStrictEqual(doc.resources.find((x) => x.name === 'sessions').subresources['client-token'], ['put']);
   });
 });
 

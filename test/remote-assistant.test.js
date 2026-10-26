@@ -28,6 +28,7 @@ function makeDeps(overrides = {}) {
   const unlinkCalls = [];
   const rmCalls = [];
   const roomCalls = [];
+  const spawnOpts = [];
   const order = [];
   const files = new Map(Object.entries(overrides.files || {}));
   const manager = {
@@ -35,6 +36,7 @@ function makeDeps(overrides = {}) {
     create: async (...args) => { createCalls.push(args); return { name: args[0], type: args[1], pid: 4242 }; },
     _handleSpawnIntent: (spawner, intent, opts = {}) => {
       spawnCalls.push({ spawner, intent });
+      spawnOpts.push(Object.keys(opts).filter((k) => k !== 'onReply').reduce((o, k) => ({ ...o, [k]: opts[k] }), {}));
       setImmediate(() => opts.onReply(overrides.spawnReply || `ok: spawned "${intent.name}" (claude) @ ${intent.cwd} via template "${intent.template}"`));
     },
     wake: async (name, opts) => {
@@ -108,7 +110,7 @@ function makeDeps(overrides = {}) {
   };
   return {
     deps, manager, records, createCalls, spawnCalls, wakeCalls, sleepCalls, destroyCalls, killCalls,
-    deliverCalls, awaitCalls, unlinkCalls, rmCalls, roomCalls, order,
+    deliverCalls, awaitCalls, unlinkCalls, rmCalls, roomCalls, spawnOpts, order,
   };
 }
 
@@ -554,6 +556,7 @@ test('createSession: CLODEX_REMOTE_CREATE=template refuses a bare create with 40
     assert.deepStrictEqual(await opts.createSession({ name: 'w1', type: 'claude', cwd: '/w' }),
       { ok: false, code: 403, error: 'create: this host accepts template creates only' });
     assert.deepStrictEqual(h.createCalls, []);
+    h.deps.manager._resolveSpawnTemplate = () => ({ ok: true, tpl: { name: 'avh-assistant', type: 'claude', class: 'assistant' } });
     assert.strictEqual((await opts.createSession({ name: 'avh-7', template: 'avh-assistant' })).ok, true);
     assert.strictEqual(h.spawnCalls.length, 1);
     delete process.env.CLODEX_REMOTE_CREATE;
@@ -580,4 +583,136 @@ test('remote.js builds the dm ref pattern from DM_REF_MAX', () => {
   const src = require('fs').readFileSync(path.join(__dirname, '..', 'remote.js'), 'utf8');
   assert.match(src, /const DM_REF_MAX = 128;\nconst DM_CLIENT_REF_RE = new RegExp\(`\^\[A-Za-z0-9\._:-\]\{1,\$\{DM_REF_MAX\}\}\$`\);/);
   assert.ok(!src.includes('{1,128}'));
+});
+
+const realFs = require('fs');
+const { mkTmpRoot } = require('./lib/tmp-roots');
+const TOKEN = 't'.repeat(16);
+
+function withTokenRoot(h) {
+  const root = mkTmpRoot('clx-client-token-');
+  h.deps.REGISTRY_DIR = root;
+  h.deps.ensureDir = (d) => realFs.mkdirSync(d, { recursive: true });
+  h.deps.fs.unlinkSync = realFs.unlinkSync;
+  return { root, tokenPath: (n) => path.join(root, 'sessions', n, 'client-token') };
+}
+
+async function withEnv(key, value, fn) {
+  const prev = process.env[key];
+  if (value === undefined) delete process.env[key]; else process.env[key] = value;
+  try { return await fn(); } finally {
+    if (prev === undefined) delete process.env[key]; else process.env[key] = prev;
+  }
+}
+
+test('createSession: client.token is written 0600 to the seat dir after create, and reaches neither create() nor the answer', async () => {
+  const h = makeDeps();
+  const t = withTokenRoot(h);
+  const opts = captureOptions(h.deps);
+  const out = await opts.createSession({ name: 'w1', type: 'claude', cwd: path.join(t.root, 'cwd'), client: { token: TOKEN } });
+  assert.strictEqual(out.ok, true, 'ENTER: the create succeeded');
+  assert.strictEqual(realFs.readFileSync(t.tokenPath('w1'), 'utf8'), TOKEN);
+  assert.strictEqual(realFs.statSync(t.tokenPath('w1')).mode & 0o777, 0o600);
+  assert.ok(!JSON.stringify(out).includes(TOKEN), 'the answer never echoes the token');
+  assert.strictEqual(h.createCalls.length, 1);
+  assert.ok(!JSON.stringify(h.createCalls[0]).includes(TOKEN), 'create() and so the persisted record never see it');
+  const tpl = makeDeps({ templates: { 'avh-assistant': { name: 'avh-assistant', type: 'claude' } } });
+  const tt = withTokenRoot(tpl);
+  const tout = await captureOptions(tpl.deps).createSession({ name: 'avh-1', template: 'avh-assistant', client: { token: TOKEN } });
+  assert.strictEqual(tout.ok, true);
+  assert.strictEqual(realFs.readFileSync(tt.tokenPath('avh-1'), 'utf8'), TOKEN);
+  assert.ok(!JSON.stringify([tout, tpl.spawnCalls]).includes(TOKEN));
+});
+
+test('createSession: a malformed client token is 400 and nothing spawns or is written', async () => {
+  for (const body of [{ name: 'w1', type: 'claude', cwd: '/w' }, { name: 'avh-1', template: 'avh-assistant' }]) {
+    const h = makeDeps({ templates: { 'avh-assistant': { name: 'avh-assistant', type: 'claude' } } });
+    const t = withTokenRoot(h);
+    assert.deepStrictEqual(await captureOptions(h.deps).createSession({ ...body, client: { token: 'short' } }),
+      { ok: false, code: 400, error: 'bad client token' });
+    assert.deepStrictEqual([h.createCalls, h.spawnCalls], [[], []]);
+    assert.strictEqual(realFs.existsSync(t.tokenPath(body.name)), false);
+  }
+});
+
+test('PUT /api/sessions/:name/client-token: set, rotate over a loose file, clear, unknown name, bad token', async () => {
+  const h = makeDeps({ records: { 'avh-7': ASLEEP } });
+  const t = withTokenRoot(h);
+  const opts = captureOptions(h.deps);
+  realFs.mkdirSync(path.dirname(t.tokenPath('avh-7')), { recursive: true });
+  realFs.writeFileSync(t.tokenPath('avh-7'), 'old', { mode: 0o644 });
+  await withServer({ setClientToken: opts.setClientToken }, async (port) => {
+    const put = (name, token) => req(port, `/api/sessions/${name}/client-token`, { method: 'PUT', body: { token } });
+    assert.deepStrictEqual(await put('avh-7', TOKEN), { status: 200, json: { ok: true, set: true } });
+    assert.strictEqual(realFs.readFileSync(t.tokenPath('avh-7'), 'utf8'), TOKEN);
+    assert.strictEqual(realFs.statSync(t.tokenPath('avh-7')).mode & 0o777, 0o600, 'a rotation tightens a pre-existing file');
+    assert.deepStrictEqual(await put('avh-7', null), { status: 200, json: { ok: true, set: false } });
+    assert.strictEqual(realFs.existsSync(t.tokenPath('avh-7')), false);
+    assert.deepStrictEqual(await put('avh-7', null), { status: 200, json: { ok: true, set: false } }, 'clearing twice is idempotent');
+    assert.deepStrictEqual(await put('nobody', TOKEN), { status: 404, json: { ok: false, code: 404, error: 'Session not found' } });
+    assert.deepStrictEqual(await put('avh-7', 'x y'), { status: 400, json: { ok: false, code: 400, error: 'bad client token' } });
+  });
+});
+
+test('CLODEX_REMOTE_CREATE=template: import begin and commit are 403', async () => {
+  await withEnv('CLODEX_REMOTE_CREATE', 'template', async () => {
+    const h = makeDeps();
+    const opts = captureOptions(h.deps);
+    const refusal = { ok: false, code: 403, error: 'import: this host accepts template creates only' };
+    assert.deepStrictEqual(await opts.importCreate({ name: 'x1', record: { type: 'claude', cwd: '/w' } }), refusal);
+    assert.deepStrictEqual(h.createCalls, []);
+    const begins = [];
+    const seatImport = {
+      begin: (a) => { begins.push(a); return { ok: true, id: 'a'.repeat(16) }; },
+      commit: () => ({ ok: true, name: 'x1', record: { type: 'claude', cwd: '/w' }, installed: [], dropped: [] }),
+    };
+    await withServer({ seatImport, importCreate: opts.importCreate }, async (port) => {
+      const b = await req(port, '/api/import/begin', { method: 'POST', body: { name: 'x1', record: {} } });
+      assert.deepStrictEqual([b.status, b.json], [403, refusal]);
+      assert.deepStrictEqual(begins, []);
+      const c = await req(port, `/api/import/${'a'.repeat(16)}/commit`, { method: 'POST' });
+      assert.deepStrictEqual([c.status, c.json], [403, { ok: false, error: refusal.error, installed: [] }]);
+    });
+    assert.deepStrictEqual(h.createCalls, []);
+  });
+});
+
+test('CLODEX_REMOTE_CREATE=template: a non-assistant or unknown template is 403; an assistant template ignores the caller cwd', async () => {
+  await withEnv('CLODEX_REMOTE_CREATE', 'template', async () => {
+    const refusal = { ok: false, code: 403, error: 'create: this host accepts assistant templates only' };
+    for (const template of ['worker', 'missing']) {
+      const h = makeDeps({ templates: { worker: { name: 'worker', type: 'claude' } } });
+      assert.deepStrictEqual(await captureOptions(h.deps).createSession({ name: 'w2', template, cwd: '/w' }), refusal, template);
+      assert.deepStrictEqual(h.spawnCalls, [], template);
+    }
+    const h = makeDeps({ templates: { 'clodex-assistant': ASSISTANT_TPL } });
+    const resolvedWith = [];
+    const orig = h.manager._resolveSpawnTemplate;
+    h.manager._resolveSpawnTemplate = (spawner, v) => { resolvedWith.push(spawner.cwd); return orig(spawner, v); };
+    assert.strictEqual((await captureOptions(h.deps).createSession({ name: 'avh-1', template: 'clodex-assistant', cwd: '/evil' })).ok, true);
+    assert.deepStrictEqual(resolvedWith, [HOME]);
+    assert.deepStrictEqual(h.spawnCalls, [{ spawner: { name: 'wire', type: 'claude', cwd: HOME, proxy: null }, intent: { name: 'avh-1', template: 'clodex-assistant' } }]);
+  });
+});
+
+test('createSession: a capped template reserves once on the wire and tells the handler it holds the room', async () => {
+  const h = makeDeps({ templates: { 'clodex-assistant': ASSISTANT_TPL, worker: { name: 'worker', type: 'claude' } } });
+  const opts = captureOptions(h.deps);
+  assert.strictEqual((await opts.createSession({ name: 'avh-1', template: 'clodex-assistant' })).ok, true);
+  assert.deepStrictEqual(h.spawnOpts, [{ awakeHeld: true }]);
+  assert.strictEqual(h.roomCalls.filter((c) => c[0] === 'room').length, 1);
+  assert.strictEqual((await opts.createSession({ name: 'w1', template: 'worker' })).ok, true);
+  assert.deepStrictEqual(h.spawnOpts, [{ awakeHeld: true }, {}]);
+});
+
+test('send: a sleeper whose wakeOn omits message refuses the dm with 409 and never wakes; absent or listing message wakes', async () => {
+  const no = makeDeps({ records: { 'avh-7': { ...ASLEEP, sleep: { wakeOn: ['reminder'] } } } });
+  assert.deepStrictEqual(await captureOptions(no.deps).send('avh-7', 'hi', [], 'avh'),
+    { ok: false, code: 409, error: 'avh-7 is asleep and does not wake on messages' });
+  assert.deepStrictEqual([no.wakeCalls, no.deliverCalls], [[], []]);
+  for (const sleep of [{ idleMs: 1 }, { wakeOn: ['message'] }]) {
+    const yes = makeDeps({ records: { 'avh-7': { ...ASLEEP, sleep } } });
+    assert.deepStrictEqual(await captureOptions(yes.deps).send('avh-7', 'hi', [], 'avh'), { ok: true }, JSON.stringify(sleep));
+    assert.deepStrictEqual(yes.wakeCalls, [['avh-7', { reason: 'message' }]]);
+  }
 });

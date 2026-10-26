@@ -35,7 +35,7 @@ disk is the source of truth — SSE signals "changed", clients refetch.
 
 Endpoints: phone page (`/`), `GET /api/sessions|events`
 (global SSE), `GET /api/resources` (the node's resource/verb document —
-`{ok, version, resources}`, now `version: 3`, filtered to what this node's
+`{ok, version, resources}`, now `version: 4`, filtered to what this node's
 injected callbacks actually serve; advertised as the `resources` cap, which is
 unconditional),
 `GET /api/sessions/:name` (one session, `{ok, session}`; 404 unknown or dead; every
@@ -121,9 +121,17 @@ state: 'awake'|'sleeping'` (sleeping = still closing after sleep), `template, sl
 (200 asleep, 202 sleeping when mid-turn, 409 not an assistant / not awake),
 `POST /api/sessions/:name/wake` (200 awake, 409, `code` forwarded; at the template's `sleep.maxAwake` with no idle sibling to evict, `503 {ok:false, code:503, error:'at capacity', retryAfterMs:30000}`),
 `GET /api/sessions/:name/memory` (`{ok, name, units, brief}`; 404 unknown, 409
-not an assistant); SSE `turn` `{name, text, intents, refs, costUsd, durationMs,
+not an assistant); `PUT /api/sessions/:name/client-token` with `{token: string|null}`
+sets the seat's game client token (`[\x21-\x7e]{16,512}`, written 0600 to
+`sessions/<name>/client-token`; 200 `{ok, set:true}`), clears it on null or `''`
+(200 `{ok, set:false}`), 404 for an unknown seat, 400 `bad client token`; a create
+body's `client.token` sets it the same way after the spawn (a bad one is a 400 and
+nothing spawns); the token reaches only exec children, as `CLODEX_CLIENT_TOKEN`, never
+an answer, the record or the CLI env; SSE `proposal` `{name, cmd, id, payload}` when
+the seat runs an exec def marked `proposal` (the player confirms it in the game;
+nothing runs on the box); SSE `turn` `{name, text, intents, refs, proposals, costUsd, durationMs,
 isError, ts}` after each assistant turn (`text` is the prose of the CLI's final
-result, `intents` the `{type, sub?, cmd?}` heads, never bodies, `refs` every dm `ref` written since the previous turn, always a list); a reminder firing on a sleeper whose `sleep.wakeOn` lists `'reminder'` wakes it and the reply arrives as an unsolicited `turn`; create
+result, `intents` the `{type, sub?, cmd?}` heads, never bodies, `refs` every dm `ref` written since the previous turn, always a list, `proposals` every `{cmd, id, payload}` proposed since the previous turn, always a list); a dm to a sleeper whose `sleep.wakeOn` is a list without `'message'` is a `409` and wakes nothing; a reminder firing on a sleeper whose `sleep.wakeOn` lists `'reminder'` wakes it and the reply arrives as an unsolicited `turn`; create
 `{name, template, cwd?}` spawns from a library template name only; DELETE on
 an assistant destroys it (record, seat dir with memory and brief, the CLI
 transcripts for its session ids, `pending/<name>`), `POST /api/restart` (app relaunch —
@@ -215,6 +223,10 @@ but **peer-visible** (attach/control/create work; DM and query don't).
   else answers `503 {ok:false, code:503, error:'at capacity', retryAfterMs:30000}`.
 - `CLODEX_REMOTE_CREATE=template` on the host refuses every create that names no
   template: `403 {ok:false, code:403, error:'create: this host accepts template creates only'}`.
+  It also accepts only templates of `class: 'assistant'`, else
+  `403 {ok:false, code:403, error:'create: this host accepts assistant templates only'}`,
+  ignores the caller's `cwd` (the template's wins), and refuses seat import at
+  begin and at commit with `403 {ok:false, code:403, error:'import: this host accepts template creates only'}`.
   Unset, or any other value, keeps bare and team creates.
 
 ## 3. Consumer side (peer-client.js)

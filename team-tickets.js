@@ -677,10 +677,18 @@ function createTicketMethods(deps, shared) {
         }
       }
 
+      const awakeCap = !opts.awakeHeld && tpl && tpl.class === 'assistant' && Number(tpl.sleep && tpl.sleep.maxAwake) > 0
+        ? Number(tpl.sleep.maxAwake) : 0;
       setImmediate(async () => {
         let wt = null;
         let spawnCwd = cwd;
+        let awakeHeld = false;
         try {
+          if (awakeCap) {
+            const full = await this.makeAwakeRoom(tpl.name || null, awakeCap, name);
+            if (full) { reply('error: at capacity — retry in 30s'); return; }
+            awakeHeld = true;
+          }
           if (bindTo) await this._bindRosterSeat(bindTo.team, name, bindTo.role, { by: bindTo.by });
           if (branch) {
             const r = await gitWorktree.createWorktree(cwd, branch);
@@ -743,6 +751,8 @@ function createTicketMethods(deps, shared) {
             log.info('worktree', `${r && r.ok ? 'removed' : 'ORPHANED'} ${wt.path} after failed spawn of ${name}`);
           }
           reply(`error: ${err.message}`);
+        } finally {
+          if (awakeHeld) this.releaseAwakeRoom(tpl.name || null, name);
         }
       });
     },

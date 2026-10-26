@@ -693,6 +693,18 @@ test('removeSeat takes the home AND every legacy spelling, and leaves pending/ a
     'pending/<name> is NOT a seat kind and survives: the hook body drains it at the shared root');
 });
 
+test('removeSeat removes a seat dir holding a client-token file', () => {
+  const { clientTokenPathFor } = require('../assistant-sleep');
+  const root = tmp();
+  const tok = clientTokenPathFor(root, 'ana');
+  fs.mkdirSync(path.dirname(tok), { recursive: true });
+  fs.writeFileSync(tok, 't'.repeat(16), { mode: 0o600 });
+  assert.ok(fs.existsSync(tok), 'ENTER: the token file is seeded');
+  removeSeat({ root, name: 'ana', fs });
+  assert.strictEqual(fs.existsSync(tok), false);
+  assert.strictEqual(fs.existsSync(path.join(root, 'sessions', 'ana')), false);
+});
+
 test('removeSeat removes a legacy path that is still a REAL dir', () => {
   const why = 'an unmigrated seat keeps everything at the legacy spellings; unlinking only '
     + 'symlinks would leak the whole seat on the boxes that need the delete most';

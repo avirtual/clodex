@@ -12,6 +12,10 @@ function briefPathFor(root, name) {
   return path.join(seatDirFor(root, name), 'brief.md');
 }
 
+function clientTokenPathFor(root, name) {
+  return path.join(seatDirFor(root, name), 'client-token');
+}
+
 function proseOf(text) {
   const lines = String(text || '').split('\n');
   const kept = [];
@@ -87,4 +91,4 @@ function pickMaxAwakeVictim(rows, maxAwake) {
   return victim ? victim.name : null;
 }
 
-module.exports = { BRIEF_MAX_BYTES, BRIEF_TAIL, briefPathFor, composeBrief, idleDecision, pickMaxAwakeVictim, splitTurnText };
+module.exports = { BRIEF_MAX_BYTES, BRIEF_TAIL, briefPathFor, clientTokenPathFor, composeBrief, idleDecision, pickMaxAwakeVictim, splitTurnText };
