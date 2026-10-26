@@ -164,7 +164,7 @@ function dupIdentity(intent) {
 const { createTicketsStore, ticketTerminalReason } = require('./tickets-store');
 const { findRepoRoot } = require('./project-root');
 const { atomicWriteFileSync } = require('./fs-util');
-const { composeBrief, idleDecision, briefPathFor, pickMaxAwakeVictim, splitTurnText, BRIEF_TAIL, BRIEF_MAX_BYTES } = require('./assistant-sleep');
+const { composeBrief, idleDecision, briefPathFor, clientTokenPathFor, pickMaxAwakeVictim, splitTurnText, BRIEF_TAIL, BRIEF_MAX_BYTES } = require('./assistant-sleep');
 const { cachedMessages } = require('./transcript');
 const { isAgentType, adapterFor, streamFor: adapterStreamFor, hasBypass, hasReadOnlyCap, postureOf, resolveModelId, resolveEffort } = require('./cli-adapters');
 
@@ -3090,7 +3090,7 @@ function createSessionManager(deps) {
 
     _resolveTurnWaiters(s, rec) {
       const refs = s._turnRefs || [];
-      const turn = { ...splitTurnText(rec.text || ''), refs, costUsd: rec.costUsd, durationMs: rec.durationMs, isError: !!rec.isError, ts: Date.now() };
+      const turn = { ...splitTurnText(rec.text || ''), refs, proposals: s._turnProposals || [], costUsd: rec.costUsd, durationMs: rec.durationMs, isError: !!rec.isError, ts: Date.now() };
       this._dropTurnWaiters(s, turn);
       if (this._assistantPolicy(s.name) && getRemoteServer()) { try { getRemoteServer().notifyTurn(s.name, turn); } catch {} }
     }
@@ -3099,6 +3099,7 @@ function createSessionManager(deps) {
       const waiters = s._turnWaiters || [];
       s._turnWaiters = [];
       s._turnRefs = [];
+      s._turnProposals = [];
       for (const w of waiters) { clearTimeout(w.timer); w.resolve(turn); }
     }
 
@@ -6992,13 +6993,27 @@ function createSessionManager(deps) {
         fail('malformed registry entry (inProcess must be "ctl")', 'exec-refused');
         return;
       }
-      if (!entry || typeof entry !== 'object' || (inProcess === undefined && (!Array.isArray(entry.argv) || !entry.argv.length))) {
+      if (!entry || typeof entry !== 'object' || (inProcess === undefined && entry.proposal !== true && (!Array.isArray(entry.argv) || !entry.argv.length))) {
         fail('malformed registry entry (needs a non-empty argv)', 'exec-refused');
         return;
       }
       const v = parseAndValidate(entry, rawBody);
       if (!v.ok) {
         fail(v.error, 'schema');
+        return;
+      }
+      if (entry.proposal === true) {
+        const server = getRemoteServer();
+        if (!server) {
+          fail('no game client can receive a proposal (phone access is off)', 'exec-refused');
+          return;
+        }
+        const id = 'p-' + nodeCrypto.randomBytes(6).toString('hex');
+        server.notifyProposal(who, { cmd, id, payload: v.value });
+        (session._turnProposals || (session._turnProposals = [])).push({ cmd, id, payload: v.value });
+        reply(`${cmd}: proposed #${id} — the player confirms in the game`);
+        log.info('intent', `exec ${cmd} by ${who}: proposal #${id}`);
+        this._broadcast('ipc-message', { type: 'exec', from: who, to: cmd, body: `proposal #${id}` });
         return;
       }
       if (inProcess === 'ctl') {
@@ -7027,6 +7042,8 @@ function createSessionManager(deps) {
       const payloadJson = JSON.stringify(v.value);
 
       const execTeam = this._teamOfOrNull(session);
+      let clientToken = '';
+      try { clientToken = fs.readFileSync(clientTokenPathFor(REGISTRY_DIR, who), 'utf8').trim(); } catch { clientToken = ''; }
       setImmediate(() => {
         let child;
         try {
@@ -7044,6 +7061,7 @@ function createSessionManager(deps) {
               CLODEX_CTL: path.join(__dirname, 'cli', 'bin', 'clodexctl.js'),
               CLODEX_TEAM: execTeam ? execTeam.name : '',
               CLODEX_TEAM_ROOT: execTeam ? execTeam.root : '',
+              CLODEX_CLIENT_TOKEN: clientToken,
             },
             stdio: ['pipe', 'ignore', 'pipe'],
           });

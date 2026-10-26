@@ -26,10 +26,12 @@ const { shellCapGranted } = require('./peer-shell');
 const { readVoiceCapabilityCached } = require('./voice-capability');
 const { trackedSessionIds } = require('./session-info');
 const { SESSION_ID_RE } = require('./seat-import');
-const { briefPathFor } = require('./assistant-sleep');
+const { briefPathFor, clientTokenPathFor } = require('./assistant-sleep');
 const { claudeProjectSlug } = require('./clodex-paths');
 
 const crypto = require('crypto');
+
+const CLIENT_TOKEN_RE = /^[\x21-\x7e]{16,512}$/;
 
 const WIRE_PROMPT_MAX_BYTES = 4096;
 const THUMB_CACHE_MAX = 200;
@@ -323,7 +325,7 @@ function createRemoteWiring(deps) {
     return cbs;
   }
 
-  function spawnViaHandler(intent, cwd, onOk, label) {
+  function spawnViaHandler(intent, cwd, onOk, label, handlerOpts = {}) {
     return new Promise((resolve) => {
       let settled = false;
       const finish = (out) => { if (settled) return; settled = true; clearTimeout(timer); resolve(out); };
@@ -340,7 +342,7 @@ function createRemoteWiring(deps) {
       manager._handleSpawnIntent(
         { name: 'wire', type: 'claude', cwd, proxy: null },
         intent,
-        { onReply },
+        { ...handlerOpts, onReply },
       );
     });
   }
@@ -357,12 +359,41 @@ function createRemoteWiring(deps) {
       () => ({ ok: true, name, type: 'claude', team: teamName, lead: true }), 'team spawn');
   }
 
-  async function spawnFromTemplate(name, template, rawCwd) {
+  function writeClientToken(name, token) {
+    const p = clientTokenPathFor(REGISTRY_DIR, name);
+    ensureDir(path.dirname(p));
+    fs.writeFileSync(p, token, { mode: 0o600 });
+    fs.chmodSync(p, 0o600);
+  }
+
+  function setClientToken(name, token) {
+    if (typeof name !== 'string' || !AGENT_NAME_RE.test(name) || !getPersistence().get(name)) return { ok: false, code: 404, error: 'Session not found' };
+    if (token === null || token === '') {
+      try { fs.unlinkSync(clientTokenPathFor(REGISTRY_DIR, name)); }
+      catch (e) { if (!e || e.code !== 'ENOENT') return { ok: false, code: 500, error: `cannot remove client token: ${e.message}` }; }
+      log.info('session', `client token cleared for ${name}`);
+      return { ok: true, set: false };
+    }
+    if (typeof token !== 'string' || !CLIENT_TOKEN_RE.test(token)) return { ok: false, code: 400, error: 'bad client token' };
+    try { writeClientToken(name, token); }
+    catch (e) { return { ok: false, code: 500, error: `cannot write client token: ${e.message}` }; }
+    log.info('session', `client token set for ${name}`);
+    return { ok: true, set: true };
+  }
+
+  function storeCreateToken(name, token) {
+    try { writeClientToken(name, token); }
+    catch (e) { log.error('session', `create ${name}: cannot write client token: ${e.message}`); }
+  }
+
+  async function spawnFromTemplate(name, template, rawCwdIn, mode = '') {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(template)) return { ok: false, error: 'template must be a library template name' };
     if (!AGENT_NAME_RE.test(name)) return { ok: false, error: `invalid name "${name}" — allowed [a-zA-Z0-9._-], 1-64 chars` };
     if (manager.sessions.has(name) || getPersistence().get(name)) return { ok: false, error: `name taken "${name}"` };
+    const rawCwd = mode === 'template' ? '' : rawCwdIn;
     const resolved = manager._resolveSpawnTemplate({ name: 'wire', cwd: rawCwd || os.homedir() }, template);
     const tpl = resolved && resolved.ok ? resolved.tpl : null;
+    if (mode === 'template' && !(tpl && tpl.class === 'assistant')) return { ok: false, code: 403, error: 'create: this host accepts assistant templates only' };
     const cap = tpl && tpl.class === 'assistant' && tpl.sleep && Number(tpl.sleep.maxAwake) > 0 ? Number(tpl.sleep.maxAwake) : 0;
     const full = cap ? await manager.makeAwakeRoom(tpl.name || null, cap, name) : null;
     if (full) return full;
@@ -371,7 +402,7 @@ function createRemoteWiring(deps) {
       out = await spawnViaHandler({ name, ...(rawCwd ? { cwd: rawCwd } : {}), template }, rawCwd || os.homedir(), (reply) => {
         const m = /\((\w+)\)/.exec(reply);
         return { ok: true, name, type: m ? m[1] : 'claude', template };
-      }, 'template spawn');
+      }, 'template spawn', cap ? { awakeHeld: true } : {});
     } finally { if (cap) manager.releaseAwakeRoom(tpl.name || null, name); }
     if (out.ok) notifySessions();
     log.info('session', `create ${name} from template ${template} via peer${out.ok ? '' : ` failed: ${out.error}`}`);
@@ -434,6 +465,7 @@ function createRemoteWiring(deps) {
   }
 
   function importNameTaken(name) {
+    if (String(process.env.CLODEX_REMOTE_CREATE || '').trim() === 'template') return { ok: false, code: 403, error: 'import: this host accepts template creates only' };
     if (typeof name !== 'string' || !AGENT_NAME_RE.test(name)) {
       return { ok: false, error: `invalid name "${name}" — allowed [a-zA-Z0-9._-], 1-64 chars` };
     }
@@ -622,6 +654,7 @@ function createRemoteWiring(deps) {
           if (!sess || sess._dead || sess._archived) {
             const entry = getPersistence().get(name);
             if (entry && entry.class === 'assistant') {
+              if (Array.isArray(entry.sleep && entry.sleep.wakeOn) && !entry.sleep.wakeOn.includes('message')) return { ok: false, code: 409, error: `${name} is asleep and does not wake on messages` };
               log.info('session', `wake ${name} on dm via ${client || 'peer'}`);
               const w = await wakeOnce(name, 'message');
               if (!w || !w.ok) return { ok: false, code: w && w.code ? w.code : 503, error: (w && w.error) || 'wake failed', ...(w && w.retryAfterMs ? { retryAfterMs: w.retryAfterMs } : {}) };
@@ -672,12 +705,18 @@ function createRemoteWiring(deps) {
           // Exec grants NEVER cross the wire (Decision 2) — strip any the client
           // sent before mapping (mirror of the setSessionArgs backstop), and force
           // execCommands [] into create() regardless. The renderer never sends them.
+          const clientToken = body && body.client && typeof body.client === 'object' ? body.client.token : undefined;
+          if (clientToken != null && !(typeof clientToken === 'string' && CLIENT_TOKEN_RE.test(clientToken))) return { ok: false, code: 400, error: 'bad client token' };
           const b = withoutExecGrants(body) || {};
           const name = String(b.name || '').trim();
           const rawCwd = String(b.cwd || '').trim();
           const mode = String(process.env.CLODEX_REMOTE_CREATE || '').trim();
           if (mode === 'template' && !(typeof b.template === 'string' && b.template.trim())) return { ok: false, code: 403, error: 'create: this host accepts template creates only' };
-          if (typeof b.template === 'string' && b.template.trim()) return spawnFromTemplate(name, b.template.trim(), rawCwd);
+          if (typeof b.template === 'string' && b.template.trim()) {
+            const made = await spawnFromTemplate(name, b.template.trim(), rawCwd, mode);
+            if (made.ok && clientToken != null) storeCreateToken(name, clientToken);
+            return made;
+          }
           if (typeof b.team === 'string' && b.team.trim()) return spawnTeamLead(name, b.team.trim());
           const type = b.type;
           const t = (type === 'codex') ? 'codex' : (type === 'claude') ? 'claude' : (type === 'bash') ? 'bash' : null;
@@ -734,6 +773,7 @@ function createRemoteWiring(deps) {
             // so NO agentDefaults fallback (Decision 6). Absent key → no seed, box
             // behavior unchanged.
             if (b.stripLevel === 1 || b.stripLevel === 2) getPersistence().setStripLevel(name, b.stripLevel);
+            if (clientToken != null) storeCreateToken(name, clientToken);
             if (getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
             log.info('session', `create ${name} (${t}) via peer @ ${dir} pid=${out.pid}`);
             return {
@@ -789,6 +829,7 @@ function createRemoteWiring(deps) {
           return out;
         },
         ...(typeof getMemoryStore === 'function' ? { exportMemory } : {}),
+        setClientToken,
         restartSession: async (name, opts = {}) => {
           name = String(name || '').trim();
           const entry = getPersistence().get(name);

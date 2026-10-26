@@ -68,7 +68,7 @@ function resolveRemoteBasePathSetting(settings, env = process.env, warn) {
 }
 
 const RESOURCES = [
-  { name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get', 'delete'], subresources: { transcript: ['get'], query: ['post'], attach: ['get'], control: ['post'], input: ['post'], resize: ['post'], dm: ['post'], restart: ['post'], args: ['get', 'patch'], skills: ['get', 'patch'], sleep: ['post'], wake: ['post'], memory: ['get'] } },
+  { name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get', 'delete'], subresources: { transcript: ['get'], query: ['post'], attach: ['get'], control: ['post'], input: ['post'], resize: ['post'], dm: ['post'], restart: ['post'], args: ['get', 'patch'], skills: ['get', 'patch'], sleep: ['post'], wake: ['post'], memory: ['get'], 'client-token': ['put'] } },
   { name: 'workspaces', singular: 'workspace', scope: 'node', verbs: ['list'] },
   { name: 'peers', singular: 'peer', scope: 'node', verbs: ['list', 'get'] },
   { name: 'teams', singular: 'team', scope: 'node', verbs: ['list', 'get'] },
@@ -81,7 +81,7 @@ const RESOURCES = [
   { name: 'node/logs', singular: 'node/logs', scope: 'node', verbs: ['get'] },
 ];
 
-const RESOURCES_VERSION = 3;
+const RESOURCES_VERSION = 4;
 
 const RESOURCE_CALLBACK = {
   'node/logs': '_nodeLogFile',
@@ -109,6 +109,7 @@ const SUBRESOURCE_CALLBACK = {
     sleep: '_sleepSession',
     wake: '_wakeSession',
     memory: '_exportMemory',
+    'client-token': '_setClientToken',
   },
 };
 
@@ -164,7 +165,7 @@ class RemoteServer {
   constructor({ port, host, basePath, warn, pagePath, getSessions, getSession, listWorkspaces, getTranscript, send, restartApp, restartUnavailable,
                 hostLabel, version, srcDir, voiceCapable, getWebInfo, getWirescopeInfo, getAttachInfo, sendInput, resizePty, onControlChange,
                 query, createSession, killSession, restartSession, getCatalogs, nodeLogFile,
-                seatImport, importCreate,
+                seatImport, importCreate, setClientToken,
                 listPeers, getPeer, listTeams, getTeam, listTickets,
                 listSandboxes, getSandbox, listAgents, getAgent, listWorktrees,
                 listDocs, getDoc, getDocSection, searchDocs,
@@ -209,6 +210,7 @@ class RemoteServer {
     this._nodeLogFile = typeof nodeLogFile === 'function' ? nodeLogFile : null;
     this._seatImport = seatImport || null;
     this._importCreate = importCreate || null;
+    this._setClientToken = setClientToken || null;
     this._listPeers = listPeers || null;
     this._getPeer = getPeer || null;
     this._listTeams = listTeams || null;
@@ -399,6 +401,10 @@ class RemoteServer {
 
   notifyTurn(name, turn) {
     this._broadcast('turn', { name, ...turn });
+  }
+
+  notifyProposal(name, p) {
+    this._broadcast('proposal', { name, ...p });
   }
 
   notifyProgress(name) {
@@ -946,6 +952,18 @@ class RemoteServer {
     });
   }
 
+  _handleClientToken(name, req, res) {
+    if (!this._setClientToken) return this._json(res, 501, { ok: false, error: 'client token not available' });
+    return this._readBody(req, res, (body) => {
+      let msg;
+      try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+      Promise.resolve()
+        .then(() => this._setClientToken(name, msg && typeof msg === 'object' ? msg.token : undefined))
+        .then((out) => this._json(res, out && out.ok ? 200 : ((out && out.code) || 409), out || { ok: false, error: 'set client token failed' }))
+        .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
+    });
+  }
+
   _readRaw(req, res, cb) {
     const chunks = [];
     let total = 0;
@@ -974,7 +992,7 @@ class RemoteServer {
         let taken;
         try { taken = this._importCreate.check(name); }
         catch (e) { return this._json(res, 500, { ok: false, error: e.message }); }
-        if (taken && !taken.ok) return this._json(res, 400, taken);
+        if (taken && !taken.ok) return this._json(res, taken.code || 400, taken);
       }
       let out;
       try { out = this._seatImport.begin({ name, record: msg && msg.record }); }
@@ -1010,7 +1028,7 @@ class RemoteServer {
       .then(() => this._importCreate({ name, record, installed, dropped }))
       .then((made) => {
         if (!made || !made.ok) {
-          return this._json(res, 500, { ok: false, error: (made && made.error) || 'create failed', installed });
+          return this._json(res, (made && made.code) || 500, { ok: false, error: (made && made.error) || 'create failed', installed });
         }
         return this._json(res, 200, {
           ok: true,
@@ -1082,6 +1100,7 @@ class RemoteServer {
       if (req.method === 'POST' && sub === 'sleep') return this._handleSleep(name, res);
       if (req.method === 'POST' && sub === 'wake') return this._handleWake(name, res);
       if (req.method === 'GET' && sub === 'memory') return this._handleMemory(name, res);
+      if (req.method === 'PUT' && sub === 'client-token') return this._handleClientToken(name, req, res);
       return this._json(res, 404, { ok: false, error: 'not found' });
     }
     if (req.method === 'GET' && p === '/api/workspaces') {

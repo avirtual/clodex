@@ -3,7 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
-const { BRIEF_MAX_BYTES, BRIEF_TAIL, briefPathFor, composeBrief, idleDecision, pickMaxAwakeVictim, splitTurnText } = require('../assistant-sleep');
+const { BRIEF_MAX_BYTES, BRIEF_TAIL, briefPathFor, clientTokenPathFor, composeBrief, idleDecision, pickMaxAwakeVictim, splitTurnText } = require('../assistant-sleep');
 
 const pairs = (n) => {
   const rows = [];
@@ -18,6 +18,10 @@ test('constants and the brief path', () => {
   assert.strictEqual(BRIEF_MAX_BYTES, 3072);
   assert.strictEqual(BRIEF_TAIL, 10);
   assert.strictEqual(briefPathFor('/r', 'asst'), path.join('/r', 'sessions', 'asst', 'brief.md'));
+});
+
+test('clientTokenPathFor is the seat dir\'s client-token file', () => {
+  assert.strictEqual(clientTokenPathFor('/r', 'a'), '/r/sessions/a/client-token');
 });
 
 test('composeBrief keeps the last tail exchanges under the heading', () => {

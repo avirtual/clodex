@@ -24,6 +24,19 @@ complete, the LAST stderr line kept as a footer. Opt-in per def, because the
 default is what keeps a chatty command from billing its progress log into the
 caller's prompt on every call.
 
+Every argv child gets its env set explicitly, never inherited from the app:
+`CLODEX_HOME`, `CLODEX_SEAT`, `CLODEX_NODE`, `CLODEX_CTL`, `CLODEX_TEAM`,
+`CLODEX_TEAM_ROOT`, and `CLODEX_CLIENT_TOKEN` — the trimmed contents of the
+seat's `sessions/<seat>/client-token` (set by a wire create's `client.token` or
+`PUT /api/sessions/:name/client-token`, see peering.md), or `''` without one.
+
+`"proposal": true` (boolean; no `argv` needed; cannot combine with `inProcess`)
+makes the def a game proposal: the dispatcher checks the grant and the schema,
+then spawns nothing — it emits SSE `proposal {name, cmd, id, payload}` through
+the phone server, adds it to the next `turn.proposals`, and tells the seat
+`proposed #<id> — the player confirms in the game`. With phone access off the
+call is refused.
+
 `wake` (`always` | `error` | `never`, default `always`) decides whether a
 successful reply wakes the seat. `always` injects it as a new turn; `error`
 delivers an exit-0 result passively, riding with the seat's next turn; `never`

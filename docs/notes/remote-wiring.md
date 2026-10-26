@@ -58,6 +58,7 @@ it left; before t1519 it stopped at `shellDeny` and came back pty at default eff
 
 Wake-on-dm calls `manager.wake` and then `_deliverMessage` as `'user'`, so it never enters `_gatedDeliver` and the assistant-class guard does not see it. `_archived` covers a seat still closing after `archive()` while it sits in the map; `wake` waits for its exit, so the wiring never calls `restartSession` itself.
 The ref rides the full-arity `_deliverMessage` call only when set, because the three shorter call forms are argument-list pins.
+A sleeper wakes on a dm unless its `sleep.wakeOn` is an array without `'message'`. An absent `wakeOn` keeps waking: records written before the field existed must keep the T3 behaviour.
 
 ## sleeperMessages
 
@@ -70,3 +71,11 @@ Only a library template name crosses: `_handleSpawnIntent` reads a `/`, `~` or `
 ## killSession
 
 Only an assistant-class record is destroyed (record, seat dir, transcripts, `pending/<name>`); any other seat's DELETE stays `kill`, so a peer cannot erase a desktop seat's memory or worktree. Transcript paths compose from the record's own `cwd` and `SESSION_ID_RE`-vetted ids only.
+
+## createSession
+
+`client.token` is read and validated from the raw body before
+`withoutExecGrants` and any branch's mapping, so a bad token is refused before
+anything spawns on every path, and no create argument is built from `client`.
+It is written to the seat dir only after the create succeeds, so a refused or
+failed create leaves no token file for a later seat of the same name to inherit.

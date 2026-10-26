@@ -450,3 +450,10 @@ test('t81 validateExecDef: description is optional, string, and length-capped', 
   d.description = 'x'.repeat(201);
   assert.strictEqual(validateExecDef(d).ok, false, 'over-long description rejected (prompt bytes are forever)');
 });
+
+test('validateExecDef: proposal is a boolean, needs no argv when true, and never combines with inProcess', () => {
+  assert.deepStrictEqual(validateExecDef({ proposal: true, schema: { type: 'object' } }), { ok: true });
+  assert.deepStrictEqual(validateExecDef({ proposal: 'yes', argv: ['/bin/true'] }), { ok: false, error: 'proposal: must be a boolean' });
+  assert.deepStrictEqual(validateExecDef({ proposal: true, inProcess: 'ctl' }), { ok: false, error: 'proposal: cannot combine with inProcess' });
+  assert.deepStrictEqual(validateExecDef({ proposal: false, schema: { type: 'object' } }), { ok: false, error: 'argv: required non-empty array' });
+});

@@ -21902,7 +21902,7 @@ test('awaitTurn + _resolveTurnWaiters: the next result resolves the armed waiter
   h.line('asst', { ...RESULT, result: 'ok\n[agent:memory remember] x\nbye' });
   const turn = await p;
   assert.strictEqual(typeof turn.ts, 'number');
-  assert.deepStrictEqual(turn, { text: 'ok\nbye', intents: [{ type: 'memory', sub: 'remember' }], refs: [], costUsd: 0, durationMs: 1, isError: false, ts: turn.ts });
+  assert.deepStrictEqual(turn, { text: 'ok\nbye', intents: [{ type: 'memory', sub: 'remember' }], refs: [], proposals: [], costUsd: 0, durationMs: 1, isError: false, ts: turn.ts });
   assert.deepStrictEqual(turns, [['asst', turn]]);
   let late = 'pending';
   h.m.awaitTurn('asst', { timeoutMs: 5000 }).then((v) => { late = v; });

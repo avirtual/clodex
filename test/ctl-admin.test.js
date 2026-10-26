@@ -369,7 +369,7 @@ test('A12 + launcher refusals: env guard, payload, ctx, verb, record', async () 
   assert.ok(!fs.existsSync(path.join(f.runs, '1.json')), 'no refused call allocated a run');
 });
 
-async function execEnvProbe(deps = {}) {
+async function execEnvProbe(deps = {}, { token } = {}) {
   const { mk: mkBase } = require('./lib/session-fixtures');
   const { isFilenameToken, parseAndValidate, clampReplyBody } = require('../exec-schema');
   const REGISTRY_DIR = mkTmpRoot('clx-ctl-exec-');
@@ -379,6 +379,11 @@ async function execEnvProbe(deps = {}) {
     argv: ['/usr/bin/env', 'node', '${CLODEX_BIN}/probe.js'], description: 'probe', timeoutMs: 5000,
     schema: { type: 'object', additionalProperties: false, properties: { x: { type: 'string' } } },
   }));
+  if (token !== undefined) {
+    const tokenPath = require('../assistant-sleep').clientTokenPathFor(REGISTRY_DIR, 'a');
+    fs.mkdirSync(path.dirname(tokenPath), { recursive: true });
+    fs.writeFileSync(tokenPath, token, { mode: 0o600 });
+  }
   const spawned = [];
   const QUIET = { info() {}, warn() {}, error() {}, debug() {} };
   const m = mkBase({
@@ -396,7 +401,7 @@ async function execEnvProbe(deps = {}) {
   return { env: spawned[0].env, REGISTRY_DIR };
 }
 
-function hostEnv(REGISTRY_DIR, team) {
+function hostEnv(REGISTRY_DIR, team, clientToken = '') {
   return {
     ...process.env,
     CLODEX_HOME: REGISTRY_DIR,
@@ -405,6 +410,7 @@ function hostEnv(REGISTRY_DIR, team) {
     CLODEX_CTL: path.join(__dirname, '..', 'cli', 'bin', 'clodexctl.js'),
     CLODEX_TEAM: team ? team.name : '',
     CLODEX_TEAM_ROOT: team ? team.root : '',
+    CLODEX_CLIENT_TOKEN: clientToken,
   };
 }
 
@@ -434,5 +440,20 @@ test('A13: a seat on no team gets CLODEX_TEAM / CLODEX_TEAM_ROOT as empty string
   } finally {
     if (saved.t === undefined) delete process.env.CLODEX_TEAM; else process.env.CLODEX_TEAM = saved.t;
     if (saved.r === undefined) delete process.env.CLODEX_TEAM_ROOT; else process.env.CLODEX_TEAM_ROOT = saved.r;
+  }
+});
+
+test('A13: CLODEX_CLIENT_TOKEN carries the seat\'s client-token file, trimmed, and is empty without one even when the app env sets it', async () => {
+  const tok = 'g'.repeat(20);
+  const withFile = await execEnvProbe({ teamOf: () => null }, { token: `${tok}\n` });
+  assert.deepStrictEqual(withFile.env, hostEnv(withFile.REGISTRY_DIR, null, tok));
+  const saved = process.env.CLODEX_CLIENT_TOKEN;
+  process.env.CLODEX_CLIENT_TOKEN = 'decoy-decoy-decoy-decoy';
+  try {
+    const bare = await execEnvProbe({ teamOf: () => null });
+    assert.deepStrictEqual(bare.env, hostEnv(bare.REGISTRY_DIR, null, ''));
+    assert.strictEqual(bare.env.CLODEX_CLIENT_TOKEN, '');
+  } finally {
+    if (saved === undefined) delete process.env.CLODEX_CLIENT_TOKEN; else process.env.CLODEX_CLIENT_TOKEN = saved;
   }
 });
