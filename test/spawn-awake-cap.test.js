@@ -65,3 +65,16 @@ test('[agent:spawn] of an assistant template with room reserves once and release
   assert.strictEqual(h.calls.length, 2);
   assert.deepStrictEqual(rooms.length, 1, 'a held room is not reserved twice');
 });
+
+test('makeAwakeRoom: a live holder at cap 1 is reserved, never refused or slept, and keeps its slot while it is dead mid-restart', async () => {
+  const h = harness({ 'avh-1': { name: 'avh-1', class: 'assistant', template: 'avh-tpl' } });
+  const slept = [];
+  h.m._sleepNow = async (s, why) => { slept.push([s && s.name, why]); return { ok: true }; };
+  h.m.sessions.set('avh-1', { name: 'avh-1', _assistant: true, activityTs: 1 });
+  assert.strictEqual(await h.m.makeAwakeRoom('avh-tpl', 1, 'avh-1'), null);
+  assert.deepStrictEqual([slept, [...h.m._awakeReserved.get('avh-tpl')]], [[], ['avh-1']]);
+  h.m.sessions.get('avh-1')._dead = true;
+  assert.deepStrictEqual(await h.m.makeAwakeRoom('avh-tpl', 1, 'avh-2'), { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000 });
+  h.m.releaseAwakeRoom('avh-tpl', 'avh-1');
+  assert.strictEqual(h.m._awakeReserved.size, 0);
+});

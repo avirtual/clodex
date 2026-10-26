@@ -3822,6 +3822,7 @@ function createSessionManager(deps) {
       const rows = this._awakeAssistantRows(key);
       const live = new Set(rows.map((r) => r.name));
       const reserved = reservedAll.get(key) || new Set();
+      if (live.has(holder)) { reservedAll.set(key, reserved.add(holder)); return null; }
       const pending = [...reserved].filter((n) => !live.has(n)).length;
       const victim = rows.length + pending < cap ? null : pickMaxAwakeVictim(rows, cap - pending);
       if (rows.length + pending >= cap && !victim) return { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000 };
@@ -4824,12 +4825,26 @@ function createSessionManager(deps) {
         if (!e || !e.name) continue;
         this.clearHintForRecord(e.name);
         getPersistence().remove(e.name);
+        this.forgetSeatFiles(e.name, e);
         dropped.push(e.name);
       }
       if (dropped.length) {
         log.info('session', `workspace ${workspaceId}: dropped ${dropped.length} saved/archived record(s): ${dropped.join(', ')}`);
       }
       return { killed, dropped };
+    }
+
+    forgetSeatFiles(name, rec) {
+      try {
+        if (rec && rec.class === 'assistant') {
+          const r = removeSeat({ root: REGISTRY_DIR, name, fs });
+          for (const f of r.failed) log.warn('session', `forget ${name}: ${f.path} not removed (${f.error})`);
+          return;
+        }
+        fs.unlinkSync(clientTokenPathFor(REGISTRY_DIR, name));
+      } catch (e) {
+        if (!e || e.code !== 'ENOENT') log.warn('session', `forget ${name}: seat files not removed (${e && e.message})`);
+      }
     }
 
     livePids() {

@@ -18,7 +18,7 @@ const { registerIpcHandlers } = require('../ipc-handlers');
 const { createSessionManager } = require('../session-manager');
 const { resolveProxyBase } = require('../statusline');
 
-function fixture(entries = []) {
+function fixture(entries = [], extraDeps = {}) {
   const hints = [];
   const order = [];
   const store = [...entries];
@@ -44,16 +44,18 @@ function fixture(entries = []) {
       },
     },
     log: { info() {}, warn() {}, error() {} },
+    ...extraDeps,
   });
   const handlers = new Map();
+  const manager = new SessionManager();
   registerIpcHandlers({
     handle: (ch, fn) => handlers.set(ch, fn),
     on: (ch, fn) => handlers.set(ch, fn),
-    manager: new SessionManager(),
+    manager,
     persistence,
     log: { info() {}, error() {} },
   });
-  return { forget: (name) => handlers.get('session:forget')(null, name), hints, order, persistence };
+  return { forget: (name) => handlers.get('session:forget')(null, name), hints, order, persistence, manager };
 }
 
 test('session:forget clears the seat\'s hint row BEFORE dropping the record that names the route', () => {
@@ -126,4 +128,51 @@ test('a hint failure never fails the forget (sync throw and rejected promise bot
   // An uncaught rejection would not fail an assertion above — it would kill the
   // test PROCESS on the next tick. Give it that tick.
   await new Promise((r) => setImmediate(r));
+});
+
+function seatRoot() {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { mkTmpRoot } = require('./lib/tmp-roots');
+  const root = mkTmpRoot('clx-forget-seat-');
+  const seat = (n) => path.join(root, 'sessions', n);
+  const plant = (n, files) => {
+    for (const f of files) {
+      fs.mkdirSync(path.dirname(path.join(seat(n), f)), { recursive: true });
+      fs.writeFileSync(path.join(seat(n), f), 'x');
+    }
+  };
+  return { fs, path, root, seat, plant, deps: { REGISTRY_DIR: root, fs } };
+}
+
+test('session:forget of an assistant record removes its seat dir: client-token, brief.md and memory go', () => {
+  const r = seatRoot();
+  r.plant('asst', ['client-token', 'brief.md', 'memory/unit.md']);
+  const { forget, persistence } = fixture([{ name: 'asst', class: 'assistant', proxy: false }], r.deps);
+  assert.ok(r.fs.existsSync(r.path.join(r.seat('asst'), 'memory', 'unit.md')), 'ENTER: the seat dir holds memory');
+  assert.strictEqual(forget('asst'), true);
+  assert.strictEqual(persistence.get('asst'), null);
+  assert.strictEqual(r.fs.existsSync(r.seat('asst')), false);
+});
+
+test('session:forget of a plain record unlinks only its client-token; the seat dir keeps its other files', () => {
+  const r = seatRoot();
+  r.plant('plain', ['client-token', 'brief.md', 'memory/unit.md']);
+  const { forget } = fixture([{ name: 'plain', type: 'claude', proxy: false }], r.deps);
+  assert.strictEqual(forget('plain'), true);
+  assert.deepStrictEqual(r.fs.readdirSync(r.seat('plain')).sort(), ['brief.md', 'memory']);
+});
+
+test('purgeWorkspace removes an assistant record\'s seat dir and a plain record\'s client-token only', () => {
+  const r = seatRoot();
+  r.plant('asst', ['client-token', 'brief.md', 'memory/unit.md']);
+  r.plant('plain', ['client-token', 'brief.md']);
+  const { manager, persistence } = fixture([
+    { name: 'asst', class: 'assistant', workspaceId: 'ws-1', proxy: false },
+    { name: 'plain', type: 'claude', workspaceId: 'ws-1', proxy: false },
+  ], r.deps);
+  persistence.listForWorkspace = (ws) => persistence.list().filter((e) => e.workspaceId === ws);
+  assert.deepStrictEqual(manager.purgeWorkspace('ws-1'), { killed: [], dropped: ['asst', 'plain'] });
+  assert.strictEqual(r.fs.existsSync(r.seat('asst')), false);
+  assert.deepStrictEqual(r.fs.readdirSync(r.seat('plain')), ['brief.md']);
 });

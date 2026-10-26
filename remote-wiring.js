@@ -376,7 +376,10 @@ function createRemoteWiring(deps) {
     }
     if (typeof token !== 'string' || !CLIENT_TOKEN_RE.test(token)) return { ok: false, code: 400, error: 'bad client token' };
     try { writeClientToken(name, token); }
-    catch (e) { return { ok: false, code: 500, error: `cannot write client token: ${e.message}` }; }
+    catch (e) {
+      try { fs.unlinkSync(clientTokenPathFor(REGISTRY_DIR, name)); } catch {}
+      return { ok: false, code: 500, error: `cannot write client token: ${e.message}` };
+    }
     log.info('session', `client token set for ${name}`);
     return { ok: true, set: true };
   }
@@ -388,6 +391,11 @@ function createRemoteWiring(deps) {
       try { fs.unlinkSync(clientTokenPathFor(REGISTRY_DIR, name)); } catch {}
       return { ...out, warnings: [...(Array.isArray(out.warnings) ? out.warnings : []), 'client token not stored'] };
     }
+  }
+
+  function clearStaleClientToken(name) {
+    try { fs.unlinkSync(clientTokenPathFor(REGISTRY_DIR, name)); }
+    catch (e) { if (!e || e.code !== 'ENOENT') log.warn('session', `create ${name}: cannot remove stale client token: ${e && e.message}`); }
   }
 
   const creatingNames = new Set();
@@ -727,7 +735,10 @@ function createRemoteWiring(deps) {
           if (mode === 'template' && !(typeof b.template === 'string' && b.template.trim())) return { ok: false, code: 403, error: 'create: this host accepts template creates only' };
           if (typeof b.template === 'string' && b.template.trim()) {
             const made = await spawnFromTemplate(name, b.template.trim(), rawCwd, mode);
-            return made.ok && clientToken != null ? storeCreateToken(name, clientToken, made) : made;
+            if (!made.ok) return made;
+            if (clientToken != null) return storeCreateToken(name, clientToken, made);
+            clearStaleClientToken(name);
+            return made;
           }
           if (typeof b.team === 'string' && b.team.trim()) {
             if (clientToken != null) return { ok: false, code: 400, error: 'client token: not accepted for a team-lead create' };
@@ -795,6 +806,7 @@ function createRemoteWiring(deps) {
               envKeys: sessionEnvKeys,
               ...(out.warnings && out.warnings.length ? { warnings: out.warnings } : {}),
             };
+            if (clientToken == null) clearStaleClientToken(name);
             const stored = clientToken != null ? storeCreateToken(name, clientToken, answer) : answer;
             if (getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
             log.info('session', `create ${name} (${t}) via peer @ ${dir} pid=${out.pid}`);
@@ -850,7 +862,20 @@ function createRemoteWiring(deps) {
           name = String(name || '').trim();
           const entry = getPersistence().get(name);
           const wsId = (entry && entry.workspaceId) || DEFAULT_WORKSPACE_ID;
-          const out = await restartSession(name, { fresh: !!(opts && opts.fresh) }, wsId);
+          if (entry && entry.class === 'assistant' && entry.archivedAt && entry.asleepAt) {
+            const w = await wakeOnce(name, 'operator');
+            if (!w || !w.ok) return { ok: false, code: w && w.code ? w.code : 503, error: (w && w.error) || 'wake failed', ...(w && w.retryAfterMs ? { retryAfterMs: w.retryAfterMs } : {}) };
+            notifySessions();
+            log.info('session', `restart ${name} via peer: woke the sleeping assistant`);
+            return { ...w, io: 'stream' };
+          }
+          const cap = entry && entry.class === 'assistant' && entry.sleep && Number(entry.sleep.maxAwake) > 0 ? Number(entry.sleep.maxAwake) : 0;
+          const full = cap ? await manager.makeAwakeRoom(entry.template || null, cap, name) : null;
+          if (full) return full;
+          let out;
+          try { out = await restartSession(name, { fresh: !!(opts && opts.fresh) }, wsId); }
+          finally { if (cap) manager.releaseAwakeRoom(entry.template || null, name); }
+          if (out && out.ok && entry && entry.class === 'assistant') getPersistence().upsert({ name, awokeAt: Date.now() });
           if (out && out.ok) notifySessions();
           log.info('session', `restart ${name} via peer (${opts && opts.fresh ? 'fresh' : 'resume'})${out && out.ok ? '' : ` failed: ${out && out.error}`}`);
           return out;

@@ -56,7 +56,7 @@ test('session:retrySpawn returns the seat io, so a row built without one is stil
   const ipc = fs.readFileSync(path.join(__dirname, '..', 'ipc-handlers.js'), 'utf8');
   const m = ipc.match(/handle\('session:retrySpawn'[\s\S]*?\n  \}\);\n/);
   assert.ok(m, 'ENTER: the retrySpawn handler is still found by this anchor');
-  assert.ok(/return \{ ok: true, io: entry\.io \|\| 'pty' \};/.test(m[0]), 'retrySpawn reports the io it spawned with');
+  assert.ok(/return \{ ok: true, io: \(made && made\.io\) \|\| entry\.io \|\| 'pty' \};/.test(m[0]), 'retrySpawn reports the io it spawned with');
 });
 
 test('the stream seat pane mounts its permission cards before the composer and renders them from every pull', () => {

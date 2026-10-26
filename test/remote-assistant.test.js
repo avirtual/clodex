@@ -66,6 +66,7 @@ function makeDeps(overrides = {}) {
     get: (n) => records.get(n),
     list: () => [...records.values()],
     setStripLevel: () => {},
+    upsert: (e) => records.set(e.name, { ...(records.get(e.name) || {}), ...e }),
   };
   const realFs = require('fs');
   const fs = {
@@ -759,4 +760,69 @@ test('createSession: a team-lead create carrying a valid client token is 400 and
   assert.deepStrictEqual([h.spawnCalls, h.createCalls, loaded], [[], [], 0]);
   assert.strictEqual(realFs.existsSync(t.tokenPath('lead-1')), false);
   assert.strictEqual((await captureOptions(h.deps).createSession({ name: 'lead-1', team: 'crew' })).ok, true, 'without a token the lead still spawns');
+});
+
+test('createSession: a create with no client.token onto a name holding a stale client-token leaves no token file', async () => {
+  const bodies = (root) => [{ name: 'w1', type: 'claude', cwd: path.join(root, 'cwd') }, { name: 'avh-1', template: 'avh-assistant' }];
+  for (const i of [0, 1]) {
+    const h = makeDeps({ templates: { 'avh-assistant': { name: 'avh-assistant', type: 'claude' } } });
+    const t = withTokenRoot(h);
+    const body = bodies(t.root)[i];
+    realFs.mkdirSync(path.dirname(t.tokenPath(body.name)), { recursive: true });
+    realFs.writeFileSync(t.tokenPath(body.name), 'stale-token-of-game-a');
+    const out = await captureOptions(h.deps).createSession(body);
+    assert.strictEqual(out.ok, true, 'ENTER: the create succeeded');
+    assert.strictEqual(realFs.existsSync(t.tokenPath(body.name)), false, body.name);
+  }
+});
+
+test('setClientToken: a write that throws after writing partial content leaves no file', () => {
+  const h = makeDeps({ records: { 'avh-7': ASLEEP } });
+  const t = withTokenRoot(h);
+  h.deps.fs.writeFileSync = (p, ...rest) => {
+    if (String(p).endsWith('client-token')) { realFs.writeFileSync(p, 'par'); throw new Error('ENOSPC'); }
+    return realFs.writeFileSync(p, ...rest);
+  };
+  const out = captureOptions(h.deps).setClientToken('avh-7', TOKEN);
+  assert.deepStrictEqual(out, { ok: false, code: 500, error: 'cannot write client token: ENOSPC' });
+  assert.strictEqual(realFs.existsSync(t.tokenPath('avh-7')), false);
+});
+
+test('restartSession (wire): an asleep assistant goes through wake, never engine restartSession', async () => {
+  const h = makeDeps({ records: { 'avh-7': ASLEEP } });
+  const restarts = [];
+  h.deps.restartSession = async (...a) => { restarts.push(a); return { ok: true }; };
+  const out = await captureOptions(h.deps).restartSession('avh-7', { fresh: false });
+  assert.deepStrictEqual(out, { ok: true, state: 'awake', io: 'stream' });
+  assert.deepStrictEqual([h.wakeCalls, restarts], [[['avh-7', { reason: 'operator' }]], []]);
+  const refused = makeDeps({ records: { 'avh-7': ASLEEP }, wakeOut: { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000 } });
+  assert.deepStrictEqual(await captureOptions(refused.deps).restartSession('avh-7'),
+    { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000 });
+});
+
+test('restartSession (wire): an awake assistant reserves under its maxAwake; at capacity it is refused and never restarts', async () => {
+  const AWAKE = { class: 'assistant', template: 'avh-tpl', sleep: { maxAwake: 1 }, type: 'claude', cwd: '/w', exitedAt: 5 };
+  const full = { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000 };
+  const h = makeDeps({ records: { 'avh-7': AWAKE }, roomOut: full });
+  const restarts = [];
+  h.deps.restartSession = async (...a) => { restarts.push(a); return { ok: true }; };
+  assert.deepStrictEqual(await captureOptions(h.deps).restartSession('avh-7'), full);
+  assert.deepStrictEqual([h.roomCalls, restarts, h.wakeCalls], [[['room', 'avh-tpl', 1, 'avh-7']], [], []]);
+  const ok = makeDeps({ records: { 'avh-7': { ...AWAKE, awokeAt: 1 } } });
+  ok.deps.restartSession = async (...a) => { restarts.push(a); return { ok: true }; };
+  const before = Date.now();
+  assert.strictEqual((await captureOptions(ok.deps).restartSession('avh-7')).ok, true);
+  assert.ok(ok.records.get('avh-7').awokeAt >= before, 'a restarted assistant restarts its awake clock');
+  assert.deepStrictEqual(ok.roomCalls, [['room', 'avh-tpl', 1, 'avh-7'], ['release', 'avh-tpl', 'avh-7', 0]]);
+  assert.deepStrictEqual(restarts, [['avh-7', { fresh: false }, 'default']]);
+});
+
+test('POST /api/sessions/:name/restart: a refusal carrying a code is sent with that status, else 404', async () => {
+  const full = { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000 };
+  await withServer({ restartSession: (n) => (n === 'avh-7' ? full : { ok: false, error: 'Session not found in persistence' }) }, async (port) => {
+    const r = await req(port, '/api/sessions/avh-7/restart', { method: 'POST', body: {} });
+    assert.deepStrictEqual([r.status, r.json], [503, full]);
+    const gone = await req(port, '/api/sessions/nobody/restart', { method: 'POST', body: {} });
+    assert.deepStrictEqual([gone.status, gone.json], [404, { ok: false, error: 'Session not found in persistence' }]);
+  });
 });
