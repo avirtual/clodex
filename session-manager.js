@@ -1109,6 +1109,7 @@ function createSessionManager(deps) {
         const persistTotals = this._wireTotalsPersist(path.join(getUserDataPath(), 'wire-totals.json'));
         this._wireTelemetry = new WireTelemetry({ warmth, hold, log: (rec) => this._shadowLog(rec), persist: persistTotals });
         wire.on('turn.completed', (t) => this._wireTelemetry.noteTurn(t));
+        if (hold) this._bindHeldSessions(hold);
       } catch (e) {
         this._shadowLog({ type: 'wire-telemetry-unavailable', error: e.message });
       }
@@ -1228,6 +1229,17 @@ function createSessionManager(deps) {
         }
       } catch (e) {
         this._shadowLog({ type: 'wire-hold-restore-error', error: e.message });
+      }
+    }
+
+    _bindHeldSessions(hold) {
+      try {
+        const held = hold.holds();
+        for (const rec of getPersistence().list()) {
+          if (rec && rec.name && rec.sessionId && held[rec.sessionId]) this._wireTelemetry.noteSession(rec.name, rec.sessionId);
+        }
+      } catch (e) {
+        this._shadowLog({ type: 'wire-hold-bind-error', error: e.message });
       }
     }
 

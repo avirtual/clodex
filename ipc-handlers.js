@@ -917,14 +917,14 @@ function registerIpcHandlers(deps) {
     if (!manager._holdKeeper || !manager._wireTelemetry) {
       return { ok: false, error: 'In-process wire keep-warm is not running' };
     }
-    const w = manager._wireTelemetry.payload(name);
-    if (!w || !w.sessionId) {
+    const sid = manager._wireTelemetry.sessionFor(name);
+    if (!sid) {
       return { ok: false, error: 'The wire has not seen a turn for this session yet' };
     }
     try {
       const j = (always || hours > 0)
-        ? manager._holdKeeper.arm(w.sessionId, hours, { force: !!force, always: !!always })
-        : manager._holdKeeper.disarm(w.sessionId);
+        ? manager._holdKeeper.arm(sid, hours, { force: !!force, always: !!always })
+        : manager._holdKeeper.disarm(sid);
       // A perpetual arm has no `until`, so it must not be gated on one.
       if (j.armed && (j.always || j.until)) {
         // holdUntil and keepWarmAlways are mutually exclusive: write one, clear the other.

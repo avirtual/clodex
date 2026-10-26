@@ -77,6 +77,7 @@ class WireTelemetry {
     this._hold = hold; // wire/hold HoldKeeper — hold/pingable payload fields + overlay ownership
     this._log = log;
     this._agents = new Map();   // name -> { sessionId, model, totals, inputTokens, ts }
+    this._bound = new Map();
     this._lastDiff = new Map(); // name -> JSON of last logged diff (dedupe)
     this._baseline = new Map(); // name -> co-observation epoch base (see diffPoll)
     // Lifetime-totals continuity (full-independence ledger):
@@ -144,6 +145,28 @@ class WireTelemetry {
       }
       this._persist.write({ version: 1, sessions });
     } catch { /* persistence failure costs continuity, never the tick */ }
+  }
+
+  noteSession(name, sessionId) {
+    if (typeof name === 'string' && typeof sessionId === 'string' && sessionId) this._bound.set(name, sessionId);
+  }
+
+  sessionFor(name) {
+    const a = this._agents.get(name);
+    return (a && a.sessionId) || this._bound.get(name) || null;
+  }
+
+  _holdState(sessionId) {
+    let hold = null;
+    let pingable = false;
+    if (this._hold && sessionId) {
+      try {
+        pingable = !!this._hold.entry(sessionId);
+        const h = this._hold.holds()[sessionId];
+        if (h) hold = { until: h.until, hours: h.hours, pings: h.pings, last_result: h.lastResult ?? null, always: !!h.always };
+      } catch { /* hold degrades alone */ }
+    }
+    return { hold, pingable };
   }
 
   // Wire listener body. Never throws.
@@ -223,15 +246,7 @@ class WireTelemetry {
       // r.hold / r.pingable (renderer contract: hold.until in epoch seconds).
       // Own try, same reasoning as warmth: a hold bug costs the fire button,
       // not the cost samples.
-      let hold = null;
-      let pingable = false;
-      if (this._hold && a.sessionId) {
-        try {
-          pingable = !!this._hold.entry(a.sessionId);
-          const h = this._hold.holds()[a.sessionId];
-          if (h) hold = { until: h.until, hours: h.hours, pings: h.pings, last_result: h.lastResult ?? null, always: !!h.always };
-        } catch { /* hold degrades alone */ }
-      }
+      const { hold, pingable } = this._holdState(a.sessionId);
       return {
         linked: true,
         sessionId: a.sessionId,
@@ -274,7 +289,12 @@ class WireTelemetry {
     try {
       if (!poll || !poll.linked) return poll;
       const wire = this.payload(name);
-      if (!wire || !wire.sessionId) return poll;
+      if (!wire || !wire.sessionId) {
+        const sid = this._hold && this._bound.get(name);
+        if (!sid) return poll;
+        const { hold, pingable } = this._holdState(sid);
+        return { ...poll, holdSource: 'wire', hold, pingable, capabilities: { ...(poll.capabilities || {}), hold: true } };
+      }
       const out = { ...poll, telemetrySource: 'wire' };
       // Preserve the poll's own cumulative before clobbering it: wirescope's
       // figure is per-REGISTRATION (zeroes when the agent's CLI process spawns
@@ -378,6 +398,7 @@ class WireTelemetry {
           this._agents.delete(name); this._lastDiff.delete(name); this._baseline.delete(name);
         }
       }
+      for (const name of this._bound.keys()) if (!liveNames.has(name)) this._bound.delete(name);
     } catch { /* never breaks the tick */ }
   }
 }

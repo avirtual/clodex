@@ -437,3 +437,46 @@ test('an ARCHIVED seat re-arms nothing, current id included', () => {
   assert.deepStrictEqual(store.load(), [],
     'and the file goes empty — HoldEntryStore removes it rather than writing an empty list');
 });
+
+test('a restored perpetual hold is visible and stoppable before the seat takes a turn', () => {
+  const { WireTelemetry } = require('../wire-telemetry');
+  const { registerIpcHandlers } = require('../ipc-handlers');
+  const eng = mkEngine();
+  const p = eng.stores.persistence;
+  p.upsert({ name: 'w', type: 'claude', cwd: '/tmp', workspaceId: 'default' });
+  p.setSessionId('w', 'B');
+  p.setKeepWarmAlways('w', true);
+  const { keeper } = keeperOverBoth();
+  eng.manager._restorePerpetualHolds(keeper);
+  assert.strictEqual(keeper.holds().B.always, true, 'ENTER: the startup restore armed B perpetually');
+
+  const tel = new WireTelemetry({ hold: keeper });
+  eng.manager._holdKeeper = keeper;
+  eng.manager._wireTelemetry = tel;
+  eng.manager._bindHeldSessions(keeper);
+  assert.strictEqual(tel.payload('w'), null, 'ENTER: the wire has seen no turn for w');
+
+  const out = tel.overlay('w', { linked: true, sessionId: 'B', cost: { usd: 1.5, requests: 3 }, turns: 2 });
+  assert.strictEqual(out.holdSource, 'wire');
+  assert.strictEqual(out.hold && out.hold.always, true);
+  assert.deepStrictEqual(out.cost, { usd: 1.5, requests: 3 }, 'the binding carries no cost or turn figures');
+  assert.strictEqual(out.turns, 2);
+  assert.strictEqual(out.telemetrySource, undefined);
+
+  const handlers = new Map();
+  registerIpcHandlers({
+    handle: (channel, fn) => handlers.set(channel, fn),
+    on: () => {},
+    manager: eng.manager,
+    persistence: p,
+    log: { info: () => {}, warn: () => {} },
+  });
+  const r = handlers.get('wire:hold')(null, 'w', 0, false, false);
+  assert.strictEqual(r.ok, true, `wire:hold off must reach the keeper: ${JSON.stringify(r)}`);
+  assert.strictEqual(keeper.holds().B, undefined);
+  assert.strictEqual(p.get('w').keepWarmAlways, false);
+
+  const unknown = handlers.get('wire:hold')(null, 'nobody', 0, false, false);
+  assert.strictEqual(unknown.ok, false);
+  assert.match(unknown.error, /has not seen a turn/);
+});
