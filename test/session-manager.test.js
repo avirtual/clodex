@@ -24652,7 +24652,7 @@ test('a /clear on a pty seat drops the turnless hold binding for the prior conve
   assert.strictEqual(tel.sessionFor('kw'), null);
 });
 
-test('destroying a dead seat\'s record drops its keep-warm hold binding', async (t) => {
+test('_bindHold: destroying a dead seat\'s record drops its keep-warm hold binding', async (t) => {
   const { h, tel } = holdBindRig(t, ['old-sid']);
   h.store.set('kw', { name: 'kw', type: 'claude', sessionId: 'old-sid' });
   tel.noteSession('kw', 'old-sid');
