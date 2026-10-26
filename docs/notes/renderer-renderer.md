@@ -103,7 +103,3 @@ which keeps every skill known today and denies only the ones synced later.
 ## persistedOr
 
 A key PRESENT in `formPersisted` (even with an undefined value, as `formPersistedOf` writes for a template lacking it) means a template is loaded and its list wins over mode defaults; only an ABSENT key (blank form, or after the `inputMode` change listener deletes it) falls back. That listener deletes only `disabledTools` and `denyBuiltins` because those are the lists the mode redraws; `execCommands` and `mcpServers` stay so `formCarry` still carries the template's undrawn grants. Pinned by `test/template-grants-rerender.test.js`.
-
-## currentOr
-
-`formRendered` is reset wherever `formPersisted` is assigned, so a key present in it means that checklist was drawn since the template loaded; only then does an in-place redraw collect the live ticks (plus the template entries the last draw could not list) instead of the template's saved list. Each call collects synchronously, before the redraw's await replaces the list. A template entry on a disabled (lower-layer-locked) row is kept too: `collectToolChecklist` skips such rows and `unlistedOf` sees them as listed, so without it a later unlocked draw re-enables the tool. Pinned by the t1961 cases in `test/template-grants-rerender.test.js`.

@@ -78,7 +78,6 @@ const SHIPPED = [
   extract(/\n(function newSessionSkillDenyList\([\s\S]*?\n\})\n/, 'newSessionSkillDenyList'),
   extract(/\n(function populateChecklistsFromCatalogs\([\s\S]*?\n\})\n/, 'populateChecklistsFromCatalogs'),
   extract(/\n(function persistedOr\([\s\S]*?\n\})\n/, 'persistedOr'),
-  extract(/\n(function currentOr\([\s\S]*?\n\})\n/, 'currentOr'),
 ].join('\n');
 
 // What the New Session dialog would persist as `disabledSkills` for a claude
@@ -155,9 +154,6 @@ async function dialogDisabledSkills(engine, mode, {
       inputProxyMode: { value: '' }, inputProxyUrl: { value: '' },
       afterRender: afterRender || noop,
       formPersisted: {}, formRendered: {},
-      collectToolChecklist: checklists.collectToolChecklist, collectBuiltinChecklist: checklists.collectBuiltinChecklist,
-      collectExecChecklist: checklists.collectExecChecklist, collectMcpChecklist: checklists.collectMcpChecklist,
-      inputExecList: null, inputMcpList: null,
     };
     const names = Object.keys(env);
     const run = new Function(...names, `${SHIPPED}

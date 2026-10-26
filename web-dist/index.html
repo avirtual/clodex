@@ -54846,11 +54846,11 @@ ${detail}` });
         if (!skipAsyncRefresh) {
           if (caps.skillRoster) refreshNewSessionSkills(modeSkillDenySet());
           if (caps.injectSkills) refreshNewSessionInjectSkills();
-          if (caps.tools) refreshNewSessionTools(currentOr("disabledTools", collectToolChecklist, inputToolsList, modeToolDenySet()));
+          if (caps.tools) refreshNewSessionTools(persistedOr("disabledTools", modeToolDenySet()));
         }
         if (agentType && !skipAsyncRefresh) {
-          refreshNewSessionExecCommands(currentOr("execCommands", collectExecChecklist, inputExecList, /* @__PURE__ */ new Set()));
-          refreshNewSessionMcpServers(currentOr("mcpServers", collectMcpChecklist, inputMcpList, /* @__PURE__ */ new Set()));
+          refreshNewSessionExecCommands(persistedOr("execCommands", /* @__PURE__ */ new Set()));
+          refreshNewSessionMcpServers(persistedOr("mcpServers", /* @__PURE__ */ new Set()));
           refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
         }
         resumeRow.style.display = agentType && !authoring ? "" : "none";
@@ -55096,9 +55096,9 @@ ${detail}` });
         resetNewSessionSkillCollector(modeSkillDenySet());
         renderSkillChecklist(inputSkillsList, [], modeSkillDenySet());
         setClaudeToolsCache(cat.claudeTools || []);
-        formRendered.disabledTools = renderToolChecklist(inputToolsList, currentOr("disabledTools", collectToolChecklist, inputToolsList, modeToolDenySet()));
-        formRendered.denyBuiltins = renderBuiltinChecklist(inputBuiltinsList, currentOr("denyBuiltins", collectBuiltinChecklist, inputBuiltinsList, modeBuiltinDenySet()));
-        refreshNewSessionExecCommands(currentOr("execCommands", collectExecChecklist, inputExecList, /* @__PURE__ */ new Set()));
+        formRendered.disabledTools = renderToolChecklist(inputToolsList, persistedOr("disabledTools", modeToolDenySet()));
+        formRendered.denyBuiltins = renderBuiltinChecklist(inputBuiltinsList, persistedOr("denyBuiltins", modeBuiltinDenySet()));
+        refreshNewSessionExecCommands(persistedOr("execCommands", /* @__PURE__ */ new Set()));
         refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
         setPromptLibCache(libraryPromptCache(cat.prompts));
         fillSystemPromptSelect(inputSystemPrompt, "", newSessionSeat());
@@ -55665,18 +55665,17 @@ ${detail}` });
       function populateHostCatalogs(settings, agentLib) {
         setAgentLibCache(agentLib || []);
         renderAgentChecklist(inputAgentsList, /* @__PURE__ */ new Set(), null, newSessionSeat());
-        refreshNewSessionExecCommands(currentOr("execCommands", collectExecChecklist, inputExecList, /* @__PURE__ */ new Set()));
-        refreshNewSessionMcpServers(currentOr("mcpServers", collectMcpChecklist, inputMcpList, /* @__PURE__ */ new Set()));
+        refreshNewSessionExecCommands(persistedOr("execCommands", /* @__PURE__ */ new Set()));
+        refreshNewSessionMcpServers(persistedOr("mcpServers", /* @__PURE__ */ new Set()));
         refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
         setClaudeToolsCache(settings?.claudeTools || []);
         setDefaultToolDenyCache(settings?.defaultToolDeny || []);
         setDefaultSkillDenyCache(settings?.defaultSkillDeny || []);
         setDefaultBuiltinDenyCache(settings?.defaultBuiltinDeny || []);
-        formRendered.denyBuiltins = renderBuiltinChecklist(inputBuiltinsList, currentOr("denyBuiltins", collectBuiltinChecklist, inputBuiltinsList, modeBuiltinDenySet()));
-        const disabledTools = currentOr("disabledTools", collectToolChecklist, inputToolsList, modeToolDenySet());
-        formRendered.disabledTools = renderToolChecklist(inputToolsList, disabledTools);
+        formRendered.denyBuiltins = renderBuiltinChecklist(inputBuiltinsList, persistedOr("denyBuiltins", modeBuiltinDenySet()));
+        formRendered.disabledTools = renderToolChecklist(inputToolsList, persistedOr("disabledTools", modeToolDenySet()));
         refreshNewSessionSkills(modeSkillDenySet());
-        refreshNewSessionTools(disabledTools);
+        refreshNewSessionTools(persistedOr("disabledTools", modeToolDenySet()));
         setProxyControls(inputProxyMode, inputProxyUrl, null, settings?.lastCustomProxyUrl || settings?.proxyUrl);
         labelProxyDefault(inputProxyMode, settings);
       }
@@ -55694,7 +55693,7 @@ ${detail}` });
           opts
         );
         refreshNewSessionTools(
-          opts.forTemplate ? new Set(collectToolChecklist(inputToolsList)) : currentOr("disabledTools", collectToolChecklist, inputToolsList, modeToolDenySet()),
+          opts.forTemplate ? new Set(collectToolChecklist(inputToolsList)) : persistedOr("disabledTools", modeToolDenySet()),
           opts
         );
       }
@@ -55748,7 +55747,6 @@ ${detail}` });
         const id = inputTemplate.value;
         if (!id) {
           formPersisted = {};
-          formRendered = {};
           return;
         }
         const list = await window.api.listTemplates();
@@ -55758,7 +55756,6 @@ ${detail}` });
         if (inputTemplate.value !== id) return;
         if (resolved.warn) showToast(resolved.warn, { kind: "warn", duration: 12e3 });
         formPersisted = formPersistedOf(t);
-        formRendered = {};
         setModeSelect("custom");
         inputType.value = t.type;
         inputCwd.value = resolved.cwd;
@@ -55905,12 +55902,6 @@ ${detail}` });
       }
       function persistedOr(key, fallback) {
         return key in formPersisted ? new Set(formPersisted[key] || []) : fallback;
-      }
-      function currentOr(key, collector, list, fallback) {
-        if (!(key in formPersisted) || !(key in formRendered)) return persistedOr(key, fallback);
-        const locked = new Set(Array.from(list.querySelectorAll('input[type="checkbox"]:disabled'), (cb) => cb.value));
-        const keptLocked = (formPersisted[key] || []).filter((id) => locked.has(id));
-        return new Set(mergeLists(collector(list), [...unlistedOf(formPersisted[key], formRendered[key]), ...keptLocked]));
       }
       function formCarry(key, checked) {
         return mergeLists(checked, unlistedOf(formPersisted[key], formRendered[key]));
@@ -56100,7 +56091,6 @@ ${detail}` });
       function setDialogMode(mode) {
         dialogMode = mode;
         formPersisted = {};
-        formRendered = {};
         const authoring = mode === "template";
         dialogTitle.textContent = authoring ? editingTemplateId ? "Edit Template" : "New Template" : "New Session";
         nameFieldLabel.textContent = authoring ? "Template name" : "Name";
@@ -56143,7 +56133,6 @@ ${detail}` });
         setModeSelect("custom");
         setDialogMode("template");
         formPersisted = formPersistedOf(tpl);
-        formRendered = {};
         applyTypeDefaults({ skipAsyncRefresh: true });
         const settings = await window.api.getSettings();
         setClaudeToolsCache(settings?.claudeTools || []);
@@ -57812,7 +57801,7 @@ Click for live activity`;
           inputResume.value = prefill.resumeId;
           inputFork.checked = false;
           refreshNewSessionSkills(modeSkillDenySet());
-          refreshNewSessionTools(currentOr("disabledTools", collectToolChecklist, inputToolsList, modeToolDenySet()));
+          refreshNewSessionTools(persistedOr("disabledTools", modeToolDenySet()));
           refreshWorktreeForCwd();
           dialogTitle.textContent = "Adopt Session";
           setTimeout(() => inputName.select(), 50);

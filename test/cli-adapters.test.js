@@ -336,7 +336,7 @@ test('t749: a widened section is repainted for the type that widened it', () => 
   // previous claude selection painted into it.
   assert.match(fn, /if \(caps\.injectSkills\) refreshNewSessionInjectSkills\(\);/);
   assert.match(fn, /if \(caps\.skillRoster\) refreshNewSessionSkills\(modeSkillDenySet\(\)\);/);
-  assert.match(fn, /if \(caps\.tools\) refreshNewSessionTools\(currentOr\('disabledTools', collectToolChecklist, inputToolsList, modeToolDenySet\(\)\)\);/);
+  assert.match(fn, /if \(caps\.tools\) refreshNewSessionTools\(persistedOr\('disabledTools', modeToolDenySet\(\)\)\);/);
 
   const guarded = src.slice(src.indexOf('function newSessionSeat()'));
   assert.match(guarded, /async function refreshNewSessionInjectSkills[\s\S]{0,160}if \(!capsFor\(inputType\.value\)\.injectSkills\) return;/);

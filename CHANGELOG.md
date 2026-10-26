@@ -13,7 +13,6 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
-- In the New Session and template dialogs, changing the CLI type, placement or folder keeps the grants you ticked or unticked, instead of restoring the template's saved ones.
 
 ## 5.145.0 — 2026-10-26
 - Editing a template no longer resets its tool, built-in agent and exec grants to mode defaults when you switch placement or CLI type, choosing "(none)" no longer carries the previous template's grants, and the Tools and Agents popovers keep entries they could not show.
