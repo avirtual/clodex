@@ -13,6 +13,8 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+
+## 5.145.0 — 2026-10-26
 - Editing a template no longer resets its tool, built-in agent and exec grants to mode defaults when you switch placement or CLI type, choosing "(none)" no longer carries the previous template's grants, and the Tools and Agents popovers keep entries they could not show.
 - Assistant-class seats auto-deny permission prompts, are hidden from `[agent:who]` and refuse seat-to-seat dms; the stream cost fold is Claude-only; a ticket with no task dir writes COST.json under the project's tasks dir (all shipped in 5.143.0, unlisted there).
 - Phone-access API also gained `GET /api/sessions?state=asleep|all`, a `turn` SSE event, single-flight wake, the `assistant` hello cap, `RESOURCES_VERSION` 3 and 403/503 codes on create (shipped in 5.144.0, unlisted there).
