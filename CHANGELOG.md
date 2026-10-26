@@ -19,7 +19,7 @@ blocks a release.
 - Saving a template or session no longer drops a tool you denied when a lower settings layer also locks that tool off; the deny survives if that layer later changes.
 - A session create whose client token could not be stored now answers `clientToken: false`, so the caller knows to set the token again.
 - The ticket loop no longer reverts a merge whose post-merge suite had no failing tests and only tripped the slow-test gate; the merged notice names the slow tests instead.
-- After a restart, a seat kept warm "Always" shows its hold and can be stopped from the keep-warm menu before it takes a turn; it used to keep pinging with no Stop option, and the menu hid Always on seats that had not taken a turn yet.
+- After a restart, a seat kept warm "Always" shows its hold and can be stopped from the keep-warm menu before it takes a turn; it used to keep pinging with no Stop option.
 
 ## 5.145.1 — 2026-10-26
 - In the New Session and template dialogs, changing the CLI type, placement or folder keeps the grants you ticked or unticked, instead of restoring the template's saved ones.
