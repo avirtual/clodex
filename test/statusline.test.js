@@ -3,7 +3,6 @@
 // and registry dir are injected, so the script output is testable with a fake
 // settings object — no Electron, no real ~/.clodex.
 const { test, after } = require('node:test');
-require('./lib/engine-isolation');
 const assert = require('node:assert');
 const {
   renderClaudeStatusScript, codexStatusLineArg, normalizeProxyBase, resolveProxyBase,
@@ -92,7 +91,7 @@ test('setupClaudeHook: a wire-routed seat with no proxyBase gets the headless st
 test('rebuildAllStatusScripts: a wire-routed seat with no proxyBase stays headless after a settings save', () => {
   const fs = require('fs');
   const path = require('path');
-  const { createEngine } = require('./lib/engine-isolation');
+  const { createEngine } = require('../engine');
   const { pathFor, runDirFor } = require('../clodex-paths');
   const { mkTmpRoot } = require('./lib/tmp-roots');
   const tmp = mkTmpRoot('clodex-hooks-');

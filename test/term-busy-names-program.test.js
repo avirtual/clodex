@@ -1,7 +1,6 @@
 'use strict';
 
 const { test, after } = require('node:test');
-require('./lib/engine-isolation');
 const assert = require('node:assert');
 const path = require('path');
 const { mkTmpRoot } = require('./lib/tmp-roots');
@@ -18,7 +17,7 @@ function boot() {
   dp.createDrawerPtys = (d) => { deps = d; return stub; };
   const tmp = mkTmpRoot('clx-term-busy-');
   try {
-    engine = require('./lib/engine-isolation').createEngine({
+    engine = require('../engine').createEngine({
       userDataPath: tmp,
       seams: { noSeed: true, registryDir: path.join(tmp, 'clodex-home') },
       log: { info() {}, warn() {}, error() {} },

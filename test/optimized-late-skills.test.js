@@ -12,7 +12,7 @@
 // test/optimized-mode-subset.test.js does: a re-typed copy of the collect would
 // assert only that this file agrees with itself.
 
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const { intentEnabled } = require('../intent-catalog');
 const fs = require('node:fs');
@@ -22,7 +22,7 @@ const { capsFor } = require('../cli-adapters');
 
 const ROOT = path.join(__dirname, '..');
 const rendererSrc = fs.readFileSync(path.join(ROOT, 'renderer', 'renderer.js'), 'utf8');
-const { createEngine } = require('./lib/engine-isolation');
+const { createEngine } = require('../engine');
 const { initStores } = require('../stores');
 const { registerIpcHandlers } = require('../ipc-handlers');
 const { createSessionManager } = require('../session-manager');
@@ -31,6 +31,9 @@ const { pathFor, runDirFor } = require('../clodex-paths');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const silent = { info() {}, warn() {}, error() {} };
+process.env.CLODEX_WIRESCOPE = 'off';
+const engines = [];
+after(() => { for (const e of engines) { e.shutdown(); clearInterval(e.manager._pendingPollTimer); } });
 
 function el(tag) {
   const e = {
@@ -346,6 +349,7 @@ function freshBox() {
   fs.cpSync(SEEDED_REGISTRY, registryDir, { recursive: true });
   fs.mkdirSync(path.join(registryDir, 'run'), { recursive: true });
   const engine = createEngine({ userDataPath: tmp, seams: { registryDir }, log: silent });
+  engines.push(engine);
   assert.ok(!fs.existsSync(path.join(tmp, 'agent-defaults.json')),
     'ENTER: no stored defaults — otherwise this is not the shipped-floor case');
   assert.ok(!fs.existsSync(path.join(tmp, 'skills-seen.json')),
@@ -651,4 +655,6 @@ test('t918 pin 11: the New Session collector keeps the asked floor when no row i
     'the asked floor rides through, rather than collapsing to "deny nothing"');
 });
 
+// createEngine leaves background timers running; the same force-exit every other
+// createEngine file uses.
 test('done', () => { setImmediate(() => process.exit(0)); });

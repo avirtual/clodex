@@ -17,7 +17,7 @@ const { test, after } = require('node:test');
 const assert = require('node:assert');
 const os = require('node:os');
 const path = require('node:path');
-const { createEngine, resolveSelfLabel } = require('./lib/engine-isolation');
+const { createEngine, resolveSelfLabel } = require('../engine');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function mkLog() {

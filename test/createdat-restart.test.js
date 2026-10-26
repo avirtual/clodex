@@ -51,7 +51,7 @@ const { intentEnabled } = require('../intent-catalog');
 const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createEngine } = require('./lib/engine-isolation');
+const { createEngine } = require('../engine');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // A fixed point in the past, not a relative offset: ENTER (c). Any re-mint

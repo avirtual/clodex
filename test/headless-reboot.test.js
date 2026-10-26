@@ -12,7 +12,7 @@ const { test, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createEngine } = require('./lib/engine-isolation');
+const { createEngine } = require('../engine');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const {
   SUPERVISED_ENV, UNSUPERVISED_REASON, supervisorDeclared, createHeadlessRestart,

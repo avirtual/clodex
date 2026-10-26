@@ -33,7 +33,7 @@ const path = require('node:path');
 const { teamPromptFile } = require('../team-prompt-dir');
 const { createTeamManifest } = require('../team-manifest');
 const { teamPreflight } = require('../team-preflight');
-const { createEngine } = require('./lib/engine-isolation');
+const { createEngine } = require('../engine');
 const { initStores } = require('../stores');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 

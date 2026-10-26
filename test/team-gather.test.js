@@ -26,7 +26,7 @@ const { badStem, readTeamJson } = require('../team-prompt-dir');
 const { parseIntent } = require('../intent-scanner');
 const { createSessionManager } = require('../session-manager');
 const { registerIpcHandlers } = require('../ipc-handlers');
-const { createEngine } = require('./lib/engine-isolation');
+const { createEngine } = require('../engine');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const silent = { info() {}, warn() {}, error() {} };

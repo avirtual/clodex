@@ -3,7 +3,7 @@
 const { test, after } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
-const { createEngine } = require('./lib/engine-isolation');
+const { createEngine } = require('../engine');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 after(() => { setImmediate(() => process.exit(0)); });

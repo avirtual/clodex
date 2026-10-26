@@ -15,7 +15,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { sweepSpilledMessages, sweepSeatMessages } = require('./lib/engine-isolation');
+const { sweepSpilledMessages, sweepSeatMessages } = require('../engine');
 const { parkDelivery, drainPending, allParkedTexts } = require('../pending-store');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -202,11 +202,11 @@ test('t1265: with imgMaxAgeSec omitted a seat image ages out at maxAgeSec', () =
 });
 
 test('t1265: IMG_MAX_AGE is 24 hours', () => {
-  assert.strictEqual(require('./lib/engine-isolation').IMG_MAX_AGE, 86400);
+  assert.strictEqual(require('../engine').IMG_MAX_AGE, 86400);
 });
 
 test("a spilled body's header states its size in bytes", () => {
-  const { createEngine } = require('./lib/engine-isolation');
+  const { createEngine } = require('../engine');
   const tmp = mkTmpRoot('clx-spill-bytes-');
   const registryDir = path.join(tmp, 'clodex-home');
   const eng = createEngine({
@@ -228,7 +228,7 @@ test("a spilled body's header states its size in bytes", () => {
 
 for (const [ch, want] of [['é', 6400], ['a', 3200]]) {
   test(`a spilled pointer's byte count matches the header's for 3200 × ${JSON.stringify(ch)}`, () => {
-    const { createEngine } = require('./lib/engine-isolation');
+    const { createEngine } = require('../engine');
     const tmp = mkTmpRoot('clx-spill-bytes-');
     const registryDir = path.join(tmp, 'clodex-home');
     const eng = createEngine({

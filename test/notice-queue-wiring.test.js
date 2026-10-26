@@ -34,7 +34,7 @@ sessionManagerModule.createSessionManager = (deps) => {
   return realFactory(deps);
 };
 
-const { createEngine } = require('./lib/engine-isolation');
+const { createEngine } = require('../engine');
 
 function mkEngine() {
   const tmp = mkTmpRoot('clx-notice-wiring-');
