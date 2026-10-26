@@ -339,7 +339,7 @@ test('slow gate: a re-run that hangs is cut at the run deadline, prints TOTALS a
   const r = runRunner({
     files: { 'test/hang.test.js': body },
     slowMs: 150,
-    extraEnv: { CLODEX_TEST_RUN_TIMEOUT_MS: '3500' },
+    extraEnv: { CLODEX_TEST_RUN_TIMEOUT_MS: '3000' },
   });
   assert.match(r.out, /^TOTALS: 2 pass, 0 fail, 2 tests$/m,
     'ENTER: the main run finished inside the deadline and its totals were printed');
