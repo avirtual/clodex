@@ -61,10 +61,11 @@ function formEnv(formPersisted, { mode = 'optimized', type = 'claude', templates
   const sets = {};
   const noop = () => {};
   let api = null;
-  const draw = (key) => (s) => { sets[key] = s; api.rendered()[key] = DRAWN[key]; };
+  const drawn = {};
+  const draw = (key) => (s) => { sets[key] = s; drawn[key] = DRAWN[key]; api.rendered()[key] = DRAWN[key]; };
   const modeListeners = [];
   let templateListener = null;
-  const ticked = (list) => (api.rendered()[list.key] || []).filter((id) => (sets[list.key] || new Set()).has(id));
+  const ticked = (list) => (drawn[list.key] || []).filter((id) => (sets[list.key] || new Set()).has(id));
   const env = {
     unlistedOf, mergeLists, capsFor, isAgentType,
     inputTemplate: { value: '', addEventListener: (_ev, fn) => { templateListener = fn; } },
@@ -82,8 +83,8 @@ function formEnv(formPersisted, { mode = 'optimized', type = 'claude', templates
     setAgentLibCache: noop, renderAgentChecklist: noop, setSkillLibCache: noop,
     renderInjectChecklist: noop, resetNewSessionSkillCollector: noop, renderSkillChecklist: noop,
     modeSkillDenySet: () => new Set(), setClaudeToolsCache: noop,
-    renderToolChecklist: (_el, s) => { sets.disabledTools = s; sets.toolsSync = s; return DRAWN.disabledTools; },
-    renderBuiltinChecklist: (_el, s) => { sets.denyBuiltins = s; return DRAWN.denyBuiltins; },
+    renderToolChecklist: (_el, s) => { sets.disabledTools = s; sets.toolsSync = s; drawn.disabledTools = DRAWN.disabledTools; return DRAWN.disabledTools; },
+    renderBuiltinChecklist: (_el, s) => { sets.denyBuiltins = s; drawn.denyBuiltins = DRAWN.denyBuiltins; return DRAWN.denyBuiltins; },
     modeToolDenySet: () => new Set(TOOL_DENY),
     modeBuiltinDenySet: () => new Set(BUILTIN_DENY),
     getDefaultToolDenyCache: () => TOOL_DENY,
