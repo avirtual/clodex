@@ -2411,7 +2411,7 @@ function registerIpcHandlers(deps) {
   handle('session:retrySpawn', async (e, name) => {
     const entry = persistence.list().find(s => s.name === name);
     if (!entry) return { ok: false, error: 'No saved entry found' };
-    if (entry.class === 'assistant') {
+    if (entry.class === 'assistant' && entry.archivedAt && entry.asleepAt) {
       try {
         const r = await manager.wake(name, { reason: 'restore' });
         return r && r.ok ? { ok: true, io: 'stream' } : (r || { ok: false, error: 'wake failed' });
@@ -2420,8 +2420,16 @@ function registerIpcHandlers(deps) {
       }
     }
     const workspaceId = entry.workspaceId || workspaceOfSender(e);
+    const assistant = entry.class === 'assistant';
+    const cap = assistant && entry.sleep && Number(entry.sleep.maxAwake) > 0 ? Number(entry.sleep.maxAwake) : 0;
     try {
-      await manager.create(
+      const full = cap ? await manager.makeAwakeRoom(entry.template || null, cap, name) : null;
+      if (full) return { ok: false, error: 'at capacity — retry in 30s' };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+    try {
+      const made = await manager.create(
         entry.name,
         entry.type,
         manager.resumeCwdOf(entry),
@@ -2451,9 +2459,12 @@ function registerIpcHandlers(deps) {
         Array.isArray(entry.protectCredentials) ? entry.protectCredentials : null,
         Array.isArray(entry.mcpServers) ? entry.mcpServers : [],
       );
-      return { ok: true, io: entry.io || 'pty' };
+      if (assistant) persistence.upsert({ name, awokeAt: Date.now() });
+      return { ok: true, io: (made && made.io) || entry.io || 'pty' };
     } catch (err) {
       return { ok: false, error: err.message };
+    } finally {
+      if (cap) manager.releaseAwakeRoom(entry.template || null, name);
     }
   });
 
@@ -2461,6 +2472,7 @@ function registerIpcHandlers(deps) {
     manager.clearHintForRecord(name);
     const rec = persistence.get(name);
     persistence.remove(name);
+    if (rec) manager.forgetSeatFiles(name, rec);
     try {
       const w = getDrawerPtys();
       const ws = (rec && rec.workspaceId)

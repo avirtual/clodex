@@ -557,6 +557,11 @@ nothing pointing at a record). The list is the point: a new
 where nobody expects one. ✕ / Cmd+W archives instead of killing for bash shells
 and sandbox rows too.
 
+The ✕ forget (`session:forget`) and Delete Workspace… (`purgeWorkspace`) also
+call `forgetSeatFiles` after the remove: an assistant record loses its whole
+seat dir (`removeSeat`: client-token, brief.md, memory), any other record only
+its `client-token`, so a later seat with the same name never inherits them.
+
 **Real delete of a LIVE session = right-click "Delete Session…"** + native
 confirm. It routes through `manager.destroy` (`ipc-handlers.js` `session:kill`)
 — see the Invariants of docs/map/session-manager.md's kill/destroy section for what it does and in what order. A

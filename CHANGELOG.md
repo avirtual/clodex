@@ -14,6 +14,9 @@ blocks a release.
 
 ## Unreleased
 
+- Forgetting an assistant seat, or purging its workspace, now removes its client token, brief and memory, so a later seat with the same name starts clean. A create without a client token clears any stale one.
+- Retrying an exited or failed assistant from the sidebar resumes its conversation again (5.145.0 restarted it fresh). The phone restart route wakes a sleeping assistant properly and respects the awake cap.
+
 ## 5.145.0 — 2026-10-26
 - Editing a template no longer resets its tool, built-in agent and exec grants to mode defaults when you switch placement or CLI type, choosing "(none)" no longer carries the previous template's grants, and the Tools and Agents popovers keep entries they could not show.
 - Assistant-class seats auto-deny permission prompts, are hidden from `[agent:who]` and refuse seat-to-seat dms; the stream cost fold is Claude-only; a ticket with no task dir writes COST.json under the project's tasks dir (all shipped in 5.143.0, unlisted there).

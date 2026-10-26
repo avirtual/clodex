@@ -4824,12 +4824,26 @@ function createSessionManager(deps) {
         if (!e || !e.name) continue;
         this.clearHintForRecord(e.name);
         getPersistence().remove(e.name);
+        this.forgetSeatFiles(e.name, e);
         dropped.push(e.name);
       }
       if (dropped.length) {
         log.info('session', `workspace ${workspaceId}: dropped ${dropped.length} saved/archived record(s): ${dropped.join(', ')}`);
       }
       return { killed, dropped };
+    }
+
+    forgetSeatFiles(name, rec) {
+      try {
+        if (rec && rec.class === 'assistant') {
+          const r = removeSeat({ root: REGISTRY_DIR, name, fs });
+          for (const f of r.failed) log.warn('session', `forget ${name}: ${f.path} not removed (${f.error})`);
+          return;
+        }
+        fs.unlinkSync(clientTokenPathFor(REGISTRY_DIR, name));
+      } catch (e) {
+        if (!e || e.code !== 'ENOENT') log.warn('session', `forget ${name}: seat files not removed (${e && e.message})`);
+      }
     }
 
     livePids() {

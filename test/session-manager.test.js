@@ -24454,6 +24454,52 @@ test('session:retrySpawn of an archived assistant wakes it instead of create(), 
   assert.deepStrictEqual([rec.wakes, rec.asleepAt, rec.sleepReason, 'archivedAt' in rec], [4, null, null, false]);
 });
 
+function retryHarness(row, t, extra = {}) {
+  const { registerIpcHandlers } = require('../ipc-handlers');
+  const h = mkStreamSeatManager({ persisted: { asst: row, ...(extra.persisted || {}) }, extraDeps: { restartSession: async () => ({ ok: true }) } });
+  t.after(() => h.stopAll());
+  const creates = [];
+  h.m.create = async (...a) => { creates.push(a); return { name: a[0], io: 'stream' }; };
+  const wakes = [];
+  h.m.wake = async (...a) => { wakes.push(a); return { ok: true, state: 'awake' }; };
+  const handlers = new Map();
+  registerIpcHandlers({
+    handle: (ch, fn) => handlers.set(ch, fn), on: () => {},
+    log: { info() {}, warn() {}, error() {} },
+    manager: h.m,
+    persistence: { list: () => [...h.store.values()], get: (n) => h.store.get(n) || null, upsert: (e) => h.store.set(e.name, { ...(h.store.get(e.name) || {}), ...e }) },
+    workspaceOfSender: () => 'ws',
+  });
+  return { h, creates, wakes, retry: () => handlers.get('session:retrySpawn')({}, 'asst') };
+}
+
+const EXITED_ASSISTANT = { ...ASSISTANT_ROW, type: 'claude', io: 'stream', sessionId: 'sid-asst', exitedAt: 5, archivedAt: null, wakes: 3, template: 'avh-tpl', sleep: { idleMs: 600000, maxAwake: 1 } };
+
+test('session:retrySpawn of an exited assistant resumes its sessionId through create, never wake, stamps awokeAt and leaves wakes', async (t) => {
+  const r = retryHarness(EXITED_ASSISTANT, t);
+  const before = Date.now();
+  assert.deepStrictEqual(await r.retry(), { ok: true, io: 'stream' });
+  assert.deepStrictEqual([r.wakes, r.creates.length, r.creates[0][0], r.creates[0][4]], [[], 1, 'asst', 'sid-asst']);
+  const rec = r.h.store.get('asst');
+  assert.strictEqual(rec.wakes, 3);
+  assert.ok(rec.awokeAt >= before, `awokeAt stamped, got ${rec.awokeAt}`);
+  assert.strictEqual(r.h.m._awakeReserved.size, 0, 'the room is released');
+});
+
+test('session:retrySpawn of an asleep assistant wakes it and never creates', async (t) => {
+  const r = retryHarness({ ...EXITED_ASSISTANT, exitedAt: null, archivedAt: 1, asleepAt: 2 }, t);
+  assert.deepStrictEqual(await r.retry(), { ok: true, io: 'stream' });
+  assert.deepStrictEqual([r.wakes, r.creates], [[['asst', { reason: 'restore' }]], []]);
+});
+
+test('session:retrySpawn of an exited assistant at its maxAwake is refused and creates nothing', async (t) => {
+  const r = retryHarness(EXITED_ASSISTANT, t, { persisted: { other: { ...ASSISTANT_ROW, template: 'avh-tpl' } } });
+  r.h.m.sessions.set('other', { name: 'other', _assistant: true, streamBusy: true, activityTs: 1 });
+  assert.deepStrictEqual(await r.retry(), { ok: false, error: 'at capacity — retry in 30s' });
+  assert.deepStrictEqual([r.creates, r.wakes, r.h.store.get('asst').wakes], [[], [], 3]);
+  r.h.m.sessions.delete('other');
+});
+
 test('moveToPeer refuses an assistant record before any peer call', async () => {
   let peerCalls = 0;
   const m = mk({
