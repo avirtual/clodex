@@ -97,8 +97,10 @@ the suite's comment ratchet refuses new comment lines.
 ## RETIME_CAP
 
 Past 12 offenders (`CLODEX_TEST_RETIME_CAP` overrides, for the fixtures) only the
-slowest 12 are re-timed (`retimeAlone`); the rest go unenforced only if every sampled
-one clears alone: three green loaded full runs each tripped more than 12. The phase
+slowest 12 are re-timed (`retimeAlone`) and each is enforced on its own result; the
+rest are never enforced: three green loaded full runs each tripped more than 12, and
+an unsampled one is faster than every enforced one, so a real regression climbs into
+the sample on a later run. The phase
 shares the main run's `runTimeoutMs` deadline, each re-run capped at `slowLimit + 30000`:
 TOTALS prints after it, so outrunning the exec ceiling leaves a green run untotalled.
 
