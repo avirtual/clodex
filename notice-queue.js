@@ -218,7 +218,7 @@ function releaseReviewNoticeFor(lastVersion, hostVersion) {
   return '<system-reminder>'
     + `Release review: the host moved from v${last} to v${host}. `
     + `scripts/release.sh launched a cloud review of v${last}..v${host} (scripts/cloud-review.sh, a detached \`claude --cloud\` session); `
-    + `its only output is ONE GitHub issue: "Release review v${host}: <VERDICT>" left open when it has findings, or "Release review v${host}: CLEAN" opened and closed when it has none; no issue means the review failed. `
+    + `its only output is ONE GitHub issue: "Release review v${host}: <VERDICT>" left open when it has findings, or "Release review v${host}: CLEAN" opened and closed when it has none; a review that never reports opens a NO REPORT issue; no issue at all means the poller itself died. `
     + 'Do not run a review yourself, locally or through the Agent tool. '
     + 'When that issue arrives, triage its findings into FOLLOWUPS before the next ticket; '
     + `if the release was cut without the script, run scripts/cloud-review.sh v${last} v${host}.`
