@@ -24391,19 +24391,19 @@ const proseTurns = (n) => Array.from({ length: n }, (_, i) => [
   { type: 'assistant', message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: `answer ${i}` }] } },
 ]).flat();
 
-for (const [briefTail, kept] of [[3, 3], [0, 6], [99, 6], [undefined, 6]]) {
-  test(`assistant sleep: sleep.briefTail ${briefTail} keeps ${kept} of 6 prose turns in the brief`, async (t) => {
+for (const [briefTail, kept] of [[3, 3], [0, 10], [99, 10], [undefined, 10]]) {
+  test(`assistant sleep: sleep.briefTail ${briefTail} keeps ${kept} of 12 prose turns in the brief`, async (t) => {
     const fs = require('node:fs');
     const { briefPathFor, BRIEF_TAIL } = require('../assistant-sleep');
-    assert.strictEqual(BRIEF_TAIL, 10, 'ENTER: the default tail covers all six turns');
+    assert.ok(BRIEF_TAIL < 12, 'ENTER: the transcript holds more turns than the default tail');
     const { h, writeTranscript } = briefTailHarness(briefTail);
     t.after(() => h.stopAll());
     await h.create('asst');
-    writeTranscript(proseTurns(6));
+    writeTranscript(proseTurns(12));
     assert.deepStrictEqual(await h.m.sleep('asst'), { ok: true, state: 'asleep' });
     const brief = fs.readFileSync(briefPathFor(h.root, 'asst'), 'utf8');
     assert.strictEqual(brief.split('**player:**').length - 1, kept, brief);
-    assert.ok(brief.includes('question 5'), brief);
+    assert.ok(brief.includes('question 11'), brief);
   });
 }
 
