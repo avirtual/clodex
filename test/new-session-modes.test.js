@@ -461,16 +461,16 @@ test("the type-change mode re-apply is catalogsFresh, and registered after apply
     'listeners fire in registration order, and applyTypeDefaults already redrew the tool checklist from this mode');
 });
 
-test('every tool-checklist draw in the dialog goes through modeToolDenySet()', () => {
+test('every tool-checklist draw in the dialog falls back to the mode default unless a template is loaded', () => {
   // Including the SANDBOX path: it draws from the box's catalogs, and a bare
   // `new Set()` there ships an untrimmed roster under a label promising a trim.
   const sandbox = slice('function populateChecklistsFromCatalogs(', '\nasync function restoreHostCatalogs(',
     'the sandbox catalog fill');
-  assert.match(sandbox, /renderToolChecklist\(inputToolsList, persistedOr\('disabledTools', modeToolDenySet\(\)\)\)/,
+  assert.match(sandbox, /renderToolChecklist\(inputToolsList, currentOr\('disabledTools', collectToolChecklist, inputToolsList, modeToolDenySet\(\)\)\)/,
     'a box-placed seat must honour the selected mode like a host one');
   const host = slice('function populateHostCatalogs(', "\ninputName.addEventListener('input'",
     'the host catalog fill');
-  assert.match(host, /renderToolChecklist\(inputToolsList, persistedOr\('disabledTools', modeToolDenySet\(\)\)\)/);
+  assert.match(host, /const disabledTools = currentOr\('disabledTools', collectToolChecklist, inputToolsList, modeToolDenySet\(\)\);\n  formRendered\.disabledTools = renderToolChecklist\(inputToolsList, disabledTools\);/);
 });
 
 // --- programmatic populates ----------------------------------------------
@@ -495,6 +495,10 @@ test('no New Session path draws the skill or built-in checklist with a bare defa
     const draws = (body.match(/refreshNewSessionSkills\s*\(/g) || []).length
       + (body.match(/renderSkillChecklist\(inputSkillsList/g) || []).length;
     sawSkillDraw += draws;
+    if (what === 'adoptSession') {
+      assert.match(body, /refreshNewSessionTools\(currentOr\('disabledTools', collectToolChecklist, inputToolsList, modeToolDenySet\(\)\)\);/,
+        'adoptSession redraws the tool list from the current ticks, falling back to the mode default');
+    }
     assert.ok(!/refreshNewSessionSkills\(\)/.test(body),
       `${what}: a bare refreshNewSessionSkills() re-enables every skill, ignoring the mode`);
     assert.ok(!/renderBuiltinChecklist\(inputBuiltinsList, new Set\(\)\)/.test(body),
