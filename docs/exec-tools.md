@@ -24,7 +24,7 @@ complete, the LAST stderr line kept as a footer. Opt-in per def, because the
 default is what keeps a chatty command from billing its progress log into the
 caller's prompt on every call.
 
-Every argv child gets its env set explicitly, never inherited from the app:
+Every argv child inherits the app env, with these keys set explicitly over it:
 `CLODEX_HOME`, `CLODEX_SEAT`, `CLODEX_NODE`, `CLODEX_CTL`, `CLODEX_TEAM`,
 `CLODEX_TEAM_ROOT`, and `CLODEX_CLIENT_TOKEN` — the trimmed contents of the
 seat's `sessions/<seat>/client-token` (set by a wire create's `client.token` or

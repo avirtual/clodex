@@ -2173,6 +2173,7 @@ function createSessionManager(deps) {
       const session = {
         name, type, cwd, pty: ptyProc, transport, socketPath,
         io: streamIo ? 'stream' : 'pty',
+        _assistant: !!(existingEntry && existingEntry.class === 'assistant'),
         ...(streamIo ? {
           stream: streamSeat,
           streamCodec,
@@ -3093,7 +3094,7 @@ function createSessionManager(deps) {
       const refs = s._turnRefs || [];
       const turn = { ...splitTurnText(rec.text || ''), refs, proposals: s._turnProposals || [], costUsd: rec.costUsd, durationMs: rec.durationMs, isError: !!rec.isError, ts: Date.now() };
       this._dropTurnWaiters(s, turn);
-      if (this._assistantPolicy(s.name) && getRemoteServer()) { try { getRemoteServer().notifyTurn(s.name, turn); } catch {} }
+      if (s._assistant && getRemoteServer()) { try { getRemoteServer().notifyTurn(s.name, turn); } catch {} }
     }
 
     _dropTurnWaiters(s, turn = null) {
@@ -3150,7 +3151,7 @@ function createSessionManager(deps) {
     }
 
     _onStreamPermission(s, rec) {
-      if (this._assistantPolicy(s.name) && s.streamCodec && typeof s.streamCodec.encodePermission === 'function') {
+      if (s._assistant && s.streamCodec && typeof s.streamCodec.encodePermission === 'function') {
         const wire = s.streamCodec.encodePermission(rec.id, 'deny');
         if (wire != null) {
           for (const obj of Array.isArray(wire) ? wire : [wire]) this._streamSend(s, obj);
@@ -3743,10 +3744,13 @@ function createSessionManager(deps) {
 
     async _sleepNow(s, reason) {
       const name = s.name;
+      const p = getPersistence();
+      const entry = p.get(name) || {};
+      const briefTail = entry.sleep && entry.sleep.briefTail;
       let brief = null;
       try {
         const messages = cachedMessages(fs.realpathSync(pathFor(REGISTRY_DIR, name, 'transcript')));
-        brief = composeBrief({ messages, tail: BRIEF_TAIL, maxBytes: BRIEF_MAX_BYTES });
+        brief = composeBrief({ messages, tail: Number.isInteger(briefTail) && briefTail >= 1 && briefTail <= 50 ? briefTail : BRIEF_TAIL, maxBytes: BRIEF_MAX_BYTES });
       } catch { brief = null; }
       if (typeof brief === 'string') {
         const briefPath = briefPathFor(REGISTRY_DIR, name);
@@ -3755,8 +3759,6 @@ function createSessionManager(deps) {
           atomicWriteFileSync(briefPath, brief);
         } catch (e) { log.warn('session', `sleep ${name}: brief write failed: ${e.message}`); }
       }
-      const p = getPersistence();
-      const entry = p.get(name) || {};
       const awokeAt = entry.awokeAt || entry.createdAt || null;
       this._foldSeatCost(s);
       const cost = (p.get(name) || {}).cost || { usd: 0, turns: 0 };
@@ -3786,13 +3788,14 @@ function createSessionManager(deps) {
       const full = cap ? await this.makeAwakeRoom(entry.template || null, cap, name) : null;
       if (full) return full;
       const p = getPersistence();
-      p.setArchived(name, false);
-      p.setExited(name, null);
-      p.upsert({ name, asleepAt: null, sleepReason: null, wakes: (entry.wakes || 0) + 1, awokeAt: Date.now() });
-      log.info('session', `wake ${name} (${reason})`);
       let r;
-      try { r = await restartSession(name, { fresh: true }, entry.workspaceId); }
-      finally { if (cap) this.releaseAwakeRoom(entry.template || null, name); }
+      try {
+        p.setArchived(name, false);
+        p.setExited(name, null);
+        p.upsert({ name, asleepAt: null, sleepReason: null, wakes: (entry.wakes || 0) + 1, awokeAt: Date.now() });
+        log.info('session', `wake ${name} (${reason})`);
+        r = await restartSession(name, { fresh: true }, entry.workspaceId);
+      } finally { if (cap) this.releaseAwakeRoom(entry.template || null, name); }
       if (!r || !r.ok) {
         p.setArchived(name, true);
         p.upsert({ name, asleepAt: entry.asleepAt || Date.now(), sleepReason: entry.sleepReason || null });
@@ -3805,7 +3808,7 @@ function createSessionManager(deps) {
       const p = getPersistence();
       const rows = [];
       for (const s of this.sessions.values()) {
-        if (s._dead || s._archived || (this._awakeEvicting && this._awakeEvicting.has(s.name))) continue;
+        if (s._dead || s._archived || !s._assistant) continue;
         const rec = p.get(s.name);
         if (!rec || rec.class !== 'assistant' || (rec.template || null) !== (template || null)) continue;
         rows.push({ name: s.name, activityTs: s.activityTs || 0, busy: !!(s.streamBusy || s.thinking || (s.outbox && s.outbox.length) || (s.streamPermissions && s.streamPermissions.size)) });
@@ -3816,7 +3819,6 @@ function createSessionManager(deps) {
     async makeAwakeRoom(template, cap, holder) {
       const key = template || null;
       const reservedAll = this._awakeReserved || (this._awakeReserved = new Map());
-      const evicting = this._awakeEvicting || (this._awakeEvicting = new Set());
       const rows = this._awakeAssistantRows(key);
       const live = new Set(rows.map((r) => r.name));
       const reserved = reservedAll.get(key) || new Set();
@@ -3825,10 +3827,8 @@ function createSessionManager(deps) {
       if (rows.length + pending >= cap && !victim) return { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000 };
       reservedAll.set(key, reserved.add(holder));
       if (!victim) return null;
-      evicting.add(victim);
       try { await this._sleepNow(this.sessions.get(victim), 'evicted'); }
       catch (e) { this.releaseAwakeRoom(key, holder); throw e; }
-      finally { evicting.delete(victim); }
       return null;
     }
 
@@ -4190,6 +4190,7 @@ function createSessionManager(deps) {
       if (this.sessions.get(name)?.clone) return { ok: false, error: `${name} is a scratch clone — cancel it from its parent instead` };
       const entry = getPersistence().get(name);
       if (!entry) return { ok: false, error: `Session not found: ${name}` };
+      if (entry.class === 'assistant') return { ok: false, error: `${name} is an assistant seat — it belongs to the host its game talks to, so it cannot be moved` };
       if (entry.worktree && entry.worktree.path) {
         return { ok: false, error: `${name} runs in a ticket worktree (${entry.worktree.path}) — that checkout belongs to the ticket loop, so it cannot be moved.` };
       }
@@ -6179,7 +6180,7 @@ function createSessionManager(deps) {
         }
         case 'who': {
           const localAgents = Array.from(this.sessions.values())
-            .filter(s => s.agentType && !s.clone && !this._assistantPolicy(s.name))
+            .filter(s => s.agentType && !s.clone && !s._assistant)
             .map(s => ({ name: s.name, label: peerStatusLabel({
               state: s.activityState || 'idle',
               idleMs: Date.now() - (s.activityTs || Date.now()),
@@ -7011,7 +7012,7 @@ function createSessionManager(deps) {
         }
         const id = 'p-' + nodeCrypto.randomBytes(6).toString('hex');
         server.notifyProposal(who, { cmd, id, payload: v.value });
-        (session._turnProposals || (session._turnProposals = [])).push({ cmd, id, payload: v.value });
+        if (session.io === 'stream') (session._turnProposals || (session._turnProposals = [])).push({ cmd, id, payload: v.value });
         reply(`${cmd}: proposed #${id} — the player confirms in the game`);
         log.info('intent', `exec ${cmd} by ${who}: proposal #${id}`);
         this._broadcast('ipc-message', { type: 'exec', from: who, to: cmd, body: `proposal #${id}` });

@@ -1716,3 +1716,11 @@ test('t1842: a template protectCredentials list rides the ticket and review shap
   const plainTeam = teamWith({ hand: { worktree: true, template: 'hand-plain' } });
   assert.strictEqual(bare.resolveSeatShape(plainTeam, 'hand', 'ticket', LEAD).protectCredentials, null);
 });
+
+test('an assistant-class template cannot back a ticket seat or a reviewer; a normal template still resolves', () => {
+  const m = managerWith([{ name: 'asst', type: 'claude', class: 'assistant', sleep: { maxAwake: 1 } }, { name: 'ht', type: 'claude' }]);
+  const team = teamWith({ hand: { worktree: true, template: 'asst' }, reviewer: { template: 'asst' }, other: { worktree: true, template: 'ht' } });
+  assert.throws(() => m.resolveSeatShape(team, 'hand', 'ticket', LEAD), { message: 'assistant templates cannot back a ticket or review seat' });
+  assert.throws(() => m.resolveSeatShape(team, 'reviewer', 'review', LEAD), { message: 'assistant templates cannot back a ticket or review seat' });
+  assert.strictEqual(m.resolveSeatShape(team, 'other', 'ticket', LEAD).tpl.name, 'ht');
+});

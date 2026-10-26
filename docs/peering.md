@@ -126,10 +126,13 @@ sets the seat's game client token (`[\x21-\x7e]{16,512}`, written 0600 to
 `sessions/<name>/client-token`; 200 `{ok, set:true}`), clears it on null or `''`
 (200 `{ok, set:false}`), 404 for an unknown seat, 400 `bad client token`; a create
 body's `client.token` sets it the same way after the spawn (a bad one is a 400 and
-nothing spawns); the token reaches only exec children, as `CLODEX_CLIENT_TOKEN`, never
+nothing spawns; a team-lead create refuses any token with a 400; a write that fails after
+the spawn answers ok with `warnings: ['client token not stored']`, so set it again with this
+PUT); the token reaches only exec children, as `CLODEX_CLIENT_TOKEN`, never
 an answer, the record or the CLI env; SSE `proposal` `{name, cmd, id, payload}` when
 the seat runs an exec def marked `proposal` (the player confirms it in the game;
-nothing runs on the box); SSE `turn` `{name, text, intents, refs, proposals, costUsd, durationMs,
+nothing runs on the box; the event is best-effort, dropped when no client is connected, and
+`turn.proposals` is the durable record); SSE `turn` `{name, text, intents, refs, proposals, costUsd, durationMs,
 isError, ts}` after each assistant turn (`text` is the prose of the CLI's final
 result, `intents` the `{type, sub?, cmd?}` heads, never bodies, `refs` every dm `ref` written since the previous turn, always a list, `proposals` every `{cmd, id, payload}` proposed since the previous turn, always a list); a dm to a sleeper whose `sleep.wakeOn` is a list without `'message'` is a `409` and wakes nothing; a reminder firing on a sleeper whose `sleep.wakeOn` lists `'reminder'` wakes it and the reply arrives as an unsolicited `turn`; create
 `{name, template, cwd?}` spawns from a library template name only; DELETE on

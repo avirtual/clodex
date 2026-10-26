@@ -378,26 +378,25 @@ for (const entry of ENTRY) {
     } finally { w.stop(); }
   });
 
-  test(`${entry.label} — an assistant-class template puts class, template and sleep on the record`, async () => {
+  test(`${entry.label} — an assistant-class template is refused and spawns nothing`, async () => {
     const w = mkWorld({ tplExtra: { class: 'assistant', sleep: { idleMs: 1 } } });
     try {
-      const seat = await entry.spawn(w);
-      assert.ok(w.spawns.length === 1 && w.m.sessions.has(seat), `ENTER: exactly one spawn named ${seat} was expected`);
-      const rec = w.persistence.get(seat) || {};
-      assert.deepStrictEqual({ class: rec.class, template: rec.template, sleep: rec.sleep },
-        { class: 'assistant', template: entry.tplName, sleep: { idleMs: 1 } });
-    } finally { w.stop(); }
-  });
-
-  test(`${entry.label} — the record's sleep policy is a copy, not the template's object`, async () => {
-    const sleep = { idleMs: 1 };
-    const w = mkWorld({ tplExtra: { class: 'assistant', sleep } });
-    try {
-      const seat = await entry.spawn(w);
-      const rec = w.persistence.get(seat) || {};
-      assert.deepStrictEqual(rec.sleep, { idleMs: 1 }, 'ENTER: the record carries the policy');
-      sleep.idleMs = 99;
-      assert.deepStrictEqual((w.persistence.get(seat) || {}).sleep, { idleMs: 1 });
+      const said = [];
+      const hear = (_s, text) => { said.push(String(text)); };
+      w.m._injectText = hear;
+      w.m._taskAck = hear;
+      w.m._gatedDeliver = (_t, _f, body) => { said.push(String(body)); return { queued: true }; };
+      if (entry.tplName === 'rv-tpl') w.m._handleTeamReview(w.lead, 'review the branch', { onReply: (t) => said.push(String(t)) });
+      else {
+        w.m._handleTask(w.lead, { type: 'task', sub: 'add', who: 'hand', id: null, body: 'shaped work' });
+        const ts = w.tstore.load(w.repo);
+        for (const t of ts) t.taskDir = t.taskDir || path.join(clodexPaths.projectDirFor(w.home, w.repo), 'tasks', `${t.id}-fixture`, 'SPEC.md');
+        w.tstore.save(w.repo, ts);
+        w.m._handleTask(w.lead, { type: 'task', sub: 'start', who: null, id: ts[0].id, body: '' });
+      }
+      const REASON = 'assistant templates cannot back a ticket or review seat';
+      assert.ok(await w.until(() => said.some((t) => t.includes(REASON))), `the refusal names the reason: ${JSON.stringify(said)}`);
+      assert.strictEqual(w.spawns.length, 0);
     } finally { w.stop(); }
   });
 

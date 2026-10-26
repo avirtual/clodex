@@ -4417,6 +4417,7 @@ function createTicketMethods(deps, shared) {
         team,
       );
       const tpl = (shape && shape.tpl) || null;
+      if (tpl && tpl.class === 'assistant') throw new Error('assistant templates cannot back a ticket or review seat');
       const type = review ? seatType(tpl, null) : seatType(tpl, opener);
       const openerAdapter = adapterFor(opener.type) || adapterFor(DEFAULT_TYPE);
       const seatAdapter = adapterFor(type);
@@ -4584,7 +4585,11 @@ function createTicketMethods(deps, shared) {
       if (tpl.stripLevel === 1 || tpl.stripLevel === 2) getPersistence().setStripLevel(name, tpl.stripLevel);
       if (tpl.autoCompact === false) getPersistence().setAutoCompact(name, false);
       if (Array.isArray(tpl.plugins)) getPersistence().setPlugins(name, tpl.plugins);
-      if (tpl.class === 'assistant') getPersistence().upsert({ name, class: 'assistant', template: tpl.name || null, awokeAt: Date.now(), ...(tpl.sleep && typeof tpl.sleep === 'object' ? { sleep: { ...tpl.sleep } } : {}) });
+      if (tpl.class === 'assistant') {
+        getPersistence().upsert({ name, class: 'assistant', template: tpl.name || null, awokeAt: Date.now(), ...(tpl.sleep && typeof tpl.sleep === 'object' ? { sleep: { ...tpl.sleep } } : {}) });
+        const live = this.sessions.get(name);
+        if (live) live._assistant = true;
+      }
     },
 
     // `mode` defaults to 'worktree', never 'spawn', so a path that never asked for one cannot put a seat in the operator's checkout.

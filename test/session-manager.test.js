@@ -1039,20 +1039,38 @@ test('who: lists agent sessions from all workspaces, flat, self excluded', async
   assert.strictEqual(injected[0], '[agent:peers] b (idle)');
 });
 
-test('who: an assistant-class seat is not listed', async () => {
+test('who: an assistant-flagged seat is not listed, with no record lookup for it', async () => {
   const injected = [];
+  const gets = [];
   const m = mk({
     registry: { listPeers: () => [] },
     getPeerManager: () => null,
     peerStatusLabel: () => 'idle',
-    getPersistence: () => ({ list: () => [], get: (n) => (n === 'asst' ? { name: 'asst', class: 'assistant' } : null) }),
+    getPersistence: () => ({ list: () => [], get: (n) => { gets.push(n); return null; } }),
   });
   m._injectText = (s, text) => injected.push(text);
   m.sessions.set('a', { name: 'a', agentType: 'claude', workspaceId: 'ws1' });
   m.sessions.set('b', { name: 'b', agentType: 'claude', workspaceId: 'ws1' });
-  m.sessions.set('asst', { name: 'asst', agentType: 'claude', workspaceId: 'ws1' });
+  m.sessions.set('asst', { name: 'asst', agentType: 'claude', workspaceId: 'ws1', _assistant: true });
   await m._handleIntent('a', { type: 'who' });
   assert.deepStrictEqual(injected, ['[agent:peers] b (idle)']);
+  assert.deepStrictEqual(gets.filter((n) => n === 'asst'), []);
+});
+
+test('who: three live non-assistant seats cost no persistence get for any listed seat', async () => {
+  const injected = [];
+  const gets = [];
+  const m = mk({
+    registry: { listPeers: () => [] },
+    getPeerManager: () => null,
+    peerStatusLabel: () => 'idle',
+    getPersistence: () => ({ list: () => [], get: (n) => { gets.push(n); return null; } }),
+  });
+  m._injectText = (s, text) => injected.push(text);
+  for (const n of ['a', 'b', 'c']) m.sessions.set(n, { name: n, agentType: 'claude', workspaceId: 'ws1' });
+  await m._handleIntent('a', { type: 'who' });
+  assert.deepStrictEqual(injected, ['[agent:peers] b (idle), c (idle)'], 'ENTER: both peers listed');
+  assert.deepStrictEqual(gets.filter((n) => n !== 'a'), []);
 });
 
 // --- Fire-time intent gate (per-session `intents` allowlist) ------------------
@@ -22051,7 +22069,7 @@ function capHarness(siblings, sleepers = ['asst']) {
   const restartSession = async (...a) => {
     calls.push(a);
     await new Promise((r) => setImmediate(r));
-    h.m.sessions.set(a[0], { name: a[0], activityTs: 900 });
+    h.m.sessions.set(a[0], { name: a[0], _assistant: true, activityTs: 900 });
     return { ok: true };
   };
   const h = mkStreamSeatManager({ persisted, extraDeps: { restartSession } });
@@ -22063,8 +22081,8 @@ function capHarness(siblings, sleepers = ['asst']) {
 test('assistant wake at maxAwake: the idlest idle sibling of the same template is evicted, then the wake proceeds', async (t) => {
   const { h, calls, slept } = capHarness({ s1: 'tpl-a', s2: 'tpl-a' });
   t.after(() => h.stopAll());
-  h.m.sessions.set('s1', { name: 's1', activityTs: 500 });
-  h.m.sessions.set('s2', { name: 's2', activityTs: 100 });
+  h.m.sessions.set('s1', { name: 's1', _assistant: true, activityTs: 500 });
+  h.m.sessions.set('s2', { name: 's2', _assistant: true, activityTs: 100 });
   assert.strictEqual(h.m._awakeAssistantRows('tpl-a').length, 2, 'ENTER: two awake siblings fill the cap');
   assert.deepStrictEqual(await h.m.wake('asst'), { ok: true, state: 'awake' });
   assert.deepStrictEqual(slept, [['s2', 'evicted']]);
@@ -22074,8 +22092,8 @@ test('assistant wake at maxAwake: the idlest idle sibling of the same template i
 test('assistant wake at maxAwake with every sibling busy answers 503 and never unarchives', async (t) => {
   const { h, calls, slept } = capHarness({ s1: 'tpl-a', s2: 'tpl-a' });
   t.after(() => h.stopAll());
-  h.m.sessions.set('s1', { name: 's1', activityTs: 500, streamBusy: true });
-  h.m.sessions.set('s2', { name: 's2', activityTs: 100, thinking: true });
+  h.m.sessions.set('s1', { name: 's1', _assistant: true, activityTs: 500, streamBusy: true });
+  h.m.sessions.set('s2', { name: 's2', _assistant: true, activityTs: 100, thinking: true });
   assert.deepStrictEqual(await h.m.wake('asst'), { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000 });
   assert.deepStrictEqual(slept, []);
   assert.deepStrictEqual(calls, []);
@@ -22085,8 +22103,8 @@ test('assistant wake at maxAwake with every sibling busy answers 503 and never u
 test('assistant wake: a sibling of another template does not count toward the cap', async (t) => {
   const { h, calls, slept } = capHarness({ s1: 'tpl-a', o1: 'tpl-b' });
   t.after(() => h.stopAll());
-  h.m.sessions.set('s1', { name: 's1', activityTs: 500, streamBusy: true });
-  h.m.sessions.set('o1', { name: 'o1', activityTs: 100, streamBusy: true });
+  h.m.sessions.set('s1', { name: 's1', _assistant: true, activityTs: 500, streamBusy: true });
+  h.m.sessions.set('o1', { name: 'o1', _assistant: true, activityTs: 100, streamBusy: true });
   assert.strictEqual([...h.m.sessions.keys()].length, 2, 'ENTER: two awake assistants');
   assert.deepStrictEqual(await h.m.wake('asst'), { ok: true, state: 'awake' });
   assert.deepStrictEqual(slept, []);
@@ -22096,7 +22114,7 @@ test('assistant wake: a sibling of another template does not count toward the ca
 test('assistant wake: makeAwakeRoom reserves a granted seat until it is live and releaseAwakeRoom frees it, so two wakes at cap-1 cannot both enter', async (t) => {
   const busy = capHarness({ s1: 'tpl-a' }, ['x', 'y']);
   t.after(() => busy.h.stopAll());
-  busy.h.m.sessions.set('s1', { name: 's1', activityTs: 100, streamBusy: true });
+  busy.h.m.sessions.set('s1', { name: 's1', _assistant: true, activityTs: 100, streamBusy: true });
   assert.strictEqual(busy.h.m._awakeAssistantRows('tpl-a').length, 1, 'ENTER: one awake sibling, cap 2');
   assert.deepStrictEqual(await Promise.all([busy.h.m.wake('x'), busy.h.m.wake('y')]),
     [{ ok: true, state: 'awake' }, { ok: false, code: 503, error: 'at capacity', retryAfterMs: 30000 }]);
@@ -22104,7 +22122,7 @@ test('assistant wake: makeAwakeRoom reserves a granted seat until it is live and
   assert.strictEqual(busy.h.m._awakeReserved.size, 0, 'a live seat releases its reservation');
   const idle = capHarness({ s1: 'tpl-a' }, ['x', 'y']);
   t.after(() => idle.h.stopAll());
-  idle.h.m.sessions.set('s1', { name: 's1', activityTs: 100, outbox: [] });
+  idle.h.m.sessions.set('s1', { name: 's1', _assistant: true, activityTs: 100, outbox: [] });
   assert.deepStrictEqual(await Promise.all([idle.h.m.wake('x'), idle.h.m.wake('y')]),
     [{ ok: true, state: 'awake' }, { ok: true, state: 'awake' }]);
   assert.deepStrictEqual(idle.slept, [['s1', 'evicted']]);
@@ -22114,8 +22132,8 @@ test('assistant wake: a sibling with queued input or a pending permission is bus
   for (const extra of [{ outbox: ['hi'] }, { streamPermissions: new Map([['p', {}]]) }]) {
     const { h, calls, slept } = capHarness({ s1: 'tpl-a', s2: 'tpl-a' });
     t.after(() => h.stopAll());
-    h.m.sessions.set('s1', { name: 's1', activityTs: 500, streamBusy: true });
-    h.m.sessions.set('s2', { name: 's2', activityTs: 100, ...extra });
+    h.m.sessions.set('s1', { name: 's1', _assistant: true, activityTs: 500, streamBusy: true });
+    h.m.sessions.set('s2', { name: 's2', _assistant: true, activityTs: 100, ...extra });
     assert.strictEqual((await h.m.wake('asst')).code, 503, Object.keys(extra)[0]);
     assert.deepStrictEqual([slept, calls], [[], []]);
   }
@@ -23603,6 +23621,7 @@ test('assistant seat: a permission request is auto-denied with no attention and 
   const s = c.h.m.sessions.get('pa1');
   t.after(() => { c.clearTimers(s); s._dead = true; });
   c.h.store.set('pa1', { ...c.h.store.get('pa1'), class: 'assistant' });
+  s._assistant = true;
   const bcast = [];
   c.h.m._broadcast = (ch, msg) => bcast.push([ch, msg]);
   c.h.line('pa1', { rec: { kind: 'init', sessionId: 'ms-1', turnEnd: true } });
@@ -24310,4 +24329,165 @@ test('the muse sse rule lives in mcp-plan museExpressible, not as a type literal
     assert.ok(src.includes('museExpressible('), `ENTER: ${f} calls museExpressible`);
     assert.ok(!src.includes("'sse'"), `${f} carries no 'sse' literal`);
   }
+});
+
+test('assistant wake: a throw from the record writes after makeAwakeRoom still releases the reservation', async (t) => {
+  const { h, calls } = capHarness({});
+  t.after(() => h.stopAll());
+  const realSet = h.store.set.bind(h.store);
+  h.store.set = () => { throw new Error('upsert boom'); };
+  await assert.rejects(h.m.wake('asst'), /upsert boom/);
+  h.store.set = realSet;
+  assert.ok(h.m._awakeReserved, 'ENTER: makeAwakeRoom reserved a room');
+  assert.deepStrictEqual([...h.m._awakeReserved.keys()], []);
+  assert.deepStrictEqual(calls, []);
+});
+
+test('makeAwakeRoom: no eviction set survives in the source', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf8');
+  assert.ok(src.includes('async makeAwakeRoom('), 'ENTER: the scan reads the module that holds makeAwakeRoom');
+  assert.strictEqual(src.includes('_awakeEvicting'), false);
+});
+
+test('assistant wake at maxAwake 1: the evicted victim is archived synchronously, so its room goes to the waker', async (t) => {
+  const calls = [];
+  const h = mkStreamSeatManager({
+    persisted: {
+      asst: { class: 'assistant', template: 'tpl-a', sleep: { maxAwake: 1 }, archivedAt: 1, asleepAt: 2 },
+      s1: { class: 'assistant', template: 'tpl-a', sleep: { maxAwake: 1 } },
+    },
+    extraDeps: { restartSession: async (n) => { calls.push(n); h.m.sessions.set(n, { name: n, _assistant: true, activityTs: 900 }); return { ok: true }; } },
+  });
+  t.after(() => h.stopAll());
+  const killed = [];
+  h.m.sessions.set('s1', { name: 's1', _assistant: true, activityTs: 100, stream: { kill: () => killed.push('s1') } });
+  assert.strictEqual(h.m._awakeAssistantRows('tpl-a').length, 1, 'ENTER: the cap is full');
+  assert.deepStrictEqual(await h.m.wake('asst'), { ok: true, state: 'awake' });
+  assert.deepStrictEqual([calls, killed], [['asst'], ['s1']]);
+  assert.strictEqual(h.store.get('s1').sleepReason, 'evicted');
+  assert.deepStrictEqual(h.m._awakeAssistantRows('tpl-a').map((r) => r.name), ['asst']);
+});
+
+function briefTailHarness(briefTail) {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { pathFor } = require('../clodex-paths');
+  const h = mkStreamSeatManager({ persisted: { asst: { class: 'assistant', sleep: { idleMs: 600000, ...(briefTail === undefined ? {} : { briefTail }) } } } });
+  const writeTranscript = (rows) => {
+    const jsonl = path.join(h.root, 'conv.jsonl');
+    fs.writeFileSync(jsonl, rows.map((o) => JSON.stringify(o)).join('\n') + '\n');
+    const link = pathFor(h.root, 'asst', 'transcript');
+    fs.mkdirSync(path.dirname(link), { recursive: true });
+    try { fs.unlinkSync(link); } catch {}
+    fs.symlinkSync(jsonl, link);
+  };
+  return { h, writeTranscript };
+}
+
+const proseTurns = (n) => Array.from({ length: n }, (_, i) => [
+  { type: 'user', message: { role: 'user', content: `question ${i}` } },
+  { type: 'assistant', message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: `answer ${i}` }] } },
+]).flat();
+
+for (const [briefTail, kept] of [[3, 3], [0, 10], [99, 10], [undefined, 10]]) {
+  test(`assistant sleep: sleep.briefTail ${briefTail} keeps ${kept} of 12 prose turns in the brief`, async (t) => {
+    const fs = require('node:fs');
+    const { briefPathFor, BRIEF_TAIL } = require('../assistant-sleep');
+    assert.ok(BRIEF_TAIL < 12, 'ENTER: the transcript holds more turns than the default tail');
+    const { h, writeTranscript } = briefTailHarness(briefTail);
+    t.after(() => h.stopAll());
+    await h.create('asst');
+    writeTranscript(proseTurns(12));
+    assert.deepStrictEqual(await h.m.sleep('asst'), { ok: true, state: 'asleep' });
+    const brief = fs.readFileSync(briefPathFor(h.root, 'asst'), 'utf8');
+    assert.strictEqual(brief.split('**player:**').length - 1, kept, brief);
+    assert.ok(brief.includes('question 11'), brief);
+  });
+}
+
+test('assistant sleep: a transcript with no prose rows leaves the previous brief.md byte-identical', async (t) => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { briefPathFor } = require('../assistant-sleep');
+  const { h, writeTranscript } = briefTailHarness(undefined);
+  t.after(() => h.stopAll());
+  await h.create('asst');
+  const briefPath = briefPathFor(h.root, 'asst');
+  fs.mkdirSync(path.dirname(briefPath), { recursive: true });
+  fs.writeFileSync(briefPath, '## Before you slept\n\nkept bytes\n');
+  writeTranscript([
+    { type: 'assistant', message: { role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'ls' } }] } },
+    { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } },
+  ]);
+  assert.deepStrictEqual(await h.m.sleep('asst'), { ok: true, state: 'asleep' });
+  assert.strictEqual(typeof h.store.get('asst').asleepAt, 'number', 'ENTER: the sleep ran');
+  assert.strictEqual(fs.readFileSync(briefPath, 'utf8'), '## Before you slept\n\nkept bytes\n');
+  assert.deepStrictEqual(fs.readdirSync(path.dirname(briefPath)).filter((f) => f.startsWith('.brief.md.tmp.')), []);
+});
+
+test('session:retrySpawn of an archived assistant wakes it instead of create(), stamping wakes and clearing asleepAt', async (t) => {
+  const { registerIpcHandlers } = require('../ipc-handlers');
+  const restarts = [];
+  const h = mkStreamSeatManager({
+    persisted: { asst: { ...ASSISTANT_ROW, type: 'claude', io: 'stream', archivedAt: 1, asleepAt: 2, sleepReason: 'idle', wakes: 3 } },
+    extraDeps: { restartSession: async (...a) => { restarts.push(a); return { ok: true }; } },
+  });
+  t.after(() => h.stopAll());
+  const creates = [];
+  h.m.create = async (...a) => { creates.push(a); };
+  const wakes = [];
+  const realWake = h.m.wake.bind(h.m);
+  h.m.wake = (...a) => { wakes.push(a); return realWake(...a); };
+  const handlers = new Map();
+  registerIpcHandlers({
+    handle: (ch, fn) => handlers.set(ch, fn), on: () => {},
+    log: { info() {}, warn() {}, error() {} },
+    manager: h.m,
+    persistence: { list: () => [...h.store.values()], get: (n) => h.store.get(n) || null },
+    workspaceOfSender: () => 'ws',
+  });
+  assert.deepStrictEqual(await handlers.get('session:retrySpawn')({}, 'asst'), { ok: true, io: 'stream' });
+  assert.deepStrictEqual([wakes, creates, restarts.length], [[['asst', { reason: 'restore' }]], [], 1]);
+  const rec = h.store.get('asst');
+  assert.deepStrictEqual([rec.wakes, rec.asleepAt, rec.sleepReason, 'archivedAt' in rec], [4, null, null, false]);
+});
+
+test('moveToPeer refuses an assistant record before any peer call', async () => {
+  let peerCalls = 0;
+  const m = mk({
+    getPersistence: () => ({ list: () => [], get: (n) => (n === 'asst' ? { name: 'asst', class: 'assistant', type: 'claude', sessionId: 'sid' } : null) }),
+    getPeerManager: () => { peerCalls++; return null; },
+  });
+  assert.deepStrictEqual(await m.moveToPeer('asst', 'peer-1'),
+    { ok: false, error: 'asst is an assistant seat — it belongs to the host its game talks to, so it cannot be moved' });
+  assert.strictEqual(peerCalls, 0);
+});
+
+test('s._assistant: create() flags a seat from its assistant record, and _applyTemplatePersistence flags a first spawn', async (t) => {
+  const h = mkStreamSeatManager({ persisted: { asst: { ...ASSISTANT_ROW }, plain: {} } });
+  t.after(() => h.stopAll());
+  await h.create('asst');
+  await h.create('plain');
+  assert.deepStrictEqual([h.m.sessions.get('asst')._assistant, h.m.sessions.get('plain')._assistant], [true, false]);
+  h.m.sessions.set('fresh', { name: 'fresh' });
+  const sleep = { idleMs: 1 };
+  h.m._applyTemplatePersistence('fresh', { name: 'tpl', class: 'assistant', sleep });
+  assert.deepStrictEqual([h.store.get('fresh').class, h.store.get('fresh').template, h.store.get('fresh').sleep], ['assistant', 'tpl', { idleMs: 1 }], 'ENTER: the class was stamped');
+  sleep.idleMs = 99;
+  assert.deepStrictEqual(h.store.get('fresh').sleep, { idleMs: 1 }, 'the record keeps a copy of the policy');
+  assert.strictEqual(h.m.sessions.get('fresh')._assistant, true);
+});
+
+test('_awakeAssistantRows: a live seat without the assistant flag costs no record lookup', (t) => {
+  const h = mkStreamSeatManager({ persisted: { p1: {} } });
+  t.after(() => h.stopAll());
+  h.m.sessions.set('p1', { name: 'p1', activityTs: 1 });
+  h.m.sessions.set('a1', { name: 'a1', _assistant: true, activityTs: 1 });
+  const gets = [];
+  const realGet = h.store.get.bind(h.store);
+  h.store.get = (n) => { gets.push(n); return realGet(n); };
+  assert.deepStrictEqual(h.m._awakeAssistantRows(null), []);
+  assert.deepStrictEqual(gets, ['a1'], 'ENTER: the flagged seat was looked up');
 });

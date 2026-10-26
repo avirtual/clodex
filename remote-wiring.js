@@ -381,14 +381,27 @@ function createRemoteWiring(deps) {
     return { ok: true, set: true };
   }
 
-  function storeCreateToken(name, token) {
-    try { writeClientToken(name, token); }
-    catch (e) { log.error('session', `create ${name}: cannot write client token: ${e.message}`); }
+  function storeCreateToken(name, token, out) {
+    try { writeClientToken(name, token); return out; }
+    catch (e) {
+      log.error('session', `create ${name}: cannot write client token: ${e.message}`);
+      try { fs.unlinkSync(clientTokenPathFor(REGISTRY_DIR, name)); } catch {}
+      return { ...out, warnings: [...(Array.isArray(out.warnings) ? out.warnings : []), 'client token not stored'] };
+    }
   }
+
+  const creatingNames = new Set();
 
   async function spawnFromTemplate(name, template, rawCwdIn, mode = '') {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(template)) return { ok: false, error: 'template must be a library template name' };
     if (!AGENT_NAME_RE.test(name)) return { ok: false, error: `invalid name "${name}" — allowed [a-zA-Z0-9._-], 1-64 chars` };
+    if (creatingNames.has(name)) return { ok: false, error: `name taken "${name}"` };
+    creatingNames.add(name);
+    try { return await spawnFromTemplateClaimed(name, template, rawCwdIn, mode); }
+    finally { creatingNames.delete(name); }
+  }
+
+  async function spawnFromTemplateClaimed(name, template, rawCwdIn, mode) {
     if (manager.sessions.has(name) || getPersistence().get(name)) return { ok: false, error: `name taken "${name}"` };
     const rawCwd = mode === 'template' ? '' : rawCwdIn;
     const resolved = manager._resolveSpawnTemplate({ name: 'wire', cwd: rawCwd || os.homedir() }, template);
@@ -714,10 +727,12 @@ function createRemoteWiring(deps) {
           if (mode === 'template' && !(typeof b.template === 'string' && b.template.trim())) return { ok: false, code: 403, error: 'create: this host accepts template creates only' };
           if (typeof b.template === 'string' && b.template.trim()) {
             const made = await spawnFromTemplate(name, b.template.trim(), rawCwd, mode);
-            if (made.ok && clientToken != null) storeCreateToken(name, clientToken);
-            return made;
+            return made.ok && clientToken != null ? storeCreateToken(name, clientToken, made) : made;
           }
-          if (typeof b.team === 'string' && b.team.trim()) return spawnTeamLead(name, b.team.trim());
+          if (typeof b.team === 'string' && b.team.trim()) {
+            if (clientToken != null) return { ok: false, code: 400, error: 'client token: not accepted for a team-lead create' };
+            return spawnTeamLead(name, b.team.trim());
+          }
           const type = b.type;
           const t = (type === 'codex') ? 'codex' : (type === 'claude') ? 'claude' : (type === 'bash') ? 'bash' : null;
           if (!AGENT_NAME_RE.test(name)) {
@@ -773,16 +788,17 @@ function createRemoteWiring(deps) {
             // so NO agentDefaults fallback (Decision 6). Absent key → no seed, box
             // behavior unchanged.
             if (b.stripLevel === 1 || b.stripLevel === 2) getPersistence().setStripLevel(name, b.stripLevel);
-            if (clientToken != null) storeCreateToken(name, clientToken);
-            if (getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
-            log.info('session', `create ${name} (${t}) via peer @ ${dir} pid=${out.pid}`);
-            return {
+            const answer = {
               ok: true, name: out.name, type: out.type, pid: out.pid,
 // Echo the env keys actually applied so a caller can detect a silent drop by
 // an older box. Keys only, never values — this is a read/ack surface.
               envKeys: sessionEnvKeys,
               ...(out.warnings && out.warnings.length ? { warnings: out.warnings } : {}),
             };
+            const stored = clientToken != null ? storeCreateToken(name, clientToken, answer) : answer;
+            if (getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
+            log.info('session', `create ${name} (${t}) via peer @ ${dir} pid=${out.pid}`);
+            return stored;
           } catch (e) {
             log.error('session', `create ${name} via peer failed: ${e.message}`);
             return { ok: false, error: `spawn failed: ${e.message}` };

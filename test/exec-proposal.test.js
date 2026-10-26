@@ -31,7 +31,7 @@ function harness({ remote = null, def } = {}) {
   const bcast = [];
   m._injectText = (_s, text) => injected.push(text);
   m._broadcast = (ch, msg) => bcast.push(msg);
-  const session = { name: 'a', agentType: 'claude', workspaceId: 'ws1', cwd: '/tmp' };
+  const session = { name: 'a', agentType: 'claude', workspaceId: 'ws1', cwd: '/tmp', io: 'stream' };
   return { m, session, spawned, injected, bcast };
 }
 
@@ -50,7 +50,7 @@ test('a granted proposal def notifies the game, tells the seat, and never spawns
   assert.deepStrictEqual(p, { cmd: 'avh-form', id: p.id, payload: { verb: 'standings' } });
   assert.deepStrictEqual(h.injected, [`[agent:exec] avh-form: proposed #${p.id} — the player confirms in the game`]);
   assert.deepStrictEqual(h.bcast, [{ type: 'exec', from: 'a', to: 'avh-form', body: `proposal #${p.id}` }]);
-  h.m._assistantPolicy = () => true;
+  h.session._assistant = true;
   h.m._resolveTurnWaiters(h.session, { text: 'done' });
   assert.deepStrictEqual(turns.map((t) => t.proposals), [[{ cmd: 'avh-form', id: p.id, payload: { verb: 'standings' } }]]);
   h.m._resolveTurnWaiters(h.session, { text: 'again' });
@@ -73,4 +73,14 @@ test('a proposal payload failing its schema is a schema error, not a proposal', 
   assert.deepStrictEqual(proposals, []);
   assert.strictEqual(h.injected.length, 1);
   assert.match(h.injected[0], /^\[agent:exec\] avh-form: /);
+});
+
+test('a proposal on a pty seat still notifies and replies but never queues onto _turnProposals', async () => {
+  const proposals = [];
+  const h = harness({ remote: { notifyProposal: (n, p) => proposals.push(p) } });
+  h.session.io = 'pty';
+  await h.m._handleExecIntent(h.session, 'avh-form', '{"verb":"standings"}');
+  assert.strictEqual(proposals.length, 1, 'ENTER: the proposal was emitted');
+  assert.deepStrictEqual(h.injected, [`[agent:exec] avh-form: proposed #${proposals[0].id} — the player confirms in the game`]);
+  assert.strictEqual(h.session._turnProposals, undefined);
 });

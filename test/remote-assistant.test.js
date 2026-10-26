@@ -716,3 +716,47 @@ test('send: a sleeper whose wakeOn omits message refuses the dm with 409 and nev
     assert.deepStrictEqual(yes.wakeCalls, [['avh-7', { reason: 'message' }]]);
   }
 });
+
+test('createSession: two concurrent template creates for one name — exactly one spawns, the other is name taken', async () => {
+  const h = makeDeps();
+  const opts = captureOptions(h.deps);
+  const outs = await Promise.all([
+    opts.createSession({ name: 'avh-9', template: 'avh-assistant', cwd: '/w' }),
+    opts.createSession({ name: 'avh-9', template: 'avh-assistant', cwd: '/w' }),
+  ]);
+  assert.deepStrictEqual(outs, [
+    { ok: true, name: 'avh-9', type: 'claude', template: 'avh-assistant' },
+    { ok: false, error: 'name taken "avh-9"' },
+  ]);
+  assert.strictEqual(h.spawnCalls.length, 1);
+  assert.strictEqual((await opts.createSession({ name: 'avh-9', template: 'avh-assistant', cwd: '/w' })).ok, true, 'a settled create frees the claim');
+});
+
+test('createSession: a token write that throws after a good create answers ok with a warning and never the token', async () => {
+  const bodies = (root) => [{ name: 'w1', type: 'claude', cwd: path.join(root, 'cwd') }, { name: 'avh-1', template: 'avh-assistant' }];
+  for (const i of [0, 1]) {
+    const h = makeDeps({ templates: { 'avh-assistant': { name: 'avh-assistant', type: 'claude' } } });
+    const t = withTokenRoot(h);
+    h.deps.fs.writeFileSync = (p, ...rest) => {
+      if (String(p).endsWith('client-token')) { realFs.writeFileSync(p, 'par'); throw new Error('ENOSPC'); }
+      return realFs.writeFileSync(p, ...rest);
+    };
+    const out = await captureOptions(h.deps).createSession({ ...bodies(t.root)[i], client: { token: TOKEN } });
+    assert.strictEqual(out.ok, true, 'ENTER: the create succeeded');
+    assert.deepStrictEqual(out.warnings, ['client token not stored']);
+    assert.ok(!JSON.stringify(out).includes(TOKEN));
+    assert.strictEqual(realFs.existsSync(t.tokenPath(bodies(t.root)[i].name)), false);
+  }
+});
+
+test('createSession: a team-lead create carrying a valid client token is 400 and nothing spawns', async () => {
+  const h = makeDeps();
+  let loaded = 0;
+  h.deps.loadManifest = () => { loaded++; return { lead: 'lead-1', root: '/r' }; };
+  const t = withTokenRoot(h);
+  assert.deepStrictEqual(await captureOptions(h.deps).createSession({ name: 'lead-1', team: 'crew', client: { token: TOKEN } }),
+    { ok: false, code: 400, error: 'client token: not accepted for a team-lead create' });
+  assert.deepStrictEqual([h.spawnCalls, h.createCalls, loaded], [[], [], 0]);
+  assert.strictEqual(realFs.existsSync(t.tokenPath('lead-1')), false);
+  assert.strictEqual((await captureOptions(h.deps).createSession({ name: 'lead-1', team: 'crew' })).ok, true, 'without a token the lead still spawns');
+});

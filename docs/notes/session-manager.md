@@ -2,11 +2,7 @@
 
 ## writeBundles
 
-`writeBundlePlugins` and `getPluginBundles` are taken BOTH-or-NEITHER: a partial
-deps object (a test, the plugin harness) supplying only the catalog read would
-call an absent writer, which throws before any `args.push` and surfaces as a
-spurious operator-facing warning about scaffolding. Same asymmetry as `tiersOf`,
-and the safe direction is the same — contribute nothing.
+`writeBundlePlugins` and `getPluginBundles` are taken BOTH-or-NEITHER: a partial deps object (a test, the plugin harness) supplying only the catalog read would call an absent writer, which throws before any `args.push` and surfaces as a spurious operator-facing warning about scaffolding. Same asymmetry as `tiersOf`, and the safe direction is the same — contribute nothing.
 
 ## move
 
@@ -118,3 +114,7 @@ the engine would reach them.
 ## _handleShoutIntent
 
 The DEPLOY OK self-archive sends `session:context-action` `retired` BEFORE `archive()`: archive kills the pty, and the renderer rebuilds a row as archived only for a name already stamped into `archivingSessions`. Sent late or not at all, the row is REMOVED. Precedent: `team-tickets.js` retire.
+
+## _awakeAssistantRows
+
+An evicted victim needs no exclusion set: `archive` sets `s._archived` synchronously before its first await, and `_sleepNow` reaches `archive` without awaiting anything first, so the `s._archived` test already drops the victim before a second `makeAwakeRoom` counts rows.

@@ -77,5 +77,8 @@ Only an assistant-class record is destroyed (record, seat dir, transcripts, `pen
 `client.token` is read and validated from the raw body before
 `withoutExecGrants` and any branch's mapping, so a bad token is refused before
 anything spawns on every path, and no create argument is built from `client`.
-It is written to the seat dir only after the create succeeds, so a refused or
-failed create leaves no token file for a later seat of the same name to inherit.
+Only the plain and template arms write it; the team-lead arm refuses any token
+with a 400. It is written to the seat dir only after the create succeeds, so a
+refused or failed create leaves no token file for a later seat of the same name
+to inherit; a write that fails answers the create with the warning
+`client token not stored`, never the token.

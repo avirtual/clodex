@@ -39,7 +39,7 @@ const flush = async () => { for (let i = 0; i < 4; i++) await new Promise((r) =>
 
 test('[agent:spawn] of an assistant template at its maxAwake, the awake seat busy, is refused at capacity and spawns nothing', async () => {
   const h = harness({ 'avh-1': { name: 'avh-1', class: 'assistant', template: 'avh-tpl' } });
-  h.m.sessions.set('avh-1', { name: 'avh-1', streamBusy: true, activityTs: 1 });
+  h.m.sessions.set('avh-1', { name: 'avh-1', _assistant: true, streamBusy: true, activityTs: 1 });
   h.m._handleSpawnIntent(SPAWNER, { name: 'avh-2', template: h.tmpl });
   await flush();
   assert.deepStrictEqual(h.calls, []);
