@@ -293,6 +293,7 @@ function wireDialog() {
     inputMode, advancedSection, modeHint,
     applyModeFields: (m) => applied.push(m),
     MODE_HINTS: { optimized: 'opt', standard: 'std', custom: 'cus' },
+    formPersisted: {},
   };
   const names = Object.keys(env);
   new Function(...names, `${SET_MODE_FN}\n${DRIFT_WIRING}\n${SELECT_WIRING}\nreturn setModeSelect;`)(
