@@ -222,7 +222,7 @@ test('every process.kill in session-manager.js is guarded against a broadcast pi
   assert.ok(calls.length >= 2,
     `found ${calls.length} signal call sites — the scan has stopped matching and this pin is vacuous`);
 
-  // The ONLY argument any process.kill in this file may take is the helper's
+  // The ONLY argument any process.kill or killPid in this file may take is the helper's
   // own already-checked `pid`. A raw `s.pty.pid` reaching process.kill directly
   // is the incident: it bypasses the refusal entirely. This is an allowlist
   // rather than a search for the known-bad spelling, because the next call site

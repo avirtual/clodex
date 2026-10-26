@@ -1023,6 +1023,34 @@ test('scope own: a root-level policy file is no subject — every branch edits C
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test('scope own: a test reading a changed source through path.join segments is selected by subject', () => {
+  const root = mkRoot();
+  try {
+    mkBranchRepo(root, {
+      extraOnMaster: {
+        'renderer/app.js': 'module.exports = 1;\n',
+        'test/joins-app.test.js': `${EMPTY_TEST}const P = path.join(ROOT, 'renderer',\n  "app.js");\n`,
+        'test/joins-other.test.js': `${EMPTY_TEST}const P = path.join(ROOT, 'renderer', 'other.js');\n`,
+      },
+      onBranch: ({ put: p, git: g }) => {
+        p('renderer/app.js', 'module.exports = 2;\n');
+        g('commit', '-aqm', 'branch work');
+      },
+    });
+    const r = run(root, '{"scope":"own"}');
+    const rec = stubRecord(root);
+    assert.ok(rec, 'ENTER: the runner never ran, so there is no selection to judge');
+    assert.ok(rec.argv.includes('test/joins-app.test.js'),
+      'the test names renderer/app.js only as consecutive path.join segments, and it is the test '
+      + 'that reads the changed source');
+    assert.ok(!rec.argv.includes('test/joins-other.test.js'),
+      'a shared directory segment alone is not the changed file');
+    assertDigest(r.digest,
+      `[${path.basename(root)}] own: 1/1 green (${WALL}) — ${OWN_SCANNERS.length + 1} files: `
+      + `0 changed, 1 by subject, ${OWN_SCANNERS.length} scanners`);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 for (const [changed, quoterSelected] of [['web-dist/index.html', false], ['renderer/index.html', true]]) {
   test(`scope own: ${changed} ${quoterSelected ? 'selects' : 'does not select'} a test quoting its bare basename`, () => {
     const root = mkRoot();

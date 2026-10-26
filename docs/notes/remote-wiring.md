@@ -80,5 +80,5 @@ anything spawns on every path, and no create argument is built from `client`.
 Only the plain and template arms write it; the team-lead arm refuses any token
 with a 400. It is written to the seat dir only after the create succeeds, so a
 refused or failed create leaves no token file for a later seat of the same name
-to inherit; a write that fails answers the create with the warning
-`client token not stored`, never the token.
+to inherit; a write that fails answers the create with `clientToken: false` and
+the warning `client token not stored`, never the token.

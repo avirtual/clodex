@@ -255,6 +255,9 @@ function subjectMatchers(sources) {
     literal: rel.endsWith('.js') || rel.includes('/'),
     base: rel.endsWith('.js') || !rel.includes('/') || rel.startsWith('web-dist/')
       ? null : path.posix.basename(rel),
+    joined: rel.includes('/')
+      ? new RegExp(rel.split('/').map((seg) => `['"]${seg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`).join('\\s*,\\s*'))
+      : null,
   }));
 }
 
@@ -308,6 +311,7 @@ function selectSet(measure) {
         (m) => (m.stem !== null && targets.has(m.stem))
           || targets.has(m.rel)
           || (m.literal && text.includes(m.rel))
+          || (m.joined !== null && m.joined.test(text))
           || (m.base !== null && (text.includes(`'${m.base}'`) || text.includes(`"${m.base}"`))),
       );
       if (!hit) continue;

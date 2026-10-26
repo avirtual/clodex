@@ -612,6 +612,7 @@ test('createSession: client.token is written 0600 to the seat dir after create, 
   const opts = captureOptions(h.deps);
   const out = await opts.createSession({ name: 'w1', type: 'claude', cwd: path.join(t.root, 'cwd'), client: { token: TOKEN } });
   assert.strictEqual(out.ok, true, 'ENTER: the create succeeded');
+  assert.strictEqual(out.clientToken, true);
   assert.strictEqual(realFs.readFileSync(t.tokenPath('w1'), 'utf8'), TOKEN);
   assert.strictEqual(realFs.statSync(t.tokenPath('w1')).mode & 0o777, 0o600);
   assert.ok(!JSON.stringify(out).includes(TOKEN), 'the answer never echoes the token');
@@ -621,6 +622,7 @@ test('createSession: client.token is written 0600 to the seat dir after create, 
   const tt = withTokenRoot(tpl);
   const tout = await captureOptions(tpl.deps).createSession({ name: 'avh-1', template: 'avh-assistant', client: { token: TOKEN } });
   assert.strictEqual(tout.ok, true);
+  assert.strictEqual(tout.clientToken, true);
   assert.strictEqual(realFs.readFileSync(tt.tokenPath('avh-1'), 'utf8'), TOKEN);
   assert.ok(!JSON.stringify([tout, tpl.spawnCalls]).includes(TOKEN));
 });
@@ -733,7 +735,7 @@ test('createSession: two concurrent template creates for one name — exactly on
   assert.strictEqual((await opts.createSession({ name: 'avh-9', template: 'avh-assistant', cwd: '/w' })).ok, true, 'a settled create frees the claim');
 });
 
-test('createSession: a token write that throws after a good create answers ok with a warning and never the token', async () => {
+test('createSession: a token write that throws after a good create answers ok with clientToken false, a warning and never the token', async () => {
   const bodies = (root) => [{ name: 'w1', type: 'claude', cwd: path.join(root, 'cwd') }, { name: 'avh-1', template: 'avh-assistant' }];
   for (const i of [0, 1]) {
     const h = makeDeps({ templates: { 'avh-assistant': { name: 'avh-assistant', type: 'claude' } } });
@@ -745,6 +747,7 @@ test('createSession: a token write that throws after a good create answers ok wi
     const out = await captureOptions(h.deps).createSession({ ...bodies(t.root)[i], client: { token: TOKEN } });
     assert.strictEqual(out.ok, true, 'ENTER: the create succeeded');
     assert.deepStrictEqual(out.warnings, ['client token not stored']);
+    assert.strictEqual(out.clientToken, false);
     assert.ok(!JSON.stringify(out).includes(TOKEN));
     assert.strictEqual(realFs.existsSync(t.tokenPath(bodies(t.root)[i].name)), false);
   }

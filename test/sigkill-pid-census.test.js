@@ -122,8 +122,8 @@ function codeOf(rel) {
 // pin that matches its own contract at the top of the file.
 function callsIn(rel) {
   const code = codeOf(rel);
-  return [...code.matchAll(/process\.kill\(\s*([^,)]+?)\s*,\s*([^)]+?)\s*\)/g)]
-    .map((m) => ({ file: rel, pid: m[1], sig: m[2] }));
+  return [...code.matchAll(/(process\.kill|\bkillPid)\(\s*([^,)]+?)\s*,\s*([^)]+?)\s*\)/g)]
+    .map((m) => ({ file: rel, via: m[1], pid: m[2], sig: m[3] }));
 }
 
 // Whitespace-tolerant where `callsIn` is not, deliberately: `process.kill (pid, sig)`
@@ -134,7 +134,7 @@ function callsIn(rel) {
 // `const k = process.kill` stays out of reach of any static scan; that is accepted,
 // not an oversight to widen this regex over.
 function rawCount(rel) {
-  return (codeOf(rel).match(/process\s*\.\s*kill\s*\(/g) || []).length;
+  return (codeOf(rel).match(/(?:process\s*\.\s*kill|\bkillPid)\s*\(/g) || []).length;
 }
 
 // A liveness probe. Signal 0 delivers nothing, so a broadcast pid here is a wrong
@@ -193,6 +193,11 @@ const CENSUS = [
     file: 'session-manager.js', pid: 'pid', sig: 'sig', count: 1,
     guard: 'if (!(pid > 0)) {',
     why: "defaultKillPid, called only from sigkillPid after its refusal — the funnel both the kill() and archive() backstops go through (12ec89d)",
+  },
+  {
+    file: 'session-manager.js', via: 'killPid', pid: 'pid', sig: "'SIGKILL'", count: 1,
+    guard: 'if (!(pid > 0)) {',
+    why: 'sigkillPid calling its injected killPid, behind the refusal at the top of sigkillPid',
   },
   {
     file: 'stream-seat.js', pid: '-pid', sig: 'sig', count: 1,
@@ -267,7 +272,7 @@ const CENSUS = [
   },
 ];
 
-const key = (c) => `${c.file} :: process.kill(${c.pid}, ${c.sig})`;
+const key = (c) => `${c.file} :: ${c.via || 'process.kill'}(${c.pid}, ${c.sig})`;
 
 function scanned() {
   const counts = new Map();
