@@ -58,10 +58,8 @@ check runs only on an UNFILTERED sweeping run, because a named-file or
 filtered run cannot see every test, and every unlisted entry would then read as
 stale on a run where nothing failed. `sweeping` alone is not that question: it
 means only that no positional argument was given, which a `--test-name-pattern`
-run satisfies while executing a handful of tests.
-
-The threshold still applies to a narrowed run: a test that is slow is slow
-however the run reached it.
+run satisfies while executing a handful of tests. The threshold still applies to
+a narrowed run: a test that is slow is slow however the run reached it.
 
 The gate also applies to every NESTED runner the suite spawns. Those throwaway
 roots carry no `slow-tests.json`, so `allow` is empty there and any stub that
@@ -113,8 +111,9 @@ That reporter double-escapes `"` as `&amp;quot;`, hence `&amp;` decoded first.
 ## RUN_TIMEOUT_MS
 
 20 minutes. The `clodex-run-tests` exec ceiling (36 minutes) exceeds the
-wrapper's 15-minute lock wait plus these 20 (test/test-digest-lock.test.js), so
-a wedged run ends in this runner's own `TIMEOUT after <m>m in <file>` line (the
-file from node's `# Interrupted while running:` tap line on SIGTERM; a one-file
-run killed before node wrote it names its given file), not an outside kill.
+wrapper's 15-minute lock wait plus these 20, pinned in
+test/test-digest-lock.test.js, so a wedged run ends in this runner's own
+`TIMEOUT after <m>m in <file>` line rather than be killed from outside with no
+file named. The file is from node's SIGTERM `# Interrupted while running:` tap
+line, or the given one for a one-file run killed before node wrote it.
 `CLODEX_TEST_RUN_TIMEOUT_MS` overrides it for the runner's own tests.
