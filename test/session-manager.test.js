@@ -24591,7 +24591,7 @@ function holdBindRig(t, held) {
     disarm: (sid) => ({ session: sid }),
   };
   h.m._wireTelemetry = new WireTelemetry({ hold: h.m._holdKeeper });
-  const create = (name, resumeId) => h.create(name, resumeId, 'pty');
+  const create = (name, resumeId, io = 'stream') => h.create(name, resumeId, io);
   return { h, armed, tel: h.m._wireTelemetry, create };
 }
 
@@ -24603,6 +24603,7 @@ test('a destroyed seat leaves no keep-warm hold binding for a new seat that reus
   await h.m.destroy('kw');
   assert.strictEqual(h.store.has('kw'), false, 'ENTER: the record was dropped');
   assert.strictEqual(tel.sessionFor('kw'), null, 'the drop forgets the binding');
+  h.stopAll();
   h.m.sessions.delete('kw');
   await create('kw', 'new-sid');
   assert.strictEqual(h.m.sessions.get('kw').sessionId, 'new-sid', 'ENTER: the new seat is up on its own conversation');
@@ -24625,6 +24626,7 @@ test('a fresh restart leaves no keep-warm hold binding on the old conversation',
   await create('kw', 'old-sid');
   assert.strictEqual(tel.sessionFor('kw'), 'old-sid', 'ENTER: create bound the held conversation');
   await h.m.kill('kw');
+  h.stopAll();
   h.m.sessions.delete('kw');
   await create('kw', null);
   assert.strictEqual(h.m.sessions.has('kw'), true, 'ENTER: the restart created the seat again');
@@ -24640,7 +24642,7 @@ test('create drops a stale keep-warm hold binding when its conversation is not h
 
 test('a /clear on a pty seat drops the turnless hold binding for the prior conversation', async (t) => {
   const { h, tel, create } = holdBindRig(t, ['sid-a']);
-  await create('kw', null);
+  await create('kw', null, 'pty');
   const onSessionId = h.watchers[0][2];
   onSessionId('sid-a');
   tel.noteSession('kw', 'sid-a');
