@@ -1700,12 +1700,12 @@ test('t1971: the Edit Settings save keeps a saved tool deny on a locked row and 
   assert.ok(kept, 'ENTER: keptLockedOf was located');
   const rows = [
     { value: 'Agent', disabled: true }, { value: 'WebFetch', disabled: true },
-    { value: 'Bash', disabled: false, checked: true }, { value: 'Read', disabled: false, checked: false },
+    { value: 'Bash', disabled: false, checked: false }, { value: 'Read', disabled: false, checked: true },
   ];
   const argsToolsList = {
     querySelectorAll: (sel) => rows.filter((r) => (sel.includes(':disabled') ? r.disabled : true)),
   };
-  const collectToolChecklist = () => rows.filter((r) => !r.disabled && r.checked).map((r) => r.value);
+  const collectToolChecklist = () => rows.filter((r) => !r.disabled && !r.checked).map((r) => r.value);
   const disabledTools = new Function('mergeLists', 'unlistedOf', 'collectToolChecklist', 'argsToolsList',
     'argsToolsRow', 'argsToolsPersisted', 'argsToolsRendered',
     `${kept[1]}\n${stmt[1]}\nreturn disabledTools;`)(

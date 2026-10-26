@@ -15,6 +15,7 @@
 // nothing for up to half an hour.
 
 const { test, after } = require('node:test');
+require('./lib/engine-isolation');
 const assert = require('node:assert');
 const os = require('node:os');
 const fs = require('node:fs');
@@ -35,7 +36,7 @@ function engineSeamTargets(seams) {
   rwMod.createRemoteWiring = (deps) => { rwDeps = deps; return origRw(deps); };
   const tmp = mkTmpRoot('clx-t282-');
   try {
-    require('../engine').createEngine({
+    require('./lib/engine-isolation').createEngine({
       userDataPath: tmp,
       log: { info() {}, warn() {}, error() {} },
       // registryDir or the engine seeds the operator's live ~/.clodex (t359).
@@ -98,7 +99,7 @@ test('engine: the return object exposes restartClodex and restartUnavailable', (
   const tmp = mkTmpRoot('clx-t282-');
   let eng;
   try {
-    eng = require('../engine').createEngine({
+    eng = require('./lib/engine-isolation').createEngine({
       userDataPath: tmp,
       log: { info() {}, warn() {}, error() {} },
       seams: {

@@ -13,7 +13,7 @@ const assert = require('node:assert');
 const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createEngine } = require('../engine');
+const { createEngine } = require('./lib/engine-isolation');
 const { createRemoteWiring } = require('../remote-wiring');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 

@@ -18,7 +18,7 @@ const os = require('node:os');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { createEngine } = require('../engine');
+const { createEngine } = require('./lib/engine-isolation');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // The operator's live tree, which no case here may resolve to.

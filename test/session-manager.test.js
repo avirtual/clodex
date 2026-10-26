@@ -25,7 +25,7 @@ const spawnedByThisRun = (target) => {
 process.kill = function guardedKill(pid, sig) {
   const target = Math.abs(Number(pid));
   if (sig === 0 || (target > 0 && target !== process.pid && spawnedByThisRun(target))) return realProcessKill.call(process, pid, sig);
-  strayKills.push({ pid, sig });
+  strayKills.push({ pid, sig, stack: new Error().stack });
   return true;
 };
 

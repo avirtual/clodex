@@ -22,7 +22,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { createEngine } = require('../engine');
+const { createEngine } = require('./lib/engine-isolation');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 // A scratch clodex home with a library prompts dir and, optionally, team dirs

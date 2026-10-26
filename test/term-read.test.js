@@ -1,6 +1,7 @@
 'use strict';
 
 const { test, after } = require('node:test');
+require('./lib/engine-isolation');
 const assert = require('node:assert');
 const path = require('path');
 const { mkTmpRoot } = require('./lib/tmp-roots');
@@ -109,7 +110,7 @@ function boot(seams, stub) {
   const tmp = mkTmpRoot('clx-term-read-');
   let engine;
   try {
-    engine = require('../engine').createEngine({
+    engine = require('./lib/engine-isolation').createEngine({
       userDataPath: tmp,
       seams: { noSeed: true, registryDir: path.join(tmp, 'clodex-home'), ...seams },
       log: { info() {}, warn() {}, error() {} },
