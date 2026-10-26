@@ -24724,16 +24724,15 @@ function telemetryRig(t) {
   return { ...r, tel, writes };
 }
 
-test('a fresh restart drops the wire telemetry entry for the old conversation', async (t) => {
-  const { h, tel, create } = telemetryRig(t);
+test('a fresh restart after a turn drops the wire telemetry entry for the old conversation (#19)', async (t) => {
+  const { h, tel, create } = holdBindRig(t, ['old-sid']);
   await create('kw', 'old-sid');
-  assert.strictEqual(tel.sessionFor('kw'), 'old-sid', 'ENTER: the resumed seat still reads old-sid');
-  await h.m.kill('kw');
-  h.stopAll();
-  h.m.sessions.delete('kw');
+  tel.noteTurn({ agent: 'kw', sessionId: 'old-sid', role: 'main' });
+  assert.strictEqual(tel.sessionFor('kw'), 'old-sid', 'ENTER: the turn put the seat on old-sid');
+  await h.m.kill('kw'); h.stopAll(); h.m.sessions.delete('kw');
   await create('kw', null);
   assert.strictEqual(h.m.sessions.has('kw'), true, 'ENTER: the restart created the seat again');
-  assert.notStrictEqual(tel.sessionFor('kw'), 'old-sid');
+  assert.strictEqual(tel.sessionFor('kw'), null);
   assert.strictEqual(tel.payload('kw'), null);
 });
 
