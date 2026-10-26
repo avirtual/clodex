@@ -22,7 +22,7 @@ function runScript(args, env) {
   });
 }
 
-const RECORD = '{ printf \'%s\\n\' "$@"; printf \'%s\\n\' "--ENV--"; env; } > "$CLOUD_REVIEW_REC"';
+const RECORD = 'if [ -t 1 ]; then T=yes; else T=no; fi; { printf \'%s\\n\' "$@"; printf \'%s\\n\' "--ENV--" "TTY=$T"; env; } > "$CLOUD_REVIEW_REC"';
 
 function launchAndRecord(extraEnv) {
   return withStub(RECORD, ({ dir, stub, rec }) => {
@@ -45,6 +45,11 @@ test('cloud-review: the stub gets --cloud and a brief naming both tags and the i
   assert.ok(!argv.includes('{{'), 'every placeholder is substituted');
   assert.match(argv, /\n--model\nopus\n/);
   assert.ok(logExists, 'output goes to ~/.clodex/logs/cloud-review-<newTag>.log');
+});
+
+test('cloud-review: claude runs on a terminal, since --cloud refuses one without', () => {
+  const { env } = launchAndRecord({});
+  assert.match(env, /^TTY=yes$/m);
 });
 
 test('cloud-review: CLAUDE_CONFIG_DIR from the parent never reaches claude', () => {
@@ -70,6 +75,23 @@ test('cloud-review: a missing claude binary exits 0 with a warn line', () => {
       CLODEX_CLAUDE_BIN: path.join(dir, 'no-such-claude'), HOME: dir,
     });
     assert.match(out, /^warn: /m);
+  });
+});
+
+test('cloud-review: a missing script(1) exits 0 with a warn line and launches nothing', () => {
+  withStub('touch "$CLOUD_REVIEW_REC"', ({ dir, stub, rec }) => {
+    const bin = path.join(dir, 'bin');
+    fs.mkdirSync(bin);
+    for (const tool of ['env', 'nohup', 'mkdir', 'cat', 'dirname']) {
+      fs.symlinkSync(execFileSync('bash', ['-c', `command -v ${tool}`], { encoding: 'utf-8' }).trim(), path.join(bin, tool));
+    }
+    const out = execFileSync('/bin/bash', [SCRIPT, 'v1.0.0', 'v1.1.0'], {
+      encoding: 'utf-8',
+      env: { PATH: bin, HOME: dir, CLODEX_CLAUDE_BIN: stub, CLOUD_REVIEW_REC: rec },
+    });
+    assert.match(out, /^warn: .*script\(1\)/m);
+    assert.doesNotMatch(out, /launched/);
+    assert.ok(!fs.existsSync(path.join(dir, '.clodex')), 'nothing was launched, so no log dir');
   });
 });
 

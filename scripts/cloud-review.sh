@@ -24,6 +24,10 @@ if ! command -v "$BIN" >/dev/null 2>&1; then
   printf 'warn: cloud-review: %s not on PATH; review not launched\n' "$BIN"
   exit 0
 fi
+if ! command -v script >/dev/null 2>&1; then
+  printf 'warn: cloud-review: script(1) not on PATH; claude --cloud needs a terminal; review not launched\n'
+  exit 0
+fi
 
 BRIEF="$(cat "$ROOT/scripts/cloud-review-brief.md")"
 BRIEF="${BRIEF//\{\{PREV\}\}/$PREV}"
@@ -33,5 +37,6 @@ LOG_DIR="$HOME/.clodex/logs"
 mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/cloud-review-$NEW.log"
 
-nohup env -u CLAUDE_CONFIG_DIR "$BIN" --cloud "$BRIEF" --model opus </dev/null >>"$LOG" 2>&1 &
-printf 'cloud-review: launched for %s..%s (pid %s); log at %s\n' "$PREV" "$NEW" "$!" "$LOG"
+nohup env -u CLAUDE_CONFIG_DIR script -q /dev/null "$BIN" --cloud "$BRIEF" --model opus </dev/null >>"$LOG" 2>&1 &
+printf 'cloud-review: launched for %s..%s (pid %s)\n' "$PREV" "$NEW" "$!"
+printf 'cloud-review: the cloud session URL lands in %s\n' "$LOG"
