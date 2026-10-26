@@ -24746,12 +24746,21 @@ test('destroy and re-create under the same name drops the wire telemetry entry f
   h.m.sessions.delete('kw');
   await create('kw', null);
   assert.strictEqual(h.m.sessions.has('kw'), true, 'ENTER: the seat was created again');
-  assert.notStrictEqual(tel.sessionFor('kw'), 'old-sid');
+  assert.strictEqual(tel.sessionFor('kw'), null);
   assert.strictEqual(tel.payload('kw'), null);
 });
 
 test('a resume create on the held conversation keeps its wire telemetry entry', async (t) => {
   const { h, tel, create } = telemetryRig(t);
+  await create('kw', 'old-sid');
+  assert.strictEqual(h.m.sessions.get('kw').sessionId, 'old-sid', 'ENTER: the seat resumed old-sid');
+  assert.strictEqual(tel.payload('kw').sessionId, 'old-sid');
+});
+
+test('a resume restart (kill, then create on the same sid) keeps the wire telemetry entry', async (t) => {
+  const { h, tel, create } = telemetryRig(t);
+  await create('kw', 'old-sid');
+  await h.m.kill('kw'); h.stopAll(); h.m.sessions.delete('kw');
   await create('kw', 'old-sid');
   assert.strictEqual(h.m.sessions.get('kw').sessionId, 'old-sid', 'ENTER: the seat resumed old-sid');
   assert.strictEqual(tel.payload('kw').sessionId, 'old-sid');

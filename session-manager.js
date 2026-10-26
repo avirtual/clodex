@@ -1245,13 +1245,13 @@ function createSessionManager(deps) {
       }
     }
 
-    _bindHold(name, sid = null) {
+    _bindHold(name, sid = null, dropStale = false) {
       const tel = this._wireTelemetry;
       if (!tel) return;
       try {
         if (sid && this._holdKeeper && this._holdKeeper.holds()[sid]) tel.noteSession(name, sid);
         else tel.forgetSession(name);
-        tel.dropAgent(name, sid);
+        if (dropStale) tel.dropAgent(name, sid);
       } catch (e) {
         this._shadowLog({ type: 'wire-hold-bind-error', error: e.message });
       }
@@ -2252,7 +2252,7 @@ function createSessionManager(deps) {
         digestNonEmpty: agentType === 'claude' && composeDigest(memoryStore.list(name)) !== null,
       };
       this.sessions.set(name, session);
-      this._bindHold(name, fork ? null : session.sessionId);
+      this._bindHold(name, fork ? null : session.sessionId, true);
       if (intentChannel) await this._startIntentSocket(session, intentChannel);
 
       // Recomposed here: the hook cats the digest only for source startup|clear|compact, so a resumed session gets none;
