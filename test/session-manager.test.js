@@ -24678,13 +24678,17 @@ async function forkedPtySeat(t) {
   t.after(() => h.stopAll());
   const calls = [];
   h.m._holdKeeper = { endSession: (sid) => { calls.push(['endSession', sid]); return { session: sid }; } };
-  h.m._wireTelemetry = { forgetSession: (n) => calls.push(['forgetSession', n]) };
+  h.m._wireTelemetry = { forgetSession: (n) => calls.push(['forgetSession', n]), dropAgent: (n, keep) => calls.push(['dropAgent', n, keep]) };
   h.m._injectText = () => {};
+  const shadow = [];
+  h.m._shadowLog = (ev) => shadow.push(ev);
   await h.m.create('fk', 'claude', os.tmpdir(), [], 'parent-sid', 'ws', null, true, null,
     [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, null);
   const s = h.m.sessions.get('fk');
   assert.strictEqual(s.forked, true, 'ENTER: a forked seat');
   assert.strictEqual(s.sessionId, 'parent-sid', 'ENTER: it starts under the parent\'s id');
+  assert.ok(calls.some((c) => c[0] === 'dropAgent' && c[1] === 'fk' && c[2] === null), 'ENTER: the fork create dropped the stale agent with a null keep\n' + JSON.stringify(calls));
+  assert.deepStrictEqual(shadow.filter((e) => e.type === 'wire-hold-bind-error'), []);
   calls.length = 0;
   return { s, calls, onSessionId: h.watchers[0][2] };
 }
