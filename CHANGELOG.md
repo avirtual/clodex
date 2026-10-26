@@ -14,6 +14,8 @@ blocks a release.
 
 ## Unreleased
 
+- Forking a seat that is kept warm no longer ends the parent's keep-warm hold when the fork starts its own conversation.
+
 ## 5.146.1 — 2026-10-26
 - The cloud release review now opens and closes its issue through GitHub's REST API with `gh api`, the one route a cloud session allows, so it no longer stalls looking for GitHub tools or asking for push access.
 
