@@ -55659,17 +55659,17 @@ ${detail}` });
       function populateHostCatalogs(settings, agentLib) {
         setAgentLibCache(agentLib || []);
         renderAgentChecklist(inputAgentsList, /* @__PURE__ */ new Set(), null, newSessionSeat());
-        refreshNewSessionExecCommands();
-        refreshNewSessionMcpServers();
+        refreshNewSessionExecCommands(persistedOr("execCommands", /* @__PURE__ */ new Set()));
+        refreshNewSessionMcpServers(persistedOr("mcpServers", /* @__PURE__ */ new Set()));
         refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
         setClaudeToolsCache(settings?.claudeTools || []);
         setDefaultToolDenyCache(settings?.defaultToolDeny || []);
         setDefaultSkillDenyCache(settings?.defaultSkillDeny || []);
         setDefaultBuiltinDenyCache(settings?.defaultBuiltinDeny || []);
-        renderBuiltinChecklist(inputBuiltinsList, modeBuiltinDenySet());
-        renderToolChecklist(inputToolsList, modeToolDenySet());
+        formRendered.denyBuiltins = renderBuiltinChecklist(inputBuiltinsList, persistedOr("denyBuiltins", modeBuiltinDenySet()));
+        formRendered.disabledTools = renderToolChecklist(inputToolsList, persistedOr("disabledTools", modeToolDenySet()));
         refreshNewSessionSkills(modeSkillDenySet());
-        refreshNewSessionTools(modeToolDenySet());
+        refreshNewSessionTools(persistedOr("disabledTools", modeToolDenySet()));
         setProxyControls(inputProxyMode, inputProxyUrl, null, settings?.lastCustomProxyUrl || settings?.proxyUrl);
         labelProxyDefault(inputProxyMode, settings);
       }
@@ -55687,7 +55687,7 @@ ${detail}` });
           opts
         );
         refreshNewSessionTools(
-          opts.forTemplate ? new Set(collectToolChecklist(inputToolsList)) : modeToolDenySet(),
+          opts.forTemplate ? new Set(collectToolChecklist(inputToolsList)) : persistedOr("disabledTools", modeToolDenySet()),
           opts
         );
       }
@@ -57795,7 +57795,7 @@ Click for live activity`;
           inputResume.value = prefill.resumeId;
           inputFork.checked = false;
           refreshNewSessionSkills(modeSkillDenySet());
-          refreshNewSessionTools(modeToolDenySet());
+          refreshNewSessionTools(persistedOr("disabledTools", modeToolDenySet()));
           refreshWorktreeForCwd();
           dialogTitle.textContent = "Adopt Session";
           setTimeout(() => inputName.select(), 50);
