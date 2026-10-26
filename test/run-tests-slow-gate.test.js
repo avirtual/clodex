@@ -319,13 +319,13 @@ test('slow gate: offenders in two files are each re-timed against their own file
 
 test('slow gate: past the cap, the twelve slowest clear alone and the run passes', () => {
   const rows = [
-    ['crowd a', 300], ['crowd b', 310], ['crowd c', 320], ['crowd d', 330], ['crowd e', 340],
-    ['crowd f', 350], ['crowd g', 360], ['crowd h', 370], ['crowd i', 380], ['crowd j', 390],
-    ['crowd k', 400], ['crowd l', 410], ['crowd m', 150],
+    ['crowd a', 100], ['crowd b', 110], ['crowd c', 120], ['crowd d', 130], ['crowd e', 140],
+    ['crowd f', 150], ['crowd g', 160], ['crowd h', 170], ['crowd i', 180], ['crowd j', 190],
+    ['crowd k', 200], ['crowd l', 210], ['crowd m', 40],
   ];
   const r = runRunner({
     files: { 'test/crowd.test.js': rows.map(([n, ms], i) => firstRunOnly(n, ms, `.crowd${i}`)).join('') },
-    slowMs: 100,
+    slowMs: 30,
   });
   const stdout = stdoutOf(r);
   assert.match(stdout, /TOTALS: 14 pass, 0 fail/, 'ENTER: the run itself must be green');
@@ -340,16 +340,16 @@ test('slow gate: past the cap, the twelve slowest clear alone and the run passes
 
 test('slow gate: past the cap, one sampled offender slow alone enforces the unsampled ones too', () => {
   const rows = [
-    ['crowd a', 300], ['crowd b', 310], ['crowd c', 320], ['crowd d', 330], ['crowd e', 340],
-    ['crowd f', 350], ['crowd g', 360], ['crowd h', 370], ['crowd i', 380], ['crowd j', 390],
-    ['crowd k', 400], ['crowd m', 150],
+    ['crowd a', 100], ['crowd b', 110], ['crowd c', 120], ['crowd d', 130], ['crowd e', 140],
+    ['crowd f', 150], ['crowd g', 160], ['crowd h', 170], ['crowd i', 180], ['crowd j', 190],
+    ['crowd k', 200], ['crowd m', 40],
   ];
   const r = runRunner({
     files: {
       'test/crowd.test.js': rows.map(([n, ms], i) => firstRunOnly(n, ms, `.crowd${i}`)).join('')
-        + sleeper('crowd always slow', 450),
+        + sleeper('crowd always slow', 220),
     },
-    slowMs: 100,
+    slowMs: 30,
   });
   const stdout = stdoutOf(r);
   assert.match(stdout, /TOTALS: 14 pass, 0 fail/, 'ENTER: the run itself must be green');
@@ -363,16 +363,16 @@ test('slow gate: past the cap, one sampled offender slow alone enforces the unsa
 
 test('slow gate: past the cap, the sample is the slowest offenders, not the first in file order', () => {
   const rows = [
-    ['crowd a', 300], ['crowd b', 310], ['crowd c', 320], ['crowd d', 330], ['crowd e', 340],
-    ['crowd f', 350], ['crowd g', 360], ['crowd h', 370], ['crowd i', 380], ['crowd j', 390],
-    ['crowd k', 400], ['crowd l', 410],
+    ['crowd a', 100], ['crowd b', 110], ['crowd c', 120], ['crowd d', 130], ['crowd e', 140],
+    ['crowd f', 150], ['crowd g', 160], ['crowd h', 170], ['crowd i', 180], ['crowd j', 190],
+    ['crowd k', 200], ['crowd l', 210],
   ];
   const r = runRunner({
     files: {
-      'test/crowd.test.js': sleeper('crowd first and least slow', 150)
+      'test/crowd.test.js': sleeper('crowd first and least slow', 40)
         + rows.map(([n, ms], i) => firstRunOnly(n, ms, `.crowd${i}`)).join(''),
     },
-    slowMs: 100,
+    slowMs: 30,
   });
   const stdout = stdoutOf(r);
   assert.match(stdout, /TOTALS: 14 pass, 0 fail/, 'ENTER: the run itself must be green');
