@@ -8,6 +8,6 @@ You are a cold reviewer of the public repo avirtual/clodex. Review the release r
 Reporting:
 - The repo is already cloned and git can push through the session's proxy. You have no GitHub API access: do not run gh, do not call add_repo, do not ask for any access, and do not use curl or any credential.
 - Write your report to `.review/{{NEW}}.md`. Its first line is the issue title, "Release review {{NEW}}: <VERDICT>" where <VERDICT> is a one-line summary of the worst finding, or "Release review {{NEW}}: CLEAN" when you have none. Then one blank line, then the body: each finding with file, symbol and evidence, or with no findings, what you checked.
-- Commit only that file, on a new branch made from the commit you reviewed: `git checkout -b claude/review-{{NEW}}`, `git add .review/{{NEW}}.md`, `git commit -m "Release review {{NEW}}"`, `git push origin claude/review-{{NEW}}`. Push no other branch and never push to master.
+- Commit only that file, on a new branch made from the commit you reviewed: `git checkout -b claude/review-{{NEW}}`, `git add .review/{{NEW}}.md`, `git commit -m "Release review {{NEW}}"`, `git push --force origin claude/review-{{NEW}}`. Push no other branch and never push to master.
 - If the push fails, put the full report in your final message and say the push failed with its exact error.
 - End by printing the pushed commit sha.

@@ -7,6 +7,7 @@ cd "$ROOT"
 PREV="${1:-}"
 NEW="${2:-}"
 BIN="${CLODEX_CLAUDE_BIN:-claude}"
+GIT="${CLODEX_GIT_BIN:-git}"
 
 if [ "${CLODEX_RELEASE_NO_REVIEW:-}" = 1 ]; then
   printf 'cloud-review: skipped (CLODEX_RELEASE_NO_REVIEW=1)\n'
@@ -36,6 +37,15 @@ BRIEF="${BRIEF//\{\{NEW\}\}/$NEW}"
 LOG_DIR="$HOME/.clodex/logs"
 mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/cloud-review-$NEW.log"
+
+STALE="$(GIT_TERMINAL_PROMPT=0 "$GIT" ls-remote origin "refs/heads/claude/review-$NEW" 2>/dev/null || true)"
+if [ -n "$STALE" ]; then
+  if GIT_TERMINAL_PROMPT=0 "$GIT" push -q origin --delete "claude/review-$NEW" >/dev/null 2>&1; then
+    printf 'cloud-review: removed stale claude/review-%s\n' "$NEW"
+  else
+    printf 'warn: cloud-review: could not delete stale claude/review-%s\n' "$NEW"
+  fi
+fi
 
 nohup env -u CLAUDE_CONFIG_DIR -u CLAUDE_CODE_OAUTH_TOKEN script -q /dev/null "$BIN" --cloud "$BRIEF" --model claude-opus-5-5 --permission-mode bypassPermissions </dev/null >>"$LOG" 2>&1 &
 CLAUDE_PID=$!

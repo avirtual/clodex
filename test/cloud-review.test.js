@@ -96,7 +96,7 @@ test('cloud-review: the brief reports by pushing .review/<tag>.md on claude/revi
   assert.ok(brief.includes('"Release review {{NEW}}: CLEAN"'), brief);
   assert.ok(!brief.includes('gh auth status'), brief);
   assert.ok(!brief.includes('gh api'), brief);
-  assert.ok(brief.includes('git push origin claude/review-{{NEW}}'), brief);
+  assert.ok(brief.includes('git push --force origin claude/review-{{NEW}}'), brief);
   assert.ok(brief.includes('.review/{{NEW}}.md'), brief);
   assert.ok(brief.includes('do not call add_repo'), brief);
   assert.ok(brief.includes('npm ci --ignore-scripts'), brief);
@@ -147,7 +147,50 @@ test('cloud-review: the launch also starts the issue poller for the new tag', ()
   });
 });
 
-function runPoller({ hitAfter, report, env, ghFails = 0, lsSleep = 0 }) {
+function launchWithGit(lsHit) {
+  return withStub('', ({ dir, stub }) => {
+    const calls = path.join(dir, 'calls');
+    const sync = path.join(dir, 'sync');
+    fs.writeFileSync(stub, `#!/bin/sh\necho claude >> "${calls}"\necho done > "${sync}"\n`, { mode: 0o755 });
+    const git = path.join(dir, 'git');
+    fs.writeFileSync(git, [
+      '#!/bin/sh',
+      `printf 'git' >> "${calls}"; printf ' %s' "$@" >> "${calls}"; printf '\\n' >> "${calls}"`,
+      lsHit ? `if [ "$1" = ls-remote ]; then printf 'old123\\trefs/heads/claude/review-v1.1.0\\n'; fi` : '',
+      '',
+    ].join('\n'), { mode: 0o755 });
+    execFileSync('mkfifo', [sync]);
+    let out;
+    try {
+      out = runScript(['v1.0.0', 'v1.1.0'], { CLODEX_CLAUDE_BIN: stub, HOME: dir, CLODEX_GIT_BIN: git });
+      execFileSync('cat', [sync], { encoding: 'utf-8', timeout: FIFO_BOUND_MS });
+      return { out, calls: fs.readFileSync(calls, 'utf-8').split('\n').filter(Boolean) };
+    } finally {
+      killPoller(out);
+      killMatching(dir);
+    }
+  });
+}
+
+test('cloud-review: a stale claude/review-<tag> on origin is deleted before claude launches', () => {
+  const { out, calls } = launchWithGit(true);
+  const del = calls.indexOf('git push -q origin --delete claude/review-v1.1.0');
+  const claude = calls.indexOf('claude');
+  assert.ok(claude >= 0, 'ENTER: the claude stub ran\n' + calls.join('\n'));
+  assert.ok(del >= 0 && del < claude, calls.join('\n'));
+  assert.match(out, /^cloud-review: removed stale claude\/review-v1\.1\.0$/m);
+});
+
+test('cloud-review: with no claude/review-<tag> on origin the launcher deletes nothing', () => {
+  const { out, calls } = launchWithGit(false);
+  const claude = calls.indexOf('claude');
+  assert.ok(claude >= 0, 'ENTER: the claude stub ran\n' + calls.join('\n'));
+  assert.ok(calls.slice(0, claude).some((c) => c.startsWith('git ls-remote origin refs/heads/claude/review-v1.1.0')), calls.join('\n'));
+  assert.ok(!calls.some((c) => c.startsWith('git push')), calls.join('\n'));
+  assert.doesNotMatch(out, /removed stale/);
+});
+
+function runPoller({ hitAfter, report, env, ghFails = 0, lsSleep = 0, ctAges = null, perlRec = false }) {
   const dir = mkTmpRoot('clodex-cloud-review-post-');
   const calls = path.join(dir, 'calls');
   const count = path.join(dir, 'count');
@@ -162,7 +205,10 @@ function runPoller({ hitAfter, report, env, ghFails = 0, lsSleep = 0 }) {
     'case "$1" in',
     `  ls-remote) if [ ${lsSleep} -gt 0 ]; then sleep ${lsSleep}; fi; n=$(cat "${count}" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "${count}"`,
     `    if [ "${hitAfter}" -gt 0 ] && [ $n -ge "${hitAfter}" ]; then printf 'abc123\\trefs/heads/claude/review-v1.1.0\\n'; fi ;;`,
-    `  show) cat "${reportFile}" ;;`,
+    ctAges
+      ? `  show) printf 'Release review v1.1.0: X\\n\\nhit %s\\n' "$(cat "${count}")" ;;`
+      : `  show) cat "${reportFile}" ;;`,
+    ...(ctAges ? [`  log) n=$(cat "${count}"); case $n in ${ctAges.map((a, i) => `${i + 1}) echo $(( $(date +%s) - ${a} )) ;;`).join(' ')} esac ;;`] : []),
     'esac',
     '',
   ].join('\n'), { mode: 0o755 });
@@ -173,13 +219,20 @@ function runPoller({ hitAfter, report, env, ghFails = 0, lsSleep = 0 }) {
     'if [ "$2" = create ]; then shift 7; cp "$1" "' + path.join(dir, 'body') + '"; echo https://github.com/avirtual/clodex/issues/7; fi',
     '',
   ].join('\n'), { mode: 0o755 });
+  const binDir = path.join(dir, 'bin');
+  if (perlRec) {
+    fs.mkdirSync(binDir);
+    const realPerl = execFileSync('bash', ['-c', 'command -v perl'], { encoding: 'utf-8' }).trim();
+    fs.writeFileSync(path.join(binDir, 'perl'), `#!/bin/sh\nprintf 'perl alarm %s\\n' "$4" >> "${calls}"\nexec "${realPerl}" "$@"\n`, { mode: 0o755 });
+  }
   try {
     const res = spawnSync('bash', [POST, 'v1.1.0'], {
       encoding: 'utf-8',
       timeout: FIFO_BOUND_MS,
       env: {
         ...process.env, HOME: dir, CLODEX_GH_BIN: gh, CLODEX_GIT_BIN: git,
-        CLODEX_REVIEW_POLL_S: '0', CLODEX_REVIEW_TIMEOUT_S: '7200', CLODEX_REVIEW_RETRY_S: '0', ...env,
+        CLODEX_REVIEW_POLL_S: '0', CLODEX_REVIEW_TIMEOUT_S: '7200', CLODEX_REVIEW_RETRY_S: '0',
+        ...(perlRec ? { PATH: `${binDir}:${process.env.PATH}` } : {}), ...env,
       },
     });
     if (res.error) throw res.error;
@@ -243,7 +296,7 @@ test('cloud-review-post: gh issue create failing every try logs an ERROR, keeps 
   const { status, calls, log } = runPoller({ hitAfter: 1, report: 'Release review v1.1.0: X\n\nbody\n', ghFails: 99 });
   assert.strictEqual(status, 1, calls.join('\n'));
   assert.strictEqual(calls.filter((c) => c.startsWith('gh [issue] [create]')).length, 3, calls.join('\n'));
-  assert.match(log, /^cloud-review: ERROR issue create failed: gh boom 3$/m);
+  assert.match(log, /^cloud-review: ERROR issue create failed: gh boom 1\ngh boom 2\ngh boom 3$/m);
   assert.ok(!calls.some((c) => c.startsWith('git push')), calls.join('\n'));
 });
 
@@ -251,6 +304,21 @@ test('cloud-review-post: a hung git ls-remote is cut off at CALL_S and the timeo
   const { calls } = runPoller({ hitAfter: 0, lsSleep: 30, env: { CLODEX_REVIEW_CALL_S: '1', CLODEX_REVIEW_TIMEOUT_S: '2' } });
   assert.ok(calls.some((c) => c.startsWith('git ls-remote')), calls.join('\n'));
   assert.ok(calls.some((c) => c.startsWith('gh [issue] [create] [-R] [avirtual/clodex] [-t] [Release review v1.1.0: NO REPORT]')), calls.join('\n'));
+});
+
+test('cloud-review-post: a report committed before the poller started is ignored once and the next fresh one is filed', () => {
+  const { out, calls, body } = runPoller({ hitAfter: 1, ctAges: [1000, 0] });
+  assert.strictEqual(calls.filter((c) => c.startsWith('git log -1 --format=%ct refs/clodex-review/v1.1.0')).length, 2, calls.join('\n'));
+  assert.strictEqual(calls.filter((c) => c.startsWith('gh [issue] [create]')).length, 1, calls.join('\n'));
+  assert.strictEqual(body, 'hit 2\n');
+  assert.strictEqual(out.split('\n').filter((l) => l === 'cloud-review-post: ignoring stale report abc123').length, 1, out);
+});
+
+test('cloud-review-post: CALL_S=0 is clamped to 60 rather than reaching alarm as 0', () => {
+  const { calls } = runPoller({ hitAfter: 1, report: 'Release review v1.1.0: X\n\nbody\n', perlRec: true, env: { CLODEX_REVIEW_CALL_S: '0' } });
+  const alarms = calls.filter((c) => c.startsWith('perl alarm '));
+  assert.ok(alarms.length > 0, 'ENTER: bounded ran through the recording perl\n' + calls.join('\n'));
+  assert.deepStrictEqual([...new Set(alarms)], ['perl alarm 60'], calls.join('\n'));
 });
 
 test('cloud-review-post: a 300-character verdict line becomes a title of at most 256 characters', () => {
