@@ -234,7 +234,7 @@ test('every process.kill in session-manager.js is guarded against a broadcast pi
     + 'sigkillPid(), which refuses a non-positive pid. A raw `s.pty.pid` here is the incident that took the '
     + 'desktop down three times — the pty seam does not guarantee a real pid.');
 
-  assert.match(code, /function sigkillPid\(pid, name, log\)\s*\{\s*if \(!\(pid > 0\)\)/,
+  assert.match(code, /function sigkillPid\(pid, name, log, killPid = defaultKillPid\)\s*\{\s*if \(!\(pid > 0\)\)/,
     'sigkillPid must open with the `pid > 0` refusal — that single check is the entire safety property, and a '
     + 'rewrite that moves or softens it puts the broadcast back');
 });
