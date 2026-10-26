@@ -16,6 +16,7 @@ blocks a release.
 
 - Forking a seat that is kept warm no longer ends the parent's keep-warm hold when the fork starts its own conversation.
 - The cloud release review now hands its report back through a git branch, and the release machine opens the GitHub issue itself, so the review no longer stalls without GitHub access or waits for an approval; a review that never reports opens a NO REPORT issue.
+- After a fresh restart, or deleting a seat and re-creating it under the same name, the keep-warm menu no longer shows or controls the old conversation's hold.
 
 ## 5.146.1 — 2026-10-26
 - The cloud release review now opens and closes its issue through GitHub's REST API with `gh api`, the one route a cloud session allows, so it no longer stalls looking for GitHub tools or asking for push access.

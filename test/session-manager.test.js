@@ -24712,3 +24712,69 @@ test('_bindHold: destroying a dead seat\'s record drops its keep-warm hold bindi
   assert.strictEqual(h.store.has('kw'), false, 'ENTER: the record was dropped');
   assert.strictEqual(tel.sessionFor('kw'), null);
 });
+
+function telemetryRig(t) {
+  const { WireTelemetry } = require('../wire-telemetry');
+  const r = holdBindRig(t, ['old-sid']);
+  const writes = [];
+  r.h.m._wireTelemetry = new WireTelemetry({ hold: r.h.m._holdKeeper, persist: { read: () => null, write: (o) => writes.push(o) } });
+  const tel = r.h.m._wireTelemetry;
+  tel.noteTurn({ agent: 'kw', sessionId: 'old-sid', sessionTotals: { est_usd: 1.5, requests: 3, turns: 2 } });
+  assert.strictEqual(tel.sessionFor('kw'), 'old-sid', 'ENTER: the turn put the seat on old-sid');
+  return { ...r, tel, writes };
+}
+
+test('a fresh restart after a turn drops the wire telemetry entry for the old conversation (#19)', async (t) => {
+  const { h, tel, create } = holdBindRig(t, ['old-sid']);
+  await create('kw', 'old-sid');
+  tel.noteTurn({ agent: 'kw', sessionId: 'old-sid', role: 'main' });
+  assert.strictEqual(tel.sessionFor('kw'), 'old-sid', 'ENTER: the turn put the seat on old-sid');
+  await h.m.kill('kw'); h.stopAll(); h.m.sessions.delete('kw');
+  await create('kw', null);
+  assert.strictEqual(h.m.sessions.has('kw'), true, 'ENTER: the restart created the seat again');
+  assert.strictEqual(tel.sessionFor('kw'), null);
+  assert.strictEqual(tel.payload('kw'), null);
+});
+
+test('destroy and re-create under the same name drops the wire telemetry entry for the old conversation', async (t) => {
+  const { h, tel, create } = telemetryRig(t);
+  await create('kw', 'old-sid');
+  assert.strictEqual(tel.sessionFor('kw'), 'old-sid', 'ENTER: the resumed seat still reads old-sid');
+  await h.m.destroy('kw');
+  assert.strictEqual(h.store.has('kw'), false, 'ENTER: the record was dropped');
+  h.stopAll();
+  h.m.sessions.delete('kw');
+  await create('kw', null);
+  assert.strictEqual(h.m.sessions.has('kw'), true, 'ENTER: the seat was created again');
+  assert.strictEqual(tel.sessionFor('kw'), null);
+  assert.strictEqual(tel.payload('kw'), null);
+});
+
+test('a resume create on the held conversation keeps its wire telemetry entry', async (t) => {
+  const { h, tel, create } = telemetryRig(t);
+  await create('kw', 'old-sid');
+  assert.strictEqual(h.m.sessions.get('kw').sessionId, 'old-sid', 'ENTER: the seat resumed old-sid');
+  assert.strictEqual(tel.payload('kw').sessionId, 'old-sid');
+});
+
+test('a resume restart (kill, then create on the same sid) keeps the wire telemetry entry', async (t) => {
+  const { h, tel, create } = telemetryRig(t);
+  await create('kw', 'old-sid');
+  await h.m.kill('kw'); h.stopAll(); h.m.sessions.delete('kw');
+  await create('kw', 'old-sid');
+  assert.strictEqual(h.m.sessions.get('kw').sessionId, 'old-sid', 'ENTER: the seat resumed old-sid');
+  assert.strictEqual(tel.payload('kw').sessionId, 'old-sid');
+});
+
+test('dropping a wire telemetry entry persists the old conversation\'s lifetime first, and later saves keep it', async (t) => {
+  const { tel, writes } = telemetryRig(t);
+  assert.deepStrictEqual(writes, [], 'ENTER: nothing flushed before the drop');
+  tel.dropAgent('kw', null);
+  assert.strictEqual(tel.sessionFor('kw'), null, 'ENTER: the entry was dropped');
+  assert.strictEqual(writes.length, 1);
+  const { ts, ...life } = writes[0].sessions['old-sid'];
+  assert.strictEqual(typeof ts, 'number');
+  assert.deepStrictEqual(life, { cost: 1.5, requests: 3, turns: 2, refusals: 0, inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null });
+  tel._save();
+  assert.strictEqual(writes[1].sessions['old-sid'].cost, 1.5);
+});

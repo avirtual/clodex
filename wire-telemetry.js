@@ -88,6 +88,7 @@ class WireTelemetry {
     // seedLifetime() imports wirescope's history while it still exists.
     this._persist = persist;
     this._lifetimeBase = new Map(); // sessionId -> { cost, requests, turns, refusals, ts }
+    this._dropped = new Map();
     this._saveTimer = null;
     if (persist) {
       try {
@@ -134,6 +135,7 @@ class WireTelemetry {
       const sessions = {};
       // Dormant sessions keep their last persisted value; live ones overwrite.
       for (const [sid, v] of this._lifetimeBase) sessions[sid] = v;
+      for (const [sid, v] of this._dropped) sessions[sid] = v;
       for (const a of this._agents.values()) {
         if (!a.sessionId || !a.totals) continue;
         sessions[a.sessionId] = { ...this._lifetime(a), ts: Date.now() };
@@ -395,6 +397,16 @@ class WireTelemetry {
       this._lastDiff.set(name, key);
       this._log(rec);
     } catch { /* diffing must never break the poller tick */ }
+  }
+
+  dropAgent(name, keepSid = null) {
+    const a = this._agents.get(name);
+    if (!a || !a.sessionId || a.sessionId === keepSid) return;
+    if (this._persist) {
+      if (a.totals) this._dropped.set(a.sessionId, { ...this._lifetime(a), ts: Date.now() });
+      this._save();
+    }
+    this._agents.delete(name); this._lastDiff.delete(name); this._baseline.delete(name);
   }
 
   // Mirror ProxyPoller's telemetry pruning so dead sessions don't accrete.
