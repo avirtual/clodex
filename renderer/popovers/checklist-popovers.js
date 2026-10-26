@@ -33,7 +33,7 @@ const { placeAboveAnchor } = require('../lib/popover-place');
 // open anchors to a sidebar row instead, where this selector finds nothing and
 // the captured row (still attached) is used.
 const BAR_ANCHOR = '#proxy-bar [data-act="session-menu"]';
-const { grantsForUnlistedPlugins, mergeGrants, pluginsForUnlistedPlugins, mergePlugins } = require('../../plugin-api');
+const { grantsForUnlistedPlugins, mergeGrants, pluginsForUnlistedPlugins, mergePlugins, unlistedOf, mergeLists } = require('../../plugin-api');
 
 // Names auto-INCLUDED for `session` by `sessions:` scope, for a scoped checklist.
 // Agents carry parsed `meta`; skills carry only raw `content` (re-parse it, same
@@ -75,6 +75,9 @@ function initChecklistPopovers({ sessionList, rowSnapshot, rebuildLiveRow, switc
   const popoverToolsList = document.getElementById('popover-tools-list');
   const toolsPopoverRestart = document.getElementById('tools-popover-restart');
 
+  let toolsPersisted = [];
+  let toolsRendered = [];
+
   function closeToolsPopover() {
     toolsPopover.classList.add('hidden');
     toolsPopover.dataset.name = '';
@@ -87,7 +90,8 @@ function initChecklistPopovers({ sessionList, rowSnapshot, rebuildLiveRow, switc
     ]);
     if (!res || !res.ok) { alert('Session not found in persistence.'); return; }
     setClaudeToolsCache(settings?.claudeTools || []);
-    renderToolChecklist(popoverToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
+    toolsPersisted = res.disabledTools || [];
+    toolsRendered = renderToolChecklist(popoverToolsList, new Set(toolsPersisted), res.effectiveTools || {});
     toolsPopoverRestart.checked = false;
     toolsPopoverName.textContent = name;
     toolsPopover.dataset.name = name;
@@ -100,7 +104,7 @@ function initChecklistPopovers({ sessionList, rowSnapshot, rebuildLiveRow, switc
   document.getElementById('tools-popover-apply').addEventListener('click', async () => {
     const name = toolsPopover.dataset.name;
     if (!name) return closeToolsPopover();
-    const disabledTools = collectToolChecklist(popoverToolsList);
+    const disabledTools = mergeLists(collectToolChecklist(popoverToolsList), unlistedOf(toolsPersisted, toolsRendered));
     const restart = toolsPopoverRestart.checked;
     closeToolsPopover();
     const r = await window.api.setSessionTools(name, disabledTools);
@@ -255,6 +259,8 @@ function initChecklistPopovers({ sessionList, rowSnapshot, rebuildLiveRow, switc
   let agentsPersisted = [];
   let agentsRendered = [];
   let agentsAuto = [];
+  let builtinsPersisted = [];
+  let builtinsRendered = [];
 
   function closeAgentsPopover() {
     agentsPopover.classList.add('hidden');
@@ -271,7 +277,8 @@ function initChecklistPopovers({ sessionList, rowSnapshot, rebuildLiveRow, switc
     agentsPersisted = res.enabled || [];
     agentsRendered = (res.agents || []).map((a) => a.name);
     agentsAuto = [...auto];
-    renderBuiltinChecklist(popoverBuiltinsList, new Set(res.denyBuiltins || []));
+    builtinsPersisted = res.denyBuiltins || [];
+    builtinsRendered = renderBuiltinChecklist(popoverBuiltinsList, new Set(builtinsPersisted));
     agentsPopoverRestart.checked = false;
     agentsPopoverName.textContent = name;
     agentsPopover.dataset.name = name;
@@ -289,7 +296,7 @@ function initChecklistPopovers({ sessionList, rowSnapshot, rebuildLiveRow, switc
     // excluded) — same as the skills popover.
     const agents = reconcilePartialSelection(
       agentsPersisted, agentsRendered, collectAgentChecklist(popoverAgentsList), agentsAuto);
-    const denyBuiltins = collectBuiltinChecklist(popoverBuiltinsList);
+    const denyBuiltins = mergeLists(collectBuiltinChecklist(popoverBuiltinsList), unlistedOf(builtinsPersisted, builtinsRendered));
     const restart = agentsPopoverRestart.checked;
     // The agent roster is fixed at conversation creation (--resume replays the
     // old one), so a restart that applies it must be the fresh, history-clearing
