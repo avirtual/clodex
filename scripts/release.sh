@@ -302,7 +302,11 @@ else
 fi
 
 step "Launching cloud release review"
-run "$(dirname "$0")/cloud-review.sh" "$PREV_TAG" "$TAG" || say "warn: cloud review launch failed; run scripts/cloud-review.sh $PREV_TAG $TAG manually"
+if run "$(dirname "$0")/cloud-review.sh" "$PREV_TAG" "$TAG"; then
+  if [ -n "$LOG" ]; then say "$(tail -n 1 "$LOG")"; fi
+else
+  say "warn: cloud review launch failed; run scripts/cloud-review.sh $PREV_TAG $TAG manually"
+fi
 
 step "Done"
 say "released $TAG"

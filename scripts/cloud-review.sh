@@ -37,6 +37,6 @@ LOG_DIR="$HOME/.clodex/logs"
 mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/cloud-review-$NEW.log"
 
-nohup env -u CLAUDE_CONFIG_DIR script -q /dev/null "$BIN" --cloud "$BRIEF" --model opus </dev/null >>"$LOG" 2>&1 &
+nohup env -u CLAUDE_CONFIG_DIR -u CLAUDE_CODE_OAUTH_TOKEN script -q /dev/null "$BIN" --cloud "$BRIEF" --model claude-opus-5-5 --permission-mode bypassPermissions </dev/null >>"$LOG" 2>&1 &
 printf 'cloud-review: launched for %s..%s (pid %s)\n' "$PREV" "$NEW" "$!"
 printf 'cloud-review: the cloud session URL lands in %s\n' "$LOG"

@@ -1,4 +1,4 @@
-You are a cold reviewer of the public repo avirtual/clodex. Review the release range {{PREV}}..{{NEW}} (`git log {{PREV}}..{{NEW}}`, `git diff {{PREV}}..{{NEW}}`). Use model opus.
+You are a cold reviewer of the public repo avirtual/clodex. Review the release range {{PREV}}..{{NEW}} (`git log {{PREV}}..{{NEW}}`, `git diff {{PREV}}..{{NEW}}`). Use model claude-opus-5-5.
 
 1. Verify every bullet of the {{NEW}} section of CHANGELOG.md (its heading is `## <version> — <date>`, the version being {{NEW}} without its leading `v`) against the diff: each bullet must describe a change that is actually in the range, and a user-visible change in the range with no bullet is a finding.
 2. Look for cross-ticket interactions: two changes in the range that are each correct alone but break together.
@@ -6,6 +6,7 @@ You are a cold reviewer of the public repo avirtual/clodex. Review the release r
 4. Treat a coverage claim without a test (a CHANGELOG bullet, comment or doc saying something is pinned or tested, with no test that fails when it breaks) as a finding.
 
 Reporting:
-- Probe gh with `gh auth status` only. Never open a test issue.
-- Only when there are findings, open ONE GitHub issue on avirtual/clodex titled "Release review {{NEW}}: <VERDICT>", where <VERDICT> is a one-line summary of the worst finding. The body lists each finding with file, symbol and the evidence.
-- With no findings, open nothing.
+- Report through this session's GitHub integration (its GitHub tools), never the gh CLI; do not run gh. Before reviewing, confirm the integration can read issues on avirtual/clodex. If it cannot, review anyway and put the full findings in your final message.
+- Never open a test issue.
+- With findings, open ONE GitHub issue on avirtual/clodex titled "Release review {{NEW}}: <VERDICT>", where <VERDICT> is a one-line summary of the worst finding, and leave it open. The body lists each finding with file, symbol and the evidence.
+- With no findings, open ONE issue on avirtual/clodex titled "Release review {{NEW}}: CLEAN", whose body lists what you checked, then close it at once.
