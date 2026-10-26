@@ -738,7 +738,7 @@ test('createSession: a token write that throws after a good create answers ok wi
     const h = makeDeps({ templates: { 'avh-assistant': { name: 'avh-assistant', type: 'claude' } } });
     const t = withTokenRoot(h);
     h.deps.fs.writeFileSync = (p, ...rest) => {
-      if (String(p).endsWith('client-token')) throw new Error('EACCES');
+      if (String(p).endsWith('client-token')) { realFs.writeFileSync(p, 'par'); throw new Error('ENOSPC'); }
       return realFs.writeFileSync(p, ...rest);
     };
     const out = await captureOptions(h.deps).createSession({ ...bodies(t.root)[i], client: { token: TOKEN } });

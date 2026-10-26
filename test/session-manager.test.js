@@ -24424,6 +24424,7 @@ test('assistant sleep: a transcript with no prose rows leaves the previous brief
   assert.deepStrictEqual(await h.m.sleep('asst'), { ok: true, state: 'asleep' });
   assert.strictEqual(typeof h.store.get('asst').asleepAt, 'number', 'ENTER: the sleep ran');
   assert.strictEqual(fs.readFileSync(briefPath, 'utf8'), '## Before you slept\n\nkept bytes\n');
+  assert.deepStrictEqual(fs.readdirSync(path.dirname(briefPath)).filter((f) => f.startsWith('.brief.md.tmp.')), []);
 });
 
 test('session:retrySpawn of an archived assistant wakes it instead of create(), stamping wakes and clearing asleepAt', async (t) => {

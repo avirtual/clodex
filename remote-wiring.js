@@ -385,6 +385,7 @@ function createRemoteWiring(deps) {
     try { writeClientToken(name, token); return out; }
     catch (e) {
       log.error('session', `create ${name}: cannot write client token: ${e.message}`);
+      try { fs.unlinkSync(clientTokenPathFor(REGISTRY_DIR, name)); } catch {}
       return { ...out, warnings: [...(Array.isArray(out.warnings) ? out.warnings : []), 'client token not stored'] };
     }
   }
