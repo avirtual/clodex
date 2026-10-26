@@ -37,11 +37,8 @@
 //       read carries the flag and the preserve under test is doing nothing.
 //   (b) create() was actually REACHED.
 //   (c) the flag was actually SET going in.
-//
-// createEngine starts background timers with no host to stop them; force-exit in
-// `after` once results flush, as engine-args-env.test.js does.
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const os = require('node:os');
 const fs = require('node:fs');
@@ -60,7 +57,6 @@ const DEADLINE = 1700000000000; // 2023-11-14T22:13:20Z
 // the startup keep-warm line as the product wrote it rather than restate it.
 function mkEngine(info) {
   const tmp = mkTmpRoot('clx-keepwarm-');
-  // registryDir, or the engine seeds the operator's live ~/.clodex (t359).
   return createEngine({
     userDataPath: tmp,
     seams: { noSeed: true, registryDir: path.join(tmp, 'clodex-home') },
@@ -441,5 +437,3 @@ test('an ARCHIVED seat re-arms nothing, current id included', () => {
   assert.deepStrictEqual(store.load(), [],
     'and the file goes empty — HoldEntryStore removes it rather than writing an empty list');
 });
-
-after(() => { setImmediate(() => process.exit(0)); });

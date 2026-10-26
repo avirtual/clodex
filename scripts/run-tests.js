@@ -464,7 +464,7 @@ const retime = process.env.CLODEX_TEST_SLOW_RETIME !== '0';
 const timed = advisory ? [] : offenders;
 const load = [];
 let unsampled = [];
-let sampled = 0;
+const expired = [];
 if (retime && timed.length) {
   const sample = timed.length <= RETIME_CAP
     ? timed
@@ -472,14 +472,13 @@ if (retime && timed.length) {
   const files = junitFiles();
   const deadline = runStart + runTimeoutMs;
   sample.forEach((o, i) => {
-    if (Date.now() >= deadline) return;
+    if (Date.now() >= deadline) { expired.push(o); return; }
     const alone = retimeAlone(o, i, files, deadline);
     if (alone !== null && alone <= slowLimit) load.push({ o, alone });
   });
-  sampled = sample.length;
   if (sample !== timed) unsampled = timed.filter((o) => !sample.includes(o));
 }
-const enforced = timed.filter((o) => !load.some((l) => l.o === o) && !unsampled.includes(o));
+const enforced = timed.filter((o) => !load.some((l) => l.o === o) && !unsampled.includes(o) && !expired.includes(o));
 
 function tapUnescape(s) {
   const map = { n: '\n', t: '\t', r: '\r', b: '\b', f: '\f', v: '\v' };
@@ -556,13 +555,14 @@ function retimeAlone(o, i, files, deadline) {
 for (const l of load) {
   console.log(`SLOW (load, re-timed alone): ${Math.round(l.o.ms)}ms → ${Math.round(l.alone)}ms ${l.o.name}`);
 }
-for (const o of unsampled) {
+for (const o of [...expired, ...unsampled]) {
   console.log(`SLOW (load, not re-timed): ${Math.round(o.ms)}ms ${o.name}`);
 }
 if (unsampled.length) {
+  const tally = load.length === RETIME_CAP;
   console.log(`SLOW (load): ${timed.length} offenders over the cap of ${RETIME_CAP}; `
-    + `re-timed the ${sampled} slowest alone and ${load.length === sampled ? 'all ' : ''}${load.length}`
-    + `${load.length === sampled ? '' : ` of ${sampled}`} cleared; the rest are not re-timed (over cap), so not enforced`);
+    + `re-timed the ${RETIME_CAP} slowest alone and ${tally ? 'all ' : ''}${load.length}`
+    + `${tally ? '' : ` of ${RETIME_CAP}`} cleared; the rest are not re-timed (over cap), so not enforced`);
 }
 
 console.log(`\nTOTALS: ${pass} pass, ${fail} fail, ${tests} tests`);

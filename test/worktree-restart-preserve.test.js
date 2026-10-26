@@ -29,11 +29,8 @@
 //       pointer on its own and the preserve under test is doing nothing;
 //   (b) create() was actually REACHED;
 //   (c) the field was actually SET going in, through the real setter.
-//
-// createEngine starts background timers with no host to stop them; force-exit in
-// `after` once results flush, as the sibling preserve tests do.
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -52,7 +49,6 @@ function gitAvailable() {
 
 function mkEngine() {
   const tmp = mkTmpRoot('clx-wt-');
-  // registryDir, or the engine seeds the operator's live ~/.clodex (t359).
   const registryDir = path.join(tmp, 'clodex-home');
   const eng = createEngine({
     userDataPath: tmp,
@@ -399,15 +395,4 @@ test('a fresh conversation is still owed its digest — the preserved list canno
     'and a conversation the fresh restart mints is STILL OWED its digest — the preserved array cannot cover '
     + 'an id that did not exist when it was written. That is the whole safety argument for ALWAYS_PRESERVE '
     + 'here: unlike rosterSentAt, a carried value can only suppress a delivery that already happened');
-});
-
-// Force-exit past createEngine's background timers, which no host stops here.
-// The tmpdir sweep is test/lib/tmp-roots.js's own top-level `after`, registered
-// at require time and therefore BEFORE this one — which is the ordering this
-// file needs: the orphan subject's assertion is that a checkout is STILL on
-// disk after destroy(), so a sweep running any earlier would delete the
-// evidence and leave that test passing for the wrong reason. Do not sweep here,
-// and do not queue the exit anywhere the sweep would land after it.
-after(() => {
-  setImmediate(() => process.exit(0));
 });

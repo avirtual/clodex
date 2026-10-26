@@ -18,12 +18,8 @@
 // which a call-arg test passes over by construction. The one call-arg assertion
 // below is marked as such and exists because create() is stubbed, so its
 // intents param has no other observable effect.
-//
-// createEngine constructs electron-free against a temp userData and starts
-// background timers with no host to stop them, so we force-exit in `after` once
-// assertions flush — node --test isolates each file in its own subprocess.
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const { createEngine } = require('./lib/engine-isolation');
@@ -158,5 +154,3 @@ test('a restart that does NOT touch plugins leaves the persisted gate and grants
   assert.deepStrictEqual(captured[0][17], ['dm', 'keptverb', 'goneverb'],
     'and create() is spawned with the same allowlist it had');
 }));
-
-after(() => { setImmediate(() => process.exit(0)); });

@@ -106,7 +106,6 @@ function engineHostLabel(label) {
   try {
     const engine = createEngine({
       userDataPath: tmp,
-      // registryDir or the engine seeds the operator's live ~/.clodex.
       seams: { noSeed: true, registryDir: path.join(tmp, 'clodex-home') },
       log,
     });

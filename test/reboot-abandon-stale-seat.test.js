@@ -21,7 +21,7 @@
 // the notice. Re-reading either inside the callback would read the LATER
 // request's values and guard nothing.
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const os = require('node:os');
 const fs = require('node:fs');
@@ -44,7 +44,6 @@ const T2 = T1 + 6 * 60 * 1000;
 
 function mkEngine(seams) {
   const tmp = mkTmpRoot('clx-t283-');
-  // registryDir or the engine seeds the operator's live ~/.clodex (t359).
   return createEngine({
     userDataPath: tmp,
     seams: { noSeed: true, registryDir: path.join(tmp, 'clodex-home'), ...seams },
@@ -222,6 +221,3 @@ test('a name-reused seat also does not clear the notice out from under a live re
   assert.strictEqual(eng.stores.uiSettings.get().pendingRebootNotice, null,
     'the notice belonged to this request, so it goes — the seat swap is irrelevant to it');
 });
-
-// createEngine starts background timers with no host to stop them.
-after(() => { setImmediate(() => process.exit(0)); });

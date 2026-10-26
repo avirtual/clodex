@@ -43,6 +43,27 @@ test('every test file that builds an engine gets createEngine from test/lib/engi
     + 'wirescope (python3 -m venv + pip install) and preseeds the real ~/.claude.json on every claude spawn');
 });
 
+const DIRECT_ENGINE_REQUIRE = /^[^'"`\n]*\brequire\(\s*['"](\.\.\/)+engine(\.js)?['"]\s*\)/m;
+
+test('the direct-engine-require scanner flags a real require and passes a quoted fixture string', () => {
+  assert.strictEqual(DIRECT_ENGINE_REQUIRE.test("const { diagLines } = require('../engine');\n"), true);
+  assert.strictEqual(DIRECT_ENGINE_REQUIRE.test('const engine = require("../engine.js");\n'), true);
+  assert.strictEqual(DIRECT_ENGINE_REQUIRE.test("  const { x } = require('../../engine');\n"), true);
+  assert.strictEqual(DIRECT_ENGINE_REQUIRE.test("const iso = require('./lib/engine-isolation');\n"), false);
+  assert.strictEqual(DIRECT_ENGINE_REQUIRE.test("    'lib/util.js': \"const sib = require('../engine');\",\n"), false);
+  assert.strictEqual(DIRECT_ENGINE_REQUIRE.test("const m = require('../engine-args');\n"), false);
+});
+
+test('no test file outside the helper requires the engine module directly', () => {
+  const files = testJsFiles(__dirname);
+  const names = files.map((f) => path.relative(__dirname, f));
+  assert.ok(names.includes('seat-layout.test.js') && names.includes('deploy-visible.test.js'),
+    `ENTER: the scan must cover every test file — got ${files.length}`);
+  const offenders = names.filter((n) => DIRECT_ENGINE_REQUIRE.test(fs.readFileSync(path.join(__dirname, n), 'utf8')));
+  assert.deepStrictEqual(offenders, [],
+    'take engine exports from ./lib/engine-isolation: a direct require skips its HOME scratch root and wirescope gate');
+});
+
 test('the isolation env is in force: wirescope gated off and HOME a scratch root', () => {
   assert.deepStrictEqual(
     { CLODEX_WIRESCOPE: process.env.CLODEX_WIRESCOPE, HOME: process.env.HOME },

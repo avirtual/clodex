@@ -409,3 +409,24 @@ test('slow gate: a re-run that hangs is cut at the run deadline, prints TOTALS a
   assert.match(r.out, /^SLOW: \d+ms the hanging subject$/m);
   assert.ok(!/re-timed alone/.test(r.out));
 });
+
+test('slow gate: a sample the run deadline skips is reported not re-timed and is not enforced', () => {
+  const body = 'require(\'node:test\').test(\'the deadline eater\', () => {\n'
+    + '  const m = require(\'node:path\').join(__dirname, \'.hang\');\n'
+    + '  const again = require(\'node:fs\').existsSync(m);\n'
+    + '  require(\'node:fs\').writeFileSync(m, \'\');\n'
+    + `  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, again ? 40000 : 400);\n});\n`
+    + sleeper('the skipped sample', 400);
+  const r = runRunner({
+    files: { 'test/hang.test.js': body },
+    slowMs: 150,
+    extraEnv: { CLODEX_TEST_RUN_TIMEOUT_MS: '8000' },
+  });
+  assert.match(r.out, /^TOTALS: 3 pass, 0 fail, 3 tests$/m,
+    'ENTER: the main run finished inside the deadline and its totals were printed');
+  assert.match(r.out, /^SLOW: \d+ms the deadline eater$/m,
+    'ENTER: the first sample was re-timed, cut at the deadline, and stays enforced');
+  assert.match(r.out, /^SLOW \(load, not re-timed\): \d+ms the skipped sample$/m);
+  assert.ok(!/^SLOW: \d+ms the skipped sample$/m.test(r.out), 'a sample never re-timed is not enforced');
+  assert.ok(!/^SLOW \(load\): /m.test(r.out), 'under the cap there is no over-cap summary');
+});

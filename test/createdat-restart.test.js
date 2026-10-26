@@ -39,13 +39,8 @@
 //       never happened asserts nothing.
 //   (c) the prior stamp is a fixed PAST ms, so "preserved" and "re-minted"
 //       cannot coincide by accident.
-//
-// createEngine constructs electron-free against a temp userData; its
-// construction starts background timers with no host to stop them, so we
-// force-exit in `after` once assertions flush (node --test isolates each file
-// in its own subprocess). Same discipline as engine-args-env.test.js.
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const { intentEnabled } = require('../intent-catalog');
 const os = require('node:os');
@@ -60,7 +55,6 @@ const BORN = 1700000000000; // 2023-11-14T22:13:20Z
 
 function mkEngine() {
   const tmp = mkTmpRoot('clx-createdat-');
-  // registryDir or the engine seeds the operator's live ~/.clodex (t359).
   return createEngine({
     userDataPath: tmp,
     seams: { noSeed: true, registryDir: path.join(tmp, 'clodex-home') },
@@ -194,8 +188,7 @@ test('[agent:context reload] preserves createdAt across its cold respawn', async
   // waitExit poll, so the intent call returns long before create fires — await
   // the probe, don't assume synchrony. _injectReloadHandoff runs after create
   // and polls for a transcript symlink that will never appear here; it is
-  // best-effort and irrelevant to the seam under test, and the after() hook
-  // below exits the process rather than waiting it out.
+  // best-effort and irrelevant to the seam under test.
   eng.manager._injectReloadHandoff = () => {};
 
   // The handoff body is MANDATORY — a blank body aborts BEFORE the kill, which
@@ -510,6 +503,3 @@ test('create() hands the birth stamp to setupClaudeHook, so the generated drain 
     'and it must equal the persisted value — a recomputed copy would drift the first time either was touched, '
     + 'which is the construction class this whole ticket exists to remove');
 });
-
-// createEngine's background timers keep the loop alive; exit once results flush.
-after(() => { setImmediate(() => process.exit(0)); });

@@ -25,7 +25,6 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function mkEngine() {
   const tmp = mkTmpRoot('clx-ctx-timeout-');
-  // registryDir or the engine seeds the operator's live ~/.clodex (t359).
   return createEngine({
     userDataPath: tmp,
     seams: { noSeed: true, registryDir: path.join(tmp, 'clodex-home') },

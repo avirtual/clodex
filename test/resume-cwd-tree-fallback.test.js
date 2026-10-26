@@ -25,7 +25,6 @@
 'use strict';
 
 const test = require('node:test');
-const { after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -267,16 +266,12 @@ test('no resume path reads worktree provenance itself', () => {
 // ANSWERS, over the states a record can be in. Driven through a real engine's
 // persistence store, so the pointer drop is observed on the stored record rather
 // than on a fixture's copy of it.
-//
-// createEngine starts background timers with no host to stop them; force-exit in
-// `after` once results flush, as engine-args-env.test.js does.
 // `info` lines are CAPTURED, not swallowed: the fallback announces itself with one,
 // and "it did not fall back a second time" is otherwise unobservable — the return
 // value is `main` either way.
 function mkEngine() {
   const tmp = mkTmpRoot('clx-resumecwd-');
   const info = [];
-  // registryDir, or the engine seeds the operator's live ~/.clodex (t359).
   const eng = createEngine({
     userDataPath: tmp,
     seams: { noSeed: true, registryDir: path.join(tmp, 'clodex-home') },
@@ -400,5 +395,3 @@ test('a pre-t752 record — tree gone, no main — is left exactly as it was', (
     + 'takes the tree and the checkout together — so guessing here lands in the ABSENT state '
     + 'ALWAYS_PRESERVE calls the dangerous one');
 });
-
-after(() => { setImmediate(() => process.exit(0)); });

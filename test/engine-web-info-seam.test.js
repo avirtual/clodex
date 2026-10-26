@@ -19,7 +19,6 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function mkEngine(seams) {
   const tmp = mkTmpRoot('clx-eng-web-');
-  // registryDir or the engine seeds the operator's live ~/.clodex (t359).
   return createEngine({
     userDataPath: tmp,
     seams: { noSeed: true, registryDir: path.join(tmp, 'clodex-home'), ...seams },

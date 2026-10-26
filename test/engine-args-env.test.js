@@ -7,13 +7,8 @@
 // spread. This pins the arg reaching create(); create() persisting a threaded env
 // flat on the entry is separately pinned in session-manager.test.js, so the two
 // together give the full "restart keeps entry.env" guarantee.
-//
-// createEngine constructs electron-free against a temp userData. Its construction
-// starts background timers that keep the event loop alive (no host to stop them),
-// so we force-exit in an `after` hook once assertions flush — node --test isolates
-// each file in its own subprocess, so this only exits THIS file's process.
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const os = require('node:os');
 const fs = require('node:fs');
@@ -23,7 +18,6 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function mkEngine() {
   const tmp = mkTmpRoot('clx-eng-env-');
-  // registryDir or the engine seeds the operator's live ~/.clodex (t359).
   return createEngine({
     userDataPath: tmp,
     seams: { noSeed: true, registryDir: path.join(tmp, 'clodex-home') },
@@ -129,7 +123,6 @@ test('args-edit with env omitted preserves the persisted env (no-restart save)',
 });
 
 // createEngine's background timers keep the loop alive; exit once results flush.
-after(() => { setImmediate(() => process.exit(0)); });
 
 for (const row of [
   { label: 'revoke', before: ['old-grant'], patch: [], want: [] },
