@@ -96,11 +96,11 @@ the suite's comment ratchet refuses new comment lines.
 
 ## RETIME_CAP
 
-Past 12 offenders only the 12 slowest are re-timed (`retimeAlone`); the rest go
-unenforced only if every sampled one clears alone, since three green full runs under
-concurrent load each tripped more than 12. The phase shares the main run's `runTimeoutMs` deadline, and each
-re-run gets at most `slowLimit + 30000`: TOTALS prints after it, so a phase that
-outran the exec ceiling would leave a green branch with no TOTALS line.
+Past 12 offenders (`CLODEX_TEST_RETIME_CAP` overrides, for the fixtures) only the
+slowest 12 are re-timed (`retimeAlone`); the rest go unenforced only if every sampled
+one clears alone: three green loaded full runs each tripped more than 12. It shares
+the main run's `runTimeoutMs` deadline, each re-run capped at `slowLimit + 30000`:
+TOTALS prints after it, so outrunning the exec ceiling leaves a green run untotalled.
 
 ## junitFiles
 
