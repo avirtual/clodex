@@ -13,6 +13,8 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+
+## 5.146.0 — 2026-10-26
 - The release script now launches the post-release cloud review itself, on the default Claude login, so every release gets reviewed without a manual step; findings arrive as one GitHub issue.
 - The release-review notice a Clodex lead gets after an upgrade now points at the cloud review the release script launched, instead of asking the lead to run a local review.
 - The cloud release review now runs unattended and always leaves a GitHub issue: findings stay open, and a clean review opens and closes a CLEAN issue, so a missing issue means the review failed.
