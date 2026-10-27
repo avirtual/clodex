@@ -831,7 +831,7 @@ test('t1077: the model hint reads the adapter aliases', () => {
 const COLLECT_FN = extract(/\n(function collectFormConfig\([\s\S]*?)\nfunction collectDialogEnv\(/, 'collectFormConfig');
 
 function collectFor(type, overrides = {}) {
-  const { unlistedOf, mergeLists } = require('../plugin-api');
+  const { unlistedOf, mergeLists, keptLockedOf } = require('../plugin-api');
   const env = {
     inputType: { value: type },
     dialogMode: 'template',
@@ -865,7 +865,7 @@ function collectFor(type, overrides = {}) {
     inputStripLevel: { value: '2' },
     inputSystemPrompt: { value: 'sys' },
     collectAppendPromptFiles: () => ['app-a'],
-    unlistedOf, mergeLists,
+    unlistedOf, mergeLists, keptLockedOf,
     formPersisted: {}, formRendered: {},
     ...overrides,
   };
