@@ -422,3 +422,16 @@ test('_holdSharedOutside counts live seats and Always unarchived records, never 
   live(m, 'plain', SID_B);
   assert.strictEqual(m._holdSharedOutside(SID_B, new Set()), true);
 });
+
+test('purgeWorkspace drops the reminders of both the live seat it kills and the record-only seat', () => {
+  const recs = new Map([['a', { name: 'a', cwd: '/p', workspaceId: 'ws-1' }], ['ghost', { name: 'ghost', cwd: '/p', workspaceId: 'ws-1' }]]);
+  const removed = [];
+  const m = mk({
+    getPersistence: () => ({ list: () => [...recs.values()], get: (n) => recs.get(n) || null, remove: (n) => { recs.delete(n); }, listForWorkspace: (ws) => [...recs.values()].filter((r) => r.workspaceId === ws) }),
+    getRemindScheduler: () => ({ removeForAgent: (n) => { removed.push(n); return 1; } }),
+    log: QUIET,
+  });
+  live(m, 'a', null, { cwd: '/p', workspaceId: 'ws-1' });
+  assert.deepStrictEqual(m.purgeWorkspace('ws-1'), { killed: ['a'], dropped: ['ghost'] });
+  assert.deepStrictEqual(removed.sort(), ['a', 'ghost']);
+});

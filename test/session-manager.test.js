@@ -14445,6 +14445,21 @@ function mkDeliver({ persisted = null, deps = {} } = {}) {
   return { m, PENDING_DIR, injected };
 }
 
+test('_deliverReminder: a row stamped by an earlier seat of the name is gone and injects nothing; a matching or absent stamp delivers', () => {
+  const infos = [];
+  const { m, PENDING_DIR, injected } = mkDeliver({ deps: { log: { info: (_c, msg) => infos.push(msg), warn: () => {}, error: () => {} } } });
+  m.sessions.set('t1', { name: 't1', agentType: 'claude', createdAt: 2000 });
+  assert.strictEqual(m._deliverReminder('t1', '[ab12 every 2h] rebase', 1000), 'gone');
+  assert.deepStrictEqual(injected, []);
+  assert.strictEqual(hasPending(PENDING_DIR, 't1'), false);
+  assert.ok(infos.some((l) => l.includes('born 1000') && l.includes('born 2000')), JSON.stringify(infos));
+  assert.strictEqual(m._deliverReminder('t1', '[ab12 every 2h] mine', 2000), 'delivered');
+  assert.strictEqual(m._deliverReminder('t1', '[ab12 every 2h] legacy'), 'delivered');
+  assert.strictEqual(injected.length, 2);
+  assert.match(injected[0], /\[ab12 every 2h\] mine/);
+  assert.match(injected[1], /\[ab12 every 2h\] legacy/);
+});
+
 test('_deliverReminder: live session → injected via the DM path, returns "delivered"', () => {
   const { m, PENDING_DIR, injected } = mkDeliver();
   m.sessions.set('t1', { name: 't1', agentType: 'claude' });
@@ -21176,6 +21191,7 @@ test('t1099 onUndelivered: a unit whose seat DIES mid-settle is re-parked stampe
   assert.strictEqual(entry.born, session.createdAt,
     'stamped from the closure\'s own session: after _cleanup neither the map nor persistence knows the name, and an unstamped entry would reach the next seat of that name');
   assert.ok(warns.some((w) => /re-parked an undelivered inject for a \(dead, /.test(w)), JSON.stringify(warns));
+  assert.strictEqual(session._parkCapTimer, undefined, 'a dead seat arms no park cap');
 });
 
 test('t1507 onUndelivered: a re-park on a live seat (the paste cap) logs at warn as paste mode off, not dead', () => {
@@ -21187,6 +21203,9 @@ test('t1507 onUndelivered: a re-park on a live seat (the paste cap) logs at warn
   const session = { name: 'a', agentType: 'claude', createdAt: 1_700_000_000_000, pty: { write: () => {} } };
   m.sessions.set('a', session);
   m._injectQueueFor(session)._undelivered('one\ntwo');
+  const capArmed = !!session._parkCapTimer;
+  clearTimeout(session._parkCapTimer);
+  assert.strictEqual(capArmed, true, 'the re-park arms the park cap so an idle seat still drains it');
   assert.strictEqual(hasPending(PENDING_DIR, 'a'), true, 're-parked on disk');
   assert.ok(warns.some((w) => w.includes('re-parked an undelivered inject for a (paste mode off, 7 chars)')), JSON.stringify(warns));
   assert.ok(!infos.some((w) => w.includes('re-parked an undelivered')), 'not at info');

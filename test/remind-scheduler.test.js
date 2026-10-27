@@ -275,6 +275,84 @@ test('renameAgent is a no-op for a missing agent, an empty name, or the same nam
   } finally { cleanup(); }
 });
 
+test('add persists born and hands it to deliver; an unstamped row has no born key', () => {
+  const userData = mkTmpRoot('remsched-ud-');
+  const registryDir = mkTmpRoot('remsched-reg-');
+  const stores = initStores(userData, { log: console, registryDir });
+  const clock = fakeClock(T0);
+  const seen = [];
+  const scheduler = createRemindScheduler({
+    now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer, store: stores.reminders,
+    deliver: (agent, id, spec, body, by, born) => seen.push({ body, born }),
+  });
+  try {
+    const stamped = scheduler.add('t1', 'in 30m', 'mine', { born: 4242 });
+    const bare = scheduler.add('t1', 'in 40m', 'old');
+    assert.deepStrictEqual(stores.reminders.get(stamped.record.id), {
+      id: stamped.record.id, agent: 't1', kind: 'in', spec: 'in 30m', body: 'mine',
+      nextFireAt: T0 + 30 * MIN, createdAt: stamped.record.createdAt, lastFiredAt: null, born: 4242,
+    });
+    assert.strictEqual('born' in stores.reminders.get(bare.record.id), false);
+    clock.advance(HOUR);
+    assert.deepStrictEqual(seen, [{ body: 'mine', born: 4242 }, { body: 'old', born: undefined }]);
+  } finally {
+    scheduler.stop();
+    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(registryDir, { recursive: true, force: true });
+  }
+});
+
+test('a deliver that reports gone drops the row: fireCompactFor, a recurring timer fire and fireNow', () => {
+  const userData = mkTmpRoot('remsched-ud-');
+  const registryDir = mkTmpRoot('remsched-reg-');
+  const stores = initStores(userData, { log: console, registryDir });
+  const clock = fakeClock(T0);
+  const delivered = [];
+  const scheduler = createRemindScheduler({
+    now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer, store: stores.reminders,
+    deliver: (agent, id, spec, body) => { delivered.push(body); return agent === 'dead' ? 'gone' : 'delivered'; },
+  });
+  try {
+    scheduler.add('dead', 'on compact', 'stale');
+    scheduler.add('live', 'on compact', 'fresh');
+    scheduler.add('dead', 'every 1h', 'tick');
+    assert.strictEqual(scheduler.fireCompactFor('live'), 1);
+    assert.strictEqual(scheduler.listForAgent('live').length, 1, 'ENTER: a delivered oncompact row survives');
+    scheduler.fireCompactFor('dead');
+    assert.deepStrictEqual(scheduler.listForAgent('dead').map((r) => r.body), ['tick']);
+    clock.advance(HOUR);
+    assert.deepStrictEqual(scheduler.listForAgent('dead'), []);
+    assert.strictEqual(delivered.includes('tick'), true);
+    stores.reminders.add({ agent: 'dead', kind: 'oncompact', spec: 'on compact', body: 'manual' });
+    const again = scheduler.listForAgent('dead')[0];
+    assert.deepStrictEqual(scheduler.fireNow('dead', again.id), { ok: true, kept: false });
+  } finally {
+    scheduler.stop();
+    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(registryDir, { recursive: true, force: true });
+  }
+});
+
+test('removeForAgent drops only that agent\'s rows and re-arms the timer to the survivor', () => {
+  const { scheduler, clock, store, fires, cleanup } = freshEngine(T0);
+  try {
+    scheduler.add('gone', 'in 30m', 'theirs');
+    scheduler.add('gone', 'on compact', 'theirs too');
+    scheduler.add('other', 'in 2h', 'kept');
+    const armed = scheduler._timer;
+    assert.strictEqual(scheduler.removeForAgent('gone'), 2);
+    assert.deepStrictEqual(store.list().map((r) => r.body), ['kept']);
+    assert.notStrictEqual(scheduler._timer, armed, 'the timer for the removed 30m row was re-armed');
+    assert.strictEqual(clock.pending(), 1);
+    clock.advance(HOUR);
+    assert.deepStrictEqual(fires, []);
+    clock.advance(HOUR);
+    assert.deepStrictEqual(fires.map((f) => f.body), ['kept']);
+    assert.strictEqual(scheduler.removeForAgent('nobody'), 0);
+    assert.strictEqual(scheduler.removeForAgent(''), 0);
+  } finally { cleanup(); }
+});
+
 test('MAX_TIMER_MS is the 32-bit signed setTimeout clamp', () => {
   assert.strictEqual(MAX_TIMER_MS, 2147483647);
 });

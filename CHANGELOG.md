@@ -44,6 +44,8 @@ blocks a release.
 - Restarting a seat no longer tells its team lead the seat retired, and no longer drops its saved entry while the old process is still exiting, so a quit in that window cannot lose the seat.
 - Sleeping assistants: a message or reminder that wakes an assistant now replaces its archived sidebar row with the live one.
 - Forgetting a saved entry is refused while that seat is still running, instead of deleting the running seat's files from under it.
+- Reminders set by a seat no longer fire into a later seat that reuses its name after it was deleted; each reminder is stamped with the seat it belongs to and dropped when that seat is gone.
+- A multi-line message re-parked because the seat's paste mode stayed off now drains on its own, instead of waiting for the operator's next turn.
 
 ## 5.146.2 — 2026-10-27
 

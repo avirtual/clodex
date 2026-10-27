@@ -11,9 +11,8 @@
 //   - now()               — epoch ms (Date.now in prod; a mutable value in tests)
 //   - setTimer(fn, ms)    — arm a one-shot timer, returns a handle (setTimeout)
 //   - clearTimer(handle)  — cancel one (clearTimeout)
-//   - store               — the reminders store (add/list/listForAgent/remove/
-//                           markFired/get/renameAgent); the durable source of truth
-//   - deliver(agent, id, spec, body, by) — hand ONE fire to the DM pipeline.
+//   - store               — the reminders store; the durable source of truth
+//   - deliver(agent, id, spec, body, by, born) — hand ONE fire to the DM pipeline.
 // remind-schedule is a pure sibling leaf, required directly (like exec-schema in
 // session-manager) — nothing to inject.
 //
@@ -62,6 +61,10 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
       return s.ok ? s : null;
     },
 
+    _deliver(rec) {
+      try { return deliver(rec.agent, rec.id, rec.spec, rec.body, rec.by, rec.born); } catch { return undefined; }
+    },
+
     // Timed records (in/at/every/cron) with a concrete pending fire time.
     _timedPending() {
       return store.list().filter((r) => typeof r.nextFireAt === 'number');
@@ -78,7 +81,7 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
     _fireRecord(rec, nowMs) {
       const sched = this._schedFor(rec);
       if (!sched) { store.remove(rec.id); return; } // corrupt row → silent drop
-      try { deliver(rec.agent, rec.id, rec.spec, rec.body, rec.by); } catch {}
+      if (this._deliver(rec) === 'gone') { store.remove(rec.id); return; }
       if (RECURRING.has(rec.kind)) {
         const next = nextFireAt(sched, nowMs);
         if (typeof next === 'number') store.markFired(rec.id, nowMs, next);
@@ -133,7 +136,7 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
     // for `list` + reload. Returns { ok: true, record } or { ok: false, error }
     // with the loud-bounce message. list/cancel are dispatched by the handler,
     // not here — reaching add() with one is a caller bug, reported as such.
-    add(agent, spec, body = '', { by } = {}) {
+    add(agent, spec, body = '', { by, born } = {}) {
       const sched = parseRemindSpec(spec);
       if (!sched.ok) return { ok: false, error: sched.error };
       if (sched.kind === 'list' || sched.kind === 'cancel') {
@@ -147,7 +150,7 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
           return { ok: false, error: 'that time is already in the past' };
         }
       }
-      const record = store.add({ agent, kind: sched.kind, spec, body, nextFireAt: first, ticket: sched.ticket || null, by: by || null });
+      const record = store.add({ agent, kind: sched.kind, spec, body, nextFireAt: first, ticket: sched.ticket || null, by: by || null, born: typeof born === 'number' ? born : null });
       this._rearm();
       return { ok: true, record };
     },
@@ -198,6 +201,13 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
       return store.renameAgent(oldAgent, newAgent);
     },
 
+    removeForAgent(agent) {
+      if (!agent) return 0;
+      const n = store.removeForAgent(agent);
+      if (n) this._rearm();
+      return n;
+    },
+
     // Event trigger: fire this agent's `on compact` reminders. Called by the
     // compact rendezvous (both manual /compact and auto-compact ride the same
     // isCompactSummary signal). No timer involved; the schedule persists (a
@@ -206,8 +216,8 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
       const nowMs = now();
       const recs = store.listForAgent(agent).filter((r) => r.kind === 'oncompact');
       for (const rec of recs) {
-        try { deliver(rec.agent, rec.id, rec.spec, rec.body, rec.by); } catch {}
-        store.markFired(rec.id, nowMs, null);
+        if (this._deliver(rec) === 'gone') store.remove(rec.id);
+        else store.markFired(rec.id, nowMs, null);
       }
       return recs.length;
     },
@@ -222,8 +232,8 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
       }
       const nowMs = now();
       if (rec.kind === 'oncompact') {
-        try { deliver(rec.agent, rec.id, rec.spec, rec.body, rec.by); } catch {}
-        store.markFired(rec.id, nowMs, null);
+        if (this._deliver(rec) === 'gone') store.remove(rec.id);
+        else store.markFired(rec.id, nowMs, null);
       } else {
         this._fireRecord(rec, nowMs);
       }

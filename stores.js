@@ -1573,7 +1573,7 @@ function initStores(userDataPath, {
     listForAgent(agent) {
       return this._load().filter((r) => r.agent === agent);
     },
-    add({ agent, kind, spec, body = '', nextFireAt = null, ticket = null, by = null }) {
+    add({ agent, kind, spec, body = '', nextFireAt = null, ticket = null, by = null, born = null }) {
       const all = this._load();
       const id = this._mintId(all);
       const rec = {
@@ -1586,6 +1586,7 @@ function initStores(userDataPath, {
         // wrote before bindings existed, so the on-disk file does not churn.
         ...(ticket ? { ticket } : {}),
         ...(by ? { by } : {}),
+        ...(typeof born === 'number' ? { born } : {}),
       };
       all.push(rec);
       if (!this._save(all)) throw new Error('reminders.json could not be written');
@@ -1615,6 +1616,13 @@ function initStores(userDataPath, {
       for (const r of mine) r.agent = newAgent;
       this._save(all);
       return mine.length;
+    },
+    removeForAgent(agent) {
+      const all = this._load();
+      const next = all.filter((r) => r.agent !== agent);
+      const n = all.length - next.length;
+      if (n) this._save(next);
+      return n;
     },
   };
 
