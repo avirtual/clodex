@@ -71,3 +71,41 @@ test('a token edit restarts the connection like a url/label edit (Bearer is fixe
     mgr.stopAll();
   }
 });
+
+test('a managed tunnel peer whose url moves A -> placeholder -> B is re-pointed, never removed', () => {
+  const emits = [];
+  const mgr = new PeerManager({ emit: (ch, ...a) => emits.push([ch, ...a]) });
+  try {
+    mgr.sync([{ id: 'p', label: 'P', url: 'http://127.0.0.1:3', managed: true }]);
+    const conn = mgr._peers.get('p');
+    emits.length = 0;
+    mgr.sync([{ id: 'p', label: 'P', url: 'http://127.0.0.1:1', managed: true }]);
+    mgr.sync([{ id: 'p', label: 'P', url: 'http://127.0.0.1:4', managed: true }]);
+
+    assert.ok(emits.some(([ch]) => ch === 'peer-state'), 'ENTER: the re-point announced itself');
+    assert.equal(emits.filter(([ch]) => ch === 'peer-removed').length, 0, 'a tunnel blip is not a peer removal');
+    assert.strictEqual(mgr._peers.get('p'), conn, 'the same connection survives both moves');
+    assert.equal(conn.url, 'http://127.0.0.1:4');
+    const last = emits.filter(([ch]) => ch === 'peer-state').pop();
+    assert.equal(last[2].url, 'http://127.0.0.1:4');
+  } finally {
+    mgr.stopAll();
+  }
+});
+
+test('the same url moves on a non-managed row still restart the connection', () => {
+  const emits = [];
+  const mgr = new PeerManager({ emit: (ch, ...a) => emits.push([ch, ...a]) });
+  try {
+    mgr.sync([{ id: 'p', label: 'P', url: 'http://127.0.0.1:3' }]);
+    const conn = mgr._peers.get('p');
+    emits.length = 0;
+    mgr.sync([{ id: 'p', label: 'P', url: 'http://127.0.0.1:1' }]);
+    mgr.sync([{ id: 'p', label: 'P', url: 'http://127.0.0.1:4' }]);
+
+    assert.equal(emits.filter(([ch]) => ch === 'peer-removed').length, 2);
+    assert.notStrictEqual(mgr._peers.get('p'), conn);
+  } finally {
+    mgr.stopAll();
+  }
+});

@@ -98,11 +98,11 @@ function validateAgainstSchema(schema, value, at = 'payload') {
     const props = schema.properties || {};
     const required = Array.isArray(schema.required) ? schema.required : [];
     for (const key of required) {
-      if (!(key in value)) return { ok: false, error: `${at}.${key}: required` };
+      if (!Object.prototype.hasOwnProperty.call(value, key)) return { ok: false, error: `${at}.${key}: required` };
     }
     if (schema.additionalProperties === false) {
       for (const key of Object.keys(value)) {
-        if (!(key in props)) return { ok: false, error: `${at}.${key}: not allowed` };
+        if (!Object.prototype.hasOwnProperty.call(props, key)) return { ok: false, error: `${at}.${key}: not allowed` };
       }
     }
     for (const key of Object.keys(props)) {

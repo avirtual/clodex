@@ -457,3 +457,15 @@ test('validateExecDef: proposal is a boolean, needs no argv when true, and never
   assert.deepStrictEqual(validateExecDef({ proposal: true, inProcess: 'ctl' }), { ok: false, error: 'proposal: cannot combine with inProcess' });
   assert.deepStrictEqual(validateExecDef({ proposal: false, schema: { type: 'object' } }), { ok: false, error: 'argv: required non-empty array' });
 });
+
+test('parseAndValidate: inherited Object.prototype names are not declared keys under additionalProperties:false', () => {
+  const entry = { schema: { type: 'object', additionalProperties: false, properties: { ctx: { type: 'string' }, verb: { type: 'string' } } } };
+  const r = parseAndValidate(entry, '{"ctx":"ios","verb":"get","constructor":{},"__proto__":{},"toString":5}');
+  assert.deepStrictEqual(r, { ok: false, error: 'payload.constructor: not allowed' });
+});
+
+test('parseAndValidate: a required key named like an Object.prototype member is not satisfied by inheritance', () => {
+  const entry = { schema: { type: 'object', required: ['toString'], properties: { toString: { type: 'number' } } } };
+  const r = parseAndValidate(entry, '{}');
+  assert.deepStrictEqual(r, { ok: false, error: 'payload.toString: required' });
+});

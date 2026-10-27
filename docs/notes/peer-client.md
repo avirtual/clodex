@@ -19,6 +19,8 @@ depends on the flag, so a restart would shed every live attachment to carry one
 boolean; but a silent no-op would leave the sidebar offering a direct address for
 a peer main now tunnels to.
 
+A `managed` row (an ssh or cloud tunnel peer) whose only change is its `url` is the exception to "a url edit restarts the connection": `repoint` keeps the connection and its wanted attachments and wterms, so a tunnel drop or re-dial never emits `peer-removed`.
+
 ## _probeDialect
 
 t938: one successful fetch per hello IDENTITY, not per tick; a failed one is
