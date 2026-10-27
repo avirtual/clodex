@@ -105,12 +105,62 @@ test('archive disarms the live seat\'s hold', async () => {
 });
 
 test('a fork that has not rotated off its parent\'s sid leaves the parent\'s hold armed', async () => {
-  const { m } = rig({ records: { parent: { cwd: '/p', sessionId: SID_A }, kid: { cwd: '/p', sessionId: SID_A } } });
+  const { m } = rig({ records: { parent: { cwd: '/p', sessionId: SID_A } } });
   const keeper = m._holdKeeper = fakeKeeper([SID_A]);
   live(m, 'kid', SID_A, { forked: true });
   enter(keeper, SID_A);
   await m.destroy('kid');
   assert.ok(!m.sessions.has('kid'), 'ENTER: the fork was killed');
+  assert.deepStrictEqual(keeper.disarmed, []);
+});
+
+test('destroying the parent while a live unrotated fork shares its sid leaves the hold armed', async () => {
+  const { m, recs } = rig({ records: { parent: { cwd: '/p', sessionId: SID_A, keepWarmAlways: true } } });
+  const keeper = m._holdKeeper = fakeKeeper([SID_A]);
+  live(m, 'parent', SID_A);
+  live(m, 'kid', SID_A, { forked: true });
+  enter(keeper, SID_A);
+  await m.destroy('parent');
+  assert.strictEqual(recs.get('parent'), undefined, 'ENTER: the parent was destroyed');
+  assert.deepStrictEqual(keeper.disarmed, []);
+});
+
+test('destroying the parent disarms past an archived fork record that shares its sid', async () => {
+  const { m, recs } = rig({ records: {
+    parent: { cwd: '/p', sessionId: SID_A, keepWarmAlways: true },
+    kid: { cwd: '/p', sessionId: SID_A, keepWarmAlways: true, archivedAt: 1 },
+  } });
+  const keeper = m._holdKeeper = fakeKeeper([SID_A]);
+  live(m, 'parent', SID_A);
+  enter(keeper, SID_A);
+  await m.destroy('parent');
+  assert.strictEqual(recs.get('kid').sessionId, SID_A, 'ENTER: the archived fork record still shares the sid');
+  assert.deepStrictEqual(keeper.disarmed, [SID_A]);
+});
+
+test('destroying the parent disarms past an exited non-Always fork record that shares its sid', async () => {
+  const { m, recs } = rig({ records: {
+    parent: { cwd: '/p', sessionId: SID_A, keepWarmAlways: true },
+    kid: { cwd: '/p', sessionId: SID_A, exitedAt: 1 },
+  } });
+  const keeper = m._holdKeeper = fakeKeeper([SID_A]);
+  live(m, 'parent', SID_A);
+  enter(keeper, SID_A);
+  await m.destroy('parent');
+  assert.strictEqual(recs.get('kid').sessionId, SID_A, 'ENTER: the exited fork record still shares the sid');
+  assert.deepStrictEqual(keeper.disarmed, [SID_A]);
+});
+
+test('destroying the parent leaves the hold a non-archived Always record shares', async () => {
+  const { m, recs } = rig({ records: {
+    parent: { cwd: '/p', sessionId: SID_A, keepWarmAlways: true },
+    kid: { cwd: '/p', sessionId: SID_A, keepWarmAlways: true },
+  } });
+  const keeper = m._holdKeeper = fakeKeeper([SID_A]);
+  live(m, 'parent', SID_A);
+  enter(keeper, SID_A);
+  await m.destroy('parent');
+  assert.strictEqual(recs.get('parent'), undefined, 'ENTER: the parent was destroyed');
   assert.deepStrictEqual(keeper.disarmed, []);
 });
 
@@ -208,6 +258,33 @@ test('purgeWorkspace disarms a live seat and a record-only seat of the workspace
   assert.deepStrictEqual(keeper.disarmed.sort(), [SID_A, SID_B]);
 });
 
+test('purgeWorkspace disarms a sid its live seat and its record-only seat share', async () => {
+  const { m, recs } = rig({ records: {
+    a: { cwd: '/p', sessionId: SID_A, workspaceId: 'ws-1', keepWarmAlways: true },
+    ghost: { cwd: '/p', sessionId: SID_A, workspaceId: 'ws-1', keepWarmAlways: true },
+  } });
+  const keeper = m._holdKeeper = fakeKeeper([SID_A]);
+  live(m, 'a', SID_A, { cwd: '/p', workspaceId: 'ws-1' });
+  enter(keeper, SID_A);
+  assert.deepStrictEqual(m.purgeWorkspace('ws-1'), { killed: ['a'], dropped: ['ghost'] });
+  assert.strictEqual(recs.size, 0, 'ENTER: both records were dropped');
+  assert.deepStrictEqual(keeper.disarmed, [SID_A]);
+});
+
+test('purgeWorkspace leaves a sid a live seat outside the workspace shares', async () => {
+  const { m, recs } = rig({ records: {
+    a: { cwd: '/p', sessionId: SID_A, workspaceId: 'ws-1' },
+    out: { cwd: '/p', sessionId: SID_A, workspaceId: 'ws-2' },
+  } });
+  const keeper = m._holdKeeper = fakeKeeper([SID_A]);
+  live(m, 'a', SID_A, { cwd: '/p', workspaceId: 'ws-1' });
+  live(m, 'out', SID_A, { cwd: '/p', workspaceId: 'ws-2' });
+  enter(keeper, SID_A);
+  assert.deepStrictEqual(m.purgeWorkspace('ws-1'), { killed: ['a'], dropped: [] });
+  assert.ok(recs.has('out') && m.sessions.has('out'), 'ENTER: the outside seat survived');
+  assert.deepStrictEqual(keeper.disarmed, []);
+});
+
 test('_maybeRearmHold arms an Always seat, and never one that is archiving', () => {
   const { m } = rig({ records: { a: { cwd: '/p', sessionId: SID_A, keepWarmAlways: true } } });
   const armed = [];
@@ -222,11 +299,24 @@ test('_maybeRearmHold arms an Always seat, and never one that is archiving', () 
 });
 
 test('endHold disarms a seat by its own sid and leaves a sid another record shares', () => {
-  const { m } = rig({ records: { a: { cwd: '/p', sessionId: SID_A }, b: { cwd: '/p', sessionId: SID_B }, c: { cwd: '/p', sessionId: SID_B } } });
+  const { m } = rig({ records: { a: { cwd: '/p', sessionId: SID_A }, b: { cwd: '/p', sessionId: SID_B }, c: { cwd: '/p', sessionId: SID_B, keepWarmAlways: true } } });
   const keeper = m._holdKeeper = fakeKeeper([SID_A, SID_B]);
   enter(keeper, SID_A);
   enter(keeper, SID_B);
   m.endHold('a');
   m.endHold('b');
   assert.deepStrictEqual(keeper.disarmed, [SID_A]);
+});
+
+test('_holdSharedOutside counts live seats and Always unarchived records, never a name it excludes', () => {
+  const { m } = rig({ records: {
+    always: { cwd: '/p', sessionId: SID_A, keepWarmAlways: true },
+    plain: { cwd: '/p', sessionId: SID_B },
+    gone: { cwd: '/p', sessionId: SID_B, keepWarmAlways: true, archived: true },
+  } });
+  assert.strictEqual(m._holdSharedOutside(SID_A, new Set()), true, 'ENTER: the Always record counts');
+  assert.strictEqual(m._holdSharedOutside(SID_A, new Set(['always'])), false);
+  assert.strictEqual(m._holdSharedOutside(SID_B, new Set()), false);
+  live(m, 'plain', SID_B);
+  assert.strictEqual(m._holdSharedOutside(SID_B, new Set()), true);
 });

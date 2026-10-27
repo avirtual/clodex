@@ -1262,9 +1262,16 @@ function createSessionManager(deps) {
       const entry = getPersistence().get(name);
       const sid = s ? (s.forked ? null : s.sessionId) : (entry && entry.sessionId);
       if (!sid) return null;
-      for (const [other, o] of this.sessions) if (other !== name && o.sessionId === sid) return null;
-      for (const rec of getPersistence().list()) if (rec && rec.name !== name && rec.sessionId === sid) return null;
-      return sid;
+      return this._holdSharedOutside(sid, new Set([name])) ? null : sid;
+    }
+
+    _holdSharedOutside(sid, names) {
+      for (const [other, o] of this.sessions) if (!names.has(other) && o.sessionId === sid) return true;
+      for (const rec of getPersistence().list()) {
+        if (!rec || names.has(rec.name) || rec.sessionId !== sid) continue;
+        if (rec.keepWarmAlways && !rec.archived && !rec.archivedAt) return true;
+      }
+      return false;
     }
 
     _disarmHoldFor(name, sid) {
@@ -4880,13 +4887,22 @@ function createSessionManager(deps) {
     }
 
     purgeWorkspace(workspaceId) {
+      const seats = this.listForWorkspace(workspaceId);
+      const records = getPersistence().listForWorkspace(workspaceId).filter((e) => e && e.name);
+      const names = new Set([...seats.map((s) => s.name), ...records.map((e) => e.name)]);
+      const sids = new Map();
+      for (const s of seats) {
+        const live = this.sessions.get(s.name);
+        if (live && !live.forked && live.sessionId && !sids.has(live.sessionId)) sids.set(live.sessionId, s.name);
+      }
+      for (const e of records) if (!this.sessions.has(e.name) && e.sessionId && !sids.has(e.sessionId)) sids.set(e.sessionId, e.name);
+      for (const [sid, name] of sids) if (!this._holdSharedOutside(sid, names)) this._disarmHoldFor(name, sid);
       const killed = [];
-      for (const s of this.listForWorkspace(workspaceId)) { killed.push(s.name); this.kill(s.name, { endHold: true }); }
+      for (const s of seats) { killed.push(s.name); this.kill(s.name); }
       const dropped = [];
       for (const e of getPersistence().listForWorkspace(workspaceId)) {
         if (!e || !e.name) continue;
         this.clearHintForRecord(e.name);
-        this.endHold(e.name);
         getPersistence().remove(e.name);
         this._bindHold(e.name);
         this.forgetSeatFiles(e.name, e);
