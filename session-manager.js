@@ -4899,8 +4899,7 @@ function createSessionManager(deps) {
       for (const [sid, name] of sids) if (!this._holdSharedOutside(sid, names)) this._disarmHoldFor(name, sid);
       const killed = [];
       for (const s of seats) {
-        const live = this.sessions.get(s.name);
-        const rec = getPersistence().get(s.name) || (live && live._assistant ? { class: 'assistant' } : null);
+        const rec = getPersistence().get(s.name);
         killed.push(s.name);
         this.kill(s.name);
         this.forgetSeatFiles(s.name, rec);
