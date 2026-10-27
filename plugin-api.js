@@ -170,6 +170,11 @@ function mergeLists(checked, unlisted) {
 }
 const mergePlugins = mergeLists;
 
+function keptLockedOf(persisted, list) {
+  const locked = new Set(Array.from(list.querySelectorAll('input[type="checkbox"]:disabled'), (cb) => cb.value));
+  return (persisted || []).filter((id) => locked.has(id));
+}
+
 // The ONE resolution of the absent case, so the readers cannot disagree.
 // `shipped` is threaded by the caller and anything but `true` withholds: an
 // origin nobody could answer must not widen reach.
@@ -265,6 +270,7 @@ module.exports = {
   mergePlugins,
   unlistedOf,
   mergeLists,
+  keptLockedOf,
   mergeGrants,
   pluginGranted,
   seatHasPlugin,

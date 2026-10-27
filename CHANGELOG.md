@@ -20,6 +20,8 @@ blocks a release.
 - Deleting a workspace now also removes the seat files of its running seats, so a new seat reusing one of their names starts clean.
 - clodexctl: `get nodes --current --ctx <name>` now refuses a node the contexts file does not know, instead of printing the unknown name as if it were current.
 - Reminders viewer: the Cancel button is no longer shown on the web surface, where cancelling is not available and the click only produced an error toast.
+- Clicking an OS notification that has been sitting in Notification Center for more than a minute now opens the Inbox again; a change earlier today made such clicks do nothing.
+- The Tools popover's Apply no longer drops a tool deny that a lower settings layer has locked, matching what the args dialog and the new-session form already did.
 
 ## 5.146.2 — 2026-10-27
 

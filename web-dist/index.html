@@ -26310,6 +26310,10 @@ ${i3.join("\n")}
         return [.../* @__PURE__ */ new Set([...(checked || []).map(String), ...(unlisted || []).map(String)])];
       }
       var mergePlugins = mergeLists;
+      function keptLockedOf(persisted, list) {
+        const locked = new Set(Array.from(list.querySelectorAll('input[type="checkbox"]:disabled'), (cb) => cb.value));
+        return (persisted || []).filter((id) => locked.has(id));
+      }
       function seatHasPlugin(pluginId, pluginsList, shipped) {
         if (!Array.isArray(pluginsList)) return shipped === true;
         return pluginsList.includes(String(pluginId));
@@ -26359,6 +26363,7 @@ ${i3.join("\n")}
         mergePlugins,
         unlistedOf,
         mergeLists,
+        keptLockedOf,
         mergeGrants,
         pluginGranted,
         seatHasPlugin,
@@ -46306,7 +46311,7 @@ void main() {
       var { makeDraggable, resetDrag } = require_popover_drag();
       var { placeAboveAnchor } = require_popover_place();
       var BAR_ANCHOR = '#proxy-bar [data-act="session-menu"]';
-      var { grantsForUnlistedPlugins, mergeGrants, pluginsForUnlistedPlugins, mergePlugins, unlistedOf, mergeLists } = require_plugin_api();
+      var { grantsForUnlistedPlugins, mergeGrants, pluginsForUnlistedPlugins, mergePlugins, unlistedOf, mergeLists, keptLockedOf } = require_plugin_api();
       var CAPABILITY_LABELS = {
         turns: "Turn text \u2014 what the agent writes",
         thinking: "Thinking blocks \u2014 its reasoning, not just its answers",
@@ -46359,7 +46364,7 @@ void main() {
         document.getElementById("tools-popover-apply").addEventListener("click", async () => {
           const name = toolsPopover.dataset.name;
           if (!name) return closeToolsPopover();
-          const disabledTools = mergeLists(collectToolChecklist(popoverToolsList), unlistedOf(toolsPersisted, toolsRendered));
+          const disabledTools = mergeLists(collectToolChecklist(popoverToolsList), [...unlistedOf(toolsPersisted, toolsRendered), ...keptLockedOf(toolsPersisted, popoverToolsList)]);
           const restart = toolsPopoverRestart.checked;
           closeToolsPopover();
           const r = await window.api.setSessionTools(name, disabledTools);
@@ -51976,7 +51981,7 @@ ${detail}` });
       var { SearchAddon } = require_addon_search();
       var { WebLinksAddon } = require_addon_web_links();
       var { isExternallyOpenable } = require_external_link();
-      var { seatHasPlugin, pluginsForUnlistedPlugins, mergePlugins, unlistedOf, mergeLists } = require_plugin_api();
+      var { seatHasPlugin, pluginsForUnlistedPlugins, mergePlugins, unlistedOf, mergeLists, keptLockedOf } = require_plugin_api();
       var { clampSidebarWidth, effectiveSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require_sidebar_width();
       var { mergeMeta } = require_meta_tiers();
       var { PendingInput } = require_peer_input_queue();
@@ -55914,10 +55919,6 @@ ${detail}` });
       function currentOr(key, collector, list, fallback) {
         if (!(key in formPersisted) || !(key in formRendered)) return persistedOr(key, fallback);
         return new Set(mergeLists(collector(list), [...unlistedOf(formPersisted[key], formRendered[key]), ...keptLockedOf(formPersisted[key], list)]));
-      }
-      function keptLockedOf(persisted, list) {
-        const locked = new Set(Array.from(list.querySelectorAll('input[type="checkbox"]:disabled'), (cb) => cb.value));
-        return (persisted || []).filter((id) => locked.has(id));
       }
       function formCarry(key, collector, list) {
         return mergeLists(collector(list), [...unlistedOf(formPersisted[key], formRendered[key]), ...keptLockedOf(formPersisted[key], list)]);

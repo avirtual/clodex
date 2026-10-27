@@ -593,10 +593,9 @@ app.whenReady().then(() => {
         try {
           if (!Notification.isSupported()) return;
           const n = new Notification(opts);
+          if (held.size >= 50) held.delete(held.values().next().value);
           held.add(n);
-          const t = setTimeout(() => held.delete(n), 60_000);
-          if (t.unref) t.unref();
-          n.on('close', () => { clearTimeout(t); held.delete(n); });
+          n.on('close', () => held.delete(n));
           n.on('click', () => {
             try {
               const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
