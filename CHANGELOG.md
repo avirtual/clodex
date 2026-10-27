@@ -12,15 +12,15 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — security fixes from the first cold audit
 
+- Security: the web host and the remote API no longer accept requests from other web origins when they run without a token on loopback. A page open in the operator's browser could previously open a WebSocket to the local web host and run commands, or post a message to a seat. Requests now need a loopback Host and, when a browser sends one, a loopback Origin; JSON endpoints require an application/json body.
 - Deleting, archiving or forgetting a seat kept warm "Always", or deleting its workspace, now stops its keep-warm pings at once; they used to continue until Clodex was restarted.
 - Deleting a workspace no longer removes the saved record of a seat that is running in another workspace, which made that seat disappear at the next restart.
 - After Clodex restarts, a seat now gets the "Clodex restarted" notice once instead of two copies in one message.
 - Deleting a workspace now also removes the seat files of its running seats, so a new seat reusing one of their names starts clean.
 - clodexctl: `get nodes --current --ctx <name>` now refuses a node the contexts file does not know, instead of printing the unknown name as if it were current.
 - Reminders viewer: the Cancel button is no longer shown on the web surface, where cancelling is not available and the click only produced an error toast.
-- Security: the web host and the remote API no longer accept requests from other web origins when they run without a token on loopback. A page open in the operator's browser could previously open a WebSocket to the local web host and run commands, or post a message to a seat. Requests now need a loopback Host and, when a browser sends one, a loopback Origin; JSON endpoints require an application/json body.
 - Clicking an OS notification that has been sitting in Notification Center for more than a minute now opens the Inbox again; a change earlier today made such clicks do nothing.
 - The Tools popover's Apply no longer drops a tool deny that a lower settings layer has locked, matching what the args dialog and the new-session form already did.
 - Sleeping assistants: deleting an assistant now removes all of its conversation transcripts, not only the most recent 20, and the sleeper view shows the full history. Transcripts of assistants built on a CLI other than Claude are reported as untracked rather than silently skipped.
