@@ -220,3 +220,13 @@ test('_maybeRearmHold arms an Always seat, and never one that is archiving', () 
   m._maybeRearmHold(archiving, 'a');
   assert.deepStrictEqual(armed, []);
 });
+
+test('endHold disarms a seat by its own sid and leaves a sid another record shares', () => {
+  const { m } = rig({ records: { a: { cwd: '/p', sessionId: SID_A }, b: { cwd: '/p', sessionId: SID_B }, c: { cwd: '/p', sessionId: SID_B } } });
+  const keeper = m._holdKeeper = fakeKeeper([SID_A, SID_B]);
+  enter(keeper, SID_A);
+  enter(keeper, SID_B);
+  m.endHold('a');
+  m.endHold('b');
+  assert.deepStrictEqual(keeper.disarmed, [SID_A]);
+});
