@@ -307,3 +307,16 @@ test('endHold disarms a seat by its own sid and leaves a sid another record shar
   m.endHold('b');
   assert.deepStrictEqual(keeper.disarmed, [SID_A]);
 });
+
+test('_holdSharedOutside counts live seats and Always unarchived records, never a name it excludes', () => {
+  const { m } = rig({ records: {
+    always: { cwd: '/p', sessionId: SID_A, keepWarmAlways: true },
+    plain: { cwd: '/p', sessionId: SID_B },
+    gone: { cwd: '/p', sessionId: SID_B, keepWarmAlways: true, archived: true },
+  } });
+  assert.strictEqual(m._holdSharedOutside(SID_A, new Set()), true, 'ENTER: the Always record counts');
+  assert.strictEqual(m._holdSharedOutside(SID_A, new Set(['always'])), false);
+  assert.strictEqual(m._holdSharedOutside(SID_B, new Set()), false);
+  live(m, 'plain', SID_B);
+  assert.strictEqual(m._holdSharedOutside(SID_B, new Set()), true);
+});
