@@ -557,8 +557,8 @@ nothing pointing at a record). The list is the point: a new
 where nobody expects one. ✕ / Cmd+W archives instead of killing for bash shells
 and sandbox rows too.
 
-The ✕ forget (`session:forget`) and Delete Workspace… (`purgeWorkspace`) also
-call `forgetSeatFiles` after the remove: an assistant record loses its whole
+The ✕ forget (`session:forget`) and Delete Workspace… (`purgeWorkspace`) disarm
+the seat's keep-warm hold before the remove, and call `forgetSeatFiles` after it: an assistant record loses its whole
 seat dir (`removeSeat`: client-token, brief.md, memory), any other record only
 its `client-token`, so a later seat with the same name never inherits them.
 
