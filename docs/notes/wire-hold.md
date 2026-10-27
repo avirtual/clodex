@@ -22,3 +22,7 @@ Measured 2026-09-22 local: five 529 declines 03:52:34–03:56:32, upstream clear
 300s margin, and a 15s cadence confined to the last minute would have been a coin
 flip, so `urgent` is set on the first decline anywhere in the margin. A `failure`
 (401-class) never sets it: the two-strike `maxFailures` disarm keeps its ~2-minute bound.
+
+## _unjudged
+
+Records `restorePerpetual` could not judge (warmth store error) ride every `_flushPerpetual` until their sid is armed with a live entry, disarmed or ended.

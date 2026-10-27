@@ -2029,6 +2029,7 @@ function registerIpcHandlers(deps) {
             label: peerLabel,
             click: () => e.sender.send('session:context-action', {
               action: 'moveToPeer', name, cwd, peerId: st.id, peerLabel,
+              envKeys: Object.keys((entry.env && typeof entry.env === 'object') ? entry.env : {}),
             }),
           };
         }),
