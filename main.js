@@ -447,7 +447,6 @@ function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
 // Loads REMOTE content: must not inherit the main window's
 // nodeIntegration/contextIsolation:false.
 const remoteWindows = new Map();
-const held = new Set();
 const remoteWindowClosedListeners = [];
 const remoteWindowBoundsListeners = [];
 function openRemoteWindow(key, url, opts = {}) {
@@ -582,6 +581,7 @@ if (!singleInstance) {
 
 app.whenReady().then(() => {
   initLog();
+  const held = new Set();
   engine = createEngine({
     userDataPath: app.getPath('userData'),
     log,
@@ -594,7 +594,9 @@ app.whenReady().then(() => {
           if (!Notification.isSupported()) return;
           const n = new Notification(opts);
           held.add(n);
-          n.on('close', () => held.delete(n));
+          const t = setTimeout(() => held.delete(n), 60_000);
+          if (t.unref) t.unref();
+          n.on('close', () => { clearTimeout(t); held.delete(n); });
           n.on('click', () => {
             try {
               const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0];
