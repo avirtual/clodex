@@ -23960,7 +23960,7 @@ async function bootNoticeSeat(t, { dropFirstText = false, submitTakenAfterMs = 1
         if (Date.now() - t0 < submitTakenAfterMs || !box.draft) return;
         box.submitted.push(box.draft);
         box.draft = '';
-        s._turnStartedAt = Date.now();
+        setTimeout(() => { s._turnStartedAt = Date.now(); }, 10);
         return;
       }
       if (dropFirstText && !dropped) { dropped = true; return; }
