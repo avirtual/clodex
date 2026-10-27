@@ -2471,6 +2471,7 @@ function registerIpcHandlers(deps) {
   });
 
   handle('session:forget', (e, name) => {
+    if (manager.sessions.has(name)) return { ok: false, error: 'running' };
     manager.clearHintForRecord(name);
     const rec = persistence.get(name);
     manager.endHold(name);

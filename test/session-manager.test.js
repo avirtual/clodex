@@ -22088,6 +22088,28 @@ test('assistant sleep and wake: a seat still closing after its sleep is not awak
   assert.deepStrictEqual(calls, [['asst', { fresh: true }, 'ws']]);
 });
 
+test('assistant wake: a successful wake sends the window a reattach for the name, a failed one does not', async (t) => {
+  const h = mkStreamSeatManager({
+    persisted: { asst: { ...ASSISTANT_ROW, type: 'claude', cwd: '/w', workspaceId: 'ws', archivedAt: 1, asleepAt: 2 } },
+    extraDeps: { restartSession: async () => ({ ok: true }) },
+  });
+  t.after(() => h.stopAll());
+  const sent = [];
+  h.m._sendToSession = (...a) => sent.push(a);
+  assert.deepStrictEqual(await h.m.wake('asst'), { ok: true, state: 'awake' });
+  assert.deepStrictEqual(sent, [['asst', 'session:context-action',
+    { action: 'reattach', name: 'asst', type: 'claude', cwd: '/w', backend: null, noWire: false, io: 'pty', background: true }]]);
+  const f = mkStreamSeatManager({
+    persisted: { asst: { ...ASSISTANT_ROW, type: 'claude', cwd: '/w', workspaceId: 'ws', archivedAt: 1, asleepAt: 2 } },
+    extraDeps: { restartSession: async () => ({ ok: false, error: 'x' }) },
+  });
+  t.after(() => f.stopAll());
+  const none = [];
+  f.m._sendToSession = (...a) => none.push(a);
+  assert.strictEqual((await f.m.wake('asst')).ok, false);
+  assert.deepStrictEqual(none, []);
+});
+
 test('assistant wake: restarts fresh in the record\'s workspace and clears the sleep stamps', async (t) => {
   const calls = [];
   const h = mkStreamSeatManager({
