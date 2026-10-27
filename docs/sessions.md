@@ -139,10 +139,10 @@ Environment variables section (T46b): the textarea prefills from the entry's
 persisted env, an empty box clears it, and the change rides the existing
 args-edit path (`session:setArgs` → `applySessionArgs` → `resolveSessionArgsPatch`
 sanitizes the map + the deny-list bites server-side → `persistence.setEnv`).
-Like exec grants, session env is LOCAL-only — never rendered, collected, sent, or
-returned over the peer wire (values may be creds and there's no secret masking for
-session env), so a remote Edit-Session view omits the section and the wire strips
-`env` in both directions. It applies at the next spawn; ticking "Restart session
+Session env is never rendered or returned over the peer wire (values may be creds
+and there's no secret masking): a remote Edit-Session view omits the section and the
+wire strips `env` on read. It DOES travel, values included, on an explicit Move to
+Peer, whose confirm lists the key names. It applies at the next spawn; ticking "Restart session
 now" applies it immediately (`applySessionArgs` threads the edited env into the
 respawn's `create()`).
 Clodex SHIPS a set of default vars for wrapped seats in `resources/env-defaults.json`

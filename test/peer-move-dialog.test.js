@@ -407,3 +407,53 @@ test('onPeerVisible replaces the saved whitelist and re-renders the peer rows', 
   withDom(() => handlers.onPeerVisible({}));
   assert.strictEqual(count(), 2, 'an emptied map shows every session again');
 });
+
+test('a move-mode open with a session env lists the key names that travel and never a value', () => {
+  const { ui, byId } = mkPeersUi();
+  ui.openPeerSessionDialog('p1', 'murmurfi', {
+    move: { name: 'crypto-hand', cwd: '/far/app', farPlatform: LOCAL.platform, envKeys: ['GITHUB_TOKEN', 'FOO'] },
+  });
+  const note = byId('peer-session-note').textContent;
+  assert.match(note, /Exec grants and privileged intents do not/, 'ENTER: the move note rendered');
+  assert.match(note, /Session env travels too: GITHUB_TOKEN, FOO\./);
+  assert.doesNotMatch(note, /ghp_secret/);
+});
+
+test('a move-mode open with no session env adds no env line', () => {
+  const { ui, byId } = mkPeersUi();
+  ui.openPeerSessionDialog('p1', 'murmurfi', {
+    move: { name: 'crypto-hand', cwd: '/far/app', farPlatform: LOCAL.platform, envKeys: [] },
+  });
+  const note = byId('peer-session-note').textContent;
+  assert.match(note, /Exec grants and privileged intents do not/, 'ENTER: the move note rendered');
+  assert.doesNotMatch(note, /Session env/);
+});
+
+test('the Move to Peer menu item sends the session env KEY names and never the env itself', () => {
+  const listeners = new Map();
+  const menus = [];
+  const sent = [];
+  registerIpcHandlers({
+    handle: () => {},
+    on: (channel, fn) => listeners.set(channel, fn),
+    log: { info() {}, warn() {}, error() {} },
+    persistence: { get: () => ({ name: 'seat', type: 'claude', cwd: '/x', env: { GITHUB_TOKEN: 'ghp_secret' } }) },
+    promptLibrary: { list: () => [] },
+    popupMenu: (tpl) => menus.push(tpl),
+    fs: require('fs'),
+    workspaces: { list: () => [] },
+    workspaceOfSender: () => 'ws1',
+    getPeerManager: () => ({ statuses: () => [{ id: 'p1', label: 'far', online: true, canImport: true, needsUpgrade: false }] }),
+  });
+  listeners.get('session:context-menu')({ sender: { send: (ch, payload) => sent.push({ ch, payload }) } }, { name: 'seat', cwd: '/x' });
+  assert.strictEqual(menus.length, 1, 'ENTER: the session menu popped');
+  const move = menus[0].find((i) => i.label === 'Move to Peer…');
+  assert.ok(move && Array.isArray(move.submenu) && move.submenu.length === 1, 'ENTER: one eligible peer offered');
+  move.submenu[0].click();
+  assert.strictEqual(sent.length, 1, 'ENTER: the click sent the context action');
+  const { payload } = sent[0];
+  assert.strictEqual(payload.action, 'moveToPeer');
+  assert.deepStrictEqual(payload.envKeys, ['GITHUB_TOKEN']);
+  assert.strictEqual('env' in payload, false);
+  assert.doesNotMatch(JSON.stringify(payload), /ghp_secret/);
+});

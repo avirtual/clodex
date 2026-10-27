@@ -198,6 +198,7 @@ class HoldKeeper extends EventEmitter {
     this._entryStore = opts.entryStore || null;
     for (const k of Object.keys(DEFAULTS)) this[k] = opts[k] ?? DEFAULTS[k];
     this._entries = new Map(); // sessionId → { obj, headers, url, ts }
+    this._unjudged = new Map();
     this._holds = new Map(); // sessionId → { until, armedAt, hours, pings, failures, lastPingTs, lastResult, urgent }
     this._timer = null;
     this._running = false;
@@ -213,11 +214,7 @@ class HoldKeeper extends EventEmitter {
   //
   // Writing the EMPTY set matters as much as writing a full one: it is what
   // takes a token off the disk when the last perpetual hold goes away.
-  // `keep` carries records that must survive the rewrite even though they are
-  // not armed — the startup restore uses it for a seat it could not JUDGE (see
-  // restorePerpetual). Dropping those would convert a transient failure into a
-  // permanent one.
-  _flushPerpetual(keep = []) {
+  _flushPerpetual() {
     if (!this._entryStore) return;
     const records = [];
     const seen = new Set();
@@ -228,8 +225,8 @@ class HoldKeeper extends EventEmitter {
       seen.add(sid);
       records.push({ sessionId: sid, obj: e.obj, headers: e.headers, url: e.url, ts: e.ts });
     }
-    for (const r of keep) {
-      if (r && r.sessionId && !seen.has(r.sessionId)) records.push(r);
+    for (const [sid, r] of this._unjudged) {
+      if (!seen.has(sid)) records.push(r);
     }
     this._entryStore.save(records);
   }
@@ -267,7 +264,6 @@ class HoldKeeper extends EventEmitter {
     const out = { restored: 0, declined: 0, dropped: 0 };
     if (!this._entryStore) return out;
     const ok = typeof accept === 'function' ? accept : () => true;
-    const keep = []; // records to preserve unjudged (see the store-error note above)
     for (const r of this._entryStore.load()) {
       let allowed = false;
       try { allowed = !!ok(r.sessionId); } catch { allowed = false; }
@@ -282,12 +278,12 @@ class HoldKeeper extends EventEmitter {
       out.declined += 1;
       this._entries.delete(r.sessionId);
       // A throw is the same class of non-answer as an explicit wq.error.
-      if (threw || (res && res.warmth && res.warmth.error)) keep.push(r);
+      if (threw || (res && res.warmth && res.warmth.error)) this._unjudged.set(r.sessionId, r);
     }
     // Rewrite the file down to what actually re-armed, PLUS anything we could
     // not judge. A seat that was dropped or genuinely declined stops carrying a
     // token on disk within one launch instead of waiting for some future write.
-    this._flushPerpetual(keep);
+    this._flushPerpetual();
     return out;
   }
 
@@ -477,6 +473,7 @@ class HoldKeeper extends EventEmitter {
     const hold = { until: always ? null : now + hours * 3600, always, armedAt: now, hours,
       pings: 0, failures: 0, lastPingTs: null, lastResult: null };
     this._holds.set(sessionId, hold);
+    if (entry) this._unjudged.delete(sessionId);
     // Before the emit: the emit is observed by session-manager, and a listener
     // that inspected the store must not see it lagging the hold it just heard about.
     this._flushPerpetual();
@@ -488,7 +485,8 @@ class HoldKeeper extends EventEmitter {
   disarm(sessionId) {
     const prev = this._holds.get(sessionId);
     this._holds.delete(sessionId);
-    if (prev && prev.always) this._flushPerpetual(); // takes the token off disk
+    const dropped = this._unjudged.delete(sessionId);
+    if ((prev && prev.always) || dropped) this._flushPerpetual(); // takes the token off disk
     if (prev) this.emit('hold', { session: sessionId, event: 'disarmed', reason: 'off', cause: 'off', pings: prev.pings });
     return { armed: false, disarmed: !!prev, session: sessionId, pings: prev ? prev.pings : 0 };
   }
@@ -499,7 +497,8 @@ class HoldKeeper extends EventEmitter {
   endSession(sessionId) {
     const prev = this._holds.get(sessionId);
     this._holds.delete(sessionId);
-    if (prev && prev.always) this._flushPerpetual();
+    const dropped = this._unjudged.delete(sessionId);
+    if ((prev && prev.always) || dropped) this._flushPerpetual();
     if (prev) this.emit('hold', { session: sessionId, event: 'disarmed', reason: 'session ended', cause: 'session-ended', pings: prev.pings });
     return { session: sessionId, holdDisarmed: !!prev };
   }
