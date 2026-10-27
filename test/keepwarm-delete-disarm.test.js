@@ -323,16 +323,20 @@ test('purgeWorkspace disarms past a non-Always record-only seat outside the work
 });
 
 test('purgeWorkspace leaves a sid whose ws-1 record names a seat live in another workspace', async () => {
-  const { m } = rig({ records: {
+  const { m, recs } = rig({ records: {
     a: { cwd: '/p', sessionId: SID_A, workspaceId: 'ws-1' },
     x: { cwd: '/p', sessionId: SID_A, workspaceId: 'ws-1' },
   } });
   const keeper = m._holdKeeper = fakeKeeper([SID_A]);
+  const forgotten = [];
+  m.forgetSeatFiles = (name) => { forgotten.push(name); };
   live(m, 'a', SID_A, { cwd: '/p', workspaceId: 'ws-1' });
   live(m, 'x', SID_A, { cwd: '/p', workspaceId: 'ws-2' });
   enter(keeper, SID_A);
-  assert.deepStrictEqual(m.purgeWorkspace('ws-1').killed, ['a']);
+  assert.deepStrictEqual(m.purgeWorkspace('ws-1'), { killed: ['a'], dropped: [] });
   assert.ok(m.sessions.has('x'), 'ENTER: the seat live in ws-2 survived');
+  assert.ok(recs.has('x'), 'the live ws-2 seat kept its record');
+  assert.deepStrictEqual(forgotten, []);
   assert.deepStrictEqual(keeper.disarmed, []);
 });
 
