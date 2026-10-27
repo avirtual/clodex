@@ -10,7 +10,7 @@ const os = require('os');
 const https = require('https');
 const { AsyncLocalStorage } = require('async_hooks');
 const { WebSocketServer } = require('ws');
-const { makeTokenGate, isLoopbackHost } = require('./auth-token');
+const { makeTokenGate, isLoopbackHost, originAllowed } = require('./auth-token');
 const { escapeSafeTail } = require('./session-manager');
 
 const APP_VERSION = require('./package.json').version;
@@ -69,6 +69,7 @@ function createWebHost({ engine, log, port, host, token, insecure = false, userD
   const checkToken = (provided) => gate.check(provided);
   const tokenFromReq = (req) => gate.fromReq(req);
   const refusing = !gate.configured && !isLoopbackHost(host) && !insecure;
+  const foreignOrigin = (req) => !gate.configured && !originAllowed(req);
 
   function fanEvent(workspaceId, channel, args) {
     if (channel === 'pty-data') {
@@ -367,6 +368,7 @@ function createWebHost({ engine, log, port, host, token, insecure = false, userD
       res.end('Refusing to serve: bound to a non-loopback address with no CLODEX_WEB_TOKEN set. Set CLODEX_WEB_TOKEN, or CLODEX_WEB_INSECURE=1 to override.');
       return;
     }
+    if (foreignOrigin(req)) { res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' }).end('forbidden origin'); return; }
     if (!checkToken(tokenFromReq(req))) { res.writeHead(401).end('unauthorized'); return; }
     if (pathname.startsWith('/exports/')) return serveExports(req, res, pathname.slice('/exports/'.length));
     return serveStatic(req, res, pathname);
@@ -375,7 +377,7 @@ function createWebHost({ engine, log, port, host, token, insecure = false, userD
   // Manual upgrade so the token gate runs before the WS handshake completes.
   const wss = new WebSocketServer({ noServer: true });
   server.on('upgrade', (req, socket, head) => {
-    if (refusing || !checkToken(tokenFromReq(req))) { socket.destroy(); return; }
+    if (refusing || foreignOrigin(req) || !checkToken(tokenFromReq(req))) { socket.destroy(); return; }
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   });
 

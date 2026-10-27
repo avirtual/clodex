@@ -54,6 +54,33 @@ test('no token + loopback bind: everything serves (localhost-trust preserved)', 
   });
 });
 
+test('no token + loopback: a foreign-Origin dm POST is a 403 naming Origin; a non-loopback Host is a 403 naming Host', async () => {
+  await withServer({ host: '127.0.0.1' }, async (port) => {
+    const body = JSON.stringify({ text: 'hi' });
+    const foreign = await req(port, '/api/sessions/alice/dm', { method: 'POST', body, headers: { 'content-type': 'application/json', origin: 'https://evil.example' } });
+    assert.equal(foreign.status, 403);
+    assert.match(foreign.body, /Origin/);
+    const rebound = await req(port, '/api/sessions', { headers: { host: 'evil.example:7900' } });
+    assert.equal(rebound.status, 403);
+    assert.match(rebound.body, /Host/);
+  });
+});
+
+test('dm POST: text/plain from a loopback Origin is a 415; application/json passes the gate', async () => {
+  const sent = [];
+  await withServer({ host: '127.0.0.1', send: (...a) => { sent.push(a); return { ok: true }; } }, async (port) => {
+    const origin = `http://127.0.0.1:${port}`;
+    const body = JSON.stringify({ text: 'hi' });
+    const plain = await req(port, '/api/sessions/alice/dm', { method: 'POST', body, headers: { 'content-type': 'text/plain', origin } });
+    assert.equal(plain.status, 415);
+    assert.equal(sent.length, 0);
+    const json = await req(port, '/api/sessions/alice/dm', { method: 'POST', body, headers: { 'content-type': 'application/json', origin } });
+    assert.equal(json.status, 200);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0][0], 'alice');
+  });
+});
+
 // ── fail-closed: non-loopback + no token → 503 ───────────────────────────────
 
 test('non-loopback bind with no token → 503 naming CLODEX_REMOTE_TOKEN', async () => {

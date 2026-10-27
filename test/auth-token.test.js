@@ -95,3 +95,34 @@ test('fromReq: a malformed url still falls through to header/cookie', () => {
   // try/catch must not swallow the header path if URL parsing ever throws.
   assert.strictEqual(fromReq({ url: 'http://[', headers: { authorization: 'Bearer B' } }), 'B');
 });
+
+test('originAllowed / originRefusal: Host must be loopback, Origin (when sent) must be this same loopback host', () => {
+  const { originAllowed, originRefusal } = require('../auth-token');
+  const rows = [
+    { host: '127.0.0.1:7810', origin: undefined, want: null },
+    { host: 'localhost:7810', origin: 'http://localhost:7810', want: null },
+    { host: '127.0.0.1:7810', origin: 'http://127.0.0.1:7810', want: null },
+    { host: '127.4.5.6:7900', origin: undefined, want: null },
+    { host: '[::1]:7810', origin: 'http://[::1]:7810', want: null },
+    { host: 'localhost', origin: 'http://localhost', want: null },
+    { host: 'localhost:80', origin: 'http://localhost', want: null },
+    { host: 'LOCALHOST:7810', origin: 'http://localhost:7810', want: null },
+    { host: 'localhost:7810', origin: 'https://evil.example', want: 'Origin' },
+    { host: 'localhost:7810', origin: 'http://localhost:3000', want: 'Origin' },
+    { host: 'localhost:7810', origin: 'null', want: 'Origin' },
+    { host: 'localhost:7810', origin: 'http://[', want: 'Origin' },
+    { host: 'localhost:7810', origin: 'file:///etc/passwd', want: 'Origin' },
+    { host: 'evil.example', origin: undefined, want: 'Host' },
+    { host: 'evil.example:7810', origin: 'http://evil.example:7810', want: 'Host' },
+    { host: '127.0.0.1.evil.example:7810', origin: undefined, want: 'Host' },
+    { host: undefined, origin: undefined, want: 'Host' },
+  ];
+  for (const r of rows) {
+    const headers = {};
+    if (r.host !== undefined) headers.host = r.host;
+    if (r.origin !== undefined) headers.origin = r.origin;
+    const label = `host=${r.host} origin=${r.origin}`;
+    assert.strictEqual(originRefusal({ headers }), r.want, label);
+    assert.strictEqual(originAllowed({ headers }), r.want === null, label);
+  }
+});

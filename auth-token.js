@@ -57,4 +57,24 @@ function isLoopbackHost(h) {
   return host === '127.0.0.1' || host === '::1' || host === 'localhost' || host.startsWith('127.');
 }
 
-module.exports = { makeTokenGate, isLoopbackHost };
+const LOOPBACK_HOST_RE = /^(?:localhost|\[::1\]|127\.\d{1,3}\.\d{1,3}\.\d{1,3})(?::\d{1,5})?$/;
+
+function originRefusal(req) {
+  const headers = (req && req.headers) || {};
+  const host = String(headers.host || '').toLowerCase();
+  if (!LOOPBACK_HOST_RE.test(host)) return 'Host';
+  const origin = headers.origin;
+  if (origin == null) return null;
+  let u;
+  try { u = new URL(String(origin)); } catch { return 'Origin'; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return 'Origin';
+  const defaultPort = u.protocol === 'https:' ? ':443' : ':80';
+  const want = host.endsWith(defaultPort) ? host.slice(0, -defaultPort.length) : host;
+  return u.host === want ? null : 'Origin';
+}
+
+function originAllowed(req) {
+  return originRefusal(req) === null;
+}
+
+module.exports = { makeTokenGate, isLoopbackHost, originAllowed, originRefusal };
