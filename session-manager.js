@@ -806,6 +806,8 @@ function createSessionManager(deps) {
   // cannot read or write the operator's real ~/.clodex board.
   const ticketsStore = createTicketsStore({ fs, path, clodexHome: REGISTRY_DIR });
 
+  const SLASH_COMMAND_RE = /^\/[\w:-]+(\s|$)/;
+
   class SessionManager {
     constructor() {
       this.sessions = new Map();
@@ -5178,6 +5180,11 @@ function createSessionManager(deps) {
     _cleanup(name) {
       const s = this.sessions.get(name);
       if (!s) return;
+      if (s._injectQueue && s._injectQueue.length) {
+        const held = s._injectQueue;
+        s._injectQueue = [];
+        this._reparkHeldInjects(s, held);
+      }
       clearTimeout(s._injectHoldTimer);
       clearTimeout(s._injectFlushRetry);
       clearTimeout(s._costFoldTimer);
@@ -5508,7 +5515,8 @@ function createSessionManager(deps) {
       if (session._injectHoldTimer) return;
       session._injectHoldTimer = setTimeout(() => {
         session._injectHoldTimer = null;
-        console.warn(`inject hold ${session.name}: release never came (${this._injectHoldReason(session) || 'none'}) — forcing flush after timeout`);
+        const reason = this._injectHoldReason(session);
+        console.warn(`inject hold ${session.name}: release never came (${reason || 'none'}) — ${reason === 'dialog' ? 're-parking (dialog)' : 'forcing flush after timeout'}`);
         session._compactGuard = false;
         this._maybeFlushInjectQueue(session, true);
       }, INJECT_HOLD_TIMEOUT);
@@ -5605,7 +5613,15 @@ function createSessionManager(deps) {
         }
         return;
       }
-      if (!force && this._injectHoldReason(session)) return;
+      const reason = this._injectHoldReason(session);
+      if (!force && reason) return;
+      if (reason === 'dialog') {
+        session._injectQueue = this._reparkHeldInjects(session, queue);
+        clearTimeout(session._injectHoldTimer);
+        session._injectHoldTimer = null;
+        this._armInjectValve(session);
+        return;
+      }
       clearTimeout(session._injectHoldTimer);
       session._injectHoldTimer = null;
       session._injectQueue = [];
@@ -5617,6 +5633,30 @@ function createSessionManager(deps) {
         this._injectText(session, e.text || '', { ...e.opts, bypassHold: true });
       }
       this._flushInjectRun(session, run);
+    }
+
+    _reparkHeldInjects(session, queue) {
+      const kept = [];
+      let parked = 0;
+      const born = typeof session.createdAt === 'number' ? session.createdAt : null;
+      for (const e of queue) {
+        if (e && typeof e.produce === 'function') { kept.push(e); continue; }
+        const text = typeof e === 'string' ? e : (e && typeof e.text === 'string' ? e.text : '');
+        if (!text) continue;
+        if (SLASH_COMMAND_RE.test(text)) {
+          log.warn('inject', `dropped a held slash command for ${session.name} instead of re-parking it`);
+          continue;
+        }
+        const opts = (e && e.opts) || {};
+        try {
+          parkDelivery(PENDING_DIR, session.name, text, this._nextParkSeq(), opts.parkId || null, false, born, opts.parkKey || null);
+          parked++;
+        } catch (err) {
+          log.error('inject', `re-park of a held inject failed for ${session.name}: ${err.message} — ${text.length} chars dropped`);
+        }
+      }
+      if (parked) log.warn('inject', `re-parked ${parked} held inject(s) for ${session.name} to pending`);
+      return kept;
     }
 
     _flushInjectRun(session, queue) {
@@ -9000,6 +9040,10 @@ function createSessionManager(deps) {
           speaking: () => Date.now() - (session.lastVoiceRecordingTs || 0) < INJECT_SPEAKING_STALE_MS,
           isDead: () => !!session._dead,
           onUndelivered: (t) => {
+            if (SLASH_COMMAND_RE.test(t)) {
+              log.warn('inject', `dropped an undelivered slash command for ${session.name} instead of re-parking it`);
+              return;
+            }
             try {
               const born = typeof session.createdAt === 'number' ? session.createdAt : null;
               parkDelivery(PENDING_DIR, session.name, t, this._nextParkSeq(), null, false, born, null);

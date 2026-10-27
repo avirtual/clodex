@@ -156,12 +156,12 @@ class InjectQueue {
       readyDeferred = true;
       await this._sleep(Math.min(this._readyMaxWaitMs, this._readyPollMs));
     }
-    if (this._isDead()) { if (divert && !produce && text) this._undelivered(text); return; }
+    if (this._isDead()) { if (!produce && text) this._undelivered(text); return; }
     if (readyDeferred && !this._ready() && this._onReadyCapFire) {
       try { this._onReadyCapFire(text); } catch {}
     }
     let { deferred } = await this._waitQuiet();
-    if (this._isDead()) { if (divert && !produce && text) this._undelivered(text); return; }
+    if (this._isDead()) { if (!produce && text) this._undelivered(text); return; }
     // Must run after the gates: the producer's claim is destructive.
     if (produce) {
       let produced = null;

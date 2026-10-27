@@ -32,6 +32,8 @@ blocks a release.
 - Sleeping assistants: deleting or forgetting an assistant while a message is waking it no longer leaves a nameless, unkillable row behind that blocked the name until the record was removed by hand. Waking an assistant that was about to sleep now also cancels that sleep.
 - Peers reached through an SSH or cloud tunnel keep their attached tabs and persisted attachments across a tunnel drop or re-dial; a tunnel coming back re-points the connection instead of removing and re-adding the peer.
 - Exec payload validation no longer accepts inherited property names such as `constructor` or `__proto__` as declared keys.
+- Messages held behind a permission dialog are no longer force-typed into the dialog after five minutes, which could answer it; they wait in the seat's pending mail until the dialog closes.
+- Messages held while a seat was busy or showing a dialog are re-parked to its pending mail when the seat exits, instead of being lost while the sender was told they were delivered.
 
 ## 5.146.2 — 2026-10-27
 
