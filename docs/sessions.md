@@ -955,6 +955,11 @@ persistence.
   `_cleanup`, persistence decision before cleanup.
 - JsonlWatcher starts reading at EOF on every symlink repoint.
 - Restore/respawn failure keeps the persisted entry (`{failed:true}`).
+- A restart (`restartSession`, `_coldRespawn`) stops the process with
+  `kill(name, { respawn: true })`: the record stays and the team hears no
+  `retired`, so a quit while the old process exits cannot lose the seat.
+- `session:forget` refuses a running seat (`{ ok: false, error: 'running' }`):
+  the ✕ on a stale row never drops a live seat's record or seat files.
 - A restart that throws re-upserts the entry — a session must never vanish
   because a respawn threw. A different arm from the bullet above: that one
   is restore-on-launch's `failed:true` row, this one writes the record back

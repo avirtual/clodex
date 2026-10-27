@@ -34,6 +34,9 @@ blocks a release.
 - Exec payload validation no longer accepts inherited property names such as `constructor` or `__proto__` as declared keys.
 - Messages held behind a permission dialog are no longer force-typed into the dialog after five minutes, which could answer it; they wait in the seat's pending mail until the dialog closes.
 - Messages held while a seat was busy or showing a dialog are re-parked to its pending mail when the seat exits, instead of being lost while the sender was told they were delivered.
+- Restarting a seat no longer tells its team lead the seat retired, and no longer drops its saved entry while the old process is still exiting, so a quit in that window cannot lose the seat.
+- Sleeping assistants: a message or reminder that wakes an assistant now replaces its archived sidebar row with the live one.
+- Forgetting a saved entry is refused while that seat is still running, instead of deleting the running seat's files from under it.
 
 ## 5.146.2 — 2026-10-27
 
