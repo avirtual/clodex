@@ -238,7 +238,7 @@ function createPeerWiring(deps) {
       // has to keep the connection object alive.
       if (p.sshHost || hasCloudTransport(p)) {
         const url = getTunnelManager() ? getTunnelManager().urlFor(p.id) : null;
-        resolved.push({ id: p.id, label: p.label, url: url || 'http://127.0.0.1:1', token, inbox: p.inbox, direct });
+        resolved.push({ id: p.id, label: p.label, url: url || 'http://127.0.0.1:1', token, inbox: p.inbox, direct, managed: true });
       } else {
         resolved.push({ id: p.id, label: p.label, url: p.url, token, inbox: p.inbox, direct });
       }

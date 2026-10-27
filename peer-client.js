@@ -149,9 +149,7 @@ class PeerConnection {
 // Scheme-matched pools. Node's ClientRequest refuses an agent whose `protocol`
 // differs from the request module's, so this is not cosmetic: swapping
 // http.request for https.request without swapping the agent throws
-// ERR_INVALID_PROTOCOL and the peer never connects at all. Fixed for the
-// connection's lifetime for the same reason the token is — a URL change is a
-// peer restart (PeerManager.sync), never a mutation of a live connection.
+// ERR_INVALID_PROTOCOL and the peer never connects at all.
     this._secure = isSecureBase(this.url);
     const Agent = this._secure ? https.Agent : http.Agent;
     this._reqAgent = new Agent({ keepAlive: true, maxSockets: 8 });
@@ -166,6 +164,7 @@ class PeerConnection {
     this._dialectKnown = false;
     this._dialectProbing = false;
     this._helloGen = 0;
+    this._helloLoopGen = 0;
     this._eventsBackoff = RECONNECT_MIN_MS;
     this._attachments = new Map();    // name -> { req, token, wanted, backoff, timer }
     // seat -> { req, wanted, backoff, timer, opening, owners } for peer TERMINAL
@@ -209,6 +208,36 @@ class PeerConnection {
     this._setOnline(false);
   }
 
+  repoint(url) {
+    this._helloLoopGen++;
+    clearTimeout(this._helloTimer);
+    this._helloTimer = null;
+    if (this._eventsReq) { try { this._eventsReq.destroy(); } catch {} this._eventsReq = null; }
+    this._eventsOpening = false;
+    for (const att of this._attachments.values()) {
+      clearTimeout(att.timer);
+      att.timer = null;
+      att.token = null;
+      att.opening = false;
+      if (att.req) { try { att.req.destroy(); } catch {} att.req = null; }
+    }
+    for (const w of this._wterms.values()) {
+      clearTimeout(w.timer);
+      w.timer = null;
+      w.opening = false;
+      if (w.req) { try { w.req.destroy(); } catch {} w.req = null; }
+    }
+    this._reqAgent.destroy();
+    this._sseAgent.destroy();
+    this.url = url.replace(/\/+$/, '');
+    this._secure = isSecureBase(this.url);
+    const Agent = this._secure ? https.Agent : http.Agent;
+    this._reqAgent = new Agent({ keepAlive: true, maxSockets: 8 });
+    this._sseAgent = new Agent({ keepAlive: false, maxSockets: Infinity });
+    this._setOnline(false);
+    this._helloLoop();
+  }
+
   status() {
     return {
       id: this.id, label: this.label, url: this.url,
@@ -230,8 +259,9 @@ class PeerConnection {
 
   _helloLoop() {
     if (this._stopped) return;
+    const loopGen = this._helloLoopGen;
     this._request('GET', '/api/peer/hello', null, (err, body) => {
-      if (this._stopped) return;
+      if (this._stopped || loopGen !== this._helloLoopGen) return;
       if (!err && body && body.ok && body.app === 'clodex') {
         const wasOffline = !this.online;
         const prev = this.hello;
@@ -1173,11 +1203,17 @@ class PeerManager {
         token: (typeof p.token === 'string' && p.token) ? p.token : null,
         claimInbox: p.inbox === 'claim',
         direct: p.direct === true,
+        managed: p.managed === true,
       });
     }
     for (const [id, conn] of this._peers) {
       const w = wanted.get(id);
-      if (!w || w.url !== conn.url || w.label !== conn.label || (w.token || null) !== (conn._token || null)
+      if (w && w.managed && w.url !== conn.url && w.label === conn.label
+        && (w.token || null) === (conn._token || null) && w.claimInbox === conn._claimInbox) {
+        conn._direct = w.direct;
+        conn.repoint(w.url);
+        this._emit('peer-state', id, conn.status());
+      } else if (!w || w.url !== conn.url || w.label !== conn.label || (w.token || null) !== (conn._token || null)
         || w.claimInbox !== conn._claimInbox) {
         conn.stop();
         this._peers.delete(id);
