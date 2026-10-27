@@ -3506,6 +3506,17 @@ test('execLibrary.list carries description and inProcess, empty strings when abs
   } finally { cleanup(); }
 });
 
+test('execLibrary.list carries proposal only for a def that sets it true', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    stores.execLibrary.save('ask', JSON.stringify({ proposal: true, schema: { type: 'object' } }));
+    stores.execLibrary.save('plain', JSON.stringify({ argv: ['echo'], schema: { type: 'object' } }));
+    const [ask, plain] = stores.execLibrary.list();
+    assert.strictEqual(ask.proposal, true);
+    assert.strictEqual('proposal' in plain, false);
+  } finally { cleanup(); }
+});
+
 test('execLibrary: missing dir -> [], save/raw/list/remove round-trip', () => {
   const { registryDir, stores, cleanup } = freshStores();
   try {

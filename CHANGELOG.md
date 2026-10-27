@@ -25,6 +25,8 @@ blocks a release.
 - The Tools popover's Apply no longer drops a tool deny that a lower settings layer has locked, matching what the args dialog and the new-session form already did.
 - Sleeping assistants: deleting an assistant now removes all of its conversation transcripts, not only the most recent 20, and the sleeper view shows the full history. Transcripts of assistants built on a CLI other than Claude are reported as untracked rather than silently skipped.
 - Ticket auto-merge survives an app relaunch: an ACCEPT queued or mid-merge when Clodex quits is requeued at boot, and a merge whose post-merge suite never finished is escalated to the lead as unverified instead of being left on the trunk unnoticed.
+- Sleeping assistants: a message to an assistant that crashed or was stopped without sleeping now resumes its last conversation instead of starting a fresh one with no brief.
+- Sleeping assistants: awake time no longer includes the time Clodex itself was not running, which inflated the cost shown for an assistant restored at app launch.
 
 ## 5.146.2 — 2026-10-27
 

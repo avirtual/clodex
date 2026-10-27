@@ -1465,6 +1465,7 @@ function initStores(userDataPath, {
             cwd: typeof obj.cwd === 'string' ? obj.cwd : '',
             description: typeof obj.description === 'string' ? obj.description : '',
             inProcess: typeof obj.inProcess === 'string' ? obj.inProcess : '',
+            ...(obj.proposal === true ? { proposal: true } : {}),
             file: f,
           });
         } catch { /* skip unreadable/garbled file */ }

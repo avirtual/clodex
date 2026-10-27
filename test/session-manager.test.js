@@ -22103,6 +22103,52 @@ test('assistant wake: restarts fresh in the record\'s workspace and clears the s
   assert.strictEqual(rec.wakes, 1);
 });
 
+test('assistant wake: a slept record restarts fresh even when it still names a sessionId', async (t) => {
+  const calls = [];
+  const h = mkStreamSeatManager({
+    persisted: { asst: { ...ASSISTANT_ROW, workspaceId: 'ws', archivedAt: 1, asleepAt: 2, sessionId: 'sid-old' } },
+    extraDeps: { restartSession: async (...a) => { calls.push(a); return { ok: true }; } },
+  });
+  t.after(() => h.stopAll());
+  assert.deepStrictEqual(await h.m.wake('asst'), { ok: true, state: 'awake' });
+  assert.deepStrictEqual(calls, [['asst', { fresh: true }, 'ws']]);
+});
+
+test('assistant wake: a crashed record with a sessionId and no asleepAt resumes that conversation', async (t) => {
+  const calls = [];
+  const h = mkStreamSeatManager({
+    persisted: { asst: { ...ASSISTANT_ROW, workspaceId: 'ws', exitedAt: 5, sessionId: 'sid-1' } },
+    extraDeps: { restartSession: async (...a) => { calls.push(a); return { ok: true }; } },
+  });
+  t.after(() => h.stopAll());
+  assert.deepStrictEqual(await h.m.wake('asst', { reason: 'message' }), { ok: true, state: 'awake' });
+  assert.deepStrictEqual(calls, [['asst', { resumeId: 'sid-1' }, 'ws']]);
+});
+
+test('assistant wake: a failed resume leaves no asleepAt, so the next wake resumes again', async (t) => {
+  const calls = [];
+  const h = mkStreamSeatManager({
+    persisted: { asst: { ...ASSISTANT_ROW, workspaceId: 'ws', exitedAt: 5, sessionId: 'sid-1' } },
+    extraDeps: { restartSession: async (...a) => { calls.push(a); return { ok: calls.length > 1 }; } },
+  });
+  t.after(() => h.stopAll());
+  assert.strictEqual((await h.m.wake('asst')).ok, false, 'ENTER: the first wake failed');
+  assert.notStrictEqual(typeof h.store.get('asst').asleepAt, 'number');
+  assert.deepStrictEqual(await h.m.wake('asst'), { ok: true, state: 'awake' });
+  assert.deepStrictEqual(calls[1], ['asst', { resumeId: 'sid-1' }, 'ws']);
+});
+
+test('assistant wake: a record with neither asleepAt nor a sessionId restarts fresh', async (t) => {
+  const calls = [];
+  const h = mkStreamSeatManager({
+    persisted: { asst: { ...ASSISTANT_ROW, workspaceId: 'ws', exitedAt: 5 } },
+    extraDeps: { restartSession: async (...a) => { calls.push(a); return { ok: true }; } },
+  });
+  t.after(() => h.stopAll());
+  assert.deepStrictEqual(await h.m.wake('asst'), { ok: true, state: 'awake' });
+  assert.deepStrictEqual(calls, [['asst', { fresh: true }, 'ws']]);
+});
+
 const CAP_ROW = (template) => ({ class: 'assistant', template, sleep: { idleMs: 600000, maxAwake: 2 } });
 
 function capHarness(siblings, sleepers = ['asst']) {
