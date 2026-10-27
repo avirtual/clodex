@@ -1,6 +1,6 @@
 'use strict';
 
-const { test } = require('node:test');
+const { test, mock } = require('node:test');
 const assert = require('node:assert');
 const { PeerConnection } = require('../peer-client');
 
@@ -43,5 +43,31 @@ test('repoint keeps a wanted attachment without its stream and the next hello re
     assert.equal(attachOpens().length, 2, 'the hello after the repoint reopened the wanted attachment');
   } finally {
     conn.stop();
+  }
+});
+
+test('a hello in flight across a repoint is ignored: no offline flip and no second hello loop', () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  const conn = new PeerConnection({ id: 'box', label: 'box', url: 'http://127.0.0.1:9', emit: () => {}, helloIntervalMs: 1000 });
+  const calls = [];
+  conn._request = (method, p, body, cb) => { calls.push({ method, p, body, cb }); };
+  conn._sse = () => {};
+  const hellos = () => calls.filter((c) => c.p === '/api/peer/hello');
+  const helloOk = { ok: true, app: 'clodex', host: 'h', version: '1', caps: ['resources'] };
+  try {
+    conn.start();
+    assert.equal(hellos().length, 1, 'ENTER: the first hello is in flight');
+    conn.repoint('http://127.0.0.1:10');
+    assert.equal(hellos().length, 2);
+    hellos()[1].cb(null, helloOk);
+    assert.equal(conn.online, true, 'ENTER: the re-pointed hello succeeded');
+    hellos()[0].cb(new Error('socket hang up'));
+    assert.equal(conn.online, true, 'the stale hello error did not flip the connection offline');
+
+    mock.timers.tick(1000);
+    assert.equal(hellos().length, 3, 'exactly one hello loop is armed');
+  } finally {
+    conn.stop();
+    mock.timers.reset();
   }
 });

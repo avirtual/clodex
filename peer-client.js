@@ -164,6 +164,7 @@ class PeerConnection {
     this._dialectKnown = false;
     this._dialectProbing = false;
     this._helloGen = 0;
+    this._helloLoopGen = 0;
     this._eventsBackoff = RECONNECT_MIN_MS;
     this._attachments = new Map();    // name -> { req, token, wanted, backoff, timer }
     // seat -> { req, wanted, backoff, timer, opening, owners } for peer TERMINAL
@@ -208,6 +209,7 @@ class PeerConnection {
   }
 
   repoint(url) {
+    this._helloLoopGen++;
     clearTimeout(this._helloTimer);
     this._helloTimer = null;
     if (this._eventsReq) { try { this._eventsReq.destroy(); } catch {} this._eventsReq = null; }
@@ -257,8 +259,9 @@ class PeerConnection {
 
   _helloLoop() {
     if (this._stopped) return;
+    const loopGen = this._helloLoopGen;
     this._request('GET', '/api/peer/hello', null, (err, body) => {
-      if (this._stopped) return;
+      if (this._stopped || loopGen !== this._helloLoopGen) return;
       if (!err && body && body.ok && body.app === 'clodex') {
         const wasOffline = !this.online;
         const prev = this.hello;
