@@ -440,15 +440,25 @@ function createRemoteWiring(deps) {
   }
 
   function claudeTranscriptFile(entry, id) {
+    if (entry.type !== 'claude') return null;
     const root = (entry.env && typeof entry.env.CLAUDE_CONFIG_DIR === 'string' && entry.env.CLAUDE_CONFIG_DIR) || path.join(os.homedir(), '.claude');
     return path.join(root, 'projects', claudeProjectSlug(entry.cwd), `${id}.jsonl`);
   }
 
+  function allSessionIds(entry) {
+    const out = [];
+    const retired = Array.isArray(entry.retiredSessionIds) ? entry.retiredSessionIds : [];
+    for (const id of [...retired, ...trackedSessionIds(entry)]) if (SESSION_ID_RE.test(id) && !out.includes(id)) out.push(id);
+    return out;
+  }
+
   function sleeperMessages(entry) {
     const all = [];
-    for (const id of trackedSessionIds(entry).filter((id) => SESSION_ID_RE.test(id))) {
+    for (const id of allSessionIds(entry)) {
+      const file = claudeTranscriptFile(entry, id);
+      if (!file) continue;
       let rows;
-      try { rows = jsonlToMessages(claudeTranscriptFile(entry, id), Infinity); } catch { continue; }
+      try { rows = jsonlToMessages(file, Infinity); } catch { continue; }
       for (const m of rows) all.push(m);
     }
     all.forEach((m, i) => { m.seq = i; });
@@ -456,14 +466,22 @@ function createRemoteWiring(deps) {
   }
 
   async function destroyAssistant(name, entry) {
-    const ids = trackedSessionIds(entry).filter((id) => SESSION_ID_RE.test(id));
+    const ids = allSessionIds(entry);
     const out = await manager.destroy(name);
     if (!out || !out.ok) return out;
-    if (entry.cwd) for (const id of ids) { try { fs.unlinkSync(claudeTranscriptFile(entry, id)); } catch {} }
+    let unlinked = 0;
+    let untracked = 0;
+    if (entry.cwd) {
+      for (const id of ids) {
+        const file = claudeTranscriptFile(entry, id);
+        if (!file) { untracked++; continue; }
+        try { fs.unlinkSync(file); unlinked++; } catch {}
+      }
+    }
     try { fs.rmSync(path.join(REGISTRY_DIR, 'pending', name), { recursive: true, force: true }); } catch {}
     notifySessions();
-    log.info('session', `destroy ${name} via peer (${ids.length} transcript(s))`);
-    return { ok: true, name, destroyed: true, transcripts: ids.length };
+    log.info('session', `destroy ${name} via peer (${unlinked} transcript(s), ${untracked} untracked)`);
+    return { ok: true, name, destroyed: true, transcripts: unlinked, ...(untracked ? { untracked } : {}) };
   }
 
   let seatImport = null;
