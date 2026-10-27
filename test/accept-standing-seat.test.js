@@ -1632,3 +1632,90 @@ test('t1892: an in-root ticket tree minted by task start is removed, and its bra
   assert.strictEqual(exists(wt.path), false, 'the in-root tree is removed');
   assert.strictEqual(branches(f).includes(wt.branch), false, 'and its branch deleted');
 });
+
+test('t2007: the close-out measures merged against the team trunk, not the root checkout HEAD', async (t) => {
+  const realGw = require('../git-worktree');
+  const seen = [];
+  const f = mkFixture(t, {
+    gitWorktree: { ...realGw, isMerged: async (cwd, branch, base) => { seen.push(base); return { ok: true, merged: false, base }; } },
+  });
+  f.team.trunk = 'main';
+  execFileSync('git', ['-C', f.repoDir, 'checkout', '-q', '-b', 'integration'], { encoding: 'utf8' });
+  f.seat('lead');
+  f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
+  assert.strictEqual(execFileSync('git', ['-C', f.repoDir, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).trim(), 'integration',
+    'ENTER: the root checkout sits on a branch that is not the trunk');
+
+  const msg = await accept(f, 't1');
+
+  assert.deepStrictEqual(seen, ['main'], 'isMerged is asked about the trunk');
+  assert.match(msg, /NOT merged into main/, 'and the reply names the trunk');
+});
+
+test('t2007: no merge target tears nothing down and says so', async (t) => {
+  const realGw = require('../git-worktree');
+  const f = mkFixture(t, { gitWorktree: { ...realGw, mergeTargetFor: async () => null } });
+  f.seat('lead');
+  const wt = f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
+
+  const msg = await accept(f, 't1');
+
+  assert.match(msg, /merge check could NOT run.*no merge target for this team/);
+  assert.deepStrictEqual(f.killed, [], 'nothing is destroyed');
+  assert.strictEqual(exists(wt), true, 'the tree is kept');
+  assert.ok(branches(f).includes('landed'), 'and the branch');
+});
+
+test('t2007: deleteBranch is forced only after a merged:true answer against the target', async (t) => {
+  const realGw = require('../git-worktree');
+  const calls = [];
+  const gw = { ...realGw, deleteBranch: async (cwd, branch, opts) => { calls.push({ branch, opts }); return realGw.deleteBranch(cwd, branch, opts); } };
+  const f = mkFixture(t, { gitWorktree: gw });
+  f.seat('lead');
+  f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
+  await accept(f, 't1');
+  assert.deepStrictEqual(calls, [{ branch: 'landed', opts: { force: true } }], 'the merged arm forces the delete');
+
+  const calls2 = [];
+  const f2 = mkFixture(t, { gitWorktree: { ...realGw, deleteBranch: async (cwd, branch, opts) => { calls2.push({ branch, opts }); return { ok: true }; } } });
+  f2.seat('lead');
+  f2.worktreeSeat('team-hand-t1', 'pending', { ephemeral: true });
+  doneTicket(f2, { assignee: 'team-hand-t1', branch: 'pending' });
+  const msg = await accept(f2, 't1');
+  assert.match(msg, /is NOT merged into master/, 'ENTER: this is the not-merged arm');
+  assert.deepStrictEqual(calls2, [], 'the not-merged arm deletes nothing');
+});
+
+test('t2007: a green close-out leaves a one-shot seat that holds another started ticket in place', async (t) => {
+  const realGw = require('../git-worktree');
+  let deletes = 0;
+  const f = mkFixture(t, { gitWorktree: { ...realGw, deleteBranch: async () => { deletes++; return { ok: true }; } } });
+  const destroyed = [];
+  const realDestroy = f.m.destroy.bind(f.m);
+  f.m.destroy = async (name) => { destroyed.push(name); return realDestroy(name); };
+  f.seat('lead');
+  const wt = f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
+  const board = f.tstore.load(f.team.root);
+  board.push({ id: 't2', state: 'open', spec: 'spec for t2', assignee: 'team-hand-t1', role: 'hand',
+    openedAt: 3, startedAt: 3, lastActivityAt: 3 });
+  f.tstore.save(f.team.root, board);
+  assert.deepStrictEqual(f.m._openTicketsFor(f.team, 'team-hand-t1', 't1').map((x) => x.id), ['t2'],
+    'ENTER: the second ticket is open, started and on the seat');
+
+  const fresh = f.tstore.load(f.team.root);
+  const r = await f.m._closeOutMergedTicket(f.team, fresh.find((x) => x.id === 't1'), fresh, { by: 'ticket-loop' });
+
+  assert.ok(f.m.sessions.has('team-hand-t1'), 'the seat keeps running');
+  assert.deepStrictEqual(destroyed, [], 'no destroy');
+  assert.deepStrictEqual(f.archived, [], 'no archive');
+  assert.strictEqual(deletes, 0, 'no branch delete');
+  assert.strictEqual(exists(wt), true, 'the tree is kept');
+  assert.strictEqual(r.ok, false);
+  assert.strictEqual(r.closedOut, false);
+  assert.match(r.text, /left in place because it holds t2/);
+  assert.strictEqual(f.one('t1').loopClosedOut, undefined, 'the loop close-out is not stamped');
+});

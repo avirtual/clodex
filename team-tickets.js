@@ -7198,7 +7198,10 @@ function createTicketMethods(deps, shared) {
         text: this._finishAccept(team, ticket, tickets, { by, note, seatName, msg, closedOut, complete, actedStamp }),
       });
 
-      const m = await gitWorktree.isMerged(team.root, branch).catch((e) => ({ ok: false, error: e.message }));
+      const target = await gitWorktree.mergeTargetFor(team, ticket).catch(() => null);
+      const m = target
+        ? await gitWorktree.isMerged(team.root, branch, target).catch((e) => ({ ok: false, error: e.message }))
+        : { ok: false, error: 'no merge target for this team' };
 
       // Re-check in both directions: whichever side passed its entry gate first, the other can still enter this await and both tear down.
       {
@@ -7355,13 +7358,15 @@ function createTicketMethods(deps, shared) {
       // No liveness term: `ephemeralSeat` implies a record, and a seat that is merely not running still has a tree to reclaim.
       if (seatName && ephemeralSeat) {
         const wt = rec && rec.worktree && rec.worktree.path ? rec.worktree.path : null;
-        if (wt) {
+        const busy = this._openTicketsFor(team, seatName, ticket.id).filter((t) => this._ticketAssigneeSeat(team, t) === seatName);
+        if (busy.length > 0) downgrade = { kind: 'held', path: wt, held: busy[0].id };
+        else if (wt) {
           const d = await gitWorktree.isDirty(wt).catch((e) => ({ ok: false, error: e.message }));
           if (!d.ok) downgrade = { kind: 'unreadable', path: wt, why: d.error || 'git could not read the tree' };
           else if (d.dirty) downgrade = { kind: 'dirty', path: wt };
         }
         if (downgrade) {
-          if (this.sessions.has(seatName)) { await this.archive(seatName); downgrade.archived = true; }
+          if (downgrade.kind !== 'held' && this.sessions.has(seatName)) { await this.archive(seatName); downgrade.archived = true; }
         } else {
           const r = await this.destroy(seatName).catch((e) => ({ ok: false, error: e.message }));
           removed = r || null;
@@ -7375,9 +7380,9 @@ function createTicketMethods(deps, shared) {
           removed = r && r.ok ? { ok: true, worktreeRemoved: true } : { ok: false, worktreeRemoved: false, error: (r && r.error) || 'unknown error', path: remoteTree };
         }
       }
-      const del = downgrade && (downgrade.kind === 'dirty' || remoteTree)
+      const del = downgrade && (downgrade.kind === 'dirty' || downgrade.kind === 'held' || remoteTree)
         ? { ok: true, skipped: true }
-        : await gitWorktree.deleteBranch(team.root, branch).catch((e) => ({ ok: false, error: e.message }));
+        : await gitWorktree.deleteBranch(team.root, branch, { force: m.merged === true }).catch((e) => ({ ok: false, error: e.message }));
       const parts = [];
       if (seatName && remoteTree) {
         const kept = `the remote seat ${seatName} is not retired by accept; its tree ${remoteTree} was KEPT`;
@@ -7395,7 +7400,10 @@ function createTicketMethods(deps, shared) {
         const kept = downgrade && downgrade.archived
           ? `${seatName} was ARCHIVED, not retired, and its worktree was KEPT`
           : `${seatName} was NOT retired and its worktree was KEPT`;
-        if (downgrade && downgrade.kind === 'dirty') {
+        if (downgrade && downgrade.kind === 'held') {
+          parts.push(`${seatName} was left in place because it holds ${downgrade.held}; its worktree and branch were KEPT — `
+            + `accept again once ${downgrade.held} closes`);
+        } else if (downgrade && downgrade.kind === 'dirty') {
           // A second accept is not refused here (state stays `done`, a downgrade never stamps `loopClosedOut`), so the recovery is the same verb again.
           parts.push(`${kept} — ${downgrade.path} has uncommitted work `
             + 'that a removal would have deleted. Commit or clear that tree, then '
@@ -7434,7 +7442,7 @@ function createTicketMethods(deps, shared) {
         && !!removed && removed.ok !== false && removed.worktreeRemoved !== false
         && del.ok === true && !del.skipped;
       try {
-        return finish(`ticket ${ticket.id} ${outcome}; ${parts.join('; ')}.`, true, complete, complete && c.ok && c.count > 0);
+        return finish(`ticket ${ticket.id} ${outcome}; ${parts.join('; ')}.`, !(downgrade && downgrade.kind === 'held'), complete, complete && c.ok && c.count > 0);
       } catch (e) {
         log.error('ticket', `accept ${ticket.id} by ${by}: the board save after the teardown failed: ${e.message}`);
         return { ok: false, closedOut: false,

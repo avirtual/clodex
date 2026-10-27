@@ -27,6 +27,8 @@ blocks a release.
 - Ticket auto-merge survives an app relaunch: an ACCEPT queued or mid-merge when Clodex quits is requeued at boot, and a merge whose post-merge suite never finished is escalated to the lead as unverified instead of being left on the trunk unnoticed.
 - Sleeping assistants: a message to an assistant that crashed or was stopped without sleeping now resumes its last conversation instead of starting a fresh one with no brief.
 - Sleeping assistants: awake time no longer includes the time Clodex itself was not running, which inflated the cost shown for an assistant restored at app launch.
+- Accept checks "merged" against the team's trunk, not whatever branch the root checkout happens to be on, so a hand-merge on a side branch no longer passes as merged and a detached root no longer refuses one.
+- The loop's close-out after a green merge leaves a one-shot seat in place when it holds another started ticket, instead of killing it mid-turn.
 
 ## 5.146.2 — 2026-10-27
 

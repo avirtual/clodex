@@ -511,6 +511,10 @@ test('deleteBranch: removes a merged branch and REFUSES an unmerged one', { skip
   assert.strictEqual(refused.ok, false, 'an unmerged branch is refused, not forced');
   assert.ok(branches().includes('t903-unmerged'), 'and it survives the refusal');
 
+  const forced = await wt.deleteBranch(repo, 't903-unmerged', { force: true });
+  assert.strictEqual(forced.ok, true, forced.error);
+  assert.ok(!branches().includes('t903-unmerged'), 'force: true runs -D and deletes it');
+
   fs.rmSync(repo, { recursive: true, force: true });
 });
 
