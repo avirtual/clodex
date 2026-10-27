@@ -12,7 +12,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — security fixes from the first cold audit
+## Unreleased
+
+## 5.147.0 — 2026-10-28 — security fixes from the first cold audit
 
 - Security: the web host and the remote API no longer accept requests from other web origins when they run without a token on loopback. A page open in the operator's browser could previously open a WebSocket to the local web host and run commands, or post a message to a seat. Requests now need a loopback Host and, when a browser sends one, a loopback Origin; JSON endpoints require an application/json body.
 - Deleting, archiving or forgetting a seat kept warm "Always", or deleting its workspace, now stops its keep-warm pings at once; they used to continue until Clodex was restarted.
