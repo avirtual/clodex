@@ -314,7 +314,7 @@ test('release: the cloud review launches after the image publish and before Done
 
 test('publish-image: refuses an untagged HEAD and moves :latest only for the newest v* tag', () => {
   const src = fs.readFileSync(path.join(ROOT, 'scripts', 'publish-image.sh'), 'utf-8');
-  assert.match(src, /git describe --exact-match --tags HEAD 2>\/dev\/null[^\n]*\] = "v\$VERSION" \]/);
+  assert.match(src, /git describe --exact-match --tags HEAD 2>\/dev\/null[^\n]*\)" = "v\$VERSION" \]/);
   assert.match(src, /die "HEAD is not tagged v\$VERSION — check out the tag first"/);
   assert.match(src, /if \[ "\$\(git tag -l 'v\*' \| sort -V \| tail -1\)" = "v\$VERSION" \]; then\n\s+TAGS\+=\(-t "\$IMAGE:latest"\)/);
   assert.doesNotMatch(src, /^\s+-t "\$IMAGE:latest" \\$/m);
