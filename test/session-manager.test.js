@@ -23944,6 +23944,7 @@ async function bootNoticeSeat(t, { dropFirstText = false, submitTakenAfterMs = 1
       set: (partial) => { Object.assign(state, partial); return { ...state }; },
     }),
     INJECT_QUIET_MAXWAIT: 3_600_000,
+    isHumanPtyInput: require('../proxy-util').isHumanPtyInput, draftChunkSignal: require('../proxy-util').draftChunkSignal,
   });
   await bashCreate(p.m, 'lead', null);
   const s = p.getSession('lead');
@@ -24009,6 +24010,49 @@ test('a reboot notice retry does not send a bare Enter into a composer the opera
   await advance(20_000);
   assert.ok(s._injectStuck && s._injectStuck.entered, 'ENTER: the nudge marked the unit stuck in the composer');
   s.lastUserInputTs = Date.now();
+  await advance(11_000);
+  assert.deepStrictEqual(box.writes.filter((w) => w.at >= 29_000 && w.b === '\r'), [], 'no Enter sent at the retry');
+  assert.deepStrictEqual(box.submitted, [], 'so the operator\'s draft was not submitted');
+});
+
+test('a reboot notice bare Enter that is dropped too leaves the operator\'s inject-stuck warning up', async (t) => {
+  const { s, box, advance } = await bootNoticeSeat(t, { submitTakenAfterMs: Infinity });
+  await advance(20_000);
+  assert.strictEqual(s.needsAttention && s.needsAttention.kind, 'inject-stuck', 'ENTER: the nudge raised the stuck warning');
+  await advance(11_000);
+  assert.strictEqual(box.writes.filter((w) => w.at >= 29_000 && w.b === '\r').length, 1, 'ENTER: the retry sent one bare Enter');
+  assert.strictEqual(s.needsAttention && s.needsAttention.kind, 'inject-stuck', 'the warning survives the bare Enter');
+});
+
+test('a reboot notice bare Enter on an idle seat stamps the turn wait like an injected submit', async (t) => {
+  const { s, box, advance } = await bootNoticeSeat(t, { submitTakenAfterMs: Infinity });
+  await advance(20_000);
+  s.activityState = 'idle';
+  s._awaitingTurnSince = null;
+  s.lastSubmitInjected = false;
+  await advance(11_000);
+  const enter = box.writes.find((w) => w.at >= 29_000 && w.b === '\r');
+  assert.ok(enter, 'ENTER: the retry sent a bare Enter');
+  assert.ok(Number.isFinite(s._awaitingTurnSince), 'the turn wait is stamped');
+  assert.strictEqual(s.lastSubmitInjected, true, 'and the submit is marked injected');
+});
+
+test('a reboot notice retry does not send a bare Enter while a permission dialog is open', async (t) => {
+  const { s, box, advance } = await bootNoticeSeat(t);
+  await advance(20_000);
+  assert.ok(s._injectStuck && s._injectStuck.entered, 'ENTER: the nudge marked the unit stuck in the composer');
+  s.needsAttention = { kind: 'permission' };
+  await advance(11_000);
+  assert.deepStrictEqual(box.writes.filter((w) => w.at >= 29_000 && w.b === '\r'), [], 'no Enter confirms the dialog');
+  assert.deepStrictEqual(box.submitted, [], 'and nothing was submitted');
+});
+
+test('a reboot notice retry does not send a bare Enter after the operator typed through the pty input handler', async (t) => {
+  const { p, s, box, advance } = await bootNoticeSeat(t);
+  await advance(20_000);
+  assert.ok(s._injectStuck && s._injectStuck.entered, 'ENTER: the nudge marked the unit stuck in the composer');
+  p.m.write('lead', 'x');
+  assert.ok(s.lastUserInputTs >= Date.now(), 'ENTER: the handler stamped operator input');
   await advance(11_000);
   assert.deepStrictEqual(box.writes.filter((w) => w.at >= 29_000 && w.b === '\r'), [], 'no Enter sent at the retry');
   assert.deepStrictEqual(box.submitted, [], 'so the operator\'s draft was not submitted');
