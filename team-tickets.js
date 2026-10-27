@@ -1317,6 +1317,7 @@ function createTicketMethods(deps, shared) {
       entry.mustFix = ticket.mustFix;
       entry.reviewedAt = ticket.reviewedAt;
       delete ticket.loopStep;
+      if (ticket.verdict === 'ACCEPT' && ticket.worktree && ticket.worktree.branch && ticket.done !== 'report') ticket.mergeWaiting = 'queued';
       // A verdict is progress: clearing nudgedAt closes the stall episode, or the watchdog spends its one nudge on a ticket that just moved.
       ticket.nudgedAt = null;
       try { ticketsStore.save(team.root, tickets); } catch { return null; }
@@ -1644,7 +1645,7 @@ function createTicketMethods(deps, shared) {
       try { names = typeof listTeams === 'function' ? listTeams() : []; } catch { names = []; }
       const seen = new Set();
       const candidates = [];
-      const isWaiting = (t) => !!t && t.mergeWaiting === 'suite-in-flight' && t.state === 'done' && !t.closedOut
+      const isWaiting = (t) => !!t && ['suite-in-flight', 'queued', 'merging'].includes(t.mergeWaiting) && t.state === 'done' && !t.closedOut
         && t.verdict === 'ACCEPT' && !!(t.worktree && t.worktree.branch);
       for (const name of names) {
         let team;
@@ -1680,13 +1681,19 @@ function createTicketMethods(deps, shared) {
       if (!isWaiting(t)) return;
       const branch = t.worktree.branch;
       const target = await gitWorktree.mergeTargetFor(team, t).catch(() => null);
+      let onTarget = false;
       if (target) {
         const m = await gitWorktree.isMerged(team.root, branch, target).catch(() => null);
-        if (m && m.ok && m.merged) {
-          this._stampMergeWaiting(team, t.id, null);
-          log.info('ticket', `boot: ${t.id} is stamped merge waiting (suite-in-flight) but ${branch} is already on ${target} — not requeued, stamp cleared`);
-          return;
-        }
+        onTarget = !!(m && m.ok && m.merged);
+      }
+      if (t.mergeWaiting === 'merging' || (t.mergeWaiting === 'queued' && onTarget)) {
+        await this._escalateUnverifiedMerge(team, t, branch, target);
+        return;
+      }
+      if (onTarget) {
+        this._stampMergeWaiting(team, t.id, null);
+        log.info('ticket', `boot: ${t.id} is stamped merge waiting (suite-in-flight) but ${branch} is already on ${target} — not requeued, stamp cleared`);
+        return;
       }
       const landedOn = { verdict: t.verdict, mustFix: t.mustFix == null ? null : t.mustFix, reviewRound: Number(t.reviewRound) || 1, reworkRound: Number(t.reworkRound) || 0 };
       let verdictText = null;
@@ -1702,6 +1709,22 @@ function createTicketMethods(deps, shared) {
       log.info('ticket', `boot: requeued the auto-merge for ${t.id} (${team.name}) — it was deferred behind a running suite before the relaunch dropped its retry timer; attempt 0, the wait cap restarts now, verdict ${from}`);
       this._queueAutoMerge(team, t.id, landedOn, verdictText, { attempt: 0, since: this._mergeRetryNow() });
       queued.push(t.id);
+    },
+
+    async _escalateUnverifiedMerge(team, t, branch, target) {
+      let sha = t.mergeWaitingSha || null;
+      if (!sha && target) {
+        const mb = await gitWorktree.mergeBase(team.root, target, branch).catch(() => null);
+        sha = mb && mb.ok ? mb.sha : null;
+      }
+      const onWhat = target || 'the merge target';
+      const shown = sha || '<the merge commit>';
+      log.warn('ticket', `boot: ${t.id} was stamped merge waiting (${t.mergeWaiting}) and its merge ${shown} reached ${onWhat} without a finished post-merge suite — escalated as unverified, not requeued`);
+      this._stampMergeError(team, t.id, 'unexpected');
+      this._stampMergeWaiting(team, t.id, null);
+      this._escalateTicket(team, t.id, 'merge: unexpected',
+        `the app relaunched while the auto-merge of ${branch} was ${t.mergeWaiting === 'merging' ? 'running its post-merge suite' : 'queued'}, and ${branch} is on ${onWhat} as ${shown} — the post-merge suite never completed, so that merge is UNVERIFIED`,
+        `nothing was re-run and nothing was reverted. Run the suite in ${team.root}; if it is red, \`git -C ${team.root} revert -m 1 ${shown}\` undoes the merge`);
     },
 
     // Two seams, not one: a test usually replaces only the clock or only the delay.
@@ -1744,13 +1767,20 @@ function createTicketMethods(deps, shared) {
     },
 
     // Kept apart from mergeError, which reads as needs a human; a ticket waiting its turn needs none.
-    _stampMergeWaiting(team, ticketId, why) {
+    _stampMergeWaiting(team, ticketId, why, sha = null) {
       try {
         const tickets = ticketsStore.load(team.root);
         const rec = tickets.find((t) => t.id === ticketId);
         if (!rec) return;
-        if (!why) { if (!('mergeWaiting' in rec)) return; delete rec.mergeWaiting; }
-        else rec.mergeWaiting = why;
+        if (!why) {
+          if (!('mergeWaiting' in rec) && !('mergeWaitingSha' in rec)) return;
+          delete rec.mergeWaiting;
+          delete rec.mergeWaitingSha;
+        } else {
+          rec.mergeWaiting = why;
+          if (sha) rec.mergeWaitingSha = sha;
+          else delete rec.mergeWaitingSha;
+        }
         rec.lastActivityAt = Date.now();
         ticketsStore.save(team.root, tickets);
       } catch (e) {
@@ -1956,6 +1986,7 @@ function createTicketMethods(deps, shared) {
             `ran the merge in ${team.root}; nothing to revert`);
           return;
         }
+        this._stampMergeWaiting(team, ticketId, 'merging', merged.sha);
 
         // Revert first, escalate second: a red trunk blocks every ticket, so the undo is not a
         // question for the lead.

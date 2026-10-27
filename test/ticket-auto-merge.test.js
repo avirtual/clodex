@@ -2493,6 +2493,95 @@ test('t1234: a WAITING ticket whose branch already reached the trunk is not requ
   assert.ok(!('mergeWaiting' in f.one()), 'and the stale waiting stamp is cleared');
 });
 
+test('t2006: an ACCEPT landing stamps the row merge waiting (queued) before the merge starts', () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const started = [];
+  f.m._autoMergeTicket = (team, ticketId) => { started.push(ticketId); return new Promise(() => {}); };
+
+  f.m._handleReviewDone(f.reviewer(), ACCEPT);
+
+  assert.strictEqual(f.one().verdict, 'ACCEPT', 'ENTER: the verdict landed');
+  assert.deepStrictEqual(started, [], 'the merge has not started yet');
+  assert.strictEqual(f.one().mergeWaiting, 'queued');
+});
+
+test('t2006: a merge that moved the trunk stamps merging and its sha until the post-merge suite resolves', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  let release = null;
+  let entered = null;
+  const held = new Promise((r) => { release = r; });
+  const inSuite = new Promise((r) => { entered = r; });
+  const real = f.m._runTicketSuite.bind(f.m);
+  f.m._runTicketSuite = async (...args) => { entered(); await held; return real(...args); };
+
+  const run = f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+  await inSuite;
+  const mid = f.one();
+  release();
+  await run;
+
+  assert.strictEqual(mid.mergeWaiting, 'merging');
+  assert.strictEqual(mid.mergeWaitingSha, f.masterHead(), 'the stamped sha is the merge commit on master');
+  assert.match(f.masterLog(), /Merge t1:/, 'ENTER: the merge landed');
+  assert.ok(!('mergeWaiting' in f.one()) && !('mergeWaitingSha' in f.one()), 'both are cleared once the suite resolved');
+});
+
+test('t2006: a queued merge whose branch is not on the trunk is requeued at boot', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo, ticketOver: { ...WAITING, mergeWaiting: 'queued' }, bootTeams: true });
+  f.m._mergeRetryNow = () => 5_000_000;
+  const calls = spyQueue(f);
+
+  await bootLoop(f);
+
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].ticketId, 't1');
+  assert.deepStrictEqual(calls[0].retry, { attempt: 0, since: 5_000_000 });
+  assert.deepStrictEqual(f.esc(), []);
+});
+
+test('t2006: a merge stamped merging at boot is escalated as unverified, never requeued or forgotten', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  git(repo.dir, ['merge', '-q', '--no-ff', '-m', 'Merge t1: crashed mid-suite', 'tl-1']);
+  const sha = git(repo.dir, ['rev-parse', 'master']);
+  const f = mkMerge({ repo, ticketOver: { ...WAITING, mergeWaiting: 'merging', mergeWaitingSha: sha }, bootTeams: true });
+  const calls = spyQueue(f);
+
+  await bootLoop(f);
+
+  assert.deepStrictEqual(calls, [], 'an unverified merge is not merged again');
+  assert.strictEqual(f.one().mergeError, 'unexpected');
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1);
+  assert.ok(esc[0].body.includes(`git -C ${f.team.root} revert -m 1 ${sha}`), esc[0].body);
+  assert.match(esc[0].body, /post-merge suite never completed/);
+  assert.ok(!('mergeWaiting' in f.one()) && !('mergeWaitingSha' in f.one()), 'the mergeError carries the trace now');
+});
+
+test('t2006: a queued merge whose branch is already on the trunk at boot is escalated the same way', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  git(repo.dir, ['merge', '-q', '--no-ff', '-m', 'landed', 'tl-1']);
+  const tip = git(repo.dir, ['rev-parse', 'tl-1']);
+  const f = mkMerge({ repo, ticketOver: { ...WAITING, mergeWaiting: 'queued' }, bootTeams: true });
+  const calls = spyQueue(f);
+
+  await bootLoop(f);
+
+  assert.deepStrictEqual(calls, []);
+  assert.strictEqual(f.one().mergeError, 'unexpected');
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1);
+  assert.ok(esc[0].body.includes(`revert -m 1 ${tip}`), esc[0].body);
+  assert.ok(!('mergeWaiting' in f.one()));
+});
+
 function bootWithoutLead(f) {
   f.m.sessions.delete('lead');
   let t = 1_000_000;
