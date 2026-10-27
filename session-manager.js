@@ -3847,14 +3847,23 @@ function createSessionManager(deps) {
     }
 
     async _wakeNow(name, { reason = 'operator' } = {}) {
-      const entry = this._assistantPolicy(name);
+      let entry = this._assistantPolicy(name);
       if (!entry) return { ok: false, error: 'not an assistant seat' };
       const live = this.sessions.get(name);
-      if (live && !live._dead && !live._archived) return { ok: true, state: 'awake' };
+      if (live && !live._dead && !live._archived) {
+        live._sleepRequested = null;
+        return { ok: true, state: 'awake' };
+      }
       if (live && !await this._waitForExit(name)) return { ok: false, error: 'still stopping' };
+      if (live && !(entry = this._assistantPolicy(name))) return { ok: false, error: 'gone' };
       const cap = entry.sleep && Number(entry.sleep.maxAwake) > 0 ? Number(entry.sleep.maxAwake) : 0;
-      const full = cap ? await this.makeAwakeRoom(entry.template || null, cap, name) : null;
+      const template = entry.template || null;
+      const full = cap ? await this.makeAwakeRoom(template, cap, name) : null;
       if (full) return full;
+      if (cap && !(entry = this._assistantPolicy(name))) {
+        this.releaseAwakeRoom(template, name);
+        return { ok: false, error: 'gone' };
+      }
       const p = getPersistence();
       let r;
       try {
@@ -3863,10 +3872,10 @@ function createSessionManager(deps) {
         p.upsert({ name, asleepAt: null, sleepReason: null, wakes: (entry.wakes || 0) + 1, awokeAt: Date.now() });
         log.info('session', `wake ${name} (${reason})`);
         r = await restartSession(name, { fresh: true }, entry.workspaceId);
-      } finally { if (cap) this.releaseAwakeRoom(entry.template || null, name); }
+      } finally { if (cap) this.releaseAwakeRoom(template, name); }
       if (!r || !r.ok) {
         p.setArchived(name, true);
-        p.upsert({ name, asleepAt: entry.asleepAt || Date.now(), sleepReason: entry.sleepReason || null });
+        if (p.get(name)) p.upsert({ name, asleepAt: entry.asleepAt || Date.now(), sleepReason: entry.sleepReason || null });
         return r || { ok: false, error: 'restart failed' };
       }
       return { ok: true, state: 'awake' };

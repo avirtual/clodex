@@ -22207,6 +22207,67 @@ test('assistant awake time: sleep adds now - awokeAt to cost.awakeMs, a later co
   assert.strictEqual(h.store.get('asst').awokeAt, 9000);
 });
 
+test('assistant wake: a record removed while the old process exits answers gone and writes no phantom record', async (t) => {
+  const calls = [];
+  const h = mkStreamSeatManager({
+    persisted: { asst: { ...ASSISTANT_ROW, workspaceId: 'ws' } },
+    extraDeps: { restartSession: async (...a) => { calls.push(a); return { ok: false, error: 'no record' }; } },
+  });
+  t.after(() => h.stopAll());
+  await h.create('asst');
+  h.m.sessions.get('asst')._archived = true;
+  let waited = 0;
+  h.m._waitForExit = async (n) => { waited += 1; h.store.delete(n); return true; };
+  assert.deepStrictEqual(await h.m.wake('asst'), { ok: false, error: 'gone' });
+  assert.strictEqual(waited, 1, 'ENTER: wake awaited the old process');
+  assert.strictEqual(h.store.has('asst'), false);
+  assert.deepStrictEqual(calls, []);
+});
+
+test('assistant wake: a record removed during makeAwakeRoom answers gone, writes no phantom record and frees the room', async (t) => {
+  const calls = [];
+  const h = mkStreamSeatManager({
+    persisted: { asst: { ...CAP_ROW('tpl-a'), archivedAt: 1, asleepAt: 2 } },
+    extraDeps: { restartSession: async (...a) => { calls.push(a); return { ok: false, error: 'no record' }; } },
+  });
+  t.after(() => h.stopAll());
+  const released = [];
+  let roomed = 0;
+  h.m.makeAwakeRoom = async () => { roomed += 1; h.store.delete('asst'); return null; };
+  h.m.releaseAwakeRoom = (tpl, n) => released.push([tpl, n]);
+  assert.deepStrictEqual(await h.m.wake('asst'), { ok: false, error: 'gone' });
+  assert.strictEqual(roomed, 1, 'ENTER: wake asked for a room');
+  assert.strictEqual(h.store.has('asst'), false);
+  assert.deepStrictEqual(calls, []);
+  assert.deepStrictEqual(released, [['tpl-a', 'asst']]);
+});
+
+test('assistant wake: a record removed during a failed restart is not re-created', async (t) => {
+  const h = mkStreamSeatManager({
+    persisted: { asst: { ...ASSISTANT_ROW, archivedAt: 1, asleepAt: 2 } },
+    extraDeps: { restartSession: async (n) => { h.store.delete(n); return { ok: false, error: 'boom' }; } },
+  });
+  t.after(() => h.stopAll());
+  assert.deepStrictEqual(await h.m.wake('asst'), { ok: false, error: 'boom' });
+  assert.strictEqual(h.store.has('asst'), false);
+});
+
+test('assistant wake: waking a busy seat with a deferred sleep cancels the sleep', async (t) => {
+  const h = mkStreamSeatManager({ persisted: { asst: { ...ASSISTANT_ROW } } });
+  t.after(() => h.stopAll());
+  await h.create('asst');
+  h.m.seatSend('asst', 'go');
+  assert.strictEqual(h.m.sessions.get('asst').streamBusy, true, 'ENTER: the seat is mid-turn');
+  assert.deepStrictEqual(await h.m.sleep('asst'), { ok: true, state: 'sleeping' });
+  assert.deepStrictEqual(await h.m.wake('asst'), { ok: true, state: 'awake' });
+  h.line('asst', RESULT);
+  const s = h.m.sessions.get('asst');
+  assert.strictEqual(s.streamBusy, false, 'ENTER: the turn ended');
+  assert.strictEqual(h.handles[0].killed, 0);
+  assert.ok(!s._archived && !s._dead);
+  assert.strictEqual(h.store.get('asst').asleepAt, undefined);
+});
+
 test('assistant wake: a failed restart re-archives and keeps the sleep stamp', async (t) => {
   const h = mkStreamSeatManager({
     persisted: { asst: { ...ASSISTANT_ROW, workspaceId: 'ws', archivedAt: 1, asleepAt: 2, sleepReason: 'idle' } },
