@@ -6771,11 +6771,11 @@ function createSessionManager(deps) {
       if (target && target.agentType) {
         try {
           if (target.agentType === 'claude') {
+            target._rebootNoticeBody = body;
             parkNotice(this._buildDeliveryText(target, 'reboot', body, 'dm'));
             this._armParkCap(target);
             this._armRebootNoticeFlush(target);
-            // A park is a promise, not a receipt: do not clear() here, the settings copy is the only durable one
-            // and a drained write can vanish into a booting CLI.
+            // A park is a promise, not a receipt: do not clear() here, the settings copy is the only durable one.
             this._armRebootNoticeRetry(target, notice);
             log.info('intent', `reboot notice parked for ${notice.name} (live claude — boot-safe, cap armed; retry armed, attempt ${(Number.isFinite(notice.attempts) ? notice.attempts : 0) + 1}/${REBOOT_NOTICE_MAX_ATTEMPTS})`);
             return;
@@ -6861,12 +6861,33 @@ function createSessionManager(deps) {
           log.info('intent', `reboot notice for ${target.name} presumed delivered (seat took a turn) — cleared after ${attempt} attempt(s)`);
           return;
         }
+        let cur = null;
+        try { cur = store ? store.get().pendingRebootNotice : null; } catch { cur = null; }
+        if (cur && cur.name === target.name && cur.at === notice.at && attempt + 1 < REBOOT_NOTICE_MAX_ATTEMPTS
+          && this._rebootNoticeInComposer(target, parkedAt)) {
+          this._clearInjectStuck(target);
+          try { target.pty.write('\r'); } catch {}
+          log.warn('intent', `reboot notice for ${target.name} unconfirmed ${Math.round((Date.now() - parkedAt) / 1000)}s after park (no turn since) — still unsubmitted in the composer, sent Enter instead of a second copy, attempt ${attempt + 1}/${REBOOT_NOTICE_MAX_ATTEMPTS}`);
+          this._armRebootNoticeRetry(target, cur);
+          return;
+        }
         log.warn('intent', `reboot notice for ${target.name} unconfirmed ${Math.round((Date.now() - parkedAt) / 1000)}s after park (no turn since) — re-offering, attempt ${attempt + 1}/${REBOOT_NOTICE_MAX_ATTEMPTS}`);
         this.maybeDeliverRebootNotice({ retry: true });
       };
       target._rebootNoticeRetryFire = fire;
       target._rebootNoticeRetryDelay = delay;
       target._rebootNoticeRetryTimer = setTimeout(fire, delay);
+    }
+
+    _rebootNoticeInComposer(target, parkedAt) {
+      if (!target.pty || target.io === 'stream') return false;
+      const wroteAt = target._rebootNoticeWrittenAt;
+      const stuck = target._injectStuck;
+      if (!Number.isFinite(wroteAt) || wroteAt < parkedAt) return false;
+      if (!stuck || !stuck.entered || !(stuck.at >= wroteAt)) return false;
+      if ((target.lastUserInputTs || 0) >= wroteAt || this._anyDraftOpen(target)) return false;
+      const q = target._injectPtyQueue;
+      return !(q && q.length > 0);
     }
 
     _turnSinceRebootPark(target, parkedAt) {
@@ -8970,10 +8991,13 @@ function createSessionManager(deps) {
             }
           },
           bracketedPaste: () => !!session._pasteModeOn,
-          onWritten: (text, { bytes, bracketed, pasteOn, settleMs }) => this._shadowLog({
-            type: 'inject-written', agent: session.name, chars: text.length, bytes, bracketed, pasteOn, settleMs,
-            head: text.slice(0, 24), tail: text.slice(-24),
-          }),
+          onWritten: (text, { bytes, bracketed, pasteOn, settleMs }) => {
+            if (session._rebootNoticeBody && text.includes(session._rebootNoticeBody)) session._rebootNoticeWrittenAt = Date.now();
+            this._shadowLog({
+              type: 'inject-written', agent: session.name, chars: text.length, bytes, bracketed, pasteOn, settleMs,
+              head: text.slice(0, 24), tail: text.slice(-24),
+            });
+          },
           onSubmitted: (_t, meta) => {
             session.lastSubmitInjected = !(meta && meta.human);
             if (isClaude && session.activityState === 'idle') session._awaitingTurnSince = Date.now();
