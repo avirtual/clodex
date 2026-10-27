@@ -23,6 +23,7 @@ fi
 nonneg() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; }
 nonneg "$CALL_S" && [ "$CALL_S" -gt 0 ] || CALL_S=60
 nonneg "$POLL_S" || POLL_S=60
+[ "${CLODEX_REVIEW_TEST:-}" = 1 ] || [ "$POLL_S" -ge 5 ] || POLL_S=5
 nonneg "$TIMEOUT_S" || TIMEOUT_S=7200
 
 BRANCH="claude/review-$TAG"
@@ -90,7 +91,11 @@ done
 delete=0
 if [ "$found" = 0 ]; then
   TITLE="$PREFIX NO REPORT"
-  printf 'No branch %s appeared on origin within %ss, so the cloud review never reported.\n\nLog: %s\n' "$BRANCH" "$TIMEOUT_S" "$LOG" >"$BODY"
+  if [ -n "$stale_seen" ]; then
+    printf 'Branch %s on origin held only report %s, committed before this run, and no fresh report replaced it within %ss.\n\nLog: %s\n' "$BRANCH" "$stale_seen" "$TIMEOUT_S" "$LOG" >"$BODY"
+  else
+    printf 'No branch %s appeared on origin within %ss, so the cloud review never reported.\n\nLog: %s\n' "$BRANCH" "$TIMEOUT_S" "$LOG" >"$BODY"
+  fi
 elif [ "$fetch_ok" = 0 ] || ! "$GIT" show "$REF:.review/$TAG.md" >"$REPORT"; then
   TITLE="$PREFIX UNPARSED REPORT"
   printf 'Branch %s is on origin, but .review/%s.md could not be read from it; the branch was kept.\n\nLog: %s\n' "$BRANCH" "$TAG" "$LOG" >"$BODY"

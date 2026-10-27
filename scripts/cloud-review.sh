@@ -8,6 +8,7 @@ PREV="${1:-}"
 NEW="${2:-}"
 BIN="${CLODEX_CLAUDE_BIN:-claude}"
 GIT="${CLODEX_GIT_BIN:-git}"
+POLLER="${CLODEX_REVIEW_POLLER_BIN:-$ROOT/scripts/cloud-review-post.sh}"
 
 if [ "${CLODEX_RELEASE_NO_REVIEW:-}" = 1 ]; then
   printf 'cloud-review: skipped (CLODEX_RELEASE_NO_REVIEW=1)\n'
@@ -49,7 +50,7 @@ fi
 
 nohup env -u CLAUDE_CONFIG_DIR -u CLAUDE_CODE_OAUTH_TOKEN script -q /dev/null "$BIN" --cloud "$BRIEF" --model claude-opus-5-5 --permission-mode bypassPermissions </dev/null >>"$LOG" 2>&1 &
 CLAUDE_PID=$!
-nohup "$ROOT/scripts/cloud-review-post.sh" "$NEW" </dev/null >>"$LOG" 2>&1 &
+nohup "$POLLER" "$NEW" </dev/null >>"$LOG" 2>&1 &
 POST_PID=$!
 printf 'cloud-review: launched for %s..%s (pid %s)\n' "$PREV" "$NEW" "$CLAUDE_PID"
 printf 'cloud-review: issue poller launched (pid %s)\n' "$POST_PID"
