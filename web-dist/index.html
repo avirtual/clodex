@@ -52693,17 +52693,25 @@ ${detail}` });
             return;
           }
           item.remove();
-          rebuildLiveRow(entry.name, entry, { io: res.io });
+          if (!sessions.has(entry.name)) rebuildLiveRow(entry.name, entry, { io: res.io });
           switchSession(entry.name);
         });
         item.querySelector(".session-close").addEventListener("click", async (e) => {
           e.stopPropagation();
           if (confirm(`Forget session "${entry.name}"? It isn't running \u2014 this just removes the saved entry.`)) {
-            await window.api.forgetSession(entry.name);
+            if (!await forgetSavedEntry(entry.name)) return;
             item.remove();
           }
         });
         insertLocalSessionRow(item);
+      }
+      async function forgetSavedEntry(name) {
+        const res = await window.api.forgetSession(name);
+        if (res && res.ok === false) {
+          showToast(res.error === "running" ? `${name} is running \u2014 stop it first` : `Forget failed: ${res.error || "unknown error"}`, { kind: "error", duration: 1e4, name });
+          return false;
+        }
+        return true;
       }
       function addArchivedSessionToSidebar(entry) {
         if (sessionList.querySelector(`[data-name="${CSS.escape(entry.name)}"]`)) return;
@@ -52738,15 +52746,17 @@ ${detail}` });
           }
           await window.api.unarchiveSession(entry.name);
           item.remove();
-          sidebarMeta.delete(entry.name);
-          rebuildLiveRow(entry.name, entry, { io: res.io });
+          if (!sessions.has(entry.name)) {
+            sidebarMeta.delete(entry.name);
+            rebuildLiveRow(entry.name, entry, { io: res.io });
+          }
           switchSession(entry.name);
           refreshSidebarView();
         });
         item.querySelector(".session-close").addEventListener("click", async (e) => {
           e.stopPropagation();
           if (confirm(`Delete archived session "${displayName}"? It isn't running \u2014 this just removes the saved entry.`)) {
-            await window.api.forgetSession(entry.name);
+            if (!await forgetSavedEntry(entry.name)) return;
             item.remove();
             sidebarMeta.delete(entry.name);
             refreshSidebarView();
@@ -52848,14 +52858,14 @@ ${detail}` });
           }
           item.remove();
           sidebarMeta.delete(entry.name);
-          rebuildLiveRow(entry.name, entry, { io: res.io });
+          if (!sessions.has(entry.name)) rebuildLiveRow(entry.name, entry, { io: res.io });
           switchSession(entry.name);
           refreshSidebarView();
         });
         item.querySelector(".session-close").addEventListener("click", async (e) => {
           e.stopPropagation();
           if (confirm(`Forget session "${displayName}"? It isn't running \u2014 this just removes the saved entry.`)) {
-            await window.api.forgetSession(entry.name);
+            if (!await forgetSavedEntry(entry.name)) return;
             item.remove();
             sidebarMeta.delete(entry.name);
             refreshSidebarView();
@@ -53153,6 +53163,10 @@ ${detail}` });
             if (type) {
               const prior = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
               const snap = rowSnapshot(name, prior);
+              if (prior && !sessions.has(name)) {
+                prior.remove();
+                sidebarMeta.delete(name);
+              }
               rebuildLiveRow(name, snap, { io, type, cwd, backend: backend || null, noWire: noWire === true, clone });
               switchToNewSession(name, { agentInitiated: background === true });
             }

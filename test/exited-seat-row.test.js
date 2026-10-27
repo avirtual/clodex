@@ -233,7 +233,7 @@ function mkRenderer({ api = {}, confirmAnswer = true } = {}) {
     respawnFocus: new Map(),
     dialogOverlay: { classList: { contains: () => true } },
     isToolInstallSession: () => false,
-    removeSession: (name) => { calls.push(['removeSession', name]); const i = rows.findIndex((r) => r.dataset.name === name); if (i >= 0) rows.splice(i, 1); },
+    removeSession: (name) => { calls.push(['removeSession', name]); env.sessions.delete(name); const i = rows.findIndex((r) => r.dataset.name === name); if (i >= 0) rows.splice(i, 1); },
     insertLocalSessionRow: (item) => rows.push(item),
     esc: (s) => String(s),
     typeGlyph: () => 'C',
@@ -253,16 +253,19 @@ function mkRenderer({ api = {}, confirmAnswer = true } = {}) {
     addFailedSessionToSidebar: rec('addFailedSessionToSidebar'),
     mountRestoredSession: rec('mountRestoredSession'),
     initSidebarView: rec('initSidebarView'),
+    switchToNewSession: rec('switchToNewSession'),
+    applyCloneChip: rec('applyCloneChip'),
     refreshNewSessionToolGate() {},
     terminalWebglReady: Promise.resolve(),
   };
   const names = Object.keys(env).filter((k) => k !== 'exitHandler' && k !== 'movedInHandler');
   const body = [
     slice('const seatIoKind', ';\n'),
-    fnSrc('exitedLabel'), fnSrc('rowSnapshot'), fnSrc('rebuildLiveRow'), fnSrc('exitedRowSnapshot'), fnSrc('addExitedSessionToSidebar'),
+    fnSrc('exitedLabel'), fnSrc('rowSnapshot'), fnSrc('rebuildLiveRow'), fnSrc('exitedRowSnapshot'), fnSrc('addExitedSessionToSidebar'), `async ${fnSrc('forgetSavedEntry')}`,
     slice('window.api.onSessionExit((name, code, meta) => {', '\n});\n'),
     slice('window.api.onSessionMovedIn((entry) => {', '\n});\n'),
-    `return { restore: () => ${slice('(async function restoreSessions() {', '\n})();\n').trim().replace(/;$/, '')} };`,
+    `const reattach = ({ name, type, cwd, backend, noWire, io, background, clone }) => { switch ('reattach') { ${slice("    case 'reattach':", '      break;\n')} } };`,
+    `return { reattach, restore: () => ${slice('(async function restoreSessions() {', '\n})();\n').trim().replace(/;$/, '')} };`,
   ].join('\n');
   const out = new Function(...names, body)(...names.map((n) => env[n]));
   const liveRow = (name, dataset) => {
@@ -271,7 +274,7 @@ function mkRenderer({ api = {}, confirmAnswer = true } = {}) {
     env.sessions.set(name, { name });
     return node;
   };
-  return { env, rows, calls, liveRow, restore: out.restore };
+  return { env, rows, calls, liveRow, restore: out.restore, reattach: out.reattach };
 }
 
 const exitedLabelOf = (row) => (/<span class="session-exited-label">([^<]*)<\/span>/.exec(row.innerHTML) || [])[1];
@@ -346,4 +349,17 @@ test('restore and session:moved-in draw an exited payload row as the exited row'
   const m = mkRenderer();
   m.env.movedInHandler({ ...payload, exitCode: 2 });
   assert.strictEqual(exitedLabelOf(m.rows[0]), 'exited (code 2) — click to resume');
+});
+
+test('a reattach for a woken seat replaces its archived row with one live row', () => {
+  const h = mkRenderer();
+  const archived = h.env.document.createElement('div');
+  archived.className = 'session-item archived';
+  archived.dataset = { name: 'asst', type: 'claude', cwd: '/w' };
+  h.rows.push(archived);
+  h.env.sidebarMeta.set('asst', { createdAt: 1 });
+  h.reattach({ name: 'asst', type: 'claude', cwd: '/w', backend: null, noWire: false, io: 'stream', background: true });
+  assert.deepStrictEqual(h.rows, []);
+  assert.deepStrictEqual(h.calls.filter((c) => c[0] === 'addSessionToSidebar').map((c) => c.slice(1, 4)), [['asst', 'claude', '/w']]);
+  assert.deepStrictEqual(h.calls.find((c) => c[0] === 'switchToNewSession'), ['switchToNewSession', 'asst', { agentInitiated: true }]);
 });

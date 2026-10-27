@@ -3689,14 +3689,14 @@ function createSessionManager(deps) {
       }
     }
 
-    async kill(name, { endHold = false } = {}) {
+    async kill(name, { endHold = false, respawn = false } = {}) {
       const s = this.sessions.get(name);
       if (!s) return;
       if (endHold) this.endHold(name);
       log.info('session', `kill ${name} (user-initiated) pid=${this._procPid(s)}`);
       s._userKilled = true;
       this._scratchCloneOnExit(s);
-      this._notifyComposition(s, 'retired');
+      if (!respawn) this._notifyComposition(s, 'retired');
       if (s.spawnerHintSet && s.proxyBase && s.proxyAgent) {
         try {
           ProxyClient.spawnerHint(s.proxyBase, s.proxyAgent, { clear: true })
@@ -3707,7 +3707,7 @@ function createSessionManager(deps) {
       }
       this._foldSeatCost(s);
       try { this._stampSeatCost(s, 'kill'); } catch {}
-      getPersistence().remove(name);
+      if (!respawn) getPersistence().remove(name);
       this._bindHold(name);
       if (s.stream) { s.stream.kill(); return; }
       const ptyPid = s.pty.pid;
@@ -3881,6 +3881,8 @@ function createSessionManager(deps) {
         if (p.get(name)) p.upsert({ name, asleepAt: entry.asleepAt || (resumeId ? null : Date.now()), sleepReason: entry.sleepReason || null });
         return r || { ok: false, error: 'restart failed' };
       }
+      const woke = p.get(name) || entry;
+      this._sendToSession(name, 'session:context-action', { ...this._reattachAction(name, woke.type, this.resumeCwdOf(woke)), background: true });
       return { ok: true, state: 'awake' };
     }
 
@@ -4690,6 +4692,17 @@ function createSessionManager(deps) {
         getPersistence().setWorktree(entry.name, null);
       } catch {}
       return main;
+    }
+
+    _dropRosterSent(name) {
+      const p = getPersistence();
+      const rec = p && p.get(name);
+      if (rec && rec.rosterSentAt !== undefined) p.upsert({ name, rosterSentAt: undefined });
+    }
+
+    _reattachAction(name, type, cwd) {
+      const live = this.sessions.get(name) || {};
+      return { action: 'reattach', name, type, cwd, backend: live.backend || null, noWire: !!live.noWire, io: live.io || 'pty' };
     }
 
     _preserveAcrossRestart(name, priorEntry, fields) {
@@ -7815,8 +7828,9 @@ function createSessionManager(deps) {
       setImmediate(async () => {
         try {
           if (this.sessions.has(name)) {
-            await this.kill(name);
+            await this.kill(name, { respawn: true });
             if (!await waitExit(name)) throw new Error('old process did not exit in time');
+            this._dropRosterSent(name);
           }
           if (typeof opts.onKilled === 'function') { try { opts.onKilled(); } catch {} }
           clearSubq(subqDirFor(name));
@@ -7849,9 +7863,7 @@ function createSessionManager(deps) {
           const lvl = stripLevelOf(entry);
           if (lvl >= 1) getPersistence().setStripLevel(name, lvl);
           if (entry.label) getPersistence().setLabel(name, entry.label);
-          this._sendToSession(name, 'session:context-action', {
-            action: 'reattach', name, type: entry.type, cwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire, io: (this.sessions.get(name) || {}).io || 'pty',
-          });
+          this._sendToSession(name, 'session:context-action', this._reattachAction(name, entry.type, cwd));
           const fresh = this.sessions.get(name);
           if (fresh && handoff) this._injectReloadHandoff(fresh, handoff, undefined, why);
         } catch (err) {

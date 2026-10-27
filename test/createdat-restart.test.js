@@ -101,6 +101,11 @@ function probe(eng) {
 
 // ENTER (a) + (b), asserted the same way for every path below.
 function assertEntered(seen, removals, name, path_) {
+  if (path_ !== 'applySessionArgs({restart:true})') {
+    assert.deepStrictEqual(removals, [], `ENTER: ${path_} respawns through kill({ respawn: true }), which keeps the record`);
+    assert.strictEqual(seen.length, 1, `ENTER: ${path_} must actually reach create()`);
+    return;
+  }
   assert.strictEqual(removals.length, 1,
     `ENTER: ${path_} must actually route through kill(), which REMOVES the persistence record — `
     + 'zero removals means existingEntry was never null and this test is pinning a path where the bug cannot occur');
@@ -502,4 +507,73 @@ test('create() hands the birth stamp to setupClaudeHook, so the generated drain 
   assert.strictEqual(seen[0][7], persistence.get('h').createdAt,
     'and it must equal the persisted value — a recomputed copy would drift the first time either was touched, '
     + 'which is the construction class this whole ticket exists to remove');
+});
+
+function respawnProbe(eng, name) {
+  const verbs = [];
+  const recordAt = [];
+  const p = eng.stores.persistence;
+  eng.manager._notifyComposition = (s, verb) => verbs.push([s.name, verb]);
+  const s = eng.manager.sessions.get(name);
+  const kill = s.pty.kill;
+  s.pty.kill = () => { recordAt.push(['pty.kill', !!p.get(name)]); kill(); };
+  return { verbs, recordAt };
+}
+
+test('restartSession of a live seat announces no retire and keeps the record from kill to create', async () => {
+  const eng = mkEngine();
+  const entry = { name: 'rs', type: 'claude', cwd: '/tmp', workspaceId: 'default', createdAt: BORN, sessionId: 's-r', rosterSentAt: 5 };
+  eng.stores.persistence.upsert(entry);
+  liveSession(eng, 'rs', entry).agentType = 'claude';
+  const { verbs, recordAt } = respawnProbe(eng, 'rs');
+  const { seen } = probe(eng);
+  const res = await eng.restartSession('rs', {}, 'default');
+  assert.strictEqual(res.ok, true, res.error);
+  assert.deepStrictEqual(recordAt, [['pty.kill', true]]);
+  assert.strictEqual(seen.length, 1, 'ENTER: create reached');
+  assert.strictEqual(seen[0].recordAtCreate.rosterSentAt, 5, 'a resume restart keeps rosterSentAt');
+  assert.deepStrictEqual(verbs, []);
+});
+
+test('a fresh restartSession of a live seat drops rosterSentAt through _dropRosterSent but keeps the record', async () => {
+  const eng = mkEngine();
+  const entry = { name: 'rf', type: 'claude', cwd: '/tmp', workspaceId: 'default', createdAt: BORN, rosterSentAt: 5 };
+  eng.stores.persistence.upsert(entry);
+  liveSession(eng, 'rf', entry).agentType = 'claude';
+  const { verbs, recordAt } = respawnProbe(eng, 'rf');
+  const { seen } = probe(eng);
+  assert.strictEqual((await eng.restartSession('rf', { fresh: true }, 'default')).ok, true);
+  assert.deepStrictEqual(recordAt, [['pty.kill', true]]);
+  assert.strictEqual(seen[0].recordAtCreate.rosterSentAt, undefined);
+  assert.strictEqual(seen[0].recordAtCreate.createdAt, BORN);
+  assert.deepStrictEqual(verbs, []);
+});
+
+test('[agent:context reload] announces no retire and keeps the record from kill to create', async () => {
+  const eng = mkEngine();
+  const entry = { name: 'cr', type: 'claude', cwd: '/tmp', workspaceId: 'default', createdAt: BORN, sessionId: 's-c' };
+  eng.stores.persistence.upsert(entry);
+  const s = liveSession(eng, 'cr', entry);
+  s.agentType = 'claude';
+  const { verbs, recordAt } = respawnProbe(eng, 'cr');
+  const { seen } = probe(eng);
+  eng.manager._injectReloadHandoff = () => {};
+  eng.manager._handleContextIntent(s, 'reload', 'carry on');
+  for (let i = 0; i < 200 && seen.length === 0; i++) await new Promise((r) => setTimeout(r, 10));
+  assert.strictEqual(seen.length, 1, 'ENTER: create reached');
+  assert.deepStrictEqual(recordAt, [['pty.kill', true]]);
+  assert.strictEqual(seen[0].recordAtCreate.createdAt, BORN);
+  assert.deepStrictEqual(verbs, []);
+});
+
+test('a plain kill (Delete) still announces retire and drops the record', async () => {
+  const eng = mkEngine();
+  const entry = { name: 'pk', type: 'claude', cwd: '/tmp', workspaceId: 'default', createdAt: BORN };
+  eng.stores.persistence.upsert(entry);
+  liveSession(eng, 'pk', entry).agentType = 'claude';
+  const { verbs, recordAt } = respawnProbe(eng, 'pk');
+  await eng.manager.kill('pk');
+  assert.deepStrictEqual(verbs, [['pk', 'retired']]);
+  assert.deepStrictEqual(recordAt, [['pty.kill', false]]);
+  assert.strictEqual(eng.stores.persistence.get('pk'), null);
 });

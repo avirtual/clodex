@@ -1530,11 +1530,10 @@ async function restartSession(name, opts = {}, wsId = DEFAULT_WORKSPACE_ID) {
   const resumeId = opts && opts.fresh ? null : ((opts && opts.resumeId) || entry.sessionId || null);
   try {
     if (manager.sessions.has(name)) {
-      await manager.kill(name);
+      await manager.kill(name, { respawn: true });
       if (!await waitForSessionExit(name)) throw new Error('old process did not exit in time');
+      if (opts && opts.fresh) manager._dropRosterSent(name);
     }
-    // Re-seed before create() reads existingEntry (kill() dropped the record); a fresh
-    // restart must not carry rosterSentAt, and every restart must carry createdAt.
     const preserveFields = ['ephemeral', 'reviewFor', 'reviewTicket', 'createdAt'];
     if (!(opts && opts.fresh)) preserveFields.push('rosterSentAt');
     manager._preserveAcrossRestart(name, entry, preserveFields);

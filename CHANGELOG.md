@@ -41,6 +41,9 @@ blocks a release.
 - Sandbox: deleting a box while Docker is not running is refused and keeps the box listed, instead of dropping it while its restart-always container survives to come back unmanaged.
 - Move to Peer: the confirm now lists the session env keys that travel with the seat, and the docs no longer claim session env never crosses the peer wire.
 - Keep-warm: a perpetual hold that could not be judged at startup is no longer erased from disk by the next unrelated seat's turn, so it is restored on the following launch.
+- Restarting a seat no longer tells its team lead the seat retired, and no longer drops its saved entry while the old process is still exiting, so a quit in that window cannot lose the seat.
+- Sleeping assistants: a message or reminder that wakes an assistant now replaces its archived sidebar row with the live one.
+- Forgetting a saved entry is refused while that seat is still running, instead of deleting the running seat's files from under it.
 
 ## 5.146.2 — 2026-10-27
 

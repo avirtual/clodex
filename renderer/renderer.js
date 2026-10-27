@@ -694,19 +694,28 @@ function addFailedSessionToSidebar(entry) {
       return;
     }
     item.remove();
-    rebuildLiveRow(entry.name, entry, { io: res.io });
+    if (!sessions.has(entry.name)) rebuildLiveRow(entry.name, entry, { io: res.io });
     switchSession(entry.name);
   });
 
   item.querySelector('.session-close').addEventListener('click', async (e) => {
     e.stopPropagation();
     if (confirm(`Forget session "${entry.name}"? It isn't running — this just removes the saved entry.`)) {
-      await window.api.forgetSession(entry.name);
+      if (!await forgetSavedEntry(entry.name)) return;
       item.remove();
     }
   });
 
   insertLocalSessionRow(item);
+}
+
+async function forgetSavedEntry(name) {
+  const res = await window.api.forgetSession(name);
+  if (res && res.ok === false) {
+    showToast(res.error === 'running' ? `${name} is running — stop it first` : `Forget failed: ${res.error || 'unknown error'}`, { kind: 'error', duration: 10000, name });
+    return false;
+  }
+  return true;
 }
 
 function addArchivedSessionToSidebar(entry) {
@@ -742,8 +751,10 @@ function addArchivedSessionToSidebar(entry) {
     if (!res || !res.ok) { alert(`Resume failed: ${(res && res.error) || 'unknown error'}`); return; }
     await window.api.unarchiveSession(entry.name);
     item.remove();
-    sidebarMeta.delete(entry.name);
-    rebuildLiveRow(entry.name, entry, { io: res.io });
+    if (!sessions.has(entry.name)) {
+      sidebarMeta.delete(entry.name);
+      rebuildLiveRow(entry.name, entry, { io: res.io });
+    }
     switchSession(entry.name);
     refreshSidebarView();
   });
@@ -751,7 +762,7 @@ function addArchivedSessionToSidebar(entry) {
   item.querySelector('.session-close').addEventListener('click', async (e) => {
     e.stopPropagation();
     if (confirm(`Delete archived session "${displayName}"? It isn't running — this just removes the saved entry.`)) {
-      await window.api.forgetSession(entry.name);
+      if (!await forgetSavedEntry(entry.name)) return;
       item.remove();
       sidebarMeta.delete(entry.name);
       refreshSidebarView();
@@ -849,7 +860,7 @@ function addExitedSessionToSidebar(entry) {
     if (!res || !res.ok) { alert(`Resume failed: ${(res && res.error) || 'unknown error'}`); return; }
     item.remove();
     sidebarMeta.delete(entry.name);
-    rebuildLiveRow(entry.name, entry, { io: res.io });
+    if (!sessions.has(entry.name)) rebuildLiveRow(entry.name, entry, { io: res.io });
     switchSession(entry.name);
     refreshSidebarView();
   });
@@ -857,7 +868,7 @@ function addExitedSessionToSidebar(entry) {
   item.querySelector('.session-close').addEventListener('click', async (e) => {
     e.stopPropagation();
     if (confirm(`Forget session "${displayName}"? It isn't running — this just removes the saved entry.`)) {
-      await window.api.forgetSession(entry.name);
+      if (!await forgetSavedEntry(entry.name)) return;
       item.remove();
       sidebarMeta.delete(entry.name);
       refreshSidebarView();
@@ -1175,6 +1186,7 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, i
       if (type) {
         const prior = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
         const snap = rowSnapshot(name, prior);
+        if (prior && !sessions.has(name)) { prior.remove(); sidebarMeta.delete(name); }
         rebuildLiveRow(name, snap, { io, type, cwd, backend: backend || null, noWire: noWire === true, clone });
         // `background` marks the agent-initiated emitters.
         // The reload respawn sends no flag and keeps focus.

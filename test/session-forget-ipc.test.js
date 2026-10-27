@@ -197,3 +197,22 @@ test('_bindHold: session:forget drops the forgotten record\'s keep-warm hold bin
   assert.strictEqual(persistence.get('x'), null, 'ENTER: the record was dropped');
   assert.strictEqual(manager._wireTelemetry.sessionFor('x'), null);
 });
+
+test('session:forget of a running seat is refused: no record drop, no seat files removed', () => {
+  const r = seatRoot();
+  r.plant('asst', ['client-token', 'brief.md', 'memory/unit.md']);
+  const { forget, persistence, manager, order } = fixture([{ name: 'asst', class: 'assistant', proxy: false }], r.deps);
+  manager.sessions.set('asst', { name: 'asst' });
+  let filesForgotten = 0;
+  const realForget = manager.forgetSeatFiles.bind(manager);
+  manager.forgetSeatFiles = (...a) => { filesForgotten += 1; return realForget(...a); };
+  assert.deepStrictEqual(forget('asst'), { ok: false, error: 'running' });
+  assert.deepStrictEqual(order, []);
+  assert.strictEqual(filesForgotten, 0);
+  assert.ok(persistence.get('asst'));
+  assert.ok(r.fs.existsSync(r.path.join(r.seat('asst'), 'memory', 'unit.md')));
+  manager.sessions.delete('asst');
+  assert.strictEqual(forget('asst'), true);
+  assert.strictEqual(filesForgotten, 1);
+  assert.strictEqual(persistence.get('asst'), null);
+});

@@ -218,7 +218,7 @@ async function dispatch(w) {
 // closes the window before a single assertion runs.
 async function startRestart(w, name) {
   w.hold(name);
-  const p = w.eng.restartSession(name, {}, 'default').then((r) => r, (e) => ({ ok: false, error: e.message }));
+  const p = w.eng.applySessionArgs(name, { extraArgs: [], restart: true }, 'default').then((r) => r, (e) => ({ ok: false, error: e.message }));
   // Waited for, not slept past: `kill()` is async and the record drop is what
   // opens the window. Polling the product's own state is what makes the ENTERs
   // below assertions about an arrangement rather than about a timer.

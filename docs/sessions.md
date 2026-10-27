@@ -535,11 +535,12 @@ natural exit removes its record (nothing to resume) — but only a genuinely
 natural one: `dropRecord` is `!agentType && !expected`, so an app quit, an
 archive or a move keeps it. `_userKilled` is in `expected` for a
 different reason from the others: `kill()` already called
-`getPersistence().remove()` unconditionally (agent or not) before the pty died,
+`getPersistence().remove()` (agent or not) before the pty died,
 so the flag only suppresses a redundant second remove — it preserves nothing. A
-killed agent's record is gone.
+killed agent's record is gone. A `respawn` kill (`restartSession`,
+`_coldRespawn`) keeps the record.
 
-**Every record-dropper**, sidebar or not: `kill()` itself, `destroy()`, Delete
+**Every record-dropper**, sidebar or not: `kill()` itself (not with `respawn`), `destroy()`, Delete
 Session…, Delete Workspace… (the seats it kills and its saved rows; a seat live
 in another workspace keeps its record), the archived and failed rows' ✕
 (`forgetSession`), team-retire with discard, `sweepReviewerGraveyard`, the
@@ -955,6 +956,11 @@ persistence.
   `_cleanup`, persistence decision before cleanup.
 - JsonlWatcher starts reading at EOF on every symlink repoint.
 - Restore/respawn failure keeps the persisted entry (`{failed:true}`).
+- A restart (`restartSession`, `_coldRespawn`) stops the process with
+  `kill(name, { respawn: true })`: the record stays and the team hears no
+  `retired`, so a quit while the old process exits cannot lose the seat.
+- `session:forget` refuses a running seat (`{ ok: false, error: 'running' }`):
+  the ✕ on a stale row never drops a live seat's record or seat files.
 - A restart that throws re-upserts the entry — a session must never vanish
   because a respawn threw. A different arm from the bullet above: that one
   is restore-on-launch's `failed:true` row, this one writes the record back
