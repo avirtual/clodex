@@ -30,6 +30,8 @@ blocks a release.
 - Accept checks "merged" against the team's trunk, not whatever branch the root checkout happens to be on, so a hand-merge on a side branch no longer passes as merged and a detached root no longer refuses one.
 - The loop's close-out after a green merge leaves a one-shot seat in place when it holds another started ticket, instead of killing it mid-turn.
 - Sleeping assistants: deleting or forgetting an assistant while a message is waking it no longer leaves a nameless, unkillable row behind that blocked the name until the record was removed by hand. Waking an assistant that was about to sleep now also cancels that sleep.
+- Messages held behind a permission dialog are no longer force-typed into the dialog after five minutes, which could answer it; they wait in the seat's pending mail until the dialog closes.
+- Messages held while a seat was busy or showing a dialog are re-parked to its pending mail when the seat exits, instead of being lost while the sender was told they were delivered.
 
 ## 5.146.2 — 2026-10-27
 
