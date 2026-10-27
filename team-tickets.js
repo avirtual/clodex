@@ -6976,7 +6976,7 @@ function createTicketMethods(deps, shared) {
         const round = (Number(ticket.reworkRound) || 0) + 1;
         const body = `ticket ${ticket.id} ${verb} ${at} to ${seat} (round ${round}); no report after ${mins}m — check the seat (clodex-team roster), `
           + 'then respawn from its artifact or reassign. Cancelled by the loop when the ticket closes.';
-        const res = sched.add(team.lead, `for ${ticket.id} in ${mins}m`, body, { by: 'ticket-loop' });
+        const res = sched.add(team.lead, `for ${ticket.id} in ${mins}m`, body, { by: 'ticket-loop', born: this._bornFor(team.lead) });
         if (!(res && res.ok)) {
           log.warn('intent', `ticket ${ticket.id} watch not armed for ${team.lead}: ${(res && res.error) || 'unknown error'}`);
           return null;

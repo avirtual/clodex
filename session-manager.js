@@ -2641,6 +2641,7 @@ function createSessionManager(deps) {
         if (dropRecord) {
           getPersistence().remove(name);
           this._bindHold(name);
+          this.dropReminders(name);
         }
         if (stampExited) {
           try { getPersistence().setExited(name, { exitCode, signal: signal || null }); } catch {}
@@ -3751,7 +3752,7 @@ function createSessionManager(deps) {
       };
       await this.kill(name);
       this._disarmHoldFor(name, holdSid);
-      if (!worktree) { dropRecord(); dropSeatDir(); return { ok: true, live: wasLive }; }
+      if (!worktree) { dropRecord(); dropSeatDir(); this.dropReminders(name); return { ok: true, live: wasLive }; }
       const keepRecord = () => {
         if (!wasLive) return;
         try {
@@ -3769,6 +3770,7 @@ function createSessionManager(deps) {
       if (r && r.ok) {
         dropRecord();
         dropSeatDir();
+        this.dropReminders(name);
         log.info('worktree', `removed ${worktree.path} (branch ${worktree.branch}) after destroying ${name}`);
         return { ok: true, worktreeRemoved: true, live: wasLive };
       }
@@ -4935,12 +4937,23 @@ function createSessionManager(deps) {
         getPersistence().remove(e.name);
         this._bindHold(e.name);
         this.forgetSeatFiles(e.name, e);
+        this.dropReminders(e.name);
         dropped.push(e.name);
       }
       if (dropped.length) {
         log.info('session', `workspace ${workspaceId}: dropped ${dropped.length} saved/archived record(s): ${dropped.join(', ')}`);
       }
       return { killed, dropped };
+    }
+
+    dropReminders(name) {
+      try {
+        const sched = getRemindScheduler && getRemindScheduler();
+        if (sched && typeof sched.removeForAgent === 'function') return sched.removeForAgent(name);
+      } catch (e) {
+        log.warn('intent', `reminders for ${name} not dropped: ${e.message}`);
+      }
+      return 0;
     }
 
     forgetSeatFiles(name, rec) {
@@ -7039,7 +7052,7 @@ function createSessionManager(deps) {
 
       let r;
       try {
-        r = sched.add(who, spec, body);
+        r = sched.add(who, spec, body, { born: this._bornFor(who) });
       } catch (e) {
         log.error('intent', `remind by ${who}: store refused the save — ${(e && e.message) || e}`);
         reply(`reminder NOT armed — ${(e && e.message) || e}`);
@@ -8807,7 +8820,12 @@ function createSessionManager(deps) {
       return written.map((w) => w.file);
     }
 
-    _deliverReminder(agent, body) {
+    _deliverReminder(agent, body, born = null) {
+      const seatBorn = this._bornFor(agent);
+      if (typeof born === 'number' && typeof seatBorn === 'number' && born !== seatBorn) {
+        log.info('intent', `remind fire for ${agent} dropped — set by seat born ${born}, name now held by seat born ${seatBorn}`);
+        return 'gone';
+      }
       const target = this.sessions.get(agent);
       if (target && target.agentType && !target._dead && !target._archived) {
         this._deliverMessage(agent, 'reminder', body, 'dm');
@@ -9059,6 +9077,7 @@ function createSessionManager(deps) {
             try {
               const born = typeof session.createdAt === 'number' ? session.createdAt : null;
               parkDelivery(PENDING_DIR, session.name, t, this._nextParkSeq(), null, false, born, null);
+              if (!session._dead) this._armParkCap(session);
               log.warn('inject', `re-parked an undelivered inject for ${session.name} (${session._dead ? 'dead' : 'paste mode off'}, ${t.length} chars)`);
             } catch (e) {
               log.error('inject', `re-park failed for ${session.name}: ${e.message} — ${t.length} chars dropped`);

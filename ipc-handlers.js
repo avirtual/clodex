@@ -2479,6 +2479,7 @@ function registerIpcHandlers(deps) {
     persistence.remove(name);
     manager._bindHold(name);
     if (rec) manager.forgetSeatFiles(name, rec);
+    manager.dropReminders(name);
     try {
       const w = getDrawerPtys();
       const ws = (rec && rec.workspaceId)

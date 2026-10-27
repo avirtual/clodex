@@ -216,3 +216,12 @@ test('session:forget of a running seat is refused: no record drop, no seat files
   assert.strictEqual(filesForgotten, 1);
   assert.strictEqual(persistence.get('asst'), null);
 });
+
+test('session:forget drops the seat\'s reminders so a later seat of the name cannot receive them', () => {
+  const removed = [];
+  const { forget } = fixture([{ name: 'seat', proxy: null }], {
+    getRemindScheduler: () => ({ removeForAgent: (n) => { removed.push(n); return 1; } }),
+  });
+  assert.strictEqual(forget('seat'), true);
+  assert.deepStrictEqual(removed, ['seat']);
+});
