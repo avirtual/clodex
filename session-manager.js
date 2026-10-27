@@ -806,6 +806,8 @@ function createSessionManager(deps) {
   // cannot read or write the operator's real ~/.clodex board.
   const ticketsStore = createTicketsStore({ fs, path, clodexHome: REGISTRY_DIR });
 
+  const SLASH_COMMAND_RE = /^\/[\w:-]+(\s|$)/;
+
   class SessionManager {
     constructor() {
       this.sessions = new Map();
@@ -5513,7 +5515,8 @@ function createSessionManager(deps) {
       if (session._injectHoldTimer) return;
       session._injectHoldTimer = setTimeout(() => {
         session._injectHoldTimer = null;
-        console.warn(`inject hold ${session.name}: release never came (${this._injectHoldReason(session) || 'none'}) — forcing flush after timeout`);
+        const reason = this._injectHoldReason(session);
+        console.warn(`inject hold ${session.name}: release never came (${reason || 'none'}) — ${reason === 'dialog' ? 're-parking (dialog)' : 'forcing flush after timeout'}`);
         session._compactGuard = false;
         this._maybeFlushInjectQueue(session, true);
       }, INJECT_HOLD_TIMEOUT);
@@ -5640,6 +5643,10 @@ function createSessionManager(deps) {
         if (e && typeof e.produce === 'function') { kept.push(e); continue; }
         const text = typeof e === 'string' ? e : (e && typeof e.text === 'string' ? e.text : '');
         if (!text) continue;
+        if (SLASH_COMMAND_RE.test(text)) {
+          log.warn('inject', `dropped a held slash command for ${session.name} instead of re-parking it`);
+          continue;
+        }
         const opts = (e && e.opts) || {};
         try {
           parkDelivery(PENDING_DIR, session.name, text, this._nextParkSeq(), opts.parkId || null, false, born, opts.parkKey || null);
@@ -9033,6 +9040,10 @@ function createSessionManager(deps) {
           speaking: () => Date.now() - (session.lastVoiceRecordingTs || 0) < INJECT_SPEAKING_STALE_MS,
           isDead: () => !!session._dead,
           onUndelivered: (t) => {
+            if (SLASH_COMMAND_RE.test(t)) {
+              log.warn('inject', `dropped an undelivered slash command for ${session.name} instead of re-parking it`);
+              return;
+            }
             try {
               const born = typeof session.createdAt === 'number' ? session.createdAt : null;
               parkDelivery(PENDING_DIR, session.name, t, this._nextParkSeq(), null, false, born, null);

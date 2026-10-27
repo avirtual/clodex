@@ -24035,6 +24035,7 @@ test('_cleanup re-parks the texts held in _injectQueue to pending through _repar
     name: 'gone', agentType: 'claude', createdAt: 77,
     _injectQueue: [
       'plain held text',
+      '/compact',
       { text: 'keyed held text', opts: { parkable: true, parkKey: 'k1' } },
       { produce: () => { produced++; return 'produced text'; } },
     ],
@@ -24045,9 +24046,20 @@ test('_cleanup re-parks the texts held in _injectQueue to pending through _repar
   assert.deepStrictEqual(parked, [
     { text: 'keyed held text', born: 77, key: 'k1' },
     { text: 'plain held text', born: 77 },
-  ], 'both text entries re-parked, the keyed one carrying its parkKey');
+  ], 'both message entries re-parked, the keyed one carrying its parkKey, the slash command dropped');
   assert.strictEqual(produced, 0, 'the produce entry is not run');
   assert.deepStrictEqual(s._injectQueue, [], 'the queue is emptied');
+});
+
+test('a dead seat\'s InjectQueue re-parks an unwritten message but drops an unwritten slash command', async () => {
+  const { m, PENDING_DIR } = mkPark();
+  const s = { name: 'dead', agentType: 'claude', createdAt: 9, _dead: true };
+  m.sessions.set('dead', s);
+  const q = m._injectQueueFor(s);
+  await q.enqueue('/clear');
+  await q.enqueue('[agent:from x] hi');
+  assert.deepStrictEqual(pendingFiles(PENDING_DIR, 'dead'), [{ text: '[agent:from x] hi', born: 9 }],
+    'only the message reaches pending: a parked /clear would run on the restored seat');
 });
 
 test('a stream seat\'s turn-end drain holds a queued operator item while its hint is pending', async (t) => {
