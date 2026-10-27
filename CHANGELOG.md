@@ -21,6 +21,7 @@ blocks a release.
 - clodexctl: `get nodes --current --ctx <name>` now refuses a node the contexts file does not know, instead of printing the unknown name as if it were current.
 - Reminders viewer: the Cancel button is no longer shown on the web surface, where cancelling is not available and the click only produced an error toast.
 - Security: the web host and the remote API no longer accept requests from other web origins when they run without a token on loopback. A page open in the operator's browser could previously open a WebSocket to the local web host and run commands, or post a message to a seat. Requests now need a loopback Host and, when a browser sends one, a loopback Origin; JSON endpoints require an application/json body.
+- Ticket auto-merge survives an app relaunch: an ACCEPT queued or mid-merge when Clodex quits is requeued at boot, and a merge whose post-merge suite never finished is escalated to the lead as unverified instead of being left on the trunk unnoticed.
 
 ## 5.146.2 — 2026-10-27
 
