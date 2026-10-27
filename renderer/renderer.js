@@ -751,8 +751,10 @@ function addArchivedSessionToSidebar(entry) {
     if (!res || !res.ok) { alert(`Resume failed: ${(res && res.error) || 'unknown error'}`); return; }
     await window.api.unarchiveSession(entry.name);
     item.remove();
-    sidebarMeta.delete(entry.name);
-    if (!sessions.has(entry.name)) rebuildLiveRow(entry.name, entry, { io: res.io });
+    if (!sessions.has(entry.name)) {
+      sidebarMeta.delete(entry.name);
+      rebuildLiveRow(entry.name, entry, { io: res.io });
+    }
     switchSession(entry.name);
     refreshSidebarView();
   });

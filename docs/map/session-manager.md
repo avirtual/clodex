@@ -138,7 +138,7 @@
 - `_createReserved`'s pty data handler caps scrollback, forwards output through `_sendToSession` (which buffers up to 2MB in pendingOutput for a detached window), and arms the boot drain on the first bracketed-paste edge after BOOT_DRAIN_SETTLE_MS.
 - `_createReserved`'s exit handler runs a fixed order: `_dead` first, `_sendToSession` session-exit before `_cleanup`, remote notify, then persistence by `exitDisposition` (a bash natural exit removes the record, an unexpected agent exit stamps exitedAt), then `_cleanup`.
 - `_createReserved` buffers pty exit events and stream lines that arrive before the session exists and replays them once the exit handler and `_onStreamEvent` route are installed, so an early exit is not lost.
-- `_createReserved` stamps createdAt once, computed above the upsert and baked into the hook, and re-mints it whenever the record is gone, so every kill()-based restart must re-seed it through `_preserveAcrossRestart` before create.
+- `_createReserved` stamps createdAt once, computed above the upsert and baked into the hook, and re-mints it whenever the record is gone, so a restart that drops the record (`applySessionArgs({restart:true})`) must re-seed it through `_preserveAcrossRestart` before create.
 - `_createReserved`'s onSessionId clear branch calls `_noteSessionLeft` before `_holdKeeper.endSession` (except on a forked seat's first change, which leaves the parent's hold alone), whose synchronous hold event resolves the seat off the list, and duplicates `_onWireSessionRotated`'s handover on purpose because the symlink repoint usually arrives first.
 
 ### Hazards
@@ -239,7 +239,7 @@
 
 ### Invariants
 
-- `kill` calls getPersistence().remove() UNCONDITIONALLY, agent or bash, before the pty dies, so a killed agent's record is gone and the bash drop gate `exitDisposition` feeds in the exit handler only suppresses a redundant second remove.
+- `kill` calls getPersistence().remove() unless `respawn` (restartSession, _coldRespawn) is set, agent or bash, before the pty dies, so a killed agent's record is gone and the bash drop gate `exitDisposition` feeds in the exit handler only suppresses a redundant second remove.
 - `kill` returns at its `if (!s) return;` before its remove, so on an already-dead seat only `destroy` drops the record; without that own drop the worktree goes and the record naming it stays.
 - `destroy` drops the record per return, never up front: the no-worktree and worktree-removed returns drop it, the `_waitForExit` timeout return (process still running, tree kept, `ok: false`) and the removeWorktree failure return keep it (each re-upserting it archived for a live seat whose record `kill` already removed).
 - `destroy` is the only route that ends a seat for good; restart paths call `kill` on purpose because they recreate the same seat, so worktree removal must never be folded into `kill`.
@@ -293,8 +293,8 @@
 | `_isEphemeralSeat` | true when the seat's persistence record marks it ephemeral; read lazily by composeRosterFor, _injectRoster, _settleBoot | sessions.json (read), `session._ephemeralSeat` (memo) | none | session-manager.test.js |
 | `_stripClaimedTree` | a pre-kill snapshot with its worktree pointer removed iff a different live seat now holds that checkout | none | `_ticketTreeHolder` (team-tickets) | preserve-across-restart.test.js |
 | `resumeCwdOf` | the cwd to resume a record in, falling back to the worktree's main (and rewriting the record) when the tree is gone | sessions.json cwd and worktree | none | resume-cwd-tree-fallback.test.js session-restore.test.js |
-| `_dropRosterSent` | clears a record's `rosterSentAt` after a respawn kill, so a fresh restart or a cold respawn re-delivers the roster as the removed record used to | sessions.json rosterSentAt | none | unpinned |
-| `_reattachAction` | the `reattach` context-action payload (name, type, cwd, live backend, noWire, io) the respawn paths send the window | none | none | unpinned |
+| `_dropRosterSent` | clears a record's `rosterSentAt` after a respawn kill, so a fresh restart or a cold respawn re-delivers the roster as the removed record used to | sessions.json rosterSentAt | none | createdat-restart.test.js |
+| `_reattachAction` | the `reattach` context-action payload (name, type, cwd, live backend, noWire, io) the respawn paths send the window | none | none | session-manager.test.js |
 | `_preserveAcrossRestart` | after kill() and before create(), upserts a stub re-seeding caller-named fields plus ALWAYS_PRESERVE from the pre-kill entry | sessions.json record | `_stripClaimedTree` | preserve-across-restart.test.js preserve-census.test.js keepwarm-restart-preserve.test.js createdat-restart.test.js |
 | `_injectRoster` | claude: parks the roster passively, re-bakes the digest, stamps rosterSentAt; others: stash the team ref for `_settleBoot` | `session._pendingRoster`, sessions.json rosterSentAt | `_deliverPassive` `_rebakeDigest` `_markRosterSent` `_isEphemeralSeat` | session-manager.test.js |
 | `_settleBoot` | closes the boot window: delivers a stashed roster rendered fresh (stamping on write), then replays tickets | `session._bootSettling`, `session._pendingRoster` | `_deliverMessage` `_markRosterSent` `_teamLiveSeats` `_isEphemeralSeat` | session-manager.test.js ticket-replay.test.js |
@@ -316,7 +316,7 @@
 - `clearHintForRecord` must run before the record is removed and keep its spawnerHintSet gate, or a blind clear wipes an operator's out-of-band /_hint override.
 - `_preserveAcrossRestart` returns before the ALWAYS_PRESERVE loop when fields is not an array, so a caller omitting the list loses sessionIds although ALWAYS_PRESERVE exists to carry them.
 - `_injectRoster` writing actively into a booting non-claude TUI leaves the roster as an unsubmitted draft; only the stashed team ref rendered by `_settleBoot` is safe.
-- `_stripClaimedTree` guards the kill-to-exit window in which a restarting seat is live but named by no record; a wholesale snapshot write-back there puts a second record on a tree another seat is committing in.
+- `_stripClaimedTree` guards the kill-to-exit window in which a seat restarting through `applySessionArgs({restart:true})` is live but named by no record; a wholesale snapshot write-back there puts a second record on a tree another seat is committing in.
 
 ## Snapshots, list, workspace queries and the voice engine — list … killVoiceEngine
 

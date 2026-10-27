@@ -535,7 +535,7 @@ test('restartSession of a live seat announces no retire and keeps the record fro
   assert.deepStrictEqual(verbs, []);
 });
 
-test('a fresh restartSession of a live seat drops rosterSentAt but keeps the record', async () => {
+test('a fresh restartSession of a live seat drops rosterSentAt through _dropRosterSent but keeps the record', async () => {
   const eng = mkEngine();
   const entry = { name: 'rf', type: 'claude', cwd: '/tmp', workspaceId: 'default', createdAt: BORN, rosterSentAt: 5 };
   eng.stores.persistence.upsert(entry);

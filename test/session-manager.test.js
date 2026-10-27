@@ -22088,7 +22088,7 @@ test('assistant sleep and wake: a seat still closing after its sleep is not awak
   assert.deepStrictEqual(calls, [['asst', { fresh: true }, 'ws']]);
 });
 
-test('assistant wake: a successful wake sends the window a reattach for the name, a failed one does not', async (t) => {
+test('assistant wake: a successful wake sends the window the _reattachAction context-action, a failed one does not', async (t) => {
   const h = mkStreamSeatManager({
     persisted: { asst: { ...ASSISTANT_ROW, type: 'claude', cwd: '/w', workspaceId: 'ws', archivedAt: 1, asleepAt: 2 } },
     extraDeps: { restartSession: async () => ({ ok: true }) },

@@ -535,11 +535,12 @@ natural exit removes its record (nothing to resume) — but only a genuinely
 natural one: `dropRecord` is `!agentType && !expected`, so an app quit, an
 archive or a move keeps it. `_userKilled` is in `expected` for a
 different reason from the others: `kill()` already called
-`getPersistence().remove()` unconditionally (agent or not) before the pty died,
+`getPersistence().remove()` (agent or not) before the pty died,
 so the flag only suppresses a redundant second remove — it preserves nothing. A
-killed agent's record is gone.
+killed agent's record is gone. A `respawn` kill (`restartSession`,
+`_coldRespawn`) keeps the record.
 
-**Every record-dropper**, sidebar or not: `kill()` itself, `destroy()`, Delete
+**Every record-dropper**, sidebar or not: `kill()` itself (not with `respawn`), `destroy()`, Delete
 Session…, Delete Workspace… (the seats it kills and its saved rows; a seat live
 in another workspace keeps its record), the archived and failed rows' ✕
 (`forgetSession`), team-retire with discard, `sweepReviewerGraveyard`, the
