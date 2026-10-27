@@ -528,6 +528,42 @@ test('killSession: an account assistant unlinks its transcripts under its CLAUDE
   ]);
 });
 
+const sid = (n) => `${String(n).padStart(8, '0')}-0000-4000-8000-000000000000`;
+
+test('killSession: an assistant unlinks its retired and tracked transcripts, counting only real unlinks', async () => {
+  const retired = [1, 2, 3, 4, 5].map(sid);
+  const tracked = Array.from({ length: 20 }, (_, i) => sid(i + 6));
+  const h = makeDeps({ records: { 'avh-7': { ...ASLEEP, retiredSessionIds: retired, sessionIds: tracked } } });
+  assert.deepStrictEqual(await captureOptions(h.deps).killSession('avh-7'), { ok: true, name: 'avh-7', destroyed: true, transcripts: 25 });
+  assert.deepStrictEqual(h.unlinkCalls, [...retired, ...tracked].map((id) => path.join(HOME, '.claude', 'projects', '-w', `${id}.jsonl`)));
+
+  const gone = makeDeps({ records: { 'avh-7': { ...ASLEEP, retiredSessionIds: [sid(1)], sessionIds: [sid(2)] } } });
+  gone.deps.fs.unlinkSync = (p) => { if (p.includes(sid(1))) { const e = new Error('ENOENT'); e.code = 'ENOENT'; throw e; } };
+  assert.deepStrictEqual(await captureOptions(gone.deps).killSession('avh-7'), { ok: true, name: 'avh-7', destroyed: true, transcripts: 1 });
+});
+
+test('killSession / getTranscript: a non-claude assistant has no transcript path, so DELETE reports its ids untracked and the sleeper view is empty', async () => {
+  const rec = { ...SLEEPER_REC, type: 'codex', retiredSessionIds: [sid(1)] };
+  const asked = [];
+  const h = makeDeps({ records: { 'avh-7': rec }, jsonlToMessages: stubJsonl({}, asked) });
+  const opts = captureOptions(h.deps);
+  assert.deepStrictEqual(await opts.getTranscript('avh-7', 100, null, null), { ok: true, messages: [], cursor: 0, complete: true });
+  assert.deepStrictEqual(asked, []);
+  assert.deepStrictEqual(await opts.killSession('avh-7'), { ok: true, name: 'avh-7', destroyed: true, transcripts: 0, untracked: 3 });
+  assert.deepStrictEqual(h.unlinkCalls, []);
+});
+
+test('getTranscript: a sleeper serves its retired periods before its tracked ones', async () => {
+  const rows = {
+    [`${sid(1)}.jsonl`]: [{ role: 'user', text: 'r1', seq: 0 }],
+    [`${SID_A}.jsonl`]: [{ role: 'user', text: 'a1', seq: 0 }],
+    [`${SID_B}.jsonl`]: [{ role: 'user', text: 'b1', seq: 0 }],
+  };
+  const h = makeDeps({ records: { 'avh-7': { ...SLEEPER_REC, retiredSessionIds: [sid(1), SID_A] } }, jsonlToMessages: stubJsonl(rows, []) });
+  const page = await captureOptions(h.deps).getTranscript('avh-7', 100, null, null);
+  assert.deepStrictEqual(page.messages.map((m) => [m.text, m.seq]), [['r1', 0], ['a1', 1], ['b1', 2]]);
+});
+
 const ASSISTANT_TPL = { name: 'clodex-assistant', type: 'claude', class: 'assistant', sleep: { idleMs: 600000, maxAwake: 20, wakeOn: ['message', 'reminder'], briefTail: 10 } };
 
 test('createSession: an assistant template makes room under its maxAwake first; at capacity it answers 503 and never spawns', async () => {

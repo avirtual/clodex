@@ -20,6 +20,7 @@ blocks a release.
 - Deleting a workspace now also removes the seat files of its running seats, so a new seat reusing one of their names starts clean.
 - clodexctl: `get nodes --current --ctx <name>` now refuses a node the contexts file does not know, instead of printing the unknown name as if it were current.
 - Reminders viewer: the Cancel button is no longer shown on the web surface, where cancelling is not available and the click only produced an error toast.
+- Sleeping assistants: deleting an assistant now removes all of its conversation transcripts, not only the most recent 20, and the sleeper view shows the full history. Transcripts of assistants built on a CLI other than Claude are reported as untracked rather than silently skipped.
 
 ## 5.146.2 — 2026-10-27
 
