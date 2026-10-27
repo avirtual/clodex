@@ -83,12 +83,9 @@ test('the verify child stages inside a tracked root, not the shared $TMPDIR', ()
   assert.match(r.out, /PASS {2}activate\(\) succeeds/,
     `the run must reach staging and activation, or it minted nothing and the counts below are trivially equal\n${r.out}`);
 
-  assert.ok(verifyStages(VERIFY_TMP).length >= 1,
-    'ENTER: the injected TMPDIR is where the stage landed — without this the assertion below passes against a '
-    + `run that staged nowhere at all (${VERIFY_TMP})`);
+  assert.deepStrictEqual(verifyStages(VERIFY_TMP), [], 'both scratch roots are removed when the run exits');
   assert.deepStrictEqual(verifyStages(os.tmpdir()), before,
-    'verify.js mints TWO roots per run and nothing in the suite removes them from the shared $TMPDIR. Compared '
-    + "by this prefix's OWN entries rather than by a total: $TMPDIR is shared with every process on the box.");
+    "Compared by this prefix's OWN entries rather than by a total: $TMPDIR is shared with every process on the box.");
 });
 
 test('verify.js counts an intent verb as a registered surface', () => {
