@@ -1276,10 +1276,14 @@ function createSessionManager(deps) {
       }
     }
 
+    endHold(name) {
+      this._disarmHoldFor(name, this._holdSidFor(name));
+    }
+
     // Retried every main-line turn until an arm lands, not latched once per spawn:
     // arm() is warm-gated, so a first-turn decline would otherwise lose the hold silently.
     _maybeRearmHold(s, agent) {
-      if (!this._holdKeeper || s._holdRearmed) return;
+      if (!this._holdKeeper || s._holdRearmed || s._archived) return;
       try {
         // Required here, not at module top: wire/* loads lazily so a wire-less host never pulls it in.
         const { rearmPlan } = require('./wire/hold');
@@ -4877,11 +4881,12 @@ function createSessionManager(deps) {
 
     purgeWorkspace(workspaceId) {
       const killed = [];
-      for (const s of this.listForWorkspace(workspaceId)) { killed.push(s.name); this.kill(s.name); }
+      for (const s of this.listForWorkspace(workspaceId)) { killed.push(s.name); this.kill(s.name, { endHold: true }); }
       const dropped = [];
       for (const e of getPersistence().listForWorkspace(workspaceId)) {
         if (!e || !e.name) continue;
         this.clearHintForRecord(e.name);
+        this.endHold(e.name);
         getPersistence().remove(e.name);
         this._bindHold(e.name);
         this.forgetSeatFiles(e.name, e);

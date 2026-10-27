@@ -2471,6 +2471,7 @@ function registerIpcHandlers(deps) {
   handle('session:forget', (e, name) => {
     manager.clearHintForRecord(name);
     const rec = persistence.get(name);
+    manager.endHold(name);
     persistence.remove(name);
     manager._bindHold(name);
     if (rec) manager.forgetSeatFiles(name, rec);

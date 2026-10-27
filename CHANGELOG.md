@@ -14,7 +14,7 @@ blocks a release.
 
 ## Unreleased
 
-- Deleting or archiving a seat kept warm "Always" now stops its keep-warm pings at once; they used to continue until Clodex was restarted.
+- Deleting, archiving or forgetting a seat kept warm "Always", or deleting its workspace, now stops its keep-warm pings at once; they used to continue until Clodex was restarted.
 
 ## 5.146.2 — 2026-10-27
 
