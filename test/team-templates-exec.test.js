@@ -710,3 +710,21 @@ test('t700 GUARD: team:preflight over a team with no own copies is unchanged', (
     [['warn', 'library']],
     'and its library def\'s missing path is still attributed to the LIBRARY');
 });
+
+test('team:preflight lists the MCP library once however many entries the templates name', () => {
+  const { dir, repo } = mkHome('clx-mcp-once-');
+  let lists = 0;
+  const handlers = registerWith({
+    fs,
+    path,
+    loadManifest: () => ({ name: 't', root: repo, dir, roles: { hand: { prompt: 'p', template: 'hand-seat' } } }),
+    templates: { list: () => [{ name: 'hand-seat', mcpServers: ['alpha', 'beta'] }] },
+    execLibrary: { list: () => [], raw: () => null },
+    promptLibrary: { raw: () => 'body' },
+    mcpLibrary: { list: () => { lists++; return [{ name: 'alpha' }]; } },
+  });
+  const res = handlers['team:preflight']({}, 't');
+  assert.strictEqual(res.ok, true, `handler succeeded (${res.error})`);
+  assert.deepStrictEqual(res.findings.map((f) => [f.kind, f.ref]), [['mcp', 'beta']]);
+  assert.strictEqual(lists, 1);
+});
