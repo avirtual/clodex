@@ -1068,7 +1068,7 @@ const movingToPeer = new Map();
 const pendingPeerMove = new Map();
 const MiB = (n) => (Number(n || 0) / (1024 * 1024)).toFixed(1);
 
-function moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd, envKeys) {
+function moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd) {
   if (movingToPeer.has(name)) return;
   pendingPeerMove.clear();
   const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
@@ -1127,7 +1127,7 @@ function moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd, envKeys) {
   });
   const farStatus = peerStatuses.get(peerId);
   openPeerSessionDialog(peerId, peerLabel, {
-    move: { name, cwd, farPlatform: (farStatus && farStatus.platform) || null, envKeys: Array.isArray(envKeys) ? envKeys : [] },
+    move: { name, cwd, farPlatform: (farStatus && farStatus.platform) || null },
   });
 }
 
@@ -1148,7 +1148,7 @@ window.api.onSessionMoveProgress(({ name, phase, bytes, total, files, fileIndex 
     : head);
 });
 
-window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, io, disposition, background, clone, peerId, peerLabel, envKeys, workspaceId, workspaceName }) => {
+window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, io, disposition, background, clone, peerId, peerLabel, workspaceId, workspaceName }) => {
   switch (action) {
     case 'editArgs':
       openArgsDialog(name);
@@ -1160,7 +1160,7 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, i
       moveSessionWithPicker(name);
       break;
     case 'moveToPeer':
-      moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd, envKeys);
+      moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd);
       break;
     case 'moveToWorkspace':
       moveSessionToWorkspace(name, workspaceId, workspaceName);

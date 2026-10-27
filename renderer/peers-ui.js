@@ -678,9 +678,7 @@ function initPeersUi({
     document.getElementById('peer-input-cwd').value = guessed.cwd;
     if (typeRow) typeRow.style.display = move ? 'none' : '';
     if (note) {
-      const envKeys = move && Array.isArray(move.envKeys) ? move.envKeys.filter((k) => typeof k === 'string') : [];
-      const envLine = envKeys.length ? ` Session env travels too: ${envKeys.join(', ')}.` : '';
-      note.textContent = move ? `${MOVE_NOTE}${envLine}${guessed.note ? ` ${guessed.note}` : ''}` : '';
+      note.textContent = move ? `${MOVE_NOTE}${guessed.note ? ` ${guessed.note}` : ''}` : '';
       note.style.display = move ? 'block' : 'none';
     }
     document.getElementById('peer-session-create').textContent = move ? 'Move' : 'Create';

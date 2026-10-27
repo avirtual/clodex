@@ -1145,7 +1145,7 @@ test('Move to Peer… lists only the online, importing, up-to-date peer, and sen
   item.submenu[0].click();
   assert.deepStrictEqual(sent, [{
     channel: 'session:context-action',
-    payload: { action: 'moveToPeer', name: 'a', cwd: '/x', peerId: 'p1', peerLabel: 'murmurfi.local', envKeys: [] },
+    payload: { action: 'moveToPeer', name: 'a', cwd: '/x', peerId: 'p1', peerLabel: 'murmurfi.local' },
   }], 'the click carries the peer id the renderer hands to moveSessionToPeer');
 });
 

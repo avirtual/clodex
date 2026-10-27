@@ -39,8 +39,6 @@ blocks a release.
 - Helm: a non-default `--port` now reaches the engine, so the pod goes Ready; the chart also persists the Codex and Muse credential homes across pod reschedules.
 - Sandbox: adding or removing a published port no longer rewrites the box's own web and wire ports in compose.yaml, which could drift from the running container and make status and health checks read dead ports.
 - Sandbox: deleting a box while Docker is not running is refused and keeps the box listed, instead of dropping it while its restart-always container survives to come back unmanaged.
-- Move to Peer: the confirm now lists the session env keys that travel with the seat, and the docs no longer claim session env never crosses the peer wire.
-- Keep-warm: a perpetual hold that could not be judged at startup is no longer erased from disk by the next unrelated seat's turn, so it is restored on the following launch.
 
 ## 5.146.2 — 2026-10-27
 
