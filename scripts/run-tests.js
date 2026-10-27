@@ -249,20 +249,6 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
 
 const suiteTmp = path.join(os.tmpdir(), 'clodex-suite');
 fs.mkdirSync(suiteTmp, { recursive: true });
-const STALE_SCRATCH_MS = 2 * 60 * 60 * 1000;
-let sweptScratch = 0;
-try {
-  const cutoff = Date.now() - STALE_SCRATCH_MS;
-  for (const name of fs.readdirSync(suiteTmp)) {
-    const child = path.join(suiteTmp, name);
-    try {
-      if (fs.lstatSync(child).mtimeMs >= cutoff) continue;
-      fs.rmSync(child, { recursive: true, force: true });
-      sweptScratch += 1;
-    } catch {}
-  }
-} catch {}
-if (sweptScratch > 0) process.stderr.write(`run-tests: swept ${sweptScratch} stale scratch roots\n`);
 const tmpDir = fs.mkdtempSync(path.join(suiteTmp, 'clodex-test-'));
 const tapFile = path.join(tmpDir, 'run.tap');
 const junitFile = path.join(tmpDir, 'run.junit.xml');
