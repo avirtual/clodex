@@ -972,6 +972,7 @@ async function nodeList({ store, printer, flags, args, dialHello }) {
   if (flags.current && flags.versions) {
     throw new CliError(EXIT.USAGE, 'get nodes --current --versions: --current prints a name alone (drop --versions)');
   }
+  if (flags.current && flags.ctx && !Object.hasOwn(store.contexts, flags.ctx)) throw new CliError(EXIT.USAGE, `no such node: ${flags.ctx}`);
   if (flags.current) return nodeCurrent({ store: flags.ctx ? { current: flags.ctx } : store, printer });
   if (target.name) {
     throw new CliError(EXIT.USAGE, `get nodes takes no name (try: describe node ${target.name})`);

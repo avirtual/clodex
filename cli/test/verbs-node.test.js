@@ -76,6 +76,19 @@ test('get nodes --current prints the name ALONE, and follows use node', async ()
   assert.strictEqual(r.stdout, 'work\n');
 });
 
+test('get nodes --current --ctx refuses a node the store does not know', async () => {
+  const f = tmpCtx();
+  await cli(['create', 'node', 'home', '--url', 'http://127.0.0.1:7900'], f);
+  await cli(['create', 'node', 'work', '--url', 'http://127.0.0.1:7901'], f);
+  let r = await cli(['get', 'nodes', '--current', '--ctx', 'nosuch'], f);
+  assert.strictEqual(r.code, 2);
+  assert.strictEqual(r.stdout, '');
+  assert.match(r.stderr, /no such node: nosuch/);
+  r = await cli(['get', 'nodes', '--current', '--ctx', 'work'], f);
+  assert.strictEqual(r.code, 0);
+  assert.strictEqual(r.stdout, 'work\n');
+});
+
 test('get nodes --current with no current node exits 5 and names the fix', async () => {
   const f = tmpCtx();
   let r = await cli(['get', 'nodes', '--current'], f);

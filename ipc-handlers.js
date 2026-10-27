@@ -349,6 +349,7 @@ function registerIpcHandlers(deps) {
     try {
       const team = loadManifest(name);
       let execDefs = null;
+      let mcpNames = null;
       const findings = teamPreflight(team, {
         exists: (abs) => { try { return fs.existsSync(abs); } catch { return false; } },
         listTemplates: () => (listAllTemplates ? listAllTemplates().filter((t) => !t.team) : templates.list()),
@@ -376,7 +377,7 @@ function registerIpcHandlers(deps) {
           ? 'team'
           : (promptLibrary.raw(kind, stem) == null ? null : 'library')),
         readTeamTemplate: (stem) => readTeamJson({ fs, path }, team, 'templates', stem),
-        readMcpEntry: (n) => mcpLibrary.list().some((r) => r.name === n),
+        readMcpEntry: (n) => (mcpNames ||= new Set(mcpLibrary.list().map((r) => r.name))).has(n),
       });
       return { ok: true, findings };
     } catch (err) { return { ok: false, error: err.message, findings: [] }; }

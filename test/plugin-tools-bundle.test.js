@@ -184,8 +184,9 @@ test('verify.js stages a plugin\'s own subdirectories, so an engine can require 
   fs.writeFileSync(path.join(dir, 'engine.js'), [
     "'use strict';",
     "const x = require('./lib/x');",
+    "const nm = require('fs').existsSync(require('path').join(__dirname, 'node_modules'));",
     'module.exports = {',
-    '  activate(host) { host.ipc.handle("tag", () => x.tag); },',
+    '  activate(host) { host.ipc.handle("tag", () => `${x.tag}|nm=${nm}`); },',
     '  deactivate() {},',
     '};',
     '',
@@ -212,14 +213,10 @@ test('verify.js stages a plugin\'s own subdirectories, so an engine can require 
     'the engine resolved its own require, so lib/ reached the stage');
 
   assert.strictEqual(r.code, 0, `a multi-file engine conforms; verify exited ${r.code}\n${r.out}`);
-  assert.match(r.out, /PASS {2}ipc tag\(\) answers {2}— -> "from-lib"/,
-    'and the value came through the required module, not a stub');
+  assert.match(r.out, /PASS {2}ipc tag\(\) answers {2}— -> "from-lib\|nm=false"/,
+    'the value came through the required module, and node_modules was skipped by the stage copy');
 
-  const stages = fs.readdirSync(verifyTmp).filter(isStageDir);
-  assert.strictEqual(stages.length, 1, `ENTER: exactly one stage dir, found ${stages.length}`);
-  const stagedPluginDir = path.join(verifyTmp, stages[0], 'lib-plugin');
-  assert.strictEqual(fs.existsSync(path.join(stagedPluginDir, 'node_modules')), false,
-    'node_modules is skipped by the stage copy, not merely present-and-unread');
+  assert.deepStrictEqual(fs.readdirSync(verifyTmp).filter(isStageDir), [], 'the stage is removed when the run exits');
   assert.strictEqual(fs.existsSync(path.join(dir, 'node_modules', 'junk', 'index.js')), true,
     'the source node_modules is untouched by the run');
 });

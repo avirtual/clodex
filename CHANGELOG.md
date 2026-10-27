@@ -18,6 +18,8 @@ blocks a release.
 - Deleting a workspace no longer removes the saved record of a seat that is running in another workspace, which made that seat disappear at the next restart.
 - After Clodex restarts, a seat now gets the "Clodex restarted" notice once instead of two copies in one message.
 - Deleting a workspace now also removes the seat files of its running seats, so a new seat reusing one of their names starts clean.
+- clodexctl: `get nodes --current --ctx <name>` now refuses a node the contexts file does not know, instead of printing the unknown name as if it were current.
+- Reminders viewer: the Cancel button is no longer shown on the web surface, where cancelling is not available and the click only produced an error toast.
 
 ## 5.146.2 — 2026-10-27
 

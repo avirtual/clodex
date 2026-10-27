@@ -62,7 +62,12 @@ for (const f of fs.readdirSync(dir).filter((f) => f.endsWith('.js'))) {
 // the very match the loader checks for, and this verifier would then be
 // structurally incapable of catching an id/dirname mismatch — a defect that
 // makes the plugin undiscoverable in the real app.
+const scratch = [];
+process.on('exit', () => {
+  for (const d of scratch) fs.rmSync(d, { recursive: true, force: true });
+});
 const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-verify-'));
+scratch.push(stage);
 const staged = path.join(stage, path.basename(path.resolve(dir)));
 fs.mkdirSync(staged, { recursive: true });
 const STAGE_SKIP_DIRS = new Set(['node_modules', '.git']);
@@ -97,6 +102,7 @@ const manager = {
 
 let ui = {};
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-verify-data-'));
+scratch.push(dataDir);
 const logged = [];
 
 const loader = createPluginLoader({
