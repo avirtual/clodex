@@ -4898,7 +4898,13 @@ function createSessionManager(deps) {
       for (const e of records) if (e.sessionId && !sids.has(e.sessionId)) sids.set(e.sessionId, e.name);
       for (const [sid, name] of sids) if (!this._holdSharedOutside(sid, names)) this._disarmHoldFor(name, sid);
       const killed = [];
-      for (const s of seats) { killed.push(s.name); this.kill(s.name); }
+      for (const s of seats) {
+        const live = this.sessions.get(s.name);
+        const rec = getPersistence().get(s.name) || (live && live._assistant ? { class: 'assistant' } : null);
+        killed.push(s.name);
+        this.kill(s.name);
+        this.forgetSeatFiles(s.name, rec);
+      }
       const dropped = [];
       for (const e of records) {
         this.clearHintForRecord(e.name);
