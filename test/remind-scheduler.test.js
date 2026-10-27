@@ -339,11 +339,13 @@ test('removeForAgent drops only that agent\'s rows and re-arms the timer to the 
     scheduler.add('gone', 'in 30m', 'theirs');
     scheduler.add('gone', 'on compact', 'theirs too');
     scheduler.add('other', 'in 2h', 'kept');
+    const armed = scheduler._timer;
     assert.strictEqual(scheduler.removeForAgent('gone'), 2);
     assert.deepStrictEqual(store.list().map((r) => r.body), ['kept']);
+    assert.notStrictEqual(scheduler._timer, armed, 'the timer for the removed 30m row was re-armed');
     assert.strictEqual(clock.pending(), 1);
     clock.advance(HOUR);
-    assert.deepStrictEqual(fires, [], 'the 30m timer was re-armed away, not left to fire');
+    assert.deepStrictEqual(fires, []);
     clock.advance(HOUR);
     assert.deepStrictEqual(fires.map((f) => f.body), ['kept']);
     assert.strictEqual(scheduler.removeForAgent('nobody'), 0);

@@ -57,7 +57,7 @@ function mkForget(entries, senderWs) {
       get: (n) => store.find((e) => e.name === n) || null,
       remove: (n) => { const i = store.findIndex((e) => e.name === n); if (i >= 0) store.splice(i, 1); },
     },
-    manager: { sessions: new Map(), clearHintForRecord() {}, forgetSeatFiles() {}, _bindHold() {}, endHold() {} },
+    manager: { sessions: new Map(), clearHintForRecord() {}, forgetSeatFiles() {}, _bindHold() {}, endHold() {}, dropReminders() {} },
     getDrawerPtys: () => ({ killSeat: (ws, name) => kills.push([ws, name]) }),
     workspaceOfSender: () => senderWs,
     workspaceOfSenderStrict: () => senderWs,

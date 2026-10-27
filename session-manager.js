@@ -3743,6 +3743,7 @@ function createSessionManager(deps) {
         this._bindHold(name);
       };
       const dropSeatDir = () => {
+        this.dropReminders(name);
         try {
           const r = removeSeat({ root: REGISTRY_DIR, name, fs });
           for (const f of r.failed) log.warn('session', `destroy ${name}: ${f.path} not removed (${f.error})`);
@@ -3752,7 +3753,7 @@ function createSessionManager(deps) {
       };
       await this.kill(name);
       this._disarmHoldFor(name, holdSid);
-      if (!worktree) { dropRecord(); dropSeatDir(); this.dropReminders(name); return { ok: true, live: wasLive }; }
+      if (!worktree) { dropRecord(); dropSeatDir(); return { ok: true, live: wasLive }; }
       const keepRecord = () => {
         if (!wasLive) return;
         try {
@@ -3770,7 +3771,6 @@ function createSessionManager(deps) {
       if (r && r.ok) {
         dropRecord();
         dropSeatDir();
-        this.dropReminders(name);
         log.info('worktree', `removed ${worktree.path} (branch ${worktree.branch}) after destroying ${name}`);
         return { ok: true, worktreeRemoved: true, live: wasLive };
       }
