@@ -4888,14 +4888,14 @@ function createSessionManager(deps) {
 
     purgeWorkspace(workspaceId) {
       const seats = this.listForWorkspace(workspaceId);
-      const records = getPersistence().listForWorkspace(workspaceId).filter((e) => e && e.name);
+      const records = this.savedForWorkspace(workspaceId);
       const names = new Set([...seats.map((s) => s.name), ...records.map((e) => e.name)]);
       const sids = new Map();
       for (const s of seats) {
         const live = this.sessions.get(s.name);
         if (live && !live.forked && live.sessionId && !sids.has(live.sessionId)) sids.set(live.sessionId, s.name);
       }
-      for (const e of records) if (!this.sessions.has(e.name) && e.sessionId && !sids.has(e.sessionId)) sids.set(e.sessionId, e.name);
+      for (const e of records) if (e.sessionId && !sids.has(e.sessionId)) sids.set(e.sessionId, e.name);
       for (const [sid, name] of sids) if (!this._holdSharedOutside(sid, names)) this._disarmHoldFor(name, sid);
       const killed = [];
       for (const s of seats) { killed.push(s.name); this.kill(s.name); }
