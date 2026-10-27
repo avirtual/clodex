@@ -29,6 +29,7 @@ blocks a release.
 - Sleeping assistants: awake time no longer includes the time Clodex itself was not running, which inflated the cost shown for an assistant restored at app launch.
 - Accept checks "merged" against the team's trunk, not whatever branch the root checkout happens to be on, so a hand-merge on a side branch no longer passes as merged and a detached root no longer refuses one.
 - The loop's close-out after a green merge leaves a one-shot seat in place when it holds another started ticket, instead of killing it mid-turn.
+- Sleeping assistants: deleting or forgetting an assistant while a message is waking it no longer leaves a nameless, unkillable row behind that blocked the name until the record was removed by hand. Waking an assistant that was about to sleep now also cancels that sleep.
 
 ## 5.146.2 — 2026-10-27
 
