@@ -14,6 +14,9 @@ blocks a release.
 
 ## Unreleased
 
+- Move to Peer: when the peer accepts the seat but its reply is lost, Clodex now checks the peer before restarting the seat locally, so the seat can no longer end up running on both machines; an unreachable peer leaves the local copy archived instead.
+- Shouts claimed from a peer box are stored exactly once even if the claim is retried, and a note that could not be stored stays unread on the box instead of being lost.
+
 ## 5.147.0 — 2026-10-28 — security fixes from the first cold audit
 
 - Security: the web host and the remote API no longer accept requests from other web origins when they run without a token on loopback. A page open in the operator's browser could previously open a WebSocket to the local web host and run commands, or post a message to a seat. Requests now need a loopback Host and, when a browser sends one, a loopback Origin; JSON endpoints require an application/json body.
