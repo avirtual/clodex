@@ -79,7 +79,7 @@ const SHIPPED = [
   extract(/\n(function populateChecklistsFromCatalogs\([\s\S]*?\n\})\n/, 'populateChecklistsFromCatalogs'),
   extract(/\n(function persistedOr\([\s\S]*?\n\})\n/, 'persistedOr'),
   extract(/\n(function currentOr\([\s\S]*?\n\})\n/, 'currentOr'),
-  extract(/\n(function keptLockedOf\([\s\S]*?\n\})\n/, 'keptLockedOf'),
+  require('../plugin-api').keptLockedOf.toString(),
 ].join('\n');
 
 // What the New Session dialog would persist as `disabledSkills` for a claude

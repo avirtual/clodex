@@ -33,7 +33,7 @@ const { placeAboveAnchor } = require('../lib/popover-place');
 // open anchors to a sidebar row instead, where this selector finds nothing and
 // the captured row (still attached) is used.
 const BAR_ANCHOR = '#proxy-bar [data-act="session-menu"]';
-const { grantsForUnlistedPlugins, mergeGrants, pluginsForUnlistedPlugins, mergePlugins, unlistedOf, mergeLists } = require('../../plugin-api');
+const { grantsForUnlistedPlugins, mergeGrants, pluginsForUnlistedPlugins, mergePlugins, unlistedOf, mergeLists, keptLockedOf } = require('../../plugin-api');
 
 // Names auto-INCLUDED for `session` by `sessions:` scope, for a scoped checklist.
 // Agents carry parsed `meta`; skills carry only raw `content` (re-parse it, same
@@ -104,7 +104,7 @@ function initChecklistPopovers({ sessionList, rowSnapshot, rebuildLiveRow, switc
   document.getElementById('tools-popover-apply').addEventListener('click', async () => {
     const name = toolsPopover.dataset.name;
     if (!name) return closeToolsPopover();
-    const disabledTools = mergeLists(collectToolChecklist(popoverToolsList), unlistedOf(toolsPersisted, toolsRendered));
+    const disabledTools = mergeLists(collectToolChecklist(popoverToolsList), [...unlistedOf(toolsPersisted, toolsRendered), ...keptLockedOf(toolsPersisted, popoverToolsList)]);
     const restart = toolsPopoverRestart.checked;
     closeToolsPopover();
     const r = await window.api.setSessionTools(name, disabledTools);

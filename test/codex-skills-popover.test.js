@@ -64,6 +64,7 @@ function makeEl(tag = 'div') {
         .flatMap((row) => row.children || [])
         .filter((c) => c.type === 'checkbox');
       if (sel === 'input[type="checkbox"]:checked') return boxes.filter((c) => c.checked);
+      if (sel === 'input[type="checkbox"]:disabled') return boxes.filter((c) => c.disabled);
       if (sel === 'input[type="checkbox"]:checked:not(:disabled)') {
         return boxes.filter((c) => c.checked && !c.disabled);
       }
@@ -325,5 +326,24 @@ test('t769: saving an allOff popover writes the explicit list, so the sentinel d
     const wrote = h.calls.filter((c) => c[0] === 'setSessionSkills');
     assert.deepStrictEqual(wrote, [['setSessionSkills', 'star_seat', ['alpha'], []]],
       'the save carries the rows as ticked, with no `*` in it');
+  } finally { h.restore(); }
+});
+
+test('t2002: the Tools popover Apply keeps a saved deny whose row a lower layer locked off', async () => {
+  const h = harness({ catalogs: {}, types: { seat: 'claude' } });
+  try {
+    const sent = [];
+    Object.assign(global.window.api, {
+      getSettings: async () => ({ claudeTools: ['Agent', 'Bash', 'Read'] }),
+      getSessionArgs: async () => ({ ok: true, disabledTools: ['Agent', 'Bash'], effectiveTools: { Agent: { value: 'off', source: 'project' } } }),
+      setSessionTools: async (name, disabledTools) => { sent.push([name, disabledTools]); return { ok: true }; },
+    });
+    await h.api.openToolsPopover('seat', h.els.get('popover-tools-list'));
+    const agent = h.boxes('popover-tools-list').find((c) => c.value === 'Agent');
+    assert.ok(agent && agent.disabled, 'ENTER: the Agent row is drawn locked');
+    await h.els.get('tools-popover-apply').fire('click');
+    assert.strictEqual(sent.length, 1);
+    assert.strictEqual(sent[0][0], 'seat');
+    assert.deepStrictEqual(sent[0][1].slice().sort(), ['Agent', 'Bash']);
   } finally { h.restore(); }
 });

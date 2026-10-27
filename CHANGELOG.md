@@ -21,6 +21,8 @@ blocks a release.
 - clodexctl: `get nodes --current --ctx <name>` now refuses a node the contexts file does not know, instead of printing the unknown name as if it were current.
 - Reminders viewer: the Cancel button is no longer shown on the web surface, where cancelling is not available and the click only produced an error toast.
 - Security: the web host and the remote API no longer accept requests from other web origins when they run without a token on loopback. A page open in the operator's browser could previously open a WebSocket to the local web host and run commands, or post a message to a seat. Requests now need a loopback Host and, when a browser sends one, a loopback Origin; JSON endpoints require an application/json body.
+- Clicking an OS notification that has been sitting in Notification Center for more than a minute now opens the Inbox again; a change earlier today made such clicks do nothing.
+- The Tools popover's Apply no longer drops a tool deny that a lower settings layer has locked, matching what the args dialog and the new-session form already did.
 
 ## 5.146.2 — 2026-10-27
 

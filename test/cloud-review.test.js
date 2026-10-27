@@ -190,11 +190,12 @@ test('cloud-review: with no claude/review-<tag> on origin the launcher deletes n
   assert.doesNotMatch(out, /removed stale/);
 });
 
-function runPoller({ hitAfter, report, env, ghFails = 0, lsSleep = 0, ctAges = null, perlRec = false, windowMs = 0 }) {
+function runPoller({ hitAfter, report, env, ghFails = 0, fetchFails = 0, lsSleep = 0, ctAges = null, perlRec = false, windowMs = 0 }) {
   const dir = mkTmpRoot('clodex-cloud-review-post-');
   const calls = path.join(dir, 'calls');
   const count = path.join(dir, 'count');
   const ghCount = path.join(dir, 'gh-count');
+  const fetchCount = path.join(dir, 'fetch-count');
   const reportFile = path.join(dir, 'report.md');
   fs.writeFileSync(reportFile, report || '');
   const git = path.join(dir, 'git');
@@ -205,6 +206,7 @@ function runPoller({ hitAfter, report, env, ghFails = 0, lsSleep = 0, ctAges = n
     'case "$1" in',
     `  ls-remote) if [ ${lsSleep} -gt 0 ]; then sleep ${lsSleep}; fi; n=$(cat "${count}" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "${count}"`,
     `    if [ "${hitAfter}" -gt 0 ] && [ $n -ge "${hitAfter}" ]; then printf 'abc123\\trefs/heads/claude/review-v1.1.0\\n'; fi ;;`,
+    `  fetch) n=$(cat "${fetchCount}" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "${fetchCount}"; if [ $n -le ${fetchFails} ]; then exit 1; fi ;;`,
     ctAges
       ? `  show) printf 'Release review v1.1.0: X\\n\\nhit %s\\n' "$(cat "${count}")" ;;`
       : `  show) cat "${reportFile}" ;;`,
@@ -298,6 +300,22 @@ test('cloud-review-post: gh issue create failing every try logs an ERROR, keeps 
   assert.strictEqual(status, 1, calls.join('\n'));
   assert.strictEqual(calls.filter((c) => c.startsWith('gh [issue] [create]')).length, 3, calls.join('\n'));
   assert.match(log, /^cloud-review: ERROR issue create failed: gh boom 1\ngh boom 2\ngh boom 3$/m);
+  assert.ok(!calls.some((c) => c.startsWith('git push')), calls.join('\n'));
+});
+
+test('cloud-review-post: a failed fetch is retried on the next poll and the report issue is opened, not UNPARSED', () => {
+  const { out, calls, body } = runPoller({ hitAfter: 1, fetchFails: 1, report: 'Release review v1.1.0: X\n\nbody\n' });
+  assert.strictEqual(calls.filter((c) => c.startsWith('git fetch')).length, 2, calls.join('\n'));
+  assert.ok(calls.some((c) => c.startsWith('gh [issue] [create] [-R] [avirtual/clodex] [-t] [Release review v1.1.0: X]')), calls.join('\n'));
+  assert.ok(!calls.some((c) => c.includes('UNPARSED')), calls.join('\n'));
+  assert.strictEqual(body, 'body\n');
+  assert.ok(out.split('\n').includes('cloud-review-post: fetch of claude/review-v1.1.0 failed, retrying'), out);
+});
+
+test('cloud-review-post: a fetch still failing at the timeout opens UNPARSED REPORT and keeps the branch', () => {
+  const { out, calls } = runPoller({ hitAfter: 1, fetchFails: 99, env: { CLODEX_REVIEW_TIMEOUT_S: '0' } });
+  assert.ok(calls.some((c) => c.startsWith('gh [issue] [create] [-R] [avirtual/clodex] [-t] [Release review v1.1.0: UNPARSED REPORT]')), calls.join('\n'));
+  assert.ok(out.split('\n').includes('cloud-review-post: fetch of claude/review-v1.1.0 failed, retrying'), out);
   assert.ok(!calls.some((c) => c.startsWith('git push')), calls.join('\n'));
 });
 

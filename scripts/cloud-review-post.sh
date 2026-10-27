@@ -66,8 +66,13 @@ while :; do
   if [ -n "$remote" ]; then
     fetched=1
     if ! bounded "$GIT" fetch -q origin "+$BRANCH:$REF"; then
-      found=1
-      break
+      printf 'cloud-review-post: fetch of %s failed, retrying\n' "$BRANCH"
+      if [ $((SECONDS - start)) -ge "$TIMEOUT_S" ]; then
+        found=1
+        break
+      fi
+      sleep "$POLL_S"
+      continue
     fi
     ct="$("$GIT" log -1 --format=%ct "$REF" 2>/dev/null)"
     sha="${remote%%[[:space:]]*}"

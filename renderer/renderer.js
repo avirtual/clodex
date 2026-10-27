@@ -3,7 +3,7 @@ const { FitAddon } = require('@xterm/addon-fit');
 const { SearchAddon } = require('@xterm/addon-search');
 const { WebLinksAddon } = require('@xterm/addon-web-links');
 const { isExternallyOpenable } = require('../external-link');
-const { seatHasPlugin, pluginsForUnlistedPlugins, mergePlugins, unlistedOf, mergeLists } = require('../plugin-api');
+const { seatHasPlugin, pluginsForUnlistedPlugins, mergePlugins, unlistedOf, mergeLists, keptLockedOf } = require('../plugin-api');
 const { clampSidebarWidth, effectiveSidebarWidth, SIDEBAR_WIDTH_DEFAULT } = require('../sidebar-width');
 const { mergeMeta } = require('../meta-tiers');
 const { PendingInput } = require('../peer-input-queue');
@@ -4013,11 +4013,6 @@ function persistedOr(key, fallback) {
 function currentOr(key, collector, list, fallback) {
   if (!(key in formPersisted) || !(key in formRendered)) return persistedOr(key, fallback);
   return new Set(mergeLists(collector(list), [...unlistedOf(formPersisted[key], formRendered[key]), ...keptLockedOf(formPersisted[key], list)]));
-}
-
-function keptLockedOf(persisted, list) {
-  const locked = new Set(Array.from(list.querySelectorAll('input[type="checkbox"]:disabled'), (cb) => cb.value));
-  return (persisted || []).filter((id) => locked.has(id));
 }
 
 function formCarry(key, collector, list) {
