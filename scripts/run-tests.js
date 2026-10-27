@@ -249,7 +249,6 @@ for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
 
 const suiteTmp = path.join(os.tmpdir(), 'clodex-suite');
 fs.mkdirSync(suiteTmp, { recursive: true });
-// Above the slow-gate kill ceiling with margin; killed files leaked 3,573 roots here by 2026-10-27.
 const STALE_SCRATCH_MS = 2 * 60 * 60 * 1000;
 let sweptScratch = 0;
 try {
