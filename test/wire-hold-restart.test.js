@@ -295,6 +295,70 @@ test('a warmth-store ERROR at startup leaves the record on disk for the next lau
   assert.strictEqual(after.holds()[SID].always, true, 'the hold came back on the next launch');
 });
 
+test('an unjudged restore record rides every later flush until its sid is armed, disarmed or ended', (t) => {
+  const m = machine(t);
+  const A = 'aaaaaaaa-0000-4000-8000-00000000000a';
+  const B = 'bbbbbbbb-0000-4000-8000-00000000000b';
+  const objA = makeObj({ messages: [{ role: 'user', content: 'seat A' }] });
+  const objB = makeObj({ messages: [{ role: 'user', content: 'seat B' }] });
+  const usage = { cache_creation_input_tokens: 100, cache_read_input_tokens: 0 };
+
+  const before = m.boot();
+  before.noteRequest(B, objB, { authorization: 'Bearer b' }, 'http://up/v1/messages');
+  before.noteRequest(A, objA, { authorization: 'Bearer a' }, 'http://up/v1/messages');
+  m.warmth.record(objA, usage, A);
+  m.warmth.record(objB, usage, B);
+  assert.strictEqual(before.arm(B, 0, { always: true }).armed, true, 'ENTER: B armed');
+  assert.strictEqual(before.arm(A, 0, { always: true }).armed, true, 'ENTER: A armed');
+  before.stop();
+  assert.deepStrictEqual(m.read().records.map((x) => x.sessionId).sort(), [A, B].sort());
+
+  const realQuery = m.warmth.query.bind(m.warmth);
+  m.warmth.query = (q) => (q && q.session === A ? { warm: false, found: false, error: 'store broke' } : realQuery(q));
+  const k = m.boot();
+  t.after(() => k.stop());
+  assert.deepStrictEqual(k.restorePerpetual({ accept: () => true }), { restored: 1, declined: 1, dropped: 0 });
+  m.warmth.query = realQuery;
+  assert.deepStrictEqual(m.read().records.map((x) => x.sessionId), [B, A], 'ENTER: A kept unjudged by the restore');
+
+  m.clock.t += 5;
+  k.noteRequest(B, makeObj({ messages: [{ role: 'user', content: 'seat B turn 2' }] }), { authorization: 'Bearer b' }, 'http://up/v1/messages');
+  const afterTurn = m.read().records;
+  assert.deepStrictEqual(afterTurn.map((x) => x.sessionId), [B, A], 'B\'s turn did not erase A');
+  assert.strictEqual(afterTurn[0].obj.messages[0].content, 'seat B turn 2', 'ENTER: the flush really ran on B\'s turn');
+  assert.strictEqual(afterTurn[1].headers.authorization, 'Bearer a');
+
+  const objA2 = makeObj({ messages: [{ role: 'user', content: 'seat A live' }] });
+  k.noteRequest(A, objA2, { authorization: 'Bearer a2' }, 'http://up/v1/messages');
+  m.warmth.record(objA2, usage, A);
+  assert.strictEqual(k.arm(A, 0, { always: true }).armed, true, 'ENTER: A armed live');
+  const afterArm = m.read().records.filter((x) => x.sessionId === A);
+  assert.strictEqual(afterArm.length, 1, 'A is written once, not live plus stale');
+  assert.strictEqual(afterArm[0].headers.authorization, 'Bearer a2', 'from its live hold');
+
+  k.disarm(A);
+  assert.deepStrictEqual(m.read().records.map((x) => x.sessionId), [B], 'disarming A takes it off disk for good');
+});
+
+test('an unjudged restore record leaves the disk when its sid is disarmed or ended', (t) => {
+  for (const verb of ['disarm', 'endSession']) {
+    const m = machine(t);
+    const obj = makeObj();
+    const before = m.boot();
+    before.noteRequest(SID, obj, { authorization: 'Bearer tok' }, 'http://up/v1/messages');
+    m.stampWarm(obj);
+    assert.strictEqual(before.arm(SID, 0, { always: true }).armed, true, 'ENTER: armed');
+    before.stop();
+    m.warmth.db.close();
+    const k = m.boot();
+    assert.deepStrictEqual(k.restorePerpetual({ accept: () => true }), { restored: 0, declined: 1, dropped: 0 });
+    assert.deepStrictEqual(m.read().records.map((x) => x.sessionId), [SID], `ENTER: ${verb}: kept unjudged`);
+    k[verb](SID);
+    assert.strictEqual(fs.existsSync(m.file), false, `${verb} drops the unjudged record`);
+    k.stop();
+  }
+});
+
 test('an armed-perpetual entry is exempt from the entry-cap eviction', async (t) => {
   const m = machine(t);
   const obj = makeObj();
