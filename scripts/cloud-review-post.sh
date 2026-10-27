@@ -68,6 +68,7 @@ while :; do
     if ! bounded "$GIT" fetch -q origin "+$BRANCH:$REF"; then
       printf 'cloud-review-post: fetch of %s failed, retrying\n' "$BRANCH"
       if [ $((SECONDS - start)) -ge "$TIMEOUT_S" ]; then
+        found=1
         break
       fi
       sleep "$POLL_S"

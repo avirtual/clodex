@@ -44,10 +44,9 @@ function build() {
     on(ev, fn) { this.handlers[ev] = fn; }
     show() {}
   }
-  const factory = new Function('held', 'Notification', 'BrowserWindow', 'sendToFocused', 'setTimeout', 'clearTimeout',
+  const factory = new Function('held', 'Notification', 'BrowserWindow', 'sendToFocused',
     `return (${sliceNotifyOS()});`);
-  const notifyOS = factory(held, Notification, { getFocusedWindow: () => null, getAllWindows: () => [] }, () => {},
-    (...a) => setTimeout(...a), (t) => clearTimeout(t));
+  const notifyOS = factory(held, Notification, { getFocusedWindow: () => null, getAllWindows: () => [] }, () => {});
   return { held, made, notifyOS };
 }
 

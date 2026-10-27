@@ -343,7 +343,7 @@ test('t2002: the Tools popover Apply keeps a saved deny whose row a lower layer 
     assert.ok(agent && agent.disabled, 'ENTER: the Agent row is drawn locked');
     await h.els.get('tools-popover-apply').fire('click');
     assert.strictEqual(sent.length, 1);
-    assert.deepStrictEqual(sent[0][0], 'seat');
+    assert.strictEqual(sent[0][0], 'seat');
     assert.deepStrictEqual(sent[0][1].slice().sort(), ['Agent', 'Bash']);
   } finally { h.restore(); }
 });

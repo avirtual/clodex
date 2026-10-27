@@ -312,6 +312,13 @@ test('cloud-review-post: a failed fetch is retried on the next poll and the repo
   assert.ok(out.split('\n').includes('cloud-review-post: fetch of claude/review-v1.1.0 failed, retrying'), out);
 });
 
+test('cloud-review-post: a fetch still failing at the timeout opens UNPARSED REPORT and keeps the branch', () => {
+  const { out, calls } = runPoller({ hitAfter: 1, fetchFails: 99, env: { CLODEX_REVIEW_TIMEOUT_S: '0' } });
+  assert.ok(calls.some((c) => c.startsWith('gh [issue] [create] [-R] [avirtual/clodex] [-t] [Release review v1.1.0: UNPARSED REPORT]')), calls.join('\n'));
+  assert.ok(out.split('\n').includes('cloud-review-post: fetch of claude/review-v1.1.0 failed, retrying'), out);
+  assert.ok(!calls.some((c) => c.startsWith('git push')), calls.join('\n'));
+});
+
 test('cloud-review-post: a hung git ls-remote is cut off at CALL_S and the timeout still opens NO REPORT', () => {
   const { calls } = runPoller({ hitAfter: 0, lsSleep: 30, env: { CLODEX_REVIEW_CALL_S: '1', CLODEX_REVIEW_TIMEOUT_S: '2' } });
   assert.ok(calls.some((c) => c.startsWith('git ls-remote')), calls.join('\n'));
