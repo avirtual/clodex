@@ -39,6 +39,8 @@ spec:
                 secretKeyRef:
                   name: {{ include "clodex.secretName" . }}
                   key: wire-token
+            - name: CLODEX_REMOTE_PORT
+              value: {{ .Values.wirePort | quote }}
             {{- if .Values.web.enabled }}
             - name: CLODEX_WEB_HOST
               value: "127.0.0.1"
@@ -69,6 +71,9 @@ spec:
             - { name: state, mountPath: /home/clodex/.clodex, subPath: dot-clodex }
             - { name: state, mountPath: /home/clodex/.claude, subPath: dot-claude }
             - { name: state, mountPath: /home/clodex/work,    subPath: work }
+            - { name: state, mountPath: /home/clodex/.codex,  subPath: dot-codex }
+            - { name: state, mountPath: /home/clodex/.config, subPath: dot-config }
+            - { name: state, mountPath: /home/clodex/.local/share, subPath: local-share }
           {{- end }}
           # Liveness mirrors the Fargate healthCheck. NOT httpGet: the wire
           # is token-gated and answers 401 unauthenticated, which an httpGet

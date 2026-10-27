@@ -6,9 +6,8 @@
 #
 # Builds the web-frontend image (docker/web/Dockerfile, repo-root context)
 # multi-arch (arm64 + amd64) and pushes ghcr.io/avirtual/clodex:<version>
-# plus :latest. Version defaults to package.json's — pass one explicitly to
-# republish an older tag. Deliberately NOT part of release.sh: run manually
-# after a release until this proves stable.
+# plus :latest when <version> is the newest v* tag. Version defaults to
+# package.json's — pass one explicitly to republish an older tag.
 #
 # Credentials ride the gh CLI: `gh auth token` must carry write:packages
 # (grant once with `gh auth refresh -s write:packages`).
@@ -27,6 +26,16 @@ PLATFORMS="linux/arm64,linux/amd64"
 # --- version ----------------------------------------------------------------
 VERSION="${1:-$(node -p "require('./package.json').version")}"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "bad version: '$VERSION' (want X.Y.Z)"
+[ "$(git describe --exact-match --tags HEAD 2>/dev/null || true)" = "v$VERSION" ] \
+  || die "HEAD is not tagged v$VERSION — check out the tag first"
+TAGS=(-t "$IMAGE:$VERSION")
+if [ "$(git tag -l 'v*' | sort -V | tail -1)" = "v$VERSION" ]; then
+  TAGS+=(-t "$IMAGE:latest")
+  LATEST_NOTE="moves :latest to $VERSION"
+else
+  LATEST_NOTE="leaves :latest alone (v$VERSION is not the newest tag)"
+fi
+echo "publish-image: $LATEST_NOTE"
 
 # --- preflights ---------------------------------------------------------------
 step "preflight"
@@ -54,17 +63,16 @@ if ! docker buildx inspect clodex-multiarch >/dev/null 2>&1; then
 fi
 
 # --- build + push -------------------------------------------------------------
-step "build + push $IMAGE:$VERSION + :latest ($PLATFORMS)"
+step "build + push $IMAGE:$VERSION ($PLATFORMS) — $LATEST_NOTE"
 docker buildx build \
   --builder clodex-multiarch \
   --platform "$PLATFORMS" \
   -f docker/web/Dockerfile \
-  -t "$IMAGE:$VERSION" \
-  -t "$IMAGE:latest" \
+  "${TAGS[@]}" \
   --push \
   .
 
 step "verify manifest"
 docker buildx imagetools inspect "$IMAGE:$VERSION" | sed -n '1,12p'
 
-printf '\n\033[32mpublished %s:%s (+latest)\033[0m\n' "$IMAGE" "$VERSION"
+printf '\n\033[32mpublished %s:%s — %s\033[0m\n' "$IMAGE" "$VERSION" "$LATEST_NOTE"
