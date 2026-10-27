@@ -1124,7 +1124,7 @@ test('all three standing-seat boundaries are hooked, and stamp BEFORE the record
   // live in this file, so any one of them satisfied a search for the next.
   for (const [label, adjacentRe] of [
     ['exit', /this\._stampSeatCost\(session, 'exit'\); \} catch \{\}\n\s*if \(dropRecord\) \{\n\s*getPersistence\(\)\.remove\(name\);/],
-    ['kill', /this\._stampSeatCost\(s, 'kill'\); \} catch \{\}\n\s*getPersistence\(\)\.remove\(name\);/],
+    ['kill', /this\._stampSeatCost\(s, 'kill'\); \} catch \{\}\n\s*if \(!respawn\) getPersistence\(\)\.remove\(name\);/],
   ]) {
     assert.match(src, adjacentRe,
       `${label}: the stamp must sit immediately BEFORE its own record drop — after it, entrySessionIds finds nothing and every standing seat books $0`);

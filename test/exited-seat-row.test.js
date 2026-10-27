@@ -233,7 +233,7 @@ function mkRenderer({ api = {}, confirmAnswer = true } = {}) {
     respawnFocus: new Map(),
     dialogOverlay: { classList: { contains: () => true } },
     isToolInstallSession: () => false,
-    removeSession: (name) => { calls.push(['removeSession', name]); const i = rows.findIndex((r) => r.dataset.name === name); if (i >= 0) rows.splice(i, 1); },
+    removeSession: (name) => { calls.push(['removeSession', name]); env.sessions.delete(name); const i = rows.findIndex((r) => r.dataset.name === name); if (i >= 0) rows.splice(i, 1); },
     insertLocalSessionRow: (item) => rows.push(item),
     esc: (s) => String(s),
     typeGlyph: () => 'C',
@@ -259,7 +259,7 @@ function mkRenderer({ api = {}, confirmAnswer = true } = {}) {
   const names = Object.keys(env).filter((k) => k !== 'exitHandler' && k !== 'movedInHandler');
   const body = [
     slice('const seatIoKind', ';\n'),
-    fnSrc('exitedLabel'), fnSrc('rowSnapshot'), fnSrc('rebuildLiveRow'), fnSrc('exitedRowSnapshot'), fnSrc('addExitedSessionToSidebar'),
+    fnSrc('exitedLabel'), fnSrc('rowSnapshot'), fnSrc('rebuildLiveRow'), fnSrc('exitedRowSnapshot'), fnSrc('addExitedSessionToSidebar'), `async ${fnSrc('forgetSavedEntry')}`,
     slice('window.api.onSessionExit((name, code, meta) => {', '\n});\n'),
     slice('window.api.onSessionMovedIn((entry) => {', '\n});\n'),
     `return { restore: () => ${slice('(async function restoreSessions() {', '\n})();\n').trim().replace(/;$/, '')} };`,

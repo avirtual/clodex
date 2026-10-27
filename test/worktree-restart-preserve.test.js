@@ -115,6 +115,11 @@ function probe(eng) {
 }
 
 function assertEntered(seen, removals, name, path_) {
+  if (path_ !== 'applySessionArgs({restart:true})') {
+    assert.deepStrictEqual(removals, [], `ENTER: ${path_} respawns through kill({ respawn: true }), which keeps the record`);
+    assert.strictEqual(seen.length, 1, `ENTER: ${path_} must actually reach create()`);
+    return;
+  }
   assert.strictEqual(removals.length, 1,
     `ENTER: ${path_} must actually route through kill(), which REMOVES the record — zero removals means the `
     + 'record was never dropped and this test pins a path where the bug cannot occur');
