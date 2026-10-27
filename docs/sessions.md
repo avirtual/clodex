@@ -559,8 +559,10 @@ where nobody expects one. ✕ / Cmd+W archives instead of killing for bash shell
 and sandbox rows too.
 
 The ✕ forget (`session:forget`) and Delete Workspace… (`purgeWorkspace`) disarm
-the seat's keep-warm hold before the remove, and call `forgetSeatFiles` after it: an assistant record loses its whole
-seat dir (`removeSeat`: client-token, brief.md, memory), any other record only
+the seat's keep-warm hold before the remove, and call `forgetSeatFiles` after it.
+`purgeWorkspace` does so for both halves: the saved rows it drops and the live
+seats it kills (their record read before `kill` drops it). An assistant seat loses its whole
+seat dir (`removeSeat`: client-token, brief.md, memory), any other seat only
 its `client-token`, so a later seat with the same name never inherits them.
 
 **Real delete of a LIVE session = right-click "Delete Session…"** + native

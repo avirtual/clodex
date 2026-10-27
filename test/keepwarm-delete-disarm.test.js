@@ -6,6 +6,7 @@ const path = require('node:path');
 const os = require('node:os');
 const fs = require('node:fs');
 const { mk } = require('./lib/session-fixtures');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 const { createRemoteWiring } = require('../remote-wiring');
 
 const SID_A = 'aaaaaaaa-1111-4111-8111-111111111111';
@@ -336,8 +337,54 @@ test('purgeWorkspace leaves a sid whose ws-1 record names a seat live in another
   assert.deepStrictEqual(m.purgeWorkspace('ws-1'), { killed: ['a'], dropped: [] });
   assert.ok(m.sessions.has('x'), 'ENTER: the seat live in ws-2 survived');
   assert.ok(recs.has('x'), 'the live ws-2 seat kept its record');
-  assert.deepStrictEqual(forgotten, []);
+  assert.deepStrictEqual(forgotten, ['a']);
   assert.deepStrictEqual(keeper.disarmed, []);
+});
+
+function seatRig(records) {
+  const root = mkTmpRoot('clx-purge-seat-');
+  const seat = (n) => path.join(root, 'sessions', n);
+  const plant = (n, files) => {
+    for (const f of files) {
+      fs.mkdirSync(path.dirname(path.join(seat(n), f)), { recursive: true });
+      fs.writeFileSync(path.join(seat(n), f), 'x');
+    }
+  };
+  const recs = new Map(Object.entries(records).map(([k, v]) => [k, { name: k, ...v }]));
+  const persistence = {
+    list: () => [...recs.values()],
+    get: (n) => recs.get(n) || null,
+    remove: (n) => { recs.delete(n); },
+    listForWorkspace: (ws) => [...recs.values()].filter((r) => r.workspaceId === ws),
+  };
+  const m = mk({ getPersistence: () => persistence, log: QUIET, REGISTRY_DIR: root, fs });
+  return { m, recs, seat, plant };
+}
+
+test('purgeWorkspace unlinks the client-token of a live plain seat it kills; the seat dir keeps its other files', () => {
+  const r = seatRig({ a: { cwd: '/p', type: 'claude', workspaceId: 'ws-1' } });
+  r.plant('a', ['client-token', 'brief.md']);
+  live(r.m, 'a', SID_A, { cwd: '/p', workspaceId: 'ws-1' });
+  assert.deepStrictEqual(r.m.purgeWorkspace('ws-1'), { killed: ['a'], dropped: [] });
+  assert.strictEqual(r.recs.size, 0, 'ENTER: the live seat\'s record was dropped');
+  assert.deepStrictEqual(fs.readdirSync(r.seat('a')), ['brief.md']);
+});
+
+test('purgeWorkspace removes the seat dir of a live assistant seat it kills', () => {
+  const r = seatRig({ asst: { cwd: '/p', class: 'assistant', workspaceId: 'ws-1' } });
+  r.plant('asst', ['client-token', 'brief.md', 'memory/unit.md']);
+  live(r.m, 'asst', SID_A, { cwd: '/p', workspaceId: 'ws-1', _assistant: true });
+  assert.ok(fs.existsSync(path.join(r.seat('asst'), 'memory', 'unit.md')), 'ENTER: the seat dir holds memory');
+  assert.deepStrictEqual(r.m.purgeWorkspace('ws-1'), { killed: ['asst'], dropped: [] });
+  assert.strictEqual(fs.existsSync(r.seat('asst')), false);
+});
+
+test('purgeWorkspace leaves the seat files of a seat live in another workspace', () => {
+  const r = seatRig({ x: { cwd: '/p', type: 'claude', workspaceId: 'ws-1' } });
+  r.plant('x', ['client-token']);
+  live(r.m, 'x', SID_A, { cwd: '/p', workspaceId: 'ws-2' });
+  assert.deepStrictEqual(r.m.purgeWorkspace('ws-1'), { killed: [], dropped: [] });
+  assert.deepStrictEqual(fs.readdirSync(r.seat('x')), ['client-token']);
 });
 
 test('_maybeRearmHold arms an Always seat, and never one that is archiving', () => {
