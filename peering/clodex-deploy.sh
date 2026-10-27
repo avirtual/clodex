@@ -279,7 +279,8 @@ ok clodexctl
 
 # --- ui-settings.json: enable the peer server, MERGE (don't clobber) --------
 step settings
-mkdir -p "$CONFIG_DIR"
+( umask 077; mkdir -p "$CONFIG_DIR" )
+chmod 700 "$CONFIG_DIR"
 node -e '
 const fs = require("fs");
 const [p, portStr] = process.argv.slice(1);
@@ -289,7 +290,8 @@ try { s = JSON.parse(fs.readFileSync(p, "utf8")) || {}; } catch {}
 s.remoteEnabled = true;
 s.remotePort = port;
 const tmp = p + ".tmp." + process.pid;
-fs.writeFileSync(tmp, JSON.stringify(s, null, 2));
+fs.writeFileSync(tmp, JSON.stringify(s, null, 2), { mode: 0o600 });
+fs.chmodSync(tmp, 0o600);
 fs.renameSync(tmp, p);
 ' "$SETTINGS" "$PORT" >&2 || fail settings "ui-settings-merge-failed"
 ok settings

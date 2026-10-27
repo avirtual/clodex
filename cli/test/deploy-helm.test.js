@@ -104,6 +104,14 @@ test('chart: wirescope.enabled value (T49) — default true; false renders CLODE
   assert.match(block.slice(0, block.indexOf('{{- end }}')), /name: CLODEX_WIRESCOPE\n\s+value: "off"/);
 });
 
+test('chart: the engine is told its wire port, and the Codex/Muse homes persist', () => {
+  const sts = fs.readFileSync(path.join(D.helmChartPath(), 'templates', 'statefulset.yaml'), 'utf8');
+  assert.match(sts, /- name: CLODEX_REMOTE_PORT\n\s+value: \{\{ \.Values\.wirePort \| quote \}\}/);
+  for (const [mount, sub] of [['/home/clodex/.codex', 'dot-codex'], ['/home/clodex/.config', 'dot-config'], ['/home/clodex/.local/share', 'local-share']]) {
+    assert.match(sts, new RegExp(`\\{ name: state, mountPath: ${mount.replace(/\./g, '\\.')},\\s+subPath: ${sub} \\}`), mount);
+  }
+});
+
 test('HELM_RELEASE_RE: DNS-1123 — rejects dots, underscores, uppercase, edges', () => {
   for (const ok of ['a', 'mynode', 'node-1', 'a1-b2']) assert.ok(D.HELM_RELEASE_RE.test(ok), ok);
   for (const bad of ['My.Node', 'a_b', 'UPPER', '-lead', 'trail-', '', 'a'.repeat(54)]) {

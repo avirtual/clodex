@@ -103,6 +103,14 @@ test('DRIFT PIN: cli/deploy/clodex-deploy.sh is byte-equal to peering/clodex-dep
   assert.ok(copy.equals(source), 'deploy script copy has drifted — edit peering/clodex-deploy.sh and re-copy to cli/deploy/clodex-deploy.sh');
 });
 
+test('deploy script settings step: ui-settings.json is written 0600 under a 0700 dir', () => {
+  const s = fs.readFileSync(path.join(__dirname, '..', '..', 'peering', 'clodex-deploy.sh'), 'utf8');
+  const step = s.slice(s.indexOf('step settings\n'), s.indexOf('ok settings\n'));
+  assert.match(step, /^\( umask 077; mkdir -p "\$CONFIG_DIR" \)\nchmod 700 "\$CONFIG_DIR"$/m);
+  assert.doesNotMatch(step, /^mkdir -p "\$CONFIG_DIR"$/m);
+  assert.match(step, /fs\.writeFileSync\(tmp, JSON\.stringify\(s, null, 2\), \{ mode: 0o600 \}\);\nfs\.chmodSync\(tmp, 0o600\);\nfs\.renameSync\(tmp, p\);/);
+});
+
 test('readScript: resolves off __dirname and returns the real installer bytes', () => {
   const s = D.readScript();
   assert.match(s, /Clodex headless peer-node deploy/);
