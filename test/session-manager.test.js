@@ -23983,6 +23983,73 @@ test('the compact guard gets a full INJECT_HOLD_TIMEOUT from when it goes up', (
     'the guard went up 1s ago — the busy hold\'s leftover deadline must not release it');
 });
 
+function pendingFiles(root, name) {
+  const dir = pathReal.join(root, name);
+  let files = [];
+  try { files = fsReal.readdirSync(dir).filter((f) => f.endsWith('.json')); } catch {}
+  return files.map((f) => JSON.parse(fsReal.readFileSync(pathReal.join(dir, f), 'utf8')));
+}
+
+test('the inject valve never forces past a permission dialog: held texts re-park to pending and the valve re-arms', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { m, PENDING_DIR } = mkPark({ INJECT_HOLD_TIMEOUT: 10_000 });
+  delete m._injectText;
+  const writes = [];
+  m._injectQueueFor = () => ({ enqueue: (text) => writes.push(text) });
+  const s = { name: 'dlg', agentType: 'claude', activityState: 'idle', createdAt: 4242, needsAttention: { kind: 'permission' } };
+  m.sessions.set('dlg', s);
+  m._injectText(s, '[agent:from reminder] 1 then Enter');
+  assert.ok(s._injectQueue && s._injectQueue.length === 1 && s._injectHoldTimer, 'ENTER: held behind the dialog with the valve armed');
+  t.mock.timers.tick(10_001);
+  assert.deepStrictEqual(writes, [], 'the valve must not type text and Enter into an open permission dialog');
+  assert.deepStrictEqual(pendingFiles(PENDING_DIR, 'dlg'), [{ text: '[agent:from reminder] 1 then Enter', born: 4242 }],
+    'the held text waits in the seat\'s pending mail');
+  assert.deepStrictEqual(s._injectQueue, [], 'and leaves the in-memory hold');
+  assert.ok(s._injectHoldTimer, 'the valve is re-armed');
+  clearTimeout(s._injectHoldTimer);
+});
+
+test('the inject valve still force-flushes a text held behind a busy turn', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { m, PENDING_DIR } = mkPark({ INJECT_HOLD_TIMEOUT: 10_000 });
+  delete m._injectText;
+  const writes = [];
+  m._injectQueueFor = () => ({ enqueue: (text) => writes.push(text) });
+  const s = { name: 'bsy', agentType: 'claude', activityState: 'thinking' };
+  m.sessions.set('bsy', s);
+  m._injectText(s, 'held while busy');
+  assert.ok(s._injectQueue && s._injectQueue.length === 1 && s._injectHoldTimer, 'ENTER: held behind the busy turn');
+  t.mock.timers.tick(10_001);
+  assert.deepStrictEqual(writes, ['held while busy'], 'force overrides the busy hold');
+  assert.deepStrictEqual(pendingFiles(PENDING_DIR, 'bsy'), [], 'nothing re-parked');
+});
+
+test('_cleanup re-parks the texts held in _injectQueue to pending instead of dropping them', () => {
+  const { m, PENDING_DIR } = mkPark({
+    registry: { unregister: () => {} },
+    cleanupClaudeHook: () => {}, cleanupSkills: () => {}, cleanupAgentPlugin: () => {},
+    path: pathReal, fs: fsReal,
+  });
+  let produced = 0;
+  const s = {
+    name: 'gone', agentType: 'claude', createdAt: 77,
+    _injectQueue: [
+      'plain held text',
+      { text: 'keyed held text', opts: { parkable: true, parkKey: 'k1' } },
+      { produce: () => { produced++; return 'produced text'; } },
+    ],
+  };
+  m.sessions.set('gone', s);
+  m._cleanup('gone');
+  const parked = pendingFiles(PENDING_DIR, 'gone').sort((a, b) => a.text.localeCompare(b.text));
+  assert.deepStrictEqual(parked, [
+    { text: 'keyed held text', born: 77, key: 'k1' },
+    { text: 'plain held text', born: 77 },
+  ], 'both text entries re-parked, the keyed one carrying its parkKey');
+  assert.strictEqual(produced, 0, 'the produce entry is not run');
+  assert.deepStrictEqual(s._injectQueue, [], 'the queue is emptied');
+});
+
 test('a stream seat\'s turn-end drain holds a queued operator item while its hint is pending', async (t) => {
   const stub = {
     encodeUser: (text) => ({ stub: text }),

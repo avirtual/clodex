@@ -755,6 +755,23 @@ test('InjectQueue: a death mid-drain re-parks the claimed text through onUndeliv
   }
 });
 
+test('InjectQueue: a non-diverted text enqueued on a dead queue reaches onUndelivered', async () => {
+  const writes = [];
+  const undelivered = [];
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: () => 5,
+    quietMs: 0, maxWaitMs: 0,
+    lastHumanInputAt: () => 0,
+    isDead: () => true,
+    onUndelivered: (t) => undelivered.push(t),
+    sleep: () => Promise.resolve(),
+  });
+  await q.enqueue('held reminder');
+  assert.deepStrictEqual(writes, []);
+  assert.deepStrictEqual(undelivered, ['held reminder']);
+});
+
 test('InjectQueue: a throwing onUndelivered is swallowed and the queue keeps draining', async () => {
   const writes = [];
   let dead = false;

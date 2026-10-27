@@ -5178,6 +5178,11 @@ function createSessionManager(deps) {
     _cleanup(name) {
       const s = this.sessions.get(name);
       if (!s) return;
+      if (s._injectQueue && s._injectQueue.length) {
+        const held = s._injectQueue;
+        s._injectQueue = [];
+        this._reparkHeldInjects(s, held);
+      }
       clearTimeout(s._injectHoldTimer);
       clearTimeout(s._injectFlushRetry);
       clearTimeout(s._costFoldTimer);
@@ -5605,7 +5610,15 @@ function createSessionManager(deps) {
         }
         return;
       }
-      if (!force && this._injectHoldReason(session)) return;
+      const reason = this._injectHoldReason(session);
+      if (!force && reason) return;
+      if (reason === 'dialog') {
+        session._injectQueue = this._reparkHeldInjects(session, queue);
+        clearTimeout(session._injectHoldTimer);
+        session._injectHoldTimer = null;
+        this._armInjectValve(session);
+        return;
+      }
       clearTimeout(session._injectHoldTimer);
       session._injectHoldTimer = null;
       session._injectQueue = [];
@@ -5617,6 +5630,26 @@ function createSessionManager(deps) {
         this._injectText(session, e.text || '', { ...e.opts, bypassHold: true });
       }
       this._flushInjectRun(session, run);
+    }
+
+    _reparkHeldInjects(session, queue) {
+      const kept = [];
+      let parked = 0;
+      const born = typeof session.createdAt === 'number' ? session.createdAt : null;
+      for (const e of queue) {
+        if (e && typeof e.produce === 'function') { kept.push(e); continue; }
+        const text = typeof e === 'string' ? e : (e && typeof e.text === 'string' ? e.text : '');
+        if (!text) continue;
+        const opts = (e && e.opts) || {};
+        try {
+          parkDelivery(PENDING_DIR, session.name, text, this._nextParkSeq(), opts.parkId || null, false, born, opts.parkKey || null);
+          parked++;
+        } catch (err) {
+          log.error('inject', `re-park of a held inject failed for ${session.name}: ${err.message} — ${text.length} chars dropped`);
+        }
+      }
+      if (parked) log.warn('inject', `re-parked ${parked} held inject(s) for ${session.name} to pending`);
+      return kept;
     }
 
     _flushInjectRun(session, queue) {
