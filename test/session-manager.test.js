@@ -23944,6 +23944,7 @@ async function bootNoticeSeat(t, { dropFirstText = false, submitTakenAfterMs = 1
       set: (partial) => { Object.assign(state, partial); return { ...state }; },
     }),
     INJECT_QUIET_MAXWAIT: 3_600_000,
+    isHumanPtyInput: require('../proxy-util').isHumanPtyInput, draftChunkSignal: require('../proxy-util').draftChunkSignal,
   });
   await bashCreate(p.m, 'lead', null);
   const s = p.getSession('lead');
