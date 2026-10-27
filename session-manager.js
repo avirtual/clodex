@@ -6865,8 +6865,10 @@ function createSessionManager(deps) {
         try { cur = store ? store.get().pendingRebootNotice : null; } catch { cur = null; }
         if (cur && cur.name === target.name && cur.at === notice.at && attempt + 1 < REBOOT_NOTICE_MAX_ATTEMPTS
           && this._rebootNoticeInComposer(target, parkedAt)) {
-          this._clearInjectStuck(target);
+          target._injectStuck = null;
           try { target.pty.write('\r'); } catch {}
+          target.lastSubmitInjected = true;
+          if (target.agentType === 'claude' && target.activityState === 'idle') target._awaitingTurnSince = Date.now();
           log.warn('intent', `reboot notice for ${target.name} unconfirmed ${Math.round((Date.now() - parkedAt) / 1000)}s after park (no turn since) — still unsubmitted in the composer, sent Enter instead of a second copy, attempt ${attempt + 1}/${REBOOT_NOTICE_MAX_ATTEMPTS}`);
           this._armRebootNoticeRetry(target, cur);
           return;
@@ -6881,6 +6883,7 @@ function createSessionManager(deps) {
 
     _rebootNoticeInComposer(target, parkedAt) {
       if (!target.pty || target.io === 'stream') return false;
+      if (this._injectHoldReason(target)) return false;
       const wroteAt = target._rebootNoticeWrittenAt;
       const stuck = target._injectStuck;
       if (!Number.isFinite(wroteAt) || wroteAt < parkedAt) return false;
