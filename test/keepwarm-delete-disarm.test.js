@@ -427,7 +427,7 @@ test('purgeWorkspace drops the reminders of both the live seat it kills and the 
   const recs = new Map([['a', { name: 'a', cwd: '/p', workspaceId: 'ws-1' }], ['ghost', { name: 'ghost', cwd: '/p', workspaceId: 'ws-1' }]]);
   const removed = [];
   const m = mk({
-    getPersistence: () => ({ list: () => [...recs.values()], get: (n) => recs.get(n) || null, remove: (n) => { recs.delete(n); } }),
+    getPersistence: () => ({ list: () => [...recs.values()], get: (n) => recs.get(n) || null, remove: (n) => { recs.delete(n); }, listForWorkspace: (ws) => [...recs.values()].filter((r) => r.workspaceId === ws) }),
     getRemindScheduler: () => ({ removeForAgent: (n) => { removed.push(n); return 1; } }),
     log: QUIET,
   });
