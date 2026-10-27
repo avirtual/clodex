@@ -1798,6 +1798,25 @@ test('seed reconcile: live == shipped with a lagging stamp converges, back onto 
   });
 });
 
+test('seed reconcile: seeding a second file leaves the first file\'s .seed-state.json entry untouched', () => {
+  withSeedDirs(({ userData, registryDir, resourcesDir }) => {
+    const relA = path.join('prompts', 'system', 'lead.md');
+    const relB = path.join('prompts', 'system', 'hand.md');
+    fs.mkdirSync(path.join(resourcesDir, 'prompts', 'system'), { recursive: true });
+    fs.writeFileSync(path.join(resourcesDir, relA), 'A1');
+    initStores(userData, { registryDir, resourcesDir });
+    const before = readSeedState(registryDir);
+    assert.strictEqual(before[relA], sha256(Buffer.from('A1')), 'ENTER: A is stamped after the first seed');
+    assert.strictEqual(before[relB], undefined);
+
+    fs.writeFileSync(path.join(resourcesDir, relB), 'B1');
+    initStores(userData, { registryDir, resourcesDir });
+    const after = readSeedState(registryDir);
+    assert.strictEqual(after[relB], sha256(Buffer.from('B1')), 'B is stamped by the second seed');
+    assert.deepStrictEqual(after[relA], before[relA]);
+  });
+});
+
 // --- t456: the stranded report's CADENCE and CHANNEL ------------------------
 // The measured real-world stranded file is genuine operator config that should
 // NOT be touched, so an unconditional per-launch report is a permanent nag with
