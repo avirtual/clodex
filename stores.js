@@ -687,7 +687,12 @@ function initStores(userDataPath, {
         entry.sessionId = sessionId;
         const hist = (Array.isArray(entry.sessionIds) ? entry.sessionIds : []).filter((id) => id !== sessionId);
         hist.push(sessionId);
-        if (entry.class === 'assistant' && hist.length > SESSION_IDS_CAP) hist.splice(0, hist.length - SESSION_IDS_CAP);
+        if (entry.class === 'assistant' && hist.length > SESSION_IDS_CAP) {
+          const evicted = hist.splice(0, hist.length - SESSION_IDS_CAP);
+          const retired = Array.isArray(entry.retiredSessionIds) ? entry.retiredSessionIds : [];
+          for (const id of evicted) if (!retired.includes(id)) retired.push(id);
+          entry.retiredSessionIds = retired;
+        }
         entry.sessionIds = hist;
         this._save(all, name);
       }

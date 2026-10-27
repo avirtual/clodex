@@ -327,6 +327,23 @@ test('persistence: setSessionId caps an assistant-class history at 20, oldest re
     assert.strictEqual(e.sessionId, 's25');
     assert.deepStrictEqual(e.sessionIds, ['s6', 's7', 's8', 's9', 's10', 's11', 's12', 's13', 's14', 's15',
       's16', 's17', 's18', 's19', 's20', 's21', 's22', 's23', 's24', 's25']);
+    assert.deepStrictEqual(e.retiredSessionIds, ['s1', 's2', 's3', 's4', 's5']);
+  } finally { cleanup(); }
+});
+
+test('persistence: an assistant-class 21st id retires the first; a resumed retired id stays retired and goes live again', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    stores.persistence.upsert({ name: 'a', workspaceId: 'default', class: 'assistant' });
+    for (let i = 1; i <= 20; i++) stores.persistence.setSessionId('a', `s${i}`);
+    assert.strictEqual(stores.persistence.get('a').retiredSessionIds, undefined);
+    stores.persistence.setSessionId('a', 's21');
+    assert.deepStrictEqual(stores.persistence.get('a').retiredSessionIds, ['s1']);
+    stores.persistence.setSessionId('a', 's1');
+    stores.persistence.setSessionId('a', 's22');
+    const e = stores.persistence.get('a');
+    assert.deepStrictEqual(e.retiredSessionIds, ['s1', 's2', 's3']);
+    assert.strictEqual(e.sessionIds.length, 20);
   } finally { cleanup(); }
 });
 
@@ -338,6 +355,7 @@ test('persistence: setSessionId keeps the whole history on a seat without a clas
     const e = stores.persistence.get('a');
     assert.strictEqual(e.sessionIds.length, 25);
     assert.strictEqual(e.sessionIds[0], 's1');
+    assert.strictEqual(e.retiredSessionIds, undefined);
   } finally { cleanup(); }
 });
 

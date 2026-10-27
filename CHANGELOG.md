@@ -23,6 +23,7 @@ blocks a release.
 - Security: the web host and the remote API no longer accept requests from other web origins when they run without a token on loopback. A page open in the operator's browser could previously open a WebSocket to the local web host and run commands, or post a message to a seat. Requests now need a loopback Host and, when a browser sends one, a loopback Origin; JSON endpoints require an application/json body.
 - Clicking an OS notification that has been sitting in Notification Center for more than a minute now opens the Inbox again; a change earlier today made such clicks do nothing.
 - The Tools popover's Apply no longer drops a tool deny that a lower settings layer has locked, matching what the args dialog and the new-session form already did.
+- Sleeping assistants: deleting an assistant now removes all of its conversation transcripts, not only the most recent 20, and the sleeper view shows the full history. Transcripts of assistants built on a CLI other than Claude are reported as untracked rather than silently skipped.
 
 ## 5.146.2 — 2026-10-27
 
