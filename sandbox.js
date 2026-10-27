@@ -1447,7 +1447,7 @@ function createSandbox(deps = {}) {
     const r = await runCompose(['down', '--remove-orphans']);
     if (!r.ok) {
       const gone = dockerUnavailableError(r.stderr);
-      if (gone) { invalidateDetect(); return { ok: false, error: gone, dockerDown: true }; }
+      if (gone) { invalidateDetect(); return { ok: false, error: gone, dockerDown: gone === DOCKER_DOWN_MSG }; }
       return { ok: false, error: r.stderr.trim() || `docker compose down exited ${r.code}` };
     }
     for (const file of [portsRecordPath(), boxPortsRecordPath()]) {
@@ -1733,7 +1733,7 @@ function createSandboxManager(deps = {}) {
     let downError;
     let dockerDown = false;
     try { const d = await inst.down(); if (d && d.ok === false) { downError = d.error; dockerDown = d.dockerDown === true; } }
-    catch (e) { downError = String((e && e.message) || e); dockerDown = Boolean(dockerUnavailableError(downError)); }
+    catch (e) { downError = String((e && e.message) || e); dockerDown = dockerUnavailableError(downError) === DOCKER_DOWN_MSG; }
     if (dockerDown) return { ok: false, error: 'Docker is not running — the container was left in place; start Docker and delete again' };
     try { if (fs.existsSync(inst.srcDir())) await removeWorktree(inst.srcDir()); } catch {}
     if (!downError) {

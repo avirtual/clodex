@@ -1945,6 +1945,18 @@ test('manager: remove() while the Docker daemon is down is refused and keeps the
   assert.ok(fs.existsSync(inst.stateDir()), 'state dir kept');
 });
 
+test('manager: remove() with no docker binary (spawn ENOENT) is not refused and drops the row', async () => {
+  const { mgr, settings, results } = removableProj();
+  await mgr.get('proj').up();
+  assert.ok(settings._state().peers.find((p) => p.id === 'proj'), 'ENTER: proj has a peer row');
+  results.down = { code: 1, stderr: 'spawn docker ENOENT' };
+  const r = await mgr.remove('proj');
+  assert.strictEqual(r.ok, true);
+  assert.ok(r.downError, 'ENTER: down failed');
+  assert.strictEqual(settings._state().boxes.find((b) => b.id === 'proj'), undefined);
+  assert.strictEqual(settings._state().peers.find((p) => p.id === 'proj'), undefined);
+});
+
 test('manager: remove() with a foreign-owner down failure still drops the row (best effort)', async () => {
   const { mgr, settings, results } = removableProj();
   await mgr.get('proj').up();
