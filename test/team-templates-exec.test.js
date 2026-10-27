@@ -26,7 +26,7 @@
 // execCommands grant, which only the operator sets. The subjects below all grant
 // the command first; a def only shapes what an already-granted name does.
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -91,8 +91,6 @@ function watchingFs(dir) {
     appendFileSync: (...a) => fs.appendFileSync(...a),
   };
 }
-
-after(() => { setImmediate(() => process.exit(0)); });
 
 // ── 1. the leaf ─────────────────────────────────────────────────────────────
 

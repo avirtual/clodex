@@ -1,12 +1,10 @@
 'use strict';
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const { createEngine } = require('./lib/engine-isolation');
 const { mkTmpRoot } = require('./lib/tmp-roots');
-
-after(() => { setImmediate(() => process.exit(0)); });
 
 test('engine applySessionArgs without restart refreshes the seat catalog after the grant writes', async () => {
   const tmp = mkTmpRoot('clx-mcpcat-');

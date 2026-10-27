@@ -413,5 +413,4 @@ test('t1703 engine shutdown drops an outstanding waiter: no reply, the result go
 
 after(() => {
   try { engine.shutdown(); } catch {}
-  setImmediate(() => process.exit(0));
 });

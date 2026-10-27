@@ -1,6 +1,6 @@
 'use strict';
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -8,8 +8,6 @@ const path = require('node:path');
 const iso = require('./lib/engine-isolation');
 const { wirescopeEnvGate } = require('../wirescope-supervisor');
 const { mkTmpRoot } = require('./lib/tmp-roots');
-
-after(() => { setImmediate(() => process.exit(0)); });
 
 const HELPER = path.join(__dirname, 'lib', 'engine-isolation.js');
 

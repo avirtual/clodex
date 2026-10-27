@@ -17,15 +17,13 @@
 // clodex home, because the source pin below is satisfied by `res.team` being
 // forever undefined.
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createEngine } = require('./lib/engine-isolation');
 const { createTeamManifest } = require('../team-manifest');
 const { mkTmpRoot } = require('./lib/tmp-roots');
-
-after(() => { setImmediate(() => process.exit(0)); });
 
 const SRC = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
 

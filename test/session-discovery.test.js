@@ -183,5 +183,3 @@ test('readSessionMeta parses only user lines that mention tool_result', () => {
     'ts(): line 0 for first; lines 4,3,2,1,0 for last (only line 0 has a timestamp); then the tool_result line and the truncated one');
 });
 
-const { after } = require('node:test');
-after(() => { setImmediate(() => process.exit(0)); });

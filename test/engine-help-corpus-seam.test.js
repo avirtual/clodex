@@ -1,6 +1,6 @@
 'use strict';
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const { createEngine } = require('./lib/engine-isolation');
@@ -18,10 +18,6 @@ function theEngine() {
   }
   return engine;
 }
-
-after(function exitOnceTheLiveEngineHasNothingLeftToAssert() {
-  setImmediate(() => process.exit(0));
-});
 
 test('the engine bag exposes getHelpCorpus as a function', () => {
   const engine = theEngine();

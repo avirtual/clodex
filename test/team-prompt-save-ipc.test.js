@@ -10,7 +10,7 @@
 // property that keeps a typo in a save from minting a team. Same rule as the
 // template twin in team-template-save-ipc.test.js.
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -192,5 +192,3 @@ test('a stem owned by BOTH the team and the library is listed once, as the team\
   assert.deepStrictEqual(res.teamOwned, ['dup'],
     'and it is labelled team-owned, since that is the file a seat would read');
 });
-
-after(() => { setImmediate(() => process.exit(0)); });

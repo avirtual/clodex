@@ -1,6 +1,6 @@
 'use strict';
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const { createEngine } = require('./lib/engine-isolation');
@@ -146,8 +146,6 @@ test('t1172: applySessionArgs accepts io:stream on a codex seat', async () => {
   await eng.applySessionArgs('io-codex', { extraArgs: [], restart: false, io: 'stream' }, 'default');
   assert.strictEqual(eng.stores.persistence.get('io-codex').io, 'stream');
 });
-
-after(() => { setImmediate(() => process.exit(0)); });
 
 const MODEL_ENTRY = (name, io = 'stream') => ({ name, type: 'claude', cwd: '/tmp', workspaceId: 'default', sessionId: 's-1', io, extraArgs: ['--model', 'claude-haiku-4-5', '--verbose'] });
 const DIALOG_PATCH = (extraArgs, extra = {}) => ({

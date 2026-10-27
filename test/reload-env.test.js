@@ -18,7 +18,7 @@
 // deny-key case below is entirely inside that merge). The cost is a heavier
 // harness; the ENTER assertions below are what keep it honest.
 
-const { test, after, mock } = require('node:test');
+const { test, mock } = require('node:test');
 const assert = require('node:assert');
 const os = require('node:os');
 const fs = require('node:fs');
@@ -221,5 +221,3 @@ test('a cold respawn whose old process never exits does not leave the seat refus
     stop('r4');
   }
 });
-
-after(() => { setImmediate(() => process.exit(0)); });

@@ -1,6 +1,6 @@
 'use strict';
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const { createEngine } = require('./lib/engine-isolation');
@@ -73,5 +73,3 @@ test('a Codex seat: a plugin residue server on the roster is not a leak; one out
   const [b] = await fetchTwice(bare);
   assert.deepStrictEqual(b.data.clodex_mcp.leaks, ['jira']);
 });
-
-after(() => { setImmediate(() => process.exit(0)); });

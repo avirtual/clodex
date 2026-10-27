@@ -1,6 +1,6 @@
 'use strict';
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -43,8 +43,6 @@ test('seams.noSeed throws outside node --test', () => {
     else process.env.NODE_TEST_CONTEXT = saved;
   }
 });
-
-after(() => { setImmediate(() => process.exit(0)); });
 
 test('t1927: with no openRemoteWindow seam, a remote window falls through to openExternal', () => {
   const tmp = mkTmpRoot('clx-engine-seams-');
