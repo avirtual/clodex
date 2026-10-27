@@ -1718,8 +1718,13 @@ function initStores(userDataPath, {
       kept.sort((a, b) => (b.rec.createdAt - a.rec.createdAt) || (b.i - a.i));
       return { items: kept.slice(0, n).map((e) => e.rec), hasMore: kept.length > n };
     },
-    add({ from, workspaceId = null, body = '' }) {
+    add({ from, workspaceId = null, body = '', sourceId = null }) {
       const all = this._load();
+      const src = typeof sourceId === 'string' && sourceId ? sourceId : null;
+      if (src) {
+        const seen = all.find((n) => n.sourceId === src);
+        if (seen) return { ...seen, dup: true };
+      }
       const id = this._mintId(all);
       const rec = {
         id, from,
@@ -1727,6 +1732,7 @@ function initStores(userDataPath, {
         body: String(body == null ? '' : body),
         createdAt: Date.now(),
         readAt: null,
+        ...(src ? { sourceId: src } : {}),
       };
       all.push(rec);
       if (!this._save(all)) throw new Error('notifications.json could not be written');

@@ -54,6 +54,7 @@ function mkMove({
   caps = ['dm', 'import'], needsUpgrade = false, peer = true,
   reminderRows = [{ id: 'r1', agent: 'seat', kind: 'in', spec: 'in 1h', body: 'ping' }],
   createThrows = null, seed = true, chunks = 1, beginRefusal = null, beginGate = null,
+  probe = null,
 } = {}) {
   const root = mkTmpRoot('clodex-movepeer-');
   const claudeDir = mkTmpRoot('clodex-movepeer-claude-');
@@ -78,8 +79,10 @@ function mkMove({
   const shipped = [];
   const begun = [];
   const aborted = [];
+  const probed = [];
   let openStaging = null;
   const conn = {
+    sessionGet: async (n) => { probed.push(n); return probe; },
     status: () => ({ id: 'p1', label: 'murmurfi', caps, needsUpgrade }),
     importBegin: async (arg) => {
       begun.push(arg);
@@ -163,7 +166,7 @@ function mkMove({
     }
   };
 
-  return { m, root, claudeDir, store, persistence, created, shipped, events, kills, begun, aborted };
+  return { m, root, claudeDir, store, persistence, created, shipped, events, kills, begun, aborted, probed };
 }
 
 function seedLive(m, name) {
@@ -670,4 +673,50 @@ test('no progress is emitted when the move is refused', async () => {
   const out = await m.moveToPeer('seat', 'p1', {});
   assert.strictEqual(out.error, 'peer murmurfi does not accept moved sessions');
   assert.deepStrictEqual(events.filter((e) => e.channel === 'session:move-progress'), []);
+});
+
+const LOST = { ok: false, unreached: true, error: 'socket hang up' };
+
+test('a lost commit reply that the probe finds on the peer takes the success arm and respawns nothing', async () => {
+  const { m, store, created, probed } = mkMove({
+    reply: LOST, probe: { ok: true, session: { name: 'seat', status: 'running' } },
+  });
+  seedLive(m, 'seat');
+  const out = await m.moveToPeer('seat', 'p1', { farCwd: FAR_CWD });
+  assert.deepStrictEqual(out, {
+    ok: true, name: 'seat', peer: 'murmurfi', farCwd: FAR_CWD, sessionId: SESSION_ID, dropped: [],
+  });
+  assert.deepStrictEqual(probed, ['seat']);
+  assert.strictEqual(created.length, 0, 'the seat runs on the peer, so it is not respawned here');
+  assert.strictEqual(store[0].movedTo.peerLabel, 'murmurfi');
+  assert.strictEqual(store[0].archivedAt, 4242);
+});
+
+test('a lost commit reply that the probe answers 404 respawns locally as a refusal does', async () => {
+  const { m, store, created, probed } = mkMove({
+    reply: LOST, probe: { ok: false, error: 'Session not found' },
+  });
+  seedLive(m, 'seat');
+  const out = await m.moveToPeer('seat', 'p1', { farCwd: FAR_CWD });
+  assert.deepStrictEqual(probed, ['seat']);
+  assert.strictEqual(out.respawned, true);
+  assert.strictEqual(out.unknown, undefined);
+  assert.strictEqual(created.length, 1, 'the peer said no, so the seat comes back here');
+  assert.strictEqual(store[0].archivedAt, null);
+});
+
+test('a lost commit reply with an unreachable probe archives the local copy and respawns nothing', async () => {
+  const { m, store, created, probed } = mkMove({
+    reply: LOST, probe: { ok: false, unreached: true, error: 'timeout' },
+  });
+  seedLive(m, 'seat');
+  const out = await m.moveToPeer('seat', 'p1', { farCwd: FAR_CWD });
+  assert.deepStrictEqual(probed, ['seat']);
+  assert.deepStrictEqual(out, {
+    ok: false, kept: true, unknown: true, archived: true, error: 'socket hang up',
+    peer: 'murmurfi', type: 'claude', cwd: SRC_CWD, team: null,
+  });
+  assert.strictEqual(created.length, 0, 'a respawn here could double the seat');
+  assert.strictEqual(store[0].archivedAt, 4242);
+  assert.deepStrictEqual(store[0].movedTo, BASE.movedTo, 'no movedTo stamp for an unknown outcome');
 });

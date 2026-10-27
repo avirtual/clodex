@@ -423,6 +423,7 @@ test('importShip bails without a commit when a file shrinks between stat and rea
     const asks = [];
     const puts = [];
     conn._ask = async (method, p) => { asks.push([method, p]); return { ok: true, installed: true }; };
+    conn._askMarked = conn._ask;
     conn._askRaw = async (method, p, buf, headers) => { puts.push(headers['Content-Range']); return { ok: true }; };
     let out;
     try {
@@ -729,4 +730,34 @@ test('an install that fails before anything lands aborts the staging so the same
     } finally { conn.stop(); }
     assert.strictEqual(w.createCalls.length, 0);
   });
+});
+
+test('importShip: a commit lost on the wire is unreached and sends no DELETE; an answered refusal still DELETEs', async () => {
+  const rows = [
+    { commit: 'drop', want: { ok: false, unreached: true, error: 'socket hang up' },
+      wantSeen: ['PUT /api/import/0123456789abcdef/file/transcript.jsonl', 'POST /api/import/0123456789abcdef/commit'] },
+    { commit: 'refuse', want: { ok: false, error: 'far: no' },
+      wantSeen: ['PUT /api/import/0123456789abcdef/file/transcript.jsonl', 'POST /api/import/0123456789abcdef/commit', 'DELETE /api/import/0123456789abcdef'] },
+  ];
+  for (const row of rows) {
+    const seen = [];
+    const server = http.createServer((req, res) => {
+      seen.push(`${req.method} ${req.url}`);
+      req.resume();
+      req.on('end', () => {
+        if (req.url.endsWith('/commit') && row.commit === 'drop') return req.socket.destroy();
+        const body = req.url.endsWith('/commit') ? { ok: false, error: 'far: no' } : { ok: true };
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(body));
+      });
+    });
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    const conn = new PeerConnection({ id: 'box', label: 'boxy', url: `http://127.0.0.1:${server.address().port}`, emit: () => {} });
+    let out;
+    try {
+      out = await conn.importShip({ id: '0123456789abcdef', files: [{ relPath: 'transcript.jsonl', bytes: Buffer.from('{}\n') }] });
+    } finally { server.close(); }
+    assert.deepStrictEqual(out, row.want);
+    assert.deepStrictEqual(seen, row.wantSeen);
+  }
 });

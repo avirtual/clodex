@@ -797,6 +797,14 @@ class PeerConnection {
     });
   }
 
+  _askMarked(method, path, payload, timeout = REQUEST_TIMEOUT_MS) {
+    return new Promise((resolve) => {
+      this._request(method, path, payload, (err, body) => {
+        resolve(err ? { ok: false, unreached: true, error: err.message } : body || { ok: false, error: 'no response' });
+      }, timeout);
+    });
+  }
+
   _askRaw(method, path, buffer, headers) {
     return new Promise((resolve) => {
       this._requestRaw(method, path, buffer, headers, (err, body) => {
@@ -875,9 +883,14 @@ class PeerConnection {
         if (fd != null) { try { fs.closeSync(fd); } catch {} }
       }
     }
-    const done = await this._ask('POST', `/api/import/${id}/commit`, null, IMPORT_TIMEOUT_MS);
+    const done = await this._askMarked('POST', `/api/import/${id}/commit`, null, IMPORT_TIMEOUT_MS);
+    if (done.unreached) return done;
     if (!done.ok && !done.installed) return bail(done);
     return done;
+  }
+
+  sessionGet(name) {
+    return this._askMarked('GET', `/api/sessions/${encodeURIComponent(name)}`, null);
   }
 
 // withoutExecGrants is the client-side mirror of the server backstop — exec
@@ -953,7 +966,7 @@ class PeerConnection {
       const fresh = resp.notes.filter((n) => n && n.readAt == null);
       if (!fresh.length) return done(resp);
       this._emit('peer-inbox', this.id, fresh);
-      const ids = fresh.filter((n) => n.id != null).map((n) => String(n.id));
+      const ids = fresh.filter((n) => n.id != null && n.stored === true).map((n) => String(n.id));
       if (!ids.length) return done(resp);
       let left = ids.length;
       for (const id of ids) {

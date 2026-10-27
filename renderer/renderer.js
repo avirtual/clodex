@@ -1109,6 +1109,15 @@ function moveSessionToPeerWithDialog(name, peerId, peerLabel, cwd, envKeys) {
       showToast(`${name} moved to ${res.peer} — archived here as a backup${dropped}`, { name, duration: 10000 });
       return res;
     }
+    if (res && res.unknown) {
+      removeSession(name, { keepPersisted: true });
+      const { account, fixFor, ...archived } = snap;
+      addArchivedSessionToSidebar({ ...archived, ...(fixFor ? { fixFor } : {}), archivedAt: Date.now() });
+      refreshSidebarView();
+      showToast(`Move to ${peerLabel} failed: ${peerLabel} did not answer the commit — ${name} is archived here; check the peer before restarting it`,
+        { kind: 'error', duration: 10000, name });
+      return res;
+    }
     if (res && res.kept) {
       if (res.respawned) {
         rebuildLiveRow(name, snap, { type: res.type, cwd: res.cwd, team: res.team });

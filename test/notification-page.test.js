@@ -214,3 +214,18 @@ test('markReplied: false for an unknown id, no event', () => {
     assert.deepStrictEqual(events, []);
   } finally { cleanup(); }
 });
+
+test('add: a repeated sourceId returns the stored record marked dup and emits nothing', () => {
+  const { notifications, cleanup } = freshNotifications([note(1)]);
+  try {
+    const seen = [];
+    notifications.onChange((p) => seen.push(p));
+    const first = notifications.add({ from: 'lead@box', body: 'x', sourceId: 'box:n7' });
+    const second = notifications.add({ from: 'lead@box', body: 'x', sourceId: 'box:n7' });
+    assert.strictEqual(first.sourceId, 'box:n7');
+    assert.strictEqual(first.dup, undefined);
+    assert.deepStrictEqual(second, { ...first, dup: true });
+    assert.deepStrictEqual(notifications.list().map((n) => n.sourceId), [undefined, 'box:n7']);
+    assert.deepStrictEqual(seen.map((p) => p.kind), ['added']);
+  } finally { cleanup(); }
+});

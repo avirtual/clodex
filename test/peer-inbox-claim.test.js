@@ -115,7 +115,7 @@ function waitFor(label, pred, ms = 5000) {
   });
 }
 
-async function withPeer(fn, connOpts = {}, seed = null) {
+async function withPeer(fn, { storeNote = () => true, ...connOpts } = {}, seed = null) {
   const { server, state } = inboxServer();
   const port = await listen(server);
   if (seed) state.notes = seed.map((n) => ({ ...n }));
@@ -124,7 +124,10 @@ async function withPeer(fn, connOpts = {}, seed = null) {
     id: 'box', label: 'box', url: `http://127.0.0.1:${port}`, selfLabel: SELF,
     emit: (channel, ...args) => {
       emits.push([channel, ...args]);
-      if (channel === 'peer-inbox') state.order.push('emit');
+      if (channel === 'peer-inbox') {
+        state.order.push('emit');
+        for (const n of args[1]) if (storeNote(n)) n.stored = true;
+      }
     },
     helloIntervalMs: 60000,
     ...connOpts,
@@ -366,4 +369,18 @@ test('the hello tick claims on its own — a note raised while the SSE feed was 
     await waitFor('it to be read-marked on the box', () => state.reads.length === 1);
     assert.deepStrictEqual(inboxEmits(emits)[0][2].map((n) => n.id), ['n1']);
   }, { claimInbox: true }, [NOTES[0]]);
+});
+
+test('a note the receiver could not store stays unread on the box — only the stored one is read-marked', async () => {
+  await withPeer(async (emits, state) => {
+    state.notes = NOTES.map((n) => ({ ...n }));
+    doorbell(state);
+    await waitFor('the stored note read-marked', () => state.reads.length >= 1);
+    const sessionsBefore = state.sessionGets;
+    state.streams[0].write('event: sessions\ndata: {}\n\n');
+    await waitFor('the trailing sessions frame to be consumed', () => state.sessionGets > sessionsBefore);
+    assert.deepStrictEqual(inboxEmits(emits)[0][2].map((n) => n.id), ['n1', 'n2']);
+    assert.deepStrictEqual(state.reads, ['n1']);
+    assert.deepStrictEqual(state.notes.map((n) => [n.id, n.readAt]), [['n1', 5150], ['n2', null]]);
+  }, { claimInbox: true, storeNote: (n) => n.id === 'n1' });
 });

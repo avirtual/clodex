@@ -4358,7 +4358,7 @@ function createSessionManager(deps) {
         let lastRel = null;
         let lastSent = 0;
         let fileIndex = 0;
-        const out = await conn.importShip({
+        let out = await conn.importShip({
           id: stagingId,
           files,
           onProgress: ({ relPath, sent }) => {
@@ -4367,6 +4367,15 @@ function createSessionManager(deps) {
             progress(relPath === 'transcript.jsonl' ? 'transcript' : 'seat', doneBytes + sent, fileIndex);
           },
         });
+
+        let probeUnreached = false;
+        if (out && out.unreached) {
+          const probe = await conn.sessionGet(name);
+          if (probe && probe.ok && probe.session) {
+            log.info('peer', `commit reply lost; ${name} confirmed on ${peerLabel} by probe`);
+            out = { ok: true, dropped: [] };
+          } else if (probe && probe.unreached) probeUnreached = true;
+        }
 
         if (out && out.ok) {
           progress('commit', totalBytes, files.length);
@@ -4387,6 +4396,14 @@ function createSessionManager(deps) {
         }
 
         const farError = (out && out.error) || 'peer refused the import';
+        if (probeUnreached) {
+          getPersistence().setArchived(name, true);
+          return {
+            ok: false, kept: true, unknown: true, archived: true, error: farError,
+            peer: peerLabel,
+            type: entry.type, cwd: entry.cwd, team: this.teamNameOf(name, entry.cwd),
+          };
+        }
         if (!s) {
           return {
             ok: false, kept: true, error: farError,
@@ -8640,9 +8657,17 @@ function createSessionManager(deps) {
         const from = `${note.from || 'peer'}@${origin}`;
         let rec;
         try {
-          rec = store.add({ from, workspaceId: null, body: note.body });
+          rec = store.add({
+            from, workspaceId: null, body: note.body,
+            ...(note.id != null ? { sourceId: `${origin}:${note.id}` } : {}),
+          });
         } catch (e) {
           log.error('peer', `claimed note from ${from} NOT stored: ${(e && e.message) || e}`);
+          continue;
+        }
+        note.stored = true;
+        if (rec && rec.dup) {
+          log.info('peer', `claimed note from ${from} already stored as ${rec.id}`);
           continue;
         }
         this._raiseNote(from, note.body);
