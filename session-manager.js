@@ -3683,7 +3683,7 @@ function createSessionManager(deps) {
     async kill(name, { endHold = false } = {}) {
       const s = this.sessions.get(name);
       if (!s) return;
-      if (endHold) this._disarmHoldFor(name, this._holdSidFor(name));
+      if (endHold) this.endHold(name);
       log.info('session', `kill ${name} (user-initiated) pid=${this._procPid(s)}`);
       s._userKilled = true;
       this._scratchCloneOnExit(s);
@@ -3775,7 +3775,7 @@ function createSessionManager(deps) {
       const s = this.sessions.get(name);
       if (!s) return;
       log.info('session', `archive ${name} pid=${this._procPid(s)}`);
-      this._disarmHoldFor(name, this._holdSidFor(name));
+      this.endHold(name);
       this._notifyComposition(s, 'archived');
       getPersistence().setArchived(name, true);
       s._archived = true;

@@ -11,7 +11,7 @@
 // library to team when Gather is applied, which is the only reason the list is
 // derived from the plan rather than from the manifest.
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -438,9 +438,6 @@ test('t702 wiring: the popover loads the uses map on every refresh and renders a
     'the templates row is labelled `template`, singular like the other three');
   assert.ok(/textContent = 'uses nothing'/.test(src), 'and an empty list says so in words');
 });
-
-// createEngine starts background timers that keep the loop alive.
-after(() => { setImmediate(() => process.exit(0)); });
 
 test('t702 wiring GUARD: a FAILED plan renders no uses block, rather than "uses nothing" everywhere', () => {
   // GUARD PIN, and the one place the wire can state a falsehood. An empty Map

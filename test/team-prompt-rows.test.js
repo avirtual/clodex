@@ -222,10 +222,6 @@ test('a team prompt row offers no Inject — that is a library affordance', () =
     'no Inject button on a team row: Inject pastes into the active terminal, which the team dir has nothing to do with');
 });
 
-// createEngine starts background timers that keep the loop alive.
-const { after } = require('node:test');
-after(() => { setImmediate(() => process.exit(0)); });
-
 test('a prompt kind outside PROMPT_KINDS lists no team rows — the team half is confined like the library half', () => {
   const { tmp, registryDir, eng } = mkEngine('rb-f5-', { teams: { x: { system: { a: 'body' } } } });
   const outside = path.join(tmp, 'outside');

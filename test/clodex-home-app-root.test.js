@@ -12,7 +12,7 @@
 // So every case below sets CLODEX_HOME to a tree that is not the injected
 // REGISTRY_DIR and asserts the injected one still wins.
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const os = require('node:os');
 const fs = require('node:fs');
@@ -207,6 +207,3 @@ test('main.js moves userData to CLODEX_DATA_DIR before the single-instance lock'
   assert.ok(/path\.resolve\(process\.env\.CLODEX_DATA_DIR\)/.test(headless),
     'the headless host must resolve it too, or the two hosts disagree on a relative value');
 });
-
-// createEngine starts background timers that keep the loop alive.
-after(() => { setImmediate(() => process.exit(0)); });

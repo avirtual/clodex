@@ -25,7 +25,7 @@
 // os.homedir() honours $HOME (including a runtime mutation) and only falls back
 // to the passwd entry when it is unset, so faking it here is sufficient.
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const os = require('node:os');
 const fs = require('node:fs');
@@ -258,9 +258,6 @@ test('initStores refuses to seed the home root under node --test whatever the sp
     }
   });
 });
-
-// createEngine starts background timers that keep the loop alive.
-after(() => { setImmediate(() => process.exit(0)); });
 
 // Deliberately absent: any assertion over the operator's REAL ~/.clodex. It
 // cannot be made stable while the app that owns that tree is running, and an
