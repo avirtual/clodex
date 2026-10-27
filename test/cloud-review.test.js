@@ -233,7 +233,7 @@ function runPoller({ hitAfter, report, env, ghFails = 0, lsSleep = 0, ctAges = n
       env: {
         ...process.env, HOME: dir, CLODEX_GH_BIN: gh, CLODEX_GIT_BIN: git, CLODEX_REVIEW_TEST: '1',
         CLODEX_REVIEW_POLL_S: '0', CLODEX_REVIEW_TIMEOUT_S: '7200', CLODEX_REVIEW_RETRY_S: '0',
-        ...(perlRec ? { PATH: `${binDir}:${process.env.PATH}` } : {}), ...env,
+        ...(perlRec ? { PATH: `${binDir}:${process.env.PATH}` } : {}), ...(windowMs ? { TMPDIR: dir } : {}), ...env,
       },
     });
     if (res.error && !(windowMs && res.error.code === 'ETIMEDOUT')) throw res.error;
