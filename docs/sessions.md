@@ -540,10 +540,10 @@ so the flag only suppresses a redundant second remove — it preserves nothing. 
 killed agent's record is gone.
 
 **Every record-dropper**, sidebar or not: `kill()` itself, `destroy()`, Delete
-Session…, Delete Workspace… (its records with no live session; a seat live in
-another workspace keeps its record), the archived and failed rows' ✕ (`forgetSession`),
-team-retire with discard, `sweepReviewerGraveyard`, the team-review
-spawn-failure rollback, the seat-import spawn-failure rollback
+Session…, Delete Workspace… (the seats it kills and its saved rows; a seat live
+in another workspace keeps its record), the archived and failed rows' ✕
+(`forgetSession`), team-retire with discard, `sweepReviewerGraveyard`, the
+team-review spawn-failure rollback, the seat-import spawn-failure rollback
 (remote-wiring.js, drops only when the seat is not live), and both ticket-seat
 spawn-failure rollbacks in `_spawnTicketSeat` (team-tickets.js: the
 createWorktree-failed arm, and the create()-threw catch, which drops only when
