@@ -49,8 +49,8 @@ async function startHost({ registerHandlers, token, sessions, stores, userDataPa
 // Minimal WS client: a message queue + a `next()` that awaits the next frame.
 //
 // Connect and bind both on 127.0.0.1, never `localhost`.
-function connect(port, { token } = {}) {
-  const ws = new WebSocket(`ws://127.0.0.1:${port}${token ? `?token=${encodeURIComponent(token)}` : ''}`);
+function connect(port, { token, headers } = {}) {
+  const ws = new WebSocket(`ws://127.0.0.1:${port}${token ? `?token=${encodeURIComponent(token)}` : ''}`, headers ? { headers } : undefined);
   const queue = [];
   const waiters = [];
   ws.on('message', (raw) => {
@@ -75,9 +75,9 @@ function connect(port, { token } = {}) {
 }
 
 // Raw HTTP GET → { status, body }, for the token gate + the /healthz exemption.
-function httpGet(port, pathname) {
+function httpGet(port, pathname, headers) {
   return new Promise((resolve, reject) => {
-    http.get({ host: '127.0.0.1', port, path: pathname }, (res) => {
+    http.get({ host: '127.0.0.1', port, path: pathname, headers }, (res) => {
       let body = '';
       res.on('data', (c) => { body += c; });
       res.on('end', () => resolve({ status: res.statusCode, body }));
@@ -191,6 +191,37 @@ test('/healthz is an unauthenticated 200 even when a token gates everything else
     // Any other route still demands the token — the exemption is /healthz-only.
     const gated = await httpGet(port, '/');
     assert.equal(gated.status, 401, 'the static bundle stays gated');
+  } finally { host.close(); }
+});
+
+test('token-less host: a foreign-Origin upgrade is destroyed; a loopback-Origin hello still gets welcome', async () => {
+  const { host, port } = await startHost();
+  try {
+    const foreign = connect(port, { headers: { Origin: 'https://evil.example' } });
+    await assert.rejects(foreign.open());
+    const ok = connect(port, { headers: { Origin: `http://127.0.0.1:${port}` } });
+    const welcome = await helloWelcome(ok, { workspaceId: 'default' });
+    assert.equal(welcome.t, 'welcome');
+    ok.close();
+  } finally { host.close(); }
+});
+
+test('token-less host: a GET whose Host is not loopback is a 403; /healthz stays exempt', async () => {
+  const { host, port } = await startHost();
+  try {
+    assert.deepStrictEqual(await httpGet(port, '/', { Host: 'evil.example' }), { status: 403, body: 'forbidden origin' });
+    assert.equal((await httpGet(port, '/', { Host: `localhost:${port}`, Origin: 'https://evil.example' })).status, 403);
+    assert.deepStrictEqual(await httpGet(port, '/healthz', { Host: 'evil.example' }), { status: 200, body: 'ok' });
+  } finally { host.close(); }
+});
+
+test('token-configured host: a valid token with a foreign Origin still welcomes (the token is the boundary)', async () => {
+  const { host, port } = await startHost({ token: 'secret' });
+  try {
+    const c = connect(port, { token: 'secret', headers: { Origin: 'https://evil.example' } });
+    const welcome = await helloWelcome(c, { workspaceId: 'default', token: 'secret' });
+    assert.equal(welcome.t, 'welcome');
+    c.close();
   } finally { host.close(); }
 });
 

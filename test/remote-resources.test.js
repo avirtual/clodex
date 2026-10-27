@@ -229,7 +229,7 @@ function rawPostStatus(port, pathname, size) {
     sock.on('data', (d) => { got += d; });
     sock.on('error', () => {});
     sock.on('close', () => resolve(got.split('\r\n')[0]));
-    sock.write(`POST ${pathname} HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: ${size}\r\n\r\n`);
+    sock.write(`POST ${pathname} HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nContent-Type: application/json\r\nContent-Length: ${size}\r\n\r\n`);
     const chunk = Buffer.alloc(16384, 120);
     const pump = () => {
       while (!got && sent < size) {

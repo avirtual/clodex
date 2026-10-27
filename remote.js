@@ -7,7 +7,7 @@ const path = require('path');
 
 const crypto = require('crypto');
 const { relayVersionOk, isQualifiedSender, isDoneTaskEnvelope, isSandboxEnvelope } = require('./relay-protocol');
-const { makeTokenGate, isLoopbackHost } = require('./auth-token');
+const { makeTokenGate, isLoopbackHost, originRefusal } = require('./auth-token');
 const { BOX_ID_RE } = require('./sandbox');
 const { maskSecrets } = require('./log-mask');
 const { IMPORT_CHUNK_MAX } = require('./seat-import');
@@ -702,6 +702,12 @@ class RemoteServer {
       res.end('Refusing to serve: bound to a non-loopback address with no CLODEX_REMOTE_TOKEN set. Set CLODEX_REMOTE_TOKEN, or CLODEX_REMOTE_INSECURE=1 to override.');
       return false;
     }
+    const failed = this._gate.configured ? null : originRefusal(req);
+    if (failed) {
+      res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(`forbidden: ${failed} header is not this loopback host`);
+      return false;
+    }
     if (!this._gate.check(this._gate.fromReq(req))) {
       res.writeHead(401, {
         'Content-Type': 'text/plain; charset=utf-8',
@@ -755,6 +761,7 @@ class RemoteServer {
 
   _handleQuery(name, req, res) {
     if (!this._query) return this._json(res, 501, { ok: false, error: 'query not available' });
+    if (!this._jsonBody(req, res)) return;
     return this._readBody(req, res, (body) => {
       let msg;
       try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
@@ -849,6 +856,7 @@ class RemoteServer {
   }
 
   _handleDm(name, req, res) {
+    if (!this._jsonBody(req, res)) return;
     return this._readBody(req, res, (body) => {
       let msg;
       try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
@@ -900,6 +908,7 @@ class RemoteServer {
 
   _handleRestartSession(name, req, res) {
     if (!this._restartSession) return this._json(res, 501, { ok: false, error: 'restart not available' });
+    if (!this._jsonBody(req, res)) return;
     return this._readBody(req, res, (body) => {
       let msg = {};
       if (body) { try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); } }
@@ -1675,6 +1684,12 @@ class RemoteServer {
     this._sseRaw(req, res);
     this._clients.add(res);
     req.on('close', () => this._clients.delete(res));
+  }
+
+  _jsonBody(req, res) {
+    if (/^application\/json\b/i.test(String(req.headers['content-type'] || ''))) return true;
+    this._json(res, 415, { ok: false, error: 'Content-Type must be application/json' });
+    return false;
   }
 
   _readBody(req, res, cb, max = MAX_BODY) {
