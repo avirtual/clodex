@@ -162,7 +162,7 @@ function launchWithGit(lsHit) {
     execFileSync('mkfifo', [sync]);
     let out;
     try {
-      out = runScript(['v1.0.0', 'v1.1.0'], { CLODEX_CLAUDE_BIN: stub, HOME: dir, CLODEX_GIT_BIN: git });
+      out = runScript(['v1.0.0', 'v1.1.0'], { CLODEX_CLAUDE_BIN: stub, HOME: dir, CLODEX_GIT_BIN: git, CLODEX_REVIEW_POLLER_BIN: 'true' });
       execFileSync('cat', [sync], { encoding: 'utf-8', timeout: FIFO_BOUND_MS });
       return { out, calls: fs.readFileSync(calls, 'utf-8').split('\n').filter(Boolean) };
     } finally {
@@ -190,7 +190,7 @@ test('cloud-review: with no claude/review-<tag> on origin the launcher deletes n
   assert.doesNotMatch(out, /removed stale/);
 });
 
-function runPoller({ hitAfter, report, env, ghFails = 0, lsSleep = 0, ctAges = null, perlRec = false }) {
+function runPoller({ hitAfter, report, env, ghFails = 0, lsSleep = 0, ctAges = null, perlRec = false, windowMs = 0 }) {
   const dir = mkTmpRoot('clodex-cloud-review-post-');
   const calls = path.join(dir, 'calls');
   const count = path.join(dir, 'count');
@@ -228,14 +228,15 @@ function runPoller({ hitAfter, report, env, ghFails = 0, lsSleep = 0, ctAges = n
   try {
     const res = spawnSync('bash', [POST, 'v1.1.0'], {
       encoding: 'utf-8',
-      timeout: FIFO_BOUND_MS,
+      timeout: windowMs || FIFO_BOUND_MS,
+      ...(windowMs ? { stdio: 'ignore', killSignal: 'SIGKILL' } : {}),
       env: {
-        ...process.env, HOME: dir, CLODEX_GH_BIN: gh, CLODEX_GIT_BIN: git,
+        ...process.env, HOME: dir, CLODEX_GH_BIN: gh, CLODEX_GIT_BIN: git, CLODEX_REVIEW_TEST: '1',
         CLODEX_REVIEW_POLL_S: '0', CLODEX_REVIEW_TIMEOUT_S: '7200', CLODEX_REVIEW_RETRY_S: '0',
         ...(perlRec ? { PATH: `${binDir}:${process.env.PATH}` } : {}), ...env,
       },
     });
-    if (res.error) throw res.error;
+    if (res.error && !(windowMs && res.error.code === 'ETIMEDOUT')) throw res.error;
     const body = fs.existsSync(path.join(dir, 'body')) ? fs.readFileSync(path.join(dir, 'body'), 'utf-8') : null;
     const logFile = path.join(dir, '.clodex', 'logs', 'cloud-review-v1.1.0.log');
     const log = fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf-8') : '';
@@ -307,11 +308,25 @@ test('cloud-review-post: a hung git ls-remote is cut off at CALL_S and the timeo
 });
 
 test('cloud-review-post: a report committed before the poller started is ignored once and the next fresh one is filed', () => {
-  const { out, calls, body } = runPoller({ hitAfter: 1, ctAges: [1000, 0] });
-  assert.strictEqual(calls.filter((c) => c.startsWith('git log -1 --format=%ct refs/clodex-review/v1.1.0')).length, 2, calls.join('\n'));
+  const { out, calls, body } = runPoller({ hitAfter: 1, ctAges: [1000, 1000, 0] });
+  assert.strictEqual(calls.filter((c) => c.startsWith('git log -1 --format=%ct refs/clodex-review/v1.1.0')).length, 3, calls.join('\n'));
   assert.strictEqual(calls.filter((c) => c.startsWith('gh [issue] [create]')).length, 1, calls.join('\n'));
-  assert.strictEqual(body, 'hit 2\n');
+  assert.strictEqual(body, 'hit 3\n');
   assert.strictEqual(out.split('\n').filter((l) => l === 'cloud-review-post: ignoring stale report abc123').length, 1, out);
+});
+
+test('cloud-review-post: a branch holding only a stale report at the timeout opens NO REPORT naming that sha', () => {
+  const { calls, body } = runPoller({ hitAfter: 1, ctAges: [1000], env: { CLODEX_REVIEW_TIMEOUT_S: '0' } });
+  assert.ok(calls.some((c) => c.startsWith('gh [issue] [create] [-R] [avirtual/clodex] [-t] [Release review v1.1.0: NO REPORT]')), calls.join('\n'));
+  assert.match(body, /held only report abc123, committed before this run/);
+  assert.doesNotMatch(body, /^No branch/);
+});
+
+test('cloud-review-post: without the test flag POLL_S=0 is clamped, so a 2s window sees at most one ls-remote', () => {
+  const { calls } = runPoller({ hitAfter: 0, windowMs: 2000, env: { CLODEX_REVIEW_TEST: '' } });
+  const ls = calls.filter((c) => c.startsWith('git ls-remote origin refs/heads/claude/review-v1.1.0'));
+  assert.ok(ls.length >= 1, 'ENTER: the poller reached ls-remote\n' + calls.join('\n'));
+  assert.ok(ls.length <= 1, `${ls.length} ls-remote calls in 2s`);
 });
 
 test('cloud-review-post: CALL_S=0 is clamped to 60 rather than reaching alarm as 0', () => {
