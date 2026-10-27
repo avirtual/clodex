@@ -34,6 +34,9 @@ blocks a release.
 - Exec payload validation no longer accepts inherited property names such as `constructor` or `__proto__` as declared keys.
 - Messages held behind a permission dialog are no longer force-typed into the dialog after five minutes, which could answer it; they wait in the seat's pending mail until the dialog closes.
 - Messages held while a seat was busy or showing a dialog are re-parked to its pending mail when the seat exits, instead of being lost while the sender was told they were delivered.
+- Deploy: the node deploy script no longer leaves ui-settings.json (which holds peer tokens) world-readable while the later steps run or when one of them fails.
+- publish-image.sh refuses to publish a version whose tag is not checked out, and moves `:latest` only when publishing the newest tag, so a manual republish can no longer overwrite a released image with newer code.
+- Helm: a non-default `--port` now reaches the engine, so the pod goes Ready; the chart also persists the Codex and Muse credential homes across pod reschedules.
 
 ## 5.146.2 — 2026-10-27
 
