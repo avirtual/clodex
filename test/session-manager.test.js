@@ -24052,7 +24052,7 @@ test('_cleanup re-parks the texts held in _injectQueue to pending through _repar
 });
 
 test('a dead seat\'s InjectQueue re-parks an unwritten message but drops an unwritten slash command', async () => {
-  const { m, PENDING_DIR } = mkPark();
+  const { m, PENDING_DIR } = mkPark({ InjectQueue: require('../inject-queue').InjectQueue });
   const s = { name: 'dead', agentType: 'claude', createdAt: 9, _dead: true };
   m.sessions.set('dead', s);
   const q = m._injectQueueFor(s);
