@@ -289,7 +289,7 @@ inject queue to empty (capped at `INJECT_BOOT_MAXWAIT` past the edge), so a spaw
      draft / recent keystroke in its pane at the delivery instant. This is
      draft-splice protection, not a cost hold; the SENDER is NOT told (the DM
      was accepted, not refused). Arms the 5min cap, so it self-drains even if
-     the target never takes a turn.
+     the target never takes a turn. A unit the inject queue re-parks because paste mode stayed off (`onUndelivered`) arms the same cap, like every other live park.
   3. **Passive park** (`_deliverPassive`, socket envelope `delivery:'passive'`)
      — ride-along notifications (clodex-monitor status ticks; see
      docs/exec-tools.md). Marked in the filename (`<seq>.passive.json` — the
@@ -338,6 +338,11 @@ inject queue to empty (capped at `INJECT_BOOT_MAXWAIT` past the edge), so a spaw
   files into the volatile in-memory queue behind the hold). **Operator-only**
   via the `session:flushPending` ipcMain.handle — there is deliberately no
   agent-facing flush verb (agents keep `[agent:resend]` for id'd cost-holds).
+
+Reminders are stamped with the setting seat's birth (`born`, from `_bornFor`): a
+fire whose stamp differs from the seat now holding the name is dropped and its
+row removed (`_deliverReminder` returns `'gone'`), and deleting or forgetting a
+seat removes its rows (`dropReminders`). Unstamped rows deliver as before.
 
 ## 4. DM federation (`name@origin`)
 
