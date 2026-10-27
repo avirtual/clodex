@@ -34,6 +34,8 @@ blocks a release.
 - Exec payload validation no longer accepts inherited property names such as `constructor` or `__proto__` as declared keys.
 - Messages held behind a permission dialog are no longer force-typed into the dialog after five minutes, which could answer it; they wait in the seat's pending mail until the dialog closes.
 - Messages held while a seat was busy or showing a dialog are re-parked to its pending mail when the seat exits, instead of being lost while the sender was told they were delivered.
+- Sandbox: adding or removing a published port no longer rewrites the box's own web and wire ports in compose.yaml, which could drift from the running container and make status and health checks read dead ports.
+- Sandbox: deleting a box while Docker is not running is refused and keeps the box listed, instead of dropping it while its restart-always container survives to come back unmanaged.
 
 ## 5.146.2 — 2026-10-27
 

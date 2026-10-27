@@ -34,6 +34,8 @@ recreate the box whenever its own definition drifted (image, ref), killing every
 seat. The gateway has no `depends_on`: one would pull the box into any plain
 `up <box>-ports`. An emptied list runs `rm -sf <box>-ports` before the compose
 file is rewritten, because `rm` refuses a service the file no longer names.
+The rewrite copies the box's own web/wirescope/wire host ports from the prior
+file and never re-resolves them: the running box keeps publishing its old ports.
 
 ## validatePortsForSave
 
@@ -76,3 +78,8 @@ The host's health wait after a team `up`/`rebuild` grows by `SETUP_TIMEOUT_S` (t
 
 ## validateBootstrapForSave
 A line matching `BOOTSTRAP_SECRET_RE` (an assignment to a `*PASSWORD*`/`*SECRET*`/`*TOKEN*`/`*API_KEY*`/`*PRIVATE_KEY*` name, optionally `export`ed) or containing `-----BEGIN ` is refused for every writer: scripts are stored in ui-settings and shown in `sandbox bootstrap show`, so secrets belong in the box's env_file. Each script is capped at 16384 bytes and the package list at 64 Debian names.
+
+## removeNow
+
+A delete whose `down` fails because the daemon is unreachable is refused and keeps
+the row: the `restart: always` container would return unmanaged when Docker starts.
