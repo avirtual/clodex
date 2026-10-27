@@ -11,7 +11,7 @@
 // expressed. Marks are knowledge, not disclosure; the two gates must stay
 // separate, and a single condition serving both is the regression to catch.
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 require('./lib/engine-isolation');
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -560,13 +560,6 @@ test('a seatless shell gets no shim in ANY state', () => {
     try { ptys.dispose(); } catch {}
   } finally { restore(); }
 });
-
-// `shutdown()` in each teardown above stops what the engine itself owns, but a
-// constructed engine also leaves handles nothing exposes a stop for (a pipe and
-// two timers, measured). Same teardown engine-context-timeout.test.js and
-// engine-web-info-seam.test.js already use for the same reason: without it the
-// file hangs AFTER every assertion has passed.
-after(() => { setImmediate(() => process.exit(0)); });
 
 test('the diagnosis has a branch per state that can produce it', () => {
   const fn = engineSrc.match(/function termShimDiagnosis\(\) \{[\s\S]*?\n\}/);

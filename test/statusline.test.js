@@ -2,7 +2,7 @@
 // Covers statusline generation + proxy-base resolution. The ui-settings store
 // and registry dir are injected, so the script output is testable with a fake
 // settings object — no Electron, no real ~/.clodex.
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 require('./lib/engine-isolation');
 const assert = require('node:assert');
 const {
@@ -109,5 +109,3 @@ test('rebuildAllStatusScripts: a wire-routed seat with no proxyBase stays headle
   assert.ok(fs.readFileSync(pathFor(home, 'w', 'statusline'), 'utf-8').includes('headless: side-channel only'), 'wire-only seat stays headless');
   assert.ok(!fs.readFileSync(pathFor(home, 'p', 'statusline'), 'utf-8').includes('headless: side-channel only'), 'an unrouted seat keeps the component line');
 });
-
-after(() => { setImmediate(() => process.exit(0)); });

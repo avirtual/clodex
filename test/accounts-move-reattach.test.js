@@ -13,7 +13,7 @@
 // skipped seat was never killed, so pushing reattach for it would rebuild a row
 // that is already there.
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const { createEngine } = require('./lib/engine-isolation');
@@ -138,5 +138,3 @@ test('a FAILED restart gets no reattach — there is no new seat to attach to', 
   );
   assert.deepStrictEqual(sent.filter((s) => s.channel === 'session:context-action'), [], 'nothing pushed');
 });
-
-after(() => { setImmediate(() => process.exit(0)); });

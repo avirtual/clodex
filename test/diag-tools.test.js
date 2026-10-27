@@ -154,5 +154,3 @@ test('whichBin: an explicit path to a directory is not a binary', () => {
   assert.strictEqual(whichBin(binDir), null);
   assert.strictEqual(whichBin(exe), path.join(tmp, 'bin', 'claude'));
 });
-
-test.after(() => { setImmediate(() => process.exit(0)); });

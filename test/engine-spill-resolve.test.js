@@ -1,6 +1,6 @@
 'use strict';
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -68,5 +68,3 @@ test('a peer session is refused before any path is consulted', () => {
   assert.strictEqual(res.error, 'remote',
     'a peer row names no local file; the spill dir here belongs to a different machine\'s seat');
 });
-
-after(() => { setImmediate(() => process.exit(0)); });

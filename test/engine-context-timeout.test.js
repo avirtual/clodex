@@ -14,7 +14,7 @@
 // comment at the call site), so the plain path is pinned too: an unconditional
 // raise is a passing implementation for the utilization test alone.
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -132,8 +132,3 @@ test('errors that are not timeouts pass through unchanged', async () => {
   assert.strictEqual(res.error, 'connect ECONNREFUSED 127.0.0.1:7999',
     'only the bare "timeout" string is rewritten — a dead proxy must keep reporting as a dead proxy, since that is the case the operator currently cannot distinguish');
 });
-
-// createEngine stands up real pollers/timers; nothing here stops them, so the
-// process would hang after the last assertion. Same teardown as
-// engine-web-info-seam.test.js, which builds engines the same way.
-after(() => { setImmediate(() => process.exit(0)); });

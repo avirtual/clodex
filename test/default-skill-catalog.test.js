@@ -258,10 +258,6 @@ test('t1356: an unreadable skills-seen.json still lets both catalogs open with t
   }
 });
 
-// The engine leaves background timers running (proxy poll, pending poll); the
-// same force-exit every other createEngine file uses.
-test('done', () => { setImmediate(() => process.exit(0)); });
-
 const MUSE_ROSTER = [
   { id: 'bundled:git', scope: 'bundled', path: 'bundled://muse-core/skills/git/SKILL.md', activation: 'on' },
   { id: 'plugin:threejs:threejs', scope: 'plugin', path: 'plugin://threejs/skills/threejs/SKILL.md', activation: 'on' },

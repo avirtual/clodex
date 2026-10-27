@@ -105,12 +105,23 @@ test('archive disarms the live seat\'s hold', async () => {
 });
 
 test('a fork that has not rotated off its parent\'s sid leaves the parent\'s hold armed', async () => {
-  const { m } = rig({ records: { parent: { cwd: '/p', sessionId: SID_A } } });
+  const { m } = rig();
   const keeper = m._holdKeeper = fakeKeeper([SID_A]);
   live(m, 'kid', SID_A, { forked: true });
   enter(keeper, SID_A);
   await m.destroy('kid');
   assert.ok(!m.sessions.has('kid'), 'ENTER: the fork was killed');
+  assert.deepStrictEqual(keeper.disarmed, []);
+});
+
+test('destroying an unforked seat whose sid a live seat shares leaves the hold armed', async () => {
+  const { m } = rig();
+  const keeper = m._holdKeeper = fakeKeeper([SID_A]);
+  live(m, 'parent', SID_A);
+  live(m, 'kid', SID_A);
+  enter(keeper, SID_A);
+  await m.destroy('kid');
+  assert.ok(!m.sessions.has('kid') && m.sessions.has('parent'), 'ENTER: only the seat was killed');
   assert.deepStrictEqual(keeper.disarmed, []);
 });
 
@@ -282,6 +293,46 @@ test('purgeWorkspace leaves a sid a live seat outside the workspace shares', asy
   enter(keeper, SID_A);
   assert.deepStrictEqual(m.purgeWorkspace('ws-1'), { killed: ['a'], dropped: [] });
   assert.ok(recs.has('out') && m.sessions.has('out'), 'ENTER: the outside seat survived');
+  assert.deepStrictEqual(keeper.disarmed, []);
+});
+
+test('purgeWorkspace leaves a sid an Always record-only seat outside the workspace shares', async () => {
+  const { m, recs } = rig({ records: {
+    a: { cwd: '/p', sessionId: SID_A, workspaceId: 'ws-1' },
+    out: { cwd: '/p', sessionId: SID_A, workspaceId: 'ws-2', keepWarmAlways: true },
+  } });
+  const keeper = m._holdKeeper = fakeKeeper([SID_A]);
+  live(m, 'a', SID_A, { cwd: '/p', workspaceId: 'ws-1' });
+  enter(keeper, SID_A);
+  assert.deepStrictEqual(m.purgeWorkspace('ws-1'), { killed: ['a'], dropped: [] });
+  assert.ok(recs.has('out') && !m.sessions.has('out'), 'ENTER: the outside record-only seat survived');
+  assert.deepStrictEqual(keeper.disarmed, []);
+});
+
+test('purgeWorkspace disarms past a non-Always record-only seat outside the workspace', async () => {
+  const { m, recs } = rig({ records: {
+    a: { cwd: '/p', sessionId: SID_A, workspaceId: 'ws-1' },
+    out: { cwd: '/p', sessionId: SID_A, workspaceId: 'ws-2' },
+  } });
+  const keeper = m._holdKeeper = fakeKeeper([SID_A]);
+  live(m, 'a', SID_A, { cwd: '/p', workspaceId: 'ws-1' });
+  enter(keeper, SID_A);
+  assert.deepStrictEqual(m.purgeWorkspace('ws-1'), { killed: ['a'], dropped: [] });
+  assert.ok(recs.has('out'), 'ENTER: the outside record-only seat survived');
+  assert.deepStrictEqual(keeper.disarmed, [SID_A]);
+});
+
+test('purgeWorkspace leaves a sid whose ws-1 record names a seat live in another workspace', async () => {
+  const { m } = rig({ records: {
+    a: { cwd: '/p', sessionId: SID_A, workspaceId: 'ws-1' },
+    x: { cwd: '/p', sessionId: SID_A, workspaceId: 'ws-1' },
+  } });
+  const keeper = m._holdKeeper = fakeKeeper([SID_A]);
+  live(m, 'a', SID_A, { cwd: '/p', workspaceId: 'ws-1' });
+  live(m, 'x', SID_A, { cwd: '/p', workspaceId: 'ws-2' });
+  enter(keeper, SID_A);
+  assert.deepStrictEqual(m.purgeWorkspace('ws-1').killed, ['a']);
+  assert.ok(m.sessions.has('x'), 'ENTER: the seat live in ws-2 survived');
   assert.deepStrictEqual(keeper.disarmed, []);
 });
 

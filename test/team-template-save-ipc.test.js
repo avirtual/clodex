@@ -14,7 +14,7 @@
 // would agree with any formatting at all, including one that loses the trailing
 // newline the rest of the library files carry.
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -143,5 +143,3 @@ test('removeTeam on an absent file is a refusal, not a silent ok', () => {
   const res = handlers['templates:removeTeam']({}, 'clodex', 'never-existed');
   assert.strictEqual(res.ok, false, 'nothing was deleted, so the caller must be told');
 });
-
-after(() => { setImmediate(() => process.exit(0)); });

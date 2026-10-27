@@ -1,6 +1,6 @@
 'use strict';
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -143,8 +143,6 @@ test('a ring seeded at startup lists each message spill once at its transcript-l
   fs.unlinkSync(path.join(msgDir, 'msg-7-3.txt'));
   assert.deepStrictEqual(ring.list(), expected);
 });
-
-after(() => { setImmediate(() => process.exit(0)); });
 
 test('t1792 the engine spill threshold keeps 3072 bytes and a 6-line 2048-byte body inline on a claude PTY seat and spills 3073', () => {
   const { engine, session } = mkEngine();

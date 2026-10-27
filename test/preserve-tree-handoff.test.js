@@ -48,7 +48,7 @@
 // claim-then-seed leaves two records, seed-then-claim leaves the restarted seat
 // naming nothing — which is why the assertion is on the record SET, not one row.
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const os = require('node:os');
 const fs = require('node:fs');
@@ -362,5 +362,3 @@ test('a stale pointer from a seat that is no longer live does not block the rest
     + 'happening for the absent pointer that orphans the checkout irrecoverably');
   fs.rmSync(w.tmp, { recursive: true, force: true });
 });
-
-after(() => { setImmediate(() => process.exit(0)); });

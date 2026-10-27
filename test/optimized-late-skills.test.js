@@ -650,5 +650,3 @@ test('t918 pin 11: the New Session collector keeps the asked floor when no row i
     [...box.engine.stores.agentDefaults.getDefaultSkillDeny()].sort(),
     'the asked floor rides through, rather than collapsing to "deny nothing"');
 });
-
-test('done', () => { setImmediate(() => process.exit(0)); });

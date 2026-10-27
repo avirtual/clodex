@@ -25,7 +25,7 @@
 // every future call site. The "refused WITHOUT touching the fs" subject below
 // asserts exactly that, by counting the calls a double records.
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -85,8 +85,6 @@ function countingFs() {
     readFileSync(p) { calls.push(['readFileSync', p]); throw new Error(`readFileSync must not be reached for ${p}`); },
   };
 }
-
-after(() => { setImmediate(() => process.exit(0)); });
 
 // ── 1. the team copy wins on all three resolvers ────────────────────────────
 

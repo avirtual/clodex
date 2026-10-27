@@ -122,7 +122,6 @@ function boot(seams, stub) {
 }
 after(() => {
   for (const e of engines) { try { e.shutdown(); } catch {} }
-  setImmediate(() => process.exit(0));
 });
 
 function ask(engine, sub, text) {

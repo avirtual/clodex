@@ -170,7 +170,3 @@ test('the same read, unmarked, is what dropped the names', () => {
   }
   assert.ok(collected.includes('Workflow'), 'a tool the cwd does not deny still collects');
 });
-
-// The engine leaves background timers running (proxy poll, pending poll); the
-// same force-exit every other createEngine file uses.
-test('done', () => { setImmediate(() => process.exit(0)); });

@@ -1,6 +1,6 @@
 'use strict';
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const { createEngine } = require('./lib/engine-isolation');
@@ -132,5 +132,3 @@ test('killing the session drops its cached report', async () => {
   assert.strictEqual(res.ok, false,
     "a same-named replacement must not be served its predecessor's report");
 });
-
-after(() => { setImmediate(() => process.exit(0)); });

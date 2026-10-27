@@ -1,6 +1,6 @@
 'use strict';
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
 const fs = require('node:fs');
@@ -192,5 +192,3 @@ test('P5 the route answers 501 and node/logs is absent from /api/resources', asy
     assert.ok(names.includes('node/logs'), 'and advertises the resource');
   });
 });
-
-after(() => { setImmediate(() => process.exit(0)); });

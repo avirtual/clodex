@@ -28,7 +28,7 @@
 // pin what the file SAYS and stay green through exactly the move described
 // above, since the line would still be there.
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const os = require('node:os');
 const fs = require('node:fs');
@@ -232,5 +232,3 @@ test('the full chain still orders correctly with the default seeded into global'
   assert.deepStrictEqual(pick(env), { [KEY]: '600000', [SIBLING]: 'g' },
     'session > workspace > global, and the global-only sibling key still crosses');
 });
-
-after(() => { setImmediate(() => process.exit(0)); });

@@ -1,6 +1,6 @@
 'use strict';
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -9,11 +9,27 @@ const iso = require('./lib/engine-isolation');
 const { wirescopeEnvGate } = require('../wirescope-supervisor');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
-after(() => { setImmediate(() => process.exit(0)); });
-
 const HELPER = path.join(__dirname, 'lib', 'engine-isolation.js');
 
-const DIRECT_ENGINE_REQUIRE = /^[^'"`\n]*\brequire\(\s*['"](\.\.\/)+engine(\.js)?['"]\s*\)/m;
+const ENGINE_REQUIRE_AT = /\brequire\(\s*['"](\.\.\/)+engine(\.js)?['"]\s*\)/y;
+
+function requiresEngineDirectly(src) {
+  for (const line of src.split('\n')) {
+    let quote = null;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (quote) {
+        if (ch === '\\') i++;
+        else if (ch === quote) quote = null;
+        continue;
+      }
+      if (ch === "'" || ch === '"' || ch === '`') { quote = ch; continue; }
+      ENGINE_REQUIRE_AT.lastIndex = i;
+      if (ENGINE_REQUIRE_AT.test(line)) return true;
+    }
+  }
+  return false;
+}
 
 function testJsFiles(dir) {
   const out = [];
@@ -37,7 +53,7 @@ test('every test file that builds an engine gets createEngine from test/lib/engi
     const rel = path.relative(__dirname, f);
     const helperSpec = path.relative(path.dirname(f), HELPER).replace(/\.js$/, '').replace(/^(?!\.)/, './');
     const viaHelper = new RegExp(`^(const [^=]+= )?require\\('${helperSpec.replace(/[./]/g, '\\$&')}'\\)`, 'm').test(src);
-    const direct = DIRECT_ENGINE_REQUIRE.test(src);
+    const direct = requiresEngineDirectly(src);
     if (!viaHelper || direct) offenders.push(`${rel}${viaHelper ? '' : ' (no top-level helper require)'}${direct ? ' (requires engine directly)' : ''}`);
   }
   assert.deepStrictEqual(offenders, [],
@@ -46,12 +62,19 @@ test('every test file that builds an engine gets createEngine from test/lib/engi
 });
 
 test('the direct-engine-require scanner flags a real require and passes a quoted fixture string', () => {
-  assert.strictEqual(DIRECT_ENGINE_REQUIRE.test("const { diagLines } = require('../engine');\n"), true);
-  assert.strictEqual(DIRECT_ENGINE_REQUIRE.test('const engine = require("../engine.js");\n'), true);
-  assert.strictEqual(DIRECT_ENGINE_REQUIRE.test("  const { x } = require('../../engine');\n"), true);
-  assert.strictEqual(DIRECT_ENGINE_REQUIRE.test("const iso = require('./lib/engine-isolation');\n"), false);
-  assert.strictEqual(DIRECT_ENGINE_REQUIRE.test("    'lib/util.js': \"const sib = require('../engine');\",\n"), false);
-  assert.strictEqual(DIRECT_ENGINE_REQUIRE.test("const m = require('../engine-args');\n"), false);
+  const rows = [
+    ["const { diagLines } = require('../engine');\n", true],
+    ['const engine = require("../engine.js");\n', true],
+    ["  const { x } = require('../../engine');\n", true],
+    ["const a = 'x'; const e = require('../engine');\n", true],
+    ['const a = "it\'s"; const e = require("../engine");\n', true],
+    ["const iso = require('./lib/engine-isolation');\n", false],
+    ["    'lib/util.js': \"const sib = require('../engine');\",\n", false],
+    ["const s = `x ${y} require('../engine')`;\n", false],
+    ["const s = 'a\\'b require(\"../engine\")';\n", false],
+    ["const m = require('../engine-args');\n", false],
+  ];
+  assert.deepStrictEqual(rows.map(([line]) => [line, requiresEngineDirectly(line)]), rows);
 });
 
 test('no test file outside the helper requires the engine module directly', () => {
@@ -59,7 +82,7 @@ test('no test file outside the helper requires the engine module directly', () =
   const names = files.map((f) => path.relative(__dirname, f));
   assert.ok(names.includes('seat-layout.test.js') && names.includes('deploy-visible.test.js'),
     `ENTER: the scan must cover every test file — got ${files.length}`);
-  const offenders = names.filter((n) => DIRECT_ENGINE_REQUIRE.test(fs.readFileSync(path.join(__dirname, n), 'utf8')));
+  const offenders = names.filter((n) => requiresEngineDirectly(fs.readFileSync(path.join(__dirname, n), 'utf8')));
   assert.deepStrictEqual(offenders, [],
     'take engine exports from ./lib/engine-isolation: a direct require skips its HOME scratch root and wirescope gate');
 });
