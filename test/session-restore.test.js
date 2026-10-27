@@ -386,3 +386,25 @@ test('stampConfigFlags stamps the approval posture from the entry argv', () => {
   assert.strictEqual(stampConfigFlags({}, { type: 'codex', extraArgs: ['--dangerously-bypass-approvals-and-sandbox'] }).posture, 'bypass');
   assert.strictEqual(stampConfigFlags({}, { type: 'claude' }).posture, 'default');
 });
+
+test('restore restamps awokeAt on a re-spawned assistant and leaves other entries untouched', async () => {
+  const store = new Map([
+    ['asst', { name: 'asst', type: 'claude', cwd: '/w', class: 'assistant', awokeAt: 1000 }],
+    ['plain', { name: 'plain', type: 'claude', cwd: '/w', awokeAt: 1000 }],
+  ]);
+  const persistence = {
+    listForWorkspace: () => [...store.values()].map((e) => ({ ...e })),
+    upsert(e) { store.set(e.name, { ...store.get(e.name), ...e }); },
+  };
+  const manager = {
+    sessions: new Map(),
+    async create(name) { manager.sessions.set(name, {}); },
+    resumeCwdOf: (e) => e.cwd,
+    teamNameFor: () => null,
+  };
+  const before = Date.now();
+  await restoreSessionsForWorkspace({ workspaceId: 'ws', persistence, manager, ...noopDeps });
+  assert.strictEqual(manager.sessions.size, 2, 'ENTER: both entries were re-spawned');
+  assert.ok(store.get('asst').awokeAt >= before, `awokeAt ${store.get('asst').awokeAt}`);
+  assert.strictEqual(store.get('plain').awokeAt, 1000);
+});

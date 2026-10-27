@@ -362,6 +362,7 @@ function registerIpcHandlers(deps) {
               name: id,
               argv: Array.isArray(own.argv) ? own.argv : [],
               cwd: typeof own.cwd === 'string' ? own.cwd : '',
+              ...(own.proposal === true ? { proposal: true } : {}),
               resolvedFrom: 'team',
             };
           }

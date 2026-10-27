@@ -20,6 +20,9 @@ blocks a release.
 - Deleting a workspace now also removes the seat files of its running seats, so a new seat reusing one of their names starts clean.
 - clodexctl: `get nodes --current --ctx <name>` now refuses a node the contexts file does not know, instead of printing the unknown name as if it were current.
 - Reminders viewer: the Cancel button is no longer shown on the web surface, where cancelling is not available and the click only produced an error toast.
+- Sleeping assistants: a message to an assistant that crashed or was stopped without sleeping now resumes its last conversation instead of starting a fresh one with no brief.
+- Sleeping assistants: awake time no longer includes the time Clodex itself was not running, which inflated the cost shown for an assistant restored at app launch.
+
 
 ## 5.146.2 — 2026-10-27
 

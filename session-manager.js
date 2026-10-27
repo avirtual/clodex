@@ -3861,8 +3861,9 @@ function createSessionManager(deps) {
         p.setArchived(name, false);
         p.setExited(name, null);
         p.upsert({ name, asleepAt: null, sleepReason: null, wakes: (entry.wakes || 0) + 1, awokeAt: Date.now() });
-        log.info('session', `wake ${name} (${reason})`);
-        r = await restartSession(name, { fresh: true }, entry.workspaceId);
+        const resumeId = !entry.asleepAt && entry.sessionId ? entry.sessionId : null;
+        log.info('session', `wake ${name} (${reason}) ${resumeId ? 'resume' : 'fresh'}`);
+        r = await restartSession(name, resumeId ? { resumeId } : { fresh: true }, entry.workspaceId);
       } finally { if (cap) this.releaseAwakeRoom(entry.template || null, name); }
       if (!r || !r.ok) {
         p.setArchived(name, true);

@@ -236,6 +236,17 @@ test('the empty-argv warn ENDS that def — a def that cannot run is not also ac
   assert.deepStrictEqual(findings.map((f) => f.message.includes('no argv to run')), [true]);
 });
 
+test('a proposal def with no argv is not a warn; the same def without proposal still is', () => {
+  const run = (def) => teamPreflight(TEAM, probes({
+    prompts: ['clodex-team-lead', 'clodex-team-hand'],
+    templates: [{ name: 'hand-seat', execCommands: ['propose'] }],
+    execs: { propose: def },
+    files: [],
+  }));
+  assert.deepStrictEqual(run({ proposal: true, cwd: '${TEAM_ROOT}/nowhere' }), []);
+  assert.deepStrictEqual(run({ cwd: '${TEAM_ROOT}/nowhere' }).map((f) => [f.level, f.message.includes('no argv to run')]), [['warn', true]]);
+});
+
 test('an exec command with no def installed is a warn — an unreadable def is not a skipped check', () => {
   const findings = teamPreflight(TEAM, probes({
     prompts: ['clodex-team-lead', 'clodex-team-hand'],

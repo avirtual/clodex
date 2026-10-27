@@ -154,6 +154,7 @@ async function restoreSessionsForWorkspace({
         Array.isArray(entry.protectCredentials) ? entry.protectCredentials : null,
         Array.isArray(entry.mcpServers) ? entry.mcpServers : [],
       );
+      if (entry.class === 'assistant') persistence.upsert({ name: entry.name, awokeAt: Date.now() });
       restored.push({
         name: entry.name,
         type: entry.type,

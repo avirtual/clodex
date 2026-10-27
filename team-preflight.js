@@ -216,6 +216,7 @@ function teamPreflight(team, probes) {
         });
       }
       const argv = Array.isArray(entry.argv) ? entry.argv : [];
+      if (!argv.length && entry.proposal === true) continue;
       if (!argv.length) {
         // execLibrary.list() normalizes a missing or non-array argv to [], so
         // without this a malformed def reads as "resolved, nothing to check"

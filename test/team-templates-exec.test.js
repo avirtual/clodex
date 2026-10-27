@@ -679,6 +679,26 @@ test('t700: team:preflight reads the team\'s own template and exec def, end to e
     'neither shadowed library copy was consulted');
 });
 
+test('team:preflight passes a team proposal def with no argv, and still warns on a non-proposal one', () => {
+  const run = (def) => {
+    const { dir, repo } = mkHome('clx-proposal-ipc-');
+    writeTeamJson(dir, 'templates', 'hand-seat', { execCommands: ['ask'] });
+    writeTeamJson(dir, 'exec', 'ask', def);
+    const handlers = registerWith({
+      fs, path,
+      loadManifest: () => ({ name: 't', root: repo, dir, roles: { hand: { prompt: 'p', template: 'hand-seat' } } }),
+      templates: { list: () => [] },
+      execLibrary: { list: () => [], raw: () => null },
+      promptLibrary: { raw: () => 'body' },
+    });
+    const res = handlers['team:preflight']({}, 't');
+    assert.strictEqual(res.ok, true, `handler succeeded (${res.error})`);
+    return res.findings.filter((f) => f.level === 'warn').map((f) => f.message.includes('no argv to run'));
+  };
+  assert.deepStrictEqual(run({ proposal: true }), []);
+  assert.deepStrictEqual(run({}), [true]);
+});
+
 test('t700 GUARD: team:preflight over a team with no own copies is unchanged', () => {
   const { home, dir, repo } = mkHome('clx-t700-ipcguard-');
   assert.strictEqual(fs.existsSync(path.join(dir, 'templates')), false,
