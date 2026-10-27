@@ -34,6 +34,8 @@ blocks a release.
 - Exec payload validation no longer accepts inherited property names such as `constructor` or `__proto__` as declared keys.
 - Messages held behind a permission dialog are no longer force-typed into the dialog after five minutes, which could answer it; they wait in the seat's pending mail until the dialog closes.
 - Messages held while a seat was busy or showing a dialog are re-parked to its pending mail when the seat exits, instead of being lost while the sender was told they were delivered.
+- Move to Peer: the confirm now lists the session env keys that travel with the seat, and the docs no longer claim session env never crosses the peer wire.
+- Keep-warm: a perpetual hold that could not be judged at startup is no longer erased from disk by the next unrelated seat's turn, so it is restored on the following launch.
 
 ## 5.146.2 — 2026-10-27
 
