@@ -27,6 +27,10 @@ function visibleRows(rows, activeSeat, showAll) {
   return rows.filter((r) => r.agent === activeSeat);
 }
 
+function isWeb() {
+  return typeof window !== 'undefined' && Boolean(window.__CLODEX_WEB__ || !window.require);
+}
+
 module.exports.fmtNextFire = fmtNextFire;
 module.exports.preview = preview;
 module.exports.visibleRows = visibleRows;
@@ -143,11 +147,13 @@ module.exports.activate = (rhost) => {
       tr.appendChild(el('td', 'rv-ticket', r.ticket || ''));
       const cell = el('td', 'rv-actions');
       const fireBtn = el('button', 'rv-fire', 'Fire');
-      const btn = el('button', 'rv-cancel', 'Cancel');
+      const btn = isWeb() ? null : el('button', 'rv-cancel', 'Cancel');
       fireBtn.addEventListener('click', () => fireRow(r, fireBtn, btn));
-      btn.addEventListener('click', () => cancelRow(r, btn));
       cell.appendChild(fireBtn);
-      cell.appendChild(btn);
+      if (btn) {
+        btn.addEventListener('click', () => cancelRow(r, btn));
+        cell.appendChild(btn);
+      }
       tr.appendChild(cell);
       return tr;
     }
@@ -179,7 +185,7 @@ module.exports.activate = (rhost) => {
     async function fireRow(r, fireBtn, cancelBtn) {
       if (fireBtn.disabled) return;
       fireBtn.disabled = true;
-      cancelBtn.disabled = true;
+      if (cancelBtn) cancelBtn.disabled = true;
       let res;
       try {
         res = await rhost.invoke('fire', { agent: r.agent, id: r.id });
@@ -195,7 +201,7 @@ module.exports.activate = (rhost) => {
       }
       rhost.ui.showToast(`Could not fire: ${(res && res.error) || 'unknown error'}`, { kind: 'error' });
       if (fireBtn.isConnected) fireBtn.disabled = false;
-      if (cancelBtn.isConnected) cancelBtn.disabled = false;
+      if (cancelBtn && cancelBtn.isConnected) cancelBtn.disabled = false;
       await reload();
     }
 

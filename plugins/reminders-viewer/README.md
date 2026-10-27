@@ -10,7 +10,8 @@ event-triggered and has no fire time, not a missing one.
 
 The table starts filtered to the selected seat; "All Seats" shows the whole
 workspace. A seat that is saved but not running is listed with its name dimmed:
-its reminders stay armed and fire on schedule; the delivery is parked and drains when the seat resumes.
+its reminders stay armed and fire on schedule; the delivery is parked and
+drains when the seat resumes.
 
 ## Scope
 
