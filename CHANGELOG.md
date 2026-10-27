@@ -21,6 +21,8 @@ blocks a release.
 - clodexctl: `get nodes --current --ctx <name>` now refuses a node the contexts file does not know, instead of printing the unknown name as if it were current.
 - Reminders viewer: the Cancel button is no longer shown on the web surface, where cancelling is not available and the click only produced an error toast.
 - Security: the web host and the remote API no longer accept requests from other web origins when they run without a token on loopback. A page open in the operator's browser could previously open a WebSocket to the local web host and run commands, or post a message to a seat. Requests now need a loopback Host and, when a browser sends one, a loopback Origin; JSON endpoints require an application/json body.
+- Accept checks "merged" against the team's trunk, not whatever branch the root checkout happens to be on, so a hand-merge on a side branch no longer passes as merged and a detached root no longer refuses one.
+- The loop's close-out after a green merge leaves a one-shot seat in place when it holds another started ticket, instead of killing it mid-turn.
 
 ## 5.146.2 — 2026-10-27
 

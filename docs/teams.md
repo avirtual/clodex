@@ -494,6 +494,9 @@ On the merged arm, what goes depends on the seat and the tree:
 | loop-minted seat, tree dirty | archived, only if still running | kept | kept |
 | loop-minted seat, tree unreadable | archived, only if still running | kept | delete attempted — usually refused |
 | standing assignee, or no record — tree never inspected | untouched | kept | delete attempted — usually refused |
+| loop-minted seat holding another open ticket | untouched | kept | kept |
+
+A second accept after that other ticket closes finishes the cleanup.
 
 - A branch delete ordinarily fails wherever the tree survived: `git branch -d`
   refuses a branch any worktree still has checked out, and a tree removed by

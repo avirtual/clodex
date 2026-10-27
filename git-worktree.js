@@ -274,16 +274,14 @@ async function isMerged(cwd, branch, base = null) {
   return { ok: false, base: against, error: (r.stderr || `merge-base exited ${r.code}`).trim() };
 }
 
-// Delete a branch ref. `-d`, never `-D`: git's own merged-check is a second,
-// independent gate behind the caller's, and the two disagreeing means the
-// caller's premise was wrong — exactly when refusing beats forcing. A refusal
-// comes back as `{ ok:false, error }` and the branch survives.
-async function deleteBranch(cwd, branch) {
+// A refusal comes back as `{ ok:false, error }` and the branch survives.
+async function deleteBranch(cwd, branch, { force = false } = {}) {
   const repo = await repoToplevel(cwd);
   if (!repo) return { ok: false, error: 'not a git repository' };
   if (!branch) return { ok: false, error: 'no branch given' };
-  const r = await git(repo, ['branch', '-d', branch]);
-  if (!r.ok) return { ok: false, error: (r.stderr || 'git branch -d failed').trim() };
+  const flag = force === true ? '-D' : '-d';
+  const r = await git(repo, ['branch', flag, branch]);
+  if (!r.ok) return { ok: false, error: (r.stderr || `git branch ${flag} failed`).trim() };
   return { ok: true };
 }
 
