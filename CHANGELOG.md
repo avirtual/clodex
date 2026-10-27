@@ -15,6 +15,7 @@ blocks a release.
 ## Unreleased
 
 - Deleting, archiving or forgetting a seat kept warm "Always", or deleting its workspace, now stops its keep-warm pings at once; they used to continue until Clodex was restarted.
+- Deleting a workspace no longer removes the saved record of a seat that is running in another workspace, which made that seat disappear at the next restart.
 
 ## 5.146.2 — 2026-10-27
 

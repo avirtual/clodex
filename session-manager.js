@@ -4900,8 +4900,7 @@ function createSessionManager(deps) {
       const killed = [];
       for (const s of seats) { killed.push(s.name); this.kill(s.name); }
       const dropped = [];
-      for (const e of getPersistence().listForWorkspace(workspaceId)) {
-        if (!e || !e.name) continue;
+      for (const e of records) {
         this.clearHintForRecord(e.name);
         getPersistence().remove(e.name);
         this._bindHold(e.name);
