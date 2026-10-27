@@ -35,6 +35,7 @@ function rig({ records, gitWorktree } = {}) {
     remove: (n) => { recs.delete(n); },
     upsert: (e) => { recs.set(e.name, { ...(recs.get(e.name) || {}), ...e }); },
     setArchived: (n, v) => { const r = recs.get(n); if (r) r.archivedAt = v ? Date.now() : null; },
+    listForWorkspace: (ws) => [...recs.values()].filter((r) => r.workspaceId === ws),
   };
   const m = mk({ getPersistence: () => persistence, log: QUIET, ...(gitWorktree ? { gitWorktree } : {}) });
   return { m, recs, persistence };
@@ -173,4 +174,49 @@ test('_holdSidFor prefers the live sid and _disarmHoldFor survives a throwing ke
   m._holdKeeper = { disarm() { throw new Error('boom'); } };
   m._disarmHoldFor('a', SID_A);
   assert.deepStrictEqual(logged, [{ type: 'wire-hold-disarm-error', agent: 'a', error: 'boom' }]);
+});
+
+test('session:forget of a record-only seat disarms by the persisted sessionId', () => {
+  const { registerIpcHandlers } = require('../ipc-handlers');
+  const { m, recs, persistence } = rig({ records: { ghost: { cwd: '/p', sessionId: SID_B } } });
+  const keeper = m._holdKeeper = fakeKeeper([SID_B]);
+  const handlers = new Map();
+  registerIpcHandlers({
+    handle: (ch, fn) => handlers.set(ch, fn),
+    on: (ch, fn) => handlers.set(ch, fn),
+    manager: m,
+    persistence,
+    log: QUIET,
+  });
+  enter(keeper, SID_B);
+  assert.strictEqual(handlers.get('session:forget')(null, 'ghost'), true);
+  assert.strictEqual(recs.get('ghost'), undefined, 'ENTER: forget dropped the record');
+  assert.deepStrictEqual(keeper.disarmed, [SID_B]);
+});
+
+test('purgeWorkspace disarms a live seat and a record-only seat of the workspace', async () => {
+  const { m, recs } = rig({ records: {
+    a: { cwd: '/p', sessionId: SID_A, workspaceId: 'ws-1' },
+    ghost: { cwd: '/p', sessionId: SID_B, workspaceId: 'ws-1' },
+  } });
+  const keeper = m._holdKeeper = fakeKeeper([SID_A, SID_B]);
+  live(m, 'a', SID_A, { cwd: '/p', workspaceId: 'ws-1' });
+  enter(keeper, SID_A);
+  enter(keeper, SID_B);
+  assert.deepStrictEqual(m.purgeWorkspace('ws-1'), { killed: ['a'], dropped: ['ghost'] });
+  assert.strictEqual(recs.size, 0, 'ENTER: both records were dropped');
+  assert.deepStrictEqual(keeper.disarmed.sort(), [SID_A, SID_B]);
+});
+
+test('_maybeRearmHold arms an Always seat, and never one that is archiving', () => {
+  const { m } = rig({ records: { a: { cwd: '/p', sessionId: SID_A, keepWarmAlways: true } } });
+  const armed = [];
+  m._holdKeeper = { arm(sid, hours, opts) { armed.push([sid, hours, opts]); return { armed: true, always: true }; } };
+  const fresh = { name: 'a', sessionId: SID_A };
+  m._maybeRearmHold(fresh, 'a');
+  assert.deepStrictEqual(armed, [[SID_A, 0, { always: true }]], 'ENTER: the same fixture arms a seat that is not archiving');
+  armed.length = 0;
+  const archiving = { name: 'a', sessionId: SID_A, _archived: true };
+  m._maybeRearmHold(archiving, 'a');
+  assert.deepStrictEqual(armed, []);
 });
