@@ -24038,13 +24038,16 @@ test('a reboot notice bare Enter on an idle seat stamps the turn wait like an in
 });
 
 test('a reboot notice retry does not send a bare Enter while a permission dialog is open', async (t) => {
-  const { s, box, advance } = await bootNoticeSeat(t);
+  const { s, box, state, advance } = await bootNoticeSeat(t);
   await advance(20_000);
   assert.ok(s._injectStuck && s._injectStuck.entered, 'ENTER: the nudge marked the unit stuck in the composer');
+  assert.strictEqual(state.pendingRebootNotice.attempts, 1, 'ENTER: the boot offer is the first rung');
   s.needsAttention = { kind: 'permission' };
   await advance(11_000);
   assert.deepStrictEqual(box.writes.filter((w) => w.at >= 29_000 && w.b === '\r'), [], 'no Enter confirms the dialog');
   assert.deepStrictEqual(box.submitted, [], 'and nothing was submitted');
+  assert.strictEqual(state.pendingRebootNotice.attempts, 2, 'the retry re-offered the notice as attempt 2');
+  assert.ok(s._rebootNoticeRetryTimer, 'and armed the next rung');
 });
 
 test('a reboot notice retry does not send a bare Enter after the operator typed through the pty input handler', async (t) => {
