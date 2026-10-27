@@ -21190,7 +21190,8 @@ test('t1099 onUndelivered: a unit whose seat DIES mid-settle is re-parked stampe
   const entry = JSON.parse(fsReal.readFileSync(pathReal.join(PENDING_DIR, 'a', files[0]), 'utf8'));
   assert.strictEqual(entry.born, session.createdAt,
     'stamped from the closure\'s own session: after _cleanup neither the map nor persistence knows the name, and an unstamped entry would reach the next seat of that name');
-  assert.ok(warns.some((w) => /re-parked an undelivered inject for a \(dead, /.test(w)), JSON.stringify(warns));  assert.strictEqual(session._parkCapTimer, undefined, 'a dead seat arms no park cap');
+  assert.ok(warns.some((w) => /re-parked an undelivered inject for a \(dead, /.test(w)), JSON.stringify(warns));
+  assert.strictEqual(session._parkCapTimer, undefined, 'a dead seat arms no park cap');
 });
 
 test('t1507 onUndelivered: a re-park on a live seat (the paste cap) logs at warn as paste mode off, not dead', () => {

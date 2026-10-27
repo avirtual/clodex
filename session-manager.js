@@ -4930,6 +4930,7 @@ function createSessionManager(deps) {
         killed.push(s.name);
         this.kill(s.name);
         this.forgetSeatFiles(s.name, rec);
+        this.dropReminders(s.name);
       }
       const dropped = [];
       for (const e of records) {

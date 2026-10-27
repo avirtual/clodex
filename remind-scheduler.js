@@ -11,8 +11,7 @@
 //   - now()               — epoch ms (Date.now in prod; a mutable value in tests)
 //   - setTimer(fn, ms)    — arm a one-shot timer, returns a handle (setTimeout)
 //   - clearTimer(handle)  — cancel one (clearTimeout)
-//   - store               — the reminders store (add/list/listForAgent/remove/
-//                           markFired/get/renameAgent); the durable source of truth
+//   - store               — the reminders store; the durable source of truth
 //   - deliver(agent, id, spec, body, by, born) — hand ONE fire to the DM pipeline.
 // remind-schedule is a pure sibling leaf, required directly (like exec-schema in
 // session-manager) — nothing to inject.
@@ -57,13 +56,13 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
     // Re-parse a record's verbatim spec back into a schedule object. Records are
     // validated at add(), so a parse failure here means a hand-edited store file
     // — skip that record defensively rather than throw the whole engine down.
-    _deliver(rec) {
-      try { return deliver(rec.agent, rec.id, rec.spec, rec.body, rec.by, rec.born); } catch { return undefined; }
-    },
-
     _schedFor(rec) {
       const s = parseRemindSpec(rec.spec);
       return s.ok ? s : null;
+    },
+
+    _deliver(rec) {
+      try { return deliver(rec.agent, rec.id, rec.spec, rec.body, rec.by, rec.born); } catch { return undefined; }
     },
 
     // Timed records (in/at/every/cron) with a concrete pending fire time.
