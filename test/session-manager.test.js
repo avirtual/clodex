@@ -8210,6 +8210,7 @@ function mkAccept(mergedAnswer, extra = {}, countAnswer = { ok: true, count: 3, 
       get: (n) => (n === 'team-hand' ? mkRecord() : null),
     }),
     gitWorktree: {
+      mergeTargetFor: async () => 'master',
       isMerged: async (root, branch) => { asked.push({ root, branch }); return mergedAnswer; },
       // Records the ORDER against the teardown, not just the arguments: the count
       // has to be taken while the branch ref still exists.
