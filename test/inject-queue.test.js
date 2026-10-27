@@ -755,23 +755,6 @@ test('InjectQueue: a death mid-drain re-parks the claimed text through onUndeliv
   }
 });
 
-test('InjectQueue: a non-diverted text enqueued on a dead queue reaches onUndelivered', async () => {
-  const writes = [];
-  const undelivered = [];
-  const q = new InjectQueue({
-    write: (bytes) => writes.push(bytes),
-    settleMsFor: () => 5,
-    quietMs: 0, maxWaitMs: 0,
-    lastHumanInputAt: () => 0,
-    isDead: () => true,
-    onUndelivered: (t) => undelivered.push(t),
-    sleep: () => Promise.resolve(),
-  });
-  await q.enqueue('held reminder');
-  assert.deepStrictEqual(writes, []);
-  assert.deepStrictEqual(undelivered, ['held reminder']);
-});
-
 test('InjectQueue: a throwing onUndelivered is swallowed and the queue keeps draining', async () => {
   const writes = [];
   let dead = false;
@@ -832,8 +815,8 @@ test('InjectQueue: a bare self-inject dying after the Ctrl-U or after the text w
   }
 });
 
-test('InjectQueue: a plain unit dying at the gates is re-parked only when it carries a divert (a parkable delivery), never a bare self-inject', async () => {
-  for (const [divert, expected] of [[() => false, ['X']], [null, []]]) {
+test('InjectQueue: a plain unit dying at the gates is re-parked through onUndelivered with or without a divert', async () => {
+  for (const [divert, expected] of [[() => false, ['X']], [null, ['X']]]) {
     const undelivered = [];
     const q = new InjectQueue({
       write: () => {},
@@ -845,7 +828,7 @@ test('InjectQueue: a plain unit dying at the gates is re-parked only when it car
       sleep: () => Promise.resolve(),
     });
     await q.enqueue('X', divert ? { divert } : undefined);
-    assert.deepStrictEqual(undelivered, expected, divert ? 'parkable text re-parked' : 'bare text dropped');
+    assert.deepStrictEqual(undelivered, expected, divert ? 'parkable text re-parked' : 'non-diverted text re-parked');
   }
 });
 

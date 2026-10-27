@@ -24024,7 +24024,7 @@ test('the inject valve still force-flushes a text held behind a busy turn', (t) 
   assert.deepStrictEqual(pendingFiles(PENDING_DIR, 'bsy'), [], 'nothing re-parked');
 });
 
-test('_cleanup re-parks the texts held in _injectQueue to pending instead of dropping them', () => {
+test('_cleanup re-parks the texts held in _injectQueue to pending through _reparkHeldInjects instead of dropping them', () => {
   const { m, PENDING_DIR } = mkPark({
     registry: { unregister: () => {} },
     cleanupClaudeHook: () => {}, cleanupSkills: () => {}, cleanupAgentPlugin: () => {},
