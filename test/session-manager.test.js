@@ -23933,6 +23933,87 @@ test('a reboot notice re-offered to a seat that stays offline keeps one copy on 
   assert.strictEqual(parks.length, 1, 'launch after launch, the archived seat holds one notice, not one per launch');
 });
 
+const NOTICE_MARK = 'Clodex restarted and is running again';
+const countNotice = (str) => str.split(NOTICE_MARK).length - 1;
+
+async function bootNoticeSeat(t, { dropFirstText = false, submitTakenAfterMs = 15_000 } = {}) {
+  const state = { pendingRebootNotice: { name: 'lead', at: Date.now() - 60_000, reason: 'load master' } };
+  const p = mkOnDataProbe({
+    getUiSettings: () => ({
+      get: () => ({ ...state }),
+      set: (partial) => { Object.assign(state, partial); return { ...state }; },
+    }),
+    INJECT_QUIET_MAXWAIT: 3_600_000,
+  });
+  await bashCreate(p.m, 'lead', null);
+  const s = p.getSession('lead');
+  s.agentType = 'claude';
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now: Date.now() });
+  const t0 = Date.now();
+  const box = { draft: '', submitted: [], writes: [] };
+  let dropped = false;
+  s.pty = {
+    write: (b) => {
+      box.writes.push({ at: Date.now() - t0, b });
+      if (b === '\x15') return;
+      if (b === '\r') {
+        if (Date.now() - t0 < submitTakenAfterMs || !box.draft) return;
+        box.submitted.push(box.draft);
+        box.draft = '';
+        s._turnStartedAt = Date.now();
+        return;
+      }
+      if (dropFirstText && !dropped) { dropped = true; return; }
+      box.draft += b;
+      setImmediate(() => p.fireData(b));
+    },
+  };
+  const advance = async (ms) => {
+    for (let i = 0; i < ms; i += 50) {
+      t.mock.timers.tick(50);
+      await new Promise((r) => setImmediate(r));
+      await new Promise((r) => setImmediate(r));
+    }
+  };
+  p.m.maybeDeliverRebootNotice();
+  p.fireData('\x1b[?2004h');
+  return { p, s, state, box, advance };
+}
+
+test('a reboot notice whose boot-time submit was dropped is submitted once, not as two copies in one prompt', async (t) => {
+  const { box, state, advance } = await bootNoticeSeat(t);
+  await advance(29_000);
+  assert.strictEqual(countNotice(box.draft), 1, 'ENTER: the boot drain typed the notice and it sits unsubmitted in the composer');
+  assert.ok(box.writes.filter((w) => w.b === '\r').length >= 2, 'ENTER: the drain\'s Enter and the submit nudge\'s Enter were both dropped');
+  assert.deepStrictEqual(box.submitted, [], 'ENTER: nothing submitted before the retry');
+  await advance(171_000);
+  assert.strictEqual(box.submitted.length, 1, 'one prompt submitted');
+  assert.strictEqual(countNotice(box.submitted[0]), 1, 'carrying exactly one copy of the notice');
+  assert.strictEqual(countNotice(box.writes.map((w) => w.b).join('')), 1, 'the notice was typed once');
+  assert.strictEqual(state.pendingRebootNotice, null, 'and the ladder cleared it on the turn');
+});
+
+test('a reboot notice whose boot-time write vanished is still re-delivered, once', async (t) => {
+  const { box, state, advance } = await bootNoticeSeat(t, { dropFirstText: true });
+  await advance(29_000);
+  assert.strictEqual(box.draft, '', 'ENTER: the first write was dropped by the pty');
+  assert.ok(box.writes.some((w) => countNotice(w.b) === 1), 'ENTER: the boot drain did write the notice');
+  await advance(171_000);
+  assert.strictEqual(box.submitted.length, 1, 'the retry re-delivered it');
+  assert.strictEqual(countNotice(box.submitted[0]), 1, 'as exactly one copy');
+  assert.strictEqual(state.pendingRebootNotice, null, 'and the ladder cleared it on the turn');
+});
+
+test('a reboot notice retry does not send a bare Enter into a composer the operator typed in since the write', async (t) => {
+  const { s, box, advance } = await bootNoticeSeat(t);
+  await advance(20_000);
+  assert.ok(s._injectStuck && s._injectStuck.entered, 'ENTER: the nudge marked the unit stuck in the composer');
+  s.lastUserInputTs = Date.now();
+  await advance(11_000);
+  assert.deepStrictEqual(box.writes.filter((w) => w.at >= 29_000 && w.b === '\r'), [], 'no Enter sent at the retry');
+  assert.deepStrictEqual(box.submitted, [], 'so the operator\'s draft was not submitted');
+});
+
 test('kill() under an unreadable sessions.json does not reject and still kills the process', { skip: typeof process.getuid === 'function' && process.getuid() === 0 && 'root reads a 000 file' }, async () => {
   const userData = mkTmpRoot('kill-unreadable-ud-');
   const registryDir = mkTmpRoot('kill-unreadable-reg-');
