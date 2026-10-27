@@ -117,3 +117,7 @@ test/test-digest-lock.test.js, so a wedged run ends in this runner's own
 file named. The file is from node's SIGTERM `# Interrupted while running:` tap
 line, or the given one for a one-file run killed before node wrote it.
 `CLODEX_TEST_RUN_TIMEOUT_MS` overrides it for the runner's own tests.
+
+## STALE_SCRATCH_MS
+
+Measured 2026-10-27: `$TMPDIR/clodex-suite/` held 3,573 roots leaked by test files the slow gate killed before their `after` reaper ran. The sweep is age-gated, never name-gated, so a concurrent runner keeps its live roots; 2 hours sits above the slow-gate ceiling with margin.
