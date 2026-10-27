@@ -240,7 +240,8 @@ test('applyPorts: a port add on a running box keeps the box\'s own ports even af
   const first = parseOwnPortMap(fs.readFileSync(sb.composePath(), 'utf8'));
   assert.deepStrictEqual(first, { web: 7811, wirescope: 7812, wire: 7820 }, 'ENTER: the first write was bumped off 7810');
   busy.delete(7810);
-  await sb.setConfig({ ports: [{ container: 3000 }] }, { writer: 'panel' });
+  const saved = await sb.setConfig({ ports: [{ container: 3001 }] }, { writer: 'panel' });
+  assert.notStrictEqual(saved && saved.ok, false, JSON.stringify(saved));
   const text = fs.readFileSync(sb.composePath(), 'utf8');
   assert.match(text, /^ {2}sandbox-ports:$/m);
   assert.deepStrictEqual(parseOwnPortMap(text), { web: 7811, wirescope: 7812, wire: 7820 });
