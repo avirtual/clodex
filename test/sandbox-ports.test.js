@@ -68,7 +68,7 @@ const SIBLING_YAML = [
   '',
 ].join('\n');
 
-function portBox({ ports = [], spawn, dockerIsLocal = async () => true, selfLabel } = {}) {
+function portBox({ ports = [], spawn, dockerIsLocal = async () => true, selfLabel, isPortInUse = () => Promise.resolve(false) } = {}) {
   const ud = mkTmpDirIn(TMP_USERDATA, 'ud-');
   const sibling = path.join(ud, 'sibling-compose.yaml');
   fs.writeFileSync(sibling, SIBLING_YAML);
@@ -78,7 +78,7 @@ function portBox({ ports = [], spawn, dockerIsLocal = async () => true, selfLabe
     getUiSettings: () => settings,
     getUserDataPath: () => ud,
     siblingComposePaths: () => [sibling],
-    isPortInUse: () => Promise.resolve(false),
+    isPortInUse,
     isPackaged: () => false,
     repoRoot: '/repo',
     platform: 'darwin',
@@ -231,6 +231,20 @@ test('applyPorts via setConfig: a running box recreates only the gateway and rec
     { container: 3001, host: 3001, proto: 'http', allInterfaces: false, applied: true, url: 'http://localhost:3001' },
     { container: 5432, host: 15432, proto: 'tcp', allInterfaces: false, applied: true, url: 'localhost:15432' },
   ]);
+});
+
+test('applyPorts: a port add on a running box keeps the box\'s own ports even after a default frees up', async () => {
+  const busy = new Set([7810]);
+  const { sb } = portBox({ spawn: recordingSpawn([], { ps: RUNNING }), isPortInUse: (p) => Promise.resolve(busy.has(p)) });
+  await sb.writeComposeFile();
+  const first = parseOwnPortMap(fs.readFileSync(sb.composePath(), 'utf8'));
+  assert.deepStrictEqual(first, { web: 7811, wirescope: 7812, wire: 7820 }, 'ENTER: the first write was bumped off 7810');
+  busy.delete(7810);
+  const saved = await sb.setConfig({ ports: [{ container: 3001 }] }, { writer: 'panel' });
+  assert.notStrictEqual(saved && saved.ok, false, JSON.stringify(saved));
+  const text = fs.readFileSync(sb.composePath(), 'utf8');
+  assert.match(text, /^ {2}sandbox-ports:$/m);
+  assert.deepStrictEqual(parseOwnPortMap(text), { web: 7811, wirescope: 7812, wire: 7820 });
 });
 
 test('applyPorts: an emptied list removes the gateway while the compose file still names it, then rewrites the file', async () => {

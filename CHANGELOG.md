@@ -37,6 +37,8 @@ blocks a release.
 - Deploy: the node deploy script no longer leaves ui-settings.json (which holds peer tokens) world-readable while the later steps run or when one of them fails.
 - publish-image.sh refuses to publish a version whose tag is not checked out, and moves `:latest` only when publishing the newest tag, so a manual republish can no longer overwrite a released image with newer code.
 - Helm: a non-default `--port` now reaches the engine, so the pod goes Ready; the chart also persists the Codex and Muse credential homes across pod reschedules.
+- Sandbox: adding or removing a published port no longer rewrites the box's own web and wire ports in compose.yaml, which could drift from the running container and make status and health checks read dead ports.
+- Sandbox: deleting a box while Docker is not running is refused and keeps the box listed, instead of dropping it while its restart-always container survives to come back unmanaged.
 
 ## 5.146.2 — 2026-10-27
 

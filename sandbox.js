@@ -1092,7 +1092,7 @@ function createSandbox(deps = {}) {
     const ports = normalizePorts(getConfig().ports).ports || [];
     const svc = gatewayServiceName(id);
     const rewrite = async () => {
-      try { await writeComposeFile({ keepPlatform: true, keepBootstrap: true }); return null; } catch (e) {
+      try { await writeComposeFile({ keepPlatform: true, keepBootstrap: true, keepClodexPorts: true }); return null; } catch (e) {
         return { ok: false, error: `compose write failed: ${(e && e.message) || e}` };
       }
     };
@@ -1251,7 +1251,7 @@ function createSandbox(deps = {}) {
     return text.includes(`:${BOOTSTRAP_CONTAINER_DIR}:ro`) ? 'restart' : 'rebuild';
   }
 
-  async function writeComposeFile({ keepPlatform = false, keepBootstrap = false, noHooks = false } = {}) {
+  async function writeComposeFile({ keepPlatform = false, keepBootstrap = false, noHooks = false, keepClodexPorts = false } = {}) {
     const config = getConfig();
     const image = await resolveImageForConfig(config);
     let ownPorts = [];
@@ -1262,7 +1262,10 @@ function createSandbox(deps = {}) {
     const busy = await buildBusySet(config, ownPorts);
     const appPorts = normalizePorts(config.ports).ports || [];
     for (const p of appPorts) busy.add(p.host);
-    const ports = resolvePorts(config, (p) => busy.has(p));
+    const priorMap = keepClodexPorts && prior != null ? parseOwnPortMap(prior) : {};
+    const ports = ['web', 'wirescope', 'wire'].every((k) => Number.isInteger(priorMap[k]))
+      ? { web: priorMap.web, wirescope: priorMap.wirescope, wire: priorMap.wire }
+      : resolvePorts(config, (p) => busy.has(p));
     const authFile = fs.existsSync(authEnvPath()) ? authEnvPath() : null;
     for (const d of LIBRARY_MOUNT_DIRS) {
       if (d.startsWith('library/')) continue;
@@ -1444,7 +1447,7 @@ function createSandbox(deps = {}) {
     const r = await runCompose(['down', '--remove-orphans']);
     if (!r.ok) {
       const gone = dockerUnavailableError(r.stderr);
-      if (gone) { invalidateDetect(); return { ok: false, error: gone }; }
+      if (gone) { invalidateDetect(); return { ok: false, error: gone, dockerDown: gone === DOCKER_DOWN_MSG }; }
       return { ok: false, error: r.stderr.trim() || `docker compose down exited ${r.code}` };
     }
     for (const file of [portsRecordPath(), boxPortsRecordPath()]) {
@@ -1718,8 +1721,6 @@ function createSandboxManager(deps = {}) {
     return { ok: true, box: { id: boxId, label } };
   }
 
-  // Best-effort down: a stop failure is surfaced but does not block removal of
-  // the registry row.
   function remove(rawId) {
     return serialize(() => removeNow(rawId));
   }
@@ -1730,8 +1731,10 @@ function createSandboxManager(deps = {}) {
     if (!box) return { ok: false, error: `no such sandbox: ${boxId}` };
     const inst = get(boxId);
     let downError;
-    try { const d = await inst.down(); if (d && d.ok === false) downError = d.error; }
-    catch (e) { downError = String((e && e.message) || e); }
+    let dockerDown = false;
+    try { const d = await inst.down(); if (d && d.ok === false) { downError = d.error; dockerDown = d.dockerDown === true; } }
+    catch (e) { downError = String((e && e.message) || e); dockerDown = dockerUnavailableError(downError) === DOCKER_DOWN_MSG; }
+    if (dockerDown) return { ok: false, error: 'Docker is not running — the container was left in place; start Docker and delete again' };
     try { if (fs.existsSync(inst.srcDir())) await removeWorktree(inst.srcDir()); } catch {}
     if (!downError) {
       const dir = inst.stateDir();
