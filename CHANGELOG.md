@@ -23,7 +23,6 @@ blocks a release.
 - Sleeping assistants: a message to an assistant that crashed or was stopped without sleeping now resumes its last conversation instead of starting a fresh one with no brief.
 - Sleeping assistants: awake time no longer includes the time Clodex itself was not running, which inflated the cost shown for an assistant restored at app launch.
 
-
 ## 5.146.2 — 2026-10-27
 
 - Forking a seat that is kept warm no longer ends the parent's keep-warm hold when the fork starts its own conversation.

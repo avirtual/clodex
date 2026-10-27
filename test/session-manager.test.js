@@ -22125,6 +22125,19 @@ test('assistant wake: a crashed record with a sessionId and no asleepAt resumes 
   assert.deepStrictEqual(calls, [['asst', { resumeId: 'sid-1' }, 'ws']]);
 });
 
+test('assistant wake: a failed resume leaves no asleepAt, so the next wake resumes again', async (t) => {
+  const calls = [];
+  const h = mkStreamSeatManager({
+    persisted: { asst: { ...ASSISTANT_ROW, workspaceId: 'ws', exitedAt: 5, sessionId: 'sid-1' } },
+    extraDeps: { restartSession: async (...a) => { calls.push(a); return { ok: calls.length > 1 }; } },
+  });
+  t.after(() => h.stopAll());
+  assert.strictEqual((await h.m.wake('asst')).ok, false, 'ENTER: the first wake failed');
+  assert.notStrictEqual(typeof h.store.get('asst').asleepAt, 'number');
+  assert.deepStrictEqual(await h.m.wake('asst'), { ok: true, state: 'awake' });
+  assert.deepStrictEqual(calls[1], ['asst', { resumeId: 'sid-1' }, 'ws']);
+});
+
 test('assistant wake: a record with neither asleepAt nor a sessionId restarts fresh', async (t) => {
   const calls = [];
   const h = mkStreamSeatManager({

@@ -3857,17 +3857,17 @@ function createSessionManager(deps) {
       if (full) return full;
       const p = getPersistence();
       let r;
+      const resumeId = !entry.asleepAt && entry.sessionId ? entry.sessionId : null;
       try {
         p.setArchived(name, false);
         p.setExited(name, null);
         p.upsert({ name, asleepAt: null, sleepReason: null, wakes: (entry.wakes || 0) + 1, awokeAt: Date.now() });
-        const resumeId = !entry.asleepAt && entry.sessionId ? entry.sessionId : null;
         log.info('session', `wake ${name} (${reason}) ${resumeId ? 'resume' : 'fresh'}`);
         r = await restartSession(name, resumeId ? { resumeId } : { fresh: true }, entry.workspaceId);
       } finally { if (cap) this.releaseAwakeRoom(entry.template || null, name); }
       if (!r || !r.ok) {
         p.setArchived(name, true);
-        p.upsert({ name, asleepAt: entry.asleepAt || Date.now(), sleepReason: entry.sleepReason || null });
+        p.upsert({ name, asleepAt: entry.asleepAt || (resumeId ? null : Date.now()), sleepReason: entry.sleepReason || null });
         return r || { ok: false, error: 'restart failed' };
       }
       return { ok: true, state: 'awake' };
