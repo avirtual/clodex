@@ -214,7 +214,7 @@ function createPeerWiring(deps) {
     // Required lazily, like the managers below, so this factory keeps its
     // load-order freedom; peer-tunnel owns the kind list, so the question
     // "does this peer use a managed cloud transport" is asked of it.
-    const { hasCloudTransport } = require('./peer-tunnel');
+    const { hasCloudTransport, DEFAULT_REMOTE_PORT } = require('./peer-tunnel');
     const { destinationOf } = require('./web-tunnel');
     if (!getPeerManager()) return;
     const s = getUiSettings().get();
@@ -238,7 +238,9 @@ function createPeerWiring(deps) {
       // has to keep the connection object alive.
       if (p.sshHost || hasCloudTransport(p)) {
         const url = getTunnelManager() ? getTunnelManager().urlFor(p.id) : null;
-        resolved.push({ id: p.id, label: p.label, url: url || 'http://127.0.0.1:1', token, inbox: p.inbox, direct, managed: true });
+        const remotePort = Number.isInteger(p.remotePort) ? p.remotePort : DEFAULT_REMOTE_PORT;
+        const dest = JSON.stringify({ ...destinationOf(p), remotePort });
+        resolved.push({ id: p.id, label: p.label, url: url || 'http://127.0.0.1:1', token, inbox: p.inbox, direct, managed: true, dest });
       } else {
         resolved.push({ id: p.id, label: p.label, url: p.url, token, inbox: p.inbox, direct });
       }
