@@ -211,6 +211,7 @@ class RemoteServer {
     this._nodeLogFile = typeof nodeLogFile === 'function' ? nodeLogFile : null;
     this._seatImport = seatImport || null;
     this._importCreate = importCreate || null;
+    this._importCommits = new Map();
     this._setClientToken = setClientToken || null;
     this._listPeers = listPeers || null;
     this._getPeer = getPeer || null;
@@ -1036,28 +1037,40 @@ class RemoteServer {
   }
 
   _handleImportCommit(id, res) {
+    let pending = this._importCommits.get(id);
+    if (!pending) {
+      pending = this._runImportCommit(id).finally(() => this._importCommits.delete(id));
+      this._importCommits.set(id, pending);
+    }
+    return pending.then(({ code, body }) => this._json(res, code, body));
+  }
+
+  _runImportCommit(id) {
     let out;
     try { out = this._seatImport.commit({ id }); }
-    catch (e) { return this._json(res, 500, { ok: false, error: e.message }); }
-    if (!out || !out.ok) return this._json(res, 400, out || { ok: false, error: 'commit failed' });
+    catch (e) { return Promise.resolve({ code: 500, body: { ok: false, error: e.message } }); }
+    if (!out || !out.ok) return Promise.resolve({ code: 400, body: out || { ok: false, error: 'commit failed' } });
     const { name, record, installed, dropped } = out;
     return Promise.resolve()
       .then(() => this._importCreate({ name, record, installed, dropped }))
       .then((made) => {
         if (!made || !made.ok) {
-          return this._json(res, (made && made.code) || 500, { ok: false, error: (made && made.error) || 'create failed', installed });
+          return { code: (made && made.code) || 500, body: { ok: false, error: (made && made.error) || 'create failed', installed } };
         }
-        return this._json(res, 200, {
-          ok: true,
-          name: made.name,
-          pid: made.pid != null ? made.pid : null,
-          cwd: made.cwd != null ? made.cwd : null,
-          sessionId: made.sessionId != null ? made.sessionId : null,
-          installed,
-          dropped: made.dropped || dropped || [],
-        });
+        return {
+          code: 200,
+          body: {
+            ok: true,
+            name: made.name,
+            pid: made.pid != null ? made.pid : null,
+            cwd: made.cwd != null ? made.cwd : null,
+            sessionId: made.sessionId != null ? made.sessionId : null,
+            installed,
+            dropped: made.dropped || dropped || [],
+          },
+        };
       })
-      .catch((e) => this._json(res, 500, { ok: false, error: e.message, installed }));
+      .catch((e) => ({ code: 500, body: { ok: false, error: e.message, installed } }));
   }
 
   _route(req, res) {
