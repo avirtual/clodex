@@ -162,7 +162,7 @@ async function busySeat(app, name) {
 
 const key = (sender, body) => crypto.createHash('sha256').update(`${sender}\n${body}`).digest('hex').slice(0, 16);
 
-test('a dm queued on a busy stream seat is parked with its key and born when the stream dies', async () => {
+test('_parkStreamOutbox: a dm queued on a busy stream seat is parked with its key and born when the stream dies', async () => {
   const app = boot();
   try {
     const s = await busySeat(app, 'sx');
@@ -199,7 +199,7 @@ test('a resend to a busy stream seat that then dies leaves the same id parked', 
     app.persistence.upsert({ name: 'lead', intents: ['resend'] });
     await app.m._handleIntent('lead', { type: 'resend', id: 'abcde' });
     assert.deepStrictEqual(app.parked('sx'), [], 'ENTER: the resend claimed the parked file');
-    assert.strictEqual(s.outbox.length, 1, 'ENTER: the resend waits in the outbox');
+    assert.strictEqual(s.outbox.length, 1, 'ENTER: _streamEnqueue queued the resend behind the busy turn');
     app.close('sx');
     const files = app.parked('sx');
     assert.strictEqual(files.length, 1);
