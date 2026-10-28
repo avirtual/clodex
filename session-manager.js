@@ -2647,7 +2647,7 @@ function createSessionManager(deps) {
         }
         try { getPluginHooks && getPluginHooks() && getPluginHooks().fireExit(name); } catch {}
         this._cleanup(name);
-        if (!session._shuttingDown && !session._moving && !session.clone) {
+        if (!session._shuttingDown && !session._moving && !session._respawning && !session.clone) {
           try { this._handSeatGone(session); } catch (e) { log.warn('ticket', `hand cap auto-start after ${name} exit failed: ${e.message}`); }
         }
         if (typeof refreshTrayMenu === 'function') refreshTrayMenu();
@@ -3708,6 +3708,7 @@ function createSessionManager(deps) {
       this._foldSeatCost(s);
       try { this._stampSeatCost(s, 'kill'); } catch {}
       if (!respawn) getPersistence().remove(name);
+      else s._respawning = true;
       this._bindHold(name);
       if (s.stream) { s.stream.kill(); return; }
       const ptyPid = s.pty.pid;
