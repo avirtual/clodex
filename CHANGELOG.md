@@ -14,6 +14,9 @@ blocks a release.
 
 ## Unreleased
 
+- The embeddings store truncates a torn tail left by a crash mid-append instead of appending after it, and a crash during compaction can no longer leave the index pointing into another record's vector.
+- A memory unit is written atomically, and a store write that fails mid-way (full disk) no longer leaves a temp file beside the store.
+
 ## 5.149.0 — 2026-10-28 — clodexctl reaps its tunnel on exit, create node takes a token file, worktree-safe workspace deletes
 
 - **Security:** `clodexctl` now reaps its tunnel child and any helm token tempdir on Ctrl-C, SIGTERM or a closed terminal, instead of leaving an authenticated forward on a loopback port and token files on disk; `attach` and `logs -f` also handle SIGHUP.
