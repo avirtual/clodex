@@ -703,9 +703,10 @@ seats get a request/response channel whose reply is the caller's own tool result
   and stay the main agent's channel. A `clodex-send` from a main-thread Bash call keeps main
   identity through that call's `tool_use_id`, but only for the first stamped segment the socket
   receives: a second `clodex-send` in the same Bash command is a subagent. A Bash call with
-  `run_in_background: true` gets its `tool_result` before the command runs, so the main-thread
-  request carrying it drops the id (`_closeMainToolUses`, wire/proxy.js) and a `clodex-send`
-  inside it is subagent-grade: the stamp fails closed and the id is not reopened. Residual: while a
+  `run_in_background: true` gets its `tool_result` as soon as the command is launched, and the
+  main-thread request carrying it drops the id (`_closeMainToolUses`, wire/proxy.js). A
+  `clodex-send` inside it that reaches the socket after that request is subagent-grade: the
+  stamp fails closed and the id is not reopened. Only one that wins the race is main. Residual: while a
   recorded id is open (from its block in the stream until its stamp is redeemed or the main thread
   sends its `tool_result`, 10 min at most; a Bash command that runs other work before its
   `clodex-send` holds it open meanwhile), any same-UID process can read its id from the main transcript and redeem it first, and a same-UID
