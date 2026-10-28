@@ -831,7 +831,7 @@ test('#45 F2: a red suite after an accept that KEPT the branch does not call it 
 
 const ACCEPT_NOTE = 'ship it';
 
-test('#45 F2: an accept that enters while merging is refused before the merge check and keeps its note', async () => {
+test('#45 F2 _suiteVeto: an accept that enters while merging is refused before the merge check and keeps its note', async () => {
   let checks = 0;
   const real = require('../git-worktree');
   const { repo, wtPath, f } = mkMergeWithTree({
@@ -846,7 +846,7 @@ test('#45 F2: an accept that enters while merging is refused before the merge ch
   assert.strictEqual(git(repo.dir, ['branch', '--list', '--format=%(refname:short)', 'tl-1']).trim(), 'tl-1');
 });
 
-test('#45 F2: an accept that sees merging only after its merge check is refused and keeps its note', async () => {
+test('#45 F2 _suiteVeto: an accept that sees merging only after its merge check is refused and keeps its note', async () => {
   let stamp = () => {};
   const real = require('../git-worktree');
   const { repo, wtPath, f } = mkMergeWithTree({
