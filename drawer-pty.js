@@ -95,7 +95,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     // Scrollback and live bytes take different IPC paths, so a seq-less renderer
     // double-prints the overlap or drops the tail.
     const rec = {
-      proc, scrollback: '', cols, rows, windowId, seat: seat || null, seq: 0, shimmed, pending: null,
+      proc, scrollback: '', cols, rows, windowId, seat: seat || null, seq: 0, shimmed, prompted: false, pending: null,
       remote: null, remoteRecord: null, remotePrompt: null, endedInner: null,
     };
     // Per shell, not per window: one parser shared across seats would attribute one
@@ -134,6 +134,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
           settle(rec, { status: 'abandoned', record: c });
         },
         onPrompt: (info) => {
+          if (!((info && info.depth) || 0)) rec.prompted = true;
           if (((info && info.depth) || 0) === 1) {
             if (rec.remotePrompt) rec.remotePrompt(info);
             return;
@@ -420,6 +421,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       // Distinct from `busy`: between the write and the C mark the parser is not
       // capturing yet, so a second exec passes a busy check and types over the first.
       if (rec.pending) return { ok: false, code: 'pending', running: rec.pending.command };
+      if (!fresh && !rec.prompted) return { ok: false, code: 'no-marks', reason: 'no-prompt' };
 
       let depth = 0;
       let inside = '';

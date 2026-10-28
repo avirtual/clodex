@@ -55,8 +55,9 @@ test('every zsh startup file is forwarded, not just .zshrc', () => {
   for (const f of FORWARDED) {
     const rec = fs.files.get(path.join('/s', f));
     assert.ok(rec, `ENTER: ${f} was generated`);
-    assert.match(rec.body, new RegExp(`source "\\$HOME/${f.replace('.', '\\.')}"`),
-      `${f} sources the operator's own`);
+    assert.match(rec.body, new RegExp(`"\\$\\{__CLODEX_REAL_ZDOTDIR:-\\$HOME\\}/${f.replace('.', '\\.')}"`),
+      `${f} names the operator's own`);
+    assert.match(rec.body, /&& source "/, `${f} sources it`);
   }
   assert.ok(fs.files.get('/s/.zshrc'), 'ENTER: .zshrc was generated');
 });
@@ -65,7 +66,7 @@ test("the operator's own rc is sourced BEFORE the hooks are added", () => {
   const fs = fakeFs();
   buildZshShim({ dir: '/s', shell: '/bin/zsh', env: {}, fs });
   const body = fs.files.get('/s/.zshrc').body;
-  const src = body.indexOf('source "$HOME/.zshrc"');
+  const src = body.indexOf('source "$__clodex_rc"');
   const hook = body.indexOf('__clodex_precmd');
   assert.ok(src > -1 && hook > -1, 'ENTER: both the source and the hooks are present');
   assert.ok(src < hook, 'sourcing first is what lets both their hooks and ours survive');
@@ -79,16 +80,56 @@ test('the real ZDOTDIR is restored before the operator rc is sourced', () => {
   assert.strictEqual(r.env.__CLODEX_REAL_ZDOTDIR, '/home/me/zsh');
   const body = fs.files.get('/s/.zshrc').body;
   const restore = body.indexOf('export ZDOTDIR="$__CLODEX_REAL_ZDOTDIR"');
-  const src = body.indexOf('source "/home/me/zsh/.zshrc"');
+  const src = body.indexOf('source "$__clodex_rc"');
   assert.ok(restore > -1 && src > -1, 'ENTER: both the restore and the source are present');
   assert.ok(restore < src, 'restored first');
 });
 
-test('a custom ZDOTDIR is where the forwarded files point', () => {
+test('a custom ZDOTDIR is where the forwarded files point, read at runtime', () => {
   const fs = fakeFs();
-  buildZshShim({ dir: '/s', shell: '/bin/zsh', env: { ZDOTDIR: '/custom' }, fs });
-  assert.match(fs.files.get('/s/.zprofile').body, /source "\/custom\/\.zprofile"/);
+  const r = buildZshShim({ dir: '/s', shell: '/bin/zsh', env: { ZDOTDIR: '/custom' }, fs });
+  assert.strictEqual(r.env.__CLODEX_REAL_ZDOTDIR, '/custom');
+  assert.match(fs.files.get('/s/.zprofile').body, /source "\$\{__CLODEX_REAL_ZDOTDIR:-\$HOME\}\/\.zprofile"/);
+  assert.ok(!fs.files.get('/s/.zprofile').body.includes('/custom'), 'not baked at generation time');
 });
+
+function whichZsh() {
+  for (const p of ['/bin/zsh', '/usr/bin/zsh', '/opt/homebrew/bin/zsh', '/usr/local/bin/zsh']) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+for (const [label, line] of [
+  ['an unconditional export', (xdg) => `export ZDOTDIR="${xdg}"\n`],
+  ['a ${ZDOTDIR:-…} default', (xdg) => `export ZDOTDIR="\${ZDOTDIR:-${xdg}}"\n`],
+]) {
+test(`a .zshenv that sets ZDOTDIR (XDG layout, ${label}) still gets the hook rc and the operator rc`, { skip: !whichZsh() && 'zsh absent' }, () => {
+  const { mkTmpRoot } = require('./lib/tmp-roots');
+  const { spawnSync } = require('child_process');
+  const zsh = whichZsh();
+  const root = mkTmpRoot('zshim-');
+  try {
+    const home = path.join(root, 'home');
+    const xdg = path.join(home, '.config', 'zsh');
+    const shimDir = path.join(root, 'shim');
+    const marker = path.join(root, 'operator-rc-ran');
+    fs.mkdirSync(xdg, { recursive: true });
+    fs.writeFileSync(path.join(home, '.zshenv'), line(xdg));
+    fs.writeFileSync(path.join(xdg, '.zshrc'), `print -r -- "$ZDOTDIR" > "${marker}"\n`);
+    const r = buildZshShim({ dir: shimDir, shell: zsh, env: {} });
+    assert.ok(r, 'ENTER: shim built');
+    const env = { PATH: process.env.PATH, HOME: home, TERM: 'dumb', ...r.env };
+    const out = spawnSync(zsh, ['-l', '-i', '-c', 'typeset -f __clodex_precmd >/dev/null && echo HOOKED || echo NOT_HOOKED'],
+      { env, encoding: 'utf8', timeout: 5000 });
+    assert.match(out.stdout, /HOOKED/, `stdout: ${out.stdout} stderr: ${out.stderr}`);
+    assert.doesNotMatch(out.stdout, /NOT_HOOKED/);
+    assert.strictEqual(fs.readFileSync(marker, 'utf8').trim(), xdg, 'operator rc ran with its own ZDOTDIR');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+}
 
 // Measured against a real PTY: `${(q)1}` ESCAPES the line, so `echo hello`
 // is reported as `echo\ hello` and every command is subtly wrong.

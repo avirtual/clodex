@@ -181,7 +181,17 @@ function mk(over = {}) {
   assert.deepStrictEqual(Object.keys(deps).sort(), declaredDeps(),
     'the fixture must wire EVERY dep — an unwired one is undefined, which is legal and silent');
 
-  return { w: createDrawerPtys(deps), spawn, sent, results, passive, mirrored, timers };
+  const w = createDrawerPtys(deps);
+  if (over.prompted !== false && spawn.spawned) {
+    const open = w.spawn;
+    w.spawn = (...a) => {
+      const before = spawn.spawned.length;
+      const r = open(...a);
+      if (spawn.spawned.length > before) spawn.spawned[spawn.spawned.length - 1].emit(A);
+      return r;
+    };
+  }
+  return { w, spawn, sent, results, passive, mirrored, timers };
 }
 
 // The kill escalation also uses the injected setTimeout, so a test about the
@@ -290,6 +300,18 @@ test('an unshimmed shell is refused — a blind command would never report back'
   // leave the agent waiting on a D mark that this shell cannot emit.
   assert.deepStrictEqual(spawn.spawned[0].written, [], 'the command did not run');
   assert.deepStrictEqual(results, []);
+});
+
+test('a shimmed shell that has never drawn a prompt mark is refused no-marks, not left to hang', () => {
+  const { w, spawn, results } = mk({ prompted: false });
+  w.spawn('ws-1', 'alice', {});
+  assert.strictEqual(w._execState('ws-1', 'alice').shimmed, true, 'ENTER: the tab counts as shimmed');
+  spawn.spawned[0].emit(`zsh startup without hooks${CR}${LF}% `);
+  assert.deepStrictEqual(w.exec('ws-1', 'alice', 'ls'), { ok: false, code: 'no-marks', reason: 'no-prompt' });
+  assert.deepStrictEqual(spawn.spawned[0].written, [], 'the command did not run');
+  assert.deepStrictEqual(results, []);
+  spawn.spawned[0].emit(A);
+  assert.deepStrictEqual(w.exec('ws-1', 'alice', 'ls'), { ok: true, command: 'ls' });
 });
 
 test('the shell remembers whether IT was shimmed, not what the pref says now', () => {

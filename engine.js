@@ -2125,7 +2125,9 @@ function termExec(workspaceId, seat, command, onResult) {
   switch (r.code) {
     case 'bad-command': return { ok: false, error: r.error };
     case 'spawn-failed': return { ok: false, error: `your terminal could not be opened (${r.error}). Nothing ran.` };
-    case 'no-marks': return { ok: false, error: `your terminal cannot report a command's result, so running one blind would leave you waiting forever: ${termShimDiagnosis()}` };
+    case 'no-marks':
+      if (r.reason === 'no-prompt') return { ok: false, error: "your terminal has not drawn a prompt with Clodex's marks yet — if it just opened, retry in a moment; if it stays this way, its startup files are not running the hook. Nothing ran." };
+      return { ok: false, error: `your terminal cannot report a command's result, so running one blind would leave you waiting forever: ${termShimDiagnosis()}` };
     case 'busy': {
       const shown = termRefusalName(r.running);
       const offer = r.remoteOffer
@@ -2397,6 +2399,7 @@ const toolCache = createToolCache({ whichBin });
     getCtlService: () => ctlService,
     getBashLive: () => bashLive,
     getDrawerPtys: () => drawerPtys,
+    termExec,
     getPluginHost: () => pluginHost,
     getHelpCorpus,
     getPluginLoader: () => pluginLoader,
