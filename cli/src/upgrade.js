@@ -186,7 +186,7 @@ async function planHelm({ ctxName, entry, dep, flags, io, printer, execFn, log }
     await D.runVendor(execFn, D.helmStatusArgs({ name: release, namespace, kubeContext }), 'status', EXIT.USAGE);
   } catch (e) {
     if (/not found/i.test(e.message || '')) {
-      throw new CliError(EXIT.USAGE, `release "${release}" is not installed in namespace "${namespace}" — upgrade moves an existing deployment, it does not create one. Install it with: clodexctl deploy node ${release} --helm --namespace ${namespace}${kubeContext ? ` --kube-context ${kubeContext}` : ''}`);
+      throw new CliError(EXIT.USAGE, `release "${release}" is not installed in namespace "${namespace}" — upgrade moves an existing deployment, it does not create one. Install it with: clodexctl deploy node ${release} --helm --namespace ${namespace}${kubeContext ? ` --kube-context ${kubeContext}` : ''}${release !== ctxName ? ` --ctx ${ctxName}` : ''}`);
     }
     throw new CliError(EXIT.CONNECT, `could not determine whether release "${release}" exists (helm status failed for a reason other than not-found) — check cluster access and re-run: ${e.message}`);
   }
@@ -231,7 +231,7 @@ async function planHelm({ ctxName, entry, dep, flags, io, printer, execFn, log }
     // it, and passing a flag would make this run's silence look like a choice.
     reverts: [],
     run: () => D.deployHelmVerb({
-      printer, flags: { ...flags, force: true, set: sets, namespace, 'kube-context': kubeContext },
+      printer, flags: { ...flags, force: true, set: sets, namespace, 'kube-context': kubeContext, ctx: ctxName },
       args: [release], io,
     }),
   };

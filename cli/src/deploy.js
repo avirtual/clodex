@@ -1215,8 +1215,10 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
   const name = args[0];
   if (!name) throw new CliError(EXIT.USAGE, 'deploy node --helm needs a release name (e.g. deploy node mynode --helm)');
   if (!HELM_RELEASE_RE.test(name)) {
-    throw new CliError(EXIT.USAGE, `bad release name "${name}" — helm release names are DNS-1123: lowercase letters/digits/hyphens, start+end alphanumeric, max 53 chars (no dots or underscores; it doubles as the ctx name)`);
+    throw new CliError(EXIT.USAGE, `bad release name "${name}" — helm release names are DNS-1123: lowercase letters/digits/hyphens, start+end alphanumeric, max 53 chars (no dots or underscores; it doubles as the ctx name unless --ctx names one)`);
   }
+  const ctxName = flags.ctx ? String(flags.ctx) : name;
+  if (!NAME_RE.test(ctxName)) throw new CliError(EXIT.USAGE, `bad --ctx "${ctxName}" — use ${NAME_RE.source}`);
   const namespace = flags.namespace ? String(flags.namespace) : DEFAULT_HELM_NAMESPACE;
   if (!K8S_NS_RE.test(namespace)) throw new CliError(EXIT.USAGE, `bad --namespace "${namespace}" — a DNS-1123 label (lowercase letters/digits/hyphens, max 63 chars)`);
   const portFlagged = flags.port != null;
@@ -1273,7 +1275,7 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
   if (flags['dry-run']) {
     const argvPreview = helmArgv({ name, chart, namespace, kubeContext: flags['kube-context'] ? String(flags['kube-context']) : null, port, wireTokenFile: '<wire-token-tempfile>', oauthTokenFile: claudeToken ? '<oauth-token-tempfile>' : null, sets, valuesFiles, forceConflicts: !!flags['force-conflicts'] });
     const ctxEntry = { kubectl: { target: `svc/${name}`, namespace, ...(flags['kube-context'] ? { context: String(flags['kube-context']) } : {}) }, ...(port !== DEFAULT_PORT ? { remotePort: port } : {}), ...(webEnabled ? { webPort } : {}), token: '<minted-or-reused>', deploy: { flavor: 'helm', release: name, namespace, kubeContext: flags['kube-context'] ? String(flags['kube-context']) : null } };
-    if (json) { emit({ type: 'dry-run', name, namespace, kubeContext: flags['kube-context'] || null, chart, port, claudeToken: !!claudeToken, helmArgv: argvPreview, ctxName: flags['no-ctx'] ? null : name, ctxEntry }); return; }
+    if (json) { emit({ type: 'dry-run', name, namespace, kubeContext: flags['kube-context'] || null, chart, port, claudeToken: !!claudeToken, helmArgv: argvPreview, ctxName: flags['no-ctx'] ? null : ctxName, ctxEntry }); return; }
     printer.line([
       `dry-run — would deploy release "${name}" from the helm chart:`,
       `  chart      ${chart}`,
@@ -1282,7 +1284,7 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
       `  port       ${port} (wire, in-cluster; reached via kubectl port-forward)`,
       claudeToken ? '  claude     token from --claude-token-file (rides a 0600 tempfile into --set-file, redacted)' : null,
       `  helm       ${argvPreview.join(' ')}`,
-      flags['no-ctx'] ? '  context (skipped — --no-ctx)' : `  context ${name} (kubectl svc/${name} -n ${namespace}, token from the release Secret)`,
+      flags['no-ctx'] ? '  context (skipped — --no-ctx)' : `  context ${ctxName} (kubectl svc/${name} -n ${namespace}, token from the release Secret)`,
       '  (an existing release would be UPGRADED in place, reusing its wire token; its claude oauth token is carried forward unless --claude-token-file replaces it)',
       '  (its prior --set/--values overrides are also carried forward and re-applied — a flag on this run beats a carried value; the cluster is not touched on --dry-run, so they cannot be listed here)',
     ].filter(Boolean).join('\n'));
@@ -1456,17 +1458,17 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
     if (json) emit({ type: 'context', action: 'skipped', reason: '--no-ctx' });
   } else {
     const store = loadContextsFor(flags, io);
-    const exists = Object.prototype.hasOwnProperty.call(store.contexts, name);
+    const exists = Object.prototype.hasOwnProperty.call(store.contexts, ctxName);
     if (exists && !flags.force) {
-      if (json) emit({ type: 'context', action: 'skipped', name, reason: 'exists — --force to overwrite' });
-      else printer.line(`context "${name}" already exists — kept it (--force to overwrite)`);
+      if (json) emit({ type: 'context', action: 'skipped', name: ctxName, reason: 'exists — --force to overwrite' });
+      else printer.line(`context "${ctxName}" already exists — kept it (--force to overwrite)`);
     } else {
-      store.contexts[name] = entry;
-      if (!store.current) store.current = name;
+      store.contexts[ctxName] = entry;
+      if (!store.current) store.current = ctxName;
       contexts.save(store, io.contextsFile);
       ctxSaved = true;
-      if (json) emit({ type: 'context', action: exists ? 'overwritten' : 'added', name });
-      else printer.line(`context "${name}" ${exists ? 'updated' : 'saved'} — you can now: clodexctl --ctx ${name} get sessions`);
+      if (json) emit({ type: 'context', action: exists ? 'overwritten' : 'added', name: ctxName });
+      else printer.line(`context "${ctxName}" ${exists ? 'updated' : 'saved'} — you can now: clodexctl --ctx ${ctxName} get sessions`);
     }
   }
 
@@ -1479,8 +1481,8 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
     if (json) emit({ type: 'error', reason: 'verify-failed', message: e.message });
     else printer.line(`release "${name}" is live (helm --wait passed), but the wire did not answer through kubectl port-forward: ${e.message}`);
     const hint = flags['no-ctx'] ? ''
-      : ctxSaved ? ` — the context was saved; debug with: clodexctl describe node ${name} --test --verbose`
-        : ` — the context was NOT saved (name "${name}" exists; re-run with --force to overwrite it)`;
+      : ctxSaved ? ` — the context was saved; debug with: clodexctl describe node ${ctxName} --test --verbose`
+        : ` — the context was NOT saved (name "${ctxName}" exists; re-run with --force to overwrite it)`;
     throw e instanceof CliError ? new CliError(e.exitCode, `${e.message}${hint}`) : new CliError(EXIT.SERVER, `deploy helm verify failed: ${e.message}${hint}`);
   }
   okm('verify');

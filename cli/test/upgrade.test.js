@@ -372,6 +372,25 @@ test('helm: a successful upgrade leaves the record STAMPED, so the next run read
   assert.doesNotMatch(s2, /inferred helm/, 'the stamped record is read, not re-inferred');
 });
 
+test('helm: upgrading a context whose release has another name updates THAT context and leaves the release-named one alone (t2045)', async () => {
+  const ssm = { ssm: { target: 'i-0abc' }, token: 'LIVE-SSM', deploy: { flavor: 'ssm' } };
+  const contextsFile = tmpCtxFile({
+    prod: { kubectl: { target: 'svc/mynode', namespace: 'clodex', context: 'docker-desktop' }, token: 'TOK-PROD' },
+    mynode: JSON.parse(JSON.stringify(ssm)),
+  }, 'prod');
+  const rec = {};
+  const { code, stdout } = await cli(['upgrade', 'node', 'prod'], {
+    contextsFile, execFn: fakeK8s(rec), probeVersion: reports('1.0.0'),
+    probeHelm: async () => ({ app: 'clodex', version: U.helmPinnedTag() }),
+  });
+  assert.strictEqual(code, EXIT.OK, stdout);
+  assert.ok(rec.helmArgs.includes('mynode'), rec.helmArgs.join(' '));
+  const after = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.deepStrictEqual(after.contexts.mynode, ssm);
+  assert.deepStrictEqual(after.contexts.prod.deploy, { flavor: 'helm', release: 'mynode', namespace: 'clodex', kubeContext: 'docker-desktop' });
+  assert.match(stdout, /context "prod" updated/);
+});
+
 test('helm: a --dry-run on a recordless kubectl node stamps NOTHING', async () => {
   const contextsFile = tmpCtxFile(RECORDLESS_KUBECTL_CTX({ target: 'svc/mynode', namespace: 'agents', context: 'prod' }));
   const { code } = await cli(['upgrade', 'node', 'mynode', '--dry-run'], {
