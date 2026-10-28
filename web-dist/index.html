@@ -32788,7 +32788,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             }
           }
           for (const key of Object.keys(props)) {
-            if (!(key in value)) continue;
+            if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
             const r = validateAgainstSchema(props[key], value[key], `${at}.${key}`);
             if (!r.ok) return r;
           }
