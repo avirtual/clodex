@@ -329,6 +329,8 @@ inject queue to empty (capped at `INJECT_BOOT_MAXWAIT` past the edge), so a spaw
 - `_dropPendingDir` removes the seat's `<name>.draining.*` claims with its
   pending dir; `rename` first rehomes the seat's orphans so they move with
   `pending/<name>`, and warns naming any claim a live drainer still holds.
+  A seat name is a claim only when it sits under `.claims/` or matches
+  `LEGACY_CLAIM_RE`, so `a.draining.idle.5-ab` is a seat both leave alone.
 - Drains: `run/<name>/pending.sh` (UserPromptSubmit and PostToolUse hooks) delivers
   parked mail with the target's own next turn or tool boundary; the busy/draft park arms a non-destructive
   5min cap (`_armParkCap`) that drains through the inject queue. Cost/dialog

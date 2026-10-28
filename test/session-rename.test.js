@@ -974,3 +974,18 @@ test("rename leaves a live drainer's claim under the old name and warns naming i
   assert.deepStrictEqual(fsReal.readdirSync(live), ['0001.json']);
   assert.strictEqual(warns.filter((w) => w.includes(pathReal.basename(live))).length, 1, `warns: ${JSON.stringify(warns)}`);
 });
+
+test('rename leaves a seat named seat.draining.idle.5-ab alone and does not warn about it', async () => {
+  const root = mkTmpRoot('clodex-rename-');
+  seedDirs(root, 'seat');
+  const lookalike = pathReal.join(root, 'pending', 'seat.draining.idle.5-ab');
+  fsReal.mkdirSync(lookalike, { recursive: true });
+  fsReal.writeFileSync(pathReal.join(lookalike, '0001.json'), JSON.stringify({ text: 'other seat' }));
+  const warns = [];
+  const { m } = mkRename({ root, entries: [BASE], deps: { log: { info() {}, warn: (_c, line) => warns.push(line), error() {}, debug() {} } } });
+  const r = await m.rename('seat', 'newseat');
+  assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
+  assert.deepStrictEqual(fsReal.readdirSync(lookalike), ['0001.json']);
+  assert.deepStrictEqual(fsReal.readdirSync(pathReal.join(root, 'pending', 'newseat')), ['marker.txt'], 'ENTER: rename moved the pending dir');
+  assert.deepStrictEqual(warns.filter((w) => w.includes('live drainer')), []);
+});

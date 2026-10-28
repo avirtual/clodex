@@ -129,7 +129,7 @@ const CODEX_LINK_SLOW_POLL_MS = 5000;
 const { mergeSessionEnv, sanitizeFlat, withUtf8Charset } = require('./env-scopes');
 const voiceEngineSpec = require('./voice-engine');
 const { CTRLU_SETTLE_MS } = require('./inject-queue');
-const { agentDir: pendingAgentDir, claimsDir: pendingClaimsDir, isReservedSeatName, claimTag, rehomeOrphans, CLAIM_TAG_RE } = require('./pending-store');
+const { agentDir: pendingAgentDir, claimsDir: pendingClaimsDir, isReservedSeatName, claimTag, rehomeOrphans, CLAIM_TAG_RE, LEGACY_CLAIM_RE } = require('./pending-store');
 const { VOICE_MODES, voiceModeOf } = require('./voice-settings');
 const { fmtAge } = require('./memory-store');
 const { mcpArgvPlan, claudeMcpServers, codexMcpArgs, museExpressible, secretRefs, discoverMcpSources } = require('./mcp-plan');
@@ -5041,8 +5041,8 @@ function createSessionManager(deps) {
       const prefix = `${name}.draining.`;
       const mine = (s) => s.startsWith(prefix) && CLAIM_TAG_RE.test(s.slice(prefix.length));
       const out = [];
-      for (const dir of [pendingClaimsDir(root), root]) {
-        try { out.push(...fs.readdirSync(dir).filter(mine).map((s) => path.join(dir, s))); } catch {}
+      for (const [dir, claim] of [[pendingClaimsDir(root), mine], [root, (s) => LEGACY_CLAIM_RE.test(s) && mine(s)]]) {
+        try { out.push(...fs.readdirSync(dir).filter(claim).map((s) => path.join(dir, s))); } catch {}
       }
       return out;
     }
