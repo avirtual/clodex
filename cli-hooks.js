@@ -580,6 +580,7 @@ function rehome_orphans() {
     if (!Number.isInteger(pid) || pid <= 0 || (!staleOwn && !aged && pid_alive(pid))) continue;
     let mine;
     try { mine = claim_path(path.basename(d) + '.draining.rehome.' + process.pid); } catch (e) { continue; }
+    if (aged) touch_claim(path.join(parent, s));
     try { fs.renameSync(path.join(parent, s), mine); } catch (e) { continue; }
     touch_claim(mine);
     const json = function (n) { return n.endsWith('.json'); };
@@ -601,6 +602,7 @@ rehome_orphans();
 let claim;
 try {
   claim = claim_path(path.basename(d) + '.draining.hook.' + process.pid);
+  try { if (Date.now() - fs.statSync(d).mtimeMs > CLAIM_STALE_MS) touch_claim(d); } catch (e) {}
   fs.renameSync(d, claim);        // atomic claim; ENOENT => nothing to drain / lost the race
 } catch (e) {
   process.exit(0);

@@ -14,6 +14,8 @@ blocks a release.
 
 ## Unreleased
 
+- Deleting or renaming seat `a` no longer removes or warns about the pending mail of a seat whose name merely looks like a drain claim (`a.draining.idle.5-ab`), and a drain of mail parked more than ten minutes ago can no longer be mistaken for a stale claim and delivered twice.
+
 ## 5.150.1 — 2026-10-28 — quoted command substitution in the Bash guard, stale pending-claim rehome
 
 - **Security:** the Bash deny guard and the `clodex-send` segmenter split on backticks and `$(` inside double quotes too, so `` echo "`kill -9 -1`" `` and `echo "$(git add -A)"` are examined as their own commands; single-quoted and backslash-escaped forms stay literal.

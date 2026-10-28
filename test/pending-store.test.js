@@ -540,7 +540,7 @@ test('Y1: a look-alike seat\'s own dead claim is not swept into the shorter-name
   assert.deepStrictEqual(drainPending(root, 'a.draining.99999', 'idle.1'), ['for the other seat']);
 });
 
-test('allParkedTexts / parkIdInUse / claimParkedById skip .claims and list a seat named x.draining.1', () => {
+test('allParkedTexts / parkIdInUse / claimParkedById skip a single-file entry under .claims and list a seat named x.draining.1', () => {
   const root = tmpRoot();
   parkDelivery(root, 'x.draining.1', 'seat text', SEQ(1), 'q1w');
   fs.mkdirSync(claimsDir(root));

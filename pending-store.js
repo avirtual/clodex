@@ -111,6 +111,7 @@ function drainPending(root, name, tag, expectedBorn = null) {
   rehomeOrphans(root, name);
   const dir = agentDir(root, name);
   const claim = claimPath(root, `${name}.draining.${tag}`);
+  if (claimIsStale(dir)) touchClaim(dir);
   try {
     fs.renameSync(dir, claim);
   } catch (e) {
@@ -168,6 +169,7 @@ function rehomeOrphans(root, name) {
     if (aged === null) continue;
     if (!Number.isInteger(pid) || pid <= 0 || (!staleOwn && !aged && isAlive(pid))) continue;
     const mine = claimPath(root, `${name}.draining.${claimTag('rehome')}`);
+    if (aged) touchClaim(path.join(parent, s));
     try { fs.renameSync(path.join(parent, s), mine); } catch { continue; }
     touchClaim(mine);
     const json = (f) => f.endsWith('.json') && !f.startsWith('.');
@@ -282,10 +284,6 @@ function parkedTextsIn(dir) {
   return out;
 }
 
-// Read-only. The caller is the spill GC: a delivery over the spill threshold was
-// parked as a POINTER to a file in ~/.clodex/messages/, and age-based collection
-// would delete that file out from under the still-parked pointer. Returning raw
-// text lets the GC see which files are still referenced.
 function parkDirs(root) {
   let names;
   try { names = fs.readdirSync(root); } catch { return []; }
@@ -294,6 +292,10 @@ function parkDirs(root) {
   return dirs;
 }
 
+// Read-only. The caller is the spill GC: a delivery over the spill threshold was
+// parked as a POINTER to a file in ~/.clodex/messages/, and age-based collection
+// would delete that file out from under the still-parked pointer. Returning raw
+// text lets the GC see which files are still referenced.
 function allParkedTexts(root) {
   return parkDirs(root).flatMap(parkedTextsIn);
 }
