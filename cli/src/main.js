@@ -276,7 +276,7 @@ async function dispatchNode(verb, args, flags, printer, io) {
   if (!handler) throw new CliError(EXIT.USAGE, `${verb} node is not supported`);
   return await handler({
     store, saveStore, printer, flags, args,
-    env: io.env || process.env, prompt: io.prompt,
+    env: io.env || process.env, prompt: io.prompt, readStdin: io.readStdin,
     dialHello: (name) => dialNodeHello(() => (verb === 'describe'
       ? describeCtx(store, name, flags, io)
       : contexts.resolve(store, { ctxName: name, env: {}, flags: {} })), io),

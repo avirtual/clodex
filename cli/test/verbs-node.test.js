@@ -797,3 +797,40 @@ test('upgrade node and undeploy node resolve only own keys — an inherited name
   assert.strictEqual(r.code, 2, r.stderr);
   assert.match(r.stderr, /no such node: constructor/);
 });
+
+test('create node --token-file stores the trimmed file content (t2041)', async () => {
+  const f = tmpCtx();
+  const tf = path.join(path.dirname(f), 'wire-token');
+  fs.writeFileSync(tf, '  filetok123\n\n');
+  const r = await cli(['create', 'node', 'home', '--url', 'http://127.0.0.1:7900', '--token-file', tf], f);
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(f, 'utf8')).contexts.home, { url: 'http://127.0.0.1:7900', token: 'filetok123' });
+});
+
+test('create node --token - reads the token from stdin, trimmed (t2041)', async () => {
+  const f = tmpCtx();
+  let reads = 0;
+  const r = await cli(['create', 'node', 'home', '--url', 'http://127.0.0.1:7900', '--token', '-'], f, { readStdin: () => { reads++; return 'stdintok456\n'; } });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.strictEqual(reads, 1);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(f, 'utf8')).contexts.home, { url: 'http://127.0.0.1:7900', token: 'stdintok456' });
+});
+
+test('create node --token-file with an argv --token is a USAGE error naming the conflict (t2041)', async () => {
+  const f = tmpCtx();
+  const tf = path.join(path.dirname(f), 'wire-token');
+  fs.writeFileSync(tf, 'filetok\n');
+  for (const tokenArg of ['argvtok', '-']) {
+    const r = await cli(['create', 'node', 'home', '--url', 'http://h', '--token-file', tf, '--token', tokenArg], f, { readStdin: () => 'stdintok' });
+    assert.strictEqual(r.code, 2);
+    assert.match(r.stderr, /--token-file and --token conflict/);
+    assert.strictEqual(fs.existsSync(f), false);
+  }
+});
+
+test('create node --token T still stores the argv token (t2041)', async () => {
+  const f = tmpCtx();
+  const r = await cli(['create', 'node', 'home', '--url', 'http://h', '--token', 'argvtok'], f, { readStdin: () => { throw new Error('stdin must not be read'); } });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.strictEqual(JSON.parse(fs.readFileSync(f, 'utf8')).contexts.home.token, 'argvtok');
+});

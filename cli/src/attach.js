@@ -79,8 +79,8 @@ function makeTerm(io = {}) {
     onData: (fn) => { stdin.on('data', fn); return () => stdin.off('data', fn); },
     onResize: (fn) => { stdout.on('resize', fn); return () => stdout.off('resize', fn); },
     onSignal: (fn) => {
-      process.on('SIGINT', fn); process.on('SIGTERM', fn);
-      return () => { process.off('SIGINT', fn); process.off('SIGTERM', fn); };
+      process.on('SIGINT', fn); process.on('SIGTERM', fn); process.on('SIGHUP', fn);
+      return () => { process.off('SIGINT', fn); process.off('SIGTERM', fn); process.off('SIGHUP', fn); };
     },
     resume: () => { if (stdin.resume) stdin.resume(); },
     pause: () => { if (stdin.pause) stdin.pause(); },

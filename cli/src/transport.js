@@ -343,7 +343,10 @@ async function openTransport(ctx, { spawnFn = spawn, execFn = execFileP, deadlin
   // never signalled (drift D3 — the GUI supervisors DO fall back). Preserved as
   // it was; cli/test/transport.test.js:39 relies on exactly this to keep its
   // in-process fake safe.
-  const close = () => dial.kill({ group: true, fallbackKill: false });
+  const killGroup = () => dial.kill({ group: true, fallbackKill: false });
+  const unregisterReap = register('dial', killGroup);
+  child.on('exit', unregisterReap);
+  const close = () => { unregisterReap(); killGroup(); };
 
   try {
     await waitForPort(port, { deadlineMs, isDead: () => exited, stderr: () => dial.stderr().trim() });
@@ -362,7 +365,38 @@ async function openTransport(ctx, { spawnFn = spawn, execFn = execFileP, deadlin
   return { baseUrl: `http://127.0.0.1:${port}`, localPort: port, close, stderr: () => dial.stderr().trim(), waitExit: () => exitP };
 }
 
+const reapers = new Map();
+let reapSeq = 0;
+
+function register(kind, cleanupFn) {
+  const id = ++reapSeq;
+  reapers.set(id, { kind, fn: cleanupFn });
+  return () => { reapers.delete(id); };
+}
+
+function reapAll() {
+  const all = [...reapers.values()];
+  reapers.clear();
+  for (const r of all) { try { r.fn(); } catch {} }
+}
+
+const SIGNAL_EXIT = { SIGINT: 130, SIGTERM: 143, SIGHUP: 129 };
+
+function installSignalReaper({ proc = process, exit = (code) => process.exit(code) } = {}) {
+  const handlers = {};
+  for (const sig of Object.keys(SIGNAL_EXIT)) {
+    handlers[sig] = () => {
+      if (proc.listenerCount(sig) > 1) return;
+      reapAll();
+      exit(SIGNAL_EXIT[sig]);
+    };
+    proc.on(sig, handlers[sig]);
+  }
+  return () => { for (const sig of Object.keys(handlers)) proc.off(sig, handlers[sig]); };
+}
+
 module.exports = {
+  register, reapAll, installSignalReaper, SIGNAL_EXIT,
   DEFAULT_REMOTE_PORT, WAIT_PORT_MS,
   sshArgv, ssmArgv, kubectlArgv, gcloudArgv, azArgv,
   parseEcsSpec, resolveEcsTarget, diagnoseSsmInstance,

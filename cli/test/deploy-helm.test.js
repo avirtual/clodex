@@ -1071,3 +1071,29 @@ test('deploy helm saves into the contexts file as it is at save time, not the co
   assert.deepStrictEqual(Object.keys(saved.contexts).sort(), ['b', 'n', 'x']);
   assert.strictEqual(saved.current, 'b');
 });
+
+test('deploy helm: a signal reap during helm removes the token tempdir (t2041)', async () => {
+  const T = require('../src/transport');
+  const rec = {};
+  const base = fakeK8s(rec);
+  let dir = null, existedBefore = null, goneAfterReap = null;
+  const execFn = async (cmd, args) => {
+    const r = await base(cmd, args);
+    if (cmd === 'helm' && args[0] === 'upgrade') {
+      dir = path.dirname(rec.setFilePaths['secrets.wireToken']);
+      existedBefore = fs.existsSync(dir);
+      T.reapAll();
+      goneAfterReap = !fs.existsSync(dir);
+    }
+    return r;
+  };
+  const { code } = await cli(['deploy', 'node', 'mynode', '--helm'], {
+    execFn,
+    probeHelm: async () => ({ app: 'clodex', host: 'mynode', version: '9.9.9', caps: [] }),
+    contextsFile: tmpCtxFile(),
+  });
+  assert.strictEqual(code, 0);
+  assert.match(path.basename(dir), /^clodexctl-helm-/);
+  assert.strictEqual(existedBefore, true);
+  assert.strictEqual(goneAfterReap, true);
+});
