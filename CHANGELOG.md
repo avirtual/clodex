@@ -14,6 +14,8 @@ blocks a release.
 
 ## Unreleased
 
+- `scripts/release.sh` resume: a failure after a resumed build no longer claims the version bump was rolled back, the DMG step picks the current version's DMG when `dist/` holds an older one, and a failure to keep the release notes now stops the release with a message.
+
 ## 5.150.1 — 2026-10-28 — quoted command substitution in the Bash guard, stale pending-claim rehome
 
 - **Security:** the Bash deny guard and the `clodex-send` segmenter split on backticks and `$(` inside double quotes too, so `` echo "`kill -9 -1`" `` and `echo "$(git add -A)"` are examined as their own commands; single-quoted and backslash-escaped forms stay literal.
