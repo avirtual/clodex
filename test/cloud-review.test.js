@@ -41,13 +41,13 @@ const RECORD = 'if [ -t 1 ]; then T=yes; else T=no; fi; { printf \'%s\\n\' "$@";
 
 const FIFO_BOUND_MS = 10000;
 
-function launchAndRecord(extraEnv) {
+function launchAndRecord(extraEnv, args = ['v1.0.0', 'v1.1.0']) {
   return withStub(RECORD, ({ dir, stub, rec }) => {
     execFileSync('mkfifo', [rec]);
     let out;
     let recorded;
     try {
-      out = runScript(['v1.0.0', 'v1.1.0'], {
+      out = runScript(args, {
         CLODEX_CLAUDE_BIN: stub, CLOUD_REVIEW_REC: rec, HOME: dir, ...extraEnv,
       });
       recorded = execFileSync('cat', [rec], { encoding: 'utf-8', timeout: FIFO_BOUND_MS });
@@ -58,7 +58,7 @@ function launchAndRecord(extraEnv) {
       killPoller(out);
     }
     const [argv, env] = recorded.split('--ENV--\n');
-    return { out, argv, env, logExists: fs.existsSync(path.join(dir, '.clodex', 'logs', 'cloud-review-v1.1.0.log')) };
+    return { out, argv, env, logExists: fs.existsSync(path.join(dir, '.clodex', 'logs', `cloud-review-${args[1]}.log`)) };
   });
 }
 
@@ -72,6 +72,86 @@ test('cloud-review: the stub gets --cloud and a brief naming both tags and the i
   assert.match(argv, /\n--model\nclaude-opus-5-5\n/);
   assert.match(argv, /\n--permission-mode\nbypassPermissions\n/);
   assert.ok(logExists, 'output goes to ~/.clodex/logs/cloud-review-<newTag>.log');
+});
+
+test('cloud-review: a pre-release launch checks out the staging sha and verifies the Unreleased section', () => {
+  const { out, argv } = launchAndRecord({
+    CLODEX_REVIEW_REF: 'staging', CLODEX_REVIEW_SHA: 'abc123', CLODEX_REVIEW_PREFIX: 'Pre-release review staging-abc12345:',
+  }, ['v1.0.0', 'staging-abc12345']);
+  assert.match(out, /launched for v1\.0\.0\.\.staging-abc12345/);
+  assert.ok(argv.includes('First run `git fetch origin staging && git checkout abc123`.'), argv);
+  assert.ok(argv.includes('`git log v1.0.0..abc123`'), argv);
+  assert.ok(argv.includes('`## Unreleased` section'), argv);
+  assert.ok(argv.includes('"Pre-release review staging-abc12345: <VERDICT>"'), argv);
+  assert.ok(argv.includes('.review/staging-abc12345.md'), argv);
+  assert.ok(argv.includes('git push --force origin claude/review-staging-abc12345'), argv);
+  assert.ok(!argv.includes('v1.0.0..staging-abc12345'), argv);
+  assert.ok(!argv.includes('{{'), argv);
+});
+
+test('cloud-review: a release launch checks out the new tag and verifies its versioned section', () => {
+  const { argv } = launchAndRecord({});
+  assert.ok(argv.includes('First run `git checkout v1.1.0`.'), argv);
+  assert.ok(argv.includes('Verify every bullet of the v1.1.0 section of CHANGELOG.md (its heading is `## <version> — <date>`'), argv);
+  assert.ok(!argv.includes('Unreleased'), argv);
+});
+
+const PRE = path.join(__dirname, '..', 'scripts', 'pre-release-review.sh');
+
+function runPreRelease({ dirty = false } = {}) {
+  return withStub(RECORD, ({ dir, stub, rec }) => {
+    const git = path.join(dir, 'git');
+    const calls = path.join(dir, 'git-calls');
+    fs.writeFileSync(git, [
+      '#!/bin/sh',
+      `printf '%s\n' "$*" >> "${calls}"`,
+      'case "$1" in',
+      `  status) ${dirty ? "printf ' M x\\n'" : ':'} ;;`,
+      '  branch) echo master ;;',
+      '  describe) echo v1.0.0 ;;',
+      '  rev-parse) echo deadbeef ;;',
+      'esac',
+      '',
+    ].join('\n'), { mode: 0o755 });
+    execFileSync('mkfifo', [rec]);
+    const res = spawnSync('bash', [PRE], {
+      encoding: 'utf-8',
+      timeout: FIFO_BOUND_MS,
+      env: {
+        ...process.env, HOME: dir, CLODEX_RELEASE_NO_REVIEW: '', CLODEX_REVIEW_REF: '', CLODEX_REVIEW_SHA: '', CLODEX_REVIEW_PREFIX: '',
+        CLODEX_GH_BIN: 'true', CLODEX_GIT_BIN: git, CLODEX_REVIEW_POLLER_BIN: 'true',
+        CLODEX_CLAUDE_BIN: stub, CLOUD_REVIEW_REC: rec,
+      },
+    });
+    let argv = null;
+    try {
+      if (res.status === 0) argv = execFileSync('cat', [rec], { encoding: 'utf-8', timeout: FIFO_BOUND_MS }).split('--ENV--\n')[0];
+    } finally {
+      killMatching(stub);
+    }
+    const gitCalls = fs.existsSync(calls) ? fs.readFileSync(calls, 'utf-8').split('\n').filter(Boolean) : [];
+    return { res, argv, gitCalls };
+  });
+}
+
+test('pre-release-review: force-pushes HEAD to staging and briefs the reviewer on staging-<short sha>', () => {
+  const { res, argv, gitCalls } = runPreRelease();
+  assert.strictEqual(res.status, 0, res.stderr);
+  assert.ok(gitCalls.includes('push -q --force origin HEAD:refs/heads/staging'), gitCalls.join('\n'));
+  assert.ok(gitCalls.includes('rev-parse --short=8 HEAD'), gitCalls.join('\n'));
+  assert.match(res.stdout, /pre-release-review: launched for v1\.0\.0\.\.staging-deadbeef/);
+  assert.ok(argv.includes('.review/staging-deadbeef.md'), argv);
+  assert.ok(argv.includes('"Pre-release review staging-deadbeef: CLEAN"'), argv);
+  assert.ok(argv.includes('git fetch origin staging && git checkout deadbeef'), argv);
+  assert.ok(argv.includes('v1.0.0..deadbeef'), argv);
+});
+
+test('pre-release-review: a dirty tree exits non-zero and pushes nothing', () => {
+  const { res, gitCalls } = runPreRelease({ dirty: true });
+  assert.notStrictEqual(res.status, 0);
+  assert.match(res.stderr, /not clean/);
+  assert.ok(gitCalls.includes('status --porcelain'), gitCalls.join('\n'));
+  assert.ok(!gitCalls.some((c) => c.startsWith('push')), gitCalls.join('\n'));
 });
 
 test('cloud-review: claude runs on a terminal, since --cloud refuses one without', () => {
@@ -93,7 +173,7 @@ test('cloud-review: CLAUDE_CODE_OAUTH_TOKEN from the parent never reaches claude
 
 test('cloud-review: the brief reports by pushing .review/<tag>.md on claude/review-<tag>, never through gh or add_repo', () => {
   const brief = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'cloud-review-brief.md'), 'utf-8');
-  assert.ok(brief.includes('"Release review {{NEW}}: CLEAN"'), brief);
+  assert.ok(brief.includes('"{{PREFIX}} CLEAN"'), brief);
   assert.ok(!brief.includes('gh auth status'), brief);
   assert.ok(!brief.includes('gh api'), brief);
   assert.ok(brief.includes('git push --force origin claude/review-{{NEW}}'), brief);
@@ -285,6 +365,17 @@ test('cloud-review-post: a pushed report opens the issue with its title and body
 test('cloud-review-post: a CLEAN report is opened and then closed', () => {
   const { calls } = runPoller({ hitAfter: 1, report: 'Release review v1.1.0: CLEAN\n\nchecked everything\n' });
   const create = calls.findIndex((c) => c.startsWith('gh [issue] [create] [-R] [avirtual/clodex] [-t] [Release review v1.1.0: CLEAN]'));
+  const close = calls.indexOf('gh [issue] [close] [https://github.com/avirtual/clodex/issues/7] [-R] [avirtual/clodex]');
+  assert.ok(create >= 0, calls.join('\n'));
+  assert.ok(close > create, calls.join('\n'));
+});
+
+test('cloud-review-post: CLODEX_REVIEW_PREFIX sets the title prefix and a CLEAN pre-release report is closed', () => {
+  const { calls } = runPoller({
+    hitAfter: 1, report: 'Pre-release review staging-deadbeef: CLEAN\n\nchecked everything\n',
+    env: { CLODEX_REVIEW_PREFIX: 'Pre-release review staging-deadbeef:' },
+  });
+  const create = calls.findIndex((c) => c.startsWith('gh [issue] [create] [-R] [avirtual/clodex] [-t] [Pre-release review staging-deadbeef: CLEAN]'));
   const close = calls.indexOf('gh [issue] [close] [https://github.com/avirtual/clodex/issues/7] [-R] [avirtual/clodex]');
   assert.ok(create >= 0, calls.join('\n'));
   assert.ok(close > create, calls.join('\n'));
