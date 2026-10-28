@@ -13,6 +13,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Erratum (5.150.5): the `time --` bullet said `clodex-send` was "stamped again"; only a `case` opened after `time --` was. `time -- clodex-send x` and `time -p -- clodex-send x` are now stamped, as parse.y's TIMEIGN rule reads.
 
 - Fixed: a review verdict written as one paragraph (`**VERDICT**: REWORK … **MUST-FIX**: … **NITS**: …`) now has its must-fixes extracted and counted; before, the lead's notice said "no must-fixes" and the hand was told the verdict named none. A REWORK whose must-fixes still cannot be extracted now says so in the notice instead of "no must-fixes".
 
