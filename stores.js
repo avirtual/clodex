@@ -566,20 +566,23 @@ function initStores(userDataPath, {
     try {
       return { state: 'ok', value: JSON.parse(text) };
     } catch {
-      const dest = `${file}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
-      try {
-        fs.renameSync(file, dest);
-      } catch (e) {
-        if (!unreadableLogged.has(file)) {
-          unreadableLogged.add(file);
-          console.error(`${path.basename(file)} could not be parsed nor moved aside (${(e && e.code) || e}); saves to it are refused`);
-        }
-        return { state: 'unreadable' };
-      }
-      quarantinedFiles.add(file);
-      console.warn(`${path.basename(file)} could not be parsed; moved aside to ${dest}`);
-      return { state: 'quarantined' };
+      return { state: quarantine(file, 'could not be parsed') };
     }
+  }
+  function quarantine(file, why) {
+    const dest = `${file}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    try {
+      fs.renameSync(file, dest);
+    } catch (e) {
+      if (!unreadableLogged.has(file)) {
+        unreadableLogged.add(file);
+        console.error(`${path.basename(file)} ${why} nor moved aside (${(e && e.code) || e}); saves to it are refused`);
+      }
+      return 'unreadable';
+    }
+    quarantinedFiles.add(file);
+    console.warn(`${path.basename(file)} ${why}; moved aside to ${dest}`);
+    return 'quarantined';
   }
   function refuseUnreadable(file) {
     throw new Error(`${path.basename(file)} could not be read; refusing to save over it`);
@@ -594,6 +597,7 @@ function initStores(userDataPath, {
   const persistence = {
     _load() {
       const primary = readStoreJson(PERSIST_FILE);
+      if (primary.state === 'ok' && !Array.isArray(primary.value)) primary.state = quarantine(PERSIST_FILE, 'is not an array');
       this._unreadable = primary.state === 'unreadable';
       let all = primary.value;
       const bak = primary.state === 'quarantined' ? readStoreJson(PERSIST_FILE + '.bak') : null;
@@ -637,8 +641,7 @@ function initStores(userDataPath, {
           launchBakTaken = true;
           try {
             const cur = fs.readFileSync(PERSIST_FILE, 'utf-8');
-            JSON.parse(cur);
-            atomicWriteFileSync(PERSIST_FILE + '.bak', cur);
+            if (Array.isArray(JSON.parse(cur))) atomicWriteFileSync(PERSIST_FILE + '.bak', cur);
           } catch {}
         }
         atomicWriteFileSync(PERSIST_FILE, JSON.stringify(entries, null, 2));

@@ -158,9 +158,10 @@ test('persistence: an absent primary with an unreadable .bak is an empty store t
 });
 
 for (const row of [
-  { state: 'absent', primary: null, rows: [], unreadable: false },
-  { state: 'quarantined', primary: '{not json', rows: ['from-bak'], unreadable: false },
-  { state: 'unreadable', primary: '[]', rows: [], unreadable: true },
+  { state: 'absent', primary: null, rows: [], unreadable: false, recovered: false },
+  { state: 'quarantined', primary: '{not json', rows: ['from-bak'], unreadable: false, recovered: true },
+  { state: 'wrong-shape', primary: '{}', rows: ['from-bak'], unreadable: false, recovered: true },
+  { state: 'unreadable', primary: '[]', rows: [], unreadable: true, recovered: false },
 ]) {
   test(`persistence: a ${row.state} sessions.json beside a parseable .bak loads ${JSON.stringify(row.rows)}`, { skip: row.state === 'unreadable' && isRoot && 'root reads a 000 file' }, () => {
     const { stores, cleanup, userData } = freshStores();
@@ -175,14 +176,32 @@ for (const row of [
         assert.deepStrictEqual(stores.persistence._load().map((e) => e.name), row.rows);
       });
       assert.strictEqual(!!stores.persistence._unreadable, row.unreadable);
-      assert.strictEqual(lines.some((l) => l.includes('recovered from .bak')), row.state === 'quarantined');
+      assert.strictEqual(lines.some((l) => l.includes('recovered from .bak')), row.recovered);
       assert.strictEqual(fs.readFileSync(bak, 'utf-8'), bakText);
+      captureConsoleError(() => stores.persistence.upsert({ name: 'added', type: 'claude', workspaceId: 'default' }));
+      assert.strictEqual(fs.readFileSync(bak, 'utf-8'), bakText, '.bak byte-identical after one upsert');
+      assert.strictEqual(fs.readdirSync(userData).some((f) => f.startsWith('sessions.json.corrupt-')), row.recovered);
     } finally {
       try { fs.chmodSync(file, 0o600); } catch {}
       cleanup();
     }
   });
 }
+
+test('persistence: the launch snapshot skips a primary that parses but is not an array', () => {
+  const { stores, cleanup, userData } = freshStores();
+  const file = path.join(userData, 'sessions.json');
+  const bakText = JSON.stringify([{ name: 'from-bak', type: 'claude', workspaceId: 'default' }]);
+  try {
+    fs.writeFileSync(file + '.bak', bakText);
+    fs.writeFileSync(file, '{}');
+    assert.strictEqual(stores.persistence._save([{ name: 'b', type: 'claude', workspaceId: 'default' }]), true);
+    assert.strictEqual(fs.readFileSync(file + '.bak', 'utf-8'), bakText);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf-8')).map((e) => e.name), ['b'], 'ENTER: the save itself landed');
+  } finally {
+    cleanup();
+  }
+});
 
 test('persistence: _save reports false when the write itself fails, true once it lands', { skip: isRoot && 'root writes a read-only dir' }, () => {
   const { stores, cleanup, userData } = freshStores();
