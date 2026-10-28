@@ -92,7 +92,7 @@ function parseIntent(rawLine) {
 // count: inline backticks are already safe (all intent regexes are
 // ^-anchored, mid-line never fires), so there is no character-level backtick
 // counting. CommonMark rules, pragmatically: an opener is 3+ backticks or
-// tildes after optional indentation (info string allowed); the closer must
+// tildes after optional indentation; the closer must
 // use the opener's char, run at least as long, and carry nothing but
 // whitespace — anything else is fence CONTENT (``` inside a ~~~ block stays
 // literal). An unclosed fence runs to end of turn: correct markdown
@@ -103,7 +103,7 @@ function fencedLines(lines) {
   let open = null; // { ch, len } of the current opener
   for (let k = 0; k < lines.length; k++) {
     const m = lines[k].match(/^\s*(`{3,}|~{3,})(.*)$/);
-    if (m) {
+    if (m && !(m[1][0] === '`' && m[2].includes('`'))) {
       const ch = m[1][0];
       if (!open) {
         open = { ch, len: m[1].length };

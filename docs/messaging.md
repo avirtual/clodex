@@ -148,7 +148,7 @@ is minted lazily, so the edge can arrive well after the keystroke.
   scanner): a line inside a ```/~~~ fence is literal text at every level of
   `_extractIntents` — no intent parse, no body boundary, no near-miss
   bounce. Line-anchored fences only (inline backticks were already safe —
-  mid-line never fires); closer must match the opener's char and length,
+  mid-line never fires; a backtick run whose info string holds a backtick, such as ```` ```bash``` is ````, is an inline span and opens nothing); closer must match the opener's char and length,
   unclosed fences run to end of turn. The PTY scan path (`_scanPtyOutput`,
   bash panes) is deliberately fence-BLIND: fence state over an unbounded
   terminal stream would let one `cat`ed markdown file disable intent

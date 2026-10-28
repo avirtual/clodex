@@ -720,6 +720,17 @@ test('fencedLines: unclosed fence runs to end of turn', () => {
   assert.deepStrictEqual(fencedLines(['```', 'a', 'b']), [true, true, true]);
 });
 
+test('fencedLines: a backtick run whose info string holds a backtick is an inline span, not an opener', () => {
+  assert.deepStrictEqual(fencedLines(['```bash``` is the tag to use.', '[agent:dm bob] hello', '[agent:end]']),
+    [false, false, false]);
+  const { scanIntentLines } = require('../intent-segments');
+  const kinds = scanIntentLines(['```bash``` is the tag to use.', '[agent:dm bob] hello', '[agent:end]']).map((s) => s.kind);
+  assert.notDeepStrictEqual(kinds, ['prose']);
+  assert.ok(kinds.includes('intent'), `kinds: ${kinds}`);
+  assert.deepStrictEqual(fencedLines(['```js', '[agent:who]', '```', 'out']), [true, true, true, false]);
+  assert.deepStrictEqual(fencedLines(['~~~a`b', '[agent:who]', '~~~']), [true, true, true]);
+});
+
 test('fencedLines: inline backticks are not fences', () => {
   assert.deepStrictEqual(fencedLines(['see `[agent:who]` inline', 'a ``` b']), [false, false]);
 });
