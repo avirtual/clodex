@@ -12,7 +12,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — guard reserved-word fix, three-state branch probe, release.sh pins
+## Unreleased
+
+## 5.150.3 — 2026-10-28 — guard reserved-word fix, three-state branch probe, release.sh pins
 
 - **Security:** inside a double-quoted `$(…)` or backtick, the Bash deny guard and the `clodex-send` segmenter now recognise a `case` after `!`, `time`, `if`/`then`/`else`/`elif`, `while`/`until`/`do` and `coproc`, so a case pattern's `)` can no longer end the substitution early and hide the command behind it.
 - Erratum (5.150.2): the "mismatched exec result names the other command with its control bytes stripped" clause described behaviour already in 5.150.1; 5.150.2 only pinned it. Missing from the 5.150.2 notes: `clodexctl deploy --ssm` now fails with "the box is already on the new token, but context <name> was not saved; re-run with --force to rotate" when the context save fails after the token switch; a clodexctl exit now group-kills a dial whose leader already exited; and the ctl-admin sweep's "outcome UNKNOWN" dm carries the computed reason.
