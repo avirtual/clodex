@@ -30,7 +30,7 @@ function enclosing(lines, i) {
 
 function census() {
   const files = execFileSync('git', ['ls-files', '*.js'], { cwd: ROOT, encoding: 'utf-8' })
-    .split('\n').filter((f) => f && !f.startsWith('test/'));
+    .split('\n').filter((f) => f && !/(^|\/)test\//.test(f));
   const out = [];
   for (const f of files) {
     const lines = fs.readFileSync(path.join(ROOT, f), 'utf-8').split('\n');

@@ -180,6 +180,7 @@ for (const row of [
       assert.strictEqual(fs.readFileSync(bak, 'utf-8'), bakText);
       captureConsoleError(() => stores.persistence.upsert({ name: 'added', type: 'claude', workspaceId: 'default' }));
       assert.strictEqual(fs.readFileSync(bak, 'utf-8'), bakText, '.bak byte-identical after one upsert');
+      if (!row.unreadable) assert.deepStrictEqual(stores.persistence.list().map((e) => e.name), [...row.rows, 'added']);
       assert.strictEqual(fs.readdirSync(userData).some((f) => f.startsWith('sessions.json.corrupt-')), row.recovered);
     } finally {
       try { fs.chmodSync(file, 0o600); } catch {}

@@ -577,7 +577,7 @@ function initStores(userDataPath, {
     } catch (e) {
       if (!unreadableLogged.has(file)) {
         unreadableLogged.add(file);
-        console.error(`${path.basename(file)} ${why} nor moved aside (${(e && e.code) || e}); saves to it are refused`);
+        console.error(`${path.basename(file)} ${why}; could not be moved aside (${(e && e.code) || e}); saves to it are refused`);
       }
       return 'unreadable';
     }
@@ -604,16 +604,17 @@ function initStores(userDataPath, {
       const bak = primary.state === 'quarantined' ? readStoreJson(PERSIST_FILE + '.bak') : null;
       if (bak && bak.state === 'unreadable') this._unreadable = true;
       if (!this._unreadable) persistRefusedLogged = false;
+      let changed = false;
       if (bak) {
         if (bak.state !== 'ok') {
           if (!this._unreadable) markLivingMigrated();
           return [];
         }
         all = bak.value;
-        console.error('sessions.json did not parse; recovered from .bak (launch snapshot)');
+        changed = true;
+        console.error('sessions.json was moved aside; recovered from .bak (launch snapshot)');
       }
       if (!Array.isArray(all)) { if (!this._unreadable) markLivingMigrated(); return []; }
-      let changed = false;
       const touched = [];
       let rewrote = false;
       if (!livingMigrated && fs.existsSync(LIVING_MIGRATED_FILE)) livingMigrated = true;
@@ -1550,7 +1551,6 @@ function initStores(userDataPath, {
       if (!check.ok) throw new Error(`invalid MCP server ${name}: ${check.errors.join('; ')}`);
       ensureDir(MCP_DIR);
       atomicWriteFileSync(file, JSON.stringify(entry, null, 2));
-      fs.chmodSync(file, 0o600);
       return this.list();
     },
     remove(name) {
