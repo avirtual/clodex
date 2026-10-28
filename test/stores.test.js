@@ -4493,7 +4493,7 @@ for (const st of LOADED_STORES) {
       let got;
       const errs = captureConsoleError(() => { got = st.read(stores); });
       assert.deepStrictEqual(got, st.empty);
-      assert.ok(errs.some((l) => l.includes('could not be parsed nor moved aside')), errs.join('\n'));
+      assert.ok(errs.some((l) => l.includes('could not be parsed; could not be moved aside')), errs.join('\n'));
       assert.deepStrictEqual(fs.readdirSync(userData).filter((n) => n.startsWith(`${st.file}.corrupt-`)), []);
       assert.strictEqual(fs.readFileSync(file, 'utf-8'), '{bad');
       captureConsoleError(() => {
