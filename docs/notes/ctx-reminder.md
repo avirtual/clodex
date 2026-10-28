@@ -16,9 +16,9 @@ and writes at about twice. The compact is the most expensive event in a Fable
 session, so it is deferred. This supersedes the earlier "stay under 200k for a
 possible long-context surcharge" rule for this family.
 
-Haiku 5.5 sits at 75k/100k with `stop: true`: `ctxReminderFor` then words the
-reminder as "stop now, do not compact" instead of a compact nudge. A `stop` row
-is exempt from session-manager.js's `_ephemeralSeat` suppression, so a ticket
-seat still gets it. An operator override row for the family drops `stop`
+Haiku 5.5 sits at 75k/100k with `stop: true`: instead of a compact nudge,
+`ctxReminderFor` below 100k says finish and read nothing new; at 100k it says
+stop now, do not compact. A `stop` row is exempt from session-manager.js's
+`_ephemeralSeat` suppression, so an ephemeral seat still gets it. An operator override row for the family drops `stop`
 (`ctxThresholdsFor` never carries it from settings), turning the wording back
 into compact nudges.

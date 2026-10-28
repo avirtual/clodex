@@ -432,8 +432,8 @@ async function sweep(dir, { send = sendDm } = {}) {
     if (running && childPid && isAlive(childPid)) {
       if (!rec.orphanNoticed) {
         try {
-          updateRecord(dir, seq, { orphanNoticed: true });
           fs.appendFileSync(path.join(dir, `${seq}.log`), `# worker pid ${lock.pid} gone; clodexctl pid ${childPid} still running — lock kept (swept ${now()})\n`, { mode: 0o600 });
+          updateRecord(dir, seq, { orphanNoticed: true });
         } catch {}
       }
       continue;
@@ -450,7 +450,7 @@ async function sweep(dir, { send = sendDm } = {}) {
         fs.appendFileSync(path.join(dir, `${seq}.log`), `# outcome unknown — ${reason} (swept ${now()})\n`, { mode: 0o600 });
       } catch {}
       try { fs.unlinkSync(lockFile); } catch {}
-      const ok = await send(lock.seat, `[run ${seq} ${lock.verb} ${ctx}] outcome UNKNOWN — the worker (pid ${lock.pid}) is gone and left no result; nothing was re-run. log ${path.join(dir, `${seq}.log`)}`);
+      const ok = await send(lock.seat, `[run ${seq} ${lock.verb} ${ctx}] outcome UNKNOWN — ${reason}; nothing was re-run. log ${path.join(dir, `${seq}.log`)}`);
       if (ok) { try { updateRecord(dir, seq, { notified: true }); } catch {} }
       continue;
     }

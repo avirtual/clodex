@@ -181,6 +181,26 @@ test('reapAll: an open dial is group-killed (negative pid, SIGTERM), once', asyn
   tr.close();
 });
 
+test('reapAll: a dial whose leader child exited is still group-killed until close()', async (t) => {
+  const srv = net.createServer((s) => s.end());
+  t.after(() => new Promise((r) => srv.close(() => r())));
+  const kills = [];
+  t.mock.method(process, 'kill', (pid, sig) => { kills.push([pid, sig]); return true; });
+  let child;
+  const spawnFn = (cmd, args) => {
+    child = new EventEmitter();
+    child.pid = 444444;
+    child.stderr = new EventEmitter();
+    srv.listen(+args[0].split(':')[0], '127.0.0.1');
+    return child;
+  };
+  const tr = await T.openTransport({ tunnel: ['faketunnel', '{port}:7900'] }, { spawnFn, deadlineMs: 2000 });
+  t.after(() => tr.close());
+  child.emit('exit', 0, null);
+  T.reapAll();
+  assert.deepStrictEqual(kills, [[-444444, 'SIGTERM']]);
+});
+
 test('reapAll: a closed dial is no longer reaped', async (t) => {
   const srv = net.createServer((s) => s.end());
   t.after(() => new Promise((r) => srv.close(() => r())));

@@ -345,7 +345,6 @@ async function openTransport(ctx, { spawnFn = spawn, execFn = execFileP, deadlin
   // in-process fake safe.
   const killGroup = () => dial.kill({ group: true, fallbackKill: false });
   const unregisterReap = register('dial', killGroup);
-  child.on('exit', unregisterReap);
   const close = () => { unregisterReap(); killGroup(); };
 
   try {

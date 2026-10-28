@@ -15,6 +15,7 @@ blocks a release.
 ## Unreleased
 
 - Deleting or renaming seat `a` no longer removes or warns about the pending mail of a seat whose name merely looks like a drain claim (`a.draining.idle.5-ab`), and a drain of mail parked more than ten minutes ago can no longer be mistaken for a stale claim and delivered twice.
+- `scripts/release.sh` resume: a failure after a resumed build no longer claims the version bump was rolled back, the DMG step picks the current version's DMG when `dist/` holds an older one, and a failure to keep the release notes now stops the release with a message.
 
 ## 5.150.1 — 2026-10-28 — quoted command substitution in the Bash guard, stale pending-claim rehome
 

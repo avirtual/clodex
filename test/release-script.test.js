@@ -531,6 +531,19 @@ test('release e2e: a re-run after a failed push resumes from the local tag witho
   } finally { fx.cleanup(); }
 });
 
+test('release e2e: a resume with no DMG left in dist/ rebuilds it', () => {
+  const fx = releaseFixture();
+  try {
+    assert.strictEqual(fx.run({ FAKE_PUSH_FAIL: '1' }).status, 1, 'ENTER: the first run dies at the push');
+    fs.rmSync(path.join(fx.repo, 'dist'), { recursive: true, force: true });
+    const res = fx.run();
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.match(res.stdout, /resuming release v1\.0\.1 from the push step/);
+    assert.match(res.calls, /^npm run dist:mac/m, 'the missing DMG is rebuilt');
+    assert.match(res.calls, /^gh release create v1\.0\.1 dist\/Clodex-1\.0\.1-arm64\.dmg /m);
+  } finally { fx.cleanup(); }
+});
+
 test('release e2e: tag on origin with no gh release resumes the gh step with the kept notes', () => {
   const fx = releaseFixture();
   try {
