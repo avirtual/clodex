@@ -425,10 +425,10 @@ test('a DIRTY tree downgrades the merged-arm destroy to an archive, keeping the 
 
   const msg = await accept(f, 't1');
 
-  assert.deepStrictEqual(f.killed, [], 'a dirty tree is never destroyed, even for a one-shot seat');
-  assert.deepStrictEqual(f.archived, ['team-hand-t1'], 'the teardown downgrades to the recoverable verb');
+  assert.deepStrictEqual(f.killed, ['team-hand-t1'], 't2024: the seat is stopped before its tree is judged');
   assert.strictEqual(exists(pathReal.join(wt, 'uncommitted.txt')), true, 'the uncommitted file survives');
   assert.ok(f.persistence.get('team-hand-t1'), 'and the record that points at the tree survives with it');
+  assert.ok(f.persistence.get('team-hand-t1').archivedAt, 'kept as an archived, resumable record');
   assert.match(msg, /ARCHIVED, not retired/, 'the reply does not claim a retire it downgraded');
   assert.match(msg, /has uncommitted work/, 'and names the reason, so the lead can go commit it');
   // The recovery is the SAME verb again, not manual cleanup: `closedOut` is not
@@ -462,6 +462,61 @@ test('a CLEAN tree on the same path is still destroyed — the downgrade is the 
   assert.deepStrictEqual(f.killed, ['team-hand-t1'], 'the seat is destroyed');
   assert.strictEqual(exists(wt), false, 'and the clean tree is reclaimed');
   assert.match(msg, /retired and its worktree removed/, 'the reply reports the teardown');
+  assert.ok(!branches(f).includes('landed'), 'and the merged branch is deleted');
+});
+
+test('t2024: a file the seat writes as it exits is judged after the exit, so the tree is kept as dirty', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  const wt = f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
+  assert.deepStrictEqual(await require('../git-worktree').isDirty(wt), { ok: true, dirty: false },
+    'ENTER: the tree is clean while the seat still runs');
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
+  const realKill = f.m.kill;
+  f.m.kill = async (name) => {
+    if (name === 'team-hand-t1') fsReal.writeFileSync(pathReal.join(wt, 'exit-hook.txt'), 'written on the way out\n');
+    return realKill(name);
+  };
+
+  const msg = await accept(f, 't1');
+
+  assert.deepStrictEqual(f.killed, ['team-hand-t1'], 'ENTER: the seat was stopped');
+  assert.strictEqual(exists(pathReal.join(wt, 'exit-hook.txt')), true, 'the file written at exit survives');
+  assert.ok(f.persistence.get('team-hand-t1').archivedAt, 'the record is kept, archived');
+  assert.match(msg, /has uncommitted work/);
+  assert.ok(branches(f).includes('landed'), 'and the branch is kept for the re-accept');
+});
+
+test('t2024: a commit the seat lands after the merge answer keeps the branch', async (t) => {
+  const realGw = require('../git-worktree');
+  let wt = null;
+  let late = null;
+  const gw = {
+    ...realGw,
+    revParse: async (cwd, ref) => {
+      const r = await realGw.revParse(cwd, ref);
+      if (ref === 'landed' && wt && !late) {
+        fsReal.writeFileSync(pathReal.join(wt, 'late.txt'), 'late\n');
+        execFileSync('git', ['-C', wt, 'add', 'late.txt']);
+        execFileSync('git', ['-C', wt, 'commit', '-qm', 'late']);
+        late = execFileSync('git', ['-C', wt, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+      }
+      return r;
+    },
+  };
+  const f = mkFixture(t, { gitWorktree: gw });
+  f.seat('lead');
+  const judged = execFileSync('git', ['-C', f.repoDir, 'rev-parse', 'landed'], { encoding: 'utf8' }).trim();
+  wt = f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
+
+  const msg = await accept(f, 't1');
+
+  assert.ok(late && late !== judged, 'ENTER: the seat committed after the merge answer');
+  assert.ok(branches(f).includes('landed'), 'the moved branch is kept');
+  assert.strictEqual(execFileSync('git', ['-C', f.repoDir, 'rev-parse', 'landed'], { encoding: 'utf8' }).trim(), late,
+    'at the commit the seat made');
+  assert.match(msg, /branch landed was KEPT — it moved past/);
 });
 
 // ── the third case the two non-merged arms must tell apart ────────────────────
@@ -539,9 +594,9 @@ test('an UNREADABLE tree also downgrades the destroy, and says which of the two 
 
   const msg = await accept(f, 't1');
 
-  assert.deepStrictEqual(f.killed, [], 'an unreadable tree is not evidence of a clean one, so nothing is destroyed');
-  assert.deepStrictEqual(f.archived, ['team-hand-t1'], 'the seat is archived — the recoverable direction');
+  assert.deepStrictEqual(f.killed, ['team-hand-t1'], 't2024: the seat is stopped before its tree is judged');
   assert.ok(f.persistence.get('team-hand-t1'), 'and its record survives, rather than being dropped');
+  assert.ok(f.persistence.get('team-hand-t1').archivedAt, 'archived — the recoverable direction');
   assert.match(msg, /could not be inspected/, 'the reply names this downgrade, not the dirty one');
   assert.doesNotMatch(msg, /has uncommitted work/, 'and does not send the lead to commit a tree that is gone');
 });
@@ -600,10 +655,9 @@ test('an assignee with no record at all is not described as a running standing s
 // and its worktree removed" — an orphaned record, the "agents vanish" class in
 // reverse.
 //
-// Reached by the route the app itself prescribes: the dirty downgrade archives
-// the seat and asks the lead to clear the tree and accept again. The archive
-// kills the pty, so the SECOND accept — the one this reply invited — always
-// lands on the merged arm with the seat out of `this.sessions`.
+// Reached by the route the app itself prescribes: the dirty downgrade stops
+// the seat and asks the lead to clear the tree and accept again, so the SECOND
+// accept always lands on the merged arm with the seat out of `this.sessions`.
 test('the second accept the dirty downgrade invites destroys a DEAD seat record and all', async (t) => {
   const f = mkFixture(t);
   f.seat('lead');
@@ -614,13 +668,8 @@ test('the second accept the dirty downgrade invites destroys a DEAD seat record 
   const first = await accept(f, 't1');
   assert.match(first, /\[agent:task accept t1\] again to finish the cleanup/,
     'ENTER: the first accept really is the dirty downgrade, and really does invite a second');
-  assert.deepStrictEqual(f.archived, ['team-hand-t1'], 'ENTER: which archived the seat rather than destroying it');
+  assert.ok(f.persistence.get('team-hand-t1').archivedAt, 'ENTER: which kept the seat archived rather than destroying it');
 
-  // What the real archive() leaves behind: it kills the pty, and _cleanup drops
-  // the name from this.sessions. The fixture's archive stub only flags the
-  // record, so the map drop is staged here — without it the second accept would
-  // run against a LIVE seat and never reach the branch under test.
-  f.m.sessions.delete('team-hand-t1');
   // The lead does what the reply asked. Clearing rather than committing keeps
   // `landed` an ancestor of master, so the second accept reaches the same arm.
   fsReal.rmSync(pathReal.join(wt, 'uncommitted.txt'));
@@ -898,7 +947,7 @@ function stripComments(src) {
 // `if (r && r.ok) { … }` is exactly the code a failed removal runs on its way to
 // its return, which is the sentence the property is written in.
 function scanDestroy(fullSrc) {
-  const body = fullSrc.slice(fullSrc.indexOf('async destroy(name)'));
+  const body = fullSrc.slice(fullSrc.indexOf('async destroy(name'));
   const end = body.indexOf('\n    async archive(');
   const destroySrc = stripComments(body.slice(0, end > 0 ? end : body.length));
   const removeAt = destroySrc.indexOf('gitWorktree.removeWorktree(');
@@ -1668,16 +1717,22 @@ test('t2007: no merge target tears nothing down and says so', async (t) => {
   assert.ok(branches(f).includes('landed'), 'and the branch');
 });
 
-test('t2007: deleteBranch is forced only after a merged:true answer against the target', async (t) => {
+test('t2007: the merged arm deletes the branch only at the sha judged merged', async (t) => {
   const realGw = require('../git-worktree');
   const calls = [];
-  const gw = { ...realGw, deleteBranch: async (cwd, branch, opts) => { calls.push({ branch, opts }); return realGw.deleteBranch(cwd, branch, opts); } };
+  const gw = {
+    ...realGw,
+    deleteBranch: async (cwd, branch, opts) => { calls.push({ branch, opts }); return realGw.deleteBranch(cwd, branch, opts); },
+    deleteBranchIfAt: async (cwd, branch, sha) => { calls.push({ branch, sha }); return realGw.deleteBranchIfAt(cwd, branch, sha); },
+  };
   const f = mkFixture(t, { gitWorktree: gw });
   f.seat('lead');
   f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
+  const judged = execFileSync('git', ['-C', f.repoDir, 'rev-parse', 'landed'], { encoding: 'utf8' }).trim();
   doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
   await accept(f, 't1');
-  assert.deepStrictEqual(calls, [{ branch: 'landed', opts: { force: true } }], 'the merged arm forces the delete');
+  assert.deepStrictEqual(calls, [{ branch: 'landed', sha: judged }], 'the merged arm deletes by compare-and-swap at the judged sha');
+  assert.ok(!branches(f).includes('landed'), 'and the branch is gone');
 
   const calls2 = [];
   const f2 = mkFixture(t, { gitWorktree: { ...realGw, deleteBranch: async (cwd, branch, opts) => { calls2.push({ branch, opts }); return { ok: true }; } } });

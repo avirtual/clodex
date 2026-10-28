@@ -493,13 +493,15 @@ On the merged arm, what goes depends on the seat and the tree:
 
 | on a merged branch | seat | worktree | branch |
 |---|---|---|---|
-| loop-minted seat, tree clean (or no tree recorded) | retired, record dropped (kept only if the seat had already exited and the removal then failed) | removed | deleted — refused if that removal failed |
-| loop-minted seat, tree dirty | archived, only if still running | kept | kept |
-| loop-minted seat, tree unreadable | archived, only if still running | kept | delete attempted — usually refused |
+| loop-minted seat, tree clean (or no tree recorded) | retired, record dropped (kept only if the seat had already exited and the removal then failed) | removed | deleted only if still at the commit judged merged — refused if that removal failed or the branch moved |
+| loop-minted seat, tree dirty after the seat exited | stopped, record kept as archived | kept | kept |
+| loop-minted seat, tree unreadable after the seat exited | stopped, record kept as archived | kept | delete attempted — usually refused |
 | standing assignee, or no record — tree never inspected | untouched | kept | delete attempted — usually refused |
 | loop-minted seat holding another open ticket | untouched | kept | kept |
 
 A second accept after that other ticket closes finishes the cleanup.
+
+Destruction is gated on the tree read after the seat exited: a loop-minted seat is stopped first, and only then is its tree judged clean or dirty, so a file it writes on the way out keeps the tree. The branch is deleted by compare-and-swap (`git update-ref -d` against the tip read beside the merge check), so a commit made after that check keeps the branch, reported as `KEPT — it moved past`.
 
 - A branch delete ordinarily fails wherever the tree survived: `git branch -d`
   refuses a branch any worktree still has checked out, and a tree removed by

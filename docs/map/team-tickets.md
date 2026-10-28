@@ -452,7 +452,7 @@
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| `_closeOutMergedTicket` | shared accept teardown for lead and loop, gating archive, destroy and branch delete on merge, seat kind, tree dirtiness and liveness | tickets.json revival mergeVetoed or mergedInto, seat worktree and branch | _acceptSeatFacts, _finishAccept, gitWorktree.isMerged, gitWorktree.isDirty | ticket-auto-merge.test.js merged-notice-owes-accept.test.js |
+| `_closeOutMergedTicket` | shared accept teardown for lead and loop, gating archive, destroy and branch delete on merge, seat kind, tree dirtiness and liveness | tickets.json revival mergeVetoed or mergedInto, seat worktree and branch | _acceptSeatFacts, _finishAccept, destroy, gitWorktree.isMerged, gitWorktree.isDirty, gitWorktree.deleteBranchIfAt | ticket-auto-merge.test.js merged-notice-owes-accept.test.js accept-standing-seat.test.js |
 | `_closeOutMergedTicket.seatClause` | the reply fragment saying what happened to the seat, split on one-shot first, then liveness, then record | none | none | accept-standing-seat.test.js |
 | `_taskPark` | lead toggle of parked on an open ticket, never re-delivering the spec on unpark | tickets.json parked, nudgedAt | _reconcileTickets, _resolvableAssignTarget | task-start.test.js |
 | `_taskList` | task list verb: validate the filter and reply with the rendered board | none | _taskListText | clodex-team.test.js |
@@ -461,7 +461,8 @@
 
 ### Invariants
 - `_closeOutMergedTicket` treats a merge check that could not run as not merged, so absence of evidence never deletes unmerged work.
-- `_closeOutMergedTicket` destroys only a seat that `_acceptSeatFacts` reports one-shot and whose tree reads clean, and downgrades to archive on a dirty or unreadable tree.
+- `_closeOutMergedTicket` destroys only a seat that `_acceptSeatFacts` reports one-shot and whose tree reads clean after the seat exited: the dirtiness read runs as destroy's `beforeRemove`, and a dirty or unreadable tree keeps the record archived.
+- `_closeOutMergedTicket` deletes a merged branch through `deleteBranchIfAt` at the tip read beside `isMerged`, so a commit landed after that read keeps the branch.
 - `_closeOutMergedTicket.seatClause` splits on seat kind before liveness, never on whether an archive ran, so a gone one-shot seat is not called standing.
 - `_taskListText` must stay behaviourally identical to the second implementation in scripts/clodex-team.js, so the two change together.
 - `_closeOutMergedTicket` returns closedOut for the ticket and ok for the cleanup, so only ok licenses "Closed out", and the mergeError veto and dirty downgrade return closedOut without ok.

@@ -7217,6 +7217,7 @@ function createTicketMethods(deps, shared) {
       const m = target
         ? await gitWorktree.isMerged(team.root, branch, target).catch((e) => ({ ok: false, error: e.message }))
         : { ok: false, error: 'no merge target for this team' };
+      const judgedTip = branch ? await gitWorktree.revParse(team.root, branch).catch(() => null) : null;
 
       // Re-check in both directions: whichever side passed its entry gate first, the other can still enter this await and both tear down.
       {
@@ -7375,16 +7376,16 @@ function createTicketMethods(deps, shared) {
         const wt = rec && rec.worktree && rec.worktree.path ? rec.worktree.path : null;
         const busy = this._openTicketsFor(team, seatName, ticket.id).filter((t) => this._ticketAssigneeSeat(team, t) === seatName);
         if (busy.length > 0) downgrade = { kind: 'held', path: wt, held: busy[0].id };
-        else if (wt) {
-          const d = await gitWorktree.isDirty(wt).catch((e) => ({ ok: false, error: e.message }));
-          if (!d.ok) downgrade = { kind: 'unreadable', path: wt, why: d.error || 'git could not read the tree' };
-          else if (d.dirty) downgrade = { kind: 'dirty', path: wt };
-        }
-        if (downgrade) {
-          if (downgrade.kind !== 'held' && this.sessions.has(seatName)) { await this.archive(seatName); downgrade.archived = true; }
-        } else {
-          const r = await this.destroy(seatName).catch((e) => ({ ok: false, error: e.message }));
-          removed = r || null;
+        else {
+          const beforeRemove = async (treePath) => {
+            const d = await gitWorktree.isDirty(treePath).catch((e) => ({ ok: false, error: e.message }));
+            if (!d.ok) downgrade = { kind: 'unreadable', path: treePath, why: d.error || 'git could not read the tree' };
+            else if (d.dirty) downgrade = { kind: 'dirty', path: treePath };
+            return downgrade ? { keep: true, why: downgrade.kind } : null;
+          };
+          const r = await this.destroy(seatName, { beforeRemove }).catch((e) => ({ ok: false, error: e.message }));
+          if (downgrade) downgrade.archived = !!(r && r.live);
+          else removed = r || null;
         }
       } else if (seatName && remoteTree) {
         const d = await gitWorktree.isDirty(remoteTree).catch((e) => ({ ok: false, error: e.message }));
@@ -7397,7 +7398,9 @@ function createTicketMethods(deps, shared) {
       }
       const del = downgrade && (downgrade.kind === 'dirty' || downgrade.kind === 'held' || remoteTree)
         ? { ok: true, skipped: true }
-        : await gitWorktree.deleteBranch(team.root, branch, { force: m.merged === true }).catch((e) => ({ ok: false, error: e.message }));
+        : m.merged === true && judgedTip
+          ? await gitWorktree.deleteBranchIfAt(team.root, branch, judgedTip).catch((e) => ({ ok: false, error: e.message }))
+          : await gitWorktree.deleteBranch(team.root, branch).catch((e) => ({ ok: false, error: e.message }));
       const parts = [];
       if (seatName && remoteTree) {
         const kept = `the remote seat ${seatName} is not retired by accept; its tree ${remoteTree} was KEPT`;
@@ -7442,7 +7445,8 @@ function createTicketMethods(deps, shared) {
       // Test `skipped` before `ok`: the skip returns ok:true, and reporting it as deleted sends the lead looking for a ref that is still there.
       parts.push(del.skipped ? `branch ${branch} was KEPT (the accept above is unfinished)`
         : del.ok ? `branch ${branch} deleted`
-          : `branch ${branch} could NOT be deleted (${del.error})`);
+          : del.moved ? `branch ${branch} was KEPT — it moved past ${String(judgedTip).slice(0, 12)}, the commit judged merged, so it could NOT be deleted (${del.error})`
+            : `branch ${branch} could NOT be deleted (${del.error})`);
       // Zero against a fallback is undecidable: empty and already-fast-forwarded count the same, so neither sentence is safe.
       // Name `c.base`, not `baseSha`, which may not be what the count measured against.
       const outcome = !c.ok

@@ -30,6 +30,7 @@ blocks a release.
 - clodexctl: undeploying a Fargate stack on a shared, pre-existing cluster no longer removes the saved contexts of the other stacks on that cluster.
 - clodexctl: `port-forward` and `web --port` now fail at once when the chosen local port is already in use, instead of reporting the forward as open on another service.
 - **Security:** the ticket loop's ACCEPT merge lands the exact commit the reviewer read: a branch that gained a commit after the review round stops at a new `moved` step instead of merging unreviewed work, and the merge names the reviewed sha rather than the branch ref.
+- Accept teardown stops the seat before judging the tree and deletes the branch only if it still points at the commit judged merged, so a file or commit a hand made during close-out is kept (tree archived, branch kept) instead of force-removed.
 
 ## 5.147.0 — 2026-10-28 — security fixes from the first cold audit
 
