@@ -42,6 +42,11 @@ const SIDECAR_VERSION = 1;
 function sidecarPath(file) { return `${file}.idx.json`; }
 function stagedSidecarPath(file) { return `${sidecarPath(file)}.next`; }
 
+function syncPath(p) {
+  const fd = fs.openSync(p, 'r+');
+  try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+}
+
 function readSidecar(p, readFile) {
   try {
     const o = JSON.parse(readFile(p, 'utf-8'));
@@ -59,6 +64,7 @@ function createVectorStore({
   file, dims, model = '',
   readFile = fs.readFileSync, writeFile = fs.writeFileSync,
   appendFile = fs.appendFileSync, statFile = fs.statSync, renameFile = fs.renameSync,
+  fsyncFile = syncPath,
 } = {}) {
   const rowBytes = dims * BYTES_PER_DIM;
   let sidecar = null;
@@ -68,7 +74,10 @@ function createVectorStore({
 
   function loadBlob() {
     let raw;
-    try { raw = readFile(file); } catch { return new Float32Array(0); }
+    try { raw = readFile(file); } catch (e) {
+      if (e && e.code === 'ENOENT') return new Float32Array(0);
+      throw e;
+    }
     const whole = Math.floor(raw.length / rowBytes);
     if (raw.length !== whole * rowBytes) {
       try { fs.truncateSync(file, whole * rowBytes); } catch {}
@@ -90,19 +99,25 @@ function createVectorStore({
 
   function adoptStagedSidecar(blobBytes) {
     const staged = stagedSidecarPath(file);
-    if (!fs.existsSync(staged)) return;
+    if (!fs.existsSync(staged)) return null;
     const next = readSidecar(staged, readFile);
+    if (!next || next.blobBytes !== blobBytes) {
+      try { fs.unlinkSync(staged); } catch {}
+      return null;
+    }
     try {
-      if (next && next.blobBytes === blobBytes) renameFile(staged, sidecarPath(file));
-      else fs.unlinkSync(staged);
-    } catch {}
+      renameFile(staged, sidecarPath(file));
+    } catch {
+      pendingRows = 1;
+    }
+    return next;
   }
 
   function load() {
     if (sidecar) return;
     blob = loadBlob();
-    adoptStagedSidecar(blob.length * BYTES_PER_DIM);
-    sidecar = readSidecar(sidecarPath(file), readFile) || { dims, model, rows: new Map() };
+    const adopted = adoptStagedSidecar(blob.length * BYTES_PER_DIM);
+    sidecar = adopted || readSidecar(sidecarPath(file), readFile) || { dims, model, rows: new Map() };
     // A sidecar written for different dimensions or a different model cannot be
     // reconciled with the current one — every row is in the wrong space. Start
     // over rather than mix two vector spaces in one file.
@@ -234,9 +249,11 @@ function createVectorStore({
       // leave a blob that is half old rows and half new.
       const tmp = `${file}.tmp`;
       const staged = stagedSidecarPath(file);
-      writeFile(tmp, buf);
       try {
+        writeFile(tmp, buf);
         writeFile(staged, serializeSidecar(next, live.length));
+        fsyncFile(tmp);
+        fsyncFile(staged);
         renameFile(tmp, file);
       } catch (e) {
         try { fs.unlinkSync(staged); } catch {}
