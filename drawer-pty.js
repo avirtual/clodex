@@ -139,7 +139,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
               if (installing) return;
               const ours = !!rec.pending && rec.pending.depth === 1 && !foreignRecord(rec.pending, c);
               if (ours) { rec.endedInner = c; return; }
-              try { onCommand(seat, c); } catch {}
+              if (!isStale(rec)) { try { onCommand(seat, c); } catch {} }
               return;
             }
             if (rec.remoteRecord && rec.remoteRecord(c)) return;
@@ -154,7 +154,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
           const mine = !!rec.pending && !foreignRecord(rec.pending, c);
           settle(rec, { status: 'ok', record: c });
           // Ours must not also reach the firehose: both feed one selection queue.
-          if (!mine) { try { onCommand(seat, c); } catch {} }
+          if (!mine && !isStale(rec)) { try { onCommand(seat, c); } catch {} }
         },
         onAbandon: (c) => {
           if (((c && c.depth) || 0) === 0) forgetRemote(rec);

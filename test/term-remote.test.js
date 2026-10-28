@@ -92,6 +92,7 @@ function mk(over = {}) {
     shellHost: over.shellHost || shellHostOf,
     remoteInstallLine: 'remoteInstallLine' in over ? over.remoteInstallLine : REMOTE_INSTALL_LINE,
     remoteUnsupportedReason: over.remoteUnsupportedReason || require('../term-shim').remoteUnsupportedReason,
+    incarnationFor: over.incarnationFor,
   };
   const w = createDrawerPtys(deps);
   const fire = (ms, nth = 0) => {
@@ -471,6 +472,18 @@ test('the far session ending under an OPERATOR’s command still reports it pass
   assert.deepStrictEqual(h.passive.map(([, r]) => [r.command, r.depth, !!r.sessionEnded]),
     [['exit', 1, true], ['ssh host', 0, false]],
     'the inner is announced before the tab is announced free');
+});
+
+test('a replaced seat\'s old shell reports neither its far session ending nor the ssh command', () => {
+  const born = { alice: 100 };
+  const h = installed({ incarnationFor: (ws, seat) => born[seat] });
+  h.proc.emit(`${TD(130)}${TA}`);
+  h.proc.emit(`${TC('ls')}${TD(0)}`);
+  assert.strictEqual(h.results.length, 1, 'ENTER: the agent’s exec is settled and gone');
+  h.proc.emit(TC('exit'));
+  born.alice = 200;
+  h.proc.emit(`${D(0)}${A}`);
+  assert.deepStrictEqual(h.passive, []);
 });
 
 test('a deadline at depth 1 names the session and does not cancel the far command', () => {
