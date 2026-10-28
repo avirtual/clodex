@@ -259,6 +259,7 @@ function t1703Seat() {
 const T1703_RESULTS = {
   ok: { status: 'ok', record: { command: 'ls', exitCode: 1, output: 'x\n', depth: 0 }, command: 'ls', late: false },
   mismatch: { status: 'ok', record: { command: 'pwd', exitCode: 0, output: '/\n', depth: 0 }, command: 'ls', late: false, mismatch: true },
+  'mismatch-control': { status: 'ok', record: { command: 'p\x1bw\x07d', exitCode: 0, output: '/\n', depth: 0 }, command: 'ls', late: false, mismatch: true },
   timeout: { status: 'timeout', command: 'ls', afterMs: 120000 },
   abandoned: { status: 'abandoned', command: 'ls' },
   'shell-gone': { status: 'shell-gone', command: 'ls', reason: 'the window was closed' },
@@ -277,6 +278,12 @@ for (const [name, res] of Object.entries(T1703_RESULTS)) {
     assert.deepStrictEqual(got[0], result(res), 'byte-identical to the untokened DM');
   });
 }
+
+test('a mismatch names the other command with its control bytes stripped', () => {
+  const text = result(T1703_RESULTS['mismatch-control']);
+  assert.ok(text.includes('the terminal reported `pwd` finishing instead'), text);
+  assert.ok(!/[\x00-\x1f\x7f]/.test(text.replace(/\n/g, '')), JSON.stringify(text));
+});
 
 test('t1703 a reply refused before acceptance falls back to the DM, and the waiter is gone', () => {
   reports('all');

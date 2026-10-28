@@ -1974,6 +1974,11 @@ const drawerPtys = enableLocalTerminal ? createDrawerPtys({
   // Not gated on the reporting pref (it governs the unasked firehose, not an answer
   // to the agent) and always:true so output rides even on a clean exit.
   onExecResult: (seat, res) => {
+    if (res.stale) {
+      if (res.token) termWaiters.delete(res.token);
+      log.info('term', `dropped a result for ${seat}'s predecessor: ${res.command}`);
+      return;
+    }
     // Worded to fit every branch: after a timeout then a window close, "it has now
     // finished" would be false.
     const late = res.late ? '\n(this supersedes the still-running notice above)' : '';
@@ -2013,11 +2018,6 @@ const drawerPtys = enableLocalTerminal ? createDrawerPtys({
     } else {
       const why = res.reason || (res.status ? `the terminal reported \`${res.status}\`` : 'the terminal went away');
       text = `[terminal] ${res.command}${insideLine}\n${why} before the command reported back. Whether it ran is unknown.`;
-    }
-    if (res.stale) {
-      if (res.token) termWaiters.delete(res.token);
-      log.info('term', `dropped a result for ${seat}'s predecessor: ${res.command}`);
-      return;
     }
     const out = `${text}${late}`;
     const w = res.token ? termWaiters.get(res.token) : null;
