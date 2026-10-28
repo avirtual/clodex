@@ -29,7 +29,7 @@ const { isAlive } = require('./stream-seat');
 
 const CLAIMS = '.claims';
 const RESERVED_SEAT_NAMES = new Set([CLAIMS]);
-const LEGACY_CLAIM_RE = /^\.resend\.|\.draining\.[a-z]+\.\d+$/;
+const LEGACY_CLAIM_RE = /^\.resend\.|\.draining\.[a-z]+\.\d+$/i;
 const CLAIM_TAG_RE = /^[a-z]+\.(\d+)(?:-([0-9a-f]+))?$/;
 const LAUNCH_NONCE = crypto.randomBytes(4).toString('hex');
 

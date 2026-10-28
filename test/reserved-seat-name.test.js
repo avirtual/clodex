@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 const { RemoteServer } = require('../remote');
-const { RESERVED_SEAT_NAMES, LEGACY_CLAIM_RE } = require('../pending-store');
+const { RESERVED_SEAT_NAMES, LEGACY_CLAIM_RE, isReservedSeatName } = require('../pending-store');
 const nameValidity = require('../renderer/lib/name-validity');
 const { mk } = require('./lib/session-fixtures');
 
@@ -25,7 +25,14 @@ test('create refuses the reserved name before anything else runs', async () => {
   assert.strictEqual(m.sessions.has('.claims'), false);
 });
 
-for (const name of ['.CLAIMS', '.Claims', '.resend.x', 'a.draining.b.1']) {
+for (const name of ['.RESEND.x', 'a.DRAINING.idle.1']) {
+  test(`both copies of isReservedSeatName refuse ${name}`, () => {
+    assert.strictEqual(isReservedSeatName(name), true);
+    assert.strictEqual(nameValidity.isReservedSeatName(name), true);
+  });
+}
+
+for (const name of ['.CLAIMS', '.Claims', '.resend.x', 'a.draining.b.1', '.RESEND.x', 'a.DRAINING.idle.1']) {
   test(`create refuses ${name} as reserved`, async () => {
     const m = mk({});
     await assert.rejects(() => m.create(name, 'claude', null), /is a reserved name/);
