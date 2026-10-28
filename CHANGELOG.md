@@ -14,6 +14,9 @@ blocks a release.
 
 ## Unreleased
 
+- **Security:** `CLODEX_WEB_INSECURE=1` / `CLODEX_REMOTE_INSECURE=1` no longer disable the browser Origin check: a cross-site page or a DNS-rebound hostname is refused again on the stock `docker/web` compose stack (which sets the flag by default), while LAN clients with no Origin or a matching one are served. 5.148.0 had skipped the whole gate under the flag.
+- Corrections to the 5.148.0 notes: the "OS notifications: only the 50 most recent remain clickable" and "Team preflight accepts an exec proposal with no argv" bullets describe changes that shipped in 5.147.0; `undeploy node --docker` now exits 0 and removes the saved context even when the data volume could not be deleted (it says so and names the volume); Move to Peer can still briefly leave a seat on both machines when the peer is still creating it after the 120 s import timeout; and a second `clodex-send` inside one Bash call runs with subagent identity.
+
 ## 5.148.0 — 2026-10-28 — security fixes from the second cold audit
 
 - **Security:** `CLODEX_WEB_INSECURE=1` / `CLODEX_REMOTE_INSECURE=1` again serve clients that reach a non-loopback bind, which 5.147.0's Host/Origin gate refused; the flag now also skips that gate, as it already skipped the token requirement.
