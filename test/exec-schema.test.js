@@ -469,3 +469,9 @@ test('parseAndValidate: a required key named like an Object.prototype member is 
   const r = parseAndValidate(entry, '{}');
   assert.deepStrictEqual(r, { ok: false, error: 'payload.toString: required' });
 });
+
+test('parseAndValidate: an optional key named like an Object.prototype member is absent when omitted, checked when supplied', () => {
+  const entry = { schema: { type: 'object', properties: { constructor: { type: 'string' } } } };
+  assert.deepStrictEqual(parseAndValidate(entry, '{}'), { ok: true });
+  assert.strictEqual(parseAndValidate(entry, '{"constructor":5}').ok, false);
+});
