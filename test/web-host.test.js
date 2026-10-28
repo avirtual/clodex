@@ -35,10 +35,10 @@ function fakeEngine(sessions = {}, stores = {}) {
   return { engine: { manager, stores }, registered, unregistered };
 }
 
-async function startHost({ registerHandlers, token, sessions, stores, userDataPath } = {}) {
+async function startHost({ registerHandlers, token, insecure, sessions, stores, userDataPath } = {}) {
   const { engine, registered, unregistered } = fakeEngine(sessions, stores);
   const host = createWebHost({
-    engine, log: silentLog, host: '127.0.0.1', port: 0, token: token || null,
+    engine, log: silentLog, host: '127.0.0.1', port: 0, token: token || null, insecure: insecure || false,
     userDataPath: userDataPath || os.tmpdir(), registerHandlers: registerHandlers || (() => {}),
   });
   if (!host._server.listening) await new Promise((res) => host._server.once('listening', res));
@@ -212,6 +212,30 @@ test('token-less host: a GET whose Host is not loopback is a 403; /healthz stays
     assert.deepStrictEqual(await httpGet(port, '/', { Host: 'evil.example' }), { status: 403, body: 'forbidden origin' });
     assert.equal((await httpGet(port, '/', { Host: `localhost:${port}`, Origin: 'https://evil.example' })).status, 403);
     assert.deepStrictEqual(await httpGet(port, '/healthz', { Host: 'evil.example' }), { status: 200, body: 'ok' });
+  } finally { host.close(); }
+});
+
+test('insecure token-less host: a foreign-Origin upgrade is still destroyed; a matching or absent Origin is welcomed', async () => {
+  const { host, port } = await startHost({ insecure: true });
+  try {
+    const foreign = connect(port, { headers: { Origin: 'http://evil.example' } });
+    await assert.rejects(foreign.open());
+    const ok = connect(port, { headers: { Origin: `http://127.0.0.1:${port}` } });
+    assert.equal((await helloWelcome(ok, { workspaceId: 'default' })).t, 'welcome');
+    ok.close();
+    const bare = connect(port);
+    assert.equal((await helloWelcome(bare, { workspaceId: 'default' })).t, 'welcome');
+    bare.close();
+  } finally { host.close(); }
+});
+
+test('insecure token-less host: anyHost lifts the loopback Host rule but a foreign Origin GET is still a 403', async () => {
+  const { host, port } = await startHost({ insecure: true });
+  try {
+    assert.deepStrictEqual(await httpGet(port, '/', { Host: `127.0.0.1:${port}`, Origin: 'http://evil.example' }), { status: 403, body: 'forbidden origin' });
+    assert.equal((await httpGet(port, '/', { Host: `192.168.1.20:${port}`, Origin: 'http://evil.example' })).status, 403);
+    assert.notEqual((await httpGet(port, '/', { Host: `192.168.1.20:${port}` })).status, 403);
+    assert.notEqual((await httpGet(port, '/', { Host: `192.168.1.20:${port}`, Origin: `http://192.168.1.20:${port}` })).status, 403);
   } finally { host.close(); }
 });
 

@@ -136,12 +136,17 @@ test('non-loopback bind with no token → 503 naming CLODEX_REMOTE_TOKEN', async
   });
 });
 
-test('escape hatch: non-loopback + no token + insecure → serves (localhost-trust)', async () => {
+test('escape hatch: non-loopback + no token + insecure → serves any Host, still refuses a foreign Origin', async () => {
   await withServer({ host: '0.0.0.0', insecure: true }, async (port) => {
     const r = await req(port, '/api/sessions');
     assert.equal(r.status, 200, 'insecure override serves with no token');
-    const lan = await req(port, '/api/sessions', { headers: { host: `192.168.1.20:${port}`, origin: `http://192.168.1.20:${port}` } });
-    assert.equal(lan.status, 200, 'insecure override skips the Host/Origin gate');
+    const lan = await req(port, '/api/sessions', { headers: { host: `192.168.1.20:${port}` } });
+    assert.equal(lan.status, 200, 'insecure override lifts the loopback Host rule');
+    const lanSame = await req(port, '/api/sessions', { headers: { host: `192.168.1.20:${port}`, origin: `http://192.168.1.20:${port}` } });
+    assert.equal(lanSame.status, 200, 'insecure override serves a matching Origin');
+    const cross = await req(port, '/api/sessions', { headers: { host: `192.168.1.20:${port}`, origin: 'http://evil.example' } });
+    assert.equal(cross.status, 403, 'insecure override keeps the Origin comparison');
+    assert.match(cross.body, /Origin header does not match this host/);
   });
 });
 
