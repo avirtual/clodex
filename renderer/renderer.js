@@ -2875,7 +2875,16 @@ function removeSession(name, { keepPersisted = false } = {}) {
     s.wrapperEl.remove();
     sessions.delete(name);
   }
-  if (!keepPersisted) streamSeatNames.delete(name);
+  if (!keepPersisted) {
+    streamSeatNames.delete(name);
+    consoleTab.forgetSeat(name);
+    seatVoices.delete(name);
+  }
+  if (voiceArmedSeat === name) {
+    if (voiceEngineView) voiceEngineView.mirror.disarm();
+    voiceArmedSeat = null;
+  }
+  if (voiceRecordingSeat === name) voiceRecordingSeat = null;
   drawerHost.forgetSession(name);
   sidePane.forgetSeat(name);
   removeSessionFromSidebar(name);
@@ -4507,6 +4516,7 @@ function seatVoiceFired(name) {
 
 window.api.onVoiceEngineStopped((name) => {
   voiceTrace(name, 'engine self-stopped');
+  if (voiceRecordingSeat === name) voiceRecordingSeat = null;
   if (!voiceSinkFor(name)) return;
   if (voiceArmedSeat === name && voiceEngineView) voiceEngineView.mirror.release();
   setSeatRecording(name, false);
@@ -5768,7 +5778,7 @@ const {
 
 createCtlTab({ host: drawerHost });
 
-createConsoleTab({
+const consoleTab = createConsoleTab({
   host: drawerHost,
   getActiveSession: () => activeSession,
   getSeatType: () => (activeSession ? sessionTypeOf(activeSession) : null),
