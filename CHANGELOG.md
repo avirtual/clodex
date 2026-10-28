@@ -12,24 +12,24 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — fourth-pass audit: four security fixes, atomic stores, resumable release, parked stream mail
 
+- **Security:** `clodexctl upgrade node` on a helm context whose release name differs from the context name updates that context instead of overwriting (and losing the token of) an unrelated context named after the release; `deploy node --helm` takes `--ctx <name>` to save under a name other than the release.
+- **Security:** the drawer shell's OSC 133 marks now carry a per-shell nonce, so a remote shell's own prompt integration (or any program printing those escapes) can no longer end the local command's capture and let a term exec type into the far host with remote commands switched off; a forged command mark no longer reaches the seat's context.
+- **Security:** a review verdict that quotes an earlier `VERDICT: ACCEPT` line inside a code block or indented text no longer lands as ACCEPT and auto-merges rework; conflicting or ambiguous verdict lines route the body to the lead instead.
+- **Security:** the Bash deny guard treats a backslash-newline as the line continuation bash does and splits on backticks, so `kill -9 \⏎-1` and `git add \⏎-A` are refused like their one-line forms.
 - Delete Session and Delete Workspace on a ticket seat wait for its inject queue to settle before removing the worktree, so a dm re-parked at the seat's death no longer lands in a pending dir nothing drains.
 - The legacy claim-shape seat-name reservation (`.resend.*`, `*.draining.<kind>.<pid>`) is case-insensitive like `.claims`.
-- **Security:** `clodexctl upgrade node` on a helm context whose release name differs from the context name updates that context instead of overwriting (and losing the token of) an unrelated context named after the release; `deploy node --helm` takes `--ctx <name>` to save under a name other than the release.
 - `clodexctl undeploy node` (helm and docker) removes only the contexts that point at the torn-down release or container, so a same-named context for another node keeps its token.
 - The embeddings store truncates a torn tail left by a crash mid-append instead of appending after it, and a crash during compaction can no longer leave the index pointing into another record's vector.
 - A memory unit is written atomically, and a store write that fails mid-way (full disk) no longer leaves a temp file beside the store.
-- **Security:** the drawer shell's OSC 133 marks now carry a per-shell nonce, so a remote shell's own prompt integration (or any program printing those escapes) can no longer end the local command's capture and let a term exec type into the far host with remote commands switched off; a forged command mark no longer reaches the seat's context.
 - `shellHostOf` refuses `ssh` with `-o` spellings of the no-shell options (SessionType=none, RequestTTY=no, StdinNull, ForkAfterAuthentication, RemoteCommand) and `-F`, so a remote exec no longer interrupts a far program that is not a shell.
 - An SSM `deploy node` saves the context the moment the box reports it switched to the new wire token, so a poll timeout or Ctrl-C after that point no longer leaves a node whose token no context holds; the remote run is capped to the poll budget, and a timeout says whether the token was saved.
 - `clodexctl undeploy node --fargate` removes only a context that points at the torn-down stack, like helm and docker.
-- **Security:** a review verdict that quotes an earlier `VERDICT: ACCEPT` line inside a code block or indented text no longer lands as ACCEPT and auto-merges rework; conflicting or ambiguous verdict lines route the body to the lead instead.
 - A lead's `task accept` while the post-merge suite is still running is refused and keeps the tree and branch, so a red suite can no longer revert a merge whose branch an early accept already deleted.
 - A restart whose respawn fails — from Edit Session, a restart whose old process outlives the exit wait, or an agent's context reload — and a Delete Session that keeps a ticket seat's record now leave a failed (or archived) sidebar row with Retry and Forget, instead of a vanished seat whose kept record still holds its name.
 - The ctl-admin sweep keeps a context's lock while a dead worker's clodexctl child is still running, so a `kill -9` on the worker no longer lets a second deploy start against the same node mid-run.
 - Deleting or renaming a seat now also closes its drawer terminal shell, and a later seat with the same name gets a fresh shell instead of inheriting the old scrollback, cwd and late command results.
-- **Security:** the Bash deny guard treats a backslash-newline as the line continuation bash does and splits on backticks, so `kill -9 \⏎-1` and `git add \⏎-A` are refused like their one-line forms.
 - A dm queued for a Codex, Muse or stream-mode Claude seat that is mid-turn is parked to its pending mail when the seat restarts, is renamed, quits or crashes, instead of being dropped; a resend or urgent copy keeps its id until the seat has actually received it.
 
 ## 5.149.0 — 2026-10-28 — clodexctl reaps its tunnel on exit, create node takes a token file, worktree-safe workspace deletes
