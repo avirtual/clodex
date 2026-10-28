@@ -111,7 +111,7 @@ function drainPending(root, name, tag, expectedBorn = null) {
   rehomeOrphans(root, name);
   const dir = agentDir(root, name);
   const claim = claimPath(root, `${name}.draining.${tag}`);
-  if (claimIsStale(dir)) touchClaim(dir);
+  touchClaim(dir);
   try {
     fs.renameSync(dir, claim);
   } catch (e) {
