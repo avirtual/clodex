@@ -14,6 +14,7 @@ blocks a release.
 
 ## Unreleased
 
+- Erratum (5.150.2): the "mismatched exec result names the other command with its control bytes stripped" clause described behaviour already in 5.150.1; 5.150.2 only pinned it. Missing from the 5.150.2 notes: `clodexctl deploy --ssm` now fails with "the box is already on the new token, but context <name> was not saved; re-run with --force to rotate" when the context save fails after the token switch; a clodexctl exit now group-kills a dial whose leader already exited; and the ctl-admin sweep's "outcome UNKNOWN" dm carries the computed reason.
 ## 5.150.2 — 2026-10-28 — guard case-pattern fix, claim look-alikes, nit sweep
 
 - **Security:** the Bash deny guard and the `clodex-send` segmenter no longer let a `case` pattern's `)` or a `#` comment inside a double-quoted `$(…)` end the substitution early, so `echo "$(case x in x) kill -9 -1;; esac)"` is examined like any other command.
