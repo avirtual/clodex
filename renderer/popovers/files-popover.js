@@ -1,4 +1,4 @@
-const { esc, fmtAgo } = require('../lib/format');
+const { esc, fmtAgo, int } = require('../lib/format');
 
 function initFilesPopover({ popoverApi, filesState, filesUnseen, peerFilesCount, renderProxyBar, getActiveSession, sidePane }) {
   // ── Touched files (wire file-tool observer) ────────────────────────────
@@ -51,7 +51,8 @@ function initFilesPopover({ popoverApi, filesState, filesUnseen, peerFilesCount,
       const base = rel.split('/').pop();
       const dir = rel.slice(0, rel.length - base.length);
       const badges = []; // aim-count + subagent provenance, not change size
-      if (f.count > 1) badges.push(`<span class="file-badge" title="Touched ${f.count} times">×${f.count}</span>`);
+      const count = int(f.count);
+      if (count > 1) badges.push(`<span class="file-badge" title="Touched ${count} times">×${count}</span>`);
       if (f.sub) badges.push('<span class="file-badge file-badge-sub" title="Touched via a subagent">sub</span>');
       return `<div class="file-row${outside(f) ? ' file-row-out' : ''}" data-path="${esc(f.path)}" title="${esc(f.path)} — click to view / diff">`
         + `<span class="file-row-main"><span class="file-row-dir">${esc(dir)}</span><span class="file-row-name">${esc(base)}</span>${badges.join('')}</span>`
