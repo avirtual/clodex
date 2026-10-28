@@ -340,7 +340,7 @@ test('release: an EXIT trap armed after PREV_TAG rolls back all six bumped files
 test('release: a run that dies at the build step leaves the version, CHANGELOG and deploy pins as they were', () => {
   const src = fs.readFileSync(SCRIPT, 'utf-8');
   const start = src.indexOf('CUR_VERSION="$(node -p');
-  const buildLine = 'run npm run dist:mac || die "build failed (try: npx electron-rebuild)"\n';
+  const buildLine = 'run npm run dist:mac || die "build failed (try: npx electron-rebuild)"\nfi\n';
   const end = src.indexOf(buildLine);
   assert.ok(start > 0 && end > start, 'the bump-to-build block was not found by its anchors');
   const block = src.slice(start, end + buildLine.length);
@@ -463,6 +463,7 @@ function releaseFixture() {
   g('tag', 'v1.0.0');
   g('remote', 'add', 'origin', origin);
   g('push', '-q', '-u', 'origin', 'master', 'v1.0.0');
+  fs.writeFileSync(path.join(state, 'released-v1.0.0'), '');
   const run = (env = {}) => {
     fs.rmSync(path.join(state, 'calls'), { force: true });
     let res;
