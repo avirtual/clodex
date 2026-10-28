@@ -29,6 +29,9 @@ blocks a release.
 - clodexctl: `undeploy node --docker` now removes only the node's own data volume and lists any other named volume it leaves alone; it used to delete every named volume attached to the container, including ones passed with `--volume`.
 - clodexctl: undeploying a Fargate stack on a shared, pre-existing cluster no longer removes the saved contexts of the other stacks on that cluster.
 - clodexctl: `port-forward` and `web --port` now fail at once when the chosen local port is already in use, instead of reporting the forward as open on another service.
+- A reply line that starts with an inline code span such as ```` ```bash``` ```` no longer opens a phantom fence that silently swallows every later intent in the turn.
+- The terminal tab's zsh shim survives a `~/.zshenv` that sets `ZDOTDIR` (the XDG layout): the hook `.zshrc` still runs and the operator's own rc files are still sourced, and `term exec` refuses with `no-marks` instead of hanging when a shell has never emitted a mark.
+- A Codex seat that crashed or was forgotten no longer leaves Clodex's `hooks.json` in place of the operator's: the swap is reconciled at the next launch for every cwd with no live seat.
 
 ## 5.147.0 — 2026-10-28 — security fixes from the first cold audit
 
