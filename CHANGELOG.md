@@ -14,6 +14,11 @@ blocks a release.
 
 ## Unreleased
 
+- Security: `CLODEX_WEB_INSECURE=1` / `CLODEX_REMOTE_INSECURE=1` again serve clients that reach a non-loopback bind, which 5.147.0's Host/Origin gate refused; the flag now also skips that gate, as it already skipped the token requirement.
+- The remote API's JSON endpoints now all require an `application/json` body; 5.147.0 enforced it on three of them.
+- OS notifications: only the 50 most recent remain clickable from Notification Center; clicking an older one does nothing.
+- Team preflight accepts an exec proposal with no argv instead of reporting it as malformed.
+
 ## 5.147.0 — 2026-10-28 — security fixes from the first cold audit
 
 - Security: the web host and the remote API no longer accept requests from other web origins when they run without a token on loopback. A page open in the operator's browser could previously open a WebSocket to the local web host and run commands, or post a message to a seat. Requests now need a loopback Host and, when a browser sends one, a loopback Origin; JSON endpoints require an application/json body.
