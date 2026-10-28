@@ -15,6 +15,7 @@ blocks a release.
 ## Unreleased
 
 - (5.150.0 notes, corrected) Archiving or sleeping a seat also closes its drawer terminal shell, not only delete and rename; and `clodexctl create node` now refuses a `--token`, `--token-file` or stdin token containing whitespace or control characters (exit 2).
+- **Security:** the Bash deny guard and the `clodex-send` segmenter split on backticks and `$(` inside double quotes too, so `` echo "`kill -9 -1`" `` and `echo "$(git add -A)"` are examined as their own commands; single-quoted and backslash-escaped forms stay literal.
 ## 5.150.0 — 2026-10-28 — fourth-pass audit: four security fixes, atomic stores, resumable release, parked stream mail
 
 - **Security:** `clodexctl upgrade node` on a helm context whose release name differs from the context name updates that context instead of overwriting (and losing the token of) an unrelated context named after the release; `deploy node --helm` takes `--ctx <name>` to save under a name other than the release.

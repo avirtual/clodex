@@ -178,16 +178,24 @@ function shellSegments(cmd) {
   let tok = null;
   let q = null;
   let pending = [];
+  const outer = [];
   const at = (i) => { if (!tok) tok = { start: i, end: i, text: '' }; return tok; };
   const push = (i) => { if (tok) { tok.end = i; segs[segs.length - 1].push(tok); } tok = null; };
   for (let i = 0; i < cmd.length; i++) {
     const c = cmd.charAt(i);
     if (q) {
       if (c === q) { q = null; continue; }
-      if (q === '"' && c === '\\' && i + 1 < cmd.length) { i++; if (cmd.charAt(i) !== '\n') tok.text += cmd.charAt(i); continue; }
-      tok.text += c;
+      if (q === '"' && c === '\\' && i + 1 < cmd.length) { i++; if (cmd.charAt(i) !== '\n') at(i - 1).text += cmd.charAt(i); continue; }
+      if (q === '"' && c === '`') { push(i); segs.push([]); outer.push({ bt: true }); q = null; continue; }
+      if (q === '"' && c === '$' && cmd.charAt(i + 1) === '(') { push(i); segs.push([]); outer.push({ bt: false, depth: 0 }); q = null; i++; continue; }
+      at(i).text += c;
       continue;
     }
+    const top = outer[outer.length - 1];
+    if (top && top.bt && c === '`') { push(i); segs.push([]); outer.pop(); q = '"'; continue; }
+    if (top && !top.bt && c === ')' && top.depth === 0) { push(i); segs.push([]); outer.pop(); q = '"'; continue; }
+    if (top && !top.bt && c === '(') top.depth++;
+    if (top && !top.bt && c === ')') top.depth--;
     if (c === "'" || c === '"') { at(i); q = c; continue; }
     if (c === '\\' && i + 1 < cmd.length) { if (cmd.charAt(i + 1) !== '\n') at(i).text += cmd.charAt(i + 1); i++; continue; }
     if (c === '{' && cmd.charAt(i + 1) === '}') { at(i).text += '{}'; i++; continue; }
