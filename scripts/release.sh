@@ -108,7 +108,20 @@ run node scripts/electron-smoke.js || die "electron smoke failed — wire/ uses 
 step "Renderer startup smoke (index.html)"
 run node scripts/renderer-smoke.js || die "renderer smoke failed — the renderer throws on startup or never renders the sidebar"
 
-PREV_TAG="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+CUR_VERSION="$(node -p "require('./package.json').version")"
+RESUME=""
+if git tag --points-at HEAD | grep -qx "v$CUR_VERSION"; then
+  REMOTE_TAG="$(git ls-remote --tags origin "refs/tags/v$CUR_VERSION")" || die "git ls-remote failed"
+  if [ -z "$REMOTE_TAG" ]; then
+    RESUME=push
+    say "resuming release v$CUR_VERSION from the push step"
+  elif ! gh release view "v$CUR_VERSION" >/dev/null 2>&1; then
+    RESUME=gh
+    say "resuming release v$CUR_VERSION from the gh release step"
+  fi
+fi
+
+PREV_TAG="$(git describe --tags --abbrev=0 ${RESUME:+HEAD^} 2>/dev/null || true)"
 note "previous tag: ${PREV_TAG:-<none>}"
 
 # Everything below edits tracked files before the build; a die before the commit must not leave them for the dirty-tree preflight.
@@ -127,11 +140,16 @@ trap 'release_cleanup package.json package-lock.json CHANGELOG.md cli/deploy/hel
 
 # --- compute the new version (writes package.json + lock, no commit/tag) ---
 step "Bumping version ($BUMP)"
-NEW_VERSION="$(npm version "$BUMP" --no-git-tag-version | tail -1 | sed 's/^v//')"
+if [ -n "$RESUME" ]; then
+  NEW_VERSION="$CUR_VERSION"
+else
+  NEW_VERSION="$(npm version "$BUMP" --no-git-tag-version | tail -1 | sed 's/^v//')"
+fi
 TAG="v$NEW_VERSION"
+KEPT_NOTES="$HOME/.clodex/logs/release-notes-$TAG.md"
 say "new version: $NEW_VERSION  ->  tag $TAG"
 
-git tag | grep -qx "$TAG" && die "tag $TAG already exists"
+if [ -z "$RESUME" ] && git tag | grep -qx "$TAG"; then die "tag $TAG already exists"; fi
 
 # --- sync the packaged deploy assets to the new version --------------------
 # cli/deploy/ ships one reviewable asset per deploy flavor, and each NAMES the
@@ -195,12 +213,23 @@ CHANGELOG_BODY=""
 # what makes the changelog the thing people maintain rather than a file that
 # quietly rots next to auto-generated notes. Empty (or absent) falls through to
 # the commit-subject default, so this never blocks a release.
-if [ -z "$NOTES_FILE" ] && [ -f "$CHANGELOG" ]; then
+if [ -z "$RESUME" ] && [ -z "$NOTES_FILE" ] && [ -f "$CHANGELOG" ]; then
   CHANGELOG_BODY="$(awk '/^## +\[?Unreleased\]?/{f=1;next} /^## /{f=0} f' "$CHANGELOG")"
   [ -n "$(printf '%s' "$CHANGELOG_BODY" | tr -d '[:space:]')" ] || CHANGELOG_BODY=""
 fi
 
-if [ -n "$NOTES_FILE" ]; then
+STAMPED_HEADING=""
+if [ -n "$RESUME" ] && [ -f "$CHANGELOG" ]; then
+  STAMPED_HEADING="$(grep -m1 -F "## $NEW_VERSION — " "$CHANGELOG" || true)"
+  SUBTITLE="$(printf '%s' "$STAMPED_HEADING" | sed -E 's/^## +[^ ]+ — [0-9-]+( — )?//')"
+  [ -n "$SUBTITLE" ] && TITLE="$TAG — $SUBTITLE"
+fi
+
+if [ -n "$RESUME" ] && [ -z "$NOTES_FILE" ] && [ -f "$KEPT_NOTES" ]; then
+  cat "$KEPT_NOTES" > "$NOTES"
+  FOOTER=""
+  note "  notes: kept copy $KEPT_NOTES"
+elif [ -n "$NOTES_FILE" ]; then
   SUBTITLE="$(grep -m1 -E '^#+ +' "$NOTES_FILE" | sed -E 's/^#+ +//' || true)"
   [ -n "$SUBTITLE" ] && TITLE="$TAG — $SUBTITLE"
   cat "$NOTES_FILE" > "$NOTES"
@@ -218,6 +247,8 @@ elif [ -n "$CHANGELOG_BODY" ]; then
   ' "$CHANGELOG" > "$CHANGELOG.tmp" && mv "$CHANGELOG.tmp" "$CHANGELOG"
   grep -qF "$STAMP" "$CHANGELOG" || die "changelog stamp failed — $STAMP is not in $CHANGELOG"
   note "  changelog: stamped $STAMP"
+elif [ -n "$STAMPED_HEADING" ]; then
+  awk -v h="$STAMPED_HEADING" '$0==h{f=1;next} /^## /{f=0} f' "$CHANGELOG" > "$NOTES"
 else
   {
     echo "## What's changed"
@@ -241,9 +272,13 @@ else
 fi
 
 # --- build -----------------------------------------------------------------
-step "Building arm64 DMG"
-rm -rf dist
-run npm run dist:mac || die "build failed (try: npx electron-rebuild)"
+if [ -n "$RESUME" ] && ls dist/*"$NEW_VERSION"*.dmg >/dev/null 2>&1; then
+  say "resume: reusing the $NEW_VERSION DMG already in dist/"
+else
+  step "Building arm64 DMG"
+  rm -rf dist
+  run npm run dist:mac || die "build failed (try: npx electron-rebuild)"
+fi
 
 DMG="$(ls dist/*.dmg 2>/dev/null | head -1 || true)"
 [ -n "$DMG" ] || die "no .dmg produced in dist/"
@@ -266,11 +301,24 @@ run bash scripts/dmg-child-probe.sh "$DMG" || die "the packaged app cannot boot 
 # them reading bytes that are not the ones shipping, and they would read green
 # precisely when the two disagree.
 step "Commit + tag + push"
-run git commit -am "$TAG" || die "commit failed"
+if [ -z "$RESUME" ]; then
+  run git commit -am "$TAG" || die "commit failed"
+fi
 COMMITTED=1
-git tag "$TAG"
-run git push origin master || die "git push failed"
-run git push origin "$TAG"  || die "git push tag failed"
+if [ -z "$RESUME" ]; then
+  git tag "$TAG"
+fi
+mkdir -p "$(dirname "$KEPT_NOTES")" && cp "$NOTES" "$KEPT_NOTES"
+note "notes kept at $KEPT_NOTES"
+followups() {
+  printf 'gh release create %s %s --title "%s" --notes-file %s\nscripts/publish-image.sh %s\nscripts/cloud-review.sh %s %s\n(or re-run scripts/release.sh to resume)' \
+    "$TAG" "$DMG" "$TITLE" "$KEPT_NOTES" "$NEW_VERSION" "$PREV_TAG" "$TAG"
+}
+PUSH_FAILED="tag $TAG is committed locally but not on origin — finish with:
+git push origin master $TAG
+$(followups)"
+run git push origin master || die "git push failed: $PUSH_FAILED"
+run git push origin "$TAG"  || die "git push tag failed: $PUSH_FAILED"
 say "pushed master and $TAG to origin"
 
 # --- publish ---------------------------------------------------------------
@@ -280,7 +328,7 @@ ATTEMPTS=3
 attempt=1
 published=0
 while [ "$attempt" -le "$ATTEMPTS" ]; do
-  if [ "$attempt" -gt 1 ]; then sleep 15; fi
+  if [ "$attempt" -gt 1 ]; then sleep "${RELEASE_RETRY_SLEEP:-15}"; fi
   if run gh release view "$TAG" >/dev/null 2>&1; then
     if run gh release upload "$TAG" "$DMG" --clobber; then published=1; break; fi
   elif run gh release create "$TAG" "$DMG" \
@@ -290,7 +338,6 @@ while [ "$attempt" -le "$ATTEMPTS" ]; do
   fi
   attempt=$((attempt + 1))
 done
-[ "$published" = 1 ] || die "gh release create failed (tag/commit are already pushed — fix and re-run just the gh step)"
 
 # --- prune old release assets ---------------------------------------------
 # Keep the DMG pile bounded: only the newest KEEP releases retain binaries
@@ -298,22 +345,24 @@ done
 # Non-fatal — the release itself is already published.
 # The retention count lives in prune-releases.sh (KEEP, default 5); don't
 # duplicate the number here — the prune script reports its own effective KEEP.
-step "Pruning old release assets"
-run "$(dirname "$0")/prune-releases.sh" --delete || say "warn: prune failed (release is fine); run scripts/prune-releases.sh --delete manually"
+if [ "$published" = 1 ]; then
+  step "Pruning old release assets"
+  run "$(dirname "$0")/prune-releases.sh" --delete || say "warn: prune failed (release is fine); run scripts/prune-releases.sh --delete manually"
+fi
 
 # --- publish the sandbox image --------------------------------------------
-# Folded in after two manual runs proved it stable. Non-fatal for the same
-# reason as the prune above: the GitHub release is already published, and a
-# docker/buildx hiccup must not leave the caller thinking the release failed.
-# It IS load-bearing though — running it by hand let ghcr's :latest drift three
+# Non-fatal: a docker/buildx hiccup must not leave the caller thinking the
+# release failed. It IS load-bearing though — running it by hand let ghcr's :latest drift three
 # versions behind, which is undiagnosable from a deployed box (an old image's
 # hello carries no webHost, so features simply appear missing).
 step "Publishing container image $NEW_VERSION"
 if run "$(dirname "$0")/publish-image.sh" "$NEW_VERSION"; then
   say "image published: $NEW_VERSION (+latest)"
 else
-  say "warn: image publish failed (GitHub release is fine); run scripts/publish-image.sh $NEW_VERSION manually"
+  say "warn: image publish failed; run scripts/publish-image.sh $NEW_VERSION manually"
 fi
+[ "$published" = 1 ] || die "gh release create failed (tag/commit are already pushed, notes kept at $KEPT_NOTES) — finish with:
+$(followups)"
 
 step "Launching cloud release review"
 if run "$(dirname "$0")/cloud-review.sh" "$PREV_TAG" "$TAG"; then
