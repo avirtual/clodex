@@ -565,6 +565,9 @@ the seat's keep-warm hold before the remove, and call `forgetSeatFiles` after it
 seats it kills (their record read before `kill` drops it). An assistant seat loses its whole
 seat dir (`removeSeat`: client-token, brief.md, memory), any other seat only
 its `client-token`, so a later seat with the same name never inherits them.
+A record carrying `worktree.path` goes through `destroy()` instead, so its tree
+is removed; a tree that cannot be removed keeps its record archived and
+re-homed to the default workspace (`_rehomeKept`), and the menu lists it.
 
 **Real delete of a LIVE session = right-click "Delete Session…"** + native
 confirm. It routes through `manager.destroy` (`ipc-handlers.js` `session:kill`)
@@ -574,7 +577,7 @@ worktree-removal failure is toasted by the renderer while the row goes.
 | Event | sessions.json | Process | UI |
 |---|---|---|---|
 | Archive (✕ / Cmd+W) | kept, `archivedAt` stamped | killed (SIGKILL fallback 5s); keep-warm hold disarmed | live tab → dimmed archived row |
-| Delete (right-click "Delete Session…") | removed (+ worktree; see `destroy()`) | killed (SIGKILL fallback 5s); worktree removal awaited, failure toasted; keep-warm hold disarmed; `sessions/<name>/` + its legacy links removed (`removeSeat`), `pending/<name>` left | tab removed |
+| Delete (right-click "Delete Session…") | removed (+ worktree; see `destroy()`) | killed (SIGKILL fallback 5s); worktree removal awaited, failure toasted; keep-warm hold disarmed; `sessions/<name>/` + its legacy links removed (`removeSeat`), `pending/<name>` removed and held injects dropped at exit | tab removed |
 | CLI exits on its own (agent) | entry kept, `exitedAt` stamped (cleared on the next spawn) | dead; not respawned by restore | exited row "exited (code N) — click to resume" (click = resume via `--resume`, with `CLAUDE_CODE_RESUME_INTERRUPTED_TURN=1` so a turn cut off mid-flight continues, and a tool that was mid-run when the CLI died has no result and may run again; ✕ = forget) |
 | Natural exit (bash) | removed only on a genuinely natural exit (see above) | dead | tab removed |
 | App quit | kept | all killed (`killAll`, `_shuttingDown`) | windows closed |
@@ -808,7 +811,9 @@ save touches it, so it holds the pre-launch state for the whole session — whic
 is what survives an upgrade or a bug in the running build. It is only written
 from content that parses, and a missing or unparseable file writes nothing and
 leaves any existing `.bak` alone. Load falls back to it only when
-sessions.json itself does not parse.
+sessions.json exists but does not parse (quarantined); an absent sessions.json
+is an empty store, so deleting sessions.json alone resets the seat list, and an
+unreadable one refuses to persist and starts empty without reading `.bak`.
 
 A ticket seat's `cwd` IS its worktree, and its record carries `worktree.main` —
 the shared checkout the tree was cut from. A `worktree` pointer naming a tree
@@ -942,7 +947,9 @@ Closing a window detaches its sessions rather than killing them: `pty-data`
 buffers into `session.pendingOutput` (2MB cap, oldest dropped) and replays on
 reopen; exit/activity events while detached are dropped and recomputed.
 **Delete Workspace…** (Window menu) is the only true workspace delete: confirm →
-kill its sessions → remove the record → close the window. (For a single LIVE
+kill its sessions → remove the record → close the window. Ticket seats with a
+worktree are destroyed with their tree; any tree that could not be removed is
+named in a warning dialog and its seat stays archived in the default workspace. (For a single LIVE
 session, right-click **Delete Session…** is the record-dropper; ✕ / Cmd+W on a
 live row archives instead. An archived or failed row's ✕ drops its record —
 see §4.) Rename: double-click the sidebar header, or File ▸ Rename Workspace….
