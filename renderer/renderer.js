@@ -2737,18 +2737,14 @@ function switchSession(name) {
   // switch. The popover this replaced had to close (it was anchored to a row);
   // surviving the switch is the drawer's whole point.
 
-  const wasActive = activeSession;
   activeSession = name;
   window.api.setSidebarView({ activeSession: name }).catch(() => {});
   reportFocusedSession();
   // An armed drawer selection is registered on ONE session's wirescope route, so
-  // leaving that session has to take it back — the drawer cannot see this
-  // switch, and a peek left behind rides a request the operator is no longer
-  // watching. Not on first activation (nothing was armed yet).
-  if (wasActive && wasActive !== name) { drawerHost.onSessionChanged(); refreshSelectionBadge(); }
-  // The first activation takes this else and may land on a seat the terminal
-  // cannot serve; the switch arm syncs inside onSessionChanged.
-  else drawerHost.syncSeatAvailability();
+  // leaving that session has to take it back — a peek left behind rides a
+  // request the operator is no longer watching. Not on first activation
+  // (nothing was armed yet).
+  if (drawerHost.seatActivated()) refreshSelectionBadge();
   sidePane.showSeat(name);
   filesToggle.refresh();
 
@@ -2901,6 +2897,7 @@ function removeSession(name, { keepPersisted = false } = {}) {
       switchSession(remaining[0]);
     } else {
       activeSession = null;
+      drawerHost.onSessionChanged();
       // Main's record has to go too, or an external voice tap keeps aiming at
       // the seat that just went away.
       reportFocusedSession();
