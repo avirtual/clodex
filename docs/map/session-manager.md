@@ -239,7 +239,7 @@
 
 ### Invariants
 
-- `kill` calls getPersistence().remove() unless `respawn` (restartSession, _coldRespawn) is set, agent or bash, before the pty dies, so a killed agent's record is gone and the bash drop gate `exitDisposition` feeds in the exit handler only suppresses a redundant second remove.
+- `kill` calls getPersistence().remove() unless `respawn` (restartSession, _coldRespawn, applySessionArgs) is set, agent or bash, before the pty dies, so a killed agent's record is gone and the bash drop gate `exitDisposition` feeds in the exit handler only suppresses a redundant second remove.
 - `kill` returns at its `if (!s) return;` before its remove, so on an already-dead seat only `destroy` drops the record; without that own drop the worktree goes and the record naming it stays.
 - `destroy` drops the record per return, never up front: the no-worktree and worktree-removed returns drop it, the `_waitForExit` timeout return (process still running, tree kept, `ok: false`), the `beforeRemove` keep return (`kept: true`, awaited after exit and before removeWorktree) and the removeWorktree failure return keep it (each re-upserting it archived for a live seat whose record `kill` already removed).
 - `destroy` decides held mail by arm: the no-worktree arm calls `_markDropHeld` before `kill`, so held injects are dropped at exit, because its seat dir goes without waiting for the exit; the worktree arm never marks, so `_cleanup` re-parks them into `pending/<name>`, which the remove arm's `_dropPendingDir` deletes with the seat and every keep arm leaves for a resume.

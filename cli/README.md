@@ -242,10 +242,11 @@ running task → a clear connect error; `aws`'s own stderr is relayed verbatim.
 
 > **Honesty caveat.** The `gcloud`/`az` templates follow the vendors' documented
 > CLI syntax but have **not** been exercised against live GCP/Azure —
-> `describe node --test --verbose` relays the vendor CLI's own stderr, which is the diagnosis
-> surface. The `ssm`/`kubectl` shapes are the same tunnel mechanism `--ssh` uses
-> and are verifiable in shape the same way. Missing a vendor binary surfaces as
-> the usual tunnel-failed error with an "is `<cli>` installed?" hint.
+> `describe node --test --verbose` relays the vendor CLI's own stderr, which is
+> the diagnosis surface. The `ssm`/`kubectl` shapes are the same tunnel
+> mechanism `--ssh` uses and are verifiable in shape the same way. Missing a
+> vendor binary surfaces as the usual tunnel-failed error with an "is `<cli>`
+> installed?" hint.
 
 **When an SSM tunnel fails, the error names the world.** SSM's control plane
 happily starts sessions to sick instances, so a bare timeout says nothing. On

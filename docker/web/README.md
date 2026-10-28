@@ -79,7 +79,7 @@ This is auth v1 — a shared secret, no TLS, no per-user login. For anything
 serious, front it with a reverse proxy that terminates TLS and adds real
 authentication (that layered arc is future work; the token predicate is the
 single seam it will replace). The proxy must pass the browser's Host through
-(`proxy_set_header Host $host;` in nginx; Caddy does by default): a present
+(`proxy_set_header Host $http_host;` in nginx; Caddy does by default): a present
 Origin is compared to the Host even with a token (`originMismatch` in
 auth-token.js), so a proxy that rewrites Host to the upstream address gets 403
 on every browser request. Treat the token like a password: anyone who has
