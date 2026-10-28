@@ -12,19 +12,22 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — security fixes from the second cold audit
 
+- **Security:** `CLODEX_WEB_INSECURE=1` / `CLODEX_REMOTE_INSECURE=1` again serve clients that reach a non-loopback bind, which 5.147.0's Host/Origin gate refused; the flag now also skips that gate, as it already skipped the token requirement.
+- **Security:** a seat granted a clodexctl exec tier can no longer list every saved context or dial one it was not granted through `get nodes` / `describe node …`; node lines are refused on every seat tier, and `help node` still answers.
+- **Security:** the context and cache-bust popovers no longer insert numbers from a peer's reply into the page unescaped; a compromised peer could previously run code in the desktop app or the web surface when the operator opened one of those chips.
+- **Security:** a keep-warm ping never carries another account's OAuth token: the hold resolves the seat's `CLAUDE_CONFIG_DIR` from its persisted record, and a session no record owns declines the ping instead of borrowing the default account's bearer.
+- **Security:** the ticket loop's ACCEPT merge lands the exact commit the reviewer read: a branch that gained a commit after the review round stops at a new `moved` step instead of merging unreviewed work, and the merge names the reviewed sha rather than the branch ref.
+- **Security:** a Claude seat's `main.` identity stamp is accepted only once per tool call the seat's wire tee saw on the main thread, and only while that call is still in flight, so a subagent that reads the seat's env and session id can no longer mint a stamp at will and reach `term_exec`, `term_read` or `exec`; a seat running with the wire off has no privileged MCP/`clodex-send` path (typed intents are unaffected), and the docs now state what the stamp does and does not prove.
 - Move to Peer: when the peer accepts the seat but its reply is lost, Clodex now checks the peer before restarting the seat locally, so the seat can no longer end up running on both machines; an unreachable peer leaves the local copy archived instead.
 - Shouts claimed from a peer box are stored exactly once even if the claim is retried, and a note that could not be stored stays unread on the box instead of being lost.
-- Security: `CLODEX_WEB_INSECURE=1` / `CLODEX_REMOTE_INSECURE=1` again serve clients that reach a non-loopback bind, which 5.147.0's Host/Origin gate refused; the flag now also skips that gate, as it already skipped the token requirement.
 - The remote API's JSON endpoints now all require an `application/json` body; 5.147.0 enforced it on three of them.
 - OS notifications: only the 50 most recent remain clickable from Notification Center; clicking an older one does nothing.
 - Team preflight accepts an exec proposal with no argv instead of reporting it as malformed.
 - Deleting a workspace now removes the git worktrees of the ticket seats it held, and keeps a seat archived when its worktree could not be removed, instead of leaving the tree on disk with nothing naming it.
 - Deleting sessions.json while Clodex is closed now starts with an empty seat list; the launch snapshot (sessions.json.bak) is used only when sessions.json exists but does not parse.
 - Deleting a seat or its workspace no longer re-parks the messages it was holding into its pending mail after its files were removed; they are dropped and logged.
-- Security: a seat granted a clodexctl exec tier can no longer list every saved context or dial one it was not granted through `get nodes` / `describe node …`; node lines are refused on every seat tier, and `help node` still answers.
-- Security: the context and cache-bust popovers no longer insert numbers from a peer's reply into the page unescaped; a compromised peer could previously run code in the desktop app or the web surface when the operator opened one of those chips.
 - A seat whose name ends in `.draining.<number>` or contains `.resend.` no longer has its parked mail swept into another seat's mailbox or hidden from resend; mailbox claims now live in a reserved `.claims` directory.
 - clodexctl: `undeploy node --docker` now removes only the node's own data volume and lists any other named volume it leaves alone; it used to delete every named volume attached to the container, including ones passed with `--volume`.
 - clodexctl: undeploying a Fargate stack on a shared, pre-existing cluster no longer removes the saved contexts of the other stacks on that cluster.
@@ -32,16 +35,13 @@ blocks a release.
 - A sessions.json that parses but is not a list is now moved aside and the launch snapshot restored, instead of starting with no seats and overwriting the snapshot with the bad file.
 - Seats whose workspace record is missing or corrupt now get their workspace re-created at launch, so it appears under Recent Workspaces and its seats restore when opened, instead of staying invisible with their names reserved.
 - Memory pins, memory edits and library saves (templates, prompts, agents, skills, exec commands, MCP entries) now write atomically, so a crash mid-save can no longer leave an empty file.
-- **Security:** a keep-warm ping never carries another account's OAuth token: the hold resolves the seat's `CLAUDE_CONFIG_DIR` from its persisted record, and a session no record owns declines the ping instead of borrowing the default account's bearer.
 - A hold ended or disarmed while another seat's ping was in flight is no longer pinged from the stale tick snapshot.
 - Upstream declines (overload, rate limit, transport, unreadable token) no longer spend a timed hold's ping budget, a `max-pings` stop re-arms on the next turn, and a ping that hangs times out after 30 s instead of wedging every hold.
 - `wirescope` telemetry: pruning a seat that left the live map no longer erases its this-launch spend from the persisted lifetime totals.
-- **Security:** the ticket loop's ACCEPT merge lands the exact commit the reviewer read: a branch that gained a commit after the review round stops at a new `moved` step instead of merging unreviewed work, and the merge names the reviewed sha rather than the branch ref.
 - Accept teardown stops the seat before judging the tree and deletes the branch only if it still points at the commit judged merged, so a file or commit a hand made during close-out is kept (tree archived, branch kept) instead of force-removed.
 - A reply line that starts with an inline code span such as ```` ```bash``` ```` no longer opens a phantom fence that silently swallows every later intent in the turn.
 - The terminal tab's zsh shim survives a `~/.zshenv` that sets `ZDOTDIR` (the XDG layout): the hook `.zshrc` still runs and the operator's own rc files are still sourced, and `term exec` refuses with `no-marks` instead of hanging when a shell has never emitted a mark.
 - A Codex seat that crashed or was forgotten no longer leaves Clodex's `hooks.json` in place of the operator's: the swap is reconciled at the next launch for every cwd with no live seat.
-- **Security:** a Claude seat's `main.` identity stamp is accepted only once per tool call the seat's wire tee saw on the main thread, and only while that call is still in flight, so a subagent that reads the seat's env and session id can no longer mint a stamp at will and reach `term_exec`, `term_read` or `exec`; a seat running with the wire off has no privileged MCP/`clodex-send` path (typed intents are unaffected), and the docs now state what the stamp does and does not prove.
 - The intent socket times out a client that connects and never sends a request, so stalled probes can no longer exhaust its connection slots and answer every real caller `busy`.
 - A restart whose respawn fails (CLI missing from PATH, a claimed tree) now leaves a failed row with Retry and Forget instead of a vanished seat whose kept record blocked its name; a stale move-failure entry no longer draws a ghost row on a later restart.
 - A reload, wake or account-move respawn keeps the seat's label and fix chip in the sidebar.
