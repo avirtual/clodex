@@ -978,13 +978,21 @@ function readSessionMeta(file) {
 const { createCliHooks } = require('./cli-hooks');
 const {
   writeClaudeDigestFile, setupClaudeHook, setupCodexHook, writeMcpConfig,
-  cleanupClaudeHook, cleanupCodexHook, cleanupMuseSeat,
+  cleanupClaudeHook, cleanupCodexHook, cleanupMuseSeat, reconcileCodexHooks,
 // composeRoster reaches `manager` lazily and inside a try: this runs before the
 // const is declared, so a bare reference at boot is a TDZ throw.
 } = createCliHooks({
   REGISTRY_DIR, memoryStore, getUiSettings: () => uiSettings, nodeInterp: process.execPath, log,
   composeRoster: (name) => { try { return manager.composeRosterFor(name); } catch { return null; } },
 });
+
+function reconcileCodexSwaps(records) {
+  const live = [];
+  for (const s of manager.sessions.values()) {
+    if (s.agentType === 'codex' && s.cwd) live.push(s.cwd);
+  }
+  reconcileCodexHooks(records, live);
+}
 
 const { createJsonlWatcher } = require('./jsonl-watcher');
 const { JsonlWatcher } = createJsonlWatcher({ REGISTRY_DIR });
@@ -2125,7 +2133,9 @@ function termExec(workspaceId, seat, command, onResult) {
   switch (r.code) {
     case 'bad-command': return { ok: false, error: r.error };
     case 'spawn-failed': return { ok: false, error: `your terminal could not be opened (${r.error}). Nothing ran.` };
-    case 'no-marks': return { ok: false, error: `your terminal cannot report a command's result, so running one blind would leave you waiting forever: ${termShimDiagnosis()}` };
+    case 'no-marks':
+      if (r.reason === 'no-prompt') return { ok: false, error: "your terminal has not drawn a prompt with Clodex's marks yet — if it just opened, retry in a moment; if it stays this way, its startup files are not running the hook. Nothing ran." };
+      return { ok: false, error: `your terminal cannot report a command's result, so running one blind would leave you waiting forever: ${termShimDiagnosis()}` };
     case 'busy': {
       const shown = termRefusalName(r.running);
       const offer = r.remoteOffer
@@ -2186,6 +2196,7 @@ const toolCache = createToolCache({ whichBin });
   try { materializeExecScripts({ root: REGISTRY_DIR, srcDir: __dirname, log }); } catch {}
   setSeatLookup({ record: (seat) => persistence.get(seat), live: (seat) => !!(manager && manager.sessions.has(seat)) });
   try { synthesiseRosters(persistence.list()); } catch (e) { log.error('team', `roster synthesis failed: ${e.message}`); }
+  try { reconcileCodexSwaps(persistence.list()); } catch (e) { log.error('session', `codex hooks reconcile failed: ${e.message}`); }
   try { materializeSeatVerb({ root: REGISTRY_DIR, srcDir: __dirname, log }); } catch {}
 
   proxyPoller.start();
@@ -2374,6 +2385,7 @@ const toolCache = createToolCache({ whichBin });
 
   return {
     manager, stores, openRequests, syncRemoteServer, syncPeerManager, restoreSessionsForWorkspace, shutdown,
+    reconcileCodexSwaps,
     knownSkillNames,
     refreshRemoteToken,
     setRemoteToken: (token) => writeRemoteEnvToken(userDataPath, token),
@@ -2397,6 +2409,7 @@ const toolCache = createToolCache({ whichBin });
     getCtlService: () => ctlService,
     getBashLive: () => bashLive,
     getDrawerPtys: () => drawerPtys,
+    termExec,
     getPluginHost: () => pluginHost,
     getHelpCorpus,
     getPluginLoader: () => pluginLoader,

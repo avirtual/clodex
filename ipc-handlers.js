@@ -77,7 +77,7 @@ function registerIpcHandlers(deps) {
     forgetPeerAttached, forgetPeerControlled, fs, https,
     jsonlToMarkdown, log, manager,
     openWirescopeWindow, openRemoteWindow, os,
-    path, persistence, probePeer, proxyPoller,
+    path, persistence, probePeer, proxyPoller, reconcileCodexSwaps,
     pty, readEffectiveToolState, readVoiceCapability, readSessionMeta,
     rebuildAllStatusScripts, refreshAppMenu, refreshTrayMenu, rememberPeerControlled,
     createTeam, addRole, resolveTeam, teamsOfCwd, listTeams, loadManifest,
@@ -2479,6 +2479,9 @@ function registerIpcHandlers(deps) {
     persistence.remove(name);
     manager._bindHold(name);
     if (rec) manager.forgetSeatFiles(name, rec);
+    if (rec && rec.type === 'codex' && reconcileCodexSwaps) {
+      try { reconcileCodexSwaps([rec]); } catch (err) { log.warn('session', `forget ${name}: codex hooks reconcile failed (${err.message})`); }
+    }
     manager.dropReminders(name);
     try {
       const w = getDrawerPtys();

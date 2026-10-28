@@ -561,6 +561,23 @@ test('a seatless shell gets no shim in ANY state', () => {
   } finally { restore(); }
 });
 
+test('a shimmed shell with no prompt yet is told to retry, not to reopen the tab', () => {
+  const { eng, restore } = bootEngine();
+  try {
+    eng.stores.uiSettings.set({ terminalReports: 'all' });
+    const ptys = eng.getDrawerPtys();
+    const realExec = ptys.exec;
+    ptys.exec = () => ({ ok: false, code: 'no-marks', reason: 'no-prompt' });
+    try {
+      const r = eng.termExec('ws-1', 'gina', 'ls');
+      assert.deepStrictEqual(r, { ok: false, error: "your terminal has not drawn a prompt with Clodex's marks yet — if it just opened, retry in a moment; if it stays this way, its startup files are not running the hook. Nothing ran." });
+      ptys.exec = () => ({ ok: false, code: 'no-marks' });
+      assert.match(eng.termExec('ws-1', 'gina', 'ls').error, /^your terminal cannot report a command's result/,
+        'the spawn-time diagnosis still answers a shell born without the shim');
+    } finally { ptys.exec = realExec; }
+  } finally { restore(); }
+});
+
 test('the diagnosis has a branch per state that can produce it', () => {
   const fn = engineSrc.match(/function termShimDiagnosis\(\) \{[\s\S]*?\n\}/);
   assert.ok(fn, 'ENTER: termShimDiagnosis was found in engine.js');

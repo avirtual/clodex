@@ -110,6 +110,7 @@ function openSsh(over = {}) {
   const h = mk(over);
   h.w.spawn('ws-1', 'alice', {});
   h.proc = h.spawn.spawned[0];
+  h.proc.emit(A);
   h.proc.emit(C('ssh host'));
   assert.strictEqual(h.w._execState('ws-1', 'alice').busy, true,
     'ENTER: the parser sees the outer ssh session holding the tab');
@@ -366,6 +367,7 @@ test('remote off: a recognised session gets today’s busy refusal, flagged as o
 test('remote off over an UNRECOGNISED program offers nothing — the refusal is today’s, verbatim', () => {
   const h = mk({ remoteAllowed: () => false });
   h.w.spawn('ws-1', 'alice', {});
+  h.spawn.spawned[0].emit(A);
   h.spawn.spawned[0].emit(C('vim notes.txt'));
 
   assert.deepStrictEqual(h.w.exec('ws-1', 'alice', 'ls'),
@@ -375,6 +377,7 @@ test('remote off over an UNRECOGNISED program offers nothing — the refusal is 
 test('remote on, but the program is not a shell host: today’s refusal, verbatim', () => {
   const h = mk();
   h.w.spawn('ws-1', 'alice', {});
+  h.spawn.spawned[0].emit(A);
   h.spawn.spawned[0].emit(C('vim notes.txt'));
 
   assert.deepStrictEqual(h.w.exec('ws-1', 'alice', 'ls'),

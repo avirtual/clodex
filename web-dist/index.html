@@ -33745,7 +33745,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let open = null;
         for (let k = 0; k < lines.length; k++) {
           const m = lines[k].match(/^\s*(`{3,}|~{3,})(.*)$/);
-          if (m) {
+          if (m && !(m[1][0] === "`" && m[2].includes("`"))) {
             const ch = m[1][0];
             if (!open) {
               open = { ch, len: m[1].length };

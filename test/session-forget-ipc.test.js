@@ -18,7 +18,7 @@ const { registerIpcHandlers } = require('../ipc-handlers');
 const { createSessionManager } = require('../session-manager');
 const { resolveProxyBase } = require('../statusline');
 
-function fixture(entries = [], extraDeps = {}) {
+function fixture(entries = [], extraDeps = {}, ipcDeps = {}) {
   const hints = [];
   const order = [];
   const store = [...entries];
@@ -54,6 +54,7 @@ function fixture(entries = [], extraDeps = {}) {
     manager,
     persistence,
     log: { info() {}, error() {} },
+    ...ipcDeps,
   });
   return { forget: (name) => handlers.get('session:forget')(null, name), hints, order, persistence, manager };
 }
@@ -224,4 +225,14 @@ test('session:forget drops the seat\'s reminders so a later seat of the name can
   });
   assert.strictEqual(forget('seat'), true);
   assert.deepStrictEqual(removed, ['seat']);
+});
+
+test('session:forget reconciles the codex hooks swap of a forgotten codex seat, and only a codex one', () => {
+  const calls = [];
+  const codex = { name: 'cx', type: 'codex', cwd: '/repo' };
+  const f = fixture([codex, { name: 'cl', type: 'claude', cwd: '/repo' }], {},
+    { reconcileCodexSwaps: (records) => calls.push(records) });
+  f.forget('cx');
+  f.forget('cl');
+  assert.deepStrictEqual(calls, [[codex]]);
 });

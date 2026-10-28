@@ -38,6 +38,9 @@ blocks a release.
 - `wirescope` telemetry: pruning a seat that left the live map no longer erases its this-launch spend from the persisted lifetime totals.
 - **Security:** the ticket loop's ACCEPT merge lands the exact commit the reviewer read: a branch that gained a commit after the review round stops at a new `moved` step instead of merging unreviewed work, and the merge names the reviewed sha rather than the branch ref.
 - Accept teardown stops the seat before judging the tree and deletes the branch only if it still points at the commit judged merged, so a file or commit a hand made during close-out is kept (tree archived, branch kept) instead of force-removed.
+- A reply line that starts with an inline code span such as ```` ```bash``` ```` no longer opens a phantom fence that silently swallows every later intent in the turn.
+- The terminal tab's zsh shim survives a `~/.zshenv` that sets `ZDOTDIR` (the XDG layout): the hook `.zshrc` still runs and the operator's own rc files are still sourced, and `term exec` refuses with `no-marks` instead of hanging when a shell has never emitted a mark.
+- A Codex seat that crashed or was forgotten no longer leaves Clodex's `hooks.json` in place of the operator's: the swap is reconciled at the next launch for every cwd with no live seat.
 
 ## 5.147.0 — 2026-10-28 — security fixes from the first cold audit
 

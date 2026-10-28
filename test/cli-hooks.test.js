@@ -291,6 +291,32 @@ test('cleanupCodexHook: restores the backed-up hooks.json', () => {
   assert.ok(!fs.existsSync(path.join(cwd, '.codex', 'hooks.json.wb-wrap-backup')));
 });
 
+test('reconcileCodexHooks: a persisted codex cwd with no live seat gets its own hooks.json back; a live cwd is untouched', () => {
+  const REGISTRY_DIR = tmp();
+  const orphan = tmp();
+  const liveCwd = tmp();
+  const h = mk(REGISTRY_DIR);
+  for (const cwd of [orphan, liveCwd]) {
+    fs.mkdirSync(path.join(cwd, '.codex'), { recursive: true });
+    fs.writeFileSync(path.join(cwd, '.codex', 'hooks.json'), '{"orig":true}');
+    h.setupCodexHook('cx', cwd);
+  }
+  const ours = fs.readFileSync(path.join(orphan, '.codex', 'hooks.json'), 'utf-8');
+  assert.ok(fs.existsSync(path.join(orphan, '.codex', 'hooks.json.wb-wrap-backup')), 'ENTER: the swap is on disk');
+  assert.notStrictEqual(ours, '{"orig":true}', 'ENTER: hooks.json holds our config');
+
+  h.reconcileCodexHooks([
+    { name: 'gone', type: 'codex', cwd: orphan },
+    { name: 'alive', type: 'codex', cwd: liveCwd },
+    { name: 'claude-seat', type: 'claude', cwd: liveCwd },
+  ], [liveCwd]);
+
+  assert.strictEqual(fs.readFileSync(path.join(orphan, '.codex', 'hooks.json'), 'utf-8'), '{"orig":true}');
+  assert.ok(!fs.existsSync(path.join(orphan, '.codex', 'hooks.json.wb-wrap-backup')));
+  assert.strictEqual(fs.readFileSync(path.join(liveCwd, '.codex', 'hooks.json'), 'utf-8'), ours, 'live seat keeps our hooks');
+  assert.strictEqual(fs.readFileSync(path.join(liveCwd, '.codex', 'hooks.json.wb-wrap-backup'), 'utf-8'), '{"orig":true}');
+});
+
 // Regression guard for the M3 template-indent bug: wrapping the moved
 // functions in a factory added a uniform +2 indent, and template literal
 // INTERIORS are byte-significant — the indent leaked into every generated
