@@ -15,7 +15,7 @@ const { createCliHooks } = require('../cli-hooks');
 const {
   INTENT_SOCKET_MAX_BYTES, INTENT_SOCKET_MAX_CONNS, INTENT_SOCKET_TIMEOUT_MS, mintIntentCredential, seatChannelEnv,
   createIntentRequestHandler, createIntentSocketServer, identToken, isMainThread, stampClodexCommand, IDENT_SEEN_MAX, IDENT_SEEN_MS,
-  callerIdentity, callerIsSubagent, subagentLabel, seatOfAgentTag, splitAgentTarget,
+  callerIdentity, callerIsSubagent, subagentLabel, seatOfAgentTag, splitAgentTarget, shellSegments,
 } = require('../intent-socket');
 const { seenIdent, consume: wireSaw, wire: seenWire } = require('./lib/wire-seen').wireSeenStamps();
 const verb = require('../cli/bin/clodex.js');
@@ -710,6 +710,12 @@ test('stamp: clodex-send behind a reserved word or a prefix command is stamped; 
     ['clodex-send x', `${T} clodex-send x`],
     ['timeout 300 \\\nclodex-send x', `${T} timeout 300 \\\nclodex-send x`],
     ['echo `clodex-send x`', `echo \`${T} clodex-send x\``],
+    ['echo "`clodex-send x`"', `echo "\`${T} clodex-send x\`"`],
+    ['echo "$(clodex-send x)"', `echo "$(${T} clodex-send x)"`],
+    ['echo "a $(true) $(clodex-send x) b"', `echo "a $(true) $(${T} clodex-send x) b"`],
+    ['echo "\\`clodex-send x\\`"', null],
+    ['echo "\\$(clodex-send x)"', null],
+    ["echo '`clodex-send x`'", null],
     ['/abs/clodex-send x', `${T} /abs/clodex-send x`],
     ['~/.clodex/bin/clodex-send a; clodex-send b', `${T} ~/.clodex/bin/clodex-send a; ${T} clodex-send b`],
     ['clodex-sendx x', null],
@@ -717,6 +723,19 @@ test('stamp: clodex-send behind a reserved word or a prefix command is stamped; 
     ['node cli/bin/clodex.js x', null],
   ]) {
     assert.strictEqual(stampClodexCommand(cmd, 't'), want, cmd);
+  }
+});
+
+test('shellSegments opens a segment at a backtick or $( inside double quotes, offsets on the real characters', () => {
+  for (const [cmd, start] of [['echo "`clodex-send x`"', 7], ['echo "$(clodex-send x)"', 8]]) {
+    const seg = shellSegments(cmd).find((s) => s[0] && s[0].text === 'clodex-send');
+    assert.ok(seg, cmd);
+    assert.strictEqual(seg[0].start, start, cmd);
+    assert.strictEqual(cmd.slice(seg[0].start, seg[0].end), 'clodex-send', cmd);
+    assert.deepStrictEqual(seg.map((t) => t.text), ['clodex-send', 'x'], cmd);
+  }
+  for (const cmd of ['echo "\\`clodex-send x\\`"', 'echo "\\$(clodex-send x)"', "echo '`clodex-send x`'"]) {
+    assert.ok(!shellSegments(cmd).some((s) => s[0] && s[0].text === 'clodex-send'), cmd);
   }
 });
 
