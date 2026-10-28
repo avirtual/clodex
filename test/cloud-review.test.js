@@ -98,7 +98,7 @@ test('cloud-review: a release launch checks out the new tag and verifies its ver
 
 const PRE = path.join(__dirname, '..', 'scripts', 'pre-release-review.sh');
 
-function runPreRelease({ dirty = false } = {}) {
+function runPreRelease({ dirty = false, statusFails = false, env = {} } = {}) {
   return withStub(RECORD, ({ dir, stub, rec }) => {
     const git = path.join(dir, 'git');
     const calls = path.join(dir, 'git-calls');
@@ -106,10 +106,10 @@ function runPreRelease({ dirty = false } = {}) {
       '#!/bin/sh',
       `printf '%s\n' "$*" >> "${calls}"`,
       'case "$1" in',
-      `  status) ${dirty ? "printf ' M x\\n'" : ':'} ;;`,
+      `  status) ${statusFails ? 'exit 1' : dirty ? "printf ' M x\\n'" : ':'} ;;`,
       '  branch) echo master ;;',
       '  describe) echo v1.0.0 ;;',
-      '  rev-parse) echo deadbeef ;;',
+      '  rev-parse) case "$2" in --short=8) echo deadbeef ;; *) echo deadbeef00112233445566778899aabbccddeeff ;; esac ;;',
       'esac',
       '',
     ].join('\n'), { mode: 0o755 });
@@ -121,11 +121,12 @@ function runPreRelease({ dirty = false } = {}) {
         ...process.env, HOME: dir, CLODEX_RELEASE_NO_REVIEW: '', CLODEX_REVIEW_REF: '', CLODEX_REVIEW_SHA: '', CLODEX_REVIEW_PREFIX: '',
         CLODEX_GH_BIN: 'true', CLODEX_GIT_BIN: git, CLODEX_REVIEW_POLLER_BIN: 'true',
         CLODEX_CLAUDE_BIN: stub, CLOUD_REVIEW_REC: rec,
+        ...env,
       },
     });
     let argv = null;
     try {
-      if (res.status === 0) argv = execFileSync('cat', [rec], { encoding: 'utf-8', timeout: FIFO_BOUND_MS }).split('--ENV--\n')[0];
+      if (res.status === 0 && !/skipped/.test(res.stdout)) argv = execFileSync('cat', [rec], { encoding: 'utf-8', timeout: FIFO_BOUND_MS }).split('--ENV--\n')[0];
     } finally {
       killMatching(stub);
     }
@@ -142,7 +143,7 @@ test('pre-release-review: force-pushes HEAD to staging and briefs the reviewer o
   assert.match(res.stdout, /pre-release-review: launched for v1\.0\.0\.\.staging-deadbeef/);
   assert.ok(argv.includes('.review/staging-deadbeef.md'), argv);
   assert.ok(argv.includes('"Pre-release review staging-deadbeef: CLEAN"'), argv);
-  assert.ok(argv.includes('git fetch origin staging && git checkout deadbeef'), argv);
+  assert.ok(argv.includes('git fetch origin staging && git checkout deadbeef00112233445566778899aabbccddeeff'), argv);
   assert.ok(argv.includes('v1.0.0..deadbeef'), argv);
 });
 
@@ -150,6 +151,21 @@ test('pre-release-review: a dirty tree exits non-zero and pushes nothing', () =>
   const { res, gitCalls } = runPreRelease({ dirty: true });
   assert.notStrictEqual(res.status, 0);
   assert.match(res.stderr, /not clean/);
+  assert.ok(gitCalls.includes('status --porcelain'), gitCalls.join('\n'));
+  assert.ok(!gitCalls.some((c) => c.startsWith('push')), gitCalls.join('\n'));
+});
+
+test('pre-release-review: an exported CLODEX_RELEASE_NO_REVIEW=1 still launches the review', () => {
+  const { res, argv } = runPreRelease({ env: { CLODEX_RELEASE_NO_REVIEW: '1' } });
+  assert.strictEqual(res.status, 0, res.stderr);
+  assert.doesNotMatch(res.stdout, /skipped/);
+  assert.ok(argv && argv.includes('.review/staging-deadbeef.md'), String(argv));
+});
+
+test('pre-release-review: a failed git status exits non-zero and pushes nothing', () => {
+  const { res, gitCalls } = runPreRelease({ statusFails: true });
+  assert.notStrictEqual(res.status, 0);
+  assert.match(res.stderr, /git status failed/);
   assert.ok(gitCalls.includes('status --porcelain'), gitCalls.join('\n'));
   assert.ok(!gitCalls.some((c) => c.startsWith('push')), gitCalls.join('\n'));
 });
