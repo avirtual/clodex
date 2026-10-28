@@ -111,6 +111,20 @@ run node scripts/renderer-smoke.js || die "renderer smoke failed — the rendere
 PREV_TAG="$(git describe --tags --abbrev=0 2>/dev/null || true)"
 note "previous tag: ${PREV_TAG:-<none>}"
 
+# Everything below edits tracked files before the build; a die before the commit must not leave them for the dirty-tree preflight.
+NOTES=""
+COMMITTED=0
+release_cleanup() {
+  if [ -n "$NOTES" ]; then rm -f "$NOTES"; fi
+  if [ "$COMMITTED" = 1 ]; then return 0; fi
+  local f
+  for f in "$@"; do
+    if [ -e "$f" ]; then git checkout -- "$f" 2>/dev/null || true; fi
+  done
+  printf 'release aborted: version bump and CHANGELOG stamp rolled back\n' >&2
+}
+trap 'release_cleanup package.json package-lock.json CHANGELOG.md cli/deploy/helm/clodex/values.yaml cli/deploy/helm/clodex/Chart.yaml cli/deploy/clodex-fargate.yaml' EXIT
+
 # --- compute the new version (writes package.json + lock, no commit/tag) ---
 step "Bumping version ($BUMP)"
 NEW_VERSION="$(npm version "$BUMP" --no-git-tag-version | tail -1 | sed 's/^v//')"
@@ -171,7 +185,6 @@ sync_pin cli/deploy/clodex-fargate.yaml \
 # --- release notes (auto from commits, or the provided file) ---------------
 step "Preparing release notes"
 NOTES="$(mktemp)"
-trap 'rm -f "$NOTES"' EXIT
 FOOTER=$'\n\n---\n\n**Apple Silicon (arm64) build.** Intel (x64) users can build from source (`npm install && npx electron-rebuild && npx electron-builder --mac dmg --x64`).\n\nUnsigned (ad-hoc) build: first launch needs right-click → Open, or `xattr -cr /Applications/Clodex.app`.'
 
 # release title: tag, plus the notes-file's first heading as a subtitle when given
@@ -254,6 +267,7 @@ run bash scripts/dmg-child-probe.sh "$DMG" || die "the packaged app cannot boot 
 # precisely when the two disagree.
 step "Commit + tag + push"
 run git commit -am "$TAG" || die "commit failed"
+COMMITTED=1
 git tag "$TAG"
 run git push origin master || die "git push failed"
 run git push origin "$TAG"  || die "git push tag failed"

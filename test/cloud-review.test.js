@@ -147,7 +147,9 @@ test('cloud-review: the launch also starts the issue poller for the new tag', ()
   });
 });
 
-function launchWithGit(lsHit) {
+const STALE_SHA = '0123abcd4567ef890123abcd4567ef8901234567';
+
+function launchWithGit(lsHit, { renameFails = false } = {}) {
   return withStub('', ({ dir, stub }) => {
     const calls = path.join(dir, 'calls');
     const sync = path.join(dir, 'sync');
@@ -156,7 +158,8 @@ function launchWithGit(lsHit) {
     fs.writeFileSync(git, [
       '#!/bin/sh',
       `printf 'git' >> "${calls}"; printf ' %s' "$@" >> "${calls}"; printf '\\n' >> "${calls}"`,
-      lsHit ? `if [ "$1" = ls-remote ]; then printf 'old123\\trefs/heads/claude/review-v1.1.0\\n'; fi` : '',
+      lsHit ? `if [ "$1" = ls-remote ]; then printf '${STALE_SHA}\\trefs/heads/claude/review-v1.1.0\\n'; fi` : '',
+      renameFails ? 'case "$3 $4" in "origin refs/remotes/"*) exit 1;; esac' : '',
       '',
     ].join('\n'), { mode: 0o755 });
     execFileSync('mkfifo', [sync]);
@@ -172,13 +175,28 @@ function launchWithGit(lsHit) {
   });
 }
 
-test('cloud-review: a stale claude/review-<tag> on origin is deleted before claude launches', () => {
+test('cloud-review: a stale claude/review-<tag> on origin is kept under a -prev name, then deleted, before claude launches', () => {
   const { out, calls } = launchWithGit(true);
+  const fetch = calls.indexOf('git fetch -q origin refs/heads/claude/review-v1.1.0:refs/remotes/origin/claude/review-v1.1.0');
+  const rename = calls.indexOf('git push -q origin refs/remotes/origin/claude/review-v1.1.0:refs/heads/claude/review-v1.1.0-prev-0123abcd');
   const del = calls.indexOf('git push -q origin --delete claude/review-v1.1.0');
   const claude = calls.indexOf('claude');
   assert.ok(claude >= 0, 'ENTER: the claude stub ran\n' + calls.join('\n'));
+  assert.ok(fetch >= 0 && fetch < rename, calls.join('\n'));
+  assert.ok(rename >= 0 && rename < del, calls.join('\n'));
   assert.ok(del >= 0 && del < claude, calls.join('\n'));
+  assert.match(out, /^cloud-review: kept the previous report as claude\/review-v1\.1\.0-prev-0123abcd$/m);
   assert.match(out, /^cloud-review: removed stale claude\/review-v1\.1\.0$/m);
+});
+
+test('cloud-review: a failed rename of the stale branch skips the delete and still launches', () => {
+  const { out, calls } = launchWithGit(true, { renameFails: true });
+  const claude = calls.indexOf('claude');
+  assert.ok(claude >= 0, 'ENTER: the claude stub ran\n' + calls.join('\n'));
+  assert.ok(calls.includes('git push -q origin refs/remotes/origin/claude/review-v1.1.0:refs/heads/claude/review-v1.1.0-prev-0123abcd'), calls.join('\n'));
+  assert.ok(!calls.some((c) => c.includes('--delete')), calls.join('\n'));
+  assert.match(out, /^warn: cloud-review: could not keep claude\/review-v1\.1\.0 as claude\/review-v1\.1\.0-prev-0123abcd; left it in place$/m);
+  assert.doesNotMatch(out, /removed stale/);
 });
 
 test('cloud-review: with no claude/review-<tag> on origin the launcher deletes nothing', () => {

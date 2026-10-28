@@ -319,3 +319,66 @@ test('publish-image: refuses an untagged HEAD and moves :latest only for the new
   assert.match(src, /if \[ "\$\(git tag -l 'v\*' \| sort -V \| tail -1\)" = "v\$VERSION" \]; then\n\s+TAGS\+=\(-t "\$IMAGE:latest"\)/);
   assert.doesNotMatch(src, /^\s+-t "\$IMAGE:latest" \\$/m);
 });
+
+const ROLLBACK_FILES = ['package.json', 'package-lock.json', 'CHANGELOG.md', 'cli/deploy/helm/clodex/values.yaml',
+  'cli/deploy/helm/clodex/Chart.yaml', 'cli/deploy/clodex-fargate.yaml'];
+
+test('release: an EXIT trap armed after PREV_TAG rolls back all six bumped files unless the commit landed', () => {
+  const src = fs.readFileSync(SCRIPT, 'utf-8');
+  const trapLine = src.split('\n').find((l) => /^trap 'release_cleanup [^']*' EXIT$/.test(l));
+  assert.ok(trapLine, 'the rollback trap line is gone');
+  assert.deepStrictEqual(trapLine.replace(/^trap 'release_cleanup /, '').replace(/' EXIT$/, '').split(' '), ROLLBACK_FILES);
+  const prevTag = src.indexOf('PREV_TAG="$(git describe');
+  const trap = src.indexOf(trapLine);
+  assert.ok(prevTag > 0 && trap > prevTag && trap < src.indexOf('npm version "$BUMP"'), 'the trap must be armed before the bump');
+  assert.strictEqual(src.match(/^trap /gm).length, 1, 'a second trap would replace the rollback');
+  assert.match(src, /\nrun git commit -am "\$TAG" \|\| die "commit failed"\nCOMMITTED=1\n/);
+  assert.match(src, /if \[ "\$COMMITTED" = 1 \]; then return 0; fi/);
+  assert.match(src, /release aborted: version bump and CHANGELOG stamp rolled back/);
+});
+
+test('release: a run that dies at the build step leaves the version, CHANGELOG and deploy pins as they were', () => {
+  const src = fs.readFileSync(SCRIPT, 'utf-8');
+  const start = src.indexOf('PREV_TAG="$(git describe');
+  const buildLine = 'run npm run dist:mac || die "build failed (try: npx electron-rebuild)"\n';
+  const end = src.indexOf(buildLine);
+  assert.ok(start > 0 && end > start, 'the bump-to-build block was not found by its anchors');
+  const block = src.slice(start, end + buildLine.length);
+  const dir = mkTmpRoot('clodex-release-rollback-');
+  const g = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf-8' });
+  const files = {
+    'package.json': '{\n  "name": "x",\n  "version": "1.0.0"\n}\n',
+    'package-lock.json': '{\n  "name": "x",\n  "version": "1.0.0"\n}\n',
+    'CHANGELOG.md': '# Changelog\n\n## Unreleased\n\n- a change\n\n## 1.0.0 — 2026-01-01\n',
+    'cli/deploy/helm/clodex/values.yaml': 'image:\n  tag: "1.0.0"\n',
+    'cli/deploy/helm/clodex/Chart.yaml': 'appVersion: "1.0.0"\n',
+    'cli/deploy/clodex-fargate.yaml': "Parameters:\n    Default: 'ghcr.io/avirtual/clodex:1.0.0'\n",
+  };
+  try {
+    for (const [f, body] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
+      fs.writeFileSync(path.join(dir, f), body);
+    }
+    g('init', '-q');
+    g('add', '.');
+    g('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'base');
+    const npmStub = 'npm() {\n'
+      + '  if [ "$1" = version ]; then\n'
+      + '    for f in package.json package-lock.json; do sed -i \'\' \'s/"version": "1.0.0"/"version": "1.0.1"/\' "$f"; done\n'
+      + '    echo v1.0.1; return 0\n'
+      + '  fi\n'
+      + '  return 1\n'
+      + '}\n';
+    let res;
+    try {
+      execFileSync('bash', ['-c', `set -euo pipefail\n${PROLOGUE}\n${npmStub}${block}\necho UNREACHED`, '--', 'patch'],
+        { cwd: dir, encoding: 'utf-8', stdio: 'pipe', env: { ...process.env, CI: '' } });
+      res = { status: 0 };
+    } catch (e) { res = { status: e.status, stderr: String(e.stderr) }; }
+    assert.strictEqual(res.status, 1, 'ENTER: the stubbed run must die at the build step');
+    assert.match(res.stderr, /build failed/);
+    assert.match(res.stderr, /release aborted: version bump and CHANGELOG stamp rolled back/);
+    for (const [f, body] of Object.entries(files)) assert.strictEqual(fs.readFileSync(path.join(dir, f), 'utf8'), body, f);
+    assert.strictEqual(g('status', '--porcelain'), '');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
