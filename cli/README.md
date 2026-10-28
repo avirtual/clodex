@@ -222,9 +222,10 @@ the question**: the ssh flavor and a remote `deploy node --docker` both save
 `{ssh: user@host}`, byte for byte.
 
 Same **data, not code** rule as the cloud kinds above, and it is enforced
-rather than merely intended — the flavor is checked against the enum on read
-and every other field must be a scalar, so an argv (an array) or a blob of
-flags (an object) is rejected by the shape itself. This file is user-editable,
+rather than merely intended — the shape is checked on read (a non-empty string
+flavor, every other field a scalar), so an argv (an array) or a blob of flags
+(an object) is rejected by the shape itself. The enum is checked by the verb
+that routes on it: `upgrade` and `undeploy` refuse an unknown flavor at dispatch. This file is user-editable,
 and a persisted argv is a command line the tool would later execute.
 
 The field is **optional**: contexts written before it simply lack it, so there

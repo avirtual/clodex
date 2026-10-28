@@ -132,3 +132,29 @@ test('waitForPort rejects with child stderr when the child dies first', async ()
 test('openTransport: unknown transport kind is a usage error', async () => {
   await assert.rejects(T.openTransport({ token: 'x' }), /no url, ssh, tunnel, or cloud transport/);
 });
+
+test('openTransport(localPort): a busy pinned port → CONNECT before spawn', async () => {
+  const srv = net.createServer();
+  await new Promise((res) => srv.listen(0, '127.0.0.1', res));
+  const busy = srv.address().port;
+  let spawned = false;
+  try {
+    await assert.rejects(
+      T.openTransport({ tunnel: ['faketunnel', '{port}:7900'] }, { spawnFn: () => { spawned = true; throw new Error('spawned'); }, localPort: busy }),
+      (e) => { assert.strictEqual(e.exitCode, 3); assert.match(e.message, new RegExp(`local port ${busy} is already in use`)); return true; },
+    );
+    assert.strictEqual(spawned, false);
+  } finally { await new Promise((res) => srv.close(res)); }
+});
+
+test('waitForPort: a dead child is its exit even while a foreign listener holds the port', async () => {
+  const srv = net.createServer((s) => s.end());
+  await new Promise((res) => srv.listen(0, '127.0.0.1', res));
+  try {
+    await assert.rejects(
+      T.waitForPort(srv.address().port, { deadlineMs: 2000, isDead: () => true, stderr: () => 'bind failed' }),
+      (e) => { assert.strictEqual(e.exitCode, 3); assert.match(e.message, /exited before the port opened:\nbind failed/); return true; },
+    );
+  } finally { await new Promise((res) => srv.close(res)); }
+});
+

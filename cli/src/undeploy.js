@@ -323,7 +323,8 @@ async function undeployFargate({ printer, flags, args, io, ctxName = null, dep =
   ctxCleanup({ flags, printer, io, matchFn: (name, entry) => {
     if (name === ctxKey) return true;
     const ecs = entry && entry.ssm && entry.ssm.ecs;
-    if (!(typeof ecs === 'string' && ecs.includes('/') && ecs.split('/')[0] === cluster)) return false;
+    if (typeof ecs !== 'string') return false;
+    if (ownsCluster ? !(ecs.includes('/') && ecs.split('/')[0] === cluster) : ecs !== `${cluster}/${stackName}-node`) return false;
     const entryRegion = entry.ssm.region;
     return entryRegion == null || !region || String(entryRegion) === region;
   } });
@@ -461,16 +462,20 @@ async function undeployDocker({ printer, flags, args, io, ctxName = null, dep = 
   }
   if (res.code !== 0) throw new CliError(EXIT.USAGE, `container "${container}" not found${dockerHost ? ` on ${dockerHost}` : ''} — nothing to undeploy`);
   const inspected = parseInspect(res.stdout);
-  const volumes = dockerVolumes(inspected);
+  const dataVolume = `${D.CONTAINER_PREFIX}${name}-data`;
+  const attached = dockerVolumes(inspected);
+  const volumes = attached.includes(dataVolume) ? [dataVolume] : [];
+  const otherVolumes = attached.filter((v) => v !== dataVolume);
 
   // 2. Preview.
   if (json) {
-    emit({ type: 'preview', container, image: inspected.image, state: inspected.state, volumes, keepData: !!flags['keep-data'] });
+    emit({ type: 'preview', container, image: inspected.image, state: inspected.state, volumes, otherVolumes, keepData: !!flags['keep-data'] });
   } else {
     log(`teardown preview for container "${container}":`);
     log(`  image ${inspected.image || '?'}, state ${inspected.state || '?'}`);
     if (volumes.length) log(`  named volumes: ${volumes.join(', ')} — ${flags['keep-data'] ? 'KEPT (--keep-data)' : 'will be DELETED (docker rm does NOT remove them; --keep-data to keep)'}`);
     else log('  named volumes: none');
+    if (otherVolumes.length) log(`  left alone: ${otherVolumes.join(', ')}`);
   }
 
   // --dry-run: print every destructive argv, execute nothing destructive.
@@ -490,14 +495,20 @@ async function undeployDocker({ printer, flags, args, io, ctxName = null, dep = 
   if (rm.code !== 0) throw new CliError(EXIT.SERVER, `docker rm -f failed (exit ${rm.code == null ? '?' : rm.code}) — see docker's output`);
   if (json) emit({ type: 'rm', container }); else log(`removed container "${container}"`);
 
-  // 5. DATA: docker rm -f does NOT remove named volumes — delete them explicitly.
   if (flags['keep-data']) {
     if (json) emit({ type: 'data', action: 'kept', volumes });
     else if (volumes.length) log(`kept named volume(s): ${volumes.join(', ')} (--keep-data)`);
+  } else if (!volumes.length) {
+    log('no data volume found');
   } else {
     for (const v of volumes) {
       const vr = await run(dockerVolumeRmArgs({ volume: v }));
-      if (vr.code !== 0) throw new CliError(EXIT.SERVER, `docker volume rm ${v} failed (exit ${vr.code == null ? '?' : vr.code})`);
+      const exit = vr.code == null ? '?' : vr.code;
+      if (vr.code !== 0) {
+        if (json) emit({ type: 'data', action: 'failed', volume: v, exit });
+        else log(`docker volume rm ${v} failed (exit ${exit}) — remove it by hand: docker volume rm ${v}`);
+        continue;
+      }
       if (json) emit({ type: 'data', action: 'deleted', volume: v }); else log(`deleted volume "${v}"`);
     }
   }

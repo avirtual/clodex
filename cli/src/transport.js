@@ -229,6 +229,16 @@ function pickFreePort() {
   });
 }
 
+function assertPortFree(port) {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.on('error', (e) => reject(e && e.code === 'EADDRINUSE'
+      ? new CliError(EXIT.CONNECT, `local port ${port} is already in use`)
+      : e));
+    srv.listen(port, '127.0.0.1', () => srv.close(() => resolve(port)));
+  });
+}
+
 // Does 127.0.0.1:<port> accept a TCP connection right now? One-shot probe.
 function portAccepts(port) {
   return new Promise((resolve) => {
@@ -252,8 +262,9 @@ function waitForPort(port, { deadlineMs = WAIT_PORT_MS, isDead, stderr } = {}) {
   const start = Date.now();
   return new Promise((resolve, reject) => {
     const tick = async () => {
-      if (await portAccepts(port)) return resolve();
-      if (isDead && isDead()) {
+      const dead = () => !!(isDead && isDead());
+      if (!dead() && await portAccepts(port) && !dead()) return resolve();
+      if (dead()) {
         return reject(new CliError(EXIT.CONNECT,
           `tunnel command exited before the port opened${stderr && stderr() ? `:\n${stderr()}` : ''}`));
       }
@@ -271,9 +282,8 @@ function waitForPort(port, { deadlineMs = WAIT_PORT_MS, isDead, stderr } = {}) {
 // spawnFn is injectable for tests (defaults to child_process.spawn); a fake
 // child that listens on {port} exercises the whole path without real ssh.
 // `localPort` (optional) pins the local end instead of picking a free port —
-// port-forward needs a caller-chosen LOCAL. A busy port makes the tunnel child
-// fail its bind (ssh's ExitOnForwardFailure), so waitForPort surfaces the
-// child's stderr as an honest CONNECT rather than silently colliding.
+// port-forward needs a caller-chosen LOCAL. A busy pinned port is refused with
+// CONNECT before the child spawns: a foreign listener would pass waitForPort.
 async function openTransport(ctx, { spawnFn = spawn, execFn = execFileP, deadlineMs = WAIT_PORT_MS, localPort = null } = {}) {
   if (ctx.url) {
     // No child → nothing ever exits; waitExit stays pending forever (callers that
@@ -302,7 +312,7 @@ async function openTransport(ctx, { spawnFn = spawn, execFn = execFileP, deadlin
     throw new CliError(EXIT.USAGE, 'context has no url, ssh, tunnel, or cloud transport');
   }
 
-  const port = localPort != null ? (localPort | 0) : await pickFreePort();
+  const port = localPort != null ? await assertPortFree(localPort | 0) : await pickFreePort();
 
   let exited = false;
   // Resolves when the tunnel child exits — port-forward's foreground hold races
