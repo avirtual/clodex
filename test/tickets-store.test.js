@@ -387,6 +387,30 @@ test('a colon inside the bold also unfolds on a VERDICT line', () => {
   assert.strictEqual(extractMustFix('**VERDICT**: REWORK. **MUST-FIX:** x.js:3 broken. **NITS:** none.'), 'x.js:3 broken.');
 });
 
+test('a bold MUST-FIX mention without a colon on the VERDICT line is not a second header', () => {
+  const text = '**VERDICT**: ACCEPT — no **MUST-FIX** items.\n\n**MUST-FIX**: (none)\n\n**CHECKED**: traced.';
+  const scan = scanVerdict(text);
+  assert.deepStrictEqual(scan.mustFixHeaders, [3]);
+  assert.strictEqual(scan.ambiguous, false);
+  assert.strictEqual(scan.verdict, 'ACCEPT');
+  assert.strictEqual(countMustFix(extractMustFix(text)), 0);
+});
+
+test('an unfolded inline header reports its source line number', () => {
+  const scan = scanVerdict('**VERDICT**: REWORK. **MUST-FIX**: a.js:1 broken. **NITS**: none.\n\n**CHECKED**: x.');
+  assert.deepStrictEqual(scan.mustFixHeaders, [1]);
+  assert.strictEqual(scan.verdicts[0].line, 1);
+});
+
+test('an indented VERDICT example is not unfolded into live headers', () => {
+  const text = '**VERDICT**: REWORK\n\n**MUST-FIX**:\n- a.js:1 broken\n\n**CHECKED**: an example a reviewer might paste:\n\n    **VERDICT**: ACCEPT. **MUST-FIX**: none.\n';
+  assert.strictEqual(extractMustFix(text), '- a.js:1 broken');
+  const scan = scanVerdict(text);
+  assert.deepStrictEqual(scan.mustFixHeaders, [3]);
+  assert.strictEqual(scan.verdict, 'REWORK');
+  assert.strictEqual(scan.verdicts.length, 1);
+});
+
 test('recordEvent appends to an existing list in call order', () => {
   const t = { id: 't1', events: [{ at: 1, kind: 'add', by: 'lead' }] };
   recordEvent(t, { at: 2, kind: 'start', by: 'lead', to: 'hand-1' });
