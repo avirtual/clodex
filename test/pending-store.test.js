@@ -10,7 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir } = require('../pending-store');
+const { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir, claimsDir, rehomeOrphans } = require('../pending-store');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function tmpRoot() {
@@ -183,8 +183,9 @@ test('countPending reports 0 while a drain claim is mid-flight (claimed = commit
   const root = tmpRoot();
   parkDelivery(root, 'a', 'x', '0001');
   // Simulate the atomic claim without completing it: the agent dir is renamed to
-  // a `.draining.` sibling, so countPending's agentDir ENOENTs → 0.
-  fs.renameSync(agentDir(root, 'a'), `${agentDir(root, 'a')}.draining.midflight`);
+  // a `.claims/` entry, so countPending's agentDir ENOENTs → 0.
+  fs.mkdirSync(claimsDir(root));
+  fs.renameSync(agentDir(root, 'a'), path.join(claimsDir(root), 'a.draining.midflight'));
   assert.equal(countPending(root, 'a'), 0);
 });
 
@@ -477,7 +478,7 @@ test('generation: a restored entry keeps its original filename, so seq order and
     'and the remaining entry drains in its original seq position');
 });
 
-test('an orphan claim dir left by a dead drainer is re-homed and delivered by the next drain', () => {
+test('an orphan claim dir left at the LEGACY root location by a dead drainer is re-homed and delivered', () => {
   const root = tmpRoot();
   parkDelivery(root, 'a', 'one', '0001');
   parkDelivery(root, 'a', 'two', '0002');
@@ -486,7 +487,74 @@ test('an orphan claim dir left by a dead drainer is re-homed and delivered by th
   assert.throws(() => process.kill(999999, 0));
   assert.deepStrictEqual(drainPending(root, 'a', `idle.${process.pid}`), ['one', 'two']);
   assert.ok(!fs.existsSync(orphan));
-  assert.deepStrictEqual(fs.readdirSync(root), []);
+  assert.deepStrictEqual(fs.readdirSync(root), ['.claims']);
+  assert.deepStrictEqual(fs.readdirSync(claimsDir(root)), []);
+});
+
+test('an orphan claim dir under .claims/ left by a dead drainer is re-homed and delivered', () => {
+  const root = tmpRoot();
+  parkDelivery(root, 'a', 'one', '0001');
+  fs.mkdirSync(claimsDir(root));
+  const orphan = path.join(claimsDir(root), 'a.draining.idle.999999');
+  fs.renameSync(agentDir(root, 'a'), orphan);
+  assert.throws(() => process.kill(999999, 0));
+  assert.deepStrictEqual(drainPending(root, 'a', `idle.${process.pid}`), ['one']);
+  assert.deepStrictEqual(fs.readdirSync(claimsDir(root)), []);
+});
+
+test('the drain claim lands under .claims/, never beside the agent dirs', () => {
+  const root = tmpRoot();
+  parkDelivery(root, 'a', 'one', '0001');
+  const seen = [];
+  const orig = fs.renameSync;
+  fs.renameSync = (from, to) => { seen.push([from, to]); return orig(from, to); };
+  try { assert.deepStrictEqual(drainPending(root, 'a', 'idle.7'), ['one']); } finally { fs.renameSync = orig; }
+  assert.deepStrictEqual(seen, [[agentDir(root, 'a'), path.join(root, '.claims', 'a.draining.idle.7')]]);
+  assert.strictEqual(fs.statSync(claimsDir(root)).mode & 0o777, 0o700);
+});
+
+test('Y1: a seat named like a dead drainer\'s claim keeps its mailbox', () => {
+  const root = tmpRoot();
+  parkDelivery(root, 'a', 'for a', '0001');
+  parkDelivery(root, 'a.draining.99999', 'for the other seat', '0001');
+  const other = path.join(agentDir(root, 'a.draining.99999'), '0001.json');
+  assert.ok(fs.existsSync(other), 'ENTER: the look-alike seat has parked mail');
+  assert.throws(() => process.kill(99999, 0));
+  rehomeOrphans(root, 'a');
+  assert.deepStrictEqual(drainPending(root, 'a', 'idle.1'), ['for a']);
+  assert.ok(fs.existsSync(other));
+  assert.deepStrictEqual(drainPending(root, 'a.draining.99999', 'idle.1'), ['for the other seat']);
+});
+
+test('Y1: a look-alike seat\'s own dead claim is not swept into the shorter-named seat', () => {
+  const root = tmpRoot();
+  parkDelivery(root, 'a.draining.99999', 'for the other seat', '0001');
+  fs.mkdirSync(claimsDir(root));
+  const orphan = path.join(claimsDir(root), 'a.draining.99999.draining.idle.999999');
+  fs.renameSync(agentDir(root, 'a.draining.99999'), orphan);
+  assert.ok(fs.existsSync(path.join(orphan, '0001.json')), 'ENTER: the look-alike seat has a dead claim');
+  assert.throws(() => process.kill(999999, 0));
+  rehomeOrphans(root, 'a');
+  assert.ok(fs.existsSync(path.join(orphan, '0001.json')));
+  assert.ok(!fs.existsSync(agentDir(root, 'a')));
+  assert.deepStrictEqual(drainPending(root, 'a.draining.99999', 'idle.1'), ['for the other seat']);
+});
+
+test('allParkedTexts / parkIdInUse / claimParkedById skip .claims and list a seat named x.draining.1', () => {
+  const root = tmpRoot();
+  parkDelivery(root, 'x.draining.1', 'seat text', SEQ(1), 'q1w');
+  fs.mkdirSync(claimsDir(root));
+  fs.writeFileSync(path.join(claimsDir(root), `${SEQ(1)}.z9z.json`), JSON.stringify({ text: 'claimed' }));
+  assert.deepStrictEqual(allParkedTexts(root), ['seat text']);
+  assert.strictEqual(parkIdInUse(root, 'q1w'), true);
+  assert.strictEqual(parkIdInUse(root, 'z9z'), false);
+  assert.strictEqual(claimParkedById(root, 'z9z'), null);
+  assert.deepStrictEqual(claimParkedById(root, 'q1w'), { name: 'x.draining.1', text: 'seat text' });
+});
+
+test('agentDir refuses the reserved .claims name', () => {
+  assert.throws(() => agentDir(tmpRoot(), '.claims'), /reserved/);
+  assert.throws(() => parkDelivery(tmpRoot(), '.claims', 't', '0001'), /reserved/);
 });
 
 test('an orphan claim dir is re-homed by the pending gates, so the engine sees the mail before any drain', () => {
@@ -510,7 +578,8 @@ test('an orphan claim dir is re-homed by the pending gates, so the engine sees t
 test("a live drainer's claim dir is left alone by the next drain", () => {
   const root = tmpRoot();
   parkDelivery(root, 'a', 'mid-drain', '0001');
-  const claim = `${agentDir(root, 'a')}.draining.idle.${process.pid}`;
+  fs.mkdirSync(claimsDir(root));
+  const claim = path.join(claimsDir(root), `a.draining.idle.${process.pid}`);
   fs.renameSync(agentDir(root, 'a'), claim);
   assert.deepStrictEqual(drainPending(root, 'a', 'boot.1'), []);
   assert.deepStrictEqual(fs.readdirSync(claim), ['0001.json']);

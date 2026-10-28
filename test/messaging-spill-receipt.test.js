@@ -142,9 +142,10 @@ test('t86: allParkedTexts returns every parked text across agents, and skips cla
   parkDelivery(pendingDir, 'bob', 'three', '0001');
   assert.deepStrictEqual(allParkedTexts(pendingDir).sort(), ['one', 'three', 'two']);
 
-  // A mid-flight whole-dir claim renames the agent dir to a `.draining.` sibling
-  // at ROOT level. It must be skipped, exactly as parkIdInUse skips it.
-  fs.renameSync(path.join(pendingDir, 'alice'), path.join(pendingDir, 'alice.draining.t1'));
+  // A mid-flight whole-dir claim renames the agent dir under `.claims/`.
+  // It must be skipped, exactly as parkIdInUse skips it.
+  fs.mkdirSync(path.join(pendingDir, '.claims'));
+  fs.renameSync(path.join(pendingDir, 'alice'), path.join(pendingDir, '.claims', 'alice.draining.t1'));
   assert.deepStrictEqual(allParkedTexts(pendingDir), ['three']);
 });
 

@@ -40,7 +40,7 @@
 //
 // 30 per-agent artifacts. SHARED dirs keep their ~/.clodex ROOT spelling:
 // messages/ (HARD — --add-dir scope + IPC_PROMPT teaching +
-// historical spill pointers), pending/ (parked DMs — pending.sh RELOCATES but
+// historical spill pointers), pending/ (parked DMs, claims under pending/.claims/ — pending.sh RELOCATES but
 // its BODY still targets ~/.clodex/pending/<name>/), promptcache/ (the frozen
 // system prompt + its delta staging) and notices/ (queue.jsonl) — same
 // script-RELOCATES-but-BODY-keeps-the-shared-spelling story, and all three MUST
