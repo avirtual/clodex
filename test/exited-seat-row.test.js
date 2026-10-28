@@ -266,6 +266,7 @@ function mkRenderer({ api = {}, confirmAnswer = true } = {}) {
   const names = Object.keys(env).filter((k) => k !== 'exitHandler' && k !== 'movedInHandler');
   const body = [
     slice('const seatIoKind', ';\n'),
+    slice('const RESTART_FAILED_TTL_MS', ';\n'),
     fnSrc('exitedLabel'), fnSrc('rowSnapshot'), fnSrc('archivedRowEntry'), fnSrc('failRowOrStash'),
     `async ${fnSrc('setArgsOrFailRow')}`, `async ${fnSrc('restartOrFailRow')}`, `async ${fnSrc('deleteSessionRow')}`, fnSrc('respawnSnapshotOf'), fnSrc('rebuildLiveRow'), fnSrc('exitedRowSnapshot'), fnSrc('addExitedSessionToSidebar'), `async ${fnSrc('forgetSavedEntry')}`,
     slice('window.api.onSessionExit((name, code, meta) => {', '\n});\n'),
@@ -516,4 +517,25 @@ test('C: a context reload whose create throws sends respawnFailed to the seat\'s
   await new Promise((r) => setImmediate(r));
   assert.deepStrictEqual(sent, [['session:context-action', { action: 'respawnFailed', name: 'rl', error: 'Directory does not exist: /gone', type: 'claude', cwd: '/gone' }]]);
   persistence.remove('rl');
+});
+
+test('an in-place model switch refused while live stashes nothing: the next unexpected exit draws the exited row', async () => {
+  const h = mkRenderer({ api: { setSessionArgs: async () => ({ ok: false, error: "Model 'claude-nope-1' not found", inPlace: true }) } });
+  h.liveRow('s', { type: 'claude', cwd: '/w' });
+  await h.out.setArgsOrFailRow('s', { name: 's', type: 'claude', cwd: '/w' }, true, [[], true]);
+  h.env.exitHandler('s', 1, { expected: false, signal: null, agentType: 'claude' });
+  assert.strictEqual(exitedLabelOf(h.rows[0]), 'exited (code 1) — click to resume');
+  assert.strictEqual(callsOf(h, 'addFailedSessionToSidebar').length, 0);
+});
+
+test('a restartFailed stash older than its TTL is ignored at the exit', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1000 });
+  const h = mkRenderer({ api: { restartSession: async () => ({ ok: false, error: 'Session not found in persistence' }) } });
+  h.liveRow('s', { type: 'claude', cwd: '/w' });
+  await h.out.restartOrFailRow('s');
+  assert.strictEqual(h.env.restartFailed.has('s'), true, 'ENTER: the refusal stashed');
+  t.mock.timers.tick(30001);
+  h.env.exitHandler('s', 1, { expected: false, signal: null, agentType: 'claude' });
+  assert.strictEqual(callsOf(h, 'addFailedSessionToSidebar').length, 0);
+  assert.strictEqual(exitedLabelOf(h.rows[0]), 'exited (code 1) — click to resume');
 });

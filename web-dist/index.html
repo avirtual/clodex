@@ -52810,6 +52810,7 @@ ${detail}` });
       }
       var respawnSnapshots = /* @__PURE__ */ new Map();
       var restartFailed = /* @__PURE__ */ new Map();
+      var RESTART_FAILED_TTL_MS = 3e4;
       function respawnSnapshotOf(name, prior) {
         if (prior) return rowSnapshot(name, prior);
         const hit = respawnSnapshots.get(name);
@@ -53030,7 +53031,7 @@ ${detail}` });
       function failRowOrStash(name, snap, error) {
         if (!snap.type) return;
         if (sessions.has(name)) {
-          restartFailed.set(name, { ...snap, error });
+          restartFailed.set(name, { ...snap, error, at: Date.now() });
         } else if (!sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`)) {
           addFailedSessionToSidebar({ ...snap, error });
           refreshSidebarView();
@@ -53038,7 +53039,7 @@ ${detail}` });
       }
       async function setArgsOrFailRow(name, snap, restart, args) {
         const res = await window.api.setSessionArgs(name, ...args);
-        if ((!res || !res.ok) && restart) failRowOrStash(name, snap, res && res.error || "unknown error");
+        if ((!res || !res.ok) && restart && !(res && res.inPlace)) failRowOrStash(name, snap, res && res.error || "unknown error");
         return res;
       }
       async function restartOrFailRow(name, opts, failLabel = "Restart failed") {
@@ -56502,9 +56503,9 @@ ${detail}` });
         const archivedEntry = archivingSessions.get(name);
         const movedFailedEntry = meta && meta.expected ? null : movingFailed.get(name);
         movingFailed.delete(name);
-        const restartFailedEntry = restartFailed.get(name);
+        const { at: restartFailedAt, ...restartFailedEntry } = restartFailed.get(name) || {};
         restartFailed.delete(name);
-        const failedEntry = movedFailedEntry || restartFailedEntry;
+        const failedEntry = movedFailedEntry || (Date.now() - restartFailedAt < RESTART_FAILED_TTL_MS ? restartFailedEntry : null);
         const exitedEntry = !archivedEntry && !failedEntry && meta && meta.agentType && !meta.expected && !(sessions.get(name) || {}).peer ? exitedRowSnapshot(name, code, meta) : null;
         if (activeSession === name && meta && meta.expected && !archivedEntry) respawnFocus.set(name, Date.now());
         if (meta && meta.expected && !archivedEntry) {

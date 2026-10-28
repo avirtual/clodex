@@ -1658,7 +1658,7 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
   const inPlaceModel = vsSpawn && vsSpawn.to && vsSpawn.to !== vsSpawn.from && modelOnlyChange(beforeKill, patch) ? vsSpawn.to : null;
   if (inPlaceModel) {
     const res = await manager.seatSetModel(name, inPlaceModel);
-    if (!res || !res.ok) return { ok: false, error: (res && res.error) || 'set_model failed' };
+    if (!res || !res.ok) return { ok: false, error: (res && res.error) || 'set_model failed', inPlace: true };
     persistence.setExtraArgs(name, extraArgs);
     spawned.extraArgs = extraArgs;
     return { ok: true, restarted: false, modelSwitched: true };
@@ -1736,7 +1736,7 @@ function moveAccountByModel(model, label, wsId = DEFAULT_WORKSPACE_ID) {
           io: live.io || 'pty',
           background: true,
         });
-      } else if (res && !res.ok) {
+      } else if (res && !res.ok && !res.inPlace) {
         manager._sendRespawnFailed(name, persistence.get(name), res.error);
       }
       return res;

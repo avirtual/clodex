@@ -586,7 +586,7 @@ whose tree is already gone is forgotten without `destroy()`.
 **Real delete of a LIVE session = right-click "Delete Session…"** + native
 confirm. It routes through `manager.destroy` (`ipc-handlers.js` `session:kill`)
 — see the Invariants of docs/map/session-manager.md's kill/destroy section for what it does and in what order. A
-worktree-removal failure is toasted by the renderer while the row goes.
+worktree-removal failure is toasted by the renderer, and the kept record's row becomes an archived row with ✕.
 
 | Event | sessions.json | Process | UI |
 |---|---|---|---|

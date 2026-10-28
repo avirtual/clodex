@@ -138,3 +138,19 @@ test('a FAILED restart gets no reattach — there is no new seat to attach to', 
   );
   assert.deepStrictEqual(sent.filter((s) => s.channel === 'session:context-action'), [], 'nothing pushed');
 });
+
+test('a FAILED restart sends one respawnFailed to the workspace window, so the renderer draws its failed row', async () => {
+  const eng = mkEngine();
+  seed(eng);
+  spyCreate(eng, { fail: true });
+  spySends(eng);
+  const winSent = [];
+  eng.manager.windows.set('default', { isDestroyed: () => false, webContents: { send: (...a) => winSent.push(a) } });
+  eng.accounts.add({ label: 'sub-2', plan: 'max', configDir: '/tmp' });
+
+  const res = await eng.moveAccountByModel('fable', 'sub-2');
+  assert.deepStrictEqual(res.moved, [], 'ENTER: the restart failed');
+  const failed = winSent.filter(([ch, p]) => ch === 'session:context-action' && p.action === 'respawnFailed');
+  assert.deepStrictEqual(failed.map(([, p]) => [p.name, p.type, p.cwd]), [['fable-idle', 'claude', '/tmp']]);
+  assert.match(failed[0][1].error, /^respawn failed —/);
+});

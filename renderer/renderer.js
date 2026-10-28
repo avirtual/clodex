@@ -807,6 +807,7 @@ function rowSnapshot(name, item) {
 
 const respawnSnapshots = new Map();
 const restartFailed = new Map();
+const RESTART_FAILED_TTL_MS = 30000;
 function respawnSnapshotOf(name, prior) {
   if (prior) return rowSnapshot(name, prior);
   const hit = respawnSnapshots.get(name);
@@ -1041,13 +1042,10 @@ function accountOfRow(name) {
   return item ? item.dataset.account || null : null;
 }
 
-// Restart a session and re-create its sidebar tab + terminal. Snapshots sidebar
-// metadata first because the kill+respawn wipes the tab via session-exit (same
-// dance as the Edit Session save path).
 function failRowOrStash(name, snap, error) {
   if (!snap.type) return;
   if (sessions.has(name)) {
-    restartFailed.set(name, { ...snap, error });
+    restartFailed.set(name, { ...snap, error, at: Date.now() });
   } else if (!sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`)) {
     addFailedSessionToSidebar({ ...snap, error });
     refreshSidebarView();
@@ -1056,10 +1054,13 @@ function failRowOrStash(name, snap, error) {
 
 async function setArgsOrFailRow(name, snap, restart, args) {
   const res = await window.api.setSessionArgs(name, ...args);
-  if ((!res || !res.ok) && restart) failRowOrStash(name, snap, (res && res.error) || 'unknown error');
+  if ((!res || !res.ok) && restart && !(res && res.inPlace)) failRowOrStash(name, snap, (res && res.error) || 'unknown error');
   return res;
 }
 
+// Restart a session and re-create its sidebar tab + terminal. Snapshots sidebar
+// metadata first because the kill+respawn wipes the tab via session-exit (same
+// dance as the Edit Session save path).
 async function restartOrFailRow(name, opts, failLabel = 'Restart failed') {
   const snap = rowSnapshot(name, sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`));
   const res = opts ? await window.api.restartSession(name, opts) : await window.api.restartSession(name);
@@ -4577,9 +4578,9 @@ window.api.onSessionExit((name, code, meta) => {
   const archivedEntry = archivingSessions.get(name);
   const movedFailedEntry = meta && meta.expected ? null : movingFailed.get(name);
   movingFailed.delete(name);
-  const restartFailedEntry = restartFailed.get(name);
+  const { at: restartFailedAt, ...restartFailedEntry } = restartFailed.get(name) || {};
   restartFailed.delete(name);
-  const failedEntry = movedFailedEntry || restartFailedEntry;
+  const failedEntry = movedFailedEntry || (Date.now() - restartFailedAt < RESTART_FAILED_TTL_MS ? restartFailedEntry : null);
   const exitedEntry = !archivedEntry && !failedEntry && meta && meta.agentType && !meta.expected
     && !(sessions.get(name) || {}).peer
     ? exitedRowSnapshot(name, code, meta)
