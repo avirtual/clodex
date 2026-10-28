@@ -41,10 +41,20 @@ LOG="$LOG_DIR/cloud-review-$NEW.log"
 
 STALE="$(GIT_TERMINAL_PROMPT=0 "$GIT" ls-remote origin "refs/heads/claude/review-$NEW" 2>/dev/null || true)"
 if [ -n "$STALE" ]; then
-  if GIT_TERMINAL_PROMPT=0 "$GIT" push -q origin --delete "claude/review-$NEW" >/dev/null 2>&1; then
-    printf 'cloud-review: removed stale claude/review-%s\n' "$NEW"
+  # The poller keeps this branch when it cannot read the report, so it may be the only copy: rename before deleting.
+  SHORT="${STALE%%[[:space:]]*}"
+  SHORT="${SHORT:0:8}"
+  KEPT="claude/review-$NEW-prev-$SHORT"
+  if GIT_TERMINAL_PROMPT=0 "$GIT" fetch -q origin "refs/heads/claude/review-$NEW:refs/remotes/origin/claude/review-$NEW" >/dev/null 2>&1 \
+    && GIT_TERMINAL_PROMPT=0 "$GIT" push -q origin "refs/remotes/origin/claude/review-$NEW:refs/heads/$KEPT" >/dev/null 2>&1; then
+    printf 'cloud-review: kept the previous report as %s\n' "$KEPT"
+    if GIT_TERMINAL_PROMPT=0 "$GIT" push -q origin --delete "claude/review-$NEW" >/dev/null 2>&1; then
+      printf 'cloud-review: removed stale claude/review-%s\n' "$NEW"
+    else
+      printf 'warn: cloud-review: could not delete stale claude/review-%s\n' "$NEW"
+    fi
   else
-    printf 'warn: cloud-review: could not delete stale claude/review-%s\n' "$NEW"
+    printf 'warn: cloud-review: could not keep claude/review-%s as %s; left it in place\n' "$NEW" "$KEPT"
   fi
 fi
 
