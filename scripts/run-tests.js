@@ -166,9 +166,7 @@ const LOCK_WAIT_MS = Math.max(0, Number(process.env.CLODEX_TEST_LOCK_WAIT_MS) ||
 function acquireLock() {
   const deadline = Date.now() + LOCK_WAIT_MS;
   // The PARENT is created recursively (an override may name a dir that does not
-  // exist yet); the lock dir itself NEVER is. `recursive: true` does not throw
-  // EEXIST on an existing dir, which would turn the atomic test-and-set into an
-  // unconditional success and hand the lock to every concurrent run at once.
+  // exist yet).
   // Named on failure: an override pointing at an unwritable or nonexistent
   // parent otherwise surfaces one step later as a generic
   // `could not take the suite lock: ENOENT`, which says nothing about WHICH
@@ -184,14 +182,23 @@ function acquireLock() {
   const startedAt = Date.now();
   let queued = false;
   for (;;) {
+    const tmp = `${LOCK}.tmp-${process.pid}`;
     try {
-      fs.mkdirSync(LOCK);
-      fs.writeFileSync(path.join(LOCK, 'pid'), String(process.pid));
-      fs.writeFileSync(path.join(LOCK, 'tree'), ROOT);
+      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.mkdirSync(tmp);
+      fs.writeFileSync(path.join(tmp, 'pid'), String(process.pid));
+      fs.writeFileSync(path.join(tmp, 'tree'), ROOT);
+    } catch (e) {
+      try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
+      die(`could not take the suite lock: ${e.message}`);
+    }
+    try {
+      fs.renameSync(tmp, LOCK);
       if (queued) lockNote(`lock acquired after ${clock(Date.now() - startedAt)}`);
       return;
     } catch (e) {
-      if (e.code !== 'EEXIST') die(`could not take the suite lock: ${e.message}`);
+      try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
+      if (e.code !== 'EEXIST' && e.code !== 'ENOTEMPTY') die(`could not take the suite lock: ${e.message}`);
     }
     let holder = null;
     try { holder = Number(fs.readFileSync(path.join(LOCK, 'pid'), 'utf8').trim()) || null; } catch {}
@@ -228,7 +235,12 @@ let lockHeld = false;
 function releaseLock() {
   if (!lockHeld) return;
   lockHeld = false;
-  try { fs.rmSync(LOCK, { recursive: true, force: true }); } catch {}
+  let owner = null;
+  try { owner = fs.readFileSync(path.join(LOCK, 'pid'), 'utf8').trim(); } catch {}
+  if (owner !== String(process.pid)) return;
+  const gone = `${LOCK}.release-${process.pid}`;
+  try { fs.renameSync(LOCK, gone); } catch { return; }
+  try { fs.rmSync(gone, { recursive: true, force: true }); } catch {}
 }
 
 // The suite spawns this runner ITSELF (test/test-escapes.test.js drives it
