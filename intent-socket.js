@@ -466,13 +466,16 @@ function createIntentSocketServer({
     const release = () => { if (!released) { released = true; active -= 1; } };
     let done = false;
     let gone = false;
-    sock.on('close', () => { gone = true; release(); });
     let buf = Buffer.alloc(0);
     const end = (res) => {
       if (done) return;
       done = true;
       respond(sock, res);
     };
+    const expire = () => { end({ ok: false, error: 'timeout' }); release(); };
+    let timer = setTimer(expire, timeoutMs);
+    const extend = (ms) => { clearTimer(timer); timer = setTimer(expire, ms); };
+    sock.on('close', () => { gone = true; clearTimer(timer); release(); });
     sock.on('data', (chunk) => {
       if (done) return;
       buf = Buffer.concat([buf, chunk]);
@@ -486,9 +489,7 @@ function createIntentSocketServer({
       try { req = JSON.parse(buf.subarray(0, nl).toString('utf8')); } catch { req = null; }
       if (!req || typeof req !== 'object') { end({ ok: false, error: 'bad request' }); return; }
       if (!credMatches(crypto, cred, req.cred)) { end({ ok: false, error: 'unauthorized' }); return; }
-      const expire = () => end({ ok: false, error: 'timeout' });
-      let timer = setTimer(expire, timeoutMs);
-      const extend = (ms) => { clearTimer(timer); timer = setTimer(expire, ms); };
+      extend(timeoutMs);
       const request = { intent: req.intent, tool: req.tool, args: req.args, agentId: req.agentId, agentType: req.agentType, ident: req.ident };
       Promise.resolve()
         .then(() => handle(request, { closed: () => done || gone, extend }))

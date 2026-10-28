@@ -13,7 +13,7 @@ const { scanIntentLines } = require('../intent-segments');
 const { subagentAllows } = require('../intent-registry');
 const { createCliHooks } = require('../cli-hooks');
 const {
-  INTENT_SOCKET_MAX_BYTES, INTENT_SOCKET_MAX_CONNS, mintIntentCredential, seatChannelEnv,
+  INTENT_SOCKET_MAX_BYTES, INTENT_SOCKET_MAX_CONNS, INTENT_SOCKET_TIMEOUT_MS, mintIntentCredential, seatChannelEnv,
   createIntentRequestHandler, createIntentSocketServer, identToken, isMainThread, stampClodexCommand, IDENT_SEEN_MAX, IDENT_SEEN_MS,
   callerIdentity, callerIsSubagent, subagentLabel, seatOfAgentTag, splitAgentTarget,
 } = require('../intent-socket');
@@ -135,6 +135,33 @@ test('a request past the timeout answers timeout and closes the reply sink', asy
     assert.deepStrictEqual(await p, { ok: false, error: 'timeout' });
     assert.strictEqual(ctl.closed(), true, 'a late acknowledgement must fall through to the seat, not the closed socket');
   } finally { srv.stop(); }
+});
+
+test('silent connections that never send a line are timed out and free their slots for the next real call', async () => {
+  const timers = [];
+  const { srv, sockPath } = await server({
+    setTimer: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+    clearTimer: () => {},
+    handle: async () => ({ ok: true, reply: 'answered' }),
+  });
+  const silent = [];
+  try {
+    const closed = [];
+    for (let i = 0; i < INTENT_SOCKET_MAX_CONNS; i++) {
+      const c = net.createConnection(sockPath);
+      c.on('error', () => {});
+      c.resume();
+      closed.push(new Promise((r) => c.on('close', r)));
+      silent.push(c);
+    }
+    while (srv.activeCount() < INTENT_SOCKET_MAX_CONNS) await new Promise((r) => setImmediate(r));
+    assert.strictEqual(timers.length, INTENT_SOCKET_MAX_CONNS, 'every connection arms its timer before any line arrives');
+    assert.ok(timers.every((t) => t.ms === INTENT_SOCKET_TIMEOUT_MS));
+    for (const t of timers.splice(0)) t.fn();
+    assert.strictEqual(srv.activeCount(), 0);
+    await Promise.all(closed);
+    assert.deepStrictEqual(await send(sockPath, req({ cred: CRED, intent: '[agent:who]' })), { ok: true, reply: 'answered' });
+  } finally { for (const c of silent) c.destroy(); srv.stop(); }
 });
 
 const GRANTED = { execCommands: ['clodex-run-tests'] };
