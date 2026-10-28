@@ -265,7 +265,7 @@ test('purgeWorkspace disarms a live seat and a record-only seat of the workspace
   live(m, 'a', SID_A, { cwd: '/p', workspaceId: 'ws-1' });
   enter(keeper, SID_A);
   enter(keeper, SID_B);
-  assert.deepStrictEqual(m.purgeWorkspace('ws-1'), { killed: ['a'], dropped: ['ghost'] });
+  assert.deepStrictEqual(await m.purgeWorkspace('ws-1'), { killed: ['a'], dropped: ['ghost'], kept: [] });
   assert.strictEqual(recs.size, 0, 'ENTER: both records were dropped');
   assert.deepStrictEqual(keeper.disarmed.sort(), [SID_A, SID_B]);
 });
@@ -278,7 +278,7 @@ test('purgeWorkspace disarms a sid its live seat and its record-only seat share'
   const keeper = m._holdKeeper = fakeKeeper([SID_A]);
   live(m, 'a', SID_A, { cwd: '/p', workspaceId: 'ws-1' });
   enter(keeper, SID_A);
-  assert.deepStrictEqual(m.purgeWorkspace('ws-1'), { killed: ['a'], dropped: ['ghost'] });
+  assert.deepStrictEqual(await m.purgeWorkspace('ws-1'), { killed: ['a'], dropped: ['ghost'], kept: [] });
   assert.strictEqual(recs.size, 0, 'ENTER: both records were dropped');
   assert.deepStrictEqual(keeper.disarmed, [SID_A]);
 });
@@ -292,7 +292,7 @@ test('purgeWorkspace leaves a sid a live seat outside the workspace shares', asy
   live(m, 'a', SID_A, { cwd: '/p', workspaceId: 'ws-1' });
   live(m, 'out', SID_A, { cwd: '/p', workspaceId: 'ws-2' });
   enter(keeper, SID_A);
-  assert.deepStrictEqual(m.purgeWorkspace('ws-1'), { killed: ['a'], dropped: [] });
+  assert.deepStrictEqual(await m.purgeWorkspace('ws-1'), { killed: ['a'], dropped: [], kept: [] });
   assert.ok(recs.has('out') && m.sessions.has('out'), 'ENTER: the outside seat survived');
   assert.deepStrictEqual(keeper.disarmed, []);
 });
@@ -305,7 +305,7 @@ test('purgeWorkspace leaves a sid an Always record-only seat outside the workspa
   const keeper = m._holdKeeper = fakeKeeper([SID_A]);
   live(m, 'a', SID_A, { cwd: '/p', workspaceId: 'ws-1' });
   enter(keeper, SID_A);
-  assert.deepStrictEqual(m.purgeWorkspace('ws-1'), { killed: ['a'], dropped: [] });
+  assert.deepStrictEqual(await m.purgeWorkspace('ws-1'), { killed: ['a'], dropped: [], kept: [] });
   assert.ok(recs.has('out') && !m.sessions.has('out'), 'ENTER: the outside record-only seat survived');
   assert.deepStrictEqual(keeper.disarmed, []);
 });
@@ -318,7 +318,7 @@ test('purgeWorkspace disarms past a non-Always record-only seat outside the work
   const keeper = m._holdKeeper = fakeKeeper([SID_A]);
   live(m, 'a', SID_A, { cwd: '/p', workspaceId: 'ws-1' });
   enter(keeper, SID_A);
-  assert.deepStrictEqual(m.purgeWorkspace('ws-1'), { killed: ['a'], dropped: [] });
+  assert.deepStrictEqual(await m.purgeWorkspace('ws-1'), { killed: ['a'], dropped: [], kept: [] });
   assert.ok(recs.has('out'), 'ENTER: the outside record-only seat survived');
   assert.deepStrictEqual(keeper.disarmed, [SID_A]);
 });
@@ -334,7 +334,7 @@ test('purgeWorkspace leaves a sid whose ws-1 record names a seat live in another
   live(m, 'a', SID_A, { cwd: '/p', workspaceId: 'ws-1' });
   live(m, 'x', SID_A, { cwd: '/p', workspaceId: 'ws-2' });
   enter(keeper, SID_A);
-  assert.deepStrictEqual(m.purgeWorkspace('ws-1'), { killed: ['a'], dropped: [] });
+  assert.deepStrictEqual(await m.purgeWorkspace('ws-1'), { killed: ['a'], dropped: [], kept: [] });
   assert.ok(m.sessions.has('x'), 'ENTER: the seat live in ws-2 survived');
   assert.ok(recs.has('x'), 'the live ws-2 seat kept its record');
   assert.deepStrictEqual(forgotten, ['a']);
@@ -361,29 +361,29 @@ function seatRig(records) {
   return { m, recs, seat, plant };
 }
 
-test('purgeWorkspace unlinks the client-token of a live plain seat it kills; the seat dir keeps its other files', () => {
+test('purgeWorkspace unlinks the client-token of a live plain seat it kills; the seat dir keeps its other files', async () => {
   const r = seatRig({ a: { cwd: '/p', type: 'claude', workspaceId: 'ws-1' } });
   r.plant('a', ['client-token', 'brief.md']);
   live(r.m, 'a', SID_A, { cwd: '/p', workspaceId: 'ws-1' });
-  assert.deepStrictEqual(r.m.purgeWorkspace('ws-1'), { killed: ['a'], dropped: [] });
+  assert.deepStrictEqual(await r.m.purgeWorkspace('ws-1'), { killed: ['a'], dropped: [], kept: [] });
   assert.strictEqual(r.recs.size, 0, 'ENTER: the live seat\'s record was dropped');
   assert.deepStrictEqual(fs.readdirSync(r.seat('a')), ['brief.md']);
 });
 
-test('purgeWorkspace removes the seat dir of a live assistant seat it kills', () => {
+test('purgeWorkspace removes the seat dir of a live assistant seat it kills', async () => {
   const r = seatRig({ asst: { cwd: '/p', class: 'assistant', workspaceId: 'ws-1' } });
   r.plant('asst', ['client-token', 'brief.md', 'memory/unit.md']);
   live(r.m, 'asst', SID_A, { cwd: '/p', workspaceId: 'ws-1', _assistant: true });
   assert.ok(fs.existsSync(path.join(r.seat('asst'), 'memory', 'unit.md')), 'ENTER: the seat dir holds memory');
-  assert.deepStrictEqual(r.m.purgeWorkspace('ws-1'), { killed: ['asst'], dropped: [] });
+  assert.deepStrictEqual(await r.m.purgeWorkspace('ws-1'), { killed: ['asst'], dropped: [], kept: [] });
   assert.strictEqual(fs.existsSync(r.seat('asst')), false);
 });
 
-test('purgeWorkspace leaves the seat files of a seat live in another workspace', () => {
+test('purgeWorkspace leaves the seat files of a seat live in another workspace', async () => {
   const r = seatRig({ x: { cwd: '/p', type: 'claude', workspaceId: 'ws-1' } });
   r.plant('x', ['client-token']);
   live(r.m, 'x', SID_A, { cwd: '/p', workspaceId: 'ws-2' });
-  assert.deepStrictEqual(r.m.purgeWorkspace('ws-1'), { killed: [], dropped: [] });
+  assert.deepStrictEqual(await r.m.purgeWorkspace('ws-1'), { killed: [], dropped: [], kept: [] });
   assert.deepStrictEqual(fs.readdirSync(r.seat('x')), ['client-token']);
 });
 
@@ -423,7 +423,7 @@ test('_holdSharedOutside counts live seats and Always unarchived records, never 
   assert.strictEqual(m._holdSharedOutside(SID_B, new Set()), true);
 });
 
-test('purgeWorkspace drops the reminders of both the live seat it kills and the record-only seat', () => {
+test('purgeWorkspace drops the reminders of both the live seat it kills and the record-only seat', async () => {
   const recs = new Map([['a', { name: 'a', cwd: '/p', workspaceId: 'ws-1' }], ['ghost', { name: 'ghost', cwd: '/p', workspaceId: 'ws-1' }]]);
   const removed = [];
   const m = mk({
@@ -432,6 +432,6 @@ test('purgeWorkspace drops the reminders of both the live seat it kills and the 
     log: QUIET,
   });
   live(m, 'a', null, { cwd: '/p', workspaceId: 'ws-1' });
-  assert.deepStrictEqual(m.purgeWorkspace('ws-1'), { killed: ['a'], dropped: ['ghost'] });
+  assert.deepStrictEqual(await m.purgeWorkspace('ws-1'), { killed: ['a'], dropped: ['ghost'], kept: [] });
   assert.deepStrictEqual(removed.sort(), ['a', 'ghost']);
 });

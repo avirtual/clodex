@@ -66,6 +66,16 @@ function deleteWorkspaceDetail(running, saved) {
   return 'This removes the empty workspace record. No sessions will be affected.';
 }
 
+function keptWorktreesMessage(kept) {
+  const list = kept.map((k) => `${k.name} (${k.path})`).join(', ');
+  return `${kept.length} worktree(s) could not be removed and their seats stay archived: ${list}`;
+}
+
+function showKeptWorktrees(kept) {
+  if (!kept || !kept.length) return;
+  dialog.showMessageBox({ type: 'warning', buttons: ['OK'], message: keptWorktreesMessage(kept) }).catch(() => {});
+}
+
 function tildePath(p) {
   const home = os.homedir();
   return home && p.startsWith(home + '/') ? `~${p.slice(home.length)}` : p;
@@ -285,8 +295,9 @@ function createAppMenus(deps) {
                     detail: deleteWorkspaceDetail(wsRunning, wsSaved),
                   });
                   if (result.response !== 0) return;
-                  getManager().purgeWorkspace(ws.id);
+                  const { kept } = await getManager().purgeWorkspace(ws.id);
                   getWorkspaces().remove(ws.id);
+                  showKeptWorktrees(kept);
                   // Clean this workspace's env-scope entry so no secret husk survives
                   // the workspace it belonged to (T46). Best-effort.
                   try { getEnvScopes && getEnvScopes() && getEnvScopes().removeWorkspace(ws.id); } catch {}
@@ -980,8 +991,9 @@ function createAppMenus(deps) {
                     detail: deleteWorkspaceDetail(runningCount, savedCount),
                   });
                   if (result.response !== 0) return;
-                  getManager().purgeWorkspace(ws.id);
+                  const { kept } = await getManager().purgeWorkspace(ws.id);
                   getWorkspaces().remove(ws.id);
+                  showKeptWorktrees(kept);
                   // Clean this workspace's env-scope entry so no secret husk survives
                   // the workspace it belonged to (T46). Best-effort.
                   try { getEnvScopes && getEnvScopes() && getEnvScopes().removeWorkspace(ws.id); } catch {}
@@ -1095,4 +1107,4 @@ function createAppMenus(deps) {
   };
 }
 
-module.exports = { createAppMenus, deleteWorkspaceDetail, workspaceCountSuffix };
+module.exports = { createAppMenus, deleteWorkspaceDetail, workspaceCountSuffix, keptWorktreesMessage };

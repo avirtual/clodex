@@ -195,14 +195,14 @@ test('cancelling the dialog deletes nothing', async () => {
   assert.deepStrictEqual(workspaces.removed, [], 'and so does the workspace');
 });
 
-test('purgeWorkspace reports what it dropped', () => {
+test('purgeWorkspace reports what it dropped', async () => {
   const persistence = realPersistence();
   persistence.upsert({ name: 'seat-a', type: 'claude', cwd: '/tmp', workspaceId: 'ws-1' });
   persistence.setArchived('seat-a', true);
   const manager = realManager(persistence);
-  const res = manager.purgeWorkspace('ws-1');
-  assert.deepStrictEqual(res, { killed: [], dropped: ['seat-a'] });
-  assert.deepStrictEqual(manager.purgeWorkspace('ws-1'), { killed: [], dropped: [] }, 'and is idempotent');
+  const res = await manager.purgeWorkspace('ws-1');
+  assert.deepStrictEqual(res, { killed: [], dropped: ['seat-a'], kept: [] });
+  assert.deepStrictEqual(await manager.purgeWorkspace('ws-1'), { killed: [], dropped: [], kept: [] }, 'and is idempotent');
 });
 
 // ── The copy ────────────────────────────────────────────────────────────────

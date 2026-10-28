@@ -163,7 +163,7 @@ test('session:forget of a plain record unlinks only its client-token; the seat d
   assert.deepStrictEqual(r.fs.readdirSync(r.seat('plain')).sort(), ['brief.md', 'memory']);
 });
 
-test('purgeWorkspace removes an assistant record\'s seat dir and a plain record\'s client-token only', () => {
+test('purgeWorkspace removes an assistant record\'s seat dir and a plain record\'s client-token only', async () => {
   const r = seatRoot();
   r.plant('asst', ['client-token', 'brief.md', 'memory/unit.md']);
   r.plant('plain', ['client-token', 'brief.md']);
@@ -172,19 +172,19 @@ test('purgeWorkspace removes an assistant record\'s seat dir and a plain record\
     { name: 'plain', type: 'claude', workspaceId: 'ws-1', proxy: false },
   ], r.deps);
   persistence.listForWorkspace = (ws) => persistence.list().filter((e) => e.workspaceId === ws);
-  assert.deepStrictEqual(manager.purgeWorkspace('ws-1'), { killed: [], dropped: ['asst', 'plain'] });
+  assert.deepStrictEqual(await manager.purgeWorkspace('ws-1'), { killed: [], dropped: ['asst', 'plain'], kept: [] });
   assert.strictEqual(r.fs.existsSync(r.seat('asst')), false);
   assert.deepStrictEqual(r.fs.readdirSync(r.seat('plain')), ['brief.md']);
 });
 
-test('_bindHold: purgeWorkspace drops a dropped record\'s keep-warm hold binding', () => {
+test('_bindHold: purgeWorkspace drops a dropped record\'s keep-warm hold binding', async () => {
   const { WireTelemetry } = require('../wire-telemetry');
   const r = seatRoot();
   const { manager, persistence } = fixture([{ name: 'plain', type: 'claude', workspaceId: 'ws-1', proxy: false }], r.deps);
   persistence.listForWorkspace = (ws) => persistence.list().filter((e) => e.workspaceId === ws);
   manager._wireTelemetry = new WireTelemetry({});
   manager._wireTelemetry.noteSession('plain', 'sid-p');
-  assert.deepStrictEqual(manager.purgeWorkspace('ws-1'), { killed: [], dropped: ['plain'] });
+  assert.deepStrictEqual(await manager.purgeWorkspace('ws-1'), { killed: [], dropped: ['plain'], kept: [] });
   assert.strictEqual(manager._wireTelemetry.sessionFor('plain'), null);
 });
 

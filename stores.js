@@ -596,7 +596,7 @@ function initStores(userDataPath, {
       const primary = readStoreJson(PERSIST_FILE);
       this._unreadable = primary.state === 'unreadable';
       let all = primary.value;
-      const bak = primary.state !== 'ok' ? readStoreJson(PERSIST_FILE + '.bak') : null;
+      const bak = primary.state === 'quarantined' ? readStoreJson(PERSIST_FILE + '.bak') : null;
       if (bak && bak.state === 'unreadable') this._unreadable = true;
       if (!this._unreadable) persistRefusedLogged = false;
       if (bak) {
@@ -605,7 +605,7 @@ function initStores(userDataPath, {
           return [];
         }
         all = bak.value;
-        console.error('sessions.json unreadable; recovered from .bak');
+        console.error('sessions.json did not parse; recovered from .bak (launch snapshot)');
       }
       if (!Array.isArray(all)) { if (!this._unreadable) markLivingMigrated(); return []; }
       let changed = false;

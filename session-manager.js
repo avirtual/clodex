@@ -129,6 +129,7 @@ const CODEX_LINK_SLOW_POLL_MS = 5000;
 const { mergeSessionEnv, sanitizeFlat, withUtf8Charset } = require('./env-scopes');
 const voiceEngineSpec = require('./voice-engine');
 const { CTRLU_SETTLE_MS } = require('./inject-queue');
+const { agentDir: pendingAgentDir } = require('./pending-store');
 const { VOICE_MODES, voiceModeOf } = require('./voice-settings');
 const { fmtAge } = require('./memory-store');
 const { mcpArgvPlan, claudeMcpServers, codexMcpArgs, museExpressible, secretRefs, discoverMcpSources } = require('./mcp-plan');
@@ -3750,7 +3751,9 @@ function createSessionManager(deps) {
         } catch (e) {
           log.warn('session', `destroy ${name}: seat dir not removed (${e.message})`);
         }
+        this._dropPendingDir(name);
       };
+      this._markDropHeld(name);
       await this.kill(name);
       this._disarmHoldFor(name, holdSid);
       if (!worktree) { dropRecord(); dropSeatDir(); return { ok: true, live: wasLive }; }
@@ -4930,7 +4933,31 @@ function createSessionManager(deps) {
       return getPersistence().listForWorkspace(workspaceId).filter(e => e && e.name && !this.sessions.has(e.name));
     }
 
-    purgeWorkspace(workspaceId) {
+    _markDropHeld(name) {
+      const s = this.sessions.get(name);
+      if (s) s._dropHeld = true;
+    }
+
+    _dropPendingDir(name) {
+      if (!PENDING_DIR || typeof name !== 'string' || !/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) return;
+      try {
+        fs.rmSync(pendingAgentDir(PENDING_DIR, name), { recursive: true, force: true });
+      } catch (e) {
+        log.warn('inject', `pending mail for ${name} not removed: ${e.message}`);
+      }
+    }
+
+    _rehomeKept(name) {
+      const rec = getPersistence().get(name);
+      if (!rec) return;
+      try {
+        getPersistence().upsert({ name, workspaceId: DEFAULT_WORKSPACE_ID, archivedAt: rec.archivedAt || Date.now() });
+      } catch (e) {
+        log.warn('worktree', `purge: record ${name} not re-homed (${e.message})`);
+      }
+    }
+
+    async purgeWorkspace(workspaceId) {
       const seats = this.listForWorkspace(workspaceId);
       const records = this.savedForWorkspace(workspaceId);
       const names = new Set([...seats.map((s) => s.name), ...records.map((e) => e.name)]);
@@ -4941,27 +4968,44 @@ function createSessionManager(deps) {
       }
       for (const e of records) if (e.sessionId && !sids.has(e.sessionId)) sids.set(e.sessionId, e.name);
       for (const [sid, name] of sids) if (!this._holdSharedOutside(sid, names)) this._disarmHoldFor(name, sid);
+      const hasTree = (rec) => !!(rec && rec.worktree && rec.worktree.path);
       const killed = [];
+      const dropped = [];
+      const kept = [];
+      const destroyArm = async (name, bucket) => {
+        const r = await this.destroy(name);
+        if (r && r.worktreeRemoved === false) {
+          kept.push({ name, worktreeRemoved: false, path: r.path, error: r.error });
+          this._rehomeKept(name);
+        } else bucket.push(name);
+      };
       for (const s of seats) {
         const rec = getPersistence().get(s.name);
+        if (hasTree(rec)) { await destroyArm(s.name, killed); continue; }
         killed.push(s.name);
+        this._markDropHeld(s.name);
         this.kill(s.name);
         this.forgetSeatFiles(s.name, rec);
+        this._dropPendingDir(s.name);
         this.dropReminders(s.name);
       }
-      const dropped = [];
       for (const e of records) {
+        if (hasTree(e)) { await destroyArm(e.name, dropped); continue; }
         this.clearHintForRecord(e.name);
         getPersistence().remove(e.name);
         this._bindHold(e.name);
         this.forgetSeatFiles(e.name, e);
+        this._dropPendingDir(e.name);
         this.dropReminders(e.name);
         dropped.push(e.name);
       }
       if (dropped.length) {
         log.info('session', `workspace ${workspaceId}: dropped ${dropped.length} saved/archived record(s): ${dropped.join(', ')}`);
       }
-      return { killed, dropped };
+      if (kept.length) {
+        log.warn('worktree', `workspace ${workspaceId}: kept ${kept.length} archived record(s) whose worktree was not removed: ${kept.map((k) => `${k.name} (${k.path})`).join(', ')}`);
+      }
+      return { killed, dropped, kept };
     }
 
     dropReminders(name) {
@@ -5227,7 +5271,8 @@ function createSessionManager(deps) {
       if (s._injectQueue && s._injectQueue.length) {
         const held = s._injectQueue;
         s._injectQueue = [];
-        this._reparkHeldInjects(s, held);
+        if (s._dropHeld) log.info('inject', `dropped ${held.length} held inject(s) for ${name}: seat deleted`);
+        else this._reparkHeldInjects(s, held);
       }
       clearTimeout(s._injectHoldTimer);
       clearTimeout(s._injectFlushRetry);
