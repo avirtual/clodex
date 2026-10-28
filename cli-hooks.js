@@ -270,14 +270,15 @@ try {
     const c = cmd.charAt(i);
     if (q) {
       if (c === q) { q = null; continue; }
-      if (q === '"' && c === BS && i + 1 < cmd.length) { i++; if (cmd.charAt(i) !== NL) tok += cmd.charAt(i); had = true; continue; }
+      if (q === '"' && c === BS && i + 1 < cmd.length) { i++; if (cmd.charAt(i) !== NL) tok += cmd.charAt(i); had = true; tq = true; continue; }
       if (q === '"' && c === BT) { push(); segs.push([]); outer.push({ bt: true }); q = null; continue; }
-      if (q === '"' && c === "$" && cmd.charAt(i + 1) === "(") { i++; push(); segs.push([]); outer.push({ bt: false, depth: 0, inCase: 0 }); q = null; continue; }
-      tok += c; had = true; continue;
+      if (q === '"' && c === "$" && cmd.charAt(i + 1) === "(") { i++; push(); segs.push([]); outer.push({ bt: false, depth: 0, inCase: 0, ubt: false }); q = null; continue; }
+      tok += c; had = true; tq = true; continue;
     }
     const top = outer[outer.length - 1];
     if (top && top.bt && c === BT) { push(); segs.push([]); outer.pop(); q = '"'; continue; }
-    if (top && !top.bt && c === "#" && !had && (cmd.charAt(i - 1) <= " " || ";&|()".indexOf(cmd.charAt(i - 1)) >= 0)) { while (i + 1 < cmd.length && cmd.charAt(i + 1) !== NL) i++; continue; }
+    if (top && !top.bt && c === BT) top.ubt = !top.ubt;
+    if (top && !top.bt && !top.ubt && c === "#" && !had && (cmd.charAt(i - 1) <= " " || ";&|()".indexOf(cmd.charAt(i - 1)) >= 0)) { while (i + 1 < cmd.length && cmd.charAt(i + 1) !== NL) i++; continue; }
     if (top && !top.bt && c === ")") {
       push();
       if (top.depth === 0 && top.inCase === 0) { segs.push([]); outer.pop(); q = '"'; continue; }

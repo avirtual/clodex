@@ -194,15 +194,17 @@ function shellSegments(cmd) {
     const c = cmd.charAt(i);
     if (q) {
       if (c === q) { q = null; continue; }
-      if (q === '"' && c === '\\' && i + 1 < cmd.length) { i++; if (cmd.charAt(i) !== '\n') at(i - 1).text += cmd.charAt(i); continue; }
+      if (q === '"' && c === '\\' && i + 1 < cmd.length) { i++; if (cmd.charAt(i) !== '\n') { at(i - 1).text += cmd.charAt(i); tok.quoted = true; } continue; }
       if (q === '"' && c === '`') { push(i); segs.push([]); outer.push({ bt: true }); q = null; continue; }
-      if (q === '"' && c === '$' && cmd.charAt(i + 1) === '(') { push(i); segs.push([]); outer.push({ bt: false, depth: 0, inCase: 0 }); q = null; i++; continue; }
+      if (q === '"' && c === '$' && cmd.charAt(i + 1) === '(') { push(i); segs.push([]); outer.push({ bt: false, depth: 0, inCase: 0, ubt: false }); q = null; i++; continue; }
       at(i).text += c;
+      tok.quoted = true;
       continue;
     }
     const top = outer[outer.length - 1];
     if (top && top.bt && c === '`') { push(i); segs.push([]); outer.pop(); q = '"'; continue; }
-    if (top && !top.bt && c === '#' && !tok && (cmd.charAt(i - 1) <= ' ' || ';&|()'.includes(cmd.charAt(i - 1)))) { while (i + 1 < cmd.length && cmd.charAt(i + 1) !== '\n') i++; continue; }
+    if (top && !top.bt && c === '`') top.ubt = !top.ubt;
+    if (top && !top.bt && !top.ubt && c === '#' && !tok && (cmd.charAt(i - 1) <= ' ' || ';&|()'.includes(cmd.charAt(i - 1)))) { while (i + 1 < cmd.length && cmd.charAt(i + 1) !== '\n') i++; continue; }
     if (top && !top.bt && c === ')') {
       push(i);
       if (top.depth === 0 && top.inCase === 0) { segs.push([]); outer.pop(); q = '"'; continue; }
