@@ -64,9 +64,10 @@ function setup() {
   const dock = { shown: {}, reveals: 0, addPane() {}, setShown(name, on) { dock.shown[name] = on; }, onScreen: () => true, reveal() { dock.reveals += 1; } };
   const api = { remote: false, mtime: 7, diff: async () => ({ ok: true }), peek: async () => api.peekRes || ({ ok: true, mtime: api.mtime }) };
   let active = 'A';
+  const win = { confirm: () => true, api: {} };
   const sp = createSidePane({
     dock, popoverApi: () => api, showToast() {}, getActiveSession: () => active, getFiles: () => [],
-    focusTerminal() {}, doc, win: { confirm: () => true, api: {} },
+    focusTerminal() {}, doc, win,
   });
   const button = el('button', 'files-toggle');
   for (const cls of ['footer-glyph', 'footer-label', 'footer-badge']) { const s = el('span'); s.className = cls; button.appendChild(s); }
@@ -80,7 +81,7 @@ function setup() {
     badge: button.querySelector('.footer-badge').textContent,
     pane: !!dock.shown.files,
   });
-  return { sp, dock, button, ids, api, toggle, setActive, switchTo, state };
+  return { sp, dock, button, ids, api, win, toggle, setActive, switchTo, state };
 }
 
 const flush = () => new Promise((r) => setImmediate(r));
@@ -243,4 +244,25 @@ test('files toggle: the renderer refreshes it on the no-seat-left branch', () =>
   assert.ok(at > 0);
   const branch = src.slice(at, src.indexOf('\n    }\n', at));
   assert.ok(branch.includes('filesToggle.refresh();'));
+});
+
+test('side pane: renameSeat carries a dirty tab to the new name and saves through it', async () => {
+  const t = setup();
+  t.switchTo('A');
+  t.sp.open('A', { kind: 'file', path: '/w/a.js' });
+  await flush();
+  const v = views[0];
+  v.on.dirty(true);
+  t.sp.renameSeat('A', 'B');
+  t.sp.forgetSeat('A');
+  assert.strictEqual(t.sp.hasTabs('A'), false, 'nothing is left under the old name');
+  assert.strictEqual(t.sp.hasTabs('B'), true, 'the tab is reachable under the new name');
+  t.switchTo('B');
+  const tabEl = t.ids['side-pane-tabs'].children[0];
+  assert.ok(tabEl && tabEl.children.some((c) => c.className === 'file-peek-dirty'), 'the tab under the new name still shows unsaved changes');
+  const writes = [];
+  t.win.api.fileWrite = async (...args) => { writes.push(args); return { ok: true, mtime: 9 }; };
+  Object.assign(v, { getText: () => 'edited', setSaving() {}, markSaved() {}, setDiff() {} });
+  await v.on.save();
+  assert.deepStrictEqual(writes, [['B', '/w/a.js', 'edited', 7]]);
 });

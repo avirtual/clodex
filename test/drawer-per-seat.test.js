@@ -1,4 +1,4 @@
-const { test } = require('node:test');
+const { test, mock } = require('node:test');
 const assert = require('node:assert');
 
 const { createDrawerHost } = require('../renderer/drawer-host');
@@ -426,4 +426,77 @@ test('drawer badge: a hidden tab shows a textless activity dot, then attention, 
     notify('activity');
     assert.deepEqual(state(), { zero: false, attention: false, text: '' });
   });
+});
+
+test('a seat activated after the last one was removed re-keys the visible tenant', () => {
+  harness((h) => {
+    const seen = [];
+    let current = null;
+    h.host.register({
+      id: 'term', label: 'term', mount() {},
+      onShow() { seen.push(`show:${current}`); },
+      onHide() { seen.push(`hide:${current}`); },
+      onSeatChanged() { seen.push(`seat:${current}`); },
+    });
+    const activate = (name) => { current = name; h.firstSeat(name); return h.host.seatActivated(); };
+    activate('bob');
+    h.clickTab('term');
+    h.flush();
+    activate('alice');
+    h.clickTab('term');
+    h.flush();
+    current = null;
+    h.firstSeat(null);
+    h.host.onSessionChanged();
+    h.flush();
+    assert.deepStrictEqual(seen.slice(-1), ['hide:null']);
+    h.clickTab('term');
+    h.flush();
+    seen.length = 0;
+    assert.strictEqual(activate('bob'), true);
+    h.flush();
+    assert.deepStrictEqual(seen, ['seat:bob']);
+  });
+});
+
+test('the first activation only syncs availability and a re-activation of the served seat is not a switch', () => {
+  harness((h) => {
+    const seen = [];
+    h.host.register({
+      id: 'term', label: 'term', mount() {},
+      onShow() { seen.push('show'); }, onHide() { seen.push('hide'); },
+      onSeatChanged() { seen.push('seat'); },
+    });
+    h.firstSeat('alice');
+    assert.strictEqual(h.host.seatActivated(), false);
+    h.clickTab('term');
+    h.flush();
+    assert.strictEqual(h.host.seatActivated(), false);
+    assert.deepStrictEqual(seen, ['show']);
+  });
+});
+
+test('forgetSession releases a peek on a seat with no attachment', () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    harness((h) => {
+      const released = [];
+      window.api.drawerArmSelection = () => new Promise(() => {});
+      window.api.drawerReleaseSelection = (name) => { released.push(name); return Promise.resolve(); };
+      const notify = h.host.register({
+        id: 'term', label: 'term', mount() {}, onShow() {}, onHide() {},
+        selection: () => 'picked text',
+      });
+      h.firstSeat('alice');
+      h.host.seatActivated();
+      h.clickTab('term');
+      h.flush();
+      notify.selectionChanged();
+      mock.timers.tick(60000);
+      h.host.forgetSession('alice');
+      assert.deepStrictEqual(released, ['alice']);
+    });
+  } finally {
+    mock.timers.reset();
+  }
 });

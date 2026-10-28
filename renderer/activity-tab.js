@@ -55,7 +55,7 @@ const ICON = {
 // 40 concurrently-live subagents hold 40 feeds.
 const MAX_RETAINED_FEEDS = 20;
 
-function createActivityTab({ host, proxyState, proxyPollMs }) {
+function createActivityTab({ host, proxyState, proxyPollMs, hasSeat = null }) {
   let chipsEl = null;
   let bodyEl = null;
   let asOfEl = null;
@@ -86,6 +86,7 @@ function createActivityTab({ host, proxyState, proxyPollMs }) {
   function liveSubs() {
     const out = new Map(); // feedKey -> { name, key, label, state, sub }
     for (const [name, st] of proxyState) {
+      if (hasSeat && !hasSeat(name)) continue;
       const p = st && st.payload;
       const ageS = st ? (Date.now() - st.at) / 1000 : 0;
       // Same deadness rule as the sidebar: a payload older than four poll

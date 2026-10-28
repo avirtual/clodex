@@ -63,6 +63,11 @@ function recentCwdsFor(settings, wsId) {
   return [];
 }
 
+const LAUNCHER_EXTS = new Set([
+  '.app', '.command', '.terminal', '.tool', '.workflow', '.scpt', '.applescript', '.pkg', '.mpkg', '.dmg',
+  '.sh', '.zsh', '.bash', '.py', '.rb', '.pl', '.jar', '.url', '.webloc',
+]);
+
 function registerIpcHandlers(deps) {
   const {
     handle, on,
@@ -1133,7 +1138,19 @@ function registerIpcHandlers(deps) {
   handle('file:write', (_e, name, filePath, content, expectMtime) =>
     writeFilePeek(name, filePath, content, expectMtime));
   handle('file:resolve', (_e, name, raw, baseDir) => resolveFilePath(name, raw, baseDir));
-  handle('file:open', (_e, filePath) => openPath(filePath));
+  handle('file:open', (_e, filePath) => {
+    const resolved = path.resolve(String(filePath || ''));
+    let st;
+    try { st = fs.lstatSync(resolved); } catch (e) { return { ok: false, revealed: false, reason: `cannot open: ${e.code || e.message}` }; }
+    const reason = st.isSymbolicLink() ? 'a symlink'
+      : st.isDirectory() ? 'a directory'
+        : LAUNCHER_EXTS.has(path.extname(resolved).toLowerCase()) ? `a ${path.extname(resolved).toLowerCase()} launcher`
+          : (st.mode & 0o111) ? 'an executable'
+            : null;
+    if (!reason) return openPath(resolved);
+    showItemInFolder(resolved);
+    return { ok: false, revealed: true, reason };
+  });
   handle('file:reveal', (_e, filePath) => { showItemInFolder(filePath); });
   handle('plugins:writeBundleFile', (_e, pluginId, kind, stem, body) => {
     const loader = getPluginLoader && getPluginLoader();

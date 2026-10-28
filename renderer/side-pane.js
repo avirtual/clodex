@@ -143,8 +143,9 @@ function createSidePane({ dock, popoverApi, showToast, getActiveSession, getFile
   }
 
   function makeView(seat, id, filePath) {
+    const at = { seat, id };
     const api = popoverApi(seat);
-    const act = (action) => { const r = dispatch(seat, { ...action, id }); runEffect(seat, id, r.effect); };
+    const act = (action) => { const r = dispatch(at.seat, { ...action, id: at.id }); runEffect(at.seat, at.id, r.effect); };
     const v = createFileTab({
       doc,
       filePath,
@@ -152,22 +153,26 @@ function createSidePane({ dock, popoverApi, showToast, getActiveSession, getFile
       showOpen: !(api.remote || isWeb),
       on: {
         view: (view) => act({ type: 'view', view }),
-        dirty: (dirty) => { dispatch(seat, { type: 'dirty', id, dirty }); renderChrome(); },
-        save: () => save(seat, id),
-        open: () => win.api.fileOpen(filePath),
+        dirty: (dirty) => { dispatch(at.seat, { type: 'dirty', id: at.id, dirty }); renderChrome(); },
+        save: () => save(at.seat, at.id),
+        open: async () => {
+          const res = await Promise.resolve(win.api.fileOpen(filePath)).catch(() => null);
+          if (res && res.revealed) showToast(`Revealed in Finder, not opened: it is ${res.reason}`, { kind: 'warn', duration: 6000 });
+        },
         escape: () => focusTerminal(),
         discard: () => act({ type: 'discard' }),
         keep: () => act({ type: 'keep' }),
         theirs: async () => {
-          const fresh = await popoverApi(seat).diff(filePath).catch((e) => ({ ok: false, error: String(e) }));
-          const cur = views.get(viewKey(seat, id));
+          const fresh = await popoverApi(at.seat).diff(filePath).catch((e) => ({ ok: false, error: String(e) }));
+          const cur = views.get(viewKey(at.seat, at.id));
           if (cur !== v) return;
           v.setDiff(fresh);
           act({ type: 'view', view: 'diff' });
         },
-        follow: (p, line) => follow(seat, filePath, p, line),
+        follow: (p, line) => follow(at.seat, filePath, p, line),
       },
     });
+    v.at = at;
     host.appendChild(v.el);
     views.set(viewKey(seat, id), v);
     recordSeen(seat, id, filePath);
@@ -277,6 +282,31 @@ function createSidePane({ dock, popoverApi, showToast, getActiveSession, getFile
     renderChrome();
   }
 
+  function renameSeat(seat, next) {
+    const set = sets.get(seat);
+    if (!set || !next || next === seat || sets.has(next)) return;
+    const ids = new Map(set.tabs.map((t) => [t.id, t.kind === 'file' ? fileTabId(next, t.path) : t.id]));
+    for (const t of set.tabs) {
+      const k = viewKey(seat, t.id);
+      const nk = viewKey(next, ids.get(t.id));
+      const v = views.get(k);
+      if (v) {
+        views.delete(k);
+        if (v.at) { v.at.seat = next; v.at.id = ids.get(t.id); }
+        views.set(nk, v);
+      }
+      if (seenTs.has(k)) { seenTs.set(nk, seenTs.get(k)); seenTs.delete(k); }
+    }
+    sets.delete(seat);
+    sets.set(next, {
+      ...set,
+      tabs: set.tabs.map((t) => ({ ...t, id: ids.get(t.id) })),
+      active: set.active ? ids.get(set.active) || null : null,
+    });
+    if (shownSeat === seat) shownSeat = next;
+    renderChrome();
+  }
+
   function noteFiles(seat, files) {
     for (const t of setOf(seat).tabs) {
       const k = viewKey(seat, t.id);
@@ -318,7 +348,7 @@ function createSidePane({ dock, popoverApi, showToast, getActiveSession, getFile
   dock.addPane('files', pane, 0);
   renderChrome();
 
-  return { open, showSeat, forgetSeat, noteFiles, noteToolRecord, toggle, hasTabs, isOpen, paneOpen, onChange };
+  return { open, showSeat, forgetSeat, renameSeat, noteFiles, noteToolRecord, toggle, hasTabs, isOpen, paneOpen, onChange };
 }
 
 function bindFilesToggle({ button, sidePane, getActiveSession }) {

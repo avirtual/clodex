@@ -730,6 +730,8 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
   // where it was put; it is per-session by construction and the operator asked
   // for it.
   function onSessionChanged() {
+    served = true;
+    servedSeat = activeName();
     clearTimeout(armTimer);
     armTimer = null;
     releasePeek();
@@ -753,6 +755,17 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
     refreshStatus();
   }
 
+  let served = false;
+  let servedSeat = null;
+  function seatActivated() {
+    const name = activeName();
+    if (served && name !== servedSeat) { onSessionChanged(); return true; }
+    served = true;
+    servedSeat = name;
+    syncSeatAvailability();
+    return false;
+  }
+
   // A session the operator deleted cannot be switched back to, so its claim has
   // no owner left to repaint it. The main process clears the registration
   // itself (selectionArm.forget); this drops the renderer's half so a rebuilt
@@ -760,8 +773,8 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
   function forgetSession(name) {
     if (!name) return;
     decks.delete(name);
-    if (!attachedBy.delete(name)) return;
     if (peekOn === name) releasePeek();
+    attachedBy.delete(name);
     refreshStatus();
   }
 
@@ -800,7 +813,7 @@ function createDrawerHost({ refitActiveTerminal, getActiveSession, getSeatType =
 
   return {
     register, open, toggle, hasFocus, domSelection, deckOf,
-    onSessionChanged, forgetSession, onSelectionSent, setQuota,
+    onSessionChanged, seatActivated, forgetSession, onSelectionSent, setQuota,
     // Separate from onSessionChanged because that one is deliberately skipped on
     // the FIRST activation (nothing was armed yet, so there is no peek to
     // release) — while tab availability must be right for the first seat the

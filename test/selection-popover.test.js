@@ -122,7 +122,7 @@ test('an open whose read lands after a keyboard switch does not paint the old se
 
 test('switching the active session refreshes the selection badge beside the drawer switch', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
-  const line = src.split('\n').find((l) => l.includes('drawerHost.onSessionChanged()'));
-  assert.ok(line, 'ENTER: the switch path calls drawerHost.onSessionChanged()');
-  assert.match(line, /if \(wasActive && wasActive !== name\) \{ drawerHost\.onSessionChanged\(\); refreshSelectionBadge\(\); \}/);
+  const line = src.split('\n').find((l) => l.includes('drawerHost.seatActivated()'));
+  assert.ok(line, 'ENTER: the switch path calls drawerHost.seatActivated()');
+  assert.match(line, /if \(drawerHost\.seatActivated\(\)\) refreshSelectionBadge\(\);/);
 });

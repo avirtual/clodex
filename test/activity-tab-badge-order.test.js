@@ -213,3 +213,15 @@ test('dropParent clears badge state while the pane is unmounted', () => {
     assert.deepStrictEqual(levels, ['activity', 'activity']);
   });
 });
+
+test('a payload whose seat is gone contributes no sub and no badge', () => {
+  withDom(() => {
+    const levels = [];
+    const tab = createActivityTab({
+      host: unmountedHost(levels), proxyState: proxyState(['sub1', 3]), proxyPollMs: 5000,
+      hasSeat: (n) => n !== 'alpha',
+    });
+    tab.refreshChips();
+    assert.deepStrictEqual(levels, []);
+  });
+});

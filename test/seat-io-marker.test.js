@@ -68,6 +68,7 @@ function mkRenderer(extra = {}) {
     peerStatuses: new Map(),
     openPeerSessionDialog() {},
     seatViewMemory: new Map(),
+    sidePane: { renameSeat() {} },
     alert() {},
     refreshSeatMcp() {},
     respawnSnapshots: new Map(),

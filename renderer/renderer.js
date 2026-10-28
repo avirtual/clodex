@@ -1322,6 +1322,7 @@ function startRename(item, nameEl, sessionName) {
         showToast(`Rename failed: ${(res && res.error) || 'unknown error'}`, { kind: 'error', duration: 10000, name: sessionName });
         return;
       }
+      sidePane.renameSeat(sessionName, res.name);
       removeSession(sessionName, { keepPersisted: true });
       streamSeatNames.delete(sessionName);
       seatViewMemory.delete(sessionName);
@@ -2737,18 +2738,14 @@ function switchSession(name) {
   // switch. The popover this replaced had to close (it was anchored to a row);
   // surviving the switch is the drawer's whole point.
 
-  const wasActive = activeSession;
   activeSession = name;
   window.api.setSidebarView({ activeSession: name }).catch(() => {});
   reportFocusedSession();
   // An armed drawer selection is registered on ONE session's wirescope route, so
-  // leaving that session has to take it back — the drawer cannot see this
-  // switch, and a peek left behind rides a request the operator is no longer
-  // watching. Not on first activation (nothing was armed yet).
-  if (wasActive && wasActive !== name) { drawerHost.onSessionChanged(); refreshSelectionBadge(); }
-  // The first activation takes this else and may land on a seat the terminal
-  // cannot serve; the switch arm syncs inside onSessionChanged.
-  else drawerHost.syncSeatAvailability();
+  // leaving that session has to take it back — a peek left behind rides a
+  // request the operator is no longer watching. Not on first activation
+  // (nothing was armed yet).
+  if (drawerHost.seatActivated()) refreshSelectionBadge();
   sidePane.showSeat(name);
   filesToggle.refresh();
 
@@ -2879,12 +2876,21 @@ function removeSession(name, { keepPersisted = false } = {}) {
     s.wrapperEl.remove();
     sessions.delete(name);
   }
-  if (!keepPersisted) streamSeatNames.delete(name);
+  if (!keepPersisted) {
+    streamSeatNames.delete(name);
+    consoleTab.forgetSeat(name);
+    seatVoices.delete(name);
+  }
+  if (voiceArmedSeat === name) {
+    if (voiceEngineView) voiceEngineView.mirror.disarm();
+    voiceArmedSeat = null;
+  }
+  if (voiceRecordingSeat === name) voiceRecordingSeat = null;
   drawerHost.forgetSession(name);
   sidePane.forgetSeat(name);
+  proxyState.delete(name);
   removeSessionFromSidebar(name);
   updateWindowTitle();
-  proxyState.delete(name);
   // The removed session may have been the freshest quota carrier — without this
   // the readout keeps showing a figure sourced from a payload nothing holds.
   refreshQuotaChip();
@@ -2901,6 +2907,7 @@ function removeSession(name, { keepPersisted = false } = {}) {
       switchSession(remaining[0]);
     } else {
       activeSession = null;
+      drawerHost.onSessionChanged();
       // Main's record has to go too, or an external voice tap keeps aiming at
       // the seat that just went away.
       reportFocusedSession();
@@ -4510,6 +4517,7 @@ function seatVoiceFired(name) {
 
 window.api.onVoiceEngineStopped((name) => {
   voiceTrace(name, 'engine self-stopped');
+  if (voiceRecordingSeat === name) voiceRecordingSeat = null;
   if (!voiceSinkFor(name)) return;
   if (voiceArmedSeat === name && voiceEngineView) voiceEngineView.mirror.release();
   setSeatRecording(name, false);
@@ -5767,11 +5775,11 @@ const { appendIpcEntry } = createIpcLog({ host: drawerHost, openFilePeek, showTo
 // this may sit below their call sites.
 const {
   openActivityFeed, refreshChips: refreshActivityChips, dropParent: dropActivityFeeds,
-} = createActivityTab({ host: drawerHost, proxyState, proxyPollMs: PROXY_POLL_MS });
+} = createActivityTab({ host: drawerHost, proxyState, proxyPollMs: PROXY_POLL_MS, hasSeat: (n) => sessions.has(n) });
 
 createCtlTab({ host: drawerHost });
 
-createConsoleTab({
+const consoleTab = createConsoleTab({
   host: drawerHost,
   getActiveSession: () => activeSession,
   getSeatType: () => (activeSession ? sessionTypeOf(activeSession) : null),

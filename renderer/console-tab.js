@@ -345,7 +345,11 @@ function createConsoleTab({ host, getActiveSession, getSeatType = null }) {
     onSeatChanged: () => onShow(),
   });
 
-  return { open: () => host.open('console') };
+  function forgetSeat(name) {
+    seats.delete(name);
+  }
+
+  return { open: () => host.open('console'), forgetSeat };
 }
 
 module.exports = { createConsoleTab, MAX_BLOCKS, POLL_MS };
