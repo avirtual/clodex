@@ -5,6 +5,9 @@
 'use strict';
 
 const { run } = require('../src/main');
+const { installSignalReaper } = require('../src/transport');
+
+installSignalReaper();
 
 run(process.argv.slice(2))
   .then((code) => { process.exitCode = code; })

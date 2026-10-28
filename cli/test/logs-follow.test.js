@@ -362,3 +362,9 @@ test('logs -f: a refetch that fails (500) is not an unhandled rejection — the 
   for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
   assert.deepStrictEqual(rejections.map((r) => String(r && r.message)), []);
 });
+
+test('logs -f: the no-seam signal set includes SIGHUP (a closed terminal ends the follow cleanly)', () => {
+  const src = require('node:fs').readFileSync(path.join(__dirname, '..', 'src', 'verbs.js'), 'utf8');
+  assert.match(src, /process\.on\('SIGINT', onSig\); process\.on\('SIGTERM', onSig\); process\.on\('SIGHUP', onSig\);/);
+  assert.match(src, /process\.off\('SIGINT', onSig\); process\.off\('SIGTERM', onSig\); process\.off\('SIGHUP', onSig\);/);
+});

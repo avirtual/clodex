@@ -11,7 +11,7 @@ const crypto = require('crypto');
 const { spawn, execFile } = require('child_process');
 const { promisify } = require('util');
 const { CliError, EXIT } = require('./errors');
-const { openTransport } = require('./transport');
+const { openTransport, register: registerReap } = require('./transport');
 const { WireClient } = require('./client');
 const contexts = require('./contexts');
 const R = require('./resources');
@@ -1396,6 +1396,7 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
   }
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-helm-'));
+  const unregisterTmp = registerReap('tmpdir', () => fs.rmSync(tmpDir, { recursive: true, force: true }));
   try {
     const wireTokenFile = path.join(tmpDir, 'wire-token');
     fs.writeFileSync(wireTokenFile, token, { mode: 0o600 });
@@ -1424,6 +1425,7 @@ async function deployHelmVerb({ printer, flags, args, io = {} }) {
     okm('helm');
   } finally {
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    unregisterTmp();
   }
   let installed = null;
   try {

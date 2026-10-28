@@ -158,3 +158,88 @@ test('waitForPort: a dead child is its exit even while a foreign listener holds 
   } finally { await new Promise((res) => srv.close(res)); }
 });
 
+
+test('reapAll: an open dial is group-killed (negative pid, SIGTERM), once', async (t) => {
+  const srv = net.createServer((s) => s.end());
+  const kills = [];
+  t.mock.method(process, 'kill', (pid, sig) => { kills.push([pid, sig]); return true; });
+  const spawnFn = (cmd, args) => {
+    const child = new EventEmitter();
+    child.pid = 424242;
+    child.stderr = new EventEmitter();
+    child.kill = () => {};
+    srv.listen(+args[0].split(':')[0], '127.0.0.1');
+    return child;
+  };
+  const tr = await T.openTransport({ tunnel: ['faketunnel', '{port}:7900'] }, { spawnFn, deadlineMs: 2000 });
+  T.reapAll();
+  assert.deepStrictEqual(kills, [[-424242, 'SIGTERM']]);
+  T.reapAll();
+  assert.deepStrictEqual(kills, [[-424242, 'SIGTERM']]);
+  await new Promise((r) => srv.close(r));
+  tr.close();
+});
+
+test('reapAll: a closed dial is no longer reaped', async (t) => {
+  const srv = net.createServer((s) => s.end());
+  const kills = [];
+  t.mock.method(process, 'kill', (pid, sig) => { kills.push([pid, sig]); return true; });
+  const spawnFn = (cmd, args) => {
+    const child = new EventEmitter();
+    child.pid = 434343;
+    child.stderr = new EventEmitter();
+    srv.listen(+args[0].split(':')[0], '127.0.0.1');
+    return child;
+  };
+  const tr = await T.openTransport({ tunnel: ['faketunnel', '{port}:7900'] }, { spawnFn, deadlineMs: 2000 });
+  tr.close();
+  T.reapAll();
+  assert.deepStrictEqual(kills, [[-434343, 'SIGTERM']]);
+  await new Promise((r) => srv.close(r));
+});
+
+test('reapAll: a registered tmpdir is removed, and each cleanup runs once', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodexctl-reap-t-'));
+  fs.writeFileSync(path.join(dir, 'wire-token'), 'secret');
+  let runs = 0;
+  T.register('tmpdir', () => { runs++; fs.rmSync(dir, { recursive: true, force: true }); });
+  T.register('dial', () => { throw new Error('best effort'); });
+  T.reapAll();
+  T.reapAll();
+  assert.strictEqual(fs.existsSync(dir), false);
+  assert.strictEqual(runs, 1);
+  const off = T.register('tmpdir', () => { runs++; });
+  off();
+  T.reapAll();
+  assert.strictEqual(runs, 1);
+});
+
+test('installSignalReaper: reaps and exits 130/143/129 only when no verb handler claimed the signal', () => {
+  const { EventEmitter: EE } = require('node:events');
+  for (const [sig, code] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129]]) {
+    const proc = new EE();
+    const exits = [];
+    let reaped = 0;
+    const off = T.installSignalReaper({ proc, exit: (c) => exits.push(c) });
+    const verb = () => {};
+    proc.on(sig, verb);
+    T.register('dial', () => { reaped++; });
+    proc.emit(sig);
+    assert.deepStrictEqual(exits, []);
+    assert.strictEqual(reaped, 0);
+    proc.off(sig, verb);
+    proc.emit(sig);
+    assert.deepStrictEqual(exits, [code]);
+    assert.strictEqual(reaped, 1);
+    off();
+    assert.strictEqual(proc.listenerCount(sig), 0);
+  }
+});
+
+test('clodexctl bin installs the signal reaper', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'bin', 'clodexctl.js'), 'utf8');
+  assert.match(src, /^installSignalReaper\(\);$/m);
+});

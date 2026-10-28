@@ -402,7 +402,7 @@ async function logsFollow({ client, printer, flags, name, initial, messages, unf
     };
     const onSig = () => finish(null);   // Ctrl-C / SIGTERM → clean exit 0
     if (term && term.onSignal) offSignal = term.onSignal(onSig);
-    else { process.on('SIGINT', onSig); process.on('SIGTERM', onSig); offSignal = () => { process.off('SIGINT', onSig); process.off('SIGTERM', onSig); }; }
+    else { process.on('SIGINT', onSig); process.on('SIGTERM', onSig); process.on('SIGHUP', onSig); offSignal = () => { process.off('SIGINT', onSig); process.off('SIGTERM', onSig); process.off('SIGHUP', onSig); }; }
 
     const seam = io.followGuard || {};
     const guard = sseGuard.openGuarded(client, '/api/events', 'logs -f (events)', {

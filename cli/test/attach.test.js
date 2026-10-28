@@ -556,3 +556,12 @@ test('attach: detach exits 0 and kills the tunnel child (real proxy child)', T, 
   assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' },
     'and the pid must be gone from the process table, not merely reported exited by its own handle');
 });
+
+test('makeTerm.onSignal: SIGINT, SIGTERM and SIGHUP all reach the handler, and off() removes all three', () => {
+  const sigs = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+  const before = sigs.map((s) => process.listenerCount(s));
+  const off = A.makeTerm({}).onSignal(() => {});
+  assert.deepStrictEqual(sigs.map((s) => process.listenerCount(s)), before.map((n) => n + 1));
+  off();
+  assert.deepStrictEqual(sigs.map((s) => process.listenerCount(s)), before);
+});
