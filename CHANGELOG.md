@@ -13,6 +13,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Erratum (5.150.5): the `time --` bullet said `clodex-send` was "stamped again"; only a `case` opened after `time --` was. `time -- clodex-send x` and `time -p -- clodex-send x` are now stamped, as parse.y's TIMEIGN rule reads.
 
 ## 5.150.5 — 2026-10-28 — Bash guard: heredoc `case` lines no longer hide a following command; `time --` accepted again
 

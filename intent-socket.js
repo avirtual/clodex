@@ -245,7 +245,7 @@ function isClodexWord(w) {
 
 function prefixLength(word, i) {
   const w = word(i);
-  if (w === 'time') return word(i + 1) === '-p' ? 2 : 1;
+  if (w === 'time') { let n = 1; if (word(i + n) === '-p') n++; if (word(i + n) === '--') n++; return n; }
   if (CMD_PREFIX.includes(w)) return 1;
   if (w === 'timeout') {
     let j = i + 1;
