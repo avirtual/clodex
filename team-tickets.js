@@ -1289,7 +1289,6 @@ function createTicketMethods(deps, shared) {
       if (!ticketInFlight(ticket)) return null;
       ticket.verdict = scanned.verdict;
       ticket.mustFix = extractMustFix(verdict);
-      ticket.mustFixHeader = scanned.mustFixHeaders.length > 0;
       ticket.reviewRound = (Number(ticket.reviewRound) || 0) + 1;
       delete ticket.verifyPhase;
       ticket.reviewedAt = Date.now();
@@ -1325,7 +1324,7 @@ function createTicketMethods(deps, shared) {
       // stranding a live seat that holds the ticket.
       try { this._reconcileTickets(team); }
       catch (e) { log.error('intent', `ticket ${ticketId}: verdict saved but reconcile failed: ${e.message}`); }
-      return { verdict: ticket.verdict, mustFix: ticket.mustFix, mustFixHeader: !!ticket.mustFixHeader, reviewRound: ticket.reviewRound, reworkRound: Number(ticket.reworkRound) || 0 };
+      return { verdict: ticket.verdict, mustFix: ticket.mustFix, reviewRound: ticket.reviewRound, reworkRound: Number(ticket.reworkRound) || 0 };
     },
 
     // Reads the round off the already-stamped record: this runs after the save, unlike _writeTicketDiff, which runs before it and adds one.
@@ -1540,9 +1539,7 @@ function createTicketMethods(deps, shared) {
         if (!team) return { ok: false, error: 'the team could not be resolved from the reviewer seat' };
         const items = landedOn.mustFix
           ? `MUST-FIX:\n${defuseSenderLines(landedOn.mustFix)}`
-          : landedOn.mustFixHeader
-            ? 'The verdict named no must-fix items — read it and fix what it says, or say in your report why it is wrong.'
-            : 'No must-fix items could be extracted from the verdict — read the full verdict file below; its must-fixes are there. Fix what it says, or say in your report why it is wrong.';
+          : 'No must-fix items could be extracted from the verdict — read the full verdict file below; its must-fixes are there. Fix what it says, or say in your report why it is wrong.';
         const where = written && written.ok
           ? `FULL VERDICT (the reasoning, the nits and what was checked): ${written.path}\nRead it; it is why, and the items above are only what.`
           : `The full verdict could NOT be saved (${(written && written.error) || 'unknown'}), so the items above are all there is.`;
@@ -1563,7 +1560,7 @@ function createTicketMethods(deps, shared) {
       try {
         const n = countMustFix(landedOn.mustFix);
         const mf = n === 0
-          ? (landedOn.verdict === 'REWORK' && !landedOn.mustFixHeader ? 'no must-fix items could be extracted — read the full verdict' : 'no must-fixes')
+          ? (landedOn.verdict === 'REWORK' ? 'no must-fix items could be extracted — read the full verdict' : 'no must-fixes')
           : `${n} must-fix${n === 1 ? '' : 'es'}`;
         // The full prose goes in the ticket's task dir: a spill is swept by age (30 min), so an overnight lead wakes to a dead path,
         // and a truncated dump of the record hides `verdict` behind a multi-KB `report`.
@@ -1697,7 +1694,7 @@ function createTicketMethods(deps, shared) {
         log.info('ticket', `boot: ${t.id} is stamped merge waiting (suite-in-flight) but ${branch} is already on ${target} — not requeued, stamp cleared`);
         return;
       }
-      const landedOn = { verdict: t.verdict, mustFix: t.mustFix == null ? null : t.mustFix, mustFixHeader: !!t.mustFixHeader, reviewRound: Number(t.reviewRound) || 1, reworkRound: Number(t.reworkRound) || 0 };
+      const landedOn = { verdict: t.verdict, mustFix: t.mustFix == null ? null : t.mustFix, reviewRound: Number(t.reviewRound) || 1, reworkRound: Number(t.reworkRound) || 0 };
       let verdictText = null;
       const round = Array.isArray(t.rounds) ? t.rounds.find((r) => r && Number(r.round) === landedOn.reviewRound) : null;
       if (round && round.verdictFile) {

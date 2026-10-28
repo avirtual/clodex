@@ -177,7 +177,7 @@ const MUSTFIX_BARE_PLACEHOLDER_RE = new RegExp(`^(?:${MUSTFIX_PLACEHOLDER_WORDS}
 const FENCE_OPEN_RE = /^[ \t]{0,3}(`{3,}|~{3,})/;
 const VERDICT_LINE_RE = /^[ \t]*(?:[-*][ \t]*)?(?:\*\*|__)?[ \t]*\bVERDICT\b\W*\b(ACCEPT|REWORK)\b/i;
 
-const INLINE_SECTION_HEADER_RE = /(\*\*)(MUST[-\s]?FIX|NITS?|CHECKED)(?:[ \t]*:[ \t]*\1|\1[ \t]*:)/gi;
+const INLINE_SECTION_HEADER_RE = /(\*\*|__)(MUST[-\s]?FIX|NITS?|CHECKED)(?:[ \t]*:[ \t]*\1|\1[ \t]*:)/gi;
 
 function liveVerdictLines(text) {
   const lines = String(text == null ? '' : text).split('\n');
@@ -193,8 +193,8 @@ function liveVerdictLines(text) {
     if (/^[ \t]*>/.test(line) || /^(?: {4}|[ ]{0,3}\t)/.test(line)) return { line, live: false, fenced: false, src };
     return { line, live: true, fenced: false, src };
   });
-  const otherMustFix = entries.some((e) => e.live && !VERDICT_LINE_RE.test(e.line) && isMustFixHeader(e.line));
-  if (otherMustFix) return entries;
+  const otherHeader = entries.some((e) => e.live && !VERDICT_LINE_RE.test(e.line) && sectionHeader(e.line));
+  if (otherHeader) return entries;
   return entries.flatMap((e) => {
     if (!e.live || !VERDICT_LINE_RE.test(e.line)) return [e];
     return e.line.replace(INLINE_SECTION_HEADER_RE, (m, _d, _k, off) => (off === 0 ? m : `\n${m}`)).split('\n')
