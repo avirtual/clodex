@@ -21339,6 +21339,19 @@ test('t2033: a held producer unit with a fallback is re-parked with its parkKey 
   assert.strictEqual(parked[0].key, 'KEY-H');
 });
 
+test('t2033: the dialog valve re-parks a held producer from its fallback and reports the park through onDivert once', () => {
+  const { m, PENDING_DIR } = mkPark({ INJECT_HOLD_TIMEOUT: 60_000 });
+  const session = { name: 'b', agentType: 'claude', createdAt: 1_700_000_000_000, needsAttention: { kind: 'permission' } };
+  m.sessions.set('b', session);
+  const diverted = [];
+  session._injectQueue = [{ produce: () => 'PRODUCED', opts: { parkable: true, fallback: () => 'VALVE FALLBACK', onDivert: (why) => diverted.push(why) } }];
+  m._maybeFlushInjectQueue(session, true);
+  clearTimeout(session._injectHoldTimer);
+  assert.deepStrictEqual(session._injectQueue, []);
+  assert.deepStrictEqual(t2033Parked(PENDING_DIR, 'b').map((e) => e.text), ['VALVE FALLBACK']);
+  assert.deepStrictEqual(diverted, ['dialog']);
+});
+
 test('t2033: onUndelivered parks nothing for a seat marked _dropHeld', () => {
   const { InjectQueue } = require('../inject-queue');
   const { m, PENDING_DIR } = mkPark({ InjectQueue });

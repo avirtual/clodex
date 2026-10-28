@@ -3758,8 +3758,7 @@ function createSessionManager(deps) {
       await this.kill(name);
       this._disarmHoldFor(name, holdSid);
       if (!worktree && injectQueue && injectQueue.length) {
-        await this._waitForExit(name);
-        await this._settleInjectQueue(injectQueue);
+        if (await this._waitForExit(name)) await this._settleInjectQueue(injectQueue);
       }
       if (!worktree) { dropRecord(); dropSeatDir(); return { ok: true, live: wasLive }; }
       const keepRecord = () => {
@@ -5008,8 +5007,7 @@ function createSessionManager(deps) {
         this._markDropHeld(s.name);
         await this.kill(s.name);
         if (injectQueue && injectQueue.length) {
-          await this._waitForExit(s.name);
-          await this._settleInjectQueue(injectQueue);
+          if (await this._waitForExit(s.name)) await this._settleInjectQueue(injectQueue);
         }
         this.forgetSeatFiles(s.name, rec);
         this._dropPendingDir(s.name);
@@ -5770,6 +5768,9 @@ function createSessionManager(deps) {
         try {
           parkDelivery(PENDING_DIR, session.name, text, this._nextParkSeq(), opts.parkId || null, false, born, opts.parkKey || null);
           parked++;
+          if (e && typeof e.produce === 'function' && typeof opts.onDivert === 'function') {
+            try { opts.onDivert(session._dead ? 'dead' : 'dialog'); } catch {}
+          }
         } catch (err) {
           log.error('inject', `re-park of a held inject failed for ${session.name}: ${err.message} — ${text.length} chars dropped`);
         }
