@@ -5290,6 +5290,33 @@ test('kill({ respawn: true }) marks the seat so its exit frees no hand-cap slot'
   assert.deepStrictEqual(gone, []);
 });
 
+for (const [label, stop] of [
+  ['kill', (m) => m.kill('seat', { respawn: true })],
+  ['archive', (m) => m.archive('seat')],
+  ['_stopForRespawn', (m) => m._stopForRespawn(m.sessions.get('seat'), 'seat')],
+]) {
+  for (const [exits, want] of [[true, []], [false, [[999, 'SIGKILL']]]]) {
+    test(`the 5 s SIGKILL fallback after ${label} fires only when the pty has not exited: exits=${exits}`, async (t) => {
+      let exitCb = null;
+      const killed = [];
+      const { m, spawn } = mkHintProbe({
+        killPid: (pid, sig) => { killed.push([pid, sig]); },
+        persistenceExtra: { setArchived: () => {} },
+        ptySpawn: () => ({ pid: 999, onData() {}, onExit(cb) { exitCb = cb; }, kill() {} }),
+      });
+      m._handSeatGone = () => {};
+      m._notifyComposition = () => {};
+      await spawn('seat', {});
+      assert.ok(exitCb, 'ENTER: the exit callback was captured');
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      await stop(m);
+      if (exits) exitCb({ exitCode: 0, signal: 15 });
+      t.mock.timers.tick(5000);
+      assert.deepStrictEqual(killed, want);
+    });
+  }
+}
+
 test('a pty that exits synchronously inside its own spawn reports create before exit', async () => {
   const events = [];
   const { m, spawn } = mkHintProbe({
