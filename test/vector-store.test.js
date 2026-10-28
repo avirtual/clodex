@@ -332,3 +332,65 @@ test('vector-store: a crash after the blob rename but before the sidecar rename 
   fs.rmSync(dir, { recursive: true, force: true });
   fs.rmSync(dir2, { recursive: true, force: true });
 });
+
+test('vector-store: a staged sidecar that cannot be renamed at load is still the one served, then flushed', () => {
+  const { dir, file } = mk();
+  seedCrossable(file);
+  const { dir2, file2 } = compactedCopy(file);
+  fs.copyFileSync(file2, file);
+  fs.copyFileSync(sidecarPath(file2), stagedSidecarPath(file));
+
+  const renameFile = (from, to) => {
+    if (from === stagedSidecarPath(file)) throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+    return fs.renameSync(from, to);
+  };
+  const store = createVectorStore({ file, dims: D, model: 'test-model', renameFile });
+  assert.deepStrictEqual(Array.from(store.get('a')), Array.from(CROSS_EXPECT.a));
+  assert.deepStrictEqual(Array.from(store.get('b')), Array.from(CROSS_EXPECT.b));
+  store.flush();
+  fs.rmSync(stagedSidecarPath(file), { force: true });
+  const after = assertOwnOrNull(file);
+  assert.strictEqual(after.size(), 2, 'the flush wrote the staged rows to the main sidecar');
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir2, { recursive: true, force: true });
+});
+
+test('vector-store: a blob read error other than ENOENT is thrown, not read as an empty store', () => {
+  const { dir, file } = mk();
+  seedCrossable(file);
+  const readFile = (p, enc) => {
+    if (p === file) throw Object.assign(new Error('EMFILE'), { code: 'EMFILE' });
+    return fs.readFileSync(p, enc);
+  };
+  const store = createVectorStore({ file, dims: D, model: 'test-model', readFile });
+  assert.throws(() => store.size(), /EMFILE/);
+  assert.strictEqual(createVectorStore({ file, dims: D, model: 'test-model' }).size(), 2);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('vector-store: a blob temp write that fails during compact leaves no temp behind', () => {
+  const { dir, file } = mk();
+  const tmp = `${file}.tmp`;
+  const writeFile = (p, data) => {
+    if (p === tmp) { fs.writeFileSync(p, Buffer.alloc(3)); throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' }); }
+    return fs.writeFileSync(p, data);
+  };
+  const store = seedCrossable(file, { writeFile });
+  assert.throws(() => store.compact(), /ENOSPC/);
+  assert.strictEqual(fs.existsSync(tmp), false);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('vector-store: compact syncs the blob temp and the staged sidecar before renaming either', () => {
+  const { dir, file } = mk();
+  const events = [];
+  const fsyncFile = (p) => { events.push(`sync ${path.basename(p)}`); };
+  const renameFile = (from, to) => { events.push(`rename ${path.basename(from)}`); return fs.renameSync(from, to); };
+  const store = seedCrossable(file, { fsyncFile, renameFile });
+  events.length = 0;
+  store.compact();
+  assert.deepStrictEqual(events, [
+    'sync vec.bin.tmp', 'sync vec.bin.idx.json.next', 'rename vec.bin.tmp', 'rename vec.bin.idx.json.next',
+  ]);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

@@ -11,6 +11,7 @@ const assert = require('node:assert');
 const {
   buildReviewScope, reviewBeginLine, VERDICT_GRAMMAR, budgetEntries, REWORK_BLOCK_BUDGET,
 } = require('../ticket-review-scope');
+const { scanVerdict } = require('../tickets-store');
 const fsReal = require('node:fs');
 const pathReal = require('node:path');
 
@@ -172,11 +173,9 @@ test('the emitted grammar is one _landVerdictOnTicket actually parses', () => {
   // Pins the two halves together: the scope tells the reviewer to write this
   // shape, and the shipped parser must accept what that instruction produces.
   // Divergence here is silent — a well-formed verdict that lands nowhere.
-  const verdictRe = /^[ \t]*(?:[-*][ \t]*)?(?:\*\*|__)?[ \t]*\bVERDICT\b\W*\b(ACCEPT|REWORK)\b/im;
   const sample = VERDICT_GRAMMAR.replace('ACCEPT | REWORK — one line, unambiguous.', 'ACCEPT');
-  const m = verdictRe.exec(sample);
-  assert.ok(m, 'the grammar line as instructed must match the shipped verdict regex');
-  assert.strictEqual(m[1], 'ACCEPT');
+  assert.notStrictEqual(sample, VERDICT_GRAMMAR, 'ENTER: the placeholder was replaced');
+  assert.strictEqual(scanVerdict(sample).verdict, 'ACCEPT', 'the grammar line as instructed must match the shipped verdict parser');
 });
 
 test('the scope tells the reviewer the suite ALREADY RAN and was green', () => {
