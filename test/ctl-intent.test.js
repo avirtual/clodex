@@ -52,12 +52,6 @@ const OPERATOR_ONLY = [
   ['port-forward', 'port-forward hand 8080'],
   ['attach', 'attach hand'],
   ['web', 'web hand'],
-  ['delete node', 'delete node ios'],
-  ['delete node', 'delete --force node ios'],
-  ['delete node', 'delete -o json --force node ios'],
-  ['delete node', 'delete node/ios --force'],
-  ['create node', 'create node ios --tunnel sh -c x {port}:1'],
-  ['create node', 'create -o json node ios --url http://x'],
   ['use', 'use node ios'],
   ['logs --follow', 'logs hand --follow'],
   ['logs --follow', 'logs hand -f'],
@@ -158,11 +152,11 @@ test('the seats tier cannot create a node through the exec path', async () => {
   m._broadcast = () => {};
   await m._handleExecIntent({ ...SEAT }, 'clodex-ctl-seats', JSON.stringify({ ctx: 'ios', verb: 'create', args: "node ios --tunnel sh -c 'touch /tmp/x' {port}:7900" }));
   assert.deepStrictEqual(calls, []);
-  assert.deepStrictEqual(replies, ['[agent:exec] clodex-ctl-seats: ctl: create node is operator-only']);
+  assert.deepStrictEqual(replies, ['[agent:exec] clodex-ctl-seats: ctl: create node is operator-only — a seat may only address its granted context']);
 });
 
 test('ctl refuses --import and a session line carrying --tunnel', async () => {
-  for (const [line, want] of [['create node ios --import --force', 'ctl: create node is operator-only'], ['get sessions --tunnel sh -c x', 'ctl: --tunnel is fixed by the context and cannot be set']]) {
+  for (const [line, want] of [['create node ios --import --force', 'ctl: create node is operator-only — a seat may only address its granted context'], ['get sessions --tunnel sh -c x', 'ctl: --tunnel is fixed by the context and cannot be set']]) {
     const { calls, svc } = fakeCtl();
     const m = mk({ getCtlService: () => svc });
     const replies = [];
@@ -283,4 +277,111 @@ test('restoreSessionsForWorkspace arms the ctl-admin boot sweep once, under the 
   assert.match(body, /spawn\(process\.execPath, \[path\.join\(REGISTRY_DIR, 'bin', 'clodex-ctl-admin\.js'\), '--sweep'\]/);
   assert.match(body, /ELECTRON_RUN_AS_NODE: '1', CLODEX_HOME: REGISTRY_DIR/);
   assert.match(body, /CLODEX_HOME: REGISTRY_DIR },\s*\}\)\.on\('error', \(\) => \{\}\)\.unref\(\);/);
+});
+
+const NODE_LINES = [
+  ['get nodes', 'ctl: get node is operator-only — a seat may only address its granted context'],
+  ['get nodes -o json', 'ctl: get node is operator-only — a seat may only address its granted context'],
+  ['get nodes --versions', 'ctl: get node is operator-only — a seat may only address its granted context'],
+  ['get node ios', 'ctl: get node is operator-only — a seat may only address its granted context'],
+  ['get node/ios', 'ctl: get node is operator-only — a seat may only address its granted context'],
+  ['describe node prod', 'ctl: describe node is operator-only — a seat may only address its granted context'],
+  ['describe node prod --test', 'ctl: describe node is operator-only — a seat may only address its granted context'],
+  ['describe nodes', 'ctl: describe node is operator-only — a seat may only address its granted context'],
+  ['create node ios --url http://x', 'ctl: create node is operator-only — a seat may only address its granted context'],
+  ['create -o json node ios --url http://x', 'ctl: create node is operator-only — a seat may only address its granted context'],
+  ['delete node ios', 'ctl: delete node is operator-only — a seat may only address its granted context'],
+  ['delete --force node ios', 'ctl: delete node is operator-only — a seat may only address its granted context'],
+  ['delete node/ios --force', 'ctl: delete node is operator-only — a seat may only address its granted context'],
+  ['use node ios', 'ctl: use is operator-only'],
+];
+
+test('ctl refuses every node line without calling the service', async () => {
+  assert.strictEqual(NODE_LINES.length, 14);
+  for (const [line, want] of NODE_LINES) {
+    const { calls, svc } = fakeCtl();
+    const m = mk({ getCtlService: () => svc });
+    const replies = [];
+    await m._handleCtlIntent({ ...SEAT }, { ctx: 'ios', line }, (t) => replies.push(t));
+    assert.deepStrictEqual(calls, [], line);
+    assert.deepStrictEqual(replies, [want], line);
+  }
+});
+
+function ctlExecSeat(def, id, svc) {
+  const REGISTRY_DIR = mkTmpRoot('clx-ctl-exec-');
+  const execDir = path.join(REGISTRY_DIR, 'library', 'exec');
+  fs.mkdirSync(execDir, { recursive: true });
+  const filled = { ...def, schema: { ...def.schema, properties: { ...def.schema.properties, ctx: { type: 'string', enum: ['ios'] } } } };
+  fs.writeFileSync(path.join(execDir, `${id}.json`), JSON.stringify(filled));
+  const m = mk({
+    REGISTRY_DIR,
+    getCtlService: () => svc,
+    clampReplyBody,
+    parseAndValidate,
+    resolveTeam: () => null,
+    getPersistence: () => ({ list: () => [], get: () => ({ name: 'a', execCommands: [id] }) }),
+  });
+  const replies = [];
+  m._injectText = (_s, text) => replies.push(text);
+  m._broadcast = () => {};
+  return { m, replies };
+}
+
+const EXEC_NODE_ROWS = [
+  ['get', 'nodes', 'ctl: get node is operator-only — a seat may only address its granted context'],
+  ['get', 'nodes -o json', 'ctl: get node is operator-only — a seat may only address its granted context'],
+  ['get', 'nodes --versions', 'ctl: get node is operator-only — a seat may only address its granted context'],
+  ['get', 'node ios', 'ctl: get node is operator-only — a seat may only address its granted context'],
+  ['describe', 'node prod', 'ctl: describe node is operator-only — a seat may only address its granted context'],
+  ['describe', 'node prod --test', 'ctl: describe node is operator-only — a seat may only address its granted context'],
+  ['describe', 'nodes', 'ctl: describe node is operator-only — a seat may only address its granted context'],
+  ['delete', 'node ios', 'payload.verb'],
+  ['use', 'node ios', 'payload.verb'],
+];
+
+for (const [def, id] of [[READ_DEF, 'clodex-ctl-read'], [SEATS_DEF, 'clodex-ctl-seats']]) {
+  test(`${id} refuses every node line and still answers help node and get sessions`, async () => {
+    assert.strictEqual(EXEC_NODE_ROWS.length, 9);
+    for (const [verb, args, want] of EXEC_NODE_ROWS) {
+      const { calls, svc } = fakeCtl();
+      const { m, replies } = ctlExecSeat(def, id, svc);
+      await m._handleExecIntent({ ...SEAT }, id, JSON.stringify({ ctx: 'ios', verb, args }));
+      assert.deepStrictEqual(calls, [], `${verb} ${args}`);
+      assert.strictEqual(replies.length, 1, `${verb} ${args}`);
+      assert.ok(replies[0].startsWith(`[agent:exec] ${id}: ${want}`), `${verb} ${args}: ${replies[0]}`);
+    }
+    for (const [verb, args] of [['help', 'node'], ['get', 'sessions']]) {
+      const { calls, svc } = fakeCtl();
+      const { m, replies } = ctlExecSeat(def, id, svc);
+      await m._handleExecIntent({ ...SEAT }, id, JSON.stringify({ ctx: 'ios', verb, args }));
+      await new Promise((r) => setImmediate(r));
+      assert.deepStrictEqual(calls, [`--ctx ios ${verb} ${args}`]);
+      assert.deepStrictEqual(replies, ['[agent:exec] ' + id + ': [ctl ios exit 0] NAME  STATE\nhand  idle']);
+    }
+  });
+}
+
+test('a refused seat node line never reaches dispatchNode on a real ctl service', async (t) => {
+  const { createCtlService } = require('../ctl-service');
+  const cliMain = require('../cli/src/main');
+  const real = cliMain.dispatchNode;
+  const dialed = [];
+  cliMain.dispatchNode = async (verb, rest) => { dialed.push([verb, ...rest].join(' ')); return 0; };
+  t.after(() => { cliMain.dispatchNode = real; });
+  const dir = mkTmpRoot('clx-ctl-node-');
+  const svc = createCtlService({
+    contextsFile: path.join(dir, 'contexts.json'), env: { CLODEX_DATA_DIR: dir },
+    openTransport: () => { throw new Error('DIALED'); },
+  });
+  t.after(() => svc.dispose());
+  const m = mk({ getCtlService: () => svc, clampReplyBody });
+  for (const line of ['get nodes -o json', 'describe node prod --test']) {
+    const replies = [];
+    await m._handleCtlIntent({ ...SEAT }, { ctx: 'ios', line }, (r) => replies.push(r));
+    assert.match(replies[0], /^ctl: \w+ node is operator-only/, line);
+  }
+  assert.deepStrictEqual(dialed, []);
+  await svc.run('get nodes');
+  assert.deepStrictEqual(dialed, ['get nodes'], 'the stub is the path an operator node line takes');
 });

@@ -505,7 +505,6 @@ const CTL_REPLY_MAX_BYTES = 12000;
 const CTL_REPLY_WAIT_MS = 30000;
 const CTL_OPERATOR_ONLY = new Set(['input', 'exec', 'deploy', 'undeploy', 'upgrade', 'port-forward', 'attach', 'web', 'use']);
 const CTL_PINNED_FLAGS = new Set(['ctx', 'url', 'token', 'ssh', 'remote-port', 'remotePort', 'tunnel']);
-const CTL_NODE_WRITES = new Set(['create', 'delete', 'use']);
 
 function ctlRefusal(tokens, parsed) {
   const verb = tokens[0];
@@ -515,7 +514,7 @@ function ctlRefusal(tokens, parsed) {
   const { flags, isNodeLine } = parsed;
   const pos = flags._;
   if (pos[0] !== verb) return 'ctl: put the verb first, flags after it';
-  if (CTL_NODE_WRITES.has(verb) && isNodeLine(verb, pos.slice(1))) return `ctl: ${verb} node is operator-only`;
+  if (isNodeLine(verb, pos.slice(1))) return `ctl: ${verb} node is operator-only — a seat may only address its granted context`;
   if (verb === 'logs' && (flags.follow || tokens.some((t) => t === '--follow' || t.startsWith('--follow=') || /^-[A-Za-z]*f[A-Za-z]*$/.test(t)))) {
     return 'ctl: logs --follow is operator-only';
   }
