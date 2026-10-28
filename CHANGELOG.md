@@ -14,7 +14,7 @@ blocks a release.
 
 ## Unreleased
 
-- `scripts/pre-release-review.sh` pushes master HEAD to a `staging` branch and runs the cloud reviewer on `<lastTag>..staging` against the `## Unreleased` notes, so a finding is fixed before any version bump, DMG build or image publish; its issue is titled `Pre-release review staging-<sha>: …`. The post-release review is unchanged.
+- `scripts/pre-release-review.sh` pushes master HEAD to a `staging` branch and runs the cloud reviewer on `<lastTag>..staging` against the `## Unreleased` notes, so a finding is fixed before any version bump, DMG build or image publish; its issue is titled `Pre-release review staging-<sha>: …`. The post-release review is unchanged. A CLEAN pre-release review leaves a marker for the reviewed commit, and `CLODEX_RELEASE_NO_REVIEW=1` skips the post-release review only while HEAD is that commit.
 - Fixed: a review verdict whose sections all sit on the VERDICT line (`**VERDICT**: REWORK … **MUST-FIX**: … **NITS**: …`) now has its must-fixes extracted and counted (the line is unfolded only when no other line carries a section header, so a header mentioned in prose on the VERDICT line of a normal verdict is not a second header; inline `(1) … (2) …` items are counted as two; a paragraph soft-wrapped onto further lines is still not unfolded); before, the lead's notice said "no must-fixes" and the hand was told the verdict named none. A REWORK whose must-fixes still cannot be extracted now says so in the notice instead of "no must-fixes".
 - Erratum (5.150.5): the `time --` bullet said `clodex-send` was "stamped again"; only a `case` opened after `time --` was. `time -- clodex-send x` and `time -p -- clodex-send x` are now stamped, as parse.y's TIMEIGN rule reads.
 

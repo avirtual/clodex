@@ -504,6 +504,28 @@ test('release e2e: gh failing 3x keeps the notes, publishes the image, and names
   } finally { fx.cleanup(); }
 });
 
+test('release e2e: CLODEX_RELEASE_NO_REVIEW=1 without a CLEAN pre-release marker for HEAD dies before any release', () => {
+  const fx = releaseFixture();
+  try {
+    const res = fx.run({ CLODEX_RELEASE_NO_REVIEW: '1' });
+    assert.notStrictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.match(res.stderr, /no CLEAN pre-release review covers HEAD/);
+    assert.ok(!/^gh release create /m.test(res.calls), res.calls);
+  } finally { fx.cleanup(); }
+});
+
+test('release e2e: CLODEX_RELEASE_NO_REVIEW=1 with the CLEAN marker for HEAD releases and names the review', () => {
+  const fx = releaseFixture();
+  try {
+    const logs = path.join(fx.home, '.clodex', 'logs');
+    fs.mkdirSync(logs, { recursive: true });
+    fs.writeFileSync(path.join(logs, `prerelease-clean-${fx.g('rev-parse', 'HEAD').trim()}`), 'Pre-release review staging-x: CLEAN\n');
+    const res = fx.run({ CLODEX_RELEASE_NO_REVIEW: '1' });
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.match(res.stdout, /pre-release review CLEAN for HEAD: Pre-release review staging-x: CLEAN/);
+  } finally { fx.cleanup(); }
+});
+
 test('release e2e: a failed push dies naming git push origin master <tag>', () => {
   const fx = releaseFixture();
   try {

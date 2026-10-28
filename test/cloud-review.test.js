@@ -98,7 +98,7 @@ test('cloud-review: a release launch checks out the new tag and verifies its ver
 
 const PRE = path.join(__dirname, '..', 'scripts', 'pre-release-review.sh');
 
-function runPreRelease({ dirty = false, statusFails = false, env = {} } = {}) {
+function runPreRelease({ dirty = false, statusFails = false, behind = 0, env = {} } = {}) {
   return withStub(RECORD, ({ dir, stub, rec }) => {
     const git = path.join(dir, 'git');
     const calls = path.join(dir, 'git-calls');
@@ -109,6 +109,8 @@ function runPreRelease({ dirty = false, statusFails = false, env = {} } = {}) {
       `  status) ${statusFails ? 'exit 1' : dirty ? "printf ' M x\\n'" : ':'} ;;`,
       '  branch) echo master ;;',
       '  describe) echo v1.0.0 ;;',
+      '  fetch) : ;;',
+      `  rev-list) echo ${behind} ;;`,
       '  rev-parse) case "$2" in --short=8) echo deadbeef ;; *) echo deadbeef00112233445566778899aabbccddeeff ;; esac ;;',
       'esac',
       '',
@@ -160,6 +162,14 @@ test('pre-release-review: an exported CLODEX_RELEASE_NO_REVIEW=1 still launches 
   assert.strictEqual(res.status, 0, res.stderr);
   assert.doesNotMatch(res.stdout, /skipped/);
   assert.ok(argv && argv.includes('.review/staging-deadbeef.md'), String(argv));
+});
+
+test('pre-release-review: a master behind origin exits non-zero and pushes nothing', () => {
+  const { res, gitCalls } = runPreRelease({ behind: 2 });
+  assert.notStrictEqual(res.status, 0);
+  assert.match(res.stderr, /behind origin\/master/);
+  assert.ok(gitCalls.includes('rev-list --count HEAD..@{u}'), gitCalls.join('\n'));
+  assert.ok(!gitCalls.some((c) => c.startsWith('push')), gitCalls.join('\n'));
 });
 
 test('pre-release-review: a failed git status exits non-zero and pushes nothing', () => {
@@ -356,7 +366,12 @@ function runPoller({ hitAfter, report, env, ghFails = 0, fetchFails = 0, lsSleep
     const body = fs.existsSync(path.join(dir, 'body')) ? fs.readFileSync(path.join(dir, 'body'), 'utf-8') : null;
     const logFile = path.join(dir, '.clodex', 'logs', 'cloud-review-v1.1.0.log');
     const log = fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf-8') : '';
-    return { out: res.stdout, status: res.status, log, calls: fs.readFileSync(calls, 'utf-8').split('\n').filter(Boolean), body };
+    const logsDir = path.join(dir, '.clodex', 'logs');
+    const markers = {};
+    if (fs.existsSync(logsDir)) {
+      for (const f of fs.readdirSync(logsDir)) if (f.startsWith('prerelease-clean-')) markers[f] = fs.readFileSync(path.join(logsDir, f), 'utf-8');
+    }
+    return { out: res.stdout, status: res.status, log, calls: fs.readFileSync(calls, 'utf-8').split('\n').filter(Boolean), body, markers };
   } finally {
     killMatching(dir);
     fs.rmSync(dir, { recursive: true, force: true });
@@ -395,6 +410,33 @@ test('cloud-review-post: CLODEX_REVIEW_PREFIX sets the title prefix and a CLEAN 
   const close = calls.indexOf('gh [issue] [close] [https://github.com/avirtual/clodex/issues/7] [-R] [avirtual/clodex]');
   assert.ok(create >= 0, calls.join('\n'));
   assert.ok(close > create, calls.join('\n'));
+});
+
+test('cloud-review-post: a CLEAN pre-release report with CLODEX_REVIEW_SHA leaves the marker named by the full sha', () => {
+  const { calls, markers } = runPoller({
+    hitAfter: 1, report: 'Pre-release review staging-deadbeef: CLEAN\n\nok\n',
+    env: { CLODEX_REVIEW_PREFIX: 'Pre-release review staging-deadbeef:', CLODEX_REVIEW_SHA: 'deadbeef00112233445566778899aabbccddeeff' },
+  });
+  assert.ok(calls.some((c) => c.startsWith('gh [issue] [close]')), calls.join('\n'));
+  assert.deepStrictEqual(markers, { 'prerelease-clean-deadbeef00112233445566778899aabbccddeeff': 'Pre-release review staging-deadbeef: CLEAN\n' });
+});
+
+test('cloud-review-post: a CLEAN report without CLODEX_REVIEW_SHA leaves no marker', () => {
+  const { calls, markers } = runPoller({
+    hitAfter: 1, report: 'Pre-release review staging-deadbeef: CLEAN\n\nok\n',
+    env: { CLODEX_REVIEW_PREFIX: 'Pre-release review staging-deadbeef:', CLODEX_REVIEW_SHA: '' },
+  });
+  assert.ok(calls.some((c) => c.startsWith('gh [issue] [close]')), calls.join('\n'));
+  assert.deepStrictEqual(markers, {});
+});
+
+test('cloud-review-post: a non-CLEAN pre-release report leaves no marker', () => {
+  const { calls, markers } = runPoller({
+    hitAfter: 1, report: 'Pre-release review staging-deadbeef: 2 findings\n\nbad\n',
+    env: { CLODEX_REVIEW_PREFIX: 'Pre-release review staging-deadbeef:', CLODEX_REVIEW_SHA: 'deadbeef00112233445566778899aabbccddeeff' },
+  });
+  assert.ok(calls.some((c) => c.startsWith('gh [issue] [create]')), calls.join('\n'));
+  assert.deepStrictEqual(markers, {});
 });
 
 test('cloud-review-post: no report before the timeout opens NO REPORT and deletes nothing', () => {

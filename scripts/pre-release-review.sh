@@ -13,6 +13,8 @@ unset CLODEX_RELEASE_NO_REVIEW
 ST="$("$GIT" status --porcelain)" || die "git status failed"
 [ -z "$ST" ] || die "working tree not clean"
 [ "$("$GIT" branch --show-current)" = master ] || die "not on master"
+"$GIT" fetch -q origin master || die "git fetch failed"
+[ "$("$GIT" rev-list --count HEAD..@{u})" = 0 ] || die "local master is behind origin/master — pull first"
 "$GH" auth status >/dev/null 2>&1 || die "gh is not authenticated"
 PREV="$("$GIT" describe --tags --abbrev=0 2>/dev/null || true)"
 [ -n "$PREV" ] || die "no previous tag to review from"

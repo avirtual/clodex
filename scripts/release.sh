@@ -84,6 +84,12 @@ BEHIND="$(git rev-list --count HEAD..@{u})" || die "could not compare with origi
 [ "$BEHIND" = "0" ] \
   || die "local master is $BEHIND commit(s) BEHIND origin/master — pull first, or the release would ship without them"
 
+if [ "${CLODEX_RELEASE_NO_REVIEW:-}" = 1 ]; then
+  MARK="$HOME/.clodex/logs/prerelease-clean-$(git rev-parse HEAD)"
+  [ -f "$MARK" ] || die "CLODEX_RELEASE_NO_REVIEW=1 but no CLEAN pre-release review covers HEAD $(git rev-parse --short=8 HEAD) — run scripts/pre-release-review.sh and wait for its CLEAN issue, or release with the post-release review"
+  say "pre-release review CLEAN for HEAD: $(cat "$MARK")"
+fi
+
 # web-dist staleness guard (T42): the prebuilt browser bundle is TRACKED, so a
 # release must ship a bundle built from the current sources. Rebuild it here —
 # BEFORE the dirty-tree check below — so a stale web-dist/index.html dirties the
