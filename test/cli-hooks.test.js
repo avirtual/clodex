@@ -1383,7 +1383,7 @@ test('cleanupCodexHook: a failing backup restore does not throw out of the teard
   assert.doesNotThrow(() => h.cleanupCodexHook('cy', cwd));
 });
 
-test('pending drain: an orphaned claim dir left by a dead drainer is delivered, not stranded', () => {
+test('pending drain: an orphaned claim dir at the LEGACY root location is delivered, not stranded', () => {
   const REGISTRY_DIR = tmp();
   const h = mk(REGISTRY_DIR);
   h.setupClaudeHook('orph');
@@ -1396,11 +1396,42 @@ test('pending drain: an orphaned claim dir left by a dead drainer is delivered, 
   assert.ok(!fs.existsSync(orphan));
 });
 
+test('pending drain: an orphaned claim dir under .claims/ is delivered, not stranded', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('orph2');
+  const orphan = path.join(REGISTRY_DIR, 'pending', '.claims', 'orph2.draining.hook.999999');
+  fs.mkdirSync(orphan, { recursive: true });
+  fs.writeFileSync(path.join(orphan, 'm0.json'), JSON.stringify({ text: 'stranded' }));
+  assert.throws(() => process.kill(999999, 0));
+  const out = runPending(REGISTRY_DIR, 'orph2', JSON.stringify({ hook_event_name: 'UserPromptSubmit' }));
+  assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, /stranded/);
+  assert.deepStrictEqual(fs.readdirSync(path.join(REGISTRY_DIR, 'pending', '.claims')), []);
+});
+
+test('pending drain: the hook claims into .claims/ and leaves a look-alike seat alone', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('a');
+  const src = fs.readFileSync(pathFor(REGISTRY_DIR, 'a', 'pendingScript'), 'utf-8');
+  assert.ok(src.includes(`claim = claim_path(path.basename(d) + '.draining.hook.' + process.pid);`));
+  const pend = path.join(REGISTRY_DIR, 'pending');
+  for (const [seat, text] of [['a', 'for a'], ['a.draining.99999', 'other seat']]) {
+    fs.mkdirSync(path.join(pend, seat), { recursive: true });
+    fs.writeFileSync(path.join(pend, seat, 'm0.json'), JSON.stringify({ text }));
+  }
+  assert.throws(() => process.kill(99999, 0));
+  const out = runPending(REGISTRY_DIR, 'a', JSON.stringify({ hook_event_name: 'UserPromptSubmit' }));
+  assert.strictEqual(JSON.parse(out).hookSpecificOutput.additionalContext, 'for a');
+  assert.deepStrictEqual(fs.readdirSync(path.join(pend, 'a.draining.99999')), ['m0.json']);
+  assert.deepStrictEqual(fs.readdirSync(path.join(pend, '.claims')), []);
+});
+
 test("pending drain: a LIVE drainer's claim dir is left alone", () => {
   const REGISTRY_DIR = tmp();
   const h = mk(REGISTRY_DIR);
   h.setupClaudeHook('busy');
-  const claim = path.join(REGISTRY_DIR, 'pending', 'busy.draining.idle.' + process.pid);
+  const claim = path.join(REGISTRY_DIR, 'pending', '.claims', 'busy.draining.idle.' + process.pid);
   fs.mkdirSync(claim, { recursive: true });
   fs.writeFileSync(path.join(claim, 'm0.json'), JSON.stringify({ text: 'mid-drain' }));
   const out = runPending(REGISTRY_DIR, 'busy', JSON.stringify({ hook_event_name: 'UserPromptSubmit' }));
