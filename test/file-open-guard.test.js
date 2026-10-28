@@ -2,12 +2,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 const { registerIpcHandlers } = require('../ipc-handlers');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 
 function fixture(t) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clx-file-open-'));
+  const dir = mkTmpRoot('clx-file-open-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const handlers = new Map();
   const opened = [];
