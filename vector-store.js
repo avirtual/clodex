@@ -40,14 +40,16 @@ const BYTES_PER_DIM = 4;
 const SIDECAR_VERSION = 1;
 
 function sidecarPath(file) { return `${file}.idx.json`; }
+function stagedSidecarPath(file) { return `${sidecarPath(file)}.next`; }
 
-function readSidecar(file, readFile) {
+function readSidecar(p, readFile) {
   try {
-    const o = JSON.parse(readFile(sidecarPath(file), 'utf-8'));
+    const o = JSON.parse(readFile(p, 'utf-8'));
     if (!o || o.version !== SIDECAR_VERSION) return null;
     if (!Number.isInteger(o.dims) || o.dims <= 0) return null;
     if (!o.rows || typeof o.rows !== 'object') return null;
-    return { dims: o.dims, model: o.model || '', rows: new Map(Object.entries(o.rows)) };
+    const blobBytes = Number.isInteger(o.blobBytes) ? o.blobBytes : null;
+    return { dims: o.dims, model: o.model || '', blobBytes, rows: new Map(Object.entries(o.rows)) };
   } catch { return null; }
 }
 
@@ -56,8 +58,9 @@ function readSidecar(file, readFile) {
 function createVectorStore({
   file, dims, model = '',
   readFile = fs.readFileSync, writeFile = fs.writeFileSync,
-  appendFile = fs.appendFileSync, statFile = fs.statSync,
+  appendFile = fs.appendFileSync, statFile = fs.statSync, renameFile = fs.renameSync,
 } = {}) {
+  const rowBytes = dims * BYTES_PER_DIM;
   let sidecar = null;
   let blob = null;      // Float32Array view over the whole file
   let rowCount = 0;
@@ -66,7 +69,10 @@ function createVectorStore({
   function loadBlob() {
     let raw;
     try { raw = readFile(file); } catch { return new Float32Array(0); }
-    const whole = Math.floor(raw.length / (dims * BYTES_PER_DIM));
+    const whole = Math.floor(raw.length / rowBytes);
+    if (raw.length !== whole * rowBytes) {
+      try { fs.truncateSync(file, whole * rowBytes); } catch {}
+    }
     // A TORN TAIL IS DISCARDED, NOT MERGED. A crash mid-append leaves a partial
     // row; reading it as a vector yields a plausible-looking direction built
     // from whatever bytes landed, which is worse than losing the record.
@@ -82,17 +88,29 @@ function createVectorStore({
     return new Float32Array(copy.buffer, copy.byteOffset, usable);
   }
 
+  function adoptStagedSidecar(blobBytes) {
+    const staged = stagedSidecarPath(file);
+    if (!fs.existsSync(staged)) return;
+    const next = readSidecar(staged, readFile);
+    try {
+      if (next && next.blobBytes === blobBytes) renameFile(staged, sidecarPath(file));
+      else fs.unlinkSync(staged);
+    } catch {}
+  }
+
   function load() {
     if (sidecar) return;
-    sidecar = readSidecar(file, readFile) || { dims, model, rows: new Map() };
+    blob = loadBlob();
+    adoptStagedSidecar(blob.length * BYTES_PER_DIM);
+    sidecar = readSidecar(sidecarPath(file), readFile) || { dims, model, rows: new Map() };
     // A sidecar written for different dimensions or a different model cannot be
     // reconciled with the current one — every row is in the wrong space. Start
     // over rather than mix two vector spaces in one file.
     if (sidecar.dims !== dims || (model && sidecar.model && sidecar.model !== model)) {
       sidecar = { dims, model, rows: new Map() };
       try { writeFile(file, Buffer.alloc(0)); } catch { /* recreated on first append */ }
+      blob = loadBlob();
     }
-    blob = loadBlob();
     rowCount = Math.floor(blob.length / dims);
     // The sidecar can outlive its blob (blob deleted, sidecar kept) or point
     // past a truncated one. Any row beyond what the blob actually holds is
@@ -100,6 +118,13 @@ function createVectorStore({
     for (const [k, r] of [...sidecar.rows]) {
       if (!Number.isInteger(r) || r < 0 || r >= rowCount) sidecar.rows.delete(k);
     }
+  }
+
+  function serializeSidecar(rows, count) {
+    return JSON.stringify({
+      version: SIDECAR_VERSION, dims, model, blobBytes: count * rowBytes,
+      rows: Object.fromEntries(rows),
+    });
   }
 
   function flushSidecar() {
@@ -110,11 +135,8 @@ function createVectorStore({
       // leaves either the old sidecar or the new one, never a half-parsed file
       // that invalidates the whole blob.
       const tmp = `${sidecarPath(file)}.tmp`;
-      writeFile(tmp, JSON.stringify({
-        version: SIDECAR_VERSION, dims, model,
-        rows: Object.fromEntries(sidecar.rows),
-      }));
-      fs.renameSync(tmp, sidecarPath(file));
+      writeFile(tmp, serializeSidecar(sidecar.rows, rowCount));
+      renameFile(tmp, sidecarPath(file));
       pendingRows = 0;
     } catch { /* an unflushed sidecar costs a re-embed, never a wrong answer */ }
   }
@@ -145,7 +167,10 @@ function createVectorStore({
       try {
         fs.mkdirSync(path.dirname(file), { recursive: true });
         appendFile(file, Buffer.from(f32.buffer, f32.byteOffset, f32.length * BYTES_PER_DIM));
-      } catch { return false; }
+      } catch {
+        try { fs.truncateSync(file, rowCount * rowBytes); } catch {}
+        return false;
+      }
       // The in-memory view does not grow with the file, so re-read rather than
       // hand back a stale blob on the next get().
       const row = rowCount;
@@ -197,6 +222,7 @@ function createVectorStore({
       const live = [...sidecar.rows.entries()];
       if (!live.length) return { before: rowCount, after: 0, reclaimed: rowCount };
       const before = rowCount;
+      if (live.length === before) return { before, after: before, reclaimed: 0 };
       const buf = Buffer.allocUnsafe(live.length * dims * BYTES_PER_DIM);
       const next = new Map();
       live.forEach(([key, row], i) => {
@@ -207,13 +233,25 @@ function createVectorStore({
       // Same temp-then-rename discipline as the sidecar: a crash here must not
       // leave a blob that is half old rows and half new.
       const tmp = `${file}.tmp`;
+      const staged = stagedSidecarPath(file);
       writeFile(tmp, buf);
-      fs.renameSync(tmp, file);
+      try {
+        writeFile(staged, serializeSidecar(next, live.length));
+        renameFile(tmp, file);
+      } catch (e) {
+        try { fs.unlinkSync(staged); } catch {}
+        try { fs.unlinkSync(tmp); } catch {}
+        throw e;
+      }
       sidecar.rows = next;
-      pendingRows = live.length;
-      flushSidecar();
-      blob = loadBlob();
       rowCount = live.length;
+      blob = loadBlob();
+      try {
+        renameFile(staged, sidecarPath(file));
+        pendingRows = 0;
+      } catch {
+        pendingRows = live.length;
+      }
       return { before, after: rowCount, reclaimed: before - rowCount };
     },
 
@@ -228,4 +266,4 @@ function createVectorStore({
   };
 }
 
-module.exports = { createVectorStore, sidecarPath, SIDECAR_VERSION, BYTES_PER_DIM };
+module.exports = { createVectorStore, sidecarPath, stagedSidecarPath, SIDECAR_VERSION, BYTES_PER_DIM };

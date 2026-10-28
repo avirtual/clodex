@@ -18,6 +18,8 @@ blocks a release.
 - The legacy claim-shape seat-name reservation (`.resend.*`, `*.draining.<kind>.<pid>`) is case-insensitive like `.claims`.
 - **Security:** `clodexctl upgrade node` on a helm context whose release name differs from the context name updates that context instead of overwriting (and losing the token of) an unrelated context named after the release; `deploy node --helm` takes `--ctx <name>` to save under a name other than the release.
 - `clodexctl undeploy node` (helm and docker) removes only the contexts that point at the torn-down release or container, so a same-named context for another node keeps its token.
+- The embeddings store truncates a torn tail left by a crash mid-append instead of appending after it, and a crash during compaction can no longer leave the index pointing into another record's vector.
+- A memory unit is written atomically, and a store write that fails mid-way (full disk) no longer leaves a temp file beside the store.
 
 ## 5.149.0 — 2026-10-28 — clodexctl reaps its tunnel on exit, create node takes a token file, worktree-safe workspace deletes
 

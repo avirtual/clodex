@@ -165,7 +165,7 @@ function createMemoryStore(rootDir) {
       if (String(tags || '').trim()) meta.tags = String(tags).trim();
       if (pinned) meta.pinned = 'true';
       if (operatorPinned) meta.operator_pinned = 'true';
-      fs.writeFileSync(this._file(agent, id), serializeMemoryUnit(meta, body), { mode: 0o600 });
+      atomicWriteFileSync(this._file(agent, id), serializeMemoryUnit(meta, body));
       const { operator_pinned: _op, ...shown } = meta;
       return { id, ...shown, pinned: !!pinned, operatorPinned: !!operatorPinned, body };
     },

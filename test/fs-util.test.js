@@ -34,6 +34,18 @@ test('atomicWriteFileSync: writes content and leaves no temp file behind', () =>
   fs.rmSync(base, { recursive: true, force: true });
 });
 
+test('atomicWriteFileSync: a write that fails mid-way rethrows and leaves no temp file', (t) => {
+  const base = tmpDir();
+  const target = path.join(base, 'store.json');
+  atomicWriteFileSync(target, 'old');
+  t.mock.method(fs, 'writeSync', () => { throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' }); });
+  assert.throws(() => atomicWriteFileSync(target, 'new'), /ENOSPC/);
+  t.mock.restoreAll();
+  assert.deepStrictEqual(fs.readdirSync(base).filter(f => f.startsWith('.store.json.tmp.')), []);
+  assert.strictEqual(fs.readFileSync(target, 'utf8'), 'old');
+  fs.rmSync(base, { recursive: true, force: true });
+});
+
 test('atomicWriteFileSync: overwrites atomically (previous content fully replaced)', () => {
   const base = tmpDir();
   const target = path.join(base, 'f.txt');
