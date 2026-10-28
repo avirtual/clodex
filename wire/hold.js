@@ -66,6 +66,7 @@ const DEFAULTS = {
   maxPings: 24, // ping budget per anchor  (WARMTH_HOLD_MAX_PINGS)
   maxFailures: 2, // consecutive FAILURES (not declines) -> disarm
   urgentIntervalSeconds: 15,
+  requestTimeoutMs: 30_000,
 };
 
 // One tick's verdict for an armed session — PURE (offline-testable).
@@ -159,7 +160,7 @@ function rearmPlan(holdUntil, nowMs, always = false) {
 // Minimal JSON POST on node http/https — injectable (opts.request) so
 // tests never open sockets. Resolves { status, headers, body:Buffer };
 // rejects on transport errors only (HTTP error statuses resolve).
-function postJson(urlString, headers, bodyBuf) {
+function postJson(urlString, headers, bodyBuf, timeoutMs = DEFAULTS.requestTimeoutMs) {
   return new Promise((resolve, reject) => {
     let u;
     try { u = new URL(urlString); } catch (e) { return reject(e); }
@@ -170,6 +171,7 @@ function postJson(urlString, headers, bodyBuf) {
       res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
       res.on('error', reject);
     });
+    req.setTimeout(timeoutMs, () => req.destroy(new Error('timeout')));
     req.on('error', reject);
     req.end(bodyBuf);
   });
@@ -192,7 +194,7 @@ class HoldKeeper extends EventEmitter {
     if (!opts.warmth) throw new Error('HoldKeeper needs a WarmthStore');
     this.warmth = opts.warmth;
     this._now = opts.now || (() => Date.now() / 1000);
-    this._request = opts.request || postJson;
+    this._request = opts.request || ((u, h, b) => postJson(u, h, b, this.requestTimeoutMs));
     this._auth = opts.auth || readClaudeAuth;
     this._configDirFor = opts.configDirFor || (() => null);
     this._entryStore = opts.entryStore || null;

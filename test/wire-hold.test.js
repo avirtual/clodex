@@ -867,6 +867,33 @@ test('ping: a session no seat record owns DECLINES instead of borrowing the defa
   assert.deepEqual(pingOutcome(res), ['decline', 'declined:no-account']);
 });
 
+test('ping: an upstream that accepts and never answers times out as a transport decline', async (t) => {
+  const sockets = new Set();
+  const server = http.createServer(() => {});
+  server.on('connection', (sock) => sockets.add(sock));
+  t.after(() => { for (const sock of sockets) sock.destroy(); server.close(); });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${server.address().port}/v1/messages`;
+
+  const clock = { t: 1_000_000 };
+  const store = new WarmthStore({ now: () => clock.t });
+  const keeper = new HoldKeeper({ warmth: store, now: () => clock.t, requestTimeoutMs: 50, marginSeconds: 100 });
+  const obj = makeObj();
+  keeper.noteRequest(SID, obj, {}, url);
+  stampWarm(store, obj);
+  keeper.arm(SID, 1);
+  const pings = [];
+  keeper.on('hold', (e) => { if (e.event === 'ping') pings.push(e.result); });
+
+  clock.t += 250;
+  await keeper.tick();
+  assert.equal(pings.length, 1, 'ENTER: the tick pinged and settled');
+  assert.equal(pings[0].status_code, null);
+  assert.match(pings[0].reason, /timeout/);
+  assert.deepEqual(pingOutcome(pings[0]), ['decline', 'declined:transport']);
+  assert.equal(keeper._inTick, false, 'the keeper is free for the next tick');
+});
+
 test('keychainServiceFor derives the CLI\'s suffixed item name', () => {
   const { keychainServiceFor, readClaudeAuth } = require('../wire/claude-auth');
 
