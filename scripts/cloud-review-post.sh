@@ -28,7 +28,7 @@ nonneg "$TIMEOUT_S" || TIMEOUT_S=7200
 
 BRANCH="claude/review-$TAG"
 REF="refs/clodex-review/$TAG"
-PREFIX="Release review $TAG:"
+PREFIX="${CLODEX_REVIEW_PREFIX:-Release review $TAG:}"
 LOG="$HOME/.clodex/logs/cloud-review-$TAG.log"
 
 TMP="$(mktemp -d)"

@@ -31,7 +31,29 @@ if ! command -v script >/dev/null 2>&1; then
   exit 0
 fi
 
+REVIEW_REF="${CLODEX_REVIEW_REF:-}"
+PREFIX="${CLODEX_REVIEW_PREFIX:-Release review $NEW:}"
+if [ -z "$REVIEW_REF" ]; then
+  CHECKOUT="git checkout $NEW"
+  SECTION="the $NEW section of CHANGELOG.md (its heading is \`## <version> — <date>\`, the version being $NEW without its leading \`v\`)"
+  RANGE="$PREV..$NEW"
+else
+  REVIEW_SHA="${CLODEX_REVIEW_SHA:-}"
+  if [ -z "$REVIEW_SHA" ]; then
+    printf 'cloud-review: CLODEX_REVIEW_REF needs CLODEX_REVIEW_SHA\n' >&2
+    exit 1
+  fi
+  CHECKOUT="git fetch origin $REVIEW_REF && git checkout $REVIEW_SHA"
+  SECTION="the \`## Unreleased\` section of CHANGELOG.md (its bullets are the candidate release notes; the heading has no version yet)"
+  RANGE="$PREV..$REVIEW_SHA"
+fi
+
+shopt -u patsub_replacement 2>/dev/null || true
 BRIEF="$(cat "$ROOT/scripts/cloud-review-brief.md")"
+BRIEF="${BRIEF//\{\{CHECKOUT\}\}/$CHECKOUT}"
+BRIEF="${BRIEF//\{\{SECTION\}\}/$SECTION}"
+BRIEF="${BRIEF//\{\{RANGE\}\}/$RANGE}"
+BRIEF="${BRIEF//\{\{PREFIX\}\}/$PREFIX}"
 BRIEF="${BRIEF//\{\{PREV\}\}/$PREV}"
 BRIEF="${BRIEF//\{\{NEW\}\}/$NEW}"
 
