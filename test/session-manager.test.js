@@ -16843,6 +16843,36 @@ test('t168 rework: a draft opening between the idle enqueue and the fire leaves 
     'and their resend handles survive — the divert re-parks with no id, so a resend would resolve to nothing');
 });
 
+test('t2035 an idle or boot drain fired while the previous turn has not started claims nothing; once it has, it claims', async () => {
+  for (const drain of ['_drainPendingAtIdle', '_drainPendingAtBootReady']) {
+    const { m, PENDING_DIR, fireData, getSession } = mkOnDataProbe({ INJECT_QUIET_MAXWAIT: 60_000 });
+    const name = `churn-${drain.length}`;
+    await bashCreate(m, name, null);
+    const s = getSession(name);
+    const writes = [];
+    s.pty = { write: (b) => writes.push(b) };
+    s.agentType = 'claude';
+    parkDelivery(PENDING_DIR, name, '[agent:from lead] first', '100.1', 'pk1');
+    parkDelivery(PENDING_DIR, name, '[agent:from lead] second', '100.2', 'pk2');
+    fireData('\x1b[?2004h');
+    s._bootReadySeen = false;
+    s.lastUserInputTs = 0; s.lastUserSubmitTs = 0;
+    m[drain](s);
+    assert.strictEqual(m._injectQueueFor(s).length, 1, `ENTER: ${drain} reached the queue`);
+    s._awaitingTurnSince = Date.now();
+    s._bootReadySeen = true;
+    await new Promise((r2) => setTimeout(r2, 400));
+    assert.deepStrictEqual(writes, [], `${drain}: nothing written while the turn start is pending`);
+    assert.strictEqual(countPendingReal(PENDING_DIR, name), 2, `${drain}: both entries still parked separately`);
+    assert.ok(parkIdInUse(PENDING_DIR, 'pk1') && parkIdInUse(PENDING_DIR, 'pk2'), `${drain}: resend ids survive`);
+    s._awaitingTurnSince = null;
+    m[drain](s);
+    await new Promise((r2) => setTimeout(r2, 400));
+    assert.strictEqual(countPendingReal(PENDING_DIR, name), 0, `${drain}: claimed once the turn started`);
+    assert.ok(writes.join('').includes('second'), `${drain}: and written`);
+  }
+});
+
 // The HOLD branch is the longest-lived window a producer can sit in — a compact
 // or a permission dialog lasts as long as the operator does, not a poll tick —
 // so it is where an eager claim costs the most. Two separate places could

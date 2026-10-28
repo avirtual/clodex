@@ -5819,11 +5819,10 @@ function createSessionManager(deps) {
       if (this._anyDraftOpen(session)) return;
       if (!hasActivePending(PENDING_DIR, session.name)) return;
       this._injectText(session, '', {
-        parkable: true,
         parkKey: session.io === 'stream' ? PENDING_DRAIN_KEY : null,
         produce: () => {
           if (session._dead) return null;
-          if (this._anyDraftOpen(session)) return null;
+          if (this._anyDraftOpen(session) || this._turnStartPending(session)) return null;
           let texts = [];
           try { texts = drainPending(PENDING_DIR, session.name, `idle.${process.pid}`, this._bornFor(session.name)); } catch { return null; }
           if (!texts.length) {
@@ -5853,7 +5852,7 @@ function createSessionManager(deps) {
       if (!hasActivePending(PENDING_DIR, session.name)) return;
       const produce = () => {
         if (session._dead) return null;
-        if (this._anyDraftOpen(session)) return null;
+        if (this._anyDraftOpen(session) || this._turnStartPending(session)) return null;
         let texts = [];
         try { texts = drainPending(PENDING_DIR, session.name, `boot.${process.pid}`, this._bornFor(session.name)); } catch { return null; }
         if (!texts.length) {
@@ -5862,7 +5861,7 @@ function createSessionManager(deps) {
         }
         return texts.join('\n\n');
       };
-      this._injectQueueFor(session).enqueue('', { produce, divert: this._parkDivertFor(session) });
+      this._injectQueueFor(session).enqueue('', { produce });
     }
 
     _replayWhenQueueEmpty(session) {
