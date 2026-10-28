@@ -551,6 +551,7 @@ class HoldKeeper extends EventEmitter {
     try {
       now = now ?? this._now();
       for (const [sid, hold] of [...this._holds]) {
+        if (this._holds.get(sid) !== hold) continue;
         const entry = this._entries.get(sid);
         let wq = null;
         if (entry) {
@@ -562,6 +563,7 @@ class HoldKeeper extends EventEmitter {
         const [action, reason, cause] = holdDecision(hold, !!entry, wq, now, this);
         if (action !== 'ping') hold.urgent = false;
         if (action === 'disarm') {
+          if (this._holds.get(sid) !== hold) continue;
           this._holds.delete(sid);
           // This path deletes from _holds directly rather than via disarm(), so
           // it needs its own flush — a perpetual hold reaching the failure stop
@@ -570,6 +572,7 @@ class HoldKeeper extends EventEmitter {
           if (hold.always) this._flushPerpetual();
           this.emit('hold', { session: sid, event: 'disarmed', reason, cause, pings: hold.pings, lastResult: hold.lastResult ?? null });
         } else if (action === 'ping') {
+          if (this._holds.get(sid) !== hold) continue;
           const res = await this.ping(sid);
           const cur = this._holds.get(sid); // may have been disarmed mid-await
           if (cur) {

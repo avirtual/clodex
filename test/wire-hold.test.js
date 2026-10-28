@@ -473,6 +473,34 @@ test('tick: a successful ping resets the failure count to zero', async () => {
   assert.equal(keeper.holds()[SID].lastResult, 'warmed');
 });
 
+test('tick: a hold ended or disarmed while another seat\'s ping is in flight is not pinged', async () => {
+  for (const stop of ['endSession', 'disarm']) {
+    const warmth = { state: () => 'warm', query: () => ({ found: true, warm: true, remaining_s: 100, ttl_s: 3600 }), record: () => null };
+    const sent = [];
+    let release;
+    let entered;
+    const inFlight = new Promise((r) => { entered = r; });
+    const k = new HoldKeeper({ warmth, auth: () => ({ accessToken: 'x', expiresAt: null }),
+      request: async (url, h, body) => {
+        const sid = JSON.parse(body).metadata.sid;
+        sent.push(sid);
+        if (sid === 'A') { entered(); await new Promise((r) => { release = r; }); }
+        return { status: 200, headers: {}, body: Buffer.from('{}') };
+      } });
+    for (const sid of ['A', 'B']) {
+      k.noteRequest(sid, { messages: [{ role: 'user', content: 'hi' }], metadata: { sid } }, {}, 'http://x/v1/messages');
+      k.arm(sid, 1);
+    }
+    assert.deepStrictEqual(Object.keys(k.holds()).sort(), ['A', 'B'], `${stop}: ENTER: both armed`);
+    const t = k.tick();
+    await inFlight;
+    k[stop]('B');
+    release();
+    await t;
+    assert.deepStrictEqual(sent, ['A'], `${stop}: B is not pinged from the stale snapshot`);
+  }
+});
+
 test('arm: always builds a deadline-free hold that maxHours cannot clamp', () => {
   const { store, keeper, clock } = rig({ maxHours: 12 });
   const obj = makeObj();
