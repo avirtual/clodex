@@ -45,9 +45,9 @@ function entryOf(name) {
   return { name, type: 'claude', cwd: '/tmp', workspaceId: 'default', sessionId: 's-1', io: 'stream', fixFor: 'peer-a' };
 }
 
-for (const [label, run, dropped] of [
-  ['restartSession', (eng, n) => eng.restartSession(n, {}, 'default'), false],
-  ['applySessionArgs restart', (eng, n) => eng.applySessionArgs(n, { extraArgs: ['--x'], restart: true }, 'default'), true],
+for (const [label, run] of [
+  ['restartSession', (eng, n) => eng.restartSession(n, {}, 'default')],
+  ['applySessionArgs restart', (eng, n) => eng.applySessionArgs(n, { extraArgs: ['--x'], restart: true }, 'default')],
 ]) {
   test(`${label} carries io:'stream' and fixFor through to create()`, async () => {
     const eng = mkEngine();
@@ -58,8 +58,7 @@ for (const [label, run, dropped] of [
 
     const res = await run(eng, name);
     assert.strictEqual(res.ok, true, `${label} succeeded`);
-    assert.deepStrictEqual(removals.map((r) => [r.name, r.recordAfter]), dropped ? [[name, null]] : [],
-      'ENTER: kill() removed the record, so create() cannot read io from persistence');
+    assert.deepStrictEqual(removals.map((r) => [r.name, r.recordAfter]), [], 'ENTER: a respawn kill keeps the record');
     assert.strictEqual(seen.length, 1, 'ENTER: create() was reached');
     assert.deepStrictEqual([seen[0][23], seen[0][24]], ['peer-a', 'stream'],
       `${label} must pass fixFor and io as create()'s 24th and 25th positionals, or a stream seat restarts as a pty seat`);
