@@ -464,11 +464,11 @@ function releaseFixture() {
   g('remote', 'add', 'origin', origin);
   g('push', '-q', '-u', 'origin', 'master', 'v1.0.0');
   fs.writeFileSync(path.join(state, 'released-v1.0.0'), '');
-  const run = (env = {}) => {
+  const run = (env = {}, args = ['patch']) => {
     fs.rmSync(path.join(state, 'calls'), { force: true });
     let res;
     try {
-      const stdout = execFileSync('bash', ['scripts/release.sh', 'patch'], {
+      const stdout = execFileSync('bash', ['scripts/release.sh', ...args], {
         cwd: repo, encoding: 'utf-8', stdio: 'pipe',
         env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, FAKE_STATE: state,
           CI: '', RELEASE_RETRY_SLEEP: '0', ...env },
@@ -523,6 +523,50 @@ test('release e2e: CLODEX_RELEASE_NO_REVIEW=1 with the CLEAN marker for HEAD rel
     const res = fx.run({ CLODEX_RELEASE_NO_REVIEW: '1' });
     assert.strictEqual(res.status, 0, res.stdout + res.stderr);
     assert.match(res.stdout, /pre-release review CLEAN for HEAD: Pre-release review staging-x: CLEAN/);
+  } finally { fx.cleanup(); }
+});
+
+test('release e2e: a resumed CLODEX_RELEASE_NO_REVIEW=1 release accepts the marker of the reviewed commit HEAD^', () => {
+  const fx = releaseFixture();
+  try {
+    assert.strictEqual(fx.run({ FAKE_PUSH_FAIL: '1' }).status, 1, 'ENTER: the first run dies at the push');
+    const logs = path.join(fx.home, '.clodex', 'logs');
+    fs.mkdirSync(logs, { recursive: true });
+    fs.writeFileSync(path.join(logs, `prerelease-clean-${fx.g('rev-parse', 'HEAD^').trim()}`), 'Pre-release review staging-x: CLEAN\n');
+    const res = fx.run({ CLODEX_RELEASE_NO_REVIEW: '1' });
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.match(res.stdout, /resuming release v1\.0\.1 from the push step/);
+    assert.match(res.stdout, /pre-release review CLEAN for the reviewed commit/);
+    assert.match(res.calls, /^gh release create v1\.0\.1 /m);
+  } finally { fx.cleanup(); }
+});
+
+test('release e2e: a resumed CLODEX_RELEASE_NO_REVIEW=1 release refuses a marker for the bump commit itself', () => {
+  const fx = releaseFixture();
+  try {
+    assert.strictEqual(fx.run({ FAKE_PUSH_FAIL: '1' }).status, 1, 'ENTER: the first run dies at the push');
+    const logs = path.join(fx.home, '.clodex', 'logs');
+    fs.mkdirSync(logs, { recursive: true });
+    fs.writeFileSync(path.join(logs, `prerelease-clean-${fx.g('rev-parse', 'HEAD').trim()}`), 'Pre-release review staging-x: CLEAN\n');
+    const res = fx.run({ CLODEX_RELEASE_NO_REVIEW: '1' });
+    assert.notStrictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.match(res.stderr, /no CLEAN pre-release review covers the reviewed commit/);
+    assert.ok(!/^gh release create /m.test(res.calls), res.calls);
+  } finally { fx.cleanup(); }
+});
+
+test('release e2e: CLODEX_RELEASE_NO_REVIEW=1 refuses a notes file even with the CLEAN marker for HEAD', () => {
+  const fx = releaseFixture();
+  try {
+    const logs = path.join(fx.home, '.clodex', 'logs');
+    fs.mkdirSync(logs, { recursive: true });
+    fs.writeFileSync(path.join(logs, `prerelease-clean-${fx.g('rev-parse', 'HEAD').trim()}`), 'Pre-release review staging-x: CLEAN\n');
+    const notesPath = path.join(fx.home, 'notes.md');
+    fs.writeFileSync(notesPath, '- unreviewed notes\n');
+    const res = fx.run({ CLODEX_RELEASE_NO_REVIEW: '1' }, ['patch', notesPath]);
+    assert.notStrictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.match(res.stderr, /cannot ship a notes file/);
+    assert.ok(!/^gh release create /m.test(res.calls), res.calls);
   } finally { fx.cleanup(); }
 });
 

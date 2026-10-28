@@ -87,7 +87,7 @@ to the `staging` branch on origin and runs the same cloud reviewer on `<lastTag>
 against the `## Unreleased` notes; its issue is titled `Pre-release review staging-<sha>: …`.
 Fix what it finds, re-run until CLEAN, then release; a CLEAN pre-release review leaves
 `~/.clodex/logs/prerelease-clean-<sha>` for the reviewed commit, and
-`CLODEX_RELEASE_NO_REVIEW=1 scripts/release.sh …` skips the post-release review only while HEAD is that commit (set it on the one release command, not exported; the pre-release script ignores it). That is not a user step: to run Clodex from source you want
+`CLODEX_RELEASE_NO_REVIEW=1 scripts/release.sh …` skips the post-release review only while HEAD is that commit (set it on the one release command, not exported; the pre-release script ignores it). It also covers a resumed release (the bump commit's parent is the reviewed one) and refuses a notes-file argument, since those notes were never reviewed. That is not a user step: to run Clodex from source you want
 `npm start`, and to ship it to a server you want a headless node.
 
 ## Run a headless node locally
