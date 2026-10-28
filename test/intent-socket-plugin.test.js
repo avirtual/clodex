@@ -14,7 +14,8 @@ const grammar = require('../plugins/browser-pane/grammar');
 const replies = require('../plugins/browser-pane/replies');
 const subagent = require('../plugins/browser-pane/subagent');
 const { TOOL } = require('../plugins/browser-pane/mcp-tool');
-const { mintIntentCredential, seatChannelEnv, createIntentRequestHandler, identToken } = require('../intent-socket');
+const { mintIntentCredential, seatChannelEnv, createIntentRequestHandler } = require('../intent-socket');
+const { seenIdent, consume: wireSaw, wire: seenWire } = require('./lib/wire-seen').wireSeenStamps();
 const verb = require('../cli/bin/clodex.js');
 
 function parse(text) {
@@ -29,11 +30,12 @@ function withBrowserVerb(fn) {
 const SEAT = { intents: ['browser'], plugins: ['browser-pane'] };
 const ctl = { closed: () => false };
 const HCRED = 'h'.repeat(64);
-const MAIN = identToken(crypto, HCRED, null, null, 'main-thread');
+const MAIN = () => seenIdent(crypto, HCRED, null, null, 'main-thread');
 
 function browserHandler(entry = SEAT) {
   const seen = [];
   const handle = createIntentRequestHandler({
+    consumeMainToolUse: wireSaw,
     seat: 'h1', parse, entryOf: () => entry, sessionIdOf: () => 'main-thread', cred: HCRED,
     refusal: registry.subagentRefusal,
     dispatch: async (intent, opts) => { seen.push(intent.raw); opts.replyTo('ok'); },
@@ -89,7 +91,7 @@ test('a plugin row without a subagent policy refuses every subagent call with th
     const r = await handle({ intent: '[agent:zzz anything]', agentId: 'agent-7' }, ctl);
     assert.deepStrictEqual(r, { ok: false, status: 'refused', error: "not available to a subagent: zzz — return and let the seat's main agent do it" });
     assert.deepStrictEqual(seen, []);
-    const main = await handle({ intent: '[agent:zzz anything]', ident: MAIN }, ctl);
+    const main = await handle({ intent: '[agent:zzz anything]', ident: MAIN() }, ctl);
     assert.deepStrictEqual(main, { ok: true, status: 'ok', reply: 'ok' });
     assert.deepStrictEqual(seen, ['[agent:zzz anything]']);
   } finally {
@@ -141,7 +143,7 @@ test('a subagent cannot --confirm a consequential action; the main agent can', (
     assert.deepStrictEqual(r, { ok: false, status: 'refused', error: 'a subagent cannot confirm a consequential action — ask the main agent' }, flag);
   }
   assert.deepStrictEqual(seen, []);
-  const main = await handle({ intent: '[agent:browser click ebloc 26 --confirm]', ident: MAIN }, ctl);
+  const main = await handle({ intent: '[agent:browser click ebloc 26 --confirm]', ident: MAIN() }, ctl);
   assert.deepStrictEqual(main, { ok: true, status: 'ok', reply: 'ok' });
   assert.deepStrictEqual(seen, ['click ebloc 26 --confirm']);
 }));
@@ -156,7 +158,7 @@ test('a subagent may add and list site notes but not --forget one; the main agen
     assert.deepStrictEqual(r, { ok: false, status: 'refused', error: 'a subagent cannot forget a site note — ask the main agent' }, intent);
   }
   assert.deepStrictEqual(seen, ['note ebloc']);
-  const main = await handle({ intent: '[agent:browser note ebloc --forget ab3k]', ident: MAIN }, ctl);
+  const main = await handle({ intent: '[agent:browser note ebloc --forget ab3k]', ident: MAIN() }, ctl);
   assert.deepStrictEqual(main, { ok: true, status: 'ok', reply: 'ok' });
   assert.deepStrictEqual(seen, ['note ebloc', 'note ebloc --forget ab3k']);
 }));
@@ -166,6 +168,7 @@ test('a plugin that never replies: the deadline answers "accepted", and a late l
   let late = null;
   let extended = null;
   const handle = createIntentRequestHandler({
+    consumeMainToolUse: wireSaw,
     seat: 'h1', parse, entryOf: () => ({}), sessionIdOf: () => null, allows: () => true,
     dispatch: async (intent, opts) => { late = opts.replyTo; },
     replyWaitMs: () => 25000,
@@ -213,7 +216,8 @@ function seatHarness({ handler = null } = {}) {
   });
   m._injectHoldReason = () => null;
   m._injectQueueFor = (s) => ({ enqueue: (t, o) => injected.push({ to: s.name, text: o && o.produce ? o.produce() : t }) });
-  const a = { name: 'a', agentType: 'claude', type: 'claude', io: 'pty', workspaceId: 'ws1', sessionId: 'sess-a' };
+  const a = { name: 'a', agentType: 'claude', type: 'claude', io: 'pty', workspaceId: 'ws1', sessionId: 'sess-a', wireRouted: true };
+  m._wire = seenWire;
   m.sessions.set('a', a);
   registry.registerIntent({
     verb: 'browser',
@@ -238,6 +242,8 @@ async function withSeat(fn, opts) {
   const h = seatHarness(opts);
   fs.mkdirSync(runDirFor(h.root, 'a'), { recursive: true });
   const cred = mintIntentCredential(crypto);
+  h.a.wireRouted = true;
+  h.m._wire = seenWire;
   await h.m._startIntentSocket(h.a, { sockPath: pathFor(h.root, 'a', 'intentSocket'), cred });
   try { await fn(h, cred); } finally { h.a.intentSocket.stop(); registry._resetPluginRows(); }
 }
@@ -251,7 +257,7 @@ async function viaVerb(h, cred, argv, extraEnv = {}) {
 }
 
 function mainStamp(cred, sessionId = 'sess-a') {
-  return { CLODEX_HOOK_IDENT: identToken(crypto, cred, null, null, sessionId) };
+  return { CLODEX_HOOK_IDENT: seenIdent(crypto, cred, null, null, sessionId) };
 }
 
 for (const [who, envOf] of [['a subagent', () => ({ CLODEX_AGENT_ID: 'agent-7' })], ['the main agent', mainStamp]]) {

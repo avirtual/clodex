@@ -13,7 +13,7 @@ const IDENT_ENV = 'CLODEX_HOOK_IDENT';
 const IDENT_HEX = 16;
 const IDENT_SEEN_MAX = 512;
 const IDENT_SEEN_MS = 10 * 60 * 1000;
-const MAIN_IDENT_RE = /^main\.(?:([0-9a-f]{16})\.)?([0-9a-f]+)$/;
+const MAIN_IDENT_RE = /^main\.(?:([0-9a-f]{16})\.)?(?:([A-Za-z0-9_:-]+)\.)?([0-9a-f]+)$/;
 const SUB_IDENT_RE = /^sub\.([A-Za-z0-9_:-]+)\.([A-Za-z0-9_:-]+)\.([0-9a-f]{16})\.([0-9a-f]+)$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ASSIGN_RE = /^[A-Za-z_][A-Za-z0-9_]*=/;
@@ -77,11 +77,13 @@ function mintIdentNonce(crypto) {
   return crypto.randomBytes(IDENT_HEX / 2).toString('hex');
 }
 
-function identToken(crypto, cred, agentId, agentType, sessionId, nonce = mintIdentNonce(crypto)) {
+function identToken(crypto, cred, agentId, agentType, sessionId, nonce = mintIdentNonce(crypto), toolUseId = null) {
   const kind = agentId ? 'sub' : 'main';
+  const tid = !agentId && toolUseId ? identPart(toolUseId) : '';
   const mac = crypto.createHmac('sha256', String(cred))
-    .update(`${kind}${agentId || ''}${sessionId || ''}${nonce}`).digest('hex').slice(0, IDENT_HEX);
-  return agentId ? `sub.${identPart(agentId)}.${identPart(agentType)}.${nonce}.${mac}` : `main.${nonce}.${mac}`;
+    .update(`${kind}${agentId || ''}${sessionId || ''}${nonce}${tid}`).digest('hex').slice(0, IDENT_HEX);
+  if (agentId) return `sub.${identPart(agentId)}.${identPart(agentType)}.${nonce}.${mac}`;
+  return tid ? `main.${nonce}.${tid}.${mac}` : `main.${nonce}.${mac}`;
 }
 
 function rememberIdentNonce(seen, nonce, now) {
@@ -105,18 +107,19 @@ function identVerdict(crypto, cred, ident, sessionId, seen, now) {
   }
   const m = MAIN_IDENT_RE.exec(ident);
   if (!m || !m[1]) return { verdict: 'sub' };
-  if (!credMatches(crypto, identToken(crypto, cred, null, null, sessionId, m[1]), ident)) return { verdict: 'sub' };
-  if (!seen) return { verdict: 'main' };
+  if (!credMatches(crypto, identToken(crypto, cred, null, null, sessionId, m[1], m[2] || null), ident)) return { verdict: 'sub' };
+  const toolUseId = m[2] || null;
+  if (!seen) return { verdict: 'main', toolUseId };
   if (seen.has(m[1])) return { verdict: 'replay' };
   rememberIdentNonce(seen, m[1], now);
-  return { verdict: 'main' };
+  return { verdict: 'main', toolUseId };
 }
 
 function identIsMain(crypto, cred, ident, sessionId, seen = null, now = Date.now()) {
   return identVerdict(crypto, cred, ident, sessionId, seen, now).verdict === 'main';
 }
 
-function callerIdentity({ req, isCodex, sessionId, cred, crypto, seen = null, now = Date.now(), onReplay = null }) {
+function callerIdentity({ req, isCodex, sessionId, cred, crypto, seen = null, now = Date.now(), onReplay = null, consumeMainToolUse = null }) {
   if (isCodex) {
     const agentId = req && typeof req.agentId === 'string' && req.agentId.trim() ? req.agentId.trim() : null;
     if (!sessionId || !agentId) return { subagent: true };
@@ -124,7 +127,7 @@ function callerIdentity({ req, isCodex, sessionId, cred, crypto, seen = null, no
   }
   const v = identVerdict(crypto, cred, req && req.ident, sessionId, seen, now);
   if (v.verdict === 'replay' && onReplay) onReplay();
-  if (v.verdict === 'main') return { subagent: false };
+  if (v.verdict === 'main') return { subagent: !(typeof consumeMainToolUse === 'function' && v.toolUseId && consumeMainToolUse(v.toolUseId) === true) };
   return v.agentId ? { subagent: true, agentId: v.agentId, agentType: v.agentType } : { subagent: true };
 }
 
@@ -290,6 +293,7 @@ function hookIdentOutput(raw, cred, crypto = nodeCrypto, { identDir, catalogPath
   let d;
   try { d = JSON.parse(raw); } catch { return ''; }
   if (!d || typeof d !== 'object') return '';
+  const toolUseId = typeof d.tool_use_id === 'string' && d.tool_use_id ? d.tool_use_id : null;
   if (d.hook_event_name === 'SubagentStart') {
     let briefs = [];
     try { briefs = JSON.parse(fs.readFileSync(catalogPath, 'utf8')).briefs || []; } catch {}
@@ -300,7 +304,7 @@ function hookIdentOutput(raw, cred, crypto = nodeCrypto, { identDir, catalogPath
     if (!cred) return '';
     const input = d.tool_input && typeof d.tool_input === 'object' && !Array.isArray(d.tool_input) ? d.tool_input : {};
     const agentId = typeof d.agent_id === 'string' && d.agent_id ? d.agent_id : null;
-    return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...input, ident: identToken(crypto, cred, agentId, d.agent_type, d.session_id) } } });
+    return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...input, ident: identToken(crypto, cred, agentId, d.agent_type, d.session_id, undefined, toolUseId) } } });
   }
   const input = d.tool_input;
   const cmd = input && input.command;
@@ -309,7 +313,7 @@ function hookIdentOutput(raw, cred, crypto = nodeCrypto, { identDir, catalogPath
   const stamps = [];
   const next = stampClodexCommand(cmd, () => {
     const nonce = mintIdentNonce(crypto);
-    stamps.push([nonce, identToken(crypto, cred, agentId, d.agent_type, d.session_id, nonce)]);
+    stamps.push([nonce, identToken(crypto, cred, agentId, d.agent_type, d.session_id, nonce, toolUseId)]);
     return `@${nonce}`;
   });
   if (next == null) return '';
@@ -338,7 +342,7 @@ function lateReply(intent, waitMs) {
 function createIntentRequestHandler({
   seat, parse, entryOf, sessionIdOf, allows, refusal, dispatch, replyWaitMs, classifyReply, cred, isCodex = false,
   crypto = nodeCrypto, setTimer = setTimeout, clearTimer = clearTimeout, log = null, identSeen = new Map(), now = Date.now,
-  tools = null, nameFor = null,
+  tools = null, nameFor = null, consumeMainToolUse = null,
 }) {
   const unknownTool = (name) => ({ ok: false, status: 'refused', error: `unknown tool: ${JSON.stringify(String(name).slice(0, 64))}` });
   const oneLineMsg = (e) => String((e && e.message) || 'invalid arguments').replace(/[\r\n]+/g, ' ').slice(0, 300);
@@ -368,7 +372,7 @@ function createIntentRequestHandler({
     if (intents.length !== 1 || intents[0].type !== row.type) return foreign(toolName);
     if (row.subagent) return run(intents[0], { subagent: true }, ctl);
     const ident = callerIdentity({
-      req, isCodex, sessionId: sessionIdOf(), cred, crypto, seen: identSeen, now: now(),
+      req, isCodex, sessionId: sessionIdOf(), cred, crypto, seen: identSeen, now: now(), consumeMainToolUse,
       onReplay: () => { if (log) log.warn('intent-socket', `${seat}: replayed identity stamp refused`); },
     });
     const tool = row.tools.find((t) => t.name === name);
@@ -429,7 +433,7 @@ function createIntentRequestHandler({
     const intent = intents[0];
     if (intent.type === 'unknown') return { ok: false, error: `unrecognized intent \`${intent.text}\`` };
     const ident = callerIdentity({
-      req, isCodex, sessionId: sessionIdOf(), cred, crypto, seen: identSeen, now: now(),
+      req, isCodex, sessionId: sessionIdOf(), cred, crypto, seen: identSeen, now: now(), consumeMainToolUse,
       onReplay: () => { if (log) log.warn('intent-socket', `${seat}: replayed identity stamp refused`); },
     });
     return run(intent, ident, ctl);
@@ -462,13 +466,16 @@ function createIntentSocketServer({
     const release = () => { if (!released) { released = true; active -= 1; } };
     let done = false;
     let gone = false;
-    sock.on('close', () => { gone = true; release(); });
     let buf = Buffer.alloc(0);
     const end = (res) => {
       if (done) return;
       done = true;
       respond(sock, res);
     };
+    const expire = () => { end({ ok: false, error: 'timeout' }); release(); };
+    let timer = setTimer(expire, timeoutMs);
+    const extend = (ms) => { clearTimer(timer); timer = setTimer(expire, ms); };
+    sock.on('close', () => { gone = true; clearTimer(timer); release(); });
     sock.on('data', (chunk) => {
       if (done) return;
       buf = Buffer.concat([buf, chunk]);
@@ -482,9 +489,7 @@ function createIntentSocketServer({
       try { req = JSON.parse(buf.subarray(0, nl).toString('utf8')); } catch { req = null; }
       if (!req || typeof req !== 'object') { end({ ok: false, error: 'bad request' }); return; }
       if (!credMatches(crypto, cred, req.cred)) { end({ ok: false, error: 'unauthorized' }); return; }
-      const expire = () => end({ ok: false, error: 'timeout' });
-      let timer = setTimer(expire, timeoutMs);
-      const extend = (ms) => { clearTimer(timer); timer = setTimer(expire, ms); };
+      extend(timeoutMs);
       const request = { intent: req.intent, tool: req.tool, args: req.args, agentId: req.agentId, agentType: req.agentType, ident: req.ident };
       Promise.resolve()
         .then(() => handle(request, { closed: () => done || gone, extend }))

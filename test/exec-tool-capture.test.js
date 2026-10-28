@@ -14,7 +14,8 @@ const { isFilenameToken, parseAndValidate, clampReplyBody } = require('../exec-s
 const { parkDelivery } = require('../pending-store');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { pathFor, runDirFor } = require('../clodex-paths');
-const { mintIntentCredential, seatChannelEnv, identToken } = require('../intent-socket');
+const { mintIntentCredential, seatChannelEnv } = require('../intent-socket');
+const { seenIdent, consume: wireSaw, wire: seenWire } = require('./lib/wire-seen').wireSeenStamps();
 const verb = require('../cli/bin/clodex.js');
 
 const QUIET = { info() {}, warn() {}, error() {}, debug() {} };
@@ -247,7 +248,8 @@ test('_startIntentSocket waits for exec: the socket intent form returns the ctl 
   m._injectHoldReason = () => null;
   m._injectQueueFor = (s) => ({ enqueue: (t, o) => injected.push({ to: s.name, text: o && o.produce ? o.produce() : t }) });
   m._broadcast = () => {};
-  const a = { name: 'a', agentType: 'claude', type: 'claude', io: 'pty', workspaceId: 'ws1', sessionId: 'sess-a' };
+  const a = { name: 'a', agentType: 'claude', type: 'claude', io: 'pty', workspaceId: 'ws1', sessionId: 'sess-a', wireRouted: true };
+  m._wire = seenWire;
   m.sessions.set('a', a);
   fs.mkdirSync(runDirFor(root, 'a'), { recursive: true });
   const cred = mintIntentCredential(crypto);
@@ -256,7 +258,7 @@ test('_startIntentSocket waits for exec: the socket intent form returns the ctl 
   try {
     let out = '';
     let err = '';
-    const env = { ...seatChannelEnv({ name: 'a', sockPath, cred }), CLODEX_HOOK_IDENT: identToken(crypto, cred, null, null, 'sess-a') };
+    const env = { ...seatChannelEnv({ name: 'a', sockPath, cred }), CLODEX_HOOK_IDENT: seenIdent(crypto, cred, null, null, 'sess-a') };
     const call = verb.main(['[agent:exec clodex-ctl-read] {"ctx":"ios","verb":"get"}'], { env, out: { write: (t) => { out += t; } }, err: { write: (t) => { err += t; } } });
     for (let i = 0; i < 50 && !calls.length; i++) await turns(1);
     assert.deepStrictEqual(calls.map((c) => c.line), ['--ctx ios get']);

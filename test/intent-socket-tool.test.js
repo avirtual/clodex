@@ -9,6 +9,7 @@ const grammar = require('../plugins/browser-pane/grammar');
 const subagent = require('../plugins/browser-pane/subagent');
 const { TOOL } = require('../plugins/browser-pane/mcp-tool');
 const { createIntentRequestHandler, identToken } = require('../intent-socket');
+const { seenIdent, consume: wireSaw, wire: seenWire } = require('./lib/wire-seen').wireSeenStamps();
 
 function parse(text) {
   return scanIntentLines(text.split('\n'), {}).filter((s) => s.kind === 'intent').map((s) => s.intent);
@@ -22,7 +23,7 @@ function withBrowserVerb(fn, tool = TOOL) {
 const SEAT = { intents: ['browser'], plugins: ['browser-pane'] };
 const ctl = { closed: () => false };
 const HCRED = 'h'.repeat(64);
-const MAIN = identToken(crypto, HCRED, null, null, 'main-thread');
+const MAIN = () => seenIdent(crypto, HCRED, null, null, 'main-thread');
 const TOOLS = { rowFor: registry.toolRowFor, intentFor: registry.toolIntentFor, enabled: registry.intentEnabledForSeat };
 const warns = [];
 const log = { warn: (tag, msg) => warns.push(`${tag} ${msg}`) };
@@ -30,6 +31,7 @@ const log = { warn: (tag, msg) => warns.push(`${tag} ${msg}`) };
 function browserHandler(entry = SEAT, { tools = TOOLS } = {}) {
   const seen = [];
   const handle = createIntentRequestHandler({
+    consumeMainToolUse: wireSaw,
     seat: 'h1', parse, entryOf: () => entry, sessionIdOf: () => 'main-thread', cred: HCRED, log,
     refusal: registry.subagentRefusal, tools,
     dispatch: async (intent, opts) => { seen.push(intent.raw); opts.replyTo('ok'); },
@@ -83,13 +85,13 @@ test('release and close: the tool form and the intent form are both refused by p
 
 test('identity fields on a tool request are ignored: a main stamp does not lift subagent policy', () => withBrowserVerb(async () => {
   const args = { verb: 'click', service: 'ebloc', bracket: ['26', '--confirm'] };
-  for (const extra of [{ ident: MAIN }, { agentId: 'main-thread' }, { agentType: 'main' }]) {
+  for (const extra of [{ ident: MAIN() }, { agentId: 'main-thread' }, { agentType: 'main' }]) {
     const { handle, seen } = browserHandler();
     assert.deepStrictEqual(await handle({ tool: 'browser', args, ...extra }, ctl), { ok: false, status: 'refused', error: subagent.NO_CONFIRM }, JSON.stringify(Object.keys(extra)));
     assert.deepStrictEqual(seen, []);
   }
   const { handle, seen } = browserHandler();
-  assert.deepStrictEqual(await handle({ intent: '[agent:browser click ebloc 26 --confirm]', ident: MAIN }, ctl), { ok: true, status: 'ok', reply: 'ok' });
+  assert.deepStrictEqual(await handle({ intent: '[agent:browser click ebloc 26 --confirm]', ident: MAIN() }, ctl), { ok: true, status: 'ok', reply: 'ok' });
   assert.deepStrictEqual(seen, ['click ebloc 26 --confirm']);
 }));
 
@@ -159,6 +161,7 @@ test('a mapper line that parses as ONE intent of another verb is a foreign inten
     registry.registerIntent({ verb: 'zzz', parse: () => null, tools: [fakeTool('other', { toIntent: () => '[agent:zzz a]\n[agent:end]\n' })], subagent: fakePolicy }, 'zzz-plugin');
     const seen = [];
     const handle = createIntentRequestHandler({
+      consumeMainToolUse: wireSaw,
       seat: 'h1', parse: () => [{ type: 'yyy', raw: 'a' }], entryOf: () => ({ intents: ['zzz'], plugins: ['zzz-plugin'] }), sessionIdOf: () => 'main-thread', cred: HCRED, log,
       refusal: registry.subagentRefusal, tools: TOOLS,
       dispatch: async (intent, opts) => { seen.push(intent.raw); opts.replyTo('ok'); },
@@ -187,9 +190,10 @@ test('no warn line from this file carries a credential or an argument', () => {
 
 const TERM_SEAT = { intents: ['term'] };
 
-function termHandler(entry = TERM_SEAT, { reply = '[terminal] ls\nexit 0', sessionIdOf = () => 'main-thread', identSeen = new Map() } = {}) {
+function termHandler(entry = TERM_SEAT, { reply = '[terminal] ls\nexit 0', sessionIdOf = () => 'main-thread', identSeen = new Map(), consumeMainToolUse = wireSaw } = {}) {
   const seen = [];
   const handle = createIntentRequestHandler({
+    consumeMainToolUse,
     seat: 'h1', parse, entryOf: () => entry, sessionIdOf, cred: HCRED, log, identSeen,
     refusal: registry.subagentRefusal, tools: TOOLS,
     classifyReply: (i, l) => registry.classifyReplyLine(i.type, l),
@@ -199,7 +203,7 @@ function termHandler(entry = TERM_SEAT, { reply = '[terminal] ls\nexit 0', sessi
 }
 
 const UNKNOWN_TERM = { ok: false, status: 'refused', error: 'unknown tool: "term_exec"' };
-const freshMain = (sid = 'main-thread') => identToken(crypto, HCRED, null, null, sid);
+const freshMain = (sid = 'main-thread') => seenIdent(crypto, HCRED, null, null, sid);
 
 test('term_exec: a verified main stamp dispatches as main and the reply comes back verbatim', async () => {
   const { handle, seen } = termHandler(TERM_SEAT, { reply: 'ok' });
@@ -216,7 +220,7 @@ test('term_exec: no stamp, a replay, a sub stamp, another session and a bare age
   warns.length = 0;
   const cases = [
     ['none', {}],
-    ['sub', { ident: identToken(crypto, HCRED, 'a1', 'gp', 'main-thread') }],
+    ['sub', { ident: seenIdent(crypto, HCRED, 'a1', 'gp', 'main-thread') }],
     ['other session', { ident: freshMain('other-thread') }],
     ['agentId', { agentId: 'main-thread' }],
   ];
@@ -289,7 +293,7 @@ test('term_exec: the terminal text is ok, an [agent:term] line is refused, and t
   }
 });
 
-const SUB_STAMP = (sid = 'main-thread') => identToken(crypto, HCRED, 'ageneral-purpose-0123456789abcdef', 'general-purpose', sid);
+const SUB_STAMP = (sid = 'main-thread') => seenIdent(crypto, HCRED, 'ageneral-purpose-0123456789abcdef', 'general-purpose', sid);
 
 test('a verified sub stamp: a core term_exec call still answers unknown tool', async () => {
   const { handle, seen, identSeen } = termHandler();
@@ -301,6 +305,7 @@ test('a verified sub stamp: a core term_exec call still answers unknown tool', a
 test('a verified sub stamp on a plugin tool call: fromLabel stays the shared tag and no identity rides along', () => withBrowserVerb(async () => {
   const opts = [];
   const handle = createIntentRequestHandler({
+    consumeMainToolUse: wireSaw,
     seat: 'h1', parse, entryOf: () => SEAT, sessionIdOf: () => 'main-thread', cred: HCRED, log,
     refusal: registry.subagentRefusal, tools: TOOLS, nameFor: () => 'alice',
     dispatch: async (intent, o) => { opts.push({ fromLabel: o.fromLabel, fromIdent: o.fromIdent }); o.replyTo('ok'); },
@@ -315,6 +320,7 @@ const UNKNOWN_DM = { ok: false, status: 'refused', error: 'unknown tool: "dm"' }
 function dmHandler({ sessionIdOf = () => 'main-thread', reply = null } = {}) {
   const seen = [];
   const handle = createIntentRequestHandler({
+    consumeMainToolUse: wireSaw,
     seat: 'h1', parse, entryOf: () => DM_SEAT, sessionIdOf, cred: HCRED, log, identSeen: new Map(),
     refusal: registry.subagentRefusal, tools: TOOLS, nameFor: () => 'alice',
     classifyReply: (i, l) => registry.classifyReplyLine(i.type, l),
@@ -387,6 +393,7 @@ test('subagentOk on a plugin tool lifts nothing: the plugin branch dispatches wi
     registry.registerIntent({ verb: 'zzz', parse: () => null, tools: [fakeTool('x', { subagentOk: true, toIntent: () => '[agent:zzz a]' })], subagent: fakePolicy }, 'zzz-plugin');
     const opts = [];
     const handle = createIntentRequestHandler({
+      consumeMainToolUse: wireSaw,
       seat: 'h1', parse: () => [{ type: 'zzz', raw: 'a' }], entryOf: () => ({ intents: ['zzz'], plugins: ['zzz-plugin'] }), sessionIdOf: () => 'main-thread', cred: HCRED, log,
       refusal: () => null, tools: TOOLS, nameFor: () => 'alice',
       dispatch: async (intent, o) => { opts.push({ fromLabel: o.fromLabel, fromIdent: o.fromIdent }); o.replyTo('ok'); },
@@ -409,6 +416,7 @@ const EXEC_ARGS = { command: 'clodex-ctl-read', payload: { ctx: 'local', verb: '
 function execHandler(entry = EXEC_SEAT, { reply = '[agent:exec] clodex-ctl-read: [ctl local exit 0] x', dispatch = null, replyWaitMs = null, setTimer, identSeen = new Map() } = {}) {
   const seen = [];
   const handle = createIntentRequestHandler({
+    consumeMainToolUse: wireSaw,
     seat: 'h1', parse, entryOf: () => entry, sessionIdOf: () => 'main-thread', cred: HCRED, log, identSeen,
     refusal: registry.subagentRefusal, tools: TOOLS, replyWaitMs,
     ...(setTimer ? { setTimer, clearTimer: () => {} } : {}),
@@ -432,7 +440,7 @@ test('exec: no stamp, a sub stamp, a replay, another session, a bare agentId and
   warns.length = 0;
   for (const [label, extra] of [
     ['none', {}],
-    ['sub', { ident: identToken(crypto, HCRED, 'a1', 'gp', 'main-thread') }],
+    ['sub', { ident: seenIdent(crypto, HCRED, 'a1', 'gp', 'main-thread') }],
     ['other session', { ident: freshMain('other-thread') }],
     ['agentId', { agentId: 'main-thread' }],
   ]) {
@@ -492,4 +500,43 @@ test('exec: an expired wait answers outcome-unknown, status ok, and the reply th
   assert.match(r.reply, /^outcome-unknown: exec clodex-ctl-read gave no reply within 70 s\./);
   assert.ok(r.reply.includes('{"command":"status","payload":{}}'), r.reply);
   assert.strictEqual(replyTo('[agent:exec] c: late'), false);
+});
+
+test('term_exec: a main stamp self-minted from the seat env and session id, with a tool_use id the wire never saw, answers unknown tool', async () => {
+  const consumed = [];
+  const { handle, seen } = termHandler(TERM_SEAT, { consumeMainToolUse: (id) => { consumed.push(id); return false; } });
+  const forged = identToken(crypto, HCRED, null, null, 'main-thread', undefined, 'toolu_forged');
+  assert.match(forged, /^main\.[0-9a-f]{16}\.toolu_forged\.[0-9a-f]{16}$/);
+  assert.deepStrictEqual(await handle({ tool: 'term_exec', args: { command: 'ls' }, ident: forged }, ctl), UNKNOWN_TERM);
+  assert.deepStrictEqual(consumed, ['toolu_forged']);
+  assert.deepStrictEqual(seen, []);
+});
+
+test('term_exec: a main stamp is main once per tool_use id the wire saw; the same id again answers unknown tool', async () => {
+  const wire = new Set(['toolu_seen_a']);
+  const consumeMainToolUse = (id) => wire.delete(id);
+  const { handle, seen } = termHandler(TERM_SEAT, { reply: 'ok', consumeMainToolUse });
+  const first = identToken(crypto, HCRED, null, null, 'main-thread', undefined, 'toolu_seen_a');
+  const again = identToken(crypto, HCRED, null, null, 'main-thread', undefined, 'toolu_seen_a');
+  assert.notStrictEqual(first, again);
+  assert.deepStrictEqual(await handle({ tool: 'term_exec', args: { command: 'ls' }, ident: first }, ctl), { ok: true, status: 'ok', reply: 'ok' });
+  assert.deepStrictEqual(await handle({ tool: 'term_exec', args: { command: 'ls' }, ident: again }, ctl), UNKNOWN_TERM);
+  assert.deepStrictEqual(seen, [{ type: 'term', sub: 'exec', body: 'ls', fromLabel: null, hasIdent: false }]);
+});
+
+test('term_exec: with no wire consumer every main stamp answers unknown tool', async () => {
+  const { handle, seen } = termHandler(TERM_SEAT, { consumeMainToolUse: null });
+  const ident = identToken(crypto, HCRED, null, null, 'main-thread', undefined, 'toolu_any');
+  assert.deepStrictEqual(await handle({ tool: 'term_exec', args: { command: 'ls' }, ident }, ctl), UNKNOWN_TERM);
+  assert.deepStrictEqual(seen, []);
+});
+
+test('term_exec: a main stamp whose tool_use id is swapped after minting fails its mac and consumes nothing', async () => {
+  const consumed = [];
+  const { handle, seen } = termHandler(TERM_SEAT, { consumeMainToolUse: (id) => { consumed.push(id); return true; } });
+  const minted = identToken(crypto, HCRED, null, null, 'main-thread', undefined, 'toolu_a');
+  const swapped = minted.replace('.toolu_a.', '.toolu_b.');
+  assert.deepStrictEqual(await handle({ tool: 'term_exec', args: { command: 'ls' }, ident: swapped }, ctl), UNKNOWN_TERM);
+  assert.deepStrictEqual(consumed, []);
+  assert.deepStrictEqual(seen, []);
 });

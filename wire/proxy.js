@@ -16,7 +16,7 @@ const { EventEmitter } = require('events');
 const { URL } = require('url');
 
 const { parseAgentPath, inferProvider } = require('./route');
-const { SSEFramer, anthropicDelta, openaiDelta, UsageCollector, OpenAIUsageCollector, FileToolCollector } = require('./sse');
+const { SSEFramer, anthropicDelta, openaiDelta, UsageCollector, OpenAIUsageCollector, FileToolCollector, MainToolUseCollector } = require('./sse');
 const { Decompressor } = require('./decompress');
 const { RoleClassifier, isSubagentRole, isTitleCall, isProbeCall, isClassifierCall, isCompactCall, isBareSideCall, sideCallKind } = require('./role');
 const { billing, billingOpenai, Ledger } = require('./billing');
@@ -27,6 +27,8 @@ const { answerVoiceSink } = require('./voice-sink');
 
 const SPILL_SHOWN_PRUNE_MS = 7 * 24 * 60 * 60 * 1000;
 const SPILL_SHOWN_PERSIST_SLACK_MS = 60 * 1000;
+const MAIN_TOOL_USE_MAX = 256;
+const MAIN_TOOL_USE_MS = 10 * 60 * 1000;
 
 // Hop-by-hop headers per RFC 7230 §6.1, plus content-length/host which the
 // HTTP libs manage themselves. content-encoding stays — the client receives
@@ -172,6 +174,7 @@ class WireProxy extends EventEmitter {
       }
     }
     this._voiceSinks = new Set();
+    this._mainToolUses = new Map();
     this.now = typeof opts.now === 'function' ? opts.now : Date.now;
     this._roles = new RoleClassifier();
     this.billing = new Ledger(); // global + per-session running totals
@@ -242,9 +245,39 @@ class WireProxy extends EventEmitter {
     this._agentSpillShown.delete(name);
     if (!opts.keepSpillShown) this._dropSpillShownRecord(name);
     this._voiceSinks.delete(name);
+    this._mainToolUses.delete(name);
     const sid = this._agentSessions.get(name);
     if (sid) this._roles.forgetSession(sid);
     this._agentSessions.delete(name);
+  }
+
+  _recordMainToolUse(agent, id) {
+    let seen = this._mainToolUses.get(agent);
+    if (!seen) { seen = new Map(); this._mainToolUses.set(agent, seen); }
+    const now = this.now();
+    for (const [k, at] of seen) {
+      if (seen.size < MAIN_TOOL_USE_MAX && now - at < MAIN_TOOL_USE_MS) break;
+      seen.delete(k);
+    }
+    seen.set(id, now);
+  }
+
+  _closeMainToolUses(agent, messages) {
+    const seen = this._mainToolUses.get(agent);
+    if (!seen || !seen.size || !Array.isArray(messages) || !messages.length) return;
+    const last = messages[messages.length - 1];
+    if (!last || last.role !== 'user' || !Array.isArray(last.content)) return;
+    for (const b of last.content) {
+      if (b && b.type === 'tool_result' && typeof b.tool_use_id === 'string') seen.delete(b.tool_use_id);
+    }
+  }
+
+  consumeMainToolUse(agent, id) {
+    const seen = this._mainToolUses.get(agent);
+    if (!seen || typeof id !== 'string' || !seen.has(id)) return false;
+    const at = seen.get(id);
+    seen.delete(id);
+    return this.now() - at < MAIN_TOOL_USE_MS;
   }
 
   sessionOf(name) {
@@ -450,6 +483,7 @@ class WireProxy extends EventEmitter {
           // the role.
           const rawAgentId = req.headers['x-claude-code-agent-id'];
           agentId = typeof rawAgentId === 'string' && rawAgentId ? rawAgentId : null;
+          if (rawAgentId === undefined) this._closeMainToolUses(agent, obj.messages);
           const rawRequestClass = req.headers['x-claude-code-request-class'];
           requestClass = typeof rawRequestClass === 'string' && rawRequestClass ? rawRequestClass : null;
           sideCall = requestClass === 'auxiliary' || isTitleCall(obj) || isProbeCall(obj) || isClassifierCall(obj) || isBareSideCall(obj);
@@ -552,6 +586,7 @@ class WireProxy extends EventEmitter {
         try {
           tee = this._buildTee(
             { agent, provider, reqId, sessionId, role, sideCall, compactCall, model, bodyObj, agentId, requestClass, prompt,
+              mainThread: req.headers['x-claude-code-agent-id'] === undefined,
               requestId: upRes.headers['request-id'] || null,
               status: upRes.statusCode },
             upRes.headers['content-encoding']);
@@ -663,10 +698,13 @@ class WireProxy extends EventEmitter {
   // Emission order on close: 'usage' → 'turn.completed' → 'stream-end', all
   // strictly after the client's final byte.
   _buildTee(turnCtx, contentEncoding) {
-    const { agent, provider, reqId, sessionId, role, sideCall, compactCall, model, bodyObj, agentId, requestClass, prompt, requestId, status } = turnCtx;
+    const { agent, provider, reqId, sessionId, role, sideCall, compactCall, model, bodyObj, agentId, requestClass, prompt, requestId, status, mainThread } = turnCtx;
     const usage = provider === 'anthropic' ? new UsageCollector() : new OpenAIUsageCollector();
     const extract = provider === 'anthropic' ? anthropicDelta : openaiDelta;
     const ftools = provider === 'anthropic' ? new FileToolCollector() : null;
+    const mainUses = provider === 'anthropic' && mainThread === true
+      ? new MainToolUseCollector((id) => this._recordMainToolUse(agent, id))
+      : null;
     let text = '';
     let truncated = false;
     // Its own accumulator, never appended to `text`. `text` is what reaches the
@@ -688,6 +726,7 @@ class WireProxy extends EventEmitter {
       try {
         if (usage) usage.onEvent(event, data);
         if (ftools) ftools.onEvent(event, data);
+        if (mainUses) mainUses.onEvent(event, data);
         const d = extract(event, data);
         if (d && d.s) {
           if (d.kind === 'thinking') {

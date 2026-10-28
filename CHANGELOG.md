@@ -41,6 +41,8 @@ blocks a release.
 - A reply line that starts with an inline code span such as ```` ```bash``` ```` no longer opens a phantom fence that silently swallows every later intent in the turn.
 - The terminal tab's zsh shim survives a `~/.zshenv` that sets `ZDOTDIR` (the XDG layout): the hook `.zshrc` still runs and the operator's own rc files are still sourced, and `term exec` refuses with `no-marks` instead of hanging when a shell has never emitted a mark.
 - A Codex seat that crashed or was forgotten no longer leaves Clodex's `hooks.json` in place of the operator's: the swap is reconciled at the next launch for every cwd with no live seat.
+- **Security:** a Claude seat's `main.` identity stamp is accepted only once per tool call the seat's wire tee saw on the main thread, and only while that call is still in flight, so a subagent that reads the seat's env and session id can no longer mint a stamp at will and reach `term_exec`, `term_read` or `exec`; a seat running with the wire off has no privileged MCP/`clodex-send` path (typed intents are unaffected), and the docs now state what the stamp does and does not prove.
+- The intent socket times out a client that connects and never sends a request, so stalled probes can no longer exhaust its connection slots and answer every real caller `busy`.
 
 ## 5.147.0 — 2026-10-28 — security fixes from the first cold audit
 

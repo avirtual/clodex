@@ -154,7 +154,7 @@ function startFakeUpstream(body = SSE_BODY) {
         body: Buffer.concat(chunks).toString('utf8'),
       });
       res.writeHead(200, { 'content-type': 'text/event-stream', 'x-upstream': 'fake' });
-      const payload = Buffer.from(body, 'utf8');
+      const payload = Buffer.from(typeof body === 'function' ? body(seen.requests.length) : body, 'utf8');
       let off = 0;
       const sizes = [7, 53, 211, 16, 1024];
       let i = 0;
@@ -725,4 +725,94 @@ test('lastUserPrompt: a <system-reminder> text block is skipped for the next tex
   assert.deepStrictEqual(lastUserPrompt({ messages: [
     { role: 'user', content: [{ type: 'text', text: '<system-reminder>ctx</system-reminder>' }, { type: 'text', text: 'real prompt' }] },
   ] }), { len: 11, head: 'real prompt', tail: 'real prompt' });
+});
+
+function toolUseSse(blocks) {
+  const lines = ['event: message_start', 'data: {"type":"message_start","message":{"usage":{"input_tokens":1,"output_tokens":0}}}', ''];
+  blocks.forEach(([id, name, deltas = []], index) => {
+    lines.push('event: content_block_start',
+      `data: ${JSON.stringify({ type: 'content_block_start', index, content_block: { type: 'tool_use', id, name, input: {} } })}`, '');
+    for (const partial of deltas) {
+      lines.push('event: content_block_delta',
+        `data: ${JSON.stringify({ type: 'content_block_delta', index, delta: { type: 'input_json_delta', partial_json: partial } })}`, '');
+    }
+    lines.push('event: content_block_stop', `data: {"type":"content_block_stop","index":${index}}`, '');
+  });
+  lines.push('event: message_stop', 'data: {"type":"message_stop"}', '', '');
+  return lines.join('\n');
+}
+
+const EMPTY_SSE = toolUseSse([]);
+
+async function mainToolUseProxy(t, body) {
+  const up = await startFakeUpstream(body);
+  t.after(() => up.server.close());
+  const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${up.port}` } });
+  await proxy.listen();
+  t.after(() => proxy.close());
+  const events = collect(proxy, ['turn.completed']);
+  proxy.registerAgent('lead', { sessionId: SESSION_ID });
+  return { proxy, events };
+}
+
+test('consumeMainToolUse: only a main-thread hook-matched clodex tool or a Bash call naming clodex-send is consumable, once', async (t) => {
+  const { proxy, events } = await mainToolUseProxy(t, toolUseSse([
+    ['toolu_term1', 'mcp__clodex__term_exec'],
+    ['toolu_send1', 'Bash', ['{"command":"echo hi; clodex', '-send \'[agent:who]\'"}']],
+    ['toolu_ls1', 'Bash', ['{"command":"ls -la"}']],
+    ['toolu_edit1', 'Edit'],
+    ['toolu_browser1', 'mcp__clodex__browser'],
+  ]));
+  await request(proxy.port, '/agent/lead/v1/messages', REQUEST_BODY);
+  assert.ok(await whenEvent(events, 'turn.completed', 1));
+  assert.strictEqual(proxy.consumeMainToolUse('other', 'toolu_term1'), false, 'another seat');
+  assert.strictEqual(proxy.consumeMainToolUse('lead', 'toolu_term1'), true);
+  assert.strictEqual(proxy.consumeMainToolUse('lead', 'toolu_term1'), false, 'one-shot');
+  assert.strictEqual(proxy.consumeMainToolUse('lead', 'toolu_send1'), true, 'clodex-send split across two deltas');
+  assert.strictEqual(proxy.consumeMainToolUse('lead', 'toolu_ls1'), false, 'a Bash call with no clodex-send');
+  assert.strictEqual(proxy.consumeMainToolUse('lead', 'toolu_edit1'), false);
+  assert.strictEqual(proxy.consumeMainToolUse('lead', 'toolu_browser1'), false, 'a plugin tool no hook stamps');
+  assert.strictEqual(proxy.consumeMainToolUse('lead', 'toolu_never'), false);
+});
+
+test('consumeMainToolUse: a response to a request carrying x-claude-code-agent-id records nothing', async (t) => {
+  const { proxy, events } = await mainToolUseProxy(t, toolUseSse([
+    ['toolu_sub1', 'mcp__clodex__term_exec'], ['toolu_sub2', 'Bash', ['{"command":"clodex-send x"}']],
+  ]));
+  await request(proxy.port, '/agent/lead/v1/messages', REQUEST_BODY, { 'x-claude-code-agent-id': 'agent-1' });
+  assert.ok(await whenEvent(events, 'turn.completed', 1));
+  assert.strictEqual(events['turn.completed'][0].agentId, 'agent-1');
+  assert.strictEqual(proxy.consumeMainToolUse('lead', 'toolu_sub1'), false);
+  assert.strictEqual(proxy.consumeMainToolUse('lead', 'toolu_sub2'), false);
+});
+
+test('consumeMainToolUse: the main request carrying a tool_result closes that id; a subagent request carrying it does not', async (t) => {
+  const { proxy, events } = await mainToolUseProxy(t, (n) => (n === 1 ? toolUseSse([
+    ['toolu_term2', 'mcp__clodex__term_exec'], ['toolu_send2', 'Bash', ['{"command":"clodex-send x"}']],
+  ]) : EMPTY_SSE));
+  await request(proxy.port, '/agent/lead/v1/messages', REQUEST_BODY);
+  assert.ok(await whenEvent(events, 'turn.completed', 1));
+  const resultFor = (id) => makeBody({ messages: [
+    { role: 'user', content: 'hi' },
+    { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Bash', input: {} }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] },
+  ] });
+  await request(proxy.port, '/agent/lead/v1/messages', resultFor('toolu_send2'), { 'x-claude-code-agent-id': 'agent-1' });
+  assert.ok(await whenEvent(events, 'turn.completed', 2));
+  await request(proxy.port, '/agent/lead/v1/messages', resultFor('toolu_term2'));
+  assert.ok(await whenEvent(events, 'turn.completed', 3));
+  assert.strictEqual(proxy.consumeMainToolUse('lead', 'toolu_term2'), false, 'its tool returned on the main thread');
+  assert.strictEqual(proxy.consumeMainToolUse('lead', 'toolu_send2'), true, 'a subagent request closes nothing');
+});
+
+test('consumeMainToolUse: an id older than ten minutes is refused and the set is capped at 256', () => {
+  let t = 1000;
+  const proxy = new WireProxy({ now: () => t });
+  proxy._recordMainToolUse('lead', 'toolu_old');
+  t += 10 * 60 * 1000;
+  assert.strictEqual(proxy.consumeMainToolUse('lead', 'toolu_old'), false);
+  for (let i = 0; i <= 256; i++) proxy._recordMainToolUse('lead', `toolu_${i}`);
+  assert.strictEqual(proxy._mainToolUses.get('lead').size, 256);
+  assert.strictEqual(proxy.consumeMainToolUse('lead', 'toolu_0'), false, 'the first id is evicted');
+  assert.strictEqual(proxy.consumeMainToolUse('lead', 'toolu_256'), true);
 });

@@ -456,4 +456,41 @@ class OpenAIUsageCollector {
   }
 }
 
-module.exports = { SSEFramer, anthropicDelta, openaiDelta, UsageCollector, OpenAIUsageCollector, FileToolCollector, FILE_TOOLS, ARG_CAP, ARG_TOOLS, clampArg };
+const MAIN_TOOL_NAMES = new Set(['mcp__clodex__term_exec', 'mcp__clodex__term_read', 'mcp__clodex__dm', 'mcp__clodex__exec']);
+const CLODEX_SEND = 'clodex-send';
+
+class MainToolUseCollector {
+  constructor(onToolUse) {
+    this._onToolUse = onToolUse;
+    this._bash = new Map();
+  }
+
+  onEvent(event, data) {
+    if (!data) return;
+    if (event != null && !_FT_EVENTS.has(event)) return;
+    if (event === 'content_block_delta' && this._bash.size === 0) return;
+    let obj;
+    try { obj = JSON.parse(data); } catch { return; }
+    if (obj.type === 'content_block_start') {
+      const cb = obj.content_block || {};
+      if (cb.type !== 'tool_use' || typeof cb.id !== 'string' || !cb.id || typeof obj.index !== 'number') return;
+      if (MAIN_TOOL_NAMES.has(cb.name)) this._onToolUse(cb.id);
+      else if (cb.name === 'Bash') this._bash.set(obj.index, { id: cb.id, tail: '' });
+    } else if (obj.type === 'content_block_delta') {
+      const b = this._bash.get(obj.index);
+      const d = obj.delta || {};
+      if (!b || d.type !== 'input_json_delta' || typeof d.partial_json !== 'string') return;
+      const s = b.tail + d.partial_json;
+      if (s.includes(CLODEX_SEND)) {
+        this._bash.delete(obj.index);
+        this._onToolUse(b.id);
+        return;
+      }
+      b.tail = s.slice(-(CLODEX_SEND.length - 1));
+    } else if (obj.type === 'content_block_stop') {
+      this._bash.delete(obj.index);
+    }
+  }
+}
+
+module.exports = { SSEFramer, anthropicDelta, openaiDelta, UsageCollector, OpenAIUsageCollector, FileToolCollector, MainToolUseCollector, MAIN_TOOL_NAMES, FILE_TOOLS, ARG_CAP, ARG_TOOLS, clampArg };
