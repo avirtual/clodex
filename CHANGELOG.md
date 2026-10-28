@@ -16,6 +16,8 @@ blocks a release.
 
 - A seat whose deletion ends with the seat kept (its worktree could not be removed, its process outlived the wait, or the accept flow kept a dirty tree) now keeps the messages it was holding in its pending mail instead of dropping them, and the "seat deleted" log fires only on a real delete; a tree-less seat deleted during close-out no longer re-parks mail into a removed pending dir.
 - `.claims` is refused as a seat name at create, rename and over the peer API, matching the pending-store reservation that already made such a seat undeliverable.
+- **Security:** `CLODEX_WEB_INSECURE=1` / `CLODEX_REMOTE_INSECURE=1` no longer disable the browser Origin check: a cross-site page is refused again on the stock `docker/web` compose stack (which sets the flag by default), while LAN clients with no Origin or a matching one are served. The flag still lifts DNS-rebinding protection; a token is the defence against it. 5.148.0 had skipped the whole gate under the flag.
+- Corrections to the 5.148.0 notes: the "OS notifications: only the 50 most recent remain clickable" and "Team preflight accepts an exec proposal with no argv" bullets describe changes that shipped in 5.147.0; `undeploy node --docker` now exits 0 and removes the saved context even when the data volume could not be deleted (it says so and names the volume); Move to Peer can still briefly leave a seat on both machines when the peer is still creating it after the 120 s import timeout; and a second `clodex-send` inside one Bash call runs with subagent identity.
 
 ## 5.148.0 — 2026-10-28 — security fixes from the second cold audit
 

@@ -18,13 +18,13 @@ edit, no build flag.
 | `CLODEX_LABEL` | the origin this instance announces to the peers it **dials** — the address their agents reach ours at, and the hello `host` field they display. Must match the outbox origin charset (`[A-Za-z0-9._-]`, 1–64, not `.`/`..`); a value that does not is ignored with a warning in `clodex.log` | the box's hostname, minus a `.local` suffix |
 | `CLODEX_WEB_PORT` | the browser frontend's port (headless only) | unset — no web host is started |
 | `CLODEX_WEB_HOST` | the interface the web host binds | unset — all interfaces |
-| `CLODEX_WEB_TOKEN` | the web frontend's bearer token | unset — localhost trust on a loopback bind, limited to requests whose Host and Origin are loopback so a web page cannot drive it (unless `CLODEX_WEB_INSECURE=1`); a non-loopback bind refuses to serve (503) |
-| `CLODEX_WEB_INSECURE` | `1` serves a non-loopback bind with no `CLODEX_WEB_TOKEN` anyway, for a container whose port map is the boundary; it also skips the Host/Origin check, trusting every client that reaches the bind | unset — fail closed |
+| `CLODEX_WEB_TOKEN` | the web frontend's bearer token | unset — localhost trust on a loopback bind, limited to requests whose Host and Origin are loopback so a web page cannot drive it (`CLODEX_WEB_INSECURE=1` lifts the loopback-Host rule but keeps the Origin check); a non-loopback bind refuses to serve (503) |
+| `CLODEX_WEB_INSECURE` | `1` serves a non-loopback bind with no `CLODEX_WEB_TOKEN` anyway, for a container whose port map is the boundary; it lifts the token and the loopback-only Host rule, while a browser Origin, when sent, must still match the Host; DNS rebinding is not stopped, only a token does that | unset — fail closed |
 | `CLODEX_WORKSPACES` | comma-separated workspace ids to restore at boot | the single default workspace |
 | `CLODEX_REMOTE_ENABLE` | `1` brings the peer wire up with no settings write (the headless-container door) | unset — the wire follows the persisted `remoteEnabled` setting |
 | `CLODEX_REMOTE_HOST` | the interface the peer wire binds | `127.0.0.1` |
 | `CLODEX_REMOTE_TOKEN` | the peer wire's bearer token; wins over the token file | unset — the token file, else localhost trust |
-| `CLODEX_REMOTE_INSECURE` | `1` serves a non-loopback peer-wire bind with no token, and skips the Host/Origin check: every client that reaches the bind is trusted | unset — fail closed |
+| `CLODEX_REMOTE_INSECURE` | `1` serves a non-loopback peer-wire bind with no token, and lifts the loopback-only Host rule, while a browser Origin, when sent, must still match the Host; DNS rebinding is not stopped, only a token does that | unset — fail closed |
 | `CLODEX_REMOTE_PORT` | the port the peer wire listens on; wins over the persisted `remotePort` setting and is never written back to it | unset — the persisted setting, else `7900` |
 | `CLODEX_WIRESCOPE_PORT` | the port wirescope listens on; wins over the persisted `wirescopePort` setting and is never written back. A persisted `proxyUrl` pointed at loopback follows it, so routing stays consistent | unset — the persisted setting, else `7800` |
 

@@ -126,3 +126,27 @@ test('originAllowed / originRefusal: Host must be loopback, Origin (when sent) m
     assert.strictEqual(originAllowed({ headers }), r.want === null, label);
   }
 });
+
+test('originRefusal anyHost: any non-empty Host passes (a DNS-rebound Host with its own Origin included), but anyHost keeps the Origin comparison', () => {
+  const { originAllowed, originRefusal } = require('../auth-token');
+  const rows = [
+    { host: '192.168.1.20:7810', origin: undefined, want: null },
+    { host: '192.168.1.20:7810', origin: 'http://192.168.1.20:7810', want: null },
+    { host: 'clodex.lan', origin: 'http://clodex.lan', want: null },
+    { host: '192.168.1.20:7810', origin: 'http://evil.example', want: 'Origin' },
+    { host: 'evil.example:7810', origin: 'http://evil.example:7810', want: null },
+    { host: '127.0.0.1:7810', origin: 'http://evil.example', want: 'Origin' },
+    { host: 'evil.example:7810', origin: 'http://127.0.0.1:7810', want: 'Origin' },
+    { host: undefined, origin: undefined, want: 'Host' },
+  ];
+  for (const r of rows) {
+    const headers = {};
+    if (r.host !== undefined) headers.host = r.host;
+    if (r.origin !== undefined) headers.origin = r.origin;
+    const label = `anyHost host=${r.host} origin=${r.origin}`;
+    assert.strictEqual(originRefusal({ headers }, { anyHost: true }), r.want, label);
+    assert.strictEqual(originAllowed({ headers }, { anyHost: true }), r.want === null, label);
+  }
+  assert.strictEqual(originRefusal({ headers: { host: '192.168.1.20:7810' } }), 'Host', 'default mode still requires a loopback Host');
+  assert.strictEqual(originAllowed({ headers: { host: '192.168.1.20:7810' } }), false, 'default mode still requires a loopback Host');
+});

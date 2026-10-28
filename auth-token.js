@@ -59,10 +59,10 @@ function isLoopbackHost(h) {
 
 const LOOPBACK_HOST_RE = /^(?:localhost|\[::1\]|127\.\d{1,3}\.\d{1,3}\.\d{1,3})(?::\d{1,5})?$/;
 
-function originRefusal(req) {
+function originRefusal(req, { anyHost = false } = {}) {
   const headers = (req && req.headers) || {};
   const host = String(headers.host || '').toLowerCase();
-  if (!LOOPBACK_HOST_RE.test(host)) return 'Host';
+  if (anyHost ? !host : !LOOPBACK_HOST_RE.test(host)) return 'Host';
   const origin = headers.origin;
   if (origin == null) return null;
   let u;
@@ -73,8 +73,8 @@ function originRefusal(req) {
   return u.host === want ? null : 'Origin';
 }
 
-function originAllowed(req) {
-  return originRefusal(req) === null;
+function originAllowed(req, opts) {
+  return originRefusal(req, opts) === null;
 }
 
 module.exports = { makeTokenGate, isLoopbackHost, originAllowed, originRefusal };
