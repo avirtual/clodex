@@ -585,3 +585,20 @@ test("a live drainer's claim dir is left alone by the next drain", () => {
   assert.deepStrictEqual(fs.readdirSync(claim), ['0001.json']);
   assert.ok(!fs.existsSync(agentDir(root, 'a')));
 });
+
+test('t2035 an own-pid claim from an earlier launch is rehomed; one carrying this launch\'s nonce is left alone', () => {
+  const { claimTag } = require('../pending-store');
+  const root = tmpRoot();
+  parkDelivery(root, 'a', 'stale', '0001');
+  fs.mkdirSync(claimsDir(root));
+  const stale = path.join(claimsDir(root), `a.draining.idle.${process.pid}-0badcafe`);
+  fs.renameSync(agentDir(root, 'a'), stale);
+  assert.notStrictEqual(claimTag('idle'), `idle.${process.pid}-0badcafe`, 'ENTER: the stale nonce is not this launch\'s');
+  assert.deepStrictEqual(drainPending(root, 'a', claimTag('idle')), ['stale']);
+  assert.ok(!fs.existsSync(stale));
+  parkDelivery(root, 'a', 'mid-drain', '0002');
+  const live = path.join(claimsDir(root), `a.draining.${claimTag('idle')}`);
+  fs.renameSync(agentDir(root, 'a'), live);
+  assert.deepStrictEqual(drainPending(root, 'a', claimTag('boot')), []);
+  assert.deepStrictEqual(fs.readdirSync(live), ['0002.json']);
+});

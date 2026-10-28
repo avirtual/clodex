@@ -9,6 +9,7 @@
 //                fresh directory and drains next turn.
 
 const fs = require('fs');
+const crypto = require('crypto');
 const path = require('path');
 const { atomicWriteFileSync } = require('./fs-util');
 const { previewLine } = require('./body-preview');
@@ -29,6 +30,10 @@ const { isAlive } = require('./stream-seat');
 const CLAIMS = '.claims';
 const RESERVED_SEAT_NAMES = new Set([CLAIMS]);
 const LEGACY_CLAIM_RE = /^\.resend\.|\.draining\.[a-z]+\.\d+$/;
+const CLAIM_TAG_RE = /^[a-z]+\.(\d+)(?:-([0-9a-f]+))?$/;
+const LAUNCH_NONCE = crypto.randomBytes(4).toString('hex');
+
+function claimTag(kind) { return `${kind}.${process.pid}-${LAUNCH_NONCE}`; }
 
 function agentDir(root, name) {
   if (name === CLAIMS) throw new Error(`reserved pending-store name: ${name}`);
@@ -145,10 +150,12 @@ function rehomeOrphans(root, name) {
   try { listings.push([claimsDir(root), fs.readdirSync(claimsDir(root))]); } catch {}
   try { listings.push([root, fs.readdirSync(root).filter((s) => LEGACY_CLAIM_RE.test(s))]); } catch {}
   for (const [parent, s] of listings.flatMap(([p, list]) => list.map((e) => [p, e]))) {
-    if (!s.startsWith(prefix) || !/^[a-z]+\.\d+$/.test(s.slice(prefix.length))) continue;
-    const pid = Number(s.slice(s.lastIndexOf('.') + 1));
-    if (!Number.isInteger(pid) || pid <= 0 || isAlive(pid)) continue;
-    const mine = claimPath(root, `${name}.draining.rehome.${process.pid}`);
+    const tag = s.startsWith(prefix) ? CLAIM_TAG_RE.exec(s.slice(prefix.length)) : null;
+    if (!tag) continue;
+    const pid = Number(tag[1]);
+    const staleOwn = pid === process.pid && tag[2] !== undefined && tag[2] !== LAUNCH_NONCE;
+    if (!Number.isInteger(pid) || pid <= 0 || (!staleOwn && isAlive(pid))) continue;
+    const mine = claimPath(root, `${name}.draining.${claimTag('rehome')}`);
     try { fs.renameSync(path.join(parent, s), mine); } catch { continue; }
     const json = (f) => f.endsWith('.json') && !f.startsWith('.');
     let files = [];
@@ -363,4 +370,4 @@ function claimParkedByKey(root, name, key) {
   return { ids, claimed };
 }
 
-module.exports = { parkDelivery, drainPending, rehomeOrphans, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, parkedTexts, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir, claimsDir, RESERVED_SEAT_NAMES, LEGACY_CLAIM_RE, isReservedSeatName };
+module.exports = { parkDelivery, drainPending, rehomeOrphans, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, parkedTexts, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir, claimsDir, RESERVED_SEAT_NAMES, LEGACY_CLAIM_RE, CLAIM_TAG_RE, claimTag, isReservedSeatName };

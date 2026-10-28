@@ -129,7 +129,7 @@ const CODEX_LINK_SLOW_POLL_MS = 5000;
 const { mergeSessionEnv, sanitizeFlat, withUtf8Charset } = require('./env-scopes');
 const voiceEngineSpec = require('./voice-engine');
 const { CTRLU_SETTLE_MS } = require('./inject-queue');
-const { agentDir: pendingAgentDir, isReservedSeatName } = require('./pending-store');
+const { agentDir: pendingAgentDir, isReservedSeatName, claimTag } = require('./pending-store');
 const { VOICE_MODES, voiceModeOf } = require('./voice-settings');
 const { fmtAge } = require('./memory-store');
 const { mcpArgvPlan, claudeMcpServers, codexMcpArgs, museExpressible, secretRefs, discoverMcpSources } = require('./mcp-plan');
@@ -5824,7 +5824,7 @@ function createSessionManager(deps) {
           if (session._dead) return null;
           if (this._anyDraftOpen(session) || this._turnStartPending(session)) return null;
           let texts = [];
-          try { texts = drainPending(PENDING_DIR, session.name, `idle.${process.pid}`, this._bornFor(session.name)); } catch { return null; }
+          try { texts = drainPending(PENDING_DIR, session.name, claimTag('idle'), this._bornFor(session.name)); } catch { return null; }
           if (!texts.length) {
             log.debug('inject', `idle drain for ${session.name} claimed nothing — hook already drained it`);
             return null;
@@ -5840,7 +5840,7 @@ function createSessionManager(deps) {
       const produce = () => {
         if (s._dead) return null;
         let texts = [];
-        try { texts = drainPending(PENDING_DIR, s.name, `stream.${process.pid}`, this._bornFor(s.name)); } catch { return null; }
+        try { texts = drainPending(PENDING_DIR, s.name, claimTag('stream'), this._bornFor(s.name)); } catch { return null; }
         return texts.length ? texts.join('\n\n') : null;
       };
       this._streamEnqueueSystem(s, '', produce, 'parked drain at stream init', null, PENDING_DRAIN_KEY);
@@ -5854,7 +5854,7 @@ function createSessionManager(deps) {
         if (session._dead) return null;
         if (this._anyDraftOpen(session) || this._turnStartPending(session)) return null;
         let texts = [];
-        try { texts = drainPending(PENDING_DIR, session.name, `boot.${process.pid}`, this._bornFor(session.name)); } catch { return null; }
+        try { texts = drainPending(PENDING_DIR, session.name, claimTag('boot'), this._bornFor(session.name)); } catch { return null; }
         if (!texts.length) {
           log.debug('inject', `boot-ready drain for ${session.name} claimed nothing — another drainer won or every entry failed the born check`);
           return null;
@@ -7021,7 +7021,7 @@ function createSessionManager(deps) {
         // Timer callback: countPending inside _flushParkedNow can throw, and an escape is an uncaughtException
         // that takes the app down.
         try {
-          this._flushParkedNow(target, `reboot.${process.pid}`, 'park-flush');
+          this._flushParkedNow(target, claimTag('reboot'), 'park-flush');
         } catch (e) {
           log.error('inject', `reboot notice flush for ${target.name} failed: ${e.message}`);
         }
@@ -9075,7 +9075,7 @@ function createSessionManager(deps) {
         if (oldest === null && typeof oldestActiveParkTs === 'function' && countPending(PENDING_DIR, target.name) > 0) return;
         const left = oldest === null ? 0 : INJECT_QUIET_MAXWAIT - (Date.now() - oldest);
         if (left > 0) { this._armParkCap(target, Math.min(left, INJECT_QUIET_MAXWAIT)); return; }
-        this._flushParkedNow(target, `cap.${process.pid}`, 'park-cap');
+        this._flushParkedNow(target, claimTag('cap'), 'park-cap');
       }, delay);
     }
 
@@ -9119,7 +9119,7 @@ function createSessionManager(deps) {
         log.info('inject', `park-flush for ${target.name} held (${hold}) — ${count} parked entr${count === 1 ? 'y stays' : 'ies stay'} on disk`);
         return { ok: false, reason: hold === 'dialog' ? 'dialog-blocked' : hold, count };
       }
-      const r = this._flushParkedNow(target, `flush.${process.pid}`, 'park-flush');
+      const r = this._flushParkedNow(target, claimTag('flush'), 'park-flush');
       if (target._parkCapTimer) { clearTimeout(target._parkCapTimer); target._parkCapTimer = null; }
       this._lastPendingCounts.delete(name);
       this._broadcast('pending-count', { name, count: 0 });
