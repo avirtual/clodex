@@ -1427,6 +1427,20 @@ test('pending drain: the hook claims into .claims/ and leaves a look-alike seat 
   assert.deepStrictEqual(fs.readdirSync(path.join(pend, '.claims')), []);
 });
 
+test("pending drain: a look-alike seat's own dead claim is not swept into the hook's seat", () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('a');
+  const orphan = path.join(REGISTRY_DIR, 'pending', '.claims', 'a.draining.99999.draining.hook.999999');
+  fs.mkdirSync(orphan, { recursive: true });
+  fs.writeFileSync(path.join(orphan, 'm0.json'), JSON.stringify({ text: 'other seat' }));
+  assert.throws(() => process.kill(999999, 0));
+  const out = runPending(REGISTRY_DIR, 'a', JSON.stringify({ hook_event_name: 'UserPromptSubmit' }));
+  assert.strictEqual(out.trim(), '');
+  assert.deepStrictEqual(fs.readdirSync(orphan), ['m0.json']);
+  assert.ok(!fs.existsSync(path.join(REGISTRY_DIR, 'pending', 'a')));
+});
+
 test("pending drain: a LIVE drainer's claim dir is left alone", () => {
   const REGISTRY_DIR = tmp();
   const h = mk(REGISTRY_DIR);

@@ -313,8 +313,8 @@ inject queue to empty (capped at `INJECT_BOOT_MAXWAIT` past the edge), so a spaw
   An `urgent` re-send of the same body from the same sender claims any parked
   copy for that target first (content key = sha256 of sender + body), so the
   target never reads it twice.
-- Claims rename into `<root>/.claims/`, outside the session-name grammar,
-  so a seat named like a claim cannot be mistaken for one.
+- Claims rename into the reserved `<root>/.claims/` (a seat may not be named
+  `.claims`), so a seat named like a claim cannot be mistaken for one.
 - Drains: `run/<name>/pending.sh` (UserPromptSubmit and PostToolUse hooks) delivers
   parked mail with the target's own next turn or tool boundary; the busy/draft park arms a non-destructive
   5min cap (`_armParkCap`) that drains through the inject queue. Cost/dialog

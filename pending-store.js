@@ -143,7 +143,7 @@ function rehomeOrphans(root, name) {
   try { listings.push([claimsDir(root), fs.readdirSync(claimsDir(root))]); } catch {}
   try { listings.push([root, fs.readdirSync(root).filter((s) => LEGACY_CLAIM_RE.test(s))]); } catch {}
   for (const [parent, s] of listings.flatMap(([p, list]) => list.map((e) => [p, e]))) {
-    if (!s.startsWith(prefix)) continue;
+    if (!s.startsWith(prefix) || !/^[a-z]+\.\d+$/.test(s.slice(prefix.length))) continue;
     const pid = Number(s.slice(s.lastIndexOf('.') + 1));
     if (!Number.isInteger(pid) || pid <= 0 || isAlive(pid)) continue;
     const mine = claimPath(root, `${name}.draining.rehome.${process.pid}`);

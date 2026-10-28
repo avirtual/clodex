@@ -526,12 +526,25 @@ test('Y1: a seat named like a dead drainer\'s claim keeps its mailbox', () => {
   assert.deepStrictEqual(drainPending(root, 'a.draining.99999', 'idle.1'), ['for the other seat']);
 });
 
+test('Y1: a look-alike seat\'s own dead claim is not swept into the shorter-named seat', () => {
+  const root = tmpRoot();
+  parkDelivery(root, 'a.draining.99999', 'for the other seat', '0001');
+  fs.mkdirSync(claimsDir(root));
+  const orphan = path.join(claimsDir(root), 'a.draining.99999.draining.idle.999999');
+  fs.renameSync(agentDir(root, 'a.draining.99999'), orphan);
+  assert.ok(fs.existsSync(path.join(orphan, '0001.json')), 'ENTER: the look-alike seat has a dead claim');
+  assert.throws(() => process.kill(999999, 0));
+  rehomeOrphans(root, 'a');
+  assert.ok(fs.existsSync(path.join(orphan, '0001.json')));
+  assert.ok(!fs.existsSync(agentDir(root, 'a')));
+  assert.deepStrictEqual(drainPending(root, 'a.draining.99999', 'idle.1'), ['for the other seat']);
+});
+
 test('allParkedTexts / parkIdInUse / claimParkedById skip .claims and list a seat named x.draining.1', () => {
   const root = tmpRoot();
   parkDelivery(root, 'x.draining.1', 'seat text', SEQ(1), 'q1w');
   fs.mkdirSync(claimsDir(root));
-  fs.mkdirSync(path.join(claimsDir(root), 'b.draining.idle.5'));
-  fs.writeFileSync(path.join(claimsDir(root), 'b.draining.idle.5', `${SEQ(1)}.z9z.json`), JSON.stringify({ text: 'claimed' }));
+  fs.writeFileSync(path.join(claimsDir(root), `${SEQ(1)}.z9z.json`), JSON.stringify({ text: 'claimed' }));
   assert.deepStrictEqual(allParkedTexts(root), ['seat text']);
   assert.strictEqual(parkIdInUse(root, 'q1w'), true);
   assert.strictEqual(parkIdInUse(root, 'z9z'), false);

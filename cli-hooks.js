@@ -556,7 +556,7 @@ function rehome_orphans() {
   try { listings.push([claims, fs.readdirSync(claims)]); } catch (e) {}
   try { listings.push([root, fs.readdirSync(root).filter(function (n) { return /\\.draining\\.[a-z]+\\.\\d+$/.test(n); })]); } catch (e) {}
   for (const [parent, s] of listings.flatMap(function (l) { return l[1].map(function (e) { return [l[0], e]; }); })) {
-    if (!s.startsWith(prefix)) continue;
+    if (!s.startsWith(prefix) || !/^[a-z]+\\.\\d+$/.test(s.slice(prefix.length))) continue;
     const pid = Number(s.slice(s.lastIndexOf('.') + 1));
     if (!Number.isInteger(pid) || pid <= 0 || pid_alive(pid)) continue;
     let mine;
