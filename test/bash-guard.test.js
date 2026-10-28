@@ -101,6 +101,7 @@ const TABLE = [
   { cmd: 'echo "$({ case x in x) git add -A;; esac; })"', want: 'deny' },
   { cmd: 'echo "$(echo `x` case)"; git add -A', want: 'deny', reason: CASE_REASON },
   { cmd: 'echo "$(case x in x) echo hi;; esac) git add -A"', want: 'pass' },
+  { cmd: "git commit -m \"$(cat <<'EOF'\nfix the edge case\nEOF\n)\"", want: 'pass' },
   { cmd: 'echo "$(if :; then case x in x) git add -A;; esac; fi)"', want: 'deny' },
   { cmd: 'echo "$(! case x in x) git add -A;; esac)"', want: 'deny' },
   { cmd: 'echo "$(coproc case x in x) git add -A;; esac)"', want: 'deny' },

@@ -265,7 +265,8 @@ try {
       if (f && f.bt && tok === "case" && !tq) uncountedCase = true;
       if (f && !f.bt) {
         const head = f.cmd && !tq;
-        if (tok === "case" && !tq && !head) uncountedCase = true;
+        if (tok.slice(0, 2) === "<<" && tok.slice(0, 3) !== "<<<") f.hd = true;
+        if (tok === "case" && !tq && !head && !f.hd) uncountedCase = true;
         const p = String(s[s.length - 1] || "");
         if (head) { if (tok === "case") f.inCase++; else if (tok === "esac" && f.inCase > 0) f.inCase--; }
         const named = f.next && !(f.next === "coproc" && tok === "case");
