@@ -160,6 +160,32 @@ test('a REWORK with no extractable must-fix tells the hand the same thing the le
   assert.ok(!sent[0].body.includes('named no must-fix items'), `Got:\n${sent[0].body}`);
 });
 
+test('a REWORK whose reviewer wrote a MUST-FIX header with no items says none were named, to the lead and the hand', () => {
+  const f = mkLoop();
+  const landedOn = { verdict: 'REWORK', mustFix: null, mustFixHeader: true, reviewRound: 2 };
+  f.m._notifyLeadOfVerdict(f.seat('lead'), 'lead', 't1', landedOn, 'VERDICT: REWORK\n\nMUST-FIX: (none)\n\nNITS:\n- y');
+  assert.strictEqual(f.gated.length, 1, 'ENTER: the lead was notified at all');
+  assert.match(f.gated[0].body, /^\[ticket t1 REWORK\] review round 2, no must-fixes\./m, `Got:\n${f.gated[0].body}`);
+  assert.ok(!f.gated[0].body.includes('could be extracted'), `Got:\n${f.gated[0].body}`);
+  const sent = [];
+  f.m._rejectTicketFromLoop = (_team, id, body) => { sent.push({ id, body }); return { ok: true }; };
+  f.m._dispatchReworkFromVerdict(f.team, 't1', landedOn, { ok: true, path: '/v.md' });
+  assert.strictEqual(sent.length, 1, 'ENTER: the rework was dispatched');
+  assert.ok(sent[0].body.includes('named no must-fix items'), `Got:\n${sent[0].body}`);
+  assert.ok(!sent[0].body.includes('could be extracted'), `Got:\n${sent[0].body}`);
+});
+
+test('a REWORK with no MUST-FIX header says its must-fixes could not be extracted, to the lead and the hand', () => {
+  const f = mkLoop();
+  const landedOn = { verdict: 'REWORK', mustFix: null, mustFixHeader: false, reviewRound: 2 };
+  f.m._notifyLeadOfVerdict(f.seat('lead'), 'lead', 't1', landedOn, 'VERDICT: REWORK');
+  assert.match(f.gated[0].body, /no must-fix items could be extracted/, `Got:\n${f.gated[0].body}`);
+  const sent = [];
+  f.m._rejectTicketFromLoop = (_team, id, body) => { sent.push({ id, body }); return { ok: true }; };
+  f.m._dispatchReworkFromVerdict(f.team, 't1', landedOn, { ok: true, path: '/v.md' });
+  assert.match(sent[0].body, /No must-fix items could be extracted/, `Got:\n${sent[0].body}`);
+});
+
 test('a REWORK verdict is unchanged: its own body already says what to do', () => {
   const f = mkLoop();
   f.m._notifyLeadOfVerdict(f.seat('lead'), 'lead', 't1',
