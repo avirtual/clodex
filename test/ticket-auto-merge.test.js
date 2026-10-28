@@ -855,10 +855,11 @@ test('#48 F6: a red suite after an accept deleted the branch says DELETED even w
   assert.ok(!esc[0].body.includes('the branch is untouched'));
 });
 
-test('#48 F6: a red suite whose branch probe throws claims neither DELETED nor untouched', async () => {
+test('#48 F6: a red suite whose branch probe hits a real git failure claims neither DELETED nor untouched', async () => {
   const { f } = mkMergeWithTree({ suite: 'red' });
   const realSuite = f.m._runTicketSuite.bind(f.m);
-  const realRevParse = f.deps.gitWorktree.revParse;
+  const realRefState = f.deps.gitWorktree.refState;
+  const notRepo = mkTmpRoot('clodex-not-a-repo-');
   let probed = 0;
   f.m._runTicketSuite = async (...args) => {
     const ts = f.tstore.load(f.team.root);
@@ -867,21 +868,22 @@ test('#48 F6: a red suite whose branch probe throws claims neither DELETED nor u
     row.acceptedBy = 'lead';
     row.closedOut = true;
     f.tstore.save(f.team.root, ts);
-    f.deps.gitWorktree.revParse = async (cwd, ref) => {
-      if (ref === 'refs/heads/tl-1') { probed += 1; throw new Error('git exploded'); }
-      return realRevParse(cwd, ref);
+    f.deps.gitWorktree.refState = async (cwd, ref) => {
+      if (ref !== 'refs/heads/tl-1') return realRefState(cwd, ref);
+      probed += 1;
+      return realRefState(notRepo, ref);
     };
     return realSuite(...args);
   };
 
   try {
     await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
-  } finally { f.deps.gitWorktree.revParse = realRevParse; }
+  } finally { f.deps.gitWorktree.refState = realRefState; }
 
   const esc = f.esc();
   assert.strictEqual(esc.length, 1, 'ENTER: the red suite escalated');
   assert.match(esc[0].body, /REVERTED the merge/, 'ENTER: and reverted');
-  assert.ok(probed >= 1, 'ENTER: the branch probe ran and threw');
+  assert.ok(probed >= 1, 'ENTER: the branch probe ran against a dir git refuses');
   assert.match(esc[0].body, /could not be checked/, `Got:\n${esc[0].body}`);
   assert.doesNotMatch(esc[0].body, /DELETED/);
   assert.ok(!esc[0].body.includes('the branch is untouched'));

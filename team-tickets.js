@@ -2055,8 +2055,7 @@ function createTicketMethods(deps, shared) {
           const rev = await gitWorktree.revertCommit(team.root, merged.sha)
             .catch((e) => ({ ok: false, error: e.message }));
           const after = this._loadTicket(team, ticketId);
-          const branchRef = await gitWorktree.revParse(team.root, `refs/heads/${branch}`)
-            .then((sha) => (sha ? 'present' : 'gone'), () => 'unknown');
+          const branchRef = await gitWorktree.refState(team.root, `refs/heads/${branch}`).catch(() => 'unknown');
           const closedOut = !!(after && after.closedOut);
           const branchFate = closedOut && branchRef === 'unknown'
             ? `the state of branch ${branch} could not be checked (git failed) after an accept (${after.acceptedBy || 'the lead'}) closed the ticket out while the suite ran`
