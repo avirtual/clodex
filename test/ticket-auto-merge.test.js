@@ -655,10 +655,6 @@ test('t825: a reject clears the accept stamp, so the round after a kept-tree acc
 });
 
 // ── t825: the accept that lands DURING the post-merge suite ────────────────
-// The window is the whole suite — minutes on a real repo — and nothing in it
-// blocks `_taskAccept`, which gates on lead-ness, id and `state === 'done'`.
-// The pre-merge re-read covers queue→merge only.
-//
 // Unguarded, the loop tears down a second time over a tree that is already
 // gone: `isMerged` answers `ok:false` on the deleted ref, the `!m.ok` arm says
 // "worktree and branch were KEPT. Nothing was removed" about a seat, a checkout
@@ -699,6 +695,114 @@ test('t825: a lead accept during the post-merge suite is REPORTED, not overwritt
     'and the notice must never say that over a teardown the lead already ran');
   assert.ok(notes[0].body.includes('Closed out: lead accepted it while the post-merge suite ran'),
     `line 2 reports who closed it and when. Got:\n${notes[0].body}`);
+});
+
+function mkMergeWithTree(opts = {}) {
+  const { repo, ticketOver } = mkRepoWithChangelog();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const wtPath = pathReal.join(repo.dir, 'wt');
+  execFileSync('git', ['-C', repo.dir, 'worktree', 'add', '-q', wtPath, 'tl-1'], { encoding: 'utf8' });
+  const f = mkMerge({ repo, ticketOver, ...opts });
+  f.persistence.upsert({
+    name: 'team-hand', cwd: wtPath, ephemeral: true,
+    worktree: { path: wtPath, branch: 'tl-1', baseSha: repo.baseSha },
+  });
+  f.m.kill = async (n) => { f.persistence.remove(n); f.m.sessions.delete(n); };
+  return { repo, wtPath, f };
+}
+
+const leadAccept = async (f) => {
+  const replies = [];
+  await f.m._taskAccept(f.m.sessions.get('lead'), f.team,
+    { type: 'task', sub: 'accept', id: 't1', who: null, body: '' }, (msg) => replies.push(msg));
+  return replies.join('\n');
+};
+
+test('#45 F2: a lead accept while the post-merge suite runs is VETOED and tears nothing down', async () => {
+  const { repo, wtPath, f } = mkMergeWithTree();
+  const realSuite = f.m._runTicketSuite.bind(f.m);
+  let during = null;
+  f.m._runTicketSuite = async (...args) => {
+    const row = f.one();
+    const reply = await leadAccept(f);
+    during = {
+      reply,
+      mergeWaiting: row.mergeWaiting,
+      state: f.one().state,
+      stillMerging: f.one().mergeWaiting,
+      closedOut: f.one().closedOut,
+      acceptedAt: f.one().acceptedAt,
+      tree: fsReal.existsSync(wtPath),
+      branch: git(repo.dir, ['branch', '--list', '--format=%(refname:short)', 'tl-1']).trim(),
+      seat: !!f.persistence.get('team-hand'),
+    };
+    return realSuite(...args);
+  };
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.strictEqual(during.mergeWaiting, 'merging', 'ENTER: the accept really landed in the merging window');
+  assert.match(during.reply, /post-merge suite has not answered yet \(merge [0-9a-f]{40} is on the trunk, unverified\); accept again after the MERGED or MERGE FAILED notice/);
+  assert.strictEqual(during.state, 'done');
+  assert.strictEqual(during.stillMerging, 'merging', 'the row is still done+merging');
+  assert.strictEqual(during.closedOut, undefined, 'the veto did not close the ticket out');
+  assert.strictEqual(during.acceptedAt, undefined, 'nor stamp an accept');
+  assert.strictEqual(during.tree, true, 'the worktree is still on disk');
+  assert.strictEqual(during.branch, 'tl-1', 'and the branch is still a ref');
+  assert.strictEqual(during.seat, true, 'and the seat record is kept');
+
+  assert.strictEqual(f.landed().length, 1, 'ENTER: the green suite announced the merge');
+  assert.ok(f.one().loopClosedOut, 'after the green suite the loop closed it out itself');
+  assert.ok(!fsReal.existsSync(wtPath), 'removing the tree');
+  assert.strictEqual(git(repo.dir, ['branch', '--list', 'tl-1']).trim(), '', 'and the ref');
+  assert.match(await leadAccept(f), /already closed out by the loop/, 'so the second accept finds nothing left to do');
+});
+
+test('#45 F2: a second accept after the suite answered closes the ticket out', async () => {
+  const { repo, wtPath, f } = mkMergeWithTree();
+  const realSuite = f.m._runTicketSuite.bind(f.m);
+  let first = null;
+  f.m._runTicketSuite = async (...args) => { first = await leadAccept(f); return realSuite(...args); };
+  f.m._closeOutMergedTicket = ((real) => async (team, row, tickets, o) => (o.by === 'ticket-loop'
+    ? { ok: false, closedOut: false, text: 'the loop left the close-out to the lead' }
+    : real(team, row, tickets, o)))(f.m._closeOutMergedTicket.bind(f.m));
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.match(first, /has not answered yet/, 'ENTER: the first accept was vetoed');
+  assert.strictEqual(f.one().mergeWaiting, undefined, 'ENTER: the suite answered and cleared the waiting mark');
+  assert.ok(fsReal.existsSync(wtPath), 'ENTER: the tree survived to the second accept');
+  const second = await leadAccept(f);
+  assert.match(second, /branch tl-1 deleted/, `the second accept took the merged arm. Got:\n${second}`);
+  assert.strictEqual(f.one().closedOut, true);
+  assert.ok(!fsReal.existsSync(wtPath));
+  assert.strictEqual(git(repo.dir, ['branch', '--list', 'tl-1']).trim(), '');
+});
+
+test('#45 F2: a red suite after an accept already tore the branch down names the restore command', async () => {
+  const { repo, f } = mkMergeWithTree({ suite: 'red' });
+  const realSuite = f.m._runTicketSuite.bind(f.m);
+  f.m._runTicketSuite = async (...args) => {
+    execFileSync('git', ['-C', repo.dir, 'worktree', 'remove', '--force', pathReal.join(repo.dir, 'wt')]);
+    git(repo.dir, ['branch', '-D', 'tl-1']);
+    const ts = f.tstore.load(f.team.root);
+    const row = ts.find((t) => t.id === 't1');
+    row.acceptedAt = Date.now();
+    row.acceptedBy = 'lead';
+    row.closedOut = true;
+    f.tstore.save(f.team.root, ts);
+    return realSuite(...args);
+  };
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: the red suite escalated');
+  assert.match(esc[0].body, /REVERTED the merge/, 'ENTER: and reverted');
+  const sha = f.one().mergeWaitingSha || git(repo.dir, ['log', '--merges', '-1', '--format=%H', 'master']).trim();
+  assert.ok(esc[0].body.includes(`branch tl-1 ${sha}^2`), `the escalation names the restore command. Got:\n${esc[0].body}`);
+  assert.match(esc[0].body, /DELETED by an accept \(lead\)/);
+  assert.ok(!esc[0].body.includes('the branch is untouched'), 'and no longer claims the branch is untouched');
 });
 
 // The same interleave on the accept arms that keep the tree. `!m.ok` and
@@ -1636,6 +1740,50 @@ test('an ACCEPT whose BODY still lists must-fixes escalates instead of merging',
   assert.match(esc[0].body, /2 items/, 'counted off the body');
   assert.strictEqual(f.masterHead(), before, 'master did not move');
   assert.deepStrictEqual(f.landed(), [], 'and no merge was announced');
+});
+
+test('#45 F1: an ACCEPT body that echoes a fenced ACCEPT and carries a REWORK line is refused at must-fix', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const before = f.masterHead();
+  const body = [
+    "The hand's report claimed:",
+    '```',
+    'VERDICT: ACCEPT',
+    'MUST-FIX: none',
+    '```',
+    'That claim is wrong.',
+    '',
+    'VERDICT: REWORK',
+    'MUST-FIX:',
+    '- the guard is inverted in foo.js',
+    '- missing test',
+  ].join('\n');
+
+  await f.m._autoMergeTicket(f.team, 't1', { verdict: 'ACCEPT', mustFix: null, reviewRound: 1 }, body);
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'exactly one escalation');
+  assert.match(esc[0].body, /merge: must-fix/);
+  assert.match(esc[0].body, /the verdict is ambiguous: VERDICT: REWORK on line 8/);
+  assert.strictEqual(f.masterHead(), before, 'master did not move');
+  assert.deepStrictEqual(f.landed(), []);
+  assert.strictEqual(f.one().mergeError, 'must-fix');
+});
+
+test('#45 F1: an ACCEPT body with two unfenced MUST-FIX headers is refused at must-fix', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const before = f.masterHead();
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, 'VERDICT: ACCEPT\nMUST-FIX: none\n\nNITS\n- x\n\nMUST-FIX: none');
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1);
+  assert.match(esc[0].body, /2 MUST-FIX headers on lines 2, 7/);
+  assert.strictEqual(f.masterHead(), before);
 });
 
 test('a header that MISCOUNTS must-fixes does not block a merge whose body says none', async () => {

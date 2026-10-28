@@ -50,7 +50,7 @@ const clodexPaths = require('../clodex-paths');
 // The resolver itself, for the one ENTER that must show a REFUSAL rather than an
 // unplaceable pointer: _ticketDiffDest reports both arms as `{ok:false}`.
 const teamCost = require('../team-cost');
-const { extractMustFix, countMustFix } = require('../tickets-store');
+const { extractMustFix, countMustFix, scanVerdict } = require('../tickets-store');
 const { intentEnabled } = require('../intent-catalog');
 const { parseWithRegistry } = require('../intent-registry');
 
@@ -634,6 +634,89 @@ test('a quoted previous verdict does not supply the must-fix list', async () => 
   const t = f.one('t1');
   assert.strictEqual(t.verdict, 'REWORK');
   assert.strictEqual(t.mustFix, '- new');
+});
+
+const FENCED_ECHO_VERDICT = [
+  "The hand's report claimed:",
+  '```',
+  'VERDICT: ACCEPT',
+  'MUST-FIX: none',
+  '```',
+  'That claim is wrong.',
+  '',
+  'VERDICT: REWORK',
+  'MUST-FIX:',
+  '- the guard is inverted in foo.js',
+  '- missing test',
+].join('\n');
+
+const INDENTED_ECHO_VERDICT = [
+  "The hand's report claimed:",
+  '',
+  '    VERDICT: ACCEPT',
+  '    MUST-FIX: none',
+  '',
+  'That claim is wrong.',
+  '',
+  'VERDICT: REWORK',
+  'MUST-FIX:',
+  '- the guard is inverted in foo.js',
+  '- missing test',
+].join('\n');
+
+for (const [label, body] of [['fenced', FENCED_ECHO_VERDICT], ['indented', INDENTED_ECHO_VERDICT]]) {
+  test(`a ${label} echo of an earlier ACCEPT does not decide the verdict or supply the must-fix list (#45 F1)`, async () => {
+    const f = mkVerdict();
+    openTicket(f);
+    const queued = [];
+    f.m._queueAutoMerge = (...args) => { queued.push(args); };
+    const rec = spawnReviewer(f, 'scope', { ticketId: 't1' });
+    await f.m._handleReviewDone(f.m.sessions.get(rec.name), body);
+    const t = f.one('t1');
+    assert.strictEqual(t.verdict, 'REWORK');
+    assert.strictEqual(t.mustFix, '- the guard is inverted in foo.js\n- missing test');
+    assert.strictEqual(countMustFix(t.mustFix), 2);
+    assert.deepStrictEqual(queued, [], 'no auto-merge is queued for a REWORK');
+  });
+}
+
+test('a body with ACCEPT and REWORK both unquoted lands nothing and goes to the lead (#45 F1)', async () => {
+  const f = mkVerdict();
+  const before = openTicket(f);
+  const queued = [];
+  f.m._queueAutoMerge = (...args) => { queued.push(args); };
+  const rec = spawnReviewer(f, 'scope', { ticketId: 't1' });
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name),
+    'VERDICT: ACCEPT\nMUST-FIX: none\n\non second thought\n\nVERDICT: REWORK\nMUST-FIX:\n- the guard is inverted');
+  const t = f.one('t1');
+  assert.ok(!('verdict' in t), 'no verdict was landed');
+  assert.strictEqual(t.reviewRound, undefined);
+  assert.strictEqual(t.lastActivityAt, before.lastActivityAt);
+  assert.deepStrictEqual(queued, []);
+  assert.strictEqual(f.gated.length, 1, 'the lead reads the raw body instead');
+  assert.strictEqual(f.gated[0].target, 'lead');
+  assert.match(f.gated[0].body, /on second thought/);
+  assert.deepStrictEqual(f.killed, [rec.name]);
+});
+
+test('scanVerdict: fence, quote and indent lines are skipped; distinct values and MUST-FIX headers are reported with line numbers', () => {
+  assert.deepStrictEqual(scanVerdict(FENCED_ECHO_VERDICT), {
+    verdict: 'REWORK', verdicts: [{ value: 'REWORK', line: 8 }], mustFixHeaders: [9], ambiguous: false,
+  });
+  assert.deepStrictEqual(scanVerdict('~~~\nVERDICT: ACCEPT\n```\nVERDICT: ACCEPT\n~~~\n> VERDICT: REWORK\n\tVERDICT: REWORK\nVERDICT: ACCEPT'), {
+    verdict: 'ACCEPT', verdicts: [{ value: 'ACCEPT', line: 8 }], mustFixHeaders: [], ambiguous: false,
+  });
+  assert.deepStrictEqual(scanVerdict('VERDICT: ACCEPT\nMUST-FIX: none\nMUST-FIX:\n- a'), {
+    verdict: 'ACCEPT', verdicts: [{ value: 'ACCEPT', line: 1 }], mustFixHeaders: [2, 3], ambiguous: true,
+  });
+  assert.strictEqual(scanVerdict('VERDICT: ACCEPT\nVERDICT: REWORK').verdict, null);
+  assert.strictEqual(scanVerdict('VERDICT: ACCEPT\nVERDICT: REWORK').ambiguous, true);
+  assert.strictEqual(scanVerdict('```\nVERDICT: ACCEPT\n```').verdict, null);
+});
+
+test('extractMustFix: the LAST unfenced MUST-FIX section is the one taken', () => {
+  assert.strictEqual(extractMustFix('MUST-FIX: none\n\nVERDICT: REWORK\nMUST-FIX:\n- a\n- b'), '- a\n- b');
+  assert.strictEqual(extractMustFix('VERDICT: REWORK\nMUST-FIX:\n- a\n```\nMUST-FIX: none\n```'), '- a\n```\nMUST-FIX: none\n```');
 });
 
 test('ordinary verdict decoration is still accepted, so the anchor did not narrow the grammar', async () => {
