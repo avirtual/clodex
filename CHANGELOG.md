@@ -23,6 +23,7 @@ blocks a release.
 - Deleting a workspace now removes the git worktrees of the ticket seats it held, and keeps a seat archived when its worktree could not be removed, instead of leaving the tree on disk with nothing naming it.
 - Deleting sessions.json while Clodex is closed now starts with an empty seat list; the launch snapshot (sessions.json.bak) is used only when sessions.json exists but does not parse.
 - Deleting a seat or its workspace no longer re-parks the messages it was holding into its pending mail after its files were removed; they are dropped and logged.
+- Security: the context and cache-bust popovers no longer insert numbers from a peer's reply into the page unescaped; a compromised peer could previously run code in the desktop app or the web surface when the operator opened one of those chips.
 
 ## 5.147.0 — 2026-10-28 — security fixes from the first cold audit
 

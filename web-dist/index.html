@@ -27276,6 +27276,12 @@ ${i3.join("\n")}
         if (n >= 1e3) return Math.round(n / 1e3) + "k";
         return String(n);
       }
+      function num(v) {
+        return typeof v === "number" && Number.isFinite(v) ? v : null;
+      }
+      function int(v, fallback = 0) {
+        return num(v) ?? fallback;
+      }
       function fmtCountdown(remaining_s) {
         const s = Math.max(0, Math.round(remaining_s));
         return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
@@ -27338,7 +27344,9 @@ ${i3.join("\n")}
         fmtDur,
         shortTs,
         fmtBustTokens,
-        fmtBytes
+        fmtBytes,
+        num,
+        int
       };
     }
   });
@@ -42992,11 +43000,12 @@ void main() {
           const legend = c.by_bucket.map((b) => `<div class="rep-leg-row"><span class="rep-leg-sw" style="background:${REP_BUCKET_COLOR[b.bucket] || "#888"}"></span><span class="rep-leg-name">${esc(REP_BUCKET_LABEL[b.bucket] || b.bucket)}</span><span class="rep-leg-nums">${fmtUsd(b.usd)} \xB7 ${num(b.pct)}%</span></div>`).join("");
           let miss = "";
           const m = c.cache_misses;
-          if (m && m.count > 0) {
+          const mCount = m ? num(m.count) : 0;
+          if (mCount > 0) {
             const causes = Object.entries(m.by_cause || {}).map(([k, n]) => `${n} ${k.replace(/_/g, " ")}`).join(", ");
             const biggest = (m.events || []).slice().sort((a, b) => (b.usd || 0) - (a.usd || 0))[0];
             const big = biggest && biggest.idle_gap_s ? ` \u2014 biggest a ${fmtDur(biggest.idle_gap_s)} gap (${fmtUsd(biggest.usd)})` : "";
-            miss = `<div class="rep-sub">\u21B3 <b>${m.count} cache miss${m.count === 1 ? "" : "es"}</b> (${fmtUsd(m.usd)}${m.where ? ", " + esc(m.where) : ""})${causes ? " \u2014 " + esc(causes) : ""}${big}. Re-wrote a preamble that had gone cold \u2014 keep-warm avoids it.</div>`;
+            miss = `<div class="rep-sub">\u21B3 <b>${mCount} cache miss${mCount === 1 ? "" : "es"}</b> (${fmtUsd(m.usd)}${m.where ? ", " + esc(m.where) : ""})${causes ? " \u2014 " + esc(causes) : ""}${big}. Re-wrote a preamble that had gone cold \u2014 keep-warm avoids it.</div>`;
           }
           return `<div class="rep-sec"><div class="rep-sec-head">Where the ${fmtUsd(total)} went</div><div class="rep-stack">${bars}</div><div class="rep-legend">${legend}</div>${miss}</div>`;
         }
@@ -44190,9 +44199,7 @@ void main() {
   var require_cost_report_view = __commonJS({
     "renderer/lib/cost-report-view.js"(exports, module) {
       "use strict";
-      function num(v) {
-        return typeof v === "number" && Number.isFinite(v) ? v : null;
-      }
+      var { num } = require_format();
       function str(v) {
         return typeof v === "string" && v ? v : null;
       }
@@ -44339,7 +44346,7 @@ void main() {
   // renderer/popovers/bust-popover.js
   var require_bust_popover = __commonJS({
     "renderer/popovers/bust-popover.js"(exports, module) {
-      var { esc, fmtAgo } = require_format();
+      var { esc, fmtAgo, num } = require_format();
       var { bustRow, isZeroCostBust, genuineBustWeight } = require_render_html();
       function absStamp(sec) {
         try {
@@ -44379,7 +44386,7 @@ void main() {
         function renderBustSeries(d, base, sid, summary) {
           const triad = bustTriad(summary);
           const busts = Array.isArray(d && d.busts) ? d.busts : [];
-          const nT = d && d.count != null ? d.count : null;
+          const nT = num(d && d.count);
           const link = base && sid ? `<span class="px-link-ext" data-url="${esc(`${base}/_session?session=${encodeURIComponent(sid)}`)}" title="Open the session in the wirescope navigator (\u2318-click for browser)">Open navigator \u2192</span>` : "";
           const counted = busts.filter((t) => genuineBustWeight(t) > 0);
           const listed = busts.filter((t) => t.fault !== "self" && !isZeroCostBust(t));
@@ -44390,7 +44397,7 @@ void main() {
             const only = designed.length ? `<div class="cost-note">No genuine cache busts \u2014 the ${designed.length} recorded event${designed.length === 1 ? " is" : "s are"} the designed per-turn strip cost (thinking falling behind the boundary), not a cache problem.</div>` : freeRows.length ? `<div class="cost-note">No cache busts that cost anything${nT != null ? ` across ${nT} turn transition${nT === 1 ? "" : "s"}` : ""} \u2014 the prefix lapsed while idle and was re-established free.</div>` : `<div class="cost-note">No cache busts recorded${nT != null ? ` across ${nT} turn transition${nT === 1 ? "" : "s"}` : ""} \u2014 the prefix stayed warm.</div>`;
             return triad + only + lapseNote + link;
           }
-          const nStatic = d.n_static_prefix_busts != null ? d.n_static_prefix_busts : null;
+          const nStatic = num(d.n_static_prefix_busts);
           const head = `<div class="cost-head"><b>${counted.length}</b> genuine cache-bust${counted.length === 1 ? "" : "s"}` + (nT != null ? ` over <b>${nT}</b> transitions` : "") + (nStatic ? ` \xB7 <b>${nStatic}</b> touched the static prefix` : "") + `</div>`;
           const rows = listed.slice().reverse().map((t) => bustRow(t, base, sid)).join("");
           const designedNote = designed.length ? `<div class="cost-note">+ ${designed.length} designed strip-cost microbust${designed.length === 1 ? "" : "s"} (fault:self) \u2014 expected every turn, not shown.</div>` : "";
@@ -44675,7 +44682,7 @@ void main() {
   // renderer/popovers/files-popover.js
   var require_files_popover = __commonJS({
     "renderer/popovers/files-popover.js"(exports, module) {
-      var { esc, fmtAgo } = require_format();
+      var { esc, fmtAgo, int } = require_format();
       function initFilesPopover({ popoverApi, filesState, filesUnseen, peerFilesCount, renderProxyBar, getActiveSession, sidePane }) {
         const filesPopover = document.getElementById("files-popover");
         const filesPopoverName = document.getElementById("files-popover-name");
@@ -44713,7 +44720,8 @@ void main() {
             const base = rel.split("/").pop();
             const dir = rel.slice(0, rel.length - base.length);
             const badges = [];
-            if (f.count > 1) badges.push(`<span class="file-badge" title="Touched ${f.count} times">\xD7${f.count}</span>`);
+            const count = int(f.count);
+            if (count > 1) badges.push(`<span class="file-badge" title="Touched ${count} times">\xD7${count}</span>`);
             if (f.sub) badges.push('<span class="file-badge file-badge-sub" title="Touched via a subagent">sub</span>');
             return `<div class="file-row${outside(f) ? " file-row-out" : ""}" data-path="${esc(f.path)}" title="${esc(f.path)} \u2014 click to view / diff"><span class="file-row-main"><span class="file-row-dir">${esc(dir)}</span><span class="file-row-name">${esc(base)}</span>${badges.join("")}</span><span class="file-row-meta">${esc(f.tool)} \xB7 ${fmtAgo(f.ts)}</span></div>`;
           }).join("");
@@ -48570,7 +48578,7 @@ You can add it back from this popover.` : "";
   // renderer/popovers/context-popover.js
   var require_context_popover = __commonJS({
     "renderer/popovers/context-popover.js"(exports, module) {
-      var { esc, fmtTokens } = require_format();
+      var { esc, fmtTokens, int } = require_format();
       var { groupMcpTools, mcpTotalTokens } = require_mcp_group();
       var { placeAboveAnchor } = require_popover_place();
       var CTX_SEG = '#proxy-bar [data-act="ctx"]';
@@ -48599,12 +48607,12 @@ You can add it back from this popover.` : "";
             comp.strip_prior_tool_errors,
             true,
             "prior tool errors",
-            comp.strip_prior_tool_errors ? (comp.strip_prior_tool_errors.failed_calls || 0) + (comp.strip_prior_tool_errors.error_results || 0) : 0
+            comp.strip_prior_tool_errors ? int(comp.strip_prior_tool_errors.failed_calls) + int(comp.strip_prior_tool_errors.error_results) : 0
           ) + renderL2StripPanel(
             comp.strip_prior_edit_acks,
             true,
             "prior edit acks",
-            comp.strip_prior_edit_acks ? comp.strip_prior_edit_acks.collapsed_acks || 0 : 0
+            comp.strip_prior_edit_acks ? int(comp.strip_prior_edit_acks.collapsed_acks) : 0
           ) : "");
         }
         function renderStripPanel(sp, stripOn) {
@@ -48635,7 +48643,7 @@ You can add it back from this popover.` : "";
           if (!(tok > 0)) return "";
           const usd = typeof d.est_read_reclaim_usd_per_turn === "number" ? d.est_read_reclaim_usd_per_turn : null;
           const usdTxt = usd == null ? "" : usd >= 0.01 ? ` (~$${usd.toFixed(2)}/turn)` : ` (~$${usd.toFixed(4)}/turn)`;
-          const n = count || 0;
+          const n = int(count);
           const countTxt = n > 0 ? ` \xB7 ${n} item${n === 1 ? "" : "s"}` : "";
           let verdict, cls;
           if (stripOn && d.would_strip) {
@@ -48654,10 +48662,10 @@ You can add it back from this popover.` : "";
         const UTIL_UNUSED_CAP = 12;
         function renderUtilBlock(u, items, title) {
           if (!u || !Array.isArray(items)) return "";
-          const turns = u.evaluable_turns || 0;
-          const loaded = u.loaded != null ? u.loaded : items.length;
-          const usedDistinct = u.used_distinct != null ? u.used_distinct : items.filter((x) => (x.used || 0) > 0).length;
-          const deadweight = u.deadweight_tokens || 0;
+          const turns = int(u.evaluable_turns);
+          const loaded = int(u.loaded, items.length);
+          const usedDistinct = int(u.used_distinct, items.filter((x) => int(x.used) > 0).length);
+          const deadweight = int(u.deadweight_tokens);
           const lowConf = turns < UTIL_MIN_TURNS;
           const deadWord = lowConf ? "idle" : "dead";
           const estHint = "Char-based estimate (\u2248chars/4); a tokenizer reads ~25% higher.";
@@ -48666,19 +48674,19 @@ You can add it back from this popover.` : "";
             return `<div class="ctx-util">${head}<div class="ctx-util-conf">No evaluable turns yet \u2014 run the session to see usage.</div></div>`;
           }
           const conf = lowConf ? `<div class="ctx-util-conf">Only ${turns} turn${turns === 1 ? "" : "s"} evaluated \u2014 unused \u2260 dead yet.</div>` : `<div class="ctx-util-conf">Over ${turns} turns.</div>`;
-          const unused = items.filter((pt) => (pt.used || 0) === 0);
-          const used = items.filter((pt) => (pt.used || 0) > 0);
+          const unused = items.filter((pt) => int(pt.used) === 0);
+          const used = items.filter((pt) => int(pt.used) > 0);
           let body = "";
           if (unused.length) {
             body += `<div class="ctx-util-group">Unused${lowConf ? "" : " \u2014 trim to save"}` + (!lowConf && deadweight > 0 ? ` ~${fmtTokens(deadweight)}` : "") + `</div>`;
-            body += unused.slice(0, UTIL_UNUSED_CAP).map((pt) => `<div class="ctx-row ctx-dead"><div class="ctx-row-top"><span class="ctx-cat">${esc(pt.name)}</span><span class="ctx-nums">~${fmtTokens(pt.est_tokens || 0)}</span></div></div>`).join("");
+            body += unused.slice(0, UTIL_UNUSED_CAP).map((pt) => `<div class="ctx-row ctx-dead"><div class="ctx-row-top"><span class="ctx-cat">${esc(pt.name)}</span><span class="ctx-nums">~${fmtTokens(int(pt.est_tokens))}</span></div></div>`).join("");
             if (unused.length > UTIL_UNUSED_CAP) {
               body += `<div class="ctx-util-more">+${unused.length - UTIL_UNUSED_CAP} more unused</div>`;
             }
           }
           if (used.length) {
             body += `<div class="ctx-util-group">Used</div>`;
-            body += used.map((pt) => `<div class="ctx-row"><div class="ctx-row-top"><span class="ctx-cat">${esc(pt.name)}</span><span class="ctx-nums">~${fmtTokens(pt.est_tokens || 0)} \xB7 ${pt.used}\xD7</span></div></div>`).join("");
+            body += used.map((pt) => `<div class="ctx-row"><div class="ctx-row-top"><span class="ctx-cat">${esc(pt.name)}</span><span class="ctx-nums">~${fmtTokens(int(pt.est_tokens))} \xB7 ${int(pt.used)}\xD7</span></div></div>`).join("");
           }
           return `<div class="ctx-util">${head}${conf}${body}</div>`;
         }
@@ -48718,15 +48726,15 @@ You can add it back from this popover.` : "";
           const groups = groupMcpTools(a.tools && a.tools.per_tool);
           if (!groups.length) return "";
           const total = mcpTotalTokens(groups);
-          const turns = a.utilization && a.utilization.evaluable_turns || 0;
+          const turns = int(a.utilization && a.utilization.evaluable_turns);
           const conclusive = turns >= UTIL_MIN_TURNS;
           const head = `<div class="ctx-util-head"><span>MCP servers</span><span class="ctx-util-stat" title="Char-based estimate (\u2248chars/4); a tokenizer reads ~25% higher.">${groups.length} loaded \xB7 <b>~${fmtTokens(total)}/turn</b></span></div>`;
           const status = mcp ? mcpStatusLine(name, mcp) : "";
           const meta = (mcp && mcp.managed === false ? `<div class="ctx-util-conf">unmanaged: this seat's Extra args carry its own MCP config</div>` : "") + (status ? `<div class="ctx-util-conf">${esc(status)}</div>` : "");
           const row = (g) => {
-            const usage = turns === 0 ? "" : g.usedTotal > 0 ? ` \xB7 ${g.usedTotal}\xD7` : conclusive ? " \xB7 <b>unused</b>" : " \xB7 idle";
+            const usage = turns === 0 ? "" : g.usedTotal > 0 ? ` \xB7 ${int(g.usedTotal)}\xD7` : conclusive ? " \xB7 <b>unused</b>" : " \xB7 idle";
             const note = mcpRowNote(g.server, mcp, name);
-            return `<div class="ctx-row${conclusive && g.usedTotal === 0 ? " ctx-dead" : ""}"><div class="ctx-row-top"><span class="ctx-cat">${esc(g.server)}</span><span class="ctx-nums">~${fmtTokens(g.estTokens)} \xB7 ${g.toolCount} tool${g.toolCount === 1 ? "" : "s"}${usage}</span></div>${note ? `<div class="ctx-util-conf">${esc(note)}</div>` : ""}</div>`;
+            return `<div class="ctx-row${conclusive && g.usedTotal === 0 ? " ctx-dead" : ""}"><div class="ctx-row-top"><span class="ctx-cat">${esc(g.server)}</span><span class="ctx-nums">~${fmtTokens(int(g.estTokens))} \xB7 ${int(g.toolCount)} tool${g.toolCount === 1 ? "" : "s"}${usage}</span></div>${note ? `<div class="ctx-util-conf">${esc(note)}</div>` : ""}</div>`;
           };
           let rows;
           if (mcp) {
@@ -48768,7 +48776,7 @@ You can add it back from this popover.` : "";
           const t = main && main.tools;
           if (t && Array.isArray(t.per_tool)) {
             const rows = t.per_tool.slice(0, 12).map((pt) => `<div class="ctx-row"><div class="ctx-row-top"><span class="ctx-cat">${esc(pt.name)}</span><span class="ctx-nums">${fmtTokens(pt.est_tokens)}</span></div></div>`).join("");
-            return `<div class="ctx-line-head"><span>tools (${t.count})</span><span class="ctx-line-total">${fmtTokens(t.est_tokens)}</span></div>${rows}<div class="ctx-note">Composition breakdown not available from this proxy build.</div>`;
+            return `<div class="ctx-line-head"><span>tools (${int(t.count, t.per_tool.length)})</span><span class="ctx-line-total">${fmtTokens(t.est_tokens)}</span></div>${rows}<div class="ctx-note">Composition breakdown not available from this proxy build.</div>`;
           }
           return '<div class="ctx-note">No breakdown available.</div>';
         }
@@ -48783,18 +48791,18 @@ You can add it back from this popover.` : "";
           const mainTools = mainAgent?.tools;
           if (mainTools && sessionTypeOf(name) === "claude") {
             const mu = mainAgent.utilization;
-            const conclusive = mu && (mu.evaluable_turns || 0) >= UTIL_MIN_TURNS;
-            const unusedCount = mainTools.per_tool ? mainTools.per_tool.filter((pt) => (pt.used || 0) === 0).length : 0;
-            const label = conclusive && unusedCount > 0 ? `Trim ${unusedCount} unused tool${unusedCount === 1 ? "" : "s"}` + (mu.deadweight_tokens > 0 ? ` (~${fmtTokens(mu.deadweight_tokens)})` : "") + " \u2192" : `Manage tools (${mainTools.count}) \u2192`;
+            const conclusive = mu && int(mu.evaluable_turns) >= UTIL_MIN_TURNS;
+            const unusedCount = mainTools.per_tool ? mainTools.per_tool.filter((pt) => int(pt.used) === 0).length : 0;
+            const label = conclusive && unusedCount > 0 ? `Trim ${unusedCount} unused tool${unusedCount === 1 ? "" : "s"}` + (mu.deadweight_tokens > 0 ? ` (~${fmtTokens(mu.deadweight_tokens)})` : "") + " \u2192" : `Manage tools (${int(mainTools.count)}) \u2192`;
             html += `<span class="ctx-tools-link" data-act="manage-tools">${label}</span>`;
           }
           const mainSkills = mainAgent?.skills;
           if (sessionTypeOf(name) === "claude") {
             if (mainSkills && Array.isArray(mainSkills.per_skill)) {
               const su = mainAgent.skills_utilization;
-              const conclusive = su && (su.evaluable_turns || 0) >= UTIL_MIN_TURNS;
-              const unusedCount = mainSkills.per_skill.filter((ps) => (ps.used || 0) === 0).length;
-              const label = conclusive && unusedCount > 0 ? `Trim ${unusedCount} unused skill${unusedCount === 1 ? "" : "s"}` + (su.deadweight_tokens > 0 ? ` (~${fmtTokens(su.deadweight_tokens)})` : "") + " \u2192" : `Manage skills (${mainSkills.count}) \u2192`;
+              const conclusive = su && int(su.evaluable_turns) >= UTIL_MIN_TURNS;
+              const unusedCount = mainSkills.per_skill.filter((ps) => int(ps.used) === 0).length;
+              const label = conclusive && unusedCount > 0 ? `Trim ${unusedCount} unused skill${unusedCount === 1 ? "" : "s"}` + (su.deadweight_tokens > 0 ? ` (~${fmtTokens(su.deadweight_tokens)})` : "") + " \u2192" : `Manage skills (${int(mainSkills.count, mainSkills.per_skill.length)}) \u2192`;
               html += `<span class="ctx-tools-link" data-act="manage-skills">${label}</span>`;
             } else {
               const skillsCat = mainAgent?.composition?.by_category?.find((c) => c.category === "skills");
