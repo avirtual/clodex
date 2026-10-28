@@ -12,7 +12,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — security fixes from the second cold audit
+## Unreleased
+
+## 5.148.0 — 2026-10-28 — security fixes from the second cold audit
 
 - **Security:** `CLODEX_WEB_INSECURE=1` / `CLODEX_REMOTE_INSECURE=1` again serve clients that reach a non-loopback bind, which 5.147.0's Host/Origin gate refused; the flag now also skips that gate, as it already skipped the token requirement.
 - **Security:** a seat granted a clodexctl exec tier can no longer list every saved context or dial one it was not granted through `get nodes` / `describe node …`; node lines are refused on every seat tier, and `help node` still answers.
