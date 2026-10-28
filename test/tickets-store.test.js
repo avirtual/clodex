@@ -377,12 +377,33 @@ test('a one-line verdict with inline bold section headers is unfolded before sca
   assert.deepStrictEqual(mustFixTitles(mf), ['a.js:1: first.', 'b.js:2: second.']);
 });
 
-test('a VERDICT line mentioning a header in prose is not unfolded when another line carries a header', () => {
+test('a VERDICT line mentioning a header in prose is not unfolded when another line carries a MUST-FIX header', () => {
   const text = '**VERDICT**: ACCEPT. Prior **MUST-FIX**: items all resolved.\n\n**MUST-FIX**: (none)\n\n**CHECKED**: x';
   const scan = scanVerdict(text);
   assert.deepStrictEqual(scan.mustFixHeaders, [3]);
   assert.strictEqual(scan.ambiguous, false);
   assert.strictEqual(countMustFix(extractMustFix(text)), 0);
+});
+
+for (const [label, trailer] of [['a NITS section', '**NITS**:\n- rename y'], ['a plain Checked line', 'Checked: tests pass']]) {
+  test(`an inline MUST-FIX on the VERDICT line is unfolded beside ${label} on its own line`, () => {
+    const text = `**VERDICT**: ACCEPT **MUST-FIX**: the guard is inverted\n\n${trailer}`;
+    const scan = scanVerdict(text);
+    assert.deepStrictEqual(scan.mustFixHeaders, [1]);
+    assert.strictEqual(scan.ambiguous, false);
+    assert.strictEqual(extractMustFix(text), 'the guard is inverted');
+    assert.strictEqual(countMustFix(extractMustFix(text)), 1);
+  });
+}
+
+test('an empty inline MUST-FIX on the VERDICT line takes the items on the following lines', () => {
+  const text = '**VERDICT**: REWORK. **MUST-FIX**:\n- a\n- b\n\n**NITS**: none';
+  assert.strictEqual(extractMustFix(text), '- a\n- b');
+  assert.strictEqual(countMustFix(extractMustFix(text)), 2);
+});
+
+test('an underscore-bold MUST-FIX on the VERDICT line is not unfolded', () => {
+  assert.strictEqual(extractMustFix('**VERDICT**: REWORK. __MUST-FIX__: a'), null);
 });
 
 test('an (n) in prose on a line that is not unfolded is not split into items', () => {
