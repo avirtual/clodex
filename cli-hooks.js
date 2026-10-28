@@ -371,8 +371,7 @@ try {
       permissionDecisionReason: "kill by pid, never by pattern: run pgrep -lf <pattern> first, read the list, then kill <pid>. On macOS pkill/killall stop parsing options at the first pattern, so flags after it become more patterns and -f cat matches every /Applications binary; a group or -1 target kills the whole login. For a command that may hang, use timeout or a background run instead of a kill afterwards." } }));
     process.exit(0);
   }
-  const last = outer[outer.length - 1];
-  if (last && !last.bt && last.inCase > 0 && !last.hd) {
+  if (outer.some((f) => !f.bt && f.inCase > 0)) {
     process.stdout.write(JSON.stringify({ hookSpecificOutput: {
       hookEventName: "PreToolUse", permissionDecision: "deny",
       permissionDecisionReason: "a " + BT + "case" + BT + " inside a double-quoted $(…) kept the substitution open to the end of the line: unquote the substitution or move the case statement out of it" } }));

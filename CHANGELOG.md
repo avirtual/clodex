@@ -14,6 +14,8 @@ blocks a release.
 
 ## Unreleased
 
+- Security: the Bash deny guard's end-of-input backstop now denies a double-quoted `$(…)` left open by a `case`, including one opened by a heredoc body line that starts with `case` and one whose innermost frame at the end of the command is a nested substitution or backtick; before, `echo "$(cat <<EOF⏎case⏎EOF⏎)"; kill -9 -1` and `echo "$(x;; case) $(cat <<EOF … EOF"; git add -A` both passed. A heredoc line that begins with the word `case` is now refused — rephrase it.
+
 ## 5.150.4 — 2026-10-28 — Bash guard fails closed on an unplaceable `case`; `time` option regression fixed
 
 - **Security:** the Bash deny guard now refuses a command whose double-quoted `$(…)` or backtick holds a `case` it could not place in bash's grammar, instead of guessing where the substitution ends; unquote the substitution or move the `case` out to run it.
