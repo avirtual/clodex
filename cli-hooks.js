@@ -262,8 +262,12 @@ try {
       const s = segs[segs.length - 1];
       const f = outer[outer.length - 1];
       if (f && !f.bt) {
-        if (f.cmd && !tq) { if (tok === "case") f.inCase++; else if (tok === "esac" && f.inCase > 0) f.inCase--; }
-        f.cmd = f.cmd && !tq && (["!", "time", "if", "then", "else", "elif", "do", "while", "until", "coproc"].indexOf(tok) >= 0 || tok.charAt(0) === "-");
+        const head = f.cmd && !tq;
+        const p = String(s[s.length - 1] || "");
+        if (head) { if (tok === "case") f.inCase++; else if (tok === "esac" && f.inCase > 0) f.inCase--; }
+        const named = f.next && tok !== "case";
+        f.next = head && (tok === "function" || tok === "coproc");
+        f.cmd = named || (head && (["!", "time", "if", "then", "else", "elif", "do", "while", "until", "coproc"].indexOf(tok) >= 0 || (tok.charAt(0) === "-" && (p === "time" || p.charAt(0) === "-"))));
       }
       s.push(tok);
     }
@@ -288,13 +292,14 @@ try {
       if (top.depth === 0 && top.inCase === 0) { segs.push([]); popFrame(); q = '"'; continue; }
       if (top.depth > 0) { top.depth--; top.cmd = false; } else top.cmd = true;
     }
+    if (top && !top.bt && c === "(" && cmd.charAt(i + 1) === ")" && had && !tq && top.cmd && "$<>".indexOf(tok.charAt(tok.length - 1)) < 0) { push(); segs.push([]); top.cmd = true; top.next = false; i++; continue; }
     if (top && !top.bt && c === "(") top.depth++;
     if (c === "'" || c === '"') { q = c; had = true; tq = true; continue; }
     if (c === BS && i + 1 < cmd.length) { i++; if (cmd.charAt(i) !== NL) { tok += cmd.charAt(i); had = true; tq = true; } continue; }
     if (c === "{" && cmd.charAt(i + 1) === "}") { i++; tok += "{}"; had = true; continue; }
-    if (c === NL) { push(); segs.push([]); if (top && !top.bt) top.cmd = true; continue; }
+    if (c === NL) { push(); segs.push([]); if (top && !top.bt) { top.cmd = true; top.next = false; } continue; }
     if (c <= " ") { push(); continue; }
-    if (c === ";" || c === "&" || c === "|" || c === "(" || c === ")" || c === "{" || c === "}" || c === BT) { push(); segs.push([]); if (top && !top.bt && c !== ")") top.cmd = c === ";" || c === "&" || c === "|" || c === "(" || (c === "{" && top.cmd && cmd.charAt(i + 1) <= " "); continue; }
+    if (c === ";" || c === "&" || c === "|" || c === "(" || c === ")" || c === "{" || c === "}" || c === BT) { push(); segs.push([]); if (top && !top.bt) { top.next = false; if (c !== ")") top.cmd = c === ";" || c === "&" || c === "|" || (c === "(" && (top.cmd || "$<>".indexOf(cmd.charAt(i - 1)) >= 0) && cmd.charAt(i + 1) !== "(") || (c === "{" && top.cmd && cmd.charAt(i + 1) <= " "); } continue; }
     tok += c; had = true;
   }
   push();
