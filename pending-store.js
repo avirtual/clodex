@@ -27,6 +27,7 @@ const { isAlive } = require('./stream-seat');
 //     claim with a copy and deliver the same message twice.
 
 const CLAIMS = '.claims';
+const RESERVED_SEAT_NAMES = new Set([CLAIMS]);
 const LEGACY_CLAIM_RE = /^\.resend\.|\.draining\.[a-z]+\.\d+$/;
 
 function agentDir(root, name) {
@@ -361,4 +362,4 @@ function claimParkedByKey(root, name, key) {
   return { ids, claimed };
 }
 
-module.exports = { parkDelivery, drainPending, rehomeOrphans, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, parkedTexts, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir, claimsDir };
+module.exports = { parkDelivery, drainPending, rehomeOrphans, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, parkedTexts, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir, claimsDir, RESERVED_SEAT_NAMES };

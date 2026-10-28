@@ -14,6 +14,9 @@ blocks a release.
 
 ## Unreleased
 
+- A seat whose deletion ends with the seat kept (its worktree could not be removed, its process outlived the wait, or the accept flow kept a dirty tree) now keeps the messages it was holding in its pending mail instead of dropping them, and the "seat deleted" log fires only on a real delete; a tree-less seat deleted during close-out no longer re-parks mail into a removed pending dir.
+- `.claims` is refused as a seat name at create, rename and over the peer API, matching the pending-store reservation that already made such a seat undeliverable.
+
 ## 5.148.0 — 2026-10-28 — security fixes from the second cold audit
 
 - **Security:** `CLODEX_WEB_INSECURE=1` / `CLODEX_REMOTE_INSECURE=1` again serve clients that reach a non-loopback bind, which 5.147.0's Host/Origin gate refused; the flag now also skips that gate, as it already skipped the token requirement.

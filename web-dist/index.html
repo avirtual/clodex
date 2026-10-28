@@ -29076,12 +29076,14 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
     "renderer/lib/name-validity.js"(exports, module) {
       "use strict";
       var SESSION_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
+      var RESERVED_SEAT_NAMES = /* @__PURE__ */ new Set([".claims"]);
       var INVALID_BORDER = "#e94560";
       var NAME_MESSAGES = {
         invalid: "Letters, numbers, dot, underscore and hyphen only (1\u201364 characters), and never all dots.",
         live: "That name is taken by a live session \u2014 pick another name.",
         persisted: "That name is taken by an archived session \u2014 unarchive it or pick another name.",
-        taken: "That name is already taken \u2014 pick another name."
+        taken: "That name is already taken \u2014 pick another name.",
+        reserved: "That name is reserved by the mail store \u2014 pick another name."
       };
       function asSet(v) {
         if (v instanceof Set) return v;
@@ -29105,6 +29107,7 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         const s = sets || {};
         if (!name) return { ok: false, kind: "empty", message: "" };
         if (!SESSION_NAME_RE.test(name)) return { ok: false, kind: "invalid", message: NAME_MESSAGES.invalid };
+        if (RESERVED_SEAT_NAMES.has(name)) return { ok: false, kind: "reserved", message: NAME_MESSAGES.reserved };
         if (asSet(s.live).has(name)) return { ok: false, kind: "live", message: NAME_MESSAGES.live };
         if (asSet(s.persisted).has(name)) return { ok: false, kind: "persisted", message: NAME_MESSAGES.persisted };
         if (asSet(s.taken).has(name)) return { ok: false, kind: "taken", message: NAME_MESSAGES.taken };
@@ -29143,6 +29146,7 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
       }
       module.exports = {
         SESSION_NAME_RE,
+        RESERVED_SEAT_NAMES,
         INVALID_BORDER,
         NAME_MESSAGES,
         reservedSets,
