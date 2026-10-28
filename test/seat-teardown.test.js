@@ -27,7 +27,7 @@ function mk({ active = null, armed = null, recording = null, seats = [] } = {}) 
     consoleTab: { forgetSeat: rec('consoleTab.forgetSeat') },
     voiceEngineView: { mirror: { disarm: rec('mirror.disarm') } },
     seatVoices: new Map(),
-    removeSessionFromSidebar: rec('removeSessionFromSidebar'),
+    removeSessionFromSidebar: (n) => { calls.push(['removeSessionFromSidebar', n, env.proxyState.has(n)]); },
     updateWindowTitle() {},
     proxyState: new Map(),
     refreshQuotaChip() {},
@@ -98,6 +98,13 @@ test('the empty-state branch tells the drawer the seat it served is gone', () =>
   const h = mk({ active: 'alice', seats: ['alice'] });
   h.removeSession('alice');
   assert.deepStrictEqual(h.calls.filter((c) => c[0] === 'drawer.onSessionChanged'), [['drawer.onSessionChanged']]);
+});
+
+test('the proxy payload is gone before the sidebar removal re-renders the activity chips', () => {
+  const h = mk({ seats: ['alice'] });
+  h.env.proxyState.set('alice', { payload: { linked: true, subagents: [] }, at: 0 });
+  h.removeSession('alice');
+  assert.deepStrictEqual(h.calls.filter((c) => c[0] === 'removeSessionFromSidebar'), [['removeSessionFromSidebar', 'alice', false]]);
 });
 
 function el() {

@@ -2888,9 +2888,9 @@ function removeSession(name, { keepPersisted = false } = {}) {
   if (voiceRecordingSeat === name) voiceRecordingSeat = null;
   drawerHost.forgetSession(name);
   sidePane.forgetSeat(name);
+  proxyState.delete(name);
   removeSessionFromSidebar(name);
   updateWindowTitle();
-  proxyState.delete(name);
   // The removed session may have been the freshest quota carrier — without this
   // the readout keeps showing a figure sourced from a payload nothing holds.
   refreshQuotaChip();
@@ -5775,7 +5775,7 @@ const { appendIpcEntry } = createIpcLog({ host: drawerHost, openFilePeek, showTo
 // this may sit below their call sites.
 const {
   openActivityFeed, refreshChips: refreshActivityChips, dropParent: dropActivityFeeds,
-} = createActivityTab({ host: drawerHost, proxyState, proxyPollMs: PROXY_POLL_MS });
+} = createActivityTab({ host: drawerHost, proxyState, proxyPollMs: PROXY_POLL_MS, hasSeat: (n) => sessions.has(n) });
 
 createCtlTab({ host: drawerHost });
 
