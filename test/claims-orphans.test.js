@@ -48,20 +48,7 @@ test("_dropPendingDir removes the seat's pending dir and its claims, and leaves 
     fs.mkdirSync(path.join(root, d), { recursive: true });
     fs.writeFileSync(path.join(root, d, 'm0.json'), JSON.stringify({ text: d }));
   }
-  const SessionManager = createSessionManager({
-    knownSkillNames: () => [],
-    PENDING_DIR: root,
-    getRemoteServer: () => null,
-    getUiSettings: () => ({ get: () => ({}) }),
-    getPersistence: () => ({ list: () => [], get: () => null }),
-    notifyOS: () => {},
-    log: { info() {}, warn() {}, error() {}, debug() {} },
-    fs,
-    path,
-    resolveTeam: () => null,
-    findProjectRoot: () => null,
-  });
-  new SessionManager()._dropPendingDir('a');
+  mkDropManager(root)._dropPendingDir('a');
   assert.deepStrictEqual(fs.readdirSync(root).sort(), ['.claims', 'ab']);
   assert.deepStrictEqual(fs.readdirSync(claims), ['ab.draining.idle.3']);
 });

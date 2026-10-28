@@ -944,3 +944,13 @@ test('t2024: deleteBranchIfAt deletes only at the expected sha, and refuses a mo
   assert.strictEqual(ok.ok, true, ok.error);
   assert.ok(!branches().includes('t2024-cas'), 'deleted at the current sha');
 });
+
+test('refState: present for a branch, gone for a missing branch even beside a same-named tag, unknown when git itself fails', { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  execFileSync('git', ['-C', repo, 'branch', 'rs-1'], { stdio: 'ignore' });
+  execFileSync('git', ['-C', repo, 'tag', 'rs-2'], { stdio: 'ignore' });
+  assert.strictEqual(await wt.refState(repo, 'refs/heads/rs-1'), 'present');
+  assert.strictEqual(await wt.refState(repo, 'refs/heads/rs-2'), 'gone');
+  assert.strictEqual(await wt.refState(mkTmpRoot('clodex-nr-'), 'refs/heads/rs-1'), 'unknown');
+  assert.strictEqual(await wt.refState(path.join(repo, 'no-such-dir'), 'refs/heads/rs-1'), 'unknown');
+});

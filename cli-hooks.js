@@ -620,7 +620,7 @@ rehome_orphans();
 let claim;
 try {
   claim = claim_path(path.basename(d) + '.draining.hook.' + process.pid);
-  try { if (Date.now() - fs.statSync(d).mtimeMs > CLAIM_STALE_MS) touch_claim(d); } catch (e) {}
+  touch_claim(d);
   fs.renameSync(d, claim);        // atomic claim; ENOENT => nothing to drain / lost the race
 } catch (e) {
   process.exit(0);

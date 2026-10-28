@@ -392,7 +392,7 @@ const NPM_STUB = [
   'case "$1 $2" in',
   '  "version patch") node -e \'const fs=require("fs");let v;for(const f of ["package.json","package-lock.json"]){const j=JSON.parse(fs.readFileSync(f));const p=j.version.split(".");p[2]=+p[2]+1;v=j.version=p.join(".");fs.writeFileSync(f,JSON.stringify(j,null,2)+"\\n")}console.log("v"+v)\' ;;',
   '  "run build:web") exit 0 ;;',
-  '  "run dist:mac") v="$(node -p "require(\'./package.json\').version")"; mkdir -p dist; touch "dist/Clodex-$v-arm64.dmg" ;;',
+  '  "run dist:mac") if [ -n "${FAKE_BUILD_FAIL:-}" ]; then exit 1; fi; v="$(node -p "require(\'./package.json\').version")"; mkdir -p dist; touch "dist/Clodex-$v-arm64.dmg" ;;',
   '  *) exit 1 ;;',
   'esac',
   '',
@@ -570,4 +570,43 @@ test('release e2e: a gh resume with no kept notes publishes the stamped CHANGELO
     assert.match(seen, /- the pending change/);
     assert.doesNotMatch(seen, /^## /m);
   } finally { fx.cleanup(); }
+});
+
+test('release e2e: a resume beside a stale older DMG hands gh the current version\'s DMG', () => {
+  const fx = releaseFixture();
+  try {
+    assert.strictEqual(fx.run({ FAKE_PUSH_FAIL: '1' }).status, 1, 'ENTER: the first run dies at the push');
+    fs.writeFileSync(path.join(fx.repo, 'dist', 'Clodex-1.0.0-arm64.dmg'), '');
+    const res = fx.run();
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.doesNotMatch(res.calls, /^npm run dist:mac/m, 'ENTER: the 1.0.1 DMG was reused');
+    assert.match(res.calls, /^gh release create v1\.0\.1 dist\/Clodex-1\.0\.1-arm64\.dmg /m, res.calls);
+  } finally { fx.cleanup(); }
+});
+
+test('release e2e: a gh resume that dies before the commit step does not claim a rollback', () => {
+  const fx = releaseFixture();
+  try {
+    assert.notStrictEqual(fx.run({ FAKE_GH_CREATE: 'fail' }).status, 0, 'ENTER: the first run dies at gh');
+    fs.rmSync(path.join(fx.repo, 'dist'), { recursive: true, force: true });
+    const res = fx.run({ FAKE_GH_CREATE: 'fail', FAKE_BUILD_FAIL: '1' });
+    assert.notStrictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.match(res.stdout, /resuming release v1\.0\.1 from the gh release step/, 'ENTER: the run resumed');
+    assert.match(res.stdout + res.stderr, /build failed/, 'ENTER: and died at the build, before the commit step');
+    assert.doesNotMatch(res.stderr, /rolled back/);
+  } finally { fx.cleanup(); }
+});
+
+test('release e2e: a notes copy that cannot be kept dies naming the kept-notes path', () => {
+  const fx = releaseFixture();
+  const logs = path.join(fx.home, '.clodex', 'logs');
+  try {
+    fs.mkdirSync(logs, { recursive: true });
+    fs.chmodSync(logs, 0o555);
+    assert.throws(() => fs.writeFileSync(path.join(logs, 'probe'), ''), 'ENTER: the logs dir refuses a write');
+    const res = fx.run();
+    assert.notStrictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.ok((res.stdout + res.stderr).includes(`could not keep the notes at ${fx.kept}`), res.stdout + res.stderr);
+    assert.doesNotMatch(res.calls, /^gh release create /m);
+  } finally { fs.chmodSync(logs, 0o755); fx.cleanup(); }
 });
