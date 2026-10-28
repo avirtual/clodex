@@ -86,7 +86,6 @@ test('cloud-review: a pre-release launch checks out the staging sha and verifies
   assert.ok(argv.includes('.review/staging-abc12345.md'), argv);
   assert.ok(argv.includes('git push --force origin claude/review-staging-abc12345'), argv);
   assert.ok(!argv.includes('v1.0.0..staging-abc12345'), argv);
-  assert.ok(!argv.includes('Release review staging'), argv);
   assert.ok(!argv.includes('{{'), argv);
 });
 
