@@ -421,6 +421,7 @@ for (const row of [
   { what: 'an empty name', to: '', error: /1–64 chars/ },
   { what: 'a non-string name', to: null, error: /1–64 chars/ },
   { what: 'the SAME name', to: 'seat', error: /already called that/ },
+  { what: 'the pending-store reserved name', to: '.claims', error: /\.claims is a reserved name/ },
 ]) {
   test(`rename refuses ${row.what}, and nothing moves`, async () => {
     const root = mkTmpRoot('clodex-rename-');
@@ -435,6 +436,15 @@ for (const row of [
     assert.ok(fsReal.existsSync(dirsUnder(root, 'seat').messages), 'the dirs stayed put');
   });
 }
+
+test('rename still accepts a dot-led name that is not reserved', async () => {
+  const root = mkTmpRoot('clodex-rename-');
+  seedDirs(root, 'seat');
+  const { m, store } = mkRename({ root, entries: [BASE] });
+  const r = await m.rename('seat', '.hidden');
+  assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
+  assert.strictEqual(store[0].name, '.hidden');
+});
 
 test('rename refuses an unknown session', async () => {
   const root = mkTmpRoot('clodex-rename-');

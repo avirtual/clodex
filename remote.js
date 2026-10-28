@@ -15,6 +15,7 @@ const { validateSeatImages, SEAT_IMAGE_MAX, SEAT_IMAGE_MAX_BYTES } = require('./
 const { kernelStartTime } = require('./stream-seat');
 const { DM_REF_RE } = require('./intent-registry');
 const { annotate: annotateNote } = require('./open-requests');
+const { RESERVED_SEAT_NAMES } = require('./pending-store');
 
 const BOOT_ID = String(process.pid) + ':' + kernelStartTime(process.pid);
 
@@ -1098,7 +1099,7 @@ class RemoteServer {
       try { name = decodeURIComponent(rest[0]); }
       catch { return this._json(res, 400, { ok: false, error: 'bad session name' }); }
       const sub = rest.length > 1 ? rest.slice(1).join('/') : undefined;
-      if (!NAME_RE.test(name)) return this._json(res, 400, { ok: false, error: 'bad session name' });
+      if (!NAME_RE.test(name) || RESERVED_SEAT_NAMES.has(name)) return this._json(res, 400, { ok: false, error: 'bad session name' });
       if (req.method === 'GET' && sub === undefined) return this._handleSessionGet(name, res);
       if (req.method === 'GET' && sub === 'transcript') return this._handleTranscript(name, url, res);
       if (req.method === 'POST' && sub === 'query') return this._handleQuery(name, req, res);
@@ -1317,6 +1318,7 @@ class RemoteServer {
       return this._readBody(req, res, (body) => {
         let msg;
         try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+        if (msg && typeof msg.name === 'string' && RESERVED_SEAT_NAMES.has(msg.name.trim())) return this._json(res, 400, { ok: false, error: 'reserved name' });
         Promise.resolve()
           .then(() => this._createSession(msg))
           .then((out) => this._json(res, out && out.ok ? 200 : (out && out.code) || 400, out || { ok: false, error: 'create failed' }))

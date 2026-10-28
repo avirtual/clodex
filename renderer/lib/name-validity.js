@@ -1,6 +1,7 @@
 'use strict';
 
 const SESSION_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
+const RESERVED_SEAT_NAMES = new Set(['.claims']);
 
 const INVALID_BORDER = '#e94560';
 
@@ -9,6 +10,7 @@ const NAME_MESSAGES = {
   live: 'That name is taken by a live session — pick another name.',
   persisted: 'That name is taken by an archived session — unarchive it or pick another name.',
   taken: 'That name is already taken — pick another name.',
+  reserved: 'That name is reserved by the mail store — pick another name.',
 };
 
 function asSet(v) {
@@ -36,6 +38,7 @@ function nameFieldState(raw, sets) {
   const s = sets || {};
   if (!name) return { ok: false, kind: 'empty', message: '' };
   if (!SESSION_NAME_RE.test(name)) return { ok: false, kind: 'invalid', message: NAME_MESSAGES.invalid };
+  if (RESERVED_SEAT_NAMES.has(name)) return { ok: false, kind: 'reserved', message: NAME_MESSAGES.reserved };
   if (asSet(s.live).has(name)) return { ok: false, kind: 'live', message: NAME_MESSAGES.live };
   if (asSet(s.persisted).has(name)) return { ok: false, kind: 'persisted', message: NAME_MESSAGES.persisted };
   if (asSet(s.taken).has(name)) return { ok: false, kind: 'taken', message: NAME_MESSAGES.taken };
@@ -78,6 +81,7 @@ function applyCreateResult(els, result) {
 
 module.exports = {
   SESSION_NAME_RE,
+  RESERVED_SEAT_NAMES,
   INVALID_BORDER,
   NAME_MESSAGES,
   reservedSets,

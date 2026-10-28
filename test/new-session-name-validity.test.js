@@ -110,6 +110,7 @@ const CASES = [
   { name: '   ', kind: 'empty', ok: false, message: '' },
   { name: 'bob', kind: 'free', ok: true, message: '' },
   { name: '.hidden', kind: 'free', ok: true, message: '' },
+  { name: '.claims', kind: 'reserved', ok: false, message: 'That name is reserved by the mail store — pick another name.' },
   { name: '  bob  ', kind: 'free', ok: true, message: '' },
 ];
 
@@ -119,10 +120,10 @@ for (const c of CASES) {
   });
 }
 
-test('the four refusal kinds say four DIFFERENT things', () => {
+test('the five refusal kinds say five DIFFERENT things', () => {
   const said = CASES.filter((c) => !c.ok && c.message).map((c) => c.message);
-  assert.strictEqual(new Set(said).size, 4,
-    'live, archived, taken and invalid must not collapse onto one sentence');
+  assert.strictEqual(new Set(said).size, 5,
+    'live, archived, taken, reserved and invalid must not collapse onto one sentence');
 });
 
 test('the name grammar is the one the main process gates on', () => {

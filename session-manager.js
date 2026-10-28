@@ -129,7 +129,7 @@ const CODEX_LINK_SLOW_POLL_MS = 5000;
 const { mergeSessionEnv, sanitizeFlat, withUtf8Charset } = require('./env-scopes');
 const voiceEngineSpec = require('./voice-engine');
 const { CTRLU_SETTLE_MS } = require('./inject-queue');
-const { agentDir: pendingAgentDir } = require('./pending-store');
+const { agentDir: pendingAgentDir, RESERVED_SEAT_NAMES } = require('./pending-store');
 const { VOICE_MODES, voiceModeOf } = require('./voice-settings');
 const { fmtAge } = require('./memory-store');
 const { mcpArgvPlan, claudeMcpServers, codexMcpArgs, museExpressible, secretRefs, discoverMcpSources } = require('./mcp-plan');
@@ -1533,6 +1533,7 @@ function createSessionManager(deps) {
       if (this.sessions.has(name) || this._creating.has(name)) {
         throw new Error(`Session "${name}" already exists`);
       }
+      if (RESERVED_SEAT_NAMES.has(name)) throw new Error(`"${name}" is a reserved name`);
       const reserve = adapterFor(type)?.account.bootstrap === 'xdg-overlay';
       if (reserve) this._creating.add(name);
       try {
@@ -3978,6 +3979,7 @@ function createSessionManager(deps) {
       if (typeof newName !== 'string' || !/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(newName)) {
         return { ok: false, error: 'Name must be 1–64 chars: letters, digits, . _ - (and not only dots)' };
       }
+      if (RESERVED_SEAT_NAMES.has(newName)) return { ok: false, error: `${newName} is a reserved name` };
       if (newName === name) return { ok: false, error: `${name} is already called that` };
       const entry = getPersistence().get(name);
       if (!entry) return { ok: false, error: `Session not found: ${name}` };
