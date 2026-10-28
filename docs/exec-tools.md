@@ -252,6 +252,9 @@ an empty enum refuses every payload (`payload.ctx: the enum is empty — …`). 
 `~/.clodex/library/exec/clodex-ctl-read.json` (or the team copy) and list the
 names, e.g. `"enum": ["ios"]`. An entry names what it may touch. Your edit
 survives app updates (the seeder never overwrites an edited file).
+Node lines (`get nodes`, `describe node …`, `create/delete/use node`) are
+refused on every seat tier because they read or dial contexts outside the
+enum; `help node` still answers.
 
 **The grant is the gate.** Add the entry id to the seat's `execCommands`. The
 exec path does not need `ctl` in the seat's `intents`; the `[agent:ctl]` row is
