@@ -122,6 +122,14 @@ const TABLE = [
   { cmd: 'echo "$(time -p case x in x) echo hi;; esac)"', want: 'pass' },
   { cmd: 'echo "$(time -p -- case x in x) echo hi;; esac)"', want: 'pass' },
   { cmd: "git commit -m \"$(cat<<'EOF'\nfix the edge case\nEOF\n)\"", want: 'pass' },
+  { cmd: 'echo "$(x;; case) $(echo ok"', want: 'deny', reason: OPEN_REASON },
+  { cmd: 'echo "$(x;; case) `echo ok"', want: 'deny', reason: OPEN_REASON },
+  { cmd: 'echo "$(x;; case) $(cat <<EOF\ny\nEOF\n"', want: 'deny', reason: OPEN_REASON },
+  { cmd: 'echo "$(x;; case) "$(echo ok"', want: 'deny', reason: OPEN_REASON },
+  { cmd: 'echo "$(x;; case) "`echo ok"', want: 'deny', reason: OPEN_REASON },
+  { cmd: 'echo "$(cat <<EOF\ncase\nEOF\n)"; git add -A', want: 'deny', reason: OPEN_REASON },
+  { cmd: "git commit -m \"$(cat <<'EOF'\ncase x in\nEOF\n)\"; git add -A", want: 'deny', reason: OPEN_REASON },
+  { cmd: 'echo "$(case x in x) echo ok;; esac) $(echo ok)"', want: 'pass' },
 
   { cmd: 'git add a.js b.js', want: 'pass' },
   { cmd: 'git add cli-hooks.js test/bash-guard.test.js', want: 'pass' },
@@ -219,6 +227,7 @@ const KILL_TABLE = [
   { cmd: 'echo "$(time -p -p case)"; pkill node', want: 'deny', reason: CASE_REASON },
   { cmd: 'echo "$(x;; case) echo ok)"', want: 'deny', reason: OPEN_REASON },
   { cmd: 'echo "$(!(case|x)) echo ok"', want: 'deny', reason: OPEN_REASON },
+  { cmd: 'echo "$(cat <<EOF\ncase\nEOF\n)"; kill -9 -1', want: 'deny', reason: OPEN_REASON },
 
   { cmd: 'kill 1234', want: 'pass' },
   { cmd: 'kill -9 1234 5678', want: 'pass' },
