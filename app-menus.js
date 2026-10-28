@@ -49,7 +49,17 @@ function workspaceCountSuffix(running, saved) {
     : ` — ${total} session${s}`;
 }
 
-function deleteWorkspaceDetail(running, saved) {
+function worktreeClause(trees) {
+  if (!trees) return '';
+  return ` ${trees === 1 ? '1 of them is a ticket worktree' : `${trees} of them are ticket worktrees`}: one without uncommitted work is removed from disk; `
+    + 'one with uncommitted work, or that cannot be inspected, is kept, its seat archived in the default workspace, and listed afterwards.';
+}
+
+function deleteWorkspaceDetail(running, saved, trees = 0) {
+  return deleteWorkspaceSessions(running, saved) + worktreeClause(trees);
+}
+
+function deleteWorkspaceSessions(running, saved) {
   const s = (n) => (n === 1 ? '' : 's');
   if (running > 0 && saved > 0) {
     return `This will kill ${running} running session${s(running)} and delete ${saved} archived or saved session${s(saved)}, `
@@ -292,7 +302,7 @@ function createAppMenus(deps) {
                     defaultId: 1,
                     cancelId: 1,
                     message: `Delete workspace "${ws.name || ws.id}"?`,
-                    detail: deleteWorkspaceDetail(wsRunning, wsSaved),
+                    detail: deleteWorkspaceDetail(wsRunning, wsSaved, getManager().worktreeCountForWorkspace(ws.id)),
                   });
                   if (result.response !== 0) return;
                   const { kept } = await getManager().purgeWorkspace(ws.id);
@@ -988,7 +998,7 @@ function createAppMenus(deps) {
                     defaultId: 1,
                     cancelId: 1,
                     message: `Delete workspace "${ws.name || ws.id}"?`,
-                    detail: deleteWorkspaceDetail(runningCount, savedCount),
+                    detail: deleteWorkspaceDetail(runningCount, savedCount, getManager().worktreeCountForWorkspace(ws.id)),
                   });
                   if (result.response !== 0) return;
                   const { kept } = await getManager().purgeWorkspace(ws.id);

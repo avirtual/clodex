@@ -14,6 +14,11 @@ blocks a release.
 
 ## Unreleased
 
+### Fixed
+
+- Delete Workspace keeps a ticket worktree that has uncommitted work (or cannot be inspected) and lists it, instead of force-removing it; the confirm dialog now says which worktrees it removes.
+- The ✕ forget on an archived ticket-seat row refuses when the seat's worktree holds uncommitted work and otherwise removes the tree and the seat's pending mail, so no worktree is left with nothing pointing at it.
+
 ## 5.148.1 — 2026-10-28 — security fixes for the INSECURE origin gate
 
 - **Security:** `CLODEX_WEB_INSECURE=1` / `CLODEX_REMOTE_INSECURE=1` no longer disable the browser Origin check: a cross-site page is refused again on the stock `docker/web` compose stack (which sets the flag by default), while LAN clients with no Origin or a matching one are served. 5.148.0 had skipped the whole gate under the flag.

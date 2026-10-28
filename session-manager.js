@@ -4948,6 +4948,11 @@ function createSessionManager(deps) {
       return getPersistence().listForWorkspace(workspaceId).filter(e => e && e.name && !this.sessions.has(e.name));
     }
 
+    worktreeCountForWorkspace(workspaceId) {
+      const names = new Set([...this.listForWorkspace(workspaceId).map((s) => s.name), ...this.savedForWorkspace(workspaceId).map((e) => e.name)]);
+      return [...names].filter((n) => { const r = getPersistence().get(n); return !!(r && r.worktree && r.worktree.path); }).length;
+    }
+
     async _settleInjectQueue(queue) {
       if (!queue || typeof queue.settled !== 'function') return;
       try { await queue.settled(); } catch {}

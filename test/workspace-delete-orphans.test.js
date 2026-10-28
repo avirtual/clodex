@@ -222,6 +222,28 @@ test('the confirm copy names both populations', () => {
   const both = deleteWorkspaceDetail(1, 3);
   assert.match(both, /kill 1 running session\b/);
   assert.match(both, /3 archived or saved sessions/);
+  assert.ok(!/worktree/.test(both), 'no worktree clause when there are none');
+});
+
+test('the confirm copy says which ticket worktrees it removes and which it keeps', () => {
+  assert.match(deleteWorkspaceDetail(0, 2, 1), /1 of them is a ticket worktree: one without uncommitted work is removed from disk; one with uncommitted work, or that cannot be inspected, is kept/);
+  assert.match(deleteWorkspaceDetail(1, 2, 2), /2 of them are ticket worktrees/);
+});
+
+test('worktreeCountForWorkspace counts live seats and saved records whose record carries worktree.path', () => {
+  const { mk } = require('./lib/session-fixtures');
+  const recs = {
+    live: { name: 'live', workspaceId: 'ws-1', worktree: { path: '/wt/a' } },
+    saved: { name: 'saved', workspaceId: 'ws-1', worktree: { path: '/wt/b' } },
+    plain: { name: 'plain', workspaceId: 'ws-1' },
+    other: { name: 'other', workspaceId: 'ws-2', worktree: { path: '/wt/c' } },
+  };
+  const m = mk({ getPersistence: () => ({
+    list: () => Object.values(recs), get: (n) => recs[n] || null,
+    listForWorkspace: (ws) => Object.values(recs).filter((r) => r.workspaceId === ws),
+  }) });
+  m.listForWorkspace = () => [{ name: 'live' }];
+  assert.strictEqual(m.worktreeCountForWorkspace('ws-1'), 2);
 });
 
 function unloadedWindow() {
