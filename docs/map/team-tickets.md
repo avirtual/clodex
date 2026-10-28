@@ -462,7 +462,7 @@
 ### Invariants
 - `_closeOutMergedTicket` treats a merge check that could not run as not merged, so absence of evidence never deletes unmerged work.
 - `_closeOutMergedTicket` destroys only a seat that `_acceptSeatFacts` reports one-shot and whose tree reads clean after the seat exited: the dirtiness read runs as destroy's `beforeRemove`, and a dirty or unreadable tree keeps the record archived.
-- `_closeOutMergedTicket` deletes a merged branch through `deleteBranchIfAt` at the tip read beside `isMerged`, so a commit landed after that read keeps the branch.
+- `_closeOutMergedTicket` deletes a merged branch through `deleteBranchIfAt` at the tip read before `isMerged`, which judges that sha rather than the ref, so a commit landed after that read keeps the branch.
 - `_closeOutMergedTicket.seatClause` splits on seat kind before liveness, never on whether an archive ran, so a gone one-shot seat is not called standing.
 - `_taskListText` must stay behaviourally identical to the second implementation in scripts/clodex-team.js, so the two change together.
 - `_closeOutMergedTicket` returns closedOut for the ticket and ok for the cleanup, so only ok licenses "Closed out", and the mergeError veto and dirty downgrade return closedOut without ok.

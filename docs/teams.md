@@ -501,7 +501,7 @@ On the merged arm, what goes depends on the seat and the tree:
 
 A second accept after that other ticket closes finishes the cleanup.
 
-Destruction is gated on the tree read after the seat exited: a loop-minted seat is stopped first, and only then is its tree judged clean or dirty, so a file it writes on the way out keeps the tree. The branch is deleted by compare-and-swap (`git update-ref -d` against the tip read beside the merge check), so a commit made after that check keeps the branch, reported as `KEPT — it moved past`.
+Destruction is gated on the tree read after the seat exited: a loop-minted seat is stopped first, and only then is its tree judged clean or dirty, so a file it writes on the way out keeps the tree. The branch is deleted by compare-and-swap (`git update-ref -d` against the tip read before the merge check, which is asked about that exact sha), so a commit made after that read keeps the branch, reported as `KEPT — it moved past`.
 
 - A branch delete ordinarily fails wherever the tree survived: `git branch -d`
   refuses a branch any worktree still has checked out, and a tree removed by
