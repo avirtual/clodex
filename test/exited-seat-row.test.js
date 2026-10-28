@@ -391,3 +391,18 @@ test('a respawn snapshot older than 60 s is not used', (t) => {
   reattach();
   assert.deepStrictEqual(h.calls.find((c) => c[0] === 'addSessionToSidebar'), ['addSessionToSidebar', 's', 'claude', '/w', null, null, null, false, null, null]);
 });
+
+for (const row of [
+  { what: 'an expected exit drops it and draws no failed row', expected: true, failedRows: 0 },
+  { what: 'an unexpected exit draws its failed row', expected: false, failedRows: 1 },
+]) {
+  test(`a movingFailed entry: ${row.what}`, () => {
+    const h = mkRenderer();
+    h.liveRow('s', { type: 'claude', cwd: '/w' });
+    h.env.movingFailed.set('s', { name: 's', type: 'claude', cwd: '/w', error: 'old process did not exit in time' });
+    h.env.exitHandler('s', 0, { expected: row.expected, signal: 15, agentType: 'claude' });
+    assert.deepStrictEqual(h.calls.filter((c) => c[0] === 'removeSession'), [['removeSession', 's']], 'ENTER: the exit was handled');
+    assert.strictEqual(h.calls.filter((c) => c[0] === 'addFailedSessionToSidebar').length, row.failedRows);
+    assert.strictEqual(h.env.movingFailed.has('s'), false);
+  });
+}

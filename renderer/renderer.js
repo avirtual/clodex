@@ -930,6 +930,8 @@ async function deleteSessionRow(name) {
 
 function addSessionToSidebar(name, type, cwd, label, backend = null, team = null, noWire = false, account = null, fixFor = null) {
   respawnSnapshots.delete(name);
+  const stale = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  if (stale && /(^|\s)(failed|exited|archived)(\s|$)/.test(stale.className)) stale.remove();
   const item = document.createElement('div');
   item.className = 'session-item';
   item.dataset.name = name;
@@ -4532,12 +4534,13 @@ window.api.onSessionExit((name, code, meta) => {
     })();
   }
   const archivedEntry = archivingSessions.get(name);
-  const movedFailedEntry = movingFailed.get(name);
+  const movedFailedEntry = meta && meta.expected ? null : movingFailed.get(name);
+  movingFailed.delete(name);
   const exitedEntry = !archivedEntry && !movedFailedEntry && meta && meta.agentType && !meta.expected
     && !(sessions.get(name) || {}).peer
     ? exitedRowSnapshot(name, code, meta)
     : null;
-  if (meta && meta.expected && !archivedEntry && !movedFailedEntry) {
+  if (meta && meta.expected && !archivedEntry) {
     if (activeSession === name) respawnFocus.set(name, Date.now());
     const row = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
     if (row) respawnSnapshots.set(name, { snap: rowSnapshot(name, row), at: Date.now() });
@@ -4550,7 +4553,6 @@ window.api.onSessionExit((name, code, meta) => {
     return;
   }
   if (movedFailedEntry) {
-    movingFailed.delete(name);
     addFailedSessionToSidebar(movedFailedEntry);
     refreshSidebarView();
     return;

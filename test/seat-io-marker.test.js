@@ -514,6 +514,20 @@ test('a restart keeps the row\'s ticket dot', async () => {
   assert.deepStrictEqual(h.rows.map((r) => [r.dataset.name, r.className, r.dataset.ticket]), [['s', 'session-item', 't7']]);
 });
 
+for (const row of [
+  { cls: 'session-item failed', draw: (h) => h.addFailedSessionToSidebar({ name: 's', type: 'claude', cwd: '/w', error: 'x' }) },
+  { cls: 'session-item exited', draw: (h) => h.addExitedSessionToSidebar({ name: 's', type: 'claude', cwd: '/w', exitCode: 1 }) },
+  { cls: 'session-item archived', draw: (h) => h.addArchivedSessionToSidebar({ name: 's', type: 'claude', cwd: '/w', archivedAt: 1 }) },
+]) {
+  test(`addSessionToSidebar over a "${row.cls}" row of that name leaves exactly one live row`, () => {
+    const h = mkRenderer();
+    row.draw(h);
+    assert.deepStrictEqual(h.rows.map((r) => r.className), [row.cls], 'ENTER: the placeholder row was drawn');
+    h.addSessionToSidebar('s', 'claude', '/w');
+    assert.deepStrictEqual(h.rows.map((r) => [r.dataset.name, r.className]), [['s', 'session-item']]);
+  });
+}
+
 test('a sidebar refresh pass applies the ticket listSessions reports to each row', async () => {
   const rows = { s: { dataset: { name: 's' } }, u: { dataset: { name: 'u', ticket: 't1' } } };
   const env = {
