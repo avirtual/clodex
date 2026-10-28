@@ -1526,41 +1526,48 @@ test('pending drain: the hook rehomes a live-pid claim older than ten minutes an
   assert.deepStrictEqual(fs.readdirSync(claims), []);
 });
 
-test('pending drain: the hook freshens an aged pending dir and an aged orphan claim before renaming either', () => {
+function agedRenameAges(seat, aged) {
   const REGISTRY_DIR = tmp();
   const h = mk(REGISTRY_DIR);
-  h.setupClaudeHook('old');
+  h.setupClaudeHook(seat);
   const { CLAIM_STALE_MS } = require('../pending-store');
-  const pend = path.join(REGISTRY_DIR, 'pending');
-  const orphan = path.join(pend, '.claims', 'old.draining.idle.999999');
-  for (const [dir, text] of [[path.join(pend, 'old'), 'parked long ago'], [orphan, 'orphaned']]) {
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, text.length + '.json'), JSON.stringify({ text }));
-    const t = new Date(Date.now() - CLAIM_STALE_MS - 60 * 1000);
-    fs.utimesSync(dir, t, t);
-  }
+  const dir = path.join(REGISTRY_DIR, 'pending', aged);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'm0.json'), JSON.stringify({ text: 'parked long ago' }));
+  const t = new Date(Date.now() - CLAIM_STALE_MS - 60 * 1000);
+  fs.utimesSync(dir, t, t);
   const work = tmp();
   const log = path.join(work, 'ages.json');
   const preload = path.join(work, 'rename-spy.js');
   fs.writeFileSync(preload, `const fs = require('fs');
-const rename = fs.renameSync, ages = {};
+const rename = fs.renameSync, ages = [];
 fs.renameSync = function (src, dest) {
-  if ([${JSON.stringify(path.join(pend, 'old'))}, ${JSON.stringify(orphan)}].includes(src)) {
-    ages[src] = Date.now() - fs.statSync(src).mtimeMs;
+  if (src === ${JSON.stringify(dir)}) {
+    ages.push(Date.now() - fs.statSync(src).mtimeMs);
     fs.writeFileSync(${JSON.stringify(log)}, JSON.stringify(ages));
   }
   return rename.apply(this, arguments);
 };
 `);
-  const src = fs.readFileSync(pathFor(REGISTRY_DIR, 'old', 'pendingScript'), 'utf-8');
+  const src = fs.readFileSync(pathFor(REGISTRY_DIR, seat, 'pendingScript'), 'utf-8');
   assert.ok(src.includes('-e "$JS"'), 'ENTER: the hook runs its drain inline');
   const script = path.join(work, 'pending.sh');
   fs.writeFileSync(script, src.replace('-e "$JS"', `-r ${JSON.stringify(preload)} -e "$JS"`));
   const out = cp.execFileSync('bash', [script], { ...HOOK_SPAWN, input: JSON.stringify({ hook_event_name: 'UserPromptSubmit' }) }).toString();
   assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, /parked long ago/);
-  const ages = JSON.parse(fs.readFileSync(log, 'utf-8'));
-  assert.deepStrictEqual(Object.keys(ages).sort(), [path.join(pend, '.claims', 'old.draining.idle.999999'), path.join(pend, 'old')].sort());
-  for (const [p, ms] of Object.entries(ages)) assert.ok(ms < CLAIM_STALE_MS, `${p} was ${ms}ms old at rename`);
+  return JSON.parse(fs.readFileSync(log, 'utf-8'));
+}
+
+test('pending drain: the hook freshens a pending dir parked more than CLAIM_STALE_MS ago before claiming it', () => {
+  const ages = agedRenameAges('old', 'old');
+  assert.strictEqual(ages.length, 1);
+  assert.ok(ages[0] < require('../pending-store').CLAIM_STALE_MS, `source was ${ages[0]}ms old at rename`);
+});
+
+test('pending drain: the hook freshens an aged orphan claim before rehoming it', () => {
+  const ages = agedRenameAges('orph', '.claims/orph.draining.idle.999999');
+  assert.strictEqual(ages.length, 1);
+  assert.ok(ages[0] < require('../pending-store').CLAIM_STALE_MS, `orphan was ${ages[0]}ms old at rename`);
 });
 
 test('pending drain: a hook input larger than ARG_MAX still drains the parked message', () => {
