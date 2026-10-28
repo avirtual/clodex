@@ -427,8 +427,21 @@ async function sweep(dir, { send = sendDm } = {}) {
     const seq = Number.isInteger(lock.seq) ? lock.seq : null;
     const recFile = seq == null ? null : path.join(dir, `${seq}.json`);
     const rec = recFile ? readJson(recFile) : null;
-    if (seq != null && (!rec || rec.outcome === 'running')) {
-      const reason = `worker pid ${lock.pid} gone without a result`;
+    const running = seq != null && (!rec || rec.outcome === 'running');
+    const childPid = rec && Number.isInteger(rec.childPid) && rec.childPid > 0 ? rec.childPid : null;
+    if (running && childPid && isAlive(childPid)) {
+      if (!rec.orphanNoticed) {
+        try {
+          updateRecord(dir, seq, { orphanNoticed: true });
+          fs.appendFileSync(path.join(dir, `${seq}.log`), `# worker pid ${lock.pid} gone; clodexctl pid ${childPid} still running — lock kept (swept ${now()})\n`, { mode: 0o600 });
+        } catch {}
+      }
+      continue;
+    }
+    if (running) {
+      const reason = childPid
+        ? `worker pid ${lock.pid} and clodexctl pid ${childPid} gone without a result`
+        : `worker pid ${lock.pid} gone without a result`;
       try {
         updateRecord(dir, seq, {
           seq, ctx, seat: lock.seat, verb: lock.verb, ...(rec ? {} : { startedAt: lock.startedAt }),
@@ -487,9 +500,19 @@ function allocSeq(dir, initial) {
   }
 }
 
-function inflightRefusal(dir, lock, ctx) {
+function orphanChild(dir, lock) {
+  if (!lock || !Number.isInteger(lock.seq)) return null;
+  const rec = readJson(path.join(dir, `${lock.seq}.json`));
+  if (!rec || rec.outcome !== 'running' || !Number.isInteger(rec.childPid) || rec.childPid <= 0) return null;
+  return isAlive(rec.childPid) ? rec.childPid : null;
+}
+
+function inflightRefusal(dir, lock, ctx, orphan = null) {
   const seq = lock.seq == null ? '?' : lock.seq;
-  const head = `refused: run ${seq} is in flight on ${ctx} (${lock.verb || '?'}, started ${hhmmss(lock.startedAt)}, seat ${lock.seat || '?'}) — wait for its result dm; log `;
+  const tail = orphan
+    ? `its clodexctl (pid ${orphan}) is still running; the worker (pid ${lock.pid}) is gone; log `
+    : 'wait for its result dm; log ';
+  const head = `refused: run ${seq} is in flight on ${ctx} (${lock.verb || '?'}, started ${hhmmss(lock.startedAt)}, seat ${lock.seat || '?'}) — ${tail}`;
   let log = path.join(dir, `${seq}.log`);
   if (head.length + log.length > MAX_LINE) log = '…' + log.slice(log.length - Math.max(0, MAX_LINE - head.length - 1));
   return head + log;
@@ -510,6 +533,8 @@ function takeLock(dir, ctx, lock) {
       if (e.code !== 'EEXIST') throw e;
       const held = readJson(file);
       if (held && isAlive(held.pid)) refuse(inflightRefusal(dir, held, ctx));
+      const orphan = orphanChild(dir, held);
+      if (orphan) refuse(inflightRefusal(dir, held, ctx, orphan));
       if (attempt === 1) refuse(inflightRefusal(dir, held || {}, ctx));
       try { fs.unlinkSync(file); } catch {}
     }

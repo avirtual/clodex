@@ -319,6 +319,69 @@ test('A8: a live lock refuses naming the run; a dead one is swept to unknown and
   }
 });
 
+const orphanRuns = (childPid) => {
+  const runs = path.join(mkTmpRoot('clodex-ctla-orphan-'), 'ctl-runs');
+  fs.mkdirSync(runs, { recursive: true });
+  const dead = cp.spawnSync(process.execPath, ['-e', '0']).pid;
+  fs.writeFileSync(path.join(runs, 'ios.lock'), JSON.stringify({ seq: 7, pid: dead, seat: 'a', verb: 'deploy', startedAt: '2026-01-02T03:04:05.000Z' }));
+  const rec = { seq: 7, ctx: 'ios', seat: 'a', verb: 'deploy', startedAt: '2026-01-02T03:04:05.000Z', outcome: 'running', notified: false };
+  if (childPid !== undefined) rec.childPid = childPid;
+  fs.writeFileSync(path.join(runs, '7.json'), JSON.stringify(rec));
+  return { runs, dead };
+};
+
+test('A15: a dead worker whose clodexctl child still runs keeps the lock and logs it once', async () => {
+  const { runs, dead } = orphanRuns(process.pid);
+  const sent = [];
+  const send = async (seat, body) => { sent.push(body); return true; };
+  await A.sweep(runs, { send });
+  await A.sweep(runs, { send });
+  assert.ok(fs.existsSync(path.join(runs, 'ios.lock')));
+  assert.strictEqual(readRec(runs, 7).outcome, 'running');
+  assert.deepStrictEqual(sent, []);
+  const log = fs.readFileSync(path.join(runs, '7.log'), 'utf8');
+  assert.match(log, new RegExp(`^# worker pid ${dead} gone; clodexctl pid ${process.pid} still running — lock kept \\(swept [^)]+\\)\\n$`));
+});
+
+test('A15: a dead worker and a dead clodexctl child sweep to unknown naming both pids', async () => {
+  const deadChild = cp.spawnSync(process.execPath, ['-e', '0']).pid;
+  const { runs, dead } = orphanRuns(deadChild);
+  const sent = [];
+  await A.sweep(runs, { send: async (seat, body) => { sent.push(body); return true; } });
+  assert.ok(!fs.existsSync(path.join(runs, 'ios.lock')));
+  const rec = readRec(runs, 7);
+  assert.deepStrictEqual({ outcome: rec.outcome, reason: rec.reason },
+    { outcome: 'unknown', reason: `worker pid ${dead} and clodexctl pid ${deadChild} gone without a result` });
+  assert.strictEqual(sent.length, 1);
+});
+
+test('A15: a record without childPid sweeps to unknown on the worker pid alone', async () => {
+  const { runs, dead } = orphanRuns();
+  await A.sweep(runs, { send: async () => true });
+  assert.ok(!fs.existsSync(path.join(runs, 'ios.lock')));
+  const rec = readRec(runs, 7);
+  assert.deepStrictEqual({ outcome: rec.outcome, reason: rec.reason },
+    { outcome: 'unknown', reason: `worker pid ${dead} gone without a result` });
+});
+
+test('A15: a submit while an orphaned clodexctl holds the context is refused naming the child', async () => {
+  const f = fixture();
+  await f.listen();
+  try {
+    fs.mkdirSync(f.runs, { recursive: true });
+    const dead = cp.spawnSync(process.execPath, ['-e', '0']).pid;
+    fs.writeFileSync(path.join(f.runs, 'ios.lock'), JSON.stringify({ seq: 7, pid: dead, seat: 'b', verb: 'upgrade', startedAt: '2026-01-02T03:04:05.000Z' }));
+    fs.writeFileSync(path.join(f.runs, '7.json'), JSON.stringify({ seq: 7, ctx: 'ios', seat: 'b', verb: 'upgrade', startedAt: '2026-01-02T03:04:05.000Z', outcome: 'running', notified: false, childPid: process.pid }));
+    const r = await launch(f.env, { ctx: 'ios', verb: 'deploy' });
+    assert.strictEqual(r.code, 1);
+    assert.ok(r.err.startsWith(`refused: run 7 is in flight on ios (upgrade, started 03:04:05, seat b) — its clodexctl (pid ${process.pid}) is still running; the worker (pid ${dead}) is gone; log `), r.err);
+    assert.ok(fs.existsSync(path.join(f.runs, 'ios.lock')));
+    assert.strictEqual(readRec(f.runs, 7).outcome, 'running');
+  } finally {
+    await f.close();
+  }
+});
+
 test('A10b: a silent run gets a passive heartbeat before its result', async () => {
   const f = fixture();
   await f.listen();
