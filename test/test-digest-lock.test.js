@@ -186,6 +186,48 @@ test('lock: an interrupted run releases the lock via its trap', async () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('lock: a lock naming a LIVE foreign pid is waited on, never removed or written into', async () => {
+  const { dir, sh, lock } = mkHarness(0);
+  fs.mkdirSync(lock);
+  fs.writeFileSync(path.join(lock, 'pid'), String(process.pid));
+  const child = spawn('/bin/sh', [sh], { stdio: 'ignore' });
+  let exited = false;
+  const done = new Promise((r) => child.on('exit', (code) => { exited = true; r(code); }));
+  await new Promise((r) => setTimeout(r, 500));
+  assert.strictEqual(exited, false, 'the run must wait on a live holder, not take the lock');
+  assert.strictEqual(fs.readFileSync(path.join(lock, 'pid'), 'utf-8').trim(), String(process.pid),
+    'the live holder\'s lock is left intact');
+  assert.deepStrictEqual(fs.readdirSync(lock), ['pid'], 'no staged dir is left inside the holder\'s lock');
+  fs.rmSync(lock, { recursive: true, force: true });
+  assert.strictEqual(await done, 0, 'once released, the waiter takes the lock and runs');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('lock: a staged lock dir left by a dead pid is swept before contending', () => {
+  const { dir, sh, lock } = mkHarness(0);
+  const left = `${lock}.tmp-999999`;
+  fs.mkdirSync(left);
+  fs.writeFileSync(path.join(left, 'pid'), '999999');
+  execFileSync('/bin/sh', [sh], { stdio: 'ignore' });
+  assert.ok(!fs.existsSync(left), 'a dead pid\'s staged dir must not accumulate');
+  assert.deepStrictEqual(fs.readdirSync(dir).filter((f) => f.startsWith('.test-digest.lock')), [],
+    'and the run leaves neither its own staged dir nor the lock');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('lock: the exit trap does not remove a lock another pid now owns', async () => {
+  const { dir, sh, lock } = mkHarness(1);
+  const child = spawn('/bin/sh', [sh], { stdio: 'ignore' });
+  await new Promise((r) => setTimeout(r, 400));
+  assert.strictEqual(fs.readFileSync(path.join(lock, 'pid'), 'utf-8').trim(), String(child.pid),
+    'precondition: the run holds the lock under its own pid');
+  fs.writeFileSync(path.join(lock, 'pid'), String(process.pid));
+  assert.strictEqual(await new Promise((r) => child.on('exit', r)), 0);
+  assert.strictEqual(fs.readFileSync(path.join(lock, 'pid'), 'utf-8').trim(), String(process.pid),
+    'a lock reclaimed by another pid survives the old holder\'s exit');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 const execTimeoutMs = () => JSON.parse(fs.readFileSync(
   path.join(__dirname, '..', 'resources', 'library', 'exec', 'clodex-run-tests.json'), 'utf-8')).timeoutMs;
 
