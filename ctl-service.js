@@ -349,6 +349,7 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
     if (warm && warm.key === key) return warm;
     closeWarm();
     const t = await (openTransport || T.openTransport)(ctx);
+    if (disposed) { try { t.close(); } catch {} throw new Error('ctl service disposed'); }
     warm = { key, ctx, transport: t, client: new C.WireClient(t.baseUrl, ctx.token) };
     return warm;
   }
@@ -356,6 +357,7 @@ function createCtlService({ contextsFile = null, env = process.env, openTranspor
   async function execute(line) {
     const { V, errors, output, args: A, main, help: H, R } = loadCli();
     const { CliError, EXIT } = errors;
+    if (disposed) return done('clodexctl: the ctl service is shutting down\n', EXIT.USAGE, null);
     let buf = '';
     const write = (s) => { buf += s; };
     const printer = output.makePrinter(write);

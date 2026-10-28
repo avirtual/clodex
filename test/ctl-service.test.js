@@ -517,6 +517,72 @@ test('dispose latches — a late run cannot spawn a child during shutdown', asyn
   assert.strictEqual(transport.opened.length, 0, 'no transport may be opened after dispose');
 });
 
+async function sessionsServer() {
+  const http = require('node:http');
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, sessions: [] }));
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  return { server, base: `http://127.0.0.1:${server.address().port}` };
+}
+
+async function until(pred) {
+  for (let i = 0; i < 1000 && !pred(); i++) await new Promise((r) => setImmediate(r));
+  assert.ok(pred(), 'ENTER: the awaited condition was reached');
+}
+
+test('dispose while a dial is pending closes the transport it resolves to', async () => {
+  const { server, base } = await sessionsServer();
+  let closed = 0;
+  let resolveDial;
+  const opened = [];
+  const openTransport = (ctx) => {
+    opened.push(ctx);
+    return new Promise((r) => { resolveDial = () => r({ baseUrl: base, close() { closed++; } }); });
+  };
+  const svc = createCtlService({ contextsFile: tmpCtxFile(), env: {}, openTransport });
+  try {
+    await svc.run('create node prod --url http://prod.example --token STORED_TOKEN');
+    const pending = svc.run('get sessions');
+    await until(() => opened.length === 1);
+    svc.dispose();
+    resolveDial();
+    const b = await pending;
+    assert.strictEqual(closed, 1, 'the transport resolved after dispose must be closed');
+    assert.notStrictEqual(b.exitCode, 0, `the command must not run on a disposed service (${b.output})`);
+    assert.match(b.output, /disposed/);
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test('a command queued behind a slow one never dials once dispose lands between them', async () => {
+  const { server, base } = await sessionsServer();
+  let resolveDial;
+  const opened = [];
+  const openTransport = (ctx) => {
+    opened.push(ctx);
+    if (opened.length > 1) return Promise.resolve({ baseUrl: base, close() {} });
+    return new Promise((r) => { resolveDial = () => r({ baseUrl: base, close() {} }); });
+  };
+  const svc = createCtlService({ contextsFile: tmpCtxFile(), env: {}, openTransport });
+  try {
+    await svc.run('create node prod --url http://prod.example --token STORED_TOKEN');
+    const first = svc.run('get sessions');
+    const second = svc.run('get sessions --token OTHER_TOKEN_LONG');
+    await until(() => opened.length === 1);
+    svc.dispose();
+    resolveDial();
+    await first;
+    const b = await second;
+    assert.strictEqual(opened.length, 1, 'the queued command must not open a transport after dispose');
+    assert.match(b.output, /shutting down/);
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
 test('run: commands serialize — the warm slot has one writer', async (t) => {
   const { svc } = mkService();
   t.after(() => svc.dispose());

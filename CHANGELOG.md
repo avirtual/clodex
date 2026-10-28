@@ -27,6 +27,10 @@ blocks a release.
 ### Fixed
 
 - Editing a managed peer's target box (ssh host, cloud target or remote port) stops the old connection and sheds its tabs, wterms and control claims again, instead of re-pointing them onto the new box; only a tunnel respawn to the same destination keeps them.
+### Fixed
+
+- Quitting while a ctl command is still dialling its tunnel, or has another command queued behind it, no longer leaves a detached tunnel child holding a local port.
+- An exec command whose schema declares an optional property named like an `Object.prototype` member (`constructor`, `toString`) no longer refuses every payload that omits it.
 
 ## 5.148.0 — 2026-10-28 — security fixes from the second cold audit
 

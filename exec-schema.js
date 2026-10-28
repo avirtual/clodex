@@ -106,7 +106,7 @@ function validateAgainstSchema(schema, value, at = 'payload') {
       }
     }
     for (const key of Object.keys(props)) {
-      if (!(key in value)) continue; // absent optional — required already checked
+      if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
       const r = validateAgainstSchema(props[key], value[key], `${at}.${key}`);
       if (!r.ok) return r;
     }
