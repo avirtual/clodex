@@ -14,6 +14,9 @@ blocks a release.
 
 ## Unreleased
 
+- **Security:** `clodexctl upgrade node` on a helm context whose release name differs from the context name updates that context instead of overwriting (and losing the token of) an unrelated context named after the release; `deploy node --helm` takes `--ctx <name>` to save under a name other than the release.
+- `clodexctl undeploy node` (helm and docker) removes only the contexts that point at the torn-down release or container, so a same-named context for another node keeps its token.
+
 ## 5.149.0 — 2026-10-28 — clodexctl reaps its tunnel on exit, create node takes a token file, worktree-safe workspace deletes
 
 - **Security:** `clodexctl` now reaps its tunnel child and any helm token tempdir on Ctrl-C, SIGTERM or a closed terminal, instead of leaving an authenticated forward on a loopback port and token files on disk; `attach` and `logs -f` also handle SIGHUP.

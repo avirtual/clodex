@@ -502,7 +502,7 @@ contract (task ids, completion events) is T38.
 | `deploy node <name> --ssh user@host [--port N] [--repo URL] [--branch B] [--src DIR] [--no-ctx] [--no-wirescope] [--force] [--ssh-opt X …] [--claude-token-file FILE] [--dry-run]` | system `ssh` → `bash -s` | drives `peering/clodex-deploy.sh` on the box (installs the claude/codex CLIs too), streams `::step`/`::ok` progress (`-o json` = NDJSON), verifies the wire through an ssh tunnel, then saves a `{ssh, remotePort}` context. `--claude-token-file` rides the ssh stdin into a `0600` unit drop-in |
 | `deploy node <name> --docker [--port N] [--image I] [--tag T] [--env-file F] [--host ssh://u@box] [--volume V …] [--no-ctx] [--no-wirescope] [--force] [--dry-run]` | system `docker run` | births a container node from the published image, verifies hello, saves a context (`{url}` local / `{ssh, remotePort}` remote) |
 | `deploy node <name> --ssm i-INSTANCE [--region R] [--profile P] [--branch B] [--repo URL] [--port N] [--no-ctx] [--no-wirescope] [--force] [--claude-token-file FILE] [--dry-run]` | system `aws` → SSM RunCommand | installs an **OS-flavor** node (dedicated `clodex` host user + systemd --user service) on an SSM-managed instance with **no ssh and no open ports**: one root `AWS-RunShellScript` running the pinned installer, polled to completion, then verified through the real SSM port-forward. Saves a typed `{ssm, token}` context. `--claude-token-file` is delivered over the encrypted wire post-verify (**never** via SSM params) |
-| `deploy node <name> --helm [--namespace NS] [--kube-context C] [--chart PATH] [--port N] [--set k=v …] [--values F] [--no-ctx] [--force] [--force-conflicts] [--claude-token-file FILE] [--dry-run]` | system `helm` + `kubectl` | a **KUBERNETES** node from the packaged chart (`cli/deploy/helm/clodex`): mints a wire token, `helm upgrade --install … --set-file secrets.wireToken=<0600 tempfile> --wait`, saves a typed `{kubectl: svc/<name>, token}` context, then verifies hello **through the real `kubectl port-forward`** with the token. Re-run = `helm upgrade` in place, **reusing** the release's existing token |
+| `deploy node <name> --helm [--namespace NS] [--kube-context C] [--chart PATH] [--port N] [--set k=v …] [--values F] [--ctx NAME] [--no-ctx] [--force] [--force-conflicts] [--claude-token-file FILE] [--dry-run]` | system `helm` + `kubectl` | a **KUBERNETES** node from the packaged chart (`cli/deploy/helm/clodex`): mints a wire token, `helm upgrade --install … --set-file secrets.wireToken=<0600 tempfile> --wait`, saves a typed `{kubectl: svc/<name>, token}` context, then verifies hello **through the real `kubectl port-forward`** with the token. Re-run = `helm upgrade` in place, **reusing** the release's existing token |
 | `deploy node <stack> --fargate [--cluster NAME] [--region R] [--profile P] [--image URI] [--use-bedrock] [--assign-public-ip E\|D] [--subnets IDs] [--security-group ID] [--persistent true\|false] [--param K=V …] [--token-file FILE] [--ctx NAME] [--no-ctx] [--force] [--dry-run]` | system `aws` → CloudFormation | an **AWS FARGATE** node from the packaged template (`cli/deploy/clodex-fargate.yaml`): `aws cloudformation deploy` (create OR idempotent update), populates the oauth-token secret from `--token-file` (`file://`, never argv; skipped on `--use-bedrock`), reads the stack's **self-minted** wire token into a typed `{ssm-ecs CLUSTER/<stack>-node, token}` context, then (when `--persistent`, the default) verifies hello **through the real SSM tunnel**. `ClusterName` defaults to the stack name; the wire token is never rotated on re-run |
 
 `deploy` is the CLI twin of the GUI's add-peer wizard. It runs the **same
@@ -676,7 +676,14 @@ headless Service, no Ingress; the chart itself is the reviewable surface) as
 helm release `<name>` and wires everything up: mint → install → context →
 verify. `<name>` doubles as the helm release name **and** the ctx name, so it
 must be DNS-1123 (lowercase letters/digits/hyphens, max 53 — no dots or
-underscores; validated early with a clear message).
+underscores; validated early with a clear message). `--ctx <name>` saves the
+context under a different name; `upgrade node <ctx>` passes it, so upgrading a
+context whose release has another name updates that context and never one
+named after the release.
+`undeploy node` (helm and docker) removes only the contexts that point at the
+torn-down release (same release, namespace and kube context) or container
+(same container and docker host); a same-named context for another node keeps
+its token.
 
 ```
 clodexctl deploy node mynode --helm                                   # current kubectl context, ns "clodex"
