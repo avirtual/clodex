@@ -347,3 +347,18 @@ test('prune drops agents not in the live set', () => {
   assert.strictEqual(wt.payload('alice'), null);
   assert.ok(wt.payload('bob'));
 });
+
+test('prune keeps a pruned seat\'s this-launch spend in the persisted lifetime', () => {
+  let disk = { version: 1, sessions: { S: { cost: 20, requests: 10, turns: 5, refusals: 0, ts: 1 } } };
+  const t = new WireTelemetry({ persist: { read: () => disk, write: (o) => { disk = JSON.parse(JSON.stringify(o)); } } });
+  const turn = (agent, sid, usd) => t.noteTurn({ agent, sessionId: sid, role: 'parent', sessionTotals: { est_usd: usd, requests: 1, turns: 1 } });
+  turn('a', 'S', 5);
+  t._save();
+  assert.strictEqual(disk.sessions.S.cost, 25, 'ENTER: the live spend is on disk');
+  t.prune(new Set(['b']));
+  assert.strictEqual(t.payload('a'), null, 'ENTER: a was pruned');
+  turn('b', 'T', 1);
+  t._save();
+  assert.strictEqual(disk.sessions.S.cost, 25);
+  assert.ok(disk.sessions.T, 'b\'s session saved alongside');
+});
