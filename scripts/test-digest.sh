@@ -105,9 +105,9 @@ fi
 # were diagnosed as contention and searched for a second runner that never
 # existed. Check for one, but do not assume it.
 #
-# mkdir is the atomic test-and-set on every POSIX filesystem. A lock holding a
-# DEAD pid is stale (a killed runner never cleans up) and is reclaimed, or the
-# first crash would wedge every later run forever.
+# The take is a rename of a dir that already holds our pid, so the lock never
+# exists without one; the pid read back decides who won, because BSD mv moves
+# into an existing dir instead of failing. A DEAD pid is stale and reclaimed.
 #
 # PINNED TO THE ROOT, ABSOLUTELY, and that is the whole reason the tree is a
 # parameter rather than a `cd`. A lock relative to the MEASURED tree gives every
@@ -215,7 +215,7 @@ lock_refusal() {
   # presenting that pid as the holder: naming it reads as "kill this and clear
   # the lock", and the last two times that reasoning was followed the lock was
   # valid and held by a run the pid file simply did not name yet. A lock dir with
-  # no pid file is also this case — it is the window between mkdir and the write.
+  # no pid file is also this case, left by a writer that does not stage its pid.
   #
   # THE WARNING LEADS, and the lock path is omitted entirely, because the exec
   # dispatcher delivers only the last stderr line SLICED TO 200 CHARS. A message
@@ -227,8 +227,27 @@ lock_refusal() {
     "${now:-absent}" "$waited" 1>&2
 }
 
+take_lock() {
+  for left in "$LOCK".tmp-*; do
+    [ -d "$left" ] || continue
+    kill -0 "${left##*.tmp-}" 2>/dev/null || rm -rf "$left"
+  done
+  tmp="$LOCK.tmp-$$"
+  rm -rf "$tmp"
+  mkdir "$tmp" 2>/dev/null || return 1
+  echo $$ > "$tmp/pid"
+  [ -e "$LOCK" ] || mv "$tmp" "$LOCK" 2>/dev/null
+  [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ] && return 0
+  rm -rf "$tmp" "$LOCK/${tmp##*/}"
+  return 1
+}
+
+release_lock() {
+  [ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ] && rm -rf "$LOCK"
+}
+
 waited=0
-while ! mkdir "$LOCK" 2>/dev/null; do
+while ! take_lock; do
   holder=$(cat "$LOCK/pid" 2>/dev/null)
   if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
     rm -rf "$LOCK"
@@ -250,10 +269,9 @@ while ! mkdir "$LOCK" 2>/dev/null; do
   waited=$((waited + 2))
   sleep 2
 done
-echo $$ > "$LOCK/pid"
 # Covers the normal exit and the common signals; without this a Ctrl-C leaves a
 # lock whose pid IS alive for a moment and the next run waits on a ghost.
-trap 'rm -rf "$LOCK"' EXIT HUP INT TERM
+trap release_lock EXIT HUP INT TERM
 
 # ONLY NOW move to the measured tree: the lock above was taken at the root and
 # is held across this cd.

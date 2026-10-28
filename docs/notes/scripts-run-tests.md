@@ -27,6 +27,7 @@ would collapse the estimate to seconds within one suite run.
 The refusal's `running <M:SS>` comes from the pid file's mtime: every entry
 point writes that file at acquisition, so it dates a holder this process never
 launched just as well as one it did.
+`scripts/test-digest.sh` takes the same lock the same way — pid staged in `LOCK.tmp-<pid>` and renamed in, released only when the pid inside is its own — but decides the win by reading the pid back, because BSD mv moves into an existing dir instead of failing.
 
 The refusal is NOT delivered whole: the exec dispatcher hands back only the LAST
 stderr line sliced to 200 (`session-manager.js`, `_handleExecIntent`). The
