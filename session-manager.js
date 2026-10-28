@@ -3750,7 +3750,7 @@ function createSessionManager(deps) {
         }
         this._dropPendingDir(name);
       };
-      if (typeof beforeRemove !== 'function') this._markDropHeld(name);
+      if (!worktree) this._markDropHeld(name);
       await this.kill(name);
       this._disarmHoldFor(name, holdSid);
       if (!worktree) { dropRecord(); dropSeatDir(); return { ok: true, live: wasLive }; }
@@ -3780,7 +3780,7 @@ function createSessionManager(deps) {
       if (r && r.ok) {
         dropRecord();
         dropSeatDir();
-        log.info('worktree', `removed ${worktree.path} (branch ${worktree.branch}) after destroying ${name}`);
+        log.info('worktree', `removed ${worktree.path} (branch ${worktree.branch}) and its pending mail after destroying ${name}: seat deleted`);
         return { ok: true, worktreeRemoved: true, live: wasLive };
       }
       const error = (r && r.error) || 'unknown error';

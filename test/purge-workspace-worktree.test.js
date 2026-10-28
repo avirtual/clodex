@@ -114,3 +114,61 @@ test('a plain kill of the same seat re-parks its held injects', async () => {
   assert.ok(!lines.some((l) => l.includes('seat deleted')));
   assert.strictEqual(fs.readdirSync(path.join(PENDING_DIR, 'a')).filter((f) => f.endsWith('.json')).length, 2);
 });
+
+function pendingJson(dir, name) {
+  const d = path.join(dir, name);
+  return fs.existsSync(d) ? fs.readdirSync(d).filter((f) => f.endsWith('.json')) : [];
+}
+
+function liveSlowExit(m, name, extra = {}) {
+  m.sessions.set(name, { name, createdAt: 1, pty: { pid: 0, kill() {} }, ...extra });
+  return () => { m._cleanup(name); m.sessions.delete(name); };
+}
+
+test('destroy of a worktree seat whose tree removal fails keeps the record archived and re-parks its held mail', async () => {
+  const { m, recs, lines, PENDING_DIR } = rig({
+    records: { w: { cwd: '/wt/t1', workspaceId: 'ws-1', worktree: WT } },
+    removeWorktree: () => ({ ok: false, error: 'busy' }),
+  });
+  live(m, 'w', { _injectQueue: ['held one'] });
+  const r = await m.destroy('w');
+  assert.strictEqual(r.worktreeRemoved, false);
+  assert.ok(recs.get('w').archivedAt, 'kept record is archived');
+  assert.strictEqual(pendingJson(PENDING_DIR, 'w').length, 1);
+  assert.ok(lines.includes('re-parked 1 held inject(s) for w to pending'));
+  assert.ok(!lines.some((l) => l.includes('seat deleted')));
+});
+
+test('destroy of a worktree seat that outlives the exit wait keeps the record and re-parks its held mail at exit', async () => {
+  const { m, recs, lines, calls, PENDING_DIR } = rig({ records: { w: { cwd: '/wt/t1', workspaceId: 'ws-1', worktree: WT } } });
+  const exit = liveSlowExit(m, 'w', { _injectQueue: ['held one'] });
+  m._waitForExit = async () => false;
+  const r = await m.destroy('w');
+  assert.strictEqual(r.ok, false);
+  assert.deepStrictEqual(calls, []);
+  assert.ok(recs.get('w').archivedAt, 'kept record is archived');
+  exit();
+  assert.strictEqual(pendingJson(PENDING_DIR, 'w').length, 1);
+  assert.ok(!lines.some((l) => l.includes('seat deleted')));
+});
+
+test('destroy of a worktree seat whose tree is removed deletes the re-parked mail with the seat', async () => {
+  const { m, recs, lines, calls, PENDING_DIR } = rig({ records: { w: { cwd: '/wt/t1', workspaceId: 'ws-1', worktree: WT } } });
+  live(m, 'w', { _injectQueue: ['held one'] });
+  const r = await m.destroy('w');
+  assert.strictEqual(r.worktreeRemoved, true);
+  assert.deepStrictEqual(calls, ['/wt/t1']);
+  assert.strictEqual(recs.has('w'), false);
+  assert.strictEqual(fs.existsSync(path.join(PENDING_DIR, 'w')), false);
+  assert.ok(lines.includes('removed /wt/t1 (branch t1) and its pending mail after destroying w: seat deleted'));
+});
+
+test('destroy of a tree-less seat with beforeRemove drops held mail even when the pty exits after the seat dir is gone', async () => {
+  const { m, lines, PENDING_DIR } = rig({ records: { a: { cwd: '/p', workspaceId: 'ws-1' } } });
+  const exit = liveSlowExit(m, 'a', { _injectQueue: ['held one'] });
+  const r = await m.destroy('a', { beforeRemove: async () => ({ keep: false }) });
+  assert.strictEqual(r.ok, true);
+  exit();
+  assert.ok(lines.includes('dropped 1 held inject(s) for a: seat deleted'));
+  assert.strictEqual(fs.existsSync(path.join(PENDING_DIR, 'a')), false);
+});
