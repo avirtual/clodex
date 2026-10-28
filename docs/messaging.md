@@ -217,7 +217,7 @@ records the transcript-literal `messages/<seat>/` path; `list()`, `filePeek` and
    text it lands as a literal character (this was the historical
    mid-draft truncation bug). The text write first drops the invisible characters Claude Code 2.1.286 would strip and hold for a second Enter (review-gate.js ports its rule: controls and default-ignorables such as zero-width spaces, soft hyphens, directional marks outside right-to-left lines and all other bidi controls and stray tag or variation characters, but not the joiners and selectors the CLI keeps inside emoji or joining scripts); Codex seats are written as-is. The text write then defangs the CLI's teammate-message tag (review-gate.js `defangTeammateTag`): a U+2011 hyphen in `<teammate‑message` and `</teammate‑message>`, every route, fenced blocks included, so no delivered body can be rewritten into a subagent result. The quiet-gate defers firing while the
    operator typed within `INJECT_QUIET_MS` (2s), capped at
-   `INJECT_QUIET_MAXWAIT` (5min, logged as splice risk). The bracketed-paste write lets Claude Code wrap a large delivery as untrusted pasted text; the PREAMBLE's peer-messages paragraph in ipc-prompt.js tells seats the sender line sets the trust (tasks/opus-5-5-prompting-survey/REPORT.md item 2). A multi-line text to a Claude seat also waits for mode 2004 (`pasteMaxWaitMs` = `INJECT_PASTE_MAXWAIT`, 10s), since a raw multi-line write is held unsent in the composer; at the cap a diverted delivery is re-parked and any other is written bracketed anyway. Held texts are re-parked to pending when the seat exits, unless `destroy()` or `purgeWorkspace` deleted it (`_dropHeld`), which drops them.
+   `INJECT_QUIET_MAXWAIT` (5min, logged as splice risk). The bracketed-paste write lets Claude Code wrap a large delivery as untrusted pasted text; the PREAMBLE's peer-messages paragraph in ipc-prompt.js tells seats the sender line sets the trust (tasks/opus-5-5-prompting-survey/REPORT.md item 2). A multi-line text to a Claude seat also waits for mode 2004 (`pasteMaxWaitMs` = `INJECT_PASTE_MAXWAIT`, 10s), since a raw multi-line write is held unsent in the composer; at the cap a diverted delivery is re-parked and any other is written bracketed anyway. Held texts, and held producer units that carry a `fallback` text (every `_deliverMessage` unit), are re-parked to pending with their `parkId`/`parkKey` when the seat exits, unless `destroy()` or `purgeWorkspace` deleted it (`_dropHeld`), which drops them; rename, destroy and purge wait for the exit and `InjectQueue.settled()` before moving or removing `pending/<name>`, so a late re-park cannot land in a dir nothing drains.
 
 **Park-at-fire divert** — injects marked `parkable` re-check
 `_parkDivertFor` at the moment of writing: if the operator has a draft open,
@@ -321,8 +321,10 @@ inject queue to empty (capped at `INJECT_BOOT_MAXWAIT` past the edge), so a spaw
   parked mail with the target's own next turn or tool boundary; the busy/draft park arms a non-destructive
   5min cap (`_armParkCap`) that drains through the inject queue. Cost/dialog
   hold-parks do NOT arm the cap — they wait for the target's next turn or an
-  explicit resend. A unit whose text is already claimed when the seat dies
-  is re-parked through the queue's `onUndelivered` with the seat's `born`,
+  explicit resend. A unit whose text is already claimed when the seat dies, or whose producer
+  has a `fallback` and never ran, is re-parked through the queue's
+  `onUndelivered` with the seat's `born` and the unit's `parkId`/`parkKey`,
+  after the unit's `onDivert` reports `parked` (a dm's swallowed-latch entry is retracted),
   so these drains deliver it to the respawned process. On that seat the
   boot-ready drain (`_bootReadySeen` edge + `BOOT_DRAIN_SETTLE_MS`) and the
   briefing (`_injectAfterBoot`: transcript symlink + `RELOAD_CONTINUATION_DELAY`)

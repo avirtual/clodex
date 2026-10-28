@@ -21294,6 +21294,76 @@ test('t1507 onUndelivered: a re-park on a live seat (the paste cap) logs at warn
   assert.ok(!infos.some((w) => w.includes('re-parked an undelivered')), 'not at info');
 });
 
+function t2033Queue() {
+  const { InjectQueue } = require('../inject-queue');
+  return class extends InjectQueue {
+    constructor(o) { super({ ...o, sleep: () => new Promise((r) => setImmediate(r)) }); }
+  };
+}
+
+function t2033Parked(PENDING_DIR, name) {
+  let files = [];
+  try { files = fsReal.readdirSync(pathReal.join(PENDING_DIR, name)).filter((f) => f.endsWith('.json')); } catch {}
+  return files.map((f) => JSON.parse(fsReal.readFileSync(pathReal.join(PENDING_DIR, name, f), 'utf8')));
+}
+
+test('t2033: a dm with onWrite queued behind the boot gate survives its seat\'s death as a parked file with its parkKey', async () => {
+  const { m, PENDING_DIR } = mkPark({ InjectQueue: t2033Queue(), SHORT_TEXT_DELAY: 0, LONG_TEXT_DELAY: 0, LONG_TEXT_THRESHOLD: 1e9 });
+  delete m._injectText;
+  m._sendToSession = () => {};
+  const session = { name: 'b', agentType: 'claude', createdAt: 1_700_000_000_000, activityState: 'idle', pty: { write: () => {} } };
+  m.sessions.set('b', session);
+  const fired = [];
+  m._deliverMessage('b', 'a', 'BOOT GATED BODY', 'dm', '', (d) => fired.push(d), 'KEY-2033');
+  await new Promise((r) => setImmediate(r));
+  assert.ok(session._injectPtyQueue && session._injectPtyQueue.length === 1, 'ENTER: the unit waits in the queue at the boot gate');
+  session._dead = true;
+  m.sessions.delete('b');
+  await session._injectPtyQueue.settled();
+  const parked = t2033Parked(PENDING_DIR, 'b');
+  assert.strictEqual(parked.length, 1, 'the producer\'s only copy is re-parked, not lost');
+  assert.match(parked[0].text, /BOOT GATED BODY/);
+  assert.strictEqual(parked[0].key, 'KEY-2033');
+  assert.deepStrictEqual(fired, ['parked'], 'the observer sees the park, never an injection');
+});
+
+test('t2033: a held producer unit with a fallback is re-parked with its parkKey and not kept for _cleanup to drop', () => {
+  const { m, PENDING_DIR } = mkPark();
+  const session = { name: 'b', agentType: 'claude', createdAt: 1_700_000_000_000 };
+  const queue = [{ produce: () => 'PRODUCED', opts: { parkable: true, parkKey: 'KEY-H', fallback: () => 'HELD FALLBACK' } }];
+  const kept = m._reparkHeldInjects(session, queue);
+  assert.deepStrictEqual(kept, []);
+  const parked = t2033Parked(PENDING_DIR, 'b');
+  assert.strictEqual(parked.length, 1);
+  assert.strictEqual(parked[0].text, 'HELD FALLBACK');
+  assert.strictEqual(parked[0].key, 'KEY-H');
+});
+
+test('t2033: the dialog valve re-parks a held producer from its fallback and reports the park through onDivert once', () => {
+  const { m, PENDING_DIR } = mkPark({ INJECT_HOLD_TIMEOUT: 60_000 });
+  const session = { name: 'b', agentType: 'claude', createdAt: 1_700_000_000_000, needsAttention: { kind: 'permission' } };
+  m.sessions.set('b', session);
+  const diverted = [];
+  session._injectQueue = [{ produce: () => 'PRODUCED', opts: { parkable: true, fallback: () => 'VALVE FALLBACK', onDivert: (why) => diverted.push(why) } }];
+  m._maybeFlushInjectQueue(session, true);
+  clearTimeout(session._injectHoldTimer);
+  assert.deepStrictEqual(session._injectQueue, []);
+  assert.deepStrictEqual(t2033Parked(PENDING_DIR, 'b').map((e) => e.text), ['VALVE FALLBACK']);
+  assert.deepStrictEqual(diverted, ['dialog']);
+});
+
+test('t2033: onUndelivered parks nothing for a seat marked _dropHeld', () => {
+  const { InjectQueue } = require('../inject-queue');
+  const { m, PENDING_DIR } = mkPark({ InjectQueue });
+  const session = { name: 'a', agentType: 'claude', createdAt: 1_700_000_000_000, pty: { write: () => {} }, _dead: true, _dropHeld: true };
+  m.sessions.set('a', session);
+  m._injectQueueFor(session)._undelivered('late text');
+  assert.strictEqual(hasPending(PENDING_DIR, 'a'), false);
+  session._dropHeld = false;
+  m._injectQueueFor(session)._undelivered('late text');
+  assert.strictEqual(hasPending(PENDING_DIR, 'a'), true, 'ENTER: the same call parks once the flag is off');
+});
+
 function mkStreamSeatManager({ persisted = {}, fakePty = null, team = null, holdDm = null, hintArm = null, selectionArm = null, streamFor = null, loadStreamCodec = null, extraDeps = {} } = {}) {
   const os = require('node:os');
   const fs = require('node:fs');

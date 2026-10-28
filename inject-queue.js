@@ -97,9 +97,17 @@ class InjectQueue {
 
   settled() { return this._chain; }
 
-  _undelivered(text) {
+  _undelivered(text, meta) {
     if (!this._onUndelivered) return;
-    try { this._onUndelivered(text); } catch {}
+    try { this._onUndelivered(text, meta); } catch {}
+  }
+
+  _undeliveredUnproduced(text, produce, fallback, meta) {
+    if (!produce) { if (text) this._undelivered(text, meta); return; }
+    if (!fallback) return;
+    let t = null;
+    try { t = fallback(); } catch { t = null; }
+    if (typeof t === 'string' && t) this._undelivered(t, meta);
   }
 
   // A throwing hold must not block delivery — the hint is optional, the message is not.
@@ -118,7 +126,13 @@ class InjectQueue {
     const divert = typeof opts.divert === 'function' ? opts.divert : null;
     const produce = typeof opts.produce === 'function' ? opts.produce : null;
     const human = opts.human === true;
-    const run = () => this._drain(text, divert, produce, human).finally(() => { this._length--; });
+    const fallback = typeof opts.fallback === 'function' ? opts.fallback : null;
+    const meta = {
+      parkId: opts.parkId || null,
+      parkKey: opts.parkKey || null,
+      onDivert: typeof opts.onDivert === 'function' ? opts.onDivert : null,
+    };
+    const run = () => this._drain(text, divert, produce, human, meta, fallback).finally(() => { this._length--; });
     this._chain = this._chain.then(run, run);   // run even if a prior item rejected
     return this._chain;
   }
@@ -140,7 +154,7 @@ class InjectQueue {
     return { deferred };
   }
 
-  async _drain(text, divert = null, produce = null, human = false) {
+  async _drain(text, divert = null, produce = null, human = false, meta = {}, fallback = null) {
     // Bytes written before a fresh seat's input loop enters raw mode are buffered
     // and read as ONE paste-like chunk, so the trailing Enter lands as content
     // instead of submitting. Runs before the quiet-gate: a virgin seat has no
@@ -156,12 +170,12 @@ class InjectQueue {
       readyDeferred = true;
       await this._sleep(Math.min(this._readyMaxWaitMs, this._readyPollMs));
     }
-    if (this._isDead()) { if (!produce && text) this._undelivered(text); return; }
+    if (this._isDead()) { this._undeliveredUnproduced(text, produce, fallback, meta); return; }
     if (readyDeferred && !this._ready() && this._onReadyCapFire) {
       try { this._onReadyCapFire(text); } catch {}
     }
     let { deferred } = await this._waitQuiet();
-    if (this._isDead()) { if (!produce && text) this._undelivered(text); return; }
+    if (this._isDead()) { this._undeliveredUnproduced(text, produce, fallback, meta); return; }
     // Must run after the gates: the producer's claim is destructive.
     if (produce) {
       let produced = null;
@@ -169,7 +183,7 @@ class InjectQueue {
       if (produced == null || produced === '') return;
       text = produced;
     }
-    if (this._isDead()) { if (parkable) this._undelivered(text); return; }
+    if (this._isDead()) { if (parkable) this._undelivered(text, meta); return; }
     let forceBracket = false;
     if (this._reviewGate && this._pasteMaxWaitMs !== null
       && stripReviewGated(text).includes('\n') && !this._pasteOn()) {
@@ -179,13 +193,13 @@ class InjectQueue {
         pasteSlept = true;
         await this._sleep(Math.min(this._pasteMaxWaitMs, this._readyPollMs));
       }
-      if (this._isDead()) { if (parkable) this._undelivered(text); return; }
+      if (this._isDead()) { if (parkable) this._undelivered(text, meta); return; }
       if (pasteSlept) {
         if ((await this._waitQuiet()).deferred) deferred = true;
-        if (this._isDead()) { if (parkable) this._undelivered(text); return; }
+        if (this._isDead()) { if (parkable) this._undelivered(text, meta); return; }
       }
       if (!this._pasteOn()) {
-        if (divert) { this._undelivered(text); return; }
+        if (divert) { this._undelivered(text, meta); return; }
         forceBracket = true;
         if (this._onPasteCapFire) { try { this._onPasteCapFire(text); } catch {} }
       }
@@ -201,7 +215,7 @@ class InjectQueue {
     }
     this._write('\x15');                               // clear-line key event
     await this._sleep(this._ctrlUSettleMs);
-    if (this._isDead()) { if (parkable) this._undelivered(text); return; }
+    if (this._isDead()) { if (parkable) this._undelivered(text, meta); return; }
     if (this._reviewGate) text = stripReviewGated(text);
     const defanged = defangTeammateTag(text);
     if (defanged !== text && this._onDefanged) { try { this._onDefanged(text); } catch {} }
@@ -217,7 +231,7 @@ class InjectQueue {
     this._write(out);
     const settleMs = this._settleMsFor(text);
     await this._sleep(settleMs);
-    if (this._isDead()) { if (parkable) this._undelivered(text); return; }
+    if (this._isDead()) { if (parkable) this._undelivered(text, meta); return; }
     this._write('\r');                                 // Enter — closes the unit
     if (this._onWritten) { try { this._onWritten(text, { bytes: Buffer.byteLength(out), bracketed, pasteOn, settleMs }); } catch {} }
     if (this._onSubmitted) { try { this._onSubmitted(text, { human }); } catch {} }
