@@ -12,7 +12,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — Bash guard: heredoc `case` lines no longer hide a following command; `time --` accepted again
+## Unreleased
+
+## 5.150.5 — 2026-10-28 — Bash guard: heredoc `case` lines no longer hide a following command; `time --` accepted again
 
 - **Security:** the Bash deny guard's end-of-input backstop now denies a double-quoted `$(…)` left open by a `case`, including one opened by a heredoc body line that starts with `case` and one whose innermost frame at the end of the command is a nested substitution or backtick; before, `echo "$(cat <<EOF⏎case⏎EOF⏎)"; kill -9 -1` and `echo "$(x;; case) "$(echo ok"; git add -A` both passed. A heredoc line that begins with the word `case` is now refused — rephrase it.
 - Fixed: `time -- cmd` inside a double-quoted `$(…)` is accepted again by the Bash deny guard and stamped again by `clodex-send`; 5.150.4 kept the command position after `--` only when it followed `time -p`, which refused a valid bash form.
