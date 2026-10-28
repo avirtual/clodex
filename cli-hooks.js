@@ -266,7 +266,7 @@ try {
         const p = String(s[s.length - 1] || "");
         if (head) { if (tok === "case") f.inCase++; else if (tok === "esac" && f.inCase > 0) f.inCase--; }
         const named = f.next && !(f.next === "coproc" && tok === "case");
-        f.fn = (head || f.next === "function") && !tq && tok.indexOf("=") < 0 && "$<>".indexOf(tok.charAt(tok.length - 1)) < 0;
+        f.fn = (head || f.next === "function") && !tq && tok.indexOf("=") < 0 && "$<>@*+?!".indexOf(tok.charAt(tok.length - 1)) < 0;
         f.next = head && (tok === "function" || tok === "coproc") && tok;
         f.cmd = named || (head && (["!", "time", "if", "then", "else", "elif", "do", "while", "until", "coproc"].indexOf(tok) >= 0 || (tok.charAt(0) === "-" && (p === "time" || p.charAt(0) === "-"))));
       }

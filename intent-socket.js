@@ -191,7 +191,7 @@ function shellSegments(cmd) {
         const p = s.length ? s[s.length - 1].text : '';
         if (head) { if (tok.text === 'case') f.inCase++; else if (tok.text === 'esac' && f.inCase > 0) f.inCase--; }
         const named = f.next && !(f.next === 'coproc' && tok.text === 'case');
-        f.fn = (head || f.next === 'function') && !tok.quoted && !tok.text.includes('=') && !'$<>'.includes(tok.text.slice(-1));
+        f.fn = (head || f.next === 'function') && !tok.quoted && !tok.text.includes('=') && !'$<>@*+?!'.includes(tok.text.slice(-1));
         f.next = head && (tok.text === 'function' || tok.text === 'coproc') && tok.text;
         f.cmd = named || (head && (CMD_POSITION_WORDS.includes(tok.text) || (tok.text.startsWith('-') && (p === 'time' || p.startsWith('-')))));
       }
