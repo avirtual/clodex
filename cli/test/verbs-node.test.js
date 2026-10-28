@@ -834,3 +834,32 @@ test('create node --token T still stores the argv token (t2041)', async () => {
   assert.strictEqual(r.code, 0, r.stderr);
   assert.strictEqual(JSON.parse(fs.readFileSync(f, 'utf8')).contexts.home.token, 'argvtok');
 });
+
+test('create node refuses a token-file or stdin token with inner whitespace/control chars (t2045)', async () => {
+  const f = tmpCtx();
+  const tf = path.join(path.dirname(f), 'wire-token');
+  fs.writeFileSync(tf, 'file tok\n');
+  let r = await cli(['create', 'node', 'home', '--url', 'http://h', '--token-file', tf], f);
+  assert.strictEqual(r.code, 2, r.stderr);
+  assert.match(r.stderr, /--token-file .*whitespace\/control chars/);
+  r = await cli(['create', 'node', 'home', '--url', 'http://h', '--token', '-'], f, { readStdin: () => 'stdin\x01tok\n' });
+  assert.strictEqual(r.code, 2, r.stderr);
+  assert.match(r.stderr, /--token - read a token with whitespace\/control chars from stdin/);
+  assert.strictEqual(fs.existsSync(f), false);
+});
+
+test('create node --token - maps a stdin read failure to a USAGE error naming stdin (t2045)', async () => {
+  const f = tmpCtx();
+  const r = await cli(['create', 'node', 'home', '--url', 'http://h', '--token', '-'], f, { readStdin: () => { throw new Error('EAGAIN: resource temporarily unavailable'); } });
+  assert.strictEqual(r.code, 2, r.stderr);
+  assert.match(r.stderr, /--token - could not read stdin: EAGAIN/);
+  assert.strictEqual(fs.existsSync(f), false);
+});
+
+test('create node refuses an argv --token with whitespace/control chars (t2045)', async () => {
+  const f = tmpCtx();
+  const r = await cli(['create', 'node', 'home', '--url', 'http://h', '--token', 'argv tok'], f);
+  assert.strictEqual(r.code, 2, r.stderr);
+  assert.match(r.stderr, /--token has whitespace\/control chars/);
+  assert.strictEqual(fs.existsSync(f), false);
+});

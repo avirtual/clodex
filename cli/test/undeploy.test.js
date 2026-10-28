@@ -733,7 +733,7 @@ test('undeploy docker --dry-run: previews volumes, prints rm + volume rm argv, n
 
 test('undeploy docker --force: rm -f + delete named volume, --host sets DOCKER_HOST, ctx removed', async () => {
   const rec = {};
-  const contextsFile = tmpCtxFile({ current: 'mybox', contexts: { mybox: { url: 'http://127.0.0.1:7900' } } });
+  const contextsFile = tmpCtxFile({ current: 'mybox', contexts: { mybox: { url: 'http://127.0.0.1:7900', deploy: { flavor: 'docker', container: 'clodexctl-mybox', dockerHost: 'ssh://user@box' } } } });
   const r = await cli(['undeploy', 'node', 'mybox', '--docker', '--force', '--host', 'ssh://user@box'], { runDocker: fakeRunDocker(rec), contextsFile });
   assert.strictEqual(r.code, 0);
   assert.ok(rec.calls.some((c) => c.args.join(' ') === 'rm -f clodexctl-mybox'));
@@ -812,7 +812,7 @@ test('undeploy docker: text preview names the volumes it leaves alone', async ()
 
 test('undeploy docker: no data volume attached → nothing rm\'d, ctx still removed', async () => {
   const rec = {};
-  const contextsFile = tmpCtxFile({ current: 'mybox', contexts: { mybox: { url: 'http://127.0.0.1:7900' } } });
+  const contextsFile = tmpCtxFile({ current: 'mybox', contexts: { mybox: { url: 'http://127.0.0.1:7900', deploy: { flavor: 'docker', container: 'clodexctl-mybox' } } } });
   const r = await cli(['undeploy', 'node', 'mybox', '--docker', '--force'], { runDocker: fakeRunDocker(rec, { volumes: ['projects'] }), contextsFile });
   assert.strictEqual(r.code, 0, r.stderr);
   assert.ok(!rec.calls.some((c) => c.args[0] === 'volume'), 'projects is never removed');
@@ -822,7 +822,7 @@ test('undeploy docker: no data volume attached → nothing rm\'d, ctx still remo
 
 test('undeploy docker: data volume rm failing → failed emitted, ctx removed, exit 0', async () => {
   const rec = {};
-  const contextsFile = tmpCtxFile({ current: 'mybox', contexts: { mybox: { url: 'http://127.0.0.1:7900' } } });
+  const contextsFile = tmpCtxFile({ current: 'mybox', contexts: { mybox: { url: 'http://127.0.0.1:7900', deploy: { flavor: 'docker', container: 'clodexctl-mybox' } } } });
   const r = await cli(['undeploy', 'node', 'mybox', '--docker', '--force', '-o', 'json'], { runDocker: fakeRunDocker(rec, { volRmCode: 1 }), contextsFile });
   assert.strictEqual(r.code, 0, r.stderr);
   const events = r.stdout.split('\n').filter(Boolean).map((l) => JSON.parse(l));
@@ -862,4 +862,101 @@ test('undeploy fargate ctx cleanup: owned cluster → every ctx on it removed', 
   assert.strictEqual(r.code, 0, r.stderr);
   const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
   assert.deepStrictEqual(saved.contexts, {});
+});
+
+const LIVE_SSM = () => ({ ssm: { target: 'i-0abc' }, token: 'LIVE-SSM', deploy: { flavor: 'ssm' } });
+
+test('undeploy helm ctx cleanup: a forced teardown keeps an unrelated context that merely shares the release name (t2045)', async () => {
+  const contextsFile = tmpCtxFile({ current: 'mynode', contexts: { mynode: LIVE_SSM() } });
+  const r = await cli(['undeploy', 'node', 'mynode', '--helm', '--kube-context', 'staging', '--force'], { execFn: fakeHelm({}), contextsFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /removed context/);
+  const after = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.deepStrictEqual(after, { current: 'mynode', contexts: { mynode: LIVE_SSM() } });
+});
+
+test('undeploy helm ctx cleanup: an inferred release removes the routed context only, not one named after the release (t2045)', async () => {
+  const contextsFile = tmpCtxFile({ current: 'prod', contexts: {
+    prod: { kubectl: { target: 'svc/mynode', namespace: 'clodex', context: 'kind' }, token: 'TOK-PROD' },
+    mynode: LIVE_SSM(),
+  } });
+  const r = await cli(['undeploy', 'node', 'prod', '--force'], { execFn: fakeHelm({}), contextsFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /removed context "prod" \(was current — cleared\)/);
+  const after = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.deepStrictEqual(after, { current: null, contexts: { mynode: LIVE_SSM() } });
+});
+
+test('undeploy helm ctx cleanup: a context saved under another name for this release IS removed, one in another namespace or cluster is not (t2045)', async () => {
+  const helmCtx = (ns, kc) => ({ kubectl: { target: 'svc/mynode', namespace: ns, context: kc }, token: 'T', deploy: { flavor: 'helm', release: 'mynode', namespace: ns, kubeContext: kc } });
+  const contextsFile = tmpCtxFile({ current: null, contexts: {
+    prod: helmCtx('clodex', 'staging'),
+    other: helmCtx('agents', 'staging'),
+    elsewhere: helmCtx('clodex', 'live'),
+    bare: { kubectl: { target: 'svc/mynode', namespace: 'clodex', context: 'staging' }, token: 'B' },
+  } });
+  const r = await cli(['undeploy', 'node', 'mynode', '--helm', '--kube-context', 'staging', '--force'], { execFn: fakeHelm({}), contextsFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /removed context "prod", "bare"/);
+  const after = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.deepStrictEqual(Object.keys(after.contexts).sort(), ['elsewhere', 'other']);
+});
+
+test('undeploy docker ctx cleanup: a forced teardown on another host keeps a same-named context (t2045)', async () => {
+  const contextsFile = tmpCtxFile({ current: 'mybox', contexts: {
+    mybox: { ssh: 'user@box', token: 'LIVE', deploy: { flavor: 'docker', container: 'clodexctl-mybox', dockerHost: 'ssh://user@box' } },
+  } });
+  const before = fs.readFileSync(contextsFile, 'utf8');
+  const r = await cli(['undeploy', 'node', 'mybox', '--docker', '--host', 'ssh://other-box', '--force'], { runDocker: fakeRunDocker({}), contextsFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /removed context/);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(contextsFile, 'utf8')), JSON.parse(before));
+});
+
+test('undeploy docker ctx cleanup: a routed context is removed, the same container name on another host is not (t2045)', async () => {
+  const edgeOn = (host) => ({ ssh: 'user@box', token: 'E', deploy: { flavor: 'docker', container: 'clodexctl-edge', dockerHost: host } });
+  const contextsFile = tmpCtxFile({ current: 'edge', contexts: { edge: edgeOn('ssh://user@box'), 'edge-b': edgeOn('ssh://other-box'), mybox: LIVE_SSM() } });
+  const r = await cli(['undeploy', 'node', 'edge', '--force'], { runDocker: fakeRunDocker({}, { volumes: ['clodexctl-edge-data'] }), contextsFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.ok(r.stdout.includes('removed context "edge" (was current — cleared)'), r.stdout);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(contextsFile, 'utf8')), { current: null, contexts: { 'edge-b': edgeOn('ssh://other-box'), mybox: LIVE_SSM() } });
+});
+
+test('undeploy docker ctx cleanup: a context recording this container on this host IS removed whatever its name (t2045)', async () => {
+  const dockerCtx = (host) => ({ url: 'http://127.0.0.1:7900', token: 'T', deploy: { flavor: 'docker', container: 'clodexctl-mybox', ...(host ? { dockerHost: host } : {}) } });
+  const contextsFile = tmpCtxFile({ current: null, contexts: {
+    renamed: dockerCtx('ssh://user@box'),
+    local: dockerCtx(null),
+    mybox: LIVE_SSM(),
+  } });
+  const r = await cli(['undeploy', 'node', 'mybox', '--docker', '--host', 'ssh://user@box', '--force'], { runDocker: fakeRunDocker({}), contextsFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.ok(r.stdout.includes('removed context "renamed"'), r.stdout);
+  const after = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.deepStrictEqual(Object.keys(after.contexts).sort(), ['local', 'mybox']);
+});
+
+test('undeploy helm ctx cleanup: a forced teardown of the typed name keeps a same-named context that records another release (t2045)', async () => {
+  const variants = {
+    stored: { kubectl: { target: 'svc/mynode', namespace: 'clodex', context: 'kind' }, token: 'T', deploy: { flavor: 'helm', release: 'mynode', namespace: 'clodex', kubeContext: 'kind' } },
+    inferred: { kubectl: { target: 'svc/mynode', namespace: 'clodex', context: 'kind' }, token: 'T' },
+  };
+  for (const [label, prod] of Object.entries(variants)) {
+    const contextsFile = tmpCtxFile({ current: 'prod', contexts: { prod } });
+    const rec = {};
+    const r = await cli(['undeploy', 'node', 'prod', '--helm', '--force'], { execFn: fakeHelm(rec), contextsFile });
+    assert.strictEqual(r.code, 0, `${label}: ${r.stderr}`);
+    assert.ok(rec.calls.some((c) => c.join(' ').startsWith('helm uninstall prod ')), `${label}: the typed name is what is torn down`);
+    assert.doesNotMatch(r.stdout, /removed context/, label);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(contextsFile, 'utf8')), { current: 'prod', contexts: { prod } }, label);
+  }
+});
+
+test('undeploy docker ctx cleanup: a routed record naming another container keeps its context (t2045)', async () => {
+  const edge = { ssh: 'user@box', token: 'E', deploy: { flavor: 'docker', container: 'clodexctl-other' } };
+  const contextsFile = tmpCtxFile({ current: 'edge', contexts: { edge } });
+  const r = await cli(['undeploy', 'node', 'edge', '--force'], { runDocker: fakeRunDocker({}, { volumes: ['clodexctl-edge-data'] }), contextsFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /removed context/);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(contextsFile, 'utf8')), { current: 'edge', contexts: { edge } });
 });

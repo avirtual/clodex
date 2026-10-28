@@ -401,7 +401,7 @@ async function logsFollow({ client, printer, flags, name, initial, messages, unf
       try { guard.close(); } catch {}
       if (err) reject(err); else resolve();
     };
-    const onSig = () => finish(null);   // Ctrl-C / SIGTERM → clean exit 0
+    const onSig = () => finish(null);
     if (term && term.onSignal) offSignal = term.onSignal(onSig);
     else { process.on('SIGINT', onSig); process.on('SIGTERM', onSig); process.on('SIGHUP', onSig); offSignal = () => { process.off('SIGINT', onSig); process.off('SIGTERM', onSig); process.off('SIGHUP', onSig); }; }
 
@@ -891,14 +891,22 @@ function resolveCreateToken(flags, readStdin) {
     catch (e) { throw new CliError(EXIT.USAGE, `--token-file unreadable at ${file}: ${e.message}`); }
     const tok = raw.trim();
     if (!tok) throw new CliError(EXIT.USAGE, `--token-file ${file} is empty`);
+    if (/[\s\x00-\x1f]/.test(tok)) throw new CliError(EXIT.USAGE, `--token-file ${file}: token has whitespace/control chars — expected a single opaque token`);
     return tok;
   }
   if (flags.token === '-') {
-    const tok = String((readStdin || (() => fs.readFileSync(0, 'utf8')))()).trim();
+    let raw;
+    try { raw = (readStdin || (() => fs.readFileSync(0, 'utf8')))(); }
+    catch (e) { throw new CliError(EXIT.USAGE, `--token - could not read stdin: ${e.message}`); }
+    const tok = String(raw).trim();
     if (!tok) throw new CliError(EXIT.USAGE, '--token - read an empty token from stdin');
+    if (/[\s\x00-\x1f]/.test(tok)) throw new CliError(EXIT.USAGE, '--token - read a token with whitespace/control chars from stdin — expected a single opaque token');
     return tok;
   }
-  return flags.token ? String(flags.token) : null;
+  if (!flags.token) return null;
+  const tok = String(flags.token);
+  if (/[\s\x00-\x1f]/.test(tok)) throw new CliError(EXIT.USAGE, '--token has whitespace/control chars — expected a single opaque token');
+  return tok;
 }
 
 function nodeKind(e) {

@@ -922,6 +922,27 @@ test('deploy helm: ctx collision kept unless --force (verify still runs on the f
   assert.match(saved.token, /^[0-9a-f]{48}$/);
 });
 
+test('deploy helm --ctx saves under that name and leaves a context named after the release alone (t2045)', async () => {
+  const contextsFile = tmpCtxFile();
+  fs.mkdirSync(path.dirname(contextsFile), { recursive: true });
+  const ssm = { ssm: { target: 'i-0abc' }, token: 'LIVE-SSM', deploy: { flavor: 'ssm' } };
+  fs.writeFileSync(contextsFile, JSON.stringify({ current: 'mynode', contexts: { mynode: ssm, prod: { url: 'http://old' } } }));
+  const r = await cli(['deploy', 'node', 'mynode', '--helm', '--ctx', 'prod', '--force'], { execFn: fakeK8s({}), probeHelm: async () => ({ app: 'clodex' }), contextsFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /context "prod" updated — you can now: clodexctl --ctx prod get sessions/);
+  const after = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.deepStrictEqual(after.contexts.mynode, ssm);
+  assert.deepStrictEqual(after.contexts.prod.kubectl, { target: 'svc/mynode', namespace: 'clodex', context: 'docker-desktop' });
+  assert.deepStrictEqual(after.contexts.prod.deploy, { flavor: 'helm', release: 'mynode', namespace: 'clodex', kubeContext: 'docker-desktop' });
+  const dry = await cli(['deploy', 'node', 'mynode', '--helm', '--ctx', 'prod', '--dry-run'], { execFn: async () => { throw new Error('nothing runs'); }, contextsFile });
+  assert.strictEqual(dry.code, 0, dry.stderr);
+  assert.match(dry.stdout, /would deploy release "mynode"/);
+  assert.match(dry.stdout, /context prod \(kubectl svc\/mynode/);
+  const bad = await cli(['deploy', 'node', 'mynode', '--helm', '--ctx', '..'], { execFn: async () => { throw new Error('nothing runs'); }, contextsFile });
+  assert.strictEqual(bad.code, EXIT.USAGE);
+  assert.match(bad.stderr, /bad --ctx "\.\."/);
+});
+
 test('deploy helm --json: NDJSON step/ok/log + context + verify, no token leak', async () => {
   const contextsFile = tmpCtxFile();
   const { code, stdout } = await cli(['deploy', 'node', 'n', '--helm', '-o', 'json'], {

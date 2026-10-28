@@ -419,8 +419,27 @@ async function undeployHelm({ printer, flags, args, io, ctxName = null, dep = nu
     else log(`deleted PVC(s) matching ${HELM_PVC_SELECTOR(name)}`);
   }
 
-  ctxCleanup({ flags, printer, io, matchFn: (n) => n === name || n === ctxName });
+  ctxCleanup({ flags, printer, io, matchFn: (n, entry) => (n === ctxName && !!dep && helmDepIsRelease(dep, { name, ctxName, namespace, kubeContext })) || helmEntryIsRelease(entry, { name, namespace, kubeContext }) });
   return EXIT.OK;
+}
+
+function helmDepIsRelease(dep, { name, ctxName, namespace, kubeContext }) {
+  return String(dep.release || ctxName) === name && String(dep.namespace || D.DEFAULT_HELM_NAMESPACE) === namespace && (dep.kubeContext ? String(dep.kubeContext) : null) === kubeContext;
+}
+
+function helmEntryIsRelease(entry, { name, namespace, kubeContext }) {
+  if (!entry || typeof entry !== 'object') return false;
+  const d = entry.deploy;
+  let rel; let ns; let kc;
+  if (d && typeof d === 'object' && d.flavor) {
+    if (String(d.flavor) !== 'helm') return false;
+    rel = d.release; ns = d.namespace || D.DEFAULT_HELM_NAMESPACE; kc = d.kubeContext;
+  } else {
+    const k = entry.kubectl;
+    if (!k || typeof k !== 'object' || k.target !== `svc/${name}`) return false;
+    rel = name; ns = k.namespace || D.DEFAULT_HELM_NAMESPACE; kc = k.context;
+  }
+  return String(rel) === name && String(ns) === namespace && (kc ? String(kc) : null) === kubeContext;
 }
 
 // helm get manifest → a stream of `---`-separated YAML docs. Pull Kind + name
@@ -513,8 +532,14 @@ async function undeployDocker({ printer, flags, args, io, ctxName = null, dep = 
     }
   }
 
-  ctxCleanup({ flags, printer, io, matchFn: (n) => n === name || n === ctxName });
+  ctxCleanup({ flags, printer, io, matchFn: (n, entry) => (n === ctxName && !!dep && String(dep.container || D.CONTAINER_PREFIX + ctxName) === container && D.normalizeDockerHost(dep.dockerHost) === dockerHost) || dockerEntryIsContainer(entry, { container, dockerHost }) });
   return EXIT.OK;
+}
+
+function dockerEntryIsContainer(entry, { container, dockerHost }) {
+  const d = entry && entry.deploy;
+  if (!d || typeof d !== 'object' || String(d.flavor) !== 'docker') return false;
+  return String(d.container) === container && D.normalizeDockerHost(d.dockerHost) === dockerHost;
 }
 
 function parseInspect(stdout) {

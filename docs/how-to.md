@@ -188,7 +188,9 @@ Depth: [`docs/recipes/aws-fargate.md`](recipes/aws-fargate.md).
 both verbs route on how the context was deployed (the `deploy.flavor` the deploy
 stamped). A docker node is deliberately NOT upgradable — the recreate needs run
 arguments a context does not store — so it refuses and points at the two-step
-`undeploy node <name> --keep-data` then redeploy path.
+`undeploy node <name> --keep-data` then redeploy path. Undeploy removes only
+the contexts that point at the torn-down release or container; a
+same-named context for another node keeps its token.
 
 ```sh
 clodexctl undeploy node mynode [--keep-data] [--keep-ctx] [--force]
