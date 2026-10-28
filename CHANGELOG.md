@@ -21,6 +21,9 @@ blocks a release.
 - The `.claims` seat-name reservation is case-insensitive (`.Claims` collided with the claims dir on a case-insensitive disk) and also refuses the legacy claim shapes (`.resend.*`, `*.draining.<kind>.<pid>`) the pending store skips.
 - The Files pane's Open button also reveals `.fileloc` and `.inetloc` launchers instead of following them, and refuses an empty path instead of revealing the app's working directory.
 - A restart whose old process outlives the exit wait no longer leaves the seat marked as respawning, so its eventual exit frees the hand-cap slot.
+- A reminder that fires while a Codex or Muse seat is offline stays in the reminder store and retries when the seat is back, instead of being parked where nothing drains it and deleted.
+- The idle and boot drains of parked mail check for a pending turn start before claiming the store, so parked messages keep their resend id, content key and passive flag instead of coming back as one plain active entry.
+- A relaunch that reuses the previous process pid (containers) rehomes the claims that launch left behind, instead of treating them as live forever.
 
 ## 5.148.1 — 2026-10-28 — security fixes for the INSECURE origin gate
 

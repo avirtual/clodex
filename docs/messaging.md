@@ -258,6 +258,7 @@ predicates — rather than `isDraftOpen` alone. Guarding on the typed one let a
 dictated draft through, `drainPending` claimed the directory destructively, and
 the divert re-parked the joined text as one ACTIVE entry: no message lost, but a
 `.passive.` park came back active, and a passive park never earns a turn.
+They also return before claiming while `_turnStartPending` holds and pass no post-claim divert, so a store they decline keeps each entry's resend id, content key and passive flag for the next idle edge, the park cap or `_armParkedDrainFallback`.
 
 Any unit the inject queue writes into a Claude seat that is idle at write time and that produces no turn within `BOOT_NUDGE_MS` (4s) gets ONE `\r` written to the pty (the submit nudge), once the CLI has drawn the unit into its
 composer (its first 32 visible characters, or the `[Pasted text #N]` placeholder, appear in pty output after the write), the seat has then been quiet `BOOT_NUDGE_QUIET_MS` (1s), and no draft is open. This holds at any time,
@@ -337,7 +338,7 @@ inject queue to empty (capped at `INJECT_BOOT_MAXWAIT` past the edge), so a spaw
   parked-DM count badge (`✉N`) on the sidebar session row, fed by a 1s
   `pending-count` poll (deltas only) over live Claude sessions plus a seed from
   the reattach snapshot. Clicking it drains that session's queue NOW: the same
-  atomic claim as the cap (tag `flush.<pid>`), injected NON-parkable (so a
+  atomic claim as the cap (tag `flush.<pid>-<nonce>`, from `claimTag`), injected NON-parkable (so a
   flushed message can't re-park — the recursion a `parkable` resend could hit).
   It's the operator's true "deliver now" override, sidestepping the sender-
   notice cost entirely (the operator has no turn cost). Guards: refuses any
@@ -350,6 +351,7 @@ Reminders are stamped with the setting seat's birth (`born`, from `_bornFor`): a
 fire whose stamp differs from the seat now holding the name is dropped and its
 row removed (`_deliverReminder` returns `'gone'`), and deleting or forgetting a
 seat removes its rows (`dropReminders`). Unstamped rows deliver as before.
+An offline seat with no parked-mail drain (a Codex or Muse PTY record: `caps.park` false, not `io: 'stream'`) gets `'deferred'`: nothing is parked and `_fireRecord` keeps the row with a retry `RETRY_MS` (60s) later, as it does for a one-shot whose deliver returned `'error'` or threw.
 
 ## 4. DM federation (`name@origin`)
 
