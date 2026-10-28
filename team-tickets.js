@@ -1843,7 +1843,7 @@ function createTicketMethods(deps, shared) {
         // reaches the trunk must not trust a count another caller computed.
         const scanned = scanVerdict(verdictText);
         const reworkLines = scanned.verdicts.filter((v) => v.value === 'REWORK').map((v) => v.line);
-        if (reworkLines.length || scanned.mustFixHeaders.length > 1) {
+        if (reworkLines.length || scanned.ambiguous) {
           const where = [
             reworkLines.length ? `VERDICT: REWORK on line${reworkLines.length === 1 ? '' : 's'} ${reworkLines.join(', ')}` : null,
             scanned.mustFixHeaders.length > 1 ? `${scanned.mustFixHeaders.length} MUST-FIX headers on lines ${scanned.mustFixHeaders.join(', ')}` : null,
