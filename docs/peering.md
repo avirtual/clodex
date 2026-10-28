@@ -24,7 +24,9 @@ built in remote-wiring.js · **consumer protocol** → peer-client.js ·
   a browser Origin, when sent, must match the Host with or without a token
   (`originMismatch`), so a page on another loopback port cannot ride the
   `SameSite=Strict` cookie; a forwarded port (ssh tunnel, tailnet share) still
-  needs the token.
+  needs the token. A reverse proxy in front must pass the browser's Host
+  through (`proxy_set_header Host $host;` in nginx), or every browser request
+  fails `originMismatch` with 403.
   `_authGate` fronts the whole peer surface with the shared secret
   `CLODEX_REMOTE_TOKEN` (401 when one is set and the caller lacks it) and
   refuses a non-loopback bind with no token (503) unless

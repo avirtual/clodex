@@ -300,9 +300,10 @@ hours. `wire/claude-auth.js` re-reads the CLI's current token at ping time
 an API key or a codex entry keeps the header it came with. A token that cannot
 be read or is already past expiry DECLINES the ping. A decline (this, a 408/429/5xx,
 a transport error, or a session no seat record owns) spends neither a strike nor
-the timed hold's ping budget, and a `max-pings` disarm reopens the re-arm gate; the
-prefix stays due (a non-200 never restamps the ledger) and the next tick retries
-until the window closes on its own.
+the timed hold's ping budget; the prefix stays due (a non-200 never restamps the
+ledger) and the next tick retries until the window closes on its own. A
+`max-pings` disarm, like a `failures` one, reopens the re-arm gate
+(`_onHoldLifecycle` in session-manager.js clears `_holdRearmed`).
 
 The strike budget therefore bounds waste per TURN, not per launch — and NOT
 because a turn proves the credential works: a 401'd main-line turn emits
