@@ -177,8 +177,16 @@ const MUSTFIX_BARE_PLACEHOLDER_RE = new RegExp(`^(?:${MUSTFIX_PLACEHOLDER_WORDS}
 const FENCE_OPEN_RE = /^[ \t]{0,3}(`{3,}|~{3,})/;
 const VERDICT_LINE_RE = /^[ \t]*(?:[-*][ \t]*)?(?:\*\*|__)?[ \t]*\bVERDICT\b\W*\b(ACCEPT|REWORK)\b/i;
 
+const INLINE_SECTION_HEADER_RE = /(\*\*|__)(MUST[-\s]?FIX|NITS?|CHECKED)[ \t]*:?[ \t]*\1:?/gi;
+
+function unfoldInlineHeaders(text) {
+  return String(text == null ? '' : text).split('\n').map((line) => (VERDICT_LINE_RE.test(line)
+    ? line.replace(INLINE_SECTION_HEADER_RE, (m, _d, _k, off) => (off === 0 ? m : `\n${m}`))
+    : line)).join('\n');
+}
+
 function liveVerdictLines(text) {
-  const lines = String(text == null ? '' : text).split('\n');
+  const lines = unfoldInlineHeaders(text).split('\n');
   let fence = null;
   return lines.map((line) => {
     const f = FENCE_OPEN_RE.exec(line);

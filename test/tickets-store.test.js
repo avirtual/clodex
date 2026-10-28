@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { createTicketsStore, nextTicketId, recordEvent, titleLine, ticketTitle, extractTaskDir, branchSlug, countMustFix, extractMustFix } = require('../tickets-store');
+const { createTicketsStore, nextTicketId, recordEvent, titleLine, ticketTitle, extractTaskDir, branchSlug, countMustFix, extractMustFix, scanVerdict } = require('../tickets-store');
 const { projectDirFor } = require('../clodex-paths');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -363,6 +363,27 @@ test('extractMustFix: a bare "empty" or qualified "none" body is null; a sentenc
   assert.strictEqual(extractMustFix('MUST-FIX: none blocking'), null);
   assert.strictEqual(extractMustFix('MUST-FIX: none — blocking'), null);
   assert.strictEqual(extractMustFix('MUST-FIX: none of the guards are checked'), 'none of the guards are checked');
+});
+
+test('a one-line verdict with inline bold section headers is unfolded before scanning', () => {
+  const text = '**VERDICT**: REWORK. Both fixed, but two new bypasses. **MUST-FIX**: (1) a.js:1: first. (2) b.js:2: second. **NITS**: one nit. **CHECKED**: traced.';
+  const scan = scanVerdict(text);
+  assert.strictEqual(scan.verdict, 'REWORK');
+  assert.strictEqual(scan.mustFixHeaders.length, 1);
+  assert.strictEqual(scan.ambiguous, false);
+  const mf = extractMustFix(text);
+  assert.strictEqual(mf, '(1) a.js:1: first. (2) b.js:2: second.');
+  assert.strictEqual(countMustFix(mf), 1);
+});
+
+test('an inline bold MUST-FIX off a VERDICT line is prose, not a header', () => {
+  const text = '**VERDICT**: ACCEPT\n\n**MUST-FIX**: (none)\n\n**CHECKED**: the **MUST-FIX**: list above is empty.';
+  assert.strictEqual(scanVerdict(text).mustFixHeaders.length, 1);
+  assert.strictEqual(extractMustFix(text), null);
+});
+
+test('a colon inside the bold also unfolds on a VERDICT line', () => {
+  assert.strictEqual(extractMustFix('**VERDICT**: REWORK. **MUST-FIX:** x.js:3 broken. **NITS:** none.'), 'x.js:3 broken.');
 });
 
 test('recordEvent appends to an existing list in call order', () => {

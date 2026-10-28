@@ -14,6 +14,8 @@ blocks a release.
 
 ## Unreleased
 
+- Fixed: a review verdict written as one paragraph (`**VERDICT**: REWORK … **MUST-FIX**: … **NITS**: …`) now has its must-fixes extracted and counted; before, the lead's notice said "no must-fixes" and the hand was told the verdict named none. A REWORK whose must-fixes still cannot be extracted now says so in the notice instead of "no must-fixes".
+
 ## 5.150.5 — 2026-10-28 — Bash guard: heredoc `case` lines no longer hide a following command; `time --` accepted again
 
 - **Security:** the Bash deny guard's end-of-input backstop now denies a double-quoted `$(…)` left open by a `case`, including one opened by a heredoc body line that starts with `case` and one whose innermost frame at the end of the command is a nested substitution or backtick; before, `echo "$(cat <<EOF⏎case⏎EOF⏎)"; kill -9 -1` and `echo "$(x;; case) "$(echo ok"; git add -A` both passed. A heredoc line that begins with the word `case` is now refused — rephrase it.
