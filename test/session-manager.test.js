@@ -14359,7 +14359,7 @@ test('_deliverClaimedInbox: a claimed box note is stored, toasted and broadcast 
   m._deliverClaimedInbox('team-clodex', [{ id: 'n1', from: 'lead', body: 'need a ruling' }]);
   // The origin is the HOST label, not the display label 'clodex team' — the
   // suffix has to be a dm-able address, and a label with a space is not one.
-  assert.deepStrictEqual(added, [{ from: 'lead@team-clodex', workspaceId: null, body: 'need a ruling' }]);
+  assert.deepStrictEqual(added, [{ from: 'lead@team-clodex', workspaceId: null, body: 'need a ruling', sourceId: 'team-clodex:n1' }]);
   assert.strictEqual(toasts.length, 1);
   assert.strictEqual(toasts[0].title, 'lead@team-clodex');
   assert.strictEqual(toasts[0].body, 'need a ruling');
@@ -14406,13 +14406,39 @@ test('_deliverClaimedInbox: a note the store refuses is logged and not toasted, 
     log: { info: () => {}, warn: () => {}, error: (...a) => errors.push(a) },
   });
   m._broadcast = () => {};
-  m._deliverClaimedInbox('team-clodex', [
+  const batch = [
     { id: 'n1', from: 'lead', body: 'first', createdAt: 100 },
     { id: 'n2', from: 'lead', body: 'second', createdAt: 200 },
-  ]);
+  ];
+  m._deliverClaimedInbox('team-clodex', batch);
+  assert.deepStrictEqual(batch.map((n) => n.stored), [undefined, true], 'only the stored note may be read-marked on the box');
   assert.strictEqual(calls.length, 2);
   assert.deepStrictEqual(toasts.map((t) => t.body), ['second']);
   assert.ok(errors.some(([tag, msg]) => tag === 'peer' && /claimed note from lead@team-clodex NOT stored: notifications\.json unreadable/.test(msg)));
+});
+
+test('_deliverClaimedInbox: the same batch claimed twice stores one row and toasts once', () => {
+  const rows = [], toasts = [];
+  const m = mk({
+    getNotifications: () => ({ add: (rec) => {
+      const seen = rows.find((r) => r.sourceId === rec.sourceId);
+      if (seen) return { ...seen, dup: true };
+      const row = { id: `nt${rows.length}`, ...rec };
+      rows.push(row);
+      return row;
+    } }),
+    getPeerManager: () => ({ statuses: () => BOX_STATUS }),
+    notifyOS: (opts) => toasts.push(opts),
+    log: { info: () => {}, warn: () => {}, error: () => {} },
+  });
+  m._broadcast = () => {};
+  const first = [{ id: 'n1', from: 'lead', body: 'once' }];
+  const again = [{ id: 'n1', from: 'lead', body: 'once' }];
+  m._deliverClaimedInbox('team-clodex', first);
+  m._deliverClaimedInbox('team-clodex', again);
+  assert.deepStrictEqual(rows.map((r) => r.sourceId), ['team-clodex:n1']);
+  assert.deepStrictEqual(toasts.map((t) => t.body), ['once']);
+  assert.strictEqual(again[0].stored, true, 'a dup counts as stored so the box copy is read-marked');
 });
 
 // --- _deliverReminder — durable fire routing (live / park-offline / drop) ----

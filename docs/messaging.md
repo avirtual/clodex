@@ -402,7 +402,9 @@ A federated dm may carry `ref:<token>` on its head (`[agent:dm name@peer ref:t18
   same posture as control acquisition).
 - **`[agent:shout]` from a box seat** rides the same pull: the note
   lands in the BOX's inbox, and the desktop claims it onto its own inbox as
-  `<seat>@<origin>` (toast and badge included), removing it from the box —
+  `<seat>@<origin>` (toast and badge included); it is marked read on the box
+  (the box keeps it) only after the desktop stored it, and a re-delivered note
+  is deduped by `<origin>:<id>` —
   see [peering.md](peering.md) for the `inbox: 'claim'` mark that gates it.
 - **Deploy-fix self-archive**: a note whose first line starts `DEPLOY OK `,
   raised by a session carrying `fixFor`, archives that session after the note is

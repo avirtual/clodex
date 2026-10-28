@@ -11,10 +11,10 @@
 // message (<seq>.json = {from,to,body,urgent,ts}):
 //   * enqueue — write a hidden .tmp then rename into place, so a claimer never
 //               sees a partial file (atomic write-then-rename per message).
-//   * claim   — CLAIM the whole origin dir with one atomic rename, then read the
-//               snapshot. Enqueue-after-claim lands in a fresh dir and is picked
-//               up on the next claim, so nothing is dropped and none delivered
-//               twice.
+//   * claim   — at most once: the atomic rename of the origin dir IS the claim,
+//               so a connection dropped before the response is flushed loses the
+//               batch. Enqueue-after-claim lands in a fresh dir for the next
+//               claim.
 //
 // Pure fs helpers, dependency-free, so federation is unit-testable without a
 // live tunnel. `origin` is the consumer's label; it's validated to the session

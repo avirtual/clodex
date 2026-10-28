@@ -185,7 +185,10 @@ every hello, then marked READ on the box — the note stays where the seat raise
 it, so the box UI still shows the operator what they were told, while the badge
 that nags is the desktop's alone. The read-mark is also what makes the claim
 idempotent: only notes with `readAt == null` are claimed, so the next doorbell
-or hello over the same page re-delivers nothing.
+or hello over the same page re-delivers nothing. Only a note the desktop stored
+(`note.stored`, set by `_deliverClaimedInbox`) is read-marked; one whose store
+threw stays unread and is retried, and a note re-delivered after a crash between
+store and read-mark is deduped by its `<origin>:<id>` `sourceId`.
 
 **The node itself** is a target with no resource row to advertise it.
 `POST /api/restart` relaunches the ENGINE — the whole Clodex app on that
@@ -416,7 +419,10 @@ onProgress})`, split so a caller can ask begin to JUDGE the record before it
 pays for anything — `moveToPeer` probes with `importBegin` before it quiesces,
 and `importAbort(id)` reaps the staging that probe opened on the arms that never
 ship. `_requestRaw` is `_request`'s sibling for the non-JSON leg (same auth
-headers). `canImport` rides `status()` next to `needsUpgrade`.
+headers). `canImport` rides `status()` next to `needsUpgrade`. A commit whose
+reply is lost (`importShip` → `{unreached:true}`, no DELETE) is settled by a
+`GET /api/sessions/<name>` probe (`sessionGet`), and an unreachable probe
+archives the local copy without a respawn.
 
 ## 4. Settings reconciliation (peer-wiring.js)
 
