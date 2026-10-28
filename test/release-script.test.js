@@ -603,6 +603,7 @@ test('release e2e: a notes copy that cannot be kept dies naming the kept-notes p
   try {
     fs.mkdirSync(logs, { recursive: true });
     fs.chmodSync(logs, 0o555);
+    assert.throws(() => fs.writeFileSync(path.join(logs, 'probe'), ''), 'ENTER: the logs dir refuses a write');
     const res = fx.run();
     assert.notStrictEqual(res.status, 0, res.stdout + res.stderr);
     assert.ok((res.stdout + res.stderr).includes(`could not keep the notes at ${fx.kept}`), res.stdout + res.stderr);
