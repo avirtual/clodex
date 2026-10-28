@@ -14663,6 +14663,24 @@ test('_deliverReminder: offline WITH a persistence entry → parked (drains on r
   assert.match(drained.join('\n'), /\[agent:from reminder\] \[ab12 in 1h\] ship it/);
 });
 
+test('t2035 _deliverReminder: an offline Codex or Muse PTY seat defers and parks nothing; a stream record still parks', () => {
+  for (const type of ['codex', 'muse']) {
+    const { m, PENDING_DIR } = mkDeliver({ persisted: { name: 't1', type } });
+    assert.strictEqual(m._deliverReminder('t1', '[ab12 in 10m] ship it'), 'deferred', type);
+    assert.strictEqual(hasPending(PENDING_DIR, 't1'), false, type);
+  }
+  const { m, PENDING_DIR } = mkDeliver({ persisted: { name: 't1', type: 'codex', io: 'stream' } });
+  assert.strictEqual(m._deliverReminder('t1', '[ab12 in 10m] ship it'), 'parked');
+  assert.strictEqual(hasPending(PENDING_DIR, 't1'), true);
+});
+
+test('t2035 _deliverReminder: a deferred sleeping assistant still wakes for a reminder', () => {
+  const h = mkReminderWake({ ...WAKE_REC, type: 'codex' });
+  assert.strictEqual(h.m._deliverReminder('t1', '[ab12 in 1h] mail'), 'deferred');
+  assert.deepStrictEqual(h.order, ['wake']);
+  assert.strictEqual(hasPending(h.PENDING_DIR, 't1'), false);
+});
+
 test('t1792 _deliverReminder: an offline seat parks a multi-line reminder inline under either persisted io', () => {
   const dir = mkTmpRoot('clodex-t1504-spill-');
   const deps = {

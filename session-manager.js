@@ -8975,17 +8975,25 @@ function createSessionManager(deps) {
         log.info('intent', `remind fire for ${agent} dropped — no live session, no persisted entry`);
         return 'gone';
       }
+      const policy = this._assistantPolicy(agent);
+      const wakeOn = policy && policy.sleep && Array.isArray(policy.sleep.wakeOn) ? policy.sleep.wakeOn : [];
+      const wakeForReminder = () => {
+        this.wake(agent, { reason: 'reminder' }).then((w) => {
+          if (!w || !w.ok) log.warn('intent', `remind wake for ${agent} failed: ${(w && w.error) || 'unknown'}`);
+        }).catch((e) => log.warn('intent', `remind wake for ${agent} failed: ${e && e.message}`));
+      };
+      if (adapterFor(entry.type)?.caps?.park !== true && entry.io !== 'stream') {
+        log.info('intent', `remind fire for ${agent} deferred — offline ${entry.type} seat has no parked-mail drain`);
+        if (policy && wakeOn.includes('reminder')) wakeForReminder();
+        return 'deferred';
+      }
       const finalText = this._buildDeliveryText({ name: agent, agentType: entry.type, io: entry.io }, 'reminder', body, 'dm');
       try {
         parkDelivery(PENDING_DIR, agent, finalText, this._nextParkSeq(), null, false, this._bornFor(agent));
         log.info('intent', `remind fire for ${agent} parked (offline) — drains on resume`);
-        const policy = this._assistantPolicy(agent);
-        const wakeOn = policy && policy.sleep && Array.isArray(policy.sleep.wakeOn) ? policy.sleep.wakeOn : [];
         if (policy && wakeOn.includes('reminder')) {
           log.info('intent', `remind fire for ${agent} parked — waking (wakeOn reminder)`);
-          this.wake(agent, { reason: 'reminder' }).then((w) => {
-            if (!w || !w.ok) log.warn('intent', `remind wake for ${agent} failed: ${(w && w.error) || 'unknown'}`);
-          }).catch((e) => log.warn('intent', `remind wake for ${agent} failed: ${e && e.message}`));
+          wakeForReminder();
           return 'waking';
         }
         return 'parked';

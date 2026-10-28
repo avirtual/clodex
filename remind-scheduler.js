@@ -47,6 +47,7 @@ const MAX_TIMER_MS = 2 ** 31 - 1;
 // timer-fire. `in`/`at` are one-shot; `every`/`cron` recur; `oncompact` is
 // event-only (fireCompactFor).
 const RECURRING = new Set(['every', 'cron']);
+const RETRY_MS = 60_000;
 const ONESHOT = new Set(['in', 'at']);
 
 function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
@@ -81,7 +82,12 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
     _fireRecord(rec, nowMs) {
       const sched = this._schedFor(rec);
       if (!sched) { store.remove(rec.id); return; } // corrupt row → silent drop
-      if (this._deliver(rec) === 'gone') { store.remove(rec.id); return; }
+      const status = this._deliver(rec);
+      if (status === 'gone') { store.remove(rec.id); return; }
+      if (status === 'deferred' || (!RECURRING.has(rec.kind) && (status === 'error' || status === undefined))) {
+        store.markFired(rec.id, nowMs, nowMs + RETRY_MS);
+        return;
+      }
       if (RECURRING.has(rec.kind)) {
         const next = nextFireAt(sched, nowMs);
         if (typeof next === 'number') store.markFired(rec.id, nowMs, next);
