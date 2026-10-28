@@ -213,7 +213,7 @@ function lateReparkQueue(m, PENDING_DIR, name, order) {
   };
 }
 
-test('destroy of a removed worktree seat settles its inject queue before the tree goes, so a late re-park dies with the seat', async () => {
+test('destroy of a removed worktree seat awaits _settleInjectQueue before the tree goes, so a late re-park dies with the seat', async () => {
   const { m, recs, calls, PENDING_DIR } = rig({
     records: { w: { cwd: '/wt/t1', workspaceId: 'ws-1', worktree: WT } },
     removeWorktree: (p) => { order.push(`remove ${p}`); return { ok: true }; },
@@ -228,7 +228,7 @@ test('destroy of a removed worktree seat settles its inject queue before the tre
   assert.strictEqual(fs.existsSync(path.join(PENDING_DIR, 'w')), false);
 });
 
-test('destroy of a kept worktree seat settles its inject queue first, so the late re-park survives with the archived record', async () => {
+test('destroy of a kept worktree seat awaits _settleInjectQueue before beforeRemove, so the late re-park survives with the archived record', async () => {
   const { m, recs, calls, PENDING_DIR } = rig({ records: { w: { cwd: '/wt/t1', workspaceId: 'ws-1', worktree: WT } } });
   const order = [];
   live(m, 'w', { _injectPtyQueue: lateReparkQueue(m, PENDING_DIR, 'w', order) });
