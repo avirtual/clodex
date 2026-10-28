@@ -84,12 +84,6 @@ BEHIND="$(git rev-list --count HEAD..@{u})" || die "could not compare with origi
 [ "$BEHIND" = "0" ] \
   || die "local master is $BEHIND commit(s) BEHIND origin/master — pull first, or the release would ship without them"
 
-if [ "${CLODEX_RELEASE_NO_REVIEW:-}" = 1 ]; then
-  MARK="$HOME/.clodex/logs/prerelease-clean-$(git rev-parse HEAD)"
-  [ -f "$MARK" ] || die "CLODEX_RELEASE_NO_REVIEW=1 but no CLEAN pre-release review covers HEAD $(git rev-parse --short=8 HEAD) — run scripts/pre-release-review.sh and wait for its CLEAN issue, or release with the post-release review"
-  say "pre-release review CLEAN for HEAD: $(cat "$MARK")"
-fi
-
 # web-dist staleness guard (T42): the prebuilt browser bundle is TRACKED, so a
 # release must ship a bundle built from the current sources. Rebuild it here —
 # BEFORE the dirty-tree check below — so a stale web-dist/index.html dirties the
@@ -125,6 +119,14 @@ if git tag --points-at HEAD | grep -qx "v$CUR_VERSION"; then
     RESUME=gh
     say "resuming release v$CUR_VERSION from the gh release step"
   fi
+fi
+if [ "${CLODEX_RELEASE_NO_REVIEW:-}" = 1 ]; then
+  [ -z "$NOTES_FILE" ] || die "CLODEX_RELEASE_NO_REVIEW=1 cannot ship a notes file: the pre-release review certified the Unreleased section, not $NOTES_FILE — drop one or the other"
+  REVIEWED="$(git rev-parse "HEAD${RESUME:+^}")"
+  WHICH=HEAD; [ -z "$RESUME" ] || WHICH="the reviewed commit"
+  MARK="$HOME/.clodex/logs/prerelease-clean-$REVIEWED"
+  [ -f "$MARK" ] || die "CLODEX_RELEASE_NO_REVIEW=1 but no CLEAN pre-release review covers $WHICH $(git rev-parse --short=8 "$REVIEWED") — run scripts/pre-release-review.sh and wait for its CLEAN issue, or release with the post-release review"
+  say "pre-release review CLEAN for $WHICH: $(cat "$MARK")"
 fi
 
 PREV_TAG="$(git describe --tags --abbrev=0 ${RESUME:+HEAD^} 2>/dev/null || true)"
