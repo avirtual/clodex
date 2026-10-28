@@ -914,3 +914,33 @@ test('mergeTargetFor: a named trunk ignores the ticket\'s recorded base branch',
   assert.strictEqual(await wt.mergeTargetFor(team, ticket), 'release');
   assert.strictEqual(wt.mergeTargetForSync(team, ticket), 'release');
 });
+
+test('t2024: deleteBranchIfAt deletes only at the expected sha, and refuses a moved or checked-out branch', { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  const git = (cwd, ...a) => execFileSync('git', ['-C', cwd, ...a], { encoding: 'utf8' }).trim();
+  const branches = () => git(repo, 'branch', '--format=%(refname:short)').split('\n').map((s) => s.trim()).filter(Boolean);
+
+  const tree = await wt.createWorktree(repo, 't2024-cas');
+  const judged = git(tree.path, 'rev-parse', 'HEAD');
+  const held = await wt.deleteBranchIfAt(repo, 't2024-cas', judged);
+  assert.strictEqual(held.ok, false);
+  assert.match(held.error, /checked out at/);
+  assert.ok(branches().includes('t2024-cas'), 'a checked-out branch is never deleted');
+
+  fs.writeFileSync(path.join(tree.path, 'late.txt'), 'late\n');
+  git(tree.path, 'add', 'late.txt');
+  git(tree.path, 'commit', '-qm', 'late');
+  const tip = git(tree.path, 'rev-parse', 'HEAD');
+  await wt.removeWorktree(tree.path);
+  assert.notStrictEqual(tip, judged, 'ENTER: the branch moved past the judged sha');
+
+  const moved = await wt.deleteBranchIfAt(repo, 't2024-cas', judged);
+  assert.strictEqual(moved.ok, false);
+  assert.strictEqual(moved.moved, true);
+  assert.ok(branches().includes('t2024-cas'), 'the moved branch survives');
+  assert.strictEqual(git(repo, 'rev-parse', 't2024-cas'), tip, 'at its new tip');
+
+  const ok = await wt.deleteBranchIfAt(repo, 't2024-cas', tip);
+  assert.strictEqual(ok.ok, true, ok.error);
+  assert.ok(!branches().includes('t2024-cas'), 'deleted at the current sha');
+});

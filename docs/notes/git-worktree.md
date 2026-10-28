@@ -39,3 +39,7 @@ The two pointer files are rewritten by hand because `git worktree add --relative
 plain relative pointers with no extension work on both sides (measured). `.clodex-wt/` must stay in `.gitignore`.
 Measured on the box's git 2.39.5: `git worktree list` shows the in-root tree `prunable`, and `git worktree prune` there removes `.git/worktrees/<n>`, killing the tree on both sides.
 Recovery on the host (git 2.52, tmp repo): `git worktree repair <tree>` fails ("does not reference a repository"); moving the dir aside and running `git worktree add --force <tree> <branch>` recreates the entry on the branch's committed tip, then `relativizeWorktreePointers` again and copy uncommitted files back from the moved-aside dir.
+
+## deleteBranchIfAt
+
+`git update-ref -d` deletes a ref even while a worktree has it checked out (unlike `git branch -d/-D`), so the checked-out refusal is done here by reading `git worktree list` first.

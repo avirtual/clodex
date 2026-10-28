@@ -8220,6 +8220,7 @@ function mkAccept(mergedAnswer, extra = {}, countAnswer = { ok: true, count: 3, 
   const archived = [];
   const deleted = [];
   const asked = [];
+  const parsed = [];
   const counted = [];
   const f = mkTasks({
     getPersistence: () => ({
@@ -8236,21 +8237,16 @@ function mkAccept(mergedAnswer, extra = {}, countAnswer = { ok: true, count: 3, 
         return countAnswer;
       },
       deleteBranch: async (root, branch) => { deleted.push(branch); return { ok: true }; },
+      deleteBranchIfAt: async (root, branch) => { deleted.push(branch); return { ok: true }; },
+      revParse: async (root, ref) => { parsed.push({ root, ref }); return 'judged0000000000000000000000000000000000'; },
       removeWorktree: async () => ({ ok: true }),
-      // The ordinary merged path: a seat that committed its work leaves a clean
-      // tree. t482 gates the merged arm's destroy on this, so the stub is
-      // REQUIRED — but a missing one fails loudly rather than silently: the call
-      // is `gitWorktree.isDirty(...)` on an object that lacks it, which throws a
-      // synchronous TypeError that the arm's `.catch` cannot intercept, so the
-      // whole accept rejects. Both downgrade directions — dirty, and unreadable
-      // — are pinned against REAL trees in accept-standing-seat.test.js.
       isDirty: async () => ({ ok: true, dirty: false }),
     },
     ...extra,
   });
   f.m.destroy = async (name) => { destroyed.push(name); return { ok: true, worktreeRemoved: true }; };
   f.m.archive = async (name) => { archived.push(name); };
-  return { ...f, destroyed, archived, deleted, asked, counted };
+  return { ...f, destroyed, archived, deleted, asked, counted, parsed };
 }
 
 function openAndDone(f) {
@@ -8277,8 +8273,10 @@ test('task accept: a MERGED branch retires the seat, removes the tree and delete
 
   // The branch is read from the SEAT RECORD, never rebuilt from the ticket id:
   // the name carries a title slug the id cannot reconstruct.
-  assert.deepStrictEqual(f.asked, [{ root: '/proj', branch: 't1-build-the-widget' }],
-    'the gate is asked about the recorded branch, in the main checkout');
+  assert.deepStrictEqual(f.parsed, [{ root: '/proj', ref: 't1-build-the-widget' }],
+    'the recorded branch is resolved in the main checkout');
+  assert.deepStrictEqual(f.asked, [{ root: '/proj', branch: 'judged0000000000000000000000000000000000' }],
+    'and the gate is asked about the sha it resolved to');
   // ENTER (t314): the branch carries commits, which is what makes "merged into
   // master" the TRUE sentence here. A fixture counting zero would take the
   // empty-branch arm and this test would be asserting the wrong claim.

@@ -146,6 +146,7 @@
 - `_queueAutoMerge` runs one merge at a time process-wide, with the catch inside each link so one rejected merge cannot break the chain.
 - `_autoMergeTicket` leaves mergeWaiting set only on the defer arm, clearing it for every other exit in its finally.
 - `_autoMergeTicket`'s `fail` re-reads the ticket before any merge ran and logs ABANDONED instead of stamping when it is gone, reopened, rejected or closed out.
+- `_autoMergeTicket` merges `rounds[reviewRound].headSha`, never the branch ref, and refuses at `moved` when that stamp is missing or the branch tip differs from it; `_requeueOneWaiting` inherits the gate.
 - `_autoMergeTicket` retries only the suite-in-flight arm, scheduling the retry through `_scheduleMergeRetry` and re-entering via `_queueAutoMerge`.
 - `_suiteLockHolder` keeps the liveness probe outside the read's catch, so a probe fault reaches the catch-all rather than reading as no suite running.
 - `_mergeTouchedChangelog` keeps the header pattern's path prefix optional (diff.noprefix emits none) and `^`-anchored, and every misread fails toward asking the lead to look, never toward saying nothing is owed.
@@ -451,7 +452,7 @@
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| `_closeOutMergedTicket` | shared accept teardown for lead and loop, gating archive, destroy and branch delete on merge, seat kind, tree dirtiness and liveness | tickets.json revival mergeVetoed or mergedInto, seat worktree and branch | _acceptSeatFacts, _finishAccept, gitWorktree.isMerged, gitWorktree.isDirty | ticket-auto-merge.test.js merged-notice-owes-accept.test.js |
+| `_closeOutMergedTicket` | shared accept teardown for lead and loop, gating archive, destroy and branch delete on merge, seat kind, tree dirtiness and liveness | tickets.json revival mergeVetoed or mergedInto, seat worktree and branch | _acceptSeatFacts, _finishAccept, destroy, gitWorktree.isMerged, gitWorktree.isDirty, gitWorktree.deleteBranchIfAt | ticket-auto-merge.test.js merged-notice-owes-accept.test.js accept-standing-seat.test.js |
 | `_closeOutMergedTicket.seatClause` | the reply fragment saying what happened to the seat, split on one-shot first, then liveness, then record | none | none | accept-standing-seat.test.js |
 | `_taskPark` | lead toggle of parked on an open ticket, never re-delivering the spec on unpark | tickets.json parked, nudgedAt | _reconcileTickets, _resolvableAssignTarget | task-start.test.js |
 | `_taskList` | task list verb: validate the filter and reply with the rendered board | none | _taskListText | clodex-team.test.js |
@@ -460,7 +461,8 @@
 
 ### Invariants
 - `_closeOutMergedTicket` treats a merge check that could not run as not merged, so absence of evidence never deletes unmerged work.
-- `_closeOutMergedTicket` destroys only a seat that `_acceptSeatFacts` reports one-shot and whose tree reads clean, and downgrades to archive on a dirty or unreadable tree.
+- `_closeOutMergedTicket` destroys only a seat that `_acceptSeatFacts` reports one-shot and whose tree reads clean after the seat exited: the dirtiness read runs as destroy's `beforeRemove`, and a dirty or unreadable tree keeps the record archived.
+- `_closeOutMergedTicket` deletes a merged branch through `deleteBranchIfAt` at the tip read before `isMerged`, which judges that sha rather than the ref, so a commit landed after that read keeps the branch.
 - `_closeOutMergedTicket.seatClause` splits on seat kind before liveness, never on whether an archive ran, so a gone one-shot seat is not called standing.
 - `_taskListText` must stay behaviourally identical to the second implementation in scripts/clodex-team.js, so the two change together.
 - `_closeOutMergedTicket` returns closedOut for the ticket and ok for the cleanup, so only ok licenses "Closed out", and the mergeError veto and dirty downgrade return closedOut without ok.

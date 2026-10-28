@@ -3727,7 +3727,7 @@ function createSessionManager(deps) {
 
     // Reads the record before kill() drops it; worktree removal runs only after the pty exit,
     // and _waitForExit's 8s timeout keeps the tree.
-    async destroy(name) {
+    async destroy(name, { beforeRemove = null } = {}) {
       const entry = getPersistence().get(name);
       const holdSid = this._holdSidFor(name);
       const worktree = entry && entry.worktree && entry.worktree.path ? entry.worktree : null;
@@ -3750,7 +3750,7 @@ function createSessionManager(deps) {
         }
         this._dropPendingDir(name);
       };
-      this._markDropHeld(name);
+      if (typeof beforeRemove !== 'function') this._markDropHeld(name);
       await this.kill(name);
       this._disarmHoldFor(name, holdSid);
       if (!worktree) { dropRecord(); dropSeatDir(); return { ok: true, live: wasLive }; }
@@ -3766,6 +3766,15 @@ function createSessionManager(deps) {
         keepRecord();
         log.warn('worktree', `destroy ${name}: process still running after 8s; ${worktree.path} kept`);
         return { ok: false, error: 'process still running after 8s; worktree kept', live: true, worktreeRemoved: false, path: worktree.path };
+      }
+      if (typeof beforeRemove === 'function') {
+        let verdict;
+        try { verdict = await beforeRemove(worktree.path); } catch (e) { verdict = { keep: true, why: e.message }; }
+        if (verdict && verdict.keep) {
+          keepRecord();
+          log.info('worktree', `destroy ${name}: ${worktree.path} kept after exit (${verdict.why || 'kept by caller'})`);
+          return { ok: false, kept: true, why: verdict.why || null, live: wasLive, worktreeRemoved: false, path: worktree.path };
+        }
       }
       const r = await gitWorktree.removeWorktree(worktree.path).catch((e) => ({ ok: false, error: e.message }));
       if (r && r.ok) {

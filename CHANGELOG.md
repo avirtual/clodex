@@ -36,6 +36,8 @@ blocks a release.
 - A hold ended or disarmed while another seat's ping was in flight is no longer pinged from the stale tick snapshot.
 - Upstream declines (overload, rate limit, transport, unreadable token) no longer spend a timed hold's ping budget, a `max-pings` stop re-arms on the next turn, and a ping that hangs times out after 30 s instead of wedging every hold.
 - `wirescope` telemetry: pruning a seat that left the live map no longer erases its this-launch spend from the persisted lifetime totals.
+- **Security:** the ticket loop's ACCEPT merge lands the exact commit the reviewer read: a branch that gained a commit after the review round stops at a new `moved` step instead of merging unreviewed work, and the merge names the reviewed sha rather than the branch ref.
+- Accept teardown stops the seat before judging the tree and deletes the branch only if it still points at the commit judged merged, so a file or commit a hand made during close-out is kept (tree archived, branch kept) instead of force-removed.
 
 ## 5.147.0 — 2026-10-28 — security fixes from the first cold audit
 

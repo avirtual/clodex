@@ -1864,6 +1864,21 @@ function createTicketMethods(deps, shared) {
           return;
         }
 
+        const now = this._loadTicket(team, ticketId) || ticket;
+        const round = Array.isArray(now.rounds) ? now.rounds.find((r) => r && Number(r.round) === Number(landedOn.reviewRound)) : null;
+        const reviewedSha = round && round.headSha ? String(round.headSha) : null;
+        if (!reviewedSha) {
+          fail('moved', 'the review round carries no headSha, so the reviewed tree cannot be identified',
+            'read rounds[reviewRound].headSha; nothing was merged');
+          return;
+        }
+        const tip = await gitWorktree.revParse(team.root, branch);
+        if (tip !== reviewedSha) {
+          fail('moved', `${branch} is at ${String(tip || 'an unresolvable ref').slice(0, 12)} but review round ${landedOn.reviewRound} read ${reviewedSha.slice(0, 12)} — a commit landed after the review`,
+            'compared rounds[].headSha with rev-parse of the branch; nothing was merged');
+          return;
+        }
+
         const dirty = await gitWorktree.isDirty(team.root).catch((e) => ({ ok: false, error: e.message }));
         if (!dirty.ok) {
           fail('clean-tree', `git could not report the state of the root checkout ${team.root}: ${dirty.error}`,
@@ -1933,7 +1948,7 @@ function createTicketMethods(deps, shared) {
             ? `it waited ${Math.round(total / 1000)}s, past the one-hour cap, and the lock was held on every sample by ${n} distinct suite${n === 1 ? '' : 's'}`
             : `it already retried ${attempt} time${attempt === 1 ? '' : 's'} over ${Math.round(waited / 1000)}s and the lock was held on every sample`;
           fail('suite-in-flight', `${what} — merging now would rewrite the files under it`,
-            `nothing was merged, and the loop will NOT retry — ${tried}. That can be one wedged run or several legitimate ones back to back, so check \`ps\` for a live \`node --test\` before concluding anything, and do not clear the lock by hand. To land it by hand: \`git -C ${team.root} merge --no-ff ${branch}\`, then run the suite in ${team.root}. Otherwise re-review the ticket.`);
+            `nothing was merged, and the loop will NOT retry — ${tried}. That can be one wedged run or several legitimate ones back to back, so check \`ps\` for a live \`node --test\` before concluding anything, and do not clear the lock by hand. To land it by hand: \`git -C ${team.root} merge --no-ff ${reviewedSha}\`, then run the suite in ${team.root}. Otherwise re-review the ticket.`);
           return;
         }
 
@@ -1968,12 +1983,12 @@ function createTicketMethods(deps, shared) {
           return;
         }
         const mergeStartedAt = Date.now();
-        merged = await gitWorktree.mergeNoFf(team.root, branch, msgFile)
+        merged = await gitWorktree.mergeNoFf(team.root, reviewedSha, msgFile)
           .catch((e) => ({ ok: false, error: e.message }));
         if (!merged.ok) {
           // Report off `wedged`, never `aborted`: a merge that failed before it started also fails to
           // abort, and a wedged-checkout claim about an untouched tree is a false alarm.
-          fail('merge', `git merge --no-ff ${branch} failed:\n${merged.error}`,
+          fail('merge', `git merge --no-ff ${reviewedSha} (${branch}) failed:\n${merged.error}`,
             merged.wedged
               ? `ran the merge in ${team.root}; \`git merge --abort\` ALSO failed and MERGE_HEAD is still there, so the checkout is left mid-merge and needs a human`
               : `ran the merge in ${team.root}; the checkout is back where it was (no MERGE_HEAD)`);
@@ -7199,8 +7214,9 @@ function createTicketMethods(deps, shared) {
       });
 
       const target = await gitWorktree.mergeTargetFor(team, ticket).catch(() => null);
+      const judgedTip = branch ? await gitWorktree.revParse(team.root, branch).catch(() => null) : null;
       const m = target
-        ? await gitWorktree.isMerged(team.root, branch, target).catch((e) => ({ ok: false, error: e.message }))
+        ? await gitWorktree.isMerged(team.root, judgedTip || branch, target).catch((e) => ({ ok: false, error: e.message }))
         : { ok: false, error: 'no merge target for this team' };
 
       // Re-check in both directions: whichever side passed its entry gate first, the other can still enter this await and both tear down.
@@ -7360,16 +7376,16 @@ function createTicketMethods(deps, shared) {
         const wt = rec && rec.worktree && rec.worktree.path ? rec.worktree.path : null;
         const busy = this._openTicketsFor(team, seatName, ticket.id).filter((t) => this._ticketAssigneeSeat(team, t) === seatName);
         if (busy.length > 0) downgrade = { kind: 'held', path: wt, held: busy[0].id };
-        else if (wt) {
-          const d = await gitWorktree.isDirty(wt).catch((e) => ({ ok: false, error: e.message }));
-          if (!d.ok) downgrade = { kind: 'unreadable', path: wt, why: d.error || 'git could not read the tree' };
-          else if (d.dirty) downgrade = { kind: 'dirty', path: wt };
-        }
-        if (downgrade) {
-          if (downgrade.kind !== 'held' && this.sessions.has(seatName)) { await this.archive(seatName); downgrade.archived = true; }
-        } else {
-          const r = await this.destroy(seatName).catch((e) => ({ ok: false, error: e.message }));
-          removed = r || null;
+        else {
+          const beforeRemove = async (treePath) => {
+            const d = await gitWorktree.isDirty(treePath).catch((e) => ({ ok: false, error: e.message }));
+            if (!d.ok) downgrade = { kind: 'unreadable', path: treePath, why: d.error || 'git could not read the tree' };
+            else if (d.dirty) downgrade = { kind: 'dirty', path: treePath };
+            return downgrade ? { keep: true, why: downgrade.kind } : null;
+          };
+          const r = await this.destroy(seatName, { beforeRemove }).catch((e) => ({ ok: false, error: e.message }));
+          if (downgrade) downgrade.archived = !!(r && r.live);
+          else removed = r || null;
         }
       } else if (seatName && remoteTree) {
         const d = await gitWorktree.isDirty(remoteTree).catch((e) => ({ ok: false, error: e.message }));
@@ -7382,7 +7398,9 @@ function createTicketMethods(deps, shared) {
       }
       const del = downgrade && (downgrade.kind === 'dirty' || downgrade.kind === 'held' || remoteTree)
         ? { ok: true, skipped: true }
-        : await gitWorktree.deleteBranch(team.root, branch, { force: m.merged === true }).catch((e) => ({ ok: false, error: e.message }));
+        : m.merged === true && judgedTip
+          ? await gitWorktree.deleteBranchIfAt(team.root, branch, judgedTip).catch((e) => ({ ok: false, error: e.message }))
+          : await gitWorktree.deleteBranch(team.root, branch).catch((e) => ({ ok: false, error: e.message }));
       const parts = [];
       if (seatName && remoteTree) {
         const kept = `the remote seat ${seatName} is not retired by accept; its tree ${remoteTree} was KEPT`;
@@ -7427,7 +7445,8 @@ function createTicketMethods(deps, shared) {
       // Test `skipped` before `ok`: the skip returns ok:true, and reporting it as deleted sends the lead looking for a ref that is still there.
       parts.push(del.skipped ? `branch ${branch} was KEPT (the accept above is unfinished)`
         : del.ok ? `branch ${branch} deleted`
-          : `branch ${branch} could NOT be deleted (${del.error})`);
+          : del.moved ? `branch ${branch} was KEPT — it moved past ${String(judgedTip).slice(0, 12)}, the commit judged merged, so it could NOT be deleted (${del.error})`
+            : `branch ${branch} could NOT be deleted (${del.error})`);
       // Zero against a fallback is undecidable: empty and already-fast-forwarded count the same, so neither sentence is safe.
       // Name `c.base`, not `baseSha`, which may not be what the count measured against.
       const outcome = !c.ok

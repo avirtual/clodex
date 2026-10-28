@@ -285,6 +285,25 @@ async function deleteBranch(cwd, branch, { force = false } = {}) {
   return { ok: true };
 }
 
+async function deleteBranchIfAt(cwd, branch, sha) {
+  const repo = await repoToplevel(cwd);
+  if (!repo) return { ok: false, error: 'not a git repository' };
+  if (!branch) return { ok: false, error: 'no branch given' };
+  if (!sha) return { ok: false, error: 'no expected sha given' };
+  const wl = await listWorktrees(repo);
+  if (!wl.ok) return { ok: false, error: wl.error };
+  const holder = wl.worktrees.find((w) => w.branch === String(branch));
+  if (holder) return { ok: false, error: `${branch} is checked out at ${holder.path}` };
+  const r = await git(repo, ['update-ref', '-d', `refs/heads/${branch}`, String(sha)]);
+  if (r.ok) {
+    await git(repo, ['config', '--remove-section', `branch.${branch}`]);
+    return { ok: true };
+  }
+  const now = await revParse(repo, `refs/heads/${branch}`);
+  const error = (r.stderr || `git update-ref -d exited ${r.code}`).trim();
+  return now && now !== String(sha) ? { ok: false, moved: true, error } : { ok: false, error };
+}
+
 // Repo metadata for the New Session dialog: whether `cwd` is in a git work tree,
 // its default branch, and the candidate base refs to offer in the autocomplete
 // (local branches ∪ remote tracking branches, default first, deduped). Never
@@ -794,7 +813,7 @@ async function revertCommit(cwd, sha) {
 
 module.exports = {
   repoToplevel, createWorktree, removeWorktree, isDirty, defaultWorktreePath,
-  defaultBranch, defaultBranchSync, mergeTargetFor, mergeTargetForSync, localBranches, repoInfo, listWorktrees, commitsOnBranch, isMerged, deleteBranch,
+  defaultBranch, defaultBranchSync, mergeTargetFor, mergeTargetForSync, localBranches, repoInfo, listWorktrees, commitsOnBranch, isMerged, deleteBranch, deleteBranchIfAt,
   diffText, diffNames, mergeBase, fileAt, currentBranch, mergeNoFf, revertCommit, initRepo, hasCommit,
   checkoutDetached, headSha, headShaSync, headLogSync, revParse, relativizeWorktreePointers,
 };
