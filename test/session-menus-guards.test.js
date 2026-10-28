@@ -103,46 +103,34 @@ test('a strip-menu pick made after a seat switch is dropped, not applied to the 
   } finally { h.restore(); }
 });
 
-function rebuildHarness(api) {
-  const rebuilt = [];
-  const row = { dataset: { type: 'claude', cwd: '/w', account: 'sub-2', noWire: '1' } };
+function restartHarness(api) {
+  const restarted = [];
   const h = harness({
-    row,
+    row: { dataset: { type: 'claude', cwd: '/w' } },
     api,
-    deps: {
-      rowSnapshot: (name, el) => ({ name, type: el.dataset.type, cwd: el.dataset.cwd,
-        account: el.dataset.account, noWire: el.dataset.noWire === '1', label: 'Renamed' }),
-      rebuildLiveRow: (name, snap, res) => rebuilt.push({ name, snap, res }),
-    },
+    deps: { restartOrFailRow: async (...a) => { restarted.push(a); return { ok: true }; } },
   });
-  return { h, rebuilt };
+  return { h, restarted };
 }
 
-test('hard restart rebuilds the row through rebuildLiveRow with the snapshot it took', async () => {
-  const { h, rebuilt } = rebuildHarness({ restartSession: async () => ({ ok: true, io: 'pty', backend: 'kimi' }) });
+test('hard restart restarts fresh through restartOrFailRow', async () => {
+  const { h, restarted } = restartHarness({});
   try {
     await h.menus.doHardRestart('s');
-    assert.strictEqual(rebuilt.length, 1, 'the injected rebuild ran');
-    assert.strictEqual(rebuilt[0].snap.account, 'sub-2');
-    assert.strictEqual(rebuilt[0].snap.noWire, true);
-    assert.strictEqual(rebuilt[0].snap.label, 'Renamed');
-    assert.deepStrictEqual(rebuilt[0].res, { io: 'pty', backend: 'kimi' });
+    assert.deepStrictEqual(restarted, [['s', { fresh: true }, 'Hard restart failed']]);
   } finally { h.restore(); }
 });
 
-test('a history resume rebuilds the row through rebuildLiveRow with the snapshot it took', async () => {
-  const { h, rebuilt } = rebuildHarness({
+test('a history resume restarts on the picked conversation through restartOrFailRow', async () => {
+  const { h, restarted } = restartHarness({
     getSessionHistory: async () => ({ ok: true, sessions: [{ sessionId: 'abcdef1234', title: 't' }] }),
-    restartSession: async () => ({ ok: true, io: 'stream', backend: 'kimi' }),
   });
   try {
     await h.menus.openHistoryMenu('a', mkEl());
     const item = h.last().children.find((c) => c.dataset.sid === 'abcdef1234');
     assert.ok(item, 'ENTER: the past conversation is listed');
     await h.last().fire('click', item);
-    assert.strictEqual(rebuilt.length, 1, 'the injected rebuild ran');
-    assert.strictEqual(rebuilt[0].snap.account, 'sub-2');
-    assert.deepStrictEqual(rebuilt[0].res, { io: 'stream', backend: 'kimi' });
+    assert.deepStrictEqual(restarted, [['a', { resumeId: 'abcdef1234' }, 'Resume failed']]);
   } finally { h.restore(); }
 });
 

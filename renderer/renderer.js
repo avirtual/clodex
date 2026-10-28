@@ -1017,19 +1017,23 @@ function accountOfRow(name) {
 // Restart a session and re-create its sidebar tab + terminal. Snapshots sidebar
 // metadata first because the kill+respawn wipes the tab via session-exit (same
 // dance as the Edit Session save path).
-function restartSessionWithReattach(name) {
-  const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-  const snap = rowSnapshot(name, item);
-  return window.api.restartSession(name).then((res) => {
-    if (!res || !res.ok) {
-      alert(`Restart failed: ${res && res.error ? res.error : 'unknown error'}`);
-      return;
+async function restartOrFailRow(name, opts, failLabel = 'Restart failed') {
+  const snap = rowSnapshot(name, sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`));
+  const res = opts ? await window.api.restartSession(name, opts) : await window.api.restartSession(name);
+  if (!res || !res.ok) {
+    const error = (res && res.error) || 'unknown error';
+    if (snap.type && !sessions.has(name) && !sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`)) {
+      addFailedSessionToSidebar({ ...snap, error });
+      refreshSidebarView();
     }
-    if (snap.type) {
-      rebuildLiveRow(name, snap, { io: res.io, backend: res.backend });
-      switchSession(name);
-    }
-  });
+    showToast(`${failLabel}: ${error}`, { kind: 'error', duration: 10000, name });
+    return res;
+  }
+  if (snap.type) {
+    rebuildLiveRow(name, snap, { io: res.io, backend: res.backend });
+    switchSession(name);
+  }
+  return res;
 }
 
 const movingFailed = new Map();
@@ -1174,7 +1178,7 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, i
       openArgsDialog(name);
       break;
     case 'restart':
-      restartSessionWithReattach(name);
+      restartOrFailRow(name);
       break;
     case 'move':
       moveSessionWithPicker(name);
@@ -1204,7 +1208,7 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, i
       break;
     case 'promptsChanged':
       if (confirm(`Prompt changed for "${name}". Restart now to apply? (Otherwise it applies on the next start.)`)) {
-        restartSessionWithReattach(name);
+        restartOrFailRow(name);
       }
       break;
     case 'rename': {
@@ -5471,7 +5475,7 @@ const {
   openHistoryMenu, doHardRestart,
 } = initSessionMenus({
   getActiveSession: () => activeSession, proxyState, sessionList,
-  switchSession, rowSnapshot, rebuildLiveRow,
+  switchSession, restartOrFailRow,
 });
 
 function routeSessionAction(act, anchor) {
@@ -5490,7 +5494,7 @@ function routeSessionAction(act, anchor) {
 const {
   openToolsPopover, openSkillsPopover, openAgentsPopover, openIntentsPopover, openPluginsPopover,
 } = initChecklistPopovers({
-  sessionList, rowSnapshot, rebuildLiveRow, switchSession, refreshSidebarMeta,
+  sessionList, restartOrFailRow, refreshSidebarMeta,
   seatPluginsOf: (name) => (sidebarMeta.get(name) || {}).plugins,
   getSessionType: sessionTypeOf,
 });

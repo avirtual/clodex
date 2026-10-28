@@ -31,14 +31,12 @@ test('the ✉ badge click handler carries a tip for every reason flushPending ca
 });
 
 for (const [label, anchor, src = SRC] of [
-  ['restartSessionWithReattach', /function restartSessionWithReattach\(name\) \{[\s\S]*?\n\}\n/],
+  ['restartOrFailRow', /async function restartOrFailRow\(name, opts, failLabel = 'Restart failed'\) \{[\s\S]*?\n\}\n/],
   ['moveSessionWithPicker', /function moveSessionWithPicker\(name\) \{[\s\S]*?\n\}\n/],
   ['moveSessionToPeerWithDialog respawn', /if \(res\.respawned\) \{[\s\S]*?switchSession\(name\);/],
   ['Edit Session save restart', /if \(res\.restarted\) \{\n    if \(source\) source\.onRestarted\(\);[\s\S]*?switchSession\(name\);/],
   ['failed-row retry', /function addFailedSessionToSidebar\(entry\) \{[\s\S]*?\n\}\n/],
   ['archived-row unarchive', /function addArchivedSessionToSidebar\(entry\) \{[\s\S]*?\n\}\n/],
-  ['session-menu fresh restart', /async function doHardRestart\(name\) \{[\s\S]*?\n  \}\n/, MENUS_SRC],
-  ['session-menu history resume', /historyMenu\.addEventListener\('click', async \(e\) => \{[\s\S]*?switchSession\(name\); \}\n    \}\);/, MENUS_SRC],
 ]) {
   test(`${label} marks the seat's io before createTerminal, so a stream seat is not rebuilt as an xterm`, () => {
     const m = src.match(anchor);
@@ -51,6 +49,13 @@ for (const [label, anchor, src = SRC] of [
     assert.ok(mark >= 0 && mark < at, `${label} must call markSeatIo before createTerminal`);
   });
 }
+
+test('the popover restarts go through restartOrFailRow, never window.api.restartSession', () => {
+  const CHECKLIST_SRC = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'popovers', 'checklist-popovers.js'), 'utf8');
+  assert.deepStrictEqual([MENUS_SRC, CHECKLIST_SRC].map((src) => [...src.matchAll(/\brestartOrFailRow\(/g)].length), [2, 5]);
+  assert.deepStrictEqual([MENUS_SRC, CHECKLIST_SRC].map((src) => /window\.api\.restartSession\b/.test(src)), [false, false]);
+  assert.strictEqual([...SRC.matchAll(/window\.api\.restartSession\(/g)].length, 2, 'only restartOrFailRow calls it in the renderer');
+});
 
 test('session:retrySpawn returns the seat io, so a row built without one is still re-marked a stream seat', () => {
   const ipc = fs.readFileSync(path.join(__dirname, '..', 'ipc-handlers.js'), 'utf8');

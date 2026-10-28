@@ -41,6 +41,7 @@ blocks a release.
 - A reply line that starts with an inline code span such as ```` ```bash``` ```` no longer opens a phantom fence that silently swallows every later intent in the turn.
 - The terminal tab's zsh shim survives a `~/.zshenv` that sets `ZDOTDIR` (the XDG layout): the hook `.zshrc` still runs and the operator's own rc files are still sourced, and `term exec` refuses with `no-marks` instead of hanging when a shell has never emitted a mark.
 - A Codex seat that crashed or was forgotten no longer leaves Clodex's `hooks.json` in place of the operator's: the swap is reconciled at the next launch for every cwd with no live seat.
+- A restart whose respawn fails (CLI missing from PATH, a claimed tree) now leaves a failed row with Retry and Forget instead of a vanished seat whose kept record blocked its name; a stale move-failure entry no longer draws a ghost row on a later restart.
 
 ## 5.147.0 — 2026-10-28 — security fixes from the first cold audit
 

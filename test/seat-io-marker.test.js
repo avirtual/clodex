@@ -70,6 +70,7 @@ function mkRenderer(extra = {}) {
     seatViewMemory: new Map(),
     alert() {},
     refreshSeatMcp() {},
+    respawnSnapshots: new Map(),
     ...extra,
   };
   const names = Object.keys(env);
@@ -81,8 +82,8 @@ function mkRenderer(extra = {}) {
     fnSrc('addSessionToSidebar'), fnSrc('addArchivedSessionToSidebar'),
     fnSrc('addFailedSessionToSidebar'), fnSrc('addExitedSessionToSidebar'),
     fnSrc('moveSessionWithPicker'), fnSrc('moveSessionToPeerWithDialog'), fnSrc('startRename'),
-    fnSrc('restartSessionWithReattach'),
-    'return { markSeatIo, markSeatEffort, markSeatPosture, exitedRowSnapshot, archivedRowEntry, addSessionToSidebar, addArchivedSessionToSidebar, addFailedSessionToSidebar, addExitedSessionToSidebar, moveSessionWithPicker, moveSessionToPeerWithDialog, startRename, restartSessionWithReattach };',
+    `async ${fnSrc('restartOrFailRow')}`, fnSrc('applyTicketBadge'),
+    'return { markSeatIo, markSeatEffort, markSeatPosture, exitedRowSnapshot, archivedRowEntry, addSessionToSidebar, addArchivedSessionToSidebar, addFailedSessionToSidebar, addExitedSessionToSidebar, moveSessionWithPicker, moveSessionToPeerWithDialog, startRename, restartOrFailRow };',
   ].join('\n');
   const fns = new Function(...names, body)(...names.map((n) => env[n]));
   return { rows, env, created, mkNode, ...fns };
@@ -396,7 +397,7 @@ const rebuildPaths = [
   { path: 'restart', rebuilt: 's', run: async (h, api) => {
     api.restartSession = async (n) => { h.env.removeSession(n); return { ok: true }; };
     liveFixRow(h);
-    await h.restartSessionWithReattach('s');
+    await h.restartOrFailRow('s');
   } },
   { path: 'move', rebuilt: 's', run: async (h, api) => {
     api.selectDirectory = async () => '/d';
@@ -437,7 +438,7 @@ test('a restart keeps the row\'s label, team, wire-off flag, effort and posture'
   h.rows[0].querySelector = (sel) => (sel === '.session-name' ? { textContent: 'lab' } : byClass(sel));
   h.markSeatEffort('s', 'xhigh');
   h.markSeatPosture('s', 'bypass');
-  await h.restartSessionWithReattach('s');
+  await h.restartOrFailRow('s');
   assert.strictEqual(h.rows.length, 1, 'ENTER: one rebuilt row');
   const r = h.rows[0];
   assert.deepStrictEqual([r.dataset.team, r.dataset.noWire, r.dataset.effort, r.dataset.posture, /<div class="session-name">lab<\/div>/.test(r.innerHTML)],
@@ -478,4 +479,27 @@ test('blurring an unedited rename box on a labelled row does not rename', async 
   input.on.blur();
   await flush();
   assert.strictEqual(calls.length, 0);
+});
+
+test('a restart whose respawn fails after the kill removed the row leaves one failed row with the error, and no alert', async () => {
+  const api = {};
+  const alerts = [];
+  const toasts = [];
+  const h = mkRenderer({ window: { api }, alert: (m) => alerts.push(m), showToast: (m) => { toasts.push(m); } });
+  api.restartSession = async (n) => { h.env.removeSession(n); return { ok: false, error: 'spawn failed' }; };
+  h.addSessionToSidebar('s', 'claude', '/w', null, null, 'T');
+  await h.restartOrFailRow('s');
+  assert.deepStrictEqual(h.rows.map((r) => [r.dataset.name, r.className, r.dataset.error, r.dataset.team]),
+    [['s', 'session-item failed', 'spawn failed', 'T']]);
+  assert.deepStrictEqual(alerts, []);
+  assert.deepStrictEqual(toasts, ['Restart failed: spawn failed']);
+});
+
+test('a restart refused while the seat is still live keeps its live row and draws no failed row', async () => {
+  const api = { restartSession: async () => ({ ok: false, error: 'busy' }) };
+  const h = mkRenderer({ window: { api } });
+  h.addSessionToSidebar('s', 'claude', '/w');
+  h.env.sessions.set('s', {});
+  await h.restartOrFailRow('s');
+  assert.deepStrictEqual(h.rows.map((r) => [r.dataset.name, r.className]), [['s', 'session-item']]);
 });

@@ -93,7 +93,7 @@ test('a checklist-popover restart rebuilds the row with its label, effort and ac
   const { initChecklistPopovers } = require('../renderer/popovers/checklist-popovers');
   const src = fs.readFileSync(path.join(ROOT, 'renderer', 'popovers', 'checklist-popovers.js'), 'utf8');
   assert.doesNotMatch(src, /\baddSessionToSidebar\(/, 'a restart site still rebuilds the row from bare dataset fields');
-  assert.strictEqual([...src.matchAll(/\brebuildLiveRow\(/g)].length, 5, 'every checklist restart rebuilds through rebuildLiveRow');
+  assert.strictEqual([...src.matchAll(/\brestartOrFailRow\(/g)].length, 5, 'every checklist restart rebuilds through restartOrFailRow');
 
   const fn = (name) => {
     const start = rendererSrc.indexOf(`function ${name}(`);
@@ -128,12 +128,14 @@ test('a checklist-popover restart rebuilds the row with its label, effort and ac
     restartSession: async () => { row = null; return { ok: true, io: 'pty', backend: null }; },
   } };
   try {
-    initChecklistPopovers({
-      sessionList: { querySelector: () => row },
-      rowSnapshot, rebuildLiveRow,
+    const sessionList = { querySelector: () => row };
+    const deps = {
+      sessionList, CSS: global.CSS, window: global.window, rowSnapshot, rebuildLiveRow, sessions: new Map(),
+      addFailedSessionToSidebar() {}, refreshSidebarView() {}, showToast() {},
       switchSession: (n) => switched.push(n),
-      refreshSidebarMeta() {},
-    });
+    };
+    const restartOrFailRow = new Function(...Object.keys(deps), `return async ${fn('restartOrFailRow')}`)(...Object.values(deps));
+    initChecklistPopovers({ restartOrFailRow, refreshSidebarMeta() {} });
     dom.get('tools-popover').dataset.name = 's';
     dom.get('tools-popover-restart').checked = true;
     await dom.get('tools-popover-apply').fire('click');
