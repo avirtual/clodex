@@ -12,28 +12,21 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — security fixes for the INSECURE origin gate
 
-- A seat whose deletion ends with the seat kept (its worktree could not be removed, its process outlived the wait, or the accept flow kept a dirty tree) now keeps the messages it was holding in its pending mail instead of dropping them, and the "seat deleted" log fires only on a real delete; a tree-less seat deleted during close-out no longer re-parks mail into a removed pending dir.
-- `.claims` is refused as a seat name at create, rename and over the peer API, matching the pending-store reservation that already made such a seat undeliverable.
 - **Security:** `CLODEX_WEB_INSECURE=1` / `CLODEX_REMOTE_INSECURE=1` no longer disable the browser Origin check: a cross-site page is refused again on the stock `docker/web` compose stack (which sets the flag by default), while LAN clients with no Origin or a matching one are served. 5.148.0 had skipped the whole gate under the flag.
 - **Security:** under `CLODEX_WEB_INSECURE` / `CLODEX_REMOTE_INSECURE` the Host must now be loopback or an IP literal, so a DNS-rebound hostname is refused on the stock `docker/web` compose stack; a LAN hostname needs a token.
 - **Security:** a browser request whose `Origin` differs from its `Host` is refused even when a token is configured, so a page on another loopback port can no longer forge the bodyless `/api/restart`, sleep/wake and inbox POSTs with the `SameSite=Strict` token cookie.
+- **Security:** the Files pane's Open button reveals launcher files (`.app`, `.command`, `.sh`, …), directories and executables in Finder instead of launching them; a plain file still opens in its default app.
+- A seat whose deletion ends with the seat kept (its worktree could not be removed, its process outlived the wait, or the accept flow kept a dirty tree) now keeps the messages it was holding in its pending mail instead of dropping them, and the "seat deleted" log fires only on a real delete; a tree-less seat deleted during close-out no longer re-parks mail into a removed pending dir.
+- `.claims` is refused as a seat name at create, rename and over the peer API, matching the pending-store reservation that already made such a seat undeliverable.
 - Corrections to the 5.148.0 notes: the "OS notifications: only the 50 most recent remain clickable" and "Team preflight accepts an exec proposal with no argv" bullets describe changes that shipped in 5.147.0; `undeploy node --docker` now exits 0 and removes the saved context even when the data volume could not be deleted (it says so and names the volume); Move to Peer can still briefly leave a seat on both machines when the peer is still creating it after the 120 s import timeout; and a second `clodex-send` inside one Bash call runs with subagent identity.
 - The drawer's Terminal and Console tabs no longer keep typing into or polling a seat that was renamed, archived or removed while it was the only seat; the next active seat gets its own tenants.
 - Removing or restarting a seat clears its voice arm/recording state and per-seat caches, so a rebuilt seat of the same name no longer starts "recording" or inherits the old seat's voice mode and console output.
 - Renaming a seat carries its unsaved side-pane edits to the new name instead of stranding them under the old one.
-- **Security:** the Files pane's Open button reveals launcher files (`.app`, `.command`, `.sh`, …), directories and executables in Finder instead of launching them; a plain file still opens in its default app.
-### Fixed
-
 - Editing a managed peer's target box (ssh host, cloud target or remote port) stops the old connection and sheds its tabs, wterms and control claims again, instead of re-pointing them onto the new box; only a tunnel respawn to the same destination keeps them.
-### Fixed
-
 - Quitting while a ctl command is still dialling its tunnel, or has another command queued behind it, no longer leaves a detached tunnel child holding a local port.
 - An exec command whose schema declares an optional property named like an `Object.prototype` member (`constructor`, `toString`) no longer refuses every payload that omits it.
-
-### Fixed
-
 - Edit Session's "Restart session now" keeps the seat's record through the restart and no longer tells the team lead the seat retired (same for a bulk account move).
 - Restarting a ticket hand no longer frees a hand-cap slot, so a cap-parked ticket cannot start and push the team one hand over its cap.
 - The 5 s SIGKILL fallback after a kill is cancelled once the pty exits, so it can no longer hit a recycled pid.
