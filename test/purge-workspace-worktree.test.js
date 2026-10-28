@@ -214,16 +214,19 @@ function lateReparkQueue(m, PENDING_DIR, name, order) {
 }
 
 test('destroy of a removed worktree seat awaits _settleInjectQueue before the tree goes, so a late re-park dies with the seat', async () => {
-  const { m, recs, calls, PENDING_DIR } = rig({
-    records: { w: { cwd: '/wt/t1', workspaceId: 'ws-1', worktree: WT } },
-    removeWorktree: (p) => { order.push(`remove ${p}`); return { ok: true }; },
-  });
   const order = [];
+  let PENDING_DIR;
+  const rigged = rig({
+    records: { w: { cwd: '/wt/t1', workspaceId: 'ws-1', worktree: WT } },
+    removeWorktree: (p) => { order.push(`remove ${p} parked=${fs.existsSync(path.join(PENDING_DIR, 'w'))}`); return { ok: true }; },
+  });
+  const { m, recs, calls } = rigged;
+  PENDING_DIR = rigged.PENDING_DIR;
   live(m, 'w', { _injectPtyQueue: lateReparkQueue(m, PENDING_DIR, 'w', order) });
   const r = await m.destroy('w');
   assert.strictEqual(r.worktreeRemoved, true);
   assert.deepStrictEqual(calls, ['/wt/t1']);
-  assert.deepStrictEqual(order, ['settled', 'remove /wt/t1']);
+  assert.deepStrictEqual(order, ['settled', 'remove /wt/t1 parked=true']);
   assert.strictEqual(recs.has('w'), false);
   assert.strictEqual(fs.existsSync(path.join(PENDING_DIR, 'w')), false);
 });

@@ -347,13 +347,13 @@ seams.skillLister         — (tests only)                     — (tests only) 
 | `termExec` | the session-manager seam that runs one agent command on the seat's drawer terminal, refusals as agent text | `drawerPtys` | drawer-pty exec, termRefusalName, termShimDiagnosis | session-manager.test.js |
 | `drawerPtyCwd` | a drawer shell's start dir: the seat's cwd, else the workspace's most common cwd, else HOME | `manager.sessions` | none | unpinned |
 | `drawerWorkspaceOf` | the workspace a seat's drawer shell is keyed under: the live session's, else the record's, else the default | `manager.sessions`, `persistence` | none | unpinned |
-| `reapDrawerSeat` | kills one seat's drawer shell, a no-op on a host without drawer terminals | `drawerPtys` | drawer-pty killSeat | unpinned |
-| `reapDrawerAfter` | wraps a manager teardown method on the instance so every caller, internal ones included, reaps the seat's drawer shell after it | `manager` | drawerWorkspaceOf, reapDrawerSeat | unpinned |
+| `reapDrawerSeat` | kills one seat's drawer shell, a no-op on a host without drawer terminals | `drawerPtys` | drawer-pty killSeat | drawer-seat-teardown.test.js |
+| `reapDrawerAfter` | wraps a manager teardown method on the instance so every caller, internal ones included, reaps the seat's drawer shell after it | `manager` | drawerWorkspaceOf, reapDrawerSeat | drawer-seat-teardown.test.js |
 | `getDrawerPtys` | the drawer pty service, null when `seams.enableLocalTerminal` is false | `drawerPtys` | drawer-pty.createDrawerPtys | drawer-services-seam.test.js |
 
 ### Invariants
 
-- `deliverExecResult` is fed by the unnamed `onExecResult` callback of the drawer pty construction just above it, and every status branch there produces a message so the asking agent is never left waiting.
+- `deliverExecResult` is fed by the unnamed `onExecResult` callback of the drawer pty construction just above it, and every status branch there except `res.stale` produces a message so the asking agent is never left waiting; a stale result is a predecessor shell's and is dropped.
 - `deliverExecResult` keeps the queue fallback for held, dead and throwing deliveries, or a late result becomes a lost one.
 - `queueForSeat` tags only passive rows with a kind, so `dropPassiveTermReports` never drops an operator's Copy attachment or an exec fallback.
 - `termExec` is handed to the SessionManager before `drawerPtys` is declared, and is safe only because it reads `drawerPtys` at call time.

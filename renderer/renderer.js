@@ -4581,7 +4581,7 @@ window.api.onSessionExit((name, code, meta) => {
   const restartFailedHit = restartFailed.get(name);
   restartFailed.delete(name);
   const restartFailedEntry = restartFailedHit && Date.now() - restartFailedHit.at < RESTART_FAILED_TTL_MS
-    ? { ...restartFailedHit, at: undefined } : null;
+    ? restartFailedHit : null;
   const failedEntry = movedFailedEntry || restartFailedEntry;
   const exitedEntry = !archivedEntry && !failedEntry && meta && meta.agentType && !meta.expected
     && !(sessions.get(name) || {}).peer

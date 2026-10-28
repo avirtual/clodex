@@ -809,12 +809,65 @@ test('a re-installed zsh also emits exactly ONE tagged C: preexec_functions+= is
       `a re-install stacked the hooks and double-marked the command\n--- marks ---\n${marks.join('\n')}\n--- raw ---\n${raw}`);
   });
 
+test('nonce: the operator\'s zsh startup files never see the nonce env, and the hooks still carry it', { skip: !whichZsh() && 'zsh absent' }, () => {
+  const { mkTmpRoot } = require('./lib/tmp-roots');
+  const { spawnSync } = require('child_process');
+  const { MARK_NONCE_ENV } = require('../term-shim');
+  const zsh = whichZsh();
+  const root = mkTmpRoot('zshim-nonce-');
+  try {
+    const home = path.join(root, 'home');
+    const seen = path.join(root, 'seen');
+    fs.mkdirSync(home, { recursive: true });
+    for (const f of ['.zshenv', '.zprofile', '.zshrc']) {
+      fs.writeFileSync(path.join(home, f), `print -r -- "${f}=\${${MARK_NONCE_ENV}-unset}" >> "${seen}"\n`);
+    }
+    const r = buildZshShim({ dir: path.join(root, 'shim'), shell: zsh, env: {} });
+    assert.ok(r, 'ENTER: shim built');
+    const env = { PATH: process.env.PATH, HOME: home, TERM: 'dumb', ...r.env, [MARK_NONCE_ENV]: 'feedface' };
+    const out = spawnSync(zsh, ['-l', '-i', '-c', 'print -r -- "K=$__clodex_k"'], { env, encoding: 'utf8', timeout: 5000 });
+    assert.match(out.stdout, /K=;k=feedface/, `stdout: ${out.stdout} stderr: ${out.stderr}`);
+    assert.deepStrictEqual(fs.readFileSync(seen, 'utf8').trim().split('\n'),
+      ['.zshenv=unset', '.zprofile=unset', '.zshrc=unset']);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('nonce: the operator\'s bash profile never sees the nonce env, and the hooks still carry it', { skip: !bashSupport({ shell: 'bash' }).ok && 'bash 4.4+ absent' }, () => {
+  const { mkTmpRoot } = require('./lib/tmp-roots');
+  const { spawnSync } = require('child_process');
+  const { MARK_NONCE_ENV } = require('../term-shim');
+  const root = mkTmpRoot('bshim-nonce-');
+  try {
+    const home = path.join(root, 'home');
+    const seen = path.join(root, 'seen');
+    fs.mkdirSync(home, { recursive: true });
+    fs.writeFileSync(path.join(home, '.bash_profile'), `echo "profile=\${${MARK_NONCE_ENV}-unset}" >> "${seen}"\n`);
+    const r = buildBashShim({ dir: path.join(root, 'shim'), shell: 'bash' });
+    assert.ok(r, 'ENTER: shim built');
+    const env = { PATH: process.env.PATH, HOME: home, TERM: 'dumb', [MARK_NONCE_ENV]: 'feedface' };
+    const out = spawnSync('bash', [...r.args, '-c', 'echo "K=$__clodex_k"'], { env, encoding: 'utf8', timeout: 5000 });
+    assert.match(out.stdout, /K=;k=feedface/, `stdout: ${out.stdout} stderr: ${out.stderr}`);
+    assert.strictEqual(fs.readFileSync(seen, 'utf8').trim(), 'profile=unset');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('nonce: every local mark in both rcs carries the nonce read from MARK_NONCE_ENV', () => {
   const { MARK_NONCE_ENV, zshrcBody: zrc, bashrcBody: brc } = require('../term-shim');
   assert.strictEqual(MARK_NONCE_ENV, '__CLODEX_MARK_NONCE');
+  const ffs = fakeFs();
+  buildZshShim({ dir: '/s', shell: '/bin/zsh', env: {}, fs: ffs });
+  for (const [name, first] of [['zsh', ffs.files.get('/s/.zshenv').body], ['bash', brc()]]) {
+    const adopt = first.indexOf(`__clodex_k=";k=$${MARK_NONCE_ENV}"`);
+    const unset = first.indexOf(`unset ${MARK_NONCE_ENV}`);
+    assert.ok(adopt > 0, `${name} reads the nonce from the env`);
+    assert.ok(unset > adopt, `${name} keeps it out of child environments`);
+    assert.ok(unset < first.indexOf('source '), `${name} unsets it before any operator file is sourced`);
+  }
   for (const [name, rc] of [['zsh', zrc()], ['bash', brc()]]) {
-    assert.ok(rc.includes(`__clodex_k=";k=$${MARK_NONCE_ENV}"`), `${name} reads the nonce from the env`);
-    assert.ok(rc.includes(`unset ${MARK_NONCE_ENV}`), `${name} keeps it out of child environments`);
     const marks = rc.split('\n').filter((l) => /133;[ACD]/.test(l));
     assert.ok(marks.length >= 3, `ENTER: ${name} has its three marks (${marks.length})`);
     for (const letter of ['A', 'C', 'D']) {
