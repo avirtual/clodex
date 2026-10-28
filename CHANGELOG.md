@@ -13,9 +13,11 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+
 - Erratum (5.150.5): the `time --` bullet said `clodex-send` was "stamped again"; only a `case` opened after `time --` was. `time -- clodex-send x` and `time -p -- clodex-send x` are now stamped, as parse.y's TIMEIGN rule reads.
 
 - Fixed: a review verdict written as one paragraph (`**VERDICT**: REWORK … **MUST-FIX**: … **NITS**: …`) now has its must-fixes extracted and counted; before, the lead's notice said "no must-fixes" and the hand was told the verdict named none. A REWORK whose must-fixes still cannot be extracted now says so in the notice instead of "no must-fixes".
+- Fixed: a bold `**MUST-FIX**` mention without a colon on the VERDICT line (`no **MUST-FIX** items`) is no longer read as a second section header, which refused a clean ACCEPT at the merge gate; the gate's "headers on lines …" message names the verdict file's own line numbers.
 
 ## 5.150.5 — 2026-10-28 — Bash guard: heredoc `case` lines no longer hide a following command; `time --` accepted again
 

@@ -177,26 +177,22 @@ const MUSTFIX_BARE_PLACEHOLDER_RE = new RegExp(`^(?:${MUSTFIX_PLACEHOLDER_WORDS}
 const FENCE_OPEN_RE = /^[ \t]{0,3}(`{3,}|~{3,})/;
 const VERDICT_LINE_RE = /^[ \t]*(?:[-*][ \t]*)?(?:\*\*|__)?[ \t]*\bVERDICT\b\W*\b(ACCEPT|REWORK)\b/i;
 
-const INLINE_SECTION_HEADER_RE = /(\*\*|__)(MUST[-\s]?FIX|NITS?|CHECKED)[ \t]*:?[ \t]*\1:?/gi;
-
-function unfoldInlineHeaders(text) {
-  return String(text == null ? '' : text).split('\n').map((line) => (VERDICT_LINE_RE.test(line)
-    ? line.replace(INLINE_SECTION_HEADER_RE, (m, _d, _k, off) => (off === 0 ? m : `\n${m}`))
-    : line)).join('\n');
-}
+const INLINE_SECTION_HEADER_RE = /(\*\*|__)(MUST[-\s]?FIX|NITS?|CHECKED)(?:[ \t]*:[ \t]*\1|\1[ \t]*:)/gi;
 
 function liveVerdictLines(text) {
-  const lines = unfoldInlineHeaders(text).split('\n');
+  const lines = String(text == null ? '' : text).split('\n');
   let fence = null;
-  return lines.map((line) => {
+  return lines.flatMap((line, i) => {
+    const src = i + 1;
     const f = FENCE_OPEN_RE.exec(line);
     if (fence) {
       if (f && f[1][0] === fence[0] && f[1].length >= fence.length && !line.slice(f[0].length).trim()) fence = null;
-      return { line, live: false, fenced: true };
+      return [{ line, live: false, fenced: true, src }];
     }
-    if (f) { fence = f[1]; return { line, live: false, fenced: true }; }
-    if (/^[ \t]*>/.test(line) || /^(?: {4}|[ ]{0,3}\t)/.test(line)) return { line, live: false, fenced: false };
-    return { line, live: true, fenced: false };
+    if (f) { fence = f[1]; return [{ line, live: false, fenced: true, src }]; }
+    if (/^[ \t]*>/.test(line) || /^(?: {4}|[ ]{0,3}\t)/.test(line)) return [{ line, live: false, fenced: false, src }];
+    if (!VERDICT_LINE_RE.test(line)) return [{ line, live: true, fenced: false, src }];
+    return line.replace(INLINE_SECTION_HEADER_RE, (m, _d, _k, off) => (off === 0 ? m : `\n${m}`)).split('\n').map((piece) => ({ line: piece, live: true, fenced: false, src }));
   });
 }
 
@@ -205,11 +201,11 @@ const isMustFixHeader = (line) => { const h = sectionHeader(line); return !!h &&
 function scanVerdict(verdictText) {
   const verdicts = [];
   const mustFixHeaders = [];
-  liveVerdictLines(verdictText).forEach(({ line, live }, i) => {
+  liveVerdictLines(verdictText).forEach(({ line, live, src }) => {
     if (!live) return;
     const m = VERDICT_LINE_RE.exec(line);
-    if (m) verdicts.push({ value: m[1].toUpperCase(), line: i + 1 });
-    if (isMustFixHeader(line)) mustFixHeaders.push(i + 1);
+    if (m) verdicts.push({ value: m[1].toUpperCase(), line: src });
+    if (isMustFixHeader(line)) mustFixHeaders.push(src);
   });
   const distinct = [...new Set(verdicts.map((v) => v.value))];
   return {
