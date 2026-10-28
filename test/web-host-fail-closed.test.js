@@ -29,9 +29,9 @@ function req(port, pathname, headers = {}) {
   });
 }
 
-function upgrade(port, token) {
+function upgrade(port, token, headers) {
   return new Promise((resolve) => {
-    const ws = new WebSocket(`ws://127.0.0.1:${port}${token ? `?token=${token}` : ''}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}${token ? `?token=${token}` : ''}`, headers ? { headers } : undefined);
     ws.once('open', () => { ws.close(); resolve('open'); });
     ws.once('error', () => resolve('refused'));
   });
@@ -62,6 +62,17 @@ test('insecure override: non-loopback bind with no token serves', async () => {
   await withHost({ host: '0.0.0.0', insecure: true }, async (port) => {
     assert.equal((await req(port, '/')).status, 200);
     assert.equal(await upgrade(port), 'open');
+    const lan = { host: `192.168.1.20:${port}`, origin: `http://192.168.1.20:${port}` };
+    assert.equal((await req(port, '/', lan)).status, 200);
+    assert.equal(await upgrade(port, null, lan), 'open');
+  });
+});
+
+test('loopback bind with no token and no insecure: a LAN Host/Origin is a 403 and its WS upgrade is refused', async () => {
+  await withHost({ host: '127.0.0.1' }, async (port) => {
+    const lan = { host: `192.168.1.20:${port}`, origin: `http://192.168.1.20:${port}` };
+    assert.equal((await req(port, '/', lan)).status, 403);
+    assert.equal(await upgrade(port, null, lan), 'refused');
   });
 });
 

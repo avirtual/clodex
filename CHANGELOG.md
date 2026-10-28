@@ -16,6 +16,10 @@ blocks a release.
 
 - Move to Peer: when the peer accepts the seat but its reply is lost, Clodex now checks the peer before restarting the seat locally, so the seat can no longer end up running on both machines; an unreachable peer leaves the local copy archived instead.
 - Shouts claimed from a peer box are stored exactly once even if the claim is retried, and a note that could not be stored stays unread on the box instead of being lost.
+- Security: `CLODEX_WEB_INSECURE=1` / `CLODEX_REMOTE_INSECURE=1` again serve clients that reach a non-loopback bind, which 5.147.0's Host/Origin gate refused; the flag now also skips that gate, as it already skipped the token requirement.
+- The remote API's JSON endpoints now all require an `application/json` body; 5.147.0 enforced it on three of them.
+- OS notifications: only the 50 most recent remain clickable from Notification Center; clicking an older one does nothing.
+- Team preflight accepts an exec proposal with no argv instead of reporting it as malformed.
 
 ## 5.147.0 — 2026-10-28 — security fixes from the first cold audit
 

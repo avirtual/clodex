@@ -39,6 +39,7 @@ function call(port, method, pathname, { body = null, headers = {}, token = null 
       host: '127.0.0.1', port, path: pathname, method,
       headers: {
         ...(buf ? { 'Content-Length': buf.length } : {}),
+        ...(body != null && !Buffer.isBuffer(body) ? { 'Content-Type': 'application/json' } : {}),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...headers,
       },

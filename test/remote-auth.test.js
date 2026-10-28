@@ -81,6 +81,48 @@ test('dm POST: text/plain from a loopback Origin is a 415; application/json pass
   });
 });
 
+const JSON_ROUTES = [
+  ['POST', '/api/sessions/alice/query'],
+  ['POST', '/api/sessions/alice/dm'],
+  ['POST', '/api/sessions/alice/restart'],
+  ['POST', '/api/sessions/alice/control'],
+  ['POST', '/api/sessions/alice/input'],
+  ['POST', '/api/sessions/alice/resize'],
+  ['PATCH', '/api/sessions/alice/args'],
+  ['PATCH', '/api/sessions/alice/skills'],
+  ['PUT', '/api/sessions/alice/client-token'],
+  ['POST', '/api/import/begin'],
+  ['POST', '/api/wterm-input/alice'],
+  ['POST', '/api/wterm-resize/alice'],
+  ['POST', '/api/sessions'],
+  ['POST', '/api/dm'],
+  ['POST', '/api/dm/claim'],
+  ['POST', '/api/peer/roster'],
+  ['POST', '/api/inbox/reply/n1'],
+];
+
+test('every JSON body route: text/plain is a 415, application/json is not', async () => {
+  assert.equal(JSON_ROUTES.length, 17);
+  const stub = () => Promise.resolve({ ok: true });
+  const deps = {
+    host: '127.0.0.1', query: stub, restartSession: stub, sendInput: stub, resizePty: stub,
+    setSessionArgs: stub, setSessionSkills: stub, setClientToken: stub,
+    seatImport: { begin: () => ({ ok: true }) }, importCreate: stub,
+    wtermInput: stub, wtermResize: stub, createSession: stub,
+    deliverDm: stub, claimDms: stub, receiveRoster: stub,
+    notifications: { page: () => [], unreadCount: () => 0, get: () => null }, replyNote: stub,
+  };
+  await withServer(deps, async (port) => {
+    const origin = `http://127.0.0.1:${port}`;
+    for (const [method, pathname] of JSON_ROUTES) {
+      const plain = await req(port, pathname, { method, body: '{}', headers: { 'content-type': 'text/plain', origin } });
+      assert.equal(plain.status, 415, `${method} ${pathname} text/plain`);
+      const json = await req(port, pathname, { method, body: '{}', headers: { 'content-type': 'application/json', origin } });
+      assert.notEqual(json.status, 415, `${method} ${pathname} application/json`);
+    }
+  });
+});
+
 // ── fail-closed: non-loopback + no token → 503 ───────────────────────────────
 
 test('non-loopback bind with no token → 503 naming CLODEX_REMOTE_TOKEN', async () => {
@@ -98,6 +140,15 @@ test('escape hatch: non-loopback + no token + insecure → serves (localhost-tru
   await withServer({ host: '0.0.0.0', insecure: true }, async (port) => {
     const r = await req(port, '/api/sessions');
     assert.equal(r.status, 200, 'insecure override serves with no token');
+    const lan = await req(port, '/api/sessions', { headers: { host: `192.168.1.20:${port}`, origin: `http://192.168.1.20:${port}` } });
+    assert.equal(lan.status, 200, 'insecure override skips the Host/Origin gate');
+  });
+});
+
+test('loopback + no token + no insecure: a LAN Host/Origin is still a 403', async () => {
+  await withServer({ host: '127.0.0.1' }, async (port) => {
+    const lan = await req(port, '/api/sessions', { headers: { host: `192.168.1.20:${port}`, origin: `http://192.168.1.20:${port}` } });
+    assert.equal(lan.status, 403);
   });
 });
 
