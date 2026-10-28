@@ -26,6 +26,9 @@ blocks a release.
 - Security: a seat granted a clodexctl exec tier can no longer list every saved context or dial one it was not granted through `get nodes` / `describe node …`; node lines are refused on every seat tier, and `help node` still answers.
 - Security: the context and cache-bust popovers no longer insert numbers from a peer's reply into the page unescaped; a compromised peer could previously run code in the desktop app or the web surface when the operator opened one of those chips.
 - A seat whose name ends in `.draining.<number>` or contains `.resend.` no longer has its parked mail swept into another seat's mailbox or hidden from resend; mailbox claims now live in a reserved `.claims` directory.
+- clodexctl: `undeploy node --docker` now removes only the node's own data volume and lists any other named volume it leaves alone; it used to delete every named volume attached to the container, including ones passed with `--volume`.
+- clodexctl: undeploying a Fargate stack on a shared, pre-existing cluster no longer removes the saved contexts of the other stacks on that cluster.
+- clodexctl: `port-forward` and `web --port` now fail at once when the chosen local port is already in use, instead of reporting the forward as open on another service.
 
 ## 5.147.0 — 2026-10-28 — security fixes from the first cold audit
 

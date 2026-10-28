@@ -698,7 +698,7 @@ test('undeploy helm --keep-data: skips the PVC delete, names the kept PVC', asyn
 // ── docker flow ──────────────────────────────────────────────────────────────
 
 // A fake runDocker seam: records argv/env, answers inspect/rm/volume-rm.
-function fakeRunDocker(rec, { exists = true, volumes = ['clodexctl-mybox-data'], rmCode = 0, volRmCode = 0 } = {}) {
+function fakeRunDocker(rec, { exists = true, volumes = ['clodexctl-mybox-data'], mounts = null, rmCode = 0, volRmCode = 0 } = {}) {
   rec.calls = [];
   return async ({ args, env }) => {
     rec.calls.push({ args, env });
@@ -706,7 +706,7 @@ function fakeRunDocker(rec, { exists = true, volumes = ['clodexctl-mybox-data'],
     if (j.startsWith('inspect')) {
       if (!exists) return { code: 1, stdout: '' };
       return { code: 0, stdout: JSON.stringify([{ Config: { Image: 'ghcr.io/avirtual/clodex:latest' }, State: { Status: 'running' },
-        Mounts: volumes.map((v) => ({ Type: 'volume', Name: v })) }]) };
+        Mounts: mounts || volumes.map((v) => ({ Type: 'volume', Name: v })) }]) };
     }
     if (j.startsWith('rm -f')) return { code: rmCode, stdout: 'clodexctl-mybox' };
     if (j.startsWith('volume rm')) return { code: volRmCode, stdout: args[2] };
@@ -778,4 +778,88 @@ test('undeploy docker: no named volumes → rm only, no volume rm', async () => 
   assert.strictEqual(r.code, 0);
   assert.ok(rec.calls.some((c) => c.args.join(' ') === 'rm -f clodexctl-mybox'));
   assert.ok(!rec.calls.some((c) => c.args.join(' ').startsWith('volume rm')));
+});
+
+const MIXED_MOUNTS = [
+  { Type: 'volume', Name: 'clodexctl-mybox-data' },
+  { Type: 'volume', Name: 'projects' },
+  { Type: 'volume', Name: '3f9a0c1e7b2d4a5f8e6c9b0a1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e' },
+  { Type: 'bind', Source: '/srv/x' },
+];
+
+test('undeploy docker: only clodexctl-<name>-data is removed; --volume mounts are left alone', async () => {
+  const rec = {};
+  assert.ok(MIXED_MOUNTS.some((m) => m.Name === 'projects'), 'ENTER: the fixture attaches an operator volume');
+  const r = await cli(['undeploy', 'node', 'mybox', '--docker', '--force', '--keep-ctx', '--json'], { runDocker: fakeRunDocker(rec, { mounts: MIXED_MOUNTS }) });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.deepStrictEqual(rec.calls.map((c) => c.args), [
+    ['inspect', 'clodexctl-mybox'],
+    ['rm', '-f', 'clodexctl-mybox'],
+    ['volume', 'rm', 'clodexctl-mybox-data'],
+  ]);
+  const preview = r.stdout.split('\n').filter(Boolean).map((l) => JSON.parse(l)).find((o) => o.type === 'preview');
+  assert.deepStrictEqual(preview.volumes, ['clodexctl-mybox-data']);
+  assert.deepStrictEqual(preview.otherVolumes, ['projects', '3f9a0c1e7b2d4a5f8e6c9b0a1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e']);
+});
+
+test('undeploy docker: text preview names the volumes it leaves alone', async () => {
+  const rec = {};
+  const r = await cli(['undeploy', 'node', 'mybox', '--docker', '--dry-run'], { runDocker: fakeRunDocker(rec, { mounts: MIXED_MOUNTS }) });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /left alone: projects, 3f9a0c1e/);
+  assert.doesNotMatch(r.stdout, /docker volume rm projects/);
+});
+
+test('undeploy docker: no data volume attached → nothing rm\'d, ctx still removed', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile({ current: 'mybox', contexts: { mybox: { url: 'http://127.0.0.1:7900' } } });
+  const r = await cli(['undeploy', 'node', 'mybox', '--docker', '--force'], { runDocker: fakeRunDocker(rec, { volumes: ['projects'] }), contextsFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.ok(!rec.calls.some((c) => c.args[0] === 'volume'), 'projects is never removed');
+  assert.match(r.stdout, /no data volume found/);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(contextsFile, 'utf8')).contexts, {});
+});
+
+test('undeploy docker: data volume rm failing → failed emitted, ctx removed, exit 0', async () => {
+  const rec = {};
+  const contextsFile = tmpCtxFile({ current: 'mybox', contexts: { mybox: { url: 'http://127.0.0.1:7900' } } });
+  const r = await cli(['undeploy', 'node', 'mybox', '--docker', '--force', '--json'], { runDocker: fakeRunDocker(rec, { volRmCode: 1 }), contextsFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  const events = r.stdout.split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.ok(events.some((o) => o.type === 'data' && o.action === 'failed' && o.volume === 'clodexctl-mybox-data' && o.exit === 1), r.stdout);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(contextsFile, 'utf8')).contexts, {});
+});
+
+test('undeploy docker: data volume rm failing (text) → names the manual command', async () => {
+  const rec = {};
+  const r = await cli(['undeploy', 'node', 'mybox', '--docker', '--force', '--keep-ctx'], { runDocker: fakeRunDocker(rec, { volRmCode: 1 }) });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /remove it by hand: docker volume rm clodexctl-mybox-data/);
+});
+
+const SHARED_CLUSTER_CTXS = () => ({ current: 'b', contexts: {
+  a: { ssm: { ecs: 'shared/a-node', region: 'r' }, token: 'A' },
+  b: { ssm: { ecs: 'shared/b-node', region: 'r' }, token: 'B' },
+} });
+
+test('undeploy fargate ctx cleanup: shared (unowned) cluster → only this stack\'s ctx removed', async () => {
+  const contextsFile = tmpCtxFile(SHARED_CLUSTER_CTXS());
+  const r = await cli(['undeploy', 'node', 'a', '--fargate', '--force', '--region', 'r'], {
+    execFn: fakeAws({}, { clusterParam: 'shared', resources: [{ LogicalResourceId: 'Service', ResourceType: 'AWS::ECS::Service' }] }), contextsFile,
+  });
+  assert.strictEqual(r.code, 0, r.stderr);
+  const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.ok(!saved.contexts.a, 'shared/a-node → removed');
+  assert.deepStrictEqual(saved.contexts.b, { ssm: { ecs: 'shared/b-node', region: 'r' }, token: 'B' });
+  assert.strictEqual(saved.current, 'b');
+});
+
+test('undeploy fargate ctx cleanup: owned cluster → every ctx on it removed', async () => {
+  const contextsFile = tmpCtxFile(SHARED_CLUSTER_CTXS());
+  const r = await cli(['undeploy', 'node', 'a', '--fargate', '--force', '--region', 'r'], {
+    execFn: fakeAws({}, { clusterParam: 'shared' }), contextsFile,
+  });
+  assert.strictEqual(r.code, 0, r.stderr);
+  const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.deepStrictEqual(saved.contexts, {});
 });
