@@ -136,7 +136,7 @@ test('non-loopback bind with no token → 503 naming CLODEX_REMOTE_TOKEN', async
   });
 });
 
-test('escape hatch: non-loopback + no token + insecure → serves any Host, still refuses a foreign Origin', async () => {
+test('escape hatch: non-loopback + no token + insecure → serves a loopback or IP-literal Host, refuses a hostname, still refuses a foreign Origin', async () => {
   await withServer({ host: '0.0.0.0', insecure: true }, async (port) => {
     const r = await req(port, '/api/sessions');
     assert.equal(r.status, 200, 'insecure override serves with no token');
@@ -147,6 +147,9 @@ test('escape hatch: non-loopback + no token + insecure → serves any Host, stil
     const cross = await req(port, '/api/sessions', { headers: { host: `192.168.1.20:${port}`, origin: 'http://evil.example' } });
     assert.equal(cross.status, 403, 'insecure override keeps the Origin comparison');
     assert.match(cross.body, /Origin header does not match this host/);
+    const rebound = await req(port, '/api/sessions', { headers: { host: `evil.example:${port}`, origin: `http://evil.example:${port}` } });
+    assert.equal(rebound.status, 403, 'insecure override refuses a DNS-rebound hostname');
+    assert.match(rebound.body, /Host header does not match this host/);
   });
 });
 
@@ -175,6 +178,23 @@ test('token configured: wrong token → 401, correct token → 200 (query, beare
     assert.equal((await req(port, '/api/sessions', { headers: { authorization: 'Bearer nope' } })).status, 401, 'wrong bearer');
     assert.equal((await req(port, '/api/sessions', { headers: { cookie: 'clodex_remote_token=sekret' } })).status, 200, 'right cookie');
     assert.equal((await req(port, '/api/sessions', { headers: { cookie: 'clodex_remote_token=nope' } })).status, 401, 'wrong cookie');
+  });
+});
+
+test('token configured + cookie: a cross-port Origin on the bodyless POST /api/restart is a 403 and never restarts; same-origin and Origin-less pass', async () => {
+  let restarts = 0;
+  await withServer({ host: '127.0.0.1', token: 'sekret', restartApp: () => { restarts += 1; } }, async (port) => {
+    const cookie = 'clodex_remote_token=sekret';
+    const cross = await req(port, '/api/restart', { method: 'POST', headers: { cookie, origin: 'http://127.0.0.1:9999' } });
+    assert.equal(cross.status, 403);
+    assert.match(cross.body, /Origin header does not match this host/);
+    assert.equal(restarts, 0, 'the restart handler never ran');
+    const same = await req(port, '/api/restart', { method: 'POST', headers: { cookie, origin: `http://127.0.0.1:${port}` } });
+    assert.equal(same.status, 200);
+    assert.equal(restarts, 1);
+    const bare = await req(port, '/api/restart', { method: 'POST', headers: { cookie } });
+    assert.equal(bare.status, 200);
+    assert.equal(restarts, 2);
   });
 });
 

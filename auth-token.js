@@ -58,11 +58,18 @@ function isLoopbackHost(h) {
 }
 
 const LOOPBACK_HOST_RE = /^(?:localhost|\[::1\]|127\.\d{1,3}\.\d{1,3}\.\d{1,3})(?::\d{1,5})?$/;
+const IP_LITERAL_HOST_RE = /^(?:\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-f:.]+\])(?::\d{1,5})?$/;
 
-function originRefusal(req, { anyHost = false } = {}) {
+function originRefusal(req, { ipHost = false } = {}) {
   const headers = (req && req.headers) || {};
   const host = String(headers.host || '').toLowerCase();
-  if (anyHost ? !host : !LOOPBACK_HOST_RE.test(host)) return 'Host';
+  if (!LOOPBACK_HOST_RE.test(host) && !(ipHost && IP_LITERAL_HOST_RE.test(host))) return 'Host';
+  return originMismatch(req);
+}
+
+function originMismatch(req) {
+  const headers = (req && req.headers) || {};
+  const host = String(headers.host || '').toLowerCase();
   const origin = headers.origin;
   if (origin == null) return null;
   let u;
@@ -77,4 +84,4 @@ function originAllowed(req, opts) {
   return originRefusal(req, opts) === null;
 }
 
-module.exports = { makeTokenGate, isLoopbackHost, originAllowed, originRefusal };
+module.exports = { makeTokenGate, isLoopbackHost, originAllowed, originRefusal, originMismatch };
