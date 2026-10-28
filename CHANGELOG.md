@@ -18,6 +18,8 @@ blocks a release.
 - The legacy claim-shape seat-name reservation (`.resend.*`, `*.draining.<kind>.<pid>`) is case-insensitive like `.claims`.
 - **Security:** `clodexctl upgrade node` on a helm context whose release name differs from the context name updates that context instead of overwriting (and losing the token of) an unrelated context named after the release; `deploy node --helm` takes `--ctx <name>` to save under a name other than the release.
 - `clodexctl undeploy node` (helm and docker) removes only the contexts that point at the torn-down release or container, so a same-named context for another node keeps its token.
+- An SSM `deploy node` saves the context the moment the box reports it switched to the new wire token, so a poll timeout or Ctrl-C after that point no longer leaves a node whose token no context holds; the remote run is capped to the poll budget, and a timeout says whether the token was saved.
+- `clodexctl undeploy node --fargate` removes only a context that points at the torn-down stack, like helm and docker.
 
 ## 5.149.0 — 2026-10-28 — clodexctl reaps its tunnel on exit, create node takes a token file, worktree-safe workspace deletes
 

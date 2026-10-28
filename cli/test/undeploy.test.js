@@ -614,16 +614,16 @@ test('undeploy fargate ctx cleanup: a second context named after the stack is NO
   assert.match(r.stdout, /^removed context "prod" \(was current — cleared\)$/m, 'only the one context is reported removed');
 });
 
-test('undeploy fargate --fargate (no record): the typed stack name is still the ctx cleaned up', async () => {
+test('undeploy fargate --fargate (no record): a same-named context that does not point at the stack is kept', async () => {
   const contextsFile = tmpCtxFile({ current: 'clodex-node', contexts: {
     'clodex-node': { url: 'http://127.0.0.1:7900', token: 'A' },
     keeper: { url: 'http://127.0.0.1:7901', token: 'B' },
   } });
   const r = await cli(['undeploy', 'node', 'clodex-node', '--fargate', '--force'], { execFn: fakeAws({}), contextsFile });
   assert.strictEqual(r.code, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /removed context/);
   const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
-  assert.ok(!saved.contexts['clodex-node'], 'the forced name is the ctx key and is removed');
-  assert.ok(saved.contexts.keeper, 'nothing else is touched');
+  assert.deepStrictEqual(Object.keys(saved.contexts).sort(), ['clodex-node', 'keeper']);
 });
 
 // NIT pin: a describe-stacks failure that is NOT a not-found (throttle, expired
@@ -873,6 +873,25 @@ test('undeploy helm ctx cleanup: a forced teardown keeps an unrelated context th
   assert.doesNotMatch(r.stdout, /removed context/);
   const after = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
   assert.deepStrictEqual(after, { current: 'mynode', contexts: { mynode: LIVE_SSM() } });
+});
+
+test('undeploy fargate ctx cleanup: a forced teardown keeps an unrelated SSM context that merely shares the stack name', async () => {
+  const contextsFile = tmpCtxFile({ current: 'mynode', contexts: { mynode: LIVE_SSM() } });
+  const r = await cli(['undeploy', 'node', 'mynode', '--fargate', '--force'], { execFn: fakeAws({}), contextsFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /removed context/);
+  const after = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
+  assert.deepStrictEqual(after, { current: 'mynode', contexts: { mynode: LIVE_SSM() } });
+});
+
+test('undeploy fargate ctx cleanup: a routed fargate context is removed', async () => {
+  const contextsFile = tmpCtxFile({ current: 'prod', contexts: {
+    prod: { url: 'http://127.0.0.1:7900', token: 'A', deploy: { flavor: 'fargate', stack: 'prod-stack', region: 'us-west-2' } },
+  } });
+  const r = await cli(['undeploy', 'node', 'prod', '--force'], { execFn: fakeAws({}), contextsFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /^removed context "prod" \(was current — cleared\)$/m);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(contextsFile, 'utf8')).contexts, {});
 });
 
 test('undeploy helm ctx cleanup: an inferred release removes the routed context only, not one named after the release (t2045)', async () => {
