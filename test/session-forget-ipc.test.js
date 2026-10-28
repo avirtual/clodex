@@ -236,3 +236,62 @@ test('session:forget reconciles the codex hooks swap of a forgotten codex seat, 
   f.forget('cl');
   assert.deepStrictEqual(calls, [[codex]]);
 });
+
+function treeFixture(isDirty) {
+  const { mkTmpRoot } = require('./lib/tmp-roots');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const tree = mkTmpRoot('clx-forget-wt-');
+  const PENDING_DIR = mkTmpRoot('clx-forget-pend-');
+  fs.mkdirSync(path.join(PENDING_DIR, 'wt'));
+  fs.writeFileSync(path.join(PENDING_DIR, 'wt', 'm.json'), '{}');
+  const removed = [];
+  const f = fixture([{ name: 'wt', type: 'claude', archivedAt: 1, proxy: false, worktree: { path: tree, branch: 't1' } }], {
+    PENDING_DIR, fs,
+    gitWorktree: { isDirty: async () => isDirty, removeWorktree: async (p) => { removed.push(p); return { ok: true }; } },
+  }, { fs });
+  return { ...f, tree, removed, pendingDir: path.join(PENDING_DIR, 'wt'), fs };
+}
+
+test('forgetTree: session:forget of an archived worktree record with uncommitted work is refused: tree, record and pending mail stay', async () => {
+  const f = treeFixture({ ok: true, dirty: true });
+  assert.deepStrictEqual(await f.forget('wt'), { ok: false, error: `uncommitted work in ${f.tree}` });
+  assert.deepStrictEqual(f.removed, []);
+  assert.ok(f.persistence.get('wt'));
+  assert.ok(f.fs.existsSync(f.pendingDir));
+});
+
+test('forgetTree: a dirty tree refuses the forget before destroy runs, so the seat\'s keep-warm hold is not disarmed', async () => {
+  const f = treeFixture({ ok: true, dirty: true });
+  let destroys = 0;
+  f.manager.destroy = async () => { destroys += 1; return { ok: true, worktreeRemoved: true }; };
+  assert.strictEqual((await f.forget('wt')).ok, false);
+  assert.strictEqual(destroys, 0);
+});
+
+test('forgetTree: session:forget of an archived worktree record it cannot inspect is refused with the inspect error', async () => {
+  const f = treeFixture({ ok: false, error: 'not a git repository' });
+  assert.deepStrictEqual(await f.forget('wt'), { ok: false, error: `${f.tree}: not a git repository` });
+  assert.deepStrictEqual(f.removed, []);
+  assert.ok(f.persistence.get('wt'));
+});
+
+test('forgetTree: session:forget of an archived clean worktree record removes the tree, the record and the pending mail', async () => {
+  const f = treeFixture({ ok: true, dirty: false });
+  assert.ok(f.fs.existsSync(f.pendingDir), 'ENTER: mail is parked for wt');
+  assert.strictEqual(await f.forget('wt'), true);
+  assert.deepStrictEqual(f.removed, [f.tree]);
+  assert.strictEqual(f.persistence.get('wt'), null);
+  assert.strictEqual(f.fs.existsSync(f.pendingDir), false);
+});
+
+test('forgetRecord: session:forget of a plain record drops its pending mail', () => {
+  const { mkTmpRoot } = require('./lib/tmp-roots');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const PENDING_DIR = mkTmpRoot('clx-forget-pend-');
+  fs.mkdirSync(path.join(PENDING_DIR, 'p'));
+  const { forget } = fixture([{ name: 'p', type: 'claude', proxy: false }], { PENDING_DIR, fs });
+  assert.strictEqual(forget('p'), true);
+  assert.strictEqual(fs.existsSync(path.join(PENDING_DIR, 'p')), false);
+});

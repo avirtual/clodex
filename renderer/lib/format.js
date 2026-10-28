@@ -97,8 +97,15 @@ function fmtBytes(n) {
   return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${u[i]}`;
 }
 
+function forgetConfirmText(head, entry) {
+  const tree = entry && entry.worktreePath
+    ? `Its worktree ${entry.worktreePath} is also removed from disk`
+    : 'If it is a ticket seat, its worktree is also removed from disk';
+  return `${head} It isn't running — this removes the saved entry. ${tree}, unless it has uncommitted work (then nothing is removed).`;
+}
+
 module.exports = {
   esc, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo,
-  fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes, num, int,
+  fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes, num, int, forgetConfirmText,
 };
 

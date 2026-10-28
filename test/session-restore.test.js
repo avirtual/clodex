@@ -377,6 +377,11 @@ test('each restored row carries the approval posture its launch argv implies', a
   assert.deepStrictEqual(out.map((e) => [e.name, e.posture]), [['yolo', 'bypass'], ['rev', 'read-only'], ['plain', 'default']]);
 });
 
+test('stampConfigFlags stamps the worktree path a forget confirm names', () => {
+  assert.strictEqual(stampConfigFlags({}, { worktree: { path: '/wt/t1', branch: 't1' } }).worktreePath, '/wt/t1');
+  assert.strictEqual('worktreePath' in stampConfigFlags({}, {}), false);
+});
+
 test('stampConfigFlags copies the entry effort onto the row', () => {
   assert.strictEqual(stampConfigFlags({}, { effort: 'medium' }).effort, 'medium');
   assert.strictEqual('effort' in stampConfigFlags({}, {}), false);

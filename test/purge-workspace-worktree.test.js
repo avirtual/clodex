@@ -11,7 +11,7 @@ const { parkDelivery } = require('../pending-store');
 beforeEach(() => { mock.timers.enable({ apis: ['setTimeout'] }); });
 afterEach(() => { mock.timers.reset(); });
 
-function rig({ records, removeWorktree } = {}) {
+function rig({ records, removeWorktree, isDirty } = {}) {
   const recs = new Map(Object.entries(records || {}).map(([k, v]) => [k, { name: k, ...v }]));
   const persistence = {
     list: () => [...recs.values()],
@@ -28,7 +28,10 @@ function rig({ records, removeWorktree } = {}) {
   const m = mk({
     getPersistence: () => persistence, log, PENDING_DIR, parkDelivery,
     DEFAULT_WORKSPACE_ID: 'default',
-    gitWorktree: { removeWorktree: async (p) => { calls.push(p); return removeWorktree ? removeWorktree(p) : { ok: true }; } },
+    gitWorktree: {
+      removeWorktree: async (p) => { calls.push(p); return removeWorktree ? removeWorktree(p) : { ok: true }; },
+      isDirty: async (p) => (isDirty ? isDirty(p) : { ok: true, dirty: false }),
+    },
   });
   return { m, recs, calls, lines, PENDING_DIR };
 }
@@ -71,6 +74,42 @@ test('purgeWorkspace keeps a worktree record archived in the default workspace w
   assert.strictEqual(recs.get('wt').workspaceId, 'default');
   assert.ok(recs.get('wt').archivedAt, 'kept record is archived');
   assert.deepStrictEqual(recs.get('wt').worktree, WT);
+});
+
+test('purgeWorkspace keeps a worktree with uncommitted work: not removed, record re-homed, listed with its why', async () => {
+  const { m, recs, calls } = rig({ records: wsRecords(), isDirty: () => ({ ok: true, dirty: true }) });
+  assert.ok(m.savedForWorkspace('ws-1').some((e) => e.name === 'wt'), 'ENTER: the worktree record is in the workspace');
+  assert.deepStrictEqual(await m.purgeWorkspace('ws-1'), {
+    killed: [], dropped: ['plain', 'a'],
+    kept: [{ name: 'wt', worktreeRemoved: false, path: '/wt/t1', why: 'uncommitted work' }],
+  });
+  assert.deepStrictEqual(calls, []);
+  assert.deepStrictEqual([...recs.keys()], ['wt']);
+  assert.strictEqual(recs.get('wt').workspaceId, 'default');
+  assert.deepStrictEqual(recs.get('wt').worktree, WT);
+});
+
+test('purgeWorkspace keeps a worktree it cannot inspect, whether isDirty fails or throws', async () => {
+  for (const [label, isDirty, why] of [
+    ['not ok', () => ({ ok: false, error: 'not a git repository' }), 'not a git repository'],
+    ['throws', () => { throw new Error('spawn git ENOENT'); }, 'spawn git ENOENT'],
+  ]) {
+    const { m, recs, calls } = rig({ records: { wt: { cwd: '/wt/t1', workspaceId: 'ws-1', worktree: WT } }, isDirty });
+    assert.deepStrictEqual(await m.purgeWorkspace('ws-1'), {
+      killed: [], dropped: [],
+      kept: [{ name: 'wt', worktreeRemoved: false, path: '/wt/t1', why }],
+    }, label);
+    assert.deepStrictEqual(calls, [], label);
+    assert.strictEqual(recs.get('wt').workspaceId, 'default', label);
+  }
+});
+
+test('keptWorktreesMessage names the why of a kept tree', () => {
+  const { keptWorktreesMessage } = require('../app-menus.js');
+  assert.strictEqual(
+    keptWorktreesMessage([{ name: 'wt', path: '/wt/t1', why: 'uncommitted work' }, { name: 'w2', path: '/wt/t2', error: 'busy' }]),
+    '2 worktree(s) were kept and their seats stay archived: wt (/wt/t1: uncommitted work), w2 (/wt/t2)',
+  );
 });
 
 test('purgeWorkspace destroys a live worktree seat and keeps its record when removal fails', async () => {
@@ -171,4 +210,17 @@ test('destroy of a tree-less seat with beforeRemove drops held mail even when th
   exit();
   assert.ok(lines.includes('dropped 1 held inject(s) for a: seat deleted'));
   assert.strictEqual(fs.existsSync(path.join(PENDING_DIR, 'a')), false);
+});
+
+test('_keepIfDirty keeps a dirty or uninspectable tree with its why and passes a clean one', async () => {
+  for (const [isDirty, want] of [
+    [() => ({ ok: true, dirty: false }), null],
+    [() => ({ ok: true, dirty: true }), { keep: true, why: 'uncommitted work' }],
+    [() => ({ ok: false, error: 'not a git repository' }), { keep: true, why: 'not a git repository' }],
+    [() => ({ ok: false }), { keep: true, why: 'tree could not be inspected' }],
+    [() => { throw new Error('spawn git ENOENT'); }, { keep: true, why: 'spawn git ENOENT' }],
+  ]) {
+    const { m } = rig({ isDirty });
+    assert.deepStrictEqual(await m._keepIfDirty.call(null, '/wt/t1'), want);
+  }
 });

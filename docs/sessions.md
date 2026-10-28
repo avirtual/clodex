@@ -361,8 +361,10 @@ REFUSES up front if the new name already owns `sessions/<new>`, any legacy
 spelling of it, or `pending/<new>` — that check is `lstat`-based, so a dangling
 link is a refusal and not a half-rename. Delete Session… (`removeSeat`) removes
 `sessions/<seat>` and every legacy spelling, symlink or real dir: it is the one
-true delete. `pending/<seat>` is exempt from both — rename moves it separately,
-delete leaves it for the hook to drain.
+true delete. `pending/<seat>` is exempt from `removeSeat`: rename moves it
+separately, and Delete (`destroy`), Delete Workspace… (`purgeWorkspace`) and the
+✕ forget (`session:forget`) each remove it with `_dropPendingDir` and drop the
+seat's held injects. `_cleanup` alone (kill, restart) never removes it.
 
 `sessions/<seat>/seat.json` is a snapshot of the seat's `sessions.json` record,
 rewritten whenever that record is written under a name (`persistence._save`'s
@@ -520,12 +522,12 @@ renderer's `archivingSessions` map, so `onSessionExit` tears the live tab down
 and rebuilds it in place as a **dimmed archived row** (`.session-item.archived`,
 "archived — click to resume") — no app restart. Clicking it unarchives
 (`setArchived(false)`) then resume-spawns; its ✕ forgets the entry
-(`forgetSession` → `persistence.remove`) — a DIFFERENT control from the live
+(`forgetSession` → `session:forget`: `persistence.remove`, or `destroy()` first when the record's worktree is on disk) — a DIFFERENT control from the live
 row's ✕, which archives. Archived rows surface via the sidebar status filter
 (Active/Archived/All).
 
 The record-droppers reachable from the sidebar are three, not one: the ARCHIVED
-row's ✕ and the FAILED ghost row's ✕ (both `forgetSession` → `persistence.remove`,
+row's ✕ and the FAILED ghost row's ✕ (both `forgetSession` → `session:forget`: `persistence.remove`, or `destroy()` first when the record's worktree is on disk,
 renderer.js), and right-click Delete Session…. Only the last kills a session
 process; the two ✕ routes act on a record whose session is already gone.
 
@@ -543,7 +545,7 @@ killed agent's record is gone. A `respawn` kill (`restartSession`,
 **Every record-dropper**, sidebar or not: `kill()` itself (not with `respawn`), `destroy()`, Delete
 Session…, Delete Workspace… (the seats it kills and its saved rows; a seat live
 in another workspace keeps its record), the archived and failed rows' ✕
-(`forgetSession`), team-retire with discard, `sweepReviewerGraveyard`, the
+(`forgetSession`, `session:forget`'s `forgetRecord`, which a record whose tree is on disk reaches only after `destroy()` removed it), team-retire with discard, `sweepReviewerGraveyard`, the
 team-review spawn-failure rollback, the seat-import spawn-failure rollback
 (remote-wiring.js, drops only when the seat is not live), and all three ticket-seat
 spawn-failure rollbacks in `_spawnTicketSeat` (team-tickets.js: the
@@ -567,9 +569,18 @@ the seat's keep-warm hold before the remove, and call `forgetSeatFiles` after it
 seats it kills (their record read before `kill` drops it). An assistant seat loses its whole
 seat dir (`removeSeat`: client-token, brief.md, memory), any other seat only
 its `client-token`, so a later seat with the same name never inherits them.
-A record carrying `worktree.path` goes through `destroy()` instead, so its tree
-is removed; a tree that cannot be removed keeps its record archived and
-re-homed to the default workspace (`_rehomeKept`), and the menu lists it.
+A record carrying `worktree.path` goes through `destroy()` instead, with
+`_keepIfDirty` as its `beforeRemove`: a tree `gitWorktree.isDirty` reports
+dirty, or cannot inspect, is never removed. Delete Workspace… keeps such a
+record archived and re-homed to the default workspace (`_rehomeKept`) and lists
+it with its reason (`kept`, `showKeptWorktrees`), as it does a tree whose removal
+failed; a clean tree is removed with its record and `pending/<seat>`. The ✕
+forget does the same for a record whose tree is on disk: a dirty or
+uninspectable tree refuses the forget before `destroy()` runs (`{ ok: false,
+error }` naming the path, toasted; the row, the tree and the keep-warm hold
+stay), a clean one is removed and the forget proceeds. Its confirm
+(`forgetConfirmText`) says so. A record
+whose tree is already gone is forgotten without `destroy()`.
 
 **Real delete of a LIVE session = right-click "Delete Session…"** + native
 confirm. It routes through `manager.destroy` (`ipc-handlers.js` `session:kill`)
@@ -979,7 +990,8 @@ persistence.
   and returns `{ok:false}`.
 - ✕ / Cmd+W on a LIVE row archives (keep the record, stamp `archivedAt`). The
   ARCHIVED row's ✕ and the FAILED ghost row's ✕ are different controls
-  (`forgetSession`) and DO drop the record, as do right-click Delete Session…
+  (`forgetSession`) and DO drop the record unless its worktree holds uncommitted
+  work, as do right-click Delete Session…
   and Delete Workspace…. "✕ archives" is true only of a live row.
 - `_cleanup` never removes parked DMs (`pending/<name>/`) — `_userKilled` is also true on restart.
 - Strip level is not a spawn arg — every kill+create path must re-assert it.

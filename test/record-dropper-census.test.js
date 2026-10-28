@@ -41,7 +41,7 @@ function census() {
 
 test('every record-dropper call site is on the docs/sessions.md list', () => {
   assert.deepStrictEqual(census(), [
-    'ipc-handlers.js:session:forget',
+    'ipc-handlers.js:forgetRecord',
     'remote-wiring.js:importCreate',
     'scratch-clone.js:_scratchCloneRetire',
     'session-manager.js:onProcExit',

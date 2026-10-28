@@ -9,7 +9,7 @@ const { mergeMeta } = require('../meta-tiers');
 const { PendingInput } = require('../peer-input-queue');
 const { versionSeverity, updateApplies, releaseAgeInfo, quotaChips, shapeQuota, isHumanPtyInput, proxyReceivedAt } = require('../proxy-util');
 const { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_FAULT, REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require('./lib/constants');
-const { esc, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes } = require('./lib/format');
+const { esc, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes, forgetConfirmText } = require('./lib/format');
 const { renderDiffHtml, costStackBlock, bustRow, genuineBustWeight, genuineBustCount } = require('./lib/render-html');
 const { effortOptions } = require('./lib/effort-options');
 const { renderMarkdown } = require('./lib/render-markdown');
@@ -700,7 +700,7 @@ function addFailedSessionToSidebar(entry) {
 
   item.querySelector('.session-close').addEventListener('click', async (e) => {
     e.stopPropagation();
-    if (confirm(`Forget session "${entry.name}"? It isn't running — this just removes the saved entry.`)) {
+    if (confirm(forgetConfirmText(`Forget session "${entry.name}"?`, entry))) {
       if (!await forgetSavedEntry(entry.name)) return;
       item.remove();
     }
@@ -761,7 +761,7 @@ function addArchivedSessionToSidebar(entry) {
 
   item.querySelector('.session-close').addEventListener('click', async (e) => {
     e.stopPropagation();
-    if (confirm(`Delete archived session "${displayName}"? It isn't running — this just removes the saved entry.`)) {
+    if (confirm(forgetConfirmText(`Delete archived session "${displayName}"?`, entry))) {
       if (!await forgetSavedEntry(entry.name)) return;
       item.remove();
       sidebarMeta.delete(entry.name);
@@ -877,7 +877,7 @@ function addExitedSessionToSidebar(entry) {
 
   item.querySelector('.session-close').addEventListener('click', async (e) => {
     e.stopPropagation();
-    if (confirm(`Forget session "${displayName}"? It isn't running — this just removes the saved entry.`)) {
+    if (confirm(forgetConfirmText(`Forget session "${displayName}"?`, entry))) {
       if (!await forgetSavedEntry(entry.name)) return;
       item.remove();
       sidebarMeta.delete(entry.name);

@@ -531,7 +531,9 @@
 |---|---|---|---|---|
 | `handle:app:restore-sessions` | restores the persisted sessions of the sender's workspace | sessions via manager | restoreSessionsForWorkspace | session-restore.test.js |
 | `handle:session:retrySpawn` | wakes an assistant record (reason restore); else re-spawns a persisted record (not a mint) in the record's own workspace, the sender's only for a record without one, returning its io | sessions via manager | manager.wake, manager.create, manager.resumeCwdOf | resume-cwd-tree-fallback.test.js exited-seat-row.test.js renderer-source-pins.test.js ipc-workspace-trio.test.js |
-| `handle:session:forget` | drops a session record, disarms its keep-warm hold and kills its workbench shell | sessions.json, keep-warm hold, drawer ptys | persistence.get, persistence.remove, manager.clearHintForRecord, manager.endHold | keepwarm-delete-disarm.test.js session-forget-ipc.test.js peer-shell-attached.test.js session-manager.test.js ipc-workspace-trio.test.js |
+| `forgetTree` | forget of a record whose worktree is on disk: `_keepIfDirty` first (a kept tree refuses before `destroy` runs), then `destroy` with `_keepIfDirty`, refusing with `{ ok: false, error }` when the tree is kept or not removed, else `forgetRecord` | sessions.json, the worktree, pending dir | manager._keepIfDirty, manager.destroy, keptError, forgetRecord | session-forget-ipc.test.js |
+| `handle:session:forget` | refuses a running seat; routes a record whose `worktree.path` exists to `forgetTree`, any other to `forgetRecord` | sessions.json | persistence.get, fs.existsSync, forgetTree, forgetRecord | keepwarm-delete-disarm.test.js session-forget-ipc.test.js peer-shell-attached.test.js session-manager.test.js ipc-workspace-trio.test.js |
+| `forgetRecord` | drops a session record, disarms its keep-warm hold, removes its seat files and pending dir, and kills its workbench shell | sessions.json, keep-warm hold, pending dir, drawer ptys | persistence.remove, manager.clearHintForRecord, manager.endHold, manager._dropPendingDir | session-forget-ipc.test.js record-dropper-census.test.js |
 | `handle:workspace:list` | every workspace | workspaces.json (read) | workspaces.list | unpinned |
 | `handle:workspace:current` | the sender's workspace id | none | workspaceOfSender | unpinned |
 | `handle:workspace:getView` | the sender workspace's saved view | workspaces.json (read) | workspaces.get | unpinned |
@@ -541,7 +543,7 @@
 ### Invariants
 - `handle:session:retrySpawn` calls manager.create with mint false, because a retry re-spawns an existing record and must not hit the mint name check.
 - `handle:workspace:setName` rewrites workspace-scoped skills and agents in the same motion, since they key off the display name.
-- `handle:session:forget` kills the seat's workbench shell itself, since nothing else reaps it.
+- `forgetRecord` kills the seat's workbench shell itself, since nothing else reaps it.
 
 ### Hazards
 - Routing `handle:session:retrySpawn` through `spawnFromParams` refuses the retry as a clash with its own persisted record.

@@ -239,7 +239,8 @@ function mkRenderer({ api = {}, confirmAnswer = true } = {}) {
     esc: (s) => String(s),
     typeGlyph: () => 'C',
     classifySender,
-    confirm: () => confirmAnswer,
+    confirm: (msg) => { calls.push(['confirm', msg]); return confirmAnswer; },
+    forgetConfirmText: require('../renderer/lib/format').forgetConfirmText,
     alert: rec('alert'),
     showToast: rec('showToast'),
     markSeatIo: rec('markSeatIo'),
@@ -351,6 +352,22 @@ test('restore and session:moved-in draw an exited payload row as the exited row'
   const m = mkRenderer();
   m.env.movedInHandler({ ...payload, exitCode: 2 });
   assert.strictEqual(exitedLabelOf(m.rows[0]), 'exited (code 2) — click to resume');
+});
+
+test('✕ on a restored exited ticket-seat row warns that its worktree is removed unless it has uncommitted work', async () => {
+  const payload = { name: 'cx', type: 'codex', cwd: '/w/c', exited: true, exitedAt: 5, exitCode: 0, exitSignal: null, worktreePath: '/wt/cx' };
+  const h = mkRenderer({ api: { restoreSessions: async () => [payload], getSidebarView: async () => ({ ok: false }), forgetSession: async () => true } });
+  await h.restore();
+  assert.strictEqual(h.rows.length, 1, 'ENTER: the exited row is drawn');
+  await h.rows[0].closeBtn.listeners.click({ stopPropagation() {} });
+  assert.deepStrictEqual(h.calls.filter((c) => c[0] === 'confirm'), [['confirm',
+    'Forget session "cx"? It isn\'t running — this removes the saved entry. Its worktree /wt/cx is also removed from disk, unless it has uncommitted work (then nothing is removed).']]);
+});
+
+test('the forget confirm of a row with no known worktree still says a ticket seat\'s worktree goes', () => {
+  const { forgetConfirmText } = require('../renderer/lib/format');
+  assert.strictEqual(forgetConfirmText('Forget session "a"?', { name: 'a' }),
+    'Forget session "a"? It isn\'t running — this removes the saved entry. If it is a ticket seat, its worktree is also removed from disk, unless it has uncommitted work (then nothing is removed).');
 });
 
 test('a reattach for a woken seat replaces its archived row with one live row', () => {
