@@ -278,7 +278,7 @@ test('release: the DMG pty probe runs after the build and before anything is com
   const build = src.indexOf('run npm run dist:mac');
   const probe = src.indexOf('run bash scripts/dmg-pty-probe.sh "$DMG" || die ');
   const commit = src.indexOf('git commit');
-  const tag = src.search(/^git tag "\$TAG"/m);
+  const tag = src.search(/^\s*git tag "\$TAG"/m);
   assert.ok(build > 0, 'the DMG build step is gone');
   assert.ok(probe > 0, 'the DMG pty probe step is gone — the shipped DMG is never launched before tagging');
   assert.ok(src.includes('step "DMG pty probe"'), 'the probe has no step header');
@@ -292,7 +292,7 @@ test('release: the DMG child probe runs right after the pty probe, before anythi
   const pty = src.indexOf('run bash scripts/dmg-pty-probe.sh "$DMG" || die ');
   const child = src.indexOf('run bash scripts/dmg-child-probe.sh "$DMG" || die ');
   const commit = src.indexOf('git commit');
-  const tag = src.search(/^git tag "\$TAG"/m);
+  const tag = src.search(/^\s*git tag "\$TAG"/m);
   assert.ok(child > 0, 'the DMG child probe step is gone — the packaged child dispatch is never proven before tagging');
   assert.ok(src.includes('step "DMG child probe"'), 'the child probe has no step header');
   assert.ok(pty > 0 && child > pty, 'the child probe runs after the pty probe');
@@ -332,14 +332,14 @@ test('release: an EXIT trap armed after PREV_TAG rolls back all six bumped files
   const trap = src.indexOf(trapLine);
   assert.ok(prevTag > 0 && trap > prevTag && trap < src.indexOf('npm version "$BUMP"'), 'the trap must be armed before the bump');
   assert.strictEqual(src.match(/^trap /gm).length, 1, 'a second trap would replace the rollback');
-  assert.match(src, /\nrun git commit -am "\$TAG" \|\| die "commit failed"\nCOMMITTED=1\n/);
+  assert.match(src, /\n  run git commit -am "\$TAG" \|\| die "commit failed"\nfi\nCOMMITTED=1\n/);
   assert.match(src, /if \[ "\$COMMITTED" = 1 \]; then return 0; fi/);
   assert.match(src, /release aborted: version bump and CHANGELOG stamp rolled back/);
 });
 
 test('release: a run that dies at the build step leaves the version, CHANGELOG and deploy pins as they were', () => {
   const src = fs.readFileSync(SCRIPT, 'utf-8');
-  const start = src.indexOf('PREV_TAG="$(git describe');
+  const start = src.indexOf('CUR_VERSION="$(node -p');
   const buildLine = 'run npm run dist:mac || die "build failed (try: npx electron-rebuild)"\n';
   const end = src.indexOf(buildLine);
   assert.ok(start > 0 && end > start, 'the bump-to-build block was not found by its anchors');
@@ -381,4 +381,179 @@ test('release: a run that dies at the build step leaves the version, CHANGELOG a
     for (const [f, body] of Object.entries(files)) assert.strictEqual(fs.readFileSync(path.join(dir, f), 'utf8'), body, f);
     assert.strictEqual(g('status', '--porcelain'), '');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+const REAL_GIT = execFileSync('bash', ['-c', 'command -v git'], { encoding: 'utf-8' }).trim();
+
+const STUB_SCRIPT = '#!/usr/bin/env bash\necho "$(basename "$0") $*" >> "$FAKE_STATE/calls"\n';
+const NPM_STUB = [
+  '#!/usr/bin/env bash',
+  'echo "npm $*" >> "$FAKE_STATE/calls"',
+  'case "$1 $2" in',
+  '  "version patch") node -e \'const fs=require("fs");let v;for(const f of ["package.json","package-lock.json"]){const j=JSON.parse(fs.readFileSync(f));const p=j.version.split(".");p[2]=+p[2]+1;v=j.version=p.join(".");fs.writeFileSync(f,JSON.stringify(j,null,2)+"\\n")}console.log("v"+v)\' ;;',
+  '  "run build:web") exit 0 ;;',
+  '  "run dist:mac") v="$(node -p "require(\'./package.json\').version")"; mkdir -p dist; touch "dist/Clodex-$v-arm64.dmg" ;;',
+  '  *) exit 1 ;;',
+  'esac',
+  '',
+].join('\n');
+const GH_STUB = [
+  '#!/usr/bin/env bash',
+  'echo "gh $*" >> "$FAKE_STATE/calls"',
+  'case "$1 $2" in',
+  '  "auth status") exit 0 ;;',
+  '  "release view") if [ -f "$FAKE_STATE/released-$3" ]; then echo "https://example.invalid/$3"; exit 0; fi; exit 1 ;;',
+  '  "release create")',
+  '    prev=""; for a in "$@"; do if [ "$prev" = --notes-file ]; then cp "$a" "$FAKE_STATE/notes-seen"; fi; prev="$a"; done',
+  '    if [ "${FAKE_GH_CREATE:-ok}" = fail ]; then exit 1; fi',
+  '    touch "$FAKE_STATE/released-$3"; exit 0 ;;',
+  '  "release upload") exit 0 ;;',
+  'esac',
+  'exit 1',
+  '',
+].join('\n');
+const GIT_STUB = [
+  '#!/usr/bin/env bash',
+  'if [ "$1" = push ]; then',
+  '  echo "git $*" >> "$FAKE_STATE/calls"',
+  '  if [ -n "${FAKE_PUSH_FAIL:-}" ]; then exit 1; fi',
+  'fi',
+  `exec ${JSON.stringify(REAL_GIT)} "$@"`,
+  '',
+].join('\n');
+
+function releaseFixture() {
+  const base = mkTmpRoot('clodex-release-e2e-');
+  const repo = path.join(base, 'repo');
+  const origin = path.join(base, 'origin.git');
+  const bin = path.join(base, 'bin');
+  const home = path.join(base, 'home');
+  const state = path.join(base, 'state');
+  for (const d of [repo, bin, home, state]) fs.mkdirSync(d, { recursive: true });
+  const pkg = '{\n  "name": "x",\n  "version": "1.0.0"\n}\n';
+  const files = {
+    'package.json': pkg,
+    'package-lock.json': pkg,
+    'CHANGELOG.md': '# Changelog\n\n## Unreleased — Theme\n\n- the pending change\n\n## 1.0.0 — 2026-01-01\n',
+    'cli/deploy/helm/clodex/values.yaml': 'image:\n  tag: "1.0.0"\n',
+    'cli/deploy/helm/clodex/Chart.yaml': 'appVersion: "1.0.0"\n',
+    'cli/deploy/clodex-fargate.yaml': "Parameters:\n    Default: 'ghcr.io/avirtual/clodex:1.0.0'\n",
+    '.gitignore': 'dist/\n',
+    'scripts/electron-smoke.js': '',
+    'scripts/renderer-smoke.js': '',
+    'scripts/release.sh': fs.readFileSync(SCRIPT, 'utf-8'),
+  };
+  for (const s of ['dmg-pty-probe.sh', 'dmg-child-probe.sh', 'prune-releases.sh', 'publish-image.sh', 'cloud-review.sh']) {
+    files[`scripts/${s}`] = STUB_SCRIPT;
+  }
+  for (const [f, body] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(repo, f)), { recursive: true });
+    fs.writeFileSync(path.join(repo, f), body, { mode: 0o755 });
+  }
+  for (const [name, body] of [['npm', NPM_STUB], ['gh', GH_STUB], ['git', GIT_STUB]]) {
+    fs.writeFileSync(path.join(bin, name), body, { mode: 0o755 });
+  }
+  const g = (...a) => execFileSync(REAL_GIT, a, { cwd: repo, encoding: 'utf-8', stdio: 'pipe' });
+  execFileSync(REAL_GIT, ['init', '-q', '--bare', origin]);
+  g('init', '-q', '-b', 'master');
+  g('config', 'user.name', 't');
+  g('config', 'user.email', 't@t');
+  g('add', '.');
+  g('commit', '-qm', 'base');
+  g('tag', 'v1.0.0');
+  g('remote', 'add', 'origin', origin);
+  g('push', '-q', '-u', 'origin', 'master', 'v1.0.0');
+  const run = (env = {}) => {
+    fs.rmSync(path.join(state, 'calls'), { force: true });
+    let res;
+    try {
+      const stdout = execFileSync('bash', ['scripts/release.sh', 'patch'], {
+        cwd: repo, encoding: 'utf-8', stdio: 'pipe',
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, FAKE_STATE: state,
+          CI: '', RELEASE_RETRY_SLEEP: '0', ...env },
+      });
+      res = { status: 0, stdout, stderr: '' };
+    } catch (e) { res = { status: e.status, stdout: String(e.stdout), stderr: String(e.stderr) }; }
+    const callsFile = path.join(state, 'calls');
+    res.calls = fs.existsSync(callsFile) ? fs.readFileSync(callsFile, 'utf-8') : '';
+    return res;
+  };
+  return {
+    repo, home, state, run, g,
+    kept: path.join(home, '.clodex', 'logs', 'release-notes-v1.0.1.md'),
+    version: () => JSON.parse(fs.readFileSync(path.join(repo, 'package.json'), 'utf-8')).version,
+    cleanup: () => fs.rmSync(base, { recursive: true, force: true }),
+  };
+}
+
+test('release e2e: gh failing 3x keeps the notes, publishes the image, and names the three follow-ups', () => {
+  const fx = releaseFixture();
+  try {
+    const res = fx.run({ FAKE_GH_CREATE: 'fail' });
+    assert.notStrictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.strictEqual((res.calls.match(/^gh release create /gm) || []).length, 3, res.calls);
+    assert.ok(fs.existsSync(fx.kept), 'the notes must survive the EXIT trap once the tag is pushed');
+    assert.match(fs.readFileSync(fx.kept, 'utf-8'), /- the pending change/);
+    assert.ok(res.stderr.includes(
+      `gh release create v1.0.1 dist/Clodex-1.0.1-arm64.dmg --title "v1.0.1 — Theme" --notes-file ${fx.kept}`), res.stderr);
+    assert.ok(res.stderr.includes('scripts/publish-image.sh 1.0.1'), res.stderr);
+    assert.ok(res.stderr.includes('scripts/cloud-review.sh v1.0.0 v1.0.1'), res.stderr);
+    assert.match(res.calls, /^publish-image\.sh 1\.0\.1$/m, 'the image depends only on the pushed tag');
+    assert.doesNotMatch(res.calls, /^prune-releases\.sh/m);
+  } finally { fx.cleanup(); }
+});
+
+test('release e2e: a failed push dies naming git push origin master <tag>', () => {
+  const fx = releaseFixture();
+  try {
+    const res = fx.run({ FAKE_PUSH_FAIL: '1' });
+    assert.strictEqual(res.status, 1, res.stdout + res.stderr);
+    assert.match(res.calls, /^git push origin master$/m, 'ENTER: the push was attempted');
+    assert.ok(res.stderr.includes('git push origin master v1.0.1'), res.stderr);
+    assert.ok(res.stderr.includes('scripts/publish-image.sh 1.0.1'), res.stderr);
+  } finally { fx.cleanup(); }
+});
+
+test('release e2e: a re-run after a failed push resumes from the local tag without bumping again', () => {
+  const fx = releaseFixture();
+  try {
+    assert.strictEqual(fx.run({ FAKE_PUSH_FAIL: '1' }).status, 1, 'ENTER: the first run dies at the push');
+    const res = fx.run();
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.match(res.stdout, /resuming release v1\.0\.1 from the push step/);
+    assert.strictEqual(fx.version(), '1.0.1');
+    assert.doesNotMatch(res.calls, /^npm version/m);
+    assert.doesNotMatch(res.calls, /^npm run dist:mac/m, 'the DMG of the failed run is reused');
+    assert.match(res.calls, /^git push origin v1\.0\.1$/m);
+    assert.match(res.calls, /^gh release create v1\.0\.1 /m);
+    assert.strictEqual(fx.g('tag', '--points-at', 'HEAD').trim(), 'v1.0.1');
+  } finally { fx.cleanup(); }
+});
+
+test('release e2e: tag on origin with no gh release resumes the gh step with the kept notes', () => {
+  const fx = releaseFixture();
+  try {
+    assert.notStrictEqual(fx.run({ FAKE_GH_CREATE: 'fail' }).status, 0, 'ENTER: the first run dies at gh');
+    fs.appendFileSync(fx.kept, '\nKEPT-MARKER\n');
+    const res = fx.run();
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.match(res.stdout, /resuming release v1\.0\.1 from the gh release step/);
+    assert.strictEqual(fx.version(), '1.0.1');
+    assert.doesNotMatch(res.calls, /^npm version/m);
+    assert.match(res.calls, /^gh release create v1\.0\.1 dist\/Clodex-1\.0\.1-arm64\.dmg --title v1\.0\.1 — Theme /m);
+    assert.match(fs.readFileSync(path.join(fx.state, 'notes-seen'), 'utf-8'), /KEPT-MARKER/);
+  } finally { fx.cleanup(); }
+});
+
+test('release e2e: a gh resume with no kept notes publishes the stamped CHANGELOG section', () => {
+  const fx = releaseFixture();
+  try {
+    assert.notStrictEqual(fx.run({ FAKE_GH_CREATE: 'fail' }).status, 0, 'ENTER: the first run dies at gh');
+    fs.rmSync(fx.kept);
+    const res = fx.run();
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    const seen = fs.readFileSync(path.join(fx.state, 'notes-seen'), 'utf-8');
+    assert.match(seen, /- the pending change/);
+    assert.doesNotMatch(seen, /^## /m);
+  } finally { fx.cleanup(); }
 });
