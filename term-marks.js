@@ -128,7 +128,7 @@ function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput, nonce } =
         const fields = body.split(';');
         let nest = null;
         let key = null;
-        while (fields.length > 1 && /^(?:nest|k)=/.test(fields[fields.length - 1])) {
+        while (fields.length > 1 && /^(?:nest=|k=(?:[0-9a-f]{16,})?$)/.test(fields[fields.length - 1])) {
           const tag = fields.pop();
           if (tag.startsWith('k=')) key = tag.slice(2);
           else nest = tag;

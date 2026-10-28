@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 
 const { createDrawerPtys } = require('../drawer-pty');
-const { buildTermShim, REMOTE_INSTALL_LINE, REMOTE_HELLO_B64, remoteUnsupportedReason } = require('../term-shim');
+const { buildTermShim, remoteInstallLineFor, mintMarkNonce, REMOTE_HELLO_B64, remoteUnsupportedReason } = require('../term-shim');
 const { createMarkParser } = require('../term-marks');
 const { shellHostOf } = require('../term-host');
 const { vetTermCommand } = require('../drawer-avail');
@@ -86,7 +86,8 @@ function harness(shellPath) {
     vetCommand: vetTermCommand,
     remoteAllowed: () => true,
     shellHost: shellHostOf,
-    remoteInstallLine: REMOTE_INSTALL_LINE,
+    remoteInstallLine: remoteInstallLineFor,
+    mintNonce: mintMarkNonce,
     remoteUnsupportedReason,
     log: { info() {}, warn() {}, error() {} },
   });
@@ -164,12 +165,12 @@ for (const [localName, localPath] of LOCAL_SHELLS) {
             `the far command's OUTPUT came back, framed by the far marks alone\n--- captured ---\n${res.record.output}`);
 
           const tail = proc.out.slice(mark);
-          assert.match(tail, /\x1b\]133;D;130;nest=1\x07/,
+          assert.match(tail, /\x1b\]133;D;130;nest=1;k=[0-9a-f]{16}\x07/,
             'the far shell answered our ^C with a TAGGED D;130, the pair the nested release waits on — '
             + 'an untagged one is the local shell\'s and must not release');
-          assert.match(tail, /\x1b\]133;A;nest=1\x07/, 'and a tagged prompt after it');
+          assert.match(tail, /\x1b\]133;A;;nest=1;k=[0-9a-f]{16}\x07/, 'and a tagged prompt after it');
 
-          assert.ok(tail.includes(`133;C;${REMOTE_HELLO_B64};nest=1`),
+          assert.ok(tail.includes(`133;C;${REMOTE_HELLO_B64};nest=1;k=`),
             'the install line arrived WHOLE: its own hello mark is the far side acting on it, and a line '
             + 'that lost its sacrificial leading byte leaves _cxp mangled and emits nothing. Read here rather '
             + `than off the echo, which zsh's line editor redraws and wraps\n--- out ---\n${tail.slice(0, 2000)}`);
