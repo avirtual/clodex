@@ -2,7 +2,7 @@
 
 const SESSION_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const RESERVED_SEAT_NAMES = new Set(['.claims']);
-const LEGACY_CLAIM_RE = /^\.resend\.|\.draining\.[a-z]+\.\d+$/;
+const LEGACY_CLAIM_RE = /^\.resend\.|\.draining\.[a-z]+\.\d+$/i;
 const isReservedSeatName = (name) => RESERVED_SEAT_NAMES.has(String(name).toLowerCase()) || LEGACY_CLAIM_RE.test(String(name));
 
 const INVALID_BORDER = '#e94560';

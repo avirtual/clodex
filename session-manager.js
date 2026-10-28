@@ -3774,6 +3774,7 @@ function createSessionManager(deps) {
         log.warn('worktree', `destroy ${name}: process still running after 8s; ${worktree.path} kept`);
         return { ok: false, error: 'process still running after 8s; worktree kept', live: true, worktreeRemoved: false, path: worktree.path };
       }
+      await this._settleInjectQueue(injectQueue);
       if (typeof beforeRemove === 'function') {
         let verdict;
         try { verdict = await beforeRemove(worktree.path); } catch (e) { verdict = { keep: true, why: e.message }; }

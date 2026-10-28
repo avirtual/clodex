@@ -14,6 +14,9 @@ blocks a release.
 
 ## Unreleased
 
+- Delete Session and Delete Workspace on a ticket seat wait for its inject queue to settle before removing the worktree, so a dm re-parked at the seat's death no longer lands in a pending dir nothing drains.
+- The legacy claim-shape seat-name reservation (`.resend.*`, `*.draining.<kind>.<pid>`) is case-insensitive like `.claims`.
+
 ## 5.149.0 — 2026-10-28 — clodexctl reaps its tunnel on exit, create node takes a token file, worktree-safe workspace deletes
 
 - **Security:** `clodexctl` now reaps its tunnel child and any helm token tempdir on Ctrl-C, SIGTERM or a closed terminal, instead of leaving an authenticated forward on a loopback port and token files on disk; `attach` and `logs -f` also handle SIGHUP.

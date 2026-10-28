@@ -202,6 +202,44 @@ test('destroy of a worktree seat whose tree is removed deletes the re-parked mai
   assert.ok(lines.includes('removed /wt/t1 (branch t1) and its pending mail after destroying w: seat deleted'));
 });
 
+function lateReparkQueue(m, PENDING_DIR, name, order) {
+  return {
+    length: 1,
+    settled: () => new Promise((resolve) => setImmediate(() => {
+      parkDelivery(PENDING_DIR, name, 'late re-park', m._nextParkSeq());
+      order.push('settled');
+      resolve();
+    })),
+  };
+}
+
+test('destroy of a removed worktree seat awaits _settleInjectQueue before the tree goes, so a late re-park dies with the seat', async () => {
+  const { m, recs, calls, PENDING_DIR } = rig({
+    records: { w: { cwd: '/wt/t1', workspaceId: 'ws-1', worktree: WT } },
+    removeWorktree: (p) => { order.push(`remove ${p}`); return { ok: true }; },
+  });
+  const order = [];
+  live(m, 'w', { _injectPtyQueue: lateReparkQueue(m, PENDING_DIR, 'w', order) });
+  const r = await m.destroy('w');
+  assert.strictEqual(r.worktreeRemoved, true);
+  assert.deepStrictEqual(calls, ['/wt/t1']);
+  assert.deepStrictEqual(order, ['settled', 'remove /wt/t1']);
+  assert.strictEqual(recs.has('w'), false);
+  assert.strictEqual(fs.existsSync(path.join(PENDING_DIR, 'w')), false);
+});
+
+test('destroy of a kept worktree seat awaits _settleInjectQueue before beforeRemove, so the late re-park survives with the archived record', async () => {
+  const { m, recs, calls, PENDING_DIR } = rig({ records: { w: { cwd: '/wt/t1', workspaceId: 'ws-1', worktree: WT } } });
+  const order = [];
+  live(m, 'w', { _injectPtyQueue: lateReparkQueue(m, PENDING_DIR, 'w', order) });
+  const r = await m.destroy('w', { beforeRemove: async () => { order.push('beforeRemove'); return { keep: true, why: 'dirty' }; } });
+  assert.strictEqual(r.kept, true);
+  assert.deepStrictEqual(calls, []);
+  assert.deepStrictEqual(order, ['settled', 'beforeRemove']);
+  assert.ok(recs.get('w').archivedAt, 'kept record is archived');
+  assert.strictEqual(pendingJson(PENDING_DIR, 'w').length, 1);
+});
+
 test('destroy of a tree-less seat with beforeRemove drops held mail even when the pty exits after the seat dir is gone', async () => {
   const { m, lines, PENDING_DIR } = rig({ records: { a: { cwd: '/p', workspaceId: 'ws-1' } } });
   const exit = liveSlowExit(m, 'a', { _injectQueue: ['held one'] });

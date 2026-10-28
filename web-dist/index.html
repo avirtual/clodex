@@ -29082,7 +29082,7 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
       "use strict";
       var SESSION_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
       var RESERVED_SEAT_NAMES = /* @__PURE__ */ new Set([".claims"]);
-      var LEGACY_CLAIM_RE = /^\.resend\.|\.draining\.[a-z]+\.\d+$/;
+      var LEGACY_CLAIM_RE = /^\.resend\.|\.draining\.[a-z]+\.\d+$/i;
       var isReservedSeatName = (name) => RESERVED_SEAT_NAMES.has(String(name).toLowerCase()) || LEGACY_CLAIM_RE.test(String(name));
       var INVALID_BORDER = "#e94560";
       var NAME_MESSAGES = {
