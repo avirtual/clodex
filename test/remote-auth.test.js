@@ -136,7 +136,7 @@ test('non-loopback bind with no token → 503 naming CLODEX_REMOTE_TOKEN', async
   });
 });
 
-test('escape hatch: non-loopback + no token + insecure → serves any Host, still refuses a foreign Origin', async () => {
+test('escape hatch: non-loopback + no token + insecure → serves a loopback or IP-literal Host, refuses a hostname, still refuses a foreign Origin', async () => {
   await withServer({ host: '0.0.0.0', insecure: true }, async (port) => {
     const r = await req(port, '/api/sessions');
     assert.equal(r.status, 200, 'insecure override serves with no token');
@@ -147,6 +147,9 @@ test('escape hatch: non-loopback + no token + insecure → serves any Host, stil
     const cross = await req(port, '/api/sessions', { headers: { host: `192.168.1.20:${port}`, origin: 'http://evil.example' } });
     assert.equal(cross.status, 403, 'insecure override keeps the Origin comparison');
     assert.match(cross.body, /Origin header does not match this host/);
+    const rebound = await req(port, '/api/sessions', { headers: { host: `evil.example:${port}`, origin: `http://evil.example:${port}` } });
+    assert.equal(rebound.status, 403, 'insecure override refuses a DNS-rebound hostname');
+    assert.match(rebound.body, /Host header does not match this host/);
   });
 });
 

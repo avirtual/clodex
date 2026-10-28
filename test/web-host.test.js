@@ -229,13 +229,14 @@ test('insecure token-less host: a foreign-Origin upgrade is still destroyed; a m
   } finally { host.close(); }
 });
 
-test('insecure token-less host: anyHost lifts the loopback Host rule but a foreign Origin GET is still a 403', async () => {
+test('insecure token-less host: ipHost lifts the loopback Host rule for IP literals, refuses a DNS-rebound hostname, and a foreign Origin GET is still a 403', async () => {
   const { host, port } = await startHost({ insecure: true });
   try {
     assert.deepStrictEqual(await httpGet(port, '/', { Host: `127.0.0.1:${port}`, Origin: 'http://evil.example' }), { status: 403, body: 'forbidden origin' });
     assert.equal((await httpGet(port, '/', { Host: `192.168.1.20:${port}`, Origin: 'http://evil.example' })).status, 403);
     assert.notEqual((await httpGet(port, '/', { Host: `192.168.1.20:${port}` })).status, 403);
     assert.notEqual((await httpGet(port, '/', { Host: `192.168.1.20:${port}`, Origin: `http://192.168.1.20:${port}` })).status, 403);
+    assert.equal((await httpGet(port, '/', { Host: `evil.example:${port}`, Origin: `http://evil.example:${port}` })).status, 403);
   } finally { host.close(); }
 });
 

@@ -58,11 +58,12 @@ function isLoopbackHost(h) {
 }
 
 const LOOPBACK_HOST_RE = /^(?:localhost|\[::1\]|127\.\d{1,3}\.\d{1,3}\.\d{1,3})(?::\d{1,5})?$/;
+const IP_LITERAL_HOST_RE = /^(?:\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-f:.]+\])(?::\d{1,5})?$/;
 
-function originRefusal(req, { anyHost = false } = {}) {
+function originRefusal(req, { ipHost = false } = {}) {
   const headers = (req && req.headers) || {};
   const host = String(headers.host || '').toLowerCase();
-  if (anyHost ? !host : !LOOPBACK_HOST_RE.test(host)) return 'Host';
+  if (!LOOPBACK_HOST_RE.test(host) && !(ipHost && IP_LITERAL_HOST_RE.test(host))) return 'Host';
   const origin = headers.origin;
   if (origin == null) return null;
   let u;

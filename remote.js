@@ -703,7 +703,7 @@ class RemoteServer {
       res.end('Refusing to serve: bound to a non-loopback address with no CLODEX_REMOTE_TOKEN set. Set CLODEX_REMOTE_TOKEN, or CLODEX_REMOTE_INSECURE=1 to override.');
       return false;
     }
-    const failed = this._gate.configured ? null : originRefusal(req, { anyHost: this._insecure });
+    const failed = this._gate.configured ? null : originRefusal(req, { ipHost: this._insecure });
     if (failed) {
       res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(`forbidden: ${failed} header does not match this host`);
