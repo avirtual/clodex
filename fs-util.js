@@ -28,6 +28,9 @@ function atomicWriteFileSync(filePath, data) {
     fd = fs.openSync(tmp, 'w', 0o600);
     fs.writeSync(fd, data);
     fs.fsyncSync(fd);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch {}
+    throw e;
   } finally {
     if (fd !== undefined) { try { fs.closeSync(fd); } catch {} }
   }

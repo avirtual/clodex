@@ -9,7 +9,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { createVectorStore, sidecarPath, BYTES_PER_DIM } = require('../vector-store');
+const { createVectorStore, sidecarPath, stagedSidecarPath, BYTES_PER_DIM } = require('../vector-store');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const D = 8;
@@ -97,6 +97,36 @@ test('vector-store: a torn tail from a crash mid-append is discarded', () => {
     'a partial row must be dropped — reading it as a vector yields a plausible direction built '
     + 'from whatever bytes landed, which is worse than losing the record');
   assert.strictEqual(after.search(axis(0), { limit: 1 })[0].key, 'a', 'and the intact rows still rank');
+
+  assert.strictEqual(after.add('c', axis(2)), true);
+  after.flush();
+  assert.deepStrictEqual(Array.from(after.get('c')), Array.from(axis(2)),
+    'a row appended after the torn tail must be read back at its own offset');
+  assert.strictEqual(fs.statSync(file).size, 3 * D * BYTES_PER_DIM, 'the torn bytes are gone from disk');
+  const reloaded = createVectorStore({ file, dims: D, model: 'test-model' });
+  assert.deepStrictEqual(Array.from(reloaded.get('c')), Array.from(axis(2)), 'and after a restart');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('vector-store: a failed append leaves no torn bytes behind', () => {
+  const { dir, file } = mk();
+  let fail = false;
+  const appendFile = (p, buf) => {
+    if (!fail) return fs.appendFileSync(p, buf);
+    fs.appendFileSync(p, buf.subarray(0, 5));
+    throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' });
+  };
+  const store = createVectorStore({ file, dims: D, model: 'test-model', appendFile });
+  store.add('a', axis(0));
+  fail = true;
+  assert.strictEqual(store.add('b', axis(1)), false);
+  fail = false;
+  assert.strictEqual(fs.statSync(file).size, D * BYTES_PER_DIM, 'the partial row is truncated away');
+  assert.strictEqual(store.add('c', axis(2)), true);
+  store.flush();
+  const after = createVectorStore({ file, dims: D, model: 'test-model' });
+  assert.deepStrictEqual(Array.from(after.get('c')), Array.from(axis(2)));
+  assert.strictEqual(after.get('b'), null);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -229,4 +259,76 @@ test('vector-store: an absent file is an empty store, not an error', () => {
   assert.deepStrictEqual(store.search(axis(0)), []);
   assert.strictEqual(store.add('a', axis(0)), true, 'and the first add creates the path');
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+const CROSS_EXPECT = { a: axis(1), b: axis(2) };
+function seedCrossable(file, extra = {}) {
+  const store = createVectorStore({ file, dims: D, model: 'test-model', ...extra });
+  store.add('a', axis(0));
+  store.add('a', axis(1));
+  store.add('b', axis(2));
+  store.flush();
+  return store;
+}
+function assertOwnOrNull(file) {
+  const after = createVectorStore({ file, dims: D, model: 'test-model' });
+  for (const [key, want] of Object.entries(CROSS_EXPECT)) {
+    const got = after.get(key);
+    if (got !== null) {
+      assert.deepStrictEqual(Array.from(got), Array.from(want), `${key} must read its own vector or nothing`);
+    }
+  }
+  return after;
+}
+
+test('vector-store: a sidecar write that fails during compact never points into another record', () => {
+  const { dir, file } = mk();
+  let failSidecar = false;
+  const writeFile = (p, data) => {
+    if (failSidecar && p.startsWith(sidecarPath(file))) throw new Error('ENOSPC');
+    return fs.writeFileSync(p, data);
+  };
+  const store = seedCrossable(file, { writeFile });
+  failSidecar = true;
+  try { store.compact(); } catch {}
+  const after = assertOwnOrNull(file);
+  assert.ok(after.get('b'), 'precondition: b is still served, so the check above ran on it');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+function compactedCopy(file) {
+  const dir2 = mkTmpRoot('clx-vec-');
+  const file2 = path.join(dir2, 'vec.bin');
+  fs.copyFileSync(file, file2);
+  fs.copyFileSync(sidecarPath(file), sidecarPath(file2));
+  createVectorStore({ file: file2, dims: D, model: 'test-model' }).compact();
+  return { dir2, file2 };
+}
+
+test('vector-store: a crash after the staged sidecar but before the blob rename loads the old pair', () => {
+  const { dir, file } = mk();
+  seedCrossable(file);
+  const { dir2, file2 } = compactedCopy(file);
+  fs.copyFileSync(sidecarPath(file2), stagedSidecarPath(file));
+
+  const after = assertOwnOrNull(file);
+  assert.strictEqual(after.size(), 2, 'the old blob and old sidecar still agree');
+  assert.strictEqual(fs.existsSync(stagedSidecarPath(file)), false,
+    'the stale staged sidecar is discarded');
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir2, { recursive: true, force: true });
+});
+
+test('vector-store: a crash after the blob rename but before the sidecar rename adopts the staged sidecar', () => {
+  const { dir, file } = mk();
+  seedCrossable(file);
+  const { dir2, file2 } = compactedCopy(file);
+  fs.copyFileSync(file2, file);
+  fs.copyFileSync(sidecarPath(file2), stagedSidecarPath(file));
+
+  const after = assertOwnOrNull(file);
+  assert.strictEqual(after.size(), 2, 'the staged sidecar describes the renamed blob');
+  assert.strictEqual(after.rows(), 2);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir2, { recursive: true, force: true });
 });

@@ -25,6 +25,24 @@ test('memoryStore: remember/list/recall roundtrip with pinned default false', ()
   assert.strictEqual(store.recall('alpha', 'electron-rebuild').id, u.id);
 });
 
+test('memoryStore: remember writes the unit atomically', (t) => {
+  const { store, dir } = tmpStore();
+  const u = store.remember('alpha', { scope: 'proj', text: 'atomic unit' });
+  const agentDir = store._dir('alpha');
+  assert.deepStrictEqual(fs.readdirSync(agentDir).filter(f => f.includes('.tmp.')), []);
+  const { meta, body } = parseMemoryUnit(fs.readFileSync(path.join(agentDir, `${u.id}.md`), 'utf8'));
+  assert.strictEqual(meta.id, u.id);
+  assert.strictEqual(meta.scope, 'proj');
+  assert.strictEqual(body.trim(), 'atomic unit');
+
+  t.mock.method(fs, 'writeSync', () => { throw Object.assign(new Error('ENOSPC'), { code: 'ENOSPC' }); });
+  assert.throws(() => store.remember('alpha', { text: 'never torn' }), /ENOSPC/);
+  t.mock.restoreAll();
+  assert.deepStrictEqual(fs.readdirSync(agentDir).sort(), [`${u.id}.md`],
+    'a failed write leaves neither a torn unit nor a temp file');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('memoryStore: remember with pinned=true saves pinned in one write', () => {
   const { store, dir } = tmpStore();
   const u = store.remember('alpha', { scope: 'ops', text: 'Boot rules ride pinned.', pinned: true });
