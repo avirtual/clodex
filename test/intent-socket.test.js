@@ -713,6 +713,21 @@ test('stamp: clodex-send behind a reserved word or a prefix command is stamped; 
     ['echo "`clodex-send x`"', `echo "\`${T} clodex-send x\`"`],
     ['echo "$(clodex-send x)"', `echo "$(${T} clodex-send x)"`],
     ['echo "a $(true) $(clodex-send x) b"', `echo "a $(true) $(${T} clodex-send x) b"`],
+    ['echo "$(echo ${#x})"; clodex-send x', `echo "$(echo \${#x})"; ${T} clodex-send x`],
+    ['echo "`true #`"; clodex-send x', `echo "\`true #\`"; ${T} clodex-send x`],
+    ['echo "$(true # )\nclodex-send x)"', `echo "$(true # )\n${T} clodex-send x)"`],
+    ['echo "$(x; "case" y)"; clodex-send x', `echo "$(x; "case" y)"; ${T} clodex-send x`],
+    ['echo "$(echo `true #`; clodex-send x) "', `echo "$(echo \`true #\`; ${T} clodex-send x) "`],
+    ['echo "$(echo "$(x)case")"; clodex-send x', `echo "$(echo "$(x)case")"; ${T} clodex-send x`],
+    ['echo "$(echo `echo "$(true #)"`; clodex-send x) "', `echo "$(echo \`echo "$(true #)"\`; ${T} clodex-send x) "`],
+    ['echo "`echo "$(true #)"`"; clodex-send x', `echo "\`echo "$(true #)"\`"; ${T} clodex-send x`],
+    ['echo "$(echo "$(x)"case)"; clodex-send x', `echo "$(echo "$(x)"case)"; ${T} clodex-send x`],
+    ['echo "$(echo "$(x)" case)"; clodex-send x', `echo "$(echo "$(x)" case)"; ${T} clodex-send x`],
+    ['echo "$(echo $(x) case)"; clodex-send x', `echo "$(echo $(x) case)"; ${T} clodex-send x`],
+    ['echo "$(echo {a,b} case)"; clodex-send x', `echo "$(echo {a,b} case)"; ${T} clodex-send x`],
+    ['echo "$(echo `x` case)"; clodex-send x', `echo "$(echo \`x\` case)"; ${T} clodex-send x`],
+    ['echo "$({ case x in x) clodex-send a;; esac; })"', `echo "$({ case x in x) ${T} clodex-send a;; esac; })"`],
+    ['echo "$(case x in x) clodex-send a b;; esac)"', `echo "$(case x in x) ${T} clodex-send a b;; esac)"`],
     ['echo "\\`clodex-send x\\`"', null],
     ['echo "\\$(clodex-send x)"', null],
     ["echo '`clodex-send x`'", null],
@@ -737,6 +752,15 @@ test('shellSegments opens a segment at a backtick or $( inside double quotes, of
   for (const cmd of ['echo "\\`clodex-send x\\`"', 'echo "\\$(clodex-send x)"', "echo '`clodex-send x`'"]) {
     assert.ok(!shellSegments(cmd).some((s) => s[0] && s[0].text === 'clodex-send'), cmd);
   }
+});
+
+test('shellSegments keeps a $( frame open across a case pattern paren', () => {
+  const cmd = 'echo "$(case x in x) clodex-send a b;; esac)"';
+  const seg = shellSegments(cmd).find((s) => s[0] && s[0].text === 'clodex-send');
+  assert.ok(seg, cmd);
+  assert.strictEqual(seg[0].start, 21);
+  assert.strictEqual(cmd.charAt(seg[0].start), 'c');
+  assert.deepStrictEqual(seg.map((t) => t.text), ['clodex-send', 'a', 'b']);
 });
 
 test('two sequential clodex-send segments each get their own minted token', () => {
