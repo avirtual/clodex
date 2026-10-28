@@ -12,10 +12,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — clodexctl reaps its tunnel on exit, create node takes a token file, worktree-safe workspace deletes
 
-### Fixed
-
+- **Security:** `clodexctl` now reaps its tunnel child and any helm token tempdir on Ctrl-C, SIGTERM or a closed terminal, instead of leaving an authenticated forward on a loopback port and token files on disk; `attach` and `logs -f` also handle SIGHUP.
 - Delete Workspace keeps a ticket worktree that has uncommitted work (or cannot be inspected) and lists it, instead of force-removing it; the confirm dialog now says which worktrees it removes.
 - The ✕ forget on an archived ticket-seat row refuses when the seat's worktree holds uncommitted work and otherwise removes the tree and the seat's pending mail, so no worktree is left with nothing pointing at it.
 - The `.claims` seat-name reservation is case-insensitive (`.Claims` collided with the claims dir on a case-insensitive disk) and also refuses the legacy claim shapes (`.resend.*`, `*.draining.<kind>.<pid>`) the pending store skips.
@@ -25,7 +24,6 @@ blocks a release.
 - The idle and boot drains of parked mail check for a pending turn start before claiming the store, so parked messages keep their resend id, content key and passive flag instead of coming back as one plain active entry.
 - A relaunch that reuses the previous process pid (containers) rehomes the claims that launch left behind, instead of treating them as live forever.
 - Move to Peer: when the commit's reply is lost, Clodex re-sends the commit instead of trusting a session probe, so a seat whose far-side creation was still in flight is no longer respawned locally as well (the conversation no longer forks onto two hosts).
-- **Security:** `clodexctl` now reaps its tunnel child and any helm token tempdir on Ctrl-C, SIGTERM or a closed terminal, instead of leaving an authenticated forward on a loopback port and token files on disk; `attach` and `logs -f` also handle SIGHUP.
 - An SSM `deploy node` / `upgrade node` saves the context with the new wire token as soon as the box switches to it, so a failed verify or Claude-token delivery no longer leaves a context whose token the box rejects.
 - `create node` accepts `--token-file FILE` and `--token -` (stdin), so a wire token no longer has to pass through argv.
 
