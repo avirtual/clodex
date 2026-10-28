@@ -161,6 +161,7 @@ test('waitForPort: a dead child is its exit even while a foreign listener holds 
 
 test('reapAll: an open dial is group-killed (negative pid, SIGTERM), once', async (t) => {
   const srv = net.createServer((s) => s.end());
+  t.after(() => new Promise((r) => srv.close(() => r())));
   const kills = [];
   t.mock.method(process, 'kill', (pid, sig) => { kills.push([pid, sig]); return true; });
   const spawnFn = (cmd, args) => {
@@ -172,16 +173,17 @@ test('reapAll: an open dial is group-killed (negative pid, SIGTERM), once', asyn
     return child;
   };
   const tr = await T.openTransport({ tunnel: ['faketunnel', '{port}:7900'] }, { spawnFn, deadlineMs: 2000 });
+  t.after(() => tr.close());
   T.reapAll();
   assert.deepStrictEqual(kills, [[-424242, 'SIGTERM']]);
   T.reapAll();
   assert.deepStrictEqual(kills, [[-424242, 'SIGTERM']]);
-  await new Promise((r) => srv.close(r));
   tr.close();
 });
 
 test('reapAll: a closed dial is no longer reaped', async (t) => {
   const srv = net.createServer((s) => s.end());
+  t.after(() => new Promise((r) => srv.close(() => r())));
   const kills = [];
   t.mock.method(process, 'kill', (pid, sig) => { kills.push([pid, sig]); return true; });
   const spawnFn = (cmd, args) => {
@@ -195,7 +197,6 @@ test('reapAll: a closed dial is no longer reaped', async (t) => {
   tr.close();
   T.reapAll();
   assert.deepStrictEqual(kills, [[-434343, 'SIGTERM']]);
-  await new Promise((r) => srv.close(r));
 });
 
 test('reapAll: a registered tmpdir is removed, and each cleanup runs once', () => {
