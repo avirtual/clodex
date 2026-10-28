@@ -18,6 +18,9 @@ blocks a release.
 
 - Delete Workspace keeps a ticket worktree that has uncommitted work (or cannot be inspected) and lists it, instead of force-removing it; the confirm dialog now says which worktrees it removes.
 - The ✕ forget on an archived ticket-seat row refuses when the seat's worktree holds uncommitted work and otherwise removes the tree and the seat's pending mail, so no worktree is left with nothing pointing at it.
+- The `.claims` seat-name reservation is case-insensitive (`.Claims` collided with the claims dir on a case-insensitive disk) and also refuses the legacy claim shapes (`.resend.*`, `*.draining.<kind>.<pid>`) the pending store skips.
+- The Files pane's Open button also reveals `.fileloc` and `.inetloc` launchers instead of following them, and refuses an empty path instead of revealing the app's working directory.
+- A restart whose old process outlives the exit wait no longer leaves the seat marked as respawning, so its eventual exit frees the hand-cap slot.
 
 ## 5.148.1 — 2026-10-28 — security fixes for the INSECURE origin gate
 
