@@ -103,7 +103,7 @@ function assertUntouched(root, oldName, newName) {
   }
 }
 
-function mkRename({ entries = [], reminderRows = [], teamHome = null, createThrows = null, root = null } = {}) {
+function mkRename({ entries = [], reminderRows = [], teamHome = null, createThrows = null, root = null, deps = {} } = {}) {
   const REGISTRY_DIR = root || mkTmpRoot('clodex-rename-');
   const store = entries.map((e) => ({ ...e }));
   const persistence = {
@@ -173,6 +173,7 @@ function mkRename({ entries = [], reminderRows = [], teamHome = null, createThro
     stripLevelOf: (e) => (e && e.stripLevel) || 0,
     log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
     notifyOS: () => {},
+    ...deps,
   });
   const m = new SessionManager();
   const created = [];
@@ -899,4 +900,48 @@ test('rename carries a turnless keep-warm hold binding to the new name and drops
   assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
   assert.strictEqual(created.length, 1, 'ENTER: the respawn was reached');
   assert.deepStrictEqual([m._wireTelemetry.sessionFor('newseat'), m._wireTelemetry.sessionFor('seat')], ['sess-abc', null]);
+});
+
+function lateReparkQueue(root, name) {
+  let land = null;
+  const landed = new Promise((r) => { land = r; });
+  const queue = {
+    length: 1,
+    arm() {
+      setImmediate(() => {
+        const dir = pathReal.join(root, 'pending', name);
+        fsReal.mkdirSync(dir, { recursive: true });
+        fsReal.writeFileSync(pathReal.join(dir, 'late.json'), '{"text":"late"}');
+        queue.length = 0;
+        land();
+      });
+    },
+    settled: () => landed,
+  };
+  return queue;
+}
+
+test('t2033: a unit still asleep when the seat is renamed re-parks under the NEW name', async () => {
+  const root = mkTmpRoot('clodex-rename-');
+  const { m } = mkRename({ root, entries: [BASE] });
+  const queue = lateReparkQueue(root, 'seat');
+  const s = seedLive(m, 'seat', { _injectPtyQueue: queue });
+  s.pty.kill = () => { m.sessions.delete('seat'); queue.arm(); };
+  const r = await m.rename('seat', 'newseat');
+  assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
+  assert.ok(fsReal.existsSync(pathReal.join(root, 'pending', 'newseat', 'late.json')), 'the late re-park moved with the seat');
+  assert.ok(!fsReal.existsSync(pathReal.join(root, 'pending', 'seat')), 'nothing is stranded under the old name');
+});
+
+test('t2033: a unit still asleep when a tree-less seat is destroyed leaves no pending/<name>/ behind', async () => {
+  const root = mkTmpRoot('clodex-rename-');
+  const { m } = mkRename({ root, entries: [BASE], deps: { PENDING_DIR: pathReal.join(root, 'pending') } });
+  const queue = lateReparkQueue(root, 'seat');
+  const s = seedLive(m, 'seat', { _injectPtyQueue: queue });
+  s.pty.kill = () => { s._dead = true; m.sessions.delete('seat'); queue.arm(); };
+  const r = await m.destroy('seat');
+  clearTimeout(s._sigkillTimer);
+  assert.strictEqual(r.ok, true);
+  await queue.settled();
+  assert.ok(!fsReal.existsSync(pathReal.join(root, 'pending', 'seat')), 'the pending dir is removed after the queue settled');
 });

@@ -1778,3 +1778,57 @@ test('t1891: a dm-confirm report for an inject-stuck seat says the submit nudge 
     assert.match(notice.slice(before.length), /composer holds an unsubmitted unit; a submit nudge was sent and did not take/);
   } finally { app.stop(); }
 });
+
+async function pasteCapParked(app, re) {
+  const found = await divertedCopy(app, re);
+  await app.m.sessions.get('target')._injectPtyQueue.settled();
+  return found;
+}
+
+test('t2033: a paste-cap re-park of an injected dm retracts the latch, so no "swallowed" notice is armed', async () => {
+  const app = boot({ deps: { specConfirmMs: 60_000, INJECT_PASTE_MAXWAIT: 0 } });
+  try {
+    await app.spawn('sender');
+    const target = await app.spawn('target');
+    app.m._handleIntent('sender', dm('target', 'PASTE CAP ONE\nPASTE CAP TWO'));
+    const found = await pasteCapParked(app, /PASTE CAP ONE/);
+    assert.strictEqual(found.length, 1, 'ENTER: the paste cap re-parked the dm');
+    assert.doesNotMatch(app.seen('target'), /PASTE CAP ONE/, 'ENTER: nothing reached the PTY');
+    assert.deepStrictEqual(target._dmUnconfirmed || [], []);
+    assert.strictEqual(target._dmConfirmTimer || null, null);
+  } finally { app.stop(); }
+});
+
+test('t2033: a paste-cap re-park keeps the content key, so the urgent resend supersedes it and the store holds one copy', async () => {
+  const app = boot({ deps: { specConfirmMs: 60_000, INJECT_PASTE_MAXWAIT: 0 } });
+  try {
+    await app.spawn('sender');
+    await app.spawn('target');
+    app.m._handleIntent('sender', dm('target', 'KEYED ONE\nKEYED TWO'));
+    const first = await pasteCapParked(app, /KEYED ONE/);
+    assert.strictEqual(first.length, 1, 'ENTER: the first copy was re-parked');
+    assert.strictEqual(typeof first[0].key, 'string');
+    app.m._handleIntent('sender', dm('target', 'KEYED ONE\nKEYED TWO', true));
+    await new Promise((r) => setImmediate(r));
+    await app.m.sessions.get('target')._injectPtyQueue.settled();
+    assert.strictEqual(app.parked('target', /KEYED ONE/), 1);
+  } finally { app.stop(); }
+});
+
+test('t2033: a paste-cap re-park of a resend keeps its parkId, so a second resend still finds it', async () => {
+  const app = boot({ deps: { specConfirmMs: 60_000, INJECT_PASTE_MAXWAIT: 0 } });
+  try {
+    await app.spawn('sender');
+    const target = await app.spawn('target');
+    await coldParked(app, 'RESENT ONE\nRESENT TWO');
+    const ids = app.parkedIds('target', /RESENT ONE/);
+    assert.strictEqual(ids.length, 1, 'ENTER: the hold-park carries an id');
+    target.activityTs = Date.now();
+    await app.m._handleIntent('sender', { type: 'resend', id: ids[0] });
+    await target._injectPtyQueue.settled();
+    assert.deepStrictEqual(app.parkedIds('target', /RESENT ONE/), ids);
+    await app.m._handleIntent('sender', { type: 'resend', id: ids[0] });
+    const said = await settled(app, 'sender', /released[^]*released/);
+    assert.doesNotMatch(said, /nothing parked under/);
+  } finally { app.stop(); }
+});

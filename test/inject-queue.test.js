@@ -728,6 +728,7 @@ test('InjectQueue: onSubmitted absent leaves the drained bytes exactly as before
 test('InjectQueue: a death mid-drain re-parks the claimed text through onUndelivered exactly when a write was skipped', async () => {
   const rows = [
     { at: 'before produce', deadFromStart: true, writes: [], undelivered: [], produceCalls: 0 },
+    { at: 'non-claim producer, dead before produce', deadFromStart: true, fallback: 'F', writes: [], undelivered: ['F'], produceCalls: 0 },
     { at: 'after produce', dieInProduce: true, writes: [], undelivered: ['X'], produceCalls: 1 },
     { at: 'after Ctrl-U', dieAtSleep: 1, writes: ['\x15'], undelivered: ['X'], produceCalls: 1 },
     { at: 'after text', dieAtSleep: 2, writes: ['\x15', 'X'], undelivered: ['X'], produceCalls: 1 },
@@ -748,11 +749,31 @@ test('InjectQueue: a death mid-drain re-parks the claimed text through onUndeliv
       onUndelivered: (t) => undelivered.push(t),
       sleep: () => { if (++sleeps === row.dieAtSleep) dead = true; return Promise.resolve(); },
     });
-    await q.enqueue('', { produce: () => { produceCalls++; if (row.dieInProduce) dead = true; return 'X'; } });
+    await q.enqueue('', {
+      produce: () => { produceCalls++; if (row.dieInProduce) dead = true; return 'X'; },
+      ...(row.fallback ? { fallback: () => row.fallback } : {}),
+    });
     assert.deepStrictEqual(writes, row.writes, `${row.at}: writes`);
     assert.deepStrictEqual(undelivered, row.undelivered, `${row.at}: onUndelivered`);
     assert.strictEqual(produceCalls, row.produceCalls, `${row.at}: produce calls`);
   }
+});
+
+test('InjectQueue: a paste-cap re-park hands onUndelivered the unit parkId, parkKey and onDivert', async () => {
+  const got = [];
+  const onDivert = () => {};
+  const q = new InjectQueue({
+    write: () => {},
+    settleMsFor: () => 1,
+    quietMs: 0, maxWaitMs: 0, ctrlUSettleMs: 0,
+    lastHumanInputAt: () => 0,
+    isDead: () => false,
+    reviewGate: true, pasteMaxWaitMs: 0, bracketedPaste: () => false,
+    onUndelivered: (t, meta) => got.push({ t, meta }),
+    sleep: () => Promise.resolve(),
+  });
+  await q.enqueue('', { produce: () => 'a\nb', divert: () => false, parkId: 'p-1', parkKey: 'k-1', onDivert });
+  assert.deepStrictEqual(got, [{ t: 'a\nb', meta: { parkId: 'p-1', parkKey: 'k-1', onDivert } }]);
 });
 
 test('InjectQueue: a throwing onUndelivered is swallowed and the queue keeps draining', async () => {

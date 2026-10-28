@@ -3753,10 +3753,17 @@ function createSessionManager(deps) {
         }
         this._dropPendingDir(name);
       };
+      const injectQueue = wasLive ? this.sessions.get(name)._injectPtyQueue || null : null;
       if (!worktree) this._markDropHeld(name);
       await this.kill(name);
       this._disarmHoldFor(name, holdSid);
-      if (!worktree) { dropRecord(); dropSeatDir(); return { ok: true, live: wasLive }; }
+      if (!worktree) {
+        if (wasLive) await this._waitForExit(name);
+        await this._settleInjectQueue(injectQueue);
+        dropRecord();
+        dropSeatDir();
+        return { ok: true, live: wasLive };
+      }
       const keepRecord = () => {
         if (!wasLive) return;
         try {
@@ -4027,6 +4034,7 @@ function createSessionManager(deps) {
               name, type: entry.type, cwd: entry.cwd, team: this.teamNameOf(name, entry.cwd),
             };
           }
+          await this._settleInjectQueue(s._injectPtyQueue);
         }
         if (!getPersistence().rename(name, newName)) {
           return {
@@ -4943,6 +4951,11 @@ function createSessionManager(deps) {
       return getPersistence().listForWorkspace(workspaceId).filter(e => e && e.name && !this.sessions.has(e.name));
     }
 
+    async _settleInjectQueue(queue) {
+      if (!queue || typeof queue.settled !== 'function') return;
+      try { await queue.settled(); } catch {}
+    }
+
     _markDropHeld(name) {
       const s = this.sessions.get(name);
       if (s) s._dropHeld = true;
@@ -4993,8 +5006,11 @@ function createSessionManager(deps) {
         const rec = getPersistence().get(s.name);
         if (hasTree(rec)) { await destroyArm(s.name, killed); continue; }
         killed.push(s.name);
+        const injectQueue = (this.sessions.get(s.name) || {})._injectPtyQueue || null;
         this._markDropHeld(s.name);
-        this.kill(s.name);
+        await this.kill(s.name);
+        await this._waitForExit(s.name);
+        await this._settleInjectQueue(injectQueue);
         this.forgetSeatFiles(s.name, rec);
         this._dropPendingDir(s.name);
         this.dropReminders(s.name);
@@ -5739,8 +5755,12 @@ function createSessionManager(deps) {
       let parked = 0;
       const born = typeof session.createdAt === 'number' ? session.createdAt : null;
       for (const e of queue) {
-        if (e && typeof e.produce === 'function') { kept.push(e); continue; }
-        const text = typeof e === 'string' ? e : (e && typeof e.text === 'string' ? e.text : '');
+        let text;
+        if (e && typeof e.produce === 'function') {
+          if (!e.opts || typeof e.opts.fallback !== 'function') { kept.push(e); continue; }
+          try { text = e.opts.fallback(); } catch { text = ''; }
+          if (typeof text !== 'string') text = '';
+        } else text = typeof e === 'string' ? e : (e && typeof e.text === 'string' ? e.text : '');
         if (!text) continue;
         if (SLASH_COMMAND_RE.test(text)) {
           log.warn('inject', `dropped a held slash command for ${session.name} instead of re-parking it`);
@@ -6298,8 +6318,13 @@ function createSessionManager(deps) {
           let sup = null;
           if (localTarget && localTarget.agentType) {
             // Armed here, not in _gatedDeliver: this is the one site with a live sender to tell.
+            let armed = null;
             const r = this._gatedDeliver(intent.target, fromTag, intent.body, intent.urgent === true, '',
-              (disposition) => this._armDmConfirm(intent.target, senderName, disposition));
+              (disposition) => {
+                if (disposition === 'injected') { armed = this._armDmConfirm(intent.target, senderName, disposition) || null; return; }
+                if (armed) this._retractDmConfirm(intent.target, armed);
+                armed = null;
+              });
             if (r.parked || r.held) {
               const parkId = r.parked || null;
               const why = r.parked ? r.reason : r.held;
@@ -8302,9 +8327,21 @@ function createSessionManager(deps) {
       const fifo = s._dmUnconfirmed || (s._dmUnconfirmed = []);
       // Stored raw: -1 (unreadable transcript) must not become 0, or didGrow would read the
       // seat's first written byte as growth.
-      fifo.push({ sender: senderName, at: Date.now(), since: this._seatTranscriptSize(targetName) });
+      const entry = { sender: senderName, at: Date.now(), since: this._seatTranscriptSize(targetName) };
+      fifo.push(entry);
       while (fifo.length > DM_LATCH_CAP) this._overflowDmEntry(s, fifo.shift());
       if (!s._dmConfirmTimer) this._armDmConfirmTimer(s);
+      return entry;
+    }
+
+    _retractDmConfirm(targetName, entry) {
+      const s = this.sessions.get(targetName);
+      const fifo = s && s._dmUnconfirmed;
+      if (!fifo) return;
+      const i = fifo.indexOf(entry);
+      if (i < 0) return;
+      fifo.splice(i, 1);
+      if (!fifo.length) { clearTimeout(s._dmConfirmTimer); s._dmConfirmTimer = null; }
     }
 
     // A dropped unit is coalesced into one record per sender rather than discarded: discarding
@@ -8863,6 +8900,7 @@ function createSessionManager(deps) {
               return textFor('injected');
             },
             onDivert: (why) => { try { fire('parked', why); } catch {} },
+            fallback: () => textFor('parked'),
           } : {}),
         });
       } else if (fire) {
@@ -9094,6 +9132,10 @@ function createSessionManager(deps) {
       const qopts = {};
       if (divert) qopts.divert = divert;
       if (produce) qopts.produce = produce;
+      if (typeof opts.fallback === 'function') qopts.fallback = opts.fallback;
+      if (onDivert) qopts.onDivert = onDivert;
+      if (opts.parkId) qopts.parkId = opts.parkId;
+      if (opts.parkKey) qopts.parkKey = opts.parkKey;
       if (opts.human === true) qopts.human = true;
       this._injectQueueFor(session).enqueue(produce ? '' : text, Object.keys(qopts).length ? qopts : undefined);
     }
@@ -9153,14 +9195,19 @@ function createSessionManager(deps) {
           // cannot release wedges the seat, so absent evidence reads as not speaking.
           speaking: () => Date.now() - (session.lastVoiceRecordingTs || 0) < INJECT_SPEAKING_STALE_MS,
           isDead: () => !!session._dead,
-          onUndelivered: (t) => {
+          onUndelivered: (t, meta = {}) => {
+            if (session._dropHeld) {
+              log.info('inject', `dropped an undelivered inject for ${session.name}: seat deleted`);
+              return;
+            }
             if (SLASH_COMMAND_RE.test(t)) {
               log.warn('inject', `dropped an undelivered slash command for ${session.name} instead of re-parking it`);
               return;
             }
+            if (typeof meta.onDivert === 'function') { try { meta.onDivert(session._dead ? 'dead' : 'paste-off'); } catch {} }
             try {
               const born = typeof session.createdAt === 'number' ? session.createdAt : null;
-              parkDelivery(PENDING_DIR, session.name, t, this._nextParkSeq(), null, false, born, null);
+              parkDelivery(PENDING_DIR, session.name, t, this._nextParkSeq(), meta.parkId || null, false, born, meta.parkKey || null);
               if (!session._dead) this._armParkCap(session);
               log.warn('inject', `re-parked an undelivered inject for ${session.name} (${session._dead ? 'dead' : 'paste mode off'}, ${t.length} chars)`);
             } catch (e) {
