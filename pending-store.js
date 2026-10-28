@@ -26,9 +26,23 @@ const { isAlive } = require('./stream-seat');
 //     bare renames; routing them through a write primitive would replace the
 //     claim with a copy and deliver the same message twice.
 
-function agentDir(root, name) { return path.join(root, name); }
+const CLAIMS = '.claims';
+const LEGACY_CLAIM_RE = /^\.resend\.|\.draining\.[a-z]+\.\d+$/;
 
-function isClaimEntry(name) { return /\.draining\.|\.resend\./.test(name); }
+function agentDir(root, name) {
+  if (name === CLAIMS) throw new Error(`reserved pending-store name: ${name}`);
+  return path.join(root, name);
+}
+
+function claimsDir(root) { return path.join(root, CLAIMS); }
+
+function claimPath(root, entry) {
+  const dir = claimsDir(root);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  return path.join(dir, entry);
+}
+
+function isClaimEntry(name) { return name === CLAIMS || LEGACY_CLAIM_RE.test(name); }
 
 // Does parked file `f` carry resend id `id`? STRUCTURAL match, not a suffix
 // endsWith: an id-tagged basename is `<ts>.<counter>.<id>.json` (4 dot-segments,
@@ -88,7 +102,7 @@ function parkDelivery(root, name, text, seq, id = null, passive = false, born = 
 function drainPending(root, name, claimTag, expectedBorn = null) {
   rehomeOrphans(root, name);
   const dir = agentDir(root, name);
-  const claim = `${dir}.draining.${claimTag}`;
+  const claim = claimPath(root, `${name}.draining.${claimTag}`);
   try {
     fs.renameSync(dir, claim);
   } catch (e) {
@@ -125,14 +139,15 @@ function restoreParked(dir, base, raw) {
 function rehomeOrphans(root, name) {
   const dir = agentDir(root, name);
   const prefix = `${name}.draining.`;
-  let siblings = [];
-  try { siblings = fs.readdirSync(root); } catch { return; }
-  for (const s of siblings) {
+  const listings = [];
+  try { listings.push([claimsDir(root), fs.readdirSync(claimsDir(root))]); } catch {}
+  try { listings.push([root, fs.readdirSync(root).filter((s) => LEGACY_CLAIM_RE.test(s))]); } catch {}
+  for (const [parent, s] of listings.flatMap(([p, list]) => list.map((e) => [p, e]))) {
     if (!s.startsWith(prefix)) continue;
     const pid = Number(s.slice(s.lastIndexOf('.') + 1));
     if (!Number.isInteger(pid) || pid <= 0 || isAlive(pid)) continue;
-    const mine = `${dir}.draining.rehome.${process.pid}`;
-    try { fs.renameSync(path.join(root, s), mine); } catch { continue; }
+    const mine = claimPath(root, `${name}.draining.rehome.${process.pid}`);
+    try { fs.renameSync(path.join(parent, s), mine); } catch { continue; }
     const json = (f) => f.endsWith('.json') && !f.startsWith('.');
     let files = [];
     try { files = fs.readdirSync(mine).filter(json); } catch { continue; }
@@ -170,7 +185,7 @@ function hasPending(root, name) {
 
 // Cheap count (not a claim): how many parked deliveries does `name` have right
 // now? Drives the sidebar's parked-message badge. A mid-flight drain has renamed
-// the agent dir out to a `<name>.draining.<tag>` sibling, so agentDir ENOENTs and
+// the agent dir out, so agentDir ENOENTs and
 // we report 0 — claimed means committed for delivery, no longer "waiting".
 function countPending(root, name) {
   try {
@@ -274,7 +289,7 @@ function parkIdInUse(root, id) {
 
 // Claim a single parked delivery by its resend `id`, across all agent stores.
 // Single-file rename-claim (mirrors drainPending's atomicity at file grain): the
-// matched file is renamed OUT to a root-level `.resend.` sibling before it's
+// matched file is renamed OUT before it's
 // read, so it can't also be swept up by a concurrent whole-dir drain. Returns
 // null when no file matches OR the rename ENOENTs (the next-turn drain already
 // claimed the whole dir — a success outcome, so the caller reports "already
@@ -289,7 +304,7 @@ function claimParkedById(root, id) {
     try { files = fs.readdirSync(dir); } catch { continue; }
     const match = files.find((f) => parkFileHasId(f, id));
     if (!match) continue;
-    const claim = path.join(root, `.resend.${id}.${process.pid}.${Date.now()}`);
+    const claim = claimPath(root, `.resend.${id}.${process.pid}.${Date.now()}`);
     try {
       fs.renameSync(path.join(dir, match), claim);
     } catch (e) {
@@ -324,7 +339,7 @@ function claimParkedByKey(root, name, key) {
     let parked;
     try { parked = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); } catch { continue; }
     if (!parked || parked.key !== key) continue;
-    const claim = path.join(root, `.resend.${key}.${process.pid}.${Date.now()}.${n++}`);
+    const claim = claimPath(root, `.resend.${key}.${process.pid}.${Date.now()}.${n++}`);
     try {
       fs.renameSync(path.join(dir, f), claim);
     } catch (e) {
@@ -346,4 +361,4 @@ function claimParkedByKey(root, name, key) {
   return { ids, claimed };
 }
 
-module.exports = { parkDelivery, drainPending, rehomeOrphans, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, parkedTexts, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir };
+module.exports = { parkDelivery, drainPending, rehomeOrphans, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, parkedTexts, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir, claimsDir };

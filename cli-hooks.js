@@ -454,8 +454,9 @@ JSEOF
     // dir guard so the empty case stays a stat-and-exit with no python spawn.
     fs.writeFileSync(pendingScriptPath, `#!/bin/bash
 if [ ! -d "${pendingDir}" ]; then
-  set -- "${pendingDir}".draining.*
-  [ -e "$1" ] || exit 0
+  shopt -s nullglob
+  set -- "${path.join(REGISTRY_DIR, 'pending', '.claims', name)}".draining.* "${pendingDir}".draining.*
+  [ $# -gt 0 ] || exit 0
 fi
 IFS= read -r -d '' JS <<'JSEOF' || true
 const fs = require('fs'), path = require('path');
@@ -543,16 +544,23 @@ function restore_parked(base, raw) {
 function pid_alive(pid) {
   try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
 }
+const claims = path.join(path.dirname(d), '.claims');
+function claim_path(entry) {
+  fs.mkdirSync(claims, { recursive: true, mode: 0o700 });
+  return path.join(claims, entry);
+}
 function rehome_orphans() {
-  const parent = path.dirname(d);
+  const root = path.dirname(d);
   const prefix = path.basename(d) + '.draining.';
-  let siblings = [];
-  try { siblings = fs.readdirSync(parent); } catch (e) { return; }
-  for (const s of siblings) {
+  const listings = [];
+  try { listings.push([claims, fs.readdirSync(claims)]); } catch (e) {}
+  try { listings.push([root, fs.readdirSync(root).filter(function (n) { return /\\.draining\\.[a-z]+\\.\\d+$/.test(n); })]); } catch (e) {}
+  for (const [parent, s] of listings.flatMap(function (l) { return l[1].map(function (e) { return [l[0], e]; }); })) {
     if (!s.startsWith(prefix)) continue;
     const pid = Number(s.slice(s.lastIndexOf('.') + 1));
     if (!Number.isInteger(pid) || pid <= 0 || pid_alive(pid)) continue;
-    const mine = d + '.draining.rehome.' + process.pid;
+    let mine;
+    try { mine = claim_path(path.basename(d) + '.draining.rehome.' + process.pid); } catch (e) { continue; }
     try { fs.renameSync(path.join(parent, s), mine); } catch (e) { continue; }
     const json = function (n) { return n.endsWith('.json'); };
     let files = [];
@@ -570,8 +578,9 @@ function rehome_orphans() {
   }
 }
 rehome_orphans();
-const claim = d + '.draining.hook.' + process.pid;
+let claim;
 try {
+  claim = claim_path(path.basename(d) + '.draining.hook.' + process.pid);
   fs.renameSync(d, claim);        // atomic claim; ENOENT => nothing to drain / lost the race
 } catch (e) {
   process.exit(0);

@@ -275,6 +275,8 @@ inject queue to empty (capped at `INJECT_BOOT_MAXWAIT` past the edge), so a spaw
   Publish is tmp + atomic rename; drain is an atomic whole-directory
   rename-claim (hook drain and cap-fire drain use distinct claim tags, so
   they're mutually exclusive). Zero-loss by construction.
+- Claims rename into `<root>/.claims/`, outside the session-name grammar,
+  so a seat named like a claim cannot be mistaken for one.
 - Parked files: `<seq>.json` or `<seq>.<id>.json` — the id segment is
   matched *structurally* (4 vs 3 segments), never by suffix, so a
   counter-shaped seq can't be claimed as an id.
