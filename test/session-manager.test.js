@@ -651,6 +651,22 @@ test('_onHoldLifecycle: re-anchor re-persists, no disarm erases an intent, only 
     'no disarm cause writes to persistence at all — a failed ping is not evidence about the setting');
 });
 
+test('_holdConfigDirFor resolves the account from persistence, not liveness', () => {
+  const m = mk({
+    getPersistence: () => ({
+      list: () => [
+        { name: 'sub', sessionId: 'sid-sub', env: { CLAUDE_CONFIG_DIR: '/x/sub' } },
+        { name: 'dflt', sessionId: 'sid-dflt' },
+      ],
+      get: () => null,
+    }),
+  });
+  assert.strictEqual(m.sessions.size, 0, 'ENTER: no seat is live');
+  assert.strictEqual(m._holdConfigDirFor('sid-sub'), '/x/sub');
+  assert.strictEqual(m._holdConfigDirFor('sid-dflt'), null, 'a record without an env is the default store');
+  assert.strictEqual(m._holdConfigDirFor('sid-unknown'), undefined, 'no record owns it: undefined, not null');
+});
+
 // A hold pings roughly hourly and, before this, a SUCCESSFUL ping was logged
 // nowhere and broadcast nowhere — the operator watched a seat's cache reset with
 // no way to tell a ping had fired, let alone whether it landed warm (one cached

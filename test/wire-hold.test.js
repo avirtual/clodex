@@ -799,6 +799,26 @@ test('ping: a seat with no config dir re-reads the default store', async () => {
   }
 });
 
+test('ping: a session no seat record owns DECLINES instead of borrowing the default account', async () => {
+  const seen = [];
+  const auth = (dir) => {
+    seen.push(dir);
+    return { accessToken: 'sk-ant-oat01-default-acct', expiresAt: Date.now() + 3600_000 };
+  };
+  const { store, keeper, sent } = rig({ auth, configDirFor: () => undefined });
+  const obj = makeObj();
+  keeper.noteRequest(SID, obj, { authorization: OAT }, 'http://up/v1/messages');
+  stampWarm(store, obj);
+
+  const res = await keeper.ping(SID);
+  assert.equal(res.skipped, 'no-account');
+  assert.equal(res.ok, true);
+  assert.equal(res.warmed, false);
+  assert.deepStrictEqual(seen, [], '_auth is never consulted');
+  assert.equal(sent.length, 0, '_request is never called');
+  assert.deepEqual(pingOutcome(res), ['decline', 'declined:no-account']);
+});
+
 test('keychainServiceFor derives the CLI\'s suffixed item name', () => {
   const { keychainServiceFor, readClaudeAuth } = require('../wire/claude-auth');
 

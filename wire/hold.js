@@ -399,7 +399,12 @@ class HoldKeeper extends EventEmitter {
     // stays due for the rest of its margin window and then goes cold on its own.
     const authKey = Object.keys(headers).find((k) => k.toLowerCase() === 'authorization');
     if (authKey && /^Bearer\s+sk-ant-oat/i.test(headers[authKey] || '')) {
-      const { accessToken, expiresAt } = this._auth(this._configDirFor(sessionId) || null);
+      const configDir = this._configDirFor(sessionId);
+      if (configDir === undefined) {
+        return { ok: true, warmed: false, skipped: 'no-account', session: sessionId,
+          hash: hFull, note: 'no seat record owns this session; declined rather than guessing an account' };
+      }
+      const { accessToken, expiresAt } = this._auth(configDir || null);
       if (!accessToken) {
         return { ok: true, warmed: false, skipped: 'no-credential', session: sessionId,
           hash: hFull, note: 'could not read the current Claude OAuth token; declined rather than replaying a stale bearer' };
