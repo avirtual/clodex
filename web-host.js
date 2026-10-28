@@ -10,7 +10,7 @@ const os = require('os');
 const https = require('https');
 const { AsyncLocalStorage } = require('async_hooks');
 const { WebSocketServer } = require('ws');
-const { makeTokenGate, isLoopbackHost, originAllowed } = require('./auth-token');
+const { makeTokenGate, isLoopbackHost, originAllowed, originMismatch } = require('./auth-token');
 const { escapeSafeTail } = require('./session-manager');
 
 const APP_VERSION = require('./package.json').version;
@@ -69,7 +69,7 @@ function createWebHost({ engine, log, port, host, token, insecure = false, userD
   const checkToken = (provided) => gate.check(provided);
   const tokenFromReq = (req) => gate.fromReq(req);
   const refusing = !gate.configured && !isLoopbackHost(host) && !insecure;
-  const foreignOrigin = (req) => !gate.configured && !originAllowed(req, { ipHost: insecure });
+  const foreignOrigin = (req) => (!gate.configured && !originAllowed(req, { ipHost: insecure })) || originMismatch(req) !== null;
 
   function fanEvent(workspaceId, channel, args) {
     if (channel === 'pty-data') {

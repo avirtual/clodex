@@ -64,6 +64,12 @@ function originRefusal(req, { ipHost = false } = {}) {
   const headers = (req && req.headers) || {};
   const host = String(headers.host || '').toLowerCase();
   if (!LOOPBACK_HOST_RE.test(host) && !(ipHost && IP_LITERAL_HOST_RE.test(host))) return 'Host';
+  return originMismatch(req);
+}
+
+function originMismatch(req) {
+  const headers = (req && req.headers) || {};
+  const host = String(headers.host || '').toLowerCase();
   const origin = headers.origin;
   if (origin == null) return null;
   let u;
@@ -78,4 +84,4 @@ function originAllowed(req, opts) {
   return originRefusal(req, opts) === null;
 }
 
-module.exports = { makeTokenGate, isLoopbackHost, originAllowed, originRefusal };
+module.exports = { makeTokenGate, isLoopbackHost, originAllowed, originRefusal, originMismatch };

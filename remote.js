@@ -7,7 +7,7 @@ const path = require('path');
 
 const crypto = require('crypto');
 const { relayVersionOk, isQualifiedSender, isDoneTaskEnvelope, isSandboxEnvelope } = require('./relay-protocol');
-const { makeTokenGate, isLoopbackHost, originRefusal } = require('./auth-token');
+const { makeTokenGate, isLoopbackHost, originRefusal, originMismatch } = require('./auth-token');
 const { BOX_ID_RE } = require('./sandbox');
 const { maskSecrets } = require('./log-mask');
 const { IMPORT_CHUNK_MAX } = require('./seat-import');
@@ -703,7 +703,7 @@ class RemoteServer {
       res.end('Refusing to serve: bound to a non-loopback address with no CLODEX_REMOTE_TOKEN set. Set CLODEX_REMOTE_TOKEN, or CLODEX_REMOTE_INSECURE=1 to override.');
       return false;
     }
-    const failed = this._gate.configured ? null : originRefusal(req, { ipHost: this._insecure });
+    const failed = this._gate.configured ? originMismatch(req) : originRefusal(req, { ipHost: this._insecure });
     if (failed) {
       res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(`forbidden: ${failed} header does not match this host`);

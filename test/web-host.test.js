@@ -240,13 +240,31 @@ test('insecure token-less host: ipHost lifts the loopback Host rule for IP liter
   } finally { host.close(); }
 });
 
-test('token-configured host: a valid token with a foreign Origin still welcomes (the token is the boundary)', async () => {
+test('token-configured host: a valid token with a foreign Origin is refused at the upgrade and on HTTP; a same-origin or Origin-less client is served', async () => {
   const { host, port } = await startHost({ token: 'secret' });
   try {
-    const c = connect(port, { token: 'secret', headers: { Origin: 'https://evil.example' } });
-    const welcome = await helloWelcome(c, { workspaceId: 'default', token: 'secret' });
-    assert.equal(welcome.t, 'welcome');
-    c.close();
+    const foreign = connect(port, { token: 'secret', headers: { Origin: 'http://127.0.0.1:9999' } });
+    await assert.rejects(foreign.open());
+    const same = connect(port, { token: 'secret', headers: { Origin: `http://127.0.0.1:${port}` } });
+    assert.equal((await helloWelcome(same, { workspaceId: 'default', token: 'secret' })).t, 'welcome');
+    same.close();
+    const bare = connect(port, { token: 'secret' });
+    assert.equal((await helloWelcome(bare, { workspaceId: 'default', token: 'secret' })).t, 'welcome');
+    bare.close();
+    const post = (origin) => new Promise((resolve, reject) => {
+      const headers = { Cookie: 'clodex_remote_token=secret' };
+      if (origin) headers.Origin = origin;
+      const r = http.request({ host: '127.0.0.1', port, path: '/', method: 'POST', headers }, (res) => {
+        let body = '';
+        res.on('data', (c) => { body += c; });
+        res.on('end', () => resolve({ status: res.statusCode, body }));
+      });
+      r.on('error', reject);
+      r.end();
+    });
+    assert.deepStrictEqual(await post('http://127.0.0.1:9999'), { status: 403, body: 'forbidden origin' });
+    assert.notEqual((await post(`http://127.0.0.1:${port}`)).status, 403);
+    assert.notEqual((await post(null)).status, 403);
   } finally { host.close(); }
 });
 

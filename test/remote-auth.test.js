@@ -181,6 +181,23 @@ test('token configured: wrong token → 401, correct token → 200 (query, beare
   });
 });
 
+test('token configured + cookie: a cross-port Origin on the bodyless POST /api/restart is a 403 and never restarts; same-origin and Origin-less pass', async () => {
+  let restarts = 0;
+  await withServer({ host: '127.0.0.1', token: 'sekret', restartApp: () => { restarts += 1; } }, async (port) => {
+    const cookie = 'clodex_remote_token=sekret';
+    const cross = await req(port, '/api/restart', { method: 'POST', headers: { cookie, origin: 'http://127.0.0.1:9999' } });
+    assert.equal(cross.status, 403);
+    assert.match(cross.body, /Origin header does not match this host/);
+    assert.equal(restarts, 0, 'the restart handler never ran');
+    const same = await req(port, '/api/restart', { method: 'POST', headers: { cookie, origin: `http://127.0.0.1:${port}` } });
+    assert.equal(same.status, 200);
+    assert.equal(restarts, 1);
+    const bare = await req(port, '/api/restart', { method: 'POST', headers: { cookie } });
+    assert.equal(bare.status, 200);
+    assert.equal(restarts, 2);
+  });
+});
+
 // ── cookie set on the ?token= bookmark hit, then replayed ────────────────────
 
 test('valid ?token= sets an HttpOnly SameSite=Strict cookie; a later cookie-only request authenticates', async () => {
