@@ -546,6 +546,7 @@ function initStores(userDataPath, {
   const MCP_DIR = path.join(registryDir, 'library', 'mcp');
 
   let launchBakTaken = false;
+  let orphanWorkspacesSynthesized = false;
 
   const unreadableLogged = new Set();
   let persistRefusedLogged = false;
@@ -1106,12 +1107,26 @@ function initStores(userDataPath, {
       } catch (e) { console.error('workspaces save failed:', e); }
     },
     list() {
-      const all = this._load();
+      let all = this._load();
+      let dirty = false;
       if (all.length === 0) {
-        const def = { id: DEFAULT_WORKSPACE_ID, name: 'Workspace', bounds: null };
-        this._save([def]);
-        return [def];
+        all = [{ id: DEFAULT_WORKSPACE_ID, name: 'Workspace', bounds: null }];
+        dirty = true;
       }
+      if (!orphanWorkspacesSynthesized && !this._unreadable) {
+        orphanWorkspacesSynthesized = true;
+        const seats = persistence.list();
+        if (!persistence._unreadable) {
+          const have = new Set(all.map((w) => w.id));
+          const ids = [...new Set(seats.map((e) => e && e.workspaceId).filter((id) => id && !have.has(id)))];
+          if (ids.length) {
+            for (const id of ids) all.push({ id, name: id, bounds: null });
+            dirty = true;
+            console.warn(`workspaces.json: synthesized ${ids.length} workspace record(s) for seats whose workspace was missing: ${ids.join(', ')}`);
+          }
+        }
+      }
+      if (dirty) this._save(all);
       return all;
     },
     get(id) { return this._load().find(w => w.id === id) || null; },

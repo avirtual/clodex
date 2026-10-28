@@ -2717,6 +2717,42 @@ test('workspaces: list seeds a default, upsert/get/setName/sortedByRecent', () =
   } finally { cleanup(); }
 });
 
+test('workspaces: a quarantined workspaces.json gets a record synthesized for every seat workspace', () => {
+  const { stores, cleanup, userData } = freshStores();
+  try {
+    stores.persistence.upsert({ name: 'a', type: 'claude', workspaceId: 'ws2' });
+    stores.persistence.upsert({ name: 'b', type: 'claude', workspaceId: 'default' });
+    fs.writeFileSync(path.join(userData, 'workspaces.json'), '{not json');
+    const warns = [];
+    const orig = console.warn;
+    console.warn = (...a) => { warns.push(a.map(String).join(' ')); };
+    let listed;
+    try { listed = stores.workspaces.list(); } finally { console.warn = orig; }
+    assert.deepStrictEqual(listed, [
+      { id: 'default', name: 'Workspace', bounds: null },
+      { id: 'ws2', name: 'ws2', bounds: null },
+    ]);
+    assert.ok(warns.some((l) => l.includes('synthesized 1 workspace record(s)') && l.includes('ws2')), warns.join('\n'));
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(userData, 'workspaces.json'), 'utf-8')).map((w) => w.id), ['default', 'ws2']);
+  } finally { cleanup(); }
+});
+
+test('workspaces: a deleted workspace row stays deleted — no seats, or a seat still naming it after the launch synthesis', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const { workspaces, persistence } = stores;
+    workspaces.upsert({ id: 'default', name: 'Workspace', bounds: null });
+    workspaces.upsert({ id: 'empty', name: 'Empty', bounds: null });
+    workspaces.upsert({ id: 'ws2', name: 'Two', bounds: null });
+    persistence.upsert({ name: 'a', type: 'claude', workspaceId: 'ws2' });
+    assert.deepStrictEqual(workspaces.list().map((w) => w.id), ['default', 'empty', 'ws2'], 'ENTER: the launch list ran');
+    workspaces.remove('empty');
+    workspaces.remove('ws2');
+    assert.deepStrictEqual(persistence.list().map((e) => e.workspaceId), ['ws2'], 'ENTER: a seat still names ws2');
+    assert.deepStrictEqual(workspaces.list().map((w) => w.id), ['default']);
+  } finally { cleanup(); }
+});
+
 test('workspaces: an unparseable workspaces.json is not overwritten by list()', () => {
   const { stores, cleanup, userData } = freshStores();
   try {
