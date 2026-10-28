@@ -1864,6 +1864,21 @@ function createTicketMethods(deps, shared) {
           return;
         }
 
+        const now = this._loadTicket(team, ticketId) || ticket;
+        const round = Array.isArray(now.rounds) ? now.rounds.find((r) => r && Number(r.round) === Number(landedOn.reviewRound)) : null;
+        const reviewedSha = round && round.headSha ? String(round.headSha) : null;
+        if (!reviewedSha) {
+          fail('moved', 'the review round carries no headSha, so the reviewed tree cannot be identified',
+            'read rounds[reviewRound].headSha; nothing was merged');
+          return;
+        }
+        const tip = await gitWorktree.revParse(team.root, branch);
+        if (tip !== reviewedSha) {
+          fail('moved', `${branch} is at ${String(tip || 'an unresolvable ref').slice(0, 12)} but review round ${landedOn.reviewRound} read ${reviewedSha.slice(0, 12)} — a commit landed after the review`,
+            'compared rounds[].headSha with rev-parse of the branch; nothing was merged');
+          return;
+        }
+
         const dirty = await gitWorktree.isDirty(team.root).catch((e) => ({ ok: false, error: e.message }));
         if (!dirty.ok) {
           fail('clean-tree', `git could not report the state of the root checkout ${team.root}: ${dirty.error}`,
@@ -1968,12 +1983,12 @@ function createTicketMethods(deps, shared) {
           return;
         }
         const mergeStartedAt = Date.now();
-        merged = await gitWorktree.mergeNoFf(team.root, branch, msgFile)
+        merged = await gitWorktree.mergeNoFf(team.root, reviewedSha, msgFile)
           .catch((e) => ({ ok: false, error: e.message }));
         if (!merged.ok) {
           // Report off `wedged`, never `aborted`: a merge that failed before it started also fails to
           // abort, and a wedged-checkout claim about an untouched tree is a false alarm.
-          fail('merge', `git merge --no-ff ${branch} failed:\n${merged.error}`,
+          fail('merge', `git merge --no-ff ${reviewedSha} (${branch}) failed:\n${merged.error}`,
             merged.wedged
               ? `ran the merge in ${team.root}; \`git merge --abort\` ALSO failed and MERGE_HEAD is still there, so the checkout is left mid-merge and needs a human`
               : `ran the merge in ${team.root}; the checkout is back where it was (no MERGE_HEAD)`);

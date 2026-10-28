@@ -341,6 +341,11 @@ function mkMerge({ repo, ticketOver = {}, suite = 'green', gitOver = null, isAli
     worktree: { path: pathReal.join(repo.dir, 'wt'), branch: 'tl-1', baseSha: repo.baseSha },
     ...ticketOver,
   };
+  if (!('rounds' in ticketOver)) {
+    let tip = null;
+    try { tip = git(repo.dir, ['rev-parse', '--verify', '--quiet', `${ticket.worktree.branch}^{commit}`]); } catch {}
+    if (tip) ticket.rounds = [1, 2, 3].map((round) => ({ round, headSha: tip }));
+  }
   tstore.save(team.root, [ticket]);
 
   return {
@@ -1761,6 +1766,63 @@ test('a base that is no longer an ancestor escalates, and nothing is merged', as
   assert.strictEqual(f.masterHead(), before, 'master did not move');
 });
 
+function spyMerge() {
+  const calls = [];
+  const real = require('../git-worktree').mergeNoFf;
+  return { calls, mergeNoFf: (cwd, ref, msg) => { calls.push(ref); return real(cwd, ref, msg); } };
+}
+
+test('t2024: a branch that gained a commit after the review round stops at moved, and nothing is merged', async () => {
+  const repo = mkRepo();
+  const reviewed = commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const spy = spyMerge();
+  const f = mkMerge({ repo, gitOver: { mergeNoFf: spy.mergeNoFf } });
+  assert.strictEqual(f.one().rounds[0].headSha, reviewed, 'ENTER: round 1 read the reviewed sha');
+  const late = commitOnBranch(repo.dir, 'tl-1', 'late.txt', 'unreviewed\n');
+  const before = f.masterHead();
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1);
+  assert.match(esc[0].body, /merge: moved/);
+  assert.ok(esc[0].body.includes(late.slice(0, 12)) && esc[0].body.includes(reviewed.slice(0, 12)),
+    `the tip and the reviewed sha are both named. Got:\n${esc[0].body}`);
+  assert.deepStrictEqual(spy.calls, [], 'mergeNoFf never ran');
+  assert.strictEqual(f.masterHead(), before, 'master did not move');
+  assert.strictEqual(f.one().mergeError, 'moved');
+});
+
+test('t2024: a branch still at the reviewed sha merges that SHA, not the branch name', async () => {
+  const repo = mkRepo();
+  const reviewed = commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const spy = spyMerge();
+  const f = mkMerge({ repo, gitOver: { mergeNoFf: spy.mergeNoFf } });
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.deepStrictEqual(f.esc(), []);
+  assert.deepStrictEqual(spy.calls, [reviewed], 'the merge argument is the reviewed sha');
+  assert.strictEqual(git(repo.dir, ['rev-parse', 'master^2']), reviewed, 'and the merge commit\'s second parent is it');
+});
+
+test('t2024: a review round with no headSha refuses at moved rather than merging blind', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const spy = spyMerge();
+  const f = mkMerge({ repo, gitOver: { mergeNoFf: spy.mergeNoFf }, ticketOver: { rounds: [{ round: 1, diffFile: 'review-t1-r1.diff' }] } });
+  const before = f.masterHead();
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1);
+  assert.match(esc[0].body, /merge: moved/);
+  assert.match(esc[0].body, /carries no headSha/);
+  assert.deepStrictEqual(spy.calls, []);
+  assert.strictEqual(f.masterHead(), before);
+});
+
 // ── step 3: the checkout must be clean and on master ───────────────────────
 
 test('a dirty root checkout escalates rather than folding stray edits into the merge', async () => {
@@ -2215,6 +2277,7 @@ test('a second ACCEPT cannot merge while the first ACCEPT is still running its s
     ...t1, id: 't2', taskDir: 'tasks/merge-fixture-2',
     spec: 'the second ticket — tasks/merge-fixture-2',
     worktree: { path: pathReal.join(repo.dir, 'wt2'), branch: 'tl-2', baseSha: repo.baseSha },
+    rounds: [{ round: 1, headSha: git(repo.dir, ['rev-parse', 'tl-2']) }],
   }]);
 
   // A slow suite that reports what master looked like WHILE it ran. The head is
@@ -2287,6 +2350,7 @@ test('two ACCEPTs arriving as review-done are serialized too, not merely when qu
     ...t1, id: 't2', taskDir: 'tasks/merge-fixture-2',
     spec: 'the second ticket — tasks/merge-fixture-2',
     worktree: { path: pathReal.join(repo.dir, 'wt2'), branch: 'tl-2', baseSha: repo.baseSha },
+    rounds: [{ round: 1, headSha: git(repo.dir, ['rev-parse', 'tl-2']) }],
   }]);
 
   let release = null;
@@ -2338,6 +2402,7 @@ test('a merge that has to wait for the chain says so in the log', async () => {
     ...t1, id: 't2', taskDir: 'tasks/merge-fixture-2',
     spec: 'the second ticket — tasks/merge-fixture-2',
     worktree: { path: pathReal.join(repo.dir, 'wt2'), branch: 'tl-2', baseSha: repo.baseSha },
+    rounds: [{ round: 1, headSha: git(repo.dir, ['rev-parse', 'tl-2']) }],
   }]);
 
   const p1 = f.m._queueAutoMerge(f.team, 't1', LANDED, ACCEPT);
@@ -3398,6 +3463,7 @@ test('a merge waiting on the lock does not hold the merge chain against another 
     ...t1, id: 't2', taskDir: 'tasks/merge-fixture-2',
     spec: 'the second ticket — tasks/merge-fixture-2',
     worktree: { path: pathReal.join(repo.dir, 'wt2'), branch: 'tl-2', baseSha: repo.baseSha },
+    rounds: [{ round: 1, headSha: git(repo.dir, ['rev-parse', 'tl-2']) }],
   }]);
   plantLock(repo);
 

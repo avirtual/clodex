@@ -29,6 +29,7 @@ blocks a release.
 - clodexctl: `undeploy node --docker` now removes only the node's own data volume and lists any other named volume it leaves alone; it used to delete every named volume attached to the container, including ones passed with `--volume`.
 - clodexctl: undeploying a Fargate stack on a shared, pre-existing cluster no longer removes the saved contexts of the other stacks on that cluster.
 - clodexctl: `port-forward` and `web --port` now fail at once when the chosen local port is already in use, instead of reporting the forward as open on another service.
+- **Security:** the ticket loop's ACCEPT merge lands the exact commit the reviewer read: a branch that gained a commit after the review round stops at a new `moved` step instead of merging unreviewed work, and the merge names the reviewed sha rather than the branch ref.
 
 ## 5.147.0 — 2026-10-28 — security fixes from the first cold audit
 

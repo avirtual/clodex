@@ -419,6 +419,7 @@ manual `git merge --no-ff` command. It does not hold the merge queue while it
 waits: other tickets merge past a waiting one. Only this one refusal retries; a
 dirty tree, a moved branch and a red suite still stop on the first try, because
 each of those is a state a human has to look at.
+The merge lands the commit the reviewer read, not the branch ref: the verify step stamps the diffed head on its round (`rounds[].headSha`), and the gate refuses (`merge: moved`) when that round carries no `headSha` or when the branch tip is no longer that sha, so a commit pushed after the review never reaches the trunk unreviewed. When the gate passes, `git merge --no-ff` is given the sha itself.
 An auto-merge carries a `mergeWaiting` stamp from the ACCEPT until it finishes: `queued` while it waits its turn on the merge chain, `suite-in-flight` while it is deferred behind a lock, and `merging` (with `mergeWaitingSha`) once the merge commit is on the trunk and its post-merge suite runs.
 At boot a `queued` or `suite-in-flight` row whose branch is not yet on the target is requeued with a fresh twenty-minute cap; a `suite-in-flight` row already on the target was landed by hand and only loses its stamp.
 A `merging` row, or a `queued` one already on the target, means a merge reached the trunk without a finished suite: boot never requeues or forgets it, but stamps `mergeError: unexpected` and escalates it as unverified with the `git revert -m 1` command for its sha.

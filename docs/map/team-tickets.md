@@ -146,6 +146,7 @@
 - `_queueAutoMerge` runs one merge at a time process-wide, with the catch inside each link so one rejected merge cannot break the chain.
 - `_autoMergeTicket` leaves mergeWaiting set only on the defer arm, clearing it for every other exit in its finally.
 - `_autoMergeTicket`'s `fail` re-reads the ticket before any merge ran and logs ABANDONED instead of stamping when it is gone, reopened, rejected or closed out.
+- `_autoMergeTicket` merges `rounds[reviewRound].headSha`, never the branch ref, and refuses at `moved` when that stamp is missing or the branch tip differs from it; `_requeueOneWaiting` inherits the gate.
 - `_autoMergeTicket` retries only the suite-in-flight arm, scheduling the retry through `_scheduleMergeRetry` and re-entering via `_queueAutoMerge`.
 - `_suiteLockHolder` keeps the liveness probe outside the read's catch, so a probe fault reaches the catch-all rather than reading as no suite running.
 - `_mergeTouchedChangelog` keeps the header pattern's path prefix optional (diff.noprefix emits none) and `^`-anchored, and every misread fails toward asking the lead to look, never toward saying nothing is owed.
