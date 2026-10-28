@@ -28,6 +28,9 @@ blocks a release.
 - Move to Peer: when the commit's reply is lost, Clodex re-sends the commit instead of trusting a session probe, so a seat whose far-side creation was still in flight is no longer respawned locally as well (the conversation no longer forks onto two hosts).
 - An SSM `deploy node` / `upgrade node` saves the context with the new wire token as soon as the box switches to it, so a failed verify or Claude-token delivery no longer leaves a context whose token the box rejects.
 - `create node` accepts `--token-file FILE` and `--token -` (stdin), so a wire token no longer has to pass through argv.
+- A dm or ticket spec waiting in a seat's inject queue is re-parked to `pending/<seat>/` when the seat exits before it was written, instead of being lost; `urgent` no longer deletes the parked copy before the new one is safe.
+- A delivery the paste-mode cap re-parks keeps its resend id and content key and no longer raises the "may have been swallowed" notice, so the advised `urgent` resend supersedes it instead of delivering twice.
+- Rename, Delete Session and Delete Workspace wait for the seat's inject queue to settle before moving or removing its pending dir, so a late re-park can no longer land in a dir nothing drains.
 
 ## 5.148.1 — 2026-10-28 — security fixes for the INSECURE origin gate
 
@@ -47,9 +50,6 @@ blocks a release.
 - Edit Session's "Restart session now" keeps the seat's record through the restart and no longer tells the team lead the seat retired (same for a bulk account move).
 - Restarting a ticket hand no longer frees a hand-cap slot, so a cap-parked ticket cannot start and push the team one hand over its cap.
 - The 5 s SIGKILL fallback after a kill is cancelled once the pty exits, so it can no longer hit a recycled pid.
-- A dm or ticket spec waiting in a seat's inject queue is re-parked to `pending/<seat>/` when the seat exits before it was written, instead of being lost; `urgent` no longer deletes the parked copy before the new one is safe.
-- A delivery the paste-mode cap re-parks keeps its resend id and content key and no longer raises the "may have been swallowed" notice, so the advised `urgent` resend supersedes it instead of delivering twice.
-- Rename, Delete Session and Delete Workspace wait for the seat's inject queue to settle before moving or removing its pending dir, so a late re-park can no longer land in a dir nothing drains.
 
 ## 5.148.0 — 2026-10-28 — security fixes from the second cold audit
 
