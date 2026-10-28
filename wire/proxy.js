@@ -16,7 +16,7 @@ const { EventEmitter } = require('events');
 const { URL } = require('url');
 
 const { parseAgentPath, inferProvider } = require('./route');
-const { SSEFramer, anthropicDelta, openaiDelta, UsageCollector, OpenAIUsageCollector, FileToolCollector } = require('./sse');
+const { SSEFramer, anthropicDelta, openaiDelta, UsageCollector, OpenAIUsageCollector, FileToolCollector, MainToolUseCollector } = require('./sse');
 const { Decompressor } = require('./decompress');
 const { RoleClassifier, isSubagentRole, isTitleCall, isProbeCall, isClassifierCall, isCompactCall, isBareSideCall, sideCallKind } = require('./role');
 const { billing, billingOpenai, Ledger } = require('./billing');
@@ -251,8 +251,7 @@ class WireProxy extends EventEmitter {
     this._agentSessions.delete(name);
   }
 
-  _recordMainToolUse(agent, id, name) {
-    if (typeof name !== 'string' || !(name.startsWith('mcp__clodex__') || name === 'Bash')) return;
+  _recordMainToolUse(agent, id) {
     let seen = this._mainToolUses.get(agent);
     if (!seen) { seen = new Map(); this._mainToolUses.set(agent, seen); }
     const now = this.now();
@@ -261,6 +260,16 @@ class WireProxy extends EventEmitter {
       seen.delete(k);
     }
     seen.set(id, now);
+  }
+
+  _closeMainToolUses(agent, messages) {
+    const seen = this._mainToolUses.get(agent);
+    if (!seen || !seen.size || !Array.isArray(messages) || !messages.length) return;
+    const last = messages[messages.length - 1];
+    if (!last || last.role !== 'user' || !Array.isArray(last.content)) return;
+    for (const b of last.content) {
+      if (b && b.type === 'tool_result' && typeof b.tool_use_id === 'string') seen.delete(b.tool_use_id);
+    }
   }
 
   consumeMainToolUse(agent, id) {
@@ -474,6 +483,7 @@ class WireProxy extends EventEmitter {
           // the role.
           const rawAgentId = req.headers['x-claude-code-agent-id'];
           agentId = typeof rawAgentId === 'string' && rawAgentId ? rawAgentId : null;
+          if (rawAgentId === undefined) this._closeMainToolUses(agent, obj.messages);
           const rawRequestClass = req.headers['x-claude-code-request-class'];
           requestClass = typeof rawRequestClass === 'string' && rawRequestClass ? rawRequestClass : null;
           sideCall = requestClass === 'auxiliary' || isTitleCall(obj) || isProbeCall(obj) || isClassifierCall(obj) || isBareSideCall(obj);
@@ -691,8 +701,9 @@ class WireProxy extends EventEmitter {
     const { agent, provider, reqId, sessionId, role, sideCall, compactCall, model, bodyObj, agentId, requestClass, prompt, requestId, status, mainThread } = turnCtx;
     const usage = provider === 'anthropic' ? new UsageCollector() : new OpenAIUsageCollector();
     const extract = provider === 'anthropic' ? anthropicDelta : openaiDelta;
-    const ftools = provider === 'anthropic'
-      ? new FileToolCollector(mainThread === true ? { onToolUse: (id, name) => this._recordMainToolUse(agent, id, name) } : {})
+    const ftools = provider === 'anthropic' ? new FileToolCollector() : null;
+    const mainUses = provider === 'anthropic' && mainThread === true
+      ? new MainToolUseCollector((id) => this._recordMainToolUse(agent, id))
       : null;
     let text = '';
     let truncated = false;
@@ -715,6 +726,7 @@ class WireProxy extends EventEmitter {
       try {
         if (usage) usage.onEvent(event, data);
         if (ftools) ftools.onEvent(event, data);
+        if (mainUses) mainUses.onEvent(event, data);
         const d = extract(event, data);
         if (d && d.s) {
           if (d.kind === 'thinking') {

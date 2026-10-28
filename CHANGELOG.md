@@ -36,7 +36,7 @@ blocks a release.
 - A hold ended or disarmed while another seat's ping was in flight is no longer pinged from the stale tick snapshot.
 - Upstream declines (overload, rate limit, transport, unreadable token) no longer spend a timed hold's ping budget, a `max-pings` stop re-arms on the next turn, and a ping that hangs times out after 30 s instead of wedging every hold.
 - `wirescope` telemetry: pruning a seat that left the live map no longer erases its this-launch spend from the persisted lifetime totals.
-- **Security:** a Claude seat's `main.` identity stamp is accepted only once per tool call the seat's wire tee saw on the main thread, so a subagent that reads the seat's env and session id can no longer mint a stamp and reach `term_exec`, `term_read` or `exec`; a seat running with the wire off has no privileged MCP/`clodex-send` path (typed intents are unaffected), and the docs now state what the stamp does and does not prove.
+- **Security:** a Claude seat's `main.` identity stamp is accepted only once per tool call the seat's wire tee saw on the main thread, and only while that call is still in flight, so a subagent that reads the seat's env and session id can no longer mint a stamp at will and reach `term_exec`, `term_read` or `exec`; a seat running with the wire off has no privileged MCP/`clodex-send` path (typed intents are unaffected), and the docs now state what the stamp does and does not prove.
 - The intent socket times out a client that connects and never sends a request, so stalled probes can no longer exhaust its connection slots and answer every real caller `busy`.
 
 ## 5.147.0 — 2026-10-28 — security fixes from the first cold audit

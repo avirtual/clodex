@@ -6585,7 +6585,7 @@ function createSessionManager(deps) {
         classifyReply: (intent, line) => classifyReplyLine(intent.type, line),
         dispatch: (intent, opts) => this._dispatchSocketIntent(session, intent, opts),
         nameFor: (id) => nameOfSubagent(subqDirFor(name), id),
-        consumeMainToolUse: session.wireRouted === true && session.agentType !== 'codex'
+        consumeMainToolUse: session.wireRouted === true && !session.backend && session.agentType !== 'codex'
           ? (id) => !!(this._wire && this._wire.consumeMainToolUse(name, id))
           : null,
         log,

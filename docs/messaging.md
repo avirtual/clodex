@@ -664,21 +664,7 @@ seats get a request/response channel whose reply is the caller's own tool result
   agent only when `ident` verifies as `main` for the seat's current `sessionId`, its nonce has
   not been seen (512 nonces, 10 min), and the seat's wire tee (`WireProxy.consumeMainToolUse`)
   consumes its `tool_use_id`; anything else — no stamp, a forged, old-shape or replayed
-  one, a tool_use id the wire did not see, or no `sessionId` yet — is a subagent, and a replay logs a warn.
-- **Main identity is one-shot per tool_use; no wire, no privileged socket path:** the credential and
-  the session id are readable by every same-UID process, a subagent's Bash included, so the mac alone
-  proves nothing about the caller. The wire records the id of every `mcp__clodex__*` and `Bash`
-  `tool_use` block in responses to requests without an `x-claude-code-agent-id` header (the main
-  thread), at most 256 ids per seat for 10 min, and hands each out once. A stamp is therefore
-  accepted once per tool call the seat's wire saw on the main thread, so the nonce window
-  (`IDENT_SEEN_MS`) is no longer the only replay guard. A seat spawned with the wire off (or whose
-  wire registration failed) has no consumer, and every socket `main` claim from it is a subagent;
-  typed intents scanned from the reply are unaffected and stay the main agent's channel. A
-  `clodex-send` from a main-thread Bash call keeps main identity through that call's `tool_use_id`,
-  but only for the first stamped segment the socket receives: a second `clodex-send` in the same
-  Bash command is a subagent. Residual: a same-UID process can still drive a real API call through
-  the seat's wire and obtain a main-thread tool_use; the boundary there is its cost and its
-  visibility in the shadow log, not cryptography. A `sub.` stamp verifies the
+  one, a tool_use id the wire did not see, or no `sessionId` yet — is a subagent, and a replay logs a warn. A `sub.` stamp verifies the
   same way (mac over `sub + agent_id + session_id + nonce`, same nonce set) and yields `{agentId, agentType}` —
   only `agent_id` is under the mac, the type is asserted and nothing is granted on it —
   plus the label `<seat>/<name>` from `subq/names/`, else `<seat>/agent-<id8>`; the name exists only after the
@@ -695,6 +681,26 @@ seats get a request/response channel whose reply is the caller's own tool result
   opens on those tool names): the stamp goes straight into `updatedInput.ident`, spread after the
   model's own input so a caller-supplied `ident` is overwritten, with no `ident/` file; `clodex-mcp`
   lifts it out of `args` into the payload's top-level `ident`.
+- **Main identity is one-shot per tool_use; no wire, no privileged socket path:** the credential and
+  the session id are readable by every same-UID process, a subagent's Bash included, so the mac alone
+  proves nothing about the caller. In responses to requests without an `x-claude-code-agent-id`
+  header (the main thread), the wire records the id of each hook-stamped `tool_use`: the four
+  hook-matched MCP tools (`MAIN_TOOL_NAMES`, wire/sse.js) at block start, and a `Bash` call once its
+  streamed input contains `clodex-send`. It keeps at most 256 ids per seat for 10 min, hands each
+  out once, and drops an id as soon as a main-thread request carries its `tool_result`. A stamp is
+  therefore accepted once per tool call the seat's wire saw on the main thread, so the nonce window
+  (`IDENT_SEEN_MS`) is no longer the only replay guard. A seat spawned with the wire off, whose wire
+  registration failed, or whose backend (Bedrock/Vertex) bypasses the wire has no consumer, and
+  every socket `main` claim from it is a subagent; so is a main turn served as non-streaming JSON,
+  whose tool_use ids the wire does not record. Typed intents scanned from the reply are unaffected
+  and stay the main agent's channel. A `clodex-send` from a main-thread Bash call keeps main
+  identity through that call's `tool_use_id`, but only for the first stamped segment the socket
+  receives: a second `clodex-send` in the same Bash command is a subagent. Residual: while a
+  recorded id is open (from its block in the stream until its stamp is redeemed or the main thread
+  sends its `tool_result`, 10 min at most; a Bash command that runs other work before its
+  `clodex-send` holds it open meanwhile), any same-UID process can read its id from the main transcript and redeem it first, and a same-UID
+  process can also drive a real API call through the seat's wire to obtain a fresh one; the
+  boundary is that window, the call's cost and its visibility in the shadow log, not cryptography.
 - **Identity (Codex):** the seat is Codex by `session.agentType` (a clone has no persistence
   entry); `agentId` from `CODEX_THREAD_ID`; equal to the seat's `sessionId`
   or its uuid tail (uuid-shaped ids only) is the main thread; a call with no `agentId`, or a seat

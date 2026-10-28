@@ -289,6 +289,27 @@ async function withSeat(fn, opts) {
   try { await fn(h, cred); } finally { h.a.intentSocket.stop(); }
 }
 
+for (const [label, seat] of [['wire off', { wireRouted: false }], ['backend bypasses the wire', { wireRouted: true, backend: 'bedrock' }]]) {
+  test(`_startIntentSocket: a Claude seat with ${label} has no consumer, so a main stamp the wire would accept is a subagent`, async () => {
+    const h = seatHarness();
+    Object.assign(h.a, seat);
+    fs.mkdirSync(runDirFor(h.root, 'a'), { recursive: true });
+    const cred = mintIntentCredential(crypto);
+    await h.m._startIntentSocket(h.a, { sockPath: pathFor(h.root, 'a', 'intentSocket'), cred });
+    try {
+      const sub = await viaVerb(h, cred, ['[agent:dm b] hi'], mainEnv(cred));
+      assert.deepStrictEqual(h.delivered, []);
+      assert.match(sub.out + sub.err, /not available to a subagent: dm/);
+      h.a.intentSocket.stop();
+      Object.assign(h.a, { wireRouted: true, backend: undefined });
+      await h.m._startIntentSocket(h.a, { sockPath: pathFor(h.root, 'a', 'intentSocket'), cred });
+      const main = await viaVerb(h, cred, ['[agent:dm b] hi'], mainEnv(cred));
+      assert.strictEqual(main.code, 0, main.err);
+      assert.deepStrictEqual(h.delivered, [{ target: 'b', tag: 'a', body: 'hi' }]);
+    } finally { h.a.intentSocket.stop(); }
+  });
+}
+
 test('reply capture: who returns the roster line to the caller and injects nothing into the seat', async () => {
   await withSeat(async (h, cred) => {
     const r = await viaVerb(h, cred, ['[agent:who]'], mainEnv(cred));
@@ -877,6 +898,9 @@ test('callerIsSubagent: the same booleans for every caller of the main-stamp tab
     [{ ident: seenIdent(crypto, CRED, null, null, 'sess-1') }, false],
   ];
   for (const [req, want] of rows) assert.strictEqual(callerIsSubagent({ ...base, req }), want, JSON.stringify(req));
+  const anyId = { ...base, consumeMainToolUse: () => true };
+  assert.strictEqual(callerIsSubagent({ ...anyId, req: { ident: identToken(crypto, CRED, null, null, 'sess-1') } }), true, 'a main stamp with no tool_use id');
+  assert.strictEqual(callerIsSubagent({ ...anyId, req: { ident: identToken(crypto, CRED, null, null, 'sess-1', undefined, 'toolu_x') } }), false);
 });
 
 test('sub stamp: with no name the label falls back to agent-<id8>, never the shared tag', async () => {
