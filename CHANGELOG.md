@@ -14,6 +14,11 @@ blocks a release.
 
 ## Unreleased
 
+- The drawer's Terminal and Console tabs no longer keep typing into or polling a seat that was renamed, archived or removed while it was the only seat; the next active seat gets its own tenants.
+- Removing or restarting a seat clears its voice arm/recording state and per-seat caches, so a rebuilt seat of the same name no longer starts "recording" or inherits the old seat's voice mode and console output.
+- Renaming a seat carries its unsaved side-pane edits to the new name instead of stranding them under the old one.
+- **Security:** the Files pane's Open button reveals launcher files (`.app`, `.command`, `.sh`, …), directories and executables in Finder instead of launching them; a plain file still opens in its default app.
+
 ## 5.148.0 — 2026-10-28 — security fixes from the second cold audit
 
 - **Security:** `CLODEX_WEB_INSECURE=1` / `CLODEX_REMOTE_INSECURE=1` again serve clients that reach a non-loopback bind, which 5.147.0's Host/Origin gate refused; the flag now also skips that gate, as it already skipped the token requirement.
