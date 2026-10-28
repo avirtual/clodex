@@ -434,7 +434,7 @@
 | `_stampTicketRevival` | write the write-once revival link (seat, session id, branch, worktree, baseSha) onto a ticket before teardown | tickets.json revival, lastActivityAt | getPersistence, ticketsStore.save | accept-standing-seat.test.js review-cost-durable.test.js |
 | `_acceptSeatFacts` | the one source of seat name, record, branch and ephemeralSeat that both accept paths read | none (reads persistence record) | getPersistence | unpinned |
 | `_finishAccept` | shared tail of every accept arm: stamp acceptance, end the loop hold, clear answered merge marks, retire reviewers, reap reminders | tickets.json acceptedAt, closedOut, loopClosedOut, mergeError, mergeWaiting | _retireReviewSeatsFor, _cancelTicketReminders, recordEvent | ticket-auto-merge.test.js |
-| `_taskAccept` | lead accept verb: validate, no-op on a loop close-out, own the no-branch arm, else hand off to the shared close-out | archives a one-shot seat, board via callees | _acceptSeatFacts, _stampTicketRevival, _finishAccept, _closeOutMergedTicket | accept-standing-seat.test.js ticket-auto-merge.test.js |
+| `_taskAccept` | lead accept verb: validate, no-op on a loop close-out, own the no-branch arm, else hand off to the shared close-out | archives a one-shot seat, board via callees | _suiteVeto, _acceptSeatFacts, _stampTicketRevival, _finishAccept, _closeOutMergedTicket | accept-standing-seat.test.js ticket-auto-merge.test.js |
 
 ### Invariants
 - `_taskReject` bumps reworkRound and never clears it, since that counter is the only mark separating a rejection-reopened ticket from one that never closed.
@@ -453,7 +453,8 @@
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| `_closeOutMergedTicket` | shared accept teardown for lead and loop, vetoing a lead accept while mergeWaiting is `merging` (post-merge suite running), gating archive, destroy and branch delete on merge, seat kind, tree dirtiness and liveness | tickets.json revival mergeVetoed or mergedInto, seat worktree and branch | _acceptSeatFacts, _finishAccept, destroy, gitWorktree.isMerged, gitWorktree.isDirty, gitWorktree.deleteBranchIfAt | ticket-auto-merge.test.js merged-notice-owes-accept.test.js accept-standing-seat.test.js |
+| `_closeOutMergedTicket` | shared accept teardown for lead and loop, vetoing a lead accept while mergeWaiting is `merging` (post-merge suite running), gating archive, destroy and branch delete on merge, seat kind, tree dirtiness and liveness | tickets.json revival mergeVetoed or mergedInto, seat worktree and branch | _suiteVeto, _acceptSeatFacts, _finishAccept, destroy, gitWorktree.isMerged, gitWorktree.isDirty, gitWorktree.deleteBranchIfAt | ticket-auto-merge.test.js merged-notice-owes-accept.test.js accept-standing-seat.test.js |
+| `_suiteVeto` | the refusal a lead accept gets while mergeWaiting is `merging`, null for the loop or any other row | none | none | ticket-auto-merge.test.js |
 | `_closeOutMergedTicket.seatClause` | the reply fragment saying what happened to the seat, split on one-shot first, then liveness, then record | none | none | accept-standing-seat.test.js |
 | `_taskPark` | lead toggle of parked on an open ticket, never re-delivering the spec on unpark | tickets.json parked, nudgedAt | _reconcileTickets, _resolvableAssignTarget | task-start.test.js |
 | `_taskList` | task list verb: validate the filter and reply with the rendered board | none | _taskListText | clodex-team.test.js |

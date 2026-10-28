@@ -2055,7 +2055,8 @@ function createTicketMethods(deps, shared) {
           const rev = await gitWorktree.revertCommit(team.root, merged.sha)
             .catch((e) => ({ ok: false, error: e.message }));
           const after = this._loadTicket(team, ticketId);
-          const branchFate = after && after.closedOut
+          const gone = !(await gitWorktree.revParse(team.root, branch).catch(() => null));
+          const branchFate = after && after.closedOut && gone
             ? `the branch was DELETED by an accept (${after.acceptedBy || 'the lead'}) that closed the ticket out while the suite ran — restore it with \`git -C ${team.root} branch ${branch} ${merged.sha}^2\``
             : 'the branch is untouched';
           fail('suite', why, (rev.ok
@@ -7187,6 +7188,11 @@ function createTicketMethods(deps, shared) {
         return;
       }
 
+      {
+        const veto = this._suiteVeto(ticket, ticket, session.name);
+        if (veto) { reply(`${veto.text}${this._spillRejectedPayload(session, 'task accept', note)}`); return; }
+      }
+
       const { branch } = this._acceptSeatFacts(ticket);
 
       // No branch means the main checkout: acceptance is the stamp alone, and a standing seat is never retired there.
@@ -7201,7 +7207,15 @@ function createTicketMethods(deps, shared) {
       }
 
       const r = await this._closeOutMergedTicket(team, ticket, tickets, { by: session.name, note });
+      if (r.vetoed) { reply(`${r.text}${this._spillRejectedPayload(session, 'task accept', note)}`); return; }
       (r.merged ? ack : reply)(r.text);
+    },
+
+    _suiteVeto(ticket, row, by) {
+      return by !== 'ticket-loop' && row && row.mergeWaiting === 'merging'
+        ? { ok: false, closedOut: false, merged: false, vetoed: 'merging',
+          text: `ticket ${ticket.id} NOT accepted — the post-merge suite has not answered yet${row.mergeWaitingSha ? ` (merge ${row.mergeWaitingSha} is on the trunk, unverified)` : ''}; accept again after the MERGED or MERGE FAILED notice. The seat, worktree and branch were left alone.` }
+        : null;
     },
 
     async _closeOutMergedTicket(team, ticket, tickets, { by, note = '' }) {
@@ -7214,14 +7228,6 @@ function createTicketMethods(deps, shared) {
       if (by === 'ticket-loop' && (ticket.acceptedAt || ticket.closedOut)) {
         return { ok: true, closedOut: true, already: true,
           text: `ticket ${ticket.id} accepted — ${ticket.acceptedBy || 'the lead'} accepted it first; the loop changed nothing` };
-      }
-      const suiteVeto = (row) => (by !== 'ticket-loop' && row && row.mergeWaiting === 'merging'
-        ? { ok: false, closedOut: false, merged: false, vetoed: 'merging',
-          text: `ticket ${ticket.id} NOT accepted — the post-merge suite has not answered yet${row.mergeWaitingSha ? ` (merge ${row.mergeWaitingSha} is on the trunk, unverified)` : ''}; accept again after the MERGED or MERGE FAILED notice. The seat, worktree and branch were left alone.` }
-        : null);
-      {
-        const veto = suiteVeto(ticket);
-        if (veto) return veto;
       }
       const { seatName, rec, branch, ephemeralSeat, remoteTree } = this._acceptSeatFacts(ticket);
       // What this accept acted on, for the compare-and-clear in `_finishAccept`; a plain let because `mergeStamp` below
@@ -7252,7 +7258,7 @@ function createTicketMethods(deps, shared) {
           return { ok: true, closedOut: true, already: true,
             text: `ticket ${ticket.id} accepted — ${now.acceptedBy} accepted it while this close-out was running; the loop changed nothing` };
         }
-        const veto = suiteVeto(now);
+        const veto = this._suiteVeto(ticket, now, by);
         if (veto) return veto;
         if (now && by !== 'ticket-loop' && now.loopClosedOut) {
           return { ok: true, closedOut: true, already: true,

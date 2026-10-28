@@ -711,10 +711,10 @@ function mkMergeWithTree(opts = {}) {
   return { repo, wtPath, f };
 }
 
-const leadAccept = async (f) => {
+const leadAccept = async (f, body = '') => {
   const replies = [];
   await f.m._taskAccept(f.m.sessions.get('lead'), f.team,
-    { type: 'task', sub: 'accept', id: 't1', who: null, body: '' }, (msg) => replies.push(msg));
+    { type: 'task', sub: 'accept', id: 't1', who: null, body }, (msg) => replies.push(msg));
   return replies.join('\n');
 };
 
@@ -803,6 +803,66 @@ test('#45 F2: a red suite after an accept already tore the branch down names the
   assert.ok(esc[0].body.includes(`branch tl-1 ${sha}^2`), `the escalation names the restore command. Got:\n${esc[0].body}`);
   assert.match(esc[0].body, /DELETED by an accept \(lead\)/);
   assert.ok(!esc[0].body.includes('the branch is untouched'), 'and no longer claims the branch is untouched');
+});
+
+test('#45 F2: a red suite after an accept that KEPT the branch does not call it deleted', async () => {
+  const { repo, f } = mkMergeWithTree({ suite: 'red' });
+  const realSuite = f.m._runTicketSuite.bind(f.m);
+  f.m._runTicketSuite = async (...args) => {
+    const ts = f.tstore.load(f.team.root);
+    const row = ts.find((t) => t.id === 't1');
+    row.acceptedAt = Date.now();
+    row.acceptedBy = 'lead';
+    row.closedOut = true;
+    f.tstore.save(f.team.root, ts);
+    return realSuite(...args);
+  };
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const esc = f.esc();
+  assert.strictEqual(esc.length, 1, 'ENTER: the red suite escalated');
+  assert.match(esc[0].body, /REVERTED the merge/, 'ENTER: and reverted');
+  assert.strictEqual(f.one().closedOut, true, 'ENTER: the row reads closed out');
+  assert.strictEqual(git(repo.dir, ['branch', '--list', '--format=%(refname:short)', 'tl-1']).trim(), 'tl-1', 'ENTER: the branch is still a ref');
+  assert.ok(esc[0].body.includes('the branch is untouched'), `Got:\n${esc[0].body}`);
+  assert.doesNotMatch(esc[0].body, /DELETED/);
+});
+
+const ACCEPT_NOTE = 'ship it';
+
+test('#45 F2: an accept that enters while merging is refused before the merge check and keeps its note', async () => {
+  let checks = 0;
+  const real = require('../git-worktree');
+  const { repo, wtPath, f } = mkMergeWithTree({
+    ticketOver: { mergeWaiting: 'merging' },
+    gitOver: { isMerged: async (...a) => { checks += 1; return real.isMerged(...a); } },
+  });
+  const reply = await leadAccept(f, ACCEPT_NOTE);
+  assert.match(reply, /post-merge suite has not answered yet/);
+  assert.match(reply, /your task accept body \(7 bytes\)/);
+  assert.strictEqual(checks, 0, 'refused at entry, before the merge check');
+  assert.ok(fsReal.existsSync(wtPath));
+  assert.strictEqual(git(repo.dir, ['branch', '--list', '--format=%(refname:short)', 'tl-1']).trim(), 'tl-1');
+});
+
+test('#45 F2: an accept that sees merging only after its merge check is refused and keeps its note', async () => {
+  let stamp = () => {};
+  const real = require('../git-worktree');
+  const { repo, wtPath, f } = mkMergeWithTree({
+    gitOver: { isMerged: async (...a) => { stamp(); return real.isMerged(...a); } },
+  });
+  stamp = () => {
+    const ts = f.tstore.load(f.team.root);
+    ts.find((t) => t.id === 't1').mergeWaiting = 'merging';
+    f.tstore.save(f.team.root, ts);
+  };
+  assert.strictEqual(f.one().mergeWaiting, undefined, 'ENTER: not merging when the accept enters');
+  const reply = await leadAccept(f, ACCEPT_NOTE);
+  assert.match(reply, /post-merge suite has not answered yet/);
+  assert.match(reply, /your task accept body \(7 bytes\)/);
+  assert.ok(fsReal.existsSync(wtPath));
+  assert.strictEqual(git(repo.dir, ['branch', '--list', '--format=%(refname:short)', 'tl-1']).trim(), 'tl-1');
 });
 
 // The same interleave on the accept arms that keep the tree. `!m.ok` and
