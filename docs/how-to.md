@@ -85,9 +85,9 @@ which leaves one GitHub issue: open with its findings, or a closed CLEAN issue
 when it has none. Before a release, `scripts/pre-release-review.sh` pushes master HEAD
 to the `staging` branch on origin and runs the same cloud reviewer on `<lastTag>..staging`
 against the `## Unreleased` notes; its issue is titled `Pre-release review staging-<sha>: …`.
-Fix what it finds, re-run until CLEAN, then release; a release cut from a tree whose
-pre-release review was CLEAN may skip the post-release review with
-`CLODEX_RELEASE_NO_REVIEW=1`, set on that one release command, not exported (the pre-release script ignores it). That is not a user step: to run Clodex from source you want
+Fix what it finds, re-run until CLEAN, then release; a CLEAN pre-release review leaves
+`~/.clodex/logs/prerelease-clean-<sha>` for the reviewed commit, and
+`CLODEX_RELEASE_NO_REVIEW=1 scripts/release.sh …` skips the post-release review only while HEAD is that commit (set it on the one release command, not exported; the pre-release script ignores it). That is not a user step: to run Clodex from source you want
 `npm start`, and to ship it to a server you want a headless node.
 
 ## Run a headless node locally

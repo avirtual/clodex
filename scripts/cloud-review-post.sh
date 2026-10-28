@@ -139,6 +139,9 @@ printf 'cloud-review-post: opened %s\n' "$URL"
 case "$TITLE" in
   *": CLEAN")
     "$GH" issue close "$URL" -R "$REPO" || printf 'cloud-review-post: gh issue close failed for %s\n' "$URL" >&2
+    if [ -n "${CLODEX_REVIEW_SHA:-}" ]; then
+      mkdir -p "$HOME/.clodex/logs" && printf '%s\n' "$TITLE" >"$HOME/.clodex/logs/prerelease-clean-$CLODEX_REVIEW_SHA"
+    fi
     ;;
 esac
 
