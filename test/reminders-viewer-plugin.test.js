@@ -44,7 +44,7 @@ function boot({ records, live = [], saved = [], libraryKinds } = {}) {
   };
   const sched = createRemindScheduler({
     now: () => 1700000000000, setTimer: () => null, clearTimer: () => {},
-    store: fileStore(file), deliver: () => {},
+    store: fileStore(file), deliver: () => 'delivered',
   });
   const removals = [];
   const adds = [];

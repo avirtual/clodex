@@ -574,7 +574,7 @@
 | `_buildDeliveryText` | Builds the [agent:from] delivery line, spilling bodies over MSG_SPILL_THRESHOLD to an @pointer and marking unanswerable dms | messages dir, `s.filedRing` | _isDmReachable, spillToFile, _noteFiled | messaging-spill-receipt.test.js file-view-api.test.js ticket-replay.test.js session-manager.test.js |
 | `_deliverMessage` | Universal delivery: stream enqueue, busy/draft park, or parkable inject, reporting injected or parked to onWrite | pending/<name>/, `target._injectPtyQueue` | _refuseStreamInject, _maybeParkDelivery, _injectText, _writeImageFiles | messaging-spill-receipt.test.js dm-delivery-latch.test.js injected-turn-bit.test.js session-manager.test.js |
 | `_writeImageFiles` | Decodes base64 image attachments into the seat's messages dir and files them | `this._imgStamp`, messages dir | seatImageFileName, _noteFiled | unpinned |
-| `_deliverReminder` | Fires a reminder to a live seat or parks it for an offline, dead or closing persisted seat, then wakes an assistant whose `sleep.wakeOn` lists reminder; returns delivered, parked, waking, gone or error | pending/<name>/, persistence | _deliverMessage, _buildDeliveryText, _bornFor, _assistantPolicy, wake | session-manager.test.js |
+| `_deliverReminder` | Fires a reminder to a live seat or parks it for an offline, dead or closing persisted seat, then wakes an assistant whose `sleep.wakeOn` lists reminder; returns delivered, parked, waking, deferred (offline seat with no parked-mail drain), gone or error | pending/<name>/, persistence | _deliverMessage, _buildDeliveryText, _bornFor, _assistantPolicy, wake | session-manager.test.js |
 
 ### Invariants
 

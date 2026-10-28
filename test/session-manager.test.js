@@ -14547,7 +14547,7 @@ function mkDeliver({ persisted = null, deps = {} } = {}) {
     parkIdInUse: () => false,
     MSG_SPILL_THRESHOLD: 500,
     getPersistence: () => persistence,
-    log: { info: () => {}, warn: () => {}, error: () => {} },
+    log: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
     ...deps,
   });
   const injected = [];
@@ -14593,7 +14593,7 @@ function mkReminderWake(persisted, { wakeImpl = null } = {}) {
     persisted,
     deps: {
       parkDelivery: (...a) => { order.push('park'); return parkDelivery(...a); },
-      log: { info: () => {}, warn: (...a) => warns.push(a.join(' ')), error: () => {} },
+      log: { debug: () => {}, info: () => {}, warn: (...a) => warns.push(a.join(' ')), error: () => {} },
     },
   });
   let pendingAtWake = null;
@@ -14661,6 +14661,24 @@ test('_deliverReminder: offline WITH a persistence entry → parked (drains on r
   // The parked bytes are the real delivery text.
   const drained = drainPending(PENDING_DIR, 't1', 'test');
   assert.match(drained.join('\n'), /\[agent:from reminder\] \[ab12 in 1h\] ship it/);
+});
+
+test('t2035 _deliverReminder: an offline Codex or Muse PTY seat defers and parks nothing; a stream record still parks', () => {
+  for (const type of ['codex', 'muse']) {
+    const { m, PENDING_DIR } = mkDeliver({ persisted: { name: 't1', type } });
+    assert.strictEqual(m._deliverReminder('t1', '[ab12 in 10m] ship it'), 'deferred', type);
+    assert.strictEqual(hasPending(PENDING_DIR, 't1'), false, type);
+  }
+  const { m, PENDING_DIR } = mkDeliver({ persisted: { name: 't1', type: 'codex', io: 'stream' } });
+  assert.strictEqual(m._deliverReminder('t1', '[ab12 in 10m] ship it'), 'parked');
+  assert.strictEqual(hasPending(PENDING_DIR, 't1'), true);
+});
+
+test('t2035 _deliverReminder: a deferred sleeping assistant still wakes for a reminder', () => {
+  const h = mkReminderWake({ ...WAKE_REC, type: 'codex' });
+  assert.strictEqual(h.m._deliverReminder('t1', '[ab12 in 1h] mail'), 'deferred');
+  assert.deepStrictEqual(h.order, ['wake']);
+  assert.strictEqual(hasPending(h.PENDING_DIR, 't1'), false);
 });
 
 test('t1792 _deliverReminder: an offline seat parks a multi-line reminder inline under either persisted io', () => {
@@ -16823,6 +16841,36 @@ test('t168 rework: a draft opening between the idle enqueue and the fire leaves 
     'still TWO entries — a claim-then-divert would have re-parked them as one joined blob');
   assert.ok(parkIdInUse(PENDING_DIR, 'pk1') && parkIdInUse(PENDING_DIR, 'pk2'),
     'and their resend handles survive — the divert re-parks with no id, so a resend would resolve to nothing');
+});
+
+test('t2035 an idle or boot drain fired while the previous turn has not started claims nothing; once it has, it claims', async () => {
+  for (const drain of ['_drainPendingAtIdle', '_drainPendingAtBootReady']) {
+    const { m, PENDING_DIR, fireData, getSession } = mkOnDataProbe({ INJECT_QUIET_MAXWAIT: 60_000 });
+    const name = `churn-${drain.length}`;
+    await bashCreate(m, name, null);
+    const s = getSession(name);
+    const writes = [];
+    s.pty = { write: (b) => writes.push(b) };
+    s.agentType = 'claude';
+    parkDelivery(PENDING_DIR, name, '[agent:from lead] first', '100.1', 'pk1');
+    parkDelivery(PENDING_DIR, name, '[agent:from lead] second', '100.2', 'pk2');
+    fireData('\x1b[?2004h');
+    s._bootReadySeen = false;
+    s.lastUserInputTs = 0; s.lastUserSubmitTs = 0;
+    m[drain](s);
+    assert.strictEqual(m._injectQueueFor(s).length, 1, `ENTER: ${drain} reached the queue`);
+    s._awaitingTurnSince = Date.now();
+    s._bootReadySeen = true;
+    await new Promise((r2) => setTimeout(r2, 400));
+    assert.deepStrictEqual(writes, [], `${drain}: nothing written while the turn start is pending`);
+    assert.strictEqual(countPendingReal(PENDING_DIR, name), 2, `${drain}: both entries still parked separately`);
+    assert.ok(parkIdInUse(PENDING_DIR, 'pk1') && parkIdInUse(PENDING_DIR, 'pk2'), `${drain}: resend ids survive`);
+    s._awaitingTurnSince = null;
+    m[drain](s);
+    await new Promise((r2) => setTimeout(r2, 400));
+    assert.strictEqual(countPendingReal(PENDING_DIR, name), 0, `${drain}: claimed once the turn started`);
+    assert.ok(writes.join('').includes('second'), `${drain}: and written`);
+  }
 });
 
 // The HOLD branch is the longest-lived window a producer can sit in — a compact

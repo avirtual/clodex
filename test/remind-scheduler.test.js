@@ -507,3 +507,60 @@ test('fireNow: an agent mismatch or unknown id is no such reminder and delivers 
     assert.ok(store.get(r.record.id));
   } finally { cleanup(); }
 });
+
+test('t2035 a deferred, errored or throwing deliver keeps a one-shot row and retries it a minute later', () => {
+  const userData = mkTmpRoot('remsched-ud-');
+  const registryDir = mkTmpRoot('remsched-reg-');
+  const stores = initStores(userData, { log: console, registryDir });
+  const clock = fakeClock(T0);
+  const calls = [];
+  const replies = { deferred: ['deferred', 'delivered'], error: ['error', 'delivered'], threw: ['throw', 'delivered'] };
+  const scheduler = createRemindScheduler({
+    now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer, store: stores.reminders,
+    deliver: (agent, id, spec, body) => {
+      calls.push(body);
+      const r = replies[body].shift();
+      if (r === 'throw') throw new Error('boom');
+      return r;
+    },
+  });
+  try {
+    for (const body of Object.keys(replies)) assert.strictEqual(scheduler.add('t1', 'in 10m', body).ok, true);
+    clock.advance(10 * MIN);
+    assert.deepStrictEqual(calls.sort(), ['deferred', 'error', 'threw'], 'ENTER: each row fired once');
+    const kept = scheduler.listForAgent('t1');
+    assert.deepStrictEqual(kept.map((r) => r.body).sort(), ['deferred', 'error', 'threw']);
+    assert.ok(kept.every((r) => r.nextFireAt === T0 + 11 * MIN && r.lastFiredAt === null), JSON.stringify(kept));
+    clock.advance(MIN);
+    assert.strictEqual(calls.length, 6);
+    assert.deepStrictEqual(scheduler.listForAgent('t1'), [], 'delivered on the retry → spent');
+  } finally {
+    scheduler.stop();
+    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(registryDir, { recursive: true, force: true });
+  }
+});
+
+test('t2035 a deferred recurring row retries in a minute instead of skipping to its next period', () => {
+  const userData = mkTmpRoot('remsched-ud-');
+  const registryDir = mkTmpRoot('remsched-reg-');
+  const stores = initStores(userData, { log: console, registryDir });
+  const clock = fakeClock(T0);
+  const replies = ['deferred', 'delivered'];
+  const scheduler = createRemindScheduler({
+    now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer, store: stores.reminders,
+    deliver: () => replies.shift(),
+  });
+  try {
+    scheduler.add('t1', 'every 1h', 'tick');
+    clock.advance(HOUR);
+    assert.strictEqual(scheduler.listForAgent('t1')[0].nextFireAt, T0 + HOUR + MIN);
+    clock.advance(MIN);
+    assert.strictEqual(replies.length, 0, 'ENTER: the retry fired');
+    assert.strictEqual(scheduler.listForAgent('t1')[0].nextFireAt, T0 + 2 * HOUR + MIN);
+  } finally {
+    scheduler.stop();
+    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(registryDir, { recursive: true, force: true });
+  }
+});

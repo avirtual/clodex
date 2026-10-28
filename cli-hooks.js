@@ -545,6 +545,7 @@ function pid_alive(pid) {
   try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
 }
 const claims = path.join(path.dirname(d), '.claims');
+const LAUNCH_NONCE = require('crypto').randomBytes(4).toString('hex');
 function claim_path(entry) {
   fs.mkdirSync(claims, { recursive: true, mode: 0o700 });
   return path.join(claims, entry);
@@ -556,9 +557,11 @@ function rehome_orphans() {
   try { listings.push([claims, fs.readdirSync(claims)]); } catch (e) {}
   try { listings.push([root, fs.readdirSync(root).filter(function (n) { return /\\.draining\\.[a-z]+\\.\\d+$/.test(n); })]); } catch (e) {}
   for (const [parent, s] of listings.flatMap(function (l) { return l[1].map(function (e) { return [l[0], e]; }); })) {
-    if (!s.startsWith(prefix) || !/^[a-z]+\\.\\d+$/.test(s.slice(prefix.length))) continue;
-    const pid = Number(s.slice(s.lastIndexOf('.') + 1));
-    if (!Number.isInteger(pid) || pid <= 0 || pid_alive(pid)) continue;
+    const tag = s.startsWith(prefix) ? /^[a-z]+\\.(\\d+)(?:-([0-9a-f]+))?$/.exec(s.slice(prefix.length)) : null;
+    if (!tag) continue;
+    const pid = Number(tag[1]);
+    const staleOwn = pid === process.pid && tag[2] !== LAUNCH_NONCE;
+    if (!Number.isInteger(pid) || pid <= 0 || (!staleOwn && pid_alive(pid))) continue;
     let mine;
     try { mine = claim_path(path.basename(d) + '.draining.rehome.' + process.pid); } catch (e) { continue; }
     try { fs.renameSync(path.join(parent, s), mine); } catch (e) { continue; }
