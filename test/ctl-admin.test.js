@@ -307,7 +307,7 @@ test('A8: a live lock refuses naming the run; a dead one is swept to unknown and
     assert.match(r.err, /^run 1 started: deploy on ios/);
     const unknown = await f.waitDm((m) => /outcome UNKNOWN/.test(m.body), 'the sweep dm');
     assert.strictEqual(unknown.delivery, undefined);
-    assert.match(unknown.body, new RegExp(`^\\[run 7 deploy ios\\] outcome UNKNOWN — the worker \\(pid ${dead}\\) is gone and left no result; nothing was re-run\\. log /.*/ctl-runs/7\\.log$`));
+    assert.match(unknown.body, new RegExp(`^\\[run 7 deploy ios\\] outcome UNKNOWN — worker pid ${dead} gone without a result; nothing was re-run\\. log /.*/ctl-runs/7\\.log$`));
     const swept = readRec(f.runs, 7);
     assert.deepStrictEqual({ outcome: swept.outcome, reason: swept.reason, notified: swept.notified },
       { outcome: 'unknown', reason: `worker pid ${dead} gone without a result`, notified: true });
@@ -353,6 +353,7 @@ test('A15: a dead worker and a dead clodexctl child sweep to unknown naming both
   assert.deepStrictEqual({ outcome: rec.outcome, reason: rec.reason },
     { outcome: 'unknown', reason: `worker pid ${dead} and clodexctl pid ${deadChild} gone without a result` });
   assert.strictEqual(sent.length, 1);
+  assert.match(sent[0], new RegExp(`^\\[run 7 deploy ios\\] outcome UNKNOWN — worker pid ${dead} and clodexctl pid ${deadChild} gone without a result; nothing was re-run\\. log /.*/7\\.log$`));
 });
 
 test('A15: a record without childPid sweeps to unknown on the worker pid alone', async () => {
