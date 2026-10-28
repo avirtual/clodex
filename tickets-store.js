@@ -174,15 +174,55 @@ function sectionHeader(line) {
 const MUSTFIX_PLACEHOLDER_WORDS = 'none(?:[ \\t—-]+[a-z]+){0,3}|n\\/a|nothing|empty';
 const MUSTFIX_BARE_PLACEHOLDER_RE = new RegExp(`^(?:${MUSTFIX_PLACEHOLDER_WORDS}|-+|—)\\.?$`, 'i');
 
+const FENCE_OPEN_RE = /^[ \t]{0,3}(`{3,}|~{3,})/;
+const VERDICT_LINE_RE = /^[ \t]*(?:[-*][ \t]*)?(?:\*\*|__)?[ \t]*\bVERDICT\b\W*\b(ACCEPT|REWORK)\b/i;
+
+function liveVerdictLines(text) {
+  const lines = String(text == null ? '' : text).split('\n');
+  let fence = null;
+  return lines.map((line) => {
+    const f = FENCE_OPEN_RE.exec(line);
+    if (fence) {
+      if (f && f[1][0] === fence[0] && f[1].length >= fence.length && !line.slice(f[0].length).trim()) fence = null;
+      return { line, live: false, fenced: true };
+    }
+    if (f) { fence = f[1]; return { line, live: false, fenced: true }; }
+    if (/^[ \t]*>/.test(line) || /^(?: {4}|[ ]{0,3}\t)/.test(line)) return { line, live: false, fenced: false };
+    return { line, live: true, fenced: false };
+  });
+}
+
+const isMustFixHeader = (line) => { const h = sectionHeader(line); return !!h && /^MUST/i.test(h.keyword); };
+
+function scanVerdict(verdictText) {
+  const verdicts = [];
+  const mustFixHeaders = [];
+  liveVerdictLines(verdictText).forEach(({ line, live }, i) => {
+    if (!live) return;
+    const m = VERDICT_LINE_RE.exec(line);
+    if (m) verdicts.push({ value: m[1].toUpperCase(), line: i + 1 });
+    if (isMustFixHeader(line)) mustFixHeaders.push(i + 1);
+  });
+  const distinct = [...new Set(verdicts.map((v) => v.value))];
+  return {
+    verdict: distinct.length === 1 ? distinct[0] : null,
+    verdicts,
+    mustFixHeaders,
+    ambiguous: distinct.length > 1 || mustFixHeaders.length > 1,
+  };
+}
+
 function extractMustFix(verdictText) {
-  const lines = String(verdictText == null ? '' : verdictText).split('\n');
+  const scanned = liveVerdictLines(verdictText);
+  const lines = scanned.map((l) => l.line);
   const body = [];
   let inSection = false;
-  const isMustFixAt = (i) => { const h = sectionHeader(lines[i]); return !!h && /^MUST/i.test(h.keyword); };
-  let start = lines.findIndex((line, i) => !/^[ \t]*>/.test(line) && isMustFixAt(i));
+  let start = -1;
+  scanned.forEach(({ line, live }, i) => { if (live && isMustFixHeader(line)) start = i; });
   if (start < 0) start = 0;
-  for (const line of lines.slice(start)) {
-    const h = sectionHeader(line);
+  for (let i = start; i < lines.length; i++) {
+    const line = lines[i];
+    const h = scanned[i].fenced ? null : sectionHeader(line);
     if (h) {
       const isMustFix = /^MUST/i.test(h.keyword);
       if (inSection && !isMustFix) break;
@@ -330,4 +370,4 @@ function ticketTerminalReason(ticket) {
   return null;
 }
 
-module.exports = { createTicketsStore, appendReworkReason, nextTicketId, recordEvent, titleLine, ticketTitle, extractTaskDir, TASK_DIR_ABS_RE, TASK_DIR_REL_RE, extractMustFix, countMustFix, mustFixTitles, ticketStarted, ticketInFlight, ticketTerminalReason, branchSlug, TICKETS_FILE };
+module.exports = { createTicketsStore, appendReworkReason, nextTicketId, recordEvent, titleLine, ticketTitle, extractTaskDir, TASK_DIR_ABS_RE, TASK_DIR_REL_RE, extractMustFix, scanVerdict, countMustFix, mustFixTitles, ticketStarted, ticketInFlight, ticketTerminalReason, branchSlug, TICKETS_FILE };

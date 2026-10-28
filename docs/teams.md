@@ -487,11 +487,12 @@ no-op, not an error, on a ticket the loop already closed out: it says so and
 changes nothing. A merged ticket still owing that step ten minutes later gets one
 reminder, and only one: leaving it open is a legitimate way to keep the tree.
 
-**What `task accept` tears down.** The reply carries one of five arms, and
+**What `task accept` tears down.** The reply carries one of six arms, and
 only the merged arm removes anything:
 
 | reply says | arm | closes the ticket out? |
 |---|---|---|
+| `NOT accepted — the post-merge suite has not answered yet` | the merge is on the trunk and its suite is still running; a red suite reverts it | no, and nothing is touched — accept again after the MERGED or MERGE FAILED notice |
 | `accepted — no ticket branch recorded` | worked in the shared checkout, so there is no tree or ref to remove; a one-shot seat is archived, unless it holds another open ticket (archived when that one closes); any other seat left as it is | yes |
 | `accepted, but the merge check could NOT run` | git could not answer; treated as not merged | no — accept again once it can |
 | `accepted, but branch X is NOT merged into` | the branch is not in the trunk | no — merge it, then accept again |

@@ -18,6 +18,8 @@ blocks a release.
 - The legacy claim-shape seat-name reservation (`.resend.*`, `*.draining.<kind>.<pid>`) is case-insensitive like `.claims`.
 - **Security:** `clodexctl upgrade node` on a helm context whose release name differs from the context name updates that context instead of overwriting (and losing the token of) an unrelated context named after the release; `deploy node --helm` takes `--ctx <name>` to save under a name other than the release.
 - `clodexctl undeploy node` (helm and docker) removes only the contexts that point at the torn-down release or container, so a same-named context for another node keeps its token.
+- **Security:** a review verdict that quotes an earlier `VERDICT: ACCEPT` line inside a code block or indented text no longer lands as ACCEPT and auto-merges rework; conflicting or ambiguous verdict lines route the body to the lead instead.
+- A lead's `task accept` while the post-merge suite is still running is refused and keeps the tree and branch, so a red suite can no longer revert a merge whose branch an early accept already deleted.
 
 ## 5.149.0 — 2026-10-28 — clodexctl reaps its tunnel on exit, create node takes a token file, worktree-safe workspace deletes
 

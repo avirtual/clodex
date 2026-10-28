@@ -1,4 +1,4 @@
-const { nextTicketId, recordEvent, titleLine, ticketTitle, extractTaskDir, extractMustFix, countMustFix, mustFixTitles, ticketStarted, ticketInFlight, branchSlug, appendReworkReason } = require('./tickets-store');
+const { nextTicketId, recordEvent, titleLine, ticketTitle, extractTaskDir, extractMustFix, scanVerdict, countMustFix, mustFixTitles, ticketStarted, ticketInFlight, branchSlug, appendReworkReason } = require('./tickets-store');
 const teamCost = require('./team-cost');
 const { defuseSenderLines } = require('./review-gate');
 const { buildReviewScope, reviewBeginLine } = require('./ticket-review-scope');
@@ -1276,9 +1276,8 @@ function createTicketMethods(deps, shared) {
     },
 
     _landVerdictOnTicket(session, ticketId, verdict) {
-      // Bullets and bold are allowed as decoration; `>` is deliberately not, since it is the decoration that marks a quoted line.
-      const m = /^[ \t]*(?:[-*][ \t]*)?(?:\*\*|__)?[ \t]*\bVERDICT\b\W*\b(ACCEPT|REWORK)\b/im.exec(verdict);
-      if (!m) return null;
+      const scanned = scanVerdict(verdict);
+      if (!scanned.verdict) return null;
       const team = this._teamOfOrNull(session);
       if (!team) return null;
       let tickets;
@@ -1288,7 +1287,7 @@ function createTicketMethods(deps, shared) {
       // Guard on ticketInFlight, not on state alone: the loop spawns its reviewer after `task done` has written state `done`,
       // so a plain closed-ticket guard would send every loop verdict to the lead.
       if (!ticketInFlight(ticket)) return null;
-      ticket.verdict = m[1].toUpperCase();
+      ticket.verdict = scanned.verdict;
       ticket.mustFix = extractMustFix(verdict);
       ticket.reviewRound = (Number(ticket.reviewRound) || 0) + 1;
       delete ticket.verifyPhase;
@@ -1842,6 +1841,17 @@ function createTicketMethods(deps, shared) {
 
         // Read must-fixes from the verdict text, not landedOn.mustFix: the gate deciding whether work
         // reaches the trunk must not trust a count another caller computed.
+        const scanned = scanVerdict(verdictText);
+        const reworkLines = scanned.verdicts.filter((v) => v.value === 'REWORK').map((v) => v.line);
+        if (reworkLines.length || scanned.mustFixHeaders.length > 1) {
+          const where = [
+            reworkLines.length ? `VERDICT: REWORK on line${reworkLines.length === 1 ? '' : 's'} ${reworkLines.join(', ')}` : null,
+            scanned.mustFixHeaders.length > 1 ? `${scanned.mustFixHeaders.length} MUST-FIX headers on lines ${scanned.mustFixHeaders.join(', ')}` : null,
+          ].filter(Boolean).join('; ');
+          fail('must-fix', `the verdict is ambiguous: ${where} (unquoted, outside code blocks)`,
+            'nothing was merged — an ambiguous verdict is the lead\'s to read, not the loop\'s to merge');
+          return;
+        }
         const mustFix = extractMustFix(verdictText == null ? '' : String(verdictText));
         const n = countMustFix(mustFix);
         if (n > 0) {
@@ -2044,8 +2054,12 @@ function createTicketMethods(deps, shared) {
           }
           const rev = await gitWorktree.revertCommit(team.root, merged.sha)
             .catch((e) => ({ ok: false, error: e.message }));
+          const after = this._loadTicket(team, ticketId);
+          const branchFate = after && after.closedOut
+            ? `the branch was DELETED by an accept (${after.acceptedBy || 'the lead'}) that closed the ticket out while the suite ran — restore it with \`git -C ${team.root} branch ${branch} ${merged.sha}^2\``
+            : 'the branch is untouched';
           fail('suite', why, (rev.ok
-            ? `merged ${branch} as ${merged.sha}, ran the suite in ${team.root}, then REVERTED the merge (${rev.sha}) — ${target} is green again and the branch is untouched`
+            ? `merged ${branch} as ${merged.sha}, ran the suite in ${team.root}, then REVERTED the merge (${rev.sha}) — ${target} is green again and ${branchFate}`
             : `merged ${branch} as ${merged.sha} and the revert ALSO failed (${rev.error}) — ${target} is left carrying the merge and needs a human`) + keptWhere(rev.ok));
           return;
         }
@@ -7201,6 +7215,14 @@ function createTicketMethods(deps, shared) {
         return { ok: true, closedOut: true, already: true,
           text: `ticket ${ticket.id} accepted — ${ticket.acceptedBy || 'the lead'} accepted it first; the loop changed nothing` };
       }
+      const suiteVeto = (row) => (by !== 'ticket-loop' && row && row.mergeWaiting === 'merging'
+        ? { ok: false, closedOut: false, merged: false, vetoed: 'merging',
+          text: `ticket ${ticket.id} NOT accepted — the post-merge suite has not answered yet${row.mergeWaitingSha ? ` (merge ${row.mergeWaitingSha} is on the trunk, unverified)` : ''}; accept again after the MERGED or MERGE FAILED notice. The seat, worktree and branch were left alone.` }
+        : null);
+      {
+        const veto = suiteVeto(ticket);
+        if (veto) return veto;
+      }
       const { seatName, rec, branch, ephemeralSeat, remoteTree } = this._acceptSeatFacts(ticket);
       // What this accept acted on, for the compare-and-clear in `_finishAccept`; a plain let because `mergeStamp` below
       // is in its temporal dead zone on the two arms that finish before it.
@@ -7230,6 +7252,8 @@ function createTicketMethods(deps, shared) {
           return { ok: true, closedOut: true, already: true,
             text: `ticket ${ticket.id} accepted — ${now.acceptedBy} accepted it while this close-out was running; the loop changed nothing` };
         }
+        const veto = suiteVeto(now);
+        if (veto) return veto;
         if (now && by !== 'ticket-loop' && now.loopClosedOut) {
           return { ok: true, closedOut: true, already: true,
             text: `ticket ${ticket.id} accepted — the loop closed it out while this accept was running; nothing was changed` };

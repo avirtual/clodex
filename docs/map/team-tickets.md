@@ -76,14 +76,15 @@
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
 | `_handleTeamReview` | the lead-only team-review intent for ad-hoc and loop reviews: shapes, refuses unsafe shapes, reserves a scoped name, spawns the reviewer | sessions.json reviewer stub (upsert), this.sessions, review-start watch | resolveSeatShape, _armReviewStartCheck, _deliverParkedActive, _applyTemplatePersistence | reviewer-ticket-name.test.js resolve-seat-shape.test.js |
-| `_landVerdictOnTicket` | parses a line-anchored ACCEPT or REWORK verdict and saves it onto the in-flight ticket, or returns null so it falls through to the lead | tickets.json (verdict, mustFix, reviewRound, rounds, loopStep cleared) | ticketInFlight, extractMustFix, recordEvent, _reconcileTickets | review-verdict-ticket.test.js reviewer-round-end.test.js |
+| `_landVerdictOnTicket` | parses the body's line-anchored ACCEPT or REWORK verdict lines outside `>` quotes, fenced code and indented code, saves the single distinct value onto the in-flight ticket, or returns null (no line, or conflicting lines) so the raw body falls through to the lead | tickets.json (verdict, mustFix, reviewRound, rounds, loopStep cleared) | ticketInFlight, scanVerdict, extractMustFix, recordEvent, _reconcileTickets | review-verdict-ticket.test.js reviewer-round-end.test.js |
 | `_writeVerdictBody` | writes the full verdict prose beside the reviewed diff in the task dir and stamps the round's verdictFile, returning ok and path | task dir verdict file, tickets.json rounds | _ticketDiffDest, _stampRoundFile | review-verdict-ticket.test.js |
 
 ### Invariants
 - `_handleTeamReview` refuses a busy verify ticket only when no ticket id was passed, since the loop's own reviewer spawn arrives for a ticket in verify.
 - `_handleTeamReview` makes every refusal before the synchronous persistence upsert, because that upsert is the name reservation.
 - `_landVerdictOnTicket` counts the round on the ticket, not the reviewer name index, and deletes loopStep in the same save that makes the verdict durable.
-- `_landVerdictOnTicket` excludes quoted lines from the verdict match, because the previous round's verdict arrives quoted in the new body.
+- `_landVerdictOnTicket` reads only lines outside `>` quotes, ``` / ~~~ fences and 4-space/tab indented code, because the previous round's verdict and the hand's report arrive quoted, fenced or indented in the new body; a quote exclusion alone let a fenced echoed ACCEPT win.
+- `_landVerdictOnTicket` returns null when the surviving verdict lines disagree, so an ambiguous body goes to the lead instead of being guessed.
 - `_handleTeamReview` fails open when the board cannot be read while checking for a busy verify ticket, because team-review is the escape hatch for when the loop cannot spawn a reviewer.
 - `_handleTeamReview` names a ticket's reviewer from the ticket and its round, falls back to the counter name rather than refusing when that name is taken, and never bumps the round at spawn because the rework ladder reads verdicts, not spawns.
 - `_handleTeamReview` writes `wireLabel` and `reviewTicket` in the same synchronous upsert as the name reservation, because create() and review-done read them back off the record and a field written after the deferred create() routes nothing.
@@ -138,7 +139,7 @@
 | `_suiteLockHolder` | the live pid holding the root checkout's suite lock, or null when absent or dead | reads .test-digest.lock pid file | isAlive | ticket-auto-merge.test.js |
 | `_stampMergeError` | re-load, mutate and save of the board's mergeError: a step sets it with a merge-failed event, null clears it | tickets.json (mergeError, escalationUndelivered) | recordEvent | ticket-auto-merge.test.js task-respec.test.js |
 | `_stampMergeWaiting` | re-load, mutate and save of a deferred merge's mergeWaiting reason, kept apart from mergeError | tickets.json (mergeWaiting) | none | task-respec.test.js |
-| `_autoMergeTicket` | gates an ACCEPTed branch, merges it with --no-ff, runs the suite on the merged trunk, then reverts and stamps MERGE FAILED or closes out | tickets.json, merge message file, git commits in the team root, retry timer | _runTicketSuite, _closeOutMergedTicket, _mergeTouchedChangelog, _notifyMergeLanded | ticket-auto-merge.test.js clodex-team.test.js |
+| `_autoMergeTicket` | gates an ACCEPTed branch (refusing at must-fix on any live REWORK line or more than one live MUST-FIX header), merges it with --no-ff, runs the suite on the merged trunk, then reverts and stamps MERGE FAILED or closes out | tickets.json, merge message file, git commits in the team root, retry timer | _runTicketSuite, _closeOutMergedTicket, _mergeTouchedChangelog, _notifyMergeLanded | ticket-auto-merge.test.js clodex-team.test.js |
 | `_mergeTouchedChangelog` | measures whether the merged range touched the root CHANGELOG.md (a header naming it on either side, so a move out of the root reads as touched) and whether it exists, known false for anything unproven | none (reads diff text, stats CHANGELOG.md) | gitWorktree.diffText | ticket-auto-merge.test.js |
 | `_notifyMergeLanded` | one lead DM for a landed merge: sha, tip drift, close-out or step owed, suite, union and CHANGELOG state; stamps merged | tickets.json (merged stamp), lead inbox | _stampMerged, _gatedDeliver, closeOutDetail | merged-notice-owes-accept.test.js ticket-auto-merge.test.js |
 
@@ -452,7 +453,7 @@
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| `_closeOutMergedTicket` | shared accept teardown for lead and loop, gating archive, destroy and branch delete on merge, seat kind, tree dirtiness and liveness | tickets.json revival mergeVetoed or mergedInto, seat worktree and branch | _acceptSeatFacts, _finishAccept, destroy, gitWorktree.isMerged, gitWorktree.isDirty, gitWorktree.deleteBranchIfAt | ticket-auto-merge.test.js merged-notice-owes-accept.test.js accept-standing-seat.test.js |
+| `_closeOutMergedTicket` | shared accept teardown for lead and loop, vetoing a lead accept while mergeWaiting is `merging` (post-merge suite running), gating archive, destroy and branch delete on merge, seat kind, tree dirtiness and liveness | tickets.json revival mergeVetoed or mergedInto, seat worktree and branch | _acceptSeatFacts, _finishAccept, destroy, gitWorktree.isMerged, gitWorktree.isDirty, gitWorktree.deleteBranchIfAt | ticket-auto-merge.test.js merged-notice-owes-accept.test.js accept-standing-seat.test.js |
 | `_closeOutMergedTicket.seatClause` | the reply fragment saying what happened to the seat, split on one-shot first, then liveness, then record | none | none | accept-standing-seat.test.js |
 | `_taskPark` | lead toggle of parked on an open ticket, never re-delivering the spec on unpark | tickets.json parked, nudgedAt | _reconcileTickets, _resolvableAssignTarget | task-start.test.js |
 | `_taskList` | task list verb: validate the filter and reply with the rendered board | none | _taskListText | clodex-team.test.js |
