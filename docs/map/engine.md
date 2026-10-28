@@ -346,6 +346,9 @@ seams.skillLister         — (tests only)                     — (tests only) 
 | `termRefusalName` | the program shown in a busy-terminal refusal: the full command only under `terminalReports: all` | `uiSettings` | drawer-avail.sanitizeName, term-host.programOf | unpinned |
 | `termExec` | the session-manager seam that runs one agent command on the seat's drawer terminal, refusals as agent text | `drawerPtys` | drawer-pty exec, termRefusalName, termShimDiagnosis | session-manager.test.js |
 | `drawerPtyCwd` | a drawer shell's start dir: the seat's cwd, else the workspace's most common cwd, else HOME | `manager.sessions` | none | unpinned |
+| `drawerWorkspaceOf` | the workspace a seat's drawer shell is keyed under: the live session's, else the record's, else the default | `manager.sessions`, `persistence` | none | drawer-seat-teardown.test.js |
+| `reapDrawerSeat` | kills one seat's drawer shell, a no-op on a host without drawer terminals | `drawerPtys` | drawer-pty killSeat | drawer-seat-teardown.test.js |
+| `reapDrawerAfter` | wraps a manager teardown method on the instance so every caller, internal ones included, reaps the seat's drawer shell after it | `manager` | drawerWorkspaceOf, reapDrawerSeat | drawer-seat-teardown.test.js |
 | `getDrawerPtys` | the drawer pty service, null when `seams.enableLocalTerminal` is false | `drawerPtys` | drawer-pty.createDrawerPtys | drawer-services-seam.test.js |
 
 ### Invariants

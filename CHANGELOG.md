@@ -11,6 +11,8 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
+- Deleting or renaming a seat now also closes its drawer terminal shell, and a later seat with the same name gets a fresh shell instead of inheriting the old scrollback, cwd and late command results.
+- **Security:** the Bash deny guard treats a backslash-newline as the line continuation bash does and splits on backticks, so `kill -9 \⏎-1` and `git add \⏎-A` are refused like their one-line forms.
 
 ## Unreleased
 

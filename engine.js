@@ -2036,38 +2036,6 @@ const drawerPtys = enableLocalTerminal ? createDrawerPtys({
   log,
 }) : null;
 
-function drawerWorkspaceOf(name) {
-  const s = manager.sessions.get(name);
-  if (s && s.workspaceId) return s.workspaceId;
-  try {
-    const e = persistence && persistence.get(name);
-    if (e && e.workspaceId) return e.workspaceId;
-  } catch {}
-  return DEFAULT_WORKSPACE_ID;
-}
-
-function reapDrawerSeat(ws, name) {
-  if (!drawerPtys) return;
-  try { drawerPtys.killSeat(ws, String(name || '')); } catch {}
-}
-
-function reapDrawerAfter(method, when) {
-  const orig = manager[method];
-  manager[method] = async function (name, ...rest) {
-    const ws = drawerWorkspaceOf(name);
-    const r = await orig.call(this, name, ...rest);
-    if (when(r, name)) reapDrawerSeat(ws, name);
-    return r;
-  };
-}
-reapDrawerAfter('destroy', () => true);
-reapDrawerAfter('archive', () => true);
-reapDrawerAfter('rename', (r, name) => {
-  if (r && r.ok) return true;
-  if (manager.sessions.has(name)) return false;
-  try { return !(persistence && persistence.get(name)); } catch { return false; }
-});
-
 // Urgent dm so an agent blocked on its own command is woken; the queue write stays
 // as fallback for held, dead or throwing deliveries, since dropping it loses the result.
 function deliverExecResult(seat, text) {
@@ -2221,6 +2189,38 @@ function drawerPtyCwd(workspaceId, seat) {
   } catch {}
   return process.env.HOME || os.homedir();
 }
+
+function drawerWorkspaceOf(name) {
+  const s = manager.sessions.get(name);
+  if (s && s.workspaceId) return s.workspaceId;
+  try {
+    const e = persistence && persistence.get(name);
+    if (e && e.workspaceId) return e.workspaceId;
+  } catch {}
+  return DEFAULT_WORKSPACE_ID;
+}
+
+function reapDrawerSeat(ws, name) {
+  if (!drawerPtys) return;
+  try { drawerPtys.killSeat(ws, String(name || '')); } catch {}
+}
+
+function reapDrawerAfter(method, when) {
+  const orig = manager[method];
+  manager[method] = async function (name, ...rest) {
+    const ws = drawerWorkspaceOf(name);
+    const r = await orig.call(this, name, ...rest);
+    if (when(r, name)) reapDrawerSeat(ws, name);
+    return r;
+  };
+}
+reapDrawerAfter('destroy', () => true);
+reapDrawerAfter('archive', () => true);
+reapDrawerAfter('rename', (r, name) => {
+  if (r && r.ok) return true;
+  if (manager.sessions.has(name)) return false;
+  try { return !(persistence && persistence.get(name)); } catch { return false; }
+});
 
 const { createToolCache } = require('./tool-doctor');
 const toolCache = createToolCache({ whichBin });
