@@ -275,8 +275,6 @@ inject queue to empty (capped at `INJECT_BOOT_MAXWAIT` past the edge), so a spaw
   Publish is tmp + atomic rename; drain is an atomic whole-directory
   rename-claim (hook drain and cap-fire drain use distinct claim tags, so
   they're mutually exclusive). Zero-loss by construction.
-- Claims rename into `<root>/.claims/`, outside the session-name grammar,
-  so a seat named like a claim cannot be mistaken for one.
 - Parked files: `<seq>.json` or `<seq>.<id>.json` — the id segment is
   matched *structurally* (4 vs 3 segments), never by suffix, so a
   counter-shaped seq can't be claimed as an id.
@@ -315,6 +313,8 @@ inject queue to empty (capped at `INJECT_BOOT_MAXWAIT` past the edge), so a spaw
   An `urgent` re-send of the same body from the same sender claims any parked
   copy for that target first (content key = sha256 of sender + body), so the
   target never reads it twice.
+- Claims rename into `<root>/.claims/`, outside the session-name grammar,
+  so a seat named like a claim cannot be mistaken for one.
 - Drains: `run/<name>/pending.sh` (UserPromptSubmit and PostToolUse hooks) delivers
   parked mail with the target's own next turn or tool boundary; the busy/draft park arms a non-destructive
   5min cap (`_armParkCap`) that drains through the inject queue. Cost/dialog
