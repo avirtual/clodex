@@ -56505,7 +56505,7 @@ ${detail}` });
         movingFailed.delete(name);
         const restartFailedHit = restartFailed.get(name);
         restartFailed.delete(name);
-        const restartFailedEntry = restartFailedHit && Date.now() - restartFailedHit.at < RESTART_FAILED_TTL_MS ? { ...restartFailedHit, at: void 0 } : null;
+        const restartFailedEntry = restartFailedHit && Date.now() - restartFailedHit.at < RESTART_FAILED_TTL_MS ? restartFailedHit : null;
         const failedEntry = movedFailedEntry || restartFailedEntry;
         const exitedEntry = !archivedEntry && !failedEntry && meta && meta.agentType && !meta.expected && !(sessions.get(name) || {}).peer ? exitedRowSnapshot(name, code, meta) : null;
         if (activeSession === name && meta && meta.expected && !archivedEntry) respawnFocus.set(name, Date.now());
