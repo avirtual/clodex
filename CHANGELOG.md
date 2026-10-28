@@ -20,6 +20,8 @@ blocks a release.
 - `clodexctl undeploy node` (helm and docker) removes only the contexts that point at the torn-down release or container, so a same-named context for another node keeps its token.
 - The embeddings store truncates a torn tail left by a crash mid-append instead of appending after it, and a crash during compaction can no longer leave the index pointing into another record's vector.
 - A memory unit is written atomically, and a store write that fails mid-way (full disk) no longer leaves a temp file beside the store.
+- **Security:** the drawer shell's OSC 133 marks now carry a per-shell nonce, so a remote shell's own prompt integration (or any program printing those escapes) can no longer end the local command's capture and let a term exec type into the far host with remote commands switched off; a forged command mark no longer reaches the seat's context.
+- `shellHostOf` refuses `ssh` with `-o` spellings of the no-shell options (SessionType=none, RequestTTY=no, StdinNull, ForkAfterAuthentication, RemoteCommand) and `-F`, so a remote exec no longer interrupts a far program that is not a shell.
 
 ## 5.149.0 — 2026-10-28 — clodexctl reaps its tunnel on exit, create node takes a token file, worktree-safe workspace deletes
 

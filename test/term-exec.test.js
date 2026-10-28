@@ -176,6 +176,7 @@ function mk(over = {}) {
     remoteAllowed: over.remoteAllowed || (() => false),
     shellHost: over.shellHost || require('../term-host').shellHostOf,
     remoteInstallLine: require('../term-shim').REMOTE_INSTALL_LINE,
+    mintNonce: over.mintNonce,
     remoteUnsupportedReason: require('../term-shim').remoteUnsupportedReason,
   };
   assert.deepStrictEqual(Object.keys(deps).sort(), declaredDeps(),

@@ -1929,7 +1929,7 @@ const ctlService = enableCtl ? createCtlService({}) : null;
 const PASSIVE_TERM_KIND = 'terminal-passive';
 const { createDrawerPtys } = require('./drawer-pty');
 const { withUtf8Charset } = require('./env-scopes');
-const { buildTermShim, unsupportedShellReason, REMOTE_INSTALL_LINE, remoteUnsupportedReason } = require('./term-shim');
+const { buildTermShim, unsupportedShellReason, remoteInstallLineFor, mintMarkNonce, remoteUnsupportedReason } = require('./term-shim');
 const { shellHostOf, programOf } = require('./term-host');
 const { formatCommand, createMarkParser } = require('./term-marks');
 const { stripAnsi } = require('./cli/src/output');
@@ -1982,7 +1982,7 @@ const drawerPtys = enableLocalTerminal ? createDrawerPtys({
     if (res.mismatch) {
       // The other command's output is not rendered: it is the operator's own work
       // and the firehose is what they rejected.
-      const ran = (res.record && res.record.command) || 'something else';
+      const ran = sanitizeName(res.record && res.record.command) || 'something else';
       text = `[terminal] ${res.command}${insideLine}\nthe terminal reported \`${ran}\` finishing instead — that was already running when your command arrived. Yours may never have run, or may still be queued behind it. Look at the terminal before sending it again.`;
     } else if (res.status === 'ok') {
       // `assumed` keeps this branch total: vetTermCommand guarantees a non-empty
@@ -2024,7 +2024,8 @@ const drawerPtys = enableLocalTerminal ? createDrawerPtys({
   },
   remoteAllowed: () => uiSettings.get().terminalRemote === 'on' && uiSettings.get().terminalReports !== 'off',
   shellHost: shellHostOf,
-  remoteInstallLine: REMOTE_INSTALL_LINE,
+  remoteInstallLine: remoteInstallLineFor,
+  mintNonce: mintMarkNonce,
   remoteUnsupportedReason,
   log,
 }) : null;

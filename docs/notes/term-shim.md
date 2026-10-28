@@ -30,6 +30,23 @@ literally. The one `\e` is in bash's static PS0, which bash's prompt decoder
 interprets rather than printf. No `!` outside single quotes — interactive bash and
 zsh history-expand it even inside double quotes.
 
+## MARK_NONCE_ENV
+
+The rc's hook block copies the nonce into the unexported `__clodex_k` and unsets
+the env var, so the shell's later children do not inherit it. Each mark appends `${__clodex_k:-}`, so
+a shell started without the env emits exactly the untagged marks it always did.
+bash's static PS0 has the nonce expanded into it at rc time because it is never
+expanded afterwards.
+
+## remoteInstallLineFor
+
+The far nonce rides as `_cxk=<hex>; ` ahead of `REMOTE_INSTALL_LINE`, and every
+far mark reads `$_cxk` when it is printed, so a later install's nonce takes over
+the helpers. bash's static PS0 is the exception: it is set once behind `_cxo`,
+so a second install into the same far bash without promptvars leaves its C mark
+on the old nonce and the exec times out. `_cxq` prints D and A through `_cxp`
+to fit the 1019-byte budget, at the cost of a second fork in zsh.
+
 ## REMOTE_MARK_TAG
 
 Every far mark carries it. Bytes alone cannot tell a nested shell's marks from

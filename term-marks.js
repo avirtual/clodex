@@ -14,9 +14,9 @@
 // makes this parser small and honest — it reads facts rather than deducing them.
 //
 // The subset this file understands:
-//   ESC ] 133 ; A            BEL   prompt about to be drawn
-//   ESC ] 133 ; C ; <b64>    BEL   command STARTED; payload is what actually ran
-//   ESC ] 133 ; D ; <exit>   BEL   command finished, with its status
+//   ESC ] 133 ; A [;k=<nonce>]            BEL   prompt about to be drawn
+//   ESC ] 133 ; C ; <b64> [;k=<nonce>]    BEL   command STARTED; payload is what actually ran
+//   ESC ] 133 ; D ; <exit> [;k=<nonce>]   BEL   command finished, with its status
 // The command rides base64 on the C mark because a command line legitimately
 // contains `;` and BEL-adjacent bytes, and a raw one would end its own mark.
 // A carries no payload of its own; the parser classifies it by the D that
@@ -45,8 +45,10 @@ const PARTIAL_RE = /\x1b(?:\](?:1(?:3(?:3(?:;[^\x07]*)?)?)?)?)?$/;
 const ALT_RE = /\x1b\[\?(?:1049|1047|47)([hl])/g;
 const ALT_OVERLAP = 16;
 
-function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput } = {}) {
+function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput, nonce } = {}) {
   const MAX_OUT = maxOutput || 64 * 1024;
+  const localKey = nonce ? String(nonce) : null;
+  let farKey = null;
   let carry = '';
   let altCarry = '';
   let altScreen = false;
@@ -124,12 +126,16 @@ function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput } = {}) {
         last = MARK_RE.lastIndex;
         const body = m[1];
         const fields = body.split(';');
-        let tagged = false;
-        if (fields.length > 1 && /^nest=/.test(fields[fields.length - 1])) {
-          const nest = fields.pop();
-          if (nest !== 'nest=1') continue;
-          tagged = true;
+        let nest = null;
+        let key = null;
+        while (fields.length > 1 && /^(?:nest=|k=(?:[0-9a-f]{16,})?$)/.test(fields[fields.length - 1])) {
+          const tag = fields.pop();
+          if (tag.startsWith('k=')) key = tag.slice(2);
+          else nest = tag;
         }
+        if (nest !== null && nest !== 'nest=1') continue;
+        const tagged = nest !== null;
+        if (tagged ? (farKey ? key !== farKey : localKey !== null) : (localKey !== null && key !== localKey)) continue;
         const letter = fields[0];
         const payload = fields.length > 1 ? fields[1] : '';
         if (tagged) {
@@ -216,6 +222,7 @@ function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput } = {}) {
           out = '';
           lastExit = null;
           innerClear();
+          farKey = null;
           seq += 1;
           altScreen = false;
         } else if (letter === 'D') {
@@ -254,6 +261,7 @@ function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput } = {}) {
         text(rest);
       }
     },
+    setFarNonce(k) { farKey = k ? String(k) : null; },
     // Whether a command is open. An agent-driven exec must refuse to type while
     // something is already running rather than injecting a line into a program's
     // stdin.
@@ -285,7 +293,7 @@ function createMarkParser({ onCommand, onAbandon, onPrompt, maxOutput } = {}) {
 // A build that prints four thousand lines and works is not something the agent
 // needs in its context.
 function formatCommand(rec, { stripAnsi, maxLines, maxChars, always, assumed, inside } = {}) {
-  const cmd = String((rec && rec.command) || '').trim();
+  const cmd = String((rec && rec.command) || '').replace(/[\x00-\x1f\x7f-\x9f]/g, '').trim();
   // A record the shell did not NAME still has a real exit code and real output,
   // and which of those is worth keeping depends entirely on who is asking.
   //

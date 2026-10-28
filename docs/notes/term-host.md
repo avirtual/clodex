@@ -23,7 +23,12 @@ long-running non-interactive program as an interactive shell.
 `-N`, `-W`, `-T`, `-n` and `-f` are refused inside the option walk
 (`SSH_NO_SHELL_OPTS`): each leaves a connection with no interactive shell reading
 keystrokes — no command, a forwarded socket, no tty (so PS0/precmd never run),
-stdin from /dev/null, or backgrounded.
+stdin from /dev/null, or backgrounded. Their `-o` spellings are refused too
+(`sshOptionNoShell`, `-o K=V` and `-oK=V`, keys case-insensitive):
+`SessionType` other than `default`, `RequestTTY=no`/`false`, `StdinNull` and
+`ForkAfterAuthentication` of `yes`/`true`, and any `RemoteCommand` but `none`.
+`-F` is refused outright, since an unknown config may set `RemoteCommand`. A
+`RemoteCommand` in `~/.ssh/config` is undetectable from argv.
 
 ## HOST_TABLE
 

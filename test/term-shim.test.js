@@ -340,7 +340,7 @@ test('the PS0 branch falls back to a static mark when promptvars is off', () => 
   // command; it just cannot say what the command was.
   assert.match(body, /if shopt -q promptvars; then/, 'ENTER: the branch exists');
   assert.match(body, /PS0='\$\(__clodex_preexec\)'/, 'dynamic form when prompts expand');
-  assert.match(body, /PS0='\\e\]133;C;\\a'/, 'static form when they do not');
+  assert.match(body, /PS0='\\e\]133;C;'"\$\{__clodex_k:-\}"'\\a'/, 'static form when they do not');
 });
 
 // bash 5.1+ allows an ARRAY here. Assigning a STRING onto an existing array
@@ -603,6 +603,9 @@ const { execFileSync } = require('child_process');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const { vetTermCommand } = require('../drawer-avail');
+const TK = '0123456789abcdef';
+const KEYED = require('../term-shim').remoteInstallLineFor(TK);
+const FT = `${REMOTE_MARK_TAG};k=${TK}`;
 
 test('the install line is ONE line and carries no byte vetCommand would reject', () => {
   assert.ok(!/[\r\n]/.test(REMOTE_INSTALL_LINE), 'no newline: it is typed as one line');
@@ -611,14 +614,14 @@ test('the install line is ONE line and carries no byte vetCommand would reject',
 });
 
 test('the install line fits the terminal line the far tty will accept', () => {
-  const typed = Buffer.byteLength(' ' + REMOTE_INSTALL_LINE);
+  const typed = Buffer.byteLength(' ' + KEYED);
   assert.ok(typed <= REMOTE_LINE_MAX,
     `the line plus its sacrificial space is ${typed} bytes, over the ${REMOTE_LINE_MAX} a canonical-mode tty accepts`);
 });
 
 test('every mark the install line emits carries the nest tag', () => {
   const marks = REMOTE_INSTALL_LINE.match(/\\033\]133;.*?\\007|\\e\]133;.*?\\a/g) || [];
-  assert.ok(marks.length >= 4, `ENTER: the line emits marks (found ${marks.length})`);
+  assert.ok(marks.length >= 2, `ENTER: the line emits marks (found ${marks.length})`);
   for (const m of marks) {
     assert.ok(m.includes(REMOTE_MARK_TAG), `untagged mark would be read as the OUTER shell's: ${m}`);
   }
@@ -690,7 +693,7 @@ for (const [name, candidates] of SHELLS) {
   test(`${name} parses the whole install line`, { skip: bin ? false : `no ${name} on this machine` }, () => {
     const root = mkTmpRoot('clodex-install-line-');
     const file = path.join(root, 'line.sh');
-    fs.writeFileSync(file, REMOTE_INSTALL_LINE);
+    fs.writeFileSync(file, KEYED);
     execFileSync(bin, ['-n', file], { timeout: 10000 });
   });
 }
@@ -704,11 +707,11 @@ const POSIX_ANSWERS = [
 for (const [name, candidates, want] of POSIX_ANSWERS) {
   const bin = findShell(candidates);
   test(`a far ${name} answers D;${want};${REMOTE_MARK_TAG} and installs no hooks`, { skip: bin ? false : `no ${name} on this machine` }, () => {
-    const out = execFileSync(bin, ['-c', REMOTE_INSTALL_LINE], { timeout: 10000, encoding: 'utf8' });
+    const out = execFileSync(bin, ['-c', KEYED], { timeout: 10000, encoding: 'utf8' });
     const marks = [...out.matchAll(/\x1b\]133;([^\x07]*)\x07/g)].map((m) => m[1]);
     assert.deepStrictEqual(marks, [
-      `C;${REMOTE_HELLO_B64};${REMOTE_MARK_TAG}`,
-      `D;${want};${REMOTE_MARK_TAG}`,
+      `C;${REMOTE_HELLO_B64};${FT}`,
+      `D;${want};${FT}`,
     ]);
   });
 }
@@ -757,40 +760,40 @@ const realOpts = (bin, why) => ({ skip: !ptyMod ? 'node-pty unavailable' : bin ?
 test('a real far bash installs the hooks: the next command reports a tagged C and D;0',
   realOpts(FAR_BASH, 'no bash 4.4+ on this machine'), async () => {
     const { marks, raw } = await runInShell(FAR_BASH, ['--norc', '--noprofile', '-i'],
-      [' ' + REMOTE_INSTALL_LINE, 'true']);
-    assert.ok(marks.includes(`D;0;${REMOTE_MARK_TAG}`),
+      [' ' + KEYED, 'true']);
+    assert.ok(marks.includes(`D;0;${FT}`),
       `the install answered 0 (supported)\n--- marks ---\n${marks.join('\n')}\n--- raw ---\n${raw}`);
-    assert.ok(marks.includes(`A;${REMOTE_MARK_TAG}`), 'the far precmd emits a tagged A — the success signal');
-    const cIdx = marks.findIndex((m) => m === `C;${Buffer.from('true').toString('base64')};${REMOTE_MARK_TAG}`);
+    assert.ok(marks.includes(`A;;${FT}`), 'the far precmd emits a tagged A — the success signal');
+    const cIdx = marks.findIndex((m) => m === `C;${Buffer.from('true').toString('base64')};${FT}`);
     assert.ok(cIdx !== -1, `the far preexec named the command it ran\n--- marks ---\n${marks.join('\n')}`);
-    assert.strictEqual(marks[cIdx + 1], `D;0;${REMOTE_MARK_TAG}`, '`true` reported exit 0, tagged');
+    assert.strictEqual(marks[cIdx + 1], `D;0;${FT}`, '`true` reported exit 0, tagged');
   });
 
 test('a real far zsh installs the hooks: the next command reports a tagged C and D;0',
   realOpts(FAR_ZSH, 'no zsh on this machine'), async () => {
     const { marks, raw } = await runInShell(FAR_ZSH, ['-f', '-i'],
-      [' ' + REMOTE_INSTALL_LINE, 'true']);
-    assert.ok(marks.includes(`D;0;${REMOTE_MARK_TAG}`),
+      [' ' + KEYED, 'true']);
+    assert.ok(marks.includes(`D;0;${FT}`),
       `the install answered 0 (supported)\n--- marks ---\n${marks.join('\n')}\n--- raw ---\n${raw}`);
-    const cIdx = marks.findIndex((m) => m === `C;${Buffer.from('true').toString('base64')};${REMOTE_MARK_TAG}`);
+    const cIdx = marks.findIndex((m) => m === `C;${Buffer.from('true').toString('base64')};${FT}`);
     assert.ok(cIdx !== -1, `the far preexec named the command it ran\n--- marks ---\n${marks.join('\n')}`);
-    assert.strictEqual(marks[cIdx + 1], `D;0;${REMOTE_MARK_TAG}`, '`true` reported exit 0, tagged');
+    assert.strictEqual(marks[cIdx + 1], `D;0;${FT}`, '`true` reported exit 0, tagged');
   });
 
 test('a real far dash answers D;2 and installs nothing',
   realOpts(FAR_DASH, 'no dash on this machine'), async () => {
-    const { marks, raw } = await runInShell(FAR_DASH, ['-i'], [' ' + REMOTE_INSTALL_LINE, 'true']);
+    const { marks, raw } = await runInShell(FAR_DASH, ['-i'], [' ' + KEYED, 'true']);
     assert.deepStrictEqual(marks, [
-      `C;${REMOTE_HELLO_B64};${REMOTE_MARK_TAG}`,
-      `D;2;${REMOTE_MARK_TAG}`,
+      `C;${REMOTE_HELLO_B64};${FT}`,
+      `D;2;${FT}`,
     ], `a POSIX sh reaches the final printf and says "unsupported"\n--- raw ---\n${raw}`);
   });
 
 test('installing twice then running one command emits exactly ONE tagged C for it',
   realOpts(FAR_BASH, 'no bash 4.4+ on this machine'), async () => {
     const { marks, raw } = await runInShell(FAR_BASH, ['--norc', '--noprofile', '-i'],
-      [' ' + REMOTE_INSTALL_LINE, ' ' + REMOTE_INSTALL_LINE, 'true']);
-    const want = `C;${Buffer.from('true').toString('base64')};${REMOTE_MARK_TAG}`;
+      [' ' + KEYED, ' ' + KEYED, 'true']);
+    const want = `C;${Buffer.from('true').toString('base64')};${FT}`;
     const n = marks.filter((m) => m === want).length;
     assert.strictEqual(n, 1,
       `a re-install stacked the hooks and double-marked the command\n--- marks ---\n${marks.join('\n')}\n--- raw ---\n${raw}`);
@@ -799,9 +802,38 @@ test('installing twice then running one command emits exactly ONE tagged C for i
 test('a re-installed zsh also emits exactly ONE tagged C: preexec_functions+= is the stacking risk',
   realOpts(FAR_ZSH, 'no zsh on this machine'), async () => {
     const { marks, raw } = await runInShell(FAR_ZSH, ['-f', '-i'],
-      [' ' + REMOTE_INSTALL_LINE, ' ' + REMOTE_INSTALL_LINE, 'true']);
-    const want = `C;${Buffer.from('true').toString('base64')};${REMOTE_MARK_TAG}`;
+      [' ' + KEYED, ' ' + KEYED, 'true']);
+    const want = `C;${Buffer.from('true').toString('base64')};${FT}`;
     const n = marks.filter((m) => m === want).length;
     assert.strictEqual(n, 1,
       `a re-install stacked the hooks and double-marked the command\n--- marks ---\n${marks.join('\n')}\n--- raw ---\n${raw}`);
   });
+
+test('nonce: every local mark in both rcs carries the nonce read from MARK_NONCE_ENV', () => {
+  const { MARK_NONCE_ENV, zshrcBody: zrc, bashrcBody: brc } = require('../term-shim');
+  assert.strictEqual(MARK_NONCE_ENV, '__CLODEX_MARK_NONCE');
+  for (const [name, rc] of [['zsh', zrc()], ['bash', brc()]]) {
+    assert.ok(rc.includes(`__clodex_k=";k=$${MARK_NONCE_ENV}"`), `${name} reads the nonce from the env`);
+    assert.ok(rc.includes(`unset ${MARK_NONCE_ENV}`), `${name} keeps it out of child environments`);
+    const marks = rc.split('\n').filter((l) => /133;[ACD]/.test(l));
+    assert.ok(marks.length >= 3, `ENTER: ${name} has its three marks (${marks.length})`);
+    for (const letter of ['A', 'C', 'D']) {
+      assert.ok(marks.some((l) => l.includes(`133;${letter}`)), `ENTER: ${name} emits ${letter}`);
+    }
+    for (const l of marks) assert.ok(l.includes('${__clodex_k:-}'), `${name} mark without the nonce: ${l}`);
+  }
+});
+
+test('nonce: the far line sets its own nonce, and every far mark reads it', () => {
+  const { remoteInstallLineFor, mintMarkNonce } = require('../term-shim');
+  const k = mintMarkNonce();
+  assert.match(k, /^[0-9a-f]{16}$/);
+  const line = remoteInstallLineFor(k);
+  assert.ok(line.startsWith(`_cxk=${k}; `));
+  assert.ok(Buffer.byteLength(' ' + line) <= REMOTE_LINE_MAX, 'the keyed line still fits the far tty');
+  assert.strictEqual(vetTermCommand(line).ok, true);
+  const marks = line.match(/\\033\]133;.*?\\007|\\e\]133;.*?\\a/g) || [];
+  assert.ok(marks.length >= 2, `ENTER: the line emits marks (${marks.length})`);
+  for (const m of marks) assert.ok(m.includes(`${REMOTE_MARK_TAG};k=$_cxk`), `far mark without the far nonce: ${m}`);
+  assert.throws(() => remoteInstallLineFor('x; rm -rf ~'), /hex/);
+});

@@ -15,3 +15,14 @@ meant; a tagged one belongs to the inner layer and carries `depth: 1` plus the
 `inside` command line on every record. `nest=2` and above are ignored and
 stripped — there is no third layer, and accepting one would frame a command
 against a shell nothing here can name.
+
+THE NONCE AUTHENTICATES, THE TAG ONLY LAYERS. With `nonce` set, an untagged mark
+counts only with `k=<nonce>`, and a `nest=1` mark only with `k=` equal to the
+nonce passed to `setFarNonce` for the current install (cleared on every outer
+C, so a mark before the install line is typed is dropped). A mark failing either
+is stripped from the output and changes no state: not `capturing`, not the
+inner layer, not the D/A pairing. Without it, a far host's own shell integration
+prints `D;0 A` on its first prompt and closes the local `ssh` while it is still
+connected. Tags are read off the end in any order. No `nonce` keeps the old
+untagged-means-local reading; drawer-pty passes one to every seat shell's parser
+when it has `mintNonce`, shimmed or not, so an unshimmed shell drops every mark.
