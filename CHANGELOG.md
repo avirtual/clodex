@@ -16,6 +16,7 @@ blocks a release.
 
 - Delete Session and Delete Workspace on a ticket seat wait for its inject queue to settle before removing the worktree, so a dm re-parked at the seat's death no longer lands in a pending dir nothing drains.
 - The legacy claim-shape seat-name reservation (`.resend.*`, `*.draining.<kind>.<pid>`) is case-insensitive like `.claims`.
+- A restart whose respawn fails — from Edit Session, a restart whose old process outlives the exit wait, or an agent's context reload — and a Delete Session that keeps a ticket seat's record now leave a failed (or archived) sidebar row with Retry and Forget, instead of a vanished seat whose kept record still holds its name.
 
 ## 5.149.0 — 2026-10-28 — clodexctl reaps its tunnel on exit, create node takes a token file, worktree-safe workspace deletes
 

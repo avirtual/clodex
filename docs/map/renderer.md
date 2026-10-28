@@ -57,7 +57,7 @@ payloads are documented in `docs/renderer-events.md`.
 | addExitedSessionToSidebar | renders an exited agent seat as a row whose click resumes it and whose ✕ forgets its record | sidebar DOM | exitedLabel, rebuildLiveRow | exited-seat-row.test.js seat-io-marker.test.js |
 | archivedRowEntry | snapshots a live row's identity with `archivedAt` so `onSessionExit` can rebuild it as an archived row | reads `sidebarMeta` | rowSnapshot | seat-io-marker.test.js |
 | archiveSessionRow | ✕ and Cmd+W: stashes the archived entry, then calls `session:archive`; un-stashes and toasts on failure | `archivingSessions`, `movingFailed` | archivedRowEntry, window.api.archiveSession | chord-overlay-guard.test.js session-move.test.js sidebar-account-chip.test.js |
-| deleteSessionRow | right-click Delete: confirm, kill, and remove the row locally only when the seat was not live | `movingFailed`, `seatViewMemory` | window.api.confirmKill, window.api.killSession | renderer-source-pins.test.js session-manager.test.js session-move.test.js |
+| deleteSessionRow | right-click Delete: confirm, kill, and remove the row locally only when the seat was not live; when a live seat's record is kept (`worktreeRemoved === false`), draws its archived row, or stashes it in `archivingSessions` while the seat is still live | `movingFailed`, `restartFailed`, `archivingSessions`, `seatViewMemory` | archivedRowEntry, addArchivedSessionToSidebar, window.api.confirmKill, window.api.killSession | renderer-source-pins.test.js session-manager.test.js session-move.test.js |
 | addSessionToSidebar | builds and inserts the live-seat row (chip, name, badges, buttons) and wires click, rename, flush and context menu | sidebar DOM, row dataset | typeGlyph, insertLocalSessionRow, applyFixChip, startRename | deploy-visible.test.js exited-seat-row.test.js peer-fix-working-line.test.js |
 
 ### Invariants
@@ -73,7 +73,9 @@ payloads are documented in `docs/renderer-events.md`.
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| restartOrFailRow | restarts a seat via `session:restart` and rebuilds its terminal and row from a snapshot taken before the kill; on a refused respawn with the row gone, draws a failed row and toasts | sidebar DOM, `sessions` | rowSnapshot, rebuildLiveRow, addFailedSessionToSidebar, switchSession | renderer-source-pins.test.js seat-io-marker.test.js |
+| failRowOrStash | after a failed respawn: stashes the failed row in `restartFailed` while the seat is live, draws it when no row remains | `restartFailed`, sidebar DOM, `sessions` | addFailedSessionToSidebar | exited-seat-row.test.js |
+| setArgsOrFailRow | the Edit Session save's `window.api.setSessionArgs` call; a failed restart goes through failRowOrStash | none | window.api.setSessionArgs, failRowOrStash | exited-seat-row.test.js renderer-source-pins.test.js |
+| restartOrFailRow | restarts a seat via `session:restart` and rebuilds its terminal and row from a snapshot taken before the kill; on a refused respawn, failRowOrStash and a toast | sidebar DOM, `sessions` | rowSnapshot, rebuildLiveRow, failRowOrStash, switchSession | exited-seat-row.test.js renderer-source-pins.test.js seat-io-marker.test.js |
 | moveSessionWithPicker | Move Session…: picks a directory, calls `session:move`, rebuilds on success or parks a failed row when kept | `movingFailed` | rowSnapshot, rebuildLiveRow, addFailedSessionToSidebar | renderer-source-pins.test.js seat-io-marker.test.js session-move.test.js |
 | moveSessionToWorkspace | calls `session:move-to-workspace` and toasts; the old window's row goes via the moved-out push | none | window.api.moveSessionToWorkspace, showToast | session-move.test.js |
 | moveSessionToPeerWithDialog | registers a one-shot move closure and opens the peer session dialog in move mode | pending move closures, sidebar DOM | rowSnapshot, rebuildLiveRow, addArchivedSessionToSidebar | renderer-source-pins.test.js seat-io-marker.test.js session-move.test.js |
@@ -218,7 +220,7 @@ payloads are documented in `docs/renderer-events.md`.
 
 ### Invariants
 - The anonymous `window.api.onPtyData` handler diverts the voice engine's name to `voiceEngine` before any `sessions` lookup.
-- The anonymous `window.api.onSessionExit` handler takes the `exitedRowSnapshot` BEFORE `removeSession`, then rebuilds the row as archived, failed or exited from `archivingSessions` and `movingFailed` in that order.
+- The anonymous `window.api.onSessionExit` handler takes the `exitedRowSnapshot` BEFORE `removeSession`, then rebuilds the row as archived, failed or exited from `archivingSessions`, then `movingFailed` (ignored on an expected exit) or `restartFailed` (read on every exit), in that order.
 - That exit handler invalidates the tool cache before its archived early return, so closing an installer tab still re-probes `refreshNewSessionToolGate`.
 
 ### Hazards

@@ -70,7 +70,7 @@ reattach — a web host needs the same replay-on-connect for a reloaded tab.
 | `session-attention` | `name, attn` (needs-attention fact object, or null to clear) | session-manager `_setAttention` |
 | `session-compacting` | `name, c, end` — `c` is `{since, trigger}` while the seat compacts, null when it stops; on stop `end` is `{outcome: 'done'\|'valve'\|'exit', ms}` | session-manager `_onCompactStart` / `_onCompactEnd` |
 | `session-mention` | `name, mtype, from` (`dm`/…) | session-manager (dm/mention gate) |
-| `session:context-action` | `msg` object `{action, name, …}` (`reattach` on the reattach/spawn path; `retired` with `disposition`) | session-manager, team-tickets, engine (`moveAccountByModel`) |
+| `session:context-action` | `msg` object `{action, name, …}` (`reattach` on the reattach/spawn path; `retired` with `disposition`; `respawnFailed` with `error, type, cwd` when a context reload or an account-move restart fails to respawn, sent to the workspace window when the seat is gone) | session-manager (`_sendRespawnFailed` too), team-tickets, engine (`moveAccountByModel`) |
 | `selection-sent` | `name` — the pending selection list retired on submit | session-manager |
 | `wterm:data` | `data, seat, seq` (workbench terminal output; `seq` absent on the shell-exited line) — **direct handle** on the workspace's window (`windowForWorkspace`) | drawer-pty via engine.js `createDrawerPtys` `send` |
 | `session-peer-control` | `name, holder` (control-holder tag or null) | remote-wiring |

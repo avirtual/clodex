@@ -254,7 +254,7 @@ function mkRenderer({ api = {}, confirmAnswer = true } = {}) {
     switchSession: rec('switchSession'),
     refreshSidebarView: rec('refreshSidebarView'),
     addArchivedSessionToSidebar: rec('addArchivedSessionToSidebar'),
-    addFailedSessionToSidebar: (entry) => { calls.push(['addFailedSessionToSidebar', entry]); rows.push({ className: 'session-item failed', dataset: { name: entry.name } }); },
+    addFailedSessionToSidebar: (entry) => { calls.push(['addFailedSessionToSidebar', entry]); const node = mkNode(); node.className = 'session-item failed'; node.dataset.name = entry.name; rows.push(node); },
     mountRestoredSession: rec('mountRestoredSession'),
     initSidebarView: rec('initSidebarView'),
     switchToNewSession: rec('switchToNewSession'),
