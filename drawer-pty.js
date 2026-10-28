@@ -6,7 +6,7 @@
 
 // Keyed by (WINDOW, SEAT): collapsing the two gives a seat a shell in another
 // seat's directory. A seatless key is the workspace-wide shell.
-function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log, setTimeout: setTimeoutFn, killPid, shimEnv, onCommand, makeMarkParser, onExecResult, vetCommand, execTimeoutMs, onOutput, onShellEnd, withUtf8Charset, remoteAllowed, shellHost, remoteInstallLine, remoteUnsupportedReason, mintNonce }) {
+function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log, setTimeout: setTimeoutFn, killPid, shimEnv, onCommand, makeMarkParser, onExecResult, vetCommand, execTimeoutMs, onOutput, onShellEnd, withUtf8Charset, remoteAllowed, shellHost, remoteInstallLine, remoteUnsupportedReason, mintNonce, incarnationFor }) {
   const ptys = new Map(); // key(windowId, seat) -> { proc, scrollback, cols, rows, windowId, seat }
 
   // NUL is the one byte neither half can contain; any other separator would let one
@@ -53,6 +53,31 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     ? remoteUnsupportedReason({ status, timeoutMs: INSTALL_TIMEOUT_MS })
     : `the remote session cannot report results back (${status}). Nothing was run there.`);
 
+  function incarnationOf(windowId, seat) {
+    if (!seat || !incarnationFor) return null;
+    try {
+      const v = incarnationFor(windowId, seat);
+      return v == null ? null : v;
+    } catch { return null; }
+  }
+
+  function isStale(rec) {
+    if (rec.incarnation == null) return false;
+    const now = incarnationOf(rec.windowId, rec.seat);
+    return now != null && now !== rec.incarnation;
+  }
+
+  function current(windowId, seat) {
+    const key = keyFor(windowId, seat);
+    const rec = ptys.get(key);
+    if (!rec || !isStale(rec)) return rec || null;
+    ptys.delete(key);
+    logger.info('drawer', `seat ${rec.seat} was replaced; closing its predecessor's shell`);
+    settle(rec, { status: 'shell-gone', reason: 'the seat was replaced' });
+    endShell(rec);
+    return null;
+  }
+
   function shellFor() {
     return shell || (env && env.SHELL) || process.env.SHELL || '/bin/zsh';
   }
@@ -64,7 +89,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
   function spawnFor(windowId, seat, opts) {
     if (disposed) return null;
     const key = keyFor(windowId, seat);
-    const existing = ptys.get(key);
+    const existing = current(windowId, seat);
     if (existing) return existing;
 
     const cols = clampDim(opts && opts.cols, 80);
@@ -96,7 +121,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     // Scrollback and live bytes take different IPC paths, so a seq-less renderer
     // double-prints the overlap or drops the tail.
     const rec = {
-      proc, scrollback: '', cols, rows, windowId, seat: seat || null, seq: 0, shimmed, prompted: false, pending: null,
+      proc, scrollback: '', cols, rows, windowId, seat: seat || null, incarnation: incarnationOf(windowId, seat), seq: 0, shimmed, prompted: false, pending: null,
       remote: null, remoteRecord: null, remotePrompt: null, endedInner: null,
     };
     // Per shell, not per window: one parser shared across seats would attribute one
@@ -204,6 +229,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     if (p.inside) res.inside = p.inside;
     if (p.token) res.token = p.token;
     if (mismatch) res.mismatch = true;
+    if (isStale(rec)) res.stale = true;
     try { onExecResult(rec.seat, res); } catch {}
     return true;
   }
@@ -385,7 +411,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
 
   return {
     spawn(windowId, seat, opts) {
-      const had = ptys.has(keyFor(windowId, seat));
+      const had = !!current(windowId, seat);
       const rec = spawnFor(windowId, seat, opts);
       if (!rec) return { ok: false, error: 'drawer terminals are unavailable on this host' };
       if (rec.error) return { ok: false, error: rec.error };
@@ -398,13 +424,13 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     // ruling. Do not give the peer its own shell; that trades a visible annoyance for
     // an invisible exposure.
     write(windowId, seat, data) {
-      const rec = ptys.get(keyFor(windowId, seat));
+      const rec = current(windowId, seat);
       if (!rec || typeof data !== 'string') return false;
       try { rec.proc.write(data); return true; } catch { return false; }
     },
 
     read(windowId, seat) {
-      const rec = ptys.get(keyFor(windowId, seat));
+      const rec = current(windowId, seat);
       return rec && typeof rec.scrollback === 'string' ? rec.scrollback : '';
     },
 
@@ -412,10 +438,10 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       if (!seat) return { ok: false, code: 'no-seat' };
       const vet = vetCommand ? vetCommand(command) : { ok: true, command };
       if (!vet.ok) return { ok: false, code: 'bad-command', error: vet.error };
-      const key = keyFor(windowId, seat);
-      const fresh = !ptys.has(key);
+      const live = current(windowId, seat);
+      const fresh = !live;
       if (fresh && !(onCommand && makeMarkParser && shimEnv && shimEnv(seat))) return { ok: false, code: 'no-marks' };
-      const rec = fresh ? spawnFor(windowId, seat, {}) : ptys.get(key);
+      const rec = fresh ? spawnFor(windowId, seat, {}) : live;
       if (!rec) return { ok: false, code: 'spawn-failed', error: 'drawer terminals are unavailable on this host' };
       if (rec.error) return { ok: false, code: 'spawn-failed', error: rec.error };
       // No marks ⇒ no D ⇒ nothing tells the agent this finished, but it still runs.
@@ -494,7 +520,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     },
 
     resize(windowId, seat, cols, rows) {
-      const rec = ptys.get(keyFor(windowId, seat));
+      const rec = current(windowId, seat);
       if (!rec) return false;
       const c = clampDim(cols, rec.cols);
       const r = clampDim(rows, rec.rows);
@@ -548,7 +574,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     // Never for a caller to pre-check and then act on: that race is the reason exec
     // takes the refusal decisions itself.
     _execState: (windowId, seat) => {
-      const rec = ptys.get(keyFor(windowId, seat));
+      const rec = current(windowId, seat);
       if (!rec) return null;
       return {
         shimmed: rec.shimmed,

@@ -2012,6 +2012,11 @@ const drawerPtys = enableLocalTerminal ? createDrawerPtys({
       const why = res.reason || (res.status ? `the terminal reported \`${res.status}\`` : 'the terminal went away');
       text = `[terminal] ${res.command}${insideLine}\n${why} before the command reported back. Whether it ran is unknown.`;
     }
+    if (res.stale) {
+      if (res.token) termWaiters.delete(res.token);
+      log.info('term', `dropped a result for ${seat}'s predecessor: ${res.command}`);
+      return;
+    }
     const out = `${text}${late}`;
     const w = res.token ? termWaiters.get(res.token) : null;
     if (w) {
@@ -2027,8 +2032,41 @@ const drawerPtys = enableLocalTerminal ? createDrawerPtys({
   remoteInstallLine: remoteInstallLineFor,
   mintNonce: mintMarkNonce,
   remoteUnsupportedReason,
+  incarnationFor: (workspaceId, seat) => manager._bornFor(seat),
   log,
 }) : null;
+
+function drawerWorkspaceOf(name) {
+  const s = manager.sessions.get(name);
+  if (s && s.workspaceId) return s.workspaceId;
+  try {
+    const e = persistence && persistence.get(name);
+    if (e && e.workspaceId) return e.workspaceId;
+  } catch {}
+  return DEFAULT_WORKSPACE_ID;
+}
+
+function reapDrawerSeat(ws, name) {
+  if (!drawerPtys) return;
+  try { drawerPtys.killSeat(ws, String(name || '')); } catch {}
+}
+
+function reapDrawerAfter(method, when) {
+  const orig = manager[method];
+  manager[method] = async function (name, ...rest) {
+    const ws = drawerWorkspaceOf(name);
+    const r = await orig.call(this, name, ...rest);
+    if (when(r, name)) reapDrawerSeat(ws, name);
+    return r;
+  };
+}
+reapDrawerAfter('destroy', () => true);
+reapDrawerAfter('archive', () => true);
+reapDrawerAfter('rename', (r, name) => {
+  if (r && r.ok) return true;
+  if (manager.sessions.has(name)) return false;
+  try { return !(persistence && persistence.get(name)); } catch { return false; }
+});
 
 // Urgent dm so an agent blocked on its own command is woken; the queue write stays
 // as fallback for held, dead or throwing deliveries, since dropping it loses the result.

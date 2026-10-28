@@ -21,7 +21,7 @@ const CMD_PREFIX = ['command', 'exec', 'env', 'builtin', 'nohup'];
 const SHELL_KEYWORDS = ['if', 'then', 'else', 'elif', 'do', 'while', 'until', '!'];
 const TIMEOUT_ARG_FLAGS = ['-s', '-k', '--signal', '--kill-after'];
 const DURATION_RE = /^[0-9]+(\.[0-9]+)?[smhd]?$/;
-const SEPARATORS = ';&|(){}\n';
+const SEPARATORS = ';&|(){}`\n';
 const SUBAGENT_BRIEF_TAIL = "Refusals come back as text; a refused call will not succeed on retry — return and let the seat's main agent decide.";
 
 function composeSubagentBrief(briefs) {
@@ -184,12 +184,12 @@ function shellSegments(cmd) {
     const c = cmd.charAt(i);
     if (q) {
       if (c === q) { q = null; continue; }
-      if (q === '"' && c === '\\' && i + 1 < cmd.length) { i++; tok.text += cmd.charAt(i); continue; }
+      if (q === '"' && c === '\\' && i + 1 < cmd.length) { i++; if (cmd.charAt(i) !== '\n') tok.text += cmd.charAt(i); continue; }
       tok.text += c;
       continue;
     }
     if (c === "'" || c === '"') { at(i); q = c; continue; }
-    if (c === '\\' && i + 1 < cmd.length) { at(i).text += cmd.charAt(i + 1); i++; continue; }
+    if (c === '\\' && i + 1 < cmd.length) { if (cmd.charAt(i + 1) !== '\n') at(i).text += cmd.charAt(i + 1); i++; continue; }
     if (c === '{' && cmd.charAt(i + 1) === '}') { at(i).text += '{}'; i++; continue; }
     if (c === '<' && cmd.charAt(i + 1) === '<' && cmd.charAt(i + 2) === '<') { at(i).text += '<<<'; i += 2; continue; }
     if (c === '<' && cmd.charAt(i + 1) === '<') {

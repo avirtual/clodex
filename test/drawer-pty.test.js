@@ -75,6 +75,7 @@ function mk(over = {}) {
     remoteAllowed: over.remoteAllowed,
     shellHost: over.shellHost,
     onExecResult: over.onExecResult,
+    incarnationFor: over.incarnationFor,
     log: { info() {}, warn() {}, error() {} },
   });
   return { w, sent, spawn, ended };
@@ -748,4 +749,61 @@ test('nonce: an UNSHIMMED seat shell still gets a keyed parser, so printed marks
   w.spawn('ws-1', 'alice', {});
   spawn.spawned[0].emit(`${MARKED('x', 'out\n', 0)}\x1b]133;A\x07`);
   assert.deepStrictEqual(got, [], 'a cat of a file carrying marks cannot name a command to the seat');
+});
+
+function seatLife() {
+  const born = { alpha: 100 };
+  const results = [];
+  const { w, spawn } = mk({
+    incarnationFor: (ws, seat) => (seat in born ? born[seat] : null),
+    shimEnv: () => ({ env: {}, args: ['-l'] }),
+    onCommand: () => {},
+    onExecResult: (seat, res) => results.push([seat, res]),
+  });
+  return { w, spawn, born, results };
+}
+
+test('incarnation: a recreated seat of the same name reads none of its predecessor\'s scrollback', () => {
+  const { w, spawn, born } = seatLife();
+  w.spawn('ws-1', 'alpha', {});
+  spawn.spawned[0].emit('old seat secret\r\n');
+  assert.strictEqual(w.read('ws-1', 'alpha'), 'old seat secret\r\n', 'ENTER: the first incarnation reads its own shell');
+  born.alpha = 200;
+  assert.strictEqual(w.read('ws-1', 'alpha'), '');
+  assert.strictEqual(spawn.spawned[0].killed, true, 'the predecessor shell is killed');
+  assert.strictEqual(w._count(), 0);
+  const again = w.spawn('ws-1', 'alpha', {});
+  assert.deepStrictEqual([again.fresh, again.scrollback, spawn.spawned.length], [true, '', 2]);
+});
+
+test('incarnation: exec for a recreated seat runs in a fresh shell, never the old one', () => {
+  const { w, spawn, born } = seatLife();
+  w.spawn('ws-1', 'alpha', {});
+  born.alpha = 200;
+  assert.deepStrictEqual(w.exec('ws-1', 'alpha', 'ls'), { ok: true, command: 'ls', fresh: true });
+  assert.strictEqual(spawn.spawned.length, 2);
+  assert.strictEqual(spawn.spawned[0].killed, true);
+  assert.deepStrictEqual(spawn.spawned[0].written, [], 'nothing was typed into the predecessor shell');
+});
+
+test('incarnation: a result for the predecessor\'s command is flagged stale; the same seat\'s own is not', () => {
+  const { w, born, results } = seatLife();
+  w.exec('ws-1', 'alpha', 'make');
+  born.alpha = 200;
+  w.read('ws-1', 'alpha');
+  assert.strictEqual(results.length, 1, 'ENTER: replacing the shell settled its pending command');
+  assert.deepStrictEqual([results[0][0], results[0][1].command, results[0][1].status, results[0][1].stale], ['alpha', 'make', 'shell-gone', true]);
+  w.exec('ws-1', 'alpha', 'ls');
+  w.killSeat('ws-1', 'alpha');
+  assert.deepStrictEqual([results.length, results[1][1].command, results[1][1].stale], [2, 'ls', undefined]);
+});
+
+test('incarnation: an unknown incarnation keeps the shell — only a different one replaces it', () => {
+  const { w, spawn, born } = seatLife();
+  w.spawn('ws-1', 'alpha', {});
+  delete born.alpha;
+  w.spawn('ws-1', 'alpha', {});
+  born.alpha = 100;
+  w.spawn('ws-1', 'alpha', {});
+  assert.deepStrictEqual([spawn.spawned.length, spawn.spawned[0].killed], [1, false]);
 });

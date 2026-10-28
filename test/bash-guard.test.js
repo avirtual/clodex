@@ -66,6 +66,11 @@ const TABLE = [
   { cmd: 'git status\ngit add -A', want: 'deny' },
   { cmd: 'cd sub\ngit commit -am x', want: 'deny' },
   { cmd: 'git commit -m x\ngit add -A', want: 'deny' },
+  { cmd: 'git add \\\n-A', want: 'deny' },
+  { cmd: 'git \\\nadd -A', want: 'deny' },
+  { cmd: 'git add "-\\\nA"', want: 'deny' },
+  { cmd: '`git add -A`', want: 'deny' },
+  { cmd: 'echo `git add -A`', want: 'deny' },
 
   { cmd: 'git add a.js b.js', want: 'pass' },
   { cmd: 'git add cli-hooks.js test/bash-guard.test.js', want: 'pass' },
@@ -133,6 +138,8 @@ const KILL_TABLE = [
   { cmd: 'kill -9 -1', want: 'deny' },
   { cmd: 'kill -TERM -- -1234', want: 'deny' },
   { cmd: 'kill 0', want: 'deny' },
+  { cmd: 'kill -9 \\\n-1', want: 'deny' },
+  { cmd: 'kill \\\n0', want: 'deny' },
   { cmd: 'timeout 5 pkill foo', want: 'deny' },
   { cmd: 'A=1 command pkill foo', want: 'deny' },
 
