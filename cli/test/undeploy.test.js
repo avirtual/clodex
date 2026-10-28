@@ -790,7 +790,7 @@ const MIXED_MOUNTS = [
 test('undeploy docker: only clodexctl-<name>-data is removed; --volume mounts are left alone', async () => {
   const rec = {};
   assert.ok(MIXED_MOUNTS.some((m) => m.Name === 'projects'), 'ENTER: the fixture attaches an operator volume');
-  const r = await cli(['undeploy', 'node', 'mybox', '--docker', '--force', '--keep-ctx', '--json'], { runDocker: fakeRunDocker(rec, { mounts: MIXED_MOUNTS }) });
+  const r = await cli(['undeploy', 'node', 'mybox', '--docker', '--force', '--keep-ctx', '-o', 'json'], { runDocker: fakeRunDocker(rec, { mounts: MIXED_MOUNTS }) });
   assert.strictEqual(r.code, 0, r.stderr);
   assert.deepStrictEqual(rec.calls.map((c) => c.args), [
     ['inspect', 'clodexctl-mybox'],
@@ -823,7 +823,7 @@ test('undeploy docker: no data volume attached → nothing rm\'d, ctx still remo
 test('undeploy docker: data volume rm failing → failed emitted, ctx removed, exit 0', async () => {
   const rec = {};
   const contextsFile = tmpCtxFile({ current: 'mybox', contexts: { mybox: { url: 'http://127.0.0.1:7900' } } });
-  const r = await cli(['undeploy', 'node', 'mybox', '--docker', '--force', '--json'], { runDocker: fakeRunDocker(rec, { volRmCode: 1 }), contextsFile });
+  const r = await cli(['undeploy', 'node', 'mybox', '--docker', '--force', '-o', 'json'], { runDocker: fakeRunDocker(rec, { volRmCode: 1 }), contextsFile });
   assert.strictEqual(r.code, 0, r.stderr);
   const events = r.stdout.split('\n').filter(Boolean).map((l) => JSON.parse(l));
   assert.ok(events.some((o) => o.type === 'data' && o.action === 'failed' && o.volume === 'clodexctl-mybox-data' && o.exit === 1), r.stdout);
