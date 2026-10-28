@@ -576,9 +576,9 @@ class HoldKeeper extends EventEmitter {
           const res = await this.ping(sid);
           const cur = this._holds.get(sid); // may have been disarmed mid-await
           if (cur) {
-            cur.pings += 1;
-            cur.lastPingTs = now;
             const [kind, label] = pingOutcome(res);
+            if (kind !== 'decline') cur.pings += 1;
+            cur.lastPingTs = now;
             cur.lastResult = label;
             cur.urgent = kind === 'decline';
             // A decline neither spends a strike nor clears the count: it is not

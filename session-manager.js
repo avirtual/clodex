@@ -1336,7 +1336,7 @@ function createSessionManager(deps) {
           const name = this._nameForWireSession(ev.session);
           // A failure disarm stops the live hold but never erases the persisted intent: the CLI refreshes its
           // OAuth on its next turn, so an overnight 401 is transient (~12 minutes) and a rejected replay proves nothing.
-          if (ev.cause === 'failures' && name) {
+          if ((ev.cause === 'failures' || ev.cause === 'max-pings') && name) {
             const s = this.sessions.get(name);
             if (s) s._holdRearmed = false;
           }

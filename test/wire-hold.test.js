@@ -439,7 +439,7 @@ test('tick: declines neither spend the failure budget nor clear a strike already
   assert.deepStrictEqual(disarms, [], 'ENTER: still armed; every assertion below is vacuous once it disarms');
   const h = keeper.holds()[SID];
   assert.equal(h.failures, 1, 'a decline is no evidence either way: it neither strikes nor absolves');
-  assert.equal(h.pings, 5, 'a declined attempt still spends the ping budget');
+  assert.equal(h.pings, 1, 'only the 401 spent the ping budget; the four declines did not');
   assert.equal(h.lastResult, 'declined:408');
 
   // The counter survived intact, so the next credential rejection is strike two
@@ -450,6 +450,26 @@ test('tick: declines neither spend the failure budget nor clear a strike already
   await keeper.tick();
   assert.deepStrictEqual(keeper.holds(), {});
   assert.deepStrictEqual(disarms, ['failures']);
+});
+
+test('tick: a 529 burst on a 12 h hold at the urgent cadence never reaches the max-pings disarm', async () => {
+  let now = 1000;
+  const k = new HoldKeeper({ now: () => now,
+    warmth: { state: () => 'warm', query: () => ({ found: true, warm: true, remaining_s: 200, ttl_s: 3600 }), record: () => null },
+    request: async () => ({ status: 529, headers: {}, body: Buffer.from('{}') }) });
+  k.noteRequest('S', { messages: [{ role: 'user', content: 'x' }] }, {}, 'http://x/v1/messages');
+  k.arm('S', 12);
+  const disarms = [];
+  const pinged = [];
+  k.on('hold', (e) => {
+    if (e.event === 'disarmed') disarms.push(e.cause);
+    if (e.event === 'ping') pinged.push(e.result.status_code);
+  });
+  for (let i = 0; i < 26; i++) { await k.tick(); now += 15; }
+  assert.equal(pinged.length, 26, 'ENTER: every tick pinged and got a 529');
+  assert.ok(pinged.every((c) => c === 529));
+  assert.deepStrictEqual(disarms, []);
+  assert.equal(k.holds().S.pings, 0);
 });
 
 // A warmed ping is the only thing that clears the count, and it must clear it

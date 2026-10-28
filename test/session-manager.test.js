@@ -565,9 +565,9 @@ test('_maybeDeliverDigest: stray sid (≠ s.sessionId) neither delivers nor mark
 // Keep-warm lifecycle listener: re-anchors must RE-PERSIST the deadline (the
 // keeper restarts its window on every organic turn, so a stale persisted
 // holdUntil would wrongly lapse-clear a still-valid hold after a restart);
-// NO disarm cause may erase a persisted intent; and a 'failures' disarm — alone
-// among the causes — REOPENS the re-arm gate, because that disarm is provisional.
-test('_onHoldLifecycle: re-anchor re-persists, no disarm erases an intent, only a failure disarm reopens the gate', () => {
+// NO disarm cause may erase a persisted intent; and a 'failures' or 'max-pings'
+// disarm REOPENS the re-arm gate, because that disarm is provisional.
+test('_onHoldLifecycle: re-anchor re-persists, no disarm erases an intent, failure and max-pings disarms reopen the gate', () => {
   // ONE ordered log for both setters, not one array each: a write to the wrong
   // one of the two is the failure this pins, and separate arrays cannot see it.
   //
@@ -624,15 +624,16 @@ test('_onHoldLifecycle: re-anchor re-persists, no disarm erases an intent, only 
   m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'off', pings: 0 });
   assert.strictEqual(seat._holdRearmed, true, "'off' is a withdrawal, not a provisional stop");
 
-  // Expiry/max-pings are terminal for the TIMED holds that can reach them (a
-  // perpetual hold is `!hold.always`-guarded out of both), and 'session-ended'
-  // is emitted on the /clear handover path, which resets the gate itself. None
-  // of the three may reopen it here.
+  // Expiry is terminal for the TIMED holds that can reach it, and 'session-ended'
+  // is emitted on the /clear handover path, which resets the gate itself.
   m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'expired', pings: 5 });
-  m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'max-pings', pings: 24 });
   m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'session-ended', pings: 2 });
   assert.strictEqual(seat._holdRearmed, true,
-    'expired/max-pings are terminal and session-ended is the rotation path\'s own job');
+    'expired is terminal and session-ended is the rotation path\'s own job');
+
+  m._onHoldLifecycle({ session: 'sid-1', event: 'disarmed', cause: 'max-pings', pings: 24 });
+  assert.strictEqual(seat._holdRearmed, false, 'a max-pings stop reopens the gate so the next turn re-arms the remaining window');
+  seat._holdRearmed = true;
 
   // A permanent but NON-credential failure now takes the SAME branch as the 401.
   // It always deserved the same treatment: ping() strips `thinking` and
