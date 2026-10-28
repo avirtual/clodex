@@ -2488,10 +2488,27 @@ function registerIpcHandlers(deps) {
     }
   });
 
+  const forgetTree = async (e, name, rec) => {
+    const r = await manager.destroy(name, { beforeRemove: manager._keepIfDirty });
+    if (r && r.kept) {
+      return { ok: false, error: r.why === 'uncommitted work' ? `uncommitted work in ${r.path}` : (r.why || 'tree could not be inspected') };
+    }
+    if (!r || r.worktreeRemoved !== true) {
+      return { ok: false, error: `${(r && r.path) || rec.worktree.path} not removed: ${(r && r.error) || 'unknown error'}` };
+    }
+    return forgetRecord(e, name, rec);
+  };
+
   handle('session:forget', (e, name) => {
     if (manager.sessions.has(name)) return { ok: false, error: 'running' };
-    manager.clearHintForRecord(name);
     const rec = persistence.get(name);
+    const wt = rec && rec.worktree && rec.worktree.path;
+    if (wt && fs.existsSync(wt)) return forgetTree(e, name, rec);
+    return forgetRecord(e, name, rec);
+  });
+
+  function forgetRecord(e, name, rec) {
+    manager.clearHintForRecord(name);
     manager.endHold(name);
     persistence.remove(name);
     manager._bindHold(name);
@@ -2506,8 +2523,9 @@ function registerIpcHandlers(deps) {
         || (workspaceOfSenderStrict ? workspaceOfSenderStrict(e) : workspaceOfSender(e));
       if (w && ws && w.killSeat) w.killSeat(ws, String(name || ''));
     } catch {}
+    manager._dropPendingDir(name);
     return true;
-  });
+  }
 
   handle('workspace:list', () => workspaces.list());
   handle('workspace:current', (e) => workspaceOfSender(e));
