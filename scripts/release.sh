@@ -142,6 +142,7 @@ trap 'release_cleanup package.json package-lock.json CHANGELOG.md cli/deploy/hel
 step "Bumping version ($BUMP)"
 if [ -n "$RESUME" ]; then
   NEW_VERSION="$CUR_VERSION"
+  COMMITTED=1
 else
   NEW_VERSION="$(npm version "$BUMP" --no-git-tag-version | tail -1 | sed 's/^v//')"
 fi
@@ -280,7 +281,7 @@ else
   run npm run dist:mac || die "build failed (try: npx electron-rebuild)"
 fi
 
-DMG="$(ls dist/*.dmg 2>/dev/null | head -1 || true)"
+DMG="$(ls dist/*"$NEW_VERSION"*.dmg 2>/dev/null | head -1 || true)"
 [ -n "$DMG" ] || die "no .dmg produced in dist/"
 say "built: $DMG"
 case "$DMG" in
@@ -308,7 +309,7 @@ COMMITTED=1
 if [ -z "$RESUME" ]; then
   git tag "$TAG"
 fi
-mkdir -p "$(dirname "$KEPT_NOTES")" && cp "$NOTES" "$KEPT_NOTES"
+{ mkdir -p "$(dirname "$KEPT_NOTES")" && cp "$NOTES" "$KEPT_NOTES"; } || die "could not keep the notes at $KEPT_NOTES"
 note "notes kept at $KEPT_NOTES"
 followups() {
   printf 'gh release create %s %s --title "%s" --notes-file %s\nscripts/publish-image.sh %s\nscripts/cloud-review.sh %s %s\n(or re-run scripts/release.sh to resume)' \
