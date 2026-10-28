@@ -1948,7 +1948,7 @@ function createTicketMethods(deps, shared) {
             ? `it waited ${Math.round(total / 1000)}s, past the one-hour cap, and the lock was held on every sample by ${n} distinct suite${n === 1 ? '' : 's'}`
             : `it already retried ${attempt} time${attempt === 1 ? '' : 's'} over ${Math.round(waited / 1000)}s and the lock was held on every sample`;
           fail('suite-in-flight', `${what} — merging now would rewrite the files under it`,
-            `nothing was merged, and the loop will NOT retry — ${tried}. That can be one wedged run or several legitimate ones back to back, so check \`ps\` for a live \`node --test\` before concluding anything, and do not clear the lock by hand. To land it by hand: \`git -C ${team.root} merge --no-ff ${branch}\`, then run the suite in ${team.root}. Otherwise re-review the ticket.`);
+            `nothing was merged, and the loop will NOT retry — ${tried}. That can be one wedged run or several legitimate ones back to back, so check \`ps\` for a live \`node --test\` before concluding anything, and do not clear the lock by hand. To land it by hand: \`git -C ${team.root} merge --no-ff ${reviewedSha}\`, then run the suite in ${team.root}. Otherwise re-review the ticket.`);
           return;
         }
 
@@ -7214,10 +7214,10 @@ function createTicketMethods(deps, shared) {
       });
 
       const target = await gitWorktree.mergeTargetFor(team, ticket).catch(() => null);
-      const m = target
-        ? await gitWorktree.isMerged(team.root, branch, target).catch((e) => ({ ok: false, error: e.message }))
-        : { ok: false, error: 'no merge target for this team' };
       const judgedTip = branch ? await gitWorktree.revParse(team.root, branch).catch(() => null) : null;
+      const m = target
+        ? await gitWorktree.isMerged(team.root, judgedTip || branch, target).catch((e) => ({ ok: false, error: e.message }))
+        : { ok: false, error: 'no merge target for this team' };
 
       // Re-check in both directions: whichever side passed its entry gate first, the other can still enter this await and both tear down.
       {

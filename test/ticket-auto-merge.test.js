@@ -3226,8 +3226,8 @@ test('an exhausted retry escalates with the manual merge command intact', async 
     'and is NOT pointed at a recovery the loop cannot perform');
   // includes, not match: the root is a real tmpdir path and regex-escaping it
   // just to assert a literal is a way to get the assertion itself wrong.
-  assert.ok(esc[0].body.includes(`git -C ${repo.dir} merge --no-ff tl-1`),
-    'the exact hand-merge command is spelled out, root and branch included');
+  assert.ok(esc[0].body.includes(`git -C ${repo.dir} merge --no-ff ${git(repo.dir, ['rev-parse', 'tl-1'])}`),
+    'the exact hand-merge command is spelled out, root and reviewed sha included');
 
   // THE MESSAGE REPORTS, IT DOES NOT DIAGNOSE. The loop cannot tell one wedged
   // run from several legitimate ones back to back — and it holds evidence

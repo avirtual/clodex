@@ -3752,7 +3752,7 @@ function createSessionManager(deps) {
         }
         this._dropPendingDir(name);
       };
-      this._markDropHeld(name);
+      if (typeof beforeRemove !== 'function') this._markDropHeld(name);
       await this.kill(name);
       this._disarmHoldFor(name, holdSid);
       if (!worktree) { dropRecord(); dropSeatDir(); return { ok: true, live: wasLive }; }

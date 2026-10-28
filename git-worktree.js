@@ -295,7 +295,10 @@ async function deleteBranchIfAt(cwd, branch, sha) {
   const holder = wl.worktrees.find((w) => w.branch === String(branch));
   if (holder) return { ok: false, error: `${branch} is checked out at ${holder.path}` };
   const r = await git(repo, ['update-ref', '-d', `refs/heads/${branch}`, String(sha)]);
-  if (r.ok) return { ok: true };
+  if (r.ok) {
+    await git(repo, ['config', '--remove-section', `branch.${branch}`]);
+    return { ok: true };
+  }
   const now = await revParse(repo, `refs/heads/${branch}`);
   const error = (r.stderr || `git update-ref -d exited ${r.code}`).trim();
   return now && now !== String(sha) ? { ok: false, moved: true, error } : { ok: false, error };

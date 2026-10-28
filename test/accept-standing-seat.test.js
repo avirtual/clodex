@@ -165,6 +165,7 @@ function mkFixture(t, { gitWorktree: gwOverride = null } = {}) {
     childProcess: require('node:child_process'),
     countPending: require('../pending-store').countPending,
     parkedTexts: require('../pending-store').parkedTexts,
+    parkDelivery: require('../pending-store').parkDelivery,
     PENDING_DIR: mkTmpRoot('clodex-pend-'),
     isDraftOpen: require('../proxy-util').isDraftOpen,
     drainPending: require('../pending-store').drainPending,
@@ -517,6 +518,61 @@ test('t2024: a commit the seat lands after the merge answer keeps the branch', a
   assert.strictEqual(execFileSync('git', ['-C', f.repoDir, 'rev-parse', 'landed'], { encoding: 'utf8' }).trim(), late,
     'at the commit the seat made');
   assert.match(msg, /branch landed was KEPT — it moved past/);
+});
+
+test('t2024: a commit the seat lands inside the merge check keeps the branch at that commit', async (t) => {
+  const realGw = require('../git-worktree');
+  let wt = null;
+  let late = null;
+  const gw = {
+    ...realGw,
+    isMerged: async (...a) => {
+      const r = await realGw.isMerged(...a);
+      if (wt && !late) {
+        fsReal.writeFileSync(pathReal.join(wt, 'late.txt'), 'late\n');
+        execFileSync('git', ['-C', wt, 'add', 'late.txt']);
+        execFileSync('git', ['-C', wt, 'commit', '-qm', 'late']);
+        late = execFileSync('git', ['-C', wt, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+      }
+      return r;
+    },
+  };
+  const f = mkFixture(t, { gitWorktree: gw });
+  f.seat('lead');
+  const judged = execFileSync('git', ['-C', f.repoDir, 'rev-parse', 'landed'], { encoding: 'utf8' }).trim();
+  wt = f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
+
+  const msg = await accept(f, 't1');
+
+  assert.ok(late && late !== judged, 'ENTER: the seat committed after the merge answer');
+  assert.ok(branches(f).includes('landed'), 'the branch is kept');
+  assert.strictEqual(execFileSync('git', ['-C', f.repoDir, 'rev-parse', 'landed'], { encoding: 'utf8' }).trim(), late,
+    'at the commit the merge check never judged');
+  assert.match(msg, /branch landed was KEPT — it moved past/);
+});
+
+test('t2024: a dirty downgrade re-parks the seat\'s held messages instead of dropping them', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  const wt = f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
+  fsReal.writeFileSync(pathReal.join(wt, 'uncommitted.txt'), 'not yet committed\n');
+  doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
+  const live = f.m.sessions.get('team-hand-t1');
+  live._injectQueue = [{ text: 'held for the seat', opts: {} }];
+  delete live.agentType;
+  const realKill = f.m.kill;
+  f.m.kill = async (name) => {
+    if (f.m.sessions.has(name)) f.m._cleanup(name);
+    return realKill(name);
+  };
+
+  const msg = await accept(f, 't1');
+
+  assert.match(msg, /has uncommitted work/, 'ENTER: this is the dirty downgrade');
+  const dir = require('../pending-store').agentDir(f.deps.PENDING_DIR, 'team-hand-t1');
+  const parked = fsReal.existsSync(dir) ? fsReal.readdirSync(dir).map((n) => fsReal.readFileSync(pathReal.join(dir, n), 'utf8')) : [];
+  assert.ok(parked.some((body) => body.includes('held for the seat')), `the held message is in pending. Got: ${JSON.stringify(parked)}`);
 });
 
 // ── the third case the two non-merged arms must tell apart ────────────────────
@@ -1735,7 +1791,9 @@ test('t2007: the merged arm deletes the branch only at the sha judged merged', a
   assert.ok(!branches(f).includes('landed'), 'and the branch is gone');
 
   const calls2 = [];
-  const f2 = mkFixture(t, { gitWorktree: { ...realGw, deleteBranch: async (cwd, branch, opts) => { calls2.push({ branch, opts }); return { ok: true }; } } });
+  const f2 = mkFixture(t, { gitWorktree: { ...realGw,
+    deleteBranch: async (cwd, branch, opts) => { calls2.push({ branch, opts }); return { ok: true }; },
+    deleteBranchIfAt: async (cwd, branch, sha) => { calls2.push({ branch, sha }); return { ok: true }; } } });
   f2.seat('lead');
   f2.worktreeSeat('team-hand-t1', 'pending', { ephemeral: true });
   doneTicket(f2, { assignee: 'team-hand-t1', branch: 'pending' });
@@ -1747,10 +1805,12 @@ test('t2007: the merged arm deletes the branch only at the sha judged merged', a
 test('t2007: a green close-out leaves a one-shot seat that holds another started ticket in place', async (t) => {
   const realGw = require('../git-worktree');
   let deletes = 0;
-  const f = mkFixture(t, { gitWorktree: { ...realGw, deleteBranch: async () => { deletes++; return { ok: true }; } } });
+  const f = mkFixture(t, { gitWorktree: { ...realGw,
+    deleteBranch: async () => { deletes++; return { ok: true }; },
+    deleteBranchIfAt: async () => { deletes++; return { ok: true }; } } });
   const destroyed = [];
   const realDestroy = f.m.destroy.bind(f.m);
-  f.m.destroy = async (name) => { destroyed.push(name); return realDestroy(name); };
+  f.m.destroy = async (name, opts) => { destroyed.push(name); return realDestroy(name, opts); };
   f.seat('lead');
   const wt = f.worktreeSeat('team-hand-t1', 'landed', { ephemeral: true });
   doneTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
