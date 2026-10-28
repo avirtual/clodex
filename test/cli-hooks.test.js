@@ -1481,12 +1481,16 @@ test('t2035 pending drain: the hook rehomes a claim tagged with its own pid and 
 const c = path.join(${JSON.stringify(claims)}, 'a.draining.idle.' + process.pid + '-0badcafe');
 fs.mkdirSync(c, { recursive: true });
 fs.writeFileSync(path.join(c, 'm0.json'), JSON.stringify({ text: 'stale own-pid' }));
+const l = path.join(${JSON.stringify(claims)}, 'a.draining.idle.' + process.pid);
+fs.mkdirSync(l, { recursive: true });
+fs.writeFileSync(path.join(l, 'm1.json'), JSON.stringify({ text: 'pre-nonce own-pid' }));
 `);
   const script = path.join(work, 'pending.sh');
   fs.writeFileSync(script, src.replace('-e "$JS"', `-r ${JSON.stringify(preload)} -e "$JS"`));
   fs.mkdirSync(path.join(REGISTRY_DIR, 'pending', 'a'), { recursive: true });
   const out = cp.execFileSync('bash', [script], { ...HOOK_SPAWN, input: JSON.stringify({ hook_event_name: 'UserPromptSubmit' }) }).toString();
   assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, /stale own-pid/);
+  assert.match(JSON.parse(out).hookSpecificOutput.additionalContext, /pre-nonce own-pid/);
   assert.deepStrictEqual(fs.readdirSync(claims), []);
 });
 

@@ -106,10 +106,10 @@ function parkDelivery(root, name, text, seq, id = null, passive = false, born = 
 // Restoring rather than merely refusing is required because THE CLAIM IS
 // DESTRUCTIVE: the dir was renamed away before the first byte was read, so an
 // entry we decline to return and decline to restore is destroyed.
-function drainPending(root, name, claimTag, expectedBorn = null) {
+function drainPending(root, name, tag, expectedBorn = null) {
   rehomeOrphans(root, name);
   const dir = agentDir(root, name);
-  const claim = claimPath(root, `${name}.draining.${claimTag}`);
+  const claim = claimPath(root, `${name}.draining.${tag}`);
   try {
     fs.renameSync(dir, claim);
   } catch (e) {
@@ -153,7 +153,7 @@ function rehomeOrphans(root, name) {
     const tag = s.startsWith(prefix) ? CLAIM_TAG_RE.exec(s.slice(prefix.length)) : null;
     if (!tag) continue;
     const pid = Number(tag[1]);
-    const staleOwn = pid === process.pid && tag[2] !== undefined && tag[2] !== LAUNCH_NONCE;
+    const staleOwn = pid === process.pid && tag[2] !== LAUNCH_NONCE;
     if (!Number.isInteger(pid) || pid <= 0 || (!staleOwn && isAlive(pid))) continue;
     const mine = claimPath(root, `${name}.draining.${claimTag('rehome')}`);
     try { fs.renameSync(path.join(parent, s), mine); } catch { continue; }

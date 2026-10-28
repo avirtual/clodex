@@ -8982,7 +8982,7 @@ function createSessionManager(deps) {
         }).catch((e) => log.warn('intent', `remind wake for ${agent} failed: ${e && e.message}`));
       };
       if (adapterFor(entry.type)?.caps?.park !== true && entry.io !== 'stream') {
-        log.info('intent', `remind fire for ${agent} deferred — offline ${entry.type} seat has no parked-mail drain`);
+        log.debug('intent', `remind fire for ${agent} deferred — offline ${entry.type} seat has no parked-mail drain`);
         if (policy && wakeOn.includes('reminder')) wakeForReminder();
         return 'deferred';
       }

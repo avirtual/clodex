@@ -14547,7 +14547,7 @@ function mkDeliver({ persisted = null, deps = {} } = {}) {
     parkIdInUse: () => false,
     MSG_SPILL_THRESHOLD: 500,
     getPersistence: () => persistence,
-    log: { info: () => {}, warn: () => {}, error: () => {} },
+    log: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} },
     ...deps,
   });
   const injected = [];
@@ -14593,7 +14593,7 @@ function mkReminderWake(persisted, { wakeImpl = null } = {}) {
     persisted,
     deps: {
       parkDelivery: (...a) => { order.push('park'); return parkDelivery(...a); },
-      log: { info: () => {}, warn: (...a) => warns.push(a.join(' ')), error: () => {} },
+      log: { debug: () => {}, info: () => {}, warn: (...a) => warns.push(a.join(' ')), error: () => {} },
     },
   });
   let pendingAtWake = null;

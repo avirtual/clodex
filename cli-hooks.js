@@ -560,7 +560,7 @@ function rehome_orphans() {
     const tag = s.startsWith(prefix) ? /^[a-z]+\\.(\\d+)(?:-([0-9a-f]+))?$/.exec(s.slice(prefix.length)) : null;
     if (!tag) continue;
     const pid = Number(tag[1]);
-    const staleOwn = pid === process.pid && tag[2] !== undefined && tag[2] !== LAUNCH_NONCE;
+    const staleOwn = pid === process.pid && tag[2] !== LAUNCH_NONCE;
     if (!Number.isInteger(pid) || pid <= 0 || (!staleOwn && pid_alive(pid))) continue;
     let mine;
     try { mine = claim_path(path.basename(d) + '.draining.rehome.' + process.pid); } catch (e) { continue; }

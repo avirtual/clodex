@@ -530,7 +530,7 @@ test('t2035 a deferred, errored or throwing deliver keeps a one-shot row and ret
     assert.deepStrictEqual(calls.sort(), ['deferred', 'error', 'threw'], 'ENTER: each row fired once');
     const kept = scheduler.listForAgent('t1');
     assert.deepStrictEqual(kept.map((r) => r.body).sort(), ['deferred', 'error', 'threw']);
-    assert.ok(kept.every((r) => r.nextFireAt === T0 + 11 * MIN), JSON.stringify(kept));
+    assert.ok(kept.every((r) => r.nextFireAt === T0 + 11 * MIN && r.lastFiredAt === null), JSON.stringify(kept));
     clock.advance(MIN);
     assert.strictEqual(calls.length, 6);
     assert.deepStrictEqual(scheduler.listForAgent('t1'), [], 'delivered on the retry → spent');

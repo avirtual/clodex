@@ -579,7 +579,7 @@ test("a live drainer's claim dir is left alone by the next drain", () => {
   const root = tmpRoot();
   parkDelivery(root, 'a', 'mid-drain', '0001');
   fs.mkdirSync(claimsDir(root));
-  const claim = path.join(claimsDir(root), `a.draining.idle.${process.pid}`);
+  const claim = path.join(claimsDir(root), `a.draining.${require('../pending-store').claimTag('idle')}`);
   fs.renameSync(agentDir(root, 'a'), claim);
   assert.deepStrictEqual(drainPending(root, 'a', 'boot.1'), []);
   assert.deepStrictEqual(fs.readdirSync(claim), ['0001.json']);
@@ -596,6 +596,11 @@ test('t2035 an own-pid claim from an earlier launch is rehomed; one carrying thi
   assert.notStrictEqual(claimTag('idle'), `idle.${process.pid}-0badcafe`, 'ENTER: the stale nonce is not this launch\'s');
   assert.deepStrictEqual(drainPending(root, 'a', claimTag('idle')), ['stale']);
   assert.ok(!fs.existsSync(stale));
+  parkDelivery(root, 'a', 'pre-nonce', '0003');
+  const legacy = path.join(claimsDir(root), `a.draining.idle.${process.pid}`);
+  fs.renameSync(agentDir(root, 'a'), legacy);
+  assert.deepStrictEqual(drainPending(root, 'a', claimTag('idle')), ['pre-nonce'], 'a nonce-less own-pid claim predates this launch');
+  assert.ok(!fs.existsSync(legacy));
   parkDelivery(root, 'a', 'mid-drain', '0002');
   const live = path.join(claimsDir(root), `a.draining.${claimTag('idle')}`);
   fs.renameSync(agentDir(root, 'a'), live);
