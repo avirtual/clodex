@@ -379,7 +379,8 @@ test('a one-line verdict with inline bold section headers is unfolded before sca
 test('an inline bold MUST-FIX off a VERDICT line is prose, not a header', () => {
   const text = '**VERDICT**: ACCEPT\n\n**MUST-FIX**: (none)\n\n**CHECKED**: the **MUST-FIX**: list above is empty.';
   assert.strictEqual(scanVerdict(text).mustFixHeaders.length, 1);
-  assert.strictEqual(extractMustFix(text), null);
+  assert.strictEqual(extractMustFix(text), '(none)');
+  assert.strictEqual(countMustFix(extractMustFix(text)), 0);
 });
 
 test('a colon inside the bold also unfolds on a VERDICT line', () => {
