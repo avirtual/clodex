@@ -1556,6 +1556,8 @@ async function restartSession(name, opts = {}, wsId = DEFAULT_WORKSPACE_ID) {
     // Strip a checkout another seat took mid-restart through the manager; a second
     // tree-occupancy reader here would be a second source of truth.
     persistence.upsert(manager._stripClaimedTree(entry));
+    const live = manager.sessions.get(name);
+    if (live) live._respawning = false;
     return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };
   }
 }
@@ -1704,6 +1706,8 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
     // Strip the assembled object, not `beforeKill`: the spread is what reaches the
     // store, so stripping the source would be undone by it.
     persistence.upsert(manager._stripClaimedTree({ ...beforeKill, extraArgs, proxy: proxy ?? null, systemPrompt: nextInline, systemPromptFile: nextSysFile, appendPromptFiles: nextAppend, agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools, disabledSkills: nextSkills, injectSkills: nextInject, intents: Array.isArray(nextIntents) ? prunedArgs.intents : undefined, pluginGrants: prunedGrants, plugins: nextPlugins, execCommands: nextExec.length ? nextExec : undefined, mcpServers: nextMcp.length ? nextMcp : undefined, env: (nextEnv && Object.keys(nextEnv).length) ? nextEnv : undefined, io: nextIo, effort: nextEffort }));
+    const live = manager.sessions.get(name);
+    if (live) live._respawning = false;
     return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };
   }
 }

@@ -6,13 +6,15 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 const { RemoteServer } = require('../remote');
-const { RESERVED_SEAT_NAMES } = require('../pending-store');
+const { RESERVED_SEAT_NAMES, LEGACY_CLAIM_RE } = require('../pending-store');
 const nameValidity = require('../renderer/lib/name-validity');
 const { mk } = require('./lib/session-fixtures');
 
 test('the renderer copy of the reserved seat names agrees with pending-store', () => {
   assert.deepStrictEqual([...RESERVED_SEAT_NAMES], ['.claims']);
   assert.deepStrictEqual([...nameValidity.RESERVED_SEAT_NAMES], [...RESERVED_SEAT_NAMES]);
+  assert.strictEqual(nameValidity.LEGACY_CLAIM_RE.source, LEGACY_CLAIM_RE.source);
+  assert.strictEqual(nameValidity.LEGACY_CLAIM_RE.flags, LEGACY_CLAIM_RE.flags);
   const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'lib', 'name-validity.js'), 'utf8');
   assert.ok(!/require\(/.test(src), 'the renderer lib stays dependency-free');
 });
@@ -21,6 +23,30 @@ test('create refuses the reserved name before anything else runs', async () => {
   const m = mk({});
   await assert.rejects(() => m.create('.claims', 'claude', null), /"\.claims" is a reserved name/);
   assert.strictEqual(m.sessions.has('.claims'), false);
+});
+
+for (const name of ['.CLAIMS', '.Claims', '.resend.x', 'a.draining.b.1']) {
+  test(`create refuses ${name} as reserved`, async () => {
+    const m = mk({});
+    await assert.rejects(() => m.create(name, 'claude', null), /is a reserved name/);
+    assert.strictEqual(m.sessions.has(name), false);
+  });
+  test(`the name field refuses ${name} as reserved`, () => {
+    assert.strictEqual(nameValidity.nameFieldState(name).kind, 'reserved');
+  });
+}
+
+for (const name of ['.CLAIMS', '.Claims']) {
+  test(`rename refuses ${name} as reserved`, async () => {
+    const m = mk({});
+    const r = await m.rename('alpha', name);
+    assert.deepStrictEqual(r, { ok: false, error: `${name} is a reserved name` });
+  });
+}
+
+test('the name field still accepts .hidden and a dotless draining', () => {
+  assert.strictEqual(nameValidity.nameFieldState('.hidden').kind, 'free');
+  assert.strictEqual(nameValidity.nameFieldState('draining').kind, 'free');
 });
 
 function req(port, pathname, opts = {}) {
@@ -48,13 +74,17 @@ test('the peer API refuses the reserved name at create and on the per-session ro
     const post = (name) => req(server.port, '/api/sessions', {
       method: 'POST', body: JSON.stringify({ name }), headers: { 'content-type': 'application/json' },
     });
-    const bad = await post('.claims');
-    assert.strictEqual(bad.status, 400);
-    assert.match(bad.body, /reserved name/);
+    for (const name of ['.claims', '.CLAIMS', '.Claims']) {
+      const bad = await post(name);
+      assert.strictEqual(bad.status, 400, name);
+      assert.match(bad.body, /reserved name/);
+    }
     assert.strictEqual((await post('.hidden')).status, 200);
     assert.deepStrictEqual(created, ['.hidden']);
-    const get = await req(server.port, '/api/sessions/.claims');
-    assert.strictEqual(get.status, 400);
-    assert.match(get.body, /bad session name/);
+    for (const name of ['.claims', '.CLAIMS', '.Claims']) {
+      const get = await req(server.port, `/api/sessions/${name}`);
+      assert.strictEqual(get.status, 400, name);
+      assert.match(get.body, /bad session name/);
+    }
   } finally { server.stop(); }
 });

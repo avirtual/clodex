@@ -83,3 +83,22 @@ test('file:open neither opens nor reveals a path that does not exist', async (t)
   assert.deepStrictEqual(res, { ok: false, revealed: false, reason: 'cannot open: ENOENT' });
   assert.deepStrictEqual([f.opened, f.revealed], [[], []]);
 });
+
+test('file:open reveals a .fileloc launcher instead of opening it', async (t) => {
+  const f = fixture(t);
+  const p = f.write('target.fileloc');
+  const res = await f.open(p);
+  assert.deepStrictEqual(res, { ok: false, revealed: true, reason: 'a .fileloc launcher' });
+  assert.deepStrictEqual(f.opened, []);
+  assert.deepStrictEqual(f.revealed, [p]);
+});
+
+for (const [label, value] of [['an empty string', ''], ['undefined', undefined]]) {
+  test(`file:open refuses ${label} without opening or revealing anything`, async (t) => {
+    const f = fixture(t);
+    const res = await f.open(value);
+    assert.deepStrictEqual(res, { ok: false, revealed: false, reason: 'no path' });
+    assert.deepStrictEqual(f.opened, []);
+    assert.deepStrictEqual(f.revealed, []);
+  });
+}

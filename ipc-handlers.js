@@ -65,7 +65,7 @@ function recentCwdsFor(settings, wsId) {
 
 const LAUNCHER_EXTS = new Set([
   '.app', '.command', '.terminal', '.tool', '.workflow', '.scpt', '.applescript', '.pkg', '.mpkg', '.dmg',
-  '.sh', '.zsh', '.bash', '.py', '.rb', '.pl', '.jar', '.url', '.webloc',
+  '.sh', '.zsh', '.bash', '.py', '.rb', '.pl', '.jar', '.url', '.webloc', '.fileloc', '.inetloc',
 ]);
 
 function registerIpcHandlers(deps) {
@@ -1139,6 +1139,7 @@ function registerIpcHandlers(deps) {
     writeFilePeek(name, filePath, content, expectMtime));
   handle('file:resolve', (_e, name, raw, baseDir) => resolveFilePath(name, raw, baseDir));
   handle('file:open', (_e, filePath) => {
+    if (!filePath) return { ok: false, revealed: false, reason: 'no path' };
     const resolved = path.resolve(String(filePath || ''));
     let st;
     try { st = fs.lstatSync(resolved); } catch (e) { return { ok: false, revealed: false, reason: `cannot open: ${e.code || e.message}` }; }

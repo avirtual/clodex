@@ -5290,6 +5290,36 @@ test('kill({ respawn: true }) marks the seat so its exit frees no hand-cap slot'
   assert.deepStrictEqual(gone, []);
 });
 
+test('a cold respawn whose exit wait times out clears _respawning, so the later exit frees the hand-cap slot', async (t) => {
+  let exitCb = null;
+  const { m, spawn } = mkHintProbe({
+    killPid: () => {},
+    ptySpawn: () => ({ pid: 999, onData() {}, onExit(cb) { exitCb = cb; }, kill() {} }),
+  });
+  const gone = [];
+  m._handSeatGone = (sess) => { gone.push(sess.name); };
+  m._notifyComposition = () => {};
+  m._sendToSession = () => {};
+  await spawn('seat', {});
+  assert.ok(exitCb, 'ENTER: the exit callback was captured');
+  const s = m.sessions.get('seat');
+  let respawningAtKill = null;
+  const kill = m.kill.bind(m);
+  m.kill = async (...args) => { await kill(...args); respawningAtKill = s._respawning; };
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  assert.strictEqual(m._coldRespawn('seat', { name: 'seat', type: 'claude', cwd: '/tmp' }, s, null, 'reload'), true);
+  for (let i = 0; i < 400 && (respawningAtKill === null || s._reloadInFlight); i++) {
+    await new Promise((r) => setImmediate(r));
+    t.mock.timers.tick(50);
+  }
+  assert.strictEqual(respawningAtKill, true, 'ENTER: kill({ respawn: true }) marked the seat');
+  assert.strictEqual(s._reloadInFlight, false, 'ENTER: the catch arm ran');
+  assert.strictEqual(m.sessions.get('seat'), s, 'ENTER: the old seat is still live');
+  assert.strictEqual(s._respawning, false);
+  exitCb({ exitCode: 0, signal: 15 });
+  assert.deepStrictEqual(gone, ['seat']);
+});
+
 for (const [label, stop] of [
   ['kill', (m) => m.kill('seat', { respawn: true })],
   ['archive', (m) => m.archive('seat')],
