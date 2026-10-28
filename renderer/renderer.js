@@ -1322,6 +1322,7 @@ function startRename(item, nameEl, sessionName) {
         showToast(`Rename failed: ${(res && res.error) || 'unknown error'}`, { kind: 'error', duration: 10000, name: sessionName });
         return;
       }
+      sidePane.renameSeat(sessionName, res.name);
       removeSession(sessionName, { keepPersisted: true });
       streamSeatNames.delete(sessionName);
       seatViewMemory.delete(sessionName);
