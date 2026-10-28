@@ -18,6 +18,7 @@
 const fs = require('fs');
 const path = require('path');
 const { confine } = require('./path-confine');
+const { atomicWriteFileSync } = require('./fs-util');
 const { previewLine } = require('./body-preview');
 const { seatPathFor, legacySeatPathFor } = require('./clodex-paths');
 
@@ -178,7 +179,7 @@ function createMemoryStore(rootDir) {
       if (raw === null) return { ok: false, error: `no unit ${id}` };
       const { meta } = parseMemoryUnit(raw);
       if (!meta.id) meta.id = id;
-      fs.writeFileSync(file, serializeMemoryUnit(meta, next), { mode: 0o600 });
+      atomicWriteFileSync(file, serializeMemoryUnit(meta, next));
       return { ok: true, id };
     },
     recall(agent, arg) {
@@ -225,7 +226,7 @@ function createMemoryStore(rootDir) {
       const { meta, body } = parseMemoryUnit(raw);
       if (on) meta[key] = 'true'; else delete meta[key];
       if (!meta.id) meta.id = id;
-      fs.writeFileSync(file, serializeMemoryUnit(meta, body), { mode: 0o600 });
+      atomicWriteFileSync(file, serializeMemoryUnit(meta, body));
       return { id, [key === 'pinned' ? 'pinned' : 'operatorPinned']: !!on };
     },
     forget(agent, id) {

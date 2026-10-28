@@ -8,10 +8,10 @@ that list, so seed-if-absent alone would restore a deleted default on the next
 launch. `envScopes._load` normalizes the whole file, so it must carry `seeded`
 through or every save drops it and re-arms the seeder.
 
-The NODE_TEST_CONTEXT refusal keys on `registryDir`, not on the userData path,
-because engine.js passes the real `~/.clodex` and the real userData together —
-a test that forgets the seam would otherwise write the operator's live
-env-scopes.json.
+The NODE_TEST_CONTEXT refusal (`refuseEnvWriteUnderTest`) keys on the userData
+path — the directory holding env-scopes.json against `platformAppDataDir()/clodex`
+— not on `registryDir`, so a temp userData is seeded even beside the home
+`~/.clodex`. The `registryDir` rule is `seedLibraryDefaults`'s.
 
 ## envDefaults
 

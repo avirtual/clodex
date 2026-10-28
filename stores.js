@@ -546,6 +546,7 @@ function initStores(userDataPath, {
   const MCP_DIR = path.join(registryDir, 'library', 'mcp');
 
   let launchBakTaken = false;
+  let orphanWorkspacesSynthesized = false;
 
   const unreadableLogged = new Set();
   let persistRefusedLogged = false;
@@ -566,20 +567,23 @@ function initStores(userDataPath, {
     try {
       return { state: 'ok', value: JSON.parse(text) };
     } catch {
-      const dest = `${file}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
-      try {
-        fs.renameSync(file, dest);
-      } catch (e) {
-        if (!unreadableLogged.has(file)) {
-          unreadableLogged.add(file);
-          console.error(`${path.basename(file)} could not be parsed nor moved aside (${(e && e.code) || e}); saves to it are refused`);
-        }
-        return { state: 'unreadable' };
-      }
-      quarantinedFiles.add(file);
-      console.warn(`${path.basename(file)} could not be parsed; moved aside to ${dest}`);
-      return { state: 'quarantined' };
+      return { state: quarantine(file, 'could not be parsed') };
     }
+  }
+  function quarantine(file, why) {
+    const dest = `${file}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    try {
+      fs.renameSync(file, dest);
+    } catch (e) {
+      if (!unreadableLogged.has(file)) {
+        unreadableLogged.add(file);
+        console.error(`${path.basename(file)} ${why}; could not be moved aside (${(e && e.code) || e}); saves to it are refused`);
+      }
+      return 'unreadable';
+    }
+    quarantinedFiles.add(file);
+    console.warn(`${path.basename(file)} ${why}; moved aside to ${dest}`);
+    return 'quarantined';
   }
   function refuseUnreadable(file) {
     throw new Error(`${path.basename(file)} could not be read; refusing to save over it`);
@@ -594,21 +598,23 @@ function initStores(userDataPath, {
   const persistence = {
     _load() {
       const primary = readStoreJson(PERSIST_FILE);
+      if (primary.state === 'ok' && !Array.isArray(primary.value)) primary.state = quarantine(PERSIST_FILE, 'is not an array');
       this._unreadable = primary.state === 'unreadable';
       let all = primary.value;
       const bak = primary.state === 'quarantined' ? readStoreJson(PERSIST_FILE + '.bak') : null;
       if (bak && bak.state === 'unreadable') this._unreadable = true;
       if (!this._unreadable) persistRefusedLogged = false;
+      let changed = false;
       if (bak) {
         if (bak.state !== 'ok') {
           if (!this._unreadable) markLivingMigrated();
           return [];
         }
         all = bak.value;
-        console.error('sessions.json did not parse; recovered from .bak (launch snapshot)');
+        changed = true;
+        console.error('sessions.json was moved aside; recovered from .bak (launch snapshot)');
       }
       if (!Array.isArray(all)) { if (!this._unreadable) markLivingMigrated(); return []; }
-      let changed = false;
       const touched = [];
       let rewrote = false;
       if (!livingMigrated && fs.existsSync(LIVING_MIGRATED_FILE)) livingMigrated = true;
@@ -637,8 +643,7 @@ function initStores(userDataPath, {
           launchBakTaken = true;
           try {
             const cur = fs.readFileSync(PERSIST_FILE, 'utf-8');
-            JSON.parse(cur);
-            atomicWriteFileSync(PERSIST_FILE + '.bak', cur);
+            if (Array.isArray(JSON.parse(cur))) atomicWriteFileSync(PERSIST_FILE + '.bak', cur);
           } catch {}
         }
         atomicWriteFileSync(PERSIST_FILE, JSON.stringify(entries, null, 2));
@@ -1042,7 +1047,7 @@ function initStores(userDataPath, {
       ensureDir(TEMPLATES_DIR);
       const { id, ...body } = template;
       body.name = name; // portability hint; read treats the filename as canonical
-      fs.writeFileSync(this._file(name), JSON.stringify(body, null, 2), { mode: 0o600 });
+      atomicWriteFileSync(this._file(name), JSON.stringify(body, null, 2));
     },
     // Rename-in-place: the caller passes the OLD name as `id` and the NEW one as
     // `name`. Dest-collision is the caller's check; this trusts it.
@@ -1103,12 +1108,26 @@ function initStores(userDataPath, {
       } catch (e) { console.error('workspaces save failed:', e); }
     },
     list() {
-      const all = this._load();
+      let all = this._load();
+      let dirty = false;
       if (all.length === 0) {
-        const def = { id: DEFAULT_WORKSPACE_ID, name: 'Workspace', bounds: null };
-        this._save([def]);
-        return [def];
+        all = [{ id: DEFAULT_WORKSPACE_ID, name: 'Workspace', bounds: null }];
+        dirty = true;
       }
+      if (!orphanWorkspacesSynthesized && !this._unreadable) {
+        orphanWorkspacesSynthesized = true;
+        const seats = persistence.list();
+        if (!persistence._unreadable) {
+          const have = new Set(all.map((w) => w.id));
+          const ids = [...new Set(seats.map((e) => e && e.workspaceId).filter((id) => id && !have.has(id)))];
+          if (ids.length) {
+            for (const id of ids) all.push({ id, name: id, bounds: null });
+            dirty = true;
+            console.warn(`workspaces.json: synthesized ${ids.length} workspace record(s) for seats whose workspace was missing: ${ids.join(', ')}`);
+          }
+        }
+      }
+      if (dirty) this._save(all);
       return all;
     },
     get(id) { return this._load().find(w => w.id === id) || null; },
@@ -1206,7 +1225,7 @@ function initStores(userDataPath, {
       if (!PROMPT_KINDS.includes(kind)) throw new Error(`invalid prompt kind: ${kind}`);
       if (!PROMPT_NAME_RE.test(stem)) throw new Error(`invalid prompt name: ${stem}`);
       ensureDir(this._dir(kind));
-      fs.writeFileSync(this._file(kind, stem), String(content ?? ''), { mode: 0o600 });
+      atomicWriteFileSync(this._file(kind, stem), String(content ?? ''));
       return this.list();
     },
     remove(kind, stem) {
@@ -1391,7 +1410,7 @@ function initStores(userDataPath, {
     save(name, content) {
       if (!AGENT_NAME_RE.test(name)) throw new Error(`invalid agent name: ${name}`);
       ensureDir(AGENTS_DIR);
-      fs.writeFileSync(this._file(name), String(content ?? ''), { mode: 0o600 });
+      atomicWriteFileSync(this._file(name), String(content ?? ''));
       return this.list();
     },
     remove(name) {
@@ -1432,7 +1451,7 @@ function initStores(userDataPath, {
     save(name, content) {
       if (!AGENT_NAME_RE.test(name)) throw new Error(`invalid skill name: ${name}`);
       ensureDir(SKILLS_LIB_DIR);
-      fs.writeFileSync(this._file(name), String(content ?? ''), { mode: 0o600 });
+      atomicWriteFileSync(this._file(name), String(content ?? ''));
       return this.list();
     },
     remove(name) {
@@ -1478,7 +1497,7 @@ function initStores(userDataPath, {
     save(name, content) {
       if (!AGENT_NAME_RE.test(name)) throw new Error(`invalid exec command name: ${name}`);
       ensureDir(EXEC_DIR);
-      fs.writeFileSync(this._file(name), String(content ?? ''), { mode: 0o600 });
+      atomicWriteFileSync(this._file(name), String(content ?? ''));
       return this.list();
     },
     remove(name) {
@@ -1531,8 +1550,7 @@ function initStores(userDataPath, {
       const check = validateMcpEntry(entry);
       if (!check.ok) throw new Error(`invalid MCP server ${name}: ${check.errors.join('; ')}`);
       ensureDir(MCP_DIR);
-      fs.writeFileSync(file, JSON.stringify(entry, null, 2), { mode: 0o600 });
-      fs.chmodSync(file, 0o600);
+      atomicWriteFileSync(file, JSON.stringify(entry, null, 2));
       return this.list();
     },
     remove(name) {

@@ -29,6 +29,9 @@ blocks a release.
 - clodexctl: `undeploy node --docker` now removes only the node's own data volume and lists any other named volume it leaves alone; it used to delete every named volume attached to the container, including ones passed with `--volume`.
 - clodexctl: undeploying a Fargate stack on a shared, pre-existing cluster no longer removes the saved contexts of the other stacks on that cluster.
 - clodexctl: `port-forward` and `web --port` now fail at once when the chosen local port is already in use, instead of reporting the forward as open on another service.
+- A sessions.json that parses but is not a list is now moved aside and the launch snapshot restored, instead of starting with no seats and overwriting the snapshot with the bad file.
+- Seats whose workspace record is missing or corrupt now get their workspace re-created at launch, so it appears under Recent Workspaces and its seats restore when opened, instead of staying invisible with their names reserved.
+- Memory pins, memory edits and library saves (templates, prompts, agents, skills, exec commands, MCP entries) now write atomically, so a crash mid-save can no longer leave an empty file.
 
 ## 5.147.0 — 2026-10-28 — security fixes from the first cold audit
 

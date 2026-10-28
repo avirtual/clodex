@@ -158,9 +158,10 @@ test('persistence: an absent primary with an unreadable .bak is an empty store t
 });
 
 for (const row of [
-  { state: 'absent', primary: null, rows: [], unreadable: false },
-  { state: 'quarantined', primary: '{not json', rows: ['from-bak'], unreadable: false },
-  { state: 'unreadable', primary: '[]', rows: [], unreadable: true },
+  { state: 'absent', primary: null, rows: [], unreadable: false, recovered: false },
+  { state: 'quarantined', primary: '{not json', rows: ['from-bak'], unreadable: false, recovered: true },
+  { state: 'wrong-shape', primary: '{}', rows: ['from-bak'], unreadable: false, recovered: true },
+  { state: 'unreadable', primary: '[]', rows: [], unreadable: true, recovered: false },
 ]) {
   test(`persistence: a ${row.state} sessions.json beside a parseable .bak loads ${JSON.stringify(row.rows)}`, { skip: row.state === 'unreadable' && isRoot && 'root reads a 000 file' }, () => {
     const { stores, cleanup, userData } = freshStores();
@@ -175,14 +176,33 @@ for (const row of [
         assert.deepStrictEqual(stores.persistence._load().map((e) => e.name), row.rows);
       });
       assert.strictEqual(!!stores.persistence._unreadable, row.unreadable);
-      assert.strictEqual(lines.some((l) => l.includes('recovered from .bak')), row.state === 'quarantined');
+      assert.strictEqual(lines.some((l) => l.includes('recovered from .bak')), row.recovered);
       assert.strictEqual(fs.readFileSync(bak, 'utf-8'), bakText);
+      captureConsoleError(() => stores.persistence.upsert({ name: 'added', type: 'claude', workspaceId: 'default' }));
+      assert.strictEqual(fs.readFileSync(bak, 'utf-8'), bakText, '.bak byte-identical after one upsert');
+      if (!row.unreadable) assert.deepStrictEqual(stores.persistence.list().map((e) => e.name), [...row.rows, 'added']);
+      assert.strictEqual(fs.readdirSync(userData).some((f) => f.startsWith('sessions.json.corrupt-')), row.recovered);
     } finally {
       try { fs.chmodSync(file, 0o600); } catch {}
       cleanup();
     }
   });
 }
+
+test('persistence: the launch snapshot skips a primary that parses but is not an array', () => {
+  const { stores, cleanup, userData } = freshStores();
+  const file = path.join(userData, 'sessions.json');
+  const bakText = JSON.stringify([{ name: 'from-bak', type: 'claude', workspaceId: 'default' }]);
+  try {
+    fs.writeFileSync(file + '.bak', bakText);
+    fs.writeFileSync(file, '{}');
+    assert.strictEqual(stores.persistence._save([{ name: 'b', type: 'claude', workspaceId: 'default' }]), true);
+    assert.strictEqual(fs.readFileSync(file + '.bak', 'utf-8'), bakText);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf-8')).map((e) => e.name), ['b'], 'ENTER: the save itself landed');
+  } finally {
+    cleanup();
+  }
+});
 
 test('persistence: _save reports false when the write itself fails, true once it lands', { skip: isRoot && 'root writes a read-only dir' }, () => {
   const { stores, cleanup, userData } = freshStores();
@@ -1101,6 +1121,20 @@ test('templates: save refuses a template with no name, and never reads undefined
     assert.strictEqual(Object.hasOwn(JSON.parse(fs.readFileSync(path.join(dir, 'fresh.json'), 'utf-8')), 'carried'), false);
     assert.throws(() => stores.templates.save({ type: 'claude' }), /name/);
     assert.throws(() => stores.templates.save({ name: '', type: 'claude' }), /name/);
+  } finally { cleanup(); }
+});
+
+test('templates: a save that dies mid-write leaves the prior file intact', (t) => {
+  const { registryDir, stores, cleanup } = freshStores();
+  try {
+    stores.templates.save({ name: 'keep', type: 'claude', model: 'one' });
+    const file = path.join(registryDir, 'library', 'templates', 'keep.json');
+    const before = fs.readFileSync(file, 'utf-8');
+    t.mock.method(fs, 'writeSync', () => { throw new Error('disk full'); });
+    t.mock.method(fs, 'writeFileSync', (f) => { fs.truncateSync(f, 0); throw new Error('disk full'); });
+    assert.throws(() => stores.templates.save({ name: 'keep', type: 'claude', model: 'two' }), /disk full/);
+    t.mock.restoreAll();
+    assert.strictEqual(fs.readFileSync(file, 'utf-8'), before);
   } finally { cleanup(); }
 });
 
@@ -2695,6 +2729,42 @@ test('workspaces: list seeds a default, upsert/get/setName/sortedByRecent', () =
     assert.strictEqual(stores.workspaces.get('w2').name, 'Renamed');
     stores.workspaces.touch('w2');
     assert.strictEqual(stores.workspaces.sortedByRecent()[0].id, 'w2');
+  } finally { cleanup(); }
+});
+
+test('workspaces: a quarantined workspaces.json gets a record synthesized for every seat workspace', () => {
+  const { stores, cleanup, userData } = freshStores();
+  try {
+    stores.persistence.upsert({ name: 'a', type: 'claude', workspaceId: 'ws2' });
+    stores.persistence.upsert({ name: 'b', type: 'claude', workspaceId: 'default' });
+    fs.writeFileSync(path.join(userData, 'workspaces.json'), '{not json');
+    const warns = [];
+    const orig = console.warn;
+    console.warn = (...a) => { warns.push(a.map(String).join(' ')); };
+    let listed;
+    try { listed = stores.workspaces.list(); } finally { console.warn = orig; }
+    assert.deepStrictEqual(listed, [
+      { id: 'default', name: 'Workspace', bounds: null },
+      { id: 'ws2', name: 'ws2', bounds: null },
+    ]);
+    assert.ok(warns.some((l) => l.includes('synthesized 1 workspace record(s)') && l.includes('ws2')), warns.join('\n'));
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(userData, 'workspaces.json'), 'utf-8')).map((w) => w.id), ['default', 'ws2']);
+  } finally { cleanup(); }
+});
+
+test('workspaces: a deleted workspace row stays deleted — no seats, or a seat still naming it after the launch synthesis', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const { workspaces, persistence } = stores;
+    workspaces.upsert({ id: 'default', name: 'Workspace', bounds: null });
+    workspaces.upsert({ id: 'empty', name: 'Empty', bounds: null });
+    workspaces.upsert({ id: 'ws2', name: 'Two', bounds: null });
+    persistence.upsert({ name: 'a', type: 'claude', workspaceId: 'ws2' });
+    assert.deepStrictEqual(workspaces.list().map((w) => w.id), ['default', 'empty', 'ws2'], 'ENTER: the launch list ran');
+    workspaces.remove('empty');
+    workspaces.remove('ws2');
+    assert.deepStrictEqual(persistence.list().map((e) => e.workspaceId), ['ws2'], 'ENTER: a seat still names ws2');
+    assert.deepStrictEqual(workspaces.list().map((w) => w.id), ['default']);
   } finally { cleanup(); }
 });
 
@@ -4423,7 +4493,7 @@ for (const st of LOADED_STORES) {
       let got;
       const errs = captureConsoleError(() => { got = st.read(stores); });
       assert.deepStrictEqual(got, st.empty);
-      assert.ok(errs.some((l) => l.includes('could not be parsed nor moved aside')), errs.join('\n'));
+      assert.ok(errs.some((l) => l.includes('could not be parsed; could not be moved aside')), errs.join('\n'));
       assert.deepStrictEqual(fs.readdirSync(userData).filter((n) => n.startsWith(`${st.file}.corrupt-`)), []);
       assert.strictEqual(fs.readFileSync(file, 'utf-8'), '{bad');
       captureConsoleError(() => {
