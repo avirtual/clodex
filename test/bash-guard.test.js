@@ -121,6 +121,8 @@ const TABLE = [
   { cmd: 'echo "$(time -p -p case)"; git add -A', want: 'deny', reason: CASE_REASON },
   { cmd: 'echo "$(time -p case x in x) echo hi;; esac)"', want: 'pass' },
   { cmd: 'echo "$(time -p -- case x in x) echo hi;; esac)"', want: 'pass' },
+  { cmd: 'echo "$(time -- case x in x) echo hi;; esac)"', want: 'pass' },
+  { cmd: 'echo "$(time -- -p case)"; git add -A', want: 'deny', reason: CASE_REASON },
   { cmd: "git commit -m \"$(cat<<'EOF'\nfix the edge case\nEOF\n)\"", want: 'pass' },
   { cmd: 'echo "$(x;; case) $(echo ok"', want: 'deny', reason: OPEN_REASON },
   { cmd: 'echo "$(x;; case) `echo ok"', want: 'deny', reason: OPEN_REASON },

@@ -272,7 +272,7 @@ try {
         const named = f.next && !(f.next === "coproc" && tok === "case");
         f.fn = (head || f.next === "function") && !tq && tok.indexOf("=") < 0 && "$<>@*+?!".indexOf(tok.charAt(tok.length - 1)) < 0;
         f.next = head && (tok === "function" || tok === "coproc") && tok;
-        f.cmd = named || (head && (["!", "time", "if", "then", "else", "elif", "do", "while", "until", "coproc"].indexOf(tok) >= 0 || (tok === "-p" && p === "time") || (tok === "--" && p === "-p" && String(s[s.length - 2] || "") === "time")));
+        f.cmd = named || (head && (["!", "time", "if", "then", "else", "elif", "do", "while", "until", "coproc"].indexOf(tok) >= 0 || (tok === "-p" && p === "time") || (tok === "--" && (p === "time" || (p === "-p" && String(s[s.length - 2] || "") === "time")))));
       }
       s.push(tok);
     }

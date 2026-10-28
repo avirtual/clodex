@@ -193,7 +193,7 @@ function shellSegments(cmd) {
         const named = f.next && !(f.next === 'coproc' && tok.text === 'case');
         f.fn = (head || f.next === 'function') && !tok.quoted && !tok.text.includes('=') && !'$<>@*+?!'.includes(tok.text.slice(-1));
         f.next = head && (tok.text === 'function' || tok.text === 'coproc') && tok.text;
-        f.cmd = named || (head && (CMD_POSITION_WORDS.includes(tok.text) || (tok.text === '-p' && p === 'time') || (tok.text === '--' && p === '-p' && s.length > 1 && s[s.length - 2].text === 'time')));
+        f.cmd = named || (head && (CMD_POSITION_WORDS.includes(tok.text) || (tok.text === '-p' && p === 'time') || (tok.text === '--' && (p === 'time' || (p === '-p' && s.length > 1 && s[s.length - 2].text === 'time')))));
       }
       s.push(tok);
     }
