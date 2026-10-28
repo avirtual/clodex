@@ -2,6 +2,8 @@
 
 const SESSION_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const RESERVED_SEAT_NAMES = new Set(['.claims']);
+const LEGACY_CLAIM_RE = /^\.resend\.|\.draining\.[a-z]+\.\d+$/;
+const isReservedSeatName = (name) => RESERVED_SEAT_NAMES.has(String(name).toLowerCase()) || LEGACY_CLAIM_RE.test(String(name));
 
 const INVALID_BORDER = '#e94560';
 
@@ -38,7 +40,7 @@ function nameFieldState(raw, sets) {
   const s = sets || {};
   if (!name) return { ok: false, kind: 'empty', message: '' };
   if (!SESSION_NAME_RE.test(name)) return { ok: false, kind: 'invalid', message: NAME_MESSAGES.invalid };
-  if (RESERVED_SEAT_NAMES.has(name)) return { ok: false, kind: 'reserved', message: NAME_MESSAGES.reserved };
+  if (isReservedSeatName(name)) return { ok: false, kind: 'reserved', message: NAME_MESSAGES.reserved };
   if (asSet(s.live).has(name)) return { ok: false, kind: 'live', message: NAME_MESSAGES.live };
   if (asSet(s.persisted).has(name)) return { ok: false, kind: 'persisted', message: NAME_MESSAGES.persisted };
   if (asSet(s.taken).has(name)) return { ok: false, kind: 'taken', message: NAME_MESSAGES.taken };
@@ -82,6 +84,8 @@ function applyCreateResult(els, result) {
 module.exports = {
   SESSION_NAME_RE,
   RESERVED_SEAT_NAMES,
+  LEGACY_CLAIM_RE,
+  isReservedSeatName,
   INVALID_BORDER,
   NAME_MESSAGES,
   reservedSets,

@@ -44,6 +44,7 @@ function claimPath(root, entry) {
 }
 
 function isClaimEntry(name) { return name === CLAIMS || LEGACY_CLAIM_RE.test(name); }
+function isReservedSeatName(name) { return RESERVED_SEAT_NAMES.has(String(name).toLowerCase()) || LEGACY_CLAIM_RE.test(String(name)); }
 
 // Does parked file `f` carry resend id `id`? STRUCTURAL match, not a suffix
 // endsWith: an id-tagged basename is `<ts>.<counter>.<id>.json` (4 dot-segments,
@@ -362,4 +363,4 @@ function claimParkedByKey(root, name, key) {
   return { ids, claimed };
 }
 
-module.exports = { parkDelivery, drainPending, rehomeOrphans, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, parkedTexts, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir, claimsDir, RESERVED_SEAT_NAMES };
+module.exports = { parkDelivery, drainPending, rehomeOrphans, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, parkedTexts, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir, claimsDir, RESERVED_SEAT_NAMES, LEGACY_CLAIM_RE, isReservedSeatName };

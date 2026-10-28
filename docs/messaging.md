@@ -315,7 +315,8 @@ inject queue to empty (capped at `INJECT_BOOT_MAXWAIT` past the edge), so a spaw
   target never reads it twice.
 - Claims rename into the reserved `<root>/.claims/` (a seat may not be named
   `.claims`), so a seat named like a claim cannot be mistaken for one.
-  `RESERVED_SEAT_NAMES` carries the reservation: `create`, `rename`,
+  `isReservedSeatName` carries the reservation (case-insensitive, plus the
+  legacy claim shapes `LEGACY_CLAIM_RE` matches): `create`, `rename`,
   `nameFieldState` and the peer API's `/api/sessions` routes refuse it.
 - Drains: `run/<name>/pending.sh` (UserPromptSubmit and PostToolUse hooks) delivers
   parked mail with the target's own next turn or tool boundary; the busy/draft park arms a non-destructive

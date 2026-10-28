@@ -29082,6 +29082,8 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
       "use strict";
       var SESSION_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
       var RESERVED_SEAT_NAMES = /* @__PURE__ */ new Set([".claims"]);
+      var LEGACY_CLAIM_RE = /^\.resend\.|\.draining\.[a-z]+\.\d+$/;
+      var isReservedSeatName = (name) => RESERVED_SEAT_NAMES.has(String(name).toLowerCase()) || LEGACY_CLAIM_RE.test(String(name));
       var INVALID_BORDER = "#e94560";
       var NAME_MESSAGES = {
         invalid: "Letters, numbers, dot, underscore and hyphen only (1\u201364 characters), and never all dots.",
@@ -29112,7 +29114,7 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         const s = sets || {};
         if (!name) return { ok: false, kind: "empty", message: "" };
         if (!SESSION_NAME_RE.test(name)) return { ok: false, kind: "invalid", message: NAME_MESSAGES.invalid };
-        if (RESERVED_SEAT_NAMES.has(name)) return { ok: false, kind: "reserved", message: NAME_MESSAGES.reserved };
+        if (isReservedSeatName(name)) return { ok: false, kind: "reserved", message: NAME_MESSAGES.reserved };
         if (asSet(s.live).has(name)) return { ok: false, kind: "live", message: NAME_MESSAGES.live };
         if (asSet(s.persisted).has(name)) return { ok: false, kind: "persisted", message: NAME_MESSAGES.persisted };
         if (asSet(s.taken).has(name)) return { ok: false, kind: "taken", message: NAME_MESSAGES.taken };
@@ -29152,6 +29154,8 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
       module.exports = {
         SESSION_NAME_RE,
         RESERVED_SEAT_NAMES,
+        LEGACY_CLAIM_RE,
+        isReservedSeatName,
         INVALID_BORDER,
         NAME_MESSAGES,
         reservedSets,
