@@ -12,7 +12,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — security fixes for the INSECURE origin gate
+## Unreleased
+
+## 5.148.1 — 2026-10-28 — security fixes for the INSECURE origin gate
 
 - **Security:** `CLODEX_WEB_INSECURE=1` / `CLODEX_REMOTE_INSECURE=1` no longer disable the browser Origin check: a cross-site page is refused again on the stock `docker/web` compose stack (which sets the flag by default), while LAN clients with no Origin or a matching one are served. 5.148.0 had skipped the whole gate under the flag.
 - **Security:** under `CLODEX_WEB_INSECURE` / `CLODEX_REMOTE_INSECURE` the Host must now be loopback or an IP literal, so a DNS-rebound hostname is refused on the stock `docker/web` compose stack; a LAN hostname needs a token.
