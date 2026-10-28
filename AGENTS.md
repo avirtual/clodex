@@ -46,7 +46,10 @@ probe, `scripts/dmg-pty-probe.sh`), commits +
 tags + pushes, runs `gh release create`, prunes old release assets, and
 publishes the container image (`scripts/publish-image.sh`), then launches the cloud
 release review (`scripts/cloud-review.sh`).
-Non-interactive; stops at the first error. No CI; `gh` is logged in as
+Non-interactive; stops at the first error. A run that dies after its commit is
+resumed by re-running the same command: a HEAD tagged with the current version
+is pushed or released instead of bumped again, and the notes are kept at
+`~/.clodex/logs/release-notes-vX.Y.Z.md`. No CI; `gh` is logged in as
 `avirtual`. arm64 only — Intel users build from source.
 
 CHANGELOG contract: the release publishes `CHANGELOG.md`'s `## Unreleased`
