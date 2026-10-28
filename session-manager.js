@@ -4386,13 +4386,24 @@ function createSessionManager(deps) {
           },
         });
 
-        let probeUnreached = false;
+        let replyLost = false;
         if (out && out.unreached) {
           const probe = await conn.sessionGet(name);
           if (probe && probe.ok && probe.session) {
             log.info('peer', `commit reply lost; ${name} confirmed on ${peerLabel} by probe`);
             out = { ok: true, dropped: [] };
-          } else if (probe && probe.unreached) probeUnreached = true;
+          } else {
+            const again = await conn.importShip({ id: stagingId, files: [], retry: true });
+            if (again && again.ok) {
+              log.info('peer', `commit reply lost; ${name} confirmed on ${peerLabel} by commit re-send`);
+              out = again;
+            } else {
+              replyLost = true;
+              const consumed = !!(again && !again.unreached && /unknown staging/.test(String(again.error || '')));
+              log.warn('peer', `commit reply lost; ${name} on ${peerLabel} unknown after re-send (${consumed ? 'staging consumed' : (again && again.error) || 'no answer'})`);
+              if (again && !again.unreached && again.error) out = again;
+            }
+          }
         }
 
         if (out && out.ok) {
@@ -4414,7 +4425,7 @@ function createSessionManager(deps) {
         }
 
         const farError = (out && out.error) || 'peer refused the import';
-        if (probeUnreached) {
+        if (replyLost) {
           getPersistence().setArchived(name, true);
           return {
             ok: false, kept: true, unknown: true, archived: true, error: farError,

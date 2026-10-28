@@ -684,6 +684,47 @@ test('a commit whose create loses a same-name race keeps the winner\'s record', 
   });
 });
 
+test('a second commit on an in-flight staging answers the first one\'s result and creates once', async () => {
+  const id = '0123456789abcdef';
+  let commits = 0;
+  const creates = [];
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const seatImport = stubSeatImport({
+    commit: () => {
+      commits += 1;
+      return commits === 1
+        ? { ok: true, name: 'ana', record: record(), installed: {}, dropped: [] }
+        : { ok: false, error: `unknown staging '${id}'` };
+    },
+  });
+  const importCreate = async ({ name }) => {
+    creates.push(name);
+    await gate;
+    return { ok: true, name, pid: 7, cwd: '/w', sessionId: SID };
+  };
+  await withServer({ seatImport, importCreate, getSessions: () => [] }, async (s) => {
+    let entered = 0;
+    const handle = s._handleImportCommit.bind(s);
+    s._handleImportCommit = (...args) => { entered += 1; return handle(...args); };
+    const first = call(s.port, 'POST', `/api/import/${id}/commit`);
+    await waitFor(() => creates.length === 1, 'the first create');
+    const second = call(s.port, 'POST', `/api/import/${id}/commit`);
+    await waitFor(() => entered === 2, 'the second commit reaching the handler');
+    release();
+    const [a, b] = await Promise.all([first, second]);
+    assert.strictEqual(a.status, 200);
+    assert.deepStrictEqual(b.body, a.body);
+    assert.strictEqual(b.status, 200);
+    assert.deepStrictEqual(creates, ['ana']);
+    assert.strictEqual(commits, 1);
+    const late = await call(s.port, 'POST', `/api/import/${id}/commit`);
+    assert.strictEqual(late.status, 400);
+    assert.match(late.body.error, /unknown staging/);
+    assert.deepStrictEqual(creates, ['ana']);
+  });
+});
+
 test('abort removes the staging and the id it names cannot be committed after', async () => {
   const w = mkWiring();
   await withServer({

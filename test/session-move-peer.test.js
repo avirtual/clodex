@@ -54,7 +54,7 @@ function mkMove({
   caps = ['dm', 'import'], needsUpgrade = false, peer = true,
   reminderRows = [{ id: 'r1', agent: 'seat', kind: 'in', spec: 'in 1h', body: 'ping' }],
   createThrows = null, seed = true, chunks = 1, beginRefusal = null, beginGate = null,
-  probe = null,
+  probe = null, retryReply,
 } = {}) {
   const root = mkTmpRoot('clodex-movepeer-');
   const claudeDir = mkTmpRoot('clodex-movepeer-claude-');
@@ -80,6 +80,7 @@ function mkMove({
   const begun = [];
   const aborted = [];
   const probed = [];
+  const retried = [];
   let openStaging = null;
   const conn = {
     sessionGet: async (n) => { probed.push(n); return probe; },
@@ -93,6 +94,7 @@ function mkMove({
     },
     importAbort: async (id) => { aborted.push(id); return { ok: true }; },
     importShip: async (arg) => {
+      if (arg.retry) { retried.push(arg); return retryReply === undefined ? reply : retryReply; }
       shipped.push({ ...arg, name: openStaging.name, record: openStaging.record });
       for (const f of arg.files) {
         const total = f.bytes ? f.bytes.length : fsReal.statSync(f.path).size;
@@ -166,7 +168,7 @@ function mkMove({
     }
   };
 
-  return { m, root, claudeDir, store, persistence, created, shipped, events, kills, begun, aborted, probed };
+  return { m, root, claudeDir, store, persistence, created, shipped, events, kills, begun, aborted, probed, retried };
 }
 
 function seedLive(m, name) {
@@ -678,7 +680,7 @@ test('no progress is emitted when the move is refused', async () => {
 const LOST = { ok: false, unreached: true, error: 'socket hang up' };
 
 test('a lost commit reply that the probe finds on the peer takes the success arm and respawns nothing', async () => {
-  const { m, store, created, probed } = mkMove({
+  const { m, store, created, probed, retried } = mkMove({
     reply: LOST, probe: { ok: true, session: { name: 'seat', status: 'running' } },
   });
   seedLive(m, 'seat');
@@ -687,22 +689,59 @@ test('a lost commit reply that the probe finds on the peer takes the success arm
     ok: true, name: 'seat', peer: 'murmurfi', farCwd: FAR_CWD, sessionId: SESSION_ID, dropped: [],
   });
   assert.deepStrictEqual(probed, ['seat']);
+  assert.deepStrictEqual(retried, [], 'a probe that finds the seat needs no re-send');
   assert.strictEqual(created.length, 0, 'the seat runs on the peer, so it is not respawned here');
   assert.strictEqual(store[0].movedTo.peerLabel, 'murmurfi');
   assert.strictEqual(store[0].archivedAt, 4242);
 });
 
-test('a lost commit reply that the probe answers 404 respawns locally as a refusal does', async () => {
-  const { m, store, created, probed } = mkMove({
-    reply: LOST, probe: { ok: false, error: 'Session not found' },
+const NOT_FOUND = { ok: false, error: 'Session not found' };
+
+test('a lost commit reply, a 404 probe and an ok re-sent commit take the success arm and respawn nothing', async () => {
+  const { m, store, created, probed, retried } = mkMove({
+    reply: LOST, probe: NOT_FOUND, retryReply: { ok: true, name: 'seat', dropped: ['account:opsguru'] },
   });
   seedLive(m, 'seat');
   const out = await m.moveToPeer('seat', 'p1', { farCwd: FAR_CWD });
   assert.deepStrictEqual(probed, ['seat']);
-  assert.strictEqual(out.respawned, true);
-  assert.strictEqual(out.unknown, undefined);
-  assert.strictEqual(created.length, 1, 'the peer said no, so the seat comes back here');
-  assert.strictEqual(store[0].archivedAt, null);
+  assert.deepStrictEqual(retried, [{ id: STAGING_ID, files: [], retry: true }]);
+  assert.deepStrictEqual(out, {
+    ok: true, name: 'seat', peer: 'murmurfi', farCwd: FAR_CWD, sessionId: SESSION_ID, dropped: ['account:opsguru'],
+  });
+  assert.strictEqual(created.length, 0, 'the far create was still in flight, so no local respawn');
+  assert.strictEqual(store[0].movedTo.peerLabel, 'murmurfi');
+  assert.strictEqual(store[0].archivedAt, 4242);
+});
+
+test('a lost commit reply, a 404 probe and an unknown-staging re-send archive the local copy and respawn nothing', async () => {
+  const { m, store, created, retried } = mkMove({
+    reply: LOST, probe: NOT_FOUND, retryReply: { ok: false, error: `unknown staging '${STAGING_ID}'` },
+  });
+  seedLive(m, 'seat');
+  const out = await m.moveToPeer('seat', 'p1', { farCwd: FAR_CWD });
+  assert.strictEqual(retried.length, 1);
+  assert.deepStrictEqual(out, {
+    ok: false, kept: true, unknown: true, archived: true, error: `unknown staging '${STAGING_ID}'`,
+    peer: 'murmurfi', type: 'claude', cwd: SRC_CWD, team: null,
+  });
+  assert.strictEqual(created.length, 0, 'a refusal to a re-send is not proof the first commit failed');
+  assert.strictEqual(store[0].archivedAt, 4242);
+  assert.deepStrictEqual(store[0].movedTo, BASE.movedTo);
+});
+
+test('a lost commit reply, a 404 probe and an unreached re-send archive the local copy and respawn nothing', async () => {
+  const { m, store, created, retried } = mkMove({
+    reply: LOST, probe: NOT_FOUND, retryReply: { ok: false, unreached: true, error: 'ECONNRESET' },
+  });
+  seedLive(m, 'seat');
+  const out = await m.moveToPeer('seat', 'p1', { farCwd: FAR_CWD });
+  assert.strictEqual(retried.length, 1);
+  assert.deepStrictEqual(out, {
+    ok: false, kept: true, unknown: true, archived: true, error: 'socket hang up',
+    peer: 'murmurfi', type: 'claude', cwd: SRC_CWD, team: null,
+  });
+  assert.strictEqual(created.length, 0);
+  assert.strictEqual(store[0].archivedAt, 4242);
 });
 
 test('a lost commit reply with an unreachable probe archives the local copy and respawns nothing', async () => {

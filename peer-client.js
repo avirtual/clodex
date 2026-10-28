@@ -836,7 +836,7 @@ class PeerConnection {
     return this.importShip({ id: begun.id, files, onProgress });
   }
 
-  async importShip({ id, files = [], onProgress } = {}) {
+  async importShip({ id, files = [], onProgress, retry = false } = {}) {
     const bail = async (out) => {
       await this._ask('DELETE', `/api/import/${id}`, null);
       return out;
@@ -884,7 +884,7 @@ class PeerConnection {
       }
     }
     const done = await this._askMarked('POST', `/api/import/${id}/commit`, null, IMPORT_TIMEOUT_MS);
-    if (done.unreached) return done;
+    if (done.unreached || retry) return done;
     if (!done.ok && !done.installed) return bail(done);
     return done;
   }
