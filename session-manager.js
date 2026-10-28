@@ -7998,6 +7998,7 @@ function createSessionManager(deps) {
           if (fresh && handoff) this._injectReloadHandoff(fresh, handoff, undefined, why);
         } catch (err) {
           session._reloadInFlight = false;
+          session._respawning = false;
           this._freshBakeOnce.delete(name);
           console.error(`[agent:context ${why}] ${name} failed:`, err.message);
           // Re-upsert the entry without a worktree another live seat has since claimed, or the failure path
