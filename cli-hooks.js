@@ -265,14 +265,14 @@ try {
       if (f && f.bt && tok === "case" && !tq) uncountedCase = true;
       if (f && !f.bt) {
         const head = f.cmd && !tq;
-        if (tok.slice(0, 2) === "<<" && tok.slice(0, 3) !== "<<<") f.hd = true;
+        if (tok.indexOf("<<") >= 0 && tok.indexOf("<<<") < 0) f.hd = true;
         if (tok === "case" && !tq && !head && !f.hd) uncountedCase = true;
         const p = String(s[s.length - 1] || "");
         if (head) { if (tok === "case") f.inCase++; else if (tok === "esac" && f.inCase > 0) f.inCase--; }
         const named = f.next && !(f.next === "coproc" && tok === "case");
         f.fn = (head || f.next === "function") && !tq && tok.indexOf("=") < 0 && "$<>@*+?!".indexOf(tok.charAt(tok.length - 1)) < 0;
         f.next = head && (tok === "function" || tok === "coproc") && tok;
-        f.cmd = named || (head && (["!", "time", "if", "then", "else", "elif", "do", "while", "until", "coproc"].indexOf(tok) >= 0 || (tok.charAt(0) === "-" && (p === "time" || p.charAt(0) === "-"))));
+        f.cmd = named || (head && (["!", "time", "if", "then", "else", "elif", "do", "while", "until", "coproc"].indexOf(tok) >= 0 || (tok === "-p" && p === "time") || (tok === "--" && p === "-p" && String(s[s.length - 2] || "") === "time")));
       }
       s.push(tok);
     }
@@ -369,6 +369,13 @@ try {
     process.stdout.write(JSON.stringify({ hookSpecificOutput: {
       hookEventName: "PreToolUse", permissionDecision: "deny",
       permissionDecisionReason: "kill by pid, never by pattern: run pgrep -lf <pattern> first, read the list, then kill <pid>. On macOS pkill/killall stop parsing options at the first pattern, so flags after it become more patterns and -f cat matches every /Applications binary; a group or -1 target kills the whole login. For a command that may hang, use timeout or a background run instead of a kill afterwards." } }));
+    process.exit(0);
+  }
+  const last = outer[outer.length - 1];
+  if (last && !last.bt && last.inCase > 0 && !last.hd) {
+    process.stdout.write(JSON.stringify({ hookSpecificOutput: {
+      hookEventName: "PreToolUse", permissionDecision: "deny",
+      permissionDecisionReason: "a " + BT + "case" + BT + " inside a double-quoted $(…) kept the substitution open to the end of the line: unquote the substitution or move the case statement out of it" } }));
     process.exit(0);
   }
   if (!ticket) process.exit(0);

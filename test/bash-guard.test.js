@@ -18,6 +18,9 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 const CASE_REASON = 'a `case` inside a double-quoted $(…) or backtick cannot be examined safely:'
   + ' unquote the substitution or move the case statement out of it';
 
+const OPEN_REASON = 'a `case` inside a double-quoted $(…) kept the substitution open to the end of the line:'
+  + ' unquote the substitution or move the case statement out of it';
+
 const REASON = 'ticket t9: stage only the paths you edited (git add <path>…)'
   + ' — a whole-tree add sweeps a subagent\'s in-flight revert into your commit.';
 
@@ -114,6 +117,11 @@ const TABLE = [
   { cmd: 'echo "$(@( ) case)"; git add -A', want: 'deny', reason: CASE_REASON },
   { cmd: 'echo "$(case x in (case) a;; esac)"; git add -A', want: 'deny', reason: CASE_REASON },
   { cmd: 'echo "$(echo @(case|x))"; git add -A', want: 'deny', reason: CASE_REASON },
+  { cmd: 'echo "$(time -x case)"; git add -A', want: 'deny', reason: CASE_REASON },
+  { cmd: 'echo "$(time -p -p case)"; git add -A', want: 'deny', reason: CASE_REASON },
+  { cmd: 'echo "$(time -p case x in x) echo hi;; esac)"', want: 'pass' },
+  { cmd: 'echo "$(time -p -- case x in x) echo hi;; esac)"', want: 'pass' },
+  { cmd: "git commit -m \"$(cat<<'EOF'\nfix the edge case\nEOF\n)\"", want: 'pass' },
 
   { cmd: 'git add a.js b.js', want: 'pass' },
   { cmd: 'git add cli-hooks.js test/bash-guard.test.js', want: 'pass' },
@@ -207,6 +215,10 @@ const KILL_TABLE = [
   { cmd: 'echo "$(x;; case) kill -9 -1;; esac)"', want: 'deny' },
   { cmd: 'echo "`case x in x) kill -9 -1;; esac`"', want: 'deny', reason: CASE_REASON },
   { cmd: 'echo "$(!(case|x)) kill -9 -1"', want: 'deny' },
+  { cmd: 'echo "$(time -x case)"; kill -9 -1', want: 'deny', reason: CASE_REASON },
+  { cmd: 'echo "$(time -p -p case)"; pkill node', want: 'deny', reason: CASE_REASON },
+  { cmd: 'echo "$(x;; case) echo ok)"', want: 'deny', reason: OPEN_REASON },
+  { cmd: 'echo "$(!(case|x)) echo ok"', want: 'deny', reason: OPEN_REASON },
 
   { cmd: 'kill 1234', want: 'pass' },
   { cmd: 'kill -9 1234 5678', want: 'pass' },
