@@ -956,13 +956,18 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
   let tokenSaved = false;
   const saveSsmContext = () => {
     if (tokenSaved || flags['no-ctx']) return;
-    tokenSaved = true;
-    const store = loadContextsFor(flags, io);
-    const exists = Object.prototype.hasOwnProperty.call(store.contexts, name);
     const webPort = port + 1;
-    store.contexts[name] = { ...entry, webPort, token, deploy: { flavor: 'ssm', target, ...(region ? { region } : {}), ...(profile ? { profile } : {}) } };
-    if (!store.current) store.current = name;
-    contexts.save(store, io.contextsFile);
+    let exists;
+    try {
+      const store = loadContextsFor(flags, io);
+      exists = Object.prototype.hasOwnProperty.call(store.contexts, name);
+      store.contexts[name] = { ...entry, webPort, token, deploy: { flavor: 'ssm', target, ...(region ? { region } : {}), ...(profile ? { profile } : {}) } };
+      if (!store.current) store.current = name;
+      contexts.save(store, io.contextsFile);
+    } catch (e) {
+      throw new CliError(e instanceof CliError ? e.exitCode : EXIT.SERVER, `${e.message} — the box is already on the new token, but context "${name}" was not saved; re-run with --force to rotate`);
+    }
+    tokenSaved = true;
     if (json) emit({ type: 'context', action: exists ? 'overwritten' : 'added', name, webPort });
     else {
       printer.line(`context "${name}" ${exists ? 'updated' : 'saved'} — you can now: clodexctl --ctx ${name} get sessions`);

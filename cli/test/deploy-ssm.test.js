@@ -954,6 +954,29 @@ test('deploy ssm: a TimedOut poll after the ::ok token marker keeps the context 
   });
 });
 
+test('deploy ssm: -o json, a TimedOut poll after the ::ok token marker reports tokenSaved true', async () => {
+  const contextsFile = tmpCtxFile();
+  const r = await cli(['deploy', 'node', 'n', '--ssm', 'i-1', '-o', 'json'], {
+    execFn: timedOutAws({}, '::step install\n::ok install\n::step token\n::ok token\n::step verify\n'), contextsFile,
+  });
+  assert.strictEqual(r.code, EXIT.SERVER);
+  const err = r.stdout.trim().split('\n').map((l) => JSON.parse(l)).find((e) => e.type === 'error');
+  assert.strictEqual(err.tokenSaved, true);
+  assert.strictEqual(err.status, 'TimedOut');
+});
+
+test('deploy ssm: a context save that fails at the ::ok token marker says the box is already on the new token', async (t) => {
+  const contexts = require('../src/contexts');
+  t.mock.method(contexts, 'save', () => { throw new Error('EACCES: permission denied'); });
+  const contextsFile = tmpCtxFile();
+  const r = await cli(['deploy', 'node', 'n', '--ssm', 'i-1'], {
+    execFn: timedOutAws({}, '::step install\n::ok install\n::step token\n::ok token\n::step verify\n'), contextsFile,
+  });
+  assert.strictEqual(r.code, EXIT.SERVER);
+  assert.match(r.stderr, /EACCES: permission denied — the box is already on the new token, but context "n" was not saved; re-run with --force to rotate/);
+  assert.doesNotMatch(r.stderr, /context was saved/);
+});
+
 test('deploy ssm: a TimedOut poll before the ::ok token marker saves nothing and points at --force', async () => {
   const contextsFile = tmpCtxFile();
   const r = await cli(['deploy', 'node', 'n', '--ssm', 'i-1', '-o', 'json'], {
