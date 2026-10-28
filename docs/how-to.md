@@ -87,7 +87,7 @@ to the `staging` branch on origin and runs the same cloud reviewer on `<lastTag>
 against the `## Unreleased` notes; its issue is titled `Pre-release review staging-<sha>: …`.
 Fix what it finds, re-run until CLEAN, then release; a release cut from a tree whose
 pre-release review was CLEAN may skip the post-release review with
-`CLODEX_RELEASE_NO_REVIEW=1`. That is not a user step: to run Clodex from source you want
+`CLODEX_RELEASE_NO_REVIEW=1`, set on that one release command, not exported (the pre-release script ignores it). That is not a user step: to run Clodex from source you want
 `npm start`, and to ship it to a server you want a headless node.
 
 ## Run a headless node locally

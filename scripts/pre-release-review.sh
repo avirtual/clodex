@@ -9,7 +9,9 @@ GH="${CLODEX_GH_BIN:-gh}"
 
 die() { printf 'pre-release-review: %s\n' "$1" >&2; exit 1; }
 
-[ -z "$("$GIT" status --porcelain)" ] || die "working tree not clean"
+unset CLODEX_RELEASE_NO_REVIEW
+ST="$("$GIT" status --porcelain)" || die "git status failed"
+[ -z "$ST" ] || die "working tree not clean"
 [ "$("$GIT" branch --show-current)" = master ] || die "not on master"
 "$GH" auth status >/dev/null 2>&1 || die "gh is not authenticated"
 PREV="$("$GIT" describe --tags --abbrev=0 2>/dev/null || true)"
