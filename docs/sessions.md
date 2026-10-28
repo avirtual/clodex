@@ -545,10 +545,10 @@ Session…, Delete Workspace… (the seats it kills and its saved rows; a seat l
 in another workspace keeps its record), the archived and failed rows' ✕
 (`forgetSession`), team-retire with discard, `sweepReviewerGraveyard`, the
 team-review spawn-failure rollback, the seat-import spawn-failure rollback
-(remote-wiring.js, drops only when the seat is not live), and both ticket-seat
+(remote-wiring.js, drops only when the seat is not live), and all three ticket-seat
 spawn-failure rollbacks in `_spawnTicketSeat` (team-tickets.js: the
-createWorktree-failed arm, and the create()-threw catch, which drops only when
-the seat is not live), the scratch-clone retire (`_scratchCloneRetire`,
+`_rootBaseBranch`-failed arm, the createWorktree-failed arm, and the
+create()-threw catch, which drops only when the seat is not live), the scratch-clone retire (`_scratchCloneRetire`,
 scratch-clone.js), and `destroyAssistant` (remote-wiring.js, DELETE on an
 assistant record, through `destroy()`). `destroy()` is on the list separately from `kill()`, not
 as its caller: `kill()` returns at `if (!s) return;` before its remove, so on an
@@ -556,7 +556,9 @@ already-dead seat only `destroy()`'s own drop runs — without it the tree went
 and the record naming it stayed (a record pointing at nothing rather than
 nothing pointing at a record). The list is the point: a new
 `getPersistence().remove()` call site that is not on it is a record dropped
-where nobody expects one. ✕ / Cmd+W archives instead of killing for bash shells
+where nobody expects one, and `test/record-dropper-census.test.js` pins every
+call site by `file:function` (`dropRecord` is `destroy()`'s, `onProcExit` the
+natural-exit drop), so a new one edits that table and this list together. ✕ / Cmd+W archives instead of killing for bash shells
 and sandbox rows too.
 
 The ✕ forget (`session:forget`) and Delete Workspace… (`purgeWorkspace`) disarm

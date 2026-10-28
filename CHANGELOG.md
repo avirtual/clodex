@@ -26,6 +26,9 @@ blocks a release.
 - Security: a seat granted a clodexctl exec tier can no longer list every saved context or dial one it was not granted through `get nodes` / `describe node …`; node lines are refused on every seat tier, and `help node` still answers.
 - Security: the context and cache-bust popovers no longer insert numbers from a peer's reply into the page unescaped; a compromised peer could previously run code in the desktop app or the web surface when the operator opened one of those chips.
 - A seat whose name ends in `.draining.<number>` or contains `.resend.` no longer has its parked mail swept into another seat's mailbox or hidden from resend; mailbox claims now live in a reserved `.claims` directory.
+- A sessions.json that parses but is not a list is now moved aside and the launch snapshot restored, instead of starting with no seats and overwriting the snapshot with the bad file.
+- Seats whose workspace record is missing or corrupt now get their workspace re-created at launch, so they are restored and listed instead of staying invisible with their names reserved.
+- Memory pins, memory edits and library saves (templates, prompts, agents, skills, exec commands, MCP entries) now write atomically, so a crash mid-save can no longer leave an empty file.
 
 ## 5.147.0 — 2026-10-28 — security fixes from the first cold audit
 
