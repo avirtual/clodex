@@ -233,6 +233,7 @@ const VERB_REGISTRY = [
       ['create node <name> --gcloud-iap INSTANCE [--zone Z] [--project P]', 'GCP IAP tunnel'],
       ['create node <name> --az-bastion NAME --az-resource-group G --az-target ID', 'Azure Bastion tunnel'],
       ['create node <name> --token T --tunnel CMD… {port}…', 'generalized tunnel argv ({port} substituted; must be LAST)'],
+      ['create node <name> … --token-file FILE | --token -', 'wire token from a file or stdin (trimmed) instead of argv'],
     ],
     flags: [
       ['--cwd DIR', 'working directory for the session'],

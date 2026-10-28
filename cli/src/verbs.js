@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('fs');
 const readline = require('readline');
 const path = require('path');
 const { CliError, EXIT } = require('./errors');
@@ -840,7 +841,7 @@ async function restartNode({ client, printer, flags, prompt = defaultPrompt }) {
 }
 
 
-function entryFromFlags(flags) {
+function entryFromFlags(flags, readStdin) {
   const entry = {};
   if (flags.url) entry.url = String(flags.url);
   if (flags.ssh) entry.ssh = String(flags.ssh);
@@ -875,9 +876,29 @@ function entryFromFlags(flags) {
     };
   }
   if (flags.remotePort) entry.remotePort = parseIntOr(flags.remotePort, 'remote-port');
-  if (flags.token) entry.token = String(flags.token);
+  const token = resolveCreateToken(flags, readStdin);
+  if (token) entry.token = token;
   validateEntry(entry);
   return entry;
+}
+
+function resolveCreateToken(flags, readStdin) {
+  if (flags['token-file'] != null) {
+    if (flags.token != null) throw new CliError(EXIT.USAGE, 'create node: --token-file and --token conflict — pass the token one way');
+    const file = String(flags['token-file']);
+    let raw;
+    try { raw = fs.readFileSync(file, 'utf8'); }
+    catch (e) { throw new CliError(EXIT.USAGE, `--token-file unreadable at ${file}: ${e.message}`); }
+    const tok = raw.trim();
+    if (!tok) throw new CliError(EXIT.USAGE, `--token-file ${file} is empty`);
+    return tok;
+  }
+  if (flags.token === '-') {
+    const tok = String((readStdin || (() => fs.readFileSync(0, 'utf8')))()).trim();
+    if (!tok) throw new CliError(EXIT.USAGE, '--token - read an empty token from stdin');
+    return tok;
+  }
+  return flags.token ? String(flags.token) : null;
 }
 
 function nodeKind(e) {
@@ -1038,14 +1059,14 @@ async function nodeDescribe({ store, printer, flags, args, dialHello }) {
 }
 
 function nodeCreate(bundle) {
-  const { store, saveStore, printer, flags } = bundle;
+  const { store, saveStore, printer, flags, readStdin } = bundle;
   const { rest: args } = takeResourceWord(bundle.args, 'create', CREATABLE);
   if (flags.import) {
     if (args.length) throw new CliError(EXIT.USAGE, `create node --import takes no name ("${args[0]}" is extra)`);
     return nodeImport(bundle);
   }
   const name = requireName(args[0], 'create node', 'node');
-  store.contexts[name] = entryFromFlags(flags);
+  store.contexts[name] = entryFromFlags(flags, readStdin);
   if (!store.current) store.current = name;
   saveStore(store);
   if (flags.json) { printer.json({ name, created: true, current: store.current }); return; }

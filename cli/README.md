@@ -266,8 +266,11 @@ are `create node`-only — they're not in the one-shot flag layer by design: a
 persistent context is the product for a cloud node, and the one-shot layer
 already has `--url` for the rare ad-hoc case.)
 
-The token travels **only** as an `Authorization: Bearer` header from
-in-process fetch — never in argv (ps-visible), never in a URL, never logged.
+On the request path the token travels **only** as an `Authorization: Bearer`
+header from in-process fetch — never in argv (ps-visible), never in a URL, never
+logged. To keep it out of argv and shell history when creating a context too,
+use `create node … --token-file FILE` or `--token -` (read from stdin, trimmed);
+`--token T` still works but is ps-visible.
 
 ### From an agent seat
 
