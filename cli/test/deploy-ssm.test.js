@@ -791,7 +791,9 @@ test('deploy ssm --json: NDJSON preflight/command/marker/verify/context, no toke
   // marker trail surfaces as parsed events (one per ^:: line).
   assert.ok(objs.some((o) => o.type === 'step' && o.name === 'prereqs'));
   assert.ok(objs.some((o) => o.type === 'verify' && o.ok && o.host === 'n'));
-  assert.deepStrictEqual(objs[objs.length - 1], { type: 'context', action: 'added', name: 'n', webPort: 7901 });
+  const ctxAt = objs.findIndex((o) => o.type === 'context');
+  assert.deepStrictEqual(objs[ctxAt], { type: 'context', action: 'added', name: 'n', webPort: 7901 });
+  assert.ok(ctxAt < objs.findIndex((o) => o.type === 'verify'), 'the context is saved before the verify');
   // No object carries the minted token.
   assert.doesNotMatch(stdout, /[0-9a-f]{48}/);
 });
@@ -865,16 +867,63 @@ test('deploy ssm saves into the contexts file as it is at save time, not the cop
   const contextsFile = tmpCtxFile();
   fs.mkdirSync(path.dirname(contextsFile), { recursive: true });
   fs.writeFileSync(contextsFile, JSON.stringify({ current: 'x', contexts: { x: { url: 'http://x' } } }));
+  const aws = fakeAws({});
   const r = await cli(['deploy', 'node', 'n', '--ssm', 'i-1'], {
-    execFn: fakeAws({}), contextsFile,
-    probeSsm: async () => {
-      fs.writeFileSync(contextsFile, JSON.stringify({ current: 'b', contexts: { x: { url: 'http://x' }, b: { url: 'http://b', token: 'tb' } } }));
-      return { app: 'clodex' };
+    contextsFile,
+    execFn: async (cmd, argv) => {
+      if (argv.join(' ').includes('get-command-invocation')) {
+        fs.writeFileSync(contextsFile, JSON.stringify({ current: 'b', contexts: { x: { url: 'http://x' }, b: { url: 'http://b', token: 'tb' } } }));
+      }
+      return aws(cmd, argv);
     },
+    probeSsm: async () => ({ app: 'clodex' }),
   });
   assert.strictEqual(r.code, 0, r.stderr);
   const saved = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
   assert.deepStrictEqual(Object.keys(saved.contexts).sort(), ['b', 'n', 'x']);
   assert.strictEqual(saved.contexts.b.token, 'tb');
   assert.strictEqual(saved.current, 'b');
+});
+
+test('deploy ssm: a verify failure keeps the context saved with the NEW token and points at describe --test (t2041)', async () => {
+  const contextsFile = tmpCtxFile();
+  const rec = {};
+  const r = await cli(['deploy', 'node', 'n', '--ssm', 'i-1'], {
+    execFn: fakeAws(rec), contextsFile,
+    probeSsm: async () => { throw new Error('tunnel hiccup'); },
+  });
+  assert.strictEqual(r.code, EXIT.SERVER);
+  assert.match(r.stderr, /tunnel hiccup — the context was saved; debug with: clodexctl describe node n --test --verbose/);
+  const sent = /CLODEX_REMOTE_TOKEN=(\w+)/.exec(rec.sentScript)[1];
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(contextsFile, 'utf8')).contexts.n, {
+    ssm: { target: 'i-1' }, webPort: 7901, token: sent, deploy: { flavor: 'ssm', target: 'i-1' },
+  });
+});
+
+test('deploy ssm: a Claude-token delivery failure keeps the context saved with the NEW token (t2041)', async () => {
+  const contextsFile = tmpCtxFile();
+  const tf = path.join(mkTmpRoot('clodexctl-tok-'), 'tok'); fs.writeFileSync(tf, 'sk-oauth\n');
+  const rec = {};
+  const r = await cli(['deploy', 'node', 'n', '--ssm', 'i-1', '--claude-token-file', tf], {
+    execFn: fakeAws(rec), contextsFile,
+    probeSsm: async () => ({ app: 'clodex' }),
+    deliverToken: async () => { throw new Error('delivery broke'); },
+  });
+  assert.strictEqual(r.code, EXIT.SERVER);
+  assert.match(r.stderr, /delivery broke — the context was saved; debug with: clodexctl describe node n --test --verbose/);
+  const sent = /CLODEX_REMOTE_TOKEN=(\w+)/.exec(rec.sentScript)[1];
+  assert.strictEqual(JSON.parse(fs.readFileSync(contextsFile, 'utf8')).contexts.n.token, sent);
+});
+
+test('deploy ssm: a successful deploy saves the contexts file exactly once (t2041)', async (t) => {
+  const contexts = require('../src/contexts');
+  const orig = contexts.save;
+  let saves = 0;
+  t.mock.method(contexts, 'save', (...a) => { saves++; return orig(...a); });
+  const contextsFile = tmpCtxFile();
+  const r = await cli(['deploy', 'node', 'n', '--ssm', 'i-1'], {
+    execFn: fakeAws({}), contextsFile, probeSsm: async () => ({ app: 'clodex' }),
+  });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.strictEqual(saves, 1);
 });

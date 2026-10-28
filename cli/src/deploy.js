@@ -974,6 +974,23 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
   const helloCode = parseHelloMarker(result.stdout);
   if (!json) printer.line(`  remote install ok${helloCode ? ` (on-box hello ${helloCode})` : ''}`);
 
+  if (flags['no-ctx']) {
+    if (json) emit({ type: 'context', action: 'skipped', reason: '--no-ctx' });
+  } else {
+    const store = loadContextsFor(flags, io);
+    const exists = Object.prototype.hasOwnProperty.call(store.contexts, name);
+    const webPort = port + 1;
+    store.contexts[name] = { ...entry, webPort, token, deploy: { flavor: 'ssm', target, ...(region ? { region } : {}), ...(profile ? { profile } : {}) } };
+    if (!store.current) store.current = name;
+    contexts.save(store, io.contextsFile);
+    if (json) emit({ type: 'context', action: exists ? 'overwritten' : 'added', name, webPort });
+    else {
+      printer.line(`context "${name}" ${exists ? 'updated' : 'saved'} — you can now: clodexctl --ctx ${name} get sessions`);
+      printer.line(`  see it in your browser: clodexctl web ${name}`);
+    }
+  }
+  const savedHint = flags['no-ctx'] ? '' : ` — the context was saved; debug with: clodexctl describe node ${name} --test --verbose`;
+
   let hello;
   try {
     const probe = io.probeSsm || ssmVerifyHello;
@@ -981,7 +998,7 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
   } catch (e) {
     if (json) emit({ type: 'error', reason: 'verify-failed', message: e.message });
     else printer.line(`installed, but the wire did not answer through the SSM tunnel: ${e.message}`);
-    throw e instanceof CliError ? e : new CliError(EXIT.SERVER, `deploy ssm verify failed: ${e.message}`);
+    throw e instanceof CliError ? new CliError(e.exitCode, `${e.message}${savedHint}`) : new CliError(EXIT.SERVER, `deploy ssm verify failed: ${e.message}${savedHint}`);
   }
   if (json) emit({ type: 'verify', ok: true, host: hello.host || null, version: hello.version || null, caps: hello.caps || [] });
   else printer.line(`verified — ${hello.app || 'clodex'} host=${hello.host || '?'} version=${hello.version || '?'} on ${target}:${port}`);
@@ -993,27 +1010,12 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
     } catch (e) {
       if (json) emit({ type: 'error', reason: 'token-delivery-failed', message: e.message });
       else printer.line(`installed and verified, but delivering the Claude token failed: ${e.message} (re-run with --claude-token-file to retry)`);
-      throw e instanceof CliError ? e : new CliError(EXIT.SERVER, `claude token delivery failed: ${e.message}`);
+      throw e instanceof CliError ? new CliError(e.exitCode, `${e.message}${savedHint}`) : new CliError(EXIT.SERVER, `claude token delivery failed: ${e.message}${savedHint}`);
     }
     if (json) emit({ type: 'claude-auth', ok: true });
     else printer.line('  claude token sent over the wire (unit drop-in, 0600) — verify with a claude spawn');
   }
 
-  if (flags['no-ctx']) {
-    if (json) emit({ type: 'context', action: 'skipped', reason: '--no-ctx' });
-    return;
-  }
-  const store = loadContextsFor(flags, io);
-  const exists = Object.prototype.hasOwnProperty.call(store.contexts, name);
-  const webPort = port + 1;
-  store.contexts[name] = { ...entry, webPort, token, deploy: { flavor: 'ssm', target, ...(region ? { region } : {}), ...(profile ? { profile } : {}) } };
-  if (!store.current) store.current = name;
-  contexts.save(store, io.contextsFile);
-  if (json) emit({ type: 'context', action: exists ? 'overwritten' : 'added', name, webPort });
-  else {
-    printer.line(`context "${name}" ${exists ? 'updated' : 'saved'} — you can now: clodexctl --ctx ${name} get sessions`);
-    printer.line(`  see it in your browser: clodexctl web ${name}`);
-  }
 }
 
 // ── helm flavor ──

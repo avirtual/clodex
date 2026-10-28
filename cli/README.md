@@ -613,10 +613,13 @@ clodexctl deploy node mybox --ssm i-… --branch dev --dry-run   # print the arg
   `clodex` user → the token drop-in → an on-box `curl` hello loop) →
   `get-command-invocation` poll (5 s cadence, **10 min budget**;
   `StandardOutputContent` is read partial each tick, so the marker trail
-  **pseudo-streams** as it grows) → verify from your laptop **through the real
-  SSM port-forward** with the token → save a typed
+  **pseudo-streams** as it grows) → save a typed
   `{ssm:{target,region,profile}, token}` context (`remotePort` when `--port` ≠
-  7900). `Failed`/`Cancelled`/`TimedOut` each relay the invocation's output tail
+  7900) the moment the install succeeds, since the box now answers only the new
+  token → verify from your laptop **through the real SSM port-forward** with the
+  token. Like helm, a verify or Claude-token delivery failure keeps the saved
+  context and points you at `clodexctl describe node <name> --test --verbose`.
+  `Failed`/`Cancelled`/`TimedOut` each relay the invocation's output tail
   with a distinct message and exit `1` (`TimedOut` says "re-run to resume").
 - **`aws` is the operator's tool** — spawned argv-direct (the same `execFn` seam
   the `--ssm` transport uses), never a shell, **zero AWS SDKs**. A missing `aws`
