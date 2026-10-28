@@ -311,7 +311,8 @@ group, so `kill -9` on the worker does not stop the run: while the worker's
 clodexctl child (`childPid` in `<seq>.json`) is still running the sweep keeps
 the lock and the run stays `running`. There is no cancel in v1: `kill` the
 worker pid in `<ctx>.lock`, or the `childPid` in `<seq>.json` once the worker
-is gone. `[agent:exec status]` does not list these runs; the launcher
+is gone, after `ps -p <pid>` shows it is still clodexctl: the sweep's liveness
+check counts EPERM as alive, so a reused pid keeps the lock too. `[agent:exec status]` does not list these runs; the launcher
 exits too fast to be tracked.
 
 The worker runs outside every seat sandbox: the launcher is a child of the
