@@ -28,6 +28,8 @@ blocks a release.
 - A lead's `task accept` while the post-merge suite is still running is refused and keeps the tree and branch, so a red suite can no longer revert a merge whose branch an early accept already deleted.
 - A restart whose respawn fails — from Edit Session, a restart whose old process outlives the exit wait, or an agent's context reload — and a Delete Session that keeps a ticket seat's record now leave a failed (or archived) sidebar row with Retry and Forget, instead of a vanished seat whose kept record still holds its name.
 - The ctl-admin sweep keeps a context's lock while a dead worker's clodexctl child is still running, so a `kill -9` on the worker no longer lets a second deploy start against the same node mid-run.
+- Deleting or renaming a seat now also closes its drawer terminal shell, and a later seat with the same name gets a fresh shell instead of inheriting the old scrollback, cwd and late command results.
+- **Security:** the Bash deny guard treats a backslash-newline as the line continuation bash does and splits on backticks, so `kill -9 \⏎-1` and `git add \⏎-A` are refused like their one-line forms.
 
 ## 5.149.0 — 2026-10-28 — clodexctl reaps its tunnel on exit, create node takes a token file, worktree-safe workspace deletes
 

@@ -249,6 +249,8 @@ try {
   const cmd = d && d.tool_input && d.tool_input.command;
   if (typeof cmd !== "string" || !cmd) process.exit(0);
   const BS = String.fromCharCode(92);
+  const NL = String.fromCharCode(10);
+  const BT = String.fromCharCode(96);
   const segs = [[]];
   let tok = "";
   let had = false;
@@ -258,15 +260,15 @@ try {
     const c = cmd.charAt(i);
     if (q) {
       if (c === q) { q = null; continue; }
-      if (q === '"' && c === BS && i + 1 < cmd.length) { i++; tok += cmd.charAt(i); had = true; continue; }
+      if (q === '"' && c === BS && i + 1 < cmd.length) { i++; if (cmd.charAt(i) !== NL) tok += cmd.charAt(i); had = true; continue; }
       tok += c; had = true; continue;
     }
     if (c === "'" || c === '"') { q = c; had = true; continue; }
-    if (c === BS && i + 1 < cmd.length) { i++; tok += cmd.charAt(i); had = true; continue; }
+    if (c === BS && i + 1 < cmd.length) { i++; if (cmd.charAt(i) !== NL) { tok += cmd.charAt(i); had = true; } continue; }
     if (c === "{" && cmd.charAt(i + 1) === "}") { i++; tok += "{}"; had = true; continue; }
-    if (c === String.fromCharCode(10)) { push(); segs.push([]); continue; }
+    if (c === NL) { push(); segs.push([]); continue; }
     if (c <= " ") { push(); continue; }
-    if (c === ";" || c === "&" || c === "|" || c === "(" || c === ")" || c === "{" || c === "}") { push(); segs.push([]); continue; }
+    if (c === ";" || c === "&" || c === "|" || c === "(" || c === ")" || c === "{" || c === "}" || c === BT) { push(); segs.push([]); continue; }
     tok += c; had = true;
   }
   push();

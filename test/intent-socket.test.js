@@ -708,6 +708,8 @@ test('stamp: clodex-send behind a reserved word or a prefix command is stamped; 
     ['which clodex-send', null],
     ['grep clodex-send f', null],
     ['clodex-send x', `${T} clodex-send x`],
+    ['timeout 300 \\\nclodex-send x', `${T} timeout 300 \\\nclodex-send x`],
+    ['echo `clodex-send x`', `echo \`${T} clodex-send x\``],
     ['/abs/clodex-send x', `${T} /abs/clodex-send x`],
     ['~/.clodex/bin/clodex-send a; clodex-send b', `${T} ~/.clodex/bin/clodex-send a; ${T} clodex-send b`],
     ['clodex-sendx x', null],

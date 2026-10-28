@@ -178,6 +178,7 @@ function mk(over = {}) {
     remoteInstallLine: require('../term-shim').REMOTE_INSTALL_LINE,
     mintNonce: over.mintNonce,
     remoteUnsupportedReason: require('../term-shim').remoteUnsupportedReason,
+    incarnationFor: () => null,
   };
   assert.deepStrictEqual(Object.keys(deps).sort(), declaredDeps(),
     'the fixture must wire EVERY dep — an unwired one is undefined, which is legal and silent');
