@@ -247,7 +247,7 @@ function treeFixture(isDirty) {
   fs.writeFileSync(path.join(PENDING_DIR, 'wt', 'm.json'), '{}');
   const removed = [];
   const f = fixture([{ name: 'wt', type: 'claude', archivedAt: 1, proxy: false, worktree: { path: tree, branch: 't1' } }], {
-    PENDING_DIR,
+    PENDING_DIR, fs,
     gitWorktree: { isDirty: async () => isDirty, removeWorktree: async (p) => { removed.push(p); return { ok: true }; } },
   }, { fs });
   return { ...f, tree, removed, pendingDir: path.join(PENDING_DIR, 'wt'), fs };
@@ -283,7 +283,7 @@ test('session:forget of a plain record drops its pending mail', () => {
   const path = require('node:path');
   const PENDING_DIR = mkTmpRoot('clx-forget-pend-');
   fs.mkdirSync(path.join(PENDING_DIR, 'p'));
-  const { forget } = fixture([{ name: 'p', type: 'claude', proxy: false }], { PENDING_DIR });
+  const { forget } = fixture([{ name: 'p', type: 'claude', proxy: false }], { PENDING_DIR, fs });
   assert.strictEqual(forget('p'), true);
   assert.strictEqual(fs.existsSync(path.join(PENDING_DIR, 'p')), false);
 });
