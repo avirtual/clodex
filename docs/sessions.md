@@ -217,6 +217,7 @@ the `model` on live claude `session:list` rows plus the four aliases, and report
 seat restarts. Each restart kills the PTY, which drops the sidebar row, so the
 sweep pushes a `reattach` context-action per MOVED seat exactly as every other
 main-side restart does — skipped seats get none, their rows never having gone.
+A seat whose restart fails gets a `respawnFailed` context-action instead, which draws its failed row.
 Both session dialogs carry an Account `<select>` above the env textarea that
 reads and writes `CLAUDE_CONFIG_DIR` in that box and
 nothing else (`renderer/lib/account-select.js`): picking `default` REMOVES the
@@ -585,12 +586,12 @@ whose tree is already gone is forgotten without `destroy()`.
 **Real delete of a LIVE session = right-click "Delete Session…"** + native
 confirm. It routes through `manager.destroy` (`ipc-handlers.js` `session:kill`)
 — see the Invariants of docs/map/session-manager.md's kill/destroy section for what it does and in what order. A
-worktree-removal failure is toasted by the renderer while the row goes.
+worktree-removal failure is toasted by the renderer, and the kept record's row becomes an archived row with ✕.
 
 | Event | sessions.json | Process | UI |
 |---|---|---|---|
 | Archive (✕ / Cmd+W) | kept, `archivedAt` stamped | killed (SIGKILL fallback 5s, cleared when the pty exits); keep-warm hold disarmed | live tab → dimmed archived row |
-| Delete (right-click "Delete Session…") | removed (+ worktree; see `destroy()`) | killed (SIGKILL fallback 5s, cleared when the pty exits); worktree removal awaited, failure toasted; keep-warm hold disarmed; `sessions/<name>/` + its legacy links removed (`removeSeat`), `pending/<name>` removed and held injects dropped when the seat is deleted, re-parked to `pending/<name>` when it is kept | tab removed |
+| Delete (right-click "Delete Session…") | removed (+ worktree; see `destroy()`) | killed (SIGKILL fallback 5s, cleared when the pty exits); worktree removal awaited, failure toasted; keep-warm hold disarmed; `sessions/<name>/` + its legacy links removed (`removeSeat`), `pending/<name>` removed and held injects dropped when the seat is deleted, re-parked to `pending/<name>` when it is kept | tab removed; an archived row with ✕ when the record is kept |
 | CLI exits on its own (agent) | entry kept, `exitedAt` stamped (cleared on the next spawn) | dead; not respawned by restore | exited row "exited (code N) — click to resume" (click = resume via `--resume`, with `CLAUDE_CODE_RESUME_INTERRUPTED_TURN=1` so a turn cut off mid-flight continues, and a tool that was mid-run when the CLI died has no result and may run again; ✕ = forget) |
 | Natural exit (bash) | removed only on a genuinely natural exit (see above) | dead | tab removed |
 | App quit | kept | all killed (`killAll`, `_shuttingDown`) | windows closed |
@@ -598,7 +599,7 @@ worktree-removal failure is toasted by the renderer while the row goes.
 | Restore failure | kept, returned `{failed:true}` | never spawned | failed ghost tab (retry / forget) |
 | Restore (archived) | kept | never spawned | dimmed archived row (click = resume) |
 | Move (right-click "Move Session…") | kept, `cwd` rewritten (archive stamp cleared) | killed (`_moving`) + respawned (`--resume`) | tab rebuilt under the new folder; failed ghost row if the respawn throws |
-| Restart (right-click "Restart Session", or Edit Session with "Restart session now") | kept; `io` (the transport) is kept, and Edit Session's Stream transport box rewrites it (`persistence.setIo`) | killed + respawned (`--resume`) on the entry's `io`; except a live claude stream seat whose Edit Session save differs from both the record it was spawned with (`_spawnRecord`) and the saved record only in `--model`: `applySessionArgs` sends `seatSetModel` (the CLI's `set_model`) instead and persists the args only on its success ack | tab rebuilt as a terminal or a stream pane to match `io`; untouched on an in-place model switch |
+| Restart (right-click "Restart Session", or Edit Session with "Restart session now") | kept; `io` (the transport) is kept, and Edit Session's Stream transport box rewrites it (`persistence.setIo`) | killed + respawned (`--resume`) on the entry's `io`; except a live claude stream seat whose Edit Session save differs from both the record it was spawned with (`_spawnRecord`) and the saved record only in `--model`: `applySessionArgs` sends `seatSetModel` (the CLI's `set_model`) instead and persists the args only on its success ack | tab rebuilt as a terminal or a stream pane to match `io`; untouched on an in-place model switch; a failed row (retry / forget) when the respawn fails — the menu restart, the Edit Session restart, a restart whose old process outlives the exit wait, a context reload (`_coldRespawn`) and an account-move restart alike (`failRowOrStash`, `respawnFailed`) |
 | Move to peer (right-click "Move to Peer…" ▸ peer) | entry kept, `movedTo` stamped, `archivedAt` set (the local backup; a click resumes a fork) — untouched on failure | killed (`_moving`); transcript + seat dirs shipped via `importSeat`, far box restores it with `mint=false`; not respawned (a refusal to the original commit → respawned like Move; a lost commit reply the re-sent commit doesn't confirm → archived, not respawned) | archived row "moved to <peer>" |
 | Move to workspace (right-click "Move to Workspace…" ▸ name) | entry kept, only `workspaceId` rewritten | untouched — keeps running; output buffered until the new window attaches | tab leaves this window, appears in the other (or when it next opens) |
 | Sleep (assistant class: idle sweep, or `manager.sleep`) | kept, `archivedAt` + `asleepAt`/`sleepReason` stamped, `sessionId` cleared, cost folded; `sessions/<name>/brief.md` written from the transcript tail | killed as Archive; mid-turn it waits for the turn's result | dimmed archived row |

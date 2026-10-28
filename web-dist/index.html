@@ -52809,6 +52809,8 @@ ${detail}` });
         };
       }
       var respawnSnapshots = /* @__PURE__ */ new Map();
+      var restartFailed = /* @__PURE__ */ new Map();
+      var RESTART_FAILED_TTL_MS = 3e4;
       function respawnSnapshotOf(name, prior) {
         if (prior) return rowSnapshot(name, prior);
         const hit = respawnSnapshots.get(name);
@@ -52907,6 +52909,7 @@ ${detail}` });
       }
       async function archiveSessionRow(name) {
         movingFailed.delete(name);
+        restartFailed.delete(name);
         const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
         if (!item) return;
         archivingSessions.set(name, archivedRowEntry(name, item));
@@ -52919,10 +52922,21 @@ ${detail}` });
       async function deleteSessionRow(name) {
         if (!await window.api.confirmKill(name)) return;
         movingFailed.delete(name);
+        restartFailed.delete(name);
         seatViewMemory.delete(name);
+        const prior = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+        const archived = prior ? archivedRowEntry(name, prior) : null;
         const res = await window.api.killSession(name);
         if (res && res.error) {
           showToast(`Worktree removal failed: ${res.error}`, { kind: "warn", duration: 12e3, name });
+        }
+        if (res && res.live && res.worktreeRemoved === false && archived) {
+          if (sessions.has(name)) {
+            archivingSessions.set(name, archived);
+          } else if (!sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`)) {
+            addArchivedSessionToSidebar(archived);
+            refreshSidebarView();
+          }
         }
         if (res && res.live === false) {
           removeSession(name);
@@ -52931,6 +52945,7 @@ ${detail}` });
       }
       function addSessionToSidebar(name, type, cwd, label, backend = null, team = null, noWire = false, account = null, fixFor = null) {
         respawnSnapshots.delete(name);
+        restartFailed.delete(name);
         const stale = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
         if (stale && /(^|\s)(failed|exited|archived)(\s|$)/.test(stale.className)) stale.remove();
         const item = document.createElement("div");
@@ -53013,15 +53028,26 @@ ${detail}` });
         const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
         return item ? item.dataset.account || null : null;
       }
+      function failRowOrStash(name, snap, error) {
+        if (!snap.type) return;
+        if (sessions.has(name)) {
+          restartFailed.set(name, { ...snap, error, at: Date.now() });
+        } else if (!sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`)) {
+          addFailedSessionToSidebar({ ...snap, error });
+          refreshSidebarView();
+        }
+      }
+      async function setArgsOrFailRow(name, snap, restart, args) {
+        const res = await window.api.setSessionArgs(name, ...args);
+        if ((!res || !res.ok) && restart && !(res && res.inPlace)) failRowOrStash(name, snap, res && res.error || "unknown error");
+        return res;
+      }
       async function restartOrFailRow(name, opts, failLabel = "Restart failed") {
         const snap = rowSnapshot(name, sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`));
         const res = opts ? await window.api.restartSession(name, opts) : await window.api.restartSession(name);
         if (!res || !res.ok) {
           const error = res && res.error || "unknown error";
-          if (snap.type && !sessions.has(name) && !sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`)) {
-            addFailedSessionToSidebar({ ...snap, error });
-            refreshSidebarView();
-          }
+          failRowOrStash(name, snap, error);
           showToast(`${failLabel}: ${error}`, { kind: "error", duration: 1e4, name });
           return res;
         }
@@ -53176,7 +53202,7 @@ ${detail}` });
         const head = `Moving ${name} to ${held.peerLabel} \u2014 ${phase}`;
         held.toast.set(total ? `${head} ${MiB(bytes)}/${MiB(total)} MiB (${fileIndex}/${files})` : head);
       });
-      window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, io, disposition, background, clone, peerId, peerLabel, envKeys, workspaceId, workspaceName }) => {
+      window.api.onSessionContextAction(({ action, name, type, cwd, error, backend, noWire, io, disposition, background, clone, peerId, peerLabel, envKeys, workspaceId, workspaceName }) => {
         switch (action) {
           case "editArgs":
             openArgsDialog(name);
@@ -53211,6 +53237,11 @@ ${detail}` });
               switchToNewSession(name, { agentInitiated: background === true });
             }
             break;
+          case "respawnFailed": {
+            const snap = respawnSnapshotOf(name, sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`));
+            failRowOrStash(name, { ...snap, type: type || snap.type, cwd: cwd || snap.cwd }, error || "unknown error");
+            break;
+          }
           case "promptsChanged":
             if (confirm(`Prompt changed for "${name}". Restart now to apply? (Otherwise it applies on the next start.)`)) {
               restartOrFailRow(name);
@@ -56472,7 +56503,11 @@ ${detail}` });
         const archivedEntry = archivingSessions.get(name);
         const movedFailedEntry = meta && meta.expected ? null : movingFailed.get(name);
         movingFailed.delete(name);
-        const exitedEntry = !archivedEntry && !movedFailedEntry && meta && meta.agentType && !meta.expected && !(sessions.get(name) || {}).peer ? exitedRowSnapshot(name, code, meta) : null;
+        const restartFailedHit = restartFailed.get(name);
+        restartFailed.delete(name);
+        const restartFailedEntry = restartFailedHit && Date.now() - restartFailedHit.at < RESTART_FAILED_TTL_MS ? { ...restartFailedHit, at: void 0 } : null;
+        const failedEntry = movedFailedEntry || restartFailedEntry;
+        const exitedEntry = !archivedEntry && !failedEntry && meta && meta.agentType && !meta.expected && !(sessions.get(name) || {}).peer ? exitedRowSnapshot(name, code, meta) : null;
         if (activeSession === name && meta && meta.expected && !archivedEntry) respawnFocus.set(name, Date.now());
         if (meta && meta.expected && !archivedEntry) {
           const row = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
@@ -56485,8 +56520,8 @@ ${detail}` });
           refreshSidebarView();
           return;
         }
-        if (movedFailedEntry) {
-          addFailedSessionToSidebar(movedFailedEntry);
+        if (failedEntry) {
+          addFailedSessionToSidebar(failedEntry);
           refreshSidebarView();
           return;
         }
@@ -61381,7 +61416,7 @@ ${res.stderr}` : "");
           systemPromptFile,
           appendPromptFiles,
           intents
-        }) : await window.api.setSessionArgs(name, parsed, restart, proxy, void 0, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env, plugins, io, effort, mcpServers);
+        }) : await setArgsOrFailRow(name, snap, restart, [parsed, restart, proxy, void 0, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env, plugins, io, effort, mcpServers]);
         if (!res || !res.ok) {
           alert(`Save settings failed: ${res && res.error ? res.error : "unknown error"}`);
           return;

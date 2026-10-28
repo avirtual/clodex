@@ -46,6 +46,7 @@ function loadRowBuilder(name, free, extra = {}) {
     streamSeatNames: new Set(),
     seatIoKind: (io) => (io === 'stream' ? 'stream' : 'pty'),
     respawnSnapshots: new Map(),
+    restartFailed: new Map(),
     sessionList: { querySelector: () => null },
     CSS: { escape: (s) => s },
     ...extra,

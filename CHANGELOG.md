@@ -26,6 +26,7 @@ blocks a release.
 - `clodexctl undeploy node --fargate` removes only a context that points at the torn-down stack, like helm and docker.
 - **Security:** a review verdict that quotes an earlier `VERDICT: ACCEPT` line inside a code block or indented text no longer lands as ACCEPT and auto-merges rework; conflicting or ambiguous verdict lines route the body to the lead instead.
 - A lead's `task accept` while the post-merge suite is still running is refused and keeps the tree and branch, so a red suite can no longer revert a merge whose branch an early accept already deleted.
+- A restart whose respawn fails — from Edit Session, a restart whose old process outlives the exit wait, or an agent's context reload — and a Delete Session that keeps a ticket seat's record now leave a failed (or archived) sidebar row with Retry and Forget, instead of a vanished seat whose kept record still holds its name.
 
 ## 5.149.0 — 2026-10-28 — clodexctl reaps its tunnel on exit, create node takes a token file, worktree-safe workspace deletes
 

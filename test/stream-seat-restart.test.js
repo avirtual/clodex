@@ -178,7 +178,7 @@ test('t1493: a model-only change on a live claude stream seat switches it with s
 test('t1493: a set_model the CLI rejects persists nothing and returns its error', async () => {
   const { eng, seen, calls } = modelSeat('sm-err', { ok: false, error: "Model 'claude-nope-1' not found", errorCode: 'catalog_unknown' });
   const res = await eng.applySessionArgs('sm-err', DIALOG_PATCH(['--model', 'claude-nope-1', '--verbose']), 'default');
-  assert.deepStrictEqual(res, { ok: false, error: "Model 'claude-nope-1' not found" });
+  assert.deepStrictEqual(res, { ok: false, error: "Model 'claude-nope-1' not found", inPlace: true });
   assert.strictEqual(calls.kill + seen.length, 0);
   assert.deepStrictEqual(eng.stores.persistence.get('sm-err').extraArgs, ['--model', 'claude-haiku-4-5', '--verbose']);
 });

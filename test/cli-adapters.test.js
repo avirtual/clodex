@@ -377,7 +377,7 @@ test('the Edit dialog shows Skills for a LOCAL seat and saves both lists', () =>
   const sat = src.indexOf("document.getElementById('btn-args-save')");
   assert.ok(sat > 0, 'ENTER: the Edit save handler was located');
   const save = src.slice(sat, src.indexOf('alert(`Save settings failed', sat));
-  assert.match(save, /setSessionArgs\(name, parsed, restart, proxy, undefined, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile/,
+  assert.match(save, /setArgsOrFailRow\(name, snap, restart, \[parsed, restart, proxy, undefined, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile/,
     'the local save sends both skill lists at positions 9 and 10');
 });
 

@@ -4754,6 +4754,12 @@ function createSessionManager(deps) {
       return { action: 'reattach', name, type, cwd, backend: live.backend || null, noWire: !!live.noWire, io: live.io || 'pty' };
     }
 
+    _sendRespawnFailed(name, entry, error) {
+      if (!entry) return;
+      const win = this.windowForSession(name) || this.windowForWorkspace(entry.workspaceId || DEFAULT_WORKSPACE_ID);
+      if (win) win.webContents.send('session:context-action', { action: 'respawnFailed', name, error, type: entry.type, cwd: this.resumeCwdOf(entry) });
+    }
+
     _preserveAcrossRestart(name, priorEntry, fields) {
       if (!priorEntry || !Array.isArray(fields)) return;
       let seed = { name };
@@ -8015,6 +8021,7 @@ function createSessionManager(deps) {
           // Re-upsert the entry without a worktree another live seat has since claimed, or the failure path
           // puts a second record on one tree (_stripClaimedTree).
           getPersistence().upsert(this._stripClaimedTree(entry));
+          this._sendRespawnFailed(name, entry, err.message);
         }
       });
       return true;

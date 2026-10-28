@@ -806,6 +806,8 @@ function rowSnapshot(name, item) {
 }
 
 const respawnSnapshots = new Map();
+const restartFailed = new Map();
+const RESTART_FAILED_TTL_MS = 30000;
 function respawnSnapshotOf(name, prior) {
   if (prior) return rowSnapshot(name, prior);
   const hit = respawnSnapshots.get(name);
@@ -905,6 +907,7 @@ function archivedRowEntry(name, item) {
 }
 async function archiveSessionRow(name) {
   movingFailed.delete(name);
+  restartFailed.delete(name);
   const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   if (!item) return;
   archivingSessions.set(name, archivedRowEntry(name, item));
@@ -918,10 +921,21 @@ async function archiveSessionRow(name) {
 async function deleteSessionRow(name) {
   if (!(await window.api.confirmKill(name))) return;
   movingFailed.delete(name);
+  restartFailed.delete(name);
   seatViewMemory.delete(name);
+  const prior = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  const archived = prior ? archivedRowEntry(name, prior) : null;
   const res = await window.api.killSession(name);
   if (res && res.error) {
     showToast(`Worktree removal failed: ${res.error}`, { kind: 'warn', duration: 12000, name });
+  }
+  if (res && res.live && res.worktreeRemoved === false && archived) {
+    if (sessions.has(name)) {
+      archivingSessions.set(name, archived);
+    } else if (!sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`)) {
+      addArchivedSessionToSidebar(archived);
+      refreshSidebarView();
+    }
   }
   if (res && res.live === false) {
     removeSession(name);
@@ -931,6 +945,7 @@ async function deleteSessionRow(name) {
 
 function addSessionToSidebar(name, type, cwd, label, backend = null, team = null, noWire = false, account = null, fixFor = null) {
   respawnSnapshots.delete(name);
+  restartFailed.delete(name);
   const stale = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   if (stale && /(^|\s)(failed|exited|archived)(\s|$)/.test(stale.className)) stale.remove();
   const item = document.createElement('div');
@@ -1027,6 +1042,22 @@ function accountOfRow(name) {
   return item ? item.dataset.account || null : null;
 }
 
+function failRowOrStash(name, snap, error) {
+  if (!snap.type) return;
+  if (sessions.has(name)) {
+    restartFailed.set(name, { ...snap, error, at: Date.now() });
+  } else if (!sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`)) {
+    addFailedSessionToSidebar({ ...snap, error });
+    refreshSidebarView();
+  }
+}
+
+async function setArgsOrFailRow(name, snap, restart, args) {
+  const res = await window.api.setSessionArgs(name, ...args);
+  if ((!res || !res.ok) && restart && !(res && res.inPlace)) failRowOrStash(name, snap, (res && res.error) || 'unknown error');
+  return res;
+}
+
 // Restart a session and re-create its sidebar tab + terminal. Snapshots sidebar
 // metadata first because the kill+respawn wipes the tab via session-exit (same
 // dance as the Edit Session save path).
@@ -1035,10 +1066,7 @@ async function restartOrFailRow(name, opts, failLabel = 'Restart failed') {
   const res = opts ? await window.api.restartSession(name, opts) : await window.api.restartSession(name);
   if (!res || !res.ok) {
     const error = (res && res.error) || 'unknown error';
-    if (snap.type && !sessions.has(name) && !sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`)) {
-      addFailedSessionToSidebar({ ...snap, error });
-      refreshSidebarView();
-    }
+    failRowOrStash(name, snap, error);
     showToast(`${failLabel}: ${error}`, { kind: 'error', duration: 10000, name });
     return res;
   }
@@ -1185,7 +1213,7 @@ window.api.onSessionMoveProgress(({ name, phase, bytes, total, files, fileIndex 
     : head);
 });
 
-window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, io, disposition, background, clone, peerId, peerLabel, envKeys, workspaceId, workspaceName }) => {
+window.api.onSessionContextAction(({ action, name, type, cwd, error, backend, noWire, io, disposition, background, clone, peerId, peerLabel, envKeys, workspaceId, workspaceName }) => {
   switch (action) {
     case 'editArgs':
       openArgsDialog(name);
@@ -1219,6 +1247,11 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, i
         switchToNewSession(name, { agentInitiated: background === true });
       }
       break;
+    case 'respawnFailed': {
+      const snap = respawnSnapshotOf(name, sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`));
+      failRowOrStash(name, { ...snap, type: type || snap.type, cwd: cwd || snap.cwd }, error || 'unknown error');
+      break;
+    }
     case 'promptsChanged':
       if (confirm(`Prompt changed for "${name}". Restart now to apply? (Otherwise it applies on the next start.)`)) {
         restartOrFailRow(name);
@@ -4545,7 +4578,12 @@ window.api.onSessionExit((name, code, meta) => {
   const archivedEntry = archivingSessions.get(name);
   const movedFailedEntry = meta && meta.expected ? null : movingFailed.get(name);
   movingFailed.delete(name);
-  const exitedEntry = !archivedEntry && !movedFailedEntry && meta && meta.agentType && !meta.expected
+  const restartFailedHit = restartFailed.get(name);
+  restartFailed.delete(name);
+  const restartFailedEntry = restartFailedHit && Date.now() - restartFailedHit.at < RESTART_FAILED_TTL_MS
+    ? { ...restartFailedHit, at: undefined } : null;
+  const failedEntry = movedFailedEntry || restartFailedEntry;
+  const exitedEntry = !archivedEntry && !failedEntry && meta && meta.agentType && !meta.expected
     && !(sessions.get(name) || {}).peer
     ? exitedRowSnapshot(name, code, meta)
     : null;
@@ -4561,8 +4599,8 @@ window.api.onSessionExit((name, code, meta) => {
     refreshSidebarView();
     return;
   }
-  if (movedFailedEntry) {
-    addFailedSessionToSidebar(movedFailedEntry);
+  if (failedEntry) {
+    addFailedSessionToSidebar(failedEntry);
     refreshSidebarView();
     return;
   }
@@ -9605,7 +9643,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
         extraArgs: parsed, restart, proxy, systemPrompt: undefined, agents, denyBuiltins,
         disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents,
       })
-    : await window.api.setSessionArgs(name, parsed, restart, proxy, undefined, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env, plugins, io, effort, mcpServers);
+    : await setArgsOrFailRow(name, snap, restart, [parsed, restart, proxy, undefined, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env, plugins, io, effort, mcpServers]);
   if (!res || !res.ok) {
     alert(`Save settings failed: ${res && res.error ? res.error : 'unknown error'}`);
     return;
