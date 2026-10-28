@@ -12,11 +12,11 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — Bash guard fails closed on an unplaceable `case`; `time` option regression fixed
 
-- Erratum (5.150.3): the Security bullet listed only the reserved-word arms; the same change also counts a `case` after a subshell or `<(`/`>(` opener, after the `)` of a function definition (`f()`, `f ()`, `function f ()`), and after the word that follows `function` or `coproc`.
 - **Security:** the Bash deny guard now refuses a command whose double-quoted `$(…)` or backtick holds a `case` it could not place in bash's grammar, instead of guessing where the substitution ends; unquote the substitution or move the `case` out to run it.
 - **Security:** the Bash deny guard and the `clodex-send` segmenter no longer treat a `case` after `time -x` or `time -p -p` as a keyword (a 5.150.3 regression that hid a following `; kill -9 -1`); a `case` that keeps a double-quoted substitution open to the end of the line is refused outright; and a commit message written through `cat<<'EOF'` with no space is no longer refused for mentioning "case".
+- Erratum (5.150.3): the Security bullet listed only the reserved-word arms; the same change also counts a `case` after a subshell or `<(`/`>(` opener, after the `)` of a function definition (`f()`, `f ()`, `function f ()`), and after the word that follows `function` or `coproc`.
 
 ## 5.150.3 — 2026-10-28 — guard reserved-word fix, three-state branch probe, release.sh pins
 
