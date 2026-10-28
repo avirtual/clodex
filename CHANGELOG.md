@@ -12,11 +12,13 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — guard case-pattern fix, claim look-alikes, nit sweep
 
+- **Security:** the Bash deny guard and the `clodex-send` segmenter no longer let a `case` pattern's `)` or a `#` comment inside a double-quoted `$(…)` end the substitution early, so `echo "$(case x in x) kill -9 -1;; esac)"` is examined like any other command.
 - Deleting or renaming seat `a` no longer removes or warns about the pending mail of a seat whose name merely looks like a drain claim (`a.draining.idle.5-ab`), and a drain of mail parked more than ten minutes ago can no longer be mistaken for a stale claim and delivered twice.
 - `scripts/release.sh` resume: a failure after a resumed build no longer claims the version bump was rolled back, the DMG step picks the current version's DMG when `dist/` holds an older one, and a failure to keep the release notes now stops the release with a message.
-- **Security:** the Bash deny guard and the `clodex-send` segmenter no longer let a `case` pattern's `)` or a `#` comment inside a double-quoted `$(…)` end the substitution early, so `echo "$(case x in x) kill -9 -1;; esac)"` is examined like any other command.
+- The embeddings store syncs its blob and sidecar to disk before the compaction renames and adopts a staged sidecar whose rename failed, a blob read error other than a missing file is reported instead of read as empty, and a lead's `task accept` refused mid-merge keeps its note on both veto paths; the red-suite notice names a DELETED branch only when it is really gone.
+- The drawer terminal's mark nonce is unset before the operator's own shell startup files run, a replaced seat's old shell can no longer report into the new seat's drawer, and a mismatched exec result names the other command with its control bytes stripped.
 
 ## 5.150.1 — 2026-10-28 — quoted command substitution in the Bash guard, stale pending-claim rehome
 
