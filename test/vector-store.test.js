@@ -202,7 +202,7 @@ test('vector-store: compact reclaims superseded rows without changing answers', 
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('vector-store: a blob re-read that fails after the compact rename leaves get() on the pre-compact rows', () => {
+test('vector-store: a blob re-read that fails after the compact rename leaves get() and a later add consistent', () => {
   const dir = mkTmpRoot('clx-vec-');
   const file = path.join(dir, 'vec.bin');
   let failNextBlobRead = false;
@@ -223,7 +223,9 @@ test('vector-store: a blob re-read that fails after the compact rename leaves ge
   assert.throws(() => store.compact(), /EIO/);
   assert.strictEqual(failNextBlobRead, false, 'ENTER: the blob re-read after the rename is the read that threw');
   for (const [key, vec] of Object.entries(before)) assert.deepStrictEqual(Array.from(store.get(key)), vec, key);
-  assert.strictEqual(store.rows(), 10);
+  store.add('k5', axis(5));
+  assert.deepStrictEqual(Array.from(store.get('k5')), Array.from(axis(5)), 'an add after the failed compact reads back');
+  for (const [key, vec] of Object.entries(before)) assert.deepStrictEqual(Array.from(store.get(key)), vec, `${key} after the add`);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
