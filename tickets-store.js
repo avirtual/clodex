@@ -182,18 +182,38 @@ const INLINE_SECTION_HEADER_RE = /(\*\*|__)(MUST[-\s]?FIX|NITS?|CHECKED)(?:[ \t]
 function liveVerdictLines(text) {
   const lines = String(text == null ? '' : text).split('\n');
   let fence = null;
-  return lines.flatMap((line, i) => {
+  const entries = lines.map((line, i) => {
     const src = i + 1;
     const f = FENCE_OPEN_RE.exec(line);
     if (fence) {
       if (f && f[1][0] === fence[0] && f[1].length >= fence.length && !line.slice(f[0].length).trim()) fence = null;
-      return [{ line, live: false, fenced: true, src }];
+      return { line, live: false, fenced: true, src };
     }
-    if (f) { fence = f[1]; return [{ line, live: false, fenced: true, src }]; }
-    if (/^[ \t]*>/.test(line) || /^(?: {4}|[ ]{0,3}\t)/.test(line)) return [{ line, live: false, fenced: false, src }];
-    if (!VERDICT_LINE_RE.test(line)) return [{ line, live: true, fenced: false, src }];
-    return line.replace(INLINE_SECTION_HEADER_RE, (m, _d, _k, off) => (off === 0 ? m : `\n${m}`)).split('\n').map((piece) => ({ line: piece, live: true, fenced: false, src }));
+    if (f) { fence = f[1]; return { line, live: false, fenced: true, src }; }
+    if (/^[ \t]*>/.test(line) || /^(?: {4}|[ ]{0,3}\t)/.test(line)) return { line, live: false, fenced: false, src };
+    return { line, live: true, fenced: false, src };
   });
+  const otherHeader = entries.some((e) => e.live && !VERDICT_LINE_RE.test(e.line) && sectionHeader(e.line));
+  if (otherHeader) return entries;
+  return entries.flatMap((e) => {
+    if (!e.live || !VERDICT_LINE_RE.test(e.line)) return [e];
+    return e.line.replace(INLINE_SECTION_HEADER_RE, (m, _d, _k, off) => (off === 0 ? m : `\n${m}`)).split('\n')
+      .flatMap((piece) => (isMustFixHeader(piece) ? splitInlineItems(piece) : piece).split('\n'))
+      .map((piece) => ({ line: piece, live: true, fenced: false, src: e.src }));
+  });
+}
+
+function splitInlineItems(piece) {
+  const head = INLINE_SECTION_HEADER_RE.exec(piece);
+  INLINE_SECTION_HEADER_RE.lastIndex = 0;
+  const cut = head ? head.index + head[0].length : 0;
+  let next = 1;
+  const tail = piece.slice(cut).replace(/(^[ \t]*|[ \t])\((\d+)\)[ \t]+/g, (m, _lead, n) => {
+    if (Number(n) !== next) return m;
+    next += 1;
+    return `\n${n}. `;
+  });
+  return piece.slice(0, cut) + tail;
 }
 
 const isMustFixHeader = (line) => { const h = sectionHeader(line); return !!h && /^MUST/i.test(h.keyword); };

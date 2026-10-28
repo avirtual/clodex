@@ -1539,7 +1539,7 @@ function createTicketMethods(deps, shared) {
         if (!team) return { ok: false, error: 'the team could not be resolved from the reviewer seat' };
         const items = landedOn.mustFix
           ? `MUST-FIX:\n${defuseSenderLines(landedOn.mustFix)}`
-          : 'The verdict named no must-fix items — read it and fix what it says, or say in your report why it is wrong.';
+          : 'No must-fix items could be extracted from the verdict — read the full verdict file below; its must-fixes are there. Fix what it says, or say in your report why it is wrong.';
         const where = written && written.ok
           ? `FULL VERDICT (the reasoning, the nits and what was checked): ${written.path}\nRead it; it is why, and the items above are only what.`
           : `The full verdict could NOT be saved (${(written && written.error) || 'unknown'}), so the items above are all there is.`;
