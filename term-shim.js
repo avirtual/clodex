@@ -7,10 +7,6 @@
 // without us, and any failure of ours must degrade to a plain shell rather than
 // to a broken one.
 //
-// Marks emitted, matching term-marks.js:
-//   A  before each prompt        C;<b64>  a command started, with what ran
-//   D;<status>  it finished
-//
 // TWO SHELLS, TWO MECHANISMS, and they are not variations on each other:
 //
 //   zsh  — ZDOTDIR (VSCode's approach). Purely an ENV redirect: zsh reads its

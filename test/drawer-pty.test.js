@@ -741,3 +741,11 @@ test('nonce: the same close carrying the nonce does end ssh, and the exec is acc
   assert.deepStrictEqual(res, { ok: true, command: 'ls' });
   assert.deepStrictEqual(proc.written, [String.fromCharCode(3)]);
 });
+
+test('nonce: an UNSHIMMED seat shell still gets a keyed parser, so printed marks report nothing', () => {
+  const got = [];
+  const { w, spawn } = mk({ onCommand: (seat, rec) => got.push(rec), mintNonce: () => NONCE });
+  w.spawn('ws-1', 'alice', {});
+  spawn.spawned[0].emit(`${MARKED('x', 'out\n', 0)}\x1b]133;A\x07`);
+  assert.deepStrictEqual(got, [], 'a cat of a file carrying marks cannot name a command to the seat');
+});

@@ -24,5 +24,5 @@ is stripped from the output and changes no state: not `capturing`, not the
 inner layer, not the D/A pairing. Without it, a far host's own shell integration
 prints `D;0 A` on its first prompt and closes the local `ssh` while it is still
 connected. Tags are read off the end in any order. No `nonce` keeps the old
-untagged-means-local reading; drawer-pty always passes one when it has
-`mintNonce`.
+untagged-means-local reading; drawer-pty passes one to every seat shell's parser
+when it has `mintNonce`, shimmed or not, so an unshimmed shell drops every mark.

@@ -14,9 +14,9 @@
 // makes this parser small and honest — it reads facts rather than deducing them.
 //
 // The subset this file understands:
-//   ESC ] 133 ; A            BEL   prompt about to be drawn
-//   ESC ] 133 ; C ; <b64>    BEL   command STARTED; payload is what actually ran
-//   ESC ] 133 ; D ; <exit>   BEL   command finished, with its status
+//   ESC ] 133 ; A [;k=<nonce>]            BEL   prompt about to be drawn
+//   ESC ] 133 ; C ; <b64> [;k=<nonce>]    BEL   command STARTED; payload is what actually ran
+//   ESC ] 133 ; D ; <exit> [;k=<nonce>]   BEL   command finished, with its status
 // The command rides base64 on the C mark because a command line legitimately
 // contains `;` and BEL-adjacent bytes, and a raw one would end its own mark.
 // A carries no payload of its own; the parser classifies it by the D that

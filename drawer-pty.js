@@ -77,7 +77,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     // Read off the shim, never its env half: bash's shim legitimately adds no env,
     // and a `!!shim.env` test would refuse every exec on a correctly shimmed bash.
     const shimmed = !!shim;
-    const nonce = shimmed && mintNonce ? mintNonce() : null;
+    const nonce = mintNonce ? mintNonce() : null;
 
     let proc;
     try {
@@ -86,7 +86,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
         cols,
         rows,
         cwd,
-        env: withUtf8Charset({ ...(env || process.env), ...((shim && shim.env) || {}), ...(nonce ? { __CLODEX_MARK_NONCE: nonce } : {}), TERM: 'xterm-256color' }),
+        env: withUtf8Charset({ ...(env || process.env), ...((shim && shim.env) || {}), ...(shimmed && nonce ? { __CLODEX_MARK_NONCE: nonce } : {}), TERM: 'xterm-256color' }),
       });
     } catch (e) {
       logger.warn('wterm', `spawn failed: ${e.message}`);

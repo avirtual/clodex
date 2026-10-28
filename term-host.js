@@ -15,7 +15,7 @@ function sshOptionNoShell(spec) {
   const m = /^\s*([A-Za-z]+)\s*(?:=\s*|\s+)(.*)$/.exec(String(spec || ''));
   if (!m) return false;
   const key = m[1].toLowerCase();
-  const value = m[2].trim().toLowerCase();
+  const value = m[2].trim().replace(/^(["'])(.*)\1$/, '$2').trim().toLowerCase();
   if (key === 'remotecommand') return value !== 'none';
   if (key === 'sessiontype') return value !== 'default';
   if (key === 'requesttty') return value === 'no' || value === 'false';

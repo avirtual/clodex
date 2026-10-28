@@ -32,8 +32,8 @@ zsh history-expand it even inside double quotes.
 
 ## MARK_NONCE_ENV
 
-The rc copies the nonce into the unexported `__clodex_k` and unsets the env var,
-so a child process does not inherit it. Each mark appends `${__clodex_k:-}`, so
+The rc's hook block copies the nonce into the unexported `__clodex_k` and unsets
+the env var, so the shell's later children do not inherit it. Each mark appends `${__clodex_k:-}`, so
 a shell started without the env emits exactly the untagged marks it always did.
 bash's static PS0 has the nonce expanded into it at rc time because it is never
 expanded afterwards.

@@ -84,6 +84,8 @@ const REFUSED = [
   "ssh -o 'RemoteCommand tail -f x' host",
   'ssh -F ./other_config host',
   'ssh -F/tmp/cfg host',
+  `ssh -o 'RequestTTY "no"' host`,
+  `ssh -o 'StdinNull="yes"' host`,
   'sudo -i tail -f x',
   'sudo -s tail -f x',
   "sudo bash -c 'x'",
