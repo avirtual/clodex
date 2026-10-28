@@ -14,6 +14,7 @@ blocks a release.
 
 ## Unreleased
 
+- Erratum (5.150.3): the Security bullet listed only the reserved-word arms; the same change also counts a `case` after a subshell or `<(`/`>(` opener, after the `)` of a function definition (`f()`, `f ()`, `function f ()`), and after the word that follows `function` or `coproc`.
 ## 5.150.3 — 2026-10-28 — guard reserved-word fix, three-state branch probe, release.sh pins
 
 - **Security:** inside a double-quoted `$(…)` or backtick, the Bash deny guard and the `clodex-send` segmenter now recognise a `case` after `!`, `time`, `if`/`then`/`else`/`elif`, `while`/`until`/`do` and `coproc`, so a case pattern's `)` can no longer end the substitution early and hide the command behind it.
