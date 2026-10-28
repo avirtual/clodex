@@ -127,3 +127,16 @@ test('the 💥 chip counts through the same genuineBustCount the panel agrees wi
   assert.match(block[0], /const genuineCount = genuineBustCount\(bsum\.classes\);/);
   assert.match(block[0], /const contentCount = genuineBustCount\(contentCls\);/);
 });
+
+test('a peer\'s non-number counts never reach the bust panel\'s HTML', async () => {
+  const POISON = '<img src=x onerror="window.__pwned=1">';
+  const h = harness(async () => ({ ok: true, data: {
+    count: POISON, n_static_prefix_busts: POISON, busts: [content(1), content(2)],
+  } }), { busts: { last_ts: POISON, first_ts: POISON } });
+  try {
+    await h.open();
+    assert.ok(h.body().includes('<b>2</b> genuine'), `ENTER: the listed branch painted: ${h.body()}`);
+    assert.ok(!h.body().includes('<img'), h.body());
+    assert.ok(!h.body().includes('onerror'), h.body());
+  } finally { h.restore(); }
+});

@@ -5,7 +5,7 @@
 // popoverApi(name).bust(); proxyState is the live poll-payload Map (base/
 // sessionId). openExternal/openWirescope are window.api shell actions.
 
-const { esc, fmtAgo } = require('../lib/format');
+const { esc, fmtAgo, num } = require('../lib/format');
 const { bustRow, isZeroCostBust, genuineBustWeight } = require('../lib/render-html');
 
 // The bust_summary's age triad (wirescope /_status → shaped `p.busts`). first_ts
@@ -58,7 +58,7 @@ function initBustPopover({ popoverApi, proxyState, barPopovers }) {
     // branch renders below, so recency shows even when nothing genuine remains.
     const triad = bustTriad(summary);
     const busts = Array.isArray(d && d.busts) ? d.busts : [];
-    const nT = d && d.count != null ? d.count : null;
+    const nT = num(d && d.count);
     const link = (base && sid)
       ? `<span class="px-link-ext" data-url="${esc(`${base}/_session?session=${encodeURIComponent(sid)}`)}" title="Open the session in the wirescope navigator (⌘-click for browser)">Open navigator →</span>`
       : '';
@@ -86,7 +86,7 @@ function initBustPopover({ popoverApi, proxyState, barPopovers }) {
           : `<div class="cost-note">No cache busts recorded${nT != null ? ` across ${nT} turn transition${nT === 1 ? '' : 's'}` : ''} — the prefix stayed warm.</div>`;
       return triad + only + lapseNote + link;
     }
-    const nStatic = d.n_static_prefix_busts != null ? d.n_static_prefix_busts : null;
+    const nStatic = num(d.n_static_prefix_busts);
     const head = `<div class="cost-head"><b>${counted.length}</b> genuine cache-bust${counted.length === 1 ? '' : 's'}`
       + (nT != null ? ` over <b>${nT}</b> transitions` : '')
       + (nStatic ? ` · <b>${nStatic}</b> touched the static prefix` : '')

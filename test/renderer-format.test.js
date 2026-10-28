@@ -115,3 +115,9 @@ test('fmtAgo / fmtDur / fmtBytes: a value that rounds up to the next unit is sho
   assert.strictEqual(F.fmtBytes(1048575), '1.0 MB');
   assert.strictEqual(F.fmtBytes(1023.6), '1.0 KB');
 });
+
+test('num / int: only a finite number survives', () => {
+  assert.deepStrictEqual(['3', NaN, Infinity, null, 3].map(F.num), [null, null, null, null, 3]);
+  assert.deepStrictEqual(['3', NaN, Infinity, null, 3].map((v) => F.int(v)), [0, 0, 0, 0, 3]);
+  assert.strictEqual(F.int('<b>', 7), 7);
+});

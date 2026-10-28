@@ -43,6 +43,9 @@ function fmtTokens(n) {
   return String(n);
 }
 
+function num(v) { return typeof v === 'number' && Number.isFinite(v) ? v : null; }
+function int(v, fallback = 0) { return num(v) ?? fallback; }
+
 function fmtCountdown(remaining_s) {
   const s = Math.max(0, Math.round(remaining_s));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -96,6 +99,6 @@ function fmtBytes(n) {
 
 module.exports = {
   esc, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo,
-  fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes,
+  fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes, num, int,
 };
 

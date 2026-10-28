@@ -1,6 +1,6 @@
 'use strict';
 
-function num(v) { return typeof v === 'number' && Number.isFinite(v) ? v : null; }
+const { num } = require('./format');
 function str(v) { return typeof v === 'string' && v ? v : null; }
 
 function costReportModel(report) {

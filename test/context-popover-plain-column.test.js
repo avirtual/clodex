@@ -228,3 +228,37 @@ test('a peer payload advertising ctxScan gets the plain read first, then the sca
     assert.deepStrictEqual(h.calls.map((c) => c.utilization), [false, true]);
   } finally { h.restore(); }
 });
+
+test('a peer\'s non-number counts never reach the context popover\'s HTML', async () => {
+  const P = '<img src=x onerror="window.__pwned=1">';
+  const items = [{ name: 'mcp__srv__a', est_tokens: P, used: P }, { name: 'Read', est_tokens: P, used: P }];
+  const comp = {
+    total_tokens: 1000, basis: 'exact', by_category: [{ category: 'tools', tokens: 900, pct: 90 }],
+    strip_prior_tool_errors: { read_reclaim_tokens_per_turn: 50, failed_calls: P, error_results: P },
+    strip_prior_edit_acks: { read_reclaim_tokens_per_turn: 50, collapsed_acks: P },
+  };
+  const util = (turns) => ({ evaluable_turns: turns, loaded: P, used_distinct: P, deadweight_tokens: P });
+  const agent = (line, turns) => ({
+    line, composition: comp,
+    tools: { count: P, est_tokens: P, per_tool: items }, utilization: util(turns),
+    skills: { count: P, per_skill: items }, skills_utilization: util(turns),
+  });
+  const bare = { line: 'main', tools: { count: P, est_tokens: P, per_tool: items } };
+  const h = harness({
+    payloads: { 'seat-1': { queries: ['ctx'], stripLevel: 2 }, 'seat-2': { queries: ['ctx'] } },
+    ctxImpl: async (a, name) => ({ ok: true, data: { agents: name === 'seat-1' ? [agent('main', P), agent('sub', 5)] : [bare] } }),
+  });
+  try {
+    await h.open('seat-1');
+    const full = h.body();
+    assert.match(full, /Tool utilization[\s\S]*Over 5 turns/, `ENTER: both utilization lines painted: ${full}`);
+    assert.match(full, /Manage skills/, 'ENTER: the links painted');
+    await h.open('seat-2');
+    const fallback = h.body();
+    assert.match(fallback, /tools \(2\)/, `ENTER: the tools-roster fallback painted: ${fallback}`);
+    for (const body of [full, fallback]) {
+      assert.ok(!body.includes('<img'), body);
+      assert.ok(!body.includes('onerror'), body);
+    }
+  } finally { h.restore(); }
+});

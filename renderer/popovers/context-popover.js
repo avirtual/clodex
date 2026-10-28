@@ -10,7 +10,7 @@
 //
 // The painters are DOM-bound, so no unit tests per the R1 rule; the group wiring is not.
 
-const { esc, fmtTokens } = require('../lib/format');
+const { esc, fmtTokens, int } = require('../lib/format');
 const { groupMcpTools, mcpTotalTokens } = require('../lib/mcp-group');
 const { placeAboveAnchor } = require('../lib/popover-place');
 
@@ -56,9 +56,9 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
       renderStripPanel(comp.strip_prior_thinking, stripLevel >= 1) +
       (stripLevel >= 2 ? (
         renderL2StripPanel(comp.strip_prior_tool_errors, true, 'prior tool errors',
-          (comp.strip_prior_tool_errors ? (comp.strip_prior_tool_errors.failed_calls || 0) + (comp.strip_prior_tool_errors.error_results || 0) : 0)) +
+          (comp.strip_prior_tool_errors ? int(comp.strip_prior_tool_errors.failed_calls) + int(comp.strip_prior_tool_errors.error_results) : 0)) +
         renderL2StripPanel(comp.strip_prior_edit_acks, true, 'prior edit acks',
-          (comp.strip_prior_edit_acks ? (comp.strip_prior_edit_acks.collapsed_acks || 0) : 0))
+          (comp.strip_prior_edit_acks ? int(comp.strip_prior_edit_acks.collapsed_acks) : 0))
       ) : '');
   }
 
@@ -106,7 +106,7 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     if (!(tok > 0)) return '';
     const usd = typeof d.est_read_reclaim_usd_per_turn === 'number' ? d.est_read_reclaim_usd_per_turn : null;
     const usdTxt = usd == null ? '' : (usd >= 0.01 ? ` (~$${usd.toFixed(2)}/turn)` : ` (~$${usd.toFixed(4)}/turn)`);
-    const n = count || 0;
+    const n = int(count);
     const countTxt = n > 0 ? ` · ${n} item${n === 1 ? '' : 's'}` : '';
     let verdict, cls;
     if (stripOn && d.would_strip) {
@@ -144,10 +144,10 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
   // proxy build, or a pre-context_skills proxy for skills).
   function renderUtilBlock(u, items, title) {
     if (!u || !Array.isArray(items)) return '';
-    const turns = u.evaluable_turns || 0;
-    const loaded = u.loaded != null ? u.loaded : items.length;
-    const usedDistinct = u.used_distinct != null ? u.used_distinct : items.filter((x) => (x.used || 0) > 0).length;
-    const deadweight = u.deadweight_tokens || 0;
+    const turns = int(u.evaluable_turns);
+    const loaded = int(u.loaded, items.length);
+    const usedDistinct = int(u.used_distinct, items.filter((x) => int(x.used) > 0).length);
+    const deadweight = int(u.deadweight_tokens);
     const lowConf = turns < UTIL_MIN_TURNS;
     // "dead" is a verdict; only claim it once enough turns back it. Until then
     // the same tokens are merely "idle" — present but not yet proven wasted.
@@ -173,8 +173,8 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
 
     // Items arrive deadweight-first (used==0, then highest est_tokens); keep
     // wirescope's order and just split the two groups.
-    const unused = items.filter((pt) => (pt.used || 0) === 0);
-    const used = items.filter((pt) => (pt.used || 0) > 0);
+    const unused = items.filter((pt) => int(pt.used) === 0);
+    const used = items.filter((pt) => int(pt.used) > 0);
 
     let body = '';
     if (unused.length) {
@@ -183,7 +183,7 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
       body += unused.slice(0, UTIL_UNUSED_CAP).map((pt) =>
         `<div class="ctx-row ctx-dead"><div class="ctx-row-top">` +
         `<span class="ctx-cat">${esc(pt.name)}</span>` +
-        `<span class="ctx-nums">~${fmtTokens(pt.est_tokens || 0)}</span></div></div>`).join('');
+        `<span class="ctx-nums">~${fmtTokens(int(pt.est_tokens))}</span></div></div>`).join('');
       if (unused.length > UTIL_UNUSED_CAP) {
         body += `<div class="ctx-util-more">+${unused.length - UTIL_UNUSED_CAP} more unused</div>`;
       }
@@ -193,7 +193,7 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
       body += used.map((pt) =>
         `<div class="ctx-row"><div class="ctx-row-top">` +
         `<span class="ctx-cat">${esc(pt.name)}</span>` +
-        `<span class="ctx-nums">~${fmtTokens(pt.est_tokens || 0)} · ${pt.used}×</span></div></div>`).join('');
+        `<span class="ctx-nums">~${fmtTokens(int(pt.est_tokens))} · ${int(pt.used)}×</span></div></div>`).join('');
     }
     return `<div class="ctx-util">${head}${conf}${body}</div>`;
   }
@@ -252,7 +252,7 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     const groups = groupMcpTools(a.tools && a.tools.per_tool);
     if (!groups.length) return '';
     const total = mcpTotalTokens(groups);
-    const turns = (a.utilization && a.utilization.evaluable_turns) || 0;
+    const turns = int(a.utilization && a.utilization.evaluable_turns);
     const conclusive = turns >= UTIL_MIN_TURNS;
 
     const head = `<div class="ctx-util-head"><span>MCP servers</span>` +
@@ -267,12 +267,12 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
       const usage = turns === 0
         ? ''
         : (g.usedTotal > 0
-          ? ` · ${g.usedTotal}×`
+          ? ` · ${int(g.usedTotal)}×`
           : (conclusive ? ' · <b>unused</b>' : ' · idle'));
       const note = mcpRowNote(g.server, mcp, name);
       return `<div class="ctx-row${(conclusive && g.usedTotal === 0) ? ' ctx-dead' : ''}">` +
         `<div class="ctx-row-top"><span class="ctx-cat">${esc(g.server)}</span>` +
-        `<span class="ctx-nums">~${fmtTokens(g.estTokens)} · ${g.toolCount} tool${g.toolCount === 1 ? '' : 's'}${usage}</span>` +
+        `<span class="ctx-nums">~${fmtTokens(int(g.estTokens))} · ${int(g.toolCount)} tool${g.toolCount === 1 ? '' : 's'}${usage}</span>` +
         `</div>${note ? `<div class="ctx-util-conf">${esc(note)}</div>` : ''}</div>`;
     };
     let rows;
@@ -327,7 +327,7 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
       const rows = t.per_tool.slice(0, 12).map((pt) =>
         `<div class="ctx-row"><div class="ctx-row-top"><span class="ctx-cat">${esc(pt.name)}</span>` +
         `<span class="ctx-nums">${fmtTokens(pt.est_tokens)}</span></div></div>`).join('');
-      return `<div class="ctx-line-head"><span>tools (${t.count})</span>` +
+      return `<div class="ctx-line-head"><span>tools (${int(t.count, t.per_tool.length)})</span>` +
         `<span class="ctx-line-total">${fmtTokens(t.est_tokens)}</span></div>${rows}` +
         `<div class="ctx-note">Composition breakdown not available from this proxy build.</div>`;
     }
@@ -353,13 +353,13 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     const mainTools = mainAgent?.tools;
     if (mainTools && sessionTypeOf(name) === 'claude') {
       const mu = mainAgent.utilization;
-      const conclusive = mu && (mu.evaluable_turns || 0) >= UTIL_MIN_TURNS;
+      const conclusive = mu && int(mu.evaluable_turns) >= UTIL_MIN_TURNS;
       const unusedCount = mainTools.per_tool
-        ? mainTools.per_tool.filter((pt) => (pt.used || 0) === 0).length : 0;
+        ? mainTools.per_tool.filter((pt) => int(pt.used) === 0).length : 0;
       const label = (conclusive && unusedCount > 0)
         ? `Trim ${unusedCount} unused tool${unusedCount === 1 ? '' : 's'}` +
           (mu.deadweight_tokens > 0 ? ` (~${fmtTokens(mu.deadweight_tokens)})` : '') + ' →'
-        : `Manage tools (${mainTools.count}) →`;
+        : `Manage tools (${int(mainTools.count)}) →`;
       html += `<span class="ctx-tools-link" data-act="manage-tools">${label}</span>`;
     }
     // Cross-link to the skills manager. With the v0.4.14 per-skill roster
@@ -371,12 +371,12 @@ function initContextPopover({ popoverApi, ctxCatLabel, openReportPanel, openTool
     if (sessionTypeOf(name) === 'claude') {
       if (mainSkills && Array.isArray(mainSkills.per_skill)) {
         const su = mainAgent.skills_utilization;
-        const conclusive = su && (su.evaluable_turns || 0) >= UTIL_MIN_TURNS;
-        const unusedCount = mainSkills.per_skill.filter((ps) => (ps.used || 0) === 0).length;
+        const conclusive = su && int(su.evaluable_turns) >= UTIL_MIN_TURNS;
+        const unusedCount = mainSkills.per_skill.filter((ps) => int(ps.used) === 0).length;
         const label = (conclusive && unusedCount > 0)
           ? `Trim ${unusedCount} unused skill${unusedCount === 1 ? '' : 's'}` +
             (su.deadweight_tokens > 0 ? ` (~${fmtTokens(su.deadweight_tokens)})` : '') + ' →'
-          : `Manage skills (${mainSkills.count}) →`;
+          : `Manage skills (${int(mainSkills.count, mainSkills.per_skill.length)}) →`;
         html += `<span class="ctx-tools-link" data-act="manage-skills">${label}</span>`;
       } else {
         const skillsCat = mainAgent?.composition?.by_category?.find((c) => c.category === 'skills');
