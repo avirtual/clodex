@@ -41,7 +41,7 @@ const FREE = [
   'document', 'window', 'esc', 'baseName', 'typeGlyph', 'ACCOUNT_DEFAULT',
   'switchSession', 'openSessionInfoPopover', 'archiveSessionRow', 'startRename',
   'insertLocalSessionRow', 'sidebarMeta', 'scheduleSidebarRelayout', 'applyFixChip',
-  'classifySender', 'streamSeatNames', 'respawnSnapshots', 'sessionList', 'CSS',
+  'classifySender', 'streamSeatNames', 'respawnSnapshots', 'restartFailed', 'sessionList', 'CSS',
 ];
 
 function loadBuilder() {
@@ -68,6 +68,7 @@ function loadBuilder() {
     classifySender,
     streamSeatNames: new Set(),
     respawnSnapshots: new Map(),
+    restartFailed: new Map(),
     sessionList: { querySelector: () => null },
     CSS: { escape: (s) => s },
   };

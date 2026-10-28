@@ -55,6 +55,9 @@ test('the popover restarts go through restartOrFailRow, never window.api.restart
   assert.deepStrictEqual([MENUS_SRC, CHECKLIST_SRC].map((src) => [...src.matchAll(/\brestartOrFailRow\(/g)].length), [2, 5]);
   assert.deepStrictEqual([MENUS_SRC, CHECKLIST_SRC].map((src) => /window\.api\.restartSession\b/.test(src)), [false, false]);
   assert.strictEqual([...SRC.matchAll(/window\.api\.restartSession\(/g)].length, 2, 'only restartOrFailRow calls it in the renderer');
+  const setArgs = SRC.match(/\nasync function setArgsOrFailRow\(name, snap, restart, args\) \{[\s\S]*?\n\}\n/);
+  assert.ok(setArgs && setArgs[0].includes('window.api.setSessionArgs(name, ...args)'), 'ENTER: setArgsOrFailRow calls setSessionArgs');
+  assert.strictEqual([...SRC.matchAll(/window\.api\.setSessionArgs\(/g)].length, 1, 'only setArgsOrFailRow calls setSessionArgs in the renderer');
 });
 
 test('session:retrySpawn returns the seat io, so a row built without one is still re-marked a stream seat', () => {

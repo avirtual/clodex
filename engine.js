@@ -1736,6 +1736,8 @@ function moveAccountByModel(model, label, wsId = DEFAULT_WORKSPACE_ID) {
           io: live.io || 'pty',
           background: true,
         });
+      } else if (res && !res.ok) {
+        manager._sendRespawnFailed(name, persistence.get(name), res.error);
       }
       return res;
     },

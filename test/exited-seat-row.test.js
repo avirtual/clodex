@@ -229,6 +229,8 @@ function mkRenderer({ api = {}, confirmAnswer = true } = {}) {
     streamSeatNames: new Set(),
     archivingSessions: new Map(),
     movingFailed: new Map(),
+    restartFailed: new Map(),
+    seatViewMemory: new Map(),
     respawnSnapshots: new Map(),
     activeSession: null,
     respawnFocus: new Map(),
@@ -252,7 +254,7 @@ function mkRenderer({ api = {}, confirmAnswer = true } = {}) {
     switchSession: rec('switchSession'),
     refreshSidebarView: rec('refreshSidebarView'),
     addArchivedSessionToSidebar: rec('addArchivedSessionToSidebar'),
-    addFailedSessionToSidebar: rec('addFailedSessionToSidebar'),
+    addFailedSessionToSidebar: (entry) => { calls.push(['addFailedSessionToSidebar', entry]); rows.push({ className: 'session-item failed', dataset: { name: entry.name } }); },
     mountRestoredSession: rec('mountRestoredSession'),
     initSidebarView: rec('initSidebarView'),
     switchToNewSession: rec('switchToNewSession'),
@@ -264,11 +266,13 @@ function mkRenderer({ api = {}, confirmAnswer = true } = {}) {
   const names = Object.keys(env).filter((k) => k !== 'exitHandler' && k !== 'movedInHandler');
   const body = [
     slice('const seatIoKind', ';\n'),
-    fnSrc('exitedLabel'), fnSrc('rowSnapshot'), fnSrc('respawnSnapshotOf'), fnSrc('rebuildLiveRow'), fnSrc('exitedRowSnapshot'), fnSrc('addExitedSessionToSidebar'), `async ${fnSrc('forgetSavedEntry')}`,
+    fnSrc('exitedLabel'), fnSrc('rowSnapshot'), fnSrc('archivedRowEntry'), fnSrc('failRowOrStash'),
+    `async ${fnSrc('setArgsOrFailRow')}`, `async ${fnSrc('restartOrFailRow')}`, `async ${fnSrc('deleteSessionRow')}`, fnSrc('respawnSnapshotOf'), fnSrc('rebuildLiveRow'), fnSrc('exitedRowSnapshot'), fnSrc('addExitedSessionToSidebar'), `async ${fnSrc('forgetSavedEntry')}`,
     slice('window.api.onSessionExit((name, code, meta) => {', '\n});\n'),
     slice('window.api.onSessionMovedIn((entry) => {', '\n});\n'),
     `const reattach = ({ name, type, cwd, backend, noWire, io, background, clone }) => { switch ('reattach') { ${slice("    case 'reattach':", '      break;\n')} } };`,
-    `return { reattach, restore: () => ${slice('(async function restoreSessions() {', '\n})();\n').trim().replace(/;$/, '')} };`,
+    `const respawnFailed = ({ name, type, cwd, error }) => { switch ('respawnFailed') { ${slice("    case 'respawnFailed': {", '      break;\n    }\n')} } };`,
+    `return { reattach, respawnFailed, setArgsOrFailRow, restartOrFailRow, deleteSessionRow, restore: () => ${slice('(async function restoreSessions() {', '\n})();\n').trim().replace(/;$/, '')} };`,
   ].join('\n');
   const out = new Function(...names, body)(...names.map((n) => env[n]));
   const liveRow = (name, dataset) => {
@@ -277,7 +281,7 @@ function mkRenderer({ api = {}, confirmAnswer = true } = {}) {
     env.sessions.set(name, { name });
     return node;
   };
-  return { env, rows, calls, liveRow, restore: out.restore, reattach: out.reattach };
+  return { env, rows, calls, liveRow, restore: out.restore, reattach: out.reattach, out };
 }
 
 const exitedLabelOf = (row) => (/<span class="session-exited-label">([^<]*)<\/span>/.exec(row.innerHTML) || [])[1];
@@ -423,3 +427,93 @@ for (const row of [
     assert.strictEqual(h.env.movingFailed.has('s'), false);
   });
 }
+
+const expectedExit = (h, name) => h.env.exitHandler(name, 0, { expected: true, signal: 15, agentType: 'claude' });
+const callsOf = (h, what) => h.calls.filter((c) => c[0] === what);
+
+test('A: an Edit Session restart whose respawn fails after the expected exit leaves one failed row', async () => {
+  const h = mkRenderer({ api: { setSessionArgs: async () => { expectedExit(h, 's'); return { ok: false, error: 'Directory does not exist: /w' }; } } });
+  const snap = { name: 's', type: 'claude', cwd: '/w', team: 'T' };
+  h.liveRow('s', { type: 'claude', cwd: '/w', team: 'T' });
+  const res = await h.out.setArgsOrFailRow('s', snap, true, [[], true]);
+  assert.strictEqual(res.ok, false, 'ENTER: the save failed');
+  assert.deepStrictEqual(callsOf(h, 'addFailedSessionToSidebar').map((c) => [c[1].name, c[1].type, c[1].cwd, c[1].team, c[1].error]),
+    [['s', 'claude', '/w', 'T', 'Directory does not exist: /w']]);
+});
+
+test('A: an Edit Session restart that times out stashes the failed row for the late expected exit', async () => {
+  const h = mkRenderer({ api: { setSessionArgs: async () => ({ ok: false, error: 'old process did not exit in time' }) } });
+  h.liveRow('s', { type: 'claude', cwd: '/w' });
+  await h.out.setArgsOrFailRow('s', { name: 's', type: 'claude', cwd: '/w' }, true, [[], true]);
+  assert.strictEqual(callsOf(h, 'addFailedSessionToSidebar').length, 0, 'ENTER: nothing drawn while the seat is live');
+  expectedExit(h, 's');
+  assert.deepStrictEqual(callsOf(h, 'addFailedSessionToSidebar').map((c) => c[1].error), ['old process did not exit in time']);
+});
+
+test('B: a restart reply {ok:false} while the seat is live, then the expected exit, leaves one failed row', async () => {
+  const h = mkRenderer({ api: { restartSession: async () => ({ ok: false, error: 'old process did not exit in time' }) } });
+  h.liveRow('s', { type: 'codex', cwd: '/w/c' });
+  await h.out.restartOrFailRow('s');
+  assert.strictEqual(callsOf(h, 'addFailedSessionToSidebar').length, 0, 'ENTER: nothing drawn while the seat is live');
+  assert.strictEqual(callsOf(h, 'showToast').length, 1, 'the failure still toasts');
+  expectedExit(h, 's');
+  assert.deepStrictEqual(callsOf(h, 'addFailedSessionToSidebar').map((c) => [c[1].name, c[1].type, c[1].cwd]), [['s', 'codex', '/w/c']]);
+  assert.strictEqual(h.env.restartFailed.has('s'), false);
+});
+
+test('C: a respawnFailed context action after the expected exit draws one failed row, and a second does not double it', () => {
+  const h = mkRenderer();
+  h.liveRow('s', { type: 'claude', cwd: '/w', team: 'T' });
+  expectedExit(h, 's');
+  h.out.respawnFailed({ name: 's', type: 'claude', cwd: '/w', error: 'account dir x does not exist' });
+  assert.deepStrictEqual(callsOf(h, 'addFailedSessionToSidebar').map((c) => [c[1].name, c[1].team, c[1].error]), [['s', 'T', 'account dir x does not exist']]);
+  h.out.respawnFailed({ name: 's', type: 'claude', cwd: '/w', error: 'account dir x does not exist' });
+  assert.strictEqual(callsOf(h, 'addFailedSessionToSidebar').length, 1);
+});
+
+test('C: a respawnFailed context action while the seat is live draws the failed row at its expected exit', () => {
+  const h = mkRenderer();
+  h.liveRow('s', { type: 'claude', cwd: '/w' });
+  h.out.respawnFailed({ name: 's', type: 'claude', cwd: '/w', error: 'old process did not exit in time' });
+  assert.strictEqual(callsOf(h, 'addFailedSessionToSidebar').length, 0, 'ENTER: nothing drawn while the seat is live');
+  expectedExit(h, 's');
+  assert.deepStrictEqual(callsOf(h, 'addFailedSessionToSidebar').map((c) => c[1].error), ['old process did not exit in time']);
+});
+
+test('D: a Delete Session kept by a timed-out exit leaves one archived row with the ✕ at its expected exit', async () => {
+  const h = mkRenderer({ api: { confirmKill: async () => true, killSession: async () => ({ ok: false, error: 'process still running after 8s; worktree kept', live: true, worktreeRemoved: false, path: '/wt/s' }) } });
+  h.liveRow('s', { type: 'claude', cwd: '/wt/s', ticket: 't9' });
+  await h.out.deleteSessionRow('s');
+  assert.strictEqual(callsOf(h, 'addArchivedSessionToSidebar').length, 0, 'ENTER: nothing drawn while the seat is live');
+  expectedExit(h, 's');
+  assert.deepStrictEqual(callsOf(h, 'addArchivedSessionToSidebar').map((c) => [c[1].name, c[1].type, c[1].cwd, c[1].ticket]), [['s', 'claude', '/wt/s', 't9']]);
+});
+
+test('D: a Delete Session whose tree removal failed after the exit draws one archived row', async () => {
+  const h = mkRenderer({ api: { confirmKill: async () => true, killSession: async () => { expectedExit(h, 's'); return { ok: true, worktreeRemoved: false, error: 'locked', live: true, path: '/wt/s' }; } } });
+  h.liveRow('s', { type: 'claude', cwd: '/wt/s' });
+  await h.out.deleteSessionRow('s');
+  assert.deepStrictEqual(callsOf(h, 'addArchivedSessionToSidebar').map((c) => c[1].name), ['s']);
+  assert.strictEqual(callsOf(h, 'showToast').length, 1, 'the failure still toasts');
+});
+
+test('a Delete Session that removed the tree leaves no row', async () => {
+  const h = mkRenderer({ api: { confirmKill: async () => true, killSession: async () => { expectedExit(h, 's'); return { ok: true, worktreeRemoved: true, live: true }; } } });
+  h.liveRow('s', { type: 'claude', cwd: '/wt/s' });
+  await h.out.deleteSessionRow('s');
+  assert.ok(callsOf(h, 'removeSession').length >= 1, 'ENTER: the exit was handled');
+  assert.deepStrictEqual([callsOf(h, 'addArchivedSessionToSidebar'), callsOf(h, 'addFailedSessionToSidebar'), h.rows], [[], [], []]);
+});
+
+test('C: a context reload whose create throws sends respawnFailed to the seat\'s workspace window', async () => {
+  const { m } = mkProbe();
+  const sent = [];
+  m.windows.set('ws', { isDestroyed: () => false, webContents: { send: (...a) => sent.push(a) } });
+  m.create = async () => { throw new Error('Directory does not exist: /gone'); };
+  const entry = { name: 'rl', type: 'claude', cwd: '/gone', workspaceId: 'ws' };
+  assert.strictEqual(m._coldRespawn('rl', entry, {}, '', 'reload'), true, 'ENTER: the reload was scheduled');
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(sent, [['session:context-action', { action: 'respawnFailed', name: 'rl', error: 'Directory does not exist: /gone', type: 'claude', cwd: '/gone' }]]);
+  persistence.remove('rl');
+});
