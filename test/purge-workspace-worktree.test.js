@@ -211,3 +211,16 @@ test('destroy of a tree-less seat with beforeRemove drops held mail even when th
   assert.ok(lines.includes('dropped 1 held inject(s) for a: seat deleted'));
   assert.strictEqual(fs.existsSync(path.join(PENDING_DIR, 'a')), false);
 });
+
+test('_keepIfDirty keeps a dirty or uninspectable tree with its why and passes a clean one', async () => {
+  for (const [isDirty, want] of [
+    [() => ({ ok: true, dirty: false }), null],
+    [() => ({ ok: true, dirty: true }), { keep: true, why: 'uncommitted work' }],
+    [() => ({ ok: false, error: 'not a git repository' }), { keep: true, why: 'not a git repository' }],
+    [() => ({ ok: false }), { keep: true, why: 'tree could not be inspected' }],
+    [() => { throw new Error('spawn git ENOENT'); }, { keep: true, why: 'spawn git ENOENT' }],
+  ]) {
+    const { m } = rig({ isDirty });
+    assert.deepStrictEqual(await m._keepIfDirty.call(null, '/wt/t1'), want);
+  }
+});
