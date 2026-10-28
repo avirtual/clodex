@@ -268,3 +268,29 @@ test('an unproduced producer item is parked by its fallback text and its claim n
     assert.ok(app.logs.some((l) => l.level === 'info' && l.msg === 'dropped an unproduced outbox item for sx: no fallback'));
   } finally { app.stop(); }
 });
+
+test('a queued slash command is dropped with a log line, not re-parked', async () => {
+  const app = boot();
+  try {
+    const s = await busySeat(app, 'sx');
+    app.m._injectText(s, '/compact', { bypassHold: true });
+    assert.strictEqual(s.outbox.length, 1, 'ENTER: the slash command waits in the outbox');
+    app.close('sx');
+    assert.deepStrictEqual(app.parked('sx'), []);
+    assert.ok(app.logs.some((l) => l.level === 'warn' && l.msg === 'dropped a queued slash command for sx instead of re-parking it'));
+  } finally { app.stop(); }
+});
+
+test('a re-parked dm tells its caller parked, never injected, and logs its dropped images', async () => {
+  const app = boot();
+  try {
+    const s = await busySeat(app, 'sx');
+    const heard = [];
+    app.m._deliverMessage('sx', 'lead', 'divert-body-2186', 'dm', '', (...a) => heard.push(a), 'key-2186', [{ data: 'AAAA', mediaType: 'image/png' }]);
+    assert.strictEqual(s.outbox.length, 1, 'ENTER: the dm waits in the outbox');
+    app.close('sx');
+    assert.strictEqual(app.parked('sx').length, 1);
+    assert.deepStrictEqual(heard, [['parked', 'dead']]);
+    assert.ok(app.logs.some((l) => l.level === 'warn' && /^re-parked a queued outbox item for sx \(seat exited code=1, \d+ chars, 1 image\(s\) dropped\)$/.test(l.msg)));
+  } finally { app.stop(); }
+});

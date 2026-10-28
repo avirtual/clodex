@@ -2950,12 +2950,13 @@ function createSessionManager(deps) {
       if (typeof s._streamHoldTimer.unref === 'function') s._streamHoldTimer.unref();
     }
 
-    _streamEnqueue(s, item, onSend = null, produce = null, parkKey = null, { parkId = null, fallback = null } = {}) {
+    _streamEnqueue(s, item, onSend = null, produce = null, parkKey = null, { parkId = null, fallback = null, onDivert = null } = {}) {
       if (onSend) Object.defineProperty(item, 'onSend', { value: onSend, enumerable: false });
       if (produce) Object.defineProperty(item, 'produce', { value: produce, enumerable: false });
       if (parkKey) Object.defineProperty(item, 'parkKey', { value: parkKey, enumerable: false });
       if (parkId) Object.defineProperty(item, 'parkId', { value: parkId, enumerable: false });
       if (typeof fallback === 'function') Object.defineProperty(item, 'fallback', { value: fallback, enumerable: false });
+      if (typeof onDivert === 'function') Object.defineProperty(item, 'onDivert', { value: onDivert, enumerable: false });
       const held = !s.streamBusy && this._streamHintHeld(s);
       const idle = !s.streamBusy && !held;
       if (idle && !s.outbox.length && item.wire) {
@@ -3014,9 +3015,15 @@ function createSessionManager(deps) {
           try { text = q.fallback(); } catch { text = ''; }
         }
         if (typeof text !== 'string' || !text.trim()) continue;
+        if (SLASH_COMMAND_RE.test(text)) {
+          log.warn('inject', `dropped a queued slash command for ${s.name} instead of re-parking it`);
+          continue;
+        }
         try {
           parkDelivery(PENDING_DIR, s.name, text, this._nextParkSeq(), q.parkId || null, false, born, q.parkKey || null);
-          log.warn('inject', `re-parked a queued outbox item for ${s.name} (${reason}, ${text.length} chars)`);
+          const pics = Array.isArray(q.images) && q.images.length ? `, ${q.images.length} image(s) dropped` : '';
+          log.warn('inject', `re-parked a queued outbox item for ${s.name} (${reason}, ${text.length} chars${pics})`);
+          if (typeof q.onDivert === 'function') { try { q.onDivert('dead'); } catch {} }
         } catch (e) {
           log.error('inject', `re-park failed for ${s.name}: ${e.message} — ${text.length} chars dropped`);
         }
@@ -8955,7 +8962,8 @@ function createSessionManager(deps) {
       if (target.io === 'stream') {
         const item = { text: defangTeammateTag(plainText()), images: pics, origin: senderName === 'user' ? 'operator' : 'system' };
         if (typeof ref === 'string' && ref) Object.defineProperty(item, 'ref', { value: ref, enumerable: false });
-        this._streamEnqueue(target, item, fire ? () => fire('injected') : null, null, parkKey);
+        this._streamEnqueue(target, item, fire ? () => fire('injected') : null, null, parkKey,
+          fire ? { onDivert: (why) => fire('parked', why) } : {});
       } else if (!this._maybeParkDelivery(target, () => textFor('parked'), parkKey)) {
         this._injectText(target, fire && rebody ? '' : plainText(), {
           parkable: true,
@@ -9186,7 +9194,11 @@ function createSessionManager(deps) {
       if (replyScope && replyScope.session === session && replyScope.replyTo(text) !== false) return;
       if (session.io === 'stream') {
         this._streamEnqueueSystem(session, text, produce, 'inject', null, opts.parkKey || null,
-          { parkId: opts.parkId || null, fallback: typeof opts.fallback === 'function' ? opts.fallback : null });
+          {
+            parkId: opts.parkId || null,
+            fallback: typeof opts.fallback === 'function' ? opts.fallback : null,
+            onDivert: typeof opts.onDivert === 'function' ? opts.onDivert : null,
+          });
         return;
       }
       if (!opts.bypassHold && this._injectHoldReason(session)) {
