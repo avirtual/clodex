@@ -12,7 +12,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — fourth-pass audit: four security fixes, atomic stores, resumable release, parked stream mail
+## Unreleased
+
+## 5.150.0 — 2026-10-28 — fourth-pass audit: four security fixes, atomic stores, resumable release, parked stream mail
 
 - **Security:** `clodexctl upgrade node` on a helm context whose release name differs from the context name updates that context instead of overwriting (and losing the token of) an unrelated context named after the release; `deploy node --helm` takes `--ctx <name>` to save under a name other than the release.
 - **Security:** the drawer shell's OSC 133 marks now carry a per-shell nonce, so a remote shell's own prompt integration (or any program printing those escapes) can no longer end the local command's capture and let a term exec type into the far host with remote commands switched off; a forged command mark no longer reaches the seat's context.
