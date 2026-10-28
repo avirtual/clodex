@@ -26,6 +26,10 @@ blocks a release.
 - Security: a seat granted a clodexctl exec tier can no longer list every saved context or dial one it was not granted through `get nodes` / `describe node …`; node lines are refused on every seat tier, and `help node` still answers.
 - Security: the context and cache-bust popovers no longer insert numbers from a peer's reply into the page unescaped; a compromised peer could previously run code in the desktop app or the web surface when the operator opened one of those chips.
 - A seat whose name ends in `.draining.<number>` or contains `.resend.` no longer has its parked mail swept into another seat's mailbox or hidden from resend; mailbox claims now live in a reserved `.claims` directory.
+- **Security:** a keep-warm ping never carries another account's OAuth token: the hold resolves the seat's `CLAUDE_CONFIG_DIR` from its persisted record, and a session no record owns declines the ping instead of borrowing the default account's bearer.
+- A hold ended or disarmed while another seat's ping was in flight is no longer pinged from the stale tick snapshot.
+- Upstream declines (overload, rate limit, transport, unreadable token) no longer spend a timed hold's ping budget, a `max-pings` stop re-arms on the next turn, and a ping that hangs times out after 30 s instead of wedging every hold.
+- `wirescope` telemetry: pruning a seat that left the live map no longer erases its this-launch spend from the persisted lifetime totals.
 
 ## 5.147.0 — 2026-10-28 — security fixes from the first cold audit
 
