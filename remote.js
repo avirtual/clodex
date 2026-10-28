@@ -702,7 +702,7 @@ class RemoteServer {
       res.end('Refusing to serve: bound to a non-loopback address with no CLODEX_REMOTE_TOKEN set. Set CLODEX_REMOTE_TOKEN, or CLODEX_REMOTE_INSECURE=1 to override.');
       return false;
     }
-    const failed = this._gate.configured ? null : originRefusal(req);
+    const failed = this._gate.configured || this._insecure ? null : originRefusal(req);
     if (failed) {
       res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(`forbidden: ${failed} header is not this loopback host`);
@@ -803,6 +803,7 @@ class RemoteServer {
 
   _handleControl(name, req, res) {
     if (!this._sendInput) return this._json(res, 501, { ok: false, error: 'control not available' });
+    if (!this._jsonBody(req, res)) return;
     return this._readBody(req, res, (body) => {
       const msg = parseJsonObject(body);
       if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
@@ -827,6 +828,7 @@ class RemoteServer {
 
   _handleInput(name, req, res) {
     if (!this._sendInput) return this._json(res, 501, { ok: false, error: 'input not available' });
+    if (!this._jsonBody(req, res)) return;
     return this._readBody(req, res, (body) => {
       const msg = parseJsonObject(body);
       if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
@@ -840,6 +842,7 @@ class RemoteServer {
 
   _handleResize(name, req, res) {
     if (!this._resizePty) return this._json(res, 501, { ok: false, error: 'resize not available' });
+    if (!this._jsonBody(req, res)) return;
     return this._readBody(req, res, (body) => {
       const msg = parseJsonObject(body);
       if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
@@ -929,6 +932,7 @@ class RemoteServer {
 
   _handleArgsPatch(name, req, res) {
     if (!this._setSessionArgs) return this._json(res, 501, { ok: false, error: 'args not available' });
+    if (!this._jsonBody(req, res)) return;
     return this._readBody(req, res, (body) => {
       let msg;
       try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
@@ -951,6 +955,7 @@ class RemoteServer {
 
   _handleSkillsPatch(name, req, res) {
     if (!this._setSessionSkills) return this._json(res, 501, { ok: false, error: 'skills not available' });
+    if (!this._jsonBody(req, res)) return;
     return this._readBody(req, res, (body) => {
       let msg;
       try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
@@ -963,6 +968,7 @@ class RemoteServer {
 
   _handleClientToken(name, req, res) {
     if (!this._setClientToken) return this._json(res, 501, { ok: false, error: 'client token not available' });
+    if (!this._jsonBody(req, res)) return;
     return this._readBody(req, res, (body) => {
       let msg;
       try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
@@ -993,6 +999,7 @@ class RemoteServer {
   }
 
   _handleImportBegin(req, res) {
+    if (!this._jsonBody(req, res)) return;
     return this._readBody(req, res, (body) => {
       let msg;
       try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
@@ -1223,6 +1230,7 @@ class RemoteServer {
       const seat = decodeSeg(p.slice('/api/wterm-input/'.length));
       if (seat == null) return this._json(res, 400, { ok: false, error: 'bad path' });
       if (!NAME_RE.test(seat)) return this._json(res, 400, { ok: false, error: 'bad seat' });
+      if (!this._jsonBody(req, res)) return;
       return this._readBody(req, res, (body) => {
         // Re-read the handler HERE, not above. `_readBody` calls back from
         // `req.on('end')`, which runs outside `_route`'s try/catch, and main.js
@@ -1258,6 +1266,7 @@ class RemoteServer {
       const seat = decodeSeg(p.slice('/api/wterm-resize/'.length));
       if (seat == null) return this._json(res, 400, { ok: false, error: 'bad path' });
       if (!NAME_RE.test(seat)) return this._json(res, 400, { ok: false, error: 'bad seat' });
+      if (!this._jsonBody(req, res)) return;
       return this._readBody(req, res, (body) => {
         // Same deferral, same re-read, same attachment precondition — see
         // wterm-input above. Geometry is not a keystroke, but a resize reaches
@@ -1304,6 +1313,7 @@ class RemoteServer {
     // unvalidated so the owner maps it and drops what never crosses.
     if (req.method === 'POST' && p === '/api/sessions') {
       if (!this._createSession) return this._json(res, 501, { ok: false, error: 'create not available' });
+      if (!this._jsonBody(req, res)) return;
       return this._readBody(req, res, (body) => {
         let msg;
         try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
@@ -1354,6 +1364,7 @@ class RemoteServer {
     }
     if (req.method === 'POST' && p === '/api/dm') {
       if (!this._deliverDm) return this._json(res, 501, { ok: false, error: 'dm not available' });
+      if (!this._jsonBody(req, res)) return;
       return this._readBody(req, res, (body) => {
         const msg = parseJsonObject(body);
         if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
@@ -1387,6 +1398,7 @@ class RemoteServer {
     }
     if (req.method === 'POST' && p === '/api/dm/claim') {
       if (!this._claimDms) return this._json(res, 501, { ok: false, error: 'dm not available' });
+      if (!this._jsonBody(req, res)) return;
       return this._readBody(req, res, (body) => {
         const msg = parseJsonObject(body);
         if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
@@ -1402,6 +1414,7 @@ class RemoteServer {
     // Full replacement of the spoke's via-table, not a delta.
     if (req.method === 'POST' && p === '/api/peer/roster') {
       if (!this._receiveRoster) return this._json(res, 501, { ok: false, error: 'relay not available' });
+      if (!this._jsonBody(req, res)) return;
       return this._readBody(req, res, (body) => {
         const msg = parseJsonObject(body);
         if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
@@ -1617,6 +1630,7 @@ class RemoteServer {
       if (!this._replyNote) return this._json(res, 501, { ok: false, error: 'reply not available' });
       const id = decodeSeg(p.slice('/api/inbox/reply/'.length));
       if (id == null) return this._json(res, 400, { ok: false, error: 'bad path' });
+      if (!this._jsonBody(req, res)) return;
       return this._readBody(req, res, (body) => {
         const msg = parseJsonObject(body);
         if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });

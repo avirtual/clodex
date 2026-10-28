@@ -69,7 +69,7 @@ function createWebHost({ engine, log, port, host, token, insecure = false, userD
   const checkToken = (provided) => gate.check(provided);
   const tokenFromReq = (req) => gate.fromReq(req);
   const refusing = !gate.configured && !isLoopbackHost(host) && !insecure;
-  const foreignOrigin = (req) => !gate.configured && !originAllowed(req);
+  const foreignOrigin = (req) => !gate.configured && !insecure && !originAllowed(req);
 
   function fanEvent(workspaceId, channel, args) {
     if (channel === 'pty-data') {
