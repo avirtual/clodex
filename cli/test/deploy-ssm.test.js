@@ -956,7 +956,7 @@ test('deploy ssm: a TimedOut poll after the ::ok token marker keeps the context 
 
 test('deploy ssm: a TimedOut poll before the ::ok token marker saves nothing and points at --force', async () => {
   const contextsFile = tmpCtxFile();
-  const r = await cli(['deploy', 'node', 'n', '--ssm', 'i-1', '--json'], {
+  const r = await cli(['deploy', 'node', 'n', '--ssm', 'i-1', '-o', 'json'], {
     execFn: timedOutAws({}, '::step install\n'), contextsFile,
   });
   assert.strictEqual(r.code, EXIT.SERVER);
