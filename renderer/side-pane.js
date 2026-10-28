@@ -155,7 +155,10 @@ function createSidePane({ dock, popoverApi, showToast, getActiveSession, getFile
         view: (view) => act({ type: 'view', view }),
         dirty: (dirty) => { dispatch(at.seat, { type: 'dirty', id: at.id, dirty }); renderChrome(); },
         save: () => save(at.seat, at.id),
-        open: () => win.api.fileOpen(filePath),
+        open: async () => {
+          const res = await Promise.resolve(win.api.fileOpen(filePath)).catch(() => null);
+          if (res && res.revealed) showToast(`Revealed in Finder, not opened: it is ${res.reason}`, { kind: 'warn', duration: 6000 });
+        },
         escape: () => focusTerminal(),
         discard: () => act({ type: 'discard' }),
         keep: () => act({ type: 'keep' }),

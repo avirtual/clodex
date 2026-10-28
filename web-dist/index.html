@@ -31527,6 +31527,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
         }
         function onSessionChanged() {
+          served = true;
+          servedSeat = activeName();
           clearTimeout(armTimer);
           armTimer = null;
           releasePeek();
@@ -31541,11 +31543,24 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           refreshStatus();
         }
+        let served = false;
+        let servedSeat = null;
+        function seatActivated() {
+          const name = activeName();
+          if (served && name !== servedSeat) {
+            onSessionChanged();
+            return true;
+          }
+          served = true;
+          servedSeat = name;
+          syncSeatAvailability();
+          return false;
+        }
         function forgetSession(name) {
           if (!name) return;
           decks.delete(name);
-          if (!attachedBy.delete(name)) return;
           if (peekOn === name) releasePeek();
+          attachedBy.delete(name);
           refreshStatus();
         }
         function onSelectionSent(name) {
@@ -31578,6 +31593,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           domSelection,
           deckOf,
           onSessionChanged,
+          seatActivated,
           forgetSession,
           onSelectionSent,
           setQuota,
@@ -39605,7 +39621,7 @@ Opening it here and saving would overwrite the file with what this editor could 
         alert: '<span class="subagent-icon" aria-hidden="true">&#9888;&#65039;</span>'
       };
       var MAX_RETAINED_FEEDS = 20;
-      function createActivityTab({ host, proxyState, proxyPollMs }) {
+      function createActivityTab({ host, proxyState, proxyPollMs, hasSeat = null }) {
         let chipsEl = null;
         let bodyEl = null;
         let asOfEl = null;
@@ -39623,6 +39639,7 @@ Opening it here and saving would overwrite the file with what this editor could 
         function liveSubs() {
           const out = /* @__PURE__ */ new Map();
           for (const [name, st] of proxyState) {
+            if (hasSeat && !hasSeat(name)) continue;
             const p = st && st.payload;
             const ageS = st ? (Date.now() - st.at) / 1e3 : 0;
             if (!p || !p.linked || ageS > proxyPollMs * 4 / 1e3) continue;
@@ -40441,7 +40458,10 @@ Opening it here and saving would overwrite the file with what this editor could 
           selection: () => host.domSelection(bodyEl),
           onSeatChanged: () => onShow()
         });
-        return { open: () => host.open("console") };
+        function forgetSeat(name) {
+          seats.delete(name);
+        }
+        return { open: () => host.open("console"), forgetSeat };
       }
       module.exports = { createConsoleTab, MAX_BLOCKS, POLL_MS };
     }
@@ -45361,10 +45381,11 @@ void main() {
           seenTs.set(viewKey(seat, id), entry ? entry.ts : null);
         }
         function makeView(seat, id, filePath) {
+          const at = { seat, id };
           const api = popoverApi(seat);
           const act = (action) => {
-            const r = dispatch(seat, { ...action, id });
-            runEffect(seat, id, r.effect);
+            const r = dispatch(at.seat, { ...action, id: at.id });
+            runEffect(at.seat, at.id, r.effect);
           };
           const v = createFileTab({
             doc,
@@ -45374,24 +45395,28 @@ void main() {
             on: {
               view: (view) => act({ type: "view", view }),
               dirty: (dirty) => {
-                dispatch(seat, { type: "dirty", id, dirty });
+                dispatch(at.seat, { type: "dirty", id: at.id, dirty });
                 renderChrome();
               },
-              save: () => save(seat, id),
-              open: () => win.api.fileOpen(filePath),
+              save: () => save(at.seat, at.id),
+              open: async () => {
+                const res = await Promise.resolve(win.api.fileOpen(filePath)).catch(() => null);
+                if (res && res.revealed) showToast(`Revealed in Finder, not opened: it is ${res.reason}`, { kind: "warn", duration: 6e3 });
+              },
               escape: () => focusTerminal(),
               discard: () => act({ type: "discard" }),
               keep: () => act({ type: "keep" }),
               theirs: async () => {
-                const fresh = await popoverApi(seat).diff(filePath).catch((e) => ({ ok: false, error: String(e) }));
-                const cur = views.get(viewKey(seat, id));
+                const fresh = await popoverApi(at.seat).diff(filePath).catch((e) => ({ ok: false, error: String(e) }));
+                const cur = views.get(viewKey(at.seat, at.id));
                 if (cur !== v) return;
                 v.setDiff(fresh);
                 act({ type: "view", view: "diff" });
               },
-              follow: (p, line) => follow(seat, filePath, p, line)
+              follow: (p, line) => follow(at.seat, filePath, p, line)
             }
           });
+          v.at = at;
           host.appendChild(v.el);
           views.set(viewKey(seat, id), v);
           recordSeen(seat, id, filePath);
@@ -45489,6 +45514,36 @@ void main() {
           if (shownSeat === seat) shownSeat = null;
           renderChrome();
         }
+        function renameSeat(seat, next) {
+          const set = sets.get(seat);
+          if (!set || !next || next === seat || sets.has(next)) return;
+          const ids = new Map(set.tabs.map((t) => [t.id, t.kind === "file" ? fileTabId(next, t.path) : t.id]));
+          for (const t of set.tabs) {
+            const k = viewKey(seat, t.id);
+            const nk = viewKey(next, ids.get(t.id));
+            const v = views.get(k);
+            if (v) {
+              views.delete(k);
+              if (v.at) {
+                v.at.seat = next;
+                v.at.id = ids.get(t.id);
+              }
+              views.set(nk, v);
+            }
+            if (seenTs.has(k)) {
+              seenTs.set(nk, seenTs.get(k));
+              seenTs.delete(k);
+            }
+          }
+          sets.delete(seat);
+          sets.set(next, {
+            ...set,
+            tabs: set.tabs.map((t) => ({ ...t, id: ids.get(t.id) })),
+            active: set.active ? ids.get(set.active) || null : null
+          });
+          if (shownSeat === seat) shownSeat = next;
+          renderChrome();
+        }
         function noteFiles(seat, files) {
           for (const t of setOf(seat).tabs) {
             const k = viewKey(seat, t.id);
@@ -45527,7 +45582,7 @@ void main() {
         });
         dock.addPane("files", pane, 0);
         renderChrome();
-        return { open, showSeat, forgetSeat, noteFiles, noteToolRecord, toggle, hasTabs, isOpen, paneOpen, onChange };
+        return { open, showSeat, forgetSeat, renameSeat, noteFiles, noteToolRecord, toggle, hasTabs, isOpen, paneOpen, onChange };
       }
       function bindFilesToggle({ button, sidePane, getActiveSession }) {
         const badge = button.querySelector(".footer-badge");
@@ -53244,6 +53299,7 @@ ${detail}` });
               showToast(`Rename failed: ${res && res.error || "unknown error"}`, { kind: "error", duration: 1e4, name: sessionName });
               return;
             }
+            sidePane.renameSeat(sessionName, res.name);
             removeSession(sessionName, { keepPersisted: true });
             streamSeatNames.delete(sessionName);
             seatViewMemory.delete(sessionName);
@@ -54659,15 +54715,11 @@ ${detail}` });
       function switchSession(name) {
         if (!sessions.has(name)) return;
         if (isSearchOpen()) closeSearch();
-        const wasActive = activeSession;
         activeSession = name;
         window.api.setSidebarView({ activeSession: name }).catch(() => {
         });
         reportFocusedSession();
-        if (wasActive && wasActive !== name) {
-          drawerHost.onSessionChanged();
-          refreshSelectionBadge();
-        } else drawerHost.syncSeatAvailability();
+        if (drawerHost.seatActivated()) refreshSelectionBadge();
         sidePane.showSeat(name);
         filesToggle.refresh();
         for (const [n, s] of sessions) {
@@ -54784,12 +54836,21 @@ ${detail}` });
           s.wrapperEl.remove();
           sessions.delete(name);
         }
-        if (!keepPersisted) streamSeatNames.delete(name);
+        if (!keepPersisted) {
+          streamSeatNames.delete(name);
+          consoleTab.forgetSeat(name);
+          seatVoices.delete(name);
+        }
+        if (voiceArmedSeat === name) {
+          if (voiceEngineView) voiceEngineView.mirror.disarm();
+          voiceArmedSeat = null;
+        }
+        if (voiceRecordingSeat === name) voiceRecordingSeat = null;
         drawerHost.forgetSession(name);
         sidePane.forgetSeat(name);
+        proxyState.delete(name);
         removeSessionFromSidebar(name);
         updateWindowTitle();
-        proxyState.delete(name);
         refreshQuotaChip();
         ctxPct.delete(name);
         ctxTokens.delete(name);
@@ -54803,6 +54864,7 @@ ${detail}` });
             switchSession(remaining[0]);
           } else {
             activeSession = null;
+            drawerHost.onSessionChanged();
             reportFocusedSession();
             emptyState.style.display = "";
             pluginBar.renderFooterButtons();
@@ -56371,6 +56433,7 @@ ${detail}` });
       }
       window.api.onVoiceEngineStopped((name) => {
         voiceTrace(name, "engine self-stopped");
+        if (voiceRecordingSeat === name) voiceRecordingSeat = null;
         if (!voiceSinkFor(name)) return;
         if (voiceArmedSeat === name && voiceEngineView) voiceEngineView.mirror.release();
         setSeatRecording(name, false);
@@ -57477,9 +57540,9 @@ Click for live activity`;
         openActivityFeed,
         refreshChips: refreshActivityChips,
         dropParent: dropActivityFeeds
-      } = createActivityTab({ host: drawerHost, proxyState, proxyPollMs: PROXY_POLL_MS });
+      } = createActivityTab({ host: drawerHost, proxyState, proxyPollMs: PROXY_POLL_MS, hasSeat: (n) => sessions.has(n) });
       createCtlTab({ host: drawerHost });
-      createConsoleTab({
+      var consoleTab = createConsoleTab({
         host: drawerHost,
         getActiveSession: () => activeSession,
         getSeatType: () => activeSession ? sessionTypeOf(activeSession) : null
