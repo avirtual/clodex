@@ -35,7 +35,7 @@ function seat(name, extra = {}) {
   stub.killed = [];
 }
 
-test('destroy reaps the seat\'s drawer shell in the seat\'s own workspace', async () => {
+test('reapDrawerAfter: destroy runs reapDrawerSeat on the seat\'s drawer shell in the seat\'s own workspace', async () => {
   seat('gone');
   const r = await engine.manager.destroy('gone');
   assert.deepStrictEqual(r, { ok: true, live: false });
