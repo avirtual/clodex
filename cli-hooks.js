@@ -261,36 +261,40 @@ try {
     if (had) {
       const s = segs[segs.length - 1];
       const f = outer[outer.length - 1];
-      if (f && !f.bt && s.length === 0 && !tq) { if (tok === "case") f.inCase++; else if (tok === "esac" && f.inCase > 0) f.inCase--; }
+      if (f && !f.bt) {
+        if (f.cmd && !tq) { if (tok === "case") f.inCase++; else if (tok === "esac" && f.inCase > 0) f.inCase--; }
+        f.cmd = false;
+      }
       s.push(tok);
     }
     tok = ""; had = false; tq = false;
   };
+  const popFrame = () => { outer.pop(); const f = outer[outer.length - 1]; if (f && !f.bt) f.cmd = false; };
   for (let i = 0; i < cmd.length; i++) {
     const c = cmd.charAt(i);
     if (q) {
       if (c === q) { q = null; continue; }
       if (q === '"' && c === BS && i + 1 < cmd.length) { i++; if (cmd.charAt(i) !== NL) tok += cmd.charAt(i); had = true; tq = true; continue; }
       if (q === '"' && c === BT) { push(); segs.push([]); outer.push({ bt: true }); q = null; continue; }
-      if (q === '"' && c === "$" && cmd.charAt(i + 1) === "(") { i++; push(); segs.push([]); outer.push({ bt: false, depth: 0, inCase: 0, ubt: false }); q = null; continue; }
+      if (q === '"' && c === "$" && cmd.charAt(i + 1) === "(") { i++; push(); segs.push([]); outer.push({ bt: false, depth: 0, inCase: 0, ubt: false, cmd: true }); q = null; continue; }
       tok += c; had = true; tq = true; continue;
     }
     const top = outer[outer.length - 1];
-    if (top && top.bt && c === BT) { push(); segs.push([]); outer.pop(); q = '"'; continue; }
+    if (top && top.bt && c === BT) { push(); segs.push([]); popFrame(); q = '"'; continue; }
     if (top && !top.bt && c === BT) top.ubt = !top.ubt;
-    if (top && !top.bt && !top.ubt && c === "#" && !had && (cmd.charAt(i - 1) <= " " || ";&|()".indexOf(cmd.charAt(i - 1)) >= 0)) { while (i + 1 < cmd.length && cmd.charAt(i + 1) !== NL) i++; continue; }
+    if (top && !outer.some((f) => f.bt || f.ubt) && c === "#" && !had && (cmd.charAt(i - 1) <= " " || ";&|()".indexOf(cmd.charAt(i - 1)) >= 0)) { while (i + 1 < cmd.length && cmd.charAt(i + 1) !== NL) i++; continue; }
     if (top && !top.bt && c === ")") {
       push();
-      if (top.depth === 0 && top.inCase === 0) { segs.push([]); outer.pop(); q = '"'; continue; }
-      if (top.depth > 0) top.depth--;
+      if (top.depth === 0 && top.inCase === 0) { segs.push([]); popFrame(); q = '"'; continue; }
+      if (top.depth > 0) { top.depth--; top.cmd = false; } else top.cmd = true;
     }
     if (top && !top.bt && c === "(") top.depth++;
     if (c === "'" || c === '"') { q = c; had = true; tq = true; continue; }
     if (c === BS && i + 1 < cmd.length) { i++; if (cmd.charAt(i) !== NL) { tok += cmd.charAt(i); had = true; tq = true; } continue; }
     if (c === "{" && cmd.charAt(i + 1) === "}") { i++; tok += "{}"; had = true; continue; }
-    if (c === NL) { push(); segs.push([]); continue; }
+    if (c === NL) { push(); segs.push([]); if (top && !top.bt) top.cmd = true; continue; }
     if (c <= " ") { push(); continue; }
-    if (c === ";" || c === "&" || c === "|" || c === "(" || c === ")" || c === "{" || c === "}" || c === BT) { push(); segs.push([]); continue; }
+    if (c === ";" || c === "&" || c === "|" || c === "(" || c === ")" || c === "{" || c === "}" || c === BT) { push(); segs.push([]); if (top && !top.bt && c !== ")") top.cmd = c === ";" || c === "&" || c === "|"; continue; }
     tok += c; had = true;
   }
   push();

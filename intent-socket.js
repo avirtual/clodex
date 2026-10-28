@@ -185,30 +185,34 @@ function shellSegments(cmd) {
       tok.end = i;
       const s = segs[segs.length - 1];
       const f = outer[outer.length - 1];
-      if (f && !f.bt && s.length === 0 && !tok.quoted) { if (tok.text === 'case') f.inCase++; else if (tok.text === 'esac' && f.inCase > 0) f.inCase--; }
+      if (f && !f.bt) {
+        if (f.cmd && !tok.quoted) { if (tok.text === 'case') f.inCase++; else if (tok.text === 'esac' && f.inCase > 0) f.inCase--; }
+        f.cmd = false;
+      }
       s.push(tok);
     }
     tok = null;
   };
+  const popFrame = () => { outer.pop(); const f = outer[outer.length - 1]; if (f && !f.bt) f.cmd = false; };
   for (let i = 0; i < cmd.length; i++) {
     const c = cmd.charAt(i);
     if (q) {
       if (c === q) { q = null; continue; }
       if (q === '"' && c === '\\' && i + 1 < cmd.length) { i++; if (cmd.charAt(i) !== '\n') { at(i - 1).text += cmd.charAt(i); tok.quoted = true; } continue; }
       if (q === '"' && c === '`') { push(i); segs.push([]); outer.push({ bt: true }); q = null; continue; }
-      if (q === '"' && c === '$' && cmd.charAt(i + 1) === '(') { push(i); segs.push([]); outer.push({ bt: false, depth: 0, inCase: 0, ubt: false }); q = null; i++; continue; }
+      if (q === '"' && c === '$' && cmd.charAt(i + 1) === '(') { push(i); segs.push([]); outer.push({ bt: false, depth: 0, inCase: 0, ubt: false, cmd: true }); q = null; i++; continue; }
       at(i).text += c;
       tok.quoted = true;
       continue;
     }
     const top = outer[outer.length - 1];
-    if (top && top.bt && c === '`') { push(i); segs.push([]); outer.pop(); q = '"'; continue; }
+    if (top && top.bt && c === '`') { push(i); segs.push([]); popFrame(); q = '"'; continue; }
     if (top && !top.bt && c === '`') top.ubt = !top.ubt;
-    if (top && !top.bt && !top.ubt && c === '#' && !tok && (cmd.charAt(i - 1) <= ' ' || ';&|()'.includes(cmd.charAt(i - 1)))) { while (i + 1 < cmd.length && cmd.charAt(i + 1) !== '\n') i++; continue; }
+    if (top && !outer.some((f) => f.bt || f.ubt) && c === '#' && !tok && (cmd.charAt(i - 1) <= ' ' || ';&|()'.includes(cmd.charAt(i - 1)))) { while (i + 1 < cmd.length && cmd.charAt(i + 1) !== '\n') i++; continue; }
     if (top && !top.bt && c === ')') {
       push(i);
-      if (top.depth === 0 && top.inCase === 0) { segs.push([]); outer.pop(); q = '"'; continue; }
-      if (top.depth > 0) top.depth--;
+      if (top.depth === 0 && top.inCase === 0) { segs.push([]); popFrame(); q = '"'; continue; }
+      if (top.depth > 0) { top.depth--; top.cmd = false; } else top.cmd = true;
     }
     if (top && !top.bt && c === '(') top.depth++;
     if (c === "'" || c === '"') { at(i).quoted = true; q = c; continue; }
@@ -219,8 +223,8 @@ function shellSegments(cmd) {
       const h = heredocWord(cmd, i);
       if (h) { push(i); at(i).text = cmd.slice(i, h.end); push(h.end); pending.push(h); i = h.end - 1; continue; }
     }
-    if (c === '\n' && pending.length) { push(i); segs.push([]); i = skipHeredocs(cmd, i + 1, pending); pending = []; continue; }
-    if (SEPARATORS.includes(c)) { push(i); segs.push([]); continue; }
+    if (c === '\n' && pending.length) { push(i); segs.push([]); if (top && !top.bt) top.cmd = true; i = skipHeredocs(cmd, i + 1, pending); pending = []; continue; }
+    if (SEPARATORS.includes(c)) { push(i); segs.push([]); if (top && !top.bt && c !== ')') top.cmd = ';&|\n'.includes(c); continue; }
     if (c <= ' ') { push(i); continue; }
     at(i).text += c;
   }
