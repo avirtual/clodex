@@ -14,6 +14,8 @@ blocks a release.
 
 ## Unreleased
 
+- **Security:** the Bash deny guard and the `clodex-send` segmenter no longer let a `case` pattern's `)` or a `#` comment inside a double-quoted `$(…)` end the substitution early, so `echo "$(case x in x) kill -9 -1;; esac)"` is examined like any other command.
+
 ## 5.150.1 — 2026-10-28 — quoted command substitution in the Bash guard, stale pending-claim rehome
 
 - **Security:** the Bash deny guard and the `clodex-send` segmenter split on backticks and `$(` inside double quotes too, so `` echo "`kill -9 -1`" `` and `echo "$(git add -A)"` are examined as their own commands; single-quoted and backslash-escaped forms stay literal.
