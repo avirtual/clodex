@@ -1046,7 +1046,7 @@ function initStores(userDataPath, {
       ensureDir(TEMPLATES_DIR);
       const { id, ...body } = template;
       body.name = name; // portability hint; read treats the filename as canonical
-      fs.writeFileSync(this._file(name), JSON.stringify(body, null, 2), { mode: 0o600 });
+      atomicWriteFileSync(this._file(name), JSON.stringify(body, null, 2));
     },
     // Rename-in-place: the caller passes the OLD name as `id` and the NEW one as
     // `name`. Dest-collision is the caller's check; this trusts it.
@@ -1224,7 +1224,7 @@ function initStores(userDataPath, {
       if (!PROMPT_KINDS.includes(kind)) throw new Error(`invalid prompt kind: ${kind}`);
       if (!PROMPT_NAME_RE.test(stem)) throw new Error(`invalid prompt name: ${stem}`);
       ensureDir(this._dir(kind));
-      fs.writeFileSync(this._file(kind, stem), String(content ?? ''), { mode: 0o600 });
+      atomicWriteFileSync(this._file(kind, stem), String(content ?? ''));
       return this.list();
     },
     remove(kind, stem) {
@@ -1409,7 +1409,7 @@ function initStores(userDataPath, {
     save(name, content) {
       if (!AGENT_NAME_RE.test(name)) throw new Error(`invalid agent name: ${name}`);
       ensureDir(AGENTS_DIR);
-      fs.writeFileSync(this._file(name), String(content ?? ''), { mode: 0o600 });
+      atomicWriteFileSync(this._file(name), String(content ?? ''));
       return this.list();
     },
     remove(name) {
@@ -1450,7 +1450,7 @@ function initStores(userDataPath, {
     save(name, content) {
       if (!AGENT_NAME_RE.test(name)) throw new Error(`invalid skill name: ${name}`);
       ensureDir(SKILLS_LIB_DIR);
-      fs.writeFileSync(this._file(name), String(content ?? ''), { mode: 0o600 });
+      atomicWriteFileSync(this._file(name), String(content ?? ''));
       return this.list();
     },
     remove(name) {
@@ -1496,7 +1496,7 @@ function initStores(userDataPath, {
     save(name, content) {
       if (!AGENT_NAME_RE.test(name)) throw new Error(`invalid exec command name: ${name}`);
       ensureDir(EXEC_DIR);
-      fs.writeFileSync(this._file(name), String(content ?? ''), { mode: 0o600 });
+      atomicWriteFileSync(this._file(name), String(content ?? ''));
       return this.list();
     },
     remove(name) {
@@ -1549,7 +1549,7 @@ function initStores(userDataPath, {
       const check = validateMcpEntry(entry);
       if (!check.ok) throw new Error(`invalid MCP server ${name}: ${check.errors.join('; ')}`);
       ensureDir(MCP_DIR);
-      fs.writeFileSync(file, JSON.stringify(entry, null, 2), { mode: 0o600 });
+      atomicWriteFileSync(file, JSON.stringify(entry, null, 2));
       fs.chmodSync(file, 0o600);
       return this.list();
     },

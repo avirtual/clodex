@@ -567,3 +567,15 @@ test('memoryStore: recallMany by exact id returns only that unit even when a new
   assert.deepStrictEqual(store.recallMany('alpha', older.id).map(u => u.id), [older.id]);
   assert.strictEqual(store.recall('alpha', older.id).id, older.id);
 });
+
+test('_setFlag and update leave the unit intact when the write dies mid-way', (t) => {
+  const { store, dir } = tmpStore();
+  const u = store.remember('alpha', { text: 'durable body' });
+  const file = path.join(dir, 'alpha', `${u.id}.md`);
+  const before = fs.readFileSync(file, 'utf-8');
+  t.mock.method(fs, 'writeSync', () => { throw new Error('disk full'); });
+  t.mock.method(fs, 'writeFileSync', (f) => { fs.truncateSync(f, 0); throw new Error('disk full'); });
+  assert.throws(() => store.setPinned('alpha', u.id, true), /disk full/);
+  assert.throws(() => store.update('alpha', u.id, { text: 'next' }), /disk full/);
+  assert.strictEqual(fs.readFileSync(file, 'utf-8'), before);
+});

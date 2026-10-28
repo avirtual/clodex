@@ -1123,6 +1123,20 @@ test('templates: save refuses a template with no name, and never reads undefined
   } finally { cleanup(); }
 });
 
+test('templates: a save that dies mid-write leaves the prior file intact', (t) => {
+  const { registryDir, stores, cleanup } = freshStores();
+  try {
+    stores.templates.save({ name: 'keep', type: 'claude', model: 'one' });
+    const file = path.join(registryDir, 'library', 'templates', 'keep.json');
+    const before = fs.readFileSync(file, 'utf-8');
+    t.mock.method(fs, 'writeSync', () => { throw new Error('disk full'); });
+    t.mock.method(fs, 'writeFileSync', (f) => { fs.truncateSync(f, 0); throw new Error('disk full'); });
+    assert.throws(() => stores.templates.save({ name: 'keep', type: 'claude', model: 'two' }), /disk full/);
+    t.mock.restoreAll();
+    assert.strictEqual(fs.readFileSync(file, 'utf-8'), before);
+  } finally { cleanup(); }
+});
+
 test('templates: save/list/remove over per-file storage', () => {
   const { registryDir, stores, cleanup } = freshStores();
   try {
