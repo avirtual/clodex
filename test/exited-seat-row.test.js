@@ -229,6 +229,7 @@ function mkRenderer({ api = {}, confirmAnswer = true } = {}) {
     streamSeatNames: new Set(),
     archivingSessions: new Map(),
     movingFailed: new Map(),
+    respawnSnapshots: new Map(),
     activeSession: null,
     respawnFocus: new Map(),
     dialogOverlay: { classList: { contains: () => true } },
@@ -255,13 +256,14 @@ function mkRenderer({ api = {}, confirmAnswer = true } = {}) {
     initSidebarView: rec('initSidebarView'),
     switchToNewSession: rec('switchToNewSession'),
     applyCloneChip: rec('applyCloneChip'),
+    applyTicketBadge: rec('applyTicketBadge'),
     refreshNewSessionToolGate() {},
     terminalWebglReady: Promise.resolve(),
   };
   const names = Object.keys(env).filter((k) => k !== 'exitHandler' && k !== 'movedInHandler');
   const body = [
     slice('const seatIoKind', ';\n'),
-    fnSrc('exitedLabel'), fnSrc('rowSnapshot'), fnSrc('rebuildLiveRow'), fnSrc('exitedRowSnapshot'), fnSrc('addExitedSessionToSidebar'), `async ${fnSrc('forgetSavedEntry')}`,
+    fnSrc('exitedLabel'), fnSrc('rowSnapshot'), fnSrc('takeRespawnSnapshot'), fnSrc('rebuildLiveRow'), fnSrc('exitedRowSnapshot'), fnSrc('addExitedSessionToSidebar'), `async ${fnSrc('forgetSavedEntry')}`,
     slice('window.api.onSessionExit((name, code, meta) => {', '\n});\n'),
     slice('window.api.onSessionMovedIn((entry) => {', '\n});\n'),
     `const reattach = ({ name, type, cwd, backend, noWire, io, background, clone }) => { switch ('reattach') { ${slice("    case 'reattach':", '      break;\n')} } };`,
@@ -362,4 +364,30 @@ test('a reattach for a woken seat replaces its archived row with one live row', 
   assert.deepStrictEqual(h.rows, []);
   assert.deepStrictEqual(h.calls.filter((c) => c[0] === 'addSessionToSidebar').map((c) => c.slice(1, 4)), [['asst', 'claude', '/w']]);
   assert.deepStrictEqual(h.calls.find((c) => c[0] === 'switchToNewSession'), ['switchToNewSession', 'asst', { agentInitiated: true }]);
+});
+
+function stashedRespawn(h) {
+  const row = h.liveRow('s', { type: 'claude', cwd: '/w', fixFor: 'box1', ticket: 't4' });
+  row.querySelector = (sel) => (sel === '.session-name' ? { textContent: 'Lab' } : null);
+  h.env.exitHandler('s', 0, { expected: true, signal: 15, agentType: 'claude' });
+  assert.deepStrictEqual(h.rows, [], 'ENTER: the expected exit removed the row');
+  return () => h.reattach({ name: 's', type: 'claude', cwd: '/w', backend: null, noWire: false, io: 'pty', background: false });
+}
+
+test('a reattach after an expected exit rebuilds the row with the label, fix chip and ticket dot it had', () => {
+  const h = mkRenderer();
+  const reattach = stashedRespawn(h);
+  reattach();
+  assert.deepStrictEqual(h.calls.find((c) => c[0] === 'addSessionToSidebar'), ['addSessionToSidebar', 's', 'claude', '/w', 'Lab', null, null, false, null, 'box1']);
+  assert.deepStrictEqual(h.calls.find((c) => c[0] === 'applyTicketBadge'), ['applyTicketBadge', 's', 't4']);
+  assert.strictEqual(h.env.respawnSnapshots.has('s'), false, 'the snapshot is used once');
+});
+
+test('a respawn snapshot older than 60 s is not used', (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1000 });
+  const h = mkRenderer();
+  const reattach = stashedRespawn(h);
+  t.mock.timers.tick(60001);
+  reattach();
+  assert.deepStrictEqual(h.calls.find((c) => c[0] === 'addSessionToSidebar'), ['addSessionToSidebar', 's', 'claude', '/w', null, null, null, false, null, null]);
 });
