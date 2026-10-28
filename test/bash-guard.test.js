@@ -15,6 +15,9 @@ const { createCliHooks } = require('../cli-hooks');
 const { pathFor } = require('../clodex-paths');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
+const CASE_REASON = 'a `case` inside a double-quoted $(…) or backtick cannot be examined safely:'
+  + ' unquote the substitution or move the case statement out of it';
+
 const REASON = 'ticket t9: stage only the paths you edited (git add <path>…)'
   + ' — a whole-tree add sweeps a subagent\'s in-flight revert into your commit.';
 
@@ -91,25 +94,25 @@ const TABLE = [
   { cmd: 'echo "$(echo "$(x)case")"; git add -A', want: 'deny' },
   { cmd: 'echo "$(echo `echo "$(true #)"`; git add -A) "', want: 'deny' },
   { cmd: 'echo "`echo "$(true #)"`"; git add -A', want: 'deny' },
-  { cmd: 'echo "$(echo "$(x)"case)"; git add -A', want: 'deny' },
-  { cmd: 'echo "$(echo "$(x)" case)"; git add -A', want: 'deny' },
-  { cmd: 'echo "$(echo $(x) case)"; git add -A', want: 'deny' },
-  { cmd: 'echo "$(echo {a,b} case)"; git add -A', want: 'deny' },
+  { cmd: 'echo "$(echo "$(x)"case)"; git add -A', want: 'deny', reason: CASE_REASON },
+  { cmd: 'echo "$(echo "$(x)" case)"; git add -A', want: 'deny', reason: CASE_REASON },
+  { cmd: 'echo "$(echo $(x) case)"; git add -A', want: 'deny', reason: CASE_REASON },
+  { cmd: 'echo "$(echo {a,b} case)"; git add -A', want: 'deny', reason: CASE_REASON },
   { cmd: 'echo "$({ case x in x) git add -A;; esac; })"', want: 'deny' },
-  { cmd: 'echo "$(echo `x` case)"; git add -A', want: 'deny' },
+  { cmd: 'echo "$(echo `x` case)"; git add -A', want: 'deny', reason: CASE_REASON },
   { cmd: 'echo "$(case x in x) echo hi;; esac) git add -A"', want: 'pass' },
   { cmd: 'echo "$(if :; then case x in x) git add -A;; esac; fi)"', want: 'deny' },
   { cmd: 'echo "$(! case x in x) git add -A;; esac)"', want: 'deny' },
   { cmd: 'echo "$(coproc case x in x) git add -A;; esac)"', want: 'deny' },
-  { cmd: 'echo "$(echo then case)"; git add -A', want: 'deny' },
-  { cmd: 'echo "$(a=(case x); echo)"; git add -A', want: 'deny' },
-  { cmd: 'echo "$(echo $(( case + 1 )))"; git add -A', want: 'deny' },
-  { cmd: 'echo "$(-x case)"; git add -A', want: 'deny' },
-  { cmd: 'echo "$(a=() case)"; git add -A', want: 'deny' },
-  { cmd: 'echo "$(@() case)"; git add -A', want: 'deny' },
-  { cmd: 'echo "$(@( ) case)"; git add -A', want: 'deny' },
-  { cmd: 'echo "$(case x in (case) a;; esac)"; git add -A', want: 'deny' },
-  { cmd: 'echo "$(echo @(case|x))"; git add -A', want: 'deny' },
+  { cmd: 'echo "$(echo then case)"; git add -A', want: 'deny', reason: CASE_REASON },
+  { cmd: 'echo "$(a=(case x); echo)"; git add -A', want: 'deny', reason: CASE_REASON },
+  { cmd: 'echo "$(echo $(( case + 1 )))"; git add -A', want: 'deny', reason: CASE_REASON },
+  { cmd: 'echo "$(-x case)"; git add -A', want: 'deny', reason: CASE_REASON },
+  { cmd: 'echo "$(a=() case)"; git add -A', want: 'deny', reason: CASE_REASON },
+  { cmd: 'echo "$(@() case)"; git add -A', want: 'deny', reason: CASE_REASON },
+  { cmd: 'echo "$(@( ) case)"; git add -A', want: 'deny', reason: CASE_REASON },
+  { cmd: 'echo "$(case x in (case) a;; esac)"; git add -A', want: 'deny', reason: CASE_REASON },
+  { cmd: 'echo "$(echo @(case|x))"; git add -A', want: 'deny', reason: CASE_REASON },
 
   { cmd: 'git add a.js b.js', want: 'pass' },
   { cmd: 'git add cli-hooks.js test/bash-guard.test.js', want: 'pass' },
@@ -139,7 +142,7 @@ test('the guard denies every whole-tree stage and passes everything else', () =>
     'the `git add -A` deny row must be in the table');
   assert.ok(TABLE.filter((r) => r.want === 'deny').length >= 10);
 
-  for (const { cmd, want } of TABLE) {
+  for (const { cmd, want, reason } of TABLE) {
     const out = run(script, cmd);
     if (want === 'pass') {
       assert.strictEqual(out, '', `must PASS: ${cmd}`);
@@ -153,7 +156,7 @@ test('the guard denies every whole-tree stage and passes everything else', () =>
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
         permissionDecision: 'deny',
-        permissionDecisionReason: REASON,
+        permissionDecisionReason: reason || REASON,
       },
     }, `deny shape for: ${cmd}`);
   }
@@ -194,11 +197,15 @@ const KILL_TABLE = [
   { cmd: 'echo "$(f () { case x in x) kill -9 -1;; esac; }; f)"', want: 'deny' },
   { cmd: 'echo "$(function f () { case x in x) kill -9 -1;; esac; }; f)"', want: 'deny' },
   { cmd: 'echo "$(f ( ) { case x in x) kill -9 -1;; esac; }; f)"', want: 'deny' },
-  { cmd: 'echo "$(function case { case x in x) kill -9 -1;; esac; }; :)"', want: 'deny' },
+  { cmd: 'echo "$(function case { case x in x) kill -9 -1;; esac; }; :)"', want: 'deny', reason: CASE_REASON },
   { cmd: 'kill -9 \\\n-1', want: 'deny' },
   { cmd: 'kill \\\n0', want: 'deny' },
   { cmd: 'timeout 5 pkill foo', want: 'deny' },
   { cmd: 'A=1 command pkill foo', want: 'deny' },
+  { cmd: 'echo "$(echo case)"', want: 'deny', reason: CASE_REASON },
+  { cmd: 'echo "$(x;; case) kill -9 -1;; esac)"', want: 'deny' },
+  { cmd: 'echo "`case x in x) kill -9 -1;; esac`"', want: 'deny', reason: CASE_REASON },
+  { cmd: 'echo "$(!(case|x)) kill -9 -1"', want: 'deny' },
 
   { cmd: 'kill 1234', want: 'pass' },
   { cmd: 'kill -9 1234 5678', want: 'pass' },
@@ -209,6 +216,10 @@ const KILL_TABLE = [
   { cmd: 'echo "run pkill later"', want: 'pass' },
   { cmd: 'git log --grep pkill', want: 'pass' },
   { cmd: 'ps aux | grep pkill', want: 'pass' },
+  { cmd: 'echo "$(case x in x) echo hi;; esac)"', want: 'pass' },
+  { cmd: "echo 'case'", want: 'pass' },
+  { cmd: 'echo "case"', want: 'pass' },
+  { cmd: 'echo "$(echo \\"case\\")"', want: 'pass' },
 ];
 
 function runUnticketed(script, command) {
@@ -227,7 +238,7 @@ test('every seat, ticket or not, is refused a pattern kill and allowed a pid kil
   assert.ok(KILL_TABLE.some((r) => r.cmd === 'pkill -f "cat" -U 501 -x' && r.want === 'deny'));
   assert.ok(KILL_TABLE.filter((r) => r.want === 'deny').length >= 11);
 
-  for (const { cmd, want } of KILL_TABLE) {
+  for (const { cmd, want, reason } of KILL_TABLE) {
     const out = runUnticketed(script, cmd);
     if (want === 'pass') {
       assert.strictEqual(out, '', `must PASS: ${cmd}`);
@@ -241,7 +252,7 @@ test('every seat, ticket or not, is refused a pattern kill and allowed a pid kil
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
         permissionDecision: 'deny',
-        permissionDecisionReason: KILL_REASON,
+        permissionDecisionReason: reason || KILL_REASON,
       },
     }, `deny shape for: ${cmd}`);
   }

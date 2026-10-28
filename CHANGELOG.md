@@ -14,6 +14,8 @@ blocks a release.
 
 ## Unreleased
 
+- **Security:** the Bash deny guard now refuses a command whose double-quoted `$(…)` or backtick holds a `case` it could not place in bash's grammar, instead of guessing where the substitution ends; unquote the substitution or move the `case` out to run it.
+
 ## 5.150.3 — 2026-10-28 — guard reserved-word fix, three-state branch probe, release.sh pins
 
 - **Security:** inside a double-quoted `$(…)` or backtick, the Bash deny guard and the `clodex-send` segmenter now recognise a `case` after `!`, `time`, `if`/`then`/`else`/`elif`, `while`/`until`/`do` and `coproc`, so a case pattern's `)` can no longer end the substitution early and hide the command behind it.

@@ -257,12 +257,15 @@ try {
   let tq = false;
   let q = null;
   const outer = [];
+  let uncountedCase = false;
   const push = () => {
     if (had) {
       const s = segs[segs.length - 1];
       const f = outer[outer.length - 1];
+      if (f && f.bt && tok === "case" && !tq) uncountedCase = true;
       if (f && !f.bt) {
         const head = f.cmd && !tq;
+        if (tok === "case" && !tq && !head) uncountedCase = true;
         const p = String(s[s.length - 1] || "");
         if (head) { if (tok === "case") f.inCase++; else if (tok === "esac" && f.inCase > 0) f.inCase--; }
         const named = f.next && !(f.next === "coproc" && tok === "case");
@@ -304,6 +307,12 @@ try {
     tok += c; had = true;
   }
   push();
+  if (uncountedCase) {
+    process.stdout.write(JSON.stringify({ hookSpecificOutput: {
+      hookEventName: "PreToolUse", permissionDecision: "deny",
+      permissionDecisionReason: "a " + BT + "case" + BT + " inside a double-quoted $(…) or backtick cannot be examined safely: unquote the substitution or move the case statement out of it" } }));
+    process.exit(0);
+  }
   const ADD_DENY = ["-A", "--all", "--no-ignore-removal", "-u", "--update"];
   const ADD_PATHS = [".", "./", ":/", "*"];
   const TAKES_ARG = "mcCFt";
