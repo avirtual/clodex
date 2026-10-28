@@ -855,3 +855,11 @@ test('create node --token - maps a stdin read failure to a USAGE error naming st
   assert.match(r.stderr, /--token - could not read stdin: EAGAIN/);
   assert.strictEqual(fs.existsSync(f), false);
 });
+
+test('create node refuses an argv --token with whitespace/control chars (t2045)', async () => {
+  const f = tmpCtx();
+  const r = await cli(['create', 'node', 'home', '--url', 'http://h', '--token', 'argv tok'], f);
+  assert.strictEqual(r.code, 2, r.stderr);
+  assert.match(r.stderr, /--token has whitespace\/control chars/);
+  assert.strictEqual(fs.existsSync(f), false);
+});

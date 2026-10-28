@@ -935,3 +935,28 @@ test('undeploy docker ctx cleanup: a context recording this container on this ho
   const after = JSON.parse(fs.readFileSync(contextsFile, 'utf8'));
   assert.deepStrictEqual(Object.keys(after.contexts).sort(), ['local', 'mybox']);
 });
+
+test('undeploy helm ctx cleanup: a forced teardown of the typed name keeps a same-named context that records another release (t2045)', async () => {
+  const variants = {
+    stored: { kubectl: { target: 'svc/mynode', namespace: 'clodex', context: 'kind' }, token: 'T', deploy: { flavor: 'helm', release: 'mynode', namespace: 'clodex', kubeContext: 'kind' } },
+    inferred: { kubectl: { target: 'svc/mynode', namespace: 'clodex', context: 'kind' }, token: 'T' },
+  };
+  for (const [label, prod] of Object.entries(variants)) {
+    const contextsFile = tmpCtxFile({ current: 'prod', contexts: { prod } });
+    const rec = {};
+    const r = await cli(['undeploy', 'node', 'prod', '--helm', '--force'], { execFn: fakeHelm(rec), contextsFile });
+    assert.strictEqual(r.code, 0, `${label}: ${r.stderr}`);
+    assert.ok(rec.calls.some((c) => c.join(' ').startsWith('helm uninstall prod ')), `${label}: the typed name is what is torn down`);
+    assert.doesNotMatch(r.stdout, /removed context/, label);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(contextsFile, 'utf8')), { current: 'prod', contexts: { prod } }, label);
+  }
+});
+
+test('undeploy docker ctx cleanup: a routed record naming another container keeps its context (t2045)', async () => {
+  const edge = { ssh: 'user@box', token: 'E', deploy: { flavor: 'docker', container: 'clodexctl-other' } };
+  const contextsFile = tmpCtxFile({ current: 'edge', contexts: { edge } });
+  const r = await cli(['undeploy', 'node', 'edge', '--force'], { runDocker: fakeRunDocker({}, { volumes: ['clodexctl-edge-data'] }), contextsFile });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /removed context/);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(contextsFile, 'utf8')), { current: 'edge', contexts: { edge } });
+});

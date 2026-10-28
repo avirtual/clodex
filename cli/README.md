@@ -680,6 +680,7 @@ underscores; validated early with a clear message). `--ctx <name>` saves the
 context under a different name; `upgrade node <ctx>` passes it, so upgrading a
 context whose release has another name updates that context and never one
 named after the release.
+
 `undeploy node` (helm and docker) removes only the contexts that point at the
 torn-down release (same release, namespace and kube context) or container
 (same container and docker host); a same-named context for another node keeps

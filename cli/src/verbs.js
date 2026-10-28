@@ -903,7 +903,10 @@ function resolveCreateToken(flags, readStdin) {
     if (/[\s\x00-\x1f]/.test(tok)) throw new CliError(EXIT.USAGE, '--token - read a token with whitespace/control chars from stdin — expected a single opaque token');
     return tok;
   }
-  return flags.token ? String(flags.token) : null;
+  if (!flags.token) return null;
+  const tok = String(flags.token);
+  if (/[\s\x00-\x1f]/.test(tok)) throw new CliError(EXIT.USAGE, '--token has whitespace/control chars — expected a single opaque token');
+  return tok;
 }
 
 function nodeKind(e) {

@@ -419,12 +419,12 @@ async function undeployHelm({ printer, flags, args, io, ctxName = null, dep = nu
     else log(`deleted PVC(s) matching ${HELM_PVC_SELECTOR(name)}`);
   }
 
-  ctxCleanup({ flags, printer, io, matchFn: (n, entry) => (n === ctxName && !!dep && helmDepIsRelease(dep, { namespace, kubeContext })) || helmEntryIsRelease(entry, { name, namespace, kubeContext }) });
+  ctxCleanup({ flags, printer, io, matchFn: (n, entry) => (n === ctxName && !!dep && helmDepIsRelease(dep, { name, ctxName, namespace, kubeContext })) || helmEntryIsRelease(entry, { name, namespace, kubeContext }) });
   return EXIT.OK;
 }
 
-function helmDepIsRelease(dep, { namespace, kubeContext }) {
-  return String(dep.namespace || D.DEFAULT_HELM_NAMESPACE) === namespace && (dep.kubeContext ? String(dep.kubeContext) : null) === kubeContext;
+function helmDepIsRelease(dep, { name, ctxName, namespace, kubeContext }) {
+  return String(dep.release || ctxName) === name && String(dep.namespace || D.DEFAULT_HELM_NAMESPACE) === namespace && (dep.kubeContext ? String(dep.kubeContext) : null) === kubeContext;
 }
 
 function helmEntryIsRelease(entry, { name, namespace, kubeContext }) {
@@ -532,7 +532,7 @@ async function undeployDocker({ printer, flags, args, io, ctxName = null, dep = 
     }
   }
 
-  ctxCleanup({ flags, printer, io, matchFn: (n, entry) => (n === ctxName && !!dep && D.normalizeDockerHost(dep.dockerHost) === dockerHost) || dockerEntryIsContainer(entry, { container, dockerHost }) });
+  ctxCleanup({ flags, printer, io, matchFn: (n, entry) => (n === ctxName && !!dep && String(dep.container || D.CONTAINER_PREFIX + ctxName) === container && D.normalizeDockerHost(dep.dockerHost) === dockerHost) || dockerEntryIsContainer(entry, { container, dockerHost }) });
   return EXIT.OK;
 }
 
