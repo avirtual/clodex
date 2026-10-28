@@ -298,10 +298,15 @@ cannot survive either. Those drops tear down locally and send no close POST:
 the owner sheds on the socket close, and a POST in flight would drop every
 watcher of the seat, including a re-opened one.
 
-`PeerManager.sync` reconciles from settings: URL or label change =
-stop+restart that connection; removal emits `peer-removed`. **`peer-removed`
-fires even on URL/label edits** (attachments died with the old connection —
-the UI must shed its tabs; the new connection re-announces).
+`PeerManager.sync` reconciles from settings: a URL, label, token, inbox or
+destination change = stop+restart that connection; removal emits
+`peer-removed`. **`peer-removed` fires even on these edits** (attachments died
+with the old connection — the UI must shed its tabs; the new connection
+re-announces). The one exception is a managed (ssh/cloud) peer whose tunnel
+respawns: only its local tunnel url moves while its destination key
+(`resolvePeerUrls`' `dest`: sshHost or cloud block, plus remotePort) is
+unchanged, so the connection is re-pointed and keeps its tabs, wterms and
+control claims. Editing the target box changes `dest` and restarts.
 
 `TunnelManager` (peer-tunnel.js) holds one `SupervisedTunnel`
 (tunnel-supervisor.js) per ssh-configured peer — the supervisor carries the
@@ -543,7 +548,7 @@ anything else leaves it running.
 - Replay = best-effort scrollback; reset before apply; re-replay on
   reconnect.
 - Split request/SSE socket pools (regression test pins this).
-- `peer-removed` fires on URL/label edits too — consumers must shed tabs.
+- `peer-removed` fires on URL/label/token/inbox/destination edits too — consumers must shed tabs; only a managed peer's tunnel respawn to an unchanged destination re-points instead.
 - Disabled ≠ removed: syncs exclude, prune keeps, sheds are soft.
 - A forwardable port is ADVERTISED or absent, never guessed — and the wirescope
   forward is subordinate to the web view it decorates: it may cost the dashboard

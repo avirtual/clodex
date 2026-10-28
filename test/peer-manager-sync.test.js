@@ -109,3 +109,71 @@ test('the same url moves on a non-managed row still restart the connection', () 
     mgr.stopAll();
   }
 });
+
+function wiredManager(store, urls) {
+  const { createPeerWiring } = require('../peer-wiring');
+  const emits = [];
+  const mgr = new PeerManager({ emit: (ch, ...a) => emits.push([ch, ...a]) });
+  const wiring = createPeerWiring({
+    manager: { _broadcast() {}, _deliverClaimedDms() {} },
+    log: { info() {}, error() {} },
+    SELF_LABEL: 'self',
+    scheduleAppMenuRefresh: () => {},
+    getUiSettings: () => ({ get: () => store, set: (p) => Object.assign(store, p) }),
+    getPeerManager: () => mgr,
+    setPeerManager: () => {},
+    getTunnelManager: () => ({ sync() {}, urlFor: () => urls.shift() || null, statuses: () => [] }),
+    setTunnelManager: () => {},
+  });
+  return { wiring, mgr, emits };
+}
+
+for (const [what, before, after] of [
+  ['an sshHost edit', { sshHost: 'box-a' }, { sshHost: 'box-b' }],
+  ['a remotePort edit', { sshHost: 'box-a', remotePort: 7900 }, { sshHost: 'box-a', remotePort: 7901 }],
+  ['a cloud target edit', { kubectl: { target: 'svc/a' } }, { kubectl: { target: 'svc/b' } }],
+]) {
+  test(`${what} on a managed peer with the same label stops it and fires peer-removed, never re-points`, () => {
+    const store = { peers: [{ id: 'p', label: 'P', ...before }], peerAttached: {}, peerControlled: {}, peerVisible: {} };
+    const { wiring, mgr, emits } = wiredManager(store, ['http://127.0.0.1:3', 'http://127.0.0.1:4']);
+    try {
+      wiring.resolvePeerUrls();
+      const old = mgr._peers.get('p');
+      old.attach('agent');
+      assert.equal(old._attachments.size, 1, 'ENTER: the old connection holds an attachment');
+      emits.length = 0;
+      store.peers = [{ id: 'p', label: 'P', ...after }];
+      wiring.resolvePeerUrls();
+
+      assert.deepEqual(emits.map(([ch]) => ch), ['peer-removed', 'peer-state']);
+      const fresh = mgr._peers.get('p');
+      assert.notStrictEqual(fresh, old, 'a new connection was created');
+      assert.equal(old._attachments.size, 0, 'the old attachments died with the old connection');
+      assert.equal(fresh._attachments.size, 0, 'nothing carried onto the new box');
+      assert.equal(fresh.url, 'http://127.0.0.1:4');
+    } finally {
+      mgr.stopAll();
+    }
+  });
+}
+
+test('a tunnel respawn A -> placeholder -> B with an unchanged destination still re-points through resolvePeerUrls', () => {
+  const store = { peers: [{ id: 'p', label: 'P', sshHost: 'box-a' }], peerAttached: {}, peerControlled: {}, peerVisible: {} };
+  const { wiring, mgr, emits } = wiredManager(store, ['http://127.0.0.1:3', null, 'http://127.0.0.1:4']);
+  try {
+    wiring.resolvePeerUrls();
+    const conn = mgr._peers.get('p');
+    conn.attach('agent');
+    emits.length = 0;
+    wiring.resolvePeerUrls();
+    wiring.resolvePeerUrls();
+
+    assert.ok(emits.some(([ch]) => ch === 'peer-state'), 'ENTER: the re-point announced itself');
+    assert.equal(emits.filter(([ch]) => ch === 'peer-removed').length, 0);
+    assert.strictEqual(mgr._peers.get('p'), conn);
+    assert.equal(conn.url, 'http://127.0.0.1:4');
+    assert.equal(conn._attachments.size, 1, 'the operator`s attachment survives the respawn');
+  } finally {
+    mgr.stopAll();
+  }
+});

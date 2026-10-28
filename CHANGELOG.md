@@ -24,6 +24,9 @@ blocks a release.
 - Removing or restarting a seat clears its voice arm/recording state and per-seat caches, so a rebuilt seat of the same name no longer starts "recording" or inherits the old seat's voice mode and console output.
 - Renaming a seat carries its unsaved side-pane edits to the new name instead of stranding them under the old one.
 - **Security:** the Files pane's Open button reveals launcher files (`.app`, `.command`, `.sh`, …), directories and executables in Finder instead of launching them; a plain file still opens in its default app.
+### Fixed
+
+- Editing a managed peer's target box (ssh host, cloud target or remote port) stops the old connection and sheds its tabs, wterms and control claims again, instead of re-pointing them onto the new box; only a tunnel respawn to the same destination keeps them.
 
 ## 5.148.0 — 2026-10-28 — security fixes from the second cold audit
 

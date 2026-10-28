@@ -19,7 +19,7 @@ depends on the flag, so a restart would shed every live attachment to carry one
 boolean; but a silent no-op would leave the sidebar offering a direct address for
 a peer main now tunnels to.
 
-A `managed` row (an ssh or cloud tunnel peer) whose only change is its `url` is the exception to "a url edit restarts the connection": `repoint` keeps the connection and its wanted attachments and wterms, so a tunnel drop or re-dial never emits `peer-removed`.
+A `managed` row (an ssh or cloud tunnel peer) whose only change is its `url` — its `dest` key from `resolvePeerUrls` (destination plus remotePort) equal to the connection's `_dest` — is the exception to "a url edit restarts the connection": `repoint` keeps the connection and its wanted attachments and wterms, so a tunnel drop or re-dial never emits `peer-removed`. A changed `dest` is a different box and restarts.
 
 ## _probeDialect
 

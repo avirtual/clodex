@@ -147,4 +147,4 @@ class TunnelManager {
 // them from here, and test/peer-tunnel.test.js pins hasCloudTransport from here.
 // Re-exported rather than repointed so no caller and no existing test needs
 // editing for a move that changed nothing about them.
-module.exports = { TunnelManager, Tunnel, hasCloudTransport, CLOUD_KINDS, sameCloud };
+module.exports = { TunnelManager, Tunnel, hasCloudTransport, CLOUD_KINDS, sameCloud, DEFAULT_REMOTE_PORT };

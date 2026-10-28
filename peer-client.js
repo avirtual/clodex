@@ -1217,17 +1217,20 @@ class PeerManager {
         claimInbox: p.inbox === 'claim',
         direct: p.direct === true,
         managed: p.managed === true,
+        dest: typeof p.dest === 'string' ? p.dest : null,
       });
     }
     for (const [id, conn] of this._peers) {
       const w = wanted.get(id);
       if (w && w.managed && w.url !== conn.url && w.label === conn.label
-        && (w.token || null) === (conn._token || null) && w.claimInbox === conn._claimInbox) {
+        && (w.token || null) === (conn._token || null) && w.claimInbox === conn._claimInbox
+        && w.dest === conn._dest) {
         conn._direct = w.direct;
+        conn._dest = w.dest;
         conn.repoint(w.url);
         this._emit('peer-state', id, conn.status());
       } else if (!w || w.url !== conn.url || w.label !== conn.label || (w.token || null) !== (conn._token || null)
-        || w.claimInbox !== conn._claimInbox) {
+        || w.claimInbox !== conn._claimInbox || w.dest !== conn._dest) {
         conn.stop();
         this._peers.delete(id);
         // Announce the drop even on a mere config edit — attachments died
@@ -1242,6 +1245,7 @@ class PeerManager {
     for (const [id, w] of wanted) {
       if (!this._peers.has(id)) {
         const conn = new PeerConnection({ ...w, emit: this._emit, selfLabel: this._selfLabel, computeRoster: this._computeRoster });
+        conn._dest = w.dest;
         this._peers.set(id, conn);
         conn.start();
 // _setOnline emits on TRANSITIONS, so a peer whose hello never succeeds would
