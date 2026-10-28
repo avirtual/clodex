@@ -971,6 +971,10 @@ OUTPUT="\${RUNDIR}/hook-output.json"
 
   function cleanupCodexHook(name, cwd) {
     dropRunDir(name);
+    restoreCodexHooks(cwd);
+  }
+
+  function restoreCodexHooks(cwd) {
     const codexDir = path.join(cwd, '.codex');
     const hooksPath = path.join(codexDir, 'hooks.json');
     const backupPath = hooksPath + '.wb-wrap-backup';
@@ -993,6 +997,19 @@ OUTPUT="\${RUNDIR}/hook-output.json"
         try { fs.unlinkSync(hooksPath); } catch {}
         try { fs.rmdirSync(codexDir); } catch {}
       }
+    }
+  }
+
+  function reconcileCodexHooks(records, liveCwds) {
+    const live = new Set();
+    for (const c of liveCwds || []) if (typeof c === 'string' && c) live.add(path.resolve(c));
+    const seen = new Set();
+    for (const r of records || []) {
+      if (!r || r.type !== 'codex' || typeof r.cwd !== 'string' || !r.cwd) continue;
+      const cwd = path.resolve(r.cwd);
+      if (live.has(cwd) || seen.has(cwd)) continue;
+      seen.add(cwd);
+      try { restoreCodexHooks(cwd); } catch {}
     }
   }
 
@@ -1045,7 +1062,7 @@ OUTPUT="\${RUNDIR}/hook-output.json"
 
   return {
     writeClaudeDigestFile, setupClaudeHook, setupCodexHook, writeMcpConfig, writeMcpCatalog, readMcpCatalog,
-    cleanupClaudeHook, cleanupCodexHook, cleanupMuseSeat,
+    cleanupClaudeHook, cleanupCodexHook, cleanupMuseSeat, reconcileCodexHooks,
   };
 }
 
