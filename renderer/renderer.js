@@ -801,6 +801,7 @@ function rowSnapshot(name, item) {
     fixFor: d.fixFor || null,
     account: d.account || null,
     createdAt: (sidebarMeta.get(name) || {}).createdAt || null,
+    ...(d.ticket ? { ticket: d.ticket } : {}),
   };
 }
 
@@ -814,6 +815,7 @@ function rebuildLiveRow(name, snap, res = {}) {
   refreshSeatMcp(name);
   markSeatPosture(name, snap.posture);
   if (res.clone) applyCloneChip(sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`), res.clone);
+  if (res.ticket || snap.ticket) applyTicketBadge(name, res.ticket || snap.ticket);
   if (snap.createdAt) sidebarMeta.set(name, { ...(sidebarMeta.get(name) || {}), createdAt: snap.createdAt });
 }
 
@@ -1645,7 +1647,7 @@ async function refreshSidebarMeta({ includePr = true } = {}) {
   try {
     const live = await window.api.listSessions();
     if (Array.isArray(live)) refreshSeatsMcp(live.map((s) => s.name));
-    if (Array.isArray(live)) for (const s of live) { applyAccountChip(s.name, s.account || null); markSeatVoice(s.name, s.voice); markSeatEffort(s.name, s.effort); markSeatPosture(s.name, s.posture); if (s.clone) applyCloneChip(sessionList.querySelector(`[data-name="${CSS.escape(s.name)}"]`), s.clone); }
+    if (Array.isArray(live)) for (const s of live) { applyAccountChip(s.name, s.account || null); markSeatVoice(s.name, s.voice); markSeatEffort(s.name, s.effort); markSeatPosture(s.name, s.posture); applyTicketBadge(s.name, s.ticket || null); if (s.clone) applyCloneChip(sessionList.querySelector(`[data-name="${CSS.escape(s.name)}"]`), s.clone); }
   } catch {}
   refreshSidebarView();
   // Which footer buttons show is answered off sidebarMeta, which does not exist

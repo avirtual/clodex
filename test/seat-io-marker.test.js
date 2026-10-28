@@ -503,3 +503,28 @@ test('a restart refused while the seat is still live keeps its live row and draw
   await h.restartOrFailRow('s');
   assert.deepStrictEqual(h.rows.map((r) => [r.dataset.name, r.className]), [['s', 'session-item']]);
 });
+
+test('a restart keeps the row\'s ticket dot', async () => {
+  const api = {};
+  const h = mkRenderer({ window: { api } });
+  api.restartSession = async (n) => { h.env.removeSession(n); return { ok: true }; };
+  h.addSessionToSidebar('s', 'claude', '/w');
+  h.rows[0].dataset.ticket = 't7';
+  await h.restartOrFailRow('s');
+  assert.deepStrictEqual(h.rows.map((r) => [r.dataset.name, r.className, r.dataset.ticket]), [['s', 'session-item', 't7']]);
+});
+
+test('a sidebar refresh pass applies the ticket listSessions reports to each row', async () => {
+  const rows = { s: { dataset: { name: 's' } }, u: { dataset: { name: 'u', ticket: 't1' } } };
+  const env = {
+    metaRefreshInFlight: false, metaRefreshQueued: null, sidebarMeta: new Map(), mergeMeta: (a, b) => ({ ...a, ...b }),
+    window: { api: { sidebarMeta: async () => ({ ok: false }), listSessions: async () => [{ name: 's', ticket: 't9' }, { name: 'u', ticket: null }] } },
+    CSS: { escape: (s) => s },
+    sessionList: { querySelector: (sel) => rows[(/data-name="([^"]*)"/.exec(sel) || [])[1]] || null },
+    refreshSeatsMcp() {}, applyAccountChip() {}, markSeatVoice() {}, markSeatEffort() {}, markSeatPosture() {}, applyCloneChip() {},
+    refreshSidebarView() {}, pluginBar: { renderFooterButtons() {} },
+  };
+  const refresh = new Function(...Object.keys(env), `${fnSrc('applyTicketBadge')}\nreturn async ${fnSrc('refreshSidebarMeta')}`)(...Object.values(env));
+  await refresh();
+  assert.deepStrictEqual([rows.s.dataset.ticket, rows.u.dataset.ticket], ['t9', undefined]);
+});
