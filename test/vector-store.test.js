@@ -202,6 +202,31 @@ test('vector-store: compact reclaims superseded rows without changing answers', 
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('vector-store: a blob re-read that fails after the compact rename leaves get() on the pre-compact rows', () => {
+  const dir = mkTmpRoot('clx-vec-');
+  const file = path.join(dir, 'vec.bin');
+  let failNextBlobRead = false;
+  const readFile = (p, ...rest) => {
+    if (failNextBlobRead && p === file) { failNextBlobRead = false; throw Object.assign(new Error('EIO'), { code: 'EIO' }); }
+    return fs.readFileSync(p, ...rest);
+  };
+  const renameFile = (src, dest) => {
+    fs.renameSync(src, dest);
+    if (dest === file) failNextBlobRead = true;
+  };
+  const store = createVectorStore({ file, dims: D, model: 'test-model', readFile, renameFile });
+  for (let i = 0; i < 5; i++) store.add(`k${i}`, axis(i));
+  for (let i = 0; i < 5; i++) store.add(`k${i}`, axis(7 - i));
+  store.flush();
+  const before = Object.fromEntries([0, 1, 2, 3, 4].map((i) => [`k${i}`, Array.from(store.get(`k${i}`))]));
+  assert.deepStrictEqual(before.k3, Array.from(axis(4)), 'ENTER: k3 reads its current vector');
+  assert.throws(() => store.compact(), /EIO/);
+  assert.strictEqual(failNextBlobRead, false, 'ENTER: the blob re-read after the rename is the read that threw');
+  for (const [key, vec] of Object.entries(before)) assert.deepStrictEqual(Array.from(store.get(key)), vec, key);
+  assert.strictEqual(store.rows(), 10);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('vector-store: compaction survives a restart', () => {
   const { dir, file } = mk();
   const store = createVectorStore({ file, dims: D, model: 'test-model' });

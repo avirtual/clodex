@@ -260,9 +260,10 @@ function createVectorStore({
         try { fs.unlinkSync(tmp); } catch {}
         throw e;
       }
+      const nextBlob = loadBlob();
       sidecar.rows = next;
       rowCount = live.length;
-      blob = loadBlob();
+      blob = nextBlob;
       try {
         renameFile(staged, sidecarPath(file));
         pendingRows = 0;
