@@ -225,8 +225,9 @@ Same **data, not code** rule as the cloud kinds above, and it is enforced
 rather than merely intended — the shape is checked on read (a non-empty string
 flavor, every other field a scalar), so an argv (an array) or a blob of flags
 (an object) is rejected by the shape itself. The enum is checked by the verb
-that routes on it: `upgrade` and `undeploy` refuse an unknown flavor at dispatch. This file is user-editable,
-and a persisted argv is a command line the tool would later execute.
+that routes on it: `upgrade` and `undeploy` refuse an unknown flavor at
+dispatch. This file is user-editable, and a persisted argv is a command line
+the tool would later execute.
 
 The field is **optional**: contexts written before it simply lack it, so there
 is no migration, and anything that needs the flavor says what it cannot
@@ -241,10 +242,11 @@ running task → a clear connect error; `aws`'s own stderr is relayed verbatim.
 
 > **Honesty caveat.** The `gcloud`/`az` templates follow the vendors' documented
 > CLI syntax but have **not** been exercised against live GCP/Azure —
-> `describe node --test --verbose` relays the vendor CLI's own stderr, which is the diagnosis
-> surface. The `ssm`/`kubectl` shapes are the same tunnel mechanism `--ssh` uses
-> and are verifiable in shape the same way. Missing a vendor binary surfaces as
-> the usual tunnel-failed error with an "is `<cli>` installed?" hint.
+> `describe node --test --verbose` relays the vendor CLI's own stderr, which is
+> the diagnosis surface. The `ssm`/`kubectl` shapes are the same tunnel
+> mechanism `--ssh` uses and are verifiable in shape the same way. Missing a
+> vendor binary surfaces as the usual tunnel-failed error with an "is `<cli>`
+> installed?" hint.
 
 **When an SSM tunnel fails, the error names the world.** SSM's control plane
 happily starts sessions to sick instances, so a bare timeout says nothing. On
