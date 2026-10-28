@@ -670,7 +670,7 @@ function ssmSendCommandArgs({ target, region, profile, script } = {}) {
     'ssm', 'send-command',
     '--document-name', 'AWS-RunShellScript',
     '--instance-ids', target,
-    '--parameters', JSON.stringify({ commands: [script] }),
+    '--parameters', JSON.stringify({ commands: [script], executionTimeout: [String(Math.ceil(SSM_DEPLOY_TIMEOUT_MS / 1000))] }),
     '--query', 'Command.CommandId', '--output', 'text'];
 }
 function ssmGetInvocationArgs({ commandId, target, region, profile } = {}) {
@@ -953,30 +953,10 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
   if (json) emit({ type: 'command', commandId });
   else printer.line(`running remote install (SSM command ${commandId})…`);
 
-  let streamed = 0;
-  const result = await ssmPoll({ commandId, ...sd }, {
-    execFn, sleepFn,
-    onStatus: (s) => { if (json) emit({ type: 'status', status: s }); },
-    onMarker: (raw) => { streamed++; renderMarker(raw); },
-  });
-  if (result.status !== 'Success') {
-    const why = result.status === 'TimedOut'
-      ? `remote install timed out on ${target} after ${Math.round(SSM_DEPLOY_TIMEOUT_MS / 60000)}min — re-run to resume (the installer is idempotent)`
-      : result.status === 'Cancelled'
-        ? `remote install was cancelled on ${target} (SSM command ${commandId})`
-        : `remote install failed on ${target} (SSM command ${commandId})`;
-    const tail = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
-    if (json) emit({ type: 'error', reason: 'command-failed', status: result.status, responseCode: result.responseCode, output: tail });
-    else if (tail) printer.line(tail.replace(/^/gm, '  '));
-    throw new CliError(EXIT.SERVER, why);
-  }
-  if (streamed === 0) { for (const l of ssmMarkerLines(result.stdout)) renderMarker(l); }
-  const helloCode = parseHelloMarker(result.stdout);
-  if (!json) printer.line(`  remote install ok${helloCode ? ` (on-box hello ${helloCode})` : ''}`);
-
-  if (flags['no-ctx']) {
-    if (json) emit({ type: 'context', action: 'skipped', reason: '--no-ctx' });
-  } else {
+  let tokenSaved = false;
+  const saveSsmContext = () => {
+    if (tokenSaved || flags['no-ctx']) return;
+    tokenSaved = true;
     const store = loadContextsFor(flags, io);
     const exists = Object.prototype.hasOwnProperty.call(store.contexts, name);
     const webPort = port + 1;
@@ -988,6 +968,43 @@ async function deploySsmVerb({ printer, flags, args, io = {} }) {
       printer.line(`context "${name}" ${exists ? 'updated' : 'saved'} — you can now: clodexctl --ctx ${name} get sessions`);
       printer.line(`  see it in your browser: clodexctl web ${name}`);
     }
+  };
+  let tokenSeen = false;
+  const onTokenMarker = (raw) => {
+    const ev = parseMarker(raw);
+    if (ev.type === 'ok' && ev.name === 'token') { tokenSeen = true; saveSsmContext(); }
+  };
+
+  let streamed = 0;
+  const result = await ssmPoll({ commandId, ...sd }, {
+    execFn, sleepFn,
+    onStatus: (s) => { if (json) emit({ type: 'status', status: s }); },
+    onMarker: (raw) => { streamed++; renderMarker(raw); onTokenMarker(raw); },
+  });
+  if (result.status !== 'Success') {
+    const tokenHint = tokenSaved
+      ? ` — the box is on the new token and the context was saved; verify with \`clodexctl describe node ${name} --test\``
+      : tokenSeen
+        ? ' — the box is on the new token (context not saved: --no-ctx)'
+        : ' — the box may still switch to a token this context does not hold; re-run with --force to rotate';
+    const why = result.status === 'TimedOut'
+      ? `remote install timed out on ${target} after ${Math.round(SSM_DEPLOY_TIMEOUT_MS / 60000)}min${tokenHint}`
+      : result.status === 'Cancelled'
+        ? `remote install was cancelled on ${target} (SSM command ${commandId})${tokenSaved ? tokenHint : ''}`
+        : `remote install failed on ${target} (SSM command ${commandId})${tokenSaved ? tokenHint : ''}`;
+    const tail = [result.stdout, result.stderr].filter(Boolean).join('\n').trim();
+    if (json) emit({ type: 'error', reason: 'command-failed', status: result.status, responseCode: result.responseCode, output: tail, tokenSaved });
+    else if (tail) printer.line(tail.replace(/^/gm, '  '));
+    throw new CliError(EXIT.SERVER, why);
+  }
+  if (streamed === 0) { for (const l of ssmMarkerLines(result.stdout)) renderMarker(l); }
+  const helloCode = parseHelloMarker(result.stdout);
+  if (!json) printer.line(`  remote install ok${helloCode ? ` (on-box hello ${helloCode})` : ''}`);
+
+  if (flags['no-ctx']) {
+    if (json) emit({ type: 'context', action: 'skipped', reason: '--no-ctx' });
+  } else {
+    saveSsmContext();
   }
   const savedHint = flags['no-ctx'] ? '' : ` — the context was saved; debug with: clodexctl describe node ${name} --test --verbose`;
 

@@ -144,7 +144,7 @@ test('ssmSendCommandArgs: RunShellScript, instance-ids, parameters JSON, query',
   assert.deepStrictEqual(argv.slice(argv.indexOf('ssm'), argv.indexOf('ssm') + 6),
     ['ssm', 'send-command', '--document-name', 'AWS-RunShellScript', '--instance-ids', 'i-123']);
   const pj = JSON.parse(argv[argv.indexOf('--parameters') + 1]);
-  assert.deepStrictEqual(pj, { commands: ['echo hi'] });
+  assert.deepStrictEqual(pj, { commands: ['echo hi'], executionTimeout: ['600'] });
   assert.deepStrictEqual(argv.slice(-4), ['--query', 'Command.CommandId', '--output', 'text']);
 });
 
@@ -926,4 +926,42 @@ test('deploy ssm: a successful deploy saves the contexts file exactly once (t204
   });
   assert.strictEqual(r.code, 0, r.stderr);
   assert.strictEqual(saves, 1);
+  assert.strictEqual(r.stdout.match(/context "n" saved/g).length, 1);
+});
+
+function timedOutAws(rec, stdout) {
+  const aws = fakeAws(rec);
+  return async (cmd, argv) => {
+    if (argv.join(' ').includes('get-command-invocation')) {
+      return { stdout: JSON.stringify({ Status: 'TimedOut', ResponseCode: -1, StandardOutputContent: stdout, StandardErrorContent: '' }) };
+    }
+    return aws(cmd, argv);
+  };
+}
+
+test('deploy ssm: a TimedOut poll after the ::ok token marker keeps the context saved with the NEW token', async () => {
+  const contextsFile = tmpCtxFile();
+  const rec = {};
+  const r = await cli(['deploy', 'node', 'n', '--ssm', 'i-1'], {
+    execFn: timedOutAws(rec, '::step install\n::ok install\n::step token\n::ok token\n::step verify\n'), contextsFile,
+    probeSsm: async () => { throw new Error('probe must not run'); },
+  });
+  assert.strictEqual(r.code, EXIT.SERVER);
+  assert.match(r.stderr, /timed out on i-1 after 10min — the box is on the new token and the context was saved; verify with `clodexctl describe node n --test`/);
+  const sent = /CLODEX_REMOTE_TOKEN=(\w+)/.exec(rec.sentScript)[1];
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(contextsFile, 'utf8')).contexts.n, {
+    ssm: { target: 'i-1' }, webPort: 7901, token: sent, deploy: { flavor: 'ssm', target: 'i-1' },
+  });
+});
+
+test('deploy ssm: a TimedOut poll before the ::ok token marker saves nothing and points at --force', async () => {
+  const contextsFile = tmpCtxFile();
+  const r = await cli(['deploy', 'node', 'n', '--ssm', 'i-1', '--json'], {
+    execFn: timedOutAws({}, '::step install\n'), contextsFile,
+  });
+  assert.strictEqual(r.code, EXIT.SERVER);
+  assert.match(r.stderr, /the box may still switch to a token this context does not hold; re-run with --force to rotate/);
+  const err = r.stdout.trim().split('\n').map((l) => JSON.parse(l)).find((e) => e.type === 'error');
+  assert.strictEqual(err.tokenSaved, false);
+  assert.strictEqual(fs.existsSync(contextsFile), false);
 });
