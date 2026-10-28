@@ -32,6 +32,12 @@ blocks a release.
 - Quitting while a ctl command is still dialling its tunnel, or has another command queued behind it, no longer leaves a detached tunnel child holding a local port.
 - An exec command whose schema declares an optional property named like an `Object.prototype` member (`constructor`, `toString`) no longer refuses every payload that omits it.
 
+### Fixed
+
+- Edit Session's "Restart session now" keeps the seat's record through the restart and no longer tells the team lead the seat retired (same for a bulk account move).
+- Restarting a ticket hand no longer frees a hand-cap slot, so a cap-parked ticket cannot start and push the team one hand over its cap.
+- The 5 s SIGKILL fallback after a kill is cancelled once the pty exits, so it can no longer hit a recycled pid.
+
 ## 5.148.0 — 2026-10-28 — security fixes from the second cold audit
 
 - **Security:** `CLODEX_WEB_INSECURE=1` / `CLODEX_REMOTE_INSECURE=1` again serve clients that reach a non-loopback bind, which 5.147.0's Host/Origin gate refused; the flag now also skips that gate, as it already skipped the token requirement.

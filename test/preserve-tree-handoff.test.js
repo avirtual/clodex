@@ -4,13 +4,8 @@
 // t491 — a restarting seat can have its tree claimed underneath it, and the
 // preserve must not put the pointer back.
 //
-// THE WINDOW, and why it is not theoretical. `kill()` removes the persistence
-// record SYNCHRONOUSLY and then only signals the pty; the session leaves
-// `this.sessions` much later, in `ptyProc.onExit`. Between those two moments the
-// seat is LIVE IN ITS TREE AND NAMED BY NO RECORD, and `_ticketTreeHolder` reads
-// occupancy off the RECORD — so it cannot see it. Every in-place restart then
-// sits in that state for the whole of `waitForSessionExit`, which polls on a
-// 100ms timer for up to 8 seconds. A `[agent:task assign` landing there:
+// THE WINDOW: a seat LIVE IN ITS TREE AND NAMED BY NO RECORD, which
+// `_ticketTreeHolder` cannot see. A `[agent:task assign` landing there:
 //
 //   1. `_ticketTreeHolder` returns null, so the occupancy refusal does not fire;
 //   2. `_existingTicketTree` asks the same question and reuses the tree;
@@ -208,7 +203,7 @@ async function dispatch(w) {
 }
 
 // Begins the restart and resolves once the seat is in the invisible state:
-// record removed by kill(), session still in the map. The caller fires the
+// record removed, session still in the map. The caller fires the
 // dispatch into that gap, then releases.
 //
 // The pending restart is returned BOXED. `await` on an async function flattens a
@@ -219,11 +214,10 @@ async function dispatch(w) {
 async function startRestart(w, name) {
   w.hold(name);
   const p = w.eng.applySessionArgs(name, { extraArgs: [], restart: true }, 'default').then((r) => r, (e) => ({ ok: false, error: e.message }));
-  // Waited for, not slept past: `kill()` is async and the record drop is what
-  // opens the window. Polling the product's own state is what makes the ENTERs
-  // below assertions about an arrangement rather than about a timer.
-  assert.ok(await until(() => w.killAsked(name) && w.P.get(name) === null),
-    `ENTER: kill() must have been asked for ${name} and its record dropped — the window never opened`);
+  assert.ok(await until(() => w.killAsked(name)), `ENTER: kill() must have been asked for ${name}`);
+  assert.notStrictEqual(w.P.get(name), null, 'a respawn kill keeps the record');
+  assert.strictEqual(w.m._ticketTreeHolder(w.P.get(name).worktree.path), name, 'so the occupancy gate still sees the restarting seat');
+  w.P.remove(name);
   return { p };
 }
 
@@ -246,7 +240,7 @@ test('a tree claimed while its seat restarts is NOT re-seeded onto the restarted
   const { p: restart } = await startRestart(w, 'team-hand-1');
 
   assert.strictEqual(w.P.get('team-hand-1'), null,
-    'ENTER: kill() must have REMOVED the record — with it present, claimTree finds a row to clear and the '
+    'ENTER: the record must be gone — with it present, claimTree finds a row to clear and the '
     + 'window this test is about does not exist');
   assert.ok(w.m.sessions.has('team-hand-1'),
     'ENTER: and the seat must still be LIVE — a seat already out of the map is an ordinary dead-seat handoff, '

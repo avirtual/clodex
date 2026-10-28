@@ -1691,7 +1691,7 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
     : beforeKill;
   try {
     if (manager.sessions.has(name)) {
-      await manager.kill(name);
+      await manager.kill(name, { respawn: true });
       if (!await waitForSessionExit(name)) throw new Error('old process did not exit in time');
     }
     manager._preserveAcrossRestart(name, preservable, ['rosterSentAt', 'ephemeral', 'reviewFor', 'reviewTicket', 'createdAt']);

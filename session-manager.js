@@ -2613,6 +2613,7 @@ function createSessionManager(deps) {
         // Mark dead first: after exit any node-pty write/resize/kill throws an uncaught Napi::Error that aborts the app (SIGABRT),
         // so deferred ops bail on _dead.
         session._dead = true;
+        clearTimeout(session._sigkillTimer);
         this._scratchCloneOnExit(session);
         log.info('session', `exit ${name} code=${exitCode}${signal ? ` signal=${signal}` : ''}`);
         const { expected, dropRecord, stampExited } = exitDisposition({
@@ -2647,7 +2648,7 @@ function createSessionManager(deps) {
         }
         try { getPluginHooks && getPluginHooks() && getPluginHooks().fireExit(name); } catch {}
         this._cleanup(name);
-        if (!session._shuttingDown && !session._moving && !session.clone) {
+        if (!session._shuttingDown && !session._moving && !session._respawning && !session.clone) {
           try { this._handSeatGone(session); } catch (e) { log.warn('ticket', `hand cap auto-start after ${name} exit failed: ${e.message}`); }
         }
         if (typeof refreshTrayMenu === 'function') refreshTrayMenu();
@@ -3708,10 +3709,11 @@ function createSessionManager(deps) {
       this._foldSeatCost(s);
       try { this._stampSeatCost(s, 'kill'); } catch {}
       if (!respawn) getPersistence().remove(name);
+      else s._respawning = true;
       this._bindHold(name);
       if (s.stream) { s.stream.kill(); return; }
       const ptyPid = s.pty.pid;
-      setTimeout(() => { sigkillPid(ptyPid, name, log, killPid); }, 5000);
+      s._sigkillTimer = setTimeout(() => { if (s._dead) return; sigkillPid(ptyPid, name, log, killPid); }, 5000);
       await reapPtyDescendants({ ptyPid, name, log, childProcess, killPid });
       try { s.pty.kill(); } catch {}
     }
@@ -3802,7 +3804,7 @@ function createSessionManager(deps) {
       s._archived = true;
       if (s.stream) { s.stream.kill(); return; }
       const ptyPid = s.pty.pid;
-      setTimeout(() => { sigkillPid(ptyPid, name, log, killPid); }, 5000);
+      s._sigkillTimer = setTimeout(() => { if (s._dead) return; sigkillPid(ptyPid, name, log, killPid); }, 5000);
       await reapPtyDescendants({ ptyPid, name, log, childProcess, killPid });
       try { s.pty.kill(); } catch {}
     }
@@ -3962,7 +3964,7 @@ function createSessionManager(deps) {
     async _stopForRespawn(s, name) {
       if (s.stream) { s.stream.kill(); return; }
       const ptyPid = s.pty && s.pty.pid;
-      if (ptyPid) setTimeout(() => { sigkillPid(ptyPid, name, log, killPid); }, 5000);
+      if (ptyPid) s._sigkillTimer = setTimeout(() => { if (s._dead) return; sigkillPid(ptyPid, name, log, killPid); }, 5000);
       await reapPtyDescendants({ ptyPid, name, log, childProcess, killPid });
       try { s.pty.kill(); } catch {}
     }

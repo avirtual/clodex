@@ -538,7 +538,7 @@ different reason from the others: `kill()` already called
 `getPersistence().remove()` (agent or not) before the pty died,
 so the flag only suppresses a redundant second remove — it preserves nothing. A
 killed agent's record is gone. A `respawn` kill (`restartSession`,
-`_coldRespawn`) keeps the record.
+`applySessionArgs`, `_coldRespawn`) keeps the record.
 
 **Every record-dropper**, sidebar or not: `kill()` itself (not with `respawn`), `destroy()`, Delete
 Session…, Delete Workspace… (the seats it kills and its saved rows; a seat live
@@ -578,8 +578,8 @@ worktree-removal failure is toasted by the renderer while the row goes.
 
 | Event | sessions.json | Process | UI |
 |---|---|---|---|
-| Archive (✕ / Cmd+W) | kept, `archivedAt` stamped | killed (SIGKILL fallback 5s); keep-warm hold disarmed | live tab → dimmed archived row |
-| Delete (right-click "Delete Session…") | removed (+ worktree; see `destroy()`) | killed (SIGKILL fallback 5s); worktree removal awaited, failure toasted; keep-warm hold disarmed; `sessions/<name>/` + its legacy links removed (`removeSeat`), `pending/<name>` removed and held injects dropped when the seat is deleted, re-parked to `pending/<name>` when it is kept | tab removed |
+| Archive (✕ / Cmd+W) | kept, `archivedAt` stamped | killed (SIGKILL fallback 5s, cleared when the pty exits); keep-warm hold disarmed | live tab → dimmed archived row |
+| Delete (right-click "Delete Session…") | removed (+ worktree; see `destroy()`) | killed (SIGKILL fallback 5s, cleared when the pty exits); worktree removal awaited, failure toasted; keep-warm hold disarmed; `sessions/<name>/` + its legacy links removed (`removeSeat`), `pending/<name>` removed and held injects dropped when the seat is deleted, re-parked to `pending/<name>` when it is kept | tab removed |
 | CLI exits on its own (agent) | entry kept, `exitedAt` stamped (cleared on the next spawn) | dead; not respawned by restore | exited row "exited (code N) — click to resume" (click = resume via `--resume`, with `CLAUDE_CODE_RESUME_INTERRUPTED_TURN=1` so a turn cut off mid-flight continues, and a tool that was mid-run when the CLI died has no result and may run again; ✕ = forget) |
 | Natural exit (bash) | removed only on a genuinely natural exit (see above) | dead | tab removed |
 | App quit | kept | all killed (`killAll`, `_shuttingDown`) | windows closed |
@@ -968,7 +968,7 @@ persistence.
   `_cleanup`, persistence decision before cleanup.
 - JsonlWatcher starts reading at EOF on every symlink repoint.
 - Restore/respawn failure keeps the persisted entry (`{failed:true}`).
-- A restart (`restartSession`, `_coldRespawn`) stops the process with
+- A restart (`restartSession`, `applySessionArgs`, `_coldRespawn`) stops the process with
   `kill(name, { respawn: true })`: the record stays and the team hears no
   `retired`, so a quit while the old process exits cannot lose the seat.
 - `session:forget` refuses a running seat (`{ ok: false, error: 'running' }`):

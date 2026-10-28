@@ -4898,7 +4898,7 @@ test('team-review: lead spawns an ephemeral reviewer seat — bumped name, inver
 // mergedEnv, which only exists inside create(). A stubbed create() (what the old
 // tests used, appropriate when the POST was in the handler) would assert nothing
 // here.
-function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpawn, registry, transportStart, socketLive = false, lastTranscriptWrite = () => null, probeAnswer = null, claudeHome = null, registerAccount = null, pluginHooks = null, isAlive = null, knownSkillNames = () => [], resolveTeam = () => null, buildIpcPrompt = () => 'IPC\n' } = {}) {
+function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpawn, registry, transportStart, socketLive = false, lastTranscriptWrite = () => null, probeAnswer = null, claudeHome = null, registerAccount = null, pluginHooks = null, isAlive = null, knownSkillNames = () => [], resolveTeam = () => null, buildIpcPrompt = () => 'IPC\n', killPid = processStubs().killPid, persistenceExtra = {} } = {}) {
   const root = mkTmpRoot('clodex-hint-');
   const registered = [];
   const hints = [];
@@ -4908,7 +4908,7 @@ function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpaw
   // WITHOUT a session (forget, reviewer sweep) read the hint flag back out of.
   const upserts = [];
   const SessionManager = createSessionManager({
-    killPid: processStubs().killPid,
+    killPid,
     knownSkillNames,
     REGISTRY_DIR: root,
     MSG_DIR: pathReal.join(root, 'messages'),
@@ -4938,7 +4938,7 @@ function mkHintProbe({ proxyBase = 'http://127.0.0.1:7811', ProxyClient, ptySpaw
     writeAgentPlugin: () => null, effectiveInjectedAgents: () => [],
     deliverSkills: () => null, skillDeliveryProviders: () => ['claude', 'codex'],
     effectiveInjectedSkills: () => [],
-    getPersistence: () => ({ list: () => [], get: () => null, upsert: (e) => upserts.push(e), setSessionId: () => {} }),
+    getPersistence: () => ({ list: () => [], get: () => null, upsert: (e) => upserts.push(e), setSessionId: () => {}, ...persistenceExtra }),
     getUiSettings: () => ({ get: () => ({}) }),
     getEnvScopes: () => ({ all: () => ({ global: {}, workspaces: {} }) }),
     getUserDataPath: () => root,
@@ -5259,7 +5259,7 @@ test('a pty that exits during the registry and transport awaits still sends sess
   assert.ok(sent.some((a) => a[1] === 'session-exit'), 'the exit fired inside the start-up window still reaches the renderer');
 });
 
-for (const [label, flag, want] of [['a plain exit', null, ['seat']], ['an exit during shutdown', '_shuttingDown', []], ['an exit during a move', '_moving', []]]) {
+for (const [label, flag, want] of [['a plain exit', null, ['seat']], ['an exit during shutdown', '_shuttingDown', []], ['an exit during a move', '_moving', []], ['an exit during a restart', '_respawning', []]]) {
   test(`pty exit hands the seat to the hand-cap hook: ${label}`, async () => {
     let exitCb = null;
     const { m, spawn } = mkHintProbe({ ptySpawn: () => ({ pid: 999, onData() {}, onExit(cb) { exitCb = cb; }, kill() {} }) });
@@ -5273,6 +5273,48 @@ for (const [label, flag, want] of [['a plain exit', null, ['seat']], ['an exit d
     assert.deepStrictEqual(gone, want);
     assert.strictEqual(m.sessions.has('seat'), false, 'the hook runs after cleanup removed the seat');
   });
+}
+
+test('kill({ respawn: true }) marks the seat so its exit frees no hand-cap slot', async (t) => {
+  let exitCb = null;
+  const { m, spawn } = mkHintProbe({ ptySpawn: () => ({ pid: 999, onData() {}, onExit(cb) { exitCb = cb; }, kill() {} }) });
+  const gone = [];
+  m._handSeatGone = (sess) => { gone.push(sess.name); };
+  m._notifyComposition = () => {};
+  await spawn('seat', {});
+  assert.ok(exitCb, 'ENTER: the exit callback was captured');
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  await m.kill('seat', { respawn: true });
+  exitCb({ exitCode: 0, signal: 15 });
+  assert.strictEqual(m.sessions.has('seat'), false, 'ENTER: the exit ran through cleanup');
+  assert.deepStrictEqual(gone, []);
+});
+
+for (const [label, stop] of [
+  ['kill', (m) => m.kill('seat', { respawn: true })],
+  ['archive', (m) => m.archive('seat')],
+  ['_stopForRespawn', (m) => m._stopForRespawn(m.sessions.get('seat'), 'seat')],
+]) {
+  for (const [exits, want] of [[true, []], [false, [[999, 'SIGKILL']]]]) {
+    test(`the 5 s SIGKILL fallback after ${label} fires only when the pty has not exited: exits=${exits}`, async (t) => {
+      let exitCb = null;
+      const killed = [];
+      const { m, spawn } = mkHintProbe({
+        killPid: (pid, sig) => { killed.push([pid, sig]); },
+        persistenceExtra: { setArchived: () => {} },
+        ptySpawn: () => ({ pid: 999, onData() {}, onExit(cb) { exitCb = cb; }, kill() {} }),
+      });
+      m._handSeatGone = () => {};
+      m._notifyComposition = () => {};
+      await spawn('seat', {});
+      assert.ok(exitCb, 'ENTER: the exit callback was captured');
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      await stop(m);
+      if (exits) exitCb({ exitCode: 0, signal: 15 });
+      t.mock.timers.tick(5000);
+      assert.deepStrictEqual(killed, want);
+    });
+  }
 }
 
 test('a pty that exits synchronously inside its own spawn reports create before exit', async () => {

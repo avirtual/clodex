@@ -101,20 +101,8 @@ function probe(eng) {
 
 // ENTER (a) + (b), asserted the same way for every path below.
 function assertEntered(seen, removals, name, path_) {
-  if (path_ !== 'applySessionArgs({restart:true})') {
-    assert.deepStrictEqual(removals, [], `ENTER: ${path_} respawns through kill({ respawn: true }), which keeps the record`);
-    assert.strictEqual(seen.length, 1, `ENTER: ${path_} must actually reach create()`);
-    return;
-  }
-  assert.strictEqual(removals.length, 1,
-    `ENTER: ${path_} must actually route through kill(), which REMOVES the persistence record — `
-    + 'zero removals means existingEntry was never null and this test is pinning a path where the bug cannot occur');
-  assert.strictEqual(removals[0].name, name, `ENTER: the removal was for ${name}`);
-  assert.strictEqual(removals[0].recordAfter, null,
-    `ENTER: after kill() the record for ${name} must be GONE — if it survives, create()'s existingEntry read `
-    + 'finds the stamp on its own and the preserve under test is doing nothing');
-  assert.strictEqual(seen.length, 1,
-    `ENTER: ${path_} must actually reach create() — zero calls means the assertion below inspects nothing`);
+  assert.deepStrictEqual(removals, [], `ENTER: ${path_} respawns through kill({ respawn: true }), which keeps the record`);
+  assert.strictEqual(seen.length, 1, `ENTER: ${path_} must actually reach create()`);
 }
 
 // --------------------------------------------------- engine.restartSession
@@ -532,6 +520,22 @@ test('restartSession of a live seat announces no retire and keeps the record fro
   assert.deepStrictEqual(recordAt, [['pty.kill', true]]);
   assert.strictEqual(seen.length, 1, 'ENTER: create reached');
   assert.strictEqual(seen[0].recordAtCreate.rosterSentAt, 5, 'a resume restart keeps rosterSentAt');
+  assert.deepStrictEqual(verbs, []);
+});
+
+test('an Edit Session restart (applySessionArgs) announces no retire and keeps the record from kill to create', async () => {
+  const eng = mkEngine();
+  const entry = { name: 'ea', type: 'claude', cwd: '/tmp', workspaceId: 'default', createdAt: BORN, sessionId: 's-e', rosterSentAt: 5 };
+  eng.stores.persistence.upsert(entry);
+  liveSession(eng, 'ea', entry).agentType = 'claude';
+  const { verbs, recordAt } = respawnProbe(eng, 'ea');
+  const { seen } = probe(eng);
+  const res = await eng.applySessionArgs('ea', { extraArgs: ['--x'], restart: true }, 'default');
+  assert.strictEqual(res.ok, true, res.error);
+  assert.strictEqual(res.restarted, true);
+  assert.deepStrictEqual(recordAt, [['pty.kill', true]]);
+  assert.strictEqual(seen.length, 1, 'ENTER: create reached');
+  assert.strictEqual(seen[0].recordAtCreate.createdAt, BORN);
   assert.deepStrictEqual(verbs, []);
 });
 
