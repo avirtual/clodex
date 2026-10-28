@@ -43,6 +43,9 @@ blocks a release.
 - A Codex seat that crashed or was forgotten no longer leaves Clodex's `hooks.json` in place of the operator's: the swap is reconciled at the next launch for every cwd with no live seat.
 - **Security:** a Claude seat's `main.` identity stamp is accepted only once per tool call the seat's wire tee saw on the main thread, and only while that call is still in flight, so a subagent that reads the seat's env and session id can no longer mint a stamp at will and reach `term_exec`, `term_read` or `exec`; a seat running with the wire off has no privileged MCP/`clodex-send` path (typed intents are unaffected), and the docs now state what the stamp does and does not prove.
 - The intent socket times out a client that connects and never sends a request, so stalled probes can no longer exhaust its connection slots and answer every real caller `busy`.
+- A restart whose respawn fails (CLI missing from PATH, a claimed tree) now leaves a failed row with Retry and Forget instead of a vanished seat whose kept record blocked its name; a stale move-failure entry no longer draws a ghost row on a later restart.
+- A reload, wake or account-move respawn keeps the seat's label and fix chip in the sidebar.
+- The open-ticket dot survives a seat's restart, rename, move or reattach.
 
 ## 5.147.0 — 2026-10-28 — security fixes from the first cold audit
 

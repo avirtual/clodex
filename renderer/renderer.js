@@ -801,7 +801,16 @@ function rowSnapshot(name, item) {
     fixFor: d.fixFor || null,
     account: d.account || null,
     createdAt: (sidebarMeta.get(name) || {}).createdAt || null,
+    ...(d.ticket ? { ticket: d.ticket } : {}),
   };
+}
+
+const respawnSnapshots = new Map();
+function respawnSnapshotOf(name, prior) {
+  if (prior) return rowSnapshot(name, prior);
+  const hit = respawnSnapshots.get(name);
+  respawnSnapshots.delete(name);
+  return hit && Date.now() - hit.at < 60000 ? hit.snap : rowSnapshot(name, null);
 }
 
 function rebuildLiveRow(name, snap, res = {}) {
@@ -814,6 +823,7 @@ function rebuildLiveRow(name, snap, res = {}) {
   refreshSeatMcp(name);
   markSeatPosture(name, snap.posture);
   if (res.clone) applyCloneChip(sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`), res.clone);
+  if (res.ticket || snap.ticket) applyTicketBadge(name, res.ticket || snap.ticket);
   if (snap.createdAt) sidebarMeta.set(name, { ...(sidebarMeta.get(name) || {}), createdAt: snap.createdAt });
 }
 
@@ -920,6 +930,9 @@ async function deleteSessionRow(name) {
 }
 
 function addSessionToSidebar(name, type, cwd, label, backend = null, team = null, noWire = false, account = null, fixFor = null) {
+  respawnSnapshots.delete(name);
+  const stale = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  if (stale && /(^|\s)(failed|exited|archived)(\s|$)/.test(stale.className)) stale.remove();
   const item = document.createElement('div');
   item.className = 'session-item';
   item.dataset.name = name;
@@ -1017,19 +1030,23 @@ function accountOfRow(name) {
 // Restart a session and re-create its sidebar tab + terminal. Snapshots sidebar
 // metadata first because the kill+respawn wipes the tab via session-exit (same
 // dance as the Edit Session save path).
-function restartSessionWithReattach(name) {
-  const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-  const snap = rowSnapshot(name, item);
-  return window.api.restartSession(name).then((res) => {
-    if (!res || !res.ok) {
-      alert(`Restart failed: ${res && res.error ? res.error : 'unknown error'}`);
-      return;
+async function restartOrFailRow(name, opts, failLabel = 'Restart failed') {
+  const snap = rowSnapshot(name, sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`));
+  const res = opts ? await window.api.restartSession(name, opts) : await window.api.restartSession(name);
+  if (!res || !res.ok) {
+    const error = (res && res.error) || 'unknown error';
+    if (snap.type && !sessions.has(name) && !sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`)) {
+      addFailedSessionToSidebar({ ...snap, error });
+      refreshSidebarView();
     }
-    if (snap.type) {
-      rebuildLiveRow(name, snap, { io: res.io, backend: res.backend });
-      switchSession(name);
-    }
-  });
+    showToast(`${failLabel}: ${error}`, { kind: 'error', duration: 10000, name });
+    return res;
+  }
+  if (snap.type) {
+    rebuildLiveRow(name, snap, { io: res.io, backend: res.backend });
+    switchSession(name);
+  }
+  return res;
 }
 
 const movingFailed = new Map();
@@ -1174,7 +1191,7 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, i
       openArgsDialog(name);
       break;
     case 'restart':
-      restartSessionWithReattach(name);
+      restartOrFailRow(name);
       break;
     case 'move':
       moveSessionWithPicker(name);
@@ -1194,7 +1211,7 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, i
     case 'reattach':
       if (type) {
         const prior = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-        const snap = rowSnapshot(name, prior);
+        const snap = respawnSnapshotOf(name, prior);
         if (prior && !sessions.has(name)) { prior.remove(); sidebarMeta.delete(name); }
         rebuildLiveRow(name, snap, { io, type, cwd, backend: backend || null, noWire: noWire === true, clone });
         // `background` marks the agent-initiated emitters.
@@ -1204,7 +1221,7 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, i
       break;
     case 'promptsChanged':
       if (confirm(`Prompt changed for "${name}". Restart now to apply? (Otherwise it applies on the next start.)`)) {
-        restartSessionWithReattach(name);
+        restartOrFailRow(name);
       }
       break;
     case 'rename': {
@@ -1641,7 +1658,7 @@ async function refreshSidebarMeta({ includePr = true } = {}) {
   try {
     const live = await window.api.listSessions();
     if (Array.isArray(live)) refreshSeatsMcp(live.map((s) => s.name));
-    if (Array.isArray(live)) for (const s of live) { applyAccountChip(s.name, s.account || null); markSeatVoice(s.name, s.voice); markSeatEffort(s.name, s.effort); markSeatPosture(s.name, s.posture); if (s.clone) applyCloneChip(sessionList.querySelector(`[data-name="${CSS.escape(s.name)}"]`), s.clone); }
+    if (Array.isArray(live)) for (const s of live) { applyAccountChip(s.name, s.account || null); markSeatVoice(s.name, s.voice); markSeatEffort(s.name, s.effort); markSeatPosture(s.name, s.posture); applyTicketBadge(s.name, s.ticket || null); if (s.clone) applyCloneChip(sessionList.querySelector(`[data-name="${CSS.escape(s.name)}"]`), s.clone); }
   } catch {}
   refreshSidebarView();
   // Which footer buttons show is answered off sidebarMeta, which does not exist
@@ -4518,12 +4535,17 @@ window.api.onSessionExit((name, code, meta) => {
     })();
   }
   const archivedEntry = archivingSessions.get(name);
-  const movedFailedEntry = movingFailed.get(name);
+  const movedFailedEntry = meta && meta.expected ? null : movingFailed.get(name);
+  movingFailed.delete(name);
   const exitedEntry = !archivedEntry && !movedFailedEntry && meta && meta.agentType && !meta.expected
     && !(sessions.get(name) || {}).peer
     ? exitedRowSnapshot(name, code, meta)
     : null;
-  if (activeSession === name && meta && meta.expected && !archivedEntry && !movedFailedEntry) respawnFocus.set(name, Date.now());
+  if (activeSession === name && meta && meta.expected && !archivedEntry) respawnFocus.set(name, Date.now());
+  if (meta && meta.expected && !archivedEntry) {
+    const row = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+    if (row) respawnSnapshots.set(name, { snap: rowSnapshot(name, row), at: Date.now() });
+  }
   removeSession(name);
   if (archivedEntry) {
     archivingSessions.delete(name);
@@ -4532,7 +4554,6 @@ window.api.onSessionExit((name, code, meta) => {
     return;
   }
   if (movedFailedEntry) {
-    movingFailed.delete(name);
     addFailedSessionToSidebar(movedFailedEntry);
     refreshSidebarView();
     return;
@@ -5471,7 +5492,7 @@ const {
   openHistoryMenu, doHardRestart,
 } = initSessionMenus({
   getActiveSession: () => activeSession, proxyState, sessionList,
-  switchSession, rowSnapshot, rebuildLiveRow,
+  switchSession, restartOrFailRow,
 });
 
 function routeSessionAction(act, anchor) {
@@ -5490,7 +5511,7 @@ function routeSessionAction(act, anchor) {
 const {
   openToolsPopover, openSkillsPopover, openAgentsPopover, openIntentsPopover, openPluginsPopover,
 } = initChecklistPopovers({
-  sessionList, rowSnapshot, rebuildLiveRow, switchSession, refreshSidebarMeta,
+  sessionList, restartOrFailRow, refreshSidebarMeta,
   seatPluginsOf: (name) => (sidebarMeta.get(name) || {}).plugins,
   getSessionType: sessionTypeOf,
 });

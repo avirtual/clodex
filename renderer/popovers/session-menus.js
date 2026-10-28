@@ -5,8 +5,8 @@
 // island: it OWNS its warmMenu/stripMenu/historyMenu element state + wiring.
 //
 // These are LOCAL session-action menus — no popoverApi. They act via window.api
-// directly (proxyHold/wireHold/setAutoCompact/setStripLevel/getSessionHistory/
-// restartSession). proxyState is the live poll payload; getActiveSession reads
+// directly (proxyHold/wireHold/setAutoCompact/setStripLevel/getSessionHistory).
+// proxyState is the live poll payload; getActiveSession reads
 // the live active tab (a reassigned core let).
 // isWarmMenuOpen/isStripMenuOpen let the bar's toggle dispatch query open-state
 // without touching the element (the subagent-popover predicate idiom).
@@ -22,7 +22,7 @@ const BAR_ANCHOR = {
   session: '#proxy-bar [data-act="session-menu"]',
 };
 
-function initSessionMenus({ getActiveSession, proxyState, sessionList, switchSession, rowSnapshot, rebuildLiveRow }) {
+function initSessionMenus({ getActiveSession, proxyState, restartOrFailRow }) {
   // --- Keep-warm duration dropdown ----------------------------------------
   // The fire button in the bottom bar opens this; items arm/extend a hold
   // (1h/4h/8h) or stop it. Floats above the button, dismissed on outside-click.
@@ -257,10 +257,7 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, switchSes
       const sid = item.dataset.sid;
       closeHistoryMenu();
       if (!confirm(`Switch "${name}" to this past conversation?\n\nThe session restarts with --resume on ${sid.slice(0, 8)}…. The current conversation is kept and stays re-selectable here.`)) return;
-      const snap = rowSnapshot(name, sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`));
-      const rr = await window.api.restartSession(name, { resumeId: sid });
-      if (!rr || !rr.ok) { alert(`Resume failed: ${rr && rr.error ? rr.error : 'unknown error'}`); return; }
-      if (snap.type) { rebuildLiveRow(name, snap, { io: rr.io, backend: rr.backend }); switchSession(name); }
+      await restartOrFailRow(name, { resumeId: sid }, 'Resume failed');
     });
     document.body.appendChild(historyMenu);
     placeAboveAnchor(historyMenu, anchorBtn, BAR_ANCHOR.session);
@@ -290,10 +287,7 @@ function initSessionMenus({ getActiveSession, proxyState, sessionList, switchSes
       `from disk (a plain restart, --resume, or /clear keeps the old roster). ` +
       `The current conversation isn't lost — it stays available under 🕘 history.`
     )) return;
-    const snap = rowSnapshot(name, sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`));
-    const rr = await window.api.restartSession(name, { fresh: true });
-    if (!rr || !rr.ok) { alert(`Hard restart failed: ${rr && rr.error ? rr.error : 'unknown error'}`); return; }
-    if (snap.type) { rebuildLiveRow(name, snap, { io: rr.io, backend: rr.backend }); switchSession(name); }
+    await restartOrFailRow(name, { fresh: true }, 'Hard restart failed');
   }
 
   // --- Consolidated session-actions menu (the `⚙ session ▾` bar button) ------
