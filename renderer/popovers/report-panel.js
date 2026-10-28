@@ -131,12 +131,13 @@ function initReportPanel({ popoverApi, ctxCatLabel }) {
     // sub-note, NEVER as an added segment.
     let miss = '';
     const m = c.cache_misses;
-    if (m && m.count > 0) {
+    const mCount = m ? num(m.count) : 0;
+    if (mCount > 0) {
       const causes = Object.entries(m.by_cause || {}).map(([k, n]) => `${n} ${k.replace(/_/g, ' ')}`).join(', ');
       const biggest = (m.events || []).slice().sort((a, b) => (b.usd || 0) - (a.usd || 0))[0];
       const big = biggest && biggest.idle_gap_s
         ? ` — biggest a ${fmtDur(biggest.idle_gap_s)} gap (${fmtUsd(biggest.usd)})` : '';
-      miss = `<div class="rep-sub">↳ <b>${m.count} cache miss${m.count === 1 ? '' : 'es'}</b> ` +
+      miss = `<div class="rep-sub">↳ <b>${mCount} cache miss${mCount === 1 ? '' : 'es'}</b> ` +
         `(${fmtUsd(m.usd)}${m.where ? ', ' + esc(m.where) : ''})${causes ? ' — ' + esc(causes) : ''}${big}. ` +
         `Re-wrote a preamble that had gone cold — keep-warm avoids it.</div>`;
     }
