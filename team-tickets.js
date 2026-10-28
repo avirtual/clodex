@@ -2055,10 +2055,14 @@ function createTicketMethods(deps, shared) {
           const rev = await gitWorktree.revertCommit(team.root, merged.sha)
             .catch((e) => ({ ok: false, error: e.message }));
           const after = this._loadTicket(team, ticketId);
-          const gone = !(await gitWorktree.revParse(team.root, branch).catch(() => null));
-          const branchFate = after && after.closedOut && gone
-            ? `the branch was DELETED by an accept (${after.acceptedBy || 'the lead'}) that closed the ticket out while the suite ran — restore it with \`git -C ${team.root} branch ${branch} ${merged.sha}^2\``
-            : 'the branch is untouched';
+          const branchRef = await gitWorktree.revParse(team.root, `refs/heads/${branch}`)
+            .then((sha) => (sha ? 'present' : 'gone'), () => 'unknown');
+          const closedOut = !!(after && after.closedOut);
+          const branchFate = closedOut && branchRef === 'unknown'
+            ? `the state of branch ${branch} could not be checked (git failed) after an accept (${after.acceptedBy || 'the lead'}) closed the ticket out while the suite ran`
+            : closedOut && branchRef === 'gone'
+              ? `the branch was DELETED by an accept (${after.acceptedBy || 'the lead'}) that closed the ticket out while the suite ran — restore it with \`git -C ${team.root} branch ${branch} ${merged.sha}^2\``
+              : 'the branch is untouched';
           fail('suite', why, (rev.ok
             ? `merged ${branch} as ${merged.sha}, ran the suite in ${team.root}, then REVERTED the merge (${rev.sha}) — ${target} is green again and ${branchFate}`
             : `merged ${branch} as ${merged.sha} and the revert ALSO failed (${rev.error}) — ${target} is left carrying the merge and needs a human`) + keptWhere(rev.ok));
