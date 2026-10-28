@@ -284,10 +284,6 @@ fi
 DMG="$(ls dist/*"$NEW_VERSION"*.dmg 2>/dev/null | head -1 || true)"
 [ -n "$DMG" ] || die "no .dmg produced in dist/"
 say "built: $DMG"
-case "$DMG" in
-  *"$NEW_VERSION"*) ;;
-  *) die "dmg name ($DMG) does not contain version $NEW_VERSION" ;;
-esac
 
 step "DMG pty probe"
 run bash scripts/dmg-pty-probe.sh "$DMG" || die "the packaged app cannot spawn a shell through node-pty — do not ship this DMG"
