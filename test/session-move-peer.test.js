@@ -745,12 +745,13 @@ test('a lost commit reply, a 404 probe and an unreached re-send archive the loca
 });
 
 test('a lost commit reply with an unreachable probe archives the local copy and respawns nothing', async () => {
-  const { m, store, created, probed } = mkMove({
+  const { m, store, created, probed, retried } = mkMove({
     reply: LOST, probe: { ok: false, unreached: true, error: 'timeout' },
   });
   seedLive(m, 'seat');
   const out = await m.moveToPeer('seat', 'p1', { farCwd: FAR_CWD });
   assert.deepStrictEqual(probed, ['seat']);
+  assert.strictEqual(retried.length, 1, 'the re-sent commit is the oracle on this arm too');
   assert.deepStrictEqual(out, {
     ok: false, kept: true, unknown: true, archived: true, error: 'socket hang up',
     peer: 'murmurfi', type: 'claude', cwd: SRC_CWD, team: null,
