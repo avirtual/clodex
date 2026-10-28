@@ -2807,7 +2807,7 @@ test('t1234: a merge left WAITING on a suite is requeued once at boot, with a fr
   assert.strictEqual(calls.length, 1, 'the dropped retry timer is replaced by exactly one requeue');
   assert.strictEqual(calls[0].ticketId, 't1');
   assert.deepStrictEqual(calls[0].retry, { attempt: 0, since: 5_000_000 }, 'the wait cap restarts at boot');
-  assert.deepStrictEqual(calls[0].landedOn, { verdict: 'ACCEPT', mustFix: null, reviewRound: 1, reworkRound: 0 });
+  assert.deepStrictEqual(calls[0].landedOn, { verdict: 'ACCEPT', mustFix: null, mustFixHeader: false, reviewRound: 1, reworkRound: 0 });
   assert.match(calls[0].verdictText, /VERDICT: ACCEPT/);
   assert.strictEqual(f.logs.filter((l) => /boot: requeued the auto-merge for t1/.test(l.msg)).length, 1, 'one log line per requeued ticket');
 });
