@@ -253,7 +253,7 @@ function treeFixture(isDirty) {
   return { ...f, tree, removed, pendingDir: path.join(PENDING_DIR, 'wt'), fs };
 }
 
-test('session:forget of an archived worktree record with uncommitted work is refused: tree, record and pending mail stay', async () => {
+test('forgetTree: session:forget of an archived worktree record with uncommitted work is refused: tree, record and pending mail stay', async () => {
   const f = treeFixture({ ok: true, dirty: true });
   assert.deepStrictEqual(await f.forget('wt'), { ok: false, error: `uncommitted work in ${f.tree}` });
   assert.deepStrictEqual(f.removed, []);
@@ -261,14 +261,14 @@ test('session:forget of an archived worktree record with uncommitted work is ref
   assert.ok(f.fs.existsSync(f.pendingDir));
 });
 
-test('session:forget of an archived worktree record it cannot inspect is refused with the inspect error', async () => {
+test('forgetTree: session:forget of an archived worktree record it cannot inspect is refused with the inspect error', async () => {
   const f = treeFixture({ ok: false, error: 'not a git repository' });
   assert.deepStrictEqual(await f.forget('wt'), { ok: false, error: 'not a git repository' });
   assert.deepStrictEqual(f.removed, []);
   assert.ok(f.persistence.get('wt'));
 });
 
-test('session:forget of an archived clean worktree record removes the tree, the record and the pending mail', async () => {
+test('forgetTree: session:forget of an archived clean worktree record removes the tree, the record and the pending mail', async () => {
   const f = treeFixture({ ok: true, dirty: false });
   assert.ok(f.fs.existsSync(f.pendingDir), 'ENTER: mail is parked for wt');
   assert.strictEqual(await f.forget('wt'), true);
@@ -277,7 +277,7 @@ test('session:forget of an archived clean worktree record removes the tree, the 
   assert.strictEqual(f.fs.existsSync(f.pendingDir), false);
 });
 
-test('session:forget of a plain record drops its pending mail', () => {
+test('forgetRecord: session:forget of a plain record drops its pending mail', () => {
   const { mkTmpRoot } = require('./lib/tmp-roots');
   const fs = require('node:fs');
   const path = require('node:path');
