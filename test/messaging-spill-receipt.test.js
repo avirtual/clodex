@@ -135,18 +135,16 @@ test('t86: draining the park releases the body to normal age GC', () => {
     'once delivered, the body is no longer referenced and expires normally');
 });
 
-test('t86: allParkedTexts returns every parked text across agents, and skips claim dirs', () => {
+test('t86: allParkedTexts returns every parked text across agents, claim dirs included', () => {
   const { pendingDir } = tmpDirs();
   parkDelivery(pendingDir, 'alice', 'one', '0001');
   parkDelivery(pendingDir, 'alice', 'two', '0002');
   parkDelivery(pendingDir, 'bob', 'three', '0001');
   assert.deepStrictEqual(allParkedTexts(pendingDir).sort(), ['one', 'three', 'two']);
 
-  // A mid-flight whole-dir claim renames the agent dir under `.claims/`.
-  // It must be skipped, exactly as parkIdInUse skips it.
   fs.mkdirSync(path.join(pendingDir, '.claims'));
   fs.renameSync(path.join(pendingDir, 'alice'), path.join(pendingDir, '.claims', 'alice.draining.t1'));
-  assert.deepStrictEqual(allParkedTexts(pendingDir), ['three']);
+  assert.deepStrictEqual(allParkedTexts(pendingDir).sort(), ['one', 'three', 'two']);
 });
 
 test('t86: allParkedTexts skips a corrupt entry rather than aborting the scan', () => {
