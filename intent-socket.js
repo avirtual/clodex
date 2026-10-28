@@ -22,6 +22,7 @@ const SHELL_KEYWORDS = ['if', 'then', 'else', 'elif', 'do', 'while', 'until', '!
 const TIMEOUT_ARG_FLAGS = ['-s', '-k', '--signal', '--kill-after'];
 const DURATION_RE = /^[0-9]+(\.[0-9]+)?[smhd]?$/;
 const SEPARATORS = ';&|(){}`\n';
+const CMD_POSITION_WORDS = ['!', 'time', 'if', 'then', 'else', 'elif', 'do', 'while', 'until', 'coproc'];
 const SUBAGENT_BRIEF_TAIL = "Refusals come back as text; a refused call will not succeed on retry — return and let the seat's main agent decide.";
 
 function composeSubagentBrief(briefs) {
@@ -187,7 +188,7 @@ function shellSegments(cmd) {
       const f = outer[outer.length - 1];
       if (f && !f.bt) {
         if (f.cmd && !tok.quoted) { if (tok.text === 'case') f.inCase++; else if (tok.text === 'esac' && f.inCase > 0) f.inCase--; }
-        f.cmd = false;
+        f.cmd = f.cmd && !tok.quoted && (CMD_POSITION_WORDS.includes(tok.text) || tok.text.startsWith('-'));
       }
       s.push(tok);
     }
@@ -224,7 +225,7 @@ function shellSegments(cmd) {
       if (h) { push(i); at(i).text = cmd.slice(i, h.end); push(h.end); pending.push(h); i = h.end - 1; continue; }
     }
     if (c === '\n' && pending.length) { push(i); segs.push([]); if (top && !top.bt) top.cmd = true; i = skipHeredocs(cmd, i + 1, pending); pending = []; continue; }
-    if (SEPARATORS.includes(c)) { push(i); segs.push([]); if (top && !top.bt && c !== ')') top.cmd = ';&|\n'.includes(c) || (c === '{' && top.cmd && cmd.charAt(i + 1) <= ' '); continue; }
+    if (SEPARATORS.includes(c)) { push(i); segs.push([]); if (top && !top.bt && c !== ')') top.cmd = ';&|\n('.includes(c) || (c === '{' && top.cmd && cmd.charAt(i + 1) <= ' '); continue; }
     if (c <= ' ') { push(i); continue; }
     at(i).text += c;
   }

@@ -51,6 +51,7 @@ measured 0 false positives on 440 non-hand sessions.
 
 Two rules, two gates: the whole-tree `git add`/`commit -a` rule fires on ticket seats only (empty `CLODEX_TICKET` skips it); the pattern-kill rule fires on EVERY Claude seat.
 The kill rule is not ticket-gated because the incident it answers (2026-09-23, `pkill -f "cat" -U $(id -u) -x` SIGTERMing every /Applications binary, Clodex included) came from a non-ticket seat — a pattern kill hurts the whole login no matter which seat runs it.
+A substitution frame counts `case` only at a command position: a frame push, `;` `&` `|` newline `(` `{ `, a case-pattern `)`, or a reserved word that leaves bash there (`!`, `time` plus its `-` options, `if`, `then`, `else`, `elif`, `do`, `while`, `until`, `coproc`) — bash's complete set. An argument `case` must never count: it holds the frame open past its real `)`, the closing `"` then reads as an opener and swallows the rest of the line, so over-counting fails open.
 
 ## writeMcpCatalog
 

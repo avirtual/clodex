@@ -263,7 +263,7 @@ try {
       const f = outer[outer.length - 1];
       if (f && !f.bt) {
         if (f.cmd && !tq) { if (tok === "case") f.inCase++; else if (tok === "esac" && f.inCase > 0) f.inCase--; }
-        f.cmd = false;
+        f.cmd = f.cmd && !tq && (["!", "time", "if", "then", "else", "elif", "do", "while", "until", "coproc"].indexOf(tok) >= 0 || tok.charAt(0) === "-");
       }
       s.push(tok);
     }
@@ -294,7 +294,7 @@ try {
     if (c === "{" && cmd.charAt(i + 1) === "}") { i++; tok += "{}"; had = true; continue; }
     if (c === NL) { push(); segs.push([]); if (top && !top.bt) top.cmd = true; continue; }
     if (c <= " ") { push(); continue; }
-    if (c === ";" || c === "&" || c === "|" || c === "(" || c === ")" || c === "{" || c === "}" || c === BT) { push(); segs.push([]); if (top && !top.bt && c !== ")") top.cmd = c === ";" || c === "&" || c === "|" || (c === "{" && top.cmd && cmd.charAt(i + 1) <= " "); continue; }
+    if (c === ";" || c === "&" || c === "|" || c === "(" || c === ")" || c === "{" || c === "}" || c === BT) { push(); segs.push([]); if (top && !top.bt && c !== ")") top.cmd = c === ";" || c === "&" || c === "|" || c === "(" || (c === "{" && top.cmd && cmd.charAt(i + 1) <= " "); continue; }
     tok += c; had = true;
   }
   push();
