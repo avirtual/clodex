@@ -12,7 +12,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — Bash guard fails closed on an unplaceable `case`; `time` option regression fixed
+## Unreleased
+
+## 5.150.4 — 2026-10-28 — Bash guard fails closed on an unplaceable `case`; `time` option regression fixed
 
 - **Security:** the Bash deny guard now refuses a command whose double-quoted `$(…)` or backtick holds a `case` it could not place in bash's grammar, instead of guessing where the substitution ends; unquote the substitution or move the `case` out to run it.
 - **Security:** the Bash deny guard and the `clodex-send` segmenter no longer treat a `case` after `time -x` or `time -p -p` as a keyword (a 5.150.3 regression that hid a following `; kill -9 -1`); a `case` that keeps a double-quoted substitution open to the end of the line is refused outright; and a commit message written through `cat<<'EOF'` with no space is no longer refused for mentioning "case".
