@@ -71,7 +71,8 @@ WebSocket upgrade. **Never widen the publish without a token.** The engine binds
 interfaces inside the container, so with no token it would refuse to serve (503); the
 compose file sets `CLODEX_WEB_INSECURE=1` because its loopback-only publish is the boundary.
 The flag lifts only the token and the loopback-Host requirement: a cross-site page (a browser
-Origin that does not match the Host) is still refused.
+Origin that does not match the Host) is still refused. It does not stop DNS rebinding (a rebound
+hostname's Origin matches its Host); `CLODEX_WEB_TOKEN` is the defence against that.
 
 This is auth v1 — a shared secret, no TLS, no per-user login. For anything
 serious, front it with a reverse proxy that terminates TLS and adds real

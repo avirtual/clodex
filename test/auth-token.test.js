@@ -127,13 +127,14 @@ test('originAllowed / originRefusal: Host must be loopback, Origin (when sent) m
   }
 });
 
-test('originRefusal anyHost: any non-empty Host passes, but anyHost keeps the Origin comparison', () => {
+test('originRefusal anyHost: any non-empty Host passes (a DNS-rebound Host with its own Origin included), but anyHost keeps the Origin comparison', () => {
   const { originAllowed, originRefusal } = require('../auth-token');
   const rows = [
     { host: '192.168.1.20:7810', origin: undefined, want: null },
     { host: '192.168.1.20:7810', origin: 'http://192.168.1.20:7810', want: null },
     { host: 'clodex.lan', origin: 'http://clodex.lan', want: null },
     { host: '192.168.1.20:7810', origin: 'http://evil.example', want: 'Origin' },
+    { host: 'evil.example:7810', origin: 'http://evil.example:7810', want: null },
     { host: '127.0.0.1:7810', origin: 'http://evil.example', want: 'Origin' },
     { host: 'evil.example:7810', origin: 'http://127.0.0.1:7810', want: 'Origin' },
     { host: undefined, origin: undefined, want: 'Host' },

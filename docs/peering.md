@@ -19,7 +19,8 @@ built in remote-wiring.js · **consumer protocol** → peer-client.js ·
   when one is sent, are loopback (`originRefusal` in auth-token.js, 403
   otherwise), so a web page in the operator's browser cannot drive the host,
   unless `CLODEX_REMOTE_INSECURE=1`, which lifts the token and the loopback-only Host
-  requirement while a browser Origin, when sent, must still match the Host;
+  requirement while a browser Origin, when sent, must still match the Host (that
+  leaves DNS rebinding open: only the token defends against it);
   a forwarded port (ssh tunnel, tailnet share) still needs the token.
   `_authGate` fronts the whole peer surface with the shared secret
   `CLODEX_REMOTE_TOKEN` (401 when one is set and the caller lacks it) and
