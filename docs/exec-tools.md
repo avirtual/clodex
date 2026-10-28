@@ -306,8 +306,12 @@ time; a second submit is refused naming the live seq. Progress dms from
 lines, log path) wakes the seat. A worker that dies without a result (machine
 reboot, `kill -9`) is reported `outcome UNKNOWN` by the next sweep — on the
 next deploy/upgrade/restart call (help does not sweep) and once at app boot —
-and nothing is ever re-run. There is no cancel in v1: `kill` the pid in
-`<ctx>.lock`. `[agent:exec status]` does not list these runs; the launcher
+and nothing is ever re-run. The worker spawns clodexctl in its own process
+group, so `kill -9` on the worker does not stop the run: while the worker's
+clodexctl child (`childPid` in `<seq>.json`) is still running the sweep keeps
+the lock and the run stays `running`. There is no cancel in v1: `kill` the
+worker pid in `<ctx>.lock`, or the `childPid` in `<seq>.json` once the worker
+is gone. `[agent:exec status]` does not list these runs; the launcher
 exits too fast to be tracked.
 
 The worker runs outside every seat sandbox: the launcher is a child of the

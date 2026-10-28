@@ -26,6 +26,7 @@ blocks a release.
 - `clodexctl undeploy node --fargate` removes only a context that points at the torn-down stack, like helm and docker.
 - **Security:** a review verdict that quotes an earlier `VERDICT: ACCEPT` line inside a code block or indented text no longer lands as ACCEPT and auto-merges rework; conflicting or ambiguous verdict lines route the body to the lead instead.
 - A lead's `task accept` while the post-merge suite is still running is refused and keeps the tree and branch, so a red suite can no longer revert a merge whose branch an early accept already deleted.
+- The ctl-admin sweep keeps a context's lock while a dead worker's clodexctl child is still running, so a `kill -9` on the worker no longer lets a second deploy start against the same node mid-run.
 
 ## 5.149.0 — 2026-10-28 — clodexctl reaps its tunnel on exit, create node takes a token file, worktree-safe workspace deletes
 
