@@ -945,3 +945,32 @@ test('t2033: a unit still asleep when a tree-less seat is destroyed leaves no pe
   await queue.settled();
   assert.ok(!fsReal.existsSync(pathReal.join(root, 'pending', 'seat')), 'the pending dir is removed after the queue settled');
 });
+
+test('rename rehomes an orphaned pending claim into the moved pending dir', async () => {
+  const root = mkTmpRoot('clodex-rename-');
+  seedDirs(root, 'seat');
+  const orphan = pathReal.join(root, 'pending', '.claims', 'seat.draining.idle.999999');
+  fsReal.mkdirSync(orphan, { recursive: true });
+  fsReal.writeFileSync(pathReal.join(orphan, '0001.json'), JSON.stringify({ text: 'orphaned' }));
+  const old = new Date(Date.now() - 11 * 60 * 1000);
+  fsReal.utimesSync(orphan, old, old);
+  const { m } = mkRename({ root, entries: [BASE] });
+  const r = await m.rename('seat', 'newseat');
+  assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
+  assert.deepStrictEqual(fsReal.readdirSync(pathReal.join(root, 'pending', 'newseat')).sort(), ['0001.json', 'marker.txt']);
+  assert.deepStrictEqual(fsReal.readdirSync(pathReal.join(root, 'pending', '.claims')), []);
+});
+
+test("rename leaves a live drainer's claim under the old name and warns naming it", async () => {
+  const root = mkTmpRoot('clodex-rename-');
+  seedDirs(root, 'seat');
+  const live = pathReal.join(root, 'pending', '.claims', `seat.draining.${require('../pending-store').claimTag('idle')}`);
+  fsReal.mkdirSync(live, { recursive: true });
+  fsReal.writeFileSync(pathReal.join(live, '0001.json'), JSON.stringify({ text: 'mid-drain' }));
+  const warns = [];
+  const { m } = mkRename({ root, entries: [BASE], deps: { log: { info() {}, warn: (_c, line) => warns.push(line), error() {}, debug() {} } } });
+  const r = await m.rename('seat', 'newseat');
+  assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
+  assert.deepStrictEqual(fsReal.readdirSync(live), ['0001.json']);
+  assert.strictEqual(warns.filter((w) => w.includes(pathReal.basename(live))).length, 1, `warns: ${JSON.stringify(warns)}`);
+});

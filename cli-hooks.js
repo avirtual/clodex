@@ -548,6 +548,10 @@ function pid_alive(pid) {
 }
 const claims = path.join(path.dirname(d), '.claims');
 const LAUNCH_NONCE = require('crypto').randomBytes(4).toString('hex');
+const CLAIM_STALE_MS = 10 * 60 * 1000;
+function touch_claim(p) {
+  try { const now = new Date(); fs.utimesSync(p, now, now); } catch (e) {}
+}
 function claim_path(entry) {
   fs.mkdirSync(claims, { recursive: true, mode: 0o700 });
   return path.join(claims, entry);
@@ -563,10 +567,13 @@ function rehome_orphans() {
     if (!tag) continue;
     const pid = Number(tag[1]);
     const staleOwn = pid === process.pid && tag[2] !== LAUNCH_NONCE;
-    if (!Number.isInteger(pid) || pid <= 0 || (!staleOwn && pid_alive(pid))) continue;
+    let aged;
+    try { aged = Date.now() - fs.statSync(path.join(parent, s)).mtimeMs > CLAIM_STALE_MS; } catch (e) { continue; }
+    if (!Number.isInteger(pid) || pid <= 0 || (!staleOwn && !aged && pid_alive(pid))) continue;
     let mine;
     try { mine = claim_path(path.basename(d) + '.draining.rehome.' + process.pid); } catch (e) { continue; }
     try { fs.renameSync(path.join(parent, s), mine); } catch (e) { continue; }
+    touch_claim(mine);
     const json = function (n) { return n.endsWith('.json'); };
     let files = [];
     try { files = fs.readdirSync(mine).filter(json); } catch (e) { continue; }
@@ -590,6 +597,7 @@ try {
 } catch (e) {
   process.exit(0);
 }
+touch_claim(claim);
 const texts = [];
 const handed = [];
 for (const f of fs.readdirSync(claim).filter(function (n) { return n.endsWith('.json'); }).sort()) {
