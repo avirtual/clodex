@@ -73,7 +73,7 @@ payloads are documented in `docs/renderer-events.md`.
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| failRowOrStash | after a failed respawn: stashes the failed row in `restartFailed` while the seat is live, draws it when no row remains | `restartFailed`, sidebar DOM, `sessions` | addFailedSessionToSidebar | exited-seat-row.test.js |
+| failRowOrStash | after a failed respawn: stashes the failed row in `restartFailed` while the seat is live (read by `onSessionExit` only within `RESTART_FAILED_TTL_MS`), draws it when no row remains | `restartFailed`, sidebar DOM, `sessions` | addFailedSessionToSidebar | exited-seat-row.test.js |
 | setArgsOrFailRow | the Edit Session save's `window.api.setSessionArgs` call; a failed restart goes through failRowOrStash | none | window.api.setSessionArgs, failRowOrStash | exited-seat-row.test.js renderer-source-pins.test.js |
 | restartOrFailRow | restarts a seat via `session:restart` and rebuilds its terminal and row from a snapshot taken before the kill; on a refused respawn, failRowOrStash and a toast | sidebar DOM, `sessions` | rowSnapshot, rebuildLiveRow, failRowOrStash, switchSession | exited-seat-row.test.js renderer-source-pins.test.js seat-io-marker.test.js |
 | moveSessionWithPicker | Move Session…: picks a directory, calls `session:move`, rebuilds on success or parks a failed row when kept | `movingFailed` | rowSnapshot, rebuildLiveRow, addFailedSessionToSidebar | renderer-source-pins.test.js seat-io-marker.test.js session-move.test.js |
