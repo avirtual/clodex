@@ -294,7 +294,7 @@ try {
     if (c === "{" && cmd.charAt(i + 1) === "}") { i++; tok += "{}"; had = true; continue; }
     if (c === NL) { push(); segs.push([]); if (top && !top.bt) top.cmd = true; continue; }
     if (c <= " ") { push(); continue; }
-    if (c === ";" || c === "&" || c === "|" || c === "(" || c === ")" || c === "{" || c === "}" || c === BT) { push(); segs.push([]); if (top && !top.bt && c !== ")") top.cmd = c === ";" || c === "&" || c === "|"; continue; }
+    if (c === ";" || c === "&" || c === "|" || c === "(" || c === ")" || c === "{" || c === "}" || c === BT) { push(); segs.push([]); if (top && !top.bt && c !== ")") top.cmd = c === ";" || c === "&" || c === "|" || (c === "{" && top.cmd && cmd.charAt(i + 1) <= " "); continue; }
     tok += c; had = true;
   }
   push();

@@ -224,7 +224,7 @@ function shellSegments(cmd) {
       if (h) { push(i); at(i).text = cmd.slice(i, h.end); push(h.end); pending.push(h); i = h.end - 1; continue; }
     }
     if (c === '\n' && pending.length) { push(i); segs.push([]); if (top && !top.bt) top.cmd = true; i = skipHeredocs(cmd, i + 1, pending); pending = []; continue; }
-    if (SEPARATORS.includes(c)) { push(i); segs.push([]); if (top && !top.bt && c !== ')') top.cmd = ';&|\n'.includes(c); continue; }
+    if (SEPARATORS.includes(c)) { push(i); segs.push([]); if (top && !top.bt && c !== ')') top.cmd = ';&|\n'.includes(c) || (c === '{' && top.cmd && cmd.charAt(i + 1) <= ' '); continue; }
     if (c <= ' ') { push(i); continue; }
     at(i).text += c;
   }

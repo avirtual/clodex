@@ -95,6 +95,7 @@ const TABLE = [
   { cmd: 'echo "$(echo "$(x)" case)"; git add -A', want: 'deny' },
   { cmd: 'echo "$(echo $(x) case)"; git add -A', want: 'deny' },
   { cmd: 'echo "$(echo {a,b} case)"; git add -A', want: 'deny' },
+  { cmd: 'echo "$({ case x in x) git add -A;; esac; })"', want: 'deny' },
   { cmd: 'echo "$(echo `x` case)"; git add -A', want: 'deny' },
   { cmd: 'echo "$(case x in x) echo hi;; esac) git add -A"', want: 'pass' },
 

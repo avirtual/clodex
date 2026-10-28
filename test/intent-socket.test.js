@@ -726,6 +726,7 @@ test('stamp: clodex-send behind a reserved word or a prefix command is stamped; 
     ['echo "$(echo $(x) case)"; clodex-send x', `echo "$(echo $(x) case)"; ${T} clodex-send x`],
     ['echo "$(echo {a,b} case)"; clodex-send x', `echo "$(echo {a,b} case)"; ${T} clodex-send x`],
     ['echo "$(echo `x` case)"; clodex-send x', `echo "$(echo \`x\` case)"; ${T} clodex-send x`],
+    ['echo "$({ case x in x) clodex-send a;; esac; })"', `echo "$({ case x in x) ${T} clodex-send a;; esac; })"`],
     ['echo "$(case x in x) clodex-send a b;; esac)"', `echo "$(case x in x) ${T} clodex-send a b;; esac)"`],
     ['echo "\\`clodex-send x\\`"', null],
     ['echo "\\$(clodex-send x)"', null],
