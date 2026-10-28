@@ -1929,7 +1929,7 @@ const ctlService = enableCtl ? createCtlService({}) : null;
 const PASSIVE_TERM_KIND = 'terminal-passive';
 const { createDrawerPtys } = require('./drawer-pty');
 const { withUtf8Charset } = require('./env-scopes');
-const { buildTermShim, unsupportedShellReason, REMOTE_INSTALL_LINE, remoteUnsupportedReason } = require('./term-shim');
+const { buildTermShim, unsupportedShellReason, remoteInstallLineFor, mintMarkNonce, remoteUnsupportedReason } = require('./term-shim');
 const { shellHostOf, programOf } = require('./term-host');
 const { formatCommand, createMarkParser } = require('./term-marks');
 const { stripAnsi } = require('./cli/src/output');
@@ -2024,7 +2024,8 @@ const drawerPtys = enableLocalTerminal ? createDrawerPtys({
   },
   remoteAllowed: () => uiSettings.get().terminalRemote === 'on' && uiSettings.get().terminalReports !== 'off',
   shellHost: shellHostOf,
-  remoteInstallLine: REMOTE_INSTALL_LINE,
+  remoteInstallLine: remoteInstallLineFor,
+  mintNonce: mintMarkNonce,
   remoteUnsupportedReason,
   log,
 }) : null;

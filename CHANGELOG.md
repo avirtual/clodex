@@ -14,6 +14,9 @@ blocks a release.
 
 ## Unreleased
 
+- **Security:** the drawer shell's OSC 133 marks now carry a per-shell nonce, so a remote shell's own prompt integration (or any program printing those escapes) can no longer end the local command's capture and let a term exec type into the far host with remote commands switched off; a forged command mark no longer reaches the seat's context.
+- `shellHostOf` refuses `ssh` with `-o` spellings of the no-shell options (SessionType=none, RequestTTY=no, StdinNull, ForkAfterAuthentication, RemoteCommand) and `-F`, so a remote exec no longer interrupts a far program that is not a shell.
+
 ## 5.149.0 — 2026-10-28 — clodexctl reaps its tunnel on exit, create node takes a token file, worktree-safe workspace deletes
 
 - **Security:** `clodexctl` now reaps its tunnel child and any helm token tempdir on Ctrl-C, SIGTERM or a closed terminal, instead of leaving an authenticated forward on a loopback port and token files on disk; `attach` and `logs -f` also handle SIGHUP.

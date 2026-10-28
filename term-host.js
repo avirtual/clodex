@@ -11,6 +11,18 @@ const SSH_FLAG_OPTS = '1246AaCfgGkKMNnqsTtVvXxYy';
 
 const SSH_NO_SHELL_OPTS = 'NWTnf';
 
+function sshOptionNoShell(spec) {
+  const m = /^\s*([A-Za-z]+)\s*(?:=\s*|\s+)(.*)$/.exec(String(spec || ''));
+  if (!m) return false;
+  const key = m[1].toLowerCase();
+  const value = m[2].trim().toLowerCase();
+  if (key === 'remotecommand') return value !== 'none';
+  if (key === 'sessiontype') return value !== 'default';
+  if (key === 'requesttty') return value === 'no' || value === 'false';
+  if (key === 'stdinnull' || key === 'forkafterauthentication') return value === 'yes' || value === 'true';
+  return false;
+}
+
 function basename(word) {
   const s = String(word || '');
   const cut = s.lastIndexOf('/');
@@ -101,8 +113,10 @@ function sshHost(argv) {
       while (j < w.length) {
         const c = w[j];
         if (SSH_NO_SHELL_OPTS.includes(c)) return null;
+        if (c === 'F') return null;
         if (SSH_ARG_OPTS.includes(c)) {
           if (j + 1 === w.length) consumed = true;
+          if (c === 'o' && sshOptionNoShell(consumed ? argv[i + 1] : w.slice(j + 1))) return null;
           j = w.length;
           break;
         }

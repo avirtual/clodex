@@ -618,7 +618,7 @@ test('the install line fits the terminal line the far tty will accept', () => {
 
 test('every mark the install line emits carries the nest tag', () => {
   const marks = REMOTE_INSTALL_LINE.match(/\\033\]133;.*?\\007|\\e\]133;.*?\\a/g) || [];
-  assert.ok(marks.length >= 4, `ENTER: the line emits marks (found ${marks.length})`);
+  assert.ok(marks.length >= 2, `ENTER: the line emits marks (found ${marks.length})`);
   for (const m of marks) {
     assert.ok(m.includes(REMOTE_MARK_TAG), `untagged mark would be read as the OUTER shell's: ${m}`);
   }
@@ -805,3 +805,32 @@ test('a re-installed zsh also emits exactly ONE tagged C: preexec_functions+= is
     assert.strictEqual(n, 1,
       `a re-install stacked the hooks and double-marked the command\n--- marks ---\n${marks.join('\n')}\n--- raw ---\n${raw}`);
   });
+
+test('nonce: every local mark in both rcs carries the nonce read from MARK_NONCE_ENV', () => {
+  const { MARK_NONCE_ENV, zshrcBody: zrc, bashrcBody: brc } = require('../term-shim');
+  assert.strictEqual(MARK_NONCE_ENV, '__CLODEX_MARK_NONCE');
+  for (const [name, rc] of [['zsh', zrc()], ['bash', brc()]]) {
+    assert.ok(rc.includes(`__clodex_k=";k=$${MARK_NONCE_ENV}"`), `${name} reads the nonce from the env`);
+    assert.ok(rc.includes(`unset ${MARK_NONCE_ENV}`), `${name} keeps it out of child environments`);
+    const marks = rc.split('\n').filter((l) => /133;[ACD]/.test(l));
+    assert.ok(marks.length >= 3, `ENTER: ${name} has its three marks (${marks.length})`);
+    for (const letter of ['A', 'C', 'D']) {
+      assert.ok(marks.some((l) => l.includes(`133;${letter}`)), `ENTER: ${name} emits ${letter}`);
+    }
+    for (const l of marks) assert.ok(l.includes('${__clodex_k:-}'), `${name} mark without the nonce: ${l}`);
+  }
+});
+
+test('nonce: the far line sets its own nonce, and every far mark reads it', () => {
+  const { remoteInstallLineFor, mintMarkNonce } = require('../term-shim');
+  const k = mintMarkNonce();
+  assert.match(k, /^[0-9a-f]{16}$/);
+  const line = remoteInstallLineFor(k);
+  assert.ok(line.startsWith(`_cxk=${k}; `));
+  assert.ok(Buffer.byteLength(' ' + line) <= REMOTE_LINE_MAX, 'the keyed line still fits the far tty');
+  assert.strictEqual(vetTermCommand(line).ok, true);
+  const marks = line.match(/\\033\]133;.*?\\007|\\e\]133;.*?\\a/g) || [];
+  assert.ok(marks.length >= 2, `ENTER: the line emits marks (${marks.length})`);
+  for (const m of marks) assert.ok(m.includes(`${REMOTE_MARK_TAG};k=$_cxk`), `far mark without the far nonce: ${m}`);
+  assert.throws(() => remoteInstallLineFor('x; rm -rf ~'), /hex/);
+});

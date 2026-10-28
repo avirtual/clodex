@@ -29,6 +29,7 @@
 // written, ever, for either shell.
 
 const path = require('path');
+const MARK_NONCE_ENV = '__CLODEX_MARK_NONCE';
 
 function isZsh(shell) { return /(^|\/)zsh$/.test(String(shell || '')); }
 function isBash(shell) { return /(^|\/)bash$/.test(String(shell || '')); }
@@ -61,15 +62,17 @@ const HOOK_SNIPPET = `
 # Emits invisible semantic marks so Clodex can tell where a command's output
 # begins and ends, and what it exited with. Remove the shim to disable.
 if [[ -o interactive ]]; then
+  if [[ -n "\${${MARK_NONCE_ENV}:-}" ]]; then __clodex_k=";k=\$${MARK_NONCE_ENV}"; fi
+  unset ${MARK_NONCE_ENV}
   __clodex_preexec() {
     local b
     b=$(builtin printf '%s' "$1" | base64 2>/dev/null | tr -d '\\n')
-    builtin printf '\\033]133;C;%s\\007' "$b"
+    builtin printf '\\033]133;C;%s%s\\007' "$b" "\${__clodex_k:-}"
   }
   __clodex_precmd() {
     local s=$?
-    builtin printf '\\033]133;D;%s\\007' "$s"
-    builtin printf '\\033]133;A\\007'
+    builtin printf '\\033]133;D;%s%s\\007' "$s" "\${__clodex_k:-}"
+    builtin printf '\\033]133;A%s\\007' "\${__clodex_k:-}"
     return $s
   }
   autoload -Uz add-zsh-hook 2>/dev/null && add-zsh-hook preexec __clodex_preexec
@@ -276,11 +279,13 @@ const BASH_HOOK_SNIPPET = `
 # begins and ends, and what it exited with. Remove the shim to disable.
 if [[ $- == *i* && -z \${__clodex_installed:-} ]]; then
   __clodex_installed=1
+  if [[ -n "\${${MARK_NONCE_ENV}:-}" ]]; then __clodex_k=";k=\$${MARK_NONCE_ENV}"; fi
+  unset ${MARK_NONCE_ENV}
   __clodex_hist=''
   __clodex_precmd() {
     local s=$?
-    builtin printf '\\033]133;D;%s\\007' "$s"
-    builtin printf '\\033]133;A\\007'
+    builtin printf '\\033]133;D;%s%s\\007' "$s" "\${__clodex_k:-}"
+    builtin printf '\\033]133;A%s\\007' "\${__clodex_k:-}"
     # The history number as it stands BEFORE the next command is read, so the
     # preexec below can tell a new entry from a suppressed one.
     local h
@@ -300,7 +305,7 @@ if [[ $- == *i* && -z \${__clodex_installed:-} ]]; then
       line=\${line#"\${line%%[![:space:]]*}"}
       b=$(builtin printf '%s' "$line" | base64 2>/dev/null | tr -d '\\n')
     fi
-    builtin printf '\\033]133;C;%s\\007' "$b"
+    builtin printf '\\033]133;C;%s%s\\007' "$b" "\${__clodex_k:-}"
   }
   # NO \\[ \\] AROUND EITHER FORM. They are a readline hint meaning "zero-width",
   # and readline only strips them from PS1, which it has to measure. PS0 is
@@ -317,7 +322,7 @@ if [[ $- == *i* && -z \${__clodex_installed:-} ]]; then
   if shopt -q promptvars; then
     PS0='$(__clodex_preexec)'"\${PS0:-}"
   else
-    PS0='\\e]133;C;\\a'"\${PS0:-}"
+    PS0='\\e]133;C;'"\${__clodex_k:-}"'\\a'"\${PS0:-}"
   fi
   PROMPT_COMMAND="__clodex_precmd\${PROMPT_COMMAND:+; \$PROMPT_COMMAND}"
 fi
@@ -428,10 +433,11 @@ const REMOTE_HELLO_B64 = Buffer.from('clodex marks', 'utf8').toString('base64');
 
 const BASH_FLOOR = BASH_MIN[0] * 100 + BASH_MIN[1];
 
-const FAR_HELPERS = `_cxp(){ command printf "\\033]133;$1;%s;${REMOTE_MARK_TAG}\\007" "$2"; }; `
+const FAR_TAG = `${REMOTE_MARK_TAG};k=$_cxk`;
+
+const FAR_HELPERS = `_cxp(){ command printf "\\033]133;$1;%s;${FAR_TAG}\\007" "$2"; }; `
   + '_cxb(){ command printf %s "$1"|base64 2>/dev/null|tr -d "\\n"; }; '
-  + '_cxq(){ local s=$?; command printf '
-  + `"\\033]133;D;%s;${REMOTE_MARK_TAG}\\007\\033]133;A;${REMOTE_MARK_TAG}\\007" "$s"; return $s; }; `;
+  + '_cxq(){ local s=$?; _cxp D $s; _cxp A; return $s; }; ';
 
 const ZSH_BODY = 'if [ -z "${_cxo:-}" ]; then _cxe(){ _cxp C "$(_cxb "$1")"; }; '
   + 'preexec_functions+=(_cxe); precmd_functions=(_cxq $precmd_functions); _cxo=1; fi; _cxr=0';
@@ -442,7 +448,7 @@ const BASH_BODY = `if ((BASH_VERSINFO[0]*100+BASH_VERSINFO[1]>=${BASH_FLOOR})); 
   + 'h=$(HISTTIMEFORMAT= command history 1 2>/dev/null); h=${h#*[0-9][[:space:]][[:space:]]}; '
   + 'b=$(_cxb "$h"); fi; _cxp C "$b"; }; '
   + 'if shopt -q promptvars; then PS0=\\$\\(_cxe\\)"${PS0:-}"; '
-  + `else PS0="\\e]133;C;;${REMOTE_MARK_TAG}\\a\${PS0:-}"; fi; `
+  + `else PS0="\\e]133;C;;${FAR_TAG}\\a\${PS0:-}"; fi; `
   + 'PROMPT_COMMAND="_cxq${PROMPT_COMMAND:+; $PROMPT_COMMAND}"; '
   + '_cxo=1; fi; _cxr=0; else _cxr=3; fi';
 
@@ -452,6 +458,15 @@ const REMOTE_INSTALL_LINE = FAR_HELPERS + `_cxp C ${REMOTE_HELLO_B64}; _cxr=2; `
   + '_cxp D "$_cxr"';
 
 const REMOTE_LINE_MAX = 1019;
+
+function mintMarkNonce() {
+  return require('crypto').randomBytes(8).toString('hex');
+}
+
+function remoteInstallLineFor(nonce) {
+  if (!/^[0-9a-f]{16,64}$/.test(String(nonce || ''))) throw new Error('remoteInstallLineFor: the far nonce must be 16-64 lowercase hex');
+  return `_cxk=${nonce}; ${REMOTE_INSTALL_LINE}`;
+}
 
 function remoteUnsupportedReason({ status, timeoutMs } = {}) {
   if (status === 'no-answer') {
@@ -493,6 +508,9 @@ module.exports = {
   forwardBody,
   FORWARDED,
   REMOTE_INSTALL_LINE,
+  remoteInstallLineFor,
+  mintMarkNonce,
+  MARK_NONCE_ENV,
   remoteUnsupportedReason,
   REMOTE_MARK_TAG,
   REMOTE_HELLO_B64,

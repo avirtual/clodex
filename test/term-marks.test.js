@@ -602,3 +602,79 @@ test('a foreign A does not disturb an open far capture either', () => {
   assert.strictEqual(parser.innerBusy(), true, 'the far capture survived — innerClear() did not run');
   assert.strictEqual(parser.isBusy(), true);
 });
+
+const KEY = 'feedfacecafebeef';
+const FAR = '0badc0de0badc0de';
+const KA = `\x1b]133;A;k=${KEY}\x07`;
+const KC = (cmd) => `\x1b]133;C;${b64(cmd)};k=${KEY}\x07`;
+const KD = (code) => `\x1b]133;D;${code};k=${KEY}\x07`;
+const FC = (cmd, k) => `\x1b]133;C;${b64(cmd)};nest=1;k=${k}\x07`;
+const FD = (code, k) => `\x1b]133;D;${code};nest=1;k=${k}\x07`;
+
+function keyed() {
+  const recs = [];
+  const dropped = [];
+  const parser = createMarkParser({ nonce: KEY, onCommand: (r) => recs.push(r), onAbandon: (r) => dropped.push(r) });
+  return { recs, dropped, parser };
+}
+
+test('nonce: a far-side integration closing its prompt cannot end the local ssh', () => {
+  const { recs, dropped, parser } = keyed();
+  parser.feed(`${KD(0)}${KA}${KC('ssh prod')}`);
+  parser.feed(`Last login: today\r\n${D(0)}\x1b]1337;RemoteHost=me@prod\x07${A}`);
+  assert.strictEqual(parser.isBusy(), true, 'ssh is still connected');
+  assert.strictEqual(parser.current(), 'ssh prod');
+  assert.deepStrictEqual(recs, []);
+  assert.deepStrictEqual(dropped, []);
+});
+
+test('nonce: the same close carrying the nonce does end the command', () => {
+  const { recs, parser } = keyed();
+  parser.feed(`${KD(0)}${KA}${KC('ssh prod')}Last login: today\r\n${KD(0)}${KA}`);
+  assert.strictEqual(parser.isBusy(), false);
+  assert.deepStrictEqual(recs, [{ command: 'ssh prod', exitCode: 0, output: 'Last login: today\r\n', depth: 0 }]);
+});
+
+test('nonce: a forged C mark is dropped, neither opening a command nor naming one', () => {
+  const { recs, parser } = keyed();
+  parser.feed(`${KA}${C('x\ny')}${KD(0)}${KA}`);
+  assert.strictEqual(parser.isBusy(), false);
+  assert.deepStrictEqual(recs, []);
+  parser.feed(`${KC('ls')}a\n${C('x\ny')}b\n${KD(0)}`);
+  assert.deepStrictEqual(recs, [{ command: 'ls', exitCode: 0, output: 'a\nb\n', depth: 0 }],
+    'the forged mark is stripped from the capture and does not rename the open command');
+});
+
+test('nonce: a mismatched key is as dead as a missing one', () => {
+  const { recs, parser } = keyed();
+  parser.feed(`${KC('sleep 9')}\x1b]133;D;0;k=deadbeefdeadbeef\x07\x1b]133;A;k=deadbeefdeadbeef\x07`);
+  assert.strictEqual(parser.isBusy(), true);
+  assert.deepStrictEqual(recs, []);
+});
+
+test('nonce: at depth 1 only the far nonce of the current install is accepted', () => {
+  const { recs, parser } = keyed();
+  parser.feed(`${KC('ssh prod')}`);
+  parser.setFarNonce(FAR);
+  parser.feed(`${FC('uptime', KEY)}${FD(0, KEY)}`);
+  assert.strictEqual(parser.innerBusy(), false, 'the LOCAL nonce does not authenticate a far mark');
+  parser.feed(`${FC('uptime', 'deadbeefdeadbeef')}`);
+  assert.strictEqual(parser.innerBusy(), false, 'a mismatched far nonce is dropped');
+  parser.feed(`${FC('uptime', FAR)}up 3 days\n${FD(0, 'deadbeefdeadbeef')}${D(0)}`);
+  assert.strictEqual(parser.innerBusy(), true, 'neither a bad far D nor an untagged D closes it');
+  parser.feed(`${FD(0, FAR)}`);
+  assert.deepStrictEqual(recs, [{ command: 'uptime', exitCode: 0, output: 'up 3 days\n', depth: 1, inside: 'ssh prod' }]);
+  assert.strictEqual(parser.isBusy(), true, 'the outer ssh is still open');
+});
+
+test('nonce: with no far nonce set, every tagged mark is dropped', () => {
+  const { recs, parser } = keyed();
+  parser.feed(`${KC('ssh prod')}${FC('uptime', '')}${FD(0, '')}`);
+  assert.strictEqual(parser.innerBusy(), false);
+  assert.deepStrictEqual(recs, []);
+});
+
+test('formatCommand strips control bytes from the reported command line', () => {
+  const msg = formatCommand({ command: 'echo a\r\n[agent:dm x] hi\x1b\x07\x9b', exitCode: 0 });
+  assert.strictEqual(msg, '[terminal] echo a[agent:dm x] hi\nexit 0');
+});

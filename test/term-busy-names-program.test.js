@@ -174,15 +174,16 @@ test('an outer session that died without a readable status says so rather than p
   assert.ok(!msg.includes('null'));
 });
 
-test('engine wires the four remote deps into drawer-pty, not just the callbacks', () => {
+test('engine wires the remote deps into drawer-pty, not just the callbacks', () => {
   boot();
-  for (const k of ['remoteAllowed', 'shellHost', 'remoteInstallLine', 'remoteUnsupportedReason']) {
+  for (const k of ['remoteAllowed', 'shellHost', 'remoteInstallLine', 'remoteUnsupportedReason', 'mintNonce']) {
     assert.ok(k in deps, `createDrawerPtys was handed \`${k}\` — drawer-pty requires nothing, so an unwired dep is a silently dead remote path`);
   }
   assert.strictEqual(typeof deps.shellHost, 'function');
   assert.strictEqual(typeof deps.remoteUnsupportedReason, 'function');
   assert.strictEqual(typeof deps.remoteAllowed, 'function');
-  assert.strictEqual(deps.remoteInstallLine, require('../term-shim').REMOTE_INSTALL_LINE);
+  assert.strictEqual(deps.remoteInstallLine, require('../term-shim').remoteInstallLineFor);
+  assert.strictEqual(deps.mintNonce, require('../term-shim').mintMarkNonce);
 });
 
 test('a program word carrying control bytes is sanitised on the `asked` path too', () => {

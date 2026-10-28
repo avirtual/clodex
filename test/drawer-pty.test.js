@@ -71,6 +71,10 @@ function mk(over = {}) {
     onShellEnd: over.onShellEnd || ((seat, why) => ended.push([seat, why])),
     env: over.env || { PATH: '/usr/bin' },
     withUtf8Charset,
+    mintNonce: over.mintNonce,
+    remoteAllowed: over.remoteAllowed,
+    shellHost: over.shellHost,
+    onExecResult: over.onExecResult,
     log: { info() {}, warn() {}, error() {} },
   });
   return { w, sent, spawn, ended };
@@ -687,4 +691,53 @@ test('shim: the seat is what decides which shim is built', () => {
   w.spawn('ws-1', 'alice', {});
   w.spawn('ws-1', 'bob', {});
   assert.deepStrictEqual(asked, ['alice', 'bob']);
+});
+
+const NONCE = '0123456789abcdef';
+const ssh = (cmd) => (/^ssh /.test(cmd) ? { host: cmd, shell: 'posix' } : null);
+
+function sshSession(remote) {
+  const { w, spawn } = mk({
+    shimEnv: () => ({ env: {}, args: ['-l'] }),
+    onCommand: () => {},
+    onExecResult: () => {},
+    mintNonce: () => NONCE,
+    remoteAllowed: () => remote,
+    shellHost: ssh,
+  });
+  w.spawn('ws-1', 'alice', {});
+  const proc = spawn.spawned[0];
+  proc.emit(`\x1b]133;D;0;k=${NONCE}\x07\x1b]133;A;k=${NONCE}\x07`);
+  proc.emit(`\x1b]133;C;${b64('ssh prod')};k=${NONCE}\x07`);
+  return { w, proc };
+}
+
+test('nonce: the minted nonce reaches the shell under the env name the rc reads', () => {
+  const { MARK_NONCE_ENV } = require('../term-shim');
+  const { w, spawn } = mk({ shimEnv: () => ({ env: {}, args: ['-l'] }), onCommand: () => {}, mintNonce: () => NONCE });
+  w.spawn('ws-1', 'alice', {});
+  assert.strictEqual(spawn.spawned[0].opts.env[MARK_NONCE_ENV], NONCE);
+});
+
+test('nonce: an unshimmed shell is handed no nonce', () => {
+  const { w, spawn } = mk({ onCommand: () => {}, mintNonce: () => NONCE });
+  w.spawn('ws-1', 'alice', {});
+  assert.deepStrictEqual(spawn.spawned[0].opts.env, { PATH: '/usr/bin', TERM: 'xterm-256color', LC_CTYPE: 'UTF-8' });
+});
+
+test('nonce: a far-side D without the nonce leaves ssh busy, so remote-off exec is refused and writes no ^C', () => {
+  const { w, proc } = sshSession(false);
+  proc.emit('Last login: today\r\n\x1b]133;D;0\x07\x1b]1337;RemoteHost=me@prod\x07\x1b]133;A\x07');
+  const res = w.exec('ws-1', 'alice', 'rm -rf build');
+  assert.deepStrictEqual(res, { ok: false, code: 'busy', running: 'ssh prod', remoteOffer: true });
+  assert.ok(!proc.written.includes(String.fromCharCode(3)), 'no ^C reached the far host');
+  assert.deepStrictEqual(proc.written, []);
+});
+
+test('nonce: the same close carrying the nonce does end ssh, and the exec is accepted locally', () => {
+  const { w, proc } = sshSession(false);
+  proc.emit(`\x1b]133;D;0;k=${NONCE}\x07\x1b]133;A;k=${NONCE}\x07`);
+  const res = w.exec('ws-1', 'alice', 'ls');
+  assert.deepStrictEqual(res, { ok: true, command: 'ls' });
+  assert.deepStrictEqual(proc.written, [String.fromCharCode(3)]);
 });

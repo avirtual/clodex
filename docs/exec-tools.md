@@ -353,6 +353,11 @@ by default and switched on in Settings ▸ Terminal, separately from command
 reporting: driving a session the operator authenticated to is its own consent,
 and no upgrade grants it. A far editor or pager on the alternate screen, and any
 program that is not a shell, still refuse by name with nothing typed.
+Every mark carries a nonce: the local shell's is minted per shell and handed to
+its rc through `__CLODEX_MARK_NONCE`, and the far layer gets a fresh one with each
+install line. A mark without the right one is dropped, so a remote shell's own
+prompt integration (iTerm2, VS Code, WezTerm, kitty) or a file that prints the
+escapes cannot end the local `ssh`'s capture or name a command.
 A closed tab no longer refuses: the shell is opened on demand in the seat's cwd
 and shows in the tab, with its output, when the operator opens it.
 

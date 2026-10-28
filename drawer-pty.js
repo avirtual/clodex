@@ -6,7 +6,7 @@
 
 // Keyed by (WINDOW, SEAT): collapsing the two gives a seat a shell in another
 // seat's directory. A seatless key is the workspace-wide shell.
-function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log, setTimeout: setTimeoutFn, killPid, shimEnv, onCommand, makeMarkParser, onExecResult, vetCommand, execTimeoutMs, onOutput, onShellEnd, withUtf8Charset, remoteAllowed, shellHost, remoteInstallLine, remoteUnsupportedReason }) {
+function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log, setTimeout: setTimeoutFn, killPid, shimEnv, onCommand, makeMarkParser, onExecResult, vetCommand, execTimeoutMs, onOutput, onShellEnd, withUtf8Charset, remoteAllowed, shellHost, remoteInstallLine, remoteUnsupportedReason, mintNonce }) {
   const ptys = new Map(); // key(windowId, seat) -> { proc, scrollback, cols, rows, windowId, seat }
 
   // NUL is the one byte neither half can contain; any other separator would let one
@@ -77,6 +77,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     // Read off the shim, never its env half: bash's shim legitimately adds no env,
     // and a `!!shim.env` test would refuse every exec on a correctly shimmed bash.
     const shimmed = !!shim;
+    const nonce = shimmed && mintNonce ? mintNonce() : null;
 
     let proc;
     try {
@@ -85,7 +86,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
         cols,
         rows,
         cwd,
-        env: withUtf8Charset({ ...(env || process.env), ...((shim && shim.env) || {}), TERM: 'xterm-256color' }),
+        env: withUtf8Charset({ ...(env || process.env), ...((shim && shim.env) || {}), ...(nonce ? { __CLODEX_MARK_NONCE: nonce } : {}), TERM: 'xterm-256color' }),
       });
     } catch (e) {
       logger.warn('wterm', `spawn failed: ${e.message}`);
@@ -103,6 +104,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     // stripping them would fork the same bytes into two divergent copies.
     rec.marks = (onCommand && makeMarkParser && seat)
       ? makeMarkParser({
+        nonce,
         onCommand: (c) => {
           const depth = (c && c.depth) || 0;
           if (depth === 1) {
@@ -301,7 +303,13 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
       if (rec.execArm === arm) rec.execArm = null;
       if (rec.pending !== p) return;
       try {
-        rec.proc.write(' ' + String(remoteInstallLine || '') + ENTER);
+        let line = String(remoteInstallLine || '');
+        if (typeof remoteInstallLine === 'function') {
+          const far = mintNonce();
+          line = remoteInstallLine(far);
+          rec.marks.setFarNonce(far);
+        }
+        rec.proc.write(' ' + line + ENTER);
       } catch (e) {
         settle(rec, { status: 'write-failed', reason: String((e && e.message) || e) });
         return;
