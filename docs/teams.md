@@ -381,8 +381,19 @@ spawned onto the same branch and the same worktree, the must-fixes are delivered
 there, and the reject reply names both seats.
 
 **Today that step looks for `scripts/run-tests.js` in the worktree**, spawns it
-with `--reporter=dot`, and parses TAP output. It also diffs the branch's
+with `--reporter=dot`, and reads its summary, not TAP. It also diffs the branch's
 `package.json` dependencies against the root checkout's and refuses on drift.
+
+The runner contract `_runTicketSuite` holds a runner to:
+
+- exit 0 means green; any other exit is red.
+- stdout carries exactly one summary line, `TOTALS: 12 pass, 0 fail, 12 tests`
+  — tests > 0 for a real run; `TOTALS: 0 pass, 0 fail, 0 tests` is an empty
+  suite, which verified nothing and escalates. No such line escalates the
+  ticket as `verify: suite`, whatever the exit code.
+- optional failure lines `✖ <test name> (<n>ms)` name the failing tests.
+- optional `SLOW: <n>ms <test name>` lines name tests over the time budget.
+- stderr is ignored for the summary.
 
 If that file is not there, `_runTicketSuite` reports "could not run" — and
 could-not-run is treated as **an escalation, never a rejection**. The hand is
@@ -393,8 +404,8 @@ loop is usable but not autonomous.
 
 So a project with a different test command has two options today:
 
-- Add a `scripts/run-tests.js` that runs your suite and emits TAP
-  (`--reporter=dot` is passed to it), or
+- Add a `scripts/run-tests.js` that runs your suite and prints the `TOTALS:`
+  line above (`--reporter=dot` is passed to it), or
 - Accept per-ticket escalation and have the lead judge each branch.
 
 A project with **no test suite at all** is a first-class case, not a broken
@@ -861,7 +872,7 @@ A remote-worked ticket runs the same verify, cold review, suite and merge on the
 
 1. `Create Team…`, pointed at your project root.
 2. Write `~/.clodex/teams/<name>/prompts/append/team-project.md`.
-3. Decide about tests: add `scripts/run-tests.js` emitting TAP, or accept
+3. Decide about tests: add `scripts/run-tests.js` printing the `TOTALS:` line, or accept
    per-ticket escalation.
 4. Optional: add exec defs for the commands your agents will reach for most,
    using `${TEAM_ROOT}` so they travel.
