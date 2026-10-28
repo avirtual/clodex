@@ -3757,13 +3757,11 @@ function createSessionManager(deps) {
       if (!worktree) this._markDropHeld(name);
       await this.kill(name);
       this._disarmHoldFor(name, holdSid);
-      if (!worktree) {
-        if (wasLive) await this._waitForExit(name);
+      if (!worktree && injectQueue && injectQueue.length) {
+        await this._waitForExit(name);
         await this._settleInjectQueue(injectQueue);
-        dropRecord();
-        dropSeatDir();
-        return { ok: true, live: wasLive };
       }
+      if (!worktree) { dropRecord(); dropSeatDir(); return { ok: true, live: wasLive }; }
       const keepRecord = () => {
         if (!wasLive) return;
         try {
@@ -5009,8 +5007,10 @@ function createSessionManager(deps) {
         const injectQueue = (this.sessions.get(s.name) || {})._injectPtyQueue || null;
         this._markDropHeld(s.name);
         await this.kill(s.name);
-        await this._waitForExit(s.name);
-        await this._settleInjectQueue(injectQueue);
+        if (injectQueue && injectQueue.length) {
+          await this._waitForExit(s.name);
+          await this._settleInjectQueue(injectQueue);
+        }
         this.forgetSeatFiles(s.name, rec);
         this._dropPendingDir(s.name);
         this.dropReminders(s.name);
