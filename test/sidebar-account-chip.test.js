@@ -41,7 +41,7 @@ const FREE = [
   'document', 'window', 'esc', 'baseName', 'typeGlyph', 'ACCOUNT_DEFAULT',
   'switchSession', 'openSessionInfoPopover', 'archiveSessionRow', 'startRename',
   'insertLocalSessionRow', 'sidebarMeta', 'scheduleSidebarRelayout', 'applyFixChip',
-  'classifySender', 'streamSeatNames',
+  'classifySender', 'streamSeatNames', 'respawnSnapshots', 'sessionList', 'CSS',
 ];
 
 function loadBuilder() {
@@ -67,6 +67,9 @@ function loadBuilder() {
     applyFixChip() {},
     classifySender,
     streamSeatNames: new Set(),
+    respawnSnapshots: new Map(),
+    sessionList: { querySelector: () => null },
+    CSS: { escape: (s) => s },
   };
   // eslint-disable-next-line no-new-func
   const fn = new Function(...FREE, `${body}; return addSessionToSidebar;`)(...FREE.map((n) => env[n]));

@@ -263,7 +263,7 @@ function mkRenderer({ api = {}, confirmAnswer = true } = {}) {
   const names = Object.keys(env).filter((k) => k !== 'exitHandler' && k !== 'movedInHandler');
   const body = [
     slice('const seatIoKind', ';\n'),
-    fnSrc('exitedLabel'), fnSrc('rowSnapshot'), fnSrc('takeRespawnSnapshot'), fnSrc('rebuildLiveRow'), fnSrc('exitedRowSnapshot'), fnSrc('addExitedSessionToSidebar'), `async ${fnSrc('forgetSavedEntry')}`,
+    fnSrc('exitedLabel'), fnSrc('rowSnapshot'), fnSrc('respawnSnapshotOf'), fnSrc('rebuildLiveRow'), fnSrc('exitedRowSnapshot'), fnSrc('addExitedSessionToSidebar'), `async ${fnSrc('forgetSavedEntry')}`,
     slice('window.api.onSessionExit((name, code, meta) => {', '\n});\n'),
     slice('window.api.onSessionMovedIn((entry) => {', '\n});\n'),
     `const reattach = ({ name, type, cwd, backend, noWire, io, background, clone }) => { switch ('reattach') { ${slice("    case 'reattach':", '      break;\n')} } };`,

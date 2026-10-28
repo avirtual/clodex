@@ -69,11 +69,11 @@ payloads are documented in `docs/renderer-events.md`.
 - `addSessionToSidebar` takes nine positional parameters; a call site that drops `label` or `fixFor` silently loses the displayed label or the fix chip, which is why rebuilds go through `rebuildLiveRow` and `rowSnapshot`.
 - `addArchivedSessionToSidebar` and `addExitedSessionToSidebar` wire their own click and ✕ handlers inside the builder; a new row kind needs its own pair, not a flag on `addSessionToSidebar`.
 
-## Row menus: restart, move, rename — restartSessionWithReattach … updateSidebarActive
+## Row menus: restart, move, rename — restartOrFailRow … updateSidebarActive
 
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
-| restartSessionWithReattach | restarts a seat via `session:restart` and rebuilds its terminal and row from a snapshot taken before the kill | sidebar DOM, `sessions` | rowSnapshot, rebuildLiveRow, switchSession | renderer-source-pins.test.js seat-io-marker.test.js |
+| restartOrFailRow | restarts a seat via `session:restart` and rebuilds its terminal and row from a snapshot taken before the kill; on a refused respawn with the row gone, draws a failed row and toasts | sidebar DOM, `sessions` | rowSnapshot, rebuildLiveRow, addFailedSessionToSidebar, switchSession | renderer-source-pins.test.js seat-io-marker.test.js |
 | moveSessionWithPicker | Move Session…: picks a directory, calls `session:move`, rebuilds on success or parks a failed row when kept | `movingFailed` | rowSnapshot, rebuildLiveRow, addFailedSessionToSidebar | renderer-source-pins.test.js seat-io-marker.test.js session-move.test.js |
 | moveSessionToWorkspace | calls `session:move-to-workspace` and toasts; the old window's row goes via the moved-out push | none | window.api.moveSessionToWorkspace, showToast | session-move.test.js |
 | moveSessionToPeerWithDialog | registers a one-shot move closure and opens the peer session dialog in move mode | pending move closures, sidebar DOM | rowSnapshot, rebuildLiveRow, addArchivedSessionToSidebar | renderer-source-pins.test.js seat-io-marker.test.js session-move.test.js |
@@ -82,12 +82,12 @@ payloads are documented in `docs/renderer-events.md`.
 | removeSessionFromSidebar | removes a row and its `.session-child` rows, drops activity feeds and meta, then re-lays out | sidebar DOM, `sidebarMeta` | refreshSidebarView | unpinned |
 
 ### Invariants
-- `restartSessionWithReattach` takes its `rowSnapshot` before calling restart, because the kill-and-respawn wipes the row through `onSessionExit`.
+- `restartOrFailRow` takes its `rowSnapshot` before calling restart, because the kill-and-respawn wipes the row through `onSessionExit`.
 - `moveSessionWithPicker` parks a kept-but-failed seat in `movingFailed` while it is still live, so the exit push rebuilds it as a failed row instead of dropping it.
 
 ### Hazards
 - The main-process context menu arrives through the anonymous `window.api.onSessionContextAction` switch that sits between `moveSessionToPeerFromDialog` and `startRename`; its archive, delete and move arms call these helpers directly and never go through `popoverApi`, because they act on the local record.
-- The "Handle context menu actions from main process" comment sits above `restartSessionWithReattach`, not above the handler it describes.
+- The "Handle context menu actions from main process" comment sits above `restartOrFailRow`, not above the handler it describes.
 - `startRename.finish` rebuilds the row with a null label from `rowSnapshot`, so the new name is what the row shows after a rename.
 
 ## Sidebar view loop — filterLabels … updateWindowTitle
@@ -257,7 +257,7 @@ payloads are documented in `docs/renderer-events.md`.
 | showToast | shows a toast with optional click-to-switch; returns a dismiss function carrying `.set(text)` | toast DOM | switchSession | deploy-visible.test.js exited-seat-row.test.js free-identifier-leaks.test.js |
 | checkWarmthCooldown | once per warm episode, toasts that a kept-warm cache goes cold soon | `warmWarned` | showToast | unpinned |
 | runBarActionOnClick | click router for the proxy bar: wirescope link, plugin segments, core buttons and the keep-warm menu | none | routeSessionAction | proxy-bar-press-open.test.js |
-| routeSessionAction | dispatches a session-menu pick to plugin actions, the checklist popovers, the args dialog or restart | none | openArgsDialog, restartSessionWithReattach | plugins-popover.test.js proxy-bar-press-open.test.js |
+| routeSessionAction | dispatches a session-menu pick to plugin actions, the checklist popovers, the args dialog or restart | none | openArgsDialog, restartOrFailRow | plugins-popover.test.js proxy-bar-press-open.test.js |
 | openCreateTeamDialog | modal Create Team dialog that creates a seatless team through `team:createBare` | dialog DOM | window.api.teamCreateBare, openTeamRolesPopover | teams-menu.test.js |
 | popoverApi | the local-vs-peer data seam: routes ctx, report, bust, files, peek and diff locally or through `peerQuery` | reads `sessions` entry `peer` | window.api.peerQuery | popover-sibling-close.test.js side-pane-toggle.test.js transcript-rows.test.js |
 

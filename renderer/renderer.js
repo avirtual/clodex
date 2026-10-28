@@ -806,10 +806,11 @@ function rowSnapshot(name, item) {
 }
 
 const respawnSnapshots = new Map();
-function takeRespawnSnapshot(name) {
+function respawnSnapshotOf(name, prior) {
+  if (prior) return rowSnapshot(name, prior);
   const hit = respawnSnapshots.get(name);
   respawnSnapshots.delete(name);
-  return hit && Date.now() - hit.at < 60000 ? hit.snap : null;
+  return hit && Date.now() - hit.at < 60000 ? hit.snap : rowSnapshot(name, null);
 }
 
 function rebuildLiveRow(name, snap, res = {}) {
@@ -1210,7 +1211,7 @@ window.api.onSessionContextAction(({ action, name, type, cwd, backend, noWire, i
     case 'reattach':
       if (type) {
         const prior = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
-        const snap = prior ? rowSnapshot(name, prior) : takeRespawnSnapshot(name) || rowSnapshot(name, null);
+        const snap = respawnSnapshotOf(name, prior);
         if (prior && !sessions.has(name)) { prior.remove(); sidebarMeta.delete(name); }
         rebuildLiveRow(name, snap, { io, type, cwd, backend: backend || null, noWire: noWire === true, clone });
         // `background` marks the agent-initiated emitters.
@@ -4540,8 +4541,8 @@ window.api.onSessionExit((name, code, meta) => {
     && !(sessions.get(name) || {}).peer
     ? exitedRowSnapshot(name, code, meta)
     : null;
+  if (activeSession === name && meta && meta.expected && !archivedEntry) respawnFocus.set(name, Date.now());
   if (meta && meta.expected && !archivedEntry) {
-    if (activeSession === name) respawnFocus.set(name, Date.now());
     const row = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
     if (row) respawnSnapshots.set(name, { snap: rowSnapshot(name, row), at: Date.now() });
   }

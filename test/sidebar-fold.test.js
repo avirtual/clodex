@@ -45,6 +45,9 @@ function loadRowBuilder(name, free, extra = {}) {
     classifySender,
     streamSeatNames: new Set(),
     seatIoKind: (io) => (io === 'stream' ? 'stream' : 'pty'),
+    respawnSnapshots: new Map(),
+    sessionList: { querySelector: () => null },
+    CSS: { escape: (s) => s },
     ...extra,
   };
   const names = Object.keys(env).concat(free);
