@@ -12,7 +12,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — Pre-release review on a staging branch; one-line verdicts extracted
+## Unreleased
+
+## 5.151.0 — 2026-10-28 — Pre-release review on a staging branch; one-line verdicts extracted
 
 - `scripts/pre-release-review.sh` pushes master HEAD to a `staging` branch and runs the cloud reviewer on `<lastTag>..staging` against the `## Unreleased` notes, so a finding is fixed before any version bump, DMG build or image publish; its issue is titled `Pre-release review staging-<sha>: …`. The post-release review is unchanged. A CLEAN pre-release review leaves a marker for the reviewed commit, and `CLODEX_RELEASE_NO_REVIEW=1` skips the post-release review only while HEAD (or, on a resumed release, its parent) is that commit, and never together with a notes-file argument.
 - Fixed: a review verdict whose sections all sit on the VERDICT line (`**VERDICT**: REWORK … **MUST-FIX**: … **NITS**: …`) now has its must-fixes extracted and counted (the line is unfolded unless another line carries a MUST-FIX header, so a must-fix written inline with the nits on their own lines is still extracted, while a prose mention of the prior round's must-fixes on the VERDICT line of a normal verdict is not a second header; inline `(1) … (2) …` items are counted as two; a one-line ACCEPT is now gated on its inline MUST-FIX text, so `**VERDICT**: ACCEPT … **MUST-FIX**: <item>` no longer auto-merges and prose like `Prior **MUST-FIX**: all resolved` on the VERDICT line should go on its own line; a REWORK whose reviewer wrote `MUST-FIX: (none)` is told so, not that its must-fixes could not be extracted; a paragraph soft-wrapped onto further lines is still not unfolded); before, the lead's notice said "no must-fixes" and the hand was told the verdict named none. A REWORK whose must-fixes still cannot be extracted now says so in the notice instead of "no must-fixes".
