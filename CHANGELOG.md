@@ -12,7 +12,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — quoted command substitution in the Bash guard, stale pending-claim rehome
+## Unreleased
+
+## 5.150.1 — 2026-10-28 — quoted command substitution in the Bash guard, stale pending-claim rehome
 
 - **Security:** the Bash deny guard and the `clodex-send` segmenter split on backticks and `$(` inside double quotes too, so `` echo "`kill -9 -1`" `` and `echo "$(git add -A)"` are examined as their own commands; single-quoted and backslash-escaped forms stay literal.
 - (5.150.0 notes, corrected) Archiving or sleeping a seat also closes its drawer terminal shell, not only delete and rename; and `clodexctl create node` now refuses a `--token`, `--token-file` or stdin token containing whitespace or control characters (exit 2).
