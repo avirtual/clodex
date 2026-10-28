@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { createTicketsStore, nextTicketId, recordEvent, titleLine, ticketTitle, extractTaskDir, branchSlug, countMustFix, extractMustFix, scanVerdict } = require('../tickets-store');
+const { createTicketsStore, nextTicketId, recordEvent, titleLine, ticketTitle, extractTaskDir, branchSlug, countMustFix, extractMustFix, scanVerdict, mustFixTitles } = require('../tickets-store');
 const { projectDirFor } = require('../clodex-paths');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -372,8 +372,22 @@ test('a one-line verdict with inline bold section headers is unfolded before sca
   assert.strictEqual(scan.mustFixHeaders.length, 1);
   assert.strictEqual(scan.ambiguous, false);
   const mf = extractMustFix(text);
-  assert.strictEqual(mf, '(1) a.js:1: first. (2) b.js:2: second.');
-  assert.strictEqual(countMustFix(mf), 1);
+  assert.strictEqual(mf, '1. a.js:1: first.\n2. b.js:2: second.');
+  assert.strictEqual(countMustFix(mf), 2);
+  assert.deepStrictEqual(mustFixTitles(mf), ['a.js:1: first.', 'b.js:2: second.']);
+});
+
+test('a VERDICT line mentioning a header in prose is not unfolded when another line carries a header', () => {
+  const text = '**VERDICT**: ACCEPT. Prior **MUST-FIX**: items all resolved.\n\n**MUST-FIX**: (none)\n\n**CHECKED**: x';
+  const scan = scanVerdict(text);
+  assert.deepStrictEqual(scan.mustFixHeaders, [3]);
+  assert.strictEqual(scan.ambiguous, false);
+  assert.strictEqual(countMustFix(extractMustFix(text)), 0);
+});
+
+test('an (n) in prose on a line that is not unfolded is not split into items', () => {
+  const text = '**VERDICT**: REWORK\n\n**MUST-FIX**:\n- see (1) above and (2) below\n\n**CHECKED**: x';
+  assert.strictEqual(countMustFix(extractMustFix(text)), 1);
 });
 
 test('an inline bold MUST-FIX off a VERDICT line is prose, not a header', () => {
@@ -397,9 +411,9 @@ test('a bold MUST-FIX mention without a colon on the VERDICT line is not a secon
 });
 
 test('an unfolded inline header reports its source line number', () => {
-  const scan = scanVerdict('**VERDICT**: REWORK. **MUST-FIX**: a.js:1 broken. **NITS**: none.\n\n**CHECKED**: x.');
-  assert.deepStrictEqual(scan.mustFixHeaders, [1]);
-  assert.strictEqual(scan.verdicts[0].line, 1);
+  const scan = scanVerdict('Review of t1.\n\n**VERDICT**: REWORK. **MUST-FIX**: a.js:1 broken. **NITS**: none. **CHECKED**: x.');
+  assert.deepStrictEqual(scan.mustFixHeaders, [3]);
+  assert.strictEqual(scan.verdicts[0].line, 3);
 });
 
 test('an indented VERDICT example is not unfolded into live headers', () => {

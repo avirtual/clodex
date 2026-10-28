@@ -150,6 +150,16 @@ test('a REWORK with no extractable must-fix says so instead of "no must-fixes"',
     `Got:\n${body}`);
 });
 
+test('a REWORK with no extractable must-fix tells the hand the same thing the lead is told', () => {
+  const f = mkLoop();
+  const sent = [];
+  f.m._rejectTicketFromLoop = (_team, id, body) => { sent.push({ id, body }); return { ok: true }; };
+  f.m._dispatchReworkFromVerdict(f.team, 't1', { verdict: 'REWORK', mustFix: null, reviewRound: 2 }, { ok: true, path: '/v.md' });
+  assert.strictEqual(sent.length, 1, 'ENTER: the rework was dispatched');
+  assert.match(sent[0].body, /No must-fix items could be extracted from the verdict/);
+  assert.ok(!sent[0].body.includes('named no must-fix items'), `Got:\n${sent[0].body}`);
+});
+
 test('a REWORK verdict is unchanged: its own body already says what to do', () => {
   const f = mkLoop();
   f.m._notifyLeadOfVerdict(f.seat('lead'), 'lead', 't1',
