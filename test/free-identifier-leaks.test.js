@@ -536,7 +536,7 @@ function ownDefinitions(rawSrc) {
   // Destructured requires/assignments: const { a, b: c } = anything
   for (const m of src.matchAll(/(?:const|let) \{([\s\S]*?)\}\s*=/g)) {
     for (const p of m[1].split(',')) {
-      const n = p.split(/[:/]/)[0].trim();
+      const n = p.split(/[:/]/)[0].trim().replace(/^\.\.\./, '');
       if (/^\w+$/.test(n)) defs.add(n);
     }
   }
@@ -744,7 +744,7 @@ for (const mod of RENDERER_SCANNED_MODULES) {
 // Union of every binding target text into a set (splitting on the delimiters
 // that separate identifiers in a param list / destructure pattern).
 function addIds(text, defs) {
-  for (const w of text.replace(/[{}[\]()]/g, ' ').split(/[\s,:=]+/)) {
+  for (const w of text.replace(/[{}[\]()]|\.\.\./g, ' ').split(/[\s,:=]+/)) {
     if (/^[a-zA-Z_$][\w$]*$/.test(w)) defs.add(w);
   }
 }
@@ -1001,6 +1001,21 @@ test('a class method name is a definition for the reverse gate, not for the forw
     'method head leaked into the forward scan defs, where it can mask a real leak');
   assert.ok(collectMethodParams(cls).has('body'),
     'method-shorthand param lost');
+});
+
+test('an object-rest binding declares its rest name, in a declaration and in parameters', () => {
+  for (const src of [
+    'const { a, ...rest } = x;',
+    'function f({ a, ...rest }) {}',
+    'const g = ({ a, ...rest }) => a;',
+    'const o = {\n  m({ a, ...rest }) { return a; },\n};',
+  ]) {
+    const own = ownDefinitions(src);
+    const all = definedNames(src);
+    assert.ok(own.has('a') && all.has('a'), `ENTER: ${src} binds a`);
+    assert.ok(own.has('rest'), `forward scan missed rest in ${src}`);
+    assert.ok(all.has('rest'), `reverse scan missed rest in ${src}`);
+  }
 });
 
 test('ownDefinitions collects method-shorthand params', () => {
