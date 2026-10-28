@@ -14,6 +14,8 @@ blocks a release.
 
 ## Unreleased
 
+- A pending-mail claim left by a crash is rehomed after ten minutes even when its pid was reused, counts for the spill sweeper and resend-id uniqueness while it waits, and is removed or moved with its seat on delete and rename.
+
 ## 5.150.0 — 2026-10-28 — fourth-pass audit: four security fixes, atomic stores, resumable release, parked stream mail
 
 - **Security:** `clodexctl upgrade node` on a helm context whose release name differs from the context name updates that context instead of overwriting (and losing the token of) an unrelated context named after the release; `deploy node --helm` takes `--ctx <name>` to save under a name other than the release.

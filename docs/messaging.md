@@ -319,6 +319,16 @@ inject queue to empty (capped at `INJECT_BOOT_MAXWAIT` past the edge), so a spaw
   `isReservedSeatName` carries the reservation (case-insensitive, plus the
   legacy claim shapes `LEGACY_CLAIM_RE` matches): `create`, `rename`,
   `nameFieldState` and the peer API's `/api/sessions` routes refuse it.
+- A claim is an orphan when its pid is dead, is this pid under another launch
+  nonce, or its dir mtime is older than `CLAIM_STALE_MS` (ten minutes), so a
+  pid reused after a reboot does not strand it; the drain and rehome touch
+  their claim's mtime when they take it. Both copies (`rehomeOrphans`, the
+  hook's `rehome_orphans`) carry the bound.
+- `allParkedTexts` and `parkIdInUse` also read every claim dir, so a waiting
+  orphan's spilled body survives the spill GC and its id is not reminted.
+- `_dropPendingDir` removes the seat's `<name>.draining.*` claims with its
+  pending dir; `rename` first rehomes the seat's orphans so they move with
+  `pending/<name>`, and warns naming any claim a live drainer still holds.
 - Drains: `run/<name>/pending.sh` (UserPromptSubmit and PostToolUse hooks) delivers
   parked mail with the target's own next turn or tool boundary; the busy/draft park arms a non-destructive
   5min cap (`_armParkCap`) that drains through the inject queue. Cost/dialog

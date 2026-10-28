@@ -57,6 +57,7 @@ test("_dropPendingDir removes the seat's pending dir and its claims, and leaves 
     notifyOS: () => {},
     log: { info() {}, warn() {}, error() {}, debug() {} },
     fs,
+    path,
     resolveTeam: () => null,
     findProjectRoot: () => null,
   });
