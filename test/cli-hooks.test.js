@@ -1507,6 +1507,25 @@ test("pending drain: a LIVE drainer's claim dir is left alone", () => {
   assert.ok(!fs.existsSync(path.join(REGISTRY_DIR, 'pending', 'busy')));
 });
 
+test('pending drain: the hook rehomes a live-pid claim older than ten minutes and leaves a one-minute-old one', () => {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook('aged');
+  const claims = path.join(REGISTRY_DIR, 'pending', '.claims');
+  const claim = path.join(claims, 'aged.draining.idle.' + process.pid);
+  const ev = JSON.stringify({ hook_event_name: 'UserPromptSubmit' });
+  fs.mkdirSync(claim, { recursive: true });
+  fs.writeFileSync(path.join(claim, 'm0.json'), JSON.stringify({ text: 'reused pid' }));
+  const fresh = new Date(Date.now() - 60 * 1000);
+  fs.utimesSync(claim, fresh, fresh);
+  assert.strictEqual(runPending(REGISTRY_DIR, 'aged', ev).trim(), '');
+  assert.deepStrictEqual(fs.readdirSync(claim), ['m0.json']);
+  const old = new Date(Date.now() - 11 * 60 * 1000);
+  fs.utimesSync(claim, old, old);
+  assert.match(JSON.parse(runPending(REGISTRY_DIR, 'aged', ev)).hookSpecificOutput.additionalContext, /reused pid/);
+  assert.deepStrictEqual(fs.readdirSync(claims), []);
+});
+
 test('pending drain: a hook input larger than ARG_MAX still drains the parked message', () => {
   const REGISTRY_DIR = tmp();
   const h = mk(REGISTRY_DIR);

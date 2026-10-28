@@ -237,7 +237,7 @@
 | `startAssistantSweep` | arm the unref'd idle-sweep interval once | `this._assistantSweepTimer` | `_assistantSweep` | unpinned |
 | `_assistantSweep` | sleep every live non-clone assistant stream seat `idleDecision` calls idle | none | `idleDecision` `sleep` | session-manager.test.js |
 | `_stopForRespawn` | the record-keeping stop shared by rename, move and moveToPeer: stream kill, or captured-pid SIGKILL timer plus descendant reap | none (the process only) | `sigkillPid` `reapPtyDescendants` | unpinned |
-| `rename` | give a seat a new name: refuse ticket/assignee seats and collisions, stop it, move name-keyed state, respawn with --resume | `this._movingNames`, `s._moving`, sessions.json key, seat dirs, pending/<name>, library/memory-loadlog/<name>.jsonl, team lead pointer, roster row | `_stopForRespawn` `_waitForExit` `_renameDirs` `renameSeatRow` `create` | session-rename.test.js |
+| `rename` | give a seat a new name: refuse ticket/assignee seats and collisions, stop it, move name-keyed state, respawn with --resume | `this._movingNames`, `s._moving`, sessions.json key, seat dirs, pending/<name>, library/memory-loadlog/<name>.jsonl, team lead pointer, roster row | `_stopForRespawn` `_waitForExit` `rehomeOrphans` `_claimEntries` `_renameDirs` `renameSeatRow` `create` | session-rename.test.js |
 
 ### Invariants
 

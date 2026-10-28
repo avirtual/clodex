@@ -129,7 +129,7 @@ const CODEX_LINK_SLOW_POLL_MS = 5000;
 const { mergeSessionEnv, sanitizeFlat, withUtf8Charset } = require('./env-scopes');
 const voiceEngineSpec = require('./voice-engine');
 const { CTRLU_SETTLE_MS } = require('./inject-queue');
-const { agentDir: pendingAgentDir, isReservedSeatName, claimTag } = require('./pending-store');
+const { agentDir: pendingAgentDir, claimsDir: pendingClaimsDir, isReservedSeatName, claimTag, rehomeOrphans, CLAIM_TAG_RE } = require('./pending-store');
 const { VOICE_MODES, voiceModeOf } = require('./voice-settings');
 const { fmtAge } = require('./memory-store');
 const { mcpArgvPlan, claudeMcpServers, codexMcpArgs, museExpressible, secretRefs, discoverMcpSources } = require('./mcp-plan');
@@ -4100,6 +4100,11 @@ function createSessionManager(deps) {
         } catch (e) {
           log.warn('session', `rename ${name} → ${newName}: seat dir did not move (${e.message})`);
         }
+        const pendingRoot = path.join(REGISTRY_DIR, 'pending');
+        try { rehomeOrphans(pendingRoot, name); } catch {}
+        for (const live of this._claimEntries(pendingRoot, name)) {
+          log.warn('session', `rename ${name} → ${newName}: pending claim ${live} is held by a live drainer and stays under ${name}`);
+        }
         for (const [src, dest] of this._renameDirs(name, newName)) {
           try { if (fs.existsSync(src)) fs.renameSync(src, dest); } catch (e) {
             log.warn('session', `rename ${name} → ${newName}: ${src} did not move (${e.message})`);
@@ -5026,9 +5031,20 @@ function createSessionManager(deps) {
       if (!PENDING_DIR || typeof name !== 'string' || !/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(name)) return;
       try {
         fs.rmSync(pendingAgentDir(PENDING_DIR, name), { recursive: true, force: true });
+        for (const claim of this._claimEntries(PENDING_DIR, name)) fs.rmSync(claim, { recursive: true, force: true });
       } catch (e) {
         log.warn('inject', `pending mail for ${name} not removed: ${e.message}`);
       }
+    }
+
+    _claimEntries(root, name) {
+      const prefix = `${name}.draining.`;
+      const mine = (s) => s.startsWith(prefix) && CLAIM_TAG_RE.test(s.slice(prefix.length));
+      const out = [];
+      for (const dir of [pendingClaimsDir(root), root]) {
+        try { out.push(...fs.readdirSync(dir).filter(mine).map((s) => path.join(dir, s))); } catch {}
+      }
+      return out;
     }
 
     _rehomeKept(name) {

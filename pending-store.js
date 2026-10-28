@@ -32,6 +32,7 @@ const RESERVED_SEAT_NAMES = new Set([CLAIMS]);
 const LEGACY_CLAIM_RE = /^\.resend\.|\.draining\.[a-z]+\.\d+$/i;
 const CLAIM_TAG_RE = /^[a-z]+\.(\d+)(?:-([0-9a-f]+))?$/;
 const LAUNCH_NONCE = crypto.randomBytes(4).toString('hex');
+const CLAIM_STALE_MS = 10 * 60 * 1000;
 
 function claimTag(kind) { return `${kind}.${process.pid}-${LAUNCH_NONCE}`; }
 
@@ -116,6 +117,7 @@ function drainPending(root, name, tag, expectedBorn = null) {
     if (e && e.code === 'ENOENT') return []; // nothing parked, or lost the race
     throw e;
   }
+  touchClaim(claim);
   let files = [];
   try { files = fs.readdirSync(claim); } catch { /* vanished under us */ }
   const texts = [];
@@ -143,6 +145,14 @@ function restoreParked(dir, base, raw) {
   try { atomicWriteFileSync(path.join(dir, base), raw); return true; } catch { return false; }
 }
 
+function touchClaim(p) {
+  try { const now = new Date(); fs.utimesSync(p, now, now); } catch {}
+}
+
+function claimIsStale(p) {
+  try { return Date.now() - fs.statSync(p).mtimeMs > CLAIM_STALE_MS; } catch { return null; }
+}
+
 function rehomeOrphans(root, name) {
   const dir = agentDir(root, name);
   const prefix = `${name}.draining.`;
@@ -154,9 +164,12 @@ function rehomeOrphans(root, name) {
     if (!tag) continue;
     const pid = Number(tag[1]);
     const staleOwn = pid === process.pid && tag[2] !== LAUNCH_NONCE;
-    if (!Number.isInteger(pid) || pid <= 0 || (!staleOwn && isAlive(pid))) continue;
+    const aged = claimIsStale(path.join(parent, s));
+    if (aged === null) continue;
+    if (!Number.isInteger(pid) || pid <= 0 || (!staleOwn && !aged && isAlive(pid))) continue;
     const mine = claimPath(root, `${name}.draining.${claimTag('rehome')}`);
     try { fs.renameSync(path.join(parent, s), mine); } catch { continue; }
+    touchClaim(mine);
     const json = (f) => f.endsWith('.json') && !f.startsWith('.');
     let files = [];
     try { files = fs.readdirSync(mine).filter(json); } catch { continue; }
@@ -252,13 +265,17 @@ function oldestActiveParkTs(root, name) {
 }
 
 function parkedTexts(root, name) {
+  return parkedTextsIn(agentDir(root, name));
+}
+
+function parkedTextsIn(dir) {
   let files;
-  try { files = fs.readdirSync(agentDir(root, name)); } catch { return []; }
+  try { files = fs.readdirSync(dir); } catch { return []; }
   const out = [];
   for (const f of files) {
     if (!f.endsWith('.json') || f.startsWith('.')) continue;
     try {
-      const obj = JSON.parse(fs.readFileSync(path.join(agentDir(root, name), f), 'utf8'));
+      const obj = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));
       if (obj && typeof obj.text === 'string') out.push(obj.text);
     } catch {}
   }
@@ -269,15 +286,16 @@ function parkedTexts(root, name) {
 // parked as a POINTER to a file in ~/.clodex/messages/, and age-based collection
 // would delete that file out from under the still-parked pointer. Returning raw
 // text lets the GC see which files are still referenced.
-function allParkedTexts(root) {
-  const out = [];
+function parkDirs(root) {
   let names;
-  try { names = fs.readdirSync(root); } catch { return out; }
-  for (const name of names) {
-    if (isClaimEntry(name)) continue;
-    out.push(...parkedTexts(root, name));
-  }
-  return out;
+  try { names = fs.readdirSync(root); } catch { return []; }
+  const dirs = names.filter((n) => n !== CLAIMS).map((n) => path.join(root, n));
+  try { dirs.push(...fs.readdirSync(claimsDir(root)).map((n) => path.join(claimsDir(root), n))); } catch {}
+  return dirs;
+}
+
+function allParkedTexts(root) {
+  return parkDirs(root).flatMap(parkedTextsIn);
 }
 
 // Is `id` already used by any parked delivery, in any agent's store? Resend
@@ -285,12 +303,9 @@ function allParkedTexts(root) {
 // just within one — mint checks this to guarantee a resend resolves to exactly
 // one file. Cheap: pending dirs hold at most a handful of files.
 function parkIdInUse(root, id) {
-  let names;
-  try { names = fs.readdirSync(root); } catch { return false; }
-  for (const name of names) {
-    if (isClaimEntry(name)) continue;
+  for (const dir of parkDirs(root)) {
     let files;
-    try { files = fs.readdirSync(path.join(root, name)); } catch { continue; }
+    try { files = fs.readdirSync(dir); } catch { continue; }
     if (files.some((f) => parkFileHasId(f, id))) return true;
   }
   return false;
@@ -370,4 +385,4 @@ function claimParkedByKey(root, name, key) {
   return { ids, claimed };
 }
 
-module.exports = { parkDelivery, drainPending, rehomeOrphans, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, parkedTexts, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir, claimsDir, RESERVED_SEAT_NAMES, LEGACY_CLAIM_RE, CLAIM_TAG_RE, claimTag, isReservedSeatName };
+module.exports = { parkDelivery, drainPending, rehomeOrphans, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, parkedTexts, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir, claimsDir, CLAIM_STALE_MS, RESERVED_SEAT_NAMES, LEGACY_CLAIM_RE, CLAIM_TAG_RE, claimTag, isReservedSeatName };
