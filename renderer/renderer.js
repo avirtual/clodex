@@ -4578,9 +4578,11 @@ window.api.onSessionExit((name, code, meta) => {
   const archivedEntry = archivingSessions.get(name);
   const movedFailedEntry = meta && meta.expected ? null : movingFailed.get(name);
   movingFailed.delete(name);
-  const { at: restartFailedAt, ...restartFailedEntry } = restartFailed.get(name) || {};
+  const restartFailedHit = restartFailed.get(name);
   restartFailed.delete(name);
-  const failedEntry = movedFailedEntry || (Date.now() - restartFailedAt < RESTART_FAILED_TTL_MS ? restartFailedEntry : null);
+  const restartFailedEntry = restartFailedHit && Date.now() - restartFailedHit.at < RESTART_FAILED_TTL_MS
+    ? { ...restartFailedHit, at: undefined } : null;
+  const failedEntry = movedFailedEntry || restartFailedEntry;
   const exitedEntry = !archivedEntry && !failedEntry && meta && meta.agentType && !meta.expected
     && !(sessions.get(name) || {}).peer
     ? exitedRowSnapshot(name, code, meta)

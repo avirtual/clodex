@@ -56503,9 +56503,10 @@ ${detail}` });
         const archivedEntry = archivingSessions.get(name);
         const movedFailedEntry = meta && meta.expected ? null : movingFailed.get(name);
         movingFailed.delete(name);
-        const { at: restartFailedAt, ...restartFailedEntry } = restartFailed.get(name) || {};
+        const restartFailedHit = restartFailed.get(name);
         restartFailed.delete(name);
-        const failedEntry = movedFailedEntry || (Date.now() - restartFailedAt < RESTART_FAILED_TTL_MS ? restartFailedEntry : null);
+        const restartFailedEntry = restartFailedHit && Date.now() - restartFailedHit.at < RESTART_FAILED_TTL_MS ? { ...restartFailedHit, at: void 0 } : null;
+        const failedEntry = movedFailedEntry || restartFailedEntry;
         const exitedEntry = !archivedEntry && !failedEntry && meta && meta.agentType && !meta.expected && !(sessions.get(name) || {}).peer ? exitedRowSnapshot(name, code, meta) : null;
         if (activeSession === name && meta && meta.expected && !archivedEntry) respawnFocus.set(name, Date.now());
         if (meta && meta.expected && !archivedEntry) {
