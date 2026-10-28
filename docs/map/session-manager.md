@@ -128,7 +128,7 @@
 | symbol | purpose | state | calls | pins |
 |---|---|---|---|---|
 | `create` | public spawn entry: rejects a live or reserved duplicate name, reserves xdg-overlay names in `_creating`, and delegates to `_createReserved` | `this._creating` | _createReserved, cli-adapters.adapterFor | session-manager.test.js create-mint-census.test.js createdat-restart.test.js session-move.test.js |
-| `_createReserved` | the one spawn body: builds argv and env per agent type, spawns the pty or stream seat, registers the socket, records the live session and persistence, wires watchers and exit | `this.sessions`, `sessions.json`, run/<name>/ agent.json, `s.pendingOutput` | _sendToSession, _cleanup, exitDisposition, _ensureWire | unpinned |
+| `_createReserved` | the one spawn body: builds argv and env per agent type, spawns the pty or stream seat, registers the socket, records the live session and persistence, wires watchers and exit | `this.sessions`, `sessions.json`, run/<name>/ agent.json, `s.pendingOutput` | _sendToSession, _parkStreamOutbox (in onProcExit, before _cleanup), _cleanup, exitDisposition, _ensureWire | unpinned |
 
 ### Invariants
 
@@ -160,7 +160,8 @@
 | `deliverLostMonitors` | on restore, tells each live seat which of its clodex-monitor watches lost their watcher, in one `reboot` DM, and removes their state | monitors/<seat>/*.json | `_deliverMessage` | clodex-monitor.test.js |
 | `seatSend` | stream-seat composer send: arms the hint, holds idle delivery on its promise up to STREAM_ARM_WAIT_MS, enqueues as operator | `this._lastOperatorInputAt`, `s._armWait`, `s.outbox` | `_armSubmit` `_streamReleaseHeld` `_streamEnqueue` | seat-send-images.test.js session-manager.test.js api-contract.test.js |
 | `seatControl` | operator stop/compact/clear on a stream seat, refusing while a reload/compact/clear is in flight; wire context cmd over a slash cmd | `this._lastOperatorInputAt`, `s.outbox` | `seatInterrupt` `_executeCompact` `_streamEnqueue` `_injectText` | session-manager.test.js transcript-pull-outbox.test.js api-contract.test.js |
-| `_streamEnqueue` | single entry into a stream outbox: delivers at once when idle, unheld and the outbox is empty, else queues operator-first with parkKey replace and drains through `_streamTurnEnd` when idle, unheld and not init-stalled | `s.outbox`, `s.streamBusy`, `s._outboxRev` | `_streamHintHeld` `_streamDeliver` `_streamJoin` `_streamHoldPoll` `_streamTurnEnd` | session-manager.test.js |
+| `_streamEnqueue` | single entry into a stream outbox: delivers at once when idle, unheld and the outbox is empty, else queues operator-first with parkKey replace, carrying a resend's parkId and a producer's fallback and drains through `_streamTurnEnd` when idle, unheld and not init-stalled | `s.outbox`, `s.streamBusy`, `s._outboxRev` | `_streamHintHeld` `_streamDeliver` `_streamJoin` `_streamHoldPoll` `_streamTurnEnd` | session-manager.test.js stream-outbox-park.test.js |
+| `_parkStreamOutbox` | called by `_createReserved`'s onProcExit before `_cleanup`: re-parks every non-wire, non-operator, non-slash-command outbox item to `pending/<name>` with its parkId, parkKey and born = createdAt, an unproduced producer by its fallback text; logs operator and slash-command drops, dropped images, a producer with no fallback, and the whole outbox when `_dropHeld`; fires the item's onDivert after a park | `s.outbox`, pending store under PENDING_DIR | `parkDelivery` `_nextParkSeq` | stream-outbox-park.test.js |
 | `_streamTurnEnd` | end-of-turn drain: marks idle, re-polls while hint-held, else delivers a lone wire item or the joined batch before it | `s.streamBusy`, `s.outbox` | `_streamHintHeld` `_streamJoin` `_streamDeliver` `_streamSent` | unpinned |
 | `_onStreamPermission` | records a CLI permission request, raises a permission attention plus ipc line, notifies the OS when the window is unfocused | `s.streamPermissions`, `s._streamPermRev`, `s.needsAttention` | `_setAttention` `_broadcast` `windowForSession` | unpinned |
 | `seatPermission` | answers one pending permission request with the operator's choice through the codec's encodePermission | `s.streamPermissions`, `s._streamPermRev`, `s.needsAttention` | `_streamSend` `_setAttention` `_sendToSession` | session-manager.test.js renderer-source-pins.test.js api-contract.test.js |
@@ -174,7 +175,8 @@
 
 ### Invariants
 
-- `_streamEnqueue` is the only way into `s.outbox`, and it attaches onSend, produce and parkKey as non-enumerable properties so `seatOutbox` snapshots never carry them.
+- `_streamEnqueue` is the only way into `s.outbox`, and it attaches onSend, produce, parkKey, parkId and fallback as non-enumerable properties so `seatOutbox` snapshots never carry them.
+- A resend or urgent dm to a stream seat claims its parked file before `_streamEnqueue`; the durable copy is restored only by `_parkStreamOutbox` re-parking the item under the same parkId and parkKey if the seat dies first. Claiming in onSend instead would leave the file for a parked drain to deliver alongside the outbox copy.
 - `_streamTurnEnd` always delivers a wire item alone, never joined with queued text.
 - `_streamTurnEnd`, `_streamEnqueue` and `_streamReleaseHeld` all consult `_streamHintHeld`, so a hint arm still in flight holds idle delivery on every drain path, bounded by HINT_HOLD_MAX_MS.
 - `_loadLostExecRuns` and `_writeExecLedger` keep the exec ledger at the REGISTRY_DIR root, not under run/<name>/, so it survives the per-seat exit cleanup that `deliverLostExecRuns` must outlive.

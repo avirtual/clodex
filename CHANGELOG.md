@@ -30,6 +30,7 @@ blocks a release.
 - The ctl-admin sweep keeps a context's lock while a dead worker's clodexctl child is still running, so a `kill -9` on the worker no longer lets a second deploy start against the same node mid-run.
 - Deleting or renaming a seat now also closes its drawer terminal shell, and a later seat with the same name gets a fresh shell instead of inheriting the old scrollback, cwd and late command results.
 - **Security:** the Bash deny guard treats a backslash-newline as the line continuation bash does and splits on backticks, so `kill -9 \⏎-1` and `git add \⏎-A` are refused like their one-line forms.
+- A dm queued for a Codex, Muse or stream-mode Claude seat that is mid-turn is parked to its pending mail when the seat restarts, is renamed, quits or crashes, instead of being dropped; a resend or urgent copy keeps its id until the seat has actually received it.
 
 ## 5.149.0 — 2026-10-28 — clodexctl reaps its tunnel on exit, create node takes a token file, worktree-safe workspace deletes
 
