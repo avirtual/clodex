@@ -4977,6 +4977,13 @@ function createSessionManager(deps) {
       }
     }
 
+    async _keepIfDirty(worktreePath) {
+      let d;
+      try { d = await gitWorktree.isDirty(worktreePath); } catch (e) { return { keep: true, why: e.message || 'tree could not be inspected' }; }
+      if (!d || !d.ok) return { keep: true, why: (d && d.error) || 'tree could not be inspected' };
+      return d.dirty ? { keep: true, why: 'uncommitted work' } : null;
+    }
+
     async purgeWorkspace(workspaceId) {
       const seats = this.listForWorkspace(workspaceId);
       const records = this.savedForWorkspace(workspaceId);
@@ -4993,8 +5000,11 @@ function createSessionManager(deps) {
       const dropped = [];
       const kept = [];
       const destroyArm = async (name, bucket) => {
-        const r = await this.destroy(name);
-        if (r && r.worktreeRemoved === false) {
+        const r = await this.destroy(name, { beforeRemove: this._keepIfDirty });
+        if (r && r.kept) {
+          kept.push({ name, worktreeRemoved: false, path: r.path, why: r.why });
+          this._rehomeKept(name);
+        } else if (r && r.worktreeRemoved === false) {
           kept.push({ name, worktreeRemoved: false, path: r.path, error: r.error });
           this._rehomeKept(name);
         } else bucket.push(name);

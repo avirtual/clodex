@@ -67,7 +67,7 @@ function deleteWorkspaceDetail(running, saved) {
 }
 
 function keptWorktreesMessage(kept) {
-  const list = kept.map((k) => `${k.name} (${k.path})`).join(', ');
+  const list = kept.map((k) => `${k.name} (${k.path}${k.why ? `: ${k.why}` : ''})`).join(', ');
   return `${kept.length} worktree(s) could not be removed and their seats stay archived: ${list}`;
 }
 
