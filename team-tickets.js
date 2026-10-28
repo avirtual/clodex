@@ -1560,7 +1560,7 @@ function createTicketMethods(deps, shared) {
       try {
         const n = countMustFix(landedOn.mustFix);
         const mf = n === 0
-          ? 'no must-fixes'
+          ? (landedOn.verdict === 'REWORK' ? 'no must-fix items could be extracted — read the full verdict' : 'no must-fixes')
           : `${n} must-fix${n === 1 ? '' : 'es'}`;
         // The full prose goes in the ticket's task dir: a spill is swept by age (30 min), so an overnight lead wakes to a dead path,
         // and a truncated dump of the record hides `verdict` behind a multi-KB `report`.

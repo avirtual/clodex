@@ -140,6 +140,16 @@ test('the verdict dm still says what landed and where the full text is', () => {
   assert.ok(body.includes('Full verdict ('), 'and the pointer to the full prose does too');
 });
 
+test('a REWORK with no extractable must-fix says so instead of "no must-fixes"', () => {
+  const f = mkLoop();
+  f.m._notifyLeadOfVerdict(f.seat('lead'), 'lead', 't1',
+    { verdict: 'REWORK', mustFix: null, reviewRound: 2 }, 'VERDICT: REWORK');
+  assert.strictEqual(f.gated.length, 1, 'ENTER: the lead was notified at all');
+  const body = f.gated[0].body;
+  assert.match(body, /^\[ticket t1 REWORK\] review round \d+, no must-fix items could be extracted — read the full verdict\./m,
+    `Got:\n${body}`);
+});
+
 test('a REWORK verdict is unchanged: its own body already says what to do', () => {
   const f = mkLoop();
   f.m._notifyLeadOfVerdict(f.seat('lead'), 'lead', 't1',
