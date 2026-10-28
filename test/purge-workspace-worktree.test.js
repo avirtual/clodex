@@ -108,7 +108,7 @@ test('keptWorktreesMessage names the why of a kept tree', () => {
   const { keptWorktreesMessage } = require('../app-menus.js');
   assert.strictEqual(
     keptWorktreesMessage([{ name: 'wt', path: '/wt/t1', why: 'uncommitted work' }, { name: 'w2', path: '/wt/t2', error: 'busy' }]),
-    '2 worktree(s) could not be removed and their seats stay archived: wt (/wt/t1: uncommitted work), w2 (/wt/t2)',
+    '2 worktree(s) were kept and their seats stay archived: wt (/wt/t1: uncommitted work), w2 (/wt/t2)',
   );
 });
 

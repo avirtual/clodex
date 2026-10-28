@@ -522,12 +522,12 @@ renderer's `archivingSessions` map, so `onSessionExit` tears the live tab down
 and rebuilds it in place as a **dimmed archived row** (`.session-item.archived`,
 "archived — click to resume") — no app restart. Clicking it unarchives
 (`setArchived(false)`) then resume-spawns; its ✕ forgets the entry
-(`forgetSession` → `persistence.remove`) — a DIFFERENT control from the live
+(`forgetSession` → `session:forget`: `persistence.remove`, or `destroy()` first when the record's worktree is on disk) — a DIFFERENT control from the live
 row's ✕, which archives. Archived rows surface via the sidebar status filter
 (Active/Archived/All).
 
 The record-droppers reachable from the sidebar are three, not one: the ARCHIVED
-row's ✕ and the FAILED ghost row's ✕ (both `forgetSession` → `persistence.remove`,
+row's ✕ and the FAILED ghost row's ✕ (both `forgetSession` → `session:forget`: `persistence.remove`, or `destroy()` first when the record's worktree is on disk,
 renderer.js), and right-click Delete Session…. Only the last kills a session
 process; the two ✕ routes act on a record whose session is already gone.
 
@@ -545,7 +545,7 @@ killed agent's record is gone. A `respawn` kill (`restartSession`,
 **Every record-dropper**, sidebar or not: `kill()` itself (not with `respawn`), `destroy()`, Delete
 Session…, Delete Workspace… (the seats it kills and its saved rows; a seat live
 in another workspace keeps its record), the archived and failed rows' ✕
-(`forgetSession`, `session:forget`'s `forgetRecord`, which a worktree record reaches only through `destroy()`), team-retire with discard, `sweepReviewerGraveyard`, the
+(`forgetSession`, `session:forget`'s `forgetRecord`, which a record whose tree is on disk reaches only after `destroy()` removed it), team-retire with discard, `sweepReviewerGraveyard`, the
 team-review spawn-failure rollback, the seat-import spawn-failure rollback
 (remote-wiring.js, drops only when the seat is not live), and all three ticket-seat
 spawn-failure rollbacks in `_spawnTicketSeat` (team-tickets.js: the
@@ -576,8 +576,10 @@ record archived and re-homed to the default workspace (`_rehomeKept`) and lists
 it with its reason (`kept`, `showKeptWorktrees`), as it does a tree whose removal
 failed; a clean tree is removed with its record and `pending/<seat>`. The ✕
 forget does the same for a record whose tree is on disk: a dirty or
-uninspectable tree refuses the forget (`{ ok: false, error }`, toasted; the row
-and the tree stay), a clean one is removed and the forget proceeds. A record
+uninspectable tree refuses the forget before `destroy()` runs (`{ ok: false,
+error }` naming the path, toasted; the row, the tree and the keep-warm hold
+stay), a clean one is removed and the forget proceeds. Its confirm
+(`forgetConfirmText`) says so. A record
 whose tree is already gone is forgotten without `destroy()`.
 
 **Real delete of a LIVE session = right-click "Delete Session…"** + native

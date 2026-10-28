@@ -261,9 +261,17 @@ test('forgetTree: session:forget of an archived worktree record with uncommitted
   assert.ok(f.fs.existsSync(f.pendingDir));
 });
 
+test('forgetTree: a dirty tree refuses the forget before destroy runs, so the seat\'s keep-warm hold is not disarmed', async () => {
+  const f = treeFixture({ ok: true, dirty: true });
+  let destroys = 0;
+  f.manager.destroy = async () => { destroys += 1; return { ok: true, worktreeRemoved: true }; };
+  assert.strictEqual((await f.forget('wt')).ok, false);
+  assert.strictEqual(destroys, 0);
+});
+
 test('forgetTree: session:forget of an archived worktree record it cannot inspect is refused with the inspect error', async () => {
   const f = treeFixture({ ok: false, error: 'not a git repository' });
-  assert.deepStrictEqual(await f.forget('wt'), { ok: false, error: 'not a git repository' });
+  assert.deepStrictEqual(await f.forget('wt'), { ok: false, error: `${f.tree}: not a git repository` });
   assert.deepStrictEqual(f.removed, []);
   assert.ok(f.persistence.get('wt'));
 });

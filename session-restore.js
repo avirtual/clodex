@@ -87,6 +87,7 @@ function stampConfigFlags(row, entry) {
   row.posture = postureOf(adapterFor(entry.type), Array.isArray(entry.extraArgs) ? entry.extraArgs : []);
   row.voice = voiceModeOf(entry);
   if (typeof entry.fixFor === 'string' && entry.fixFor) row.fixFor = entry.fixFor;
+  if (entry.worktree && typeof entry.worktree.path === 'string' && entry.worktree.path) row.worktreePath = entry.worktree.path;
   return row;
 }
 

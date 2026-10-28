@@ -27333,6 +27333,10 @@ ${i3.join("\n")}
         }
         return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)} ${u[i]}`;
       }
+      function forgetConfirmText(head, entry) {
+        const tree = entry && entry.worktreePath ? `Its worktree ${entry.worktreePath} is also removed from disk` : "If it is a ticket seat, its worktree is also removed from disk";
+        return `${head} It isn't running \u2014 this removes the saved entry. ${tree}, unless it has uncommitted work (then nothing is removed).`;
+      }
       module.exports = {
         esc,
         baseName,
@@ -27346,7 +27350,8 @@ ${i3.join("\n")}
         fmtBustTokens,
         fmtBytes,
         num,
-        int
+        int,
+        forgetConfirmText
       };
     }
   });
@@ -51993,7 +51998,7 @@ ${detail}` });
       var { PendingInput } = require_peer_input_queue();
       var { versionSeverity, updateApplies, releaseAgeInfo, quotaChips, shapeQuota, isHumanPtyInput, proxyReceivedAt } = require_proxy_util();
       var { STRIP_LEVELS, SEV_LINE, CTX_CAT_LABELS, COST_SPINE, COST_CONTENT, BUST_FAULT, REP_BUCKET_COLOR, REP_BUCKET_LABEL, REP_CAT_COLOR } = require_constants();
-      var { esc, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes } = require_format();
+      var { esc, baseName, fmtTokens, fmtCountdown, fmtMinutes, fmtAgo, fmtUsd, fmtDur, shortTs, fmtBustTokens, fmtBytes, forgetConfirmText } = require_format();
       var { renderDiffHtml, costStackBlock, bustRow, genuineBustWeight, genuineBustCount } = require_render_html();
       var { effortOptions } = require_effort_options();
       var { renderMarkdown } = require_render_markdown();
@@ -52702,7 +52707,7 @@ ${detail}` });
         });
         item.querySelector(".session-close").addEventListener("click", async (e) => {
           e.stopPropagation();
-          if (confirm(`Forget session "${entry.name}"? It isn't running \u2014 this just removes the saved entry.`)) {
+          if (confirm(forgetConfirmText(`Forget session "${entry.name}"?`, entry))) {
             if (!await forgetSavedEntry(entry.name)) return;
             item.remove();
           }
@@ -52759,7 +52764,7 @@ ${detail}` });
         });
         item.querySelector(".session-close").addEventListener("click", async (e) => {
           e.stopPropagation();
-          if (confirm(`Delete archived session "${displayName}"? It isn't running \u2014 this just removes the saved entry.`)) {
+          if (confirm(forgetConfirmText(`Delete archived session "${displayName}"?`, entry))) {
             if (!await forgetSavedEntry(entry.name)) return;
             item.remove();
             sidebarMeta.delete(entry.name);
@@ -52877,7 +52882,7 @@ ${detail}` });
         });
         item.querySelector(".session-close").addEventListener("click", async (e) => {
           e.stopPropagation();
-          if (confirm(`Forget session "${displayName}"? It isn't running \u2014 this just removes the saved entry.`)) {
+          if (confirm(forgetConfirmText(`Forget session "${displayName}"?`, entry))) {
             if (!await forgetSavedEntry(entry.name)) return;
             item.remove();
             sidebarMeta.delete(entry.name);

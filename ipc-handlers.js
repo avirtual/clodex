@@ -2488,11 +2488,13 @@ function registerIpcHandlers(deps) {
     }
   });
 
+  const keptError = (path, why) => (why === 'uncommitted work' ? `uncommitted work in ${path}` : `${path}: ${why || 'tree could not be inspected'}`);
+
   const forgetTree = async (e, name, rec) => {
+    const pre = await manager._keepIfDirty(rec.worktree.path);
+    if (pre && pre.keep) return { ok: false, error: keptError(rec.worktree.path, pre.why) };
     const r = await manager.destroy(name, { beforeRemove: manager._keepIfDirty });
-    if (r && r.kept) {
-      return { ok: false, error: r.why === 'uncommitted work' ? `uncommitted work in ${r.path}` : (r.why || 'tree could not be inspected') };
-    }
+    if (r && r.kept) return { ok: false, error: keptError(r.path, r.why) };
     if (!r || r.worktreeRemoved !== true) {
       return { ok: false, error: `${(r && r.path) || rec.worktree.path} not removed: ${(r && r.error) || 'unknown error'}` };
     }
