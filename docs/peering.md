@@ -432,9 +432,18 @@ pays for anything — `moveToPeer` probes with `importBegin` before it quiesces,
 and `importAbort(id)` reaps the staging that probe opened on the arms that never
 ship. `_requestRaw` is `_request`'s sibling for the non-JSON leg (same auth
 headers). `canImport` rides `status()` next to `needsUpgrade`. A commit whose
-reply is lost (`importShip` → `{unreached:true}`, no DELETE) is settled by a
-`GET /api/sessions/<name>` probe (`sessionGet`), and an unreachable probe
-archives the local copy without a respawn.
+reply is lost (`importShip` → `{unreached:true}`, no DELETE) is settled by
+the commit itself: a `GET /api/sessions/<name>` probe (`sessionGet`) that finds
+the seat is a cheap landed shortcut, but a 404 there proves nothing (the box
+answers from its live map, before a still-running create registers the seat).
+Otherwise `moveToPeer` re-POSTs the commit on the same staging id
+(`importShip({id, files: [], retry: true})`, which never DELETEs). The box keeps
+one in-flight promise per staging (`_handleImportCommit`), so a re-POST during
+the first commit's create answers that create's result, and one after it answers
+`unknown staging`. `ok` takes the success arm; any reached refusal (unknown
+staging or other) and an unreached re-send both archive the local copy as
+`unknown` without a respawn. A local respawn happens only for a refusal the box
+returned to the ORIGINAL commit.
 
 ## 4. Settings reconciliation (peer-wiring.js)
 

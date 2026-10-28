@@ -24,6 +24,7 @@ blocks a release.
 - A reminder that fires while a Codex or Muse seat is offline stays in the reminder store and retries when the seat is back, instead of being parked where nothing drains it and deleted.
 - The idle and boot drains of parked mail check for a pending turn start before claiming the store, so parked messages keep their resend id, content key and passive flag instead of coming back as one plain active entry.
 - A relaunch that reuses the previous process pid (containers) rehomes the claims that launch left behind, instead of treating them as live forever.
+- Move to Peer: when the commit's reply is lost, Clodex re-sends the commit instead of trusting a session probe, so a seat whose far-side creation was still in flight is no longer respawned locally as well (the conversation no longer forks onto two hosts).
 
 ## 5.148.1 — 2026-10-28 — security fixes for the INSECURE origin gate
 
