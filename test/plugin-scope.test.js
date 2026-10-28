@@ -1311,7 +1311,7 @@ test('ROUND-3 NIT5: the Plugins section is hidden on a PEER row, exactly as exec
   // than sending the field: the peer save branch must NOT carry `plugins`.
   const saveAt = src.indexOf('const res = source');
   assert.ok(saveAt > 0, 'ENTER: the save branch was located');
-  const peerArm = src.slice(saveAt, src.indexOf(': await window.api.setSessionArgs', saveAt));
+  const peerArm = src.slice(saveAt, src.indexOf(': await setArgsOrFailRow', saveAt));
   assert.strictEqual(/\bplugins\b/.test(peerArm), false,
     'the peer save still omits plugins — phase B decides whether it crosses the wire, not this round');
 });

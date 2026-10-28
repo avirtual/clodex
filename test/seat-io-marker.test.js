@@ -72,6 +72,7 @@ function mkRenderer(extra = {}) {
     alert() {},
     refreshSeatMcp() {},
     respawnSnapshots: new Map(),
+    restartFailed: new Map(),
     ...extra,
   };
   const names = Object.keys(env);
@@ -83,7 +84,7 @@ function mkRenderer(extra = {}) {
     fnSrc('addSessionToSidebar'), fnSrc('addArchivedSessionToSidebar'),
     fnSrc('addFailedSessionToSidebar'), fnSrc('addExitedSessionToSidebar'),
     fnSrc('moveSessionWithPicker'), fnSrc('moveSessionToPeerWithDialog'), fnSrc('startRename'),
-    `async ${fnSrc('restartOrFailRow')}`, fnSrc('applyTicketBadge'),
+    fnSrc('failRowOrStash'), `async ${fnSrc('restartOrFailRow')}`, fnSrc('applyTicketBadge'),
     'return { markSeatIo, markSeatEffort, markSeatPosture, exitedRowSnapshot, archivedRowEntry, addSessionToSidebar, addArchivedSessionToSidebar, addFailedSessionToSidebar, addExitedSessionToSidebar, moveSessionWithPicker, moveSessionToPeerWithDialog, startRename, restartOrFailRow };',
   ].join('\n');
   const fns = new Function(...names, body)(...names.map((n) => env[n]));
