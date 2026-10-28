@@ -14,6 +14,10 @@ blocks a release.
 
 ## Unreleased
 
+### Fixed
+
+- Editing a managed peer's target box (ssh host, cloud target or remote port) stops the old connection and sheds its tabs, wterms and control claims again, instead of re-pointing them onto the new box; only a tunnel respawn to the same destination keeps them.
+
 ## 5.148.0 — 2026-10-28 — security fixes from the second cold audit
 
 - **Security:** `CLODEX_WEB_INSECURE=1` / `CLODEX_REMOTE_INSECURE=1` again serve clients that reach a non-loopback bind, which 5.147.0's Host/Origin gate refused; the flag now also skips that gate, as it already skipped the token requirement.
