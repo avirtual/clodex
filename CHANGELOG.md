@@ -12,7 +12,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — clodexctl reaps its tunnel on exit, create node takes a token file, worktree-safe workspace deletes
+## Unreleased
+
+## 5.149.0 — 2026-10-28 — clodexctl reaps its tunnel on exit, create node takes a token file, worktree-safe workspace deletes
 
 - **Security:** `clodexctl` now reaps its tunnel child and any helm token tempdir on Ctrl-C, SIGTERM or a closed terminal, instead of leaving an authenticated forward on a loopback port and token files on disk; `attach` and `logs -f` also handle SIGHUP.
 - Delete Workspace keeps a ticket worktree that has uncommitted work (or cannot be inspected) and lists it, instead of force-removing it; the confirm dialog now says which worktrees it removes.
