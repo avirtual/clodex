@@ -66,6 +66,7 @@ const DEFAULTS = {
   maxPings: 24, // ping budget per anchor  (WARMTH_HOLD_MAX_PINGS)
   maxFailures: 2, // consecutive FAILURES (not declines) -> disarm
   urgentIntervalSeconds: 15,
+  requestTimeoutMs: 30_000,
 };
 
 // One tick's verdict for an armed session — PURE (offline-testable).
@@ -159,7 +160,7 @@ function rearmPlan(holdUntil, nowMs, always = false) {
 // Minimal JSON POST on node http/https — injectable (opts.request) so
 // tests never open sockets. Resolves { status, headers, body:Buffer };
 // rejects on transport errors only (HTTP error statuses resolve).
-function postJson(urlString, headers, bodyBuf) {
+function postJson(urlString, headers, bodyBuf, timeoutMs = DEFAULTS.requestTimeoutMs) {
   return new Promise((resolve, reject) => {
     let u;
     try { u = new URL(urlString); } catch (e) { return reject(e); }
@@ -170,6 +171,7 @@ function postJson(urlString, headers, bodyBuf) {
       res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
       res.on('error', reject);
     });
+    req.setTimeout(timeoutMs, () => req.destroy(new Error('timeout')));
     req.on('error', reject);
     req.end(bodyBuf);
   });
@@ -192,7 +194,7 @@ class HoldKeeper extends EventEmitter {
     if (!opts.warmth) throw new Error('HoldKeeper needs a WarmthStore');
     this.warmth = opts.warmth;
     this._now = opts.now || (() => Date.now() / 1000);
-    this._request = opts.request || postJson;
+    this._request = opts.request || ((u, h, b) => postJson(u, h, b, this.requestTimeoutMs));
     this._auth = opts.auth || readClaudeAuth;
     this._configDirFor = opts.configDirFor || (() => null);
     this._entryStore = opts.entryStore || null;
@@ -399,7 +401,12 @@ class HoldKeeper extends EventEmitter {
     // stays due for the rest of its margin window and then goes cold on its own.
     const authKey = Object.keys(headers).find((k) => k.toLowerCase() === 'authorization');
     if (authKey && /^Bearer\s+sk-ant-oat/i.test(headers[authKey] || '')) {
-      const { accessToken, expiresAt } = this._auth(this._configDirFor(sessionId) || null);
+      const configDir = this._configDirFor(sessionId);
+      if (configDir === undefined) {
+        return { ok: true, warmed: false, skipped: 'no-account', session: sessionId,
+          hash: hFull, note: 'no seat record owns this session; declined rather than guessing an account' };
+      }
+      const { accessToken, expiresAt } = this._auth(configDir || null);
       if (!accessToken) {
         return { ok: true, warmed: false, skipped: 'no-credential', session: sessionId,
           hash: hFull, note: 'could not read the current Claude OAuth token; declined rather than replaying a stale bearer' };
@@ -546,6 +553,7 @@ class HoldKeeper extends EventEmitter {
     try {
       now = now ?? this._now();
       for (const [sid, hold] of [...this._holds]) {
+        if (this._holds.get(sid) !== hold) continue;
         const entry = this._entries.get(sid);
         let wq = null;
         if (entry) {
@@ -557,6 +565,7 @@ class HoldKeeper extends EventEmitter {
         const [action, reason, cause] = holdDecision(hold, !!entry, wq, now, this);
         if (action !== 'ping') hold.urgent = false;
         if (action === 'disarm') {
+          if (this._holds.get(sid) !== hold) continue;
           this._holds.delete(sid);
           // This path deletes from _holds directly rather than via disarm(), so
           // it needs its own flush — a perpetual hold reaching the failure stop
@@ -565,12 +574,13 @@ class HoldKeeper extends EventEmitter {
           if (hold.always) this._flushPerpetual();
           this.emit('hold', { session: sid, event: 'disarmed', reason, cause, pings: hold.pings, lastResult: hold.lastResult ?? null });
         } else if (action === 'ping') {
+          if (this._holds.get(sid) !== hold) continue;
           const res = await this.ping(sid);
           const cur = this._holds.get(sid); // may have been disarmed mid-await
           if (cur) {
-            cur.pings += 1;
-            cur.lastPingTs = now;
             const [kind, label] = pingOutcome(res);
+            if (kind !== 'decline') cur.pings += 1;
+            cur.lastPingTs = now;
             cur.lastResult = label;
             cur.urgent = kind === 'decline';
             // A decline neither spends a strike nor clears the count: it is not

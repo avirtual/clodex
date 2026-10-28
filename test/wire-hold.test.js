@@ -439,7 +439,7 @@ test('tick: declines neither spend the failure budget nor clear a strike already
   assert.deepStrictEqual(disarms, [], 'ENTER: still armed; every assertion below is vacuous once it disarms');
   const h = keeper.holds()[SID];
   assert.equal(h.failures, 1, 'a decline is no evidence either way: it neither strikes nor absolves');
-  assert.equal(h.pings, 5, 'a declined attempt still spends the ping budget');
+  assert.equal(h.pings, 1, 'only the 401 spent the ping budget; the four declines did not');
   assert.equal(h.lastResult, 'declined:408');
 
   // The counter survived intact, so the next credential rejection is strike two
@@ -450,6 +450,26 @@ test('tick: declines neither spend the failure budget nor clear a strike already
   await keeper.tick();
   assert.deepStrictEqual(keeper.holds(), {});
   assert.deepStrictEqual(disarms, ['failures']);
+});
+
+test('tick: a 529 burst on a 12 h hold at the urgent cadence never reaches the max-pings disarm', async () => {
+  let now = 1000;
+  const k = new HoldKeeper({ now: () => now,
+    warmth: { state: () => 'warm', query: () => ({ found: true, warm: true, remaining_s: 200, ttl_s: 3600 }), record: () => null },
+    request: async () => ({ status: 529, headers: {}, body: Buffer.from('{}') }) });
+  k.noteRequest('S', { messages: [{ role: 'user', content: 'x' }] }, {}, 'http://x/v1/messages');
+  k.arm('S', 12);
+  const disarms = [];
+  const pinged = [];
+  k.on('hold', (e) => {
+    if (e.event === 'disarmed') disarms.push(e.cause);
+    if (e.event === 'ping') pinged.push(e.result.status_code);
+  });
+  for (let i = 0; i < 26; i++) { await k.tick(); now += 15; }
+  assert.equal(pinged.length, 26, 'ENTER: every tick pinged and got a 529');
+  assert.ok(pinged.every((c) => c === 529));
+  assert.deepStrictEqual(disarms, []);
+  assert.equal(k.holds().S.pings, 0);
 });
 
 // A warmed ping is the only thing that clears the count, and it must clear it
@@ -471,6 +491,34 @@ test('tick: a successful ping resets the failure count to zero', async () => {
   await keeper.tick();
   assert.equal(keeper.holds()[SID].failures, 0);
   assert.equal(keeper.holds()[SID].lastResult, 'warmed');
+});
+
+test('tick: a hold ended or disarmed while another seat\'s ping is in flight is not pinged', async () => {
+  for (const stop of ['endSession', 'disarm']) {
+    const warmth = { state: () => 'warm', query: () => ({ found: true, warm: true, remaining_s: 100, ttl_s: 3600 }), record: () => null };
+    const sent = [];
+    let release;
+    let entered;
+    const inFlight = new Promise((r) => { entered = r; });
+    const k = new HoldKeeper({ warmth, auth: () => ({ accessToken: 'x', expiresAt: null }),
+      request: async (url, h, body) => {
+        const sid = JSON.parse(body).metadata.sid;
+        sent.push(sid);
+        if (sid === 'A') { entered(); await new Promise((r) => { release = r; }); }
+        return { status: 200, headers: {}, body: Buffer.from('{}') };
+      } });
+    for (const sid of ['A', 'B']) {
+      k.noteRequest(sid, { messages: [{ role: 'user', content: 'hi' }], metadata: { sid } }, {}, 'http://x/v1/messages');
+      k.arm(sid, 1);
+    }
+    assert.deepStrictEqual(Object.keys(k.holds()).sort(), ['A', 'B'], `${stop}: ENTER: both armed`);
+    const t = k.tick();
+    await inFlight;
+    k[stop]('B');
+    release();
+    await t;
+    assert.deepStrictEqual(sent, ['A'], `${stop}: B is not pinged from the stale snapshot`);
+  }
 });
 
 test('arm: always builds a deadline-free hold that maxHours cannot clamp', () => {
@@ -797,6 +845,53 @@ test('ping: a seat with no config dir re-reads the default store', async () => {
     assert.deepStrictEqual(seen, [null], label);
     assert.equal(sent[0].headers.authorization, 'Bearer sk-ant-oat01-fresh', label);
   }
+});
+
+test('ping: a session no seat record owns DECLINES instead of borrowing the default account', async () => {
+  const seen = [];
+  const auth = (dir) => {
+    seen.push(dir);
+    return { accessToken: 'sk-ant-oat01-default-acct', expiresAt: Date.now() + 3600_000 };
+  };
+  const { store, keeper, sent } = rig({ auth, configDirFor: () => undefined });
+  const obj = makeObj();
+  keeper.noteRequest(SID, obj, { authorization: OAT }, 'http://up/v1/messages');
+  stampWarm(store, obj);
+
+  const res = await keeper.ping(SID);
+  assert.equal(res.skipped, 'no-account');
+  assert.equal(res.ok, true);
+  assert.equal(res.warmed, false);
+  assert.deepStrictEqual(seen, [], '_auth is never consulted');
+  assert.equal(sent.length, 0, '_request is never called');
+  assert.deepEqual(pingOutcome(res), ['decline', 'declined:no-account']);
+});
+
+test('ping: an upstream that accepts and never answers times out as a transport decline', async (t) => {
+  const sockets = new Set();
+  const server = http.createServer(() => {});
+  server.on('connection', (sock) => sockets.add(sock));
+  t.after(() => { for (const sock of sockets) sock.destroy(); server.close(); });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${server.address().port}/v1/messages`;
+
+  const clock = { t: 1_000_000 };
+  const store = new WarmthStore({ now: () => clock.t });
+  const keeper = new HoldKeeper({ warmth: store, now: () => clock.t, requestTimeoutMs: 50, marginSeconds: 100 });
+  const obj = makeObj();
+  keeper.noteRequest(SID, obj, {}, url);
+  stampWarm(store, obj);
+  keeper.arm(SID, 1);
+  const pings = [];
+  keeper.on('hold', (e) => { if (e.event === 'ping') pings.push(e.result); });
+
+  clock.t += 250;
+  await keeper.tick();
+  assert.equal(pings.length, 1, 'ENTER: the tick pinged and settled');
+  assert.equal(pings[0].status_code, null);
+  assert.match(pings[0].reason, /timeout/);
+  assert.deepEqual(pingOutcome(pings[0]), ['decline', 'declined:transport']);
+  assert.equal(keeper._inTick, false, 'the keeper is free for the next tick');
 });
 
 test('keychainServiceFor derives the CLI\'s suffixed item name', () => {

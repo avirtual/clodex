@@ -894,15 +894,7 @@ function createSessionManager(deps) {
           hold = new HoldKeeper({
             warmth,
             entryStore,
-            configDirFor: (sid) => {
-              for (const s of this.sessions.values()) {
-                if (s.sessionId !== sid) continue;
-                const entry = getPersistence().get(s.name);
-                const dir = entry && entry.env && entry.env.CLAUDE_CONFIG_DIR;
-                return dir || null;
-              }
-              return null;
-            },
+            configDirFor: (sid) => this._holdConfigDirFor(sid),
           });
           hold.on('hold', (ev) => this._shadowLog({ type: 'wire-hold', ...ev }));
           hold.on('hold', (ev) => this._onHoldLifecycle(ev));
@@ -1325,6 +1317,12 @@ function createSessionManager(deps) {
       }
     }
 
+    _holdConfigDirFor(sid) {
+      const rec = getPersistence().list().find((r) => r && r.sessionId === sid);
+      if (!rec) return undefined;
+      return (rec.env && rec.env.CLAUDE_CONFIG_DIR) || null;
+    }
+
     _onHoldLifecycle(ev) {
       try {
         if (!ev) return;
@@ -1338,7 +1336,7 @@ function createSessionManager(deps) {
           const name = this._nameForWireSession(ev.session);
           // A failure disarm stops the live hold but never erases the persisted intent: the CLI refreshes its
           // OAuth on its next turn, so an overnight 401 is transient (~12 minutes) and a rejected replay proves nothing.
-          if (ev.cause === 'failures' && name) {
+          if ((ev.cause === 'failures' || ev.cause === 'max-pings') && name) {
             const s = this.sessions.get(name);
             if (s) s._holdRearmed = false;
           }

@@ -298,7 +298,9 @@ exists for — measured, that struck out a hold overnight and left it dead for t
 hours. `wire/claude-auth.js` re-reads the CLI's current token at ping time
 (credentials file, else the login keychain), gated on the `sk-ant-oat` prefix so
 an API key or a codex entry keeps the header it came with. A token that cannot
-be read or is already past expiry DECLINES the ping, which spends no strike; the
+be read or is already past expiry DECLINES the ping. A decline (this, a 408/429/5xx,
+a transport error, or a session no seat record owns) spends neither a strike nor
+the timed hold's ping budget, and a `max-pings` disarm reopens the re-arm gate; the
 prefix stays due (a non-200 never restamps the ledger) and the next tick retries
 until the window closes on its own.
 

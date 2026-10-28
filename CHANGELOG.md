@@ -32,6 +32,10 @@ blocks a release.
 - A sessions.json that parses but is not a list is now moved aside and the launch snapshot restored, instead of starting with no seats and overwriting the snapshot with the bad file.
 - Seats whose workspace record is missing or corrupt now get their workspace re-created at launch, so it appears under Recent Workspaces and its seats restore when opened, instead of staying invisible with their names reserved.
 - Memory pins, memory edits and library saves (templates, prompts, agents, skills, exec commands, MCP entries) now write atomically, so a crash mid-save can no longer leave an empty file.
+- **Security:** a keep-warm ping never carries another account's OAuth token: the hold resolves the seat's `CLAUDE_CONFIG_DIR` from its persisted record, and a session no record owns declines the ping instead of borrowing the default account's bearer.
+- A hold ended or disarmed while another seat's ping was in flight is no longer pinged from the stale tick snapshot.
+- Upstream declines (overload, rate limit, transport, unreadable token) no longer spend a timed hold's ping budget, a `max-pings` stop re-arms on the next turn, and a ping that hangs times out after 30 s instead of wedging every hold.
+- `wirescope` telemetry: pruning a seat that left the live map no longer erases its this-launch spend from the persisted lifetime totals.
 
 ## 5.147.0 — 2026-10-28 — security fixes from the first cold audit
 

@@ -412,11 +412,17 @@ class WireTelemetry {
   // Mirror ProxyPoller's telemetry pruning so dead sessions don't accrete.
   prune(liveNames) {
     try {
-      for (const name of this._agents.keys()) {
+      let dropped = false;
+      for (const [name, a] of this._agents) {
         if (!liveNames.has(name)) {
+          if (a.sessionId && a.totals) {
+            this._dropped.set(a.sessionId, { ...this._lifetime(a), ts: Date.now() });
+            dropped = true;
+          }
           this._agents.delete(name); this._lastDiff.delete(name); this._baseline.delete(name);
         }
       }
+      if (dropped && this._persist) this._save();
     } catch { /* never breaks the tick */ }
   }
 }
