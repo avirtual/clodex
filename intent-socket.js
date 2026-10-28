@@ -185,7 +185,7 @@ function shellSegments(cmd) {
       tok.end = i;
       const s = segs[segs.length - 1];
       const f = outer[outer.length - 1];
-      if (f && !f.bt && s.length === 0) { if (tok.text === 'case') f.inCase++; else if (tok.text === 'esac' && f.inCase > 0) f.inCase--; }
+      if (f && !f.bt && s.length === 0 && !tok.quoted) { if (tok.text === 'case') f.inCase++; else if (tok.text === 'esac' && f.inCase > 0) f.inCase--; }
       s.push(tok);
     }
     tok = null;
@@ -202,15 +202,15 @@ function shellSegments(cmd) {
     }
     const top = outer[outer.length - 1];
     if (top && top.bt && c === '`') { push(i); segs.push([]); outer.pop(); q = '"'; continue; }
-    if (top && c === '#' && !tok) { while (i + 1 < cmd.length && cmd.charAt(i + 1) !== '\n') i++; continue; }
+    if (top && !top.bt && c === '#' && !tok && (cmd.charAt(i - 1) <= ' ' || ';&|()'.includes(cmd.charAt(i - 1)))) { while (i + 1 < cmd.length && cmd.charAt(i + 1) !== '\n') i++; continue; }
     if (top && !top.bt && c === ')') {
       push(i);
       if (top.depth === 0 && top.inCase === 0) { segs.push([]); outer.pop(); q = '"'; continue; }
       if (top.depth > 0) top.depth--;
     }
     if (top && !top.bt && c === '(') top.depth++;
-    if (c === "'" || c === '"') { at(i); q = c; continue; }
-    if (c === '\\' && i + 1 < cmd.length) { if (cmd.charAt(i + 1) !== '\n') at(i).text += cmd.charAt(i + 1); i++; continue; }
+    if (c === "'" || c === '"') { at(i).quoted = true; q = c; continue; }
+    if (c === '\\' && i + 1 < cmd.length) { at(i).quoted = true; if (cmd.charAt(i + 1) !== '\n') at(i).text += cmd.charAt(i + 1); i++; continue; }
     if (c === '{' && cmd.charAt(i + 1) === '}') { at(i).text += '{}'; i++; continue; }
     if (c === '<' && cmd.charAt(i + 1) === '<' && cmd.charAt(i + 2) === '<') { at(i).text += '<<<'; i += 2; continue; }
     if (c === '<' && cmd.charAt(i + 1) === '<') {

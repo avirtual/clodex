@@ -254,16 +254,17 @@ try {
   const segs = [[]];
   let tok = "";
   let had = false;
+  let tq = false;
   let q = null;
   const outer = [];
   const push = () => {
     if (had) {
       const s = segs[segs.length - 1];
       const f = outer[outer.length - 1];
-      if (f && !f.bt && s.length === 0) { if (tok === "case") f.inCase++; else if (tok === "esac" && f.inCase > 0) f.inCase--; }
+      if (f && !f.bt && s.length === 0 && !tq) { if (tok === "case") f.inCase++; else if (tok === "esac" && f.inCase > 0) f.inCase--; }
       s.push(tok);
     }
-    tok = ""; had = false;
+    tok = ""; had = false; tq = false;
   };
   for (let i = 0; i < cmd.length; i++) {
     const c = cmd.charAt(i);
@@ -276,15 +277,15 @@ try {
     }
     const top = outer[outer.length - 1];
     if (top && top.bt && c === BT) { push(); segs.push([]); outer.pop(); q = '"'; continue; }
-    if (top && c === "#" && !had) { while (i + 1 < cmd.length && cmd.charAt(i + 1) !== NL) i++; continue; }
+    if (top && !top.bt && c === "#" && !had && (cmd.charAt(i - 1) <= " " || ";&|()".indexOf(cmd.charAt(i - 1)) >= 0)) { while (i + 1 < cmd.length && cmd.charAt(i + 1) !== NL) i++; continue; }
     if (top && !top.bt && c === ")") {
       push();
       if (top.depth === 0 && top.inCase === 0) { segs.push([]); outer.pop(); q = '"'; continue; }
       if (top.depth > 0) top.depth--;
     }
     if (top && !top.bt && c === "(") top.depth++;
-    if (c === "'" || c === '"') { q = c; had = true; continue; }
-    if (c === BS && i + 1 < cmd.length) { i++; if (cmd.charAt(i) !== NL) { tok += cmd.charAt(i); had = true; } continue; }
+    if (c === "'" || c === '"') { q = c; had = true; tq = true; continue; }
+    if (c === BS && i + 1 < cmd.length) { i++; if (cmd.charAt(i) !== NL) { tok += cmd.charAt(i); had = true; tq = true; } continue; }
     if (c === "{" && cmd.charAt(i + 1) === "}") { i++; tok += "{}"; had = true; continue; }
     if (c === NL) { push(); segs.push([]); continue; }
     if (c <= " ") { push(); continue; }
