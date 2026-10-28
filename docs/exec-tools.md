@@ -366,8 +366,13 @@ so look at the terminal and do not re-run it automatically.
 
 The same command is the `term_exec` MCP tool (`{command}`), listed in the seat's
 `tools/list` only while `term` is granted; its result is the same `[terminal]`
-text. It is main agent only, proven per call by the PreToolUse stamp: a
-subagent's or an unstamped call answers `unknown tool: "term_exec"`.
+text. It is main agent only: the PreToolUse stamp is accepted once per tool_use
+the seat's wire saw on the main thread, so a subagent's, an unstamped or a
+self-minted call answers `unknown tool: "term_exec"`. A seat running with the
+wire off has no privileged socket path, and the Codex path remains unproven.
+The residual is a same-UID process that drives a real API call through the
+seat's wire to obtain a tool_use: the boundary is cost and visibility in the
+shadow log, not cryptography (docs/messaging.md §7b).
 
 `[agent:term read] [tail N | grep <regex>]` reads the seat's own terminal tab's
 scrollback (the captured buffer, ANSI and `\r` stripped) and answers in the same

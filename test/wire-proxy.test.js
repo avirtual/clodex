@@ -726,3 +726,61 @@ test('lastUserPrompt: a <system-reminder> text block is skipped for the next tex
     { role: 'user', content: [{ type: 'text', text: '<system-reminder>ctx</system-reminder>' }, { type: 'text', text: 'real prompt' }] },
   ] }), { len: 11, head: 'real prompt', tail: 'real prompt' });
 });
+
+function toolUseSse(blocks) {
+  const lines = ['event: message_start', 'data: {"type":"message_start","message":{"usage":{"input_tokens":1,"output_tokens":0}}}', ''];
+  blocks.forEach(([id, name], index) => {
+    lines.push('event: content_block_start',
+      `data: ${JSON.stringify({ type: 'content_block_start', index, content_block: { type: 'tool_use', id, name, input: {} } })}`, '',
+      'event: content_block_stop', `data: {"type":"content_block_stop","index":${index}}`, '');
+  });
+  lines.push('event: message_stop', 'data: {"type":"message_stop"}', '', '');
+  return lines.join('\n');
+}
+
+test('consumeMainToolUse: a main-thread clodex or Bash tool_use is consumable once; other tools and subagent responses never are', async (t) => {
+  const up = await startFakeUpstream(toolUseSse([
+    ['toolu_term1', 'mcp__clodex__term_exec'], ['toolu_bash1', 'Bash'], ['toolu_edit1', 'Edit'],
+  ]));
+  t.after(() => up.server.close());
+  const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${up.port}` } });
+  await proxy.listen();
+  t.after(() => proxy.close());
+  const events = collect(proxy, ['turn.completed']);
+  proxy.registerAgent('lead', { sessionId: SESSION_ID });
+  await request(proxy.port, '/agent/lead/v1/messages', REQUEST_BODY);
+  assert.ok(await whenEvent(events, 'turn.completed', 1));
+  assert.strictEqual(proxy.consumeMainToolUse('other', 'toolu_term1'), false, 'another seat');
+  assert.strictEqual(proxy.consumeMainToolUse('lead', 'toolu_term1'), true);
+  assert.strictEqual(proxy.consumeMainToolUse('lead', 'toolu_term1'), false, 'one-shot');
+  assert.strictEqual(proxy.consumeMainToolUse('lead', 'toolu_bash1'), true);
+  assert.strictEqual(proxy.consumeMainToolUse('lead', 'toolu_edit1'), false);
+  assert.strictEqual(proxy.consumeMainToolUse('lead', 'toolu_never'), false);
+});
+
+test('consumeMainToolUse: a response to a request carrying x-claude-code-agent-id records nothing', async (t) => {
+  const up = await startFakeUpstream(toolUseSse([['toolu_sub1', 'mcp__clodex__term_exec'], ['toolu_sub2', 'Bash']]));
+  t.after(() => up.server.close());
+  const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${up.port}` } });
+  await proxy.listen();
+  t.after(() => proxy.close());
+  const events = collect(proxy, ['turn.completed']);
+  proxy.registerAgent('lead', { sessionId: SESSION_ID });
+  await request(proxy.port, '/agent/lead/v1/messages', REQUEST_BODY, { 'x-claude-code-agent-id': 'agent-1' });
+  assert.ok(await whenEvent(events, 'turn.completed', 1));
+  assert.strictEqual(events['turn.completed'][0].agentId, 'agent-1');
+  assert.strictEqual(proxy.consumeMainToolUse('lead', 'toolu_sub1'), false);
+  assert.strictEqual(proxy.consumeMainToolUse('lead', 'toolu_sub2'), false);
+});
+
+test('consumeMainToolUse: an id older than ten minutes is refused and the set is capped at 256', () => {
+  let t = 1000;
+  const proxy = new WireProxy({ now: () => t });
+  proxy._recordMainToolUse('lead', 'toolu_old', 'mcp__clodex__exec');
+  t += 10 * 60 * 1000;
+  assert.strictEqual(proxy.consumeMainToolUse('lead', 'toolu_old'), false);
+  for (let i = 0; i <= 256; i++) proxy._recordMainToolUse('lead', `toolu_${i}`, 'Bash');
+  assert.strictEqual(proxy._mainToolUses.get('lead').size, 256);
+  assert.strictEqual(proxy.consumeMainToolUse('lead', 'toolu_0'), false, 'the first id is evicted');
+  assert.strictEqual(proxy.consumeMainToolUse('lead', 'toolu_256'), true);
+});

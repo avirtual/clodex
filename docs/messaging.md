@@ -656,13 +656,29 @@ seats get a request/response channel whose reply is the caller's own tool result
   and `nice [-n <n> | -n<n> | -<n>]` (stamped before them, so the assignment reaches `clodex-send`'s env).
   A `clodex-send` that is an argument (`echo clodex-send`, `which clodex-send`) is not stamped. Each stamped
   segment gets a fresh 16-hex nonce, and the stamp itself goes to `run/<name>/ident/<nonce>` (0600),
-  never onto the command line: `main.<nonce>.<hmac16>` with no `agent_id` in the hook input, else
+  never onto the command line: `main.<nonce>.<tool_use_id>.<hmac16>` with no `agent_id` in the hook input, else
   `sub.<agent_id>.<agent_type>.<nonce>.<hmac16>`; the HMAC-SHA256 is keyed by the seat credential
-  (env, else `run/<name>/intent.cred`, 0600) over `kind + agent_id + session_id + nonce`. The verb
+  (env, else `run/<name>/intent.cred`, 0600) over `kind + agent_id + session_id + nonce` (a main
+  stamp appends the hook input's `tool_use_id`). The verb
   reads the file named by `@<nonce>` and unlinks it. The socket treats a Claude caller as the main
-  agent only when `ident` verifies as `main` for the seat's current `sessionId` and its nonce has
-  not been seen (512 nonces, 10 min); anything else — no stamp, a forged, old-shape or replayed
-  one, or no `sessionId` yet — is a subagent, and a replay logs a warn. A `sub.` stamp verifies the
+  agent only when `ident` verifies as `main` for the seat's current `sessionId`, its nonce has
+  not been seen (512 nonces, 10 min), and the seat's wire tee (`WireProxy.consumeMainToolUse`)
+  consumes its `tool_use_id`; anything else — no stamp, a forged, old-shape or replayed
+  one, a tool_use id the wire did not see, or no `sessionId` yet — is a subagent, and a replay logs a warn.
+- **Main identity is one-shot per tool_use; no wire, no privileged socket path:** the credential and
+  the session id are readable by every same-UID process, a subagent's Bash included, so the mac alone
+  proves nothing about the caller. The wire records the id of every `mcp__clodex__*` and `Bash`
+  `tool_use` block in responses to requests without an `x-claude-code-agent-id` header (the main
+  thread), at most 256 ids per seat for 10 min, and hands each out once. A stamp is therefore
+  accepted once per tool call the seat's wire saw on the main thread, so the nonce window
+  (`IDENT_SEEN_MS`) is no longer the only replay guard. A seat spawned with the wire off (or whose
+  wire registration failed) has no consumer, and every socket `main` claim from it is a subagent;
+  typed intents scanned from the reply are unaffected and stay the main agent's channel. A
+  `clodex-send` from a main-thread Bash call keeps main identity through that call's `tool_use_id`,
+  but only for the first stamped segment the socket receives: a second `clodex-send` in the same
+  Bash command is a subagent. Residual: a same-UID process can still drive a real API call through
+  the seat's wire and obtain a main-thread tool_use; the boundary there is its cost and its
+  visibility in the shadow log, not cryptography. A `sub.` stamp verifies the
   same way (mac over `sub + agent_id + session_id + nonce`, same nonce set) and yields `{agentId, agentType}` —
   only `agent_id` is under the mac, the type is asserted and nothing is granted on it —
   plus the label `<seat>/<name>` from `subq/names/`, else `<seat>/agent-<id8>`; the name exists only after the
@@ -683,8 +699,9 @@ seats get a request/response channel whose reply is the caller's own tool result
   entry); `agentId` from `CODEX_THREAD_ID`; equal to the seat's `sessionId`
   or its uuid tail (uuid-shaped ids only) is the main thread; a call with no `agentId`, or a seat
   with no `sessionId` yet, is a subagent. Codex identity is asserted by the caller's environment,
-  not proven: there is no HMAC on the Codex path, so a subagent that learns the rollout uuid can
-  pass as main; the Claude stamp (`hook-ident.sh`) is the proven one.
+  not proven: there is no HMAC on the Codex path and no wire check, so a subagent that learns the
+  rollout uuid can pass as main. The Claude stamp is bound to a main-thread tool_use the wire saw,
+  as above.
 - **Subagent filter:** a subagent call is refused unless the intent's plugin row declares a `subagent` policy that allows it (`subagentAllows`, intent-registry.js); the browser policy lives in plugins/browser-pane/subagent.js. Everything else answers `not available to a subagent: <verb> — return and let the seat's main agent do it`; a core tool call answers `unknown tool` unless the tool carries `subagentOk` and the stamp verified — today only `dm`: a verified subagent sends as `<seat>/<name>`, local seats only, never urgent, 10 per 60 s per agent; a parked or held dm answers without the resend/urgent clause; replies to `<seat>/<name>` route into the subagent's note queue (§3); the tool is listed for the whole seat, but a verified main stamp is delivered as a plain seat dm and its ack ends with a one-line do-not-use-again correction (`subagentOnly`, intent-registry.js); behind wirescope the harness prompt's trailing `[wirescope:strip-tools mcp__clodex__dm]` line removes the tool from main-line requests altogether (task subagents carry their own system prompt and keep it), so the correction fires only on a seat not behind the proxy; an unverified stamp still answers `unknown tool`. The socket verb still refuses `dm` to a subagent.
 - **Verb:** `clodex-send '<intent>' [more words…]` (args joined with spaces into one line) or `clodex-send -` (stdin, for a multi-line body). Forwards
   `CLODEX_AGENT_ID`, else `CODEX_THREAD_ID`, as `agentId` (Claude exports no

@@ -17,6 +17,7 @@ const {
   createIntentRequestHandler, createIntentSocketServer, identToken, isMainThread, stampClodexCommand, IDENT_SEEN_MAX, IDENT_SEEN_MS,
   callerIdentity, callerIsSubagent, subagentLabel, seatOfAgentTag, splitAgentTarget,
 } = require('../intent-socket');
+const { seenIdent, consume: wireSaw, wire: seenWire } = require('./lib/wire-seen').wireSeenStamps();
 const verb = require('../cli/bin/clodex.js');
 
 const CRED = 'c'.repeat(64);
@@ -178,6 +179,7 @@ for (const [line, label, allowed] of TABLE) {
     assert.strictEqual(subagentAllows(intents[0], GRANTED), allowed);
     const seen = [];
     const handle = createIntentRequestHandler({
+      consumeMainToolUse: wireSaw,
       seat: 'h1', parse, entryOf: () => GRANTED, sessionIdOf: () => 'main-thread', allows: subagentAllows, cred: CRED,
       dispatch: async (intent, opts) => { seen.push(opts.fromLabel); },
     });
@@ -189,7 +191,7 @@ for (const [line, label, allowed] of TABLE) {
       assert.deepStrictEqual(r, { ok: false, status: 'refused', error: `not available to a subagent: ${label} — return and let the seat's main agent do it` });
       assert.deepStrictEqual(seen, [], 'a refusal dispatches nothing');
     }
-    const main = await handle({ intent: line, ident: identToken(crypto, CRED, null, null, 'main-thread') }, { closed: () => false });
+    const main = await handle({ intent: line, ident: seenIdent(crypto, CRED, null, null, 'main-thread') }, { closed: () => false });
     assert.strictEqual(main.ok, true, 'a verified main stamp: the seat\'s full catalog');
   });
 }
@@ -225,7 +227,8 @@ function seatHarness({ realDeliver = false } = {}) {
   m._injectHoldReason = () => null;
   m._injectQueueFor = (s) => ({ enqueue: (t, o) => injected.push({ to: s.name, text: o && o.produce ? o.produce() : t }) });
   if (!realDeliver) m._gatedDeliver = (target, tag, body) => { delivered.push({ target, tag, body }); return { queued: true }; };
-  const a = { name: 'a', agentType: 'claude', type: 'claude', io: 'pty', workspaceId: 'ws1', sessionId: 'sess-a' };
+  const a = { name: 'a', agentType: 'claude', type: 'claude', io: 'pty', workspaceId: 'ws1', sessionId: 'sess-a', wireRouted: true };
+  m._wire = seenWire;
   const b = { name: 'b', agentType: 'claude', type: 'claude', io: 'pty', workspaceId: 'ws1', activityState: 'working', activityTs: Date.now() };
   m.sessions.set('a', a);
   m.sessions.set('b', b);
@@ -246,13 +249,15 @@ async function viaVerb(h, cred, argv, extraEnv = {}) {
 }
 
 function mainEnv(cred, sessionId = 'sess-a') {
-  return { CLODEX_HOOK_IDENT: identToken(crypto, cred, null, null, sessionId) };
+  return { CLODEX_HOOK_IDENT: seenIdent(crypto, cred, null, null, sessionId) };
 }
 
 async function withSeat(fn, opts) {
   const h = seatHarness(opts);
   fs.mkdirSync(runDirFor(h.root, 'a'), { recursive: true });
   const cred = mintIntentCredential(crypto);
+  h.a.wireRouted = true;
+  h.m._wire = seenWire;
   await h.m._startIntentSocket(h.a, { sockPath: pathFor(h.root, 'a', 'intentSocket'), cred });
   try { await fn(h, cred); } finally { h.a.intentSocket.stop(); }
 }
@@ -285,7 +290,7 @@ test('an async verb says where its answer arrives for the main agent; a subagent
 
 test('a verified subagent stamp on the socket verb is still refused dm', async () => {
   await withSeat(async (h, cred) => {
-    const stamp = identToken(crypto, cred, 'ageneral-purpose-0123456789abcdef', 'general-purpose', 'sess-a');
+    const stamp = seenIdent(crypto, cred, 'ageneral-purpose-0123456789abcdef', 'general-purpose', 'sess-a');
     const r = await viaVerb(h, cred, ['[agent:dm b] hi'], { CLODEX_HOOK_IDENT: stamp });
     assert.strictEqual(r.code, verb.EXIT.DENIED);
     assert.strictEqual(r.err, "clodex-send: not available to a subagent: dm — return and let the seat's main agent do it\n");
@@ -370,6 +375,7 @@ test('a Codex main thread whose id is the rollout uuid tail keeps the full catal
   const uuid = '0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
   const seen = [];
   const handle = createIntentRequestHandler({
+    consumeMainToolUse: wireSaw,
     seat: 'cx', parse, isCodex: true, entryOf: () => ({ type: 'codex' }), sessionIdOf: () => `rollout-2026-10-05T01-00-00-${uuid}`, allows: subagentAllows,
     dispatch: async (intent, opts) => { seen.push(opts.fromLabel); },
   });
@@ -384,6 +390,7 @@ test('a Codex caller with a known session id and no agentId is a subagent', asyn
   const uuid = '0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
   const seen = [];
   const handle = createIntentRequestHandler({
+    consumeMainToolUse: wireSaw,
     seat: 'cx', parse, isCodex: true, entryOf: () => ({ type: 'codex' }), sessionIdOf: () => `rollout-2026-10-05T01-00-00-${uuid}`, allows: subagentAllows,
     dispatch: async (intent, opts) => { seen.push(opts.fromLabel); },
   });
@@ -396,6 +403,7 @@ test('a Codex caller with a known session id and no agentId is a subagent', asyn
 test('a Codex clone (no persistence entry) keeps its main thread: isCodex comes from the session, not entryOf', async () => {
   const uuid = '0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
   const handle = createIntentRequestHandler({
+    consumeMainToolUse: wireSaw,
     seat: 'cx', parse, isCodex: true, entryOf: () => undefined, sessionIdOf: () => `rollout-2026-10-05T01-00-00-${uuid}`, allows: subagentAllows,
     dispatch: async () => {},
   });
@@ -440,6 +448,7 @@ test('a Codex seat with no session id yet treats every caller as a subagent', as
   const uuid = '0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
   for (const sid of [null, undefined]) {
     const handle = createIntentRequestHandler({
+      consumeMainToolUse: wireSaw,
       seat: 'cx', parse, isCodex: true, entryOf: () => ({ type: 'codex' }), sessionIdOf: () => sid, allows: subagentAllows,
       dispatch: async () => {},
     });
@@ -459,6 +468,7 @@ test('the Codex uuid-tail match needs a uuid-shaped agent id', () => {
 test('a Claude seat: only a main stamp keyed by this seat\'s credential and session is the main agent', async () => {
   const seen = [];
   const handle = createIntentRequestHandler({
+    consumeMainToolUse: wireSaw,
     seat: 'h1', parse, entryOf: () => ({ type: 'claude' }), sessionIdOf: () => 'sess-1', allows: subagentAllows, cred: CRED,
     dispatch: async (intent, opts) => { seen.push(opts.fromLabel); },
   });
@@ -466,12 +476,12 @@ test('a Claude seat: only a main stamp keyed by this seat\'s credential and sess
   const refused = { ok: false, status: 'refused', error: "not available to a subagent: shout — return and let the seat's main agent do it" };
   assert.deepStrictEqual(await handle({ intent: '[agent:shout] x' }, ctl), refused, 'no stamp');
   assert.deepStrictEqual(await handle({ intent: '[agent:shout] x', agentId: 'sess-1' }, ctl), refused, 'an agentId claim is not a stamp');
-  assert.deepStrictEqual(await handle({ intent: '[agent:shout] x', ident: identToken(crypto, 'd'.repeat(64), null, null, 'sess-1') }, ctl), refused, 'wrong cred');
-  assert.deepStrictEqual(await handle({ intent: '[agent:shout] x', ident: identToken(crypto, CRED, null, null, 'sess-0') }, ctl), refused, 'another session');
+  assert.deepStrictEqual(await handle({ intent: '[agent:shout] x', ident: seenIdent(crypto, 'd'.repeat(64), null, null, 'sess-1') }, ctl), refused, 'wrong cred');
+  assert.deepStrictEqual(await handle({ intent: '[agent:shout] x', ident: seenIdent(crypto, CRED, null, null, 'sess-0') }, ctl), refused, 'another session');
   assert.deepStrictEqual(await handle({ intent: '[agent:shout] x', ident: 'main.deadbeefdeadbeef' }, ctl), refused, 'forged');
-  assert.deepStrictEqual(await handle({ intent: '[agent:shout] x', ident: identToken(crypto, CRED, 'ag1', 'gp', 'sess-1') }, ctl), refused, 'a sub stamp');
+  assert.deepStrictEqual(await handle({ intent: '[agent:shout] x', ident: seenIdent(crypto, CRED, 'ag1', 'gp', 'sess-1') }, ctl), refused, 'a sub stamp');
   assert.deepStrictEqual(seen, []);
-  const ok = await handle({ intent: '[agent:shout] x', ident: identToken(crypto, CRED, null, null, 'sess-1') }, ctl);
+  const ok = await handle({ intent: '[agent:shout] x', ident: seenIdent(crypto, CRED, null, null, 'sess-1') }, ctl);
   assert.deepStrictEqual(ok.ok, true);
   assert.deepStrictEqual(seen, [null], 'the main agent acts as the seat');
 });
@@ -481,6 +491,7 @@ function stampHarness({ sessionId = 'sess-1', now = () => 1000 } = {}) {
   const seen = [];
   const identSeen = new Map();
   const handle = createIntentRequestHandler({
+    consumeMainToolUse: wireSaw,
     seat: 'h1', parse, entryOf: () => ({ type: 'claude' }), sessionIdOf: () => sessionId, allows: subagentAllows, cred: CRED,
     dispatch: async (intent, opts) => { seen.push(opts.fromLabel); },
     log: { warn: (tag, msg) => warns.push(`${tag}: ${msg}`) }, identSeen, now,
@@ -491,14 +502,14 @@ function stampHarness({ sessionId = 'sess-1', now = () => 1000 } = {}) {
 
 test('identity stamp: a fresh valid main stamp is the main agent', async () => {
   const h = stampHarness();
-  assert.strictEqual(await h.shout(identToken(crypto, CRED, null, null, 'sess-1')), true);
+  assert.strictEqual(await h.shout(seenIdent(crypto, CRED, null, null, 'sess-1')), true);
   assert.deepStrictEqual(h.seen, [null]);
   assert.deepStrictEqual(h.warns, []);
 });
 
 test('identity stamp: the same stamp twice — the replay is a subagent and is logged', async () => {
   const h = stampHarness();
-  const stamp = identToken(crypto, CRED, null, null, 'sess-1');
+  const stamp = seenIdent(crypto, CRED, null, null, 'sess-1');
   assert.strictEqual(await h.shout(stamp), true);
   assert.strictEqual(await h.shout(stamp), false);
   assert.deepStrictEqual(h.seen, [null]);
@@ -507,8 +518,8 @@ test('identity stamp: the same stamp twice — the replay is a subagent and is l
 
 test('identity stamp: two different stamps from the same session are both the main agent', async () => {
   const h = stampHarness();
-  assert.strictEqual(await h.shout(identToken(crypto, CRED, null, null, 'sess-1')), true);
-  assert.strictEqual(await h.shout(identToken(crypto, CRED, null, null, 'sess-1')), true);
+  assert.strictEqual(await h.shout(seenIdent(crypto, CRED, null, null, 'sess-1')), true);
+  assert.strictEqual(await h.shout(seenIdent(crypto, CRED, null, null, 'sess-1')), true);
   assert.deepStrictEqual(h.seen, [null, null]);
 });
 
@@ -516,7 +527,7 @@ test('identity stamp: the old per-session shape main.<mac> is a subagent even wh
   const h = stampHarness();
   const oldMac = crypto.createHmac('sha256', CRED).update('mainsess-1').digest('hex').slice(0, 16);
   assert.strictEqual(await h.shout(`main.${oldMac}`), false);
-  const fresh = identToken(crypto, CRED, null, null, 'sess-1');
+  const fresh = seenIdent(crypto, CRED, null, null, 'sess-1');
   assert.strictEqual(await h.shout(fresh.replace(/^main\.[0-9a-f]{16}\./, 'main.')), false, 'the mac without its nonce');
   assert.deepStrictEqual(h.seen, []);
 });
@@ -525,20 +536,20 @@ test('identity stamp: the nonce set is capped FIFO at IDENT_SEEN_MAX and ages ou
   let t = 1000;
   const h = stampHarness({ now: () => t });
   const stamps = [];
-  for (let i = 0; i <= IDENT_SEEN_MAX; i++) stamps.push(identToken(crypto, CRED, null, null, 'sess-1'));
+  for (let i = 0; i <= IDENT_SEEN_MAX; i++) stamps.push(seenIdent(crypto, CRED, null, null, 'sess-1'));
   for (const s of stamps) assert.strictEqual(await h.shout(s), true);
   assert.strictEqual(h.identSeen.size, IDENT_SEEN_MAX);
   assert.strictEqual(h.identSeen.has(stamps[0].split('.')[1]), false, 'the first nonce is forgotten');
   assert.strictEqual(await h.shout(stamps[IDENT_SEEN_MAX]), false, 'a replay inside the window is refused');
   t += IDENT_SEEN_MS;
-  assert.strictEqual(await h.shout(identToken(crypto, CRED, null, null, 'sess-1')), true);
+  assert.strictEqual(await h.shout(seenIdent(crypto, CRED, null, null, 'sess-1')), true);
   assert.strictEqual(h.identSeen.size, 1, 'entries older than the window are dropped');
 });
 
 test('identity stamp: a Claude seat with no session id is a subagent even with a would-be-valid stamp', async () => {
   for (const sid of [null, '']) {
     const h = stampHarness({ sessionId: sid });
-    for (const s of ['', 'null', 'undefined']) assert.strictEqual(await h.shout(identToken(crypto, CRED, null, null, s)), false, String(sid));
+    for (const s of ['', 'null', 'undefined']) assert.strictEqual(await h.shout(seenIdent(crypto, CRED, null, null, s)), false, String(sid));
     assert.deepStrictEqual(h.seen, []);
   }
 });
@@ -549,6 +560,7 @@ test('a client that hangs up before the reply closes the sink, so the late reply
   const dispatched = new Promise((r) => { arrived = r; });
   let ctlRef = null;
   const inner = createIntentRequestHandler({
+    consumeMainToolUse: wireSaw,
     seat: 'h1', parse, entryOf: () => ({}), sessionIdOf: () => null, allows: () => true,
     dispatch: async (intent, opts) => { captured = opts.replyTo; arrived(); },
     replyWaitMs: () => 60000,
@@ -589,6 +601,7 @@ test('the socket writes the credential file 0600 beside it and removes it on sto
 test('the reply sink closes when the reply is built, so a late acknowledgement falls through to the seat', async () => {
   let late = null;
   const handle = createIntentRequestHandler({
+    consumeMainToolUse: wireSaw,
     seat: 'h1', parse, entryOf: () => ({}), sessionIdOf: () => null, allows: () => true,
     dispatch: async (intent, opts) => { opts.replyTo('now'); late = opts.replyTo; },
   });
@@ -668,6 +681,7 @@ test('t1703 a term reply waits 130 s and the socket is extended to 140 s', async
   const timers = [];
   let extended = null;
   const handle = createIntentRequestHandler({
+    consumeMainToolUse: wireSaw,
     seat: 'h1', parse, entryOf: () => ({}), sessionIdOf: () => null, allows: () => true,
     dispatch: async () => {},
     replyWaitMs: () => 130000,
@@ -688,6 +702,7 @@ test('t1703 a term client gone before the result: replyTo refuses it, leaving th
   const dispatched = new Promise((r) => { arrived = r; });
   let ctlRef = null;
   const inner = createIntentRequestHandler({
+    consumeMainToolUse: wireSaw,
     seat: 'h1', parse, entryOf: () => ({}), sessionIdOf: () => null, allows: () => true,
     dispatch: async (intent, opts) => { captured = opts.replyTo; arrived(); },
     replyWaitMs: () => 130000,
@@ -720,6 +735,7 @@ test('t1703 a term client gone after its result was accepted: the reply is built
   let ctlRef = null;
   let responded = false;
   const inner = createIntentRequestHandler({
+    consumeMainToolUse: wireSaw,
     seat: 'h1', parse, entryOf: () => ({}), sessionIdOf: () => null, allows: () => true,
     dispatch: async (intent, opts) => { captured = opts.replyTo; arrived(); },
     replyWaitMs: () => 130000,
@@ -763,6 +779,7 @@ function subHarness({ sessionId = 'sess-1', nameFor = () => 'alice' } = {}) {
   const warns = [];
   const seen = [];
   const handle = createIntentRequestHandler({
+    consumeMainToolUse: wireSaw,
     seat: 'h1', parse, entryOf: () => GRANTED, sessionIdOf: () => sessionId, allows: (i) => i.type !== 'shout', cred: CRED,
     dispatch: async (intent, opts) => { seen.push(opts); },
     log: { warn: (tag, msg) => warns.push(`${tag}: ${msg}`) }, identSeen: new Map(), now: () => 1000, nameFor,
@@ -776,13 +793,13 @@ const SHOUT_REFUSED = { ok: false, status: 'refused', error: "not available to a
 
 test('sub stamp: a verified stamp dispatches fromIdent beside the unchanged fromLabel', async () => {
   const h = subHarness();
-  const r = await h.call(ALLOWED, identToken(crypto, CRED, SUB_ID, SUB_TYPE, 'sess-1'));
+  const r = await h.call(ALLOWED, seenIdent(crypto, CRED, SUB_ID, SUB_TYPE, 'sess-1'));
   assert.strictEqual(r.ok, true);
   assert.strictEqual(h.seen.length, 1);
   const { replyTo } = h.seen[0];
   assert.strictEqual(typeof replyTo, 'function');
   assert.deepStrictEqual(h.seen[0], { replyTo, fromLabel: 'h1/agent', fromIdent: { agentId: SUB_ID, agentType: SUB_TYPE, label: 'h1/alice' } });
-  assert.deepStrictEqual(await h.call('[agent:shout] x', identToken(crypto, CRED, SUB_ID, SUB_TYPE, 'sess-1')), SHOUT_REFUSED, 'a verified sub is still a subagent');
+  assert.deepStrictEqual(await h.call('[agent:shout] x', seenIdent(crypto, CRED, SUB_ID, SUB_TYPE, 'sess-1')), SHOUT_REFUSED, 'a verified sub is still a subagent');
 });
 
 test('sub stamp: a forged mac yields no identity and is still refused', async () => {
@@ -797,7 +814,7 @@ test('sub stamp: a forged mac yields no identity and is still refused', async ()
 
 test('sub stamp: a replayed nonce yields no identity and warns once', async () => {
   const h = subHarness();
-  const stamp = identToken(crypto, CRED, SUB_ID, SUB_TYPE, 'sess-1');
+  const stamp = seenIdent(crypto, CRED, SUB_ID, SUB_TYPE, 'sess-1');
   await h.call(ALLOWED, stamp);
   await h.call(ALLOWED, stamp);
   assert.strictEqual(h.seen[0].fromIdent.agentId, SUB_ID);
@@ -808,7 +825,7 @@ test('sub stamp: a replayed nonce yields no identity and warns once', async () =
 
 test('sub stamp: a rewritten agent_id segment yields no identity', async () => {
   const h = subHarness();
-  const stamp = identToken(crypto, CRED, SUB_ID, SUB_TYPE, 'sess-1');
+  const stamp = seenIdent(crypto, CRED, SUB_ID, SUB_TYPE, 'sess-1');
   const tampered = stamp.replace(SUB_ID, 'ageneral-purpose-fedcba9876543210');
   assert.notStrictEqual(tampered, stamp);
   await h.call(ALLOWED, tampered);
@@ -817,27 +834,27 @@ test('sub stamp: a rewritten agent_id segment yields no identity', async () => {
 
 test('sub stamp: a stamp minted for another session yields no identity', async () => {
   const h = subHarness();
-  await h.call(ALLOWED, identToken(crypto, CRED, SUB_ID, SUB_TYPE, 'sess-0'));
+  await h.call(ALLOWED, seenIdent(crypto, CRED, SUB_ID, SUB_TYPE, 'sess-0'));
   assert.strictEqual(h.seen[0].fromIdent, null);
 });
 
 test('callerIsSubagent: the same booleans for every caller of the main-stamp table', () => {
-  const base = { isCodex: false, sessionId: 'sess-1', cred: CRED, crypto };
+  const base = { isCodex: false, sessionId: 'sess-1', cred: CRED, crypto, consumeMainToolUse: wireSaw };
   const rows = [
     [{}, true],
     [{ agentId: 'sess-1' }, true],
-    [{ ident: identToken(crypto, 'd'.repeat(64), null, null, 'sess-1') }, true],
-    [{ ident: identToken(crypto, CRED, null, null, 'sess-0') }, true],
+    [{ ident: seenIdent(crypto, 'd'.repeat(64), null, null, 'sess-1') }, true],
+    [{ ident: seenIdent(crypto, CRED, null, null, 'sess-0') }, true],
     [{ ident: 'main.deadbeefdeadbeef' }, true],
-    [{ ident: identToken(crypto, CRED, 'ag1', 'gp', 'sess-1') }, true],
-    [{ ident: identToken(crypto, CRED, null, null, 'sess-1') }, false],
+    [{ ident: seenIdent(crypto, CRED, 'ag1', 'gp', 'sess-1') }, true],
+    [{ ident: seenIdent(crypto, CRED, null, null, 'sess-1') }, false],
   ];
   for (const [req, want] of rows) assert.strictEqual(callerIsSubagent({ ...base, req }), want, JSON.stringify(req));
 });
 
 test('sub stamp: with no name the label falls back to agent-<id8>, never the shared tag', async () => {
   const h = subHarness({ nameFor: () => null });
-  await h.call(ALLOWED, identToken(crypto, CRED, SUB_ID, SUB_TYPE, 'sess-1'));
+  await h.call(ALLOWED, seenIdent(crypto, CRED, SUB_ID, SUB_TYPE, 'sess-1'));
   assert.strictEqual(h.seen[0].fromIdent.label, 'h1/agent-89abcdef');
   assert.notStrictEqual(subagentLabel('h1', SUB_ID, null), 'h1/agent');
   assert.strictEqual(subagentLabel('h1', SUB_ID, 'alice'), 'h1/alice');

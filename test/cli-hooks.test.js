@@ -2052,3 +2052,29 @@ test('ident hook: two term_exec calls carry different nonces; a Bash echo naming
   assert.notStrictEqual(a, b);
   assert.strictEqual(runIdent(REGISTRY_DIR, bashCall('echo mcp__clodex__term_exec')), '');
 });
+
+test('ident hook: a main MCP call stamps its tool_use_id into the mac and the stamp', () => {
+  const REGISTRY_DIR = identSeat();
+  const out = JSON.parse(runIdent(REGISTRY_DIR, mcpCall({ command: 'ls' }, { tool_use_id: 'toolu_01Abc' })));
+  const { ident } = out.hookSpecificOutput.updatedInput;
+  const m = /^main\.([0-9a-f]{16})\.toolu_01Abc\.[0-9a-f]{16}$/.exec(ident);
+  assert.ok(m, ident);
+  assert.strictEqual(ident, identToken(crypto, ICRED, null, null, 'sess-1', m[1], 'toolu_01Abc'));
+  assert.notStrictEqual(ident, identToken(crypto, ICRED, null, null, 'sess-1', m[1], 'toolu_01Abd'));
+});
+
+test('ident hook: a main Bash clodex-send stamp file carries the Bash call tool_use_id', () => {
+  const REGISTRY_DIR = identSeat();
+  const out = JSON.parse(runIdent(REGISTRY_DIR, bashCall("clodex-send '[agent:who]'", { tool_use_id: 'toolu_bash9' })));
+  const st = stamped(REGISTRY_DIR, out.hookSpecificOutput.updatedInput.command);
+  assert.strictEqual(st.stamps[0], identToken(crypto, ICRED, null, null, 'sess-1', st.nonces[0], 'toolu_bash9'));
+  assert.match(st.stamps[0], new RegExp(`^main\\.${st.nonces[0]}\\.toolu_bash9\\.[0-9a-f]{16}$`));
+});
+
+test('ident hook: a subagent MCP call stamp ignores tool_use_id', () => {
+  const REGISTRY_DIR = identSeat();
+  const out = JSON.parse(runIdent(REGISTRY_DIR, mcpCall({ command: 'ls' }, { tool_use_id: 'toolu_s', agent_id: 'a1', agent_type: 'gp' })));
+  const { ident } = out.hookSpecificOutput.updatedInput;
+  const nonce = ident.split('.')[3];
+  assert.strictEqual(ident, identToken(crypto, ICRED, 'a1', 'gp', 'sess-1', nonce));
+});

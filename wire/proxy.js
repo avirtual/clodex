@@ -27,6 +27,8 @@ const { answerVoiceSink } = require('./voice-sink');
 
 const SPILL_SHOWN_PRUNE_MS = 7 * 24 * 60 * 60 * 1000;
 const SPILL_SHOWN_PERSIST_SLACK_MS = 60 * 1000;
+const MAIN_TOOL_USE_MAX = 256;
+const MAIN_TOOL_USE_MS = 10 * 60 * 1000;
 
 // Hop-by-hop headers per RFC 7230 §6.1, plus content-length/host which the
 // HTTP libs manage themselves. content-encoding stays — the client receives
@@ -172,6 +174,7 @@ class WireProxy extends EventEmitter {
       }
     }
     this._voiceSinks = new Set();
+    this._mainToolUses = new Map();
     this.now = typeof opts.now === 'function' ? opts.now : Date.now;
     this._roles = new RoleClassifier();
     this.billing = new Ledger(); // global + per-session running totals
@@ -242,9 +245,30 @@ class WireProxy extends EventEmitter {
     this._agentSpillShown.delete(name);
     if (!opts.keepSpillShown) this._dropSpillShownRecord(name);
     this._voiceSinks.delete(name);
+    this._mainToolUses.delete(name);
     const sid = this._agentSessions.get(name);
     if (sid) this._roles.forgetSession(sid);
     this._agentSessions.delete(name);
+  }
+
+  _recordMainToolUse(agent, id, name) {
+    if (typeof name !== 'string' || !(name.startsWith('mcp__clodex__') || name === 'Bash')) return;
+    let seen = this._mainToolUses.get(agent);
+    if (!seen) { seen = new Map(); this._mainToolUses.set(agent, seen); }
+    const now = this.now();
+    for (const [k, at] of seen) {
+      if (seen.size < MAIN_TOOL_USE_MAX && now - at < MAIN_TOOL_USE_MS) break;
+      seen.delete(k);
+    }
+    seen.set(id, now);
+  }
+
+  consumeMainToolUse(agent, id) {
+    const seen = this._mainToolUses.get(agent);
+    if (!seen || typeof id !== 'string' || !seen.has(id)) return false;
+    const at = seen.get(id);
+    seen.delete(id);
+    return this.now() - at < MAIN_TOOL_USE_MS;
   }
 
   sessionOf(name) {
@@ -552,6 +576,7 @@ class WireProxy extends EventEmitter {
         try {
           tee = this._buildTee(
             { agent, provider, reqId, sessionId, role, sideCall, compactCall, model, bodyObj, agentId, requestClass, prompt,
+              mainThread: req.headers['x-claude-code-agent-id'] === undefined,
               requestId: upRes.headers['request-id'] || null,
               status: upRes.statusCode },
             upRes.headers['content-encoding']);
@@ -663,10 +688,12 @@ class WireProxy extends EventEmitter {
   // Emission order on close: 'usage' → 'turn.completed' → 'stream-end', all
   // strictly after the client's final byte.
   _buildTee(turnCtx, contentEncoding) {
-    const { agent, provider, reqId, sessionId, role, sideCall, compactCall, model, bodyObj, agentId, requestClass, prompt, requestId, status } = turnCtx;
+    const { agent, provider, reqId, sessionId, role, sideCall, compactCall, model, bodyObj, agentId, requestClass, prompt, requestId, status, mainThread } = turnCtx;
     const usage = provider === 'anthropic' ? new UsageCollector() : new OpenAIUsageCollector();
     const extract = provider === 'anthropic' ? anthropicDelta : openaiDelta;
-    const ftools = provider === 'anthropic' ? new FileToolCollector() : null;
+    const ftools = provider === 'anthropic'
+      ? new FileToolCollector(mainThread === true ? { onToolUse: (id, name) => this._recordMainToolUse(agent, id, name) } : {})
+      : null;
     let text = '';
     let truncated = false;
     // Its own accumulator, never appended to `text`. `text` is what reaches the

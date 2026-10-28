@@ -250,7 +250,8 @@ function clampArg(s) {
 }
 
 class FileToolCollector {
-  constructor() {
+  constructor(opts = {}) {
+    this._onToolUse = typeof opts.onToolUse === 'function' ? opts.onToolUse : null;
     this._blocks = new Map(); // index -> { kind:'edit'|'read'|'arg', tool, buf, rec, ... }
     this._files = [];         // { tool, path } mutations, in stream order
     this._reads = [];         // { tool:'Read', path, offset?, limit? } in stream order
@@ -351,6 +352,7 @@ class FileToolCollector {
         // snippet onto the wrong tool.
         const rec = { name: typeof cb.name === 'string' ? cb.name : null, arg: null };
         this._calls.push(rec);
+        if (this._onToolUse && typeof cb.id === 'string' && cb.id) this._onToolUse(cb.id, rec.name);
         if (FILE_TOOLS.has(cb.name)) {
           this._blocks.set(obj.index, { kind: 'edit', tool: cb.name, buf: '', path: null, rec });
         } else if (cb.name === 'Read') {

@@ -6585,6 +6585,9 @@ function createSessionManager(deps) {
         classifyReply: (intent, line) => classifyReplyLine(intent.type, line),
         dispatch: (intent, opts) => this._dispatchSocketIntent(session, intent, opts),
         nameFor: (id) => nameOfSubagent(subqDirFor(name), id),
+        consumeMainToolUse: session.wireRouted === true && session.agentType !== 'codex'
+          ? (id) => !!(this._wire && this._wire.consumeMainToolUse(name, id))
+          : null,
         log,
         replyWaitMs: (intent) => {
           if (intent.type === 'term') return TERM_REPLY_WAIT_MS;
