@@ -321,7 +321,7 @@ async function undeployFargate({ printer, flags, args, io, ctxName = null, dep =
   //    agree (or be absent) — a same-named cluster in ANOTHER region is a
   //    different deployment; don't drop its ctx.
   ctxCleanup({ flags, printer, io, matchFn: (name, entry) => {
-    if (name === ctxKey) return true;
+    if (name === ctxKey && !!dep && String(dep.stack || ctxKey) === stackName) return true;
     const ecs = entry && entry.ssm && entry.ssm.ecs;
     if (typeof ecs !== 'string') return false;
     if (ownsCluster ? !(ecs.includes('/') && ecs.split('/')[0] === cluster) : ecs !== `${cluster}/${stackName}-node`) return false;

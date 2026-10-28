@@ -501,7 +501,7 @@ contract (task ids, completion events) is T38.
 |---|---|---|
 | `deploy node <name> --ssh user@host [--port N] [--repo URL] [--branch B] [--src DIR] [--no-ctx] [--no-wirescope] [--force] [--ssh-opt X …] [--claude-token-file FILE] [--dry-run]` | system `ssh` → `bash -s` | drives `peering/clodex-deploy.sh` on the box (installs the claude/codex CLIs too), streams `::step`/`::ok` progress (`-o json` = NDJSON), verifies the wire through an ssh tunnel, then saves a `{ssh, remotePort}` context. `--claude-token-file` rides the ssh stdin into a `0600` unit drop-in |
 | `deploy node <name> --docker [--port N] [--image I] [--tag T] [--env-file F] [--host ssh://u@box] [--volume V …] [--no-ctx] [--no-wirescope] [--force] [--dry-run]` | system `docker run` | births a container node from the published image, verifies hello, saves a context (`{url}` local / `{ssh, remotePort}` remote) |
-| `deploy node <name> --ssm i-INSTANCE [--region R] [--profile P] [--branch B] [--repo URL] [--port N] [--no-ctx] [--no-wirescope] [--force] [--claude-token-file FILE] [--dry-run]` | system `aws` → SSM RunCommand | installs an **OS-flavor** node (dedicated `clodex` host user + systemd --user service) on an SSM-managed instance with **no ssh and no open ports**: one root `AWS-RunShellScript` running the pinned installer, polled to completion, then verified through the real SSM port-forward. Saves a typed `{ssm, token}` context. `--claude-token-file` is delivered over the encrypted wire post-verify (**never** via SSM params) |
+| `deploy node <name> --ssm i-INSTANCE [--region R] [--profile P] [--branch B] [--repo URL] [--port N] [--no-ctx] [--no-wirescope] [--force] [--claude-token-file FILE] [--dry-run]` | system `aws` → SSM RunCommand | installs an **OS-flavor** node (dedicated `clodex` host user + systemd --user service) on an SSM-managed instance with **no ssh and no open ports**: one root `AWS-RunShellScript` running the pinned installer, polled to completion, then verified through the real SSM port-forward. Saves a typed `{ssm, token}` context; `--force` is required to re-run onto an existing context. `--claude-token-file` is delivered over the encrypted wire post-verify (**never** via SSM params) |
 | `deploy node <name> --helm [--namespace NS] [--kube-context C] [--chart PATH] [--port N] [--set k=v …] [--values F] [--ctx NAME] [--no-ctx] [--force] [--force-conflicts] [--claude-token-file FILE] [--dry-run]` | system `helm` + `kubectl` | a **KUBERNETES** node from the packaged chart (`cli/deploy/helm/clodex`): mints a wire token, `helm upgrade --install … --set-file secrets.wireToken=<0600 tempfile> --wait`, saves a typed `{kubectl: svc/<name>, token}` context, then verifies hello **through the real `kubectl port-forward`** with the token. Re-run = `helm upgrade` in place, **reusing** the release's existing token |
 | `deploy node <stack> --fargate [--cluster NAME] [--region R] [--profile P] [--image URI] [--use-bedrock] [--assign-public-ip E\|D] [--subnets IDs] [--security-group ID] [--persistent true\|false] [--param K=V …] [--token-file FILE] [--ctx NAME] [--no-ctx] [--force] [--dry-run]` | system `aws` → CloudFormation | an **AWS FARGATE** node from the packaged template (`cli/deploy/clodex-fargate.yaml`): `aws cloudformation deploy` (create OR idempotent update), populates the oauth-token secret from `--token-file` (`file://`, never argv; skipped on `--use-bedrock`), reads the stack's **self-minted** wire token into a typed `{ssm-ecs CLUSTER/<stack>-node, token}` context, then (when `--persistent`, the default) verifies hello **through the real SSM tunnel**. `ClusterName` defaults to the stack name; the wire token is never rotated on re-run |
 
@@ -620,12 +620,14 @@ clodexctl deploy node mybox --ssm i-… --branch dev --dry-run   # print the arg
   `StandardOutputContent` is read partial each tick, so the marker trail
   **pseudo-streams** as it grows) → save a typed
   `{ssm:{target,region,profile}, token}` context (`remotePort` when `--port` ≠
-  7900) the moment the install succeeds, since the box now answers only the new
-  token → verify from your laptop **through the real SSM port-forward** with the
+  7900) the moment the box reports `::ok token`, since it now answers only the
+  new token → verify from your laptop **through the real SSM port-forward** with the
   token. Like helm, a verify or Claude-token delivery failure keeps the saved
   context and points you at `clodexctl describe node <name> --test --verbose`.
   `Failed`/`Cancelled`/`TimedOut` each relay the invocation's output tail
-  with a distinct message and exit `1` (`TimedOut` says "re-run to resume").
+  with a distinct message and exit `1`; `TimedOut` says whether the token was
+  saved, or else to re-run with `--force`. The remote run is capped
+  (`executionTimeout`) at the same 10-minute budget as the local poll.
 - **`aws` is the operator's tool** — spawned argv-direct (the same `execFn` seam
   the `--ssm` transport uses), never a shell, **zero AWS SDKs**. A missing `aws`
   binary is the "is aws installed?" hint. A newly-registered instance can be
@@ -633,8 +635,9 @@ clodexctl deploy node mybox --ssm i-… --branch dev --dry-run   # print the arg
   `InvalidInstanceId` and the poll waits ~2 s before its first tick.
 - **A first-class node, not a container.** The `clodex` user's home holds the
   clone and the systemd --user service, the wire bound on `127.0.0.1:<port>`
-  **on the box** — it never leaves the instance's loopback. Re-running is the
-  update path (the installer, `useradd`, and linger steps are all idempotent).
+  **on the box** — it never leaves the instance's loopback. Re-running with
+  `--force` (or `clodexctl upgrade node <ctx>`) is the update path (the
+  installer, `useradd`, and linger steps are all idempotent).
 - **The installer is byte-for-byte the pinned `clodex-deploy.sh`** — the wrapper
   embeds it verbatim (a drift test gates it equal to `peering/clodex-deploy.sh`)
   and runs it under `sudo -iu clodex bash -s`, its full log parked at
@@ -650,7 +653,8 @@ clodexctl deploy node mybox --ssm i-… --branch dev --dry-run   # print the arg
   history / CloudTrail** to anyone with `ssm:GetCommandInvocation`. This is an
   acceptable posture **only because the port never leaves loopback** — reaching
   the wire at all requires `ssm:StartSession` on the same account. To rotate the
-  token, **re-run the `--ssm` deploy** (it mints a new one, rewrites the drop-in and
+  token, **re-run the `--ssm` deploy with `--force`** (or `clodexctl upgrade node
+  <ctx>`; it mints a new one, rewrites the drop-in and
   restarts the service, then updates the context).
 - **`--claude-token-file FILE` never rides SSM.** The Claude OAuth token is
   **not ours to rotate** (unlike the wire token), so it must **not** land in
