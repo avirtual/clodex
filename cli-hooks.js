@@ -12,6 +12,7 @@ const { CLAUDE_TOOLS } = require('./catalogs');
 const { denyAgentRules } = require('./agents-util');
 const { buildCredentialSandbox } = require('./credential-sandbox');
 const { runningInSandboxBox } = require('./sandbox');
+const { intentEnabled } = require('./intent-catalog');
 // The horizon is interpolated into the generated drain, so the constant beside
 // its reasoning stays the single source — a second literal in a template string
 // is exactly the copy that drifts the first time either is touched.
@@ -20,6 +21,7 @@ const { CONSOLE_MAX_RECORDS } = require('./bash-console');
 
 const PROFILE_HEADING = "## Your player's profile";
 const PROFILE_TRAILER = 'Amend a note with [agent:profile set <key>] <value> or [agent:profile drop <key>]; the game: section is read-only.';
+const PROFILE_READONLY_TRAILER = 'This profile is read-only for you.';
 
 function holdsOurs(p, body) {
   let raw;
@@ -37,7 +39,7 @@ function holdsOurs(p, body) {
 // electron-free and free of session state, and resolving a team needs both a cwd
 // and the live seat list. Absent (or returning null) it simply contributes
 // nothing, which is what a non-team seat gets.
-function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp, composeRoster = null, log = null }) {
+function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp, composeRoster = null, getIntents = null, log = null }) {
   // The interpreter every generated hook shells out to: the app's own Electron
   // binary run as Node (`ELECTRON_RUN_AS_NODE=1 "<nodeInterp>"`), baked absolute
   // so a Finder/Dock-launched packaged .app never depends on an ambient python3
@@ -64,7 +66,10 @@ function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp, 
     let profile = null;
     try {
       const view = memoryStore.profileGet(name);
-      profile = view && view.ok && view.profile ? `${PROFILE_HEADING}\n${view.yaml}${PROFILE_TRAILER}` : null;
+      let intents = null;
+      try { intents = getIntents ? getIntents(name) : null; } catch { intents = null; }
+      const trailer = intentEnabled('profile', intents) ? PROFILE_TRAILER : PROFILE_READONLY_TRAILER;
+      profile = view && view.ok && view.profile ? `${PROFILE_HEADING}\n${view.yaml}${trailer}` : null;
     } catch { profile = null; }
     const ctx = `You are the clodex agent named '${name}'.`
       + (digest ? `\n\n${digest}` : '')

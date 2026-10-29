@@ -697,6 +697,32 @@ test('writeClaudeDigestFile: the profile rides verbatim between the roster and t
   assert.strictEqual(read('neither'), `You are the clodex agent named 'neither'.\n\n${digest('neither')}\n\n[team t] roster for neither\n\n${brief}`);
 });
 
+test('writeClaudeDigestFile: the amend hint rides only when the seat allowlist carries profile', () => {
+  const { createMemoryStore } = require('../memory-store');
+  const REGISTRY_DIR = tmp();
+  const memoryStore = createMemoryStore(path.join(REGISTRY_DIR, 'memory'));
+  const intents = { amend: ['dm', 'profile'], ro: ['dm', 'memory'], all: null, none: ['dm', 'profile'] };
+  const hooks = createCliHooks({
+    REGISTRY_DIR,
+    memoryStore,
+    getUiSettings: () => ({ get: () => ({ statusline: { claude: [], claudeCommand: '' } }) }),
+    nodeInterp: process.execPath,
+    getIntents: (n) => intents[n],
+  });
+  const read = (n) => JSON.parse(fs.readFileSync(pathFor(REGISTRY_DIR, n, 'hookDigest'), 'utf-8')).hookSpecificOutput.additionalContext;
+  for (const n of ['amend', 'ro', 'all']) assert.ok(memoryStore.profileSet(n, { notes: { mood: 'calm' } }).ok);
+  const rows = [
+    ['amend', "You are the clodex agent named 'amend'.\n\n## Your player's profile\nnotes:\n  mood: calm\nAmend a note with [agent:profile set <key>] <value> or [agent:profile drop <key>]; the game: section is read-only."],
+    ['ro', "You are the clodex agent named 'ro'.\n\n## Your player's profile\nnotes:\n  mood: calm\nThis profile is read-only for you."],
+    ['all', "You are the clodex agent named 'all'.\n\n## Your player's profile\nnotes:\n  mood: calm\nAmend a note with [agent:profile set <key>] <value> or [agent:profile drop <key>]; the game: section is read-only."],
+    ['none', "You are the clodex agent named 'none'."],
+  ];
+  for (const [n, want] of rows) {
+    hooks.writeClaudeDigestFile(n);
+    assert.strictEqual(read(n), want, n);
+  }
+});
+
 test('SessionStart: a stream seat serves the profile on startup through the same hook', () => {
   const { createMemoryStore } = require('../memory-store');
   const REGISTRY_DIR = tmp();
