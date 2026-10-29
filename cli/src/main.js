@@ -174,7 +174,8 @@ async function run(argv, io = {}) {
   }
   let flags;
   try {
-    flags = parse(argv, argv[0] === 'patch' ? PATCH_PARSE_OPTS : PARSE_OPTS);
+    flags = parse(argv, PARSE_OPTS);
+    if (flags._[0] === 'patch') flags = parse(argv, PATCH_PARSE_OPTS);
   } catch (e) {
     writeErr(`clodexctl: ${e.message}\n`);
     return e instanceof CliError ? e.exitCode : EXIT.USAGE;

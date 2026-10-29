@@ -532,6 +532,7 @@ order, two-space indent, strings quoted only when needed. Cap: `PROFILE_CAP`
 `profileGet` / `profileSet(agent, { game, notes }, { merge })` / `profileDelete`.
 Merge upserts the top-level keys of each section (a `null` drops the key, a map
 value replaces the key whole); `merge: false` replaces the body and keeps nulls.
+A write whose result is empty deletes the file, so empty and none are one state.
 The profile is not a unit: `list()` (so the digest, `[agent:memory list]` and
 recall) never sees it, and `update`/`forget` refuse id `profile`. Peer API:
 `GET|PUT|PATCH|DELETE /api/sessions/<name>/memory/profile` (assistant seats only;

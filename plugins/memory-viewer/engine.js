@@ -162,7 +162,7 @@ function readUnits(agent) {
   }
   const units = [];
   for (const f of files) {
-    if (!f.endsWith('.md')) continue;
+    if (!f.endsWith('.md') || f === 'profile.md') continue;
     const real = confineToDir(base, path.join(dir, f));
     if (real === null) continue;
     // Judged through the FD: `real` re-resolves at open, a hardlink is in-dir.

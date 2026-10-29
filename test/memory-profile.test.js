@@ -193,3 +193,27 @@ test('profileDelete: existed true then false; invalid agent refused', () => {
   assert.strictEqual(store.profileDelete('..').ok, false);
   assert.strictEqual(store.profileGet('..').ok, false);
 });
+
+test('profile: __proto__ is refused as a section key, a nested key and in YAML', () => {
+  const { store } = tmpStore();
+  const viaJson = [JSON.parse('{"game":{"__proto__":1}}'), JSON.parse('{"notes":{"h":{"__proto__":"x"}}}')];
+  for (const input of viaJson) {
+    const out = store.profileSet('alpha', input);
+    assert.strictEqual(out.ok, false, JSON.stringify(input));
+    assert.match(out.error, /bad key "__proto__"/);
+  }
+  assert.throws(() => parseProfileYaml('game:\n  __proto__: 1'), /bad key "__proto__"/);
+  assert.throws(() => parseProfileYaml('game:\n  h:\n    __proto__: x'), /bad key "__proto__"/);
+  assert.deepStrictEqual(store.profileGet('alpha'), { ok: true, profile: null });
+});
+
+test('profileSet: an empty result deletes the profile, so empty and none are one state', () => {
+  const { store, dir } = tmpStore();
+  store.profileSet('alpha', { game: { a: 1 } });
+  assert.ok(fs.existsSync(path.join(dir, 'alpha', 'profile.md')), 'ENTER: a profile exists');
+  assert.deepStrictEqual(store.profileSet('alpha', {}, { merge: false }), { ok: true, profile: null });
+  assert.ok(!fs.existsSync(path.join(dir, 'alpha', 'profile.md')));
+  store.profileSet('alpha', { game: { a: 1 } });
+  assert.deepStrictEqual(store.profileSet('alpha', { game: { a: null } }), { ok: true, profile: null }, 'a merge that drops the last key');
+  assert.deepStrictEqual(store.profileGet('alpha'), { ok: true, profile: null });
+});

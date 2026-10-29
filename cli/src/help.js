@@ -88,7 +88,7 @@ const VERB_REGISTRY = [
       '-o wide adds: sessions WORKSPACE; peers URL PLATFORM; tickets ASSIGNEE BRANCH; agents TOOLS; worktrees MAIN DETACHED LOCKED PRUNABLE. workspaces, teams and sandboxes have no wide columns.',
       'get docs lists the help corpus (the same pages the desktop Help window shows); -q searches it and prints NAME HEADING SNIPPET instead. describe doc <name> prints one page, and --section <slug> prints one section of it — a page is 10-25k tokens, a section usually under 2k.',
       'get tickets without --state shows the OPEN board; -o json sends no state and returns every state, the server\'s own default. A ticket id (t42) and a --state value are both checked here, before any request.',
-      '--subresource skills|args print the raw JSON payload; --subresource transcript is a one-shot read of the same transcript `logs` reads (use `logs -f` to follow; -f here is forced off, not honoured). -o wide|name are accepted by the parser and ignored on all three: skills and args are always JSON, transcript renders exactly as `logs` does.',
+      '--subresource skills|args print the raw JSON payload; --subresource transcript is a one-shot read of the same transcript `logs` reads (use `logs -f` to follow; -f here is forced off, not honoured). -o wide|name are accepted by the parser and ignored on all four: skills and args are always JSON, transcript renders exactly as `logs` does, profile prints its YAML.',
       '--subresource profile prints an assistant seat\'s profile YAML as-is ((no profile) when none); -o json|yaml prints the wire body.',
     ],
   },

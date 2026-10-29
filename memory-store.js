@@ -153,7 +153,7 @@ function isProfileScalar(v) {
 }
 
 function checkNestedKey(k, where) {
-  if (typeof k !== 'string' || k.length === 0 || k.length > PROFILE_KEY_MAX || PROFILE_CTRL.test(k)) {
+  if (typeof k !== 'string' || k.length === 0 || k.length > PROFILE_KEY_MAX || PROFILE_CTRL.test(k) || k === '__proto__') {
     throw new Error(`${where}: bad key ${JSON.stringify(k)}`);
   }
 }
@@ -186,7 +186,7 @@ function checkProfileInput(input) {
     if (map === undefined) continue;
     if (!isPlainObject(map)) throw new Error(`${section}: must be a map`);
     for (const [k, v] of Object.entries(map)) {
-      if (!PROFILE_KEY_RE.test(k) || k.length > PROFILE_KEY_MAX) throw new Error(`${section}: bad key ${JSON.stringify(k)}`);
+      if (!PROFILE_KEY_RE.test(k) || k.length > PROFILE_KEY_MAX || k === '__proto__') throw new Error(`${section}: bad key ${JSON.stringify(k)}`);
       checkProfileValue(v, `${section}.${k}`);
     }
   }
@@ -307,7 +307,7 @@ function parseProfileYaml(text) {
       const m = body.match(PROFILE_KEY_LINE);
       if (!m) throw new Error(`${at}: expected key: value`);
       const key = parseProfileKey(m[1], at);
-      if (!PROFILE_KEY_RE.test(key) || key.length > PROFILE_KEY_MAX) throw new Error(`${at}: bad key ${JSON.stringify(key)}`);
+      if (!PROFILE_KEY_RE.test(key) || key.length > PROFILE_KEY_MAX || key === '__proto__') throw new Error(`${at}: bad key ${JSON.stringify(key)}`);
       if (Object.prototype.hasOwnProperty.call(out[section], key)) throw new Error(`${at}: duplicate key ${key}`);
       const v = parseProfileValueText(m[2], at);
       if (v.kind === 'empty') { entry = { key, pending: true }; out[section][key] = null; continue; }
@@ -525,6 +525,10 @@ function createMemoryStore(rootDir) {
         }
       }
       const yaml = serializeProfile(next);
+      if (!yaml) {
+        const gone = this.profileDelete(agent);
+        return gone.ok ? { ok: true, profile: null } : gone;
+      }
       const bytes = Buffer.byteLength(yaml);
       if (bytes > PROFILE_CAP) return { ok: false, error: `profile exceeds ${PROFILE_CAP} bytes (${bytes})` };
       const updatedAt = new Date().toISOString();

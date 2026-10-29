@@ -90,6 +90,12 @@ test('patch session X --subresource profile -f file.yaml sends text/yaml with me
     assert.strictEqual(r.stdout, YAML);
     assert.deepStrictEqual(seen[0], { method: 'PATCH', url: '/api/sessions/asst/memory/profile?merge=1', type: 'text/yaml', body: YAML });
     const rep = await cli(['patch', 'session', 'asst', '--subresource', 'profile', '--filename', file, '--replace'], port);
+    const lead = await run(['--url', `http://127.0.0.1:${port}`, '--token', TOKEN, 'patch', 'session', 'asst', '--subresource', 'profile', '-f', file], {
+      stdout: () => {}, stderr: () => {}, env: {},
+      contextsFile: path.join(os.tmpdir(), 'nonexistent-clodexctl-t2078', 'contexts.json'),
+      spawnFn: () => { throw new Error('spawnFn called'); },
+    });
+    assert.strictEqual(lead, 0, 'global flags before patch still make -f the filename');
     assert.strictEqual(rep.code, 0, rep.stderr);
     assert.strictEqual(seen[1].url, '/api/sessions/asst/memory/profile?merge=0');
   });
