@@ -1245,7 +1245,6 @@ function createTicketMethods(deps, shared) {
             shape.disabledSkills, shape.injectSkills,
             reviewerSystemPrompt, shape.appendPromptFiles, shape.execCommands, shape.intents, shape.env, true,
             false, shape.plugins, shape.shellDeny, null, shape.io || 'pty', shape.effort || null, shape.protectCredentials || null, shape.mcpServers,
-            (shape.tpl && shape.tpl.class) || null,
           );
           // Report a missing prompt once: suppress create()'s finding when `promptWarn` is already carried; the two texts are worded
           // differently on purpose, so suppression keys on the warn, not on matching text.
@@ -4797,7 +4796,6 @@ function createTicketMethods(deps, shared) {
             // it also cannot be dropped, since the plugin list after it is positional.
             { ...shape.env, CLODEX_TICKET: ticket.id }, true,
             false, shape.plugins, null, null, shape.io || 'pty', shape.effort || null, shape.protectCredentials || null, shape.mcpServers,
-            (shape.tpl && shape.tpl.class) || null,
           );
           // First, before anything that can throw: until claimed the seat lives in a tree no record names, so _ticketTreeHolder is blind
           // to it and session:kill orphans the checkout.
