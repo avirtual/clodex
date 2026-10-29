@@ -53,7 +53,7 @@ test('parseProfileYaml: rejects anchors, aliases, tags, depth 3, bad keys, non-s
     ['game:\n  a: !!str 1', /tags are not allowed/],
     ['game:\n  a: |\n    text', /block scalars/],
     ['game:\n  h:\n    s:\n      d: 1', /nesting deeper than one level/],
-    ['game:\n  h:\n    s: [1]', /nesting deeper than one level/],
+    ['game:\n  h:\n    s: []', /nesting deeper than one level/],
     ['game:\n  Bad: 1', /bad key "Bad"/],
     ['game:\n  a b: 1', /bad key "a b"/],
     ['game:\n  l:\n    - a: b', /list items must be scalars/],

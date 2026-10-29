@@ -69,7 +69,7 @@ function resolveRemoteBasePathSetting(settings, env = process.env, warn) {
 }
 
 const RESOURCES = [
-  { name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get', 'delete'], subresources: { transcript: ['get'], query: ['post'], attach: ['get'], control: ['post'], input: ['post'], resize: ['post'], dm: ['post'], restart: ['post'], args: ['get', 'patch'], skills: ['get', 'patch'], sleep: ['post'], wake: ['post'], memory: ['get'], 'client-token': ['put'], describe: ['get'] } },
+  { name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get', 'delete'], subresources: { transcript: ['get'], query: ['post'], attach: ['get'], control: ['post'], input: ['post'], resize: ['post'], dm: ['post'], restart: ['post'], args: ['get', 'patch'], skills: ['get', 'patch'], sleep: ['post'], wake: ['post'], memory: ['get'], 'memory/profile': ['get', 'put', 'patch', 'delete'], 'client-token': ['put'], describe: ['get'] } },
   { name: 'workspaces', singular: 'workspace', scope: 'node', verbs: ['list'] },
   { name: 'peers', singular: 'peer', scope: 'node', verbs: ['list', 'get'] },
   { name: 'teams', singular: 'team', scope: 'node', verbs: ['list', 'get'] },
@@ -110,6 +110,7 @@ const SUBRESOURCE_CALLBACK = {
     sleep: '_sleepSession',
     wake: '_wakeSession',
     memory: '_exportMemory',
+    'memory/profile': { get: '_getProfile', put: '_setProfile', patch: '_setProfile', delete: '_deleteProfile' },
     'client-token': '_setClientToken',
     describe: '_describeSession',
   },
@@ -174,6 +175,7 @@ class RemoteServer {
                 getSessionArgs, setSessionArgs, describeSession,
                 getSkillCatalog, setSessionSkills,
                 listSleepers, getSleeper, sleepSession, wakeSession, exportMemory,
+                getProfile, setProfile, deleteProfile,
                 deliverDm, claimDms, listDmOrigins, receiveRoster, notifications, openRequests, replyNote,
                 wtermOpen, wtermInput, wtermResize, wtermClose, onWtermStreams,
                 token, insecure }) {
@@ -238,6 +240,9 @@ class RemoteServer {
     this._sleepSession = sleepSession || null;
     this._wakeSession = wakeSession || null;
     this._exportMemory = exportMemory || null;
+    this._getProfile = getProfile || null;
+    this._setProfile = setProfile || null;
+    this._deleteProfile = deleteProfile || null;
     this._deliverDm = deliverDm || null;
     this._claimDms = claimDms || null;
     this._listDmOrigins = listDmOrigins || null;
@@ -931,6 +936,55 @@ class RemoteServer {
     return this._handleAssistantVerb(this._exportMemory, 'memory', name, res);
   }
 
+  _profileStatus(out) {
+    return out && out.ok ? 200 : (out && out.code) || 400;
+  }
+
+  _handleProfileGet(name, req, res) {
+    if (!this._getProfile) return this._json(res, 501, { ok: false, error: 'profile not available' });
+    const wantsYaml = /\b(?:text|application)\/(?:x-)?yaml\b/i.test(String(req.headers.accept || ''));
+    return Promise.resolve()
+      .then(() => this._getProfile(name))
+      .then((out) => {
+        if (!wantsYaml || !out || !out.ok) return this._json(res, this._profileStatus(out), out || { ok: false, error: 'profile failed' });
+        if (res.writableEnded) return;
+        if (!out.profile) { res.writeHead(204, { 'Cache-Control': 'no-store' }); return res.end(); }
+        res.writeHead(200, { 'Content-Type': 'text/yaml; charset=utf-8', 'Cache-Control': 'no-store' });
+        return res.end(out.yaml);
+      })
+      .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
+  }
+
+  _handleProfileSet(name, req, url, res) {
+    if (!this._setProfile) return this._json(res, 501, { ok: false, error: 'profile not available' });
+    const mergeParam = url.searchParams.get('merge');
+    if (mergeParam !== null && mergeParam !== '0' && mergeParam !== '1') return this._json(res, 400, { ok: false, error: 'bad merge (expected 0 or 1)' });
+    const ctype = String(req.headers['content-type'] || '');
+    const isYaml = /^(?:text|application)\/(?:x-)?yaml\b/i.test(ctype);
+    if (!isYaml && !/^application\/json\b/i.test(ctype)) {
+      return this._json(res, 415, { ok: false, error: 'Content-Type must be application/json or text/yaml' });
+    }
+    return this._readBody(req, res, (body) => {
+      let input;
+      if (isYaml) input = { yaml: body };
+      else {
+        try { input = { data: JSON.parse(body) }; } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+      }
+      Promise.resolve()
+        .then(() => this._setProfile(name, input, { merge: mergeParam !== '0' }))
+        .then((out) => this._json(res, this._profileStatus(out), out || { ok: false, error: 'profile failed' }))
+        .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
+    });
+  }
+
+  _handleProfileDelete(name, res) {
+    if (!this._deleteProfile) return this._json(res, 501, { ok: false, error: 'profile not available' });
+    return Promise.resolve()
+      .then(() => this._deleteProfile(name))
+      .then((out) => this._json(res, this._profileStatus(out), out || { ok: false, error: 'profile failed' }))
+      .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
+  }
+
   _handleRestartSession(name, req, res) {
     if (!this._restartSession) return this._json(res, 501, { ok: false, error: 'restart not available' });
     if (!this._jsonBody(req, res)) return;
@@ -1151,6 +1205,9 @@ class RemoteServer {
       if (req.method === 'POST' && sub === 'sleep') return this._handleSleep(name, res);
       if (req.method === 'POST' && sub === 'wake') return this._handleWake(name, res);
       if (req.method === 'GET' && sub === 'memory') return this._handleMemory(name, res);
+      if (req.method === 'GET' && sub === 'memory/profile') return this._handleProfileGet(name, req, res);
+      if ((req.method === 'PUT' || req.method === 'PATCH') && sub === 'memory/profile') return this._handleProfileSet(name, req, url, res);
+      if (req.method === 'DELETE' && sub === 'memory/profile') return this._handleProfileDelete(name, res);
       if (req.method === 'PUT' && sub === 'client-token') return this._handleClientToken(name, req, res);
       return this._json(res, 404, { ok: false, error: 'not found' });
     }
