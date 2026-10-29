@@ -64,6 +64,9 @@ function parseIntentLegacy(rawLine) {
   const memMatch = cleaned.match(/^\[agent:memory\s+(\S+)\]\s*(.*)/s);
   if (memMatch) return { type: 'memory', sub: memMatch[1].toLowerCase(), body: memMatch[2] };
 
+  const profileMatch = cleaned.match(/^\[agent:profile(?:\s+([^\]\s]+))?(?:\s+([^\]\s]+))?\s*\]\s*(.*)$/s);
+  if (profileMatch) return { type: 'profile', sub: (profileMatch[1] || '').toLowerCase(), key: profileMatch[2] || '', body: profileMatch[3] };
+
   const fileMatch = cleaned.match(/^\[agent:file\s+(\S+)\s+(.+?)\]\s*$/);
   if (fileMatch) return { type: 'file', sub: fileMatch[1].toLowerCase(), path: fileMatch[2].trim() };
 
@@ -399,6 +402,8 @@ const ADVERSARIAL = [
   '[agent:probe  END ]',
   '[agent:memory list]', '[agent:memory remember] text', '[agent:memory RECALL] q',
   '[agent:memory]',
+  '[agent:profile set mood] calm', '[agent:profile drop mood]', '[agent:profile SET plan]\n- e4',
+  '[agent:profile frob mood]', '[agent:profile set Bad] x', '[agent:profile]', '[agent:profile set a b] x',
   '[agent:file view /a/b.txt]', '[agent:file open /a b/c.txt]',
   '[agent:file VIEW x]', '[agent:file view]', '[agent:file view x] trailing',
   '[agent:exec cmd]', '[agent:exec cmd] {"a":1}', '[agent:exec]',
@@ -865,6 +870,22 @@ test('bodyMode for remind: list and cancel take no body, a schedule captures one
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:remind CANCEL abc]')), 'none');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:remind in 20m] x')), 'greedy');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:remind every 2h] x')), 'greedy');
+});
+
+test('parseProfile: set/drop with a key, loose enough that a bad verb or key reaches the bounce', () => {
+  assert.deepStrictEqual(parseIntent('[agent:profile set mood] calm and steady'), { type: 'profile', sub: 'set', key: 'mood', body: 'calm and steady' });
+  assert.deepStrictEqual(parseIntent('[agent:profile set plan]\n- e4\n- d4'), { type: 'profile', sub: 'set', key: 'plan', body: '\n- e4\n- d4' });
+  assert.deepStrictEqual(parseIntent('[agent:profile drop mood]'), { type: 'profile', sub: 'drop', key: 'mood', body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:profile set Mood] x'), { type: 'profile', sub: 'set', key: 'Mood', body: 'x' });
+  assert.deepStrictEqual(parseIntent('[agent:profile frob mood]'), { type: 'profile', sub: 'frob', key: 'mood', body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:profile]'), { type: 'profile', sub: '', key: '', body: '' });
+  assert.strictEqual(parseIntent('[agent:profile set a b] x'), null);
+});
+
+test('bodyMode for profile: set captures, drop does not', () => {
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:profile set plan] x')), 'greedy');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:profile drop plan]')), 'none');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:profile frob plan]')), 'none');
 });
 
 test('bodyMode per sub-verb for team / memory / context', () => {

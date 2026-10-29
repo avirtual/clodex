@@ -663,6 +663,57 @@ test('writeClaudeDigestFile: a sleeper\'s brief.md rides after the roster, and n
   assert.strictEqual(read('awake'), `You are the clodex agent named 'awake'.\n\n[team t] roster for awake`);
 });
 
+test('writeClaudeDigestFile: the profile rides verbatim between the roster and the brief', () => {
+  const { briefPathFor } = require('../assistant-sleep');
+  const { createMemoryStore, composeDigest } = require('../memory-store');
+  const REGISTRY_DIR = tmp();
+  const memoryStore = createMemoryStore(path.join(REGISTRY_DIR, 'memory'));
+  const hooks = createCliHooks({
+    REGISTRY_DIR,
+    memoryStore,
+    getUiSettings: () => ({ get: () => ({ statusline: { claude: [], claudeCommand: '' } }) }),
+    nodeInterp: process.execPath,
+    composeRoster: (n) => `[team t] roster for ${n}`,
+  });
+  const read = (n) => JSON.parse(fs.readFileSync(pathFor(REGISTRY_DIR, n, 'hookDigest'), 'utf-8')).hookSpecificOutput.additionalContext;
+  const TRAILER = 'Amend a note with [agent:profile set <key>] <value> or [agent:profile drop <key>]; the game: section is read-only.';
+  const brief = '## Before you slept\n\n**player:** hi';
+  for (const n of ['both', 'nobrief', 'neither']) memoryStore.remember(n, { text: `fact for ${n}`, source: n, pinned: true });
+  for (const n of ['both', 'nobrief']) {
+    assert.ok(memoryStore.profileSet(n, { game: { level: 3, name: 'Ann: the bold' }, notes: { plan: ['e4', 'd4'] } }).ok);
+  }
+  fs.mkdirSync(path.dirname(briefPathFor(REGISTRY_DIR, 'both')), { recursive: true });
+  fs.writeFileSync(briefPathFor(REGISTRY_DIR, 'both'), brief);
+  fs.mkdirSync(path.dirname(briefPathFor(REGISTRY_DIR, 'neither')), { recursive: true });
+  fs.writeFileSync(briefPathFor(REGISTRY_DIR, 'neither'), brief);
+  const yaml = 'game:\n  level: 3\n  name: "Ann: the bold"\nnotes:\n  plan:\n    - e4\n    - d4\n';
+  assert.strictEqual(memoryStore.profileGet('both').yaml, yaml, 'ENTER: the canonical YAML this test expects');
+  const digest = (n) => composeDigest(memoryStore.list(n));
+  hooks.writeClaudeDigestFile('both');
+  assert.strictEqual(read('both'), `You are the clodex agent named 'both'.\n\n${digest('both')}\n\n[team t] roster for both\n\n## Your player's profile\n${yaml}${TRAILER}\n\n${brief}`);
+  hooks.writeClaudeDigestFile('nobrief');
+  assert.strictEqual(read('nobrief'), `You are the clodex agent named 'nobrief'.\n\n${digest('nobrief')}\n\n[team t] roster for nobrief\n\n## Your player's profile\n${yaml}${TRAILER}`);
+  hooks.writeClaudeDigestFile('neither');
+  assert.strictEqual(read('neither'), `You are the clodex agent named 'neither'.\n\n${digest('neither')}\n\n[team t] roster for neither\n\n${brief}`);
+});
+
+test('SessionStart: a stream seat serves the profile on startup through the same hook', () => {
+  const { createMemoryStore } = require('../memory-store');
+  const REGISTRY_DIR = tmp();
+  const memoryStore = createMemoryStore(path.join(REGISTRY_DIR, 'memory'));
+  assert.ok(memoryStore.profileSet('st', { notes: { mood: 'calm' } }).ok);
+  const h = createCliHooks({
+    REGISTRY_DIR,
+    memoryStore,
+    getUiSettings: () => ({ get: () => ({ statusline: { claude: [], claudeCommand: '' } }) }),
+    nodeInterp: process.execPath,
+  });
+  fs.writeFileSync(path.join(REGISTRY_DIR, 't.jsonl'), '');
+  h.setupClaudeHook('st', null, null, [], [], [], null, null, [], true);
+  const ctx = JSON.parse(runSessionStart(REGISTRY_DIR, 'st', 'startup')).hookSpecificOutput.additionalContext;
+  assert.strictEqual(ctx, "You are the clodex agent named 'st'.\n\n## Your player's profile\nnotes:\n  mood: calm\nAmend a note with [agent:profile set <key>] <value> or [agent:profile drop <key>]; the game: section is read-only.");
+});
+
 // The drawer's Copy button writes JSONL into the seat's run dir; this script is
 // what turns it into transcript content. It CONSUMES what it reads — unlike
 // ctxwarn, which re-emits every turn — because a hard copy that re-delivered
