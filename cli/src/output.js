@@ -205,6 +205,11 @@ function describeSession(body) {
   return lines.join('\n');
 }
 
+function renderProfile(body) {
+  if (!body || !body.profile) return '(no profile)';
+  return String(body.yaml || '').replace(/\n$/, '');
+}
+
 function describePeer(peer) {
   const { sessions, ...rest } = peer || {};
   const lines = [renderDescribe(rest), 'sessions:'];
@@ -296,7 +301,7 @@ module.exports = {
   jsonLine, stripAnsi, ANSI_RE, renderSessions, renderSessionsWide, renderNames, renderWorkspaces,
   renderPeers, renderPeersWide, renderTeams, renderTickets, renderTicketsWide, renderSandboxes,
   renderAgents, renderAgentsWide, renderDocs, renderDocHits, renderWorktrees, renderWorktreesWide,
-  renderResources, renderDescribe,
+  renderResources, renderDescribe, renderProfile,
   describeSession, describePeer, describeTeam, describeSandbox, describeAgent, describeDoc,
   renderTranscript, renderInfo, table, makePrinter,
 };
