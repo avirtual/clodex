@@ -129,13 +129,16 @@ assistant-class seats under the `assistant` hello cap (sleep + wake wired):
 `GET /api/sessions?state=asleep|all` (asleep lists only sleepers, all appends
 them to the live rows, anything else is a 400) and `GET /api/sessions/:name`
 answer a sleeper row from its record (`class: 'assistant', state: 'asleep',
-activity: 'asleep', asleepAt, sleepReason, template, sleep, cost, wakes`, a
+activity: 'asleep', asleepAt, sleepReason, template, sleep, cost, wakes, memory`, a
 null `activityTs` and null stats); a live assistant row adds `class: 'assistant',
-state: 'awake'|'sleeping'` (sleeping = still closing after sleep), `template, sleep, cost, wakes`; `POST /api/sessions/:name/sleep`
+state: 'awake'|'sleeping'` (sleeping = still closing after sleep), `template, sleep, cost, wakes, memory` (`memory: {profile: <bytes|0>, profileUpdatedAt}`); `POST /api/sessions/:name/sleep`
 (200 asleep, 202 sleeping when mid-turn, 409 not an assistant / not awake),
 `POST /api/sessions/:name/wake` (200 awake, 409, `code` forwarded; at the template's `sleep.maxAwake` with no idle sibling to evict, `503 {ok:false, code:503, error:'at capacity', retryAfterMs:30000}`),
 `GET /api/sessions/:name/memory` (`{ok, name, units, brief}`; 404 unknown, 409
-not an assistant); `PUT /api/sessions/:name/client-token` with `{token: string|null}`
+not an assistant); `GET|PUT|PATCH|DELETE /api/sessions/:name/memory/profile` (the seat's
+profile document, docs/messaging.md §5 Profile: GET `{ok, name, profile, yaml, bytes, updatedAt}`,
+`Accept: text/yaml` → the YAML or 204; PUT/PATCH JSON `{game?, notes?}` or `text/yaml`, `?merge=0|1`;
+DELETE `{ok, existed}`; 404 unknown, 400 not an assistant / invalid / over 4096 bytes); `PUT /api/sessions/:name/client-token` with `{token: string|null}`
 sets the seat's game client token (`[\x21-\x7e]{16,512}`, written 0600 to
 `sessions/<name>/client-token`; 200 `{ok, set:true}`), clears it on null or `''`
 (200 `{ok, set:false}`), 404 for an unknown seat, 400 `bad client token`; a create

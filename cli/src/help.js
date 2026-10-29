@@ -47,7 +47,7 @@ const VERB_REGISTRY = [
       'get catalogs [-o json|yaml]',
       'get nodes [--current] [-o json|yaml|wide|name]',
       'get nodes --versions [-o json|yaml|wide]',
-      'get session <name> --subresource skills|args|transcript',
+      'get session <name> --subresource skills|args|transcript|profile',
     ],
     args: [['resource', 'sessions|workspaces|peers|teams|tickets|sandboxes|agents|docs|worktrees|catalogs|nodes (singular accepted too)'], ['name', 'one object (also accepted as session/<name>)']],
     flags: [
@@ -62,7 +62,7 @@ const VERB_REGISTRY = [
       ['--current', 'nodes only — print the current node NAME alone (exit 5 when none is set)'],
       ['--versions', 'nodes only — dial every node (4 at a time, 10 s each) and add a VERSION column; (unreachable) when one cannot be reached'],
       ['-o FORMAT', 'json (raw wire payload) | yaml (the same payload as YAML) | wide (extra columns) | name (<singular>/<id> per line)'],
-      ['--subresource S', 'sessions only — read one subresource of a named session: skills|args|transcript'],
+      ['--subresource S', 'sessions only — read one subresource of a named session: skills|args|transcript|profile'],
     ],
     examples: [
       'clodexctl get sessions',
@@ -72,6 +72,7 @@ const VERB_REGISTRY = [
       'clodexctl get sessions -o name | cut -d/ -f2 | xargs -n1 clodexctl logs',
       'clodexctl get session bob --subresource skills',
       'clodexctl get session bob --subresource args',
+      'clodexctl get session asst --subresource profile',
       'clodexctl get nodes',
       'clodexctl get nodes --current',
       'clodexctl get nodes --versions',
@@ -88,6 +89,7 @@ const VERB_REGISTRY = [
       'get docs lists the help corpus (the same pages the desktop Help window shows); -q searches it and prints NAME HEADING SNIPPET instead. describe doc <name> prints one page, and --section <slug> prints one section of it — a page is 10-25k tokens, a section usually under 2k.',
       'get tickets without --state shows the OPEN board; -o json sends no state and returns every state, the server\'s own default. A ticket id (t42) and a --state value are both checked here, before any request.',
       '--subresource skills|args print the raw JSON payload; --subresource transcript is a one-shot read of the same transcript `logs` reads (use `logs -f` to follow; -f here is forced off, not honoured). -o wide|name are accepted by the parser and ignored on all three: skills and args are always JSON, transcript renders exactly as `logs` does.',
+      '--subresource profile prints an assistant seat\'s profile YAML as-is ((no profile) when none); -o json|yaml prints the wire body.',
     ],
   },
   {
@@ -268,9 +270,10 @@ const VERB_REGISTRY = [
     usage: [
       'delete session <name> [--force] [-o json|yaml]',
       'delete node <name> [--force] [-o json|yaml]',
+      'delete session <name> --subresource profile [-o json|yaml]',
     ],
     args: [['resource', 'session | node (singular or plural spelling)'], ['name', 'the object to delete']],
-    flags: [['--force', 'skip the type-the-name confirm (REQUIRED with -o json|yaml)']],
+    flags: [['--force', 'skip the type-the-name confirm (REQUIRED with -o json|yaml)'], ['--subresource profile', 'delete only the assistant seat\'s profile document — no confirm, the seat stays']],
     examples: ['clodexctl delete session doomed', 'clodexctl delete session doomed --force -o json', 'clodexctl delete node oldbox'],
     notes: [
       'This is a hard delete on the engine — no resume. Confirms by typing the name back unless --force. In -o json|yaml/non-interactive mode --force is required (there is no prompt to answer).',
@@ -298,14 +301,20 @@ const VERB_REGISTRY = [
   {
     name: 'patch', group: 'sessions',
     summary: 'patch a resource — only the keys you pass change',
-    usage: 'patch session <name> [--arg X…] [--proxy URL] [--restart] [-o json|yaml]',
+    usage: [
+      'patch session <name> [--arg X…] [--proxy URL] [--restart] [-o json|yaml]',
+      'patch session <name> --subresource profile -f <file.yaml|file.json> [--replace] [-o json|yaml]',
+    ],
     args: [['resource', 'session (singular or plural spelling)'], ['name', 'session to patch']],
     flags: [
       ['--arg X', 'set extraArgs — repeatable (replaces the whole list)'],
       ['--proxy URL', 'set the session proxy'],
       ['--restart', 'respawn the session so the new args take effect'],
+      ['--subresource profile', 'patch the assistant seat\'s profile instead of its args'],
+      ['-f, --filename F', 'with --subresource profile: the YAML or JSON (.json) file to send'],
+      ['--replace', 'with --subresource profile: replace the whole profile (merge=0) instead of merging by key'],
     ],
-    examples: ['clodexctl patch session bob --arg --model --arg opus --restart'],
+    examples: ['clodexctl patch session bob --arg --model --arg opus --restart', 'clodexctl patch session asst --subresource profile -f profile.yaml'],
     notes: [
       'Needs at least one of --arg / --proxy / --restart. Undefined keys are left untouched owner-side.',
       'To READ the same args: clodexctl get session <name> --subresource args.',

@@ -572,7 +572,9 @@ natural-exit drop), so a new one edits that table and this list together. ✕ / 
 and sandbox rows too.
 
 The ✕ forget (`session:forget`) and Delete Workspace… (`purgeWorkspace`) disarm
-the seat's keep-warm hold before the remove, and call `forgetSeatFiles` after it.
+the seat's keep-warm hold before the remove, and call `forgetSeatFiles` after it. The seat's memory profile (`profile.md`) goes with the seat dir: `destroy()`'s
+seat-dir drop and `forgetSeatFiles` on an assistant record call `_dropProfile`
+first; a plain `kill()`, a respawn and a sleep keep it.
 `purgeWorkspace` does so for both halves: the saved rows it drops and the live
 seats it kills (their record read before `kill` drops it). An assistant seat loses its whole
 seat dir (`removeSeat`: client-token, brief.md, memory), any other seat only

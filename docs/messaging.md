@@ -518,6 +518,28 @@ SessionStart hook's `additionalContext` for born conversations; resumed
 pre-feature sessions get a one-time append rescue (`_maybeDeliverDigest`,
 ledger-gated).
 
+### Profile
+
+One document per seat beside the units, `<agentDir>/profile.md` (frontmatter
+`id: profile`, `type: profile`, `updated_at`), body a strict YAML subset parsed and
+serialised by `parseProfileYaml` / `serializeProfile`: only `game:` and `notes:`,
+each a map with `[a-z0-9_-]+` keys whose values are scalars, flat scalar lists or
+one-level scalar maps; no anchors, tags, flow collections (except `[]`/`{}`),
+block scalars or documents. Canonical output is `game:` then `notes:`, insertion
+order, two-space indent, strings quoted only when needed. Cap: `PROFILE_CAP`
+(4096) serialised bytes, refused as `profile exceeds 4096 bytes (N)`.
+
+`profileGet` / `profileSet(agent, { game, notes }, { merge })` / `profileDelete`.
+Merge upserts the top-level keys of each section (a `null` drops the key, a map
+value replaces the key whole); `merge: false` replaces the body and keeps nulls.
+The profile is not a unit: `list()` (so the digest, `[agent:memory list]` and
+recall) never sees it, and `update`/`forget` refuse id `profile`. Peer API:
+`GET|PUT|PATCH|DELETE /api/sessions/<name>/memory/profile` (assistant seats only;
+`Accept: text/yaml` reads the YAML, 204 when none; PUT/PATCH take JSON or a
+`text/yaml` body, `?merge=0|1`, default 1), and assistant rows carry
+`memory: { profile: <bytes|0>, profileUpdatedAt }`. A seat delete erases it
+(`_dropProfile`, next to the seat-dir removal); respawn, sleep and archive keep it.
+
 ## 6. Protocol text (ipc-prompt.js)
 
 `IPC_PROMPT` is the sole source of truth for the agent-facing protocol — the

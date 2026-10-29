@@ -370,6 +370,7 @@ Read (all but `describe` support `-o json` — stable raw wire payload — and `
 | `get session <name> --subresource args` | `GET /api/resources` → `GET /api/sessions/:name/args` |
 | `get session <name> --subresource skills` | `GET /api/resources` → `GET /api/sessions/:name/skills` |
 | `get session <name> --subresource transcript` | the one-shot read `logs` makes |
+| `get session <name> --subresource profile` | `GET /api/resources` → `GET /api/sessions/:name/memory/profile` (prints the YAML as-is) |
 
 **`exec` — the one verb.** For "make this session do something and show me the
 result", reach for `exec` — it looks up the session's type and picks the right
@@ -460,6 +461,8 @@ Write:
 | `delete session <name> [--force]` | `DELETE /api/sessions/:name` | **HARD DELETE — no resume.** Confirms unless `--force` (required with `-o json`) |
 | `restart session <name> [--fresh]` | `POST /api/sessions/:name/restart` | |
 | `patch session <name> [--arg X…] [--proxy URL] [--restart]` | `PATCH /api/sessions/:name/args` | |
+| `patch session <name> --subresource profile -f <file.yaml\|file.json> [--replace]` | `PATCH /api/sessions/:name/memory/profile?merge=1` | assistant seats; `.json` files go as JSON, anything else as `text/yaml`; `--replace` sends `merge=0` |
+| `delete session <name> --subresource profile` | `DELETE /api/sessions/:name/memory/profile` | deletes only the profile; no confirm |
 | `restart node [--force]` | `POST /api/restart` | relaunches the whole engine |
 
 The resource word is **mandatory** on all five: `restart` alone carries both a
