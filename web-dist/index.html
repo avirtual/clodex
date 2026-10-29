@@ -32574,6 +32574,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         { type: "context", label: "Self context control (compact/clear/reload)" },
         { type: "scratch", label: "Probes \u2014 fork a research clone that returns a summary (probe)" },
         { type: "memory", label: "Memory management (remember/recall)" },
+        { type: "profile", label: "Amend own profile notes (profile set/drop)" },
         { type: "spawn", label: "Spawn peer sessions (spawn)" },
         { type: "file", label: "Surface files on screen (file)" },
         { type: "resend", label: "Escalate a parked dm (resend)" },
@@ -33081,6 +33082,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const m = cleaned.match(/^\[agent:memory\s+(\S+)\]\s*(.*)/s);
         return m ? { type: "memory", sub: m[1].toLowerCase(), body: m[2] } : null;
       }
+      function parseProfile(cleaned) {
+        const m = cleaned.match(/^\[agent:profile(?:\s+([^\]\s]+))?(?:\s+([^\]\s]+))?\s*\]\s*(.*)$/s);
+        return m ? { type: "profile", sub: (m[1] || "").toLowerCase(), key: m[2] || "", body: m[3] } : null;
+      }
       function parseFile(cleaned) {
         const m = cleaned.match(/^\[agent:file\s+(\S+)\s+(.+?)\]\s*$/);
         return m ? { type: "file", sub: m[1].toLowerCase(), path: m[2].trim() } : null;
@@ -33356,6 +33361,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         { type: "scratch", parse: parseScratch, bodyMode: (i) => i.sub === "end" || i.sub === "begin" && i.body ? "greedy" : "none" },
         { type: "probe", parse: parseProbe, bodyMode: (i) => i.sub === "begin" || i.sub === "end" ? "greedy" : "none" },
         { type: "memory", parse: parseMemory, bodyMode: (i) => i.sub === "remember" ? "greedy" : "none" },
+        { type: "profile", parse: parseProfile, bodyMode: (i) => i.sub === "set" ? "greedy" : "none" },
         { type: "file", parse: parseFile, bodyMode: NONE },
         // Line-scoped, unlike every other body-carrying row here: the command is
         // whatever follows the bracket on THAT line and nothing after it. Greedy

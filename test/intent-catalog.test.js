@@ -45,8 +45,8 @@ test('t1865 a frozen list carrying a stale sub counts and serializes as if sub w
   const rows = catalogRows([]);
   assert.ok(rows.some((r) => r.type === 'dm'), 'ENTER: the dm row survived');
   assert.strictEqual(rows.some((r) => r.type === 'sub'), false);
-  assert.strictEqual(deniedIntentCount(['dm', 'sub']), 10);
-  assert.strictEqual(deniedIntentCount(['dm']), 10);
+  assert.strictEqual(deniedIntentCount(['dm', 'sub']), 11);
+  assert.strictEqual(deniedIntentCount(['dm']), 11);
   assert.deepStrictEqual(intentsAllowlistFromChecked(['dm', 'sub']), ['dm']);
 });
 

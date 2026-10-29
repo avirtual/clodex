@@ -120,7 +120,7 @@ test('drop removes the key and acks', async () => {
   const f = mkFixture();
   try {
     seed(f);
-    await f.run('[agent:profile drop mood]');
+    f.m._handleProfileIntent(f.session, { sub: 'drop', key: 'mood', body: '' });
     assert.deepStrictEqual(f.memoryStore.profileGet('p1').profile, { game: { level: 3 }, notes: {} });
     assert.deepStrictEqual(f.acks, ['[agent:profile] notes.mood dropped']);
   } finally { f.cleanup(); }

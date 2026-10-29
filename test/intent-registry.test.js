@@ -874,7 +874,7 @@ test('bodyMode for remind: list and cancel take no body, a schedule captures one
 
 test('parseProfile: set/drop with a key, loose enough that a bad verb or key reaches the bounce', () => {
   assert.deepStrictEqual(parseIntent('[agent:profile set mood] calm and steady'), { type: 'profile', sub: 'set', key: 'mood', body: 'calm and steady' });
-  assert.deepStrictEqual(parseIntent('[agent:profile set plan]\n- e4\n- d4'), { type: 'profile', sub: 'set', key: 'plan', body: '\n- e4\n- d4' });
+  assert.deepStrictEqual(parseIntent('[agent:profile set plan]\n- e4\n- d4'), { type: 'profile', sub: 'set', key: 'plan', body: '- e4\n- d4' });
   assert.deepStrictEqual(parseIntent('[agent:profile drop mood]'), { type: 'profile', sub: 'drop', key: 'mood', body: '' });
   assert.deepStrictEqual(parseIntent('[agent:profile set Mood] x'), { type: 'profile', sub: 'set', key: 'Mood', body: 'x' });
   assert.deepStrictEqual(parseIntent('[agent:profile frob mood]'), { type: 'profile', sub: 'frob', key: 'mood', body: '' });
@@ -1013,6 +1013,7 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
     || (i.type === 'team' && (i.sub === 'template-save' || i.sub === 'prompt-save'))
     || (i.type === 'team' && i.sub === 'sandbox' && i.action === 'bootstrap' && (i.op === 'setup' || i.op === 'start'))
     || i.type === 'team-create'
+    || (i.type === 'profile' && i.sub === 'set')
     || i.type === 'sub'
     || (i.type === 'scratch' && i.sub === 'end')
     || (i.type === 'probe' && (i.sub === 'begin' || i.sub === 'end'));

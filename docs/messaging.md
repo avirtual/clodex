@@ -88,8 +88,7 @@ is minted lazily, so the edge can arrive well after the keystroke.
 - `\[agent:…]` is the escape — parsed as `{type:'escape'}`, treated as
   literal text everywhere, and never terminates a multi-line body.
 - Intents: `dm` (`target`, optional `urgent`, body), `resend <id>`, `who`,
-  `name`, `context <sub>`, `memory <sub>`, `profile <set|drop> <key>`,
-  `file <view|open> <path>`,
+  `name`, `context <sub>`, `memory <sub>`, `profile <set|drop> <key>`, `file <view|open> <path>`,
   `spawn name:X cwd:Y` (optional `template:Z` — matched by name, supplies
   type/config; see sessions.md §5).
 - `probe` (Claude seats only; gated by the `scratch` intent key) —

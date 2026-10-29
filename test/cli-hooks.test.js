@@ -680,13 +680,13 @@ test('writeClaudeDigestFile: the profile rides verbatim between the roster and t
   const brief = '## Before you slept\n\n**player:** hi';
   for (const n of ['both', 'nobrief', 'neither']) memoryStore.remember(n, { text: `fact for ${n}`, source: n, pinned: true });
   for (const n of ['both', 'nobrief']) {
-    assert.ok(memoryStore.profileSet(n, { game: { level: 3, name: 'Ann: the bold' }, notes: { plan: ['e4', 'd4'] } }).ok);
+    assert.ok(memoryStore.profileSet(n, { game: { level: 3, name: 'Ann: the bold' }, notes: { plan: ['rook', 'pawn'] } }).ok);
   }
   fs.mkdirSync(path.dirname(briefPathFor(REGISTRY_DIR, 'both')), { recursive: true });
   fs.writeFileSync(briefPathFor(REGISTRY_DIR, 'both'), brief);
   fs.mkdirSync(path.dirname(briefPathFor(REGISTRY_DIR, 'neither')), { recursive: true });
   fs.writeFileSync(briefPathFor(REGISTRY_DIR, 'neither'), brief);
-  const yaml = 'game:\n  level: 3\n  name: "Ann: the bold"\nnotes:\n  plan:\n    - e4\n    - d4\n';
+  const yaml = 'game:\n  level: 3\n  name: "Ann: the bold"\nnotes:\n  plan:\n    - rook\n    - pawn\n';
   assert.strictEqual(memoryStore.profileGet('both').yaml, yaml, 'ENTER: the canonical YAML this test expects');
   const digest = (n) => composeDigest(memoryStore.list(n));
   hooks.writeClaudeDigestFile('both');
