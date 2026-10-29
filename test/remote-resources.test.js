@@ -1785,18 +1785,30 @@ test('GET .../describe: an unknown name is 404 Session not found', async () => {
   });
 });
 
-test('GET .../describe: a sleeper has null capabilities and its activity from the sleeper transcript', async () => {
+test('GET .../describe: a sleeper with persisted args has capabilities and its activity from the sleeper transcript', async () => {
   const sleepy = {
     name: 'sleepy', type: 'claude', class: 'assistant', archivedAt: 1, cwd: '/w/sleepy', workspaceId: 'ws-alpha',
     sessionId: '11111111-2222-3333-4444-555555555555',
   };
-  await withDescribeNode({ persisted: { sleepy } }, async (port) => {
+  await withDescribeNode({ persisted: { sleepy }, args: { sleepy: DESCRIBE_ARGS } }, async (port) => {
     const r = await req(port, '/api/sessions/sleepy/describe');
     assert.strictEqual(r.status, 200, r.body);
     const body = JSON.parse(r.body);
     assert.strictEqual(body.session.activity, 'asleep');
-    assert.strictEqual(body.capabilities, null);
+    assert.deepStrictEqual(body.capabilities.execGrants, ['alpha-check', 'zeta-run']);
+    assert.deepStrictEqual(body.capabilities.extraArgs, ['--model', 'gpt-5']);
     assert.deepStrictEqual(body.activity, { turns: 1, lastTurnTs: '2026-09-01T00:00:05.000Z', pendingMail: 0, transcriptPath: null });
+  });
+});
+
+test('GET .../describe: a seat whose args are not persisted has null capabilities', async () => {
+  await withDescribeNode({}, async (port) => {
+    const r = await req(port, '/api/sessions/stream1/describe');
+    assert.strictEqual(r.status, 200, r.body);
+    const body = JSON.parse(r.body);
+    assert.strictEqual(body.session.name, 'stream1');
+    assert.strictEqual(body.capabilities, null);
+    assert.strictEqual(body.activity.turns, 2);
   });
 });
 

@@ -715,7 +715,7 @@ function createTicketMethods(deps, shared) {
             plugins, null, null,
             (tpl && tpl.io) === 'stream' ? 'stream' : 'pty',
             (tpl && typeof tpl.effort === 'string' && tpl.effort) ? tpl.effort : null,
-            null, Array.isArray(tpl && tpl.mcpServers) ? tpl.mcpServers.map(String) : [],
+            null, Array.isArray(tpl && tpl.mcpServers) ? tpl.mcpServers.map(String) : [], (tpl && tpl.class) || null,
           );
           if (wt) {
             try { getPersistence().setWorktree(name, wt); } catch { /* best-effort */ }

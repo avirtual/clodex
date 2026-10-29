@@ -44,7 +44,6 @@ Intents are not tools but text you emit in your output, one per line; Clodex act
   [agent:memory remember] <text>   Save a memory unit (optional leading scope=<tag>, tags=<a,b>, pinned=true); persists across sessions
   [agent:memory recall] <id|query> Surface a saved memory: by id, or the newest match for a query (two runners-up listed by id and age)
   [agent:memory pin] <id>          Boost an existing unit's recency ordering; [agent:memory unpin] <id> reverses. [agent:memory forget] <id> deletes. Operator pins (the ones always delivered in full) are set by your operator, not here.
-  [agent:profile set <key>] <value>  Save one note under your profile's notes: at once; a value on the following lines (to [agent:end]) is a YAML list or map. [agent:profile drop <key>] removes it.
   [agent:remind every <interval>] text   Durable SELF-reminder, delivered as a dm from \`reminder\`; survives restart/clear/compact. \`every 30m\` (min 60s) and \`[agent:remind cron 0 9 * * *] text\` recur; \`[agent:remind in 45m] text\` and \`[agent:remind at 14:30] text\` (or ISO) fire once; \`[agent:remind on compact] text\` fires at every compact. \`[agent:remind list]\` shows ids; \`[agent:remind cancel <id>]\` drops one. A leading \`for <ticketId>\` (\`[agent:remind for t42 in 40m] text\`) binds it: cancelled when that ticket is accepted or cancelled, not on done; a ticket not on your team's board bounces. Quiet on success; a bad spec or id bounces.
   [agent:shout] message      Raise a note into the operator's persistent INBOX (OS notification; the Inbox button in the sidebar footer, also File ▸ Inbox). The REQUIRED channel for a decision or approval only the operator can give, or a finding they must act on — a request left in plain text is a silent stall. Keep status and what a teammate could answer out of it. On a team, a hand or reviewer routes these through its lead. Empty or over 16KB bounces.
   [agent:task done <id>] <report>  Close a ticket dispatched to you. The report is the body, to \`[agent:end]\`, and is REQUIRED: a bodyless done bounces. It is an intent like any other — not an exec command, no grant needed. A dm carrying your report does NOT close the ticket: it looks identical to the lead while the ticket stays open and nothing downstream of the close (verify, review, verdict) runs.
@@ -129,7 +128,7 @@ const GRAMMAR_LINES = [
   [agent:memory remember] <text>   Save a memory unit (optional leading scope=<tag>, tags=<a,b>, pinned=true); persists across sessions
   [agent:memory recall] <id|query> Surface a saved memory: by id, or the newest match for a query (two runners-up listed by id and age)
   [agent:memory pin] <id>          Boost an existing unit's recency ordering; [agent:memory unpin] <id> reverses. [agent:memory forget] <id> deletes. Operator pins (the ones always delivered in full) are set by your operator, not here.` },
-  { type: 'profile', text: `  [agent:profile set <key>] <value>  Save one note under your profile's notes: at once; a value on the following lines (to [agent:end]) is a YAML list or map. [agent:profile drop <key>] removes it.` },
+  { type: 'profile', profileOnly: true, text: `  [agent:profile set <key>] <value>  Save one note under your profile's notes: at once; a value on the following lines (to [agent:end]) is a YAML list or map. [agent:profile drop <key>] removes it.` },
   { type: 'remind', text: `  [agent:remind every <interval>] text   Durable SELF-reminder, delivered as a dm from \`reminder\`; survives restart/clear/compact. \`every 30m\` (min 60s) and \`[agent:remind cron 0 9 * * *] text\` recur; \`[agent:remind in 45m] text\` and \`[agent:remind at 14:30] text\` (or ISO) fire once; \`[agent:remind on compact] text\` fires at every compact. \`[agent:remind list]\` shows ids; \`[agent:remind cancel <id>]\` drops one. A leading \`for <ticketId>\` (\`[agent:remind for t42 in 40m] text\`) binds it: cancelled when that ticket is accepted or cancelled, not on done; a ticket not on your team's board bounces. Quiet on success; a bad spec or id bounces.` },
   { type: 'shout', text: `  [agent:shout] message      Raise a note into the operator's persistent INBOX (OS notification; the Inbox button in the sidebar footer, also File ▸ Inbox). The REQUIRED channel for a decision or approval only the operator can give, or a finding they must act on — a request left in plain text is a silent stall. Keep status and what a teammate could answer out of it. On a team, a hand or reviewer routes these through its lead. Empty or over 16KB bounces.` },
   // task is NOT gateable (absent from intent-catalog's GATEABLE_INTENTS, and
@@ -254,8 +253,9 @@ Your Bash tool starts in the session's working directory (the project root) and 
 // byte-pins clean: they call this with no third argument.
 function buildIpcPrompt(intentsList, execCommands, extraGrammarLines, opts) {
   const teamLead = !!opts && opts.teamLead === true;
+  const profileSeat = !!opts && opts.profileSeat === true;
   const grammar = [
-    ...GRAMMAR_LINES.filter((g) => intentEnabled(g.type, intentsList) && (!g.leadOnly || teamLead)).map((g) => g.text),
+    ...GRAMMAR_LINES.filter((g) => intentEnabled(g.type, intentsList) && (!g.leadOnly || teamLead) && (!g.profileOnly || profileSeat)).map((g) => g.text),
     ...(Array.isArray(extraGrammarLines) ? extraGrammarLines.filter(Boolean).map(String) : []),
   ].join('\n');
   const blocks = [PREAMBLE, grammar, REPLIES_LINE];

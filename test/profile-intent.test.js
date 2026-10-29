@@ -13,10 +13,10 @@ const registry = require('../intent-registry');
 const scanner = require('../intent-scanner');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
-function mkFixture({ intents = null } = {}) {
+function mkFixture({ intents = null, cls = 'assistant', agentType = 'claude' } = {}) {
   const home = mkTmpRoot('clodex-t2079-');
   const memoryStore = createMemoryStore(pathReal.join(home, 'memory'));
-  const entry = { name: 'p1', class: 'assistant', intents };
+  const entry = { name: 'p1', class: cls, intents };
   const persistence = {
     list: () => [entry], get: (n) => (n === 'p1' ? entry : null), upsert: () => {}, remove: () => {},
     markDigested: () => {}, setArchived: () => {}, setStripLevel: () => {}, setAutoCompact: () => {},
@@ -72,7 +72,7 @@ function mkFixture({ intents = null } = {}) {
   m._memoryAck = (s, text) => acks.push(text);
   m._deliverMessage = () => 'delivered';
   m.recordMisfire = () => {};
-  const session = { name: 'p1', type: 'claude', agentType: 'claude', cwd: home, pty: { pid: 1 }, activityState: 'idle' };
+  const session = { name: 'p1', type: agentType, agentType, cwd: home, pty: { pid: 1 }, activityState: 'idle' };
   m.sessions.set('p1', session);
   return {
     m, session, injected, acks, rebaked, memoryStore,
@@ -135,6 +135,26 @@ test('set on a seat with no profile is refused and writes nothing', async () => 
     assert.deepStrictEqual(f.acks, []);
   } finally { f.cleanup(); }
 });
+
+for (const [label, opts] of [['a Claude non-assistant', { cls: 'agent' }], ['a Codex assistant', { agentType: 'codex' }]]) {
+  test(`${label} is refused before any store call and writes nothing`, async () => {
+    const f = mkFixture(opts);
+    try {
+      seed(f);
+      const calls = [];
+      for (const k of ['profileGet', 'profileSet']) {
+        const real = f.memoryStore[k];
+        f.memoryStore[k] = (...a) => { calls.push(k); return real(...a); };
+      }
+      f.m._handleProfileIntent(f.session, { sub: 'set', key: 'plan', body: 'x' });
+      f.m._handleProfileIntent(f.session, { sub: 'drop', key: 'mood', body: '' });
+      assert.deepStrictEqual(f.injected, ['[agent:profile] not available for this seat', '[agent:profile] not available for this seat']);
+      assert.deepStrictEqual(calls, []);
+      assert.deepStrictEqual(f.acks, []);
+      assert.deepStrictEqual(f.rebaked, []);
+    } finally { f.cleanup(); }
+  });
+}
 
 test('the store cap refusal passes through verbatim', async () => {
   const f = mkFixture();
