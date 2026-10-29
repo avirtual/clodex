@@ -167,6 +167,29 @@ test('the store cap refusal passes through verbatim', async () => {
   } finally { f.cleanup(); }
 });
 
+test('a seat note past the 2048-byte notes budget is refused verbatim', async () => {
+  const f = mkFixture();
+  try {
+    seed(f);
+    await f.run(`[agent:profile set big] ${'x'.repeat(2100)}`);
+    assert.deepStrictEqual(f.injected, ['[agent:profile] notes exceed 2048 bytes (2128) — drop a note first']);
+    assert.strictEqual(f.memoryStore.profileGet('p1').profile.notes.big, undefined);
+  } finally { f.cleanup(); }
+});
+
+test('after the seat fills notes to its budget, the game can still grow game:', async () => {
+  const f = mkFixture();
+  try {
+    seed(f);
+    for (let i = 0; i < 10 && !f.injected.length; i++) await f.run(`[agent:profile set n${i}] ${'x'.repeat(400)}`);
+    assert.deepStrictEqual(f.injected, ['[agent:profile] notes exceed 2048 bytes (2055) — drop a note first']);
+    assert.strictEqual(f.acks.length, 4);
+    const grown = f.memoryStore.profileSet('p1', { game: { map: 'y'.repeat(1900) } }, { merge: true });
+    assert.strictEqual(grown.ok, true, grown.error);
+    assert.strictEqual(grown.profile.game.map.length, 1900);
+  } finally { f.cleanup(); }
+});
+
 test('unknown verb, bad key and a bad value bounce', async () => {
   const f = mkFixture();
   try {

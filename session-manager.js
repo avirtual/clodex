@@ -7972,7 +7972,7 @@ function createSessionManager(deps) {
       if (sub === 'set') {
         try { value = parseProfileValue(body); } catch (e) { return refuse(e.message); }
       }
-      const res = memoryStore.profileSet(agent, { notes: { [key]: value } }, { merge: true });
+      const res = memoryStore.profileSet(agent, { notes: { [key]: value } }, { merge: true, seat: true });
       if (!res.ok) return refuse(res.error);
       this._memoryAck(session, sub === 'set' ? `[agent:profile] notes.${key} set (${res.bytes} bytes)` : `[agent:profile] notes.${key} dropped`);
       this._rebakeDigest(agent);

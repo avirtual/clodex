@@ -137,7 +137,7 @@ state: 'awake'|'sleeping'` (sleeping = still closing after sleep), `template, sl
 `GET /api/sessions/:name/memory` (`{ok, name, units, brief}`; 404 unknown, 409
 not an assistant); `GET|PUT|PATCH|DELETE /api/sessions/:name/memory/profile` (the seat's
 profile document, docs/messaging.md §5 Profile: GET `{ok, name, profile, yaml, bytes, updatedAt}`,
-`Accept: text/yaml` → the YAML or 204; PUT/PATCH JSON `{game?, notes?}` or `text/yaml`, `?merge=0|1` (default 1, merge by key, for PUT and PATCH alike);
+`Accept: text/yaml` → the YAML or 204; PUT/PATCH JSON `{game?, notes?}` or `text/yaml`, `?merge=0|1` (default 1, merge by key, for PUT and PATCH alike; the seat's own notes are capped at 2048 bytes so `game:` can always grow);
 DELETE `{ok, existed}`; 404 unknown, 400 not an assistant / invalid / over 4096 bytes); `PUT /api/sessions/:name/client-token` with `{token: string|null}`
 sets the seat's game client token (`[\x21-\x7e]{16,512}`, written 0600 to
 `sessions/<name>/client-token`; 200 `{ok, set:true}`), clears it on null or `''`
