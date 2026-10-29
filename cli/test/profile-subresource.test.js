@@ -98,6 +98,8 @@ test('patch session X --subresource profile -f file.yaml sends text/yaml with me
     assert.strictEqual(lead, 0, 'global flags before patch still make -f the filename');
     assert.strictEqual(rep.code, 0, rep.stderr);
     assert.strictEqual(seen[1].url, '/api/sessions/asst/memory/profile?merge=0');
+    assert.deepStrictEqual(seen[2], { method: 'PATCH', url: '/api/sessions/asst/memory/profile?merge=1', type: 'text/yaml', body: YAML });
+    assert.strictEqual(seen.length, 3);
   });
 });
 

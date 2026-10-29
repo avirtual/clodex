@@ -526,13 +526,16 @@ function createRemoteWiring(deps) {
       try { data = parseProfileYaml(input.yaml); }
       catch (e) { return { ok: false, code: 400, error: `bad profile YAML: ${e.message}` }; }
     }
-    return profileReply(name, getMemoryStore().profileSet(name, data, { merge }));
+    const out = profileReply(name, getMemoryStore().profileSet(name, data, { merge }));
+    if (out.ok) { try { manager._refreshOperatorDigest(name); } catch {} }
+    return out;
   }
 
   function deleteProfile(name) {
     const refused = profileSeat(name);
     if (refused) return refused;
     const out = getMemoryStore().profileDelete(name);
+    if (out && out.ok) { try { manager._refreshOperatorDigest(name); } catch {} }
     return out && out.ok ? { ok: true, existed: out.existed } : { ok: false, code: 400, error: (out && out.error) || 'profile delete failed' };
   }
 

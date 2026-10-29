@@ -88,7 +88,7 @@ is minted lazily, so the edge can arrive well after the keystroke.
 - `\[agent:…]` is the escape — parsed as `{type:'escape'}`, treated as
   literal text everywhere, and never terminates a multi-line body.
 - Intents: `dm` (`target`, optional `urgent`, body), `resend <id>`, `who`,
-  `name`, `context <sub>`, `memory <sub>`, `file <view|open> <path>`,
+  `name`, `context <sub>`, `memory <sub>`, `profile <set|drop> <key>`, `file <view|open> <path>`,
   `spawn name:X cwd:Y` (optional `template:Z` — matched by name, supplies
   type/config; see sessions.md §5).
 - `probe` (Claude seats only; gated by the `scratch` intent key) —
@@ -141,7 +141,7 @@ is minted lazily, so the edge can arrive well after the keystroke.
   before the service is called. The exec entries with `"inProcess": "ctl"` reach the same handler
   (docs/exec-tools.md, "clodexctl through exec"); the deploy/upgrade/restart-node tier is a separate argv exec entry, `clodex-ctl-admin`, not an intent.
 - **Multi-line bodies** are captured in `_extractIntents`, not the scanner: a body (dm, memory
-  remember, remind, shout, task verbs) runs to the next column-1 real intent or a bare `[agent:end]`;
+  remember, profile set, remind, shout, task verbs) runs to the next column-1 real intent or a bare `[agent:end]`;
   left open with lines after the head, only the head line applies, the rest is prose and the seat is told;
   review-done, scratch end, probe end and context clear/compact/reload are refused outright (an open head with nothing after it still applies). A `task done` body runs to the end of the turn without `[agent:end]` (`bodyRunsToTurnEnd`); an interrupted turn still refuses it.
 - **Fenced code blocks are quotes** (`fencedLines`, pure leaf in the
@@ -540,6 +540,25 @@ recall) never sees it, and `update`/`forget` refuse id `profile`. Peer API:
 `text/yaml` body, `?merge=0|1`, default 1), and assistant rows carry
 `memory: { profile: <bytes|0>, profileUpdatedAt }`. A seat delete erases it
 (`_dropProfile`, next to the seat-dir removal); respawn, sleep and archive keep it.
+
+Seat side (Claude seats, PTY and stream; Codex and Muse seats get neither the
+delivery nor the rebake). `[agent:profile set <key>] <value>` and `[agent:profile drop <key>]`
+(`_handleProfileIntent`) address one key under `notes:` only; there is no form
+that names `game:`, so the game section is unreachable from the seat. `profile`
+is its own gateable type, so an allowlist can grant it without the `memory`
+verbs and the reverse. A one-line value is stored as that text; a value spanning
+lines is parsed by `parseProfileValue` (the strict parser, as a list or
+one-level map). The write goes straight through `profileSet` with `merge: true`
+(a drop sends `null`; dropping the last note of a profile with no `game:` keys
+empties it, which deletes the file, and later sets are then refused), so the file and `profileUpdatedAt` move before the ack and
+a later game PUT merges over it. Refusals: verb or key malformed, `no profile for
+this seat` (the seat cannot create one), the store's cap or the parser's error
+verbatim. Delivery: `writeClaudeDigestFile` puts `## Your player's profile`, the
+canonical YAML verbatim and a one-line amend hint after the roster and before the
+sleep brief, so it rides every SessionStart that serves the digest file (startup,
+clear, compact, and a wake, which boots fresh); stream seats use the same hook. A
+seat-side write and a peer-API PUT/PATCH/DELETE rebake that file for a live seat
+(`_refreshOperatorDigest`).
 
 ## 6. Protocol text (ipc-prompt.js)
 

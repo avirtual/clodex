@@ -1923,3 +1923,21 @@ test('memory/profile: the assistant row carries memory.profile bytes and profile
     assert.strictEqual(put.bytes, Buffer.byteLength('game:\n  name: Bob\n'));
   });
 });
+
+test('a peer-API profile write or delete rebakes the live seat digest; a refused one does not', () => {
+  const { createMemoryStore } = require('../memory-store');
+  const { deps } = makeDeps();
+  const root = mkTmpRoot('clodex-t2079-rw-');
+  const store = createMemoryStore(root);
+  const rebaked = [];
+  deps.getMemoryStore = () => store;
+  deps.getPersistence = () => ({ get: (n) => (n === 'asst' ? { name: 'asst', class: 'assistant' } : undefined), setStripLevel: () => {} });
+  deps.manager._refreshOperatorDigest = (n) => rebaked.push(n);
+  const opts = captureOptions(deps);
+  try {
+    assert.strictEqual(opts.setProfile('asst', { data: { notes: { mood: 'calm' } } }).ok, true);
+    assert.strictEqual(opts.setProfile('asst', { yaml: 'bogus: 1\n' }).ok, false);
+    assert.strictEqual(opts.deleteProfile('asst').ok, true);
+    assert.deepStrictEqual(rebaked, ['asst', 'asst']);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});

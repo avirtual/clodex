@@ -131,7 +131,7 @@ const voiceEngineSpec = require('./voice-engine');
 const { CTRLU_SETTLE_MS } = require('./inject-queue');
 const { agentDir: pendingAgentDir, claimsDir: pendingClaimsDir, isReservedSeatName, claimTag, rehomeOrphans, CLAIM_TAG_RE, LEGACY_CLAIM_RE } = require('./pending-store');
 const { VOICE_MODES, voiceModeOf } = require('./voice-settings');
-const { fmtAge } = require('./memory-store');
+const { fmtAge, parseProfileValue, PROFILE_KEY_RE } = require('./memory-store');
 const { mcpArgvPlan, claudeMcpServers, codexMcpArgs, museExpressible, secretRefs, discoverMcpSources } = require('./mcp-plan');
 const MCP_AMBIENT_ENV = new Set(['HOME', 'PATH', 'USER', 'SHELL', 'TMPDIR', 'LOGNAME', 'PWD']);
 const { pasteModeSignal, PROXY_AGENT_PREFIX, PASTE_START, PASTE_END, stampServedAge, fmtQuotaReset } = require('./proxy-util');
@@ -6621,6 +6621,11 @@ function createSessionManager(deps) {
           this._handleMemoryIntent(session, intent.sub, intent.body || '');
           break;
         }
+        case 'profile': {
+          if (!session || !session.agentType) break;
+          this._handleProfileIntent(session, intent);
+          break;
+        }
         case 'spawn': {
           if (!session || !session.agentType) break;
           this._handleSpawnIntent(session, intent);
@@ -7951,6 +7956,24 @@ function createSessionManager(deps) {
       this._injectText(session, `[agent:memory] unknown sub-command "${sub}" (use list|remember|recall|pin|unpin|forget)`, { parkable: true });
     }
 
+
+    _handleProfileIntent(session, { sub, key, body }) {
+      const agent = session.name;
+      const refuse = (why) => this._injectText(session, `[agent:profile] ${why}`, { parkable: true });
+      if (sub !== 'set' && sub !== 'drop') return refuse(`unknown verb "${sub}" (use set|drop)`);
+      if (!PROFILE_KEY_RE.test(key || '')) return refuse(`bad key "${key || ''}" (lowercase a-z, 0-9, _ or -)`);
+      const current = memoryStore.profileGet(agent);
+      if (!current.ok) return refuse(current.error);
+      if (!current.profile) return refuse('no profile for this seat (the operator or the game creates it over the API)');
+      let value = null;
+      if (sub === 'set') {
+        try { value = parseProfileValue(body); } catch (e) { return refuse(e.message); }
+      }
+      const res = memoryStore.profileSet(agent, { notes: { [key]: value } }, { merge: true });
+      if (!res.ok) return refuse(res.error);
+      this._memoryAck(session, sub === 'set' ? `[agent:profile] notes.${key} set (${res.bytes} bytes)` : `[agent:profile] notes.${key} dropped`);
+      if (session.agentType === 'claude') this._rebakeDigest(agent);
+    }
 
     // Every rejecting return of a ticket command must route its reply suffix through here, or the composed
     // body is lost. A failed spill reports the failure and never a path.

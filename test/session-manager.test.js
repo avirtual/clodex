@@ -1475,7 +1475,7 @@ test('t170 every bodiless gateable verb is structurally unspillable', () => {
   // certify a spill path it never exercised. Bodiless means bodiless for every sub
   // the verb can carry — so a verb whose body hides behind ONE sub needs that sub
   // in this list, or the ratchet below silently stops guarding it.
-  const SUBS = [null, 'compact', 'clear', 'reload', 'remember', 'recall', 'add', 'done', 'list', 'exec', 'begin', 'end', 'cancel'];
+  const SUBS = [null, 'compact', 'clear', 'reload', 'remember', 'recall', 'add', 'done', 'list', 'exec', 'begin', 'end', 'cancel', 'set'];
   const bodiless = GATEABLE_INTENTS
     .map((i) => i.type)
     .filter((t) => SUBS.every((sub) => bodyModeFor({ type: t, sub }) === 'none'));
@@ -1487,6 +1487,8 @@ test('t170 every bodiless gateable verb is structurally unspillable', () => {
   // there is nothing to hand back on disk.
   assert.deepStrictEqual(deniedBodyDisposition({ type: 'team-create', body: 'x' }),
     { how: 'note', label: 'team-create' });
+  assert.deepStrictEqual(deniedBodyDisposition({ type: 'profile', sub: 'set', body: 'x' }),
+    { how: 'note', label: 'profile' });
   for (const type of bodiless) {
     assert.deepStrictEqual(deniedBodyDisposition({ type }), { how: 'none', label: null },
       `${type} carries no body, so it can never reach a spill`);

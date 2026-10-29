@@ -81,6 +81,11 @@ function parseMemory(cleaned) {
   return m ? { type: 'memory', sub: m[1].toLowerCase(), body: m[2] } : null;
 }
 
+function parseProfile(cleaned) {
+  const m = cleaned.match(/^\[agent:profile(?:\s+([^\]\s]+))?(?:\s+([^\]\s]+))?\s*\]\s*(.*)$/s);
+  return m ? { type: 'profile', sub: (m[1] || '').toLowerCase(), key: m[2] || '', body: m[3] } : null;
+}
+
 function parseFile(cleaned) {
   const m = cleaned.match(/^\[agent:file\s+(\S+)\s+(.+?)\]\s*$/);
   return m ? { type: 'file', sub: m[1].toLowerCase(), path: m[2].trim() } : null;
@@ -396,6 +401,7 @@ const CORE_ROWS = [
   { type: 'scratch', parse: parseScratch, bodyMode: (i) => (i.sub === 'end' || (i.sub === 'begin' && i.body) ? 'greedy' : 'none') },
   { type: 'probe', parse: parseProbe, bodyMode: (i) => (i.sub === 'begin' || i.sub === 'end' ? 'greedy' : 'none') },
   { type: 'memory', parse: parseMemory, bodyMode: (i) => (i.sub === 'remember' ? 'greedy' : 'none') },
+  { type: 'profile', parse: parseProfile, bodyMode: (i) => (i.sub === 'set' ? 'greedy' : 'none') },
   { type: 'file', parse: parseFile, bodyMode: NONE },
   // Line-scoped, unlike every other body-carrying row here: the command is
   // whatever follows the bracket on THAT line and nothing after it. Greedy
