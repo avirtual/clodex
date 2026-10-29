@@ -169,7 +169,8 @@ const VERB_REGISTRY = [
     flags: [['--test', 'node only — open the transport + GET hello, then report identity or the failure'], ['--verbose', 'with --test: also print the transport line and the resolved base URL']],
     examples: ['clodexctl describe session bob', 'clodexctl describe workspace main', 'clodexctl describe ticket t42 --team clodex', 'clodexctl describe node cust', 'clodexctl describe node cust --test --verbose'],
     notes: [
-      'A composed human view — there is no -o json here (kubectl\'s describe has none either). For machine output use `get <resource> <name> -o json`.',
+      'describe session X — the seat\'s row plus capabilities (model, tools, intents, MCP, prompts, exec grant names) and activity (turns, last turn, pending mail).',
+      'A composed human view — only describe session takes -o json (the raw describe body). For machine output elsewhere use `get <resource> <name> -o json`.',
       'describe node reads the LOCAL contexts file (token redacted, never printed) and a bare `describe node` shows the current one. It then dials once (10 s) for the `version` and `host` lines; an unreachable node prints `version     (unreachable: <reason>)` and still exits 0. --test fails the command instead, relaying the tunnel child\'s stderr verbatim, which is the diagnosis surface.',
       'Needs the resources API; an older node answers with the upgrade line and exit 1.',
       'A ticket id is unique per TEAM, not per node: an id on more than one board asks you to add --team and exits 2.',

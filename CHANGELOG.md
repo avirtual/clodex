@@ -14,6 +14,8 @@ blocks a release.
 
 ## Unreleased
 
+- `clodexctl describe session X` now returns the seat's capabilities (model, tools, intents, prompts, plugins, exec grant names) and activity (turn count, last turn, pending mail, transcript path) alongside its row, so an assistant-class seat on a remote sandbox can be inspected without attaching. Exec payloads, env and the MCP server selection stay local-only.
+
 ## 5.151.0 — 2026-10-28 — Pre-release review on a staging branch; one-line verdicts extracted
 
 - `scripts/pre-release-review.sh` pushes master HEAD to a `staging` branch and runs the cloud reviewer on `<lastTag>..staging` against the `## Unreleased` notes, so a finding is fixed before any version bump, DMG build or image publish; its issue is titled `Pre-release review staging-<sha>: …`. The post-release review is unchanged. A CLEAN pre-release review leaves a marker for the reviewed commit, and `CLODEX_RELEASE_NO_REVIEW=1` skips the post-release review only while HEAD (or, on a resumed release, its parent) is that commit, and never together with a notes-file argument.

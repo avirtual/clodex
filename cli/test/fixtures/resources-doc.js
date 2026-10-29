@@ -4,7 +4,7 @@ const SESSIONS_ROW = {
   name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get', 'delete'],
   subresources: {
     transcript: ['get'], query: ['post'], attach: ['get'], control: ['post'], input: ['post'], resize: ['post'],
-    dm: ['post'], restart: ['post'], args: ['get', 'patch'], skills: ['get', 'patch'],
+    dm: ['post'], restart: ['post'], args: ['get', 'patch'], skills: ['get', 'patch'], describe: ['get'],
   },
 };
 

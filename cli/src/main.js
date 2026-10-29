@@ -135,7 +135,13 @@ function findDeletedJsonFlag(argv) {
 const OUTPUT_FORMATS = ['json', 'yaml', 'wide', 'name'];
 const GET_ONLY_FORMATS = ['wide', 'name'];
 
-function applyOutput(flags, verb) {
+function describesSession(rest) {
+  const token = String((rest && rest[0]) || '').split('/')[0];
+  const entry = token ? R.resolveResource(token) : null;
+  return !!(entry && entry.plural === 'sessions');
+}
+
+function applyOutput(flags, verb, rest) {
   if (flags.output == null) return;
   const fmt = String(flags.output);
   if (!OUTPUT_FORMATS.includes(fmt)) {
@@ -144,7 +150,7 @@ function applyOutput(flags, verb) {
   if (GET_ONLY_FORMATS.includes(fmt) && verb !== 'get') {
     throw new CliError(EXIT.USAGE, `-o ${fmt} is only valid on get`);
   }
-  if (verb === 'describe') {
+  if (verb === 'describe' && !(fmt === 'json' && describesSession(rest))) {
     throw new CliError(EXIT.USAGE, `describe has no -o ${fmt} (it is a composed human view; use get)`);
   }
   if (fmt === 'json' || fmt === 'yaml') flags.json = true;
@@ -198,7 +204,7 @@ async function run(argv, io = {}) {
   const rest = flags._.slice(1); // positionals after the top verb
 
   try {
-    applyOutput(flags, verb);
+    applyOutput(flags, verb, rest);
     printer.format = flags.output === 'yaml' ? 'yaml' : 'json';
     const secondLine = renamedSecondLine(verb, rest[0], flags);
     if (secondLine) throw new CliError(RENAMED_HELP_EXIT, secondLine);

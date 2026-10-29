@@ -13,7 +13,7 @@ const RESOURCE_DOC = {
   ok: true,
   version: 1,
   resources: [
-    { name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get'], subresources: {} },
+    { name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get'], subresources: { describe: ['get'] } },
     { name: 'workspaces', singular: 'workspace', scope: 'node', verbs: ['list'] },
     { name: 'catalogs', singular: 'catalogs', scope: 'node', verbs: ['get'] },
     { name: 'docs', singular: 'doc', scope: 'node', verbs: ['list', 'get'] },
@@ -36,6 +36,18 @@ const WORKSPACES = [
   { id: 'w2', name: 'side', open: false, lastFocusedAt: 2 },
   { id: 'w3', name: 'Client A', open: false, lastFocusedAt: 3 },
 ];
+
+const DESCRIBE_EXTRA = {
+  bob: {
+    capabilities: {
+      extraArgs: ['--model', 'opus'], effort: 'high', io: 'stream', effectiveTools: { WebFetch: { value: 'off', source: 'project' } },
+      disabledTools: ['Bash'], intents: null, mcpServers: ['notes'], systemPromptFile: null, appendPromptFiles: ['house'],
+      plugins: ['tickets'], execGrants: ['clodex-monitor', 'clodex-run-tests'],
+    },
+    activity: { turns: 7, lastTurnTs: '2026-10-01T12:00:00.000Z', pendingMail: 3, transcriptPath: '/t/bob.jsonl' },
+  },
+  'builder-long': { capabilities: null, activity: { turns: 1, lastTurnTs: null, pendingMail: 0, transcriptPath: null } },
+};
 
 function node({ old = false } = {}) {
   const seen = [];
@@ -63,7 +75,13 @@ function node({ old = false } = {}) {
       }
       if (!old && p === '/api/docs/messaging') return send(200, { ok: true, doc: DOC_SECTION });
       if (!old && p.startsWith('/api/sessions/')) {
-        const name = decodeURIComponent(p.slice('/api/sessions/'.length));
+        const parts = p.slice('/api/sessions/'.length).split('/');
+        const name = decodeURIComponent(parts[0]);
+        if (parts[1] === 'describe') {
+          const s = SESSIONS.find((x) => x.name === name);
+          if (!s) return send(404, { ok: false, error: 'Session not found' });
+          return send(200, { ok: true, session: { ...s, workspaceId: 'w1', stats: { turns: 2 }, activity: s.activity }, ...DESCRIBE_EXTRA[name] });
+        }
         const s = SESSIONS.find((x) => x.name === name);
         if (!s) return send(404, { ok: false, error: 'Session not found' });
         return send(200, { ok: true, session: { ...s, workspaceId: 'w1', stats: { turns: 2 }, activity: s.activity } });
@@ -320,6 +338,49 @@ test('describe session renders every field as a key: value block', async () => {
   });
 });
 
+test('describe session renders Session, Capabilities and Activity sections off /describe', async () => {
+  await withNode({}, async (port, seen) => {
+    const { code, stdout } = await cli(['describe', 'session', 'bob'], port);
+    assert.strictEqual(code, 0, stdout);
+    assert.deepStrictEqual(seen, ['/api/resources', '/api/sessions/bob/describe']);
+    assert.match(stdout, /^Session\nname:/m);
+    assert.match(stdout, /^Capabilities$/m);
+    assert.match(stdout, /^model:\s+opus$/m);
+    assert.match(stdout, /^effectiveTools:\s+WebFetch=off$/m);
+    assert.match(stdout, /^disabledTools:\s+Bash$/m);
+    assert.match(stdout, /^intents:\s+all$/m);
+    assert.match(stdout, /^mcpServers:\s+notes$/m);
+    assert.match(stdout, /^prompts:\s+house$/m);
+    assert.match(stdout, /^plugins:\s+tickets$/m);
+    assert.match(stdout, /^execGrants:\s+clodex-monitor, clodex-run-tests$/m);
+    assert.match(stdout, /^Activity$/m);
+    assert.match(stdout, /^turns:\s+7$/m);
+    assert.match(stdout, /^lastTurn:\s+2026-10-01T12:00:00\.000Z$/m);
+    assert.match(stdout, /^pendingMail:\s+3$/m);
+    assert.match(stdout, /^transcript:\s+\/t\/bob\.jsonl$/m);
+  });
+});
+
+test('describe session with null capabilities prints the one unavailable line', async () => {
+  await withNode({}, async (port) => {
+    const { code, stdout } = await cli(['describe', 'session', 'builder-long'], port);
+    assert.strictEqual(code, 0, stdout);
+    assert.match(stdout, /^Capabilities\ncapabilities: unavailable \(seat not live\)$/m);
+    assert.doesNotMatch(stdout, /^execGrants:/m);
+  });
+});
+
+test('describe session -o json prints the raw /describe body', async () => {
+  await withNode({}, async (port) => {
+    const { code, stdout } = await cli(['describe', 'session', 'bob', '-o', 'json'], port);
+    assert.strictEqual(code, 0, stdout);
+    const body = JSON.parse(stdout);
+    assert.deepStrictEqual(body.capabilities, DESCRIBE_EXTRA.bob.capabilities);
+    assert.deepStrictEqual(body.activity, DESCRIBE_EXTRA.bob.activity);
+    assert.strictEqual(body.session.name, 'bob');
+  });
+});
+
 test('describe workspace reads the list and renders the one row', async () => {
   await withNode({}, async (port) => {
     const { code, stdout } = await cli(['describe', 'workspace', 'side'], port);
@@ -334,7 +395,7 @@ test('describe checks the resources API too — an old node gets the upgrade lin
     await withNode({ old: true }, async (port, seen) => {
       const { code, stderr } = await cli(argv, port);
       assert.strictEqual(code, 1, `${argv.join(' ')} must exit 1 against an old node`);
-      assert.match(stderr, /does not serve \w+ \w+; run: clodexctl upgrade node /);
+      assert.match(stderr, /does not serve [\w/]+ \w+; run: clodexctl upgrade node /);
       assert.deepStrictEqual(seen, ['/api/resources', '/api/peer/hello'],
         `${argv.join(' ')} must probe resources and stop, never fetch the object`);
     });
@@ -349,9 +410,9 @@ test('describe workspace <unknown> is a not-found, not an empty block', async ()
   });
 });
 
-test('describe has no -o json, and refuses BEFORE any wire (kubectl has none either)', async () => {
+test('describe has no -o json outside sessions, and refuses BEFORE any wire (kubectl has none either)', async () => {
   await withNode({}, async (port, seen) => {
-    const { code, stderr } = await cli(['describe', 'session', 'bob', '-o', 'json'], port);
+    const { code, stderr } = await cli(['describe', 'workspace', 'main', '-o', 'json'], port);
     assert.strictEqual(code, 2);
     assert.match(stderr, /describe has no -o json/);
     assert.deepStrictEqual(seen, [], 'a usage error must not cost a round trip');

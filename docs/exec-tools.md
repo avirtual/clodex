@@ -217,6 +217,10 @@ MCP servers are the third spawn-time grant: `mcpServers` on the template,
 operator-set like the two above (docs/sessions.md record fields;
 docs/notes/mcp-plan.md).
 
+Grant NAMES cross the peer wire in exactly one place: `capabilities.execGrants`
+on `GET /api/sessions/:name/describe` (sorted names). Payloads, env and the MCP
+selection never do — `/args` and describe both go through `withoutLocalOnly`.
+
 The coarse intent gate and the fine per-command `execCommands` gate must both
 allow — a seat with `exec` but not the command id is refused, and vice versa.
 

@@ -12,6 +12,7 @@ const { createRemoteWiring } = require('../remote-wiring');
 const { RemoteServer, RESOURCES, DM_MAX_BODY } = require('../remote');
 const { createTicketsStore } = require('../tickets-store');
 const { mkTmpRoot } = require('./lib/tmp-roots');
+const { pathFor } = require('../clodex-paths');
 
 const REMOTE_SRC = fs.readFileSync(path.join(__dirname, '..', 'remote.js'), 'utf-8');
 
@@ -331,6 +332,10 @@ function subresourceFixture() {
         calls.push({ route: 'client-token', name });
         return name === 'ghost' ? { ok: false, code: 404, error: 'Session not found' } : { ok: true, set: token != null };
       },
+      describeSession: (name) => {
+        calls.push({ route: 'describe', name });
+        return { ok: true, capabilities: null, activity: { turns: 0, lastTurnTs: null, pendingMail: 0, transcriptPath: null } };
+      },
     },
   };
 }
@@ -350,6 +355,7 @@ const SUB_WALK = {
   wake: { post: { method: 'POST' } },
   memory: { get: { method: 'GET' } },
   'client-token': { put: { method: 'PUT', body: () => JSON.stringify({ token: 'k'.repeat(16) }) } },
+  describe: { get: { method: 'GET' } },
 };
 
 const VERB_WALK = { list: 'GET', get: 'GET', delete: 'DELETE' };
@@ -402,13 +408,13 @@ test('RESOURCES: every (resource, verb) answers on a fully-injected node, and ev
     'sessions/control.post', 'sessions/input.post', 'sessions/resize.post', 'sessions/dm.post',
     'sessions/restart.post', 'sessions/args.get', 'sessions/args.patch', 'sessions/skills.get',
     'sessions/skills.patch', 'sessions/sleep.post', 'sessions/wake.post', 'sessions/memory.get',
-    'sessions/client-token.put', 'sessions/attach.get', 'workspaces.list',
+    'sessions/client-token.put', 'sessions/describe.get', 'sessions/attach.get', 'workspaces.list',
     'peers.list', 'peers.get', 'teams.list', 'teams.get', 'tickets.list', 'tickets.get',
     'sandboxes.list', 'sandboxes.get', 'agents.list', 'agents.get',
     'docs.list', 'docs.get', 'worktrees.list', 'catalogs.get',
     'node/logs.get',
   ], 'the walk must visit every shipped row — an empty or shortened walk passes vacuously');
-  assert.strictEqual(seen.length, 35, 'the walk entered 18 resource verbs, the sessions delete, and the 16 session subresource verbs');
+  assert.strictEqual(seen.length, 36, 'the walk entered 18 resource verbs, the sessions delete, and the 17 session subresource verbs');
   assert.strictEqual(RESOURCES.length, 11, 'the walk covered fewer than the 11 shipped resources');
 });
 
@@ -842,7 +848,7 @@ test('subresource gating: a node with the attach/control callbacks nulled omits 
     const doc = JSON.parse((await req(port, '/api/resources')).body);
     const sessions = doc.resources.find((r) => r.name === 'sessions');
     assert.deepStrictEqual(
-      Object.keys(sessions.subresources), ['transcript', 'query', 'dm', 'restart', 'args', 'skills', 'sleep', 'wake', 'memory', 'client-token'],
+      Object.keys(sessions.subresources), ['transcript', 'query', 'dm', 'restart', 'args', 'skills', 'sleep', 'wake', 'memory', 'client-token', 'describe'],
       'the document advertises a subresource this node cannot serve',
     );
     assert.strictEqual((await req(port, '/api/sessions/alice/attach')).status, 501);
@@ -1689,4 +1695,102 @@ test('t1891: sessionRow carries submitNudges once the seat has counts, and omits
   const opts = captureOptions(deps);
   assert.deepStrictEqual(opts.getSession('s1').submitNudges, { fired: 3, exhausted: 1 });
   assert.strictEqual('submitNudges' in opts.getSession('s2'), false);
+});
+
+const DESCRIBE_ARGS = {
+  ok: true, type: 'codex', extraArgs: ['--model', 'gpt-5'], io: 'stream', effort: 'high',
+  intents: ['dm', 'exec'], plugins: null, disabledTools: ['WebFetch'], effectiveTools: {},
+  appendPromptFiles: ['house-style'], systemPromptFile: null, agentCatalog: [],
+  execCommands: ['zeta-run', 'alpha-check'], env: { SECRET: 'v' }, mcpServers: ['notes', 'fs'],
+};
+
+function describeDeps({ persisted = {}, args = {} } = {}) {
+  const made = makeDeps();
+  const { deps } = made;
+  const reg = deps.REGISTRY_DIR;
+  deps.manager.sessions.set('stream1', { name: 'stream1', type: 'codex', agentType: 'codex', cwd: path.join(reg, 'w'), workspaceId: 'ws-alpha', io: 'stream' });
+  const jsonl = path.join(reg, 'stream1.jsonl');
+  fs.mkdirSync(path.dirname(pathFor(reg, 'stream1', 'transcript')), { recursive: true });
+  fs.writeFileSync(jsonl, '');
+  fs.symlinkSync(jsonl, pathFor(reg, 'stream1', 'transcript'));
+  deps.cachedMessages = (p) => (p === fs.realpathSync(jsonl)
+    ? [{ role: 'user', ts: '2026-10-01T00:00:00.000Z' }, { role: 'assistant', ts: '2026-10-01T00:00:01.000Z' },
+      { role: 'user', ts: '2026-10-01T00:00:02.000Z' }, { role: 'assistant', ts: '2026-10-01T00:00:03.000Z' }]
+    : []);
+  deps.jsonlToMessages = () => [{ role: 'user', ts: '2026-09-01T00:00:00.000Z' }, { role: 'assistant', ts: '2026-09-01T00:00:05.000Z' }];
+  deps.readSessionArgs = (name) => (args[name] || { ok: false });
+  deps.getPersistence = () => ({ get: (n) => persisted[n], list: () => Object.values(persisted), setStripLevel: () => {} });
+  return { ...made, jsonl };
+}
+
+async function withDescribeNode(opts, fn) {
+  const { deps, jsonl } = describeDeps(opts);
+  const s = new RemoteServer(captureOptions(deps));
+  await s.start();
+  try { return await fn(s.port, { deps, jsonl }); } finally { s.stop(); }
+}
+
+test('GET /api/sessions/:name/describe: a live stream seat answers session, capabilities with exec grant NAMES only, and activity', async () => {
+  await withDescribeNode({ args: { stream1: DESCRIBE_ARGS } }, async (port, { jsonl }) => {
+    const r = await req(port, '/api/sessions/stream1/describe');
+    assert.strictEqual(r.status, 200, r.body);
+    const body = JSON.parse(r.body);
+    assert.deepStrictEqual(Object.keys(body).sort(), ['activity', 'capabilities', 'ok', 'session']);
+    assert.deepStrictEqual(body.session, JSON.parse((await req(port, '/api/sessions/stream1')).body).session,
+      'the session block is exactly what GET /api/sessions/:name serves');
+    assert.deepStrictEqual(body.capabilities.execGrants, ['alpha-check', 'zeta-run']);
+    assert.ok(!('mcpServers' in body.capabilities), 'the MCP selection is local-only and stays off the wire');
+    assert.ok(!('execCommands' in body.capabilities), 'exec payload key crossed the wire');
+    assert.ok(!('env' in body.capabilities), 'session env crossed the wire');
+    assert.ok(!JSON.stringify(body).includes('SECRET'), 'an env key reached the body');
+    assert.deepStrictEqual(body.capabilities.extraArgs, ['--model', 'gpt-5']);
+    assert.deepStrictEqual(body.activity, {
+      turns: 2, lastTurnTs: '2026-10-01T00:00:03.000Z', pendingMail: 0, transcriptPath: fs.realpathSync(jsonl),
+    });
+  });
+});
+
+test('GET .../describe: /args keeps its shape — no execGrants on the args projection', async () => {
+  await withDescribeNode({ args: { stream1: DESCRIBE_ARGS } }, async (port) => {
+    const a = JSON.parse((await req(port, '/api/sessions/stream1/args')).body);
+    assert.strictEqual(a.ok, true);
+    assert.ok(!('execGrants' in a) && !('execCommands' in a) && !('mcpServers' in a) && !('env' in a), JSON.stringify(Object.keys(a)));
+  });
+});
+
+test('GET .../describe: an unknown name is 404 Session not found', async () => {
+  await withDescribeNode({}, async (port) => {
+    const r = await req(port, '/api/sessions/nobody/describe');
+    assert.strictEqual(r.status, 404);
+    assert.deepStrictEqual(JSON.parse(r.body), { ok: false, error: 'Session not found' });
+  });
+});
+
+test('GET .../describe: a sleeper has null capabilities and its activity from the sleeper transcript', async () => {
+  const sleepy = {
+    name: 'sleepy', type: 'claude', class: 'assistant', archivedAt: 1, cwd: '/w/sleepy', workspaceId: 'ws-alpha',
+    sessionId: '11111111-2222-3333-4444-555555555555',
+  };
+  await withDescribeNode({ persisted: { sleepy } }, async (port) => {
+    const r = await req(port, '/api/sessions/sleepy/describe');
+    assert.strictEqual(r.status, 200, r.body);
+    const body = JSON.parse(r.body);
+    assert.strictEqual(body.session.activity, 'asleep');
+    assert.strictEqual(body.capabilities, null);
+    assert.deepStrictEqual(body.activity, { turns: 1, lastTurnTs: '2026-09-01T00:00:05.000Z', pendingMail: 0, transcriptPath: null });
+  });
+});
+
+test('GET .../describe: pendingMail counts parked deliveries and ignores claim entries', async () => {
+  await withDescribeNode({ args: { stream1: DESCRIBE_ARGS } }, async (port, { deps }) => {
+    const dir = path.join(deps.REGISTRY_DIR, 'pending', 'stream1');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, '1700000000000.1.json'), '{}');
+    fs.writeFileSync(path.join(dir, '1700000000001.2.json'), '{}');
+    fs.writeFileSync(path.join(dir, '.resend.1700000000002.3.json'), '{}');
+    fs.writeFileSync(path.join(dir, 'x.draining.abc.123'), '{}');
+    fs.mkdirSync(path.join(dir, '.claims'));
+    const body = JSON.parse((await req(port, '/api/sessions/stream1/describe')).body);
+    assert.strictEqual(body.activity.pendingMail, 2);
+  });
 });
