@@ -526,7 +526,7 @@ serialised by `parseProfileYaml` / `serializeProfile`: only `game:` and `notes:`
 each a map with `[a-z0-9_-]+` keys whose values are scalars, flat scalar lists or
 one-level scalar maps; no anchors, tags, flow collections (except `[]`/`{}`),
 block scalars or documents. Canonical output is `game:` then `notes:`, insertion
-order, two-space indent, strings quoted only when needed. Cap: `PROFILE_CAP`
+order, two-space indent, strings quoted only when needed — that is, whenever the reader would alter or reject them (edge whitespace as `trim()` sees it, U+0085/U+2028/U+2029 escaped) — and a write that would not read back identically is refused as `profile value cannot be represented: …` rather than stored. Cap: `PROFILE_CAP`
 (4096) serialised bytes, refused as `profile exceeds 4096 bytes (N)`.
 The seat's `notes:` are capped at `PROFILE_NOTES_CAP` (2048) bytes inside the 4096-byte document (a seat write that grows them past it is refused as `notes exceed 2048 bytes (N) — drop a note first`), so the game's `game:` section can always grow.
 
