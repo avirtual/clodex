@@ -12,7 +12,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — Memory viewer writes from the browser
+## Unreleased
+
+## 5.153.0 — 2026-10-29 — Memory viewer writes from the browser
 
 - **Memory viewer writes from the browser.** Adding, editing and pinning a memory now work from the web UI, not only the desktop app; the web surface used to answer "plugin method not available on this surface". Deleting a memory stays desktop-only.
 
