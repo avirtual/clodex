@@ -30,6 +30,8 @@ const PARSE_OPTS = {
   aliases: { h: 'help', V: 'version', f: 'follow', o: 'output', n: 'workspace', A: 'all-workspaces', q: 'query', 'remote-port': 'remotePort' },
 };
 
+const PATCH_PARSE_OPTS = { ...PARSE_OPTS, aliases: { ...PARSE_OPTS.aliases, f: 'filename' } };
+
 // Wire verbs and their handler.
 const WIRE_VERBS = {
   info: V.info, get: V.get, describe: V.describe, 'api-resources': V.apiResources,
@@ -172,7 +174,7 @@ async function run(argv, io = {}) {
   }
   let flags;
   try {
-    flags = parse(argv, PARSE_OPTS);
+    flags = parse(argv, argv[0] === 'patch' ? PATCH_PARSE_OPTS : PARSE_OPTS);
   } catch (e) {
     writeErr(`clodexctl: ${e.message}\n`);
     return e instanceof CliError ? e.exitCode : EXIT.USAGE;

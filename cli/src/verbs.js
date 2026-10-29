@@ -846,7 +846,7 @@ async function patch(bundle) {
 
 async function patchProfile({ client, ctx, printer, flags, args, name }) {
   requireProfileSub(flags, 'patch');
-  const file = flags.filename != null ? String(flags.filename) : (flags.follow ? args[1] : null);
+  const file = flags.filename != null ? String(flags.filename) : null;
   if (!file) throw new CliError(EXIT.USAGE, 'patch session --subresource profile needs -f <file.yaml|file.json>');
   let text;
   try { text = fs.readFileSync(file, 'utf8'); }
