@@ -29,6 +29,7 @@ const { trackedSessionIds } = require('./session-info');
 const { SESSION_ID_RE } = require('./seat-import');
 const { briefPathFor, clientTokenPathFor } = require('./assistant-sleep');
 const { claudeProjectSlug } = require('./clodex-paths');
+const { parseProfileYaml } = require('./memory-store');
 
 const crypto = require('crypto');
 
@@ -239,7 +240,7 @@ function createRemoteWiring(deps) {
       workspace: (getWorkspaces().get(sess.workspaceId) || {}).name || '',
       workspaceId: sess.workspaceId || null,
       activityTs: typeof sess.activityTs === 'number' ? sess.activityTs : null,
-      ...assistantFields(getPersistence().get(sess.name)),
+      ...assistantFields(getPersistence().get(sess.name), sess.name),
       ...(sess._submitNudges ? { submitNudges: { fired: sess._submitNudges.fired, exhausted: sess._submitNudges.exhausted } } : {}),
       stats: {
         model: (p && p.model) || null,
@@ -252,9 +253,16 @@ function createRemoteWiring(deps) {
     };
   }
 
-  function assistantFields(entry) {
+  function profileStat(name) {
+    let view = null;
+    try { view = typeof getMemoryStore === 'function' ? getMemoryStore().profileGet(name) : null; } catch { view = null; }
+    const has = !!(view && view.ok && view.profile);
+    return { profile: has ? view.bytes : 0, profileUpdatedAt: has ? view.updatedAt : null };
+  }
+
+  function assistantFields(entry, name) {
     if (!entry || entry.class !== 'assistant') return {};
-    return { class: 'assistant', state: entry.archivedAt ? 'sleeping' : 'awake', template: entry.template || null, sleep: entry.sleep || null, cost: entry.cost || null, wakes: entry.wakes || 0 };
+    return { class: 'assistant', state: entry.archivedAt ? 'sleeping' : 'awake', template: entry.template || null, sleep: entry.sleep || null, cost: entry.cost || null, wakes: entry.wakes || 0, memory: profileStat(name) };
   }
 
   function isSleeper(entry) {
@@ -278,6 +286,7 @@ function createRemoteWiring(deps) {
       sleep: entry.sleep || null,
       cost: entry.cost || null,
       wakes: entry.wakes || 0,
+      memory: profileStat(entry.name),
       stats: { model: null, cost: null, requests: null, ctxTok: null, ctxSize: null, ctxPct: null },
     };
   }
@@ -490,6 +499,41 @@ function createRemoteWiring(deps) {
     let brief = null;
     try { brief = fs.readFileSync(briefPathFor(REGISTRY_DIR, name), 'utf8'); } catch {}
     return { ok: true, name, units: getMemoryStore().list(name), brief };
+  }
+
+  function profileSeat(name) {
+    const entry = getPersistence().get(name);
+    if (!entry) return { ok: false, code: 404, error: 'Session not found' };
+    if (entry.class !== 'assistant') return { ok: false, code: 400, error: 'not an assistant seat' };
+    return null;
+  }
+
+  function profileReply(name, view) {
+    if (!view || !view.ok) return { ok: false, code: 400, error: (view && view.error) || 'profile failed' };
+    if (!view.profile) return { ok: true, name, profile: null, yaml: null, bytes: 0, updatedAt: null };
+    return { ok: true, name, profile: view.profile, yaml: view.yaml, bytes: view.bytes, updatedAt: view.updatedAt };
+  }
+
+  function getProfile(name) {
+    return profileSeat(name) || profileReply(name, getMemoryStore().profileGet(name));
+  }
+
+  function setProfile(name, input, { merge = true } = {}) {
+    const refused = profileSeat(name);
+    if (refused) return refused;
+    let data = input && input.data;
+    if (input && typeof input.yaml === 'string') {
+      try { data = parseProfileYaml(input.yaml); }
+      catch (e) { return { ok: false, code: 400, error: `bad profile YAML: ${e.message}` }; }
+    }
+    return profileReply(name, getMemoryStore().profileSet(name, data, { merge }));
+  }
+
+  function deleteProfile(name) {
+    const refused = profileSeat(name);
+    if (refused) return refused;
+    const out = getMemoryStore().profileDelete(name);
+    return out && out.ok ? { ok: true, existed: out.existed } : { ok: false, code: 400, error: (out && out.error) || 'profile delete failed' };
   }
 
   function claudeTranscriptFile(entry, id) {
@@ -927,7 +971,7 @@ function createRemoteWiring(deps) {
           if (out && out.ok) notifySessions();
           return out;
         },
-        ...(typeof getMemoryStore === 'function' ? { exportMemory } : {}),
+        ...(typeof getMemoryStore === 'function' ? { exportMemory, getProfile, setProfile, deleteProfile } : {}),
         setClientToken,
         restartSession: async (name, opts = {}) => {
           name = String(name || '').trim();

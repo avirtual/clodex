@@ -576,7 +576,9 @@ the seat's keep-warm hold before the remove, and call `forgetSeatFiles` after it
 `purgeWorkspace` does so for both halves: the saved rows it drops and the live
 seats it kills (their record read before `kill` drops it). An assistant seat loses its whole
 seat dir (`removeSeat`: client-token, brief.md, memory), any other seat only
-its `client-token`, so a later seat with the same name never inherits them.
+its `client-token`, so a later seat with the same name never inherits them. The seat's memory profile (`profile.md`) goes with the seat dir: `destroy()`'s
+seat-dir drop and `forgetSeatFiles` on an assistant record call `_dropProfile`
+first; a plain `kill()`, a respawn and a sleep keep it.
 A record carrying `worktree.path` goes through `destroy()` instead, with
 `_keepIfDirty` as its `beforeRemove`: a tree `gitWorktree.isDirty` reports
 dirty, or cannot inspect, is never removed. Delete Workspace… keeps such a

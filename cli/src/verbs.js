@@ -155,7 +155,22 @@ async function getSession({ client, printer, flags, name, label }) {
   printer.line(out.renderSessions([session]));
 }
 
-const SESSION_SUBRESOURCES = ['skills', 'args', 'transcript'];
+const SESSION_SUBRESOURCES = ['skills', 'args', 'transcript', 'profile'];
+const PROFILE_SUB = 'memory/profile';
+
+function profilePath(name) {
+  return `/api/sessions/${encodeURIComponent(name)}/${PROFILE_SUB}`;
+}
+
+function requireProfileSub(flags, verb) {
+  const sub = String(flags.subresource);
+  if (sub !== 'profile') throw new CliError(EXIT.USAGE, `${verb} session --subresource takes only profile (got ${sub})`);
+}
+
+function printProfile(printer, flags, body) {
+  if (flags.json) printer.json(body);
+  else printer.line(out.renderProfile(body));
+}
 
 async function getSubresource({ client, ctx, printer, flags, label, target, io }) {
   const sub = String(flags.subresource);
@@ -167,6 +182,11 @@ async function getSubresource({ client, ctx, printer, flags, label, target, io }
   }
   const name = requireName(target.name, `get session --subresource ${sub}`);
   if (sub === 'transcript') return logsSession({ client, ctx, printer, flags: { ...flags, follow: false }, args: [name], io });
+  if (sub === 'profile') {
+    await R.requireResource(client, 'sessions', 'get', label, PROFILE_SUB);
+    printProfile(printer, flags, await client.get(profilePath(name), 'get session --subresource profile'));
+    return;
+  }
   await R.requireResource(client, 'sessions', 'get', label, sub);
   const body = await client.get(`/api/sessions/${encodeURIComponent(name)}/${sub}`, `get session --subresource ${sub}`);
   printer.json(body);
@@ -784,6 +804,14 @@ async function del(bundle) {
 
 async function deleteSession({ client, ctx, printer, flags, args, prompt = defaultPrompt }) {
   const name = requireName(args[0], 'delete session');
+  if (flags.subresource != null) {
+    requireProfileSub(flags, 'delete');
+    await R.requireResource(client, 'sessions', 'delete', R.ctxLabel(ctx, flags), PROFILE_SUB);
+    const res = await client.del(profilePath(name), 'delete session --subresource profile');
+    if (flags.json) printer.json(res);
+    else printer.line(res.existed ? `profile of ${name} deleted` : `${name} had no profile`);
+    return;
+  }
   if (!flags.force && flags.json) {
     throw new CliError(EXIT.USAGE, 'delete session needs --force in -o json|yaml/non-interactive mode (wire delete is a hard delete, no resume)');
   }
@@ -816,8 +844,30 @@ async function patch(bundle) {
   if (word === 'session') return patchSession({ ...bundle, args: rest });
 }
 
+async function patchProfile({ client, ctx, printer, flags, args, name }) {
+  requireProfileSub(flags, 'patch');
+  const file = flags.filename != null ? String(flags.filename) : null;
+  if (!file) throw new CliError(EXIT.USAGE, 'patch session --subresource profile needs -f <file.yaml|file.json>');
+  let text;
+  try { text = fs.readFileSync(file, 'utf8'); }
+  catch (e) { throw new CliError(EXIT.USAGE, `cannot read ${file}: ${e.message}`); }
+  await R.requireResource(client, 'sessions', 'patch', R.ctxLabel(ctx, flags), PROFILE_SUB);
+  const url = `${profilePath(name)}?merge=${flags.replace ? 0 : 1}`;
+  const verb = 'patch session --subresource profile';
+  let res;
+  if (/\.json$/i.test(file)) {
+    let body;
+    try { body = JSON.parse(text); } catch (e) { throw new CliError(EXIT.USAGE, `${file} is not JSON: ${e.message}`); }
+    res = await client.patch(url, verb, body);
+  } else {
+    res = await client.patch(url, verb, null, { rawBody: text, contentType: 'text/yaml' });
+  }
+  printProfile(printer, flags, res);
+}
+
 async function patchSession({ client, ctx, printer, flags, args }) {
   const name = requireName(args[0], 'patch session');
+  if (flags.subresource != null) return patchProfile({ client, ctx, printer, flags, args, name });
   const body = {};
   if (Array.isArray(flags.arg)) body.extraArgs = flags.arg;
   else if (flags.arg) body.extraArgs = [String(flags.arg)];

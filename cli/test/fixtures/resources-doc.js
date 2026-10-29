@@ -5,6 +5,7 @@ const SESSIONS_ROW = {
   subresources: {
     transcript: ['get'], query: ['post'], attach: ['get'], control: ['post'], input: ['post'], resize: ['post'],
     dm: ['post'], restart: ['post'], args: ['get', 'patch'], skills: ['get', 'patch'], describe: ['get'],
+    'memory/profile': ['get', 'put', 'patch', 'delete'],
   },
 };
 

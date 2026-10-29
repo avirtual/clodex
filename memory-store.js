@@ -95,6 +95,260 @@ function parseMemoryUnit(raw) {
   return { meta, body: (m[2] || '').trim() };
 }
 
+const PROFILE_ID = 'profile';
+const PROFILE_SECTIONS = ['game', 'notes'];
+const PROFILE_KEY_RE = /^[a-z0-9_-]+$/;
+const PROFILE_KEY_MAX = 64;
+const PROFILE_CAP = 4096;
+const PROFILE_NOT_UNIT = 'profile is not a unit';
+
+const PROFILE_TYPE_WORDS = /^(?:true|false|null|yes|no|on|off|y|n|~|[-+]?\.inf|\.nan)$/i;
+const PROFILE_LEAD_SPECIAL = /^[-?:,[\]{}#&*!|>'"%@` ]/;
+const PROFILE_CTRL = /[\u0000-\u001F\u007F]/;
+const PROFILE_PLAIN_NESTED_KEY = /^[A-Za-z0-9_](?:[A-Za-z0-9 _.'-]*[A-Za-z0-9_.'-])?$/;
+const PROFILE_NUMBER = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][-+]?\d+)?$/;
+const PROFILE_KEY_LINE = /^("(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s"'#][^:]*?):(?:[ \t]+(.*))?$/;
+
+function profileNumericLooking(s) {
+  return /^[-+]?0[xXoObB][0-9a-fA-F_]+$/.test(s)
+    || /^[-+]?\d+(?::[0-5]?\d)+(?:\.\d*)?$/.test(s)
+    || (/^[-+]?(?:[0-9][0-9_]*)?(?:\.[0-9_]*)?(?:[eE][-+]?[0-9]+)?$/.test(s) && /[0-9]/.test(s));
+}
+
+function profileNeedsQuote(s) {
+  return s === ''
+    || PROFILE_TYPE_WORDS.test(s)
+    || profileNumericLooking(s)
+    || PROFILE_LEAD_SPECIAL.test(s)
+    || /[ :]$/.test(s)
+    || s.includes(': ')
+    || s.includes(' #')
+    || PROFILE_CTRL.test(s);
+}
+
+function profileQuote(s) {
+  return JSON.stringify(s).replace(/\u007F/g, '\\u007f');
+}
+
+function profileScalarText(v) {
+  if (v === null) return 'null';
+  if (typeof v === 'boolean') return v ? 'true' : 'false';
+  if (typeof v === 'number') return String(v);
+  return profileNeedsQuote(v) ? profileQuote(v) : v;
+}
+
+function profileNestedKeyText(k) {
+  return PROFILE_PLAIN_NESTED_KEY.test(k) && !profileNeedsQuote(k) ? k : profileQuote(k);
+}
+
+function isPlainObject(v) {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+
+function isProfileScalar(v) {
+  return v === null || typeof v === 'string' || typeof v === 'boolean'
+    || (typeof v === 'number' && Number.isFinite(v));
+}
+
+function checkNestedKey(k, where) {
+  if (typeof k !== 'string' || k.length === 0 || k.length > PROFILE_KEY_MAX || PROFILE_CTRL.test(k) || k === '__proto__') {
+    throw new Error(`${where}: bad key ${JSON.stringify(k)}`);
+  }
+}
+
+function checkProfileValue(v, where) {
+  if (isProfileScalar(v)) return;
+  if (Array.isArray(v)) {
+    v.forEach((item, i) => {
+      if (!isProfileScalar(item)) throw new Error(`${where}[${i}]: list items must be scalars`);
+    });
+    return;
+  }
+  if (isPlainObject(v)) {
+    for (const [k, item] of Object.entries(v)) {
+      checkNestedKey(k, where);
+      if (!isProfileScalar(item)) throw new Error(`${where}.${k}: nesting deeper than one level`);
+    }
+    return;
+  }
+  throw new Error(`${where}: unsupported value`);
+}
+
+function checkProfileInput(input) {
+  if (!isPlainObject(input)) throw new Error('profile must be an object with game and/or notes');
+  for (const key of Object.keys(input)) {
+    if (!PROFILE_SECTIONS.includes(key)) throw new Error(`unknown profile section: ${key}`);
+  }
+  for (const section of PROFILE_SECTIONS) {
+    const map = input[section];
+    if (map === undefined) continue;
+    if (!isPlainObject(map)) throw new Error(`${section}: must be a map`);
+    for (const [k, v] of Object.entries(map)) {
+      if (!PROFILE_KEY_RE.test(k) || k.length > PROFILE_KEY_MAX || k === '__proto__') throw new Error(`${section}: bad key ${JSON.stringify(k)}`);
+      checkProfileValue(v, `${section}.${k}`);
+    }
+  }
+}
+
+function cloneProfileValue(v) {
+  if (Array.isArray(v)) return v.slice();
+  if (isPlainObject(v)) return { ...v };
+  return v;
+}
+
+function serializeProfile(profile) {
+  const lines = [];
+  for (const section of PROFILE_SECTIONS) {
+    const map = (profile && profile[section]) || {};
+    const keys = Object.keys(map);
+    if (!keys.length) continue;
+    lines.push(`${section}:`);
+    for (const k of keys) {
+      const v = map[k];
+      if (Array.isArray(v)) {
+        if (!v.length) { lines.push(`  ${k}: []`); continue; }
+        lines.push(`  ${k}:`);
+        for (const item of v) lines.push(`    - ${profileScalarText(item)}`);
+      } else if (isPlainObject(v)) {
+        const inner = Object.keys(v);
+        if (!inner.length) { lines.push(`  ${k}: {}`); continue; }
+        lines.push(`  ${k}:`);
+        for (const ik of inner) lines.push(`    ${profileNestedKeyText(ik)}: ${profileScalarText(v[ik])}`);
+      } else {
+        lines.push(`  ${k}: ${profileScalarText(v)}`);
+      }
+    }
+  }
+  return lines.length ? `${lines.join('\n')}\n` : '';
+}
+
+function parseProfileValueText(text, where) {
+  const t = String(text == null ? '' : text).trim();
+  if (t === '' || t.startsWith('#')) return { kind: 'empty' };
+  const c = t[0];
+  if (c === '&' || c === '*') throw new Error(`${where}: anchors and aliases are not allowed`);
+  if (c === '!') throw new Error(`${where}: tags are not allowed`);
+  if (c === '|' || c === '>') throw new Error(`${where}: block scalars are not allowed`);
+  if (c === '"') {
+    const m = t.match(/^"((?:[^"\\]|\\.)*)"\s*(?:#.*)?$/);
+    if (!m) throw new Error(`${where}: bad double-quoted string`);
+    try { return { kind: 'scalar', value: JSON.parse(`"${m[1]}"`) }; }
+    catch { throw new Error(`${where}: bad double-quoted string`); }
+  }
+  if (c === "'") {
+    const m = t.match(/^'((?:[^']|'')*)'\s*(?:#.*)?$/);
+    if (!m) throw new Error(`${where}: bad single-quoted string`);
+    return { kind: 'scalar', value: m[1].replace(/''/g, "'") };
+  }
+  const hash = t.search(/\s#/);
+  const s = hash >= 0 ? t.slice(0, hash).trimEnd() : t;
+  if (s === '[]') return { kind: 'list' };
+  if (s === '{}') return { kind: 'map' };
+  if (c === '[' || c === '{') throw new Error(`${where}: flow collections are not allowed (only [] and {})`);
+  if (s === '-' || s.startsWith('- ')) throw new Error(`${where}: a list must start on its own line`);
+  if (/^(?:null|Null|NULL|~)$/.test(s)) return { kind: 'scalar', value: null };
+  if (/^(?:true|True|TRUE)$/.test(s)) return { kind: 'scalar', value: true };
+  if (/^(?:false|False|FALSE)$/.test(s)) return { kind: 'scalar', value: false };
+  if (PROFILE_NUMBER.test(s)) return { kind: 'scalar', value: Number(s) };
+  if (s.includes(': ') || s.endsWith(':')) throw new Error(`${where}: nested mapping is not allowed here`);
+  return { kind: 'scalar', value: s };
+}
+
+function parseProfileKey(raw, at) {
+  if (raw.startsWith('"')) {
+    try { return JSON.parse(raw); } catch { throw new Error(`${at}: bad key`); }
+  }
+  if (raw.startsWith("'")) return raw.slice(1, -1).replace(/''/g, "'");
+  return raw.trimEnd();
+}
+
+function parseProfileYaml(text) {
+  const out = { game: {}, notes: {} };
+  const seenSections = new Set();
+  let section = null;
+  let entry = null;
+  let nested = null;
+  const lines = String(text == null ? '' : text).replace(/\r\n/g, '\n').split('\n');
+  const close = () => {
+    if (entry && entry.pending) out[section][entry.key] = null;
+    entry = null;
+    nested = null;
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const at = `line ${i + 1}`;
+    const lead = line.match(/^[ \t]*/)[0];
+    if (lead.includes('\t')) throw new Error(`${at}: tabs are not allowed in indentation`);
+    const body = line.slice(lead.length);
+    if (body === '' || body.trim() === '' || body.startsWith('#')) continue;
+    if (lead.length === 0 && (/^(?:---|\.\.\.)(?:\s|$)/.test(body) || body.startsWith('%'))) {
+      throw new Error(`${at}: multi-document streams and directives are not allowed`);
+    }
+    const indent = lead.length;
+    if (indent === 0) {
+      close();
+      const m = body.match(PROFILE_KEY_LINE);
+      if (!m) throw new Error(`${at}: expected game: or notes:`);
+      const key = parseProfileKey(m[1], at);
+      if (!PROFILE_SECTIONS.includes(key)) throw new Error(`${at}: unknown top-level key ${JSON.stringify(key)} (only game: and notes:)`);
+      if (seenSections.has(key)) throw new Error(`${at}: duplicate key ${key}`);
+      const v = parseProfileValueText(m[2], at);
+      if (v.kind !== 'empty' && v.kind !== 'map') throw new Error(`${at}: ${key} must be a map`);
+      seenSections.add(key);
+      section = key;
+      continue;
+    }
+    if (!section) throw new Error(`${at}: content before game: or notes:`);
+    const isItem = body === '-' || body.startsWith('- ');
+    if (indent === 2 && !isItem) {
+      close();
+      const m = body.match(PROFILE_KEY_LINE);
+      if (!m) throw new Error(`${at}: expected key: value`);
+      const key = parseProfileKey(m[1], at);
+      if (!PROFILE_KEY_RE.test(key) || key.length > PROFILE_KEY_MAX || key === '__proto__') throw new Error(`${at}: bad key ${JSON.stringify(key)}`);
+      if (Object.prototype.hasOwnProperty.call(out[section], key)) throw new Error(`${at}: duplicate key ${key}`);
+      const v = parseProfileValueText(m[2], at);
+      if (v.kind === 'empty') { entry = { key, pending: true }; out[section][key] = null; continue; }
+      out[section][key] = v.kind === 'list' ? [] : v.kind === 'map' ? {} : v.value;
+      entry = null;
+      continue;
+    }
+    if ((indent === 2 && isItem) || indent === 4) {
+      if (!entry) throw new Error(`${at}: ${indent === 4 ? 'nesting deeper than one level' : 'list item outside a list'}`);
+      if (isItem) {
+        if (entry.kind === 'map') throw new Error(`${at}: cannot mix list items and keys`);
+        if (entry.listIndent != null && entry.listIndent !== indent) throw new Error(`${at}: inconsistent list indentation`);
+        const rest = body === '-' ? '' : body.slice(2);
+        if (/^-(?:\s|$)/.test(rest.trim()) || PROFILE_KEY_LINE.test(rest.trim())) throw new Error(`${at}: list items must be scalars`);
+        const v = parseProfileValueText(rest, at);
+        if (v.kind === 'list' || v.kind === 'map') throw new Error(`${at}: list items must be scalars`);
+        if (entry.pending) { out[section][entry.key] = []; entry.pending = false; entry.kind = 'list'; entry.listIndent = indent; }
+        out[section][entry.key].push(v.kind === 'empty' ? null : v.value);
+        continue;
+      }
+      if (entry.kind === 'list') throw new Error(`${at}: cannot mix list items and keys`);
+      const m = body.match(PROFILE_KEY_LINE);
+      if (!m) throw new Error(`${at}: expected key: value`);
+      const key = parseProfileKey(m[1], at);
+      checkNestedKey(key, at);
+      if (entry.pending) { out[section][entry.key] = {}; entry.pending = false; entry.kind = 'map'; }
+      const map = out[section][entry.key];
+      if (Object.prototype.hasOwnProperty.call(map, key)) throw new Error(`${at}: duplicate key ${key}`);
+      const v = parseProfileValueText(m[2], at);
+      if (v.kind === 'list' || v.kind === 'map') throw new Error(`${at}: nesting deeper than one level`);
+      map[key] = v.kind === 'empty' ? null : v.value;
+      nested = key;
+      continue;
+    }
+    if (indent > 4 && nested !== null) throw new Error(`${at}: nesting deeper than one level`);
+    throw new Error(`${at}: bad indentation (two spaces per level)`);
+  }
+  close();
+  return out;
+}
+
 function createMemoryStore(rootDir) {
   return {
     // The single choke point: list/remember/recall/setPinned/forget all build
@@ -130,7 +384,7 @@ function createMemoryStore(rootDir) {
       catch { return []; }
       const out = [];
       for (const f of files) {
-        if (!f.endsWith('.md')) continue;
+        if (!f.endsWith('.md') || f === `${PROFILE_ID}.md`) continue;
         const raw = readUnitFile(path.join(dir, f));
         if (raw === null) continue;
         try {
@@ -171,6 +425,7 @@ function createMemoryStore(rootDir) {
     },
     update(agent, id, { text } = {}) {
       if (!MEMORY_AGENT_RE.test(agent || '')) return { ok: false, error: `invalid agent name: ${agent}` };
+      if (String(id) === PROFILE_ID) return { ok: false, error: PROFILE_NOT_UNIT };
       if (!MEMORY_ID_RE.test(String(id || ''))) return { ok: false, error: `invalid unit id: ${id}` };
       const next = String(text ?? '').trim();
       if (!next) return { ok: false, error: 'empty memory text' };
@@ -231,9 +486,66 @@ function createMemoryStore(rootDir) {
     },
     forget(agent, id) {
       if (!MEMORY_AGENT_RE.test(agent || '')) throw new Error(`invalid agent name: ${agent}`);
+      if (String(id) === PROFILE_ID) throw new Error(PROFILE_NOT_UNIT);
       if (!MEMORY_ID_RE.test(String(id || ''))) throw new Error(`invalid unit id: ${id}`);
       try { fs.unlinkSync(this._file(agent, id)); }
       catch { throw new Error(`no unit ${id}`); }
+    },
+    _readProfile(agent) {
+      const raw = readUnitFile(this._file(agent, PROFILE_ID));
+      if (raw === null) return null;
+      const { meta, body } = parseMemoryUnit(raw);
+      return { profile: parseProfileYaml(body), updatedAt: meta.updated_at || null };
+    },
+    _profileView(stored) {
+      if (!stored) return { ok: true, profile: null };
+      const yaml = serializeProfile(stored.profile);
+      return { ok: true, profile: stored.profile, yaml, bytes: Buffer.byteLength(yaml), updatedAt: stored.updatedAt };
+    },
+    profileGet(agent) {
+      if (!MEMORY_AGENT_RE.test(agent || '')) return { ok: false, error: `invalid agent name: ${agent}` };
+      try { return this._profileView(this._readProfile(agent)); }
+      catch (e) { return { ok: false, error: `stored profile unreadable: ${e.message}` }; }
+    },
+    profileSet(agent, input, { merge = true } = {}) {
+      if (!MEMORY_AGENT_RE.test(agent || '')) return { ok: false, error: `invalid agent name: ${agent}` };
+      try { checkProfileInput(input); }
+      catch (e) { return { ok: false, error: e.message }; }
+      let current;
+      try { current = merge ? this._readProfile(agent) : null; }
+      catch (e) { return { ok: false, error: `stored profile unreadable: ${e.message}` }; }
+      const base = current ? current.profile : { game: {}, notes: {} };
+      const next = { game: { ...base.game }, notes: { ...base.notes } };
+      for (const section of PROFILE_SECTIONS) {
+        const src = input[section];
+        if (src === undefined) continue;
+        for (const [k, v] of Object.entries(src)) {
+          if (merge && v === null) delete next[section][k];
+          else next[section][k] = cloneProfileValue(v);
+        }
+      }
+      const yaml = serializeProfile(next);
+      if (!yaml) {
+        const gone = this.profileDelete(agent);
+        return gone.ok ? { ok: true, profile: null } : gone;
+      }
+      const bytes = Buffer.byteLength(yaml);
+      if (bytes > PROFILE_CAP) return { ok: false, error: `profile exceeds ${PROFILE_CAP} bytes (${bytes})` };
+      const updatedAt = new Date().toISOString();
+      const doc = ['---', `id: ${PROFILE_ID}`, `type: ${PROFILE_ID}`, `updated_at: ${updatedAt}`, '---', '', yaml].join('\n');
+      fs.mkdirSync(this._dir(agent), { recursive: true, mode: 0o700 });
+      atomicWriteFileSync(this._file(agent, PROFILE_ID), doc);
+      return this._profileView({ profile: next, updatedAt });
+    },
+    profileDelete(agent) {
+      if (!MEMORY_AGENT_RE.test(agent || '')) return { ok: false, error: `invalid agent name: ${agent}` };
+      try {
+        fs.unlinkSync(this._file(agent, PROFILE_ID));
+        return { ok: true, existed: true };
+      } catch (e) {
+        if (e && e.code === 'ENOENT') return { ok: true, existed: false };
+        return { ok: false, error: e.message };
+      }
     },
   };
 }
@@ -433,5 +745,6 @@ function composeDigest(units, opts) {
 
 module.exports = {
   createMemoryStore, composeDigest, digestTiers, serializeMemoryUnit, parseMemoryUnit,
+  parseProfileYaml, serializeProfile, PROFILE_CAP,
   MEMORY_ID_RE, DIGEST_BUDGET, OPERATOR_PIN_CAP, RECENT_BODY_CAP, fmtAge,
 };

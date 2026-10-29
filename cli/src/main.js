@@ -24,11 +24,13 @@ const { parse } = require('./args');
 
 // Parser option spec shared by all verbs (a verb ignores flags it doesn't use).
 const PARSE_OPTS = {
-  booleans: ['force', 'fresh', 'fork', 'restart', 'detail', 'verbose', 'dry-run', 'no-enter', 'raw', 'wait', 'pty', 'no-ctx', 'keep-ctx', 'keep-data', 'no-wirescope', 'use-bedrock', 'follow', 'read-only', 'no-open', 'probe-http', 'force-conflicts', 'all-workspaces', 'docker', 'helm', 'fargate', 'current', 'import', 'test', 'versions', 'help', 'version', 'timestamps'],
+  booleans: ['force', 'fresh', 'fork', 'restart', 'detail', 'verbose', 'dry-run', 'no-enter', 'raw', 'wait', 'pty', 'no-ctx', 'keep-ctx', 'keep-data', 'no-wirescope', 'use-bedrock', 'follow', 'read-only', 'no-open', 'probe-http', 'force-conflicts', 'all-workspaces', 'docker', 'helm', 'fargate', 'current', 'import', 'test', 'versions', 'help', 'version', 'timestamps', 'replace'],
   multi: ['arg', 'ssh-opt', 'volume', 'env', 'set', 'values', 'param'],
   greedy: ['tunnel'],
   aliases: { h: 'help', V: 'version', f: 'follow', o: 'output', n: 'workspace', A: 'all-workspaces', q: 'query', 'remote-port': 'remotePort' },
 };
+
+const PATCH_PARSE_OPTS = { ...PARSE_OPTS, aliases: { ...PARSE_OPTS.aliases, f: 'filename' } };
 
 // Wire verbs and their handler.
 const WIRE_VERBS = {
@@ -173,6 +175,7 @@ async function run(argv, io = {}) {
   let flags;
   try {
     flags = parse(argv, PARSE_OPTS);
+    if (flags._[0] === 'patch') flags = parse(argv, PATCH_PARSE_OPTS);
   } catch (e) {
     writeErr(`clodexctl: ${e.message}\n`);
     return e instanceof CliError ? e.exitCode : EXIT.USAGE;

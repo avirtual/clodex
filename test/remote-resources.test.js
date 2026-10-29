@@ -328,6 +328,18 @@ function subresourceFixture() {
         calls.push({ route: 'memory', name });
         return name === 'ghost' ? { ok: false, code: 404, error: 'Session not found' } : { ok: true, name, units: [], brief: null };
       },
+      getProfile: (name) => {
+        calls.push({ route: 'profileGet', name });
+        return name === 'ghost' ? { ok: false, code: 404, error: 'Session not found' } : { ok: true, name, profile: null, yaml: null, bytes: 0, updatedAt: null };
+      },
+      setProfile: (name, input, opts) => {
+        calls.push({ route: 'profileSet', name, input, opts });
+        return name === 'ghost' ? { ok: false, code: 404, error: 'Session not found' } : { ok: true, name, profile: { game: {}, notes: {} }, yaml: '', bytes: 0, updatedAt: 'x' };
+      },
+      deleteProfile: (name) => {
+        calls.push({ route: 'profileDelete', name });
+        return name === 'ghost' ? { ok: false, code: 404, error: 'Session not found' } : { ok: true, existed: false };
+      },
       setClientToken: (name, token) => {
         calls.push({ route: 'client-token', name });
         return name === 'ghost' ? { ok: false, code: 404, error: 'Session not found' } : { ok: true, set: token != null };
@@ -354,6 +366,12 @@ const SUB_WALK = {
   sleep: { post: { method: 'POST' } },
   wake: { post: { method: 'POST' } },
   memory: { get: { method: 'GET' } },
+  'memory/profile': {
+    get: { method: 'GET' },
+    put: { method: 'PUT', body: () => JSON.stringify({ game: { level: 1 } }) },
+    patch: { method: 'PATCH', body: () => JSON.stringify({ notes: { tip: 'x' } }) },
+    delete: { method: 'DELETE' },
+  },
   'client-token': { put: { method: 'PUT', body: () => JSON.stringify({ token: 'k'.repeat(16) }) } },
   describe: { get: { method: 'GET' } },
 };
@@ -408,13 +426,14 @@ test('RESOURCES: every (resource, verb) answers on a fully-injected node, and ev
     'sessions/control.post', 'sessions/input.post', 'sessions/resize.post', 'sessions/dm.post',
     'sessions/restart.post', 'sessions/args.get', 'sessions/args.patch', 'sessions/skills.get',
     'sessions/skills.patch', 'sessions/sleep.post', 'sessions/wake.post', 'sessions/memory.get',
+    'sessions/memory/profile.get', 'sessions/memory/profile.put', 'sessions/memory/profile.patch', 'sessions/memory/profile.delete',
     'sessions/client-token.put', 'sessions/describe.get', 'sessions/attach.get', 'workspaces.list',
     'peers.list', 'peers.get', 'teams.list', 'teams.get', 'tickets.list', 'tickets.get',
     'sandboxes.list', 'sandboxes.get', 'agents.list', 'agents.get',
     'docs.list', 'docs.get', 'worktrees.list', 'catalogs.get',
     'node/logs.get',
   ], 'the walk must visit every shipped row — an empty or shortened walk passes vacuously');
-  assert.strictEqual(seen.length, 36, 'the walk entered 18 resource verbs, the sessions delete, and the 17 session subresource verbs');
+  assert.strictEqual(seen.length, 40, 'the walk entered 18 resource verbs, the sessions delete, and the 21 session subresource verbs');
   assert.strictEqual(RESOURCES.length, 11, 'the walk covered fewer than the 11 shipped resources');
 });
 
@@ -848,7 +867,7 @@ test('subresource gating: a node with the attach/control callbacks nulled omits 
     const doc = JSON.parse((await req(port, '/api/resources')).body);
     const sessions = doc.resources.find((r) => r.name === 'sessions');
     assert.deepStrictEqual(
-      Object.keys(sessions.subresources), ['transcript', 'query', 'dm', 'restart', 'args', 'skills', 'sleep', 'wake', 'memory', 'client-token', 'describe'],
+      Object.keys(sessions.subresources), ['transcript', 'query', 'dm', 'restart', 'args', 'skills', 'sleep', 'wake', 'memory', 'memory/profile', 'client-token', 'describe'],
       'the document advertises a subresource this node cannot serve',
     );
     assert.strictEqual((await req(port, '/api/sessions/alice/attach')).status, 501);
@@ -1792,5 +1811,115 @@ test('GET .../describe: pendingMail counts parked deliveries and ignores claim e
     fs.mkdirSync(path.join(dir, '.claims'));
     const body = JSON.parse((await req(port, '/api/sessions/stream1/describe')).body);
     assert.strictEqual(body.activity.pendingMail, 2);
+  });
+});
+
+async function withProfileNode(fn) {
+  const { createMemoryStore } = require('../memory-store');
+  const made = makeDeps();
+  const { deps } = made;
+  const store = createMemoryStore(mkTmpRoot('clodex-profile-api-'));
+  const persisted = {
+    asst: { name: 'asst', type: 'claude', class: 'assistant', cwd: '/w/asst', workspaceId: 'ws-alpha' },
+    plain: { name: 'plain', type: 'claude', cwd: '/w/plain', workspaceId: 'ws-alpha' },
+  };
+  deps.manager.sessions.set('asst', { name: 'asst', type: 'claude', agentType: 'claude', cwd: '/w/asst', workspaceId: 'ws-alpha', io: 'stream' });
+  deps.getPersistence = () => ({ get: (n) => persisted[n], list: () => Object.values(persisted), setStripLevel: () => {} });
+  deps.getMemoryStore = () => store;
+  const s = new RemoteServer(captureOptions(deps));
+  await s.start();
+  try { return await fn(s.port, store); } finally { s.stop(); }
+}
+
+const JSON_HDR = { 'content-type': 'application/json' };
+const PROFILE_URL = '/api/sessions/asst/memory/profile';
+
+test('memory/profile: GET with none is profile null (JSON) and 204 (YAML)', async () => {
+  await withProfileNode(async (port) => {
+    const r = await req(port, PROFILE_URL);
+    assert.strictEqual(r.status, 200, r.body);
+    assert.deepStrictEqual(JSON.parse(r.body), { ok: true, name: 'asst', profile: null, yaml: null, bytes: 0, updatedAt: null });
+    const y = await req(port, PROFILE_URL, { headers: { accept: 'text/yaml' } });
+    assert.strictEqual(y.status, 204);
+    assert.strictEqual(y.body, '');
+  });
+});
+
+test('memory/profile: PUT JSON then GET Accept text/yaml returns the canonical text', async () => {
+  await withProfileNode(async (port) => {
+    const put = await req(port, PROFILE_URL, { method: 'PUT', headers: JSON_HDR, body: JSON.stringify({ notes: { tip: 'carrots' }, game: { name: 'Bob', level: 4, horses: { Star: 'bay' } } }) });
+    assert.strictEqual(put.status, 200, put.body);
+    const body = JSON.parse(put.body);
+    const yaml = 'game:\n  name: Bob\n  level: 4\n  horses:\n    Star: bay\nnotes:\n  tip: carrots\n';
+    assert.deepStrictEqual({ ...body, updatedAt: typeof body.updatedAt }, {
+      ok: true, name: 'asst', profile: { game: { name: 'Bob', level: 4, horses: { Star: 'bay' } }, notes: { tip: 'carrots' } },
+      yaml, bytes: Buffer.byteLength(yaml), updatedAt: 'string',
+    });
+    const y = await req(port, PROFILE_URL, { headers: { accept: 'text/yaml' } });
+    assert.strictEqual(y.status, 200);
+    assert.strictEqual(y.body, yaml);
+    assert.deepStrictEqual(JSON.parse((await req(port, PROFILE_URL)).body), body, 'GET serves the PUT reply shape');
+  });
+});
+
+test('memory/profile: a text/yaml body is parsed by the strict parser and merged; a bad one is a 400', async () => {
+  await withProfileNode(async (port) => {
+    await req(port, PROFILE_URL, { method: 'PUT', headers: JSON_HDR, body: JSON.stringify({ game: { name: 'Bob', level: 1 } }) });
+    const put = await req(port, PROFILE_URL, { method: 'PUT', headers: { 'content-type': 'text/yaml' }, body: 'game:\n  level: 2\nnotes:\n  tags:\n    - a\n' });
+    assert.strictEqual(put.status, 200, put.body);
+    assert.deepStrictEqual(JSON.parse(put.body).profile, { game: { name: 'Bob', level: 2 }, notes: { tags: ['a'] } });
+    const bad = await req(port, PROFILE_URL, { method: 'PUT', headers: { 'content-type': 'text/yaml' }, body: 'game:\n  a: &x 1\n' });
+    assert.strictEqual(bad.status, 400);
+    assert.match(JSON.parse(bad.body).error, /^bad profile YAML: line 2: anchors and aliases are not allowed$/);
+  });
+});
+
+test('memory/profile: merge=0 replaces the body; a bad merge value, an over-cap write and a bad key are 400s', async () => {
+  await withProfileNode(async (port) => {
+    await req(port, PROFILE_URL, { method: 'PUT', headers: JSON_HDR, body: JSON.stringify({ game: { name: 'Bob' }, notes: { tip: 'x' } }) });
+    const r = await req(port, `${PROFILE_URL}?merge=0`, { method: 'PUT', headers: JSON_HDR, body: JSON.stringify({ game: { level: 9 } }) });
+    assert.strictEqual(r.status, 200, r.body);
+    assert.deepStrictEqual(JSON.parse(r.body).profile, { game: { level: 9 }, notes: {} });
+    assert.strictEqual((await req(port, `${PROFILE_URL}?merge=yes`, { method: 'PUT', headers: JSON_HDR, body: '{}' })).status, 400);
+    const big = await req(port, PROFILE_URL, { method: 'PUT', headers: JSON_HDR, body: JSON.stringify({ game: { k: 'a'.repeat(5000) } }) });
+    assert.strictEqual(big.status, 400);
+    assert.match(JSON.parse(big.body).error, /^profile exceeds 4096 bytes \(\d+\)$/);
+    const key = await req(port, PROFILE_URL, { method: 'PATCH', headers: JSON_HDR, body: JSON.stringify({ game: { Bad: 1 } }) });
+    assert.strictEqual(key.status, 400);
+  });
+});
+
+test('memory/profile: unknown seat 404, non-assistant 400, on every verb', async () => {
+  await withProfileNode(async (port) => {
+    for (const [method, body] of [['GET'], ['PUT', '{}'], ['DELETE']]) {
+      const headers = body ? JSON_HDR : {};
+      const miss = await req(port, '/api/sessions/nobody/memory/profile', { method, headers, body });
+      assert.strictEqual(miss.status, 404, `${method} ${miss.body}`);
+      assert.deepStrictEqual(JSON.parse(miss.body), { ok: false, code: 404, error: 'Session not found' });
+      const plain = await req(port, '/api/sessions/plain/memory/profile', { method, headers, body });
+      assert.strictEqual(plain.status, 400, `${method} ${plain.body}`);
+      assert.deepStrictEqual(JSON.parse(plain.body), { ok: false, code: 400, error: 'not an assistant seat' });
+    }
+  });
+});
+
+test('memory/profile: DELETE existed true then false', async () => {
+  await withProfileNode(async (port) => {
+    await req(port, PROFILE_URL, { method: 'PUT', headers: JSON_HDR, body: JSON.stringify({ game: { a: 1 } }) });
+    const first = await req(port, PROFILE_URL, { method: 'DELETE' });
+    assert.strictEqual(first.status, 200);
+    assert.deepStrictEqual(JSON.parse(first.body), { ok: true, existed: true });
+    assert.deepStrictEqual(JSON.parse((await req(port, PROFILE_URL, { method: 'DELETE' })).body), { ok: true, existed: false });
+  });
+});
+
+test('memory/profile: the assistant row carries memory.profile bytes and profileUpdatedAt', async () => {
+  await withProfileNode(async (port) => {
+    const before = JSON.parse((await req(port, '/api/sessions/asst')).body).session;
+    assert.deepStrictEqual(before.memory, { profile: 0, profileUpdatedAt: null });
+    const put = JSON.parse((await req(port, PROFILE_URL, { method: 'PUT', headers: JSON_HDR, body: JSON.stringify({ game: { name: 'Bob' } }) })).body);
+    const after = JSON.parse((await req(port, '/api/sessions/asst')).body).session;
+    assert.deepStrictEqual(after.memory, { profile: put.bytes, profileUpdatedAt: put.updatedAt });
+    assert.strictEqual(put.bytes, Buffer.byteLength('game:\n  name: Bob\n'));
   });
 });

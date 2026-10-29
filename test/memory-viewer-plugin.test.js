@@ -617,3 +617,17 @@ test("memory-viewer: a link to a SIBLING seat's memory is still refused after mi
       + 'so this is a refusal of the alias and not of the whole migrated store');
   } finally { cleanup(); }
 });
+
+test('memory-viewer: a seat profile beside a unit is not a unit (units and agents count only the unit)', async () => {
+  const { host, root, cleanup } = boot();
+  try {
+    writeUnit(root, 'asst', 'mem-1-aaaaaa');
+    fs.writeFileSync(path.join(root, 'asst', 'profile.md'), '---\nid: profile\ntype: profile\nupdated_at: 2026-10-29T00:00:00.000Z\n---\n\ngame:\n  name: Bob\n');
+    const units = await host.dispatch('memory-viewer', 'units', ['asst'], 'desktop');
+    assert.deepEqual(units.units.map((u) => u.id), ['mem-1-aaaaaa']);
+    const agents = await host.dispatch('memory-viewer', 'agents', [], 'desktop');
+    const row = agents.agents.find((a) => a.agent === 'asst' || a.name === 'asst');
+    assert.ok(row, `ENTER: asst listed in ${JSON.stringify(agents)}`);
+    assert.equal(row.count, 1);
+  } finally { cleanup(); }
+});

@@ -73,8 +73,11 @@ class WireClient {
   // (optional) is an AbortSignal — the caller can cut a hung request so its
   // socket is released and the process can exit (send --wait's hard ceiling).
   async _call(method, pathAndQuery, verb, jsonBody, opts) {
-    const init = { method, headers: this._headers(jsonBody != null ? { 'Content-Type': 'application/json' } : null) };
-    if (jsonBody != null) init.body = JSON.stringify(jsonBody);
+    const raw = opts && typeof opts.rawBody === 'string' ? opts.rawBody : null;
+    const ctype = raw != null ? (opts.contentType || 'text/plain') : jsonBody != null ? 'application/json' : null;
+    const init = { method, headers: this._headers(ctype ? { 'Content-Type': ctype } : null) };
+    if (raw != null) init.body = raw;
+    else if (jsonBody != null) init.body = JSON.stringify(jsonBody);
     if (opts && opts.signal) init.signal = opts.signal;
     const res = await this._fetch(pathAndQuery, init);
     const body = await this._body(res);

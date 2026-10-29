@@ -3786,6 +3786,7 @@ function createSessionManager(deps) {
       };
       const dropSeatDir = () => {
         this.dropReminders(name);
+        this._dropProfile(name);
         try {
           const r = removeSeat({ root: REGISTRY_DIR, name, fs });
           for (const f of r.failed) log.warn('session', `destroy ${name}: ${f.path} not removed (${f.error})`);
@@ -5132,9 +5133,20 @@ function createSessionManager(deps) {
       return 0;
     }
 
+    _dropProfile(name) {
+      if (!memoryStore || typeof memoryStore.profileDelete !== 'function') return;
+      try {
+        const out = memoryStore.profileDelete(name);
+        if (out && !out.ok) log.warn('session', `drop ${name}: profile not removed (${out.error})`);
+      } catch (e) {
+        log.warn('session', `drop ${name}: profile not removed (${e.message})`);
+      }
+    }
+
     forgetSeatFiles(name, rec) {
       try {
         if (rec && rec.class === 'assistant') {
+          this._dropProfile(name);
           const r = removeSeat({ root: REGISTRY_DIR, name, fs });
           for (const f of r.failed) log.warn('session', `forget ${name}: ${f.path} not removed (${f.error})`);
           return;

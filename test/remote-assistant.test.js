@@ -249,7 +249,7 @@ test('listSleepers / getSessions: only an archived, unmapped assistant is a slee
   const opts = captureOptions(h.deps);
   const sleeper = {
     name: 'avh-7', type: 'claude', io: 'stream', cwd: '/w', workspace: '', workspaceId: null, activityTs: null,
-    class: 'assistant', state: 'asleep', asleepAt: 2, sleepReason: null, template: null, sleep: null, cost: null, wakes: 0, stats: STATS,
+    class: 'assistant', state: 'asleep', asleepAt: 2, sleepReason: null, template: null, sleep: null, cost: null, wakes: 0, memory: { profile: 0, profileUpdatedAt: null }, stats: STATS,
   };
   assert.deepStrictEqual(opts.listSleepers(), [sleeper]);
   assert.deepStrictEqual(opts.getSleeper('avh-7'), sleeper);
@@ -261,7 +261,7 @@ test('listSleepers / getSessions: only an archived, unmapped assistant is a slee
   assert.strictEqual(co.getSleeper('avh-7'), null);
   assert.strictEqual(co.getSessions()[0].state, 'sleeping', 'a closing assistant is not reported awake');
   assert.deepStrictEqual(opts.getSessions(), [
-    { name: 'a1', type: 'claude', io: 'stream', cwd: '/a', workspace: '', workspaceId: null, activityTs: null, class: 'assistant', state: 'awake', template: null, sleep: null, cost: { usd: 0.5, turns: 3, at: 9, awakeMs: 7000 }, wakes: 2, stats: STATS },
+    { name: 'a1', type: 'claude', io: 'stream', cwd: '/a', workspace: '', workspaceId: null, activityTs: null, class: 'assistant', state: 'awake', template: null, sleep: null, cost: { usd: 0.5, turns: 3, at: 9, awakeMs: 7000 }, wakes: 2, memory: { profile: 0, profileUpdatedAt: null }, stats: STATS },
     { name: 'w1', type: 'codex', io: 'pty', cwd: '/q', workspace: '', workspaceId: null, activityTs: null, stats: STATS },
   ]);
 });
