@@ -229,3 +229,15 @@ test('an allowlist with memory but not profile is refused profile', async () => 
     assert.strictEqual(f.memoryStore.profileGet('p1').profile.notes.plan, undefined);
   } finally { f.cleanup(); }
 });
+
+test('set with a one-line value carrying U+2028 stores it and reads it back identically', async () => {
+  const f = mkFixture();
+  try {
+    seed(f);
+    await f.run('[agent:profile set k] line sep');
+    const view = f.memoryStore.profileGet('p1');
+    assert.strictEqual(view.ok, true, view.error);
+    assert.strictEqual(view.profile.notes.k, 'line sep');
+    assert.deepStrictEqual(f.acks, [`[agent:profile] notes.k set (${view.bytes} bytes)`]);
+  } finally { f.cleanup(); }
+});
