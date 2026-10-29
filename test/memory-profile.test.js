@@ -265,14 +265,16 @@ test('profileSet: strings the reader would alter or reject are quoted and read b
     ['bom', '﻿bom'],
     ['tab', 'tab\tin'],
     ['plain', 'plain'],
+    ['lone', 'x\uD800'],
   ];
-  const { store } = tmpStore();
+  const { store, dir } = tmpStore();
   const set = store.profileSet('alpha', { game: Object.fromEntries(rows) });
   assert.strictEqual(set.ok, true, set.error);
   const view = store.profileGet('alpha');
   assert.strictEqual(view.ok, true, view.error);
   for (const [k, v] of rows) assert.strictEqual(view.profile.game[k], v, `ENTER: ${k}`);
-  assert.strictEqual(view.yaml.split('\n').filter(Boolean).length, rows.length + 1);
+  const body = fs.readFileSync(path.join(dir, 'alpha', 'profile.md'), 'utf8').split('---\n')[2];
+  assert.strictEqual(body.split(/\r\n|[\n\r\u0085\u2028\u2029]/).filter(Boolean).length, rows.length + 1);
 });
 
 test('profileSet: a nested key carrying a line separator is refused before any write', () => {
@@ -285,14 +287,16 @@ test('profileSet: a nested key carrying a line separator is refused before any w
 
 test('serializeProfile: 2000 random strings round-trip exactly through the parser', () => {
   const alphabet = [...'&*!|>[]{}#:\'"\\ -?,%@`ab', '\t', '\u0085', ' ', ' ', ' ', ' ',
-    ' ', ' ', ' ', ' ', '　', '﻿'];
+    ' ', ' ', ' ', ' ', '　', '﻿', '\uD800', '\uDC00'];
   let seed = 20832083;
   const rand = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
   for (let i = 0; i < 2000; i++) {
     let s = '';
     const len = rand(13);
     for (let j = 0; j < len; j++) s += alphabet[rand(alphabet.length)];
-    const profile = { game: { v: s, l: [s], m: { k: s } }, notes: {} };
+    const m = { k: s };
+    if (s && !/[\u0000-\u001F\u007F\u0085\u2028\u2029]/.test(s)) m[s] = i;
+    const profile = { game: { v: s, l: [s], m }, notes: {} };
     let back;
     try { back = parseProfileYaml(serializeProfile(profile)); }
     catch (e) { assert.fail(`case ${i} ${JSON.stringify(s)}: ${e.message}`); }
@@ -307,11 +311,12 @@ test('profileSet: a serialisation that would not read back identically is refuse
   const before = fs.readFileSync(file, 'utf8');
   const stubs = [
     ['rejected', () => 'game:\n  k: line sep\n', /^profile value cannot be represented: line 2: expected key: value$/],
-    ['altered', () => 'game:\n  k: x\n', /^profile value cannot be represented: game\.k would not read back identically$/],
+    ['altered', () => 'game:\n  k: x\n', /^profile value cannot be represented: game\.k would not read back identically$/, 'x '],
+    ['encoded', () => 'game:\n  k: x\uD800\n', /^profile value cannot be represented: game\.k would not read back identically$/, 'x\uD800'],
   ];
-  for (const [name, serializeProfileFn, error] of stubs) {
+  for (const [name, serializeProfileFn, error, value = 'x '] of stubs) {
     const stubbed = createMemoryStore(dir, { serializeProfileFn });
-    const out = stubbed.profileSet('alpha', { game: { k: 'x ' } });
+    const out = stubbed.profileSet('alpha', { game: { k: value } });
     assert.strictEqual(out.ok, false, name);
     assert.match(out.error, error, name);
     assert.strictEqual(fs.readFileSync(file, 'utf8'), before, name);

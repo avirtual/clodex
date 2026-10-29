@@ -127,6 +127,7 @@ function profileNeedsQuote(s) {
     || /\s#/.test(s)
     || /^\s|\s$/.test(s)
     || PROFILE_LINE_BREAKING.test(s)
+    || /[\uD800-\uDFFF]/u.test(s)
     || PROFILE_CTRL.test(s);
 }
 
@@ -382,9 +383,9 @@ function profileDeepEqual(a, b) {
   return ka.length === kb.length && ka.every((k, i) => k === kb[i] && profileDeepEqual(a[k], b[k]));
 }
 
-function profileRoundTripError(yaml, profile) {
+function profileRoundTripError(doc, profile) {
   let back;
-  try { back = parseProfileYaml(yaml); }
+  try { back = parseProfileYaml(parseMemoryUnit(Buffer.from(doc, 'utf8').toString('utf8')).body); }
   catch (e) { return e.message; }
   for (const section of PROFILE_SECTIONS) {
     for (const k of new Set([...Object.keys(profile[section] || {}), ...Object.keys(back[section])])) {
@@ -581,10 +582,10 @@ function createMemoryStore(rootDir, { serializeProfileFn = serializeProfile } = 
         const baseNotes = Buffer.byteLength(serializeProfile({ notes: base.notes }));
         if (notesBytes > PROFILE_NOTES_CAP && notesBytes > baseNotes) return { ok: false, error: `notes exceed ${PROFILE_NOTES_CAP} bytes (${notesBytes}) — drop a note first` };
       }
-      const lost = profileRoundTripError(yaml, next);
-      if (lost) return { ok: false, error: `profile value cannot be represented: ${lost}` };
       const updatedAt = new Date().toISOString();
       const doc = ['---', `id: ${PROFILE_ID}`, `type: ${PROFILE_ID}`, `updated_at: ${updatedAt}`, '---', '', yaml].join('\n');
+      const lost = profileRoundTripError(doc, next);
+      if (lost) return { ok: false, error: `profile value cannot be represented: ${lost}` };
       fs.mkdirSync(this._dir(agent), { recursive: true, mode: 0o700 });
       atomicWriteFileSync(this._file(agent, PROFILE_ID), doc);
       return this._profileView({ profile: next, updatedAt });
