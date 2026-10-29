@@ -1937,6 +1937,9 @@ test('a peer-API profile write or delete rebakes the live seat digest; a refused
   try {
     assert.strictEqual(opts.setProfile('asst', { data: { notes: { mood: 'calm' } } }).ok, true);
     assert.strictEqual(opts.setProfile('asst', { yaml: 'bogus: 1\n' }).ok, false);
+    const over = opts.setProfile('asst', { data: { notes: { big: 'x'.repeat(5000) } } });
+    assert.strictEqual(over.ok, false);
+    assert.match(over.error, /profile exceeds 4096 bytes/);
     assert.strictEqual(opts.deleteProfile('asst').ok, true);
     assert.deepStrictEqual(rebaked, ['asst', 'asst']);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
