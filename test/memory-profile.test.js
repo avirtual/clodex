@@ -252,3 +252,68 @@ test('profileSet: an empty result deletes the profile, so empty and none are one
   assert.deepStrictEqual(store.profileSet('alpha', { game: { a: null } }), { ok: true, profile: null }, 'a merge that drops the last key');
   assert.deepStrictEqual(store.profileGet('alpha'), { ok: true, profile: null });
 });
+
+test('profileSet: strings the reader would alter or reject are quoted and read back identically, one line per key', () => {
+  const rows = [
+    ['ls', 'line sep'],
+    ['ps', ' x'],
+    ['nel', 'x\u0085y'],
+    ['nbsp', ' &x'],
+    ['ideo', 'x　'],
+    ['trail', 'x '],
+    ['lead', ' x'],
+    ['bom', '﻿bom'],
+    ['tab', 'tab\tin'],
+    ['plain', 'plain'],
+  ];
+  const { store } = tmpStore();
+  const set = store.profileSet('alpha', { game: Object.fromEntries(rows) });
+  assert.strictEqual(set.ok, true, set.error);
+  const view = store.profileGet('alpha');
+  assert.strictEqual(view.ok, true, view.error);
+  for (const [k, v] of rows) assert.strictEqual(view.profile.game[k], v, `ENTER: ${k}`);
+  assert.strictEqual(view.yaml.split('\n').filter(Boolean).length, rows.length + 1);
+});
+
+test('profileSet: a nested key carrying a line separator is refused before any write', () => {
+  const { store, dir } = tmpStore();
+  const out = store.profileSet('alpha', { notes: { m: { 'a b': 1 } } });
+  assert.strictEqual(out.ok, false);
+  assert.match(out.error, /bad key/);
+  assert.strictEqual(fs.existsSync(path.join(dir, 'alpha', 'profile.md')), false);
+});
+
+test('serializeProfile: 2000 random strings round-trip exactly through the parser', () => {
+  const alphabet = [...'&*!|>[]{}#:\'"\\ -?,%@`ab', '\t', '\u0085', ' ', ' ', ' ', ' ',
+    ' ', ' ', ' ', ' ', '　', '﻿'];
+  let seed = 20832083;
+  const rand = (n) => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+  for (let i = 0; i < 2000; i++) {
+    let s = '';
+    const len = rand(13);
+    for (let j = 0; j < len; j++) s += alphabet[rand(alphabet.length)];
+    const profile = { game: { v: s, l: [s], m: { k: s } }, notes: {} };
+    let back;
+    try { back = parseProfileYaml(serializeProfile(profile)); }
+    catch (e) { assert.fail(`case ${i} ${JSON.stringify(s)}: ${e.message}`); }
+    assert.deepStrictEqual(back, profile, `case ${i} ${JSON.stringify(s)}`);
+  }
+});
+
+test('profileSet: a serialisation that would not read back identically is refused and the file is unchanged', () => {
+  const { store, dir } = tmpStore();
+  assert.strictEqual(store.profileSet('alpha', { game: { k: 'keep' } }).ok, true);
+  const file = path.join(dir, 'alpha', 'profile.md');
+  const before = fs.readFileSync(file, 'utf8');
+  const stubs = [
+    ['rejected', () => 'game:\n  k: line sep\n', /^profile value cannot be represented: line 2: expected key: value$/],
+    ['altered', () => 'game:\n  k: x\n', /^profile value cannot be represented: game\.k would not read back identically$/],
+  ];
+  for (const [name, serializeProfileFn, error] of stubs) {
+    const stubbed = createMemoryStore(dir, { serializeProfileFn });
+    const out = stubbed.profileSet('alpha', { game: { k: 'x ' } });
+    assert.strictEqual(out.ok, false, name);
+    assert.match(out.error, error, name);
+    assert.strictEqual(fs.readFileSync(file, 'utf8'), before, name);
+  }
+});

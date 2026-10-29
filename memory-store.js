@@ -106,6 +106,7 @@ const PROFILE_NOT_UNIT = 'profile is not a unit';
 const PROFILE_TYPE_WORDS = /^(?:true|false|null|yes|no|on|off|y|n|~|[-+]?\.inf|\.nan)$/i;
 const PROFILE_LEAD_SPECIAL = /^[-?:,[\]{}#&*!|>'"%@` ]/;
 const PROFILE_CTRL = /[\u0000-\u001F\u007F]/;
+const PROFILE_LINE_BREAKING = /[\u0085\u2028\u2029]/;
 const PROFILE_PLAIN_NESTED_KEY = /^[A-Za-z0-9_](?:[A-Za-z0-9 _.'-]*[A-Za-z0-9_.'-])?$/;
 const PROFILE_NUMBER = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][-+]?\d+)?$/;
 const PROFILE_KEY_LINE = /^("(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s"'#][^:]*?):(?:[ \t]+(.*))?$/;
@@ -123,12 +124,18 @@ function profileNeedsQuote(s) {
     || PROFILE_LEAD_SPECIAL.test(s)
     || /[ :]$/.test(s)
     || s.includes(': ')
-    || s.includes(' #')
+    || /\s#/.test(s)
+    || /^\s|\s$/.test(s)
+    || PROFILE_LINE_BREAKING.test(s)
     || PROFILE_CTRL.test(s);
 }
 
 function profileQuote(s) {
-  return JSON.stringify(s).replace(/\u007F/g, '\\u007f');
+  return JSON.stringify(s)
+    .replace(/\u007F/g, '\\u007f')
+    .replace(/\u0085/g, '\\u0085')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
 }
 
 function profileScalarText(v) {
@@ -154,7 +161,7 @@ function isProfileScalar(v) {
 }
 
 function checkNestedKey(k, where) {
-  if (typeof k !== 'string' || k.length === 0 || k.length > PROFILE_KEY_MAX || PROFILE_CTRL.test(k) || k === '__proto__') {
+  if (typeof k !== 'string' || k.length === 0 || k.length > PROFILE_KEY_MAX || PROFILE_CTRL.test(k) || PROFILE_LINE_BREAKING.test(k) || k === '__proto__') {
     throw new Error(`${where}: bad key ${JSON.stringify(k)}`);
   }
 }
@@ -366,7 +373,28 @@ function parseProfileValue(text) {
   return value;
 }
 
-function createMemoryStore(rootDir) {
+function profileDeepEqual(a, b) {
+  if (a === b) return true;
+  if (Array.isArray(a)) return Array.isArray(b) && a.length === b.length && a.every((x, i) => profileDeepEqual(x, b[i]));
+  if (!isPlainObject(a) || !isPlainObject(b)) return false;
+  const ka = Object.keys(a);
+  const kb = Object.keys(b);
+  return ka.length === kb.length && ka.every((k, i) => k === kb[i] && profileDeepEqual(a[k], b[k]));
+}
+
+function profileRoundTripError(yaml, profile) {
+  let back;
+  try { back = parseProfileYaml(yaml); }
+  catch (e) { return e.message; }
+  for (const section of PROFILE_SECTIONS) {
+    for (const k of new Set([...Object.keys(profile[section] || {}), ...Object.keys(back[section])])) {
+      if (!profileDeepEqual((profile[section] || {})[k], back[section][k])) return `${section}.${k} would not read back identically`;
+    }
+  }
+  return null;
+}
+
+function createMemoryStore(rootDir, { serializeProfileFn = serializeProfile } = {}) {
   return {
     // The single choke point: list/remember/recall/setPinned/forget all build
     // their paths from here, so one containment check covers the store rather
@@ -541,7 +569,7 @@ function createMemoryStore(rootDir) {
           else next[section][k] = cloneProfileValue(v);
         }
       }
-      const yaml = serializeProfile(next);
+      const yaml = serializeProfileFn(next);
       if (!yaml) {
         const gone = this.profileDelete(agent);
         return gone.ok ? { ok: true, profile: null } : gone;
@@ -553,6 +581,8 @@ function createMemoryStore(rootDir) {
         const baseNotes = Buffer.byteLength(serializeProfile({ notes: base.notes }));
         if (notesBytes > PROFILE_NOTES_CAP && notesBytes > baseNotes) return { ok: false, error: `notes exceed ${PROFILE_NOTES_CAP} bytes (${notesBytes}) — drop a note first` };
       }
+      const lost = profileRoundTripError(yaml, next);
+      if (lost) return { ok: false, error: `profile value cannot be represented: ${lost}` };
       const updatedAt = new Date().toISOString();
       const doc = ['---', `id: ${PROFILE_ID}`, `type: ${PROFILE_ID}`, `updated_at: ${updatedAt}`, '---', '', yaml].join('\n');
       fs.mkdirSync(this._dir(agent), { recursive: true, mode: 0o700 });
