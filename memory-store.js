@@ -550,7 +550,8 @@ function createMemoryStore(rootDir) {
       if (bytes > PROFILE_CAP) return { ok: false, error: `profile exceeds ${PROFILE_CAP} bytes (${bytes})` };
       if (seat === true) {
         const notesBytes = Buffer.byteLength(serializeProfile({ notes: next.notes }));
-        if (notesBytes > PROFILE_NOTES_CAP) return { ok: false, error: `notes exceed ${PROFILE_NOTES_CAP} bytes (${notesBytes}) — drop a note first` };
+        const baseNotes = Buffer.byteLength(serializeProfile({ notes: base.notes }));
+        if (notesBytes > PROFILE_NOTES_CAP && notesBytes > baseNotes) return { ok: false, error: `notes exceed ${PROFILE_NOTES_CAP} bytes (${notesBytes}) — drop a note first` };
       }
       const updatedAt = new Date().toISOString();
       const doc = ['---', `id: ${PROFILE_ID}`, `type: ${PROFILE_ID}`, `updated_at: ${updatedAt}`, '---', '', yaml].join('\n');
