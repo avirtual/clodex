@@ -387,4 +387,4 @@ function claimParkedByKey(root, name, key) {
   return { ids, claimed };
 }
 
-module.exports = { parkDelivery, drainPending, rehomeOrphans, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, parkedTexts, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir, claimsDir, CLAIM_STALE_MS, RESERVED_SEAT_NAMES, LEGACY_CLAIM_RE, CLAIM_TAG_RE, claimTag, isReservedSeatName };
+module.exports = { isClaimEntry, parkDelivery, drainPending, rehomeOrphans, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, parkedTexts, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir, claimsDir, CLAIM_STALE_MS, RESERVED_SEAT_NAMES, LEGACY_CLAIM_RE, CLAIM_TAG_RE, claimTag, isReservedSeatName };

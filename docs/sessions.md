@@ -469,6 +469,13 @@ at `SNAPSHOT_MAX_BYTES` with the board truncated last-rows-first; the author's
 bytes above the `---` and the injected pointer line are unchanged. The short,
 Codex and write-failure paths type the body as before — no snapshot.
 
+From another node, `GET /api/sessions/:name/describe` (`describeSession` in
+remote-wiring.js, `clodexctl describe session X`) is the one assembled view of a
+seat: the row, the `/args` projection plus exec grant names (`null` when the
+seat has no persisted args), and activity — assistant turns and last-message ts
+from the same transcript source `getTranscript` reads, and the parked-delivery
+count under `pending/<name>`.
+
 ## 3a. Probes (scratch clones)
 
 `[agent:probe] <question + return shape>` … `[agent:end]` forks a research

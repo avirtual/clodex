@@ -37,7 +37,8 @@ thing a pod is in this analogy.
 The grammar is the same one kubectl trained you on — `<verb> <resource> [name]`
 — and so are the habits: `get` for a table, `describe` for the full object,
 `-o json` to pipe it. `describe` has no `-o json` here, exactly as kubectl's
-does not; use `get <resource> <name> -o json` for machine output.
+does not — except `describe session`, whose `-o json` prints the raw
+`/describe` body; elsewhere use `get <resource> <name> -o json` for machine output.
 
 ## A live terminal on a container in Fargate, from your laptop
 
@@ -297,7 +298,7 @@ adds the bracketed columns; `-o name` prints `<singular>/<id>` per line.
 
 | Resource | `get` columns (`-o wide` adds) | `describe` target |
 |---|---|---|
-| `sessions` | NAME TYPE ACTIVITY CWD [WORKSPACE] | `describe session <name>` — the row, every field |
+| `sessions` | NAME TYPE ACTIVITY CWD [WORKSPACE] | `describe session <name>` — `GET /api/sessions/:name/describe`: the row, every field, plus Capabilities (model, effort, io, tools, intents, MCP servers, prompts, plugins, exec grant names) and Activity (turns, last turn, pending mail, transcript path); `-o json` prints the raw body |
 | `workspaces` | ID NAME | `describe workspace <name>` |
 | `peers` | ID LABEL ONLINE HOST VERSION [URL, PLATFORM] | `describe peer <id>` — plus its sessions |
 | `teams` | NAME | `describe team <name>` — root, lead, roles, activity |

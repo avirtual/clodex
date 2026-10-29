@@ -155,6 +155,56 @@ function renderDescribe(obj) {
     .join('\n');
 }
 
+function modelOf(extraArgs) {
+  const argv = Array.isArray(extraArgs) ? extraArgs.map(String) : [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--model' && i + 1 < argv.length) return argv[i + 1];
+    if (argv[i].startsWith('--model=')) return argv[i].slice('--model='.length);
+  }
+  return null;
+}
+
+function listOr(v, empty = '-') {
+  return Array.isArray(v) && v.length ? v.join(', ') : empty;
+}
+
+function isoOf(ts) {
+  if (ts == null || ts === '') return '-';
+  const d = new Date(typeof ts === 'number' ? ts : String(ts));
+  return Number.isFinite(d.getTime()) ? d.toISOString() : String(ts);
+}
+
+function describeSession(body) {
+  const { session, capabilities: c, activity: a } = body || {};
+  const lines = ['Session', renderDescribe(session || {}), '', 'Capabilities'];
+  if (!c) {
+    lines.push('capabilities: unavailable (seat not live)');
+  } else {
+    const tools = Object.entries(c.effectiveTools || {}).map(([k, v]) => `${k}=${(v && v.value) || v}`);
+    const prompts = [c.systemPromptFile, ...(Array.isArray(c.appendPromptFiles) ? c.appendPromptFiles : [])].filter(Boolean);
+    lines.push(renderDescribe({
+      model: modelOf(c.extraArgs) || '-',
+      effort: c.effort || '-',
+      io: c.io || '-',
+      effectiveTools: listOr(tools),
+      disabledTools: listOr(c.disabledTools),
+      intents: Array.isArray(c.intents) ? listOr(c.intents) : 'all',
+      mcpServers: Array.isArray(c.mcpServers) ? listOr(c.mcpServers) : 'local-only',
+      prompts: listOr(prompts),
+      plugins: Array.isArray(c.plugins) ? listOr(c.plugins) : 'all',
+      execGrants: listOr(c.execGrants),
+    }));
+  }
+  const act = a || {};
+  lines.push('', 'Activity', renderDescribe({
+    turns: act.turns == null ? 0 : act.turns,
+    lastTurn: isoOf(act.lastTurnTs),
+    pendingMail: act.pendingMail == null ? 0 : act.pendingMail,
+    transcript: act.transcriptPath || '-',
+  }));
+  return lines.join('\n');
+}
+
 function describePeer(peer) {
   const { sessions, ...rest } = peer || {};
   const lines = [renderDescribe(rest), 'sessions:'];
@@ -247,6 +297,6 @@ module.exports = {
   renderPeers, renderPeersWide, renderTeams, renderTickets, renderTicketsWide, renderSandboxes,
   renderAgents, renderAgentsWide, renderDocs, renderDocHits, renderWorktrees, renderWorktreesWide,
   renderResources, renderDescribe,
-  describePeer, describeTeam, describeSandbox, describeAgent, describeDoc,
+  describeSession, describePeer, describeTeam, describeSandbox, describeAgent, describeDoc,
   renderTranscript, renderInfo, table, makePrinter,
 };

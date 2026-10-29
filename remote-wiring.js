@@ -16,6 +16,7 @@ const { withoutExecGrants, withoutLocalOnly } = require('./session-args');
 // knows only core's verbs, so it passes plugin verbs — which are forced
 // privileged — straight through to a remote caller's grant.
 const { withoutPrivilegedIntentsFor } = require('./intent-registry');
+const { isClaimEntry } = require('./pending-store');
 // Env scopes cross the wire on a create body — never trust the client: sanitize
 // server-side (drops invalid/denied/newline keys) before it reaches create().
 const { sanitizeFlat } = require('./env-scopes');
@@ -148,6 +149,58 @@ function createRemoteWiring(deps) {
     thumbnail,
   } = deps;
   const thumbPage = createThumbnailer(thumbnail, log);
+
+  function argsProjection(base) {
+    return {
+      ...withoutLocalOnly(base),
+      catalogs: {
+        agents: base.agentCatalog || [],
+        prompts: getPromptLibrary().list(),
+        claudeTools: CLAUDE_TOOLS,
+        proxyUrl: getUiSettings().get().proxyUrl,
+        proxyEnabled: getUiSettings().get().proxyEnabled,
+      },
+    };
+  }
+
+  function countParked(name) {
+    let entries;
+    try { entries = fs.readdirSync(path.join(REGISTRY_DIR, 'pending', name), { withFileTypes: true }); } catch { return 0; }
+    return entries.filter((e) => e.isFile() && e.name.endsWith('.json') && !e.name.startsWith('.') && !isClaimEntry(e.name)).length;
+  }
+
+  function describeSession(name) {
+    const sess = manager.sessions.get(name);
+    const live = !!(sess && !sess._dead && sess.agentType);
+    const entry = getPersistence().get(name);
+    if (!(sess && !sess._dead) && !entry) return { ok: false, error: 'Session not found' };
+    let messages = [];
+    let transcriptPath = null;
+    if (live) {
+      try { transcriptPath = fs.realpathSync(pathFor(REGISTRY_DIR, name, 'transcript')); } catch { transcriptPath = null; }
+      if (transcriptPath) { try { messages = cachedMessages(transcriptPath); } catch { messages = []; } }
+    } else if (entry && entry.class === 'assistant') {
+      try { messages = sleeperMessages(entry); } catch { messages = []; }
+    }
+    const base = readSessionArgs(name);
+    const capabilities = base && base.ok
+      ? {
+        ...argsProjection(base),
+        execGrants: (Array.isArray(base.execCommands) ? base.execCommands.map(String) : []).sort(),
+      }
+      : null;
+    const last = messages.length ? messages[messages.length - 1] : null;
+    return {
+      ok: true,
+      capabilities,
+      activity: {
+        turns: messages.filter((m) => m && m.role === 'assistant').length,
+        lastTurnTs: (last && last.ts) || null,
+        pendingMail: countParked(name),
+        transcriptPath,
+      },
+    };
+  }
 
   function clientTag(client) {
     if (!client) return '';
@@ -905,17 +958,9 @@ function createRemoteWiring(deps) {
           // box's grant list or env (values may be creds; there's no secret masking)
           // over the wire. readSessionArgs always includes both; withoutLocalOnly
           // drops execCommands + env in one named barrier (pinned both directions).
-          return {
-            ...withoutLocalOnly(base),
-            catalogs: {
-              agents: base.agentCatalog || [],
-              prompts: getPromptLibrary().list(),
-              claudeTools: CLAUDE_TOOLS,
-              proxyUrl: getUiSettings().get().proxyUrl,
-              proxyEnabled: getUiSettings().get().proxyEnabled,
-            },
-          };
+          return argsProjection(base);
         },
+        describeSession,
         setSessionArgs: async (name, patch) => {
           name = String(name || '').trim();
           const entry = getPersistence().get(name);

@@ -69,7 +69,7 @@ function resolveRemoteBasePathSetting(settings, env = process.env, warn) {
 }
 
 const RESOURCES = [
-  { name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get', 'delete'], subresources: { transcript: ['get'], query: ['post'], attach: ['get'], control: ['post'], input: ['post'], resize: ['post'], dm: ['post'], restart: ['post'], args: ['get', 'patch'], skills: ['get', 'patch'], sleep: ['post'], wake: ['post'], memory: ['get'], 'client-token': ['put'] } },
+  { name: 'sessions', singular: 'session', scope: 'workspace', verbs: ['list', 'get', 'delete'], subresources: { transcript: ['get'], query: ['post'], attach: ['get'], control: ['post'], input: ['post'], resize: ['post'], dm: ['post'], restart: ['post'], args: ['get', 'patch'], skills: ['get', 'patch'], sleep: ['post'], wake: ['post'], memory: ['get'], 'client-token': ['put'], describe: ['get'] } },
   { name: 'workspaces', singular: 'workspace', scope: 'node', verbs: ['list'] },
   { name: 'peers', singular: 'peer', scope: 'node', verbs: ['list', 'get'] },
   { name: 'teams', singular: 'team', scope: 'node', verbs: ['list', 'get'] },
@@ -111,6 +111,7 @@ const SUBRESOURCE_CALLBACK = {
     wake: '_wakeSession',
     memory: '_exportMemory',
     'client-token': '_setClientToken',
+    describe: '_describeSession',
   },
 };
 
@@ -170,7 +171,7 @@ class RemoteServer {
                 listPeers, getPeer, listTeams, getTeam, listTickets,
                 listSandboxes, getSandbox, listAgents, getAgent, listWorktrees,
                 listDocs, getDoc, getDocSection, searchDocs,
-                getSessionArgs, setSessionArgs,
+                getSessionArgs, setSessionArgs, describeSession,
                 getSkillCatalog, setSessionSkills,
                 listSleepers, getSleeper, sleepSession, wakeSession, exportMemory,
                 deliverDm, claimDms, listDmOrigins, receiveRoster, notifications, openRequests, replyNote,
@@ -229,6 +230,7 @@ class RemoteServer {
     this._searchDocs = searchDocs || null;
     this._getSessionArgs = getSessionArgs || null;
     this._setSessionArgs = setSessionArgs || null;
+    this._describeSession = describeSession || null;
     this._getSkillCatalog = getSkillCatalog || null;
     this._setSessionSkills = setSessionSkills || null;
     this._listSleepers = listSleepers || null;
@@ -735,12 +737,30 @@ class RemoteServer {
     res.setHeader('Set-Cookie', `clodex_remote_token=${encodeURIComponent(q)}; HttpOnly; SameSite=Strict; Path=/${secure}`);
   }
 
-  _handleSessionGet(name, res) {
+  _sessionView(name) {
     const row = this._getSession(name);
-    if (row) return this._json(res, 200, { ok: true, session: { ...row, activity: this.activityFor(name) } });
+    if (row) return { ...row, activity: this.activityFor(name) };
     const sleeper = this._getSleeper ? this._getSleeper(name) : null;
-    if (sleeper) return this._json(res, 200, { ok: true, session: { ...sleeper, activity: 'asleep' } });
+    return sleeper ? { ...sleeper, activity: 'asleep' } : null;
+  }
+
+  _handleSessionGet(name, res) {
+    const session = this._sessionView(name);
+    if (session) return this._json(res, 200, { ok: true, session });
     return this._json(res, 404, { ok: false, error: 'Session not found' });
+  }
+
+  _handleDescribe(name, res) {
+    if (!this._describeSession) return this._json(res, 501, { ok: false, error: 'describe not available' });
+    const session = this._sessionView(name);
+    if (!session) return this._json(res, 404, { ok: false, error: 'Session not found' });
+    return Promise.resolve()
+      .then(() => this._describeSession(name))
+      .then((out) => {
+        if (!out || !out.ok) return this._json(res, 404, out || { ok: false, error: 'Session not found' });
+        return this._json(res, 200, { ok: true, session, capabilities: out.capabilities, activity: out.activity });
+      })
+      .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
   }
 
   _handleTranscript(name, url, res) {
@@ -1115,6 +1135,7 @@ class RemoteServer {
       if (!NAME_RE.test(name) || isReservedSeatName(name)) return this._json(res, 400, { ok: false, error: 'bad session name' });
       if (req.method === 'GET' && sub === undefined) return this._handleSessionGet(name, res);
       if (req.method === 'GET' && sub === 'transcript') return this._handleTranscript(name, url, res);
+      if (req.method === 'GET' && sub === 'describe') return this._handleDescribe(name, res);
       if (req.method === 'POST' && sub === 'query') return this._handleQuery(name, req, res);
       if (req.method === 'GET' && sub === 'attach') return this._handleAttach(name, req, res);
       if (req.method === 'POST' && sub === 'control') return this._handleControl(name, req, res);
