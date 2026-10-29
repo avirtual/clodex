@@ -889,3 +889,10 @@ test('parseIntent: an emphasised term body keeps its RAW bytes, so ANSI is refus
   assert.deepStrictEqual(bold, bare, 'emphasis must not strip the escape the vetter has to see');
   assert.ok(bold.body.includes('\x1b'), 'the escape survives — refusal is the vetter\'s job, not a silent rewrite');
 });
+
+test('shadowIntentKey: profile keys on the note key, so two notes in one reply stay distinct', () => {
+  const k = (line) => shadowIntentKey('p1', parseIntent(line));
+  assert.notStrictEqual(k('[agent:profile drop mood]'), k('[agent:profile drop plan]'));
+  assert.notStrictEqual(k('[agent:profile set a] yes'), k('[agent:profile set b] yes'));
+  assert.strictEqual(k('[agent:profile drop mood]'), k('[agent:profile drop mood]'));
+});
