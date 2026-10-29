@@ -984,6 +984,7 @@ const {
 } = createCliHooks({
   REGISTRY_DIR, memoryStore, getUiSettings: () => uiSettings, nodeInterp: process.execPath, log,
   composeRoster: (name) => { try { return manager.composeRosterFor(name); } catch { return null; } },
+  getIntents: (name) => { const entry = persistence.get(name); return entry ? entry.intents : null; },
 });
 
 function reconcileCodexSwaps(records) {

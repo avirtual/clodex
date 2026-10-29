@@ -1001,10 +1001,9 @@ function createRemoteWiring(deps) {
         getSessionArgs: (name) => {
           const base = readSessionArgs(name);
           if (!base || !base.ok) return base || { ok: false };
-          // Exec grants AND session env (T46b) are LOCAL-ONLY — never expose the
-          // box's grant list or env (values may be creds; there's no secret masking)
-          // over the wire. readSessionArgs always includes both; withoutLocalOnly
-          // drops execCommands + env in one named barrier (pinned both directions).
+          // Exec payloads and session env are local-only (env values may be creds);
+          // withoutLocalOnly is the one barrier dropping execCommands + env here.
+          // Grant names cross the wire only via describeSession's execGrants.
           return argsProjection(base);
         },
         describeSession,

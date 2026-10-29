@@ -542,23 +542,24 @@ recall) never sees it, and `update`/`forget` refuse id `profile`. Peer API:
 (`_dropProfile`, next to the seat-dir removal); respawn, sleep and archive keep it.
 
 Seat side (Claude seats, PTY and stream; Codex and Muse seats get neither the
-delivery nor the rebake). `[agent:profile set <key>] <value>` and `[agent:profile drop <key>]`
-(`_handleProfileIntent`) address one key under `notes:` only; there is no form
-that names `game:`, so the game section is unreachable from the seat. `profile`
-is its own gateable type, so an allowlist can grant it without the `memory`
-verbs and the reverse. A one-line value is stored as that text; a value spanning
-lines is parsed by `parseProfileValue` (the strict parser, as a list or
-one-level map). The write goes straight through `profileSet` with `merge: true`
-(a drop sends `null`; dropping the last note of a profile with no `game:` keys
-empties it, which deletes the file, and later sets are then refused), so the file and `profileUpdatedAt` move before the ack and
-a later game PUT merges over it. Refusals: verb or key malformed, `no profile for
-this seat` (the seat cannot create one), the store's cap or the parser's error
-verbatim. Delivery: `writeClaudeDigestFile` puts `## Your player's profile`, the
-canonical YAML verbatim and a one-line amend hint after the roster and before the
-sleep brief, so it rides every SessionStart that serves the digest file (startup,
-clear, compact, and a wake, which boots fresh); stream seats use the same hook. A
-seat-side write and a peer-API PUT/PATCH/DELETE rebake that file for a live seat
-(`_refreshOperatorDigest`).
+delivery nor the rebake). `[agent:profile set <key>] <value>` and
+`[agent:profile drop <key>]` (`_handleProfileIntent`) address one key under
+`notes:` only; there is no form that names `game:`, so the game section is
+unreachable from the seat. `profile` is its own gateable type, so an allowlist
+can grant it without the `memory` verbs and the reverse. A one-line value is
+stored as that text; a value spanning lines is parsed by `parseProfileValue` (the
+strict parser, as a list or one-level map). The write goes straight through
+`profileSet` with `merge: true` (a drop sends `null`; dropping the last note of a
+profile with no `game:` keys empties it, which deletes the file, and later sets
+are then refused), so the file and `profileUpdatedAt` move before the ack and a
+later game PUT merges over it. Refusals: verb or key malformed,
+`no profile for this seat` (the seat cannot create one), the store's cap or the
+parser's error verbatim. Delivery: `writeClaudeDigestFile` puts
+`## Your player's profile`, the canonical YAML verbatim and a one-line amend hint
+after the roster and before the sleep brief, so it rides every SessionStart that
+serves the digest file (startup, clear, compact, and a wake, which boots fresh);
+stream seats use the same hook. A seat-side write and a peer-API PUT/PATCH/DELETE
+rebake that file for a live seat (`_refreshOperatorDigest`).
 
 ## 6. Protocol text (ipc-prompt.js)
 
