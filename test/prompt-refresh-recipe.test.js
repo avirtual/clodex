@@ -171,7 +171,7 @@ function mkManager(root) {
     clearTimeout(s._injectFlushRetry);
     clearTimeout(s._compactValveTimer);
   };
-  return { m, watchers, stop };
+  return { m, watchers, stop, persisted };
 }
 
 async function spawn(h, name, extraArgs = [], sessionEnv = null) {
@@ -235,6 +235,20 @@ test('recipe: the disable flag and extraArgs are actually LOAD-BEARING in the co
     assert.ok(bakedBytes(c, 'rx').includes('EXTRA-SEAT-TEXT'),
       'extraArgs text lands in the baked prompt — so a refresh that dropped extraArgs would delete it');
   } finally { ha.stop('rx'); hb.stop('rx'); hc.stop('rx'); }
+});
+
+test('recipe: the profile grammar row is baked only for a Claude assistant seat, and its refresh is a no-op', async () => {
+  const ROW = '[agent:profile set <key>]';
+  const a = tmp(), b = tmp();
+  const ha = mkManager(a), hb = mkManager(b);
+  try {
+    ha.persisted.set('rx', { name: 'rx', class: 'assistant' });
+    await spawn(ha, 'rx');
+    await spawn(hb, 'rx');
+    assert.ok(bakedBytes(a, 'rx').includes(ROW), 'the assistant seat carries the profile row');
+    assert.ok(!bakedBytes(b, 'rx').includes(ROW), 'a non-assistant Claude seat does not');
+    assert.strictEqual(ha.m.refreshPrompt('rx', 'test'), false, 'the refresh replays the captured seat kind');
+  } finally { ha.stop('rx'); hb.stop('rx'); }
 });
 
 test('recipe: a seat spawned before the capture existed refuses to refresh', async () => {

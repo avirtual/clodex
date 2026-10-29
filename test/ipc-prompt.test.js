@@ -570,6 +570,18 @@ test('t1407: the [agent:team …] rows render ONLY when the caller says the seat
   assert.strictEqual(buildIpcPrompt(null, undefined, undefined, {}), IPC_PROMPT, 'and so is an opts without the flag');
 });
 
+test('the profile row renders only when the caller says the seat is a Claude assistant', () => {
+  const ROW = '  [agent:profile set <key>] <value>';
+  const seat = (list) => buildIpcPrompt(list, undefined, undefined, { profileSeat: true });
+  assert.ok(seat(null).includes(ROW), 'a Claude assistant on the living default sees it');
+  assert.ok(seat(['dm', 'profile']).includes(ROW), 'and one granted profile');
+  assert.ok(!seat(['dm']).includes(ROW), 'an allowlist without profile still gates it');
+  assert.ok(!IPC_PROMPT.includes(ROW), 'the baseline literal carries no profile row');
+  assert.ok(!buildIpcPrompt(null).includes(ROW), 'default seat: none (null pin holds)');
+  assert.ok(!buildIpcPrompt(ALL_GATEABLE).includes(ROW), 'all-non-privileged seat: none either');
+  assert.ok(!buildIpcPrompt(null, undefined, undefined, { profileSeat: false, teamLead: true }).includes(ROW), 'nor a lead that is not a profile seat');
+});
+
 test('t1407: the lead variant is IPC_PROMPT plus the nine team rows, first role-add and last done', () => {
   const lead = leadPrompt(null);
   const rows = lead.split('\n').filter((l) => l.startsWith('  [agent:team '));

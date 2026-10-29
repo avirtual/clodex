@@ -49,7 +49,7 @@ const DESCRIBE_EXTRA = {
   'builder-long': { capabilities: null, activity: { turns: 1, lastTurnTs: null, pendingMail: 0, transcriptPath: null } },
 };
 
-function node({ old = false } = {}) {
+function node({ old = false, doc = RESOURCE_DOC } = {}) {
   const seen = [];
   const server = http.createServer((req, res) => {
     let body = '';
@@ -68,7 +68,7 @@ function node({ old = false } = {}) {
       if (p === '/api/peer/hello') return send(200, old ? HELLO_OLD : HELLO_NEW);
       if (p === '/api/sessions') return send(200, { ok: true, sessions: SESSIONS });
       if (p === '/api/catalogs') return send(200, { ok: true, catalogs: { agents: [{ name: 'a' }], skills: [], proxyEnabled: false } });
-      if (!old && p === '/api/resources') return send(200, RESOURCE_DOC);
+      if (!old && p === '/api/resources') return send(200, doc);
       if (!old && p === '/api/workspaces') return send(200, { ok: true, workspaces: WORKSPACES });
       if (!old && p === '/api/docs') {
         return send(200, req.url.includes('q=') ? { ok: true, hits: DOC_HITS } : { ok: true, docs: DOCS });
@@ -365,7 +365,7 @@ test('describe session with null capabilities prints the one unavailable line', 
   await withNode({}, async (port) => {
     const { code, stdout } = await cli(['describe', 'session', 'builder-long'], port);
     assert.strictEqual(code, 0, stdout);
-    assert.match(stdout, /^Capabilities\ncapabilities: unavailable \(seat not live\)$/m);
+    assert.match(stdout, /^Capabilities\ncapabilities: unavailable \(no persisted args\)$/m);
     assert.doesNotMatch(stdout, /^execGrants:/m);
   });
 });
@@ -400,6 +400,19 @@ test('describe checks the resources API too — an old node gets the upgrade lin
         `${argv.join(' ')} must probe resources and stop, never fetch the object`);
     });
   }
+});
+
+test('describe session against a node whose resources doc lacks sessions/describe gets the upgrade line, never the fetch', async () => {
+  const subresources = { ...RESOURCE_DOC.resources[0].subresources };
+  delete subresources.describe;
+  const doc = { ...RESOURCE_DOC, resources: [{ ...RESOURCE_DOC.resources[0], subresources }, ...RESOURCE_DOC.resources.slice(1)] };
+  await withNode({ doc }, async (port, seen) => {
+    const { code, stderr } = await cli(['describe', 'session', 'bob'], port);
+    assert.strictEqual(code, 1, stderr);
+    assert.match(stderr, /does not serve sessions\/describe get; run: clodexctl upgrade node /);
+    assert.ok(seen.includes('/api/resources'), 'ENTER: the resources doc was probed');
+    assert.ok(!seen.includes('/api/sessions/bob/describe'), `never fetch the describe object: ${seen.join(',')}`);
+  });
 });
 
 test('describe workspace <unknown> is a not-found, not an empty block', async () => {

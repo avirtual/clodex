@@ -1762,6 +1762,7 @@ function createSessionManager(deps) {
             // Captured at spawn like `intents`: refreshPrompt replays this object, so a member re-reading persistence
             // would make clear/compact stage a delta the spawn never baked.
             pluginGrants: (existingEntry && existingEntry.pluginGrants) || null,
+            profileSeat: !!(promptEntry && promptEntry.class === 'assistant'),
             plugins: Array.isArray(plugins) ? plugins : null,
             appendPromptFiles,
             inlineBody: systemPromptBody || null,
@@ -4589,7 +4590,7 @@ function createSessionManager(deps) {
         ? ''
         : buildIpcPrompt(recipe.intents, this._resolveExecDefs(recipe.execCommands, team),
           recipe.spillArmed ? [...extraGrammar, spillGrammarLine(REGISTRY_DIR, recipe.spillExamples)] : extraGrammar,
-          { teamLead: !!team && team.lead === name });
+          { teamLead: !!team && team.lead === name, profileSeat: recipe.profileSeat === true });
       const { cleaned, append } = mergeClaudeSystemPrompt(recipe.extraArgs, ipcPrompt, {
         appendBodies: readAppendBodies(recipe.appendPromptFiles, recipe.plugins, team),
         inlineBody: recipe.inlineBody,
@@ -7960,6 +7961,8 @@ function createSessionManager(deps) {
     _handleProfileIntent(session, { sub, key, body }) {
       const agent = session.name;
       const refuse = (why) => this._injectText(session, `[agent:profile] ${why}`, { parkable: true });
+      const entry = getPersistence().get(agent);
+      if (session.agentType !== 'claude' || !entry || entry.class !== 'assistant') return refuse('not available for this seat');
       if (sub !== 'set' && sub !== 'drop') return refuse(`unknown verb "${sub}" (use set|drop)`);
       if (!PROFILE_KEY_RE.test(key || '')) return refuse(`bad key "${key || ''}" (lowercase a-z, 0-9, _ or -)`);
       const current = memoryStore.profileGet(agent);

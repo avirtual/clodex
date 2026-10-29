@@ -178,7 +178,7 @@ function describeSession(body) {
   const { session, capabilities: c, activity: a } = body || {};
   const lines = ['Session', renderDescribe(session || {}), '', 'Capabilities'];
   if (!c) {
-    lines.push('capabilities: unavailable (seat not live)');
+    lines.push('capabilities: unavailable (no persisted args)');
   } else {
     const tools = Object.entries(c.effectiveTools || {}).map(([k, v]) => `${k}=${(v && v.value) || v}`);
     const prompts = [c.systemPromptFile, ...(Array.isArray(c.appendPromptFiles) ? c.appendPromptFiles : [])].filter(Boolean);
