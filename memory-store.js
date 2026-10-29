@@ -100,6 +100,7 @@ const PROFILE_SECTIONS = ['game', 'notes'];
 const PROFILE_KEY_RE = /^[a-z0-9_-]+$/;
 const PROFILE_KEY_MAX = 64;
 const PROFILE_CAP = 4096;
+const PROFILE_NOTES_CAP = 2048;
 const PROFILE_NOT_UNIT = 'profile is not a unit';
 
 const PROFILE_TYPE_WORDS = /^(?:true|false|null|yes|no|on|off|y|n|~|[-+]?\.inf|\.nan)$/i;
@@ -523,7 +524,7 @@ function createMemoryStore(rootDir) {
       try { return this._profileView(this._readProfile(agent)); }
       catch (e) { return { ok: false, error: `stored profile unreadable: ${e.message}` }; }
     },
-    profileSet(agent, input, { merge = true } = {}) {
+    profileSet(agent, input, { merge = true, seat = false } = {}) {
       if (!MEMORY_AGENT_RE.test(agent || '')) return { ok: false, error: `invalid agent name: ${agent}` };
       try { checkProfileInput(input); }
       catch (e) { return { ok: false, error: e.message }; }
@@ -547,6 +548,11 @@ function createMemoryStore(rootDir) {
       }
       const bytes = Buffer.byteLength(yaml);
       if (bytes > PROFILE_CAP) return { ok: false, error: `profile exceeds ${PROFILE_CAP} bytes (${bytes})` };
+      if (seat === true) {
+        const notesBytes = Buffer.byteLength(serializeProfile({ notes: next.notes }));
+        const baseNotes = Buffer.byteLength(serializeProfile({ notes: base.notes }));
+        if (notesBytes > PROFILE_NOTES_CAP && notesBytes > baseNotes) return { ok: false, error: `notes exceed ${PROFILE_NOTES_CAP} bytes (${notesBytes}) — drop a note first` };
+      }
       const updatedAt = new Date().toISOString();
       const doc = ['---', `id: ${PROFILE_ID}`, `type: ${PROFILE_ID}`, `updated_at: ${updatedAt}`, '---', '', yaml].join('\n');
       fs.mkdirSync(this._dir(agent), { recursive: true, mode: 0o700 });
@@ -761,6 +767,6 @@ function composeDigest(units, opts) {
 
 module.exports = {
   createMemoryStore, composeDigest, digestTiers, serializeMemoryUnit, parseMemoryUnit,
-  parseProfileYaml, parseProfileValue, serializeProfile, PROFILE_CAP, PROFILE_KEY_RE,
+  parseProfileYaml, parseProfileValue, serializeProfile, PROFILE_CAP, PROFILE_NOTES_CAP, PROFILE_KEY_RE,
   MEMORY_ID_RE, DIGEST_BUDGET, OPERATOR_PIN_CAP, RECENT_BODY_CAP, fmtAge,
 };

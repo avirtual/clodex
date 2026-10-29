@@ -124,6 +124,41 @@ test('profileSet: refuses at 4097 serialised bytes, accepts 4096', () => {
   assert.strictEqual(at.bytes, 4096);
 });
 
+test('profileSet seat: notes refused at 2049 bytes with the file unchanged, accepted at 2048, and seat=false keeps the 4096 cap', () => {
+  const { store, dir } = tmpStore();
+  assert.strictEqual(store.profileSet('alpha', { game: { level: 1 } }).ok, true);
+  const file = path.join(dir, 'alpha', 'profile.md');
+  const before = fs.readFileSync(file, 'utf8');
+  const over = store.profileSet('alpha', { notes: { k: 'a'.repeat(2036) } }, { merge: true, seat: true });
+  assert.deepStrictEqual(over, { ok: false, error: 'notes exceed 2048 bytes (2049) — drop a note first' });
+  assert.strictEqual(fs.readFileSync(file, 'utf8'), before, 'a refused seat write left the file unchanged');
+  const api = store.profileSet('alpha', { notes: { k: 'a'.repeat(2036) } }, { merge: true });
+  assert.strictEqual(api.ok, true);
+  assert.strictEqual(api.profile.notes.k.length, 2036);
+  const at = store.profileSet('alpha', { notes: { k: 'a'.repeat(2035) } }, { merge: true, seat: true });
+  assert.strictEqual(at.ok, true);
+  assert.strictEqual(Buffer.byteLength(serializeProfile({ notes: at.profile.notes })), 2048);
+});
+
+test('profileSet seat: the whole-document 4096 cap still applies to seat writes', () => {
+  const { store } = tmpStore();
+  assert.strictEqual(store.profileSet('alpha', { game: { g: 'b'.repeat(2500) } }).ok, true);
+  const res = store.profileSet('alpha', { notes: { n: 'c'.repeat(1700) } }, { merge: true, seat: true });
+  assert.deepStrictEqual(res, { ok: false, error: 'profile exceeds 4096 bytes (4225)' });
+});
+
+test('profileSet seat: over-budget notes written by the API can still shrink from the seat, never grow', () => {
+  const { store } = tmpStore();
+  const api = store.profileSet('alpha', { notes: { a: 'a'.repeat(1100), b: 'b'.repeat(1100), c: 'c'.repeat(1100) } });
+  assert.strictEqual(api.ok, true);
+  assert.strictEqual(api.bytes, 3325);
+  const drop = store.profileSet('alpha', { notes: { a: null } }, { merge: true, seat: true });
+  assert.strictEqual(drop.ok, true, drop.error);
+  assert.deepStrictEqual(Object.keys(drop.profile.notes), ['b', 'c']);
+  const grow = store.profileSet('alpha', { notes: { d: 'd' } }, { merge: true, seat: true });
+  assert.deepStrictEqual(grow, { ok: false, error: 'notes exceed 2048 bytes (2226) — drop a note first' });
+});
+
 test('profileSet merge: upsert, null drops, a map value replaces the key whole', () => {
   const { store } = tmpStore();
   store.profileSet('alpha', { game: { name: 'Bob', level: 1 }, notes: { horses: { Star: 'a' }, tip: 'x' } });

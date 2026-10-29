@@ -528,8 +528,9 @@ one-level scalar maps; no anchors, tags, flow collections (except `[]`/`{}`),
 block scalars or documents. Canonical output is `game:` then `notes:`, insertion
 order, two-space indent, strings quoted only when needed. Cap: `PROFILE_CAP`
 (4096) serialised bytes, refused as `profile exceeds 4096 bytes (N)`.
+The seat's `notes:` are capped at `PROFILE_NOTES_CAP` (2048) bytes inside the 4096-byte document (a seat write that grows them past it is refused as `notes exceed 2048 bytes (N) — drop a note first`), so the game's `game:` section can always grow.
 
-`profileGet` / `profileSet(agent, { game, notes }, { merge })` / `profileDelete`.
+`profileGet` / `profileSet(agent, { game, notes }, { merge, seat })` / `profileDelete`.
 Merge upserts the top-level keys of each section (a `null` drops the key, a map
 value replaces the key whole); `merge: false` replaces the body and keeps nulls.
 A write whose result is empty deletes the file, so empty and none are one state.
