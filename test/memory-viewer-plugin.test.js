@@ -626,7 +626,7 @@ test('memory-viewer: a seat profile beside a unit is not a unit (units and agent
     const units = await host.dispatch('memory-viewer', 'units', ['asst'], 'desktop');
     assert.deepEqual(units.units.map((u) => u.id), ['mem-1-aaaaaa']);
     const agents = await host.dispatch('memory-viewer', 'agents', [], 'desktop');
-    const row = agents.agents.find((a) => a.agent === 'asst' || a.name === 'asst');
+    const row = agents.agents.find((a) => a.agent === 'asst');
     assert.ok(row, `ENTER: asst listed in ${JSON.stringify(agents)}`);
     assert.equal(row.count, 1);
   } finally { cleanup(); }
