@@ -1927,7 +1927,7 @@ test('memory/profile: the assistant row carries memory.profile bytes and profile
 test('a peer-API profile write or delete rebakes the live seat digest; a refused one does not', () => {
   const { createMemoryStore } = require('../memory-store');
   const { deps } = makeDeps();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clodex-t2079-rw-'));
+  const root = mkTmpRoot('clodex-t2079-rw-');
   const store = createMemoryStore(root);
   const rebaked = [];
   deps.getMemoryStore = () => store;
