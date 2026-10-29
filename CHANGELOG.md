@@ -14,6 +14,8 @@ blocks a release.
 
 ## Unreleased
 
+- **Memory viewer writes from the browser.** Adding, editing and pinning a memory now work from the web UI, not only the desktop app; the web surface used to answer "plugin method not available on this surface". Deleting a memory stays desktop-only.
+
 ## 5.152.0 — 2026-10-29 — Per-seat profile memory for assistant seats; clodexctl describe session
 
 - `clodexctl describe session X` now returns the seat's capabilities (model, tools, intents, prompts, plugins, exec grant names) and activity (turn count, last turn, pending mail, transcript path) alongside its row, so an assistant-class seat on a remote sandbox can be inspected without attaching. The verb needs a node of this version or later; against an older node it prints the upgrade line instead of the old row-only view. `describe session X -o json` prints the raw body (it used to be a usage error). Exec payloads, env and the MCP server selection stay local-only.

@@ -454,6 +454,48 @@ test('the workbench opens exactly these methods to the web surface', () => {
     'a change here widens or narrows what an authenticated browser can call — say so in the changelog');
 });
 
+test('the memory viewer opens exactly these methods to the web surface', () => {
+  const WEB_REACHABLE = ['add', 'agents', 'edit', 'setPin', 'units'];
+  const surfaces = manifestOf('memory-viewer').surfaces || {};
+  const open = Object.entries(surfaces).filter(([, v]) => v === 'any').map(([k]) => k).sort();
+  assert.deepStrictEqual(open, WEB_REACHABLE,
+    'a change here widens or narrows what an authenticated browser can call — say so in the changelog');
+});
+
+test('memory-viewer: add, edit and setPin reach the handler from the web; forget does not', async () => {
+  const b = bootBothSurfaces();
+  try {
+    const keys = b.host._dispatchKeys();
+    for (const method of ['add', 'edit', 'setPin', 'forget']) {
+      assert.ok(keys.includes(`memory-viewer:${method}`),
+        `ENTER: memory-viewer:${method} is in the dispatch map, so the replies below are about a method that exists`);
+    }
+    const HANDLER_ERROR = { ok: false, error: 'a valid agent name is required' };
+    const calls = [
+      ['add', [{ agent: '..', text: 'x' }]],
+      ['edit', [{ agent: '..', id: 'm1', text: 'x' }]],
+      ['setPin', [{ agent: '..', id: 'm1', on: true }]],
+    ];
+    for (const [method, args] of calls) {
+      const web = await b.web('memory-viewer', method, args);
+      assert.notDeepStrictEqual(web, { ok: false, error: NOT_ON_THIS_SURFACE },
+        `${method} must answer an authenticated browser — saving a directive from the web UI depends on it`);
+      assert.deepStrictEqual(web, HANDLER_ERROR,
+        `ENTER: the web call reached ${method}'s handler, so the equality below is about dispatch `
+        + 'and not two identical surface refusals');
+      assert.deepStrictEqual(web, await b.desktop('memory-viewer', method, args),
+        `${method} must give the browser the same answer as the desktop`);
+    }
+    const forgetArgs = [{ agent: '..', id: 'm1' }];
+    assert.deepStrictEqual(await b.web('memory-viewer', 'forget', forgetArgs),
+      { ok: false, error: NOT_ON_THIS_SURFACE },
+      'forget is permanent deletion and must stay desktop-only');
+    assert.notDeepStrictEqual(await b.desktop('memory-viewer', 'forget', forgetArgs),
+      { ok: false, error: NOT_ON_THIS_SURFACE },
+      'the desktop still reaches forget — otherwise the web refusal above is about a dead method');
+  } finally { b.cleanup(); }
+});
+
 test('no manifest opens a method that does not exist', () => {
   // A typo in the table fails CLOSED, which is safe and therefore silent: the
   // author sees a method that mysteriously does not work on the web. Checked
