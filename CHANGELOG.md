@@ -12,7 +12,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — Per-seat profile memory for assistant seats; clodexctl describe session
+## Unreleased
+
+## 5.152.0 — 2026-10-29 — Per-seat profile memory for assistant seats; clodexctl describe session
 
 - `clodexctl describe session X` now returns the seat's capabilities (model, tools, intents, prompts, plugins, exec grant names) and activity (turn count, last turn, pending mail, transcript path) alongside its row, so an assistant-class seat on a remote sandbox can be inspected without attaching. The verb needs a node of this version or later; against an older node it prints the upgrade line instead of the old row-only view. `describe session X -o json` prints the raw body (it used to be a usage error). Exec payloads, env and the MCP server selection stay local-only.
 - A per-seat `profile` memory for assistant seats: a 4 KB YAML document with a `game:` section and a `notes:` section, read, merged by key or replaced, and deleted over the peer API (`/api/sessions/<name>/memory/profile`, `clodexctl get|patch|delete session X --subresource profile`), and erased with the seat; assistant rows in `GET /api/sessions` and `GET /api/sessions/<name>` carry `memory: { profile: <bytes>, profileUpdatedAt }`. Memory units, the digest and the memory verbs are unchanged.
