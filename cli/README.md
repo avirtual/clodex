@@ -339,7 +339,7 @@ hosts no sandboxes), answers with the upgrade line and exit `1`.
 > The tables below are the narrative tour; for the exact current flag set of any
 > verb, ask `help`.
 
-Read (all but `describe` support `-o json` — stable raw wire payload — and `-o yaml`, the same payload as YAML):
+Read (all but `describe` — except `describe session` — support `-o json` — stable raw wire payload — and `-o yaml`, the same payload as YAML):
 
 | Verb | Route |
 |---|---|

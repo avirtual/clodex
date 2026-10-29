@@ -238,7 +238,7 @@ test('recipe: the disable flag and extraArgs are actually LOAD-BEARING in the co
   } finally { ha.stop('rx'); hb.stop('rx'); hc.stop('rx'); }
 });
 
-test('recipe: the profile grammar row is baked only for a Claude assistant seat, and its refresh is a no-op', async () => {
+test('recipe: the profile grammar row is baked only for a Claude assistant seat', async () => {
   const ROW = '[agent:profile set <key>]';
   const a = tmp(), b = tmp();
   const ha = mkManager(a), hb = mkManager(b);
