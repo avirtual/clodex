@@ -18,6 +18,9 @@ const { runningInSandboxBox } = require('./sandbox');
 const { NOTICE_MAX_AGE_MS } = require('./notice-queue');
 const { CONSOLE_MAX_RECORDS } = require('./bash-console');
 
+const PROFILE_HEADING = "## Your player's profile";
+const PROFILE_TRAILER = 'Amend a note with [agent:profile set <key>] <value> or [agent:profile drop <key>]; the game: section is read-only.';
+
 function holdsOurs(p, body) {
   let raw;
   try { raw = fs.readFileSync(p, 'utf8'); } catch { return false; }
@@ -58,9 +61,15 @@ function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp, 
     try { roster = composeRoster ? composeRoster(name) : null; } catch { roster = null; }
     let brief = null;
     try { brief = fs.readFileSync(briefPathFor(REGISTRY_DIR, name), 'utf-8'); } catch { brief = null; }
+    let profile = null;
+    try {
+      const view = memoryStore.profileGet(name);
+      profile = view && view.ok && view.profile ? `${PROFILE_HEADING}\n${view.yaml}${PROFILE_TRAILER}` : null;
+    } catch { profile = null; }
     const ctx = `You are the clodex agent named '${name}'.`
       + (digest ? `\n\n${digest}` : '')
       + (roster ? `\n\n${roster}` : '')
+      + (profile ? `\n\n${profile}` : '')
       + (brief ? `\n\n${brief}` : '');
     atomicWriteFileSync(pathFor(REGISTRY_DIR, name, 'hookDigest'), JSON.stringify({
       hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: ctx }

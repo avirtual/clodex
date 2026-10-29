@@ -349,6 +349,22 @@ function parseProfileYaml(text) {
   return out;
 }
 
+function parseProfileValue(text) {
+  const lines = String(text == null ? '' : text).replace(/\r\n/g, '\n').split('\n');
+  while (lines.length && !lines[0].trim()) lines.shift();
+  while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+  if (!lines.length) throw new Error('value required (drop removes a key)');
+  if (lines.length === 1) return lines[0].trim();
+  const pad = Math.min(...lines.filter((l) => l.trim()).map((l) => l.match(/^ */)[0].length));
+  const doc = ['notes:', '  v:', ...lines.map((l) => `    ${l.slice(pad)}`)].join('\n');
+  let parsed;
+  try { parsed = parseProfileYaml(doc); }
+  catch (e) { throw new Error(e.message.replace(/^line (\d+)/, (_, n) => `line ${Number(n) - 2}`)); }
+  const value = parsed.notes.v;
+  if (value === null) throw new Error('value required (drop removes a key)');
+  return value;
+}
+
 function createMemoryStore(rootDir) {
   return {
     // The single choke point: list/remember/recall/setPinned/forget all build
@@ -745,6 +761,6 @@ function composeDigest(units, opts) {
 
 module.exports = {
   createMemoryStore, composeDigest, digestTiers, serializeMemoryUnit, parseMemoryUnit,
-  parseProfileYaml, serializeProfile, PROFILE_CAP,
+  parseProfileYaml, parseProfileValue, serializeProfile, PROFILE_CAP, PROFILE_KEY_RE,
   MEMORY_ID_RE, DIGEST_BUDGET, OPERATOR_PIN_CAP, RECENT_BODY_CAP, fmtAge,
 };

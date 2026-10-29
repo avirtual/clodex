@@ -27,6 +27,7 @@ const GATEABLE_INTENTS = [
   { type: 'context', label: 'Self context control (compact/clear/reload)' },
   { type: 'scratch', label: 'Probes — fork a research clone that returns a summary (probe)' },
   { type: 'memory', label: 'Memory management (remember/recall)' },
+  { type: 'profile', label: 'Amend own profile notes (profile set/drop)' },
   { type: 'spawn', label: 'Spawn peer sessions (spawn)' },
   { type: 'file', label: 'Surface files on screen (file)' },
   { type: 'resend', label: 'Escalate a parked dm (resend)' },
