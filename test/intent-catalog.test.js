@@ -10,10 +10,10 @@ const ALL_TYPES = GATEABLE_INTENTS.map((i) => i.type);
 // what collapses back to null when every one is checked.
 const NONPRIV_TYPES = GATEABLE_INTENTS.filter((i) => !PRIVILEGED_INTENTS.has(i.type)).map((i) => i.type);
 
-test('catalog: the 15 gateable types in grammar order (privileged last), name excluded', () => {
+test('catalog: the 16 gateable types in grammar order (privileged last), name excluded', () => {
   assert.deepStrictEqual(
     GATEABLE_INTENTS.map((i) => i.type),
-    ['dm', 'who', 'context', 'scratch', 'memory', 'spawn', 'file', 'resend', 'exec', 'remind', 'shout', 'term', 'reboot', 'team-create', 'ctl'],
+    ['dm', 'who', 'context', 'scratch', 'memory', 'profile', 'spawn', 'file', 'resend', 'exec', 'remind', 'shout', 'term', 'reboot', 'team-create', 'ctl'],
   );
   // The privileged set, and the reason it is worth naming all three: `term`
   // runs arbitrary shell in the operator's own login shell, so a seat
@@ -269,7 +269,7 @@ const PRE_SUB = ['dm', 'who', 'context', 'scratch', 'memory', 'spawn', 'file', '
 
 test('LIVING_MIGRATION_SET: the ordinary types that predate sub', () => {
   assert.deepStrictEqual(LIVING_MIGRATION_SET, new Set(PRE_SUB));
-  assert.deepStrictEqual(LIVING_MIGRATION_SET, new Set(NONPRIV_TYPES.filter((t) => t !== 'sub')));
+  assert.deepStrictEqual(LIVING_MIGRATION_SET, new Set(NONPRIV_TYPES.filter((t) => t !== 'sub' && t !== 'profile')));
 });
 
 test('migrateLivingAllowlist: rewrites only an all-ordinary-plus-grant array', () => {
