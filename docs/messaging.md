@@ -571,7 +571,9 @@ intents a seat may not emit; which intents those are comes from intent-catalog's
 `intentEnabled`. Both create() arms call `buildIpcPrompt(intents)` off the
 session's persisted allowlist. A fourth `opts` argument's `teamLead` flag adds
 the `[agent:team …]` grammar rows, which create() sets only for the seat its
-team names as lead. Double byte-pin (`buildIpcPrompt(null)` AND
+team names as lead; its `profileSeat` flag adds the `profile` row, which create()
+sets only for a Claude assistant (from the record's class or the spawning
+template's), so `IPC_PROMPT` does not carry it. Double byte-pin (`buildIpcPrompt(null)` AND
 `buildIpcPrompt(<all gateable>)` both `=== IPC_PROMPT`) keeps the pieces from
 drifting from the literal. It reaches the CLI via `--append-system-prompt-file`
 (Claude) / `model_instructions_file` (Codex); the agent's NAME arrives separately

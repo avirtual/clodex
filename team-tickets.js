@@ -715,7 +715,7 @@ function createTicketMethods(deps, shared) {
             plugins, null, null,
             (tpl && tpl.io) === 'stream' ? 'stream' : 'pty',
             (tpl && typeof tpl.effort === 'string' && tpl.effort) ? tpl.effort : null,
-            null, Array.isArray(tpl && tpl.mcpServers) ? tpl.mcpServers.map(String) : [],
+            null, Array.isArray(tpl && tpl.mcpServers) ? tpl.mcpServers.map(String) : [], (tpl && tpl.class) || null,
           );
           if (wt) {
             try { getPersistence().setWorktree(name, wt); } catch { /* best-effort */ }
@@ -1245,6 +1245,7 @@ function createTicketMethods(deps, shared) {
             shape.disabledSkills, shape.injectSkills,
             reviewerSystemPrompt, shape.appendPromptFiles, shape.execCommands, shape.intents, shape.env, true,
             false, shape.plugins, shape.shellDeny, null, shape.io || 'pty', shape.effort || null, shape.protectCredentials || null, shape.mcpServers,
+            (shape.tpl && shape.tpl.class) || null,
           );
           // Report a missing prompt once: suppress create()'s finding when `promptWarn` is already carried; the two texts are worded
           // differently on purpose, so suppression keys on the warn, not on matching text.
@@ -4796,6 +4797,7 @@ function createTicketMethods(deps, shared) {
             // it also cannot be dropped, since the plugin list after it is positional.
             { ...shape.env, CLODEX_TICKET: ticket.id }, true,
             false, shape.plugins, null, null, shape.io || 'pty', shape.effort || null, shape.protectCredentials || null, shape.mcpServers,
+            (shape.tpl && shape.tpl.class) || null,
           );
           // First, before anything that can throw: until claimed the seat lives in a tree no record names, so _ticketTreeHolder is blind
           // to it and session:kill orphans the checkout.

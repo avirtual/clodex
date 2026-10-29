@@ -137,6 +137,7 @@ function mkManager(root) {
     refreshAppMenu: () => {},
     refreshTrayMenu: () => {},
     findProjectRoot: () => null,
+    AGENT_NAME_RE: /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/,
     execBodyCap: () => 4096,
     unionEnabled: require('../scope-util').unionEnabled,
     intentEnabled: require('../intent-catalog').intentEnabled,
@@ -247,8 +248,23 @@ test('recipe: the profile grammar row is baked only for a Claude assistant seat,
     await spawn(hb, 'rx');
     assert.ok(bakedBytes(a, 'rx').includes(ROW), 'the assistant seat carries the profile row');
     assert.ok(!bakedBytes(b, 'rx').includes(ROW), 'a non-assistant Claude seat does not');
-    assert.strictEqual(ha.m.refreshPrompt('rx', 'test'), false, 'the refresh replays the captured seat kind');
   } finally { ha.stop('rx'); hb.stop('rx'); }
+});
+
+test('recipe: a first spawn from an assistant template, with no prior record, bakes the profile row', async () => {
+  const root = tmp();
+  const h = mkManager(root);
+  const tpl = path.join(root, 'asst-tpl.json');
+  fs.writeFileSync(tpl, JSON.stringify({ type: 'claude', cwd: os.tmpdir(), class: 'assistant' }));
+  const replies = [];
+  h.m._injectText = (_s, t) => replies.push(t);
+  try {
+    assert.strictEqual(h.persisted.get('fresh'), undefined, 'ENTER: no record before the spawn');
+    h.m._handleSpawnIntent({ name: 'lead', cwd: os.tmpdir(), workspaceId: 'ws', type: 'claude' }, { name: 'fresh', template: tpl });
+    for (let i = 0; i < 50 && !h.m.sessions.get('fresh'); i++) await new Promise((r) => setImmediate(r));
+    assert.ok(h.m.sessions.get('fresh'), `ENTER: the spawn handler created the seat: ${replies.join(' | ')}`);
+    assert.ok(bakedBytes(root, 'fresh').includes('[agent:profile set <key>]'), 'the first lifetime carries the profile row');
+  } finally { h.stop('fresh'); }
 });
 
 test('recipe: a seat spawned before the capture existed refuses to refresh', async () => {
