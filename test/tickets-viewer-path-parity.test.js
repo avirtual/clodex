@@ -552,9 +552,10 @@ function traceWrite(write, { dir, file, data, failRename = false }) {
       trace.push({ op: 'openSync', path: label(p), flags, mode });
       return fd;
     };
-    fs.writeSync = (fd, d) => {
-      trace.push({ op: 'writeSync', target: fds.get(fd), data: d === data ? '<data>' : d });
-      return orig.writeSync(fd, d);
+    fs.writeSync = (fd, d, ...rest) => {
+      const whole = d === data || (Buffer.isBuffer(d) && d.toString() === data);
+      trace.push({ op: 'writeSync', target: fds.get(fd), data: whole ? '<data>' : d });
+      return orig.writeSync(fd, d, ...rest);
     };
     fs.fsyncSync = (fd) => {
       trace.push({ op: 'fsyncSync', target: fds.get(fd) });
