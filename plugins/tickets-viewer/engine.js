@@ -118,6 +118,21 @@ function ticketTaskDirRefusal(team, ticket, verb, reSend) {
     + `Fix: re-file it with the artifact dir on the spec's first line, or \`[agent:task respec ${ticket.id}]\` <the corrected spec> to replace it in place.`;
 }
 
+function writeAllSync(fd, data, label) {
+  const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+  let written = 0;
+  while (written < buf.length) {
+    const n = fs.writeSync(fd, buf, written, buf.length - written);
+    if (!(n > 0)) {
+      const err = new Error(`short write: ${written}/${buf.length} bytes to ${label}`);
+      err.code = 'ENOSPC';
+      throw err;
+    }
+    written += n;
+  }
+  return written;
+}
+
 // Not simplifiable to a writeFileSync: the board is one JSON array rewritten whole,
 // so a torn write truncates the entire registry. Temp in the SAME directory (rename
 // is atomic only within a volume), and fsync the DIRECTORY too — the rename must be
@@ -129,8 +144,11 @@ function atomicWriteFileSync(filePath, data) {
   let fd;
   try {
     fd = fs.openSync(tmp, 'w', 0o600);
-    fs.writeSync(fd, data);
+    writeAllSync(fd, data, tmp);
     fs.fsyncSync(fd);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch (_) {}
+    throw e;
   } finally {
     if (fd !== undefined) { try { fs.closeSync(fd); } catch (_) {} }
   }
