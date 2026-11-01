@@ -74,18 +74,22 @@ function rulesFor(tool, p, dir) {
   return [`${tool}(${anchor})`, `${tool}(${anchor}/**)`];
 }
 
-function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = os.homedir(), inBox = false, fsImpl = fs, mcpSecretNames = [] }) {
+function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = os.homedir(), inBox = false, fsImpl = fs, mcpSecretNames = [], cwd = null }) {
   const listed = normalizeList(list);
   const t0 = t0ReadPaths(registryDir, home);
   const denyRead = [...t0, ...listed.filter((p) => !t0.includes(p))];
   const dataEntries = dataWriteDeny(registryDir, fsImpl);
-  const denyWrite = [...new Set([...HOME_WRITE_DENY, ...listed, ...dataEntries.map((e) => e.p), APP_BUNDLE])];
+  const repoGit = typeof cwd === 'string' && path.isAbsolute(cwd)
+    ? [{ p: path.join(cwd, '.git', 'config'), dir: false }, { p: path.join(cwd, '.git', 'hooks'), dir: true }]
+    : [];
+  const denyWrite = [...new Set([...HOME_WRITE_DENY, ...listed, ...dataEntries.map((e) => e.p), APP_BUNDLE, ...repoGit.map((e) => e.p)])];
 
   const kindOf = new Map(dataEntries.map((e) => [e.p, e.dir]));
   kindOf.set(t0[0], false);
   kindOf.set(t0[2], true);
   kindOf.set(path.join(home, '.clodex', 'cli', 'contexts.json'), false);
   kindOf.set(APP_BUNDLE, true);
+  for (const e of repoGit) kindOf.set(e.p, e.dir);
 
   const deny = [];
   for (const p of denyRead) {

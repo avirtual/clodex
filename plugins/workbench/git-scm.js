@@ -6,10 +6,11 @@
 // { ok, ... } | { ok:false, error } object so the renderer can render or toast.
 
 const { execFile } = require('child_process');
+const { safeGitArgs } = require('./git-safe');
 
 function git(cwd, args, { maxBuffer = 8 * 1024 * 1024, timeout = 20000 } = {}) {
   return new Promise((resolve) => {
-    execFile('git', ['-C', cwd, ...args], { maxBuffer, timeout }, (err, stdout, stderr) => {
+    execFile('git', safeGitArgs(['-C', cwd, ...args]), { maxBuffer, timeout }, (err, stdout, stderr) => {
       resolve({ ok: !err, code: err && err.code, stdout: stdout || '', stderr: stderr || (err && err.message) || '' });
     });
   });

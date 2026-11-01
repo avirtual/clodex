@@ -41,6 +41,7 @@
 const { execFile } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const { safeGitArgs } = require('./git-safe');
 
 const GIT_TIMEOUT_MS = 5000;
 const MIN_TTL_MS = 2000;
@@ -190,7 +191,7 @@ function runGit(cwd, args) {
     try {
       execFile(
         'git',
-        args,
+        safeGitArgs(args),
         {
           cwd,
           env: gitEnv(),

@@ -11,6 +11,7 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const { execFile, execFileSync } = require('child_process');
+const { safeGitArgs } = require('./git-safe');
 
 const FETCH_TIMEOUT_MS = 60_000;
 
@@ -19,12 +20,12 @@ const FETCH_TIMEOUT_MS = 60_000;
 // separate "git ran and said no" (1) from "git could not answer" (128, ENOENT).
 // `isMerged` turns on exactly that distinction. Null when the process never ran
 // (spawn failure carries a string errno, not a status).
-function git(cwd, args, { maxBuffer = 4 * 1024 * 1024, timeout, env } = {}) {
+function git(cwd, args, { maxBuffer = 4 * 1024 * 1024, timeout, env, keepHooks = false } = {}) {
   const opts = { maxBuffer };
   if (timeout) opts.timeout = timeout;
   if (env) opts.env = env;
   return new Promise((resolve) => {
-    execFile('git', ['-C', cwd, ...args], opts, (err, stdout, stderr) => {
+    execFile('git', safeGitArgs(['-C', cwd, ...args], { keepHooks }), opts, (err, stdout, stderr) => {
       const code = err ? (typeof err.code === 'number' ? err.code : null) : 0;
       const timedOut = !!(err && timeout && err.killed);
       const why = timedOut ? `git ${args[0]} timed out after ${timeout}ms` : '';
@@ -196,7 +197,7 @@ async function defaultBranch(repo) {
 
 function gitSync(cwd, args) {
   try {
-    const stdout = execFileSync('git', ['-C', cwd, ...args],
+    const stdout = execFileSync('git', safeGitArgs(['-C', cwd, ...args]),
       { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] });
     return { ok: true, stdout: stdout || '' };
   } catch { return { ok: false, stdout: '' }; }
@@ -414,7 +415,7 @@ async function refState(cwd, ref) {
 function headShaSync(dir) {
   if (!dir || !fs.existsSync(dir)) return null;
   try {
-    const out = execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'],
+    const out = execFileSync('git', safeGitArgs(['-C', dir, 'rev-parse', 'HEAD']),
       { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] });
     const sha = String(out || '').trim();
     return /^[0-9a-f]{7,40}$/.test(sha) ? sha : null;
@@ -424,7 +425,7 @@ function headShaSync(dir) {
 function headLogSync(dir) {
   if (!dir || !fs.existsSync(dir)) return null;
   try {
-    const out = execFileSync('git', ['-C', dir, 'log', '-1', '--format=%h %s'],
+    const out = execFileSync('git', safeGitArgs(['-C', dir, 'log', '-1', '--format=%h %s']),
       { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] });
     const line = String(out || '').split('\n')[0].trim();
     const m = /^([0-9a-f]{7,40})(?: (.*))?$/.exec(line);
@@ -725,7 +726,7 @@ async function unionChangelogConflict(repo, messageFile, headBefore) {
   }
   const add = await git(repo, ['add', 'CHANGELOG.md']);
   if (!add.ok) return no(`\`git add CHANGELOG.md\` failed: ${(add.stderr || add.stdout || '').trim() || `exit ${add.code}`}`);
-  const ci = await git(repo, ['commit', '--no-edit', '-F', String(messageFile)]);
+  const ci = await git(repo, ['commit', '--no-edit', '-F', String(messageFile)], { keepHooks: true });
   if (!ci.ok) return no(`the merge commit failed: ${(ci.stderr || ci.stdout || '').trim() || `exit ${ci.code}`}`);
   const after = await git(repo, ['rev-parse', 'HEAD']);
   const sha = after.ok ? after.stdout.trim() : null;
@@ -769,7 +770,7 @@ async function mergeNoFf(cwd, branch, messageFile) {
   if (!messageFile) return { ok: false, sha: null, moved: false, error: 'no message file given' };
   const before = await git(repo, ['rev-parse', 'HEAD']);
   const headBefore = before.ok ? before.stdout.trim() : null;
-  const r = await git(repo, ['merge', '--no-ff', '--no-edit', '-F', String(messageFile), branch]);
+  const r = await git(repo, ['merge', '--no-ff', '--no-edit', '-F', String(messageFile), branch], { keepHooks: true });
   if (!r.ok) {
     const output = `${r.stdout || ''}${r.stderr || ''}`.trim() || `git merge exited ${r.code}`;
     const union = await unionChangelogConflict(repo, messageFile, headBefore)
@@ -805,7 +806,7 @@ async function revertCommit(cwd, sha) {
   const repo = await repoToplevel(cwd);
   if (!repo) return { ok: false, error: 'not a git repository' };
   if (!sha) return { ok: false, error: 'no commit given' };
-  const r = await git(repo, ['revert', '--no-edit', '-m', '1', sha]);
+  const r = await git(repo, ['revert', '--no-edit', '-m', '1', sha], { keepHooks: true });
   if (!r.ok) {
     const output = `${r.stdout || ''}${r.stderr || ''}`.trim() || `git revert exited ${r.code}`;
     // Same argument as mergeNoFf's abort: a half-applied revert leaves the
