@@ -39,7 +39,7 @@ function holdsOurs(p, body) {
 // electron-free and free of session state, and resolving a team needs both a cwd
 // and the live seat list. Absent (or returning null) it simply contributes
 // nothing, which is what a non-team seat gets.
-function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp, composeRoster = null, getIntents = null, log = null }) {
+function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp, composeRoster = null, getIntents = null, log = null, getUserDataPath = null }) {
   // The interpreter every generated hook shells out to: the app's own Electron
   // binary run as Node (`ELECTRON_RUN_AS_NODE=1 "<nodeInterp>"`), baked absolute
   // so a Finder/Dock-launched packaged .app never depends on an ambient python3
@@ -946,7 +946,7 @@ exit 0
     const toolSet = new Set(CLAUDE_TOOLS);
     const guard = Array.isArray(protectCredentials)
       ? buildCredentialSandbox({
-        registryDir: REGISTRY_DIR, list: protectCredentials, seatSocket: pathFor(REGISTRY_DIR, name, 'intentSocket'), inBox: runningInSandboxBox(process.env), mcpSecretNames,
+        registryDir: REGISTRY_DIR, list: protectCredentials, seatSocket: pathFor(REGISTRY_DIR, name, 'intentSocket'), inBox: runningInSandboxBox(process.env), mcpSecretNames, userDataPath: getUserDataPath ? getUserDataPath() : null,
       })
       : null;
     const denyRules = [...new Set([

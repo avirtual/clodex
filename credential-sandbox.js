@@ -19,6 +19,7 @@ const HOME_WRITE_DENY = [
 const APP_BUNDLE = '/Applications/Clodex.app';
 const DATA_WRITE_OPEN = new Set(['projects']);
 const GLOB_RE = /[*?[]/;
+const USER_DATA_READ_DENY = ['remote.env', 'env-scopes.json', 'sessions.json', 'wire-hold-entries.json', 'env-override.env'];
 
 function normalizeList(list) {
   const out = [];
@@ -74,18 +75,22 @@ function rulesFor(tool, p, dir) {
   return [`${tool}(${anchor})`, `${tool}(${anchor}/**)`];
 }
 
-function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = os.homedir(), inBox = false, fsImpl = fs, mcpSecretNames = [] }) {
+function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = os.homedir(), inBox = false, fsImpl = fs, mcpSecretNames = [], userDataPath = null }) {
   const listed = normalizeList(list);
   const t0 = t0ReadPaths(registryDir, home);
-  const denyRead = [...t0, ...listed.filter((p) => !t0.includes(p))];
+  const userDataFiles = userDataPath ? [...USER_DATA_READ_DENY, path.join('sandbox*', 'auth.env')].map((f) => path.join(userDataPath, f)) : [];
+  const userDataWrite = userDataPath && registryDir !== userDataPath && !registryDir.startsWith(userDataPath + path.sep) ? [userDataPath] : [];
+  const denyRead = [...new Set([...t0, ...listed.filter((p) => !t0.includes(p)), ...userDataFiles])];
   const dataEntries = dataWriteDeny(registryDir, fsImpl);
-  const denyWrite = [...new Set([...HOME_WRITE_DENY, ...listed, ...dataEntries.map((e) => e.p), APP_BUNDLE])];
+  const denyWrite = [...new Set([...HOME_WRITE_DENY, ...listed, ...dataEntries.map((e) => e.p), APP_BUNDLE, ...userDataWrite])];
 
   const kindOf = new Map(dataEntries.map((e) => [e.p, e.dir]));
   kindOf.set(t0[0], false);
   kindOf.set(t0[2], true);
   kindOf.set(path.join(home, '.clodex', 'cli', 'contexts.json'), false);
   kindOf.set(APP_BUNDLE, true);
+  for (const p of userDataFiles) kindOf.set(p, false);
+  for (const p of userDataWrite) kindOf.set(p, true);
 
   const deny = [];
   for (const p of denyRead) {
