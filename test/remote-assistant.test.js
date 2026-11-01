@@ -225,7 +225,7 @@ test('createSession: a template body spawns through the handler; a path-shaped t
   assert.deepStrictEqual(taken.spawnCalls, []);
 });
 
-test('killSession: an assistant record is destroyed with its vetted transcripts and pending dir; a plain seat is killed', async () => {
+test('killSession: an assistant record is destroyed with its vetted transcripts and pending dir; a plain seat is destroyed', async () => {
   const h = makeDeps({ records: { 'avh-7': { ...ASLEEP, sessionIds: [SID, 'bad/../id'] } } });
   const opts = captureOptions(h.deps);
   assert.deepStrictEqual(await opts.killSession('avh-7'), { ok: true, name: 'avh-7', destroyed: true, transcripts: 1 });
@@ -235,8 +235,8 @@ test('killSession: an assistant record is destroyed with its vetted transcripts 
   assert.deepStrictEqual(h.killCalls, []);
   const p = makeDeps({ records: { w1: { type: 'claude', cwd: '/w' } }, sessions: { w1: { name: 'w1', agentType: 'claude' } } });
   assert.deepStrictEqual(await captureOptions(p.deps).killSession('w1'), { ok: true, name: 'w1' });
-  assert.deepStrictEqual(p.killCalls, ['w1']);
-  assert.deepStrictEqual(p.destroyCalls, []);
+  assert.deepStrictEqual(p.destroyCalls, ['w1']);
+  assert.deepStrictEqual(p.killCalls, []);
   const u = makeDeps();
   assert.deepStrictEqual(await captureOptions(u.deps).killSession('nobody'), { ok: false, error: 'no such session "nobody"' });
 });
