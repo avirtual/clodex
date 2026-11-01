@@ -98,7 +98,8 @@ test('setupClaudeHook hands the userData dir to the sandbox', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'cli-hooks.js'), 'utf8');
   assert.ok(/buildCredentialSandbox\(\{[^}]*userDataPath: getUserDataPath \? getUserDataPath\(\) : null,/.test(src));
   const engine = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
-  assert.ok(/createCliHooks\(\{[^;]*getUserDataPath: \(\) => userDataPath,/.test(engine));
+  const call = engine.slice(engine.indexOf('createCliHooks({'), engine.indexOf('\n});', engine.indexOf('createCliHooks({')));
+  assert.ok(call.includes('getUserDataPath: () => userDataPath,'));
 });
 
 test('setupClaudeHook hands mcpSecretNames to the sandbox only for a protected seat', () => {
