@@ -841,6 +841,54 @@ test('the generated pending script fsyncs its restore, like the store it mirrors
   assert.strictEqual(syncs.length, 2, `expected both fsyncs (contents + parent dir), found ${syncs.length}`);
 });
 
+function generatedRestore(name) {
+  const REGISTRY_DIR = tmp();
+  const h = mk(REGISTRY_DIR);
+  h.setupClaudeHook(name, null, null, [], [], [], null, 2000);
+  const src = fs.readFileSync(pathFor(REGISTRY_DIR, name, 'pendingScript'), 'utf-8');
+  assert.match(src, /function restore_parked/, 'ENTER: the generated script has no restore_parked');
+  const body = src.slice(src.indexOf('function restore_parked'));
+  return body.slice(0, body.indexOf('\n}'));
+}
+
+function stubFs(writeSync) {
+  return Object.assign(Object.create(fs), { writeSync });
+}
+
+test('the generated restore_parked loops until every byte is written', () => {
+  const restore = generatedRestore('short1');
+  assert.doesNotMatch(restore, /writeSync\(fd, raw\)/, 'a bare writeSync(fd, raw) ignores the short count');
+  assert.match(restore, /writeSync\(fd, buf, w, /);
+  assert.match(restore, /while \(w < buf\.length\)/);
+
+  const d = tmp();
+  const raw = JSON.stringify({ from: 'a', body: 'x'.repeat(40) });
+  let calls = 0;
+  const stub = stubFs((fd, buf, off, len) => {
+    calls++;
+    return fs.writeSync(fd, buf, off, Math.min(len, 5));
+  });
+  const restoreParked = new Function('fs', 'path', 'd', 'return ' + restore + '\n}')(stub, path, d);
+  assert.strictEqual(restoreParked('m1.json', raw), true);
+  assert.strictEqual(fs.readFileSync(path.join(d, 'm1.json'), 'utf-8'), raw);
+  assert.ok(calls > 1, `ENTER: expected several partial writes, got ${calls}`);
+});
+
+test('the generated restore_parked fails and leaves nothing when a write makes no progress', () => {
+  const restore = generatedRestore('short2');
+  const d = tmp();
+  let calls = 0;
+  const stub = stubFs((fd, buf, off, len) => {
+    calls++;
+    return calls === 1 ? fs.writeSync(fd, buf, off, Math.min(len, 5)) : 0;
+  });
+  const restoreParked = new Function('fs', 'path', 'd', 'return ' + restore + '\n}')(stub, path, d);
+  assert.strictEqual(restoreParked('m2.json', 'y'.repeat(50)), false);
+  assert.ok(calls >= 2, `ENTER: expected the zero-byte write to be reached, got ${calls}`);
+  assert.strictEqual(fs.existsSync(path.join(d, 'm2.json')), false);
+  assert.deepStrictEqual(fs.readdirSync(d).filter((f) => f.endsWith('.tmp')), []);
+});
+
 test('CONTROL: the at-least-once writes are deliberately NOT fsynced', () => {
   // Without this, the test above reads as "fsync everything", and the next
   // reader adds one to the delta advance — where a durable rename would convert

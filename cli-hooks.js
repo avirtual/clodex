@@ -590,7 +590,13 @@ function restore_parked(base, raw) {
     let fd;
     try {
       fd = fs.openSync(tmp, 'w', 0o600);
-      fs.writeSync(fd, raw);
+      const buf = Buffer.from(raw);
+      let w = 0;
+      while (w < buf.length) {
+        const n = fs.writeSync(fd, buf, w, buf.length - w);
+        if (!(n > 0)) throw new Error('short write');
+        w += n;
+      }
       fs.fsyncSync(fd);
     } finally {
       if (fd !== undefined) { try { fs.closeSync(fd); } catch (e3) {} }
