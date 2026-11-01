@@ -12,7 +12,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — A full disk can no longer truncate a store
+## Unreleased
+
+## 5.153.1 — 2026-11-02 — A full disk can no longer truncate a store
 
 - **A full disk can no longer truncate a store.** The atomic file writer behind the JSON stores (tickets board, persistence, memories), the tickets viewer's own copy of it and the hook script's parked-message restore now check that every byte reached the temp file before renaming it over the live one. An out-of-space write used to return a short count that went unchecked, so the cut-off temp file replaced the good board; now it fails loudly and leaves the previous file intact.
 
