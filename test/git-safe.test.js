@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { safeGitArgs } = require('../git-safe');
+const { safeGitArgs, safeGitArgsFor, filterOverrides, readOperatorGitConfig } = require('../git-safe');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const ROOT = path.join(__dirname, '..');
@@ -51,10 +51,31 @@ test('safeGitArgs: diff/show/log get --no-ext-diff --no-textconv ahead of any pa
   assert.deepStrictEqual(safeGitArgs(['-C', '/r', 'rev-parse', 'HEAD']), [...prefix, '-C', '/r', 'rev-parse', 'HEAD']);
 });
 
-test('safeGitArgs keepHooks drops only the hooksPath override', () => {
-  assert.deepStrictEqual(safeGitArgs(['merge', 'b'], { keepHooks: true }), [
-    '-c', 'core.fsmonitor=', '-c', 'diff.external=', '-c', 'core.sshCommand=ssh', '-c', 'core.pager=cat', 'merge', 'b',
+test('safeGitArgs takes the operator hooksPath and sshCommand in place of the defaults', () => {
+  assert.deepStrictEqual(safeGitArgs(['merge', 'b'], { hooksPath: '/op/hooks', sshCommand: 'ssh -i /op/k' }), [
+    '-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/op/hooks', '-c', 'diff.external=',
+    '-c', 'core.sshCommand=ssh -i /op/k', '-c', 'core.pager=cat', 'merge', 'b',
   ]);
+});
+
+test('readOperatorGitConfig reads only global values and falls back to /dev/null and ssh', () => {
+  const asked = [];
+  const set = { 'core.hooksPath': '/op/hooks\n', 'core.sshCommand': 'ssh -i /op/k\n' };
+  assert.deepStrictEqual(readOperatorGitConfig((a) => { asked.push(a); return set[a[a.length - 1]]; }),
+    { hooksPath: '/op/hooks', sshCommand: 'ssh -i /op/k' });
+  assert.deepStrictEqual(asked, [
+    ['config', '--global', '--type=path', '--get', 'core.hooksPath'],
+    ['config', '--global', '--type=path', '--get', 'core.sshCommand'],
+  ]);
+  assert.deepStrictEqual(readOperatorGitConfig(() => { throw new Error('exit 1'); }), { hooksPath: '/dev/null', sshCommand: 'ssh' });
+});
+
+test('filterOverrides blanks clean, smudge and process for each configured driver, dotted names included', () => {
+  assert.deepStrictEqual(filterOverrides('filter.x.clean\0filter.x.required\0filter.a.b.smudge\0filter.lone\0'), [
+    '-c', 'filter.x.clean=', '-c', 'filter.x.smudge=', '-c', 'filter.x.process=',
+    '-c', 'filter.a.b.clean=', '-c', 'filter.a.b.smudge=', '-c', 'filter.a.b.process=',
+  ]);
+  assert.deepStrictEqual(filterOverrides(''), []);
 });
 
 test('a planted core.fsmonitor command does not run under safeGitArgs, and does without it', (t) => {
@@ -92,9 +113,30 @@ test('a planted diff.external command does not run under safeGitArgs, and does w
   }
 });
 
-const SAFE_SITES = ['engine.js', 'git-worktree.js', 'session-meta.js', 'plugins/workbench/git-scm.js', 'plugins/git-branches/engine.js'];
+test('a planted clean filter does not run under safeGitArgsFor, and does without it', async (t) => {
+  if (!hasGit()) { t.skip('git not installed'); return; }
+  const { repo, run } = plantedRepo();
+  const marker = path.join(repo, '..', `${path.basename(repo)}-filter-ran`);
+  run('config', 'filter.x.clean', `touch '${marker}'; cat`);
+  fs.writeFileSync(path.join(repo, '.git', 'info', 'attributes'), 'README.md filter=x\n');
+  try {
+    const out = execFileSync('git', await safeGitArgsFor(repo, ['diff', 'HEAD', '--no-color', '--', 'README.md']), { encoding: 'utf8' });
+    assert.strictEqual(fs.existsSync(marker), false, 'the clean filter ran under safeGitArgsFor');
+    assert.match(out, /^\+b$/m);
+    execFileSync('git', ['-C', repo, 'diff', 'HEAD', '--', 'README.md'], { stdio: 'ignore' });
+    assert.strictEqual(fs.existsSync(marker), true, 'control: the planted clean filter runs on a raw diff');
+  } finally {
+    fs.rmSync(marker, { force: true });
+  }
+});
+
+const SAFE_SITES = ['git-safe.js', 'engine.js', 'git-worktree.js', 'session-meta.js', 'plugins/workbench/git-scm.js', 'plugins/git-branches/engine.js'];
 const GIT_SPAWN_RE = /\b(?:execFile|execFileSync|spawn|spawnSync|run)\(\s*'git',\s*([A-Za-z[]\w*\(?)/g;
-const UNWRAPPED_ALLOWED = [];
+const UNWRAPPED_ALLOWED = [
+  "git-safe.js:execFileSync('git', a",
+  "engine.js:execFile('git', argv",
+  "plugins/workbench/git-scm.js:execFile('git', argv",
+];
 
 test('every git spawn in the app-process git sites goes through safeGitArgs', () => {
   const seen = [];
@@ -107,6 +149,9 @@ test('every git spawn in the app-process git sites goes through safeGitArgs', ()
     }
   }
   assert.deepStrictEqual(bad, []);
+  for (const rel of ['engine.js', 'plugins/workbench/git-scm.js']) {
+    assert.ok(fs.readFileSync(path.join(ROOT, rel), 'utf8').includes('const argv = await safeGitArgsFor(cwd, args);'), rel);
+  }
   assert.deepStrictEqual([...new Set(seen)].sort(), [...SAFE_SITES].sort(), 'ENTER: each listed file has a git spawn');
 });
 

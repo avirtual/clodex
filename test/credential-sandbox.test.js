@@ -103,3 +103,16 @@ test('setupClaudeHook hands the session cwd to the sandbox', () => {
     if (prior !== undefined) process.env.CLODEX_IN_SANDBOX = prior;
   }
 });
+
+test('buildCredentialSandbox: a cwd under a symlink denies the real .git paths', () => {
+  const root = seededRoot();
+  const real = path.join(root, 'projects', 'real');
+  fs.mkdirSync(real);
+  const link = path.join(root, 'projects', 'link');
+  fs.symlinkSync(real, link);
+  const realResolved = fs.realpathSync(real);
+  const g = buildCredentialSandbox({ registryDir: root, list: [], home: '/h', cwd: link });
+  assert.ok(g.sandbox.filesystem.denyWrite.includes(path.join(realResolved, '.git', 'config')));
+  assert.ok(g.sandbox.filesystem.denyWrite.includes(path.join(realResolved, '.git', 'hooks')));
+  assert.ok(!g.sandbox.filesystem.denyWrite.includes(path.join(link, '.git', 'config')));
+});

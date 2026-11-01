@@ -14,7 +14,7 @@ blocks a release.
 
 ## Unreleased
 
-- **Security: a seat can no longer run code on the host through its repo's git config.** Clodex's own git calls in a seat's working tree (file diffs, branch lists, workbench status) now disable fsmonitor, hooks, external diff and textconv drivers, so a `core.fsmonitor` or `diff.external` command planted in `.git/config` never runs in the app process. A credential-protected seat is also denied writes to its `.git/config` and `.git/hooks`.
+- **Security: Clodex's own git calls no longer run fsmonitor, hook, diff or filter commands planted in a seat's repo.** Git calls Clodex makes in a seat's working tree (file diffs, branch lists, Workbench status and diffs) now turn off fsmonitor, external diff, textconv and the repo's clean/smudge filters, so a `core.fsmonitor`, `diff.external` or `filter.*.clean` command planted in `.git/config` no longer runs in the app process. Hooks run only from your global `core.hooksPath`. A credential-protected seat is also denied writes to its `.git/config` and `.git/hooks`, so in such a seat `git push -u`, `git remote add` and `git config` (which write `.git/config`) now fail; committing still works.
 
 ## 5.153.1 — 2026-11-02 — A full disk can no longer truncate a store
 

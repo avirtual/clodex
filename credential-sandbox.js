@@ -63,6 +63,10 @@ function realSocketPath(p, fsImpl) {
   try { return path.join(fsImpl.realpathSync(path.dirname(p)), path.basename(p)); } catch { return p; }
 }
 
+function realPathOr(p, fsImpl) {
+  try { return fsImpl.realpathSync(p); } catch { return p; }
+}
+
 function ruleAnchor(p) {
   return p.startsWith('~/') ? p : `/${p}`;
 }
@@ -79,8 +83,9 @@ function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = o
   const t0 = t0ReadPaths(registryDir, home);
   const denyRead = [...t0, ...listed.filter((p) => !t0.includes(p))];
   const dataEntries = dataWriteDeny(registryDir, fsImpl);
-  const repoGit = typeof cwd === 'string' && path.isAbsolute(cwd)
-    ? [{ p: path.join(cwd, '.git', 'config'), dir: false }, { p: path.join(cwd, '.git', 'hooks'), dir: true }]
+  const realCwd = typeof cwd === 'string' && path.isAbsolute(cwd) ? realPathOr(cwd, fsImpl) : null;
+  const repoGit = realCwd
+    ? [{ p: path.join(realCwd, '.git', 'config'), dir: false }, { p: path.join(realCwd, '.git', 'hooks'), dir: true }]
     : [];
   const denyWrite = [...new Set([...HOME_WRITE_DENY, ...listed, ...dataEntries.map((e) => e.p), APP_BUNDLE, ...repoGit.map((e) => e.p)])];
 
