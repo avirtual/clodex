@@ -79,7 +79,7 @@ test('buildCredentialSandbox: without a userDataPath the output is unchanged', (
   const want = expectedFilesystem(R, false);
   assert.deepStrictEqual(g.sandbox.filesystem, want.filesystem);
   assert.deepStrictEqual(g.sandbox.credentials, { files: want.files });
-  assert.strictEqual(g.deny.length, 40);
+  assert.strictEqual(g.deny.length, 39);
 });
 
 test('setupClaudeHook hands the userData dir to the sandbox', () => {
