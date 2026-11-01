@@ -293,6 +293,9 @@ with `/` or `~/`; anything else is dropped.
   (`<data>/run/*/mcp.json` and its seat-layout twin
   `<data>/sessions/*/run/mcp.json`) is read-denied too, and each `${NAME}` the
   seat's applied MCP selection references is unset like the AWS names.
+  When the host has an app data dir (`<userData>`), its `remote.env`,
+  `env-scopes.json`, `sessions.json`, `wire-hold-entries.json` and
+  `env-override.env` are read-denied as well.
 - **A narrow write deny.** Writes are otherwise open (`allowWrite: ["/"]`; the
   sandbox's default would confine them to the cwd). `denyWrite` covers config
   that an unsandboxed process runs later: the template's own paths (a
@@ -303,7 +306,9 @@ with `/` or `~/`; anything else is dropped.
   `<data>/projects` (task artifacts stay writable). The data dir is listed when
   the settings file is written, so an entry created later is not covered until
   the seat respawns. The seat's own `run/<name>` is denied too: it holds the hook
-  scripts the CLI runs outside the sandbox.
+  scripts the CLI runs outside the sandbox. The whole `<userData>` dir is
+  write-denied, so a seat cannot plant variables in `env-override.env`, which
+  is merged into every later spawn's env.
 - **Network.** No domain allowlist. Under bypass permissions the sandbox
   proxy lets every host through; in other modes a new host prompts. The one
   `network` entry is `allowUnixSockets` for the seat's own `intent.sock`, so
