@@ -9,7 +9,8 @@ const { execFile } = require('child_process');
 const { safeGitArgsFor } = require('./git-safe');
 
 async function git(cwd, args, { maxBuffer = 8 * 1024 * 1024, timeout = 20000 } = {}) {
-  const argv = await safeGitArgsFor(cwd, args);
+  let argv;
+  try { argv = await safeGitArgsFor(cwd, args); } catch (e) { return { ok: false, code: null, stdout: '', stderr: e.message }; }
   return new Promise((resolve) => {
     execFile('git', argv, { maxBuffer, timeout }, (err, stdout, stderr) => {
       resolve({ ok: !err, code: err && err.code, stdout: stdout || '', stderr: stderr || (err && err.message) || '' });

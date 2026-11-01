@@ -68,6 +68,7 @@ test('readOperatorGitConfig reads only global values and falls back to /dev/null
     ['config', '--global', '--type=path', '--get', 'core.sshCommand'],
   ]);
   assert.deepStrictEqual(readOperatorGitConfig(() => { throw new Error('exit 1'); }), { hooksPath: '/dev/null', sshCommand: 'ssh' });
+  assert.deepStrictEqual(readOperatorGitConfig(() => 'hooks\n'), { hooksPath: '/dev/null', sshCommand: 'hooks' });
 });
 
 test('filterOverrides blanks clean, smudge and process for each configured driver, dotted names included', () => {
@@ -76,6 +77,24 @@ test('filterOverrides blanks clean, smudge and process for each configured drive
     '-c', 'filter.a.b.clean=', '-c', 'filter.a.b.smudge=', '-c', 'filter.a.b.process=',
   ]);
   assert.deepStrictEqual(filterOverrides(''), []);
+  assert.throws(() => filterOverrides('filter.x.clean\0filter.a=b.clean\0'), /contains "="/);
+});
+
+test('safeGitArgsFor rejects on any filter-lookup failure but exit 1 with no output', async () => {
+  const runner = (err, stdout) => (file, argv, opts, cb) => {
+    assert.strictEqual(opts.maxBuffer, 64 * 1024 * 1024);
+    process.nextTick(() => cb(err, stdout, ''));
+  };
+  const maxBuf = Object.assign(new Error('stdout maxBuffer length exceeded'), { code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' });
+  const killed = Object.assign(new Error('Command failed'), { code: null, killed: true, signal: 'SIGTERM' });
+  const other = Object.assign(new Error('Command failed'), { code: 128 });
+  for (const err of [maxBuf, killed, other]) {
+    await assert.rejects(safeGitArgsFor('/r', ['status'], { run: runner(err, '') }), /git filter lookup failed/);
+  }
+  await assert.rejects(safeGitArgsFor('/r', ['status'], { run: runner(Object.assign(new Error('x'), { code: 1 }), 'filter.x.clean\0') }));
+  const none = await safeGitArgsFor('/r', ['status'], { run: runner(Object.assign(new Error('x'), { code: 1 }), '') });
+  assert.deepStrictEqual(none.slice(-3), ['-C', '/r', 'status']);
+  assert.ok(!none.some((a) => a.startsWith('filter.')));
 });
 
 test('a planted core.fsmonitor command does not run under safeGitArgs, and does without it', (t) => {
@@ -130,6 +149,22 @@ test('a planted clean filter does not run under safeGitArgsFor, and does without
   }
 });
 
+test('a filter driver named a=b makes safeGitArgsFor refuse, and runs without it', async (t) => {
+  if (!hasGit()) { t.skip('git not installed'); return; }
+  const { repo, run } = plantedRepo();
+  const marker = path.join(repo, '..', `${path.basename(repo)}-eqfilter-ran`);
+  run('config', 'filter.a=b.clean', `touch '${marker}'; cat`);
+  fs.writeFileSync(path.join(repo, '.git', 'info', 'attributes'), 'README.md filter=a=b\n');
+  try {
+    await assert.rejects(safeGitArgsFor(repo, ['diff', 'HEAD', '--no-color', '--', 'README.md']), /contains "="/);
+    assert.strictEqual(fs.existsSync(marker), false);
+    execFileSync('git', ['-C', repo, 'diff', 'HEAD', '--', 'README.md'], { stdio: 'ignore' });
+    assert.strictEqual(fs.existsSync(marker), true, 'control: the a=b driver runs on a raw diff');
+  } finally {
+    fs.rmSync(marker, { force: true });
+  }
+});
+
 const SAFE_SITES = ['git-safe.js', 'engine.js', 'git-worktree.js', 'session-meta.js', 'plugins/workbench/git-scm.js', 'plugins/git-branches/engine.js'];
 const GIT_SPAWN_RE = /\b(?:execFile|execFileSync|spawn|spawnSync|run)\(\s*'git',\s*([A-Za-z[]\w*\(?)/g;
 const UNWRAPPED_ALLOWED = [
@@ -149,8 +184,13 @@ test('every git spawn in the app-process git sites goes through safeGitArgs', ()
     }
   }
   assert.deepStrictEqual(bad, []);
+  for (const allowed of UNWRAPPED_ALLOWED) {
+    const [rel, site] = [allowed.slice(0, allowed.indexOf(':')), allowed.slice(allowed.indexOf(':') + 1)];
+    const hits = [...fs.readFileSync(path.join(ROOT, rel), 'utf8').matchAll(GIT_SPAWN_RE)].filter((m) => m[0] === site);
+    assert.strictEqual(hits.length, 1, allowed);
+  }
   for (const rel of ['engine.js', 'plugins/workbench/git-scm.js']) {
-    assert.ok(fs.readFileSync(path.join(ROOT, rel), 'utf8').includes('const argv = await safeGitArgsFor(cwd, args);'), rel);
+    assert.ok(fs.readFileSync(path.join(ROOT, rel), 'utf8').includes('argv = await safeGitArgsFor(cwd, args); } catch'), rel);
   }
   assert.deepStrictEqual([...new Set(seen)].sort(), [...SAFE_SITES].sort(), 'ENTER: each listed file has a git spawn');
 });

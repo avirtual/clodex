@@ -1,4 +1,5 @@
 'use strict';
+const path = require('path');
 const { execFile, execFileSync } = require('child_process');
 
 const DIFF_SUBCOMMANDS = new Set(['diff', 'show', 'log']);
@@ -22,6 +23,7 @@ function filterOverrides(configNames) {
     const m = FILTER_KEY_RE.exec(key.trim());
     if (m && !names.includes(m[1])) names.push(m[1]);
   }
+  if (names.some((n) => n.includes('='))) throw new Error('git filter driver name contains "="; refusing to run git here');
   return names.flatMap((n) => ['-c', `filter.${n}.clean=`, '-c', `filter.${n}.smudge=`, '-c', `filter.${n}.process=`]);
 }
 
@@ -29,7 +31,8 @@ function readOperatorGitConfig(run) {
   const get = (key) => {
     try { return String(run(['config', '--global', '--type=path', '--get', key]) || '').trim() || null; } catch { return null; }
   };
-  return { hooksPath: get('core.hooksPath') || '/dev/null', sshCommand: get('core.sshCommand') || 'ssh' };
+  const hooks = get('core.hooksPath');
+  return { hooksPath: hooks && path.isAbsolute(hooks) ? hooks : '/dev/null', sshCommand: get('core.sshCommand') || 'ssh' };
 }
 
 let operatorConfig = null;
@@ -40,15 +43,19 @@ function operatorGitConfig() {
   return operatorConfig;
 }
 
-function repoFilterNames(cwd) {
-  return new Promise((resolve) => {
-    execFile('git', safeGitArgs(['-C', cwd, 'config', '--null', '--name-only', '--get-regexp', '^filter\\.']),
-      { timeout: 5000 }, (err, stdout) => resolve(err ? '' : String(stdout || '')));
+function repoFilterNames(cwd, run = execFile) {
+  return new Promise((resolve, reject) => {
+    run('git', safeGitArgs(['-C', cwd, 'config', '--null', '--name-only', '--get-regexp', '^filter\\.']),
+      { timeout: 5000, maxBuffer: 64 * 1024 * 1024 }, (err, stdout) => {
+        if (!err) return resolve(String(stdout || ''));
+        if (err.code === 1 && !err.killed && !stdout) return resolve('');
+        reject(new Error(`git filter lookup failed: ${err.message}`));
+      });
   });
 }
 
-async function safeGitArgsFor(cwd, args) {
-  return [...filterOverrides(await repoFilterNames(cwd)), ...safeGitArgs(['-C', cwd, ...args], operatorGitConfig())];
+async function safeGitArgsFor(cwd, args, { run } = {}) {
+  return [...filterOverrides(await repoFilterNames(cwd, run)), ...safeGitArgs(['-C', cwd, ...args], operatorGitConfig())];
 }
 
 module.exports = { safeGitArgs, safeGitArgsFor, filterOverrides, readOperatorGitConfig, operatorGitConfig };

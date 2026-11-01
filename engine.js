@@ -1473,7 +1473,8 @@ async function fetchFileDiff(name, filePath) {
   const s = manager.sessions.get(name);
   const cwd = (s && s.cwd) || path.dirname(filePath);
   const git = async (args) => {
-    const argv = await safeGitArgsFor(cwd, args);
+    let argv;
+    try { argv = await safeGitArgsFor(cwd, args); } catch { return null; }
     return new Promise((resolve) => {
       require('child_process').execFile('git', argv,
         { maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => resolve(err ? null : stdout));
