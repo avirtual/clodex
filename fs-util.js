@@ -14,6 +14,21 @@ function ensureDir(dir, mode = 0o700) {
   fs.mkdirSync(dir, { recursive: true, mode });
 }
 
+function writeAllSync(fd, data, label) {
+  const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+  let written = 0;
+  while (written < buf.length) {
+    const n = fs.writeSync(fd, buf, written, buf.length - written);
+    if (!(n > 0)) {
+      const err = new Error(`short write: ${written}/${buf.length} bytes to ${label}`);
+      err.code = 'ENOSPC';
+      throw err;
+    }
+    written += n;
+  }
+  return written;
+}
+
 // Crash-safe file write: same-dir temp → fsync contents → atomic rename →
 // fsync the parent dir. A power loss or interrupted write leaves the previous
 // file fully intact (rename is atomic on one volume); the fsyncs make the
@@ -26,7 +41,7 @@ function atomicWriteFileSync(filePath, data) {
   let fd;
   try {
     fd = fs.openSync(tmp, 'w', 0o600);
-    fs.writeSync(fd, data);
+    writeAllSync(fd, data, tmp);
     fs.fsyncSync(fd);
   } catch (e) {
     try { fs.unlinkSync(tmp); } catch {}
@@ -54,4 +69,4 @@ function readJsonSafe(p) {
   try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return null; }
 }
 
-module.exports = { ensureDir, atomicWriteFileSync, readJsonSafe };
+module.exports = { ensureDir, atomicWriteFileSync, writeAllSync, readJsonSafe };

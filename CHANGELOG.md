@@ -14,6 +14,8 @@ blocks a release.
 
 ## Unreleased
 
+- **A full disk can no longer truncate a store.** Every JSON store (tickets board, persistence, memories) is written through one atomic writer; it now checks that every byte reached the temp file before renaming it over the live one, so an out-of-space write fails loudly and leaves the previous file intact instead of replacing it with a cut-off copy.
+
 ## 5.153.0 — 2026-10-29 — Memory viewer writes from the browser
 
 - **Memory viewer writes from the browser.** Adding, editing and pinning a memory now work from the web UI, not only the desktop app; the web surface used to answer "plugin method not available on this surface". Deleting a memory stays desktop-only.
