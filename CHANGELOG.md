@@ -14,6 +14,8 @@ blocks a release.
 
 ## Unreleased
 
+- **Security: a seat can no longer run code on the host through its repo's git config.** Clodex's own git calls in a seat's working tree (file diffs, branch lists, workbench status) now disable fsmonitor, hooks, external diff and textconv drivers, so a `core.fsmonitor` or `diff.external` command planted in `.git/config` never runs in the app process. A credential-protected seat is also denied writes to its `.git/config` and `.git/hooks`.
+
 ## 5.153.1 — 2026-11-02 — A full disk can no longer truncate a store
 
 - **A full disk can no longer truncate a store.** The atomic file writer behind the JSON stores (tickets board, persistence, memories), the tickets viewer's own copy of it and the hook script's parked-message restore now check that every byte reached the temp file before renaming it over the live one. An out-of-space write used to return a short count that went unchecked, so the cut-off temp file replaced the good board; now it fails loudly and leaves the previous file intact.

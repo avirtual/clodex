@@ -354,6 +354,11 @@ bundle), whose packaged form is the Docker image under
   worktree:<branch>]`, and the delete flow's awaited `removeWorktree`.
   `execFile`, never a shell; in SCANNED_MODULES. Its ticket-seat consumers are
   under *Teams and tickets*.
+- **git-safe.js** — `safeGitArgs`, the `-c` prefix every app-process git call in
+  a seat-controlled cwd goes through, so repo config (fsmonitor, hooks,
+  external diff, textconv, sshCommand, pager) never runs in the app. Copied
+  byte-for-byte into `plugins/workbench/` and `plugins/git-branches/` (plugins
+  cannot require core); `test/git-safe.test.js` pins the copies and the sites.
 - **transcript-readers.js** — one transcript reader per platform (Claude,
   Codex, Muse Code): `readerFor(id)` → `{ expand, classify }`, `sniffReader(obj)`
   for the per-record consumers. The watcher and transcript.js both consume its
