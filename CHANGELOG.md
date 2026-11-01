@@ -14,6 +14,8 @@ blocks a release.
 
 ## Unreleased
 
+- **Deleting a seat over the wire now cleans up like the desktop does.** `clodexctl delete session` (DELETE /api/sessions/:name) used to kill the process and drop the record but leave the seat's files, parked mail and worktree behind, so a later seat of the same name inherited the old client token and mail. It now runs the same destroy path as Delete Session…, and an archived seat can be deleted over the wire too.
+
 ## 5.153.1 — 2026-11-02 — A full disk can no longer truncate a store
 
 - **A full disk can no longer truncate a store.** The atomic file writer behind the JSON stores (tickets board, persistence, memories), the tickets viewer's own copy of it and the hook script's parked-message restore now check that every byte reached the temp file before renaming it over the live one. An out-of-space write used to return a short count that went unchecked, so the cut-off temp file replaced the good board; now it fails loudly and leaves the previous file intact.

@@ -951,10 +951,10 @@ function createRemoteWiring(deps) {
           const entry = getPersistence().get(name);
           if (!sess && !entry) return { ok: false, error: `no such session "${name}"` };
           if (entry && entry.class === 'assistant') return destroyAssistant(name, entry);
-          if (!sess) return { ok: false, error: `no such session "${name}"` };
-          await manager.kill(name, { endHold: true });
+          const r = await manager.destroy(name);
+          if (r && r.ok === false) return r;
           notifySessions();
-          log.info('session', `kill ${name} via peer`);
+          log.info('session', `destroy ${name} via peer`);
           return { ok: true, name };
         },
         listSleepers: () => getPersistence().list().filter(isSleeper).map(sleeperRow),
