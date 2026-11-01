@@ -41,6 +41,54 @@ test('buildCredentialSandbox: the selection\'s ${NAME}s join the env deny, dedup
   assert.strictEqual(Object.prototype.hasOwnProperty.call(none.sandbox.credentials, 'envVars'), false);
 });
 
+function expectedFilesystem(R, ud) {
+  const denyRead = [
+    `${R}/cli/contexts.json`, `${R}/teams/*/sandbox.json`, `${R}/boxes`, '/h/.clodex/cli/contexts.json',
+    `${R}/run/*/mcp.json`, `${R}/sessions/*/run/mcp.json`,
+    ...(ud ? ['/ud/remote.env', '/ud/env-scopes.json', '/ud/sessions.json', '/ud/wire-hold-entries.json', '/ud/env-override.env'] : []),
+  ];
+  const denyWrite = [
+    '~/.claude', '~/.claude.json', '~/.zshrc', '~/.zprofile', '~/.zshenv', '~/.bashrc', '~/.bash_profile',
+    '~/.gitconfig', '~/.config/git', '~/Library/LaunchAgents', '~/.ssh',
+    `${R}/boxes`, `${R}/cli`, `${R}/run`, `${R}/sessions`, `${R}/teams`, '/Applications/Clodex.app',
+    ...(ud ? ['/ud'] : []),
+  ];
+  return { filesystem: { allowWrite: ['/'], denyRead, denyWrite }, files: denyRead.map((p) => ({ path: p, mode: 'deny' })) };
+}
+
+test('buildCredentialSandbox: a userDataPath read-denies its token and secret stores and write-denies the whole dir', () => {
+  const R = seededRoot();
+  const g = buildCredentialSandbox({ registryDir: R, list: [], home: '/h', userDataPath: '/ud' });
+  const want = expectedFilesystem(R, true);
+  assert.deepStrictEqual(g.sandbox.filesystem, want.filesystem);
+  assert.deepStrictEqual(g.sandbox.credentials, { files: want.files });
+  const udRules = g.deny.filter((r) => r.includes('//ud'));
+  assert.deepStrictEqual(udRules, [
+    'Read(//ud/remote.env)', 'Edit(//ud/remote.env)',
+    'Read(//ud/env-scopes.json)', 'Edit(//ud/env-scopes.json)',
+    'Read(//ud/sessions.json)', 'Edit(//ud/sessions.json)',
+    'Read(//ud/wire-hold-entries.json)', 'Edit(//ud/wire-hold-entries.json)',
+    'Read(//ud/env-override.env)', 'Edit(//ud/env-override.env)',
+    'Edit(//ud/**)',
+  ]);
+});
+
+test('buildCredentialSandbox: without a userDataPath the output is unchanged', () => {
+  const R = seededRoot();
+  const g = buildCredentialSandbox({ registryDir: R, list: [], home: '/h' });
+  const want = expectedFilesystem(R, false);
+  assert.deepStrictEqual(g.sandbox.filesystem, want.filesystem);
+  assert.deepStrictEqual(g.sandbox.credentials, { files: want.files });
+  assert.strictEqual(g.deny.length, 40);
+});
+
+test('setupClaudeHook hands the userData dir to the sandbox', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'cli-hooks.js'), 'utf8');
+  assert.ok(/buildCredentialSandbox\(\{[^}]*userDataPath: getUserDataPath \? getUserDataPath\(\) : null,/.test(src));
+  const engine = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
+  assert.ok(/createCliHooks\(\{[\s\S]*?getUserDataPath: \(\) => userDataPath,\n\}\);/.test(engine));
+});
+
 test('setupClaudeHook hands mcpSecretNames to the sandbox only for a protected seat', () => {
   const root = seededRoot();
   const h = createCliHooks({
