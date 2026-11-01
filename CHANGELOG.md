@@ -14,7 +14,7 @@ blocks a release.
 
 ## Unreleased
 
-- **Security: a credential-protected seat can no longer read Clodex's own token and secret stores or rewrite its spawn environment.** The sandbox now denies reads of the app data dir's remote token, env scopes, session env and held-request files, and denies every write under that dir, so a seat cannot lift the remote API token or plant variables (such as BASH_ENV) that every later seat would inherit. Headless hosts, which have no app data dir, are unchanged.
+- **Security: a credential-protected seat can no longer read Clodex's own token and secret stores or rewrite its spawn environment.** The sandbox now denies reads of the app data dir's remote token, env scopes, session env, held-request files and box tokens, and denies every write under that dir, so a seat cannot lift the remote API token or plant variables (such as BASH_ENV) that every later seat would inherit.
 
 ## 5.153.1 — 2026-11-02 — A full disk can no longer truncate a store
 

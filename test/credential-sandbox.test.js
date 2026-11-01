@@ -45,7 +45,7 @@ function expectedFilesystem(R, ud) {
   const denyRead = [
     `${R}/cli/contexts.json`, `${R}/teams/*/sandbox.json`, `${R}/boxes`, '/h/.clodex/cli/contexts.json',
     `${R}/run/*/mcp.json`, `${R}/sessions/*/run/mcp.json`,
-    ...(ud ? ['/ud/remote.env', '/ud/env-scopes.json', '/ud/sessions.json', '/ud/wire-hold-entries.json', '/ud/env-override.env'] : []),
+    ...(ud ? ['/ud/remote.env', '/ud/env-scopes.json', '/ud/sessions.json', '/ud/wire-hold-entries.json', '/ud/env-override.env', '/ud/sandbox*/auth.env'] : []),
   ];
   const denyWrite = [
     '~/.claude', '~/.claude.json', '~/.zshrc', '~/.zprofile', '~/.zshenv', '~/.bashrc', '~/.bash_profile',
@@ -69,6 +69,7 @@ test('buildCredentialSandbox: a userDataPath read-denies its token and secret st
     'Read(//ud/sessions.json)', 'Edit(//ud/sessions.json)',
     'Read(//ud/wire-hold-entries.json)', 'Edit(//ud/wire-hold-entries.json)',
     'Read(//ud/env-override.env)', 'Edit(//ud/env-override.env)',
+    'Read(//ud/sandbox*/auth.env)', 'Edit(//ud/sandbox*/auth.env)',
     'Edit(//ud/**)',
   ]);
 });
@@ -82,11 +83,22 @@ test('buildCredentialSandbox: without a userDataPath the output is unchanged', (
   assert.strictEqual(g.deny.length, 39);
 });
 
+test('buildCredentialSandbox: a userData dir holding the registry keeps its file denies but drops the whole-dir write deny', () => {
+  const R = seededRoot();
+  const ud = path.dirname(R);
+  const g = buildCredentialSandbox({ registryDir: R, list: [], home: '/h', userDataPath: ud });
+  assert.strictEqual(g.sandbox.filesystem.denyWrite.includes(ud), false);
+  assert.strictEqual(g.deny.includes(`Edit(/${ud}/**)`), false);
+  assert.ok(g.sandbox.filesystem.denyRead.includes(path.join(ud, 'remote.env')));
+  const same = buildCredentialSandbox({ registryDir: R, list: [], home: '/h', userDataPath: R });
+  assert.strictEqual(same.sandbox.filesystem.denyWrite.includes(R), false);
+});
+
 test('setupClaudeHook hands the userData dir to the sandbox', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'cli-hooks.js'), 'utf8');
   assert.ok(/buildCredentialSandbox\(\{[^}]*userDataPath: getUserDataPath \? getUserDataPath\(\) : null,/.test(src));
   const engine = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
-  assert.ok(/createCliHooks\(\{[\s\S]*?getUserDataPath: \(\) => userDataPath,\n\}\);/.test(engine));
+  assert.ok(/createCliHooks\(\{[^;]*getUserDataPath: \(\) => userDataPath,/.test(engine));
 });
 
 test('setupClaudeHook hands mcpSecretNames to the sandbox only for a protected seat', () => {
