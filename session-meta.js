@@ -17,6 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
 const { pathFor } = require('./clodex-paths');
+const { safeGitArgs } = require('./git-safe');
 
 function createSessionMeta({ REGISTRY_DIR, prTtlMs = 60_000 }) {
   // cwd -> { at, promise|value } PR-status cache. A promise while in flight so
@@ -69,7 +70,7 @@ function createSessionMeta({ REGISTRY_DIR, prTtlMs = 60_000 }) {
     if (!force && hit && hit.promise) return hit.promise;
 
     const promise = (async () => {
-      const branchOut = await run('git', ['-C', cwd, 'rev-parse', '--abbrev-ref', 'HEAD'], cwd);
+      const branchOut = await run('git', safeGitArgs(['-C', cwd, 'rev-parse', '--abbrev-ref', 'HEAD']), cwd);
       if (branchOut == null) return { isRepo: false, branch: null, prState: null, prNumber: null };
       const branch = branchOut.trim() || null;
       let prState = null, prNumber = null;

@@ -11,6 +11,7 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const { execFile, execFileSync } = require('child_process');
+const { safeGitArgs, operatorGitConfig } = require('./git-safe');
 
 const FETCH_TIMEOUT_MS = 60_000;
 
@@ -24,7 +25,7 @@ function git(cwd, args, { maxBuffer = 4 * 1024 * 1024, timeout, env } = {}) {
   if (timeout) opts.timeout = timeout;
   if (env) opts.env = env;
   return new Promise((resolve) => {
-    execFile('git', ['-C', cwd, ...args], opts, (err, stdout, stderr) => {
+    execFile('git', safeGitArgs(['-C', cwd, ...args], operatorGitConfig()), opts, (err, stdout, stderr) => {
       const code = err ? (typeof err.code === 'number' ? err.code : null) : 0;
       const timedOut = !!(err && timeout && err.killed);
       const why = timedOut ? `git ${args[0]} timed out after ${timeout}ms` : '';
@@ -196,7 +197,7 @@ async function defaultBranch(repo) {
 
 function gitSync(cwd, args) {
   try {
-    const stdout = execFileSync('git', ['-C', cwd, ...args],
+    const stdout = execFileSync('git', safeGitArgs(['-C', cwd, ...args]),
       { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] });
     return { ok: true, stdout: stdout || '' };
   } catch { return { ok: false, stdout: '' }; }
@@ -414,7 +415,7 @@ async function refState(cwd, ref) {
 function headShaSync(dir) {
   if (!dir || !fs.existsSync(dir)) return null;
   try {
-    const out = execFileSync('git', ['-C', dir, 'rev-parse', 'HEAD'],
+    const out = execFileSync('git', safeGitArgs(['-C', dir, 'rev-parse', 'HEAD']),
       { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] });
     const sha = String(out || '').trim();
     return /^[0-9a-f]{7,40}$/.test(sha) ? sha : null;
@@ -424,7 +425,7 @@ function headShaSync(dir) {
 function headLogSync(dir) {
   if (!dir || !fs.existsSync(dir)) return null;
   try {
-    const out = execFileSync('git', ['-C', dir, 'log', '-1', '--format=%h %s'],
+    const out = execFileSync('git', safeGitArgs(['-C', dir, 'log', '-1', '--format=%h %s']),
       { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] });
     const line = String(out || '').split('\n')[0].trim();
     const m = /^([0-9a-f]{7,40})(?: (.*))?$/.exec(line);

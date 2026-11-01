@@ -125,6 +125,55 @@ test('setupClaudeHook hands mcpSecretNames to the sandbox only for a protected s
 test('session-manager derives mcpSecretNames from the applied selection and passes it to setupClaudeHook', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf8');
   assert.ok(src.includes('mcpLib.filter((r) => mcpSel.applied.names.includes(r.name)).flatMap((r) => secretRefs(r.entry))'));
-  assert.ok(/setupClaudeHook\([^;]*Array\.isArray\(protectCredentials\) \? protectCredentials : null, mcpSecretNames, mcpSel \? mcpSel\.applied\.denyRules : \[\]\);/.test(src));
+  assert.ok(/setupClaudeHook\([^;]*Array\.isArray\(protectCredentials\) \? protectCredentials : null, mcpSecretNames, mcpSel \? mcpSel\.applied\.denyRules : \[\], cwd \|\| null\);/.test(src));
   assert.ok(src.indexOf('const mcpSecretNames') < src.indexOf('setupClaudeHook(name,'));
+});
+
+test('buildCredentialSandbox: a cwd adds exactly its .git/config and .git/hooks to the write deny', () => {
+  const root = seededRoot();
+  const without = buildCredentialSandbox({ registryDir: root, list: [], home: '/h' });
+  const withCwd = buildCredentialSandbox({ registryDir: root, list: [], home: '/h', cwd: '/w' });
+  assert.deepStrictEqual(
+    withCwd.sandbox.filesystem.denyWrite.filter((p) => !without.sandbox.filesystem.denyWrite.includes(p)),
+    ['/w/.git/config', '/w/.git/hooks']);
+  assert.deepStrictEqual(withCwd.deny.filter((r) => !without.deny.includes(r)),
+    ['Edit(//w/.git/config)', 'Edit(//w/.git/hooks/**)']);
+  assert.deepStrictEqual(without.sandbox.filesystem.denyWrite.filter((p) => p.includes('.git/')), []);
+  assert.ok(without.sandbox.filesystem.denyWrite.length > 0, 'ENTER: the base denyWrite is populated');
+  assert.deepStrictEqual(buildCredentialSandbox({ registryDir: root, list: [], home: '/h', cwd: 'rel' }).sandbox.filesystem.denyWrite,
+    without.sandbox.filesystem.denyWrite);
+});
+
+test('setupClaudeHook hands the session cwd to the sandbox', () => {
+  const root = seededRoot();
+  const h = createCliHooks({
+    REGISTRY_DIR: root,
+    memoryStore: { list: () => [] },
+    getUiSettings: () => ({ get: () => ({ statusline: { claude: [], claudeCommand: '' } }) }),
+    nodeInterp: process.execPath,
+  });
+  const prior = process.env.CLODEX_IN_SANDBOX;
+  delete process.env.CLODEX_IN_SANDBOX;
+  try {
+    const s = JSON.parse(fs.readFileSync(
+      h.setupClaudeHook('c1', null, null, [], [], [], null, null, [], false, null, [], [], [], '/w'), 'utf-8'));
+    assert.ok(s.sandbox.filesystem.denyWrite.includes('/w/.git/config'));
+    assert.ok(s.sandbox.filesystem.denyWrite.includes('/w/.git/hooks'));
+    assert.ok(s.permissions.deny.includes('Edit(//w/.git/hooks/**)'));
+  } finally {
+    if (prior !== undefined) process.env.CLODEX_IN_SANDBOX = prior;
+  }
+});
+
+test('buildCredentialSandbox: a cwd under a symlink denies the real .git paths', () => {
+  const root = seededRoot();
+  const real = path.join(root, 'projects', 'real');
+  fs.mkdirSync(real);
+  const link = path.join(root, 'projects', 'link');
+  fs.symlinkSync(real, link);
+  const realResolved = fs.realpathSync(real);
+  const g = buildCredentialSandbox({ registryDir: root, list: [], home: '/h', cwd: link });
+  assert.ok(g.sandbox.filesystem.denyWrite.includes(path.join(realResolved, '.git', 'config')));
+  assert.ok(g.sandbox.filesystem.denyWrite.includes(path.join(realResolved, '.git', 'hooks')));
+  assert.ok(!g.sandbox.filesystem.denyWrite.includes(path.join(link, '.git', 'config')));
 });

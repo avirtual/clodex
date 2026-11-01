@@ -833,7 +833,7 @@ test('checkoutDetached: the fallback fetch runs with a timeout and no terminal p
   const real = cp.execFile;
   const calls = [];
   cp.execFile = (file, argv, opts, cb) => {
-    const args = argv.slice(2);
+    const args = argv.slice(argv.indexOf('-C') + 2);
     calls.push({ args, opts });
     if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') return process.nextTick(() => cb(null, '/fake/repo\n', ''));
     if (args[0] === 'fetch') {

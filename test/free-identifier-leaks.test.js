@@ -43,6 +43,7 @@ const MAIN_SCOPE = ['main.js', 'engine.js'];
 // extraction phases MUST add their modules here (M5: ipc-handlers,
 // remote-wiring, peer-wiring, app-menus).
 const SCANNED_MODULES = [
+  'git-safe.js',
   'dev-reload.js',
   'assistant-sleep.js',
   'mcp-plan.js',

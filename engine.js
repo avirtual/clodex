@@ -14,6 +14,7 @@ const { pathFor, runDirFor, defaultClodexHome, seatPathFor, claudeProjectSlug } 
 const { SEAT_IMAGE_FILE_PATTERN } = require('./seat-images');
 const { SEAT_FILE_FILE_PATTERN } = require('./seat-files');
 const { confine } = require('./path-confine');
+const { safeGitArgsFor } = require('./git-safe');
 const { createSkillDelivery } = require('./skill-delivery');
 const { createSkillLister, skillAliases } = require('./muse-skills');
 const { adapterFor: adapterRowFor, streamFor } = require('./cli-adapters');
@@ -1472,10 +1473,14 @@ function writeFilePeek(name, filePath, content, expectMtime) {
 async function fetchFileDiff(name, filePath) {
   const s = manager.sessions.get(name);
   const cwd = (s && s.cwd) || path.dirname(filePath);
-  const git = (args) => new Promise((resolve) => {
-    require('child_process').execFile('git', ['-C', cwd, ...args],
-      { maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => resolve(err ? null : stdout));
-  });
+  const git = async (args) => {
+    let argv;
+    try { argv = await safeGitArgsFor(cwd, args); } catch { return null; }
+    return new Promise((resolve) => {
+      require('child_process').execFile('git', argv,
+        { maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => resolve(err ? null : stdout));
+    });
+  };
   const status = await git(['status', '--porcelain', '--', filePath]);
   if (status == null) return { ok: false, error: 'Not in a git repository (or git unavailable)' };
   if (status.startsWith('??')) return { ok: true, untracked: true, clean: false, diff: '' };

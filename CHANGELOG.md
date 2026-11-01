@@ -14,8 +14,9 @@ blocks a release.
 
 ## Unreleased
 
-- **Deleting a seat over the wire now cleans up like the desktop does.** `clodexctl delete session` (DELETE /api/sessions/:name) used to kill the process and drop the record but leave the seat's files, parked mail and worktree behind, so a later seat of the same name inherited the old client token and mail. It now runs the same destroy path as Delete Session…, and an archived seat can be deleted over the wire too.
 - **Security: a credential-protected seat can no longer read Clodex's own token and secret stores or rewrite its spawn environment.** The sandbox now denies reads of the app data dir's remote token, env scopes, session env, held-request files and box tokens, and denies every write under that dir, so a seat cannot lift the remote API token or plant variables (such as BASH_ENV) that every later seat would inherit.
+- **Security: Clodex's own git calls no longer run fsmonitor, hook, diff or filter commands planted in a seat's repo.** Git calls Clodex makes in a seat's working tree (file diffs, branch lists, Workbench status and diffs) now turn off fsmonitor, external diff, textconv and the repo's clean/smudge filters, so a `core.fsmonitor`, `diff.external` or `filter.*.clean` command planted in `.git/config` no longer runs in the app process. Hooks run only from your global `core.hooksPath`. A credential-protected seat is also denied writes to its `.git/config` and `.git/hooks`, so in such a seat `git push -u`, `git remote add` and `git config` (which write `.git/config`) now fail; committing still works.
+- **Deleting a seat over the wire now cleans up like the desktop does.** `clodexctl delete session` (DELETE /api/sessions/:name) used to kill the process and drop the record but leave the seat's files, parked mail and worktree behind, so a later seat of the same name inherited the old client token and mail. It now runs the same destroy path as Delete Session…, and an archived seat can be deleted over the wire too.
 
 ## 5.153.1 — 2026-11-02 — A full disk can no longer truncate a store
 

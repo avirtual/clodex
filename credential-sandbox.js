@@ -64,6 +64,10 @@ function realSocketPath(p, fsImpl) {
   try { return path.join(fsImpl.realpathSync(path.dirname(p)), path.basename(p)); } catch { return p; }
 }
 
+function realPathOr(p, fsImpl) {
+  try { return fsImpl.realpathSync(p); } catch { return p; }
+}
+
 function ruleAnchor(p) {
   return p.startsWith('~/') ? p : `/${p}`;
 }
@@ -75,14 +79,18 @@ function rulesFor(tool, p, dir) {
   return [`${tool}(${anchor})`, `${tool}(${anchor}/**)`];
 }
 
-function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = os.homedir(), inBox = false, fsImpl = fs, mcpSecretNames = [], userDataPath = null }) {
+function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = os.homedir(), inBox = false, fsImpl = fs, mcpSecretNames = [], userDataPath = null, cwd = null }) {
   const listed = normalizeList(list);
   const t0 = t0ReadPaths(registryDir, home);
   const userDataFiles = userDataPath ? [...USER_DATA_READ_DENY, path.join('sandbox*', 'auth.env')].map((f) => path.join(userDataPath, f)) : [];
   const userDataWrite = userDataPath && registryDir !== userDataPath && !registryDir.startsWith(userDataPath + path.sep) ? [userDataPath] : [];
   const denyRead = [...new Set([...t0, ...listed.filter((p) => !t0.includes(p)), ...userDataFiles])];
   const dataEntries = dataWriteDeny(registryDir, fsImpl);
-  const denyWrite = [...new Set([...HOME_WRITE_DENY, ...listed, ...dataEntries.map((e) => e.p), APP_BUNDLE, ...userDataWrite])];
+  const realCwd = typeof cwd === 'string' && path.isAbsolute(cwd) ? realPathOr(cwd, fsImpl) : null;
+  const repoGit = realCwd
+    ? [{ p: path.join(realCwd, '.git', 'config'), dir: false }, { p: path.join(realCwd, '.git', 'hooks'), dir: true }]
+    : [];
+  const denyWrite = [...new Set([...HOME_WRITE_DENY, ...listed, ...dataEntries.map((e) => e.p), APP_BUNDLE, ...userDataWrite, ...repoGit.map((e) => e.p)])];
 
   const kindOf = new Map(dataEntries.map((e) => [e.p, e.dir]));
   kindOf.set(t0[0], false);
@@ -91,6 +99,7 @@ function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = o
   kindOf.set(APP_BUNDLE, true);
   for (const p of userDataFiles) kindOf.set(p, false);
   for (const p of userDataWrite) kindOf.set(p, true);
+  for (const e of repoGit) kindOf.set(e.p, e.dir);
 
   const deny = [];
   for (const p of denyRead) {
