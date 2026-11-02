@@ -52,7 +52,7 @@ test('safeGitArgs: diff/show/log get --no-ext-diff --no-textconv, diff also --ig
     '-c', 'credential.helper=', '-c', 'core.askPass=', '-c', 'fetch.all=false',
     '-c', 'protocol.ext.allow=never', '-c', 'protocol.git.allow=never', '-c', 'gpg.x509.program=', '-c', 'gpg.openpgp.program=',
     '-c', 'merge.verifySignatures=false', '-c', 'pull.verifySignatures=false',
-    '-c', 'diff.ignoreSubmodules=all', '-c', 'status.submoduleSummary=false', '-c', 'submodule.recurse=false', '-c', 'fetch.recurseSubmodules=no', '-c', 'push.recurseSubmodules=no',
+    '-c', 'diff.ignoreSubmodules=all', '-c', 'status.submoduleSummary=false', '-c', 'submodule.recurse=false', '-c', 'fetch.recurseSubmodules=no', '-c', 'push.recurseSubmodules=no', '-c', 'core.alternateRefsCommand=',
   ];
   assert.deepStrictEqual(safeGitArgs(['diff', 'HEAD']), [...prefix, 'diff', '--no-ext-diff', '--no-textconv', '--ignore-submodules=all', 'HEAD']);
   assert.deepStrictEqual(safeGitArgs(['-C', '/r', 'diff', 'HEAD', '--', 'f']),
@@ -76,7 +76,7 @@ test('safeGitArgs takes the operator hooksPath, sshCommand, askPass and credenti
     '-c', 'core.askPass=/op/ask', '-c', 'fetch.all=false',
     '-c', 'protocol.ext.allow=never', '-c', 'protocol.git.allow=never', '-c', 'gpg.x509.program=', '-c', 'gpg.openpgp.program=',
     '-c', 'merge.verifySignatures=false', '-c', 'pull.verifySignatures=false',
-    '-c', 'diff.ignoreSubmodules=all', '-c', 'status.submoduleSummary=false', '-c', 'submodule.recurse=false', '-c', 'fetch.recurseSubmodules=no', '-c', 'push.recurseSubmodules=no', 'merge', 'b',
+    '-c', 'diff.ignoreSubmodules=all', '-c', 'status.submoduleSummary=false', '-c', 'submodule.recurse=false', '-c', 'fetch.recurseSubmodules=no', '-c', 'push.recurseSubmodules=no', '-c', 'core.alternateRefsCommand=', 'merge', 'b',
   ]);
 });
 
