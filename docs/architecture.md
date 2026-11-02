@@ -355,10 +355,13 @@ bundle), whose packaged form is the Docker image under
   `execFile`, never a shell; in SCANNED_MODULES. Its ticket-seat consumers are
   under *Teams and tickets*.
 - **git-safe.js** — `safeGitArgs` prefixes app-process git calls in a seat cwd
-  with `-c` overrides for core.fsmonitor, core.hooksPath (the operator's global
-  value, else /dev/null), diff.external, core.sshCommand and core.pager, plus
-  `--no-ext-diff --no-textconv` on diff/show/log; `safeGitArgsFor` also blanks
-  the repo's `filter.<name>.*` drivers. Copied byte-for-byte into
+  with `-c` overrides for core.fsmonitor, core.hooksPath (/dev/null by
+  default), diff.external, core.sshCommand (`ssh` by default) and core.pager,
+  plus `--no-ext-diff --no-textconv` on diff/show/log; `safeGitArgsFor` also
+  blanks the `filter.<name>.*` drivers defined outside the system and global
+  config (repo, worktree, includes) and takes core.hooksPath and
+  core.sshCommand from the last system- or global-scope value for that cwd
+  (`includeIf` files included), via `operatorGitConfigFor`. Copied byte-for-byte into
   `plugins/workbench/` and `plugins/git-branches/` (plugins cannot require
   core); `test/git-safe.test.js` pins the copies and the sites.
 - **transcript-readers.js** — one transcript reader per platform (Claude,
