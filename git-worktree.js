@@ -11,7 +11,7 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const { execFile, execFileSync } = require('child_process');
-const { safeGitArgs, operatorGitConfig } = require('./git-safe');
+const { safeGitArgs, safeGitArgsFor } = require('./git-safe');
 
 const FETCH_TIMEOUT_MS = 60_000;
 
@@ -20,12 +20,14 @@ const FETCH_TIMEOUT_MS = 60_000;
 // separate "git ran and said no" (1) from "git could not answer" (128, ENOENT).
 // `isMerged` turns on exactly that distinction. Null when the process never ran
 // (spawn failure carries a string errno, not a status).
-function git(cwd, args, { maxBuffer = 4 * 1024 * 1024, timeout, env } = {}) {
+async function git(cwd, args, { maxBuffer = 4 * 1024 * 1024, timeout, env } = {}) {
   const opts = { maxBuffer };
   if (timeout) opts.timeout = timeout;
   if (env) opts.env = env;
+  let argv;
+  try { argv = await safeGitArgsFor(cwd, args); } catch (e) { return { ok: false, code: null, stdout: '', stderr: e.message }; }
   return new Promise((resolve) => {
-    execFile('git', safeGitArgs(['-C', cwd, ...args], operatorGitConfig()), opts, (err, stdout, stderr) => {
+    execFile('git', argv, opts, (err, stdout, stderr) => {
       const code = err ? (typeof err.code === 'number' ? err.code : null) : 0;
       const timedOut = !!(err && timeout && err.killed);
       const why = timedOut ? `git ${args[0]} timed out after ${timeout}ms` : '';
