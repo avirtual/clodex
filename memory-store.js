@@ -86,13 +86,13 @@ function serializeMemoryUnit(meta, body) {
     lines.push(`${k}: ${frontmatterValue(meta, k)}`);
   }
   // Written only when set — pre-pin files stay byte-identical on disk.
-  if (meta.pinned) lines.push('pinned: true');
+  if (meta.pinned === 'true') lines.push('pinned: true');
   // Last, so an operator pin is visible at the end of the frontmatter where a
   // human scanning the file expects the thing they set. Separate key from
   // `pinned` on purpose: the agent's flag and the operator's are different
   // claims, and collapsing them would erase which one a store's history came
   // from the moment either is written.
-  if (meta.operator_pinned) lines.push('operator_pinned: true');
+  if (meta.operator_pinned === 'true') lines.push('operator_pinned: true');
   lines.push('---', '', String(body ?? '').trim(), '');
   return lines.join('\n');
 }

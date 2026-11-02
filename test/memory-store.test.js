@@ -650,6 +650,19 @@ for (const [name, ch] of [['U+0085', '\u0085'], ['U+2028', '\u2028'], ['U+2029',
   });
 }
 
+test('memoryStore: a legacy `operator_pinned: true\\r` line stays inert through setPinned', () => {
+  const { store, dir } = tmpStore();
+  const u = store.remember('a', { text: 'legacy', scope: 'x' });
+  const file = path.join(dir, 'a', `${u.id}.md`);
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('scope: x\n', 'scope: x\noperator_pinned: true\r\n'));
+  assert.strictEqual(store.list('a').find(x => x.id === u.id).operatorPinned, false);
+  store.setPinned('a', u.id, true);
+  const unit = store.list('a').find(x => x.id === u.id);
+  assert.strictEqual(unit.operatorPinned, false);
+  assert.strictEqual(unit.pinned, true);
+  assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /^operator_pinned: true$/m);
+});
+
 test('serializeMemoryUnit refuses a frontmatter value carrying a line break, naming the key', () => {
   assert.throws(() => serializeMemoryUnit({ scope: 'a\nb' }, 'x'), /scope/);
 });
