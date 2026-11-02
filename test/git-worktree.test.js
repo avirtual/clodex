@@ -834,6 +834,7 @@ test('checkoutDetached: the fallback fetch runs with a timeout and no terminal p
   const calls = [];
   cp.execFile = (file, argv, opts, cb) => {
     const args = argv.slice(argv.indexOf('-C') + 2);
+    if (args[0] === 'config') return process.nextTick(() => cb(Object.assign(new Error('Command failed'), { code: 1 }), '', ''));
     calls.push({ args, opts });
     if (args[0] === 'rev-parse' && args[1] === '--show-toplevel') return process.nextTick(() => cb(null, '/fake/repo\n', ''));
     if (args[0] === 'fetch') {
@@ -843,11 +844,11 @@ test('checkoutDetached: the fallback fetch runs with a timeout and no terminal p
     const err = Object.assign(new Error('Command failed'), { code: 1 });
     return process.nextTick(() => cb(err, '', ''));
   };
-  const key = require.resolve('../git-worktree');
-  const cached = require.cache[key];
-  delete require.cache[key];
+  const keys = [require.resolve('../git-worktree'), require.resolve('../git-safe')];
+  const cached = keys.map((k) => require.cache[k]);
+  for (const k of keys) delete require.cache[k];
   let fresh;
-  try { fresh = require('../git-worktree'); } finally { require.cache[key] = cached; }
+  try { fresh = require('../git-worktree'); } finally { keys.forEach((k, n) => { require.cache[k] = cached[n]; }); }
   let r;
   try {
     r = await fresh.checkoutDetached({ repoTop: '/fake/repo', dir: '/fake/wt', ref: 't9-x' });
