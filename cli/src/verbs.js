@@ -822,7 +822,10 @@ async function deleteSession({ client, ctx, printer, flags, args, prompt = defau
   }
   const res = await client.del(`/api/sessions/${encodeURIComponent(name)}`, 'delete session');
   if (flags.json) printer.json(res);
-  else printer.line(`deleted ${res.name || name} (hard delete — not resumable)`);
+  else {
+    printer.line(`deleted ${res.name || name} (hard delete — not resumable)`);
+    if (res.worktreeRemoved === false) printer.line(`worktree kept at ${res.path}: ${res.error}`);
+  }
 }
 
 async function restart(bundle) {
