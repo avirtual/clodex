@@ -37,10 +37,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libcurl4-openssl-dev libexpat1-dev zlib1g-dev libssl-dev libpcre2-dev \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
-RUN base=https://mirrors.edge.kernel.org/pub/software/scm/git \
- && v=$(curl -fsSL "$base/" | grep -o 'git-2\.[0-9]*\.[0-9]*\.tar\.xz' | sort -uV | tail -1) \
- && curl -fsSLO "$base/$v" \
- && curl -fsSL "$base/sha256sums.asc" | grep "  $v\$" | sha256sum -c - \
+ARG GIT_VERSION=2.56.0
+ARG GIT_SHA256=26c56c296b38c0695b26fa95f475f1d01704d2d38e73465ca30b0b2f5dc789d3
+RUN v="git-$GIT_VERSION.tar.xz" \
+ && curl -fsSLO "https://mirrors.edge.kernel.org/pub/software/scm/git/$v" \
+ && echo "$GIT_SHA256  $v" | sha256sum -c - \
  && tar -xJf "$v" && cd "${v%.tar.xz}" \
  && make -j"$(nproc)" prefix=/usr/local NO_TCLTK=1 NO_GETTEXT=1 NO_PERL=1 NO_PYTHON=1 NO_RUST=1 \
       USE_LIBPCRE2=1 INSTALL_SYMLINKS=1 SKIP_DASHED_BUILT_INS=1 DESTDIR=/git-root all strip install
