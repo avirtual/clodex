@@ -152,27 +152,40 @@ async function checkout(cwd, branch, { create = false } = {}) {
 
 // push / pull / fetch. These are network ops — longer timeout, and their combined
 // stdout+stderr is returned as `output` so the pane can surface progress/errors.
-async function fetchEachRemote(cwd) {
-  const list = await git(cwd, ['remote']);
-  if (!list.ok) return { ok: false, error: (list.stderr || 'git remote failed').trim() };
-  const names = list.stdout.split('\n').map((s) => s.trim()).filter((n) => n && !n.startsWith('-'));
-  const outputs = [];
-  let failed = false;
-  for (const name of names) {
-    const r = await git(cwd, ['fetch', name], { timeout: 120000 });
-    outputs.push(`${r.stdout}\n${r.stderr}`.trim());
-    if (!r.ok) failed = true;
-  }
-  const output = outputs.filter(Boolean).join('\n');
-  return failed ? { ok: false, error: output || 'git fetch failed' } : { ok: true, output };
-}
-
 async function remoteOp(cwd, op) {
   if (op !== 'push' && op !== 'pull') return fetchEachRemote(cwd);
   const args = op === 'push' ? ['push'] : ['pull', '--ff-only'];
   const r = await git(cwd, args, { timeout: 120000 });
   const output = `${r.stdout}\n${r.stderr}`.trim();
   return r.ok ? { ok: true, output } : { ok: false, error: output || `git ${op} failed` };
+}
+
+function configEntries(r) {
+  if (!r.ok) return [];
+  return r.stdout.split('\0').filter(Boolean).map((e) => (e.includes('\n') ? [e.slice(0, e.indexOf('\n')), e.slice(e.indexOf('\n') + 1)] : [e, '']));
+}
+
+async function fetchEachRemote(cwd) {
+  const list = await git(cwd, ['remote']);
+  if (!list.ok) return { ok: false, error: (list.stderr || 'git remote failed').trim() };
+  const groups = new Set(configEntries(await git(cwd, ['config', '--null', '--get-regexp', '^remotes\\.']))
+    .map(([key]) => key.slice('remotes.'.length).toLowerCase()));
+  const skipped = new Set(configEntries(await git(cwd, ['config', '--null', '--type=bool', '--get-regexp', '^remote\\..*\\.skipfetchall$']))
+    .filter(([, value]) => value === 'true').map(([key]) => key.slice('remote.'.length, -'.skipfetchall'.length)));
+  const names = list.stdout.split('\n').map((s) => s.trim()).filter((n) => n && !n.startsWith('-') && !skipped.has(n));
+  const outputs = [];
+  let failed = false;
+  for (const name of names) {
+    if (groups.has(name.toLowerCase())) {
+      outputs.push(`skipped remote ${name}: a remotes.${name} group of the same name would be fetched instead`);
+      continue;
+    }
+    const r = await git(cwd, ['fetch', name], { timeout: 120000 });
+    outputs.push(`${r.stdout}\n${r.stderr}`.trim());
+    if (!r.ok) failed = true;
+  }
+  const output = outputs.filter(Boolean).join('\n');
+  return failed ? { ok: false, error: output || 'git fetch failed' } : { ok: true, output };
 }
 
 module.exports = {

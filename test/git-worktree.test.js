@@ -975,7 +975,14 @@ test('headLogSync does not run a repo-planted gpg.program on a signed HEAD and s
   assert.strictEqual(fs.existsSync(marker), true, 'ENTER: plain git log runs the planted program');
 });
 
-test('checkoutDetached\'s fetch in a fetch.all repo does not run a repo-planted remote.<n>.uploadpack', { skip: !gitAvailable() }, async () => {
+function gitAtLeast(major, minor) {
+  try {
+    const [, a, b] = /(\d+)\.(\d+)/.exec(execFileSync('git', ['--version'], { encoding: 'utf8' })).map(Number);
+    return a > major || (a === major && b >= minor);
+  } catch { return false; }
+}
+
+test('checkoutDetached\'s fetch in a fetch.all repo does not run a repo-planted remote.<n>.uploadpack', { skip: !gitAtLeast(2, 44) && 'fetch.all needs git 2.44+' }, async () => {
   const repo = makeRepo();
   const src = makeRepo();
   const markers = [];

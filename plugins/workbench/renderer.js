@@ -63,7 +63,7 @@ const WORKBENCH_HTML = `
         <div class="wb-branchbar">
           <select id="wb-branch-select" class="sidebar-select" data-tip="Switch branch"></select>
           <span id="wb-aheadbehind" class="wb-aheadbehind"></span>
-          <button id="wb-fetch" class="wb-remote-btn" data-tip="git fetch --all" type="button">⟳</button>
+          <button id="wb-fetch" class="wb-remote-btn" data-tip="git fetch (each remote)" type="button">⟳</button>
           <button id="wb-pull" class="wb-remote-btn" data-tip="git pull --ff-only" type="button">↓</button>
           <button id="wb-push" class="wb-remote-btn" data-tip="git push" type="button">↑</button>
           <button id="wb-newbranch" class="wb-remote-btn" data-tip="Create a new branch" type="button">+</button>
