@@ -856,6 +856,105 @@ test('arm: an abandoned PRE-armed draft deletes the hint and releases the hold',
     'an abandoned draft must release the hold, or deliveries stall for the whole cap');
 });
 
+function mkPendingArm({ debounceMs } = {}) {
+  const { store } = mkStore(CORPUS);
+  const posts = [];
+  const clears = [];
+  const pending = [];
+  const semantic = {
+    rank(draft) { return new Promise((resolve) => { pending.push({ draft, resolve }); }); },
+  };
+  const a = createHintArm({
+    retriever: createMemoryRetriever({ listUnits: (agent) => store.list(agent) }),
+    semantic,
+    compose,
+    terms,
+    loadState: () => 'absent',
+    armHints: (p) => { posts.push(p); return Promise.resolve({ status: 200 }); },
+    clearHints: (p) => { clears.push(p); return Promise.resolve({ status: 200 }); },
+    now: () => 1_000_000,
+    ...(debounceMs !== undefined ? { debounceMs } : {}),
+  });
+  return { arm: a, posts, clears, pending };
+}
+
+const drainImmediates = async () => {
+  for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
+};
+
+const SIGNING_DRAFT = 'why must ad-hoc signing happen in afterpack or node-pty dies on apple silicon';
+
+test('arm: a disarm while the rank is in flight arms nothing', async () => {
+  const h = mkPendingArm();
+  h.arm.onDraft('s', DRAFT, CTX, { final: true });
+  await drainImmediates();
+  assert.strictEqual(h.pending.length, 1, 'ENTER: the rank must be parked on the semantic pass');
+  h.arm.disarm('s', CTX);
+  h.pending[0].resolve(null);
+  await drainImmediates();
+  assert.strictEqual(h.posts.length, 0, 'a draft discarded mid-rank must not have its hint armed');
+  assert.strictEqual(h.arm._offered('a').size, 0, 'nor its units put on cooldown');
+  assert.strictEqual(h.arm._armedIds('s'), null);
+});
+
+test('arm: a forget while the rank is in flight leaves nothing behind', async () => {
+  const h = mkPendingArm();
+  h.arm.onDraft('s', DRAFT, CTX, { final: true });
+  await drainImmediates();
+  assert.strictEqual(h.pending.length, 1, 'ENTER: the rank must be parked on the semantic pass');
+  h.arm.forget('s', CTX.agent);
+  h.pending[0].resolve(null);
+  await drainImmediates();
+  assert.strictEqual(h.posts.length, 0, 'a forgotten seat must not be armed by its last rank');
+  assert.strictEqual(h.arm._armedIds('s'), null, 'the stale rank re-created the forgotten state');
+  assert.strictEqual(h.arm._offered('a').size, 0, 'the stale rank re-created the forgotten ledger');
+});
+
+test('arm: of two overlapping ranks only the later draft is armed', async () => {
+  const h = mkPendingArm();
+  h.arm.onDraft('s', DRAFT, CTX, { final: true });
+  await drainImmediates();
+  h.arm.onDraft('s', SIGNING_DRAFT, CTX, { final: true });
+  await drainImmediates();
+  assert.strictEqual(h.pending.length, 2, 'ENTER: both ranks must be parked on the semantic pass');
+  h.pending[1].resolve(null);
+  await drainImmediates();
+  assert.strictEqual(h.posts.length, 1, 'ENTER: the later draft armed');
+  assert.ok(h.posts[0].text.includes('afterPack'), 'and with its own unit');
+  h.pending[0].resolve(null);
+  await drainImmediates();
+  assert.strictEqual(h.posts.length, 1,
+    'the older draft finished last and overwrote the newer hint on the fixed id');
+});
+
+test('arm: a stale pre-arm pass does not release the hold the newer draft opened', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = mkPendingArm({ debounceMs: 5 });
+  h.arm.onDraft('s', DRAFT, CTX);
+  t.mock.timers.tick(5);
+  await drainImmediates();
+  assert.strictEqual(h.pending.length, 1, 'ENTER: the pre-arm rank must be parked on the semantic pass');
+  h.arm.onDraft('s', SIGNING_DRAFT, CTX);
+  assert.ok(h.arm.holding('s'), 'ENTER: the newer draft opened its own hold');
+  h.pending[0].resolve(null);
+  await drainImmediates();
+  assert.strictEqual(h.posts.length, 0, 'ENTER: the stale pass armed nothing');
+  assert.strictEqual(h.arm.holding('s'), true,
+    'the stale pass released a hold it did not open, so an injected turn can spend the newer hint');
+});
+
+test('arm: the Enter pass survives the onSubmit that follows it', async () => {
+  const h = mkPendingArm();
+  h.arm.onDraft('s', DRAFT, CTX, { final: true });
+  h.arm.onSubmit('s');
+  await drainImmediates();
+  assert.strictEqual(h.pending.length, 1, 'ENTER: the rank must be parked on the semantic pass');
+  h.pending[0].resolve(null);
+  await drainImmediates();
+  assert.strictEqual(h.posts.length, 1,
+    'session-manager calls onSubmit right after the final onDraft; it must not cancel that pass');
+});
+
 // The budget is wired through the arm, not just unit-tested: with it the arm
 // must widen past one unit, and WITHOUT it the old single-unit behaviour must
 // be exactly what it was.
