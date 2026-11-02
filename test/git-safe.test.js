@@ -58,17 +58,29 @@ test('safeGitArgs takes the operator hooksPath and sshCommand in place of the de
   ]);
 });
 
-test('readOperatorGitConfig reads only global values and falls back to /dev/null and ssh', () => {
+test('readOperatorGitConfig takes the last system or global value of each key and ignores local, worktree and command scopes', async () => {
   const asked = [];
-  const set = { 'core.hooksPath': '/op/hooks\n', 'core.sshCommand': 'ssh -i /op/k\n' };
-  assert.deepStrictEqual(readOperatorGitConfig((a) => { asked.push(a); return set[a[a.length - 1]]; }),
-    { hooksPath: '/op/hooks', sshCommand: 'ssh -i /op/k' });
+  const out = {
+    'core.hooksPath': 'system\0/s/hooks\0global\0/g/hooks\0local\0/l/hooks\0',
+    'core.sshCommand': 'global\0ssh -i /g\0local\0ssh -i /l\0worktree\0ssh -i /w\0command\0ssh\0',
+  };
+  const run = (file, argv, opts, cb) => {
+    asked.push(argv.slice(argv.indexOf('-C')));
+    process.nextTick(() => cb(null, out[argv[argv.length - 1]], ''));
+  };
+  assert.deepStrictEqual(await readOperatorGitConfig('/r', run), { hooksPath: '/g/hooks', sshCommand: 'ssh -i /g' });
   assert.deepStrictEqual(asked, [
-    ['config', '--global', '--type=path', '--get', 'core.hooksPath'],
-    ['config', '--global', '--type=path', '--get', 'core.sshCommand'],
+    ['-C', '/r', 'config', '--null', '--show-scope', '--type=path', '--get-all', 'core.hooksPath'],
+    ['-C', '/r', 'config', '--null', '--show-scope', '--type=path', '--get-all', 'core.sshCommand'],
   ]);
-  assert.deepStrictEqual(readOperatorGitConfig(() => { throw new Error('exit 1'); }), { hooksPath: '/dev/null', sshCommand: 'ssh' });
-  assert.deepStrictEqual(readOperatorGitConfig(() => 'hooks\n'), { hooksPath: '/dev/null', sshCommand: 'hooks' });
+  const reply = (err, stdout) => (file, argv, opts, cb) => process.nextTick(() => cb(err, stdout, ''));
+  assert.deepStrictEqual(await readOperatorGitConfig('/r', reply(Object.assign(new Error('x'), { code: 1 }), '')),
+    { hooksPath: '/dev/null', sshCommand: 'ssh' });
+  assert.deepStrictEqual(await readOperatorGitConfig('/r', reply(Object.assign(new Error('x'), { code: 128 }), '')),
+    { hooksPath: '/dev/null', sshCommand: 'ssh' });
+  assert.deepStrictEqual(await readOperatorGitConfig('/r', reply(null, 'local\0/l/hooks\0command\0ssh -i /c\0')),
+    { hooksPath: '/dev/null', sshCommand: 'ssh' });
+  assert.deepStrictEqual(await readOperatorGitConfig('/r', reply(null, 'global\0hooks\0')), { hooksPath: '/dev/null', sshCommand: 'hooks' });
 });
 
 test('filterOverrides blanks clean, smudge and process for each configured driver, dotted names included', () => {
@@ -165,11 +177,90 @@ test('a filter driver named a=b makes safeGitArgsFor refuse, and runs without it
   }
 });
 
+function withGitConfigGlobal(file, fn) {
+  const prior = { g: process.env.GIT_CONFIG_GLOBAL, s: process.env.GIT_CONFIG_NOSYSTEM };
+  process.env.GIT_CONFIG_GLOBAL = file;
+  process.env.GIT_CONFIG_NOSYSTEM = '1';
+  const restore = () => {
+    for (const [k, v] of [['GIT_CONFIG_GLOBAL', prior.g], ['GIT_CONFIG_NOSYSTEM', prior.s]]) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  };
+  return Promise.resolve().then(fn).finally(restore);
+}
+
+test('a clean filter defined only in the global config is not blanked and cleans the staged blob', async (t) => {
+  if (!hasGit()) { t.skip('git not installed'); return; }
+  const { repo } = plantedRepo();
+  const globalFile = path.join(repo, '..', `${path.basename(repo)}-global`);
+  fs.writeFileSync(globalFile, '[filter "up"]\n\tclean = tr a-z A-Z\n\trequired = true\n');
+  fs.writeFileSync(path.join(repo, '.git', 'info', 'attributes'), 'f filter=up\n');
+  fs.writeFileSync(path.join(repo, 'f'), 'hello\n');
+  try {
+    await withGitConfigGlobal(globalFile, async () => {
+      const argv = await safeGitArgsFor(repo, ['add', '--', 'f']);
+      assert.deepStrictEqual(argv.filter((a) => a.startsWith('filter.')), []);
+      execFileSync('git', argv, { stdio: 'ignore' });
+      assert.strictEqual(execFileSync('git', ['-C', repo, 'show', ':f'], { encoding: 'utf8' }), 'HELLO\n');
+    });
+  } finally {
+    fs.rmSync(globalFile, { force: true });
+  }
+});
+
+test('a clean filter planted through the repo config\'s include.path is still blanked', async (t) => {
+  if (!hasGit()) { t.skip('git not installed'); return; }
+  const { repo, run } = plantedRepo();
+  const marker = path.join(repo, '..', `${path.basename(repo)}-incfilter-ran`);
+  const included = path.join(repo, '..', `${path.basename(repo)}-included`);
+  fs.writeFileSync(included, `[filter "inc"]\n\tclean = touch '${marker}'; cat\n`);
+  run('config', 'include.path', included);
+  fs.writeFileSync(path.join(repo, '.git', 'info', 'attributes'), 'README.md filter=inc\n');
+  try {
+    const argv = await safeGitArgsFor(repo, ['diff', 'HEAD', '--no-color', '--', 'README.md']);
+    assert.ok(argv.includes('filter.inc.clean='));
+    execFileSync('git', argv, { stdio: 'ignore' });
+    assert.strictEqual(fs.existsSync(marker), false, 'the included clean filter ran under safeGitArgsFor');
+    execFileSync('git', ['-C', repo, 'diff', 'HEAD', '--', 'README.md'], { stdio: 'ignore' });
+    assert.strictEqual(fs.existsSync(marker), true, 'control: the included clean filter runs on a raw diff');
+  } finally {
+    fs.rmSync(marker, { force: true });
+    fs.rmSync(included, { force: true });
+  }
+});
+
+test('safeGitArgsFor honours an includeIf sshCommand from the global config and ignores a repo-local one', async (t) => {
+  if (!hasGit()) { t.skip('git not installed'); return; }
+  const { repo, run } = plantedRepo();
+  const other = plantedRepo();
+  const real = fs.realpathSync(repo);
+  const globalFile = path.join(repo, '..', `${path.basename(repo)}-global`);
+  const included = path.join(repo, '..', `${path.basename(repo)}-work`);
+  fs.writeFileSync(globalFile, `[includeIf "gitdir:${real}/"]\n\tpath = ${included}\n`);
+  fs.writeFileSync(included, '[core]\n\tsshCommand = ssh -i /inc/key\n\thooksPath = /inc/hooks\n');
+  run('config', 'core.sshCommand', 'ssh -i /local/key');
+  run('config', 'core.hooksPath', '/local/hooks');
+  other.run('config', 'core.sshCommand', 'ssh -i /local/key');
+  try {
+    await withGitConfigGlobal(globalFile, async () => {
+      const argv = await safeGitArgsFor(repo, ['fetch']);
+      assert.ok(argv.includes('core.sshCommand=ssh -i /inc/key'), argv.join(' '));
+      assert.ok(argv.includes('core.hooksPath=/inc/hooks'), argv.join(' '));
+      const plain = await safeGitArgsFor(other.repo, ['fetch']);
+      assert.ok(plain.includes('core.sshCommand=ssh'), plain.join(' '));
+      assert.ok(!plain.some((a) => a.includes('/local/key')), plain.join(' '));
+    });
+  } finally {
+    fs.rmSync(globalFile, { force: true });
+    fs.rmSync(included, { force: true });
+  }
+});
+
 const SAFE_SITES = ['git-safe.js', 'engine.js', 'git-worktree.js', 'session-meta.js', 'plugins/workbench/git-scm.js', 'plugins/git-branches/engine.js'];
 const GIT_SPAWN_RE = /\b(?:execFile|execFileSync|spawn|spawnSync|run)\(\s*'git',\s*([A-Za-z[]\w*\(?)/g;
 const UNWRAPPED_ALLOWED = [
-  "git-safe.js:execFileSync('git', a",
   "engine.js:execFile('git', argv",
+  "git-worktree.js:execFile('git', argv",
   "plugins/workbench/git-scm.js:execFile('git', argv",
 ];
 
@@ -189,7 +280,7 @@ test('every git spawn in the app-process git sites goes through safeGitArgs', ()
     const hits = [...fs.readFileSync(path.join(ROOT, rel), 'utf8').matchAll(GIT_SPAWN_RE)].filter((m) => m[0] === site);
     assert.strictEqual(hits.length, 1, allowed);
   }
-  for (const rel of ['engine.js', 'plugins/workbench/git-scm.js']) {
+  for (const rel of ['engine.js', 'git-worktree.js', 'plugins/workbench/git-scm.js']) {
     assert.ok(fs.readFileSync(path.join(ROOT, rel), 'utf8').includes('argv = await safeGitArgsFor(cwd, args); } catch'), rel);
   }
   assert.deepStrictEqual([...new Set(seen)].sort(), [...SAFE_SITES].sort(), 'ENTER: each listed file has a git spawn');
