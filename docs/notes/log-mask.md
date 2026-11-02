@@ -30,12 +30,6 @@ regex made a long `=`-less identifier (`'_auth'.repeat(4000)`) take minutes.
 The name regex stops at the separator; the value regex runs only for a secret
 name. A rejected name resumes right after its separator, so a `name=` inside its
 value is still seen and every byte of a dense `k=v&k=v` run is scanned once.
-
-No rule may start a match at every position of a separator-less run: a
-`\b[a-z][a-z0-9+.-]*:\/\/` URL regex does (each `.`/`-` is a word boundary)
-and cost 2.4 s on `'a.'.repeat(50000)`. `maskUrls` therefore matches the whole
-scheme-class run once (`URL_CANDIDATE_RE`, anchored by lookbehind) and
-`schemeStart` picks the leftmost `\b`-letter inside it.
 Scanning the value before judging the name re-read the rest of the line per
 rejected pair: 1.7 s for `'a=b'.repeat(33333)`.
 
@@ -56,3 +50,11 @@ The mask is applied at BOTH ends: each host's `writeLog` masks on the way in,
 and remote.js's `readLogTail` masks again on the way out. The read-side pass is
 not redundant — a clodex.log on disk predating this, or written by an older
 generation of the app, still reaches the wire through that route.
+
+## maskUrls
+
+No rule may start a match at every position of a separator-less run: a
+`\b[a-z][a-z0-9+.-]*:\/\/` URL regex does (each `.`/`-` is a word boundary)
+and cost 2.4 s on `'a.'.repeat(50000)`. `maskUrls` therefore matches the whole
+scheme-class run once (`URL_CANDIDATE_RE`, anchored by lookbehind) and
+`schemeStart` picks the leftmost `\b`-letter inside it.

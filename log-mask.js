@@ -7,6 +7,8 @@ const FLAG_VALUE_RE = /(?:(?:bearer|basic)\s+)?(?:"[^"]*"|'[^']*'|(?!-)\S+)/iy;
 const KEY_WORD_RE = /(?:token|secret|password|authorization|bearer|api[-_]?key|access[-_]?key|private[-_]?key|credentials?|passwd|auth)(?:[-_]|$)/i;
 const URL_USERINFO_RE = /(:\/\/[^\s:/?#@]+):[^\s/?#@]*@/g;
 const URL_CANDIDATE_RE = /(?<![a-z0-9+.-])([a-z0-9+.-]+):\/\/\S+/gi;
+const ASCII_LETTER_RE = /[a-z]/i;
+const WORD_CHAR_RE = /\w/;
 const URL_QUERY_SECRET_RE = /([?&](?:token|key|sig|api[-_]?key)=)[^&#\s]*/gi;
 
 function isSecretName(name) {
@@ -31,7 +33,7 @@ function maskNamed(text, nameRe, valueRe) {
 function schemeStart(text, at, run) {
   for (let i = 0; i < run.length; i++) {
     const prev = i === 0 ? text[at - 1] : run[i - 1];
-    if (/[a-z]/i.test(run[i]) && (prev === undefined || !/\w/.test(prev))) return i;
+    if (ASCII_LETTER_RE.test(run[i]) && (prev === undefined || !WORD_CHAR_RE.test(prev))) return i;
   }
   return -1;
 }

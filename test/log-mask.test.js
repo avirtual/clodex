@@ -164,7 +164,7 @@ test('a dense run of rejected `k=v` pairs is masked in linear time', () => {
 });
 
 test('a long dotted, dashed or path run with no separator is masked in linear time', () => {
-  for (const line of ['a.'.repeat(50000), 'a'.repeat(100000), 'a-'.repeat(50000), 'x.y.z/'.repeat(16667)]) {
+  for (const line of ['a.'.repeat(50000), 'a.'.repeat(150000), 'a'.repeat(100000), 'a-'.repeat(50000), 'x.y.z/'.repeat(16667)]) {
     const started = process.hrtime.bigint();
     assert.strictEqual(maskSecrets(line), line);
     assert.ok(process.hrtime.bigint() - started < 2_000_000_000n, `a ${line.length}-byte separator-less run took over 2 s`);
