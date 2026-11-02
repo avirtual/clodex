@@ -955,3 +955,49 @@ test('refState: present for a branch, gone for a missing branch even beside a sa
   assert.strictEqual(await wt.refState(mkTmpRoot('clodex-nr-'), 'refs/heads/rs-1'), 'unknown');
   assert.strictEqual(await wt.refState(path.join(repo, 'no-such-dir'), 'refs/heads/rs-1'), 'unknown');
 });
+
+test('headLogSync does not run a repo-planted gpg.program on a signed HEAD and still returns sha and subject', { skip: !gitAvailable() }, () => {
+  const dir = makeRepo();
+  const marker = path.join(dir, 'PWNED');
+  const prog = path.join(dir, 'fake-gpg.sh');
+  fs.writeFileSync(prog, `#!/bin/sh\ntouch '${marker}'\nexit 1\n`, { mode: 0o755 });
+  const run = (...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8' });
+  run('config', 'log.showSignature', 'true');
+  run('config', 'gpg.program', prog);
+  const raw = run('cat-file', 'commit', 'HEAD');
+  const signed = raw.replace(/^(committer .*\n)/m,
+    '$1gpgsig -----BEGIN PGP SIGNATURE-----\n \n iQEzBAABCAAdFiEE\n -----END PGP SIGNATURE-----\n');
+  const sha = execFileSync('git', ['-C', dir, 'hash-object', '-t', 'commit', '-w', '--stdin'], { input: signed, encoding: 'utf8' }).trim();
+  run('update-ref', 'HEAD', sha);
+  assert.deepStrictEqual(wt.headLogSync(dir), { sha: sha.slice(0, run('rev-parse', '--short', 'HEAD').trim().length), subject: 'init' });
+  assert.strictEqual(fs.existsSync(marker), false);
+  run('log', '-1');
+  assert.strictEqual(fs.existsSync(marker), true, 'ENTER: plain git log runs the planted program');
+});
+
+function gitAtLeast(major, minor) {
+  try {
+    const [, a, b] = /(\d+)\.(\d+)/.exec(execFileSync('git', ['--version'], { encoding: 'utf8' })).map(Number);
+    return a > major || (a === major && b >= minor);
+  } catch { return false; }
+}
+
+test('checkoutDetached\'s fetch in a fetch.all repo does not run a repo-planted remote.<n>.uploadpack', { skip: !gitAtLeast(2, 44) && 'fetch.all needs git 2.44+' }, async () => {
+  const repo = makeRepo();
+  const src = makeRepo();
+  const markers = [];
+  const run = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'ignore' });
+  for (const name of ['one', 'two']) {
+    const marker = path.join(repo, `PACK_${name}`);
+    markers.push(marker);
+    run('remote', 'add', name, src);
+    run('config', `remote.${name}.uploadpack`, `touch '${marker}'; git-upload-pack`);
+  }
+  run('config', 'fetch.all', 'true');
+  const dest = path.join(mkTmpRoot('clodex-wt-dest-'), 'd');
+  const r = await wt.checkoutDetached({ repoTop: repo, dir: dest, ref: 'no-such-ref' });
+  assert.strictEqual(r.ok, false);
+  assert.deepStrictEqual(markers.filter((m) => fs.existsSync(m)), []);
+  run('fetch', '--quiet');
+  assert.deepStrictEqual(markers.filter((m) => fs.existsSync(m)), markers, 'ENTER: plain fetch under fetch.all runs both planted programs');
+});

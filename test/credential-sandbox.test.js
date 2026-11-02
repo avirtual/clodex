@@ -45,7 +45,8 @@ function expectedFilesystem(R, ud) {
   const denyRead = [
     `${R}/cli/contexts.json`, `${R}/teams/*/sandbox.json`, `${R}/boxes`, '/h/.clodex/cli/contexts.json',
     `${R}/run/*/mcp.json`, `${R}/sessions/*/run/mcp.json`,
-    ...(ud ? ['/ud/remote.env', '/ud/ui-settings.json*', '/ud/env-scopes.json*', '/ud/sessions.json*', '/ud/wire-hold-entries.json', '/ud/env-override.env', '/ud/sandbox*/auth.env'] : []),
+    ...(ud ? ['/ud/remote.env', '/ud/ui-settings.json*', '/ud/env-scopes.json*', '/ud/sessions.json*', '/ud/wire-hold-entries.json', '/ud/env-override.env',
+      '/ud/.ui-settings.json*', '/ud/.env-scopes.json*', '/ud/.sessions.json*', '/ud/.wire-hold-entries.json.tmp.*', '/ud/remote.env.tmp', '/ud/sandbox*/auth.env'] : []),
   ];
   const denyWrite = [
     '~/.claude', '~/.claude.json', '~/.zshrc', '~/.zprofile', '~/.zshenv', '~/.bashrc', '~/.bash_profile',
@@ -70,6 +71,11 @@ test('buildCredentialSandbox: a userDataPath read-denies its token and secret st
     'Read(//ud/sessions.json*)', 'Edit(//ud/sessions.json*)',
     'Read(//ud/wire-hold-entries.json)', 'Edit(//ud/wire-hold-entries.json)',
     'Read(//ud/env-override.env)', 'Edit(//ud/env-override.env)',
+    'Read(//ud/.ui-settings.json*)', 'Edit(//ud/.ui-settings.json*)',
+    'Read(//ud/.env-scopes.json*)', 'Edit(//ud/.env-scopes.json*)',
+    'Read(//ud/.sessions.json*)', 'Edit(//ud/.sessions.json*)',
+    'Read(//ud/.wire-hold-entries.json.tmp.*)', 'Edit(//ud/.wire-hold-entries.json.tmp.*)',
+    'Read(//ud/remote.env.tmp)', 'Edit(//ud/remote.env.tmp)',
     'Read(//ud/sandbox*/auth.env)', 'Edit(//ud/sandbox*/auth.env)',
     'Edit(//ud/**)',
   ]);
@@ -235,4 +241,49 @@ test('buildCredentialSandbox: a .git dir whose commondir points elsewhere denies
     `${fs.realpathSync(rel)}/.git`,
     `${O}/config`, `${O}/config.worktree`, `${O}/commondir`, `${O}/hooks`, `${O}/info/attributes`,
   ]);
+});
+
+const GIT_DENY_RELS = ['config', 'config.worktree', 'commondir', 'hooks', 'info/attributes'];
+
+test('buildCredentialSandbox: a cwd below the repo top denies the repo\'s .git and nothing under the cwd', () => {
+  const root = seededRoot();
+  const repo = path.join(root, 'projects', 'repo');
+  fs.mkdirSync(path.join(repo, '.git'), { recursive: true });
+  fs.mkdirSync(path.join(repo, 'sub', 'deeper'), { recursive: true });
+  const R = fs.realpathSync(repo);
+  const got = addedRepoDenies(root, path.join(repo, 'sub', 'deeper'));
+  assert.deepStrictEqual(got.denyWrite, GIT_DENY_RELS.map((r) => `${R}/.git/${r}`));
+  assert.deepStrictEqual(got.denyWrite.filter((p) => p.startsWith(`${R}/sub`)), []);
+});
+
+test('buildCredentialSandbox: a cwd below a linked worktree denies the pointer, its git dir and the common dir', () => {
+  const root = seededRoot();
+  const repo = path.join(root, 'projects', 'main');
+  const wt = path.join(root, 'projects', 'wt');
+  const own = path.join(repo, '.git', 'worktrees', 'wt');
+  fs.mkdirSync(own, { recursive: true });
+  fs.mkdirSync(path.join(wt, 'sub'), { recursive: true });
+  fs.writeFileSync(path.join(wt, '.git'), 'gitdir: ../main/.git/worktrees/wt\n');
+  fs.writeFileSync(path.join(own, 'commondir'), '../..\n');
+  const R = fs.realpathSync(repo);
+  const W = fs.realpathSync(wt);
+  assert.deepStrictEqual(addedRepoDenies(root, path.join(wt, 'sub')).denyWrite, [
+    `${W}/.git`,
+    ...GIT_DENY_RELS.map((r) => `${R}/.git/worktrees/wt/${r}`),
+    ...GIT_DENY_RELS.map((r) => `${R}/.git/${r}`),
+  ]);
+});
+
+test('buildCredentialSandbox: a .git symlink to a directory keeps its pointer deny and denies under the target', () => {
+  const root = seededRoot();
+  const cwd = path.join(root, 'projects', 'seat');
+  const target = path.join(root, 'projects', 'gitstore');
+  fs.mkdirSync(cwd, { recursive: true });
+  fs.mkdirSync(target, { recursive: true });
+  fs.symlinkSync(target, path.join(cwd, '.git'));
+  const C = fs.realpathSync(cwd);
+  const T = fs.realpathSync(target);
+  const got = addedRepoDenies(root, cwd);
+  assert.deepStrictEqual(got.denyWrite, [`${C}/.git`, ...GIT_DENY_RELS.map((r) => `${T}/${r}`)]);
+  assert.ok(got.deny.includes(`Edit(/${C}/.git)`));
 });

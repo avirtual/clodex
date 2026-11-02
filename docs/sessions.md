@@ -296,7 +296,9 @@ with `/` or `~/`; anything else is dropped.
   The app data dir's (`<userData>`) `remote.env`, `ui-settings.json` (peer
   tokens), `env-scopes.json` and `sessions.json` (each with its `.bak` and
   `.corrupt-*` copies, via a `*` suffix), `wire-hold-entries.json`,
-  `env-override.env` and each box's `sandbox*/auth.env` are read-denied as well.
+  `env-override.env` and each box's `sandbox*/auth.env` are read-denied as well,
+  with the writers' temp copies: `.ui-settings.json*`, `.env-scopes.json*`,
+  `.sessions.json*`, `.wire-hold-entries.json.tmp.*` and `remote.env.tmp`.
 - **A narrow write deny.** Writes are otherwise open (`allowWrite: ["/"]`; the
   sandbox's default would confine them to the cwd). `denyWrite` covers config
   that an unsandboxed process runs later: the template's own paths (a

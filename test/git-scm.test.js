@@ -88,3 +88,69 @@ test('status: non-repo → ok:false, isRepo:false', async () => {
   assert.strictEqual(r.ok, false);
   assert.strictEqual(r.isRepo, false);
 });
+
+function plantedPackRemotes(dir) {
+  const src = mkTmpRoot('clodex-scm-src-');
+  execFileSync('git', ['-C', src, 'init', '-q'], { stdio: 'ignore' });
+  execFileSync('git', ['-C', src, '-c', 'user.email=t@t.co', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 's'], { stdio: 'ignore' });
+  const markers = [];
+  for (const name of ['one', 'two']) {
+    const marker = path.join(dir, `PACK_${name}`);
+    markers.push(marker);
+    execFileSync('git', ['-C', dir, 'remote', 'add', name, src], { stdio: 'ignore' });
+    execFileSync('git', ['-C', dir, 'config', `remote.${name}.uploadpack`, `touch '${marker}'; git-upload-pack`], { stdio: 'ignore' });
+  }
+  return markers;
+}
+
+test('remoteOp fetch with two remotes does not run a repo-planted remote.<n>.uploadpack', { skip: !gitOk() }, async () => {
+  const dir = makeRepo();
+  const markers = plantedPackRemotes(dir);
+  const r = await scm.remoteOp(dir, 'fetch');
+  assert.strictEqual(r.ok, true, r.error);
+  assert.deepStrictEqual(markers.filter((m) => fs.existsSync(m)), []);
+  execFileSync('git', ['-C', dir, 'fetch', '--all', '--quiet'], { stdio: 'ignore' });
+  assert.deepStrictEqual(markers.filter((m) => fs.existsSync(m)), markers, 'ENTER: plain fetch --all runs both planted programs');
+});
+
+function addPlantedRemote(dir, name) {
+  const src = execFileSync('git', ['-C', dir, 'config', 'remote.one.url'], { encoding: 'utf8' }).trim();
+  const marker = path.join(dir, `PACK_${name}`);
+  execFileSync('git', ['-C', dir, 'remote', 'add', name, src], { stdio: 'ignore' });
+  execFileSync('git', ['-C', dir, 'config', `remote.${name}.uploadpack`, `touch '${marker}'; git-upload-pack`], { stdio: 'ignore' });
+  return marker;
+}
+
+test('remoteOp fetch skips a remote whose name is also a remotes.<group> and runs no planted uploadpack', { skip: !gitOk() }, async () => {
+  const dir = makeRepo();
+  const markers = [...plantedPackRemotes(dir), addPlantedRemote(dir, 'three')];
+  execFileSync('git', ['-C', dir, 'config', 'remotes.one', 'two three'], { stdio: 'ignore' });
+  const r = await scm.remoteOp(dir, 'fetch');
+  assert.deepStrictEqual(markers.filter((m) => fs.existsSync(m)), []);
+  assert.strictEqual(r.ok, true, r.error);
+  assert.ok(/skipped remote one/.test(r.output), r.output);
+  execFileSync('git', ['-C', dir, 'fetch', '--quiet', 'one'], { stdio: 'ignore' });
+  assert.deepStrictEqual(markers.filter((m) => fs.existsSync(m)), markers.slice(1), 'ENTER: plain fetch of the group name runs the members\' planted programs');
+});
+
+test('remoteOp fetch leaves out a remote with skipFetchAll', { skip: !gitOk() }, async () => {
+  const dir = makeRepo();
+  plantedPackRemotes(dir);
+  execFileSync('git', ['-C', dir, 'config', 'remote.two.skipFetchAll', 'true'], { stdio: 'ignore' });
+  const r = await scm.remoteOp(dir, 'fetch');
+  assert.strictEqual(r.ok, true, r.error);
+  const refs = execFileSync('git', ['-C', dir, 'for-each-ref', '--format=%(refname)', 'refs/remotes'], { encoding: 'utf8' });
+  assert.ok(refs.includes('refs/remotes/one/'), `ENTER: ${refs}`);
+  assert.strictEqual(refs.includes('refs/remotes/two/'), false, refs);
+});
+
+test('remoteOp fetch fails closed when the remote-group lookup overflows its buffer', { skip: !gitOk() }, async () => {
+  const dir = makeRepo();
+  const markers = [...plantedPackRemotes(dir), addPlantedRemote(dir, 'three')];
+  const pad = Array.from({ length: 42000 }, (_, i) => `\tp${i}${'k'.repeat(200)} = x\n`).join('');
+  fs.appendFileSync(path.join(dir, '.git', 'config'), `[remotes]\n${pad}\tone = two three\n`);
+  const r = await scm.remoteOp(dir, 'fetch');
+  assert.deepStrictEqual(markers.filter((m) => fs.existsSync(m)), []);
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /remote-group lookup failed/);
+});
