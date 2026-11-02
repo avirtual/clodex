@@ -30,8 +30,11 @@ function lazyFetchOpt(version) {
 
 let lazyOpt = null;
 function lazyFetchPrefix(run) {
-  if (!lazyOpt) lazyOpt = lazyFetchOpt(detectGitVersion(run));
-  return lazyOpt;
+  if (lazyOpt) return lazyOpt;
+  const version = detectGitVersion(run);
+  const opt = lazyFetchOpt(version);
+  if (version) lazyOpt = opt;
+  return opt;
 }
 
 function safeGitArgs(args, { hooksPath = '/dev/null', sshCommand = 'ssh', askPass = '', credentialHelpers = [] } = {}) {

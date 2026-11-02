@@ -350,7 +350,7 @@ test('--no-lazy-fetch leads the prefix only on git 2.45 or newer, and is dropped
   }
 });
 
-test('git-safe spawns nothing at require time and checks the git version once, on the first safeGitArgs call', () => {
+test('git-safe spawns nothing at require time, checks the git version once on the first safeGitArgs call, and re-probes after a failed probe', () => {
   const cp = require('node:child_process');
   const real = cp.execFileSync;
   const id = require.resolve('../git-safe');
@@ -364,6 +364,16 @@ test('git-safe spawns nothing at require time and checks the git version once, o
     assert.strictEqual(fresh.safeGitArgs(['status'])[0], '--no-lazy-fetch');
     fresh.safeGitArgs(['diff']);
     assert.deepStrictEqual(calls, [['git', ['--version']]]);
+    calls.length = 0;
+    delete require.cache[id];
+    let fail = true;
+    cp.execFileSync = (file, argv) => { calls.push([file, argv]); if (fail) throw new Error('ETIMEDOUT'); return 'git version 2.52.0\n'; };
+    const flaky = require('../git-safe');
+    assert.deepStrictEqual(flaky.safeGitArgs(['status'])[0], '-c');
+    fail = false;
+    assert.strictEqual(flaky.safeGitArgs(['status'])[0], '--no-lazy-fetch');
+    flaky.safeGitArgs(['diff']);
+    assert.deepStrictEqual(calls, [['git', ['--version']], ['git', ['--version']]]);
   } finally {
     cp.execFileSync = real;
     require.cache[id] = cached;

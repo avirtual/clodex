@@ -17,6 +17,7 @@ With no operator `core.askPass`, the pinned empty value also stops git falling b
 
 ## lazyFetchPrefix
 Runs `git --version` on the first `safeGitArgs` call, not at require time: the hosts require git-safe before `fixPathFromLoginShell`, and the launchd PATH would find a different git than the one later spawns run.
+A failed probe (timeout, ENOENT) is not cached: the next call probes again, so one slow first spawn cannot turn the option off for the process.
 git < 2.45: lazy fetch is not blocked, since no argv option stops it there; the box image ships 2.39 — upgrading the image's git closes it.
 
 ## driverOverrides
