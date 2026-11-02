@@ -3,7 +3,7 @@
 ## maskSecrets
 
 The key/value rule REQUIRES an `=` or a `:`. A bare space as separator was tried
-and reverted: the five key words appear in ops-log prose more often than they
+and reverted: the key words appear in ops-log prose more often than they
 introduce a credential, and four security-diagnostic lines were being corrupted
 into `token=[redacted]` — `web-host.js`'s "(token required)" vs
 "(localhost-trust)" distinction, the `CLODEX_REMOTE_INSECURE` warning, and both
@@ -14,6 +14,21 @@ leading `-`/`--`, so `--token abc` still masks while `bearer abc` in prose does
 not. Both rules allow a prefix on the key word (`GITHUB_TOKEN`, `access_token`)
 because that is the shape an agent-written term command carries.
 
+Key words: `token`, `secret`, `password`, `authorization`, `bearer`,
+`api[-_]?key`, `access[-_]?key`, `private[-_]?key`, `credential(s)`, `passwd`,
+`auth`. A suffix is allowed (`SECRET_ACCESS_KEY`, `API_KEY_ID`) only when it
+opens with `-` or `_`: a bare `[\w-]*` suffix masks `author: bob` and
+`tokenizer=x`. The prefix is NOT anchored to a word start, so `refreshToken=`
+still masks; `--keyboard foo` and `monkey=1` survive because no key word is
+`key` alone.
+
+## maskNamed
+
+The name is matched once as a whole `[\w.-]+` run and judged afterwards by
+`isSecretName`. Putting the key-word alternation and its suffix inside the run
+regex made a long `=`-less identifier (`'_auth'.repeat(4000)`) take minutes; a
+miss resumes the scan at the value so a `name=` inside it is still seen.
+
 Rule order is load-bearing and the rules OVERLAP. The key/value rule runs first
 and consumes to the next whitespace, so `?token=x&page=2` inside a URL loses the
 rest of its query to that rule rather than to the query rule. Deliberate,
@@ -21,10 +36,11 @@ in the safe direction: making the key/value rule stop at `&` would leave a
 credential intact in every log line that is not a URL, and those are the
 majority.
 
-The query rule enumerates `token`/`key`/`sig` and therefore cannot cover a
-signed URL's vendor spellings (`X-Amz-Signature`, `Signature`, a bare `t`).
-That is why engine.js's default `openExternal` seam drops the whole query
-itself instead of relying on this.
+The query rule enumerates `token`/`key`/`sig`/`api_key`/`apikey`/`access_token`/
+`secret`/`password` and therefore cannot cover a signed URL's vendor
+spellings (`X-Amz-Signature`, `Signature`, a bare `t`). That is why
+engine.js's default `openExternal` seam drops the whole query itself instead
+of relying on this.
 
 The mask is applied at BOTH ends: each host's `writeLog` masks on the way in,
 and remote.js's `readLogTail` masks again on the way out. The read-side pass is

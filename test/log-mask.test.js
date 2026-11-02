@@ -23,8 +23,6 @@ test('rule (a): an `=` or `:` is REQUIRED — a bare space is not a separator', 
   assert.strictEqual(maskSecrets(`bearer ${V}`), `bearer ${V}`,
     'a space-separated key word is prose far more often than a credential; the flag branch below '
     + 'recovers the case that matters');
-  assert.strictEqual(maskSecrets('tokenizer=x'), 'tokenizer=x',
-    'the key word must end the identifier — `\\b` after the alternation');
 });
 
 test('these real ops-log lines carry a key word in PROSE and survive byte-identical', () => {
@@ -128,4 +126,33 @@ test('every rule fires on one line, and repeated calls are stable', () => {
   const once = maskSecrets(line);
   assert.ok(!once.includes(V), 'no occurrence of the value survives any rule');
   assert.strictEqual(maskSecrets(once), once, 'masking an already-masked line changes nothing');
+});
+
+test('rule (a) and the flag branch: API key, access key, private key and credential spellings', () => {
+  assert.strictEqual(maskSecrets('ANTHROPIC_API_KEY=sk-ant-abc123 claude'), 'ANTHROPIC_API_KEY=[redacted] claude');
+  assert.strictEqual(maskSecrets('export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI'), 'export AWS_SECRET_ACCESS_KEY=[redacted]');
+  assert.strictEqual(maskSecrets('x-api-key: sk-ant-zzz'), 'x-api-key=[redacted]');
+  assert.strictEqual(maskSecrets('--api-key sk-ant-q'), '--api-key=[redacted]');
+  assert.strictEqual(maskSecrets('https://h/x?api_key=zzz'), 'https://h/x?api_key=[redacted]');
+  assert.strictEqual(maskSecrets('API_KEY_ID=AKIA1'), 'API_KEY_ID=[redacted]');
+  assert.strictEqual(maskSecrets('--private-key k.pem'), '--private-key=[redacted]');
+  assert.strictEqual(maskSecrets('credentials: x'), 'credentials=[redacted]');
+  assert.strictEqual(maskSecrets('refreshToken=abc'), 'refreshToken=[redacted]');
+});
+
+test('the key-word suffix must open with `-` or `_`, so a word merely containing a key word survives', () => {
+  for (const line of ['--keyboard foo', 'monkey=1', 'author: bob', 'tokenizer=x']) {
+    assert.strictEqual(maskSecrets(line), line);
+  }
+});
+
+test('a long identifier with no separator is masked in linear time, not cubic', () => {
+  const started = process.hrtime.bigint();
+  assert.strictEqual(maskSecrets('_auth'.repeat(4000)), '_auth'.repeat(4000));
+  assert.ok(process.hrtime.bigint() - started < 2_000_000_000n, 'a 20 KB key-word run took over 2 s');
+});
+
+test('a long key-word identifier with a value is masked whole', () => {
+  assert.strictEqual(maskSecrets('x_token'.repeat(2000) + '=secret'), 'x_token'.repeat(2000) + '=[redacted]');
+  assert.strictEqual(maskSecrets('a=token=xyz'), 'a=token=[redacted]');
 });

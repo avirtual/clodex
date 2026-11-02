@@ -14,6 +14,7 @@ blocks a release.
 
 ## Unreleased
 
+- **Security: Clodex's log mask now catches `*_API_KEY`, `*_ACCESS_KEY`, private-key and credential spellings, `x-api-key:` headers and `?api_key=` query strings**, so a term exec or env line carrying one no longer reaches `clodex.log` or `/api/node/logs` in the clear.
 - **Images up to 4 MB render inline, including over a remote Clodex.** The file viewer also opens a changed image on the image itself rather than a binary diff, and says so when an image cannot be decoded.
 - **The container images ship git 2.45 or newer**, so the partial-clone lazy-fetch guard from 5.155.0 is active on boxes too.
 - **A respawned seat no longer gets its operator pins delivered twice.** Memory-load state is reset at every non-resume spawn, so the first turn's digest and the late-directive path agree on what the seat already holds.
