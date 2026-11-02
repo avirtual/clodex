@@ -15,6 +15,7 @@ blocks a release.
 ## Unreleased
 
 - **Preferences says when the phone-access token is pinned by `CLODEX_REMOTE_TOKEN`.** Saving or clearing the token there used to report success while the environment value kept gating the server; the panel now shows the pin and refuses the edit.
+- **Security: seat import refuses reserved and legacy-claim seat names.** A token holder could stage mail under a `.draining.rehome` name that a later rehome restored into another seat; import now applies the same name check as every other create door.
 
 ## 5.156.0 — 2026-11-02 — Security: log mask catches API/access/private-key spellings; 4 MB images, git ≥2.45 in containers, no CRLF/non-UTF-8 rewrites
 

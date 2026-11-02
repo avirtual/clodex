@@ -452,6 +452,17 @@ test('begin refuses a name that is live or persisted here, before any staging di
   }
 });
 
+test('begin refuses a legacy-claim name with 400 reserved name, before any staging dir exists', async () => {
+  const w = mkWiring();
+  await withServer({ seatImport: w.opts.seatImport, importCreate: w.opts.importCreate }, async (s) => {
+    const res = await call(s.port, 'POST', '/api/import/begin',
+      { body: { name: 'alice.draining.rehome.999999', record: record({ cwd: path.join(w.home, 'proj') }) } });
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(res.body.error, 'reserved name');
+  });
+  assert.ok(!fs.existsSync(path.join(w.root, 'import')), 'no staging directory was created');
+});
+
 
 test('begin returns the far-cwd refusal as a 400 and stages nothing for it', async () => {
   const w = mkWiring();
