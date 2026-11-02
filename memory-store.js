@@ -60,10 +60,10 @@ function readUnitFile(file) {
 }
 
 const FRONTMATTER_LINE_BREAK = /[\r\n\u0085\u2028\u2029]/;
-const FRONTMATTER_LINE_BREAK_ALL = new RegExp(FRONTMATTER_LINE_BREAK.source, 'g');
+const FRONTMATTER_LINE_BREAK_ALL = new RegExp(FRONTMATTER_LINE_BREAK.source + '+', 'g');
 
 function collapseLineBreaks(v) {
-  return String(v ?? '').replace(FRONTMATTER_LINE_BREAK_ALL, ' ');
+  return (v == null || v === false ? '' : String(v)).replace(FRONTMATTER_LINE_BREAK_ALL, ' ');
 }
 
 function frontmatterValue(meta, k) {
@@ -102,8 +102,8 @@ function parseMemoryUnit(raw) {
   if (!m) return { meta: {}, body: String(raw).trim() };
   const meta = {};
   for (const line of m[1].split('\n')) {
-    const kv = line.match(/^(\w+):\s?(.*)$/);
-    if (kv) meta[kv[1]] = kv[2];
+    const kv = line.match(/^(\w+):\s?(.*)$/s);
+    if (kv) meta[kv[1]] = collapseLineBreaks(kv[2]);
   }
   return { meta, body: (m[2] || '').trim() };
 }
