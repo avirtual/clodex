@@ -1,9 +1,9 @@
 'use strict';
 
 const KV_NAME_RE = /(?<![\w.-])([\w.-]+)(["']?\s*[=:]\s*)/g;
-const KV_VALUE_RE = /(?:(?:bearer|basic)\s+)?(?:"[^"]*"|'[^']*'|\S+)/iy;
+const KV_VALUE_RE = /(?:(?:bearer|basic)\s+)?(?:(?:"[^"]*"|'[^']*')[^\s&#,;}\])]*|\S+)/iy;
 const FLAG_NAME_RE = /(?:^|(?<=\s))(--?[\w.-]+)(\s+)/g;
-const FLAG_VALUE_RE = /(?:(?:bearer|basic)\s+)?(?:"[^"]*"|'[^']*'|(?!-)\S+)/iy;
+const FLAG_VALUE_RE = /(?:(?:bearer|basic)\s+)?(?:(?:"[^"]*"|'[^']*')[^\s&#,;}\])]*|(?!-)\S+)/iy;
 const KEY_WORD_RE = /(?:token|secret|password|authorization|bearer|api[-_]?key|access[-_]?key|private[-_]?key|credentials?|passwd|auth)(?:[-_]|$)/i;
 const URL_USERINFO_RE = /(:\/\/[^\s:/?#@]+):[^\s/?#@]*@/g;
 const URL_CANDIDATE_RE = /(?<![a-z0-9+.-])([a-z0-9+.-]+):\/\//gi;

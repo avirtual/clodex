@@ -211,6 +211,21 @@ test('a quote-led query value is masked through to the next `&`, `#` or whitespa
   assert.strictEqual(maskSecrets('https://h/p?api-key="v"LEAK'), 'https://h/p?api-key=[redacted]');
 });
 
+test('a quote-led secret value with a tail past the closing quote is masked to the next delimiter', () => {
+  for (const [line, expected] of [
+    ['client_secret="v"LEAK x=1', 'client_secret=[redacted] x=1'],
+    ["--passwd='v'LEAK --x=1", '--passwd=[redacted] --x=1'],
+    ["--passwd 'v'LEAK --x=1", '--passwd=[redacted] --x=1'],
+    ['GET https://h/p?client_secret="v"LEAK&x=1', 'GET https://h/p?client_secret=[redacted]&x=1'],
+    ['https://h/p?auth="v"LEAK&y', 'https://h/p?auth=[redacted]&y'],
+    ['password="x y" next=1', 'password=[redacted] next=1'],
+    ['{"token":"abc123"LEAK,"n":1}', '{"token=[redacted],"n":1}'],
+    ['token="v"', 'token=[redacted]'],
+  ]) {
+    assert.strictEqual(maskSecrets(line), expected);
+  }
+});
+
 test('a long key-word identifier with a value is masked whole', () => {
   assert.strictEqual(maskSecrets('x_token'.repeat(2000) + '=secret'), 'x_token'.repeat(2000) + '=[redacted]');
   assert.strictEqual(maskSecrets('a=token=xyz'), 'a=token=[redacted]');

@@ -41,8 +41,8 @@ credential intact in every log line that is not a URL, and those are the
 majority.
 
 The query rule enumerates `token`/`key`/`sig`/`api[-_]?key`/`access_token`/`secret`/`password`.
-None of the key-word spellings is redundant with the key/value rule: that rule takes a
-leading quoted string as the whole value, so `?access_token="v"SECRET` keeps `SECRET`
+None of the key-word spellings is redundant with the key/value rule: that rule ends a quoted
+value's tail at `,` `;` `}` `]` `)`, so `?access_token="v"a,b` keeps `,b`
 unless the query rule runs on to the next `&`/`#`/whitespace. Neither can cover a signed URL's vendor
 spellings (`X-Amz-Signature`, `Signature`, a bare `t`). That is why
 engine.js's default `openExternal` seam drops the whole query itself instead
@@ -62,3 +62,7 @@ scheme head (whole scheme-class run plus `://`, anchored by lookbehind), so a
 rejected candidate costs its own length; `schemeStart` picks the leftmost
 `\b`-letter inside the run, and `URL_TAIL_RE` consumes the tail once per
 accepted scheme. A `\S+` tail in the candidate cost 16 s on `'_a://'.repeat(80000)`.
+
+## KV_VALUE_RE
+
+A quoted value continues past its closing quote only up to whitespace, `&`, `#`, `,`, `;`, `}`, `]` or `)`: `,` and the brackets keep the JSON shape `{"token":"v","n":1}` intact, `&`/`#` the next query pair.
