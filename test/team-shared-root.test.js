@@ -163,6 +163,7 @@ test('the hand cap counts each team\'s hands alone on a shared root', (t) => {
   seat('a-hand-1');
   seat('a-hand-2');
   seat('b-hand-1');
+  h.store.save(h.root, ['a-hand-1', 'a-hand-2', 'b-hand-1'].map((n, i) => ({ id: `t${i + 1}`, state: 'open', assignee: n, startedAt: 1, openedAt: 1 })));
   assert.strictEqual(m._liveHandCount(h.tm.loadManifest('a')), 2);
   assert.strictEqual(m._liveHandCount(h.tm.loadManifest('b')), 1);
 });
