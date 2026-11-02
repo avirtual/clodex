@@ -206,6 +206,9 @@ test('a quote-led query value is masked through to the next `&`, `#` or whitespa
   assert.strictEqual(maskSecrets("https://h/p?password='x'tail&a=1"), 'https://h/p?password=[redacted]&a=1');
   assert.strictEqual(maskSecrets('https://h/p?secret="x"tail#f'), 'https://h/p?secret=[redacted]#f');
   assert.strictEqual(maskSecrets('https://h/p?apikey="x"tail z'), 'https://h/p?apikey=[redacted] z');
+  assert.strictEqual(maskSecrets('GET https://h/p?token="v"SECRET&x=1'), 'GET https://h/p?token=[redacted]&x=1');
+  assert.strictEqual(maskSecrets('https://h/p?api_key="v"LEAK'), 'https://h/p?api_key=[redacted]');
+  assert.strictEqual(maskSecrets('https://h/p?api-key="v"LEAK'), 'https://h/p?api-key=[redacted]');
 });
 
 test('a long key-word identifier with a value is masked whole', () => {
