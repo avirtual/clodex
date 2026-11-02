@@ -28,9 +28,6 @@ RUN npm ci --ignore-scripts
 COPY . .
 RUN npm run build:web
 
-# ── Stage 2: runtime — the headless host + the built bundle.
-# node:22 (not 20) so node:sqlite exists — the wire shadow differ needs it;
-# on 20 the engine logs "wire shadow unavailable" and spawns unshadowed.
 FROM node:22-slim AS git-build
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl xz-utils make gcc libc6-dev \
@@ -46,9 +43,12 @@ RUN v="git-$GIT_VERSION.tar.xz" \
  && make -j"$(nproc)" prefix=/usr/local NO_TCLTK=1 NO_GETTEXT=1 NO_PERL=1 NO_PYTHON=1 NO_RUST=1 \
       USE_LIBPCRE2=1 INSTALL_SYMLINKS=1 SKIP_DASHED_BUILT_INS=1 DESTDIR=/git-root all strip install
 
+# ── Stage 2: runtime — the headless host + the built bundle.
+# node:22 (not 20) so node:sqlite exists — the wire shadow differ needs it;
+# on 20 the engine logs "wire shadow unavailable" and spawns unshadowed.
 FROM node:22-slim AS runtime
 
-# git/bash/procps/ca-certificates for the engine + agents; python3/make/g++ are
+# bash/procps/ca-certificates for the engine + agents; python3/make/g++ are
 # node-pty's build toolchain, kept in the final image DELIBERATELY: agents in the
 # container will want to build things. python3-venv is for the wirescope
 # supervisor: it builds its venv (`python3 -m venv` + pip) at first boot, and
