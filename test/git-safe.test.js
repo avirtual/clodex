@@ -34,6 +34,8 @@ test('safeGitArgs: status gets the config prefix and nothing else', () => {
     '-c', 'diff.external=',
     '-c', 'core.sshCommand=ssh',
     '-c', 'core.pager=cat',
+    '-c', 'log.showSignature=false', '-c', 'commit.gpgSign=false', '-c', 'tag.gpgSign=false', '-c', 'gpg.program=', '-c', 'gpg.ssh.program=',
+    '-c', 'credential.helper=', '-c', 'core.askPass=',
     'status',
   ]);
 });
@@ -42,6 +44,8 @@ test('safeGitArgs: diff/show/log get --no-ext-diff --no-textconv ahead of any pa
   const prefix = [
     '-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/dev/null', '-c', 'diff.external=',
     '-c', 'core.sshCommand=ssh', '-c', 'core.pager=cat',
+    '-c', 'log.showSignature=false', '-c', 'commit.gpgSign=false', '-c', 'tag.gpgSign=false', '-c', 'gpg.program=', '-c', 'gpg.ssh.program=',
+    '-c', 'credential.helper=', '-c', 'core.askPass=',
   ];
   assert.deepStrictEqual(safeGitArgs(['diff', 'HEAD']), [...prefix, 'diff', '--no-ext-diff', '--no-textconv', 'HEAD']);
   assert.deepStrictEqual(safeGitArgs(['-C', '/r', 'diff', 'HEAD', '--', 'f']),
@@ -49,12 +53,20 @@ test('safeGitArgs: diff/show/log get --no-ext-diff --no-textconv ahead of any pa
   assert.deepStrictEqual(safeGitArgs(['-C', '/r', 'show', 'x']), [...prefix, '-C', '/r', 'show', '--no-ext-diff', '--no-textconv', 'x']);
   assert.deepStrictEqual(safeGitArgs(['-C', '/r', 'log', '-1']), [...prefix, '-C', '/r', 'log', '--no-ext-diff', '--no-textconv', '-1']);
   assert.deepStrictEqual(safeGitArgs(['-C', '/r', 'rev-parse', 'HEAD']), [...prefix, '-C', '/r', 'rev-parse', 'HEAD']);
+  assert.deepStrictEqual(safeGitArgs(['-C', '/r', 'fetch', '--quiet']), [...prefix, '-C', '/r', 'fetch', '--upload-pack=git-upload-pack', '--quiet']);
+  assert.deepStrictEqual(safeGitArgs(['pull', '--ff-only']), [...prefix, 'pull', '--upload-pack=git-upload-pack', '--ff-only']);
+  assert.deepStrictEqual(safeGitArgs(['ls-remote', 'o']), [...prefix, 'ls-remote', '--upload-pack=git-upload-pack', 'o']);
+  assert.deepStrictEqual(safeGitArgs(['push']), [...prefix, 'push', '--receive-pack=git-receive-pack']);
 });
 
-test('safeGitArgs takes the operator hooksPath and sshCommand in place of the defaults', () => {
-  assert.deepStrictEqual(safeGitArgs(['merge', 'b'], { hooksPath: '/op/hooks', sshCommand: 'ssh -i /op/k' }), [
+test('safeGitArgs takes the operator hooksPath, sshCommand, askPass and credential helpers in place of the defaults', () => {
+  const credentialHelpers = [['credential.helper', 'osxkeychain'], ['credential.https://gh.example.helper', '!gh auth git-credential']];
+  assert.deepStrictEqual(safeGitArgs(['merge', 'b'], { hooksPath: '/op/hooks', sshCommand: 'ssh -i /op/k', askPass: '/op/ask', credentialHelpers }), [
     '-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/op/hooks', '-c', 'diff.external=',
-    '-c', 'core.sshCommand=ssh -i /op/k', '-c', 'core.pager=cat', 'merge', 'b',
+    '-c', 'core.sshCommand=ssh -i /op/k', '-c', 'core.pager=cat',
+    '-c', 'log.showSignature=false', '-c', 'commit.gpgSign=false', '-c', 'tag.gpgSign=false', '-c', 'gpg.program=', '-c', 'gpg.ssh.program=',
+    '-c', 'credential.helper=', '-c', 'credential.helper=osxkeychain', '-c', 'credential.https://gh.example.helper=!gh auth git-credential',
+    '-c', 'core.askPass=/op/ask', 'merge', 'b',
   ]);
 });
 
@@ -63,24 +75,32 @@ test('readOperatorGitConfig takes the last system or global value of each key an
   const out = {
     'core.hooksPath': 'system\0/s/hooks\0global\0/g/hooks\0local\0/l/hooks\0',
     'core.sshCommand': 'global\0ssh -i /g\0local\0ssh -i /l\0worktree\0ssh -i /w\0command\0ssh\0',
+    'core.askPass': 'global\0/g/ask\0local\0/l/ask\0',
+    '^credential\\..*helper$': 'system\0credential.helper\nosxkeychain\0global\0credential.https://gh.example.helper\n!gh auth\0'
+      + 'local\0credential.helper\n!planted\0global\0credential.helper\0global\0credential.a=b.helper\nx\0',
   };
   const run = (file, argv, opts, cb) => {
     asked.push(argv.slice(argv.indexOf('-C')));
     process.nextTick(() => cb(null, out[argv[argv.length - 1]], ''));
   };
-  assert.deepStrictEqual(await readOperatorGitConfig('/r', run), { hooksPath: '/g/hooks', sshCommand: 'ssh -i /g' });
+  assert.deepStrictEqual(await readOperatorGitConfig('/r', run), {
+    hooksPath: '/g/hooks', sshCommand: 'ssh -i /g', askPass: '/g/ask',
+    credentialHelpers: [['credential.helper', 'osxkeychain'], ['credential.https://gh.example.helper', '!gh auth']],
+  });
   assert.deepStrictEqual(asked, [
     ['-C', '/r', 'config', '--null', '--show-scope', '--type=path', '--get-all', 'core.hooksPath'],
     ['-C', '/r', 'config', '--null', '--show-scope', '--type=path', '--get-all', 'core.sshCommand'],
+    ['-C', '/r', 'config', '--null', '--show-scope', '--type=path', '--get-all', 'core.askPass'],
+    ['-C', '/r', 'config', '--null', '--show-scope', '--get-regexp', '^credential\\..*helper$'],
   ]);
   const reply = (err, stdout) => (file, argv, opts, cb) => process.nextTick(() => cb(err, stdout, ''));
   assert.deepStrictEqual(await readOperatorGitConfig('/r', reply(Object.assign(new Error('x'), { code: 1 }), '')),
-    { hooksPath: '/dev/null', sshCommand: 'ssh' });
+    { hooksPath: '/dev/null', sshCommand: 'ssh', askPass: '', credentialHelpers: [] });
   assert.deepStrictEqual(await readOperatorGitConfig('/r', reply(Object.assign(new Error('x'), { code: 128 }), '')),
-    { hooksPath: '/dev/null', sshCommand: 'ssh' });
+    { hooksPath: '/dev/null', sshCommand: 'ssh', askPass: '', credentialHelpers: [] });
   assert.deepStrictEqual(await readOperatorGitConfig('/r', reply(null, 'local\0/l/hooks\0command\0ssh -i /c\0')),
-    { hooksPath: '/dev/null', sshCommand: 'ssh' });
-  assert.deepStrictEqual(await readOperatorGitConfig('/r', reply(null, 'global\0hooks\0')), { hooksPath: '/dev/null', sshCommand: 'hooks' });
+    { hooksPath: '/dev/null', sshCommand: 'ssh', askPass: '', credentialHelpers: [] });
+  assert.deepStrictEqual(await readOperatorGitConfig('/r', reply(null, 'global\0hooks\0')), { hooksPath: '/dev/null', sshCommand: 'hooks', askPass: 'hooks', credentialHelpers: [] });
 });
 
 test('filterOverrides blanks clean, smudge and process for each configured driver, dotted names included', () => {
@@ -90,6 +110,10 @@ test('filterOverrides blanks clean, smudge and process for each configured drive
   ]);
   assert.deepStrictEqual(filterOverrides(''), []);
   assert.throws(() => filterOverrides('filter.x.clean\0filter.a=b.clean\0'), /contains "="/);
+  assert.deepStrictEqual(filterOverrides('merge.m.driver\0merge.m.name\0merge.a.b.driver\0merge.m.driver\0'), [
+    '-c', 'merge.m.driver=', '-c', 'merge.a.b.driver=',
+  ]);
+  assert.throws(() => filterOverrides('merge.a=b.driver\0'), /contains "="/);
 });
 
 test('safeGitArgsFor rejects on any filter-lookup failure but exit 1 with no output', async () => {

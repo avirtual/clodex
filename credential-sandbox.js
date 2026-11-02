@@ -19,7 +19,8 @@ const HOME_WRITE_DENY = [
 const APP_BUNDLE = '/Applications/Clodex.app';
 const DATA_WRITE_OPEN = new Set(['projects']);
 const GLOB_RE = /[*?[]/;
-const USER_DATA_READ_DENY = ['remote.env', 'ui-settings.json*', 'env-scopes.json*', 'sessions.json*', 'wire-hold-entries.json', 'env-override.env'];
+const USER_DATA_READ_DENY = ['remote.env', 'ui-settings.json*', 'env-scopes.json*', 'sessions.json*', 'wire-hold-entries.json', 'env-override.env',
+  '.ui-settings.json*', '.env-scopes.json*', '.sessions.json*', '.wire-hold-entries.json.tmp.*', 'remote.env.tmp'];
 const GIT_DIR_WRITE_DENY = [['config', false], ['config.worktree', false], ['commondir', false], ['hooks', true], [path.join('info', 'attributes'), false]];
 
 function normalizeList(list) {
@@ -73,18 +74,31 @@ function readGitPointer(file, fsImpl) {
   try { return String(fsImpl.readFileSync(file, 'utf8')).replace(/[\r\n]+$/, ''); } catch { return null; }
 }
 
+function lstatOr(p, fsImpl) {
+  try { return fsImpl.lstatSync(p); } catch { return null; }
+}
+
+function findDotGit(realCwd, fsImpl) {
+  for (let dir = realCwd; ; dir = path.dirname(dir)) {
+    const p = path.join(dir, '.git');
+    const lst = lstatOr(p, fsImpl);
+    if (lst) return { dotGit: p, lst };
+    if (path.dirname(dir) === dir) return { dotGit: path.join(realCwd, '.git'), lst: null };
+  }
+}
+
 function repoGitDirs(realCwd, fsImpl) {
-  const dotGit = path.join(realCwd, '.git');
+  const { dotGit, lst } = findDotGit(realCwd, fsImpl);
   let gitDir = realPathOr(dotGit, fsImpl);
   let st = null;
   try { st = fsImpl.statSync(dotGit); } catch {}
   if (st && st.isFile()) {
     const m = /^gitdir: (.+)$/.exec(readGitPointer(dotGit, fsImpl) || '');
-    if (m) gitDir = realPathOr(path.resolve(realCwd, m[1]), fsImpl);
+    if (m) gitDir = realPathOr(path.resolve(path.dirname(dotGit), m[1]), fsImpl);
   }
   const common = readGitPointer(path.join(gitDir, 'commondir'), fsImpl);
   const commonDir = common ? realPathOr(path.resolve(gitDir, common), fsImpl) : gitDir;
-  const pointer = st && st.isDirectory() ? [] : [{ p: dotGit, dir: false }];
+  const pointer = lst && lst.isDirectory() ? [] : [{ p: dotGit, dir: false }];
   return [...pointer, ...[...new Set([gitDir, commonDir])]
     .flatMap((dir) => GIT_DIR_WRITE_DENY.map(([rel, isDir]) => ({ p: path.join(dir, rel), dir: isDir })))];
 }

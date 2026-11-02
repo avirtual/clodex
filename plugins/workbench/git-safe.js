@@ -2,30 +2,41 @@
 const path = require('path');
 const { execFile } = require('child_process');
 
-const DIFF_SUBCOMMANDS = new Set(['diff', 'show', 'log']);
+const SUBCOMMAND_FLAGS = new Map([
+  ...['diff', 'show', 'log'].map((c) => [c, ['--no-ext-diff', '--no-textconv']]),
+  ...['fetch', 'pull', 'ls-remote'].map((c) => [c, ['--upload-pack=git-upload-pack']]),
+  ['push', ['--receive-pack=git-receive-pack']],
+]);
 const VALUE_OPTIONS = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace']);
 const FILTER_KEY_RE = /^filter\.(.+)\.[^.]+$/;
+const MERGE_DRIVER_RE = /^merge\.(.+)\.driver$/;
 const OPERATOR_SCOPES = new Set(['system', 'global']);
 
-function safeGitArgs(args, { hooksPath = '/dev/null', sshCommand = 'ssh' } = {}) {
+function safeGitArgs(args, { hooksPath = '/dev/null', sshCommand = 'ssh', askPass = '', credentialHelpers = [] } = {}) {
   const list = Array.isArray(args) ? args : [];
   const config = [
     'core.fsmonitor=', `core.hooksPath=${hooksPath}`, 'diff.external=', `core.sshCommand=${sshCommand}`, 'core.pager=cat',
+    'log.showSignature=false', 'commit.gpgSign=false', 'tag.gpgSign=false', 'gpg.program=', 'gpg.ssh.program=',
+    'credential.helper=', ...credentialHelpers.map(([key, value]) => `${key}=${value}`), `core.askPass=${askPass}`,
   ].flatMap((s) => ['-c', s]);
   let i = 0;
   while (i < list.length && String(list[i]).startsWith('-')) i += VALUE_OPTIONS.has(list[i]) ? 2 : 1;
-  if (i >= list.length || !DIFF_SUBCOMMANDS.has(list[i])) return [...config, ...list];
-  return [...config, ...list.slice(0, i + 1), '--no-ext-diff', '--no-textconv', ...list.slice(i + 1)];
+  if (i >= list.length || !SUBCOMMAND_FLAGS.has(list[i])) return [...config, ...list];
+  return [...config, ...list.slice(0, i + 1), ...SUBCOMMAND_FLAGS.get(list[i]), ...list.slice(i + 1)];
 }
 
-function filterOverrides(configNames) {
+function driverOverrides(configNames) {
   const names = [];
-  for (const key of String(configNames || '').split('\0')) {
-    const m = FILTER_KEY_RE.exec(key.trim());
-    if (m && !names.includes(m[1])) names.push(m[1]);
+  const blanks = [];
+  for (const raw of String(configNames || '').split('\0')) {
+    const key = raw.trim();
+    let m;
+    if ((m = FILTER_KEY_RE.exec(key))) blanks.push(`filter.${m[1]}.clean=`, `filter.${m[1]}.smudge=`, `filter.${m[1]}.process=`);
+    else if ((m = MERGE_DRIVER_RE.exec(key))) blanks.push(`merge.${m[1]}.driver=`);
+    if (m) names.push(m[1]);
   }
-  if (names.some((n) => n.includes('='))) throw new Error('git filter driver name contains "="; refusing to run git here');
-  return names.flatMap((n) => ['-c', `filter.${n}.clean=`, '-c', `filter.${n}.smudge=`, '-c', `filter.${n}.process=`]);
+  if (names.some((n) => n.includes('='))) throw new Error('git driver name contains "="; refusing to run git here');
+  return [...new Set(blanks)].flatMap((s) => ['-c', s]);
 }
 
 function scopedConfig(cwd, argv, run, what) {
@@ -50,8 +61,13 @@ async function readOperatorGitConfig(cwd, run = execFile) {
     const operator = pairs.filter(([scope]) => OPERATOR_SCOPES.has(scope));
     return operator.length ? operator[operator.length - 1][1].trim() || null : null;
   };
-  const [hooks, sshCommand] = [await get('core.hooksPath'), await get('core.sshCommand')];
-  return { hooksPath: hooks && path.isAbsolute(hooks) ? hooks : '/dev/null', sshCommand: sshCommand || 'ssh' };
+  const [hooks, sshCommand, askPass] = [await get('core.hooksPath'), await get('core.sshCommand'), await get('core.askPass')];
+  let helpers = [];
+  try { helpers = await scopedConfig(cwd, ['--get-regexp', '^credential\\..*helper$'], run, 'git credential lookup'); } catch {}
+  const credentialHelpers = helpers.filter(([scope, entry]) => OPERATOR_SCOPES.has(scope) && entry.includes('\n'))
+    .map(([, entry]) => [entry.slice(0, entry.indexOf('\n')), entry.slice(entry.indexOf('\n') + 1)])
+    .filter(([key]) => !key.includes('='));
+  return { hooksPath: hooks && path.isAbsolute(hooks) ? hooks : '/dev/null', sshCommand: sshCommand || 'ssh', askPass: askPass || '', credentialHelpers };
 }
 
 const operatorConfigs = new Map();
@@ -61,13 +77,13 @@ function operatorGitConfigFor(cwd) {
 }
 
 async function repoFilterNames(cwd, run = execFile) {
-  const pairs = await scopedConfig(cwd, ['--name-only', '--get-regexp', '^filter\\.'], run, 'git filter lookup');
+  const pairs = await scopedConfig(cwd, ['--name-only', '--get-regexp', '^(filter|merge)\\.'], run, 'git filter lookup');
   return pairs.filter(([scope]) => !OPERATOR_SCOPES.has(scope)).map(([, name]) => name).join('\0');
 }
 
 async function safeGitArgsFor(cwd, args, { run } = {}) {
   const [names, operator] = await Promise.all([repoFilterNames(cwd, run), operatorGitConfigFor(cwd)]);
-  return [...filterOverrides(names), ...safeGitArgs(['-C', cwd, ...args], operator)];
+  return [...driverOverrides(names), ...safeGitArgs(['-C', cwd, ...args], operator)];
 }
 
-module.exports = { safeGitArgs, safeGitArgsFor, filterOverrides, readOperatorGitConfig, operatorGitConfigFor };
+module.exports = { safeGitArgs, safeGitArgsFor, driverOverrides, filterOverrides: driverOverrides, readOperatorGitConfig, operatorGitConfigFor };
