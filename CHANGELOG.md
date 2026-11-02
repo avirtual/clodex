@@ -12,10 +12,10 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — Security: repo-planted alternateRefsCommand and partial-clone lazy fetches; the file viewer shows images
 
+- **Security: Clodex-side git also ignores a repo-planted `core.alternateRefsCommand`, and on git 2.45 or newer never lazily fetches missing objects in a partial clone (`--no-lazy-fetch`)**, so a `remote.<name>.uploadpack` planted in `.git/config` no longer runs in the app process from a `diff`, `log` or `status` either (5.154.0 covered only fetch, pull and ls-remote), and a command planted in `core.alternateRefsCommand` no longer runs from a Workbench fetch. In a partial clone, Clodex's own checkout, ticket-worktree creation and diffs now fail on objects not yet downloaded — check out or diff the files once outside Clodex so the objects are downloaded, or use a full clone. A ticket seat's worktree with uncommitted edits inside a submodule also counts as clean for ticket close, reviewer discard, the merge gate's clean-root check and the worktree summary, not only Delete — commit or stash submodule work before closing.
 - **The file viewer shows images.** `[agent:file view]` and the side-pane file tab render PNG, JPEG, GIF and WebP inline (up to 720 KB) on the desktop, in the web host and over a remote Clodex, where "use Open" was no option.
-- **Security: Clodex-side git also ignores a repo-planted `core.alternateRefsCommand`, and on git 2.45 or newer never lazily fetches missing objects in a partial clone (`--no-lazy-fetch`)**, so a `remote.<name>.uploadpack` planted in `.git/config` no longer runs in the app process from a `diff`, `log` or `status` either (5.154.0 covered only fetch, pull and ls-remote), and a command planted in `core.alternateRefsCommand` no longer runs from a Workbench fetch. In a partial clone, Clodex's own checkout, ticket-worktree creation and diffs now fail on objects not yet downloaded — run `git fetch`/`git checkout` yourself first, or use a full clone. A ticket seat's worktree with uncommitted edits inside a submodule also counts as clean for ticket close, reviewer discard, the merge gate's clean-root check and the worktree summary, not only Delete — commit or stash submodule work before closing.
 
 ## 5.154.0 — 2026-11-02 — Security: credential sandbox covers the app data dir; Clodex-side git ignores repo-planted commands
 
