@@ -5,10 +5,11 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { safeGitArgs, safeGitArgsFor, filterOverrides, readOperatorGitConfig } = require('../git-safe');
+const { safeGitArgs, safeGitArgsFor, filterOverrides, readOperatorGitConfig, lazyFetchPrefix, detectGitVersion, lazyFetchOpt } = require('../git-safe');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const ROOT = path.join(__dirname, '..');
+const ALT_REFS = `core.alternateRefsCommand=git --git-dir="$1" for-each-ref --format='%(objectname)' #`;
 
 function hasGit() {
   try { execFileSync('git', ['--version'], { stdio: 'ignore' }); return true; } catch { return false; }
@@ -29,7 +30,7 @@ function plantedRepo() {
 
 test('safeGitArgs: status gets the config prefix and --ignore-submodules=all', () => {
   assert.deepStrictEqual(safeGitArgs(['status']), [
-    '-c', 'core.fsmonitor=',
+    ...lazyFetchPrefix(), '-c', 'core.fsmonitor=',
     '-c', 'core.hooksPath=/dev/null',
     '-c', 'diff.external=',
     '-c', 'core.sshCommand=ssh',
@@ -39,19 +40,20 @@ test('safeGitArgs: status gets the config prefix and --ignore-submodules=all', (
     '-c', 'protocol.ext.allow=never', '-c', 'protocol.git.allow=never', '-c', 'gpg.x509.program=', '-c', 'gpg.openpgp.program=',
     '-c', 'merge.verifySignatures=false', '-c', 'pull.verifySignatures=false',
     '-c', 'diff.ignoreSubmodules=all', '-c', 'status.submoduleSummary=false', '-c', 'submodule.recurse=false', '-c', 'fetch.recurseSubmodules=no', '-c', 'push.recurseSubmodules=no',
+    '-c', ALT_REFS,
     'status', '--ignore-submodules=all',
   ]);
 });
 
 test('safeGitArgs: diff/show/log get --no-ext-diff --no-textconv, diff also --ignore-submodules=all, ahead of any pathspec separator', () => {
   const prefix = [
-    '-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/dev/null', '-c', 'diff.external=',
+    ...lazyFetchPrefix(), '-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/dev/null', '-c', 'diff.external=',
     '-c', 'core.sshCommand=ssh', '-c', 'core.pager=cat',
     '-c', 'log.showSignature=false', '-c', 'commit.gpgSign=false', '-c', 'tag.gpgSign=false', '-c', 'gpg.program=', '-c', 'gpg.ssh.program=',
     '-c', 'credential.helper=', '-c', 'core.askPass=', '-c', 'fetch.all=false',
     '-c', 'protocol.ext.allow=never', '-c', 'protocol.git.allow=never', '-c', 'gpg.x509.program=', '-c', 'gpg.openpgp.program=',
     '-c', 'merge.verifySignatures=false', '-c', 'pull.verifySignatures=false',
-    '-c', 'diff.ignoreSubmodules=all', '-c', 'status.submoduleSummary=false', '-c', 'submodule.recurse=false', '-c', 'fetch.recurseSubmodules=no', '-c', 'push.recurseSubmodules=no',
+    '-c', 'diff.ignoreSubmodules=all', '-c', 'status.submoduleSummary=false', '-c', 'submodule.recurse=false', '-c', 'fetch.recurseSubmodules=no', '-c', 'push.recurseSubmodules=no', '-c', ALT_REFS,
   ];
   assert.deepStrictEqual(safeGitArgs(['diff', 'HEAD']), [...prefix, 'diff', '--no-ext-diff', '--no-textconv', '--ignore-submodules=all', 'HEAD']);
   assert.deepStrictEqual(safeGitArgs(['-C', '/r', 'diff', 'HEAD', '--', 'f']),
@@ -68,14 +70,14 @@ test('safeGitArgs: diff/show/log get --no-ext-diff --no-textconv, diff also --ig
 test('safeGitArgs takes the operator hooksPath, sshCommand, askPass and credential helpers in place of the defaults', () => {
   const credentialHelpers = [['credential.helper', 'osxkeychain'], ['credential.https://gh.example.helper', '!gh auth git-credential']];
   assert.deepStrictEqual(safeGitArgs(['merge', 'b'], { hooksPath: '/op/hooks', sshCommand: 'ssh -i /op/k', askPass: '/op/ask', credentialHelpers }), [
-    '-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/op/hooks', '-c', 'diff.external=',
+    ...lazyFetchPrefix(), '-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/op/hooks', '-c', 'diff.external=',
     '-c', 'core.sshCommand=ssh -i /op/k', '-c', 'core.pager=cat',
     '-c', 'log.showSignature=false', '-c', 'commit.gpgSign=false', '-c', 'tag.gpgSign=false', '-c', 'gpg.program=', '-c', 'gpg.ssh.program=',
     '-c', 'credential.helper=', '-c', 'credential.helper=osxkeychain', '-c', 'credential.https://gh.example.helper=!gh auth git-credential',
     '-c', 'core.askPass=/op/ask', '-c', 'fetch.all=false',
     '-c', 'protocol.ext.allow=never', '-c', 'protocol.git.allow=never', '-c', 'gpg.x509.program=', '-c', 'gpg.openpgp.program=',
     '-c', 'merge.verifySignatures=false', '-c', 'pull.verifySignatures=false',
-    '-c', 'diff.ignoreSubmodules=all', '-c', 'status.submoduleSummary=false', '-c', 'submodule.recurse=false', '-c', 'fetch.recurseSubmodules=no', '-c', 'push.recurseSubmodules=no', 'merge', 'b',
+    '-c', 'diff.ignoreSubmodules=all', '-c', 'status.submoduleSummary=false', '-c', 'submodule.recurse=false', '-c', 'fetch.recurseSubmodules=no', '-c', 'push.recurseSubmodules=no', '-c', ALT_REFS, 'merge', 'b',
   ]);
 });
 
@@ -304,6 +306,96 @@ test('a url.insteadOf rewrite of a normal remote to ext:: does not run under saf
   }
 });
 
+test('a planted core.alternateRefsCommand does not run on fetch under safeGitArgsFor, and does without it', async (t) => {
+  if (!hasGit()) { t.skip('git not installed'); return; }
+  const { repo, run } = plantedRepo();
+  const alt = plantedRepo();
+  const origin = plantedRepo();
+  const marker = path.join(repo, '..', `${path.basename(repo)}-altrefs-ran`);
+  fs.writeFileSync(path.join(repo, '.git', 'objects', 'info', 'alternates'), `${path.join(alt.repo, '.git', 'objects')}\n`);
+  run('config', 'core.alternateRefsCommand', `touch '${marker}'; true`);
+  run('remote', 'add', 'origin', origin.repo);
+  try {
+    gitTry(await safeGitArgsFor(repo, ['fetch', 'origin']));
+    assert.strictEqual(fs.existsSync(marker), false, 'core.alternateRefsCommand ran under safeGitArgsFor');
+    const altHead = execFileSync('git', ['-C', alt.repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    const haves = execFileSync('git', await safeGitArgsFor(repo, ['rev-list', '--alternate-refs', '--no-walk']), { encoding: 'utf8' }).trim();
+    assert.strictEqual(haves, altHead, 'the pinned alternateRefsCommand still lists the alternate tips');
+    origin.run('commit', '-qm', 'two', '--', 'README.md');
+    gitTry(['-C', repo, 'fetch', 'origin']);
+    assert.strictEqual(fs.existsSync(marker), true, 'control: the planted core.alternateRefsCommand runs on a raw fetch');
+  } finally {
+    fs.rmSync(marker, { force: true });
+  }
+});
+
+test('--no-lazy-fetch leads the prefix only on git 2.45 or newer, and is dropped when git --version fails', () => {
+  const rows = [
+    ['git version 2.39.5', '2.39.5', []],
+    ['git version 2.39.5 (Apple Git-154)\n', '2.39.5', []],
+    ['git version 2.44.2', '2.44.2', []],
+    ['git version 2.45.0', '2.45.0', ['--no-lazy-fetch']],
+    ['git version 2.52.0\n', '2.52.0', ['--no-lazy-fetch']],
+    ['git version 3.0.1', '3.0.1', ['--no-lazy-fetch']],
+    [new Error('spawn git ENOENT'), null, []],
+  ];
+  for (const [out, version, opt] of rows) {
+    const run = (file, argv) => {
+      assert.deepStrictEqual([file, argv], ['git', ['--version']]);
+      if (out instanceof Error) throw out;
+      return out;
+    };
+    assert.strictEqual(detectGitVersion(run), version, String(out));
+    assert.deepStrictEqual(lazyFetchOpt(detectGitVersion(run)), opt, String(out));
+  }
+});
+
+test('git-safe spawns nothing at require time and checks the git version once, on the first safeGitArgs call', () => {
+  const cp = require('node:child_process');
+  const real = cp.execFileSync;
+  const id = require.resolve('../git-safe');
+  const cached = require.cache[id];
+  const calls = [];
+  cp.execFileSync = (file, argv) => { calls.push([file, argv]); return 'git version 2.52.0\n'; };
+  try {
+    delete require.cache[id];
+    const fresh = require('../git-safe');
+    assert.deepStrictEqual(calls, []);
+    assert.strictEqual(fresh.safeGitArgs(['status'])[0], '--no-lazy-fetch');
+    fresh.safeGitArgs(['diff']);
+    assert.deepStrictEqual(calls, [['git', ['--version']]]);
+  } finally {
+    cp.execFileSync = real;
+    require.cache[id] = cached;
+  }
+});
+
+test('a partial clone does not lazily fetch through a planted remote uploadpack under safeGitArgsFor diff, and does without it', async (t) => {
+  if (!hasGit()) { t.skip('git not installed'); return; }
+  if (!lazyFetchPrefix().length) { t.skip(`git ${detectGitVersion()} predates --no-lazy-fetch (2.45)`); return; }
+  const up = plantedRepo();
+  up.run('commit', '-qm', 'two', '--', 'README.md');
+  up.run('config', 'uploadpack.allowFilter', 'true');
+  const clone = () => {
+    const seat = path.join(mkTmpRoot('clx-gitsafe-seat-'), 'seat');
+    execFileSync('git', ['clone', '-q', '--filter=blob:none', '--no-checkout', `file://${up.repo}`, seat], { stdio: 'ignore' });
+    const marker = `${seat}-lazy-ran`;
+    execFileSync('git', ['-C', seat, 'config', 'remote.origin.uploadpack', `touch '${marker}'; git-upload-pack`], { stdio: 'ignore' });
+    return { seat, marker };
+  };
+  const safe = clone();
+  const raw = clone();
+  try {
+    gitTry(await safeGitArgsFor(safe.seat, ['diff', 'HEAD~1', 'HEAD']));
+    assert.strictEqual(fs.existsSync(safe.marker), false, 'the planted uploadpack ran from a lazy fetch under safeGitArgsFor');
+    gitTry(['-C', raw.seat, 'diff', 'HEAD~1', 'HEAD']);
+    assert.strictEqual(fs.existsSync(raw.marker), true, 'control: a raw diff lazily fetches through the planted uploadpack');
+  } finally {
+    fs.rmSync(safe.marker, { force: true });
+    fs.rmSync(raw.marker, { force: true });
+  }
+});
+
 function x509SignedHead(repo) {
   const rev = (r) => execFileSync('git', ['-C', repo, 'rev-parse', r], { encoding: 'utf8' }).trim();
   const parent = rev('HEAD');
@@ -439,6 +531,7 @@ const UNWRAPPED_ALLOWED = [
   "engine.js:execFile('git', argv",
   "git-worktree.js:execFile('git', argv",
   "plugins/workbench/git-scm.js:execFile('git', argv",
+  "git-safe.js:run('git', VERSION_ARGV",
 ];
 
 test('every git spawn in the app-process git sites goes through safeGitArgs', () => {

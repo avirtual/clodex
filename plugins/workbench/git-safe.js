@@ -1,6 +1,6 @@
 'use strict';
 const path = require('path');
-const { execFile } = require('child_process');
+const { execFile, execFileSync } = require('child_process');
 
 const SUBCOMMAND_FLAGS = new Map([
   ['diff', ['--no-ext-diff', '--no-textconv', '--ignore-submodules=all']],
@@ -14,15 +14,36 @@ const FILTER_KEY_RE = /^filter\.(.+)\.[^.]+$/;
 const MERGE_DRIVER_RE = /^merge\.(.+)\.driver$/;
 const OPERATOR_SCOPES = new Set(['system', 'global', 'unknown']);
 
+const VERSION_ARGV = ['--version'];
+
+function detectGitVersion(run = execFileSync) {
+  try {
+    const v = /(\d+)\.(\d+)(?:\.(\d+))?/.exec(String(run('git', VERSION_ARGV, { encoding: 'utf8', timeout: 2000 })));
+    return v ? v[0] : null;
+  } catch { return null; }
+}
+
+function lazyFetchOpt(version) {
+  const v = /^(\d+)\.(\d+)/.exec(version || '');
+  return v && (+v[1] > 2 || (+v[1] === 2 && +v[2] >= 45)) ? ['--no-lazy-fetch'] : [];
+}
+
+let lazyOpt = null;
+function lazyFetchPrefix(run) {
+  if (!lazyOpt) lazyOpt = lazyFetchOpt(detectGitVersion(run));
+  return lazyOpt;
+}
+
 function safeGitArgs(args, { hooksPath = '/dev/null', sshCommand = 'ssh', askPass = '', credentialHelpers = [] } = {}) {
   const list = Array.isArray(args) ? args : [];
-  const config = [
+  const config = [...lazyFetchPrefix(), ...[
     'core.fsmonitor=', `core.hooksPath=${hooksPath}`, 'diff.external=', `core.sshCommand=${sshCommand}`, 'core.pager=cat',
     'log.showSignature=false', 'commit.gpgSign=false', 'tag.gpgSign=false', 'gpg.program=', 'gpg.ssh.program=',
     'credential.helper=', ...credentialHelpers.map(([key, value]) => `${key}=${value}`), `core.askPass=${askPass}`, 'fetch.all=false',
     'protocol.ext.allow=never', 'protocol.git.allow=never', 'gpg.x509.program=', 'gpg.openpgp.program=', 'merge.verifySignatures=false', 'pull.verifySignatures=false',
     'diff.ignoreSubmodules=all', 'status.submoduleSummary=false', 'submodule.recurse=false', 'fetch.recurseSubmodules=no', 'push.recurseSubmodules=no',
-  ].flatMap((s) => ['-c', s]);
+    `core.alternateRefsCommand=git --git-dir="$1" for-each-ref --format='%(objectname)' #`,
+  ].flatMap((s) => ['-c', s])];
   let i = 0;
   while (i < list.length && String(list[i]).startsWith('-')) i += VALUE_OPTIONS.has(list[i]) ? 2 : 1;
   if (i >= list.length || !SUBCOMMAND_FLAGS.has(list[i])) return [...config, ...list];
@@ -90,4 +111,4 @@ async function safeGitArgsFor(cwd, args, { run } = {}) {
   return [...driverOverrides(names), ...safeGitArgs(['-C', cwd, ...args], operator)];
 }
 
-module.exports = { safeGitArgs, safeGitArgsFor, driverOverrides, filterOverrides: driverOverrides, readOperatorGitConfig, operatorGitConfigFor };
+module.exports = { safeGitArgs, lazyFetchPrefix, detectGitVersion, lazyFetchOpt, safeGitArgsFor, driverOverrides, filterOverrides: driverOverrides, readOperatorGitConfig, operatorGitConfigFor };
