@@ -67,6 +67,7 @@ function mkFixture({ maxHands, env = {}, cpus = 6, extraRoles = {} } = {}) {
     refreshAppMenu: () => {},
     env,
     setTeamMaxHands: (name, v) => { team.maxHands = v; return team; },
+    gitWorktree: require('../git-worktree'),
   };
   const SessionManager = createSessionManager(deps);
   const m = new SessionManager();
@@ -258,7 +259,8 @@ test('hand-merged after MERGE FAILED: the second accept retires the seat and sta
   git(['commit', '-q', '-m', 'work']);
   git(['checkout', '-q', 'master']);
   git(['merge', '-q', '--no-ff', '-m', 'hand merge', 'team-hand-91-br']);
-  const wtPath = pathReal.join(f.root, 'no-such-tree');
+  const wtPath = pathReal.join(mkTmpRoot('clodex-t2114-wt-'), 'tree');
+  git(['worktree', 'add', '-q', wtPath, 'team-hand-91-br']);
   f.records.set('team-hand-91', { name: 'team-hand-91', ephemeral: true, worktree: { path: wtPath, branch: 'team-hand-91-br' } });
   f.hold('team-hand-91');
   const lead = f.seat('lead');
@@ -287,7 +289,7 @@ test('hand-merged after MERGE FAILED: the second accept retires the seat and sta
   f.acks.length = 0;
   f.injected.length = 0;
   const second = await accept();
-  assert.match(second, /team-hand-91 retired/);
+  assert.match(second, /team-hand-91 retired and its worktree removed/);
   assert.strictEqual(f.m.sessions.has('team-hand-91'), false);
   assert.deepStrictEqual(f.spawned, [{ id: 't1', name: 'team-hand-1' }]);
   assert.match(f.acks[0], /^\[agent:task\] cap freed: ticket t1 \(unparked\) → spawning team-hand-1 /);
