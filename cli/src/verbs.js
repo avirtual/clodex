@@ -658,7 +658,8 @@ async function dmWait({ client, ctx, printer, flags, name, text, mode = null, io
             const before = await client.get(`${transcriptPath(name)}?limit=500`, 'exec (snapshot)', { signal: waitAc.signal });
             sinceSeq = lastSeqOf(before.messages) + 1;
           }
-          await client.post(`/api/sessions/${encodeURIComponent(name)}/dm`, 'exec (dm)', { text }, { signal: waitAc.signal });
+          const sent = await client.post(`/api/sessions/${encodeURIComponent(name)}/dm`, 'exec (dm)', { text }, { signal: waitAc.signal });
+          if (asleep && sent && typeof sent.ts === 'string' && Number.isFinite(Date.parse(sent.ts))) afterIso = sent.ts;
           dmSent = true;
         } catch (e) { finish(reject, e); } // a ceiling abort lands here too — finish is then a no-op (already settled)
       },
@@ -717,6 +718,9 @@ async function dmWait({ client, ctx, printer, flags, name, text, mode = null, io
 
   if (waitResult.timedOut) {
     throw new CliError(EXIT.SERVER, `exec: no end-of-turn within ${Math.round(timeoutMs / 1000)}s — the agent may still be working; check \`logs ${name}\``);
+  }
+  if (asleep && !fresh.length) {
+    throw new CliError(EXIT.SERVER, `exec: ${name} ended its turn but no reply after the wake reached the transcript; check \`logs ${name}\``);
   }
 }
 

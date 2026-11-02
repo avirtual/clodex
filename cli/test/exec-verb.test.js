@@ -67,7 +67,7 @@ function stub(opts = {}) {
       if (/^\/api\/sessions\/[^/]+\/transcript$/.test(p)) {
         res.writeHead(200); return res.end(JSON.stringify(serverTranscriptPage((opts.transcript && opts.transcript(seen)) || [], req.url)));
       }
-      if (/^\/api\/sessions\/[^/]+\/dm$/.test(p)) { res.writeHead(200); return res.end(JSON.stringify({ ok: true })); }
+      if (/^\/api\/sessions\/[^/]+\/dm$/.test(p)) { res.writeHead(200); return res.end(JSON.stringify(opts.dmReply ? opts.dmReply() : { ok: true })); }
       res.writeHead(404); res.end(JSON.stringify({ ok: false, error: 'no route' }));
     });
   });
@@ -226,6 +226,44 @@ test('exec on a sleeping assistant resolves it by name and waits on the post-wak
     assert.doesNotMatch(r.url, /[?&]since=/);
   }
   server.close();
+});
+
+test('exec on a sleeper floors the after= cursor at the dm reply ts, so a server clock 30 s behind still yields the reply', async () => {
+  const serverNow = () => new Date(Date.now() - 30000).toISOString();
+  const dmSent = (seen) => seen.some((r) => r.method === 'POST' && r.url === '/api/sessions/asst/dm');
+  const { server, seen } = stub({
+    sessions: [{ name: 'bob', type: 'claude' }],
+    seats: { asst: { name: 'asst', type: 'claude', class: 'assistant', state: 'asleep', activity: 'asleep' } },
+    onEventsOpen: endTurnWhenSent('asst'),
+    dmReply: () => ({ ok: true, ts: serverNow() }),
+    transcript: (seen) => (dmSent(seen)
+      ? [{ role: 'user', text: 'hi', ts: serverNow() }, { role: 'assistant', text: 'skewed reply', ts: serverNow() }]
+      : [{ role: 'assistant', text: 'old reply', ts: '2020-01-01T00:00:00.000Z' }]),
+  });
+  try {
+    const port = await listen(server);
+    const { code, stdout, stderr } = await cli(['exec', 'asst', 'hi', '--timeout', '10'], port, { refetchGraceMs: 300 });
+    assert.strictEqual(code, 0, stderr);
+    assert.match(stdout, /\[assistant\] skewed reply/);
+    assert.doesNotMatch(stdout, /old reply/);
+    assert.ok(seen.some((r) => r.url.startsWith('/api/sessions/asst/transcript') && /[?&]after=/.test(r.url)), 'read with the after= cursor');
+  } finally { server.close(); }
+});
+
+test('exec on a sleeper whose turn ends with no reply in the transcript exits non-zero, not a silent empty success', async () => {
+  const { server } = stub({
+    sessions: [{ name: 'bob', type: 'claude' }],
+    seats: { asst: { name: 'asst', type: 'claude', class: 'assistant', state: 'asleep', activity: 'asleep' } },
+    onEventsOpen: endTurnWhenSent('asst'),
+    transcript: () => [{ role: 'assistant', text: 'old reply', ts: '2020-01-01T00:00:00.000Z' }],
+  });
+  try {
+    const port = await listen(server);
+    const { code, stdout, stderr } = await cli(['exec', 'asst', 'hi', '--timeout', '10'], port, { refetchGraceMs: 300 });
+    assert.notStrictEqual(code, 0);
+    assert.strictEqual(stdout, '');
+    assert.match(stderr, /asst ended its turn but no reply after the wake reached the transcript/);
+  } finally { server.close(); }
 });
 
 test('exec with no text → usage error', async () => {

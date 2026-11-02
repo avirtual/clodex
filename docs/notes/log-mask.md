@@ -40,8 +40,10 @@ in the safe direction: making the key/value rule stop at `&` would leave a
 credential intact in every log line that is not a URL, and those are the
 majority.
 
-The query rule enumerates `token`/`key`/`sig`/`api[-_]?key`; the key/value rule
-already masks the other key words inside a query. Neither can cover a signed URL's vendor
+The query rule enumerates `token`/`key`/`sig`/`api[-_]?key`/`access_token`/`secret`/`password`.
+None of the key-word spellings is redundant with the key/value rule: that rule takes a
+leading quoted string as the whole value, so `?access_token="v"SECRET` keeps `SECRET`
+unless the query rule runs on to the next `&`/`#`/whitespace. Neither can cover a signed URL's vendor
 spellings (`X-Amz-Signature`, `Signature`, a bare `t`). That is why
 engine.js's default `openExternal` seam drops the whole query itself instead
 of relying on this.
