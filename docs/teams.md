@@ -810,8 +810,9 @@ a box.
 `[agent:team worktrees]` shows the effective value and whether it is set or
 derived from the box flag. Existing trees are not moved.
 
-A team can cap its concurrent one-shot hands (seats of a `worktree` or `spawn`
-role, live or minted and not yet up; standing seats do not count). `maxHands` in
+A team can cap its concurrent one-shot hands: a seat of a `worktree` or `spawn`
+role counts only while it holds an open started ticket and is not archived,
+whether live or minted and not yet up; standing seats do not count. `maxHands` in
 team.json is a positive integer, or `null` for off. Unset, the cap is off on the
 desktop and, inside a sandbox box, half the box's vCPUs (at least 1) — the
 cgroup `cpu.max` quota when bounded, else the CPU count. A `task start` (or
