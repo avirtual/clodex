@@ -12,7 +12,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — Security: repo-planted alternateRefsCommand and partial-clone lazy fetches; the file viewer shows images
+## Unreleased
+
+## 5.155.0 — 2026-11-02 — Security: repo-planted alternateRefsCommand and partial-clone lazy fetches; the file viewer shows images
 
 - **Security: Clodex-side git also ignores a repo-planted `core.alternateRefsCommand`, and on git 2.45 or newer never lazily fetches missing objects in a partial clone (`--no-lazy-fetch`)**, so a `remote.<name>.uploadpack` planted in `.git/config` no longer runs in the app process from a `diff`, `log` or `status` either (5.154.0 covered only fetch, pull and ls-remote), and a command planted in `core.alternateRefsCommand` no longer runs from a Workbench fetch. In a partial clone, Clodex's own checkout, Workbench pull and branch switch, ticket-worktree creation, ticket merge and diffs now fail on objects not yet downloaded — check out or diff the files once outside Clodex so the objects are downloaded, or use a full clone.
 - **The file viewer shows images.** `[agent:file view]` and the side-pane file tab render PNG, JPEG, GIF and WebP inline (up to 720 KB) on the desktop, in the web host and over a remote Clodex, where "use Open" was no option. The `filePeek` wire query returns such an image whole, as base64 `content` with `image` set to its media type, ignoring `offset` and `length`.
