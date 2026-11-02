@@ -856,7 +856,7 @@ test('arm: an abandoned PRE-armed draft deletes the hint and releases the hold',
     'an abandoned draft must release the hold, or deliveries stall for the whole cap');
 });
 
-function mkPendingArm() {
+function mkPendingArm({ debounceMs } = {}) {
   const { store } = mkStore(CORPUS);
   const posts = [];
   const clears = [];
@@ -873,6 +873,7 @@ function mkPendingArm() {
     armHints: (p) => { posts.push(p); return Promise.resolve({ status: 200 }); },
     clearHints: (p) => { clears.push(p); return Promise.resolve({ status: 200 }); },
     now: () => 1_000_000,
+    ...(debounceMs !== undefined ? { debounceMs } : {}),
   });
   return { arm: a, posts, clears, pending };
 }
@@ -924,6 +925,22 @@ test('arm: of two overlapping ranks only the later draft is armed', async () => 
   await drainImmediates();
   assert.strictEqual(h.posts.length, 1,
     'the older draft finished last and overwrote the newer hint on the fixed id');
+});
+
+test('arm: a stale pre-arm pass does not release the hold the newer draft opened', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = mkPendingArm({ debounceMs: 5 });
+  h.arm.onDraft('s', DRAFT, CTX);
+  t.mock.timers.tick(5);
+  await drainImmediates();
+  assert.strictEqual(h.pending.length, 1, 'ENTER: the pre-arm rank must be parked on the semantic pass');
+  h.arm.onDraft('s', SIGNING_DRAFT, CTX);
+  assert.ok(h.arm.holding('s'), 'ENTER: the newer draft opened its own hold');
+  h.pending[0].resolve(null);
+  await drainImmediates();
+  assert.strictEqual(h.posts.length, 0, 'ENTER: the stale pass armed nothing');
+  assert.strictEqual(h.arm.holding('s'), true,
+    'the stale pass released a hold it did not open, so an injected turn can spend the newer hint');
 });
 
 test('arm: the Enter pass survives the onSubmit that follows it', async () => {

@@ -286,7 +286,7 @@ function createHintArm({
     if (st && st.timer) { clearTimeout(st.timer); st.timer = null; }
   };
 
-  const hold = (key) => { stateFor(key).holdSince = now(); };
+  const hold = (key) => { const st = stateFor(key); st.holdSince = now(); st.holdGen = genOf(key); };
   const release = (key) => { const st = armed.get(key); if (st) st.holdSince = 0; };
 
   // THE REGISTER IS LAST-WRITE-WINS, AND THE EMPTY WRITE IS THE ONE THAT WAS
@@ -405,9 +405,10 @@ function createHintArm({
   // nothing releases; the `finally` is what keeps a throw in `rank` from leaking
   // a hold and stalling that session's deliveries for the whole cap.
   async function fire(key, draft, ctx, { preArm = false } = {}) {
-    try { await rank(key, draft, ctx, genOf(key)); } finally {
+    const gen = genOf(key);
+    try { await rank(key, draft, ctx, gen); } finally {
       const st = armed.get(key);
-      if (preArm && (!st || !st.lastIds)) release(key);
+      if (preArm && st && st.holdGen === gen && !st.lastIds) release(key);
     }
   }
 
@@ -483,11 +484,15 @@ function createHintArm({
       p = armHints({ base, route, id: HINT_ID, text, ttl_s: TTL_S, turn_start_only: true, once: true });
     } catch (e) { st.lastIds = null; debug(`arm threw for ${route}: ${e.message}`); return; }
     return Promise.resolve(p).then((res) => {
-      if (stale()) return;
       // Recorded on a successful POST, not on the rank: a unit the proxy never
       // accepted has not been offered, and burning its cooldown would suppress
       // the retry the failure exists to allow.
-      if (res && res.status && res.status >= 400) { st.lastIds = null; debug(`arm ${route} -> ${res.status}`); return; }
+      if (res && res.status && res.status >= 400) {
+        if (st.lastIds === ids) st.lastIds = null;
+        debug(`arm ${route} -> ${res.status}`);
+        return;
+      }
+      if (armed.get(key) !== st || st.lastIds !== ids) return;
       if (!offered.has(agent)) offered.set(agent, new Map());
       const m = offered.get(agent);
       for (const r of results) m.set(r.id, now());
@@ -497,7 +502,7 @@ function createHintArm({
       // are safe to write. Dropping this is what made every judgement about
       // hint quality a guess.
       debug(`armed ${route} ${results.map(whyOf).join(' | ')}`);
-    }).catch((e) => { if (!stale()) st.lastIds = null; debug(`arm failed for ${route}: ${e.message}`); });
+    }).catch((e) => { if (st.lastIds === ids) st.lastIds = null; debug(`arm failed for ${route}: ${e.message}`); });
   }
 
   return {
