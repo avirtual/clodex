@@ -15,6 +15,7 @@ blocks a release.
 ## Unreleased
 
 - **Security: a bind host like `127.lan.example` no longer counts as loopback.** Only 127/8 literals, `::1` and `localhost` skip the fail-closed token check on the remote port.
+- **Security: the log mask no longer stalls on long `k=v&k=v` lines.** 5.156.0's masker re-scanned every rejected pair to the end of the line, so a 100 KB URL or term-exec line cost over a second of main-process time (27 s at 400 KB); the scan is linear again, and a 100 KB dotted or dashed token without a separator no longer costs seconds either.
 - **Preferences says when the phone-access token is pinned by `CLODEX_REMOTE_TOKEN`.** Saving or clearing the token there used to report success while the environment value kept gating the server; the panel now shows the pin and refuses the edit.
 - **Security: seat import refuses reserved and legacy-claim seat names.** A token holder could stage mail under a `.draining.rehome` name that a later rehome restored into another seat; import now applies the same name check as every other create door.
 - **`clodexctl exec` reaches a sleeping assistant.** The verb looked the seat up in the live list, which omits sleepers, and reported `no such session`; it now resolves the seat directly and waits on the cursor the wake restarts.

@@ -26,8 +26,12 @@ still masks; `--keyboard foo` and `monkey=1` survive because no key word is
 
 The name is matched once as a whole `[\w.-]+` run and judged afterwards by
 `isSecretName`. Putting the key-word alternation and its suffix inside the run
-regex made a long `=`-less identifier (`'_auth'.repeat(4000)`) take minutes; a
-miss resumes the scan at the value so a `name=` inside it is still seen.
+regex made a long `=`-less identifier (`'_auth'.repeat(4000)`) take minutes.
+The name regex stops at the separator; the value regex runs only for a secret
+name. A rejected name resumes right after its separator, so a `name=` inside its
+value is still seen and every byte of a dense `k=v&k=v` run is scanned once.
+Scanning the value before judging the name re-read the rest of the line per
+rejected pair: 1.7 s for `'a=b'.repeat(33333)`.
 
 Rule order is load-bearing and the rules OVERLAP. The key/value rule runs first
 and consumes to the next whitespace, so `?token=x&page=2` inside a URL loses the
@@ -36,8 +40,8 @@ in the safe direction: making the key/value rule stop at `&` would leave a
 credential intact in every log line that is not a URL, and those are the
 majority.
 
-The query rule enumerates `token`/`key`/`sig`/`api_key`/`apikey`/`access_token`/
-`secret`/`password` and therefore cannot cover a signed URL's vendor
+The query rule enumerates `token`/`key`/`sig`/`api[-_]?key`; the key/value rule
+already masks the other key words inside a query. Neither can cover a signed URL's vendor
 spellings (`X-Amz-Signature`, `Signature`, a bare `t`). That is why
 engine.js's default `openExternal` seam drops the whole query itself instead
 of relying on this.
