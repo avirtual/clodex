@@ -12,7 +12,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — Security: log-mask quoted-value tails, memory pin flags written only for `true`; hand cap ignores finished hands, legacy memory units self-heal
+## Unreleased
+
+## 5.158.0 — 2026-11-03 — Security: log-mask quoted-value tails, memory pin flags written only for `true`; hand cap ignores finished hands, legacy memory units self-heal
 
 - **Security: a memory unit's `pinned` or `operator_pinned` flag is written back only when its value is the literal `true`.** A file carrying `operator_pinned: 1` (or `yes`, or `true` with a trailing space) read as unpinned but became a real operator pin on its next pin, update or retag, bypassing the operator-pin cap.
 - **Security: a secret value that starts with a quote and continues past the closing quote (`client_secret="v"tail`, `--passwd='v'tail`, the same inside a URL query) is now masked to the end of the token.** The log mask stopped at the closing quote and wrote the rest in clear; inside a URL query only the names on the query rule's own list (`token`, `key`, `sig`, `api_key`, `access_token`, `secret`, `password`) were covered, and outside a URL none were. A delimiter (`,` `;` `&` `#` or a closing bracket) still ends the value.
