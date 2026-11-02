@@ -127,9 +127,23 @@ function createFileTab({ doc = document, filePath, editable, showOpen, on }) {
     body.replaceChildren(pre);
   }
 
+  function paintImage() {
+    const kb = `${Math.max(1, Math.round(peekRes.size / 1024))} KB`;
+    const note = el(doc, 'div', 'cost-note', kb);
+    const img = el(doc, 'img', 'file-peek-image');
+    img.alt = String(peekRes.path || '').split(/[\\/]/).pop();
+    img.addEventListener('load', () => {
+      note.textContent = `${img.naturalWidth}×${img.naturalHeight} · ${kb}`;
+    });
+    img.src = 'data:' + peekRes.image + ';base64,' + peekRes.content;
+    body.replaceChildren(note, img);
+  }
+
   function paintFile(tab) {
     if (tab.deleted) return paintNote('No longer on disk.');
     if (!peekRes || !peekRes.ok) return paintNote((peekRes && peekRes.error) || 'File unavailable');
+    if (peekRes.image && peekRes.content) return paintImage();
+    if (peekRes.image) return paintNote('Image larger than 720 KB — use Open.');
     if (peekRes.binary) return paintNote(`Binary file (${peekRes.size} bytes) — use Open.`);
     const nodes = [];
     if (peekRes.truncated) {

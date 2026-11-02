@@ -14,6 +14,8 @@ blocks a release.
 
 ## Unreleased
 
+- **The file viewer shows images.** `[agent:file view]` and the side-pane file tab render PNG, JPEG, GIF and WebP inline (up to 720 KB) on the desktop, in the web host and over a remote Clodex, where "use Open" was no option.
+
 ## 5.154.0 — 2026-11-02 — Security: credential sandbox covers the app data dir; Clodex-side git ignores repo-planted commands
 
 - **Security: a credential-protected seat can no longer read Clodex's own token and secret stores or rewrite its spawn environment.** The sandbox now denies reads of the app data dir's remote token, peer tokens, env scopes, session env, held-request files and box tokens, and denies every write under that dir, or, when Clodex's data dir sits inside it, writes to `env-override.env`, `remote.env` and the env-scope, session and UI-settings stores, so a seat cannot lift the remote API token or plant variables (such as BASH_ENV) that every later seat would inherit.

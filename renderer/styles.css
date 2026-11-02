@@ -2195,6 +2195,10 @@ body.drawer-dragging #drawer, body.drawer-dragging #work-row { transition: none;
   font-size: 11px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere;
   background: var(--active-bg); border-radius: 5px; padding: 8px 10px;
 }
+.file-peek-image {
+  display: block; max-width: 100%; height: auto; image-rendering: auto;
+  background: var(--active-bg); border-radius: 5px;
+}
 .diff-line { min-height: 1em; padding-left: 5ch; text-indent: -5ch; }
 .diff-ctx { color: var(--text); }
 /* user-select:none keeps the gutter out of a copied selection. */
