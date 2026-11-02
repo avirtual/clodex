@@ -64,7 +64,7 @@ function createVectorStore({
   file, dims, model = '',
   readFile = fs.readFileSync, writeFile = fs.writeFileSync,
   appendFile = fs.appendFileSync, statFile = fs.statSync, renameFile = fs.renameSync,
-  fsyncFile = syncPath,
+  fsyncFile = syncPath, readOnly = false,
 } = {}) {
   const rowBytes = dims * BYTES_PER_DIM;
   let sidecar = null;
@@ -79,7 +79,7 @@ function createVectorStore({
       throw e;
     }
     const whole = Math.floor(raw.length / rowBytes);
-    if (raw.length !== whole * rowBytes) {
+    if (raw.length !== whole * rowBytes && !readOnly) {
       try { fs.truncateSync(file, whole * rowBytes); } catch {}
     }
     // A TORN TAIL IS DISCARDED, NOT MERGED. A crash mid-append leaves a partial
@@ -101,6 +101,7 @@ function createVectorStore({
     const staged = stagedSidecarPath(file);
     if (!fs.existsSync(staged)) return null;
     const next = readSidecar(staged, readFile);
+    if (readOnly) return next && next.blobBytes === blobBytes ? next : null;
     if (!next || next.blobBytes !== blobBytes) {
       try { fs.unlinkSync(staged); } catch {}
       return null;
@@ -123,8 +124,12 @@ function createVectorStore({
     // over rather than mix two vector spaces in one file.
     if (sidecar.dims !== dims || (model && sidecar.model && sidecar.model !== model)) {
       sidecar = { dims, model, rows: new Map() };
-      try { writeFile(file, Buffer.alloc(0)); } catch { /* recreated on first append */ }
-      blob = loadBlob();
+      if (readOnly) {
+        blob = new Float32Array(0);
+      } else {
+        try { writeFile(file, Buffer.alloc(0)); } catch { /* recreated on first append */ }
+        blob = loadBlob();
+      }
     }
     rowCount = Math.floor(blob.length / dims);
     // The sidecar can outlive its blob (blob deleted, sidecar kept) or point
@@ -156,12 +161,25 @@ function createVectorStore({
     } catch { /* an unflushed sidecar costs a re-embed, never a wrong answer */ }
   }
 
+  function assertWritable() {
+    if (readOnly) throw new Error('vector store is read-only');
+  }
+
   return {
     dims,
 
     has(key) { load(); return sidecar.rows.has(key); },
     size() { load(); return sidecar.rows.size; },
     rows() { load(); return rowCount; },
+    keys() { load(); return [...sidecar.rows.keys()]; },
+
+    remove(key) {
+      assertWritable();
+      load();
+      if (!sidecar.rows.delete(key)) return false;
+      pendingRows++;
+      return true;
+    },
 
     get(key) {
       load();
@@ -174,6 +192,7 @@ function createVectorStore({
     // sidecar entry is added in memory and flushed by the caller, so a batch of
     // appends costs one sidecar write rather than one per record.
     add(key, vec) {
+      assertWritable();
       load();
       if (!vec || vec.length !== dims) {
         throw new Error(`vector for ${key} has ${vec ? vec.length : 0} dims, store expects ${dims}`);
@@ -233,6 +252,7 @@ function createVectorStore({
     // accumulates one row per superseded record, so this is a maintenance
     // operation, not part of any hot path — and it is why `add` can stay O(1).
     compact() {
+      assertWritable();
       load();
       const live = [...sidecar.rows.entries()];
       if (!live.length) return { before: rowCount, after: 0, reclaimed: rowCount };

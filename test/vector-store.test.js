@@ -421,3 +421,52 @@ test('vector-store: compact syncs the blob temp and the staged sidecar before re
   ]);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+function seedTorn(file) {
+  const store = createVectorStore({ file, dims: D, model: 'test-model' });
+  store.add('a', axis(0));
+  store.add('b', axis(1));
+  store.flush();
+  fs.appendFileSync(file, Buffer.from([1, 2, 3]));
+  return fs.statSync(file).size;
+}
+
+test('vector-store: a read-only store leaves a torn blob at its byte length and refuses writes', () => {
+  const { dir, file } = mk();
+  const before = seedTorn(file);
+  const ro = createVectorStore({ file, dims: D, model: 'test-model', readOnly: true });
+  assert.deepStrictEqual(ro.stats(), { rows: 2, live: 2, garbage: 0, bytes: before });
+  assert.strictEqual(fs.statSync(file).size, before);
+  assert.throws(() => ro.add('c', axis(2)), /vector store is read-only/);
+  assert.throws(() => ro.compact(), /vector store is read-only/);
+  assert.throws(() => ro.remove('a'), /vector store is read-only/);
+  assert.strictEqual(fs.statSync(file).size, before);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('vector-store: a read-only store with a model mismatch does not empty the blob', () => {
+  const { dir, file } = mk();
+  const first = createVectorStore({ file, dims: D, model: 'test-model' });
+  first.add('a', axis(0));
+  first.flush();
+  const before = fs.statSync(file).size;
+  const ro = createVectorStore({ file, dims: D, model: 'other-model', readOnly: true });
+  assert.strictEqual(ro.size(), 0);
+  assert.strictEqual(fs.statSync(file).size, before);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('vector-store: remove retires a key across a restart and compact reclaims its row', () => {
+  const { dir, file, store } = mk();
+  store.add('a', axis(0));
+  store.add('b', axis(1));
+  store.flush();
+  assert.strictEqual(store.remove('a'), true);
+  assert.strictEqual(store.remove('missing'), false);
+  store.flush();
+  const again = createVectorStore({ file, dims: D, model: 'test-model' });
+  assert.deepStrictEqual(again.keys(), ['b']);
+  assert.deepStrictEqual(again.stats(), { rows: 2, live: 1, garbage: 1, bytes: 2 * D * BYTES_PER_DIM });
+  assert.deepStrictEqual(again.compact(), { before: 2, after: 1, reclaimed: 1 });
+  fs.rmSync(dir, { recursive: true, force: true });
+});

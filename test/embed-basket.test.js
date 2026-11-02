@@ -9,7 +9,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { asRecord, readBasket, parseArgs } = require('../scripts/embed-basket');
+const { asRecord, readBasket, parseArgs, run } = require('../scripts/embed-basket');
 const { keyOf } = require('../hint-embed');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -158,4 +158,51 @@ test('embed-basket: every rejection names the flag and prints the usage', () => 
     assert.match(msg, /usage: embed-basket\.js \[--limit N\]/,
       `${argv.join(' ')} must print the usage line`);
   }
+});
+
+test('embed-basket: --dry-run --compact opens the store read-only and never compacts or adds', async () => {
+  const { dir, file } = mkBasket([{ id: 'a', text: 'first' }]);
+  const calls = [];
+  let opts = null;
+  const makeStore = (o) => {
+    opts = o;
+    return {
+      has: () => false,
+      keys: () => [],
+      stats: () => ({ rows: 5, live: 2, garbage: 3, bytes: 0 }),
+      compact: () => { calls.push('compact'); return { before: 5, after: 2, reclaimed: 3 }; },
+      add: () => { calls.push('add'); return true; },
+      remove: () => { calls.push('remove'); return true; },
+      flush: () => { calls.push('flush'); },
+    };
+  };
+  const makeEmbedder = () => ({ embedDoc: async () => { calls.push('embed'); return new Float32Array(768); } });
+  const out = [];
+  await run({ file, limit: Infinity, dry: true, compact: true },
+    { makeStore, makeEmbedder, storeFile: path.join(dir, 'v.bin'), log: (s) => out.push(s), write: () => {} });
+  assert.strictEqual(opts.readOnly, true);
+  assert.deepStrictEqual(calls, []);
+  assert.ok(out.some((l) => l.includes('compact would reclaim: 3 rows')), out.join('\n'));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('embed-basket: an edited record retires its old vector row', async () => {
+  const dir = mkTmpRoot('clx-eb-');
+  const basket = path.join(dir, 'operator.jsonl');
+  const storeFile = path.join(dir, 'vectors.bin');
+  const makeEmbedder = () => ({ embedDoc: async () => { const v = new Float32Array(768); v[0] = 1; return v; } });
+  const deps = { makeEmbedder, storeFile, log: () => {}, write: () => {} };
+  const args = { file: basket, limit: Infinity, dry: false, compact: false };
+  fs.writeFileSync(basket, JSON.stringify({ id: 'x', text: 'v1' }) + '\n' + JSON.stringify({ id: 'y', text: 'kept' }) + '\n');
+  await run(args, deps);
+  fs.writeFileSync(basket, JSON.stringify({ id: 'x', text: 'v2' }) + '\n' + JSON.stringify({ id: 'y', text: 'kept' }) + '\n');
+  await run(args, deps);
+  const { createVectorStore } = require('../vector-store');
+  const { DEFAULT_MODEL } = require('../hint-embed');
+  const store = createVectorStore({ file: storeFile, dims: 768, model: DEFAULT_MODEL });
+  const newKey = keyOf(asRecord({ id: 'x', text: 'v2' }));
+  const keptKey = keyOf(asRecord({ id: 'y', text: 'kept' }));
+  assert.deepStrictEqual(store.keys().sort(), [newKey, keptKey].sort());
+  assert.deepStrictEqual(store.stats(), { rows: 3, live: 2, garbage: 1, bytes: 3 * 768 * 4 });
+  fs.rmSync(dir, { recursive: true, force: true });
 });

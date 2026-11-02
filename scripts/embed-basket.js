@@ -106,18 +106,31 @@ function asRecord(r) {
   };
 }
 
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
-  if (!fs.existsSync(args.file)) {
-    console.error(`no basket at ${args.file} — run scripts/mine-operator-messages.js first`);
-    process.exit(1);
+function idOfKey(key) {
+  const i = key.lastIndexOf(':');
+  return i < 0 ? null : key.slice(0, i);
+}
+
+function keysById(store) {
+  const out = new Map();
+  for (const key of store.keys()) {
+    const id = idOfKey(key);
+    if (id == null) continue;
+    if (!out.has(id)) out.set(id, []);
+    out.get(id).push(key);
   }
+  return out;
+}
 
+async function run(args, {
+  makeStore = createVectorStore, makeEmbedder = createEmbedder,
+  storeFile = STORE, log = console.log, write = (s) => process.stdout.write(s),
+} = {}) {
   const { records, bad } = readBasket(args.file);
-  console.log(`basket: ${records.length} records${bad ? ` (${bad} unparseable lines skipped)` : ''}`);
+  log(`basket: ${records.length} records${bad ? ` (${bad} unparseable lines skipped)` : ''}`);
 
-  const store = createVectorStore({ file: STORE, dims: DIMS, model: DEFAULT_MODEL });
-  const embedder = createEmbedder({});
+  const store = makeStore({ file: storeFile, dims: DIMS, model: DEFAULT_MODEL, readOnly: args.dry });
+  const embedder = makeEmbedder({});
 
   const todo = [];
   for (const r of records) {
@@ -127,16 +140,22 @@ async function main() {
   }
 
   const stats = store.stats();
-  console.log(`store:  ${stats.live} live rows, ${stats.garbage} garbage, ${(stats.bytes / 1e6).toFixed(1)}MB`);
+  log(`store:  ${stats.live} live rows, ${stats.garbage} garbage, ${(stats.bytes / 1e6).toFixed(1)}MB`);
 
+  if (args.dry) {
+    if (args.compact) log(`compact would reclaim: ${stats.rows - stats.live} rows (dry run, store untouched)`);
+    log(`todo:   ${todo.length} to embed`);
+    return;
+  }
   if (args.compact) {
     const r = store.compact();
-    console.log(`compacted: ${r.before} -> ${r.after} rows (${r.reclaimed} reclaimed)`);
+    log(`compacted: ${r.before} -> ${r.after} rows (${r.reclaimed} reclaimed)`);
     if (!todo.length) return;
   }
-  console.log(`todo:   ${todo.length} to embed`);
-  if (args.dry) return;
-  if (!todo.length) { console.log('nothing to do'); return; }
+  log(`todo:   ${todo.length} to embed`);
+  if (!todo.length) { log('nothing to do'); return; }
+
+  const byId = keysById(store);
 
   // A daemon that is down fails on every record; stop rather than grind through
   // thousands of timeouts.
@@ -154,23 +173,36 @@ async function main() {
       continue;
     }
     failed = 0;
-    store.add(keyOf(rec), v);
+    const key = keyOf(rec);
+    if (store.add(key, v) === false) continue;
+    for (const old of byId.get(String(rec.id)) || []) {
+      if (old !== key) store.remove(old);
+    }
     done++;
     if (done % FLUSH_EVERY === 0) {
       store.flush();
       const rate = done / ((Date.now() - t0) / 1000);
       const left = (todo.length - done) / rate;
-      process.stdout.write(`\r  ${done}/${todo.length}  ${rate.toFixed(0)}/s  eta ${(left / 60).toFixed(1)}min   `);
+      write(`\r  ${done}/${todo.length}  ${rate.toFixed(0)}/s  eta ${(left / 60).toFixed(1)}min   `);
     }
   }
   store.flush();
 
   const s = store.stats();
-  console.log(`\ndone: embedded ${done} in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
-  console.log(`store: ${s.live} live rows, ${s.garbage} garbage, ${(s.bytes / 1e6).toFixed(1)}MB at ${STORE}`);
+  log(`\ndone: embedded ${done} in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+  log(`store: ${s.live} live rows, ${s.garbage} garbage, ${(s.bytes / 1e6).toFixed(1)}MB at ${storeFile}`);
   if (s.garbage > s.live * 0.25) {
-    console.log('garbage is over 25% of the store — rerun with --compact to reclaim it');
+    log('garbage is over 25% of the store — rerun with --compact to reclaim it');
   }
+}
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  if (!fs.existsSync(args.file)) {
+    console.error(`no basket at ${args.file} — run scripts/mine-operator-messages.js first`);
+    process.exit(1);
+  }
+  await run(args);
 }
 
 if (require.main === module) {
@@ -180,4 +212,4 @@ if (require.main === module) {
 // parseArgs is exported for the tests: it guards a write that costs six minutes
 // against a live daemon, and until it was exported the only way to reach it was
 // to perform that write.
-module.exports = { asRecord, readBasket, parseArgs };
+module.exports = { asRecord, readBasket, parseArgs, run };
