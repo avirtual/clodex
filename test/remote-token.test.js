@@ -125,7 +125,7 @@ test('remote:setToken under CLODEX_REMOTE_TOKEN writes nothing and reports the e
       });
       assert.strictEqual(fs.existsSync(remoteEnvPath(dir)), false, 'the token file was never written');
       const s = h.get('settings:get')({});
-      assert.strictEqual(s.remoteTokenEnvOverride, true);
+      assert.strictEqual(s.remoteEnvTokenPinned, true);
       assert.strictEqual(s.remoteHasToken, false, 'ENTER: the file side still reads absent');
     });
   } finally { cleanup(); }
@@ -138,10 +138,10 @@ test('remote:setToken with CLODEX_REMOTE_TOKEN unset writes the file and reports
       const h = ipcWithTokenFile(dir);
       assert.deepStrictEqual(h.get('remote:setToken')(null, 'gui-token'), { ok: true, hasToken: true });
       assert.strictEqual(readRemoteEnvToken(dir), 'gui-token');
-      assert.strictEqual(h.get('settings:get')({}).remoteTokenEnvOverride, false);
+      assert.strictEqual(h.get('settings:get')({}).remoteEnvTokenPinned, false);
     });
     withEnvToken('', () => {
-      assert.strictEqual(ipcWithTokenFile(dir).get('settings:get')({}).remoteTokenEnvOverride, false,
+      assert.strictEqual(ipcWithTokenFile(dir).get('settings:get')({}).remoteEnvTokenPinned, false,
         'an empty env value does not win in resolveRemoteToken, so it is no pin');
     });
   } finally { cleanup(); }

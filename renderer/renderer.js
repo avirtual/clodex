@@ -9166,7 +9166,7 @@ async function openPrefs(group = null) {
   }
   if (prefsPeerShell) prefsPeerShell.checked = !!s.peerShellEnabled;
   prefsRemoteToken.value = '';
-  renderRemoteTokenState(!!s.remoteHasToken, !!s.remoteTokenEnvOverride);
+  renderRemoteTokenState(!!s.remoteHasToken, !!s.remoteEnvTokenPinned);
   if (prefsEnvScope) prefsEnvScope.value = 'global';
   if (prefsEnvKey) prefsEnvKey.value = '';
   if (prefsEnvValue) prefsEnvValue.value = '';
