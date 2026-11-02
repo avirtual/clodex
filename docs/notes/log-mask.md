@@ -50,3 +50,11 @@ The mask is applied at BOTH ends: each host's `writeLog` masks on the way in,
 and remote.js's `readLogTail` masks again on the way out. The read-side pass is
 not redundant — a clodex.log on disk predating this, or written by an older
 generation of the app, still reaches the wire through that route.
+
+## maskUrls
+
+No rule may start a match at every position of a separator-less run: a
+`\b[a-z][a-z0-9+.-]*:\/\/` URL regex does (each `.`/`-` is a word boundary)
+and cost 2.4 s on `'a.'.repeat(50000)`. `maskUrls` therefore matches the whole
+scheme-class run once (`URL_CANDIDATE_RE`, anchored by lookbehind) and
+`schemeStart` picks the leftmost `\b`-letter inside it.
