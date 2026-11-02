@@ -2289,7 +2289,7 @@ function createSessionManager(deps) {
 
       // Recomposed here: the hook cats the digest only for source startup|clear|compact, so a resumed session gets none;
       // recording it would claim FULL for units the model never saw, hence a resume records nothing.
-      if (agentType === 'claude' && !resumeId) this._seedMemoryLoad(name);
+      if (agentType === 'claude' && !resumeId) this._seedMemoryLoad(name, { fresh: true });
 
       if (!session.clone) getPersistence().upsert({
         name, type, cwd,
@@ -7777,8 +7777,11 @@ function createSessionManager(deps) {
       } catch { /* observer-grade — never break the turn handler */ }
     }
 
-    _seedMemoryLoad(name) {
-      try { memLoad.noteDigest(name, tiersOf(memoryStore.list(name))); } catch { /* observer-grade */ }
+    _seedMemoryLoad(name, { fresh = false } = {}) {
+      try {
+        if (fresh) memLoad.reset(name);
+        memLoad.noteDigest(name, tiersOf(memoryStore.list(name)));
+      } catch { /* observer-grade */ }
     }
 
     _pushLateDirective(agent, id, { updated = false } = {}) {
