@@ -617,7 +617,7 @@ test('memoryStore: a U+2028 in tags is collapsed to a space', () => {
   assert.strictEqual(unit.tags, 'one pinned: true');
   assert.strictEqual(unit.pinned, false);
   const raw = fs.readFileSync(path.join(dir, 'a', `${unit.id}.md`), 'utf8');
-  assert.ok(!raw.includes('\npinned'));
+  assert.ok(!raw.includes('\u2028'));
 });
 
 test('memoryStore: a CRLF in scope collapses to one space', () => {
