@@ -10,14 +10,14 @@ const SUBCOMMAND_FLAGS = new Map([
 const VALUE_OPTIONS = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace']);
 const FILTER_KEY_RE = /^filter\.(.+)\.[^.]+$/;
 const MERGE_DRIVER_RE = /^merge\.(.+)\.driver$/;
-const OPERATOR_SCOPES = new Set(['system', 'global']);
+const OPERATOR_SCOPES = new Set(['system', 'global', 'unknown']);
 
 function safeGitArgs(args, { hooksPath = '/dev/null', sshCommand = 'ssh', askPass = '', credentialHelpers = [] } = {}) {
   const list = Array.isArray(args) ? args : [];
   const config = [
     'core.fsmonitor=', `core.hooksPath=${hooksPath}`, 'diff.external=', `core.sshCommand=${sshCommand}`, 'core.pager=cat',
     'log.showSignature=false', 'commit.gpgSign=false', 'tag.gpgSign=false', 'gpg.program=', 'gpg.ssh.program=',
-    'credential.helper=', ...credentialHelpers.map(([key, value]) => `${key}=${value}`), `core.askPass=${askPass}`,
+    'credential.helper=', ...credentialHelpers.map(([key, value]) => `${key}=${value}`), `core.askPass=${askPass}`, 'fetch.all=false',
   ].flatMap((s) => ['-c', s]);
   let i = 0;
   while (i < list.length && String(list[i]).startsWith('-')) i += VALUE_OPTIONS.has(list[i]) ? 2 : 1;

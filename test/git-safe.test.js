@@ -35,7 +35,7 @@ test('safeGitArgs: status gets the config prefix and nothing else', () => {
     '-c', 'core.sshCommand=ssh',
     '-c', 'core.pager=cat',
     '-c', 'log.showSignature=false', '-c', 'commit.gpgSign=false', '-c', 'tag.gpgSign=false', '-c', 'gpg.program=', '-c', 'gpg.ssh.program=',
-    '-c', 'credential.helper=', '-c', 'core.askPass=',
+    '-c', 'credential.helper=', '-c', 'core.askPass=', '-c', 'fetch.all=false',
     'status',
   ]);
 });
@@ -45,7 +45,7 @@ test('safeGitArgs: diff/show/log get --no-ext-diff --no-textconv ahead of any pa
     '-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/dev/null', '-c', 'diff.external=',
     '-c', 'core.sshCommand=ssh', '-c', 'core.pager=cat',
     '-c', 'log.showSignature=false', '-c', 'commit.gpgSign=false', '-c', 'tag.gpgSign=false', '-c', 'gpg.program=', '-c', 'gpg.ssh.program=',
-    '-c', 'credential.helper=', '-c', 'core.askPass=',
+    '-c', 'credential.helper=', '-c', 'core.askPass=', '-c', 'fetch.all=false',
   ];
   assert.deepStrictEqual(safeGitArgs(['diff', 'HEAD']), [...prefix, 'diff', '--no-ext-diff', '--no-textconv', 'HEAD']);
   assert.deepStrictEqual(safeGitArgs(['-C', '/r', 'diff', 'HEAD', '--', 'f']),
@@ -66,7 +66,7 @@ test('safeGitArgs takes the operator hooksPath, sshCommand, askPass and credenti
     '-c', 'core.sshCommand=ssh -i /op/k', '-c', 'core.pager=cat',
     '-c', 'log.showSignature=false', '-c', 'commit.gpgSign=false', '-c', 'tag.gpgSign=false', '-c', 'gpg.program=', '-c', 'gpg.ssh.program=',
     '-c', 'credential.helper=', '-c', 'credential.helper=osxkeychain', '-c', 'credential.https://gh.example.helper=!gh auth git-credential',
-    '-c', 'core.askPass=/op/ask', 'merge', 'b',
+    '-c', 'core.askPass=/op/ask', '-c', 'fetch.all=false', 'merge', 'b',
   ]);
 });
 
@@ -76,7 +76,7 @@ test('readOperatorGitConfig takes the last system or global value of each key an
     'core.hooksPath': 'system\0/s/hooks\0global\0/g/hooks\0local\0/l/hooks\0',
     'core.sshCommand': 'global\0ssh -i /g\0local\0ssh -i /l\0worktree\0ssh -i /w\0command\0ssh\0',
     'core.askPass': 'global\0/g/ask\0local\0/l/ask\0',
-    '^credential\\..*helper$': 'system\0credential.helper\nosxkeychain\0global\0credential.https://gh.example.helper\n!gh auth\0'
+    '^credential\\..*helper$': 'unknown\0credential.helper\nosxkeychain\0global\0credential.https://gh.example.helper\n!gh auth\0'
       + 'local\0credential.helper\n!planted\0global\0credential.helper\0global\0credential.a=b.helper\nx\0',
   };
   const run = (file, argv, opts, cb) => {
