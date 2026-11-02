@@ -105,6 +105,7 @@ function parseMemoryUnit(raw) {
     const kv = line.match(/^(\w+):\s?(.*)$/s);
     if (kv) meta[kv[1]] = collapseLineBreaks(kv[2]);
   }
+  if (meta.id) meta.id = meta.id.trim();
   return { meta, body: (m[2] || '').trim() };
 }
 

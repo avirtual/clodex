@@ -650,6 +650,16 @@ for (const [name, ch] of [['U+0085', '\u0085'], ['U+2028', '\u2028'], ['U+2029',
   });
 }
 
+test('memoryStore: a legacy unit with a trailing U+2028 on its id line keeps its real id and can be pinned', () => {
+  const { store, dir } = tmpStore();
+  const u = store.remember('a', { text: 'legacy', scope: 'x' });
+  const file = path.join(dir, 'a', `${u.id}.md`);
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(`id: ${u.id}\n`, `id: ${u.id}\u2028\n`));
+  assert.strictEqual(store.list('a')[0].id, u.id);
+  store.setPinned('a', u.id, true);
+  assert.strictEqual(store.list('a').find(x => x.id === u.id).pinned, true);
+});
+
 test('memoryStore: a legacy `operator_pinned: true\\r` line stays inert through setPinned', () => {
   const { store, dir } = tmpStore();
   const u = store.remember('a', { text: 'legacy', scope: 'x' });

@@ -221,6 +221,7 @@ test('a quote-led secret value with a tail past the closing quote is masked to t
     ['password="x y" next=1', 'password=[redacted] next=1'],
     ['{"token":"abc123"LEAK,"n":1}', '{"token=[redacted],"n":1}'],
     ['token="v"', 'token=[redacted]'],
+    ["--passwd 'v'LEAK&x=1", '--passwd=[redacted]&x=1'],
   ]) {
     assert.strictEqual(maskSecrets(line), expected);
   }

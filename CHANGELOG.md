@@ -14,6 +14,8 @@ blocks a release.
 
 ## Unreleased
 
+- **A memory unit whose `id` line carries a trailing line break lists under its real id again.** 5.158.0's collapse-on-read left a trailing space on the id, so every pin, update and forget on that unit refused it as invalid.
+
 ## 5.158.0 — 2026-11-03 — Security: log-mask quoted-value tails, memory pin flags written only for `true`; hand cap ignores finished hands, legacy memory units self-heal
 
 - **Security: a memory unit's `pinned` or `operator_pinned` flag is written back only when its value is the literal `true`.** A file carrying `operator_pinned: 1` (or `yes`, or `true` with a trailing space) read as unpinned but became a real operator pin on its next pin, update or retag, bypassing the operator-pin cap.

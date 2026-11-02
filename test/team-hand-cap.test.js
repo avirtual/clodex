@@ -212,6 +212,20 @@ test('seats minted but not yet live count toward the cap, so a burst of starts s
   assert.strictEqual(f.acks[2], '[agent:task] ticket t3 parked: hand cap reached (2/2 live hands) — it starts when one retires');
 });
 
+test('a minted, not yet live seat whose ticket is done but not accepted still counts toward the cap', () => {
+  const f = mkFixture({ maxHands: 1 });
+  f.add({ body: 'first' });
+  f.add({ body: 'second' });
+  f.start('t1');
+  assert.deepStrictEqual(f.spawned.map((s) => s.id), ['t1'], 'ENTER: t1 minted, its seat not yet in the map');
+  const all = f.tstore.load(f.root);
+  all.find((t) => t.id === 't1').state = 'done';
+  f.tstore.save(f.root, all);
+  assert.strictEqual(f.m._liveHandCount(f.team), 1);
+  f.start('t2');
+  assert.strictEqual(f.one('t2').parkedBy, 'cap');
+});
+
 test('task list marks a cap-parked ticket with its stored count', () => {
   const f = capped();
   f.injected.length = 0;
