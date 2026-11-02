@@ -110,6 +110,7 @@ function createFileTab({ doc = document, filePath, editable, showOpen, on }) {
   function defaultView(forceView) {
     if (forceView === 'edit' && !canEdit()) return 'file';
     if (forceView) return forceView;
+    if (peekRes && peekRes.image) return 'file';
     return (diffRes && diffRes.ok && !diffRes.untracked && diffRes.diff.trim()) ? 'diff' : 'file';
   }
 
@@ -135,6 +136,7 @@ function createFileTab({ doc = document, filePath, editable, showOpen, on }) {
     img.addEventListener('load', () => {
       note.textContent = `${img.naturalWidth}×${img.naturalHeight} · ${kb}`;
     });
+    img.addEventListener('error', () => paintNote('Image could not be decoded — use Open.'));
     img.src = 'data:' + peekRes.image + ';base64,' + peekRes.content;
     body.replaceChildren(note, img);
   }
@@ -143,7 +145,7 @@ function createFileTab({ doc = document, filePath, editable, showOpen, on }) {
     if (tab.deleted) return paintNote('No longer on disk.');
     if (!peekRes || !peekRes.ok) return paintNote((peekRes && peekRes.error) || 'File unavailable');
     if (peekRes.image && peekRes.content) return paintImage();
-    if (peekRes.image) return paintNote('Image larger than 720 KB — use Open.');
+    if (peekRes.image) return paintNote('Image larger than 4 MB — use Open.');
     if (peekRes.binary) return paintNote(`Binary file (${peekRes.size} bytes) — use Open.`);
     const nodes = [];
     if (peekRes.truncated) {

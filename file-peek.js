@@ -4,14 +4,14 @@ const fs = require('node:fs');
 const { PEEK_MAX_BYTES } = require('./file-edit');
 
 const SNIFF_BYTES = 8192;
-const IMAGE_MAX_BYTES = 720 * 1024;
+const IMAGE_MAX_BYTES = 4 * 1024 * 1024;
 
 function imageMediaType(buf) {
   if (!buf || buf.length < 3) return null;
   const at = (sig, from = 0) => buf.length >= from + sig.length && sig.every((b, i) => buf[from + i] === b);
   if (at([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])) return 'image/png';
   if (at([0xFF, 0xD8, 0xFF])) return 'image/jpeg';
-  if (at([0x47, 0x49, 0x46, 0x38])) return 'image/gif';
+  if (at([0x47, 0x49, 0x46, 0x38, 0x37, 0x61]) || at([0x47, 0x49, 0x46, 0x38, 0x39, 0x61])) return 'image/gif';
   if (at([0x52, 0x49, 0x46, 0x46]) && at([0x57, 0x45, 0x42, 0x50], 8)) return 'image/webp';
   return null;
 }

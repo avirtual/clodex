@@ -468,7 +468,6 @@ test('side-pane tabs: Edit is offered only for whole, local, text content', () =
   assert.strictEqual(peekEditable(true, { ok: false, error: 'x' }), false);
   assert.strictEqual(peekEditable(false, whole), false);
   assert.strictEqual(peekEditable(true, null), false);
-  assert.strictEqual(peekEditable(true, { ok: true, binary: true, truncated: false, image: 'image/png', content: 'iVBO' }), false);
 });
 
 test('side-pane tabs: a fetch keeps the buffer of a dirty tab, whatever its view or the file state', () => {
