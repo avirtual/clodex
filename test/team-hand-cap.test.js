@@ -180,6 +180,19 @@ test('a lead-parked ticket is not auto-started when a hand retires', () => {
   assert.strictEqual(f.one('t1').parked, true);
 });
 
+test('a live seat whose only ticket is assigned but not started does not count toward the cap', () => {
+  const f = mkFixture({ maxHands: 3 });
+  for (const n of ['team-hand-91', 'team-hand-92']) f.hold(n);
+  f.hold('team-hand-93');
+  const all = f.tstore.load(f.root);
+  all.find((t) => t.assignee === 'team-hand-93').startedAt = null;
+  f.tstore.save(f.root, all);
+  assert.strictEqual(f.m._liveHandCount(f.team), 2, 'ENTER: the unstarted holder is not counted');
+  f.add();
+  f.start('t1');
+  assert.deepStrictEqual(f.spawned, [{ id: 't1', name: 'team-hand-1' }]);
+});
+
 test('standing-dispatch seats do not count toward the cap', () => {
   const f = mkFixture({ maxHands: 3, extraRoles: { dev: { brief: 'the dev', dispatch: 'standing' } } });
   for (const n of ['team-dev-1', 'team-dev-2', 'team-dev-3']) f.seat(n);

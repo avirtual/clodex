@@ -667,6 +667,13 @@ test('serializeMemoryUnit refuses a frontmatter value carrying a line break, nam
   assert.throws(() => serializeMemoryUnit({ scope: 'a\nb' }, 'x'), /scope/);
 });
 
+test('serializeMemoryUnit writes pinned only for the literal string true, as list reads it', () => {
+  for (const v of ['yes', '1', 'true ', true]) {
+    assert.doesNotMatch(serializeMemoryUnit({ id: 'mem-1-abcdef', pinned: v }, 'x'), /^pinned:/m, `pinned=${JSON.stringify(v)}`);
+  }
+  assert.match(serializeMemoryUnit({ id: 'mem-1-abcdef', pinned: 'true' }, 'x'), /^pinned: true$/m);
+});
+
 test('memoryStore: setPinned, setOperatorPinned and update round-trip a clean scope unchanged', () => {
   const { store } = tmpStore();
   const u = store.remember('a', { text: 'clean', scope: 'proj', tags: 't1' });

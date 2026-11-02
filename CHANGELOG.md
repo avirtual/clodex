@@ -16,7 +16,7 @@ blocks a release.
 
 - **Security: a secret value that starts with a quote and continues past the closing quote (`client_secret="v"tail`, `--passwd='v'tail`, the same inside a URL query) is now masked to the end of the token.** The log mask stopped at the closing quote and wrote the rest in clear; only four query spellings were covered since 5.157.0. A delimiter (`,` `;` `&` `#` or a closing bracket) still ends the value.
 - **A finished hand no longer blocks the hand cap.** One-shot seats left behind by a hand-merged or otherwise kept ticket were still counted as live hands, so new tickets parked at the cap with nobody working; the cap now counts only seats that hold a ticket not yet accepted, and a merged ticket's accept retires its seat.
-- **A memory unit written before 5.157.0 with a NEL/LS/PS line break in its scope, tags or source can be pinned, updated and retagged again.** Line breaks are collapsed to one space when the unit is read, so it self-heals on its next write instead of throwing (`memory unit scope contains a line break`) on every pin, unpin, update and retag.
+- **A memory unit written before 5.157.0 with a NEL, LS or PS line break in its scope, tags or source now keeps that value.** Such breaks are collapsed to one space when the unit is read, so the unit self-heals on its next write. In 5.157.0 a NEL unit threw (`memory unit scope contains a line break`) on every pin, unpin, update and retag, and an LS or PS unit silently lost the value on its first rewrite.
 
 ## 5.157.0 — 2026-11-02 — Security: log-mask stalls, seat-import reserved names, memory frontmatter forgery, loopback bind check; Preferences token pin, exec on sleepers, embed-basket dry run
 
