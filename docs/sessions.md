@@ -294,8 +294,9 @@ with `/` or `~/`; anything else is dropped.
   `<data>/sessions/*/run/mcp.json`) is read-denied too, and each `${NAME}` the
   seat's applied MCP selection references is unset like the AWS names.
   The app data dir's (`<userData>`) `remote.env`, `ui-settings.json` (peer
-  tokens), `env-scopes.json`, `sessions.json`, `wire-hold-entries.json`, `env-override.env` and each box's
-  `sandbox*/auth.env` are read-denied as well.
+  tokens), `env-scopes.json` and `sessions.json` (each with its `.bak` and
+  `.corrupt-*` copies, via a `*` suffix), `wire-hold-entries.json`,
+  `env-override.env` and each box's `sandbox*/auth.env` are read-denied as well.
 - **A narrow write deny.** Writes are otherwise open (`allowWrite: ["/"]`; the
   sandbox's default would confine them to the cwd). `denyWrite` covers config
   that an unsandboxed process runs later: the template's own paths (a

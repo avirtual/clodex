@@ -19,8 +19,8 @@ const HOME_WRITE_DENY = [
 const APP_BUNDLE = '/Applications/Clodex.app';
 const DATA_WRITE_OPEN = new Set(['projects']);
 const GLOB_RE = /[*?[]/;
-const USER_DATA_READ_DENY = ['remote.env', 'ui-settings.json', 'env-scopes.json', 'sessions.json', 'wire-hold-entries.json', 'env-override.env'];
-const GIT_DIR_WRITE_DENY = [['config', false], ['commondir', false], ['hooks', true], [path.join('info', 'attributes'), false]];
+const USER_DATA_READ_DENY = ['remote.env', 'ui-settings.json*', 'env-scopes.json*', 'sessions.json*', 'wire-hold-entries.json', 'env-override.env'];
+const GIT_DIR_WRITE_DENY = [['config', false], ['config.worktree', false], ['commondir', false], ['hooks', true], [path.join('info', 'attributes'), false]];
 
 function normalizeList(list) {
   const out = [];
@@ -70,7 +70,7 @@ function realPathOr(p, fsImpl) {
 }
 
 function readGitPointer(file, fsImpl) {
-  try { return String(fsImpl.readFileSync(file, 'utf8')).replace(/\r?\n$/, ''); } catch { return null; }
+  try { return String(fsImpl.readFileSync(file, 'utf8')).replace(/[\r\n]+$/, ''); } catch { return null; }
 }
 
 function repoGitDirs(realCwd, fsImpl) {
@@ -84,8 +84,9 @@ function repoGitDirs(realCwd, fsImpl) {
   }
   const common = readGitPointer(path.join(gitDir, 'commondir'), fsImpl);
   const commonDir = common ? realPathOr(path.resolve(gitDir, common), fsImpl) : gitDir;
-  return [...new Set([gitDir, commonDir])]
-    .flatMap((dir) => GIT_DIR_WRITE_DENY.map(([rel, isDir]) => ({ p: path.join(dir, rel), dir: isDir })));
+  const pointer = st && st.isDirectory() ? [] : [{ p: dotGit, dir: false }];
+  return [...pointer, ...[...new Set([gitDir, commonDir])]
+    .flatMap((dir) => GIT_DIR_WRITE_DENY.map(([rel, isDir]) => ({ p: path.join(dir, rel), dir: isDir })))];
 }
 
 function ruleAnchor(p) {

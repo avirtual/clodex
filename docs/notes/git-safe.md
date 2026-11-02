@@ -9,7 +9,7 @@ A driver name containing `=` cannot be blanked: git splits a `-c` argument at th
 An empty `filter.<name>.clean`/`smudge`/`process` makes git skip the driver instead of running it.
 
 ## operatorGitConfigFor
-Cached per cwd for the process lifetime and never invalidated: a change to the operator's `core.hooksPath` or `core.sshCommand` takes effect after an app restart.
+Cached per cwd for the process lifetime and never invalidated: a change to the operator's `core.hooksPath` or `core.sshCommand` takes effect after an app restart, and a value from an `includeIf "onbranch:…"` file stays the one resolved at the first lookup.
 Measured on git 2.52: `git config --show-scope` reports a file pulled in by an `includeIf` in the global config as `global`, and one included from `.git/config` as `local`.
 
 ## repoFilterNames
