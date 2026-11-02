@@ -1,6 +1,6 @@
 'use strict';
 const path = require('path');
-const { execFile } = require('child_process');
+const { execFile, execFileSync } = require('child_process');
 
 const SUBCOMMAND_FLAGS = new Map([
   ['diff', ['--no-ext-diff', '--no-textconv', '--ignore-submodules=all']],
@@ -14,9 +14,24 @@ const FILTER_KEY_RE = /^filter\.(.+)\.[^.]+$/;
 const MERGE_DRIVER_RE = /^merge\.(.+)\.driver$/;
 const OPERATOR_SCOPES = new Set(['system', 'global', 'unknown']);
 
+function detectGitVersion(run = execFileSync) {
+  try {
+    const v = /(\d+)\.(\d+)(?:\.(\d+))?/.exec(String(run('git', ['--version'], { encoding: 'utf8', timeout: 2000 })));
+    return v ? v[0] : null;
+  } catch { return null; }
+}
+
+function lazyFetchOpt(version) {
+  const v = /^(\d+)\.(\d+)/.exec(version || '');
+  return v && (+v[1] > 2 || (+v[1] === 2 && +v[2] >= 45)) ? ['--no-lazy-fetch'] : [];
+}
+
+const gitVersion = detectGitVersion();
+const LAZY_FETCH_OPT = lazyFetchOpt(gitVersion);
+
 function safeGitArgs(args, { hooksPath = '/dev/null', sshCommand = 'ssh', askPass = '', credentialHelpers = [] } = {}) {
   const list = Array.isArray(args) ? args : [];
-  const config = ['--no-lazy-fetch', ...[
+  const config = [...LAZY_FETCH_OPT, ...[
     'core.fsmonitor=', `core.hooksPath=${hooksPath}`, 'diff.external=', `core.sshCommand=${sshCommand}`, 'core.pager=cat',
     'log.showSignature=false', 'commit.gpgSign=false', 'tag.gpgSign=false', 'gpg.program=', 'gpg.ssh.program=',
     'credential.helper=', ...credentialHelpers.map(([key, value]) => `${key}=${value}`), `core.askPass=${askPass}`, 'fetch.all=false',
@@ -91,4 +106,4 @@ async function safeGitArgsFor(cwd, args, { run } = {}) {
   return [...driverOverrides(names), ...safeGitArgs(['-C', cwd, ...args], operator)];
 }
 
-module.exports = { safeGitArgs, safeGitArgsFor, driverOverrides, filterOverrides: driverOverrides, readOperatorGitConfig, operatorGitConfigFor };
+module.exports = { safeGitArgs, gitVersion, LAZY_FETCH_OPT, detectGitVersion, lazyFetchOpt, safeGitArgsFor, driverOverrides, filterOverrides: driverOverrides, readOperatorGitConfig, operatorGitConfigFor };

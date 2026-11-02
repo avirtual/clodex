@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
-const { safeGitArgs, safeGitArgsFor, filterOverrides, readOperatorGitConfig } = require('../git-safe');
+const { safeGitArgs, safeGitArgsFor, filterOverrides, readOperatorGitConfig, LAZY_FETCH_OPT, gitVersion, detectGitVersion, lazyFetchOpt } = require('../git-safe');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const ROOT = path.join(__dirname, '..');
@@ -29,7 +29,7 @@ function plantedRepo() {
 
 test('safeGitArgs: status gets the config prefix and --ignore-submodules=all', () => {
   assert.deepStrictEqual(safeGitArgs(['status']), [
-    '--no-lazy-fetch', '-c', 'core.fsmonitor=',
+    ...LAZY_FETCH_OPT, '-c', 'core.fsmonitor=',
     '-c', 'core.hooksPath=/dev/null',
     '-c', 'diff.external=',
     '-c', 'core.sshCommand=ssh',
@@ -46,7 +46,7 @@ test('safeGitArgs: status gets the config prefix and --ignore-submodules=all', (
 
 test('safeGitArgs: diff/show/log get --no-ext-diff --no-textconv, diff also --ignore-submodules=all, ahead of any pathspec separator', () => {
   const prefix = [
-    '--no-lazy-fetch', '-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/dev/null', '-c', 'diff.external=',
+    ...LAZY_FETCH_OPT, '-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/dev/null', '-c', 'diff.external=',
     '-c', 'core.sshCommand=ssh', '-c', 'core.pager=cat',
     '-c', 'log.showSignature=false', '-c', 'commit.gpgSign=false', '-c', 'tag.gpgSign=false', '-c', 'gpg.program=', '-c', 'gpg.ssh.program=',
     '-c', 'credential.helper=', '-c', 'core.askPass=', '-c', 'fetch.all=false',
@@ -69,7 +69,7 @@ test('safeGitArgs: diff/show/log get --no-ext-diff --no-textconv, diff also --ig
 test('safeGitArgs takes the operator hooksPath, sshCommand, askPass and credential helpers in place of the defaults', () => {
   const credentialHelpers = [['credential.helper', 'osxkeychain'], ['credential.https://gh.example.helper', '!gh auth git-credential']];
   assert.deepStrictEqual(safeGitArgs(['merge', 'b'], { hooksPath: '/op/hooks', sshCommand: 'ssh -i /op/k', askPass: '/op/ask', credentialHelpers }), [
-    '--no-lazy-fetch', '-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/op/hooks', '-c', 'diff.external=',
+    ...LAZY_FETCH_OPT, '-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/op/hooks', '-c', 'diff.external=',
     '-c', 'core.sshCommand=ssh -i /op/k', '-c', 'core.pager=cat',
     '-c', 'log.showSignature=false', '-c', 'commit.gpgSign=false', '-c', 'tag.gpgSign=false', '-c', 'gpg.program=', '-c', 'gpg.ssh.program=',
     '-c', 'credential.helper=', '-c', 'credential.helper=osxkeychain', '-c', 'credential.https://gh.example.helper=!gh auth git-credential',
@@ -325,8 +325,31 @@ test('a planted core.alternateRefsCommand does not run on fetch under safeGitArg
   }
 });
 
+test('--no-lazy-fetch leads the prefix only on git 2.45 or newer, and is dropped when git --version fails', () => {
+  const rows = [
+    ['git version 2.39.5', '2.39.5', []],
+    ['git version 2.39.5 (Apple Git-154)\n', '2.39.5', []],
+    ['git version 2.44.2', '2.44.2', []],
+    ['git version 2.45.0', '2.45.0', ['--no-lazy-fetch']],
+    ['git version 2.52.0\n', '2.52.0', ['--no-lazy-fetch']],
+    ['git version 3.0.1', '3.0.1', ['--no-lazy-fetch']],
+    [new Error('spawn git ENOENT'), null, []],
+  ];
+  for (const [out, version, opt] of rows) {
+    const run = (file, argv) => {
+      assert.deepStrictEqual([file, argv], ['git', ['--version']]);
+      if (out instanceof Error) throw out;
+      return out;
+    };
+    assert.strictEqual(detectGitVersion(run), version, String(out));
+    assert.deepStrictEqual(lazyFetchOpt(detectGitVersion(run)), opt, String(out));
+  }
+  assert.deepStrictEqual(LAZY_FETCH_OPT, lazyFetchOpt(gitVersion));
+});
+
 test('a partial clone does not lazily fetch through a planted remote uploadpack under safeGitArgsFor diff, and does without it', async (t) => {
   if (!hasGit()) { t.skip('git not installed'); return; }
+  if (!LAZY_FETCH_OPT.length) { t.skip(`git ${gitVersion} predates --no-lazy-fetch (2.45)`); return; }
   const up = plantedRepo();
   up.run('commit', '-qm', 'two', '--', 'README.md');
   up.run('config', 'uploadpack.allowFilter', 'true');

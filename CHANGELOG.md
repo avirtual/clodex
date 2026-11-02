@@ -14,7 +14,7 @@ blocks a release.
 
 ## Unreleased
 
-- **Security: Clodex-side git also ignores a repo-planted `core.alternateRefsCommand`, and never lazily fetches missing objects in a partial clone (`--no-lazy-fetch`)**, so a `remote.<name>.uploadpack` planted in `.git/config` no longer runs in the app process from a `diff`, `log` or `status` either (5.154.0 covered only fetch, pull and ls-remote), and a command planted in `core.alternateRefsCommand` no longer runs from a Workbench fetch. A ticket seat's worktree with uncommitted edits inside a submodule also counts as clean for ticket close, reviewer discard, the merge gate's clean-root check and the worktree summary, not only Delete — commit or stash submodule work before closing.
+- **Security: Clodex-side git also ignores a repo-planted `core.alternateRefsCommand`, and on git 2.45 or newer never lazily fetches missing objects in a partial clone (`--no-lazy-fetch`)**, so a `remote.<name>.uploadpack` planted in `.git/config` no longer runs in the app process from a `diff`, `log` or `status` either (5.154.0 covered only fetch, pull and ls-remote), and a command planted in `core.alternateRefsCommand` no longer runs from a Workbench fetch. A ticket seat's worktree with uncommitted edits inside a submodule also counts as clean for ticket close, reviewer discard, the merge gate's clean-root check and the worktree summary, not only Delete — commit or stash submodule work before closing.
 
 ## 5.154.0 — 2026-11-02 — Security: credential sandbox covers the app data dir; Clodex-side git ignores repo-planted commands
 
