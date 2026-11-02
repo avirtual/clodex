@@ -88,3 +88,27 @@ test('status: non-repo → ok:false, isRepo:false', async () => {
   assert.strictEqual(r.ok, false);
   assert.strictEqual(r.isRepo, false);
 });
+
+function plantedPackRemotes(dir) {
+  const src = mkTmpRoot('clodex-scm-src-');
+  execFileSync('git', ['-C', src, 'init', '-q'], { stdio: 'ignore' });
+  execFileSync('git', ['-C', src, '-c', 'user.email=t@t.co', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 's'], { stdio: 'ignore' });
+  const markers = [];
+  for (const name of ['one', 'two']) {
+    const marker = path.join(dir, `PACK_${name}`);
+    markers.push(marker);
+    execFileSync('git', ['-C', dir, 'remote', 'add', name, src], { stdio: 'ignore' });
+    execFileSync('git', ['-C', dir, 'config', `remote.${name}.uploadpack`, `touch '${marker}'; git-upload-pack`], { stdio: 'ignore' });
+  }
+  return markers;
+}
+
+test('remoteOp fetch with two remotes does not run a repo-planted remote.<n>.uploadpack', { skip: !gitOk() }, async () => {
+  const dir = makeRepo();
+  const markers = plantedPackRemotes(dir);
+  const r = await scm.remoteOp(dir, 'fetch');
+  assert.strictEqual(r.ok, true, r.error);
+  assert.deepStrictEqual(markers.filter((m) => fs.existsSync(m)), []);
+  execFileSync('git', ['-C', dir, 'fetch', '--all', '--quiet'], { stdio: 'ignore' });
+  assert.deepStrictEqual(markers.filter((m) => fs.existsSync(m)), markers, 'ENTER: plain fetch --all runs both planted programs');
+});

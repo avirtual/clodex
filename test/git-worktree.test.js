@@ -974,3 +974,23 @@ test('headLogSync does not run a repo-planted gpg.program on a signed HEAD and s
   run('log', '-1');
   assert.strictEqual(fs.existsSync(marker), true, 'ENTER: plain git log runs the planted program');
 });
+
+test('checkoutDetached\'s fetch in a fetch.all repo does not run a repo-planted remote.<n>.uploadpack', { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  const src = makeRepo();
+  const markers = [];
+  const run = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'ignore' });
+  for (const name of ['one', 'two']) {
+    const marker = path.join(repo, `PACK_${name}`);
+    markers.push(marker);
+    run('remote', 'add', name, src);
+    run('config', `remote.${name}.uploadpack`, `touch '${marker}'; git-upload-pack`);
+  }
+  run('config', 'fetch.all', 'true');
+  const dest = path.join(mkTmpRoot('clodex-wt-dest-'), 'd');
+  const r = await wt.checkoutDetached({ repoTop: repo, dir: dest, ref: 'no-such-ref' });
+  assert.strictEqual(r.ok, false);
+  assert.deepStrictEqual(markers.filter((m) => fs.existsSync(m)), []);
+  run('fetch', '--quiet');
+  assert.deepStrictEqual(markers.filter((m) => fs.existsSync(m)), markers, 'ENTER: plain fetch under fetch.all runs both planted programs');
+});
