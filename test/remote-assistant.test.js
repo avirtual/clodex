@@ -344,7 +344,9 @@ test('POST /api/sessions/:name/dm: await is capped at 60 s, omitted is 0, a queu
     assert.strictEqual((await req(port, '/api/sessions/avh-7/dm', { method: 'POST', body: { text: 'hi', client: 'avh' } })).status, 200);
     const q = await req(port, '/api/sessions/avh-7/dm', { method: 'POST', body: { text: 'q', client: 'avh', await: 10 } });
     assert.strictEqual(q.status, 202);
-    assert.deepStrictEqual(q.json, { ok: true, queued: true });
+    const { ts, ...rest } = q.json;
+    assert.deepStrictEqual(rest, { ok: true, queued: true });
+    assert.strictEqual(new Date(ts).toISOString(), ts, 'an ok answer carries the node\'s ISO ts');
     assert.deepStrictEqual(sent, [{ name: 'avh-7', client: 'avh', awaitMs: 60000 }, { name: 'avh-7', client: 'avh', awaitMs: 0 }, { name: 'avh-7', client: 'avh', awaitMs: 10 }]);
   });
 });
@@ -406,18 +408,19 @@ test('send with ref: the full-arity delivery carries the ref as the 10th positio
 test('POST /api/sessions/:name/dm: ref is validated, passed as the 6th positional and echoed top-level on every answer', async () => {
   const seen = [];
   let answer = { ok: true };
+  const noTs = (j) => { assert.strictEqual(typeof j.ts, 'string'); const { ts, ...rest } = j; return rest; };
   const send = (name, text, images, client, awaitMs, ref) => { seen.push(ref); return answer; };
   await withServer({ send }, async (port) => {
     const post = (body) => req(port, '/api/sessions/avh-7/dm', { method: 'POST', body });
     const plain = await post({ text: 'hi', client: 'avh', ref: 'm-1' });
-    assert.deepStrictEqual([plain.status, plain.json, seen], [200, { ok: true, ref: 'm-1' }, ['m-1']]);
+    assert.deepStrictEqual([plain.status, noTs(plain.json), seen], [200, { ok: true, ref: 'm-1' }, ['m-1']]);
     const turn = { text: 'x', intents: [], refs: ['m-1'] };
     answer = { ok: true, turn };
     const t = await post({ text: 'hi', client: 'avh', ref: 'm-1', await: 10 });
-    assert.deepStrictEqual([t.status, t.json], [200, { ok: true, turn, ref: 'm-1' }]);
+    assert.deepStrictEqual([t.status, noTs(t.json)], [200, { ok: true, turn, ref: 'm-1' }]);
     answer = { ok: true, queued: true };
     const q = await post({ text: 'hi', client: 'avh', ref: 'm-1', await: 10 });
-    assert.deepStrictEqual([q.status, q.json], [202, { ok: true, queued: true, ref: 'm-1' }]);
+    assert.deepStrictEqual([q.status, noTs(q.json)], [202, { ok: true, queued: true, ref: 'm-1' }]);
     answer = { ok: false, code: 409, error: 'nope' };
     const refused = await post({ text: 'hi', ref: 'm-1' });
     assert.deepStrictEqual([refused.status, refused.json], [409, { ok: false, code: 409, error: 'nope', ref: 'm-1' }]);
@@ -432,9 +435,9 @@ test('POST /api/sessions/:name/dm: ref is validated, passed as the 6th positiona
     }
     assert.deepStrictEqual(seen, [], 'a bad ref never sends');
     const none = await post({ text: 'hi', client: 'avh' });
-    assert.deepStrictEqual([none.json, seen], [{ ok: true }, [null]]);
+    assert.deepStrictEqual([noTs(none.json), seen], [{ ok: true }, [null]]);
     const wide = await post({ text: 'hi', ref: 'id:7.x-y_z' });
-    assert.deepStrictEqual([wide.status, wide.json], [200, { ok: true, ref: 'id:7.x-y_z' }]);
+    assert.deepStrictEqual([wide.status, noTs(wide.json)], [200, { ok: true, ref: 'id:7.x-y_z' }]);
     const max = await post({ text: 'hi', ref: 'b'.repeat(128) });
     assert.strictEqual(max.status, 200);
   });

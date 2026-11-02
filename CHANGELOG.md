@@ -14,12 +14,12 @@ blocks a release.
 
 ## Unreleased — Security: log-mask stalls, seat-import reserved names, memory frontmatter forgery, loopback bind check; Preferences token pin, exec on sleepers, embed-basket dry run
 
-- **Security: the log mask no longer stalls on long `k=v&k=v` lines.** 5.156.0's masker re-scanned every rejected pair to the end of the line, so a 100 KB URL or term-exec line cost over a second of main-process time (27 s at 400 KB); the scan is linear again, and a 100 KB dotted or dashed token without a separator no longer costs seconds either.
+- **Security: the log mask no longer stalls on long `k=v&k=v` lines.** 5.156.0's masker re-scanned every rejected pair to the end of the line, so a 100 KB URL or term-exec line cost over a second of main-process time (27 s at 400 KB); the scan is linear again, and a 100 KB dotted or dashed token without a separator no longer costs seconds either; quoted query values (`?access_token="…"`) stay fully masked.
 - **Security: seat import refuses reserved and legacy-claim seat names.** A token holder could stage mail under a `.draining.rehome` name that a later rehome restored into another seat; import now applies the same name check as every other create door.
 - **Security: a line break in a memory unit's scope or tags can no longer forge frontmatter.** A plugin or seat could pin a unit as an operator pin by embedding `\n operator_pinned: true` in the scope; such characters are now collapsed on write and refused by the serializer.
 - **Security: a bind host like `127.lan.example` no longer counts as loopback.** Only 127/8 literals, `::1` and `localhost` skip the fail-closed token check on the remote port.
 - **Preferences says when the phone-access token is pinned by `CLODEX_REMOTE_TOKEN`.** Saving or clearing the token there used to report success while the environment value kept gating the server; the panel now shows the pin and refuses the edit.
-- **`clodexctl exec` reaches a sleeping assistant.** The verb looked the seat up in the live list, which omits sleepers, and reported `no such session`; it now resolves the seat directly and waits on the cursor the wake restarts.
+- **`clodexctl exec` reaches a sleeping assistant.** The verb looked the seat up in the live list, which omits sleepers, and reported `no such session`; it now resolves the seat directly and waits on a cursor the node stamps, so a clock difference between the two hosts cannot drop or misorder the reply.
 - **`embed-basket.js --dry-run` no longer rewrites the vector store.** The preview ran compaction and could truncate the blob on a sidecar mismatch; it now opens the store read-only and reports what a real run would reclaim. An edited basket record now retires its old vector row instead of leaving it live.
 
 ## 5.156.0 — 2026-11-02 — Security: log mask catches API/access/private-key spellings; 4 MB images, git ≥2.45 in containers, no CRLF/non-UTF-8 rewrites

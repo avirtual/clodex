@@ -189,6 +189,13 @@ test('the URL credential spellings outside the query rule are masked by the key/
   }
 });
 
+test('a quote-led query value is masked through to the next `&`, `#` or whitespace', () => {
+  assert.strictEqual(maskSecrets('https://h/p?access_token="v"SECRET'), 'https://h/p?access_token=[redacted]');
+  assert.strictEqual(maskSecrets("https://h/p?password='x'tail&a=1"), 'https://h/p?password=[redacted]&a=1');
+  assert.strictEqual(maskSecrets('https://h/p?secret="x"tail#f'), 'https://h/p?secret=[redacted]#f');
+  assert.strictEqual(maskSecrets('https://h/p?apikey="x"tail z'), 'https://h/p?apikey=[redacted] z');
+});
+
 test('a long key-word identifier with a value is masked whole', () => {
   assert.strictEqual(maskSecrets('x_token'.repeat(2000) + '=secret'), 'x_token'.repeat(2000) + '=[redacted]');
   assert.strictEqual(maskSecrets('a=token=xyz'), 'a=token=[redacted]');

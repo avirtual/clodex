@@ -898,10 +898,12 @@ class RemoteServer {
       const ref = msg && msg.ref != null ? msg.ref : null;
       if (ref !== null && (typeof ref !== 'string' || !DM_CLIENT_REF_RE.test(ref))) return this._json(res, 400, { ok: false, error: 'bad ref' });
       const awaitMs = Number.isFinite(+msg.await) && +msg.await > 0 ? Math.min(+msg.await, DM_AWAIT_MAX_MS) : 0;
+      const ts = new Date().toISOString();
       return Promise.resolve()
         .then(() => this._send(name, text, checked.images, client, awaitMs, ref))
         .then((out) => {
-          const body = ref ? { ...out, ref } : out;
+          const stamped = out.ok ? { ...out, ts } : out;
+          const body = ref ? { ...stamped, ref } : stamped;
           this._json(res, out.turn ? 200 : out.queued ? 202 : out.ok ? 200 : (out.code || 404), body);
         })
         .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
