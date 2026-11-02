@@ -76,7 +76,7 @@ function peerKillSession(manager, persistence, REGISTRY_DIR) {
   let srv = null;
   const known = {
     path, fs, os, log: QUIET, manager,
-    DEFAULT_WORKSPACE_ID: 'default', AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
+    DEFAULT_WORKSPACE_ID: 'default', AGENT_NAME_RE: /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/,
     REGISTRY_DIR, OUTBOX_DIR: path.join(REGISTRY_DIR, 'outbox'), SELF_LABEL: 't',
     ensureDir: () => {}, claimOutbox: () => [], listOutboxOrigins: () => [],
     getPersistence: () => persistence,

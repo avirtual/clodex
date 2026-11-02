@@ -22,6 +22,7 @@ function safeGitArgs(args, { hooksPath = '/dev/null', sshCommand = 'ssh', askPas
     'credential.helper=', ...credentialHelpers.map(([key, value]) => `${key}=${value}`), `core.askPass=${askPass}`, 'fetch.all=false',
     'protocol.ext.allow=never', 'protocol.git.allow=never', 'gpg.x509.program=', 'gpg.openpgp.program=', 'merge.verifySignatures=false', 'pull.verifySignatures=false',
     'diff.ignoreSubmodules=all', 'status.submoduleSummary=false', 'submodule.recurse=false', 'fetch.recurseSubmodules=no', 'push.recurseSubmodules=no',
+    'core.alternateRefsCommand=',
   ].flatMap((s) => ['-c', s]);
   let i = 0;
   while (i < list.length && String(list[i]).startsWith('-')) i += VALUE_OPTIONS.has(list[i]) ? 2 : 1;

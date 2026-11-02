@@ -39,6 +39,7 @@ test('safeGitArgs: status gets the config prefix and --ignore-submodules=all', (
     '-c', 'protocol.ext.allow=never', '-c', 'protocol.git.allow=never', '-c', 'gpg.x509.program=', '-c', 'gpg.openpgp.program=',
     '-c', 'merge.verifySignatures=false', '-c', 'pull.verifySignatures=false',
     '-c', 'diff.ignoreSubmodules=all', '-c', 'status.submoduleSummary=false', '-c', 'submodule.recurse=false', '-c', 'fetch.recurseSubmodules=no', '-c', 'push.recurseSubmodules=no',
+    '-c', 'core.alternateRefsCommand=',
     'status', '--ignore-submodules=all',
   ]);
 });
@@ -299,6 +300,26 @@ test('a url.insteadOf rewrite of a normal remote to ext:: does not run under saf
     assert.strictEqual(fs.existsSync(marker), false, 'the insteadOf ext:: rewrite ran under safeGitArgsFor');
     gitTry(['-C', repo, 'fetch', 'origin']);
     assert.strictEqual(fs.existsSync(marker), true, 'control: the insteadOf ext:: rewrite runs on a raw fetch');
+  } finally {
+    fs.rmSync(marker, { force: true });
+  }
+});
+
+test('a planted core.alternateRefsCommand does not run on fetch under safeGitArgsFor, and does without it', async (t) => {
+  if (!hasGit()) { t.skip('git not installed'); return; }
+  const { repo, run } = plantedRepo();
+  const alt = plantedRepo();
+  const origin = plantedRepo();
+  const marker = path.join(repo, '..', `${path.basename(repo)}-altrefs-ran`);
+  fs.writeFileSync(path.join(repo, '.git', 'objects', 'info', 'alternates'), `${path.join(alt.repo, '.git', 'objects')}\n`);
+  run('config', 'core.alternateRefsCommand', `touch '${marker}'; true`);
+  run('remote', 'add', 'origin', origin.repo);
+  try {
+    gitTry(await safeGitArgsFor(repo, ['fetch', 'origin']));
+    assert.strictEqual(fs.existsSync(marker), false, 'core.alternateRefsCommand ran under safeGitArgsFor');
+    origin.run('commit', '-qm', 'two', '--', 'README.md');
+    gitTry(['-C', repo, 'fetch', 'origin']);
+    assert.strictEqual(fs.existsSync(marker), true, 'control: the planted core.alternateRefsCommand runs on a raw fetch');
   } finally {
     fs.rmSync(marker, { force: true });
   }
