@@ -57,6 +57,8 @@ generation of the app, still reaches the wire through that route.
 
 No rule may start a match at every position of a separator-less run: a
 `\b[a-z][a-z0-9+.-]*:\/\/` URL regex does (each `.`/`-` is a word boundary)
-and cost 2.4 s on `'a.'.repeat(50000)`. `maskUrls` therefore matches the whole
-scheme-class run once (`URL_CANDIDATE_RE`, anchored by lookbehind) and
-`schemeStart` picks the leftmost `\b`-letter inside it.
+and cost 2.4 s on `'a.'.repeat(50000)`. `URL_CANDIDATE_RE` matches only the
+scheme head (whole scheme-class run plus `://`, anchored by lookbehind), so a
+rejected candidate costs its own length; `schemeStart` picks the leftmost
+`\b`-letter inside the run, and `URL_TAIL_RE` consumes the tail once per
+accepted scheme. A `\S+` tail in the candidate cost 16 s on `'_a://'.repeat(80000)`.

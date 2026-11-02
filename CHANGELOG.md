@@ -14,7 +14,7 @@ blocks a release.
 
 ## Unreleased — Security: log-mask stalls, seat-import reserved names, memory frontmatter forgery, loopback bind check; Preferences token pin, exec on sleepers, embed-basket dry run
 
-- **Security: the log mask no longer stalls on long `k=v&k=v` lines.** 5.156.0's masker re-scanned every rejected pair to the end of the line, so a 100 KB URL or term-exec line cost over a second of main-process time (27 s at 400 KB); the scan is linear again, and a 100 KB dotted or dashed token without a separator no longer costs seconds either; quoted query values (`?access_token="…"`) stay fully masked.
+- **Security: the log mask no longer stalls on long `k=v&k=v` lines.** 5.156.0's masker re-scanned every rejected pair to the end of the line, so a 100 KB URL or term-exec line cost over a second of main-process time (27 s at 400 KB); the scan is linear again, and a 100 KB dotted or dashed token, or a run of rejected `x://` scheme candidates, no longer costs seconds either; quoted query values (`?access_token="…"`) stay fully masked.
 - **Security: seat import refuses reserved and legacy-claim seat names.** A token holder could stage mail under a `.draining.rehome` name that a later rehome restored into another seat; import now applies the same name check as every other create door.
 - **Security: a line break in a memory unit's scope or tags can no longer forge frontmatter.** A plugin or seat could pin a unit as an operator pin by embedding `\n operator_pinned: true` in the scope; such characters are now collapsed on write and refused by the serializer.
 - **Security: a bind host like `127.lan.example` no longer counts as loopback.** Only 127/8 literals, `::1` and `localhost` skip the fail-closed token check on the remote port.
