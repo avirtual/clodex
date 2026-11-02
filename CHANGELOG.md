@@ -18,6 +18,7 @@ blocks a release.
 - **Preferences says when the phone-access token is pinned by `CLODEX_REMOTE_TOKEN`.** Saving or clearing the token there used to report success while the environment value kept gating the server; the panel now shows the pin and refuses the edit.
 - **Security: seat import refuses reserved and legacy-claim seat names.** A token holder could stage mail under a `.draining.rehome` name that a later rehome restored into another seat; import now applies the same name check as every other create door.
 - **`clodexctl exec` reaches a sleeping assistant.** The verb looked the seat up in the live list, which omits sleepers, and reported `no such session`; it now resolves the seat directly and waits on the cursor the wake restarts.
+- **Security: a line break in a memory unit's scope or tags can no longer forge frontmatter.** A plugin or seat could pin a unit as an operator pin by embedding `\n operator_pinned: true` in the scope; such characters are now collapsed on write and refused by the serializer.
 
 ## 5.156.0 — 2026-11-02 — Security: log mask catches API/access/private-key spellings; 4 MB images, git ≥2.45 in containers, no CRLF/non-UTF-8 rewrites
 
