@@ -165,17 +165,23 @@ function configEntries(r) {
   return r.stdout.split('\0').filter(Boolean).map((e) => (e.includes('\n') ? [e.slice(0, e.indexOf('\n')), e.slice(e.indexOf('\n') + 1)] : [e, '']));
 }
 
+async function remoteGroups(cwd) {
+  const r = await git(cwd, ['config', '--null', '--name-only', '--get-regexp', '^remotes\\.']);
+  if (!r.ok && !(r.code === 1 && !r.stdout)) return { error: `git remote-group lookup failed: ${String(r.stderr).trim()}` };
+  return { groups: new Set(r.stdout.split('\0').filter(Boolean).map((key) => key.slice('remotes.'.length).toLowerCase())) };
+}
+
 async function fetchEachRemote(cwd) {
   const list = await git(cwd, ['remote']);
   if (!list.ok) return { ok: false, error: (list.stderr || 'git remote failed').trim() };
-  const groups = new Set(configEntries(await git(cwd, ['config', '--null', '--get-regexp', '^remotes\\.']))
-    .map(([key]) => key.slice('remotes.'.length).toLowerCase()));
   const skipped = new Set(configEntries(await git(cwd, ['config', '--null', '--type=bool', '--get-regexp', '^remote\\..*\\.skipfetchall$']))
     .filter(([, value]) => value === 'true').map(([key]) => key.slice('remote.'.length, -'.skipfetchall'.length)));
   const names = list.stdout.split('\n').map((s) => s.trim()).filter((n) => n && !n.startsWith('-') && !skipped.has(n));
   const outputs = [];
   let failed = false;
   for (const name of names) {
+    const { groups, error } = await remoteGroups(cwd);
+    if (error) return { ok: false, error: [...outputs, error].filter(Boolean).join('\n') };
     if (groups.has(name.toLowerCase())) {
       outputs.push(`skipped remote ${name}: a remotes.${name} group of the same name would be fetched instead`);
       continue;
