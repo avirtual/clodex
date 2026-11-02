@@ -566,6 +566,42 @@ test('writeFilePeek returns the integral mtime the next save is vetted against',
   assert.strictEqual(fs.readFileSync(late, 'utf8'), 'a'.repeat(9000) + '\r\n');
 });
 
+function writeFilePeekWithSwap(cwd, swap) {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
+  const start = src.indexOf('function writeFilePeek(');
+  assert.ok(start > 0, 'ENTER: writeFilePeek is found by this anchor');
+  const body = src.slice(start, src.indexOf('\n}\n', start) + 2);
+  const { vetFileWrite } = require('../file-edit');
+  const manager = { sessions: new Map([['seat', { cwd }]]) };
+  let swapped = false;
+  const shim = { ...fs, closeSync: (fd) => { fs.closeSync(fd); if (!swapped) { swapped = true; swap(); } } };
+  const fn = new Function('manager', 'vetFileWrite', 'fs', 'path', 'PEEK_MAX_BYTES', `${body}\nreturn writeFilePeek;`)(manager, vetFileWrite, shim, path, PEEK_MAX_BYTES);
+  return { fn, swappedYet: () => swapped };
+}
+
+test('writeFilePeek refuses when the vetted file is swapped for a symlink before the write', () => {
+  const cwd = mkTmpRoot('clx-fileview-');
+  const outsideRoot = mkTmpRoot('clx-fileview-');
+  const file = writeAt(cwd, 'a.txt', 'one');
+  const outside = writeAt(outsideRoot, 'outside.txt', 'keep');
+  const { fn, swappedYet } = writeFilePeekWithSwap(cwd, () => { fs.unlinkSync(file); fs.symlinkSync(outside, file); });
+  const r = fn('seat', file, 'pwned', null);
+  assert.strictEqual(swappedYet(), true, 'ENTER: the swap ran inside the vet');
+  assert.deepStrictEqual(r, { ok: false, error: 'File changed under the editor — reload and retry' });
+  assert.strictEqual(fs.readFileSync(outside, 'utf8'), 'keep');
+  assert.strictEqual(fs.readlinkSync(file), outside);
+});
+
+test('writeFilePeek refuses when the vetted file is replaced by a new inode before the write', () => {
+  const cwd = mkTmpRoot('clx-fileview-');
+  const file = writeAt(cwd, 'a.txt', 'one');
+  const { fn, swappedYet } = writeFilePeekWithSwap(cwd, () => { fs.unlinkSync(file); fs.writeFileSync(file, 'fresh'); });
+  const r = fn('seat', file, 'pwned', null);
+  assert.strictEqual(swappedYet(), true, 'ENTER: the swap ran inside the vet');
+  assert.deepStrictEqual(r, { ok: false, error: 'File changed under the editor — reload and retry' });
+  assert.strictEqual(fs.readFileSync(file, 'utf8'), 'fresh');
+});
+
 test('confinement follow-up: a non-traversable ancestor is outside, a loop is unreadable; a root itself and a dangling link inside cwd are not-a-file', () => {
   const registry = mkTmpRoot('clx-fileview-');
   const cwd = mkTmpRoot('clx-fileview-');
