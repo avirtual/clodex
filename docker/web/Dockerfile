@@ -38,11 +38,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 RUN base=https://mirrors.edge.kernel.org/pub/software/scm/git \
- && v=$(curl -fsSL "$base/" | grep -o 'git-[0-9]*\.[0-9]*\.[0-9]*\.tar\.xz' | sort -uV | tail -1) \
+ && v=$(curl -fsSL "$base/" | grep -o 'git-2\.[0-9]*\.[0-9]*\.tar\.xz' | sort -uV | tail -1) \
  && curl -fsSLO "$base/$v" \
  && curl -fsSL "$base/sha256sums.asc" | grep "  $v\$" | sha256sum -c - \
  && tar -xJf "$v" && cd "${v%.tar.xz}" \
- && make -j"$(nproc)" prefix=/usr/local NO_TCLTK=1 NO_GETTEXT=1 NO_PERL=1 NO_PYTHON=1 \
+ && make -j"$(nproc)" prefix=/usr/local NO_TCLTK=1 NO_GETTEXT=1 NO_PERL=1 NO_PYTHON=1 NO_RUST=1 \
       USE_LIBPCRE2=1 INSTALL_SYMLINKS=1 SKIP_DASHED_BUILT_INS=1 DESTDIR=/git-root all strip install
 
 FROM node:22-slim AS runtime
