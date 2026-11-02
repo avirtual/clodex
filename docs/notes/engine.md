@@ -107,6 +107,10 @@ No spill branch since t1065: the stub carries the file's absolute path, which
 pane (reading is unconfined by design, `file-resolve.js`). The old `@spill:<id>`
 token is an ordinary path miss. Pinned by `test/engine-spill-resolve.test.js`.
 
+## writeFilePeek
+
+`O_NOFOLLOW` refuses a symlink only in the last path component, so an ancestor directory swapped for a symlink after the vet still opens. The `fstat` dev/ino compare against the vet's own `stat` is what catches that, so both are needed. Pinned by `test/file-view-api.test.js`.
+
 ## sweepSpilledMessages
 
 Seat image files (`img-<stamp>-<n>.<ext>`) age out after 24 h because a browser draft holds an uploaded image with nothing on disk naming it until send, so no parked pointer protects it.
