@@ -28,18 +28,21 @@ function lazyFetchOpt(version) {
   return v && (+v[1] > 2 || (+v[1] === 2 && +v[2] >= 45)) ? ['--no-lazy-fetch'] : [];
 }
 
-const gitVersion = detectGitVersion();
-const LAZY_FETCH_OPT = lazyFetchOpt(gitVersion);
+let lazyOpt = null;
+function lazyFetchPrefix(run) {
+  if (!lazyOpt) lazyOpt = lazyFetchOpt(detectGitVersion(run));
+  return lazyOpt;
+}
 
 function safeGitArgs(args, { hooksPath = '/dev/null', sshCommand = 'ssh', askPass = '', credentialHelpers = [] } = {}) {
   const list = Array.isArray(args) ? args : [];
-  const config = [...LAZY_FETCH_OPT, ...[
+  const config = [...lazyFetchPrefix(), ...[
     'core.fsmonitor=', `core.hooksPath=${hooksPath}`, 'diff.external=', `core.sshCommand=${sshCommand}`, 'core.pager=cat',
     'log.showSignature=false', 'commit.gpgSign=false', 'tag.gpgSign=false', 'gpg.program=', 'gpg.ssh.program=',
     'credential.helper=', ...credentialHelpers.map(([key, value]) => `${key}=${value}`), `core.askPass=${askPass}`, 'fetch.all=false',
     'protocol.ext.allow=never', 'protocol.git.allow=never', 'gpg.x509.program=', 'gpg.openpgp.program=', 'merge.verifySignatures=false', 'pull.verifySignatures=false',
     'diff.ignoreSubmodules=all', 'status.submoduleSummary=false', 'submodule.recurse=false', 'fetch.recurseSubmodules=no', 'push.recurseSubmodules=no',
-    'core.alternateRefsCommand=',
+    `core.alternateRefsCommand=git --git-dir="$1" for-each-ref --format='%(objectname)' #`,
   ].flatMap((s) => ['-c', s])];
   let i = 0;
   while (i < list.length && String(list[i]).startsWith('-')) i += VALUE_OPTIONS.has(list[i]) ? 2 : 1;
@@ -108,4 +111,4 @@ async function safeGitArgsFor(cwd, args, { run } = {}) {
   return [...driverOverrides(names), ...safeGitArgs(['-C', cwd, ...args], operator)];
 }
 
-module.exports = { safeGitArgs, gitVersion, LAZY_FETCH_OPT, detectGitVersion, lazyFetchOpt, safeGitArgsFor, driverOverrides, filterOverrides: driverOverrides, readOperatorGitConfig, operatorGitConfigFor };
+module.exports = { safeGitArgs, lazyFetchPrefix, detectGitVersion, lazyFetchOpt, safeGitArgsFor, driverOverrides, filterOverrides: driverOverrides, readOperatorGitConfig, operatorGitConfigFor };
