@@ -14,7 +14,7 @@ the app side in ClodexKit. Both sides build against this file.
   every route. Advertised as `"query"` in `/api/peer/hello` `caps`.
   - `files` → `{ok, cwd, files: Touch[]}` — the seat's tool-touched files
     (`engine.js` `fetchSessionFiles`, `session.fileTouches`).
-  - `filePeek` args `{path}` → `{ok, size, mtime, truncated, binary, content}` —
+  - `filePeek` args `{path}` → `{ok, size, mtime, truncated, binary, content, editable, encoding?}` —
     first 512 KB (`file-edit.js` `PEEK_MAX_BYTES`) as UTF-8, `content: null` when
     binary. Reads ANY absolute path.
   - `fileDiff` args `{path}` → git diff of that path in the seat's repo.
@@ -80,7 +80,7 @@ included, with the file's first line as `head` (no `[agent:<verb>]` prefix).
 
 ```
 POST /api/sessions/:name/query   {kind: "filePeek", args: {path, offset?, length?}}
-  -> 200 { ok: true, path, size, mtime, offset, length, truncated, binary, content }
+  -> 200 { ok: true, path, size, mtime, offset, length, truncated, binary, content, editable, encoding? }
   -> 4xx { ok: false, code, error }
 ```
 
@@ -93,8 +93,13 @@ POST /api/sessions/:name/query   {kind: "filePeek", args: {path, offset?, length
   moved value is echoed as `offset` (ten `é`, `offset 5 length 5` → echoed
   `offset 6 length 4`); a cut that lands inside one trims the END back to a
   boundary and reports the trimmed `length`. A client resuming from the echoed
-  `offset + length` therefore never re-reads or skips a byte. Never a
-  replacement character.
+  `offset + length` therefore never re-reads or skips a byte.
+- `editable` rides every text reply. `false` with `encoding: 'non-utf8'` when
+  the returned bytes are not valid UTF-8 (`content` is then the lossy decode,
+  with U+FFFD for each invalid byte), or `encoding: 'crlf'` when they contain a
+  `\r`; `true` and no `encoding` otherwise. An Edit surface must not offer
+  editing on `false`: a textarea round-trip rewrites the line endings or the
+  invalid bytes. `writeFilePeek` refuses both cases on the on-disk bytes too.
 - `binary: true, content: null` for a file with a NUL in its first 8 KB; the
   client renders "binary, N bytes" and offers nothing. On that reply `size` is
   the real size and `offset`, `length` are `0`, `truncated` is `false`: there

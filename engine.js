@@ -1457,8 +1457,13 @@ function writeFilePeek(name, filePath, content, expectMtime) {
     readHead: (p) => {
       const fd = fs.openSync(p, 'r');
       try {
-        const buf = Buffer.alloc(8192);
-        const n = fs.readSync(fd, buf, 0, 8192, 0);
+        const buf = Buffer.alloc(PEEK_MAX_BYTES);
+        let n = 0;
+        while (n < buf.length) {
+          const r = fs.readSync(fd, buf, n, buf.length - n, n);
+          if (r <= 0) break;
+          n += r;
+        }
         return buf.subarray(0, n);
       } finally { fs.closeSync(fd); }
     },

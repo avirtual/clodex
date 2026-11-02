@@ -21,9 +21,15 @@
 //     normal case here), a blind overwrite silently discards the agent's edit.
 
 const PEEK_MAX_BYTES = 512 * 1024;
+const NUL_SNIFF_BYTES = 8192;
+
+function textEncodingRefusal(bytes) {
+  try { new TextDecoder('utf-8', { fatal: true }).decode(bytes); } catch { return 'non-utf8'; }
+  return bytes.includes(0x0d) ? 'crlf' : null;
+}
 
 // Returns { ok, path } — the realpath to write — or { ok:false, error }.
-// `readHead` returns a Buffer of the file's first bytes (NUL sniff); it is
+// `readHead` returns a Buffer of the file's bytes up to PEEK_MAX_BYTES; it is
 // separate from `stat` because a caller that already refused on size should not
 // pay a read.
 function vetFileWrite({ filePath, cwd, content, expectMtime, resolve, realpath, stat, readHead }) {
@@ -53,9 +59,12 @@ function vetFileWrite({ filePath, cwd, content, expectMtime, resolve, realpath, 
   }
   let head;
   try { head = readHead(real); } catch { return { ok: false, error: 'Unreadable' }; }
-  if (head && head.includes(0)) return { ok: false, error: 'Binary file' };
+  if (head && head.subarray(0, NUL_SNIFF_BYTES).includes(0)) return { ok: false, error: 'Binary file' };
+  const refusal = head ? textEncodingRefusal(head) : null;
+  if (refusal === 'non-utf8') return { ok: false, error: 'File is not UTF-8 — edit it outside Clodex' };
+  if (refusal === 'crlf') return { ok: false, error: 'File uses CRLF line endings — edit it outside Clodex' };
 
   return { ok: true, path: real };
 }
 
-module.exports = { vetFileWrite, PEEK_MAX_BYTES };
+module.exports = { vetFileWrite, textEncodingRefusal, PEEK_MAX_BYTES };

@@ -4,6 +4,8 @@ const { renderDiffHtml } = require('./lib/render-html');
 const { scanPaths } = require('./lib/path-scan');
 const { peekEditable } = require('./lib/side-pane-tabs');
 
+const ENCODING_REFUSALS = { crlf: 'CRLF file — not editable here', 'non-utf8': 'Not UTF-8 — not editable here' };
+
 function el(doc, tag, className, text) {
   const n = doc.createElement(tag);
   if (className) n.className = className;
@@ -185,7 +187,10 @@ function createFileTab({ doc = document, filePath, editable, showOpen, on }) {
     diffBtn.classList.toggle('active', view === 'diff');
     fileBtn.classList.toggle('active', view === 'file');
     editBtn.classList.toggle('active', edit);
-    editBtn.style.display = (canEdit() || hasBuffer()) ? '' : 'none';
+    const refusal = editable && peekRes && !canEdit() && !hasBuffer() ? ENCODING_REFUSALS[peekRes.encoding] : undefined;
+    editBtn.style.display = (canEdit() || hasBuffer() || refusal) ? '' : 'none';
+    editBtn.disabled = !!refusal;
+    editBtn.title = refusal || '';
     editor.readOnly = !canEdit();
     const diffOk = !!(diffRes && diffRes.ok);
     diffBtn.disabled = !diffOk;

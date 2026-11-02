@@ -1,7 +1,7 @@
 'use strict';
 
 const fs = require('node:fs');
-const { PEEK_MAX_BYTES } = require('./file-edit');
+const { PEEK_MAX_BYTES, textEncodingRefusal } = require('./file-edit');
 
 const SNIFF_BYTES = 8192;
 const IMAGE_MAX_BYTES = 4 * 1024 * 1024;
@@ -95,10 +95,13 @@ function peekFile(filePath, opts = {}) {
       return { ok: true, path: filePath, size: st.size, mtime: Math.trunc(st.mtimeMs), offset: 0, length: 0, truncated: false, binary: true, content: null };
     }
     const got = offset + buf.length < st.size ? utf8CutAt(buf, buf.length) : buf.length;
+    const text = buf.subarray(0, got);
+    const encoding = textEncodingRefusal(text);
     return {
       ok: true, path: filePath, size: st.size, mtime: Math.trunc(st.mtimeMs),
       offset, length: got, truncated: offset + got < st.size, binary: false,
-      content: buf.subarray(0, got).toString('utf-8'),
+      content: text.toString('utf-8'),
+      ...(encoding ? { editable: false, encoding } : { editable: true }),
     };
   } catch (e) { return { ok: false, code: 'unreadable', error: e.message }; }
 }
