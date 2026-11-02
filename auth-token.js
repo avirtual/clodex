@@ -54,7 +54,7 @@ function makeTokenGate(token) {
 
 function isLoopbackHost(h) {
   const host = String(h || '').toLowerCase();
-  return host === '127.0.0.1' || host === '::1' || host === 'localhost' || host.startsWith('127.');
+  return host === '127.0.0.1' || host === '::1' || host === 'localhost' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
 }
 
 const LOOPBACK_HOST_RE = /^(?:localhost|\[::1\]|127\.\d{1,3}\.\d{1,3}\.\d{1,3})(?::\d{1,5})?$/;
