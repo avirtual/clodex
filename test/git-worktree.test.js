@@ -1001,3 +1001,55 @@ test('checkoutDetached\'s fetch in a fetch.all repo does not run a repo-planted 
   run('fetch', '--quiet');
   assert.deepStrictEqual(markers.filter((m) => fs.existsSync(m)), markers, 'ENTER: plain fetch under fetch.all runs both planted programs');
 });
+
+function nestedFilterRepo() {
+  const repo = makeRepo();
+  const sub = path.join(repo, 'sub');
+  const marker = path.join(repo, '..', `${path.basename(repo)}-nested-filter-ran`);
+  const run = (dir, ...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8' }).trim();
+  fs.mkdirSync(sub);
+  run(sub, 'init', '-q');
+  run(sub, 'config', 'user.email', 't@example.com');
+  run(sub, 'config', 'user.name', 'Test');
+  fs.writeFileSync(path.join(sub, 'f'), 'hi\n');
+  run(sub, 'add', 'f');
+  run(sub, 'commit', '-qm', 's');
+  run(sub, 'config', 'filter.evil.clean', `sh -c "touch '${marker}'; cat"`);
+  fs.writeFileSync(path.join(sub, '.git', 'info', 'attributes'), '* filter=evil\n');
+  const base = run(repo, 'rev-parse', 'HEAD');
+  const subHead = run(sub, 'rev-parse', 'HEAD');
+  const later = new Date(Date.now() + 5000);
+  fs.utimesSync(path.join(sub, 'f'), later, later);
+  return { repo, sub, marker, run, base, subHead };
+}
+
+test('diffText and diffNames show a gitlink a range adds, and run no nested filter', { skip: !gitAvailable() }, async () => {
+  const { repo, marker, run, base, subHead } = nestedFilterRepo();
+  run(repo, 'update-index', '--add', '--cacheinfo', `160000,${subHead},sub`);
+  run(repo, 'commit', '-qm', 'sm');
+  try {
+    const d = await wt.diffText(repo, base, 'HEAD');
+    assert.strictEqual(d.ok, true);
+    assert.match(d.text, new RegExp(`^\\+Subproject commit ${subHead}$`, 'm'));
+    assert.deepStrictEqual(await wt.diffNames(repo, base, 'HEAD'), { ok: true, names: ['sub'], error: null });
+    assert.strictEqual(fs.existsSync(marker), false, 'a nested filter ran under diffText/diffNames');
+  } finally {
+    fs.rmSync(marker, { force: true });
+  }
+});
+
+test('isDirty reads a staged or moved gitlink as dirty and a committed one as clean, without running a nested filter', { skip: !gitAvailable() }, async () => {
+  const { repo, sub, marker, run, subHead } = nestedFilterRepo();
+  try {
+    run(repo, 'update-index', '--add', '--cacheinfo', `160000,${subHead},sub`);
+    assert.deepStrictEqual(await wt.isDirty(repo), { ok: true, dirty: true }, 'a staged new gitlink');
+    run(repo, 'commit', '-qm', 'sm');
+    assert.deepStrictEqual(await wt.isDirty(repo), { ok: true, dirty: false }, 'a committed gitlink with a stat-dirty nested file');
+    assert.strictEqual(fs.existsSync(marker), false, 'a nested filter ran under isDirty');
+    run(sub, '-c', 'filter.evil.clean=cat', 'commit', '-q', '--allow-empty', '-m', 's2');
+    assert.deepStrictEqual(await wt.isDirty(repo), { ok: true, dirty: true }, 'a gitlink whose submodule moved');
+    assert.strictEqual(fs.existsSync(marker), false, 'a nested filter ran under isDirty');
+  } finally {
+    fs.rmSync(marker, { force: true });
+  }
+});

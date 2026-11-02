@@ -5530,12 +5530,12 @@ function createTicketMethods(deps, shared) {
         const diff = await gitWorktree.diffText(team.root, baseSha, branch)
           .catch((e) => ({ ok: false, text: null, error: e.message }));
         if (!diff.ok) {
-          fail('verify: diff', `git diff --text --no-ext-diff -U20 ${baseSha}..${branch} failed: ${diff.error}`,
+          fail('verify: diff', `git diff --text --no-ext-diff --ignore-submodules=none --submodule=short -U20 ${baseSha}..${branch} failed: ${diff.error}`,
             `ran diffText(${baseSha}, ${branch})`, 'infra');
           return;
         }
         if (!diff.text || !diff.text.trim()) {
-          fail('verify: diff', `git diff --text --no-ext-diff -U20 ${baseSha}..${branch} is empty despite ${commits.count} commit(s) on the branch — there is nothing to review`,
+          fail('verify: diff', `git diff --text --no-ext-diff --ignore-submodules=none --submodule=short -U20 ${baseSha}..${branch} is empty despite ${commits.count} commit(s) on the branch — there is nothing to review`,
             `ran commitsOnBranch (${commits.count}) then diffText, both succeeded`, 'hand');
           return;
         }
