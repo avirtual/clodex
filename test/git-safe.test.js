@@ -70,7 +70,7 @@ test('safeGitArgs takes the operator hooksPath, sshCommand, askPass and credenti
   ]);
 });
 
-test('readOperatorGitConfig takes the last system or global value of each key and ignores local, worktree and command scopes', async () => {
+test('readOperatorGitConfig takes the last system, global or unknown-scope value of each key and ignores local, worktree and command scopes', async () => {
   const asked = [];
   const out = {
     'core.hooksPath': 'system\0/s/hooks\0global\0/g/hooks\0local\0/l/hooks\0',
