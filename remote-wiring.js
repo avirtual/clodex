@@ -16,7 +16,7 @@ const { withoutExecGrants, withoutLocalOnly } = require('./session-args');
 // knows only core's verbs, so it passes plugin verbs — which are forced
 // privileged — straight through to a remote caller's grant.
 const { withoutPrivilegedIntentsFor } = require('./intent-registry');
-const { isClaimEntry } = require('./pending-store');
+const { isClaimEntry, isReservedSeatName } = require('./pending-store');
 // Env scopes cross the wire on a create body — never trust the client: sanitize
 // server-side (drops invalid/denied/newline keys) before it reaches create().
 const { sanitizeFlat } = require('./env-scopes');
@@ -608,6 +608,7 @@ function createRemoteWiring(deps) {
     if (typeof name !== 'string' || !AGENT_NAME_RE.test(name)) {
       return { ok: false, error: `invalid name "${name}" — allowed [a-zA-Z0-9._-], 1-64 chars` };
     }
+    if (isReservedSeatName(name)) return { ok: false, code: 400, error: 'reserved name' };
     if (manager.sessions.has(name) || getPersistence().get(name)) {
       return { ok: false, error: `name taken "${name}"` };
     }

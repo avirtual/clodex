@@ -14,6 +14,8 @@ blocks a release.
 
 ## Unreleased
 
+- **Security: seat import refuses reserved and legacy-claim seat names.** A token holder could stage mail under a `.draining.rehome` name that a later rehome restored into another seat; import now applies the same name check as every other create door.
+
 ## 5.156.0 — 2026-11-02 — Security: log mask catches API/access/private-key spellings; 4 MB images, git ≥2.45 in containers, no CRLF/non-UTF-8 rewrites
 
 - **Security: Clodex's log mask now catches `*_API_KEY`, `*_ACCESS_KEY`, private-key and credential spellings, `x-api-key:` headers and `?api_key=` query strings**, so a term exec or env line carrying one no longer reaches `clodex.log` or `/api/node/logs` in the clear.

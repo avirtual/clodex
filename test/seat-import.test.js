@@ -136,6 +136,20 @@ test('begin refuses a bad name, a codex seat, a missing sessionId and a relative
   assert.match(imp.begin({ name: 'ana', record: null }).error, /record must be an object/);
 });
 
+test('begin and commit each refuse a legacy-claim and a reserved seat name', () => {
+  for (const name of ['.resend.x', '.claims', 'alice.draining.rehome.999999']) {
+    const { root, imp } = mkImport();
+    assert.strictEqual(imp.begin({ name, record: record() }).error, `reserved seat name '${name}'`);
+    assert.ok(!fs.existsSync(path.join(root, 'import')) || fs.readdirSync(path.join(root, 'import')).length === 0,
+      `${name}: begin staged nothing`);
+    const { id } = imp.begin({ name: 'ana', record: record() });
+    put(imp, id, 'transcript.jsonl', '{"t":1}\n');
+    const mf = path.join(root, 'import', id, 'manifest.json');
+    fs.writeFileSync(mf, JSON.stringify({ ...JSON.parse(fs.readFileSync(mf, 'utf8')), name }));
+    assert.strictEqual(imp.commit({ id }).error, `reserved seat name '${name}'`);
+  }
+});
+
 test('begin refuses a second staging for a name already in progress', () => {
   const { imp } = mkImport();
   const first = imp.begin({ name: 'ana', record: record() });
