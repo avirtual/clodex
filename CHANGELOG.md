@@ -14,6 +14,8 @@ blocks a release.
 
 ## Unreleased
 
+- **Security: Clodex-side git also ignores a repo-planted `core.alternateRefsCommand`**, so a command planted there in `.git/config` no longer runs in the app process from a Workbench fetch. A ticket seat's worktree with uncommitted edits inside a submodule also counts as clean for ticket close, reviewer discard, the merge gate's clean-root check and the worktree summary, not only Delete — commit or stash submodule work before closing.
+
 ## 5.154.0 — 2026-11-02 — Security: credential sandbox covers the app data dir; Clodex-side git ignores repo-planted commands
 
 - **Security: a credential-protected seat can no longer read Clodex's own token and secret stores or rewrite its spawn environment.** The sandbox now denies reads of the app data dir's remote token, peer tokens, env scopes, session env, held-request files and box tokens, and denies every write under that dir, or, when Clodex's data dir sits inside it, writes to `env-override.env`, `remote.env` and the env-scope, session and UI-settings stores, so a seat cannot lift the remote API token or plant variables (such as BASH_ENV) that every later seat would inherit.
