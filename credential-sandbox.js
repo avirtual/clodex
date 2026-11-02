@@ -119,7 +119,8 @@ function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = o
   const t0 = t0ReadPaths(registryDir, home);
   const userDataFiles = userDataPath ? [...USER_DATA_READ_DENY, path.join('sandbox*', 'auth.env')].map((f) => path.join(userDataPath, f)) : [];
   const userDataWrite = userDataPath && registryDir !== userDataPath && !registryDir.startsWith(userDataPath + path.sep) ? [userDataPath] : [];
-  const userDataFileWrite = userDataPath && !userDataWrite.length ? ['env-override.env', 'remote.env'].map((f) => path.join(userDataPath, f)) : [];
+  const userDataFileWrite = userDataPath && !userDataWrite.length ? ['env-override.env', 'remote.env', 'env-scopes.json*', '.env-scopes.json*', 'sessions.json*', '.sessions.json*', 'ui-settings.json*', '.ui-settings.json*']
+    .map((f) => path.join(userDataPath, f)) : [];
   const denyRead = [...new Set([...t0, ...listed.filter((p) => !t0.includes(p)), ...userDataFiles])];
   const dataEntries = dataWriteDeny(registryDir, fsImpl);
   const realCwd = typeof cwd === 'string' && path.isAbsolute(cwd) ? realPathOr(cwd, fsImpl) : null;

@@ -268,17 +268,39 @@ test('a url.insteadOf rewrite of a normal remote to ext:: does not run under saf
   }
 });
 
+function x509SignedHead(repo) {
+  const rev = (r) => execFileSync('git', ['-C', repo, 'rev-parse', r], { encoding: 'utf8' }).trim();
+  const parent = rev('HEAD');
+  const body = `tree ${rev('HEAD^{tree}')}\nparent ${parent}\nauthor t <t@t.co> 1 +0000\ncommitter t <t@t.co> 1 +0000\n`
+    + 'gpgsig -----BEGIN SIGNED MESSAGE-----\n MIIB\n -----END SIGNED MESSAGE-----\n\nsigned\n';
+  const signed = execFileSync('git', ['-C', repo, 'hash-object', '-t', 'commit', '-w', '--stdin'], { input: body, encoding: 'utf8' }).trim();
+  execFileSync('git', ['-C', repo, 'update-ref', 'HEAD', signed], { stdio: 'ignore' });
+  return { parent, signed };
+}
+
+test('a planted gpg.x509.program does not run on log --show-signature under safeGitArgsFor, and does without it', async (t) => {
+  if (!hasGit()) { t.skip('git not installed'); return; }
+  const { repo, run } = plantedRepo();
+  x509SignedHead(repo);
+  const { marker, script } = markerScript(repo, 'x509log');
+  run('config', 'gpg.x509.program', script);
+  try {
+    gitTry(await safeGitArgsFor(repo, ['log', '-1', '--show-signature']));
+    assert.strictEqual(fs.existsSync(marker), false, 'gpg.x509.program ran under safeGitArgsFor');
+    gitTry(['-C', repo, 'log', '-1', '--show-signature']);
+    assert.strictEqual(fs.existsSync(marker), true, 'control: the planted gpg.x509.program runs on a raw log --show-signature');
+  } finally {
+    fs.rmSync(marker, { force: true });
+    fs.rmSync(script, { force: true });
+  }
+});
+
 test('a planted gpg.x509.program does not verify an incoming signed commit on pull under safeGitArgsFor, and does without it', async (t) => {
   if (!hasGit()) { t.skip('git not installed'); return; }
   const up = plantedRepo();
   const repo = mkTmpRoot('clx-gitsafe-');
   execFileSync('git', ['clone', '-q', up.repo, repo], { stdio: 'ignore' });
-  const tree = execFileSync('git', ['-C', up.repo, 'rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim();
-  const parent = execFileSync('git', ['-C', up.repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-  const body = `tree ${tree}\nparent ${parent}\nauthor t <t@t.co> 1 +0000\ncommitter t <t@t.co> 1 +0000\n`
-    + 'gpgsig -----BEGIN SIGNED MESSAGE-----\n MIIB\n -----END SIGNED MESSAGE-----\n\nsigned\n';
-  const signed = execFileSync('git', ['-C', up.repo, 'hash-object', '-t', 'commit', '-w', '--stdin'], { input: body, encoding: 'utf8' }).trim();
-  up.run('update-ref', 'HEAD', signed);
+  const { parent } = x509SignedHead(up.repo);
   const { marker, script } = markerScript(repo, 'x509');
   const run = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'ignore' });
   run('config', 'gpg.format', 'x509');
