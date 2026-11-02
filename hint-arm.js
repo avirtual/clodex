@@ -254,6 +254,9 @@ function createHintArm({
   const offered = new Map();
   // session key -> { timer, lastIds, holdSince }
   const armed = new Map();
+  const gens = new Map();
+  const bump = (key) => { gens.set(key, (gens.get(key) || 0) + 1); };
+  const genOf = (key) => gens.get(key) || 0;
 
   const debug = (msg) => { try { if (log && log.debug) log.debug('hint', msg); } catch {} };
 
@@ -402,13 +405,14 @@ function createHintArm({
   // nothing releases; the `finally` is what keeps a throw in `rank` from leaking
   // a hold and stalling that session's deliveries for the whole cap.
   async function fire(key, draft, ctx, { preArm = false } = {}) {
-    try { await rank(key, draft, ctx); } finally {
+    try { await rank(key, draft, ctx, genOf(key)); } finally {
       const st = armed.get(key);
       if (preArm && (!st || !st.lastIds)) release(key);
     }
   }
 
-  async function rank(key, draft, ctx) {
+  async function rank(key, draft, ctx, gen) {
+    const stale = () => genOf(key) !== gen;
     // The budget, not this, is what decides how many units ride — this only has
     // to be wide enough to give it a choice. Every ranker and both ledgers run
     // over the whole set, so a suppressed unit still cannot reach the budget.
@@ -426,6 +430,7 @@ function createHintArm({
     // path. setImmediate rather than a microtask: a microtask still runs before
     // the loop gets to pending I/O, which is the thing being protected.
     await new Promise((r) => setImmediate(r));
+    if (stale()) return;
     let results;
     try { results = pick(draft, agent, limit); } catch (e) { debug(`rank failed for ${agent}: ${e.message}`); return; }
     const nothing = () => clearArmed(key, ctx);
@@ -438,6 +443,7 @@ function createHintArm({
         results = [];
       }
       fromPersonal = results.length > 0;
+      if (stale()) return;
     }
     if (!results.length) { nothing(); return; }
     // REFINE MUST NOT RUN ON A PERSONAL RESULT. It re-ranks the whole corpus and
@@ -449,6 +455,7 @@ function createHintArm({
       try { results = await refine(results, draft, agent, limit); } catch (e) {
         debug(`refine failed for ${agent}: ${e.message}`);
       }
+      if (stale()) return;
     }
     if (!results.length) { nothing(); return; }
     // Last, on the final ordering: the budget spends on what the rankers
@@ -476,6 +483,7 @@ function createHintArm({
       p = armHints({ base, route, id: HINT_ID, text, ttl_s: TTL_S, turn_start_only: true, once: true });
     } catch (e) { st.lastIds = null; debug(`arm threw for ${route}: ${e.message}`); return; }
     return Promise.resolve(p).then((res) => {
+      if (stale()) return;
       // Recorded on a successful POST, not on the rank: a unit the proxy never
       // accepted has not been offered, and burning its cooldown would suppress
       // the retry the failure exists to allow.
@@ -489,7 +497,7 @@ function createHintArm({
       // are safe to write. Dropping this is what made every judgement about
       // hint quality a guess.
       debug(`armed ${route} ${results.map(whyOf).join(' | ')}`);
-    }).catch((e) => { st.lastIds = null; debug(`arm failed for ${route}: ${e.message}`); });
+    }).catch((e) => { if (!stale()) st.lastIds = null; debug(`arm failed for ${route}: ${e.message}`); });
   }
 
   return {
@@ -498,6 +506,7 @@ function createHintArm({
     // on the fixed hint id, and the safety net for a draft sent inside 300ms.
     onDraft(key, draft, ctx = {}, { final = false, overflow = false, desync = false } = {}) {
       cancelTimer(key);
+      bump(key);
       if (enabled && !enabled()) return;
       // Each of these gates says the CURRENT draft cannot be ranked — which is
       // also a reason not to keep serving a hint ranked against an earlier one.
@@ -535,6 +544,7 @@ function createHintArm({
     // from a discarded draft pops on whatever the user types next.
     disarm(key, ctx = {}) {
       cancelTimer(key);
+      bump(key);
       release(key);
       const st = stateFor(key);
       const had = st.lastIds;
@@ -584,7 +594,7 @@ function createHintArm({
     // The two ledgers are keyed differently — `armed` by SESSION, `offered` by
     // AGENT — and the names are equal in production, so one argument would have
     // worked right up until the day it silently did not.
-    forget(key, agent = key) { cancelTimer(key); release(key); armed.delete(key); offered.delete(agent); },
+    forget(key, agent = key) { cancelTimer(key); bump(key); release(key); armed.delete(key); offered.delete(agent); },
 
     // Test/inspection surface.
     _offered(agent) { return new Map(offered.get(agent) || []); },
