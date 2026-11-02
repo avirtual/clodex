@@ -6576,7 +6576,15 @@ async function addPrefsAccount() {
 
 if (prefsAccountAdd) prefsAccountAdd.addEventListener('click', addPrefsAccount);
 
-function renderRemoteTokenState(hasToken) {
+function renderRemoteTokenState(hasToken, envOverride = false) {
+  prefsRemoteToken.disabled = envOverride;
+  prefsRemoteTokenSave.disabled = envOverride;
+  prefsRemoteTokenClear.disabled = envOverride;
+  if (envOverride) {
+    prefsRemoteTokenState.textContent = 'Pinned by CLODEX_REMOTE_TOKEN (set in the environment); edits here have no effect.';
+    prefsRemoteTokenState.style.color = 'var(--warn, #d9a55b)';
+    return;
+  }
   prefsRemoteTokenState.textContent = hasToken
     ? 'A token is configured ✓ — paste a new one to replace it, or Clear to remove.'
     : 'No token set — phone access is open to anyone who can reach the port.';
@@ -6585,6 +6593,12 @@ function renderRemoteTokenState(hasToken) {
 
 async function saveRemoteToken(value) {
   const res = await window.api.remoteSetToken(value);
+  if (res && res.envOverride) {
+    prefsRemoteToken.value = '';
+    renderRemoteTokenState(true, true);
+    showToast(`Update token refused: ${res.error}`, { kind: 'error' });
+    return;
+  }
   if (!res || res.ok === false) {
     showToast(`Update token failed: ${(res && res.error) || 'unknown error'}`, { kind: 'error' });
     return;
@@ -9152,7 +9166,7 @@ async function openPrefs(group = null) {
   }
   if (prefsPeerShell) prefsPeerShell.checked = !!s.peerShellEnabled;
   prefsRemoteToken.value = '';
-  renderRemoteTokenState(!!s.remoteHasToken);
+  renderRemoteTokenState(!!s.remoteHasToken, !!s.remoteEnvTokenPinned);
   if (prefsEnvScope) prefsEnvScope.value = 'global';
   if (prefsEnvKey) prefsEnvKey.value = '';
   if (prefsEnvValue) prefsEnvValue.value = '';

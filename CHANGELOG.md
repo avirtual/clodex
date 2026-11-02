@@ -14,6 +14,8 @@ blocks a release.
 
 ## Unreleased
 
+- **Preferences says when the phone-access token is pinned by `CLODEX_REMOTE_TOKEN`.** Saving or clearing the token there used to report success while the environment value kept gating the server; the panel now shows the pin and refuses the edit.
+
 ## 5.156.0 — 2026-11-02 — Security: log mask catches API/access/private-key spellings; 4 MB images, git ≥2.45 in containers, no CRLF/non-UTF-8 rewrites
 
 - **Security: Clodex's log mask now catches `*_API_KEY`, `*_ACCESS_KEY`, private-key and credential spellings, `x-api-key:` headers and `?api_key=` query strings**, so a term exec or env line carrying one no longer reaches `clodex.log` or `/api/node/logs` in the clear.

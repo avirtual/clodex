@@ -56,6 +56,11 @@ function envLockedSettings(env = process.env) {
   return out;
 }
 
+function envPinsRemoteToken(env = process.env) {
+  const v = env ? env.CLODEX_REMOTE_TOKEN : null;
+  return typeof v === 'string' && v !== '';
+}
+
 function recentCwdsFor(settings, wsId) {
   const byWs = settings.recentCwdsByWorkspace || {};
   if (Array.isArray(byWs[wsId])) return byWs[wsId];
@@ -1274,6 +1279,7 @@ function registerIpcHandlers(deps) {
       // reads as off, which is wrong for peerShellEnabled on a box that is serving.
       peerShellEnabled: s.peerShellEnabled,
       remoteHasToken: typeof hasRemoteToken === 'function' ? hasRemoteToken() : false,
+      remoteEnvTokenPinned: envPinsRemoteToken(),
       // The peer token is write-only: the renderer sees only hasToken, and
       // sanitizePeers carries an omitted token forward when the dialog saves back.
       peers: (s.peers || []).map(({ token, ...rest }) => ({ ...rest, hasToken: !!token })),
@@ -1309,10 +1315,13 @@ function registerIpcHandlers(deps) {
     error: getRemoteError(),
   }));
 
-  // Write-only: the reply carries just hasToken. The RemoteServer reads the token
+  // The RemoteServer reads the token
   // only at construct, so the refresh is what makes the new gate live.
   handle('remote:setToken', (_e, token) => {
     if (typeof setRemoteToken !== 'function') return { ok: false, error: 'remote token not supported on this host' };
+    if (envPinsRemoteToken()) {
+      return { ok: false, error: 'pinned by CLODEX_REMOTE_TOKEN — unset it and restart to manage the token here', hasToken: true, envOverride: true };
+    }
     try {
       const hasToken = setRemoteToken(token);
       if (typeof refreshRemoteToken === 'function') refreshRemoteToken();
@@ -2652,4 +2661,4 @@ function registerIpcHandlers(deps) {
   });
 }
 
-module.exports = { registerIpcHandlers, envLockedSettings };
+module.exports = { registerIpcHandlers, envLockedSettings, envPinsRemoteToken };
