@@ -204,8 +204,10 @@ fileDiff); peer sessions route the same kinds through `peerQuery`, with
 identical response shapes so render code is shared. `sessionFiles` carries
 `filed[]` (the seat's spilled intent bodies, handoffs and message spills, from
 `session.filedRing`) beside `files`; `filePeek` answers `{path, size, mtime,
-offset, length, truncated, binary, content}` plus `image` (a media type; then
-`content` is the whole file as base64, `offset`/`length` ignored) and, on failure,
+offset, length, truncated, binary, content, editable, encoding?}` (`editable:
+false` with `encoding` `crlf` or `non-utf8` on text the Edit tab must not
+rewrite) plus `image` (a media type; then `content` is the whole file as
+base64, `offset`/`length` ignored) and, on failure,
 `{ok:false, code, error}`. Confinement of `filePeek`/`fileDiff` lives in the
 remote query path only, so the direct IPC and the peer drawer are unchanged. `peerProxyView` is
 the owner-side trim: no capabilities cross the wire, and no base/sessionId unless

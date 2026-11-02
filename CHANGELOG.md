@@ -15,8 +15,8 @@ blocks a release.
 ## Unreleased — Security: log mask catches API/access/private-key spellings; 4 MB images, git ≥2.45 in containers, no CRLF/non-UTF-8 rewrites
 
 - **Security: Clodex's log mask now catches `*_API_KEY`, `*_ACCESS_KEY`, private-key and credential spellings, `x-api-key:` headers and `?api_key=` query strings**, so a term exec or env line carrying one no longer reaches `clodex.log` or `/api/node/logs` in the clear.
-- **Images up to 4 MB render inline, including over a remote Clodex.** The file viewer also opens a changed image on the image itself rather than a binary diff, and says so when an image cannot be decoded.
-- **The container images ship git 2.45 or newer**, so the partial-clone lazy-fetch guard from 5.155.0 is active on boxes too.
+- **Images up to 4 MB render inline, including over a remote Clodex.** The file viewer also opens a changed image on the image itself rather than a binary diff, and says so when an image cannot be decoded. A client older than 5.156.0 asking this node for an image over 1 MB sees `response too large` until it upgrades.
+- **The container images ship git 2.45 or newer**, so the partial-clone lazy-fetch guard from 5.155.0 is active in the box and web images too (a box provisioned by `clodex-deploy.sh` keeps its distro git).
 - **A respawned seat no longer gets its operator pins delivered twice.** Memory-load state is reset at every non-resume spawn, so the first turn's digest and the late-directive path agree on what the seat already holds.
 - **A memory hint no longer arms for a draft you already discarded.** A rank still running when the draft is cleared, replaced, submitted or the seat forgotten is dropped instead of registering the stale hint.
 - **The Edit tab refuses files it would corrupt.** A file with CRLF line endings or bytes that are not UTF-8 opens read-only with the reason shown, instead of saving with every line ending rewritten or each invalid byte replaced.
