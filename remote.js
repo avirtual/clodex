@@ -902,7 +902,8 @@ class RemoteServer {
       return Promise.resolve()
         .then(() => this._send(name, text, checked.images, client, awaitMs, ref))
         .then((out) => {
-          const body = ref ? { ...out, ts, ref } : { ...out, ts };
+          const stamped = out.ok ? { ...out, ts } : out;
+          const body = ref ? { ...stamped, ref } : stamped;
           this._json(res, out.turn ? 200 : out.queued ? 202 : out.ok ? 200 : (out.code || 404), body);
         })
         .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
