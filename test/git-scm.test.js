@@ -147,9 +147,8 @@ test('remoteOp fetch leaves out a remote with skipFetchAll', { skip: !gitOk() },
 test('remoteOp fetch fails closed when the remote-group lookup overflows its buffer', { skip: !gitOk() }, async () => {
   const dir = makeRepo();
   const markers = [...plantedPackRemotes(dir), addPlantedRemote(dir, 'three')];
-  execFileSync('git', ['-C', dir, 'config', 'remotes.one', 'two three'], { stdio: 'ignore' });
   const pad = Array.from({ length: 42000 }, (_, i) => `\tp${i}${'k'.repeat(200)} = x\n`).join('');
-  fs.appendFileSync(path.join(dir, '.git', 'config'), `[remotes]\n${pad}`);
+  fs.appendFileSync(path.join(dir, '.git', 'config'), `[remotes]\n${pad}\tone = two three\n`);
   const r = await scm.remoteOp(dir, 'fetch');
   assert.deepStrictEqual(markers.filter((m) => fs.existsSync(m)), []);
   assert.strictEqual(r.ok, false);
