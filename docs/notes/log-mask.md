@@ -22,6 +22,13 @@ opens with `-` or `_`: a bare `[\w-]*` suffix masks `author: bob` and
 still masks; `--keyboard foo` and `monkey=1` survive because no key word is
 `key` alone.
 
+## maskNamed
+
+The name is matched once as a whole `[\w.-]+` run and judged afterwards by
+`isSecretName`. Putting the key-word alternation and its suffix inside the run
+regex made a long `=`-less identifier (`'_auth'.repeat(4000)`) take minutes; a
+miss resumes the scan at the value so a `name=` inside it is still seen.
+
 Rule order is load-bearing and the rules OVERLAP. The key/value rule runs first
 and consumes to the next whitespace, so `?token=x&page=2` inside a URL loses the
 rest of its query to that rule rather than to the query rule. Deliberate,
@@ -29,9 +36,9 @@ in the safe direction: making the key/value rule stop at `&` would leave a
 credential intact in every log line that is not a URL, and those are the
 majority.
 
-The query rule enumerates `token`/`key`/`sig`/`api_key`/`apikey`/`access_token`/`secret`/`password` and therefore cannot cover a
-signed URL's vendor spellings (`X-Amz-Signature`, `Signature`, a bare `t`).
-That is why engine.js's default `openExternal` seam drops the whole query
+The query rule enumerates `token`/`key`/`sig`/`api_key`/`apikey`/`access_token`/
+`secret`/`password` and therefore cannot cover a signed URL's vendor
+spellings (`X-Amz-Signature`, `Signature`, a bare `t`). That is why engine.js's default `openExternal` seam drops the whole query
 itself instead of relying on this.
 
 The mask is applied at BOTH ends: each host's `writeLog` masks on the way in,
