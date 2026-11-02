@@ -99,6 +99,11 @@ POST /api/sessions/:name/query   {kind: "filePeek", args: {path, offset?, length
   client renders "binary, N bytes" and offers nothing. On that reply `size` is
   the real size and `offset`, `length` are `0`, `truncated` is `false`: there
   is no range to advance, so a client must never offer "load more" on it.
+- `image` (a media type: `image/png`, `image/jpeg`, `image/gif`, `image/webp`)
+  is set when the file's magic bytes name an image. Then `content` is the whole
+  file as base64 (or `null` over `IMAGE_MAX_BYTES`, 4 MiB), `binary` is `true`,
+  `offset` is `0`, `length` is the whole-file length, and the request's
+  `offset`/`length` are ignored.
 - `ok:false` NEVER rides a 2xx: the HTTP status and `ok` agree on every reply
   (200 ⇔ `ok:true`). A client may trust either; a host answering
   `200 {"ok":false,…}` is non-conforming.

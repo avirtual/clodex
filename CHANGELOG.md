@@ -14,6 +14,8 @@ blocks a release.
 
 ## Unreleased
 
+- **Images up to 4 MB render inline, including over a remote Clodex.** The file viewer also opens a changed image on the image itself rather than a binary diff, and says so when an image cannot be decoded.
+
 ## 5.155.0 — 2026-11-02 — Security: repo-planted alternateRefsCommand and partial-clone lazy fetches; the file viewer shows images
 
 - **Security: Clodex-side git also ignores a repo-planted `core.alternateRefsCommand`, and on git 2.45 or newer never lazily fetches missing objects in a partial clone (`--no-lazy-fetch`)**, so a `remote.<name>.uploadpack` planted in `.git/config` no longer runs in the app process from a `diff`, `log` or `status` either (5.154.0 covered only fetch, pull and ls-remote), and a command planted in `core.alternateRefsCommand` no longer runs from a Workbench fetch. In a partial clone, Clodex's own checkout, Workbench pull and branch switch, ticket-worktree creation, ticket merge and diffs now fail on objects not yet downloaded — check out or diff the files once outside Clodex so the objects are downloaded, or use a full clone.

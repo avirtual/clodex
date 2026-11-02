@@ -42,6 +42,8 @@ const WTERM_STATUS_CODE = {
 };
 const REQUEST_TIMEOUT_MS = 5000;
 const QUERY_TIMEOUT_MS = 20000;
+const REPLY_MAX_BYTES = 1024 * 1024;
+const FILE_PEEK_REPLY_MAX_BYTES = 8 * 1024 * 1024;
 const IMPORT_TIMEOUT_MS = 120000;
 const OVERFLOW_LOG_INTERVAL_MS = 60000;
 const CLAIM_FAIL_LOG_INTERVAL_MS = 60000;
@@ -551,7 +553,7 @@ class PeerConnection {
   query(name, kind, args, cb) {
     this._request('POST', `/api/sessions/${encodeURIComponent(name)}/query`, { kind, args: args || {} }, (err, body) => {
       cb(err ? { ok: false, error: err.message } : body || { ok: false, error: 'query failed' });
-    }, QUERY_TIMEOUT_MS);
+    }, QUERY_TIMEOUT_MS, kind === 'filePeek' ? FILE_PEEK_REPLY_MAX_BYTES : REPLY_MAX_BYTES);
   }
 
   resize(name, cols, rows, cb) {
@@ -1025,7 +1027,7 @@ class PeerConnection {
     });
   }
 
-  _request(method, path, payload, cb, timeout = REQUEST_TIMEOUT_MS) {
+  _request(method, path, payload, cb, timeout = REQUEST_TIMEOUT_MS, maxBytes = REPLY_MAX_BYTES) {
     let d;
     try { d = dialOptions(this.url, path); } catch (e) { return cb(e); }
     const body = payload ? JSON.stringify(payload) : null;
@@ -1043,7 +1045,7 @@ class PeerConnection {
       let tooLarge = false;
       res.on('data', (c) => {
         buf += c;
-        if (tooLarge || buf.length <= 1024 * 1024) return;
+        if (tooLarge || buf.length <= maxBytes) return;
         tooLarge = true;
         req.destroy(new Error('response too large'));
       });

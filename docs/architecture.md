@@ -1091,6 +1091,8 @@ accept teardown removes.
   the file's first 8 KB for a NUL whatever the range, and answers
   `{ok:false, code}` with `not-found`, `not-a-file` (stat: dir, device — a
   symlinked file is followed, as the desktop viewer always did) or `unreadable`.
+  An image (magic bytes, `imageMediaType`) adds `image: <media type>` and
+  returns the whole file as base64 `content`, ignoring `offset`/`length`.
   Pure leaf over node fs; `engine.js` `fetchFilePeek` is the seam that calls it.
   The remote query arm (`remote-wiring.js` `confineRemotePath`) is where a
   symlink is refused and where confinement decides before existence.

@@ -272,6 +272,12 @@ test('peekFile: a PNG under IMAGE_MAX_BYTES comes back whole as base64 with its 
     ok: true, path: p, size: 67, mtime: Math.trunc(fs.statSync(p).mtimeMs), offset: 0, length: 67,
     truncated: false, binary: true, image: 'image/png', content: PNG_1X1.toString('base64'),
   });
+  const edgeBytes = Buffer.concat([PNG_1X1, Buffer.alloc(IMAGE_MAX_BYTES - 67, 0x41)]);
+  const edge = writeAt(root, 'edge.png', edgeBytes);
+  assert.deepStrictEqual(peekFile(edge), {
+    ok: true, path: edge, size: IMAGE_MAX_BYTES, mtime: Math.trunc(fs.statSync(edge).mtimeMs), offset: 0, length: IMAGE_MAX_BYTES,
+    truncated: false, binary: true, image: 'image/png', content: edgeBytes.toString('base64'),
+  });
   const big = writeAt(root, 'big.png', Buffer.concat([PNG_1X1, Buffer.alloc(IMAGE_MAX_BYTES, 0x41)]));
   assert.deepStrictEqual(peekFile(big), {
     ok: true, path: big, size: 67 + IMAGE_MAX_BYTES, mtime: Math.trunc(fs.statSync(big).mtimeMs), offset: 0, length: 0,
@@ -291,11 +297,22 @@ test('file-tab paints an image peek as a file-peek-image <img> with a data: src,
   assert.match(src, /img\.src = 'data:' \+ peekRes\.image \+ ';base64,' \+ peekRes\.content;/);
 });
 
+test('file-tab: an image that fails to decode paints a note, and an image peek opens on the File view over a diff', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'file-tab.js'), 'utf8');
+  const paintImage = src.slice(src.indexOf('function paintImage('), src.indexOf('function paintFile('));
+  assert.ok(paintImage.includes("img.addEventListener('error', () => paintNote('Image could not be decoded — use Open.'));"));
+  const dv = src.slice(src.indexOf('function defaultView('), src.indexOf('function paintNote('));
+  assert.match(dv, /if \(peekRes && peekRes\.image\) return 'file';\n\s*return \(diffRes/);
+});
+
 test('imageMediaType: magic bytes for PNG, JPEG, GIF and WebP; RIFF that is not WebP and short heads are null', () => {
   const rows = [
     [PNG_1X1.subarray(0, 12), 'image/png'],
     [Buffer.from([0xFF, 0xD8, 0xFF, 0xE0]), 'image/jpeg'],
+    [Buffer.from('GIF87a'), 'image/gif'],
     [Buffer.from('GIF89a'), 'image/gif'],
+    [Buffer.from('GIF8xyz notes'), null],
+    [Buffer.from('GIF8'), null],
     [Buffer.from('RIFF\x00\x00\x00\x00WEBP', 'latin1'), 'image/webp'],
     [Buffer.from('RIFF\x00\x00\x00\x00WAVE', 'latin1'), null],
     [Buffer.from('RIFF'), null],
