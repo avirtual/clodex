@@ -38,8 +38,9 @@ majority.
 
 The query rule enumerates `token`/`key`/`sig`/`api_key`/`apikey`/`access_token`/
 `secret`/`password` and therefore cannot cover a signed URL's vendor
-spellings (`X-Amz-Signature`, `Signature`, a bare `t`). That is why engine.js's default `openExternal` seam drops the whole query
-itself instead of relying on this.
+spellings (`X-Amz-Signature`, `Signature`, a bare `t`). That is why
+engine.js's default `openExternal` seam drops the whole query itself instead
+of relying on this.
 
 The mask is applied at BOTH ends: each host's `writeLog` masks on the way in,
 and remote.js's `readLogTail` masks again on the way out. The read-side pass is
