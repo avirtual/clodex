@@ -138,7 +138,7 @@ test('safeGitArgsFor rejects on any filter-lookup failure but exit 1 with no out
   }
   await assert.rejects(safeGitArgsFor('/r', ['status'], { run: runner(Object.assign(new Error('x'), { code: 1 }), 'filter.x.clean\0') }));
   const none = await safeGitArgsFor('/r', ['status'], { run: runner(Object.assign(new Error('x'), { code: 1 }), '') });
-  assert.deepStrictEqual(none.slice(-3), ['-C', '/r', 'status']);
+  assert.deepStrictEqual(none.slice(-4), ['-C', '/r', 'status', '--ignore-submodules=all']);
   assert.ok(!none.some((a) => a.startsWith('filter.')));
 });
 
