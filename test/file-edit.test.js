@@ -94,6 +94,16 @@ test('refuses binary content', () => {
   assert.match(r.error, /Binary file/);
 });
 
+test('refuses a file that is not UTF-8', () => {
+  const r = vetFileWrite(base({ ...fsFixture({ files: { '/repo/src/a.js': { head: Buffer.from([0x63, 0x61, 0x66, 0xE9]) } } }) }));
+  assert.deepStrictEqual(r, { ok: false, error: 'File is not UTF-8 — edit it outside Clodex' });
+});
+
+test('refuses a file with CRLF line endings, a CR past the NUL sniff included', () => {
+  const r = vetFileWrite(base({ ...fsFixture({ files: { '/repo/src/a.js': { head: 'a'.repeat(9000) + '\r\n' } } }) }));
+  assert.deepStrictEqual(r, { ok: false, error: 'File uses CRLF line endings — edit it outside Clodex' });
+});
+
 // The data-loss guard: the peek only READ the first PEEK_MAX_BYTES, so writing
 // the textarea back would truncate the file to the head it showed.
 test('refuses a file larger than the peek cap', () => {

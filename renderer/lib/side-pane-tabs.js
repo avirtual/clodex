@@ -27,7 +27,7 @@ function clampSidePaneWidth(px, windowPx) {
 }
 
 function peekEditable(editable, peekRes) {
-  return !!(editable && peekRes && peekRes.ok && !peekRes.binary && !peekRes.truncated);
+  return !!(editable && peekRes && peekRes.ok && !peekRes.binary && !peekRes.truncated && peekRes.editable !== false);
 }
 
 function shouldKeepBuffer(tab) {

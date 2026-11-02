@@ -247,7 +247,7 @@ test('peekFile: offset/length echo, clamp to PEEK_MAX_BYTES, truncated, and the 
   const root = mkTmpRoot('clx-fileview-');
   const p = writeAt(root, 'a.txt', 'hello world, this is text');
   const whole = peekFile(p);
-  assert.deepStrictEqual(whole, { ok: true, path: p, size: 25, mtime: Math.trunc(fs.statSync(p).mtimeMs), offset: 0, length: 25, truncated: false, binary: false, content: 'hello world, this is text' });
+  assert.deepStrictEqual(whole, { ok: true, path: p, size: 25, mtime: Math.trunc(fs.statSync(p).mtimeMs), offset: 0, length: 25, truncated: false, binary: false, content: 'hello world, this is text', editable: true });
   const part = peekFile(p, { offset: 6, length: 5 });
   assert.deepStrictEqual([part.offset, part.length, part.truncated, part.content], [6, 5, true, 'world']);
   const tail = peekFile(p, { offset: 20, length: 100 });
@@ -260,6 +260,34 @@ test('peekFile: offset/length echo, clamp to PEEK_MAX_BYTES, truncated, and the 
   assert.strictEqual(peekFile(big).truncated, true, 'old callers: truncated when the file exceeds the cap');
   const junk = peekFile(p, { offset: 'x', length: -4 });
   assert.deepStrictEqual([junk.offset, junk.length], [0, 25], 'garbage opts fall back to the defaults');
+});
+
+test('peekFile: CRLF and non-UTF-8 text views as before but is marked not editable, with the reason', () => {
+  const root = mkTmpRoot('clx-fileview-');
+  const lf = writeAt(root, 'lf.txt', 'caf\u00e9\nline\n');
+  assert.deepStrictEqual(peekFile(lf), {
+    ok: true, path: lf, size: 11, mtime: Math.trunc(fs.statSync(lf).mtimeMs), offset: 0, length: 11,
+    truncated: false, binary: false, content: 'caf\u00e9\nline\n', editable: true,
+  });
+  const crlf = writeAt(root, 'crlf.txt', 'one\r\ntwo\r\n');
+  assert.deepStrictEqual(peekFile(crlf), {
+    ok: true, path: crlf, size: 10, mtime: Math.trunc(fs.statSync(crlf).mtimeMs), offset: 0, length: 10,
+    truncated: false, binary: false, content: 'one\r\ntwo\r\n', editable: false, encoding: 'crlf',
+  });
+  const latin1 = writeAt(root, 'latin1.txt', Buffer.from([0x63, 0x61, 0x66, 0xE9, 0x0A]));
+  assert.deepStrictEqual(peekFile(latin1), {
+    ok: true, path: latin1, size: 5, mtime: Math.trunc(fs.statSync(latin1).mtimeMs), offset: 0, length: 5,
+    truncated: false, binary: false, content: 'caf\uFFFD\n', editable: false, encoding: 'non-utf8',
+  });
+});
+
+test('file-tab: an encoding refusal shows a disabled Edit with its reason', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'file-tab.js'), 'utf8');
+  assert.match(src, /const ENCODING_REFUSALS = \{ crlf: 'CRLF file — not editable here', 'non-utf8': 'Not UTF-8 — not editable here' \};/);
+  assert.match(src, /ENCODING_REFUSALS\[peekRes\.encoding\]/);
+  assert.match(src, /editBtn\.style\.display = \(canEdit\(\) \|\| hasBuffer\(\) \|\| refusal\) \? '' : 'none';/);
+  assert.match(src, /editBtn\.disabled = !!refusal;/);
+  assert.match(src, /editBtn\.title = refusal \|\| '';/);
 });
 
 const PNG_1X1 = Buffer.from('89504E470D0A1A0A0000000D49484452000000010000000108060000001F15C4890000000A4944415478DA63000100000500010D0A2DB40000000049454E44AE426082', 'hex');
@@ -525,7 +553,7 @@ test('writeFilePeek returns the integral mtime the next save is vetted against',
   const cwd = mkTmpRoot('clx-fileview-');
   const file = writeAt(cwd, 'a.txt', 'one');
   const manager = { sessions: new Map([['seat', { cwd }]]) };
-  const writeFilePeek = new Function('manager', 'vetFileWrite', 'fs', 'path', `${body}\nreturn writeFilePeek;`)(manager, vetFileWrite, fs, path);
+  const writeFilePeek = new Function('manager', 'vetFileWrite', 'fs', 'path', 'PEEK_MAX_BYTES', `${body}\nreturn writeFilePeek;`)(manager, vetFileWrite, fs, path, PEEK_MAX_BYTES);
   const first = writeFilePeek('seat', file, 'two', null);
   assert.strictEqual(first.ok, true, `ENTER: the first save wrote (${first.error})`);
   assert.strictEqual(Number.isInteger(fs.statSync(file).mtimeMs), false, 'ENTER: the filesystem keeps a fraction on the write');
@@ -533,6 +561,9 @@ test('writeFilePeek returns the integral mtime the next save is vetted against',
   const second = writeFilePeek('seat', file, 'three', first.mtime);
   assert.deepStrictEqual([second.ok, second.error], [true, undefined]);
   assert.strictEqual(fs.readFileSync(file, 'utf8'), 'three');
+  const late = writeAt(cwd, 'late.txt', 'a'.repeat(9000) + '\r\n');
+  assert.deepStrictEqual(writeFilePeek('seat', late, 'b', null), { ok: false, error: 'File uses CRLF line endings — edit it outside Clodex' });
+  assert.strictEqual(fs.readFileSync(late, 'utf8'), 'a'.repeat(9000) + '\r\n');
 });
 
 test('confinement follow-up: a non-traversable ancestor is outside, a loop is unreadable; a root itself and a dangling link inside cwd are not-a-file', () => {

@@ -17,6 +17,7 @@ blocks a release.
 - **Images up to 4 MB render inline, including over a remote Clodex.** The file viewer also opens a changed image on the image itself rather than a binary diff, and says so when an image cannot be decoded.
 - **The container images ship git 2.45 or newer**, so the partial-clone lazy-fetch guard from 5.155.0 is active on boxes too.
 - **A respawned seat no longer gets its operator pins delivered twice.** Memory-load state is reset at every non-resume spawn, so the first turn's digest and the late-directive path agree on what the seat already holds.
+- **The Edit tab refuses files it would corrupt.** A file with CRLF line endings or bytes that are not UTF-8 opens read-only with the reason shown, instead of saving with every line ending rewritten or each invalid byte replaced.
 
 ## 5.155.0 — 2026-11-02 — Security: repo-planted alternateRefsCommand and partial-clone lazy fetches; the file viewer shows images
 
