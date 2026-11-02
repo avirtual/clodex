@@ -4,6 +4,17 @@ const fs = require('node:fs');
 const { PEEK_MAX_BYTES } = require('./file-edit');
 
 const SNIFF_BYTES = 8192;
+const IMAGE_MAX_BYTES = 720 * 1024;
+
+function imageMediaType(buf) {
+  if (!buf || buf.length < 3) return null;
+  const at = (sig, from = 0) => buf.length >= from + sig.length && sig.every((b, i) => buf[from + i] === b);
+  if (at([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])) return 'image/png';
+  if (at([0xFF, 0xD8, 0xFF])) return 'image/jpeg';
+  if (at([0x47, 0x49, 0x46, 0x38])) return 'image/gif';
+  if (at([0x52, 0x49, 0x46, 0x46]) && at([0x57, 0x45, 0x42, 0x50], 8)) return 'image/webp';
+  return null;
+}
 
 function utf8CutAt(buf, n) {
   if (n > buf.length) return buf.length;
@@ -48,6 +59,25 @@ function peekFile(filePath, opts = {}) {
     let binary;
     let offset = asked;
     try {
+      const magic = Buffer.alloc(Math.min(12, st.size));
+      if (magic.length > 0) fs.readSync(fd, magic, 0, magic.length, 0);
+      const image = imageMediaType(magic);
+      if (image && st.size <= IMAGE_MAX_BYTES) {
+        const whole = Buffer.alloc(st.size);
+        let got = 0;
+        while (got < st.size) {
+          const r = fs.readSync(fd, whole, got, st.size - got, got);
+          if (r <= 0) break;
+          got += r;
+        }
+        return {
+          ok: true, path: filePath, size: st.size, mtime: Math.trunc(st.mtimeMs), offset: 0, length: got,
+          truncated: false, binary: true, image, content: whole.subarray(0, got).toString('base64'),
+        };
+      }
+      if (image) {
+        return { ok: true, path: filePath, size: st.size, mtime: Math.trunc(st.mtimeMs), offset: 0, length: 0, truncated: false, binary: true, image, content: null };
+      }
       if (offset > 0 && offset < st.size) offset = utf8ForwardFrom(fd, offset, st.size);
       const n = Math.max(0, Math.min(length, st.size - offset));
       buf = Buffer.alloc(n);
@@ -73,4 +103,4 @@ function peekFile(filePath, opts = {}) {
   } catch (e) { return { ok: false, code: 'unreadable', error: e.message }; }
 }
 
-module.exports = { peekFile, peekInt, utf8CutAt, PEEK_MAX_BYTES };
+module.exports = { peekFile, peekInt, utf8CutAt, imageMediaType, PEEK_MAX_BYTES, IMAGE_MAX_BYTES };

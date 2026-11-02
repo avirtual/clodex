@@ -3251,6 +3251,14 @@ body.drawer-dragging #work-row {
   border-radius: 5px;
   padding: 8px 10px;
 }
+.file-peek-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  image-rendering: auto;
+  background: var(--active-bg);
+  border-radius: 5px;
+}
 .diff-line {
   min-height: 1em;
   padding-left: 5ch;
@@ -45131,9 +45139,22 @@ void main() {
           pre.innerHTML = renderDiffHtml(diffRes.diff, { lineNumbers: true });
           body.replaceChildren(pre);
         }
+        function paintImage() {
+          const kb = `${Math.max(1, Math.round(peekRes.size / 1024))} KB`;
+          const note = el(doc, "div", "cost-note", kb);
+          const img = el(doc, "img", "file-peek-image");
+          img.alt = String(peekRes.path || "").split(/[\\/]/).pop();
+          img.addEventListener("load", () => {
+            note.textContent = `${img.naturalWidth}\xD7${img.naturalHeight} \xB7 ${kb}`;
+          });
+          img.src = "data:" + peekRes.image + ";base64," + peekRes.content;
+          body.replaceChildren(note, img);
+        }
         function paintFile(tab) {
           if (tab.deleted) return paintNote("No longer on disk.");
           if (!peekRes || !peekRes.ok) return paintNote(peekRes && peekRes.error || "File unavailable");
+          if (peekRes.image && peekRes.content) return paintImage();
+          if (peekRes.image) return paintNote("Image larger than 720 KB \u2014 use Open.");
           if (peekRes.binary) return paintNote(`Binary file (${peekRes.size} bytes) \u2014 use Open.`);
           const nodes = [];
           if (peekRes.truncated) {

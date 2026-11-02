@@ -9,7 +9,7 @@ const http = require('node:http');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { mk } = require('./lib/session-fixtures');
 const { createFiledRing, seedFiledRing, clipHead, filedEntry, spillHead, HEAD_MAX_BYTES, FILED_CAP } = require('../filed-ring');
-const { peekFile, utf8CutAt, PEEK_MAX_BYTES } = require('../file-peek');
+const { peekFile, utf8CutAt, imageMediaType, PEEK_MAX_BYTES, IMAGE_MAX_BYTES } = require('../file-peek');
 const { spillPathFor, spillDirFor, writeSpill } = require('../intent-spill');
 const { projectDirFor } = require('../clodex-paths');
 const { createRemoteWiring } = require('../remote-wiring');
@@ -260,6 +260,50 @@ test('peekFile: offset/length echo, clamp to PEEK_MAX_BYTES, truncated, and the 
   assert.strictEqual(peekFile(big).truncated, true, 'old callers: truncated when the file exceeds the cap');
   const junk = peekFile(p, { offset: 'x', length: -4 });
   assert.deepStrictEqual([junk.offset, junk.length], [0, 25], 'garbage opts fall back to the defaults');
+});
+
+const PNG_1X1 = Buffer.from('89504E470D0A1A0A0000000D49484452000000010000000108060000001F15C4890000000A4944415478DA63000100000500010D0A2DB40000000049454E44AE426082', 'hex');
+
+test('peekFile: a PNG under IMAGE_MAX_BYTES comes back whole as base64 with its media type', () => {
+  assert.strictEqual(PNG_1X1.length, 67);
+  const root = mkTmpRoot('clx-fileview-');
+  const p = writeAt(root, 'dot.png', PNG_1X1);
+  assert.deepStrictEqual(peekFile(p, { offset: 10, length: 4 }), {
+    ok: true, path: p, size: 67, mtime: Math.trunc(fs.statSync(p).mtimeMs), offset: 0, length: 67,
+    truncated: false, binary: true, image: 'image/png', content: PNG_1X1.toString('base64'),
+  });
+  const big = writeAt(root, 'big.png', Buffer.concat([PNG_1X1, Buffer.alloc(IMAGE_MAX_BYTES, 0x41)]));
+  assert.deepStrictEqual(peekFile(big), {
+    ok: true, path: big, size: 67 + IMAGE_MAX_BYTES, mtime: Math.trunc(fs.statSync(big).mtimeMs), offset: 0, length: 0,
+    truncated: false, binary: true, image: 'image/png', content: null,
+  });
+  const svg = writeAt(root, 'a.svg', '<svg xmlns="http://www.w3.org/2000/svg"><script>x</script></svg>');
+  const s = peekFile(svg);
+  assert.deepStrictEqual([s.binary, s.image, s.content.startsWith('<svg')], [false, undefined, true], 'SVG stays source text');
+});
+
+test('file-tab paints an image peek as a file-peek-image <img> with a data: src, before the binary note', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'file-tab.js'), 'utf8');
+  const paint = src.slice(src.indexOf('function paintFile('));
+  assert.match(paint, /if \(peekRes\.image && peekRes\.content\) return paintImage\(\);[\s\S]*if \(peekRes\.binary\)/,
+    'the image branch must run before the "Binary file — use Open" note');
+  assert.match(src, /el\(doc, 'img', 'file-peek-image'\)/);
+  assert.match(src, /img\.src = 'data:' \+ peekRes\.image \+ ';base64,' \+ peekRes\.content;/);
+});
+
+test('imageMediaType: magic bytes for PNG, JPEG, GIF and WebP; RIFF that is not WebP and short heads are null', () => {
+  const rows = [
+    [PNG_1X1.subarray(0, 12), 'image/png'],
+    [Buffer.from([0xFF, 0xD8, 0xFF, 0xE0]), 'image/jpeg'],
+    [Buffer.from('GIF89a'), 'image/gif'],
+    [Buffer.from('RIFF\x00\x00\x00\x00WEBP', 'latin1'), 'image/webp'],
+    [Buffer.from('RIFF\x00\x00\x00\x00WAVE', 'latin1'), null],
+    [Buffer.from('RIFF'), null],
+    [Buffer.from([0x89, 0x50, 0x4E, 0x47]), null],
+    [Buffer.from('hello'), null],
+    [Buffer.alloc(0), null],
+  ];
+  for (const [buf, want] of rows) assert.strictEqual(imageMediaType(buf), want, buf.toString('hex'));
 });
 
 test('peekFile: a cut inside a multibyte sequence trims back to the boundary and reports the trimmed length', () => {
