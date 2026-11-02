@@ -26,9 +26,10 @@ function mkFixture({ maxHands, env = {}, cpus = 6, extraRoles = {} } = {}) {
     },
     trunk: 'master', ...(maxHands !== undefined ? { maxHands } : {}),
   };
+  const records = new Map();
   const persistence = {
-    list: () => [], get: (n) => (n === 'lead' ? { name: 'lead', extraArgs: [] } : null),
-    upsert: () => {}, remove: () => {}, setWorktree: () => {},
+    list: () => [], get: (n) => (n === 'lead' ? { name: 'lead', extraArgs: [] } : records.get(n) || null),
+    upsert: () => {}, remove: () => {}, setWorktree: () => {}, setArchived: () => {},
   };
   const deps = {
     knownSkillNames: () => [],
@@ -66,6 +67,7 @@ function mkFixture({ maxHands, env = {}, cpus = 6, extraRoles = {} } = {}) {
     refreshAppMenu: () => {},
     env,
     setTeamMaxHands: (name, v) => { team.maxHands = v; return team; },
+    gitWorktree: require('../git-worktree'),
   };
   const SessionManager = createSessionManager(deps);
   const m = new SessionManager();
@@ -94,14 +96,20 @@ function mkFixture({ maxHands, env = {}, cpus = 6, extraRoles = {} } = {}) {
     m._handSeatGone(s);
   };
   const one = (id) => tstore.load(root).find((t) => t.id === id);
-  return { m, team, root, tstore, seat, add, start, retire, one, injected, acks, spawned };
+  const hold = (name, state = 'open') => {
+    seat(name);
+    const all = tstore.load(root);
+    all.push({ id: `w${name.replace(/\D/g, '')}`, state, spec: 'held', assignee: name, role: 'hand', openedAt: 1, startedAt: 1, lastActivityAt: Date.now() });
+    tstore.save(root, all);
+  };
+  return { m, team, root, tstore, records, seat, hold, add, start, retire, one, injected, acks, spawned };
 }
 
 const PARK_REPLY = '[agent:task] ticket t1 parked: hand cap reached (3/3 live hands) — it starts when one retires';
 
 function capped() {
   const f = mkFixture({ maxHands: 3 });
-  for (const n of ['team-hand-91', 'team-hand-92', 'team-hand-93']) f.seat(n);
+  for (const n of ['team-hand-91', 'team-hand-92', 'team-hand-93']) f.hold(n);
   f.add();
   f.acks.length = 0;
   f.start('t1');
@@ -164,7 +172,7 @@ test('a hand retiring while the lead is down is caught by the sweep once the lea
 
 test('a lead-parked ticket is not auto-started when a hand retires', () => {
   const f = mkFixture({ maxHands: 3 });
-  for (const n of ['team-hand-91', 'team-hand-92', 'team-hand-93']) f.seat(n);
+  for (const n of ['team-hand-91', 'team-hand-92', 'team-hand-93']) f.hold(n);
   f.add({ park: true });
   assert.strictEqual(f.one('t1').parked, true, 'ENTER: the lead parked it');
   f.retire('team-hand-91');
@@ -198,6 +206,106 @@ test('task list marks a cap-parked ticket with its stored count', () => {
   const row = f.injected.join('\n').split('\n').find((l) => l.startsWith('t1 '));
   assert.ok(row, 'ENTER: t1 is listed');
   assert.match(row, /^t1 \[open parked\] hand .* — build it \(parked: cap 3\/3\)/);
+});
+
+test('a live one-shot seat whose only ticket is accepted does not count, so a start at cap 1 proceeds', () => {
+  const f = mkFixture({ maxHands: 1 });
+  f.hold('team-hand-91', 'done');
+  const all = f.tstore.load(f.root);
+  Object.assign(all.find((t) => t.id === 'w91'), { acceptedAt: 3, closedOut: true });
+  f.tstore.save(f.root, all);
+  assert.strictEqual(f.m.sessions.get('team-hand-91')._dead, undefined, 'ENTER: the seat is live');
+  f.add();
+  f.start('t1');
+  assert.deepStrictEqual(f.spawned, [{ id: 't1', name: 'team-hand-1' }]);
+  assert.strictEqual(f.one('t1').parked, undefined);
+});
+
+test('a live one-shot seat whose ticket is done and in verify still counts, so a start at cap 1 parks', () => {
+  const f = mkFixture({ maxHands: 1 });
+  f.hold('team-hand-91', 'done');
+  assert.strictEqual(f.one('w91').acceptedAt, undefined, 'ENTER: done, not yet accepted');
+  f.add();
+  f.start('t1');
+  assert.deepStrictEqual(f.spawned, []);
+  assert.strictEqual(f.one('t1').parkedBy, 'cap');
+});
+
+test('an archived seat still in the map does not count, even holding an open ticket', () => {
+  const f = mkFixture({ maxHands: 1 });
+  f.hold('team-hand-91');
+  f.m.sessions.get('team-hand-91')._archived = true;
+  f.add();
+  f.start('t1');
+  assert.deepStrictEqual(f.spawned, [{ id: 't1', name: 'team-hand-1' }]);
+});
+
+test('the minute sweep starts a cap-parked ticket once the holding seat\'s ticket is accepted', async () => {
+  const f = mkFixture({ maxHands: 1 });
+  f.hold('team-hand-91');
+  f.add();
+  f.start('t1');
+  assert.strictEqual(f.one('t1').parkedBy, 'cap', 'ENTER: parked behind the working hand');
+  const all = f.tstore.load(f.root);
+  Object.assign(all.find((t) => t.id === 'w91'), { state: 'done', acceptedAt: 3, closedOut: true });
+  f.tstore.save(f.root, all);
+  assert.ok(f.m.sessions.has('team-hand-91'), 'ENTER: the seat itself is still live');
+  f.acks.length = 0;
+  await f.m._sweepTickets();
+  assert.deepStrictEqual(f.spawned, [{ id: 't1', name: 'team-hand-1' }]);
+  assert.match(f.acks[0], /^\[agent:task\] cap freed: ticket t1 \(unparked\) → spawning team-hand-1 /);
+});
+
+test('hand-merged after MERGE FAILED: the second accept retires the seat and starts the cap-parked ticket', async () => {
+  const { execFileSync } = require('node:child_process');
+  const f = mkFixture({ maxHands: 1 });
+  const git = (args) => execFileSync('git', ['-C', f.root, ...args], { encoding: 'utf8' }).trim();
+  git(['init', '-q', '-b', 'master']);
+  git(['config', 'user.email', 't@t.t']);
+  git(['config', 'user.name', 'T']);
+  fsReal.writeFileSync(pathReal.join(f.root, 'base.txt'), 'base\n');
+  git(['add', 'base.txt']);
+  git(['commit', '-q', '-m', 'base']);
+  git(['checkout', '-q', '-b', 'team-hand-91-br']);
+  fsReal.writeFileSync(pathReal.join(f.root, 'work.txt'), 'work\n');
+  git(['add', 'work.txt']);
+  git(['commit', '-q', '-m', 'work']);
+  git(['checkout', '-q', 'master']);
+  git(['merge', '-q', '--no-ff', '-m', 'hand merge', 'team-hand-91-br']);
+  const wtPath = pathReal.join(mkTmpRoot('clodex-t2114-wt-'), 'tree');
+  git(['worktree', 'add', '-q', wtPath, 'team-hand-91-br']);
+  f.records.set('team-hand-91', { name: 'team-hand-91', ephemeral: true, worktree: { path: wtPath, branch: 'team-hand-91-br' } });
+  f.hold('team-hand-91');
+  const lead = f.seat('lead');
+  f.m._retireReviewSeatsFor = () => {};
+  f.m.archive = async (name) => { f.m.sessions.get(name)._archived = true; };
+  f.m.kill = async (name) => {
+    const s = f.m.sessions.get(name);
+    if (!s) return;
+    f.m.sessions.delete(name);
+    f.m._handSeatGone(s);
+  };
+  f.add();
+  f.start('t1');
+  assert.strictEqual(f.one('t1').parkedBy, 'cap', 'ENTER: t1 parked behind the working hand');
+  const all = f.tstore.load(f.root);
+  Object.assign(all.find((t) => t.id === 'w91'), { state: 'done', closedAt: 2, worktree: { branch: 'team-hand-91-br' }, mergeError: 'merge' });
+  f.tstore.save(f.root, all);
+  const accept = async () => {
+    let out = null;
+    await f.m._taskAccept(lead, f.team, { type: 'task', sub: 'accept', id: 'w91', who: null, body: '' }, (msg) => { out = msg; });
+    return out;
+  };
+  const first = await accept();
+  assert.match(first, /MERGE FAILED at "merge"/, 'ENTER: the first accept answers the mark');
+  assert.ok(f.m.sessions.get('team-hand-91')._archived, 'ENTER: the archive left the seat in the map');
+  f.acks.length = 0;
+  f.injected.length = 0;
+  const second = await accept();
+  assert.match(second, /team-hand-91 retired and its worktree removed/);
+  assert.strictEqual(f.m.sessions.has('team-hand-91'), false);
+  assert.deepStrictEqual(f.spawned, [{ id: 't1', name: 'team-hand-1' }]);
+  assert.match(f.acks[0], /^\[agent:task\] cap freed: ticket t1 \(unparked\) → spawning team-hand-1 /);
 });
 
 for (const [name, input, want] of [

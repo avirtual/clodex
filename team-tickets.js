@@ -2862,15 +2862,17 @@ function createTicketMethods(deps, shared) {
     _liveHandCount(team) {
       const inflight = this._capInflight || (this._capInflight = new Set());
       const names = new Set();
+      const tickets = ticketsStore.load(team.root);
+      const holdsOpen = (name) => tickets.some((t) => t.assignee === name && t.startedAt
+        && (t.state === 'open' || (t.state === 'done' && !t.acceptedAt)));
       for (const s of this.sessions.values()) {
-        if (!s || s._dead) continue;
+        if (!s || s._dead || s._archived) continue;
         const role = matchSeatRole(team, s.name);
-        if (role && this._ticketDispatchMode(team, role).mode !== 'standing') names.add(s.name);
+        if (role && this._ticketDispatchMode(team, role).mode !== 'standing' && holdsOpen(s.name)) names.add(s.name);
       }
-      const tickets = inflight.size ? ticketsStore.load(team.root) : [];
       for (const name of [...inflight]) {
         if (this.sessions.has(name)) { inflight.delete(name); continue; }
-        if (tickets.some((t) => t.state === 'open' && t.assignee === name && t.startedAt)) names.add(name);
+        if (holdsOpen(name)) names.add(name);
         else inflight.delete(name);
       }
       return names.size;
