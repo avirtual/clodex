@@ -97,6 +97,11 @@ test('buildCredentialSandbox: a userData dir holding the registry keeps its file
   assert.strictEqual(g.sandbox.filesystem.denyWrite.includes(ud), false);
   assert.strictEqual(g.deny.includes(`Edit(/${ud}/**)`), false);
   assert.ok(g.sandbox.filesystem.denyRead.includes(path.join(ud, 'remote.env')));
+  assert.ok(g.sandbox.filesystem.denyWrite.includes(path.join(ud, 'env-override.env')));
+  assert.ok(g.sandbox.filesystem.denyWrite.includes(path.join(ud, 'remote.env')));
+  for (const f of ['env-scopes.json*', '.env-scopes.json*', 'sessions.json*', '.sessions.json*', 'ui-settings.json*', '.ui-settings.json*']) {
+    assert.ok(g.sandbox.filesystem.denyWrite.includes(path.join(ud, f)), f);
+  }
   const same = buildCredentialSandbox({ registryDir: R, list: [], home: '/h', userDataPath: R });
   assert.strictEqual(same.sandbox.filesystem.denyWrite.includes(R), false);
 });

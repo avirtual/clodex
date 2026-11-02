@@ -36,6 +36,8 @@ test('safeGitArgs: status gets the config prefix and nothing else', () => {
     '-c', 'core.pager=cat',
     '-c', 'log.showSignature=false', '-c', 'commit.gpgSign=false', '-c', 'tag.gpgSign=false', '-c', 'gpg.program=', '-c', 'gpg.ssh.program=',
     '-c', 'credential.helper=', '-c', 'core.askPass=', '-c', 'fetch.all=false',
+    '-c', 'protocol.ext.allow=never', '-c', 'protocol.git.allow=never', '-c', 'gpg.x509.program=', '-c', 'gpg.openpgp.program=',
+    '-c', 'merge.verifySignatures=false', '-c', 'pull.verifySignatures=false',
     'status',
   ]);
 });
@@ -46,6 +48,8 @@ test('safeGitArgs: diff/show/log get --no-ext-diff --no-textconv ahead of any pa
     '-c', 'core.sshCommand=ssh', '-c', 'core.pager=cat',
     '-c', 'log.showSignature=false', '-c', 'commit.gpgSign=false', '-c', 'tag.gpgSign=false', '-c', 'gpg.program=', '-c', 'gpg.ssh.program=',
     '-c', 'credential.helper=', '-c', 'core.askPass=', '-c', 'fetch.all=false',
+    '-c', 'protocol.ext.allow=never', '-c', 'protocol.git.allow=never', '-c', 'gpg.x509.program=', '-c', 'gpg.openpgp.program=',
+    '-c', 'merge.verifySignatures=false', '-c', 'pull.verifySignatures=false',
   ];
   assert.deepStrictEqual(safeGitArgs(['diff', 'HEAD']), [...prefix, 'diff', '--no-ext-diff', '--no-textconv', 'HEAD']);
   assert.deepStrictEqual(safeGitArgs(['-C', '/r', 'diff', 'HEAD', '--', 'f']),
@@ -66,7 +70,9 @@ test('safeGitArgs takes the operator hooksPath, sshCommand, askPass and credenti
     '-c', 'core.sshCommand=ssh -i /op/k', '-c', 'core.pager=cat',
     '-c', 'log.showSignature=false', '-c', 'commit.gpgSign=false', '-c', 'tag.gpgSign=false', '-c', 'gpg.program=', '-c', 'gpg.ssh.program=',
     '-c', 'credential.helper=', '-c', 'credential.helper=osxkeychain', '-c', 'credential.https://gh.example.helper=!gh auth git-credential',
-    '-c', 'core.askPass=/op/ask', '-c', 'fetch.all=false', 'merge', 'b',
+    '-c', 'core.askPass=/op/ask', '-c', 'fetch.all=false',
+    '-c', 'protocol.ext.allow=never', '-c', 'protocol.git.allow=never', '-c', 'gpg.x509.program=', '-c', 'gpg.openpgp.program=',
+    '-c', 'merge.verifySignatures=false', '-c', 'pull.verifySignatures=false', 'merge', 'b',
   ]);
 });
 
@@ -198,6 +204,117 @@ test('a filter driver named a=b makes safeGitArgsFor refuse, and runs without it
     assert.strictEqual(fs.existsSync(marker), true, 'control: the a=b driver runs on a raw diff');
   } finally {
     fs.rmSync(marker, { force: true });
+  }
+});
+
+function markerScript(repo, tag) {
+  const marker = path.join(repo, '..', `${path.basename(repo)}-${tag}-ran`);
+  const script = path.join(repo, '..', `${path.basename(repo)}-${tag}.sh`);
+  fs.writeFileSync(script, `#!/bin/sh\ntouch '${marker}'\nexit 1\n`, { mode: 0o755 });
+  return { marker, script };
+}
+
+function gitTry(argv) {
+  try { execFileSync('git', argv, { stdio: 'ignore', timeout: 20000 }); } catch {}
+}
+
+test('a planted core.gitProxy command does not run on a git:// fetch under safeGitArgsFor, and does without it', async (t) => {
+  if (!hasGit()) { t.skip('git not installed'); return; }
+  const { repo, run } = plantedRepo();
+  const { marker, script } = markerScript(repo, 'gitproxy');
+  run('config', 'core.gitProxy', script);
+  run('config', 'remote.origin.url', 'git://example.invalid/x');
+  try {
+    gitTry(await safeGitArgsFor(repo, ['fetch', 'origin']));
+    assert.strictEqual(fs.existsSync(marker), false, 'core.gitProxy ran under safeGitArgsFor');
+    gitTry(['-C', repo, 'fetch', 'origin']);
+    assert.strictEqual(fs.existsSync(marker), true, 'control: the planted core.gitProxy runs on a raw fetch');
+  } finally {
+    fs.rmSync(marker, { force: true });
+    fs.rmSync(script, { force: true });
+  }
+});
+
+test('an ext:: remote allowed by the repo config does not run under safeGitArgsFor, and does without it', async (t) => {
+  if (!hasGit()) { t.skip('git not installed'); return; }
+  const { repo, run } = plantedRepo();
+  const marker = path.join(repo, '..', `${path.basename(repo)}-ext-ran`);
+  run('config', 'protocol.ext.allow', 'always');
+  run('config', 'remote.ext.url', `ext::sh -c touch% ${marker}`);
+  try {
+    gitTry(await safeGitArgsFor(repo, ['fetch', 'ext']));
+    assert.strictEqual(fs.existsSync(marker), false, 'the ext:: remote ran under safeGitArgsFor');
+    gitTry(['-C', repo, 'fetch', 'ext']);
+    assert.strictEqual(fs.existsSync(marker), true, 'control: the ext:: remote runs on a raw fetch');
+  } finally {
+    fs.rmSync(marker, { force: true });
+  }
+});
+
+test('a url.insteadOf rewrite of a normal remote to ext:: does not run under safeGitArgsFor, and does without it', async (t) => {
+  if (!hasGit()) { t.skip('git not installed'); return; }
+  const { repo, run } = plantedRepo();
+  const marker = path.join(repo, '..', `${path.basename(repo)}-insteadof-ran`);
+  run('config', 'protocol.ext.allow', 'always');
+  run('config', 'remote.origin.url', 'https://example.invalid/x');
+  run('config', `url.ext::sh -c touch% ${marker}% #.insteadOf`, 'https://example.invalid/');
+  try {
+    gitTry(await safeGitArgsFor(repo, ['fetch', 'origin']));
+    assert.strictEqual(fs.existsSync(marker), false, 'the insteadOf ext:: rewrite ran under safeGitArgsFor');
+    gitTry(['-C', repo, 'fetch', 'origin']);
+    assert.strictEqual(fs.existsSync(marker), true, 'control: the insteadOf ext:: rewrite runs on a raw fetch');
+  } finally {
+    fs.rmSync(marker, { force: true });
+  }
+});
+
+function x509SignedHead(repo) {
+  const rev = (r) => execFileSync('git', ['-C', repo, 'rev-parse', r], { encoding: 'utf8' }).trim();
+  const parent = rev('HEAD');
+  const body = `tree ${rev('HEAD^{tree}')}\nparent ${parent}\nauthor t <t@t.co> 1 +0000\ncommitter t <t@t.co> 1 +0000\n`
+    + 'gpgsig -----BEGIN SIGNED MESSAGE-----\n MIIB\n -----END SIGNED MESSAGE-----\n\nsigned\n';
+  const signed = execFileSync('git', ['-C', repo, 'hash-object', '-t', 'commit', '-w', '--stdin'], { input: body, encoding: 'utf8' }).trim();
+  execFileSync('git', ['-C', repo, 'update-ref', 'HEAD', signed], { stdio: 'ignore' });
+  return { parent, signed };
+}
+
+test('a planted gpg.x509.program does not run on log --show-signature under safeGitArgsFor, and does without it', async (t) => {
+  if (!hasGit()) { t.skip('git not installed'); return; }
+  const { repo, run } = plantedRepo();
+  x509SignedHead(repo);
+  const { marker, script } = markerScript(repo, 'x509log');
+  run('config', 'gpg.x509.program', script);
+  try {
+    gitTry(await safeGitArgsFor(repo, ['log', '-1', '--show-signature']));
+    assert.strictEqual(fs.existsSync(marker), false, 'gpg.x509.program ran under safeGitArgsFor');
+    gitTry(['-C', repo, 'log', '-1', '--show-signature']);
+    assert.strictEqual(fs.existsSync(marker), true, 'control: the planted gpg.x509.program runs on a raw log --show-signature');
+  } finally {
+    fs.rmSync(marker, { force: true });
+    fs.rmSync(script, { force: true });
+  }
+});
+
+test('a planted gpg.x509.program does not verify an incoming signed commit on pull under safeGitArgsFor, and does without it', async (t) => {
+  if (!hasGit()) { t.skip('git not installed'); return; }
+  const up = plantedRepo();
+  const repo = mkTmpRoot('clx-gitsafe-');
+  execFileSync('git', ['clone', '-q', up.repo, repo], { stdio: 'ignore' });
+  const { parent } = x509SignedHead(up.repo);
+  const { marker, script } = markerScript(repo, 'x509');
+  const run = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'ignore' });
+  run('config', 'gpg.format', 'x509');
+  run('config', 'gpg.x509.program', script);
+  run('config', 'merge.verifySignatures', 'true');
+  try {
+    gitTry(await safeGitArgsFor(repo, ['pull', '--ff-only']));
+    assert.strictEqual(fs.existsSync(marker), false, 'gpg.x509.program ran under safeGitArgsFor');
+    run('reset', '-q', '--hard', parent);
+    gitTry(['-C', repo, 'pull', '--ff-only']);
+    assert.strictEqual(fs.existsSync(marker), true, 'control: the planted gpg.x509.program runs on a raw pull');
+  } finally {
+    fs.rmSync(marker, { force: true });
+    fs.rmSync(script, { force: true });
   }
 });
 
