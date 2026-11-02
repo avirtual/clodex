@@ -378,7 +378,7 @@ path for you:
 
 | Verb | Route | Notes |
 |---|---|---|
-| `exec <name> <text…> [--timeout N] [--quiet-ms N] [--raw] [--pty] [-o json]` | `GET /api/sessions` (type lookup) → dm-and-wait **or** the PTY | **agent** (claude/codex) → send the text as a prompt, wait for the turn to end, print the reply; **bash** → run the command, print the terminal output. `--pty` forces the PTY path whatever the type. `-o json` carries `mode:"agent"\|"pty"`. Always executes (no `--no-enter`) |
+| `exec <name> <text…> [--timeout N] [--quiet-ms N] [--raw] [--pty] [-o json]` | `GET /api/sessions` (type lookup; a miss falls back to `GET /api/sessions/:name`, which answers a sleeper) → dm-and-wait **or** the PTY | **agent** (claude/codex) → send the text as a prompt, wait for the turn to end, print the reply; **bash** → run the command, print the terminal output. `--pty` forces the PTY path whatever the type. `-o json` carries `mode:"agent"\|"pty"`. Always executes (no `--no-enter`) |
 
 Without `--pty`, `exec` adds one `GET /api/sessions` round-trip to learn the type
 — the engine's session list is **authoritative**, so a bash session named like an
