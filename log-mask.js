@@ -6,7 +6,8 @@ const FLAG_NAME_RE = /(?:^|(?<=\s))(--?[\w.-]+)(\s+)/g;
 const FLAG_VALUE_RE = /(?:(?:bearer|basic)\s+)?(?:"[^"]*"|'[^']*'|(?!-)\S+)/iy;
 const KEY_WORD_RE = /(?:token|secret|password|authorization|bearer|api[-_]?key|access[-_]?key|private[-_]?key|credentials?|passwd|auth)(?:[-_]|$)/i;
 const URL_USERINFO_RE = /(:\/\/[^\s:/?#@]+):[^\s/?#@]*@/g;
-const URL_CANDIDATE_RE = /(?<![a-z0-9+.-])([a-z0-9+.-]+):\/\/\S+/gi;
+const URL_CANDIDATE_RE = /(?<![a-z0-9+.-])([a-z0-9+.-]+):\/\//gi;
+const URL_TAIL_RE = /\S*/y;
 const ASCII_LETTER_RE = /[a-z]/i;
 const WORD_CHAR_RE = /\w/;
 const URL_QUERY_SECRET_RE = /([?&](?:token|key|sig|api[-_]?key|access_token|secret|password)=)[^&#\s]*/gi;
@@ -49,8 +50,10 @@ function maskUrls(text) {
       URL_CANDIDATE_RE.lastIndex = m.index + m[1].length + 1;
       continue;
     }
-    out += text.slice(last, m.index + start) + m[0].slice(start).replace(URL_QUERY_SECRET_RE, '$1[redacted]');
-    last = URL_CANDIDATE_RE.lastIndex;
+    URL_TAIL_RE.lastIndex = URL_CANDIDATE_RE.lastIndex;
+    const url = m[0].slice(start) + URL_TAIL_RE.exec(text)[0];
+    out += text.slice(last, m.index + start) + url.replace(URL_QUERY_SECRET_RE, '$1[redacted]');
+    last = URL_CANDIDATE_RE.lastIndex = URL_TAIL_RE.lastIndex;
   }
   return out + text.slice(last);
 }

@@ -171,6 +171,18 @@ test('a long dotted, dashed or path run with no separator is masked in linear ti
   }
 });
 
+test('a run of rejected `x://` scheme candidates is masked in linear time', () => {
+  for (const line of ['_a://'.repeat(20000), '_a://'.repeat(80000), '1://'.repeat(40000)]) {
+    const started = process.hrtime.bigint();
+    assert.strictEqual(maskSecrets(line), line);
+    assert.ok(process.hrtime.bigint() - started < 2_000_000_000n, `a ${line.length}-byte rejected-scheme run took over 2 s`);
+  }
+  const mixed = ('_a://'.repeat(1000) + ' https://h/?sig=x ').repeat(20);
+  const started = process.hrtime.bigint();
+  assert.strictEqual(maskSecrets(mixed), ('_a://'.repeat(1000) + ' https://h/?sig=[redacted] ').repeat(20));
+  assert.ok(process.hrtime.bigint() - started < 2_000_000_000n, 'a mixed rejected-scheme line took over 2 s');
+});
+
 test('a URL whose scheme starts mid-run is still found, and a digit-led run is not a scheme', () => {
   assert.strictEqual(maskSecrets('9.https://h/p?sig=abc'), '9.https://h/p?sig=[redacted]');
   assert.strictEqual(maskSecrets('a_b.https://h/?key=abc'), 'a_b.https://h/?key=[redacted]');
