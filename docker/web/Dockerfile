@@ -31,6 +31,20 @@ RUN npm run build:web
 # ── Stage 2: runtime — the headless host + the built bundle.
 # node:22 (not 20) so node:sqlite exists — the wire shadow differ needs it;
 # on 20 the engine logs "wire shadow unavailable" and spawns unshadowed.
+FROM node:22-slim AS git-build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl xz-utils make gcc libc6-dev \
+      libcurl4-openssl-dev libexpat1-dev zlib1g-dev libssl-dev libpcre2-dev \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+RUN base=https://mirrors.edge.kernel.org/pub/software/scm/git \
+ && v=$(curl -fsSL "$base/" | grep -o 'git-[0-9]*\.[0-9]*\.[0-9]*\.tar\.xz' | sort -uV | tail -1) \
+ && curl -fsSLO "$base/$v" \
+ && curl -fsSL "$base/sha256sums.asc" | grep "  $v\$" | sha256sum -c - \
+ && tar -xJf "$v" && cd "${v%.tar.xz}" \
+ && make -j"$(nproc)" prefix=/usr/local NO_TCLTK=1 NO_GETTEXT=1 NO_PERL=1 NO_PYTHON=1 \
+      USE_LIBPCRE2=1 INSTALL_SYMLINKS=1 SKIP_DASHED_BUILT_INS=1 DESTDIR=/git-root all strip install
+
 FROM node:22-slim AS runtime
 
 # git/bash/procps/ca-certificates for the engine + agents; python3/make/g++ are
@@ -42,9 +56,12 @@ FROM node:22-slim AS runtime
 # so a box session is usable out of the gate; anything beyond these is a
 # `sudo apt-get install` away.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git bash procps ca-certificates python3 python3-venv make g++ sudo \
+      bash procps ca-certificates python3 python3-venv make g++ sudo \
       curl jq vim less tree unzip zip ripgrep openssh-client util-linux findutils wget \
+      libcurl4 libexpat1 libpcre2-8-0 zlib1g \
  && rm -rf /var/lib/apt/lists/*
+COPY --from=git-build /git-root/usr/local/ /usr/local/
+RUN git --version | awk '{split($3,v,"."); if (v[1]<2 || (v[1]==2 && v[2]<45)) exit 1}'
 
 # The agent CLIs, globally. Pin nothing — agents self-update.
 RUN npm i -g @anthropic-ai/claude-code @openai/codex \
