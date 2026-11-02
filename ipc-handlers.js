@@ -1315,7 +1315,7 @@ function registerIpcHandlers(deps) {
     error: getRemoteError(),
   }));
 
-  // Write-only: the reply carries just hasToken. The RemoteServer reads the token
+  // The RemoteServer reads the token
   // only at construct, so the refresh is what makes the new gate live.
   handle('remote:setToken', (_e, token) => {
     if (typeof setRemoteToken !== 'function') return { ok: false, error: 'remote token not supported on this host' };
