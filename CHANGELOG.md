@@ -12,7 +12,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — Security: log-mask stalls, seat-import reserved names, memory frontmatter forgery, loopback bind check; Preferences token pin, exec on sleepers, embed-basket dry run
+## Unreleased
+
+## 5.157.0 — 2026-11-02 — Security: log-mask stalls, seat-import reserved names, memory frontmatter forgery, loopback bind check; Preferences token pin, exec on sleepers, embed-basket dry run
 
 - **Security: the log mask no longer stalls on long `k=v&k=v` lines.** 5.156.0's masker re-scanned every rejected pair to the end of the line, so a 100 KB URL or term-exec line cost over a second of main-process time (27 s at 400 KB); the scan is linear again, and a 100 KB dotted or dashed token, or a run of rejected `x://` scheme candidates, no longer costs seconds either; quoted query values (`?access_token="…"`) stay fully masked.
 - **Security: seat import refuses reserved and legacy-claim seat names.** A token holder could stage mail under a `.draining.rehome` name that a later rehome restored into another seat; import now applies the same name check as every other create door.
