@@ -28,12 +28,27 @@ RUN npm ci --ignore-scripts
 COPY . .
 RUN npm run build:web
 
+FROM node:22-slim AS git-build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl xz-utils make gcc libc6-dev \
+      libcurl4-openssl-dev libexpat1-dev zlib1g-dev libssl-dev libpcre2-dev \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+ARG GIT_VERSION=2.56.0
+ARG GIT_SHA256=26c56c296b38c0695b26fa95f475f1d01704d2d38e73465ca30b0b2f5dc789d3
+RUN v="git-$GIT_VERSION.tar.xz" \
+ && curl -fsSLO "https://mirrors.edge.kernel.org/pub/software/scm/git/$v" \
+ && echo "$GIT_SHA256  $v" | sha256sum -c - \
+ && tar -xJf "$v" && cd "${v%.tar.xz}" \
+ && make -j"$(nproc)" prefix=/usr/local NO_TCLTK=1 NO_GETTEXT=1 NO_PERL=1 NO_PYTHON=1 NO_RUST=1 \
+      USE_LIBPCRE2=1 INSTALL_SYMLINKS=1 SKIP_DASHED_BUILT_INS=1 DESTDIR=/git-root all strip install
+
 # ── Stage 2: runtime — the headless host + the built bundle.
 # node:22 (not 20) so node:sqlite exists — the wire shadow differ needs it;
 # on 20 the engine logs "wire shadow unavailable" and spawns unshadowed.
 FROM node:22-slim AS runtime
 
-# git/bash/procps/ca-certificates for the engine + agents; python3/make/g++ are
+# bash/procps/ca-certificates for the engine + agents; python3/make/g++ are
 # node-pty's build toolchain, kept in the final image DELIBERATELY: agents in the
 # container will want to build things. python3-venv is for the wirescope
 # supervisor: it builds its venv (`python3 -m venv` + pip) at first boot, and
@@ -42,9 +57,12 @@ FROM node:22-slim AS runtime
 # so a box session is usable out of the gate; anything beyond these is a
 # `sudo apt-get install` away.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git bash procps ca-certificates python3 python3-venv make g++ sudo \
+      bash procps ca-certificates python3 python3-venv make g++ sudo \
       curl jq vim less tree unzip zip ripgrep openssh-client util-linux findutils wget \
+      libcurl4 libexpat1 libpcre2-8-0 zlib1g \
  && rm -rf /var/lib/apt/lists/*
+COPY --from=git-build /git-root/usr/local/ /usr/local/
+RUN git --version | awk '{split($3,v,"."); if (v[1]<2 || (v[1]==2 && v[2]<45)) exit 1}'
 
 # The agent CLIs, globally. Pin nothing — agents self-update.
 RUN npm i -g @anthropic-ai/claude-code @openai/codex \

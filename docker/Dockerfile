@@ -94,6 +94,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/*
 
+RUN install -d -m 0755 /etc/apt/keyrings \
+ && curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xF911AB184317630C59970973E363C90F8F1B6217" \
+      | gpg --dearmor -o /etc/apt/keyrings/git-core.gpg \
+ && echo "deb [signed-by=/etc/apt/keyrings/git-core.gpg] https://ppa.launchpadcontent.net/git-core/ppa/ubuntu noble main" \
+      > /etc/apt/sources.list.d/git-core.list \
+ && apt-get update && apt-get install -y --no-install-recommends git \
+ && rm -rf /var/lib/apt/lists/*
+RUN git --version | awk '{split($3,v,"."); if (v[1]<2 || (v[1]==2 && v[2]<45)) exit 1}'
+
 # Strip systemd units that are pointless in a container and only add noise.
 # NOTE: keep systemd-logind — it processes /var/lib/systemd/linger at boot,
 # which is what starts clodex's per-user systemd manager (see the linger step

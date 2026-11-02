@@ -15,6 +15,7 @@ blocks a release.
 ## Unreleased
 
 - **Images up to 4 MB render inline, including over a remote Clodex.** The file viewer also opens a changed image on the image itself rather than a binary diff, and says so when an image cannot be decoded.
+- **The container images ship git 2.45 or newer**, so the partial-clone lazy-fetch guard from 5.155.0 is active on boxes too.
 
 ## 5.155.0 — 2026-11-02 — Security: repo-planted alternateRefsCommand and partial-clone lazy fetches; the file viewer shows images
 

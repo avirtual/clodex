@@ -18,7 +18,7 @@ With no operator `core.askPass`, the pinned empty value also stops git falling b
 ## lazyFetchPrefix
 Runs `git --version` on the first `safeGitArgs` call, not at require time: the hosts require git-safe before `fixPathFromLoginShell`, and the launchd PATH would find a different git than the one later spawns run.
 A failed probe (timeout, ENOENT) is not cached: the next call probes again, so one slow first spawn cannot turn the option off for the process.
-git < 2.45: lazy fetch is not blocked, since no argv option stops it there; the box image ships 2.39 — upgrading the image's git closes it.
+git < 2.45: lazy fetch is not blocked, since no argv option stops it there; both Dockerfiles fail their build below 2.45.
 
 ## driverOverrides
 Blanks repo-local `merge.<n>.driver` as well as filters; an empty driver makes `git merge` report "cannot run" and leave a conflict instead of running it.
