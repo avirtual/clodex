@@ -62,3 +62,7 @@ scheme head (whole scheme-class run plus `://`, anchored by lookbehind), so a
 rejected candidate costs its own length; `schemeStart` picks the leftmost
 `\b`-letter inside the run, and `URL_TAIL_RE` consumes the tail once per
 accepted scheme. A `\S+` tail in the candidate cost 16 s on `'_a://'.repeat(80000)`.
+
+## KV_VALUE_RE
+
+A quoted value continues past its closing quote only up to whitespace, `&`, `#`, `,`, `;`, `}`, `]` or `)`: `,` and the brackets keep the JSON shape `{"token":"v","n":1}` intact, `&`/`#` the next query pair.
