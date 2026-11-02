@@ -1,10 +1,13 @@
 # git-safe.js
 
 ## safeGitArgs
+Neutralised on every call: `core.fsmonitor`, `core.hooksPath`, `diff.external`, `core.sshCommand`, `core.pager`, `log.showSignature`, `commit.gpgSign`, `tag.gpgSign`, `gpg.program`, `gpg.ssh.program`, `credential.helper` (reset, then the operator's system/global helpers re-added) and `core.askPass`; `--no-ext-diff --no-textconv` on diff/show/log, `--upload-pack=git-upload-pack` on fetch/pull/ls-remote and `--receive-pack=git-receive-pack` on push.
+`-c remote.<n>.uploadpack=` does not override a repo-local value (git 2.52 keeps the first and warns "more than one uploadpack given"), so the pack programs are pinned by the subcommand flags instead.
 `core.sshCommand=` (empty) breaks every ssh fetch/push with "fatal: unable to fork" (git 2.52), so the fallback is `ssh`; `GIT_SSH_COMMAND` in the env still wins over it.
 `-c diff.external=` alone did not stop a planted `diff.external` on `git diff HEAD` (git 2.52); `--no-ext-diff` is what stops it.
 
-## filterOverrides
+## driverOverrides
+Blanks repo-local `merge.<n>.driver` as well as filters; an empty driver makes `git merge` report "cannot run" and leave a conflict instead of running it.
 A driver name containing `=` cannot be blanked: git splits a `-c` argument at the first `=`, so `-c filter.a=b.clean=` sets the key `filter.a` instead; the name is refused instead.
 An empty `filter.<name>.clean`/`smudge`/`process` makes git skip the driver instead of running it.
 
