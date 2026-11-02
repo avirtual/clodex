@@ -12,7 +12,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — Security: credential sandbox covers the app data dir; Clodex-side git ignores repo-planted commands
 
 - **Security: a credential-protected seat can no longer read Clodex's own token and secret stores or rewrite its spawn environment.** The sandbox now denies reads of the app data dir's remote token, env scopes, session env, held-request files and box tokens, and denies every write under that dir, so a seat cannot lift the remote API token or plant variables (such as BASH_ENV) that every later seat would inherit.
 - **Security: Clodex's own git calls no longer run fsmonitor, hook, diff or filter commands planted in a seat's repo.** Git calls Clodex makes in a seat's working tree (file diffs, branch lists, Workbench status and diffs) now turn off fsmonitor, external diff, textconv and the repo's clean/smudge filters, so a `core.fsmonitor`, `diff.external` or `filter.*.clean` command planted in `.git/config` no longer runs in the app process. Hooks run only from your global `core.hooksPath`. A credential-protected seat is also denied writes to its `.git/config` and `.git/hooks`, so in such a seat `git push -u`, `git remote add` and `git config` (which write `.git/config`) now fail; committing still works.
