@@ -36,7 +36,7 @@ test('safeGitArgs: status gets the config prefix and nothing else', () => {
     '-c', 'core.pager=cat',
     '-c', 'log.showSignature=false', '-c', 'commit.gpgSign=false', '-c', 'tag.gpgSign=false', '-c', 'gpg.program=', '-c', 'gpg.ssh.program=',
     '-c', 'credential.helper=', '-c', 'core.askPass=', '-c', 'fetch.all=false',
-    '-c', 'protocol.ext.allow=never', '-c', 'core.gitProxy=', '-c', 'gpg.x509.program=', '-c', 'gpg.openpgp.program=',
+    '-c', 'protocol.ext.allow=never', '-c', 'protocol.git.allow=never', '-c', 'gpg.x509.program=', '-c', 'gpg.openpgp.program=',
     '-c', 'merge.verifySignatures=false', '-c', 'pull.verifySignatures=false',
     'status',
   ]);
@@ -48,7 +48,7 @@ test('safeGitArgs: diff/show/log get --no-ext-diff --no-textconv ahead of any pa
     '-c', 'core.sshCommand=ssh', '-c', 'core.pager=cat',
     '-c', 'log.showSignature=false', '-c', 'commit.gpgSign=false', '-c', 'tag.gpgSign=false', '-c', 'gpg.program=', '-c', 'gpg.ssh.program=',
     '-c', 'credential.helper=', '-c', 'core.askPass=', '-c', 'fetch.all=false',
-    '-c', 'protocol.ext.allow=never', '-c', 'core.gitProxy=', '-c', 'gpg.x509.program=', '-c', 'gpg.openpgp.program=',
+    '-c', 'protocol.ext.allow=never', '-c', 'protocol.git.allow=never', '-c', 'gpg.x509.program=', '-c', 'gpg.openpgp.program=',
     '-c', 'merge.verifySignatures=false', '-c', 'pull.verifySignatures=false',
   ];
   assert.deepStrictEqual(safeGitArgs(['diff', 'HEAD']), [...prefix, 'diff', '--no-ext-diff', '--no-textconv', 'HEAD']);
@@ -71,7 +71,7 @@ test('safeGitArgs takes the operator hooksPath, sshCommand, askPass and credenti
     '-c', 'log.showSignature=false', '-c', 'commit.gpgSign=false', '-c', 'tag.gpgSign=false', '-c', 'gpg.program=', '-c', 'gpg.ssh.program=',
     '-c', 'credential.helper=', '-c', 'credential.helper=osxkeychain', '-c', 'credential.https://gh.example.helper=!gh auth git-credential',
     '-c', 'core.askPass=/op/ask', '-c', 'fetch.all=false',
-    '-c', 'protocol.ext.allow=never', '-c', 'core.gitProxy=', '-c', 'gpg.x509.program=', '-c', 'gpg.openpgp.program=',
+    '-c', 'protocol.ext.allow=never', '-c', 'protocol.git.allow=never', '-c', 'gpg.x509.program=', '-c', 'gpg.openpgp.program=',
     '-c', 'merge.verifySignatures=false', '-c', 'pull.verifySignatures=false', 'merge', 'b',
   ]);
 });

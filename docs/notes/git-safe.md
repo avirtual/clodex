@@ -1,11 +1,13 @@
 # git-safe.js
 
 ## safeGitArgs
-Neutralised on every call: `core.fsmonitor`, `core.hooksPath`, `diff.external`, `core.sshCommand`, `core.pager`, `log.showSignature`, `commit.gpgSign`, `tag.gpgSign`, `gpg.program`, `gpg.ssh.program`, `credential.helper` (reset, then the operator's system/global helpers re-added) and `core.askPass`; `--no-ext-diff --no-textconv` on diff/show/log, `--upload-pack=git-upload-pack` on fetch/pull/ls-remote and `--receive-pack=git-receive-pack` on push.
+Neutralised on every call: `core.fsmonitor`, `core.hooksPath`, `diff.external`, `core.sshCommand`, `core.pager`, `log.showSignature`, `commit.gpgSign`, `tag.gpgSign`, `gpg.program`, `gpg.ssh.program`, `gpg.x509.program`, `gpg.openpgp.program`, `merge.verifySignatures`, `pull.verifySignatures`, the `ext` and `git` protocols, `credential.helper` (reset, then the operator's system/global helpers re-added) and `core.askPass`; `--no-ext-diff --no-textconv` on diff/show/log, `--upload-pack=git-upload-pack` on fetch/pull/ls-remote and `--receive-pack=git-receive-pack` on push.
 `-c remote.<n>.uploadpack=` does not override a repo-local value (git 2.52 keeps the first and warns "more than one uploadpack given"), so the pack programs are pinned by the subcommand flags instead.
 `fetch --all` (and `fetch.all=true`, git 2.44+) spawns one child `git fetch <remote>` per remote without forwarding `--upload-pack`, so `fetch.all=false` is pinned and Workbench's `remoteOp` fetches each remote by name.
 With no operator `core.askPass`, the pinned empty value also stops git falling back to `SSH_ASKPASS` for an https password prompt.
 `core.sshCommand=` (empty) breaks every ssh fetch/push with "fatal: unable to fork" (git 2.52), so the fallback is `ssh`; `GIT_SSH_COMMAND` in the env still wins over it.
+`-c core.gitProxy=` (or `=none`) does not override a repo-local `core.gitProxy`: git keeps the first value it reads and `-c` is read last (measured git 2.52), so `protocol.git.allow=never` blocks git:// instead.
+`protocol.ext.allow=never` also blocks a repo-local `url.<x>.insteadOf` that rewrites a normal remote to `ext::` (measured git 2.52), so `protocol.allow=user` is not needed.
 `-c diff.external=` alone did not stop a planted `diff.external` on `git diff HEAD` (git 2.52); `--no-ext-diff` is what stops it.
 
 ## driverOverrides
