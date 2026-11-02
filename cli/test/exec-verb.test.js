@@ -51,6 +51,11 @@ function stub(opts = {}) {
         if (opts.onEventsOpen) opts.onEventsOpen(state, seen);
         return;
       }
+      if (req.method === 'GET' && opts.seats && /^\/api\/sessions\/[^/]+$/.test(p)) {
+        const seat = opts.seats[decodeURIComponent(p.split('/')[3])];
+        if (seat) { res.writeHead(200); return res.end(JSON.stringify({ ok: true, session: seat })); }
+        res.writeHead(404); return res.end(JSON.stringify({ ok: false, error: 'Session not found' }));
+      }
       if (/^\/api\/sessions\/[^/]+\/control(\?|$)/.test(p)) {
         if (rec.body && rec.body.action === 'acquire') { res.writeHead(200); return res.end(JSON.stringify({ ok: true, token: 'ctl-1' })); }
         res.writeHead(200); return res.end(JSON.stringify({ ok: true }));
@@ -193,6 +198,33 @@ test('exec on an unknown session → exit 5, lists the running names', async () 
   assert.strictEqual(code, 5);
   assert.match(stderr, /no such session: ghost/);
   assert.match(stderr, /running: shell, bob/);
+  server.close();
+});
+
+test('exec on a sleeping assistant resolves it by name and waits on the post-wake after= cursor', async () => {
+  const dmSent = (seen) => seen.some((r) => r.method === 'POST' && r.url === '/api/sessions/asst/dm');
+  const { server, seen } = stub({
+    sessions: [{ name: 'bob', type: 'claude' }],
+    seats: { asst: { name: 'asst', type: 'claude', class: 'assistant', state: 'asleep', activity: 'asleep' } },
+    onEventsOpen: endTurnWhenSent('asst'),
+    transcript: (seen) => (dmSent(seen)
+      ? [{ role: 'user', text: 'hi', ts: new Date().toISOString() }, { role: 'assistant', text: 'awake now', ts: new Date().toISOString() }]
+      : [{ role: 'user', text: 'old', ts: '2020-01-01T00:00:00.000Z' }, { role: 'assistant', text: 'old reply', ts: '2020-01-01T00:00:00.000Z' }]),
+  });
+  const port = await listen(server);
+  const { code, stdout, stderr } = await cli(['exec', 'asst', 'hi', '--timeout', '10'], port);
+  assert.strictEqual(code, 0, stderr);
+  assert.match(stdout, /\[assistant\] awake now/);
+  assert.doesNotMatch(stdout, /old reply/);
+  const dmAt = seen.findIndex((r) => r.method === 'POST' && r.url === '/api/sessions/asst/dm');
+  assert.ok(dmAt > 0, 'reached the dm');
+  const reads = seen.filter((r) => r.url.startsWith('/api/sessions/asst/transcript'));
+  assert.ok(reads.length > 0, 'read the transcript');
+  for (const r of reads) {
+    assert.ok(seen.indexOf(r) > dmAt, `transcript read after the wake dm: ${r.url}`);
+    assert.match(r.url, /[?&]after=/);
+    assert.doesNotMatch(r.url, /[?&]since=/);
+  }
   server.close();
 });
 

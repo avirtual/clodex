@@ -598,12 +598,19 @@ async function sessionType(client, name) {
   const body = await client.get('/api/sessions', 'session lookup');
   const list = body.sessions || [];
   const found = list.find((s) => s && s.name === name);
-  if (!found) {
+  if (found) return { type: found.type || '', asleep: false };
+  let seat = null;
+  try {
+    seat = (await client.get(`/api/sessions/${encodeURIComponent(name)}`, 'session lookup')).session || null;
+  } catch (e) {
+    if (!(e && e.exitCode === EXIT.NOTFOUND)) throw e;
+  }
+  if (!seat) {
     const names = list.map((s) => s && s.name).filter(Boolean);
     const hint = names.length ? ` — running: ${names.join(', ')}` : '';
     throw new CliError(EXIT.NOTFOUND, `no such session: ${name}${hint}`);
   }
-  return found.type || '';
+  return { type: seat.type || '', asleep: seat.activity === 'asleep' };
 }
 
     // --pty picks the PTY mode outright; else ROUTES on the authoritative type, `bash`
@@ -613,14 +620,14 @@ async function exec({ client, ctx, printer, flags, args, io = {} }) {
   const text = args.slice(1).join(' ').trim();
   if (!text) throw new CliError(EXIT.USAGE, 'exec needs text — a prompt for an agent, or a command for a bash session');
   if (flags.pty) return execPty({ client, ctx, printer, flags, args, mode: 'pty' });
-  const type = await sessionType(client, name);
+  const { type, asleep } = await sessionType(client, name);
   if (type === 'bash') {
     return execPty({ client, ctx, printer, flags, args, mode: 'pty' });
   }
-  return dmWait({ client, ctx, printer, flags, name, text, mode: 'agent', io });
+  return dmWait({ client, ctx, printer, flags, name, text, mode: 'agent', io, asleep });
 }
 
-async function dmWait({ client, ctx, printer, flags, name, text, mode = null, io = {} }) {
+async function dmWait({ client, ctx, printer, flags, name, text, mode = null, io = {}, asleep = false }) {
   await R.requireResource(client, 'sessions', 'post', R.ctxLabel(ctx, flags), 'dm');
   const timeoutMs = (flags.timeout != null ? parseIntOr(flags.timeout, 'timeout') : 300) * 1000;
       // --timeout is a hard ceiling on the WHOLE verb (wait phase, then refetch at +grace):
@@ -632,6 +639,7 @@ async function dmWait({ client, ctx, printer, flags, name, text, mode = null, io
   let settled = false;
   let hardTimer = null;
   let sinceSeq = null;
+  let afterIso = null;
   let dmSent = false;
   const waitAc = new AbortController();
   const waitResult = await new Promise((resolve, reject) => {
@@ -644,8 +652,12 @@ async function dmWait({ client, ctx, printer, flags, name, text, mode = null, io
     stream = client.openEventStream('/api/events', 'exec (events)', {
       onOpen: async () => {
         try {
-          const before = await client.get(`${transcriptPath(name)}?limit=500`, 'exec (snapshot)', { signal: waitAc.signal });
-          sinceSeq = lastSeqOf(before.messages) + 1;
+          if (asleep) {
+            afterIso = new Date((io.now || Date.now)()).toISOString();
+          } else {
+            const before = await client.get(`${transcriptPath(name)}?limit=500`, 'exec (snapshot)', { signal: waitAc.signal });
+            sinceSeq = lastSeqOf(before.messages) + 1;
+          }
           await client.post(`/api/sessions/${encodeURIComponent(name)}/dm`, 'exec (dm)', { text }, { signal: waitAc.signal });
           dmSent = true;
         } catch (e) { finish(reject, e); } // a ceiling abort lands here too — finish is then a no-op (already settled)
@@ -678,10 +690,11 @@ async function dmWait({ client, ctx, printer, flags, name, text, mode = null, io
   const refetchDeadline = setTimeout(() => { graceExpired = true; try { refetchAc.abort(); } catch {} }, graceMs);
   let fresh = [];
   try {
-    while (!graceExpired && sinceSeq != null) {
+    while (!graceExpired && (sinceSeq != null || afterIso != null)) {
+      const cursor = afterIso != null ? `after=${encodeURIComponent(afterIso)}` : `since=${sinceSeq}`;
       let after;
       try {
-        after = await client.get(`${transcriptPath(name)}?since=${sinceSeq}&limit=500`, 'exec (refetch)', { signal: refetchAc.signal });
+        after = await client.get(`${transcriptPath(name)}?${cursor}&limit=500`, 'exec (refetch)', { signal: refetchAc.signal });
       } catch (e) {
         // Swallow ONLY our own ceiling abort (client rethrows AbortError
         // unwrapped) — a real transport error that merely RACED the deadline
