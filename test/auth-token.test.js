@@ -6,7 +6,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { makeTokenGate } = require('../auth-token');
+const { makeTokenGate, isLoopbackHost } = require('../auth-token');
+const { RemoteServer } = require('../remote');
 
 // A minimal Node-http-ish request double for fromReq.
 function req({ url = '/', headers = {} } = {}) {
@@ -158,4 +159,18 @@ test('originRefusal ipHost: a loopback or IP-literal Host passes, a hostname (DN
   }
   assert.strictEqual(originRefusal({ headers: { host: '192.168.1.20:7810' } }), 'Host', 'default mode still requires a loopback Host');
   assert.strictEqual(originAllowed({ headers: { host: '192.168.1.20:7810' } }), false, 'default mode still requires a loopback Host');
+});
+
+test('isLoopbackHost accepts only 127/8 literals, ::1 and localhost, never a hostname that starts with 127.', () => {
+  const rows = [
+    ['127.0.0.1', true], ['127.1.2.3', true], ['::1', true], ['localhost', true], ['LOCALHOST', true],
+    ['127.lan.example', false], ['127.0.0.1.evil', false], ['1270.0.0.1', false],
+    ['0.0.0.0', false], ['10.0.0.1', false], ['[::1]', false], ['', false],
+  ];
+  for (const [host, want] of rows) assert.strictEqual(isLoopbackHost(host), want, host);
+});
+
+test('RemoteServer bound to 127.lan.example is not loopback, so the fail-closed token gate applies', () => {
+  assert.strictEqual(new RemoteServer({ port: 0, host: '127.lan.example' })._loopback, false);
+  assert.strictEqual(new RemoteServer({ port: 0, host: '127.0.0.1' })._loopback, true);
 });
