@@ -425,6 +425,41 @@ test('load: a tracker with no log directory still tracks, and reports an empty l
     'and it must report an EMPTY log rather than throwing on the missing directory');
 });
 
+test('load: reset gives a second life in the same process the adoption a first life gets', () => {
+  const lives = (withReset) => {
+    const t = createMemoryLoad();
+    t.noteDigest('a', { full: ['u1'] });
+    t.noteSession('a', 'S1');
+    if (withReset) t.reset('a');
+    t.noteDigest('a', { full: ['u1', 'u2'], title: ['u3'] });
+    t.noteSession('a', 'S2');
+    return ['u1', 'u2', 'u3'].map(id => t.stateOf('a', id));
+  };
+  assert.deepStrictEqual(lives(true), ['full', 'full', 'title'],
+    'after reset the new life\'s first id is adopted, so the seed it carried survives');
+  assert.deepStrictEqual(lives(false), ['absent', 'absent', 'absent'],
+    'contrast: without reset the old life\'s S1 makes S2 read as a /clear and wipes the seed');
+});
+
+test('load: a respawn in the same process keeps the new life\'s digest across its first session id', async () => {
+  const h = mkManager({ units: [{ text: 'a pinned claim', operatorPinned: true }] });
+  const [pin] = h.ids;
+  try {
+    await spawned(h, 'a');
+    h.watchers.find(x => x.name === 'a').onSessionId('life-1');
+    assert.strictEqual(h.m.memoryLiveSet('a').sessionId, 'life-1', 'ENTER: the first life adopted its id');
+    h.stop('a');
+    h.m.sessions.delete('a');
+
+    await spawned(h, 'a');
+    const w2 = h.watchers.filter(x => x.name === 'a').pop();
+    w2.onSessionId('life-2');
+    assert.strictEqual(h.m.memoryLoadState('a', pin), 'full',
+      'the respawn\'s digest served the pin; reading the first id as a /clear re-delivers it');
+    assert.strictEqual(h.m.memoryLiveSet('a').sessionId, 'life-2');
+  } finally { h.stop('a'); }
+});
+
 function stampUnit(h, id, iso) {
   const file = path.join(h.root, 'library', 'memory', 'a', `${id}.md`);
   fs.writeFileSync(file, fs.readFileSync(file, 'utf-8').replace(/^learned_at: .*$/m, `learned_at: ${iso}`));

@@ -54,6 +54,10 @@ function createMemoryLoad({ logDir, now = () => Date.now() } = {}) {
       for (const id of tiers.title || []) { if (!s.full.has(id)) s.title.add(id); }
     },
 
+    reset(agent) {
+      live.delete(agent);
+    },
+
     // The highest-signal event in the scheme: an explicit delivery of one
     // body into the transcript. Persisted as well as recorded, because the log
     // is the evidence base for evidence-driven archival later — a unit that has
