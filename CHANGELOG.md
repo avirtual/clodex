@@ -12,7 +12,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — Security: log-mask quoted-value tails; hand cap ignores finished hands, legacy memory units self-heal
 
 - **Security: a secret value that starts with a quote and continues past the closing quote (`client_secret="v"tail`, `--passwd='v'tail`, the same inside a URL query) is now masked to the end of the token.** The log mask stopped at the closing quote and wrote the rest in clear; only four query spellings were covered since 5.157.0. A delimiter (`,` `;` `&` `#` or a closing bracket) still ends the value.
 - **A finished hand no longer blocks the hand cap.** One-shot seats left behind by a hand-merged or otherwise kept ticket were still counted as live hands, so new tickets parked at the cap with nobody working; the cap now counts only seats that hold a ticket not yet accepted, and a merged ticket's accept retires its seat.
