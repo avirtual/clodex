@@ -14,7 +14,7 @@ blocks a release.
 
 ## Unreleased
 
-- **A finished hand no longer blocks the hand cap.** One-shot seats left behind by a hand-merged or otherwise kept ticket were still counted as live hands, so new tickets parked at the cap with nobody working; the cap now counts only seats that hold an open ticket, and a merged ticket's accept retires its seat.
+- **A finished hand no longer blocks the hand cap.** One-shot seats left behind by a hand-merged or otherwise kept ticket were still counted as live hands, so new tickets parked at the cap with nobody working; the cap now counts only seats that hold a ticket not yet accepted, and a merged ticket's accept retires its seat.
 
 ## 5.157.0 — 2026-11-02 — Security: log-mask stalls, seat-import reserved names, memory frontmatter forgery, loopback bind check; Preferences token pin, exec on sleepers, embed-basket dry run
 

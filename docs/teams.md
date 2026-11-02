@@ -811,7 +811,7 @@ a box.
 derived from the box flag. Existing trees are not moved.
 
 A team can cap its concurrent one-shot hands: a seat of a `worktree` or `spawn`
-role counts only while it holds an open started ticket and is not archived,
+role counts only while it holds a started ticket not yet accepted and is not archived,
 whether live or minted and not yet up; standing seats do not count. `maxHands` in
 team.json is a positive integer, or `null` for off. Unset, the cap is off on the
 desktop and, inside a sandbox box, half the box's vCPUs (at least 1) — the

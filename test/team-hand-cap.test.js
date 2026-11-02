@@ -208,14 +208,27 @@ test('task list marks a cap-parked ticket with its stored count', () => {
   assert.match(row, /^t1 \[open parked\] hand .* — build it \(parked: cap 3\/3\)/);
 });
 
-test('a live one-shot seat whose only ticket is closed does not count, so a start at cap 1 proceeds', () => {
+test('a live one-shot seat whose only ticket is accepted does not count, so a start at cap 1 proceeds', () => {
   const f = mkFixture({ maxHands: 1 });
   f.hold('team-hand-91', 'done');
+  const all = f.tstore.load(f.root);
+  Object.assign(all.find((t) => t.id === 'w91'), { acceptedAt: 3, closedOut: true });
+  f.tstore.save(f.root, all);
   assert.strictEqual(f.m.sessions.get('team-hand-91')._dead, undefined, 'ENTER: the seat is live');
   f.add();
   f.start('t1');
   assert.deepStrictEqual(f.spawned, [{ id: 't1', name: 'team-hand-1' }]);
   assert.strictEqual(f.one('t1').parked, undefined);
+});
+
+test('a live one-shot seat whose ticket is done and in verify still counts, so a start at cap 1 parks', () => {
+  const f = mkFixture({ maxHands: 1 });
+  f.hold('team-hand-91', 'done');
+  assert.strictEqual(f.one('w91').acceptedAt, undefined, 'ENTER: done, not yet accepted');
+  f.add();
+  f.start('t1');
+  assert.deepStrictEqual(f.spawned, []);
+  assert.strictEqual(f.one('t1').parkedBy, 'cap');
 });
 
 test('an archived seat still in the map does not count, even holding an open ticket', () => {
@@ -227,14 +240,14 @@ test('an archived seat still in the map does not count, even holding an open tic
   assert.deepStrictEqual(f.spawned, [{ id: 't1', name: 'team-hand-1' }]);
 });
 
-test('the minute sweep starts a cap-parked ticket once the holding seat\'s ticket closes', async () => {
+test('the minute sweep starts a cap-parked ticket once the holding seat\'s ticket is accepted', async () => {
   const f = mkFixture({ maxHands: 1 });
   f.hold('team-hand-91');
   f.add();
   f.start('t1');
   assert.strictEqual(f.one('t1').parkedBy, 'cap', 'ENTER: parked behind the working hand');
   const all = f.tstore.load(f.root);
-  all.find((t) => t.id === 'w91').state = 'done';
+  Object.assign(all.find((t) => t.id === 'w91'), { state: 'done', acceptedAt: 3, closedOut: true });
   f.tstore.save(f.root, all);
   assert.ok(f.m.sessions.has('team-hand-91'), 'ENTER: the seat itself is still live');
   f.acks.length = 0;

@@ -2863,7 +2863,8 @@ function createTicketMethods(deps, shared) {
       const inflight = this._capInflight || (this._capInflight = new Set());
       const names = new Set();
       const tickets = ticketsStore.load(team.root);
-      const holdsOpen = (name) => tickets.some((t) => t.state === 'open' && t.assignee === name && t.startedAt);
+      const holdsOpen = (name) => tickets.some((t) => t.assignee === name && t.startedAt
+        && (t.state === 'open' || (t.state === 'done' && !t.acceptedAt)));
       for (const s of this.sessions.values()) {
         if (!s || s._dead || s._archived) continue;
         const role = matchSeatRole(team, s.name);
