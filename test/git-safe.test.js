@@ -508,6 +508,7 @@ const UNWRAPPED_ALLOWED = [
   "engine.js:execFile('git', argv",
   "git-worktree.js:execFile('git', argv",
   "plugins/workbench/git-scm.js:execFile('git', argv",
+  "git-safe.js:run('git', VERSION_ARGV",
 ];
 
 test('every git spawn in the app-process git sites goes through safeGitArgs', () => {

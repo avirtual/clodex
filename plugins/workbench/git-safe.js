@@ -14,9 +14,11 @@ const FILTER_KEY_RE = /^filter\.(.+)\.[^.]+$/;
 const MERGE_DRIVER_RE = /^merge\.(.+)\.driver$/;
 const OPERATOR_SCOPES = new Set(['system', 'global', 'unknown']);
 
+const VERSION_ARGV = ['--version'];
+
 function detectGitVersion(run = execFileSync) {
   try {
-    const v = /(\d+)\.(\d+)(?:\.(\d+))?/.exec(String(run('git', ['--version'], { encoding: 'utf8', timeout: 2000 })));
+    const v = /(\d+)\.(\d+)(?:\.(\d+))?/.exec(String(run('git', VERSION_ARGV, { encoding: 'utf8', timeout: 2000 })));
     return v ? v[0] : null;
   } catch { return null; }
 }
