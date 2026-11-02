@@ -132,3 +132,10 @@ test('the wire delete of an unknown name is no such session', async () => {
   const killSession = peerKillSession(r.m, r.persistence, r.REGISTRY_DIR);
   assert.deepStrictEqual(await killSession('nobody'), { ok: false, error: 'no such session "nobody"' });
 });
+
+test('the wire delete of a seat whose worktree cannot be removed reports the kept worktree', async () => {
+  const r = rig({ w2: { cwd: '/w', sessionId: SID } });
+  r.m.destroy = async () => ({ ok: true, worktreeRemoved: false, path: '/w', error: 'busy' });
+  const killSession = peerKillSession(r.m, r.persistence, r.REGISTRY_DIR);
+  assert.deepStrictEqual(await killSession('w2'), { ok: true, name: 'w2', worktreeRemoved: false, kept: true, path: '/w', error: 'busy' });
+});

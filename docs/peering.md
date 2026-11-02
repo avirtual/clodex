@@ -159,7 +159,7 @@ transcripts for both its live `sessionIds` and its `retiredSessionIds`, `pending
 non-Claude assistant, whose transcripts are not handled yet), `POST /api/restart` (app relaunch —
 response written before the restart fires), `POST /api/sessions`,
 `DELETE /api/sessions/:name`, `POST /api/sessions/:name/restart` (remote
-create, destroy (same as Delete Session…) and restart — all under the `create` cap, shipped together),
+create, destroy (same as Delete Session…; a worktree that cannot be removed answers `worktreeRemoved: false, kept: true, path, error`) and restart — all under the `create` cap, shipped together),
 `GET /api/sessions/:name/args` + `PATCH /api/sessions/:name/args` (Edit Session
 over the wire: read editable args + the box's dialog catalogs, apply an edited
 patch with kill+respawn on `restart:true`) and `GET /api/sessions/:name/skills` +

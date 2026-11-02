@@ -27,7 +27,7 @@ function plantedRepo() {
   return { repo, run };
 }
 
-test('safeGitArgs: status gets the config prefix and nothing else', () => {
+test('safeGitArgs: status gets the config prefix and --ignore-submodules=all', () => {
   assert.deepStrictEqual(safeGitArgs(['status']), [
     '-c', 'core.fsmonitor=',
     '-c', 'core.hooksPath=/dev/null',
@@ -38,11 +38,12 @@ test('safeGitArgs: status gets the config prefix and nothing else', () => {
     '-c', 'credential.helper=', '-c', 'core.askPass=', '-c', 'fetch.all=false',
     '-c', 'protocol.ext.allow=never', '-c', 'protocol.git.allow=never', '-c', 'gpg.x509.program=', '-c', 'gpg.openpgp.program=',
     '-c', 'merge.verifySignatures=false', '-c', 'pull.verifySignatures=false',
-    'status',
+    '-c', 'diff.ignoreSubmodules=all', '-c', 'status.submoduleSummary=false', '-c', 'submodule.recurse=false', '-c', 'fetch.recurseSubmodules=no', '-c', 'push.recurseSubmodules=no',
+    'status', '--ignore-submodules=all',
   ]);
 });
 
-test('safeGitArgs: diff/show/log get --no-ext-diff --no-textconv ahead of any pathspec separator', () => {
+test('safeGitArgs: diff/show/log get --no-ext-diff --no-textconv, diff also --ignore-submodules=all, ahead of any pathspec separator', () => {
   const prefix = [
     '-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/dev/null', '-c', 'diff.external=',
     '-c', 'core.sshCommand=ssh', '-c', 'core.pager=cat',
@@ -50,10 +51,11 @@ test('safeGitArgs: diff/show/log get --no-ext-diff --no-textconv ahead of any pa
     '-c', 'credential.helper=', '-c', 'core.askPass=', '-c', 'fetch.all=false',
     '-c', 'protocol.ext.allow=never', '-c', 'protocol.git.allow=never', '-c', 'gpg.x509.program=', '-c', 'gpg.openpgp.program=',
     '-c', 'merge.verifySignatures=false', '-c', 'pull.verifySignatures=false',
+    '-c', 'diff.ignoreSubmodules=all', '-c', 'status.submoduleSummary=false', '-c', 'submodule.recurse=false', '-c', 'fetch.recurseSubmodules=no', '-c', 'push.recurseSubmodules=no',
   ];
-  assert.deepStrictEqual(safeGitArgs(['diff', 'HEAD']), [...prefix, 'diff', '--no-ext-diff', '--no-textconv', 'HEAD']);
+  assert.deepStrictEqual(safeGitArgs(['diff', 'HEAD']), [...prefix, 'diff', '--no-ext-diff', '--no-textconv', '--ignore-submodules=all', 'HEAD']);
   assert.deepStrictEqual(safeGitArgs(['-C', '/r', 'diff', 'HEAD', '--', 'f']),
-    [...prefix, '-C', '/r', 'diff', '--no-ext-diff', '--no-textconv', 'HEAD', '--', 'f']);
+    [...prefix, '-C', '/r', 'diff', '--no-ext-diff', '--no-textconv', '--ignore-submodules=all', 'HEAD', '--', 'f']);
   assert.deepStrictEqual(safeGitArgs(['-C', '/r', 'show', 'x']), [...prefix, '-C', '/r', 'show', '--no-ext-diff', '--no-textconv', 'x']);
   assert.deepStrictEqual(safeGitArgs(['-C', '/r', 'log', '-1']), [...prefix, '-C', '/r', 'log', '--no-ext-diff', '--no-textconv', '-1']);
   assert.deepStrictEqual(safeGitArgs(['-C', '/r', 'rev-parse', 'HEAD']), [...prefix, '-C', '/r', 'rev-parse', 'HEAD']);
@@ -72,7 +74,8 @@ test('safeGitArgs takes the operator hooksPath, sshCommand, askPass and credenti
     '-c', 'credential.helper=', '-c', 'credential.helper=osxkeychain', '-c', 'credential.https://gh.example.helper=!gh auth git-credential',
     '-c', 'core.askPass=/op/ask', '-c', 'fetch.all=false',
     '-c', 'protocol.ext.allow=never', '-c', 'protocol.git.allow=never', '-c', 'gpg.x509.program=', '-c', 'gpg.openpgp.program=',
-    '-c', 'merge.verifySignatures=false', '-c', 'pull.verifySignatures=false', 'merge', 'b',
+    '-c', 'merge.verifySignatures=false', '-c', 'pull.verifySignatures=false',
+    '-c', 'diff.ignoreSubmodules=all', '-c', 'status.submoduleSummary=false', '-c', 'submodule.recurse=false', '-c', 'fetch.recurseSubmodules=no', '-c', 'push.recurseSubmodules=no', 'merge', 'b',
   ]);
 });
 
@@ -186,6 +189,39 @@ test('a planted clean filter does not run under safeGitArgsFor, and does without
     assert.match(out, /^\+b$/m);
     execFileSync('git', ['-C', repo, 'diff', 'HEAD', '--', 'README.md'], { stdio: 'ignore' });
     assert.strictEqual(fs.existsSync(marker), true, 'control: the planted clean filter runs on a raw diff');
+  } finally {
+    fs.rmSync(marker, { force: true });
+  }
+});
+
+test('a clean filter planted in a nested repo behind a gitlink does not run under safeGitArgsFor status or diff, and does without it', async (t) => {
+  if (!hasGit()) { t.skip('git not installed'); return; }
+  const { repo, run } = plantedRepo();
+  run('checkout', '--', 'README.md');
+  const sub = path.join(repo, 'sub');
+  const marker = path.join(repo, '..', `${path.basename(repo)}-nested-filter-ran`);
+  const runSub = (...a) => execFileSync('git', ['-C', sub, ...a], { stdio: 'ignore' });
+  fs.mkdirSync(sub);
+  runSub('init', '-q');
+  runSub('config', 'user.email', 't@t.co');
+  runSub('config', 'user.name', 't');
+  fs.writeFileSync(path.join(sub, 'f'), 'hi\n');
+  runSub('add', 'f');
+  runSub('commit', '-qm', 's');
+  runSub('config', 'filter.evil.clean', `sh -c "touch '${marker}'; cat"`);
+  fs.writeFileSync(path.join(sub, '.git', 'info', 'attributes'), '* filter=evil\n');
+  const head = execFileSync('git', ['-C', sub, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  run('update-index', '--add', '--cacheinfo', `160000,${head},sub`);
+  run('commit', '-qm', 'sm');
+  const later = new Date(Date.now() + 5000);
+  fs.utimesSync(path.join(sub, 'f'), later, later);
+  try {
+    execFileSync('git', await safeGitArgsFor(repo, ['status', '--porcelain=v1', '-z', '--branch']), { stdio: 'ignore' });
+    assert.strictEqual(fs.existsSync(marker), false, 'the nested clean filter ran under safeGitArgsFor status');
+    execFileSync('git', await safeGitArgsFor(repo, ['diff', 'HEAD']), { stdio: 'ignore' });
+    assert.strictEqual(fs.existsSync(marker), false, 'the nested clean filter ran under safeGitArgsFor diff');
+    execFileSync('git', ['-C', repo, 'status', '--porcelain=v1'], { stdio: 'ignore' });
+    assert.strictEqual(fs.existsSync(marker), true, 'control: the nested clean filter runs on a raw status');
   } finally {
     fs.rmSync(marker, { force: true });
   }

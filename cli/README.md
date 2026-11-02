@@ -458,7 +458,7 @@ Write:
 | Verb | Route | Notes |
 |---|---|---|
 | `create session <name> --cwd DIR --type T [--model M] [--arg X …] [--env KEY=VALUE …] [--fork]` | `POST /api/sessions` | `--model`/`--arg` ride `extraArgs`; each `--env KEY=VALUE` (repeatable) rides `body.env` and sets a per-session env var on the spawned PTY (merged over the box's machine + global/workspace scopes — the session value wins). Applied **only at create** (`exec`/`dm`/`patch session` can't change env). The box re-validates every key server-side and drops invalid/deny-listed ones (`CLODEX_REMOTE_TOKEN` is reserved); the ack echoes the applied keys and `clodexctl` warns loudly if any were dropped — or if the node is too old to support env at all |
-| `delete session <name> [--force]` | `DELETE /api/sessions/:name` | **HARD DELETE — no resume.** Confirms unless `--force` (required with `-o json`) |
+| `delete session <name> [--force]` | `DELETE /api/sessions/:name` | **HARD DELETE — no resume.** Confirms unless `--force` (required with `-o json`). When the worktree cannot be removed the reply adds `worktreeRemoved: false, kept: true, path, error` |
 | `restart session <name> [--fresh]` | `POST /api/sessions/:name/restart` | |
 | `patch session <name> [--arg X…] [--proxy URL] [--restart]` | `PATCH /api/sessions/:name/args` | |
 | `patch session <name> --subresource profile -f <file.yaml\|file.json> [--replace]` | `PATCH /api/sessions/:name/memory/profile?merge=1` | assistant seats; `.json` files go as JSON, anything else as `text/yaml`; `--replace` sends `merge=0` |

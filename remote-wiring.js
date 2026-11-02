@@ -955,7 +955,7 @@ function createRemoteWiring(deps) {
           if (r && r.ok === false) return r;
           notifySessions();
           log.info('session', `destroy ${name} via peer`);
-          return { ok: true, name };
+          return { ok: true, name, ...(r && r.worktreeRemoved === false ? { worktreeRemoved: false, kept: true, path: r.path, error: r.error || r.why || null } : {}) };
         },
         listSleepers: () => getPersistence().list().filter(isSleeper).map(sleeperRow),
         getSleeper: (name) => {
