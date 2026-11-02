@@ -744,7 +744,9 @@ accept teardown removes.
 - **remote-token.js** — the operator's remote-wire token, GUI-managed and
   persisted in `<userData>/remote.env` (0600, single key), so the peer-wire gate
   survives restarts without an env var the operator has to remember.
-  DELIBERATELY separate from the sandbox's `auth.env`.
+  DELIBERATELY separate from the sandbox's `auth.env`. A non-empty
+  `CLODEX_REMOTE_TOKEN` wins over the file, and while it is set Preferences is
+  read-only: it shows the pin and `remote:setToken` refuses the edit.
 - **service-ports.js** — `CLODEX_REMOTE_PORT` / `CLODEX_WIRESCOPE_PORT`, the env
   overrides for the two service ports, so a second instance on one box is fully
   env-configurable. Env wins over the persisted setting and is never written
