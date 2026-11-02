@@ -14,6 +14,7 @@ blocks a release.
 
 ## Unreleased
 
+- **Security: the log mask no longer stalls on long `k=v&k=v` lines.** 5.156.0's masker re-scanned every rejected pair to the end of the line, so a 100 KB URL or term-exec line cost over a second of main-process time (27 s at 400 KB); the scan is linear again.
 - **Preferences says when the phone-access token is pinned by `CLODEX_REMOTE_TOKEN`.** Saving or clearing the token there used to report success while the environment value kept gating the server; the panel now shows the pin and refuses the edit.
 
 ## 5.156.0 — 2026-11-02 — Security: log mask catches API/access/private-key spellings; 4 MB images, git ≥2.45 in containers, no CRLF/non-UTF-8 rewrites

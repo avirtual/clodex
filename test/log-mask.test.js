@@ -147,9 +147,31 @@ test('the key-word suffix must open with `-` or `_`, so a word merely containing
 });
 
 test('a long identifier with no separator is masked in linear time, not cubic', () => {
-  const started = process.hrtime.bigint();
-  assert.strictEqual(maskSecrets('_auth'.repeat(4000)), '_auth'.repeat(4000));
-  assert.ok(process.hrtime.bigint() - started < 2_000_000_000n, 'a 20 KB key-word run took over 2 s');
+  for (const line of ['_auth'.repeat(4000), '_auth'.repeat(20000)]) {
+    const started = process.hrtime.bigint();
+    assert.strictEqual(maskSecrets(line), line);
+    assert.ok(process.hrtime.bigint() - started < 2_000_000_000n, `a ${line.length}-byte key-word run took over 2 s`);
+  }
+});
+
+test('a dense run of rejected `k=v` pairs is masked in linear time', () => {
+  const url = 'https://h/p?' + Array.from({ length: 8000 }, (_, i) => `k${i}=v${i}&`).join('');
+  for (const line of [url, 'a=b'.repeat(33333), 'a=b'.repeat(133333)]) {
+    const started = process.hrtime.bigint();
+    assert.strictEqual(maskSecrets(line), line);
+    assert.ok(process.hrtime.bigint() - started < 2_000_000_000n, `a ${line.length}-byte k=v run took over 2 s`);
+  }
+});
+
+test('the `passwd` and `auth` key words mask', () => {
+  assert.strictEqual(maskSecrets('passwd=x'), 'passwd=[redacted]');
+  assert.strictEqual(maskSecrets('auth=x'), 'auth=[redacted]');
+});
+
+test('the URL credential spellings outside the query rule are masked by the key/value rule', () => {
+  for (const name of ['apikey', 'access_token', 'secret', 'password']) {
+    assert.strictEqual(maskSecrets(`https://h/p?${name}=x`), `https://h/p?${name}=[redacted]`);
+  }
 });
 
 test('a long key-word identifier with a value is masked whole', () => {
