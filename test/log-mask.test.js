@@ -215,6 +215,7 @@ test('a quote-led secret value with a tail past the closing quote is masked to t
   for (const [line, expected] of [
     ['client_secret="v"LEAK x=1', 'client_secret=[redacted] x=1'],
     ["--passwd='v'LEAK --x=1", '--passwd=[redacted] --x=1'],
+    ["--passwd 'v'LEAK --x=1", '--passwd=[redacted] --x=1'],
     ['GET https://h/p?client_secret="v"LEAK&x=1', 'GET https://h/p?client_secret=[redacted]&x=1'],
     ['https://h/p?auth="v"LEAK&y', 'https://h/p?auth=[redacted]&y'],
     ['password="x y" next=1', 'password=[redacted] next=1'],
