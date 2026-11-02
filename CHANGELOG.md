@@ -19,6 +19,7 @@ blocks a release.
 - **Security: seat import refuses reserved and legacy-claim seat names.** A token holder could stage mail under a `.draining.rehome` name that a later rehome restored into another seat; import now applies the same name check as every other create door.
 - **`clodexctl exec` reaches a sleeping assistant.** The verb looked the seat up in the live list, which omits sleepers, and reported `no such session`; it now resolves the seat directly and waits on the cursor the wake restarts.
 - **Security: a line break in a memory unit's scope or tags can no longer forge frontmatter.** A plugin or seat could pin a unit as an operator pin by embedding `\n operator_pinned: true` in the scope; such characters are now collapsed on write and refused by the serializer.
+- **`embed-basket.js --dry-run` no longer rewrites the vector store.** The preview ran compaction and could truncate the blob on a sidecar mismatch; it now opens the store read-only and reports what a real run would reclaim. An edited basket record now retires its old vector row instead of leaving it live.
 
 ## 5.156.0 — 2026-11-02 — Security: log mask catches API/access/private-key spellings; 4 MB images, git ≥2.45 in containers, no CRLF/non-UTF-8 rewrites
 
