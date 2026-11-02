@@ -119,11 +119,12 @@ function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = o
   const t0 = t0ReadPaths(registryDir, home);
   const userDataFiles = userDataPath ? [...USER_DATA_READ_DENY, path.join('sandbox*', 'auth.env')].map((f) => path.join(userDataPath, f)) : [];
   const userDataWrite = userDataPath && registryDir !== userDataPath && !registryDir.startsWith(userDataPath + path.sep) ? [userDataPath] : [];
+  const userDataFileWrite = userDataPath && !userDataWrite.length ? ['env-override.env', 'remote.env'].map((f) => path.join(userDataPath, f)) : [];
   const denyRead = [...new Set([...t0, ...listed.filter((p) => !t0.includes(p)), ...userDataFiles])];
   const dataEntries = dataWriteDeny(registryDir, fsImpl);
   const realCwd = typeof cwd === 'string' && path.isAbsolute(cwd) ? realPathOr(cwd, fsImpl) : null;
   const repoGit = realCwd ? repoGitDirs(realCwd, fsImpl) : [];
-  const denyWrite = [...new Set([...HOME_WRITE_DENY, ...listed, ...dataEntries.map((e) => e.p), APP_BUNDLE, ...userDataWrite, ...repoGit.map((e) => e.p)])];
+  const denyWrite = [...new Set([...HOME_WRITE_DENY, ...listed, ...dataEntries.map((e) => e.p), APP_BUNDLE, ...userDataWrite, ...userDataFileWrite, ...repoGit.map((e) => e.p)])];
 
   const kindOf = new Map(dataEntries.map((e) => [e.p, e.dir]));
   kindOf.set(t0[0], false);
@@ -132,6 +133,7 @@ function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = o
   kindOf.set(APP_BUNDLE, true);
   for (const p of userDataFiles) kindOf.set(p, false);
   for (const p of userDataWrite) kindOf.set(p, true);
+  for (const p of userDataFileWrite) kindOf.set(p, false);
   for (const e of repoGit) kindOf.set(e.p, e.dir);
 
   const deny = [];

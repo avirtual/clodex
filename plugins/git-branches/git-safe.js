@@ -18,6 +18,7 @@ function safeGitArgs(args, { hooksPath = '/dev/null', sshCommand = 'ssh', askPas
     'core.fsmonitor=', `core.hooksPath=${hooksPath}`, 'diff.external=', `core.sshCommand=${sshCommand}`, 'core.pager=cat',
     'log.showSignature=false', 'commit.gpgSign=false', 'tag.gpgSign=false', 'gpg.program=', 'gpg.ssh.program=',
     'credential.helper=', ...credentialHelpers.map(([key, value]) => `${key}=${value}`), `core.askPass=${askPass}`, 'fetch.all=false',
+    'protocol.ext.allow=never', 'core.gitProxy=', 'gpg.x509.program=', 'gpg.openpgp.program=', 'merge.verifySignatures=false', 'pull.verifySignatures=false',
   ].flatMap((s) => ['-c', s]);
   let i = 0;
   while (i < list.length && String(list[i]).startsWith('-')) i += VALUE_OPTIONS.has(list[i]) ? 2 : 1;
