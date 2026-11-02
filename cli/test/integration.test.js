@@ -495,6 +495,18 @@ test('delete session --force: no prompt, hard-delete message', async () => {
   server.close();
 });
 
+test('delete session --force names a worktree the engine kept', async () => {
+  const { server } = stub((req, res) => { res.writeHead(200); res.end(JSON.stringify({ ok: true, name: 'doomed', worktreeRemoved: false, kept: true, path: '/w', error: 'busy' })); });
+  const port = await listen(server);
+  try {
+    const { code, stdout } = await cli(['delete', 'session', 'doomed', '--force'], port);
+    assert.strictEqual(code, 0);
+    assert.match(stdout, /^deleted doomed \(hard delete — not resumable\)\nworktree kept at \/w: busy$/m);
+  } finally {
+    server.close();
+  }
+});
+
 test('delete session --json without --force is a usage error (no request)', async () => {
   const { server, seen } = stub((req, res) => { res.writeHead(200); res.end('{}'); });
   const port = await listen(server);

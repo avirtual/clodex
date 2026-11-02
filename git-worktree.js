@@ -349,7 +349,7 @@ async function isDirty(worktreePath) {
   if (!wt) return { ok: false, error: 'No worktree path given' };
   let linkedModules = false;
   try { linkedModules = fs.lstatSync(path.join(wt, 'node_modules')).isSymbolicLink(); } catch { linkedModules = false; }
-  const args = linkedModules ? ['status', '--porcelain', '--', '.', ':(exclude)node_modules'] : ['status', '--porcelain'];
+  const args = linkedModules ? ['status', '--porcelain', '--ignore-submodules=dirty', '--', '.', ':(exclude)node_modules'] : ['status', '--porcelain', '--ignore-submodules=dirty'];
   const r = await git(wt, args);
   if (!r.ok) return { ok: false, error: (r.stderr || 'git status failed').trim() };
   return { ok: true, dirty: r.stdout.trim().length > 0 };
@@ -620,7 +620,7 @@ async function diffText(cwd, base, head, { maxBuffer = 32 * 1024 * 1024 } = {}) 
   // These flags are QUOTED back to the lead by team-tickets.js's CHECK 4 failure
   // messages so they can re-run the command by hand. That copy went stale once;
   // sweep it when this argv changes.
-  const r = await git(repo, ['diff', '--text', '--no-ext-diff', '-U20', `${base}..${head}`], { maxBuffer });
+  const r = await git(repo, ['diff', '--text', '--no-ext-diff', '--ignore-submodules=none', '--submodule=short', '-U20', `${base}..${head}`], { maxBuffer });
   if (!r.ok) return { ok: false, text: null, headSha: null, error: (r.stderr || 'git diff failed').trim() };
   return { ok: true, text: r.stdout, headSha: resolved[head], error: null };
 }
@@ -629,7 +629,7 @@ async function diffNames(cwd, base, head, pathspec = []) {
   const repo = await repoToplevel(cwd);
   if (!repo) return { ok: false, names: null, error: 'not a git repository' };
   if (!base || !head) return { ok: false, names: null, error: 'no base or head given' };
-  const args = ['diff', '--name-only', `${base}..${head}`];
+  const args = ['diff', '--name-only', '--ignore-submodules=none', '--submodule=short', `${base}..${head}`];
   if (pathspec.length) args.push('--', ...pathspec);
   const r = await git(repo, args);
   if (!r.ok) return { ok: false, names: null, error: (r.stderr || 'git diff --name-only failed').trim() };

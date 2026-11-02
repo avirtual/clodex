@@ -122,7 +122,7 @@ function quotedDiffFlags(src) {
   const seen = new Map();
   for (const call of src.matchAll(/gitWorktree\.diffText\(/g)) {
     const near = src.slice(call.index, call.index + CALL_WINDOW);
-    for (const m of near.matchAll(/`git (?:-C \$\{[^}]*\}\s+)?diff ((?:-{1,2}[\w-]+\s+)*)\$\{[^}]*\}\.\.\$\{[^}]*\}/g)) {
+    for (const m of near.matchAll(/`git (?:-C \$\{[^}]*\}\s+)?diff ((?:-{1,2}[\w=-]+\s+)*)\$\{[^}]*\}\.\.\$\{[^}]*\}/g)) {
       seen.set(call.index + m.index, m[1].trim().split(/\s+/).filter(Boolean));
     }
   }
