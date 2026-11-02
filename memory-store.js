@@ -59,10 +59,23 @@ function readUnitFile(file) {
   }
 }
 
+const FRONTMATTER_LINE_BREAK = /[\r\n\u0085\u2028\u2029]/;
+const FRONTMATTER_LINE_BREAK_ALL = new RegExp(FRONTMATTER_LINE_BREAK.source, 'g');
+
+function collapseLineBreaks(v) {
+  return String(v ?? '').replace(FRONTMATTER_LINE_BREAK_ALL, ' ');
+}
+
+function frontmatterValue(meta, k) {
+  const v = meta[k] != null ? String(meta[k]) : '';
+  if (FRONTMATTER_LINE_BREAK.test(v)) throw new Error(`memory unit ${k} contains a line break`);
+  return v;
+}
+
 function serializeMemoryUnit(meta, body) {
   const lines = ['---'];
   for (const k of CORE_META_KEYS) {
-    lines.push(`${k}: ${meta[k] != null ? String(meta[k]) : ''}`);
+    lines.push(`${k}: ${frontmatterValue(meta, k)}`);
   }
   // Anything parse read that this function doesn't name. setPinned round-trips
   // parse -> serialize, so a key omitted here is a key that PIN DELETES —
@@ -70,7 +83,7 @@ function serializeMemoryUnit(meta, body) {
   // keys and before `pinned` so the core order stays byte-stable.
   for (const k of Object.keys(meta)) {
     if (CORE_META_KEYS.includes(k) || k === 'pinned' || k === 'operator_pinned') continue;
-    lines.push(`${k}: ${meta[k] != null ? String(meta[k]) : ''}`);
+    lines.push(`${k}: ${frontmatterValue(meta, k)}`);
   }
   // Written only when set — pre-pin files stay byte-identical on disk.
   if (meta.pinned) lines.push('pinned: true');
@@ -459,10 +472,11 @@ function createMemoryStore(rootDir, { serializeProfileFn = serializeProfile } = 
       if (operatorPinned) this._checkOperatorPinCap(agent, null);
       fs.mkdirSync(this._dir(agent), { recursive: true, mode: 0o700 });
       const id = `mem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const meta = { id, scope: String(scope || '').trim(), learned_at: new Date().toISOString(), source: source || agent };
+      const meta = { id, scope: collapseLineBreaks(scope).trim(), learned_at: new Date().toISOString(), source: collapseLineBreaks(source) || agent };
       // Omitted when empty so untagged units keep the pre-tags byte shape on
       // disk, matching how `pinned` is written only when set.
-      if (String(tags || '').trim()) meta.tags = String(tags).trim();
+      const cleanTags = collapseLineBreaks(tags).trim();
+      if (cleanTags) meta.tags = cleanTags;
       if (pinned) meta.pinned = 'true';
       if (operatorPinned) meta.operator_pinned = 'true';
       atomicWriteFileSync(this._file(agent, id), serializeMemoryUnit(meta, body));
