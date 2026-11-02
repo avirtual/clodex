@@ -45,7 +45,7 @@ function expectedFilesystem(R, ud) {
   const denyRead = [
     `${R}/cli/contexts.json`, `${R}/teams/*/sandbox.json`, `${R}/boxes`, '/h/.clodex/cli/contexts.json',
     `${R}/run/*/mcp.json`, `${R}/sessions/*/run/mcp.json`,
-    ...(ud ? ['/ud/remote.env', '/ud/env-scopes.json', '/ud/sessions.json', '/ud/wire-hold-entries.json', '/ud/env-override.env', '/ud/sandbox*/auth.env'] : []),
+    ...(ud ? ['/ud/remote.env', '/ud/ui-settings.json*', '/ud/env-scopes.json*', '/ud/sessions.json*', '/ud/wire-hold-entries.json', '/ud/env-override.env', '/ud/sandbox*/auth.env'] : []),
   ];
   const denyWrite = [
     '~/.claude', '~/.claude.json', '~/.zshrc', '~/.zprofile', '~/.zshenv', '~/.bashrc', '~/.bash_profile',
@@ -65,8 +65,9 @@ test('buildCredentialSandbox: a userDataPath read-denies its token and secret st
   const udRules = g.deny.filter((r) => r.includes('//ud'));
   assert.deepStrictEqual(udRules, [
     'Read(//ud/remote.env)', 'Edit(//ud/remote.env)',
-    'Read(//ud/env-scopes.json)', 'Edit(//ud/env-scopes.json)',
-    'Read(//ud/sessions.json)', 'Edit(//ud/sessions.json)',
+    'Read(//ud/ui-settings.json*)', 'Edit(//ud/ui-settings.json*)',
+    'Read(//ud/env-scopes.json*)', 'Edit(//ud/env-scopes.json*)',
+    'Read(//ud/sessions.json*)', 'Edit(//ud/sessions.json*)',
     'Read(//ud/wire-hold-entries.json)', 'Edit(//ud/wire-hold-entries.json)',
     'Read(//ud/env-override.env)', 'Edit(//ud/env-override.env)',
     'Read(//ud/sandbox*/auth.env)', 'Edit(//ud/sandbox*/auth.env)',
@@ -129,15 +130,15 @@ test('session-manager derives mcpSecretNames from the applied selection and pass
   assert.ok(src.indexOf('const mcpSecretNames') < src.indexOf('setupClaudeHook(name,'));
 });
 
-test('buildCredentialSandbox: a cwd adds exactly its .git/config and .git/hooks to the write deny', () => {
+test('buildCredentialSandbox: a cwd without a .git adds exactly the .git pointer and its config, config.worktree, commondir, hooks and info/attributes to the write deny', () => {
   const root = seededRoot();
   const without = buildCredentialSandbox({ registryDir: root, list: [], home: '/h' });
   const withCwd = buildCredentialSandbox({ registryDir: root, list: [], home: '/h', cwd: '/w' });
   assert.deepStrictEqual(
     withCwd.sandbox.filesystem.denyWrite.filter((p) => !without.sandbox.filesystem.denyWrite.includes(p)),
-    ['/w/.git/config', '/w/.git/hooks']);
+    ['/w/.git', '/w/.git/config', '/w/.git/config.worktree', '/w/.git/commondir', '/w/.git/hooks', '/w/.git/info/attributes']);
   assert.deepStrictEqual(withCwd.deny.filter((r) => !without.deny.includes(r)),
-    ['Edit(//w/.git/config)', 'Edit(//w/.git/hooks/**)']);
+    ['Edit(//w/.git)', 'Edit(//w/.git/config)', 'Edit(//w/.git/config.worktree)', 'Edit(//w/.git/commondir)', 'Edit(//w/.git/hooks/**)', 'Edit(//w/.git/info/attributes)']);
   assert.deepStrictEqual(without.sandbox.filesystem.denyWrite.filter((p) => p.includes('.git/')), []);
   assert.ok(without.sandbox.filesystem.denyWrite.length > 0, 'ENTER: the base denyWrite is populated');
   assert.deepStrictEqual(buildCredentialSandbox({ registryDir: root, list: [], home: '/h', cwd: 'rel' }).sandbox.filesystem.denyWrite,
@@ -176,4 +177,62 @@ test('buildCredentialSandbox: a cwd under a symlink denies the real .git paths',
   assert.ok(g.sandbox.filesystem.denyWrite.includes(path.join(realResolved, '.git', 'config')));
   assert.ok(g.sandbox.filesystem.denyWrite.includes(path.join(realResolved, '.git', 'hooks')));
   assert.ok(!g.sandbox.filesystem.denyWrite.includes(path.join(link, '.git', 'config')));
+});
+
+function addedRepoDenies(root, cwd) {
+  const without = buildCredentialSandbox({ registryDir: root, list: [], home: '/h' });
+  const g = buildCredentialSandbox({ registryDir: root, list: [], home: '/h', cwd });
+  return {
+    denyWrite: g.sandbox.filesystem.denyWrite.filter((p) => !without.sandbox.filesystem.denyWrite.includes(p)),
+    deny: g.deny.filter((r) => !without.deny.includes(r)),
+  };
+}
+
+test('buildCredentialSandbox: a linked-worktree cwd denies its own git dir and the main repository\'s', () => {
+  const root = seededRoot();
+  const repo = path.join(root, 'projects', 'main');
+  const wt = path.join(root, 'projects', 'wt');
+  const own = path.join(repo, '.git', 'worktrees', 'wt');
+  fs.mkdirSync(path.join(own), { recursive: true });
+  fs.mkdirSync(wt);
+  fs.writeFileSync(path.join(wt, '.git'), `gitdir: ${own}\n\n`);
+  fs.writeFileSync(path.join(own, 'commondir'), '../..\n');
+  const R = fs.realpathSync(repo);
+  const W = fs.realpathSync(wt);
+  assert.deepStrictEqual(addedRepoDenies(root, wt), {
+    denyWrite: [
+      `${W}/.git`,
+      `${R}/.git/worktrees/wt/config`, `${R}/.git/worktrees/wt/config.worktree`, `${R}/.git/worktrees/wt/commondir`,
+      `${R}/.git/worktrees/wt/hooks`, `${R}/.git/worktrees/wt/info/attributes`,
+      `${R}/.git/config`, `${R}/.git/config.worktree`, `${R}/.git/commondir`, `${R}/.git/hooks`, `${R}/.git/info/attributes`,
+    ],
+    deny: [
+      `Edit(/${W}/.git)`,
+      `Edit(/${R}/.git/worktrees/wt/config)`, `Edit(/${R}/.git/worktrees/wt/config.worktree)`, `Edit(/${R}/.git/worktrees/wt/commondir)`,
+      `Edit(/${R}/.git/worktrees/wt/hooks/**)`, `Edit(/${R}/.git/worktrees/wt/info/attributes)`,
+      `Edit(/${R}/.git/config)`, `Edit(/${R}/.git/config.worktree)`, `Edit(/${R}/.git/commondir)`, `Edit(/${R}/.git/hooks/**)`, `Edit(/${R}/.git/info/attributes)`,
+    ],
+  });
+});
+
+test('buildCredentialSandbox: a .git dir whose commondir points elsewhere denies both dirs, the relative gitdir resolved from the cwd', () => {
+  const root = seededRoot();
+  const cwd = path.join(root, 'projects', 'seat');
+  const other = path.join(root, 'projects', 'elsewhere');
+  fs.mkdirSync(path.join(cwd, '.git'), { recursive: true });
+  fs.mkdirSync(other);
+  fs.writeFileSync(path.join(cwd, '.git', 'commondir'), '../../elsewhere');
+  const C = fs.realpathSync(cwd);
+  const O = fs.realpathSync(other);
+  assert.deepStrictEqual(addedRepoDenies(root, cwd).denyWrite, [
+    `${C}/.git/config`, `${C}/.git/config.worktree`, `${C}/.git/commondir`, `${C}/.git/hooks`, `${C}/.git/info/attributes`,
+    `${O}/config`, `${O}/config.worktree`, `${O}/commondir`, `${O}/hooks`, `${O}/info/attributes`,
+  ]);
+  const rel = path.join(root, 'projects', 'relwt');
+  fs.mkdirSync(rel);
+  fs.writeFileSync(path.join(rel, '.git'), 'gitdir: ../elsewhere\n');
+  assert.deepStrictEqual(addedRepoDenies(root, rel).denyWrite, [
+    `${fs.realpathSync(rel)}/.git`,
+    `${O}/config`, `${O}/config.worktree`, `${O}/commondir`, `${O}/hooks`, `${O}/info/attributes`,
+  ]);
 });

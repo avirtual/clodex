@@ -1,10 +1,11 @@
 'use strict';
 const path = require('path');
-const { execFile, execFileSync } = require('child_process');
+const { execFile } = require('child_process');
 
 const DIFF_SUBCOMMANDS = new Set(['diff', 'show', 'log']);
 const VALUE_OPTIONS = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace']);
 const FILTER_KEY_RE = /^filter\.(.+)\.[^.]+$/;
+const OPERATOR_SCOPES = new Set(['system', 'global']);
 
 function safeGitArgs(args, { hooksPath = '/dev/null', sshCommand = 'ssh' } = {}) {
   const list = Array.isArray(args) ? args : [];
@@ -27,35 +28,46 @@ function filterOverrides(configNames) {
   return names.flatMap((n) => ['-c', `filter.${n}.clean=`, '-c', `filter.${n}.smudge=`, '-c', `filter.${n}.process=`]);
 }
 
-function readOperatorGitConfig(run) {
-  const get = (key) => {
-    try { return String(run(['config', '--global', '--type=path', '--get', key]) || '').trim() || null; } catch { return null; }
-  };
-  const hooks = get('core.hooksPath');
-  return { hooksPath: hooks && path.isAbsolute(hooks) ? hooks : '/dev/null', sshCommand: get('core.sshCommand') || 'ssh' };
-}
-
-let operatorConfig = null;
-function operatorGitConfig() {
-  if (!operatorConfig) {
-    operatorConfig = readOperatorGitConfig((a) => execFileSync('git', a, { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] }));
-  }
-  return operatorConfig;
-}
-
-function repoFilterNames(cwd, run = execFile) {
+function scopedConfig(cwd, argv, run, what) {
   return new Promise((resolve, reject) => {
-    run('git', safeGitArgs(['-C', cwd, 'config', '--null', '--name-only', '--get-regexp', '^filter\\.']),
+    run('git', safeGitArgs(['-C', cwd, 'config', '--null', '--show-scope', ...argv]),
       { timeout: 5000, maxBuffer: 64 * 1024 * 1024 }, (err, stdout) => {
-        if (!err) return resolve(String(stdout || ''));
-        if (err.code === 1 && !err.killed && !stdout) return resolve('');
-        reject(new Error(`git filter lookup failed: ${err.message}`));
+        const out = String(stdout || '');
+        const pairs = [];
+        const fields = out.split('\0');
+        for (let i = 0; i + 1 < fields.length; i += 2) pairs.push([fields[i], fields[i + 1]]);
+        if (!err) return resolve(pairs);
+        if (err.code === 1 && !err.killed && !out) return resolve([]);
+        reject(new Error(`${what} failed: ${err.message}`));
       });
   });
 }
 
-async function safeGitArgsFor(cwd, args, { run } = {}) {
-  return [...filterOverrides(await repoFilterNames(cwd, run)), ...safeGitArgs(['-C', cwd, ...args], operatorGitConfig())];
+async function readOperatorGitConfig(cwd, run = execFile) {
+  const get = async (key) => {
+    let pairs;
+    try { pairs = await scopedConfig(cwd, ['--type=path', '--get-all', key], run, 'git config lookup'); } catch { return null; }
+    const operator = pairs.filter(([scope]) => OPERATOR_SCOPES.has(scope));
+    return operator.length ? operator[operator.length - 1][1].trim() || null : null;
+  };
+  const [hooks, sshCommand] = [await get('core.hooksPath'), await get('core.sshCommand')];
+  return { hooksPath: hooks && path.isAbsolute(hooks) ? hooks : '/dev/null', sshCommand: sshCommand || 'ssh' };
 }
 
-module.exports = { safeGitArgs, safeGitArgsFor, filterOverrides, readOperatorGitConfig, operatorGitConfig };
+const operatorConfigs = new Map();
+function operatorGitConfigFor(cwd) {
+  if (!operatorConfigs.has(cwd)) operatorConfigs.set(cwd, readOperatorGitConfig(cwd));
+  return operatorConfigs.get(cwd);
+}
+
+async function repoFilterNames(cwd, run = execFile) {
+  const pairs = await scopedConfig(cwd, ['--name-only', '--get-regexp', '^filter\\.'], run, 'git filter lookup');
+  return pairs.filter(([scope]) => !OPERATOR_SCOPES.has(scope)).map(([, name]) => name).join('\0');
+}
+
+async function safeGitArgsFor(cwd, args, { run } = {}) {
+  const [names, operator] = await Promise.all([repoFilterNames(cwd, run), operatorGitConfigFor(cwd)]);
+  return [...filterOverrides(names), ...safeGitArgs(['-C', cwd, ...args], operator)];
+}
+
+module.exports = { safeGitArgs, safeGitArgsFor, filterOverrides, readOperatorGitConfig, operatorGitConfigFor };

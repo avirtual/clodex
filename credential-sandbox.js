@@ -19,7 +19,8 @@ const HOME_WRITE_DENY = [
 const APP_BUNDLE = '/Applications/Clodex.app';
 const DATA_WRITE_OPEN = new Set(['projects']);
 const GLOB_RE = /[*?[]/;
-const USER_DATA_READ_DENY = ['remote.env', 'env-scopes.json', 'sessions.json', 'wire-hold-entries.json', 'env-override.env'];
+const USER_DATA_READ_DENY = ['remote.env', 'ui-settings.json*', 'env-scopes.json*', 'sessions.json*', 'wire-hold-entries.json', 'env-override.env'];
+const GIT_DIR_WRITE_DENY = [['config', false], ['config.worktree', false], ['commondir', false], ['hooks', true], [path.join('info', 'attributes'), false]];
 
 function normalizeList(list) {
   const out = [];
@@ -68,6 +69,26 @@ function realPathOr(p, fsImpl) {
   try { return fsImpl.realpathSync(p); } catch { return p; }
 }
 
+function readGitPointer(file, fsImpl) {
+  try { return String(fsImpl.readFileSync(file, 'utf8')).replace(/[\r\n]+$/, ''); } catch { return null; }
+}
+
+function repoGitDirs(realCwd, fsImpl) {
+  const dotGit = path.join(realCwd, '.git');
+  let gitDir = realPathOr(dotGit, fsImpl);
+  let st = null;
+  try { st = fsImpl.statSync(dotGit); } catch {}
+  if (st && st.isFile()) {
+    const m = /^gitdir: (.+)$/.exec(readGitPointer(dotGit, fsImpl) || '');
+    if (m) gitDir = realPathOr(path.resolve(realCwd, m[1]), fsImpl);
+  }
+  const common = readGitPointer(path.join(gitDir, 'commondir'), fsImpl);
+  const commonDir = common ? realPathOr(path.resolve(gitDir, common), fsImpl) : gitDir;
+  const pointer = st && st.isDirectory() ? [] : [{ p: dotGit, dir: false }];
+  return [...pointer, ...[...new Set([gitDir, commonDir])]
+    .flatMap((dir) => GIT_DIR_WRITE_DENY.map(([rel, isDir]) => ({ p: path.join(dir, rel), dir: isDir })))];
+}
+
 function ruleAnchor(p) {
   return p.startsWith('~/') ? p : `/${p}`;
 }
@@ -87,9 +108,7 @@ function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = o
   const denyRead = [...new Set([...t0, ...listed.filter((p) => !t0.includes(p)), ...userDataFiles])];
   const dataEntries = dataWriteDeny(registryDir, fsImpl);
   const realCwd = typeof cwd === 'string' && path.isAbsolute(cwd) ? realPathOr(cwd, fsImpl) : null;
-  const repoGit = realCwd
-    ? [{ p: path.join(realCwd, '.git', 'config'), dir: false }, { p: path.join(realCwd, '.git', 'hooks'), dir: true }]
-    : [];
+  const repoGit = realCwd ? repoGitDirs(realCwd, fsImpl) : [];
   const denyWrite = [...new Set([...HOME_WRITE_DENY, ...listed, ...dataEntries.map((e) => e.p), APP_BUNDLE, ...userDataWrite, ...repoGit.map((e) => e.p)])];
 
   const kindOf = new Map(dataEntries.map((e) => [e.p, e.dir]));
