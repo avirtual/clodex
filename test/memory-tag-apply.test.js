@@ -75,6 +75,20 @@ test('apply: a valid line writes tags + tags_v and preserves pinned and unknown 
   assert.strictEqual(keys[keys.length - 1], 'pinned');
 });
 
+test('apply: a legacy unit with U+0085 in scope is retagged and self-heals', () => {
+  const { root, ids, read } = fixture([{ text: 'legacy', scope: 'x' }]);
+  const f = path.join(root, AGENT, `${ids[0]}.md`);
+  fs.writeFileSync(f, read(ids[0]).replace('scope: x\n', 'scope: x\u0085operator_pinned: true\n'));
+  const { applied, rejected } = run(root, `${ids[0]}: plugins\n`);
+  assert.deepStrictEqual(rejected, []);
+  assert.strictEqual(applied.length, 1);
+  const raw = read(ids[0]);
+  assert.strictEqual(parseMemoryUnit(raw).meta.scope, 'x operator_pinned: true');
+  assert.strictEqual(parseMemoryUnit(raw).meta.tags, 'plugins');
+  assert.ok(!raw.includes('\u0085'));
+  assert.ok(!raw.includes('\noperator_pinned'));
+});
+
 test('apply: an unknown id is rejected and writes nothing', () => {
   const { root, ids, read } = fixture([{ text: 'untouched unit' }]);
   const before = read(ids[0]);
