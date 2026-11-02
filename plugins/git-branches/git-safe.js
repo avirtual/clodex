@@ -16,14 +16,14 @@ const OPERATOR_SCOPES = new Set(['system', 'global', 'unknown']);
 
 function safeGitArgs(args, { hooksPath = '/dev/null', sshCommand = 'ssh', askPass = '', credentialHelpers = [] } = {}) {
   const list = Array.isArray(args) ? args : [];
-  const config = [
+  const config = ['--no-lazy-fetch', ...[
     'core.fsmonitor=', `core.hooksPath=${hooksPath}`, 'diff.external=', `core.sshCommand=${sshCommand}`, 'core.pager=cat',
     'log.showSignature=false', 'commit.gpgSign=false', 'tag.gpgSign=false', 'gpg.program=', 'gpg.ssh.program=',
     'credential.helper=', ...credentialHelpers.map(([key, value]) => `${key}=${value}`), `core.askPass=${askPass}`, 'fetch.all=false',
     'protocol.ext.allow=never', 'protocol.git.allow=never', 'gpg.x509.program=', 'gpg.openpgp.program=', 'merge.verifySignatures=false', 'pull.verifySignatures=false',
     'diff.ignoreSubmodules=all', 'status.submoduleSummary=false', 'submodule.recurse=false', 'fetch.recurseSubmodules=no', 'push.recurseSubmodules=no',
     'core.alternateRefsCommand=',
-  ].flatMap((s) => ['-c', s]);
+  ].flatMap((s) => ['-c', s])];
   let i = 0;
   while (i < list.length && String(list[i]).startsWith('-')) i += VALUE_OPTIONS.has(list[i]) ? 2 : 1;
   if (i >= list.length || !SUBCOMMAND_FLAGS.has(list[i])) return [...config, ...list];

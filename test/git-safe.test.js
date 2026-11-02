@@ -29,7 +29,7 @@ function plantedRepo() {
 
 test('safeGitArgs: status gets the config prefix and --ignore-submodules=all', () => {
   assert.deepStrictEqual(safeGitArgs(['status']), [
-    '-c', 'core.fsmonitor=',
+    '--no-lazy-fetch', '-c', 'core.fsmonitor=',
     '-c', 'core.hooksPath=/dev/null',
     '-c', 'diff.external=',
     '-c', 'core.sshCommand=ssh',
@@ -46,7 +46,7 @@ test('safeGitArgs: status gets the config prefix and --ignore-submodules=all', (
 
 test('safeGitArgs: diff/show/log get --no-ext-diff --no-textconv, diff also --ignore-submodules=all, ahead of any pathspec separator', () => {
   const prefix = [
-    '-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/dev/null', '-c', 'diff.external=',
+    '--no-lazy-fetch', '-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/dev/null', '-c', 'diff.external=',
     '-c', 'core.sshCommand=ssh', '-c', 'core.pager=cat',
     '-c', 'log.showSignature=false', '-c', 'commit.gpgSign=false', '-c', 'tag.gpgSign=false', '-c', 'gpg.program=', '-c', 'gpg.ssh.program=',
     '-c', 'credential.helper=', '-c', 'core.askPass=', '-c', 'fetch.all=false',
@@ -69,7 +69,7 @@ test('safeGitArgs: diff/show/log get --no-ext-diff --no-textconv, diff also --ig
 test('safeGitArgs takes the operator hooksPath, sshCommand, askPass and credential helpers in place of the defaults', () => {
   const credentialHelpers = [['credential.helper', 'osxkeychain'], ['credential.https://gh.example.helper', '!gh auth git-credential']];
   assert.deepStrictEqual(safeGitArgs(['merge', 'b'], { hooksPath: '/op/hooks', sshCommand: 'ssh -i /op/k', askPass: '/op/ask', credentialHelpers }), [
-    '-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/op/hooks', '-c', 'diff.external=',
+    '--no-lazy-fetch', '-c', 'core.fsmonitor=', '-c', 'core.hooksPath=/op/hooks', '-c', 'diff.external=',
     '-c', 'core.sshCommand=ssh -i /op/k', '-c', 'core.pager=cat',
     '-c', 'log.showSignature=false', '-c', 'commit.gpgSign=false', '-c', 'tag.gpgSign=false', '-c', 'gpg.program=', '-c', 'gpg.ssh.program=',
     '-c', 'credential.helper=', '-c', 'credential.helper=osxkeychain', '-c', 'credential.https://gh.example.helper=!gh auth git-credential',
@@ -322,6 +322,31 @@ test('a planted core.alternateRefsCommand does not run on fetch under safeGitArg
     assert.strictEqual(fs.existsSync(marker), true, 'control: the planted core.alternateRefsCommand runs on a raw fetch');
   } finally {
     fs.rmSync(marker, { force: true });
+  }
+});
+
+test('a partial clone does not lazily fetch through a planted remote uploadpack under safeGitArgsFor diff, and does without it', async (t) => {
+  if (!hasGit()) { t.skip('git not installed'); return; }
+  const up = plantedRepo();
+  up.run('commit', '-qm', 'two', '--', 'README.md');
+  up.run('config', 'uploadpack.allowFilter', 'true');
+  const clone = () => {
+    const seat = path.join(mkTmpRoot('clx-gitsafe-seat-'), 'seat');
+    execFileSync('git', ['clone', '-q', '--filter=blob:none', '--no-checkout', `file://${up.repo}`, seat], { stdio: 'ignore' });
+    const marker = `${seat}-lazy-ran`;
+    execFileSync('git', ['-C', seat, 'config', 'remote.origin.uploadpack', `touch '${marker}'; git-upload-pack`], { stdio: 'ignore' });
+    return { seat, marker };
+  };
+  const safe = clone();
+  const raw = clone();
+  try {
+    gitTry(await safeGitArgsFor(safe.seat, ['diff', 'HEAD~1', 'HEAD']));
+    assert.strictEqual(fs.existsSync(safe.marker), false, 'the planted uploadpack ran from a lazy fetch under safeGitArgsFor');
+    gitTry(['-C', raw.seat, 'diff', 'HEAD~1', 'HEAD']);
+    assert.strictEqual(fs.existsSync(raw.marker), true, 'control: a raw diff lazily fetches through the planted uploadpack');
+  } finally {
+    fs.rmSync(safe.marker, { force: true });
+    fs.rmSync(raw.marker, { force: true });
   }
 });
 
