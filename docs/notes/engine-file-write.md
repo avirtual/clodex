@@ -2,4 +2,4 @@
 
 ## writeFilePeek
 
-`O_NOFOLLOW` refuses a symlink only in the last path component, so an ancestor directory swapped for a symlink after the vet still opens. The `fstat` dev/ino compare against the vet's own `stat` is what catches that; `O_NOFOLLOW` keeps the open from going through a symlinked last component before that check runs. Pinned by `test/file-view-api.test.js`.
+`vetFileWrite` vets the descriptor `writeFilePeek` opens, and the write goes through that same descriptor, so the type, size, mtime and content checks describe the bytes the write replaces. The open descriptor keeps its inode alive, so its number cannot be recycled while held; the post-vet name check (`realpathSync` equal to the vetted path, then `statSync` matching the descriptor's `dev`, `ino` and `birthtimeNs`) is what refuses an ancestor swapped for a symlink and a file recreated at the vetted name. `O_NOFOLLOW` refuses a leaf symlink swapped in before the open. Pinned by `test/file-view-api.test.js`.
