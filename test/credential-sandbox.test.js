@@ -45,7 +45,7 @@ function expectedFilesystem(R, ud) {
   const denyRead = [
     `${R}/cli/contexts.json`, `${R}/teams/*/sandbox.json`, `${R}/boxes`, '/h/.clodex/cli/contexts.json',
     `${R}/run/*/mcp.json`, `${R}/sessions/*/run/mcp.json`, `${R}/peer-outbox/outbox-key`,
-    `${R}/sessions/*/seat.json`, `${R}/sessions/*/.seat.json.tmp.*`, `${R}/sessions/*/client-token`, `${R}/accounts`,
+    `${R}/sessions/*/seat.json`, `${R}/sessions/*/.seat.json.tmp.*`, `${R}/sessions/*/client-token`, `${R}/accounts/*/.credentials.json`,
     ...(ud ? ['/ud/remote.env', '/ud/ui-settings.json*', '/ud/env-scopes.json*', '/ud/sessions.json*', '/ud/wire-hold-entries.json', '/ud/env-override.env',
       '/ud/.ui-settings.json*', '/ud/.env-scopes.json*', '/ud/.sessions.json*', '/ud/.wire-hold-entries.json.tmp.*', '/ud/remote.env.tmp', '/ud/sandbox*/auth.env'] : []),
   ];
@@ -304,7 +304,7 @@ test('buildCredentialSandbox: the seat mirror, temp copy, client token and accou
     [`${R}/sessions/*/seat.json`, [`Read(/${R}/sessions/*/seat.json)`, `Edit(/${R}/sessions/*/seat.json)`]],
     [`${R}/sessions/*/.seat.json.tmp.*`, [`Read(/${R}/sessions/*/.seat.json.tmp.*)`, `Edit(/${R}/sessions/*/.seat.json.tmp.*)`]],
     [`${R}/sessions/*/client-token`, [`Read(/${R}/sessions/*/client-token)`, `Edit(/${R}/sessions/*/client-token)`]],
-    [`${R}/accounts`, [`Read(/${R}/accounts/**)`, `Edit(/${R}/accounts/**)`]],
+    [`${R}/accounts/*/.credentials.json`, [`Read(/${R}/accounts/*/.credentials.json)`, `Edit(/${R}/accounts/*/.credentials.json)`]],
   ];
   for (const [p, rules] of rows) {
     assert.ok(g.sandbox.filesystem.denyRead.includes(p), `denyRead lists ${p}`);

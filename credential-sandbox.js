@@ -21,9 +21,9 @@ const DATA_WRITE_OPEN = new Set(['projects']);
 const GLOB_RE = /[*?[]/;
 const USER_DATA_READ_DENY = ['remote.env', 'ui-settings.json*', 'env-scopes.json*', 'sessions.json*', 'wire-hold-entries.json', 'env-override.env',
   '.ui-settings.json*', '.env-scopes.json*', '.sessions.json*', '.wire-hold-entries.json.tmp.*', 'remote.env.tmp'];
-const T0_FILE_GLOBS = [['sessions', '*', 'seat.json'], ['sessions', '*', '.seat.json.tmp.*'], ['sessions', '*', 'client-token']];
+const T0_FILE_GLOBS = [['sessions', '*', 'seat.json'], ['sessions', '*', '.seat.json.tmp.*'], ['sessions', '*', 'client-token'], ['accounts', '*', '.credentials.json']];
 const CWD_AGENT_DIRS = ['.codex', '.claude'];
-const GIT_DIR_WRITE_DENY =[['config', false], ['config.worktree', false], ['commondir', false], ['hooks', true], [path.join('info', 'attributes'), false]];
+const GIT_DIR_WRITE_DENY = [['config', false], ['config.worktree', false], ['commondir', false], ['hooks', true], [path.join('info', 'attributes'), false]];
 
 function normalizeList(list) {
   const out = [];
@@ -54,7 +54,6 @@ function t0ReadPaths(registryDir, home) {
   out.push(path.join(registryDir, 'sessions', '*', 'run', 'mcp.json'));
   out.push(path.join(registryDir, 'peer-outbox', 'outbox-key'));
   out.push(...T0_FILE_GLOBS.map((rel) => path.join(registryDir, ...rel)));
-  out.push(path.join(registryDir, 'accounts'));
   return out;
 }
 
@@ -143,7 +142,6 @@ function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = o
   for (const p of userDataWrite) kindOf.set(p, true);
   for (const p of userDataFileWrite) kindOf.set(p, false);
   for (const rel of T0_FILE_GLOBS) kindOf.set(path.join(registryDir, ...rel), false);
-  kindOf.set(path.join(registryDir, 'accounts'), true);
   for (const e of repoGit) kindOf.set(e.p, e.dir);
 
   const deny = [];

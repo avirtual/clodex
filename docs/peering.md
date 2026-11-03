@@ -146,7 +146,7 @@ body's `client.token` sets it the same way after the spawn, answering `clientTok
 nothing spawns; a team-lead create refuses any token with a 400; a write that fails after
 the spawn answers ok with `clientToken: false` and `warnings: ['client token not stored']`, so set it again with this
 PUT); the token file is read-denied inside the credential sandbox and is injected only into exec children's env, as `CLODEX_CLIENT_TOKEN`, never
-an answer, the record or the CLI env; a seat without protectCredentials can read its own file; SSE `proposal` `{name, cmd, id, payload}` when
+an answer, the record or the CLI env; a seat without protectCredentials can read any seat's token file; SSE `proposal` `{name, cmd, id, payload}` when
 the seat runs an exec def marked `proposal` (the player confirms it in the game;
 nothing runs on the box; the event is best-effort, dropped when no client is connected, and
 `turn.proposals` is the durable record); SSE `turn` `{name, text, intents, refs, proposals, costUsd, durationMs,
