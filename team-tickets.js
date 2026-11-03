@@ -646,6 +646,10 @@ function createTicketMethods(deps, shared) {
       const proxy = tpl ? (tpl.proxy ?? null) : (spawner.proxy ?? null);
       const childArgs = (tpl && Array.isArray(tpl.extraArgs) && tpl.extraArgs.length)
         ? tpl.extraArgs : postureArgs;
+      if (childArgs !== postureArgs && childArgs.some((t) => typeof t !== 'string')) {
+        reply(`error: template "${tplLabel}" extraArgs must be strings`);
+        return;
+      }
       if (!operator && childArgs !== postureArgs) {
         const key = ([f, v]) => `${f}\0${v}`;
         const own = new Set(splitPrivilegedArgs(spawnerArgs).pairs.map(key));

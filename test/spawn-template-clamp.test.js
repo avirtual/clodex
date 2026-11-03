@@ -192,6 +192,13 @@ const ESCALATION_ROWS = [
   { args: ['-p', 'danger'], flag: '--profile' },
   { args: ['--sandbox-network', 'enabled'], flag: '--sandbox-network' },
   { args: ['--permission-profile', 'open'], flag: '--permission-profile' },
+  { args: ['--agents', '{"x":{"permissionMode":"bypassPermissions"}}'], flag: '--agents' },
+  { args: ['--plugin-dir', '/tmp/evil'], flag: '--plugin-dir' },
+  { args: ['--enable', 'unsafe_feature'], flag: '--enable' },
+  { args: ['--dangerously-bypass-hook-trust'], flag: '--dangerously-bypass-hook-trust' },
+  { args: ['--disable-approval'], flag: '--disable-approval' },
+  { args: ['--trust-workspace'], flag: '--trust-workspace' },
+  { args: ['--approval-judge', 'off'], flag: '--approval-judge' },
   { args: ['--allowedTools', 'Bash'], flag: '--allowedTools' },
   { args: ['--allowed-tools', 'Bash'], flag: '--allowedTools' },
   { args: ['--disallowedTools', 'Bash'], flag: '--disallowedTools' },
@@ -230,4 +237,18 @@ test('short, glued and alias forms split into pairs under the long name', () => 
   const { pairs, kept } = splitPrivilegedArgs(['-s', 'read-only', '-anever', '-c', 'sandbox_mode=x', '-p', 'prof', '--allowed-tools', 'Read', '-m', 'o3']);
   assert.deepStrictEqual(pairs, [['--sandbox', 'read-only'], ['--ask-for-approval', 'never'], ['--config', 'sandbox_mode=x'], ['--profile', 'prof'], ['--allowedTools', 'Read']]);
   assert.deepStrictEqual(kept, ['-m', 'o3']);
+});
+
+test('a template extraArgs element that is not a string is refused, even from a spawner holding the flag', async () => {
+  const h = harness({ rec: { extraArgs: ['--yolo'] } });
+  await spawn(h, h.writeTpl({ extraArgs: [['--yolo']] }));
+  assert.deepStrictEqual(h.calls, []);
+  assert.strictEqual(h.replies.length, 1);
+  assert.match(h.replies[0], /^\[agent:spawn\] error: template ".*" extraArgs must be strings$/);
+});
+
+test('template-save without operator drops an extraArgs array holding a non-string and reports it', () => {
+  const { deps, file } = teamDeps();
+  assert.deepStrictEqual(teamTemplateSave(deps, 'core', 'pm', { type: 'claude', extraArgs: [['--yolo'], '--model', 'x'] }), { ok: true, file, stripped: ['extraArgs'] });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { type: 'claude' });
 });
