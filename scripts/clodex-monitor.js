@@ -223,7 +223,7 @@ async function runWatcher() {
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    killTarget = () => {
+    killTarget = async () => {
       // `> 0` before negating, the same guard cli/src/dial.js and
       // team-tickets.js's suite runner carry on the identical call. A failed
       // spawn leaves `child.pid` undefined, so `-child.pid` is NaN — and
@@ -231,7 +231,7 @@ async function runWatcher() {
       // would signal every process this user owns instead of this command's
       // group. The command here is operator-supplied and may fail to spawn for
       // reasons this code never sees.
-      if (!(child.pid > 0)) return Promise.resolve();
+      if (!(child.pid > 0)) return;
       if (killing) return killing;
       killing = new Promise((resolve) => {
         const grace = setTimeout(resolve, KILL_GRACE_MS);
