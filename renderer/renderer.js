@@ -1952,6 +1952,11 @@ function createStreamSeatPane(name, wrapperEl, seat) {
   };
   let pending = [];
   let pendingFiles = [];
+  let voiceFired = false;
+  const markVoiceSent = () => {
+    voiceFired = true;
+    window.api.markVoiceOrigin(name);
+  };
   const renderAttachments = () => {
     attachEl.replaceChildren();
     attachEl.hidden = pending.length === 0 && pendingFiles.length === 0;
@@ -2102,6 +2107,8 @@ function createStreamSeatPane(name, wrapperEl, seat) {
     const images = pending;
     const files = pendingFiles;
     const paths = files.map((t) => t.path).filter(Boolean);
+    const voiced = voiceFired;
+    voiceFired = false;
     if (!text.trim() && !images.length && !paths.length) return;
     clearTimeout(draftTimer);
     draftTimer = null;
@@ -2113,6 +2120,7 @@ function createStreamSeatPane(name, wrapperEl, seat) {
     renderAttachments();
     follow = true;
     const restore = () => {
+      if (voiced) window.api.unmarkVoiceOrigin(name);
       if (!composer.value) composer.value = text;
       fitComposer();
       if (!pending.length && images.length) pending = images;
@@ -2260,7 +2268,7 @@ function createStreamSeatPane(name, wrapperEl, seat) {
   };
   const triggerSubmit = attachTriggerSubmit(composer, {
     getConfig: () => voiceSubmitConfig,
-    markOrigin: () => window.api.markVoiceOrigin(name),
+    markOrigin: markVoiceSent,
     send: sendComposer,
     hasImages: () => pending.length > 0 || pendingFiles.length > 0,
     onVoiceFire: () => seatVoiceFired(name),
