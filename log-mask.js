@@ -10,7 +10,7 @@ const URL_CANDIDATE_RE = /(?<![a-z0-9+.-])([a-z0-9+.-]+):\/\//gi;
 const URL_TAIL_RE = /\S*/y;
 const ASCII_LETTER_RE = /[a-z]/i;
 const WORD_CHAR_RE = /\w/;
-const URL_QUERY_SECRET_RE = /([?&](?:token|key|sig|api[-_]?key|access_token|secret|password)=)[^&#\s]*/gi;
+const URL_QUERY_SECRET_RE = /([?&](?:[\w.-]*[-_.])?(?:token|key|sig|api[-_]?key|access[-_]?key|private[-_]?key|secret|password|passwd|authorization|auth|credentials?)=)[^&#\s]*/gi;
 
 function isSecretName(name) {
   return KEY_WORD_RE.test(name.slice(name.lastIndexOf('.') + 1));
