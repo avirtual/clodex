@@ -1095,3 +1095,106 @@ test('a library row installs through the ordinary source path, spec and all', as
   assert.strictEqual(after.plugins[0].installed, 'fetched', 'and the next catalog read sees it');
   assert.strictEqual(after.plugins[0].upToDate, true);
 });
+
+test('a fetched user-root plugin is read-only: editable false and writeBundleFile refuses by name', async () => {
+  const bytes = buildTarballBytes('abc1234', 'demo');
+  const { loader, userDir } = mkSourceLoader({ script: [{ bytes }] });
+  await loader.installFromSource('owner/repo@main');
+  fs.mkdirSync(path.join(userDir, 'mine'), { recursive: true });
+  fs.writeFileSync(path.join(userDir, 'mine', 'manifest.json'), JSON.stringify(manifestFor('mine')));
+  fs.writeFileSync(path.join(userDir, 'mine', 'engine.js'), engineFile);
+  const recs = loader.discover();
+  const fetched = recs.find((rec) => rec.id === 'demo');
+  const mine = recs.find((rec) => rec.id === 'mine');
+  assert.ok(fetched && mine, 'ENTER: both user-root plugins were discovered');
+  assert.strictEqual(fetched.editable, false);
+  assert.strictEqual(mine.editable, true);
+  const w = loader.writeBundleFile('demo', 'skills', 'note', 'edited');
+  assert.deepStrictEqual(w, {
+    ok: false,
+    error: '"demo" was fetched from owner/repo and is read-only here — copy it into your plugins folder under a new id to edit it',
+  });
+  assert.strictEqual(fs.existsSync(path.join(userDir, 'demo', 'skills')), false, 'nothing was written into the fetched tree');
+  const own = loader.writeBundleFile('mine', 'skills', 'note', 'edited');
+  assert.strictEqual(own.ok, true, JSON.stringify(own));
+});
+
+test('write → resolveUpdate → applyUpdate on a fetched plugin: the write is refused, an unrelated upstream commit is no update', async () => {
+  const installBytes = buildTarballBytes('abc1234', 'demo');
+  const updateBytes = buildTarballBytes('def5678', 'demo');
+  const { loader, userDir } = mkSourceLoader({ script: [{ bytes: installBytes }, { bytes: updateBytes }, { bytes: updateBytes }] });
+  await loader.installFromSource('owner/repo@main');
+  assert.strictEqual(loader.writeBundleFile('demo', 'skills', 'note', 'edited').ok, false);
+  const r = await loader.resolveUpdate('demo');
+  assert.strictEqual(r.commit, 'def5678', 'ENTER: the upstream commit really moved');
+  assert.strictEqual(r.changed, false);
+  assert.strictEqual(r.drifted, false);
+  const applied = await loader.applyUpdate('demo', r.commit);
+  assert.deepStrictEqual(applied, { ok: true, id: 'demo', previousCommit: 'abc1234', commit: 'def5678' });
+  assert.deepStrictEqual(fs.readdirSync(userDir).filter((n) => n.startsWith('.old-')), []);
+});
+
+test('an outside edit drifts the tree: resolveUpdate says so and compares upstream with the recorded install', async () => {
+  const installBytes = buildTarballBytes('abc1234', 'demo');
+  const updateBytes = buildTarballBytes('def5678', 'demo');
+  const { loader, userDir } = mkSourceLoader({ script: [{ bytes: installBytes }, { bytes: updateBytes }] });
+  await loader.installFromSource('owner/repo@main');
+  fs.writeFileSync(path.join(userDir, 'demo', 'engine.js'), `${engineFile} // mine`);
+  const r = await loader.resolveUpdate('demo');
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.strictEqual(r.drifted, true);
+  assert.strictEqual(r.changed, false, 'upstream still matches what was installed');
+});
+
+test('applyUpdate on a drifted tree keeps the edited copy aside and names it', async () => {
+  const installBytes = buildTarballBytes('abc1234', 'demo');
+  const updateBytes = buildTarballBytes('def5678', 'demo', { 'engine.js': `${engineFile};` });
+  const { loader, userDir } = mkSourceLoader({ script: [{ bytes: installBytes }, { bytes: updateBytes }] });
+  await loader.installFromSource('owner/repo@main');
+  fs.writeFileSync(path.join(userDir, 'demo', 'engine.js'), `${engineFile} // mine`);
+  const r = await loader.applyUpdate('demo', 'def5678');
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.match(String(r.kept), /\.old-demo-/);
+  assert.strictEqual(path.dirname(r.kept), userDir);
+  assert.strictEqual(fs.readFileSync(path.join(r.kept, 'engine.js'), 'utf8'), `${engineFile} // mine`);
+  assert.strictEqual(fs.readFileSync(path.join(userDir, 'demo', 'engine.js'), 'utf8'), `${engineFile};`);
+  const twoHoursAgo = (Date.now() - 2 * 60 * 60 * 1000) / 1000;
+  fs.utimesSync(r.kept, twoHoursAgo, twoHoursAgo);
+  loader.ensureUserRoot();
+  assert.strictEqual(fs.existsSync(r.kept), true, 'a kept edited copy is never swept as stale');
+});
+
+test('removeSourcePlugin on a drifted tree keeps the edited copy aside and names it', async () => {
+  const bytes = buildTarballBytes('abc1234', 'demo');
+  const { loader, userDir } = mkSourceLoader({ script: [{ bytes }] });
+  await loader.installFromSource('owner/repo');
+  fs.writeFileSync(path.join(userDir, 'demo', 'extra.md'), 'mine');
+  const r = loader.removeSourcePlugin('demo');
+  assert.strictEqual(r.ok, true, JSON.stringify(r));
+  assert.match(String(r.kept), /\.old-demo-/);
+  assert.strictEqual(fs.existsSync(path.join(userDir, 'demo')), false);
+  assert.strictEqual(fs.readFileSync(path.join(r.kept, 'extra.md'), 'utf8'), 'mine');
+});
+
+test('a sidecar with no treeDigest counts as not drifted, so Remove deletes it outright', async () => {
+  const { loader, userDir } = mkSourceLoader({ script: [] });
+  fs.mkdirSync(path.join(userDir, 'demo'), { recursive: true });
+  fs.writeFileSync(path.join(userDir, 'demo', 'manifest.json'), JSON.stringify(manifestFor('demo')));
+  fs.writeFileSync(path.join(userDir, 'demo', '.clodex-source.json'), JSON.stringify({ source: 'github', repo: 'owner/repo', commit: 'abc1234' }));
+  assert.deepStrictEqual(loader.removeSourcePlugin('demo'), { ok: true, id: 'demo' });
+  assert.deepStrictEqual(fs.readdirSync(userDir), []);
+});
+
+test('an .old- aside is never a problems row, and ensureUserRoot sweeps only a stale one', () => {
+  const { loader, userDir } = mkSourceLoader({ script: [] });
+  fs.mkdirSync(userDir, { recursive: true });
+  for (const name of ['.old-x-123', '.old-y-456']) {
+    fs.mkdirSync(path.join(userDir, name));
+    fs.writeFileSync(path.join(userDir, name, 'manifest.json'), JSON.stringify(manifestFor('x')));
+  }
+  const twoHoursAgo = (Date.now() - 2 * 60 * 60 * 1000) / 1000;
+  fs.utimesSync(path.join(userDir, '.old-x-123'), twoHoursAgo, twoHoursAgo);
+  assert.deepStrictEqual(loader.status().problems, []);
+  loader.ensureUserRoot();
+  assert.deepStrictEqual(fs.readdirSync(userDir).sort(), ['.old-y-456']);
+});
