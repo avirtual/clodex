@@ -292,7 +292,7 @@ test('a large backlog is capped per pull, and says how many it dropped', () => {
   for (let i = 0; i < total; i++) {
     writeRecord(root, 'agent1',
       { ...OK_PAYLOAD, tool_input: { command: `echo ${i}` } },
-      String(i).padStart(20, '0'));
+      String(BigInt(i) * 6000000000n).padStart(20, '0'));
   }
   const res = readBashConsole(root, 'agent1', '');
   assert.strictEqual(res.records.length, PULL_MAX_RECORDS, 'the reply is capped');
@@ -357,6 +357,50 @@ test('the cursor never moves backwards when a tie group is re-served', () => {
   const res = readBashConsole(root, 'agent1', cursor);
   assert.strictEqual(res.records.length, 2, 'ENTER: the whole tie group really was re-served');
   assert.strictEqual(res.cursor, cursor, 'but the cursor held its high-water mark');
+});
+
+test('a record stamped behind the cursor but landing after it is still served', () => {
+  const root = tmp();
+  const dir = spoolDir(root, 'alpha');
+  fs.writeFileSync(path.join(dir, '1730000000000000200-11.json'),
+    JSON.stringify({ ...OK_PAYLOAD, tool_input: { command: 'B' } }));
+  const first = readBashConsole(root, 'alpha', '');
+  assert.deepStrictEqual(first.records.map((r) => r.command), ['B'], 'ENTER: B was served first');
+  assert.strictEqual(first.cursor, '1730000000000000200-11.json');
+
+  fs.writeFileSync(path.join(dir, '1730000000000000100-10.json'),
+    JSON.stringify({ ...FAIL_PAYLOAD, tool_input: { command: 'A' } }));
+  const second = readBashConsole(root, 'alpha', first.cursor);
+  assert.deepStrictEqual(second.records.map((r) => r.command), ['A', 'B'],
+    'A took its stamp before B but renamed after the cursor moved to B');
+  assert.strictEqual(second.cursor, first.cursor, 'and the cursor does not move back to A');
+});
+
+test('a record older than the lookback window is not re-served', () => {
+  const root = tmp();
+  const dir = spoolDir(root, 'alpha');
+  fs.writeFileSync(path.join(dir, '1730000000000000000-10.json'),
+    JSON.stringify({ ...OK_PAYLOAD, tool_input: { command: 'old' } }));
+  fs.writeFileSync(path.join(dir, '1730000004999999999-11.json'),
+    JSON.stringify({ ...OK_PAYLOAD, tool_input: { command: 'inside' } }));
+  fs.writeFileSync(path.join(dir, '1730000005000000001-12.json'),
+    JSON.stringify({ ...OK_PAYLOAD, tool_input: { command: 'cursor' } }));
+  const res = readBashConsole(root, 'alpha', '1730000005000000001-12.json');
+  assert.deepStrictEqual(res.records.map((r) => r.command), ['inside', 'cursor']);
+});
+
+test('records the window re-serves past the per-pull cap are not reported as a gap', () => {
+  const root = tmp();
+  const total = PULL_MAX_RECORDS + 20;
+  for (let i = 0; i < total; i++) {
+    writeRecord(root, 'agent1', { ...OK_PAYLOAD, tool_input: { command: `echo ${i}` } },
+      String(1730000000000000000n + BigInt(i)));
+  }
+  const first = readBashConsole(root, 'agent1', '');
+  assert.strictEqual(first.skipped, 20, 'ENTER: the first pull really dropped 20');
+  const idle = readBashConsole(root, 'agent1', first.cursor);
+  assert.strictEqual(idle.records.length, PULL_MAX_RECORDS, 'ENTER: the window refilled the cap');
+  assert.strictEqual(idle.skipped, 0, 'nothing newer than the cursor was dropped');
 });
 
 // The writer names the files and the ipc-handlers validator decides which

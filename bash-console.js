@@ -7,6 +7,7 @@ const { pathFor } = require('./clodex-paths');
 const CONSOLE_MAX_RECORDS = 2000;
 const RECORD_MAX_BYTES = 256 * 1024;
 const PULL_MAX_RECORDS = 50;
+const LOOKBACK_NS = 5000000000n;
 const BG_MAX_BYTES = 30000;
 
 const RECORD_NAME_RE = /^[0-9]{1,32}-[0-9]{1,16}\.json$/;
@@ -171,16 +172,18 @@ function readBashConsole(root, name, cursor) {
   if (files === null) return { records: [], cursor: '', reset: !!cursor, skipped: 0, live: false };
 
   const since = typeof cursor === 'string' ? cursor : '';
-  const sinceStamp = since ? stampOf(since) : '';
+  const sinceStamp = since ? BigInt(stampOf(since)) : 0n;
+  const floor = sinceStamp - LOOKBACK_NS;
   let fresh = since
-    ? files.filter((f) => stampOf(f) >= sinceStamp)
+    ? files.filter((f) => BigInt(stampOf(f)) >= floor)
     : files;
 
   const reset = !!since && files.length > 0 && !files.includes(since);
 
   let skipped = 0;
   if (fresh.length > PULL_MAX_RECORDS) {
-    skipped = fresh.length - PULL_MAX_RECORDS;
+    const dropped = fresh.slice(0, fresh.length - PULL_MAX_RECORDS);
+    skipped = since ? dropped.filter((f) => BigInt(stampOf(f)) >= sinceStamp).length : dropped.length;
     fresh = fresh.slice(-PULL_MAX_RECORDS);
   }
 
