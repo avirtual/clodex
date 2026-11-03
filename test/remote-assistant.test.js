@@ -182,6 +182,21 @@ test('send with await: arms at the write and answers the turn, or queued on null
   assert.deepStrictEqual(z.awaitCalls, []);
 });
 
+test('send with await to a pty seat: delivered with no onWrite and answered queued; await 0 stays a plain ok', async () => {
+  const rows = [
+    { seat: { name: 'pty-1', agentType: 'claude', io: 'pty' }, awaitMs: 5000, want: { ok: true, queued: true } },
+    { seat: { name: 'pty-1', agentType: 'claude', io: 'pty' }, awaitMs: 0, want: { ok: true } },
+    { seat: { name: 'pty-1', agentType: 'claude' }, awaitMs: 5000, want: { ok: true, queued: true } },
+  ];
+  for (const { seat, awaitMs, want } of rows) {
+    const h = makeDeps({ sessions: { 'pty-1': seat }, turn: { text: 'x', intents: [] } });
+    assert.deepStrictEqual(await captureOptions(h.deps).send('pty-1', 'yo', [], 'avh', awaitMs), want, `io=${seat.io} awaitMs=${awaitMs}`);
+    assert.strictEqual(h.deliverCalls.length, 1, 'ENTER: delivered once');
+    assert.strictEqual(h.deliverCalls[0].args[5], undefined);
+    assert.deepStrictEqual(h.awaitCalls, []);
+  }
+});
+
 test('send with await: a dm never written answers queued at the deadline instead of hanging', async (t) => {
   const { mock } = require('node:test');
   const h = makeDeps({ sessions: { 'avh-7': { name: 'avh-7', agentType: 'claude', io: 'stream' } }, turn: { text: 'x', intents: [] } });
