@@ -23,6 +23,8 @@
 
 const fs = require('fs');
 const path = require('path');
+const { isQualifiedSender, isRelayEnvelope } = require('./relay-protocol');
+const { SYSTEM_SENDERS } = require('./system-senders');
 
 const ORIGIN_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 
@@ -31,6 +33,23 @@ const ORIGIN_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 // the root). Everything downstream trusts this gate.
 function validOrigin(origin) {
   return typeof origin === 'string' && ORIGIN_RE.test(origin) && origin !== '.' && origin !== '..';
+}
+
+const CLAIM_REF_RE = /^[A-Za-z0-9._-]{1,48}$/;
+
+function claimedSenderFault(from) {
+  if (typeof from !== 'string' || !ORIGIN_RE.test(from)) return 'bad sender name';
+  if (SYSTEM_SENDERS.has(from)) return 'system sender name';
+  return null;
+}
+
+function claimedRecordFault(m) {
+  if (!m || typeof m !== 'object') return 'not an object';
+  if (typeof m.to !== 'string' || !ORIGIN_RE.test(m.to)) return 'bad recipient name';
+  if (typeof m.body !== 'string') return 'bad body';
+  if (m.ref != null && (typeof m.ref !== 'string' || !CLAIM_REF_RE.test(m.ref))) return 'bad ref';
+  if (isRelayEnvelope(m)) return isQualifiedSender(m.from) ? null : 'bad relay sender';
+  return claimedSenderFault(m.from);
 }
 
 function originDir(root, origin) { return path.join(root, origin); }
@@ -105,7 +124,7 @@ function claimOutbox(root, origin) {
   for (const f of files.filter((f) => f.endsWith('.json') && !f.startsWith('.')).sort()) {
     try {
       const obj = JSON.parse(fs.readFileSync(path.join(claim, f), 'utf8'));
-      if (obj && typeof obj.to === 'string') {
+      if (!claimedRecordFault(obj)) {
         out.push({
           from: obj.from || '', to: obj.to, body: obj.body || '', urgent: !!obj.urgent, ts: obj.ts || 0,
           // Carry the relay envelope fields back out (see enqueueOutbox) — only
@@ -175,4 +194,5 @@ module.exports = {
   enqueueOutbox, claimOutbox, outboxHasOrigin, listOutboxOrigins,
   markOutboxOrigin, outboxKnowsOrigin,
   validOrigin, ORIGIN_RE,
+  claimedRecordFault, claimedSenderFault, CLAIM_REF_RE,
 };

@@ -142,6 +142,7 @@ const {
 } = require('./relay-protocol');
 const { formatTeamBlock, matchSeatRole, formatRoster, formatCompositionDelta } = require('./team-manifest');
 const { SYSTEM_SENDERS } = require('./system-senders');
+const { claimedRecordFault } = require('./peer-outbox');
 const { defuseSenderLines, defangTeammateTag } = require('./review-gate');
 
 const SCRATCH_CLONE_CEILING_MS = 45 * 60 * 1000;
@@ -8858,9 +8859,13 @@ function createSessionManager(deps) {
         || peerOriginSuffix({ label: peerLabel, id: peerId }, AGENT_NAME_RE)
         || String(peerId);
       for (const m of (Array.isArray(messages) ? messages : [])) {
-        if (!m || typeof m.to !== 'string') continue;
+        const fault = claimedRecordFault(m);
+        if (fault) {
+          log.warn('peer', `claimed dm from peer ${peerId} dropped — ${fault}`);
+          continue;
+        }
         if (isRelayEnvelope(m)) { this._relayClaimedDm(peerId, peerLabel, cfg, m, origin); continue; }
-        const senderTag = `${m.from || 'peer'}@${origin}`;
+        const senderTag = `${m.from}@${origin}`;
         const refKey = typeof m.ref === 'string' && m.ref ? `c\n${peerId}\n${m.from}\n${m.ref}` : null;
         const answer = (text) => this._sendToFederatedTarget('board', `${m.from}@${origin}`, `[agent:task] ${text}`, false, {});
         const answerTeam = (text) => this._sendToFederatedTarget('board', `${m.from}@${origin}`, `[agent:team] ${text}`, false, {});
@@ -8933,7 +8938,11 @@ function createSessionManager(deps) {
         .map((e) => e.n);
       for (const note of ordered) {
         if (!note || typeof note.body !== 'string') continue;
-        const from = `${note.from || 'peer'}@${origin}`;
+        if (typeof note.from !== 'string' || !AGENT_NAME_RE.test(note.from)) {
+          log.warn('peer', `claimed note from peer ${peerId} dropped — bad sender name`);
+          continue;
+        }
+        const from = `${note.from}@${origin}`;
         let rec;
         try {
           rec = store.add({
@@ -9020,6 +9029,13 @@ function createSessionManager(deps) {
     }
 
     _buildDeliveryText(target, senderName, body, mtype, tag = '') {
+      if (!SYSTEM_SENDERS.has(senderName)) {
+        const at = typeof senderName === 'string' ? senderName.indexOf('@') : -1;
+        const ok = typeof senderName === 'string' && (at < 0
+          ? AGENT_NAME_RE.test(senderName)
+          : AGENT_NAME_RE.test(senderName.slice(0, at)) && AGENT_NAME_RE.test(senderName.slice(at + 1)));
+        if (!ok) senderName = 'peer';
+      }
       const prefix = `[agent:from ${senderName}]`;
 
       // The marker is parenthesized and never at column 1 so IntentScanner cannot read it as an
