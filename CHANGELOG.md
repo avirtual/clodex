@@ -12,7 +12,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — Security: log-mask masks every secret-named URL query parameter, Edit tab writes through the vetted inode; memory id trim, dm await on pty seats, board cost breakdown
 
 - **Security: inside a URL, every secret-named query parameter (`client_secret`, `passwd`, `auth`, `x_token`, …) is masked to the next `&`, not just the seven spellings 5.157.0 listed.** A quoted value with a comma tail (`?client_secret="v"a,b`) left `,b` in the log for any name outside that list.
 - **Security: the Edit tab writes through the file it vetted.** The save re-opened the vetted path by name, so a symlink swapped in between the check and the write could land the content on a file outside the seat's directory; the write now goes through one descriptor whose inode must match the vetted one, and a mismatch is refused with "File changed under the editor — reload and retry".
