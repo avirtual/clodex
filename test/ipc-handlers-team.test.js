@@ -533,6 +533,30 @@ test('deleting a team whose `sandbox up` box left a pointer removes that box, th
   } finally { d.cleanup(); }
 });
 
+for (const boxId of ['sandbox', 'team-other']) {
+  test(`a pointer naming a box that is not team-<name> (${boxId}) is not trusted: no box is removed`, async () => {
+    const calls = [];
+    const probed = [];
+    const d = mkDeleteDoor({
+      files: { 'sandbox.json': JSON.stringify({ boxId, token: 'x' }) },
+      sandboxManager: {
+        get: (id) => { probed.push(id); return null; },
+        remove: async (id) => { calls.push(id); return { ok: true }; },
+      },
+    });
+    try {
+      assert.ok(d.exists(), 'ENTER: the pointer dir exists');
+      const check = d.deleteCheck('t');
+      assert.strictEqual(check.loaded, true);
+      assert.strictEqual(check.sandboxed, false);
+      assert.strictEqual(check.boxId, undefined);
+      assert.deepStrictEqual(probed, ['team-t'], 'the manager probe still runs');
+      assert.deepStrictEqual(await d.del(), { ok: true });
+      assert.deepStrictEqual(calls, []);
+    } finally { d.cleanup(); }
+  });
+}
+
 test('deleting a team whose box the sandbox manager still knows removes it even with no pointer file', async () => {
   const calls = [];
   const d = mkDeleteDoor({ sandboxManager: {

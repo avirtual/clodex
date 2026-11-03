@@ -18,7 +18,7 @@ function createTeamDelete({ loadManifest, deleteTeam, getManager, getSandboxMana
 
   function raisedBox(name) {
     const fromPointer = pointerBoxId(name);
-    if (fromPointer) return fromPointer;
+    if (fromPointer === `team-${name}`) return fromPointer;
     const mgr = getSandboxManager ? getSandboxManager() : null;
     if (!mgr || typeof mgr.get !== 'function') return null;
     try {
