@@ -642,6 +642,15 @@ function createPluginLoader(deps) {
       if (live) {
         const movedDir = live.dir !== rec.dir;
         const movedVersion = (live.version || null) !== (rec.manifest.version || null);
+        const contentOnly = !rec.enginePath && !rec.rendererPath && !movedDir && !restartRequired.has(rec.id);
+        if (movedVersion && contentOnly && !rec.bundleUnreadable && typeof pluginHost.updateBundle === 'function') {
+          try {
+            pluginHost.updateBundle(rec.id, rec.skills, rec.agents, rec.prompts, rec.templates);
+            if (typeof pluginHost.updateManifest === 'function') pluginHost.updateManifest(rec.id, rec.manifest);
+            live.version = rec.manifest.version || null;
+          } catch {}
+          continue;
+        }
         if (!movedDir && !movedVersion && !rec.bundleUnreadable && !restartRequired.has(rec.id)
             && typeof pluginHost.updateBundle === 'function') {
           try {

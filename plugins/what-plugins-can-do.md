@@ -65,11 +65,18 @@ JavaScript regardless, so scoping the CSS would buy tidiness rather than safety.
 The practical advice is to keep your selectors under your own class names so two
 plugins don't collide.
 
-**Its own settings, and only its own.** Each plugin gets a namespace in the
-user's settings file and a private JSON file of its own. It cannot read another
-plugin's settings and cannot reach Clodex's real stores — `sessions.json`,
-workspaces, peers, teams, the library are all off-limits by construction. A
-buggy plugin cannot corrupt your sessions because it cannot find them.
+**Its own settings, and the files it opens.** Each plugin gets a namespace in
+the user's settings file and a private data directory of its own, and the host
+API hands it no handle to another plugin's settings or to Clodex's stores —
+`sessions.json`, workspaces, peers, teams, tickets, the library. That is a
+contract, not a containment boundary: an engine half is in-process Node with
+`require('fs')` and the app's full authority, and the boundary lint only refuses
+a `require` that leaves the plugin's directory, not a file path. Several shipped
+plugins open core files directly: `reminders-viewer` and `intent-misfires` read
+from the app's data directory beside `sessions.json`, `tickets-viewer` reads
+`~/.clodex/teams/` and rewrites the boards' `tickets.json`, and `memory-viewer`
+reads `~/.clodex/library/memory`. Install a third-party plugin only if you
+would run its code (see `plugin-api.md` §12).
 
 **What a session receives as input.** A plugin can type into a running agent
 (§3.3 below). That is the sharpest thing in the API.

@@ -293,7 +293,11 @@ test('t679: the rescan refresh stays behind the version/moved gate', () => {
   // version arm is the one a fixture can drive honestly: `loadedFrom` is per
   // loader, so a second loader over a second root never reaches the gate at all
   // — it sees the id as not-running and takes the load path instead.
-  const root = mkTree('clodex-t679-h-', { rev: PACK });
+  const ENGINE_MANIFEST = { ...PACK.manifest, entry: { engine: 'engine.js' } };
+  const root = mkTree('clodex-t679-h-', { rev: {
+    manifest: ENGINE_MANIFEST,
+    files: { ...PACK.files, 'engine.js': 'module.exports = { activate() {} };' },
+  } });
   const engine = mkEngine();
   const { loader } = mkLoader([{ id: 'user', dir: root, label: 'Yours' }]);
   loader.loadAll(engine);
@@ -310,7 +314,7 @@ test('t679: the rescan refresh stays behind the version/moved gate', () => {
   // engine half is NOT the one in the require cache.
   fs.writeFileSync(path.join(root, 'rev', 'prompts', 'system', 'strict.md'), 'FROM v2\n');
   fs.writeFileSync(path.join(root, 'rev', 'manifest.json'),
-    JSON.stringify({ ...PACK.manifest, version: '2.0.0' }));
+    JSON.stringify({ ...ENGINE_MANIFEST, version: '2.0.0' }));
 
   const r = loader.rescan(engine);
   assert.deepStrictEqual(r.changed, ['rev'],
