@@ -871,6 +871,50 @@ test('applyUpdate on a BUNDLE-ONLY plugin does NOT set restartRequired (t683 r3 
   assert.deepStrictEqual(again.changed, [], 'a second rescan does not re-report the already-refreshed version');
 });
 
+async function activeBundleOnly() {
+  const { loader } = mkSourceLoader({ script: [{ bytes: buildBundleOnlyTarballBytes('abc1234', 'demo', 'v1 skill') }] });
+  await loader.installFromSource('owner/repo@main');
+  loader.setEnabledInSettings('demo', true);
+  const pluginHost = fakePluginHost();
+  assert.strictEqual(loader.activateById('demo', pluginHost).ok, true, 'ENTER: the bundle-only plugin activates');
+  const dir = loader.discover().find((r) => r.id === 'demo').dir;
+  return { loader, pluginHost, dir };
+}
+
+test('a version bump on a bundle-only plugin that ships a stylesheet sets restartRequired', async () => {
+  const { loader, pluginHost, dir } = await activeBundleOnly();
+  fs.writeFileSync(path.join(dir, 'style.css'), '.demo { color: red; }');
+  fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({
+    id: 'demo', name: 'demo plugin', version: '1.1.0', hostApi: HOST_API_VERSION, entry: {}, style: 'style.css',
+  }));
+  const r = loader.rescan(pluginHost);
+  assert.deepStrictEqual(r.changed, ['demo']);
+  assert.deepStrictEqual(pluginHost.updateBundleCalls, []);
+  assert.deepStrictEqual(loader.status().plugins.find((p) => p.id === 'demo').restartRequired,
+    { was: '1.0.0', now: '1.1.0', dirChanged: false });
+});
+
+test('a bundle-only version bump seen while the bundle is unreadable waits, then refreshes in place once it reads', async () => {
+  const { loader, pluginHost, dir } = await activeBundleOnly();
+  const skill = path.join(dir, 'skills', 'note', 'SKILL.md');
+  fs.renameSync(skill, `${skill}.aside`);
+  fs.mkdirSync(skill);
+  fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify({
+    id: 'demo', name: 'demo plugin', version: '1.1.0', hostApi: HOST_API_VERSION, entry: {},
+  }));
+  assert.strictEqual(loader.discover().find((r) => r.id === 'demo').bundleUnreadable, true, 'ENTER: the bundle reads as unreadable');
+  const first = loader.rescan(pluginHost);
+  assert.deepStrictEqual(first.changed, []);
+  assert.deepStrictEqual(pluginHost.updateBundleCalls, []);
+  assert.ok(!loader.status().plugins.find((p) => p.id === 'demo').restartRequired);
+  fs.rmdirSync(skill);
+  fs.renameSync(`${skill}.aside`, skill);
+  const second = loader.rescan(pluginHost);
+  assert.deepStrictEqual(second.changed, []);
+  assert.deepStrictEqual(pluginHost.updateBundleCalls.map((c) => c[0]), ['demo']);
+  assert.ok(!loader.status().plugins.find((p) => p.id === 'demo').restartRequired);
+});
+
 test('a version bump on a plugin WITH an engine still sets restartRequired', async () => {
   const { loader } = mkSourceLoader({ script: [{ bytes: buildTarballBytes('abc1234', 'demo') }] });
   await loader.installFromSource('owner/repo@main');
@@ -1173,9 +1217,12 @@ test('applyUpdate on a drifted tree keeps the edited copy aside and names it', a
   const { loader, userDir } = mkSourceLoader({ script: [{ bytes: installBytes }, { bytes: updateBytes }] });
   await loader.installFromSource('owner/repo@main');
   fs.writeFileSync(path.join(userDir, 'demo', 'engine.js'), `${engineFile} // mine`);
+  const longAgo = (Date.now() - 2 * 60 * 60 * 1000) / 1000;
+  fs.utimesSync(path.join(userDir, 'demo'), longAgo, longAgo);
   const r = await loader.applyUpdate('demo', 'def5678');
   assert.strictEqual(r.ok, true, JSON.stringify(r));
   assert.match(String(r.kept), /\.old-demo-/);
+  assert.ok(Date.now() - fs.statSync(r.kept).mtimeMs < 60 * 1000, 'the kept aside carries a fresh mtime, not the tree\'s old one');
   assert.strictEqual(path.dirname(r.kept), userDir);
   assert.strictEqual(fs.readFileSync(path.join(r.kept, 'engine.js'), 'utf8'), `${engineFile} // mine`);
   assert.strictEqual(fs.readFileSync(path.join(userDir, 'demo', 'engine.js'), 'utf8'), `${engineFile};`);
