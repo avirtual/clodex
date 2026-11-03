@@ -495,7 +495,7 @@ async function doRetire(payload) {
     die(`no live registration for "${target}" — not running (already retired?)`);
   }
   try {
-    await sendEnvelope(info.socket, { from: process.env.CLODEX_SEAT || payload.agent, body: '', type: 'team-retire' });
+    await sendEnvelope(info.socket, { from: payload.agent, body: '', type: 'team-retire' });
   } catch (e) {
     die(`could not reach "${target}" socket: ${e.message}`);
   }
