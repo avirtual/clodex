@@ -228,6 +228,14 @@ function existsIn(measure, rel) {
   }
 }
 
+function isPoolDir(rel) {
+  return rel.split('/').every((seg) => seg !== 'node_modules' && !seg.startsWith('.') && !/fixture/i.test(seg));
+}
+
+function isPoolPath(rel) {
+  return rel.endsWith('.test.js') && isPoolDir(path.posix.dirname(rel));
+}
+
 function testPool(measure) {
   const found = [];
   const walk = (rel) => {
@@ -240,8 +248,8 @@ function testPool(measure) {
     for (const e of ents) {
       const child = `${rel}/${e.name}`;
       if (e.isDirectory()) {
-        if (!/fixture/i.test(e.name)) walk(child);
-      } else if (e.name.endsWith('.test.js')) found.push(child);
+        if (isPoolDir(child)) walk(child);
+      } else if (isPoolPath(child)) found.push(child);
     }
   };
   for (const r of TEST_ROOTS) walk(r);
@@ -292,8 +300,8 @@ function selectSet(measure) {
     );
   }
   const live = touched.filter((p) => existsIn(measure, p));
-  const changed = live.filter((p) => p.endsWith('.test.js')).sort();
-  const sources = live.filter((p) => !p.endsWith('.test.js'));
+  const changed = live.filter((p) => isPoolPath(p)).sort();
+  const sources = live.filter((p) => !isPoolPath(p));
   const seen = new Set(changed);
   const matchers = subjectMatchers(sources);
   const bySubject = [];
