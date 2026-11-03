@@ -1510,6 +1510,58 @@ test('removeRole removes a normal role, refuses lead + reviewer (C1), throws on 
   assert.throws(() => tm.removeRole('shop', 'ghost'), /not found on team "shop"/);
 });
 
+function failRosterWrites(fn) {
+  const real = fs.openSync;
+  fs.openSync = function (file, ...rest) {
+    if (/\.roster\.json\.tmp\./.test(path.basename(String(file)))) throw new Error('EIO: roster write');
+    return real.call(this, file, ...rest);
+  };
+  try { return fn(); } finally { fs.openSync = real; }
+}
+
+function teamWithRunnerSeat() {
+  const home = mkHome();
+  const root = mkTmpRoot('proj-');
+  const tm = createTeamManifest({ fs, clodexHome: home });
+  tm.createTeam({ name: 'shop', root, lead: 'clodex' });
+  tm.addRole('shop', 'runner', { prompt: 'r' });
+  const dir = path.join(home, 'teams', 'shop');
+  fs.writeFileSync(path.join(dir, 'roster.json'), JSON.stringify({ version: 1, seats: [
+    { seat: 'shop-runner-1', role: 'runner', since: 1, by: 'test' },
+  ] }));
+  return { tm, dir, teamJson: () => fs.readFileSync(path.join(dir, 'team.json'), 'utf-8') };
+}
+
+test('removeRole whose roster write fails leaves team.json untouched, so the roster still loads', () => {
+  const t = teamWithRunnerSeat();
+  const before = t.teamJson();
+  assert.ok(JSON.parse(before).roles.runner, 'ENTER: the role is on disk');
+  assert.throws(() => failRosterWrites(() => t.tm.removeRole('shop', 'runner')), /EIO: roster write/);
+  assert.strictEqual(t.teamJson(), before);
+  assert.deepStrictEqual(t.tm.loadManifest('shop').roster.map((r) => r.seat), ['shop-runner-1']);
+});
+
+test('renameRole whose roster write fails leaves team.json untouched, so the roster still loads', () => {
+  const t = teamWithRunnerSeat();
+  const before = t.teamJson();
+  assert.throws(() => failRosterWrites(() => t.tm.renameRole('shop', 'runner', 'walker')), /EIO: roster write/);
+  assert.strictEqual(t.teamJson(), before);
+  assert.deepStrictEqual(t.tm.loadManifest('shop').roster.map((r) => [r.seat, r.role]), [['shop-runner-1', 'runner']]);
+});
+
+test('renameRole whose team.json write fails puts the roster rows back on the old role', () => {
+  const t = teamWithRunnerSeat();
+  const real = fs.openSync;
+  fs.openSync = function (file, ...rest) {
+    if (/\.team\.json\.tmp\./.test(path.basename(String(file)))) throw new Error('EIO: team write');
+    return real.call(this, file, ...rest);
+  };
+  try {
+    assert.throws(() => t.tm.renameRole('shop', 'runner', 'walker'), /EIO: team write/);
+  } finally { fs.openSync = real; }
+  assert.deepStrictEqual(t.tm.loadManifest('shop').roster.map((r) => [r.seat, r.role]), [['shop-runner-1', 'runner']]);
+});
+
 // --- t421: the operator may drop `reviewer`, and get it back ---------------
 //
 // The two halves are ONE decision: removal without a re-mint strands a team

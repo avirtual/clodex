@@ -249,6 +249,7 @@ test('t1104: team:addRole with no account logs the role line with the literal "a
 function mkDeleteDoor({
   manifest = 'ok', sessions = [], tickets = [], persisted = [],
   sandboxed = false, removeResult = { ok: true }, sandboxManager, refreshThrows = false, files = {},
+  withListTeams = false,
 } = {}) {
   const home = mkTmpRoot('ipc-del-home-');
   const root = mkTmpRoot('ipc-del-root-');
@@ -270,7 +271,8 @@ function mkDeleteDoor({
   const { createTicketMethods } = require('../team-tickets');
   const methods = createTicketMethods(
     { fs, os, path, log: { info() {}, error() {}, warn() {} },
-      getPersistence: () => ({ list: () => persisted }), resolveTeam: tm.resolveTeam },
+      getPersistence: () => ({ list: () => persisted }), resolveTeam: tm.resolveTeam,
+      ...(withListTeams ? { listTeams: tm.listTeams } : {}) },
     { ticketsStore: tstore, nameConflict: () => null, SPEC_CONFIRM_MS: 1000 },
   );
   const manager = {
@@ -305,7 +307,7 @@ function mkDeleteDoor({
     skillLibrary: { save: (name) => [name] },
   });
   return {
-    root, dir, manager, refreshed, calls, sandboxManager: mgr, handlers, deleteCheck,
+    root, dir, home, tm, manager, refreshed, calls, sandboxManager: mgr, handlers, deleteCheck,
     check: () => handlers.get('team:deleteCheck')(null, 't'),
     del: () => handlers.get('team:delete')(null, 't'),
     exists: () => fs.existsSync(dir),
@@ -512,6 +514,71 @@ test('t863: sandboxes disabled on this host refuses a sandboxed delete and keeps
     assert.match(res.error, /disabled/);
     assert.match(res.error, /team-t/, 'and names the box that would have been left behind');
     assert.ok(d.exists(), 'the pointer dir stays');
+  } finally { d.cleanup(); }
+});
+
+test('deleting a team whose `sandbox up` box left a pointer removes that box, though team.json never said sandboxed', async () => {
+  const d = mkDeleteDoor({ files: { 'sandbox.json': JSON.stringify({ boxId: 'team-t', token: 'x' }) } });
+  try {
+    const check = d.deleteCheck('t');
+    assert.strictEqual(check.loaded, true, 'ENTER: the manifest loads');
+    assert.strictEqual(check.sandboxed, true);
+    assert.strictEqual(check.boxId, 'team-t');
+    assert.strictEqual(check.raised, true);
+    const res = await d.del();
+    assert.deepStrictEqual(res, { ok: true, box: { id: 'team-t', removed: true, downError: undefined } });
+    assert.deepStrictEqual(d.calls, ['team-t']);
+    assert.ok(!d.exists());
+  } finally { d.cleanup(); }
+});
+
+test('deleting a team whose box the sandbox manager still knows removes it even with no pointer file', async () => {
+  const calls = [];
+  const d = mkDeleteDoor({ sandboxManager: {
+    get: (id) => (id === 'team-t' ? { id } : null),
+    remove: async (id) => { calls.push(id); return { ok: true }; },
+  } });
+  try {
+    const check = d.deleteCheck('t');
+    assert.strictEqual(check.loaded, true);
+    assert.strictEqual(check.boxId, 'team-t');
+    assert.strictEqual((await d.del()).ok, true);
+    assert.deepStrictEqual(calls, ['team-t']);
+  } finally { d.cleanup(); }
+});
+
+test('a loaded plain team with no pointer and no live box stays a plain delete', async () => {
+  const calls = [];
+  const d = mkDeleteDoor({ sandboxManager: {
+    get: () => null,
+    remove: async (id) => { calls.push(id); return { ok: true }; },
+  } });
+  try {
+    const check = d.deleteCheck('t');
+    assert.strictEqual(check.sandboxed, false);
+    assert.strictEqual(check.boxId, undefined);
+    assert.strictEqual(check.raised, undefined);
+    assert.deepStrictEqual(await d.del(), { ok: true });
+    assert.deepStrictEqual(calls, []);
+  } finally { d.cleanup(); }
+});
+
+test('on a shared root the in-use gate counts only the team\'s own tickets', async () => {
+  const d = mkDeleteDoor({
+    withListTeams: true,
+    tickets: [{ id: 't1', assignee: 'hand', state: 'open', team: 'other' }],
+  });
+  try {
+    const otherDir = path.join(d.home, 'teams', 'other');
+    fs.mkdirSync(path.join(otherDir, 'prompts'), { recursive: true });
+    fs.writeFileSync(path.join(otherDir, 'prompts', 'lead.md'), '# lead');
+    fs.writeFileSync(path.join(otherDir, 'team.json'), JSON.stringify({ root: d.root, lead: 'o', roles: { lead: {}, hand: {} } }));
+    assert.deepStrictEqual(d.manager._teamInUse(d.tm.loadManifest('other')).tickets, ['t1'],
+      'ENTER: the other team still sees its own open ticket');
+    assert.deepStrictEqual(d.check().tickets, []);
+    const res = await d.del();
+    assert.strictEqual(res.ok, true, JSON.stringify(res));
+    assert.ok(!d.exists());
   } finally { d.cleanup(); }
 });
 

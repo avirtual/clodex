@@ -1441,8 +1441,8 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
       dropStash(raw, roleName);
     }
     if (raw.roles) delete raw.roles[roleName];
-    atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
     rewriteRosterRows(teamName, (rows) => rows.filter((r) => !(r && r.role === roleName)));
+    atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
     return loadManifest(teamName);
   }
 
@@ -1488,6 +1488,7 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
       }
     }
     const moved = [];
+    let rosterRenamed = false;
     try {
       for (const mv of owned) {
         fs.renameSync(mv.from, mv.to);
@@ -1496,9 +1497,13 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
       }
       raw.roles[toName] = def;
       delete raw.roles[fromName];
-      atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
       rewriteRosterRows(teamName, (rows) => rows.map((r) => (r && r.role === fromName ? { ...r, role: toName } : r)));
+      rosterRenamed = true;
+      atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
     } catch (err) {
+      if (rosterRenamed) {
+        try { rewriteRosterRows(teamName, (rows) => rows.map((r) => (r && r.role === toName ? { ...r, role: fromName } : r))); } catch {}
+      }
       for (const mv of moved.reverse()) {
         try { fs.renameSync(mv.to, mv.from); } catch {}
       }

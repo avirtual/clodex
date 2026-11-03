@@ -785,8 +785,9 @@ function createTicketMethods(deps, shared) {
         if (matchSeatRole(team, s.name) !== null) seats.add(s.name);
       }
       const tickets = [];
+      const own = this._ownRowFilter(team);
       for (const tk of ticketsStore.load(team.root)) {
-        if (!tk || tk.state === 'cancelled') continue;
+        if (!tk || tk.state === 'cancelled' || !own(tk)) continue;
         if (tk.state !== 'done'
           || tk.loopStep || tk.mergeWaiting || (!tk.closedOut && tk.worktree && tk.worktree.branch)) tickets.push(tk.id);
       }

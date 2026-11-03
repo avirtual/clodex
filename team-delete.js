@@ -16,6 +16,18 @@ function createTeamDelete({ loadManifest, deleteTeam, getManager, getSandboxMana
     }
   }
 
+  function raisedBox(name) {
+    const fromPointer = pointerBoxId(name);
+    if (fromPointer) return fromPointer;
+    const mgr = getSandboxManager ? getSandboxManager() : null;
+    if (!mgr || typeof mgr.get !== 'function') return null;
+    try {
+      return mgr.get(`team-${name}`) ? `team-${name}` : null;
+    } catch {
+      return null;
+    }
+  }
+
   function deleteCheck(name) {
     let team;
     try {
@@ -25,7 +37,8 @@ function createTeamDelete({ loadManifest, deleteTeam, getManager, getSandboxMana
       return { ok: true, loaded: false, error: err.message, ...(boxId ? { sandboxed: true, boxId } : {}) };
     }
     const used = getManager()._teamInUse(team);
-    const sandboxed = team.sandboxed === true;
+    const raisedBoxId = team.sandboxed === true ? null : raisedBox(name);
+    const sandboxed = team.sandboxed === true || !!raisedBoxId;
     return {
       ok: true,
       loaded: true,
@@ -34,7 +47,8 @@ function createTeamDelete({ loadManifest, deleteTeam, getManager, getSandboxMana
       saved: used.saved,
       root: team.root,
       sandboxed,
-      ...(sandboxed ? { boxId: `team-${name}` } : {}),
+      ...(sandboxed ? { boxId: raisedBoxId || `team-${name}` } : {}),
+      ...(raisedBoxId ? { raised: true } : {}),
     };
   }
 
