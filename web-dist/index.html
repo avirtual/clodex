@@ -27776,6 +27776,11 @@ ${i3.join("\n")}
         "--config": 1,
         "-c": 1,
         "--full-auto": 0,
+        "--yolo": 0,
+        "--profile": 1,
+        "-p": 1,
+        "--sandbox-network": 1,
+        "--permission-profile": 1,
         "--allowedTools": Infinity,
         "--allowed-tools": Infinity,
         "--disallowedTools": Infinity,
@@ -27785,6 +27790,7 @@ ${i3.join("\n")}
       var PRIVILEGED_FLAG_ALIAS = {
         ...ADAPTERS.codex.readOnlyCap.shortFlags,
         "-c": "--config",
+        "-p": "--profile",
         "--allowed-tools": "--allowedTools",
         "--disallowed-tools": "--disallowedTools"
       };

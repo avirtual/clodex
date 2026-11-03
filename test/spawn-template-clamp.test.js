@@ -7,6 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
 const { teamTemplateSave } = require('../team-prompt-dir');
+const { splitPrivilegedArgs } = require('../cli-adapters');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const EXTRA_ARGS = 3;
@@ -186,6 +187,11 @@ const ESCALATION_ROWS = [
   { args: ['-c', 'sandbox_mode=danger-full-access'], flag: '--config' },
   { args: ['--config=sandbox_mode=danger-full-access'], flag: '--config' },
   { args: ['--full-auto'], flag: '--full-auto' },
+  { args: ['--yolo'], flag: '--yolo' },
+  { args: ['--profile', 'danger'], flag: '--profile' },
+  { args: ['-p', 'danger'], flag: '--profile' },
+  { args: ['--sandbox-network', 'enabled'], flag: '--sandbox-network' },
+  { args: ['--permission-profile', 'open'], flag: '--permission-profile' },
   { args: ['--allowedTools', 'Bash'], flag: '--allowedTools' },
   { args: ['--allowed-tools', 'Bash'], flag: '--allowedTools' },
   { args: ['--disallowedTools', 'Bash'], flag: '--disallowedTools' },
@@ -218,4 +224,10 @@ test('a short and a long form of the same flag and value match across spawner an
   await spawn(widened, widened.writeTpl({ extraArgs: ['-s', 'danger-full-access'] }));
   assert.deepStrictEqual([sandbox.calls.length, approval.calls.length, config.calls.length, tools.calls.length, widened.calls.length], [1, 1, 1, 1, 0]);
   assert.match(widened.replies[0], /carries --sandbox,/);
+});
+
+test('short, glued and alias forms split into pairs under the long name', () => {
+  const { pairs, kept } = splitPrivilegedArgs(['-s', 'read-only', '-anever', '-c', 'sandbox_mode=x', '-p', 'prof', '--allowed-tools', 'Read', '-m', 'o3']);
+  assert.deepStrictEqual(pairs, [['--sandbox', 'read-only'], ['--ask-for-approval', 'never'], ['--config', 'sandbox_mode=x'], ['--profile', 'prof'], ['--allowedTools', 'Read']]);
+  assert.deepStrictEqual(kept, ['-m', 'o3']);
 });

@@ -257,14 +257,15 @@ function stripModelArgs(type, extraArgs) {
 
 const PRIVILEGED_FLAG_ARITY = {
   '--settings': 1, '--permission-mode': 1, '--mcp-config': Infinity, '--add-dir': Infinity,
-  '--sandbox': 1, '-s': 1, '--ask-for-approval': 1, '-a': 1, '--config': 1, '-c': 1, '--full-auto': 0,
+  '--sandbox': 1, '-s': 1, '--ask-for-approval': 1, '-a': 1, '--config': 1, '-c': 1, '--full-auto': 0, '--yolo': 0,
+  '--profile': 1, '-p': 1, '--sandbox-network': 1, '--permission-profile': 1,
   '--allowedTools': Infinity, '--allowed-tools': Infinity, '--disallowedTools': Infinity, '--disallowed-tools': Infinity,
   ...Object.fromEntries(Object.values(ADAPTERS).flatMap((a) => a.posture.bypass.map((opt) => [opt[0], opt.length - 1]))),
 };
 
 const PRIVILEGED_FLAG_ALIAS = {
   ...ADAPTERS.codex.readOnlyCap.shortFlags,
-  '-c': '--config', '--allowed-tools': '--allowedTools', '--disallowed-tools': '--disallowedTools',
+  '-c': '--config', '-p': '--profile', '--allowed-tools': '--allowedTools', '--disallowed-tools': '--disallowedTools',
 };
 
 function privilegedFlagOf(tok) {
