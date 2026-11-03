@@ -34,7 +34,6 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync } = require('child_process');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const {
@@ -53,9 +52,7 @@ const BASE = '44430fd';
 function loadBaseModule(t) {
   const dir = mkTmpRoot('clodex-t619-base-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const src = execFileSync('git', ['show', `${BASE}:ctx-reminder.js`], {
-    cwd: path.join(__dirname, '..'), encoding: 'utf-8',
-  });
+  const src = fs.readFileSync(path.join(__dirname, 'fixtures', `ctx-reminder-${BASE}.js.txt`), 'utf-8');
   const file = path.join(dir, 'ctx-reminder-base.js');
   fs.writeFileSync(file, src);
   return require(file);

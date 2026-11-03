@@ -2504,17 +2504,20 @@ function createSessionManager(deps) {
       if (agentType === 'claude') {
         const ctxPath = pathFor(REGISTRY_DIR, name, 'ctx');
         let lastRaw = null;
+        let lastKey = null;
         const readCtx = () => {
           try {
             const raw = fs.readFileSync(ctxPath, 'utf-8').trim();
-            if (raw === lastRaw) return;
+            const fresh = raw !== lastRaw;
             lastRaw = raw;
             const c = parseCtxFile(raw);
             if (c.pct != null) {
-              this._sendToSession(name, 'session-ctx', name, c.pct, c.tok, c.size, c.cost, c.modelName);
-              session.ctxInfo = { pct: c.pct, tok: c.tok, size: c.size, cost: c.cost, modelName: c.modelName, model: c.model };
-              if (getRemoteServer()) {
-                try { getRemoteServer().pushTelemetry(name, { ctx: session.ctxInfo }); } catch {}
+              if (fresh) {
+                this._sendToSession(name, 'session-ctx', name, c.pct, c.tok, c.size, c.cost, c.modelName);
+                session.ctxInfo = { pct: c.pct, tok: c.tok, size: c.size, cost: c.cost, modelName: c.modelName, model: c.model };
+                if (getRemoteServer()) {
+                  try { getRemoteServer().pushTelemetry(name, { ctx: session.ctxInfo }); } catch {}
+                }
               }
               const warnPath = pathFor(REGISTRY_DIR, name, 'ctxwarn');
               // Gate on the CTX_THRESHOLD_MIN floor, not the shipped nudge: sanitizeThresholdPair drops rows below it, so this skips the
@@ -2524,6 +2527,9 @@ function createSessionManager(deps) {
                 try { ctxOverrides = getUiSettings().get().ctxReminderThresholds; } catch {}
               }
               const thresholds = ctxThresholdsFor(c.model, ctxOverrides);
+              const key = raw + '\u0000' + JSON.stringify(thresholds);
+              if (key === lastKey) return;
+              lastKey = key;
               let warn = ctxReminderFor(c.tok, thresholds);
               // Ephemeral seats are never nudged to compact (a compact costs the context their rework needs); a `stop` row asks for no compact, so it is exempt from this skip.
               // Read the record lazily and memoize only a returned one, so a failed read leaves the seat nudged rather than silenced.
@@ -5647,6 +5653,7 @@ function createSessionManager(deps) {
       const c = session.compacting;
       if (!c) return;
       session.compacting = null;
+      try { fs.rmSync(pathFor(REGISTRY_DIR, session.name, 'ctxwarn'), { force: true }); } catch {}
       const ms = Date.now() - c.since;
       if (outcome !== 'exit') {
         if (!session._compactNotices) session._compactNotices = [];
