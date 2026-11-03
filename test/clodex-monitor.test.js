@@ -427,3 +427,40 @@ test('restore: a killed watch listed before delivery is not reported live', asyn
   const listed = await launchMon(home, { action: 'list', agent: 'a' });
   assert.strictEqual(listed.err, 'no monitors running');
 });
+
+test('a timed-out target that traps SIGTERM is SIGKILLed before the watcher exits', async () => {
+  const home = mkTmpRoot('clodex-mon-');
+  fs.mkdirSync(path.join(home, 'run', 'a'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'run', 'a', 'agent.json'),
+    JSON.stringify({ socket: path.join(home, 'no-such.sock') }));
+  const markFile = path.join(home, 'mark');
+  const monDir = path.join(home, 'monitors', 'a');
+  const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  const until = async (cond, ms, what) => {
+    const end = Date.now() + ms;
+    while (!cond()) {
+      if (Date.now() > end) throw new Error(`${what} within ${ms}ms`);
+      await new Promise((r) => setImmediate(r));
+    }
+  };
+  process.env.CMON_KILL_GRACE_MS = '300';
+  let mark = 0;
+  try {
+    const r = await launchMon(home, {
+      action: 'start', agent: 'a', timeout_ms: 1000,
+      command: `trap "" TERM; echo $$ > ${JSON.stringify(markFile)}; while :; do sleep 0.2; done`,
+    });
+    assert.strictEqual(r.code, 0, `start must succeed: ${r.err}`);
+    const state = fs.readdirSync(monDir).find((f) => f.endsWith('.json'));
+    const watcher = JSON.parse(fs.readFileSync(path.join(monDir, state), 'utf-8')).pid;
+    await until(() => fs.existsSync(markFile) && fs.readFileSync(markFile, 'utf-8').trim(), 3000, 'ENTER: the target never wrote its pid');
+    mark = Number(fs.readFileSync(markFile, 'utf-8').trim());
+    assert.ok(alive(mark), 'ENTER: the target is running');
+    await until(() => !alive(watcher), 4000, 'the watcher did not exit');
+    await until(() => !alive(mark), 1000, `the TERM-trapping target ${mark} outlived its watcher`);
+  } finally {
+    delete process.env.CMON_KILL_GRACE_MS;
+    if (mark) { try { process.kill(-mark, 'SIGKILL'); } catch {} }
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});

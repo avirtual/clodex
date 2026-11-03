@@ -163,6 +163,13 @@ function lockNote(line) {
 // verification — skipping is the false green this whole check exists to prevent.
 const LOCK_WAIT_MS = Math.max(0, Number(process.env.CLODEX_TEST_LOCK_WAIT_MS) || 0);
 
+function readLockHolder(dir) {
+  let holder = null;
+  try { holder = Number(fs.readFileSync(path.join(dir, 'pid'), 'utf8').trim()) || null; } catch {}
+  if (!(holder > 0)) return { holder: null, alive: false };
+  try { process.kill(holder, 0); return { holder, alive: true }; } catch { return { holder, alive: false }; }
+}
+
 function acquireLock() {
   const deadline = Date.now() + LOCK_WAIT_MS;
   // The PARENT is created recursively (an override may name a dir that does not
@@ -200,12 +207,9 @@ function acquireLock() {
       try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {}
       if (e.code !== 'EEXIST' && e.code !== 'ENOTEMPTY') die(`could not take the suite lock: ${e.message}`);
     }
-    let holder = null;
-    try { holder = Number(fs.readFileSync(path.join(LOCK, 'pid'), 'utf8').trim()) || null; } catch {}
+    const { holder, alive } = readLockHolder(LOCK);
     // A killed runner never cleans up, so a lock naming a DEAD pid is stale and
     // reclaimed — without this the first crash wedges every later run forever.
-    let alive = false;
-    if (holder) { try { process.kill(holder, 0); alive = true; } catch {} }
     if (alive) {
       // Sleep SYNCHRONOUSLY: this runs before the suite spawns and the process
       // has nothing else to do, so a busy Atomics.wait costs nothing and keeps
@@ -226,7 +230,18 @@ function acquireLock() {
         + ` Parts of this suite bind real ports, so a second run deadlocks both;`
         + ` if it is wedged: kill ${holder} && rm -rf ${LOCK}`);
     }
-    try { fs.rmSync(LOCK, { recursive: true, force: true }); } catch {}
+    const stale = `${LOCK}.stale-${process.pid}`;
+    try { fs.rmSync(stale, { recursive: true, force: true }); } catch {}
+    try { fs.renameSync(LOCK, stale); } catch (e) {
+      if (e.code === 'ENOENT') continue;
+      die(`could not reclaim the stale suite lock: ${e.message}`);
+    }
+    const { holder: staleHolder, alive: staleAlive } = readLockHolder(stale);
+    if (staleHolder !== holder) {
+      try { fs.renameSync(stale, LOCK); continue; } catch {}
+      if (staleAlive) die(`could not return a live suite lock (pid ${staleHolder}) moved aside to ${stale}`);
+    }
+    try { fs.rmSync(stale, { recursive: true, force: true }); } catch {}
     if (++reclaims >= 2) die('could not take the suite lock after reclaiming a stale one');
   }
 }
