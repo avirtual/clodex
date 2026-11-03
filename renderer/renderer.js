@@ -7616,7 +7616,7 @@ async function renderPluginsDialog() {
           showPluginsRegisterNote(`Could not remove ${name}: ${(r && r.error) || 'unknown error'}`, 'warn');
           return;
         }
-        showPluginsRegisterNote(`Removed ${name}.`);
+        showPluginsRegisterNote(`Removed ${name}.${r.kept ? ` Your edited copy was kept at ${r.kept}.` : ''}`);
         if (pluginsSourceTarget === p.id) closePluginsSourceSection();
         await renderPluginsDialog();
       });
@@ -8082,7 +8082,7 @@ pluginsSourceInstallBtn.addEventListener('click', async () => {
       const rows = await renderPluginsDialog();
       const redrawn = rows.find((x) => x.id === r.id);
       const restart = redrawn && redrawn.restartRequired ? ' — restart Clodex to run the new code' : '';
-      showPluginsRegisterNote(`Updated ${name} to ${shortCommit(r.commit)}${restart}.`);
+      showPluginsRegisterNote(`Updated ${name} to ${shortCommit(r.commit)}${restart}.${r.kept ? ` Your edited copy was kept at ${r.kept}.` : ''}`);
       return;
     }
     closePluginsSourceSection();

@@ -3090,13 +3090,17 @@ function createSessionManager(deps) {
       const now = Date.now();
       if (s._toolDrainAt != null && now - s._toolDrainAt < STREAM_TOOL_DRAIN_MIN_MS) return;
       s._toolDrainAt = now;
+      const before = s.outbox.slice();
       const keep = s.outbox.filter((q) => q.origin !== 'system' || q.wire);
       s.outbox.splice(0, s.outbox.length, ...keep);
       const payload = this._streamJoin(sys);
       if (payload.text.trim() || payload.images.length) {
-        this._streamWrite(s, payload);
-        this._streamSent(s, sys);
-        s._toolDrainedInTurn = true;
+        if (this._streamWrite(s, payload)) {
+          this._streamSent(s, sys);
+          s._toolDrainedInTurn = true;
+        } else {
+          s.outbox.splice(0, s.outbox.length, ...before);
+        }
       }
       this._streamOutboxChanged(s);
     }
