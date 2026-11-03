@@ -758,8 +758,10 @@ const SCROLLBACK_MAX = 256 * 1024;
 
 
 
-const { createAgentTransport } = require('./agent-transport');
-const { isAlive, registry, Transport } = createAgentTransport({ REGISTRY_DIR, MAX_MSG });
+const { createAgentTransport, mintAgentSockCred, writeAgentSockCred } = require('./agent-transport');
+const AGENT_SOCK_CRED = mintAgentSockCred();
+try { writeAgentSockCred(REGISTRY_DIR, AGENT_SOCK_CRED); } catch (e) { if (log && typeof log.warn === 'function') log.warn('transport', `agent socket credential file not written: ${e.message}`); }
+const { isAlive, registry, Transport } = createAgentTransport({ REGISTRY_DIR, MAX_MSG, hostCred: AGENT_SOCK_CRED });
 
 
 const { buildIpcPrompt, DEFAULT_COMPACT_CONTINUATION } = require('./ipc-prompt');
@@ -1132,6 +1134,7 @@ const SessionManager = createSessionManager({
     SELF_LABEL,
     SHORT_TEXT_DELAY,
     Transport,
+    AGENT_SOCK_CRED,
     WIRE_INTENTS_LIVE,
     WIRE_SHADOW,
     BUILTIN_AGENTS,
@@ -1613,7 +1616,7 @@ async function restoreSessionsForWorkspace(workspaceId) {
       try {
         spawn(process.execPath, [path.join(REGISTRY_DIR, 'bin', 'clodex-ctl-admin.js'), '--sweep'], {
           detached: true, stdio: 'ignore',
-          env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', CLODEX_HOME: REGISTRY_DIR },
+          env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', CLODEX_HOME: REGISTRY_DIR, CLODEX_AGENT_CRED: AGENT_SOCK_CRED },
         }).on('error', () => {}).unref();
       } catch {}
     }, 15000).unref();

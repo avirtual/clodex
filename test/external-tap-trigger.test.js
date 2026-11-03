@@ -212,9 +212,9 @@ test('MODE: the socket arm dispatches voice-mode to the focused seat, the mode o
   const { m, records } = mkSeatModes({ a: 'tap' });
   const win = seat(m, 'a');
   reportFrom(m, win, 'a');
-  m._onIncoming('courier', { type: 'voice-mode', from: 'voice-tap', mode: 'off' });
+  m._onIncoming('courier', { type: 'voice-mode', from: 'voice-tap', mode: 'off' }, true);
   assert.strictEqual(records.get('a').voice, 'off');
-  m._onIncoming('courier', { type: 'voice-mode', from: 'voice-tap', mode: { evil: 1 } });
+  m._onIncoming('courier', { type: 'voice-mode', from: 'voice-tap', mode: { evil: 1 } }, true);
   assert.strictEqual(records.get('a').voice, 'off');
   assert.deepStrictEqual(win.sent.filter((f) => f[0] === 'agent-message'), []);
 });
@@ -236,7 +236,7 @@ test('the socket arm dispatches voice-tap and delivers it to NO transcript', () 
   // sender could reach, NOT the seat acted on. Asserting that distinction is
   // the point of routing to 'watched' from a message addressed to 'courier'.
   m.sessions.set('courier', { name: 'courier', agentType: 'claude', workspaceId: 'ws1' });
-  m._onIncoming('courier', { type: 'voice-tap', from: 'voice-tap' });
+  m._onIncoming('courier', { type: 'voice-tap', from: 'voice-tap' }, true);
 
   assert.deepStrictEqual(win.sent,
     [['voice-tap', 'watched']],
@@ -250,7 +250,7 @@ test('the socket arm honours an explicit target on the envelope', () => {
   m.sessions.set('courier', { name: 'courier', agentType: 'claude', workspaceId: 'ws1' });
   m.sessions.set('named', { name: 'named', agentType: 'claude', workspaceId: 'ws1' });
   reportFrom(m, win, 'courier');
-  m._onIncoming('courier', { type: 'voice-tap', from: 'voice-tap', target: 'named' });
+  m._onIncoming('courier', { type: 'voice-tap', from: 'voice-tap', target: 'named' }, true);
   // The focus put the microphone on 'courier'; the NAMED target takes it away.
   assert.deepStrictEqual(win.sent,
     [['voice-tap', 'named']]);
@@ -927,7 +927,7 @@ test('SELECT: the socket arm cannot smuggle an empty name past the manager', () 
   const { a, b } = twoWindows(m);
   reportFrom(m, a, 'A');
   const before = [...a.sent];
-  m._onIncoming('courier', { type: 'voice-select', from: 'voice-tap', target: '' });
+  m._onIncoming('courier', { type: 'voice-select', from: 'voice-tap', target: '' }, true);
   assert.deepStrictEqual(a.sent, before, 'nothing reached the focused seat');
   assert.deepStrictEqual(b.sent.filter((f) => f[0] === 'voice-tap'), [], 'and nothing armed');
 });
@@ -945,7 +945,7 @@ test('SELECT: the socket arm dispatches voice-select', () => {
   const m = mk();
   const { b } = twoWindows(m);
   m.noteAppFocused(true);
-  m._onIncoming('courier', { type: 'voice-select', from: 'voice-tap', target: 'B' });
+  m._onIncoming('courier', { type: 'voice-select', from: 'voice-tap', target: 'B' }, true);
   // Raise included: the socket arm is the real entry point, so it must show the
   // same window-forward behaviour the direct call does.
   assert.deepStrictEqual(b.sent,
@@ -1092,11 +1092,11 @@ test('SPEECH: the write is a partial and leaves the other speech settings alone'
 
 test('SPEECH: the socket arm dispatches voice-speech and takes the state only as a string', () => {
   const h = mkSpeech();
-  h.m._onIncoming('courier', { type: 'voice-speech', from: 'voice-tap', state: 'on' });
+  h.m._onIncoming('courier', { type: 'voice-speech', from: 'voice-tap', state: 'on' }, true);
   assert.strictEqual(h.read().speakReplies, true);
   // A non-string state reaches the verb as null and is refused, so a malformed
   // envelope cannot write anything.
-  h.m._onIncoming('courier', { type: 'voice-speech', from: 'voice-tap', state: { on: true } });
+  h.m._onIncoming('courier', { type: 'voice-speech', from: 'voice-tap', state: { on: true } }, true);
   assert.strictEqual(h.read().speakReplies, true, 'unchanged by the malformed envelope');
   assert.deepStrictEqual(h.sets, [{ speakReplies: true }], 'and no second write happened');
 });
