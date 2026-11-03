@@ -26,7 +26,7 @@ const {
   teamPromptFile,
 } = require('./team-prompt-dir');
 const { resolveModelId, deriveModelTemplate, deriveEffortTemplate } = require('./team-template-derive');
-const { seatType, adapterFor, DEFAULT_TYPE, PLATFORMS, hasBypass, resolveEffort } = require('./cli-adapters');
+const { seatType, adapterFor, DEFAULT_TYPE, PLATFORMS, hasBypass, resolveEffort, splitPrivilegedArgs } = require('./cli-adapters');
 const { readerFor } = require('./transcript-readers');
 const { ctxThresholdsFor } = require('./ctx-reminder');
 const { formatGatherReport } = require('./team-gather');
@@ -528,6 +528,16 @@ function createTicketMethods(deps, shared) {
         if (!path.isAbsolute(p)) p = path.resolve(spawner.cwd || os.homedir(), p);
         let obj;
         try {
+          p = fs.realpathSync(p);
+          const roots = [
+            typeof REGISTRY_DIR === 'string' && REGISTRY_DIR ? path.join(REGISTRY_DIR, 'library', 'templates') : null,
+            spawnerTeam && typeof spawnerTeam.dir === 'string' && spawnerTeam.dir ? path.join(spawnerTeam.dir, 'templates') : null,
+          ].filter(Boolean).map((r) => { try { return fs.realpathSync(r); } catch { return null; } }).filter(Boolean);
+          const inside = roots.some((r) => {
+            const rel = path.relative(r, p);
+            return rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+          });
+          if (!inside) return { ok: false, error: 'template path must be under the library or the team templates dir' };
           obj = JSON.parse(fs.readFileSync(p, 'utf-8'));
         } catch (e) {
           const why = e.code === 'ENOENT' ? 'not found'
@@ -593,6 +603,7 @@ function createTicketMethods(deps, shared) {
       const cwd = path.resolve(expandedCwd.value.replace(/^~(?=$|\/)/, os.homedir()));
 
       let leadNote = '';
+      let leadRoleTemplate = false;
       let targetTeam = null;
       try { targetTeam = this._teamOf({ name, cwd }); } catch { targetTeam = null; }
       if (!tpl && targetTeam && name === targetTeam.lead) {
@@ -602,6 +613,7 @@ function createTicketMethods(deps, shared) {
         if (shape && shape.tpl) {
           tpl = shape.tpl;
           tplLabel = tpl.name || stem;
+          leadRoleTemplate = true;
           leadNote = ` (lead of team ${targetTeam.name})`;
         } else {
           leadNote = ` — lead role template "${stem}" not installed, spawned with no template`;
@@ -617,13 +629,38 @@ function createTicketMethods(deps, shared) {
       try { type = seatType(tpl, spawner); } catch (e) { reply('error: spawn: ' + e.message); return; }
       const workspaceId = spawner.workspaceId || DEFAULT_WORKSPACE_ID;
 
-      const spawnerArgs = (getPersistence().get(spawner.name)?.extraArgs) || [];
+      const spawnerRec = getPersistence().get(spawner.name) || {};
+      const spawnerArgs = spawnerRec.extraArgs || [];
       const spawnerAdapter = adapterFor(spawner.type) || adapterFor(DEFAULT_TYPE);
       const postureArgs = hasBypass(spawnerAdapter, spawnerArgs) ? [...adapterFor(type).posture.bypassArgs] : [];
+      const operator = opts.operator === true;
+      const leadByCreator = leadRoleTemplate && typeof intentEnabledForSeat === 'function'
+        && intentEnabledForSeat('team-create', spawnerRec);
+      const clampToSpawner = (list, key) => {
+        if (!Array.isArray(list)) return [];
+        if (operator || leadByCreator) return list;
+        const own = Array.isArray(spawnerRec[key]) ? spawnerRec[key].map(String) : [];
+        return list.filter((x) => own.includes(String(x)));
+      };
 
       const proxy = tpl ? (tpl.proxy ?? null) : (spawner.proxy ?? null);
       const childArgs = (tpl && Array.isArray(tpl.extraArgs) && tpl.extraArgs.length)
         ? tpl.extraArgs : postureArgs;
+      if (!operator && childArgs !== postureArgs) {
+        const key = ([f, v]) => `${f}\0${v}`;
+        const own = new Set(splitPrivilegedArgs(spawnerArgs).pairs.map(key));
+        const unheld = [...new Set(splitPrivilegedArgs(childArgs).pairs.filter((p) => !own.has(key(p))).map(([f]) => f))];
+        if (unheld.length) {
+          reply(`error: template "${tplLabel}" carries ${unheld.join(', ')}, which ${spawner.name} does not — a spawned seat cannot hold more than its spawner`);
+          return;
+        }
+      }
+      const seatGrants = clampToSpawner(tpl && tpl.execCommands, 'execCommands');
+      const mcpServers = clampToSpawner(tpl && tpl.mcpServers, 'mcpServers').map(String);
+      const noWire = (tpl && tpl.noWire) === true && (operator || spawnerRec.noWire === true || spawner.noWire === true);
+      const credLists = [spawnerRec.protectCredentials, tpl && tpl.protectCredentials].filter(Array.isArray);
+      const protectCredentials = credLists.length
+        ? [...new Set(credLists.flat().filter((p) => typeof p === 'string'))] : null;
       const agents = (tpl && tpl.agents) || [];
       const denyBuiltins = (tpl && tpl.denyBuiltins) || [];
       const disabledTools = (tpl && tpl.disabledTools) || [];
@@ -634,9 +671,8 @@ function createTicketMethods(deps, shared) {
       const plugins = (tpl && Array.isArray(tpl.plugins)) ? tpl.plugins.map(String) : null;
       const { sessionEnv, dropped: envDropped, badType: envBadType } = filterTemplateEnv(tpl && tpl.env);
 
-      const seatGrants = Array.isArray(tpl && tpl.execCommands) ? tpl.execCommands : [];
       const grantWarn = (targetTeam && name === targetTeam.lead && !seatGrants.includes('clodex-team'))
-        ? ` — WARNING: lead seat has no clodex-team exec grant (${tplLabel ? `template "${tplLabel}"` : 'no template'} carries none);`
+        ? ` — WARNING: lead seat has no clodex-team exec grant (${tplLabel ? `template "${tplLabel}"` : 'no template'} carries none, or the spawner holds none);`
           + ' the roster verb will bounce until granted'
         : '';
 
@@ -707,18 +743,16 @@ function createTicketMethods(deps, shared) {
           const spawned = await this.create(
             name, type, spawnCwd, childArgs, null, workspaceId,
             null, false, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles,
-            Array.isArray(tpl && tpl.execCommands) ? tpl.execCommands : [],
+            seatGrants,
             // `[]` intents (everything gated) is a real value that must apply; an absent key passes null so create() keeps the
             // all-enabled default.
             withoutPrivilegedIntentsFor(Array.isArray(tpl && tpl.intents) ? tpl.intents : null),
             sessionEnv, true,
-            // Wire-off only removes a capability (tee, telemetry, warmth), so an agent-initiated spawn may carry it;
-            // it cannot redirect traffic.
-            (tpl && tpl.noWire) === true,
+            noWire,
             plugins, null, null,
             (tpl && tpl.io) === 'stream' ? 'stream' : 'pty',
             (tpl && typeof tpl.effort === 'string' && tpl.effort) ? tpl.effort : null,
-            null, Array.isArray(tpl && tpl.mcpServers) ? tpl.mcpServers.map(String) : [], (tpl && tpl.class) || null,
+            protectCredentials, mcpServers, (tpl && tpl.class) || null,
           );
           if (wt) {
             try { getPersistence().setWorktree(name, wt); } catch { /* best-effort */ }
@@ -2701,7 +2735,8 @@ function createTicketMethods(deps, shared) {
             const res = teamTemplateSave(this._teamFileDeps(), team.name, stem, parsed);
             if (!res.ok) { reply(`error: ${res.error}`); return; }
             this._refreshAppMenuQuietly();
-            reply(`template "${stem}" saved to ${res.file}${res.mcpIgnored ? ': mcpServers is operator-set; the stored list is unchanged' : ''}`);
+            reply(`template "${stem}" saved to ${res.file}${res.mcpIgnored ? ': mcpServers is operator-set; the stored list is unchanged' : ''}`
+              + (res.stripped ? `; stripped operator-only ${res.stripped.join(', ')} — the stored values are unchanged` : ''));
             return;
           }
           case 'template-rm': {
@@ -3264,7 +3299,7 @@ function createTicketMethods(deps, shared) {
       const target = teamTemplatePath(deps, team.name, name);
       let prior = null;
       try { prior = target ? fs.readFileSync(target) : null; } catch { prior = null; }
-      const res = teamTemplateSave(deps, team.name, name, deriveModelTemplate(base, name, id));
+      const res = teamTemplateSave(deps, team.name, name, deriveModelTemplate(base, name, id), { derived: true });
       if (!res.ok) return { ok: false, error: res.error };
       this._refreshAppMenuQuietly();
       const undo = () => {
@@ -3313,7 +3348,7 @@ function createTicketMethods(deps, shared) {
       const target = teamTemplatePath(deps, team.name, name);
       let prior = null;
       try { prior = target ? fs.readFileSync(target) : null; } catch { prior = null; }
-      const res = teamTemplateSave(deps, team.name, name, deriveEffortTemplate({ ...base, type: baseType }, name, effort));
+      const res = teamTemplateSave(deps, team.name, name, deriveEffortTemplate({ ...base, type: baseType }, name, effort), { derived: true });
       if (!res.ok) return { ok: false, error: res.error };
       this._refreshAppMenuQuietly();
       const undo = () => {

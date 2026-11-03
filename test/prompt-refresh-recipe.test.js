@@ -254,7 +254,8 @@ test('recipe: the profile grammar row is baked only for a Claude assistant seat'
 test('recipe: a first spawn from an assistant template, with no prior record, bakes the profile row', async () => {
   const root = tmp();
   const h = mkManager(root);
-  const tpl = path.join(root, 'asst-tpl.json');
+  fs.mkdirSync(path.join(root, 'library', 'templates'), { recursive: true });
+  const tpl = path.join(root, 'library', 'templates', 'asst-tpl.json');
   fs.writeFileSync(tpl, JSON.stringify({ type: 'claude', cwd: os.tmpdir(), class: 'assistant' }));
   const replies = [];
   h.m._injectText = (_s, t) => replies.push(t);

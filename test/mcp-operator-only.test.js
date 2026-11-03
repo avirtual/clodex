@@ -105,46 +105,62 @@ test('part 4: the peer wire strips mcpServers both ways', () => {
   assert.deepStrictEqual(withoutExecGrants({ mcpServers: ['a'], execCommands: ['x'], type: 'claude' }), { type: 'claude' });
 });
 
-function spawnHarness(tpl) {
+function spawnHarness(tpl, { rec = null, where = 'library' } = {}) {
   const calls = [];
+  const replies = [];
+  const home = fs.realpathSync(mkTmpRoot('clx-mcp-home-'));
   const SessionManager = createSessionManager({
     knownSkillNames: () => [], os, fs, path,
     log: { warn() {}, info() {}, error() {} },
-    getPersistence: () => ({ get: () => null, setStripLevel() {}, setAutoCompact() {} }),
+    getPersistence: () => ({ get: (n) => (n === 'lead' ? rec : null), setStripLevel() {}, setAutoCompact() {} }),
     withoutPrivilegedIntentsFor: (x) => x,
     ensureDir: () => {},
     AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
     DEFAULT_WORKSPACE_ID: 'default',
+    REGISTRY_DIR: home,
   });
   const m = new SessionManager();
   m.sessions = new Map();
-  m._injectText = () => {};
+  m._injectText = (_s, t) => replies.push(t);
   m._broadcast = () => {};
   m._sendToSession = () => {};
   m.create = async (...args) => { calls.push(args); return undefined; };
-  const dir = mkTmpRoot('clx-mcp-tpl-');
+  const dir = where === 'library' ? path.join(home, 'library', 'templates') : path.join(home, 'seat-cwd');
+  fs.mkdirSync(dir, { recursive: true });
   const tmpl = path.join(dir, 'tpl.json');
   fs.writeFileSync(tmpl, JSON.stringify({ type: 'claude', cwd: os.tmpdir(), ...tpl }));
-  return { m, calls, tmpl };
+  return { m, calls, replies, tmpl };
 }
 
-async function spawnVia(tpl, body) {
-  const { m, calls, tmpl } = spawnHarness(tpl);
+async function spawnVia(tpl, body, opts) {
+  const { m, calls, replies, tmpl } = spawnHarness(tpl, opts);
   m._handleSpawnIntent(
     { name: 'lead', cwd: os.tmpdir(), workspaceId: 'default', type: 'claude' },
     { name: 'child', template: tpl ? tmpl : null, cwd: tpl ? null : os.tmpdir(), body },
   );
   await new Promise((r) => setImmediate(r));
   await new Promise((r) => setImmediate(r));
-  assert.strictEqual(calls.length, 1, 'ENTER: create was called');
-  return calls[0];
+  return { calls, replies };
 }
 
-test('part 5: an intent spawn from a template carries exactly the template\'s list; the body adds nothing', async () => {
-  assert.deepStrictEqual((await spawnVia({ mcpServers: ['jira', 'docs'] }, ''))[MCP_ARG], ['jira', 'docs']);
-  assert.deepStrictEqual((await spawnVia({ mcpServers: ['jira'] }, '{"mcpServers":["evil"]} mcpServers: evil'))[MCP_ARG], ['jira']);
-  assert.deepStrictEqual((await spawnVia({}, '{"mcpServers":["evil"]}'))[MCP_ARG], []);
-  assert.deepStrictEqual((await spawnVia(null, 'mcp:evil'))[MCP_ARG], []);
+test('part 5: a template at a seat-writable path is refused before create()', async () => {
+  const { calls, replies } = await spawnVia({ mcpServers: ['jira'] }, '', { rec: { mcpServers: ['jira'] }, where: 'seat' });
+  assert.deepStrictEqual(calls, []);
+  assert.deepStrictEqual(replies, ['[agent:spawn] error: template path must be under the library or the team templates dir']);
+});
+
+test('part 5: a library-path template reaches create() with its mcpServers intersected with the spawner\'s; the body adds nothing', async () => {
+  const mcpOf = async (tpl, body, rec) => {
+    const { calls } = await spawnVia(tpl, body, { rec });
+    assert.strictEqual(calls.length, 1, 'ENTER: create was called');
+    return calls[0][MCP_ARG];
+  };
+  assert.deepStrictEqual(await mcpOf({ mcpServers: ['jira', 'docs'] }, '', { mcpServers: ['jira', 'docs'] }), ['jira', 'docs']);
+  assert.deepStrictEqual(await mcpOf({ mcpServers: ['jira', 'docs'] }, '', { mcpServers: ['docs', 'wiki'] }), ['docs']);
+  assert.deepStrictEqual(await mcpOf({ mcpServers: ['jira'] }, '', null), []);
+  assert.deepStrictEqual(await mcpOf({ mcpServers: ['jira'] }, '{"mcpServers":["evil"]} mcpServers: evil', { mcpServers: ['jira', 'evil'] }), ['jira']);
+  assert.deepStrictEqual(await mcpOf({}, '{"mcpServers":["evil"]}', { mcpServers: ['evil'] }), []);
+  assert.deepStrictEqual(await mcpOf(null, 'mcp:evil', { mcpServers: ['evil'] }), []);
 });
 
 test('part 5: the dialog door spawns exactly the list it was handed', async () => {

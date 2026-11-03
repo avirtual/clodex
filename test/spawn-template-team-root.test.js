@@ -17,6 +17,9 @@ const path = require('node:path');
 const fs = require('node:fs');
 
 const { createSessionManager } = require('../session-manager');
+const { mkTmpRoot } = require('./lib/tmp-roots');
+
+const TPL_LIB = path.join(mkTmpRoot('clx-tpl-root-'), 'library', 'templates');
 
 const TEAM_ROOT = path.join(os.tmpdir(), `t415-root-${process.pid}`);
 
@@ -37,6 +40,7 @@ function harness({ teamRoot }) {
     resolveTeam: (cwd) => (teamRoot ? { name: 'someteam', root: teamRoot, roles: {}, cwd } : null),
     AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
     DEFAULT_WORKSPACE_ID: 'default',
+    REGISTRY_DIR: path.dirname(path.dirname(TPL_LIB)),
   });
   const m = new SessionManager();
   m.sessions = new Map();
@@ -51,7 +55,8 @@ const CWD_ARG = 2; // 0-based index of cwd in create()'s signature
 
 async function spawnWith({ tplCwd, teamRoot, intentCwd }) {
   const { m, calls, replies } = harness({ teamRoot });
-  const tmpl = path.join(os.tmpdir(), `tpl-t415-${process.pid}-${Date.now()}-${Math.random()}.json`);
+  fs.mkdirSync(TPL_LIB, { recursive: true });
+  const tmpl = path.join(TPL_LIB, `tpl-t415-${process.pid}-${Date.now()}-${Math.random()}.json`);
   fs.writeFileSync(tmpl, JSON.stringify({ type: 'claude', cwd: tplCwd }));
   try {
     m._handleSpawnIntent(

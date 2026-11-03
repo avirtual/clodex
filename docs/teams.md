@@ -47,15 +47,26 @@ shapes the seat: model, tools, grants, cwd — resolved against
 (one line about the role, shown in the roster) and `dispatch` (what a ticket for this role
 does: `standing` delivers to the live seat, `spawn` mints a one-shot seat in
 the shared checkout, `worktree` mints a one-shot seat on its own branch in its
-own git worktree). The template may also carry `mcpServers`, set only in the
-app's template editor (`templates:saveTeam`), never by `role-set` or
-`template-save`; reviewer seats load none.
+own git worktree). The template's `mcpServers`, `execCommands` and privileged
+`extraArgs` flags (`--settings`, `--dangerously-skip-permissions`,
+`--permission-mode`, `--mcp-config`, `--add-dir` and the other CLIs' bypass
+flags) are set only in the app's template editor (`templates:saveTeam`), never by
+`template-save`, which strips them and keeps the stored values; a `model:` or
+`effort:` derive copies the base template's exec grants and flags but not its
+`mcpServers`. Reviewer seats load no `mcpServers`. An `[agent:spawn]` child gets
+the template's exec grants and `mcpServers` only where its spawner holds them (except the lead role below),
+is refused a privileged flag and value its spawner's own args lack, inherits the
+spawner's `protectCredentials`, and takes a `template:<path>` only from under
+`~/.clodex/library/templates/` or the team's `templates/` dir.
 
 `[agent:spawn name:<name>-lead cwd:<root>]` with no `template:` boots the lead
 on the lead role's template, which the kit picks (`clodex-team-lead` in the
 clodex kit, `lead` in the default kit) — `claude-opus-5-5[1m]`, every skill off,
 `clodex-team` + `clodex-monitor` + `clodex-run-tests` granted, `spawn` on and
-the privileged intents off. A team created before that stem was recorded on the
+the privileged intents off. Those grants and the template's `mcpServers` ride
+through whole only when the spawner holds the `team-create` intent (which is how
+`[agent:team create]` spawns its lead); from any other seat they are intersected
+with the spawner's own, and the reply warns when `clodex-team` is lost. A team created before that stem was recorded on the
 role has no `lead.template` line and reaches `clodex-team-lead` by default. Want
 another shape: set `lead.template` in the app's team editor, or pass an explicit
 `template:` on the spawn, which always wins.

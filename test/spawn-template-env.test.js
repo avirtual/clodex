@@ -20,6 +20,9 @@ const path = require('node:path');
 const fs = require('node:fs');
 
 const { createSessionManager } = require('../session-manager');
+const { mkTmpRoot } = require('./lib/tmp-roots');
+
+const TPL_LIB = path.join(mkTmpRoot('clx-tpl-env-'), 'library', 'templates');
 
 function harness(tpl) {
   const calls = [];
@@ -35,6 +38,7 @@ function harness(tpl) {
     ensureDir: () => {},
     AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
     DEFAULT_WORKSPACE_ID: 'default',
+    REGISTRY_DIR: path.dirname(path.dirname(TPL_LIB)),
   });
   const m = new SessionManager();
   m.sessions = new Map();
@@ -45,7 +49,8 @@ function harness(tpl) {
   // assertion reads the real signature rather than a re-derived one.
   m.create = async (...args) => { calls.push(args); return undefined; };
 
-  const tmpl = path.join(os.tmpdir(), `tpl-${process.pid}-${Date.now()}.json`);
+  fs.mkdirSync(TPL_LIB, { recursive: true });
+  const tmpl = path.join(TPL_LIB, `tpl-${process.pid}-${Date.now()}-${Math.random()}.json`);
   // `type` is what makes a file a template object at all (the loader rejects
   // one without it), so every fixture carries it.
   fs.writeFileSync(tmpl, JSON.stringify({ type: 'claude', cwd: os.tmpdir(), ...tpl }));

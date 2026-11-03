@@ -404,7 +404,7 @@ function createRemoteWiring(deps) {
       manager._handleSpawnIntent(
         { name: 'wire', type: 'claude', cwd, proxy: null },
         intent,
-        { ...handlerOpts, onReply },
+        { ...handlerOpts, operator: true, onReply },
       );
     });
   }

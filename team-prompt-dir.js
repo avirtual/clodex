@@ -1,6 +1,7 @@
 'use strict';
 
 const { ensureDir, atomicWriteFileSync } = require('./fs-util');
+const { splitPrivilegedArgs } = require('./cli-adapters');
 
 const KINDS = ['system', 'append'];
 const JSON_KINDS = ['templates', 'exec'];
@@ -89,11 +90,11 @@ function noTeamOrStem(team, stem, what) {
   return `no team "${team}" or bad ${what} name "${stem}"`;
 }
 
-function priorMcpServers(deps, file) {
+function priorTemplate(deps, file) {
   try {
     const prior = JSON.parse(deps.fs.readFileSync(file, 'utf-8'));
-    return prior && Array.isArray(prior.mcpServers) ? prior.mcpServers : null;
-  } catch { return null; }
+    return prior && typeof prior === 'object' && !Array.isArray(prior) ? prior : {};
+  } catch { return {}; }
 }
 
 function teamTemplateSave(deps, team, stem, body, opts = {}) {
@@ -104,17 +105,32 @@ function teamTemplateSave(deps, team, stem, body, opts = {}) {
   }
   let out = body;
   let mcpIgnored = false;
+  const stripped = [];
   if (!(opts && opts.operator === true)) {
+    const prior = priorTemplate(deps, file);
     const { mcpServers, ...rest } = body;
     mcpIgnored = mcpServers !== undefined;
-    const kept = priorMcpServers(deps, file);
-    out = kept ? { ...rest, mcpServers: kept } : rest;
+    out = Array.isArray(prior.mcpServers) ? { ...rest, mcpServers: prior.mcpServers } : rest;
+    if (!(opts && opts.derived === true)) {
+      const { execCommands, ...noExec } = out;
+      if (execCommands !== undefined) stripped.push('execCommands');
+      out = Array.isArray(prior.execCommands) ? { ...noExec, execCommands: prior.execCommands } : noExec;
+      if (out.extraArgs !== undefined && !Array.isArray(out.extraArgs)) {
+        const { extraArgs, ...noArgs } = out;
+        stripped.push('extraArgs');
+        out = noArgs;
+      }
+      const { kept, flags } = splitPrivilegedArgs(out.extraArgs);
+      const priorPrivileged = splitPrivilegedArgs(prior.extraArgs).privileged;
+      stripped.push(...flags);
+      if (flags.length || priorPrivileged.length) out = { ...out, extraArgs: [...kept, ...priorPrivileged] };
+    }
   }
   try {
     ensureDir(deps.path.dirname(file));
     atomicWriteFileSync(file, `${JSON.stringify(out, null, 2)}\n`);
   } catch (err) { return { ok: false, error: err.message }; }
-  return mcpIgnored ? { ok: true, file, mcpIgnored } : { ok: true, file };
+  return { ok: true, file, ...(mcpIgnored ? { mcpIgnored } : {}), ...(stripped.length ? { stripped } : {}) };
 }
 
 function teamTemplateRemove(deps, team, stem) {
