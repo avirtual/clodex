@@ -623,13 +623,14 @@ about any of them changed to add this.
 
 **A fetched root is a cache; a user root without a sidecar is authority.** A
 `.clodex-source.json` sidecar (`{ source, repo, ref, subpath, commit,
-commitFull, fetchedAt, hostVersion }`) marks a directory as fetched;
+commitFull, fetchedAt, hostVersion, treeDigest }`) marks a directory as fetched;
 `update`/`remove` only ever touch a sidecar-carrying directory, and a plain
 user directory sharing an id is refused rather than silently adopted — with
 "already exists in your plugins folder and is not from a source" on the install
 path, and "is not installed from a source" on update/remove. A fetched
 directory is read-only in the app: `writeBundleFile` refuses it and the library
-drawers offer Reveal instead of Edit.
+drawers offer Reveal instead of Edit; a copy made to edit it under a new id
+must drop `.clodex-source.json`, or it is read-only too.
 
 **The library is a catalog over one tarball of `avirtual/clodex-plugins`;
 install is the ordinary source install with a fixed repo** (t718).

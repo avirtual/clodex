@@ -680,10 +680,6 @@ function createPluginLoader(deps) {
     return { added, removed, changed, failed };
   }
 
-  // Startup must never create the user plugins root — its absence is the honest
-  // representation of no user plugins. Created here only because this runs when a
-  // user explicitly asks to be shown the path, and revealing a path that does not
-  // exist is a broken action on every platform.
   function sweepStaleAsides(rootDir) {
     let names = [];
     try { names = fs.readdirSync(rootDir).filter((n) => ASIDE_RE.test(n)); } catch { return; }
@@ -703,6 +699,10 @@ function createPluginLoader(deps) {
     return !!(sidecar && sidecar.treeDigest) && source.treeDigest(dir) !== sidecar.treeDigest;
   }
 
+  // Startup must never create the user plugins root — its absence is the honest
+  // representation of no user plugins. Created here only because this runs when a
+  // user explicitly asks to be shown the path, and revealing a path that does not
+  // exist is a broken action on every platform.
   function ensureUserRoot() {
     const root = roots.find((r) => r.id === 'user');
     if (!root) return null;
@@ -713,7 +713,7 @@ function createPluginLoader(deps) {
     return root.dir;
   }
 
-  // No path argument, no recursion, no writes: the root comes from `roots` and
+  // No path argument, no recursion: the root comes from `roots` and
   // cannot be influenced by the caller, so this one answers every surface. The
   // three below DO take a caller-supplied path and are desktop-gated in dispatch.
   function listUserRoot() {
@@ -838,6 +838,7 @@ function createPluginLoader(deps) {
     return dir;
   }
   function rmQuiet(dir) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} }
+  function touchQuiet(dir) { try { const now = new Date(); fs.utimesSync(dir, now, now); } catch {} }
 
   function renameOrCopy(from, to) {
     try {
@@ -1018,6 +1019,7 @@ function createPluginLoader(deps) {
     const aside = path.join(root, `.old-${id}-${nonce()}`);
     try {
       fs.renameSync(target, aside);
+      touchQuiet(aside);
     } catch (e) {
       rmQuiet(r.work);
       return { ok: false, error: `could not move the old copy aside — ${(e && e.message) || e}` };
@@ -1073,6 +1075,7 @@ function createPluginLoader(deps) {
       const aside = path.join(root, `.old-${id}-${nonce()}`);
       try {
         fs.renameSync(target, aside);
+        touchQuiet(aside);
       } catch (e) {
         return { ok: false, error: `could not move the edited copy of ${id} aside — ${(e && e.message) || e}` };
       }

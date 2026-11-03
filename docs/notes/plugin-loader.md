@@ -23,7 +23,8 @@ plugin's own id into `plugins`, making picking a template GRANT it.
 
 ## writeBundleFile
 
-Two independent refusals: `editable` refuses a plugin outside the user root
+Three independent refusals: a `.clodex-source.json` sidecar refuses a fetched
+plugin by repo; `editable` refuses a plugin outside the user root
 even for a legal stem; `insideDir` re-checks the assembled path, so a stem
 that slipped the name regex still cannot land outside the plugin's own
 directory.

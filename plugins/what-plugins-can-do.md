@@ -181,7 +181,8 @@ Four properties bound what to build on it:
   is skipped with a logged reason; the rest of the bundle loads.
 - **Editable only if it is yours.** Content in a plugin under `~/.clodex/plugins/`
   is editable unless it was fetched from a source, and the save goes back into the
-  plugin folder; content in a built-in plugin is read-only there, with a reveal-folder action instead.
+  plugin folder; content in a built-in plugin is read-only there, with a
+  reveal-folder action instead.
 
 The layout, the name rule and the visibility rule are in
 [`README.md`](README.md); the manifest half of it is §2 of the contract.

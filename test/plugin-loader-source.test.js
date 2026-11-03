@@ -1169,11 +1169,14 @@ test('removeSourcePlugin on a drifted tree keeps the edited copy aside and names
   const { loader, userDir } = mkSourceLoader({ script: [{ bytes }] });
   await loader.installFromSource('owner/repo');
   fs.writeFileSync(path.join(userDir, 'demo', 'extra.md'), 'mine');
+  const twoHoursAgo = (Date.now() - 2 * 60 * 60 * 1000) / 1000;
+  fs.utimesSync(path.join(userDir, 'demo'), twoHoursAgo, twoHoursAgo);
   const r = loader.removeSourcePlugin('demo');
   assert.strictEqual(r.ok, true, JSON.stringify(r));
   assert.match(String(r.kept), /\.old-demo-/);
   assert.strictEqual(fs.existsSync(path.join(userDir, 'demo')), false);
   assert.strictEqual(fs.readFileSync(path.join(r.kept, 'extra.md'), 'utf8'), 'mine');
+  assert.ok(fs.statSync(r.kept).mtimeMs > Date.now() - 60 * 1000, 'the aside is stamped at the move, not at the plugin\'s last change');
 });
 
 test('a sidecar with no treeDigest counts as not drifted, so Remove deletes it outright', async () => {
