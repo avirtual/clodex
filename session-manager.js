@@ -138,7 +138,7 @@ const { pasteModeSignal, PROXY_AGENT_PREFIX, PASTE_START, PASTE_END, stampServed
 const QUOTA_WINDOW_LONG = { '5h': '5-hour window', '7d': 'weekly window (all models)', '7d_oi': 'weekly window (Fable)', overage: 'overage window' };
 const {
   RELAY_ROSTER_TTL_MS, RELAY_MAX_HOPS,
-  buildRelayEnvelope, buildTerminalDm, isRelayEnvelope, hopRule, relayVersionOk, isDoneTaskEnvelope, isSandboxEnvelope, peerOriginSuffix,
+  buildRelayEnvelope, buildTerminalDm, isRelayEnvelope, hopRule, relayVersionOk, isDoneTaskEnvelope, isSandboxEnvelope, peerOriginSuffix, isQualifiedSender,
 } = require('./relay-protocol');
 const { formatTeamBlock, matchSeatRole, formatRoster, formatCompositionDelta } = require('./team-manifest');
 const { SYSTEM_SENDERS } = require('./system-senders');
@@ -9029,13 +9029,7 @@ function createSessionManager(deps) {
     }
 
     _buildDeliveryText(target, senderName, body, mtype, tag = '') {
-      if (!SYSTEM_SENDERS.has(senderName)) {
-        const at = typeof senderName === 'string' ? senderName.indexOf('@') : -1;
-        const ok = typeof senderName === 'string' && (at < 0
-          ? AGENT_NAME_RE.test(senderName)
-          : AGENT_NAME_RE.test(senderName.slice(0, at)) && AGENT_NAME_RE.test(senderName.slice(at + 1)));
-        if (!ok) senderName = 'peer';
-      }
+      if (!SYSTEM_SENDERS.has(senderName) && !isQualifiedSender(senderName)) senderName = 'peer';
       const prefix = `[agent:from ${senderName}]`;
 
       // The marker is parenthesized and never at column 1 so IntentScanner cannot read it as an
