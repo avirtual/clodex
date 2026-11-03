@@ -29,6 +29,7 @@ blocks a release.
 - Re-running `scripts/release.sh` after a run died past the GitHub release (during image publish, prune or the review launch) resumes those steps for the same version instead of cutting a second, empty release.
 - A subagent note that cannot be parked on retire is returned to its queue with a `park-failed` receipt instead of vanishing, and a changed context-reminder threshold takes effect on the next poll rather than after the seat's next turn.
 - The Bash console no longer loses a command record whose stamp landed behind one already shown (two Bash calls settling together), and a drawer shell that exited on its own no longer gets a delayed SIGKILL that could hit a reused pid.
+- Spoken replies no longer go silent after a bare `[agent:who]`, `[agent:name]` or other body-less intent line; and on Linux the voice controls disable themselves when /dev/snd has no capture device, not just when it is empty.
 
 ## 5.159.0 — 2026-11-03 — Security: log-mask masks every secret-named URL query parameter, Edit tab vets and writes one descriptor; memory id trim, dm await on pty seats, board cost breakdown
 

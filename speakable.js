@@ -12,6 +12,9 @@
 // clause is a shorter sentence and the cost of a mangled one is the operator
 // reaching for the mute.
 
+const { parseIntent } = require('./intent-scanner');
+const { bodyModeFor } = require('./intent-registry');
+
 // Utterance ceiling, in characters. Roughly 40 seconds at the 210 wpm the
 // speaker now runs at (700 chars is ~140 words), against the ~24 seconds 350
 // bought at `say`'s ~175 default. So this is a real INCREASE in narration
@@ -27,8 +30,7 @@ const SPEAK_MAX_CHARS = 700;
 // exceeds the ceiling, so it bounds the mangling that hard truncation does.
 const SPEAK_MIN_CHARS = 24;
 
-// An intent line is machinery, not speech, and its BODY is greedy — it runs to
-// a bare [agent:end] or to the end of the reply. Speaking a dm body aloud
+// An intent line is machinery, not speech. Speaking a dm body aloud
 // narrates a message addressed to another agent, which is the sharpest form of
 // "not the final text" this repo can produce. Matched on the same shape the
 // scanner uses, anchored at line start after decoration is stripped.
@@ -47,16 +49,12 @@ function stripBlocks(text) {
   for (const line of String(text).split('\n')) {
     if (FENCE.test(line)) { inFence = !inFence; continue; }
     if (inFence) continue;
-    if (inIntent) {
-      if (INTENT_END.test(line) || INTENT_OPEN.test(line)) inIntent = !INTENT_END.test(line);
+    if (inIntent && INTENT_END.test(line)) { inIntent = false; continue; }
+    if (INTENT_OPEN.test(line)) {
+      inIntent = bodyModeFor(parseIntent(line)) === 'greedy';
       continue;
     }
-    const open = INTENT_OPEN.exec(line);
-    if (open) {
-      // `end` closes a body and opens nothing; every other verb may carry one.
-      inIntent = open[1].toLowerCase() !== 'end';
-      continue;
-    }
+    if (inIntent) continue;
     // A table row is data, and its cells are fragments that do not compose into
     // a sentence. Two pipes is the discriminator: one pipe appears in ordinary
     // prose about shell commands.

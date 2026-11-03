@@ -48,6 +48,11 @@ const ROWS = [
     expect: { capable: true, cause: null },
   },
   {
+    name: 'linux with sox and only a control node in /dev/snd is not capable — no capture PCM, nothing to record from',
+    platform: 'linux', env: { PATH: '/usr/bin' }, fs: { soxDirs: ['/usr/bin'], snd: ['controlC0', 'pcmC0D0p'] },
+    expect: { capable: false, cause: NO_DEVICE },
+  },
+  {
     name: 'linux without sox names SoX, not the device — the first missing piece is the one to fix',
     platform: 'linux', env: { PATH: '/usr/bin:/bin' }, fs: { soxDirs: [], snd: ['controlC0'] },
     expect: { capable: false, cause: SOX_MISSING },

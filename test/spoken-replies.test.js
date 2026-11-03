@@ -362,6 +362,16 @@ test('speakable never reads an intent or its body', () => {
   assert.ok(!out.includes('secret'), 'the dm body must not be spoken');
 });
 
+test('speakable keeps the prose after a body-less intent line', () => {
+  assert.strictEqual(speakable('[agent:who]\nEveryone is idle.'), 'Everyone is idle.');
+  assert.strictEqual(speakable('Done.\n[agent:context]\nThe build is green.'), 'Done. The build is green.');
+});
+
+test('speakable still drops the body of a greedy intent', () => {
+  assert.strictEqual(speakable('Compacting.\n[agent:context compact]\npickup note\nmore\n[agent:end]\nBack soon.'), 'Compacting. Back soon.');
+  assert.strictEqual(speakable('Telling x.\n[agent:dm x]\nthe secret body\n[agent:end]\nDone.'), 'Telling x. Done.');
+});
+
 test('speakable yields nothing for a turn with nothing to say', () => {
   for (const empty of ['', null, undefined, 42, '```\ncode only\n```', '[agent:dm x]\nbody\n[agent:end]', '   \n\n  ']) {
     assert.strictEqual(speakable(empty), '', `expected silence for ${JSON.stringify(empty)}`);
