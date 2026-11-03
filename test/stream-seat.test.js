@@ -147,6 +147,22 @@ test('(e) kill signals the process group with SIGTERM, then SIGKILL after 5s', (
   }
 });
 
+test('kill ends stdin and marks the seat stopping before it signals', () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  const realKill = process.kill;
+  const seen = [];
+  try {
+    const { seat, child } = start();
+    process.kill = () => { seen.push({ stopping: seat.stopping, ended: child.stdin.writableEnded }); };
+    assert.strictEqual(seat.stopping, false, 'ENTER: a fresh seat is not stopping');
+    seat.kill();
+    assert.deepStrictEqual(seen, [{ stopping: true, ended: true }]);
+  } finally {
+    process.kill = realKill;
+    mock.timers.reset();
+  }
+});
+
 test('groupKill refuses a non-positive pid', () => {
   const realKill = process.kill;
   const calls = [];
