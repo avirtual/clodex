@@ -10,10 +10,15 @@ const URL_CANDIDATE_RE = /(?<![a-z0-9+.-])([a-z0-9+.-]+):\/\//gi;
 const URL_TAIL_RE = /\S*/y;
 const ASCII_LETTER_RE = /[a-z]/i;
 const WORD_CHAR_RE = /\w/;
-const URL_QUERY_SECRET_RE = /([?&](?:[\w.-]*[-_.])?(?:token|key|sig|api[-_]?key|access[-_]?key|private[-_]?key|secret|password|passwd|authorization|auth|credentials?)=)[^&#\s]*/gi;
+const URL_QUERY_PARAM_RE = /([?&]([\w.-]+)=)[^&#\s]*/g;
+const URL_KEY_SIG_RE = /(?:^|[-_.])(?:key|sig)$/i;
 
 function isSecretName(name) {
   return KEY_WORD_RE.test(name.slice(name.lastIndexOf('.') + 1));
+}
+
+function maskQueryParam(param, head, name) {
+  return isSecretName(name) || URL_KEY_SIG_RE.test(name) ? head + '[redacted]' : param;
 }
 
 function maskNamed(text, nameRe, valueRe) {
@@ -52,7 +57,7 @@ function maskUrls(text) {
     }
     URL_TAIL_RE.lastIndex = URL_CANDIDATE_RE.lastIndex;
     const url = m[0].slice(start) + URL_TAIL_RE.exec(text)[0];
-    out += text.slice(last, m.index + start) + url.replace(URL_QUERY_SECRET_RE, '$1[redacted]');
+    out += text.slice(last, m.index + start) + url.replace(URL_QUERY_PARAM_RE, maskQueryParam);
     last = URL_CANDIDATE_RE.lastIndex = URL_TAIL_RE.lastIndex;
   }
   return out + text.slice(last);

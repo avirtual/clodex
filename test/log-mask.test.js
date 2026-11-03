@@ -211,7 +211,7 @@ test('a quote-led query value is masked through to the next `&`, `#` or whitespa
   assert.strictEqual(maskSecrets('https://h/p?api-key="v"LEAK'), 'https://h/p?api-key=[redacted]');
 });
 
-test('the URL query rule masks any name whose last segment is a key word through to the next `&` or `#`', () => {
+test('the URL query rule masks any secret-named parameter through to the next `&` or `#`', () => {
   for (const [url, expected] of [
     ['https://h/p?client_secret="v"a,b&c=1', 'https://h/p?client_secret=[redacted]&c=1'],
     ['https://h/p?x_client_secret="v"a,b&c=1', 'https://h/p?x_client_secret=[redacted]&c=1'],
@@ -220,6 +220,11 @@ test('the URL query rule masks any name whose last segment is a key word through
     ['https://h/p?mykey=v&c=1', 'https://h/p?mykey=v&c=1'],
     ['https://h/p?author=v&c=1', 'https://h/p?author=v&c=1'],
     ['https://h/p?sig=v&c=1', 'https://h/p?sig=[redacted]&c=1'],
+    ['https://h/p?clientSecret="v"a,b&c=1', 'https://h/p?clientSecret=[redacted]&c=1'],
+    ['https://h/p?accessToken="v"a,b&c=1', 'https://h/p?accessToken=[redacted]&c=1'],
+    ['https://h/p?token_type="v"a,b&c=1', 'https://h/p?token_type=[redacted]&c=1'],
+    ['https://h/p?bearer="v"a,b&c=1', 'https://h/p?bearer=[redacted]&c=1'],
+    ['https://h/p?monkey=v&c=1', 'https://h/p?monkey=v&c=1'],
   ]) {
     assert.strictEqual(maskSecrets(url), expected);
   }

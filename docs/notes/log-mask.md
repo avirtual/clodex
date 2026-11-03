@@ -40,8 +40,8 @@ in the safe direction: making the key/value rule stop at `&` would leave a
 credential intact in every log line that is not a URL, and those are the
 majority.
 
-The query rule takes any name whose last segment is a key word (the same vocabulary as
-`KEY_WORD_RE`, plus `key` and `sig`) and masks to the next `&`/`#`/whitespace. Neither rule can cover a signed URL's vendor
+The query rule masks any name `isSecretName` accepts, plus a bare or separator-led
+`key`/`sig` last segment, and masks to the next `&`/`#`/whitespace. Neither rule can cover a signed URL's vendor
 spellings (`X-Amz-Signature`, `Signature`, a bare `t`). That is why
 engine.js's default `openExternal` seam drops the whole query itself instead
 of relying on this.
