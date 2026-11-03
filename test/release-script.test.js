@@ -402,7 +402,7 @@ const GH_STUB = [
   'echo "gh $*" >> "$FAKE_STATE/calls"',
   'case "$1 $2" in',
   '  "auth status") exit 0 ;;',
-  '  "release view") if [ -f "$FAKE_STATE/released-$3" ]; then if [ -n "${FAKE_GH_NO_ASSETS:-}" ] && [ "$5" = assets ]; then exit 0; fi; echo "https://example.invalid/$3"; exit 0; fi; exit 1 ;;',
+  '  "release view") if [ -f "$FAKE_STATE/released-$3" ]; then if [ -n "${FAKE_GH_NO_ASSETS:-}" ] && [ "$5" = assets ]; then exit 0; fi; if [ "$5" = assets ]; then echo "Clodex-${3#v}-arm64.dmg"; exit 0; fi; echo "https://example.invalid/$3"; exit 0; fi; exit 1 ;;',
   '  "release create")',
   '    prev=""; for a in "$@"; do if [ "$prev" = --notes-file ]; then cp "$a" "$FAKE_STATE/notes-seen"; fi; prev="$a"; done',
   '    if [ "${FAKE_GH_CREATE:-ok}" = fail ]; then exit 1; fi',
@@ -654,6 +654,7 @@ test('release e2e: a re-run after a death past gh release create resumes the pos
     assert.doesNotMatch(res.calls, /^npm (version|run dist:mac)/m);
     assert.doesNotMatch(res.calls, /^git push /m);
     assert.doesNotMatch(res.calls, /^gh release (create|upload) /m);
+    assert.doesNotMatch(res.calls, /^dmg-(pty|child)-probe\.sh/m);
     assert.match(res.calls, /^publish-image\.sh 1\.0\.1$/m);
     assert.match(res.calls, /^cloud-review\.sh v1\.0\.0 v1\.0\.1$/m);
   } finally { fx.cleanup(); }
@@ -667,6 +668,8 @@ test('release e2e: a post-release resume of a release with no DMG asset re-uploa
     assert.strictEqual(res.status, 0, res.stdout + res.stderr);
     assert.match(res.stdout, /resuming release v1\.0\.1 from the post-release steps/);
     assert.match(res.calls, /^gh release upload v1\.0\.1 dist\/Clodex-1\.0\.1-arm64\.dmg --clobber$/m);
+    assert.match(res.calls, /^dmg-pty-probe\.sh dist\/Clodex-1\.0\.1-arm64\.dmg$/m);
+    assert.match(res.calls, /^dmg-child-probe\.sh dist\/Clodex-1\.0\.1-arm64\.dmg$/m);
     assert.doesNotMatch(res.calls, /^gh release create /m);
     assert.match(res.calls, /^publish-image\.sh 1\.0\.1$/m);
   } finally { fx.cleanup(); }

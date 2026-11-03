@@ -296,7 +296,17 @@ else
 fi
 
 DMG="$(ls dist/*"$NEW_VERSION"*.dmg 2>/dev/null | head -1 || true)"
-if [ "$RESUME" != post ]; then
+HAS_DMG_ASSET=0
+if [ "$RESUME" = post ]; then
+  ASSETS="$(gh release view "$TAG" --json assets -q '.assets[].name')" || die "gh release view $TAG failed — re-run scripts/release.sh to resume"
+  if printf '%s\n' "$ASSETS" | grep -q '\.dmg$'; then
+    HAS_DMG_ASSET=1
+    say "resume: $TAG is already released with its DMG"
+  else
+    [ -n "$DMG" ] || die "release $TAG has no DMG asset and dist/ holds no $NEW_VERSION DMG — run npm run dist:mac, then re-run scripts/release.sh"
+  fi
+fi
+if [ "$HAS_DMG_ASSET" = 0 ]; then
   [ -n "$DMG" ] || die "no .dmg produced in dist/"
   say "built: $DMG"
 
@@ -337,16 +347,7 @@ if [ "$RESUME" != post ]; then
 fi
 
 # --- publish ---------------------------------------------------------------
-published=0
-if [ "$RESUME" = post ]; then
-  ASSETS="$(gh release view "$TAG" --json assets -q '.assets[].name')" || die "gh release view $TAG failed — re-run scripts/release.sh to resume"
-  if [ -n "$ASSETS" ]; then
-    published=1
-    say "resume: $TAG is already released with its assets"
-  else
-    [ -n "$DMG" ] || die "release $TAG has no DMG asset and dist/ holds no $NEW_VERSION DMG — run npm run dist:mac, then re-run scripts/release.sh"
-  fi
-fi
+published="$HAS_DMG_ASSET"
 if [ "$published" = 0 ]; then
   step "Creating GitHub release $TAG"
   # GitHub's asset upload has answered HTTP 500 on a healthy release; a retry succeeded.
