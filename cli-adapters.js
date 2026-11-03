@@ -257,8 +257,29 @@ function stripModelArgs(type, extraArgs) {
 
 const PRIVILEGED_FLAG_ARITY = {
   '--settings': 1, '--permission-mode': 1, '--mcp-config': Infinity, '--add-dir': Infinity,
+  '--sandbox': 1, '-s': 1, '--ask-for-approval': 1, '-a': 1, '--config': 1, '-c': 1, '--full-auto': 0, '--yolo': 0,
+  '--profile': 1, '-p': 1, '--sandbox-network': 1, '--permission-profile': 1,
+  '--agents': 1, '--plugin-dir': 1, '--enable': 1, '--dangerously-bypass-hook-trust': 0,
+  '--disable-approval': 0, '--trust-workspace': 0, '--approval-judge': 1,
+  '--allowedTools': Infinity, '--allowed-tools': Infinity, '--disallowedTools': Infinity, '--disallowed-tools': Infinity,
   ...Object.fromEntries(Object.values(ADAPTERS).flatMap((a) => a.posture.bypass.map((opt) => [opt[0], opt.length - 1]))),
 };
+
+const PRIVILEGED_FLAG_ALIAS = {
+  ...ADAPTERS.codex.readOnlyCap.shortFlags,
+  '-c': '--config', '-p': '--profile', '--allowed-tools': '--allowedTools', '--disallowed-tools': '--disallowedTools',
+};
+
+function privilegedFlagOf(tok) {
+  if (typeof tok !== 'string') return null;
+  if (tok.startsWith('--')) {
+    const eq = tok.indexOf('=');
+    return { name: eq < 0 ? tok : tok.slice(0, eq), inline: eq < 0 ? null : tok.slice(eq + 1) };
+  }
+  const short = tok.slice(0, 2);
+  if (!/^-[^-]$/.test(short) || !Object.prototype.hasOwnProperty.call(PRIVILEGED_FLAG_ALIAS, short)) return null;
+  return { name: short, inline: tok.length > 2 ? tok.slice(2).replace(/^=/, '') : null };
+}
 
 function splitPrivilegedArgs(argv) {
   const kept = [];
@@ -268,12 +289,13 @@ function splitPrivilegedArgs(argv) {
   const list = Array.isArray(argv) ? argv : [];
   for (let i = 0; i < list.length; i += 1) {
     const tok = list[i];
-    const name = typeof tok === 'string' && tok.startsWith('--') ? tok.split('=')[0] : null;
-    if (!name || !Object.prototype.hasOwnProperty.call(PRIVILEGED_FLAG_ARITY, name)) { kept.push(tok); continue; }
+    const parsed = privilegedFlagOf(tok);
+    if (!parsed || !Object.prototype.hasOwnProperty.call(PRIVILEGED_FLAG_ARITY, parsed.name)) { kept.push(tok); continue; }
+    const name = PRIVILEGED_FLAG_ALIAS[parsed.name] || parsed.name;
     if (!flags.includes(name)) flags.push(name);
     privileged.push(tok);
-    if (tok.includes('=')) { pairs.push([name, tok.slice(name.length + 1)]); continue; }
-    let left = PRIVILEGED_FLAG_ARITY[name];
+    if (parsed.inline !== null) { pairs.push([name, parsed.inline]); continue; }
+    let left = PRIVILEGED_FLAG_ARITY[parsed.name];
     let took = 0;
     while (left > 0 && i + 1 < list.length && !(typeof list[i + 1] === 'string' && list[i + 1].startsWith('-'))) {
       privileged.push(list[i + 1]);

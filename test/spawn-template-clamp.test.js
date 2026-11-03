@@ -7,6 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
 const { teamTemplateSave } = require('../team-prompt-dir');
+const { splitPrivilegedArgs } = require('../cli-adapters');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const EXTRA_ARGS = 3;
@@ -174,4 +175,80 @@ test('a derive and the operator keep exec grants and flags', () => {
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), body);
   assert.deepStrictEqual(teamTemplateSave(deps, 'core', 'pm', { ...body, execCommands: ['clodex-ctl-admin'] }, { operator: true }), { ok: true, file });
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')).execCommands, ['clodex-ctl-admin']);
+});
+
+const ESCALATION_ROWS = [
+  { args: ['--sandbox', 'danger-full-access'], flag: '--sandbox' },
+  { args: ['-s', 'danger-full-access'], flag: '--sandbox' },
+  { args: ['-sdanger-full-access'], flag: '--sandbox' },
+  { args: ['--ask-for-approval', 'never'], flag: '--ask-for-approval' },
+  { args: ['-a', 'never'], flag: '--ask-for-approval' },
+  { args: ['--config', 'sandbox_mode=danger-full-access'], flag: '--config' },
+  { args: ['-c', 'sandbox_mode=danger-full-access'], flag: '--config' },
+  { args: ['--config=sandbox_mode=danger-full-access'], flag: '--config' },
+  { args: ['--full-auto'], flag: '--full-auto' },
+  { args: ['--yolo'], flag: '--yolo' },
+  { args: ['--profile', 'danger'], flag: '--profile' },
+  { args: ['-p', 'danger'], flag: '--profile' },
+  { args: ['--sandbox-network', 'enabled'], flag: '--sandbox-network' },
+  { args: ['--permission-profile', 'open'], flag: '--permission-profile' },
+  { args: ['--agents', '{"x":{"permissionMode":"bypassPermissions"}}'], flag: '--agents' },
+  { args: ['--plugin-dir', '/tmp/evil'], flag: '--plugin-dir' },
+  { args: ['--enable', 'unsafe_feature'], flag: '--enable' },
+  { args: ['--dangerously-bypass-hook-trust'], flag: '--dangerously-bypass-hook-trust' },
+  { args: ['--disable-approval'], flag: '--disable-approval' },
+  { args: ['--trust-workspace'], flag: '--trust-workspace' },
+  { args: ['--approval-judge', 'off'], flag: '--approval-judge' },
+  { args: ['--allowedTools', 'Bash'], flag: '--allowedTools' },
+  { args: ['--allowed-tools', 'Bash'], flag: '--allowedTools' },
+  { args: ['--disallowedTools', 'Bash'], flag: '--disallowedTools' },
+  { args: ['--disallowed-tools', 'Bash'], flag: '--disallowedTools' },
+];
+
+for (const { args, flag } of ESCALATION_ROWS) {
+  test(`${args.join(' ')} is refused from a spawner without it and passes from one carrying it`, async () => {
+    const bare = harness({ rec: { extraArgs: ['--model', 'opus'] } });
+    await spawn(bare, bare.writeTpl({ extraArgs: args }));
+    assert.deepStrictEqual(bare.calls, []);
+    assert.match(bare.replies[0] || '', new RegExp(`carries ${flag},? `));
+    const held = harness({ rec: { extraArgs: args } });
+    await spawn(held, held.writeTpl({ extraArgs: args }));
+    assert.strictEqual(held.calls.length, 1, `ENTER: create was called (${JSON.stringify(held.replies)})`);
+    assert.deepStrictEqual(held.calls[0][EXTRA_ARGS], args);
+  });
+}
+
+test('a short and a long form of the same flag and value match across spawner and template', async () => {
+  const sandbox = harness({ rec: { extraArgs: ['--sandbox', 'read-only'] } });
+  await spawn(sandbox, sandbox.writeTpl({ extraArgs: ['-s', 'read-only'] }));
+  const approval = harness({ rec: { extraArgs: ['-a', 'never'] } });
+  await spawn(approval, approval.writeTpl({ extraArgs: ['--ask-for-approval=never'] }));
+  const config = harness({ rec: { extraArgs: ['--config', 'sandbox_mode=read-only'] } });
+  await spawn(config, config.writeTpl({ extraArgs: ['-c', 'sandbox_mode=read-only'] }));
+  const tools = harness({ rec: { extraArgs: ['--allowed-tools', 'Read'] } });
+  await spawn(tools, tools.writeTpl({ extraArgs: ['--allowedTools', 'Read'] }));
+  const widened = harness({ rec: { extraArgs: ['--sandbox', 'read-only'] } });
+  await spawn(widened, widened.writeTpl({ extraArgs: ['-s', 'danger-full-access'] }));
+  assert.deepStrictEqual([sandbox.calls.length, approval.calls.length, config.calls.length, tools.calls.length, widened.calls.length], [1, 1, 1, 1, 0]);
+  assert.match(widened.replies[0], /carries --sandbox,/);
+});
+
+test('short, glued and alias forms split into pairs under the long name', () => {
+  const { pairs, kept } = splitPrivilegedArgs(['-s', 'read-only', '-anever', '-c', 'sandbox_mode=x', '-p', 'prof', '--allowed-tools', 'Read', '-m', 'o3']);
+  assert.deepStrictEqual(pairs, [['--sandbox', 'read-only'], ['--ask-for-approval', 'never'], ['--config', 'sandbox_mode=x'], ['--profile', 'prof'], ['--allowedTools', 'Read']]);
+  assert.deepStrictEqual(kept, ['-m', 'o3']);
+});
+
+test('a template extraArgs element that is not a string is refused, even from a spawner holding the flag', async () => {
+  const h = harness({ rec: { extraArgs: ['--yolo'] } });
+  await spawn(h, h.writeTpl({ extraArgs: [['--yolo']] }));
+  assert.deepStrictEqual(h.calls, []);
+  assert.strictEqual(h.replies.length, 1);
+  assert.match(h.replies[0], /^\[agent:spawn\] error: template ".*" extraArgs must be strings$/);
+});
+
+test('template-save without operator drops an extraArgs array holding a non-string and reports it', () => {
+  const { deps, file } = teamDeps();
+  assert.deepStrictEqual(teamTemplateSave(deps, 'core', 'pm', { type: 'claude', extraArgs: [['--yolo'], '--model', 'x'] }), { ok: true, file, stripped: ['extraArgs'] });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { type: 'claude' });
 });

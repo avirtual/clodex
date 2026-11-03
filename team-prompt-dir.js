@@ -115,7 +115,7 @@ function teamTemplateSave(deps, team, stem, body, opts = {}) {
       const { execCommands, ...noExec } = out;
       if (execCommands !== undefined) stripped.push('execCommands');
       out = Array.isArray(prior.execCommands) ? { ...noExec, execCommands: prior.execCommands } : noExec;
-      if (out.extraArgs !== undefined && !Array.isArray(out.extraArgs)) {
+      if (out.extraArgs !== undefined && !(Array.isArray(out.extraArgs) && out.extraArgs.every((t) => typeof t === 'string'))) {
         const { extraArgs, ...noArgs } = out;
         stripped.push('extraArgs');
         out = noArgs;
