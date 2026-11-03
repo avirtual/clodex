@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const { isValidPluginId } = require('./plugin-api');
 
 const SIDECAR_NAME = '.clodex-source.json';
@@ -264,6 +265,19 @@ function createPluginSource(deps) {
     } catch { return false; }
   }
 
+  function treeDigest(dir) {
+    try {
+      const hash = crypto.createHash('sha256');
+      for (const [rel, kind] of [...walkTree(dir)].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))) {
+        const body = kind === 'file' ? fs.readFileSync(path.join(dir, rel))
+          : kind === 'link' ? Buffer.from(fs.readlinkSync(path.join(dir, rel))) : Buffer.alloc(0);
+        hash.update(`${kind}\0${rel}\0${body.length}\0`);
+        hash.update(body);
+      }
+      return hash.digest('hex');
+    } catch { return null; }
+  }
+
   function writeSidecar(dir, meta) {
     const file = path.join(dir, SIDECAR_NAME);
     const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
@@ -273,7 +287,7 @@ function createPluginSource(deps) {
 
   return {
     parseSourceSpec, fetchTarball, extractPlugin, fetchLibraryCatalog,
-    fetchCommitSha, readSidecar, sameTree, writeSidecar,
+    fetchCommitSha, readSidecar, sameTree, treeDigest, writeSidecar,
   };
 }
 

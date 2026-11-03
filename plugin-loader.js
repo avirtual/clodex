@@ -81,6 +81,8 @@ function namespaceTemplateRefs(tpl, pluginId) {
 
 const SKILL_COMPANION_FILE_CAP = 64;
 const SKILL_COMPANION_BYTE_CAP = 1024 * 1024;
+const ASIDE_RE = /^\.old-/;
+const ASIDE_STALE_MS = 60 * 60 * 1000;
 
 function readSkillCompanions(fs, path, skillDir) {
   const files = {};
@@ -440,7 +442,7 @@ function createPluginLoader(deps) {
       return; // a root that does not exist is a legal, silent state
     }
     const note = (dir, why) => { problems.push({ dir, why: String(why), root: root.id }); };
-    for (const ent of entries.filter((d) => isCandidateDir(root.dir, d)).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    for (const ent of entries.filter((d) => !ASIDE_RE.test(d.name) && isCandidateDir(root.dir, d)).sort((a, b) => (a.name < b.name ? -1 : 1))) {
       const dir = resolveDir(path.join(root.dir, ent.name), ent.isSymbolicLink());
       const manifestPath = path.join(dir, 'manifest.json');
       let manifest;
@@ -469,6 +471,7 @@ function createPluginLoader(deps) {
         continue;
       }
       const entry = manifest.entry || {};
+      const fetched = root.id === 'user' ? source.readSidecar(dir) : null;
       const rec = {
         id: manifest.id,
         dir,
@@ -483,7 +486,7 @@ function createPluginLoader(deps) {
         agents: bundle.agents,
         prompts: bundle.prompts,
         templates: bundle.templates,
-        editable: root.id === 'user',
+        editable: root.id === 'user' && !fetched,
         bundleUnreadable: bundle.unreadable,
       };
       const held = claimed.get(manifest.id);
@@ -677,6 +680,25 @@ function createPluginLoader(deps) {
     return { added, removed, changed, failed };
   }
 
+  function sweepStaleAsides(rootDir) {
+    let names = [];
+    try { names = fs.readdirSync(rootDir).filter((n) => ASIDE_RE.test(n)); } catch { return; }
+    const cutoff = Date.now() - ASIDE_STALE_MS;
+    for (const name of names) {
+      const dir = path.join(rootDir, name);
+      let st = null;
+      try { st = fs.lstatSync(dir); } catch { continue; }
+      if (!st.isDirectory() || st.mtimeMs > cutoff) continue;
+      if (hasDrifted(dir, source.readSidecar(dir))) continue;
+      rmQuiet(dir);
+      logIt(`removed stale update leftover ${name}`);
+    }
+  }
+
+  function hasDrifted(dir, sidecar) {
+    return !!(sidecar && sidecar.treeDigest) && source.treeDigest(dir) !== sidecar.treeDigest;
+  }
+
   // Startup must never create the user plugins root — its absence is the honest
   // representation of no user plugins. Created here only because this runs when a
   // user explicitly asks to be shown the path, and revealing a path that does not
@@ -687,10 +709,11 @@ function createPluginLoader(deps) {
     try { fs.mkdirSync(root.dir, { recursive: true }); } catch (e) {
       logIt(`could not create the user plugins dir: ${e && e.message}`);
     }
+    sweepStaleAsides(root.dir);
     return root.dir;
   }
 
-  // No path argument, no recursion, no writes: the root comes from `roots` and
+  // No path argument, no recursion: the root comes from `roots` and
   // cannot be influenced by the caller, so this one answers every surface. The
   // three below DO take a caller-supplied path and are desktop-gated in dispatch.
   function listUserRoot() {
@@ -815,6 +838,7 @@ function createPluginLoader(deps) {
     return dir;
   }
   function rmQuiet(dir) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} }
+  function touchQuiet(dir) { try { const now = new Date(); fs.utimesSync(dir, now, now); } catch {} }
 
   function renameOrCopy(from, to) {
     try {
@@ -921,6 +945,7 @@ function createPluginLoader(deps) {
       source.writeSidecar(target, {
         source: 'github', repo: parsed.repo, ref: parsed.ref, subpath: parsed.subpath,
         commit: r.commit, commitFull: r.commitFull, fetchedAt: Date.now(), hostVersion: HOST_API_VERSION,
+        treeDigest: source.treeDigest(target),
       });
     } catch (e) {
       rmQuiet(target);
@@ -950,10 +975,14 @@ function createPluginLoader(deps) {
       rmQuiet(r.work);
       return { ok: false, error: `upstream now declares id "${r.manifest.id}", not "${id}"` };
     }
-    const changed = !commitsMatch(sidecar.commit, r.commit) && !source.sameTree(r.dir, dir);
+    const changed = !commitsMatch(sidecar.commit, r.commit) && (sidecar.treeDigest
+      ? source.treeDigest(r.dir) !== sidecar.treeDigest
+      : !source.sameTree(r.dir, dir));
+    const drifted = hasDrifted(dir, sidecar);
     rmQuiet(r.work);
     return {
       ok: true,
+      drifted,
       id: r.manifest.id,
       previousCommit: sidecar.commit,
       commit: r.commit,
@@ -986,9 +1015,11 @@ function createPluginLoader(deps) {
       rmQuiet(r.work);
       return { ok: false, error: `the source now resolves to ${r.commit}, not the ${commit} you accepted — resolve the update again` };
     }
+    const drifted = hasDrifted(target, sidecar);
     const aside = path.join(root, `.old-${id}-${nonce()}`);
     try {
       fs.renameSync(target, aside);
+      touchQuiet(aside);
     } catch (e) {
       rmQuiet(r.work);
       return { ok: false, error: `could not move the old copy aside — ${(e && e.message) || e}` };
@@ -999,8 +1030,9 @@ function createPluginLoader(deps) {
       source.writeSidecar(target, {
         source: 'github', repo: sidecar.repo, ref: sidecar.ref, subpath: sidecar.subpath,
         commit: r.commit, commitFull: r.commitFull, fetchedAt: Date.now(), hostVersion: HOST_API_VERSION,
+        treeDigest: source.treeDigest(target),
       });
-      rmQuiet(aside);
+      if (!drifted) rmQuiet(aside);
       const live = loadedFrom.get(id);
       const enginePath = r.manifest.entry.engine ? path.join(target, r.manifest.entry.engine) : null;
       const required = !!enginePath && requiredPaths.has(enginePath);
@@ -1009,8 +1041,10 @@ function createPluginLoader(deps) {
           was: live ? live.version : requiredPaths.get(enginePath), now: r.manifest.version || null, dirChanged: false,
         });
       }
-      logIt(`updated ${id}: ${sidecar.commit} -> ${r.commit}`);
-      return { ok: true, id, previousCommit: sidecar.commit, commit: r.commit };
+      logIt(`updated ${id}: ${sidecar.commit} -> ${r.commit}${drifted ? `, edited copy kept at ${aside}` : ''}`);
+      return drifted
+        ? { ok: true, id, previousCommit: sidecar.commit, commit: r.commit, kept: aside }
+        : { ok: true, id, previousCommit: sidecar.commit, commit: r.commit };
     } catch (e) {
       rmQuiet(r.work);
       rmQuiet(target);
@@ -1037,6 +1071,17 @@ function createPluginLoader(deps) {
     }
     const sidecar = source.readSidecar(target);
     if (!sidecar) return { ok: false, error: `"${id}" is not installed from a source` };
+    if (hasDrifted(target, sidecar)) {
+      const aside = path.join(root, `.old-${id}-${nonce()}`);
+      try {
+        fs.renameSync(target, aside);
+        touchQuiet(aside);
+      } catch (e) {
+        return { ok: false, error: `could not move the edited copy of ${id} aside — ${(e && e.message) || e}` };
+      }
+      logIt(`removed source plugin ${id}, edited copy kept at ${aside}`);
+      return { ok: true, id, kept: aside };
+    }
     try {
       fs.rmSync(target, { recursive: true, force: true });
     } catch (e) {
@@ -1144,6 +1189,13 @@ function createPluginLoader(deps) {
     if (!AGENT_NAME_RE.test(name)) return { ok: false, error: `invalid name: ${JSON.stringify(stem)}` };
     const rec = discover().find((r) => r.id === String(id));
     if (!rec) return { ok: false, error: `no such plugin: ${id}` };
+    const fetched = rec.root === 'user' ? source.readSidecar(rec.dir) : null;
+    if (fetched) {
+      return {
+        ok: false,
+        error: `"${rec.id}" was fetched from ${fetched.repo} and is read-only here — copy it into your plugins folder under a new id to edit it`,
+      };
+    }
     if (!rec.editable) {
       return {
         ok: false,
