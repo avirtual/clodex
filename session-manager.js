@@ -2237,6 +2237,7 @@ function createSessionManager(deps) {
         _assistant: !!(existingEntry && existingEntry.class === 'assistant'),
         ...(streamIo ? {
           stream: streamSeat,
+          _streamStopping: false,
           streamCodec,
           outbox: [],
           streamPid: { pid: streamSeat.pid, startTime: streamSeat.startTime ?? streamSeat.startedAt },
@@ -2958,8 +2959,8 @@ function createSessionManager(deps) {
       if (parkId) Object.defineProperty(item, 'parkId', { value: parkId, enumerable: false });
       if (typeof fallback === 'function') Object.defineProperty(item, 'fallback', { value: fallback, enumerable: false });
       if (typeof onDivert === 'function') Object.defineProperty(item, 'onDivert', { value: onDivert, enumerable: false });
-      const held = !s.streamBusy && this._streamHintHeld(s);
-      const idle = !s.streamBusy && !held;
+      const held = !s.streamBusy && !this._streamStopped(s) && this._streamHintHeld(s);
+      const idle = !s.streamBusy && !held && !this._streamStopped(s);
       if (idle && !s.outbox.length && item.wire) {
         this._streamDeliver(s, { text: '', images: [], wire: item.wire });
         this._streamSent(s, [item]);
@@ -2986,6 +2987,10 @@ function createSessionManager(deps) {
       this._streamOutboxChanged(s);
       if (idle && !s._streamInitStalled) this._streamTurnEnd(s);
       return s.outbox.length;
+    }
+
+    _streamStopped(s) {
+      return !!(s._streamStopping || (s.stream && s.stream.exited));
     }
 
     _streamEnqueueSystem(s, text, produce, where, onSend = null, parkKey = null, park = {}) {
@@ -3068,7 +3073,7 @@ function createSessionManager(deps) {
     }
 
     _onStreamToolBoundary(s) {
-      if (!s || s.io !== 'stream' || s._dead || !s.stream) return;
+      if (!s || s.io !== 'stream' || s._dead || !s.stream || this._streamStopped(s)) return;
       const sys = s.outbox.filter((q) => q.origin === 'system' && !q.wire);
       if (!sys.length) return;
       const now = Date.now();
@@ -3233,6 +3238,10 @@ function createSessionManager(deps) {
     _streamTurnEnd(s) {
       this._clearStreamInitWatchdog(s);
       s.streamBusy = false;
+      if (this._streamStopped(s)) {
+        this._emitActivity(s.name, 'idle', true);
+        return;
+      }
       if (s._sleepRequested && !s.outbox.length) {
         const reason = s._sleepRequested;
         s._sleepRequested = null;
@@ -3753,7 +3762,7 @@ function createSessionManager(deps) {
       if (!respawn) getPersistence().remove(name);
       else s._respawning = true;
       this._bindHold(name);
-      if (s.stream) { s.stream.kill(); return; }
+      if (s.stream) { s._streamStopping = true; s.stream.kill(); return; }
       const ptyPid = s.pty.pid;
       s._sigkillTimer = setTimeout(() => { if (s._dead) return; sigkillPid(ptyPid, name, log, killPid); }, 5000);
       await reapPtyDescendants({ ptyPid, name, log, childProcess, killPid });
@@ -3850,7 +3859,7 @@ function createSessionManager(deps) {
       this._notifyComposition(s, 'archived');
       getPersistence().setArchived(name, true);
       s._archived = true;
-      if (s.stream) { s.stream.kill(); return; }
+      if (s.stream) { s._streamStopping = true; s.stream.kill(); return; }
       const ptyPid = s.pty.pid;
       s._sigkillTimer = setTimeout(() => { if (s._dead) return; sigkillPid(ptyPid, name, log, killPid); }, 5000);
       await reapPtyDescendants({ ptyPid, name, log, childProcess, killPid });
@@ -4010,7 +4019,7 @@ function createSessionManager(deps) {
     }
 
     async _stopForRespawn(s, name) {
-      if (s.stream) { s.stream.kill(); return; }
+      if (s.stream) { s._streamStopping = true; s.stream.kill(); return; }
       const ptyPid = s.pty && s.pty.pid;
       if (ptyPid) s._sigkillTimer = setTimeout(() => { if (s._dead) return; sigkillPid(ptyPid, name, log, killPid); }, 5000);
       await reapPtyDescendants({ ptyPid, name, log, childProcess, killPid });
@@ -5219,7 +5228,7 @@ function createSessionManager(deps) {
       const rows = psSnapshotSync(childProcess);
       for (const [name] of this.sessions) {
         const s = this.sessions.get(name);
-        if (s.stream) { s.stream.kill(); continue; }
+        if (s.stream) { s._streamStopping = true; s.stream.kill(); continue; }
         if (s.pty && Number.isInteger(s.pty.pid)) reapFromSnapshot({ rows, ptyPid: s.pty.pid, name, log, killPid });
         try { s.pty.kill(); } catch {}
       }

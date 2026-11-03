@@ -63,6 +63,7 @@ function spawnStreamSeat({
   let scanFrom = 0;
   let skipped = 0;
   let exited = false;
+  let stopping = false;
   let closed = false;
   let closeFired = false;
   let exitInfo = { code: null, signal: null };
@@ -169,6 +170,8 @@ function spawnStreamSeat({
   };
 
   const kill = () => {
+    stopping = true;
+    close();
     killGroup(pid, 'SIGTERM');
     if (killTimer) return;
     killTimer = setTimeout(() => { killGroup(pid, 'SIGKILL'); }, KILL_GRACE_MS);
@@ -183,6 +186,7 @@ function spawnStreamSeat({
     close,
     kill,
     get exited() { return exited; },
+    get stopping() { return stopping; },
     get skipped() { return skipped; },
     get stderrTail() { return stderrTail; },
   };

@@ -20,6 +20,7 @@ function boot() {
   const sends = new Map();
   const lines = new Map();
   const closes = new Map();
+  const seats = new Map();
   const logs = [];
   let pending = null;
   const persistence = {
@@ -60,11 +61,13 @@ function boot() {
       sends.set(who, []);
       lines.set(who, opts.onLine);
       closes.set(who, opts.onClose);
-      return {
-        pid: 7001, startedAt: 1, startTime: 1, stderrTail: '',
+      const seat = {
+        pid: 7001, startedAt: 1, startTime: 1, stderrTail: '', exited: false,
         send: (obj) => { sends.get(who).push(obj); return Promise.resolve(); },
         close() {}, kill() {},
       };
+      seats.set(who, seat);
+      return seat;
     },
     notifyOS: () => {},
     log: { info: rec('info'), warn: rec('warn'), error: rec('error'), debug: rec('debug') },
@@ -128,7 +131,7 @@ function boot() {
     return m.sessions.get(name);
   };
   return {
-    m, root, PENDING_DIR, logs, sends, persistence,
+    m, root, PENDING_DIR, logs, sends, persistence, seats,
     close: (n, code = 1) => closes.get(n)(code, null),
     setPending: (n) => { pending = n; },
     spawn,
@@ -292,5 +295,48 @@ test('a re-parked dm tells its caller parked, never injected, and logs its dropp
     assert.strictEqual(app.parked('sx').length, 1);
     assert.deepStrictEqual(heard, [['parked', 'dead']]);
     assert.ok(app.logs.some((l) => l.level === 'warn' && /^re-parked a queued outbox item for sx \(seat exited code=1, \d+ chars, 1 image\(s\) dropped\)$/.test(l.msg)));
+  } finally { app.stop(); }
+});
+
+const STOP_VERBS = [
+  { verb: 'kill', stop: (m, s) => m.kill('sx', { respawn: true }) },
+  { verb: 'archive', stop: (m, s) => m.archive('sx') },
+  { verb: 'restart', stop: (m, s) => m._stopForRespawn(s, 'sx') },
+];
+
+for (const { verb, stop } of STOP_VERBS) {
+  test(`${verb}: a dm to an idle stream seat while it stops is parked at exit and the sender hears parked, not injected`, async () => {
+    const app = boot();
+    try {
+      const s = await app.spawn('sx', 'stream');
+      s.streamBusy = false;
+      app.m._deliverMessage('sx', 'lead', 'warm-body-1100', 'dm', '', null, 'key-1100');
+      assert.strictEqual(app.sends.get('sx').length, 1, 'ENTER: an idle seat takes a dm straight to stdin');
+      app.m._streamTurnEnd(s);
+      await stop(app.m, s);
+      const fired = [];
+      app.m._deliverMessage('sx', 'lead', 'stop-body-7310', 'dm', '', (...a) => fired.push(a), 'key-7310');
+      assert.strictEqual(app.sends.get('sx').length, 1);
+      assert.strictEqual(s.outbox.length, 1);
+      app.close('sx');
+      const files = app.parked('sx');
+      assert.deepStrictEqual(files.map((f) => f.key), ['key-7310']);
+      assert.match(files[0].text, /stop-body-7310/);
+      assert.deepStrictEqual(fired, [['parked', 'dead']]);
+    } finally { app.stop(); }
+  });
+}
+
+test('an exited-but-not-closed stream seat queues a dm instead of writing it', async () => {
+  const app = boot();
+  try {
+    const s = await app.spawn('sx', 'stream');
+    s.streamBusy = false;
+    app.seats.get('sx').exited = true;
+    const fired = [];
+    app.m._deliverMessage('sx', 'lead', 'gap-body-8820', 'dm', '', (...a) => fired.push(a), 'key-8820');
+    assert.deepStrictEqual(app.sends.get('sx'), []);
+    assert.strictEqual(s.outbox.length, 1);
+    assert.deepStrictEqual(fired, []);
   } finally { app.stop(); }
 });
