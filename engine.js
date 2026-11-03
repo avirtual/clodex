@@ -1451,9 +1451,10 @@ function writeFilePeek(name, filePath, content, expectMtime) {
   const s = manager.sessions.get(name);
   if (!s) return { ok: false, error: 'Session not running' };
   if (s.peer) return { ok: false, error: 'remote' };
+  let vetted = null;
   const v = vetFileWrite({
     filePath, cwd: s.cwd, content, expectMtime,
-    resolve: path.resolve, realpath: fs.realpathSync, stat: fs.statSync,
+    resolve: path.resolve, realpath: fs.realpathSync, stat: (p) => (vetted = fs.statSync(p)),
     readHead: (p) => {
       const fd = fs.openSync(p, 'r');
       try {
@@ -1469,10 +1470,20 @@ function writeFilePeek(name, filePath, content, expectMtime) {
     },
   });
   if (!v.ok) return v;
+  const changed = { ok: false, error: 'File changed under the editor — reload and retry' };
+  let fd;
+  try { fd = fs.openSync(v.path, fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW); }
+  catch (e) { return (e.code === 'ELOOP' || e.code === 'ENOENT') ? changed : { ok: false, error: e.message }; }
   try {
-    fs.writeFileSync(v.path, content);
-    return { ok: true, mtime: Math.trunc(fs.statSync(v.path).mtimeMs), size: Buffer.byteLength(content) };
+    const st = fs.fstatSync(fd);
+    if (st.dev !== vetted.dev || st.ino !== vetted.ino) return changed;
+    fs.ftruncateSync(fd, 0);
+    const buf = Buffer.from(content);
+    let n = 0;
+    while (n < buf.length) n += fs.writeSync(fd, buf, n, buf.length - n, n);
+    return { ok: true, mtime: Math.trunc(fs.fstatSync(fd).mtimeMs), size: buf.length };
   } catch (e) { return { ok: false, error: e.message }; }
+  finally { fs.closeSync(fd); }
 }
 
 async function fetchFileDiff(name, filePath) {
