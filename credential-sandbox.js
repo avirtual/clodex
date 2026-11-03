@@ -10,8 +10,8 @@ const ENV_GROUPS = [
 
 const HOME_WRITE_DENY = [
   '~/.claude', '~/.claude.json',
-  '~/.zshrc', '~/.zprofile', '~/.zshenv', '~/.bashrc', '~/.bash_profile',
-  '~/.gitconfig', '~/.config/git',
+  '~/.zshrc', '~/.zprofile', '~/.zshenv', '~/.zlogin', '~/.zlogout', '~/.bashrc', '~/.bash_profile', '~/.bash_login', '~/.profile',
+  '~/.gitconfig', '~/.config/git', '~/.config/fish', '~/.codex',
   '~/Library/LaunchAgents',
   '~/.ssh',
 ];
@@ -21,7 +21,9 @@ const DATA_WRITE_OPEN = new Set(['projects']);
 const GLOB_RE = /[*?[]/;
 const USER_DATA_READ_DENY = ['remote.env', 'ui-settings.json*', 'env-scopes.json*', 'sessions.json*', 'wire-hold-entries.json', 'env-override.env',
   '.ui-settings.json*', '.env-scopes.json*', '.sessions.json*', '.wire-hold-entries.json.tmp.*', 'remote.env.tmp'];
-const GIT_DIR_WRITE_DENY = [['config', false], ['config.worktree', false], ['commondir', false], ['hooks', true], [path.join('info', 'attributes'), false]];
+const T0_FILE_GLOBS = [['sessions', '*', 'seat.json'], ['sessions', '*', '.seat.json.tmp.*'], ['sessions', '*', 'client-token']];
+const CWD_AGENT_DIRS = ['.codex', '.claude'];
+const GIT_DIR_WRITE_DENY =[['config', false], ['config.worktree', false], ['commondir', false], ['hooks', true], [path.join('info', 'attributes'), false]];
 
 function normalizeList(list) {
   const out = [];
@@ -51,6 +53,8 @@ function t0ReadPaths(registryDir, home) {
   out.push(path.join(registryDir, 'run', '*', 'mcp.json'));
   out.push(path.join(registryDir, 'sessions', '*', 'run', 'mcp.json'));
   out.push(path.join(registryDir, 'peer-outbox', 'outbox-key'));
+  out.push(...T0_FILE_GLOBS.map((rel) => path.join(registryDir, ...rel)));
+  out.push(path.join(registryDir, 'accounts'));
   return out;
 }
 
@@ -115,7 +119,7 @@ function rulesFor(tool, p, dir) {
   return [`${tool}(${anchor})`, `${tool}(${anchor}/**)`];
 }
 
-function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = os.homedir(), inBox = false, fsImpl = fs, mcpSecretNames = [], userDataPath = null, cwd = null }) {
+function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = os.homedir(), inBox = false, fsImpl = fs, mcpSecretNames = [], userDataPath = null, cwd = null, codexHome = null }) {
   const listed = normalizeList(list);
   const t0 = t0ReadPaths(registryDir, home);
   const userDataFiles = userDataPath ? [...USER_DATA_READ_DENY, path.join('sandbox*', 'auth.env')].map((f) => path.join(userDataPath, f)) : [];
@@ -126,7 +130,8 @@ function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = o
   const dataEntries = dataWriteDeny(registryDir, fsImpl);
   const realCwd = typeof cwd === 'string' && path.isAbsolute(cwd) ? realPathOr(cwd, fsImpl) : null;
   const repoGit = realCwd ? repoGitDirs(realCwd, fsImpl) : [];
-  const denyWrite = [...new Set([...HOME_WRITE_DENY, ...listed, ...dataEntries.map((e) => e.p), APP_BUNDLE, ...userDataWrite, ...userDataFileWrite, ...repoGit.map((e) => e.p)])];
+  const cwdAgentDirs = realCwd ? CWD_AGENT_DIRS.map((d) => path.join(realCwd, d)) : [];
+  const denyWrite = [...new Set([...HOME_WRITE_DENY, ...normalizeList([codexHome]), ...listed, ...dataEntries.map((e) => e.p), APP_BUNDLE, ...userDataWrite, ...userDataFileWrite, ...repoGit.map((e) => e.p), ...cwdAgentDirs])];
 
   const kindOf = new Map(dataEntries.map((e) => [e.p, e.dir]));
   kindOf.set(t0[0], false);
@@ -137,6 +142,8 @@ function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = o
   for (const p of userDataFiles) kindOf.set(p, false);
   for (const p of userDataWrite) kindOf.set(p, true);
   for (const p of userDataFileWrite) kindOf.set(p, false);
+  for (const rel of T0_FILE_GLOBS) kindOf.set(path.join(registryDir, ...rel), false);
+  kindOf.set(path.join(registryDir, 'accounts'), true);
   for (const e of repoGit) kindOf.set(e.p, e.dir);
 
   const deny = [];

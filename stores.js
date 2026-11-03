@@ -664,8 +664,9 @@ function initStores(userDataPath, {
       if (!entry || !registryDir || !seatLayoutActive(registryDir, fs)) return false;
       const dir = seatDirFor(registryDir, name);
       if (!fs.existsSync(dir)) return false;
+      const { env, ...rest } = entry;
       try {
-        atomicWriteFileSync(path.join(dir, 'seat.json'), `${JSON.stringify(entry, null, 2)}\n`);
+        atomicWriteFileSync(path.join(dir, 'seat.json'), `${JSON.stringify(rest, null, 2)}\n`);
         return true;
       } catch (e) {
         if (log && log.warn) log.warn('stores', `seat.json not written for ${name} (${e.message})`);

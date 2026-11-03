@@ -293,6 +293,9 @@ with `/` or `~/`; anything else is dropped.
   (`<data>/run/*/mcp.json` and its seat-layout twin
   `<data>/sessions/*/run/mcp.json`) is read-denied too, and each `${NAME}` the
   seat's applied MCP selection references is unset like the AWS names.
+  Each seat's `seat.json` mirror (with the writer's `.seat.json.tmp.*` copy),
+  its `client-token` file and the minted account config dirs under
+  `<data>/accounts` are read-denied as well.
   The app data dir's (`<userData>`) `remote.env`, `ui-settings.json` (peer
   tokens), `env-scopes.json` and `sessions.json` (each with its `.bak` and
   `.corrupt-*` copies, via a `*` suffix), `wire-hold-entries.json`,
@@ -303,7 +306,9 @@ with `/` or `~/`; anything else is dropped.
   sandbox's default would confine them to the cwd). `denyWrite` covers config
   that an unsandboxed process runs later: the template's own paths (a
   credential dir's config can name a command, e.g. `credential_process`),
-  `~/.claude`, `~/.claude.json`, the shell rc files,
+  `~/.claude`, `~/.claude.json`, the shell rc and login files (`.zlogin`,
+  `.zlogout`, `.profile`, `.bash_login` among them), `~/.config/fish`,
+  `~/.codex` and `$CODEX_HOME` when set, the cwd's `.codex` and `.claude`,
   `~/.gitconfig`, `~/.config/git`, `~/Library/LaunchAgents`, `~/.ssh`,
   `/Applications/Clodex.app`, and every entry of the Clodex data dir except
   `<data>/projects` (task artifacts stay writable). The data dir is listed when
@@ -375,7 +380,7 @@ separately, and Delete (`destroy`), Delete Workspace… (`purgeWorkspace`) and t
 ✕ forget (`session:forget`) each remove it with `_dropPendingDir` and drop the
 seat's held injects. `_cleanup` alone (kill, restart) never removes it.
 
-`sessions/<seat>/seat.json` is a snapshot of the seat's `sessions.json` record,
+`sessions/<seat>/seat.json` is a snapshot of the seat's `sessions.json` record minus its `env` (the per-seat secrets),
 rewritten whenever that record is written under a name (`persistence._save`'s
 touched-name argument, which every upsert and name-keyed setter passes) and once
 more at the end of a rename. It is read by nothing: it is there for inspection

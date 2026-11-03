@@ -29,6 +29,8 @@ Every argv child inherits the app env, with these keys set explicitly over it:
 `CLODEX_TEAM_ROOT`, and `CLODEX_CLIENT_TOKEN` — the trimmed contents of the
 seat's `sessions/<seat>/client-token` (set by a wire create's `client.token` or
 `PUT /api/sessions/:name/client-token`, see peering.md), or `''` without one.
+The token file is read-denied inside the credential sandbox and is injected only
+into exec children's env; a seat without protectCredentials can read its own file.
 
 `"proposal": true` (boolean; no `argv` needed; cannot combine with `inProcess`)
 makes the def a game proposal: the dispatcher checks the grant and the schema,

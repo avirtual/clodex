@@ -45,12 +45,13 @@ function expectedFilesystem(R, ud) {
   const denyRead = [
     `${R}/cli/contexts.json`, `${R}/teams/*/sandbox.json`, `${R}/boxes`, '/h/.clodex/cli/contexts.json',
     `${R}/run/*/mcp.json`, `${R}/sessions/*/run/mcp.json`, `${R}/peer-outbox/outbox-key`,
+    `${R}/sessions/*/seat.json`, `${R}/sessions/*/.seat.json.tmp.*`, `${R}/sessions/*/client-token`, `${R}/accounts`,
     ...(ud ? ['/ud/remote.env', '/ud/ui-settings.json*', '/ud/env-scopes.json*', '/ud/sessions.json*', '/ud/wire-hold-entries.json', '/ud/env-override.env',
       '/ud/.ui-settings.json*', '/ud/.env-scopes.json*', '/ud/.sessions.json*', '/ud/.wire-hold-entries.json.tmp.*', '/ud/remote.env.tmp', '/ud/sandbox*/auth.env'] : []),
   ];
   const denyWrite = [
-    '~/.claude', '~/.claude.json', '~/.zshrc', '~/.zprofile', '~/.zshenv', '~/.bashrc', '~/.bash_profile',
-    '~/.gitconfig', '~/.config/git', '~/Library/LaunchAgents', '~/.ssh',
+    '~/.claude', '~/.claude.json', '~/.zshrc', '~/.zprofile', '~/.zshenv', '~/.zlogin', '~/.zlogout', '~/.bashrc', '~/.bash_profile', '~/.bash_login', '~/.profile',
+    '~/.gitconfig', '~/.config/git', '~/.config/fish', '~/.codex', '~/Library/LaunchAgents', '~/.ssh',
     `${R}/boxes`, `${R}/cli`, `${R}/run`, `${R}/sessions`, `${R}/teams`, '/Applications/Clodex.app',
     ...(ud ? ['/ud'] : []),
   ];
@@ -87,7 +88,7 @@ test('buildCredentialSandbox: without a userDataPath the output is unchanged', (
   const want = expectedFilesystem(R, false);
   assert.deepStrictEqual(g.sandbox.filesystem, want.filesystem);
   assert.deepStrictEqual(g.sandbox.credentials, { files: want.files });
-  assert.strictEqual(g.deny.length, 41);
+  assert.strictEqual(g.deny.length, 61);
 });
 
 test('buildCredentialSandbox: a userData dir holding the registry keeps its file denies but drops the whole-dir write deny', () => {
@@ -141,15 +142,16 @@ test('session-manager derives mcpSecretNames from the applied selection and pass
   assert.ok(src.indexOf('const mcpSecretNames') < src.indexOf('setupClaudeHook(name,'));
 });
 
-test('buildCredentialSandbox: a cwd without a .git adds exactly the .git pointer and its config, config.worktree, commondir, hooks and info/attributes to the write deny', () => {
+test('buildCredentialSandbox: a cwd without a .git adds exactly the .git pointer and its config, config.worktree, commondir, hooks and info/attributes, plus the cwd\'s .codex and .claude, to the write deny', () => {
   const root = seededRoot();
   const without = buildCredentialSandbox({ registryDir: root, list: [], home: '/h' });
   const withCwd = buildCredentialSandbox({ registryDir: root, list: [], home: '/h', cwd: '/w' });
   assert.deepStrictEqual(
     withCwd.sandbox.filesystem.denyWrite.filter((p) => !without.sandbox.filesystem.denyWrite.includes(p)),
-    ['/w/.git', '/w/.git/config', '/w/.git/config.worktree', '/w/.git/commondir', '/w/.git/hooks', '/w/.git/info/attributes']);
+    ['/w/.git', '/w/.git/config', '/w/.git/config.worktree', '/w/.git/commondir', '/w/.git/hooks', '/w/.git/info/attributes', '/w/.codex', '/w/.claude']);
   assert.deepStrictEqual(withCwd.deny.filter((r) => !without.deny.includes(r)),
-    ['Edit(//w/.git)', 'Edit(//w/.git/config)', 'Edit(//w/.git/config.worktree)', 'Edit(//w/.git/commondir)', 'Edit(//w/.git/hooks/**)', 'Edit(//w/.git/info/attributes)']);
+    ['Edit(//w/.git)', 'Edit(//w/.git/config)', 'Edit(//w/.git/config.worktree)', 'Edit(//w/.git/commondir)', 'Edit(//w/.git/hooks/**)', 'Edit(//w/.git/info/attributes)',
+      'Edit(//w/.codex)', 'Edit(//w/.codex/**)', 'Edit(//w/.claude)', 'Edit(//w/.claude/**)']);
   assert.deepStrictEqual(without.sandbox.filesystem.denyWrite.filter((p) => p.includes('.git/')), []);
   assert.ok(without.sandbox.filesystem.denyWrite.length > 0, 'ENTER: the base denyWrite is populated');
   assert.deepStrictEqual(buildCredentialSandbox({ registryDir: root, list: [], home: '/h', cwd: 'rel' }).sandbox.filesystem.denyWrite,
@@ -193,9 +195,11 @@ test('buildCredentialSandbox: a cwd under a symlink denies the real .git paths',
 function addedRepoDenies(root, cwd) {
   const without = buildCredentialSandbox({ registryDir: root, list: [], home: '/h' });
   const g = buildCredentialSandbox({ registryDir: root, list: [], home: '/h', cwd });
+  const agentDirs = ['.codex', '.claude'].map((d) => path.join(fs.realpathSync(cwd), d));
+  const isAgentDir = (s) => agentDirs.some((d) => s === d || s === `Edit(/${d})` || s === `Edit(/${d}/**)`);
   return {
-    denyWrite: g.sandbox.filesystem.denyWrite.filter((p) => !without.sandbox.filesystem.denyWrite.includes(p)),
-    deny: g.deny.filter((r) => !without.deny.includes(r)),
+    denyWrite: g.sandbox.filesystem.denyWrite.filter((p) => !without.sandbox.filesystem.denyWrite.includes(p) && !isAgentDir(p)),
+    deny: g.deny.filter((r) => !without.deny.includes(r) && !isAgentDir(r)),
   };
 }
 
@@ -291,4 +295,47 @@ test('buildCredentialSandbox: a .git symlink to a directory keeps its pointer de
   const got = addedRepoDenies(root, cwd);
   assert.deepStrictEqual(got.denyWrite, [`${C}/.git`, ...GIT_DENY_RELS.map((r) => `${T}/${r}`)]);
   assert.ok(got.deny.includes(`Edit(/${C}/.git)`));
+});
+
+test('buildCredentialSandbox: the seat mirror, temp copy, client token and account dirs are read-denied in both layers', () => {
+  const R = seededRoot();
+  const g = buildCredentialSandbox({ registryDir: R, list: [], home: '/h' });
+  const rows = [
+    [`${R}/sessions/*/seat.json`, [`Read(/${R}/sessions/*/seat.json)`, `Edit(/${R}/sessions/*/seat.json)`]],
+    [`${R}/sessions/*/.seat.json.tmp.*`, [`Read(/${R}/sessions/*/.seat.json.tmp.*)`, `Edit(/${R}/sessions/*/.seat.json.tmp.*)`]],
+    [`${R}/sessions/*/client-token`, [`Read(/${R}/sessions/*/client-token)`, `Edit(/${R}/sessions/*/client-token)`]],
+    [`${R}/accounts`, [`Read(/${R}/accounts/**)`, `Edit(/${R}/accounts/**)`]],
+  ];
+  for (const [p, rules] of rows) {
+    assert.ok(g.sandbox.filesystem.denyRead.includes(p), `denyRead lists ${p}`);
+    assert.ok(g.sandbox.credentials.files.some((f) => f.path === p && f.mode === 'deny'), `credentials.files lists ${p}`);
+    for (const r of rules) assert.ok(g.deny.includes(r), `permissions deny ${r}`);
+  }
+});
+
+test('buildCredentialSandbox: autorun files a later unsandboxed process runs are write-denied in both layers', () => {
+  const R = seededRoot();
+  const g = buildCredentialSandbox({ registryDir: R, list: [], home: '/h', cwd: '/w', codexHome: '/opt/codex-home/' });
+  const rows = [
+    ['~/.zlogin', ['Edit(~/.zlogin)', 'Edit(~/.zlogin/**)']],
+    ['~/.zlogout', ['Edit(~/.zlogout)', 'Edit(~/.zlogout/**)']],
+    ['~/.profile', ['Edit(~/.profile)', 'Edit(~/.profile/**)']],
+    ['~/.bash_login', ['Edit(~/.bash_login)', 'Edit(~/.bash_login/**)']],
+    ['~/.config/fish', ['Edit(~/.config/fish)', 'Edit(~/.config/fish/**)']],
+    ['~/.codex', ['Edit(~/.codex)', 'Edit(~/.codex/**)']],
+    ['/opt/codex-home', ['Edit(//opt/codex-home)', 'Edit(//opt/codex-home/**)']],
+    ['/w/.codex', ['Edit(//w/.codex)', 'Edit(//w/.codex/**)']],
+    ['/w/.claude', ['Edit(//w/.claude)', 'Edit(//w/.claude/**)']],
+  ];
+  for (const [p, rules] of rows) {
+    assert.ok(g.sandbox.filesystem.denyWrite.includes(p), `denyWrite lists ${p}`);
+    for (const r of rules) assert.ok(g.deny.includes(r), `permissions deny ${r}`);
+  }
+  const unset = buildCredentialSandbox({ registryDir: R, list: [], home: '/h' });
+  assert.strictEqual(unset.sandbox.filesystem.denyWrite.includes('/opt/codex-home'), false);
+});
+
+test('setupClaudeHook hands CODEX_HOME to the sandbox', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'cli-hooks.js'), 'utf8');
+  assert.ok(/buildCredentialSandbox\(\{[^}]*codexHome: process\.env\.CODEX_HOME/.test(src));
 });
