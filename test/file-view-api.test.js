@@ -667,15 +667,19 @@ test('writeFilePeek refuses a leaf swapped for a symlink between the vet realpat
   const file = writeAt(cwd, 'a.txt', 'one');
   const outside = writeAt(outsideRoot, 'outside.txt', 'keep');
   let swapped = false;
+  const opened = [];
   const fn = writeFilePeekWith(cwd, (real) => ({
     openSync: (p, flags, ...rest) => {
       if (!swapped) { swapped = true; fs.unlinkSync(file); fs.symlinkSync(outside, file); }
-      return real.openSync(p, flags, ...rest);
+      const fd = real.openSync(p, flags, ...rest);
+      opened.push(p);
+      return fd;
     },
   }));
   const r = fn('seat', file, 'pwned', null);
   assert.strictEqual(swapped, true, 'ENTER: the leaf swap ran before the vet open');
-  assert.deepStrictEqual(r, { ok: false, error: `No such file: ${file}` });
+  assert.deepStrictEqual(r, { ok: false, error: 'File changed under the editor — reload and retry' });
+  assert.deepStrictEqual(opened, [], 'the open itself refused the symlinked leaf');
   assert.strictEqual(fs.readFileSync(outside, 'utf8'), 'keep');
 });
 

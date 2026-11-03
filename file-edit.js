@@ -49,7 +49,9 @@ function vetFileWrite({ filePath, cwd, content, expectMtime, resolve, realpath, 
   }
 
   let handle;
-  try { handle = open(real); } catch { return { ok: false, error: `No such file: ${trimmed}` }; }
+  try { handle = open(real); } catch (e) {
+    return { ok: false, error: e && e.code === 'ELOOP' ? 'File changed under the editor — reload and retry' : `No such file: ${trimmed}` };
+  }
   const refuse = (error) => { close(handle); return { ok: false, error }; };
 
   let st;

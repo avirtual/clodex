@@ -177,9 +177,11 @@ test('a confinement refusal never opens the file outside the cwd', () => {
   assert.deepStrictEqual(opened, []);
 });
 
-test('an open that fails after realpath succeeded is a missing file and closes nothing', () => {
-  const fx = fsFixture({ files: { '/repo/src/a.js': {} } });
-  const r = vetFileWrite(base({ ...fx, open: () => { throw Object.assign(new Error('ELOOP'), { code: 'ELOOP' }); } }));
-  assert.deepStrictEqual(r, { ok: false, error: 'No such file: /repo/src/a.js' });
-  assert.deepStrictEqual(fx.closed, []);
+test('an open that fails after realpath succeeded closes nothing: a leaf turned symlink is a change, a vanished leaf is missing', () => {
+  for (const [code, error] of [['ELOOP', 'File changed under the editor — reload and retry'], ['ENOENT', 'No such file: /repo/src/a.js']]) {
+    const fx = fsFixture({ files: { '/repo/src/a.js': {} } });
+    const r = vetFileWrite(base({ ...fx, open: () => { throw Object.assign(new Error(code), { code }); } }));
+    assert.deepStrictEqual(r, { ok: false, error });
+    assert.deepStrictEqual(fx.closed, []);
+  }
 });
