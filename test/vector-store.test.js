@@ -470,3 +470,15 @@ test('vector-store: remove retires a key across a restart and compact reclaims i
   assert.deepStrictEqual(again.compact(), { before: 2, after: 1, reclaimed: 1 });
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('vector-store: spaceMismatch names the on-disk space a read-only open discarded', () => {
+  const { dir, file } = mk(3, 'small-model');
+  const first = createVectorStore({ file, dims: 3, model: 'small-model' });
+  first.add('a', axis(0, 3));
+  first.flush();
+  const ro = createVectorStore({ file, dims: 4, model: 'small-model', readOnly: true });
+  assert.deepStrictEqual(ro.spaceMismatch(), { dims: 3, model: 'small-model' });
+  const same = createVectorStore({ file, dims: 3, model: 'small-model', readOnly: true });
+  assert.strictEqual(same.spaceMismatch(), null);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
