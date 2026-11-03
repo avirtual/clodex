@@ -1454,7 +1454,7 @@ function writeFilePeek(name, filePath, content, expectMtime) {
   const v = vetFileWrite({
     filePath, cwd: s.cwd, content, expectMtime,
     resolve: path.resolve, realpath: fs.realpathSync,
-    open: (p) => fs.openSync(p, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW),
+    open: (p) => fs.openSync(p, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK),
     stat: (fd) => fs.fstatSync(fd),
     readHead: (fd) => {
       const buf = Buffer.alloc(PEEK_MAX_BYTES);

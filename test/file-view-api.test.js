@@ -661,6 +661,36 @@ test('writeFilePeek refuses when an ancestor directory is swapped for a symlink 
   assert.strictEqual(fs.readFileSync(path.join(cwd, 'sub-old', 'a.txt'), 'utf8'), 'one');
 });
 
+test('writeFilePeek refuses an ancestor swapped for a symlink out between the vet realpath and its open', () => {
+  const cwd = mkTmpRoot('clx-fileview-');
+  const outsideRoot = mkTmpRoot('clx-fileview-');
+  const file = writeAt(path.join(cwd, 'sub'), 'a.txt', 'one');
+  const outside = writeAt(path.join(outsideRoot, 'sub'), 'a.txt', 'keep');
+  let swapped = false;
+  const fn = writeFilePeekWith(cwd, (real) => ({
+    openSync: (p, flags, ...rest) => {
+      if (!swapped) {
+        swapped = true;
+        fs.renameSync(path.join(cwd, 'sub'), path.join(cwd, 'sub-old'));
+        fs.symlinkSync(path.join(outsideRoot, 'sub'), path.join(cwd, 'sub'));
+      }
+      return real.openSync(p, flags, ...rest);
+    },
+  }));
+  const r = fn('seat', file, 'pwned', null);
+  assert.strictEqual(swapped, true, 'ENTER: the ancestor swap ran before the vet open');
+  assert.deepStrictEqual(r, { ok: false, error: 'File changed under the editor — reload and retry' });
+  assert.strictEqual(fs.readFileSync(outside, 'utf8'), 'keep');
+  assert.strictEqual(fs.readFileSync(path.join(cwd, 'sub-old', 'a.txt'), 'utf8'), 'one');
+});
+
+test('writeFilePeek answers a directory as not a regular file', () => {
+  const cwd = mkTmpRoot('clx-fileview-');
+  fs.mkdirSync(path.join(cwd, 'd'));
+  const fn = writeFilePeekWith(cwd, () => ({}));
+  assert.deepStrictEqual(fn('seat', path.join(cwd, 'd'), 'x', null), { ok: false, error: 'Not a regular file' });
+});
+
 test('writeFilePeek refuses a leaf swapped for a symlink between the vet realpath and its open', () => {
   const cwd = mkTmpRoot('clx-fileview-');
   const outsideRoot = mkTmpRoot('clx-fileview-');

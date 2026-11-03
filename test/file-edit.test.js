@@ -177,8 +177,14 @@ test('a confinement refusal never opens the file outside the cwd', () => {
   assert.deepStrictEqual(opened, []);
 });
 
-test('an open that fails after realpath succeeded closes nothing: a leaf turned symlink is a change, a vanished leaf is missing', () => {
-  for (const [code, error] of [['ELOOP', 'File changed under the editor — reload and retry'], ['ENOENT', 'No such file: /repo/src/a.js']]) {
+test('an open that fails after realpath succeeded closes nothing and names its cause', () => {
+  for (const [code, error] of [
+    ['ELOOP', 'File changed under the editor — reload and retry'],
+    ['EISDIR', 'Not a regular file'],
+    ['ENOENT', 'No such file: /repo/src/a.js'],
+    ['ENOTDIR', 'No such file: /repo/src/a.js'],
+    ['EACCES', 'EACCES'],
+  ]) {
     const fx = fsFixture({ files: { '/repo/src/a.js': {} } });
     const r = vetFileWrite(base({ ...fx, open: () => { throw Object.assign(new Error(code), { code }); } }));
     assert.deepStrictEqual(r, { ok: false, error });

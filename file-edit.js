@@ -50,7 +50,11 @@ function vetFileWrite({ filePath, cwd, content, expectMtime, resolve, realpath, 
 
   let handle;
   try { handle = open(real); } catch (e) {
-    return { ok: false, error: e && e.code === 'ELOOP' ? 'File changed under the editor — reload and retry' : `No such file: ${trimmed}` };
+    const code = e && e.code;
+    if (code === 'ELOOP') return { ok: false, error: 'File changed under the editor — reload and retry' };
+    if (code === 'EISDIR') return { ok: false, error: 'Not a regular file' };
+    if (code === 'ENOENT' || code === 'ENOTDIR') return { ok: false, error: `No such file: ${trimmed}` };
+    return { ok: false, error: (e && e.message) || String(e) };
   }
   const refuse = (error) => { close(handle); return { ok: false, error }; };
 
