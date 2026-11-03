@@ -1069,7 +1069,7 @@ function createRemoteWiring(deps) {
           return resp;
         },
         claimDms: (origin) => {
-          const messages = claimOutbox(OUTBOX_DIR, origin);
+          const messages = claimOutbox(OUTBOX_DIR, origin, (file, reason) => log.warn('peer', `outbox claim by ${origin}: skipped ${file} — ${reason}`));
           if (messages.length) log.info('peer', `outbox claim by ${origin}: ${messages.length} message(s)`);
           return messages;
         },

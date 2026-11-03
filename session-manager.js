@@ -272,7 +272,16 @@ const { readTeamJson } = require('./team-prompt-dir');
 const { ensureSeatLink, renameSeat, removeSeat, renameTargets, pathInUse } = require('./seat-layout');
 const { SEAT_KINDS, seatPathFor, legacySeatPathFor, claudeProjectSlug } = require('./clodex-paths');
 const { LIVING_MARK } = require('./intent-catalog');
-const { resolveSubagent, nameOfSubagent, clearSubq, SUBQ_DM_SUFFIX } = require('./subq');
+const { resolveSubagent, nameOfSubagent, clearSubq, SUBQ_DM_SUFFIX, SUBQ_NAME_RE } = require('./subq');
+
+function isSubagentSender(name) {
+  const slash = typeof name === 'string' ? name.indexOf('/') : -1;
+  if (slash <= 0) return false;
+  const seat = name.slice(0, slash);
+  const sub = name.slice(slash + 1);
+  return isQualifiedSender(seat) && !seat.includes('@') && (SUBQ_NAME_RE.test(sub) || /^agent-[0-9a-f]{8}$/.test(sub));
+}
+
 const { SEGMENT_RE: IMPORT_SEGMENT_RE, SESSION_ID_RE: IMPORT_SESSION_ID_RE } = require('./seat-import');
 const { effectiveModel } = require('./accounts');
 const { liveSnapshotFor, archivedSnapshotFor, exitedSnapshotFor, stampConfigFlags } = require('./session-restore');
@@ -9029,7 +9038,7 @@ function createSessionManager(deps) {
     }
 
     _buildDeliveryText(target, senderName, body, mtype, tag = '') {
-      if (!SYSTEM_SENDERS.has(senderName) && !isQualifiedSender(senderName)) senderName = 'peer';
+      if (!SYSTEM_SENDERS.has(senderName) && !isQualifiedSender(senderName) && !isSubagentSender(senderName)) senderName = 'peer';
       const prefix = `[agent:from ${senderName}]`;
 
       // The marker is parenthesized and never at column 1 so IntentScanner cannot read it as an

@@ -8,7 +8,7 @@
 //
 // Store shape mirrors pending-store's zero-loss discipline, one dir per ORIGIN
 // (the consumer's self-reported label) instead of per agent, one file per
-// message (<seq>.json = {from,to,body,urgent,ts}):
+// message (<seq>.json):
 //   * enqueue — write a hidden .tmp then rename into place, so a claimer never
 //               sees a partial file (atomic write-then-rename per message).
 //   * claim   — at most once: the atomic rename of the origin dir IS the claim,
@@ -16,7 +16,7 @@
 //               batch. Enqueue-after-claim lands in a fresh dir for the next
 //               claim.
 //
-// Pure fs helpers, dependency-free, so federation is unit-testable without a
+// Pure fs helpers, so federation is unit-testable without a
 // live tunnel. `origin` is the consumer's label; it's validated to the session
 // name charset before it ever touches the path (and '.'/'..' rejected) so a wire
 // value can't traverse out of the outbox root.
@@ -120,7 +120,7 @@ function isClaimEntry(name) { return /\.claiming\./.test(name); }
 
 // Publish one message to `origin`'s mailbox. `seq` is a lexically-sortable,
 // monotonic string (arrival order); filenames sort by it, so a claim reads in
-// order. Returns { ok:true, file } or { ok:false, error } (bad origin). Retries
+// order. Returns { ok:true, file } or { ok:false, error }. Retries
 // once into a fresh dir if the mailbox was claimed away mid-publish (delivered on
 // the next claim, not lost).
 function enqueueOutbox(root, origin, msg, seq) {
@@ -129,7 +129,7 @@ function enqueueOutbox(root, origin, msg, seq) {
   const base = `${seq}.json`;
   const tmp = path.join(dir, `.${base}.tmp`);
   const fin = path.join(dir, base);
-  const record = JSON.stringify({
+  const fields = {
     from: String(msg && msg.from != null ? msg.from : ''),
     to: String(msg && msg.to != null ? msg.to : ''),
     body: String(msg && msg.body != null ? msg.body : ''),
@@ -146,7 +146,10 @@ function enqueueOutbox(root, origin, msg, seq) {
     ...(msg && Number.isInteger(msg.rv) ? { rv: msg.rv } : {}),
     ...(msg && typeof msg.ref === 'string' && msg.ref ? { ref: msg.ref } : {}),
     ...(msg && msg.task && typeof msg.task === 'object' ? { task: msg.task } : {}),
-  });
+  };
+  const fault = claimedRecordFault(fields);
+  if (fault) return { ok: false, error: fault };
+  const record = JSON.stringify(fields);
   const payload = `${record.slice(0, -1)},"sig":${JSON.stringify(outboxSig(root, record))}}`;
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(tmp, payload);
@@ -168,7 +171,8 @@ function enqueueOutbox(root, origin, msg, seq) {
 // [] when empty, the origin is bad, or another claimer won the race. At most once
 // and possibly zero: the claim dir is gone before this returns, so a crash or
 // dropped connection before the caller flushes the response loses the batch.
-function claimOutbox(root, origin) {
+function claimOutbox(root, origin, onSkip = null) {
+  const skip = (file, reason) => { if (typeof onSkip === 'function') { try { onSkip(file, reason); } catch {} } };
   if (!validMailbox(origin)) return [];
   const dir = originDir(root, origin);
   const claim = `${dir}.claiming.${process.pid}.${Date.now()}`;
@@ -184,7 +188,9 @@ function claimOutbox(root, origin) {
   for (const f of files.filter((f) => f.endsWith('.json') && !f.startsWith('.')).sort()) {
     try {
       const obj = JSON.parse(fs.readFileSync(path.join(claim, f), 'utf8'));
-      if (outboxSigOk(root, obj) && !claimedRecordFault(obj)) {
+      const fault = outboxSigOk(root, obj) ? claimedRecordFault(obj) : 'missing or bad signature';
+      if (fault) skip(f, fault);
+      else {
         out.push({
           from: obj.from || '', to: obj.to, body: obj.body || '', urgent: !!obj.urgent, ts: obj.ts || 0,
           // Carry the relay envelope fields back out (see enqueueOutbox) — only
@@ -197,7 +203,7 @@ function claimOutbox(root, origin) {
           ...(obj.task && typeof obj.task === 'object' ? { task: obj.task } : {}),
         });
       }
-    } catch { /* skip a corrupt entry rather than abort the whole claim */ }
+    } catch { skip(f, 'unreadable'); }
   }
   try { fs.rmSync(claim, { recursive: true, force: true }); } catch {}
   return out;
