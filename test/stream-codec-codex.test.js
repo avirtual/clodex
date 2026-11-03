@@ -177,7 +177,7 @@ test('under bypass an approval request is other, but the decline still rides sen
   assert.strictEqual(codec.encodePermission('0', 'accept'), null);
 });
 
-test('an error for turn/start, compact or thread/start is an error result; for anything else it is other with one warning', () => {
+test('an error for turn/start or compact is an error result, for the opening thread/start init-failed; for anything else it is other with one warning', () => {
   const [err] = wire('error');
   const { codec, warns } = started();
   const turn = codec.encodeUser('hi', []);
@@ -188,7 +188,27 @@ test('an error for turn/start, compact or thread/start is an error result; for a
   const h = opened();
   assert.deepStrictEqual(h.codec.decode({ ...err, id: h.open[0].id }), { kind: 'other' });
   assert.strictEqual(h.warns.length, 1);
-  assert.deepStrictEqual(h.codec.decode({ ...err, id: h.open[2].id }), { kind: 'result', durationMs: null, costUsd: null, isError: true });
+  assert.deepStrictEqual(h.codec.decode({ ...err, id: h.open[2].id }), { kind: 'init-failed', error: JSON.stringify(err.error).slice(0, 300) });
+});
+
+test('a thread/start error after init, as a clear sends, is still an error result', () => {
+  const [err] = wire('error');
+  const { codec } = started();
+  const clear = codec.encodeContext('clear');
+  assert.deepStrictEqual(codec.decode({ ...err, id: clear.id }), { kind: 'result', durationMs: null, costUsd: null, isError: true });
+});
+
+test('encodeUser is null while no thread exists', () => {
+  const rows = [
+    ['fresh', {}],
+    ['resume', { resumeId: '01a0d36f-d6a5-7371-8d9b-774875de6de3' }],
+  ];
+  for (const [label, ctx] of rows) {
+    const { codec } = opened(ctx);
+    assert.strictEqual(codec.encodeUser('hello-7702', []), null, label);
+  }
+  const { codec } = started();
+  assert.strictEqual(codec.encodeUser('hello-7702', []).method, 'turn/start', 'ENTER: the same text encodes once the thread exists');
 });
 
 test('a failed thread/resume falls back to a fresh thread/start in send, whose result ends the handshake', () => {

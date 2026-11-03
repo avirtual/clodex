@@ -23707,15 +23707,16 @@ test('t1172: [agent:context compact] on a codex stream seat writes the codec\'s 
   assert.deepStrictEqual(texts, []);
 });
 
-test('t1172: encodeUser returning null writes nothing and starts no turn', async (t) => {
+test('t1172: encodeUser returning null writes nothing, starts no turn and keeps the text queued', async (t) => {
   const c = mkCodexStreamSeat();
   t.after(() => c.h.stopAll());
   await c.create('cx5');
   const s = c.h.m.sessions.get('cx5');
   c.h.line('cx5', { rec: { kind: 'init', sessionId: 'thr-5', turnEnd: true } });
-  assert.deepStrictEqual(c.h.m.seatSend('cx5', 'SWALLOW'), { ok: true, queued: 0 });
+  assert.deepStrictEqual(c.h.m.seatSend('cx5', 'SWALLOW'), { ok: true, queued: 1 });
   assert.strictEqual(c.sent().length, 3);
   assert.strictEqual(s.streamBusy, false);
+  assert.deepStrictEqual(s.outbox.map((q) => q.text), ['SWALLOW']);
 });
 
 test('t1172: _repointStreamTranscript on a stream spec with a null transcriptRepoint writes no transcript link', async (t) => {

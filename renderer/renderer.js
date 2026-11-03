@@ -3002,6 +3002,7 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
     inputResume.value = '';
     inputFork.checked = false;
   }
+  refreshForkAvailability();
   proxyRow.style.display = agentType ? '' : 'none';
   if (!agentType) {
     inputProxyMode.value = '';
@@ -3350,6 +3351,13 @@ const inputAutoCompact = document.getElementById('input-auto-compact');
 const inputNoWire = document.getElementById('input-no-wire');
 const streamIoRow = document.getElementById('stream-io-row');
 const inputStreamIo = document.getElementById('input-stream-io');
+function refreshForkAvailability() {
+  const blocked = !!(inputStreamIo && inputStreamIo.checked && capsFor(inputType.value).streamIo
+    && (inputType.value === 'codex' || inputType.value === 'muse'));
+  inputFork.disabled = blocked;
+  if (blocked) inputFork.checked = false;
+}
+if (inputStreamIo) inputStreamIo.addEventListener('change', refreshForkAvailability);
 const toolsSection = document.getElementById('tools-section');
 const skillsSection = document.getElementById('skills-section');
 const otherSection = document.getElementById('other-section');
@@ -3956,6 +3964,7 @@ inputTemplate.addEventListener('change', async () => {
   if (tplCaps.autoCompact && inputAutoCompact) inputAutoCompact.checked = !(t.autoCompact === false);
   if (tplCaps.noWire && inputNoWire) inputNoWire.checked = t.noWire === true;
   if (inputStreamIo) inputStreamIo.checked = t.io === 'stream';
+  refreshForkAvailability();
   if (agentType) {
     setProxyControls(inputProxyMode, inputProxyUrl, t.proxy ?? null, inputProxyUrl.value);
   }

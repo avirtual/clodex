@@ -126,6 +126,7 @@ function create({ cwd = null, resumeId = null, fork = false, bypass = false, rea
         return { kind: 'other', send: [sessionStart()] };
       }
       warnOnce(`error:${method}`, `${method || `request ${obj.id}`} failed: ${detail}`);
+      if (method === 'session/start' && !sessionId) return { kind: 'init-failed', error: detail };
       return TURN_ERRORS.has(method) ? errorResult() : { kind: 'other' };
     }
     const result = obj.result || {};
@@ -256,7 +257,7 @@ function create({ cwd = null, resumeId = null, fork = false, bypass = false, rea
       .filter((img) => img && img.data && img.mediaType)
       .map((img) => ({ type: 'image', mediaType: img.mediaType, base64Data: img.data }));
     if (body.trim()) parts.push({ type: 'text', text: body });
-    if (!parts.length) return null;
+    if (!parts.length || !sessionId) return null;
     return command('turn/start', { sessionId, input: parts });
   };
 

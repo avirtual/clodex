@@ -321,7 +321,7 @@ test('-32051 approvalAlreadyResolved on a decide is other with no warning', () =
   assert.strictEqual(warns.length, 0);
 });
 
-test('an error for session/start, turn/start or session/compact is an error result with one warning; anything else is other', () => {
+test('an error for turn/start or session/compact is an error result with one warning, for the opening session/start init-failed; anything else is other', () => {
   const [, rejected] = lines('rejected').map((l) => l.m);
   const { codec, warns } = started();
   const turn = codec.encodeUser('hi', []);
@@ -333,7 +333,7 @@ test('an error for session/start, turn/start or session/compact is an error resu
   assert.deepStrictEqual(codec.decode({ ...rejected, id: compact.id }), RESULT(true));
   assert.strictEqual(warns.length, 2);
   const h = opened();
-  assert.deepStrictEqual(h.codec.decode({ ...rejected, id: h.open[2].id }), RESULT(true));
+  assert.deepStrictEqual(h.codec.decode({ ...rejected, id: h.open[2].id }), { kind: 'init-failed', error: JSON.stringify(rejected.error).slice(0, 300) });
   assert.deepStrictEqual(h.codec.decode({ ...rejected, id: h.open[0].id }), { kind: 'other' });
   assert.strictEqual(h.warns.length, 2);
 });
@@ -364,4 +364,24 @@ test('the turn/completed an interrupt produces drops a pending approval', () => 
   h.codec.decode(req);
   assert.deepStrictEqual(h.codec.decode(wire('interrupt').find((m) => m.method === 'turn/completed')), RESULT(false));
   assert.strictEqual(h.codec.encodePermission(req.params.approvalId, 'abort'), null);
+});
+
+test('a session/start error after init, as a clear sends, is still an error result', () => {
+  const [, rejected] = lines('rejected').map((l) => l.m);
+  const { codec } = started();
+  const clear = codec.encodeContext('clear');
+  assert.deepStrictEqual(codec.decode({ ...rejected, id: clear.id }), RESULT(true));
+});
+
+test('encodeUser is null while no session exists, for text and images alike', () => {
+  const rows = [
+    ['text', 'hello-7701', []],
+    ['image', '', [{ data: 'AAAA', mediaType: 'image/png' }]],
+  ];
+  for (const [label, text, images] of rows) {
+    const { codec } = opened();
+    assert.strictEqual(codec.encodeUser(text, images), null, label);
+    const h = started();
+    assert.strictEqual(h.codec.encodeUser(text, images).method, 'turn/start', `ENTER: ${label} encodes once the session exists`);
+  }
 });

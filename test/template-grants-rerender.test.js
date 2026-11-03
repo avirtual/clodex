@@ -114,6 +114,7 @@ function formEnv(formPersisted, { mode = 'optimized', type = 'claude', templates
     inputAgentsList: {}, inputInjectSkillsList: {}, inputSkillsList: {}, inputToolsList: listOf('disabledTools'),
     inputBuiltinsList: listOf('denyBuiltins'), inputSystemPrompt: {}, inputAppendList: {},
     inputProxyMode: {}, inputProxyUrl: {}, inputStripLevel: null, inputAutoCompact: null, inputNoWire: null,
+    refreshForkAvailability: noop,
   };
   const names = Object.keys(env);
   api = new Function(...names, 'formPersistedInit', `let formPersisted = formPersistedInit;
