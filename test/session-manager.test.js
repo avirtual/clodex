@@ -2721,10 +2721,11 @@ test('spawn template: prompt refs thread into create() params 15/16', async () =
 // spawner cwd), read + parsed into the same template object the library lookup
 // yields — so config application can't drift between the two sources.
 const TPL_HOME = fsReal.realpathSync(mkTmpRoot('clodex-tplhome-'));
+let tplDirSeq = 0;
 const tmpTplDir = () => {
-  const lib = pathReal.join(TPL_HOME, 'library', 'templates');
-  fsReal.mkdirSync(lib, { recursive: true });
-  return fsReal.mkdtempSync(pathReal.join(lib, 'clodex-tpl-'));
+  const dir = pathReal.join(TPL_HOME, 'library', 'templates', `clodex-tpl-${tplDirSeq += 1}`);
+  fsReal.mkdirSync(dir, { recursive: true });
+  return dir;
 };
 
 test('spawn template: a JSON file path resolves + applies its config', async () => {
