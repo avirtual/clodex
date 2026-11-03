@@ -117,7 +117,7 @@ async function runWatcher() {
     deadDeliveries = ok ? 0 : deadDeliveries + 1;
     // Six straight failures ≈ the agent is gone. Tear the whole monitor down.
     if (deadDeliveries >= 6) {
-      try { killTarget(); } catch {}
+      try { await killTarget(); } catch {}
       cleanupState(agent, id);
       process.exit(0);
     }
@@ -149,7 +149,7 @@ async function runWatcher() {
     deliveryTimes.push(now);
     if (deliveryTimes.length > FIREHOSE_MAX_PER_MIN && !shuttingDown) {
       notify(`too noisy (>${FIREHOSE_MAX_PER_MIN} notifications/min) — monitor stopped; restart with a tighter filter`, { wake: true })
-        .then(() => { try { killTarget(); } catch {} cleanupState(agent, id); process.exit(0); });
+        .then(async () => { try { await killTarget(); } catch {} cleanupState(agent, id); process.exit(0); });
       return;
     }
     notify(text);
@@ -161,6 +161,8 @@ async function runWatcher() {
   const pushLine = (line) => { if (line.length) { pending.push(line); armFlush(); } };
 
   let killTarget;
+  let killing = null;
+  const KILL_GRACE_MS = parseInt(process.env.CMON_KILL_GRACE_MS || '2000', 10);
   let timer = null;
   // Once-guard: a stop/timeout kills the target, whose own exit event would
   // otherwise call shutdown a second time and double-notify.
@@ -174,6 +176,7 @@ async function runWatcher() {
     if (timer) clearTimeout(timer);
     flush();
     await notify(why, { wake });
+    if (killing) await killing;
     cleanupState(agent, id);
     process.exit(0);
   };
@@ -228,9 +231,15 @@ async function runWatcher() {
       // would signal every process this user owns instead of this command's
       // group. The command here is operator-supplied and may fail to spawn for
       // reasons this code never sees.
-      if (!(child.pid > 0)) return;
-      try { process.kill(-child.pid, 'SIGTERM'); } catch {}
-      setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }, 2000);
+      if (!(child.pid > 0)) return Promise.resolve();
+      if (killing) return killing;
+      killing = new Promise((resolve) => {
+        const grace = setTimeout(resolve, KILL_GRACE_MS);
+        child.once('exit', () => { clearTimeout(grace); resolve(); });
+        if (child.exitCode !== null || child.signalCode !== null) { clearTimeout(grace); resolve(); }
+        try { process.kill(-child.pid, 'SIGTERM'); } catch {}
+      }).then(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch {} });
+      return killing;
     };
 
     let buf = '';

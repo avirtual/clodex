@@ -226,7 +226,21 @@ function acquireLock() {
         + ` Parts of this suite bind real ports, so a second run deadlocks both;`
         + ` if it is wedged: kill ${holder} && rm -rf ${LOCK}`);
     }
-    try { fs.rmSync(LOCK, { recursive: true, force: true }); } catch {}
+    const stale = `${LOCK}.stale-${process.pid}`;
+    try { fs.rmSync(stale, { recursive: true, force: true }); } catch {}
+    try { fs.renameSync(LOCK, stale); } catch (e) {
+      if (e.code === 'ENOENT') continue;
+      die(`could not reclaim the stale suite lock: ${e.message}`);
+    }
+    let staleHolder = null;
+    try { staleHolder = Number(fs.readFileSync(path.join(stale, 'pid'), 'utf8').trim()) || null; } catch {}
+    if (staleHolder !== holder) {
+      try { fs.renameSync(stale, LOCK); continue; } catch {}
+      let staleAlive = false;
+      if (staleHolder) { try { process.kill(staleHolder, 0); staleAlive = true; } catch {} }
+      if (staleAlive) die(`could not return a live suite lock (pid ${staleHolder}) moved aside to ${stale}`);
+    }
+    try { fs.rmSync(stale, { recursive: true, force: true }); } catch {}
     if (++reclaims >= 2) die('could not take the suite lock after reclaiming a stale one');
   }
 }

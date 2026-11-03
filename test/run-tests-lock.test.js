@@ -105,3 +105,31 @@ fs.renameSync = function (a, b) {
     assert.deepStrictEqual(fs.readdirSync(root).filter((n) => n.startsWith('.test-digest.lock')), []);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('lock: a contender whose stale probe raced another reclaim leaves the winner\'s live lock in place', () => {
+  const { root, lockDir } = mkRoot();
+  fs.mkdirSync(lockDir);
+  fs.writeFileSync(path.join(lockDir, 'pid'), DEAD_PID);
+  const hook = path.join(root, 'race.js');
+  fs.writeFileSync(hook, `const fs = require('fs');
+const LOCK = ${JSON.stringify(lockDir)};
+const kill = process.kill; let raced = false;
+process.kill = function (pid, sig) {
+  if (!raced && pid === ${DEAD_PID} && sig === 0) {
+    raced = true;
+    fs.rmSync(LOCK, { recursive: true, force: true });
+    fs.mkdirSync(LOCK);
+    fs.writeFileSync(LOCK + '/pid', '${process.pid}');
+  }
+  return kill.call(this, pid, sig);
+};
+`);
+  try {
+    const res = runSync(root, ['-r', hook]);
+    assert.doesNotMatch(res.stdout, /TOTALS:/, 'the second contender ran a suite beside the live holder');
+    assert.match(res.stderr, new RegExp(`another suite run is already going \\(pid ${process.pid}`));
+    assert.notStrictEqual(res.status, 0);
+    assert.strictEqual(fs.readFileSync(path.join(lockDir, 'pid'), 'utf8'), String(process.pid));
+    assert.deepStrictEqual(fs.readdirSync(root).filter((n) => n.startsWith('.test-digest.lock')), ['.test-digest.lock']);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
