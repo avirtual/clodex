@@ -14,15 +14,22 @@ function fsFixture({ files = {}, links = {}, dirs = ['/repo'] } = {}) {
     if (!files[target] && !dirs.includes(target)) throw new Error(`ENOENT ${p}`);
     return target;
   };
+  const closed = [];
+  const fileOf = (h) => h.slice('fd:'.length);
   return {
     resolve: path.resolve,
     realpath,
-    stat: (p) => {
-      const f = files[p];
-      if (!f) throw new Error(`ENOENT ${p}`);
+    open: (p) => {
+      if (!files[p]) throw new Error(`ENOENT ${p}`);
+      return `fd:${p}`;
+    },
+    stat: (h) => {
+      const f = files[fileOf(h)];
       return { isFile: () => f.dir !== true, size: f.size == null ? 10 : f.size, mtimeMs: f.mtimeMs == null ? 1000 : f.mtimeMs };
     },
-    readHead: (p) => Buffer.from((files[p] && files[p].head) || 'text'),
+    readHead: (h) => Buffer.from(files[fileOf(h)].head || 'text'),
+    close: (h) => closed.push(h),
+    closed,
   };
 }
 
@@ -33,11 +40,11 @@ const base = (over = {}) => ({
 });
 
 test('accepts a regular file inside the session cwd and returns its realpath', () => {
-  assert.deepStrictEqual(vetFileWrite(base()), { ok: true, path: '/repo/src/a.js' });
+  assert.deepStrictEqual(vetFileWrite(base()), { ok: true, path: '/repo/src/a.js', handle: 'fd:/repo/src/a.js' });
 });
 
 test('accepts a relative path resolved against the cwd', () => {
-  assert.deepStrictEqual(vetFileWrite(base({ filePath: 'src/a.js' })), { ok: true, path: '/repo/src/a.js' });
+  assert.deepStrictEqual(vetFileWrite(base({ filePath: 'src/a.js' })), { ok: true, path: '/repo/src/a.js', handle: 'fd:/repo/src/a.js' });
 });
 
 test('refuses a path that resolves outside the session cwd', () => {
@@ -73,7 +80,7 @@ test('accepts a child when the cwd itself is a symlink', () => {
       dirs: ['/private/tmp/ws'],
     }),
   }));
-  assert.deepStrictEqual(r, { ok: true, path: '/private/tmp/ws/a.js' });
+  assert.deepStrictEqual(r, { ok: true, path: '/private/tmp/ws/a.js', handle: 'fd:/private/tmp/ws/a.js' });
 });
 
 test('refuses a directory', () => {
@@ -119,12 +126,12 @@ test('refuses when the mtime moved under the open editor', () => {
 });
 
 test('accepts when the mtime still matches', () => {
-  assert.deepStrictEqual(vetFileWrite(base({ expectMtime: 1000 })), { ok: true, path: '/repo/src/a.js' });
+  assert.deepStrictEqual(vetFileWrite(base({ expectMtime: 1000 })), { ok: true, path: '/repo/src/a.js', handle: 'fd:/repo/src/a.js' });
 });
 
 test('accepts the integral expectMtime the peek reports when the real mtime carries a fraction', () => {
   const frac = fsFixture({ files: { '/repo/src/a.js': { mtimeMs: 1000.4624 } } });
-  assert.deepStrictEqual(vetFileWrite(base({ expectMtime: 1000, ...frac })), { ok: true, path: '/repo/src/a.js' });
+  assert.deepStrictEqual(vetFileWrite(base({ expectMtime: 1000, ...frac })), { ok: true, path: '/repo/src/a.js', handle: 'fd:/repo/src/a.js' });
   assert.match(vetFileWrite(base({ expectMtime: 999, ...frac })).error, /changed on disk/);
 });
 
@@ -141,5 +148,46 @@ test('refuses non-string content rather than coercing it', () => {
 });
 
 test('accepts empty content — clearing a file is a legitimate edit', () => {
-  assert.deepStrictEqual(vetFileWrite(base({ content: '' })), { ok: true, path: '/repo/src/a.js' });
+  assert.deepStrictEqual(vetFileWrite(base({ content: '' })), { ok: true, path: '/repo/src/a.js', handle: 'fd:/repo/src/a.js' });
+});
+
+test('every refusal after the open closes the handle it opened; the accept leaves it open for the writer', () => {
+  const cases = [
+    [{ dir: true }, null, 'Not a regular file'],
+    [{ size: PEEK_MAX_BYTES + 1 }, null, 'File is larger than the 512KB peek limit — edit it in a real editor'],
+    [{}, 900, 'File changed on disk since it was opened — reopen it to see the current bytes'],
+    [{ head: 'a\0b' }, null, 'Binary file'],
+    [{ head: 'a\r\n' }, null, 'File uses CRLF line endings — edit it outside Clodex'],
+  ];
+  for (const [file, expectMtime, error] of cases) {
+    const fx = fsFixture({ files: { '/repo/src/a.js': file } });
+    assert.deepStrictEqual(vetFileWrite(base({ expectMtime, ...fx })), { ok: false, error });
+    assert.deepStrictEqual(fx.closed, ['fd:/repo/src/a.js'], error);
+  }
+  const fx = fsFixture({ files: { '/repo/src/a.js': {} } });
+  assert.strictEqual(vetFileWrite(base(fx)).ok, true);
+  assert.deepStrictEqual(fx.closed, []);
+});
+
+test('a confinement refusal never opens the file outside the cwd', () => {
+  const fx = fsFixture({ files: { '/etc/passwd': {} }, links: { '/repo/link.js': '/etc/passwd' } });
+  const opened = [];
+  const r = vetFileWrite(base({ filePath: '/repo/link.js', ...fx, open: (p) => { opened.push(p); return fx.open(p); } }));
+  assert.deepStrictEqual(r, { ok: false, error: 'Refusing to write outside the session directory' });
+  assert.deepStrictEqual(opened, []);
+});
+
+test('an open that fails after realpath succeeded closes nothing and names its cause', () => {
+  for (const [code, error] of [
+    ['ELOOP', 'File changed under the editor — reload and retry'],
+    ['EISDIR', 'Not a regular file'],
+    ['ENOENT', 'No such file: /repo/src/a.js'],
+    ['ENOTDIR', 'No such file: /repo/src/a.js'],
+    ['EACCES', 'EACCES'],
+  ]) {
+    const fx = fsFixture({ files: { '/repo/src/a.js': {} } });
+    const r = vetFileWrite(base({ ...fx, open: () => { throw Object.assign(new Error(code), { code }); } }));
+    assert.deepStrictEqual(r, { ok: false, error });
+    assert.deepStrictEqual(fx.closed, []);
+  }
 });

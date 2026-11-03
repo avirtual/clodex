@@ -1451,32 +1451,34 @@ function writeFilePeek(name, filePath, content, expectMtime) {
   const s = manager.sessions.get(name);
   if (!s) return { ok: false, error: 'Session not running' };
   if (s.peer) return { ok: false, error: 'remote' };
-  let vetted = null;
   const v = vetFileWrite({
     filePath, cwd: s.cwd, content, expectMtime,
-    resolve: path.resolve, realpath: fs.realpathSync, stat: (p) => (vetted = fs.statSync(p)),
-    readHead: (p) => {
-      const fd = fs.openSync(p, 'r');
-      try {
-        const buf = Buffer.alloc(PEEK_MAX_BYTES);
-        let n = 0;
-        while (n < buf.length) {
-          const r = fs.readSync(fd, buf, n, buf.length - n, n);
-          if (r <= 0) break;
-          n += r;
-        }
-        return buf.subarray(0, n);
-      } finally { fs.closeSync(fd); }
+    resolve: path.resolve, realpath: fs.realpathSync,
+    open: (p) => fs.openSync(p, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK),
+    stat: (fd) => fs.fstatSync(fd),
+    readHead: (fd) => {
+      const buf = Buffer.alloc(PEEK_MAX_BYTES);
+      let n = 0;
+      while (n < buf.length) {
+        const r = fs.readSync(fd, buf, n, buf.length - n, n);
+        if (r <= 0) break;
+        n += r;
+      }
+      return buf.subarray(0, n);
     },
+    close: fs.closeSync,
   });
   if (!v.ok) return v;
   const changed = { ok: false, error: 'File changed under the editor — reload and retry' };
-  let fd;
-  try { fd = fs.openSync(v.path, fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW); }
-  catch (e) { return (e.code === 'ELOOP' || e.code === 'ENOENT') ? changed : { ok: false, error: e.message }; }
+  const fd = v.handle;
   try {
-    const st = fs.fstatSync(fd);
-    if (st.dev !== vetted.dev || st.ino !== vetted.ino) return changed;
+    let again;
+    try { again = fs.realpathSync(v.path); } catch { return changed; }
+    if (again !== v.path) return changed;
+    const held = fs.fstatSync(fd, { bigint: true });
+    let named;
+    try { named = fs.statSync(again, { bigint: true }); } catch { return changed; }
+    if (named.dev !== held.dev || named.ino !== held.ino || named.birthtimeNs !== held.birthtimeNs) return changed;
     fs.ftruncateSync(fd, 0);
     const buf = Buffer.from(content);
     let n = 0;
