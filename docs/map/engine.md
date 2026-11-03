@@ -258,7 +258,7 @@ seams.skillLister         — (tests only)                     — (tests only) 
 | `fetchSessionFiles` | a live seat's cwd, file touches and filed-ring list | `manager.sessions` | none | engine-web-info-seam.test.js file-view-api.test.js |
 | `fetchFilePeek` | a pass-through to `peekFile`, session-less and unconfined | none (reads fs) | file-peek.peekFile | engine-web-info-seam.test.js file-view-api.test.js |
 | `resolveFilePath` | resolves a displayed path against a local seat's cwd and touches; refuses peer rows | `manager.sessions` | file-resolve.resolveDisplayedPath | engine-spill-resolve.test.js |
-| `writeFilePeek` | writes an edited file under a local seat's cwd after the stale-mtime vet, returning the new mtime | the target file | file-edit.vetFileWrite | unpinned |
+| `writeFilePeek` | writes an edited file under a local seat's cwd after the stale-mtime vet, returning the new mtime | the target file | file-edit.vetFileWrite | file-view-api.test.js |
 | `fetchFileDiff` | git status and diff of one file in the seat's cwd | none (runs git) | child_process.execFile | engine-web-info-seam.test.js file-view-api.test.js |
 | `peerProxyView` | the viewer-safe subset of a proxy snapshot shipped to peers, with the queries it can answer | none (pure; reads CLODEX_WIRESCOPE_PUBLIC_URL) | proxy-util.boxWirescopeView | engine-web-info-seam.test.js context-popover-plain-column.test.js |
 
@@ -273,7 +273,6 @@ seams.skillLister         — (tests only)                     — (tests only) 
 
 - `fetchFileDiff` has no peer-row guard, unlike `resolveFilePath` and `writeFilePeek`, so it runs local git in a peer's far-box cwd.
 - `fetchFilePeek` reads any path with no session and no confinement, so routing it to a remote or web surface without a confinement layer grants arbitrary reads.
-- `writeFilePeek` realpaths before it writes, so a symlink swapped in between redirects the write outside the cwd.
 
 ## Seat restart, restore and the Edit Session args — waitForSessionExit … applySessionSkills
 
