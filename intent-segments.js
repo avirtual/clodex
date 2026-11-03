@@ -102,4 +102,4 @@ function scanIntentLines(lines, opts = {}) {
   return segs;
 }
 
-module.exports = { scanIntentLines };
+module.exports = { scanIntentLines, jsonComplete };

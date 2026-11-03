@@ -354,8 +354,8 @@ test('speakable drops what cannot be spoken', () => {
   }
 });
 
-// An intent body is greedy, so a dm's body would otherwise be narrated in full —
-// a message addressed to another agent, read aloud to the room.
+// A dm's body would otherwise be narrated in full — a message addressed to
+// another agent, read aloud to the room.
 test('speakable never reads an intent or its body', () => {
   const out = speakable('I will tell the lead.\n\n[agent:dm clodex]\nthe secret body\nand more\n[agent:end]\n\nDone.');
   assert.strictEqual(out, 'I will tell the lead. Done.');
@@ -370,6 +370,15 @@ test('speakable keeps the prose after a body-less intent line', () => {
 test('speakable still drops the body of a greedy intent', () => {
   assert.strictEqual(speakable('Compacting.\n[agent:context compact]\npickup note\nmore\n[agent:end]\nBack soon.'), 'Compacting. Back soon.');
   assert.strictEqual(speakable('Telling x.\n[agent:dm x]\nthe secret body\n[agent:end]\nDone.'), 'Telling x. Done.');
+});
+
+test('speakable keeps a greedy body open across an intent-looking line the scanner does not parse', () => {
+  assert.strictEqual(speakable('Telling x.\n[agent:dm x]\nplease do A\n- [agent:who] then report\nthe secret plan\n[agent:end]\nDone.'), 'Telling x. Done.');
+});
+
+test('speakable drops a multi-line exec JSON body and speaks the prose after it', () => {
+  assert.strictEqual(speakable('Checking.\n[agent:exec clodex-team]\n{"action":"roster",\n "agent":"x"}\nAll set.'), 'Checking. All set.');
+  assert.strictEqual(speakable('Checking.\n[agent:exec clodex-team] {"action":"roster"}\nAll set.'), 'Checking. All set.');
 });
 
 test('speakable yields nothing for a turn with nothing to say', () => {

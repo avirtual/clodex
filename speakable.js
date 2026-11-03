@@ -14,6 +14,7 @@
 
 const { parseIntent } = require('./intent-scanner');
 const { bodyModeFor } = require('./intent-registry');
+const { jsonComplete } = require('./intent-segments');
 
 // Utterance ceiling, in characters. Roughly 40 seconds at the 210 wpm the
 // speaker now runs at (700 chars is ~140 words), against the ~24 seconds 350
@@ -32,10 +33,8 @@ const SPEAK_MIN_CHARS = 24;
 
 // An intent line is machinery, not speech. Speaking a dm body aloud
 // narrates a message addressed to another agent, which is the sharpest form of
-// "not the final text" this repo can produce. Matched on the same shape the
-// scanner uses, anchored at line start after decoration is stripped.
+// "not the final text" this repo can produce.
 const INTENT_OPEN = /^\s*(?:[-*>]\s*)?\[agent:([a-z-]+)/i;
-const INTENT_END = /^\s*(?:[-*>]\s*)?\[agent:end\]/i;
 
 // A fence toggles; anything between toggles is code and is dropped whole. An
 // UNCLOSED fence drops the rest of the reply rather than speaking it, which is
@@ -46,12 +45,23 @@ function stripBlocks(text) {
   const out = [];
   let inFence = false;
   let inIntent = false;
+  let jsonBuf = null;
   for (const line of String(text).split('\n')) {
     if (FENCE.test(line)) { inFence = !inFence; continue; }
     if (inFence) continue;
-    if (inIntent && INTENT_END.test(line)) { inIntent = false; continue; }
+    const intent = INTENT_OPEN.test(line) ? parseIntent(line) : null;
+    if (inIntent && intent && intent.type === 'end') { inIntent = false; jsonBuf = null; continue; }
+    if (inIntent && (!intent || intent.type === 'escape')) {
+      if (jsonBuf !== null) {
+        jsonBuf += '\n' + line;
+        if (jsonComplete(jsonBuf)) { inIntent = false; jsonBuf = null; }
+      }
+      continue;
+    }
     if (INTENT_OPEN.test(line)) {
-      inIntent = bodyModeFor(parseIntent(line)) === 'greedy';
+      const mode = bodyModeFor(intent);
+      jsonBuf = mode === 'json' && !jsonComplete(intent.body || '') ? intent.body || '' : null;
+      inIntent = mode === 'greedy' || jsonBuf !== null;
       continue;
     }
     if (inIntent) continue;

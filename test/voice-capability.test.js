@@ -43,12 +43,12 @@ const ROWS = [
     expect: { capable: false, cause: NO_DEVICE },
   },
   {
-    name: 'linux with sox and a populated /dev/snd is capable',
+    name: 'linux with sox and a capture PCM in /dev/snd is capable',
     platform: 'linux', env: { PATH: '/usr/bin' }, fs: { soxDirs: ['/usr/bin'], snd: ['controlC0', 'pcmC0D0c'] },
     expect: { capable: true, cause: null },
   },
   {
-    name: 'linux with sox and only a control node in /dev/snd is not capable — no capture PCM, nothing to record from',
+    name: 'linux with sox and control and playback nodes only, no capture PCM, is not capable',
     platform: 'linux', env: { PATH: '/usr/bin' }, fs: { soxDirs: ['/usr/bin'], snd: ['controlC0', 'pcmC0D0p'] },
     expect: { capable: false, cause: NO_DEVICE },
   },
