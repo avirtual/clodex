@@ -216,8 +216,8 @@ class InjectQueue {
     this._write('\x15');                               // clear-line key event
     await this._sleep(this._ctrlUSettleMs);
     if (this._isDead()) { if (parkable) this._undelivered(text, meta); return; }
-    text = stripDeliveryControls(text);
     if (this._reviewGate) text = stripReviewGated(text);
+    text = stripDeliveryControls(text);
     const defanged = defangTeammateTag(text);
     if (defanged !== text && this._onDefanged) { try { this._onDefanged(text); } catch {} }
     text = defanged;
