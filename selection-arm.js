@@ -50,7 +50,7 @@ const PEEK_TTL_MS = PEEK_TTL_S * 1000;
 //   scrubber    () -> {scrub, tokens}    the token set to redact, read per call
 function createSelectionArm({
   armHints, clearHints, readHints = null, queue = null, readQueue = null,
-  enabled = null, scrubber = null, log = null, now = Date.now,
+  enabled = null, scrubber = null, log = null, now = Date.now, canQueue = () => true,
 }) {
   // session name -> { peek, pending }.
   //   peek    — `{ text, bytes, truncated, until }` the proxy currently holds.
@@ -127,6 +127,7 @@ function createSelectionArm({
     if (enabled && !enabled()) return { handed: false, reason: 'selection hints are off' };
     if (!raw.trim()) return { handed: false, reason: 'nothing selected' };
     if (!queue) return { handed: false, reason: 'this session has no queue' };
+    if (!canQueue(key)) return { handed: false, reason: 'this seat type cannot take attachments' };
 
     const reg = regFor(key);
     // A second click on text already waiting is the SAME hand-off, not a second
