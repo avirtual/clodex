@@ -1378,6 +1378,7 @@ function createTicketMethods(deps, shared) {
       } catch { /* a telemetry fault costs the freshest turn, not the rollup */ }
       const ledger = teamCost.sumSessions(totals, sessionIds, { currentId, live });
       ledger.ids = sessionIds;
+      ledger.bySession = teamCost.perSession(totals, sessionIds, { currentId, live });
       // `resolved` means a ledger was found: a seat with no observable spend reports null rather than 0,
       // so a review whose cost the wire never saw cannot read as free.
       return { ledger, resolved: ledger.known > 0, model };
@@ -1447,6 +1448,7 @@ function createTicketMethods(deps, shared) {
           return { ok: false, error: 'the seat-cost cursor file is unreadable' };
         }
         const cursor = cursors[name] || null;
+        const createdAt = entry.createdAt == null ? null : entry.createdAt;
         const row = teamCost.seatLedgerRow({
           seat: name,
           team: team.name,
@@ -1458,19 +1460,21 @@ function createTicketMethods(deps, shared) {
             tokens: ledger.inputTokens + ledger.outputTokens + ledger.cacheReadTokens + ledger.cacheWriteTokens,
             requests: ledger.requests,
             turns: ledger.turns,
+            bySession: ledger.bySession,
           },
           cursor,
+          createdAt,
         });
-        if (!row) return { ok: false, error: 'nothing new since the last stamp' };
+        if (!row) {
+          if (teamCost.isLegacySeatCursor(cursor)) {
+            if (ledger.usd < Number(cursor.usd)) log.warn('cost', `seat ${name} on team ${team.name}: legacy seat-cost cursor ($${cursor.usd}) is above the seat's lifetime ($${ledger.usd}) — nothing booked this stamp, cursor migrated to per-session`);
+            this._writeSeatCursor(team, name, teamCost.seatCursorEntry(ledger.bySession, createdAt, Date.now()));
+          }
+          return { ok: false, error: 'nothing new since the last stamp' };
+        }
         const w = this._appendTeamLedger(team, row);
         if (!w.ok) return w;
-        const wrote = this._writeSeatCursor(team, name, {
-          usd: row.to,
-          tokens: (cursor && Number(cursor.tokens) || 0) + row.tokens,
-          requests: (cursor && Number(cursor.requests) || 0) + row.requests,
-          turns: (cursor && Number(cursor.turns) || 0) + row.turns,
-          at: row.at,
-        });
+        const wrote = this._writeSeatCursor(team, name, teamCost.seatCursorEntry(ledger.bySession, createdAt, row.at));
         if (!wrote) {
           log.warn('cost', `seat ${name} on team ${team.name}: ledger row appended but the seat-cost cursor could not be written — the next stamp will re-count it`);
           return { ok: false, path: w.path, usd: row.usd, error: 'the seat-cost cursor could not be written' };

@@ -718,7 +718,7 @@ test('seatLedgerRow books the DELTA since the seat was last stamped', () => {
 
 test('a seat with no cursor books its whole life ONCE', () => {
   const row = tc.seatLedgerRow({
-    seat: 'lead', lifetime: { usd: 5, tokens: 9, requests: 2, turns: 1 }, cursor: null, now: 1,
+    seat: 'lead', lifetime: { usd: 5, tokens: 9, requests: 2, turns: 1, bySession: { s1: { usd: 5, tokens: 9, requests: 2, turns: 1 } } }, cursor: null, now: 1,
   });
   assert.deepStrictEqual([row.usd, row.from, row.to], [5, 0, 5]);
 });
@@ -743,4 +743,58 @@ test('a lifetime BELOW the cursor books nothing rather than a negative row', () 
     seat: 'lead', lifetime: { usd: 3, tokens: 1, requests: 1, turns: 1 },
     cursor: { usd: 40, tokens: 90, requests: 9, turns: 9 },
   }), null);
+});
+
+const sess = (usd) => ({ usd, tokens: usd * 10, requests: usd, turns: 1 });
+
+test('a seat re-spawned under the same name books its new spend, not the old seat\'s cursor', () => {
+  const row = tc.seatLedgerRow({
+    seat: 'lead', lifetime: { usd: 30, bySession: { b: sess(30) } },
+    cursor: { createdAt: 1, sessions: { a: sess(40) }, at: 5 }, createdAt: 2, now: 9,
+  });
+  assert.strictEqual(row && row.usd, 30);
+});
+
+test('a re-spawned seat ignores the old cursor even for a session id it already booked', () => {
+  const row = tc.seatLedgerRow({
+    seat: 'lead', lifetime: { usd: 30, bySession: { a: sess(30) } },
+    cursor: { createdAt: 1, sessions: { a: sess(40) }, at: 5 }, createdAt: 2, now: 9,
+  });
+  assert.strictEqual(row && row.usd, 30);
+});
+
+test('a session aged out of wire-totals does not hide the spend of the sessions still there', () => {
+  const row = tc.seatLedgerRow({
+    seat: 'lead', lifetime: { usd: 25, bySession: { b: sess(15), c: sess(10) } },
+    cursor: { createdAt: 1, sessions: { a: sess(25), b: sess(15) }, at: 5 }, createdAt: 1, now: 9,
+  });
+  assert.strictEqual(row && row.usd, 10);
+});
+
+test('a continuing seat books each session\'s growth plus every new session', () => {
+  const row = tc.seatLedgerRow({
+    seat: 'lead', lifetime: { usd: 35, bySession: { a: sess(30), b: sess(5) } },
+    cursor: { createdAt: 1, sessions: { a: sess(25) }, at: 5 }, createdAt: 1, now: 9,
+  });
+  assert.deepStrictEqual([row.usd, row.tokens, row.requests, row.turns], [10, 100, 10, 1]);
+});
+
+test('a per-session cursor equal to the lifetime books nothing', () => {
+  assert.strictEqual(tc.seatLedgerRow({
+    seat: 'lead', lifetime: { usd: 30, bySession: { a: sess(25), b: sess(5) } },
+    cursor: { createdAt: 1, sessions: { a: sess(25), b: sess(5) }, at: 5 }, createdAt: 1,
+  }), null);
+});
+
+test('seatCursorEntry keeps only the ids it is given', () => {
+  assert.deepStrictEqual(tc.seatCursorEntry({ b: sess(5) }, 3, 7),
+    { createdAt: 3, sessions: { b: { usd: 5, tokens: 50, requests: 5, turns: 1 } }, at: 7 });
+});
+
+test('perSession projects each known id and skips the unknown ones', () => {
+  const totals = { sessions: { a: { cost: 2, inputTokens: 1, outputTokens: 2, cacheReadTokens: 3, cacheWriteTokens: 4, requests: 5, turns: 6 } } };
+  assert.deepStrictEqual(tc.perSession(totals, ['a', 'gone', 'cur'], { currentId: 'cur', live: { cost: 1, requests: 1, turns: 1 } }), {
+    a: { usd: 2, tokens: 10, requests: 5, turns: 6 },
+    cur: { usd: 1, tokens: 0, requests: 1, turns: 1 },
+  });
 });
