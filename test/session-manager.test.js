@@ -25372,3 +25372,17 @@ test('dropping a wire telemetry entry persists the old conversation\'s lifetime 
   tel._save();
   assert.strictEqual(writes[1].sessions['old-sid'].cost, 1.5);
 });
+
+test('selectionDrain: a Claude seat whose settings carry the hook is marked; one with its own --settings is not', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  const spawn = (extra) => h.m.create('sd1', 'claude', require('node:os').tmpdir(), extra, null, 'ws', null, false, null,
+    [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, 'stream');
+  await spawn([]);
+  assert.strictEqual(h.m.sessions.get('sd1').selectionDrain, true);
+  h.stopAll();
+  h.m.sessions.delete('sd1');
+  await spawn(['--settings', '/x/own-settings.json']);
+  assert.ok(h.m.sessions.get('sd1'), 'ENTER: the custom-settings seat spawned');
+  assert.strictEqual(h.m.sessions.get('sd1').selectionDrain, false);
+});

@@ -532,3 +532,21 @@ test('inspect reports the pref being off, since that explains an empty panel', a
   const out = await arm.inspect('a', CTX);
   assert.strictEqual(out.enabled, false);
 });
+
+test('Copy on a seat with no selection drain refuses and writes nothing', async () => {
+  const asked = [];
+  const { arm, queued } = mk({ canQueue: (name) => { asked.push(name); return false; } });
+  const res = await arm.arm('codex-seat', { text: 'undrainable', tab: 'term', attach: true }, CTX);
+  assert.deepStrictEqual(res, { handed: false, reason: 'this seat type cannot take attachments' });
+  assert.deepStrictEqual(asked, ['codex-seat']);
+  assert.deepStrictEqual(queued, []);
+  assert.deepStrictEqual(arm._registers('codex-seat').pending, []);
+});
+
+test('Copy on a seat whose hook drains the queue still hands over', async () => {
+  const { arm, queued } = mk({ canQueue: (name) => name === 'claude-seat' });
+  const res = await arm.arm('claude-seat', { text: 'drained', tab: 'term', attach: true }, CTX);
+  assert.strictEqual(res.handed, true);
+  assert.strictEqual(queued.length, 1);
+  assert.strictEqual(queued[0].name, 'claude-seat');
+});

@@ -1664,6 +1664,7 @@ function createSessionManager(deps) {
       const shell = process.env.SHELL || '/bin/bash';
       const warnings = [];
       let mcpRecord = null;
+      let selectionDrain = false;
       if (museSel) {
         const museWarnings = [...museSseWarnings, ...museSel.warnings];
         warnings.push(...museWarnings);
@@ -1837,6 +1838,7 @@ function createSessionManager(deps) {
             const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, skillsOff, wireBase, createdAt, Array.isArray(shellDeny) ? shellDeny : [], streamIo, effortLevel, Array.isArray(protectCredentials) ? protectCredentials : null, mcpSecretNames, mcpSel ? mcpSel.applied.denyRules : [], cwd || null);
             args.push('--settings', settingsPath);
             hookInstalled = true;
+            selectionDrain = true;
           }
           if (!hookInstalled && effortLevel) warnings.push(`effort ${effortLevel} not applied: the seat's extra args carry their own --settings.`);
           if (!hookInstalled && mcpSel && mcpSel.applied.denyRules.length) {
@@ -2287,6 +2289,7 @@ function createSessionManager(deps) {
         lastSubmitInjected: false,
         bootResumeId: resumeId || null,
         promptRecipe,
+        selectionDrain,
         // Recompute, do not re-write: setupClaudeHook already wrote the digest file pre-spawn, and a rewrite here
         // would race the SessionStart hook cat-ing it (writeFileSync is not atomic).
         digestNonEmpty: agentType === 'claude' && composeDigest(memoryStore.list(name)) !== null,

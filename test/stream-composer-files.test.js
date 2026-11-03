@@ -17,9 +17,9 @@ class FakeReader {
 }
 
 function deferred() {
-  let resolve;
-  const promise = new Promise((res) => { resolve = res; });
-  return { promise, resolve };
+  let resolve, reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
 }
 
 function streamHarness() {
@@ -40,6 +40,7 @@ function streamHarness() {
   const uploads = [];
   const sends = [];
   const toasts = [];
+  const origin = [];
   const composer = { value: '' };
   const attachEl = document.createElement('div');
   const env = {
@@ -49,6 +50,8 @@ function streamHarness() {
     window: { api: {
       seatFileUpload: (_name, files) => { const d = deferred(); d.files = files; uploads.push(d); return d.promise; },
       seatSend: (...args) => { const d = deferred(); d.args = args; sends.push(d); return d.promise; },
+      markVoiceOrigin: (n) => origin.push(['mark', n]),
+      unmarkVoiceOrigin: (n) => origin.push(['unmark', n]),
     } },
     showToast: (m) => toasts.push(m),
     FileReader: FakeReader,
@@ -67,10 +70,10 @@ function streamHarness() {
   const body = [
     slice('let pending = [];', "composer.addEventListener('paste'"),
     slice('const sendComposer = () => {', 'let slashList = null;'),
-    'return { attach: attachStreamFiles, send: sendComposer, files: () => pendingFiles, images: () => pending };',
+    'return { attach: attachStreamFiles, send: sendComposer, markVoice: markVoiceSent, files: () => pendingFiles, images: () => pending };',
   ].join('\n');
   const out = new Function(...names, body)(...names.map((n) => env[n]));
-  return { ...out, composer, strip: attachEl, uploads, sends, toasts };
+  return { ...out, composer, strip: attachEl, uploads, sends, toasts, origin };
 }
 
 const settle = () => new Promise(setImmediate);
@@ -206,4 +209,46 @@ test('× on a file tile removes that tile only', async () => {
   assert.deepStrictEqual(h.files().map((t) => t.file.name), ['b.pdf']);
   assert.strictEqual(h.strip.childNodes.length, 1);
   assert.strictEqual(h.strip.childNodes[0].className, second.className);
+});
+
+for (const [how, fail] of [
+  ['refused', (d) => d.resolve({ ok: false, error: 'seat busy' })],
+  ['rejected', (d) => d.reject(new Error('ipc gone'))],
+]) {
+  test(`a voice-fired send the seat ${how} disarms the spoken-origin marker once`, async () => {
+    const h = streamHarness();
+    h.composer.value = 'spoken words';
+    h.markVoice();
+    h.send();
+    assert.strictEqual(h.sends.length, 1, 'ENTER: the voice fire reached seatSend');
+    fail(h.sends[0]);
+    await settle();
+    assert.deepStrictEqual(h.origin, [['mark', 'seat'], ['unmark', 'seat']]);
+    assert.strictEqual(h.composer.value, 'spoken words', 'the failed text was restored');
+    h.sends.length = 0;
+    h.send();
+    fail(h.sends[0]);
+    await settle();
+    assert.deepStrictEqual(h.origin, [['mark', 'seat'], ['unmark', 'seat']], 'a typed retry does not disarm again');
+  });
+}
+
+test('a voice-fired send that lands leaves the spoken-origin marker armed', async () => {
+  const h = streamHarness();
+  h.composer.value = 'spoken words';
+  h.markVoice();
+  h.send();
+  h.sends[0].resolve({ ok: true });
+  await settle();
+  assert.deepStrictEqual(h.origin, [['mark', 'seat']]);
+});
+
+test('a typed send that fails never calls unmark', async () => {
+  const h = streamHarness();
+  h.composer.value = 'typed';
+  h.send();
+  h.sends[0].resolve({ ok: false, error: 'seat busy' });
+  await settle();
+  assert.strictEqual(h.toasts.length, 1, 'ENTER: the send failed');
+  assert.deepStrictEqual(h.origin, []);
 });

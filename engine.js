@@ -615,6 +615,10 @@ const selectionArm = createSelectionArm({
   queue: ({ name, text }) => {
     fs.appendFileSync(pathFor(REGISTRY_DIR, name, 'selection'), `${JSON.stringify({ text })}\n`);
   },
+  canQueue: (name) => {
+    const s = manager.sessions.get(name);
+    return !!(s && s.selectionDrain);
+  },
   readQueue: ({ name }) => {
     let raw;
     try { raw = fs.readFileSync(pathFor(REGISTRY_DIR, name, 'selection'), 'utf8'); }
