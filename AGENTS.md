@@ -48,7 +48,8 @@ publishes the container image (`scripts/publish-image.sh`), then launches the cl
 release review (`scripts/cloud-review.sh`).
 Non-interactive; stops at the first error. A run that dies after its commit is
 resumed by re-running the same command: a HEAD tagged with the current version
-is pushed or released instead of bumped again, and the notes are kept at
+is pushed, released, or has its image published and review launched instead of
+bumped again, and the notes are kept at
 `~/.clodex/logs/release-notes-vX.Y.Z.md`. No CI; `gh` is logged in as
 `avirtual`. arm64 only — Intel users build from source.
 

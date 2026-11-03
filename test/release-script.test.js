@@ -402,7 +402,7 @@ const GH_STUB = [
   'echo "gh $*" >> "$FAKE_STATE/calls"',
   'case "$1 $2" in',
   '  "auth status") exit 0 ;;',
-  '  "release view") if [ -f "$FAKE_STATE/released-$3" ]; then echo "https://example.invalid/$3"; exit 0; fi; exit 1 ;;',
+  '  "release view") if [ -f "$FAKE_STATE/released-$3" ]; then if [ -n "${FAKE_GH_NO_ASSETS:-}" ] && [ "$5" = assets ]; then exit 0; fi; if [ "$5" = assets ]; then echo "Clodex-${3#v}-arm64.dmg"; exit 0; fi; echo "https://example.invalid/$3"; exit 0; fi; exit 1 ;;',
   '  "release create")',
   '    prev=""; for a in "$@"; do if [ "$prev" = --notes-file ]; then cp "$a" "$FAKE_STATE/notes-seen"; fi; prev="$a"; done',
   '    if [ "${FAKE_GH_CREATE:-ok}" = fail ]; then exit 1; fi',
@@ -461,6 +461,7 @@ function releaseFixture() {
   g('add', '.');
   g('commit', '-qm', 'base');
   g('tag', 'v1.0.0');
+  g('commit', '-q', '--allow-empty', '-m', 'work since v1.0.0');
   g('remote', 'add', 'origin', origin);
   g('push', '-q', '-u', 'origin', 'master', 'v1.0.0');
   fs.writeFileSync(path.join(state, 'released-v1.0.0'), '');
@@ -622,6 +623,67 @@ test('release e2e: tag on origin with no gh release resumes the gh step with the
     assert.doesNotMatch(res.calls, /^npm version/m);
     assert.match(res.calls, /^gh release create v1\.0\.1 dist\/Clodex-1\.0\.1-arm64\.dmg --title v1\.0\.1 — Theme /m);
     assert.match(fs.readFileSync(path.join(fx.state, 'notes-seen'), 'utf-8'), /KEPT-MARKER/);
+  } finally { fx.cleanup(); }
+});
+
+function dieInPublishImage(fx) {
+  fs.writeFileSync(path.join(fx.repo, 'scripts', 'publish-image.sh'), [
+    '#!/usr/bin/env bash',
+    'echo "$(basename "$0") $*" >> "$FAKE_STATE/calls"',
+    'if [ ! -f "$FAKE_STATE/publish-died" ]; then touch "$FAKE_STATE/publish-died"; kill -TERM $PPID; fi',
+    '',
+  ].join('\n'), { mode: 0o755 });
+  fx.g('commit', '-qam', 'die in publish-image');
+  fx.g('push', '-q', 'origin', 'master');
+  const first = fx.run();
+  assert.notStrictEqual(first.status, 0, 'ENTER: the first run dies in publish-image');
+  assert.match(first.calls, /^gh release create v1\.0\.1 /m, 'ENTER: after the gh release was created');
+  assert.match(first.calls, /^publish-image\.sh 1\.0\.1$/m);
+}
+
+test('release e2e: a re-run after a death past gh release create resumes the post-release steps for the same version', () => {
+  const fx = releaseFixture();
+  try {
+    dieInPublishImage(fx);
+    const res = fx.run();
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.match(res.stdout, /resuming release v1\.0\.1 from the post-release steps/);
+    assert.doesNotMatch(res.stdout, /new version: 1\.0\.2/);
+    assert.strictEqual(fx.version(), '1.0.1');
+    assert.strictEqual(fx.g('tag', '-l', 'v1.0.2').trim(), '');
+    assert.doesNotMatch(res.calls, /^npm (version|run dist:mac)/m);
+    assert.doesNotMatch(res.calls, /^git push /m);
+    assert.doesNotMatch(res.calls, /^gh release (create|upload) /m);
+    assert.doesNotMatch(res.calls, /^dmg-(pty|child)-probe\.sh/m);
+    assert.match(res.calls, /^publish-image\.sh 1\.0\.1$/m);
+    assert.match(res.calls, /^cloud-review\.sh v1\.0\.0 v1\.0\.1$/m);
+  } finally { fx.cleanup(); }
+});
+
+test('release e2e: a post-release resume of a release with no DMG asset re-uploads it with --clobber', () => {
+  const fx = releaseFixture();
+  try {
+    dieInPublishImage(fx);
+    const res = fx.run({ FAKE_GH_NO_ASSETS: '1' });
+    assert.strictEqual(res.status, 0, res.stdout + res.stderr);
+    assert.match(res.stdout, /resuming release v1\.0\.1 from the post-release steps/);
+    assert.match(res.calls, /^gh release upload v1\.0\.1 dist\/Clodex-1\.0\.1-arm64\.dmg --clobber$/m);
+    assert.match(res.calls, /^dmg-pty-probe\.sh dist\/Clodex-1\.0\.1-arm64\.dmg$/m);
+    assert.match(res.calls, /^dmg-child-probe\.sh dist\/Clodex-1\.0\.1-arm64\.dmg$/m);
+    assert.doesNotMatch(res.calls, /^gh release create /m);
+    assert.match(res.calls, /^publish-image\.sh 1\.0\.1$/m);
+  } finally { fx.cleanup(); }
+});
+
+test('release e2e: a post-release resume with no DMG asset and none in dist/ dies naming the rebuild', () => {
+  const fx = releaseFixture();
+  try {
+    dieInPublishImage(fx);
+    fs.rmSync(path.join(fx.repo, 'dist'), { recursive: true, force: true });
+    const res = fx.run({ FAKE_GH_NO_ASSETS: '1' });
+    assert.strictEqual(res.status, 1, res.stdout + res.stderr);
+    assert.match(res.stderr, /no DMG asset .* run npm run dist:mac, then re-run scripts\/release\.sh/);
+    assert.doesNotMatch(res.calls, /^gh release (create|upload) /m);
   } finally { fx.cleanup(); }
 });
 

@@ -118,6 +118,10 @@ if git tag --points-at HEAD | grep -qx "v$CUR_VERSION"; then
   elif ! gh release view "v$CUR_VERSION" >/dev/null 2>&1; then
     RESUME=gh
     say "resuming release v$CUR_VERSION from the gh release step"
+  else
+    # A death during prune, publish-image or the review launch: falling through would bump and ship an empty release.
+    RESUME=post
+    say "resuming release v$CUR_VERSION from the post-release steps"
   fi
 fi
 if [ "${CLODEX_RELEASE_NO_REVIEW:-}" = 1 ]; then
@@ -281,7 +285,9 @@ else
 fi
 
 # --- build -----------------------------------------------------------------
-if [ -n "$RESUME" ] && ls dist/*"$NEW_VERSION"*.dmg >/dev/null 2>&1; then
+if [ "$RESUME" = post ]; then
+  note "resume: the $TAG release exists, skipping the build"
+elif [ -n "$RESUME" ] && ls dist/*"$NEW_VERSION"*.dmg >/dev/null 2>&1; then
   say "resume: reusing the $NEW_VERSION DMG already in dist/"
 else
   step "Building arm64 DMG"
@@ -290,14 +296,26 @@ else
 fi
 
 DMG="$(ls dist/*"$NEW_VERSION"*.dmg 2>/dev/null | head -1 || true)"
-[ -n "$DMG" ] || die "no .dmg produced in dist/"
-say "built: $DMG"
+HAS_DMG_ASSET=0
+if [ "$RESUME" = post ]; then
+  ASSETS="$(gh release view "$TAG" --json assets -q '.assets[].name')" || die "gh release view $TAG failed — re-run scripts/release.sh to resume"
+  if printf '%s\n' "$ASSETS" | grep -q '\.dmg$'; then
+    HAS_DMG_ASSET=1
+    say "resume: $TAG is already released with its DMG"
+  else
+    [ -n "$DMG" ] || die "release $TAG has no DMG asset and dist/ holds no $NEW_VERSION DMG — run npm run dist:mac, then re-run scripts/release.sh"
+  fi
+fi
+if [ "$HAS_DMG_ASSET" = 0 ]; then
+  [ -n "$DMG" ] || die "no .dmg produced in dist/"
+  say "built: $DMG"
 
-step "DMG pty probe"
-run bash scripts/dmg-pty-probe.sh "$DMG" || die "the packaged app cannot spawn a shell through node-pty — do not ship this DMG"
+  step "DMG pty probe"
+  run bash scripts/dmg-pty-probe.sh "$DMG" || die "the packaged app cannot spawn a shell through node-pty — do not ship this DMG"
 
-step "DMG child probe"
-run bash scripts/dmg-child-probe.sh "$DMG" || die "the packaged app cannot boot a plugin Electron child — do not ship this DMG"
+  step "DMG child probe"
+  run bash scripts/dmg-child-probe.sh "$DMG" || die "the packaged app cannot boot a plugin Electron child — do not ship this DMG"
+fi
 
 # --- commit, tag, push -----------------------------------------------------
 # The tag must name the commit built above, never a named ref like origin/master.
@@ -322,27 +340,31 @@ followups() {
 PUSH_FAILED="tag $TAG is committed locally but not on origin — finish with:
 git push origin master $TAG
 $(followups)"
-run git push origin master || die "git push failed: $PUSH_FAILED"
-run git push origin "$TAG"  || die "git push tag failed: $PUSH_FAILED"
-say "pushed master and $TAG to origin"
+if [ "$RESUME" != post ]; then
+  run git push origin master || die "git push failed: $PUSH_FAILED"
+  run git push origin "$TAG"  || die "git push tag failed: $PUSH_FAILED"
+  say "pushed master and $TAG to origin"
+fi
 
 # --- publish ---------------------------------------------------------------
-step "Creating GitHub release $TAG"
-# GitHub's asset upload has answered HTTP 500 on a healthy release; a retry succeeded.
-ATTEMPTS=3
-attempt=1
-published=0
-while [ "$attempt" -le "$ATTEMPTS" ]; do
-  if [ "$attempt" -gt 1 ]; then sleep "${RELEASE_RETRY_SLEEP:-15}"; fi
-  if run gh release view "$TAG" >/dev/null 2>&1; then
-    if run gh release upload "$TAG" "$DMG" --clobber; then published=1; break; fi
-  elif run gh release create "$TAG" "$DMG" \
-    --title "$TITLE" \
-    --notes-file "$NOTES"; then
-    published=1; break
-  fi
-  attempt=$((attempt + 1))
-done
+published="$HAS_DMG_ASSET"
+if [ "$published" = 0 ]; then
+  step "Creating GitHub release $TAG"
+  # GitHub's asset upload has answered HTTP 500 on a healthy release; a retry succeeded.
+  ATTEMPTS=3
+  attempt=1
+  while [ "$attempt" -le "$ATTEMPTS" ]; do
+    if [ "$attempt" -gt 1 ]; then sleep "${RELEASE_RETRY_SLEEP:-15}"; fi
+    if run gh release view "$TAG" >/dev/null 2>&1; then
+      if run gh release upload "$TAG" "$DMG" --clobber; then published=1; break; fi
+    elif run gh release create "$TAG" "$DMG" \
+      --title "$TITLE" \
+      --notes-file "$NOTES"; then
+      published=1; break
+    fi
+    attempt=$((attempt + 1))
+  done
+fi
 
 # --- prune old release assets ---------------------------------------------
 # Keep the DMG pile bounded: only the newest KEEP releases retain binaries
