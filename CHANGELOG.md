@@ -14,6 +14,7 @@ blocks a release.
 
 ## Unreleased
 
+- **Security: inside a URL, every secret-named query parameter (`client_secret`, `passwd`, `auth`, `x_token`, …) is masked to the next `&`, not just the seven spellings 5.157.0 listed.** A quoted value with a comma tail (`?client_secret="v"a,b`) left `,b` in the log for any name outside that list.
 - **Security: the Edit tab writes through the file it vetted.** The save re-opened the vetted path by name, so a symlink swapped in between the check and the write could land the content on a file outside the seat's directory; the write now goes through one descriptor whose inode must match the vetted one, and a mismatch is refused with "File changed under the editor — reload and retry".
 - **A memory unit whose `id` line carries a trailing line break lists under its real id again.** 5.158.0's collapse-on-read left a trailing space on the id, so every pin, update and forget on that unit refused it as invalid.
 - **A dm with `await` to a pty seat answers `202 {queued: true}` at once.** The box cannot observe a pty seat's turns, so the wait was silently dropped and the reply was a plain 200 that read as a delivered no-await dm; the 202 now says the message was delivered and no turn will be reported.
