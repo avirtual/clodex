@@ -176,6 +176,8 @@ is minted lazily, so the edge can arrive well after the keystroke.
 
 A `<seat>/<name>` or `<seat>/agent-<id8>` target names a running subagent of that seat (`splitAgentTarget`, subq.js `resolveSubagent`): the body is defused and queued as a dm note (`<seq>.dm`, sender on its first line) that its next tool call's drain heads `[dm <nonce> from <sender>]`, the `[parent <nonce>]` nonce — no gate, no park, no confirm latch, `urgent` ignored; a subagent not running, a Codex or dead seat, or an ambiguous `agent-<id8>` folds to the seat with one notice line after the outcome line (`subagent <x> is not running; routed to <seat>`; none on a bounce); `agent` is reserved and is always the seat. The pipeline for a message addressed to a local agent, in order:
 
+**Socket frames** — a frame on `run/<seat>/agent.sock` is trusted only when its `cred` matches the host's per-boot credential (`mintAgentSockCred` in engine.js; `run/.agent-sock.cred`, 0600, and `CLODEX_AGENT_CRED` in the env of the `clodex-team` / `clodex-monitor` / `clodex-ctl-admin` exec children only). `_onIncoming` drops an unauthenticated frame of any type but `dm` with one warn, and delivers an unauthenticated `dm` as `[agent:from ext:<from>]` (`ext:unknown` for a non-name), defused and never operator-marked — so a wake script, or a dm from a second Clodex host sharing `~/.clodex`, now arrives as `ext:`.
+
 **Gate** — `_gatedDeliver(target, senderTag, body, urgent)` (shared by local
 dm, the wire `/api/dm` entry, and claimed federated mail) consults
 `shouldHoldDm` (proxy-util.js): a permission dialog holds unconditionally
