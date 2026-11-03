@@ -23,6 +23,7 @@ blocks a release.
 - Updating a plugin that has only skills, agents, prompts or templates (no engine or renderer) refreshes its bundle in place when its version changes, instead of demanding a restart and re-flagging it on every rescan.
 - The plugin update watch no longer fetches the library every six hours when no plugin was installed from it.
 - A Codex or Muse stream seat whose opening handshake fails now raises the handshake attention and keeps its queued dms instead of showing idle and acknowledging every dm into an RPC error; Fork is refused on such seats, which would have put two writers on one transcript.
+- A hand's pending permission request (a Bash call the guard did not clear, say) now reaches its lead as a dm carrying the request id and the command, and the lead can answer it with `[agent:permit <seat> <id> allow|deny]` instead of the seat waiting on the operator.
 
 ## 5.159.0 — 2026-11-03 — Security: log-mask masks every secret-named URL query parameter, Edit tab vets and writes one descriptor; memory id trim, dm await on pty seats, board cost breakdown
 

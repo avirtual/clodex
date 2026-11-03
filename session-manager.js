@@ -3296,6 +3296,7 @@ function createSessionManager(deps) {
       s.streamPermissions.set(rec.id, { ...rec, ts });
       s._streamPermRev = (s._streamPermRev || 0) + 1;
       this._setAttention(s, { kind: 'permission', ts, message: rec.displayName + (rec.preview ? ': ' + rec.preview : '') });
+      this._relayPermissionToLead(s, rec.id);
       this._broadcast('ipc-message', {
         type: 'attention', from: s.name, to: '',
         body: `permission: ${s.needsAttention.message || '(no message)'}`,
@@ -5686,9 +5687,11 @@ function createSessionManager(deps) {
         const store = getNotifications && getNotifications();
         if (!store) return;
         session._permInboxTs = attn.ts;
+        const pending = session.streamPermissions ? [...session.streamPermissions.values()].filter((p) => p.ts === attn.ts).pop() : null;
         store.add({
           from: 'clodex', workspaceId: session.workspaceId || null,
-          body: `Seat ${session.name} (ticket ${ticketId}) is waiting on a permission dialog: ${attn.message || '(no message)'}. Allow or deny it in the attention view; it holds the ticket until you do.`,
+          body: `Seat ${session.name} (ticket ${ticketId}) is waiting on a permission dialog: ${attn.message || '(no message)'}. Allow or deny it in the attention view; it holds the ticket until you do.`
+            + (pending ? `\nIts lead can answer it: [agent:permit ${session.name} ${pending.id} allow] or [agent:permit ${session.name} ${pending.id} deny]` : ''),
         });
       } catch (e) {
         this._shadowLog({ type: 'permission-inbox-error', error: e.message });
@@ -6702,6 +6705,11 @@ function createSessionManager(deps) {
         case 'task': {
           if (!session || !session.agentType) break;
           this._handleTask(session, intent);
+          break;
+        }
+        case 'permit': {
+          if (!session || !session.agentType) break;
+          this._handlePermit(session, intent);
           break;
         }
         case 'team': {

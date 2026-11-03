@@ -155,6 +155,11 @@ function parseReboot(cleaned) {
   return m ? { type: 'reboot', body: m[1] } : null;
 }
 
+function parsePermit(cleaned) {
+  const m = cleaned.match(/^\[agent:permit\s+([^\s\]]+)\s+([^\s\]]+)\s+(allow|deny)\]\s*$/);
+  return m ? { type: 'permit', seat: m[1], id: m[2], choice: m[3] } : null;
+}
+
 const REVIEWER_TOKEN_RE = /^reviewer:(.+)$/;
 
 function reviewerToken(argToks) {
@@ -419,6 +424,7 @@ const CORE_ROWS = [
   { type: 'review-done', parse: parseReviewDone, bodyMode: GREEDY },
   { type: 'reboot', parse: parseReboot, bodyMode: NONE },
   { type: 'task', parse: parseTask, bodyMode: (i) => (i.sub === 'add' || i.sub === 'done' || i.sub === 'reject' || i.sub === 'respec' || i.sub === 'cancel' || i.sub === 'accept' ? 'greedy' : 'none') },
+  { type: 'permit', parse: parsePermit, bodyMode: NONE },
   { type: 'team-create', parse: parseTeamCreate, bodyMode: GREEDY },
   { type: 'team', parse: parseTeam, bodyMode: teamBodyMode },
   { type: 'spawn', parse: parseSpawn, bodyMode: NONE },
@@ -781,7 +787,7 @@ function pluginGrammarLines(intentsList, plugins) {
 // `end` stays last.
 const CORE_VALID_INTENT_NAMES = [
   'dm', 'sub', 'resend', 'who', 'name', 'context', 'probe', 'scratch', 'memory', 'spawn', 'file', 'exec',
-  'remind', 'shout', 'team-review', 'review-done', 'task', 'term', 'reboot',
+  'remind', 'shout', 'team-review', 'review-done', 'task', 'permit', 'term', 'reboot',
 ];
 
 // Feeds the near-miss bounce, which is user-visible text: naming a verb here
