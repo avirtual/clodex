@@ -2,7 +2,6 @@
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
-const crypto = require('crypto');
 const { ensureDir } = require('./fs-util');
 const { pathFor, runDirFor } = require('./clodex-paths');
 const { ensureSeatLink } = require('./seat-layout');
@@ -12,35 +11,7 @@ const { ensureSeatLink } = require('./seat-layout');
 // A longer wait would sit in front of every recovery from an unclean shutdown.
 const SOCKET_PROBE_TIMEOUT = 250;
 
-const AGENT_SOCK_CRED_BASENAME = '.agent-sock.cred';
-const AGENT_SOCK_CRED_ENV = 'CLODEX_AGENT_CRED';
-
-function mintAgentSockCred() {
-  return crypto.randomBytes(32).toString('hex');
-}
-
-function agentSockCredPath(registryDir) {
-  return path.join(registryDir, 'run', AGENT_SOCK_CRED_BASENAME);
-}
-
-function writeAgentSockCred(registryDir, cred, fsImpl = fs) {
-  const file = agentSockCredPath(registryDir);
-  fsImpl.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  const tmp = `${file}.tmp.${process.pid}`;
-  fsImpl.writeFileSync(tmp, cred, { mode: 0o600 });
-  fsImpl.chmodSync(tmp, 0o600);
-  fsImpl.renameSync(tmp, file);
-  return file;
-}
-
-function agentSockCredMatches(want, got) {
-  if (typeof want !== 'string' || !want || typeof got !== 'string') return false;
-  const a = Buffer.from(want, 'utf8');
-  const b = Buffer.from(got, 'utf8');
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
-}
-
-function createAgentTransport({ REGISTRY_DIR, MAX_MSG, hostCred = null }) {
+function createAgentTransport({ REGISTRY_DIR, MAX_MSG }) {
   function isAlive(pid) {
     if (!Number.isInteger(pid) || pid <= 0) return false;
     try { process.kill(pid, 0); return true; }
@@ -151,10 +122,7 @@ function createAgentTransport({ REGISTRY_DIR, MAX_MSG, hostCred = null }) {
             if (data.length === 0 || data.length > MAX_MSG) return;
             try {
               const msg = JSON.parse(data.toString('utf-8'));
-              if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return;
-              const authed = agentSockCredMatches(hostCred, msg.cred);
-              delete msg.cred;
-              this._onMessage(msg, authed);
+              this._onMessage(msg);
             } catch {}
           });
           setTimeout(() => conn.destroy(), 5000);
@@ -215,7 +183,4 @@ function createAgentTransport({ REGISTRY_DIR, MAX_MSG, hostCred = null }) {
   return { isAlive, registry, Transport };
 }
 
-module.exports = {
-  createAgentTransport, mintAgentSockCred, agentSockCredPath, writeAgentSockCred, agentSockCredMatches,
-  AGENT_SOCK_CRED_BASENAME, AGENT_SOCK_CRED_ENV,
-};
+module.exports = { createAgentTransport };

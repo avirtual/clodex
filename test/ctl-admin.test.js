@@ -475,7 +475,6 @@ function hostEnv(REGISTRY_DIR, team, clientToken = '') {
     CLODEX_TEAM: team ? team.name : '',
     CLODEX_TEAM_ROOT: team ? team.root : '',
     CLODEX_CLIENT_TOKEN: clientToken,
-    CLODEX_AGENT_CRED: '',
   };
 }
 

@@ -293,7 +293,6 @@ function childEnv(base) {
   const env = { ...base, ELECTRON_RUN_AS_NODE: '1' };
   delete env.CLODEX_URL;
   delete env.CLODEX_TOKEN;
-  delete env.CLODEX_AGENT_CRED;
   return env;
 }
 
@@ -382,7 +381,6 @@ function sendDm(seat, body, passive = false) {
     const done = (ok) => { if (!settled) { settled = true; resolve(ok); } };
     const msg = { from: FROM, body, type: 'dm' };
     if (passive) msg.delivery = 'passive';
-    if (process.env.CLODEX_AGENT_CRED) msg.cred = process.env.CLODEX_AGENT_CRED;
     const conn = net.createConnection(sock, () => conn.end(Buffer.from(JSON.stringify(msg), 'utf8'), () => done(true)));
     conn.on('error', () => done(false));
     conn.setTimeout(2000, () => { conn.destroy(); done(false); });

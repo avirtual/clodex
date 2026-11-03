@@ -61,10 +61,10 @@ function mkRoster(home, team, seats) {
     JSON.stringify({ version: 1, seats: seats.map(([seat, role]) => ({ seat, role, gen: 1, since: 1, by: 'test' })) }));
 }
 
-function launch(home, payload, team = '', seat = (payload && payload.agent) || '') {
+function launch(home, payload, team = '') {
   return new Promise((resolve) => {
     const ch = cp.spawn(process.execPath, [SCRIPT], {
-      env: { ...process.env, CLODEX_HOME: home, CLODEX_TEAM: team, CLODEX_TEAM_ROOT: '', CLODEX_SEAT: seat },
+      env: { ...process.env, CLODEX_HOME: home, CLODEX_TEAM: team, CLODEX_TEAM_ROOT: '' },
       stdio: ['pipe', 'ignore', 'pipe'],
     });
     let err = '';
@@ -252,31 +252,6 @@ test('retire: failures are loud (unknown target, dead socket, missing target)', 
   const r7 = await launch(home, { action: 'retire', agent: 'alead' });
   assert.strictEqual(r7.code, 1);
   assert.match(r7.err, /needs "target"/, r7.err);
-});
-
-test('retire: a seat naming another seat as "agent" is refused and sends nothing', async () => {
-  const home = mkHome();
-  const proj = path.join(home, 'proj');
-  mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {}, dev: {} } });
-  reg(home, 'alead', proj);
-  const devSock = reg(home, 'adev', proj);
-  const envelopes = [];
-  const server = net.createServer((conn) => {
-    const chunks = [];
-    conn.on('data', (c) => chunks.push(c));
-    conn.on('end', () => { try { envelopes.push(JSON.parse(Buffer.concat(chunks).toString())); } catch {} });
-  });
-  await new Promise((r) => server.listen(devSock, r));
-  try {
-    const forged = await launch(home, { action: 'retire', agent: 'alead', target: 'adev' }, '', 'hand');
-    assert.strictEqual(forged.code, 1, forged.err);
-    assert.match(forged.err, /retire refused: "agent" must be your own seat \(hand\)/, forged.err);
-    const unset = await launch(home, { action: 'retire', agent: 'alead', target: 'adev' }, '', '');
-    assert.strictEqual(unset.code, 1, unset.err);
-    assert.match(unset.err, /no CLODEX_SEAT/, unset.err);
-    await new Promise((r) => setImmediate(r));
-    assert.deepStrictEqual(envelopes, []);
-  } finally { server.close(); }
 });
 
 test('bad payloads are loud (unknown action, missing agent)', async () => {

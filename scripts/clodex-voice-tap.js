@@ -150,19 +150,12 @@ function envelopeFor(args) {
   return { type: 'voice-tap', from: 'voice-tap', ...(target ? { target } : {}) };
 }
 
-function hostCred() {
-  if (process.env.CLODEX_AGENT_CRED) return process.env.CLODEX_AGENT_CRED;
-  try { return fs.readFileSync(path.join(RUN_DIR, '.agent-sock.cred'), 'utf-8').trim(); } catch { return ''; }
-}
-
 async function main() {
   const envelope = envelopeFor(process.argv.slice(2));
   if (envelope.error) die(envelope.error);
-  const cred = hostCred();
-  const frame = cred ? { ...envelope, cred } : envelope;
 
   for (const socketPath of candidateSockets()) {
-    if (await send(socketPath, frame)) return;
+    if (await send(socketPath, envelope)) return;
   }
   // Every agent socket is a per-AGENT socket, so a box with no agent session
   // running has nothing listening and nothing to tap.

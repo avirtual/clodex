@@ -276,7 +276,7 @@ test('restoreSessionsForWorkspace arms the ctl-admin boot sweep once, under the 
   assert.match(body, /if \(!ctlAdminSweepArmed\) \{\s*ctlAdminSweepArmed = true;/);
   assert.match(body, /spawn\(process\.execPath, \[path\.join\(REGISTRY_DIR, 'bin', 'clodex-ctl-admin\.js'\), '--sweep'\]/);
   assert.match(body, /ELECTRON_RUN_AS_NODE: '1', CLODEX_HOME: REGISTRY_DIR/);
-  assert.match(body, /CLODEX_HOME: REGISTRY_DIR, CLODEX_AGENT_CRED: AGENT_SOCK_CRED },\s*\}\)\.on\('error', \(\) => \{\}\)\.unref\(\);/);
+  assert.match(body, /CLODEX_HOME: REGISTRY_DIR },\s*\}\)\.on\('error', \(\) => \{\}\)\.unref\(\);/);
 });
 
 const NODE_LINES = [
