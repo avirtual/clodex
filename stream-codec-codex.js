@@ -100,7 +100,9 @@ function create({ cwd = null, resumeId = null, fork = false, bypass = false, rea
         return { kind: 'other', send: [threadStart()] };
       }
       if (method === 'thread/start') {
-        warnOnce('error:thread/start', `thread/start failed: ${JSON.stringify(obj.error).slice(0, 300)}`);
+        const detail = JSON.stringify(obj.error).slice(0, 300);
+        warnOnce('error:thread/start', `thread/start failed: ${detail}`);
+        if (!threadId) return { kind: 'init-failed', error: detail };
         return { kind: 'result', durationMs: null, costUsd: null, isError: true };
       }
       warnOnce(`error:${method}`, `${method || `request ${obj.id}`} failed: ${JSON.stringify(obj.error).slice(0, 300)}`);
@@ -197,7 +199,7 @@ function create({ cwd = null, resumeId = null, fork = false, bypass = false, rea
       return null;
     }
     if (Array.isArray(images) && images.length) warnOnce('images', `dropped ${images.length} image(s): codex stream seats send text only`);
-    if (!body.trim()) return null;
+    if (!body.trim() || !threadId) return null;
     return request('turn/start', {
       threadId,
       input: [{ type: 'text', text: body, text_elements: [] }],

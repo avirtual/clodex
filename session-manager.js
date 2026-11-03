@@ -22,6 +22,7 @@ const EXEC_RUN_LEDGER_FILE = 'exec-runs-inflight.json';
 const pidAlive = (pid) => { if (!(pid > 0)) return false; try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 const EXEC_STATUS_QUERY_CMD = 'status';
 const EXEC_STATUS_REPLY_MAX = 400;
+const STREAM_PRODUCED = new WeakMap();
 const EXEC_STATUS_REPLY_RUNS = 3;
 const EXEC_STATUS_REPLY_CLOSING = ' Do not poll; a running run reports every few minutes'
   + ' and delivers its result as input.';
@@ -1554,6 +1555,7 @@ function createSessionManager(deps) {
       const streamIo = io === 'stream';
       const streamSpec = streamIo ? streamFor(type) : null;
       if (streamIo && !streamSpec) throw new Error(`stream transport is not supported for ${type}`);
+      if (streamIo && fork && (type === 'codex' || type === 'muse')) throw new Error(`fork is not supported on a ${type} stream seat — resume it or start fresh`);
       const streamCtx = streamIo ? streamCodecCtx(type, extraArgs) : null;
       if (streamIo && resumeId) {
         const prior = getPersistence().get(name);
@@ -2149,6 +2151,11 @@ function createSessionManager(deps) {
             onClose: (code, signal) => streamRoute({ close: { code, signal } }),
           });
           if (!(streamSeat.pid > 0)) throw new Error(`spawn ${cmd} failed: no pid`);
+          try {
+            if (getPersistence().get(name)) getPersistence().upsert({ name, streamPid: { pid: streamSeat.pid, startTime: streamSeat.startTime ?? streamSeat.startedAt } });
+          } catch (e) {
+            log.warn('session', `stream ${name}: early pid persist failed: ${e.message}`);
+          }
         } else {
           ptyProc = pty.spawn(cmd, args, {
             name: 'xterm-256color',
@@ -2961,17 +2968,16 @@ function createSessionManager(deps) {
       if (typeof onDivert === 'function') Object.defineProperty(item, 'onDivert', { value: onDivert, enumerable: false });
       const held = !s.streamBusy && !this._streamStopped(s) && this._streamHintHeld(s);
       const idle = !s.streamBusy && !held && !this._streamStopped(s);
-      if (idle && !s.outbox.length && item.wire) {
-        this._streamDeliver(s, { text: '', images: [], wire: item.wire });
-        this._streamSent(s, [item]);
-        return 0;
-      }
       if (idle && !s.outbox.length) {
-        const payload = this._streamJoin([item]);
-        if (!payload.text.trim() && !payload.images.length) return 0;
-        this._streamDeliver(s, payload);
-        this._streamSent(s, [item]);
-        return 0;
+        const payload = item.wire ? { text: '', images: [], wire: item.wire } : this._streamJoin([item]);
+        if (!payload.wire && !payload.text.trim() && !payload.images.length) return 0;
+        if (this._streamDeliver(s, payload)) {
+          this._streamSent(s, [item]);
+          return 0;
+        }
+        s.outbox.push(item);
+        this._streamOutboxChanged(s);
+        return s.outbox.length;
       }
       const same = parkKey ? s.outbox.findIndex((q) => q.parkKey === parkKey) : -1;
       if (same >= 0) {
@@ -3013,7 +3019,9 @@ function createSessionManager(deps) {
       for (const q of items) {
         if (q.origin === 'operator') { operator++; continue; }
         let text = q.text;
-        if (typeof q.produce === 'function') {
+        if (STREAM_PRODUCED.has(q)) {
+          text = STREAM_PRODUCED.get(q);
+        } else if (typeof q.produce === 'function') {
           if (typeof q.fallback !== 'function') {
             log.info('inject', `dropped an unproduced outbox item for ${s.name}: no fallback`);
             continue;
@@ -3040,9 +3048,12 @@ function createSessionManager(deps) {
     _streamJoin(items) {
       const texts = items.map((q) => {
         if (typeof q.produce !== 'function') return q.text;
+        if (STREAM_PRODUCED.has(q)) return STREAM_PRODUCED.get(q);
         let t = null;
         try { t = q.produce(); } catch { t = null; }
-        return t ? defangTeammateTag(t) : '';
+        const text = t ? defangTeammateTag(t) : '';
+        STREAM_PRODUCED.set(q, text);
+        return text;
       });
       return {
         text: texts.filter((t) => t.trim()).join('\n\n'),
@@ -3261,7 +3272,11 @@ function createSessionManager(deps) {
       let delivered = false;
       if (payload && (payload.wire || payload.text.trim() || payload.images.length)) {
         delivered = this._streamDeliver(s, payload);
-        this._streamSent(s, queued);
+        if (delivered) this._streamSent(s, queued);
+      }
+      if (!delivered && payload) {
+        s.outbox.unshift(...queued);
+        this._streamOutboxChanged(s);
       }
       if (!delivered) this._emitActivity(s.name, 'idle', true);
     }
@@ -3397,6 +3412,9 @@ function createSessionManager(deps) {
           }
           this._drainPendingAtStreamInit(s);
           if (rec.turnEnd) this._streamTurnEnd(s);
+          break;
+        case 'init-failed':
+          log.warn('session', `stream ${s.name}: opening handshake failed, the init watchdog stays armed: ${rec.error || '(no detail)'}`);
           break;
         case 'result':
           this._clearStreamResultHold(s);
