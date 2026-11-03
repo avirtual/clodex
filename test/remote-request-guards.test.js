@@ -4,6 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
 const path = require('node:path');
+const fs = require('node:fs');
 const { EventEmitter } = require('node:events');
 const { RemoteServer } = require('../remote');
 
@@ -66,19 +67,30 @@ test('a JSON null body is a 400 on every body route, never an uncaught throw', a
     deliverDm: ok, claimDms: () => [], receiveRoster: ok,
     sendInput: ok, resizePty: ok, getAttachInfo: () => ({ ok: true }),
     wtermOpen: ok, wtermInput: ok, wtermResize: ok,
+    query: ok, setProfile: ok, restartSession: ok, setSessionArgs: ok, setSessionSkills: ok, setClientToken: ok,
+    createSession: ok, seatImport: { begin: ok }, importCreate: { check: ok },
+    notifications: { list: () => [], markRead: () => false, remove: () => false }, replyNote: ok,
   }, async (server) => {
     server._wterm.set('seat', new Set([{}]));
     const rows = [
-      '/api/dm', '/api/dm/claim', '/api/peer/roster',
-      '/api/sessions/alpha/control', '/api/sessions/alpha/input', '/api/sessions/alpha/resize',
-      '/api/wterm-input/seat', '/api/wterm-resize/seat',
+      ['POST', '/api/dm'], ['POST', '/api/dm/claim'], ['POST', '/api/peer/roster'],
+      ['POST', '/api/sessions/alpha/control'], ['POST', '/api/sessions/alpha/input'], ['POST', '/api/sessions/alpha/resize'],
+      ['POST', '/api/wterm-input/seat'], ['POST', '/api/wterm-resize/seat'],
+      ['POST', '/api/sessions/alpha/query'], ['POST', '/api/sessions/alpha/dm'], ['PUT', '/api/sessions/alpha/memory/profile'],
+      ['POST', '/api/sessions/alpha/restart'], ['PATCH', '/api/sessions/alpha/args'], ['PATCH', '/api/sessions/alpha/skills'],
+      ['PUT', '/api/sessions/alpha/client-token'], ['POST', '/api/import/begin'], ['POST', '/api/sessions'],
+      ['POST', '/api/inbox/reply/n1'],
     ];
+    const src = fs.readFileSync(path.join(__dirname, '..', 'remote.js'), 'utf8');
+    assert.equal(rows.length, src.split('this._readBody(').length - 1, 'every _readBody call site has a null-body row');
     const trap = trapUncaught();
     try {
-      for (const p of rows) {
-        const r = await Promise.race([request(server, 'POST', p, 'null'), trap.tripped]);
-        assert.equal(r.status, 400, p);
+      for (const [method, p] of rows) {
+        const r = await Promise.race([request(server, method, p, 'null'), trap.tripped]);
+        assert.equal(r.status, 400, `${method} ${p}: ${r.body}`);
       }
+      const restart = await request(server, 'POST', '/api/sessions/alpha/restart', '');
+      assert.equal(restart.status, 200, 'a restart with no body stays allowed');
       const after = await request(server, 'GET', '/api/sessions');
       assert.equal(after.status, 200);
     } finally { trap.release(); }

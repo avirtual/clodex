@@ -419,45 +419,58 @@ test('a subagent dm is refused before delivery', async () => {
   }, { realDeliver: true });
 });
 
-test('a Codex main thread whose id is the rollout uuid tail keeps the full catalog', async () => {
-  const uuid = '0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+const CODEX_UUID = '0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+const CODEX_SID = `rollout-2026-10-05T01-00-00-${CODEX_UUID}`;
+const CODEX_SHOUT_REFUSED = { ok: false, status: 'refused', error: "not available to a subagent: shout — return and let the seat's main agent do it" };
+
+function codexHandler({ consumeMainToolUse = wireSaw, entryOf = () => ({ type: 'codex' }) } = {}) {
   const seen = [];
   const handle = createIntentRequestHandler({
-    consumeMainToolUse: wireSaw,
-    seat: 'cx', parse, isCodex: true, entryOf: () => ({ type: 'codex' }), sessionIdOf: () => `rollout-2026-10-05T01-00-00-${uuid}`, allows: subagentAllows,
+    consumeMainToolUse, cred: CRED, crypto,
+    seat: 'cx', parse, isCodex: true, entryOf, sessionIdOf: () => CODEX_SID, allows: (i) => i.type !== 'shout',
     dispatch: async (intent, opts) => { seen.push(opts.fromLabel); },
   });
-  const main = await handle({ intent: '[agent:shout] x', agentId: uuid }, { closed: () => false });
-  assert.strictEqual(main.ok, true, 'CODEX_THREAD_ID of the main thread is the main agent');
-  assert.deepStrictEqual(seen, [null], 'and its dm would go out as the seat');
-  const sub = await handle({ intent: '[agent:shout] x', agentId: '0199ffff-bbbb-cccc-dddd-eeeeeeeeeeee' }, { closed: () => false });
-  assert.deepStrictEqual(sub, { ok: false, status: 'refused', error: "not available to a subagent: shout — return and let the seat's main agent do it" });
+  const call = (req) => handle(req, { closed: () => false });
+  return { call, seen };
+}
+
+test('a Codex caller asserting the main thread id without a wire proof is refused a non-allowlisted verb', async () => {
+  const h = codexHandler();
+  assert.deepStrictEqual(await h.call({ intent: '[agent:shout] x', agentId: CODEX_UUID }), CODEX_SHOUT_REFUSED);
+  assert.deepStrictEqual(h.seen, []);
+});
+
+test('a Codex caller asserting the main thread id without a wire proof keeps an allowlisted verb, as a subagent', async () => {
+  const h = codexHandler();
+  assert.strictEqual((await h.call({ intent: '[agent:who]', agentId: CODEX_UUID })).ok, true);
+  assert.deepStrictEqual(h.seen, ['cx/agent']);
+});
+
+test('a Codex seat with no wire consumer refuses an asserted main id even with a main stamp', async () => {
+  const h = codexHandler({ consumeMainToolUse: null });
+  const ident = seenIdent(crypto, CRED, null, null, CODEX_SID);
+  assert.deepStrictEqual(await h.call({ intent: '[agent:shout] x', agentId: CODEX_UUID, ident }), CODEX_SHOUT_REFUSED);
+});
+
+test('a Codex main thread id with a wire-seen main stamp keeps the full catalog', async () => {
+  const h = codexHandler();
+  const r = await h.call({ intent: '[agent:shout] x', agentId: CODEX_UUID, ident: seenIdent(crypto, CRED, null, null, CODEX_SID) });
+  assert.strictEqual(r.ok, true);
+  assert.deepStrictEqual(h.seen, [null]);
+  const other = await h.call({ intent: '[agent:shout] x', agentId: '0199ffff-bbbb-cccc-dddd-eeeeeeeeeeee', ident: seenIdent(crypto, CRED, null, null, CODEX_SID) });
+  assert.deepStrictEqual(other, CODEX_SHOUT_REFUSED, 'a wire proof does not lift a non-main thread id');
 });
 
 test('a Codex caller with a known session id and no agentId is a subagent', async () => {
-  const uuid = '0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
-  const seen = [];
-  const handle = createIntentRequestHandler({
-    consumeMainToolUse: wireSaw,
-    seat: 'cx', parse, isCodex: true, entryOf: () => ({ type: 'codex' }), sessionIdOf: () => `rollout-2026-10-05T01-00-00-${uuid}`, allows: subagentAllows,
-    dispatch: async (intent, opts) => { seen.push(opts.fromLabel); },
-  });
-  assert.deepStrictEqual(await handle({ intent: '[agent:shout] x' }, { closed: () => false }), { ok: false, status: 'refused', error: "not available to a subagent: shout — return and let the seat's main agent do it" });
-  assert.deepStrictEqual(seen, []);
-  assert.strictEqual((await handle({ intent: '[agent:shout] x', agentId: uuid }, { closed: () => false })).ok, true);
-  assert.deepStrictEqual(seen, [null]);
+  const h = codexHandler();
+  assert.deepStrictEqual(await h.call({ intent: '[agent:shout] x', ident: seenIdent(crypto, CRED, null, null, CODEX_SID) }), CODEX_SHOUT_REFUSED);
+  assert.deepStrictEqual(h.seen, []);
 });
 
 test('a Codex clone (no persistence entry) keeps its main thread: isCodex comes from the session, not entryOf', async () => {
-  const uuid = '0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
-  const handle = createIntentRequestHandler({
-    consumeMainToolUse: wireSaw,
-    seat: 'cx', parse, isCodex: true, entryOf: () => undefined, sessionIdOf: () => `rollout-2026-10-05T01-00-00-${uuid}`, allows: subagentAllows,
-    dispatch: async () => {},
-  });
-  assert.strictEqual((await handle({ intent: '[agent:shout] x', agentId: uuid }, { closed: () => false })).ok, true);
-  const sub = await handle({ intent: '[agent:shout] x', agentId: '0199ffff-bbbb-cccc-dddd-eeeeeeeeeeee' }, { closed: () => false });
-  assert.strictEqual(sub.status, 'refused');
+  const h = codexHandler({ entryOf: () => undefined });
+  assert.strictEqual((await h.call({ intent: '[agent:shout] x', agentId: CODEX_UUID, ident: seenIdent(crypto, CRED, null, null, CODEX_SID) })).ok, true);
+  assert.deepStrictEqual(await h.call({ intent: '[agent:shout] x', agentId: CODEX_UUID }), CODEX_SHOUT_REFUSED);
 });
 
 test('_startIntentSocket marks a codex session as Codex even with no persistence entry', async () => {
@@ -470,9 +483,26 @@ test('_startIntentSocket marks a codex session as Codex even with no persistence
   const cred = mintIntentCredential(crypto);
   await h.m._startIntentSocket(h.a, { sockPath: pathFor(h.root, 'a', 'intentSocket'), cred });
   try {
-    const main = await viaVerb(h, cred, ['[agent:dm b] hi'], { CODEX_THREAD_ID: uuid });
+    const asserted = await viaVerb(h, cred, ['[agent:dm b] hi'], { CODEX_THREAD_ID: uuid });
+    assert.match(asserted.out + asserted.err, /not available to a subagent: dm/);
+    assert.deepStrictEqual(h.delivered, []);
+    const main = await viaVerb(h, cred, ['[agent:dm b] hi'], { CODEX_THREAD_ID: uuid, ...mainEnv(cred, h.a.sessionId) });
     assert.strictEqual(main.code, 0, main.err);
     assert.deepStrictEqual(h.delivered, [{ target: 'b', tag: 'a', body: 'hi' }]);
+  } finally { h.a.intentSocket.stop(); }
+});
+
+test('_startIntentSocket: a wire-off Codex seat refuses a wire-stamped main thread', async () => {
+  const uuid = '0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  const h = seatHarness();
+  Object.assign(h.a, { agentType: 'codex', type: 'codex', sessionId: `rollout-2026-10-05T01-00-00-${uuid}`, wireRouted: false });
+  fs.mkdirSync(runDirFor(h.root, 'a'), { recursive: true });
+  const cred = mintIntentCredential(crypto);
+  await h.m._startIntentSocket(h.a, { sockPath: pathFor(h.root, 'a', 'intentSocket'), cred });
+  try {
+    const sub = await viaVerb(h, cred, ['[agent:dm b] hi'], { CODEX_THREAD_ID: uuid, ...mainEnv(cred, h.a.sessionId) });
+    assert.match(sub.out + sub.err, /not available to a subagent: dm/);
+    assert.deepStrictEqual(h.delivered, []);
   } finally { h.a.intentSocket.stop(); }
 });
 
@@ -989,7 +1019,10 @@ test('sub stamp: with no name the label falls back to agent-<id8>, never the sha
 test('callerIdentity: a Codex caller never carries an agentId', () => {
   const sid = 'rollout-1-0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
   assert.deepStrictEqual(callerIdentity({ isCodex: true, req: { agentId: 'x' }, sessionId: sid }), { subagent: true });
-  assert.deepStrictEqual(callerIdentity({ isCodex: true, req: { agentId: '0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee' }, sessionId: sid }), { subagent: false });
+  assert.deepStrictEqual(callerIdentity({ isCodex: true, req: { agentId: '0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee' }, sessionId: sid, cred: CRED, crypto, consumeMainToolUse: () => true }), { subagent: true });
+  const proof = { cred: CRED, crypto, consumeMainToolUse: () => true };
+  assert.deepStrictEqual(callerIdentity({ isCodex: true, req: { agentId: '0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee', ident: identToken(crypto, CRED, null, null, sid, undefined, 'call_x') }, sessionId: sid, ...proof }), { subagent: false });
+  assert.deepStrictEqual(callerIdentity({ isCodex: true, req: { agentId: '0199aaaa-bbbb-cccc-dddd-eeeeeeeeeeee', ident: identToken(crypto, CRED, 'ag1', 'gp', sid) }, sessionId: sid, ...proof }), { subagent: true });
   assert.deepStrictEqual(callerIdentity({ isCodex: true, req: {}, sessionId: sid }), { subagent: true });
 });
 

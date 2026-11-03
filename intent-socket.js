@@ -123,13 +123,12 @@ function identIsMain(crypto, cred, ident, sessionId, seen = null, now = Date.now
 function callerIdentity({ req, isCodex, sessionId, cred, crypto, seen = null, now = Date.now(), onReplay = null, consumeMainToolUse = null }) {
   if (isCodex) {
     const agentId = req && typeof req.agentId === 'string' && req.agentId.trim() ? req.agentId.trim() : null;
-    if (!sessionId || !agentId) return { subagent: true };
-    return { subagent: !isMainThread(agentId, sessionId) };
+    if (!sessionId || !agentId || !isMainThread(agentId, sessionId)) return { subagent: true };
   }
   const v = identVerdict(crypto, cred, req && req.ident, sessionId, seen, now);
   if (v.verdict === 'replay' && onReplay) onReplay();
   if (v.verdict === 'main') return { subagent: !(typeof consumeMainToolUse === 'function' && v.toolUseId && consumeMainToolUse(v.toolUseId) === true) };
-  return v.agentId ? { subagent: true, agentId: v.agentId, agentType: v.agentType } : { subagent: true };
+  return v.agentId && !isCodex ? { subagent: true, agentId: v.agentId, agentType: v.agentType } : { subagent: true };
 }
 
 function callerIsSubagent(opts) {
