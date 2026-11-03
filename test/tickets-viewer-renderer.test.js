@@ -1874,6 +1874,14 @@ test('teamCostTitle omits zero parentheticals, singularises one round, and drops
   }), 'Ledger: tickets ~$10.00 over 2 hands · reviews ~$1.00 over 1 round · standing seats ~$0.00. The per-ticket figure on a row is its hand alone.');
 });
 
+test('teamCostTitle falls back to the bare head for a since outside the Date range, and singularises one hand', () => {
+  assert.equal(viewer.teamCostTitle({
+    ok: true, team: 'beta', since: 1e16,
+    usd: { tickets: 10, reviews: 1, standing: 0, total: 11 },
+    counts: { tickets: 1, reviews: 2, standing: 0, unattributed: 0, unpriced: 0 },
+  }), 'Ledger: tickets ~$10.00 over 1 hand · reviews ~$1.00 over 2 rounds · standing seats ~$0.00. The per-ticket figure on a row is its hand alone.');
+});
+
 test('a project with no team gets no cost header rather than a zero one', async () => {
   await withDom({
     projects: projectsRes([projectRow({ open: 1 })]),

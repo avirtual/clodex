@@ -108,17 +108,18 @@ test('exec on a claude agent routes to dm-and-wait: /api/sessions/:name/dm hit, 
     onEventsOpen: endTurnWhenSent('worker2'),
     transcript: () => { calls++; return calls === 1 ? [] : [{ role: 'user', text: '2*3' }, { role: 'assistant', text: '6' }]; },
   });
-  const port = await listen(server);
-  const { code, stdout } = await cli(['exec', 'worker2', '2*3', '--timeout', '10'], port);
-  assert.strictEqual(code, 0);
-  assert.match(stdout, /\[assistant\] 6/);
-  assert.doesNotMatch(stdout, /\[user\] 2\*3/);
-  const urls = seen.map((s) => `${s.method} ${s.url.split('?')[0]}`);
-  assert.ok(urls.includes('GET /api/sessions'), 'looked up the type');
-  assert.ok(urls.some((u) => /^POST \/api\/sessions\/[^/]+\/dm$/.test(u)), 'used the dm path');
-  assert.ok(urls.includes('GET /api/events'), 'awaited turn end');
-  assert.ok(!urls.some((u) => /^POST \/api\/sessions\/[^/]+\/input$/.test(u)), 'never typed into the TUI');
-  server.close();
+  try {
+    const port = await listen(server);
+    const { code, stdout } = await cli(['exec', 'worker2', '2*3', '--timeout', '10'], port);
+    assert.strictEqual(code, 0);
+    assert.match(stdout, /\[assistant\] 6/);
+    assert.doesNotMatch(stdout, /\[user\] 2\*3/);
+    const urls = seen.map((s) => `${s.method} ${s.url.split('?')[0]}`);
+    assert.ok(urls.includes('GET /api/sessions'), 'looked up the type');
+    assert.ok(urls.some((u) => /^POST \/api\/sessions\/[^/]+\/dm$/.test(u)), 'used the dm path');
+    assert.ok(urls.includes('GET /api/events'), 'awaited turn end');
+    assert.ok(!urls.some((u) => /^POST \/api\/sessions\/[^/]+\/input$/.test(u)), 'never typed into the TUI');
+  } finally { server.close(); }
 });
 
 test('exec on a codex agent also routes to dm-and-wait', async () => {
@@ -128,12 +129,13 @@ test('exec on a codex agent also routes to dm-and-wait', async () => {
     onEventsOpen: endTurnWhenSent('cx'),
     transcript: () => { calls++; return calls === 1 ? [] : [{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'yo' }]; },
   });
-  const port = await listen(server);
-  const { code, stdout } = await cli(['exec', 'cx', 'hi', '--timeout', '10'], port);
-  assert.strictEqual(code, 0);
-  assert.match(stdout, /\[assistant\] yo/);
-  assert.ok(!seen.some((s) => /^\/api\/sessions\/[^/]+\/input(\?|$)/.test(s.url)));
-  server.close();
+  try {
+    const port = await listen(server);
+    const { code, stdout } = await cli(['exec', 'cx', 'hi', '--timeout', '10'], port);
+    assert.strictEqual(code, 0);
+    assert.match(stdout, /\[assistant\] yo/);
+    assert.ok(!seen.some((s) => /^\/api\/sessions\/[^/]+\/input(\?|$)/.test(s.url)));
+  } finally { server.close(); }
 });
 
 test('exec --json on an agent carries mode:"agent"', async () => {
@@ -143,14 +145,15 @@ test('exec --json on an agent carries mode:"agent"', async () => {
     onEventsOpen: endTurnWhenSent('bob'),
     transcript: () => { calls++; return calls === 1 ? [] : [{ role: 'user', text: 'q' }, { role: 'assistant', text: 'a' }]; },
   });
-  const port = await listen(server);
-  const { code, stdout } = await cli(['exec', 'bob', 'q', '-o', 'json', '--timeout', '10'], port);
-  assert.strictEqual(code, 0);
-  const j = JSON.parse(stdout);
-  assert.strictEqual(j.mode, 'agent');
-  assert.strictEqual(j.ok, true);
-  assert.deepStrictEqual(j.entries, [{ role: 'assistant', text: 'a', seq: 1 }]);
-  server.close();
+  try {
+    const port = await listen(server);
+    const { code, stdout } = await cli(['exec', 'bob', 'q', '-o', 'json', '--timeout', '10'], port);
+    assert.strictEqual(code, 0);
+    const j = JSON.parse(stdout);
+    assert.strictEqual(j.mode, 'agent');
+    assert.strictEqual(j.ok, true);
+    assert.deepStrictEqual(j.entries, [{ role: 'assistant', text: 'a', seq: 1 }]);
+  } finally { server.close(); }
 });
 
 // ── exec → bash (PTY path) ───────────────────────────────────────────────────
@@ -160,18 +163,19 @@ test('exec on a bash session routes to the PTY: attach + input hit, NOT the dm p
     sessions: [{ name: 'shell', type: 'bash' }],
     onInput: (state) => pushOutput(state.attach, '/work\r\n'),
   });
-  const port = await listen(server);
-  const { code, stdout } = await cli(['exec', 'shell', 'pwd', '--quiet-ms', '80'], port);
-  assert.strictEqual(code, 0);
-  assert.match(stdout, /\/work/);
-  const urls = seen.map((s) => `${s.method} ${s.url.split('?')[0]}`);
-  assert.ok(urls.includes('GET /api/sessions'), 'looked up the type');
-  assert.ok(urls.includes('GET /api/sessions/shell/attach'), 'used the PTY attach path');
-  assert.ok(urls.some((u) => u === 'POST /api/sessions/shell/input'), 'typed the command');
-  assert.ok(!urls.some((u) => /^POST \/api\/sessions\/[^/]+\/dm$/.test(u)), 'never used the DM path');
-  const inputRec = seen.find((s) => s.url === '/api/sessions/shell/input');
-  assert.strictEqual(inputRec.body.data, 'pwd\r');
-  server.close();
+  try {
+    const port = await listen(server);
+    const { code, stdout } = await cli(['exec', 'shell', 'pwd', '--quiet-ms', '80'], port);
+    assert.strictEqual(code, 0);
+    assert.match(stdout, /\/work/);
+    const urls = seen.map((s) => `${s.method} ${s.url.split('?')[0]}`);
+    assert.ok(urls.includes('GET /api/sessions'), 'looked up the type');
+    assert.ok(urls.includes('GET /api/sessions/shell/attach'), 'used the PTY attach path');
+    assert.ok(urls.some((u) => u === 'POST /api/sessions/shell/input'), 'typed the command');
+    assert.ok(!urls.some((u) => /^POST \/api\/sessions\/[^/]+\/dm$/.test(u)), 'never used the DM path');
+    const inputRec = seen.find((s) => s.url === '/api/sessions/shell/input');
+    assert.strictEqual(inputRec.body.data, 'pwd\r');
+  } finally { server.close(); }
 });
 
 test('exec --json on a bash session carries mode:"pty"', async () => {
@@ -179,26 +183,28 @@ test('exec --json on a bash session carries mode:"pty"', async () => {
     sessions: [{ name: 'shell', type: 'bash' }],
     onInput: (state) => pushOutput(state.attach, 'hi\r\n'),
   });
-  const port = await listen(server);
-  const { code, stdout } = await cli(['exec', 'shell', 'echo hi', '-o', 'json', '--quiet-ms', '80'], port);
-  assert.strictEqual(code, 0);
-  const j = JSON.parse(stdout);
-  assert.strictEqual(j.mode, 'pty');
-  assert.strictEqual(j.name, 'shell');
-  assert.match(j.output, /hi/);
-  server.close();
+  try {
+    const port = await listen(server);
+    const { code, stdout } = await cli(['exec', 'shell', 'echo hi', '-o', 'json', '--quiet-ms', '80'], port);
+    assert.strictEqual(code, 0);
+    const j = JSON.parse(stdout);
+    assert.strictEqual(j.mode, 'pty');
+    assert.strictEqual(j.name, 'shell');
+    assert.match(j.output, /hi/);
+  } finally { server.close(); }
 });
 
 // ── exec → unknown ───────────────────────────────────────────────────────────
 
 test('exec on an unknown session → exit 5, lists the running names', async () => {
   const { server } = stub({ sessions: [{ name: 'shell', type: 'bash' }, { name: 'bob', type: 'claude' }] });
-  const port = await listen(server);
-  const { code, stderr } = await cli(['exec', 'ghost', 'hi'], port);
-  assert.strictEqual(code, 5);
-  assert.match(stderr, /no such session: ghost/);
-  assert.match(stderr, /running: shell, bob/);
-  server.close();
+  try {
+    const port = await listen(server);
+    const { code, stderr } = await cli(['exec', 'ghost', 'hi'], port);
+    assert.strictEqual(code, 5);
+    assert.match(stderr, /no such session: ghost/);
+    assert.match(stderr, /running: shell, bob/);
+  } finally { server.close(); }
 });
 
 test('exec on a sleeping assistant resolves it by name and waits on the post-wake after= cursor', async () => {
@@ -211,21 +217,22 @@ test('exec on a sleeping assistant resolves it by name and waits on the post-wak
       ? [{ role: 'user', text: 'hi', ts: new Date().toISOString() }, { role: 'assistant', text: 'awake now', ts: new Date().toISOString() }]
       : [{ role: 'user', text: 'old', ts: '2020-01-01T00:00:00.000Z' }, { role: 'assistant', text: 'old reply', ts: '2020-01-01T00:00:00.000Z' }]),
   });
-  const port = await listen(server);
-  const { code, stdout, stderr } = await cli(['exec', 'asst', 'hi', '--timeout', '10'], port);
-  assert.strictEqual(code, 0, stderr);
-  assert.match(stdout, /\[assistant\] awake now/);
-  assert.doesNotMatch(stdout, /old reply/);
-  const dmAt = seen.findIndex((r) => r.method === 'POST' && r.url === '/api/sessions/asst/dm');
-  assert.ok(dmAt > 0, 'reached the dm');
-  const reads = seen.filter((r) => r.url.startsWith('/api/sessions/asst/transcript'));
-  assert.ok(reads.length > 0, 'read the transcript');
-  for (const r of reads) {
-    assert.ok(seen.indexOf(r) > dmAt, `transcript read after the wake dm: ${r.url}`);
-    assert.match(r.url, /[?&]after=/);
-    assert.doesNotMatch(r.url, /[?&]since=/);
-  }
-  server.close();
+  try {
+    const port = await listen(server);
+    const { code, stdout, stderr } = await cli(['exec', 'asst', 'hi', '--timeout', '10'], port);
+    assert.strictEqual(code, 0, stderr);
+    assert.match(stdout, /\[assistant\] awake now/);
+    assert.doesNotMatch(stdout, /old reply/);
+    const dmAt = seen.findIndex((r) => r.method === 'POST' && r.url === '/api/sessions/asst/dm');
+    assert.ok(dmAt > 0, 'reached the dm');
+    const reads = seen.filter((r) => r.url.startsWith('/api/sessions/asst/transcript'));
+    assert.ok(reads.length > 0, 'read the transcript');
+    for (const r of reads) {
+      assert.ok(seen.indexOf(r) > dmAt, `transcript read after the wake dm: ${r.url}`);
+      assert.match(r.url, /[?&]after=/);
+      assert.doesNotMatch(r.url, /[?&]since=/);
+    }
+  } finally { server.close(); }
 });
 
 test('exec on a sleeper floors the after= cursor at the dm reply ts, so a server clock 30 s behind still yields the reply', async () => {
@@ -268,11 +275,12 @@ test('exec on a sleeper whose turn ends with no reply in the transcript exits no
 
 test('exec with no text → usage error', async () => {
   const { server } = stub({ sessions: [{ name: 'bob', type: 'claude' }] });
-  const port = await listen(server);
-  const { code, stderr } = await cli(['exec', 'bob'], port);
-  assert.strictEqual(code, 2);
-  assert.match(stderr, /exec needs text/);
-  server.close();
+  try {
+    const port = await listen(server);
+    const { code, stderr } = await cli(['exec', 'bob'], port);
+    assert.strictEqual(code, 2);
+    assert.match(stderr, /exec needs text/);
+  } finally { server.close(); }
 });
 
 // ── --pty: the explicit TUI-typing mode ──────────────────────────────────────
@@ -282,13 +290,14 @@ test('exec --pty on an agent types into the TUI instead of routing by type', asy
     sessions: [{ name: 'worker2', type: 'claude' }],
     onInput: (state) => pushOutput(state.attach, 'y\r\n'),
   });
-  const port = await listen(server);
-  const { code } = await cli(['exec', 'worker2', 'y', '--pty', '--quiet-ms', '80'], port);
-  assert.strictEqual(code, 0);
-  assert.ok(seen.some((s) => s.url === '/api/sessions/worker2/attach'), 'attached with --pty');
-  assert.ok(seen.some((s) => s.url === '/api/sessions/worker2/input'), 'typed with --pty');
-  assert.ok(!seen.some((s) => /^\/api\/sessions\/[^/]+\/dm$/.test(s.url)), 'never used the DM path');
-  server.close();
+  try {
+    const port = await listen(server);
+    const { code } = await cli(['exec', 'worker2', 'y', '--pty', '--quiet-ms', '80'], port);
+    assert.strictEqual(code, 0);
+    assert.ok(seen.some((s) => s.url === '/api/sessions/worker2/attach'), 'attached with --pty');
+    assert.ok(seen.some((s) => s.url === '/api/sessions/worker2/input'), 'typed with --pty');
+    assert.ok(!seen.some((s) => /^\/api\/sessions\/[^/]+\/dm$/.test(s.url)), 'never used the DM path');
+  } finally { server.close(); }
 });
 
 test('exec --pty does not look the type up at all', async () => {
@@ -296,11 +305,12 @@ test('exec --pty does not look the type up at all', async () => {
     sessions: [],   // the lookup, if it ran, would be a NOTFOUND exit 5
     onInput: (state) => pushOutput(state.attach, 'ok\r\n'),
   });
-  const port = await listen(server);
-  const { code } = await cli(['exec', 'ghostly', 'y', '--pty', '--quiet-ms', '80'], port);
-  assert.strictEqual(code, 0, 'no type lookup, so an absent row cannot fail it');
-  assert.ok(!seen.some((s) => s.url === '/api/sessions'), 'the type lookup never ran');
-  server.close();
+  try {
+    const port = await listen(server);
+    const { code } = await cli(['exec', 'ghostly', 'y', '--pty', '--quiet-ms', '80'], port);
+    assert.strictEqual(code, 0, 'no type lookup, so an absent row cannot fail it');
+    assert.ok(!seen.some((s) => s.url === '/api/sessions'), 'the type lookup never ran');
+  } finally { server.close(); }
 });
 
 test('exec on a bash session takes the PTY path with no --pty needed', async () => {
@@ -308,48 +318,52 @@ test('exec on a bash session takes the PTY path with no --pty needed', async () 
     sessions: [{ name: 'shell', type: 'bash' }],
     onInput: (state) => pushOutput(state.attach, 'ok\r\n'),
   });
-  const port = await listen(server);
-  const { code, stdout } = await cli(['exec', 'shell', 'true', '--quiet-ms', '80'], port);
-  assert.strictEqual(code, 0);
-  assert.match(stdout, /ok/);
-  assert.ok(seen.some((s) => s.url === '/api/sessions/shell/attach'));
-  server.close();
+  try {
+    const port = await listen(server);
+    const { code, stdout } = await cli(['exec', 'shell', 'true', '--quiet-ms', '80'], port);
+    assert.strictEqual(code, 0);
+    assert.match(stdout, /ok/);
+    assert.ok(seen.some((s) => s.url === '/api/sessions/shell/attach'));
+  } finally { server.close(); }
 });
 
 // ── dm: fire-and-forget only ─────────────────────────────────────────────────
 
 test('dm --wait is a usage error naming exec, and sends nothing', async () => {
   const { server, seen } = stub({ sessions: [{ name: 'bob', type: 'claude' }] });
-  const port = await listen(server);
-  const { code, stderr } = await cli(['dm', 'bob', 'hi', '--wait'], port);
-  assert.strictEqual(code, 2);
-  assert.match(stderr, /dm has no --wait/);
-  assert.match(stderr, /clodexctl exec/);
-  assert.deepStrictEqual(seen, [], 'refused before any request');
-  server.close();
+  try {
+    const port = await listen(server);
+    const { code, stderr } = await cli(['dm', 'bob', 'hi', '--wait'], port);
+    assert.strictEqual(code, 2);
+    assert.match(stderr, /dm has no --wait/);
+    assert.match(stderr, /clodexctl exec/);
+    assert.deepStrictEqual(seen, [], 'refused before any request');
+  } finally { server.close(); }
 });
 
 test('dm without --wait posts to /dm and returns fire-and-forget', async () => {
   const { server, seen } = stub({ sessions: [{ name: 'bob', type: 'claude' }] });
-  const port = await listen(server);
-  const { code, stdout } = await cli(['dm', 'bob', 'hi'], port);
-  assert.strictEqual(code, 0);
-  assert.match(stdout, /fire-and-forget/);
-  assert.ok(seen.some((s) => s.url === '/api/sessions/bob/dm'), 'posted the DM');
-  assert.ok(!seen.some((s) => s.url === '/api/events'), 'no events feed opened');
-  server.close();
+  try {
+    const port = await listen(server);
+    const { code, stdout } = await cli(['dm', 'bob', 'hi'], port);
+    assert.strictEqual(code, 0);
+    assert.match(stdout, /fire-and-forget/);
+    assert.ok(seen.some((s) => s.url === '/api/sessions/bob/dm'), 'posted the DM');
+    assert.ok(!seen.some((s) => s.url === '/api/events'), 'no events feed opened');
+  } finally { server.close(); }
 });
 
 // ── input is deliberately UNCHANGED (no guardrail) ───────────────────────────
 
 test('input on an agent is unchanged — no type lookup, no guardrail, just types', async () => {
   const { server, seen } = stub({ sessions: [{ name: 'worker2', type: 'claude' }] });
-  const port = await listen(server);
-  const { code, stdout } = await cli(['input', 'worker2', 'hello'], port);
-  assert.strictEqual(code, 0);
-  assert.match(stdout, /input sent to worker2/);
-  // input does NOT consult /api/sessions — it's the raw plumbing channel
-  assert.ok(!seen.some((s) => s.url === '/api/sessions'), 'input never looks up the type');
-  assert.ok(seen.some((s) => s.url === '/api/sessions/worker2/input'), 'typed raw');
-  server.close();
+  try {
+    const port = await listen(server);
+    const { code, stdout } = await cli(['input', 'worker2', 'hello'], port);
+    assert.strictEqual(code, 0);
+    assert.match(stdout, /input sent to worker2/);
+    // input does NOT consult /api/sessions — it's the raw plumbing channel
+    assert.ok(!seen.some((s) => s.url === '/api/sessions'), 'input never looks up the type');
+    assert.ok(seen.some((s) => s.url === '/api/sessions/worker2/input'), 'typed raw');
+  } finally { server.close(); }
 });

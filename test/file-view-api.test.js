@@ -679,6 +679,7 @@ test('writeFilePeek refuses an ancestor swapped for a symlink out between the ve
   }));
   const r = fn('seat', file, 'pwned', null);
   assert.strictEqual(swapped, true, 'ENTER: the ancestor swap ran before the vet open');
+  assert.strictEqual(fs.realpathSync(file), fs.realpathSync(outside), 'ENTER: the swap landed before the open');
   assert.deepStrictEqual(r, { ok: false, error: 'File changed under the editor — reload and retry' });
   assert.strictEqual(fs.readFileSync(outside, 'utf8'), 'keep');
   assert.strictEqual(fs.readFileSync(path.join(cwd, 'sub-old', 'a.txt'), 'utf8'), 'one');

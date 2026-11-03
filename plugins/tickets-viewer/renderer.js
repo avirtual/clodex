@@ -122,7 +122,7 @@ function teamCostTitle(res) {
   const n = (k) => Number(counts[k]) || 0;
   const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
   const since = Number(res.since);
-  const head = Number.isFinite(since) && res.since !== null
+  const head = Number.isFinite(since) && Math.abs(since) <= 8.64e15 && res.since !== null
     ? `Ledger since ${new Date(since).toISOString().slice(0, 10)}:`
     : 'Ledger:';
   const tickets = `tickets ~${money(usd.tickets)} over ${plural(n('tickets'), 'hand')}${n('unattributed') ? ` (${n('unattributed')} unattributed)` : ''}`;

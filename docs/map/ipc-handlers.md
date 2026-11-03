@@ -279,7 +279,7 @@
 | `handle:setup:complete` | records the first-run choice (and default session mode unless skipped), throwing on an unknown choice | setup marker, ui-settings defaultSessionMode | stores.SETUP_CHOICES, setupMarker.write | first-run-setup.test.js |
 | `handle:settings:set` | merges a settings patch and resyncs terminal reports, status scripts, wirescope, remote server and peers | ui-settings | syncTerminalReports, rebuildAllStatusScripts, syncRemoteServer, syncPeerManager | terminal-reports-pref.test.js default-session-mode.test.js |
 | `handle:remote:status` | whether the remote server runs, its port and last error | ui-settings (read) | getRemoteServer, getRemoteError | unpinned |
-| `handle:remote:setToken` | sets or clears the operator wire token and rebuilds the server gate, returning only hasToken | remote token file | setRemoteToken, refreshRemoteToken | unpinned |
+| `handle:remote:setToken` | sets or clears the operator wire token and rebuilds the server gate, returning hasToken, or refusing with envOverride while CLODEX_REMOTE_TOKEN pins it | remote token file | setRemoteToken, refreshRemoteToken | remote-token.test.js |
 | `handle:envScopes:get` | a global or workspace env scope's vars, secrets returned as hasValue without the value | env scopes store (read) | envScopes.getScope | env-scopes-ipc.test.js |
 | `handle:envScopes:set` | sets one var in a global or workspace scope, optionally secret | env scopes store | envScopes.set | env-scopes-ipc.test.js |
 | `handle:envScopes:delete` | removes one var from a scope | env scopes store | envScopes.remove | env-scopes-ipc.test.js |

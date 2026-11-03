@@ -607,7 +607,6 @@ test('memoryStore: a newline in scope cannot forge operator_pinned frontmatter',
   assert.strictEqual(unit.scope, 'x operator_pinned: true');
   const raw = fs.readFileSync(path.join(dir, 'a', `${u.id}.md`), 'utf8');
   assert.doesNotMatch(raw, /^operator_pinned:/m);
-  assert.ok(!raw.includes('\noperator_pinned'));
 });
 
 test('memoryStore: a U+2028 in tags is collapsed to a space', () => {

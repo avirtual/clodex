@@ -101,9 +101,11 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
   const readBundle = async (sec, kind, stem) => {
     const file = sec.dir ? `${sec.dir}/${bundleRelPath(kind, stem)}` : null;
     const r = file ? await window.api.filePeek(file) : null;
-    if (!r || !r.ok || r.binary || r.truncated || r.content == null) {
+    if (!r || !r.ok || r.binary || r.truncated || r.content == null || r.editable === false) {
       const why = !r || !r.ok ? ((r && r.error) || 'it could not be read')
-        : r.binary ? 'it is not text' : 'it is too large to edit here';
+        : r.binary ? 'it is not text'
+          : r.editable === false ? ({ crlf: 'it has CRLF line endings', 'non-utf8': 'it is not UTF-8' }[r.encoding] || 'it is not editable here')
+            : 'it is too large to edit here';
       alert(`Can't open ${stem} from the ${sec.name} plugin: ${why}.\n\n`
         + 'Opening it here and saving would overwrite the file with what this editor could show, '
         + 'so use Reveal plugin folder and edit it in place.');
