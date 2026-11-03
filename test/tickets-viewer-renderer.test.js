@@ -1862,7 +1862,7 @@ test('the board header carries the team total when the ledger has one', async ()
     const text = textOf(root).join('\n');
     assert.ok(text.includes('team alpha: ~$4,212'), `the header shows the team total\n--- got ---\n${text}`);
     assert.equal(allByClass(root, 'tv-team-cost')[0].title,
-      'Ledger since 2026-07-01: tickets ~$3,691 over 442 hands (44 unattributed) · reviews ~$494 over 262 rounds · standing seats ~$27 (3). The per-ticket figure on a row is its hand alone.');
+      'Ledger since 2026-07-01: tickets ~$3,691 over 442 hands (44 unattributed) · reviews ~$494 over 262 rounds · standing seats ~$27.00 (3). The per-ticket figure on a row is its hand alone.');
   });
 });
 
