@@ -719,6 +719,14 @@ test('a seat re-spawned under the same name books its new spend, not the old sea
   assert.strictEqual(row && row.usd, 30);
 });
 
+test('a re-spawned seat ignores the old cursor even for a session id it already booked', () => {
+  const row = tc.seatLedgerRow({
+    seat: 'lead', lifetime: { usd: 30, bySession: { a: sess(30) } },
+    cursor: { createdAt: 1, sessions: { a: sess(40) }, at: 5 }, createdAt: 2, now: 9,
+  });
+  assert.strictEqual(row && row.usd, 30);
+});
+
 test('a session aged out of wire-totals does not hide the spend of the sessions still there', () => {
   const row = tc.seatLedgerRow({
     seat: 'lead', lifetime: { usd: 25, bySession: { b: sess(15), c: sess(10) } },
