@@ -87,7 +87,7 @@ test('buildCredentialSandbox: without a userDataPath the output is unchanged', (
   const want = expectedFilesystem(R, false);
   assert.deepStrictEqual(g.sandbox.filesystem, want.filesystem);
   assert.deepStrictEqual(g.sandbox.credentials, { files: want.files });
-  assert.strictEqual(g.deny.length, 39);
+  assert.strictEqual(g.deny.length, 41);
 });
 
 test('buildCredentialSandbox: a userData dir holding the registry keeps its file denies but drops the whole-dir write deny', () => {

@@ -8938,7 +8938,7 @@ function createSessionManager(deps) {
         .map((e) => e.n);
       for (const note of ordered) {
         if (!note || typeof note.body !== 'string') continue;
-        if (typeof note.from !== 'string' || !AGENT_NAME_RE.test(note.from)) {
+        if (!isQualifiedSender(note.from) || note.from.includes('@')) {
           log.warn('peer', `claimed note from peer ${peerId} dropped — bad sender name`);
           continue;
         }
