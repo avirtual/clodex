@@ -18,6 +18,7 @@ blocks a release.
 - The team cost rollup (board header, clodex-team cost) counts each ticket's newest close only, so a reworked ticket no longer adds every earlier round's cumulative spend to the team total.
 - Deleting a team now also removes the sandbox box it raised with `[agent:team sandbox up]`, and the confirmation names it; the box used to keep running and a later team of the same name inherited the deleted manifest.
 - On a shared root, deleting a team is no longer refused because of the other team's open tickets.
+- A dm that reaches an idle Claude/Codex/Muse stream seat while it is being killed, restarted or archived is parked for the next boot instead of being acknowledged and lost with the exiting process.
 
 ## 5.159.0 — 2026-11-03 — Security: log-mask masks every secret-named URL query parameter, Edit tab vets and writes one descriptor; memory id trim, dm await on pty seats, board cost breakdown
 
