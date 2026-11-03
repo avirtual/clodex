@@ -279,6 +279,7 @@ function mkDeleteDoor({
     sessions: new Map(sessions.map((x) => [x.name, x])),
     _ticketWatch: new Map(),
     _teamInUse: methods._teamInUse,
+    _ownRowFilter: methods._ownRowFilter,
     _forgetTeam: methods._forgetTeam,
     _teamsOfRoot: methods._teamsOfRoot,
   };
