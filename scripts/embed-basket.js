@@ -80,16 +80,20 @@ function parseArgs(argv) {
 }
 
 function readBasket(file) {
-  const out = [];
+  const byId = new Map();
   let bad = 0;
+  let noId = 0;
+  let dupId = 0;
   for (const line of fs.readFileSync(file, 'utf-8').split('\n')) {
     if (!line) continue;
-    try {
-      const o = JSON.parse(line);
-      if (o && o.text) out.push(o);
-    } catch { bad++; }
+    let o;
+    try { o = JSON.parse(line); } catch { bad++; continue; }
+    if (!o || !o.text) continue;
+    if (typeof o.id !== 'string' || !o.id) { noId++; continue; }
+    if (byId.has(o.id)) dupId++;
+    byId.set(o.id, o);
   }
-  return { records: out, bad };
+  return { records: [...byId.values()], bad, noId, dupId };
 }
 
 // The record shape the memory retriever uses, so keyOf() produces the same
@@ -126,8 +130,10 @@ async function run(args, {
   makeStore = createVectorStore, makeEmbedder = createEmbedder,
   storeFile = STORE, log = console.log, write = (s) => process.stdout.write(s),
 } = {}) {
-  const { records, bad } = readBasket(args.file);
-  log(`basket: ${records.length} records${bad ? ` (${bad} unparseable lines skipped)` : ''}`);
+  const { records, bad, noId, dupId } = readBasket(args.file);
+  log(`basket: ${records.length} records${bad ? ` (${bad} unparseable lines skipped)` : ''}`
+    + `${noId ? `, ${noId} without an id skipped` : ''}`
+    + `${dupId ? `, ${dupId} earlier duplicates of an id dropped` : ''}`);
 
   const store = makeStore({ file: storeFile, dims: DIMS, model: DEFAULT_MODEL, readOnly: args.dry });
   const embedder = makeEmbedder({});
@@ -139,13 +145,36 @@ async function run(args, {
     if (todo.length >= args.limit) break;
   }
 
+  if (args.dry) {
+    const m = store.spaceMismatch();
+    if (m) {
+      log(`store:  on-disk vectors are dims=${m.dims} model=${m.model}, not dims=${DIMS} model=${DEFAULT_MODEL} — a real run starts the store over`);
+      return;
+    }
+  }
+
   const stats = store.stats();
   log(`store:  ${stats.live} live rows, ${stats.garbage} garbage, ${(stats.bytes / 1e6).toFixed(1)}MB`);
 
+  const byId = keysById(store);
+  const current = new Set(records.map((r) => keyOf(asRecord(r))));
+  const stale = [];
+  for (const r of records) {
+    for (const key of byId.get(r.id) || []) {
+      if (!current.has(key)) stale.push(key);
+    }
+  }
+
   if (args.dry) {
+    if (stale.length) log(`stale:  ${stale.length} rows would be retired`);
     if (args.compact) log(`compact would reclaim: ${stats.rows - stats.live} rows (dry run, store untouched)`);
     log(`todo:   ${todo.length} to embed`);
     return;
+  }
+  for (const key of stale) store.remove(key);
+  if (stale.length) {
+    store.flush();
+    log(`stale:  ${stale.length} rows retired`);
   }
   if (args.compact) {
     const r = store.compact();
@@ -154,8 +183,6 @@ async function run(args, {
   }
   log(`todo:   ${todo.length} to embed`);
   if (!todo.length) { log('nothing to do'); return; }
-
-  const byId = keysById(store);
 
   // A daemon that is down fails on every record; stop rather than grind through
   // thousands of timeouts.
@@ -175,9 +202,6 @@ async function run(args, {
     failed = 0;
     const key = keyOf(rec);
     if (store.add(key, v) === false) continue;
-    for (const old of byId.get(String(rec.id)) || []) {
-      if (old !== key) store.remove(old);
-    }
     done++;
     if (done % FLUSH_EVERY === 0) {
       store.flush();

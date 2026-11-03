@@ -1,7 +1,5 @@
-// The basket ingestion script's pure parts. The embedding loop itself needs a
-// daemon and is exercised for real by running the script; what is testable
-// here — and what actually breaks — is the record shaping and the parsing that
-// decides WHICH records get embedded at all.
+// The basket ingestion script: record shaping, basket parsing, argv, and the
+// embed/sweep loop driven through `run` with an injected store and embedder.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -169,6 +167,7 @@ test('embed-basket: --dry-run --compact opens the store read-only and never comp
     return {
       has: () => false,
       keys: () => [],
+      spaceMismatch: () => null,
       stats: () => ({ rows: 5, live: 2, garbage: 3, bytes: 0 }),
       compact: () => { calls.push('compact'); return { before: 5, after: 2, reclaimed: 3 }; },
       add: () => { calls.push('add'); return true; },
@@ -204,5 +203,113 @@ test('embed-basket: an edited record retires its old vector row', async () => {
   const keptKey = keyOf(asRecord({ id: 'y', text: 'kept' }));
   assert.deepStrictEqual(store.keys().sort(), [newKey, keptKey].sort());
   assert.deepStrictEqual(store.stats(), { rows: 3, live: 2, garbage: 1, bytes: 3 * 768 * 4 });
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+const { createVectorStore } = require('../vector-store');
+const { DEFAULT_MODEL } = require('../hint-embed');
+
+function loopFixture() {
+  const dir = mkTmpRoot('clx-eb-');
+  const basket = path.join(dir, 'operator.jsonl');
+  const storeFile = path.join(dir, 'vectors.bin');
+  const embedded = [];
+  const out = [];
+  const makeEmbedder = () => ({
+    embedDoc: async (rec) => { embedded.push(rec.text); const v = new Float32Array(768); v[0] = 1; return v; },
+  });
+  const deps = { makeEmbedder, storeFile, log: (s) => out.push(s), write: () => {} };
+  const go = (dry = false) => run({ file: basket, limit: Infinity, dry, compact: false }, deps);
+  const writeBasket = (lines) => fs.writeFileSync(basket, lines.map((o) => (typeof o === 'string' ? o : JSON.stringify(o))).join('\n') + '\n');
+  const open = () => createVectorStore({ file: storeFile, dims: 768, model: DEFAULT_MODEL });
+  return { dir, basket, storeFile, embedded, out, go, writeBasket, open };
+}
+
+test('embed-basket: records with no id are skipped and counted, and never reach the store', async () => {
+  const f = loopFixture();
+  f.writeBasket([{ text: 'no id' }, { id: '', text: 'empty id' }, { id: 7, text: 'numeric id' }, { id: 'a', text: 'kept' }]);
+  const { records, noId, dupId } = readBasket(f.basket);
+  assert.deepStrictEqual([records.map((r) => r.id), noId, dupId], [['a'], 3, 0]);
+  f.writeBasket([{ text: 'no id' }, { id: '', text: 'empty id' }, { id: 'a', text: 'kept' }]);
+  await f.go();
+  assert.strictEqual(f.out[0], 'basket: 1 records, 2 without an id skipped');
+  assert.deepStrictEqual(f.open().keys(), [keyOf(asRecord({ id: 'a', text: 'kept' }))]);
+  fs.rmSync(f.dir, { recursive: true, force: true });
+});
+
+test('embed-basket: a repeated id keeps the last line and does not oscillate across runs', async () => {
+  const f = loopFixture();
+  f.writeBasket([{ id: 'x', text: 'v1' }, { id: 'x', text: 'v2' }]);
+  const { records, dupId } = readBasket(f.basket);
+  assert.deepStrictEqual([records.map((r) => r.text), dupId], [['v2'], 1]);
+  await f.go();
+  assert.deepStrictEqual(f.embedded, ['v2']);
+  assert.strictEqual(f.out[0], 'basket: 1 records, 1 earlier duplicates of an id dropped');
+  const keys = f.open().keys();
+  assert.deepStrictEqual(keys, [keyOf(asRecord({ id: 'x', text: 'v2' }))]);
+  f.out.length = 0;
+  await f.go();
+  assert.deepStrictEqual(f.embedded, ['v2']);
+  assert.ok(f.out.includes('todo:   0 to embed'), f.out.join('\n'));
+  assert.deepStrictEqual(f.open().keys(), keys);
+  fs.rmSync(f.dir, { recursive: true, force: true });
+});
+
+test('embed-basket: a stale row from before the sweep is retired, and a dry run only reports it', async () => {
+  const f = loopFixture();
+  const oldKey = keyOf(asRecord({ id: 'x', text: 'old' }));
+  const keptKey = keyOf(asRecord({ id: 'y', text: 'kept' }));
+  const newKey = keyOf(asRecord({ id: 'x', text: 'new' }));
+  const seed = f.open();
+  seed.add(oldKey, new Float32Array(768).fill(1));
+  seed.add(keptKey, new Float32Array(768).fill(1));
+  seed.flush();
+  f.writeBasket([{ id: 'x', text: 'new' }, { id: 'y', text: 'kept' }]);
+  await f.go(true);
+  assert.deepStrictEqual(f.out, [
+    'basket: 2 records',
+    'store:  2 live rows, 0 garbage, 0.0MB',
+    'stale:  1 rows would be retired',
+    'todo:   1 to embed',
+  ]);
+  assert.deepStrictEqual(f.open().keys().sort(), [oldKey, keptKey].sort());
+  f.out.length = 0;
+  await f.go();
+  assert.ok(f.out.includes('stale:  1 rows retired'), f.out.join('\n'));
+  assert.deepStrictEqual(f.open().keys().sort(), [newKey, keptKey].sort());
+  fs.rmSync(f.dir, { recursive: true, force: true });
+});
+
+test('embed-basket: a store id absent from the basket survives a run', async () => {
+  const f = loopFixture();
+  const orphan = keyOf(asRecord({ id: 'gone', text: 'truncated away' }));
+  const seed = f.open();
+  seed.add(orphan, new Float32Array(768).fill(1));
+  seed.flush();
+  f.writeBasket([{ id: 'a', text: 'present' }]);
+  await f.go();
+  const keys = f.open().keys();
+  assert.ok(keys.includes(keyOf(asRecord({ id: 'a', text: 'present' }))), `ENTER: ${keys}`);
+  assert.ok(keys.includes(orphan), `the orphan row must survive: ${keys}`);
+  assert.ok(!f.out.some((l) => l.startsWith('stale:')), f.out.join('\n'));
+  fs.rmSync(f.dir, { recursive: true, force: true });
+});
+
+test('embed-basket: a dry run over a store in another vector space says so instead of 0 rows', async () => {
+  const { dir, file } = mkBasket([{ id: 'a', text: 'first' }]);
+  const makeStore = () => ({
+    has: () => false,
+    keys: () => [],
+    spaceMismatch: () => ({ dims: 384, model: 'all-minilm' }),
+    stats: () => ({ rows: 0, live: 0, garbage: 0, bytes: 0 }),
+  });
+  const makeEmbedder = () => ({ embedDoc: async () => null });
+  const out = [];
+  await run({ file, limit: Infinity, dry: true, compact: true },
+    { makeStore, makeEmbedder, storeFile: path.join(dir, 'v.bin'), log: (s) => out.push(s), write: () => {} });
+  assert.deepStrictEqual(out, [
+    'basket: 1 records',
+    `store:  on-disk vectors are dims=384 model=all-minilm, not dims=768 model=${DEFAULT_MODEL} — a real run starts the store over`,
+  ]);
   fs.rmSync(dir, { recursive: true, force: true });
 });

@@ -71,6 +71,7 @@ function createVectorStore({
   let blob = null;      // Float32Array view over the whole file
   let rowCount = 0;
   let pendingRows = 0;  // rows appended since the sidecar was last flushed
+  let mismatch = null;
 
   function loadBlob() {
     let raw;
@@ -123,6 +124,7 @@ function createVectorStore({
     // reconciled with the current one — every row is in the wrong space. Start
     // over rather than mix two vector spaces in one file.
     if (sidecar.dims !== dims || (model && sidecar.model && sidecar.model !== model)) {
+      mismatch = { dims: sidecar.dims, model: sidecar.model };
       sidecar = { dims, model, rows: new Map() };
       if (readOnly) {
         blob = new Float32Array(0);
@@ -301,6 +303,11 @@ function createVectorStore({
       let bytes = 0;
       try { bytes = statFile(file).size; } catch {}
       return { rows: rowCount, live: sidecar.rows.size, garbage: rowCount - sidecar.rows.size, bytes };
+    },
+
+    spaceMismatch() {
+      load();
+      return mismatch;
     },
   };
 }
