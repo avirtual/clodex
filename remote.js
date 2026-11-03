@@ -1091,7 +1091,7 @@ class RemoteServer {
         if (taken && !taken.ok) return this._json(res, taken.code || 400, taken);
       }
       let out;
-      try { out = this._seatImport.begin({ name, record: msg && msg.record }); }
+      try { out = this._seatImport.begin({ name, record: msg.record }); }
       catch (e) { return this._json(res, 500, { ok: false, error: e.message }); }
       return this._json(res, out && out.ok ? 200 : 400, out || { ok: false, error: 'begin failed' });
     });
