@@ -856,7 +856,7 @@ test('arm: an abandoned PRE-armed draft deletes the hint and releases the hold',
     'an abandoned draft must release the hold, or deliveries stall for the whole cap');
 });
 
-function mkPendingArm({ debounceMs, personalAsk: pa = null, deferArm = false } = {}) {
+function mkPendingArm({ debounceMs, personalAsk: pa = null, deferArm = false, enabled = null } = {}) {
   const { store } = mkStore(CORPUS);
   const posts = [];
   const clears = [];
@@ -880,6 +880,7 @@ function mkPendingArm({ debounceMs, personalAsk: pa = null, deferArm = false } =
     now: () => 1_000_000,
     ...(pa ? { personalAsk: pa } : {}),
     ...(debounceMs !== undefined ? { debounceMs } : {}),
+    ...(enabled ? { enabled } : {}),
   });
   return { arm: a, posts, clears, pending, arms };
 }
@@ -913,6 +914,7 @@ test('arm: a forget while the rank is in flight leaves nothing behind', async ()
   await drainImmediates();
   assert.strictEqual(h.posts.length, 0, 'a forgotten seat must not be armed by its last rank');
   assert.strictEqual(h.arm._armedIds('s'), null, 'the stale rank re-created the forgotten state');
+  assert.strictEqual(h.arm._hasState('s'), false, 'the stale rank re-created the forgotten entry');
   assert.strictEqual(h.arm._offered('a').size, 0, 'the stale rank re-created the forgotten ledger');
 });
 
@@ -949,6 +951,32 @@ test('arm: a stale pre-arm pass does not release the hold the newer draft opened
     'the stale pass released a hold it did not open, so an injected turn can spend the newer hint');
 });
 
+for (const [gate, draft, flags] of [
+  ['overflow', SIGNING_DRAFT, { overflow: true }],
+  ['desync', SIGNING_DRAFT, { desync: true }],
+  ['short', 'hi', {}],
+]) {
+  test(`guard gated-release: a ${gate} draft after a held one releases the hold`, () => {
+    const h = mkPendingArm();
+    h.arm.onDraft('s', DRAFT, CTX);
+    assert.strictEqual(h.arm.holding('s'), true, 'ENTER: the long draft opened a hold');
+    h.arm.onDraft('s', draft, CTX, flags);
+    assert.strictEqual(h.arm.holding('s'), false,
+      'a gated draft with nothing armed kept the hold, stalling deliveries for the whole cap');
+  });
+}
+
+test('guard gated-release: a draft typed while the arm is disabled releases the hold', () => {
+  let on = true;
+  const h = mkPendingArm({ enabled: () => on });
+  h.arm.onDraft('s', DRAFT, CTX);
+  assert.strictEqual(h.arm.holding('s'), true, 'ENTER: the long draft opened a hold');
+  on = false;
+  h.arm.onDraft('s', SIGNING_DRAFT, CTX);
+  assert.strictEqual(h.arm.holding('s'), false,
+    'a disabled arm with nothing armed kept the hold, stalling deliveries for the whole cap');
+});
+
 test('guard stale-after-yield: a draft discarded before the setImmediate drains is never ranked', async () => {
   const h = mkPendingArm();
   h.arm.onDraft('s', DRAFT, CTX, { final: true });
@@ -960,8 +988,9 @@ test('guard stale-after-yield: a draft discarded before the setImmediate drains 
 });
 
 const PERSONAL_DRAFT = 'who are my colleagues';
-const PERSONAL_UNIT = { id: 'good', text: 'bogdan works with colleagues at opsguru', tags: '', scope: '',
-  source: 'memory', confidence: 0.7, evidence: { sim: 0.7, ranker: 'semantic' } };
+const semanticUnit = (id, text) => ({ id, text, tags: '', scope: '',
+  source: 'memory', confidence: 0.7, evidence: { sim: 0.7, ranker: 'semantic' } });
+const PERSONAL_UNIT = semanticUnit('good', 'bogdan works with colleagues at opsguru');
 
 for (const [how, discard] of [
   ['disarm', (h) => h.arm.disarm('s', CTX)],
@@ -977,6 +1006,7 @@ for (const [how, discard] of [
     await drainImmediates();
     assert.strictEqual(h.posts.length, 0, 'a draft discarded mid-personal-rank must not have its hint armed');
     assert.strictEqual(h.arm._armedIds('s'), null, 'the stale personal pass re-created the armed memo');
+    if (how === 'forget') assert.strictEqual(h.arm._hasState('s'), false, 'the stale personal pass re-created the entry');
     assert.strictEqual(h.arm._offered('a').size, 0, 'the stale personal pass re-created the offered ledger');
   });
 }
@@ -1045,6 +1075,23 @@ for (const [guard, fail] of [
       'the older POST failing wiped the newer memo, so the same draft re-POSTs on every keystroke');
   });
 }
+
+test('guard status-memo: a failed POST for the current draft nulls the memo so it re-POSTs', async () => {
+  const h = mkPendingArm({ deferArm: true });
+  h.arm.onDraft('s', DRAFT, CTX, { final: true });
+  await drainImmediates();
+  h.pending[0].resolve(null);
+  await drainImmediates();
+  assert.strictEqual(h.arms.length, 1, 'ENTER: the arm POST must be in flight');
+  h.arms[0].resolve({ status: 500 });
+  await drainImmediates();
+  assert.strictEqual(h.arm._armedIds('s'), null, 'a rejected POST left the memo set');
+  h.arm.onDraft('s', DRAFT, CTX, { final: true });
+  await drainImmediates();
+  h.pending[1].resolve(null);
+  await drainImmediates();
+  assert.strictEqual(h.posts.length, 2, 'the same draft never retried the POST the proxy refused');
+});
 
 test('arm: the Enter pass survives the onSubmit that follows it', async () => {
   const h = mkPendingArm();
@@ -1859,8 +1906,7 @@ function fakeSemantic({
       calls.push({ draft, opts });
       if (throws) throw new Error('daemon exploded');
       if (returns !== undefined) return returns;
-      return [{ id: winner, text, tags: '', scope: '',
-        source: 'memory', confidence: 0.7, evidence: { sim: 0.7, ranker: 'semantic' } }];
+      return [semanticUnit(winner, text)];
     },
   };
 }

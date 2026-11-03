@@ -13,6 +13,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- **A short or unrankable draft typed after a longer one no longer stalls that seat's deliveries.** The inject-queue hold taken for the earlier draft's pending hint was kept until the hold cap when the next keystroke could not be ranked; it is released as soon as nothing is armed.
 
 ## 5.159.0 — 2026-11-03 — Security: log-mask masks every secret-named URL query parameter, Edit tab vets and writes one descriptor; memory id trim, dm await on pty seats, board cost breakdown
 
