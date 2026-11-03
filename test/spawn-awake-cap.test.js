@@ -11,6 +11,7 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 function harness(records) {
   const calls = [];
   const replies = [];
+  const dir = mkTmpRoot('clx-awake-cap-');
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
     os, fs, path,
@@ -20,6 +21,7 @@ function harness(records) {
     ensureDir: () => {},
     AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
     DEFAULT_WORKSPACE_ID: 'default',
+    REGISTRY_DIR: dir,
   });
   const m = new SessionManager();
   m.sessions = new Map();
@@ -28,8 +30,8 @@ function harness(records) {
   m._sendToSession = () => {};
   m._applyTemplatePersistence = () => {};
   m.create = async (...args) => { calls.push(args); return undefined; };
-  const dir = mkTmpRoot('clx-awake-cap-');
-  const tmpl = path.join(dir, 'avh-tpl.json');
+  fs.mkdirSync(path.join(dir, 'library', 'templates'), { recursive: true });
+  const tmpl = path.join(dir, 'library', 'templates', 'avh-tpl.json');
   fs.writeFileSync(tmpl, JSON.stringify({ name: 'avh-tpl', type: 'claude', cwd: dir, class: 'assistant', sleep: { maxAwake: 1 } }));
   return { m, calls, replies, tmpl };
 }
