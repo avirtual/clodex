@@ -48,7 +48,7 @@ for (const [from, client, want] of CLIENT_TABLE) {
 }
 
 test('SYSTEM_GLYPHS names exactly the known system senders', () => {
-  assert.deepStrictEqual(Object.keys(SYSTEM_GLYPHS), ['reminder', 'reboot', 'ticket-loop', 'ticket-watchdog', 'monitor', 'memory', 'exec', 'terminal', 'team', 'clodex-team', 'wirescope', 'deploy-fix']);
+  assert.deepStrictEqual(Object.keys(SYSTEM_GLYPHS), ['reminder', 'reboot', 'ticket-loop', 'ticket-watchdog', 'monitor', 'memory', 'exec', 'terminal', 'team', 'clodex-team', 'wirescope', 'deploy-fix', 'permission']);
 });
 
 test('initial is the first character upper-cased, or ? for an empty name', () => {
