@@ -5,7 +5,7 @@
 // hence get+set. No electron require here: this runs under a headless host.
 
 const { pathFor, projectDirFor } = require('./clodex-paths');
-const { SYSTEM_SENDERS } = require('./system-senders');
+const { SYSTEM_SENDERS, isReservedSenderName, reservedSenderError } = require('./system-senders');
 const { spillDirFor } = require('./intent-spill');
 const { durableMessageCopyOf } = require('./file-resolve');
 const { createTicketsStore } = require('./tickets-store');
@@ -609,6 +609,7 @@ function createRemoteWiring(deps) {
       return { ok: false, error: `invalid name "${name}" — allowed [a-zA-Z0-9._-], 1-64 chars` };
     }
     if (isReservedSeatName(name)) return { ok: false, code: 400, error: 'reserved name' };
+    if (isReservedSenderName(name)) return { ok: false, code: 400, error: reservedSenderError(name) };
     if (manager.sessions.has(name) || getPersistence().get(name)) {
       return { ok: false, error: `name taken "${name}"` };
     }

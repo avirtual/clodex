@@ -4,6 +4,9 @@ const SESSION_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const RESERVED_SEAT_NAMES = new Set(['.claims']);
 const LEGACY_CLAIM_RE = /^\.resend\.|\.draining\.[a-z]+\.\d+$/i;
 const isReservedSeatName = (name) => RESERVED_SEAT_NAMES.has(String(name).toLowerCase()) || LEGACY_CLAIM_RE.test(String(name));
+const RESERVED_SENDER_NAMES = new Set(['reminder', 'reboot', 'ticket-loop', 'ticket-watchdog', 'monitor', 'memory', 'exec', 'terminal', 'team', 'clodex-team', 'wirescope', 'deploy-fix', 'permission', 'clodex', 'user', 'relay', 'ctl-admin', 'peer', 'ext']);
+const RESERVED_SENDER_SUFFIX_RE = /-(loop|watchdog)$/;
+const isReservedSenderName = (name) => RESERVED_SENDER_NAMES.has(String(name).toLowerCase()) || RESERVED_SENDER_SUFFIX_RE.test(String(name).toLowerCase());
 
 const INVALID_BORDER = '#e94560';
 
@@ -41,6 +44,7 @@ function nameFieldState(raw, sets) {
   if (!name) return { ok: false, kind: 'empty', message: '' };
   if (!SESSION_NAME_RE.test(name)) return { ok: false, kind: 'invalid', message: NAME_MESSAGES.invalid };
   if (isReservedSeatName(name)) return { ok: false, kind: 'reserved', message: NAME_MESSAGES.reserved };
+  if (isReservedSenderName(name)) return { ok: false, kind: 'reserved', message: `"${name}" is reserved for a system sender` };
   if (asSet(s.live).has(name)) return { ok: false, kind: 'live', message: NAME_MESSAGES.live };
   if (asSet(s.persisted).has(name)) return { ok: false, kind: 'persisted', message: NAME_MESSAGES.persisted };
   if (asSet(s.taken).has(name)) return { ok: false, kind: 'taken', message: NAME_MESSAGES.taken };
@@ -86,6 +90,9 @@ module.exports = {
   RESERVED_SEAT_NAMES,
   LEGACY_CLAIM_RE,
   isReservedSeatName,
+  RESERVED_SENDER_NAMES,
+  RESERVED_SENDER_SUFFIX_RE,
+  isReservedSenderName,
   INVALID_BORDER,
   NAME_MESSAGES,
   reservedSets,

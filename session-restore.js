@@ -21,6 +21,7 @@
 const { voiceModeOf } = require('./voice-settings');
 const { adapterFor, postureOf } = require('./cli-adapters');
 const { stampServedAge } = require('./proxy-util');
+const { isReservedSenderName } = require('./system-senders');
 
 function archivedSnapshotFor({ manager, entry }) {
   return {
@@ -117,6 +118,7 @@ async function restoreSessionsForWorkspace({
       }));
       continue;
     }
+    if (isReservedSenderName(entry.name)) log.warn('session', `restoring ${entry.name}: the name is reserved for a system sender — its messages are defused and never marked as the operator's`);
     try {
       // Resume-time bake (opt-in, fail-safe): slim the transcript before
       // --resume so the replayed prefix is small + permanently slimmer. Safe
