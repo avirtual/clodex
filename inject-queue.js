@@ -18,7 +18,7 @@ const CTRLU_SETTLE_MS = 30;
 // proxy-util (a pure leaf, so this require keeps the module electron-free and
 // unit-testable under plain node).
 const { PASTE_START, PASTE_END } = require('./proxy-util');
-const { stripReviewGated, defangTeammateTag } = require('./review-gate');
+const { stripReviewGated, defangTeammateTag, stripDeliveryControls } = require('./review-gate');
 
 // `hintHeld` covers the gap the typing window does not: a hint pre-armed against
 // the operator's draft is one-shot and pops at the next TURN START, so injecting
@@ -216,6 +216,7 @@ class InjectQueue {
     this._write('\x15');                               // clear-line key event
     await this._sleep(this._ctrlUSettleMs);
     if (this._isDead()) { if (parkable) this._undelivered(text, meta); return; }
+    text = stripDeliveryControls(text);
     if (this._reviewGate) text = stripReviewGated(text);
     const defanged = defangTeammateTag(text);
     if (defanged !== text && this._onDefanged) { try { this._onDefanged(text); } catch {} }
@@ -224,9 +225,10 @@ class InjectQueue {
     // across reads — the body submits early and the remainder lands as a second
     // prompt. Wrapping in 200~/201~ makes interior \r literal, but only while the
     // CLI actually has mode 2004 on; otherwise the markers land as literal text.
-    let out = text.replace(/\n/g, '\r');               // the text (\n→\r)
     const pasteOn = this._pasteOn();
-    const bracketed = text.includes('\n') && (forceBracket || pasteOn);
+    if (!pasteOn && !forceBracket) text = text.replace(/\n/g, ' ⏎ ');
+    let out = text.replace(/\n/g, '\r');               // the text (\n→\r)
+    const bracketed = text.includes('\n');
     if (bracketed) out = PASTE_START + out + PASTE_END;
     this._write(out);
     const settleMs = this._settleMsFor(text);

@@ -460,7 +460,7 @@ test('InjectQueue: single-line text is never wrapped, even with paste mode on', 
   assert.deepStrictEqual(writes, ['\x15', 'one line only', '\r']);
 });
 
-test('InjectQueue: paste mode off (or absent) → old bare bytes for multi-line', async () => {
+test('InjectQueue: paste mode off (or absent) flattens a multi-line text to one line', async () => {
   const writes = [];
   const q = new InjectQueue({
     write: (bytes) => writes.push(bytes),
@@ -471,10 +471,10 @@ test('InjectQueue: paste mode off (or absent) → old bare bytes for multi-line'
     // no bracketedPaste seam at all — back-compat default
   });
   await q.enqueue('line a\nline b');
-  assert.deepStrictEqual(writes, ['\x15', 'line a\rline b', '\r']);
+  assert.deepStrictEqual(writes, ['\x15', 'line a ⏎ line b', '\r']);
 });
 
-test('InjectQueue: a throwing bracketedPaste falls back to unwrapped bytes', async () => {
+test('InjectQueue: a throwing bracketedPaste falls back to one flattened line', async () => {
   const writes = [];
   const q = new InjectQueue({
     write: (bytes) => writes.push(bytes),
@@ -485,7 +485,7 @@ test('InjectQueue: a throwing bracketedPaste falls back to unwrapped bytes', asy
     bracketedPaste: () => { throw new Error('boom'); },
   });
   await q.enqueue('line a\nline b');
-  assert.deepStrictEqual(writes, ['\x15', 'line a\rline b', '\r']);
+  assert.deepStrictEqual(writes, ['\x15', 'line a ⏎ line b', '\r']);
 });
 
 test('InjectQueue: bracketedPaste is read at WRITE time, not enqueue time', async () => {

@@ -142,7 +142,7 @@ const {
 } = require('./relay-protocol');
 const { formatTeamBlock, matchSeatRole, formatRoster, formatCompositionDelta } = require('./team-manifest');
 const { SYSTEM_SENDERS, isReservedSenderName, reservedSenderError } = require('./system-senders');
-const { defuseSenderLines, defangTeammateTag } = require('./review-gate');
+const { defuseSenderLines, defangTeammateTag, quoteBodyLines } = require('./review-gate');
 
 const SCRATCH_CLONE_CEILING_MS = 45 * 60 * 1000;
 
@@ -9037,7 +9037,7 @@ function createSessionManager(deps) {
         ? ''
         : '(no reply path)';
 
-      if (!this._isSystemSender(senderName)) body = defuseSenderLines(body);
+      if (!this._isSystemSender(senderName)) body = quoteBodyLines(defuseSenderLines(body));
       const bytes = Buffer.byteLength(body);
       if (bytes > MSG_SPILL_THRESHOLD) {
         const filePath = spillToFile(senderName, body, target.name);

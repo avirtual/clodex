@@ -231,4 +231,18 @@ function defangTeammateTag(text) {
   return String(text).replace(/<(\/?)(teammate)-(message)\b/gi, '<$1$2\u2011$3');
 }
 
-module.exports = { stripReviewGated, defuseSenderLines, defangTeammateTag };
+const DELIVERY_CONTROL = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/g;
+
+function stripDeliveryControls(text) {
+  return String(text).replace(DELIVERY_CONTROL, '');
+}
+
+const BODY_QUOTE = '\u2502 ';
+
+function quoteBodyLines(text) {
+  const parts = String(text).split(LINE_BREAK);
+  for (let i = 2; i < parts.length; i += 2) parts[i] = BODY_QUOTE + parts[i];
+  return parts.join('');
+}
+
+module.exports = { stripReviewGated, defuseSenderLines, defangTeammateTag, stripDeliveryControls, quoteBodyLines, BODY_QUOTE };
