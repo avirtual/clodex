@@ -763,6 +763,11 @@ const PARITY_LEDGER_ROWS = [
   '{"no":"kind"}',
 ];
 
+const PARITY_REWORK_ROWS = [
+  '{"kind":"ticket","ticket":"t4","team":"a","role":"hand","seat":"h4","attribution":"seat","usd":8,"at":2600}',
+  '{"kind":"ticket","ticket":"t4","team":"a","role":"hand","seat":"h4","attribution":"seat","usd":5,"at":2500}',
+];
+
 test('viewer parseTeamLedger agrees with core team-cost, malformed count included', () => {
   const text = `${PARITY_LEDGER_ROWS.join('\n')}\n`;
   const mine = viewer.parseTeamLedger(text);
@@ -778,7 +783,7 @@ test('viewer parseTeamLedger agrees with core team-cost, malformed count include
 });
 
 test('viewer rollupTeam agrees with core team-cost on every total it publishes', () => {
-  const rows = coreCost.parseTeamLedger(`${PARITY_LEDGER_ROWS.join('\n')}\n`).rows;
+  const rows = coreCost.parseTeamLedger(`${[...PARITY_LEDGER_ROWS, ...PARITY_REWORK_ROWS].join('\n')}\n`).rows;
   const mine = viewer.rollupTeam(rows);
   const theirs = coreCost.rollupTeam(rows);
 
@@ -788,6 +793,7 @@ test('viewer rollupTeam agrees with core team-cost on every total it publishes',
   assert.ok(theirs.usd.total < 100, 'and excludes the $594.98 lifetime row from the total');
   assert.strictEqual(theirs.counts.unattributed, 2, 'the lifetime and null rows are counted, not summed');
 
+  assert.strictEqual(theirs.byTicket.get('t4').hand, 8, 'the newest rework close is the one kept');
   assert.deepStrictEqual(mine.usd, theirs.usd, 'the copies publish different money');
   assert.deepStrictEqual(mine.counts, theirs.counts, 'or count the rows differently');
   assert.strictEqual(mine.since, theirs.since);

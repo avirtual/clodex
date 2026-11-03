@@ -625,6 +625,34 @@ test('rollupTeam survives junk in the row array', () => {
   assert.strictEqual(roll.usd.total, 10, 'an unknown kind contributes nothing, and nothing throws');
 });
 
+const REWORK_ROWS = [
+  { kind: 'ticket', ticket: 't1', team: 'a', role: 'hand', seat: 'h1', attribution: 'seat', usd: 5, at: 1 },
+  { kind: 'ticket', ticket: 't1', team: 'a', role: 'hand', seat: 'h1', attribution: 'seat', usd: 8, at: 2 },
+  { kind: 'ticket', ticket: 't2', team: 'a', role: 'hand', seat: 'h2', attribution: 'seat', usd: 3, at: 3 },
+];
+
+test('rollupTeam counts one hand row per ticket: the newest close, not every round', () => {
+  const roll = tc.rollupTeam(REWORK_ROWS);
+  assert.deepStrictEqual(
+    [roll.usd.tickets, roll.counts.tickets, roll.byRole.get('hand'), roll.byTicket.get('t1').hand],
+    [11, 2, 11, 8]);
+});
+
+test('rollupTeam picks the newest close by at, not by arrival order', () => {
+  const roll = tc.rollupTeam([REWORK_ROWS[1], REWORK_ROWS[0], REWORK_ROWS[2]]);
+  assert.deepStrictEqual(
+    [roll.usd.tickets, roll.counts.tickets, roll.byRole.get('hand'), roll.byTicket.get('t1').hand],
+    [11, 2, 11, 8]);
+});
+
+test('a seat-lifetime rework close after an exact one counts once, as unattributed', () => {
+  const lifetime = { ...REWORK_ROWS[1], attribution: 'seat-lifetime', usd: 40 };
+  const roll = tc.rollupTeam([REWORK_ROWS[0], lifetime, REWORK_ROWS[2]]);
+  assert.deepStrictEqual(
+    [roll.usd.tickets, roll.counts.tickets, roll.counts.unattributed, roll.byTicket.get('t1').hand],
+    [3, 2, 1, null]);
+});
+
 // ── the three row builders ──────────────────────────────────────────────────
 
 test('ticketLedgerRow carries the attribution VERBATIM off the COST.json record', () => {
