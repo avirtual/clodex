@@ -326,6 +326,7 @@ test('hand-merged after MERGE FAILED: the second accept retires the seat and sta
   const first = await accept();
   assert.match(first, /MERGE FAILED at "merge"/, 'ENTER: the first accept answers the mark');
   assert.ok(f.m.sessions.get('team-hand-91')._archived, 'ENTER: the archive left the seat in the map');
+  assert.strictEqual(f.m._liveHandCount(f.team), 0);
   f.acks.length = 0;
   f.injected.length = 0;
   const second = await accept();

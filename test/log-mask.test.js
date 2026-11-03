@@ -195,7 +195,7 @@ test('the `passwd` and `auth` key words mask', () => {
   assert.strictEqual(maskSecrets('auth=x'), 'auth=[redacted]');
 });
 
-test('the URL credential spellings outside the query rule are masked by the key/value rule', () => {
+test('the URL credential spellings are masked whichever rule claims them', () => {
   for (const name of ['apikey', 'access_token', 'secret', 'password']) {
     assert.strictEqual(maskSecrets(`https://h/p?${name}=x`), `https://h/p?${name}=[redacted]`);
   }

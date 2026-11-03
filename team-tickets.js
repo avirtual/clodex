@@ -2863,16 +2863,16 @@ function createTicketMethods(deps, shared) {
       const inflight = this._capInflight || (this._capInflight = new Set());
       const names = new Set();
       const tickets = ticketsStore.load(team.root);
-      const holdsOpen = (name) => tickets.some((t) => t.assignee === name && t.startedAt
+      const holdsUnaccepted = (name) => tickets.some((t) => t.assignee === name && t.startedAt
         && (t.state === 'open' || (t.state === 'done' && !t.acceptedAt)));
       for (const s of this.sessions.values()) {
         if (!s || s._dead || s._archived) continue;
         const role = matchSeatRole(team, s.name);
-        if (role && this._ticketDispatchMode(team, role).mode !== 'standing' && holdsOpen(s.name)) names.add(s.name);
+        if (role && this._ticketDispatchMode(team, role).mode !== 'standing' && holdsUnaccepted(s.name)) names.add(s.name);
       }
       for (const name of [...inflight]) {
         if (this.sessions.has(name)) { inflight.delete(name); continue; }
-        if (holdsOpen(name)) names.add(name);
+        if (holdsUnaccepted(name)) names.add(name);
         else inflight.delete(name);
       }
       return names.size;
