@@ -264,6 +264,7 @@ function splitPrivilegedArgs(argv) {
   const kept = [];
   const privileged = [];
   const flags = [];
+  const pairs = [];
   const list = Array.isArray(argv) ? argv : [];
   for (let i = 0; i < list.length; i += 1) {
     const tok = list[i];
@@ -271,15 +272,19 @@ function splitPrivilegedArgs(argv) {
     if (!name || !Object.prototype.hasOwnProperty.call(PRIVILEGED_FLAG_ARITY, name)) { kept.push(tok); continue; }
     if (!flags.includes(name)) flags.push(name);
     privileged.push(tok);
-    if (tok.includes('=')) continue;
+    if (tok.includes('=')) { pairs.push([name, tok.slice(name.length + 1)]); continue; }
     let left = PRIVILEGED_FLAG_ARITY[name];
+    let took = 0;
     while (left > 0 && i + 1 < list.length && !(typeof list[i + 1] === 'string' && list[i + 1].startsWith('-'))) {
       privileged.push(list[i + 1]);
+      pairs.push([name, list[i + 1]]);
       i += 1;
       left -= 1;
+      took += 1;
     }
+    if (!took) pairs.push([name, null]);
   }
-  return { kept, privileged, flags };
+  return { kept, privileged, flags, pairs };
 }
 
 module.exports = {

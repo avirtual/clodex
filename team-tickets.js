@@ -601,6 +601,7 @@ function createTicketMethods(deps, shared) {
       const cwd = path.resolve(expandedCwd.value.replace(/^~(?=$|\/)/, os.homedir()));
 
       let leadNote = '';
+      let leadRoleTemplate = false;
       let targetTeam = null;
       try { targetTeam = this._teamOf({ name, cwd }); } catch { targetTeam = null; }
       if (!tpl && targetTeam && name === targetTeam.lead) {
@@ -610,6 +611,7 @@ function createTicketMethods(deps, shared) {
         if (shape && shape.tpl) {
           tpl = shape.tpl;
           tplLabel = tpl.name || stem;
+          leadRoleTemplate = true;
           leadNote = ` (lead of team ${targetTeam.name})`;
         } else {
           leadNote = ` — lead role template "${stem}" not installed, spawned with no template`;
@@ -630,9 +632,11 @@ function createTicketMethods(deps, shared) {
       const spawnerAdapter = adapterFor(spawner.type) || adapterFor(DEFAULT_TYPE);
       const postureArgs = hasBypass(spawnerAdapter, spawnerArgs) ? [...adapterFor(type).posture.bypassArgs] : [];
       const operator = opts.operator === true;
+      const leadByCreator = leadRoleTemplate && typeof intentEnabledForSeat === 'function'
+        && intentEnabledForSeat('team-create', spawnerRec);
       const clampToSpawner = (list, key) => {
         if (!Array.isArray(list)) return [];
-        if (operator) return list;
+        if (operator || leadByCreator) return list;
         const own = Array.isArray(spawnerRec[key]) ? spawnerRec[key].map(String) : [];
         return list.filter((x) => own.includes(String(x)));
       };
@@ -641,8 +645,9 @@ function createTicketMethods(deps, shared) {
       const childArgs = (tpl && Array.isArray(tpl.extraArgs) && tpl.extraArgs.length)
         ? tpl.extraArgs : postureArgs;
       if (!operator && childArgs !== postureArgs) {
-        const own = splitPrivilegedArgs(spawnerArgs).flags;
-        const unheld = splitPrivilegedArgs(childArgs).flags.filter((f) => !own.includes(f));
+        const key = ([f, v]) => `${f}\0${v}`;
+        const own = new Set(splitPrivilegedArgs(spawnerArgs).pairs.map(key));
+        const unheld = [...new Set(splitPrivilegedArgs(childArgs).pairs.filter((p) => !own.has(key(p))).map(([f]) => f))];
         if (unheld.length) {
           reply(`error: template "${tplLabel}" carries ${unheld.join(', ')}, which ${spawner.name} does not — a spawned seat cannot hold more than its spawner`);
           return;

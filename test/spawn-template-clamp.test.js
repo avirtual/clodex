@@ -131,9 +131,16 @@ test('the operator door is not clamped', async () => {
   assert.deepStrictEqual([h.calls[0][EXEC], h.calls[0][EXTRA_ARGS], h.calls[0][NO_WIRE]], [['clodex-ctl-admin'], ['--settings', '/x.json'], true]);
 });
 
-test('remote-wiring\'s spawn handler is the operator door', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'remote-wiring.js'), 'utf8');
-  assert.ok(src.includes('{ ...handlerOpts, operator: true, onReply }'));
+test('a privileged flag is held only with the spawner\'s own values', async () => {
+  const swap = harness({ rec: { extraArgs: ['--settings', 'ops.json', '--add-dir', '/proj'] } });
+  await spawn(swap, swap.writeTpl({ extraArgs: ['--settings', '/tmp/empty.json'] }));
+  const wider = harness({ rec: { extraArgs: ['--add-dir', '/proj'] } });
+  await spawn(wider, wider.writeTpl({ extraArgs: ['--add-dir', '/proj', '/'] }));
+  const same = harness({ rec: { extraArgs: ['--settings=ops.json', '--add-dir', '/proj', '/b'] } });
+  await spawn(same, same.writeTpl({ extraArgs: ['--settings', 'ops.json', '--add-dir', '/b'] }));
+  assert.deepStrictEqual([swap.calls.length, wider.calls.length, same.calls.length], [0, 0, 1]);
+  assert.match(swap.replies[0], /carries --settings,/);
+  assert.match(wider.replies[0], /carries --add-dir,/);
 });
 
 function teamDeps() {
@@ -152,6 +159,12 @@ test('template-save without operator strips execCommands and privileged flags, r
   assert.deepStrictEqual(teamTemplateSave(deps, 'core', 'pm', { type: 'claude', extraArgs: ['--model', 'x'] }), { ok: true, file });
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')),
     { type: 'claude', extraArgs: ['--model', 'x', '--dangerously-skip-permissions'], execCommands: ['clodex-team'] });
+});
+
+test('template-save without operator drops a non-array extraArgs and reports it', () => {
+  const { deps, file } = teamDeps();
+  assert.deepStrictEqual(teamTemplateSave(deps, 'core', 'pm', { type: 'claude', extraArgs: '--settings /x' }), { ok: true, file, stripped: ['extraArgs'] });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { type: 'claude' });
 });
 
 test('a derive and the operator keep exec grants and flags', () => {

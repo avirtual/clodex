@@ -115,6 +115,11 @@ function teamTemplateSave(deps, team, stem, body, opts = {}) {
       const { execCommands, ...noExec } = out;
       if (execCommands !== undefined) stripped.push('execCommands');
       out = Array.isArray(prior.execCommands) ? { ...noExec, execCommands: prior.execCommands } : noExec;
+      if (out.extraArgs !== undefined && !Array.isArray(out.extraArgs)) {
+        const { extraArgs, ...noArgs } = out;
+        stripped.push('extraArgs');
+        out = noArgs;
+      }
       const { kept, flags } = splitPrivilegedArgs(out.extraArgs);
       const priorPrivileged = splitPrivilegedArgs(prior.extraArgs).privileged;
       stripped.push(...flags);

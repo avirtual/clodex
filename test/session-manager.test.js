@@ -12161,6 +12161,29 @@ test('t782 create: a caller with NO spawn grant still gets the lead spawned, on 
   assert.deepStrictEqual(f.created[0][3], ['--model', 'claude-opus-5-5[1m]'], 'the template\'s 1M model pin rides through to argv');
   assert.deepStrictEqual(f.created[0][12], ['*'],
     'every skill off, as the lead template says — the resolution really ran');
+  assert.deepStrictEqual(f.created[0][16], ['clodex-team', 'clodex-monitor', 'clodex-run-tests'],
+    'a team-create holder\'s lead keeps the lead role template\'s grants though the creator holds none');
+});
+
+test('t2146: a seat WITHOUT team-create spawning a team\'s lead bare gets the role template clamped to its own grants', async () => {
+  const f = mkLeadSpawn({ spawnerRec: { execCommands: ['clodex-team'] } });
+  f.m._handleSpawnIntent(f.spawner, { name: 'acme-lead', cwd: f.projectRoot });
+  await tick();
+  assert.strictEqual(f.created.length, 1, 'ENTER: create() must have been reached');
+  assert.deepStrictEqual(f.created[0][16], ['clodex-team']);
+  const g = mkLeadSpawn({ spawnerRec: { intents: ['team-create'] } });
+  g.m._handleSpawnIntent(g.spawner, { name: 'acme-lead', cwd: g.projectRoot });
+  await tick();
+  assert.deepStrictEqual(g.created[0][16], ['clodex-team', 'clodex-monitor', 'clodex-run-tests']);
+});
+
+test('t2146: a team-create holder naming a template: explicitly is still clamped', async () => {
+  const bare = { id: 'granty', name: 'granty', type: 'claude', execCommands: ['clodex-ctl-admin'] };
+  const f = mkLeadSpawn({ extraTemplates: [bare], spawnerRec: { intents: ['team-create'] } });
+  f.m._handleSpawnIntent(f.spawner, { name: 'acme-lead', cwd: f.projectRoot, template: 'granty' });
+  await tick();
+  assert.strictEqual(f.created.length, 1, 'ENTER: create() must have been reached');
+  assert.deepStrictEqual(f.created[0][16], []);
 });
 
 test('t782 create: the caller sees ONE [agent:team] line and ZERO [agent:spawn] lines', async () => {
