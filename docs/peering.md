@@ -123,7 +123,7 @@ line; advertised as
 the unconditional `images` cap; a delivery that fails on the box is a 500
 `{ok:false, error}`, and only a missing seat is a 404; optional `ref` (≤128 chars of `[A-Za-z0-9._:-]`, else `400 {ok:false, error:'bad ref'}`) echoed top-level on the answer and returned in `turn.refs`; every `ok` answer carries a top-level `ts` (ISO, the node's clock, stamped before delivery), which `clodexctl exec` on a sleeper uses as its `after=` floor (a node older than 5.157.0 sends no `ts`, so the CLI falls back to its own clock and a skewed node may still drop the reply — loudly, as a non-zero exit); body `await: <ms>`
 (capped at 60000) holds the reply for the turn: `200 {ok, turn}` with the turn
-below, or `202 {ok, queued: true}` on timeout or seat death; a dm to a sleeping
+below, or `202 {ok, queued: true}` on timeout or seat death, or at once for a pty seat, whose turns the box cannot observe; a dm to a sleeping
 assistant wakes it first, a refused wake forwards its `code`, 503 by default),
 assistant-class seats under the `assistant` hello cap (sleep + wake wired):
 `GET /api/sessions?state=asleep|all` (asleep lists only sleepers, all appends

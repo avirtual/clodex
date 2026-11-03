@@ -826,7 +826,7 @@ function createRemoteWiring(deps) {
             log.error('remote', `dm to ${name} failed: ${e.message}`);
             return { ok: false, code: 500, error: `delivery failed: ${e.message}` };
           }
-          if (!armed) return { ok: true };
+          if (!armed) return awaitMs > 0 ? { ok: true, queued: true } : { ok: true };
           const turn = await armed;
           return turn ? { ok: true, turn } : { ok: true, queued: true };
         },
