@@ -48,7 +48,7 @@ function resolveSubagent(dir, target) {
   return hits.length === 1 ? hits[0] : null;
 }
 
-function claimQueue(dir, id, pid) {
+function claimQueue(dir, id, pid, now) {
   const q = path.join(dir, id);
   let names = [];
   try { names = fs.readdirSync(q).filter((n) => !n.startsWith('.')).sort(); } catch { return null; }
@@ -59,7 +59,10 @@ function claimQueue(dir, id, pid) {
   for (const n of names) {
     try { fs.renameSync(path.join(q, n), path.join(claim, n)); } catch { continue; }
     let raw;
-    try { raw = fs.readFileSync(path.join(claim, n), 'utf8').replace(/\n+$/, ''); } catch { continue; }
+    try { raw = fs.readFileSync(path.join(claim, n), 'utf8').replace(/\n+$/, ''); } catch {
+      appendReceipt(dir, { id, ev: 'read-failed', name: n }, now);
+      continue;
+    }
     if (!n.endsWith(SUBQ_DM_SUFFIX)) { notes.push({ from: null, text: raw }); continue; }
     const nl = raw.indexOf('\n');
     notes.push({ from: nl < 0 ? raw : raw.slice(0, nl), text: nl < 0 ? '' : raw.slice(nl + 1) });
@@ -67,15 +70,33 @@ function claimQueue(dir, id, pid) {
   return { claim, notes, body: notes.map((x) => (x.from == null ? x.text : `[dm from ${x.from}] ${x.text}`)).join('\n') };
 }
 
+function returnClaim(dir, id, claim) {
+  const q = path.join(dir, id);
+  let names = [];
+  try {
+    fs.mkdirSync(q, { recursive: true, mode: 0o700 });
+    names = fs.readdirSync(claim);
+  } catch { return { kept: claim }; }
+  let kept = false;
+  for (const n of names) {
+    try { fs.renameSync(path.join(claim, n), path.join(q, n)); } catch { kept = true; }
+  }
+  if (kept) return { kept: claim };
+  try { fs.rmdirSync(claim); } catch {}
+  return {};
+}
+
 function retireSubagent(dir, id, why, { pendingRoot, seat, born, now, pid }) {
-  const got = claimQueue(dir, id, pid);
+  const got = claimQueue(dir, id, pid, now);
   if (got && got.body) {
     try {
       const seq = `${now}.${String(pid % 1e9).padStart(9, '0')}`;
       require('./pending-store').parkDelivery(pendingRoot, seat, `[agent:sub] undelivered to ${id} (${why}): ${got.body}`, seq, null, false, born);
       appendReceipt(dir, { id, ev: 'undelivered' }, now);
       fs.rmSync(got.claim, { recursive: true, force: true });
-    } catch {}
+    } catch (e) {
+      appendReceipt(dir, { id, ev: 'park-failed', error: e && e.message, ...returnClaim(dir, id, got.claim) }, now);
+    }
   } else if (got) {
     try { fs.rmSync(got.claim, { recursive: true, force: true }); } catch {}
   }
@@ -131,7 +152,7 @@ function subqHookOutput(raw, { dir, pendingRoot, seat, born = null, now = Date.n
       retireSubagent(dir, id, 'it finished before its next tool call', ctx);
       return '';
     }
-    const got = claimQueue(dir, id, pid);
+    const got = claimQueue(dir, id, pid, now);
     if (!got) return '';
     try { fs.rmSync(got.claim, { recursive: true, force: true }); } catch {}
     if (!got.body) return '';

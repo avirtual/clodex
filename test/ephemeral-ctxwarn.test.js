@@ -46,6 +46,8 @@ function harness(t, { ephemeral = false, getThrows = false } = {}) {
   // is what keeps the count honest: the latter attributed every persistence read
   // after sessions.set to this arm.
   const uiReads = [];
+  const watchers = [];
+  let ui = {};
   const getCalls = [];
   const ctxArmReads = [];
   let armOpen = false;
@@ -56,6 +58,7 @@ function harness(t, { ephemeral = false, getThrows = false } = {}) {
   const fsSpy = Object.assign(Object.create(fs), {
     writeFileSync: (p, ...rest) => { closeArm(p); return fs.writeFileSync(p, ...rest); },
     rmSync: (p, ...rest) => { closeArm(p); return fs.rmSync(p, ...rest); },
+    watch: (d, cb) => { watchers.push(cb); return { close() {} }; },
   });
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
@@ -99,7 +102,7 @@ function harness(t, { ephemeral = false, getThrows = false } = {}) {
     deliverSkills: () => null, skillDeliveryProviders: () => ['claude', 'codex'],
     effectiveInjectedSkills: () => [],
     getRemoteServer: () => null,
-    getUiSettings: () => ({ get: () => { if (armOpen) uiReads.push(1); return {}; } }),
+    getUiSettings: () => ({ get: () => { if (armOpen) uiReads.push(1); return ui; } }),
     getPersistence: () => ({
       list: () => (record ? [record] : []),
       // Discriminates on the argument: a `() => record` stub cannot tell
@@ -147,6 +150,8 @@ function harness(t, { ephemeral = false, getThrows = false } = {}) {
     // Written BEFORE create so the arm's initial readCtx() sees it. The poll is
     // otherwise fs.watch-driven, which is not synchronous enough to assert on.
     uiReads,
+    setUi: (next) => { ui = next; },
+    fireCtx: () => { for (const cb of watchers) cb('change', 'ctx'); },
     writeCtx: (tokens, model = FIXTURE_MODEL) => {
       fs.mkdirSync(runDirFor(root, 'seat'), { recursive: true });
       fs.writeFileSync(pathFor(root, 'seat', 'ctx'), `50\t${tokens}\t400000\t${model}`);
@@ -311,4 +316,25 @@ test('a persistence read that THROWS leaves the seat nudged, and unsettled', asy
   assert.ok(fs.existsSync(h.warnPath()), 'an unreadable record must not silently suppress the reminder');
   assert.strictEqual(h.session()._ephemeralSeat, undefined,
     'nothing memoized from a failed read, so a later tick can still settle it');
+});
+
+test('a threshold raised above the count clears ctxwarn on the next ctx event with the same raw', async (t) => {
+  const h = harness(t, { ephemeral: false });
+  h.writeCtx(OVER);
+  await h.spawn();
+  assert.ok(fs.existsSync(h.warnPath()), 'ENTER: the seat was nudged at the old threshold');
+  h.setUi({ ctxReminderThresholds: { [FIXTURE_THRESHOLDS.family]: { nudge: OVER + 20_000, escalate: OVER + 120_000 } } });
+  h.fireCtx();
+  assert.ok(!fs.existsSync(h.warnPath()));
+});
+
+test('a compact end removes the ctxwarn file', async (t) => {
+  const h = harness(t, { ephemeral: false });
+  h.writeCtx(OVER);
+  await h.spawn();
+  assert.ok(fs.existsSync(h.warnPath()), 'ENTER: the seat was nudged before the compact');
+  const s = h.session();
+  s.compacting = { since: Date.now() };
+  h.m._onCompactEnd(s, 'done');
+  assert.ok(!fs.existsSync(h.warnPath()));
 });
