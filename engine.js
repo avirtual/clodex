@@ -1478,7 +1478,7 @@ function writeFilePeek(name, filePath, content, expectMtime) {
     const held = fs.fstatSync(fd, { bigint: true });
     let named;
     try { named = fs.statSync(again, { bigint: true }); } catch { return changed; }
-    if (named.dev !== held.dev || named.ino !== held.ino || named.birthtimeNs !== held.birthtimeNs) return changed;
+    if (named.dev !== held.dev || named.ino !== held.ino) return changed;
     fs.ftruncateSync(fd, 0);
     const buf = Buffer.from(content);
     let n = 0;
