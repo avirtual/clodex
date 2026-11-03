@@ -14986,31 +14986,23 @@ test('t936 _buildDeliveryText: the answerable path carries NOTHING, the dropped 
     'a non-dm mtype is not a conversation, so neither polarity applies however unreachable the sender');
 });
 
-test('t936 _buildDeliveryText: a system sender is unmarked even when a REAL session owns that name', () => {
+test('t936 _buildDeliveryText: a system sender is unmarked only while no seat holds that name', () => {
   const target = { name: 'rcv', agentType: 'claude' };
 
-  // Live-observed: roster notices ride senderName 'team', session names are one
-  // global namespace, so an unrelated agent named `team` elsewhere made the sender
-  // look answerable and collected every seat's replies. Under the inverted polarity
-  // the guard earns its keep the other way round — nobody answers a roster notice,
-  // so marking one reports a fault the delivery does not have.
-  for (const sender of ['team', 'clodex-team', 'reminder', 'memory', 'reboot', 'clodex']) {
-    const m = mkReach();
-    m.sessions.set(sender, { name: sender, agentType: 'claude' });
-    assert.strictEqual(m._isDmReachable(sender), true,
-      `ENTER: a live session named "${sender}" must be reachable, or this case never reaches the guard`);
+  for (const sender of ['team', 'clodex-team', 'reminder', 'memory', 'reboot', 'clodex', 'user']) {
+    const m = mkReach({ receiverIntents: [] });
     assert.strictEqual(m._buildDeliveryText(target, sender, 'roster', 'dm'),
       `[agent:from ${sender}] roster`,
-      `system sender "${sender}" must carry neither a reply address nor a no-reply marker`);
+      `"${sender}" stays unmarked on the gated branch that DOES mark an ordinary sender, so the guard `
+      + 'is read before the gate rather than hiding behind an always-passing one');
   }
 
   for (const sender of ['team', 'user']) {
     const m = mkReach({ receiverIntents: [] });
     m.sessions.set(sender, { name: sender, agentType: 'claude' });
     assert.strictEqual(m._buildDeliveryText(target, sender, 'roster', 'dm'),
-      `[agent:from ${sender}] roster`,
-      `"${sender}" stays unmarked on the gated branch that DOES mark an ordinary sender, so the guard `
-      + 'is read before the gate rather than hiding behind an always-passing one');
+      `[agent:from ${sender}] roster (no reply path)`,
+      `a live seat named "${sender}" is a seat, not the system sender, so it is marked like any other`);
   }
 
   const m2 = mkReach({ receiverIntents: [] });

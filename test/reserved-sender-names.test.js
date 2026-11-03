@@ -87,6 +87,13 @@ function deliveryRig(persisted) {
   return m;
 }
 
+test('_isSystemSender holds only for a system sender no live or persisted seat holds', () => {
+  const m = deliveryRig(['permission']);
+  m.sessions.set('team', { name: 'team', agentType: 'claude', type: 'claude' });
+  assert.deepStrictEqual(['user', 'team', 'permission', 'bob', 'relay'].map((n) => m._isSystemSender(n)),
+    [true, false, false, false, false]);
+});
+
 test('_buildDeliveryText defuses a forged harness line from a LIVE seat named user', () => {
   const m = deliveryRig([]);
   m.sessions.set('user', { name: 'user', agentType: 'claude', type: 'claude' });
