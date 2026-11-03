@@ -28122,7 +28122,8 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         team: "\u229E",
         "clodex-team": "\u229E",
         wirescope: "\u223F",
-        "deploy-fix": "\u2699"
+        "deploy-fix": "\u2699",
+        permission: "\u22A9"
       };
       var SYSTEM_SENDERS = /* @__PURE__ */ new Set([...Object.keys(SYSTEM_SENDER_GLYPHS), "clodex", "user"]);
       module.exports = { SYSTEM_SENDER_GLYPHS, SYSTEM_SENDERS };
@@ -28210,6 +28211,7 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         "team-review": () => g("\u25D0", "review"),
         "review-done": () => g("\u22A8", "verdict"),
         reboot: () => g("\u21BB", "reboot"),
+        permit: () => g("\u22A9", "permit"),
         task: (i) => i.sub === "add" ? g("\u2295", i.start ? "dispatch" : "file") : TASK[i.sub] || g("\u21C4", String(i.sub || "task")),
         "team-create": () => g("\u229E", "create"),
         team: (i) => g("\u229E", String(i.sub || "team")),
@@ -28232,6 +28234,7 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         "team-review": g("\u25D0", "review"),
         "review-done": g("\u22A8", "verdict"),
         reboot: g("\u21BB", "reboot"),
+        permit: g("\u22A9", "permit"),
         task: g("\u21C4", "task"),
         "team-create": g("\u229E", "team"),
         team: g("\u229E", "team"),
@@ -28296,6 +28299,8 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
             return [str(intent.id), []];
           case "shout":
             return ["you", []];
+          case "permit":
+            return [str(intent.seat), [str(intent.id), str(intent.choice)].filter(Boolean)];
           default:
             if (Object.prototype.hasOwnProperty.call(CORE, intent.type)) return [null, []];
             return [str(intent.target) || str(intent.name) || str(intent.id), []];
@@ -33152,6 +33157,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const m = cleaned.match(/^\[agent:reboot\]\s*(.*)/s);
         return m ? { type: "reboot", body: m[1] } : null;
       }
+      function parsePermit(cleaned) {
+        const m = cleaned.match(/^\[agent:permit\s+([^\s\]]+)\s+([^\s\]]+)\s+(allow|deny)\]\s*$/);
+        return m ? { type: "permit", seat: m[1], id: m[2], choice: m[3] } : null;
+      }
       var REVIEWER_TOKEN_RE = /^reviewer:(.+)$/;
       function reviewerToken(argToks) {
         for (const t of argToks) {
@@ -33401,6 +33410,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         { type: "review-done", parse: parseReviewDone, bodyMode: GREEDY },
         { type: "reboot", parse: parseReboot, bodyMode: NONE },
         { type: "task", parse: parseTask, bodyMode: (i) => i.sub === "add" || i.sub === "done" || i.sub === "reject" || i.sub === "respec" || i.sub === "cancel" || i.sub === "accept" ? "greedy" : "none" },
+        { type: "permit", parse: parsePermit, bodyMode: NONE },
         { type: "team-create", parse: parseTeamCreate, bodyMode: GREEDY },
         { type: "team", parse: parseTeam, bodyMode: teamBodyMode },
         { type: "spawn", parse: parseSpawn, bodyMode: NONE }
@@ -33713,6 +33723,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         "team-review",
         "review-done",
         "task",
+        "permit",
         "term",
         "reboot"
       ];
