@@ -115,6 +115,22 @@ function teamCostText(res) {
   return `team ${res.team}: ~${money(res.usd.total)}`;
 }
 
+function teamCostTitle(res) {
+  if (!res || !res.ok || !res.usd) return '';
+  const usd = res.usd;
+  const counts = res.counts || {};
+  const n = (k) => Number(counts[k]) || 0;
+  const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+  const since = Number(res.since);
+  const head = Number.isFinite(since) && res.since !== null
+    ? `Ledger since ${new Date(since).toISOString().slice(0, 10)}:`
+    : 'Ledger:';
+  const tickets = `tickets ~${money(usd.tickets)} over ${plural(n('tickets'), 'hand')}${n('unattributed') ? ` (${n('unattributed')} unattributed)` : ''}`;
+  const reviews = `reviews ~${money(usd.reviews)} over ${plural(n('reviews'), 'round')}`;
+  const standing = `standing seats ~${money(usd.standing)}${n('standing') ? ` (${n('standing')})` : ''}`;
+  return `${head} ${tickets} · ${reviews} · ${standing}. The per-ticket figure on a row is its hand alone.`;
+}
+
 /**
  * The label for a project row. The KEY carries a hash the operator never typed
  * and cannot act on, so the leaf leads; the team, when one names the project,
@@ -193,6 +209,7 @@ module.exports.feedChipFor = feedChipFor;
 module.exports.clockText = clockText;
 module.exports.dayText = dayText;
 module.exports.feedRowText = feedRowText;
+module.exports.teamCostTitle = teamCostTitle;
 module.exports.humanizeAge = humanizeAge;
 module.exports.ageLine = ageLine;
 module.exports.hitAgeText = hitAgeText;
@@ -820,7 +837,7 @@ module.exports.activate = (rhost) => {
       const teamTotal = teamCostText(cost);
       if (teamTotal) {
         const cell = el('span', 'tv-team-cost', teamTotal);
-        cell.title = 'Everything this team has booked: tickets, review rounds and standing seats.';
+        cell.title = teamCostTitle(cost);
         openHead.appendChild(cell);
       }
       // The one action that is not about an existing row, so it lives on the
