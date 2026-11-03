@@ -9,13 +9,39 @@ function jsonComplete(s) {
   try { JSON.parse(t); return true; } catch { return false; }
 }
 
+const DEFAULT_EXEC_BODY_CAP = 64 * 1024;
+
+function newShape() { return { depth: 0, inStr: false, esc: false, seen: false }; }
+
+function jsonShape(shape, s) {
+  for (let k = 0; k < s.length; k++) {
+    const c = s.charCodeAt(k);
+    if (shape.inStr) {
+      if (shape.esc) shape.esc = false;
+      else if (c === 0x5c) shape.esc = true;
+      else if (c === 0x22) shape.inStr = false;
+      continue;
+    }
+    if (c === 0x22) { shape.inStr = true; shape.seen = true; }
+    else if (c === 0x7b || c === 0x5b) { shape.depth++; shape.seen = true; }
+    else if (c === 0x7d || c === 0x5d) { shape.depth--; shape.seen = true; }
+    else if (c !== 0x20 && c !== 0x09 && c !== 0x0a && c !== 0x0d) shape.seen = true;
+  }
+  return shape;
+}
+
+function jsonPrefix(shape) {
+  return !shape.inStr && shape.depth >= 0 && !(shape.seen && shape.depth === 0);
+}
+
 function scanIntentLines(lines, opts = {}) {
   const parseIntent = opts.parseIntent || scanner.parseIntent;
   const fencedLines = opts.fencedLines || scanner.fencedLines;
   const looksLikeIntent = opts.looksLikeIntent || scanner.looksLikeIntent;
   const bodyModeFor = opts.bodyModeFor || registry.bodyModeFor;
   const bodyRunsToTurnEnd = opts.bodyRunsToTurnEnd || registry.bodyRunsToTurnEnd;
-  const execBodyCap = opts.execBodyCap;
+  const execBodyCap = opts.execBodyCap ?? DEFAULT_EXEC_BODY_CAP;
+  const isComplete = opts.jsonComplete || jsonComplete;
   const segs = [];
   let proseFrom = null;
   const prose = (at) => { if (proseFrom == null) proseFrom = at; };
@@ -49,16 +75,20 @@ function scanIntentLines(lines, opts = {}) {
 
     if (bodyModeFor(intent) === 'json') {
       let buf = intent.body || '';
+      let bytes = Buffer.byteLength(buf, 'utf8');
+      const shape = jsonShape(newShape(), buf);
       let j = i;
-      let complete = jsonComplete(buf);
-      while (!complete && j < lines.length) {
+      let complete = isComplete(buf);
+      while (!complete && j < lines.length && jsonPrefix(shape)) {
         const next = fenced[j] ? null : parseIntent(lines[j]);
         if (next && next.type !== 'escape') break;
-        const grown = buf + '\n' + lines[j];
-        if (Buffer.byteLength(grown, 'utf8') > execBodyCap) break;
-        buf = grown;
+        const grownBytes = bytes + 1 + Buffer.byteLength(lines[j], 'utf8');
+        if (grownBytes > execBodyCap) break;
+        buf = buf + '\n' + lines[j];
+        bytes = grownBytes;
+        jsonShape(shape, lines[j]);
         j++;
-        complete = jsonComplete(buf);
+        complete = shape.seen && shape.depth === 0 && !shape.inStr && isComplete(buf);
       }
       if (complete) {
         intent.body = buf;
@@ -102,4 +132,4 @@ function scanIntentLines(lines, opts = {}) {
   return segs;
 }
 
-module.exports = { scanIntentLines, jsonComplete };
+module.exports = { scanIntentLines, jsonComplete, DEFAULT_EXEC_BODY_CAP };

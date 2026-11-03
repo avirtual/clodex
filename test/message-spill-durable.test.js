@@ -152,6 +152,6 @@ test('t1792 the engine spill threshold keeps 3072 bytes and a 6-line 2048-byte b
   const six = [...Array(5).fill('w'.repeat(340)), 'w'.repeat(343)].join('\n');
   assert.strictEqual(Buffer.byteLength(six), 2048);
   const inlineSix = engine.manager._buildDeliveryText(session, 'lead', six, 'dm');
-  assert.ok(inlineSix.startsWith(`[agent:from lead] ${six}`) && !inlineSix.includes('attached:'));
+  assert.ok(inlineSix.startsWith(`[agent:from lead] ${[...Array(5).fill('w'.repeat(340)), 'w'.repeat(343)].join('\n│ ')}`) &&!inlineSix.includes('attached:'));
   assert.match(engine.manager._buildDeliveryText(session, 'lead', 'y'.repeat(3073), 'dm'), /Message \(3073 bytes\) attached: @\S+ /);
 });

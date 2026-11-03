@@ -290,7 +290,7 @@ test('a dm resolves BEFORE routing, so the recipient is injected the full messag
   await h.m._handleIntent('lead', { type: 'dm', target: 'bob', body: `first line @spill:${id}` });
 
   assert.strictEqual(h.injected.length, 1, 'exactly one delivery, and no bounce');
-  assert.ok(h.injected[0].text.includes(BIG),
+  assert.ok(h.injected[0].text.includes(`spec line one\n│ ${'z'.repeat(1200)}\n│ last line`),
     'the REAL delivery path carries the file body: the resolve sits above `case \'dm\'`, so '
     + `_deliverMessage never sees a pointer. Got: ${JSON.stringify(h.injected[0].text.slice(0, 120))}`);
   assert.ok(!h.injected[0].text.includes(`@spill:${id}`),
