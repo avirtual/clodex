@@ -193,6 +193,22 @@ function sumSessions(totals, sessionIds, { currentId = null, live = null } = {})
   return out;
 }
 
+function perSession(totals, sessionIds, { currentId = null, live = null } = {}) {
+  const sessions = (totals && totals.sessions) || {};
+  const out = {};
+  for (const sid of (sessionIds || [])) {
+    const v = (live && currentId && sid === currentId) ? live : sessions[sid];
+    if (!v) continue;
+    out[sid] = {
+      usd: round6(num(v.cost)),
+      tokens: num(v.inputTokens) + num(v.outputTokens) + num(v.cacheReadTokens) + num(v.cacheWriteTokens),
+      requests: num(v.requests),
+      turns: num(v.turns),
+    };
+  }
+  return out;
+}
+
 // cache-read / all input the turn was billed for. Separately load-bearing:
 // stable-prefix ordering predicts a HIGH fraction on round-2 packed reviews,
 // and a low one falsifies it. null (never 0) when no input was
@@ -462,11 +478,45 @@ function reviewLedgerRow(rec, now = Date.now()) {
   };
 }
 
-function seatLedgerRow({ seat, team = null, role = null, sessionId = null, boundary = null, lifetime, cursor = null, now = Date.now() }) {
+function isLegacySeatCursor(cursor) {
+  return !!(cursor && typeof cursor === 'object'
+    && !(cursor.sessions && typeof cursor.sessions === 'object') && cursor.usd != null);
+}
+
+function seatCursorEntry(bySession, createdAt = null, now = Date.now()) {
+  const sessions = {};
+  for (const [sid, v] of Object.entries(bySession || {})) {
+    sessions[sid] = { usd: round6(num(v.usd)), tokens: num(v.tokens), requests: num(v.requests), turns: num(v.turns) };
+  }
+  return { createdAt: createdAt == null ? null : createdAt, sessions, at: now };
+}
+
+function seatLedgerRow({ seat, team = null, role = null, sessionId = null, boundary = null, lifetime, cursor = null, createdAt = null, now = Date.now() }) {
   if (!seat || !lifetime || typeof lifetime !== 'object') return null;
-  const c = cursor && typeof cursor === 'object' ? cursor : {};
-  const usd = round6(num(lifetime.usd) - num(c.usd));
-  const tokens = num(lifetime.tokens) - num(c.tokens);
+  const bySession = (lifetime.bySession && typeof lifetime.bySession === 'object') ? lifetime.bySession : {};
+  let usd = 0, tokens = 0, requests = 0, turns = 0, to = 0;
+  for (const v of Object.values(bySession)) to += num(v.usd);
+  to = round6(to);
+  if (isLegacySeatCursor(cursor)) {
+    to = round6(num(lifetime.usd));
+    if (to < num(cursor.usd)) return null;
+    usd = round6(to - num(cursor.usd));
+    tokens = Math.max(0, num(lifetime.tokens) - num(cursor.tokens));
+    requests = Math.max(0, num(lifetime.requests) - num(cursor.requests));
+    turns = Math.max(0, num(lifetime.turns) - num(cursor.turns));
+  } else {
+    const fresh = !cursor || typeof cursor !== 'object'
+      || (cursor.createdAt == null ? null : cursor.createdAt) !== (createdAt == null ? null : createdAt);
+    const booked = (!fresh && cursor.sessions && typeof cursor.sessions === 'object') ? cursor.sessions : {};
+    for (const [sid, v] of Object.entries(bySession)) {
+      const b = booked[sid] || {};
+      usd += Math.max(0, num(v.usd) - num(b.usd));
+      tokens += Math.max(0, num(v.tokens) - num(b.tokens));
+      requests += Math.max(0, num(v.requests) - num(b.requests));
+      turns += Math.max(0, num(v.turns) - num(b.turns));
+    }
+    usd = round6(usd);
+  }
   if (!(usd > 0) && !(tokens > 0)) return null;
   return {
     kind: 'seat',
@@ -477,10 +527,10 @@ function seatLedgerRow({ seat, team = null, role = null, sessionId = null, bound
     boundary: boundary || null,
     usd,
     tokens,
-    requests: num(lifetime.requests) - num(c.requests),
-    turns: num(lifetime.turns) - num(c.turns),
-    from: round6(num(c.usd)),
-    to: round6(num(lifetime.usd)),
+    requests,
+    turns,
+    from: round6(to - usd),
+    to,
     at: now,
   };
 }
@@ -569,6 +619,6 @@ module.exports = {
   REVIEW_COST_FILE, REVIEW_COST_VERSION, TEAM_LEDGER_FILE,
   wireLabelFor, reviewWireLabelFor, ticketIdFromScope, resolveTaskDir,
   sumSessions, cachedFraction, costRecord, reviewCostRecord, orphanedCheckouts,
-  ticketLedgerRow, reviewLedgerRow, seatLedgerRow,
+  ticketLedgerRow, reviewLedgerRow, seatLedgerRow, seatCursorEntry, isLegacySeatCursor,
   parseTeamLedger, readTeamLedger, rollupTeam,
 };
