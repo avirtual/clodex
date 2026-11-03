@@ -288,6 +288,8 @@ function createHintArm({
 
   const hold = (key) => { const st = stateFor(key); st.holdSince = now(); st.holdGen = genOf(key); };
   const release = (key) => { const st = armed.get(key); if (st) st.holdSince = 0; };
+  const releaseIfIdle = (key) => { if (!(armed.get(key) || {}).lastIds) release(key); };
+  const gated = (key, ctx) => { clearArmed(key, ctx); releaseIfIdle(key); };
 
   // THE REGISTER IS LAST-WRITE-WINS, AND THE EMPTY WRITE IS THE ONE THAT WAS
   // MISSING. Re-ranking a changed draft already overwrites the hint on the fixed
@@ -512,21 +514,21 @@ function createHintArm({
     onDraft(key, draft, ctx = {}, { final = false, overflow = false, desync = false } = {}) {
       cancelTimer(key);
       bump(key);
-      if (enabled && !enabled()) return;
+      if (enabled && !enabled()) { releaseIfIdle(key); return; }
       // Each of these gates says the CURRENT draft cannot be ranked — which is
       // also a reason not to keep serving a hint ranked against an earlier one.
-      if (overflow) { clearArmed(key, ctx); return; }
+      if (overflow) { gated(key, ctx); return; }
       // The accumulator no longer matches the screen (history recall, tab
       // completion). Ranking it would answer a question the user never asked,
       // and would do it with full confidence.
-      if (desync) { clearArmed(key, ctx); return; }
+      if (desync) { gated(key, ctx); return; }
       // MIN_TERMS assumes a short draft is not yet a question. That holds for
       // prose, but "do i have kids" reduces to ONE content term and is a
       // complete question — so a draft the shape test recognises skips the
       // length floor. It is not a weaker gate: personalAsk is strictly narrower
       // than "has three terms", and its branch still needs a semantic opinion.
       const short = countTerms(draft, terms) < minTerms;
-      if (short && !(personalAsk && semantic && personalAsk(draft))) { clearArmed(key, ctx); return; }
+      if (short && !(personalAsk && semantic && personalAsk(draft))) { gated(key, ctx); return; }
       // Deliberately NOT awaited, and the rejection is swallowed here rather
       // than left to bubble: `fire` became async when the semantic ranker landed
       // and an unhandled rejection on the keystroke path would crash the main
@@ -604,6 +606,7 @@ function createHintArm({
     // Test/inspection surface.
     _offered(agent) { return new Map(offered.get(agent) || []); },
     _armedIds(key) { const st = armed.get(key); return st ? st.lastIds : null; },
+    _hasState(key) { return armed.has(key); },
   };
 }
 
