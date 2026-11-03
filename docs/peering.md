@@ -597,6 +597,8 @@ anything else leaves it running.
 - The signing key is `<registry>/peer-outbox/outbox-key` (32 bytes, 0600,
   created on first enqueue, read once per process). A credential-sandboxed
   seat is denied reading it; an unsandboxed seat on the box can read it — the
-  same limit as the rest of the run-dir trust model. A key deleted and recreated invalidates records still
-  queued under the old one; the consumer claims every ~15 s, so the loss is
-  bounded to that window.
+  same limit as the rest of the run-dir trust model. A key deleted and
+  recreated invalidates records still queued under the old one; the consumer
+  claims every ~15 s, so the loss is bounded to that window. A record the
+  claim would drop is refused at enqueue, so its sender is told, and every
+  skipped file is logged on the box with its reason.
