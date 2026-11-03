@@ -11,14 +11,18 @@ const URL_TAIL_RE = /\S*/y;
 const ASCII_LETTER_RE = /[a-z]/i;
 const WORD_CHAR_RE = /\w/;
 const URL_QUERY_PARAM_RE = /([?&]([\w.-]+)=)(?:[^&#\s?]|\?(?![\w.-]+=))*/g;
+const URL_QUERY_REST_RE = /[^&#\s]*/y;
 const URL_KEY_SIG_RE = /(?:^|[-_.])(?:key|sig)$/i;
 
 function isSecretName(name) {
   return KEY_WORD_RE.test(name.slice(name.lastIndexOf('.') + 1));
 }
 
-function maskQueryParam(param, head, name) {
-  return isSecretName(name) || URL_KEY_SIG_RE.test(name) ? head + '[redacted]' : param;
+function maskQueryParam(param, head, name, offset, url) {
+  if (!isSecretName(name) && !URL_KEY_SIG_RE.test(name)) return param;
+  URL_QUERY_REST_RE.lastIndex = offset + param.length;
+  URL_QUERY_PARAM_RE.lastIndex = offset + param.length + URL_QUERY_REST_RE.exec(url)[0].length;
+  return head + '[redacted]';
 }
 
 function maskNamed(text, nameRe, valueRe) {
@@ -44,6 +48,20 @@ function schemeStart(text, at, run) {
   return -1;
 }
 
+function maskQuery(url) {
+  URL_QUERY_PARAM_RE.lastIndex = 0;
+  let out = '';
+  let last = 0;
+  let m;
+  while ((m = URL_QUERY_PARAM_RE.exec(url)) !== null) {
+    const masked = maskQueryParam(m[0], m[1], m[2], m.index, url);
+    if (masked === m[0]) continue;
+    out += url.slice(last, m.index) + masked;
+    last = URL_QUERY_PARAM_RE.lastIndex;
+  }
+  return out + url.slice(last);
+}
+
 function maskUrls(text) {
   URL_CANDIDATE_RE.lastIndex = 0;
   let out = '';
@@ -57,7 +75,7 @@ function maskUrls(text) {
     }
     URL_TAIL_RE.lastIndex = URL_CANDIDATE_RE.lastIndex;
     const url = m[0].slice(start) + URL_TAIL_RE.exec(text)[0];
-    out += text.slice(last, m.index + start) + url.replace(URL_QUERY_PARAM_RE, maskQueryParam);
+    out += text.slice(last, m.index + start) + maskQuery(url);
     last = URL_CANDIDATE_RE.lastIndex = URL_TAIL_RE.lastIndex;
   }
   return out + text.slice(last);
