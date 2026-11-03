@@ -451,3 +451,16 @@ test('the new stream pid reaches persistence before the first await after spawn'
     assert.deepStrictEqual(app.persistence.get('sx').streamPid, { pid: 7001, startTime: 1 });
   } finally { app.stop(); }
 });
+
+test('a producer item that produces nothing is dropped at turn end, not kept at the outbox head', async () => {
+  const app = boot();
+  try {
+    const s = await busySeat(app, 'sx');
+    let acked = 0;
+    app.m._streamEnqueue(s, { text: '', images: [], origin: 'system' }, () => { acked++; }, () => null, 'key-8807');
+    assert.strictEqual(s.outbox.length, 1, 'ENTER: the producer waits in the outbox');
+    app.m._streamTurnEnd(s);
+    assert.strictEqual(s.outbox.length, 0);
+    assert.strictEqual(acked, 0);
+  } finally { app.stop(); }
+});

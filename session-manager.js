@@ -22,7 +22,6 @@ const EXEC_RUN_LEDGER_FILE = 'exec-runs-inflight.json';
 const pidAlive = (pid) => { if (!(pid > 0)) return false; try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 const EXEC_STATUS_QUERY_CMD = 'status';
 const EXEC_STATUS_REPLY_MAX = 400;
-const STREAM_PRODUCED = new WeakMap();
 const EXEC_STATUS_REPLY_RUNS = 3;
 const EXEC_STATUS_REPLY_CLOSING = ' Do not poll; a running run reports every few minutes'
   + ' and delivers its result as input.';
@@ -307,6 +306,7 @@ const CLAUDE_SLASH_DESCRIPTIONS = Object.freeze({
 });
 const STREAM_HINT_POLL_MS = 50;
 const STREAM_INIT_TIMEOUT_MS = 60 * 1000;
+const STREAM_PRODUCED = new WeakMap();
 const STREAM_SET_MODEL_MS = 60 * 1000;
 const PENDING_DRAIN_KEY = '\0pending-drain';
 // Imported only to re-export: tests import ticketCloseLine and ticketTaskDirLine from this module, so do not drop them as unused.
@@ -3273,10 +3273,10 @@ function createSessionManager(deps) {
       if (payload && (payload.wire || payload.text.trim() || payload.images.length)) {
         delivered = this._streamDeliver(s, payload);
         if (delivered) this._streamSent(s, queued);
-      }
-      if (!delivered && payload) {
-        s.outbox.unshift(...queued);
-        this._streamOutboxChanged(s);
+        else {
+          s.outbox.unshift(...queued);
+          this._streamOutboxChanged(s);
+        }
       }
       if (!delivered) this._emitActivity(s.name, 'idle', true);
     }
