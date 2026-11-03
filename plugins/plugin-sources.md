@@ -690,8 +690,12 @@ folders do not offer an empty update;
 `applyUpdate(id, commit)` re-fetches and **refuses if the newly fetched commit
 is not the one the caller passed** — the commit the row's Update… preview
 showed before the operator pressed Update. **No automatic update anywhere**:
-nothing schedules a re-fetch, and every path that changes what runs takes an
-explicit id and (for apply) an explicit accepted commit.
+every path that changes what runs takes an explicit id and (for apply) an
+explicit accepted commit. What is scheduled is a read-only check:
+`plugin-update-watch.js` sweeps 90 s after launch and every 6 h, fetching the
+library catalog tarball from api.github.com and resolving at most 8 fetched
+plugins per sweep, to feed `plugins.updatesAvailable`. It skips the sweep, and
+makes no request, while no installed plugin carries a source sidecar.
 
 **Rescan is the method's own job, not the caller's** (ruling, round 1 rework):
 `plugins.installFromSource`, `plugins.applyUpdate` and

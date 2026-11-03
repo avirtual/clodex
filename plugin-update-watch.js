@@ -55,6 +55,16 @@ function createPluginUpdateWatch(deps) {
     if (!loader || typeof loader.libraryCatalog !== 'function'
       || typeof loader.resolveUpdate !== 'function') return cached.slice();
 
+    if (typeof loader.listUserRoot === 'function') {
+      let listing = null;
+      try { listing = loader.listUserRoot(); } catch { listing = null; }
+      const entries = listing && Array.isArray(listing.entries) ? listing.entries : null;
+      if (entries && !entries.some((e) => e && e.source && e.source.repo)) {
+        publish([]);
+        return cached.slice();
+      }
+    }
+
     let cat = null;
     try { cat = await loader.libraryCatalog(); } catch (e) { cat = { ok: false, error: (e && e.message) || e }; }
     if (!cat || !cat.ok) {

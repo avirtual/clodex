@@ -433,3 +433,27 @@ test('a run started after the first one settled is a new check', async () => {
   await w.run();
   assert.deepStrictEqual(asked, ['y', 'y']);
 });
+
+test('a sweep with no fetched plugin installed does not fetch the library', async () => {
+  const asked = [];
+  const loader = {
+    listUserRoot: () => ({ dir: '/u', entries: [{ name: 'local', isDir: true, source: null }] }),
+    libraryCatalog: async () => { asked.push('catalog'); return { ok: true, plugins: [] }; },
+    resolveUpdate: async (id) => { asked.push(id); return { ok: true, changed: false }; },
+  };
+  const w = createPluginUpdateWatch({ getLoader: () => loader, log: silent });
+  assert.deepStrictEqual(await w.run(), []);
+  assert.deepStrictEqual(asked, [], 'zero fetched plugins means zero outbound requests');
+});
+
+test('a sweep with one fetched plugin installed still fetches the library', async () => {
+  const asked = [];
+  const loader = {
+    listUserRoot: () => ({ dir: '/u', entries: [{ name: 'demo', isDir: true, source: { repo: 'o/r' } }] }),
+    libraryCatalog: async () => { asked.push('catalog'); return { ok: true, plugins: [] }; },
+    resolveUpdate: async () => ({ ok: true, changed: false }),
+  };
+  const w = createPluginUpdateWatch({ getLoader: () => loader, log: silent });
+  await w.run();
+  assert.deepStrictEqual(asked, ['catalog'], 'ENTER: the gate lets a sidecar-carrying install through');
+});
