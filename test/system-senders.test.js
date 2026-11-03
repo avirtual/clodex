@@ -14,7 +14,7 @@ test('SYSTEM_SENDERS is the glyph names plus exactly clodex and user', () => {
   for (const n of glyphNames) assert.ok(SYSTEM_SENDERS.has(n), `${n} missing from SYSTEM_SENDERS`);
   const extra = [...SYSTEM_SENDERS].filter((n) => !glyphNames.includes(n)).sort();
   assert.deepStrictEqual(extra, ['clodex', 'user']);
-  assert.strictEqual(SYSTEM_SENDERS.size, 14);
+  assert.strictEqual(SYSTEM_SENDERS.size, 15);
 });
 
 test('every glyph-carrying system sender appears as a quoted literal in a delivery source', () => {

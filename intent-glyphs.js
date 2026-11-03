@@ -42,6 +42,7 @@ const CORE = {
   'team-review': () => g('◐', 'review'),
   'review-done': () => g('⊨', 'verdict'),
   reboot: () => g('↻', 'reboot'),
+  permit: () => g('⊩', 'permit'),
   task: (i) => (i.sub === 'add' ? g('⊕', i.start ? 'dispatch' : 'file') : TASK[i.sub] || g('⇄', String(i.sub || 'task'))),
   'team-create': () => g('⊞', 'create'),
   team: (i) => g('⊞', String(i.sub || 'team')),
@@ -65,6 +66,7 @@ const REPLY_GLYPHS = Object.freeze({
   'team-review': g('◐', 'review'),
   'review-done': g('⊨', 'verdict'),
   reboot: g('↻', 'reboot'),
+  permit: g('⊩', 'permit'),
   task: g('⇄', 'task'),
   'team-create': g('⊞', 'team'),
   team: g('⊞', 'team'),
@@ -132,6 +134,7 @@ function targetAndChips(intent) {
     case 'spawn': return [str(intent.name), []];
     case 'resend': return [str(intent.id), []];
     case 'shout': return ['you', []];
+    case 'permit': return [str(intent.seat), [str(intent.id), str(intent.choice)].filter(Boolean)];
     default:
       if (Object.prototype.hasOwnProperty.call(CORE, intent.type)) return [null, []];
       return [str(intent.target) || str(intent.name) || str(intent.id), []];

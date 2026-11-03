@@ -12,6 +12,7 @@ const {
   sumTreeCpuMs, parsePsRows, classifyReviewSeat, formatReviewSeatClause, didGrow,
 } = require('./stall-evidence');
 const { isDraftOpen } = require('./proxy-util');
+const { maskSecrets } = require('./log-mask');
 const { resolveAccountLabel, accountMissingError } = require('./accounts');
 const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
@@ -3409,6 +3410,62 @@ function createTicketMethods(deps, shared) {
         log.warn('intent', `task ${intent.sub} ${intent.id || ''} by ${session.name} failed: ${e.message}`);
         reply(`error: task ${intent.sub} failed: ${e.message}`);
       }
+    },
+
+    _seatTicketLead(seat) {
+      const rec = getPersistence().get(seat.name);
+      const ticketId = rec && rec.ticketId;
+      if (!ticketId) return null;
+      const team = this._teamOfOrNull(seat);
+      if (!team || !team.lead || team.lead === seat.name) return null;
+      return { lead: team.lead, ticketId };
+    },
+
+    _relayPermissionToLead(seat, id) {
+      try {
+        const rec = seat.streamPermissions && seat.streamPermissions.get(id);
+        if (!rec) return;
+        const sent = seat._permRelayed || (seat._permRelayed = new Set());
+        if (sent.has(id)) return;
+        const owner = this._seatTicketLead(seat);
+        if (!owner) return;
+        sent.add(id);
+        const flat = (v) => maskSecrets(String(v || '')).replace(/\r\n|[\n\v\f\r\x85\p{Zl}\p{Zp}]/gu, ' ⏎ ');
+        const tag = `[permission ${seat.name} ${flat(id)}]`;
+        const preview = flat(rec.preview || rec.displayName).slice(0, 300);
+        const tool = flat(rec.toolName || rec.displayName || 'a tool').slice(0, 80);
+        const r = this._gatedDeliver(owner.lead, 'permission',
+          `${tag} ticket ${owner.ticketId}: ${tool} — ${preview}\n`
+          + `Answer: [agent:permit ${seat.name} ${flat(id)} allow] or [agent:permit ${seat.name} ${flat(id)} deny]; the Requests list in the attention view still works.`,
+          false, tag);
+        if (r && r.error) {
+          log.warn('intent', `permission relay for ${seat.name} ${id} to ${owner.lead} failed: ${r.error}`);
+          this._shadowLog({ type: 'permission-relay-error', seat: seat.name, id, error: r.error });
+        }
+      } catch (e) {
+        this._shadowLog({ type: 'permission-relay-error', seat: seat && seat.name, id, error: e.message });
+      }
+    },
+
+    _handlePermit(session, intent) {
+      const reply = (msg) => this._injectText(session, msg, { parkable: true });
+      const name = intent.seat;
+      const seat = this.sessions.get(name);
+      const owner = seat ? this._seatTicketLead(seat) : null;
+      if (!owner || owner.lead !== session.name) { reply(`permit: only ${name}'s lead can answer its requests`); return; }
+      const say = (what) => reply(`[agent:permit] ${name} ${intent.id}: ${what}`);
+      if (seat.io !== 'stream') { say('not a stream seat'); return; }
+      const rec = seat.streamPermissions && seat.streamPermissions.get(intent.id);
+      if (!rec) { say('request is stale'); return; }
+      const choices = Array.isArray(rec.choices) ? rec.choices : [];
+      const pick = choices.find((c) => c && c.kind === intent.choice);
+      if (!pick) { say(`no ${intent.choice} choice — available: ${choices.map((c) => c && c.id).filter(Boolean).join(', ') || '(none)'}`); return; }
+      const r = this.seatPermission(name, rec.id, pick.id);
+      if (!r || !r.ok) { say((r && r.error) || 'failed'); return; }
+      const verb = intent.choice === 'allow' ? 'allowed' : 'denied';
+      this._shadowLog({ type: 'permit', seat: name, id: rec.id, choice: pick.id, by: session.name });
+      log.warn('session', `${name}: ${verb} ${rec.displayName || rec.toolName || 'a permission request'} by its lead ${session.name}`);
+      say(verb);
     },
 
     _remoteTaskDone({ senderTag, origin, ticketId, report }) {
