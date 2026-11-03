@@ -645,6 +645,14 @@ test('rollupTeam picks the newest close by at, not by arrival order', () => {
     [11, 2, 11, 8]);
 });
 
+test('rollupTeam breaks a same-at tie by arrival: the last row seen wins', () => {
+  const roll = tc.rollupTeam([
+    { kind: 'ticket', ticket: 't1', team: 'a', role: 'hand', seat: 'h1', attribution: 'seat', usd: 5, at: 7 },
+    { kind: 'ticket', ticket: 't1', team: 'a', role: 'hand', seat: 'h1', attribution: 'seat', usd: 9, at: 7 },
+  ]);
+  assert.deepStrictEqual([roll.counts.tickets, roll.byTicket.get('t1').hand], [1, 9]);
+});
+
 test('a seat-lifetime rework close after an exact one counts once, as unattributed', () => {
   const lifetime = { ...REWORK_ROWS[1], attribution: 'seat-lifetime', usd: 40 };
   const roll = tc.rollupTeam([REWORK_ROWS[0], lifetime, REWORK_ROWS[2]]);
