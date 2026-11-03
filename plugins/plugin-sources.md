@@ -627,7 +627,9 @@ commitFull, fetchedAt, hostVersion }`) marks a directory as fetched;
 `update`/`remove` only ever touch a sidecar-carrying directory, and a plain
 user directory sharing an id is refused rather than silently adopted — with
 "already exists in your plugins folder and is not from a source" on the install
-path, and "is not installed from a source" on update/remove.
+path, and "is not installed from a source" on update/remove. A fetched
+directory is read-only in the app: `writeBundleFile` refuses it and the library
+drawers offer Reveal instead of Edit.
 
 **The library is a catalog over one tarball of `avirtual/clodex-plugins`;
 install is the ordinary source install with a fixed repo** (t718).
@@ -725,7 +727,7 @@ naming where the old copy is instead, rather than claiming a restore, if
 even that rename fails.
 
 **Temp dirs live under `os.tmpdir()`, not the plugins root.** `discoverRoot`
-places no filter on dot-entries — verified by probe — so a `.fetch-<nonce>`
+filters no dot-entry except `.old-*` — verified by probe — so a `.fetch-<nonce>`
 under `~/.clodex/plugins/` would be scanned as a broken plugin candidate on
 every `discover()` until removed. `os.tmpdir()` is off every root discovery
 ever reads. The move-in from there is `renameSync`, falling back to
@@ -797,6 +799,9 @@ End to end, today, with the user root implemented:
    note repeats. **Remove** deletes the fetched directory after one `confirm()`,
    which is safe precisely because it is a cache and can be installed again —
    §9's "a fetched root is a cache; a user root without a sidecar is authority".
+   A tree edited outside the app (its digest no longer matches the sidecar's
+   `treeDigest`) is kept as `.old-<id>-<nonce>` on Update or Remove, and the
+   result names it.
 4. **Re-scan** in Manage Plugins, or restart. Discovery no longer runs only at
    startup: `plugins.rescan` re-reads every root and loads what it finds.
 5. Enable it in **Plugins ▸ Manage Plugins…**, if it is not `enabledByDefault`

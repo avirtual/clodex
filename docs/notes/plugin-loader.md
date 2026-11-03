@@ -30,8 +30,8 @@ directory.
 
 ## mkFetchDir / fetchAndValidate / renameOrCopy / applyUpdate
 
-Fetch temp dirs sit under `os.tmpdir()`: `discoverRoot` has no dot-entry
-filter (verified by probe), so one under the plugins root would scan as
+Fetch temp dirs sit under `os.tmpdir()`: `discoverRoot` filters only `.old-*`
+dot-entries (verified by probe), so one under the plugins root would scan as
 broken. `fetchAndValidate` renames the extracted dir to the manifest's own id
 — GitHub's top dir is `owner-repo-<sha>`, not what `validateCandidate` wants.
 `renameOrCopy` falls back to `cpSync` only on `EXDEV`. `applyUpdate` moves the

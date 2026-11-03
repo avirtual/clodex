@@ -180,8 +180,8 @@ Four properties bound what to build on it:
   directory with no readable `SKILL.md`, or a template that is not parseable JSON
   is skipped with a logged reason; the rest of the bundle loads.
 - **Editable only if it is yours.** Content in a plugin under `~/.clodex/plugins/`
-  can be edited in the app and the save goes back into the plugin folder; content
-  in a built-in plugin is read-only there, with a reveal-folder action instead.
+  is editable unless it was fetched from a source, and the save goes back into the
+  plugin folder; content in a built-in plugin is read-only there, with a reveal-folder action instead.
 
 The layout, the name rule and the visibility rule are in
 [`README.md`](README.md); the manifest half of it is §2 of the contract.

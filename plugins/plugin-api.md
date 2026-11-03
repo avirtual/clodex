@@ -212,7 +212,8 @@ no JavaScript. `entry` is still required as an object.
 
 Whether the app may EDIT that content is decided by the root the plugin came from:
 a plugin under `~/.clodex/plugins/` is the user's own and its files are editable in
-the library drawers, which save back into the plugin folder; a plugin under the
+the library drawers, which save back into the plugin folder, unless it was fetched
+from a source; a plugin under the
 app's own `plugins/` is read-only there and the drawers offer a reveal-folder
 action instead. The refusal is engine-side, not merely a hidden button.
 

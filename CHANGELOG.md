@@ -18,6 +18,7 @@ blocks a release.
 - The team cost rollup (board header, clodex-team cost) counts each ticket's newest close only, so a reworked ticket no longer adds every earlier round's cumulative spend to the team total.
 - Deleting a team now also removes the sandbox box it raised with `[agent:team sandbox up]`, and the confirmation names it; the box used to keep running and a later team of the same name inherited the deleted manifest.
 - On a shared root, deleting a team is no longer refused because of the other team's open tickets.
+- A plugin installed from GitHub is read-only in the library drawer, so Update and Remove can no longer delete edits made in the app, and an upstream commit to another plugin in the same repo no longer offers an empty update; a tree edited outside the app is kept aside as `.old-<id>-<nonce>` on Update or Remove, and stale asides no longer show as broken plugins.
 
 ## 5.159.0 — 2026-11-03 — Security: log-mask masks every secret-named URL query parameter, Edit tab vets and writes one descriptor; memory id trim, dm await on pty seats, board cost breakdown
 
