@@ -75,7 +75,7 @@ function teamFromEnv() {
 function sendEnvelope(socketPath, envelope) {
   return new Promise((resolve, reject) => {
     const conn = net.createConnection(socketPath, () => {
-      conn.end(JSON.stringify(envelope));
+      conn.end(JSON.stringify({ ...envelope, ...(process.env.CLODEX_AGENT_CRED ? { cred: process.env.CLODEX_AGENT_CRED } : {}) }));
     });
     conn.on('close', resolve);
     conn.on('error', reject);
@@ -495,7 +495,7 @@ async function doRetire(payload) {
     die(`no live registration for "${target}" — not running (already retired?)`);
   }
   try {
-    await sendEnvelope(info.socket, { from: payload.agent, body: '', type: 'team-retire' });
+    await sendEnvelope(info.socket, { from: process.env.CLODEX_SEAT || payload.agent, body: '', type: 'team-retire' });
   } catch (e) {
     die(`could not reach "${target}" socket: ${e.message}`);
   }

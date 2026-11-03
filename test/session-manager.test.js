@@ -3257,7 +3257,7 @@ test('_deliverPassive: parks passive for a live claude target, no inject, no wak
   const target = { name: 'a', agentType: 'claude' };
   m.sessions.set('a', target);
   m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
-  m._onIncoming('a', { from: 'monitor', body: 'tick 1', type: 'dm', delivery: 'passive' });
+  m._onIncoming('a', { from: 'monitor', body: 'tick 1', type: 'dm', delivery: 'passive' }, true);
   assert.deepStrictEqual(injected, [], 'no inject — passive never wakes');
   assert.ok(hasPending(PENDING_DIR, 'a'), 'parked in the pending store');
   assert.strictEqual(hasActivePending(PENDING_DIR, 'a'), false, 'parked as PASSIVE');
@@ -3270,7 +3270,7 @@ test('_deliverPassive: a codex target falls back to the normal wake path (never 
   m.sessions.set('c', target);
   const delivered = [];
   m._deliverMessage = (name, sender, body, mtype) => delivered.push({ name, sender, body, mtype });
-  m._onIncoming('c', { from: 'monitor', body: 'tick', type: 'dm', delivery: 'passive' });
+  m._onIncoming('c', { from: 'monitor', body: 'tick', type: 'dm', delivery: 'passive' }, true);
   assert.deepStrictEqual(delivered, [{ name: 'c', sender: 'monitor', body: 'tick', mtype: 'dm' }]);
   assert.strictEqual(hasPending(PENDING_DIR, 'c'), false, 'nothing parked for codex');
 });
@@ -3418,7 +3418,7 @@ test('_onIncoming: an unknown delivery value falls through to the normal path (o
   const { m } = mkPark();
   const delivered = [];
   m._deliverMessage = (name, sender, body) => delivered.push(body);
-  m._onIncoming('a', { from: 'x', body: 'hi', type: 'dm', delivery: 'someday-class' });
+  m._onIncoming('a', { from: 'x', body: 'hi', type: 'dm', delivery: 'someday-class' }, true);
   assert.deepStrictEqual(delivered, ['hi']);
 });
 
@@ -3524,7 +3524,7 @@ test('team-retire: persistent role → archives, signals the window first, confi
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
   m.sessions.set('team-dev', { name: 'team-dev', agentType: 'claude', cwd: '/proj/b' });
   m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
-  m._onIncoming('team-dev', { from: 'lead', body: '', type: 'team-retire' });
+  m._onIncoming('team-dev', { from: 'lead', body: '', type: 'team-retire' }, true);
   await new Promise((r) => setImmediate(r));
   assert.deepStrictEqual(archived, ['team-dev'], 'persistent role archives');
   assert.deepStrictEqual(killed, [], 'never killed on the archive path');
@@ -3554,7 +3554,7 @@ test('team-retire: an ephemeral RECORD → kill (discard), drops the record, no 
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
   m.sessions.set('team-runner', { name: 'team-runner', agentType: 'claude', cwd: '/proj/r' });
   m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
-  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' });
+  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' }, true);
   await new Promise((r) => setImmediate(r));
   assert.deepStrictEqual(killed, ['team-runner'], 'a seat whose RECORD says ephemeral is killed (record dropped)');
   assert.deepStrictEqual(archived, [], 'never archived on the discard path');
@@ -3594,7 +3594,7 @@ test('team-retire: a discarded seat takes its worktree with it', async () => {
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
   m.sessions.set('team-runner', { name: 'team-runner', agentType: 'claude', cwd: '/proj/r' });
   m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
-  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' });
+  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' }, true);
   await new Promise((r) => setTimeout(r, 50));
   assert.deepStrictEqual(removed, ['/wt/t900'],
     'a discarded seat\'s worktree must be removed: kill() drops the persistence record, which is the ONLY pointer to the checkout, so a tree not removed here is orphaned forever along with any unmerged commits on its branch');
@@ -3644,7 +3644,7 @@ test('team-retire: a discarded seat LIVING IN its tree is killed first, and the 
   // question rather than a formality.
   m.sessions.set('team-runner', { name: 'team-runner', agentType: 'claude', cwd: made.path });
   m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
-  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' });
+  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' }, true);
   await waitFor(() => order.length === 2 && !fsReal.existsSync(made.path));
 
   assert.deepStrictEqual(order, ['kill', 'remove'],
@@ -3677,7 +3677,7 @@ test('team-retire: the discard confirmation names the removed worktree', async (
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
   m.sessions.set('team-runner', { name: 'team-runner', agentType: 'claude', cwd: '/proj/r' });
   m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
-  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' });
+  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' }, true);
   await new Promise((r) => setTimeout(r, 50));
   const parked = drainPending(PENDING_DIR, 'lead', 't');
   assert.strictEqual(parked.length, 1, 'ENTER: the confirmation was delivered');
@@ -3709,7 +3709,7 @@ test('team-retire: a DIRTY worktree downgrades the discard to an archive', async
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
   m.sessions.set('team-runner', { name: 'team-runner', agentType: 'claude', cwd: '/proj/r' });
   m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
-  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' });
+  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' }, true);
   await new Promise((r) => setTimeout(r, 50));
   assert.deepStrictEqual(archived, ['team-runner'],
     'an ephemeral seat holding uncommitted work is ARCHIVED, not discarded — the recoverable direction');
@@ -3752,7 +3752,7 @@ test('team-retire: an UNREADABLE worktree also downgrades to an archive', async 
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
   m.sessions.set('team-runner', { name: 'team-runner', agentType: 'claude', cwd: '/proj/r' });
   m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
-  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' });
+  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' }, true);
   await new Promise((r) => setTimeout(r, 50));
   assert.deepStrictEqual(archived, ['team-runner'], 'an unanswerable tree is preserved, not deleted on a guess');
   assert.deepStrictEqual(killed, [], 'and never killed');
@@ -3809,7 +3809,7 @@ test('team-retire: a tree that is GONE says so, and never claims uncommitted wor
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
   m.sessions.set('team-runner', { name: 'team-runner', agentType: 'claude', cwd: '/proj/r' });
   m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
-  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' });
+  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' }, true);
   await waitFor(() => hasPending(PENDING_DIR, 'lead'));
 
   assert.deepStrictEqual(archived, ['team-runner'], 'behaviour is unchanged: still the conservative archive');
@@ -3848,7 +3848,7 @@ test('team-retire: a genuinely DIRTY tree still tells the operator to commit it'
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
   m.sessions.set('team-runner', { name: 'team-runner', agentType: 'claude', cwd: '/proj/r' });
   m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
-  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' });
+  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' }, true);
   await new Promise((r) => setTimeout(r, 50));
   const parked = drainPending(PENDING_DIR, 'lead', 't');
   assert.strictEqual(parked.length, 1, 'ENTER: the confirmation was delivered');
@@ -3881,7 +3881,7 @@ test('team-retire: a failed worktree removal names the path to remove by hand', 
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
   m.sessions.set('team-runner', { name: 'team-runner', agentType: 'claude', cwd: '/proj/r' });
   m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
-  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' });
+  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' }, true);
   await new Promise((r) => setTimeout(r, 50));
   const parked = drainPending(PENDING_DIR, 'lead', 't');
   assert.strictEqual(parked.length, 1, 'ENTER: the confirmation was delivered');
@@ -3914,7 +3914,7 @@ test('team-retire: a handler throw DMs the requester, not just the log', async (
   // The probe's own .catch handles a rejected promise, so force the throw where
   // nothing local catches it: the sync prelude.
   m._sendToSession = () => { throw new Error('window gone'); };
-  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' });
+  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' }, true);
   await new Promise((r) => setTimeout(r, 50));
   assert.strictEqual(delivered.length, 1, 'ENTER: the requester was told something');
   assert.match(delivered[0].body, /retire team-runner failed: window gone/,
@@ -3944,7 +3944,7 @@ test('team-retire: a treeless ephemeral seat still discards', async () => {
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
   m.sessions.set('team-runner', { name: 'team-runner', agentType: 'claude', cwd: '/proj/r' });
   m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
-  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' });
+  m._onIncoming('team-runner', { from: 'lead', body: '', type: 'team-retire' }, true);
   await new Promise((r) => setTimeout(r, 50));
   assert.deepStrictEqual(killed, ['team-runner'], 'ENTER: the discard path ran');
   assert.deepStrictEqual(archived, [], 'no tree, nothing to protect, still a discard');
@@ -3966,7 +3966,7 @@ test('team-retire: an ARCHIVED seat keeps its worktree', async () => {
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
   m.sessions.set('team-dev', { name: 'team-dev', agentType: 'claude', cwd: '/proj/b' });
   m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
-  m._onIncoming('team-dev', { from: 'lead', body: '', type: 'team-retire' });
+  m._onIncoming('team-dev', { from: 'lead', body: '', type: 'team-retire' }, true);
   await new Promise((r) => setTimeout(r, 50));
   assert.deepStrictEqual(archived, ['team-dev'], 'ENTER: the archive path ran');
   assert.deepStrictEqual(removed, [],
@@ -3982,7 +3982,7 @@ test('team-retire: an OFF-manifest seat (matches no role) → kill (discard)', a
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
   m.sessions.set('stray', { name: 'stray', agentType: 'claude', cwd: '/proj/s' });
   m._buildDeliveryText = (t, sender, body) => `[agent:from ${sender}] ${body}`;
-  m._onIncoming('stray', { from: 'lead', body: '', type: 'team-retire' });
+  m._onIncoming('stray', { from: 'lead', body: '', type: 'team-retire' }, true);
   await new Promise((r) => setImmediate(r));
   assert.deepStrictEqual(killed, ['stray'], 'off-manifest seat is killed (record dropped)');
   assert.deepStrictEqual(archived, [], 'never archived');
@@ -3997,7 +3997,7 @@ test('team-retire: refusals wake the requester and never archive', async () => {
     const { m, archived, delivered } = mkRetire({ '/p1/x': '/p1', '/p2/y': '/p2' });
     m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/p1/x' });
     m.sessions.set('dev', { name: 'dev', agentType: 'claude', cwd: '/p2/y' });
-    m._onIncoming('dev', { from: 'lead', body: '', type: 'team-retire' });
+    m._onIncoming('dev', { from: 'lead', body: '', type: 'team-retire' }, true);
     assert.deepStrictEqual(archived, []);
     assert.match(delivered[0].body, /dev is on team team-p2, not yours/);
   }
@@ -4005,7 +4005,7 @@ test('team-retire: refusals wake the requester and never archive', async () => {
   {
     const { m, archived, delivered } = mkRetire({ '/p/x': '/p' });
     m.sessions.set('dev', { name: 'dev', agentType: 'claude', cwd: '/p/x' });
-    m._onIncoming('dev', { from: 'ghost', body: '', type: 'team-retire' });
+    m._onIncoming('dev', { from: 'ghost', body: '', type: 'team-retire' }, true);
     assert.deepStrictEqual(archived, []);
     assert.match(delivered[0].body, /not a running session/);
   }
@@ -4013,7 +4013,7 @@ test('team-retire: refusals wake the requester and never archive', async () => {
   {
     const { m, archived, delivered } = mkRetire({ '/p/x': '/p' });
     m.sessions.set('dev', { name: 'dev', agentType: 'claude', cwd: '/p/x' });
-    m._onIncoming('dev', { from: 'dev', body: '', type: 'team-retire' });
+    m._onIncoming('dev', { from: 'dev', body: '', type: 'team-retire' }, true);
     assert.deepStrictEqual(archived, []);
     assert.match(delivered[0].body, /self-retire/);
   }
@@ -4022,7 +4022,7 @@ test('team-retire: refusals wake the requester and never archive', async () => {
     const { m, archived, delivered } = mkRetire({});
     m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/a' });
     m.sessions.set('dev', { name: 'dev', agentType: 'claude', cwd: '/b' });
-    m._onIncoming('dev', { from: 'lead', body: '', type: 'team-retire' });
+    m._onIncoming('dev', { from: 'lead', body: '', type: 'team-retire' }, true);
     assert.deepStrictEqual(archived, []);
     assert.match(delivered[0].body, /not in the same project/);
   }
@@ -4031,7 +4031,7 @@ test('team-retire: refusals wake the requester and never archive', async () => {
 test('team-retire: absent target is a silent no-op (socket outlived the session)', () => {
   const { m, archived, delivered } = mkRetire({ '/p/x': '/p' });
   m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/p/x' });
-  m._onIncoming('gone', { from: 'lead', body: '', type: 'team-retire' });
+  m._onIncoming('gone', { from: 'lead', body: '', type: 'team-retire' }, true);
   assert.deepStrictEqual(archived, []);
   assert.deepStrictEqual(delivered, []);
 });

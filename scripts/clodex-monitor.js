@@ -73,6 +73,7 @@ function sendDm(socketPath, from, body, passive = false) {
     const done = (ok) => { if (!settled) { settled = true; resolve(ok); } };
     const msg = { from, body, type: 'dm' };
     if (passive) msg.delivery = 'passive';
+    if (process.env.CLODEX_AGENT_CRED) msg.cred = process.env.CLODEX_AGENT_CRED;
     const payload = Buffer.from(JSON.stringify(msg), 'utf-8');
     const conn = net.createConnection(socketPath, () => conn.end(payload, () => done(true)));
     conn.on('error', () => done(false));
@@ -219,9 +220,12 @@ async function runWatcher() {
     // the shell. This mirrors the CLI Monitor: the COMMAND decides what counts
     // as a status change (poll+diff, `until`, grep --line-buffered); the
     // watcher only forwards what it emits.
+    const commandEnv = { ...process.env };
+    delete commandEnv.CLODEX_AGENT_CRED;
     const child = childProcess.spawn('/bin/sh', ['-c', command], {
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
+      env: commandEnv,
     });
     killTarget = async () => {
       // `> 0` before negating, the same guard cli/src/dial.js and
