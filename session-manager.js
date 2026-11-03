@@ -1378,7 +1378,9 @@ function createSessionManager(deps) {
 
     unregisterWindow(workspaceId) {
       this.windows.delete(workspaceId);
-      try { speaker.stop(); } catch {}
+      for (const [name, s] of this.sessions) {
+        if (s.workspaceId === workspaceId) { try { speaker.stopFor(name); } catch {} }
+      }
     }
 
     windowForWorkspace(workspaceId) {
@@ -5473,9 +5475,9 @@ function createSessionManager(deps) {
       s._postClearContinuation = null;
       if (this._wire) { try { this._wire.unregisterAgent(name, { keepSpillShown: s._shuttingDown === true }); } catch {} }
       // Watcher before speaker: stop() flushes pending text, which can start a narration
-      // for the dead seat. The speaker's stop is unconditional because the speaker is box-wide.
+      // for the dead seat.
       if (s.watcher) s.watcher.stop();
-      try { speaker.stop(); } catch {}
+      try { speaker.stopFor(name); } catch {}
       if (s.sentinel) { try { s.sentinel.stop(); } catch {} }
       if (s.ctxWatcher) { try { s.ctxWatcher.close(); } catch {} }
       if (s.transport) s.transport.stop();
@@ -6270,7 +6272,7 @@ function createSessionManager(deps) {
         if (Date.now() - (this._lastVoiceRecordingTs || 0) < INJECT_SPEAKING_STALE_MS) return;
         const say = speakable(text);
         if (!say) return;
-        speaker.speak(say, { voice: cfg.speakVoice, rate: cfg.speakRate });
+        speaker.speak(say, { voice: cfg.speakVoice, rate: cfg.speakRate, owner: name });
       } catch { /* observer-grade: speech must never break turn handling */ }
     }
 

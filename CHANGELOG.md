@@ -30,6 +30,7 @@ blocks a release.
 - A subagent note that cannot be parked on retire is returned to its queue with a `park-failed` receipt instead of vanishing, and a changed context-reminder threshold takes effect on the next poll rather than after the seat's next turn.
 - The Bash console no longer loses a command record whose stamp landed behind one already shown (two Bash calls settling together), and a drawer shell that exited on its own no longer gets a delayed SIGKILL that could hit a reused pid.
 - Drawer Copy on a Codex, Muse or custom-settings Claude seat now refuses with a reason instead of reporting an attachment as sent that nothing drains; and a voice-fired send that fails disarms the spoken-origin marker, so the next typed message is not labelled as dictated.
+- Spoken replies are no longer cut off when an unrelated seat exits or another window closes; only the speaking seat's own exit stops its narration.
 
 ## 5.159.0 — 2026-11-03 — Security: log-mask masks every secret-named URL query parameter, Edit tab vets and writes one descriptor; memory id trim, dm await on pty seats, board cost breakdown
 

@@ -442,6 +442,41 @@ test('stop is idempotent and clears the speaking state', () => {
   assert.strictEqual(killed, 1);
 });
 
+test('stopFor kills the narration its owner started', () => {
+  let killed = 0;
+  const sp = createSpeaker({ execFileImpl: () => ({ kill() { killed += 1; } }) });
+  sp.speak('hello', { owner: 'seatA' });
+  assert.strictEqual(sp.stopFor('seatA'), true);
+  assert.strictEqual(killed, 1);
+  assert.strictEqual(sp.isSpeaking(), false);
+});
+
+test('stopFor another owner leaves the narration running', () => {
+  let killed = 0;
+  const sp = createSpeaker({ execFileImpl: () => ({ kill() { killed += 1; } }) });
+  sp.speak('hello', { owner: 'seatA' });
+  assert.strictEqual(sp.stopFor('seatB'), false);
+  assert.strictEqual(killed, 0);
+  assert.strictEqual(sp.isSpeaking(), true);
+});
+
+test('stopFor never matches an unowned narration', () => {
+  let killed = 0;
+  const sp = createSpeaker({ execFileImpl: () => ({ kill() { killed += 1; } }) });
+  sp.speak('hello');
+  assert.strictEqual(sp.stopFor(undefined), false);
+  assert.strictEqual(sp.stopFor(null), false);
+  assert.strictEqual(killed, 0);
+});
+
+test('stop kills an owned narration regardless of owner', () => {
+  let killed = 0;
+  const sp = createSpeaker({ execFileImpl: () => ({ kill() { killed += 1; } }) });
+  sp.speak('hello', { owner: 'seatA' });
+  assert.strictEqual(sp.stop(), true);
+  assert.strictEqual(killed, 1);
+});
+
 // The operator's actual question: he taps the mic while a narration is playing.
 // Option (a) — kill it. Pinned as a NAMED behaviour, so a refactor that moved
 // the call out of noteVoiceRecording fails here rather than going quiet.
@@ -600,6 +635,7 @@ function bootSpeakingManager({ speakReplies = true, speakRate } = {}) {
   const { createSessionManager } = require('../session-manager');
   const spoken = [];
   const opts = [];
+  const stoppedFor = [];
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
     INJECT_SPEAKING_STALE_MS: 3000,
@@ -608,13 +644,14 @@ function bootSpeakingManager({ speakReplies = true, speakRate } = {}) {
     speaker: {
       speak: (text, o) => { spoken.push(text); opts.push(o); return true; },
       stop: () => false, interruptForRecorder: () => false, isSpeaking: () => false,
+      stopFor: (owner) => { stoppedFor.push(owner); return false; },
     },
   });
   const m = new SessionManager();
   m._broadcast = () => {};
-  const mk = (name) => ({ name, agentType: 'claude', _dead: false });
-  m.sessions = new Map([['seatA', mk('seatA')], ['seatB', mk('seatB')]]);
-  return { m, spoken, opts };
+  const mk = (name, workspaceId) => ({ name, agentType: 'claude', _dead: false, workspaceId });
+  m.sessions = new Map([['seatA', mk('seatA', 'ws1')], ['seatB', mk('seatB', 'ws2')]]);
+  return { m, spoken, opts, stoppedFor };
 }
 
 // Hand a seat the microphone by the REAL entry points. The two box-wide facts
@@ -643,6 +680,13 @@ test('the operator-chosen rate reaches the speaker, per turn', () => {
   assert.strictEqual(opts.length, 1);
   assert.strictEqual(opts[0].rate, 210, 'a rate read but never passed is a setting that does nothing');
   assert.strictEqual(opts[0].voice, 'Daniel');
+  assert.strictEqual(opts[0].owner, 'seatB', 'an unowned utterance can never be stopped by its own seat exiting');
+});
+
+test('closing a window stops only the narration its own seats own', () => {
+  const { m, stoppedFor } = bootSpeakingManager();
+  m.unregisterWindow('ws2');
+  assert.deepStrictEqual(stoppedFor, ['seatB']);
 });
 
 test('the recorder on ONE seat silences a turn ending on ANOTHER', () => {
@@ -837,14 +881,11 @@ test('a speaker reports isSpeaking once an utterance starts', () => {
 test('the speaker is stopped AFTER the thing that can start it speaking', () => {
   const fs = require('node:fs');
   const path = require('node:path');
-  // Scoped to a WINDOW around the flushing call, never a file-wide indexOf:
-  // both files hold other, legitimate `speaker.stop()` calls — the window-close
-  // one in session-manager.js precedes this code entirely — and a bare search
-  // measures whichever came first in the file rather than the pair under test.
+  // Scoped to a WINDOW around the flushing call, never a file-wide indexOf.
   const WINDOW = 600;
-  for (const [file, starter] of [
-    ['session-manager.js', 'if (s.watcher) s.watcher.stop();'],
-    ['engine.js', 'manager.killAll();'],
+  for (const [file, starter, stopCall] of [
+    ['session-manager.js', 'if (s.watcher) s.watcher.stop();', 'speaker.stopFor(name)'],
+    ['engine.js', 'manager.killAll();', 'speaker.stop()'],
   ]) {
     const src = fs.readFileSync(path.join(__dirname, '..', file), 'utf-8');
     const at = src.indexOf(starter);
@@ -853,10 +894,10 @@ test('the speaker is stopped AFTER the thing that can start it speaking', () => 
       `${file}: \`${starter}\` must be unique, or this pin is reading the wrong one`);
     const after = src.slice(at + starter.length, at + starter.length + WINDOW);
     const before = src.slice(Math.max(0, at - WINDOW), at);
-    assert.ok(after.includes('speaker.stop()'),
-      `${file}: speaker.stop() must follow \`${starter}\` — the flush can start a narration`);
-    assert.ok(!before.includes('speaker.stop()'),
-      `${file}: speaker.stop() must NOT precede \`${starter}\` — that is the defect this pins`);
+    assert.ok(after.includes(stopCall),
+      `${file}: ${stopCall} must follow \`${starter}\` — the flush can start a narration`);
+    assert.ok(!before.includes(stopCall),
+      `${file}: ${stopCall} must NOT precede \`${starter}\` — that is the defect this pins`);
   }
 });
 
