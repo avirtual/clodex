@@ -46,6 +46,7 @@ function expectedFilesystem(R, ud) {
     `${R}/cli/contexts.json`, `${R}/teams/*/sandbox.json`, `${R}/boxes`, '/h/.clodex/cli/contexts.json',
     `${R}/run/*/mcp.json`, `${R}/sessions/*/run/mcp.json`, `${R}/peer-outbox/outbox-key`,
     `${R}/sessions/*/seat.json`, `${R}/sessions/*/.seat.json.tmp.*`, `${R}/sessions/*/client-token`, `${R}/accounts/*/.credentials.json`,
+    '/h/.claude/.credentials.json', '/h/.claude.json',
     ...(ud ? ['/ud/remote.env', '/ud/ui-settings.json*', '/ud/env-scopes.json*', '/ud/sessions.json*', '/ud/wire-hold-entries.json', '/ud/env-override.env',
       '/ud/.ui-settings.json*', '/ud/.env-scopes.json*', '/ud/.sessions.json*', '/ud/.wire-hold-entries.json.tmp.*', '/ud/remote.env.tmp', '/ud/sandbox*/auth.env'] : []),
   ];
@@ -88,7 +89,7 @@ test('buildCredentialSandbox: without a userDataPath the output is unchanged', (
   const want = expectedFilesystem(R, false);
   assert.deepStrictEqual(g.sandbox.filesystem, want.filesystem);
   assert.deepStrictEqual(g.sandbox.credentials, { files: want.files });
-  assert.strictEqual(g.deny.length, 61);
+  assert.strictEqual(g.deny.length, 65);
 });
 
 test('buildCredentialSandbox: a userData dir holding the registry keeps its file denies but drops the whole-dir write deny', () => {
@@ -305,6 +306,8 @@ test('buildCredentialSandbox: the seat mirror, temp copy, client token and accou
     [`${R}/sessions/*/.seat.json.tmp.*`, [`Read(/${R}/sessions/*/.seat.json.tmp.*)`, `Edit(/${R}/sessions/*/.seat.json.tmp.*)`]],
     [`${R}/sessions/*/client-token`, [`Read(/${R}/sessions/*/client-token)`, `Edit(/${R}/sessions/*/client-token)`]],
     [`${R}/accounts/*/.credentials.json`, [`Read(/${R}/accounts/*/.credentials.json)`, `Edit(/${R}/accounts/*/.credentials.json)`]],
+    ['/h/.claude/.credentials.json', ['Read(//h/.claude/.credentials.json)', 'Edit(//h/.claude/.credentials.json)']],
+    ['/h/.claude.json', ['Read(//h/.claude.json)', 'Edit(//h/.claude.json)']],
   ];
   for (const [p, rules] of rows) {
     assert.ok(g.sandbox.filesystem.denyRead.includes(p), `denyRead lists ${p}`);

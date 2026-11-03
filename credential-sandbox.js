@@ -42,6 +42,10 @@ function expandHome(p, home) {
   return p.startsWith('~/') ? path.join(home, p.slice(2)) : p;
 }
 
+function defaultLoginFiles(home) {
+  return [path.join(home, '.claude', '.credentials.json'), path.join(home, '.claude.json')];
+}
+
 function t0ReadPaths(registryDir, home) {
   const out = [
     path.join(registryDir, 'cli', 'contexts.json'),
@@ -54,6 +58,7 @@ function t0ReadPaths(registryDir, home) {
   out.push(path.join(registryDir, 'sessions', '*', 'run', 'mcp.json'));
   out.push(path.join(registryDir, 'peer-outbox', 'outbox-key'));
   out.push(...T0_FILE_GLOBS.map((rel) => path.join(registryDir, ...rel)));
+  out.push(...defaultLoginFiles(home));
   return out;
 }
 
@@ -142,6 +147,7 @@ function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = o
   for (const p of userDataWrite) kindOf.set(p, true);
   for (const p of userDataFileWrite) kindOf.set(p, false);
   for (const rel of T0_FILE_GLOBS) kindOf.set(path.join(registryDir, ...rel), false);
+  for (const p of defaultLoginFiles(home)) kindOf.set(p, false);
   for (const e of repoGit) kindOf.set(e.p, e.dir);
 
   const deny = [];

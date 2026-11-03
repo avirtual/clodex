@@ -294,8 +294,9 @@ with `/` or `~/`; anything else is dropped.
   `<data>/sessions/*/run/mcp.json`) is read-denied too, and each `${NAME}` the
   seat's applied MCP selection references is unset like the AWS names.
   Each seat's `seat.json` mirror (with the writer's `.seat.json.tmp.*` copy),
-  its `client-token` file and each minted account's `.credentials.json` under
-  `<data>/accounts` are read-denied as well.
+  its `client-token` file, each minted account's `.credentials.json` under
+  `<data>/accounts`, and the default login's `~/.claude/.credentials.json` and
+  `~/.claude.json` are read-denied as well.
   The app data dir's (`<userData>`) `remote.env`, `ui-settings.json` (peer
   tokens), `env-scopes.json` and `sessions.json` (each with its `.bak` and
   `.corrupt-*` copies, via a `*` suffix), `wire-hold-entries.json`,
