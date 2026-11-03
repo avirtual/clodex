@@ -837,6 +837,20 @@ test('a blocked team names only the half that blocks — the instruction is neve
   assert.strictEqual(d2.shown[0].detail, 'In-flight tickets: t3. Accept or cancel the tickets, then delete.');
 });
 
+test('a team that raised a box with `sandbox up` names that box in its confirm and deletes it', async () => {
+  const { getTeams, dirOf, removed } = deletableTeamsOnDisk(
+    { good: { root: '/proj/good', lead: 'boss', roles: { lead: {} } } });
+  fs.writeFileSync(path.join(dirOf('good'), 'sandbox.json'), JSON.stringify({ boxId: 'team-good' }));
+  const dialog = mkDialog(0);
+  const { menus } = menusWith(getTeams, [], dialog);
+  await menus.buildTeamsMenu().submenu.find((r) => r.label === 'Delete Team…').submenu[0].click();
+  const { detail } = dialog.shown[0];
+  assert.match(detail, /Keeps: the project at \/proj\/good/);
+  assert.match(detail, /Also stops and removes box team-good, its state under ~\/\.clodex\/boxes\/team-good\/ and its peer entry\./);
+  assert.ok(!/pointer manifest/.test(detail));
+  assert.deepStrictEqual(removed, ['team-good']);
+});
+
 test('a broken team\'s confirm says the manifest could not be read, and deleting it works', async () => {
   const { getTeams, dirOf } = deletableTeamsOnDisk({ bad: 'not json at all' });
   const dialog = mkDialog(0);

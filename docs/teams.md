@@ -28,9 +28,11 @@ From the Teams menu, `Create Team…` writes
   "root": "/absolute/path/to/your/project",
   "kit": "default",
   "roles": {
-    "lead":     { "prompt": "lead", "template": "lead" },
-    "hand":     { "prompt": "hand", "template": "hand", "dispatch": "worktree" },
-    "reviewer": { "prompt": "reviewer", "template": "reviewer" }
+    "lead":       { "prompt": "lead", "template": "lead" },
+    "hand":       { "prompt": "hand", "template": "hand", "dispatch": "worktree" },
+    "scout":      { "prompt": "scout", "template": "scout", "dispatch": "spawn" },
+    "page-scout": { "prompt": "page-scout", "template": "page-scout", "dispatch": "spawn" },
+    "reviewer":   { "prompt": "reviewer", "template": "clodex-team-reviewer" }
   }
 }
 ```
@@ -147,9 +149,10 @@ prefix-based discovery reads the library only.
 
 What is seeded for you under `teams/` is the two copies above: creating a team
 writes `team.json`, a `templates/<role>.json` per role whose named template is
-installed in the library, and a `prompts/system/<role>.md` per role whose named
-prompt is, and stops. Every other piece its manifest names — append prompts,
-exec defs — is served by the shared library until you ask otherwise, and so is a
+installed in the library, a `prompts/system/<role>.md` per role whose named
+prompt is, and the kit's `exec/*.json` into the team's `exec/`, and stops. Every
+other piece its manifest names — append prompts, any exec def the kit does not
+carry — is served by the shared library until you ask otherwise, and so is a
 template or prompt whose stem the library does not carry: the copy is skipped
 and the role keeps naming the stem. What fills the rest of the directory is
 **Gather**, and only when you ask for it.
@@ -158,7 +161,7 @@ and the role keeps naming the stem. What fills the rest of the directory is
 
 A kit is a team directory in miniature, under `~/.clodex/library/kits/<kit>/`:
 `kit.json` (a description and a `roles` map shaped exactly like `team.json`'s),
-plus `templates/`, `prompts/system/`, optionally `prompts/append/` and `exec/`.
+plus `templates/`, `prompts/system/` and optionally `exec/`.
 Two ship. `default` builds the team on your own Claude Code — plugins and
 builtin agents left as you have them, but every skill off and the hand's 35
 tools (plan mode among them) off. `clodex` is the aggressive ticket-loop profile
@@ -892,8 +895,8 @@ An agent can do step 1 instead of you, if you granted it the privileged
 `[agent:team create <name> root:<abs-path> [lead:<seat>]]` writes the same
 manifest `Create Team…` does. The root must already exist and belong to no other
 team; the lead defaults to `<name>-lead` and names a seat that does not exist yet.
-The manifest it writes is not an empty one: `lead`, `hand` and `reviewer` are
-already in it, the hand per-ticket (`dispatch: worktree`). Give the intent a body — the kickstart brief,
+The manifest it writes is not an empty one: `lead`, `hand`, `scout`,
+`page-scout` and `reviewer` are already in it, the hand per-ticket (`dispatch: worktree`). Give the intent a body — the kickstart brief,
 closed by `[agent:end]` — and the brief is
 saved as `prompts/append/team-project.md`, the stem the stock lead and hand
 templates compose at boot: step 2 is then already done,

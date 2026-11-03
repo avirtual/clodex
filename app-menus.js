@@ -98,7 +98,7 @@ function deleteTeamDetail(dir, check) {
         ? `Removes the directory, stops and removes box ${check.boxId}, its state under ~/.clodex/boxes/${check.boxId}/ and its peer entry.`
         : 'Removes the directory; nothing else is touched.');
   }
-  if (check.sandboxed) {
+  if (check.sandboxed && !check.raised) {
     return `Removes ${tildePath(dir)} (the pointer manifest), stops and removes box ${check.boxId}, `
       + `its state under ~/.clodex/boxes/${check.boxId}/ (every seat that lived in the box, their session `
       + "records, messages and the team's ticket history) and its peer entry. "
@@ -106,10 +106,13 @@ function deleteTeamDetail(dir, check) {
   }
   const base = `Removes ${tildePath(dir)} (its manifest, prompts and templates). Keeps: the project at ${check.root}, `
     + "its ticket history and task artifacts under ~/.clodex/projects, and every seat's session record";
-  if (!check.saved) return `${base}.`;
+  const box = check.sandboxed
+    ? ` Also stops and removes box ${check.boxId}, its state under ~/.clodex/boxes/${check.boxId}/ and its peer entry.`
+    : '';
+  if (!check.saved) return `${base}.${box}`;
   return check.saved === 1
-    ? `${base} — 1 saved seat on this team becomes a plain session.`
-    : `${base} — ${check.saved} saved seats on this team become plain sessions.`;
+    ? `${base} — 1 saved seat on this team becomes a plain session.${box}`
+    : `${base} — ${check.saved} saved seats on this team become plain sessions.${box}`;
 }
 
 function teamInUseDetail(check) {
