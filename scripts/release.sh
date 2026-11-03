@@ -286,17 +286,17 @@ fi
 
 # --- build -----------------------------------------------------------------
 if [ "$RESUME" = post ]; then
-  DMG="$(ls dist/*"$NEW_VERSION"*.dmg 2>/dev/null | head -1 || true)"
+  note "resume: the $TAG release exists, skipping the build"
+elif [ -n "$RESUME" ] && ls dist/*"$NEW_VERSION"*.dmg >/dev/null 2>&1; then
+  say "resume: reusing the $NEW_VERSION DMG already in dist/"
 else
-  if [ -n "$RESUME" ] && ls dist/*"$NEW_VERSION"*.dmg >/dev/null 2>&1; then
-    say "resume: reusing the $NEW_VERSION DMG already in dist/"
-  else
-    step "Building arm64 DMG"
-    rm -rf dist
-    run npm run dist:mac || die "build failed (try: npx electron-rebuild)"
-  fi
+  step "Building arm64 DMG"
+  rm -rf dist
+  run npm run dist:mac || die "build failed (try: npx electron-rebuild)"
+fi
 
-  DMG="$(ls dist/*"$NEW_VERSION"*.dmg 2>/dev/null | head -1 || true)"
+DMG="$(ls dist/*"$NEW_VERSION"*.dmg 2>/dev/null | head -1 || true)"
+if [ "$RESUME" != post ]; then
   [ -n "$DMG" ] || die "no .dmg produced in dist/"
   say "built: $DMG"
 

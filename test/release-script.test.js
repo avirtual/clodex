@@ -461,6 +461,7 @@ function releaseFixture() {
   g('add', '.');
   g('commit', '-qm', 'base');
   g('tag', 'v1.0.0');
+  g('commit', '-q', '--allow-empty', '-m', 'work since v1.0.0');
   g('remote', 'add', 'origin', origin);
   g('push', '-q', '-u', 'origin', 'master', 'v1.0.0');
   fs.writeFileSync(path.join(state, 'released-v1.0.0'), '');
