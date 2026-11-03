@@ -27,6 +27,7 @@ blocks a release.
 - A standing seat's cost is booked per session, so a seat re-spawned under the same name, or one whose early sessions aged out of the telemetry file, no longer under-reports its spend on the team ledger.
 - A hand's pending permission request (a Bash call the guard did not clear, say) now reaches its lead as a dm carrying the request id and the command, and the lead can answer it with `[agent:permit <seat> <id> allow|deny]` instead of the seat waiting on the operator.
 - Re-running `scripts/release.sh` after a run died past the GitHub release (during image publish, prune or the review launch) resumes those steps for the same version instead of cutting a second, empty release.
+- Drawer Copy on a Codex, Muse or custom-settings Claude seat now refuses with a reason instead of reporting an attachment as sent that nothing drains; and a voice-fired send that fails disarms the spoken-origin marker, so the next typed message is not labelled as dictated.
 
 ## 5.159.0 — 2026-11-03 — Security: log-mask masks every secret-named URL query parameter, Edit tab vets and writes one descriptor; memory id trim, dm await on pty seats, board cost breakdown
 
