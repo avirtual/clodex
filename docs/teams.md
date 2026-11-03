@@ -47,9 +47,17 @@ shapes the seat: model, tools, grants, cwd — resolved against
 (one line about the role, shown in the roster) and `dispatch` (what a ticket for this role
 does: `standing` delivers to the live seat, `spawn` mints a one-shot seat in
 the shared checkout, `worktree` mints a one-shot seat on its own branch in its
-own git worktree). The template may also carry `mcpServers`, set only in the
-app's template editor (`templates:saveTeam`), never by `role-set` or
-`template-save`; reviewer seats load none.
+own git worktree). The template's `mcpServers`, `execCommands` and privileged
+`extraArgs` flags (`--settings`, `--dangerously-skip-permissions`,
+`--permission-mode`, `--mcp-config`, `--add-dir` and the other CLIs' bypass
+flags) are set only in the app's template editor (`templates:saveTeam`), never by
+`template-save`, which strips them and keeps the stored values; a `model:` or
+`effort:` derive copies the base template's exec grants and flags but not its
+`mcpServers`. Reviewer seats load no `mcpServers`. An `[agent:spawn]` child gets
+the template's exec grants and `mcpServers` only where its spawner holds them,
+is refused a privileged flag its spawner's own args lack, inherits the
+spawner's `protectCredentials`, and takes a `template:<path>` only from under
+`~/.clodex/library/templates/` or the team's `templates/` dir.
 
 `[agent:spawn name:<name>-lead cwd:<root>]` with no `template:` boots the lead
 on the lead role's template, which the kit picks (`clodex-team-lead` in the
