@@ -53,7 +53,7 @@ test('writeAgentSockCred: 0600, at the shared run/ root, outside every run/<seat
 });
 
 test('createEngine writes the credential file it authenticates with', () => {
-  const { createEngine } = require('../engine');
+  const { createEngine } = require('./lib/engine-isolation');
   const tmp = mkTmpRoot('clx-asock-eng-');
   const reg = path.join(tmp, 'clodex-home');
   createEngine({ userDataPath: tmp, seams: { noSeed: true, registryDir: reg }, log: { info() {}, warn() {}, error() {} } });
