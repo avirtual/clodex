@@ -896,6 +896,8 @@ test('a version bump on a bundle-only plugin that ships a stylesheet sets restar
 
 test('a bundle-only version bump seen while the bundle is unreadable waits, then refreshes in place once it reads', async () => {
   const { loader, pluginHost, dir } = await activeBundleOnly();
+  fs.mkdirSync(path.join(dir, 'skills', 'memo'));
+  fs.writeFileSync(path.join(dir, 'skills', 'memo', 'SKILL.md'), 'memo skill');
   const skill = path.join(dir, 'skills', 'note', 'SKILL.md');
   fs.renameSync(skill, `${skill}.aside`);
   fs.mkdirSync(skill);
