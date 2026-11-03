@@ -464,6 +464,21 @@ test('t863: deleting a sandboxed team whose manifest does not load still removes
   } finally { d.cleanup(); }
 });
 
+test('an unloadable team whose pointer names a box that is not team-<name> removes no box', async () => {
+  const d = mkDeleteDoor({
+    manifest: '{not json',
+    files: { 'sandbox.json': JSON.stringify({ boxId: 'sandbox' }) },
+  });
+  try {
+    assert.ok(d.exists(), 'ENTER: the pointer dir exists');
+    const check = d.deleteCheck('t');
+    assert.strictEqual(check.loaded, false);
+    assert.strictEqual(check.boxId, undefined);
+    assert.strictEqual((await d.del()).ok, true);
+    assert.deepStrictEqual(d.calls, []);
+  } finally { d.cleanup(); }
+});
+
 test('deleteCheck never reads a sandbox pointer outside the teams dir for a name that is not a team name', () => {
   const d = mkDeleteDoor({ manifest: '{not json' });
   try {

@@ -10,7 +10,7 @@ function createTeamDelete({ loadManifest, deleteTeam, getManager, getSandboxMana
     if (typeof name !== 'string' || !TEAM_NAME_RE.test(name)) return null;
     try {
       const rec = JSON.parse(fs.readFileSync(path.join(teamsDir, name, 'sandbox.json'), 'utf8'));
-      return rec && typeof rec.boxId === 'string' && rec.boxId ? rec.boxId : null;
+      return rec && rec.boxId === `team-${name}` ? rec.boxId : null;
     } catch {
       return null;
     }
@@ -18,7 +18,7 @@ function createTeamDelete({ loadManifest, deleteTeam, getManager, getSandboxMana
 
   function raisedBox(name) {
     const fromPointer = pointerBoxId(name);
-    if (fromPointer === `team-${name}`) return fromPointer;
+    if (fromPointer) return fromPointer;
     const mgr = getSandboxManager ? getSandboxManager() : null;
     if (!mgr || typeof mgr.get !== 'function') return null;
     try {
