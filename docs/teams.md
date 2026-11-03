@@ -114,7 +114,7 @@ A ticket seat and a reviewer never write `seat` rows — their spend is already
 booked once by the close. Read the file back with
 `[agent:exec clodex-team] {"action":"cost","agent":"<you>"}`, or
 `{"action":"cost","target":"t42","agent":"<you>"}` for one ticket's hand and
-review split. The tickets board shows the same figures per row.
+review split; the rollup counts the newest close per ticket. The tickets board shows the same figures per row.
 
 The loop's own data is *not* here: `tickets.json` and the per-ticket `tasks/`
 directories are keyed to the PROJECT, not the team, and live under
