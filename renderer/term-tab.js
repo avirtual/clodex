@@ -224,11 +224,15 @@ function createTermTab({ host, xtermTheme, getActiveSession, getSeatType = null,
         ? `\r\n\x1b[33mthe remote shell exited (${code})\x1b[0m\r\n`
         : `\r\n\x1b[33mthe remote terminal was closed on that box\x1b[0m\r\n`);
     });
-    window.api.onPeerWtermClosed((_id, from, why) => {
+    window.api.onPeerWtermClosed((_id, from, why, meta) => {
       if (!terminal || !mine(from)) return;
       // The reason is composed main-side from peer-shell's vocabulary. Printed
       // rather than swallowed: a revoked grant and a dropped tunnel look
       // identical on screen otherwise, and one of them is someone's decision.
+      if (meta && meta.reason === 'offline') {
+        terminal.write(`\r\n\x1b[33m${String(why || '').replace(/\.$/, '')} — reconnecting when it wakes.\x1b[0m\r\n`);
+        return;
+      }
       terminal.write(`\r\n\x1b[31m${why || 'the remote terminal closed'}\x1b[0m\r\n`);
     });
 

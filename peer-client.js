@@ -643,12 +643,13 @@ class PeerConnection {
           w.wanted = false;
           this._emit('peer-wterm-exit', this.id, seat, data.exitCode);
         } else if (event === 'closed') {
-          // A DECISION, not a blip — the serving side always says why. Retrying
-          // against a revocation is what this frame exists to prevent, so the
-          // want is cleared before the close door runs.
-          w.wanted = false;
+          // A decision, except `offline` (the box is restarting): retrying a
+          // revocation is what this frame prevents, so any other reason clears
+          // the want before the close door runs; offline keeps it for re-arm.
+          const reason = String((data && data.reason) || 'closed');
+          if (reason !== 'offline') w.wanted = false;
           this._emit('peer-wterm-closed', this.id, seat,
-            peerShellRefusal(String((data && data.reason) || 'closed'), this.label));
+            peerShellRefusal(reason, this.label), { reason });
         }
       },
       // A drop can land in the interval between the GET going out and its 200

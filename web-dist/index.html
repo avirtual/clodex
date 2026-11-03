@@ -42582,8 +42582,14 @@ void main() {
 \x1B[33mthe remote terminal was closed on that box\x1B[0m\r
 `);
           });
-          window.api.onPeerWtermClosed((_id, from, why) => {
+          window.api.onPeerWtermClosed((_id, from, why, meta) => {
             if (!terminal || !mine(from)) return;
+            if (meta && meta.reason === "offline") {
+              terminal.write(`\r
+\x1B[33m${String(why || "").replace(/\.$/, "")} \u2014 reconnecting when it wakes.\x1B[0m\r
+`);
+              return;
+            }
             terminal.write(`\r
 \x1B[31m${why || "the remote terminal closed"}\x1B[0m\r
 `);

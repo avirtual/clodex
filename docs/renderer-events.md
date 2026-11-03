@@ -111,7 +111,7 @@ Every live window; a web host fans to every connection.
 | `peer-wterm-replay` | `id, seat, {data, cols, rows}` | peer-client |
 | `peer-wterm-data` | `id, seat, data` | peer-client |
 | `peer-wterm-exit` | `id, seat, exitCode` | peer-client |
-| `peer-wterm-closed` | `id, seat, text` (the `peerShellRefusal` sentence) | peer-client |
+| `peer-wterm-closed` | `id, seat, text` (the `peerShellRefusal` sentence), plus `{reason}` for a server `closed` frame | peer-client |
 
 All `peer-*` (except `peer-disabled`/`peer-visible`/`peer-tunnel`/`peer-web-tunnel`/`peer-shell-allowed`) originate in
 `peer-client.js` `this._emit(...)`; the PeerManager `emit` closure in
