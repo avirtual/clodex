@@ -101,7 +101,7 @@ function initLibraryDrawers({ getActiveSession, setAgentLibCache, setSkillLibCac
   const readBundle = async (sec, kind, stem) => {
     const file = sec.dir ? `${sec.dir}/${bundleRelPath(kind, stem)}` : null;
     const r = file ? await window.api.filePeek(file) : null;
-    if (!r || !r.ok || r.binary || r.truncated || r.editable === false || r.content == null) {
+    if (!r || !r.ok || r.binary || r.truncated || r.content == null || r.editable === false) {
       const why = !r || !r.ok ? ((r && r.error) || 'it could not be read')
         : r.binary ? 'it is not text'
           : r.editable === false ? ({ crlf: 'it has CRLF line endings', 'non-utf8': 'it is not UTF-8' }[r.encoding] || 'it is not editable here')
