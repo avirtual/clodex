@@ -341,7 +341,7 @@ const PEEKS = [
 for (const p of PEEKS) {
   test(`a plugin bundle file peeked as ${JSON.stringify(p.reply)} ${p.opened ? 'opens in the editor' : `is refused: ${p.why}`}`, async () => {
     const writes = [];
-    const sec = { id: 'plug', name: 'Plug', dir: '/plug', editable: true };
+    const sec = { id: 'plug', name: 'Plug', dir: '/plug', editable: true, entries: [{ name: 'x' }] };
     const r = await rig({
       filePeek: async () => p.reply,
       writePluginBundleFile: async (...a) => { writes.push(a); return { ok: true }; },
