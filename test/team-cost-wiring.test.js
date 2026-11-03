@@ -1073,6 +1073,102 @@ test('a failed seat-cursor write is logged as a warn naming the seat', () => {
   cleanup();
 });
 
+const wireRow = (cost) => ({ cost, requests: cost, turns: 1, inputTokens: cost * 10, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 });
+const mkCursorLedger = ({ wire, record, cursor }) => {
+  const userData = mkTmpRoot('clodex-ud-');
+  fs.writeFileSync(path.join(userData, 'wire-totals.json'), JSON.stringify({ version: 1, sessions: wire }));
+  const teamsDir = mkTmpRoot('clodex-teams-');
+  const cursorFile = path.join(teamsDir, 'team', 'cost-cursor.json');
+  if (cursor) {
+    fs.mkdirSync(path.dirname(cursorFile), { recursive: true });
+    fs.writeFileSync(cursorFile, JSON.stringify({ 'team-lead': cursor }));
+  }
+  const persistence = mkPersistence([{ name: 'team-lead', ...record }]);
+  const warns = [];
+  const log = { info: () => {}, warn: (...a) => warns.push(a), error: () => {}, debug: () => {} };
+  const { m } = mkLedgerManager({ persistence, userData, teamsDir, deps: { log } });
+  const stamp = () => m._stampSeatCost({ name: 'team-lead', cwd: '/proj', sessionId: record.sessionId }, 'clear');
+  const readCursor = () => JSON.parse(fs.readFileSync(cursorFile, 'utf8'))['team-lead'];
+  const cleanup = () => {
+    fs.rmSync(userData, { recursive: true, force: true });
+    fs.rmSync(teamsDir, { recursive: true, force: true });
+  };
+  return { stamp, readCursor, warns, teamsDir, cleanup };
+};
+const cur = (cost) => ({ usd: cost, tokens: cost * 10, requests: cost, turns: 1 });
+
+test('a continuing standing seat books per session and writes the per-session cursor', () => {
+  const h = mkCursorLedger({
+    wire: { a: wireRow(30), b: wireRow(5) },
+    record: { sessionId: 'b', sessionIds: ['a', 'b'], createdAt: 7 },
+    cursor: { createdAt: 7, sessions: { a: cur(25) }, at: 1 },
+  });
+  const r = h.stamp();
+  assert.strictEqual(r.ok, true, r.error);
+  const rows = readLedger(h.teamsDir);
+  assert.deepStrictEqual(rows.map((x) => x.usd), [10]);
+  assert.deepStrictEqual(h.readCursor(), { createdAt: 7, sessions: { a: cur(30), b: cur(5) }, at: rows[0].at });
+  h.cleanup();
+});
+
+test('a seat re-spawned under the same name books its whole new spend', () => {
+  const h = mkCursorLedger({
+    wire: { b: wireRow(30) },
+    record: { sessionId: 'b', sessionIds: ['b'], createdAt: 2 },
+    cursor: { createdAt: 1, sessions: { a: cur(40) }, at: 1 },
+  });
+  assert.strictEqual(h.stamp().ok, true);
+  assert.deepStrictEqual(readLedger(h.teamsDir).map((x) => x.usd), [30]);
+  assert.deepStrictEqual(Object.keys(h.readCursor().sessions), ['b']);
+  h.cleanup();
+});
+
+test('a stamp drops cursor ids that aged out of wire-totals', () => {
+  const sessions = {};
+  for (let i = 0; i < 600; i++) sessions[`old${i}`] = cur(1);
+  const h = mkCursorLedger({
+    wire: { c: wireRow(10) },
+    record: { sessionId: 'c', sessionIds: ['old0', 'old1', 'c'], createdAt: 1 },
+    cursor: { createdAt: 1, sessions, at: 1 },
+  });
+  assert.strictEqual(h.stamp().ok, true);
+  assert.deepStrictEqual(readLedger(h.teamsDir).map((x) => x.usd), [10]);
+  assert.deepStrictEqual(Object.keys(h.readCursor().sessions), ['c']);
+  h.cleanup();
+});
+
+test('a legacy cursor below the lifetime books the difference once, then migrates', () => {
+  const h = mkCursorLedger({
+    wire: { a: wireRow(30), b: wireRow(20) },
+    record: { sessionId: 'b', sessionIds: ['a', 'b'], createdAt: 4 },
+    cursor: { usd: 40, tokens: 400, requests: 40, turns: 2, at: 1 },
+  });
+  assert.strictEqual(h.stamp().ok, true);
+  const rows = readLedger(h.teamsDir);
+  assert.deepStrictEqual(rows.map((x) => x.usd), [10]);
+  assert.deepStrictEqual(h.readCursor(), { createdAt: 4, sessions: { a: cur(30), b: cur(20) }, at: rows[0].at });
+  assert.strictEqual(h.stamp().error, 'nothing new since the last stamp');
+  assert.strictEqual(readLedger(h.teamsDir).length, 1);
+  assert.strictEqual(h.warns.length, 0);
+  h.cleanup();
+});
+
+test('a legacy cursor above the lifetime books nothing, warns, and migrates the cursor', () => {
+  const h = mkCursorLedger({
+    wire: { a: wireRow(30) },
+    record: { sessionId: 'a', sessionIds: ['a'], createdAt: 4 },
+    cursor: { usd: 40, tokens: 400, requests: 40, turns: 2, at: 1 },
+  });
+  const r = h.stamp();
+  assert.strictEqual(r.error, 'nothing new since the last stamp');
+  assert.strictEqual(readLedger(h.teamsDir).length, 0);
+  const c = h.readCursor();
+  assert.deepStrictEqual([c.createdAt, c.sessions], [4, { a: cur(30) }]);
+  assert.strictEqual(h.warns.length, 1);
+  assert.ok(h.warns[0][1].includes('legacy seat-cost cursor ($40) is above the seat\'s lifetime ($30)'), h.warns[0][1]);
+  h.cleanup();
+});
+
 test('a TICKET seat and a REVIEWER are skipped — their spend is already booked once', () => {
   const userData = mkTmpRoot('clodex-ud-');
   fs.writeFileSync(path.join(userData, 'wire-totals.json'), JSON.stringify({

@@ -618,7 +618,7 @@ module.exports = {
   COST_FILE, COST_VERSION, MAX_LABEL, TICKET_BRANCH_RE,
   REVIEW_COST_FILE, REVIEW_COST_VERSION, TEAM_LEDGER_FILE,
   wireLabelFor, reviewWireLabelFor, ticketIdFromScope, resolveTaskDir,
-  sumSessions, cachedFraction, costRecord, reviewCostRecord, orphanedCheckouts,
+  sumSessions, perSession, cachedFraction, costRecord, reviewCostRecord, orphanedCheckouts,
   ticketLedgerRow, reviewLedgerRow, seatLedgerRow, seatCursorEntry, isLegacySeatCursor,
   parseTeamLedger, readTeamLedger, rollupTeam,
 };

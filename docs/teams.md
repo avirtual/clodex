@@ -108,7 +108,7 @@ the one kind with no close behind it: a STANDING seat — one you dispatch to by
 name, working ticket after ticket — has no ticket end, so it books what it has
 spent since its last row at three boundaries instead: the session ending,
 a `/clear`, and a compact. Each of those books the DELTA, which is what
-`cost-cursor.json` remembers; a boundary that spent nothing writes no row.
+`cost-cursor.json` remembers; a boundary that spent nothing writes no row. The cursor books per session id, so a re-spawned seat or an aged-out session never hides spend.
 
 A ticket seat and a reviewer never write `seat` rows — their spend is already
 booked once by the close. Read the file back with

@@ -172,7 +172,7 @@ test('a seat cost stamp lands one row in each team\'s own ledger on a shared roo
   const { h, m, seat } = mkShared(t);
   h.writeRoster('a', [['a-scout', 'scout']]);
   h.writeRoster('b', [['b-scout', 'scout']]);
-  m._seatLedger = () => ({ ledger: { usd: 1.5, inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0, requests: 2, turns: 1 } });
+  m._seatLedger = () => ({ ledger: { usd: 1.5, inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, cacheWriteTokens: 0, requests: 2, turns: 1, bySession: { s1: { usd: 1.5, tokens: 15, requests: 2, turns: 1 } } } });
   assert.strictEqual(m._stampSeatCost(seat('a-scout'), 'exit').ok, true);
   assert.strictEqual(m._stampSeatCost(seat('b-scout'), 'exit').ok, true);
   const rows = (n) => fs.readFileSync(path.join(h.home, 'teams', n, 'cost.jsonl'), 'utf-8').trim().split('\n').map((l) => JSON.parse(l));
