@@ -25,7 +25,7 @@ function soxOnPath(platform, env, fs) {
 function hasCaptureDevice(fs) {
   let entries = null;
   try { entries = fs.readdirSync(SND_DIR); } catch { return false; }
-  return Array.isArray(entries) && entries.length > 0;
+  return Array.isArray(entries) && entries.some((e) => /^pcmC\d+D\d+c$/.test(String(e)));
 }
 
 function readVoiceCapability({ platform = process.platform, env = process.env, fs = require('fs') } = {}) {
