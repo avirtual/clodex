@@ -2708,6 +2708,35 @@ function clearLock(repo) {
 // arithmetic. What the fixture must not do is stub _autoMergeTicket or
 // _suiteLockHolder — the deferral being tested lives inside the first and reads
 // the second, so replacing either would step over the code under test.
+function skipFsync(t) {
+  const real = fsReal.fsyncSync;
+  fsReal.fsyncSync = () => {};
+  t.after(() => { fsReal.fsyncSync = real; });
+}
+
+function replayPreGateReads() {
+  const real = require('../git-worktree');
+  const seen = new Map();
+  let live = false;
+  const memo = (name, keyOf) => async (...args) => {
+    if (live) return real[name](...args);
+    const key = `${name}:${keyOf(args)}`;
+    if (!seen.has(key)) seen.set(key, await real[name](...args));
+    return seen.get(key);
+  };
+  const argsKey = (args) => JSON.stringify(args);
+  return {
+    gitOver: {
+      mergeTargetFor: memo('mergeTargetFor', ([team]) => `${team.root}|${team.trunk || ''}`),
+      isMerged: memo('isMerged', argsKey),
+      revParse: memo('revParse', argsKey),
+      isDirty: memo('isDirty', argsKey),
+      currentBranch: memo('currentBranch', argsKey),
+    },
+    goLive: () => { live = true; seen.clear(); },
+  };
+}
+
 function captureRetries(f) {
   const scheduled = [];
   f.m._scheduleMergeRetry = (fn, ms) => { scheduled.push({ fn, ms }); return null; };
@@ -3146,14 +3175,16 @@ test('a retry that hits a DIFFERENT terminal arm does not leave the WAITING stam
   assert.strictEqual(f.one().mergeError, 'on-master', 'and the real failure is stamped in its place');
 });
 
-test('an exhausted retry clears the WAITING stamp as it escalates', async () => {
+test('an exhausted retry clears the WAITING stamp as it escalates', async (t) => {
+  skipFsync(t);
   // The other arm reachable only through a defer: exhaustion. It stamps
   // mergeError, and the waiting stamp must not survive alongside it — a ticket
   // reading as both waiting and failed describes two different states of the
   // world at once.
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
-  const f = mkMerge({ repo });
+  const reads = replayPreGateReads();
+  const f = mkMerge({ repo, gitOver: reads.gitOver });
   const r = captureRetries(f);
   plantLock(repo);
 
@@ -3455,14 +3486,16 @@ test('t538: an accept that did NOT close the ticket out leaves the pending merge
   assert.deepStrictEqual(f.esc(), [], 'and nothing escalated');
 });
 
-test('an exhausted retry escalates with the manual merge command intact', async () => {
+test('an exhausted retry escalates with the manual merge command intact', async (t) => {
+  skipFsync(t);
   // A retry that gave up SILENTLY would be worse than the terminal refusal it
   // replaced: the lead would be waiting on a mechanism that had already stopped.
   // So exhaustion escalates with the same message the terminal refusal used,
   // including the exact command that lands the branch by hand.
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
-  const f = mkMerge({ repo });
+  const reads = replayPreGateReads();
+  const f = mkMerge({ repo, gitOver: reads.gitOver });
   const r = captureRetries(f);
   const before = f.masterHead();
   plantLock(repo);   // never cleared: a wedged or abandoned lock
@@ -3543,10 +3576,12 @@ test('the TOTAL wait bounds the retry even when the attempt count has not run ou
     'and the message reports the real elapsed wait, not the attempt count dressed up as one');
 });
 
-test('a merge meeting a running suite waits at least twenty minutes before it escalates', async () => {
+test('a merge meeting a running suite waits at least twenty minutes before it escalates', async (t) => {
+  skipFsync(t);
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
-  const f = mkMerge({ repo });
+  const reads = replayPreGateReads();
+  const f = mkMerge({ repo, gitOver: reads.gitOver });
   const r = captureRetries(f);
   let now = 1_000_000;
   f.m._mergeRetryNow = () => now;
@@ -3626,10 +3661,12 @@ test('a holder with no tree file keeps the root-checkout wording', async () => {
   assert.ok(!/ and holds the lock of /.test(esc[0].body), 'no tree clause when no tree was recorded');
 });
 
-test('a change of holder between samples resets the retry budget instead of escalating', async () => {
+test('a change of holder between samples resets the retry budget instead of escalating', async (t) => {
+  skipFsync(t);
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
-  const f = mkMerge({ repo });
+  const reads = replayPreGateReads();
+  const f = mkMerge({ repo, gitOver: reads.gitOver });
   const r = captureRetries(f);
   let now = 1_000_000;
   f.m._mergeRetryNow = () => now;
@@ -3654,6 +3691,7 @@ test('a change of holder between samples resets the retry budget instead of esca
   assert.ok(resets[0].msg.includes(`holder changed (pid ${process.pid} → pid ${process.ppid} in /work/wt-a) — budget reset`),
     `got ${resets[0].msg}`);
 
+  reads.goLive();
   clearLock(repo);
   assert.strictEqual(await r.drain(), 1, 'the lock clears and the next retry lands it');
   assert.match(f.masterLog(), /Merge t1:/);
