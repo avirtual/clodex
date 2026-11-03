@@ -11,6 +11,7 @@ const {
   createAgentTransport, mintAgentSockCred, agentSockCredPath, writeAgentSockCred,
   AGENT_SOCK_CRED_BASENAME, AGENT_SOCK_CRED_ENV,
 } = require('../agent-transport');
+const { createEngine } = require('./lib/engine-isolation');
 const { mkPark } = require('./lib/session-fixtures');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -53,7 +54,6 @@ test('writeAgentSockCred: 0600, at the shared run/ root, outside every run/<seat
 });
 
 test('createEngine writes the credential file it authenticates with', () => {
-  const { createEngine } = require('./lib/engine-isolation');
   const tmp = mkTmpRoot('clx-asock-eng-');
   const reg = path.join(tmp, 'clodex-home');
   createEngine({ userDataPath: tmp, seams: { noSeed: true, registryDir: reg }, log: { info() {}, warn() {}, error() {} } });
