@@ -874,11 +874,17 @@ test('the script\'s copy of the rollup still agrees with core team-cost', () => 
 
   // eslint-disable-next-line no-new-func
   const scriptRollup = new Function(`${round6[0]}\n${finite[0]}\n${rollup[0]}\nreturn rollupTeam;`)();
-  const mine = scriptRollup(COST_LEDGER);
-  const theirs = coreCost.rollupTeam(COST_LEDGER);
+  const rows = [
+    ...COST_LEDGER,
+    { kind: 'ticket', ticket: 't950', team: 'proj', role: 'hand', seat: 'h3', attribution: 'seat', usd: 8, at: Date.parse('2026-07-06T00:00:00Z') },
+    { kind: 'ticket', ticket: 't950', team: 'proj', role: 'hand', seat: 'h3', attribution: 'seat', usd: 5, at: Date.parse('2026-07-05T00:00:00Z') },
+  ];
+  const mine = scriptRollup(rows);
+  const theirs = coreCost.rollupTeam(rows);
 
   assert.ok(theirs.usd.total > 0 && theirs.counts.unattributed === 1,
     'ENTER: the fixture prices something AND excludes something, or agreement is trivial');
+  assert.strictEqual(theirs.byTicket.get('t950').hand, 8, 'the newest rework close is the one kept');
   assert.deepStrictEqual(mine.usd, theirs.usd, 'the script publishes different money than core');
   assert.deepStrictEqual(mine.counts, theirs.counts);
   assert.strictEqual(mine.since, theirs.since);

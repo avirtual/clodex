@@ -476,12 +476,20 @@ function rollupTeam(rows) {
     if (!byTicket.has(id)) byTicket.set(id, { hand: null, attribution: null, reviews: [], total: null });
     return byTicket.get(id);
   };
+  const atOf = (r) => { const v = finite(r.at); return v === null ? -Infinity : v; };
+  const newest = new Map();
+  for (const r of (Array.isArray(rows) ? rows : [])) {
+    if (!r || typeof r !== 'object' || r.kind !== 'ticket' || !r.ticket) continue;
+    const prev = newest.get(r.ticket);
+    if (!prev || atOf(r) >= atOf(prev)) newest.set(r.ticket, r);
+  }
   for (const r of (Array.isArray(rows) ? rows : [])) {
     if (!r || typeof r !== 'object') continue;
     const at = finite(r.at);
     if (at !== null && (since === null || at < since)) since = at;
     const amount = finite(r.usd);
     if (r.kind === 'ticket') {
+      if (r.ticket && newest.get(r.ticket) !== r) continue;
       counts.tickets++;
       const exact = amount !== null && r.attribution !== 'seat-lifetime';
       if (exact) { usd.tickets = round6(usd.tickets + amount); bump(r.role, amount); }
