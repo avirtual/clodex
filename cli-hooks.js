@@ -946,7 +946,7 @@ exit 0
     const toolSet = new Set(CLAUDE_TOOLS);
     const guard = Array.isArray(protectCredentials)
       ? buildCredentialSandbox({
-        registryDir: REGISTRY_DIR, list: protectCredentials, seatSocket: pathFor(REGISTRY_DIR, name, 'intentSocket'), inBox: runningInSandboxBox(process.env), mcpSecretNames, userDataPath: getUserDataPath ? getUserDataPath() : null, cwd,
+        registryDir: REGISTRY_DIR, list: protectCredentials, seatSocket: pathFor(REGISTRY_DIR, name, 'intentSocket'), inBox: runningInSandboxBox(process.env), mcpSecretNames, userDataPath: getUserDataPath ? getUserDataPath() : null, cwd, codexHome: process.env.CODEX_HOME,
       })
       : null;
     const denyRules = [...new Set([

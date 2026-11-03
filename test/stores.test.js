@@ -4559,3 +4559,17 @@ test('mcpLibrary: an invalid entry, a literal secret, a reserved or path-shaped 
     assert.deepStrictEqual(fs.existsSync(dir) ? fs.readdirSync(dir) : [], []);
   } finally { cleanup(); }
 });
+
+test('persistence: seat.json leaves the per-seat env out while the record keeps it', () => {
+  const { stores, registryDir, cleanup } = freshStores();
+  try {
+    stores.persistence.upsert({ name: 'lead', type: 'claude', workspaceId: 'default' });
+    migrateSeatLayout({ root: registryDir, names: ['lead'], fs });
+    stores.persistence.setEnv('lead', { STRIPE_SECRET: 'sk_live_xyz' });
+    const seatFile = path.join(registryDir, 'sessions', 'lead', 'seat.json');
+    assert.deepStrictEqual(stores.persistence.get('lead').env, { STRIPE_SECRET: 'sk_live_xyz' });
+    const bytes = fs.readFileSync(seatFile, 'utf8');
+    assert.ok(bytes.includes('"lead"'), 'ENTER: the mirror was written for this seat');
+    assert.strictEqual(bytes.includes('sk_live_xyz'), false);
+  } finally { cleanup(); }
+});
