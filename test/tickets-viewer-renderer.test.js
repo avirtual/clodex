@@ -1861,7 +1861,17 @@ test('the board header carries the team total when the ledger has one', async ()
   }, ({ root }) => {
     const text = textOf(root).join('\n');
     assert.ok(text.includes('team alpha: ~$4,212'), `the header shows the team total\n--- got ---\n${text}`);
+    assert.equal(allByClass(root, 'tv-team-cost')[0].title,
+      'Ledger since 2026-07-01: tickets ~$3,691 over 442 hands (44 unattributed) · reviews ~$494 over 262 rounds · standing seats ~$27.00 (3). The per-ticket figure on a row is its hand alone.');
   });
+});
+
+test('teamCostTitle omits zero parentheticals, singularises one round, and drops the date without since', () => {
+  assert.equal(viewer.teamCostTitle({
+    ok: true, team: 'beta', since: null,
+    usd: { tickets: 10, reviews: 1, standing: 0, total: 11 },
+    counts: { tickets: 2, reviews: 1, standing: 0, unattributed: 0, unpriced: 0 },
+  }), 'Ledger: tickets ~$10.00 over 2 hands · reviews ~$1.00 over 1 round · standing seats ~$0.00. The per-ticket figure on a row is its hand alone.');
 });
 
 test('a project with no team gets no cost header rather than a zero one', async () => {
