@@ -301,7 +301,7 @@ test('a re-parked dm tells its caller parked, never injected, and logs its dropp
 const STOP_VERBS = [
   { verb: 'kill', stop: (m, s) => m.kill('sx', { respawn: true }) },
   { verb: 'archive', stop: (m, s) => m.archive('sx') },
-  { verb: 'restart', stop: (m, s) => m._stopForRespawn(s, 'sx') },
+  { verb: 'rename/move', stop: (m, s) => m._stopForRespawn(s, 'sx') },
 ];
 
 for (const { verb, stop } of STOP_VERBS) {
@@ -338,6 +338,9 @@ test('an exited-but-not-closed stream seat queues a dm instead of writing it', a
     assert.deepStrictEqual(app.sends.get('sx'), []);
     assert.strictEqual(s.outbox.length, 1);
     assert.deepStrictEqual(fired, []);
+    app.close('sx');
+    assert.deepStrictEqual(app.parked('sx').map((f) => f.key), ['key-8820']);
+    assert.deepStrictEqual(fired, [['parked', 'dead']]);
   } finally { app.stop(); }
 });
 
@@ -405,6 +408,27 @@ test('a queued /clear text the codex codec refuses is put back at the outbox hea
   } finally { app.stop(); }
 });
 
+test('a tool-boundary drain whose write the codec refuses leaves the item at the outbox head and fires no injected', async () => {
+  const app = boot();
+  try {
+    const s = await app.spawn('sx', 'stream');
+    const codec = codexCodec.create({ cwd: '/w' });
+    codec.open();
+    s.streamCodec = codec;
+    app.m._clearStreamInitWatchdog(s);
+    s.streamBusy = true;
+    const fired = [];
+    app.m._streamEnqueue(s, { text: 'tool-body-5521', images: [], origin: 'system' }, (...a) => fired.push(a));
+    assert.strictEqual(s.outbox.length, 1, 'ENTER: queued behind the busy turn');
+    const before = app.sends.get('sx').length;
+    app.m._onStreamToolBoundary(s);
+    assert.deepStrictEqual(s.outbox.map((q) => q.text), ['tool-body-5521']);
+    assert.deepStrictEqual(fired, []);
+    assert.strictEqual(app.sends.get('sx').length, before);
+    assert.notStrictEqual(s._toolDrainedInTurn, true);
+  } finally { app.stop(); }
+});
+
 test('a producer item whose delivery fails is produced once and parks its produced text at exit', async () => {
   const app = boot();
   try {
@@ -462,5 +486,10 @@ test('a producer item that produces nothing is dropped at turn end, not kept at 
     app.m._streamTurnEnd(s);
     assert.strictEqual(s.outbox.length, 0);
     assert.strictEqual(acked, 0);
+    const slept = [];
+    app.m._sleepNow = async (seat, reason) => { slept.push([seat.name, reason]); };
+    s._sleepRequested = 'idle';
+    app.m._streamTurnEnd(s);
+    assert.deepStrictEqual(slept, [['sx', 'idle']]);
   } finally { app.stop(); }
 });

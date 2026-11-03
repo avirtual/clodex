@@ -3094,9 +3094,12 @@ function createSessionManager(deps) {
       s.outbox.splice(0, s.outbox.length, ...keep);
       const payload = this._streamJoin(sys);
       if (payload.text.trim() || payload.images.length) {
-        this._streamWrite(s, payload);
-        this._streamSent(s, sys);
-        s._toolDrainedInTurn = true;
+        if (this._streamWrite(s, payload)) {
+          this._streamSent(s, sys);
+          s._toolDrainedInTurn = true;
+        } else {
+          s.outbox.unshift(...sys);
+        }
       }
       this._streamOutboxChanged(s);
     }
