@@ -790,8 +790,8 @@ class RemoteServer {
     if (!this._query) return this._json(res, 501, { ok: false, error: 'query not available' });
     if (!this._jsonBody(req, res)) return;
     return this._readBody(req, res, (body) => {
-      let msg;
-      try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+      const msg = parseJsonObject(body);
+      if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
       Promise.resolve()
         .then(() => this._query(name, String(msg.kind || ''), msg.args || {}))
         .then((out) => this._json(res, out && out.ok ? 200 : queryErrorStatus(out), out || { ok: false, error: 'query failed' }))
@@ -888,14 +888,14 @@ class RemoteServer {
   _handleDm(name, req, res) {
     if (!this._jsonBody(req, res)) return;
     return this._readBody(req, res, (body) => {
-      let msg;
-      try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
-      const checked = validateSeatImages(msg && msg.images);
+      const msg = parseJsonObject(body);
+      if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
+      const checked = validateSeatImages(msg.images);
       if (!checked.ok) return this._json(res, 400, checked);
-      const text = String((msg && msg.text) || '').trim();
+      const text = String(msg.text || '').trim();
       if (!text && !checked.images.length) return this._json(res, 400, { ok: false, error: 'empty message' });
-      const client = msg && typeof msg.client === 'string' && DM_CLIENT_RE.test(msg.client) ? msg.client : null;
-      const ref = msg && msg.ref != null ? msg.ref : null;
+      const client = typeof msg.client === 'string' && DM_CLIENT_RE.test(msg.client) ? msg.client : null;
+      const ref = msg.ref != null ? msg.ref : null;
       if (ref !== null && (typeof ref !== 'string' || !DM_CLIENT_REF_RE.test(ref))) return this._json(res, 400, { ok: false, error: 'bad ref' });
       const awaitMs = Number.isFinite(+msg.await) && +msg.await > 0 ? Math.min(+msg.await, DM_AWAIT_MAX_MS) : 0;
       const ts = new Date().toISOString();
@@ -970,7 +970,9 @@ class RemoteServer {
       let input;
       if (isYaml) input = { yaml: body };
       else {
-        try { input = { data: JSON.parse(body) }; } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+        const data = parseJsonObject(body);
+        if (!data) return this._json(res, 400, { ok: false, error: 'bad JSON' });
+        input = { data };
       }
       Promise.resolve()
         .then(() => this._setProfile(name, input, { merge: mergeParam !== '0' }))
@@ -991,8 +993,8 @@ class RemoteServer {
     if (!this._restartSession) return this._json(res, 501, { ok: false, error: 'restart not available' });
     if (!this._jsonBody(req, res)) return;
     return this._readBody(req, res, (body) => {
-      let msg = {};
-      if (body) { try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); } }
+      const msg = body ? parseJsonObject(body) : {};
+      if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
       Promise.resolve()
         .then(() => this._restartSession(name, { fresh: !!msg.fresh }))
         .then((out) => this._json(res, out && out.ok ? 200 : (Number.isInteger(out && out.code) ? out.code : 404), out || { ok: false, error: 'restart failed' }))
@@ -1012,8 +1014,8 @@ class RemoteServer {
     if (!this._setSessionArgs) return this._json(res, 501, { ok: false, error: 'args not available' });
     if (!this._jsonBody(req, res)) return;
     return this._readBody(req, res, (body) => {
-      let msg;
-      try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+      const msg = parseJsonObject(body);
+      if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
       Promise.resolve()
         .then(() => this._setSessionArgs(name, msg))
         .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'setArgs failed' }))
@@ -1035,8 +1037,8 @@ class RemoteServer {
     if (!this._setSessionSkills) return this._json(res, 501, { ok: false, error: 'skills not available' });
     if (!this._jsonBody(req, res)) return;
     return this._readBody(req, res, (body) => {
-      let msg;
-      try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+      const msg = parseJsonObject(body);
+      if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
       Promise.resolve()
         .then(() => this._setSessionSkills(name, msg.disabledSkills, msg.injectSkills))
         .then((out) => this._json(res, out && out.ok ? 200 : 404, out || { ok: false, error: 'setSkills failed' }))
@@ -1048,10 +1050,10 @@ class RemoteServer {
     if (!this._setClientToken) return this._json(res, 501, { ok: false, error: 'client token not available' });
     if (!this._jsonBody(req, res)) return;
     return this._readBody(req, res, (body) => {
-      let msg;
-      try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
+      const msg = parseJsonObject(body);
+      if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
       Promise.resolve()
-        .then(() => this._setClientToken(name, msg && typeof msg === 'object' ? msg.token : undefined))
+        .then(() => this._setClientToken(name, msg.token))
         .then((out) => this._json(res, out && out.ok ? 200 : ((out && out.code) || 409), out || { ok: false, error: 'set client token failed' }))
         .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
     });
@@ -1079,9 +1081,9 @@ class RemoteServer {
   _handleImportBegin(req, res) {
     if (!this._jsonBody(req, res)) return;
     return this._readBody(req, res, (body) => {
-      let msg;
-      try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
-      const name = msg && msg.name;
+      const msg = parseJsonObject(body);
+      if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
+      const name = msg.name;
       if (this._importCreate && typeof this._importCreate.check === 'function') {
         let taken;
         try { taken = this._importCreate.check(name); }
@@ -1089,7 +1091,7 @@ class RemoteServer {
         if (taken && !taken.ok) return this._json(res, taken.code || 400, taken);
       }
       let out;
-      try { out = this._seatImport.begin({ name, record: msg && msg.record }); }
+      try { out = this._seatImport.begin({ name, record: msg.record }); }
       catch (e) { return this._json(res, 500, { ok: false, error: e.message }); }
       return this._json(res, out && out.ok ? 200 : 400, out || { ok: false, error: 'begin failed' });
     });
@@ -1409,9 +1411,9 @@ class RemoteServer {
       if (!this._createSession) return this._json(res, 501, { ok: false, error: 'create not available' });
       if (!this._jsonBody(req, res)) return;
       return this._readBody(req, res, (body) => {
-        let msg;
-        try { msg = JSON.parse(body); } catch { return this._json(res, 400, { ok: false, error: 'bad JSON' }); }
-        if (msg && typeof msg.name === 'string' && isReservedSeatName(msg.name.trim())) return this._json(res, 400, { ok: false, error: 'reserved name' });
+        const msg = parseJsonObject(body);
+        if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
+        if (typeof msg.name === 'string' && isReservedSeatName(msg.name.trim())) return this._json(res, 400, { ok: false, error: 'reserved name' });
         Promise.resolve()
           .then(() => this._createSession(msg))
           .then((out) => this._json(res, out && out.ok ? 200 : (out && out.code) || 400, out || { ok: false, error: 'create failed' }))

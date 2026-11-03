@@ -771,12 +771,14 @@ seats get a request/response channel whose reply is the caller's own tool result
   process can also drive a real API call through the seat's wire to obtain a fresh one; the
   boundary is that window, the call's cost and its visibility in the shadow log, not cryptography.
 - **Identity (Codex):** the seat is Codex by `session.agentType` (a clone has no persistence
-  entry); `agentId` from `CODEX_THREAD_ID`; equal to the seat's `sessionId`
-  or its uuid tail (uuid-shaped ids only) is the main thread; a call with no `agentId`, or a seat
-  with no `sessionId` yet, is a subagent. Codex identity is asserted by the caller's environment,
-  not proven: there is no HMAC on the Codex path and no wire check, so a subagent that learns the
-  rollout uuid can pass as main. The Claude stamp is bound to a main-thread tool_use the wire saw,
-  as above.
+  entry); `agentId` from `CODEX_THREAD_ID`. An `agentId` equal to the seat's `sessionId` or its
+  uuid tail (uuid-shaped ids only) is necessary but not sufficient: the asserted id is readable by
+  any same-UID process, so a Codex caller is the main thread only if it also carries a main stamp
+  whose tool-use id the wire saw (`consumeMainToolUse`), exactly as a Claude caller. A call with no
+  `agentId`, or a seat with no `sessionId` yet, is a subagent. Codex has no PreToolUse hook to
+  stamp a call, and `MainToolUseCollector` is built only for `provider === 'anthropic'`
+  (wire/proxy.js `_buildTee`), so today every Codex socket caller is a subagent: a Codex main
+  thread's intents work only through its output.
 - **Subagent filter:** a subagent call is refused unless the intent's plugin row declares a `subagent` policy that allows it (`subagentAllows`, intent-registry.js); the browser policy lives in plugins/browser-pane/subagent.js. Everything else answers `not available to a subagent: <verb> — return and let the seat's main agent do it`; a core tool call answers `unknown tool` unless the tool carries `subagentOk` and the stamp verified — today only `dm`: a verified subagent sends as `<seat>/<name>`, local seats only, never urgent, 10 per 60 s per agent; a parked or held dm answers without the resend/urgent clause; replies to `<seat>/<name>` route into the subagent's note queue (§3); the tool is listed for the whole seat, but a verified main stamp is delivered as a plain seat dm and its ack ends with a one-line do-not-use-again correction (`subagentOnly`, intent-registry.js); behind wirescope the harness prompt's trailing `[wirescope:strip-tools mcp__clodex__dm]` line removes the tool from main-line requests altogether (task subagents carry their own system prompt and keep it), so the correction fires only on a seat not behind the proxy; an unverified stamp still answers `unknown tool`. The socket verb still refuses `dm` to a subagent.
 - **Verb:** `clodex-send '<intent>' [more words…]` (args joined with spaces into one line) or `clodex-send -` (stdin, for a multi-line body). Forwards
   `CLODEX_AGENT_ID`, else `CODEX_THREAD_ID`, as `agentId` (Claude exports no
