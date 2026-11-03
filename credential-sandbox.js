@@ -50,6 +50,7 @@ function t0ReadPaths(registryDir, home) {
   if (!out.includes(ctlContexts)) out.push(ctlContexts);
   out.push(path.join(registryDir, 'run', '*', 'mcp.json'));
   out.push(path.join(registryDir, 'sessions', '*', 'run', 'mcp.json'));
+  out.push(path.join(registryDir, 'peer-outbox', 'outbox-key'));
   return out;
 }
 
@@ -130,6 +131,7 @@ function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = o
   const kindOf = new Map(dataEntries.map((e) => [e.p, e.dir]));
   kindOf.set(t0[0], false);
   kindOf.set(t0[2], true);
+  kindOf.set(path.join(registryDir, 'peer-outbox', 'outbox-key'), false);
   kindOf.set(path.join(home, '.clodex', 'cli', 'contexts.json'), false);
   kindOf.set(APP_BUNDLE, true);
   for (const p of userDataFiles) kindOf.set(p, false);

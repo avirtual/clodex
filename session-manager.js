@@ -138,10 +138,11 @@ const { pasteModeSignal, PROXY_AGENT_PREFIX, PASTE_START, PASTE_END, stampServed
 const QUOTA_WINDOW_LONG = { '5h': '5-hour window', '7d': 'weekly window (all models)', '7d_oi': 'weekly window (Fable)', overage: 'overage window' };
 const {
   RELAY_ROSTER_TTL_MS, RELAY_MAX_HOPS,
-  buildRelayEnvelope, buildTerminalDm, isRelayEnvelope, hopRule, relayVersionOk, isDoneTaskEnvelope, isSandboxEnvelope, peerOriginSuffix,
+  buildRelayEnvelope, buildTerminalDm, isRelayEnvelope, hopRule, relayVersionOk, isDoneTaskEnvelope, isSandboxEnvelope, peerOriginSuffix, isQualifiedSender,
 } = require('./relay-protocol');
 const { formatTeamBlock, matchSeatRole, formatRoster, formatCompositionDelta } = require('./team-manifest');
 const { SYSTEM_SENDERS, isReservedSenderName, reservedSenderError } = require('./system-senders');
+const { claimedRecordFault } = require('./peer-outbox');
 const { defuseSenderLines, defangTeammateTag } = require('./review-gate');
 
 const SCRATCH_CLONE_CEILING_MS = 45 * 60 * 1000;
@@ -271,7 +272,16 @@ const { readTeamJson } = require('./team-prompt-dir');
 const { ensureSeatLink, renameSeat, removeSeat, renameTargets, pathInUse } = require('./seat-layout');
 const { SEAT_KINDS, seatPathFor, legacySeatPathFor, claudeProjectSlug } = require('./clodex-paths');
 const { LIVING_MARK } = require('./intent-catalog');
-const { resolveSubagent, nameOfSubagent, clearSubq, SUBQ_DM_SUFFIX } = require('./subq');
+const { resolveSubagent, nameOfSubagent, clearSubq, SUBQ_DM_SUFFIX, SUBQ_NAME_RE } = require('./subq');
+
+function isSubagentSender(name) {
+  const slash = typeof name === 'string' ? name.indexOf('/') : -1;
+  if (slash <= 0) return false;
+  const seat = name.slice(0, slash);
+  const sub = name.slice(slash + 1);
+  return isQualifiedSender(seat) && !seat.includes('@') && (SUBQ_NAME_RE.test(sub) || /^agent-[0-9a-f]{8}$/.test(sub));
+}
+
 const { SEGMENT_RE: IMPORT_SEGMENT_RE, SESSION_ID_RE: IMPORT_SESSION_ID_RE } = require('./seat-import');
 const { effectiveModel } = require('./accounts');
 const { liveSnapshotFor, archivedSnapshotFor, exitedSnapshotFor, stampConfigFlags } = require('./session-restore');
@@ -8860,9 +8870,13 @@ function createSessionManager(deps) {
         || peerOriginSuffix({ label: peerLabel, id: peerId }, AGENT_NAME_RE)
         || String(peerId);
       for (const m of (Array.isArray(messages) ? messages : [])) {
-        if (!m || typeof m.to !== 'string') continue;
+        const fault = claimedRecordFault(m);
+        if (fault) {
+          log.warn('peer', `claimed dm from peer ${peerId} dropped — ${fault}`);
+          continue;
+        }
         if (isRelayEnvelope(m)) { this._relayClaimedDm(peerId, peerLabel, cfg, m, origin); continue; }
-        const senderTag = `${m.from || 'peer'}@${origin}`;
+        const senderTag = `${m.from}@${origin}`;
         const refKey = typeof m.ref === 'string' && m.ref ? `c\n${peerId}\n${m.from}\n${m.ref}` : null;
         const answer = (text) => this._sendToFederatedTarget('board', `${m.from}@${origin}`, `[agent:task] ${text}`, false, {});
         const answerTeam = (text) => this._sendToFederatedTarget('board', `${m.from}@${origin}`, `[agent:team] ${text}`, false, {});
@@ -8935,7 +8949,11 @@ function createSessionManager(deps) {
         .map((e) => e.n);
       for (const note of ordered) {
         if (!note || typeof note.body !== 'string') continue;
-        const from = `${note.from || 'peer'}@${origin}`;
+        if (!isQualifiedSender(note.from) || note.from.includes('@')) {
+          log.warn('peer', `claimed note from peer ${peerId} dropped — bad sender name`);
+          continue;
+        }
+        const from = `${note.from}@${origin}`;
         let rec;
         try {
           rec = store.add({
@@ -9026,6 +9044,7 @@ function createSessionManager(deps) {
     }
 
     _buildDeliveryText(target, senderName, body, mtype, tag = '') {
+      if (!SYSTEM_SENDERS.has(senderName) && !isQualifiedSender(senderName) && !isSubagentSender(senderName)) senderName = 'peer';
       const prefix = `[agent:from ${senderName}]`;
 
       // The marker is parenthesized and never at column 1 so IntentScanner cannot read it as an

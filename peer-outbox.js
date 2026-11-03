@@ -8,7 +8,7 @@
 //
 // Store shape mirrors pending-store's zero-loss discipline, one dir per ORIGIN
 // (the consumer's self-reported label) instead of per agent, one file per
-// message (<seq>.json = {from,to,body,urgent,ts}):
+// message (<seq>.json):
 //   * enqueue — write a hidden .tmp then rename into place, so a claimer never
 //               sees a partial file (atomic write-then-rename per message).
 //   * claim   — at most once: the atomic rename of the origin dir IS the claim,
@@ -16,13 +16,16 @@
 //               batch. Enqueue-after-claim lands in a fresh dir for the next
 //               claim.
 //
-// Pure fs helpers, dependency-free, so federation is unit-testable without a
+// Pure fs helpers, so federation is unit-testable without a
 // live tunnel. `origin` is the consumer's label; it's validated to the session
 // name charset before it ever touches the path (and '.'/'..' rejected) so a wire
 // value can't traverse out of the outbox root.
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+const { isQualifiedSender, isRelayEnvelope } = require('./relay-protocol');
+const { SYSTEM_SENDERS } = require('./system-senders');
 
 const ORIGIN_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 
@@ -31,6 +34,81 @@ const ORIGIN_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 // the root). Everything downstream trusts this gate.
 function validOrigin(origin) {
   return typeof origin === 'string' && ORIGIN_RE.test(origin) && origin !== '.' && origin !== '..';
+}
+
+const OUTBOX_KEY_FILE = 'outbox-key';
+const OUTBOX_KEY_BYTES = 32;
+const outboxKeys = new Map();
+
+function validMailbox(origin) {
+  return validOrigin(origin) && origin !== OUTBOX_KEY_FILE;
+}
+
+function outboxKeyPath(root) { return path.join(root, OUTBOX_KEY_FILE); }
+
+function readKeyFile(p) {
+  try {
+    const key = fs.readFileSync(p);
+    return key.length === OUTBOX_KEY_BYTES ? key : null;
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return null;
+    throw e;
+  }
+}
+
+function outboxKey(root) {
+  const p = outboxKeyPath(root);
+  const cached = outboxKeys.get(p);
+  if (cached) return cached;
+  let key = readKeyFile(p);
+  if (!key) {
+    fs.mkdirSync(root, { recursive: true });
+    const tmp = `${p}.${process.pid}.${Date.now()}.tmp`;
+    fs.writeFileSync(tmp, crypto.randomBytes(OUTBOX_KEY_BYTES), { mode: 0o600 });
+    try {
+      fs.linkSync(tmp, p);
+    } catch (e) {
+      if (!e || e.code !== 'EEXIST') throw e;
+      if (!readKeyFile(p)) fs.renameSync(tmp, p);
+    } finally {
+      try { fs.rmSync(tmp, { force: true }); } catch {}
+    }
+    key = readKeyFile(p);
+    if (!key) throw new Error(`outbox key at ${p} is unreadable`);
+  }
+  outboxKeys.set(p, key);
+  return key;
+}
+
+function forgetOutboxKey(root) { outboxKeys.delete(outboxKeyPath(root)); }
+
+function outboxSig(root, canonical) {
+  return crypto.createHmac('sha256', outboxKey(root)).update(canonical).digest('hex');
+}
+
+function outboxSigOk(root, obj) {
+  if (!obj || typeof obj !== 'object' || typeof obj.sig !== 'string') return false;
+  const { sig, ...record } = obj;
+  const want = Buffer.from(outboxSig(root, JSON.stringify(record)), 'hex');
+  const got = Buffer.from(sig, 'hex');
+  return got.length === want.length && crypto.timingSafeEqual(got, want);
+}
+
+const CLAIM_REF_RE = /^[A-Za-z0-9._-]{1,48}$/;
+
+function claimedSenderFault(from) {
+  if (typeof from !== 'string' || !ORIGIN_RE.test(from)) return 'bad sender name';
+  if (SYSTEM_SENDERS.has(from)) return 'system sender name';
+  return null;
+}
+
+function claimedRecordFault(m) {
+  if (!m || typeof m !== 'object') return 'not an object';
+  if (typeof m.to !== 'string' || !ORIGIN_RE.test(m.to)) return 'bad recipient name';
+  if (typeof m.body !== 'string') return 'bad body';
+  if (m.ref != null && (typeof m.ref !== 'string' || !CLAIM_REF_RE.test(m.ref))) return 'bad ref';
+  if (isRelayEnvelope(m)) return isQualifiedSender(m.from) ? null : 'bad relay sender';
+  return claimedSenderFault(m.from);
 }
 
 function originDir(root, origin) { return path.join(root, origin); }
@@ -42,16 +120,16 @@ function isClaimEntry(name) { return /\.claiming\./.test(name); }
 
 // Publish one message to `origin`'s mailbox. `seq` is a lexically-sortable,
 // monotonic string (arrival order); filenames sort by it, so a claim reads in
-// order. Returns { ok:true, file } or { ok:false, error } (bad origin). Retries
+// order. Returns { ok:true, file } or { ok:false, error }. Retries
 // once into a fresh dir if the mailbox was claimed away mid-publish (delivered on
 // the next claim, not lost).
 function enqueueOutbox(root, origin, msg, seq) {
-  if (!validOrigin(origin)) return { ok: false, error: 'bad origin' };
+  if (!validMailbox(origin)) return { ok: false, error: 'bad origin' };
   const dir = originDir(root, origin);
   const base = `${seq}.json`;
   const tmp = path.join(dir, `.${base}.tmp`);
   const fin = path.join(dir, base);
-  const payload = JSON.stringify({
+  const fields = {
     from: String(msg && msg.from != null ? msg.from : ''),
     to: String(msg && msg.to != null ? msg.to : ''),
     body: String(msg && msg.body != null ? msg.body : ''),
@@ -68,7 +146,11 @@ function enqueueOutbox(root, origin, msg, seq) {
     ...(msg && Number.isInteger(msg.rv) ? { rv: msg.rv } : {}),
     ...(msg && typeof msg.ref === 'string' && msg.ref ? { ref: msg.ref } : {}),
     ...(msg && msg.task && typeof msg.task === 'object' ? { task: msg.task } : {}),
-  });
+  };
+  const fault = claimedRecordFault(fields);
+  if (fault) return { ok: false, error: fault };
+  const record = JSON.stringify(fields);
+  const payload = `${record.slice(0, -1)},"sig":${JSON.stringify(outboxSig(root, record))}}`;
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(tmp, payload);
   try {
@@ -89,8 +171,9 @@ function enqueueOutbox(root, origin, msg, seq) {
 // [] when empty, the origin is bad, or another claimer won the race. At most once
 // and possibly zero: the claim dir is gone before this returns, so a crash or
 // dropped connection before the caller flushes the response loses the batch.
-function claimOutbox(root, origin) {
-  if (!validOrigin(origin)) return [];
+function claimOutbox(root, origin, onSkip = null) {
+  const skip = (file, reason) => { if (typeof onSkip === 'function') { try { onSkip(file, reason); } catch {} } };
+  if (!validMailbox(origin)) return [];
   const dir = originDir(root, origin);
   const claim = `${dir}.claiming.${process.pid}.${Date.now()}`;
   try {
@@ -105,7 +188,9 @@ function claimOutbox(root, origin) {
   for (const f of files.filter((f) => f.endsWith('.json') && !f.startsWith('.')).sort()) {
     try {
       const obj = JSON.parse(fs.readFileSync(path.join(claim, f), 'utf8'));
-      if (obj && typeof obj.to === 'string') {
+      const fault = outboxSigOk(root, obj) ? claimedRecordFault(obj) : 'missing or bad signature';
+      if (fault) skip(f, fault);
+      else {
         out.push({
           from: obj.from || '', to: obj.to, body: obj.body || '', urgent: !!obj.urgent, ts: obj.ts || 0,
           // Carry the relay envelope fields back out (see enqueueOutbox) — only
@@ -118,7 +203,7 @@ function claimOutbox(root, origin) {
           ...(obj.task && typeof obj.task === 'object' ? { task: obj.task } : {}),
         });
       }
-    } catch { /* skip a corrupt entry rather than abort the whole claim */ }
+    } catch { skip(f, 'unreadable'); }
   }
   try { fs.rmSync(claim, { recursive: true, force: true }); } catch {}
   return out;
@@ -127,7 +212,7 @@ function claimOutbox(root, origin) {
 // Does `origin` have at least one queued message right now? Cheap peek, not a
 // claim.
 function outboxHasOrigin(root, origin) {
-  if (!validOrigin(origin)) return false;
+  if (!validMailbox(origin)) return false;
   try {
     return fs.readdirSync(originDir(root, origin))
       .some((f) => f.endsWith('.json') && !f.startsWith('.'));
@@ -165,7 +250,7 @@ function listOutboxOrigins(root) {
   try { names = fs.readdirSync(root); } catch { return []; }
   const out = [];
   for (const name of names) {
-    if (isClaimEntry(name) || !validOrigin(name)) continue;
+    if (isClaimEntry(name) || !validMailbox(name)) continue;
     if (outboxHasOrigin(root, name)) out.push(name);
   }
   return out;
@@ -175,4 +260,6 @@ module.exports = {
   enqueueOutbox, claimOutbox, outboxHasOrigin, listOutboxOrigins,
   markOutboxOrigin, outboxKnowsOrigin,
   validOrigin, ORIGIN_RE,
+  claimedRecordFault, claimedSenderFault, CLAIM_REF_RE,
+  OUTBOX_KEY_FILE, outboxKeyPath, forgetOutboxKey,
 };
