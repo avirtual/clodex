@@ -10,7 +10,7 @@ const URL_CANDIDATE_RE = /(?<![a-z0-9+.-])([a-z0-9+.-]+):\/\//gi;
 const URL_TAIL_RE = /\S*/y;
 const ASCII_LETTER_RE = /[a-z]/i;
 const WORD_CHAR_RE = /\w/;
-const URL_QUERY_PARAM_RE = /([?&]([\w.-]+)=)[^&#\s]*/g;
+const URL_QUERY_PARAM_RE = /([?&]([\w.-]+)=)[^&#\s?]*/g;
 const URL_KEY_SIG_RE = /(?:^|[-_.])(?:key|sig)$/i;
 
 function isSecretName(name) {
