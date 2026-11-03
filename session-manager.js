@@ -5687,7 +5687,7 @@ function createSessionManager(deps) {
         const store = getNotifications && getNotifications();
         if (!store) return;
         session._permInboxTs = attn.ts;
-        const pending = session.streamPermissions ? [...session.streamPermissions.values()].filter((p) => p.ts === attn.ts).pop() : null;
+        const pending = session.streamPermissions && this._seatTicketLead(session) ? [...session.streamPermissions.values()].filter((p) => p.ts === attn.ts).pop() : null;
         store.add({
           from: 'clodex', workspaceId: session.workspaceId || null,
           body: `Seat ${session.name} (ticket ${ticketId}) is waiting on a permission dialog: ${attn.message || '(no message)'}. Allow or deny it in the attention view; it holds the ticket until you do.`

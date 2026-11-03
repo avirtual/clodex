@@ -3426,12 +3426,18 @@ function createTicketMethods(deps, shared) {
         const owner = this._seatTicketLead(seat);
         if (!owner) return;
         sent.add(id);
-        const tag = `[permission ${seat.name} ${id}]`;
-        const preview = maskSecrets(String(rec.preview || rec.displayName || '')).slice(0, 300);
-        this._gatedDeliver(owner.lead, 'permission',
-          `${tag} ticket ${owner.ticketId}: ${rec.toolName || rec.displayName || 'a tool'} — ${preview}\n`
-          + `Answer: [agent:permit ${seat.name} ${id} allow] or [agent:permit ${seat.name} ${id} deny]; the Requests list in the attention view still works.`,
+        const flat = (v) => maskSecrets(String(v || '')).replace(/\r\n|[\n\v\f\r\x85\p{Zl}\p{Zp}]/gu, ' ⏎ ');
+        const tag = `[permission ${seat.name} ${flat(id)}]`;
+        const preview = flat(rec.preview || rec.displayName).slice(0, 300);
+        const tool = flat(rec.toolName || rec.displayName || 'a tool').slice(0, 80);
+        const r = this._gatedDeliver(owner.lead, 'permission',
+          `${tag} ticket ${owner.ticketId}: ${tool} — ${preview}\n`
+          + `Answer: [agent:permit ${seat.name} ${flat(id)} allow] or [agent:permit ${seat.name} ${flat(id)} deny]; the Requests list in the attention view still works.`,
           false, tag);
+        if (r && r.error) {
+          log.warn('intent', `permission relay for ${seat.name} ${id} to ${owner.lead} failed: ${r.error}`);
+          this._shadowLog({ type: 'permission-relay-error', seat: seat.name, id, error: r.error });
+        }
       } catch (e) {
         this._shadowLog({ type: 'permission-relay-error', seat: seat && seat.name, id, error: e.message });
       }

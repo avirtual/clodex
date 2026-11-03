@@ -113,6 +113,8 @@ teammate.
 - `[agent:task list]` — the open board, the last few closed, and a count of
   the rest. There is no `rejected` filter; an unknown one bounces with the
   valid set.
+- `[agent:permit <seat> <id> allow|deny]` — answer the request a `permission`
+  dm relays from a ticket seat held on a permission dialog.
 - Each intent in a reply is acked separately, possibly out of order; a missing
   ack is not a dropped verb. Before re-emitting, end the turn and read
   `[agent:task list]` — a re-sent start bounces "already started" and names
