@@ -229,6 +229,8 @@ test('the URL query rule masks any secret-named parameter through to the next `&
     ['https://h/p?next=/cb?token="v"LEAK,MORE', 'https://h/p?next=/cb?token=[redacted]'],
     ['https://h/p?a=x?password="p"q,r#f', 'https://h/p?a=x?password=[redacted]#f'],
     ['https://h/p?next=/cb?page=2&c=1', 'https://h/p?next=/cb?page=2&c=1'],
+    ['https://h/p?sig=abc?def&c=1', 'https://h/p?sig=[redacted]&c=1'],
+    ['https://h/p?sig="a?b"c&c=1', 'https://h/p?sig=[redacted]&c=1'],
   ]) {
     assert.strictEqual(maskSecrets(url), expected);
   }
