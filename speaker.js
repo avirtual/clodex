@@ -131,6 +131,7 @@ function createVoiceCatalog({ execFileImpl = execFile, bin = SAY_BIN, lang = 'en
 
 function createSpeaker({ execFileImpl = execFile, bin = SAY_BIN } = {}) {
   let child = null;
+  let childOwner = null;
 
   function killChild() {
     if (!child) return false;
@@ -143,6 +144,11 @@ function createSpeaker({ execFileImpl = execFile, bin = SAY_BIN } = {}) {
   }
 
   function stop() {
+    return killChild();
+  }
+
+  function stopFor(owner) {
+    if (!child || typeof owner !== 'string' || childOwner !== owner) return false;
     return killChild();
   }
 
@@ -164,7 +170,7 @@ function createSpeaker({ execFileImpl = execFile, bin = SAY_BIN } = {}) {
   // first rather than queueing behind it: the newer reply is the one the
   // operator is waiting on, and a queue would fall further behind on every turn
   // until it narrated the distant past.
-  function speak(text, { voice = DEFAULT_VOICE, rate = DEFAULT_RATE } = {}) {
+  function speak(text, { voice = DEFAULT_VOICE, rate = DEFAULT_RATE, owner = null } = {}) {
     if (!text) return false;
     killChild();
     const args = [];
@@ -193,10 +199,11 @@ function createSpeaker({ execFileImpl = execFile, bin = SAY_BIN } = {}) {
       return false;
     }
     child = started;
+    childOwner = typeof owner === 'string' ? owner : null;
     return true;
   }
 
-  return { speak, stop, interruptForRecorder, isSpeaking: () => !!child };
+  return { speak, stop, stopFor, interruptForRecorder, isSpeaking: () => !!child };
 }
 
 module.exports = {

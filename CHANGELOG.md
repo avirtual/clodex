@@ -28,6 +28,7 @@ blocks a release.
 - A hand's pending permission request (a Bash call the guard did not clear, say) now reaches its lead as a dm carrying the request id and the command, and the lead can answer it with `[agent:permit <seat> <id> allow|deny]` instead of the seat waiting on the operator.
 - Re-running `scripts/release.sh` after a run died past the GitHub release (during image publish, prune or the review launch) resumes those steps for the same version instead of cutting a second, empty release.
 - A subagent note that cannot be parked on retire is returned to its queue with a `park-failed` receipt instead of vanishing, and a changed context-reminder threshold takes effect on the next poll rather than after the seat's next turn.
+- Spoken replies are no longer cut off when an unrelated seat exits or another window closes; only the speaking seat's own exit stops its narration.
 
 ## 5.159.0 — 2026-11-03 — Security: log-mask masks every secret-named URL query parameter, Edit tab vets and writes one descriptor; memory id trim, dm await on pty seats, board cost breakdown
 
