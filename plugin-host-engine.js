@@ -1028,6 +1028,14 @@ function createPluginHostEngine(deps) {
       notifyStateChanged();
       return true;
     },
+    updateManifest(pluginId, manifest) {
+      const rec = registered.get(String(pluginId));
+      if (!rec || !manifest) return false;
+      const { name, version, announce } = manifest;
+      rec.manifest = { ...rec.manifest, name, version, announce };
+      notifyStateChanged();
+      return true;
+    },
     setEnabled(pluginId, enabled) {
       const id = String(pluginId);
       const loader = getLoader && getLoader();

@@ -821,13 +821,13 @@ test('resolveSource and resolveUpdate project the fetched manifest\'s announce',
 
 // A tarball whose plugin has NO engine and NO renderer half — legal since the
 // directory carries a skills/ entry, and the case the row below is about.
-function buildBundleOnlyTarballBytes(sha, id, skillBody) {
+function buildBundleOnlyTarballBytes(sha, id, skillBody, version = '1.0.0') {
   const stage = mkTmpRoot('clodex-loader-source-stage-');
   const topDirName = `owner-repo-${sha}`;
   const topDir = path.join(stage, topDirName);
   fs.mkdirSync(path.join(topDir, 'skills', 'note'), { recursive: true });
   fs.writeFileSync(path.join(topDir, 'manifest.json'), JSON.stringify({
-    id, name: `${id} plugin`, version: '1.0.0', hostApi: HOST_API_VERSION, entry: {},
+    id, name: `${id} plugin`, version, hostApi: HOST_API_VERSION, entry: {},
   }));
   fs.writeFileSync(path.join(topDir, 'skills', 'note', 'SKILL.md'), skillBody);
   require('node:child_process').execFileSync('tar', ['-czf', path.join(stage, 'out.tar.gz'), '-C', stage, topDirName]);
@@ -842,7 +842,7 @@ test('applyUpdate on a BUNDLE-ONLY plugin does NOT set restartRequired (t683 r3 
   // plugin. Setting it here means an updated skill silently never reaches the
   // seats until the app restarts, which is the whole point of updating a bundle.
   const installBytes = buildBundleOnlyTarballBytes('abc1234', 'demo', 'v1 skill');
-  const updateBytes = buildBundleOnlyTarballBytes('def5678', 'demo', 'v2 skill');
+  const updateBytes = buildBundleOnlyTarballBytes('def5678', 'demo', 'v2 skill', '1.1.0');
   const { loader, getUi } = mkSourceLoader({ script: [{ bytes: installBytes }, { bytes: updateBytes }] });
   const installed = await loader.installFromSource('owner/repo@main');
   assert.strictEqual(installed.ok, true, JSON.stringify(installed));
@@ -864,6 +864,27 @@ test('applyUpdate on a BUNDLE-ONLY plugin does NOT set restartRequired (t683 r3 
   assert.deepStrictEqual(r.changed, [], 'nothing to restart for, so nothing to report as changed');
   assert.deepStrictEqual(pluginHost.updateBundleCalls.map((c) => c[0]), ['demo'],
     'the refreshed skills must reach the host — the flag would have withheld exactly this');
+  assert.ok(!loader.status().plugins.find((p) => p.id === 'demo').restartRequired,
+    'the version move is absorbed as a bundle refresh, not flagged for a restart');
+
+  const again = loader.rescan(pluginHost);
+  assert.deepStrictEqual(again.changed, [], 'a second rescan does not re-report the already-refreshed version');
+});
+
+test('a version bump on a plugin WITH an engine still sets restartRequired', async () => {
+  const { loader } = mkSourceLoader({ script: [{ bytes: buildTarballBytes('abc1234', 'demo') }] });
+  await loader.installFromSource('owner/repo@main');
+  loader.setEnabledInSettings('demo', true);
+  const pluginHost = fakePluginHost();
+  assert.strictEqual(loader.activateById('demo', pluginHost).ok, true);
+  const manifestPath = path.join(loader.discover().find((r) => r.id === 'demo').dir, 'manifest.json');
+  fs.writeFileSync(manifestPath, JSON.stringify(manifestFor('demo', { version: '1.1.0' })));
+
+  const r = loader.rescan(pluginHost);
+  assert.deepStrictEqual(r.changed, ['demo'], 'ENTER: the engine-carrying version move is reported');
+  assert.deepStrictEqual(pluginHost.updateBundleCalls, [], 'no bundle refresh is paired with the stale engine');
+  assert.deepStrictEqual(loader.status().plugins.find((p) => p.id === 'demo').restartRequired,
+    { was: '1.0.0', now: '1.1.0', dirChanged: false });
 });
 
 // ════════════════════════════════════════════════════════════════════════════

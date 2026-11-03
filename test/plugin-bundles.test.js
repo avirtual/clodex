@@ -293,7 +293,11 @@ test('t672 r2: a plugin whose VERSION moved keeps its old bundle, paired with th
   // fresh skills against the require-cached OLD engine — a pairing no install
   // ever shipped, and the restart badge below is the app admitting it cannot
   // reload the engine half.
-  const root = mkTree({ stocks: PACK });
+  const ENGINE_MANIFEST = { ...PACK.manifest, entry: { engine: 'engine.js' } };
+  const root = mkTree({ stocks: {
+    manifest: ENGINE_MANIFEST,
+    files: { ...PACK.files, 'engine.js': 'module.exports = { activate() {} };' },
+  } });
   const { loader } = mkLoader(root);
   const engine = mkEngine();
   loader.loadAll(engine);
@@ -305,7 +309,7 @@ test('t672 r2: a plugin whose VERSION moved keeps its old bundle, paired with th
   assert.match(bodyOf(), /Go look it up/, 'ENTER: the seat-visible read is populated at load');
 
   fs.writeFileSync(path.join(root, 'stocks', 'manifest.json'),
-    JSON.stringify({ ...PACK.manifest, version: '2.0.0' }));
+    JSON.stringify({ ...ENGINE_MANIFEST, version: '2.0.0' }));
   fs.writeFileSync(path.join(root, 'stocks', 'skills', 'foo', 'SKILL.md'), '---\ndescription: d\n---\nEDITED\n');
 
   const r = loader.rescan(engine);
@@ -313,6 +317,27 @@ test('t672 r2: a plugin whose VERSION moved keeps its old bundle, paired with th
     'ENTER: the version move was actually detected — otherwise the assertion below is about the ordinary refresh case');
   assert.match(bodyOf(), /Go look it up/,
     'the old body stands until the restart the changed badge asks for');
+});
+
+test('a content-only plugin whose VERSION moved refreshes its bundle and host manifest in place', () => {
+  const root = mkTree({ stocks: PACK });
+  const { loader } = mkLoader(root);
+  const engine = mkEngine();
+  loader.loadAll(engine);
+  const bodyOf = () => engine.bundles().find((x) => x.id === 'stocks').skills[0].content;
+  assert.match(bodyOf(), /Go look it up/, 'ENTER: the old body is loaded');
+
+  fs.writeFileSync(path.join(root, 'stocks', 'manifest.json'),
+    JSON.stringify({ ...PACK.manifest, name: 'Stocks Two', version: '2.0.0', announce: 'new' }));
+  fs.writeFileSync(path.join(root, 'stocks', 'skills', 'foo', 'SKILL.md'), '---\ndescription: d\n---\nEDITED\n');
+
+  const r = loader.rescan(engine);
+  assert.deepStrictEqual([r.added, r.removed, r.changed], [[], [], []]);
+  assert.match(bodyOf(), /EDITED/, 'the new body reaches the host without a restart');
+  const row = engine.catalog().find((x) => x.id === 'stocks');
+  assert.deepStrictEqual([row.name, row.version, row.announce], ['Stocks Two', '2.0.0', 'new']);
+  assert.strictEqual(loader.status().plugins.find((p) => p.id === 'stocks').restartRequired, null);
+  assert.deepStrictEqual(loader.rescan(engine).changed, [], 'a second rescan reports nothing changed');
 });
 
 test('t672 r2: a transient listing failure does not blank a good bundle record', () => {
