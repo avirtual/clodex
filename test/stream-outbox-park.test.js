@@ -13,7 +13,7 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const IO_ARG = 24;
 
-function boot() {
+function boot(opts = {}) {
   const root = mkTmpRoot('clx-sop-');
   const PENDING_DIR = path.join(root, 'pending');
   const store = new Map();
@@ -53,7 +53,7 @@ function boot() {
     memoryStore: { list: () => [] },
     composeDigest: () => null,
     registry: { register: () => {}, unregister: () => {} },
-    Transport: class { start() {} stop() {} },
+    Transport: class { start() { if (opts.transportStart) return opts.transportStart(); } stop() {} },
     JsonlWatcher: class { start() {} stop() {} },
     pty: { spawn: () => ({ onData() {}, onExit() {}, pid: 999, kill() {}, write() {}, resize() {} }) },
     spawnStreamSeat: (opts) => {
@@ -338,5 +338,116 @@ test('an exited-but-not-closed stream seat queues a dm instead of writing it', a
     assert.deepStrictEqual(app.sends.get('sx'), []);
     assert.strictEqual(s.outbox.length, 1);
     assert.deepStrictEqual(fired, []);
+  } finally { app.stop(); }
+});
+
+const codexCodec = require('../stream-codec-codex');
+
+test('a failed thread/start keeps the seat busy with its init watchdog armed, which raises the handshake attention; a dm waits', async (t) => {
+  const app = boot();
+  try {
+    const s = await app.spawn('sx', 'stream');
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const codec = codexCodec.create({ cwd: '/w' });
+    const open = codec.open();
+    s.streamCodec = codec;
+    s.streamBusy = true;
+    app.m._armStreamInitWatchdog(s);
+    app.emit('sx', { id: open[2].id, error: { code: -32000, message: 'auth gone' } });
+    assert.strictEqual(s.streamBusy, true);
+    assert.ok(s._streamInitTimer);
+    const fired = [];
+    app.m._deliverMessage('sx', 'lead', 'held-body-3301', 'dm', '', (...a) => fired.push(a), 'key-3301');
+    assert.strictEqual(s.outbox.length, 1);
+    assert.deepStrictEqual(fired, []);
+    t.mock.timers.tick(60 * 1000);
+    assert.match(s.needsAttention && s.needsAttention.message, /^never answered the opening handshake after 60000ms$/);
+  } finally { app.stop(); }
+});
+
+test('a dm to an idle seat whose codec cannot encode it stays at the outbox head and is not acked', async () => {
+  const app = boot();
+  try {
+    const s = await app.spawn('sx', 'stream');
+    const codec = codexCodec.create({ cwd: '/w' });
+    codec.open();
+    s.streamCodec = codec;
+    app.m._clearStreamInitWatchdog(s);
+    s.streamBusy = false;
+    const before = app.sends.get('sx').length;
+    const fired = [];
+    app.m._deliverMessage('sx', 'lead', 'nothread-body-4402', 'dm', '', (...a) => fired.push(a), 'key-4402');
+    app.m._streamTurnEnd(s);
+    assert.strictEqual(s.outbox.length, 1);
+    assert.match(s.outbox[0].text, /nothread-body-4402/);
+    assert.deepStrictEqual(fired, []);
+    assert.strictEqual(app.sends.get('sx').length, before);
+    assert.strictEqual(s.streamBusy, false);
+  } finally { app.stop(); }
+});
+
+test('a queued /clear text the codex codec refuses is put back at the outbox head, not acked into the void', async () => {
+  const app = boot();
+  try {
+    const s = await app.spawn('sx', 'stream');
+    const codec = codexCodec.create({ cwd: '/w' });
+    const open = codec.open();
+    codec.decode({ id: open[2].id, result: { thread: { id: 'th-1' } } });
+    s.streamCodec = codec;
+    app.m._clearStreamInitWatchdog(s);
+    s.streamBusy = true;
+    let acked = 0;
+    app.m._streamEnqueue(s, { text: '/clear', images: [], origin: 'system' }, () => { acked++; });
+    assert.strictEqual(s.outbox.length, 1, 'ENTER: queued behind the busy turn');
+    app.m._streamTurnEnd(s);
+    assert.deepStrictEqual(s.outbox.map((q) => q.text), ['/clear']);
+    assert.strictEqual(acked, 0);
+  } finally { app.stop(); }
+});
+
+test('a producer item whose delivery fails is produced once and parks its produced text at exit', async () => {
+  const app = boot();
+  try {
+    const s = await app.spawn('sx', 'stream');
+    const codec = codexCodec.create({ cwd: '/w' });
+    codec.open();
+    s.streamCodec = codec;
+    app.m._clearStreamInitWatchdog(s);
+    s.streamBusy = true;
+    let ran = 0;
+    app.m._injectText(s, '', { produce: () => { ran++; return 'produced-5503'; }, fallback: () => 'fallback-5503', parkKey: 'key-5503' });
+    assert.strictEqual(s.outbox.length, 1, 'ENTER: the producer waits in the outbox');
+    app.m._streamTurnEnd(s);
+    app.m._streamTurnEnd(s);
+    assert.strictEqual(s.outbox.length, 1);
+    assert.strictEqual(ran, 1);
+    app.close('sx');
+    assert.deepStrictEqual(app.parked('sx').map((f) => f.text), ['produced-5503']);
+  } finally { app.stop(); }
+});
+
+const FORK_ARG = 7;
+
+for (const type of ['codex', 'muse']) {
+  test(`fork on a ${type} stream seat is refused before the codec is reached`, async () => {
+    const app = boot();
+    try {
+      const args = ['fx', type, app.root, [], 'some-thread', 'ws'];
+      args[FORK_ARG] = true;
+      args[IO_ARG] = 'stream';
+      app.setPending('fx');
+      await assert.rejects(app.m.create(...args), { message: `fork is not supported on a ${type} stream seat — resume it or start fresh` });
+      assert.strictEqual(app.sends.has('fx'), false);
+    } finally { app.stop(); }
+  });
+}
+
+test('the new stream pid reaches persistence before the first await after spawn', async () => {
+  const app = boot({ transportStart: () => { throw new Error('boom-6604'); } });
+  try {
+    app.persistence.upsert({ name: 'sx', type: 'claude', streamPid: { pid: 1234, startTime: 5 } });
+    await assert.rejects(app.spawn('sx', 'stream'), /boom-6604/);
+    assert.ok(app.seats.has('sx'), 'ENTER: the seat was spawned');
+    assert.deepStrictEqual(app.persistence.get('sx').streamPid, { pid: 7001, startTime: 1 });
   } finally { app.stop(); }
 });
