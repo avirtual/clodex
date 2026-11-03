@@ -1441,8 +1441,19 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
       dropStash(raw, roleName);
     }
     if (raw.roles) delete raw.roles[roleName];
-    rewriteRosterRows(teamName, (rows) => rows.filter((r) => !(r && r.role === roleName)));
-    atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
+    let removed = null;
+    rewriteRosterRows(teamName, (rows) => {
+      removed = rows.filter((r) => r && r.role === roleName);
+      return rows.filter((r) => !(r && r.role === roleName));
+    });
+    try {
+      atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
+    } catch (err) {
+      if (removed && removed.length) {
+        try { rewriteRosterRows(teamName, (rows) => [...rows, ...removed]); } catch {}
+      }
+      throw err;
+    }
     return loadManifest(teamName);
   }
 

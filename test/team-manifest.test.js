@@ -1562,6 +1562,20 @@ test('renameRole whose team.json write fails puts the roster rows back on the ol
   assert.deepStrictEqual(t.tm.loadManifest('shop').roster.map((r) => [r.seat, r.role]), [['shop-runner-1', 'runner']]);
 });
 
+test('removeRole whose team.json write fails puts the removed role\'s roster rows back', () => {
+  const t = teamWithRunnerSeat();
+  assert.deepStrictEqual(t.tm.loadManifest('shop').roster.map((r) => [r.seat, r.role]), [['shop-runner-1', 'runner']], 'ENTER');
+  const real = fs.openSync;
+  fs.openSync = function (file, ...rest) {
+    if (/\.team\.json\.tmp\./.test(path.basename(String(file)))) throw new Error('EIO: team write');
+    return real.call(this, file, ...rest);
+  };
+  try {
+    assert.throws(() => t.tm.removeRole('shop', 'runner'), /EIO: team write/);
+  } finally { fs.openSync = real; }
+  assert.deepStrictEqual(t.tm.loadManifest('shop').roster.map((r) => [r.seat, r.role]), [['shop-runner-1', 'runner']]);
+});
+
 // --- t421: the operator may drop `reviewer`, and get it back ---------------
 //
 // The two halves are ONE decision: removal without a re-mint strands a team
