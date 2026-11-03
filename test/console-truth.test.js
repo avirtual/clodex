@@ -346,6 +346,22 @@ test('a late lower-pid record in the cursor group is painted, and painted once',
     'the record sorting below the cursor reaches the pane exactly once');
 });
 
+test('a record stamped behind the cursor is painted once though the window re-serves it', async (t) => {
+  const p = await mountPane(t);
+
+  p.write('B', 11, '1730000000000000200');
+  await p.tick();
+  assert.deepStrictEqual(p.painted, ['B'], 'ENTER: the newer-stamped call was painted first');
+
+  p.write('A', 10, '1730000000000000100');
+  await p.tick();
+  await p.tick();
+  await p.tick();
+
+  assert.deepStrictEqual(p.painted, ['B', 'A'],
+    'the late-landing record reaches the pane, and every re-serve of it is dropped');
+});
+
 // If more than PULL_MAX_RECORDS records share the top timestamp group and the
 // seat goes quiet, the cursor cannot advance past the group, so `skipped` stays
 // above zero on every poll. Appending a gap node each time fills MAX_BLOCKS and

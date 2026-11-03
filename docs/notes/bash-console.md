@@ -32,9 +32,11 @@ reported absent, not as silence.
 
 ## readBashConsole
 
-"Newer than" is NOT a plain `>`. Where `date` has no `%N` the writer falls back
-to whole seconds, so a second's records share one stamp ordered only by pid and
-`f > cursor` drops every tie below it. The scan re-serves that whole group
-INCLUDING the cursor's own record (A-B-A measured, 3 dupes in 48 records).
+"Newer than" is NOT `stamp >= cursor`. The writer stamps at `date` but the
+record becomes visible only at its later `mv`, so parallel hooks can land A
+after B with A's stamp below B's; a poll that already moved the cursor to B would
+drop A forever. The scan therefore serves every record within `LOOKBACK_NS` (5 s)
+before the cursor's stamp, which also covers the whole-second fallback's ties,
+and the tenant's `lastKeys` drops the re-served ones.
 `RECORD_NAME_RE` is exported because `ipc-handlers.js` validates an incoming
 cursor with it — two literals could drift into rejecting every cursor written.

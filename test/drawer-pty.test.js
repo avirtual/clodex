@@ -295,6 +295,26 @@ test('kill escalates to SIGKILL, and the escalation cannot hold the loop open', 
   assert.deepStrictEqual(killed, [[4242, 'SIGKILL']], 'the pid captured BEFORE the delete');
 });
 
+test('a shell that exits on the SIGHUP is not SIGKILLed when the escalation fires', () => {
+  const spawn = fakePty();
+  const timers = [];
+  const killed = [];
+  const { w } = mk({
+    spawn,
+    setTimeout: (fn, ms) => { const t = { fn, ms, unref() { return t; } }; timers.push(t); return t; },
+    killPid: (pid, sig) => killed.push([pid, sig]),
+  });
+
+  w.spawn('ws-1', null, {});
+  spawn.spawned[0].pid = 4242;
+  w.kill('ws-1');
+  assert.strictEqual(timers.length, 1, 'ENTER: an escalation was scheduled');
+
+  spawn.spawned[0].exit(0);
+  timers[0].fn();
+  assert.deepStrictEqual(killed, [], 'a reaped pid may already belong to another process');
+});
+
 test('kill: the shell dies with its window and leaves no record', () => {
   const { w, spawn } = mk();
   w.spawn('ws-1', null, {});

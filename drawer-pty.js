@@ -191,6 +191,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     });
 
     proc.onExit(({ exitCode }) => {
+      rec.exited = true;
       // Before the identity guard: a dead shell took its pending command with it.
       settle(rec, { status: 'shell-exit', exitCode });
       // Identity, not key. A child trapping SIGHUP outlives the kill() that closed
@@ -398,7 +399,7 @@ function createDrawerPtys({ spawn, send, shell, cwdFor, scrollbackMax, env, log,
     try { rec.proc.kill(); } catch {}
     // pty.kill() is SIGHUP, which a child trapping or ignoring HUP survives. `unref`
     // so a quit is never held open for five seconds.
-    const t = later(() => { try { killProcess(pid, 'SIGKILL'); } catch {} }, 5000);
+    const t = later(() => { if (rec.exited) return; try { killProcess(pid, 'SIGKILL'); } catch {} }, 5000);
     if (t && typeof t.unref === 'function') t.unref();
   }
 
