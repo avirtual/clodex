@@ -898,6 +898,54 @@ test('scope own: a test file the branch DELETED is not handed to the runner', ()
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test('scope own: a fixture test file the branch ADDS is a subject, never a test to run', () => {
+  const root = mkRoot();
+  try {
+    mkBranchRepo(root, {
+      onBranch: ({ put: p, git: g }) => {
+        p('test/fixtures/x/bad.test.js', "throw new Error('fixture ran');\n");
+        p('test/reads-fixture.test.js',
+          `${EMPTY_TEST}fs.readFileSync(path.join(__dirname, './fixtures/x/bad.test.js'), 'utf8');\n`);
+        g('add', '-A');
+        g('commit', '-qm', 'add a fixture and its reader');
+      },
+    });
+    const r = run(root, '{"scope":"own"}');
+    const rec = stubRecord(root);
+    assert.ok(rec, 'ENTER: the runner never ran, so there is no selection to judge');
+    assert.deepStrictEqual(rec.argv, [
+      '--reporter=dot',
+      'test/reads-fixture.test.js',
+      ...OWN_SCANNERS,
+    ], 'the reader is selected and the fixture it reads is not handed to the runner');
+    assertDigest(r.digest,
+      `[${path.basename(root)}] own: 1/1 green (${WALL}) — ${OWN_SCANNERS.length + 1} files: `
+      + `1 changed, 0 by subject, ${OWN_SCANNERS.length} scanners`);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('scope own: a fixture test file the branch EDITS selects its reader by subject', () => {
+  const root = mkRoot();
+  try {
+    mkBranchRepo(root, {
+      extraOnMaster: {
+        'test/fixtures/x/bad.test.js': "throw new Error('fixture ran');\n",
+        'test/reads-fixture.test.js':
+          `${EMPTY_TEST}fs.readFileSync(path.join(__dirname, './fixtures/x/bad.test.js'), 'utf8');\n`,
+      },
+      onBranch: ({ put: p, git: g }) => {
+        p('test/fixtures/x/bad.test.js', "throw new Error('fixture ran, edited');\n");
+        g('commit', '-aqm', 'edit the fixture');
+      },
+    });
+    run(root, '{"scope":"own"}');
+    const rec = stubRecord(root);
+    assert.ok(rec, 'ENTER: the runner never ran, so there is no selection to judge');
+    assert.deepStrictEqual(rec.argv, ['--reporter=dot', 'test/reads-fixture.test.js', ...OWN_SCANNERS],
+      'the edited fixture is the reader\'s subject, not a test of its own');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 test('scope own: twelve long slow advisories keep the digest head and a bounded length', () => {
   const root = mkRoot();
   try {
