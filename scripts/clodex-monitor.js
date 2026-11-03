@@ -358,6 +358,7 @@ async function runLauncher() {
   // where die() is the only thing the caller ever sees.
   const agent = p.agent;
   if (typeof agent !== 'string' || !/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(agent)) die('agent (your own name) is required');
+  if (process.env.CLODEX_SEAT && process.env.CLODEX_SEAT !== agent) die(`agent must be your own name (${process.env.CLODEX_SEAT})`);
   if ('id' in p && (typeof p.id !== 'string' || !/^[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}$/.test(p.id))) die('id must be a plain monitor id');
   const action = p.action;
 

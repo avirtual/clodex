@@ -31,9 +31,9 @@ const SRC = fs.readFileSync(SCRIPT, 'utf-8');
 
 const ok = (payload) => parseAndValidate(EXEC_DEF, JSON.stringify(payload));
 const cpMon = require('child_process');
-const launchMon = (home, payload) => new Promise((resolve) => {
+const launchMon = (home, payload, seat = '') => new Promise((resolve) => {
   const ch = cpMon.spawn(process.execPath, [SCRIPT], {
-    env: { ...process.env, CLODEX_HOME: home },
+    env: { ...process.env, CLODEX_HOME: home, CLODEX_SEAT: seat },
     stdio: ['pipe', 'ignore', 'pipe'],
   });
   let err = '';
@@ -278,6 +278,16 @@ test('launcher refuses a traversing agent or id before touching the filesystem',
     const r = await launchMon(home, { action: 'list', agent });
     assert.strictEqual(r.code, 0, `must accept the legitimate name ${agent}: ${r.err}`);
   }
+});
+
+test('a seat naming another seat as agent is refused before any watcher is spawned', async () => {
+  const home = mkTmpRoot('clodex-mon-');
+  const own = await launchMon(home, { action: 'list', agent: 'hand' }, 'hand');
+  assert.strictEqual(own.code, 0, `ENTER: its own name passes: ${own.err}`);
+  const forged = await launchMon(home, { action: 'start', agent: 'alead', command: 'echo hi' }, 'hand');
+  assert.strictEqual(forged.code, 1, forged.err);
+  assert.strictEqual(forged.err, 'agent must be your own name (hand)');
+  assert.strictEqual(fs.existsSync(path.join(home, 'monitors', 'alead')), false, 'no state written for the forged agent');
 });
 
 test('the traversal guard is DECLARED for id and hand-written for agent, deliberately', () => {

@@ -133,14 +133,14 @@ test('_onIncoming: an authenticated dm from user keeps the operator marker', () 
   assert.deepStrictEqual(writes, [{ text: '[agent:from user] ship it', human: true }]);
 });
 
-function execEnvFor(bin) {
+function execEnvFor(bin, argv = ['/usr/bin/env', 'node', `\${CLODEX_BIN}/${bin}`]) {
   const { createSessionManager } = require('../session-manager');
   const { isFilenameToken, parseAndValidate } = require('../exec-schema');
   const REGISTRY_DIR = mkTmpRoot('clx-asock-exec-');
   const execDir = path.join(REGISTRY_DIR, 'library', 'exec');
   fs.mkdirSync(execDir, { recursive: true });
   fs.writeFileSync(path.join(execDir, 'cmd.json'), JSON.stringify({
-    argv: ['/usr/bin/env', 'node', `\${CLODEX_BIN}/${bin}`],
+    argv,
     timeoutMs: 5000, maxBytes: 4096, replyStderr: true,
     schema: { type: 'object', additionalProperties: false, properties: { action: { type: 'string' } } },
   }));
@@ -176,4 +176,17 @@ test('exec: only Clodex\'s own agent-socket writers receive the host credential'
   const other = await execEnvFor('clodex-run-tests.js');
   assert.strictEqual(other.length, 1, 'ENTER: run-tests spawned');
   assert.strictEqual(other[0].env.CLODEX_AGENT_CRED, '', 'a def that runs seat-editable code never sees it');
+  const trailing = await execEnvFor(null, ['/bin/sh', '-c', 'true', '${CLODEX_BIN}/clodex-team.js']);
+  assert.strictEqual(trailing.length, 1, 'ENTER: sh def spawned');
+  assert.strictEqual(trailing[0].env.CLODEX_AGENT_CRED, '', 'a writer bin outside the script position does not qualify');
+});
+
+test('_onIncoming: an unauthenticated passive dm parks passive as ext:, never wakes', () => {
+  const { m, PENDING_DIR, injected } = mkPark({ getPeerManager: () => null });
+  m.sessions.set('seat', { name: 'seat', agentType: 'claude', activityState: 'idle', activityTs: Date.now() });
+  m._onIncoming('seat', { type: 'dm', from: 'monitor', body: 'tick', delivery: 'passive' }, false);
+  const { drainPending, hasActivePending } = require('../pending-store');
+  assert.deepStrictEqual(injected, []);
+  assert.strictEqual(hasActivePending(PENDING_DIR, 'seat'), false);
+  assert.deepStrictEqual(drainPending(PENDING_DIR, 'seat', 't'), ['[agent:from ext:monitor] tick (no reply path)']);
 });

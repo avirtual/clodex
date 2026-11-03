@@ -276,10 +276,21 @@ const { resolveSubagent, nameOfSubagent, clearSubq, SUBQ_DM_SUFFIX, SUBQ_NAME_RE
 
 const AGENT_SOCK_WRITER_BINS = new Set(['clodex-team.js', 'clodex-monitor.js', 'clodex-ctl-admin.js']);
 
-const EXT_SENDER_RE =/^ext:(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
+const EXT_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 
 function extSenderOf(from) {
-  return `ext:${typeof from === 'string' && /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(from) ? from : 'unknown'}`;
+  return `ext:${typeof from === 'string' && EXT_NAME_RE.test(from) ? from : 'unknown'}`;
+}
+
+function isExtSender(name) {
+  return typeof name === 'string' && name.startsWith('ext:') && EXT_NAME_RE.test(name.slice(4));
+}
+
+function agentSockWriterArgv(argv, binDir) {
+  const i = nodePath.basename(String(argv[0])) === 'env' ? 1 : 0;
+  const j = /^node(\.exe)?$/.test(nodePath.basename(String(argv[i]))) || argv[i] === process.execPath ? i + 1 : i;
+  const script = String(argv[j] || '');
+  return nodePath.dirname(script) === binDir && AGENT_SOCK_WRITER_BINS.has(nodePath.basename(script));
 }
 
 function isSubagentSender(name) {
@@ -7544,8 +7555,7 @@ function createSessionManager(deps) {
               CLODEX_TEAM: execTeam ? execTeam.name : '',
               CLODEX_TEAM_ROOT: execTeam ? execTeam.root : '',
               CLODEX_CLIENT_TOKEN: clientToken,
-              CLODEX_AGENT_CRED: argv.some((a) => path.dirname(String(a)) === CLODEX_BIN && AGENT_SOCK_WRITER_BINS.has(path.basename(String(a))))
-                ? (AGENT_SOCK_CRED || '') : '',
+              CLODEX_AGENT_CRED: agentSockWriterArgv(argv, CLODEX_BIN) ? (AGENT_SOCK_CRED || '') : '',
             },
             stdio: ['pipe', 'ignore', 'pipe'],
           });
@@ -9055,7 +9065,7 @@ function createSessionManager(deps) {
     }
 
     _buildDeliveryText(target, senderName, body, mtype, tag = '') {
-      if (!SYSTEM_SENDERS.has(senderName) && !isQualifiedSender(senderName) && !isSubagentSender(senderName) && !EXT_SENDER_RE.test(senderName)) senderName = 'peer';
+      if (!SYSTEM_SENDERS.has(senderName) && !isQualifiedSender(senderName) && !isSubagentSender(senderName) && !isExtSender(senderName)) senderName = 'peer';
       const prefix = `[agent:from ${senderName}]`;
 
       // The marker is parenthesized and never at column 1 so IntentScanner cannot read it as an
@@ -9489,7 +9499,9 @@ function createSessionManager(deps) {
           log.warn('transport', `unauthenticated ${String(mtype).slice(0, 32)} frame on ${targetName}'s agent socket dropped`);
           return;
         }
-        this._deliverMessage(targetName, extSenderOf(msg.from), typeof msg.body === 'string' ? msg.body : '', 'dm');
+        const extBody = typeof msg.body === 'string' ? msg.body : '';
+        if (msg.delivery === 'passive') this._deliverPassive(targetName, extSenderOf(msg.from), extBody, 'dm');
+        else this._deliverMessage(targetName, extSenderOf(msg.from), extBody, 'dm');
         return;
       }
       const sender = msg.from || '?';

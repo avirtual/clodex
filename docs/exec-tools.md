@@ -52,7 +52,7 @@ That makes exec an excellent **control plane** and a useless **data plane** —
 which is the exact split most "tools" want. The trick, for any tool that
 produces ongoing output, is to run the real work in a **detached worker** and
 have the worker deliver results back to the invoking agent as DMs over its
-`run/<agent>/agent.sock` socket (`{from, body, type:'dm'}` — the same
+`run/<agent>/agent.sock` socket (`{from, body, type:'dm', cred}` — the same
 "message from outside clodex to an agent inside" path wake scripts use). This
 is that channel.
 
@@ -86,7 +86,7 @@ delivering DMs, reparented to launchd (`ppid=1`). If a future change makes the
 dispatcher group-kill the launcher, this guarantee must be re-checked.
 - The worker streams events back as DMs. The agent needs no new mechanism: DMs
   arrive as `[agent:from <tool>] …` exactly like peer mail. The wire envelope is
-  `{from, body, type:'dm'}` — byte-identical to `Transport.static send()`, and
+  `{from, body, type:'dm', cred}` (`cred` from `CLODEX_AGENT_CRED`; without it the frame lands as `ext:<from>`), and
   verified to decode through the real `Transport` receiver into the
   `SessionManager._onIncoming` from/body/type read.
 - Per-agent worker state lives under `~/.clodex/monitors/<agent>/` (a shared

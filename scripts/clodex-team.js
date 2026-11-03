@@ -488,6 +488,8 @@ function doCost(payload) {
 async function doRetire(payload) {
   const target = payload.target;
   if (!target || !/^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(target)) die('retire needs "target": a session name');
+  const seat = process.env.CLODEX_SEAT || '';
+  if (!seat || seat !== payload.agent) die(`retire refused: "agent" must be your own seat (${seat || 'no CLODEX_SEAT'})`);
   let info;
   try {
     info = registryEntry(target);
@@ -495,7 +497,7 @@ async function doRetire(payload) {
     die(`no live registration for "${target}" — not running (already retired?)`);
   }
   try {
-    await sendEnvelope(info.socket, { from: payload.agent, body: '', type: 'team-retire' });
+    await sendEnvelope(info.socket, { from: seat, body: '', type: 'team-retire' });
   } catch (e) {
     die(`could not reach "${target}" socket: ${e.message}`);
   }
