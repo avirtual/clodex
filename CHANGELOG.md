@@ -32,6 +32,7 @@ blocks a release.
 - Drawer Copy on a Codex, Muse or custom-settings Claude seat now refuses with a reason instead of reporting an attachment as sent that nothing drains; and a voice-fired send that fails disarms the spoken-origin marker, so the next typed message is not labelled as dictated.
 - Spoken replies are no longer cut off when an unrelated seat exits or another window closes; only the speaking seat's own exit stops its narration.
 - Spoken replies no longer go silent after a bare `[agent:who]`, `[agent:name]` or other body-less intent line; and on Linux the voice controls disable themselves when /dev/snd has no capture device, not just when it is empty.
+- A peer terminal pane reconnects on its own after the remote Clodex restarts — an upgrade or restart of an open peer no longer leaves the pane stuck on "is offline" until it is closed and reopened; a revoked or disabled terminal still closes for good.
 
 ## 5.159.0 — 2026-11-03 — Security: log-mask masks every secret-named URL query parameter, Edit tab vets and writes one descriptor; memory id trim, dm await on pty seats, board cost breakdown
 
