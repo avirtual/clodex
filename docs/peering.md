@@ -590,4 +590,13 @@ anything else leaves it running.
 - A ticket assigned over the wire is still owned by the board that filed it;
   no board state crosses.
 - A task envelope closes a ticket only when the board's recorded assignee
-  equals the dialing sender; the body is never trusted for identity.
+  equals the dialing sender; the body is never trusted for identity. On the
+  claim path a record is honoured only when it carries the box's outbox
+  signature, which only the box's own Clodex can produce, so a file dropped
+  into the outbox by a seat is skipped.
+- The signing key is `<registry>/peer-outbox/outbox-key` (32 bytes, 0600,
+  created on first enqueue, read once per process). A credential-sandboxed
+  seat is denied reading it; an unsandboxed seat on the box can read it — the
+  same limit as the rest of the run-dir trust model. A key deleted and recreated invalidates records still
+  queued under the old one; the consumer claims every ~15 s, so the loss is
+  bounded to that window.

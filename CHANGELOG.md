@@ -13,6 +13,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- **Security: a message claimed from a peer box's outbox can no longer forge its sender.** Any process on the box could drop a file into the outbox with a `from` of `user` or a bracketed line break and have it delivered to a seat as the operator, a system sender or another seat, close that seat's ticket with its own report, or run sandbox verbs in its name; claimed records are shape-checked on both sides, a malformed sender is delivered as `peer`, and the box now signs every record it enqueues so a file a seat drops into the outbox is never claimed.
 - **A short or unrankable draft typed after a longer one no longer stalls that seat's deliveries.** The inject-queue hold taken for the earlier draft's pending hint was kept until the hold cap when the next keystroke could not be ranked; it is released as soon as nothing is armed.
 - The plugin library's bundle editor refuses CRLF and non-UTF-8 files the way the Edit tab does, instead of rewriting their line endings or bytes on save.
 - The team cost rollup (board header, clodex-team cost) counts each ticket's newest close only, so a reworked ticket no longer adds every earlier round's cumulative spend to the team total.
