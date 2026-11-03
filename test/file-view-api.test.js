@@ -566,16 +566,39 @@ test('writeFilePeek returns the integral mtime the next save is vetted against',
   assert.strictEqual(fs.readFileSync(late, 'utf8'), 'a'.repeat(9000) + '\r\n');
 });
 
-function writeFilePeekWithSwap(cwd, swap) {
+function writeFilePeekWith(cwd, shimOf) {
   const src = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
   const start = src.indexOf('function writeFilePeek(');
   assert.ok(start > 0, 'ENTER: writeFilePeek is found by this anchor');
   const body = src.slice(start, src.indexOf('\n}\n', start) + 2);
   const { vetFileWrite } = require('../file-edit');
   const manager = { sessions: new Map([['seat', { cwd }]]) };
+  const shim = { ...fs, ...shimOf(fs) };
+  return new Function('manager', 'vetFileWrite', 'fs', 'path', 'PEEK_MAX_BYTES', `${body}\nreturn writeFilePeek;`)(manager, vetFileWrite, shim, path, PEEK_MAX_BYTES);
+}
+
+function writeFilePeekWithSwap(cwd, swap) {
   let swapped = false;
-  const shim = { ...fs, closeSync: (fd) => { fs.closeSync(fd); if (!swapped) { swapped = true; swap(); } } };
-  const fn = new Function('manager', 'vetFileWrite', 'fs', 'path', 'PEEK_MAX_BYTES', `${body}\nreturn writeFilePeek;`)(manager, vetFileWrite, shim, path, PEEK_MAX_BYTES);
+  let calls = 0;
+  const fn = writeFilePeekWith(cwd, (real) => ({
+    realpathSync: (p, ...rest) => {
+      calls += 1;
+      if (calls === 3 && !swapped) { swapped = true; swap(); }
+      return real.realpathSync(p, ...rest);
+    },
+  }));
+  return { fn, swappedYet: () => swapped };
+}
+
+function writeFilePeekSwapAfterOpen(cwd, swap) {
+  let swapped = false;
+  const fn = writeFilePeekWith(cwd, (real) => ({
+    openSync: (...args) => {
+      const fd = real.openSync(...args);
+      if (!swapped) { swapped = true; swap(); }
+      return fd;
+    },
+  }));
   return { fn, swappedYet: () => swapped };
 }
 
@@ -586,7 +609,7 @@ test('writeFilePeek refuses when the vetted file is swapped for a symlink before
   const outside = writeAt(outsideRoot, 'outside.txt', 'keep');
   const { fn, swappedYet } = writeFilePeekWithSwap(cwd, () => { fs.unlinkSync(file); fs.symlinkSync(outside, file); });
   const r = fn('seat', file, 'pwned', null);
-  assert.strictEqual(swappedYet(), true, 'ENTER: the swap ran inside the vet');
+  assert.strictEqual(swappedYet(), true, 'ENTER: the swap ran after the vet');
   assert.deepStrictEqual(r, { ok: false, error: 'File changed under the editor — reload and retry' });
   assert.strictEqual(fs.readFileSync(outside, 'utf8'), 'keep');
   assert.strictEqual(fs.readlinkSync(file), outside);
@@ -597,9 +620,63 @@ test('writeFilePeek refuses when the vetted file is replaced by a new inode befo
   const file = writeAt(cwd, 'a.txt', 'one');
   const { fn, swappedYet } = writeFilePeekWithSwap(cwd, () => { fs.unlinkSync(file); fs.writeFileSync(file, 'fresh'); });
   const r = fn('seat', file, 'pwned', null);
-  assert.strictEqual(swappedYet(), true, 'ENTER: the swap ran inside the vet');
+  assert.strictEqual(swappedYet(), true, 'ENTER: the swap ran after the vet');
   assert.deepStrictEqual(r, { ok: false, error: 'File changed under the editor — reload and retry' });
   assert.strictEqual(fs.readFileSync(file, 'utf8'), 'fresh');
+});
+
+test('writeFilePeek refuses a file recreated at the vetted name right after the vet opened it', () => {
+  const cwd = mkTmpRoot('clx-fileview-');
+  const file = writeAt(cwd, 'a.txt', 'one');
+  const { fn, swappedYet } = writeFilePeekSwapAfterOpen(cwd, () => { fs.unlinkSync(file); fs.writeFileSync(file, 'recreated'); });
+  const r = fn('seat', file, 'pwned', null);
+  assert.strictEqual(swappedYet(), true, 'ENTER: the swap ran after the vet opened the file');
+  assert.deepStrictEqual(r, { ok: false, error: 'File changed under the editor — reload and retry' });
+  assert.strictEqual(fs.readFileSync(file, 'utf8'), 'recreated');
+});
+
+test('writeFilePeek refuses when an ancestor directory is swapped for a symlink out after the realpath check', () => {
+  const cwd = mkTmpRoot('clx-fileview-');
+  const outsideRoot = mkTmpRoot('clx-fileview-');
+  const file = writeAt(path.join(cwd, 'sub'), 'a.txt', 'one');
+  const outside = writeAt(path.join(outsideRoot, 'sub'), 'a.txt', 'keep');
+  let calls = 0;
+  let swapped = false;
+  const fn = writeFilePeekWith(cwd, (real) => ({
+    realpathSync: (p, ...rest) => {
+      calls += 1;
+      if (calls !== 3) return real.realpathSync(p, ...rest);
+      const answer = real.realpathSync(p, ...rest);
+      fs.renameSync(path.join(cwd, 'sub'), path.join(cwd, 'sub-old'));
+      fs.symlinkSync(path.join(outsideRoot, 'sub'), path.join(cwd, 'sub'));
+      swapped = true;
+      return answer;
+    },
+  }));
+  const r = fn('seat', file, 'pwned', null);
+  assert.strictEqual(swapped, true, 'ENTER: the ancestor swap ran after the post-vet realpath');
+  assert.strictEqual(fs.realpathSync(file), fs.realpathSync(outside), 'ENTER: the vetted name now resolves outside the cwd');
+  assert.deepStrictEqual(r, { ok: false, error: 'File changed under the editor — reload and retry' });
+  assert.strictEqual(fs.readFileSync(outside, 'utf8'), 'keep');
+  assert.strictEqual(fs.readFileSync(path.join(cwd, 'sub-old', 'a.txt'), 'utf8'), 'one');
+});
+
+test('writeFilePeek refuses a leaf swapped for a symlink between the vet realpath and its open', () => {
+  const cwd = mkTmpRoot('clx-fileview-');
+  const outsideRoot = mkTmpRoot('clx-fileview-');
+  const file = writeAt(cwd, 'a.txt', 'one');
+  const outside = writeAt(outsideRoot, 'outside.txt', 'keep');
+  let swapped = false;
+  const fn = writeFilePeekWith(cwd, (real) => ({
+    openSync: (p, flags, ...rest) => {
+      if (!swapped) { swapped = true; fs.unlinkSync(file); fs.symlinkSync(outside, file); }
+      return real.openSync(p, flags, ...rest);
+    },
+  }));
+  const r = fn('seat', file, 'pwned', null);
+  assert.strictEqual(swapped, true, 'ENTER: the leaf swap ran before the vet open');
+  assert.deepStrictEqual(r, { ok: false, error: `No such file: ${file}` });
+  assert.strictEqual(fs.readFileSync(outside, 'utf8'), 'keep');
 });
 
 test('confinement follow-up: a non-traversable ancestor is outside, a loop is unreadable; a root itself and a dangling link inside cwd are not-a-file', () => {

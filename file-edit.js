@@ -28,11 +28,10 @@ function textEncodingRefusal(bytes) {
   return bytes.includes(0x0d) ? 'crlf' : null;
 }
 
-// Returns { ok, path } — the realpath to write — or { ok:false, error }.
 // `readHead` returns a Buffer of the file's bytes up to PEEK_MAX_BYTES; it is
 // separate from `stat` because a caller that already refused on size should not
 // pay a read.
-function vetFileWrite({ filePath, cwd, content, expectMtime, resolve, realpath, stat, readHead }) {
+function vetFileWrite({ filePath, cwd, content, expectMtime, resolve, realpath, open, stat, readHead, close }) {
   if (typeof content !== 'string') return { ok: false, error: 'Content must be a string' };
   if (!cwd) return { ok: false, error: 'Session has no working directory' };
   const trimmed = (filePath || '').trim();
@@ -41,30 +40,35 @@ function vetFileWrite({ filePath, cwd, content, expectMtime, resolve, realpath, 
   let root;
   try { root = realpath(cwd); } catch { return { ok: false, error: 'Session directory is unavailable' }; }
 
-  let real, st;
-  // No creation: the Edit tab edits a file the peek just showed. A missing file
-  // is a bug in the caller, not a new-file affordance.
-  try { real = realpath(resolve(cwd, trimmed)); st = stat(real); }
+  let real;
+  try { real = realpath(resolve(cwd, trimmed)); }
   catch { return { ok: false, error: `No such file: ${trimmed}` }; }
 
   if (real !== root && !real.startsWith(root + '/')) {
     return { ok: false, error: 'Refusing to write outside the session directory' };
   }
-  if (!st.isFile()) return { ok: false, error: 'Not a regular file' };
+
+  let handle;
+  try { handle = open(real); } catch { return { ok: false, error: `No such file: ${trimmed}` }; }
+  const refuse = (error) => { close(handle); return { ok: false, error }; };
+
+  let st;
+  try { st = stat(handle); } catch { return refuse(`No such file: ${trimmed}`); }
+  if (!st.isFile()) return refuse('Not a regular file');
   if (st.size > PEEK_MAX_BYTES) {
-    return { ok: false, error: `File is larger than the ${PEEK_MAX_BYTES / 1024}KB peek limit — edit it in a real editor` };
+    return refuse(`File is larger than the ${PEEK_MAX_BYTES / 1024}KB peek limit — edit it in a real editor`);
   }
   if (expectMtime != null && Math.trunc(st.mtimeMs) !== expectMtime) {
-    return { ok: false, error: 'File changed on disk since it was opened — reopen it to see the current bytes' };
+    return refuse('File changed on disk since it was opened — reopen it to see the current bytes');
   }
   let head;
-  try { head = readHead(real); } catch { return { ok: false, error: 'Unreadable' }; }
-  if (head && head.subarray(0, NUL_SNIFF_BYTES).includes(0)) return { ok: false, error: 'Binary file' };
+  try { head = readHead(handle); } catch { return refuse('Unreadable'); }
+  if (head && head.subarray(0, NUL_SNIFF_BYTES).includes(0)) return refuse('Binary file');
   const refusal = head ? textEncodingRefusal(head) : null;
-  if (refusal === 'non-utf8') return { ok: false, error: 'File is not UTF-8 — edit it outside Clodex' };
-  if (refusal === 'crlf') return { ok: false, error: 'File uses CRLF line endings — edit it outside Clodex' };
+  if (refusal === 'non-utf8') return refuse('File is not UTF-8 — edit it outside Clodex');
+  if (refusal === 'crlf') return refuse('File uses CRLF line endings — edit it outside Clodex');
 
-  return { ok: true, path: real };
+  return { ok: true, path: real, handle };
 }
 
 module.exports = { vetFileWrite, textEncodingRefusal, PEEK_MAX_BYTES };
