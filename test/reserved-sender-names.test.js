@@ -150,10 +150,12 @@ test('restore warns once for a persisted seat with a reserved name and still cre
     sessions: new Map(),
     resumeCwdOf: () => '/tmp',
     create: async (name) => { created.push(name); return { name, pid: 1 }; },
+    teamNameFor: () => null,
+    pendingCountFor: () => 0,
   };
   const persistence = { listForWorkspace: () => [{ name: 'user', type: 'claude' }, { name: 'alpha', type: 'claude' }] };
   await restoreSessionsForWorkspace({
-    workspaceId: 'default', persistence, manager, proxyPoller: null,
+    workspaceId: 'default', persistence, manager, proxyPoller: { snapshot: () => null },
     maybeCompactBeforeResume: async () => {}, readCtxFor: () => null,
     log: { info() {}, warn: (...a) => warns.push(a.join(' ')), error() {} },
   });
