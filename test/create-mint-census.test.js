@@ -250,7 +250,7 @@ const EXPECTED = [
   // sorts AFTER session-restore.js — the census walks the root modules in
   // filename order, so their rows move with them. The reload row above stayed
   // behind; it is the only one of the four that is not ticket machinery.
-  { file: 'team-tickets.js', mint: true, noWire: '(tpl && tpl.noWire) === true', label: '[agent:spawn] intent — agent-initiated new seat. DOES carry the flag, unlike the privileged-intent strip beside it: wire-off REMOVES a capability rather than granting one, and it cannot redirect traffic (proxyBase is nulled outright, never pointed where the template chose).' },
+  { file: 'team-tickets.js', mint: true, noWire: 'noWire', label: '[agent:spawn] intent — agent-initiated new seat. Carries the template flag only when the spawner is itself wire-off (or on the operator door), so a seat cannot mint a child that escapes the wire it runs under.' },
   // Both rows below spell noWire `'false'` — the literal written out, not the
   // default taken — because each must reach a LATER positional: the reviewer's
   // 23rd (`shellDeny`) and the ticket seat's 22nd (`plugins`, the template's

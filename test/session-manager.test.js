@@ -2566,6 +2566,7 @@ function mkSpawn(templatesList, persistedEntries = {}) {
     getTemplates: () => ({ list: () => templatesList }),
     AGENT_NAME_RE: AGENT_NAME_RE_T,
     DEFAULT_WORKSPACE_ID: 'default',
+    REGISTRY_DIR: TPL_HOME,
     ensureDir: () => {},
     fs: fsReal,
     path: pathReal,
@@ -2719,7 +2720,12 @@ test('spawn template: prompt refs thread into create() params 15/16', async () =
 // template:VALUE with a '/' or leading ~/. is a file path (resolved against the
 // spawner cwd), read + parsed into the same template object the library lookup
 // yields — so config application can't drift between the two sources.
-const tmpTplDir = () => mkTmpRoot('clodex-tpl-');
+const TPL_HOME = fsReal.realpathSync(mkTmpRoot('clodex-tplhome-'));
+const tmpTplDir = () => {
+  const lib = pathReal.join(TPL_HOME, 'library', 'templates');
+  fsReal.mkdirSync(lib, { recursive: true });
+  return fsReal.mkdtempSync(pathReal.join(lib, 'clodex-tpl-'));
+};
 
 test('spawn template: a JSON file path resolves + applies its config', async () => {
   const dir = tmpTplDir();
@@ -2822,7 +2828,7 @@ test('spawn template (t297): a template whose env is entirely well-typed and all
 // every skill and plugin, zero exec grants. The resolution is off the TARGET
 // cwd's team (the seat opening a new team is usually on no team itself), so
 // these fixtures give the manager a real teams dir and a real library.
-function mkLeadSpawn({ leadTemplate = null, ownCopy = null, spawnerCwd = null, extraTemplates = [] } = {}) {
+function mkLeadSpawn({ leadTemplate = null, ownCopy = null, spawnerCwd = null, extraTemplates = [], spawnerRec = null } = {}) {
   const home = mkTmpRoot('t770-home-');
   const projectRoot = mkTmpRoot('t770-proj-');
   const tm = createTeamManifestReal({ fs: fsReal, clodexHome: home });
@@ -2849,7 +2855,7 @@ function mkLeadSpawn({ leadTemplate = null, ownCopy = null, spawnerCwd = null, e
   const m = mk({
     AGENT_NAME_RE: AGENT_NAME_RE_T,
     DEFAULT_WORKSPACE_ID: 'default',
-    getPersistence: () => ({ list: () => [], get: () => null, setStripLevel() {}, setAutoCompact() {}, setPlugins() {} }),
+    getPersistence: () => ({ list: () => [], get: (n) => (n === 'contact' ? spawnerRec : null), setStripLevel() {}, setAutoCompact() {}, setPlugins() {} }),
     getTemplates: () => ({ list: () => [] }),
     listAllTemplates: () => [{ ...shippedLead, id: 'clodex-team-lead' }, ...extraTemplates],
     resolveTeam: tm.resolveTeam,
@@ -2867,11 +2873,11 @@ function mkLeadSpawn({ leadTemplate = null, ownCopy = null, spawnerCwd = null, e
   // The spawner is on NO team — the bootstrap skill's contact agent is exactly
   // this seat, and it is the case the resolution must cover.
   const spawner = { name: 'contact', type: 'claude', workspaceId: 'default', proxy: null, cwd: spawnerCwd || osReal.tmpdir() };
-  return { m, created, replies, spawner, projectRoot, shippedLead };
+  return { m, created, replies, spawner, projectRoot, shippedLead, home };
 }
 
 test('t770: a spawner on NO team spawning a team\'s lead by name boots it on clodex-team-lead', async () => {
-  const f = mkLeadSpawn();
+  const f = mkLeadSpawn({ spawnerRec: { execCommands: ['clodex-team', 'clodex-monitor', 'clodex-run-tests'] } });
   f.m._handleSpawnIntent(f.spawner, { name: 'acme-lead', cwd: f.projectRoot });
   await tick();
   assert.strictEqual(f.created.length, 1, 'ENTER: create() must have been reached');
@@ -2918,7 +2924,7 @@ test('t770: a lead spawned into a SUBDIRECTORY of the team root still resolves i
 
 test('t770: an explicit template: still wins, with no lead parenthetical', async () => {
   const f = mkLeadSpawn();
-  const dir = mkTmpRoot('t770-tpl-');
+  const dir = pathReal.join(f.home, 'library', 'templates'); fsReal.mkdirSync(dir, { recursive: true });
   const file = pathReal.join(dir, 'mine.json');
   fsReal.writeFileSync(file, JSON.stringify({ type: 'claude', extraArgs: ['--model', 'claude-haiku-4-5-20251001'] }));
   f.m._handleSpawnIntent(f.spawner, { name: 'acme-lead', cwd: f.projectRoot, template: file });
@@ -2979,11 +2985,11 @@ test('t824: a lead spawned on a template with no execCommands carries the grant 
   assert.deepStrictEqual(f.created[0][16], [], 'ENTER: and it booted with no grants, which is what is warned about');
   const reply = f.replies.at(-1);
   assert.match(reply, /^\[agent:spawn\] ok: spawned "acme-lead"/, 'ENTER: the ok reply is what the WARNING rides');
-  assert.match(reply, /WARNING: lead seat has no clodex-team exec grant \(template "plain-lead" carries none\); the roster verb will bounce until granted/);
+  assert.match(reply, /WARNING: lead seat has no clodex-team exec grant \(template "plain-lead" carries none, or the spawner holds none\); the roster verb will bounce until granted/);
 });
 
 test('t824: a lead on clodex-team-lead holds the grant, so the reply says nothing', async () => {
-  const f = mkLeadSpawn();
+  const f = mkLeadSpawn({ spawnerRec: { execCommands: ['clodex-team'] } });
   f.m._handleSpawnIntent(f.spawner, { name: 'acme-lead', cwd: f.projectRoot });
   await tick();
   assert.strictEqual(f.created.length, 1, 'ENTER: create() must have been reached');
@@ -13093,7 +13099,7 @@ test('_handleExecIntent: execCommands grant flows from template into create() on
   // so the grant is THREADED into create()'s args (EXEC_ARG) rather than upserted
   // after — which is what makes it survive kill()+recreate. (create()'s own upsert
   // persisting it is pinned separately in the restart-survival block below.)
-  const { m, created } = mkSpawnCreateProbe();
+  const { m, created } = mkSpawnCreateProbe({ execCommands: ['bridge-reply', 'other'] });
   const dir = tmpTplDir();
   const file = pathReal.join(dir, 'degen-seat.json');
   fsReal.writeFileSync(file, JSON.stringify({ type: 'claude', cwd: '/proj/desk', execCommands: ['bridge-reply', 'other'] }));
@@ -13114,11 +13120,11 @@ test('_handleExecIntent: execCommands grant flows from template into create() on
 // create(...,systemPromptFile[14], appendPromptFiles[15], execCommands[16], intents[17])
 const EXEC_ARG = 16;
 const INTENTS_ARG = 17;
-function mkSpawnCreateProbe() {
+function mkSpawnCreateProbe(spawnerRec = null) {
   const created = [];
   const persistence = {
     list: () => [],
-    get: () => null,
+    get: (n) => (n === 'clodex' ? spawnerRec : null),
     setStripLevel: () => {},
     setAutoCompact: () => {},
     upsert: () => {},
@@ -13126,7 +13132,7 @@ function mkSpawnCreateProbe() {
   const m = mk({
     getPersistence: () => persistence,
     getTemplates: () => ({ list: () => [] }),
-    AGENT_NAME_RE: AGENT_NAME_RE_T, DEFAULT_WORKSPACE_ID: 'default',
+    AGENT_NAME_RE: AGENT_NAME_RE_T, DEFAULT_WORKSPACE_ID: 'default', REGISTRY_DIR: TPL_HOME,
     ensureDir: () => {}, fs: fsReal, path: pathReal, os: osReal,
     log: { info: () => {}, warn: () => {}, error: () => {} },
   });
@@ -13179,7 +13185,7 @@ test('spawn template: a template WITHOUT `intents` threads null (absent = all en
 // granted" — so the template threads `[]` for a grant-less template and the
 // non-empty allowlist otherwise.
 test('spawn template: a captured `execCommands` grant is threaded into create()', async () => {
-  const { m, created } = mkSpawnCreateProbe();
+  const { m, created } = mkSpawnCreateProbe({ execCommands: ['trade-sell', 'trade-buy'] });
   const dir = tmpTplDir();
   const file = pathReal.join(dir, 'trader-seat.json');
   fsReal.writeFileSync(file, JSON.stringify({ type: 'claude', cwd: '/proj/desk', execCommands: ['trade-buy', 'trade-sell'] }));

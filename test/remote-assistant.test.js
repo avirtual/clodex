@@ -756,10 +756,10 @@ test('createSession: a capped template reserves once on the wire and tells the h
   const h = makeDeps({ templates: { 'clodex-assistant': ASSISTANT_TPL, worker: { name: 'worker', type: 'claude' } } });
   const opts = captureOptions(h.deps);
   assert.strictEqual((await opts.createSession({ name: 'avh-1', template: 'clodex-assistant' })).ok, true);
-  assert.deepStrictEqual(h.spawnOpts, [{ awakeHeld: true }]);
+  assert.deepStrictEqual(h.spawnOpts, [{ awakeHeld: true, operator: true }]);
   assert.strictEqual(h.roomCalls.filter((c) => c[0] === 'room').length, 1);
   assert.strictEqual((await opts.createSession({ name: 'w1', template: 'worker' })).ok, true);
-  assert.deepStrictEqual(h.spawnOpts, [{ awakeHeld: true }, {}]);
+  assert.deepStrictEqual(h.spawnOpts, [{ awakeHeld: true, operator: true }, { operator: true }]);
 });
 
 test('send: a sleeper whose wakeOn omits message refuses the dm with 409 and never wakes; absent or listing message wakes', async () => {
