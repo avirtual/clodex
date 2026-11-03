@@ -223,15 +223,11 @@ test('a dm from ticket-loop carries neither a reply address nor a no-reply marke
   });
   const target = { name: 'lead', agentType: 'claude' };
   const m = mkOne(undefined);
-  m.sessions.set('ticket-loop', { name: 'ticket-loop', agentType: 'claude' });
-  assert.strictEqual(m._isDmReachable('ticket-loop'), true,
-    'ENTER: the name is reachable, or the guard is never reached and this subject proves nothing');
   assert.strictEqual(m._buildDeliveryText(target, 'ticket-loop', 'ACCEPT on ticket t1', 'dm'),
     '[agent:from ticket-loop] ACCEPT on ticket t1',
     'nothing is on the other end of ticket-loop: a lead that replies to it is talking to a label');
 
   const gated = mkOne([]);
-  gated.sessions.set('ticket-loop', { name: 'ticket-loop', agentType: 'claude' });
   gated.sessions.set('clodex-hand-1', { name: 'clodex-hand-1', agentType: 'claude' });
   assert.strictEqual(gated._buildDeliveryText(target, 'clodex-hand-1', 'done', 'dm'),
     '[agent:from clodex-hand-1] done (no reply path)',

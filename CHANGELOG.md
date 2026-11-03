@@ -13,6 +13,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- **Security: system-sender names are reserved.** A seat could be spawned as `user`, `ticket-loop` or `permission` and its messages arrived as the operator's or the harness's own, undefused, so a forged verdict or permission relay inside them read as real; every create door now refuses those names, and delivery decides "system sender" only for a name no seat holds.
 - **Security: a Codex subagent can no longer act as its seat's main thread by asserting the thread id.** The intent socket took the caller's own `CLODEX_AGENT_ID` as proof, so a prompt-injected subagent could dm, shout or spawn; Codex callers are now subagents unless the wire saw the tool call, like Claude. The wire records no Codex tool calls yet, so a Codex main thread's `clodex-send` is now limited to what a subagent may do; its output intents are unaffected. Also, every remote body route answers 400 to a JSON `null` body instead of a 500 carrying a TypeError.
 - **A short or unrankable draft typed after a longer one no longer stalls that seat's deliveries.** The inject-queue hold taken for the earlier draft's pending hint was kept until the hold cap when the next keystroke could not be ranked; it is released as soon as nothing is armed.
 - The plugin library's bundle editor refuses CRLF and non-UTF-8 files the way the Edit tab does, instead of rewriting their line endings or bytes on save.

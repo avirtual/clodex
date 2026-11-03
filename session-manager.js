@@ -141,7 +141,7 @@ const {
   buildRelayEnvelope, buildTerminalDm, isRelayEnvelope, hopRule, relayVersionOk, isDoneTaskEnvelope, isSandboxEnvelope, peerOriginSuffix,
 } = require('./relay-protocol');
 const { formatTeamBlock, matchSeatRole, formatRoster, formatCompositionDelta } = require('./team-manifest');
-const { SYSTEM_SENDERS } = require('./system-senders');
+const { SYSTEM_SENDERS, isReservedSenderName, reservedSenderError } = require('./system-senders');
 const { defuseSenderLines, defangTeammateTag } = require('./review-gate');
 
 const SCRATCH_CLONE_CEILING_MS = 45 * 60 * 1000;
@@ -1537,6 +1537,7 @@ function createSessionManager(deps) {
         throw new Error(`Session "${name}" already exists`);
       }
       if (isReservedSeatName(name)) throw new Error(`"${name}" is a reserved name`);
+      if (isReservedSenderName(name) && !getPersistence().get(name)) throw new Error(reservedSenderError(name));
       const reserve = adapterFor(type)?.account.bootstrap === 'xdg-overlay';
       if (reserve) this._creating.add(name);
       try {
@@ -4073,6 +4074,7 @@ function createSessionManager(deps) {
         return { ok: false, error: 'Name must be 1–64 chars: letters, digits, . _ - (and not only dots)' };
       }
       if (isReservedSeatName(newName)) return { ok: false, error: `${newName} is a reserved name` };
+      if (isReservedSenderName(newName)) return { ok: false, error: reservedSenderError(newName) };
       if (newName === name) return { ok: false, error: `${name} is already called that` };
       const entry = getPersistence().get(name);
       if (!entry) return { ok: false, error: `Session not found: ${name}` };
@@ -8462,7 +8464,7 @@ function createSessionManager(deps) {
         if (!r.error && typeof onWrite === 'function') { try { onWrite('queued', 'federated'); } catch {} }
         return r;
       }
-      if (this._assistantPolicy(targetName) && !(SYSTEM_SENDERS.has(senderTag) && !this.sessions.has(senderTag) && !getPersistence().get(senderTag))) return { error: `${targetName} takes messages only from its operator client` };
+      if (this._assistantPolicy(targetName) && !this._isSystemSender(senderTag)) return { error: `${targetName} takes messages only from its operator client` };
       const target = this.sessions.get(targetName);
       if (!target || !target.agentType) return { error: `no such agent "${targetName}"` };
       if (target.clone) return { error: `${targetName} is a scratch clone — not addressable` };
@@ -9019,19 +9021,23 @@ function createSessionManager(deps) {
       return !!(s && s.agentType && !s._dead);
     }
 
+    _isSystemSender(name) {
+      return SYSTEM_SENDERS.has(name) && !this.sessions.has(name) && !getPersistence().get(name);
+    }
+
     _buildDeliveryText(target, senderName, body, mtype, tag = '') {
       const prefix = `[agent:from ${senderName}]`;
 
       // The marker is parenthesized and never at column 1 so IntentScanner cannot read it as an
       // intent; system senders are excluded first because nothing answers them.
-      const answerable = mtype === 'dm' && !SYSTEM_SENDERS.has(senderName);
+      const answerable = mtype === 'dm' && !this._isSystemSender(senderName);
       const trailer = (!answerable
           || (intentEnabled('dm', getPersistence().get(target.name)?.intents)
             && this._isDmReachable(senderName)))
         ? ''
         : '(no reply path)';
 
-      if (!SYSTEM_SENDERS.has(senderName)) body = defuseSenderLines(body);
+      if (!this._isSystemSender(senderName)) body = defuseSenderLines(body);
       const bytes = Buffer.byteLength(body);
       if (bytes > MSG_SPILL_THRESHOLD) {
         const filePath = spillToFile(senderName, body, target.name);
@@ -9043,7 +9049,7 @@ function createSessionManager(deps) {
           ? `${marked} Message (${bytes} bytes) attached: @${filePath} ${trailer}`
           : `${marked} Message (${bytes} bytes) saved to ${filePath} — read it with your Read tool.${trailer ? ' ' + trailer : ''}`;
       }
-      const inline = senderName === 'user' && tag ? ` ${tag}` : '';
+      const inline = senderName === 'user' && tag && this._isSystemSender(senderName) ? ` ${tag}` : '';
       return `${prefix}${inline} ${body}${trailer ? ' ' + trailer : ''}`;
     }
 
@@ -9068,7 +9074,7 @@ function createSessionManager(deps) {
           : plainText();
       };
       if (target.io === 'stream') {
-        const item = { text: defangTeammateTag(plainText()), images: pics, origin: senderName === 'user' ? 'operator' : 'system' };
+        const item = { text: defangTeammateTag(plainText()), images: pics, origin: senderName === 'user' && this._isSystemSender(senderName) ? 'operator' : 'system' };
         if (typeof ref === 'string' && ref) Object.defineProperty(item, 'ref', { value: ref, enumerable: false });
         this._streamEnqueue(target, item, fire ? () => fire('injected') : null, null, parkKey,
           fire ? { onDivert: (why) => fire('parked', why) } : {});
@@ -9076,7 +9082,7 @@ function createSessionManager(deps) {
         this._injectText(target, fire && rebody ? '' : plainText(), {
           parkable: true,
           parkKey,
-          human: senderName === 'user',
+          human: senderName === 'user' && this._isSystemSender(senderName),
           // A park via the fire-time divert is durable too; onDivert reports 'parked' so an observer
           // keying on consumption sees a file, not a write.
           ...(fire ? {

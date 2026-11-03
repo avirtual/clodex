@@ -16,6 +16,7 @@ const { kernelStartTime } = require('./stream-seat');
 const { DM_REF_RE } = require('./intent-registry');
 const { annotate: annotateNote } = require('./open-requests');
 const { isReservedSeatName } = require('./pending-store');
+const { isReservedSenderName, reservedSenderError } = require('./system-senders');
 
 const BOOT_ID = String(process.pid) + ':' + kernelStartTime(process.pid);
 
@@ -1414,6 +1415,7 @@ class RemoteServer {
         const msg = parseJsonObject(body);
         if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
         if (typeof msg.name === 'string' && isReservedSeatName(msg.name.trim())) return this._json(res, 400, { ok: false, error: 'reserved name' });
+        if (typeof msg.name === 'string' && isReservedSenderName(msg.name.trim())) return this._json(res, 400, { ok: false, error: reservedSenderError(msg.name.trim()) });
         Promise.resolve()
           .then(() => this._createSession(msg))
           .then((out) => this._json(res, out && out.ok ? 200 : (out && out.code) || 400, out || { ok: false, error: 'create failed' }))

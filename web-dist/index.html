@@ -28126,7 +28126,16 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         permission: "\u22A9"
       };
       var SYSTEM_SENDERS = /* @__PURE__ */ new Set([...Object.keys(SYSTEM_SENDER_GLYPHS), "clodex", "user"]);
-      module.exports = { SYSTEM_SENDER_GLYPHS, SYSTEM_SENDERS };
+      var RESERVED_SENDER_NAMES = /* @__PURE__ */ new Set([...SYSTEM_SENDERS, "relay", "ctl-admin", "peer", "ext"]);
+      var RESERVED_SENDER_SUFFIX_RE = /-(loop|watchdog)$/;
+      function isReservedSenderName(name) {
+        const n = String(name).toLowerCase();
+        return RESERVED_SENDER_NAMES.has(n) || RESERVED_SENDER_SUFFIX_RE.test(n);
+      }
+      function reservedSenderError(name) {
+        return `"${name}" is reserved for a system sender`;
+      }
+      module.exports = { SYSTEM_SENDER_GLYPHS, SYSTEM_SENDERS, RESERVED_SENDER_NAMES, RESERVED_SENDER_SUFFIX_RE, isReservedSenderName, reservedSenderError };
     }
   });
 
@@ -29111,6 +29120,9 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
       var RESERVED_SEAT_NAMES = /* @__PURE__ */ new Set([".claims"]);
       var LEGACY_CLAIM_RE = /^\.resend\.|\.draining\.[a-z]+\.\d+$/i;
       var isReservedSeatName = (name) => RESERVED_SEAT_NAMES.has(String(name).toLowerCase()) || LEGACY_CLAIM_RE.test(String(name));
+      var RESERVED_SENDER_NAMES = /* @__PURE__ */ new Set(["reminder", "reboot", "ticket-loop", "ticket-watchdog", "monitor", "memory", "exec", "terminal", "team", "clodex-team", "wirescope", "deploy-fix", "permission", "clodex", "user", "relay", "ctl-admin", "peer", "ext"]);
+      var RESERVED_SENDER_SUFFIX_RE = /-(loop|watchdog)$/;
+      var isReservedSenderName = (name) => RESERVED_SENDER_NAMES.has(String(name).toLowerCase()) || RESERVED_SENDER_SUFFIX_RE.test(String(name).toLowerCase());
       var INVALID_BORDER = "#e94560";
       var NAME_MESSAGES = {
         invalid: "Letters, numbers, dot, underscore and hyphen only (1\u201364 characters), and never all dots.",
@@ -29142,6 +29154,7 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         if (!name) return { ok: false, kind: "empty", message: "" };
         if (!SESSION_NAME_RE.test(name)) return { ok: false, kind: "invalid", message: NAME_MESSAGES.invalid };
         if (isReservedSeatName(name)) return { ok: false, kind: "reserved", message: NAME_MESSAGES.reserved };
+        if (isReservedSenderName(name)) return { ok: false, kind: "reserved", message: `"${name}" is reserved for a system sender` };
         if (asSet(s.live).has(name)) return { ok: false, kind: "live", message: NAME_MESSAGES.live };
         if (asSet(s.persisted).has(name)) return { ok: false, kind: "persisted", message: NAME_MESSAGES.persisted };
         if (asSet(s.taken).has(name)) return { ok: false, kind: "taken", message: NAME_MESSAGES.taken };
@@ -29183,6 +29196,9 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         RESERVED_SEAT_NAMES,
         LEGACY_CLAIM_RE,
         isReservedSeatName,
+        RESERVED_SENDER_NAMES,
+        RESERVED_SENDER_SUFFIX_RE,
+        isReservedSenderName,
         INVALID_BORDER,
         NAME_MESSAGES,
         reservedSets,
