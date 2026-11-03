@@ -33,7 +33,7 @@ function caseInsensitiveStore(seed) {
   };
 }
 
-async function rig(apiOver = {}) {
+async function rig(apiOver = {}, drawerOver = {}) {
   const nodes = new Map();
   const byId = (id) => { if (!nodes.has(id)) nodes.set(id, el()); return nodes.get(id); };
   const opens = {};
@@ -61,6 +61,7 @@ async function rig(apiOver = {}) {
   initLibraryDrawers({
     getActiveSession: () => null, setAgentLibCache() {}, setSkillLibCache() {},
     openTemplateEditor() {}, bundleSectionsOf: () => [], refreshPluginCatalog: async () => {},
+    ...drawerOver,
   });
   const restore = () => { global.document = had.d; global.window = had.w; global.alert = had.a; global.confirm = had.c; };
   return { byId, opens, alerts, restore };
@@ -329,3 +330,39 @@ test('MCP discover: candidates group by source, an in-library one has no Import,
     assert.deepStrictEqual(imported, [['jira', JIRA]]);
   } finally { r.restore(); }
 });
+
+const PEEKS = [
+  { reply: { ok: true, content: 'x' }, opened: true, why: null },
+  { reply: { ok: true, editable: false, encoding: 'crlf', content: 'a\r\n' }, opened: false, why: 'it has CRLF line endings' },
+  { reply: { ok: true, editable: false, encoding: 'non-utf8', content: '\ufffd' }, opened: false, why: 'it is not UTF-8' },
+  { reply: { ok: true, binary: true }, opened: false, why: 'it is not text' },
+];
+
+for (const p of PEEKS) {
+  test(`a plugin bundle file peeked as ${JSON.stringify(p.reply)} ${p.opened ? 'opens in the editor' : `is refused: ${p.why}`}`, async () => {
+    const writes = [];
+    const sec = { id: 'plug', name: 'Plug', dir: '/plug', editable: true };
+    const r = await rig({
+      filePeek: async () => p.reply,
+      writePluginBundleFile: async (...a) => { writes.push(a); return { ok: true }; },
+    }, { bundleSectionsOf: (kind) => (kind === 'agents' ? [sec] : []) });
+    try {
+      await r.opens.agents({ plugin: 'plug', name: 'x' });
+      await flush();
+      if (p.opened) {
+        assert.deepStrictEqual(r.alerts, []);
+        assert.strictEqual(r.byId('agent-content').value, 'x');
+        await r.byId('agent-save').fire('click');
+        await flush();
+        assert.deepStrictEqual(writes, [['plug', 'agents', 'x', 'x']]);
+      } else {
+        assert.strictEqual(r.alerts.length, 1);
+        assert.ok(r.alerts[0].startsWith(`Can't open x from the Plug plugin: ${p.why}.\n\n`), r.alerts[0]);
+        assert.strictEqual(r.byId('agent-content').value, '');
+        await r.byId('agent-save').fire('click');
+        await flush();
+        assert.deepStrictEqual(writes, []);
+      }
+    } finally { r.restore(); }
+  });
+}
