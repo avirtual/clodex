@@ -142,7 +142,13 @@ function noClaudeOnlyFlags(args) {
 
 test('clay: a fresh seat spawns `clay` with a minted --session-id, Clodex hooks, both add-dirs and the baked prompt — whole argv and env', async () => {
   const f = mkClay();
-  await f.create('seat', { extraArgs: ['--model', 'claude-haiku-5-5'] });
+  const runnerBaseUrl = process.env.ANTHROPIC_BASE_URL;
+  delete process.env.ANTHROPIC_BASE_URL;
+  try {
+    await f.create('seat', { extraArgs: ['--model', 'claude-haiku-5-5'] });
+  } finally {
+    if (runnerBaseUrl !== undefined) process.env.ANTHROPIC_BASE_URL = runnerBaseUrl;
+  }
   try {
     assert.strictEqual(f.spawns.length, 1, 'ENTER: one PTY spawn');
     const { cmd, args, opts } = f.spawns[0];
