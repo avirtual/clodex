@@ -10,7 +10,7 @@ const { intentEnabled } = require('../intent-catalog');
 const { createSessionManager } = require('../session-manager');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { processStubs } = require('./lib/process-stubs');
-const { pathFor: pathForReal, runDirFor: runDirForReal, seatPathFor } = require('../clodex-paths');
+const { pathFor: pathForReal, runDirFor: runDirForReal } = require('../clodex-paths');
 const { mergeClaudeSystemPrompt, mergeInstructionBodies } = require('../argv-merge');
 const { classifyNotification } = require('../attention');
 
@@ -129,9 +129,8 @@ function mkClay({ proxyBase = 'http://127.0.0.1:7811', sysFile = null } = {}) {
   );
   const settings = (name) => pathForReal(root, name, 'settings');
   const prompt = (name) => pathForReal(root, name, 'appendPrompt');
-  const seatMsgs = (name) => seatPathFor(root, name, 'messages');
   const link = (name) => pathForReal(root, name, 'transcript');
-  return { m, root, home, cwd, spawns, hooks, watchers, probes, registers, hints, create, stop, settings, prompt, seatMsgs, link };
+  return { m, root, home, cwd, spawns, hooks, watchers, probes, registers, hints, create, stop, settings, prompt, link };
 }
 
 function noClaudeOnlyFlags(args) {
@@ -153,7 +152,6 @@ test('clay: a fresh seat spawns `clay` with a minted --session-id, Clodex hooks,
       '--model', 'claude-haiku-5-5',
       '--settings', f.settings('seat'),
       '--add-dir', pathReal.join(f.root, 'messages'),
-      '--add-dir', f.seatMsgs('seat'),
       '--session-id', sid,
       '--append-system-prompt-file', f.prompt('seat'),
     ]);
@@ -216,7 +214,6 @@ test('clay: a resume passes --resume <id> and no --session-id, and links the res
     assert.deepStrictEqual(args, [
       '--settings', f.settings('seat'),
       '--add-dir', pathReal.join(f.root, 'messages'),
-      '--add-dir', f.seatMsgs('seat'),
       '--resume', RESUME,
       '--append-system-prompt-file', f.prompt('seat'),
     ]);
@@ -237,7 +234,6 @@ test('clay: a fork passes --resume <id> --fork-session --session-id <new> and li
     assert.deepStrictEqual(args, [
       '--settings', f.settings('seat'),
       '--add-dir', pathReal.join(f.root, 'messages'),
-      '--add-dir', f.seatMsgs('seat'),
       '--resume', RESUME, '--fork-session', '--session-id', sid,
       '--append-system-prompt-file', f.prompt('seat'),
     ]);
@@ -257,7 +253,6 @@ test('clay: read-only and bypass postures ride the extra args; effort becomes --
       '--read-only',
       '--settings', f.settings('ro'),
       '--add-dir', pathReal.join(f.root, 'messages'),
-      '--add-dir', f.seatMsgs('ro'),
       '--session-id', roSid,
       '--system-prompt-file', '/lib/system.md',
       '--effort', 'high',

@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 
 const {
-  ADAPTERS, PLATFORMS, CAP_KEYS, capsFor, streamFor, adapterFor, seatType, stripModelArgs, hasBypass, postureOf, resolveModelId,
+  ADAPTERS, PLATFORMS, CAP_KEYS, capsFor, streamFor, adapterFor, seatType, stripModelArgs, hasBypass, postureOf, resolveModelId, resolveEffort, runsClaudeHooks, PRIVILEGED_FLAG_ARITY,
 } = require('../cli-adapters');
 const { createSkillDelivery } = require('../skill-delivery');
 

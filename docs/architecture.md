@@ -1553,7 +1553,9 @@ and are not, which is why the judgement worth testing is pushed down here.
   Edit Session alike — `capsFor(type)` answers a whole-object row and an unlisted
   type reads all-false; a third CLI is a row, not a new gate. Its `injectSkills`
   column may not exceed `skill-delivery.js`'s adapters, since the dialog must not
-  offer skills main cannot deliver), **placement.js** (the "Run
+  offer skills main cannot deliver. The rows are claude, codex, muse and clay —
+  clay, the Messages-API CLI, runs Claude-shape hooks and transcripts, so
+  `runsClaudeHooks(type)` is true for it beside claude), **placement.js** (the "Run
   in" selector: `'host'` or a sandbox BOX ID), **prefs-gate.js** (which
   Preferences controls are inert given dialog state, plus the reason line),
   **plugin-source-dialog.js** (Manage Plugins ▸ Install from GitHub… and a

@@ -61,6 +61,16 @@ arg** (which is why restart paths must re-assert it; kill drops the entry).
   *subcommand* placed after top-level flags (clap). Proxy rides
   `openai_base_url`. Selected skills arrive as a `# Clodex skills` catalog
   appended to the merged instructions, above the team block.
+- **clay** — link → spawn → hook. `clay` in a PTY with Clodex's Claude-shape
+  `--settings` (`setupClaudeHook`, no proxy, no wire), `--add-dir` for the
+  messages dirs, the baked IPC prompt as `--append-system-prompt-file`
+  (regenerated every spawn, never frozen), `--effort`, and `--session-id
+  <minted uuid>` on a fresh seat or a fork (`--resume <id> --fork-session`);
+  a plain resume passes `--resume <id>` only. `create()` links
+  `run/<name>/transcript.jsonl` to `$CLAY_HOME/projects/<slug>/<sid>.jsonl`
+  (`~/.clay` when unset; `_claudeTranscriptPath`) before the spawn, and the
+  SessionStart hook re-links it to the reported `transcript_path`. No
+  plugins, MCP, skills, stream io or wire routing yet.
 - **muse** — spawn → registry → link. Before the spawn, `bootstrapSeatConfig`
   (seat-config.js) rebuilds `run/<name>/xdg` as an overlay of `~/.config` (or
   the seat's `XDG_CONFIG_HOME`) and the seat's env gets `XDG_CONFIG_HOME` pointed
