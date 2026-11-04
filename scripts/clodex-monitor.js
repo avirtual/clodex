@@ -43,6 +43,14 @@ function statePath(agent, id) {
 function logPath(agent, id) {
   return path.join(monitorsDir(agent), `${id}.log`);
 }
+function credPath(agent, id) {
+  return path.join(monitorsDir(agent), `${id}.cred`);
+}
+function readCred() {
+  const { CMON_AGENT: agent, CMON_ID: id } = process.env;
+  if (!agent || !id) return null;
+  try { return fs.readFileSync(credPath(agent, id), 'utf-8') || null; } catch { return null; }
+}
 // The agent's inbound socket, read from its registry entry so we track the
 // canonical path rather than re-deriving the run/<name>/agent.sock grammar.
 function agentSocket(agent) {
@@ -73,7 +81,8 @@ function sendDm(socketPath, from, body, passive = false) {
     const done = (ok) => { if (!settled) { settled = true; resolve(ok); } };
     const msg = { from, body, type: 'dm' };
     if (passive) msg.delivery = 'passive';
-    if (process.env.CLODEX_AGENT_CRED) msg.cred = process.env.CLODEX_AGENT_CRED;
+    const cred = readCred();
+    if (cred) msg.cred = cred;
     const payload = Buffer.from(JSON.stringify(msg), 'utf-8');
     const conn = net.createConnection(socketPath, () => conn.end(payload, () => done(true)));
     conn.on('error', () => done(false));
@@ -221,7 +230,6 @@ async function runWatcher() {
     // as a status change (poll+diff, `until`, grep --line-buffered); the
     // watcher only forwards what it emits.
     const commandEnv = { ...process.env };
-    delete commandEnv.CLODEX_AGENT_CRED;
     const child = childProcess.spawn('/bin/sh', ['-c', command], {
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -294,6 +302,7 @@ async function runWatcher() {
 function cleanupState(agent, id) {
   try { fs.unlinkSync(statePath(agent, id)); } catch {}
   try { fs.unlinkSync(logPath(agent, id)); } catch {}
+  try { fs.unlinkSync(credPath(agent, id)); } catch {}
 }
 
 // ===========================================================================
@@ -400,11 +409,13 @@ async function runLauncher() {
     // Detach the watcher so it survives our SIGKILL: own session (detached),
     // stdio to a logfile for observability, and unref so we can exit now.
     const logFd = fs.openSync(logPath(agent, id), 'a');
+    const { CLODEX_AGENT_CRED: agentCred, ...watcherEnv } = process.env;
+    if (agentCred) fs.writeFileSync(credPath(agent, id), agentCred, { mode: 0o600, flag: 'wx' });
     const child = childProcess.spawn(process.execPath, [__filename, '--daemon'], {
       detached: true,
       stdio: ['ignore', logFd, logFd],
       env: {
-        ...process.env,
+        ...watcherEnv,
         CMON_AGENT: agent,
         CMON_ID: id,
         CMON_COMMAND: p.command || '',
