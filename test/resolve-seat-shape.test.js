@@ -1514,6 +1514,20 @@ test('t680: a role template named <plugin>:<stem> resolves through listAllTempla
     'without the seam only the library is consulted, and the library does not carry it');
 });
 
+test('_templateShape: extraArgs keeps only string elements, and is null when none survive', () => {
+  const rows = [
+    [['--model', 42, null, 'x'], ['--model', 'x']],
+    [[42], null],
+    [[], null],
+  ];
+  for (const [extraArgs, want] of rows) {
+    const tpl = { name: 'rev:audit', id: 'rev:audit', plugin: 'rev', type: 'claude', extraArgs };
+    const shape = managerWith([], { listAllTemplates: () => [tpl] })._templateShape('rev:audit');
+    assert.ok(shape, 'ENTER: the template was found');
+    assert.deepStrictEqual(shape.extraArgs, want, JSON.stringify(extraArgs));
+  }
+});
+
 
 function t891Team(roles, files) {
   const dir = mkTmpRoot('t891-team-');

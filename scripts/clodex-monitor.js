@@ -46,6 +46,19 @@ function logPath(agent, id) {
 function credPath(agent, id) {
   return path.join(monitorsDir(agent), `${id}.cred`);
 }
+function writeCred(agent, id, cred) {
+  fs.writeFileSync(credPath(agent, id), cred, { mode: 0o600, flag: 'wx' });
+}
+function fillSshAuthSock(env, getenv) {
+  if (env.SSH_AUTH_SOCK) return env;
+  let sock = '';
+  try { sock = String(getenv('SSH_AUTH_SOCK') || '').trim(); } catch { return env; }
+  if (sock) env.SSH_AUTH_SOCK = sock;
+  return env;
+}
+function launchctlGetenv(name) {
+  return childProcess.execFileSync('launchctl', ['getenv', name], { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000 });
+}
 function takeCred(agent, id) {
   let cred = null;
   try { cred = fs.readFileSync(credPath(agent, id), 'utf-8') || null; } catch {}
@@ -231,6 +244,7 @@ async function runWatcher() {
     // as a status change (poll+diff, `until`, grep --line-buffered); the
     // watcher only forwards what it emits.
     const commandEnv = { ...process.env };
+    if (process.platform === 'darwin') fillSshAuthSock(commandEnv, launchctlGetenv);
     const child = childProcess.spawn('/bin/sh', ['-c', command], {
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -404,14 +418,14 @@ async function runLauncher() {
     const timeoutMs = (typeof p.timeout_ms === 'number' && p.timeout_ms > 0) ? p.timeout_ms : 300000;
     const persistent = p.persistent === true;
 
+    const { CLODEX_AGENT_CRED: agentCred, ...watcherEnv } = process.env;
+    if (agentCred) {
+      try { writeCred(agent, id, agentCred); }
+      catch (e) { die(`cannot write monitor credential: ${e.message}`); }
+    }
     // Detach the watcher so it survives our SIGKILL: own session (detached),
     // stdio to a logfile for observability, and unref so we can exit now.
     const logFd = fs.openSync(logPath(agent, id), 'a');
-    const { CLODEX_AGENT_CRED: agentCred, ...watcherEnv } = process.env;
-    if (agentCred) {
-      try { fs.writeFileSync(credPath(agent, id), agentCred, { mode: 0o600, flag: 'wx' }); }
-      catch (e) { die(`cannot write monitor credential: ${e.message}`); }
-    }
     const child = childProcess.spawn(process.execPath, [__filename, '--daemon'], {
       detached: true,
       stdio: ['ignore', logFd, logFd],
@@ -450,8 +464,12 @@ async function runLauncher() {
 
 // ===========================================================================
 
-if (process.argv.includes('--daemon')) {
-  runWatcher();
-} else {
-  runLauncher();
+if (require.main === module) {
+  if (process.argv.includes('--daemon')) {
+    runWatcher();
+  } else {
+    runLauncher();
+  }
 }
+
+module.exports = { writeCred, fillSshAuthSock };

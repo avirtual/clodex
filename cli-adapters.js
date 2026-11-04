@@ -295,7 +295,7 @@ const PRIVILEGED_FLAG_ARITY = {
   '--sandbox': 1, '-s': 1, '--ask-for-approval': 1, '-a': 1, '--config': 1, '-c': 1, '--full-auto': 0, '--yolo': 0,
   '--profile': 1, '-p': 1, '--sandbox-network': 1, '--permission-profile': 1,
   '--agents': 1, '--plugin-dir': 1, '--enable': 1, '--dangerously-bypass-hook-trust': 0,
-  '--disable-approval': 0, '--trust-workspace': 0, '--approval-judge': 1,
+  '--disable-approval': 0, '--trust-workspace': 0, '--approval-judge': 1, '--allow-dangerously-skip-permissions': 0,
   '--allowedTools': Infinity, '--allowed-tools': Infinity, '--disallowedTools': Infinity, '--disallowed-tools': Infinity,
   ...Object.fromEntries(Object.values(ADAPTERS).flatMap((a) => a.posture.bypass.map((opt) => [opt[0], opt.length - 1]))),
 };

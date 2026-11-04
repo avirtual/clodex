@@ -523,8 +523,49 @@ test('the watcher runs without CLODEX_AGENT_CRED in its env and signs frames fro
   }
 });
 
-test('the launcher writes the cred file 0600 and refuses to overwrite one (source pin: the watcher consumes it before a stat can see it)', () => {
-  const src = fs.readFileSync(SCRIPT, 'utf8');
-  assert.match(src, /fs\.writeFileSync\(credPath\(agent, id\), agentCred, \{ mode: 0o600, flag: 'wx' \}\)/,
-    'credPath write must carry mode 0o600 and flag wx');
+const loadMonitor = (home) => {
+  const prev = process.env.CLODEX_HOME;
+  process.env.CLODEX_HOME = home;
+  delete require.cache[require.resolve(SCRIPT)];
+  try { return require(SCRIPT); }
+  finally {
+    if (prev === undefined) delete process.env.CLODEX_HOME; else process.env.CLODEX_HOME = prev;
+    delete require.cache[require.resolve(SCRIPT)];
+  }
+};
+
+test('writeCred writes the cred file 0600 and refuses to overwrite one', () => {
+  const home = mkTmpRoot('cmon-cred-');
+  try {
+    const { writeCred } = loadMonitor(home);
+    const dir = path.join(home, 'monitors', 'agent-x');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, 'm1.cred');
+    fs.writeFileSync(path.join(dir, 'm0.cred'), 'pre', { mode: 0o644 });
+    writeCred('agent-x', 'm1', 's3cret');
+    assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600);
+    assert.strictEqual(fs.readFileSync(file, 'utf-8'), 's3cret');
+    assert.throws(() => writeCred('agent-x', 'm0', 'other'), { code: 'EEXIST' });
+    assert.strictEqual(fs.readFileSync(path.join(dir, 'm0.cred'), 'utf-8'), 'pre');
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('the launcher writes the cred before it opens the log, so a failed cred write leaves no orphan <id>.log', () => {
+  const credAt = SRC.indexOf('writeCred(agent, id, agentCred)');
+  const logAt = SRC.indexOf("fs.openSync(logPath(agent, id), 'a')");
+  assert.ok(credAt > 0 && logAt > 0, 'ENTER: both call sites found');
+  assert.ok(credAt < logAt, 'cred write must precede the log open');
+});
+
+test('fillSshAuthSock: fills a missing SSH_AUTH_SOCK from getenv, leaves a set one and a failed/empty lookup alone', () => {
+  const { fillSshAuthSock } = loadMonitor(path.join(os.tmpdir(), 'cmon-ssh-unused'));
+  assert.deepStrictEqual(fillSshAuthSock({ A: '1' }, () => '/tmp/launchd-sock\n'), { A: '1', SSH_AUTH_SOCK: '/tmp/launchd-sock' });
+  let asked = 0;
+  assert.deepStrictEqual(fillSshAuthSock({ SSH_AUTH_SOCK: '/own' }, () => { asked += 1; return '/other'; }), { SSH_AUTH_SOCK: '/own' });
+  assert.strictEqual(asked, 0, 'a present SSH_AUTH_SOCK is not looked up');
+  assert.deepStrictEqual(fillSshAuthSock({ A: '1' }, () => { throw new Error('no launchctl'); }), { A: '1' });
+  assert.deepStrictEqual(fillSshAuthSock({ A: '1' }, () => ''), { A: '1' });
+  assert.deepStrictEqual(fillSshAuthSock({ A: '1' }, () => '  \n'), { A: '1' });
 });
