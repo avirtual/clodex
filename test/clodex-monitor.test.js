@@ -522,3 +522,9 @@ test('the watcher runs without CLODEX_AGENT_CRED in its env and signs frames fro
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+test('the launcher writes the cred file 0600 and refuses to overwrite one (source pin: the watcher consumes it before a stat can see it)', () => {
+  const src = fs.readFileSync(SCRIPT, 'utf8');
+  assert.match(src, /fs\.writeFileSync\(credPath\(agent, id\), agentCred, \{ mode: 0o600, flag: 'wx' \}\)/,
+    'credPath write must carry mode 0o600 and flag wx');
+});

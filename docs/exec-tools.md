@@ -88,11 +88,11 @@ delivering DMs, reparented to launchd (`ppid=1`). If a future change makes the
 dispatcher group-kill the launcher, this guarantee must be re-checked.
 - The worker streams events back as DMs. The agent needs no new mechanism: DMs
   arrive as `[agent:from <tool>] …` exactly like peer mail. The wire envelope is
-  `{from, body, type:'dm', cred}` (`cred` from `CLODEX_AGENT_CRED`; without it the frame lands as `ext:<from>`), and
+  `{from, body, type:'dm', cred}` (`cred` is read once at watcher start from `<id>.cred`, written 0600 by the launcher and deleted on read, so it never sits in the watcher's environment; without it the frame lands as `ext:<from>`), and
   verified to decode through the real `Transport` receiver into the
   `SessionManager._onIncoming` from/body/type read.
 - Per-agent worker state lives under `~/.clodex/monitors/<agent>/` (a shared
-  clodex-owned root, 0700), one `<id>.json` per running worker + an `<id>.log`
+  clodex-owned root, 0700), one `<id>.json` per running worker + an `<id>.log` (plus a transient `<id>.cred` between launch and the watcher's first read)
   for observability.
 
 ## clodex-monitor (first tool)

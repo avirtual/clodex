@@ -17,9 +17,6 @@ blocks a release.
 
 ## 5.160.1 — 2026-11-04 — Security: sandboxed seats cannot spawn unsandboxed children; monitor credential off the environment
 - **Security: a credential-sandboxed seat can no longer spawn an unsandboxed Codex or Muse child.** An agent spawn whose child type cannot enforce the spawner's `protectCredentials` is refused; only Claude seats enforce the credential sandbox.
-- **Security: deleting a team whose manifest failed to load no longer removes whatever sandbox box its `sandbox.json` pointer names.** The pointer's box id is trusted only when it equals `team-<name>`.
-- A role removal or rename that fails to write `team.json` restores the roster rows it had changed.
-- `clodex-run-tests` with `scope: own` no longer runs a test file under a fixture or dot directory as a test.
 - The `clodex-monitor` watcher no longer keeps the agent-socket credential in its process environment; it reads it once at start from a 0600 file, which it then deletes.
 
 ## 5.160.0 — 2026-11-04 — Security hardening of seats, spawns and sockets; Clodex hosts clay
@@ -32,6 +29,7 @@ blocks a release.
 - **Security: the credential sandbox now also denies the per-seat `seat.json` mirror (which carried every seat's environment secrets and no longer does), the per-seat client-token file, minted accounts' credential files, and writes to the autorun files it missed — `~/.zlogin`, `~/.profile`, `~/.bash_login`, `~/.config/fish`, `~/.codex` and the working tree's `.codex`/`.claude` dirs — so a sandboxed seat can neither read another seat's secrets nor plant a command that runs unsandboxed later.** A `seat.json` written by an earlier version keeps its `env` until that seat's record is next saved.
 - **Security: a seat's agent socket now authenticates its frames.** Any process of the same user could write a frame to `run/<seat>/agent.sock` with `from: user` or `from: <lead>` and inject an operator-marked message or retire another seat as the lead; frames now carry a per-boot host credential that only Clodex's own scripts receive, and an unauthenticated frame is delivered as `ext:` and can run no verb; the credential file `run/.agent-sock.cred` is now denied by the credential sandbox, so this holds against processes that cannot read `~/.clodex` (credential-sandboxed seats, other users, peers), not against every same-user process.
 - **Security: the spawn clamp also refuses the Codex sandbox and approval flags (`--sandbox`, `-s`, `--ask-for-approval`, `-a`, `-c sandbox_mode=…`, `--full-auto`) and Claude's `--allowedTools` / `--disallowedTools` unless the spawner carries the same flag and value.** The first clamp compared long names only, so a short form, a glued short value (`-sdanger-full-access`), a config override, a `--profile`/`-p` or `--yolo` reached the bypass posture; Codex `--profile`/`-p`, `--yolo` and Muse `--sandbox-network`/`--permission-profile`/`--disable-approval`/`--trust-workspace`/`--approval-judge`, Codex `--enable`/`--dangerously-bypass-hook-trust` and Claude `--agents`/`--plugin-dir` are refused the same way, and a template whose `extraArgs` holds a non-string is refused at spawn and dropped at template-save.
+- **Security: deleting a team whose manifest failed to load no longer removes whatever sandbox box its `sandbox.json` pointer names.** The pointer's box id is trusted only when it equals `team-<name>`.
 - **A short or unrankable draft typed after a longer one no longer stalls that seat's deliveries.** The inject-queue hold taken for the earlier draft's pending hint was kept until the hold cap when the next keystroke could not be ranked; it is released as soon as nothing is armed.
 - A monitored command that ignores SIGTERM no longer outlives a "too noisy" or dead-agent shutdown of `clodex-monitor`: the SIGKILL escalation is awaited before exit.
 - `scripts/embed-basket.js` keeps the last line for a duplicate id, sweeps stale keys on every run, skips id-less lines, and a dry run reports a vector-space mismatch instead of rewriting the store.
@@ -55,6 +53,8 @@ blocks a release.
 - Spoken replies no longer go silent after a bare `[agent:who]`, `[agent:name]` or other body-less intent line; and on Linux the voice controls disable themselves when /dev/snd has no capture device, not just when it is empty.
 - A peer terminal pane reconnects on its own after the remote Clodex restarts — an upgrade or restart of an open peer no longer leaves the pane stuck on "is offline" until it is closed and reopened; a revoked or disabled terminal still closes for good.
 - **Clodex can host clay as a fourth CLI.** `clay`, the Messages-API CLI that bills a prepaid API credit, is a session type beside Claude, Codex and Muse: it launches in a PTY with Clodex's hooks, statusline and transcript watcher, takes dms through bracketed paste, resumes and forks sessions, and honours the bypass (`--yolo`) and read-only postures. Accounts and the wire proxy for clay follow in a later release.
+- A role removal or rename that fails to write `team.json` restores the roster rows it had changed.
+- `clodex-run-tests` with `scope: own` no longer runs a test file under a fixture or dot directory as a test.
 
 ## 5.159.0 — 2026-11-03 — Security: log-mask masks every secret-named URL query parameter, Edit tab vets and writes one descriptor; memory id trim, dm await on pty seats, board cost breakdown
 
