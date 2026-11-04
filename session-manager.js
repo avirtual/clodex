@@ -1641,6 +1641,7 @@ function createSessionManager(deps) {
       let seatConfigDir = null;
       let museSid = null;
       let clayMintedSid = null;
+      let resumedTranscriptAt = null;
       let museData = null;
       let codexLink = null;
       let museSel = null;
@@ -2142,6 +2143,18 @@ function createSessionManager(deps) {
         }
         case 'clay': {
           cmd = 'clay';
+          if (Array.isArray(protectCredentials) && protectCredentials.length) {
+            abandonHint();
+            throw new Error(`clay seat "${name}" refused: protectCredentials (${protectCredentials.join(', ')}) cannot be enforced on clay 0.1.0, which ignores permissions and sandbox settings`);
+          }
+          const clayUnenforced = [['tool denies', disabledTools], ['shell denies', shellDeny], ['subagent denies', denyBuiltins]]
+            .filter(([, list]) => Array.isArray(list) && list.length).map(([label]) => label);
+          if (clayUnenforced.length) {
+            const w = `${clayUnenforced.join(', ')} not enforced on clay 0.1.0: it ignores permissions settings.`;
+            warnings.push(w);
+            this._broadcast('ipc-message', { type: 'system', from: name, to: name, body: w });
+          }
+          try { clearNotices(REGISTRY_DIR, name); } catch {}
           const claySysFile = resolveSystemPromptFile(systemPromptFile, Array.isArray(plugins) ? plugins : null, resolvedTeam);
           const clayIpc = this._realIpcFor({
             extraArgs,
@@ -2183,10 +2196,14 @@ function createSessionManager(deps) {
           const clayPromptPath = pathFor(REGISTRY_DIR, name, 'appendPrompt');
           fs.writeFileSync(clayPromptPath, bakePrompt(REGISTRY_DIR, name, clayIpc.realIpc, false, { snapshot: null }), { mode: 0o600 });
           args.push('--append-system-prompt-file', clayPromptPath);
+          const claySpawnCwd = cwd || process.env.HOME || os.homedir();
           const claySid = userSession ? null : (clayMintedSid || resumeId);
           if (claySid) {
             linkTranscript({ fs }, pathFor(REGISTRY_DIR, name, 'transcript'),
-              this._claudeTranscriptPath(cwd || process.env.HOME || os.homedir(), accountDir, claySid, type));
+              this._claudeTranscriptPath(claySpawnCwd, accountDir, claySid, type));
+          }
+          if (resumeId) {
+            try { resumedTranscriptAt = fs.statSync(this._claudeTranscriptPath(claySpawnCwd, accountDir, resumeId, type)).mtimeMs; } catch {}
           }
           break;
         }
@@ -2365,7 +2382,7 @@ function createSessionManager(deps) {
         activityState: 'idle',
         // Math.min clamps a future mtime (NFS, rsync -t, clock step): a future seed would stick, keep idleMs negative,
         // and make `idleMs < DM_HOLD_IDLE_MS` always true, so the seat could never be held.
-        activityTs: Math.min(lastTranscriptWrite(agentType, cwd, resumeId) || Date.now(), Date.now()),
+        activityTs: Math.min(lastTranscriptWrite(agentType, cwd, resumeId) || resumedTranscriptAt || Date.now(), Date.now()),
         needsAttention: null,
         // A spawned or resumed CLI is parked at its prompt; without this seed a GUI restart wipes the turn.completed stamp
         // and an idle restored seat can never pass the auto-compact atPrompt guard.
@@ -4762,7 +4779,8 @@ function createSessionManager(deps) {
     }
 
     _claudeTranscriptPath(cwd, accountDir, sid, type = 'claude') {
-      const home = accountDir || (adapterFor(type)?.account.envKey === 'CLAY_HOME' ? path.join(os.homedir(), '.clay') : claudeHome());
+      const defaultDir = adapterFor(type)?.account.defaultDir;
+      const home = accountDir || (defaultDir ? path.join(os.homedir(), defaultDir) : claudeHome());
       return path.join(home, 'projects', claudeProjectSlug(cwd), `${sid}.jsonl`);
     }
 
@@ -9478,9 +9496,9 @@ function createSessionManager(deps) {
       if (!session._injectPtyQueue) {
         // Claude seats wait for the mode-2004 edge plus BOOT_DRAIN_SETTLE_MS: text and Enter written before
         // the raw-mode input loop is up submit as one paste-like chunk. Codex must not be coupled to this gate.
-        const isClaude = runsClaudeHooks(session.agentType);
+        const claudeShape = runsClaudeHooks(session.agentType);
         session._injectPtyQueue = new InjectQueue({
-          reviewGate: isClaude,
+          reviewGate: claudeShape,
           onDefanged: (t) => log.warn('inject', `defanged teammate-message tag in ${(/^\[agent:[a-z-]+(?: [^\]\r\n]+)?\]/.exec(t) || ['inject'])[0]} body for ${session.name}`),
           write: (bytes) => { if (!session.pty) return; if (!session.firstInputAt) session.firstInputAt = Date.now(); try { session.pty.write(bytes); } catch {} this._armSubmitNudge(session, bytes); },
           settleMsFor: (t) => (t.length > LONG_TEXT_THRESHOLD ? LONG_TEXT_DELAY : SHORT_TEXT_DELAY),
@@ -9521,15 +9539,15 @@ function createSessionManager(deps) {
           },
           onSubmitted: (_t, meta) => {
             session.lastSubmitInjected = !(meta && meta.human);
-            if (isClaude && session.activityState === 'idle') session._awaitingTurnSince = Date.now();
+            if (claudeShape && session.activityState === 'idle') session._awaitingTurnSince = Date.now();
           },
-          ready: isClaude ? () => !!session._bootReadySeen && Date.now() - (session._bootReadyAt || 0) >= BOOT_DRAIN_SETTLE_MS : undefined,
+          ready: claudeShape ? () => !!session._bootReadySeen && Date.now() - (session._bootReadyAt || 0) >= BOOT_DRAIN_SETTLE_MS : undefined,
           readyMaxWaitMs: INJECT_BOOT_MAXWAIT,
-          onReadyCapFire: isClaude ? () => {
+          onReadyCapFire: claudeShape ? () => {
             log.warn('inject', `boot-readiness cap fired for ${session.name} — injected before mode-2004 seen (${INJECT_BOOT_MAXWAIT / 1000}s cap)`);
           } : null,
-          pasteMaxWaitMs: isClaude ? INJECT_PASTE_MAXWAIT : undefined,
-          onPasteCapFire: isClaude ? () => {
+          pasteMaxWaitMs: claudeShape ? INJECT_PASTE_MAXWAIT : undefined,
+          onPasteCapFire: claudeShape ? () => {
             log.warn('inject', `paste-mode cap fired for ${session.name} — multi-line inject written bracketed with mode-2004 off (${INJECT_PASTE_MAXWAIT / 1000}s cap)`);
           } : null,
           onCapFire: () => {

@@ -12,9 +12,10 @@
 
 const { esc, fmtCountdown, fmtTokens } = require('./lib/format');
 const { turnLine, reqLine, costLine } = require('./lib/turn-stat');
+const { PLATFORMS } = require('../cli-adapters');
 
 const IO_KINDS = { stream: 'stream', pty: 'terminal' };
-const AGENT_TYPES = new Set(['claude', 'codex', 'muse', 'clay']);
+const AGENT_TYPES = new Set(PLATFORMS);
 
 function initSessionHovercard({ sessionList, proxyState, ctxPct, ctxTokens, proxyPollMs, typeGlyph }) {
   const HOVER_DELAY_MS = 350;

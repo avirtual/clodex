@@ -78,7 +78,12 @@ arg** (which is why restart paths must re-assert it; kill drops the entry).
   the 2004h replay and inject gate, the memory digest and the pending count
   and drains for it beside claude; park, passive delivery, `promptRecipe`
   and account moves stay Claude-only. A clay permission Notification
-  (`notification_type: "permission"`) classifies as `permission`.
+  (`notification_type: "permission"`) classifies as `permission`. clay 0.1.0
+  silently ignores settings `permissions` and `sandbox`, so `create()` refuses
+  a clay seat with a non-empty `protectCredentials` and warns (returned and
+  broadcast) when tool, shell or subagent denies are set; a team role naming
+  an `account` on a clay template is refused with reason `platform`. The
+  transcript home falls back to `~/<account.defaultDir>` (`.clay`).
 - **muse** — spawn → registry → link. Before the spawn, `bootstrapSeatConfig`
   (seat-config.js) rebuilds `run/<name>/xdg` as an overlay of `~/.config` (or
   the seat's `XDG_CONFIG_HOME`) and the seat's env gets `XDG_CONFIG_HOME` pointed

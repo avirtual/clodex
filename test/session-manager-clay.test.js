@@ -109,7 +109,8 @@ function mkClay({ proxyBase = 'http://127.0.0.1:7811', sysFile = null } = {}) {
   });
   const m = new SessionManager();
   m._sendToSession = () => {};
-  m._broadcast = () => {};
+  const broadcasts = [];
+  m._broadcast = (ch, msg) => broadcasts.push([ch, msg]);
   const stop = (name) => {
     const s = m.sessions.get(name);
     if (!s) return;
@@ -122,15 +123,15 @@ function mkClay({ proxyBase = 'http://127.0.0.1:7811', sysFile = null } = {}) {
     clearTimeout(s._replayFallbackTimer);
     m.sessions.delete(name);
   };
-  const create = (name, { extraArgs = [], resumeId = null, fork = false, sessionEnv = { ANTHROPIC_API_KEY: 'sk-test' }, effort = null } = {}) => m.create(
+  const create = (name, { extraArgs = [], resumeId = null, fork = false, sessionEnv = { ANTHROPIC_API_KEY: 'sk-test' }, effort = null, denyBuiltins = [], disabledTools = [], shellDeny = null, protectCredentials = null } = {}) => m.create(
     name, 'clay', cwd, extraArgs, resumeId, 'ws', null, fork, null,
-    [], [], [], [], [], null, [], [], null, sessionEnv,
-    false, false, null, null, null, 'pty', effort,
+    [], denyBuiltins, disabledTools, [], [], null, [], [], null, sessionEnv,
+    false, false, null, shellDeny, null, 'pty', effort, protectCredentials,
   );
   const settings = (name) => pathForReal(root, name, 'settings');
   const prompt = (name) => pathForReal(root, name, 'appendPrompt');
   const link = (name) => pathForReal(root, name, 'transcript');
-  return { m, root, home, cwd, spawns, hooks, watchers, probes, registers, hints, create, stop, settings, prompt, link };
+  return { m, root, home, cwd, spawns, hooks, watchers, probes, registers, hints, broadcasts, create, stop, settings, prompt, link };
 }
 
 function noClaudeOnlyFlags(args) {
@@ -288,4 +289,41 @@ test('clay: an own --settings in the extra args installs no Clodex hook', async 
 test('clay: the Notification shape {notification_type:"permission"} classifies as a permission dialog', () => {
   assert.strictEqual(classifyNotification({ notification_type: 'permission', tool: 'Bash', id: 'toolu_1', message: 'rm -rf build' }), 'permission');
   assert.strictEqual(classifyNotification({ notification_type: 'idle', message: 'rm -rf build' }), 'other');
+});
+
+test('clay: a seat carrying protectCredentials is refused before any PTY — clay 0.1.0 ignores permissions and sandbox settings', async () => {
+  const f = mkClay();
+  await assert.rejects(f.create('seat', { protectCredentials: ['~/.ssh'] }),
+    /clay seat "seat" refused: protectCredentials \(~\/\.ssh\) cannot be enforced on clay 0\.1\.0/);
+  assert.deepStrictEqual(f.spawns, [], 'no PTY');
+  assert.deepStrictEqual(f.hooks, [], 'no hook settings written');
+  assert.strictEqual(f.m.sessions.has('seat'), false);
+});
+
+test('clay: an empty protectCredentials list spawns as usual', async () => {
+  const f = mkClay();
+  await f.create('seat', { protectCredentials: [] });
+  try { assert.strictEqual(f.spawns.length, 1); } finally { f.stop('seat'); }
+});
+
+test('clay: tool, shell and subagent denies are not enforced — one warning, returned and broadcast to the seat', async () => {
+  const f = mkClay();
+  const res = await f.create('seat', { disabledTools: ['WebFetch'], shellDeny: ['Bash(rm:*)'], denyBuiltins: ['Explore'] });
+  try {
+    const want = 'tool denies, shell denies, subagent denies not enforced on clay 0.1.0: it ignores permissions settings.';
+    assert.deepStrictEqual(res.warnings, [want]);
+    assert.deepStrictEqual(f.broadcasts.filter(([ch, msg]) => ch === 'ipc-message' && msg.type === 'system').map(([, msg]) => [msg.from, msg.body]), [['seat', want]]);
+    assert.strictEqual(f.spawns.length, 1, 'a warning, not a refusal');
+  } finally { f.stop('seat'); }
+});
+
+test('clay: a resume seeds activityTs from the resumed transcript mtime, not now', async () => {
+  const f = mkClay();
+  const p = pathReal.join(f.home, '.clay', 'projects', f.cwd.replace(/[/.]/g, '-'), `${RESUME}.jsonl`);
+  fsReal.mkdirSync(pathReal.dirname(p), { recursive: true });
+  fsReal.writeFileSync(p, '{}\n');
+  const old = new Date('2026-01-02T03:04:05Z');
+  fsReal.utimesSync(p, old, old);
+  await f.create('seat', { resumeId: RESUME });
+  try { assert.strictEqual(f.m.sessions.get('seat').activityTs, old.getTime()); } finally { f.stop('seat'); }
 });
