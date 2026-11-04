@@ -112,6 +112,29 @@ test('protectCredentials is the union of the spawner\'s and the template\'s; nul
   assert.deepStrictEqual([h.calls[0][PROTECT], none.calls[0][PROTECT]], [['~/.ssh', '~/.aws'], null]);
 });
 
+for (const type of ['codex', 'muse']) {
+  test(`a credential-sandboxed spawner cannot spawn a ${type} child, which does not enforce the sandbox`, async () => {
+    const h = harness({ rec: { protectCredentials: ['~/.ssh'] } });
+    await spawn(h, h.writeTpl({ type }));
+    assert.deepStrictEqual(h.calls, []);
+    assert.deepStrictEqual(h.replies, [`[agent:spawn] error: ${type} does not enforce a credential sandbox — a ${type} seat cannot carry the protectCredentials its spawner holds (~/.ssh)`]);
+  });
+}
+
+test('a credential-sandboxed spawner spawns a claude child carrying its list', async () => {
+  const h = harness({ rec: { protectCredentials: ['~/.ssh'] } });
+  await spawn(h, h.writeTpl({ type: 'claude' }));
+  assert.strictEqual(h.calls.length, 1, `ENTER: create was called (${JSON.stringify(h.replies)})`);
+  assert.deepStrictEqual(h.calls[0][PROTECT], ['~/.ssh']);
+});
+
+test('the operator door spawns a codex child from a credential-sandboxed spawner', async () => {
+  const h = harness({ rec: { protectCredentials: ['~/.ssh'] } });
+  await spawn(h, h.writeTpl({ type: 'codex' }), { operator: true, onReply: (r) => h.replies.push(r) });
+  assert.strictEqual(h.calls.length, 1, `ENTER: create was called (${JSON.stringify(h.replies)})`);
+  assert.strictEqual(h.calls[0][1], 'codex');
+});
+
 test('a path template under the spawner\'s team templates dir is accepted; a symlink out of the library is refused', async () => {
   const tmp = fs.realpathSync(mkTmpRoot('clx-clamp-team-'));
   const team = { name: 't', root: tmp, lead: 't-lead', dir: path.join(tmp, 'teams', 't'), roles: {} };

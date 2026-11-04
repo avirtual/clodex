@@ -13,6 +13,11 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- **Security: a credential-sandboxed seat can no longer spawn an unsandboxed Codex or Muse child.** An agent spawn whose child type cannot enforce the spawner's `protectCredentials` is refused; only Claude seats enforce the credential sandbox.
+- **Security: deleting a team whose manifest failed to load no longer removes whatever sandbox box its `sandbox.json` pointer names.** The pointer's box id is trusted only when it equals `team-<name>`.
+- A role removal or rename that fails to write `team.json` restores the roster rows it had changed.
+- `clodex-run-tests` with `scope: own` no longer runs a test file under a fixture or dot directory as a test.
+- The `clodex-monitor` watcher no longer keeps the agent-socket credential in its process environment; it reads it once at start from a 0600 file, which it then deletes.
 
 ## 5.160.0 — 2026-11-04 — Security hardening of seats, spawns and sockets; Clodex hosts clay
 - **Security: a credential-sandboxed seat on the default login can no longer read the operator's own `~/.claude/.credentials.json`.** Only minted accounts' credential files were denied; the default account's was write-denied but readable.

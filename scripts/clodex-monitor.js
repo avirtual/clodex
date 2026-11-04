@@ -43,6 +43,15 @@ function statePath(agent, id) {
 function logPath(agent, id) {
   return path.join(monitorsDir(agent), `${id}.log`);
 }
+function credPath(agent, id) {
+  return path.join(monitorsDir(agent), `${id}.cred`);
+}
+function takeCred(agent, id) {
+  let cred = null;
+  try { cred = fs.readFileSync(credPath(agent, id), 'utf-8') || null; } catch {}
+  try { fs.unlinkSync(credPath(agent, id)); } catch {}
+  return cred;
+}
 // The agent's inbound socket, read from its registry entry so we track the
 // canonical path rather than re-deriving the run/<name>/agent.sock grammar.
 function agentSocket(agent) {
@@ -67,13 +76,13 @@ function mintId() {
 // field and wakes, so this degrades to noisy, never to dropped. Resolves to a
 // boolean so the watcher can count consecutive failures (dead agent → shut down
 // rather than orphan a daemon forever).
-function sendDm(socketPath, from, body, passive = false) {
+function sendDm(socketPath, from, body, passive = false, cred = null) {
   return new Promise((resolve) => {
     let settled = false;
     const done = (ok) => { if (!settled) { settled = true; resolve(ok); } };
     const msg = { from, body, type: 'dm' };
     if (passive) msg.delivery = 'passive';
-    if (process.env.CLODEX_AGENT_CRED) msg.cred = process.env.CLODEX_AGENT_CRED;
+    if (cred) msg.cred = cred;
     const payload = Buffer.from(JSON.stringify(msg), 'utf-8');
     const conn = net.createConnection(socketPath, () => conn.end(payload, () => done(true)));
     conn.on('error', () => done(false));
@@ -88,6 +97,7 @@ function sendDm(socketPath, from, body, passive = false) {
 async function runWatcher() {
   const agent = process.env.CMON_AGENT;
   const id = process.env.CMON_ID;
+  const cred = takeCred(agent, id);
   const command = process.env.CMON_COMMAND;
   const description = process.env.CMON_DESC || '';
   const persistent = process.env.CMON_PERSISTENT === '1';
@@ -114,7 +124,7 @@ async function runWatcher() {
   // Lifecycle events always wake (silence is not success). wakeAll (payload
   // wake:true) restores built-in-Monitor behavior: every event wakes.
   const notify = async (text, { wake = false } = {}) => {
-    const ok = await sendDm(socketPath, 'monitor', `[${label}] ${text}`, !(wake || wakeAll));
+    const ok = await sendDm(socketPath, 'monitor', `[${label}] ${text}`, !(wake || wakeAll), cred);
     deadDeliveries = ok ? 0 : deadDeliveries + 1;
     // Six straight failures ≈ the agent is gone. Tear the whole monitor down.
     if (deadDeliveries >= 6) {
@@ -221,7 +231,6 @@ async function runWatcher() {
     // as a status change (poll+diff, `until`, grep --line-buffered); the
     // watcher only forwards what it emits.
     const commandEnv = { ...process.env };
-    delete commandEnv.CLODEX_AGENT_CRED;
     const child = childProcess.spawn('/bin/sh', ['-c', command], {
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -288,12 +297,10 @@ async function runWatcher() {
   notify('monitoring started');
 }
 
-// Remove a monitor's on-disk footprint: both the .json state and its .log. The
-// two are minted together in `start`, so they die together — otherwise logs
-// accumulate unbounded (list only ever reaped the .json).
 function cleanupState(agent, id) {
   try { fs.unlinkSync(statePath(agent, id)); } catch {}
   try { fs.unlinkSync(logPath(agent, id)); } catch {}
+  try { fs.unlinkSync(credPath(agent, id)); } catch {}
 }
 
 // ===========================================================================
@@ -400,11 +407,16 @@ async function runLauncher() {
     // Detach the watcher so it survives our SIGKILL: own session (detached),
     // stdio to a logfile for observability, and unref so we can exit now.
     const logFd = fs.openSync(logPath(agent, id), 'a');
+    const { CLODEX_AGENT_CRED: agentCred, ...watcherEnv } = process.env;
+    if (agentCred) {
+      try { fs.writeFileSync(credPath(agent, id), agentCred, { mode: 0o600, flag: 'wx' }); }
+      catch (e) { die(`cannot write monitor credential: ${e.message}`); }
+    }
     const child = childProcess.spawn(process.execPath, [__filename, '--daemon'], {
       detached: true,
       stdio: ['ignore', logFd, logFd],
       env: {
-        ...process.env,
+        ...watcherEnv,
         CMON_AGENT: agent,
         CMON_ID: id,
         CMON_COMMAND: p.command || '',

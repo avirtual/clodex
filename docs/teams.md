@@ -56,7 +56,7 @@ flags) are set only in the app's template editor (`templates:saveTeam`), never b
 `mcpServers`. Reviewer seats load no `mcpServers`. An `[agent:spawn]` child gets
 the template's exec grants and `mcpServers` only where its spawner holds them (except the lead role below),
 is refused a privileged flag and value its spawner's own args lack, inherits the
-spawner's `protectCredentials`, and takes a `template:<path>` only from under
+spawner's `protectCredentials` (a Codex or Muse child that would inherit a non-empty list is refused, since only Claude seats enforce it), and takes a `template:<path>` only from under
 `~/.clodex/library/templates/` or the team's `templates/` dir.
 
 `[agent:spawn name:<name>-lead cwd:<root>]` with no `template:` boots the lead

@@ -474,3 +474,51 @@ test('a timed-out target that traps SIGTERM is SIGKILLed before the watcher exit
     fs.rmSync(home, { recursive: true, force: true });
   }
 });
+
+test('the watcher runs without CLODEX_AGENT_CRED in its env and signs frames from a 0600 cred file', async () => {
+  const net = require('net');
+  const home = mkTmpRoot('clodex-mon-');
+  const sock = path.join(home, 'a.sock');
+  fs.mkdirSync(path.join(home, 'run', 'a'), { recursive: true });
+  fs.writeFileSync(path.join(home, 'run', 'a', 'agent.json'), JSON.stringify({ socket: sock }));
+  const monDir = path.join(home, 'monitors', 'a');
+  const frames = [];
+  let onFrame = () => {};
+  const server = net.createServer((c) => {
+    let buf = '';
+    c.on('data', (d) => { buf += d; });
+    c.on('end', () => { frames.push(JSON.parse(buf)); onFrame(); });
+  });
+  await new Promise((resolve) => server.listen(sock, resolve));
+  const frameWith = (text) => new Promise((resolve) => {
+    const check = () => { const f = frames.find((x) => x.body.includes(text)); if (f) resolve(f); };
+    onFrame = check;
+    check();
+  });
+  process.env.CLODEX_AGENT_CRED = 'sekrit';
+  let id = null;
+  try {
+    const r = await launchMon(home, {
+      action: 'start', agent: 'a', persistent: true,
+      command: 'echo "cred=${CLODEX_AGENT_CRED-unset}"; exec sleep 30',
+    });
+    assert.strictEqual(r.code, 0, `start must succeed: ${r.err}`);
+    id = fs.readdirSync(monDir).find((f) => f.endsWith('.json')).replace(/\.json$/, '');
+    const out = await frameWith('cred=');
+    assert.match(out.body, /cred=unset/, 'the watcher\'s env, inherited by its command, holds no CLODEX_AGENT_CRED');
+    assert.strictEqual(out.cred, 'sekrit');
+    assert.strictEqual(fs.existsSync(path.join(monDir, `${id}.cred`)), false, 'the watcher deletes the cred file once it has read it');
+    const stop = await launchMon(home, { action: 'stop', agent: 'a', id });
+    assert.strictEqual(stop.code, 0, `stop must succeed: ${stop.err}`);
+    const stopped = await frameWith('stopped');
+    assert.strictEqual(stopped.cred, 'sekrit', 'the stopped notice is signed');
+  } finally {
+    delete process.env.CLODEX_AGENT_CRED;
+    server.close();
+    for (const f of fs.existsSync(monDir) ? fs.readdirSync(monDir) : []) {
+      if (!f.endsWith('.json')) continue;
+      try { process.kill(JSON.parse(fs.readFileSync(path.join(monDir, f), 'utf-8')).pid); } catch {}
+    }
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});

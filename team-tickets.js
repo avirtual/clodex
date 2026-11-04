@@ -26,7 +26,7 @@ const {
   teamPromptFile,
 } = require('./team-prompt-dir');
 const { resolveModelId, deriveModelTemplate, deriveEffortTemplate } = require('./team-template-derive');
-const { seatType, adapterFor, DEFAULT_TYPE, PLATFORMS, hasBypass, hasReadOnlyCap, resolveEffort, splitPrivilegedArgs } = require('./cli-adapters');
+const { seatType, adapterFor, DEFAULT_TYPE, PLATFORMS, hasBypass, hasReadOnlyCap, runsClaudeHooks, resolveEffort, splitPrivilegedArgs } = require('./cli-adapters');
 const { readerFor } = require('./transcript-readers');
 const { ctxThresholdsFor } = require('./ctx-reminder');
 const { formatGatherReport } = require('./team-gather');
@@ -699,6 +699,10 @@ function createTicketMethods(deps, shared) {
       const credLists = [spawnerRec.protectCredentials, tpl && tpl.protectCredentials].filter(Array.isArray);
       const protectCredentials = credLists.length
         ? [...new Set(credLists.flat().filter((p) => typeof p === 'string'))] : null;
+      if (!operator && protectCredentials && protectCredentials.length && !runsClaudeHooks(type)) {
+        reply(`error: ${type} does not enforce a credential sandbox — a ${type} seat cannot carry the protectCredentials its spawner holds (${protectCredentials.join(', ')})`);
+        return;
+      }
       const agents = (tpl && tpl.agents) || [];
       const disabledSkills = (tpl && tpl.disabledSkills) || [];
       const injectSkills = (tpl && tpl.injectSkills) || [];
