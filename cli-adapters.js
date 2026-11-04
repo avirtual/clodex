@@ -30,7 +30,7 @@ const ADAPTERS = {
     skills: null,
     instructions: 'append-system-prompt-file',
     transcript: { reader: 'claude', link: 'hook' },
-    caps: { park: true, transcript: true, warmth: true },
+    caps: { park: true, transcript: true, warmth: true, claudeHooks: true },
     stream: {
       codec: 'stream-codec-claude',
       argv: ({ resumeId, sessionId, fork }) => [
@@ -68,7 +68,7 @@ const ADAPTERS = {
     skills: null,
     instructions: 'model-instructions-file',
     transcript: { reader: 'codex', link: 'clodex' },
-    caps: { park: false, transcript: true, warmth: false },
+    caps: { park: false, transcript: true, warmth: false, claudeHooks: false },
     stream: {
       codec: 'stream-codec-codex',
       argv: () => ['app-server'],
@@ -125,7 +125,7 @@ const ADAPTERS = {
     },
     instructions: 'user-agents-md',
     transcript: { reader: 'muse', link: 'clodex' },
-    caps: { park: false, transcript: true, warmth: false },
+    caps: { park: false, transcript: true, warmth: false, claudeHooks: false },
     stream: {
       codec: 'stream-codec-muse',
       argv: ({ bypass = false, readOnly = false } = {}) => [
@@ -146,6 +146,35 @@ const ADAPTERS = {
       noWire: false,
       accounts: false,
       streamIo: true,
+    },
+  },
+  clay: {
+    id: 'clay',
+    label: 'clay',
+    cmd: 'clay',
+    model: { flags: ['--model'], aliases: {}, idRe: MODEL_ID_RE },
+    effort: { values: ['low', 'medium', 'high'], apply: 'flag' },
+    posture: { bypassArgs: ['--yolo'], bypass: [['--yolo']] },
+    account: { envKey: 'CLAY_HOME', bootstrap: null },
+    cwdDir: null,
+    readOnlyCap: { enforce: 'argv', args: ['--read-only'] },
+    seatSettings: null,
+    skills: null,
+    instructions: 'append-system-prompt-file',
+    transcript: { reader: 'claude', link: 'hook' },
+    caps: { park: false, transcript: true, warmth: false, claudeHooks: true },
+    stream: null,
+    ui: {
+      injectSkills: false,
+      skillRoster: false,
+      plugins: false,
+      agents: false,
+      tools: false,
+      strip: false,
+      autoCompact: false,
+      noWire: false,
+      accounts: false,
+      streamIo: false,
     },
   },
 };
@@ -193,6 +222,7 @@ function hasBypass(adapter, argv) {
 
 function hasReadOnlyCap(adapter, argv) {
   const cap = adapter && adapter.readOnlyCap && adapter.readOnlyCap.args;
+  if (Array.isArray(cap) && cap.length === 1) return Array.isArray(argv) && argv.includes(cap[0]);
   if (!Array.isArray(cap) || cap.length === 0 || cap.length % 2 !== 0 || !Array.isArray(argv)) return false;
   const norm = normalizeArgv(argv, adapter.readOnlyCap.shortFlags || {});
   for (let c = 0; c < cap.length; c += 2) {
@@ -206,6 +236,11 @@ function postureOf(adapter, argv) {
   if (hasBypass(adapter, argv)) return 'bypass';
   if (hasReadOnlyCap(adapter, argv)) return 'read-only';
   return 'default';
+}
+
+function runsClaudeHooks(type) {
+  const a = adapterFor(type);
+  return !!(a && a.caps.claudeHooks);
 }
 
 function capsFor(type) {
@@ -311,6 +346,6 @@ function splitPrivilegedArgs(argv) {
 
 module.exports = {
   ADAPTERS, PLATFORMS, DEFAULT_TYPE, CAP_KEYS,
-  adapterFor, isAgentType, capsFor, streamFor, seatType, resolveModelId, resolveEffort, stripModelArgs, hasBypass, hasReadOnlyCap, postureOf,
+  adapterFor, isAgentType, capsFor, runsClaudeHooks, streamFor, seatType, resolveModelId, resolveEffort, stripModelArgs, hasBypass, hasReadOnlyCap, postureOf,
   PRIVILEGED_FLAG_ARITY, splitPrivilegedArgs,
 };

@@ -76,7 +76,7 @@ test('every adapter entry carries the whole entry key set', () => {
     assert.strictEqual(entry.id, type);
     assert.deepStrictEqual(Object.keys(entry.model), ['flags', 'aliases', 'idRe']);
     assert.deepStrictEqual(Object.keys(entry.effort), ['values', 'apply']);
-    assert.deepStrictEqual(Object.keys(entry.caps), ['park', 'transcript', 'warmth']);
+    assert.deepStrictEqual(Object.keys(entry.caps), ['park', 'transcript', 'warmth', 'claudeHooks']);
     assert.deepStrictEqual(Object.keys(entry.transcript), ['reader', 'link']);
     assert.deepStrictEqual(Object.keys(entry.posture), ['bypassArgs', 'bypass']);
     assert.ok(Array.isArray(entry.posture.bypassArgs) && entry.posture.bypassArgs.length > 0
@@ -92,12 +92,12 @@ test('m0: the table rows declare posture, cwdDir, transcript and warmth literall
   assert.strictEqual(ADAPTERS.codex.cwdDir, '.codex');
   assert.deepStrictEqual(ADAPTERS.claude.transcript, { reader: 'claude', link: 'hook' });
   assert.deepStrictEqual(ADAPTERS.codex.transcript, { reader: 'codex', link: 'clodex' });
-  assert.deepStrictEqual(ADAPTERS.claude.caps, { park: true, transcript: true, warmth: true });
-  assert.deepStrictEqual(ADAPTERS.codex.caps, { park: false, transcript: true, warmth: false });
+  assert.deepStrictEqual(ADAPTERS.claude.caps, { park: true, transcript: true, warmth: true, claudeHooks: true });
+  assert.deepStrictEqual(ADAPTERS.codex.caps, { park: false, transcript: true, warmth: false, claudeHooks: false });
   assert.deepStrictEqual(ADAPTERS.muse.posture, { bypassArgs: ['--approval-mode', 'never', '--disable-sandbox'], bypass: [['--approval-mode', 'never'], ['--disable-sandbox']] });
   assert.strictEqual(ADAPTERS.muse.cwdDir, null);
   assert.deepStrictEqual(ADAPTERS.muse.transcript, { reader: 'muse', link: 'clodex' });
-  assert.deepStrictEqual(ADAPTERS.muse.caps, { park: false, transcript: true, warmth: false });
+  assert.deepStrictEqual(ADAPTERS.muse.caps, { park: false, transcript: true, warmth: false, claudeHooks: false });
 });
 
 test('m2: the muse row — Meta\'s CLI, XDG overlay bootstrap, user-scope AGENTS.md, settings-profile read-only cap', () => {
@@ -138,7 +138,7 @@ test('m2: the muse row — Meta\'s CLI, XDG overlay bootstrap, user-scope AGENTS
     },
     instructions: 'user-agents-md',
     transcript: { reader: 'muse', link: 'clodex' },
-    caps: { park: false, transcript: true, warmth: false },
+    caps: { park: false, transcript: true, warmth: false, claudeHooks: false },
     stream: { codec: 'stream-codec-muse', argv: ADAPTERS.muse.stream.argv, toolBoundary: 'hook', transcriptRepoint: 'record' },
     ui: {
       injectSkills: true, skillRoster: true, plugins: true, agents: false, tools: false,
@@ -195,6 +195,10 @@ test('m0: hasBypass matches every posture.bypass option anywhere in argv', () =>
     [claude, null, false],
     [claude, '--dangerously-skip-permissions', false],
     [null, ['--dangerously-skip-permissions'], false],
+    [ADAPTERS.clay, ['--yolo'], true],
+    [ADAPTERS.clay, ['--model', 'claude-haiku-5-5', '--yolo'], true],
+    [ADAPTERS.clay, ['--read-only'], false],
+    [ADAPTERS.clay, ['--dangerously-skip-permissions'], false],
   ];
   for (const [adapter, argv, want] of rows) {
     assert.strictEqual(hasBypass(adapter, argv), want, `hasBypass(${adapter && JSON.stringify(adapter.posture)}, ${JSON.stringify(argv)})`);
@@ -210,6 +214,9 @@ test('postureOf reads bypass, then the full read-only cap, else default', () => 
     [ADAPTERS.codex, ['--dangerously-bypass-approvals-and-sandbox', '--sandbox', 'read-only', '--ask-for-approval', 'never'], 'bypass'],
     [ADAPTERS.muse, ['--approval-mode', 'never', '--disable-sandbox'], 'bypass'],
     [ADAPTERS.muse, ['--permission-profile', 'reviewer'], 'read-only'],
+    [ADAPTERS.clay, ['--yolo'], 'bypass'],
+    [ADAPTERS.clay, ['--read-only'], 'read-only'],
+    [ADAPTERS.clay, ['--model', 'claude-haiku-5-5'], 'default'],
     [ADAPTERS.claude, [], 'default'],
     [adapterFor('bash'), ['--dangerously-skip-permissions'], 'default'],
     [ADAPTERS.codex, null, 'default'],
@@ -219,8 +226,50 @@ test('postureOf reads bypass, then the full read-only cap, else default', () => 
   }
 });
 
-test('the adapter table names exactly the providers skill-delivery can deliver to', () => {
-  assert.deepStrictEqual(Object.keys(ADAPTERS), createSkillDelivery({}).providers());
+test('every provider skill-delivery can deliver to is an adapter; clay alone has none', () => {
+  const providers = createSkillDelivery({}).providers();
+  assert.deepStrictEqual(Object.keys(ADAPTERS).filter((k) => !providers.includes(k)), ['clay']);
+  assert.deepStrictEqual(providers.filter((k) => !Object.keys(ADAPTERS).includes(k)), []);
+});
+
+test('clay: the Messages-API CLI row — raw model ids, flag effort, --yolo bypass, --read-only argv cap, Claude-shape hooks and transcript', () => {
+  assert.deepStrictEqual(ADAPTERS.clay, {
+    id: 'clay',
+    label: 'clay',
+    cmd: 'clay',
+    model: { flags: ['--model'], aliases: {}, idRe: ADAPTERS.claude.model.idRe },
+    effort: { values: ['low', 'medium', 'high'], apply: 'flag' },
+    posture: { bypassArgs: ['--yolo'], bypass: [['--yolo']] },
+    account: { envKey: 'CLAY_HOME', bootstrap: null },
+    cwdDir: null,
+    readOnlyCap: { enforce: 'argv', args: ['--read-only'] },
+    seatSettings: null,
+    skills: null,
+    instructions: 'append-system-prompt-file',
+    transcript: { reader: 'claude', link: 'hook' },
+    caps: { park: false, transcript: true, warmth: false, claudeHooks: true },
+    stream: null,
+    ui: {
+      injectSkills: false, skillRoster: false, plugins: false, agents: false, tools: false,
+      strip: false, autoCompact: false, noWire: false, accounts: false, streamIo: false,
+    },
+  });
+  assert.strictEqual(streamFor('clay'), null);
+  assert.strictEqual(resolveModelId('clay', 'haiku'), 'haiku', 'no aliases: an alias word passes through as an id');
+  assert.strictEqual(resolveModelId('clay', 'claude-haiku-5-5'), 'claude-haiku-5-5');
+  assert.deepStrictEqual(resolveEffort('clay', 'high'), 'high');
+  assert.deepStrictEqual(resolveEffort('clay', 'xhigh'), { error: 'effort "xhigh" is not one of low, medium, high (clay), or default' });
+  assert.deepStrictEqual(stripModelArgs('clay', ['--model', 'x', '--yolo']), ['--yolo']);
+});
+
+test('runsClaudeHooks: claude and clay run the Claude hook settings, codex and muse do not', () => {
+  const rows = [['claude', true], ['clay', true], ['codex', false], ['muse', false], ['bash', false], [null, false]];
+  for (const [type, want] of rows) assert.strictEqual(runsClaudeHooks(type), want, String(type));
+});
+
+test('PRIVILEGED_FLAG_ARITY: --yolo is privileged with no value, --read-only is a cap and is not', () => {
+  assert.strictEqual(PRIVILEGED_FLAG_ARITY['--yolo'], 0);
+  assert.strictEqual(Object.prototype.hasOwnProperty.call(PRIVILEGED_FLAG_ARITY, '--read-only'), false);
 });
 
 test('readOnlyCap: claude is a tool denylist, codex is the argv sandbox pair, muse is the settings profile', () => {
@@ -247,7 +296,7 @@ test('readOnlyCap: claude is a tool denylist, codex is the argv sandbox pair, mu
 });
 
 test('PLATFORMS is the table order', () => {
-  assert.deepStrictEqual(PLATFORMS, ['claude', 'codex', 'muse']);
+  assert.deepStrictEqual(PLATFORMS, ['claude', 'codex', 'muse', 'clay']);
 });
 
 test('adapterFor answers null for anything the table does not name', () => {

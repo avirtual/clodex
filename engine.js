@@ -17,7 +17,7 @@ const { confine } = require('./path-confine');
 const { safeGitArgsFor } = require('./git-safe');
 const { createSkillDelivery } = require('./skill-delivery');
 const { createSkillLister, skillAliases } = require('./muse-skills');
-const { adapterFor: adapterRowFor, streamFor } = require('./cli-adapters');
+const { adapterFor: adapterRowFor, streamFor, runsClaudeHooks } = require('./cli-adapters');
 const { KINDS: PROMPT_KINDS, badStem, teamPromptFile, teamJsonFile, readTeamJson } = require('./team-prompt-dir');
 const { planGather, applyGather } = require('./team-gather');
 const { vetFileWrite, PEEK_MAX_BYTES } = require('./file-edit');
@@ -768,7 +768,7 @@ const { buildIpcPrompt, DEFAULT_COMPACT_CONTINUATION } = require('./ipc-prompt')
 
 function rebuildAllStatusScripts(manager) {
   for (const [name, s] of manager.sessions) {
-    if (s.agentType !== 'claude') continue;
+    if (!runsClaudeHooks(s.agentType)) continue;
     const p = pathFor(REGISTRY_DIR, name, 'statusline');
     try { fs.writeFileSync(p, renderClaudeStatusScript(name, !!(s.wireRouted || s.proxyBase), uiSettings, REGISTRY_DIR), { mode: 0o700 }); } catch {}
   }
