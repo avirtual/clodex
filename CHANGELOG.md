@@ -12,7 +12,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — Security hardening of seats, spawns and sockets; Clodex hosts clay
+## Unreleased
+
+## 5.160.0 — 2026-11-04 — Security hardening of seats, spawns and sockets; Clodex hosts clay
 - **Security: a credential-sandboxed seat on the default login can no longer read the operator's own `~/.claude/.credentials.json`.** Only minted accounts' credential files were denied; the default account's was write-denied but readable.
 - **Security: a message claimed from a peer box's outbox can no longer forge its sender.** Any process on the box could drop a file into the outbox with a `from` of `user` or a bracketed line break and have it delivered to a seat as the operator, a system sender or another seat, close that seat's ticket with its own report, or run sandbox verbs in its name; claimed records are shape-checked on both sides, a malformed sender is delivered as `peer`, and the box now signs every record it enqueues so a file a seat drops into the outbox is never claimed — a defence against senders that cannot read `~/.clodex` (credential-sandboxed seats, other users, peers), not against every same-user process, which can read the outbox key.
 - **Security: system-sender names are reserved.** A seat could be spawned as `user`, `ticket-loop` or `permission` and its messages arrived as the operator's or the harness's own, undefused, so a forged verdict or permission relay inside them read as real; every create door now refuses those names, and delivery decides "system sender" only for a name no seat holds.
