@@ -9,7 +9,7 @@ binary), `model` (`flags` the CLI takes a model on, `aliases` short names →
 ids, `idRe` the id shape), `posture` (`bypassArgs`, the permission-bypass
 argv tokens spawned as an array; `bypass`, the same tokens as options —
 `[flag]` or `[flag, value]` — and `hasBypass(adapter, argv)` is true when every
-option is present in any order, a valued one `=`-joined or not, last-wins), `account` (`envKey` the config-dir env
+option is present in any order, a valued one `=`-joined or not, last-wins, or any single-token `aliases` is (clodent 0.3.0 takes `--yolo` as bypass; `readOnlyCap.aliases` likewise, `--read-only` as plan)), `account` (`envKey` the config-dir env
 var, which `create()` resolves the account dir through for every type that
 names one; `bootstrap` names the mechanism the call site with fs runs, `null`
 when none), `cwdDir` (the directory the CLI writes into the seat's cwd, which
@@ -67,11 +67,6 @@ no entry was written; `--add-dir` under `read-only` is NOT writable (`touch`:
 Operation not permitted), the cwd is not either, and outbound network is off
 (DNS fails). `exec` rejects `--ask-for-approval`; the TUI the seat boots takes
 it.
-
-`aliases` (clodent) are single argv tokens that name the same cap or the same
-bypass: clodent 0.3.0 takes `--read-only` as `--permission-mode plan` and
-`--yolo` as `--dangerously-skip-permissions`, and exits 2 on two permission
-flags that name different modes.
 
 `enforce: 'settings-profile'` (Muse) is a settings file plus a flag: `settings`
 is deep-merged into every Muse seat's settings.json by `bootstrapSeatConfig`

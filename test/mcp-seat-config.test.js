@@ -44,7 +44,7 @@ test('session-manager samples the user MCP flags before the plan and its push', 
   const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf8');
   const mcp = src.indexOf('const userMcp = args.some((a) => /^--mcp-config(=|$)/.test(a));');
   const strict = src.indexOf('const userStrict = args.some((a) => /^--strict-mcp-config(=|$)/.test(a));');
-  const plan = src.indexOf('const plan = mcpArgvPlan(');
+  const plan = src.indexOf('? mcpArgvPlan({ userMcp, userStrict, ');
   const push = src.indexOf('args.push(...plan.push);');
   assert.ok(mcp > 0 && strict > 0);
   assert.ok(plan > mcp && plan > strict);
