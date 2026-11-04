@@ -504,14 +504,14 @@ test('the watcher runs without CLODEX_AGENT_CRED in its env and signs frames fro
     });
     assert.strictEqual(r.code, 0, `start must succeed: ${r.err}`);
     id = fs.readdirSync(monDir).find((f) => f.endsWith('.json')).replace(/\.json$/, '');
-    const credFile = path.join(monDir, `${id}.cred`);
-    assert.strictEqual(fs.statSync(credFile).mode & 0o777, 0o600);
     const out = await frameWith('cred=');
     assert.match(out.body, /cred=unset/, 'the watcher\'s env, inherited by its command, holds no CLODEX_AGENT_CRED');
     assert.strictEqual(out.cred, 'sekrit');
+    assert.strictEqual(fs.existsSync(path.join(monDir, `${id}.cred`)), false, 'the watcher deletes the cred file once it has read it');
     const stop = await launchMon(home, { action: 'stop', agent: 'a', id });
     assert.strictEqual(stop.code, 0, `stop must succeed: ${stop.err}`);
-    assert.strictEqual(fs.existsSync(credFile), false, 'the cred file is removed with the watcher\'s state');
+    const stopped = await frameWith('stopped');
+    assert.strictEqual(stopped.cred, 'sekrit', 'the stopped notice is signed');
   } finally {
     delete process.env.CLODEX_AGENT_CRED;
     server.close();
@@ -519,5 +519,6 @@ test('the watcher runs without CLODEX_AGENT_CRED in its env and signs frames fro
       if (!f.endsWith('.json')) continue;
       try { process.kill(JSON.parse(fs.readFileSync(path.join(monDir, f), 'utf-8')).pid); } catch {}
     }
+    fs.rmSync(home, { recursive: true, force: true });
   }
 });
