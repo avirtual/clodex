@@ -317,3 +317,18 @@ test('the operator door inherits neither the spawner\'s cap nor its denies', asy
   assert.strictEqual(h.calls.length, 1, `ENTER: create was called (${JSON.stringify(h.replies)})`);
   assert.deepStrictEqual([h.calls[0][EXTRA_ARGS], h.calls[0][DISABLED_TOOLS], h.calls[0][SHELL_DENY]], [[], ['Skill'], null]);
 });
+
+test('a template that sets a held cap flag to another value is refused as lifting the read-only cap', async () => {
+  const h = harness({ rec: { extraArgs: ['--sandbox', 'workspace-write', ...CODEX_RO] } });
+  await spawn(h, h.writeTpl({ type: 'codex', extraArgs: ['--sandbox', 'workspace-write'] }), undefined, 'codex');
+  assert.deepStrictEqual(h.calls, []);
+  assert.match(h.replies[0], /^\[agent:spawn\] error: template ".*" carries --sandbox, which lifts spawner's read-only cap/);
+});
+
+test('deny lists are read off the spawner\'s live session when the record has none', async () => {
+  const h = harness({ rec: null });
+  h.m.sessions.set('spawner', { name: 'spawner', disabledTools: ['WebFetch'], shellDeny: ['curl'] });
+  await spawn(h, h.writeTpl({}));
+  assert.strictEqual(h.calls.length, 1, `ENTER: create was called (${JSON.stringify(h.replies)})`);
+  assert.deepStrictEqual([h.calls[0][DISABLED_TOOLS], h.calls[0][SHELL_DENY]], [['WebFetch'], ['curl']]);
+});
