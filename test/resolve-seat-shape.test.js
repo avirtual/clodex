@@ -771,23 +771,23 @@ test('t1076 review arm: a CODEX lead with the Codex bypass flag gives its claude
   assert.deepStrictEqual(shape.extraArgs, ['--dangerously-skip-permissions']);
 });
 
-test('clay: a clay-template hand naming an account is refused with reason platform — no Claude account dir becomes CLAY_HOME', () => {
-  const m = managerWith([{ name: 'hk', type: 'clay', cwd: '/repo' }]);
+test('clodent: a clodent-template hand naming an account is refused with reason platform — no Claude account dir becomes CLODENT_HOME', () => {
+  const m = managerWith([{ name: 'hk', type: 'clodent', cwd: '/repo' }]);
   const shape = m.resolveSeatShape(teamWith({ hand: { worktree: true, template: 'hk', account: 'work' } }), 'hand', 'ticket', LEAD);
-  assert.strictEqual(shape.type, 'clay', 'ENTER: the clay template resolved');
+  assert.strictEqual(shape.type, 'clodent', 'ENTER: the clodent template resolved');
   assert.deepStrictEqual(shape.accountMissing, { label: 'work', reason: 'platform' });
-  assert.deepStrictEqual(Object.keys(shape.env || {}), [], 'no CLAY_HOME reaches the seat env');
+  assert.deepStrictEqual(Object.keys(shape.env || {}), [], 'no CLODENT_HOME reaches the seat env');
 });
 
-test('clay: a clay reviewer gets --read-only last and the clay cap note, not the OS-sandbox one', () => {
+test('clodent: a clodent reviewer gets --permission-mode plan last and the clodent cap note, not the OS-sandbox one', () => {
   const m = managerWith(
-    [{ name: 'rk', type: 'clay', cwd: '/repo', extraArgs: ['--model', 'claude-haiku-5-5'] }],
+    [{ name: 'rk', type: 'clodent', cwd: '/repo', extraArgs: ['--model', 'claude-haiku-5-5'] }],
     { leadArgs: ['--dangerously-skip-permissions'] },
   );
   const shape = m.resolveSeatShape(teamWith({ reviewer: { template: 'rk' } }), 'reviewer', 'review', LEAD);
-  assert.strictEqual(shape.type, 'clay');
-  assert.deepStrictEqual(shape.extraArgs, ['--model', 'claude-haiku-5-5', '--read-only']);
-  assert.strictEqual(shape.capNote, 'read-only (clay refuses write tools and non-read-only Bash; not an OS sandbox)');
+  assert.strictEqual(shape.type, 'clodent');
+  assert.deepStrictEqual(shape.extraArgs, ['--model', 'claude-haiku-5-5', '--permission-mode', 'plan']);
+  assert.strictEqual(shape.capNote, 'read-only (clodent plan mode: permission rules and a Bash path guard, not an OS sandbox)');
 });
 
 test('t1076: a Codex-template hand naming an account is refused with reason platform', () => {

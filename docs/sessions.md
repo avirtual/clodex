@@ -61,29 +61,39 @@ arg** (which is why restart paths must re-assert it; kill drops the entry).
   *subcommand* placed after top-level flags (clap). Proxy rides
   `openai_base_url`. Selected skills arrive as a `# Clodex skills` catalog
   appended to the merged instructions, above the team block.
-- **clay** — link → spawn → hook. `clay` in a PTY with Clodex's Claude-shape
-  `--settings` (`setupClaudeHook`, no proxy, no wire), `--add-dir` for the
-  messages dirs, the baked IPC prompt as `--append-system-prompt-file`
-  (regenerated every spawn, never frozen), `--effort`, and `--session-id
-  <minted uuid>` on a fresh seat or a fork (`--resume <id> --fork-session`);
-  a plain resume passes `--resume <id>` only. `create()` links
-  `run/<name>/transcript.jsonl` to `$CLAY_HOME/projects/<slug>/<sid>.jsonl`
-  (`~/.clay` when unset; `_claudeTranscriptPath`) before the spawn, and the
-  SessionStart hook re-links it to the reported `transcript_path`. No
-  plugins, MCP, skills, stream io or wire routing yet: `proxyBase` is nulled
-  for clay before the account register and the spawner hint. Clay honours
-  Claude's hooks, statusLine stdin and JSONL records (clay 0.1.0 README,
-  "Hosting clay"), so `caps.claudeHooks` / `runsClaudeHooks(type)` gate the
-  hook settings and cleanup, the intent channel, the ctx/attn/delivered tail,
-  the 2004h replay and inject gate, the memory digest and the pending count
-  and drains for it beside claude; park, passive delivery, `promptRecipe`
-  and account moves stay Claude-only. A clay permission Notification
-  (`notification_type: "permission"`) classifies as `permission`. clay 0.1.0
-  silently ignores settings `permissions` and `sandbox`, so `create()` refuses
-  a clay seat with a non-empty `protectCredentials` and warns (returned and
-  broadcast) when tool, shell or subagent denies are set; a team role naming
-  an `account` on a clay template is refused with reason `platform`. The
-  transcript home falls back to `~/<account.defaultDir>` (`.clay`).
+- **clodent** — spawn → hook → link. The claude arm with `clodent` as the
+  binary: the same argv (Claude-shape `--settings` from `setupClaudeHook`
+  carrying the tool, shell and subagent denies and the `protectCredentials`
+  sandbox block, `--add-dir` for the messages dirs, `--plugin-dir` for the
+  agent plugin and bundles, which clodent accepts and ignores, the system
+  and append prompt files, `--resume`/`--fork-session`), minus the Claude
+  Code parts: no onboarding preseed, wire registration, spill, MCP config
+  or MCP catalog, and the prompt is regenerated every spawn, never frozen
+  (`refreshPrompt` stays Claude-only). Effort goes as `--effort` (the
+  adapter's `effort.apply: 'flag'`), not into the settings file. clodent
+  0.3.0 enforces `permissions.deny`/`ask` and applies the `sandbox` block as
+  deny rules (README "Hosting clodent"), so the credential sandbox and the
+  denies are permission rules and a Bash path guard, not an OS sandbox.
+  The read-only cap is `--permission-mode plan` (`--read-only` is
+  recognised as the same cap); bypass is `--dangerously-skip-permissions`
+  (`--yolo` recognised). The SessionStart hook links
+  `run/<name>/transcript.jsonl` to `$CLODENT_HOME/projects/<slug>/<sid>.jsonl`
+  (`~/.clodent` when unset; `_claudeTranscriptPath`). `proxyBase` is nulled
+  for clodent before the account register and the spawner hint.
+  `caps.claudeHooks` / `runsClaudeHooks(type)` gate the hook settings and
+  cleanup, the agent-plugin cleanup, the intent channel, the
+  ctx/attn/delivered tail, the 2004h replay and inject gate, the memory
+  digest and the pending count and drains beside claude; park, passive
+  delivery and account moves stay Claude-only. A clodent permission ask
+  (`notification_type: "permission_prompt"`) classifies as `permission`; it
+  is answered in the terminal (`seatPermission` answers stream seats only).
+  A team role naming an `account` on a clodent template is refused with
+  reason `platform`. The operator keys a clodent account by writing
+  `env.ANTHROPIC_API_KEY` into `$CLODENT_HOME/settings.json`; Clodex never
+  writes the key, and a key set in the seat env instead reaches the child
+  env, which same-UID processes can read with `ps eww`. A credential-sandboxed
+  seat of any type is read-denied `settings.json` in `~/.clodent` and in the
+  seat's or the app's `CLODENT_HOME`, and write-denied those dirs.
 - **muse** — spawn → registry → link. Before the spawn, `bootstrapSeatConfig`
   (seat-config.js) rebuilds `run/<name>/xdg` as an overlay of `~/.config` (or
   the seat's `XDG_CONFIG_HOME`) and the seat's env gets `XDG_CONFIG_HOME` pointed

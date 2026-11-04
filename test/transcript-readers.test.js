@@ -296,17 +296,17 @@ test('a muse compacted outcome fires onCompactSummary once through the watcher; 
   assert.strictEqual(fired, 1);
 });
 
-test('clay watcher: through its adapter reader, end_turn then system turn_duration flushes one reply and idles once with turnEnd, as Claude does', () => {
+test('clodent watcher: through its adapter reader, end_turn then system turn_duration flushes one reply and idles once with turnEnd, as Claude does', () => {
   const { adapterFor } = require('../cli-adapters');
   const tape = [
     { type: 'user', sessionId: 's1', message: { role: 'user', content: 'say hi' } },
     { type: 'assistant', sessionId: 's1', requestId: 'req_1', message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: 'hi' }] } },
     { type: 'system', subtype: 'turn_duration', sessionId: 's1', durationMs: 812 },
   ];
-  const clay = runWatcher(tape, readerFor(adapterFor('clay').transcript.reader));
+  const clodent = runWatcher(tape, readerFor(adapterFor('clodent').transcript.reader));
   const claude = runWatcher(tape, readerFor('claude'));
-  assert.ok(clay.seen.length >= 1, 'ENTER: a flush happened at all');
-  assert.deepStrictEqual(clay.seen.map((s) => [s.text, s.meta.turnEnd]), [['hi', true]]);
-  assert.deepStrictEqual(clay.edges.filter(([state]) => state === 'idle'), [['idle', true]]);
-  assert.deepStrictEqual(clay.edges, claude.edges);
+  assert.ok(clodent.seen.length >= 1, 'ENTER: a flush happened at all');
+  assert.deepStrictEqual(clodent.seen.map((s) => [s.text, s.meta.turnEnd]), [['hi', true]]);
+  assert.deepStrictEqual(clodent.edges.filter(([state]) => state === 'idle'), [['idle', true]]);
+  assert.deepStrictEqual(clodent.edges, claude.edges);
 });

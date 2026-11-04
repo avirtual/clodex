@@ -1640,7 +1640,6 @@ function createSessionManager(deps) {
       }
       let seatConfigDir = null;
       let museSid = null;
-      let clayMintedSid = null;
       let resumedTranscriptAt = null;
       let museData = null;
       let codexLink = null;
@@ -1685,7 +1684,7 @@ function createSessionManager(deps) {
       // Nulling proxyBase is the wire-off switch itself: setupClaudeHook falls back to proxyBase when wireBase is
       // absent, so skipping only the wire registration would still set ANTHROPIC_BASE_URL through the external proxy.
       const wireOff = noWire === true;
-      if (wireOff || type === 'clay') proxyBase = null;
+      if (wireOff || type === 'clodent') proxyBase = null;
       const fixHost = (typeof fixFor === 'string' && fixFor) ? fixFor : null;
 
       if (accountDir && proxyBase && !adapterFor(type).account.bootstrap && accountDir !== claudeHome()) {
@@ -1781,13 +1780,16 @@ function createSessionManager(deps) {
         (b) => (b.skills || []).map((s) => ({ name: `${b.id}:${s.name}`, content: s.content })));
 
       switch (type) {
+        case 'clodent':
         case 'claude': {
-          cmd = 'claude';
-          if (preseedClaudeOnboarding({ fs, path, homeDir: os.homedir(), cwd })) {
+          cmd = adapterFor(type).cmd;
+          const claudeCode = type === 'claude';
+          const effortFlag = adapterFor(type).effort.apply === 'flag';
+          if (claudeCode && preseedClaudeOnboarding({ fs, path, homeDir: os.homedir(), cwd })) {
             this._shadowLog({ type: 'claude-onboarding-preseeded', agent: name });
           }
           const sysFile = resolveSystemPromptFile(systemPromptFile, Array.isArray(plugins) ? plugins : null, resolvedTeam);
-          const spillVerbs = backend
+          const spillVerbs = (backend || !claudeCode)
             ? []
             : [...SPILL_VERBS].filter((k) => intentEnabled(k.split('.')[0], intents));
           spillArmedForRecord = spillVerbs.length > 0;
@@ -1815,7 +1817,7 @@ function createSessionManager(deps) {
           // Register with the in-process wire before the PTY exists (identity is spawn-bound), chaining to the external proxy.
           // A wire failure falls back to the normal path: a tee must never block a session from starting.
           let wireBase = null;
-          if (WIRE_SHADOW && !wireOff) {
+          if (WIRE_SHADOW && !wireOff && claudeCode) {
             try {
               const wire = await this._ensureWire();
               wireBase = wire.registerAgent(name, {
@@ -1847,7 +1849,9 @@ function createSessionManager(deps) {
           }
           const userMcp = args.some((a) => /^--mcp-config(=|$)/.test(a));
           const userStrict = args.some((a) => /^--strict-mcp-config(=|$)/.test(a));
-          const plan = mcpArgvPlan({ userMcp, userStrict, mcpPath: pathFor(REGISTRY_DIR, name, 'mcpConfig') });
+          const plan = claudeCode
+            ? mcpArgvPlan({ userMcp, userStrict, mcpPath: pathFor(REGISTRY_DIR, name, 'mcpConfig') })
+            : { push: [], writeConfig: false, unmanaged: false, notice: null };
           const mcpLib = plan.writeConfig ? this._mcpLibraryRows() : [];
           const mcpSel = plan.writeConfig
             ? claudeMcpServers({ selected: Array.isArray(mcpServers) ? mcpServers : [], library: mcpLib, env: mergedEnv, cli: 'claude' })
@@ -1856,7 +1860,7 @@ function createSessionManager(deps) {
             ? [...new Set(mcpLib.filter((r) => mcpSel.applied.names.includes(r.name)).flatMap((r) => secretRefs(r.entry)))]
               .filter((n) => !MCP_AMBIENT_ENV.has(n))
             : [];
-          mcpRecord = { mcpUnmanaged: plan.unmanaged, mcpApplied: mcpSel ? mcpSel.applied : null };
+          if (claudeCode) mcpRecord = { mcpUnmanaged: plan.unmanaged, mcpApplied: mcpSel ? mcpSel.applied : null };
           // A user-supplied --settings in extraArgs replaces the whole hooks block, so ipcdelta.sh and every other drain is absent
           // for that seat, which the frozen-prompt decision below depends on.
           let hookInstalled = false;
@@ -1870,12 +1874,12 @@ function createSessionManager(deps) {
               known: Array.isArray(disabledSkills) && disabledSkills.includes('*') ? knownSkillNames() : [],
               injectSkills,
             });
-            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, skillsOff, wireBase, createdAt, Array.isArray(shellDeny) ? shellDeny : [], streamIo, effortLevel, Array.isArray(protectCredentials) ? protectCredentials : null, mcpSecretNames, mcpSel ? mcpSel.applied.denyRules : [], cwd || null);
+            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, skillsOff, wireBase, createdAt, Array.isArray(shellDeny) ? shellDeny : [], streamIo, effortFlag ? null : effortLevel, Array.isArray(protectCredentials) ? protectCredentials : null, mcpSecretNames, mcpSel ? mcpSel.applied.denyRules : [], cwd || null, mergedEnv.CLODENT_HOME || null);
             args.push('--settings', settingsPath);
             hookInstalled = true;
             selectionDrain = true;
           }
-          if (!hookInstalled && effortLevel) warnings.push(`effort ${effortLevel} not applied: the seat's extra args carry their own --settings.`);
+          if (!hookInstalled && !effortFlag && effortLevel) warnings.push(`effort ${effortLevel} not applied: the seat's extra args carry their own --settings.`);
           if (!hookInstalled && mcpSel && mcpSel.applied.denyRules.length) {
             warnings.push('MCP deny list not applied: the seat\'s extra args carry their own --settings.');
             mcpRecord.mcpApplied = { ...mcpSel.applied, denyUnenforced: true };
@@ -1891,10 +1895,12 @@ function createSessionManager(deps) {
           } else {
             try { fs.unlinkSync(pathFor(REGISTRY_DIR, name, 'mcpConfig')); } catch {}
           }
-          writeMcpCatalog(name, subagentCatalogFor({
-            intents: Array.isArray(intents) ? intents.map(String) : undefined,
-            plugins: Array.isArray(plugins) ? plugins.map(String) : undefined,
-          }));
+          if (claudeCode) {
+            writeMcpCatalog(name, subagentCatalogFor({
+              intents: Array.isArray(intents) ? intents.map(String) : undefined,
+              plugins: Array.isArray(plugins) ? plugins.map(String) : undefined,
+            }));
+          }
           args.push(...plan.push);
           if (plan.notice) {
             this._broadcast('ipc-message', { type: 'system', from: name, to: name, body: plan.notice });
@@ -1963,13 +1969,16 @@ function createSessionManager(deps) {
           if (sysFile && !args.includes('--system-prompt-file') && !args.includes('--system-prompt')) {
             args.push('--system-prompt-file', sysFile);
           }
+          if (effortFlag && effortLevel && !args.some((a) => typeof a === 'string' && (a === '--effort' || a.startsWith('--effort=')))) {
+            args.push('--effort', effortLevel);
+          }
           const promptPath = pathFor(REGISTRY_DIR, name, 'appendPrompt');
           // Freeze on resume only with resumeId, !mint and hookInstalled: a mint must regenerate (a dead namesake's frozen bytes are
           // a stranger's prompt), and without ipcdelta.sh a staged delta is never delivered, so freezing is permanent staleness.
           if (resumeId && !mint && !hookInstalled) {
             warnings.push(`This session's own --settings replaces Clodex's hooks, so the IPC protocol-change channel isn't installed. Its system prompt will be regenerated on every resume instead of frozen — correct, but it re-reads the whole prompt each time.`);
           }
-          const reuse = !!resumeId && !mint && hookInstalled;
+          const reuse = !!resumeId && !mint && hookInstalled && claudeCode;
           const freeze = reuse && !freshBake;
           const baked = bakePrompt(REGISTRY_DIR, name, realIpc, freeze,
             { snapshot: freeze ? this._snapshotBlockFor(name, cwd, accountDir, resumeId) : null });
@@ -1995,6 +2004,9 @@ function createSessionManager(deps) {
           ensureDir(runDirFor(REGISTRY_DIR, name));
           fs.writeFileSync(promptPath, baked, { mode: 0o600 });
           args.push('--append-system-prompt-file', promptPath);
+          if (resumeId && adapterFor(type).account.defaultDir) {
+            try { resumedTranscriptAt = fs.statSync(this._claudeTranscriptPath(cwd || process.env.HOME || os.homedir(), accountDir, resumeId, type)).mtimeMs; } catch {}
+          }
           break;
         }
         case 'codex': {
@@ -2138,72 +2150,6 @@ function createSessionManager(deps) {
           } else {
             ensureDir(runDirFor(REGISTRY_DIR, name));
             args = [...extraArgs, ...museEffortArgs, '--trust-workspace', '--provider', 'meta', ...museBaseUrl];
-          }
-          break;
-        }
-        case 'clay': {
-          cmd = 'clay';
-          if (Array.isArray(protectCredentials) && protectCredentials.length) {
-            abandonHint();
-            throw new Error(`clay seat "${name}" refused: protectCredentials (${protectCredentials.join(', ')}) cannot be enforced on clay 0.1.0, which ignores permissions and sandbox settings`);
-          }
-          const clayUnenforced = [['tool denies', disabledTools], ['shell denies', shellDeny], ['subagent denies', denyBuiltins]]
-            .filter(([, list]) => Array.isArray(list) && list.length).map(([label]) => label);
-          if (clayUnenforced.length) {
-            const w = `${clayUnenforced.join(', ')} not enforced on clay 0.1.0: it ignores permissions settings.`;
-            warnings.push(w);
-            this._broadcast('ipc-message', { type: 'system', from: name, to: name, body: w });
-          }
-          try { clearNotices(REGISTRY_DIR, name); } catch {}
-          const claySysFile = resolveSystemPromptFile(systemPromptFile, Array.isArray(plugins) ? plugins : null, resolvedTeam);
-          const clayIpc = this._realIpcFor({
-            extraArgs,
-            intents,
-            execCommands,
-            spillArmed: false,
-            spillExamples: 2,
-            profileSeat: false,
-            plugins: Array.isArray(plugins) ? plugins : null,
-            appendPromptFiles,
-            inlineBody: systemPromptBody || null,
-            hasSystemFile: !!claySysFile,
-            ipcDisabled: mergedEnv.CLODEX_DISABLE_IPC_PROMPT === '1',
-          }, teamBlock, resolvedTeam, promptOwner);
-          args = clayIpc.cleaned;
-          if (!args.includes('--settings')) {
-            args.push('--settings', setupClaudeHook(name, null, null, [], [], [], null, createdAt, [], false, null, null, [], [], cwd || null));
-            selectionDrain = true;
-          }
-          ensureDir(MSG_DIR);
-          if (!args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
-          const claySeatMsgDir = seatPathFor(REGISTRY_DIR, name, 'messages');
-          if (ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'messages', fs, log }) && !args.includes(claySeatMsgDir)) args.push('--add-dir', claySeatMsgDir);
-          const userSession = args.includes('--resume') || args.includes('--session-id');
-          if (!userSession) {
-            clayMintedSid = (!resumeId || fork) ? randomUUID() : null;
-            if (resumeId) args.push('--resume', resumeId);
-            if (resumeId && fork) args.push('--fork-session');
-            if (clayMintedSid) args.push('--session-id', clayMintedSid);
-          }
-          if (claySysFile && !args.includes('--system-prompt-file') && !args.includes('--system-prompt')) {
-            args.push('--system-prompt-file', claySysFile);
-          }
-          if (effortLevel && !args.some((a) => typeof a === 'string' && (a === '--effort' || a.startsWith('--effort=')))) {
-            args.push('--effort', effortLevel);
-          }
-          ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'run', fs });
-          ensureDir(runDirFor(REGISTRY_DIR, name));
-          const clayPromptPath = pathFor(REGISTRY_DIR, name, 'appendPrompt');
-          fs.writeFileSync(clayPromptPath, bakePrompt(REGISTRY_DIR, name, clayIpc.realIpc, false, { snapshot: null }), { mode: 0o600 });
-          args.push('--append-system-prompt-file', clayPromptPath);
-          const claySpawnCwd = cwd || process.env.HOME || os.homedir();
-          const claySid = userSession ? null : (clayMintedSid || resumeId);
-          if (claySid) {
-            linkTranscript({ fs }, pathFor(REGISTRY_DIR, name, 'transcript'),
-              this._claudeTranscriptPath(claySpawnCwd, accountDir, claySid, type));
-          }
-          if (resumeId) {
-            try { resumedTranscriptAt = fs.statSync(this._claudeTranscriptPath(claySpawnCwd, accountDir, resumeId, type)).mtimeMs; } catch {}
           }
           break;
         }
@@ -2355,7 +2301,7 @@ function createSessionManager(deps) {
         spawnedAt: Date.now(),
         createdAt,
         agentType, lineBuffer: '', watcher: null,
-        sessionId: resumeId || clayMintedSid || null,
+        sessionId: resumeId || null,
         accountDir: seatConfigDir || accountDir || null,
         forked: !!fork,
         ...this._scratchCloneMarkerFields(name),
@@ -5586,10 +5532,10 @@ function createSessionManager(deps) {
       if (s.intentSocket) { try { s.intentSocket.stop(); } catch {} s.intentSocket = null; }
       if (s.agentType) registry.unregister(name);
       if (runsClaudeHooks(s.agentType)) cleanupClaudeHook(name);
-      if (s.agentType === 'claude') cleanupAgentPlugin(name);
+      if (runsClaudeHooks(s.agentType)) cleanupAgentPlugin(name);
       if (s.agentType === 'codex') cleanupCodexHook(name, s.cwd);
       if (s.agentType === 'muse') cleanupMuseSeat(name);
-      if (s.agentType) cleanupSkills(s.agentType, name);
+      if (s.agentType) cleanupSkills(runsClaudeHooks(s.agentType) ? 'claude' : s.agentType, name);
       if (s.needsAttention) this._setAttention(s, null);
       this.sessions.delete(name);
       const live = new Set(this.sessions.keys());

@@ -689,10 +689,6 @@ function createTicketMethods(deps, shared) {
       const disabledTools = inherited('disabledTools');
       const shellDenyList = operator ? [] : inherited('shellDeny');
       const shellDeny = shellDenyList.length ? shellDenyList : null;
-      if (!operator && type === 'clay' && (denyBuiltins.length || disabledTools.length || shellDenyList.length)) {
-        reply('error: clay does not enforce tool denies — a clay seat cannot carry the denies its spawner or template holds');
-        return;
-      }
       const seatGrants = clampToSpawner(tpl && tpl.execCommands, 'execCommands');
       const mcpServers = clampToSpawner(tpl && tpl.mcpServers, 'mcpServers').map(String);
       const noWire = (tpl && tpl.noWire) === true && (operator || spawnerRec.noWire === true || spawner.noWire === true);

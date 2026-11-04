@@ -67,13 +67,13 @@ function expectedFilesystem(R, ud) {
     `${R}/run/*/mcp.json`, `${R}/sessions/*/run/mcp.json`, `${R}/peer-outbox/outbox-key`, `${R}/run/.agent-sock.cred`,
     `${R}/sessions/*/seat.json`, `${R}/sessions/*/.seat.json.tmp.*`, `${R}/sessions/*/client-token`, `${R}/accounts/*/.credentials.json`,
     `${R}/monitors/*/*.cred`, `${R}/sessions/*/monitors/*.cred`,
-    '/h/.claude/.credentials.json', '/h/.claude.json',
+    '/h/.claude/.credentials.json', '/h/.claude.json', '/h/.clodent/settings.json',
     ...(ud ? ['/ud/remote.env', '/ud/ui-settings.json*', '/ud/env-scopes.json*', '/ud/sessions.json*', '/ud/wire-hold-entries.json', '/ud/env-override.env',
       '/ud/.ui-settings.json*', '/ud/.env-scopes.json*', '/ud/.sessions.json*', '/ud/.wire-hold-entries.json.tmp.*', '/ud/remote.env.tmp', '/ud/sandbox*/auth.env'] : []),
   ];
   const denyWrite = [
     '~/.claude', '~/.claude.json', '~/.zshrc', '~/.zprofile', '~/.zshenv', '~/.zlogin', '~/.zlogout', '~/.bashrc', '~/.bash_profile', '~/.bash_login', '~/.profile',
-    '~/.gitconfig', '~/.config/git', '~/.config/fish', '~/.codex', '~/Library/LaunchAgents', '~/.ssh',
+    '~/.gitconfig', '~/.config/git', '~/.config/fish', '~/.codex', '~/.clodent', '~/Library/LaunchAgents', '~/.ssh',
     `${R}/boxes`, `${R}/cli`, `${R}/run`, `${R}/sessions`, `${R}/teams`, '/Applications/Clodex.app',
     ...(ud ? ['/ud'] : []),
   ];
@@ -110,7 +110,7 @@ test('buildCredentialSandbox: without a userDataPath the output is unchanged', (
   const want = expectedFilesystem(R, false);
   assert.deepStrictEqual(g.sandbox.filesystem, want.filesystem);
   assert.deepStrictEqual(g.sandbox.credentials, { files: want.files });
-  assert.strictEqual(g.deny.length, 71);
+  assert.strictEqual(g.deny.length, 75);
 });
 
 test('buildCredentialSandbox: a userData dir holding the registry keeps its file denies but drops the whole-dir write deny', () => {
@@ -160,7 +160,7 @@ test('setupClaudeHook hands mcpSecretNames to the sandbox only for a protected s
 test('session-manager derives mcpSecretNames from the applied selection and passes it to setupClaudeHook', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'session-manager.js'), 'utf8');
   assert.ok(src.includes('mcpLib.filter((r) => mcpSel.applied.names.includes(r.name)).flatMap((r) => secretRefs(r.entry))'));
-  assert.ok(/setupClaudeHook\([^;]*Array\.isArray\(protectCredentials\) \? protectCredentials : null, mcpSecretNames, mcpSel \? mcpSel\.applied\.denyRules : \[\], cwd \|\| null\);/.test(src));
+  assert.ok(/setupClaudeHook\([^;]*Array\.isArray\(protectCredentials\) \? protectCredentials : null, mcpSecretNames, mcpSel \? mcpSel\.applied\.denyRules : \[\], cwd \|\| null, mergedEnv\.CLODENT_HOME \|\| null\);/.test(src));
   assert.ok(src.indexOf('const mcpSecretNames') < src.indexOf('setupClaudeHook(name,'));
 });
 
@@ -357,6 +357,60 @@ test('buildCredentialSandbox: autorun files a later unsandboxed process runs are
   }
   const unset = buildCredentialSandbox({ registryDir: R, list: [], home: '/h' });
   assert.strictEqual(unset.sandbox.filesystem.denyWrite.includes('/opt/codex-home'), false);
+});
+
+test('buildCredentialSandbox: the clodent home is write-denied and its settings.json, which carries the API key, read-denied', () => {
+  const R = seededRoot();
+  const g = buildCredentialSandbox({ registryDir: R, list: [], home: '/h', clodentHomes: ['/opt/clodent-home/', undefined, null] });
+  const writeRows = [
+    ['~/.clodent', ['Edit(~/.clodent)', 'Edit(~/.clodent/**)']],
+    ['/opt/clodent-home', ['Edit(//opt/clodent-home)', 'Edit(//opt/clodent-home/**)']],
+  ];
+  for (const [p, rules] of writeRows) {
+    assert.ok(g.sandbox.filesystem.denyWrite.includes(p), `denyWrite lists ${p}`);
+    for (const r of rules) assert.ok(g.deny.includes(r), `permissions deny ${r}`);
+  }
+  const readRows = [
+    ['/h/.clodent/settings.json', 'Read(//h/.clodent/settings.json)'],
+    ['/opt/clodent-home/settings.json', 'Read(//opt/clodent-home/settings.json)'],
+  ];
+  for (const [p, rule] of readRows) {
+    assert.ok(g.sandbox.filesystem.denyRead.includes(p), `denyRead lists ${p}`);
+    assert.ok(g.deny.includes(rule), `permissions deny ${rule}`);
+    assert.ok(!g.deny.includes(`Read(/${p}/**)`), `${p} is a file rule, not a directory rule`);
+  }
+  const unset = buildCredentialSandbox({ registryDir: R, list: [], home: '/h' });
+  assert.strictEqual(unset.sandbox.filesystem.denyWrite.includes('/opt/clodent-home'), false);
+  assert.strictEqual(unset.sandbox.filesystem.denyRead.includes('/opt/clodent-home/settings.json'), false);
+});
+
+test('setupClaudeHook writes the seat\'s and the process\'s CLODENT_HOME into the settings file\'s sandbox and deny rules', () => {
+  const root = seededRoot();
+  const h = createCliHooks({
+    REGISTRY_DIR: root,
+    memoryStore: { list: () => [] },
+    getUiSettings: () => ({ get: () => ({ statusline: { claude: [], claudeCommand: '' } }) }),
+    nodeInterp: process.execPath,
+  });
+  const prior = { sb: process.env.CLODEX_IN_SANDBOX, ch: process.env.CLODENT_HOME };
+  delete process.env.CLODEX_IN_SANDBOX;
+  process.env.CLODENT_HOME = '/opt/proc-clodent';
+  try {
+    const s = JSON.parse(fs.readFileSync(
+      h.setupClaudeHook('cl1', null, null, ['Explore'], ['WebFetch'], [], null, null, [], false, null, ['~/.ssh'], [], [], '/w', '/opt/seat-clodent'), 'utf-8'));
+    for (const dir of ['/opt/seat-clodent', '/opt/proc-clodent']) {
+      assert.ok(s.sandbox.filesystem.denyWrite.includes(dir), `denyWrite lists ${dir}`);
+      assert.ok(s.sandbox.filesystem.denyRead.includes(`${dir}/settings.json`), `denyRead lists ${dir}/settings.json`);
+      assert.ok(s.permissions.deny.includes(`Read(/${dir}/settings.json)`));
+      assert.ok(s.permissions.deny.includes(`Edit(/${dir}/**)`));
+    }
+    assert.ok(s.permissions.deny.includes('WebFetch') && s.permissions.deny.includes('Agent(Explore)'), 'ENTER: the tool denies ride the same file');
+    assert.ok(s.sandbox.filesystem.denyRead.some((p) => p.endsWith('/.ssh')), 'ENTER: the listed credential dir rides the same file');
+  } finally {
+    for (const [k, v] of [['CLODEX_IN_SANDBOX', prior.sb], ['CLODENT_HOME', prior.ch]]) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  }
 });
 
 test('setupClaudeHook hands CODEX_HOME to the sandbox', () => {

@@ -21326,7 +21326,7 @@ test('t1078: a reviewer template of a platform with no read-only cap is refused 
   m._handleTeamReview(m.sessions.get('lead'), 'scope');
   await new Promise((r) => setImmediate(r));
   assert.deepStrictEqual(created, [], 'no reviewer spawned');
-  assert.ok(injected.some((t) => /\] error: unknown seat type "sh" \(known: claude, codex, muse, clay\)/.test(t)), injected.join('\n'));
+  assert.ok(injected.some((t) => /\] error: unknown seat type "sh" \(known: claude, codex, muse, clodent\)/.test(t)), injected.join('\n'));
   assert.deepStrictEqual(persistence.list().map((e) => e.name), [], 'no name reserved');
 });
 

@@ -13,6 +13,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- **The `clay` session type is now `clodent`** (clodent 0.3.0, no alias): it launches with the same argv as a Claude seat, enforces the credential sandbox and tool denies through its settings file, honours `--permission-mode plan` as its read-only cap and `--dangerously-skip-permissions` as bypass, and its permission ask raises the attention badge. Accounts and the wire proxy for clodent follow.
 
 ## 5.160.1 — 2026-11-04 — Security: sandboxed seats cannot spawn unsandboxed children; monitor credential off the environment
 - **Security: a credential-sandboxed seat can no longer spawn an unsandboxed Codex or Muse child.** An agent spawn whose child type cannot enforce the spawner's `protectCredentials` is refused; only Claude seats enforce the credential sandbox.

@@ -56,8 +56,9 @@ flags) are set only in the app's template editor (`templates:saveTeam`), never b
 `mcpServers`. Reviewer seats load no `mcpServers`. An `[agent:spawn]` child gets
 the template's exec grants and `mcpServers` only where its spawner holds them (except the lead role below),
 is refused a privileged flag and value its spawner's own args lack, inherits the
-spawner's `protectCredentials` (a Codex or Muse child that would inherit a non-empty list is refused, since only Claude seats enforce it), and takes a `template:<path>` only from under
-`~/.clodex/library/templates/` or the team's `templates/` dir.
+spawner's `protectCredentials` (a Codex or Muse child that would inherit a non-empty list is refused, since only Claude and clodent seats enforce it), and takes a `template:<path>` only from under
+`~/.clodex/library/templates/` or the team's `templates/` dir. A clodent template that wants plan mode spells it
+`--read-only`: `--permission-mode` is a privileged flag, refused when the spawner's args lack it.
 
 `[agent:spawn name:<name>-lead cwd:<root>]` with no `template:` boots the lead
 on the lead role's template, which the kit picks (`clodex-team-lead` in the
