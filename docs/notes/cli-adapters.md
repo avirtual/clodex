@@ -21,15 +21,15 @@ id; `link`: `hook` = the CLI's hook writes the transcript symlink, `clodex` =
 `create()` writes it before spawn — reserved, no reader yet), `caps` (`park`:
 a held delivery can be parked for this seat; `transcript`: the hook writes
 `transcript.jsonl`; `warmth`: the renderer shows the prompt-cache warmth
-segment), `ui` (the t749 dialog-field row `capsFor` returns). `Object.keys(ADAPTERS)`
-must equal `skill-delivery.js`'s `providers()`, so a new platform is one
-entry here plus one delivery function there and the suite names the missing
-half.
+segment; `claudeHooks`: runs Clodex's Claude-shape hooks, see docs/sessions.md
+clay), `ui` (the t749 row `capsFor` returns). Every `providers()` entry of
+`skill-delivery.js` is an adapter; clay, with no skills surface, has none.
 
 ### Guards that stay literal
 
-The ~55 `agentType === 'claude'` guards left in `session-manager.js` and
-`team-tickets.js` stay literal on purpose. They gate Claude ARTIFACTS —
+The `agentType === 'claude'` guards left in `session-manager.js` and
+`team-tickets.js` (hook-driven ones read `runsClaudeHooks` since clay, see
+docs/sessions.md) stay literal on purpose. They gate Claude ARTIFACTS —
 `hookDigest`, the pending dir, `promptRecipe`/`session.md`,
 move-to-peer, `refreshPrompt`, the argv arms themselves — not platform
 policy. A boolean on the adapter would be true for exactly one platform and

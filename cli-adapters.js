@@ -23,14 +23,14 @@ const ADAPTERS = {
     },
     effort: { values: ['low', 'medium', 'high', 'xhigh', 'max'], apply: 'settings' },
     posture: { bypassArgs: ['--dangerously-skip-permissions'], bypass: [['--dangerously-skip-permissions']] },
-    account: { envKey: 'CLAUDE_CONFIG_DIR', bootstrap: null },
+    account: { envKey: 'CLAUDE_CONFIG_DIR', bootstrap: null, defaultDir: null },
     cwdDir: null,
     readOnlyCap: { enforce: 'tool-denylist' },
     seatSettings: null,
     skills: null,
     instructions: 'append-system-prompt-file',
     transcript: { reader: 'claude', link: 'hook' },
-    caps: { park: true, transcript: true, warmth: true },
+    caps: { park: true, transcript: true, warmth: true, claudeHooks: true },
     stream: {
       codec: 'stream-codec-claude',
       argv: ({ resumeId, sessionId, fork }) => [
@@ -61,14 +61,14 @@ const ADAPTERS = {
     model: { flags: ['--model', '-m'], aliases: {}, idRe: MODEL_ID_RE },
     effort: { values: [...META_EFFORTS], apply: 'config' },
     posture: { bypassArgs: ['--dangerously-bypass-approvals-and-sandbox'], bypass: [['--dangerously-bypass-approvals-and-sandbox']] },
-    account: { envKey: 'CODEX_HOME', bootstrap: 'codex-home' },
+    account: { envKey: 'CODEX_HOME', bootstrap: 'codex-home', defaultDir: null },
     cwdDir: '.codex',
     readOnlyCap: { enforce: 'argv', args: ['--sandbox', 'read-only', '--ask-for-approval', 'never'], shortFlags: { '-s': '--sandbox', '-a': '--ask-for-approval' } },
     seatSettings: null,
     skills: null,
     instructions: 'model-instructions-file',
     transcript: { reader: 'codex', link: 'clodex' },
-    caps: { park: false, transcript: true, warmth: false },
+    caps: { park: false, transcript: true, warmth: false, claudeHooks: false },
     stream: {
       codec: 'stream-codec-codex',
       argv: () => ['app-server'],
@@ -95,7 +95,7 @@ const ADAPTERS = {
     model: { flags: ['--model'], aliases: {}, idRe: MODEL_ID_RE },
     effort: { values: [...META_EFFORTS], apply: 'flag' },
     posture: { bypassArgs: ['--approval-mode', 'never', '--disable-sandbox'], bypass: [['--approval-mode', 'never'], ['--disable-sandbox']] },
-    account: { envKey: 'XDG_CONFIG_HOME', bootstrap: 'xdg-overlay' },
+    account: { envKey: 'XDG_CONFIG_HOME', bootstrap: 'xdg-overlay', defaultDir: null },
     cwdDir: null,
     readOnlyCap: {
       enforce: 'settings-profile',
@@ -125,7 +125,7 @@ const ADAPTERS = {
     },
     instructions: 'user-agents-md',
     transcript: { reader: 'muse', link: 'clodex' },
-    caps: { park: false, transcript: true, warmth: false },
+    caps: { park: false, transcript: true, warmth: false, claudeHooks: false },
     stream: {
       codec: 'stream-codec-muse',
       argv: ({ bypass = false, readOnly = false } = {}) => [
@@ -146,6 +146,35 @@ const ADAPTERS = {
       noWire: false,
       accounts: false,
       streamIo: true,
+    },
+  },
+  clay: {
+    id: 'clay',
+    label: 'clay',
+    cmd: 'clay',
+    model: { flags: ['--model'], aliases: {}, idRe: MODEL_ID_RE },
+    effort: { values: ['low', 'medium', 'high'], apply: 'flag' },
+    posture: { bypassArgs: ['--yolo'], bypass: [['--yolo']] },
+    account: { envKey: 'CLAY_HOME', bootstrap: null, defaultDir: '.clay' },
+    cwdDir: null,
+    readOnlyCap: { enforce: 'argv', args: ['--read-only'], note: 'read-only (clay refuses write tools and non-read-only Bash; not an OS sandbox)' },
+    seatSettings: null,
+    skills: null,
+    instructions: 'append-system-prompt-file',
+    transcript: { reader: 'claude', link: 'hook' },
+    caps: { park: false, transcript: true, warmth: false, claudeHooks: true },
+    stream: null,
+    ui: {
+      injectSkills: false,
+      skillRoster: false,
+      plugins: false,
+      agents: false,
+      tools: false,
+      strip: false,
+      autoCompact: false,
+      noWire: false,
+      accounts: false,
+      streamIo: false,
     },
   },
 };
@@ -193,6 +222,7 @@ function hasBypass(adapter, argv) {
 
 function hasReadOnlyCap(adapter, argv) {
   const cap = adapter && adapter.readOnlyCap && adapter.readOnlyCap.args;
+  if (Array.isArray(cap) && cap.length === 1) return Array.isArray(argv) && argv.includes(cap[0]);
   if (!Array.isArray(cap) || cap.length === 0 || cap.length % 2 !== 0 || !Array.isArray(argv)) return false;
   const norm = normalizeArgv(argv, adapter.readOnlyCap.shortFlags || {});
   for (let c = 0; c < cap.length; c += 2) {
@@ -206,6 +236,11 @@ function postureOf(adapter, argv) {
   if (hasBypass(adapter, argv)) return 'bypass';
   if (hasReadOnlyCap(adapter, argv)) return 'read-only';
   return 'default';
+}
+
+function runsClaudeHooks(type) {
+  const a = adapterFor(type);
+  return !!(a && a.caps.claudeHooks);
 }
 
 function capsFor(type) {
@@ -311,6 +346,6 @@ function splitPrivilegedArgs(argv) {
 
 module.exports = {
   ADAPTERS, PLATFORMS, DEFAULT_TYPE, CAP_KEYS,
-  adapterFor, isAgentType, capsFor, streamFor, seatType, resolveModelId, resolveEffort, stripModelArgs, hasBypass, hasReadOnlyCap, postureOf,
+  adapterFor, isAgentType, capsFor, runsClaudeHooks, streamFor, seatType, resolveModelId, resolveEffort, stripModelArgs, hasBypass, hasReadOnlyCap, postureOf,
   PRIVILEGED_FLAG_ARITY, splitPrivilegedArgs,
 };

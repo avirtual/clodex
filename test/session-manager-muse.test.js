@@ -634,7 +634,7 @@ test('t1095: restore-path deadline — the link already exists, so the miss is o
 });
 
 test('m2: the muse adapter row is what the arm reads — envKey XDG_CONFIG_HOME, bootstrap xdg-overlay', () => {
-  assert.deepStrictEqual(adapterFor('muse').account, { envKey: 'XDG_CONFIG_HOME', bootstrap: 'xdg-overlay' });
+  assert.deepStrictEqual(adapterFor('muse').account, { envKey: 'XDG_CONFIG_HOME', bootstrap: 'xdg-overlay', defaultDir: null });
 });
 
 test('m3: the profile merge is a deepMerge — a permissions.profiles.other entry in the source settings survives', async () => {

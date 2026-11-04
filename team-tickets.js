@@ -4608,7 +4608,7 @@ function createTicketMethods(deps, shared) {
       const roleCwd = this._resolveRoleCwd(team, def);
       const accountLabel = (def && typeof def.account === 'string' && def.account) ? def.account : null;
       const acct = !accountLabel ? { ok: true, configDir: null }
-        : (seatAdapter.account.bootstrap ? { ok: false, label: accountLabel, reason: 'platform' } : resolveAccount(accountLabel));
+        : ((seatAdapter.account.bootstrap || seatAdapter.account.envKey !== 'CLAUDE_CONFIG_DIR') ? { ok: false, label: accountLabel, reason: 'platform' } : resolveAccount(accountLabel));
       const accountDir = acct.ok ? (acct.configDir || null) : null;
       const accountMissing = acct.ok ? null : { label: acct.label, reason: acct.reason };
       const withAccount = (env) => {
@@ -4740,7 +4740,7 @@ function createTicketMethods(deps, shared) {
         envDropped: (shape && shape.envDropped) || [],
         envBadType: (shape && shape.envBadType) || [],
         beyondCap: capArgs ? [] : beyondCap,
-        capNote: capMode ? capMode.note : null,
+        capNote: (cap && cap.note) || (capMode ? capMode.note : null),
         toolsIgnored: capArgs && rawTools !== undefined,
         promptEscaped,
         workspaceId,

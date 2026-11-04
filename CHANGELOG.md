@@ -42,6 +42,7 @@ blocks a release.
 - Spoken replies are no longer cut off when an unrelated seat exits or another window closes; only the speaking seat's own exit stops its narration.
 - Spoken replies no longer go silent after a bare `[agent:who]`, `[agent:name]` or other body-less intent line; and on Linux the voice controls disable themselves when /dev/snd has no capture device, not just when it is empty.
 - A peer terminal pane reconnects on its own after the remote Clodex restarts — an upgrade or restart of an open peer no longer leaves the pane stuck on "is offline" until it is closed and reopened; a revoked or disabled terminal still closes for good.
+- **Clodex can host clay as a fourth CLI.** `clay`, the Messages-API CLI that bills a prepaid API credit, is a session type beside Claude, Codex and Muse: it launches in a PTY with Clodex's hooks, statusline and transcript watcher, takes dms through bracketed paste, resumes and forks sessions, and honours the bypass (`--yolo`) and read-only postures. Accounts and the wire proxy for clay follow in a later release.
 
 ## 5.159.0 — 2026-11-03 — Security: log-mask masks every secret-named URL query parameter, Edit tab vets and writes one descriptor; memory id trim, dm await on pty seats, board cost breakdown
 

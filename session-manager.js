@@ -168,7 +168,7 @@ const { findRepoRoot } = require('./project-root');
 const { atomicWriteFileSync } = require('./fs-util');
 const { composeBrief, idleDecision, briefPathFor, clientTokenPathFor, pickMaxAwakeVictim, splitTurnText, BRIEF_TAIL, BRIEF_MAX_BYTES } = require('./assistant-sleep');
 const { cachedMessages } = require('./transcript');
-const { isAgentType, adapterFor, streamFor: adapterStreamFor, hasBypass, hasReadOnlyCap, postureOf, resolveModelId, resolveEffort } = require('./cli-adapters');
+const { isAgentType, adapterFor, runsClaudeHooks, streamFor: adapterStreamFor, hasBypass, hasReadOnlyCap, postureOf, resolveModelId, resolveEffort } = require('./cli-adapters');
 
 function streamCodecCtx(type, extraArgs) {
   const a = adapterFor(type);
@@ -1640,6 +1640,8 @@ function createSessionManager(deps) {
       }
       let seatConfigDir = null;
       let museSid = null;
+      let clayMintedSid = null;
+      let resumedTranscriptAt = null;
       let museData = null;
       let codexLink = null;
       let museSel = null;
@@ -1683,7 +1685,7 @@ function createSessionManager(deps) {
       // Nulling proxyBase is the wire-off switch itself: setupClaudeHook falls back to proxyBase when wireBase is
       // absent, so skipping only the wire registration would still set ANTHROPIC_BASE_URL through the external proxy.
       const wireOff = noWire === true;
-      if (wireOff) proxyBase = null;
+      if (wireOff || type === 'clay') proxyBase = null;
       const fixHost = (typeof fixFor === 'string' && fixFor) ? fixFor : null;
 
       if (accountDir && proxyBase && !adapterFor(type).account.bootstrap && accountDir !== claudeHome()) {
@@ -2139,6 +2141,72 @@ function createSessionManager(deps) {
           }
           break;
         }
+        case 'clay': {
+          cmd = 'clay';
+          if (Array.isArray(protectCredentials) && protectCredentials.length) {
+            abandonHint();
+            throw new Error(`clay seat "${name}" refused: protectCredentials (${protectCredentials.join(', ')}) cannot be enforced on clay 0.1.0, which ignores permissions and sandbox settings`);
+          }
+          const clayUnenforced = [['tool denies', disabledTools], ['shell denies', shellDeny], ['subagent denies', denyBuiltins]]
+            .filter(([, list]) => Array.isArray(list) && list.length).map(([label]) => label);
+          if (clayUnenforced.length) {
+            const w = `${clayUnenforced.join(', ')} not enforced on clay 0.1.0: it ignores permissions settings.`;
+            warnings.push(w);
+            this._broadcast('ipc-message', { type: 'system', from: name, to: name, body: w });
+          }
+          try { clearNotices(REGISTRY_DIR, name); } catch {}
+          const claySysFile = resolveSystemPromptFile(systemPromptFile, Array.isArray(plugins) ? plugins : null, resolvedTeam);
+          const clayIpc = this._realIpcFor({
+            extraArgs,
+            intents,
+            execCommands,
+            spillArmed: false,
+            spillExamples: 2,
+            profileSeat: false,
+            plugins: Array.isArray(plugins) ? plugins : null,
+            appendPromptFiles,
+            inlineBody: systemPromptBody || null,
+            hasSystemFile: !!claySysFile,
+            ipcDisabled: mergedEnv.CLODEX_DISABLE_IPC_PROMPT === '1',
+          }, teamBlock, resolvedTeam, promptOwner);
+          args = clayIpc.cleaned;
+          if (!args.includes('--settings')) {
+            args.push('--settings', setupClaudeHook(name, null, null, [], [], [], null, createdAt, [], false, null, null, [], [], cwd || null));
+            selectionDrain = true;
+          }
+          ensureDir(MSG_DIR);
+          if (!args.includes(MSG_DIR)) args.push('--add-dir', MSG_DIR);
+          const claySeatMsgDir = seatPathFor(REGISTRY_DIR, name, 'messages');
+          if (ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'messages', fs, log }) && !args.includes(claySeatMsgDir)) args.push('--add-dir', claySeatMsgDir);
+          const userSession = args.includes('--resume') || args.includes('--session-id');
+          if (!userSession) {
+            clayMintedSid = (!resumeId || fork) ? randomUUID() : null;
+            if (resumeId) args.push('--resume', resumeId);
+            if (resumeId && fork) args.push('--fork-session');
+            if (clayMintedSid) args.push('--session-id', clayMintedSid);
+          }
+          if (claySysFile && !args.includes('--system-prompt-file') && !args.includes('--system-prompt')) {
+            args.push('--system-prompt-file', claySysFile);
+          }
+          if (effortLevel && !args.some((a) => typeof a === 'string' && (a === '--effort' || a.startsWith('--effort=')))) {
+            args.push('--effort', effortLevel);
+          }
+          ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'run', fs });
+          ensureDir(runDirFor(REGISTRY_DIR, name));
+          const clayPromptPath = pathFor(REGISTRY_DIR, name, 'appendPrompt');
+          fs.writeFileSync(clayPromptPath, bakePrompt(REGISTRY_DIR, name, clayIpc.realIpc, false, { snapshot: null }), { mode: 0o600 });
+          args.push('--append-system-prompt-file', clayPromptPath);
+          const claySpawnCwd = cwd || process.env.HOME || os.homedir();
+          const claySid = userSession ? null : (clayMintedSid || resumeId);
+          if (claySid) {
+            linkTranscript({ fs }, pathFor(REGISTRY_DIR, name, 'transcript'),
+              this._claudeTranscriptPath(claySpawnCwd, accountDir, claySid, type));
+          }
+          if (resumeId) {
+            try { resumedTranscriptAt = fs.statSync(this._claudeTranscriptPath(claySpawnCwd, accountDir, resumeId, type)).mtimeMs; } catch {}
+          }
+          break;
+        }
         case 'bash':
           cmd = shell;
           args = [...extraArgs];
@@ -2152,7 +2220,7 @@ function createSessionManager(deps) {
       // and FORCE_HYPERLINK removes inheritance of how Clodex was launched (terminal vs Finder); link clicks scan rendered text.
       const env = withUtf8Charset({ ...mergedEnv, TERM: 'xterm-256color', CLODEX_HOME: REGISTRY_DIR, FORCE_HYPERLINK: '1' });
       if (type === 'codex') env.WB_WRAP_NAME = name;
-      const intentChannel = (agentType === 'claude' || agentType === 'codex')
+      const intentChannel = (runsClaudeHooks(agentType) || agentType === 'codex')
         ? { sockPath: pathFor(REGISTRY_DIR, name, 'intentSocket'), cred: mintIntentCredential(nodeCrypto) }
         : null;
       if (intentChannel) {
@@ -2287,7 +2355,7 @@ function createSessionManager(deps) {
         spawnedAt: Date.now(),
         createdAt,
         agentType, lineBuffer: '', watcher: null,
-        sessionId: resumeId || null,
+        sessionId: resumeId || clayMintedSid || null,
         accountDir: seatConfigDir || accountDir || null,
         forked: !!fork,
         ...this._scratchCloneMarkerFields(name),
@@ -2314,7 +2382,7 @@ function createSessionManager(deps) {
         activityState: 'idle',
         // Math.min clamps a future mtime (NFS, rsync -t, clock step): a future seed would stick, keep idleMs negative,
         // and make `idleMs < DM_HOLD_IDLE_MS` always true, so the seat could never be held.
-        activityTs: Math.min(lastTranscriptWrite(agentType, cwd, resumeId) || Date.now(), Date.now()),
+        activityTs: Math.min(lastTranscriptWrite(agentType, cwd, resumeId) || resumedTranscriptAt || Date.now(), Date.now()),
         needsAttention: null,
         // A spawned or resumed CLI is parked at its prompt; without this seed a GUI restart wipes the turn.completed stamp
         // and an idle restored seat can never pass the auto-compact atPrompt guard.
@@ -2325,7 +2393,7 @@ function createSessionManager(deps) {
         selectionDrain,
         // Recompute, do not re-write: setupClaudeHook already wrote the digest file pre-spawn, and a rewrite here
         // would race the SessionStart hook cat-ing it (writeFileSync is not atomic).
-        digestNonEmpty: agentType === 'claude' && composeDigest(memoryStore.list(name)) !== null,
+        digestNonEmpty: runsClaudeHooks(agentType) && composeDigest(memoryStore.list(name)) !== null,
       };
       this.sessions.set(name, session);
       this._bindHold(name, fork ? null : session.sessionId, true);
@@ -2333,7 +2401,7 @@ function createSessionManager(deps) {
 
       // Recomposed here: the hook cats the digest only for source startup|clear|compact, so a resumed session gets none;
       // recording it would claim FULL for units the model never saw, hence a resume records nothing.
-      if (agentType === 'claude' && !resumeId) this._seedMemoryLoad(name, { fresh: true });
+      if (runsClaudeHooks(agentType) && !resumeId) this._seedMemoryLoad(name, { fresh: true });
 
       if (!session.clone) getPersistence().upsert({
         name, type, cwd,
@@ -2396,7 +2464,7 @@ function createSessionManager(deps) {
 
       const onSessionId = (sessionId) => {
         const priorSid = session.sessionId;
-        const reseed = !!(priorSid && sessionId && priorSid !== sessionId && !session.forked && session.agentType === 'claude');
+        const reseed = !!(priorSid && sessionId && priorSid !== sessionId && !session.forked && runsClaudeHooks(session.agentType));
         if (priorSid && sessionId && priorSid !== sessionId) {
           this._foldSeatCost(session);
           try { this._stampSeatCost(session, 'clear'); } catch {}
@@ -2537,7 +2605,7 @@ function createSessionManager(deps) {
         if (deadline.unref) deadline.unref();
       }
 
-      if (agentType === 'claude') {
+      if (runsClaudeHooks(agentType)) {
         const ctxPath = pathFor(REGISTRY_DIR, name, 'ctx');
         let lastRaw = null;
         let lastKey = null;
@@ -2733,7 +2801,7 @@ function createSessionManager(deps) {
         if (streamIo) {
           if (resumeId) this._replayTicketsOnce(session);
           session._replayAtInit = !!session._replayTicketsPending;
-        } else if (session.agentType !== 'claude') {
+        } else if (!runsClaudeHooks(session.agentType)) {
           session._bootSettling = true;
           session._bootSettleSince = Date.now();
           // The cap is not wall-clock: _settleBoot runs only from _armBootSettle, which runs only from onData, so a silent codex
@@ -4710,8 +4778,10 @@ function createSessionManager(deps) {
       }
     }
 
-    _claudeTranscriptPath(cwd, accountDir, sid) {
-      return path.join(accountDir || claudeHome(), 'projects', claudeProjectSlug(cwd), `${sid}.jsonl`);
+    _claudeTranscriptPath(cwd, accountDir, sid, type = 'claude') {
+      const defaultDir = adapterFor(type)?.account.defaultDir;
+      const home = accountDir || (defaultDir ? path.join(os.homedir(), defaultDir) : claudeHome());
+      return path.join(home, 'projects', claudeProjectSlug(cwd), `${sid}.jsonl`);
     }
 
     _snapshotBlockFor(name, cwd, accountDir, sid) {
@@ -4826,7 +4896,7 @@ function createSessionManager(deps) {
       if (existingEntry && existingEntry.rosterSentAt) {
         // A resumed seat gets no roster message (a duplicate costs a turn) but its digest must be
         // re-baked: the pre-spawn write ran before the seat existed.
-        if (session.agentType === 'claude') this._rebakeDigest(session.name);
+        if (runsClaudeHooks(session.agentType)) this._rebakeDigest(session.name);
         return;
       }
       this._injectRoster(session, team);
@@ -4958,7 +5028,7 @@ function createSessionManager(deps) {
         if (s.name === team.lead) this._deliverPassive(s.name, 'team', body, 'dm');
         // Re-bake stays outside the lead-only guard: the delta dies with the next reset, and only the
         // digest makes the next boot of every seat carry the changed roster.
-        if (s.agentType === 'claude') this._rebakeDigest(s.name);
+        if (runsClaudeHooks(s.agentType)) this._rebakeDigest(s.name);
       }
     }
 
@@ -5077,7 +5147,7 @@ function createSessionManager(deps) {
         attention: s.needsAttention ? s.needsAttention.kind : null,
         account: this.accountFor(s.name, resolveAccount),
         model: s.type === 'claude' ? this.modelFor(s.name, resolveSettingsModel) : null,
-        pendingCount: s.agentType === 'claude' ? countPending(PENDING_DIR, s.name) : 0,
+        pendingCount: runsClaudeHooks(s.agentType) ? countPending(PENDING_DIR, s.name) : 0,
       }));
     }
 
@@ -5254,12 +5324,12 @@ function createSessionManager(deps) {
 
     pendingCountFor(name) {
       const s = this.sessions.get(name);
-      return s && s.agentType === 'claude' ? countPending(PENDING_DIR, s.name) : 0;
+      return s && runsClaudeHooks(s.agentType) ? countPending(PENDING_DIR, s.name) : 0;
     }
 
     peekPendingFor(name) {
       const s = this.sessions.get(name);
-      return s && s.agentType === 'claude' ? peekPending(PENDING_DIR, s.name) : [];
+      return s && runsClaudeHooks(s.agentType) ? peekPending(PENDING_DIR, s.name) : [];
     }
 
     // Poll, not events: the UserPromptSubmit hook drains the store out of process with a
@@ -5269,7 +5339,7 @@ function createSessionManager(deps) {
       const tick = () => {
         const live = new Set();
         for (const s of this.sessions.values()) {
-          if (s.agentType !== 'claude' || s._dead) continue;
+          if (!runsClaudeHooks(s.agentType) || s._dead) continue;
           live.add(s.name);
           const count = countPending(PENDING_DIR, s.name);
           if ((this._lastPendingCounts.get(s.name) || 0) === count) continue;
@@ -5515,7 +5585,8 @@ function createSessionManager(deps) {
       if (s.transport) s.transport.stop();
       if (s.intentSocket) { try { s.intentSocket.stop(); } catch {} s.intentSocket = null; }
       if (s.agentType) registry.unregister(name);
-      if (s.agentType === 'claude') { cleanupClaudeHook(name); cleanupAgentPlugin(name); }
+      if (runsClaudeHooks(s.agentType)) cleanupClaudeHook(name);
+      if (s.agentType === 'claude') cleanupAgentPlugin(name);
       if (s.agentType === 'codex') cleanupCodexHook(name, s.cwd);
       if (s.agentType === 'muse') cleanupMuseSeat(name);
       if (s.agentType) cleanupSkills(s.agentType, name);
@@ -5753,7 +5824,7 @@ function createSessionManager(deps) {
       // Reset the live set to empty rather than model what the summarizer kept: possibly-evicted
       // must read as not loaded.
       try { memLoad.noteCompact(session.name); } catch { /* observer-grade */ }
-      if (session.agentType === 'claude') this._seedMemoryLoad(session.name);
+      if (runsClaudeHooks(session.agentType)) this._seedMemoryLoad(session.name);
       // Separate ledger from memLoad: already in context and already offered reset side by side.
       try { arm.onContextReset(session.name); } catch { /* observer-grade */ }
       const sched = getRemindScheduler && getRemindScheduler();
@@ -5981,7 +6052,7 @@ function createSessionManager(deps) {
     }
 
     _drainPendingAtIdle(session) {
-      if (!session || session.agentType !== 'claude' || session._dead) return;
+      if (!session || !runsClaudeHooks(session.agentType) || session._dead) return;
       if (this._anyDraftOpen(session)) return;
       if (!hasActivePending(PENDING_DIR, session.name)) return;
       this._injectText(session, '', {
@@ -6013,7 +6084,7 @@ function createSessionManager(deps) {
     }
 
     _drainPendingAtBootReady(session) {
-      if (!session || session.agentType !== 'claude' || session._dead || session.io === 'stream') return;
+      if (!session || !runsClaudeHooks(session.agentType) || session._dead || session.io === 'stream') return;
       if (this._anyDraftOpen(session)) return;
       if (!hasActivePending(PENDING_DIR, session.name)) return;
       const produce = () => {
@@ -7842,7 +7913,7 @@ function createSessionManager(deps) {
 
     _maybeDeliverDigest(s, sid) {
       try {
-        if (!sid || s._dead || s.agentType !== 'claude') return;
+        if (!sid || s._dead || !runsClaudeHooks(s.agentType)) return;
         if (s.needsAttention) return; // injection would answer the dialog
         if (sid !== s.sessionId) return;
         if (isDigested(getPersistence().get(s.name), sid)) return;
@@ -7871,7 +7942,7 @@ function createSessionManager(deps) {
     _pushLateDirective(agent, id, { updated = false } = {}) {
       try {
         const session = this.sessions.get(agent);
-        if (!session || session._dead || session.agentType !== 'claude') return;
+        if (!session || session._dead || !runsClaudeHooks(session.agentType)) return;
         if (session.needsAttention) return;
         if (!updated && memLoad.stateOf(agent, id) === 'full') return;
         const unit = memoryStore.list(agent).find(u => u.id === id);
@@ -7886,7 +7957,7 @@ function createSessionManager(deps) {
     }
 
     _memoryAck(session, line, opts = { parkable: true }) {
-      if (session.agentType === 'claude') {
+      if (runsClaudeHooks(session.agentType)) {
         try {
           fs.appendFileSync(pathFor(REGISTRY_DIR, session.name, 'acks'), line + '\n');
           return;
@@ -7910,7 +7981,7 @@ function createSessionManager(deps) {
       // Live sessions only: a dead agent's unit can be forgotten, and writeClaudeDigestFile would recreate its
       // run directory as a side effect.
       const session = this.sessions.get(agent);
-      if (session && !session._dead && session.agentType === 'claude') {
+      if (session && !session._dead && runsClaudeHooks(session.agentType)) {
         // Assign the result: _noteConversationForDigest marks digested on this flag, so a stale true after the
         // store empties would mark a conversation digested that never received a digest.
         try { session.digestNonEmpty = writeClaudeDigestFile(agent); } catch { /* best-effort */ }
@@ -7925,7 +7996,7 @@ function createSessionManager(deps) {
         return { ok: false, error: e.message };
       }
       const session = this.sessions.get(agent);
-      if (session && !session._dead && session.agentType === 'claude') {
+      if (session && !session._dead && runsClaudeHooks(session.agentType)) {
         try { session.digestNonEmpty = writeClaudeDigestFile(agent); } catch { /* best-effort */ }
       }
       if (on) this._pushLateDirective(agent, id, { updated: false });
@@ -7959,7 +8030,7 @@ function createSessionManager(deps) {
 
     _refreshOperatorDigest(agent) {
       const session = this.sessions.get(agent);
-      if (!session || session._dead || session.agentType !== 'claude') return;
+      if (!session || session._dead || !runsClaudeHooks(session.agentType)) return;
       try {
         session.digestNonEmpty = writeClaudeDigestFile(agent);
       } catch (e) {
@@ -7970,7 +8041,7 @@ function createSessionManager(deps) {
     _handleMemoryIntent(session, sub, body) {
       const agent = session.name;
       const refreshDigest = () => {
-        if (session.agentType === 'claude') session.digestNonEmpty = writeClaudeDigestFile(agent);
+        if (runsClaudeHooks(session.agentType)) session.digestNonEmpty = writeClaudeDigestFile(agent);
       };
       if (sub === 'list') {
         const units = memoryStore.list(agent);
@@ -9425,9 +9496,9 @@ function createSessionManager(deps) {
       if (!session._injectPtyQueue) {
         // Claude seats wait for the mode-2004 edge plus BOOT_DRAIN_SETTLE_MS: text and Enter written before
         // the raw-mode input loop is up submit as one paste-like chunk. Codex must not be coupled to this gate.
-        const isClaude = session.agentType === 'claude';
+        const claudeShape = runsClaudeHooks(session.agentType);
         session._injectPtyQueue = new InjectQueue({
-          reviewGate: isClaude,
+          reviewGate: claudeShape,
           onDefanged: (t) => log.warn('inject', `defanged teammate-message tag in ${(/^\[agent:[a-z-]+(?: [^\]\r\n]+)?\]/.exec(t) || ['inject'])[0]} body for ${session.name}`),
           write: (bytes) => { if (!session.pty) return; if (!session.firstInputAt) session.firstInputAt = Date.now(); try { session.pty.write(bytes); } catch {} this._armSubmitNudge(session, bytes); },
           settleMsFor: (t) => (t.length > LONG_TEXT_THRESHOLD ? LONG_TEXT_DELAY : SHORT_TEXT_DELAY),
@@ -9468,15 +9539,15 @@ function createSessionManager(deps) {
           },
           onSubmitted: (_t, meta) => {
             session.lastSubmitInjected = !(meta && meta.human);
-            if (isClaude && session.activityState === 'idle') session._awaitingTurnSince = Date.now();
+            if (claudeShape && session.activityState === 'idle') session._awaitingTurnSince = Date.now();
           },
-          ready: isClaude ? () => !!session._bootReadySeen && Date.now() - (session._bootReadyAt || 0) >= BOOT_DRAIN_SETTLE_MS : undefined,
+          ready: claudeShape ? () => !!session._bootReadySeen && Date.now() - (session._bootReadyAt || 0) >= BOOT_DRAIN_SETTLE_MS : undefined,
           readyMaxWaitMs: INJECT_BOOT_MAXWAIT,
-          onReadyCapFire: isClaude ? () => {
+          onReadyCapFire: claudeShape ? () => {
             log.warn('inject', `boot-readiness cap fired for ${session.name} — injected before mode-2004 seen (${INJECT_BOOT_MAXWAIT / 1000}s cap)`);
           } : null,
-          pasteMaxWaitMs: isClaude ? INJECT_PASTE_MAXWAIT : undefined,
-          onPasteCapFire: isClaude ? () => {
+          pasteMaxWaitMs: claudeShape ? INJECT_PASTE_MAXWAIT : undefined,
+          onPasteCapFire: claudeShape ? () => {
             log.warn('inject', `paste-mode cap fired for ${session.name} — multi-line inject written bracketed with mode-2004 off (${INJECT_PASTE_MAXWAIT / 1000}s cap)`);
           } : null,
           onCapFire: () => {

@@ -29,6 +29,7 @@ function classifyNotification(entry) {
   const msg = (entry && typeof entry.message === 'string') ? entry.message : '';
   const title = (entry && typeof entry.title === 'string') ? entry.title : '';
   const text = `${title} ${msg}`;
+  if (entry && entry.notification_type === 'permission') return 'permission';
   if (PERMISSION_RE.test(text)) return 'permission';
   if (IDLE_RE.test(text)) return 'idle';
   return 'other';
