@@ -2393,7 +2393,7 @@ function createSessionManager(deps) {
         // Written unconditionally: this is the advance half of the upgrade-notice comparison, and omitting it on any path
         // leaves the old version so every later resume re-enqueues the same notice.
         appVersion,
-        sessionId: resumeId || clayMintedSid || null,
+        sessionId: resumeId || null,
         workspaceId,
         systemPrompt: systemPromptBody || null,
         systemPromptFile: systemPromptFile || null,

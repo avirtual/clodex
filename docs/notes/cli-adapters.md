@@ -21,28 +21,21 @@ id; `link`: `hook` = the CLI's hook writes the transcript symlink, `clodex` =
 `create()` writes it before spawn — reserved, no reader yet), `caps` (`park`:
 a held delivery can be parked for this seat; `transcript`: the hook writes
 `transcript.jsonl`; `warmth`: the renderer shows the prompt-cache warmth
-segment; `claudeHooks`: the CLI runs Clodex's Claude-shape hook settings, see
-`runsClaudeHooks`), `ui` (the t749 dialog-field row `capsFor` returns). Every
-`skill-delivery.js` `providers()` entry is an adapter, and every adapter whose
-`ui.injectSkills` is true is a provider; clay (injectSkills false) is the one
-adapter with no delivery function.
+segment; `claudeHooks`: runs Clodex's Claude-shape hooks, see docs/sessions.md
+clay), `ui` (the t749 row `capsFor` returns). Every `providers()` entry of
+`skill-delivery.js` is an adapter; clay, with no skills surface, has none.
 
 ### Guards that stay literal
 
-The ~55 `agentType === 'claude'` guards left in `session-manager.js` and
-`team-tickets.js` stay literal on purpose. They gate Claude ARTIFACTS —
+The `agentType === 'claude'` guards left in `session-manager.js` and
+`team-tickets.js` (hook-driven ones read `runsClaudeHooks` since clay, see
+docs/sessions.md) stay literal on purpose. They gate Claude ARTIFACTS —
 `hookDigest`, the pending dir, `promptRecipe`/`session.md`,
 move-to-peer, `refreshPrompt`, the argv arms themselves — not platform
 policy. A boolean on the adapter would be true for exactly one platform and
 would read as a promise that a second platform gains the artifact by
 flipping it, which is false: each artifact needs its own mechanism written.
-Convert a guard the day a second platform gets that artifact. Clay is that
-second platform for the hook-driven artifacts: the guards on the hook
-settings and its cleanup, the intent channel, the ctx/attn/delivered tail,
-the 2004h boot replay and inject gate, the memory digest and the pending
-count and idle/boot drains read `runsClaudeHooks` since t2154; park,
-passive delivery, `promptRecipe`, plugins, MCP, stream io and account moves
-stay literal. The two
+Convert a guard the day a second platform gets that artifact. The two
 `transcript` guards on the review watchdog and the stall wake read
 `caps.transcript` since t1078, which measured the Codex hook landing the
 symlink live (see `readOnlyCap` below).
@@ -125,12 +118,3 @@ read-only: `filesystem.mode: managed`, rules `:minimal` / `:root` /
 `:workspace_roots` all `access: read`, `protected_metadata: true`, beside
 `local_command_network.mode: enabled`, `approval: allow_all`, `reviewer: none`.
 
-
-## runsClaudeHooks
-
-True where `caps.claudeHooks` is: claude and clay. clay 0.1.0 honours Claude's
-settings `hooks` (matcher, timeout, onFailure, additionalContext) and
-`statusLine` stdin fields, writes Claude-shape JSONL records and emits
-`\x1b[?2004h` at boot-ready (clay README, "Hosting clay"). A clay seat is
-spawned with `proxyBase` nulled in `create()`: the wire route for clay is not
-built yet, so neither the account register nor the spawner hint may fire.

@@ -70,7 +70,15 @@ arg** (which is why restart paths must re-assert it; kill drops the entry).
   `run/<name>/transcript.jsonl` to `$CLAY_HOME/projects/<slug>/<sid>.jsonl`
   (`~/.clay` when unset; `_claudeTranscriptPath`) before the spawn, and the
   SessionStart hook re-links it to the reported `transcript_path`. No
-  plugins, MCP, skills, stream io or wire routing yet.
+  plugins, MCP, skills, stream io or wire routing yet: `proxyBase` is nulled
+  for clay before the account register and the spawner hint. Clay honours
+  Claude's hooks, statusLine stdin and JSONL records (clay 0.1.0 README,
+  "Hosting clay"), so `caps.claudeHooks` / `runsClaudeHooks(type)` gate the
+  hook settings and cleanup, the intent channel, the ctx/attn/delivered tail,
+  the 2004h replay and inject gate, the memory digest and the pending count
+  and drains for it beside claude; park, passive delivery, `promptRecipe`
+  and account moves stay Claude-only. A clay permission Notification
+  (`notification_type: "permission"`) classifies as `permission`.
 - **muse** — spawn → registry → link. Before the spawn, `bootstrapSeatConfig`
   (seat-config.js) rebuilds `run/<name>/xdg` as an overlay of `~/.config` (or
   the seat's `XDG_CONFIG_HOME`) and the seat's env gets `XDG_CONFIG_HOME` pointed
