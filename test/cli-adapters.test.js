@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 
 const {
-  ADAPTERS, PLATFORMS, CAP_KEYS, capsFor, streamFor, adapterFor, seatType, stripModelArgs, hasBypass, postureOf, resolveModelId, resolveEffort, runsClaudeHooks, PRIVILEGED_FLAG_ARITY,
+  ADAPTERS, PLATFORMS, CAP_KEYS, capsFor, streamFor, adapterFor, seatType, stripModelArgs, hasBypass, postureOf, resolveModelId, resolveEffort, runsClaudeHooks, PRIVILEGED_FLAG_ARITY, splitPrivilegedArgs,
 } = require('../cli-adapters');
 const { createSkillDelivery } = require('../skill-delivery');
 
@@ -282,6 +282,13 @@ test('runsClaudeHooks: claude and clodent run the Claude hook settings, codex an
 test('PRIVILEGED_FLAG_ARITY: --yolo is privileged with no value, --read-only is a cap and is not', () => {
   assert.strictEqual(PRIVILEGED_FLAG_ARITY['--yolo'], 0);
   assert.strictEqual(Object.prototype.hasOwnProperty.call(PRIVILEGED_FLAG_ARITY, '--read-only'), false);
+  assert.strictEqual(PRIVILEGED_FLAG_ARITY['--allow-dangerously-skip-permissions'], 0);
+  assert.deepStrictEqual(splitPrivilegedArgs(['--allow-dangerously-skip-permissions', '--model', 'x']), {
+    kept: ['--model', 'x'],
+    privileged: ['--allow-dangerously-skip-permissions'],
+    flags: ['--allow-dangerously-skip-permissions'],
+    pairs: [['--allow-dangerously-skip-permissions', null]],
+  });
 });
 
 test('readOnlyCap: claude is a tool denylist, codex is the argv sandbox pair, muse is the settings profile', () => {

@@ -4501,7 +4501,7 @@ function createTicketMethods(deps, shared) {
       const { sessionEnv, dropped, badType } = filterTemplateEnv(tpl.env);
       return {
         tpl,
-        extraArgs: (Array.isArray(tpl.extraArgs) && tpl.extraArgs.length) ? tpl.extraArgs : null,
+        extraArgs: (Array.isArray(tpl.extraArgs) && tpl.extraArgs.some((a) => typeof a === 'string')) ? tpl.extraArgs.filter((a) => typeof a === 'string') : null,
         effort: (typeof tpl.effort === 'string' && tpl.effort) ? tpl.effort : null,
         agents: tpl.agents || [],
         denyBuiltins: tpl.denyBuiltins || [],
