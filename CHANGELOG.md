@@ -12,7 +12,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — Security: sandboxed seats cannot spawn unsandboxed children; monitor credential off the environment
 - **Security: a credential-sandboxed seat can no longer spawn an unsandboxed Codex or Muse child.** An agent spawn whose child type cannot enforce the spawner's `protectCredentials` is refused; only Claude seats enforce the credential sandbox.
 - **Security: deleting a team whose manifest failed to load no longer removes whatever sandbox box its `sandbox.json` pointer names.** The pointer's box id is trusted only when it equals `team-<name>`.
 - A role removal or rename that fails to write `team.json` restores the roster rows it had changed.
