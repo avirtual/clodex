@@ -91,7 +91,9 @@ arg** (which is why restart paths must re-assert it; kill drops the entry).
   reason `platform`. The operator keys a clodent account by writing
   `env.ANTHROPIC_API_KEY` into `$CLODENT_HOME/settings.json`; Clodex never
   writes the key, and a key set in the seat env instead reaches the child
-  env, which same-UID processes can read with `ps eww`.
+  env, which same-UID processes can read with `ps eww`. A credential-sandboxed
+  seat of any type is read-denied `settings.json` in `~/.clodent` and in the
+  seat's or the app's `CLODENT_HOME`, and write-denied those dirs.
 - **muse** — spawn → registry → link. Before the spawn, `bootstrapSeatConfig`
   (seat-config.js) rebuilds `run/<name>/xdg` as an overlay of `~/.config` (or
   the seat's `XDG_CONFIG_HOME`) and the seat's env gets `XDG_CONFIG_HOME` pointed

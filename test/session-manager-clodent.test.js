@@ -30,6 +30,7 @@ function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null } = {})
   const hints = [];
   const skillCalls = [];
   const mcpWrites = [];
+  const cleanups = [];
   const SessionManager = createSessionManager({
     killPid: processStubs().killPid,
     knownSkillNames: () => [],
@@ -61,7 +62,7 @@ function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null } = {})
     skillDeliveryProviders: () => ['claude', 'codex', 'muse'],
     getPluginBundles: () => [{ id: 'bundle-a', shipped: true, skills: [], agents: [] }],
     writeBundlePlugins: (name, bundles) => bundles.map((b) => ({ dir: pathReal.join(root, 'bundles', name, b.id), skills: [], agents: [] })),
-    cleanupSkills: () => {}, cleanupClaudeHook: () => {}, cleanupCodexHook: () => {}, cleanupAgentPlugin: () => {}, cleanupMuseSeat: () => {},
+    cleanupSkills: (provider, name) => { cleanups.push(['skills', provider, name]); }, cleanupClaudeHook: (name) => { cleanups.push(['hook', name]); }, cleanupCodexHook: () => {}, cleanupAgentPlugin: (name) => { cleanups.push(['agents', name]); }, cleanupMuseSeat: () => {},
     writeMcpConfig: (name) => { mcpWrites.push(['config', name]); },
     writeMcpCatalog: (name) => { mcpWrites.push(['catalog', name]); },
     crypto: require('node:crypto'),
@@ -136,7 +137,7 @@ function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null } = {})
   const link = (name) => pathForReal(root, name, 'transcript');
   const agentDir = (name) => pathReal.join(root, 'agent-plugins', name);
   const bundleDir = (name) => pathReal.join(root, 'bundles', name, 'bundle-a');
-  return { m, root, home, cwd, spawns, hooks, watchers, probes, registers, hints, broadcasts, skillCalls, mcpWrites, create, stop, settings, prompt, link, agentDir, bundleDir };
+  return { m, root, home, cwd, spawns, hooks, watchers, probes, registers, hints, broadcasts, skillCalls, mcpWrites, cleanups, create, stop, settings, prompt, link, agentDir, bundleDir };
 }
 
 function noMcpFlags(args) {
@@ -260,7 +261,17 @@ test('clodent: CLODENT_HOME in the seat env reaches the PTY env and is the accou
     assert.strictEqual(opts.env.CLODENT_HOME, clodentHome);
     assert.strictEqual(opts.env.ANTHROPIC_API_KEY, process.env.ANTHROPIC_API_KEY, 'Clodex adds no key of its own');
     assert.strictEqual(f.m.sessions.get('seat').accountDir, clodentHome);
+    assert.strictEqual(f.hooks[0][15], clodentHome, 'the seat CLODENT_HOME reaches setupClaudeHook, which sandboxes it');
   } finally { f.stop('seat'); }
+});
+
+test('clodent: the kill cleanup removes the hook settings, the agent plugin and the claude skill and bundle plugin dir it wrote', async () => {
+  const f = mkClodent();
+  await f.create('seat');
+  assert.strictEqual(f.spawns.length, 1, 'ENTER: spawned');
+  f.m._cleanup('seat');
+  assert.deepStrictEqual(f.cleanups, [['hook', 'seat'], ['agents', 'seat'], ['skills', 'claude', 'seat']]);
+  assert.strictEqual(f.m.sessions.has('seat'), false);
 });
 
 test('clodent: _claudeTranscriptPath resolves the home by adapter envKey — accountDir, else ~/.clodent for clodent and ~/.claude for claude', () => {

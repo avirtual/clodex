@@ -1874,7 +1874,7 @@ function createSessionManager(deps) {
               known: Array.isArray(disabledSkills) && disabledSkills.includes('*') ? knownSkillNames() : [],
               injectSkills,
             });
-            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, skillsOff, wireBase, createdAt, Array.isArray(shellDeny) ? shellDeny : [], streamIo, effortFlag ? null : effortLevel, Array.isArray(protectCredentials) ? protectCredentials : null, mcpSecretNames, mcpSel ? mcpSel.applied.denyRules : [], cwd || null);
+            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, skillsOff, wireBase, createdAt, Array.isArray(shellDeny) ? shellDeny : [], streamIo, effortFlag ? null : effortLevel, Array.isArray(protectCredentials) ? protectCredentials : null, mcpSecretNames, mcpSel ? mcpSel.applied.denyRules : [], cwd || null, mergedEnv.CLODENT_HOME || null);
             args.push('--settings', settingsPath);
             hookInstalled = true;
             selectionDrain = true;
@@ -5535,7 +5535,7 @@ function createSessionManager(deps) {
       if (runsClaudeHooks(s.agentType)) cleanupAgentPlugin(name);
       if (s.agentType === 'codex') cleanupCodexHook(name, s.cwd);
       if (s.agentType === 'muse') cleanupMuseSeat(name);
-      if (s.agentType) cleanupSkills(s.agentType, name);
+      if (s.agentType) cleanupSkills(runsClaudeHooks(s.agentType) ? 'claude' : s.agentType, name);
       if (s.needsAttention) this._setAttention(s, null);
       this.sessions.delete(name);
       const live = new Set(this.sessions.keys());
