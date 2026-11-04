@@ -22,13 +22,13 @@ id; `link`: `hook` = the CLI's hook writes the transcript symlink, `clodex` =
 a held delivery can be parked for this seat; `transcript`: the hook writes
 `transcript.jsonl`; `warmth`: the renderer shows the prompt-cache warmth
 segment; `claudeHooks`: runs Clodex's Claude-shape hooks, see docs/sessions.md
-clay), `ui` (the t749 row `capsFor` returns). Every `providers()` entry of
-`skill-delivery.js` is an adapter; clay, with no skills surface, has none.
+clodent), `ui` (the t749 row `capsFor` returns). Every `providers()` entry of
+`skill-delivery.js` is an adapter; clodent, with no skills surface, has none.
 
 ### Guards that stay literal
 
 The `agentType === 'claude'` guards left in `session-manager.js` and
-`team-tickets.js` (hook-driven ones read `runsClaudeHooks` since clay, see
+`team-tickets.js` (hook-driven ones read `runsClaudeHooks` since clodent, see
 docs/sessions.md) stay literal on purpose. They gate Claude ARTIFACTS —
 `hookDigest`, the pending dir, `promptRecipe`/`session.md`,
 move-to-peer, `refreshPrompt`, the argv arms themselves — not platform
@@ -67,6 +67,11 @@ no entry was written; `--add-dir` under `read-only` is NOT writable (`touch`:
 Operation not permitted), the cwd is not either, and outbound network is off
 (DNS fails). `exec` rejects `--ask-for-approval`; the TUI the seat boots takes
 it.
+
+`aliases` (clodent) are single argv tokens that name the same cap or the same
+bypass: clodent 0.3.0 takes `--read-only` as `--permission-mode plan` and
+`--yolo` as `--dangerously-skip-permissions`, and exits 2 on two permission
+flags that name different modes.
 
 `enforce: 'settings-profile'` (Muse) is a settings file plus a flag: `settings`
 is deep-merged into every Muse seat's settings.json by `bootstrapSeatConfig`

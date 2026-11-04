@@ -121,12 +121,15 @@ for (const type of ['codex', 'muse']) {
   });
 }
 
-test('a credential-sandboxed spawner spawns a claude child carrying its list', async () => {
-  const h = harness({ rec: { protectCredentials: ['~/.ssh'] } });
-  await spawn(h, h.writeTpl({ type: 'claude' }));
-  assert.strictEqual(h.calls.length, 1, `ENTER: create was called (${JSON.stringify(h.replies)})`);
-  assert.deepStrictEqual(h.calls[0][PROTECT], ['~/.ssh']);
-});
+for (const type of ['claude', 'clodent']) {
+  test(`a credential-sandboxed spawner spawns a ${type} child carrying its list`, async () => {
+    const h = harness({ rec: { protectCredentials: ['~/.ssh'] } });
+    await spawn(h, h.writeTpl({ type }));
+    assert.strictEqual(h.calls.length, 1, `ENTER: create was called (${JSON.stringify(h.replies)})`);
+    assert.strictEqual(h.calls[0][1], type);
+    assert.deepStrictEqual(h.calls[0][PROTECT], ['~/.ssh']);
+  });
+}
 
 test('the operator door spawns a codex child from a credential-sandboxed spawner', async () => {
   const h = harness({ rec: { protectCredentials: ['~/.ssh'] } });
@@ -286,10 +289,14 @@ test('a read-only spawner\'s child carries its adapter\'s read-only cap args', a
   await spawn(h, h.writeTpl({ type: 'codex' }), undefined, 'codex');
   assert.strictEqual(h.calls.length, 1, `ENTER: create was called (${JSON.stringify(h.replies)})`);
   assert.deepStrictEqual(h.calls[0][EXTRA_ARGS], ['--sandbox', 'read-only', '--ask-for-approval', 'never']);
-  const clay = harness({ rec: { extraArgs: CODEX_RO } });
-  await spawn(clay, clay.writeTpl({ type: 'clay', extraArgs: ['--model', 'x'] }), undefined, 'codex');
-  assert.strictEqual(clay.calls.length, 1, `ENTER: clay create was called (${JSON.stringify(clay.replies)})`);
-  assert.deepStrictEqual(clay.calls[0][EXTRA_ARGS], ['--model', 'x', '--read-only']);
+  const clodent = harness({ rec: { extraArgs: CODEX_RO } });
+  await spawn(clodent, clodent.writeTpl({ type: 'clodent', extraArgs: ['--model', 'x'] }), undefined, 'codex');
+  assert.strictEqual(clodent.calls.length, 1, `ENTER: clodent create was called (${JSON.stringify(clodent.replies)})`);
+  assert.deepStrictEqual(clodent.calls[0][EXTRA_ARGS], ['--model', 'x', '--permission-mode', 'plan']);
+  const alias = harness({ rec: { extraArgs: CODEX_RO } });
+  await spawn(alias, alias.writeTpl({ type: 'clodent', extraArgs: ['--read-only'] }), undefined, 'codex');
+  assert.strictEqual(alias.calls.length, 1, `ENTER: clodent --read-only create was called (${JSON.stringify(alias.replies)})`);
+  assert.deepStrictEqual(alias.calls[0][EXTRA_ARGS], ['--read-only'], '--read-only already is the cap: no conflicting --permission-mode is appended');
 });
 
 test('a read-only spawner\'s child whose template already carries the cap is not given a second copy', async () => {
@@ -318,25 +325,23 @@ test('denyBuiltins, disabledTools and shellDeny are the union of the template\'s
   assert.deepStrictEqual([bare.calls[0][DISABLED_TOOLS], bare.calls[0][DENY_BUILTINS], bare.calls[0][SHELL_DENY]], [[], [], null]);
 });
 
-test('a clay child carrying any deny is refused', async () => {
-  for (const [rec, tpl] of [
-    [{ disabledTools: ['WebFetch'] }, {}],
-    [{ shellDeny: ['curl'] }, {}],
-    [null, { denyBuiltins: ['Explore'] }],
+test('a clodent child spawns carrying the denies its spawner and template hold', async () => {
+  for (const [rec, tpl, col, want] of [
+    [{ disabledTools: ['WebFetch'] }, {}, DISABLED_TOOLS, ['WebFetch']],
+    [{ shellDeny: ['curl'] }, {}, SHELL_DENY, ['curl']],
+    [null, { denyBuiltins: ['Explore'] }, DENY_BUILTINS, ['Explore']],
   ]) {
     const h = harness({ rec });
-    await spawn(h, h.writeTpl({ type: 'clay', ...tpl }));
-    assert.deepStrictEqual(h.calls, [], JSON.stringify([rec, tpl]));
-    assert.match(h.replies[0], /^\[agent:spawn\] error: clay does not enforce tool denies/);
+    await spawn(h, h.writeTpl({ type: 'clodent', ...tpl }));
+    assert.strictEqual(h.calls.length, 1, `ENTER: create was called for ${JSON.stringify([rec, tpl])} (${JSON.stringify(h.replies)})`);
+    assert.strictEqual(h.calls[0][1], 'clodent');
+    assert.deepStrictEqual(h.calls[0][col], want, JSON.stringify([rec, tpl]));
   }
-  const ok = harness({ rec: null });
-  await spawn(ok, ok.writeTpl({ type: 'clay' }));
-  assert.strictEqual(ok.calls.length, 1, `ENTER: a deny-free clay child is created (${JSON.stringify(ok.replies)})`);
 });
 
 test('the operator door inherits neither the spawner\'s cap nor its denies', async () => {
   const h = harness({ rec: { extraArgs: CODEX_RO, disabledTools: ['WebFetch'], shellDeny: ['curl'] } });
-  await spawn(h, h.writeTpl({ type: 'clay', disabledTools: ['Skill'] }), { operator: true, onReply: (r) => h.replies.push(r) }, 'codex');
+  await spawn(h, h.writeTpl({ type: 'clodent', disabledTools: ['Skill'] }), { operator: true, onReply: (r) => h.replies.push(r) }, 'codex');
   assert.strictEqual(h.calls.length, 1, `ENTER: create was called (${JSON.stringify(h.replies)})`);
   assert.deepStrictEqual([h.calls[0][EXTRA_ARGS], h.calls[0][DISABLED_TOOLS], h.calls[0][SHELL_DENY]], [[], ['Skill'], null]);
 });

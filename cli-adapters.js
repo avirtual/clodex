@@ -6,21 +6,19 @@ const META_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'
 
 const CAP_KEYS = ['injectSkills', 'skillRoster', 'plugins', 'agents', 'tools', 'strip', 'autoCompact', 'noWire', 'accounts', 'streamIo'];
 
+const CLAUDE_MODEL_ALIASES = Object.freeze({
+  opus: 'claude-opus-5-5[1m]',
+  sonnet: 'claude-sonnet-5-5[1m]',
+  haiku: 'claude-haiku-5-5[1m]',
+  fable: 'claude-fable-5-1[1m]',
+});
+
 const ADAPTERS = {
   claude: {
     id: 'claude',
     label: 'Claude Code',
     cmd: 'claude',
-    model: {
-      flags: ['--model'],
-      aliases: {
-        opus: 'claude-opus-5-5[1m]',
-        sonnet: 'claude-sonnet-5-5[1m]',
-        haiku: 'claude-haiku-5-5[1m]',
-        fable: 'claude-fable-5-1[1m]',
-      },
-      idRe: MODEL_ID_RE,
-    },
+    model: { flags: ['--model'], aliases: CLAUDE_MODEL_ALIASES, idRe: MODEL_ID_RE },
     effort: { values: ['low', 'medium', 'high', 'xhigh', 'max'], apply: 'settings' },
     posture: { bypassArgs: ['--dangerously-skip-permissions'], bypass: [['--dangerously-skip-permissions']] },
     account: { envKey: 'CLAUDE_CONFIG_DIR', bootstrap: null, defaultDir: null },
@@ -148,16 +146,16 @@ const ADAPTERS = {
       streamIo: true,
     },
   },
-  clay: {
-    id: 'clay',
-    label: 'clay',
-    cmd: 'clay',
-    model: { flags: ['--model'], aliases: {}, idRe: MODEL_ID_RE },
-    effort: { values: ['low', 'medium', 'high'], apply: 'flag' },
-    posture: { bypassArgs: ['--yolo'], bypass: [['--yolo']] },
-    account: { envKey: 'CLAY_HOME', bootstrap: null, defaultDir: '.clay' },
+  clodent: {
+    id: 'clodent',
+    label: 'clodent',
+    cmd: 'clodent',
+    model: { flags: ['--model'], aliases: CLAUDE_MODEL_ALIASES, idRe: MODEL_ID_RE },
+    effort: { values: ['low', 'medium', 'high', 'xhigh', 'max'], apply: 'flag' },
+    posture: { bypassArgs: ['--dangerously-skip-permissions'], bypass: [['--dangerously-skip-permissions']], aliases: ['--yolo'] },
+    account: { envKey: 'CLODENT_HOME', bootstrap: null, defaultDir: '.clodent' },
     cwdDir: null,
-    readOnlyCap: { enforce: 'argv', args: ['--read-only'], note: 'read-only (clay refuses write tools and non-read-only Bash; not an OS sandbox)' },
+    readOnlyCap: { enforce: 'argv', args: ['--permission-mode', 'plan'], aliases: ['--read-only'], note: 'read-only (clodent plan mode: permission rules and a Bash path guard, not an OS sandbox)' },
     seatSettings: null,
     skills: null,
     instructions: 'append-system-prompt-file',
@@ -216,13 +214,15 @@ function lastValueOf(norm, flag) {
 function hasBypass(adapter, argv) {
   const want = adapter && adapter.posture && adapter.posture.bypass;
   if (!Array.isArray(want) || want.length === 0 || !Array.isArray(argv)) return false;
+  if (Array.isArray(adapter.posture.aliases) && adapter.posture.aliases.some((a) => argv.includes(a))) return true;
   const norm = normalizeArgv(argv, {});
   return want.every((opt) => (opt.length === 1 ? argv.includes(opt[0]) : lastValueOf(norm, opt[0]) === opt[1]));
 }
 
 function hasReadOnlyCap(adapter, argv) {
   const cap = adapter && adapter.readOnlyCap && adapter.readOnlyCap.args;
-  if (Array.isArray(cap) && cap.length === 1) return Array.isArray(argv) && argv.includes(cap[0]);
+  const aliases = adapter && adapter.readOnlyCap && adapter.readOnlyCap.aliases;
+  if (Array.isArray(aliases) && Array.isArray(argv) && aliases.some((a) => argv.includes(a))) return true;
   if (!Array.isArray(cap) || cap.length === 0 || cap.length % 2 !== 0 || !Array.isArray(argv)) return false;
   const norm = normalizeArgv(argv, adapter.readOnlyCap.shortFlags || {});
   for (let c = 0; c < cap.length; c += 2) {
