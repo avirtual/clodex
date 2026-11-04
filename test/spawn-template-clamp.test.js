@@ -14,6 +14,9 @@ const EXTRA_ARGS = 3;
 const EXEC = 16;
 const NO_WIRE = 20;
 const PROTECT = 26;
+const DENY_BUILTINS = 10;
+const DISABLED_TOOLS = 11;
+const SHELL_DENY = 22;
 
 function harness({ rec = null, team = null } = {}) {
   const calls = [];
@@ -45,9 +48,9 @@ function harness({ rec = null, team = null } = {}) {
   return { m, calls, replies, home, writeTpl };
 }
 
-async function spawn(h, template, opts) {
+async function spawn(h, template, opts, spawnerType = 'claude') {
   h.m._handleSpawnIntent(
-    { name: 'spawner', cwd: os.tmpdir(), workspaceId: 'default', type: 'claude' },
+    { name: 'spawner', cwd: os.tmpdir(), workspaceId: 'default', type: spawnerType },
     { name: 'child', ...(template ? { template } : { cwd: os.tmpdir() }) },
     opts,
   );
@@ -251,4 +254,81 @@ test('template-save without operator drops an extraArgs array holding a non-stri
   const { deps, file } = teamDeps();
   assert.deepStrictEqual(teamTemplateSave(deps, 'core', 'pm', { type: 'claude', extraArgs: [['--yolo'], '--model', 'x'] }), { ok: true, file, stripped: ['extraArgs'] });
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { type: 'claude' });
+});
+
+const CODEX_RO = ['--sandbox', 'read-only', '--ask-for-approval', 'never'];
+
+test('a read-only spawner\'s child carries its adapter\'s read-only cap args', async () => {
+  const h = harness({ rec: { extraArgs: CODEX_RO } });
+  await spawn(h, h.writeTpl({ type: 'codex' }), undefined, 'codex');
+  assert.strictEqual(h.calls.length, 1, `ENTER: create was called (${JSON.stringify(h.replies)})`);
+  assert.deepStrictEqual(h.calls[0][EXTRA_ARGS], ['--sandbox', 'read-only', '--ask-for-approval', 'never']);
+  const clay = harness({ rec: { extraArgs: CODEX_RO } });
+  await spawn(clay, clay.writeTpl({ type: 'clay', extraArgs: ['--model', 'x'] }), undefined, 'codex');
+  assert.strictEqual(clay.calls.length, 1, `ENTER: clay create was called (${JSON.stringify(clay.replies)})`);
+  assert.deepStrictEqual(clay.calls[0][EXTRA_ARGS], ['--model', 'x', '--read-only']);
+});
+
+test('a read-only spawner\'s child whose template already carries the cap is not given a second copy', async () => {
+  const h = harness({ rec: { extraArgs: CODEX_RO } });
+  await spawn(h, h.writeTpl({ type: 'codex', extraArgs: ['-s', 'read-only', '-a', 'never'] }), undefined, 'codex');
+  assert.strictEqual(h.calls.length, 1, `ENTER: create was called (${JSON.stringify(h.replies)})`);
+  assert.deepStrictEqual(h.calls[0][EXTRA_ARGS], ['-s', 'read-only', '-a', 'never']);
+});
+
+test('a read-only spawner cannot spawn a claude child, which has no argv cap', async () => {
+  const h = harness({ rec: { extraArgs: CODEX_RO } });
+  await spawn(h, h.writeTpl({ type: 'claude' }), undefined, 'codex');
+  assert.deepStrictEqual(h.calls, []);
+  assert.match(h.replies[0], /^\[agent:spawn\] error: spawner is read-only/);
+});
+
+test('denyBuiltins, disabledTools and shellDeny are the union of the template\'s and the spawner\'s', async () => {
+  const h = harness({ rec: { disabledTools: ['WebFetch'], denyBuiltins: ['Explore'], shellDeny: ['curl'] } });
+  await spawn(h, h.writeTpl({ disabledTools: ['Skill'], denyBuiltins: ['Explore', 'Plan'] }));
+  assert.strictEqual(h.calls.length, 1, `ENTER: create was called (${JSON.stringify(h.replies)})`);
+  assert.deepStrictEqual([h.calls[0][DISABLED_TOOLS], h.calls[0][DENY_BUILTINS], h.calls[0][SHELL_DENY]],
+    [['Skill', 'WebFetch'], ['Explore', 'Plan'], ['curl']]);
+  const bare = harness({ rec: null });
+  await spawn(bare, null);
+  assert.strictEqual(bare.calls.length, 1, 'ENTER: bare create was called');
+  assert.deepStrictEqual([bare.calls[0][DISABLED_TOOLS], bare.calls[0][DENY_BUILTINS], bare.calls[0][SHELL_DENY]], [[], [], null]);
+});
+
+test('a clay child carrying any deny is refused', async () => {
+  for (const [rec, tpl] of [
+    [{ disabledTools: ['WebFetch'] }, {}],
+    [{ shellDeny: ['curl'] }, {}],
+    [null, { denyBuiltins: ['Explore'] }],
+  ]) {
+    const h = harness({ rec });
+    await spawn(h, h.writeTpl({ type: 'clay', ...tpl }));
+    assert.deepStrictEqual(h.calls, [], JSON.stringify([rec, tpl]));
+    assert.match(h.replies[0], /^\[agent:spawn\] error: clay does not enforce tool denies/);
+  }
+  const ok = harness({ rec: null });
+  await spawn(ok, ok.writeTpl({ type: 'clay' }));
+  assert.strictEqual(ok.calls.length, 1, `ENTER: a deny-free clay child is created (${JSON.stringify(ok.replies)})`);
+});
+
+test('the operator door inherits neither the spawner\'s cap nor its denies', async () => {
+  const h = harness({ rec: { extraArgs: CODEX_RO, disabledTools: ['WebFetch'], shellDeny: ['curl'] } });
+  await spawn(h, h.writeTpl({ type: 'clay', disabledTools: ['Skill'] }), { operator: true, onReply: (r) => h.replies.push(r) }, 'codex');
+  assert.strictEqual(h.calls.length, 1, `ENTER: create was called (${JSON.stringify(h.replies)})`);
+  assert.deepStrictEqual([h.calls[0][EXTRA_ARGS], h.calls[0][DISABLED_TOOLS], h.calls[0][SHELL_DENY]], [[], ['Skill'], null]);
+});
+
+test('a template that sets a held cap flag to another value is refused as lifting the read-only cap', async () => {
+  const h = harness({ rec: { extraArgs: ['--sandbox', 'workspace-write', ...CODEX_RO] } });
+  await spawn(h, h.writeTpl({ type: 'codex', extraArgs: ['--sandbox', 'workspace-write'] }), undefined, 'codex');
+  assert.deepStrictEqual(h.calls, []);
+  assert.match(h.replies[0], /^\[agent:spawn\] error: template ".*" carries --sandbox, which lifts spawner's read-only cap/);
+});
+
+test('deny lists are read off the spawner\'s live session when the record has none', async () => {
+  const h = harness({ rec: null });
+  h.m.sessions.set('spawner', { name: 'spawner', disabledTools: ['WebFetch'], shellDeny: ['curl'] });
+  await spawn(h, h.writeTpl({}));
+  assert.strictEqual(h.calls.length, 1, `ENTER: create was called (${JSON.stringify(h.replies)})`);
+  assert.deepStrictEqual([h.calls[0][DISABLED_TOOLS], h.calls[0][SHELL_DENY]], [['WebFetch'], ['curl']]);
 });

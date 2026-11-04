@@ -26,7 +26,7 @@ const {
   teamPromptFile,
 } = require('./team-prompt-dir');
 const { resolveModelId, deriveModelTemplate, deriveEffortTemplate } = require('./team-template-derive');
-const { seatType, adapterFor, DEFAULT_TYPE, PLATFORMS, hasBypass, resolveEffort, splitPrivilegedArgs } = require('./cli-adapters');
+const { seatType, adapterFor, DEFAULT_TYPE, PLATFORMS, hasBypass, hasReadOnlyCap, resolveEffort, splitPrivilegedArgs } = require('./cli-adapters');
 const { readerFor } = require('./transcript-readers');
 const { ctxThresholdsFor } = require('./ctx-reminder');
 const { formatGatherReport } = require('./team-gather');
@@ -659,6 +659,40 @@ function createTicketMethods(deps, shared) {
           return;
         }
       }
+      let spawnArgs = childArgs;
+      if (!operator && hasReadOnlyCap(spawnerAdapter, spawnerArgs)) {
+        const childAdapter = adapterFor(type);
+        const capArgs = childAdapter && childAdapter.readOnlyCap && childAdapter.readOnlyCap.args;
+        if (!Array.isArray(capArgs) || !capArgs.length) {
+          reply(`error: ${spawner.name} is read-only and a ${type} seat cannot be capped read-only by argv — a spawned seat cannot hold more than its spawner`);
+          return;
+        }
+        if (!hasReadOnlyCap(childAdapter, childArgs)) {
+          const want = new Map();
+          for (let c = 0; c + 1 < capArgs.length; c += 2) want.set(capArgs[c], capArgs[c + 1]);
+          const lifting = [...new Set(splitPrivilegedArgs(childArgs).pairs
+            .filter(([f, v]) => want.has(f) && v !== want.get(f)).map(([f]) => f))];
+          if (lifting.length) {
+            reply(`error: template "${tplLabel}" carries ${lifting.join(', ')}, which lifts ${spawner.name}'s read-only cap — a spawned seat cannot hold more than its spawner`);
+            return;
+          }
+          spawnArgs = [...childArgs, ...capArgs];
+        }
+      }
+      const spawnerSession = this.sessions.get(spawner.name) || {};
+      const inherited = (key) => {
+        const lists = [tpl && tpl[key]];
+        if (!operator) lists.push(spawnerRec[key], spawnerSession[key], spawner[key]);
+        return [...new Set(lists.filter(Array.isArray).flat().filter((x) => typeof x === 'string'))];
+      };
+      const denyBuiltins = inherited('denyBuiltins');
+      const disabledTools = inherited('disabledTools');
+      const shellDenyList = operator ? [] : inherited('shellDeny');
+      const shellDeny = shellDenyList.length ? shellDenyList : null;
+      if (!operator && type === 'clay' && (denyBuiltins.length || disabledTools.length || shellDenyList.length)) {
+        reply('error: clay does not enforce tool denies — a clay seat cannot carry the denies its spawner or template holds');
+        return;
+      }
       const seatGrants = clampToSpawner(tpl && tpl.execCommands, 'execCommands');
       const mcpServers = clampToSpawner(tpl && tpl.mcpServers, 'mcpServers').map(String);
       const noWire = (tpl && tpl.noWire) === true && (operator || spawnerRec.noWire === true || spawner.noWire === true);
@@ -666,8 +700,6 @@ function createTicketMethods(deps, shared) {
       const protectCredentials = credLists.length
         ? [...new Set(credLists.flat().filter((p) => typeof p === 'string'))] : null;
       const agents = (tpl && tpl.agents) || [];
-      const denyBuiltins = (tpl && tpl.denyBuiltins) || [];
-      const disabledTools = (tpl && tpl.disabledTools) || [];
       const disabledSkills = (tpl && tpl.disabledSkills) || [];
       const injectSkills = (tpl && tpl.injectSkills) || [];
       const systemPromptFile = (tpl && tpl.systemPromptFile) || null;
@@ -745,7 +777,7 @@ function createTicketMethods(deps, shared) {
             ensureDir(cwd);
           }
           const spawned = await this.create(
-            name, type, spawnCwd, childArgs, null, workspaceId,
+            name, type, spawnCwd, spawnArgs, null, workspaceId,
             null, false, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles,
             seatGrants,
             // `[]` intents (everything gated) is a real value that must apply; an absent key passes null so create() keeps the
@@ -753,7 +785,7 @@ function createTicketMethods(deps, shared) {
             withoutPrivilegedIntentsFor(Array.isArray(tpl && tpl.intents) ? tpl.intents : null),
             sessionEnv, true,
             noWire,
-            plugins, null, null,
+            plugins, shellDeny, null,
             (tpl && tpl.io) === 'stream' ? 'stream' : 'pty',
             (tpl && typeof tpl.effort === 'string' && tpl.effort) ? tpl.effort : null,
             protectCredentials, mcpServers, (tpl && tpl.class) || null,

@@ -57,6 +57,7 @@ function t0ReadPaths(registryDir, home) {
   out.push(path.join(registryDir, 'run', '*', 'mcp.json'));
   out.push(path.join(registryDir, 'sessions', '*', 'run', 'mcp.json'));
   out.push(path.join(registryDir, 'peer-outbox', 'outbox-key'));
+  out.push(path.join(registryDir, 'run', '.agent-sock.cred'));
   out.push(...T0_FILE_GLOBS.map((rel) => path.join(registryDir, ...rel)));
   out.push(...defaultLoginFiles(home));
   return out;
@@ -141,6 +142,7 @@ function buildCredentialSandbox({ registryDir, list, seatSocket = null, home = o
   kindOf.set(t0[0], false);
   kindOf.set(t0[2], true);
   kindOf.set(path.join(registryDir, 'peer-outbox', 'outbox-key'), false);
+  kindOf.set(path.join(registryDir, 'run', '.agent-sock.cred'), false);
   kindOf.set(path.join(home, '.clodex', 'cli', 'contexts.json'), false);
   kindOf.set(APP_BUNDLE, true);
   for (const p of userDataFiles) kindOf.set(p, false);
