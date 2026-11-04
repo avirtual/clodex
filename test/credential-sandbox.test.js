@@ -29,6 +29,15 @@ test('buildCredentialSandbox: every seat\'s resolved MCP file is read-denied, bo
   assert.ok(inBox.deny.includes(`Read(/${runGlob})`), 'the file-tool deny survives inside a box');
 });
 
+test('buildCredentialSandbox: the agent-socket credential is read- and edit-denied as a file', () => {
+  const root = seededRoot();
+  const g = buildCredentialSandbox({ registryDir: root, list: [], home: '/h' });
+  const cred = path.join(root, 'run', '.agent-sock.cred');
+  assert.deepStrictEqual(g.deny.filter((r) => r.includes('.agent-sock.cred')), [`Read(/${cred})`, `Edit(/${cred})`]);
+  assert.ok(g.sandbox.credentials.files.some((f) => f.path === cred && f.mode === 'deny'));
+  assert.ok(g.sandbox.filesystem.denyRead.includes(cred));
+});
+
 test('buildCredentialSandbox: the selection\'s ${NAME}s join the env deny, deduped with the group names', () => {
   const root = seededRoot();
   const g = buildCredentialSandbox({ registryDir: root, list: ['~/.config/gh'], home: '/h', mcpSecretNames: ['JIRA_TOKEN', 'GH_TOKEN', '', 7] });
@@ -44,7 +53,7 @@ test('buildCredentialSandbox: the selection\'s ${NAME}s join the env deny, dedup
 function expectedFilesystem(R, ud) {
   const denyRead = [
     `${R}/cli/contexts.json`, `${R}/teams/*/sandbox.json`, `${R}/boxes`, '/h/.clodex/cli/contexts.json',
-    `${R}/run/*/mcp.json`, `${R}/sessions/*/run/mcp.json`, `${R}/peer-outbox/outbox-key`,
+    `${R}/run/*/mcp.json`, `${R}/sessions/*/run/mcp.json`, `${R}/peer-outbox/outbox-key`, `${R}/run/.agent-sock.cred`,
     `${R}/sessions/*/seat.json`, `${R}/sessions/*/.seat.json.tmp.*`, `${R}/sessions/*/client-token`, `${R}/accounts/*/.credentials.json`,
     '/h/.claude/.credentials.json', '/h/.claude.json',
     ...(ud ? ['/ud/remote.env', '/ud/ui-settings.json*', '/ud/env-scopes.json*', '/ud/sessions.json*', '/ud/wire-hold-entries.json', '/ud/env-override.env',
@@ -89,7 +98,7 @@ test('buildCredentialSandbox: without a userDataPath the output is unchanged', (
   const want = expectedFilesystem(R, false);
   assert.deepStrictEqual(g.sandbox.filesystem, want.filesystem);
   assert.deepStrictEqual(g.sandbox.credentials, { files: want.files });
-  assert.strictEqual(g.deny.length, 65);
+  assert.strictEqual(g.deny.length, 67);
 });
 
 test('buildCredentialSandbox: a userData dir holding the registry keeps its file denies but drops the whole-dir write deny', () => {
