@@ -1476,6 +1476,8 @@ function createSessionManager(deps) {
     }
 
     _noteQuotaResponse(store, ev) {
+      const seat = this.sessions.get(ev.agent);
+      if (seat && seat.agentType === 'clodent') return;
       try {
         const account = this._accountForWireAgent(ev.agent);
         const snap = store.note(ev.headers, { status: ev.status, account });
@@ -1716,10 +1718,10 @@ function createSessionManager(deps) {
       // Nulling proxyBase is the wire-off switch itself: setupClaudeHook falls back to proxyBase when wireBase is
       // absent, so skipping only the wire registration would still set ANTHROPIC_BASE_URL through the external proxy.
       const wireOff = noWire === true;
-      if (wireOff || type === 'clodent') proxyBase = null;
+      if (wireOff) proxyBase = null;
       const fixHost = (typeof fixFor === 'string' && fixFor) ? fixFor : null;
 
-      if (accountDir && proxyBase && !adapterFor(type).account.bootstrap && accountDir !== claudeHome()) {
+      if (type !== 'clodent' && accountDir && proxyBase && !adapterFor(type).account.bootstrap && accountDir !== claudeHome()) {
         Promise.resolve().then(() => ProxyClient.probe(proxyBase)).then((probe) => {
           if (!probe || !probe.capabilities || !probe.capabilities.accounts) return;
           return ProxyClient.registerAccount(proxyBase, accountDir);
@@ -1849,7 +1851,7 @@ function createSessionManager(deps) {
           // Register with the in-process wire before the PTY exists (identity is spawn-bound), chaining to the external proxy.
           // A wire failure falls back to the normal path: a tee must never block a session from starting.
           let wireBase = null;
-          if (WIRE_SHADOW && !wireOff && claudeCode) {
+          if (WIRE_SHADOW && !wireOff && (claudeCode || type === 'clodent')) {
             try {
               const wire = await this._ensureWire();
               wireBase = wire.registerAgent(name, {
@@ -1877,7 +1879,7 @@ function createSessionManager(deps) {
             // Bedrock/Vertex seats route straight to AWS/GCP and ignore the injected ANTHROPIC_BASE_URL, so the wire tee never sees
             // turn.completed; keep the registration but take intents from the JsonlWatcher, which reads the transcript.
             if (backend) this._shadowLog({ type: 'wire-tee-blind', agent: name, backend });
-            else intentSource = 'wire';
+            else if (claudeCode) intentSource = 'wire';
           }
           const userMcp = args.some((a) => /^--mcp-config(=|$)/.test(a));
           const userStrict = args.some((a) => /^--strict-mcp-config(=|$)/.test(a));
@@ -6299,7 +6301,7 @@ function createSessionManager(deps) {
           if (s) this._refuseInterruptedBody(s, intent);
           continue;
         }
-        if (WIRE_SHADOW && this._shadow && s && s.wireRouted && s.intentSource === 'jsonl') {
+        if (WIRE_SHADOW && this._shadow && s && s.wireRouted && s.intentSource === 'jsonl' && s.agentType !== 'clodent') {
           try {
             this._shadow.record('jsonl', shadowIntentKey(senderName, intent), {
               agent: senderName, sessionId: (s && s.sessionId) || null,
@@ -6858,6 +6860,11 @@ function createSessionManager(deps) {
       return this._handleIntent(session.name, intent, opts);
     }
 
+    _consumeMainToolUseFor(session) {
+      if (session.wireRouted !== true || session.backend || session.agentType === 'clodent') return null;
+      return (id) => !!(this._wire && this._wire.consumeMainToolUse(session.name, id));
+    }
+
     _startIntentSocket(session, channel) {
       const name = session.name;
       Object.defineProperty(session, 'intentCred', { value: channel.cred, enumerable: false, configurable: true });
@@ -6874,9 +6881,7 @@ function createSessionManager(deps) {
         classifyReply: (intent, line) => classifyReplyLine(intent.type, line),
         dispatch: (intent, opts) => this._dispatchSocketIntent(session, intent, opts),
         nameFor: (id) => nameOfSubagent(subqDirFor(name), id),
-        consumeMainToolUse: session.wireRouted === true && !session.backend
-          ? (id) => !!(this._wire && this._wire.consumeMainToolUse(name, id))
-          : null,
+        consumeMainToolUse: this._consumeMainToolUseFor(session),
         log,
         replyWaitMs: (intent) => {
           if (intent.type === 'term') return TERM_REPLY_WAIT_MS;

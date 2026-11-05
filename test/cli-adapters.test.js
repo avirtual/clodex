@@ -245,6 +245,11 @@ test('clodent offers the account picker, keyed on CLODENT_HOME; codex still does
   assert.strictEqual(capsFor('codex').accounts, false);
 });
 
+test('clodent offers the wire toggle like claude; codex and muse do not', () => {
+  assert.deepStrictEqual(['claude', 'clodent', 'codex', 'muse'].map((t) => [t, capsFor(t).noWire]),
+    [['claude', true], ['clodent', true], ['codex', false], ['muse', false]]);
+});
+
 test('accountEnvKey: the adapter key only where the picker is offered, CLAUDE_CONFIG_DIR elsewhere', () => {
   assert.strictEqual(accountEnvKey('clodent'), 'CLODENT_HOME');
   assert.strictEqual(accountEnvKey('claude'), 'CLAUDE_CONFIG_DIR');
@@ -276,7 +281,7 @@ test('clodent: the Messages-API CLI row — Claude model aliases, Claude efforts
     stream: { codec: 'stream-codec-claude', argv: ADAPTERS.claude.stream.argv, toolBoundary: 'hook', transcriptRepoint: 'claude' },
     ui: {
       injectSkills: false, skillRoster: false, plugins: false, agents: false, tools: false,
-      strip: false, autoCompact: false, noWire: false, accounts: true, streamIo: true,
+      strip: false, autoCompact: false, noWire: true, accounts: true, streamIo: true,
     },
   });
   assert.strictEqual(streamFor('clodent'), streamFor('claude'), 'clodent stream seats run the Claude stream spec');
