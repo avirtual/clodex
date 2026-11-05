@@ -281,7 +281,7 @@ test('clodent: the Messages-API CLI row — Claude model aliases, Claude efforts
     stream: { codec: 'stream-codec-claude', argv: ADAPTERS.claude.stream.argv, toolBoundary: 'hook', transcriptRepoint: 'claude' },
     ui: {
       injectSkills: false, skillRoster: false, plugins: false, agents: false, tools: false,
-      strip: false, autoCompact: false, noWire: false, accounts: true, streamIo: true,
+      strip: false, autoCompact: false, noWire: true, accounts: true, streamIo: true,
     },
   });
   assert.strictEqual(streamFor('clodent'), streamFor('claude'), 'clodent stream seats run the Claude stream spec');
