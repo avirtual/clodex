@@ -23,6 +23,8 @@ blocks a release.
 - Standing clodent seats (lead, plain) are launched with a one-hour prompt cache; ticket seats keep the five-minute default.
 - A clodent seat refuses to launch on clodent older than 0.5.2, naming the version it found.
 - clodent seats route through the wire and wirescope like Claude seats: cost, context and the wire toggle appear in the sidebar, with no beta headers added to their requests.
+- Sidebar session chips show `D` for clodent seats and `M` for Muse seats (clodent was falling back to Codex's `C`).
+- A `~/.clodex/cloud-review.paused` file (first line: the reason) skips the cloud release review, for when the cloud credit is out.
 
 ## 5.160.1 — 2026-11-04 — Security: sandboxed seats cannot spawn unsandboxed children; monitor credential off the environment
 - **Security: a credential-sandboxed seat can no longer spawn an unsandboxed Codex or Muse child.** An agent spawn whose child type cannot enforce the spawner's `protectCredentials` is refused; only Claude seats enforce the credential sandbox.
