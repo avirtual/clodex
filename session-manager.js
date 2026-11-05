@@ -1477,7 +1477,7 @@ function createSessionManager(deps) {
 
     _noteQuotaResponse(store, ev) {
       const seat = this.sessions.get(ev.agent);
-      if (seat && seat.agentType !== 'claude') return;
+      if (seat && seat.agentType === 'clodent') return;
       try {
         const account = this._accountForWireAgent(ev.agent);
         const snap = store.note(ev.headers, { status: ev.status, account });
@@ -6301,7 +6301,7 @@ function createSessionManager(deps) {
           if (s) this._refuseInterruptedBody(s, intent);
           continue;
         }
-        if (WIRE_SHADOW && this._shadow && s && s.wireRouted && s.intentSource === 'jsonl' && s.agentType === 'claude') {
+        if (WIRE_SHADOW && this._shadow && s && s.wireRouted && s.intentSource === 'jsonl' && s.agentType !== 'clodent') {
           try {
             this._shadow.record('jsonl', shadowIntentKey(senderName, intent), {
               agent: senderName, sessionId: (s && s.sessionId) || null,
