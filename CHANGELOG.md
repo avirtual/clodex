@@ -15,6 +15,8 @@ blocks a release.
 - Sidebar type chip: clodent seats show `D` in their own colour (they shared Codex's `C` before), muse seats `M`.
 
 ## Unreleased
+
+## 5.161.0 — 2026-11-05
 - **Security: `--allow-dangerously-skip-permissions` is now a privileged launch flag**, stripped from hand and reviewer templates like `--dangerously-skip-permissions`.
 - **The `clay` session type is now `clodent`** (clodent 0.3.0, no alias): it launches with the same argv as a Claude seat, enforces the credential sandbox and tool denies through its settings file, honours `--permission-mode plan` as its read-only cap and `--dangerously-skip-permissions` as bypass, and its permission ask raises the attention badge.
 - Fixed: clodex-monitor commands inherit `SSH_AUTH_SOCK` from launchd after a host reboot, so git-over-ssh works inside monitors; a failed credential write no longer leaves an orphan monitor log.
