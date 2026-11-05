@@ -277,6 +277,57 @@ test('t830: a registry that cannot be READ refuses with its own reason, not a de
     `the reason is the registry, not the label, got: ${JSON.stringify(f.injected)}`);
 });
 
+const CLODENT_REVIEWER_TEMPLATE = { ...SHIPPED_REVIEWER_TEMPLATE, name: 'rk', type: 'clodent' };
+
+test('t2163: a cold CLODENT reviewer whose role has an account boots with CLODENT_HOME on that dir', async () => {
+  const f = mkFixture({ reviewerRole: { account: 'work', template: 'rk' }, templates: [HAND_TEMPLATE, CLODENT_REVIEWER_TEMPLATE] });
+  f.seat('lead');
+  f.m._handleTeamReview(f.m.sessions.get('lead'), 'review the diff');
+  await settle();
+
+  assert.strictEqual(f.created.length, 1, `ENTER: the clodent reviewer spawned, got: ${JSON.stringify(f.injected)}`);
+  assert.strictEqual(f.created[0][1], 'clodent');
+  const env = f.created[0][SESSION_ENV_ARG];
+  assert.strictEqual(env.CLODENT_HOME, WORK_DIR);
+  assert.strictEqual(env.CLAUDE_CONFIG_DIR, undefined, 'the pin rides the adapter key, not the Claude one');
+  assert.ok(!f.injected.some((t) => /Codex roles take no account/.test(t)), 'no platform refusal');
+});
+
+test('t2163: a cold CODEX reviewer whose role has an account is still refused with the platform reason', async () => {
+  const f = mkFixture({
+    reviewerRole: { account: 'work', template: 'rc' },
+    templates: [HAND_TEMPLATE, { ...SHIPPED_REVIEWER_TEMPLATE, name: 'rc', type: 'codex' }],
+  });
+  f.seat('lead');
+  f.m._handleTeamReview(f.m.sessions.get('lead'), 'review the diff');
+  await settle();
+
+  assert.strictEqual(f.created.length, 0, 'no codex reviewer spawned');
+  assert.ok(f.injected.some((t) => /role reviewer: account "work" is a Claude config dir; Codex roles take no account yet/.test(t)),
+    `the refusal names the platform, got: ${JSON.stringify(f.injected)}`);
+});
+
+test('t2163: the reviewer brief carries the tool note only for an argv-capped seat that keeps Bash', async () => {
+  const NOTE = 'Tool note: read-only (clodent plan mode: permission rules and a Bash path guard, not an OS sandbox). Read-only shell commands (git diff, git log, grep) are allowed under this cap; the "no shell" paragraph of your role prompt does not apply.';
+  const briefFor = async (tpl, reviewerRole) => {
+    const f = mkFixture({ reviewerRole, templates: [HAND_TEMPLATE, tpl] });
+    f.seat('lead');
+    f.m._handleTeamReview(f.m.sessions.get('lead'), 'review the diff');
+    await settle();
+    assert.strictEqual(f.created.length, 1, `ENTER: the reviewer spawned, got: ${JSON.stringify(f.injected)}`);
+    return f.created[0][6];
+  };
+  const shellClodent = await briefFor({ ...CLODENT_REVIEWER_TEMPLATE, tools: ['Read', 'Grep', 'Glob', 'Bash'] }, { template: 'rk' });
+  assert.ok(shellClodent.includes('REVIEW SCOPE'), 'ENTER: this is the review brief');
+  assert.ok(shellClodent.endsWith(`\n\n${NOTE}`), `the clodent seat asking for Bash is told its shell is allowed, got: ${shellClodent}`);
+  const plainClodent = await briefFor(CLODENT_REVIEWER_TEMPLATE, { template: 'rk' });
+  assert.ok(plainClodent.includes('REVIEW SCOPE'), 'ENTER: this is the review brief');
+  assert.ok(!plainClodent.includes('Tool note:'), 'a Read/Grep/Glob clodent seat has no Bash, so no note');
+  const shellClaude = await briefFor({ ...SHIPPED_REVIEWER_TEMPLATE, tools: ['Read', 'Grep', 'Glob', 'Bash'] }, {});
+  assert.ok(shellClaude.includes('REVIEW SCOPE'), 'ENTER: this is the review brief');
+  assert.ok(!shellClaude.includes('Tool note:'), 'a claude seat is not argv-capped, so no note');
+});
+
 test('t1076: a hand role on a CODEX template naming an account fails the ticket spawn with the platform reason', async () => {
   const f = mkFixture({ handRole: { account: 'work' }, templates: [{ ...HAND_TEMPLATE, type: 'codex' }, SHIPPED_REVIEWER_TEMPLATE] });
   await dispatchTicket(f);

@@ -242,6 +242,7 @@ const REVIEWER_ENV_ALLOWLIST = new Set([
   'CLODEX_DISABLE_IPC_PROMPT',
   'CLODEX_SPAWNER_HINT',
   'CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS',
+  'CLODENT_HOME',
 ]);
 
 function filterTemplateEnv(rawEnv) {
@@ -1309,6 +1310,9 @@ function createTicketMethods(deps, shared) {
         scope,
         '',
         `Report your verdict with [agent:review-done] <verdict>, closed by a bare [agent:end] line, which returns it to ${session.name} and retires you.`,
+        ...((shape.capNote && shape.effectiveTools.includes(REVIEWER_SHELL_TOOL))
+          ? ['', `Tool note: ${shape.capNote}. Read-only shell commands (git diff, git log, grep) are allowed under this cap; the "no shell" paragraph of your role prompt does not apply.`]
+          : []),
       ].join('\n');
 
       setImmediate(async () => {
@@ -4634,13 +4638,14 @@ function createTicketMethods(deps, shared) {
         throw new Error(`reviewer template "${(tpl && tpl.name) || DEFAULT_REVIEWER_TEMPLATE}" is type "${type}", whose read-only cap "${capKind}" cannot be enforced in this build`);
       }
       const capArgs = !!capMode && capMode.argv;
+      const toolsGated = !capArgs || cap.denylist === true;
       const leadArgs = (getPersistence().get(opener.name)?.extraArgs) || [];
       const postureArgs = hasBypass(openerAdapter, leadArgs) ? [...seatAdapter.posture.bypassArgs] : [];
       const workspaceId = opener.workspaceId || DEFAULT_WORKSPACE_ID;
       const roleCwd = this._resolveRoleCwd(team, def);
       const accountLabel = (def && typeof def.account === 'string' && def.account) ? def.account : null;
       const acct = !accountLabel ? { ok: true, configDir: null }
-        : ((seatAdapter.account.bootstrap || seatAdapter.account.envKey !== 'CLAUDE_CONFIG_DIR') ? { ok: false, label: accountLabel, reason: 'platform' } : resolveAccount(accountLabel));
+        : ((seatAdapter.account.bootstrap || !seatAdapter.account.envKey || (!review && seatAdapter.account.envKey !== 'CLAUDE_CONFIG_DIR')) ? { ok: false, label: accountLabel, reason: 'platform' } : resolveAccount(accountLabel));
       const accountDir = acct.ok ? (acct.configDir || null) : null;
       const accountMissing = acct.ok ? null : { label: acct.label, reason: acct.reason };
       const withAccount = (env) => {
@@ -4746,15 +4751,15 @@ function createTicketMethods(deps, shared) {
         effort: (shape && shape.effort) || null,
         agents: [],
         denyBuiltins: [],
-        disabledTools: capArgs ? [] : CLAUDE_TOOLS.filter((t) => !effectiveTools.includes(t)),
+        disabledTools: toolsGated ? CLAUDE_TOOLS.filter((t) => !effectiveTools.includes(t)) : [],
         disabledSkills: (tpl && Array.isArray(tpl.disabledSkills)) ? tpl.disabledSkills.slice() : ['*'],
         injectSkills: [],
         // Carried, not recomputed from disabledTools: the warning prints REVIEWER_TOOL_CAP order and inverting the denylist would print CLAUDE_TOOLS order.
-        effectiveTools: capArgs ? [] : effectiveTools,
+        effectiveTools: toolsGated ? effectiveTools : [],
         // Carried so the refusal prints the exact list asked for, without borrowing beyondCap, which means what the template overreached for.
-        requestedTools: capArgs ? null : requestedTools,
+        requestedTools: toolsGated ? requestedTools : null,
         // A separate key: requestedTools null also means absent, and the caller must refuse one and not the other.
-        toolsMalformed: capArgs ? false : toolsMalformed,
+        toolsMalformed: toolsGated ? toolsMalformed : false,
         systemPromptFile,
         appendPromptFiles: [],
         execCommands: [],
@@ -4771,9 +4776,9 @@ function createTicketMethods(deps, shared) {
         accountMissing,
         envDropped: (shape && shape.envDropped) || [],
         envBadType: (shape && shape.envBadType) || [],
-        beyondCap: capArgs ? [] : beyondCap,
+        beyondCap: toolsGated ? beyondCap : [],
         capNote: (cap && cap.note) || (capMode ? capMode.note : null),
-        toolsIgnored: capArgs && rawTools !== undefined,
+        toolsIgnored: !toolsGated && rawTools !== undefined,
         promptEscaped,
         workspaceId,
         ephemeral: true,

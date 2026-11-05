@@ -790,6 +790,44 @@ test('clodent: a clodent reviewer gets --permission-mode plan last and the clode
   assert.strictEqual(shape.capNote, 'read-only (clodent plan mode: permission rules and a Bash path guard, not an OS sandbox)');
 });
 
+test('t2163: a clodent reviewer keeps plan mode AND the Read/Grep/Glob cap as a tool denylist; codex stays without one', () => {
+  const m = managerWith([
+    { name: 'rk', type: 'clodent', cwd: '/repo', tools: ['Read', 'Grep', 'Glob'] },
+    { name: 'rc', type: 'codex', cwd: '/repo', tools: ['Read', 'Grep', 'Glob'] },
+  ]);
+  const shape = m.resolveSeatShape(teamWith({ reviewer: { template: 'rk' } }), 'reviewer', 'review', LEAD);
+  assert.strictEqual(shape.type, 'clodent', 'ENTER: the clodent template resolved');
+  assert.deepStrictEqual(shape.extraArgs, ['--permission-mode', 'plan']);
+  assert.deepStrictEqual(shape.disabledTools, CLAUDE_TOOLS.filter((t) => !['Read', 'Grep', 'Glob'].includes(t)));
+  assert.ok(shape.disabledTools.includes('Bash') && shape.disabledTools.includes('Edit') && shape.disabledTools.includes('Write'),
+    'the write tools and the shell are off the roster');
+  assert.deepStrictEqual(shape.effectiveTools, ['Read', 'Grep', 'Glob']);
+  assert.deepStrictEqual(shape.requestedTools, ['Read', 'Grep', 'Glob']);
+  assert.strictEqual(shape.toolsIgnored, false, 'template tools are honoured, not ignored');
+  assert.strictEqual(shape.shellDeny, null);
+  const codex = m.resolveSeatShape(teamWith({ reviewer: { template: 'rc' } }), 'reviewer', 'review', LEAD);
+  assert.strictEqual(codex.type, 'codex', 'ENTER: the codex template resolved');
+  assert.deepStrictEqual(codex.disabledTools, []);
+  assert.deepStrictEqual(codex.effectiveTools, []);
+  assert.strictEqual(codex.toolsIgnored, true);
+});
+
+test('t2163: a clodent reviewer asking for Bash gets it under the cap, beyond-cap tools are reported', () => {
+  const m = managerWith([{ name: 'rk', type: 'clodent', cwd: '/repo', tools: ['Read', 'Bash', 'Edit'] }]);
+  const shape = m.resolveSeatShape(teamWith({ reviewer: { template: 'rk' } }), 'reviewer', 'review', LEAD);
+  assert.deepStrictEqual(shape.effectiveTools, ['Read', 'Grep', 'Glob', 'Bash']);
+  assert.ok(!shape.disabledTools.includes('Bash'), 'Bash stays on the roster');
+  assert.ok(shape.disabledTools.includes('Edit'), 'Edit is still denied');
+  assert.deepStrictEqual(shape.beyondCap, ['Edit']);
+});
+
+test('t2163: a reviewer template env keeps CLODENT_HOME and still drops CLAUDE_CONFIG_DIR', () => {
+  const m = managerWith([{ name: 'rk', type: 'clodent', cwd: '/repo', env: { CLODENT_HOME: '/home/u/.clodent-side', CLAUDE_CONFIG_DIR: '/home/u/.claude-side' } }]);
+  const shape = m.resolveSeatShape(teamWith({ reviewer: { template: 'rk' } }), 'reviewer', 'review', LEAD);
+  assert.deepStrictEqual(shape.env, { CLODENT_HOME: '/home/u/.clodent-side' });
+  assert.deepStrictEqual(shape.envDropped, ['CLAUDE_CONFIG_DIR']);
+});
+
 test('t1076: a Codex-template hand naming an account is refused with reason platform', () => {
   const m = managerWith([{ name: 'hc', type: 'codex', cwd: '/repo' }]);
   const shape = m.resolveSeatShape(teamWith({ hand: { worktree: true, template: 'hc', account: 'work' } }), 'hand', 'ticket', LEAD);
