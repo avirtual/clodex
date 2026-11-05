@@ -61676,7 +61676,7 @@ ${res.stderr}` : "");
         if (res.restarted) {
           if (source) source.onRestarted();
           else if (snap.type) {
-            rebuildLiveRow(name, { ...snap, noWire: noWire !== void 0 ? noWire : snap.noWire, account: snapAccount, effort: effort !== void 0 ? effort || null : snap.effort }, { io: res.io, backend: res.backend });
+            rebuildLiveRow(name, { ...snap, account: snapAccount, noWire: noWire !== void 0 ? noWire : snap.noWire, effort: effort !== void 0 ? effort || null : snap.effort }, { io: res.io, backend: res.backend });
             switchSession(name);
           }
         }

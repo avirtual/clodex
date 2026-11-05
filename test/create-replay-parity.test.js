@@ -148,6 +148,7 @@ const SITES = [
     17: ['nextExec', PATCH_REASON],
     18: ['restartIntents', PATCH_REASON],
     19: ['(nextEnv && Object.keys(nextEnv).length) ? nextEnv : null', PATCH_REASON],
+    21: ['nextNoWire', PATCH_REASON],
     22: ['nextPlugins', PATCH_REASON],
     25: ['nextIo', PATCH_REASON],
     26: ['nextEffort', PATCH_REASON],
