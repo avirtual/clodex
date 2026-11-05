@@ -27521,6 +27521,22 @@ ${i3.join("\n")}
         haiku: "claude-haiku-5-5[1m]",
         fable: "claude-fable-5-1[1m]"
       });
+      var CLAUDE_STREAM = Object.freeze({
+        codec: "stream-codec-claude",
+        argv: ({ resumeId, sessionId, fork }) => [
+          "-p",
+          "--input-format",
+          "stream-json",
+          "--output-format",
+          "stream-json",
+          "--verbose",
+          ...resumeId ? ["--resume", resumeId, ...fork ? ["--fork-session"] : []] : ["--session-id", sessionId],
+          "--permission-prompt-tool",
+          "stdio"
+        ],
+        toolBoundary: "hook",
+        transcriptRepoint: "claude"
+      });
       var ADAPTERS = {
         claude: {
           id: "claude",
@@ -27537,22 +27553,7 @@ ${i3.join("\n")}
           instructions: "append-system-prompt-file",
           transcript: { reader: "claude", link: "hook" },
           caps: { park: true, transcript: true, warmth: true, claudeHooks: true },
-          stream: {
-            codec: "stream-codec-claude",
-            argv: ({ resumeId, sessionId, fork }) => [
-              "-p",
-              "--input-format",
-              "stream-json",
-              "--output-format",
-              "stream-json",
-              "--verbose",
-              ...resumeId ? ["--resume", resumeId, ...fork ? ["--fork-session"] : []] : ["--session-id", sessionId],
-              "--permission-prompt-tool",
-              "stdio"
-            ],
-            toolBoundary: "hook",
-            transcriptRepoint: "claude"
-          },
+          stream: CLAUDE_STREAM,
           ui: {
             injectSkills: true,
             skillRoster: true,
@@ -27676,7 +27677,7 @@ ${i3.join("\n")}
           instructions: "append-system-prompt-file",
           transcript: { reader: "claude", link: "hook" },
           caps: { park: false, transcript: true, warmth: false, claudeHooks: true },
-          stream: null,
+          stream: CLAUDE_STREAM,
           ui: {
             injectSkills: false,
             skillRoster: false,
@@ -27687,7 +27688,7 @@ ${i3.join("\n")}
             autoCompact: false,
             noWire: false,
             accounts: false,
-            streamIo: false
+            streamIo: true
           }
         }
       };
