@@ -3590,7 +3590,7 @@ function createSessionManager(deps) {
       try {
         let current = null;
         try { current = fs.readlinkSync(link); } catch {}
-        const target = current ? path.join(path.dirname(current), `${sid}.jsonl`) : this._claudeTranscriptPath(s.cwd, s.accountDir, sid);
+        const target = current ? path.join(path.dirname(current), `${sid}.jsonl`) : this._claudeTranscriptPath(s.cwd, s.accountDir, sid, s.type);
         if (target === current) return;
         linkTranscript({ fs }, link, target);
       } catch (e) {

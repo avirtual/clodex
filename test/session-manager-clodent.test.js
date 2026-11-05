@@ -403,3 +403,10 @@ test('clodentVersionOk: 0.5.2 is the floor, compared numerically; garbage fails'
     assert.strictEqual(clodentVersionOk(out), ok, JSON.stringify(out));
   }
 });
+
+test('clodent: a stream repoint with no transcript link yet points under the clodent home, not ~/.claude', () => {
+  const f = mkClodent();
+  fsReal.mkdirSync(runDirForReal(f.root, 'rp'), { recursive: true });
+  f.m._repointStreamTranscript({ io: 'stream', cwd: f.cwd, type: 'clodent', accountDir: null, name: 'rp' }, RESUME);
+  assert.strictEqual(fsReal.readlinkSync(f.link('rp')), pathReal.join(f.home, '.clodent', 'projects', f.cwd.replace(/[/.]/g, '-'), `${RESUME}.jsonl`));
+});

@@ -259,13 +259,13 @@ test('clodent: the Messages-API CLI row — Claude model aliases, Claude efforts
     instructions: 'append-system-prompt-file',
     transcript: { reader: 'claude', link: 'hook' },
     caps: { park: false, transcript: true, warmth: false, claudeHooks: true },
-    stream: null,
+    stream: { codec: 'stream-codec-claude', argv: ADAPTERS.claude.stream.argv, toolBoundary: 'hook', transcriptRepoint: 'claude' },
     ui: {
       injectSkills: false, skillRoster: false, plugins: false, agents: false, tools: false,
-      strip: false, autoCompact: false, noWire: false, accounts: false, streamIo: false,
+      strip: false, autoCompact: false, noWire: false, accounts: false, streamIo: true,
     },
   });
-  assert.strictEqual(streamFor('clodent'), null);
+  assert.strictEqual(streamFor('clodent'), streamFor('claude'), 'clodent stream seats run the Claude stream spec');
   assert.strictEqual(resolveModelId('clodent', 'haiku'), 'claude-haiku-5-5[1m]', 'Claude\'s aliases: clodent drops the [1m] suffix itself');
   assert.strictEqual(resolveModelId('clodent', 'claude-haiku-5-5'), 'claude-haiku-5-5');
   assert.deepStrictEqual(resolveEffort('clodent', 'xhigh'), 'xhigh');
@@ -489,6 +489,21 @@ test('t1171: streamFor(claude) builds the stream-json argv; a fresh seat gets --
   assert.deepStrictEqual(block.argv({ resumeId: null, sessionId: 'S', fork: false }), [...STREAM_HEAD, '--session-id', 'S', ...PERMISSION_TAIL]);
   assert.deepStrictEqual(block.argv({ resumeId: 'R', sessionId: 'S', fork: true }), [...STREAM_HEAD, '--resume', 'R', '--fork-session', ...PERMISSION_TAIL]);
   assert.deepStrictEqual(block.argv({ resumeId: 'R', sessionId: 'S', fork: false }), [...STREAM_HEAD, '--resume', 'R', ...PERMISSION_TAIL]);
+});
+
+test('streamFor(clodent) is a hook-boundary Claude-codec seat; fresh gets --session-id, a resume --resume and --fork-session', () => {
+  const block = streamFor('clodent');
+  assert.deepStrictEqual([block.codec, block.toolBoundary, block.transcriptRepoint], ['stream-codec-claude', 'hook', 'claude']);
+  assert.deepStrictEqual(block.argv({ resumeId: null, sessionId: 'x', fork: false }), [
+    '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--session-id', 'x', '--permission-prompt-tool', 'stdio',
+  ]);
+  assert.deepStrictEqual(block.argv({ resumeId: 'R', sessionId: 'x', fork: false }), [
+    '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--resume', 'R', '--permission-prompt-tool', 'stdio',
+  ]);
+  assert.deepStrictEqual(block.argv({ resumeId: 'R', sessionId: 'x', fork: true }), [
+    '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--resume', 'R', '--fork-session', '--permission-prompt-tool', 'stdio',
+  ]);
+  assert.strictEqual(capsFor('clodent').streamIo, true);
 });
 
 test('t1172: streamFor(codex) runs app-server over stdio; resume rides the wire, not the argv', () => {
