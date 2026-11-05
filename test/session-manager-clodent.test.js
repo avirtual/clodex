@@ -466,3 +466,45 @@ test('clodent: a wire-routed clodent seat keeps the transcript watcher as its in
   }
   assert.deepStrictEqual(sources, [['claude', true, 'wire'], ['clodent', true, 'jsonl']]);
 });
+
+test('clodent: a wire-routed clodent seat gets no main-thread check from the wire while a wire-routed claude seat does', async () => {
+  const f = mkClodent({ wire: true });
+  const asked = [];
+  f.m._wire = { consumeMainToolUse: (agent, id) => { asked.push([agent, id]); return true; } };
+  const rows = [];
+  for (const type of ['claude', 'clodent']) {
+    await f.create('seat', { type });
+    const s = f.m.sessions.get('seat');
+    const check = f.m._consumeMainToolUseFor(s);
+    rows.push([type, s.wireRouted, check ? check('toolu_1') : null]);
+    f.stop('seat');
+  }
+  assert.deepStrictEqual(rows, [['claude', true, true], ['clodent', true, null]]);
+  assert.deepStrictEqual(asked, [['seat', 'toolu_1']]);
+});
+
+test('clodent: a 429 from a clodent seat is not filed against the Claude plan; a claude seat 429 is', async () => {
+  const f = mkClodent({ wire: true });
+  const noted = [];
+  const store = { note: (headers, opts) => { noted.push(opts.status); return null; } };
+  for (const type of ['clodent', 'claude']) {
+    await f.create('seat', { type });
+    f.m._noteQuotaResponse(store, { agent: 'seat', status: type === 'clodent' ? 429 : 529, headers: {} });
+    f.stop('seat');
+  }
+  assert.deepStrictEqual(noted, [529]);
+});
+
+test('clodent: a CLODENT_HOME is never registered as a wirescope account; a claude CLAUDE_CONFIG_DIR is', async () => {
+  const f = mkClodent();
+  const clodentHome = pathReal.join(f.root, 'clodent-home');
+  const claudeDir = pathReal.join(f.root, 'claude-dir');
+  fsReal.mkdirSync(clodentHome);
+  fsReal.mkdirSync(claudeDir);
+  await f.create('seat', { sessionEnv: { CLODENT_HOME: clodentHome } });
+  f.stop('seat');
+  await f.create('seat', { type: 'claude', sessionEnv: { CLAUDE_CONFIG_DIR: claudeDir } });
+  f.stop('seat');
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(f.registers, [['http://127.0.0.1:7811', claudeDir]]);
+});

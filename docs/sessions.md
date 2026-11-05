@@ -67,7 +67,7 @@ arg** (which is why restart paths must re-assert it; kill drops the entry).
   sandbox block, `--add-dir` for the messages dirs, `--plugin-dir` for the
   agent plugin and bundles, which clodent accepts and ignores, the system
   and append prompt files, `--resume`/`--fork-session`), minus the Claude
-  Code parts: no onboarding preseed, wire registration, spill, MCP config
+  Code parts: no onboarding preseed, spill, MCP config
   or MCP catalog, and the prompt is regenerated every spawn, never frozen
   (`refreshPrompt` stays Claude-only). Effort goes as `--effort` (the
   adapter's `effort.apply: 'flag'`), not into the settings file. clodent

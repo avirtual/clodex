@@ -1476,6 +1476,8 @@ function createSessionManager(deps) {
     }
 
     _noteQuotaResponse(store, ev) {
+      const seat = this.sessions.get(ev.agent);
+      if (seat && seat.agentType !== 'claude') return;
       try {
         const account = this._accountForWireAgent(ev.agent);
         const snap = store.note(ev.headers, { status: ev.status, account });
@@ -1719,7 +1721,7 @@ function createSessionManager(deps) {
       if (wireOff) proxyBase = null;
       const fixHost = (typeof fixFor === 'string' && fixFor) ? fixFor : null;
 
-      if (accountDir && proxyBase && !adapterFor(type).account.bootstrap && accountDir !== claudeHome()) {
+      if (type !== 'clodent' && accountDir && proxyBase && !adapterFor(type).account.bootstrap && accountDir !== claudeHome()) {
         Promise.resolve().then(() => ProxyClient.probe(proxyBase)).then((probe) => {
           if (!probe || !probe.capabilities || !probe.capabilities.accounts) return;
           return ProxyClient.registerAccount(proxyBase, accountDir);
@@ -6299,7 +6301,7 @@ function createSessionManager(deps) {
           if (s) this._refuseInterruptedBody(s, intent);
           continue;
         }
-        if (WIRE_SHADOW && this._shadow && s && s.wireRouted && s.intentSource === 'jsonl') {
+        if (WIRE_SHADOW && this._shadow && s && s.wireRouted && s.intentSource === 'jsonl' && s.agentType === 'claude') {
           try {
             this._shadow.record('jsonl', shadowIntentKey(senderName, intent), {
               agent: senderName, sessionId: (s && s.sessionId) || null,
@@ -6858,6 +6860,11 @@ function createSessionManager(deps) {
       return this._handleIntent(session.name, intent, opts);
     }
 
+    _consumeMainToolUseFor(session) {
+      if (session.wireRouted !== true || session.backend || session.agentType !== 'claude') return null;
+      return (id) => !!(this._wire && this._wire.consumeMainToolUse(session.name, id));
+    }
+
     _startIntentSocket(session, channel) {
       const name = session.name;
       Object.defineProperty(session, 'intentCred', { value: channel.cred, enumerable: false, configurable: true });
@@ -6874,9 +6881,7 @@ function createSessionManager(deps) {
         classifyReply: (intent, line) => classifyReplyLine(intent.type, line),
         dispatch: (intent, opts) => this._dispatchSocketIntent(session, intent, opts),
         nameFor: (id) => nameOfSubagent(subqDirFor(name), id),
-        consumeMainToolUse: session.wireRouted === true && !session.backend
-          ? (id) => !!(this._wire && this._wire.consumeMainToolUse(name, id))
-          : null,
+        consumeMainToolUse: this._consumeMainToolUseFor(session),
         log,
         replyWaitMs: (intent) => {
           if (intent.type === 'term') return TERM_REPLY_WAIT_MS;
