@@ -11,6 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
+- Release and pre-release cloud reviews pause while `~/.clodex/cloud-review.paused` exists (its first line is printed as the reason); remove the file to resume.
 
 ## Unreleased
 - **Security: `--allow-dangerously-skip-permissions` is now a privileged launch flag**, stripped from hand and reviewer templates like `--dangerously-skip-permissions`.

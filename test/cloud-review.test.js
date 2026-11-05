@@ -74,6 +74,17 @@ test('cloud-review: the stub gets --cloud and a brief naming both tags and the i
   assert.ok(logExists, 'output goes to ~/.clodex/logs/cloud-review-<newTag>.log');
 });
 
+test('cloud-review: ~/.clodex/cloud-review.paused skips the launch, naming the file and its first line', () => {
+  withStub(RECORD, ({ dir, stub }) => {
+    fs.mkdirSync(path.join(dir, '.clodex'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.clodex', 'cloud-review.paused'), 'out of cloud credits 2026-11-05\nsecond line\n');
+    const out = runScript(['v1.0.0', 'v1.1.0'], { CLODEX_CLAUDE_BIN: stub, HOME: dir });
+    assert.match(out, /cloud-review: paused \(.*cloud-review\.paused: out of cloud credits 2026-11-05\)/);
+    assert.ok(!out.includes('launched'), out);
+    assert.ok(!fs.existsSync(path.join(dir, '.clodex', 'logs')), 'a paused review writes no log');
+  });
+});
+
 test('cloud-review: a pre-release launch checks out the staging sha and verifies the Unreleased section', () => {
   const { out, argv } = launchAndRecord({
     CLODEX_REVIEW_REF: 'staging', CLODEX_REVIEW_SHA: 'abc123', CLODEX_REVIEW_PREFIX: 'Pre-release review staging-abc12345:',

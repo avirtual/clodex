@@ -45,7 +45,8 @@ and proves the packaged app can spawn a shell through node-pty (the DMG pty
 probe, `scripts/dmg-pty-probe.sh`), commits +
 tags + pushes, runs `gh release create`, prunes old release assets, and
 publishes the container image (`scripts/publish-image.sh`), then launches the cloud
-release review (`scripts/cloud-review.sh`).
+release review (`scripts/cloud-review.sh`; a `~/.clodex/cloud-review.paused` file skips
+it, for when the cloud credit is out).
 Non-interactive; stops at the first error. A run that dies after its commit is
 resumed by re-running the same command: a HEAD tagged with the current version
 is pushed, released, or has its image published and review launched instead of

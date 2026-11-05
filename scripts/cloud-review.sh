@@ -14,6 +14,11 @@ if [ "${CLODEX_RELEASE_NO_REVIEW:-}" = 1 ]; then
   printf 'cloud-review: skipped (CLODEX_RELEASE_NO_REVIEW=1)\n'
   exit 0
 fi
+PAUSE="$HOME/.clodex/cloud-review.paused"
+if [ -f "$PAUSE" ]; then
+  printf 'cloud-review: paused (%s: %s)\n' "$PAUSE" "$(head -n 1 "$PAUSE" 2>/dev/null)"
+  exit 0
+fi
 if [ -z "$NEW" ]; then
   printf 'usage: scripts/cloud-review.sh <prevTag> <newTag>\n' >&2
   exit 1
