@@ -20,6 +20,7 @@ blocks a release.
 - A clodent reviewer honours the reviewer role's account pin (`CLODENT_HOME`), accepts `CLODENT_HOME` from its template env, and keeps the Read/Grep/Glob tool cap as a tool denylist on top of plan mode.
 - The ticket loop's suite runs show in the IPC traffic: a `verify: suite running` row after a hand's done, `suite green — spawning reviewer` or `re-measuring` as it goes, and a `post-merge suite running` row before `merged`.
 - clodent seats (clodent 0.6.0+) get the seat tool catalog (`run/<seat>/mcp-tools.json`), so Clodex's plugin tools appear as native clodent tools, no MCP layer.
+- A clodent seat's native Clodex tool calls (`mcp__clodex__exec`, `term_*`) run as the main agent; they were refused as subagent calls.
 
 ## 5.161.0 — 2026-11-05
 - **Security: `--allow-dangerously-skip-permissions` is now a privileged launch flag**, stripped from hand and reviewer templates like `--dangerously-skip-permissions`.
