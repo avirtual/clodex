@@ -17,6 +17,7 @@ blocks a release.
 ## Unreleased
 
 - Wire off is editable in the session Edit dialog (local seats): a seat created wire-off can be put on wirescope at its next restart, and the reverse.
+- A clodent reviewer honours the reviewer role's account pin (`CLODENT_HOME`), accepts `CLODENT_HOME` from its template env, and keeps the Read/Grep/Glob tool cap as a tool denylist (`permissions.deny`, which clodent merges with `--disallowedTools`) on top of plan mode.
 
 ## 5.161.0 — 2026-11-05
 - **Security: `--allow-dangerously-skip-permissions` is now a privileged launch flag**, stripped from hand and reviewer templates like `--dangerously-skip-permissions`.

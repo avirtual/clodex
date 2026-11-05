@@ -272,7 +272,7 @@ test('clodent: the Messages-API CLI row — Claude model aliases, Claude efforts
     posture: { bypassArgs: ['--dangerously-skip-permissions'], bypass: [['--dangerously-skip-permissions']], aliases: ['--yolo'] },
     account: { envKey: 'CLODENT_HOME', bootstrap: null, defaultDir: '.clodent' },
     cwdDir: null,
-    readOnlyCap: { enforce: 'argv', args: ['--permission-mode', 'plan'], aliases: ['--read-only'], note: 'read-only (clodent plan mode: permission rules and a Bash path guard, not an OS sandbox)' },
+    readOnlyCap: { enforce: 'argv', args: ['--permission-mode', 'plan'], aliases: ['--read-only'], denylist: true, note: 'read-only (clodent plan mode: permission rules and a Bash path guard, not an OS sandbox)' },
     seatSettings: null,
     skills: null,
     instructions: 'append-system-prompt-file',
