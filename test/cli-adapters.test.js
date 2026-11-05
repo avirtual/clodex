@@ -245,6 +245,11 @@ test('clodent offers the account picker, keyed on CLODENT_HOME; codex still does
   assert.strictEqual(capsFor('codex').accounts, false);
 });
 
+test('clodent offers the wire toggle like claude; codex and muse do not', () => {
+  assert.deepStrictEqual(['claude', 'clodent', 'codex', 'muse'].map((t) => [t, capsFor(t).noWire]),
+    [['claude', true], ['clodent', true], ['codex', false], ['muse', false]]);
+});
+
 test('accountEnvKey: the adapter key only where the picker is offered, CLAUDE_CONFIG_DIR elsewhere', () => {
   assert.strictEqual(accountEnvKey('clodent'), 'CLODENT_HOME');
   assert.strictEqual(accountEnvKey('claude'), 'CLAUDE_CONFIG_DIR');

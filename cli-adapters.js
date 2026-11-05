@@ -172,7 +172,7 @@ const ADAPTERS = {
       tools: false,
       strip: false,
       autoCompact: false,
-      noWire: false,
+      noWire: true,
       accounts: true,
       streamIo: true,
     },

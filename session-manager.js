@@ -1716,7 +1716,7 @@ function createSessionManager(deps) {
       // Nulling proxyBase is the wire-off switch itself: setupClaudeHook falls back to proxyBase when wireBase is
       // absent, so skipping only the wire registration would still set ANTHROPIC_BASE_URL through the external proxy.
       const wireOff = noWire === true;
-      if (wireOff || type === 'clodent') proxyBase = null;
+      if (wireOff) proxyBase = null;
       const fixHost = (typeof fixFor === 'string' && fixFor) ? fixFor : null;
 
       if (accountDir && proxyBase && !adapterFor(type).account.bootstrap && accountDir !== claudeHome()) {
@@ -1849,7 +1849,7 @@ function createSessionManager(deps) {
           // Register with the in-process wire before the PTY exists (identity is spawn-bound), chaining to the external proxy.
           // A wire failure falls back to the normal path: a tee must never block a session from starting.
           let wireBase = null;
-          if (WIRE_SHADOW && !wireOff && claudeCode) {
+          if (WIRE_SHADOW && !wireOff && (claudeCode || type === 'clodent')) {
             try {
               const wire = await this._ensureWire();
               wireBase = wire.registerAgent(name, {
@@ -1877,7 +1877,7 @@ function createSessionManager(deps) {
             // Bedrock/Vertex seats route straight to AWS/GCP and ignore the injected ANTHROPIC_BASE_URL, so the wire tee never sees
             // turn.completed; keep the registration but take intents from the JsonlWatcher, which reads the transcript.
             if (backend) this._shadowLog({ type: 'wire-tee-blind', agent: name, backend });
-            else intentSource = 'wire';
+            else if (claudeCode) intentSource = 'wire';
           }
           const userMcp = args.some((a) => /^--mcp-config(=|$)/.test(a));
           const userStrict = args.some((a) => /^--strict-mcp-config(=|$)/.test(a));

@@ -13,10 +13,12 @@ const { processStubs } = require('./lib/process-stubs');
 const { pathFor: pathForReal, runDirFor: runDirForReal } = require('../clodex-paths');
 const { mergeClaudeSystemPrompt, mergeInstructionBodies } = require('../argv-merge');
 const { classifyNotification } = require('../attention');
+const { createCliHooks } = require('../cli-hooks');
 
 const RESUME = '6a1f0c2e-1111-4222-8333-944455556666';
+const WIRE_BASE = 'http://127.0.0.1:9/wire';
 
-function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entries = {}, probeClodentVersion = () => 'clodent 0.5.2\n' } = {}) {
+function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entries = {}, probeClodentVersion = () => 'clodent 0.5.2\n', wire = false } = {}) {
   const root = mkTmpRoot('clodex-clodent-');
   const home = pathReal.join(root, 'home');
   fsReal.mkdirSync(home, { recursive: true });
@@ -111,6 +113,7 @@ function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entrie
     diagSummary: () => '',
     log: { info() {}, warn() {}, error() {}, debug() {} },
     DEFAULT_WORKSPACE_ID: 'default',
+    WIRE_SHADOW: wire, WIRE_INTENTS_LIVE: wire,
   });
   const m = new SessionManager();
   m._sendToSession = () => {};
@@ -128,17 +131,23 @@ function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entrie
     clearTimeout(s._replayFallbackTimer);
     m.sessions.delete(name);
   };
-  const create = (name, { type = 'clodent', extraArgs = [], resumeId = null, fork = false, sessionEnv = { ANTHROPIC_API_KEY: 'sk-test' }, effort = null, denyBuiltins = [], disabledTools = [], shellDeny = null, protectCredentials = null } = {}) => m.create(
+  const create = (name, { type = 'clodent', extraArgs = [], resumeId = null, fork = false, sessionEnv = { ANTHROPIC_API_KEY: 'sk-test' }, effort = null, denyBuiltins = [], disabledTools = [], shellDeny = null, protectCredentials = null, noWire = false } = {}) => m.create(
     name, type, cwd, extraArgs, resumeId, 'ws', null, fork, null,
     [], denyBuiltins, disabledTools, [], [], null, [], [], null, sessionEnv,
-    false, false, null, shellDeny, null, 'pty', effort, protectCredentials,
+    false, noWire, null, shellDeny, null, 'pty', effort, protectCredentials,
   );
+  const wireRegs = [];
+  if (wire) {
+    m._ensureWire = async () => ({
+      registerAgent: (agent, opts) => { wireRegs.push({ agent, upstreams: opts.upstreams, spill: opts.spill }); return WIRE_BASE; },
+    });
+  }
   const settings = (name) => pathForReal(root, name, 'settings');
   const prompt = (name) => pathForReal(root, name, 'appendPrompt');
   const link = (name) => pathForReal(root, name, 'transcript');
   const agentDir = (name) => pathReal.join(root, 'agent-plugins', name);
   const bundleDir = (name) => pathReal.join(root, 'bundles', name, 'bundle-a');
-  return { m, root, home, cwd, spawns, hooks, watchers, probes, registers, hints, broadcasts, skillCalls, mcpWrites, cleanups, create, stop, settings, prompt, link, agentDir, bundleDir };
+  return { m, root, home, cwd, spawns, hooks, watchers, probes, registers, hints, broadcasts, skillCalls, mcpWrites, cleanups, create, stop, settings, prompt, link, agentDir, bundleDir, wireRegs };
 }
 
 function noMcpFlags(args) {
@@ -196,22 +205,22 @@ test('clodent: a fresh seat spawns `clodent` with Clodex hooks, the messages add
     assert.strictEqual(fsReal.statSync(f.prompt('seat')).mode & 0o777, 0o600);
     assert.strictEqual(f.hooks.length, 1);
     const [hookName, hookProxy, , , , , hookWire, , , hookStream, hookEffort] = f.hooks[0];
-    assert.deepStrictEqual([hookName, hookProxy, hookWire, hookStream, hookEffort], ['seat', null, null, false, null],
-      'the hook settings carry no proxy, no wire and no effort, so no ANTHROPIC_BASE_URL is written');
+    assert.deepStrictEqual([hookName, hookProxy, hookWire, hookStream, hookEffort], ['seat', 'http://127.0.0.1:7811', null, false, null],
+      'with the wire off in this fixture the hook settings route through the external proxy, with no effort');
     assert.strictEqual(opts.cwd, f.cwd);
     assert.strictEqual(opts.env.TERM, 'xterm-256color');
     assert.strictEqual(opts.env.CLODEX_HOME, f.root);
     assert.strictEqual(opts.env.FORCE_HYPERLINK, '1');
     assert.strictEqual(opts.env.ANTHROPIC_API_KEY, 'sk-test', 'a seat env key passes through');
-    assert.strictEqual(opts.env.ANTHROPIC_BASE_URL, undefined, 'nothing routes through the wire');
+    assert.strictEqual(opts.env.ANTHROPIC_BASE_URL, undefined, 'the base URL rides the settings file, not the PTY env');
     assert.strictEqual(opts.env.CLODEX_SEAT, 'seat', 'the seat gets the intent channel its hooks reach');
     assert.ok(opts.env.CLODEX_INTENT_SOCK && opts.env.CLODEX_INTENT_CRED);
     assert.strictEqual(opts.env.WB_WRAP_NAME, undefined);
-    assert.deepStrictEqual([f.probes.length, f.registers.length, f.hints.length], [0, 0, 0], 'no proxy traffic for a clodent seat');
+    assert.deepStrictEqual([f.probes.length, f.registers.length, f.hints.length], [0, 0, 0], 'no account dir and no hint env, so no probe, account register or spawner hint');
     const s = f.m.sessions.get('seat');
     assert.strictEqual(s.agentType, 'clodent');
     assert.strictEqual(s.sessionId, null, 'the SessionStart hook reports the id, as for Claude');
-    assert.strictEqual(s.proxyBase, null);
+    assert.strictEqual(s.proxyBase, 'http://127.0.0.1:7811');
     assert.strictEqual(s.wireRouted, false);
     assert.strictEqual(s.selectionDrain, true);
     assert.deepStrictEqual(f.watchers.map((w) => [w.name, w.opts.reader.id]), [['seat', 'claude']]);
@@ -232,10 +241,10 @@ test('clodent: the argv is the claude PTY argv apart from cmd and the MCP flags,
     const mcpPath = pathForReal(f.root, 'seat', 'mcpConfig');
     assert.ok(claude.args.includes('--mcp-config') && claude.args.includes('--strict-mcp-config'), `ENTER: the claude argv carries its MCP flags ${label}`);
     assert.deepStrictEqual(clodent.args, withoutMcp(claude.args, mcpPath), label);
-    const sansProxyAndClock = (h) => h.filter((_, i) => i !== 1 && i !== 7 && i !== 16);
+    const sansClock = (h) => h.filter((_, i) => i !== 7 && i !== 16);
     assert.deepStrictEqual([hooks[0][16], hooks[1][16]], [null, '1h'], `only the standing clodent seat asks for the one-hour cache ${label}`);
-    assert.deepStrictEqual([hooks[0][1], hooks[1][1]], ['http://127.0.0.1:7811', null], `only the claude seat routes through the proxy ${label}`);
-    assert.deepStrictEqual(sansProxyAndClock(hooks[1]), sansProxyAndClock(hooks[0]), `the settings file is written from the same setupClaudeHook arguments ${label}`);
+    assert.deepStrictEqual([hooks[0][1], hooks[1][1]], ['http://127.0.0.1:7811', 'http://127.0.0.1:7811'], `both seats route through the proxy ${label}`);
+    assert.deepStrictEqual(sansClock(hooks[1]), sansClock(hooks[0]), `the settings file is written from the same setupClaudeHook arguments ${label}`);
     assert.deepStrictEqual(sessionIds[1], sessionIds[0], label);
     assert.deepStrictEqual(clodent.opts.env.CLODEX_SEAT, claude.opts.env.CLODEX_SEAT);
   }
@@ -409,4 +418,51 @@ test('clodent: a stream repoint with no transcript link yet points under the clo
   fsReal.mkdirSync(runDirForReal(f.root, 'rp'), { recursive: true });
   f.m._repointStreamTranscript({ io: 'stream', cwd: f.cwd, type: 'clodent', accountDir: null, name: 'rp' }, RESUME);
   assert.strictEqual(fsReal.readlinkSync(f.link('rp')), pathReal.join(f.home, '.clodent', 'projects', f.cwd.replace(/[/.]/g, '-'), `${RESUME}.jsonl`));
+});
+
+test('clodent: with the wire on, the seat registers with the wire chained to the external proxy and its settings env points at the wire base', async () => {
+  const f = mkClodent({ wire: true });
+  try {
+    await f.create('seat');
+    assert.deepStrictEqual(f.wireRegs, [
+      { agent: 'seat', upstreams: { anthropic: 'http://127.0.0.1:7811/agent/clodex-seat-rt/anthropic' }, spill: null },
+    ]);
+    assert.strictEqual(f.hooks.length, 1, 'ENTER: one hook settings write');
+    assert.strictEqual(f.hooks[0][6], WIRE_BASE, 'setupClaudeHook gets the wire base');
+    const s = f.m.sessions.get('seat');
+    assert.deepStrictEqual([s.proxyBase, s.proxyAgent, s.wireRouted], ['http://127.0.0.1:7811', 'clodex-seat-rt', true]);
+    const hookRoot = mkTmpRoot('clodex-clodent-hooks-');
+    const realHooks = createCliHooks({
+      REGISTRY_DIR: hookRoot,
+      memoryStore: { list: () => [] },
+      getUiSettings: () => ({ get: () => ({ statusline: { claude: [], claudeCommand: '' } }) }),
+      nodeInterp: process.execPath,
+    });
+    const written = JSON.parse(fsReal.readFileSync(realHooks.setupClaudeHook(...f.hooks[0]), 'utf-8'));
+    assert.deepStrictEqual(written.env, { ANTHROPIC_BASE_URL: `${WIRE_BASE}/anthropic`, CLAUDE_CODE_GATEWAY_HINT_HEADERS: '1' });
+  } finally { f.stop('seat'); }
+});
+
+test('clodent: noWire skips the wire registration and nulls the proxy, so no base URL reaches the settings', async () => {
+  const f = mkClodent({ wire: true });
+  try {
+    await f.create('seat', { noWire: true });
+    assert.deepStrictEqual(f.wireRegs, []);
+    assert.strictEqual(f.hooks.length, 1, 'ENTER: one hook settings write');
+    assert.deepStrictEqual([f.hooks[0][1], f.hooks[0][6]], [null, null]);
+    const s = f.m.sessions.get('seat');
+    assert.deepStrictEqual([s.proxyBase, s.wireRouted, s.noWire], [null, false, true]);
+  } finally { f.stop('seat'); }
+});
+
+test('clodent: a wire-routed clodent seat keeps the transcript watcher as its intent source while a claude seat flips to the wire', async () => {
+  const f = mkClodent({ wire: true });
+  const sources = [];
+  for (const type of ['claude', 'clodent']) {
+    await f.create('seat', { type });
+    const s = f.m.sessions.get('seat');
+    sources.push([type, s.wireRouted, s.intentSource]);
+    f.stop('seat');
+  }
+  assert.deepStrictEqual(sources, [['claude', true, 'wire'], ['clodent', true, 'jsonl']]);
 });
