@@ -503,6 +503,7 @@ html, body {
 }
 .session-chip[data-type="claude"] { --chip-color: #d97757; }
 .session-chip[data-type="codex"]  { --chip-color: #56b6c2; }
+.session-chip[data-type="clodent"] { --chip-color: #a78bfa; }
 .session-chip[data-type="remote"] { --chip-color: #b18cd9; }
 /* Cloud-backend claude sessions: distinct tint so B/V reads at a glance, not
    just by letter (more specific than [data-type] above, so it wins). AWS amber,

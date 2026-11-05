@@ -646,7 +646,7 @@ window.api.onRequestRenameWorkspace(() => startWorkspaceRename());
 function typeGlyph(type, backend) {
   if (backend === 'bedrock') return 'B';
   if (backend === 'vertex') return 'V';
-  return { claude: 'A', codex: 'C', bash: '›_', remote: '@' }[type]
+  return { claude: 'A', codex: 'C', clodent: 'D', muse: 'M', bash: '›_', remote: '@' }[type]
     || (type ? type[0].toUpperCase() : '?');
 }
 

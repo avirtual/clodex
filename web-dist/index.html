@@ -694,6 +694,9 @@ body {
 .session-chip[data-type=codex] {
   --chip-color: #56b6c2;
 }
+.session-chip[data-type=clodent] {
+  --chip-color: #a78bfa;
+}
 .session-chip[data-type=remote] {
   --chip-color: #b18cd9;
 }
@@ -52869,7 +52872,7 @@ ${detail}` });
       function typeGlyph(type, backend) {
         if (backend === "bedrock") return "B";
         if (backend === "vertex") return "V";
-        return { claude: "A", codex: "C", bash: "\u203A_", remote: "@" }[type] || (type ? type[0].toUpperCase() : "?");
+        return { claude: "A", codex: "C", clodent: "D", muse: "M", bash: "\u203A_", remote: "@" }[type] || (type ? type[0].toUpperCase() : "?");
       }
       function insertLocalSessionRow(item) {
         const firstPeer = sessionList.querySelector("[data-peer-ui]");
