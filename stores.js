@@ -795,6 +795,14 @@ function initStores(userDataPath, {
         this._save(all, name);
       }
     },
+    setNoWire(name, on) {
+      const all = this._load();
+      const entry = all.find(s => s.name === name);
+      if (!entry) return;
+      if (on === true) entry.noWire = true;
+      else delete entry.noWire;
+      this._save(all, name);
+    },
     setEffort(name, effort) {
       const all = this._load();
       const entry = all.find(s => s.name === name);

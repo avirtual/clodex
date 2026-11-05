@@ -858,12 +858,12 @@ test('t655: every plugin-axis invoke crosses the web shim at full arity', async 
       {
         name: 'setSessionArgs',
         channel: 'session:setArgs',
-        // The REAL caller's arity (renderer.js's args-dialog save): 16
-        // positionals with `plugins` LAST. A 3-arg case would be satisfied by a
+        // The REAL caller's arity (renderer.js's args-dialog save): 20
+        // positionals with `noWire` LAST. A 3-arg case would be satisfied by a
         // truncating argmap of arity >= 3, so it could not fail for the reason
         // this test exists.
         args: ['seat', ['--model', 'opus'], true, null, undefined, [], [], [], undefined, undefined,
-          null, [], ['dm'], [], {}, ['workbench']],
+          null, [], ['dm'], [], {}, ['workbench'], 'pty', null, [], true],
       },
       {
         name: 'createSession',
@@ -894,6 +894,8 @@ test('t655: every plugin-axis invoke crosses the web shim at full arity', async 
     const argsSaved = ws.frames().find((f) => f.t === 'invoke' && f.channel === 'session:setArgs');
     assert.deepEqual(argsSaved.args[15], ['workbench'],
       'session:setArgs arg[15] is the plugins list, intact at the far end of the wire');
+    assert.strictEqual(argsSaved.args[19], true,
+      'session:setArgs arg[19] is noWire, intact at the far end of the wire');
   } finally { restore(); }
 });
 

@@ -56,8 +56,8 @@ test('args-edit restart threads the persisted env into create() (19th positional
 // t189 — the arm that carries the claim. The `false` above is satisfied by a
 // dropped argument (the parameter defaults false), so on its own it says nothing
 // about whether the value is READ. This one can only pass if applySessionArgs
-// actually reaches into the persisted entry: the Edit dialog does not surface
-// wire-off, so `patch` never carries it and the record is the sole source.
+// actually reaches into the persisted entry: `patch` MAY carry wire-off, and
+// when it does not, the record is the fallback.
 // Without this, an args edit silently re-wires a wire-off seat — ANTHROPIC_BASE_URL
 // comes back and the phone can no longer attach — while the save reports success.
 test('args-edit restart on a WIRE-OFF seat threads noWire true (21st positional)', async () => {
@@ -71,7 +71,39 @@ test('args-edit restart on a WIRE-OFF seat threads noWire true (21st positional)
     'ENTER: the restart must have happened — a save that did not respawn calls create() zero times and the assertion below reads undefined');
   assert.strictEqual(captured.length, 1, 'create was called once');
   assert.strictEqual(captured[0][20], true,
-    'the persisted wire-off flag survives an unrelated args edit — the patch never carries it, so this can only come from the record');
+    'the persisted wire-off flag survives an unrelated args edit — this patch omits it, so this can only come from the record');
+});
+
+test('args-edit patch noWire:true on an ordinary seat threads true and persists it', async () => {
+  const eng = mkEngine();
+  eng.stores.persistence.upsert({ name: 'nw1', type: 'claude', cwd: '/tmp' });
+  const captured = [];
+  spyCreate(eng.manager, captured);
+  const res = await eng.applySessionArgs('nw1', { extraArgs: [], restart: true, noWire: true }, 'default');
+  assert.strictEqual(res.restarted, true);
+  assert.strictEqual(captured.length, 1);
+  assert.strictEqual(captured[0][20], true, 'the patch value wins over the record');
+  assert.strictEqual(eng.stores.persistence.get('nw1').noWire, true);
+});
+
+test('args-edit patch noWire:false on a wire-off seat threads false and clears the key', async () => {
+  const eng = mkEngine();
+  eng.stores.persistence.upsert({ name: 'nw2', type: 'claude', cwd: '/tmp', noWire: true });
+  const captured = [];
+  spyCreate(eng.manager, captured);
+  const res = await eng.applySessionArgs('nw2', { extraArgs: [], restart: true, noWire: false }, 'default');
+  assert.strictEqual(res.restarted, true);
+  assert.strictEqual(captured.length, 1);
+  assert.strictEqual(captured[0][20], false);
+  assert.ok(!('noWire' in eng.stores.persistence.get('nw2')), 'the key is removed, not left false');
+});
+
+test('readSessionArgs reports the persisted wire-off flag', () => {
+  const eng = mkEngine();
+  eng.stores.persistence.upsert({ name: 'nw3', type: 'claude', cwd: '/tmp', noWire: true });
+  eng.stores.persistence.upsert({ name: 'nw4', type: 'claude', cwd: '/tmp' });
+  assert.strictEqual(eng.readSessionArgs('nw3').noWire, true);
+  assert.strictEqual(eng.readSessionArgs('nw4').noWire, false);
 });
 
 test('args-edit restart with no persisted env threads null (no-scopes byte-identity holds)', async () => {

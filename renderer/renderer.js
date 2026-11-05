@@ -9376,6 +9376,8 @@ const argsTarget = document.getElementById('args-target');
 const argsRestart = document.getElementById('args-restart');
 const argsStreamIoRow = document.getElementById('args-stream-io-row');
 const argsStreamIo = document.getElementById('args-stream-io');
+const argsNoWireRow = document.getElementById('args-no-wire-row');
+const argsNoWire = document.getElementById('args-no-wire');
 const argsProxyRow = document.getElementById('args-proxy-row');
 const argsProxyMode = document.getElementById('args-proxy-mode');
 const argsProxyUrl = document.getElementById('args-proxy-url');
@@ -9510,6 +9512,9 @@ async function openArgsDialog(name, argsSource = null) {
   const ioEditable = caps.streamIo && !argsSource;
   if (argsStreamIoRow) argsStreamIoRow.style.display = ioEditable ? '' : 'none';
   if (argsStreamIo) argsStreamIo.checked = ioEditable && res.io === 'stream';
+  const noWireEditable = caps.noWire && !argsSource;
+  if (argsNoWireRow) argsNoWireRow.style.display = noWireEditable ? '' : 'none';
+  if (argsNoWire) argsNoWire.checked = noWireEditable && res.noWire === true;
   argsAccountRow.style.display = caps.accounts ? '' : 'none';
   argsAccountKey = accountEnvKey(res.type);
   argsAgentsRow.style.display = caps.agents ? '' : 'none';
@@ -9643,6 +9648,8 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
     ? undefined : mergeLists(collectMcpChecklist(argsMcpList), unlistedOf(argsMcpPersisted, argsMcpRendered));
   const io = (!argsStreamIoRow || argsStreamIoRow.style.display === 'none' || !argsStreamIo)
     ? undefined : (argsStreamIo.checked ? 'stream' : 'pty');
+  const noWire = (!argsNoWireRow || argsNoWireRow.style.display === 'none' || !argsNoWire)
+    ? undefined : argsNoWire.checked;
   // LOCAL-only: a hidden section (peer row) leaves env untouched via `undefined`. Locally the
   // dialog OWNS env — an empty box is {}, a real clear, not a no-op.
   const env = argsEnvSection.style.display === 'none'
@@ -9676,7 +9683,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
         extraArgs: parsed, restart, proxy, systemPrompt: undefined, agents, denyBuiltins,
         disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents,
       })
-    : await setArgsOrFailRow(name, snap, restart, [parsed, restart, proxy, undefined, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env, plugins, io, effort, mcpServers]);
+    : await setArgsOrFailRow(name, snap, restart, [parsed, restart, proxy, undefined, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env, plugins, io, effort, mcpServers, noWire]);
   if (!res || !res.ok) {
     alert(`Save settings failed: ${res && res.error ? res.error : 'unknown error'}`);
     return;
@@ -9685,7 +9692,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   if (res.restarted) {
     if (source) source.onRestarted();
     else if (snap.type) {
-      rebuildLiveRow(name, { ...snap, account: snapAccount, effort: effort !== undefined ? effort || null : snap.effort }, { io: res.io, backend: res.backend });
+      rebuildLiveRow(name, { ...snap, noWire: noWire !== undefined ? noWire : snap.noWire, account: snapAccount, effort: effort !== undefined ? effort || null : snap.effort }, { io: res.io, backend: res.backend });
       switchSession(name);
     }
   }

@@ -399,6 +399,15 @@ test('setSessionArgs (t8 F1): a PLUGIN verb in a peer patch is stripped before t
   });
 });
 
+test('setSessionArgs: a peer patch cannot set wire-off', async () => {
+  const { deps, argsCalls } = makeDeps();
+  const opts = captureOptions(deps);
+  await opts.setSessionArgs('box1', { noWire: true, extraArgs: ['--x'] });
+  assert.strictEqual(argsCalls.length, 1, 'ENTER: the patch reaches applySessionArgs');
+  assert.deepStrictEqual(argsCalls[0][1].extraArgs, ['--x']);
+  assert.ok(!('noWire' in argsCalls[0][1]), 'noWire is dropped from a peer patch');
+});
+
 for (const row of [
   { result: { ok: true }, notifies: 0, suffix: '' },
   { result: { ok: true, restarted: true }, notifies: 1, suffix: ' (respawned)' },

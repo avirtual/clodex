@@ -1214,11 +1214,11 @@ function registerIpcHandlers(deps) {
     return { ok: true, effective: readEffectiveToolState(cwd || null).overrides };
   });
 
-  handle('session:setArgs', async (e, name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommands, env, plugins, io, effort, mcpServers) =>
+  handle('session:setArgs', async (e, name, extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommands, env, plugins, io, effort, mcpServers, noWire) =>
     applySessionArgs(name, {
       extraArgs, restart, proxy, systemPrompt, agents, denyBuiltins,
       disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommands, env,
-      plugins, io, effort, mcpServers,
+      plugins, io, effort, mcpServers, noWire,
     }, workspaceOfSender(e)));
 
   handle('session:restart', async (e, name, opts = {}) =>
