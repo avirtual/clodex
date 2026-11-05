@@ -382,8 +382,10 @@ test('clodent: a ticket-loop seat (ephemeral record) asks for no cache TTL, a st
 test('clodent: below 0.5.2 or off PATH the seat refuses to spawn, naming what it found; a passing probe runs once per manager', async () => {
   for (const [out, found] of [['clodent 0.5.1\n', 'found 0.5.1'], [null, 'not on PATH']]) {
     const f = mkClodent({ probeClodentVersion: () => { if (out == null) throw Object.assign(new Error('spawn clodent ENOENT'), { code: 'ENOENT' }); return out; } });
-    await assert.rejects(f.create('seat'), { message: `clodent 0.5.2 or newer is required (${found}): clone github.com/avirtual/clodent and \`npm link\`` });
-    assert.deepStrictEqual([f.spawns.length, f.hooks.length], [0, 0]);
+    try {
+      await assert.rejects(f.create('seat'), { message: `clodent 0.5.2 or newer is required (${found}): clone github.com/avirtual/clodent and \`npm link\`` });
+      assert.deepStrictEqual([f.spawns.length, f.hooks.length], [0, 0]);
+    } finally { f.stop('seat'); }
   }
   let calls = 0;
   const f = mkClodent({ probeClodentVersion: () => { calls++; return 'clodent 0.10.0\n'; } });
