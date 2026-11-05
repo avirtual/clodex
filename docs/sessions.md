@@ -78,8 +78,9 @@ arg** (which is why restart paths must re-assert it; kill drops the entry).
   recognised as the same cap); bypass is `--dangerously-skip-permissions`
   (`--yolo` recognised). The SessionStart hook links
   `run/<name>/transcript.jsonl` to `$CLODENT_HOME/projects/<slug>/<sid>.jsonl`
-  (`~/.clodent` when unset; `_claudeTranscriptPath`). `proxyBase` is nulled
-  for clodent before the account register and the spawner hint.
+  (`~/.clodent` when unset; `_claudeTranscriptPath`). A clodent seat registers with the wire
+  and the external proxy like claude, but its intents stay on the
+  JsonlWatcher (`intentSource` flips to `'wire'` only for claude).
   `caps.claudeHooks` / `runsClaudeHooks(type)` gate the hook settings and
   cleanup, the agent-plugin cleanup, the intent channel, the
   ctx/attn/delivered tail, the 2004h replay and inject gate, the memory

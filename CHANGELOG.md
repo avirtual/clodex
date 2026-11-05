@@ -21,6 +21,7 @@ blocks a release.
 - clodent seats can run as stream seats (`io: stream`), with the same permission dialog and interrupt as Claude stream seats; a permission the CLI abandons (`control_cancel_request`) closes its dialog.
 - Standing clodent seats (lead, plain) are launched with a one-hour prompt cache; ticket seats keep the five-minute default.
 - A clodent seat refuses to launch on clodent older than 0.5.2, naming the version it found.
+- clodent seats route through the wire and wirescope like Claude seats: cost, context and the wire toggle appear in the sidebar, with no beta headers added to their requests.
 
 ## 5.160.1 — 2026-11-04 — Security: sandboxed seats cannot spawn unsandboxed children; monitor credential off the environment
 - **Security: a credential-sandboxed seat can no longer spawn an unsandboxed Codex or Muse child.** An agent spawn whose child type cannot enforce the spawner's `protectCredentials` is refused; only Claude seats enforce the credential sandbox.
