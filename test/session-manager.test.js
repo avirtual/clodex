@@ -24118,6 +24118,33 @@ test('t1180: seatPermission sends exactly what encodePermission returns, drops t
   assert.deepStrictEqual(c.h.m.seatPermission('ghost', 'r3', 'n'), { ok: false, error: 'no such session' });
 });
 
+test('a permission-cancel record drops that queued prompt, bumps the rev and clears the attention after the last one', async (t) => {
+  const c = mkPermStreamSeat();
+  t.after(() => c.h.stopAll());
+  await c.create('pc1');
+  const s = c.h.m.sessions.get('pc1');
+  t.after(() => { c.clearTimers(s); s._dead = true; });
+  const changed = [];
+  c.h.m._sendToSession = (n, ch) => changed.push(ch);
+  c.h.line('pc1', { rec: c.rec('r1') });
+  c.h.line('pc1', { rec: c.rec('r2') });
+  assert.deepStrictEqual(c.h.m.seatPermissions('pc1').items.map((i) => i.id), ['r1', 'r2']);
+  const before = c.sent().length;
+  changed.length = 0;
+  c.h.line('pc1', { rec: { kind: 'permission-cancel', id: 'r1' } });
+  assert.strictEqual(c.h.m.seatPermissions('pc1').rev, 3);
+  assert.deepStrictEqual(c.h.m.seatPermissions('pc1').items.map((i) => i.id), ['r2']);
+  assert.strictEqual(s.needsAttention && s.needsAttention.kind, 'permission', 'one prompt still pending');
+  assert.deepStrictEqual(changed, ['transcript-changed']);
+  c.h.line('pc1', { rec: { kind: 'permission-cancel', id: 'nope' } });
+  assert.strictEqual(c.h.m.seatPermissions('pc1').rev, 3);
+  c.h.line('pc1', { rec: { kind: 'permission-cancel', id: 'r2' } });
+  assert.deepStrictEqual(c.h.m.seatPermissions('pc1'), { rev: 4, items: [] });
+  assert.strictEqual(s.needsAttention, null);
+  assert.deepStrictEqual(c.encoded, []);
+  assert.strictEqual(c.sent().length, before);
+});
+
 test('t1180: a dm to a stream seat with a pending prompt is held as dialog and goes through after the answer', async (t) => {
   const c = mkPermStreamSeat();
   t.after(() => c.h.stopAll());

@@ -82,7 +82,7 @@ function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp, 
     return !!digest;
   }
 
-  function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], wireBase = null, createdAt = null, extraDenyRules = [], stream = false, effort = null, protectCredentials = null, mcpSecretNames = [], mcpDenyRules = [], cwd = null, clodentHome = null) {
+  function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], wireBase = null, createdAt = null, extraDenyRules = [], stream = false, effort = null, protectCredentials = null, mcpSecretNames = [], mcpDenyRules = [], cwd = null, clodentHome = null, cacheTtl = null) {
     ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'run', fs });
     ensureDir(runDirFor(REGISTRY_DIR, name));
     const linkPath = pathFor(REGISTRY_DIR, name, 'transcript');
@@ -844,6 +844,7 @@ exit 0
       voice: { enabled: false },
       voiceEnabled: false,
       ...(typeof effort === 'string' && effort ? { effortLevel: effort } : {}),
+      ...(typeof cacheTtl === 'string' && cacheTtl ? { cacheTtl } : {}),
       hooks: {
         SessionStart: [{
           matcher: '',

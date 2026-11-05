@@ -94,3 +94,12 @@ test('t1222: the generated Claude settings carry effortLevel when set and lack t
   const without = JSON.parse(fs.readFileSync(pathFor(root, 'e3', 'settings'), 'utf-8'));
   assert.ok(!('effortLevel' in without));
 });
+
+test('the generated settings carry cacheTtl when asked and lack the key when not', (t) => {
+  const { h, root } = hooks();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  h.setupClaudeHook('c1', null, null, [], [], [], null, null, [], false, null, null, [], [], null, null, '1h');
+  assert.strictEqual(JSON.parse(fs.readFileSync(pathFor(root, 'c1', 'settings'), 'utf-8')).cacheTtl, '1h');
+  h.setupClaudeHook('c2', null, null, [], [], [], null, null, [], true, null, null, [], [], null, null, null);
+  assert.ok(!('cacheTtl' in JSON.parse(fs.readFileSync(pathFor(root, 'c2', 'settings'), 'utf-8'))));
+});
