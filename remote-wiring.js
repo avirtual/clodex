@@ -1017,6 +1017,7 @@ function createRemoteWiring(deps) {
 // dropping both leaves each undefined = untouched by the resolver. Same for
 // privileged intents on a requested allowlist (a plain intents edit still applies).
           const safePatch = withoutLocalOnly(patch || {});
+          delete safePatch.noWire;
           if (Array.isArray(safePatch.intents)) safePatch.intents = withoutPrivilegedIntentsFor(safePatch.intents);
           const out = await applySessionArgs(name, safePatch, wsId);
           if (out && out.ok && (out.restarted || out.modelSwitched) && getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }

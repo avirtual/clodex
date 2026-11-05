@@ -11070,6 +11070,12 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           <span class="hint-text" style="margin: 0;">Clodex runs the CLI over its stream protocol instead of in a terminal. The seat is its conversation view and a message box: dms, permission prompts, slash commands, images and voice all go through them, and there is no terminal to fall back to. It survives a Clodex relaunch. Takes effect at the next restart.</span>
         </label>
       </label>
+      <label id="args-no-wire-row">Wire off
+        <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
+          <input type="checkbox" id="args-no-wire" style="margin: 0;">
+          <span class="hint-text" style="margin: 0;">Respawn this seat with no <code>ANTHROPIC_BASE_URL</code> — no Clodex tee, no wirescope, no cost/context bar. Needed for Anthropic's remote access. Applies on the next spawn.</span>
+        </label>
+      </label>
       <details id="args-append-section" class="dialog-section">
         <summary>Append prompts</summary>
         <label id="args-append-row">
@@ -53259,7 +53265,7 @@ ${detail}` });
           return res;
         }
         if (snap.type) {
-          rebuildLiveRow(name, snap, { io: res.io, backend: res.backend });
+          rebuildLiveRow(name, snap, { io: res.io, backend: res.backend, noWire: res.noWire });
           switchSession(name);
         }
         return res;
@@ -61357,6 +61363,8 @@ ${res.stderr}` : "");
       var argsRestart = document.getElementById("args-restart");
       var argsStreamIoRow = document.getElementById("args-stream-io-row");
       var argsStreamIo = document.getElementById("args-stream-io");
+      var argsNoWireRow = document.getElementById("args-no-wire-row");
+      var argsNoWire = document.getElementById("args-no-wire");
       var argsProxyRow = document.getElementById("args-proxy-row");
       var argsProxyMode = document.getElementById("args-proxy-mode");
       var argsProxyUrl = document.getElementById("args-proxy-url");
@@ -61495,6 +61503,9 @@ ${res.stderr}` : "");
         const ioEditable = caps.streamIo && !argsSource;
         if (argsStreamIoRow) argsStreamIoRow.style.display = ioEditable ? "" : "none";
         if (argsStreamIo) argsStreamIo.checked = ioEditable && res.io === "stream";
+        const noWireEditable = caps.noWire && !argsSource;
+        if (argsNoWireRow) argsNoWireRow.style.display = noWireEditable ? "" : "none";
+        if (argsNoWire) argsNoWire.checked = noWireEditable && res.noWire === true;
         argsAccountRow.style.display = caps.accounts ? "" : "none";
         argsAccountKey = accountEnvKey(res.type);
         argsAgentsRow.style.display = caps.agents ? "" : "none";
@@ -61624,6 +61635,7 @@ ${res.stderr}` : "");
         const execCommandsGrant = argsExecSection.style.display === "none" ? void 0 : mergeLists(collectExecChecklist(argsExecList), unlistedOf(argsExecPersisted, argsExecRendered));
         const mcpServers = argsMcpSection.style.display === "none" ? void 0 : mergeLists(collectMcpChecklist(argsMcpList), unlistedOf(argsMcpPersisted, argsMcpRendered));
         const io = !argsStreamIoRow || argsStreamIoRow.style.display === "none" || !argsStreamIo ? void 0 : argsStreamIo.checked ? "stream" : "pty";
+        const noWire = !argsNoWireRow || argsNoWireRow.style.display === "none" || !argsNoWire ? void 0 : argsNoWire.checked;
         const env = argsEnvSection.style.display === "none" ? void 0 : parseEnvLines(argsEnv.value || "").env;
         const skillsShown = argsSkillsSection.style.display !== "none";
         const disabledSkills = !skillsShown ? void 0 : argsSkillsRow.style.display === "none" ? argsSkillsDisabledPersisted : collectSkillChecklist(argsSkillsList);
@@ -61655,7 +61667,7 @@ ${res.stderr}` : "");
           systemPromptFile,
           appendPromptFiles,
           intents
-        }) : await setArgsOrFailRow(name, snap, restart, [parsed, restart, proxy, void 0, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env, plugins, io, effort, mcpServers]);
+        }) : await setArgsOrFailRow(name, snap, restart, [parsed, restart, proxy, void 0, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles, intents, execCommandsGrant, env, plugins, io, effort, mcpServers, noWire]);
         if (!res || !res.ok) {
           alert(`Save settings failed: ${res && res.error ? res.error : "unknown error"}`);
           return;
@@ -61664,7 +61676,7 @@ ${res.stderr}` : "");
         if (res.restarted) {
           if (source) source.onRestarted();
           else if (snap.type) {
-            rebuildLiveRow(name, { ...snap, account: snapAccount, effort: effort !== void 0 ? effort || null : snap.effort }, { io: res.io, backend: res.backend });
+            rebuildLiveRow(name, { ...snap, account: snapAccount, noWire: noWire !== void 0 ? noWire : snap.noWire, effort: effort !== void 0 ? effort || null : snap.effort }, { io: res.io, backend: res.backend, noWire: res.noWire });
             switchSession(name);
           }
         }

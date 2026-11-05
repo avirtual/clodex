@@ -1583,7 +1583,7 @@ async function restartSession(name, opts = {}, wsId = DEFAULT_WORKSPACE_ID) {
     const restartLvl = stripLevelOf(entry);
     if (restartLvl >= 1) persistence.setStripLevel(name, restartLvl);
     if (entry.label) persistence.setLabel(name, entry.label);
-    return { ok: true, restarted: true, backend: created.backend || null, io: created.io || 'pty' };
+    return { ok: true, restarted: true, backend: created.backend || null, io: created.io || 'pty', noWire: created.noWire === true };
   } catch (err) {
     // Strip a checkout another seat took mid-restart through the manager; a second
     // tree-occupancy reader here would be a second source of truth.
@@ -1657,6 +1657,7 @@ function readSessionArgs(name) {
     stripLevel: stripLevelOf(entry),
     io: entry.io === 'stream' ? 'stream' : 'pty',
     effort: (typeof entry.effort === 'string' && entry.effort) ? entry.effort : null,
+    noWire: entry.noWire === true,
   } : { ok: false };
 }
 
@@ -1683,7 +1684,9 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
   const priorEffort = (typeof beforeKill.effort === 'string' && beforeKill.effort) ? beforeKill.effort : null;
   const nextEffort = patch.effort === undefined ? priorEffort
     : ((typeof patch.effort === 'string' && patch.effort.trim()) ? patch.effort.trim() : null);
-  const live = restart && beforeKill.type === 'claude' && nextIo === 'stream' && priorIo === 'stream' && nextEffort === priorEffort ? manager.sessions.get(name) : null;
+  const priorNoWire = beforeKill.noWire === true;
+  const nextNoWire = typeof patch.noWire === 'boolean' ? patch.noWire : priorNoWire;
+  const live = restart && beforeKill.type === 'claude' && nextIo === 'stream' && priorIo === 'stream' && nextEffort === priorEffort && nextNoWire === priorNoWire ? manager.sessions.get(name) : null;
   const spawned = live && !live._dead && live.io === 'stream' ? live._spawnRecord : null;
   const spawnedEffort = spawned && typeof spawned.effort === 'string' && spawned.effort ? spawned.effort : null;
   const vsSpawn = spawned && (spawned.io || 'pty') === 'stream' && spawnedEffort === nextEffort ? modelOnlyChange(spawned, patch, beforeKill) : null;
@@ -1715,6 +1718,7 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
   persistence.setEnv(name, nextEnv);
   if (nextIo !== priorIo) persistence.setIo(name, nextIo);
   if (nextEffort !== priorEffort) persistence.setEffort(name, nextEffort);
+  if (nextNoWire !== priorNoWire) persistence.setNoWire(name, nextNoWire);
   try { manager.refreshSeatCatalog(name); } catch {}
   if (!restart) return { ok: true, restarted: false };
   const restartIntents = Array.isArray(nextIntents) ? prunedArgs.intents : nextIntents;
@@ -1729,15 +1733,15 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
       if (!await waitForSessionExit(name)) throw new Error('old process did not exit in time');
     }
     manager._preserveAcrossRestart(name, preservable, ['rosterSentAt', 'ephemeral', 'reviewFor', 'reviewTicket', 'createdAt']);
-    const created = await manager.create(name, beforeKill.type, manager.resumeCwdOf(beforeKill), extraArgs, beforeKill.sessionId || null, wsId, nextInline, false, proxy ?? null, nextAgents, nextDeny, nextTools, nextSkills, nextInject, nextSysFile, nextAppend, nextExec, restartIntents, (nextEnv && Object.keys(nextEnv).length) ? nextEnv : null, false, beforeKill.noWire === true, nextPlugins, Array.isArray(beforeKill.shellDeny) ? beforeKill.shellDeny : null, typeof beforeKill.fixFor === 'string' ? beforeKill.fixFor : null, nextIo, nextEffort, Array.isArray(beforeKill.protectCredentials) ? beforeKill.protectCredentials : null, nextMcp);
+    const created = await manager.create(name, beforeKill.type, manager.resumeCwdOf(beforeKill), extraArgs, beforeKill.sessionId || null, wsId, nextInline, false, proxy ?? null, nextAgents, nextDeny, nextTools, nextSkills, nextInject, nextSysFile, nextAppend, nextExec, restartIntents, (nextEnv && Object.keys(nextEnv).length) ? nextEnv : null, false, nextNoWire, nextPlugins, Array.isArray(beforeKill.shellDeny) ? beforeKill.shellDeny : null, typeof beforeKill.fixFor === 'string' ? beforeKill.fixFor : null, nextIo, nextEffort, Array.isArray(beforeKill.protectCredentials) ? beforeKill.protectCredentials : null, nextMcp);
     const argsLvl = stripLevelOf(beforeKill);
     if (argsLvl >= 1) persistence.setStripLevel(name, argsLvl);
     if (beforeKill.label) persistence.setLabel(name, beforeKill.label);
-    return { ok: true, restarted: true, backend: created.backend || null, io: created.io || 'pty' };
+    return { ok: true, restarted: true, backend: created.backend || null, io: created.io || 'pty', noWire: created.noWire === true };
   } catch (err) {
     // Strip the assembled object, not `beforeKill`: the spread is what reaches the
     // store, so stripping the source would be undone by it.
-    persistence.upsert(manager._stripClaimedTree({ ...beforeKill, extraArgs, proxy: proxy ?? null, systemPrompt: nextInline, systemPromptFile: nextSysFile, appendPromptFiles: nextAppend, agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools, disabledSkills: nextSkills, injectSkills: nextInject, intents: Array.isArray(nextIntents) ? prunedArgs.intents : undefined, pluginGrants: prunedGrants, plugins: nextPlugins, execCommands: nextExec.length ? nextExec : undefined, mcpServers: nextMcp.length ? nextMcp : undefined, env: (nextEnv && Object.keys(nextEnv).length) ? nextEnv : undefined, io: nextIo, effort: nextEffort }));
+    persistence.upsert(manager._stripClaimedTree({ ...beforeKill, extraArgs, proxy: proxy ?? null, systemPrompt: nextInline, systemPromptFile: nextSysFile, appendPromptFiles: nextAppend, agents: nextAgents, denyBuiltins: nextDeny, disabledTools: nextTools, disabledSkills: nextSkills, injectSkills: nextInject, intents: Array.isArray(nextIntents) ? prunedArgs.intents : undefined, pluginGrants: prunedGrants, plugins: nextPlugins, execCommands: nextExec.length ? nextExec : undefined, mcpServers: nextMcp.length ? nextMcp : undefined, env: (nextEnv && Object.keys(nextEnv).length) ? nextEnv : undefined, io: nextIo, effort: nextEffort, noWire: nextNoWire || undefined }));
     const live = manager.sessions.get(name);
     if (live) live._respawning = false;
     return { ok: false, error: `${err.message} — session kept; it will respawn on next workspace open.` };

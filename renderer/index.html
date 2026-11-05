@@ -971,6 +971,12 @@
           <span class="hint-text" style="margin: 0;">Clodex runs the CLI over its stream protocol instead of in a terminal. The seat is its conversation view and a message box: dms, permission prompts, slash commands, images and voice all go through them, and there is no terminal to fall back to. It survives a Clodex relaunch. Takes effect at the next restart.</span>
         </label>
       </label>
+      <label id="args-no-wire-row">Wire off
+        <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; font-weight: normal;">
+          <input type="checkbox" id="args-no-wire" style="margin: 0;">
+          <span class="hint-text" style="margin: 0;">Respawn this seat with no <code>ANTHROPIC_BASE_URL</code> — no Clodex tee, no wirescope, no cost/context bar. Needed for Anthropic's remote access. Applies on the next spawn.</span>
+        </label>
+      </label>
       <details id="args-append-section" class="dialog-section">
         <summary>Append prompts</summary>
         <label id="args-append-row">

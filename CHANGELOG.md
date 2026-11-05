@@ -16,6 +16,8 @@ blocks a release.
 
 ## Unreleased
 
+- Wire off is editable in the session Edit dialog (local seats): a seat created wire-off can be put on wirescope at its next restart, and the reverse.
+
 ## 5.161.0 — 2026-11-05
 - **Security: `--allow-dangerously-skip-permissions` is now a privileged launch flag**, stripped from hand and reviewer templates like `--dangerously-skip-permissions`.
 - **The `clay` session type is now `clodent`** (clodent 0.3.0, no alias): it launches with the same argv as a Claude seat, enforces the credential sandbox and tool denies through its settings file, honours `--permission-mode plan` as its read-only cap and `--dangerously-skip-permissions` as bypass, and its permission ask raises the attention badge.
