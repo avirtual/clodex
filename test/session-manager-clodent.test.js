@@ -467,7 +467,7 @@ test('clodent: a wire-routed clodent seat keeps the transcript watcher as its in
   assert.deepStrictEqual(sources, [['claude', true, 'wire'], ['clodent', true, 'jsonl']]);
 });
 
-test('clodent: a wire-routed clodent seat gets no main-thread check from the wire while a wire-routed claude seat does', async () => {
+test('clodent: a wire-routed clodent seat gets no main-thread check from the wire while wire-routed claude and codex seats do', async () => {
   const f = mkClodent({ wire: true });
   const asked = [];
   f.m._wire = { consumeMainToolUse: (agent, id) => { asked.push([agent, id]); return true; } };
@@ -479,8 +479,10 @@ test('clodent: a wire-routed clodent seat gets no main-thread check from the wir
     rows.push([type, s.wireRouted, check ? check('toolu_1') : null]);
     f.stop('seat');
   }
-  assert.deepStrictEqual(rows, [['claude', true, true], ['clodent', true, null]]);
-  assert.deepStrictEqual(asked, [['seat', 'toolu_1']]);
+  const codexCheck = f.m._consumeMainToolUseFor({ name: 'cx', agentType: 'codex', wireRouted: true, backend: null });
+  rows.push(['codex', true, codexCheck ? codexCheck('toolu_2') : null]);
+  assert.deepStrictEqual(rows, [['claude', true, true], ['clodent', true, null], ['codex', true, true]]);
+  assert.deepStrictEqual(asked, [['seat', 'toolu_1'], ['cx', 'toolu_2']]);
 });
 
 test('clodent: a 429 from a clodent seat is not filed against the Claude plan; a claude seat 429 is', async () => {
