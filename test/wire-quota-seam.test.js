@@ -194,7 +194,7 @@ function recordingStore(m) {
 test('seam: a response from a seat on a registered account is filed under that label', async () => {
   await onWire(async ({ wire, m }) => {
     const calls = recordingStore(m);
-    m.sessions.set('worker', { name: 'worker' });
+    m.sessions.set('worker', { name: 'worker', agentType: 'claude' });
     wire.emit('response', {
       agent: 'worker', provider: 'anthropic', reqId: 'r1', status: 200, headers: CLAUDE_HEADERS,
     });
