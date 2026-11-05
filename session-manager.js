@@ -6861,7 +6861,7 @@ function createSessionManager(deps) {
     }
 
     _consumeMainToolUseFor(session) {
-      if (session.wireRouted !== true || session.backend || session.agentType !== 'claude') return null;
+      if (session.wireRouted !== true || session.backend || session.agentType === 'clodent') return null;
       return (id) => !!(this._wire && this._wire.consumeMainToolUse(session.name, id));
     }
 
