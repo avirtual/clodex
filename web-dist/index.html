@@ -27686,7 +27686,7 @@ ${i3.join("\n")}
             strip: false,
             autoCompact: false,
             noWire: false,
-            accounts: false,
+            accounts: true,
             streamIo: false
           }
         }
@@ -29888,8 +29888,8 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
       function rowsOf(accounts) {
         return Array.isArray(accounts) ? accounts.filter((a) => a && typeof a === "object") : [];
       }
-      function accountFromEnv(envText, accounts) {
-        const dir = normDir(parseEnvLines(envText).env[ENV_KEY]);
+      function accountFromEnv(envText, accounts, envKey = ENV_KEY) {
+        const dir = normDir(parseEnvLines(envText).env[envKey]);
         if (!dir) return DEFAULT_LABEL;
         const hit = rowsOf(accounts).find((a) => normDir(a.configDir) === dir);
         return hit ? String(hit.label) : CUSTOM_LABEL;
@@ -29900,7 +29900,7 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         const eq = line.indexOf("=");
         return eq >= 0 && line.slice(0, eq).trim() === key;
       }
-      function envWithAccount(envText, label, accounts) {
+      function envWithAccount(envText, label, accounts, envKey = ENV_KEY) {
         const text = String(envText == null ? "" : envText);
         const want = String(label == null ? "" : label);
         if (want === CUSTOM_LABEL) return text;
@@ -29915,7 +29915,7 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         let at = -1;
         const kept = [];
         for (const line of lines) {
-          if (isAssignTo(line, ENV_KEY)) {
+          if (isAssignTo(line, envKey)) {
             if (at < 0) at = kept.length;
             continue;
           }
@@ -29926,7 +29926,7 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
           if (kept.length === 1 && kept[0] === "") return "";
           return kept.join("\n");
         }
-        const assign = `${ENV_KEY}=${dir}`;
+        const assign = `${envKey}=${dir}`;
         if (at >= 0) {
           kept.splice(at, 0, assign);
           return kept.join("\n");
@@ -52241,7 +52241,7 @@ ${detail}` });
       var { parseEnvLines, formatEnvLines } = require_env_edit();
       var { envRowView, buildEnvRow } = require_env_row();
       var { envLockView, applyEnvLock, patchUnlessEnvLocked } = require_env_lock();
-      var { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT } = require_account_select();
+      var { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require_account_select();
       var { accountRowView, buildAccountRow, modelOptions } = require_account_row();
       var { isToolInstallSession } = require_tool_doctor();
       var { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require_placement();
@@ -52559,11 +52559,14 @@ ${detail}` });
         }
         return lastAccounts;
       }
-      function paintAccountSelect(sel, envText, accounts) {
+      function accountKeyOf(type) {
+        return adapterFor(type)?.account.envKey || ACCOUNT_ENV_KEY;
+      }
+      function paintAccountSelect(sel, envText, accounts, envKey = ACCOUNT_ENV_KEY) {
         if (!sel) return;
         const rows = accounts || [];
-        const label = accountFromEnv(envText, rows);
-        const current = label === "custom" ? { label, configDir: parseEnvLines(envText).env.CLAUDE_CONFIG_DIR || "" } : { label, configDir: "" };
+        const label = accountFromEnv(envText, rows, envKey);
+        const current = label === "custom" ? { label, configDir: parseEnvLines(envText).env[envKey] || "" } : { label, configDir: "" };
         sel.textContent = "";
         for (const opt of accountOptions(rows, current)) {
           const el = document.createElement("option");
@@ -52573,16 +52576,16 @@ ${detail}` });
           sel.appendChild(el);
         }
       }
-      function bindAccountSelect(sel, textarea, getAccounts) {
+      function bindAccountSelect(sel, textarea, getAccounts, getKey) {
         if (!sel || !textarea) return;
         sel.addEventListener("change", () => {
-          textarea.value = envWithAccount(textarea.value, sel.value, getAccounts() || []);
+          textarea.value = envWithAccount(textarea.value, sel.value, getAccounts() || [], getKey());
           textarea.dispatchEvent(new Event("input"));
         });
-        textarea.addEventListener("input", () => paintAccountSelect(sel, textarea.value, getAccounts() || []));
+        textarea.addEventListener("input", () => paintAccountSelect(sel, textarea.value, getAccounts() || [], getKey()));
       }
       if (inputEnv) inputEnv.addEventListener("input", refreshEnvHint);
-      bindAccountSelect(inputAccount, inputEnv, () => dialogAccounts);
+      bindAccountSelect(inputAccount, inputEnv, () => dialogAccounts, () => accountKeyOf(inputType.value));
       var inputModel = document.getElementById("input-model");
       var inputEffort = document.getElementById("input-effort");
       var effortRow = document.getElementById("effort-row");
@@ -55152,6 +55155,7 @@ ${detail}` });
         if (noWireRow) noWireRow.style.display = caps.noWire ? "" : "none";
         if (streamIoRow) streamIoRow.style.display = caps.streamIo ? "" : "none";
         if (accountRow) accountRow.style.display = caps.accounts ? "" : "none";
+        if (inputAccount) paintAccountSelect(inputAccount, inputEnv ? inputEnv.value : "", dialogAccounts, accountKeyOf(type));
         if (toolsAllowRow) toolsAllowRow.style.display = authoring ? "" : "none";
         if (authoring && caps.tools && !skipAsyncRefresh) renderToolAllowChecklist(inputToolsAllowList, /* @__PURE__ */ new Set());
         if (!skipAsyncRefresh) {
@@ -55948,7 +55952,7 @@ ${detail}` });
         if (inputEnv) inputEnv.value = "";
         refreshEnvHint();
         dialogAccounts = await fetchAccounts();
-        paintAccountSelect(inputAccount, inputEnv ? inputEnv.value : "", dialogAccounts);
+        paintAccountSelect(inputAccount, inputEnv ? inputEnv.value : "", dialogAccounts, accountKeyOf(inputType.value));
         applyTypeDefaults();
         paintNameField(nameFieldEls(), { ok: true, kind: "free", message: "" });
         const [, , settings, agentLib, boxes, reserved] = await Promise.all([
@@ -61409,7 +61413,8 @@ ${res.stderr}` : "");
       var argsAccountRow = document.getElementById("args-account-row");
       var argsAccounts = null;
       if (argsEnv) argsEnv.addEventListener("input", () => renderEnvHint(argsEnv, argsEnvHint));
-      bindAccountSelect(argsAccount, argsEnv, () => argsAccounts);
+      var argsAccountKey = ACCOUNT_ENV_KEY;
+      bindAccountSelect(argsAccount, argsEnv, () => argsAccounts, () => argsAccountKey);
       wireBulkToggles(argsToolsRow, argsToolsList);
       wireBulkToggles(argsSkillsRow, argsSkillsList);
       var argsEditingName = null;
@@ -61486,6 +61491,7 @@ ${res.stderr}` : "");
         if (argsStreamIoRow) argsStreamIoRow.style.display = ioEditable ? "" : "none";
         if (argsStreamIo) argsStreamIo.checked = ioEditable && res.io === "stream";
         argsAccountRow.style.display = caps.accounts ? "" : "none";
+        argsAccountKey = accountKeyOf(res.type);
         argsAgentsRow.style.display = caps.agents ? "" : "none";
         argsOtherSection.style.display = caps.agents ? "" : "none";
         const isPluginsEditable = caps.plugins && !argsSource;
@@ -61569,7 +61575,7 @@ ${res.stderr}` : "");
           argsEnv.value = formatEnvLines(res.env || {});
           renderEnvHint(argsEnv, argsEnvHint);
           argsAccounts = await fetchAccounts();
-          paintAccountSelect(argsAccount, argsEnv.value, argsAccounts);
+          paintAccountSelect(argsAccount, argsEnv.value, argsAccounts, argsAccountKey);
         } else {
           argsEnv.value = "";
           renderEnvHint(argsEnv, argsEnvHint);
@@ -61626,7 +61632,7 @@ ${res.stderr}` : "");
         const source = argsEditingSource;
         const existing = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
         const snap = rowSnapshot(name, existing);
-        const snapAccount = env === void 0 ? accountOfRow(name) : accountFromEnv(formatEnvLines(env), argsAccounts || []);
+        const snapAccount = env === void 0 ? accountOfRow(name) : accountFromEnv(formatEnvLines(env), argsAccounts || [], argsAccountKey);
         closeArgsDialog();
         const res = source ? await source.save({
           // Peer save NEVER carries execCommands: the key is omitted entirely (not even []),

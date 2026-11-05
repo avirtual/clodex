@@ -89,6 +89,16 @@ test('envWithAccount: a COMMENTED-OUT assignment is not the selection and is not
   assert.strictEqual(envWithAccount(text, 'sub-3', ACCOUNTS), '#CLAUDE_CONFIG_DIR=/minted/sub-2\nA=1\nCLAUDE_CONFIG_DIR=/minted/sub-3');
 });
 
+test('envKey CLODENT_HOME: reads and writes that line, leaving a CLAUDE_CONFIG_DIR line alone', () => {
+  const text = 'CLAUDE_CONFIG_DIR=/minted/sub-2\nA=1';
+  assert.strictEqual(accountFromEnv(text, ACCOUNTS, 'CLODENT_HOME'), 'default');
+  assert.strictEqual(accountFromEnv('CLODENT_HOME=/minted/sub-3\nCLAUDE_CONFIG_DIR=/minted/sub-2', ACCOUNTS, 'CLODENT_HOME'), 'sub-3');
+  assert.strictEqual(accountFromEnv('CLODENT_HOME=/elsewhere', ACCOUNTS, 'CLODENT_HOME'), 'custom');
+  assert.strictEqual(envWithAccount(text, 'sub-3', ACCOUNTS, 'CLODENT_HOME'), 'CLAUDE_CONFIG_DIR=/minted/sub-2\nA=1\nCLODENT_HOME=/minted/sub-3');
+  assert.strictEqual(envWithAccount('CLODENT_HOME=/minted/sub-3\nCLAUDE_CONFIG_DIR=/minted/sub-2', 'sub-2', ACCOUNTS, 'CLODENT_HOME'), 'CLODENT_HOME=/minted/sub-2\nCLAUDE_CONFIG_DIR=/minted/sub-2');
+  assert.strictEqual(envWithAccount('CLODENT_HOME=/minted/sub-3\nCLAUDE_CONFIG_DIR=/minted/sub-2', 'default', ACCOUNTS, 'CLODENT_HOME'), 'CLAUDE_CONFIG_DIR=/minted/sub-2');
+});
+
 // --- accountOptions ----------------------------------------------------------
 
 test('accountOptions: default first, then the registered rows, with email and plan', () => {

@@ -5007,7 +5007,9 @@ function createSessionManager(deps) {
       if (!resolve) return 'default';
       try {
         const entry = getPersistence().get(name);
-        const dir = entry && entry.env && entry.env.CLAUDE_CONFIG_DIR;
+        const adapter = entry ? adapterFor(entry.type) : null;
+        const key = adapter && adapter.ui.accounts ? adapter.account.envKey : 'CLAUDE_CONFIG_DIR';
+        const dir = entry && entry.env && entry.env[key];
         return dir ? (resolve(dir) || 'default') : 'default';
       } catch { return 'default'; }
     }

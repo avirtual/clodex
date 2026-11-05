@@ -239,6 +239,12 @@ test('every provider skill-delivery can deliver to is an adapter; clodent alone 
   assert.deepStrictEqual(providers.filter((k) => !Object.keys(ADAPTERS).includes(k)), []);
 });
 
+test('clodent offers the account picker, keyed on CLODENT_HOME; codex still does not', () => {
+  assert.strictEqual(capsFor('clodent').accounts, true);
+  assert.strictEqual(adapterFor('clodent').account.envKey, 'CLODENT_HOME');
+  assert.strictEqual(capsFor('codex').accounts, false);
+});
+
 test('clodent: the Messages-API CLI row — Claude model aliases, Claude efforts by flag, Claude bypass, plan-mode argv cap, Claude-shape hooks and transcript', () => {
   assert.deepStrictEqual(ADAPTERS.clodent, {
     id: 'clodent',
@@ -262,7 +268,7 @@ test('clodent: the Messages-API CLI row — Claude model aliases, Claude efforts
     stream: null,
     ui: {
       injectSkills: false, skillRoster: false, plugins: false, agents: false, tools: false,
-      strip: false, autoCompact: false, noWire: false, accounts: false, streamIo: false,
+      strip: false, autoCompact: false, noWire: false, accounts: true, streamIo: false,
     },
   });
   assert.strictEqual(streamFor('clodent'), null);

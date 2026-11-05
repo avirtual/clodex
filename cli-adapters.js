@@ -171,7 +171,7 @@ const ADAPTERS = {
       strip: false,
       autoCompact: false,
       noWire: false,
-      accounts: false,
+      accounts: true,
       streamIo: false,
     },
   },
