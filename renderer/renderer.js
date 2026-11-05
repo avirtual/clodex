@@ -24,7 +24,7 @@ const { matchGutterRow, findGutterFile } = require('./lib/gutter-scan');
 // on a pathological run, not the usual cost.
 const GUTTER_HEADER_SCAN = 400;
 const { splitModelArg, withModelArg } = require('./lib/args-model');
-const { PLATFORMS, adapterFor, isAgentType, capsFor } = require('../cli-adapters');
+const { PLATFORMS, adapterFor, isAgentType, capsFor, accountEnvKey } = require('../cli-adapters');
 const { expandTeamRoot, usesTeamRoot } = require('../team-root-expand');
 const { altChordAction } = require('./lib/web-shortcuts');
 const { filterSummary, setFilterFolded } = require('./lib/sidebar-filter-fold');
@@ -319,10 +319,6 @@ async function fetchAccounts() {
   return lastAccounts;
 }
 
-function accountKeyOf(type) {
-  return adapterFor(type)?.account.envKey || ACCOUNT_ENV_KEY;
-}
-
 function paintAccountSelect(sel, envText, accounts, envKey = ACCOUNT_ENV_KEY) {
   if (!sel) return;
   const rows = accounts || [];
@@ -350,7 +346,7 @@ function bindAccountSelect(sel, textarea, getAccounts, getKey) {
 }
 
 if (inputEnv) inputEnv.addEventListener('input', refreshEnvHint);
-bindAccountSelect(inputAccount, inputEnv, () => dialogAccounts, () => accountKeyOf(inputType.value));
+bindAccountSelect(inputAccount, inputEnv, () => dialogAccounts, () => accountEnvKey(inputType.value));
 const inputModel = document.getElementById('input-model');
 const inputEffort = document.getElementById('input-effort');
 const effortRow = document.getElementById('effort-row');
@@ -3001,7 +2997,7 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
   if (noWireRow) noWireRow.style.display = caps.noWire ? '' : 'none';
   if (streamIoRow) streamIoRow.style.display = caps.streamIo ? '' : 'none';
   if (accountRow) accountRow.style.display = caps.accounts ? '' : 'none';
-  if (inputAccount) paintAccountSelect(inputAccount, inputEnv ? inputEnv.value : '', dialogAccounts, accountKeyOf(type));
+  if (inputAccount) paintAccountSelect(inputAccount, inputEnv ? inputEnv.value : '', dialogAccounts, accountEnvKey(type));
   if (toolsAllowRow) toolsAllowRow.style.display = authoring ? '' : 'none';
   if (authoring && caps.tools && !skipAsyncRefresh) renderToolAllowChecklist(inputToolsAllowList, new Set());
   if (!skipAsyncRefresh) {
@@ -3793,7 +3789,6 @@ async function openDialog(prefill = null) {
   if (inputEnv) inputEnv.value = ''; // per-session env starts empty each open
   refreshEnvHint();
   dialogAccounts = await fetchAccounts();
-  paintAccountSelect(inputAccount, inputEnv ? inputEnv.value : '', dialogAccounts, accountKeyOf(inputType.value));
   applyTypeDefaults();
   paintNameField(nameFieldEls(), { ok: true, kind: 'free', message: '' });
   const [, , settings, agentLib, boxes, reserved] = await Promise.all([
@@ -9516,7 +9511,7 @@ async function openArgsDialog(name, argsSource = null) {
   if (argsStreamIoRow) argsStreamIoRow.style.display = ioEditable ? '' : 'none';
   if (argsStreamIo) argsStreamIo.checked = ioEditable && res.io === 'stream';
   argsAccountRow.style.display = caps.accounts ? '' : 'none';
-  argsAccountKey = accountKeyOf(res.type);
+  argsAccountKey = accountEnvKey(res.type);
   argsAgentsRow.style.display = caps.agents ? '' : 'none';
   argsOtherSection.style.display = caps.agents ? '' : 'none';
   // Hidden on a PEER row as exec is: the peer save omits `plugins`, so a section

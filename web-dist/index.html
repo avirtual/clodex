@@ -27753,6 +27753,10 @@ ${i3.join("\n")}
         const a = adapterFor(type);
         return !!(a && a.caps.claudeHooks);
       }
+      function accountEnvKey(type) {
+        const a = adapterFor(type);
+        return a && a.ui.accounts ? a.account.envKey : "CLAUDE_CONFIG_DIR";
+      }
       function capsFor(type) {
         const a = adapterFor(type);
         return a ? a.ui : NO_CAPS;
@@ -27886,6 +27890,7 @@ ${i3.join("\n")}
         adapterFor,
         isAgentType,
         capsFor,
+        accountEnvKey,
         runsClaudeHooks,
         streamFor,
         seatType,
@@ -52211,7 +52216,7 @@ ${detail}` });
       var { matchGutterRow, findGutterFile } = require_gutter_scan();
       var GUTTER_HEADER_SCAN = 400;
       var { splitModelArg, withModelArg } = require_args_model();
-      var { PLATFORMS, adapterFor, isAgentType, capsFor } = require_cli_adapters();
+      var { PLATFORMS, adapterFor, isAgentType, capsFor, accountEnvKey } = require_cli_adapters();
       var { expandTeamRoot, usesTeamRoot } = require_team_root_expand();
       var { altChordAction } = require_web_shortcuts();
       var { filterSummary, setFilterFolded } = require_sidebar_filter_fold();
@@ -52559,9 +52564,6 @@ ${detail}` });
         }
         return lastAccounts;
       }
-      function accountKeyOf(type) {
-        return adapterFor(type)?.account.envKey || ACCOUNT_ENV_KEY;
-      }
       function paintAccountSelect(sel, envText, accounts, envKey = ACCOUNT_ENV_KEY) {
         if (!sel) return;
         const rows = accounts || [];
@@ -52585,7 +52587,7 @@ ${detail}` });
         textarea.addEventListener("input", () => paintAccountSelect(sel, textarea.value, getAccounts() || [], getKey()));
       }
       if (inputEnv) inputEnv.addEventListener("input", refreshEnvHint);
-      bindAccountSelect(inputAccount, inputEnv, () => dialogAccounts, () => accountKeyOf(inputType.value));
+      bindAccountSelect(inputAccount, inputEnv, () => dialogAccounts, () => accountEnvKey(inputType.value));
       var inputModel = document.getElementById("input-model");
       var inputEffort = document.getElementById("input-effort");
       var effortRow = document.getElementById("effort-row");
@@ -55155,7 +55157,7 @@ ${detail}` });
         if (noWireRow) noWireRow.style.display = caps.noWire ? "" : "none";
         if (streamIoRow) streamIoRow.style.display = caps.streamIo ? "" : "none";
         if (accountRow) accountRow.style.display = caps.accounts ? "" : "none";
-        if (inputAccount) paintAccountSelect(inputAccount, inputEnv ? inputEnv.value : "", dialogAccounts, accountKeyOf(type));
+        if (inputAccount) paintAccountSelect(inputAccount, inputEnv ? inputEnv.value : "", dialogAccounts, accountEnvKey(type));
         if (toolsAllowRow) toolsAllowRow.style.display = authoring ? "" : "none";
         if (authoring && caps.tools && !skipAsyncRefresh) renderToolAllowChecklist(inputToolsAllowList, /* @__PURE__ */ new Set());
         if (!skipAsyncRefresh) {
@@ -55952,7 +55954,6 @@ ${detail}` });
         if (inputEnv) inputEnv.value = "";
         refreshEnvHint();
         dialogAccounts = await fetchAccounts();
-        paintAccountSelect(inputAccount, inputEnv ? inputEnv.value : "", dialogAccounts, accountKeyOf(inputType.value));
         applyTypeDefaults();
         paintNameField(nameFieldEls(), { ok: true, kind: "free", message: "" });
         const [, , settings, agentLib, boxes, reserved] = await Promise.all([
@@ -61491,7 +61492,7 @@ ${res.stderr}` : "");
         if (argsStreamIoRow) argsStreamIoRow.style.display = ioEditable ? "" : "none";
         if (argsStreamIo) argsStreamIo.checked = ioEditable && res.io === "stream";
         argsAccountRow.style.display = caps.accounts ? "" : "none";
-        argsAccountKey = accountKeyOf(res.type);
+        argsAccountKey = accountEnvKey(res.type);
         argsAgentsRow.style.display = caps.agents ? "" : "none";
         argsOtherSection.style.display = caps.agents ? "" : "none";
         const isPluginsEditable = caps.plugins && !argsSource;

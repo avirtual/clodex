@@ -243,6 +243,11 @@ function runsClaudeHooks(type) {
   return !!(a && a.caps.claudeHooks);
 }
 
+function accountEnvKey(type) {
+  const a = adapterFor(type);
+  return a && a.ui.accounts ? a.account.envKey : 'CLAUDE_CONFIG_DIR';
+}
+
 function capsFor(type) {
   const a = adapterFor(type);
   return a ? a.ui : NO_CAPS;
@@ -346,6 +351,6 @@ function splitPrivilegedArgs(argv) {
 
 module.exports = {
   ADAPTERS, PLATFORMS, DEFAULT_TYPE, CAP_KEYS,
-  adapterFor, isAgentType, capsFor, runsClaudeHooks, streamFor, seatType, resolveModelId, resolveEffort, stripModelArgs, hasBypass, hasReadOnlyCap, postureOf,
+  adapterFor, isAgentType, capsFor, accountEnvKey, runsClaudeHooks, streamFor, seatType, resolveModelId, resolveEffort, stripModelArgs, hasBypass, hasReadOnlyCap, postureOf,
   PRIVILEGED_FLAG_ARITY, splitPrivilegedArgs,
 };

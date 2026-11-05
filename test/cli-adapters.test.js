@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 
 const {
-  ADAPTERS, PLATFORMS, CAP_KEYS, capsFor, streamFor, adapterFor, seatType, stripModelArgs, hasBypass, postureOf, resolveModelId, resolveEffort, runsClaudeHooks, PRIVILEGED_FLAG_ARITY, splitPrivilegedArgs,
+  ADAPTERS, PLATFORMS, CAP_KEYS, capsFor, accountEnvKey, streamFor, adapterFor, seatType, stripModelArgs, hasBypass, postureOf, resolveModelId, resolveEffort, runsClaudeHooks, PRIVILEGED_FLAG_ARITY, splitPrivilegedArgs,
 } = require('../cli-adapters');
 const { createSkillDelivery } = require('../skill-delivery');
 
@@ -243,6 +243,14 @@ test('clodent offers the account picker, keyed on CLODENT_HOME; codex still does
   assert.strictEqual(capsFor('clodent').accounts, true);
   assert.strictEqual(adapterFor('clodent').account.envKey, 'CLODENT_HOME');
   assert.strictEqual(capsFor('codex').accounts, false);
+});
+
+test('accountEnvKey: the adapter key only where the picker is offered, CLAUDE_CONFIG_DIR elsewhere', () => {
+  assert.strictEqual(accountEnvKey('clodent'), 'CLODENT_HOME');
+  assert.strictEqual(accountEnvKey('claude'), 'CLAUDE_CONFIG_DIR');
+  assert.strictEqual(accountEnvKey('codex'), 'CLAUDE_CONFIG_DIR');
+  assert.strictEqual(accountEnvKey('muse'), 'CLAUDE_CONFIG_DIR');
+  assert.strictEqual(accountEnvKey(undefined), 'CLAUDE_CONFIG_DIR');
 });
 
 test('clodent: the Messages-API CLI row — Claude model aliases, Claude efforts by flag, Claude bypass, plan-mode argv cap, Claude-shape hooks and transcript', () => {
