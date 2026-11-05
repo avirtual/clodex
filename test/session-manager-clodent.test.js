@@ -7,7 +7,7 @@ const osReal = require('node:os');
 const pathReal = require('node:path');
 
 const { intentEnabled } = require('../intent-catalog');
-const { createSessionManager } = require('../session-manager');
+const { createSessionManager, clodentVersionOk } = require('../session-manager');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { processStubs } = require('./lib/process-stubs');
 const { pathFor: pathForReal, runDirFor: runDirForReal } = require('../clodex-paths');
@@ -16,7 +16,7 @@ const { classifyNotification } = require('../attention');
 
 const RESUME = '6a1f0c2e-1111-4222-8333-944455556666';
 
-function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null } = {}) {
+function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entries = {}, probeClodentVersion = () => 'clodent 0.5.2\n' } = {}) {
   const root = mkTmpRoot('clodex-clodent-');
   const home = pathReal.join(root, 'home');
   fsReal.mkdirSync(home, { recursive: true });
@@ -67,7 +67,8 @@ function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null } = {})
     writeMcpCatalog: (name) => { mcpWrites.push(['catalog', name]); },
     crypto: require('node:crypto'),
     effectiveInjectedSkills: () => [],
-    getPersistence: () => ({ list: () => [], get: () => null, upsert: () => {}, setSessionId: () => {}, remove: () => {} }),
+    probeClodentVersion,
+    getPersistence: () => ({ list: () => [], get: (n) => entries[n] || null, upsert: () => {}, setSessionId: () => {}, remove: () => {} }),
     getUiSettings: () => ({ get: () => ({}) }),
     getEnvScopes: () => ({ all: () => ({ global: {}, workspaces: {} }) }),
     getUserDataPath: () => root,
@@ -231,7 +232,8 @@ test('clodent: the argv is the claude PTY argv apart from cmd and the MCP flags,
     const mcpPath = pathForReal(f.root, 'seat', 'mcpConfig');
     assert.ok(claude.args.includes('--mcp-config') && claude.args.includes('--strict-mcp-config'), `ENTER: the claude argv carries its MCP flags ${label}`);
     assert.deepStrictEqual(clodent.args, withoutMcp(claude.args, mcpPath), label);
-    const sansProxyAndClock = (h) => h.filter((_, i) => i !== 1 && i !== 7);
+    const sansProxyAndClock = (h) => h.filter((_, i) => i !== 1 && i !== 7 && i !== 16);
+    assert.deepStrictEqual([hooks[0][16], hooks[1][16]], [null, '1h'], `only the standing clodent seat asks for the one-hour cache ${label}`);
     assert.deepStrictEqual([hooks[0][1], hooks[1][1]], ['http://127.0.0.1:7811', null], `only the claude seat routes through the proxy ${label}`);
     assert.deepStrictEqual(sansProxyAndClock(hooks[1]), sansProxyAndClock(hooks[0]), `the settings file is written from the same setupClaudeHook arguments ${label}`);
     assert.deepStrictEqual(sessionIds[1], sessionIds[0], label);
@@ -364,4 +366,47 @@ test('clodent: a resume seeds activityTs from the resumed transcript mtime, not 
   fsReal.utimesSync(p, old, old);
   await f.create('seat', { resumeId: RESUME });
   try { assert.strictEqual(f.m.sessions.get('seat').activityTs, old.getTime()); } finally { f.stop('seat'); }
+});
+
+test('clodent: a ticket-loop seat (ephemeral record) asks for no cache TTL, a standing one for 1h, a claude seat for none', async () => {
+  const f = mkClodent({ entries: { hand: { name: 'hand', ephemeral: true }, lead: { name: 'lead' } } });
+  await f.create('hand');
+  f.stop('hand');
+  await f.create('lead');
+  f.stop('lead');
+  await f.create('cl', { type: 'claude' });
+  f.stop('cl');
+  assert.deepStrictEqual(f.hooks.map((h) => [h[0], h[16]]), [['hand', null], ['lead', '1h'], ['cl', null]]);
+});
+
+test('clodent: below 0.5.2 or off PATH the seat refuses to spawn, naming what it found; a passing probe runs once per manager', async () => {
+  for (const [out, found] of [['clodent 0.5.1\n', 'found 0.5.1'], [null, 'not on PATH']]) {
+    const f = mkClodent({ probeClodentVersion: () => { if (out == null) throw Object.assign(new Error('spawn clodent ENOENT'), { code: 'ENOENT' }); return out; } });
+    try {
+      await assert.rejects(f.create('seat'), { message: `clodent 0.5.2 or newer is required (${found}): clone github.com/avirtual/clodent and \`npm link\`` });
+      assert.deepStrictEqual([f.spawns.length, f.hooks.length], [0, 0]);
+    } finally { f.stop('seat'); }
+  }
+  let calls = 0;
+  const f = mkClodent({ probeClodentVersion: () => { calls++; return 'clodent 0.10.0\n'; } });
+  await f.create('a');
+  f.stop('a');
+  await f.create('b');
+  f.stop('b');
+  await f.create('c', { type: 'claude' });
+  f.stop('c');
+  assert.deepStrictEqual([calls, f.spawns.length], [1, 3]);
+});
+
+test('clodentVersionOk: 0.5.2 is the floor, compared numerically; garbage fails', () => {
+  for (const [out, ok] of [['0.5.1', false], ['0.5.2', true], ['0.10.0', true], ['clodent 0.5.2\n', true], ['clodent 0.4.9', false], ['1.0.0', true], ['garbage', false], ['', false], [null, false], ['clodent v0.6', false]]) {
+    assert.strictEqual(clodentVersionOk(out), ok, JSON.stringify(out));
+  }
+});
+
+test('clodent: a stream repoint with no transcript link yet points under the clodent home, not ~/.claude', () => {
+  const f = mkClodent();
+  fsReal.mkdirSync(runDirForReal(f.root, 'rp'), { recursive: true });
+  f.m._repointStreamTranscript({ io: 'stream', cwd: f.cwd, type: 'clodent', accountDir: null, name: 'rp' }, RESUME);
+  assert.strictEqual(fsReal.readlinkSync(f.link('rp')), pathReal.join(f.home, '.clodent', 'projects', f.cwd.replace(/[/.]/g, '-'), `${RESUME}.jsonl`));
 });

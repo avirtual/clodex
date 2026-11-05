@@ -13,6 +13,17 @@ const CLAUDE_MODEL_ALIASES = Object.freeze({
   fable: 'claude-fable-5-1[1m]',
 });
 
+const CLAUDE_STREAM = Object.freeze({
+  codec: 'stream-codec-claude',
+  argv: ({ resumeId, sessionId, fork }) => [
+    '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
+    ...(resumeId ? ['--resume', resumeId, ...(fork ? ['--fork-session'] : [])] : ['--session-id', sessionId]),
+    '--permission-prompt-tool', 'stdio',
+  ],
+  toolBoundary: 'hook',
+  transcriptRepoint: 'claude',
+});
+
 const ADAPTERS = {
   claude: {
     id: 'claude',
@@ -29,16 +40,7 @@ const ADAPTERS = {
     instructions: 'append-system-prompt-file',
     transcript: { reader: 'claude', link: 'hook' },
     caps: { park: true, transcript: true, warmth: true, claudeHooks: true },
-    stream: {
-      codec: 'stream-codec-claude',
-      argv: ({ resumeId, sessionId, fork }) => [
-        '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
-        ...(resumeId ? ['--resume', resumeId, ...(fork ? ['--fork-session'] : [])] : ['--session-id', sessionId]),
-        '--permission-prompt-tool', 'stdio',
-      ],
-      toolBoundary: 'hook',
-      transcriptRepoint: 'claude',
-    },
+    stream: CLAUDE_STREAM,
     ui: {
       injectSkills: true,
       skillRoster: true,
@@ -161,7 +163,7 @@ const ADAPTERS = {
     instructions: 'append-system-prompt-file',
     transcript: { reader: 'claude', link: 'hook' },
     caps: { park: false, transcript: true, warmth: false, claudeHooks: true },
-    stream: null,
+    stream: CLAUDE_STREAM,
     ui: {
       injectSkills: false,
       skillRoster: false,
@@ -172,7 +174,7 @@ const ADAPTERS = {
       autoCompact: false,
       noWire: false,
       accounts: true,
-      streamIo: false,
+      streamIo: true,
     },
   },
 };

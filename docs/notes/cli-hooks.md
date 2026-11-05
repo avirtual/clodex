@@ -58,3 +58,7 @@ An over-counted `case` is a frame that never pops: a double-quoted `$(…)` fram
 ## writeMcpCatalog
 
 Identical content (same `rev`) is not rewritten, because T3b's server treats any rewrite of `mcp-tools.json` as a tool-list change and would announce one.
+
+## cacheTtl
+
+The caller passes `1h` only for a clodent seat whose persistence record is not `ephemeral` (ticket-loop minted). Measured: 1h is −48% cost on idle standing seats, +35–42% on one-shot ones.

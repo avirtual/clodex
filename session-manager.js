@@ -457,6 +457,22 @@ function missingToolOnExit({ expected, exitCode, signal, elapsedMs, cmd, whichBi
   return resolved ? null : (cmd || null);
 }
 
+const CLODENT_MIN_VERSION = [0, 5, 2];
+
+function clodentVersionOf(stdout) {
+  const m = /^(?:clodent\s+)?(\d+)\.(\d+)\.(\d+)(?:\s|$)/.exec(String(stdout == null ? '' : stdout).trim());
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+function clodentVersionOk(stdout) {
+  const v = clodentVersionOf(stdout);
+  if (!v) return false;
+  for (let i = 0; i < 3; i++) {
+    if (v[i] !== CLODENT_MIN_VERSION[i]) return v[i] > CLODENT_MIN_VERSION[i];
+  }
+  return true;
+}
+
 function nameConflict({ liveHas, persistedHas }) {
   if (liveHas) return 'live';
   if (persistedHas) return 'persisted';
@@ -770,6 +786,8 @@ function createSessionManager(deps) {
     restartSession,
   } = deps;
   const spawnStreamSeat = deps.spawnStreamSeat || streamSeatLib.spawnStreamSeat;
+  const probeClodentVersion = deps.probeClodentVersion
+    || (() => childProcess.execFileSync(adapterFor('clodent').cmd, ['--version'], { timeout: 3000, encoding: 'utf-8' }));
   const writeMcpConfig = deps.writeMcpConfig
     || ((n, servers) => require('./cli-hooks').createCliHooks({ REGISTRY_DIR, nodeInterp: process.execPath }).writeMcpConfig(n, servers));
   const writeMcpCatalog = deps.writeMcpCatalog
@@ -844,6 +862,7 @@ function createSessionManager(deps) {
       this.sessions = new Map();
       this._freshBakeOnce = new Set();
       this._creating = new Set();
+      this._clodentVersion = undefined;
       this.windows = new Map();
       // Global, not per-window: the external tap picks one seat for the whole box.
       this._focusedSession = null;
@@ -1577,6 +1596,18 @@ function createSessionManager(deps) {
       }
     }
 
+    _requireClodentVersion() {
+      if (this._clodentVersion !== undefined) return;
+      let out = null;
+      try { out = String(probeClodentVersion()); } catch { out = null; }
+      if (out != null && clodentVersionOk(out)) {
+        this._clodentVersion = out;
+        return;
+      }
+      const found = out == null ? 'not on PATH' : `found ${String(out).trim().replace(/^clodent\s+/, '') || '(no version)'}`;
+      throw new Error(`clodent 0.5.2 or newer is required (${found}): clone github.com/avirtual/clodent and \`npm link\``);
+    }
+
     async _createReserved(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellDeny = null, fixFor = null, io = 'pty', effort = null, protectCredentials = null, mcpServers = [], seatClass = null) {
       const freshBake = this._freshBakeOnce.delete(name);
       if (cwd) {
@@ -1585,6 +1616,7 @@ function createSessionManager(deps) {
         if (!st) throw new Error(`Directory does not exist: ${cwd}`);
         if (!st.isDirectory()) throw new Error(`Not a directory: ${cwd}`);
       }
+      if (type === 'clodent') this._requireClodentVersion();
       const streamIo = io === 'stream';
       const streamSpec = streamIo ? streamFor(type) : null;
       if (streamIo && !streamSpec) throw new Error(`stream transport is not supported for ${type}`);
@@ -1874,7 +1906,7 @@ function createSessionManager(deps) {
               known: Array.isArray(disabledSkills) && disabledSkills.includes('*') ? knownSkillNames() : [],
               injectSkills,
             });
-            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, skillsOff, wireBase, createdAt, Array.isArray(shellDeny) ? shellDeny : [], streamIo, effortFlag ? null : effortLevel, Array.isArray(protectCredentials) ? protectCredentials : null, mcpSecretNames, mcpSel ? mcpSel.applied.denyRules : [], cwd || null, mergedEnv.CLODENT_HOME || null);
+            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, skillsOff, wireBase, createdAt, Array.isArray(shellDeny) ? shellDeny : [], streamIo, effortFlag ? null : effortLevel, Array.isArray(protectCredentials) ? protectCredentials : null, mcpSecretNames, mcpSel ? mcpSel.applied.denyRules : [], cwd || null, mergedEnv.CLODENT_HOME || null, type === 'clodent' && !(existingEntry && existingEntry.ephemeral === true) ? '1h' : null);
             args.push('--settings', settingsPath);
             hookInstalled = true;
             selectionDrain = true;
@@ -3384,6 +3416,13 @@ function createSessionManager(deps) {
       if (had) this._sendToSession(s.name, 'transcript-changed', s.name);
     }
 
+    _cancelStreamPermission(s, id) {
+      if (!s.streamPermissions || !s.streamPermissions.delete(id)) return;
+      s._streamPermRev = (s._streamPermRev || 0) + 1;
+      if (!s.streamPermissions.size && s.needsAttention && s.needsAttention.kind === 'permission') this._setAttention(s, null);
+      this._sendToSession(s.name, 'transcript-changed', s.name);
+    }
+
     seatPermission(name, id, choiceId) {
       const s = this.sessions.get(name);
       if (!s) return { ok: false, error: 'no such session' };
@@ -3510,6 +3549,9 @@ function createSessionManager(deps) {
         case 'permission-request':
           this._onStreamPermission(s, rec);
           break;
+        case 'permission-cancel':
+          this._cancelStreamPermission(s, rec.id);
+          break;
         case 'control-ack': {
           const settle = s._controlAcks && s._controlAcks.get(rec.id);
           if (settle) { s._controlAcks.delete(rec.id); settle(rec); } else log.warn('session', `stream ${s.name}: control ack ${rec.id} (${rec.ok ? 'success' : rec.errorCode || 'error'}) arrived with no waiter`);
@@ -3548,7 +3590,7 @@ function createSessionManager(deps) {
       try {
         let current = null;
         try { current = fs.readlinkSync(link); } catch {}
-        const target = current ? path.join(path.dirname(current), `${sid}.jsonl`) : this._claudeTranscriptPath(s.cwd, s.accountDir, sid);
+        const target = current ? path.join(path.dirname(current), `${sid}.jsonl`) : this._claudeTranscriptPath(s.cwd, s.accountDir, sid, s.type);
         if (target === current) return;
         linkTranscript({ fs }, link, target);
       } catch (e) {
@@ -9679,4 +9721,4 @@ function createSessionManager(deps) {
   return SessionManager;
 }
 
-module.exports = { EXEC_ACK_MIN_TIMEOUT_MS, defaultKillPid, EXEC_REPLY_WAIT_MS, SANDBOX_RELAY_TIMEOUT_MS, createSessionManager, deniedBodyDisposition, escapeSafeTail, exitDisposition, findPeerByOrigin, isStaleRegistration, missingToolOnExit, nameConflict, peerOriginSuffix, preseedClaudeOnboarding, spillAckLine, ticketCloseLine, ticketTaskDirLine };
+module.exports = { EXEC_ACK_MIN_TIMEOUT_MS, defaultKillPid, EXEC_REPLY_WAIT_MS, SANDBOX_RELAY_TIMEOUT_MS, createSessionManager, clodentVersionOk, deniedBodyDisposition, escapeSafeTail, exitDisposition, findPeerByOrigin, isStaleRegistration, missingToolOnExit, nameConflict, peerOriginSuffix, preseedClaudeOnboarding, spillAckLine, ticketCloseLine, ticketTaskDirLine };

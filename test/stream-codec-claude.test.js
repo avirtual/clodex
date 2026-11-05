@@ -152,6 +152,19 @@ test('decode: any other control_request subtype is other', () => {
   assert.deepStrictEqual(decode({ type: 'control_request', request_id: 'r', request: { subtype: 'hook_callback' } }), { kind: 'other' });
 });
 
+test('decode: control_cancel_request is a permission-cancel and hook_context_truncated is other', () => {
+  assert.deepStrictEqual(decode({ type: 'control_cancel_request', request_id: 'req-9' }), { kind: 'permission-cancel', id: 'req-9' });
+  assert.deepStrictEqual(decode({ type: 'control_cancel_request' }), { kind: 'other' });
+  assert.deepStrictEqual(decode({ type: 'system', subtype: 'hook_context_truncated', hook_event: 'PostToolUse', scope: 'hook', bytes: 70000, limit: 65536, session_id: 's', uuid: 'u' }), { kind: 'other' });
+});
+
+test('a control_cancel_request drops its pending request without answering it', () => {
+  const codec = create();
+  codec.decode(CAN_USE_WRITE);
+  assert.deepStrictEqual(codec.decode({ type: 'control_cancel_request', request_id: CAN_USE_WRITE.request_id }), { kind: 'permission-cancel', id: CAN_USE_WRITE.request_id });
+  assert.strictEqual(codec.encodePermission(CAN_USE_WRITE.request_id, 'allow'), null);
+});
+
 test('encodePermission answers allow, allow-always and deny in the control_response shape, once per id', () => {
   const input = CAN_USE_WRITE.request.input;
   const id = CAN_USE_WRITE.request_id;

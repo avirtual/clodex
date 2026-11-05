@@ -58,8 +58,13 @@ function decode(obj) {
   if (obj.type === 'control_request') {
     return obj.request && obj.request.subtype === 'can_use_tool' && obj.request_id ? decodePermission(obj) : { kind: 'other' };
   }
+  if (obj.type === 'control_cancel_request') {
+    return obj.request_id ? { kind: 'permission-cancel', id: obj.request_id } : { kind: 'other' };
+  }
   if (obj.type !== 'system') return { kind: 'other' };
   switch (obj.subtype) {
+    case 'hook_context_truncated':
+      return { kind: 'other' };
     case 'init':
       return {
         kind: 'init',
@@ -113,6 +118,8 @@ function create() {
     const rec = decode(obj);
     if (rec.kind === 'permission-request') {
       pending.set(rec.id, { input: rec.input, suggestions: Array.isArray(obj.request.permission_suggestions) ? obj.request.permission_suggestions : [] });
+    } else if (rec.kind === 'permission-cancel') {
+      pending.delete(rec.id);
     } else if (rec.kind === 'result' || rec.kind === 'init') {
       pending.clear();
     }
