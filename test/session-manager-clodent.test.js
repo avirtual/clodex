@@ -7,7 +7,7 @@ const osReal = require('node:os');
 const pathReal = require('node:path');
 
 const { intentEnabled } = require('../intent-catalog');
-const { createSessionManager, clodentVersionOk } = require('../session-manager');
+const { createSessionManager, clodentVersionAtLeast, clodentVersionOk } = require('../session-manager');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { processStubs } = require('./lib/process-stubs');
 const { pathFor: pathForReal, runDirFor: runDirForReal } = require('../clodex-paths');
@@ -66,7 +66,13 @@ function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entrie
     writeBundlePlugins: (name, bundles) => bundles.map((b) => ({ dir: pathReal.join(root, 'bundles', name, b.id), skills: [], agents: [] })),
     cleanupSkills: (provider, name) => { cleanups.push(['skills', provider, name]); }, cleanupClaudeHook: (name) => { cleanups.push(['hook', name]); }, cleanupCodexHook: () => {}, cleanupAgentPlugin: (name) => { cleanups.push(['agents', name]); }, cleanupMuseSeat: () => {},
     writeMcpConfig: (name) => { mcpWrites.push(['config', name]); },
-    writeMcpCatalog: (name) => { mcpWrites.push(['catalog', name]); },
+    writeMcpCatalog: (name, catalog) => {
+      mcpWrites.push(['catalog', name]);
+      const file = pathForReal(root, name, 'mcpCatalog');
+      fsReal.mkdirSync(pathReal.dirname(file), { recursive: true });
+      fsReal.writeFileSync(file, JSON.stringify(catalog));
+      return { changed: true };
+    },
     crypto: require('node:crypto'),
     effectiveInjectedSkills: () => [],
     probeClodentVersion,
@@ -405,6 +411,58 @@ test('clodent: below 0.5.2 or off PATH the seat refuses to spawn, naming what it
   await f.create('c', { type: 'claude' });
   f.stop('c');
   assert.deepStrictEqual([calls, f.spawns.length], [1, 3]);
+});
+
+test('clodent 0.6.0+: the seat gets the same mcp-tools.json as a Claude seat with identical grants, and no mcp.json', async () => {
+  const entries = {};
+  const f = mkClodent({ entries, probeClodentVersion: () => 'clodent 0.6.0\n' });
+  try {
+    await f.create('cd');
+    await f.create('cl', { type: 'claude', sessionEnv: { ANTHROPIC_API_KEY: 'sk-test' } });
+    const read = (n) => JSON.parse(fsReal.readFileSync(pathForReal(f.root, n, 'mcpCatalog'), 'utf-8'));
+    const cd = read('cd');
+    assert.ok(cd.tools.some((t) => t.name === 'dm'), 'ENTER: the clodent catalog carries the dm tool');
+    assert.deepStrictEqual(cd, read('cl'));
+    assert.ok(!fsReal.existsSync(pathForReal(f.root, 'cd', 'mcpConfig')), 'no mcp.json for a clodent seat');
+    entries.cd = { name: 'cd', type: 'clodent' };
+    assert.deepStrictEqual(f.m.refreshSeatCatalog('cd'), { changed: true });
+  } finally { f.stop('cd'); f.stop('cl'); }
+});
+
+test('clodent below 0.6.0: no catalog at spawn, a stale one is unlinked, refreshSeatCatalog is null', async () => {
+  const entries = { cd: { name: 'cd', type: 'clodent' } };
+  const f = mkClodent({ entries, probeClodentVersion: () => 'clodent 0.5.2\n' });
+  const file = pathForReal(f.root, 'cd', 'mcpCatalog');
+  fsReal.mkdirSync(pathReal.dirname(file), { recursive: true });
+  fsReal.writeFileSync(file, '{"stale":true}');
+  try {
+    await f.create('cd');
+    assert.strictEqual(f.spawns.length, 1, 'ENTER: the seat spawned');
+    assert.ok(!fsReal.existsSync(file), 'the stale catalog is gone');
+    assert.deepStrictEqual(f.mcpWrites, []);
+    assert.strictEqual(f.m.refreshSeatCatalog('cd'), null);
+  } finally { f.stop('cd'); }
+});
+
+test('refreshSeatCatalog: codex and muse seats stay null on a clodent-0.6.0 manager', async () => {
+  const entries = {};
+  const f = mkClodent({ entries, probeClodentVersion: () => 'clodent 0.6.0\n' });
+  try {
+    await f.create('cd');
+    for (const type of ['codex', 'muse']) {
+      f.m.sessions.set(type, { name: type, type });
+      entries[type] = { name: type, type };
+      assert.strictEqual(f.m.refreshSeatCatalog(type), null, type);
+    }
+    entries.cd = { name: 'cd', type: 'clodent' };
+    assert.notStrictEqual(f.m.refreshSeatCatalog('cd'), null, 'ENTER: the clodent seat on the same manager refreshes');
+  } finally { f.stop('cd'); f.m.sessions.delete('codex'); f.m.sessions.delete('muse'); }
+});
+
+test('clodentVersionAtLeast: compares numerically against the given floor', () => {
+  for (const [out, ok] of [['clodent 0.6.0\n', true], ['0.5.9', false], ['0.10.0', true], ['1.0.0', true], ['0.5.2', false], ['garbage', false]]) {
+    assert.strictEqual(clodentVersionAtLeast(out, 0, 6, 0), ok, JSON.stringify(out));
+  }
 });
 
 test('clodentVersionOk: 0.5.2 is the floor, compared numerically; garbage fails', () => {

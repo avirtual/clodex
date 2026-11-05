@@ -458,19 +458,25 @@ function missingToolOnExit({ expected, exitCode, signal, elapsedMs, cmd, whichBi
 }
 
 const CLODENT_MIN_VERSION = [0, 5, 2];
+const CLODENT_NATIVE_TOOLS_VERSION = [0, 6, 0];
 
 function clodentVersionOf(stdout) {
   const m = /^(?:clodent\s+)?(\d+)\.(\d+)\.(\d+)(?:\s|$)/.exec(String(stdout == null ? '' : stdout).trim());
   return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
 }
 
-function clodentVersionOk(stdout) {
+function clodentVersionAtLeast(stdout, major, minor, patch) {
   const v = clodentVersionOf(stdout);
   if (!v) return false;
+  const min = [major, minor, patch];
   for (let i = 0; i < 3; i++) {
-    if (v[i] !== CLODENT_MIN_VERSION[i]) return v[i] > CLODENT_MIN_VERSION[i];
+    if (v[i] !== min[i]) return v[i] > min[i];
   }
   return true;
+}
+
+function clodentVersionOk(stdout) {
+  return clodentVersionAtLeast(stdout, ...CLODENT_MIN_VERSION);
 }
 
 function nameConflict({ liveHas, persistedHas }) {
@@ -1610,6 +1616,14 @@ function createSessionManager(deps) {
       throw new Error(`clodent 0.5.2 or newer is required (${found}): clone github.com/avirtual/clodent and \`npm link\``);
     }
 
+    _clodentNativeTools() {
+      return this._clodentVersion != null && clodentVersionAtLeast(this._clodentVersion, ...CLODENT_NATIVE_TOOLS_VERSION);
+    }
+
+    _seatGetsCatalog(type) {
+      return type === 'claude' || (type === 'clodent' && this._clodentNativeTools());
+    }
+
     async _createReserved(name, type, cwd, extraArgs = [], resumeId = null, workspaceId = DEFAULT_WORKSPACE_ID, systemPromptBody = null, fork = false, proxy = null, agents = [], denyBuiltins = [], disabledTools = [], disabledSkills = [], injectSkills = [], systemPromptFile = null, appendPromptFiles = [], execCommands = [], intents = null, sessionEnv = null, mint = false, noWire = false, plugins = null, shellDeny = null, fixFor = null, io = 'pty', effort = null, protectCredentials = null, mcpServers = [], seatClass = null) {
       const freshBake = this._freshBakeOnce.delete(name);
       if (cwd) {
@@ -1929,11 +1943,13 @@ function createSessionManager(deps) {
           } else {
             try { fs.unlinkSync(pathFor(REGISTRY_DIR, name, 'mcpConfig')); } catch {}
           }
-          if (claudeCode) {
+          if (this._seatGetsCatalog(type)) {
             writeMcpCatalog(name, subagentCatalogFor({
               intents: Array.isArray(intents) ? intents.map(String) : undefined,
               plugins: Array.isArray(plugins) ? plugins.map(String) : undefined,
             }));
+          } else {
+            try { fs.unlinkSync(pathFor(REGISTRY_DIR, name, 'mcpCatalog')); } catch {}
           }
           args.push(...plan.push);
           if (plan.notice) {
@@ -2804,13 +2820,13 @@ function createSessionManager(deps) {
     refreshSeatCatalog(name) {
       if (!this.sessions.has(name)) return null;
       const entry = getPersistence().get(name);
-      if (!entry || entry.type !== 'claude') return null;
+      if (!entry || !this._seatGetsCatalog(entry.type)) return null;
       return writeMcpCatalog(name, subagentCatalogFor(entry));
     }
 
     refreshAllSeatCatalogs() {
       for (const s of this.sessions.values()) {
-        if (s.type === 'claude') {
+        if (this._seatGetsCatalog(s.type)) {
           try { this.refreshSeatCatalog(s.name); } catch {}
         }
       }
@@ -9726,4 +9742,4 @@ function createSessionManager(deps) {
   return SessionManager;
 }
 
-module.exports = { EXEC_ACK_MIN_TIMEOUT_MS, defaultKillPid, EXEC_REPLY_WAIT_MS, SANDBOX_RELAY_TIMEOUT_MS, createSessionManager, clodentVersionOk, deniedBodyDisposition, escapeSafeTail, exitDisposition, findPeerByOrigin, isStaleRegistration, missingToolOnExit, nameConflict, peerOriginSuffix, preseedClaudeOnboarding, spillAckLine, ticketCloseLine, ticketTaskDirLine };
+module.exports = { EXEC_ACK_MIN_TIMEOUT_MS, defaultKillPid, EXEC_REPLY_WAIT_MS, SANDBOX_RELAY_TIMEOUT_MS, createSessionManager, clodentVersionAtLeast, clodentVersionOk, deniedBodyDisposition, escapeSafeTail, exitDisposition, findPeerByOrigin, isStaleRegistration, missingToolOnExit, nameConflict, peerOriginSuffix, preseedClaudeOnboarding, spillAckLine, ticketCloseLine, ticketTaskDirLine };
