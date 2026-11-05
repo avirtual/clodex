@@ -14,8 +14,9 @@ blocks a release.
 
 ## Unreleased
 - **Security: `--allow-dangerously-skip-permissions` is now a privileged launch flag**, stripped from hand and reviewer templates like `--dangerously-skip-permissions`.
-- **The `clay` session type is now `clodent`** (clodent 0.3.0, no alias): it launches with the same argv as a Claude seat, enforces the credential sandbox and tool denies through its settings file, honours `--permission-mode plan` as its read-only cap and `--dangerously-skip-permissions` as bypass, and its permission ask raises the attention badge. Accounts and the wire proxy for clodent follow.
+- **The `clay` session type is now `clodent`** (clodent 0.3.0, no alias): it launches with the same argv as a Claude seat, enforces the credential sandbox and tool denies through its settings file, honours `--permission-mode plan` as its read-only cap and `--dangerously-skip-permissions` as bypass, and its permission ask raises the attention badge. The wire proxy for clodent follows.
 - Fixed: clodex-monitor commands inherit `SSH_AUTH_SOCK` from launchd after a host reboot, so git-over-ssh works inside monitors; a failed credential write no longer leaves an orphan monitor log.
+- clodent seats take an account from the create dialog and the session's account menu: the account dir becomes `CLODENT_HOME`, so its `settings.json` (API key, model, cacheTtl) applies to that seat.
 
 ## 5.160.1 — 2026-11-04 — Security: sandboxed seats cannot spawn unsandboxed children; monitor credential off the environment
 - **Security: a credential-sandboxed seat can no longer spawn an unsandboxed Codex or Muse child.** An agent spawn whose child type cannot enforce the spawner's `protectCredentials` is refused; only Claude seats enforce the credential sandbox.

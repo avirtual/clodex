@@ -76,6 +76,18 @@ test('list(): a row whose persisted env names a REGISTERED dir carries that labe
   assert.strictEqual(rows['fable-seat'].account, 'sub-2');
 });
 
+test('list(): a clodent row reads its account off CLODENT_HOME, not CLAUDE_CONFIG_DIR', () => {
+  const rows = mkRows([{ name: 'cl' }, { name: 'stray' }], {
+    entries: {
+      cl: { type: 'clodent', env: { CLODENT_HOME: '/minted/sub-2', CLAUDE_CONFIG_DIR: '/Users/u/other' } },
+      stray: { type: 'clodent', env: { CLAUDE_CONFIG_DIR: '/minted/sub-2' } },
+    },
+    accounts: registry,
+  });
+  assert.strictEqual(rows.cl.account, 'sub-2');
+  assert.strictEqual(rows.stray.account, 'default');
+});
+
 test('list(): a row with no env at all reads `default`', () => {
   const rows = mkRows([{ name: 'plain' }], { entries: { plain: {} }, accounts: registry });
   assert.strictEqual(rows.plain.account, 'default');

@@ -168,7 +168,7 @@ const { findRepoRoot } = require('./project-root');
 const { atomicWriteFileSync } = require('./fs-util');
 const { composeBrief, idleDecision, briefPathFor, clientTokenPathFor, pickMaxAwakeVictim, splitTurnText, BRIEF_TAIL, BRIEF_MAX_BYTES } = require('./assistant-sleep');
 const { cachedMessages } = require('./transcript');
-const { isAgentType, adapterFor, runsClaudeHooks, streamFor: adapterStreamFor, hasBypass, hasReadOnlyCap, postureOf, resolveModelId, resolveEffort } = require('./cli-adapters');
+const { isAgentType, adapterFor, accountEnvKey, runsClaudeHooks, streamFor: adapterStreamFor, hasBypass, hasReadOnlyCap, postureOf, resolveModelId, resolveEffort } = require('./cli-adapters');
 
 function streamCodecCtx(type, extraArgs) {
   const a = adapterFor(type);
@@ -5007,7 +5007,8 @@ function createSessionManager(deps) {
       if (!resolve) return 'default';
       try {
         const entry = getPersistence().get(name);
-        const dir = entry && entry.env && entry.env.CLAUDE_CONFIG_DIR;
+        const key = accountEnvKey(entry && entry.type);
+        const dir = entry && entry.env && entry.env[key];
         return dir ? (resolve(dir) || 'default') : 'default';
       } catch { return 'default'; }
     }

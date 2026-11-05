@@ -25,8 +25,8 @@ function rowsOf(accounts) {
   return Array.isArray(accounts) ? accounts.filter((a) => a && typeof a === 'object') : [];
 }
 
-function accountFromEnv(envText, accounts) {
-  const dir = normDir(parseEnvLines(envText).env[ENV_KEY]);
+function accountFromEnv(envText, accounts, envKey = ENV_KEY) {
+  const dir = normDir(parseEnvLines(envText).env[envKey]);
   if (!dir) return DEFAULT_LABEL;
   const hit = rowsOf(accounts).find((a) => normDir(a.configDir) === dir);
   return hit ? String(hit.label) : CUSTOM_LABEL;
@@ -39,7 +39,7 @@ function isAssignTo(line, key) {
   return eq >= 0 && line.slice(0, eq).trim() === key;
 }
 
-function envWithAccount(envText, label, accounts) {
+function envWithAccount(envText, label, accounts, envKey = ENV_KEY) {
   const text = String(envText == null ? '' : envText);
   const want = String(label == null ? '' : label);
   if (want === CUSTOM_LABEL) return text;
@@ -56,7 +56,7 @@ function envWithAccount(envText, label, accounts) {
   let at = -1;
   const kept = [];
   for (const line of lines) {
-    if (isAssignTo(line, ENV_KEY)) {
+    if (isAssignTo(line, envKey)) {
       if (at < 0) at = kept.length;
       continue;
     }
@@ -67,7 +67,7 @@ function envWithAccount(envText, label, accounts) {
     if (kept.length === 1 && kept[0] === '') return '';
     return kept.join('\n');
   }
-  const assign = `${ENV_KEY}=${dir}`;
+  const assign = `${envKey}=${dir}`;
   if (at >= 0) {
     kept.splice(at, 0, assign);
     return kept.join('\n');

@@ -24,7 +24,7 @@ const { matchGutterRow, findGutterFile } = require('./lib/gutter-scan');
 // on a pathological run, not the usual cost.
 const GUTTER_HEADER_SCAN = 400;
 const { splitModelArg, withModelArg } = require('./lib/args-model');
-const { PLATFORMS, adapterFor, isAgentType, capsFor } = require('../cli-adapters');
+const { PLATFORMS, adapterFor, isAgentType, capsFor, accountEnvKey } = require('../cli-adapters');
 const { expandTeamRoot, usesTeamRoot } = require('../team-root-expand');
 const { altChordAction } = require('./lib/web-shortcuts');
 const { filterSummary, setFilterFolded } = require('./lib/sidebar-filter-fold');
@@ -46,7 +46,7 @@ const { anyOverlayOpen, dialogOverlayIds, performCloseChord } = require('./lib/c
 const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { envRowView, buildEnvRow } = require('./lib/env-row');
 const { envLockView, applyEnvLock, patchUnlessEnvLocked } = require('./lib/env-lock');
-const { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT } = require('./lib/account-select');
+const { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require('./lib/account-select');
 const { accountRowView, buildAccountRow, modelOptions } = require('./lib/account-row');
 const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
@@ -319,12 +319,12 @@ async function fetchAccounts() {
   return lastAccounts;
 }
 
-function paintAccountSelect(sel, envText, accounts) {
+function paintAccountSelect(sel, envText, accounts, envKey = ACCOUNT_ENV_KEY) {
   if (!sel) return;
   const rows = accounts || [];
-  const label = accountFromEnv(envText, rows);
+  const label = accountFromEnv(envText, rows, envKey);
   const current = label === 'custom'
-    ? { label, configDir: parseEnvLines(envText).env.CLAUDE_CONFIG_DIR || '' }
+    ? { label, configDir: parseEnvLines(envText).env[envKey] || '' }
     : { label, configDir: '' };
   sel.textContent = '';
   for (const opt of accountOptions(rows, current)) {
@@ -336,17 +336,17 @@ function paintAccountSelect(sel, envText, accounts) {
   }
 }
 
-function bindAccountSelect(sel, textarea, getAccounts) {
+function bindAccountSelect(sel, textarea, getAccounts, getKey) {
   if (!sel || !textarea) return;
   sel.addEventListener('change', () => {
-    textarea.value = envWithAccount(textarea.value, sel.value, getAccounts() || []);
+    textarea.value = envWithAccount(textarea.value, sel.value, getAccounts() || [], getKey());
     textarea.dispatchEvent(new Event('input'));
   });
-  textarea.addEventListener('input', () => paintAccountSelect(sel, textarea.value, getAccounts() || []));
+  textarea.addEventListener('input', () => paintAccountSelect(sel, textarea.value, getAccounts() || [], getKey()));
 }
 
 if (inputEnv) inputEnv.addEventListener('input', refreshEnvHint);
-bindAccountSelect(inputAccount, inputEnv, () => dialogAccounts);
+bindAccountSelect(inputAccount, inputEnv, () => dialogAccounts, () => accountEnvKey(inputType.value));
 const inputModel = document.getElementById('input-model');
 const inputEffort = document.getElementById('input-effort');
 const effortRow = document.getElementById('effort-row');
@@ -2997,6 +2997,7 @@ function applyTypeDefaults({ skipAsyncRefresh = false } = {}) {
   if (noWireRow) noWireRow.style.display = caps.noWire ? '' : 'none';
   if (streamIoRow) streamIoRow.style.display = caps.streamIo ? '' : 'none';
   if (accountRow) accountRow.style.display = caps.accounts ? '' : 'none';
+  if (inputAccount) paintAccountSelect(inputAccount, inputEnv ? inputEnv.value : '', dialogAccounts, accountEnvKey(type));
   if (toolsAllowRow) toolsAllowRow.style.display = authoring ? '' : 'none';
   if (authoring && caps.tools && !skipAsyncRefresh) renderToolAllowChecklist(inputToolsAllowList, new Set());
   if (!skipAsyncRefresh) {
@@ -3788,7 +3789,6 @@ async function openDialog(prefill = null) {
   if (inputEnv) inputEnv.value = ''; // per-session env starts empty each open
   refreshEnvHint();
   dialogAccounts = await fetchAccounts();
-  paintAccountSelect(inputAccount, inputEnv ? inputEnv.value : '', dialogAccounts);
   applyTypeDefaults();
   paintNameField(nameFieldEls(), { ok: true, kind: 'free', message: '' });
   const [, , settings, agentLib, boxes, reserved] = await Promise.all([
@@ -9434,7 +9434,8 @@ const argsAccount = document.getElementById('args-account');
 const argsAccountRow = document.getElementById('args-account-row');
 let argsAccounts = null;
 if (argsEnv) argsEnv.addEventListener('input', () => renderEnvHint(argsEnv, argsEnvHint));
-bindAccountSelect(argsAccount, argsEnv, () => argsAccounts);
+let argsAccountKey = ACCOUNT_ENV_KEY;
+bindAccountSelect(argsAccount, argsEnv, () => argsAccounts, () => argsAccountKey);
 wireBulkToggles(argsToolsRow, argsToolsList);
 wireBulkToggles(argsSkillsRow, argsSkillsList);
 let argsEditingName = null;
@@ -9510,6 +9511,7 @@ async function openArgsDialog(name, argsSource = null) {
   if (argsStreamIoRow) argsStreamIoRow.style.display = ioEditable ? '' : 'none';
   if (argsStreamIo) argsStreamIo.checked = ioEditable && res.io === 'stream';
   argsAccountRow.style.display = caps.accounts ? '' : 'none';
+  argsAccountKey = accountEnvKey(res.type);
   argsAgentsRow.style.display = caps.agents ? '' : 'none';
   argsOtherSection.style.display = caps.agents ? '' : 'none';
   // Hidden on a PEER row as exec is: the peer save omits `plugins`, so a section
@@ -9590,7 +9592,7 @@ async function openArgsDialog(name, argsSource = null) {
     argsEnv.value = formatEnvLines(res.env || {});
     renderEnvHint(argsEnv, argsEnvHint);
     argsAccounts = await fetchAccounts();
-    paintAccountSelect(argsAccount, argsEnv.value, argsAccounts);
+    paintAccountSelect(argsAccount, argsEnv.value, argsAccounts, argsAccountKey);
   } else {
     argsEnv.value = '';
     renderEnvHint(argsEnv, argsEnvHint);
@@ -9662,7 +9664,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   const snap = rowSnapshot(name, existing);
   const snapAccount = env === undefined
     ? accountOfRow(name)
-    : accountFromEnv(formatEnvLines(env), argsAccounts || []);
+    : accountFromEnv(formatEnvLines(env), argsAccounts || [], argsAccountKey);
   closeArgsDialog();
   // systemPrompt (legacy inline) passes undefined so a pre-library inline body
   // survives.
