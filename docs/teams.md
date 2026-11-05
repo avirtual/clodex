@@ -329,7 +329,10 @@ runs under Codex's OS-enforced read-only sandbox with approvals off;
 settings.json) with approvals off; a platform without a cap is refused before a
 seat is minted. A reviewer gets no library MCP server on any platform; on a
 Codex reviewer plugin-bundled servers stay as residue the selection cannot
-control.
+control. A clodent reviewer runs under `--permission-mode plan` and, because its
+adapter's cap declares `denylist`, also keeps the template's Read/Grep/Glob cap as
+a tool denylist; it honours the reviewer role's `account:` as `CLODENT_HOME`, and
+`CLODENT_HOME` is on the reviewer template env allowlist (`CLAUDE_CONFIG_DIR` is not).
 
 The stock hand and lead templates keep eight tools — Read, Edit, Write, Glob,
 Grep, Bash, Agent, SendMessage — and deny the rest of the catalog; the list is
