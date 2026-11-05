@@ -1971,6 +1971,61 @@ test('a suite that reds once and is green on the re-run reaches the reviewer', a
     'and the reviewer is told, in the scope it is actually spawned with');
 });
 
+function traceLoopRows(f) {
+  const events = [];
+  const broadcast = f.m._broadcast;
+  f.m._broadcast = (channel, msg) => {
+    if (channel === 'ipc-message' && msg && msg.from === 'ticket-loop') events.push(msg);
+    return broadcast(channel, msg);
+  };
+  const create = f.m.create;
+  f.m.create = async (...a) => { events.push('SPAWN'); return create(...a); };
+  return events;
+}
+
+test('a green verify leaves "suite running" then "suite green" traffic rows before the reviewer spawn', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'green' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  const events = traceLoopRows(f);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(f.created.length, 1, 'ENTER: the reviewer was spawned');
+  const shape = events.map((e) => (e === 'SPAWN' ? e : e.body.replace(/\(.*\)/, '(…)')));
+  assert.deepStrictEqual(shape, [
+    'ticket t1 verify: suite running on tl-1',
+    'ticket t1 verify: suite green (…) — spawning reviewer',
+    'SPAWN',
+  ]);
+  for (const e of events.filter((x) => x !== 'SPAWN')) {
+    assert.strictEqual(e.type, 'task');
+    assert.strictEqual(e.to, f.team.lead);
+  }
+});
+
+test('a red-then-green verify puts the "re-measuring" row between running and green', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({ repo, suite: 'flaky' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  const events = traceLoopRows(f);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(runCount(repo), 2, 'ENTER: the suite ran twice');
+  const bodies = events.map((e) => (e === 'SPAWN' ? e : e.body));
+  assert.strictEqual(bodies.length, 4, `four events: ${JSON.stringify(bodies)}`);
+  assert.ok(bodies[0].startsWith('ticket t1 verify: suite running on tl-1'), bodies[0]);
+  assert.strictEqual(bodies[1], 'ticket t1 verify: suite red (3/5 passing, 2 failing (exit 1)) — re-measuring');
+  assert.ok(bodies[2].startsWith('ticket t1 verify: suite green ('), bodies[2]);
+  assert.ok(bodies[2].endsWith(') — spawning reviewer'), bodies[2]);
+  assert.strictEqual(bodies[3], 'SPAWN');
+});
+
 test('a round-1 re-measure stamp does not ride into round 2', async () => {
   // The stamp is a claim about THE RUN THAT JUST HAPPENED, so it must be cleared
   // at the top of every verify rather than only written. Nothing else clears it:
@@ -5813,7 +5868,8 @@ test('t1016: the silence is only the REPLY — the report, the broadcast and the
 
   assert.strictEqual(f.gated.filter((g) => g.target === 'lead' && /shipped it/.test(g.body)).length, 1,
     'the report still reaches the lead — the silence is toward the SENDER only, and an early return would take this with it');
-  const tasks = f.broadcasts.filter((b) => b.channel === 'ipc-message' && b.msg.type === 'task');
+  const tasks = f.broadcasts.filter((b) => b.channel === 'ipc-message' && b.msg.type === 'task'
+    && !b.msg.body.startsWith('ticket t1 verify: '));
   assert.strictEqual(tasks.length, 1, 'the drawer still sees the close');
   assert.strictEqual(tasks[0].msg.body, 'ticket t1 done');
   assert.strictEqual(f.created.length, 1, 'and the loop still reached a reviewer spawn — without it no verdict is ever produced');
