@@ -883,7 +883,7 @@ test('t655: every plugin-axis invoke crosses the web shim at full arity', async 
       const inv = ws.frames().find((f) => f.t === 'invoke' && f.channel === c.channel);
       assert.ok(inv, `${c.name} sent an invoke on ${c.channel}`);
       assert.deepEqual(inv.args, c.args,
-        `${c.name} forwards all ${c.args.length} arguments — an argmap here would drop the trailing plugins positional`);
+        `${c.name} forwards all ${c.args.length} arguments — an argmap here would drop the trailing positional`);
     }
     // The last positional is the one at risk, so assert it survived by VALUE and
     // not merely by count: a shim that padded with undefined would pass a length

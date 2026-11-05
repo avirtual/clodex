@@ -1583,7 +1583,7 @@ async function restartSession(name, opts = {}, wsId = DEFAULT_WORKSPACE_ID) {
     const restartLvl = stripLevelOf(entry);
     if (restartLvl >= 1) persistence.setStripLevel(name, restartLvl);
     if (entry.label) persistence.setLabel(name, entry.label);
-    return { ok: true, restarted: true, backend: created.backend || null, io: created.io || 'pty' };
+    return { ok: true, restarted: true, backend: created.backend || null, io: created.io || 'pty', noWire: created.noWire === true };
   } catch (err) {
     // Strip a checkout another seat took mid-restart through the manager; a second
     // tree-occupancy reader here would be a second source of truth.
@@ -1737,7 +1737,7 @@ async function applySessionArgs(name, patch = {}, wsId = DEFAULT_WORKSPACE_ID) {
     const argsLvl = stripLevelOf(beforeKill);
     if (argsLvl >= 1) persistence.setStripLevel(name, argsLvl);
     if (beforeKill.label) persistence.setLabel(name, beforeKill.label);
-    return { ok: true, restarted: true, backend: created.backend || null, io: created.io || 'pty' };
+    return { ok: true, restarted: true, backend: created.backend || null, io: created.io || 'pty', noWire: created.noWire === true };
   } catch (err) {
     // Strip the assembled object, not `beforeKill`: the spread is what reaches the
     // store, so stripping the source would be undone by it.

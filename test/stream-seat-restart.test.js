@@ -245,3 +245,30 @@ test('t1493: a model-only restart save on a stream seat whose saved io went pty 
   assert.strictEqual(seen.length, 1);
   assert.strictEqual(seen[0][24], 'pty');
 });
+
+test('a model change that also flips wire-off respawns instead of switching in place, and persists the flag', async () => {
+  const { eng, seen, calls } = modelSeat('sm-nowire', { ok: true });
+  const res = await eng.applySessionArgs('sm-nowire', DIALOG_PATCH(['--model', 'claude-sonnet-4-6', '--verbose'], { noWire: true }), 'default');
+  assert.strictEqual(res.restarted, true);
+  assert.strictEqual(res.modelSwitched, undefined);
+  assert.deepStrictEqual(calls.setModel, []);
+  assert.strictEqual(seen.length, 1);
+  assert.strictEqual(seen[0][20], true);
+  assert.strictEqual(eng.stores.persistence.get('sm-nowire').noWire, true);
+});
+
+for (const [label, run] of [
+  ['restartSession', (eng, n) => eng.restartSession(n, {}, 'default')],
+  ['applySessionArgs restart', (eng, n) => eng.applySessionArgs(n, { extraArgs: [], restart: true }, 'default')],
+]) {
+  test(`${label} returns the spawned seat's noWire so the sidebar badge follows it`, async () => {
+    const eng = mkEngine();
+    const name = `nw-${label.length}`;
+    eng.stores.persistence.upsert({ ...PTY_ENTRY(name), noWire: true });
+    liveSession(eng, name, PTY_ENTRY(name));
+    eng.manager.create = async (...args) => ({ name: args[0], backend: null, noWire: args[20] === true });
+    const res = await run(eng, name);
+    assert.strictEqual(res.restarted, true, 'ENTER: the seat respawned');
+    assert.strictEqual(res.noWire, true);
+  });
+}

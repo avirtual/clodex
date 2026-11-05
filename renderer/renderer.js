@@ -1071,7 +1071,7 @@ async function restartOrFailRow(name, opts, failLabel = 'Restart failed') {
     return res;
   }
   if (snap.type) {
-    rebuildLiveRow(name, snap, { io: res.io, backend: res.backend });
+    rebuildLiveRow(name, snap, { io: res.io, backend: res.backend, noWire: res.noWire });
     switchSession(name);
   }
   return res;
@@ -9692,7 +9692,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
   if (res.restarted) {
     if (source) source.onRestarted();
     else if (snap.type) {
-      rebuildLiveRow(name, { ...snap, account: snapAccount, noWire: noWire !== undefined ? noWire : snap.noWire, effort: effort !== undefined ? effort || null : snap.effort }, { io: res.io, backend: res.backend });
+      rebuildLiveRow(name, { ...snap, account: snapAccount, noWire: noWire !== undefined ? noWire : snap.noWire, effort: effort !== undefined ? effort || null : snap.effort }, { io: res.io, backend: res.backend, noWire: res.noWire });
       switchSession(name);
     }
   }

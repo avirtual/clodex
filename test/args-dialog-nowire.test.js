@@ -29,3 +29,8 @@ test('session:setArgs takes noWire as its trailing parameter and puts it on the 
   assert.match(ipcSrc, /handle\('session:setArgs', async \(e, [^)]*, mcpServers, noWire\) =>/);
   assert.match(ipcSrc, /plugins, io, effort, mcpServers, noWire,\s*\}, workspaceOfSender\(e\)\)/);
 });
+
+test('both restart rebuilds take noWire from the restart result', () => {
+  assert.match(rendererSrc, /rebuildLiveRow\(name, snap, \{ io: res\.io, backend: res\.backend, noWire: res\.noWire \}\)/);
+  assert.match(rendererSrc, /: snap\.effort \}, \{ io: res\.io, backend: res\.backend, noWire: res\.noWire \}\)/);
+});
