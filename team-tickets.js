@@ -2100,6 +2100,7 @@ function createTicketMethods(deps, shared) {
 
         // Revert first, escalate second: a red trunk blocks every ticket, so the undo is not a
         // question for the lead.
+        this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: `ticket ${ticketId} post-merge suite running on ${target}` });
         const suite = await this._runTicketSuite(team, ticket, team.root);
         const mergeSlowOwned = suite.ran && suite.slowOnly
           ? await this._slowTestsOwned(team, ticket, suite.slow, ownBase && ownBase.ok ? ownBase.sha : null)
@@ -5695,6 +5696,7 @@ function createTicketMethods(deps, shared) {
         this._stampSuiteSlow(team, ticketId, null);
         const runOpts = { onSpawn: (pid) => { ownPid = pid; this._stampRunnerPid(team, ticketId, pid); } };
         this._stampVerifyPhase(team, ticketId, { phase: 'suite', since: Date.now(), run: 1 });
+        this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: `ticket ${ticketId} verify: suite running on ${branch}` });
         let suite = await this._runTicketSuite(team, ticket, null, runOpts);
         let still = this._loadTicket(team, ticketId);
         if (!current(still)) { this._reapRunner(ticketId, suite.runnerPid); return; }
@@ -5703,6 +5705,7 @@ function createTicketMethods(deps, shared) {
         let slowOwned = [];
         if (suite.ran && !suite.slowOnly && !suite.green) {
           log.info('ticket', `ticket ${ticketId}: verify suite red (${suite.summary}) — re-measuring once`);
+          this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: `ticket ${ticketId} verify: suite red (${suite.summary}) — re-measuring` });
           this._stampVerifyPhase(team, ticketId, { phase: 'suite', since: Date.now(), run: 2 });
           const again = await this._runTicketSuite(team, ticket, null, runOpts);
           still = this._loadTicket(team, ticketId);
@@ -5779,6 +5782,7 @@ function createTicketMethods(deps, shared) {
           return;
         }
 
+        this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: `ticket ${ticketId} verify: suite green (${suite.summary}) — spawning reviewer` });
         this._stampVerifyPhase(team, ticketId, { phase: 'reviewer', since: Date.now() });
         this._setLoopStep(team, ticketId, 'review');
         atStep = 'review';

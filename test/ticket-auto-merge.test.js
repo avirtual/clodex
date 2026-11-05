@@ -434,6 +434,26 @@ test('an ACCEPT merges the branch into master with a merge commit', async () => 
     'and the working tree really carries the branch content');
 });
 
+test('the post-merge suite leaves a "post-merge suite running" traffic row before "merged:"', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  const bodies = f.broadcasts
+    .filter((b) => b.channel === 'ipc-message' && b.msg && b.msg.from === 'ticket-loop')
+    .map((b) => b.msg.body);
+  const running = bodies.findIndex((b) => b.startsWith('ticket t1 post-merge suite running on '));
+  const merged = bodies.findIndex((b) => b.startsWith('ticket t1 merged: '));
+  assert.ok(merged >= 0, `ENTER: the merge landed and was announced: ${JSON.stringify(bodies)}`);
+  assert.ok(running >= 0 && running < merged, `the running row precedes merged: ${JSON.stringify(bodies)}`);
+  assert.strictEqual(bodies[running], `ticket t1 post-merge suite running on ${git(repo.dir, ['rev-parse', '--abbrev-ref', 'HEAD'])}`);
+  const row = f.broadcasts.find((b) => b.msg && b.msg.body === bodies[running]).msg;
+  assert.strictEqual(row.type, 'task');
+  assert.strictEqual(row.to, f.team.lead);
+});
+
 test('the merge message names the ticket, the branch and the review rounds', async () => {
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
