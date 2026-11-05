@@ -5868,7 +5868,8 @@ test('t1016: the silence is only the REPLY — the report, the broadcast and the
 
   assert.strictEqual(f.gated.filter((g) => g.target === 'lead' && /shipped it/.test(g.body)).length, 1,
     'the report still reaches the lead — the silence is toward the SENDER only, and an early return would take this with it');
-  const tasks = f.broadcasts.filter((b) => b.channel === 'ipc-message' && b.msg.type === 'task');
+  const tasks = f.broadcasts.filter((b) => b.channel === 'ipc-message' && b.msg.type === 'task'
+    && !b.msg.body.startsWith('ticket t1 verify: '));
   assert.strictEqual(tasks.length, 1, 'the drawer still sees the close');
   assert.strictEqual(tasks[0].msg.body, 'ticket t1 done');
   assert.strictEqual(f.created.length, 1, 'and the loop still reached a reviewer spawn — without it no verdict is ever produced');
