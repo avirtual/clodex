@@ -118,3 +118,11 @@ The DEPLOY OK self-archive sends `session:context-action` `retired` BEFORE `arch
 ## _awakeAssistantRows
 
 An evicted victim needs no exclusion set: `archive` sets `s._archived` synchronously before its first await, and `_sleepNow` reaches `archive` without awaiting anything first, so the `s._archived` test already drops the victim before a second `makeAwakeRoom` counts rows.
+
+## _createReserved
+
+A clodent seat passes `cacheTtl` `1h` to `setupClaudeHook` unless its persistence record is `ephemeral` (minted by the ticket loop). Measured: 1h is −48% cost on idle standing seats and +35–42% on one-shot ones.
+
+## _requireClodentVersion
+
+Only a passing `clodent --version` is cached for the manager's life; a refusal re-probes on the next create, so installing clodent needs no app restart.
