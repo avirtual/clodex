@@ -5677,7 +5677,7 @@ function createTicketMethods(deps, shared) {
           this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: `ticket ${ticketId} verify: merge conflict — rejected` });
           const rejected = this._rejectTicketFromLoop(team, ticketId,
             `your branch does not merge cleanly into ${target} at ${targetSha || 'its tip'} — conflicting: ${defuseSenderLines(paths)}\n\n`
-            + `Rebase onto ${target} (or merge it in), resolve, run the suite, and close the ticket again. `
+            + `Rebase onto ${target} (or merge it in), resolve, run the suite, and close it again. `
             + 'No suite ran and no reviewer was spawned: a review of a branch that cannot merge is wasted.',
             { cause: 'merge conflict' });
           if (!rejected.ok) {
