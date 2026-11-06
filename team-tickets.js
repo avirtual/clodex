@@ -5656,6 +5656,36 @@ function createTicketMethods(deps, shared) {
           return;
         }
 
+        const target = await gitWorktree.mergeTargetFor(team, ticket).catch(() => null);
+        if (!target) {
+          fail('verify: merge-check', `could not resolve the merge target branch for ${team.name}`,
+            'ran mergeTargetFor; no suite, no reviewer', 'infra');
+          return;
+        }
+        this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: `ticket ${ticketId} verify: merge check against ${target}` });
+        const mc = await gitWorktree.mergeCheck(team.root, target, branch)
+          .catch((e) => ({ ok: false, error: e && e.message ? e.message : String(e) }));
+        if (!current(this._loadTicket(team, ticketId))) return;
+        if (!mc.ok) {
+          fail('verify: merge-check', `git merge-tree --write-tree --name-only ${target} ${branch} failed: ${mc.error}`,
+            'ran mergeCheck(target, branch); no suite, no reviewer', 'infra');
+          return;
+        }
+        if (!mc.clean) {
+          const targetSha = await gitWorktree.revParse(team.root, target).catch(() => null);
+          const paths = mc.conflicted.join(', ');
+          this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: `ticket ${ticketId} verify: merge conflict — rejected` });
+          const rejected = this._rejectTicketFromLoop(team, ticketId,
+            `your branch does not merge cleanly into ${target} at ${targetSha || 'its tip'} — conflicting: ${defuseSenderLines(paths)}\n\n`
+            + `Rebase onto ${target} (or merge it in), resolve, run the suite, and close the ticket again. `
+            + 'No suite ran and no reviewer was spawned: a review of a branch that cannot merge is wasted.');
+          if (!rejected.ok) {
+            fail('verify: merge-check', `${branch} does not merge cleanly into ${target} (conflicting: ${paths}) and the rework could not be sent back: ${rejected.error}`,
+              'ran mergeCheck(target, branch); no suite, no reviewer', rejected.reopened ? 'reopened' : 'hand');
+          }
+          return;
+        }
+
         // Resolve the destination before computing the diff: the check is a string match, the diff a git subprocess over the branch.
         // Missing and refused task dirs stay separate arms: one spec-formatting sentence for both is false for the refused path.
         const dest = this._ticketDiffDest(team, ticket);

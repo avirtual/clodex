@@ -16,6 +16,8 @@ blocks a release.
 
 ## Unreleased
 
+- A ticket that cannot merge cleanly into the trunk is rejected back to its hand at `task done`, with the conflicting paths, before the suite and the reviewer run; a CHANGELOG-only conflict still passes, since the merge resolves it.
+
 ## 5.163.0 — 2026-11-07
 
 - A context-pressure reminder: `[agent:remind on context 150k] text` (or `80%`) delivers the text once when the seat's context passes that size, so a seat can compact or clear itself with its own handoff at a chosen point.

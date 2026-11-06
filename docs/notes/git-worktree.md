@@ -43,3 +43,11 @@ Recovery on the host (git 2.52, tmp repo): `git worktree repair <tree>` fails ("
 ## deleteBranchIfAt
 
 `git update-ref -d` deletes a ref even while a worktree has it checked out (unlike `git branch -d/-D`), so the checked-out refusal is done here by reading `git worktree list` first.
+
+## mergeCheck
+
+`git merge-tree --write-tree` exits 1 for a conflict and anything else (128 for
+a bad ref) for a failure to run, so only exit 1 with a tree oid reads as a
+conflict; every other outcome is `ok:false`, an infra error, never a conflict.
+A conflict on `CHANGELOG.md` alone reads `clean:true, changelogOnly:true`:
+`mergeNoFf`'s `unionChangelogConflict` resolves that case at merge time.

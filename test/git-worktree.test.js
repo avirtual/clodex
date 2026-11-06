@@ -738,6 +738,57 @@ test('mergeNoFf: a merge that fails without conflicting reports through the old 
   assert.strictEqual(gitOut(repo, ['rev-parse', 'HEAD']), before, 'master did not move');
 });
 
+test('mergeCheck: a clean branch reads clean with the merged tree, and touches nothing', { skip: !gitAvailable() }, async () => {
+  const repo = makeChangelogRepo();
+  const trunk = gitOut(repo, ['rev-parse', '--abbrev-ref', 'HEAD']);
+  commitOn(repo, 'tl-1', { 'work.txt': 'the work\n' }, 'branch work');
+  commitOn(repo, trunk, { 'other.txt': 'master work\n' }, 'master work');
+  const before = gitOut(repo, ['rev-parse', 'HEAD']);
+
+  const r = await wt.mergeCheck(repo, trunk, 'tl-1');
+
+  assert.deepStrictEqual(Object.keys(r).sort(), ['clean', 'ok', 'tree']);
+  assert.deepStrictEqual([r.ok, r.clean], [true, true]);
+  assert.match(r.tree, /^[0-9a-f]{40,64}$/);
+  assert.strictEqual(gitOut(repo, ['rev-parse', 'HEAD']), before, 'the check moved no ref');
+  assert.strictEqual(gitOut(repo, ['status', '--porcelain']), '', 'and left the tree clean');
+});
+
+test('mergeCheck: a conflicting branch reads clean:false and names every conflicted path', { skip: !gitAvailable() }, async () => {
+  const repo = makeChangelogRepo();
+  const trunk = gitOut(repo, ['rev-parse', '--abbrev-ref', 'HEAD']);
+  commitOn(repo, 'tl-1', { 'a.txt': 'branch a\n', 'CHANGELOG.md': underUnreleased(CHANGELOG_BASE, '- **B.** b') }, 'branch');
+  commitOn(repo, trunk, { 'a.txt': 'master a\n', 'CHANGELOG.md': underUnreleased(CHANGELOG_BASE, '- **A.** a') }, 'master');
+
+  const r = await wt.mergeCheck(repo, trunk, 'tl-1');
+
+  assert.deepStrictEqual({ ok: r.ok, clean: r.clean, conflicted: r.conflicted, changelogOnly: r.changelogOnly },
+    { ok: true, clean: false, conflicted: ['CHANGELOG.md', 'a.txt'], changelogOnly: undefined });
+  assert.strictEqual(mergeHead(repo), '', 'no merge was started');
+});
+
+test('mergeCheck: a CHANGELOG-only conflict reads clean, flagged changelogOnly', { skip: !gitAvailable() }, async () => {
+  const repo = makeChangelogRepo();
+  const trunk = gitOut(repo, ['rev-parse', '--abbrev-ref', 'HEAD']);
+  commitOn(repo, 'tl-1', { 'CHANGELOG.md': underUnreleased(CHANGELOG_BASE, '- **B.** b'), 'work.txt': 'w\n' }, 'branch');
+  commitOn(repo, trunk, { 'CHANGELOG.md': underUnreleased(CHANGELOG_BASE, '- **A.** a') }, 'master');
+
+  const r = await wt.mergeCheck(repo, trunk, 'tl-1');
+
+  assert.deepStrictEqual({ ok: r.ok, clean: r.clean, changelogOnly: r.changelogOnly, conflicted: r.conflicted },
+    { ok: true, clean: true, changelogOnly: true, conflicted: ['CHANGELOG.md'] });
+});
+
+test('mergeCheck: an unresolvable target is ok:false, never a conflict', { skip: !gitAvailable() }, async () => {
+  const repo = makeChangelogRepo();
+
+  const r = await wt.mergeCheck(repo, 'no-such-trunk', 'tl-1');
+
+  assert.strictEqual(r.ok, false);
+  assert.ok(!('clean' in r), 'an infra failure carries no clean verdict');
+  assert.ok(r.error && r.error.length > 0, 'and carries git\'s error');
+});
+
 // t808 rider: `checkoutDetached` interpolates the caller's ref straight into a
 // `rev-parse` argv, and its input regex admits a leading dash (`-` is in the
 // class, so `--all` passes it). `--end-of-options` is what makes git read the
