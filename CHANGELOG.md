@@ -16,6 +16,8 @@ blocks a release.
 
 ## Unreleased
 
+- A context-pressure reminder: `[agent:remind on context 150k] text` (or `80%`) delivers the text once when the seat's context passes that size, so a seat can compact or clear itself with its own handoff at a chosen point.
+
 ## 5.162.0 — 2026-11-07
 
 - Wire off is editable in the session Edit dialog (local seats): a seat created wire-off can be put on wirescope at its next restart, and the reverse.

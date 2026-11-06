@@ -29,8 +29,8 @@
 //     from now — never a burst of back-dated fires, and recurring never
 //     double-fires at launch (the next slot is computed from `now`, not the
 //     stale one).
-//   * `on compact` schedules carry a null nextFireAt (no timer) — they fire only
-//     via fireCompactFor(), the event hook the compact rendezvous calls.
+//   * `on compact` / `on context` schedules carry a null nextFireAt (no timer) — they
+//     fire only via fireCompactFor() / fireContextFor(); see docs/notes for one-shot.
 //   * A record may carry a `ticket` binding (the spec's `for <id>` prefix).
 //     Nothing here fires on it; it is a selector for cancelForTicket, which the
 //     ticket close path calls.
@@ -150,7 +150,7 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
       }
       const nowMs = now();
       let first = null;
-      if (sched.kind !== 'oncompact') {
+      if (sched.kind !== 'oncompact' && sched.kind !== 'onctx') {
         first = nextFireAt(sched, nowMs);
         if (typeof first !== 'number') {
           return { ok: false, error: 'that time is already in the past' };
@@ -228,6 +228,21 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
       return recs.length;
     },
 
+    fireContextFor(agent, { tok = null, pct = null } = {}) {
+      const crossed = (r) => {
+        const s = this._schedFor(r);
+        if (!s) return false;
+        if (s.pct != null) return typeof pct === 'number' && pct >= s.pct;
+        return s.tok != null && typeof tok === 'number' && tok >= s.tok;
+      };
+      const recs = store.listForAgent(agent).filter((r) => r.kind === 'onctx' && crossed(r));
+      for (const rec of recs) {
+        this._deliver(rec);
+        store.remove(rec.id);
+      }
+      return recs.length;
+    },
+
     fireNow(agent, id) {
       const rec = store.get(id);
       if (!rec || rec.agent !== agent) return { ok: false, error: 'no such reminder' };
@@ -240,6 +255,9 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
       if (rec.kind === 'oncompact') {
         if (this._deliver(rec) === 'gone') store.remove(rec.id);
         else store.markFired(rec.id, nowMs, null);
+      } else if (rec.kind === 'onctx') {
+        this._deliver(rec);
+        store.remove(rec.id);
       } else {
         this._fireRecord(rec, nowMs);
       }

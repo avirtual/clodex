@@ -16,7 +16,7 @@
 //   at <HH:MM|ISO>     one-shot    — clock time (past today rolls to tomorrow)
 //                                     or an absolute ISO datetime
 //   cron <m h dom mon dow>  recurring — 5-field, subset: * fixed */step a-b a,b
-//   on compact         event       — fired by the compact rendezvous, not a timer
+//   on compact | on context <N>k|<N>|<N>%  event — compact rendezvous / ctx size, not a timer
 //   list               management  — enumerate this agent's schedules
 //   cancel <id>        management   — drop one schedule by id
 //
@@ -206,7 +206,22 @@ function parseSchedule(head, rest) {
 
     case 'on':
       if (rest.toLowerCase() === 'compact') return { ok: true, kind: 'oncompact' };
-      return err(`unknown remind form "on ${rest}" (did you mean "on compact"?)`);
+      {
+        const cm = rest.match(/^context\s+(\S+)$/i);
+        if (cm) {
+          const t = cm[1].toLowerCase();
+          let tm;
+          if ((tm = t.match(/^(\d+)%$/))) {
+            const pct = Number(tm[1]);
+            if (pct >= 1 && pct <= 100) return { ok: true, kind: 'onctx', tok: null, pct };
+          } else if ((tm = t.match(/^(\d+)(k?)$/))) {
+            const tok = Number(tm[1]) * (tm[2] ? 1000 : 1);
+            if (tok > 0) return { ok: true, kind: 'onctx', tok, pct: null };
+          }
+          return err(`bad context threshold "${cm[1]}" (use e.g. 150k, 200000 or 80%)`);
+        }
+      }
+      return err(`unknown remind form "on ${rest}" (did you mean "on compact" or "on context <N>k|<N>%"?)`);
 
     case 'every': {
       const ms = parseDuration(rest);
@@ -250,7 +265,7 @@ function parseSchedule(head, rest) {
 //   at     — clock form rolls to tomorrow when today's HH:MM has passed; ISO
 //            form fires once if still in the future, else null (past one-shot).
 //   cron   — the next matching local minute, searched up to ~366 days out.
-//   oncompact / list / cancel — null (no timer).
+//   oncompact / onctx / list / cancel — null (no timer).
 function nextFireAt(schedule, fromMs) {
   if (!schedule || !schedule.ok) return null;
   switch (schedule.kind) {
@@ -294,7 +309,7 @@ function nextFireAt(schedule, fromMs) {
     }
 
     default:
-      return null; // oncompact / list / cancel
+      return null; // oncompact / onctx / list / cancel
   }
 }
 

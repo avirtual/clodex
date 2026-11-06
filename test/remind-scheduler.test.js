@@ -220,6 +220,47 @@ test('on compact: no timer fire; fireCompactFor delivers and persists (recurring
   } finally { cleanup(); }
 });
 
+test('on context: fireContextFor fires once when crossed, then the record is gone', () => {
+  const { scheduler, clock, fires, store, cleanup } = freshEngine(T0);
+  try {
+    const r = scheduler.add('t1', 'on context 150k', 'compact now');
+    assert.strictEqual(r.ok, true);
+    assert.strictEqual(store.get(r.record.id).nextFireAt, null);
+    clock.advance(10 * HOUR);
+    assert.strictEqual(fires.length, 0);
+    assert.strictEqual(scheduler.fireContextFor('t1', { tok: 149999, pct: 70 }), 0);
+    assert.strictEqual(fires.length, 0);
+    assert.strictEqual(scheduler.fireContextFor('t2', { tok: 999999, pct: 99 }), 0);
+    assert.strictEqual(scheduler.fireContextFor('t1', { tok: 150000, pct: 75 }), 1);
+    assert.deepStrictEqual(fires, [{ agent: 't1', id: r.record.id, spec: 'on context 150k', body: 'compact now' }]);
+    assert.strictEqual(store.get(r.record.id), null);
+    assert.strictEqual(scheduler.fireContextFor('t1', { tok: 160000, pct: 80 }), 0);
+    assert.strictEqual(fires.length, 1);
+  } finally { cleanup(); }
+});
+
+test('on context: a percent record is not crossed by a tok-only read, only by pct', () => {
+  const { scheduler, fires, store, cleanup } = freshEngine(T0);
+  try {
+    const r = scheduler.add('t1', 'on context 80%', 'clear');
+    assert.strictEqual(scheduler.fireContextFor('t1', { tok: 900000, pct: null }), 0);
+    assert.strictEqual(scheduler.fireContextFor('t1', { tok: 900000, pct: 79 }), 0);
+    assert.ok(store.get(r.record.id), 'ENTER: still armed below its pct');
+    assert.strictEqual(scheduler.fireContextFor('t1', { tok: 1, pct: 80 }), 1);
+    assert.strictEqual(fires.length, 1);
+    assert.strictEqual(store.get(r.record.id), null);
+  } finally { cleanup(); }
+});
+
+test('on context: a tok record is not crossed by a pct-only read', () => {
+  const { scheduler, fires, cleanup } = freshEngine(T0);
+  try {
+    scheduler.add('t1', 'on context 150k', 'x');
+    assert.strictEqual(scheduler.fireContextFor('t1', { tok: null, pct: 100 }), 0);
+    assert.strictEqual(fires.length, 0);
+  } finally { cleanup(); }
+});
+
 test('start() coalesces missed + arms live, across a mix of schedule kinds', () => {
   const { scheduler, clock, fires, store, cleanup } = freshEngine(T0);
   try {
@@ -457,6 +498,16 @@ function fireNowEngine(startMs) {
     },
   };
 }
+
+test('fireNow: an on context row delivers once and is removed', () => {
+  const { scheduler, delivered, store, cleanup } = fireNowEngine(T0);
+  try {
+    const r = scheduler.add('t1', 'on context 80%', 'clear with a briefing');
+    assert.deepStrictEqual(scheduler.fireNow('t1', r.record.id), { ok: true, kept: false });
+    assert.deepStrictEqual(delivered, [{ agent: 't1', id: r.record.id, spec: 'on context 80%', body: 'clear with a briefing', by: undefined }]);
+    assert.strictEqual(store.get(r.record.id), null);
+  } finally { cleanup(); }
+});
 
 test('fireNow: a one-shot delivers once and is spent', () => {
   const { scheduler, clock, delivered, store, cleanup } = fireNowEngine(T0);

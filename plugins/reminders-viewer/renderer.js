@@ -4,6 +4,10 @@ const PREVIEW_CHARS = 60;
 
 function fmtNextFire(row, timeZone) {
   if (!row || row.kind === 'oncompact') return 'on compact';
+  if (row.kind === 'onctx') {
+    const m = String(row.spec || '').match(/\bon\s+context\s+(\S+)/i);
+    return m ? `on context ≥ ${m[1].toLowerCase()}` : 'on context';
+  }
   if (typeof row.nextFireAt !== 'number' || !Number.isFinite(row.nextFireAt)) return '';
   const fmt = new Intl.DateTimeFormat('en-US', {
     timeZone,
