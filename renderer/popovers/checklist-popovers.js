@@ -16,7 +16,7 @@ const {
   renderBuiltinChecklist, collectBuiltinChecklist, wireBulkToggles,
   renderIntentChecklist, collectIntentChecklist,
   renderPluginChecklist, collectPluginChecklist,
-  setClaudeToolsCache, setSkillLibCache, setAgentLibCache, getSkillLibCache,
+  setClaudeToolsCache, toolListFor, setSkillLibCache, setAgentLibCache, getSkillLibCache,
   setIntentCatalogCache, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf,
 } = require('../lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../../scope-util');
@@ -88,7 +88,7 @@ function initChecklistPopovers({ restartOrFailRow, refreshSidebarMeta, seatPlugi
       window.api.getSessionArgs(name),
     ]);
     if (!res || !res.ok) { alert('Session not found in persistence.'); return; }
-    setClaudeToolsCache(settings?.claudeTools || []);
+    setClaudeToolsCache(toolListFor(settings, typeof getSessionType === 'function' ? getSessionType(name) : null));
     toolsPersisted = res.disabledTools || [];
     toolsRendered = renderToolChecklist(popoverToolsList, new Set(toolsPersisted), res.effectiveTools || {});
     toolsPopoverRestart.checked = false;

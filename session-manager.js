@@ -542,7 +542,7 @@ function findPeerByOrigin(peers, origin) {
 const { speakable } = require('./speakable');
 const { proseVerdictNeedsNudge, PROSE_VERDICT_NUDGE } = require('./verdict-nudge');
 const { isFilingVerb, stepTicketClaims } = require('./ticket-claim-nudge');
-const { expandSkillsOff } = require('./skills-off');
+const { expandSkillsOff, SKILL_PLUGIN_NAME } = require('./skills-off');
 const { randomUUID } = require('crypto');
 const nodeCrypto = require('crypto');
 const nodeNet = require('net');
@@ -1963,14 +1963,28 @@ function createSessionManager(deps) {
           const agentRecords = effectiveInjectedAgents(name, agents);
           const injectedAgents = [];
           const injectedSkills = [];
-          if (!args.includes('--agents')) {
+          let clodentCatalog = null;
+          if (!claudeCode) {
+            cleanupAgentPlugin(name);
+            if (!userPluginDir) {
+              const candidates = [...librarySkills, ...bundleSkills(seatBundles())];
+              const off = new Set(expandSkillsOff(Array.isArray(disabledSkills) ? disabledSkills : [], {
+                known: candidates.flatMap((r) => [r.name, `${SKILL_PLUGIN_NAME}:${r.name}`]),
+                injectSkills,
+              }));
+              const records = candidates.filter((r) => !off.has(r.name) && !off.has(`${SKILL_PLUGIN_NAME}:${r.name}`));
+              clodentCatalog = deliverSkills('clodent', name, records);
+            } else {
+              cleanupSkills('clodent', name);
+            }
+          } else if (!args.includes('--agents')) {
             const agentPluginDir = writeAgentPlugin(name, agents);
             if (agentPluginDir) args.push('--plugin-dir', agentPluginDir);
             for (const rec of agentRecords) injectedAgents.push({ ...rec, qualified: qualifiedAgentName(rec.name) });
           } else {
             cleanupAgentPlugin(name);
           }
-          if (!userPluginDir) {
+          if (claudeCode && !userPluginDir) {
             const delivery = deliverSkills('claude', name, librarySkills);
             if (delivery) args.push(...delivery.args);
             for (const rec of librarySkills) injectedSkills.push({ ...rec });
@@ -1983,7 +1997,7 @@ function createSessionManager(deps) {
             } catch (e) {
               warnings.push(`Plugin-owned skills and agents could not be scaffolded for this session: ${(e && e.message) || e}`);
             }
-          } else {
+          } else if (claudeCode) {
             cleanupSkills('claude', name);
           }
           for (const rec of injectedAgents) {
@@ -2052,7 +2066,7 @@ function createSessionManager(deps) {
           // without them the write ENOENTs and the seat is exempt from the seat layout (ensureSeatLink never adopts a real legacy dir).
           ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'run', fs });
           ensureDir(runDirFor(REGISTRY_DIR, name));
-          fs.writeFileSync(promptPath, baked, { mode: 0o600 });
+          fs.writeFileSync(promptPath, clodentCatalog && clodentCatalog.instructions ? `${baked}\n\n${clodentCatalog.instructions}\n` : baked, { mode: 0o600 });
           args.push('--append-system-prompt-file', promptPath);
           if (resumeId && adapterFor(type).account.defaultDir) {
             try { resumedTranscriptAt = fs.statSync(this._claudeTranscriptPath(cwd || process.env.HOME || os.homedir(), accountDir, resumeId, type)).mtimeMs; } catch {}

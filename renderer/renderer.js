@@ -54,7 +54,7 @@ const { dropText } = require('./lib/drop-paths');
 const { composerReadlineEdit, composerHeightFor, isAttachKey } = require('./lib/composer-keys');
 const { slashQuery, filterCommands, slashMenuKey } = require('./lib/composer-slash');
 const { turnSeg, reqSeg, costSeg } = require('./lib/turn-stat');
-const { renderAppendChecklist, collectAppendChecklist, appendRepaintTicks, mergeUnrendered, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderMcpChecklist, collectMcpChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setMcpLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require('./lib/checklists');
+const { renderAppendChecklist, collectAppendChecklist, appendRepaintTicks, mergeUnrendered, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderMcpChecklist, collectMcpChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setMcpLibCache, setIntentCatalogCache, setClaudeToolsCache, toolListFor, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require('./lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../scope-util');
 const { parseSkillFrontmatter } = require('../skills-util');
 const skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
@@ -3565,6 +3565,7 @@ function newSessionSkillDenyList() {
 }
 async function refreshNewSessionTools(disabledSet = null, { forTemplate = false } = {}) {
   if (!capsFor(inputType.value).tools) return;
+  if (dialogHostSettings && currentPlacement() === 'host') setClaudeToolsCache(toolListFor(dialogHostSettings, inputType.value));
   const cwd = expandPath(inputCwd.value.trim()) || homeDir;
   const res = await window.api.getToolCatalogFor(cwd);
   const disabled = disabledSet || new Set(getDefaultToolDenyCache());
@@ -3827,7 +3828,7 @@ function populateHostCatalogs(settings, agentLib) {
   refreshNewSessionExecCommands(currentOr('execCommands', collectExecChecklist, inputExecList, new Set()));
   refreshNewSessionMcpServers(currentOr('mcpServers', collectMcpChecklist, inputMcpList, new Set()));
   refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
-  setClaudeToolsCache(settings?.claudeTools || []);
+  setClaudeToolsCache(toolListFor(settings, inputType.value));
   setDefaultToolDenyCache(settings?.defaultToolDeny || []);
   setDefaultSkillDenyCache(settings?.defaultSkillDeny || []);
   setDefaultBuiltinDenyCache(settings?.defaultBuiltinDeny || []);
@@ -4347,7 +4348,7 @@ async function openTemplateEditor(tpl = null, bundle = null, teamOwner = null) {
   formRendered = {};
   applyTypeDefaults({ skipAsyncRefresh: true });
   const settings = await window.api.getSettings();
-  setClaudeToolsCache(settings?.claudeTools || []);
+  setClaudeToolsCache(toolListFor(settings, inputType.value));
   setDefaultToolDenyCache(settings?.defaultToolDeny || []);
   setDefaultSkillDenyCache(settings?.defaultSkillDeny || []);
   setDefaultBuiltinDenyCache(settings?.defaultBuiltinDeny || []);
@@ -9543,7 +9544,7 @@ async function openArgsDialog(name, argsSource = null) {
   argsBuiltinsRendered = renderBuiltinChecklist(argsBuiltinsList, new Set(res.denyBuiltins || []));
   argsToolsRow.style.display = caps.tools ? '' : 'none';
   argsToolsSection.style.display = caps.tools ? '' : 'none';
-  setClaudeToolsCache(settings?.claudeTools || []);
+  setClaudeToolsCache(toolListFor(settings, res.type));
   argsToolsPersisted = res.disabledTools || [];
   argsToolsRendered = renderToolChecklist(argsToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
   argsIntentsSection.style.display = isAgent ? '' : 'none';

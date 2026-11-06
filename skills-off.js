@@ -71,5 +71,5 @@ function expandSkillsOff(disabledSkills, { known = [], injectSkills = [] } = {})
 
 module.exports = {
   expandSkillsOff, deferredSkillDeny, skillOffSetFor, applySkillAliases,
-  skillDenyKeepList, skillDenyIsDeferred, isSkillDenyDirective, skillDenyForPeer,
+  skillDenyKeepList, skillDenyIsDeferred, isSkillDenyDirective, skillDenyForPeer, SKILL_PLUGIN_NAME,
 };

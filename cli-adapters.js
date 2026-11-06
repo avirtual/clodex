@@ -1,5 +1,7 @@
 'use strict';
 
+const { CLAUDE_TOOLS, CLODENT_TOOLS } = require('./catalogs');
+
 const MODEL_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9.-]{0,63}(?:\[[a-z0-9]{1,8}\])?$/;
 
 const META_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
@@ -37,6 +39,7 @@ const ADAPTERS = {
     readOnlyCap: { enforce: 'tool-denylist' },
     seatSettings: null,
     skills: null,
+    tools: CLAUDE_TOOLS,
     instructions: 'append-system-prompt-file',
     transcript: { reader: 'claude', link: 'hook' },
     caps: { park: true, transcript: true, warmth: true, claudeHooks: true },
@@ -66,6 +69,7 @@ const ADAPTERS = {
     readOnlyCap: { enforce: 'argv', args: ['--sandbox', 'read-only', '--ask-for-approval', 'never'], shortFlags: { '-s': '--sandbox', '-a': '--ask-for-approval' } },
     seatSettings: null,
     skills: null,
+    tools: null,
     instructions: 'model-instructions-file',
     transcript: { reader: 'codex', link: 'clodex' },
     caps: { park: false, transcript: true, warmth: false, claudeHooks: false },
@@ -123,6 +127,7 @@ const ADAPTERS = {
       },
       activation: { key: 'skills.activation', off: 'off' },
     },
+    tools: null,
     instructions: 'user-agents-md',
     transcript: { reader: 'muse', link: 'clodex' },
     caps: { park: false, transcript: true, warmth: false, claudeHooks: false },
@@ -160,16 +165,17 @@ const ADAPTERS = {
     readOnlyCap: { enforce: 'argv', args: ['--permission-mode', 'plan'], aliases: ['--read-only'], denylist: true, note: 'read-only (clodent plan mode: permission rules and a Bash path guard, not an OS sandbox)' },
     seatSettings: null,
     skills: null,
+    tools: CLODENT_TOOLS,
     instructions: 'append-system-prompt-file',
     transcript: { reader: 'claude', link: 'hook' },
     caps: { park: false, transcript: true, warmth: false, claudeHooks: true },
     stream: CLAUDE_STREAM,
     ui: {
-      injectSkills: false,
+      injectSkills: true,
       skillRoster: false,
-      plugins: false,
+      plugins: true,
       agents: false,
-      tools: false,
+      tools: true,
       strip: false,
       autoCompact: false,
       noWire: true,
@@ -253,6 +259,11 @@ function accountEnvKey(type) {
 function capsFor(type) {
   const a = adapterFor(type);
   return a ? a.ui : NO_CAPS;
+}
+
+function toolsFor(type) {
+  const a = adapterFor(type);
+  return a ? a.tools : null;
 }
 
 function streamFor(type) {
@@ -353,6 +364,6 @@ function splitPrivilegedArgs(argv) {
 
 module.exports = {
   ADAPTERS, PLATFORMS, DEFAULT_TYPE, CAP_KEYS,
-  adapterFor, isAgentType, capsFor, accountEnvKey, runsClaudeHooks, streamFor, seatType, resolveModelId, resolveEffort, stripModelArgs, hasBypass, hasReadOnlyCap, postureOf,
+  adapterFor, isAgentType, capsFor, toolsFor, accountEnvKey, runsClaudeHooks, streamFor, seatType, resolveModelId, resolveEffort, stripModelArgs, hasBypass, hasReadOnlyCap, postureOf,
   PRIVILEGED_FLAG_ARITY, splitPrivilegedArgs,
 };

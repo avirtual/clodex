@@ -75,6 +75,10 @@ function setIntentCatalogCache(v) { intentCatalogCache = Array.isArray(v) ? v : 
 function setPluginCatalogCache(v) { pluginCatalogCache = Array.isArray(v) ? v : []; }
 function getPluginCatalogCache() { return pluginCatalogCache; }
 function setClaudeToolsCache(v) { claudeToolsCache = v; }
+function toolListFor(settings, type) {
+  const list = settings && settings.toolsByType ? settings.toolsByType[type] : null;
+  return Array.isArray(list) ? list : ((settings && settings.claudeTools) || []);
+}
 function setDefaultToolDenyCache(v) { defaultToolDenyCache = v; }
 function setDefaultSkillDenyCache(v) { defaultSkillDenyCache = v; }
 function setDefaultBuiltinDenyCache(v) { defaultBuiltinDenyCache = v; }
@@ -621,7 +625,7 @@ module.exports = {
   setIntentCatalogCache,
   setPluginCatalogCache,
   getPluginCatalogCache,
-  setClaudeToolsCache, setDefaultToolDenyCache,
+  setClaudeToolsCache, toolListFor, setDefaultToolDenyCache,
   setDefaultSkillDenyCache, setDefaultBuiltinDenyCache,
   getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache,
   getDefaultSkillDenyCache, getDefaultBuiltinDenyCache,

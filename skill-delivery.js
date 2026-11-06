@@ -80,7 +80,7 @@ function deliverMuse(deps, name, records) {
   return { args: [], instructions: null, skillsDir: tree.skillsRoot };
 }
 
-const ADAPTERS = { claude: deliverClaude, codex: deliverCodex, muse: deliverMuse };
+const ADAPTERS = { claude: deliverClaude, codex: deliverCodex, muse: deliverMuse, clodent: deliverCodex };
 
 function createSkillDelivery(deps) {
   return {
