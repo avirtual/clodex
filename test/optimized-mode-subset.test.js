@@ -137,7 +137,7 @@ async function runDialog(settings, { type = 'claude', openIn, switchTo } = {}) {
       renderToolChecklist: checklists.renderToolChecklist,
       renderSkillChecklist: checklists.renderSkillChecklist,
       renderBuiltinChecklist: checklists.renderBuiltinChecklist,
-      setClaudeToolsCache: checklists.setClaudeToolsCache,
+      setClaudeToolsCache: checklists.setClaudeToolsCache, toolListFor: checklists.toolListFor, dialogHostSettings: null, currentPlacement: () => 'host',
       setDefaultToolDenyCache: checklists.setDefaultToolDenyCache,
       setDefaultSkillDenyCache: checklists.setDefaultSkillDenyCache,
       setDefaultBuiltinDenyCache: checklists.setDefaultBuiltinDenyCache,
