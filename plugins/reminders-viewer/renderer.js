@@ -89,7 +89,7 @@ module.exports.activate = (rhost) => {
     const compose = el('div', 'rv-compose');
     const seatSel = el('select', 'rv-compose-seat');
     const specIn = el('input', 'rv-compose-spec');
-    specIn.placeholder = 'every 1h | in 45m | at 14:30 | cron 0 9 * * *';
+    specIn.placeholder = 'every 1h | in 45m | at 14:30 | cron 0 9 * * * | on compact | on context 150k';
     const textIn = el('textarea', 'rv-compose-text');
     textIn.placeholder = '[agent:context clear] Fresh start: …';
     const addBtn = el('button', 'rv-add', '+ reminder');
