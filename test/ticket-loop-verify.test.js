@@ -1803,7 +1803,9 @@ test('a branch that conflicts with the trunk is rejected to the hand before the 
   assert.deepStrictEqual(events.map((e) => (e === 'SPAWN' ? e : e.body)), [
     'ticket t1 verify: merge check against master',
     'ticket t1 verify: merge conflict — rejected',
+    'ticket t1 rejected: merge conflict',
   ]);
+  assert.deepStrictEqual((f.one().events || []).filter((e) => e.kind === 'reject').map((e) => e.cause), ['merge conflict']);
   const t = f.one();
   assert.strictEqual(t.state, 'open', 'the ticket is reopened for rework');
   assert.ok(!t.verifyHold, 'and no hold is stamped');

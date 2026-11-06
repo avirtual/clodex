@@ -5678,7 +5678,8 @@ function createTicketMethods(deps, shared) {
           const rejected = this._rejectTicketFromLoop(team, ticketId,
             `your branch does not merge cleanly into ${target} at ${targetSha || 'its tip'} — conflicting: ${defuseSenderLines(paths)}\n\n`
             + `Rebase onto ${target} (or merge it in), resolve, run the suite, and close the ticket again. `
-            + 'No suite ran and no reviewer was spawned: a review of a branch that cannot merge is wasted.');
+            + 'No suite ran and no reviewer was spawned: a review of a branch that cannot merge is wasted.',
+            { cause: 'merge conflict' });
           if (!rejected.ok) {
             fail('verify: merge-check', `${branch} does not merge cleanly into ${target} (conflicting: ${paths}) and the rework could not be sent back: ${rejected.error}`,
               'ran mergeCheck(target, branch); no suite, no reviewer', rejected.reopened ? 'reopened' : 'hand');
