@@ -1776,6 +1776,78 @@ test('a red suite rejects to the hand and spawns NO reviewer', async () => {
   assert.strictEqual(t.closedAt, null, 'reopening clears the close stamp, exactly as _taskReject does');
 });
 
+function conflictOnMaster(repo) {
+  commitOnBranch(repo.dir, 'tl-1', 'base.txt', 'the branch version\n');
+  commitOnBranch(repo.dir, 'master', 'base.txt', 'the master version\n');
+}
+
+test('a branch that conflicts with the trunk is rejected to the hand before the suite runs', async () => {
+  const repo = mkRepo();
+  conflictOnMaster(repo);
+  const f = mkLoop({ repo, suite: 'flaky' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  const events = traceLoopRows(f);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(runCount(repo), 0, 'the suite never ran');
+  assert.strictEqual(f.created.length, 0, 'no reviewer is spawned');
+  assert.deepStrictEqual(f.esc(), [], 'a conflict is rework, not an escalation');
+  const sent = f.gated.filter((g) => /rejected/.test(g.body));
+  assert.strictEqual(sent.length, 1, 'ENTER: exactly one rejection was delivered');
+  assert.strictEqual(sent[0].target, 'team-hand');
+  const masterSha = git(repo.dir, ['rev-parse', 'master']);
+  assert.ok(sent[0].body.includes(`your branch does not merge cleanly into master at ${masterSha} — conflicting: base.txt`), sent[0].body);
+  assert.match(sent[0].body, /No suite ran and no reviewer was spawned/);
+  assert.deepStrictEqual(events.map((e) => (e === 'SPAWN' ? e : e.body)), [
+    'ticket t1 verify: merge check against master',
+    'ticket t1 verify: merge conflict — rejected',
+    'ticket t1 rejected: merge conflict',
+  ]);
+  assert.deepStrictEqual((f.one().events || []).filter((e) => e.kind === 'reject').map((e) => e.cause), ['merge conflict']);
+  const t = f.one();
+  assert.strictEqual(t.state, 'open', 'the ticket is reopened for rework');
+  assert.ok(!t.verifyHold, 'and no hold is stamped');
+});
+
+test('a merge check git cannot run holds the ticket as infra, with no suite and no reject', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkLoop({
+    repo, suite: 'flaky',
+    wrapGit: (gw) => ({ ...gw, mergeCheck: async () => ({ ok: false, error: 'fatal: merge-tree exploded' }) }),
+  });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(runCount(repo), 0, 'the suite never ran');
+  assert.strictEqual(f.created.length, 0);
+  assert.strictEqual(f.gated.filter((g) => /rejected/.test(g.body)).length, 0, 'an infra error is not a conflict');
+  const t = f.one();
+  assert.strictEqual(t.state, 'done');
+  assert.strictEqual(t.verifyHold && t.verifyHold.recovery, 'infra');
+  assert.strictEqual(t.verifyHold.step, 'verify: merge-check');
+  assert.match(t.verifyHold.evidence, /merge-tree exploded/);
+});
+
+test('a branch that merges cleanly over a moved trunk proceeds to the suite and the reviewer', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  commitOnBranch(repo.dir, 'master', 'other.txt', 'master moved\n');
+  const f = mkLoop({ repo, suite: 'flaky' });
+  f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+
+  await f.m._runTicketLoop(f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+
+  assert.strictEqual(runCount(repo), 2, 'the suite ran');
+  assert.strictEqual(f.created.length, 1, 'and the reviewer was spawned');
+  assert.strictEqual(f.gated.filter((g) => /rejected/.test(g.body)).length, 0);
+});
+
 test('an UNOWNED slow gate reaches the reviewer, with the names on the ticket and in the scope', async () => {
   const repo = mkRepo();
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
@@ -1996,6 +2068,7 @@ test('a green verify leaves "suite running" then "suite green" traffic rows befo
   assert.strictEqual(f.created.length, 1, 'ENTER: the reviewer was spawned');
   const shape = events.map((e) => (e === 'SPAWN' ? e : e.body.replace(/\(.*\)/, '(…)')));
   assert.deepStrictEqual(shape, [
+    'ticket t1 verify: merge check against master',
     'ticket t1 verify: suite running on tl-1',
     'ticket t1 verify: suite green (…) — spawning reviewer',
     'SPAWN',
@@ -2018,12 +2091,13 @@ test('a red-then-green verify puts the "re-measuring" row between running and gr
 
   assert.strictEqual(runCount(repo), 2, 'ENTER: the suite ran twice');
   const bodies = events.map((e) => (e === 'SPAWN' ? e : e.body));
-  assert.strictEqual(bodies.length, 4, `four events: ${JSON.stringify(bodies)}`);
-  assert.ok(bodies[0].startsWith('ticket t1 verify: suite running on tl-1'), bodies[0]);
-  assert.strictEqual(bodies[1], 'ticket t1 verify: suite red (3/5 passing, 2 failing (exit 1)) — re-measuring');
-  assert.ok(bodies[2].startsWith('ticket t1 verify: suite green ('), bodies[2]);
-  assert.ok(bodies[2].endsWith(') — spawning reviewer'), bodies[2]);
-  assert.strictEqual(bodies[3], 'SPAWN');
+  assert.strictEqual(bodies.length, 5, `five events: ${JSON.stringify(bodies)}`);
+  assert.strictEqual(bodies[0], 'ticket t1 verify: merge check against master');
+  assert.ok(bodies[1].startsWith('ticket t1 verify: suite running on tl-1'), bodies[1]);
+  assert.strictEqual(bodies[2], 'ticket t1 verify: suite red (3/5 passing, 2 failing (exit 1)) — re-measuring');
+  assert.ok(bodies[3].startsWith('ticket t1 verify: suite green ('), bodies[3]);
+  assert.ok(bodies[3].endsWith(') — spawning reviewer'), bodies[3]);
+  assert.strictEqual(bodies[4], 'SPAWN');
 });
 
 test('a round-1 re-measure stamp does not ride into round 2', async () => {

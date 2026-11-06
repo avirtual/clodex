@@ -800,6 +800,24 @@ async function mergeNoFf(cwd, branch, messageFile) {
   };
 }
 
+async function mergeCheck(cwd, target, branch) {
+  if (!target) return { ok: false, error: 'no merge target given' };
+  if (!branch) return { ok: false, error: 'no branch given' };
+  const r = await git(cwd, ['merge-tree', '--write-tree', '--name-only', target, branch]);
+  const lines = (r.stdout || '').split('\n');
+  const tree = (lines[0] || '').trim();
+  if (r.code === 0 && tree) return { ok: true, clean: true, tree };
+  if (r.code === 1 && tree) {
+    const end = lines.indexOf('', 1);
+    const conflicted = [...new Set(lines.slice(1, end === -1 ? undefined : end).map((s) => s.trim()).filter(Boolean))];
+    if (conflicted.length === 1 && conflicted[0] === 'CHANGELOG.md') {
+      return { ok: true, clean: true, changelogOnly: true, tree, conflicted };
+    }
+    return { ok: true, clean: false, tree, conflicted };
+  }
+  return { ok: false, code: r.code, error: (r.stderr || r.stdout || '').trim() || `git merge-tree exited ${r.code}` };
+}
+
 // Undo a MERGE commit. `-m 1` is not optional and not a default: git refuses to
 // revert a merge without a mainline, so omitting it turns the undo into an
 // error at exactly the moment the tree is broken and the undo is the only way
@@ -823,6 +841,6 @@ async function revertCommit(cwd, sha) {
 module.exports = {
   repoToplevel, createWorktree, removeWorktree, isDirty, defaultWorktreePath,
   defaultBranch, defaultBranchSync, mergeTargetFor, mergeTargetForSync, localBranches, repoInfo, listWorktrees, commitsOnBranch, isMerged, deleteBranch, deleteBranchIfAt,
-  diffText, diffNames, mergeBase, fileAt, currentBranch, mergeNoFf, revertCommit, initRepo, hasCommit,
+  diffText, diffNames, mergeBase, fileAt, currentBranch, mergeNoFf, mergeCheck, revertCommit, initRepo, hasCommit,
   checkoutDetached, headSha, headShaSync, headLogSync, revParse, refState, relativizeWorktreePointers,
 };

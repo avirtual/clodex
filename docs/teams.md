@@ -385,6 +385,7 @@ run that SUCCEEDED loses its report and keeps holding whatever lock it took.
 
 ### 3. The merge gate wants `scripts/run-tests.js`
 
+A merge precheck comes first: `git merge-tree` against the trunk, and a branch that does not merge cleanly is rejected to its hand with the conflicting paths before any suite runs (a CHANGELOG-only conflict passes, since the merge unions it); the traffic rows are `verify: merge check against <trunk>` and, on a conflict, `verify: merge conflict — rejected`.
 Before a closed ticket reaches a reviewer, the loop runs the branch's own test
 suite — a full run, in the ticket's worktree. Order is deliberate: a cold
 review is expensive, and paying it for a branch that fails its own suite is the
