@@ -37,7 +37,7 @@ function mk() {
 const catalogLines = (block) => block.split('\n').filter((l) => l.startsWith('- '));
 
 test('t747: providers() names exactly the CLIs that have an adapter', () => {
-  assert.deepStrictEqual(mk().delivery.providers(), ['claude', 'codex', 'muse']);
+  assert.deepStrictEqual(mk().delivery.providers(), ['claude', 'codex', 'muse', 'clodent']);
 });
 
 test('t747: a provider with no adapter delivers nothing and cleans up nothing', () => {

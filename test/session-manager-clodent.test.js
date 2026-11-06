@@ -14,11 +14,14 @@ const { pathFor: pathForReal, runDirFor: runDirForReal } = require('../clodex-pa
 const { mergeClaudeSystemPrompt, mergeInstructionBodies } = require('../argv-merge');
 const { classifyNotification } = require('../attention');
 const { createCliHooks } = require('../cli-hooks');
+const { createSkillDelivery, CATALOG_INTRO } = require('../skill-delivery');
+const { confine } = require('../path-confine');
+const { buildSkillPlugin, skillMd, parseSkillFrontmatter } = require('../skills-util');
 
 const RESUME = '6a1f0c2e-1111-4222-8333-944455556666';
 const WIRE_BASE = 'http://127.0.0.1:9/wire';
 
-function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entries = {}, probeClodentVersion = () => 'clodent 0.5.2\n', wire = false } = {}) {
+function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entries = {}, probeClodentVersion = () => 'clodent 0.5.2\n', wire = false, library = null } = {}) {
   const root = mkTmpRoot('clodex-clodent-');
   const home = pathReal.join(root, 'home');
   fsReal.mkdirSync(home, { recursive: true });
@@ -33,6 +36,11 @@ function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entrie
   const skillCalls = [];
   const mcpWrites = [];
   const cleanups = [];
+  const skillPluginsDir = pathReal.join(root, 'skill-plugins');
+  const realDelivery = library ? createSkillDelivery({
+    fs: fsReal, path: pathReal, confine, ensureDir: (d) => fsReal.mkdirSync(d, { recursive: true }), SKILL_PLUGINS_DIR: skillPluginsDir,
+    SKILL_PLUGIN_NAME: 'clodex-skills', buildSkillPlugin, skillMd, parseSkillFrontmatter,
+  }) : null;
   const SessionManager = createSessionManager({
     killPid: processStubs().killPid,
     knownSkillNames: () => [],
@@ -60,9 +68,9 @@ function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entrie
     unionEnabled: () => [],
     writeAgentPlugin: (name) => pathReal.join(root, 'agent-plugins', name),
     effectiveInjectedAgents: () => [],
-    deliverSkills: (provider, name, records) => { skillCalls.push([provider, name, records.length]); return null; },
-    skillDeliveryProviders: () => ['claude', 'codex', 'muse'],
-    getPluginBundles: () => [{ id: 'bundle-a', shipped: true, skills: [], agents: [] }],
+    deliverSkills: (provider, name, records) => { skillCalls.push([provider, name, records.length]); return realDelivery ? realDelivery.deliver(provider, name, records) : null; },
+    skillDeliveryProviders: () => (realDelivery ? realDelivery.providers() : ['claude', 'codex', 'muse']),
+    getPluginBundles: () => [{ id: 'bundle-a', shipped: true, skills: library ? library.bundleSkills : [], agents: [] }],
     writeBundlePlugins: (name, bundles) => bundles.map((b) => ({ dir: pathReal.join(root, 'bundles', name, b.id), skills: [], agents: [] })),
     cleanupSkills: (provider, name) => { cleanups.push(['skills', provider, name]); }, cleanupClaudeHook: (name) => { cleanups.push(['hook', name]); }, cleanupCodexHook: () => {}, cleanupAgentPlugin: (name) => { cleanups.push(['agents', name]); }, cleanupMuseSeat: () => {},
     writeMcpConfig: (name) => { mcpWrites.push(['config', name]); },
@@ -74,7 +82,7 @@ function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entrie
       return { changed: true };
     },
     crypto: require('node:crypto'),
-    effectiveInjectedSkills: () => [],
+    effectiveInjectedSkills: () => (library ? library.skills : []),
     probeClodentVersion,
     getPersistence: () => ({ list: () => [], get: (n) => entries[n] || null, upsert: () => {}, setSessionId: () => {}, remove: () => {} }),
     getUiSettings: () => ({ get: () => ({}) }),
@@ -137,9 +145,9 @@ function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entrie
     clearTimeout(s._replayFallbackTimer);
     m.sessions.delete(name);
   };
-  const create = (name, { type = 'clodent', extraArgs = [], resumeId = null, fork = false, sessionEnv = { ANTHROPIC_API_KEY: 'sk-test' }, effort = null, denyBuiltins = [], disabledTools = [], shellDeny = null, protectCredentials = null, noWire = false } = {}) => m.create(
+  const create = (name, { type = 'clodent', extraArgs = [], resumeId = null, fork = false, sessionEnv = { ANTHROPIC_API_KEY: 'sk-test' }, effort = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], shellDeny = null, protectCredentials = null, noWire = false } = {}) => m.create(
     name, type, cwd, extraArgs, resumeId, 'ws', null, fork, null,
-    [], denyBuiltins, disabledTools, [], [], null, [], [], null, sessionEnv,
+    [], denyBuiltins, disabledTools, disabledSkills, [], null, [], [], null, sessionEnv,
     false, noWire, null, shellDeny, null, 'pty', effort, protectCredentials,
   );
   const wireRegs = [];
@@ -153,7 +161,7 @@ function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entrie
   const link = (name) => pathForReal(root, name, 'transcript');
   const agentDir = (name) => pathReal.join(root, 'agent-plugins', name);
   const bundleDir = (name) => pathReal.join(root, 'bundles', name, 'bundle-a');
-  return { m, root, home, cwd, spawns, hooks, watchers, probes, registers, hints, broadcasts, skillCalls, mcpWrites, cleanups, create, stop, settings, prompt, link, agentDir, bundleDir, wireRegs };
+  return { m, root, home, cwd, skillPluginsDir, spawns, hooks, watchers, probes, registers, hints, broadcasts, skillCalls, mcpWrites, cleanups, create, stop, settings, prompt, link, agentDir, bundleDir, wireRegs };
 }
 
 function noMcpFlags(args) {
@@ -175,6 +183,14 @@ async function claudeAndClodent(f, opts) {
 }
 
 function withoutMcp(args, mcpPath) {
+  return withoutFlag(withoutMcpFlags(args, mcpPath), '--plugin-dir');
+}
+
+function withoutFlag(args, flag) {
+  return args.filter((a, i) => a !== flag && args[i - 1] !== flag);
+}
+
+function withoutMcpFlags(args, mcpPath) {
   const out = [];
   for (let i = 0; i < args.length; i += 1) {
     if (args[i] === '--strict-mcp-config') continue;
@@ -184,7 +200,7 @@ function withoutMcp(args, mcpPath) {
   return out;
 }
 
-test('clodent: a fresh seat spawns `clodent` with Clodex hooks, the messages add-dir, the agent and bundle plugin dirs and the baked prompt — whole argv and env', async () => {
+test('clodent: a fresh seat spawns `clodent` with Clodex hooks, the messages add-dir and the baked prompt, and no plugin dir — whole argv and env', async () => {
   const f = mkClodent();
   const runnerBaseUrl = process.env.ANTHROPIC_BASE_URL;
   delete process.env.ANTHROPIC_BASE_URL;
@@ -201,8 +217,6 @@ test('clodent: a fresh seat spawns `clodent` with Clodex hooks, the messages add
       '--model', 'claude-haiku-5-5',
       '--settings', f.settings('seat'),
       '--add-dir', pathReal.join(f.root, 'messages'),
-      '--plugin-dir', f.agentDir('seat'),
-      '--plugin-dir', f.bundleDir('seat'),
       '--append-system-prompt-file', f.prompt('seat'),
     ]);
     noMcpFlags(args);
@@ -287,7 +301,7 @@ test('clodent: the kill cleanup removes the hook settings, the agent plugin and 
   await f.create('seat');
   assert.strictEqual(f.spawns.length, 1, 'ENTER: spawned');
   f.m._cleanup('seat');
-  assert.deepStrictEqual(f.cleanups, [['hook', 'seat'], ['agents', 'seat'], ['skills', 'claude', 'seat']]);
+  assert.deepStrictEqual(f.cleanups, [['agents', 'seat'], ['hook', 'seat'], ['agents', 'seat'], ['skills', 'claude', 'seat']], 'the spawn clears any stale agent plugin; the kill clears the hook, the agent plugin and the skill dir');
   assert.strictEqual(f.m.sessions.has('seat'), false);
 });
 
@@ -307,8 +321,6 @@ test('clodent: a resume passes --resume <id>, a fork adds --fork-session, neithe
     assert.deepStrictEqual(r, [
       '--settings', f.settings('r'),
       '--add-dir', pathReal.join(f.root, 'messages'),
-      '--plugin-dir', f.agentDir('r'),
-      '--plugin-dir', f.bundleDir('r'),
       '--resume', RESUME,
       '--append-system-prompt-file', f.prompt('r'),
     ]);
@@ -567,4 +579,76 @@ test('clodent: a CLODENT_HOME is never registered as a wirescope account; a clau
   f.stop('seat');
   await new Promise((r) => setImmediate(r));
   assert.deepStrictEqual(f.registers, [['http://127.0.0.1:7811', claudeDir]]);
+});
+
+test('clodent: disabled tools become exactly the permissions.deny rules in the written settings', async () => {
+  const f = mkClodent();
+  try {
+    await f.create('seat', { disabledTools: ['Write', 'Edit'] });
+    assert.strictEqual(f.hooks.length, 1, 'ENTER: one hook settings write');
+    const realHooks = createCliHooks({
+      REGISTRY_DIR: mkTmpRoot('clodex-clodent-deny-'),
+      memoryStore: { list: () => [] },
+      getUiSettings: () => ({ get: () => ({ statusline: { claude: [], claudeCommand: '' } }) }),
+      nodeInterp: process.execPath,
+    });
+    const written = JSON.parse(fsReal.readFileSync(realHooks.setupClaudeHook(...f.hooks[0]), 'utf-8'));
+    assert.deepStrictEqual(written.permissions.deny, ['Write', 'Edit']);
+  } finally { f.stop('seat'); }
+});
+
+const CLODENT_LIBRARY = {
+  skills: [
+    { name: 'foo', content: '---\ndescription: Foo it.\n---\nDo foo.\n' },
+    { name: 'bar', content: '---\ndescription: Bar it.\n---\nDo bar.\n' },
+  ],
+  bundleSkills: [{ name: 'baz', content: '---\ndescription: Baz it.\n---\nDo baz.\n' }],
+};
+
+test('clodent: library and plugin skills are delivered as SKILL.md files listed in the append prompt, a disabled skill is left out, and no --plugin-dir is passed', async () => {
+  const f = mkClodent({ library: CLODENT_LIBRARY });
+  try {
+    await f.create('seat', { disabledSkills: ['bar'] });
+    assert.strictEqual(f.spawns.length, 1, 'ENTER: spawned');
+    const skills = pathReal.join(f.skillPluginsDir, 'seat', 'skills');
+    const foo = pathReal.join(skills, 'foo', 'SKILL.md');
+    const baz = pathReal.join(skills, 'bundle-a:baz', 'SKILL.md');
+    assert.deepStrictEqual(fsReal.readdirSync(skills).sort(), ['bundle-a:baz', 'foo']);
+    assert.ok(fsReal.existsSync(foo) && fsReal.existsSync(baz));
+    assert.strictEqual(fsReal.existsSync(pathReal.join(skills, 'bar')), false);
+    assert.strictEqual(fsReal.readFileSync(f.prompt('seat'), 'utf-8'), [
+      'IPC|freeze=false|snapshot=null',
+      '',
+      '# Clodex skills',
+      '',
+      CATALOG_INTRO,
+      '',
+      `- bundle-a:baz: Baz it. — ${baz}`,
+      `- foo: Foo it. — ${foo}`,
+      '',
+    ].join('\n'));
+    assert.ok(!f.spawns[0].args.includes('--plugin-dir'), 'a clodent argv carries no --plugin-dir');
+    assert.deepStrictEqual(f.skillCalls, [['clodent', 'seat', 2]]);
+  } finally { f.stop('seat'); }
+});
+
+test('clodent: a disabled skill named by its clodex-skills qualified name is left out too', async () => {
+  const f = mkClodent({ library: CLODENT_LIBRARY });
+  try {
+    await f.create('seat', { disabledSkills: ['clodex-skills:foo', 'bundle-a:baz'] });
+    assert.deepStrictEqual(fsReal.readdirSync(pathReal.join(f.skillPluginsDir, 'seat', 'skills')), ['bar']);
+  } finally { f.stop('seat'); }
+});
+
+test('clodent: a user --plugin-dir in the extra args skips skill delivery and clears the seat skill dir', async () => {
+  const f = mkClodent({ library: CLODENT_LIBRARY });
+  try {
+    await f.create('seat', { extraArgs: ['--plugin-dir', '/mine'] });
+    assert.strictEqual(f.spawns.length, 1, 'ENTER: spawned');
+    assert.deepStrictEqual(f.skillCalls, []);
+    assert.strictEqual(fsReal.existsSync(pathReal.join(f.skillPluginsDir, 'seat')), false);
+    assert.ok(f.cleanups.some((c) => c[0] === 'skills' && c[1] === 'clodent' && c[2] === 'seat'), 'the clodent skill dir is cleaned');
+    assert.strictEqual(fsReal.readFileSync(f.prompt('seat'), 'utf-8'), 'IPC|freeze=false|snapshot=null');
+    assert.deepStrictEqual(f.spawns[0].args.filter((a, i, all) => a === '--plugin-dir' || all[i - 1] === '--plugin-dir'), ['--plugin-dir', '/mine']);
+  } finally { f.stop('seat'); }
 });

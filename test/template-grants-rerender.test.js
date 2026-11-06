@@ -93,7 +93,7 @@ function formEnv(formPersisted, { mode = 'optimized', type = 'claude', templates
     modeHint: null, advancedSection: null, MODE_HINTS: {},
     setAgentLibCache: noop, renderAgentChecklist: noop, setSkillLibCache: noop,
     renderInjectChecklist: noop, resetNewSessionSkillCollector: noop, renderSkillChecklist: noop,
-    modeSkillDenySet: () => new Set(), setClaudeToolsCache: noop,
+    modeSkillDenySet: () => new Set(), setClaudeToolsCache: noop, toolListFor: () => [],
     renderToolChecklist: (_el, s) => { sets.disabledTools = s; sets.toolsSync = s; drawn.disabledTools = DRAWN.disabledTools; return DRAWN.disabledTools; },
     renderBuiltinChecklist: (_el, s) => { sets.denyBuiltins = s; drawn.denyBuiltins = DRAWN.denyBuiltins; return DRAWN.denyBuiltins; },
     modeToolDenySet: () => new Set(TOOL_DENY),

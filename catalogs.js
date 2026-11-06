@@ -66,6 +66,8 @@ const OPTIMIZED_TOOLS = [
 
 const DEFAULT_TOOL_DENY_FLOOR = CLAUDE_TOOLS.filter((t) => !OPTIMIZED_TOOLS.includes(t));
 
+const CLODENT_TOOLS = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob'];
+
 // Known CLI-shipped built-in skills. Unlike tools, skills are normally
 // DISCOVERED from the transcript (skill_listing attachments) — but a skill
 // disabled in another settings source (e.g. a hand-written $cwd/.claude/
@@ -110,7 +112,7 @@ const AGENT_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/; // mirrors session name 
 const THEME_KEYS = ['midnight', 'claude', 'paper', 'light'];
 
 module.exports = {
-  CLAUDE_TOOLS, OPTIMIZED_TOOLS, DEFAULT_TOOL_DENY_FLOOR,
+  CLAUDE_TOOLS, CLODENT_TOOLS, OPTIMIZED_TOOLS, DEFAULT_TOOL_DENY_FLOOR,
   CLAUDE_SKILLS, OPTIMIZED_SKILLS, DEFAULT_SKILL_DENY_FLOOR, SKILL_REENABLE_CONFIRMED,
   DEFAULT_BUILTIN_DENY_FLOOR,
   DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, THEME_KEYS,

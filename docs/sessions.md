@@ -64,10 +64,9 @@ arg** (which is why restart paths must re-assert it; kill drops the entry).
 - **clodent** — spawn → hook → link. The claude arm with `clodent` as the
   binary: the same argv (Claude-shape `--settings` from `setupClaudeHook`
   carrying the tool, shell and subagent denies and the `protectCredentials`
-  sandbox block, `--add-dir` for the messages dirs, `--plugin-dir` for the
-  agent plugin and bundles, which clodent accepts and ignores, the system
+  sandbox block, `--add-dir` for the messages dirs, the system
   and append prompt files, `--resume`/`--fork-session`), minus the Claude
-  Code parts: no onboarding preseed, spill or MCP config
+  Code parts: no `--plugin-dir` (clodent ignores it), onboarding preseed, spill or MCP config
   (clodent ≥ 0.6.0 does get `run/<name>/mcp-tools.json`; below it a stale
   one is unlinked), and the prompt is regenerated every spawn, never frozen
   (`refreshPrompt` stays Claude-only). Effort goes as `--effort` (the
@@ -75,6 +74,11 @@ arg** (which is why restart paths must re-assert it; kill drops the entry).
   0.3.0 enforces `permissions.deny`/`ask` and applies the `sandbox` block as
   deny rules (README "Hosting clodent"), so the credential sandbox and the
   denies are permission rules and a Bash path guard, not an OS sandbox.
+  The seat editor's tool toggles offer `CLODENT_TOOLS` (`toolsFor('clodent')`)
+  and land as `permissions.deny` rules; its skill toggles pick which library
+  and plugin skills `deliverSkills('clodent', …)` writes as SKILL.md files,
+  listed as a `# Clodex skills` catalog (the codex shape) appended to
+  `append-prompt.md` — a disabled skill is left out of the catalog.
   The read-only cap is `--permission-mode plan` (`--read-only` is
   recognised as the same cap); bypass is `--dangerously-skip-permissions`
   (`--yolo` recognised). The SessionStart hook links

@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 
 const {
-  ADAPTERS, PLATFORMS, CAP_KEYS, capsFor, accountEnvKey, streamFor, adapterFor, seatType, stripModelArgs, hasBypass, postureOf, resolveModelId, resolveEffort, runsClaudeHooks, PRIVILEGED_FLAG_ARITY, splitPrivilegedArgs,
+  ADAPTERS, PLATFORMS, CAP_KEYS, capsFor, toolsFor, accountEnvKey, streamFor, adapterFor, seatType, stripModelArgs, hasBypass, postureOf, resolveModelId, resolveEffort, runsClaudeHooks, PRIVILEGED_FLAG_ARITY, splitPrivilegedArgs,
 } = require('../cli-adapters');
 const { createSkillDelivery } = require('../skill-delivery');
 
@@ -68,7 +68,7 @@ test('t749: the dialog may not offer skills to a provider main cannot deliver to
   assert.deepStrictEqual(offered.sort(), [...deliverable].sort());
 });
 
-const ENTRY_KEYS = ['id', 'label', 'cmd', 'model', 'effort', 'posture', 'account', 'cwdDir', 'readOnlyCap', 'seatSettings', 'skills', 'instructions', 'transcript', 'caps', 'stream', 'ui'];
+const ENTRY_KEYS = ['id', 'label', 'cmd', 'model', 'effort', 'posture', 'account', 'cwdDir', 'readOnlyCap', 'seatSettings', 'skills', 'tools', 'instructions', 'transcript', 'caps', 'stream', 'ui'];
 
 test('every adapter entry carries the whole entry key set', () => {
   for (const [type, entry] of Object.entries(ADAPTERS)) {
@@ -137,6 +137,7 @@ test('m2: the muse row — Meta\'s CLI, XDG overlay bootstrap, user-scope AGENTS
       },
       activation: { key: 'skills.activation', off: 'off' },
     },
+    tools: null,
     instructions: 'user-agents-md',
     transcript: { reader: 'muse', link: 'clodex' },
     caps: { park: false, transcript: true, warmth: false, claudeHooks: false },
@@ -233,9 +234,10 @@ test('postureOf reads bypass, then the full read-only cap, else default', () => 
   }
 });
 
-test('every provider skill-delivery can deliver to is an adapter; clodent alone has none', () => {
+test('skill-delivery delivers to exactly the adapters, clodent included', () => {
   const providers = createSkillDelivery({}).providers();
-  assert.deepStrictEqual(Object.keys(ADAPTERS).filter((k) => !providers.includes(k)), ['clodent']);
+  assert.ok(providers.includes('clodent'), 'ENTER: clodent is a delivery provider');
+  assert.deepStrictEqual(Object.keys(ADAPTERS).filter((k) => !providers.includes(k)), []);
   assert.deepStrictEqual(providers.filter((k) => !Object.keys(ADAPTERS).includes(k)), []);
 });
 
@@ -275,12 +277,13 @@ test('clodent: the Messages-API CLI row — Claude model aliases, Claude efforts
     readOnlyCap: { enforce: 'argv', args: ['--permission-mode', 'plan'], aliases: ['--read-only'], denylist: true, note: 'read-only (clodent plan mode: permission rules and a Bash path guard, not an OS sandbox)' },
     seatSettings: null,
     skills: null,
+    tools: ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob'],
     instructions: 'append-system-prompt-file',
     transcript: { reader: 'claude', link: 'hook' },
     caps: { park: false, transcript: true, warmth: false, claudeHooks: true },
     stream: { codec: 'stream-codec-claude', argv: ADAPTERS.claude.stream.argv, toolBoundary: 'hook', transcriptRepoint: 'claude' },
     ui: {
-      injectSkills: false, skillRoster: false, plugins: false, agents: false, tools: false,
+      injectSkills: true, skillRoster: false, plugins: true, agents: false, tools: true,
       strip: false, autoCompact: false, noWire: true, accounts: true, streamIo: true,
     },
   });
@@ -576,4 +579,35 @@ test('t1171: renderer gates the stream-transport controls on capsFor(type).strea
     }
   }
   assert.deepStrictEqual([...new Set(hits)], []);
+});
+
+test('toolsFor: clodent offers its six tools, claude the Claude catalog, codex and muse none', () => {
+  const { CLAUDE_TOOLS } = require('../catalogs');
+  assert.deepStrictEqual(toolsFor('clodent'), ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob']);
+  assert.strictEqual(toolsFor('claude'), CLAUDE_TOOLS);
+  assert.deepStrictEqual([toolsFor('codex'), toolsFor('muse'), toolsFor('bash')], [null, null, null]);
+  assert.deepStrictEqual(toolsFor('clodent').filter((t) => !CLAUDE_TOOLS.includes(t)), [], 'every clodent tool passes the CLAUDE_TOOLS deny filter');
+});
+
+test('the create and Edit dialogs pick the tool checklist by seat type', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const body = (name) => {
+    const at = src.indexOf(`function ${name}(`);
+    assert.ok(at >= 0, `ENTER: ${name} is found`);
+    return src.slice(at, src.indexOf('\n}\n', at));
+  };
+  assert.ok(body('populateHostCatalogs').includes('setClaudeToolsCache(toolListFor(settings, inputType.value));'));
+  assert.ok(body('refreshNewSessionTools').includes('setClaudeToolsCache(toolListFor(dialogHostSettings, inputType.value));'));
+  assert.ok(body('openArgsDialog').includes('setClaudeToolsCache(toolListFor(settings, res.type));'));
+  const ipc = fs.readFileSync(path.join(__dirname, '..', 'ipc-handlers.js'), 'utf8');
+  assert.ok(ipc.includes('toolsByType: Object.fromEntries(PLATFORMS.filter((t) => toolsFor(t)).map((t) => [t, toolsFor(t)])),'));
+});
+
+test('toolListFor: the seat type picks its list from toolsByType, else the Claude list', () => {
+  const { toolListFor } = require('../renderer/lib/checklists');
+  const settings = { claudeTools: ['Read', 'Agent'], toolsByType: { claude: ['Read', 'Agent'], clodent: ['Read', 'Bash'] } };
+  assert.deepStrictEqual(toolListFor(settings, 'clodent'), ['Read', 'Bash']);
+  assert.deepStrictEqual(toolListFor(settings, 'claude'), ['Read', 'Agent']);
+  assert.deepStrictEqual(toolListFor({ claudeTools: ['Read', 'Agent'] }, 'clodent'), ['Read', 'Agent']);
+  assert.deepStrictEqual(toolListFor(null, 'clodent'), []);
 });

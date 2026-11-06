@@ -33,7 +33,7 @@ const { wireSeatFor } = require('./peer-shell');
 const { readBashConsole, RECORD_NAME_RE } = require('./bash-console');
 const { createTranscriptSpikeReader } = require('./transcript-spike');
 const { mergeCompactNotices } = require('./compact-notices');
-const { isAgentType } = require('./cli-adapters');
+const { isAgentType, PLATFORMS, toolsFor } = require('./cli-adapters');
 const { findCodexRollout, codexRolloutsForCwd } = require('./seat-config');
 // Read from the module that decides with them, not restated: a second copy would show
 // Preferences a number the reminder does not use.
@@ -1231,6 +1231,7 @@ function registerIpcHandlers(deps) {
       claudeComponents: CLAUDE_SL_COMPONENTS,
       codexComponents: CODEX_SL_COMPONENTS,
       claudeTools: CLAUDE_TOOLS,
+      toolsByType: Object.fromEntries(PLATFORMS.filter((t) => toolsFor(t)).map((t) => [t, toolsFor(t)])),
       defaultToolDeny: agentDefaults.getDefaultDeny(),
       defaultSkillDeny: agentDefaults.getDefaultSkillDeny(),
       defaultBuiltinDeny: agentDefaults.getDefaultBuiltinDeny(),
