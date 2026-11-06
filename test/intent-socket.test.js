@@ -310,6 +310,26 @@ for (const [label, seat] of [['wire off', { wireRouted: false }], ['backend bypa
   });
 }
 
+test('_startIntentSocket: a wire-routed clodent seat runs a main-only tool on a wire-seen tool_use id and refuses one the wire never saw', async () => {
+  const h = seatHarness();
+  Object.assign(h.a, { agentType: 'clodent', type: 'clodent', wireRouted: true });
+  const recorded = new Set(['toolu_x']);
+  h.m._wire = { consumeMainToolUse: (name, id) => name === 'a' && recorded.delete(id) };
+  const dispatched = [];
+  h.m._dispatchSocketIntent = (s, intent, opts) => { dispatched.push(opts.fromLabel); opts.replyTo('ran'); };
+  fs.mkdirSync(runDirFor(h.root, 'a'), { recursive: true });
+  const cred = mintIntentCredential(crypto);
+  const sockPath = pathFor(h.root, 'a', 'intentSocket');
+  await h.m._startIntentSocket(h.a, { sockPath, cred });
+  try {
+    const call = (toolUseId) => send(sockPath, req({ cred, tool: 'exec', args: { command: 'clodex-run-tests', payload: {} }, ident: identToken(crypto, cred, null, null, 'sess-a', undefined, toolUseId) }));
+    assert.deepStrictEqual(await call('toolu_x'), { ok: true, status: 'ok', reply: 'ran' });
+    assert.deepStrictEqual(dispatched, [null], 'dispatched as the main agent');
+    assert.deepStrictEqual(await call('toolu_y'), { ok: false, status: 'refused', error: 'unknown tool: "exec"' });
+    assert.deepStrictEqual(dispatched, [null]);
+  } finally { h.a.intentSocket.stop(); }
+});
+
 test('reply capture: who returns the roster line to the caller and injects nothing into the seat', async () => {
   await withSeat(async (h, cred) => {
     const r = await viaVerb(h, cred, ['[agent:who]'], mainEnv(cred));

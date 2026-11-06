@@ -756,7 +756,8 @@ seats get a request/response channel whose reply is the caller's own tool result
   streamed input contains `clodex-send`. It keeps at most 256 ids per seat for 10 min, hands each
   out once, and drops an id as soon as a main-thread request carries its `tool_result`. A stamp is
   therefore accepted once per tool call the seat's wire saw on the main thread, so the nonce window
-  (`IDENT_SEEN_MS`) is no longer the only replay guard. A seat spawned with the wire off, whose wire
+  (`IDENT_SEEN_MS`) is no longer the only replay guard. A clodent seat has no subagents, so every
+  wire request is its main thread; its main identity is the same tool_use_id binding. A seat spawned with the wire off, whose wire
   registration failed, or whose backend (Bedrock/Vertex) bypasses the wire has no consumer, and
   every socket `main` claim from it is a subagent; so is a main turn served as non-streaming JSON,
   whose tool_use ids the wire does not record. Typed intents scanned from the reply are unaffected
