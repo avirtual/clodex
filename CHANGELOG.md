@@ -21,6 +21,7 @@ blocks a release.
 - The ticket loop's suite runs show in the IPC traffic: a `verify: suite running` row after a hand's done, `suite green — spawning reviewer` or `re-measuring` as it goes, and a `post-merge suite running` row before `merged`.
 - clodent seats (clodent 0.6.0+) get the seat tool catalog (`run/<seat>/mcp-tools.json`), so Clodex's plugin tools appear as native clodent tools, no MCP layer.
 - A clodent seat's native Clodex tool calls (`mcp__clodex__exec`, `term_*`) run as the main agent; they were refused as subagent calls.
+- clodent seats take the seat editor's tool and skill toggles: disabled tools become `permissions.deny` rules, and library and plugin skills are listed in the seat's prompt as a `# Clodex skills` catalog of SKILL.md paths the seat reads on demand.
 
 ## 5.161.0 — 2026-11-05
 - **Security: `--allow-dangerously-skip-permissions` is now a privileged launch flag**, stripped from hand and reviewer templates like `--dangerously-skip-permissions`.

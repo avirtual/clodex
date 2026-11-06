@@ -27517,10 +27517,217 @@ ${i3.join("\n")}
     }
   });
 
+  // skills-off.js
+  var require_skills_off = __commonJS({
+    "skills-off.js"(exports, module) {
+      "use strict";
+      var SKILL_PLUGIN_NAME = "clodex-skills";
+      function isSkillDenyDirective(name) {
+        return typeof name === "string" && (name === "*" || name.startsWith("!"));
+      }
+      function skillDenyIsDeferred(disabledSkills) {
+        const list = Array.isArray(disabledSkills) ? disabledSkills : [...disabledSkills || []];
+        return list.includes("*");
+      }
+      function deferredSkillDeny(keep) {
+        const names = [...new Set((Array.isArray(keep) ? keep : []).filter((n) => typeof n === "string" && n && !isSkillDenyDirective(n)))];
+        return ["*", ...names.map((n) => `!${n}`)];
+      }
+      function skillDenyKeepList(disabledSkills) {
+        const list = Array.isArray(disabledSkills) ? disabledSkills : [...disabledSkills || []];
+        return list.filter((n) => typeof n === "string" && n.startsWith("!") && n.length > 1).map((n) => n.slice(1));
+      }
+      function skillOffSetFor(names, disabledSkills) {
+        const list = Array.isArray(disabledSkills) ? disabledSkills : [...disabledSkills || []];
+        if (!list.includes("*")) {
+          return new Set(list.filter((n) => typeof n === "string" && n && !isSkillDenyDirective(n)));
+        }
+        const keep = new Set(skillDenyKeepList(list));
+        return new Set((Array.isArray(names) ? names : []).filter((n) => !keep.has(n)));
+      }
+      function applySkillAliases(disabledSkills, aliases) {
+        const list = Array.isArray(disabledSkills) ? disabledSkills : [...disabledSkills || []];
+        const map = aliases && typeof aliases === "object" ? aliases : {};
+        return list.map((n) => {
+          if (typeof n !== "string" || n === "*") return n;
+          const key = n.startsWith("!") && n.length > 1 ? n.slice(1) : n;
+          const id = Object.hasOwn(map, key) ? map[key] : key;
+          return key === n ? id : `!${id}`;
+        });
+      }
+      function skillDenyForPeer(disabledSkills) {
+        const list = Array.isArray(disabledSkills) ? disabledSkills : [];
+        return list.some((n) => isSkillDenyDirective(n)) ? [] : list;
+      }
+      function expandSkillsOff(disabledSkills, { known = [], injectSkills = [] } = {}) {
+        if (!Array.isArray(disabledSkills)) return disabledSkills;
+        const deferred = disabledSkills.includes("*");
+        const keep = skillDenyKeepList(disabledSkills);
+        if (!disabledSkills.some(isSkillDenyDirective)) return disabledSkills;
+        const exempt = /* @__PURE__ */ new Set();
+        for (const n of [...Array.isArray(injectSkills) ? injectSkills : [], ...keep]) {
+          if (typeof n !== "string" || !n) continue;
+          exempt.add(n);
+          exempt.add(`${SKILL_PLUGIN_NAME}:${n}`);
+        }
+        const out = /* @__PURE__ */ new Set();
+        for (const n of [...disabledSkills, ...deferred && Array.isArray(known) ? known : []]) {
+          if (typeof n !== "string" || !n || isSkillDenyDirective(n)) continue;
+          if (exempt.has(n)) continue;
+          out.add(n);
+        }
+        return [...out].sort();
+      }
+      module.exports = {
+        expandSkillsOff,
+        deferredSkillDeny,
+        skillOffSetFor,
+        applySkillAliases,
+        skillDenyKeepList,
+        skillDenyIsDeferred,
+        isSkillDenyDirective,
+        skillDenyForPeer,
+        SKILL_PLUGIN_NAME
+      };
+    }
+  });
+
+  // catalogs.js
+  var require_catalogs = __commonJS({
+    "catalogs.js"(exports, module) {
+      var { deferredSkillDeny } = require_skills_off();
+      var CLAUDE_TOOLS = [
+        // Filesystem & code
+        "Read",
+        "Edit",
+        "Write",
+        "NotebookEdit",
+        "Glob",
+        "Grep",
+        "LSP",
+        // Shell
+        "Bash",
+        "PowerShell",
+        "Monitor",
+        // Web
+        "WebFetch",
+        "WebSearch",
+        // Subagents & teams
+        "Agent",
+        "SendMessage",
+        "ListAgents",
+        // Skills & workflows
+        "Skill",
+        "Workflow",
+        // Plan mode & worktrees
+        "EnterPlanMode",
+        "ExitPlanMode",
+        "EnterWorktree",
+        "ExitWorktree",
+        // Task list
+        "TaskCreate",
+        "TaskGet",
+        "TaskList",
+        "TaskUpdate",
+        "TaskStop",
+        "TodoWrite",
+        // Scheduling
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "ScheduleWakeup",
+        // Notifications, remote & prompts
+        "PushNotification",
+        "RemoteTrigger",
+        "ShareOnboardingGuide",
+        "AskUserQuestion",
+        // Conversation control
+        "EndConversation",
+        "SendFeedback",
+        // Publishing & review (Artifact uploads local content to claude.ai hosting)
+        "Artifact",
+        "ReportFindings",
+        // MCP plumbing
+        "ListMcpResourcesTool",
+        "ReadMcpResourceTool",
+        "WaitForMcpServers",
+        // Connectors
+        "DesignSync"
+      ];
+      var OPTIMIZED_TOOLS = [
+        "Read",
+        "Edit",
+        "Write",
+        "Glob",
+        "Grep",
+        "Bash",
+        "WebFetch",
+        "WebSearch",
+        "Agent",
+        "SendMessage",
+        "Skill"
+      ];
+      var DEFAULT_TOOL_DENY_FLOOR = CLAUDE_TOOLS.filter((t) => !OPTIMIZED_TOOLS.includes(t));
+      var CLODENT_TOOLS = ["Read", "Write", "Edit", "Bash", "Grep", "Glob"];
+      var CLAUDE_SKILLS = [
+        "code-review",
+        "security-review",
+        "review",
+        "deep-research",
+        "verify",
+        "init",
+        "update-config",
+        "simplify",
+        "run",
+        "loop",
+        "schedule",
+        "claude-api",
+        "keybindings-help",
+        "fewer-permission-prompts",
+        "design",
+        "dataviz",
+        "artifact-design",
+        "artifact-diagramming",
+        "artifact-capabilities"
+      ];
+      var SKILL_REENABLE_CONFIRMED = false;
+      var OPTIMIZED_SKILLS = [
+        "code-review",
+        "security-review",
+        "review",
+        "verify",
+        "simplify",
+        "claude-api",
+        "dataviz",
+        "artifact-diagramming"
+      ];
+      var DEFAULT_SKILL_DENY_FLOOR = deferredSkillDeny(OPTIMIZED_SKILLS);
+      var DEFAULT_BUILTIN_DENY_FLOOR = ["Plan", "claude", "claude-code-guide", "statusline-setup"];
+      var DEFAULT_WORKSPACE_ID = "default";
+      var AGENT_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
+      var THEME_KEYS = ["midnight", "claude", "paper", "light"];
+      module.exports = {
+        CLAUDE_TOOLS,
+        CLODENT_TOOLS,
+        OPTIMIZED_TOOLS,
+        DEFAULT_TOOL_DENY_FLOOR,
+        CLAUDE_SKILLS,
+        OPTIMIZED_SKILLS,
+        DEFAULT_SKILL_DENY_FLOOR,
+        SKILL_REENABLE_CONFIRMED,
+        DEFAULT_BUILTIN_DENY_FLOOR,
+        DEFAULT_WORKSPACE_ID,
+        AGENT_NAME_RE,
+        THEME_KEYS
+      };
+    }
+  });
+
   // cli-adapters.js
   var require_cli_adapters = __commonJS({
     "cli-adapters.js"(exports, module) {
       "use strict";
+      var { CLAUDE_TOOLS, CLODENT_TOOLS } = require_catalogs();
       var MODEL_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9.-]{0,63}(?:\[[a-z0-9]{1,8}\])?$/;
       var META_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
       var CAP_KEYS = ["injectSkills", "skillRoster", "plugins", "agents", "tools", "strip", "autoCompact", "noWire", "accounts", "streamIo"];
@@ -27559,6 +27766,7 @@ ${i3.join("\n")}
           readOnlyCap: { enforce: "tool-denylist" },
           seatSettings: null,
           skills: null,
+          tools: CLAUDE_TOOLS,
           instructions: "append-system-prompt-file",
           transcript: { reader: "claude", link: "hook" },
           caps: { park: true, transcript: true, warmth: true, claudeHooks: true },
@@ -27588,6 +27796,7 @@ ${i3.join("\n")}
           readOnlyCap: { enforce: "argv", args: ["--sandbox", "read-only", "--ask-for-approval", "never"], shortFlags: { "-s": "--sandbox", "-a": "--ask-for-approval" } },
           seatSettings: null,
           skills: null,
+          tools: null,
           instructions: "model-instructions-file",
           transcript: { reader: "codex", link: "clodex" },
           caps: { park: false, transcript: true, warmth: false, claudeHooks: false },
@@ -27645,6 +27854,7 @@ ${i3.join("\n")}
             },
             activation: { key: "skills.activation", off: "off" }
           },
+          tools: null,
           instructions: "user-agents-md",
           transcript: { reader: "muse", link: "clodex" },
           caps: { park: false, transcript: true, warmth: false, claudeHooks: false },
@@ -27683,16 +27893,17 @@ ${i3.join("\n")}
           readOnlyCap: { enforce: "argv", args: ["--permission-mode", "plan"], aliases: ["--read-only"], denylist: true, note: "read-only (clodent plan mode: permission rules and a Bash path guard, not an OS sandbox)" },
           seatSettings: null,
           skills: null,
+          tools: CLODENT_TOOLS,
           instructions: "append-system-prompt-file",
           transcript: { reader: "claude", link: "hook" },
           caps: { park: false, transcript: true, warmth: false, claudeHooks: true },
           stream: CLAUDE_STREAM,
           ui: {
-            injectSkills: false,
+            injectSkills: true,
             skillRoster: false,
-            plugins: false,
+            plugins: true,
             agents: false,
-            tools: false,
+            tools: true,
             strip: false,
             autoCompact: false,
             noWire: true,
@@ -27770,6 +27981,10 @@ ${i3.join("\n")}
       function capsFor(type) {
         const a = adapterFor(type);
         return a ? a.ui : NO_CAPS;
+      }
+      function toolsFor(type) {
+        const a = adapterFor(type);
+        return a ? a.tools : null;
       }
       function streamFor(type) {
         const a = adapterFor(type);
@@ -27900,6 +28115,7 @@ ${i3.join("\n")}
         adapterFor,
         isAgentType,
         capsFor,
+        toolsFor,
         accountEnvKey,
         runsClaudeHooks,
         streamFor,
@@ -29551,80 +29767,6 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
     }
   });
 
-  // skills-off.js
-  var require_skills_off = __commonJS({
-    "skills-off.js"(exports, module) {
-      "use strict";
-      var SKILL_PLUGIN_NAME = "clodex-skills";
-      function isSkillDenyDirective(name) {
-        return typeof name === "string" && (name === "*" || name.startsWith("!"));
-      }
-      function skillDenyIsDeferred(disabledSkills) {
-        const list = Array.isArray(disabledSkills) ? disabledSkills : [...disabledSkills || []];
-        return list.includes("*");
-      }
-      function deferredSkillDeny(keep) {
-        const names = [...new Set((Array.isArray(keep) ? keep : []).filter((n) => typeof n === "string" && n && !isSkillDenyDirective(n)))];
-        return ["*", ...names.map((n) => `!${n}`)];
-      }
-      function skillDenyKeepList(disabledSkills) {
-        const list = Array.isArray(disabledSkills) ? disabledSkills : [...disabledSkills || []];
-        return list.filter((n) => typeof n === "string" && n.startsWith("!") && n.length > 1).map((n) => n.slice(1));
-      }
-      function skillOffSetFor(names, disabledSkills) {
-        const list = Array.isArray(disabledSkills) ? disabledSkills : [...disabledSkills || []];
-        if (!list.includes("*")) {
-          return new Set(list.filter((n) => typeof n === "string" && n && !isSkillDenyDirective(n)));
-        }
-        const keep = new Set(skillDenyKeepList(list));
-        return new Set((Array.isArray(names) ? names : []).filter((n) => !keep.has(n)));
-      }
-      function applySkillAliases(disabledSkills, aliases) {
-        const list = Array.isArray(disabledSkills) ? disabledSkills : [...disabledSkills || []];
-        const map = aliases && typeof aliases === "object" ? aliases : {};
-        return list.map((n) => {
-          if (typeof n !== "string" || n === "*") return n;
-          const key = n.startsWith("!") && n.length > 1 ? n.slice(1) : n;
-          const id = Object.hasOwn(map, key) ? map[key] : key;
-          return key === n ? id : `!${id}`;
-        });
-      }
-      function skillDenyForPeer(disabledSkills) {
-        const list = Array.isArray(disabledSkills) ? disabledSkills : [];
-        return list.some((n) => isSkillDenyDirective(n)) ? [] : list;
-      }
-      function expandSkillsOff(disabledSkills, { known = [], injectSkills = [] } = {}) {
-        if (!Array.isArray(disabledSkills)) return disabledSkills;
-        const deferred = disabledSkills.includes("*");
-        const keep = skillDenyKeepList(disabledSkills);
-        if (!disabledSkills.some(isSkillDenyDirective)) return disabledSkills;
-        const exempt = /* @__PURE__ */ new Set();
-        for (const n of [...Array.isArray(injectSkills) ? injectSkills : [], ...keep]) {
-          if (typeof n !== "string" || !n) continue;
-          exempt.add(n);
-          exempt.add(`${SKILL_PLUGIN_NAME}:${n}`);
-        }
-        const out = /* @__PURE__ */ new Set();
-        for (const n of [...disabledSkills, ...deferred && Array.isArray(known) ? known : []]) {
-          if (typeof n !== "string" || !n || isSkillDenyDirective(n)) continue;
-          if (exempt.has(n)) continue;
-          out.add(n);
-        }
-        return [...out].sort();
-      }
-      module.exports = {
-        expandSkillsOff,
-        deferredSkillDeny,
-        skillOffSetFor,
-        applySkillAliases,
-        skillDenyKeepList,
-        skillDenyIsDeferred,
-        isSkillDenyDirective,
-        skillDenyForPeer
-      };
-    }
-  });
-
   // renderer/lib/focus-policy.js
   var require_focus_policy = __commonJS({
     "renderer/lib/focus-policy.js"(exports, module) {
@@ -30455,6 +30597,10 @@ ${String(body || "").trim()}
       function setClaudeToolsCache(v) {
         claudeToolsCache = v;
       }
+      function toolListFor(settings, type) {
+        const list = settings && settings.toolsByType ? settings.toolsByType[type] : null;
+        return Array.isArray(list) ? list : settings && settings.claudeTools || [];
+      }
       function setDefaultToolDenyCache(v) {
         defaultToolDenyCache = v;
       }
@@ -30946,6 +31092,7 @@ ${String(body || "").trim()}
         setPluginCatalogCache,
         getPluginCatalogCache,
         setClaudeToolsCache,
+        toolListFor,
         setDefaultToolDenyCache,
         setDefaultSkillDenyCache,
         setDefaultBuiltinDenyCache,
@@ -32812,135 +32959,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
         ).length;
       }
       module.exports = { GATEABLE_INTENTS, GATEABLE_TYPES, PRIVILEGED_INTENTS, LEGACY_INTENT_KEYS, canonicalIntentKey, intentEnabled, intentsAllowlistFromChecked, withoutPrivilegedIntents, deniedIntentCount, LIVING_MARK, LIVING_MIGRATION_SET, migrateLivingAllowlist };
-    }
-  });
-
-  // catalogs.js
-  var require_catalogs = __commonJS({
-    "catalogs.js"(exports, module) {
-      var { deferredSkillDeny } = require_skills_off();
-      var CLAUDE_TOOLS = [
-        // Filesystem & code
-        "Read",
-        "Edit",
-        "Write",
-        "NotebookEdit",
-        "Glob",
-        "Grep",
-        "LSP",
-        // Shell
-        "Bash",
-        "PowerShell",
-        "Monitor",
-        // Web
-        "WebFetch",
-        "WebSearch",
-        // Subagents & teams
-        "Agent",
-        "SendMessage",
-        "ListAgents",
-        // Skills & workflows
-        "Skill",
-        "Workflow",
-        // Plan mode & worktrees
-        "EnterPlanMode",
-        "ExitPlanMode",
-        "EnterWorktree",
-        "ExitWorktree",
-        // Task list
-        "TaskCreate",
-        "TaskGet",
-        "TaskList",
-        "TaskUpdate",
-        "TaskStop",
-        "TodoWrite",
-        // Scheduling
-        "CronCreate",
-        "CronDelete",
-        "CronList",
-        "ScheduleWakeup",
-        // Notifications, remote & prompts
-        "PushNotification",
-        "RemoteTrigger",
-        "ShareOnboardingGuide",
-        "AskUserQuestion",
-        // Conversation control
-        "EndConversation",
-        "SendFeedback",
-        // Publishing & review (Artifact uploads local content to claude.ai hosting)
-        "Artifact",
-        "ReportFindings",
-        // MCP plumbing
-        "ListMcpResourcesTool",
-        "ReadMcpResourceTool",
-        "WaitForMcpServers",
-        // Connectors
-        "DesignSync"
-      ];
-      var OPTIMIZED_TOOLS = [
-        "Read",
-        "Edit",
-        "Write",
-        "Glob",
-        "Grep",
-        "Bash",
-        "WebFetch",
-        "WebSearch",
-        "Agent",
-        "SendMessage",
-        "Skill"
-      ];
-      var DEFAULT_TOOL_DENY_FLOOR = CLAUDE_TOOLS.filter((t) => !OPTIMIZED_TOOLS.includes(t));
-      var CLAUDE_SKILLS = [
-        "code-review",
-        "security-review",
-        "review",
-        "deep-research",
-        "verify",
-        "init",
-        "update-config",
-        "simplify",
-        "run",
-        "loop",
-        "schedule",
-        "claude-api",
-        "keybindings-help",
-        "fewer-permission-prompts",
-        "design",
-        "dataviz",
-        "artifact-design",
-        "artifact-diagramming",
-        "artifact-capabilities"
-      ];
-      var SKILL_REENABLE_CONFIRMED = false;
-      var OPTIMIZED_SKILLS = [
-        "code-review",
-        "security-review",
-        "review",
-        "verify",
-        "simplify",
-        "claude-api",
-        "dataviz",
-        "artifact-diagramming"
-      ];
-      var DEFAULT_SKILL_DENY_FLOOR = deferredSkillDeny(OPTIMIZED_SKILLS);
-      var DEFAULT_BUILTIN_DENY_FLOOR = ["Plan", "claude", "claude-code-guide", "statusline-setup"];
-      var DEFAULT_WORKSPACE_ID = "default";
-      var AGENT_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
-      var THEME_KEYS = ["midnight", "claude", "paper", "light"];
-      module.exports = {
-        CLAUDE_TOOLS,
-        OPTIMIZED_TOOLS,
-        DEFAULT_TOOL_DENY_FLOOR,
-        CLAUDE_SKILLS,
-        OPTIMIZED_SKILLS,
-        DEFAULT_SKILL_DENY_FLOOR,
-        SKILL_REENABLE_CONFIRMED,
-        DEFAULT_BUILTIN_DENY_FLOOR,
-        DEFAULT_WORKSPACE_ID,
-        AGENT_NAME_RE,
-        THEME_KEYS
-      };
     }
   });
 
@@ -46584,6 +46602,7 @@ void main() {
         renderPluginChecklist,
         collectPluginChecklist,
         setClaudeToolsCache,
+        toolListFor,
         setSkillLibCache,
         setAgentLibCache,
         getSkillLibCache,
@@ -46639,7 +46658,7 @@ void main() {
             alert("Session not found in persistence.");
             return;
           }
-          setClaudeToolsCache(settings?.claudeTools || []);
+          setClaudeToolsCache(toolListFor(settings, typeof getSessionType === "function" ? getSessionType(name) : null));
           toolsPersisted = res.disabledTools || [];
           toolsRendered = renderToolChecklist(popoverToolsList, new Set(toolsPersisted), res.effectiveTools || {});
           toolsPopoverRestart.checked = false;
@@ -52264,7 +52283,7 @@ ${detail}` });
       var { composerReadlineEdit, composerHeightFor, isAttachKey } = require_composer_keys();
       var { slashQuery, filterCommands, slashMenuKey } = require_composer_slash();
       var { turnSeg, reqSeg, costSeg } = require_turn_stat();
-      var { renderAppendChecklist, collectAppendChecklist, appendRepaintTicks, mergeUnrendered, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderMcpChecklist, collectMcpChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setMcpLibCache, setIntentCatalogCache, setClaudeToolsCache, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require_checklists();
+      var { renderAppendChecklist, collectAppendChecklist, appendRepaintTicks, mergeUnrendered, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderMcpChecklist, collectMcpChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setMcpLibCache, setIntentCatalogCache, setClaudeToolsCache, toolListFor, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require_checklists();
       var { autoEnabledFor, reconcilePartialSelection } = require_scope_util();
       var { parseSkillFrontmatter } = require_skills_util();
       var skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
@@ -55731,6 +55750,7 @@ ${detail}` });
       }
       async function refreshNewSessionTools(disabledSet = null, { forTemplate = false } = {}) {
         if (!capsFor(inputType.value).tools) return;
+        if (dialogHostSettings && currentPlacement() === "host") setClaudeToolsCache(toolListFor(dialogHostSettings, inputType.value));
         const cwd = expandPath(inputCwd.value.trim()) || homeDir;
         const res = await window.api.getToolCatalogFor(cwd);
         const disabled = disabledSet || new Set(getDefaultToolDenyCache());
@@ -56001,7 +56021,7 @@ ${detail}` });
         refreshNewSessionExecCommands(currentOr("execCommands", collectExecChecklist, inputExecList, /* @__PURE__ */ new Set()));
         refreshNewSessionMcpServers(currentOr("mcpServers", collectMcpChecklist, inputMcpList, /* @__PURE__ */ new Set()));
         refreshNewSessionPlugins().then(() => refreshNewSessionIntents());
-        setClaudeToolsCache(settings?.claudeTools || []);
+        setClaudeToolsCache(toolListFor(settings, inputType.value));
         setDefaultToolDenyCache(settings?.defaultToolDeny || []);
         setDefaultSkillDenyCache(settings?.defaultSkillDeny || []);
         setDefaultBuiltinDenyCache(settings?.defaultBuiltinDeny || []);
@@ -56478,7 +56498,7 @@ ${detail}` });
         formRendered = {};
         applyTypeDefaults({ skipAsyncRefresh: true });
         const settings = await window.api.getSettings();
-        setClaudeToolsCache(settings?.claudeTools || []);
+        setClaudeToolsCache(toolListFor(settings, inputType.value));
         setDefaultToolDenyCache(settings?.defaultToolDeny || []);
         setDefaultSkillDenyCache(settings?.defaultSkillDeny || []);
         setDefaultBuiltinDenyCache(settings?.defaultBuiltinDeny || []);
@@ -61530,7 +61550,7 @@ ${res.stderr}` : "");
         argsBuiltinsRendered = renderBuiltinChecklist(argsBuiltinsList, new Set(res.denyBuiltins || []));
         argsToolsRow.style.display = caps.tools ? "" : "none";
         argsToolsSection.style.display = caps.tools ? "" : "none";
-        setClaudeToolsCache(settings?.claudeTools || []);
+        setClaudeToolsCache(toolListFor(settings, res.type));
         argsToolsPersisted = res.disabledTools || [];
         argsToolsRendered = renderToolChecklist(argsToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
         argsIntentsSection.style.display = isAgent ? "" : "none";

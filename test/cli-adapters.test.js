@@ -137,6 +137,7 @@ test('m2: the muse row — Meta\'s CLI, XDG overlay bootstrap, user-scope AGENTS
       },
       activation: { key: 'skills.activation', off: 'off' },
     },
+    tools: null,
     instructions: 'user-agents-md',
     transcript: { reader: 'muse', link: 'clodex' },
     caps: { park: false, transcript: true, warmth: false, claudeHooks: false },
@@ -586,4 +587,27 @@ test('toolsFor: clodent offers its six tools, claude the Claude catalog, codex a
   assert.strictEqual(toolsFor('claude'), CLAUDE_TOOLS);
   assert.deepStrictEqual([toolsFor('codex'), toolsFor('muse'), toolsFor('bash')], [null, null, null]);
   assert.deepStrictEqual(toolsFor('clodent').filter((t) => !CLAUDE_TOOLS.includes(t)), [], 'every clodent tool passes the CLAUDE_TOOLS deny filter');
+});
+
+test('the create and Edit dialogs pick the tool checklist by seat type', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const body = (name) => {
+    const at = src.indexOf(`function ${name}(`);
+    assert.ok(at >= 0, `ENTER: ${name} is found`);
+    return src.slice(at, src.indexOf('\n}\n', at));
+  };
+  assert.ok(body('populateHostCatalogs').includes('setClaudeToolsCache(toolListFor(settings, inputType.value));'));
+  assert.ok(body('refreshNewSessionTools').includes('setClaudeToolsCache(toolListFor(dialogHostSettings, inputType.value));'));
+  assert.ok(body('openArgsDialog').includes('setClaudeToolsCache(toolListFor(settings, res.type));'));
+  const ipc = fs.readFileSync(path.join(__dirname, '..', 'ipc-handlers.js'), 'utf8');
+  assert.ok(ipc.includes('toolsByType: Object.fromEntries(PLATFORMS.filter((t) => toolsFor(t)).map((t) => [t, toolsFor(t)])),'));
+});
+
+test('toolListFor: the seat type picks its list from toolsByType, else the Claude list', () => {
+  const { toolListFor } = require('../renderer/lib/checklists');
+  const settings = { claudeTools: ['Read', 'Agent'], toolsByType: { claude: ['Read', 'Agent'], clodent: ['Read', 'Bash'] } };
+  assert.deepStrictEqual(toolListFor(settings, 'clodent'), ['Read', 'Bash']);
+  assert.deepStrictEqual(toolListFor(settings, 'claude'), ['Read', 'Agent']);
+  assert.deepStrictEqual(toolListFor({ claudeTools: ['Read', 'Agent'] }, 'clodent'), ['Read', 'Agent']);
+  assert.deepStrictEqual(toolListFor(null, 'clodent'), []);
 });

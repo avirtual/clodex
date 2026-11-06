@@ -581,7 +581,7 @@ test('clodent: a CLODENT_HOME is never registered as a wirescope account; a clau
   assert.deepStrictEqual(f.registers, [['http://127.0.0.1:7811', claudeDir]]);
 });
 
-test('clodent: disabled tools become permissions.deny rules in the written settings, beside the fixture guard rules', async () => {
+test('clodent: disabled tools become exactly the permissions.deny rules in the written settings', async () => {
   const f = mkClodent();
   try {
     await f.create('seat', { disabledTools: ['Write', 'Edit'] });
@@ -593,7 +593,7 @@ test('clodent: disabled tools become permissions.deny rules in the written setti
       nodeInterp: process.execPath,
     });
     const written = JSON.parse(fsReal.readFileSync(realHooks.setupClaudeHook(...f.hooks[0]), 'utf-8'));
-    assert.deepStrictEqual(written.permissions.deny, ['PLACEHOLDER']);
+    assert.deepStrictEqual(written.permissions.deny, ['Write', 'Edit']);
   } finally { f.stop('seat'); }
 });
 
