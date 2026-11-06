@@ -2632,6 +2632,10 @@ function createSessionManager(deps) {
                 if (getRemoteServer()) {
                   try { getRemoteServer().pushTelemetry(name, { ctx: session.ctxInfo }); } catch {}
                 }
+                const sched = getRemindScheduler && getRemindScheduler();
+                if (sched && typeof sched.fireContextFor === 'function') {
+                  try { sched.fireContextFor(name, { tok: c.tok, pct: c.pct }); } catch {}
+                }
               }
               const warnPath = pathFor(REGISTRY_DIR, name, 'ctxwarn');
               // Gate on the CTX_THRESHOLD_MIN floor, not the shipped nudge: sanitizeThresholdPair drops rows below it, so this skips the

@@ -160,6 +160,25 @@ test('on compact: event kind, never timer-fires', () => {
   assert.strictEqual(parseRemindSpec('on tuesday').ok, false);
 });
 
+test('on context: k / bare tokens / percent thresholds, event kind, never timer-fires', () => {
+  const k = parseRemindSpec('on context 150k');
+  assert.deepStrictEqual(k, { ok: true, kind: 'onctx', tok: 150000, pct: null });
+  assert.strictEqual(nextFireAt(k, NOW), null);
+  assert.deepStrictEqual(parseRemindSpec('on context 200000'), { ok: true, kind: 'onctx', tok: 200000, pct: null });
+  assert.deepStrictEqual(parseRemindSpec('on context 80%'), { ok: true, kind: 'onctx', tok: null, pct: 80 });
+  assert.deepStrictEqual(parseRemindSpec('on context 100%'), { ok: true, kind: 'onctx', tok: null, pct: 100 });
+  assert.deepStrictEqual(parseRemindSpec('for t1 on context 150k'), { ok: true, kind: 'onctx', tok: 150000, pct: null, ticket: 't1' });
+});
+
+test('on context: bad thresholds bounce; unknown on-form names both forms', () => {
+  for (const spec of ['on context 0%', 'on context 101%', 'on context abc', 'on context 0', 'on context 0k', 'on context']) {
+    const r = parseRemindSpec(spec);
+    assert.strictEqual(r.ok, false, spec);
+  }
+  assert.match(parseRemindSpec('on context abc').error, /bad context threshold "abc"/);
+  assert.match(parseRemindSpec('on tuesday').error, /did you mean "on compact" or "on context <N>k\|<N>%"\?/);
+});
+
 test('list: no args, no timer', () => {
   assert.deepStrictEqual(parseRemindSpec('list'), { ok: true, kind: 'list' });
   assert.strictEqual(nextFireAt(parseRemindSpec('list'), NOW), null);

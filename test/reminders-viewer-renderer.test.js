@@ -17,6 +17,11 @@ test('fmtNextFire: absolute time with a zone abbreviation; oncompact reads "on c
   assert.strictEqual(fmtNextFire(row({ kind: 'oncompact', nextFireAt: null }), 'UTC'), 'on compact');
 });
 
+test('fmtNextFire: onctx shows its threshold from the spec', () => {
+  assert.strictEqual(fmtNextFire(row({ kind: 'onctx', spec: 'on context 150K', nextFireAt: null }), 'UTC'), 'on context ≥ 150k');
+  assert.strictEqual(fmtNextFire(row({ kind: 'onctx', spec: 'for t1 on context 80%', nextFireAt: null }), 'UTC'), 'on context ≥ 80%');
+});
+
 test('preview: 60 characters at most, whitespace flattened', () => {
   assert.strictEqual(preview('a\n  b'), 'a b');
   const p = preview('x'.repeat(100));

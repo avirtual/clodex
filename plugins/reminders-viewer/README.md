@@ -6,7 +6,8 @@ the seat's own `[agent:remind …]` or by the operator from this panel. Opens fr
 Columns: seat, kind, spec, next fire (local time with its zone abbreviation),
 a 60-character preview of the text (the full text on hover) and the ticket a
 `for <id>` binding ties it to. An `oncompact` reminder shows "on compact": it is
-event-triggered and has no fire time, not a missing one.
+event-triggered and has no fire time, not a missing one. An `onctx` reminder shows
+its threshold, e.g. "on context ≥ 150k".
 
 The table starts filtered to the selected seat; "All Seats" shows the whole
 workspace. A seat that is saved but not running is listed with its name dimmed:
@@ -60,4 +61,4 @@ table without an error.
 
 ## Firing
 
-Each row's Fire goes through `host.library.fire('reminder', { agent, id })`, which delivers the reminder now through the scheduler's own fire path: a one-shot is spent, a recurring one keeps its schedule (an `every` restarts its period from now), and an `on compact` one stays armed.
+Each row's Fire goes through `host.library.fire('reminder', { agent, id })`, which delivers the reminder now through the scheduler's own fire path: a one-shot is spent, a recurring one keeps its schedule (an `every` restarts its period from now), an `on compact` one stays armed, and an `on context` one is spent.
