@@ -27,7 +27,7 @@ Watch it run: [Clodex adding a feature to itself](https://github.com/avirtual/cl
 
 Download `Clodex-x.y.z-arm64.dmg` from [Releases](https://github.com/avirtual/clodex/releases/latest) and drag **Clodex** to Applications. First launch: right-click `Clodex.app` → **Open**, or `xattr -cr /Applications/Clodex.app`; the app is ad-hoc signed, not notarized. Then open Clodex, choose File ▸ New Session… (⌘T), and pick a CLI and a project directory.
 
-Requires an Apple Silicon Mac on macOS 12+, plus the CLIs you want to drive: [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude` in PATH) [Codex](https://github.com/openai/codex) (`codex` in PATH) and/or [clodent](https://github.com/avirtual/clodent) 0.5.2+ (`npm i -g https://github.com/avirtual/clodent/archive/refs/tags/v0.5.2.tar.gz`, a small Messages-API agent that runs on a plain API key). Intel Macs build from source; Linux servers run the headless engine.
+Requires an Apple Silicon Mac on macOS 12+, plus the CLIs you want to drive: [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude` in PATH) [Codex](https://github.com/openai/codex) (`codex` in PATH) and/or [clodent](https://github.com/avirtual/clodent) 0.6.1+ (`npm i -g clodent`, a small Messages-API agent that runs on a plain API key). Intel Macs build from source; Linux servers run the headless engine.
 
 With the desktop app running and its peer wire enabled, install the standalone client (Node 20+):
 
