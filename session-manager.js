@@ -116,6 +116,7 @@ const REBOOT_NOTICE_DRAFT_STALE_MS = 10 * 1000;
 
 const { readEffectiveClaudeEnv, teeBlindBackend } = require('./claude-env');
 const { readerFor } = require('./transcript-readers');
+const { specFor: toolSpecFor } = require('./tool-doctor');
 const { scanIntentLines } = require('./intent-segments');
 const { deepMerge, bootstrapSeatConfig, museDataHome, findMuseTranscript, oldestMuseTranscript, findCodexRollout, museRegistryFor, linkTranscript } = require('./seat-config');
 const { activationSettings } = require('./muse-skills');
@@ -1613,7 +1614,7 @@ function createSessionManager(deps) {
         return;
       }
       const found = out == null ? 'not on PATH' : `found ${String(out).trim().replace(/^clodent\s+/, '') || '(no version)'}`;
-      throw new Error(`clodent 0.5.2 or newer is required (${found}): clone github.com/avirtual/clodent and \`npm link\``);
+      throw new Error(`clodent 0.5.2 or newer is required (${found}): install or upgrade with \`${toolSpecFor('clodent').install}\``);
     }
 
     _clodentNativeTools() {

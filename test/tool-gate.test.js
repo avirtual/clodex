@@ -136,6 +136,7 @@ const onlyClaudeMissing = {
     claude: { present: false, install: claudeCmd },
     codex: { present: true, install: codexCmd },
     muse: { present: true, install: museCmd },
+    clodent: { present: true, install: clodentCmd },
   },
 };
 

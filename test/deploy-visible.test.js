@@ -477,7 +477,8 @@ test('deploy agent-clis installs clodent best-effort via npm and never carries a
   const arm = src.slice(src.indexOf('if command -v clodent', start), end);
   assert.ok(start > 0 && arm.length > 0, 'ENTER: the clodent arm sits inside the agent-clis step');
   assert.ok(arm.includes('log "clodent already present — skipping"'));
-  assert.ok(arm.includes('npm i -g clodent --no-audit --no-fund --loglevel=error >&2'));
+  assert.ok(arm.includes('if command -v clodent >/dev/null 2>&1 || [ -x "$HOME/.local/bin/clodent" ]; then'));
+  assert.ok(arm.includes('npm i -g --prefix "$HOME/.local" clodent --no-audit --no-fund --loglevel=error >&2'), 'installs into ~/.local so the binary lands in ~/.local/bin on the unit PATH');
   assert.ok(arm.includes('log "clodent install failed (best-effort) — a clodent spawn will fail until it is installed"'));
   const installAt = arm.indexOf('log "clodent installed"');
   const elseAt = arm.indexOf('else', installAt);

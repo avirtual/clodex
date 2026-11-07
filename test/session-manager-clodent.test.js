@@ -410,7 +410,7 @@ test('clodent: below 0.5.2 or off PATH the seat refuses to spawn, naming what it
   for (const [out, found] of [['clodent 0.5.1\n', 'found 0.5.1'], [null, 'not on PATH']]) {
     const f = mkClodent({ probeClodentVersion: () => { if (out == null) throw Object.assign(new Error('spawn clodent ENOENT'), { code: 'ENOENT' }); return out; } });
     try {
-      await assert.rejects(f.create('seat'), { message: `clodent 0.5.2 or newer is required (${found}): clone github.com/avirtual/clodent and \`npm link\`` });
+      await assert.rejects(f.create('seat'), { message: `clodent 0.5.2 or newer is required (${found}): install or upgrade with \`npm i -g clodent\`` });
       assert.deepStrictEqual([f.spawns.length, f.hooks.length], [0, 0]);
     } finally { f.stop('seat'); }
   }
