@@ -61,7 +61,7 @@ const PINNED_NAMES = [
   'onSessionFiles', 'sessionFiles', 'filePeek', 'fileDiff', 'fileWrite', 'fileResolve',
   // fileReveal added by t22 — reveal-in-file-manager for Manage Plugins' "Open
   // Plugins Folder", distinct from fileOpen (which opens the file itself).
-  'fileOpen', 'fileReveal', 'onSessionFileView', 'openExternal',
+  'fileOpen', 'fileSaveBytes', 'fileOpenBytes', 'fileReveal', 'onSessionFileView', 'openExternal',
   // sessionInfo added with the sidebar ⓘ panel — on-demand session stats
   // (compactions, the four cost scopes, transcript size).
   'sessionInfo', 'getProxySnapshot',

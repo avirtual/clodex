@@ -4,6 +4,7 @@ const { createFileTab } = require('./file-tab');
 const {
   emptyTabSet, fileTabId, saveArgs, shouldKeepBuffer, reduceTabs, stripState,
 } = require('./lib/side-pane-tabs');
+const { fetchWhole } = require('./lib/file-fetch');
 
 function createSidePane({ dock, popoverApi, showToast, getActiveSession, getFiles, focusTerminal, doc = document, win = window }) {
   const pane = doc.getElementById('side-pane');
@@ -159,6 +160,8 @@ function createSidePane({ dock, popoverApi, showToast, getActiveSession, getFile
           const res = await Promise.resolve(win.api.fileOpen(filePath)).catch(() => null);
           if (res && res.revealed) showToast(`Revealed in Finder, not opened: it is ${res.reason}`, { kind: 'warn', duration: 6000 });
         },
+        saveAs: (size) => exportFile(at.seat, filePath, size, 'save'),
+        openLocal: (size) => exportFile(at.seat, filePath, size, 'open'),
         escape: () => focusTerminal(),
         discard: () => act({ type: 'discard' }),
         keep: () => act({ type: 'keep' }),
@@ -177,6 +180,32 @@ function createSidePane({ dock, popoverApi, showToast, getActiveSession, getFile
     views.set(viewKey(seat, id), v);
     recordSeen(seat, id, filePath);
     return v;
+  }
+
+  async function exportFile(seat, filePath, size, mode) {
+    const name = filePath.split(/[\\/]/).pop() || 'file';
+    const got = await fetchWhole(popoverApi(seat).peek, filePath, size);
+    if (!got.ok) {
+      showToast(`Can't fetch ${name}: ${got.error}`, { kind: 'error', duration: 8000 });
+      return;
+    }
+    if (isWeb) {
+      const url = win.URL.createObjectURL(new win.Blob([got.bytes], { type: got.image || 'application/octet-stream' }));
+      if (mode === 'open') {
+        win.open(url, '_blank');
+      } else {
+        const a = doc.createElement('a');
+        a.href = url;
+        a.download = name;
+        a.click();
+      }
+      win.setTimeout(() => win.URL.revokeObjectURL(url), 60000);
+      return;
+    }
+    const res = await Promise.resolve(mode === 'open' ? win.api.fileOpenBytes(name, got.bytes) : win.api.fileSaveBytes(name, got.bytes))
+      .catch((e) => ({ ok: false, error: String(e) }));
+    if (res && res.revealed) showToast(`Revealed in Finder, not opened: it is ${res.reason}`, { kind: 'warn', duration: 6000 });
+    else if (!res || (!res.ok && res.error !== 'cancelled')) showToast(`${mode === 'open' ? 'Open' : 'Save'} failed: ${(res && (res.error || res.reason)) || 'unknown'}`, { kind: 'error', duration: 8000 });
   }
 
   async function save(seat, id) {

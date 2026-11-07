@@ -428,6 +428,7 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/lib/split.js',
   'renderer/file-tab.js',
   'renderer/lib/side-pane-tabs.js',
+  'renderer/lib/file-fetch.js',
   'renderer/term-search.js',
   'renderer/banners.js',
   'renderer/themes.js',

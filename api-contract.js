@@ -198,6 +198,8 @@ const API_CONTRACT = [
   // Read-only: answers whether a displayed string names a real file, and where.
   { name: 'fileResolve', kind: 'invoke', channel: 'file:resolve' },
   { name: 'fileOpen', kind: 'invoke', channel: 'file:open' },
+  { name: 'fileSaveBytes', kind: 'invoke', channel: 'file:saveBytes' },
+  { name: 'fileOpenBytes', kind: 'invoke', channel: 'file:openBytes' },
   // Reveal in the OS file manager, as distinct from opening the file itself.
   // An ordinary capability row, NOT part of the frozen five-row plugin transport
   // — its first caller is Manage Plugins (t22), pointing a user at

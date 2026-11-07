@@ -5,6 +5,7 @@ const { PEEK_MAX_BYTES, textEncodingRefusal } = require('./file-edit');
 
 const SNIFF_BYTES = 8192;
 const IMAGE_MAX_BYTES = 4 * 1024 * 1024;
+const RAW_CHUNK_MAX = 1024 * 1024;
 
 function imageMediaType(buf) {
   if (!buf || buf.length < 3) return null;
@@ -42,6 +43,22 @@ function utf8ForwardFrom(fd, offset, size) {
   return offset + i;
 }
 
+function rawChunk(fd, st, filePath, offset, want, image) {
+  const start = Math.min(offset, st.size);
+  const n = Math.max(0, Math.min(want, RAW_CHUNK_MAX, st.size - start));
+  const buf = Buffer.alloc(n);
+  let got = 0;
+  while (got < n) {
+    const r = fs.readSync(fd, buf, got, n - got, start + got);
+    if (r <= 0) break;
+    got += r;
+  }
+  return {
+    ok: true, path: filePath, size: st.size, mtime: Math.trunc(st.mtimeMs), offset: start, length: got,
+    truncated: start + got < st.size, binary: true, image, content: buf.subarray(0, got).toString('base64'),
+  };
+}
+
 function peekFile(filePath, opts = {}) {
   const asked = peekInt(opts.offset, 0);
   const length = Math.min(peekInt(opts.length, PEEK_MAX_BYTES), PEEK_MAX_BYTES);
@@ -62,6 +79,7 @@ function peekFile(filePath, opts = {}) {
       const magic = Buffer.alloc(Math.min(12, st.size));
       if (magic.length > 0) fs.readSync(fd, magic, 0, magic.length, 0);
       const image = imageMediaType(magic);
+      if (opts.raw) return rawChunk(fd, st, filePath, asked, peekInt(opts.length, RAW_CHUNK_MAX), image);
       if (image && st.size <= IMAGE_MAX_BYTES) {
         const whole = Buffer.alloc(st.size);
         let got = 0;
@@ -106,4 +124,4 @@ function peekFile(filePath, opts = {}) {
   } catch (e) { return { ok: false, code: 'unreadable', error: e.message }; }
 }
 
-module.exports = { peekFile, peekInt, utf8CutAt, imageMediaType, PEEK_MAX_BYTES, IMAGE_MAX_BYTES };
+module.exports = { peekFile, peekInt, utf8CutAt, imageMediaType, PEEK_MAX_BYTES, IMAGE_MAX_BYTES, RAW_CHUNK_MAX };

@@ -5732,7 +5732,7 @@ function popoverApi(name) {
       report: (opts) => q('report', opts),
       bust: () => q('bust'),
       files: () => q('files'),
-      peek: (p) => q('filePeek', { path: p }),
+      peek: (p, opts) => q('filePeek', { ...opts, path: p }),
       diff: (p) => q('fileDiff', { path: p }),
     };
   }
@@ -5742,7 +5742,7 @@ function popoverApi(name) {
     report: (opts) => window.api.getProxyReport(name, opts),
     bust: () => window.api.getProxyBust(name),
     files: () => window.api.sessionFiles(name),
-    peek: (p) => window.api.filePeek(p),
+    peek: (p, opts) => window.api.filePeek(p, opts),
     diff: (p) => window.api.fileDiff(name, p),
   };
 }
