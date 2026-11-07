@@ -20,7 +20,7 @@ function installDescriptor(tool, cmd) {
   return { tool, command: cmd, sessionName: installSessionName(tool), label: `Install ${tool}…` };
 }
 
-const AGENT_TOOLS = ['claude', 'codex', 'muse'];
+const AGENT_TOOLS = ['claude', 'codex', 'muse', 'clodent'];
 
 // type: the New Session selector value ('claude' | 'codex' | 'muse' | 'bash').
 // check: the tools:check IPC payload —

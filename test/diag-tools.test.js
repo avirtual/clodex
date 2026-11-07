@@ -28,8 +28,8 @@ test('diagWarning: only one CLI missing → NOT a global warning (dialog gate ow
 });
 
 test('diagWarning: every agent CLI missing → warns "no agent sessions can start"', () => {
-  const w = diagWarning({ ...healthyHelper, claude: null, codex: null, muse: null });
-  assert.match(w, /No agent CLI \(claude, codex or muse\)/);
+  const w = diagWarning({ ...healthyHelper, claude: null, codex: null, muse: null, clodent: null });
+  assert.match(w, /No agent CLI \(claude, codex, muse or clodent\)/);
   assert.match(w, /no agent sessions can start/);
   // Same remedy discipline as tool-doctor's claude spec: the native installer,
   // not npm — this audience (fresh account/machine) usually lacks npm too.

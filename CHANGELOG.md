@@ -19,6 +19,7 @@ blocks a release.
 - A ticket that cannot merge cleanly into the trunk is rejected back to its hand at `task done`, with the conflicting paths, before the suite and the reviewer run; a CHANGELOG-only conflict still passes, since the merge resolves it.
 - A "Minimal" sidebar filter hides the ticket loop's ephemeral seats (hands, reviewers) so the sidebar shows only the seats you talk to; a hidden seat still appears while it waits on a permission dialog.
 - A file shared by a remote seat (`[agent:file view]`, images included) can be opened or saved from its tab: Open shows an image full-window in your browser (other files go to their default app) from a temp copy, Save… writes it where you choose, and both fetch past the 4 MB preview cap in chunks.
+- Deploying a node installs clodent beside the claude, codex and muse CLIs (`npm i -g --prefix ~/.local clodent`, best-effort) and prepares `~/.clodent` for its API key; the tool doctor and the New Session gate list clodent with its install command, and a clodent seat refused for a missing or too-old clodent names `npm i -g clodent` instead of a clone-and-link.
 
 ## 5.163.0 — 2026-11-07
 

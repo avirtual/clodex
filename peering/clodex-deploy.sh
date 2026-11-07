@@ -296,15 +296,15 @@ fs.renameSync(tmp, p);
 ' "$SETTINGS" "$PORT" >&2 || fail settings "ui-settings-merge-failed"
 ok settings
 
-# --- agent-clis: the claude/codex/muse CLIs a spawn will exec ---------------------
-# The engine spawns `claude`/`codex` as child PTYs; without the binaries on PATH
+# --- agent-clis: the claude/codex/muse/clodent CLIs a spawn will exec ---------
+# The engine spawns the agent CLIs as child PTYs; without the binaries on PATH
 # the child dies on execvp with a bare code-1 (the exact silent-death this step
-# prevents). Install them the SETTLED native way — the same one-liners the GUI's
-# "Install <tool>…" button runs (tool-doctor.js): curl|sh into ~/.local/bin, no
-# npm, no root, self-updating. BEST-EFFORT by design: a node that only runs bash
-# sessions is legitimate, so a failed CLI install is logged but NEVER fails the
-# deploy and NEVER needs sudo. Idempotent: a present CLI is skipped. macOS is the
-# desktop-app story — skip there too (the app manages its own tools).
+# prevents). Install them with the same one-liners the GUI's "Install <tool>…"
+# button runs (tool-doctor.js): claude/codex/muse via curl|sh into ~/.local/bin,
+# clodent via `npm i -g --prefix ~/.local` (also ~/.local/bin). BEST-EFFORT: a
+# node that only runs bash sessions is legitimate, so a failed install is logged
+# but NEVER fails the deploy and NEVER needs sudo. Idempotent: a present CLI is
+# skipped. macOS: skipped too (the desktop app manages its own tools).
 step agent-clis
 if [ "$IS_MAC" = "1" ]; then
   log "macOS: skipping agent-CLI install (desktop app manages its own tools)"
@@ -336,6 +336,18 @@ else
       && MUSE_LAUNCHER_INSTALL=1 MUSE_LOGIN=0 "$HOME/.local/bin/muse" >&2 \
       && log "muse installed" \
       || log "muse install failed (best-effort) — a Muse spawn will fail until it is installed"
+  fi
+  if command -v clodent >/dev/null 2>&1 || [ -x "$HOME/.local/bin/clodent" ]; then
+    log "clodent already present — skipping"
+  else
+    log "installing clodent CLI (npm → ~/.local/bin)…"
+    if npm i -g --prefix "$HOME/.local" clodent --no-audit --no-fund --loglevel=error >&2; then
+      log "clodent installed"
+      mkdir -p "$HOME/.clodent" && chmod 700 "$HOME/.clodent"
+      log "clodent reads its API key from ~/.clodent/settings.json env (ANTHROPIC_API_KEY) — place it there, mode 0600"
+    else
+      log "clodent install failed (best-effort) — a clodent spawn will fail until it is installed"
+    fi
   fi
   for f in "$HOME/.profile" "$HOME/.bashrc"; do
     grep -qs '^export TBH_CREDENTIAL_BACKEND=file$' "$f" || echo 'export TBH_CREDENTIAL_BACKEND=file' >> "$f"

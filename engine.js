@@ -58,8 +58,8 @@ function diagWarning(d = {}) {
     return 'PATH merge from your login shell failed — CLIs installed there (claude/codex) '
       + 'may be invisible to Clodex. Relaunch Clodex, or start it from a terminal.';
   }
-  if (!d.claude && !d.codex && !d.muse) {
-    return 'No agent CLI (claude, codex or muse) was found on PATH — no agent sessions can start. '
+  if (!d.claude && !d.codex && !d.muse && !d.clodent) {
+    return 'No agent CLI (claude, codex, muse or clodent) was found on PATH — no agent sessions can start. '
       + 'Install one, e.g. curl -fsSL https://claude.ai/install.sh | bash';
   }
   return null;
@@ -78,6 +78,7 @@ function diagLines(d = {}) {
     `claude:       ${d.claude || 'NOT FOUND on PATH'}`,
     `codex:        ${d.codex || 'NOT FOUND on PATH'}`,
     `muse:         ${d.muse || 'NOT FOUND on PATH'}`,
+    `clodent:      ${d.clodent || 'NOT FOUND on PATH'}`,
   );
   const warning = diagWarning(d);
   if (warning) lines.push(`⚠ ${warning}`);
@@ -279,7 +280,7 @@ function collectSystemDiagnostics() {
   return {
     platform: process.platform, procArch: process.arch, rosetta: detectRosetta(),
     electron: process.versions.electron, node: process.versions.node,
-    claude: whichBin('claude'), codex: whichBin('codex'), muse: whichBin('muse'),
+    claude: whichBin('claude'), codex: whichBin('codex'), muse: whichBin('muse'), clodent: whichBin('clodent'),
     pathMergeFailed,
     helperPath: helper, helperExists: fs.existsSync(helper),
     helperExecutable, helperArch: machoArch(helper),
