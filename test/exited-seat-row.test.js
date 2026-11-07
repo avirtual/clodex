@@ -258,6 +258,8 @@ function mkRenderer({ api = {}, confirmAnswer = true } = {}) {
     mountRestoredSession: rec('mountRestoredSession'),
     initSidebarView: rec('initSidebarView'),
     switchToNewSession: rec('switchToNewSession'),
+    rowPasses: () => true,
+    fitSessionInBackground: rec('fitSessionInBackground'),
     applyCloneChip: rec('applyCloneChip'),
     applyTicketBadge: rec('applyTicketBadge'),
     refreshNewSessionToolGate() {},
@@ -271,7 +273,7 @@ function mkRenderer({ api = {}, confirmAnswer = true } = {}) {
     `async ${fnSrc('setArgsOrFailRow')}`, `async ${fnSrc('restartOrFailRow')}`, `async ${fnSrc('deleteSessionRow')}`, fnSrc('respawnSnapshotOf'), fnSrc('rebuildLiveRow'), fnSrc('exitedRowSnapshot'), fnSrc('addExitedSessionToSidebar'), `async ${fnSrc('forgetSavedEntry')}`,
     slice('window.api.onSessionExit((name, code, meta) => {', '\n});\n'),
     slice('window.api.onSessionMovedIn((entry) => {', '\n});\n'),
-    `const reattach = ({ name, type, cwd, backend, noWire, io, background, clone }) => { switch ('reattach') { ${slice("    case 'reattach':", '      break;\n')} } };`,
+    `const reattach = ({ name, type, cwd, backend, noWire, ephemeral, io, background, clone }) => { switch ('reattach') { ${slice("    case 'reattach':", '      break;\n')} } };`,
     `const respawnFailed = ({ name, type, cwd, error }) => { switch ('respawnFailed') { ${slice("    case 'respawnFailed': {", '      break;\n    }\n')} } };`,
     `return { reattach, respawnFailed, setArgsOrFailRow, restartOrFailRow, deleteSessionRow, restore: () => ${slice('(async function restoreSessions() {', '\n})();\n').trim().replace(/;$/, '')} };`,
   ].join('\n');
@@ -334,7 +336,7 @@ test('clicking the exited row resumes through retrySpawnSession and mounts the s
   assert.deepStrictEqual(h.calls[4], ['refreshSeatMcp', 'cx']);
   assert.deepStrictEqual(h.calls[5], ['markSeatPosture', 'cx', 'bypass']);
   assert.deepStrictEqual(h.calls[0], ['markSeatIo', 'cx', 'stream']);
-  assert.deepStrictEqual(h.calls[2], ['addSessionToSidebar', 'cx', 'codex', '/w/c', null, null, 'T', false, null, null]);
+  assert.deepStrictEqual(h.calls[2], ['addSessionToSidebar', 'cx', 'codex', '/w/c', null, null, 'T', false, null, null, false]);
 });
 
 test('✕ on the exited row forgets the record', async () => {

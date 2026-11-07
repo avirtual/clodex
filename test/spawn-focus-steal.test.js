@@ -280,7 +280,7 @@ test('the renderer routes new sessions through the policy, not straight to switc
   const src = read('renderer/renderer.js');
   // The reattach case is the agent path: it must consult the policy and pass
   // provenance through, or the fix is inert no matter what the leaf decides.
-  const reattach = src.match(/case 'reattach':[\s\S]{0,600}?break;/);
+  const reattach = src.match(/case 'reattach':[\s\S]{0,900}?break;/);
   assert.ok(reattach, 'ENTER: the reattach case is still there to check');
   assert.match(reattach[0], /switchToNewSession\(\s*name,\s*\{\s*agentInitiated:\s*background === true/);
   assert.doesNotMatch(reattach[0], /\bswitchSession\(/, 'must not bypass the policy');
