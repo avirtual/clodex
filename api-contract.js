@@ -482,6 +482,8 @@ const API_CONTRACT = [
   { name: 'accountsAdd', kind: 'invoke', channel: 'accounts:add' },
   { name: 'accountsRemove', kind: 'invoke', channel: 'accounts:remove' },
   { name: 'accountsResync', kind: 'invoke', channel: 'accounts:resync' },
+  { name: 'accountsSetApiKey', kind: 'invoke', channel: 'accounts:setApiKey' },
+  { name: 'accountsClearApiKey', kind: 'invoke', channel: 'accounts:clearApiKey' },
   { name: 'accountsMoveByModel', kind: 'invoke', channel: 'accounts:move-by-model' },
   // Plugin transport. EXACTLY these five rows —
   // the whole plugin surface, for every plugin, forever. `pluginInvoke` is ONE

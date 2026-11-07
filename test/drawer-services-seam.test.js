@@ -298,7 +298,7 @@ test('the web-host surface REGISTERS console:read and console:live', () => {
     // renderer's Preferences ▸ Accounts pane and the dialogs' Account select
     // both ship in the web bundle, so nothing in the browser frontend stops an
     // operator reaching them — only the absent handlers do.
-    for (const ch of ['accounts:list', 'accounts:add', 'accounts:remove', 'accounts:resync', 'accounts:move-by-model']) {
+    for (const ch of ['accounts:list', 'accounts:add', 'accounts:remove', 'accounts:resync', 'accounts:setApiKey', 'accounts:clearApiKey', 'accounts:move-by-model']) {
       assert.ok(!registered.has(ch), `${ch} must not register on the web surface`);
     }
   } finally {
