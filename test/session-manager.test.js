@@ -22292,6 +22292,23 @@ test('turn refs: an item without a ref has no own key, and the close drops pendi
   assert.deepStrictEqual(s._turnRefs, []);
 });
 
+test('stream ctx: an assistant usage record pushes session-ctx, sets ctxInfo and fires the context reminders once per new size', async (t) => {
+  const fired = [];
+  const sched = { fireContextFor: (n, c) => fired.push([n, c]) };
+  const h = mkStreamSeatManager({ extraDeps: { getRemindScheduler: () => sched } });
+  t.after(() => h.stopAll());
+  await h.create('st-ctx');
+  const pushes = [];
+  h.m._sendToSession = (n, channel, ...args) => { if (channel === 'session-ctx') pushes.push(args); };
+  const usage = { type: 'assistant', message: { model: 'claude-opus-5-5', content: [], usage: { input_tokens: 1000, cache_read_input_tokens: 120000, cache_creation_input_tokens: 500 } } };
+  h.line('st-ctx', usage);
+  h.line('st-ctx', usage);
+  assert.deepStrictEqual(pushes, [['st-ctx', 12, 121500, 1000000, null, null]]);
+  assert.deepStrictEqual(h.m.sessions.get('st-ctx').ctxInfo,
+    { pct: 12, tok: 121500, size: 1000000, cost: null, modelName: null, model: 'claude-opus-5-5' });
+  assert.deepStrictEqual(fired, [['st-ctx', { tok: 121500, pct: 12 }]]);
+});
+
 test('assistant wake: single-flight — racing callers share one restart, a settled or rejected wake clears the slot', async (t) => {
   const calls = [];
   const h = mkStreamSeatManager({

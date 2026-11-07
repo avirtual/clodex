@@ -74,6 +74,16 @@ test('decode: assistant and user content records are not decoded', () => {
     [{ kind: 'other' }, { kind: 'other' }, { kind: 'other' }]);
 });
 
+test('decode: an assistant record carrying usage decodes to the summed prompt size and its model', () => {
+  assert.deepStrictEqual(
+    decode({ type: 'assistant', message: { model: 'claude-opus-5-5', content: [], usage: { input_tokens: 1000, cache_read_input_tokens: 120000, cache_creation_input_tokens: 500, output_tokens: 42 } } }),
+    { kind: 'usage', model: 'claude-opus-5-5', tok: 121500 });
+  assert.deepStrictEqual(
+    decode({ type: 'assistant', message: { content: [], usage: { input_tokens: 7 } } }),
+    { kind: 'usage', model: null, tok: 7 });
+  assert.deepStrictEqual(decode({ type: 'assistant', message: { model: 'claude-opus-5-5', content: [] } }), { kind: 'other' });
+});
+
 test('encodeUser builds the stream-json user message', () => {
   assert.deepStrictEqual(encodeUser('hello'), { type: 'user', message: { role: 'user', content: 'hello' } });
 });

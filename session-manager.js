@@ -129,6 +129,7 @@ const CODEX_LINK_DEADLINE_MS = 60000;
 const CODEX_LINK_SLOW_POLL_MS = 5000;
 const { mergeSessionEnv, sanitizeFlat, withUtf8Charset } = require('./env-scopes');
 const voiceEngineSpec = require('./voice-engine');
+const { effectiveWindowSize } = require('./argv-merge');
 const { CTRLU_SETTLE_MS } = require('./inject-queue');
 const { agentDir: pendingAgentDir, claimsDir: pendingClaimsDir, isReservedSeatName, claimTag, rehomeOrphans, CLAIM_TAG_RE, LEGACY_CLAIM_RE } = require('./pending-store');
 const { VOICE_MODES, voiceModeOf } = require('./voice-settings');
@@ -2627,17 +2628,7 @@ function createSessionManager(deps) {
             lastRaw = raw;
             const c = parseCtxFile(raw);
             if (c.pct != null) {
-              if (fresh) {
-                this._sendToSession(name, 'session-ctx', name, c.pct, c.tok, c.size, c.cost, c.modelName);
-                session.ctxInfo = { pct: c.pct, tok: c.tok, size: c.size, cost: c.cost, modelName: c.modelName, model: c.model };
-                if (getRemoteServer()) {
-                  try { getRemoteServer().pushTelemetry(name, { ctx: session.ctxInfo }); } catch {}
-                }
-                const sched = getRemindScheduler && getRemindScheduler();
-                if (sched && typeof sched.fireContextFor === 'function') {
-                  try { sched.fireContextFor(name, { tok: c.tok, pct: c.pct }); } catch {}
-                }
-              }
+              if (fresh) this._noteCtx(session, c);
               const warnPath = pathFor(REGISTRY_DIR, name, 'ctxwarn');
               // Gate on the CTX_THRESHOLD_MIN floor, not the shipped nudge: sanitizeThresholdPair drops rows below it, so this skips the
               // ui-settings re-parse for a quiet session without capping how low an operator can set the threshold.
@@ -3319,6 +3310,29 @@ function createSessionManager(deps) {
       s._resultHold = null;
     }
 
+    _noteCtx(session, c) {
+      const name = session.name;
+      this._sendToSession(name, 'session-ctx', name, c.pct, c.tok, c.size, c.cost, c.modelName);
+      session.ctxInfo = { pct: c.pct, tok: c.tok, size: c.size, cost: c.cost, modelName: c.modelName, model: c.model };
+      if (getRemoteServer()) {
+        try { getRemoteServer().pushTelemetry(name, { ctx: session.ctxInfo }); } catch {}
+      }
+      const sched = getRemindScheduler && getRemindScheduler();
+      if (sched && typeof sched.fireContextFor === 'function') {
+        try { sched.fireContextFor(name, { tok: c.tok, pct: c.pct }); } catch {}
+      }
+    }
+
+    _noteStreamUsage(s, rec) {
+      if (typeof rec.tok !== 'number') return;
+      if (s.ctxInfo && s.ctxInfo.tok === rec.tok) return;
+      const model = rec.model || s.streamModel || null;
+      const size = effectiveWindowSize(model, 0) || 0;
+      const pct = size > 0 ? Math.round((rec.tok / size) * 100) : null;
+      const cost = s._costSeen && typeof s._costSeen.usd === 'number' ? s._costSeen.usd : null;
+      this._noteCtx(s, { pct, tok: rec.tok, size, cost, modelName: null, model });
+    }
+
     _noteSeatCost(s, usd) {
       s._costSeen = { usd, turns: (s._costSeen?.turns || 0) + 1 };
       if (s._costFoldTimer) return;
@@ -3549,6 +3563,9 @@ function createSessionManager(deps) {
           }
           this._drainPendingAtStreamInit(s);
           if (rec.turnEnd) this._streamTurnEnd(s);
+          break;
+        case 'usage':
+          this._noteStreamUsage(s, rec);
           break;
         case 'init-failed':
           log.warn('session', `stream ${s.name}: opening handshake failed, the init watchdog stays armed: ${rec.error || '(no detail)'}`);

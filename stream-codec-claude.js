@@ -52,6 +52,16 @@ function decode(obj) {
       text: typeof obj.result === 'string' ? obj.result : null,
     };
   }
+  if (obj.type === 'assistant') {
+    const u = obj.message && obj.message.usage;
+    if (!u || typeof u !== 'object') return { kind: 'other' };
+    const n = (v) => (typeof v === 'number' ? v : 0);
+    return {
+      kind: 'usage',
+      model: obj.message.model || null,
+      tok: n(u.input_tokens) + n(u.cache_read_input_tokens) + n(u.cache_creation_input_tokens),
+    };
+  }
   if (obj.type === 'conversation_reset') {
     return { kind: 'reset', newConversationId: obj.new_conversation_id || null };
   }
