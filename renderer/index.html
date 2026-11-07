@@ -1213,7 +1213,7 @@
       </details>
       <details class="prefs-group" data-group="accounts">
         <summary><h4>Accounts</h4><span class="prefs-group-sub">Your registered Claude subscriptions, and which seats run on them</span></summary>
-        <p class="hint-text">Each account is a label plus the <code>CLAUDE_CONFIG_DIR</code> a seat on it spawns with; <code>default</code> is <code>~/.claude</code> and is never stored. Adding an account with no config dir mints one that shares transcripts, plugins and skills with the default. A seat picks its account in the New Session and Edit Session dialogs.</p>
+        <p class="hint-text">Each account is a label plus the <code>CLAUDE_CONFIG_DIR</code> a seat on it spawns with; <code>default</code> is <code>~/.claude</code> and is never stored. Adding an account with no config dir mints one that shares transcripts, plugins and skills with the default. A seat picks its account in the New Session and Edit Session dialogs. An <code>api</code> account can hold an Anthropic API key; it is written only to that account's settings.json (0600), which clodent and Console-billed claude seats read.</p>
         <div id="prefs-accounts-list" style="margin-top: 8px;"></div>
         <div class="prefs-row" style="gap: 6px; margin-top: 8px;">
           <input type="text" id="prefs-account-label" placeholder="label" spellcheck="false" autocomplete="off" style="flex: 1; min-width: 0;">
@@ -1228,6 +1228,7 @@
         </div>
         <div class="prefs-row" style="gap: 6px; margin-top: 6px;">
           <input type="text" id="prefs-account-dir" placeholder="config dir (optional)" spellcheck="false" autocomplete="off" style="flex: 2; min-width: 0;">
+          <input type="password" id="prefs-account-key" placeholder="API key (sk-ant-…)" spellcheck="false" autocomplete="off" hidden style="flex: 2; min-width: 0;">
           <button id="prefs-account-add" class="secondary" type="button" style="flex: none;">Add</button>
         </div>
         <div class="prefs-row" style="gap: 6px; margin-top: 8px;">

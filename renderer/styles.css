@@ -2863,6 +2863,8 @@ body.drawer-dragging #drawer, body.drawer-dragging #work-row { transition: none;
 .prefs-account-row .prefs-account-seats { flex: none; }
 .prefs-account-row button { flex: none; }
 .prefs-account-plan { flex: none; font-size: 10px; opacity: 0.6; text-transform: uppercase; letter-spacing: 0.04em; }
+.prefs-account-key { flex: none; font-size: 10px; opacity: 0.8; }
+.prefs-account-row .prefs-account-key-input { flex: 1 1 auto; min-width: 0; }
 .prefs-check { display: flex; align-items: center; gap: 8px; }
 .prefs-check input[type="checkbox"] { margin: 0; }
 .prefs-dot { width: 10px; height: 10px; border-radius: 50%; background: #888; display: inline-block; flex: none; }

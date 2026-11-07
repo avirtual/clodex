@@ -33,3 +33,13 @@ directions because a live seat's `extraArgs` may carry either spelling.
 `claudeConfigFile` derives from `path.dirname(claudeHome)` because `~/.claude`
 pairs with `~/.claude.json` — a sibling, not a child. Deriving it keeps a test's
 fake home self-consistent.
+
+## setApiKey
+
+A key is 1–`API_KEY_MAX` (512) characters with no whitespace; a pasted trailing
+newline is refused rather than trimmed. `default` is refused, and so is any
+registered account whose config dir is `claudeHome`: that settings.json is the
+operator's real `~/.claude/settings.json`. An existing settings.json that does
+not parse as a JSON object is refused rather than replaced, so a hand-edited
+file with a typo is never clobbered. `resync` copies the default settings.json
+over the account's and so drops a key set here.

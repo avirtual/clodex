@@ -591,3 +591,88 @@ test('mint: a claudeHome entry that is itself a dangling symlink is skipped like
   assert.ok(fs.lstatSync(path.join(dir, 'projects')).isSymbolicLink());
   assert.throws(() => fs.lstatSync(path.join(dir, 'plugins')), /ENOENT/);
 });
+
+const KEY = 'sk-ant-api03-TESTKEYliteral_0123456789';
+const settingsOf = (dir) => JSON.parse(fs.readFileSync(path.join(dir, 'settings.json'), 'utf-8'));
+
+test('setApiKey writes env.ANTHROPIC_API_KEY into the account settings.json, keeps the rest, at 0600, and returns only ok', () => {
+  const { accounts, root } = fixture();
+  const dir = path.join(root, 'acct-api');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ model: 'opus', env: { FOO: 'bar' } }), { mode: 0o644 });
+  accounts.add({ label: 'api-1', plan: 'api', configDir: dir });
+  const res = accounts.setApiKey('api-1', KEY);
+  assert.deepStrictEqual(res, { ok: true });
+  assert.deepStrictEqual(settingsOf(dir), { model: 'opus', env: { FOO: 'bar', ANTHROPIC_API_KEY: KEY } });
+  assert.strictEqual(fs.statSync(path.join(dir, 'settings.json')).mode & 0o777, 0o600);
+  assert.strictEqual(accounts.hasApiKey('api-1'), true);
+});
+
+test('setApiKey creates settings.json when the dir has none', () => {
+  const { accounts, root } = fixture();
+  const dir = path.join(root, 'acct-empty');
+  accounts.add({ label: 'api-2', plan: 'api', configDir: dir });
+  assert.deepStrictEqual(accounts.setApiKey('api-2', KEY), { ok: true });
+  assert.deepStrictEqual(settingsOf(dir), { env: { ANTHROPIC_API_KEY: KEY } });
+  assert.strictEqual(fs.statSync(path.join(dir, 'settings.json')).mode & 0o777, 0o600);
+});
+
+test('setApiKey refuses default, an account aliasing ~/.claude, unknown labels, and bad keys — writing nothing', () => {
+  const { accounts, root, claudeHome } = fixture();
+  const dir = path.join(root, 'acct-x');
+  accounts.add({ label: 'api-3', plan: 'api', configDir: dir });
+  accounts.add({ label: 'alias', plan: 'api', configDir: claudeHome });
+  const before = fs.readFileSync(path.join(claudeHome, 'settings.json'), 'utf-8');
+  for (const [label, key] of [
+    ['default', KEY],
+    ['alias', KEY],
+    ['nope', KEY],
+    ['api-3', ''],
+    ['api-3', 'sk-ant has space'],
+    ['api-3', 'sk-ant-trailing\n'],
+    ['api-3', 'x'.repeat(513)],
+    ['api-3', 42],
+  ]) {
+    const r = accounts.setApiKey(label, key);
+    assert.strictEqual(r.ok, false, `${label}/${String(key).slice(0, 12)} must be refused`);
+    assert.ok(!String(r.error).includes('sk-ant'), 'the refusal never echoes the key');
+  }
+  assert.strictEqual(fs.readFileSync(path.join(claudeHome, 'settings.json'), 'utf-8'), before, 'the real ~/.claude settings are untouched');
+  assert.strictEqual(fs.existsSync(path.join(dir, 'settings.json')), false);
+  assert.deepStrictEqual(accounts.setApiKey('api-3', 'x'.repeat(512)), { ok: true }, 'ENTER: 512 is the inclusive bound');
+});
+
+test('setApiKey refuses to replace a settings.json that is not a JSON object', () => {
+  const { accounts, root } = fixture();
+  const dir = path.join(root, 'acct-bad');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'settings.json'), '{ "model": "opus", ');
+  accounts.add({ label: 'api-4', plan: 'api', configDir: dir });
+  assert.strictEqual(accounts.setApiKey('api-4', KEY).ok, false);
+  assert.strictEqual(fs.readFileSync(path.join(dir, 'settings.json'), 'utf-8'), '{ "model": "opus", ');
+});
+
+test('clearApiKey drops only the key; hasApiKey follows it', () => {
+  const { accounts, root } = fixture();
+  const dir = path.join(root, 'acct-clear');
+  accounts.add({ label: 'api-5', plan: 'api', configDir: dir });
+  assert.strictEqual(accounts.hasApiKey('api-5'), false);
+  accounts.setApiKey('api-5', KEY);
+  fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ ...settingsOf(dir), model: 'opus', env: { ...settingsOf(dir).env, FOO: 'bar' } }));
+  assert.deepStrictEqual(accounts.clearApiKey('api-5'), { ok: true });
+  assert.deepStrictEqual(settingsOf(dir), { model: 'opus', env: { FOO: 'bar' } });
+  assert.strictEqual(accounts.hasApiKey('api-5'), false);
+  assert.strictEqual(accounts.clearApiKey('default').ok, false);
+  assert.strictEqual(accounts.hasApiKey('nope'), false);
+});
+
+test('list() rows carry an apiKey boolean and never the key string, and the registry never stores it', () => {
+  const { accounts, root, clodexHome } = fixture();
+  accounts.add({ label: 'api-6', plan: 'api', configDir: path.join(root, 'acct-6') });
+  accounts.add({ label: 'api-7', plan: 'api', configDir: path.join(root, 'acct-7') });
+  accounts.setApiKey('api-6', KEY);
+  const rows = accounts.list();
+  assert.deepStrictEqual(rows.map((r) => [r.label, r.apiKey]), [['default', false], ['api-6', true], ['api-7', false]]);
+  assert.ok(!JSON.stringify(rows).includes(KEY), 'no list row carries the key literal');
+  assert.ok(!fs.readFileSync(path.join(clodexHome, 'accounts.json'), 'utf-8').includes('apiKey'), 'the boolean is derived, never persisted');
+});
