@@ -10,6 +10,9 @@ const { pathToFileURL } = require('url');
 const os = require('os');
 const fs = require('fs');
 const { execSync, execFile } = require('child_process');
+const { promisify } = require('util');
+const { launchInBrowser } = require('./browser-launch');
+const browserCache = {};
 const { ensureDir } = require('./fs-util');
 const { defaultClodexHome } = require('./clodex-paths');
 const { maskSecrets } = require('./log-mask');
@@ -713,6 +716,7 @@ app.whenReady().then(() => {
     openPath: (filePath) => shell.openPath(filePath),
     showItemInFolder: (filePath) => shell.showItemInFolder(filePath),
     openInTerminal: (cwd) => execFile('open', ['-a', 'Terminal', cwd]),
+    openInBrowser: (p) => launchInBrowser(p, { platform: process.platform, execFile: promisify(execFile), openExternal: (url) => shell.openExternal(url), openPath: (f) => shell.openPath(f), cache: browserCache }),
     getAppVersion: () => app.getVersion(),
     getDesktopPath: () => app.getPath('desktop'),
     fs, https, os, path, log,

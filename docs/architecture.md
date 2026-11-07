@@ -107,6 +107,10 @@ bundle), whose packaged form is the Docker image under
   engine.js and injected; deliberately NOT a module).
   `window-all-closed` quits only off macOS (the tray keeps the app alive there);
   `before-quit` → `engine.shutdown()` is the real quit.
+- **browser-launch.js** — `launchInBrowser`, main.js's `openInBrowser` seam
+  for `file:openBytes` images: opens a file with the default web browser (the
+  `https` handler on macOS, the xdg default on Linux), since a `file://` URL
+  goes to the file type's app. `defaultBrowserMac` parses `LSHandlers`.
 - **headless-main.js** — the **headless adapter**, `node headless-main.js`. No
   Electron, no Xvfb, no windows/tray/ipc: `userDataPath` from
   `CLODEX_DATA_DIR` (or the platform default; the Electron host honours the same
@@ -1302,7 +1306,10 @@ Own state + DOM, `init*(deps)`:
 - **file-tab.js** — one file tab's DOM: the Diff / File / Edit views, the
   save button and the agent-changed banner. The git diff is still rendered
   through `renderDiffHtml` into `innerHTML`; the file view is built with DOM
-  nodes.
+  nodes. A remote or web viewer gets Save… and Open instead of the editor
+  Open: `side-pane.js` fetches the whole file in raw chunks
+  (`lib/file-fetch.js`, 64 MB cap) and hands it to `file:saveBytes` /
+  `file:openBytes` (a Blob download / tab on web).
 - **splitter.js** — `attachSplitter`, the one pointer-capture drag behind the
   dock width handle and the Files/Tickets `#dock-split`: moves coalesce to one
   rAF with an optional throttle, one `commit` on release, `reset` on

@@ -328,7 +328,7 @@ test('file-tab paints an image peek as a file-peek-image <img> with a data: src,
 test('file-tab: an image that fails to decode paints a note, and an image peek opens on the File view over a diff', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'file-tab.js'), 'utf8');
   const paintImage = src.slice(src.indexOf('function paintImage('), src.indexOf('function paintFile('));
-  assert.ok(paintImage.includes("img.addEventListener('error', () => paintNote('Image could not be decoded — use Open.'));"));
+  assert.ok(paintImage.includes("img.addEventListener('error', () => paintNote(`Image could not be decoded — ${useHint}`));"));
   const dv = src.slice(src.indexOf('function defaultView('), src.indexOf('function paintNote('));
   assert.match(dv, /if \(peekRes && peekRes\.image\) return 'file';\n\s*return \(diffRes/);
 });
@@ -527,6 +527,23 @@ test('confinement (remote query only): cwd, spill, messages and task dirs of the
   assert.deepStrictEqual(f.diffs, [['seat', inCwd]], 'fileDiff still receives the requested path');
   assert.ok(f.peeks.every(([p]) => path.isAbsolute(p)));
   assert.strictEqual(f.query('seat', 'files').ok, true);
+});
+
+test('remote filePeek forwards raw with offset/length, and a raw read of an image over the preview cap answers base64 bytes', () => {
+  const registry = mkTmpRoot('clx-fileview-');
+  const cwd = mkTmpRoot('clx-fileview-');
+  const session = { name: 'seat', agentType: 'claude', cwd, filedRing: createFiledRing() };
+  const f = wiringFixture({ registry, cwd, session });
+  const big = writeAt(cwd, 'big.png', Buffer.concat([PNG_1X1, Buffer.alloc(IMAGE_MAX_BYTES, 0x41)]));
+  const r = f.query('seat', 'filePeek', { path: big, raw: true, offset: 8, length: 4 });
+  assert.deepStrictEqual(f.peeks[0][1], { offset: 8, length: 4, raw: true });
+  assert.deepStrictEqual([r.ok, r.path, r.offset, r.length, r.truncated, r.image, Buffer.from(r.content, 'base64').toString('hex')],
+    [true, big, 8, 4, true, 'image/png', '0000000d']);
+  const plain = f.query('seat', 'filePeek', { path: big, raw: 'yes' });
+  assert.deepStrictEqual(f.peeks[1][1], { offset: undefined, length: undefined, raw: false }, 'only a literal true asks for raw');
+  assert.strictEqual(plain.content, null);
+  const outside = f.query('seat', 'filePeek', { path: '/etc/hosts', raw: true, offset: 0, length: 10 });
+  assert.strictEqual(outside.code, 'outside', 'raw does not bypass confinement');
 });
 
 test('mtime is integral on both filePeek shapes and on a seeded filed[].ts, whatever the filesystem holds', () => {

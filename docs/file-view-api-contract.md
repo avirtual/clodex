@@ -109,6 +109,11 @@ POST /api/sessions/:name/query   {kind: "filePeek", args: {path, offset?, length
   file as base64 (or `null` over `IMAGE_MAX_BYTES`, 4 MiB), `binary` is `true`,
   `offset` is `0`, `length` is the whole-file length, and the request's
   `offset`/`length` are ignored.
+- `raw: true` (a literal JSON `true`) answers any file as a base64 byte chunk:
+  `content` holds `length` bytes from `offset` (clamped to `RAW_CHUNK_MAX`,
+  1 MiB), `binary` is `true`, `image` is the media type or `null`, and
+  `truncated` says more bytes follow; this is how the desktop file tab fetches
+  past `IMAGE_MAX_BYTES` for Save… and Open.
 - `ok:false` NEVER rides a 2xx: the HTTP status and `ok` agree on every reply
   (200 ⇔ `ok:true`). A client may trust either; a host answering
   `200 {"ok":false,…}` is non-conforming.

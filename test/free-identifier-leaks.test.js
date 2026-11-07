@@ -44,6 +44,7 @@ const MAIN_SCOPE = ['main.js', 'engine.js'];
 // remote-wiring, peer-wiring, app-menus).
 const SCANNED_MODULES = [
   'git-safe.js',
+  'browser-launch.js',
   'dev-reload.js',
   'assistant-sleep.js',
   'mcp-plan.js',
@@ -428,6 +429,7 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/lib/split.js',
   'renderer/file-tab.js',
   'renderer/lib/side-pane-tabs.js',
+  'renderer/lib/file-fetch.js',
   'renderer/term-search.js',
   'renderer/banners.js',
   'renderer/themes.js',

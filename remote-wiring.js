@@ -1166,7 +1166,7 @@ function createRemoteWiring(deps) {
             case 'filePeek': {
               const c = confineRemotePath(sess, a.path);
               if (!c.ok) return c;
-              const out = fetchFilePeek(c.real, { offset: a.offset, length: a.length });
+              const out = fetchFilePeek(c.real, { offset: a.offset, length: a.length, raw: a.raw === true });
               return out && out.ok ? { ...out, path: c.path } : out;
             }
             case 'fileDiff': {

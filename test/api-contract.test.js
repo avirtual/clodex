@@ -61,7 +61,7 @@ const PINNED_NAMES = [
   'onSessionFiles', 'sessionFiles', 'filePeek', 'fileDiff', 'fileWrite', 'fileResolve',
   // fileReveal added by t22 — reveal-in-file-manager for Manage Plugins' "Open
   // Plugins Folder", distinct from fileOpen (which opens the file itself).
-  'fileOpen', 'fileReveal', 'onSessionFileView', 'openExternal',
+  'fileOpen', 'fileSaveBytes', 'fileOpenBytes', 'fileReveal', 'onSessionFileView', 'openExternal',
   // sessionInfo added with the sidebar ⓘ panel — on-demand session stats
   // (compactions, the four cost scopes, transcript size).
   'sessionInfo', 'getProxySnapshot',
@@ -255,8 +255,8 @@ test('no duplicate names and no duplicate channels', () => {
   assert.equal(new Set(channels).size, channels.length, 'channels are unique');
 });
 
-test('contract covers exactly the pinned 347-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 347, 'pinned list is the full 347-method surface');
+test('contract covers exactly the pinned 349-method surface', () => {
+  assert.equal(PINNED_NAMES.length, 349, 'pinned list is the full 349-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -280,7 +280,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 347, 'window.api has exactly 347 methods');
+    assert.equal(generated.length, 349, 'window.api has exactly 349 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);

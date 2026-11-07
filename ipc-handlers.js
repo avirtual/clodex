@@ -18,6 +18,9 @@ const { appendRailPrompts } = require('./prompt-rails');
 const { validateExecDef } = require('./exec-schema');
 const { discoverMcpSources, normaliseDiscovered, resolveMcpEntry, secretRefs, digestShape, mcpDigest, codexExpressible, museExpressible } = require('./mcp-plan');
 const { validateSeatImages } = require('./seat-images');
+const { imageMediaType } = require('./file-peek');
+const { pathToFileURL } = require('node:url');
+const { randomBytes } = require('node:crypto');
 const { validateSeatFiles } = require('./seat-files');
 const { BOX_ID_RE, runningInSandboxBox } = require('./sandbox');
 const { SETUP_CHOICES } = require('./stores');
@@ -73,11 +76,17 @@ const LAUNCHER_EXTS = new Set([
   '.sh', '.zsh', '.bash', '.py', '.rb', '.pl', '.jar', '.url', '.webloc', '.fileloc', '.inetloc',
 ]);
 
+function bytesBuffer(bytes) {
+  if (bytes instanceof Uint8Array) return Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (bytes instanceof ArrayBuffer) return Buffer.from(bytes);
+  return null;
+}
+
 function registerIpcHandlers(deps) {
   const {
     handle, on,
     popupMenu, showMessageBox, showSaveDialog, showOpenDialog,
-    openExternal, openPath, showItemInFolder, openInTerminal, getAppVersion, getDesktopPath,
+    openExternal, openPath, openInBrowser, showItemInFolder, openInTerminal, getAppVersion, getDesktopPath,
     CLAUDE_SL_COMPONENTS, CLAUDE_TOOLS, CODEX_SL_COMPONENTS,
     DEPLOY_FIX_INJECT_DELAY_MS, ProxyClient, REGISTRY_DIR,
     UPDATE_REPO, buildDeployFixBriefing, checkForUpdate, classifyDeployFolder,
@@ -1137,25 +1146,70 @@ function registerIpcHandlers(deps) {
     return { ok: true };
   });
   handle('session:files', (_e, name) => fetchSessionFiles(name));
-  handle('file:peek', (_e, filePath) => fetchFilePeek(filePath));
+  handle('file:peek', (_e, filePath, opts) => fetchFilePeek(filePath, opts && opts.raw === true ? { raw: true, offset: opts.offset, length: opts.length } : {}));
   handle('file:diff', (_e, name, filePath) => fetchFileDiff(name, filePath));
   // Takes a name, unlike file:peek: the session's cwd confines the write.
   handle('file:write', (_e, name, filePath, content, expectMtime) =>
     writeFilePeek(name, filePath, content, expectMtime));
   handle('file:resolve', (_e, name, raw, baseDir) => resolveFilePath(name, raw, baseDir));
+  const launchRefusal = (st, resolved) => {
+    const ext = path.extname(resolved).toLowerCase();
+    return st.isSymbolicLink() ? 'a symlink'
+      : st.isDirectory() ? 'a directory'
+        : LAUNCHER_EXTS.has(ext) ? `a ${ext} launcher`
+          : (st.mode & 0o111) ? 'an executable'
+            : null;
+  };
+  const bytesName = (name) => {
+    const base = path.basename(String(name || ''));
+    return base && base !== '.' && base !== '..' ? base : 'file';
+  };
   handle('file:open', (_e, filePath) => {
     if (!filePath) return { ok: false, revealed: false, reason: 'no path' };
     const resolved = path.resolve(String(filePath || ''));
     let st;
     try { st = fs.lstatSync(resolved); } catch (e) { return { ok: false, revealed: false, reason: `cannot open: ${e.code || e.message}` }; }
-    const reason = st.isSymbolicLink() ? 'a symlink'
-      : st.isDirectory() ? 'a directory'
-        : LAUNCHER_EXTS.has(path.extname(resolved).toLowerCase()) ? `a ${path.extname(resolved).toLowerCase()} launcher`
-          : (st.mode & 0o111) ? 'an executable'
-            : null;
+    const reason = launchRefusal(st, resolved);
     if (!reason) return openPath(resolved);
     showItemInFolder(resolved);
     return { ok: false, revealed: true, reason };
+  });
+  handle('file:saveBytes', async (_e, name, bytes) => {
+    const buf = bytesBuffer(bytes);
+    if (!buf) return { ok: false, error: 'no bytes' };
+    const result = await showSaveDialog({ defaultPath: path.join(getDesktopPath(), bytesName(name)) });
+    if (result.canceled || !result.filePath) return { ok: false, error: 'cancelled' };
+    try {
+      fs.writeFileSync(result.filePath, buf);
+      return { ok: true, path: result.filePath };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+  handle('file:openBytes', async (_e, name, bytes) => {
+    const buf = bytesBuffer(bytes);
+    if (!buf) return { ok: false, revealed: false, reason: 'no bytes' };
+    const dir = path.join(os.tmpdir(), 'clodex-view');
+    const tmpPath = path.join(dir, `${randomBytes(6).toString('hex')}-${bytesName(name)}`);
+    let st;
+    try {
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      fs.chmodSync(dir, 0o700);
+      fs.writeFileSync(tmpPath, buf, { mode: 0o600, flag: 'wx' });
+      st = fs.lstatSync(tmpPath);
+    } catch (e) { return { ok: false, revealed: false, reason: `cannot write: ${e.code || e.message}` }; }
+    const reason = launchRefusal(st, tmpPath);
+    if (reason) {
+      showItemInFolder(tmpPath);
+      return { ok: false, revealed: true, reason };
+    }
+    if (imageMediaType(buf.subarray(0, 12))) {
+      const launch = openInBrowser || ((p) => openExternal(pathToFileURL(p).href));
+      const shown = await Promise.resolve().then(() => launch(tmpPath)).then((e) => !e, () => false);
+      if (shown) return { ok: true, path: tmpPath };
+    }
+    const err = await openPath(tmpPath);
+    return err ? { ok: false, revealed: false, reason: err } : { ok: true, path: tmpPath };
   });
   handle('file:reveal', (_e, filePath) => { showItemInFolder(filePath); });
   handle('plugins:writeBundleFile', (_e, pluginId, kind, stem, body) => {

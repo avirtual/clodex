@@ -51,7 +51,11 @@ function createFileTab({ doc = document, filePath, editable, showOpen, on }) {
   const saveBtn = button(doc, 'file-peek-open side-file-save hidden', 'Save', 'Save (Cmd+S)');
   const openBtn = button(doc, 'file-peek-open', 'Open', 'Open in the default editor');
   if (!showOpen) openBtn.style.display = 'none';
-  controls.append(diffBtn, fileBtn, editBtn, dirtyEl, saveBtn, openBtn);
+  const saveAsBtn = button(doc, 'file-peek-open side-file-save-as', 'Save…', 'Save a copy where you choose');
+  const openLocalBtn = button(doc, 'file-peek-open side-file-open-local', 'Open', 'Open a copy locally');
+  if (showOpen) { saveAsBtn.style.display = 'none'; openLocalBtn.style.display = 'none'; }
+  const useHint = showOpen ? 'use Open.' : 'use Save… or Open.';
+  controls.append(diffBtn, fileBtn, editBtn, dirtyEl, saveBtn, openBtn, saveAsBtn, openLocalBtn);
   bar.append(pathEl, byEl, controls);
 
   const banner = el(doc, 'div', 'side-file-banner hidden');
@@ -138,7 +142,7 @@ function createFileTab({ doc = document, filePath, editable, showOpen, on }) {
     img.addEventListener('load', () => {
       note.textContent = `${img.naturalWidth}×${img.naturalHeight} · ${kb}`;
     });
-    img.addEventListener('error', () => paintNote('Image could not be decoded — use Open.'));
+    img.addEventListener('error', () => paintNote(`Image could not be decoded — ${useHint}`));
     img.src = 'data:' + peekRes.image + ';base64,' + peekRes.content;
     body.replaceChildren(note, img);
   }
@@ -147,8 +151,8 @@ function createFileTab({ doc = document, filePath, editable, showOpen, on }) {
     if (tab.deleted) return paintNote('No longer on disk.');
     if (!peekRes || !peekRes.ok) return paintNote((peekRes && peekRes.error) || 'File unavailable');
     if (peekRes.image && peekRes.content) return paintImage();
-    if (peekRes.image) return paintNote('Image larger than 4 MB — use Open.');
-    if (peekRes.binary) return paintNote(`Binary file (${peekRes.size} bytes) — use Open.`);
+    if (peekRes.image) return paintNote(`Image larger than 4 MB — ${useHint}`);
+    if (peekRes.binary) return paintNote(`Binary file (${peekRes.size} bytes) — ${useHint}`);
     const nodes = [];
     if (peekRes.truncated) {
       nodes.push(el(doc, 'div', 'cost-note',
@@ -233,6 +237,8 @@ function createFileTab({ doc = document, filePath, editable, showOpen, on }) {
   });
   saveBtn.addEventListener('click', () => on.save());
   openBtn.addEventListener('click', () => on.open());
+  saveAsBtn.addEventListener('click', () => on.saveAs(peekRes && peekRes.size));
+  openLocalBtn.addEventListener('click', () => on.openLocal(peekRes && peekRes.size));
   reloadBtn.addEventListener('click', () => on.discard());
   theirsBtn.addEventListener('click', () => on.theirs());
   keepBtn.addEventListener('click', () => on.keep());
