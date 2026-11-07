@@ -34,4 +34,11 @@ function setFilterFolded(els, folded, { summary = '', persist = null } = {}) {
   if (persist) persist({ filterFolded: on });
 }
 
-module.exports = { filterSummary, setFilterFolded };
+function statusPasses(status, { archived = false, ephemeral = false, attention = false } = {}) {
+  if ((status === 'active' || status === 'minimal') && archived) return false;
+  if (status === 'archived' && !archived) return false;
+  if (status === 'minimal' && ephemeral && !attention) return false;
+  return true;
+}
+
+module.exports = { filterSummary, setFilterFolded, statusPasses };

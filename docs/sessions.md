@@ -585,7 +585,7 @@ and rebuilds it in place as a **dimmed archived row** (`.session-item.archived`,
 (`setArchived(false)`) then resume-spawns; its ✕ forgets the entry
 (`forgetSession` → `session:forget`: `persistence.remove`, or `destroy()` first when the record's worktree is on disk) — a DIFFERENT control from the live
 row's ✕, which archives. Archived rows surface via the sidebar status filter
-(Active/Archived/All).
+(Minimal/Active/Archived/All); Minimal is Active minus the ticket loop's ephemeral seats (hands, reviewers), except one that needs attention.
 
 The record-droppers reachable from the sidebar are three, not one: the ARCHIVED
 row's ✕ and the FAILED ghost row's ✕ (both `forgetSession` → `session:forget`: `persistence.remove`, or `destroy()` first when the record's worktree is on disk,

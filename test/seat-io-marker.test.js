@@ -467,7 +467,7 @@ test('an archived entry keeps the seat\'s io and wire-off flag', () => {
   h.addSessionToSidebar('s', 'claude', '/w', null, null, null, true);
   const e = h.archivedRowEntry('s', h.rows[0]);
   assert.deepStrictEqual({ ...e, archivedAt: 0 },
-    { name: 's', type: 'claude', cwd: '/w', label: null, backend: null, team: null, effort: null, posture: null, io: 'stream', noWire: true, archivedAt: 0, createdAt: null });
+    { name: 's', type: 'claude', cwd: '/w', label: null, backend: null, team: null, effort: null, posture: null, io: 'stream', noWire: true, ephemeral: false, archivedAt: 0, createdAt: null });
 });
 
 test('blurring an unedited rename box on a labelled row does not rename', async () => {

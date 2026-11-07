@@ -17,6 +17,7 @@ blocks a release.
 ## Unreleased
 
 - A ticket that cannot merge cleanly into the trunk is rejected back to its hand at `task done`, with the conflicting paths, before the suite and the reviewer run; a CHANGELOG-only conflict still passes, since the merge resolves it.
+- A "Minimal" sidebar filter hides the ticket loop's ephemeral seats (hands, reviewers) so the sidebar shows only the seats you talk to; a hidden seat still appears while it waits on a permission dialog.
 
 ## 5.163.0 — 2026-11-07
 

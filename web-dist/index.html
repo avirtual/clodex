@@ -10164,6 +10164,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           <option value="alpha">Sort: A–Z</option>
         </select>
         <select id="sidebar-status" class="sidebar-select" data-tip="Show">
+          <option value="minimal">Minimal</option>
           <option value="active">Active</option>
           <option value="archived">Archived</option>
           <option value="all">All</option>
@@ -29005,7 +29006,13 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         if (els && els.summary) els.summary.textContent = on ? summary : "";
         if (persist) persist({ filterFolded: on });
       }
-      module.exports = { filterSummary, setFilterFolded };
+      function statusPasses(status, { archived = false, ephemeral = false, attention = false } = {}) {
+        if ((status === "active" || status === "minimal") && archived) return false;
+        if (status === "archived" && !archived) return false;
+        if (status === "minimal" && ephemeral && !attention) return false;
+        return true;
+      }
+      module.exports = { filterSummary, setFilterFolded, statusPasses };
     }
   });
 
@@ -52252,7 +52259,7 @@ ${detail}` });
       var { PLATFORMS, adapterFor, isAgentType, capsFor, accountEnvKey } = require_cli_adapters();
       var { expandTeamRoot, usesTeamRoot } = require_team_root_expand();
       var { altChordAction } = require_web_shortcuts();
-      var { filterSummary, setFilterFolded } = require_sidebar_filter_fold();
+      var { filterSummary, setFilterFolded, statusPasses } = require_sidebar_filter_fold();
       var { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require_web_notify();
       var { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, foreignNotice: sandboxForeignNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText, validatePorts: sandboxValidatePorts, sandboxRebuiltLine, limitsLineText: sandboxLimitsLineText, figuresHint: sandboxFiguresHint, bootstrapLineText: sandboxBootstrapLineText, bootstrapHistoryRows: sandboxBootstrapHistoryRows, advancedDirty: sandboxAdvancedDirty, saveLabel: sandboxSaveLabel } = require_sandbox_view();
       var { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require_tool_gate();
@@ -53038,6 +53045,7 @@ ${detail}` });
           posture: d.posture || null,
           io: streamSeatNames.has(name) ? "stream" : "pty",
           noWire: d.noWire === "1",
+          ephemeral: d.ephemeral === "1",
           fixFor: d.fixFor || null,
           account: d.account || null,
           createdAt: (sidebarMeta.get(name) || {}).createdAt || null,
@@ -53065,7 +53073,8 @@ ${detail}` });
           res.team !== void 0 ? res.team || null : snap.team || null,
           (res.noWire ?? snap.noWire) === true,
           snap.account || null,
-          snap.fixFor || null
+          snap.fixFor || null,
+          (res.ephemeral ?? snap.ephemeral) === true
         );
         markSeatEffort(name, snap.effort);
         refreshSeatMcp(name);
@@ -53179,7 +53188,7 @@ ${detail}` });
           refreshSidebarView();
         }
       }
-      function addSessionToSidebar(name, type, cwd, label, backend = null, team = null, noWire = false, account = null, fixFor = null) {
+      function addSessionToSidebar(name, type, cwd, label, backend = null, team = null, noWire = false, account = null, fixFor = null, ephemeral = false) {
         respawnSnapshots.delete(name);
         restartFailed.delete(name);
         const stale = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
@@ -53193,6 +53202,8 @@ ${detail}` });
         if (backend) item.dataset.backend = backend;
         if (team) item.dataset.team = team;
         if (noWire) item.dataset.noWire = "1";
+        if (ephemeral) item.dataset.ephemeral = "1";
+        else delete item.dataset.ephemeral;
         if (account && account !== ACCOUNT_DEFAULT) item.dataset.account = account;
         item.dataset.io = streamSeatNames.has(name) ? "stream" : "pty";
         const displayName = label || name;
@@ -53438,7 +53449,7 @@ ${detail}` });
         const head = `Moving ${name} to ${held.peerLabel} \u2014 ${phase}`;
         held.toast.set(total ? `${head} ${MiB(bytes)}/${MiB(total)} MiB (${fileIndex}/${files})` : head);
       });
-      window.api.onSessionContextAction(({ action, name, type, cwd, error, backend, noWire, io, disposition, background, clone, peerId, peerLabel, envKeys, workspaceId, workspaceName }) => {
+      window.api.onSessionContextAction(({ action, name, type, cwd, error, backend, noWire, ephemeral, io, disposition, background, clone, peerId, peerLabel, envKeys, workspaceId, workspaceName }) => {
         switch (action) {
           case "editArgs":
             openArgsDialog(name);
@@ -53469,8 +53480,10 @@ ${detail}` });
                 prior.remove();
                 sidebarMeta.delete(name);
               }
-              rebuildLiveRow(name, snap, { io, type, cwd, backend: backend || null, noWire: noWire === true, clone });
-              switchToNewSession(name, { agentInitiated: background === true });
+              rebuildLiveRow(name, snap, { io, type, cwd, backend: backend || null, noWire: noWire === true, ephemeral, clone });
+              const row = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+              if (row && !rowPasses(row)) fitSessionInBackground(name);
+              else switchToNewSession(name, { agentInitiated: background === true });
             }
             break;
           case "respawnFailed": {
@@ -53704,8 +53717,7 @@ ${detail}` });
       function rowPasses(item) {
         const meta = sidebarMeta.get(item.dataset.name) || {};
         const archived = item.classList.contains("archived");
-        if (sidebarView.status === "active" && archived) return false;
-        if (sidebarView.status === "archived" && !archived) return false;
+        if (!statusPasses(sidebarView.status, { archived, ephemeral: !!item.dataset.ephemeral, attention: !!item.dataset.attention })) return false;
         if (sidebarView.activity !== "all" && !archived) {
           const ts = meta.lastActivityTs || meta.createdAt;
           const maxMs = Number(sidebarView.activity) * 864e5;
@@ -53919,7 +53931,10 @@ ${detail}` });
             markSeatEffort(s.name, s.effort);
             markSeatPosture(s.name, s.posture);
             applyTicketBadge(s.name, s.ticket || null);
-            if (s.clone) applyCloneChip(sessionList.querySelector(`[data-name="${CSS.escape(s.name)}"]`), s.clone);
+            const row = sessionList.querySelector(`[data-name="${CSS.escape(s.name)}"]`);
+            if (row && s.ephemeral === true) row.dataset.ephemeral = "1";
+            else if (row && s.ephemeral === false) delete row.dataset.ephemeral;
+            if (s.clone) applyCloneChip(row, s.clone);
           }
         } catch {
         }
@@ -56838,6 +56853,7 @@ ${detail}` });
           delete el.dataset.attention;
           delete el.dataset.attentionMsg;
         }
+        if (el.dataset.ephemeral) refreshSidebarView();
         if (window.__CLODEX_WEB__) updateWindowTitle();
       });
       var peerStatuses = /* @__PURE__ */ new Map();

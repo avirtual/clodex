@@ -27,7 +27,7 @@ const { splitModelArg, withModelArg } = require('./lib/args-model');
 const { PLATFORMS, adapterFor, isAgentType, capsFor, accountEnvKey } = require('../cli-adapters');
 const { expandTeamRoot, usesTeamRoot } = require('../team-root-expand');
 const { altChordAction } = require('./lib/web-shortcuts');
-const { filterSummary, setFilterFolded } = require('./lib/sidebar-filter-fold');
+const { filterSummary, setFilterFolded, statusPasses } = require('./lib/sidebar-filter-fold');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
 const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, foreignNotice: sandboxForeignNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText, validatePorts: sandboxValidatePorts, sandboxRebuiltLine, limitsLineText: sandboxLimitsLineText, figuresHint: sandboxFiguresHint, bootstrapLineText: sandboxBootstrapLineText, bootstrapHistoryRows: sandboxBootstrapHistoryRows, advancedDirty: sandboxAdvancedDirty, saveLabel: sandboxSaveLabel } = require('./lib/sandbox-view');
 const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require('./lib/tool-gate');
@@ -798,6 +798,7 @@ function rowSnapshot(name, item) {
     posture: d.posture || null,
     io: streamSeatNames.has(name) ? 'stream' : 'pty',
     noWire: d.noWire === '1',
+    ephemeral: d.ephemeral === '1',
     fixFor: d.fixFor || null,
     account: d.account || null,
     createdAt: (sidebarMeta.get(name) || {}).createdAt || null,
@@ -820,7 +821,8 @@ function rebuildLiveRow(name, snap, res = {}) {
   createTerminal(name);
   addSessionToSidebar(name, res.type || snap.type, res.cwd || snap.cwd, snap.label || null,
     res.backend ?? snap.backend ?? null, res.team !== undefined ? res.team || null : snap.team || null,
-    (res.noWire ?? snap.noWire) === true, snap.account || null, snap.fixFor || null);
+    (res.noWire ?? snap.noWire) === true, snap.account || null, snap.fixFor || null,
+    (res.ephemeral ?? snap.ephemeral) === true);
   markSeatEffort(name, snap.effort);
   refreshSeatMcp(name);
   markSeatPosture(name, snap.posture);
@@ -943,7 +945,7 @@ async function deleteSessionRow(name) {
   }
 }
 
-function addSessionToSidebar(name, type, cwd, label, backend = null, team = null, noWire = false, account = null, fixFor = null) {
+function addSessionToSidebar(name, type, cwd, label, backend = null, team = null, noWire = false, account = null, fixFor = null, ephemeral = false) {
   respawnSnapshots.delete(name);
   restartFailed.delete(name);
   const stale = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
@@ -962,6 +964,8 @@ function addSessionToSidebar(name, type, cwd, label, backend = null, team = null
   // files are NOT lost: the JsonlWatcher feeds the same sink. What goes is
   // subagent attribution on the edits.)
   if (noWire) item.dataset.noWire = '1';
+  if (ephemeral) item.dataset.ephemeral = '1';
+  else delete item.dataset.ephemeral;
   if (account && account !== ACCOUNT_DEFAULT) item.dataset.account = account;
   item.dataset.io = streamSeatNames.has(name) ? 'stream' : 'pty';
   const displayName = label || name;
@@ -1213,7 +1217,7 @@ window.api.onSessionMoveProgress(({ name, phase, bytes, total, files, fileIndex 
     : head);
 });
 
-window.api.onSessionContextAction(({ action, name, type, cwd, error, backend, noWire, io, disposition, background, clone, peerId, peerLabel, envKeys, workspaceId, workspaceName }) => {
+window.api.onSessionContextAction(({ action, name, type, cwd, error, backend, noWire, ephemeral, io, disposition, background, clone, peerId, peerLabel, envKeys, workspaceId, workspaceName }) => {
   switch (action) {
     case 'editArgs':
       openArgsDialog(name);
@@ -1241,10 +1245,12 @@ window.api.onSessionContextAction(({ action, name, type, cwd, error, backend, no
         const prior = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
         const snap = respawnSnapshotOf(name, prior);
         if (prior && !sessions.has(name)) { prior.remove(); sidebarMeta.delete(name); }
-        rebuildLiveRow(name, snap, { io, type, cwd, backend: backend || null, noWire: noWire === true, clone });
+        rebuildLiveRow(name, snap, { io, type, cwd, backend: backend || null, noWire: noWire === true, ephemeral, clone });
+        const row = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
         // `background` marks the agent-initiated emitters.
         // The reload respawn sends no flag and keeps focus.
-        switchToNewSession(name, { agentInitiated: background === true });
+        if (row && !rowPasses(row)) fitSessionInBackground(name);
+        else switchToNewSession(name, { agentInitiated: background === true });
       }
       break;
     case 'respawnFailed': {
@@ -1492,8 +1498,7 @@ function groupSortIndex(mode, key) {
 function rowPasses(item) {
   const meta = sidebarMeta.get(item.dataset.name) || {};
   const archived = item.classList.contains('archived');
-  if (sidebarView.status === 'active' && archived) return false;
-  if (sidebarView.status === 'archived' && !archived) return false;
+  if (!statusPasses(sidebarView.status, { archived, ephemeral: !!item.dataset.ephemeral, attention: !!item.dataset.attention })) return false;
   if (sidebarView.activity !== 'all' && !archived) {
     const ts = meta.lastActivityTs || meta.createdAt;
     const maxMs = Number(sidebarView.activity) * 86400000;
@@ -1692,7 +1697,7 @@ async function refreshSidebarMeta({ includePr = true } = {}) {
   try {
     const live = await window.api.listSessions();
     if (Array.isArray(live)) refreshSeatsMcp(live.map((s) => s.name));
-    if (Array.isArray(live)) for (const s of live) { applyAccountChip(s.name, s.account || null); markSeatVoice(s.name, s.voice); markSeatEffort(s.name, s.effort); markSeatPosture(s.name, s.posture); applyTicketBadge(s.name, s.ticket || null); if (s.clone) applyCloneChip(sessionList.querySelector(`[data-name="${CSS.escape(s.name)}"]`), s.clone); }
+    if (Array.isArray(live)) for (const s of live) { applyAccountChip(s.name, s.account || null); markSeatVoice(s.name, s.voice); markSeatEffort(s.name, s.effort); markSeatPosture(s.name, s.posture); applyTicketBadge(s.name, s.ticket || null); const row = sessionList.querySelector(`[data-name="${CSS.escape(s.name)}"]`); if (row && s.ephemeral === true) row.dataset.ephemeral = '1'; else if (row && s.ephemeral === false) delete row.dataset.ephemeral; if (s.clone) applyCloneChip(row, s.clone); }
   } catch {}
   refreshSidebarView();
   // Which footer buttons show is answered off sidebarMeta, which does not exist
@@ -4695,6 +4700,7 @@ window.api.onSessionAttention((name, attn) => {
     delete el.dataset.attention;
     delete el.dataset.attentionMsg;
   }
+  if (el.dataset.ephemeral) refreshSidebarView();
   if (window.__CLODEX_WEB__) updateWindowTitle();
 });
 
