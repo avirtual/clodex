@@ -53,6 +53,7 @@ function decode(obj) {
     };
   }
   if (obj.type === 'assistant') {
+    if (obj.parent_tool_use_id) return { kind: 'other' };
     const u = obj.message && obj.message.usage;
     if (!u || typeof u !== 'object') return { kind: 'other' };
     const n = (v) => (typeof v === 'number' ? v : 0);

@@ -3324,7 +3324,7 @@ function createSessionManager(deps) {
     }
 
     _noteStreamUsage(s, rec) {
-      if (typeof rec.tok !== 'number') return;
+      if (typeof rec.tok !== 'number' || rec.tok <= 0) return;
       if (s.ctxInfo && s.ctxInfo.tok === rec.tok) return;
       const model = rec.model || s.streamModel || null;
       const size = effectiveWindowSize(model, 0) || 0;

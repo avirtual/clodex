@@ -22307,6 +22307,13 @@ test('stream ctx: an assistant usage record pushes session-ctx, sets ctxInfo and
   assert.deepStrictEqual(h.m.sessions.get('st-ctx').ctxInfo,
     { pct: 12, tok: 121500, size: 1000000, cost: null, modelName: null, model: 'claude-opus-5-5' });
   assert.deepStrictEqual(fired, [['st-ctx', { tok: 121500, pct: 12 }]]);
+  h.line('st-ctx', { type: 'assistant', message: { model: '<synthetic>', content: [], usage: { input_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } });
+  assert.strictEqual(h.m.sessions.get('st-ctx').ctxInfo.tok, 121500, 'a zero-usage synthetic record leaves ctxInfo alone');
+  assert.strictEqual(pushes.length, 1);
+  h.line('st-ctx', { type: 'assistant', message: { model: 'claude-haiku-4-5-20251001', content: [], usage: { input_tokens: 5000 } } });
+  assert.deepStrictEqual(h.m.sessions.get('st-ctx').ctxInfo,
+    { pct: null, tok: 5000, size: 0, cost: null, modelName: null, model: 'claude-haiku-4-5-20251001' });
+  assert.deepStrictEqual(fired[1], ['st-ctx', { tok: 5000, pct: null }]);
 });
 
 test('assistant wake: single-flight — racing callers share one restart, a settled or rejected wake clears the slot', async (t) => {

@@ -84,6 +84,12 @@ test('decode: an assistant record carrying usage decodes to the summed prompt si
   assert.deepStrictEqual(decode({ type: 'assistant', message: { model: 'claude-opus-5-5', content: [] } }), { kind: 'other' });
 });
 
+test('decode: a subagent assistant record (parent_tool_use_id set) is not the seat\'s context', () => {
+  assert.deepStrictEqual(
+    decode({ type: 'assistant', parent_tool_use_id: 'toolu_x', message: { model: 'claude-opus-5-5', content: [], usage: { input_tokens: 1000, cache_read_input_tokens: 120000, cache_creation_input_tokens: 500 } } }),
+    { kind: 'other' });
+});
+
 test('encodeUser builds the stream-json user message', () => {
   assert.deepStrictEqual(encodeUser('hello'), { type: 'user', message: { role: 'user', content: 'hello' } });
 });
