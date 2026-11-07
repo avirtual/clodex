@@ -4968,7 +4968,7 @@ function createSessionManager(deps) {
 
     _reattachAction(name, type, cwd) {
       const live = this.sessions.get(name) || {};
-      return { action: 'reattach', name, type, cwd, backend: live.backend || null, noWire: !!live.noWire, io: live.io || 'pty' };
+      return { action: 'reattach', name, type, cwd, backend: live.backend || null, noWire: !!live.noWire, io: live.io || 'pty', ephemeral: this._isEphemeralSeat(name) };
     }
 
     _sendRespawnFailed(name, entry, error) {
@@ -5165,6 +5165,7 @@ function createSessionManager(deps) {
         ticket: s.agentType ? openTicketFor(s) : null,
         backend: s.backend || null,
         noWire: !!s.noWire,
+        ephemeral: this._isEphemeralSeat(s.name),
         ...(s.fixFor ? { fixFor: s.fixFor } : {}),
         ...(s.clone ? { clone: s.clone } : {}),
         activity: s.activityState || 'idle',

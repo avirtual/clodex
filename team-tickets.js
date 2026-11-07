@@ -797,6 +797,7 @@ function createTicketMethods(deps, shared) {
           this._applyTemplatePersistence(name, tpl);
           this._sendToSession(name, 'session:context-action', {
             action: 'reattach', name, type, cwd: spawnCwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire, io: (this.sessions.get(name) || {}).io || 'pty',
+            ephemeral: this._isEphemeralSeat(name),
             // Agent-initiated, so it must not take the keyboard while the operator works elsewhere.
             background: true,
           });
@@ -1332,6 +1333,7 @@ function createTicketMethods(deps, shared) {
           this._applyTemplatePersistence(name, shape.tpl);
           this._sendToSession(name, 'session:context-action', {
             action: 'reattach', name, type, cwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire, io: (this.sessions.get(name) || {}).io || 'pty',
+            ephemeral: this._isEphemeralSeat(name),
             background: true,
           });
           // Carries no copy of the scope, which the prompt already has: two copies would disagree once one is edited, and this dm is the losable one.
@@ -4950,6 +4952,7 @@ function createTicketMethods(deps, shared) {
             cwd: seatCwd, backend: (this.sessions.get(seat.name) || {}).backend || null,
             noWire: !!(this.sessions.get(seat.name) || {}).noWire,
             io: (this.sessions.get(seat.name) || {}).io || 'pty',
+            ephemeral: this._isEphemeralSeat(seat.name),
             background: true,
           });
           const d = this._deliverTicketSpec(team, ticket, ticket.spec, 'clodex-team', true, false, false,

@@ -22372,7 +22372,7 @@ test('assistant wake: a successful wake sends the window the _reattachAction con
   h.m._sendToSession = (...a) => sent.push(a);
   assert.deepStrictEqual(await h.m.wake('asst'), { ok: true, state: 'awake' });
   assert.deepStrictEqual(sent, [['asst', 'session:context-action',
-    { action: 'reattach', name: 'asst', type: 'claude', cwd: '/w', backend: null, noWire: false, io: 'pty', background: true }]]);
+    { action: 'reattach', name: 'asst', type: 'claude', cwd: '/w', backend: null, noWire: false, io: 'pty', ephemeral: false, background: true }]]);
   const f = mkStreamSeatManager({
     persisted: { asst: { ...ASSISTANT_ROW, type: 'claude', cwd: '/w', workspaceId: 'ws', archivedAt: 1, asleepAt: 2 } },
     extraDeps: { restartSession: async () => ({ ok: false, error: 'x' }) },
