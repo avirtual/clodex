@@ -490,7 +490,9 @@ Callbacks: `onText` → intent scan · `onSessionId` →
 `onCompactSummary` → `_fireCompactContinuation` · `onFileTouches` → 📄
 telemetry. Claude side-channels ride `fs.watch` on the `run/<name>/` dir:
 `ctx` (statusline-written context numbers → `session-ctx` + ctxwarn
-reminder file) and `attn.jsonl` (Notification hook → attention state).
+reminder file) and `attn.jsonl` (Notification hook → attention state); stream
+seats derive the same numbers from the assistant usage of each turn (no ctxwarn
+file).
 
 A `[agent:context clear]` on a claude seat whose prompt delta is pending
 (`_promptDeltaPending`: the freshly assembled realIpc differs from the running
