@@ -16,6 +16,8 @@ blocks a release.
 
 ## Unreleased
 
+- Stream seats (`io: stream`, including `claude -p` seats on peer nodes) now report context size to the app: `[agent:remind on context …]`, the sidebar context badge and the ticket loop's context gate work for them, not only for PTY seats.
+
 ## 5.164.0 — 2026-11-07
 
 - A ticket that cannot merge cleanly into the trunk is rejected back to its hand at `task done`, with the conflicting paths, before the suite and the reviewer run; a CHANGELOG-only conflict still passes, since the merge resolves it.
