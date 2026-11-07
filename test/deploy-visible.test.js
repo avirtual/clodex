@@ -469,3 +469,20 @@ test('the deploy-fix briefing pins the exact first lines and names the scratch d
   assert.match(b, /scratch dir Clodex made for this fix; write notes there, not in \$HOME/,
     'the seat is told where to write notes');
 });
+
+test('deploy agent-clis installs clodent best-effort via npm and never carries an API key', () => {
+  const src = fs.readFileSync(path.join(REPO, 'peering', 'clodex-deploy.sh'), 'utf8');
+  const start = src.indexOf('step agent-clis');
+  const end = src.indexOf('TBH_CREDENTIAL_BACKEND', start);
+  const arm = src.slice(src.indexOf('if command -v clodent', start), end);
+  assert.ok(start > 0 && arm.length > 0, 'ENTER: the clodent arm sits inside the agent-clis step');
+  assert.ok(arm.includes('log "clodent already present — skipping"'));
+  assert.ok(arm.includes('npm i -g clodent --no-audit --no-fund --loglevel=error >&2'));
+  assert.ok(arm.includes('log "clodent install failed (best-effort) — a clodent spawn will fail until it is installed"'));
+  const installAt = arm.indexOf('log "clodent installed"');
+  const elseAt = arm.indexOf('else', installAt);
+  const mkdirAt = arm.indexOf('mkdir -p "$HOME/.clodent" && chmod 700 "$HOME/.clodent"');
+  assert.ok(installAt > 0 && mkdirAt > installAt && mkdirAt < elseAt, '~/.clodent is prepared only after a successful install');
+  assert.ok(src.indexOf('if [ "$IS_MAC" = "1" ]', start) < src.indexOf('if command -v clodent', start), 'the arm is in the non-macOS branch');
+  assert.doesNotMatch(src, /ANTHROPIC_API_KEY=/);
+});

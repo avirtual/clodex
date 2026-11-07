@@ -29301,6 +29301,7 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         { name: "claude", bins: ["claude"], neededFor: "Claude sessions", install: "curl -fsSL https://claude.ai/install.sh | bash" },
         { name: "codex", bins: ["codex"], neededFor: "Codex sessions", install: "curl -fsSL https://chatgpt.com/codex/install.sh | sh" },
         { name: "muse", bins: ["muse"], neededFor: "Muse sessions", install: "mkdir -p ~/.local/bin && curl -fsSL https://api.meta.ai/muse-launcher.sh -o ~/.local/bin/muse && chmod +x ~/.local/bin/muse && MUSE_LAUNCHER_INSTALL=1 ~/.local/bin/muse" },
+        { name: "clodent", bins: ["clodent"], neededFor: "clodent sessions", install: "npm i -g clodent" },
         { name: "git", bins: ["git"], neededFor: "worktrees & version control" },
         { name: "gh", bins: ["gh"], neededFor: "GitHub releases", install: "brew install gh" },
         { name: "docker", bins: ["docker"], neededFor: "sandboxes" },
@@ -29371,7 +29372,7 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
       function installDescriptor(tool, cmd) {
         return { tool, command: cmd, sessionName: installSessionName(tool), label: `Install ${tool}\u2026` };
       }
-      var AGENT_TOOLS = ["claude", "codex", "muse"];
+      var AGENT_TOOLS = ["claude", "codex", "muse", "clodent"];
       function newSessionToolGate(type, check) {
         if (!AGENT_TOOLS.includes(type)) {
           return { ok: true, disabled: false, notice: null, install: null };

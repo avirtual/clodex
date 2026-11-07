@@ -17,6 +17,7 @@ blocks a release.
 ## Unreleased
 
 - A ticket that cannot merge cleanly into the trunk is rejected back to its hand at `task done`, with the conflicting paths, before the suite and the reviewer run; a CHANGELOG-only conflict still passes, since the merge resolves it.
+- Deploying a node installs clodent beside the claude, codex and muse CLIs (`npm i -g clodent`, best-effort) and prepares `~/.clodent` for its API key; the tool doctor lists clodent with its install command, and a clodent spawn on a host without it says how to install it.
 
 ## 5.163.0 — 2026-11-07
 

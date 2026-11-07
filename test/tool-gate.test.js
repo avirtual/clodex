@@ -122,11 +122,13 @@ test('installSessionParams: null/empty install → null (nothing to spawn)', () 
 // ── Prominence overlay plan (Task 18) ────────────────────────────────────────
 const claudeCmd = 'curl -fsSL https://claude.ai/install.sh | bash';
 const codexCmd = 'npm i -g @openai/codex';
+const clodentCmd = 'npm i -g clodent';
 const bothMissing = {
   byTool: {
     claude: { present: false, install: claudeCmd },
     codex: { present: false, install: codexCmd },
     muse: { present: false, install: museCmd },
+    clodent: { present: false, install: clodentCmd },
   },
 };
 const onlyClaudeMissing = {
@@ -151,11 +153,11 @@ test('overlay: BOTH missing → show, both tools, both-missing headline', () => 
   const p = newSessionOverlayPlan('claude', bothMissing);
   assert.strictEqual(p.show, true);
   assert.match(p.headline, /No agent CLI is installed/);
-  assert.deepStrictEqual(p.tools.map((t) => t.tool), ['claude', 'codex', 'muse']);
+  assert.deepStrictEqual(p.tools.map((t) => t.tool), ['claude', 'codex', 'muse', 'clodent']);
   assert.ok(p.tools.every((t) => t.install));
   // Same both-missing overlay regardless of which missing type is selected.
-  assert.deepStrictEqual(newSessionOverlayPlan('codex', bothMissing).tools.map((t) => t.tool), ['claude', 'codex', 'muse']);
-  assert.deepStrictEqual(newSessionOverlayPlan('muse', bothMissing).tools.map((t) => t.tool), ['claude', 'codex', 'muse']);
+  assert.deepStrictEqual(newSessionOverlayPlan('codex', bothMissing).tools.map((t) => t.tool), ['claude', 'codex', 'muse', 'clodent']);
+  assert.deepStrictEqual(newSessionOverlayPlan('muse', bothMissing).tools.map((t) => t.tool), ['claude', 'codex', 'muse', 'clodent']);
 });
 
 test('overlay: only muse missing → show, single muse tool with its launcher install', () => {
@@ -202,8 +204,8 @@ test('shouldRaiseOverlay: never raises a non-showing plan, or a null plan', () =
 // ── Diag banner install buttons (Task 18) ────────────────────────────────────
 test('agentInstallButtons: all missing → one descriptor each, in claude/codex/muse order', () => {
   const btns = agentInstallButtons(bothMissing);
-  assert.deepStrictEqual(btns.map((b) => b.tool), ['claude', 'codex', 'muse']);
-  assert.deepStrictEqual(btns.map((b) => b.sessionName), ['install-claude', 'install-codex', 'install-muse']);
+  assert.deepStrictEqual(btns.map((b) => b.tool), ['claude', 'codex', 'muse', 'clodent']);
+  assert.deepStrictEqual(btns.map((b) => b.sessionName), ['install-claude', 'install-codex', 'install-muse', 'install-clodent']);
 });
 test('agentInstallButtons: only the missing agent CLI (present one excluded)', () => {
   assert.deepStrictEqual(agentInstallButtons(onlyClaudeMissing).map((b) => b.tool), ['claude']);
@@ -214,4 +216,16 @@ test('agentInstallButtons: null check / no byTool → empty', () => {
 });
 test('agentInstallButtons: missing but no install line → excluded', () => {
   assert.deepStrictEqual(agentInstallButtons({ byTool: { claude: { present: false } } }), []);
+});
+
+test('clodent missing → gated, disabled, carries the npm install button', () => {
+  const check = { byTool: { clodent: { present: false, notice: { kind: 'error', text: 'clodent CLI not found on PATH — install: npm i -g clodent' }, install: 'npm i -g clodent' } } };
+  const g = newSessionToolGate('clodent', check);
+  assert.strictEqual(g.disabled, true);
+  assert.match(g.notice.text, /clodent CLI not found on PATH — install: npm i -g clodent/);
+  assert.strictEqual(g.install.sessionName, 'install-clodent');
+  assert.strictEqual(g.install.command, 'npm i -g clodent');
+  const p = newSessionOverlayPlan('clodent', { byTool: { claude: { present: true }, codex: { present: true }, muse: { present: true }, clodent: check.byTool.clodent } });
+  assert.match(p.headline, /clodent CLI isn't installed/);
+  assert.deepStrictEqual(p.tools.map((t) => t.tool), ['clodent']);
 });

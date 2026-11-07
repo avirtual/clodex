@@ -121,3 +121,9 @@ test('createToolCache: invalidate() forces the next get() to re-probe', async ()
   await cache.get();
   assert.ok(probes > afterFirst, 'invalidate drops the cache');
 });
+
+test('specs: clodent is probed with its npm install line', () => {
+  assert.deepStrictEqual(specFor('clodent'), { name: 'clodent', bins: ['clodent'], neededFor: 'clodent sessions', install: 'npm i -g clodent' });
+  assert.strictEqual(toolNotice({ tool: 'clodent', present: false }, specFor('clodent')).text,
+    'clodent CLI not found on PATH — install: npm i -g clodent');
+});
