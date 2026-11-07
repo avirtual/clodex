@@ -1448,6 +1448,24 @@ function registerIpcHandlers(deps) {
         return { ok: false, error: String((e && e.message) || e) };
       }
     });
+    handle('accounts:setApiKey', (_e, label, key) => {
+      if (!accounts) return { ok: false, error: 'accounts not supported on this host' };
+      try {
+        const r = accounts.setApiKey(label, key);
+        return r && r.ok ? { ok: true } : { ok: false, error: String((r && r.error) || 'set key failed') };
+      } catch {
+        return { ok: false, error: 'could not write the account settings.json' };
+      }
+    });
+    handle('accounts:clearApiKey', (_e, label) => {
+      if (!accounts) return { ok: false, error: 'accounts not supported on this host' };
+      try {
+        const r = accounts.clearApiKey(label);
+        return r && r.ok ? { ok: true } : { ok: false, error: String((r && r.error) || 'clear key failed') };
+      } catch {
+        return { ok: false, error: 'could not write the account settings.json' };
+      }
+    });
     handle('accounts:move-by-model', async (_e, params) => {
       if (!moveAccountByModel) return { ok: false, error: 'accounts not supported on this host' };
       const p = params || {};

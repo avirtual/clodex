@@ -289,6 +289,8 @@
 | `handle:accounts:add` | adds an account (label, email, plan, configDir) | accounts store | accounts.add | accounts-ipc.test.js drawer-services-seam.test.js |
 | `handle:accounts:remove` | removes an account by label | accounts store | accounts.remove | accounts-ipc.test.js drawer-services-seam.test.js |
 | `handle:accounts:resync` | re-reads one account's config dir | accounts store | accounts.resync | accounts-ipc.test.js drawer-services-seam.test.js |
+| `handle:accounts:setApiKey` | writes an Anthropic API key into a registered account's settings.json env (0600); returns only ok/error, never the key | account settings.json | accounts.setApiKey | accounts-ipc.test.js drawer-services-seam.test.js |
+| `handle:accounts:clearApiKey` | deletes ANTHROPIC_API_KEY from a registered account's settings.json env, keeping the rest | account settings.json | accounts.clearApiKey | accounts-ipc.test.js drawer-services-seam.test.js |
 | `handle:accounts:move-by-model` | moves the sender workspace's seats on a model onto an account, reporting moved and skipped | sessions via moveAccountByModel | moveAccountByModel, workspaceOfSender | accounts-ipc.test.js drawer-services-seam.test.js accounts-move-reattach.test.js |
 | `handle:envDefaults:get` | the shipped env defaults | env defaults store (read) | envDefaults.list | env-scopes-ipc.test.js |
 | `handle:envDefaults:restore` | restores the shipped env defaults | env defaults store | envDefaults.restore | env-scopes-ipc.test.js |
