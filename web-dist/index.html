@@ -4637,6 +4637,15 @@ body.drawer-dragging #work-row {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+.prefs-account-key {
+  flex: none;
+  font-size: 10px;
+  opacity: 0.8;
+}
+.prefs-account-row .prefs-account-key-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
 .prefs-check {
   display: flex;
   align-items: center;
@@ -11312,7 +11321,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
       </details>
       <details class="prefs-group" data-group="accounts">
         <summary><h4>Accounts</h4><span class="prefs-group-sub">Your registered Claude subscriptions, and which seats run on them</span></summary>
-        <p class="hint-text">Each account is a label plus the <code>CLAUDE_CONFIG_DIR</code> a seat on it spawns with; <code>default</code> is <code>~/.claude</code> and is never stored. Adding an account with no config dir mints one that shares transcripts, plugins and skills with the default. A seat picks its account in the New Session and Edit Session dialogs.</p>
+        <p class="hint-text">Each account is a label plus the <code>CLAUDE_CONFIG_DIR</code> a seat on it spawns with; <code>default</code> is <code>~/.claude</code> and is never stored. Adding an account with no config dir mints one that shares transcripts, plugins and skills with the default. A seat picks its account in the New Session and Edit Session dialogs. An <code>api</code> account can hold an Anthropic API key; it is written only to that account's settings.json (0600), which clodent and Console-billed claude seats read.</p>
         <div id="prefs-accounts-list" style="margin-top: 8px;"></div>
         <div class="prefs-row" style="gap: 6px; margin-top: 8px;">
           <input type="text" id="prefs-account-label" placeholder="label" spellcheck="false" autocomplete="off" style="flex: 1; min-width: 0;">
@@ -11327,6 +11336,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         </div>
         <div class="prefs-row" style="gap: 6px; margin-top: 6px;">
           <input type="text" id="prefs-account-dir" placeholder="config dir (optional)" spellcheck="false" autocomplete="off" style="flex: 2; min-width: 0;">
+          <input type="password" id="prefs-account-key" placeholder="API key (sk-ant-…)" spellcheck="false" autocomplete="off" hidden style="flex: 2; min-width: 0;">
           <button id="prefs-account-add" class="secondary" type="button" style="flex: none;">Add</button>
         </div>
         <div class="prefs-row" style="gap: 6px; margin-top: 8px;">
@@ -12198,6 +12208,8 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "accountsAdd", kind: "invoke", channel: "accounts:add" },
         { name: "accountsRemove", kind: "invoke", channel: "accounts:remove" },
         { name: "accountsResync", kind: "invoke", channel: "accounts:resync" },
+        { name: "accountsSetApiKey", kind: "invoke", channel: "accounts:setApiKey" },
+        { name: "accountsClearApiKey", kind: "invoke", channel: "accounts:clearApiKey" },
         { name: "accountsMoveByModel", kind: "invoke", channel: "accounts:move-by-model" },
         // Plugin transport. EXACTLY these five rows —
         // the whole plugin surface, for every plugin, forever. `pluginInvoke` is ONE
@@ -30160,6 +30172,7 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
     "renderer/lib/account-row.js"(exports, module) {
       "use strict";
       var { DEFAULT_LABEL, abbrevHome } = require_account_select();
+      var API_KEY_PLACEHOLDER = "API key (sk-ant-\u2026)";
       var MODEL_ALIASES = ["fable", "opus", "sonnet", "haiku"];
       function modelOptions(rows) {
         const out = new Set(MODEL_ALIASES);
@@ -30170,11 +30183,16 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         }
         return [...out];
       }
+      function keyFieldVisible(plan) {
+        return plan === "api";
+      }
       function accountRowView(account, seats, home) {
         const a = account && typeof account === "object" ? account : {};
         const label = String(a.label == null ? "" : a.label);
         const isDefault = label === DEFAULT_LABEL;
         const n = Number.isFinite(seats) ? seats : 0;
+        const keyed = !isDefault && keyFieldVisible(a.plan);
+        const hasKey = keyed && a.apiKey === true;
         return {
           label,
           isDefault,
@@ -30182,7 +30200,10 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
           plan: isDefault ? "" : String(a.plan || "unknown"),
           dir: abbrevHome(a.configDir, home),
           seats: n === 1 ? "1 seat" : `${n} seats`,
-          dirTitle: String(a.configDir || "")
+          dirTitle: String(a.configDir || ""),
+          keyed,
+          keyChip: keyed ? hasKey ? "key \u2713" : "no key" : "",
+          hasKey
         };
       }
       function buildAccountRow(doc, view) {
@@ -30202,6 +30223,12 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
           plan.className = "prefs-account-plan";
           plan.textContent = view.plan;
           row.appendChild(plan);
+        }
+        if (view.keyChip) {
+          const chip = doc.createElement("span");
+          chip.className = "prefs-account-key";
+          chip.textContent = view.keyChip;
+          row.appendChild(chip);
         }
         const dir = doc.createElement("span");
         dir.className = "hint-text prefs-account-dir";
@@ -30223,10 +30250,25 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         const login = mk("prefs-account-login", "Log in");
         const move = view.isDefault ? null : mk("prefs-account-move", "Move");
         const resync = view.isDefault ? null : mk("prefs-account-resync", "Re-sync settings");
+        const setKey = view.keyed ? mk("prefs-account-setkey", "Set key\u2026") : null;
+        const clearKey = view.hasKey ? mk("prefs-account-clearkey", "Clear key") : null;
         const remove = view.isDefault ? null : mk("prefs-account-remove", "Remove");
-        return { row, login, move, resync, remove };
+        return { row, login, move, resync, setKey, clearKey, remove };
       }
-      module.exports = { accountRowView, buildAccountRow, modelOptions, MODEL_ALIASES };
+      function buildKeyPrompt(doc) {
+        const input = doc.createElement("input");
+        input.type = "password";
+        input.className = "prefs-account-key-input";
+        input.placeholder = API_KEY_PLACEHOLDER;
+        input.autocomplete = "off";
+        input.spellcheck = false;
+        const save = doc.createElement("button");
+        save.className = "secondary prefs-account-key-save";
+        save.type = "button";
+        save.textContent = "Save key";
+        return { input, save };
+      }
+      module.exports = { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, modelOptions, MODEL_ALIASES, API_KEY_PLACEHOLDER };
     }
   });
 
@@ -52287,7 +52329,7 @@ ${detail}` });
       var { envRowView, buildEnvRow } = require_env_row();
       var { envLockView, applyEnvLock, patchUnlessEnvLocked } = require_env_lock();
       var { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require_account_select();
-      var { accountRowView, buildAccountRow, modelOptions } = require_account_row();
+      var { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, modelOptions } = require_account_row();
       var { isToolInstallSession } = require_tool_doctor();
       var { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require_placement();
       var { dropText } = require_drop_paths();
@@ -58468,6 +58510,7 @@ Click for live activity`;
       var prefsAccountEmail = document.getElementById("prefs-account-email");
       var prefsAccountPlan = document.getElementById("prefs-account-plan");
       var prefsAccountDir = document.getElementById("prefs-account-dir");
+      var prefsAccountKey = document.getElementById("prefs-account-key");
       var prefsAccountAdd = document.getElementById("prefs-account-add");
       var prefsAccountModel = document.getElementById("prefs-account-model");
       var prefsAccountsState = document.getElementById("prefs-accounts-state");
@@ -58516,8 +58559,44 @@ Click for live activity`;
         }
         for (const account of accounts) {
           const view = accountRowView(account, seatsBy.get(account.label) || 0);
-          const { row, login, move, resync, remove } = buildAccountRow(document, view);
+          const { row, login, move, resync, setKey, clearKey, remove } = buildAccountRow(document, view);
           login.addEventListener("click", () => startLoginSeat(account));
+          if (setKey) {
+            setKey.addEventListener("click", () => {
+              if (row.querySelector(".prefs-account-key-input")) return;
+              const { input, save } = buildKeyPrompt(document);
+              const submit = async () => {
+                const key = input.value;
+                input.value = "";
+                const r = await window.api.accountsSetApiKey(account.label, key);
+                if (!r || r.ok === false) {
+                  setPrefsAccountsState(r && r.error || "Set key failed.", "error");
+                  return;
+                }
+                setPrefsAccountsState(`Key saved for ${account.label}.`);
+                refreshPrefsAccounts();
+              };
+              save.addEventListener("click", submit);
+              input.addEventListener("keydown", (e) => {
+                if (e.key === "Enter") submit();
+              });
+              row.insertBefore(input, setKey);
+              row.insertBefore(save, setKey);
+              input.focus();
+            });
+          }
+          if (clearKey) {
+            clearKey.addEventListener("click", async () => {
+              if (!confirm(`Clear the API key from account "${account.label}"?`)) return;
+              const r = await window.api.accountsClearApiKey(account.label);
+              if (!r || r.ok === false) {
+                setPrefsAccountsState(r && r.error || "Clear key failed.", "error");
+                return;
+              }
+              setPrefsAccountsState(`Key cleared for ${account.label}.`);
+              refreshPrefsAccounts();
+            });
+          }
           if (move) {
             move.addEventListener("click", async () => {
               const model = prefsAccountModel ? prefsAccountModel.value : "";
@@ -58620,6 +58699,8 @@ Click for live activity`;
         const email = (prefsAccountEmail.value || "").trim();
         const plan = prefsAccountPlan ? prefsAccountPlan.value : "unknown";
         const configDir = (prefsAccountDir.value || "").trim();
+        const key = prefsAccountKey && keyFieldVisible(plan) ? prefsAccountKey.value : "";
+        if (prefsAccountKey) prefsAccountKey.value = "";
         if (!label) {
           setPrefsAccountsState("Enter a label first.", "error");
           return;
@@ -58632,10 +58713,19 @@ Click for live activity`;
         prefsAccountLabel.value = "";
         prefsAccountEmail.value = "";
         prefsAccountDir.value = "";
-        setPrefsAccountsState(`Added ${label} at ${abbrevHome(res.account && res.account.configDir)}.`);
+        let note = "";
+        if (key) {
+          const k = await window.api.accountsSetApiKey(label, key);
+          note = k && k.ok ? " Key saved." : ` Key not saved: ${k && k.error || "failed"}.`;
+        }
+        setPrefsAccountsState(`Added ${label} at ${abbrevHome(res.account && res.account.configDir)}.${note}`, note.startsWith(" Key not") ? "error" : void 0);
         refreshPrefsAccounts();
       }
+      function syncPrefsAccountKey() {
+        if (prefsAccountKey) prefsAccountKey.hidden = !keyFieldVisible(prefsAccountPlan ? prefsAccountPlan.value : "");
+      }
       if (prefsAccountAdd) prefsAccountAdd.addEventListener("click", addPrefsAccount);
+      if (prefsAccountPlan) prefsAccountPlan.addEventListener("change", syncPrefsAccountKey);
       function renderRemoteTokenState(hasToken, envOverride = false) {
         prefsRemoteToken.disabled = envOverride;
         prefsRemoteTokenSave.disabled = envOverride;
@@ -61235,6 +61325,8 @@ ${res.stderr}` : "");
         if (prefsAccountLabel) prefsAccountLabel.value = "";
         if (prefsAccountEmail) prefsAccountEmail.value = "";
         if (prefsAccountDir) prefsAccountDir.value = "";
+        if (prefsAccountKey) prefsAccountKey.value = "";
+        syncPrefsAccountKey();
         setPrefsAccountsState("");
         refreshPrefsAccounts();
         setClaudeToolsCache(s.claudeTools || []);

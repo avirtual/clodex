@@ -213,7 +213,6 @@ test('the Move "moved N · skipped" line survives the list refresh it triggers',
   assert.strictEqual(ctx.prefsAccountsState.textContent, 'moved 1 · skipped: s (r)');
 });
 
-// --- the API key (t2173) -----------------------------------------------------
 
 const API_NOKEY = { label: 'api-1', email: null, configDir: '/minted/api-1', plan: 'api', apiKey: false };
 const API_KEYED = { ...API_NOKEY, apiKey: true };
