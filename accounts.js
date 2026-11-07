@@ -4,7 +4,6 @@ const LABEL_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 const PLANS = new Set(['pro', 'max', 'team', 'api', 'unknown']);
 const DEFAULT_LABEL = 'default';
 const { RESERVED_LABELS } = require('./renderer/lib/account-select');
-const API_KEY_MAX = 512;
 const SHARED_LINKS = ['projects', 'plugins', 'skills', 'agents', 'commands'];
 
 function modelOfArgs(argv) {
@@ -136,7 +135,7 @@ function createAccounts(deps = {}) {
   }
 
   function list() {
-    return [defaultRow(), ...load()].map((row) => ({ ...row, apiKey: dirHasApiKey(row.configDir) }));
+    return [defaultRow(), ...load()];
   }
 
   function configDirFor(label) {
@@ -264,68 +263,6 @@ function createAccounts(deps = {}) {
     return { ok: true, copied: copySettings(dir, { overwrite: true }), trusted: mergeTrust(label) };
   }
 
-  function readSettings(file) {
-    if (!exists(file)) return { body: {} };
-    let body;
-    try { body = JSON.parse(fs.readFileSync(file, 'utf-8')); } catch { return { error: 'settings.json is not valid JSON' }; }
-    if (!body || typeof body !== 'object' || Array.isArray(body)) return { error: 'settings.json is not a JSON object' };
-    return { body };
-  }
-
-  function keyedSettings(label) {
-    const want = String(label || '');
-    if (want === DEFAULT_LABEL) return { error: 'the default account is ~/.claude itself; key a registered account' };
-    const dir = configDirFor(want);
-    if (!dir) return { error: `unknown account "${want}"` };
-    if (norm(dir) === norm(claudeHome)) return { error: `account "${want}" points at ~/.claude; key a registered account` };
-    const file = path.join(dir, 'settings.json');
-    const read = readSettings(file);
-    if (read.error) return { error: `account "${want}": ${read.error}` };
-    return { dir, file, body: read.body };
-  }
-
-  function envOf(body) {
-    return (body.env && typeof body.env === 'object' && !Array.isArray(body.env)) ? body.env : {};
-  }
-
-  function writeSettings(file, body) {
-    writeJsonAtomic(file, body);
-    fs.chmodSync(file, 0o600);
-  }
-
-  function setApiKey(label, key) {
-    if (typeof key !== 'string' || !key.length || /\s/.test(key) || key.length > API_KEY_MAX) {
-      return { ok: false, error: `an API key is 1-${API_KEY_MAX} characters with no whitespace` };
-    }
-    const t = keyedSettings(label);
-    if (t.error) return { ok: false, error: t.error };
-    fs.mkdirSync(t.dir, { recursive: true });
-    writeSettings(t.file, { ...t.body, env: { ...envOf(t.body), ANTHROPIC_API_KEY: key } });
-    return { ok: true };
-  }
-
-  function clearApiKey(label) {
-    const t = keyedSettings(label);
-    if (t.error) return { ok: false, error: t.error };
-    const env = envOf(t.body);
-    if (!Object.prototype.hasOwnProperty.call(env, 'ANTHROPIC_API_KEY')) return { ok: true };
-    const { ANTHROPIC_API_KEY: _drop, ...rest } = env;
-    writeSettings(t.file, { ...t.body, env: rest });
-    return { ok: true };
-  }
-
-  function hasApiKey(label) {
-    return dirHasApiKey(configDirFor(label));
-  }
-
-  function dirHasApiKey(dir) {
-    if (!dir) return false;
-    const read = readSettings(path.join(dir, 'settings.json'));
-    if (read.error) return false;
-    const v = envOf(read.body).ANTHROPIC_API_KEY;
-    return typeof v === 'string' && v.length > 0;
-  }
-
   function add({ label, email = null, plan = 'unknown', configDir = null } = {}) {
     const want = String(label || '');
     if (!LABEL_RE.test(want)) throw new Error(`invalid account label "${label}" — must match ${LABEL_RE}`);
@@ -371,9 +308,6 @@ function createAccounts(deps = {}) {
     configDirFor,
     mint,
     resync,
-    setApiKey,
-    clearApiKey,
-    hasApiKey,
     mergeTrust,
   };
 }

@@ -47,7 +47,7 @@ const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { envRowView, buildEnvRow } = require('./lib/env-row');
 const { envLockView, applyEnvLock, patchUnlessEnvLocked } = require('./lib/env-lock');
 const { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require('./lib/account-select');
-const { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, modelOptions } = require('./lib/account-row');
+const { accountRowView, buildAccountRow, modelOptions } = require('./lib/account-row');
 const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { dropText } = require('./lib/drop-paths');
@@ -6480,7 +6480,6 @@ const prefsAccountLabel = document.getElementById('prefs-account-label');
 const prefsAccountEmail = document.getElementById('prefs-account-email');
 const prefsAccountPlan = document.getElementById('prefs-account-plan');
 const prefsAccountDir = document.getElementById('prefs-account-dir');
-const prefsAccountKey = document.getElementById('prefs-account-key');
 const prefsAccountAdd = document.getElementById('prefs-account-add');
 const prefsAccountModel = document.getElementById('prefs-account-model');
 const prefsAccountsState = document.getElementById('prefs-accounts-state');
@@ -6526,36 +6525,8 @@ async function refreshPrefsAccounts() {
 
   for (const account of accounts) {
     const view = accountRowView(account, seatsBy.get(account.label) || 0);
-    const { row, login, move, resync, setKey, clearKey, remove } = buildAccountRow(document, view);
+    const { row, login, move, resync, remove } = buildAccountRow(document, view);
     login.addEventListener('click', () => startLoginSeat(account));
-    if (setKey) {
-      setKey.addEventListener('click', () => {
-        if (row.querySelector('.prefs-account-key-input')) return;
-        const { input, save } = buildKeyPrompt(document);
-        const submit = async () => {
-          const key = input.value;
-          input.value = '';
-          const r = await window.api.accountsSetApiKey(account.label, key);
-          if (!r || r.ok === false) { setPrefsAccountsState((r && r.error) || 'Set key failed.', 'error'); return; }
-          setPrefsAccountsState(`Key saved for ${account.label}.`);
-          refreshPrefsAccounts();
-        };
-        save.addEventListener('click', submit);
-        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
-        row.insertBefore(input, setKey);
-        row.insertBefore(save, setKey);
-        input.focus();
-      });
-    }
-    if (clearKey) {
-      clearKey.addEventListener('click', async () => {
-        if (!confirm(`Clear the API key from account "${account.label}"?`)) return;
-        const r = await window.api.accountsClearApiKey(account.label);
-        if (!r || r.ok === false) { setPrefsAccountsState((r && r.error) || 'Clear key failed.', 'error'); return; }
-        setPrefsAccountsState(`Key cleared for ${account.label}.`);
-        refreshPrefsAccounts();
-      });
-    }
     if (move) {
       move.addEventListener('click', async () => {
         const model = prefsAccountModel ? prefsAccountModel.value : '';
@@ -6617,29 +6588,17 @@ async function addPrefsAccount() {
   const email = (prefsAccountEmail.value || '').trim();
   const plan = prefsAccountPlan ? prefsAccountPlan.value : 'unknown';
   const configDir = (prefsAccountDir.value || '').trim();
-  const key = prefsAccountKey && keyFieldVisible(plan) ? prefsAccountKey.value : '';
-  if (prefsAccountKey) prefsAccountKey.value = '';
   if (!label) { setPrefsAccountsState('Enter a label first.', 'error'); return; }
   const res = await window.api.accountsAdd({ label, email: email || null, plan, configDir: configDir || null });
   if (!res || res.ok === false) { setPrefsAccountsState((res && res.error) || 'Add failed.', 'error'); return; }
   prefsAccountLabel.value = '';
   prefsAccountEmail.value = '';
   prefsAccountDir.value = '';
-  let note = '';
-  if (key) {
-    const k = await window.api.accountsSetApiKey(label, key);
-    note = k && k.ok ? ' Key saved.' : ` Key not saved: ${(k && k.error) || 'failed'}.`;
-  }
-  setPrefsAccountsState(`Added ${label} at ${abbrevHome(res.account && res.account.configDir)}.${note}`, note.startsWith(' Key not') ? 'error' : undefined);
+  setPrefsAccountsState(`Added ${label} at ${abbrevHome(res.account && res.account.configDir)}.`);
   refreshPrefsAccounts();
 }
 
-function syncPrefsAccountKey() {
-  if (prefsAccountKey) prefsAccountKey.hidden = !keyFieldVisible(prefsAccountPlan ? prefsAccountPlan.value : '');
-}
-
 if (prefsAccountAdd) prefsAccountAdd.addEventListener('click', addPrefsAccount);
-if (prefsAccountPlan) prefsAccountPlan.addEventListener('change', syncPrefsAccountKey);
 
 function renderRemoteTokenState(hasToken, envOverride = false) {
   prefsRemoteToken.disabled = envOverride;
@@ -9241,8 +9200,6 @@ async function openPrefs(group = null) {
   if (prefsAccountLabel) prefsAccountLabel.value = '';
   if (prefsAccountEmail) prefsAccountEmail.value = '';
   if (prefsAccountDir) prefsAccountDir.value = '';
-  if (prefsAccountKey) prefsAccountKey.value = '';
-  syncPrefsAccountKey();
   setPrefsAccountsState('');
   refreshPrefsAccounts();
   setClaudeToolsCache(s.claudeTools || []);

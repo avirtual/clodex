@@ -103,7 +103,7 @@ test('every accounts:* handler answers { ok:false } rather than throwing on a ho
     handle: (ch, fn) => handlers.set(ch, fn), on: (ch, fn) => handlers.set(ch, fn),
     enableAccounts: true, workspaceOfSender: () => 'ws-1', log: { info() {}, error() {} },
   });
-  for (const ch of ['accounts:list', 'accounts:add', 'accounts:remove', 'accounts:resync', 'accounts:setApiKey', 'accounts:clearApiKey']) {
+  for (const ch of ['accounts:list', 'accounts:add', 'accounts:remove', 'accounts:resync']) {
     const res = handlers.get(ch)(null, { label: 'sub-2' });
     assert.strictEqual(res.ok, false, `${ch} returns a result`);
     assert.match(res.error, /not supported on this host/, `${ch} says why`);
@@ -117,7 +117,7 @@ test('enableAccounts:false registers NO accounts channel at all — the gate is 
   // Registration IS the capability on the web surface (web-host dispatches any
   // registered channel by name), so a flag the handler consults would be no gate.
   const { handlers } = fixture({ enableAccounts: false });
-  for (const ch of ['accounts:list', 'accounts:add', 'accounts:remove', 'accounts:resync', 'accounts:setApiKey', 'accounts:clearApiKey', 'accounts:move-by-model']) {
+  for (const ch of ['accounts:list', 'accounts:add', 'accounts:remove', 'accounts:resync', 'accounts:move-by-model']) {
     assert.strictEqual(handlers.has(ch), false, `${ch} must not be registered`);
   }
   // ENTER: with the gate open they ARE registered, so the absence above is the
@@ -391,74 +391,4 @@ test('sweep: a seat whose CLAUDE_CONFIG_DIR differs only by a trailing slash is 
   assert.deepStrictEqual(res.moved, []);
   assert.deepStrictEqual(res.skipped[0], { name: 'fable-idle', reason: 'already on account sub-2' });
   assert.strictEqual(fx.restarts.length, 0);
-});
-
-const fs = require('node:fs');
-const path = require('node:path');
-const { createAccounts } = require('../accounts');
-const { mkTmpRoot } = require('./lib/tmp-roots');
-
-const KEY = 'sk-ant-api03-IPCKEYliteral_9876543210';
-
-function realFixture() {
-  const root = mkTmpRoot('clx-accounts-ipc-');
-  const claudeHome = path.join(root, 'home', '.claude');
-  fs.mkdirSync(claudeHome, { recursive: true });
-  const accounts = createAccounts({ fs, path, os: require('node:os'), clodexHome: path.join(root, 'clodex'), claudeHome });
-  const dir = path.join(root, 'acct');
-  accounts.add({ label: 'api-1', plan: 'api', configDir: dir });
-  const logged = [];
-  const capture = (...args) => { logged.push(args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')); };
-  const handlers = new Map();
-  registerIpcHandlers({
-    handle: (ch, fn) => handlers.set(ch, fn), on: (ch, fn) => handlers.set(ch, fn),
-    accounts, enableAccounts: true, workspaceOfSender: () => 'ws-1',
-    log: { info: capture, warn: capture, error: capture, debug: capture },
-  });
-  return { handlers, dir, logged, call: (ch, ...args) => handlers.get(ch)(null, ...args) };
-}
-
-test('accounts:setApiKey / clearApiKey write the account settings.json and reply with ok only — never the key', () => {
-  const { call, dir, logged } = realFixture();
-  const replies = [];
-  const set = call('accounts:setApiKey', 'api-1', KEY);
-  replies.push(set);
-  assert.deepStrictEqual(set, { ok: true });
-  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(dir, 'settings.json'), 'utf-8')).env.ANTHROPIC_API_KEY, KEY);
-  const list = call('accounts:list');
-  replies.push(list);
-  assert.deepStrictEqual(list.accounts.map((a) => [a.label, a.apiKey]), [['default', false], ['api-1', true]]);
-  for (const [label, key] of [['default', KEY], ['nope', KEY], ['api-1', `${KEY} `]]) {
-    const r = call('accounts:setApiKey', label, key);
-    replies.push(r);
-    assert.strictEqual(r.ok, false, `${label} refused`);
-    assert.strictEqual(typeof r.error, 'string');
-  }
-  const cleared = call('accounts:clearApiKey', 'api-1');
-  replies.push(cleared);
-  assert.deepStrictEqual(cleared, { ok: true });
-  assert.strictEqual('ANTHROPIC_API_KEY' in JSON.parse(fs.readFileSync(path.join(dir, 'settings.json'), 'utf-8')).env, false);
-  assert.deepStrictEqual(call('accounts:clearApiKey', 'default').ok, false);
-  assert.ok(!JSON.stringify(replies).includes('IPCKEYliteral'), 'no IPC reply carries the key');
-  assert.ok(!logged.join('\n').includes('IPCKEYliteral'), 'no log line carries the key');
-});
-
-test('accounts:setApiKey turns a store throw into a fixed error that cannot carry the key', () => {
-  const handlers = new Map();
-  registerIpcHandlers({
-    handle: (ch, fn) => handlers.set(ch, fn), on: (ch, fn) => handlers.set(ch, fn),
-    accounts: { setApiKey: (_l, k) => { throw new Error(`boom ${k}`); }, clearApiKey: () => { throw new Error('boom'); } },
-    enableAccounts: true, workspaceOfSender: () => 'ws-1', log: { info() {}, error() {} },
-  });
-  const r = handlers.get('accounts:setApiKey')(null, 'api-1', KEY);
-  assert.deepStrictEqual(r, { ok: false, error: 'could not write the account settings.json' });
-  assert.deepStrictEqual(handlers.get('accounts:clearApiKey')(null, 'api-1'), { ok: false, error: 'could not write the account settings.json' });
-});
-
-test('the peer surface never mirrors the key channels', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'remote-wiring.js'), 'utf8');
-  assert.ok(src.includes('configDirFor'), 'ENTER: remote-wiring reads the accounts store');
-  for (const name of ['setApiKey', 'clearApiKey', 'accounts:setApiKey', 'accounts:clearApiKey']) {
-    assert.strictEqual(src.includes(name), false, `remote-wiring.js must not reach ${name}`);
-  }
 });

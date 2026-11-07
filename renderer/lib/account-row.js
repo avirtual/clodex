@@ -2,7 +2,6 @@
 
 const { DEFAULT_LABEL, abbrevHome } = require('./account-select');
 
-const API_KEY_PLACEHOLDER = 'API key (sk-ant-…)';
 const MODEL_ALIASES = ['fable', 'opus', 'sonnet', 'haiku'];
 
 function modelOptions(rows) {
@@ -15,17 +14,11 @@ function modelOptions(rows) {
   return [...out];
 }
 
-function keyFieldVisible(plan) {
-  return plan === 'api';
-}
-
 function accountRowView(account, seats, home) {
   const a = (account && typeof account === 'object') ? account : {};
   const label = String(a.label == null ? '' : a.label);
   const isDefault = label === DEFAULT_LABEL;
   const n = Number.isFinite(seats) ? seats : 0;
-  const keyed = !isDefault && keyFieldVisible(a.plan);
-  const hasKey = keyed && a.apiKey === true;
   return {
     label,
     isDefault,
@@ -34,9 +27,6 @@ function accountRowView(account, seats, home) {
     dir: abbrevHome(a.configDir, home),
     seats: n === 1 ? '1 seat' : `${n} seats`,
     dirTitle: String(a.configDir || ''),
-    keyed,
-    keyChip: keyed ? (hasKey ? 'key ✓' : 'no key') : '',
-    hasKey,
   };
 }
 
@@ -62,13 +52,6 @@ function buildAccountRow(doc, view) {
     row.appendChild(plan);
   }
 
-  if (view.keyChip) {
-    const chip = doc.createElement('span');
-    chip.className = 'prefs-account-key';
-    chip.textContent = view.keyChip;
-    row.appendChild(chip);
-  }
-
   const dir = doc.createElement('span');
   dir.className = 'hint-text prefs-account-dir';
   dir.textContent = view.dir;
@@ -92,25 +75,9 @@ function buildAccountRow(doc, view) {
   const login = mk('prefs-account-login', 'Log in');
   const move = view.isDefault ? null : mk('prefs-account-move', 'Move');
   const resync = view.isDefault ? null : mk('prefs-account-resync', 'Re-sync settings');
-  const setKey = view.keyed ? mk('prefs-account-setkey', 'Set key…') : null;
-  const clearKey = view.hasKey ? mk('prefs-account-clearkey', 'Clear key') : null;
   const remove = view.isDefault ? null : mk('prefs-account-remove', 'Remove');
 
-  return { row, login, move, resync, setKey, clearKey, remove };
+  return { row, login, move, resync, remove };
 }
 
-function buildKeyPrompt(doc) {
-  const input = doc.createElement('input');
-  input.type = 'password';
-  input.className = 'prefs-account-key-input';
-  input.placeholder = API_KEY_PLACEHOLDER;
-  input.autocomplete = 'off';
-  input.spellcheck = false;
-  const save = doc.createElement('button');
-  save.className = 'secondary prefs-account-key-save';
-  save.type = 'button';
-  save.textContent = 'Save key';
-  return { input, save };
-}
-
-module.exports = { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, modelOptions, MODEL_ALIASES, API_KEY_PLACEHOLDER };
+module.exports = { accountRowView, buildAccountRow, modelOptions, MODEL_ALIASES };
