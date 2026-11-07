@@ -94,9 +94,11 @@ arg** (which is why restart paths must re-assert it; kill drops the entry).
   (`notification_type: "permission_prompt"`) classifies as `permission`; it
   is answered in the terminal (`seatPermission` answers stream seats only).
   A team role naming an `account` on a clodent template is refused with
-  reason `platform`. The operator keys a clodent account by writing
-  `env.ANTHROPIC_API_KEY` into `$CLODENT_HOME/settings.json`; Clodex never
-  writes the key, and a key set in the seat env instead reaches the child
+  reason `platform`. The operator keys a clodent account by pasting an API
+  key on an `api` account in Preferences ▸ Accounts: Clodex writes it as
+  `env.ANTHROPIC_API_KEY` into that account's own `settings.json` (0600) and
+  nowhere else — never into a seat env, a log or the wire, and no IPC returns
+  it (`accounts.setApiKey`). A key set in the seat env instead reaches the child
   env, which same-UID processes can read with `ps eww`. A credential-sandboxed
   seat of any type is read-denied `settings.json` in `~/.clodent` and in the
   seat's or the app's `CLODENT_HOME`, and write-denied those dirs.

@@ -16,7 +16,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { accountRowView, buildAccountRow, modelOptions, MODEL_ALIASES } = require('../renderer/lib/account-row');
+const { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, modelOptions, MODEL_ALIASES } = require('../renderer/lib/account-row');
 
 const css = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
 
@@ -46,6 +46,9 @@ test('accountRowView: a registered row, as literals', () => {
     dir: '/minted/sub-2',
     seats: '3 seats',
     dirTitle: '/minted/sub-2',
+    keyed: false,
+    keyChip: '',
+    hasKey: false,
   });
 });
 
@@ -58,6 +61,9 @@ test('accountRowView: the default row abbreviates ~ and carries no plan', () => 
     dir: '~/.claude',
     seats: '1 seat',
     dirTitle: `${HOME}/.claude`,
+    keyed: false,
+    keyChip: '',
+    hasKey: false,
   });
 });
 
@@ -205,4 +211,110 @@ test('the Move "moved N · skipped" line survives the list refresh it triggers',
   await moveClick();
   for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
   assert.strictEqual(ctx.prefsAccountsState.textContent, 'moved 1 · skipped: s (r)');
+});
+
+// --- the API key (t2173) -----------------------------------------------------
+
+const API_NOKEY = { label: 'api-1', email: null, configDir: '/minted/api-1', plan: 'api', apiKey: false };
+const API_KEYED = { ...API_NOKEY, apiKey: true };
+
+test('accountRowView: an api row carries the key chip, as literals', () => {
+  assert.deepStrictEqual(
+    [API_NOKEY, API_KEYED, { ...SUB2, apiKey: true }].map((a) => {
+      const v = accountRowView(a, 0, HOME);
+      return [v.keyed, v.keyChip, v.hasKey];
+    }),
+    [[true, 'no key', false], [true, 'key ✓', true], [false, '', false]],
+  );
+});
+
+test('an api row shows the chip and Set key…, Clear key only once keyed, and never the key', () => {
+  const texts = (a) => build(a, 0).row.children.map((c) => c.textContent);
+  const bare = build(API_NOKEY, 0);
+  assert.deepStrictEqual(bare.row.children.filter((c) => c.tag === 'button').map((b) => b.textContent),
+    ['Log in', 'Move', 'Re-sync settings', 'Set key…', 'Remove']);
+  assert.strictEqual(bare.clearKey, null);
+  assert.ok(texts(API_NOKEY).includes('no key'));
+  const keyed = build(API_KEYED, 0);
+  assert.deepStrictEqual(keyed.row.children.filter((c) => c.tag === 'button').map((b) => b.textContent),
+    ['Log in', 'Move', 'Re-sync settings', 'Set key…', 'Clear key', 'Remove']);
+  const chip = keyed.row.children.find((c) => c.className === 'prefs-account-key');
+  assert.strictEqual(chip.textContent, 'key ✓');
+  assert.ok(!JSON.stringify(build({ ...API_KEYED, ANTHROPIC_API_KEY: 'sk-ant-LEAK' }, 0).row).includes('sk-ant-LEAK'));
+  const sub = build(SUB2, 0);
+  assert.strictEqual(sub.setKey, null, 'a non-api row offers no key');
+});
+
+test('the inline key prompt is a password field with autocomplete off', () => {
+  const { input, save } = buildKeyPrompt(fakeDoc());
+  assert.strictEqual(input.type, 'password');
+  assert.strictEqual(input.autocomplete, 'off');
+  assert.strictEqual(input.placeholder, 'API key (sk-ant-…)');
+  assert.strictEqual(save.type, 'button');
+  assert.ok(css.includes('.prefs-account-key '), '.prefs-account-key is styled');
+});
+
+test('#prefs-account-key ships as a hidden password input and shows only for plan api', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.html'), 'utf8');
+  const tag = html.match(/<input[^>]*id="prefs-account-key"[^>]*>/);
+  assert.ok(tag, 'ENTER: the add-row key field exists');
+  assert.match(tag[0], /type="password"/);
+  assert.match(tag[0], /autocomplete="off"/);
+  assert.match(tag[0], / hidden/);
+  assert.deepStrictEqual(['api', 'max', 'pro', 'team', 'unknown'].map(keyFieldVisible), [true, false, false, false, false]);
+
+  const vm = require('node:vm');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const start = src.indexOf('function syncPrefsAccountKey(');
+  assert.ok(start >= 0, 'ENTER: syncPrefsAccountKey was located');
+  const ctx = { keyFieldVisible, prefsAccountKey: { hidden: true }, prefsAccountPlan: { value: 'api' } };
+  vm.createContext(ctx);
+  vm.runInContext(src.slice(start, src.indexOf('\n}\n', start) + 2), ctx);
+  ctx.syncPrefsAccountKey();
+  assert.strictEqual(ctx.prefsAccountKey.hidden, false, 'api shows the field');
+  ctx.prefsAccountPlan.value = 'max';
+  ctx.syncPrefsAccountKey();
+  assert.strictEqual(ctx.prefsAccountKey.hidden, true, 'any other plan hides it');
+  assert.match(src, /prefsAccountPlan\.addEventListener\('change', syncPrefsAccountKey\)/);
+});
+
+async function runAdd({ plan, addOk }) {
+  const vm = require('node:vm');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const start = src.indexOf('async function addPrefsAccount(');
+  assert.ok(start >= 0, 'ENTER: addPrefsAccount was located');
+  const calls = [];
+  const field = (value) => ({ value });
+  const ctx = {
+    keyFieldVisible, abbrevHome: (d) => d, refreshPrefsAccounts() {},
+    prefsAccountLabel: field('api-1'), prefsAccountEmail: field(''), prefsAccountDir: field(''),
+    prefsAccountPlan: field(plan), prefsAccountKey: field(KEY_LITERAL),
+    state: null, setPrefsAccountsState(msg, kind) { ctx.state = [msg, kind]; },
+    window: { api: {
+      accountsAdd: async (p) => { calls.push(['add', p]); return addOk ? { ok: true, account: { configDir: '/d' } } : { ok: false, error: 'dup' }; },
+      accountsSetApiKey: async (label, key) => { calls.push(['setKey', label, key]); return { ok: true }; },
+    } },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(src.slice(start, src.indexOf('\n}\n', start) + 2), ctx);
+  await ctx.addPrefsAccount();
+  return { calls, ctx };
+}
+const KEY_LITERAL = 'sk-ant-api03-RENDERERKEY';
+
+test('addPrefsAccount keys an api account after the add, and clears the key field on success and failure', async () => {
+  const ok = await runAdd({ plan: 'api', addOk: true });
+  assert.deepStrictEqual(ok.calls.map((c) => c[0]), ['add', 'setKey']);
+  assert.deepStrictEqual(ok.calls[1], ['setKey', 'api-1', KEY_LITERAL]);
+  assert.ok(!JSON.stringify(ok.calls[0]).includes(KEY_LITERAL), 'the add call never carries the key');
+  assert.strictEqual(ok.ctx.prefsAccountKey.value, '');
+  assert.ok(!String(ok.ctx.state[0]).includes(KEY_LITERAL));
+
+  const bad = await runAdd({ plan: 'api', addOk: false });
+  assert.deepStrictEqual(bad.calls.map((c) => c[0]), ['add'], 'a failed add sets no key');
+  assert.strictEqual(bad.ctx.prefsAccountKey.value, '', 'the field is cleared regardless');
+
+  const max = await runAdd({ plan: 'max', addOk: true });
+  assert.deepStrictEqual(max.calls.map((c) => c[0]), ['add'], 'a non-api plan sends no key');
+  assert.strictEqual(max.ctx.prefsAccountKey.value, '');
 });
