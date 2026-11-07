@@ -402,7 +402,7 @@ test('a reattach after an expected exit rebuilds the row with the label, fix chi
   const h = mkRenderer();
   const reattach = stashedRespawn(h);
   reattach();
-  assert.deepStrictEqual(h.calls.find((c) => c[0] === 'addSessionToSidebar'), ['addSessionToSidebar', 's', 'claude', '/w', 'Lab', null, null, false, null, 'box1']);
+  assert.deepStrictEqual(h.calls.find((c) => c[0] === 'addSessionToSidebar'), ['addSessionToSidebar', 's', 'claude', '/w', 'Lab', null, null, false, null, 'box1', false]);
   assert.deepStrictEqual(h.calls.find((c) => c[0] === 'applyTicketBadge'), ['applyTicketBadge', 's', 't4']);
   assert.strictEqual(h.env.respawnSnapshots.has('s'), false, 'the snapshot is used once');
 });
@@ -413,7 +413,7 @@ test('a respawn snapshot older than 60 s is not used', (t) => {
   const reattach = stashedRespawn(h);
   t.mock.timers.tick(60001);
   reattach();
-  assert.deepStrictEqual(h.calls.find((c) => c[0] === 'addSessionToSidebar'), ['addSessionToSidebar', 's', 'claude', '/w', null, null, null, false, null, null]);
+  assert.deepStrictEqual(h.calls.find((c) => c[0] === 'addSessionToSidebar'), ['addSessionToSidebar', 's', 'claude', '/w', null, null, null, false, null, null, false]);
 });
 
 for (const row of [
