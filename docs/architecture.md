@@ -107,6 +107,10 @@ bundle), whose packaged form is the Docker image under
   engine.js and injected; deliberately NOT a module).
   `window-all-closed` quits only off macOS (the tray keeps the app alive there);
   `before-quit` → `engine.shutdown()` is the real quit.
+- **browser-launch.js** — `launchInBrowser`, main.js's `openInBrowser` seam
+  for `file:openBytes` images: opens a file with the default web browser (the
+  `https` handler on macOS, the xdg default on Linux), since a `file://` URL
+  goes to the file type's app. `defaultBrowserMac` parses `LSHandlers`.
 - **headless-main.js** — the **headless adapter**, `node headless-main.js`. No
   Electron, no Xvfb, no windows/tray/ipc: `userDataPath` from
   `CLODEX_DATA_DIR` (or the platform default; the Electron host honours the same
