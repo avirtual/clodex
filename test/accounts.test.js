@@ -242,8 +242,35 @@ test('resync re-copies settings.json over an edited one; mint alone does not', (
   accounts.mint('sub-2');
   assert.strictEqual(fs.readFileSync(dest, 'utf8'), '{"defaultMode":"plan"}\n', 'mint does not clobber');
 
-  assert.deepStrictEqual(accounts.resync('sub-2'), { ok: true, copied: true, trusted: 2 });
+  assert.deepStrictEqual(accounts.resync('sub-2'), { ok: true, copied: true, trusted: 2, keyKept: false });
   assert.deepStrictEqual(fs.readFileSync(dest), fs.readFileSync(path.join(claudeHome, 'settings.json')));
+});
+
+test('resync keeps a keyed account\'s own API key and refreshes the rest, at 0600', () => {
+  const { accounts, claudeHome } = fixture();
+  accounts.add({ label: 'sub-2', plan: 'api' });
+  const dest = path.join(accounts.configDirFor('sub-2'), 'settings.json');
+  fs.writeFileSync(dest, '{"defaultMode":"plan","env":{"FOO":"old","ANTHROPIC_API_KEY":"sk-own-key"}}\n', { mode: 0o644 });
+  fs.writeFileSync(path.join(claudeHome, 'settings.json'), '{"defaultMode":"acceptEdits","env":{"BAR":"new","ANTHROPIC_API_KEY":"sk-default-key"}}\n');
+
+  assert.deepStrictEqual(accounts.resync('sub-2'), { ok: true, copied: true, trusted: 2, keyKept: true });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(dest, 'utf8')), {
+    defaultMode: 'acceptEdits',
+    env: { BAR: 'new', ANTHROPIC_API_KEY: 'sk-own-key' },
+  });
+  assert.strictEqual(fs.statSync(dest).mode & 0o777, 0o600);
+});
+
+test('resync never imports the default settings.json API key into a keyless account', () => {
+  const { accounts, claudeHome } = fixture();
+  accounts.add({ label: 'sub-2', plan: 'max' });
+  const dest = path.join(accounts.configDirFor('sub-2'), 'settings.json');
+  fs.writeFileSync(path.join(claudeHome, 'settings.json'), '{"defaultMode":"acceptEdits","env":{"BAR":"new","ANTHROPIC_API_KEY":"sk-default-key"}}\n');
+
+  assert.deepStrictEqual(accounts.resync('sub-2'), { ok: true, copied: true, trusted: 2, keyKept: false });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(dest, 'utf8')), { defaultMode: 'acceptEdits', env: { BAR: 'new' } });
+  assert.strictEqual(accounts.hasApiKey('sub-2'), false);
+  assert.strictEqual(fs.statSync(dest).mode & 0o777, 0o600);
 });
 
 test('trustProjects: only the trusted entries, only the trust keys', () => {
@@ -269,7 +296,7 @@ test('resync MERGES trust into the account\'s own projects, keeping every other 
     projects: { '/w/both': { lastCost: 1, allowedTools: ['Bash(ls:*)'] } },
   }));
 
-  assert.deepStrictEqual(accounts.resync('sub-2'), { ok: true, copied: true, trusted: 2 });
+  assert.deepStrictEqual(accounts.resync('sub-2'), { ok: true, copied: true, trusted: 2, keyKept: false });
 
   const body = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.strictEqual(body.oauthAccount, 'live', 'the login the dir carries survived');
@@ -293,7 +320,7 @@ test('resync leaves an unparseable account .claude.json alone rather than rewrit
   accounts.add({ label: 'sub-2', plan: 'max' });
   const file = path.join(accounts.configDirFor('sub-2'), '.claude.json');
   fs.writeFileSync(file, 'not json at all');
-  assert.deepStrictEqual(accounts.resync('sub-2'), { ok: true, copied: true, trusted: 0 });
+  assert.deepStrictEqual(accounts.resync('sub-2'), { ok: true, copied: true, trusted: 0, keyKept: false });
   assert.strictEqual(fs.readFileSync(file, 'utf8'), 'not json at all');
 });
 

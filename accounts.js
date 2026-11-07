@@ -261,7 +261,28 @@ function createAccounts(deps = {}) {
     const dir = configDirFor(label);
     if (!dir) return { ok: false, error: `unknown account "${label}"` };
     if (label === DEFAULT_LABEL) return { ok: false, error: 'the default account is the source, not a copy' };
-    return { ok: true, copied: copySettings(dir, { overwrite: true }), trusted: mergeTrust(label) };
+    const prior = keyedSettings(label);
+    const key = prior.error ? undefined : envOf(prior.body).ANTHROPIC_API_KEY;
+    const had = typeof key === 'string' && key.length > 0;
+    const copied = copySettings(dir, { overwrite: true });
+    const keyKept = copied && norm(dir) !== norm(claudeHome) ? restoreKey(dir, had ? key : null) : had;
+    return { ok: true, copied, trusted: mergeTrust(label), keyKept };
+  }
+
+  function restoreKey(dir, key) {
+    const file = path.join(dir, 'settings.json');
+    const read = readSettings(file);
+    if (read.error) return false;
+    const env = envOf(read.body);
+    if (key) {
+      writeSettings(file, { ...read.body, env: { ...env, ANTHROPIC_API_KEY: key } });
+      return true;
+    }
+    if (Object.prototype.hasOwnProperty.call(env, 'ANTHROPIC_API_KEY')) {
+      const { ANTHROPIC_API_KEY: _drop, ...rest } = env;
+      writeSettings(file, { ...read.body, env: rest });
+    }
+    return false;
   }
 
   function readSettings(file) {
