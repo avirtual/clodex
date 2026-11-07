@@ -11915,6 +11915,8 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         // Read-only: answers whether a displayed string names a real file, and where.
         { name: "fileResolve", kind: "invoke", channel: "file:resolve" },
         { name: "fileOpen", kind: "invoke", channel: "file:open" },
+        { name: "fileSaveBytes", kind: "invoke", channel: "file:saveBytes" },
+        { name: "fileOpenBytes", kind: "invoke", channel: "file:openBytes" },
         // Reveal in the OS file manager, as distinct from opening the file itself.
         // An ordinary capability row, NOT part of the frozen five-row plugin transport
         // — its first caller is Manage Plugins (t22), pointing a user at
@@ -45276,7 +45278,14 @@ void main() {
         const saveBtn = button(doc, "file-peek-open side-file-save hidden", "Save", "Save (Cmd+S)");
         const openBtn = button(doc, "file-peek-open", "Open", "Open in the default editor");
         if (!showOpen) openBtn.style.display = "none";
-        controls.append(diffBtn, fileBtn, editBtn, dirtyEl, saveBtn, openBtn);
+        const saveAsBtn = button(doc, "file-peek-open side-file-save-as", "Save\u2026", "Save a copy where you choose");
+        const openLocalBtn = button(doc, "file-peek-open side-file-open-local", "Open", "Open a copy locally");
+        if (showOpen) {
+          saveAsBtn.style.display = "none";
+          openLocalBtn.style.display = "none";
+        }
+        const useHint = showOpen ? "use Open." : "use Save\u2026 or Open.";
+        controls.append(diffBtn, fileBtn, editBtn, dirtyEl, saveBtn, openBtn, saveAsBtn, openLocalBtn);
         bar.append(pathEl, byEl, controls);
         const banner = el(doc, "div", "side-file-banner hidden");
         const bannerText = el(doc, "span", "side-file-banner-text");
@@ -45351,7 +45360,7 @@ void main() {
           img.addEventListener("load", () => {
             note.textContent = `${img.naturalWidth}\xD7${img.naturalHeight} \xB7 ${kb}`;
           });
-          img.addEventListener("error", () => paintNote("Image could not be decoded \u2014 use Open."));
+          img.addEventListener("error", () => paintNote(`Image could not be decoded \u2014 ${useHint}`));
           img.src = "data:" + peekRes.image + ";base64," + peekRes.content;
           body.replaceChildren(note, img);
         }
@@ -45359,8 +45368,8 @@ void main() {
           if (tab.deleted) return paintNote("No longer on disk.");
           if (!peekRes || !peekRes.ok) return paintNote(peekRes && peekRes.error || "File unavailable");
           if (peekRes.image && peekRes.content) return paintImage();
-          if (peekRes.image) return paintNote("Image larger than 4 MB \u2014 use Open.");
-          if (peekRes.binary) return paintNote(`Binary file (${peekRes.size} bytes) \u2014 use Open.`);
+          if (peekRes.image) return paintNote(`Image larger than 4 MB \u2014 ${useHint}`);
+          if (peekRes.binary) return paintNote(`Binary file (${peekRes.size} bytes) \u2014 ${useHint}`);
           const nodes = [];
           if (peekRes.truncated) {
             nodes.push(el(
@@ -45454,6 +45463,8 @@ void main() {
         });
         saveBtn.addEventListener("click", () => on.save());
         openBtn.addEventListener("click", () => on.open());
+        saveAsBtn.addEventListener("click", () => on.saveAs(peekRes && peekRes.size));
+        openLocalBtn.addEventListener("click", () => on.openLocal(peekRes && peekRes.size));
         reloadBtn.addEventListener("click", () => on.discard());
         theirsBtn.addEventListener("click", () => on.theirs());
         keepBtn.addEventListener("click", () => on.keep());
@@ -45482,6 +45493,46 @@ void main() {
     }
   });
 
+  // renderer/lib/file-fetch.js
+  var require_file_fetch = __commonJS({
+    "renderer/lib/file-fetch.js"(exports, module) {
+      "use strict";
+      var FETCH_MAX = 64 * 1024 * 1024;
+      var FETCH_CHUNK = 1024 * 1024;
+      function decodeBase64(b64) {
+        const bin = atob(String(b64 || ""));
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
+        return out;
+      }
+      var tooLarge = (size) => ({ ok: false, error: `File is ${Math.round(size / (1024 * 1024))} MB \u2014 larger than the ${FETCH_MAX / (1024 * 1024)} MB fetch limit` });
+      async function fetchWhole(peek, filePath, size) {
+        if (Number(size) > FETCH_MAX) return tooLarge(Number(size));
+        const parts = [];
+        let total = 0;
+        let image = null;
+        for (; ; ) {
+          const r = await Promise.resolve(peek(filePath, { raw: true, offset: total, length: FETCH_CHUNK })).catch((e) => ({ ok: false, error: String(e && e.message || e) }));
+          if (!r || !r.ok) return { ok: false, error: r && r.error || "fetch failed" };
+          if (r.size > FETCH_MAX) return tooLarge(r.size);
+          if (total === 0) image = r.image || null;
+          const chunk = decodeBase64(r.content);
+          parts.push(chunk);
+          total += chunk.length;
+          if (!r.truncated || chunk.length === 0) break;
+        }
+        const bytes = new Uint8Array(total);
+        let at = 0;
+        for (const p of parts) {
+          bytes.set(p, at);
+          at += p.length;
+        }
+        return { ok: true, bytes, image };
+      }
+      module.exports = { fetchWhole, FETCH_MAX, FETCH_CHUNK };
+    }
+  });
+
   // renderer/side-pane.js
   var require_side_pane = __commonJS({
     "renderer/side-pane.js"(exports, module) {
@@ -45495,6 +45546,7 @@ void main() {
         reduceTabs,
         stripState
       } = require_side_pane_tabs();
+      var { fetchWhole } = require_file_fetch();
       function createSidePane({ dock, popoverApi, showToast, getActiveSession, getFiles, focusTerminal, doc = document, win = window }) {
         const pane = doc.getElementById("side-pane");
         const strip = doc.getElementById("side-pane-tabs");
@@ -45651,6 +45703,8 @@ void main() {
                 const res = await Promise.resolve(win.api.fileOpen(filePath)).catch(() => null);
                 if (res && res.revealed) showToast(`Revealed in Finder, not opened: it is ${res.reason}`, { kind: "warn", duration: 6e3 });
               },
+              saveAs: (size) => exportFile(at.seat, filePath, size, "save"),
+              openLocal: (size) => exportFile(at.seat, filePath, size, "open"),
               escape: () => focusTerminal(),
               discard: () => act({ type: "discard" }),
               keep: () => act({ type: "keep" }),
@@ -45669,6 +45723,30 @@ void main() {
           views.set(viewKey(seat, id), v);
           recordSeen(seat, id, filePath);
           return v;
+        }
+        async function exportFile(seat, filePath, size, mode) {
+          const name = filePath.split(/[\\/]/).pop() || "file";
+          const got = await fetchWhole(popoverApi(seat).peek, filePath, size);
+          if (!got.ok) {
+            showToast(`Can't fetch ${name}: ${got.error}`, { kind: "error", duration: 8e3 });
+            return;
+          }
+          if (isWeb) {
+            const url = win.URL.createObjectURL(new win.Blob([got.bytes], { type: got.image || "application/octet-stream" }));
+            if (mode === "open") {
+              win.open(url, "_blank");
+            } else {
+              const a = doc.createElement("a");
+              a.href = url;
+              a.download = name;
+              a.click();
+            }
+            win.setTimeout(() => win.URL.revokeObjectURL(url), 6e4);
+            return;
+          }
+          const res = await Promise.resolve(mode === "open" ? win.api.fileOpenBytes(name, got.bytes) : win.api.fileSaveBytes(name, got.bytes)).catch((e) => ({ ok: false, error: String(e) }));
+          if (res && res.revealed) showToast(`Revealed in Finder, not opened: it is ${res.reason}`, { kind: "warn", duration: 6e3 });
+          else if (!res || !res.ok && res.error !== "cancelled") showToast(`${mode === "open" ? "Open" : "Save"} failed: ${res && (res.error || res.reason) || "unknown"}`, { kind: "error", duration: 8e3 });
         }
         async function save(seat, id) {
           const tab = tabOf(seat, id);
@@ -57757,7 +57835,7 @@ Click for live activity`;
             report: (opts) => q("report", opts),
             bust: () => q("bust"),
             files: () => q("files"),
-            peek: (p) => q("filePeek", { path: p }),
+            peek: (p, opts) => q("filePeek", { ...opts, path: p }),
             diff: (p) => q("fileDiff", { path: p })
           };
         }
@@ -57767,7 +57845,7 @@ Click for live activity`;
           report: (opts) => window.api.getProxyReport(name, opts),
           bust: () => window.api.getProxyBust(name),
           files: () => window.api.sessionFiles(name),
-          peek: (p) => window.api.filePeek(p),
+          peek: (p, opts) => window.api.filePeek(p, opts),
           diff: (p) => window.api.fileDiff(name, p)
         };
       }

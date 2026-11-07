@@ -17,6 +17,7 @@ blocks a release.
 ## Unreleased
 
 - A ticket that cannot merge cleanly into the trunk is rejected back to its hand at `task done`, with the conflicting paths, before the suite and the reviewer run; a CHANGELOG-only conflict still passes, since the merge resolves it.
+- A file shared by a remote seat (`[agent:file view]`, images included) can be opened or saved from its tab: Open shows an image full-window in your browser (other files go to their default app) from a temp copy, Save… writes it where you choose, and both fetch past the 4 MB preview cap in chunks.
 
 ## 5.163.0 — 2026-11-07
 

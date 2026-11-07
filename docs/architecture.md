@@ -1302,7 +1302,10 @@ Own state + DOM, `init*(deps)`:
 - **file-tab.js** — one file tab's DOM: the Diff / File / Edit views, the
   save button and the agent-changed banner. The git diff is still rendered
   through `renderDiffHtml` into `innerHTML`; the file view is built with DOM
-  nodes.
+  nodes. A remote or web viewer gets Save… and Open instead of the editor
+  Open: `side-pane.js` fetches the whole file in raw chunks
+  (`lib/file-fetch.js`, 64 MB cap) and hands it to `file:saveBytes` /
+  `file:openBytes` (a Blob download / tab on web).
 - **splitter.js** — `attachSplitter`, the one pointer-capture drag behind the
   dock width handle and the Files/Tickets `#dock-split`: moves coalesce to one
   rAF with an optional throttle, one `commit` on release, `reset` on

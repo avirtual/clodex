@@ -233,6 +233,8 @@
 | `handle:file:write` | writes an edited peek back, confined to the session's cwd and guarded by the expected mtime | file on disk | writeFilePeek | unpinned |
 | `handle:file:resolve` | whether a path-shaped string in a session's output names a real file, and its resolved path | none | resolveFilePath | unpinned |
 | `handle:file:open` | opens a file with the OS default app | none | openPath | unpinned |
+| `handle:file:saveBytes` | writes fetched bytes where a save dialog points | file on disk | showSaveDialog | remote-file-save.test.js |
+| `handle:file:openBytes` | writes fetched bytes to a 0600 temp copy and opens it, images in the browser | temp file on disk | openExternal, openPath, showItemInFolder | remote-file-save.test.js |
 | `handle:file:reveal` | reveals a file in the OS file manager | none | showItemInFolder | unpinned |
 | `handle:plugins:writeBundleFile` | writes a template or prompt file into a plugin's bundle | plugin bundle on disk | getPluginLoader, loader.writeBundleFile | plugin-template-spawn.test.js |
 
