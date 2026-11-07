@@ -21,6 +21,7 @@ blocks a release.
 - A file shared by a remote seat (`[agent:file view]`, images included) can be opened or saved from its tab: Open shows an image full-window in your browser (other files go to their default app) from a temp copy, Save… writes it where you choose, and both fetch past the 4 MB preview cap in chunks.
 - Deploying a node installs clodent beside the claude, codex and muse CLIs (`npm i -g --prefix ~/.local clodent`, best-effort) and prepares `~/.clodent` for its API key; the tool doctor and the New Session gate list clodent with its install command, and a clodent seat refused for a missing or too-old clodent names `npm i -g clodent` instead of a clone-and-link.
 - Preferences ▸ Accounts takes an Anthropic API key for an `api` account and writes it to that account's settings.json (0600) — the file clodent and Console-billed claude seats read — so keying a clodent seat is paste-and-go. The key is never shown, logged, sent to a peer, or placed in a seat env.
+- Re-sync settings on an account keeps the API key set for it, and never imports one from the default account.
 
 ## 5.163.0 — 2026-11-07
 

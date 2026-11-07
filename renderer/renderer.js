@@ -6572,7 +6572,8 @@ async function refreshPrefsAccounts() {
       resync.addEventListener('click', async () => {
         const r = await window.api.accountsResync({ label: account.label });
         if (!r || r.ok === false) { setPrefsAccountsState((r && r.error) || 'Re-sync failed.', 'error'); return; }
-        setPrefsAccountsState(r.copied ? `Copied settings.json into ${account.label}.` : `Nothing to copy for ${account.label}.`);
+        const kept = r.keyKept ? ' · API key kept' : '';
+        setPrefsAccountsState((r.copied ? `Copied settings.json into ${account.label}.` : `Nothing to copy for ${account.label}.`) + kept);
       });
     }
     if (remove) {
