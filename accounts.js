@@ -264,6 +264,9 @@ function createAccounts(deps = {}) {
     const prior = keyedSettings(label);
     const key = prior.error ? undefined : envOf(prior.body).ANTHROPIC_API_KEY;
     const had = typeof key === 'string' && key.length > 0;
+    if (had && readSettings(path.join(claudeHome, 'settings.json')).error) {
+      return { ok: false, error: 'default settings.json is not a JSON object; the account key would be lost' };
+    }
     const copied = copySettings(dir, { overwrite: true });
     const keyKept = copied && norm(dir) !== norm(claudeHome) ? restoreKey(dir, had ? key : null) : had;
     return { ok: true, copied, trusted: mergeTrust(label), keyKept };

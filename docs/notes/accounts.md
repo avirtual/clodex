@@ -48,4 +48,5 @@ file with a typo is never clobbered.
 The account's own `env.ANTHROPIC_API_KEY` is read before the copy and written
 back after it (`restoreKey`); a key in the default settings.json is stripped, so
 a keyless account stays keyless. A default settings.json that is not a JSON
-object is copied raw and the key is lost (`keyKept: false`).
+object is refused for a keyed account (copying it would drop the key) and
+copied raw for a keyless one.

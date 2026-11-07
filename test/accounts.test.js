@@ -261,6 +261,22 @@ test('resync keeps a keyed account\'s own API key and refreshes the rest, at 060
   assert.strictEqual(fs.statSync(dest).mode & 0o777, 0o600);
 });
 
+test('resync refuses a keyed account when the default settings.json is not a JSON object, leaving the file alone', () => {
+  const { accounts, claudeHome } = fixture();
+  accounts.add({ label: 'sub-2', plan: 'api' });
+  const dest = path.join(accounts.configDirFor('sub-2'), 'settings.json');
+  const own = '{"defaultMode":"plan","env":{"ANTHROPIC_API_KEY":"sk-own-key"}}\n';
+  fs.writeFileSync(dest, own, { mode: 0o600 });
+  fs.writeFileSync(path.join(claudeHome, 'settings.json'), '{"defaultMode": garbled');
+
+  assert.deepStrictEqual(accounts.resync('sub-2'), {
+    ok: false,
+    error: 'default settings.json is not a JSON object; the account key would be lost',
+  });
+  assert.strictEqual(fs.readFileSync(dest, 'utf8'), own);
+  assert.strictEqual(fs.statSync(dest).mode & 0o777, 0o600);
+});
+
 test('resync never imports the default settings.json API key into a keyless account', () => {
   const { accounts, claudeHome } = fixture();
   accounts.add({ label: 'sub-2', plan: 'max' });
