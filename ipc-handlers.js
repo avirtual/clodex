@@ -86,7 +86,7 @@ function registerIpcHandlers(deps) {
   const {
     handle, on,
     popupMenu, showMessageBox, showSaveDialog, showOpenDialog,
-    openExternal, openPath, showItemInFolder, openInTerminal, getAppVersion, getDesktopPath,
+    openExternal, openPath, openInBrowser, showItemInFolder, openInTerminal, getAppVersion, getDesktopPath,
     CLAUDE_SL_COMPONENTS, CLAUDE_TOOLS, CODEX_SL_COMPONENTS,
     DEPLOY_FIX_INJECT_DELAY_MS, ProxyClient, REGISTRY_DIR,
     UPDATE_REPO, buildDeployFixBriefing, checkForUpdate, classifyDeployFolder,
@@ -1204,7 +1204,8 @@ function registerIpcHandlers(deps) {
       return { ok: false, revealed: true, reason };
     }
     if (imageMediaType(buf.subarray(0, 12))) {
-      const shown = await Promise.resolve().then(() => openExternal(pathToFileURL(tmpPath).href)).then(() => true, () => false);
+      const launch = openInBrowser || ((p) => openExternal(pathToFileURL(p).href));
+      const shown = await Promise.resolve().then(() => launch(tmpPath)).then((e) => !e, () => false);
       if (shown) return { ok: true, path: tmpPath };
     }
     const err = await openPath(tmpPath);

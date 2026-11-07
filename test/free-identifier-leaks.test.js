@@ -44,6 +44,7 @@ const MAIN_SCOPE = ['main.js', 'engine.js'];
 // remote-wiring, peer-wiring, app-menus).
 const SCANNED_MODULES = [
   'git-safe.js',
+  'browser-launch.js',
   'dev-reload.js',
   'assistant-sleep.js',
   'mcp-plan.js',

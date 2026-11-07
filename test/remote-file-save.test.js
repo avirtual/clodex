@@ -124,7 +124,7 @@ test('file-tab: a local viewer keeps its single Open and the "use Open." note', 
   assert.strictEqual(body.children[0].textContent, 'Binary file (9 bytes) — use Open.');
 });
 
-function ipcFixture(t, { externalRejects = false, saveTo = null } = {}) {
+function ipcFixture(t, { externalRejects = false, saveTo = null, openInBrowser = undefined } = {}) {
   const dir = tmp(t);
   const handlers = new Map();
   const opened = [];
@@ -138,6 +138,7 @@ function ipcFixture(t, { externalRejects = false, saveTo = null } = {}) {
     openPath: async (p) => { opened.push(p); return ''; },
     openExternal: async (u) => { external.push(u); if (externalRejects) throw new Error('no browser'); },
     showItemInFolder: (p) => { revealed.push(p); },
+    openInBrowser,
     showSaveDialog: async (o) => { dialogs.push(o); return { canceled: !saveTo, filePath: saveTo }; },
     getDesktopPath: () => '/Desktop',
     fetchFilePeek: (p, o) => { peeks.push([p, o]); return { ok: true }; },
@@ -197,4 +198,97 @@ test('local file:peek forwards a raw range and drops a non-raw opts', async (t) 
   await f.call('file:peek', '/b');
   await f.call('file:peek', '/c', { offset: 5 });
   assert.deepStrictEqual(f.peeks, [['/a', { raw: true, offset: 3, length: 9 }], ['/b', {}], ['/c', {}]]);
+});
+
+const { defaultBrowserMac, launchInBrowser, MAC_LS_DOMAIN } = require('../browser-launch');
+
+const LS_HANDLERS = `(
+        {
+        LSHandlerContentType = "public.png";
+        LSHandlerPreferredVersions =         {
+            LSHandlerRoleAll = "-";
+        };
+        LSHandlerRoleAll = "com.apple.preview";
+    },
+        {
+        LSHandlerPreferredVersions =         {
+            LSHandlerRoleAll = "-";
+        };
+        LSHandlerRoleAll = "org.mozilla.firefox";
+        LSHandlerURLScheme = http;
+    },
+        {
+        LSHandlerPreferredVersions =         {
+            LSHandlerRoleAll = "-";
+        };
+        LSHandlerRoleAll = "com.google.chrome";
+        LSHandlerURLScheme = https;
+    }
+)
+`;
+
+test('defaultBrowserMac: the https row wins over the http and png rows; empty or garbled output is null', () => {
+  assert.strictEqual(defaultBrowserMac(LS_HANDLERS), 'com.google.chrome');
+  assert.strictEqual(defaultBrowserMac(''), null);
+  assert.strictEqual(defaultBrowserMac('The domain/default pair of (x, LSHandlers) does not exist'), null);
+  assert.strictEqual(defaultBrowserMac(LS_HANDLERS.replace('LSHandlerURLScheme = https;', '')), null, 'no https row');
+});
+
+function fakeExec(answers) {
+  const calls = [];
+  const execFile = async (cmd, args) => {
+    calls.push([cmd, ...args]);
+    const a = answers(cmd, args);
+    if (a instanceof Error) throw a;
+    return { stdout: a || '' };
+  };
+  return { calls, execFile };
+}
+
+test('launchInBrowser (darwin): opens with the https handler by bundle id, reads defaults once per cache', async () => {
+  const x = fakeExec((cmd) => (cmd === 'defaults' ? LS_HANDLERS : ''));
+  const cache = {};
+  const deps = { platform: 'darwin', execFile: x.execFile, openExternal: () => assert.fail('no fallback'), openPath: () => assert.fail('no openPath'), cache };
+  assert.strictEqual(await launchInBrowser('/t/a.png', deps), '');
+  assert.strictEqual(await launchInBrowser('/t/b.png', deps), '');
+  assert.deepStrictEqual(x.calls, [
+    ['defaults', 'read', MAC_LS_DOMAIN, 'LSHandlers'],
+    ['open', '-b', 'com.google.chrome', '/t/a.png'],
+    ['open', '-b', 'com.google.chrome', '/t/b.png'],
+  ]);
+});
+
+test('launchInBrowser (darwin): garbled defaults falls back to Safari, and a failed Safari to openExternal file://', async () => {
+  const x = fakeExec((cmd) => (cmd === 'defaults' ? 'garbage' : ''));
+  assert.strictEqual(await launchInBrowser('/t/a.png', { platform: 'darwin', execFile: x.execFile, openExternal: () => assert.fail('no fallback') }), '');
+  assert.deepStrictEqual(x.calls.slice(1), [['open', '-a', 'Safari', '/t/a.png']]);
+  const urls = [];
+  const y = fakeExec((cmd) => (cmd === 'defaults' ? new Error('no domain') : new Error('no app')));
+  assert.strictEqual(await launchInBrowser('/t/a.png', { platform: 'darwin', execFile: y.execFile, openExternal: async (u) => { urls.push(u); } }), '');
+  assert.deepStrictEqual(urls, [pathToFileURL('/t/a.png').href]);
+});
+
+test('launchInBrowser (linux): gtk-launch the default-web-browser desktop entry, else openPath; other platforms openExternal', async () => {
+  const x = fakeExec((cmd) => (cmd === 'xdg-settings' ? 'firefox.desktop\n' : ''));
+  assert.strictEqual(await launchInBrowser('/t/a.png', { platform: 'linux', execFile: x.execFile, openPath: () => assert.fail('no openPath') }), '');
+  assert.deepStrictEqual(x.calls, [['xdg-settings', 'get', 'default-web-browser'], ['gtk-launch', 'firefox.desktop', '/t/a.png']]);
+  const opened = [];
+  const y = fakeExec(() => new Error('missing'));
+  assert.strictEqual(await launchInBrowser('/t/a.png', { platform: 'linux', execFile: y.execFile, openPath: async (p) => { opened.push(p); return ''; } }), '');
+  assert.deepStrictEqual(opened, ['/t/a.png']);
+  const urls = [];
+  await launchInBrowser('C:\\t\\a.png', { platform: 'win32', execFile: () => assert.fail('no exec'), openExternal: async (u) => { urls.push(u); } });
+  assert.strictEqual(urls.length, 1);
+});
+
+test('file:openBytes hands an image to the injected openInBrowser, not openExternal, and a text file still to openPath', async (t) => {
+  const launched = [];
+  const f = ipcFixture(t, { openInBrowser: async (p) => { launched.push(p); return ''; } });
+  const img = await f.call('file:openBytes', 'shot.png', new Uint8Array(PNG_HEAD));
+  assert.deepStrictEqual([img.ok, launched, f.external, f.opened], [true, [img.path], [], []]);
+  const txt = await f.call('file:openBytes', 'notes.txt', new Uint8Array(Buffer.from('hi')));
+  assert.deepStrictEqual([launched.length, f.opened], [1, [txt.path]]);
+  const g = ipcFixture(t, { openInBrowser: async () => 'no browser' });
+  const failed = await g.call('file:openBytes', 'shot.png', new Uint8Array(PNG_HEAD));
+  assert.deepStrictEqual([failed.ok, g.opened], [true, [failed.path]], 'a launcher error falls back to openPath');
 });
