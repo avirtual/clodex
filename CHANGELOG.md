@@ -18,6 +18,7 @@ blocks a release.
 
 - A ticket that cannot merge cleanly into the trunk is rejected back to its hand at `task done`, with the conflicting paths, before the suite and the reviewer run; a CHANGELOG-only conflict still passes, since the merge resolves it.
 - A "Minimal" sidebar filter hides the ticket loop's ephemeral seats (hands, reviewers) so the sidebar shows only the seats you talk to; a hidden seat still appears while it waits on a permission dialog.
+- Preferences ▸ Accounts takes an Anthropic API key for an `api` account and writes it to that account's settings.json (0600) — the file clodent and Console-billed claude seats read — so keying a clodent seat is paste-and-go. The key is never shown, logged, sent to a peer, or placed in a seat env.
 
 ## 5.163.0 — 2026-11-07
 
