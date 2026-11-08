@@ -135,14 +135,27 @@ test('reminders-viewer: cancel routes agent+id to library.remove and the record 
   } finally { cleanup(); }
 });
 
-test('reminders-viewer: cancel is desktop-only; the manifest lists every other method as any', async () => {
+test('reminders-viewer: cancel dispatches from the web surface; the manifest lists every method as any', async () => {
   const { host, removals, cleanup } = boot({ live: LIVE, records: [rec({ id: 'aaa111', agent: 'lead' })] });
   try {
-    assert.deepStrictEqual(await host.dispatch('reminders-viewer', 'cancel', [{ agent: 'lead', id: 'aaa111' }], 'web'),
-      { ok: false, error: 'plugin method not available on this surface' });
-    assert.deepStrictEqual(removals, []);
+    assert.deepStrictEqual(await host.dispatch('reminders-viewer', 'cancel', [{ agent: 'lead', id: 'aaa111' }], 'web'), { ok: true });
+    assert.deepStrictEqual(removals, [{ agent: 'lead', id: 'aaa111' }]);
     const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'plugins', 'reminders-viewer', 'manifest.json'), 'utf8'));
-    assert.deepStrictEqual(manifest.surfaces, { list: 'any', seats: 'any', add: 'any', fire: 'any' });
+    assert.deepStrictEqual(manifest.surfaces, { list: 'any', seats: 'any', add: 'any', fire: 'any', cancel: 'any' });
+  } finally { cleanup(); }
+});
+
+test('reminders-viewer: add refuses an exact duplicate of an armed reminder; a differing body is accepted', async () => {
+  const { host, adds, cleanup } = boot({
+    live: LIVE, records: [rec({ id: 'dup111', agent: 'lead', spec: 'every 2h', body: 'check the board' })],
+  });
+  try {
+    assert.deepStrictEqual(await host.dispatch('reminders-viewer', 'add', [{ wsId: 'ws-1', agent: 'lead', spec: ' Every 2H ', body: 'check the board' }], 'web'),
+      { ok: false, error: 'an identical reminder is already armed (dup111)' });
+    assert.deepStrictEqual(adds, []);
+    const res = await host.dispatch('reminders-viewer', 'add', [{ wsId: 'ws-1', agent: 'lead', spec: 'every 2h', body: 'check the inbox' }], 'web');
+    assert.deepStrictEqual(res, { ok: true, id: 'new111' });
+    assert.deepStrictEqual(adds, [{ ref: { agent: 'lead' }, payload: { spec: 'every 2h', body: 'check the inbox' } }]);
   } finally { cleanup(); }
 });
 

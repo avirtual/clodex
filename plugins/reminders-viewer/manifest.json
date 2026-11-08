@@ -14,6 +14,7 @@
     "list": "any",
     "seats": "any",
     "add": "any",
-    "fire": "any"
+    "fire": "any",
+    "cancel": "any"
   }
 }
