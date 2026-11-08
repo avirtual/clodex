@@ -41,4 +41,12 @@ function statusPasses(status, { archived = false, ephemeral = false, attention =
   return true;
 }
 
-module.exports = { filterSummary, setFilterFolded, statusPasses };
+function hiddenBusy(rows, { status } = {}) {
+  if (status !== 'minimal') return [];
+  return (rows || [])
+    .filter((r) => r && r.ephemeral && !r.passes && (r.attention || (r.activity && r.activity !== 'idle')))
+    .map((r) => r.name)
+    .sort();
+}
+
+module.exports = { filterSummary, hiddenBusy, setFilterFolded, statusPasses };

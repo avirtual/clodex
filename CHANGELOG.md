@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Sidebar Minimal filter: a group header shows a red count of hidden ephemeral seats that are working (tooltip names them; click shows them), so a node is not mistaken for idle before a reboot.
 
 ## 5.164.4 — 2026-11-08
 

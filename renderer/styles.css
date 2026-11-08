@@ -383,6 +383,7 @@ html, body {
 .session-group-header.collapsed .session-group-caret { transform: rotate(-90deg); }
 .session-group-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-group-count { opacity: 0.7; font-weight: 600; }
+.session-group-hidden-busy { background: var(--danger); color: #fff; border-radius: 8px; padding: 0 6px; margin-left: 6px; font-size: 11px; font-weight: 600; cursor: pointer; }
 .session-empty-note { padding: 16px 8px; text-align: center; font-size: 12px; color: var(--text-dim); }
 
 /* PR-status chip on a row (open=green, merged=purple, closed=red). */

@@ -564,6 +564,16 @@ body {
   opacity: 0.7;
   font-weight: 600;
 }
+.session-group-hidden-busy {
+  background: var(--danger);
+  color: #fff;
+  border-radius: 8px;
+  padding: 0 6px;
+  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
 .session-empty-note {
   padding: 16px 8px;
   text-align: center;
@@ -29037,7 +29047,11 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         if (status === "minimal" && ephemeral && !attention) return false;
         return true;
       }
-      module.exports = { filterSummary, setFilterFolded, statusPasses };
+      function hiddenBusy(rows, { status } = {}) {
+        if (status !== "minimal") return [];
+        return (rows || []).filter((r) => r && r.ephemeral && !r.passes && (r.attention || r.activity && r.activity !== "idle")).map((r) => r.name).sort();
+      }
+      module.exports = { filterSummary, hiddenBusy, setFilterFolded, statusPasses };
     }
   });
 
@@ -52391,7 +52405,7 @@ ${detail}` });
       var { PLATFORMS, adapterFor, isAgentType, capsFor, accountEnvKey } = require_cli_adapters();
       var { expandTeamRoot, usesTeamRoot } = require_team_root_expand();
       var { altChordAction } = require_web_shortcuts();
-      var { filterSummary, setFilterFolded, statusPasses } = require_sidebar_filter_fold();
+      var { filterSummary, hiddenBusy, setFilterFolded, statusPasses } = require_sidebar_filter_fold();
       var { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require_web_notify();
       var { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, foreignNotice: sandboxForeignNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText, validatePorts: sandboxValidatePorts, sandboxRebuiltLine, limitsLineText: sandboxLimitsLineText, figuresHint: sandboxFiguresHint, bootstrapLineText: sandboxBootstrapLineText, bootstrapHistoryRows: sandboxBootstrapHistoryRows, advancedDirty: sandboxAdvancedDirty, saveLabel: sandboxSaveLabel } = require_sandbox_view();
       var { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require_tool_gate();
@@ -53884,6 +53898,7 @@ ${detail}` });
           (el) => !el.dataset.peerUi && !el.classList.contains("peer-item") && !el.classList.contains("session-child")
         );
         sessionList.querySelectorAll(".session-group-header, .session-empty-note").forEach((el) => el.remove());
+        const hiddenRowsByGroup = /* @__PURE__ */ new Map();
         for (const el of rows) {
           applyPrBadge(el);
           pluginBar.applyRowBadges(el);
@@ -53892,8 +53907,25 @@ ${detail}` });
           sessionList.querySelectorAll(`.session-child[data-parent="${CSS.escape(el.dataset.name)}"]`).forEach((c) => {
             c.style.display = pass ? "" : "none";
           });
+          if (!pass && sidebarView.group !== "none") {
+            const key = groupFor(el) || "(other)";
+            if (!hiddenRowsByGroup.has(key)) hiddenRowsByGroup.set(key, []);
+            hiddenRowsByGroup.get(key).push({
+              name: el.dataset.name,
+              ephemeral: !!el.dataset.ephemeral,
+              archived: el.classList.contains("archived"),
+              attention: !!el.dataset.attention,
+              activity: el.dataset.activity || "",
+              passes: false
+            });
+          }
         }
         const visible = rows.filter((el) => el.style.display !== "none");
+        const hiddenBusyByGroup = /* @__PURE__ */ new Map();
+        for (const [key, list] of hiddenRowsByGroup) {
+          const names = hiddenBusy(list, { status: sidebarView.status });
+          if (names.length) hiddenBusyByGroup.set(key, names);
+        }
         const childrenOf = (name) => [...sessionList.querySelectorAll(`.session-child[data-parent="${CSS.escape(name)}"]`)];
         const place = (el, anchor) => {
           const ref = anchor || firstPeer || null;
@@ -53904,7 +53936,7 @@ ${detail}` });
             else sessionList.appendChild(c);
           }
         };
-        if (!visible.length) {
+        if (!visible.length && !hiddenBusyByGroup.size) {
           const note = document.createElement("div");
           note.className = "session-empty-note";
           note.textContent = rows.length ? "No sessions match the current filter." : "No sessions yet.";
@@ -53922,13 +53954,14 @@ ${detail}` });
           if (!groups.has(key)) groups.set(key, []);
           groups.get(key).push(el);
         }
+        for (const key of hiddenBusyByGroup.keys()) if (!groups.has(key)) groups.set(key, []);
         const keys = [...groups.keys()].sort((a, b) => {
           const ia = groupSortIndex(sidebarView.group, a), ib = groupSortIndex(sidebarView.group, b);
           if (ia !== ib) return ia - ib;
           return String(a).localeCompare(String(b));
         });
         for (const key of keys) {
-          const header = makeGroupHeader(key, groups.get(key).length);
+          const header = makeGroupHeader(key, groups.get(key).length, hiddenBusyByGroup.get(key) || []);
           if (firstPeer) sessionList.insertBefore(header, firstPeer);
           else sessionList.appendChild(header);
           const collapsed = collapsedGroups.has(key);
@@ -54004,7 +54037,7 @@ ${detail}` });
           renderProxyBar();
         }, 250);
       }
-      function makeGroupHeader(key, count) {
+      function makeGroupHeader(key, count, hiddenBusyNames = []) {
         const h = document.createElement("div");
         h.className = "session-group-header";
         if (collapsedGroups.has(key)) h.classList.add("collapsed");
@@ -54019,6 +54052,20 @@ ${detail}` });
         cnt.className = "session-group-count";
         cnt.textContent = String(count);
         h.append(caret, title, cnt);
+        if (hiddenBusyNames.length) {
+          const n = hiddenBusyNames.length;
+          const busy = document.createElement("span");
+          busy.className = "session-group-hidden-busy";
+          busy.textContent = String(n);
+          busy.title = `${n} hidden seat${n === 1 ? "" : "s"} working: ${hiddenBusyNames.join(", ")} (click to show: filter Active)`;
+          busy.addEventListener("click", (e) => {
+            e.stopPropagation();
+            if (sbStatus) sbStatus.value = "active";
+            sidebarView.status = "active";
+            onViewControlChange();
+          });
+          h.appendChild(busy);
+        }
         h.addEventListener("click", () => {
           if (collapsedGroups.has(key)) collapsedGroups.delete(key);
           else collapsedGroups.add(key);
