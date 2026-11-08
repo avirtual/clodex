@@ -536,13 +536,13 @@ function fireNowEngine(startMs) {
   };
 }
 
-test('fireNow: an on context row delivers once and is removed', () => {
+test('fireNow: an on context row delivers once and is kept', () => {
   const { scheduler, delivered, store, cleanup } = fireNowEngine(T0);
   try {
     const r = scheduler.add('t1', 'on context 80%', 'clear with a briefing');
-    assert.deepStrictEqual(scheduler.fireNow('t1', r.record.id), { ok: true, kept: false });
+    assert.deepStrictEqual(scheduler.fireNow('t1', r.record.id), { ok: true, kept: true });
     assert.deepStrictEqual(delivered, [{ agent: 't1', id: r.record.id, spec: 'on context 80%', body: 'clear with a briefing', by: undefined }]);
-    assert.strictEqual(store.get(r.record.id), null);
+    assert.strictEqual(store.get(r.record.id).id, r.record.id);
   } finally { cleanup(); }
 });
 
