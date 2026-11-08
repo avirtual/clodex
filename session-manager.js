@@ -3035,8 +3035,7 @@ function createSessionManager(deps) {
         this._executeCompact(s, cmd, '');
         return { ok: true };
       }
-      if (wireCtx) this._streamEnqueue(s, { text: '', images: [], origin: 'system', wire: cmd });
-      else this._injectText(s, cmd, { bypassHold: true });
+      this._sendContextCommand(s, cmd);
       log.info('session', `clear ${s.name} → ${wireCtx ? cmd.method : cmd} (operator control)`);
       return { ok: true };
     }
@@ -3201,13 +3200,13 @@ function createSessionManager(deps) {
 
     _onStreamToolBoundary(s) {
       if (!s || s.io !== 'stream' || s._dead || !s.stream || this._streamStopped(s)) return;
-      const sys = s.outbox.filter((q) => q.origin === 'system' && !q.wire);
+      const sys = s.outbox.filter((q) => q.origin === 'system' && !q.wire && !q.solo);
       if (!sys.length) return;
       const now = Date.now();
       if (s._toolDrainAt != null && now - s._toolDrainAt < STREAM_TOOL_DRAIN_MIN_MS) return;
       s._toolDrainAt = now;
       const before = s.outbox.slice();
-      const keep = s.outbox.filter((q) => q.origin !== 'system' || q.wire);
+      const keep = s.outbox.filter((q) => q.origin !== 'system' || q.wire || q.solo);
       s.outbox.splice(0, s.outbox.length, ...keep);
       const payload = this._streamJoin(sys);
       if (payload.text.trim() || payload.images.length) {
@@ -3407,7 +3406,7 @@ function createSessionManager(deps) {
         this._streamHoldPoll(s);
         return;
       }
-      const w = s.outbox.findIndex((q) => q.wire);
+      const w = s.outbox.findIndex((q) => q.wire || q.solo);
       const queued = s.outbox.splice(0, w === 0 ? 1 : (w > 0 ? w : s.outbox.length));
       if (queued.length) this._streamOutboxChanged(s);
       const payload = !queued.length ? null
@@ -8421,10 +8420,7 @@ function createSessionManager(deps) {
         unsupported();
         return;
       }
-      // Inject clear immediately with bypassHold: a queued bare slash command must never join a flush
-      // batch, or the command line swallows the rest.
-      if (wireCtx) this._streamEnqueue(session, { text: '', images: [], origin: 'system', wire: cmd });
-      else this._injectText(session, cmd, { bypassHold: true });
+      this._sendContextCommand(session, cmd);
       const cont = sub === 'clear' && body ? body.trim() : '';
       if (cont) {
         session._postClearContinuation = cont;
@@ -8464,12 +8460,21 @@ function createSessionManager(deps) {
       reply('[agent:probe] end is the clone\'s verb — you have no clone summary to return.');
     }
 
+    _sendContextCommand(session, cmd) {
+      if (cmd && typeof cmd === 'object') {
+        this._streamEnqueue(session, { text: '', images: [], origin: 'system', wire: cmd });
+      } else if (session.io === 'stream') {
+        if (!this._refuseStreamInject(session, cmd, 'context')) this._streamEnqueue(session, { text: cmd, images: [], origin: 'system', solo: true });
+      } else {
+        this._injectText(session, cmd, { bypassHold: true });
+      }
+    }
+
     _executeCompact(session, cmd, continuation) {
       session._compactContinuation = continuation;
       if (session.sentinel) session.sentinel.armCompact(() => this._fireCompactContinuation(session));
       const wire = cmd && typeof cmd === 'object';
-      if (wire) this._streamEnqueue(session, { text: '', images: [], origin: 'system', wire: cmd });
-      else this._injectText(session, cmd, { bypassHold: true });
+      this._sendContextCommand(session, cmd);
       this._armCompactGuard(session);
       this._armCompactValve(session);
       const shown = wire ? cmd.method : cmd;

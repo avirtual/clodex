@@ -652,6 +652,10 @@ stdin message.
   line; `_onStreamToolBoundary` sends only the SYSTEM items as one message,
   leaving operator items for `result` and the seat busy. At most one such drain
   per `STREAM_TOOL_DRAIN_MIN_MS` (2s) per seat.
+- **Solo items:** a text slash command (`/clear`, `/compact` from
+  `[agent:context …]` or the seat controls, `_sendContextCommand`) is a `solo`
+  outbox item: like a wire command it is sent as its own message at a turn end,
+  never joined with queued text and never taken by the tool-boundary drain.
 - The UserPromptSubmit drains (§7) still fire under `-p` and are not copied into
   the outbox. Passive notices and held (cold-seat) dms still park to
   `pending/<name>/`; the idle edge drains active parks into the outbox.
