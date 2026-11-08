@@ -16,6 +16,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.164.2 — 2026-11-08
+
 - Reminders viewer: Cancel is available from the web UI too (a peer node's operator reminders could be armed and fired but not removed), and `+ reminder` refuses an exact duplicate of a reminder already armed on that seat.
 - Stream seats (`claude -p`): `[agent:context clear]` and `/clear` or `/compact` from the seat controls are sent as their own message. They were joined onto queued text and read as prose, so the clear never happened and later clears were refused as 'already in flight' until the valve dropped the continuation.
 
