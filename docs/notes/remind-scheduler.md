@@ -9,7 +9,9 @@ would claim, to the next reader, that a fire time can move here.
 
 ## fireContextFor
 
-`onctx` records are removed after delivery, never re-armed: a seat that compacts
-drops under the threshold and climbs past it again, and a standing record would
-re-fire on every ctx read above it. Re-arming is the agent's job (a fresh
-`[agent:remind on context …]`). `fireNow` removes them for the same reason.
+`onctx` records are standing and latched by `armed` (absent reads as true): a
+read at or past the threshold delivers only while armed and then sets
+`armed:false` (`markArmed`, which also stamps `lastFiredAt`); a read below the
+threshold sets it back to true. The latch, not deletion, stops a re-fire on every
+ctx read above the threshold. `fireNow` delivers without touching `armed`. Only a
+`'gone'` deliver result removes the record.

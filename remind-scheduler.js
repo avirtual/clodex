@@ -30,7 +30,7 @@
 //     double-fires at launch (the next slot is computed from `now`, not the
 //     stale one).
 //   * `on compact` / `on context` schedules carry a null nextFireAt (no timer) — they
-//     fire only via fireCompactFor() / fireContextFor(); see docs/notes for one-shot.
+//     fire only via fireCompactFor() / fireContextFor().
 //   * A record may carry a `ticket` binding (the spec's `for <id>` prefix).
 //     Nothing here fires on it; it is a selector for cancelForTicket, which the
 //     ticket close path calls.
@@ -63,7 +63,7 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
     },
 
     _deliver(rec) {
-      try { return deliver(rec.agent, rec.id, rec.spec, rec.body, rec.by, rec.born); } catch { return undefined; }
+      try { return deliver(rec.agent, rec.id, rec.spec, rec.body, rec.by, rec.born, rec.kind); } catch { return undefined; }
     },
 
     // Timed records (in/at/every/cron) with a concrete pending fire time.
@@ -156,6 +156,11 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
           return { ok: false, error: 'that time is already in the past' };
         }
       }
+      const norm = (s) => String(s).trim().replace(/\s+/g, ' ').toLowerCase();
+      const want = norm(spec);
+      const existing = store.listForAgent(agent).find((r) => r.kind === sched.kind
+        && typeof r.spec === 'string' && norm(r.spec) === want && r.body === body);
+      if (existing) return { ok: true, id: existing.id, duplicate: true, record: existing };
       const record = store.add({ agent, kind: sched.kind, spec, body, nextFireAt: first, ticket: sched.ticket || null, by: by || null, born: typeof born === 'number' ? born : null });
       this._rearm();
       return { ok: true, record };
@@ -235,12 +240,20 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
         if (s.pct != null) return typeof pct === 'number' && pct >= s.pct;
         return s.tok != null && typeof tok === 'number' && tok >= s.tok;
       };
-      const recs = store.listForAgent(agent).filter((r) => r.kind === 'onctx' && crossed(r));
-      for (const rec of recs) {
-        this._deliver(rec);
-        store.remove(rec.id);
+      const nowMs = now();
+      let fired = 0;
+      for (const rec of store.listForAgent(agent).filter((r) => r.kind === 'onctx')) {
+        const armed = rec.armed !== false;
+        if (!crossed(rec)) {
+          if (!armed) store.markArmed(rec.id, true);
+          continue;
+        }
+        if (!armed) continue;
+        fired++;
+        if (this._deliver(rec) === 'gone') store.remove(rec.id);
+        else store.markArmed(rec.id, false, nowMs);
       }
-      return recs.length;
+      return fired;
     },
 
     fireNow(agent, id) {
@@ -256,8 +269,7 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
         if (this._deliver(rec) === 'gone') store.remove(rec.id);
         else store.markFired(rec.id, nowMs, null);
       } else if (rec.kind === 'onctx') {
-        this._deliver(rec);
-        store.remove(rec.id);
+        if (this._deliver(rec) === 'gone') store.remove(rec.id);
       } else {
         this._fireRecord(rec, nowMs);
       }

@@ -1635,6 +1635,15 @@ function initStores(userDataPath, {
       this._save(all);
       return true;
     },
+    markArmed(id, armed, firedAtMs = null) {
+      const all = this._load();
+      const rec = all.find((r) => r.id === id);
+      if (!rec) return false;
+      rec.armed = !!armed;
+      if (typeof firedAtMs === 'number') rec.lastFiredAt = firedAtMs;
+      this._save(all);
+      return true;
+    },
     get(id) { return this._load().find((r) => r.id === id) || null; },
     renameAgent(agent, newAgent) {
       const all = this._load();

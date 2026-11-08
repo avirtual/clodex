@@ -20,6 +20,8 @@ test('fmtNextFire: absolute time with a zone abbreviation; oncompact reads "on c
 test('fmtNextFire: onctx shows its threshold from the spec', () => {
   assert.strictEqual(fmtNextFire(row({ kind: 'onctx', spec: 'on context 150K', nextFireAt: null }), 'UTC'), 'on context ≥ 150k');
   assert.strictEqual(fmtNextFire(row({ kind: 'onctx', spec: 'for t1 on context 80%', nextFireAt: null }), 'UTC'), 'on context ≥ 80%');
+  assert.strictEqual(fmtNextFire(row({ kind: 'onctx', spec: 'on context 150k', nextFireAt: null, armed: true }), 'UTC'), 'on context ≥ 150k');
+  assert.strictEqual(fmtNextFire(row({ kind: 'onctx', spec: 'on context 150k', nextFireAt: null, armed: false }), 'UTC'), 'fired · re-arms below 150k');
 });
 
 test('preview: 60 characters at most, whitespace flattened', () => {

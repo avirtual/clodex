@@ -2292,7 +2292,7 @@ const toolCache = createToolCache({ whichBin });
     setTimer: (fn, ms) => setTimeout(fn, ms),
     clearTimer: (h) => clearTimeout(h),
     store: reminders,
-    deliver: (agent, id, spec, body, by, born) => manager._deliverReminder(agent, reminderText(id, spec, body, by), born),
+    deliver: (agent, id, spec, body, by, born, kind) => manager._deliverReminder(agent, reminderText(id, spec, body, by), born, { kind }),
   });
   remindScheduler.start();
 

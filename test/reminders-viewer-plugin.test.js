@@ -276,5 +276,5 @@ test('engine.js wires the reminder remove and add kinds to reminderLibraryKinds,
   const wired = src.indexOf('reminderLibraryKinds({\n      scheduler: remindScheduler,');
   const host = src.indexOf('pluginHost = createPluginHostEngine(');
   assert.ok(built !== -1 && wired !== -1 && host !== -1 && built < wired && wired < host, 'scheduler, then kinds, then plugin host');
-  assert.match(src, /deliver: \(agent, id, spec, body, by, born\) => manager\._deliverReminder\(agent, reminderText\(id, spec, body, by\), born\),/);
+  assert.match(src, /deliver: \(agent, id, spec, body, by, born, kind\) => manager\._deliverReminder\(agent, reminderText\(id, spec, body, by\), born, \{ kind \}\),/);
 });
