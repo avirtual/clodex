@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
-const { filterSummary, setFilterFolded } = require(path.join(ROOT, 'renderer/lib/sidebar-filter-fold.js'));
+const { filterSummary, hiddenBusy, setFilterFolded } = require(path.join(ROOT, 'renderer/lib/sidebar-filter-fold.js'));
 const html = fs.readFileSync(path.join(ROOT, 'renderer/index.html'), 'utf8');
 
 const LABELS = {
@@ -111,4 +111,23 @@ test('styles.css: .collapsed on the bar is what hides the body', () => {
   assert.ok(rules.length > 0, 'the fold rule exists');
   assert.ok(rules.every(([, , body]) => /display\s*:\s*none/.test(body)),
     'every such rule hides the body — a layer that forgot it leaves the bar open in that theme');
+});
+
+test('hiddenBusy: under minimal, lists only hidden ephemeral seats that are busy, sorted', () => {
+  const rows = [
+    { name: 'hand-b', ephemeral: true, archived: false, attention: false, activity: 'thinking', passes: false },
+    { name: 'hand-a', ephemeral: true, archived: false, attention: true, activity: 'idle', passes: false },
+    { name: 'hand-idle', ephemeral: true, archived: false, attention: false, activity: 'idle', passes: false },
+    { name: 'hand-unset', ephemeral: true, archived: false, attention: false, activity: '', passes: false },
+    { name: 'lead', ephemeral: false, archived: false, attention: false, activity: 'thinking', passes: true },
+  ];
+  assert.deepStrictEqual(hiddenBusy(rows, { status: 'minimal' }), ['hand-a', 'hand-b']);
+});
+
+test('hiddenBusy: under active nothing is listed, nothing is hidden', () => {
+  const rows = [
+    { name: 'hand-b', ephemeral: true, archived: false, attention: false, activity: 'thinking', passes: true },
+    { name: 'lead', ephemeral: false, archived: false, attention: false, activity: 'thinking', passes: true },
+  ];
+  assert.deepStrictEqual(hiddenBusy(rows, { status: 'active' }), []);
 });

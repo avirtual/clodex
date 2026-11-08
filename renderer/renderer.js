@@ -27,7 +27,7 @@ const { splitModelArg, withModelArg } = require('./lib/args-model');
 const { PLATFORMS, adapterFor, isAgentType, capsFor, accountEnvKey } = require('../cli-adapters');
 const { expandTeamRoot, usesTeamRoot } = require('../team-root-expand');
 const { altChordAction } = require('./lib/web-shortcuts');
-const { filterSummary, setFilterFolded, statusPasses } = require('./lib/sidebar-filter-fold');
+const { filterSummary, hiddenBusy, setFilterFolded, statusPasses } = require('./lib/sidebar-filter-fold');
 const { attentionNotice, mentionNotice, badgeTitle, createWebNotifier } = require('./lib/web-notify');
 const { detectNotice: sandboxDetectNotice, sandboxActionGate, sandboxGateTreatment, boxRowStartGated, statusNotice: sandboxStatusNotice, foreignNotice: sandboxForeignNotice, refLineText: sandboxRefLineText, openUrl: sandboxOpenUrl, portsLineText: sandboxPortsLineText, validatePorts: sandboxValidatePorts, sandboxRebuiltLine, limitsLineText: sandboxLimitsLineText, figuresHint: sandboxFiguresHint, bootstrapLineText: sandboxBootstrapLineText, bootstrapHistoryRows: sandboxBootstrapHistoryRows, advancedDirty: sandboxAdvancedDirty, saveLabel: sandboxSaveLabel } = require('./lib/sandbox-view');
 const { newSessionToolGate, installSessionParams, newSessionOverlayPlan, shouldRaiseOverlay } = require('./lib/tool-gate');
@@ -1533,6 +1533,7 @@ function refreshSidebarView() {
     (el) => !el.dataset.peerUi && !el.classList.contains('peer-item') && !el.classList.contains('session-child'));
   sessionList.querySelectorAll('.session-group-header, .session-empty-note').forEach((el) => el.remove());
 
+  const hiddenRowsByGroup = new Map();
   for (const el of rows) {
     applyPrBadge(el);
     pluginBar.applyRowBadges(el); // no-op while no plugin registers a rowBadge
@@ -1540,8 +1541,21 @@ function refreshSidebarView() {
     el.style.display = pass ? '' : 'none';
     sessionList.querySelectorAll(`.session-child[data-parent="${CSS.escape(el.dataset.name)}"]`)
       .forEach((c) => { c.style.display = pass ? '' : 'none'; });
+    if (!pass && sidebarView.group !== 'none') {
+      const key = groupFor(el) || '(other)';
+      if (!hiddenRowsByGroup.has(key)) hiddenRowsByGroup.set(key, []);
+      hiddenRowsByGroup.get(key).push({
+        name: el.dataset.name, ephemeral: !!el.dataset.ephemeral, archived: el.classList.contains('archived'),
+        attention: !!el.dataset.attention, activity: el.dataset.activity || '', passes: false,
+      });
+    }
   }
   const visible = rows.filter((el) => el.style.display !== 'none');
+  const hiddenBusyByGroup = new Map();
+  for (const [key, list] of hiddenRowsByGroup) {
+    const names = hiddenBusy(list, { status: sidebarView.status });
+    if (names.length) hiddenBusyByGroup.set(key, names);
+  }
 
   const childrenOf = (name) =>
     [...sessionList.querySelectorAll(`.session-child[data-parent="${CSS.escape(name)}"]`)];
@@ -1554,7 +1568,7 @@ function refreshSidebarView() {
     }
   };
 
-  if (!visible.length) {
+  if (!visible.length && !hiddenBusyByGroup.size) {
     const note = document.createElement('div');
     note.className = 'session-empty-note';
     note.textContent = rows.length ? 'No sessions match the current filter.' : 'No sessions yet.';
@@ -1573,13 +1587,14 @@ function refreshSidebarView() {
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(el);
   }
+  for (const key of hiddenBusyByGroup.keys()) if (!groups.has(key)) groups.set(key, []);
   const keys = [...groups.keys()].sort((a, b) => {
     const ia = groupSortIndex(sidebarView.group, a), ib = groupSortIndex(sidebarView.group, b);
     if (ia !== ib) return ia - ib;
     return String(a).localeCompare(String(b));
   });
   for (const key of keys) {
-    const header = makeGroupHeader(key, groups.get(key).length);
+    const header = makeGroupHeader(key, groups.get(key).length, hiddenBusyByGroup.get(key) || []);
     if (firstPeer) sessionList.insertBefore(header, firstPeer); else sessionList.appendChild(header);
     const collapsed = collapsedGroups.has(key);
     for (const el of groups.get(key).sort(compareRows)) {
@@ -1649,7 +1664,7 @@ function scheduleStatusBarRelayout() {
   statusBarRelayoutTimer = setTimeout(() => { statusBarRelayoutTimer = null; renderProxyBar(); }, 250);
 }
 
-function makeGroupHeader(key, count) {
+function makeGroupHeader(key, count, hiddenBusyNames = []) {
   const h = document.createElement('div');
   h.className = 'session-group-header';
   if (collapsedGroups.has(key)) h.classList.add('collapsed');
@@ -1664,6 +1679,20 @@ function makeGroupHeader(key, count) {
   cnt.className = 'session-group-count';
   cnt.textContent = String(count);
   h.append(caret, title, cnt);
+  if (hiddenBusyNames.length) {
+    const n = hiddenBusyNames.length;
+    const busy = document.createElement('span');
+    busy.className = 'session-group-hidden-busy';
+    busy.textContent = String(n);
+    busy.title = `${n} hidden seat${n === 1 ? '' : 's'} working: ${hiddenBusyNames.join(', ')} (click to show: filter Active)`;
+    busy.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (sbStatus) sbStatus.value = 'active';
+      sidebarView.status = 'active';
+      onViewControlChange();
+    });
+    h.appendChild(busy);
+  }
   h.addEventListener('click', () => {
     if (collapsedGroups.has(key)) collapsedGroups.delete(key); else collapsedGroups.add(key);
     refreshSidebarView();
