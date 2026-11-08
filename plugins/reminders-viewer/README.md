@@ -40,6 +40,11 @@ calls `host.library.add('reminder', { agent }, { spec, body })`; core arms it
 through the scheduler with `by: 'operator'`. A bad schedule, an unknown seat or a
 `for <id>` ticket binding comes back as the inline error.
 
+`add` refuses an exact duplicate of a reminder already armed: a row with the
+same seat, the same schedule (trimmed, case-insensitive) and the same text comes
+back as `an identical reminder is already armed (<id>)` and nothing is armed.
+Two reminders with the same schedule and different text are both allowed.
+
 An operator-set reminder fires whether or not the seat holds the remind intent,
 and arrives as a dm from `reminder`:
 `[<id> every 1h, set by your operator] <text>`. The text is exactly what the seat
@@ -50,7 +55,7 @@ here carries an `operator` chip.
 
 ## Cancelling
 
-Each row's Cancel goes through `host.library.remove('reminder', { agent, id })`,
+Cancel is on every row on both surfaces, the desktop and the web UI. It goes through `host.library.remove('reminder', { agent, id })`,
 which core routes to the reminder scheduler's `cancel(agent, id, { force: true })`:
 the panel cancels any row, including operator-set ones.
 

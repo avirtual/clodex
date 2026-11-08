@@ -127,18 +127,23 @@ test('renderer: a row shows on compact, the preview, full text on hover and the 
   } finally { m.done(); }
 });
 
-test('renderer: the web surface draws Fire and no Cancel; the desktop draws both', async () => {
+test('renderer: both surfaces draw Fire and Cancel', async () => {
   const prev = global.window;
   try {
     global.window = { __CLODEX_WEB__: true };
     const web = await mount({ rows: [row({ id: 'a1' })] });
     try {
       assert.strictEqual(web.buttons('rv-fire').length, 1);
-      assert.strictEqual(web.buttons('rv-cancel').length, 0);
+      assert.strictEqual(web.buttons('rv-cancel').length, 1);
       web.buttons('rv-fire')[0].click();
       await settle(); await settle();
       assert.deepStrictEqual(web.toasts.map((t) => t.msg), ['Could not fire: unknown error']);
       assert.strictEqual(web.buttons('rv-fire')[0].disabled, false);
+      assert.strictEqual(web.buttons('rv-cancel')[0].disabled, false);
+      web.buttons('rv-cancel')[0].click();
+      await settle(); await settle();
+      const cancels = web.invokes.filter((i) => i.method === 'cancel');
+      assert.deepStrictEqual(cancels.map((i) => i.args), [[{ agent: 'lead', id: 'a1' }]]);
     } finally { web.done(); }
     global.window = { require() {} };
     const desk = await mount({ rows: [row({ id: 'a1' })] });

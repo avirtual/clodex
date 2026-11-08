@@ -123,7 +123,14 @@ function add(payload) {
   if (typeof spec !== 'string' || !spec.trim()) {
     return { ok: false, error: 'a schedule is required' };
   }
-  return host.library.add('reminder', { agent }, { spec: spec.trim(), body: typeof body === 'string' ? body : '' });
+  const text = typeof body === 'string' ? body : '';
+  const want = spec.trim().toLowerCase();
+  const all = readAll();
+  const dup = Array.isArray(all) && all.find((r) => r && r.agent === agent
+    && typeof r.spec === 'string' && r.spec.trim().toLowerCase() === want
+    && String(r.body ?? '') === text);
+  if (dup) return { ok: false, error: `an identical reminder is already armed (${dup.id})` };
+  return host.library.add('reminder', { agent }, { spec: spec.trim(), body: text });
 }
 
 module.exports.activate = (h) => {

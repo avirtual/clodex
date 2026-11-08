@@ -16,6 +16,8 @@ blocks a release.
 
 ## Unreleased
 
+- Reminders viewer: Cancel is available from the web UI too (a peer node's operator reminders could be armed and fired but not removed), and `+ reminder` refuses an exact duplicate of a reminder already armed on that seat.
+
 ## 5.164.1 — 2026-11-08
 
 - Stream seats (`io: stream`, including `claude -p` seats on peer nodes) now report context size to the app: `[agent:remind on context …]`, the sidebar context badge and the ticket loop's context gate work for them, not only for PTY seats.
