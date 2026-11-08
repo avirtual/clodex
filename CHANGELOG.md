@@ -16,6 +16,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.164.3 — 2026-11-08
+
 - `[agent:remind on context …]` is now standing: it fires each time the seat's context climbs past the threshold, re-arms when it drops below (after a clear or compact), and survives seat restarts. Arming an identical reminder (same seat, schedule and text) is a no-op instead of a duplicate row, from the intent, the viewer and the remote wire alike.
 
 ## 5.164.2 — 2026-11-08
