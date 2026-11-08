@@ -191,13 +191,13 @@ function createSidePane({ dock, popoverApi, showToast, getActiveSession, getFile
     }
     if (isWeb) {
       const url = win.URL.createObjectURL(new win.Blob([got.bytes], { type: got.image || 'application/octet-stream' }));
-      if (mode === 'open') {
-        win.open(url, '_blank');
-      } else {
+      const opened = mode === 'open' && win.open(url, '_blank');
+      if (!opened) {
         const a = doc.createElement('a');
         a.href = url;
         a.download = name;
         a.click();
+        if (mode === 'open') showToast('Opened as a download: pop-ups are blocked here', { kind: 'warn' });
       }
       win.setTimeout(() => win.URL.revokeObjectURL(url), 60000);
       return;

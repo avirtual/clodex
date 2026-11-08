@@ -20,4 +20,17 @@ function isExternallyOpenable(url) {
   return parsed.protocol === 'http:' || parsed.protocol === 'https:';
 }
 
-module.exports = { isExternallyOpenable };
+function blobChildAllowed(url, openerUrl) {
+  if (typeof url !== 'string' || typeof openerUrl !== 'string') return false;
+  let blob, inner, opener;
+  try {
+    blob = new URL(url);
+    if (blob.protocol !== 'blob:') return false;
+    inner = new URL(blob.pathname);
+    opener = new URL(openerUrl);
+  } catch { return false; }
+  if (inner.protocol !== 'http:' && inner.protocol !== 'https:') return false;
+  return inner.origin === opener.origin;
+}
+
+module.exports = { isExternallyOpenable, blobChildAllowed };

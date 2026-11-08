@@ -16,11 +16,16 @@ const browserCache = {};
 const { ensureDir } = require('./fs-util');
 const { defaultClodexHome } = require('./clodex-paths');
 const { maskSecrets } = require('./log-mask');
-const { isExternallyOpenable } = require('./external-link');
+const { isExternallyOpenable, blobChildAllowed } = require('./external-link');
 const { DEFAULT_WORKSPACE_ID, THEME_KEYS } = require('./catalogs');
 const { createEngine } = require('./engine');
 const { writeHostStamp } = require('./host-stamp');
 const { childSpawnSpec } = require('./electron-child');
+
+const sandboxedChildWindow = () => ({
+  action: 'allow',
+  overrideBrowserWindowOptions: { webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true } },
+});
 
 
 
@@ -339,6 +344,7 @@ function createWindow(workspaceId = DEFAULT_WORKSPACE_ID) {
   // without opening it.
   const ownIndexUrl = pathToFileURL(path.join(__dirname, 'renderer', 'index.html')).href;
   win.webContents.setWindowOpenHandler(({ url }) => {
+    if (blobChildAllowed(url, win.webContents.getURL())) return sandboxedChildWindow();
     if (isExternallyOpenable(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
@@ -493,6 +499,7 @@ function openRemoteWindow(key, url, opts = {}) {
   // to navigate between remote URLs (unlike the main window, which only ever
   // loads our own index.html).
   win.webContents.setWindowOpenHandler(({ url: u }) => {
+    if (blobChildAllowed(u, win.webContents.getURL())) return sandboxedChildWindow();
     if (isExternallyOpenable(u)) shell.openExternal(u);
     return { action: 'deny' };
   });
