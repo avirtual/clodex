@@ -16,6 +16,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.164.4 — 2026-11-08
+
 - Web UI: Open on a remote image works inside Clodex's remote-node window (blob: pop-ups from the page's own origin are allowed); when a browser blocks the pop-up, Open falls back to a download and says so.
 
 ## 5.164.3 — 2026-11-08
