@@ -52,21 +52,25 @@ function el(tag = 'div', id = null) {
     replaceChildren(...kids) { node.children = kids; },
     remove() { if (node.parent) node.parent.children = node.parent.children.filter((c) => c !== node); node.parent = null; },
     querySelector: (sel) => node.children.find((c) => sel === `.${c.className}`) || null,
+    clicks: 0,
+    click() { node.clicks += 1; },
   };
   return node;
 }
 
-function setup() {
+function setup(winExtra = {}) {
   views.length = 0;
   const ids = {};
   for (const id of ['side-pane', 'side-pane-tabs', 'side-pane-seat', 'side-pane-close', 'side-pane-body']) ids[id] = el('div', id);
-  const doc = { getElementById: (id) => ids[id] || null, createElement: (tag) => el(tag) };
+  const created = [];
+  const doc = { getElementById: (id) => ids[id] || null, createElement: (tag) => { const n = el(tag); created.push(n); return n; } };
   const dock = { shown: {}, reveals: 0, addPane() {}, setShown(name, on) { dock.shown[name] = on; }, onScreen: () => true, reveal() { dock.reveals += 1; } };
   const api = { remote: false, mtime: 7, diff: async () => ({ ok: true }), peek: async () => api.peekRes || ({ ok: true, mtime: api.mtime }) };
   let active = 'A';
-  const win = { confirm: () => true, api: {} };
+  const win = { confirm: () => true, api: {}, ...winExtra };
+  const toasts = [];
   const sp = createSidePane({
-    dock, popoverApi: () => api, showToast() {}, getActiveSession: () => active, getFiles: () => [],
+    dock, popoverApi: () => api, showToast: (msg, opts) => toasts.push([msg, opts]), getActiveSession: () => active, getFiles: () => [],
     focusTerminal() {}, doc, win,
   });
   const button = el('button', 'files-toggle');
@@ -81,7 +85,7 @@ function setup() {
     badge: button.querySelector('.footer-badge').textContent,
     pane: !!dock.shown.files,
   });
-  return { sp, dock, button, ids, api, win, toggle, setActive, switchTo, state };
+  return { sp, dock, button, ids, api, win, toasts, created, toggle, setActive, switchTo, state };
 }
 
 const flush = () => new Promise((r) => setImmediate(r));
@@ -265,4 +269,45 @@ test('side pane: renameSeat carries a dirty tab to the new name and saves throug
   Object.assign(v, { getText: () => 'edited', setSaving() {}, markSaved() {}, setDiff() {} });
   await v.on.save();
   assert.deepStrictEqual(writes, [['B', '/w/a.js', 'edited', 7]]);
+});
+
+function webWin(openResult) {
+  const opens = [];
+  return {
+    opens,
+    extra: {
+      __CLODEX_WEB__: true,
+      URL: { createObjectURL: () => 'blob:https://node.example/uuid', revokeObjectURL() {} },
+      Blob: class { constructor(parts, opts) { this.parts = parts; this.type = opts.type; } },
+      setTimeout() {},
+      open: (url, target) => { opens.push([url, target]); return openResult; },
+    },
+  };
+}
+
+async function openLocalOnWeb(openResult) {
+  const w = webWin(openResult);
+  const t = setup(w.extra);
+  t.switchTo('A');
+  t.sp.open('A', { kind: 'file', path: '/w/pic.png' });
+  await flush();
+  t.api.peekRes = { ok: true, content: Buffer.from('png').toString('base64'), image: 'image/png', truncated: false };
+  t.created.length = 0;
+  await views[0].on.openLocal(3);
+  return { t, opens: w.opens, anchors: t.created.filter((n) => n.tag === 'a') };
+}
+
+test('side pane web Open: a blocked pop-up falls back to the download anchor and says so', async () => {
+  const { t, opens, anchors } = await openLocalOnWeb(null);
+  assert.deepStrictEqual(opens, [['blob:https://node.example/uuid', '_blank']]);
+  assert.strictEqual(anchors.length, 1);
+  assert.deepStrictEqual([anchors[0].href, anchors[0].download, anchors[0].clicks], ['blob:https://node.example/uuid', 'pic.png', 1]);
+  assert.deepStrictEqual(t.toasts, [['Opened as a download: pop-ups are blocked here', { kind: 'warn' }]]);
+});
+
+test('side pane web Open: an opened pop-up clicks no anchor and raises no toast', async () => {
+  const { t, opens, anchors } = await openLocalOnWeb({ closed: false });
+  assert.strictEqual(opens.length, 1);
+  assert.deepStrictEqual(anchors, []);
+  assert.deepStrictEqual(t.toasts, []);
 });

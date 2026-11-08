@@ -24,7 +24,7 @@ One row per gate site, in source order. Symbols, not line numbers; `test/web-par
 | renderer/renderer.js | `revealBtn` | the Reveal button is relabelled Show Plugins Folder | KEPT: inability — same as the row above |
 | renderer/side-pane.js | `isWeb` | the flag itself | KEPT: declaration of the rows below |
 | renderer/side-pane.js | `showOpen` | file tabs hide Open | KEPT: inability — a browser has no default app to open a host path with; on web `file:open` only toasts |
-| renderer/side-pane.js | `exportFile` | Save… downloads a Blob and Open shows it in a new tab, instead of `file:saveBytes` / `file:openBytes` | KEPT: inability — those handlers write and open on the host desktop, not the browser's machine |
+| renderer/side-pane.js | `exportFile` | Save… downloads a Blob and Open shows it in a new tab (a blocked pop-up falls back to the download with a warn toast), instead of `file:saveBytes` / `file:openBytes` | KEPT: inability — those handlers write and open on the host desktop, not the browser's machine |
 | renderer/dock.js | `isWeb` | the flag itself | KEPT: declaration of the three rows below |
 | renderer/dock.js | `onScreen` | the dock opens at any viewport width | KEPT: layout — narrow viewports get a sheet instead of hiding the dock |
 | renderer/dock.js | `render` | a narrow viewport shows the dock as a sheet | KEPT: layout |

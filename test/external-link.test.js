@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { isExternallyOpenable } = require('../external-link');
+const { isExternallyOpenable, blobChildAllowed } = require('../external-link');
 
 test('isExternallyOpenable: http/https are openable', () => {
   assert.equal(isExternallyOpenable('http://example.com'), true);
@@ -42,4 +42,23 @@ test('isExternallyOpenable: unparseable / schemeless values are denied', () => {
   assert.equal(isExternallyOpenable('example.com'), false);
   assert.equal(isExternallyOpenable('//example.com'), false); // protocol-relative, no scheme
   assert.equal(isExternallyOpenable('/local/path'), false);
+});
+
+test('blobChildAllowed: a blob from the opener origin is allowed', () => {
+  assert.equal(blobChildAllowed('blob:https://node.example:8443/0b6c-uuid', 'https://node.example:8443/ui/index.html'), true);
+  assert.equal(blobChildAllowed('blob:http://127.0.0.1:7777/uuid', 'http://127.0.0.1:7777/'), true);
+});
+
+test('blobChildAllowed: other origins and non-blob schemes are denied', () => {
+  const opener = 'https://node.example:8443/ui/';
+  assert.equal(blobChildAllowed('blob:https://evil.example/uuid', opener), false);
+  assert.equal(blobChildAllowed('blob:https://node.example:9999/uuid', opener), false);
+  assert.equal(blobChildAllowed('blob:http://node.example:8443/uuid', opener), false);
+  assert.equal(blobChildAllowed('javascript:alert(1)', opener), false);
+  assert.equal(blobChildAllowed('file:///etc/passwd', opener), false);
+  assert.equal(blobChildAllowed('https://node.example:8443/x.png', opener), false);
+  assert.equal(blobChildAllowed('blob:file:///uuid', 'file:///app/renderer/index.html'), false);
+  assert.equal(blobChildAllowed('blob:null/uuid', 'file:///app/renderer/index.html'), false);
+  assert.equal(blobChildAllowed(null, opener), false);
+  assert.equal(blobChildAllowed('blob:https://node.example:8443/uuid', ''), false);
 });

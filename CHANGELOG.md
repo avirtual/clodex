@@ -16,6 +16,8 @@ blocks a release.
 
 ## Unreleased
 
+- Web UI: Open on a remote image works inside Clodex's remote-node window (blob: pop-ups from the page's own origin are allowed); when a browser blocks the pop-up, Open falls back to a download and says so.
+
 ## 5.164.3 — 2026-11-08
 
 - `[agent:remind on context …]` is now standing: it fires each time the seat's context climbs past the threshold, re-arms when it drops below (after a clear or compact), and survives seat restarts. Arming an identical reminder (same seat, schedule and text) is a no-op instead of a duplicate row, from the intent, the viewer and the remote wire alike.

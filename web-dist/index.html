@@ -26278,7 +26278,21 @@ ${i3.join("\n")}
         }
         return parsed.protocol === "http:" || parsed.protocol === "https:";
       }
-      module.exports = { isExternallyOpenable };
+      function blobChildAllowed(url, openerUrl) {
+        if (typeof url !== "string" || typeof openerUrl !== "string") return false;
+        let blob, inner, opener;
+        try {
+          blob = new URL(url);
+          if (blob.protocol !== "blob:") return false;
+          inner = new URL(blob.pathname);
+          opener = new URL(openerUrl);
+        } catch {
+          return false;
+        }
+        if (inner.protocol !== "http:" && inner.protocol !== "https:") return false;
+        return inner.origin === opener.origin;
+      }
+      module.exports = { isExternallyOpenable, blobChildAllowed };
     }
   });
 
@@ -45780,13 +45794,13 @@ void main() {
           }
           if (isWeb) {
             const url = win.URL.createObjectURL(new win.Blob([got.bytes], { type: got.image || "application/octet-stream" }));
-            if (mode === "open") {
-              win.open(url, "_blank");
-            } else {
+            const opened = mode === "open" && win.open(url, "_blank");
+            if (!opened) {
               const a = doc.createElement("a");
               a.href = url;
               a.download = name;
               a.click();
+              if (mode === "open") showToast("Opened as a download: pop-ups are blocked here", { kind: "warn" });
             }
             win.setTimeout(() => win.URL.revokeObjectURL(url), 6e4);
             return;
