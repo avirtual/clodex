@@ -8,11 +8,8 @@ Keep `Unreleased` current as work lands. `scripts/release.sh` publishes it
 verbatim as the release notes, then stamps it with the version and date and
 opens a fresh empty one — so anything missing from it is missing from the
 release. Text after `## Unreleased —` becomes the release subtitle. An empty or
-
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
-- Release and pre-release cloud reviews pause while `~/.clodex/cloud-review.paused` exists (its first line is printed as the reason); remove the file to resume.
-- Sidebar type chip: clodent seats show `D` in their own colour (they shared Codex's `C` before), muse seats `M`.
 
 ## Unreleased
 
