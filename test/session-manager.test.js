@@ -21976,7 +21976,7 @@ test('t2177: a solo /clear at the head of the outbox goes alone; the text behind
   assert.deepStrictEqual(t2177Texts(seat), ['first', '/clear', 'note one\n\nnote two']);
 });
 
-test('t2177: operator clear and compact controls on a busy claude stream seat each send their slash command alone', async (t) => {
+test('t2177: _sendContextCommand: operator clear and compact controls on a busy claude stream seat each send their slash command alone', async (t) => {
   const h = mkStreamSeatManager({ extraDeps: { isInjectInFlight: require('../inject-queue').isInjectInFlight } });
   t.after(() => h.stopAll());
   await h.create('sc3');
@@ -21994,7 +21994,7 @@ test('t2177: operator clear and compact controls on a busy claude stream seat ea
   assert.deepStrictEqual(h.m.seatControl('sc3', 'compact'), { ok: true });
   h.line('sc3', t2177Result);
   h.line('sc3', t2177Result);
-  assert.deepStrictEqual(t2177Texts(seat).slice(3), ['busy again', 'more text', '/compact']);
+  assert.deepStrictEqual(t2177Texts(seat).slice(3), ['busy again\n\nmore text', '/compact']);
 });
 
 test('t2177: a solo /clear is never drained into a tool-boundary system batch', async (t) => {
