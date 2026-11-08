@@ -21937,6 +21937,101 @@ test('stream seat (i): two seatSends while busy become ONE joined message on res
   assert.strictEqual(h.m.sessions.get('st4').activityState, 'idle');
 });
 
+const t2177Result = { type: 'result', subtype: 'success', duration_ms: 1, total_cost_usd: 0, is_error: false };
+const t2177Texts = (seat) => seat.sent.map((o) => o.message.content);
+
+test('t2177: [agent:context clear] behind queued text on a claude stream seat sends the text, then /clear alone', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sc1');
+  const seat = h.handles[0];
+  const s = h.m.sessions.get('sc1');
+  t.after(() => h.m._clearPostClearValve(s));
+  h.m.seatSend('sc1', 'first');
+  h.m.seatSend('sc1', 'queued dm');
+  h.m._handleContextIntent(s, 'clear', 'carry on');
+  assert.deepStrictEqual(s.outbox.map((q) => [q.text, !!q.solo]), [['queued dm', false], ['/clear', true]]);
+  assert.strictEqual(s._postClearContinuation, 'carry on');
+  h.line('sc1', t2177Result);
+  assert.deepStrictEqual(t2177Texts(seat), ['first', 'queued dm']);
+  h.line('sc1', t2177Result);
+  assert.deepStrictEqual(t2177Texts(seat), ['first', 'queued dm', '/clear']);
+});
+
+test('t2177: a solo /clear at the head of the outbox goes alone; the text behind it rides the next batch', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sc2');
+  const seat = h.handles[0];
+  const s = h.m.sessions.get('sc2');
+  t.after(() => h.m._clearPostClearValve(s));
+  h.m.seatSend('sc2', 'first');
+  h.m._handleContextIntent(s, 'clear', '');
+  h.m._injectText(s, 'note one');
+  h.m._injectText(s, 'note two');
+  assert.deepStrictEqual(s.outbox.map((q) => q.text), ['/clear', 'note one', 'note two']);
+  h.line('sc2', t2177Result);
+  assert.deepStrictEqual(t2177Texts(seat), ['first', '/clear']);
+  h.line('sc2', t2177Result);
+  assert.deepStrictEqual(t2177Texts(seat), ['first', '/clear', 'note one\n\nnote two']);
+});
+
+test('t2177: operator clear and compact controls on a busy claude stream seat each send their slash command alone', async (t) => {
+  const h = mkStreamSeatManager({ extraDeps: { isInjectInFlight: require('../inject-queue').isInjectInFlight } });
+  t.after(() => h.stopAll());
+  await h.create('sc3');
+  const seat = h.handles[0];
+  const s = h.m.sessions.get('sc3');
+  t.after(() => { h.m._clearPostClearValve(s); clearTimeout(s._compactGuard); clearTimeout(s._compactValveTimer); });
+  h.m.seatSend('sc3', 'first');
+  h.m.seatSend('sc3', 'queued text');
+  assert.deepStrictEqual(h.m.seatControl('sc3', 'clear'), { ok: true });
+  h.line('sc3', t2177Result);
+  h.line('sc3', t2177Result);
+  assert.deepStrictEqual(t2177Texts(seat), ['first', 'queued text', '/clear']);
+  h.m.seatSend('sc3', 'busy again');
+  h.m.seatSend('sc3', 'more text');
+  assert.deepStrictEqual(h.m.seatControl('sc3', 'compact'), { ok: true });
+  h.line('sc3', t2177Result);
+  h.line('sc3', t2177Result);
+  assert.deepStrictEqual(t2177Texts(seat).slice(3), ['busy again', 'more text', '/compact']);
+});
+
+test('t2177: a solo /clear is never drained into a tool-boundary system batch', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sc4');
+  const seat = h.handles[0];
+  const s = h.m.sessions.get('sc4');
+  t.after(() => h.m._clearPostClearValve(s));
+  h.m.seatSend('sc4', 'first');
+  h.m._injectText(s, 'sys note');
+  h.m._handleContextIntent(s, 'clear', '');
+  h.m._onStreamToolBoundary(s);
+  assert.deepStrictEqual(t2177Texts(seat), ['first', 'sys note']);
+  assert.deepStrictEqual(s.outbox.map((q) => q.text), ['/clear']);
+});
+
+test('t2177: parking a stream outbox drops a solo /clear instead of re-parking it', async (t) => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('sc5');
+  const s = h.m.sessions.get('sc5');
+  t.after(() => h.m._clearPostClearValve(s));
+  h.m.seatSend('sc5', 'first');
+  h.m._injectText(s, 'sys note');
+  h.m._handleContextIntent(s, 'clear', '');
+  assert.strictEqual(s.outbox[1].solo, true, 'ENTER: the clear is a solo item');
+  h.m._parkStreamOutbox(s, 'test');
+  const dir = path.join(h.root, 'pending', 'sc5');
+  const parked = fs.readdirSync(dir).map((f) => fs.readFileSync(path.join(dir, f), 'utf8'));
+  assert.strictEqual(parked.length, 1);
+  assert.ok(parked[0].includes('sys note'));
+  assert.ok(!parked.some((p) => p.includes('/clear')));
+});
+
 test('stream seat (i2): queued images concatenate in order and ride the joined message; image-only sends are accepted', async (t) => {
   const h = mkStreamSeatManager();
   t.after(() => h.stopAll());
