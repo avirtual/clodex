@@ -276,6 +276,32 @@ test('add: an identical (agent, kind, spec, body) is a duplicate, spec compared 
   } finally { cleanup(); }
 });
 
+test('add: a timed row stamped by an earlier seat of the name is not a duplicate; an event-kind row still is', () => {
+  const { scheduler, store, cleanup } = freshEngine(T0);
+  try {
+    const old = scheduler.add('t1', 'every 30m', 'x', { born: 1000 });
+    const fresh = scheduler.add('t1', 'every 30m', 'x', { born: 2000 });
+    assert.strictEqual(fresh.ok, true);
+    assert.strictEqual(fresh.duplicate, undefined);
+    assert.notStrictEqual(fresh.record.id, old.record.id);
+    assert.strictEqual(store.list().length, 2);
+    const ctxOld = scheduler.add('t1', 'on context 150k', 'x', { born: 1000 });
+    const ctxNew = scheduler.add('t1', 'on context 150k', 'x', { born: 2000 });
+    assert.deepStrictEqual({ duplicate: ctxNew.duplicate, id: ctxNew.id }, { duplicate: true, id: ctxOld.record.id });
+    assert.strictEqual(store.list().length, 3);
+  } finally { cleanup(); }
+});
+
+test('add: an operator row and a seat row with the same spec and body are not duplicates of each other', () => {
+  const { scheduler, store, cleanup } = freshEngine(T0);
+  try {
+    scheduler.add('t1', 'every 30m', 'x', { by: 'operator' });
+    assert.strictEqual(scheduler.add('t1', 'every 30m', 'x').duplicate, undefined);
+    assert.strictEqual(scheduler.add('t1', 'every 30m', 'x', { by: 'operator' }).duplicate, true);
+    assert.strictEqual(store.list().length, 2);
+  } finally { cleanup(); }
+});
+
 test('on context: a percent record is not crossed by a tok-only read, only by pct', () => {
   const { scheduler, fires, store, cleanup } = freshEngine(T0);
   try {

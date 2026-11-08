@@ -12,7 +12,7 @@
 //   - setTimer(fn, ms)    — arm a one-shot timer, returns a handle (setTimeout)
 //   - clearTimer(handle)  — cancel one (clearTimeout)
 //   - store               — the reminders store; the durable source of truth
-//   - deliver(agent, id, spec, body, by, born) — hand ONE fire to the DM pipeline.
+//   - deliver(agent, id, spec, body, by, born, kind) — hand ONE fire to the DM pipeline.
 // remind-schedule is a pure sibling leaf, required directly (like exec-schema in
 // session-manager) — nothing to inject.
 //
@@ -159,7 +159,10 @@ function createRemindScheduler({ now, setTimer, clearTimer, store, deliver }) {
       const norm = (s) => String(s).trim().replace(/\s+/g, ' ').toLowerCase();
       const want = norm(spec);
       const existing = store.listForAgent(agent).find((r) => r.kind === sched.kind
-        && typeof r.spec === 'string' && norm(r.spec) === want && r.body === body);
+        && typeof r.spec === 'string' && norm(r.spec) === want && r.body === body
+        && (r.by || null) === (by || null)
+        && (sched.kind === 'onctx' || sched.kind === 'oncompact'
+          || !(typeof r.born === 'number' && typeof born === 'number' && r.born !== born)));
       if (existing) return { ok: true, id: existing.id, duplicate: true, record: existing };
       const record = store.add({ agent, kind: sched.kind, spec, body, nextFireAt: first, ticket: sched.ticket || null, by: by || null, born: typeof born === 'number' ? born : null });
       this._rearm();
