@@ -14822,7 +14822,9 @@ Its login, last page and downloads are deleted and it leaves this list.`;
         if (!row || row.kind === "oncompact") return "on compact";
         if (row.kind === "onctx") {
           const m = String(row.spec || "").match(/\bon\s+context\s+(\S+)/i);
-          return m ? `on context \u2265 ${m[1].toLowerCase()}` : "on context";
+          const at = m ? m[1].toLowerCase() : null;
+          if (row.armed === false) return at ? `fired \xB7 re-arms below ${at}` : "fired \xB7 re-arms below threshold";
+          return at ? `on context \u2265 ${at}` : "on context";
         }
         if (typeof row.nextFireAt !== "number" || !Number.isFinite(row.nextFireAt)) return "";
         const fmt = new Intl.DateTimeFormat("en-US", {

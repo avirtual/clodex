@@ -14296,6 +14296,14 @@ test('_handleRemindIntent: valid schedule is silent (no reply), audited via ipc'
   assert.match(ipc.at(-1).body, /scheduled ab12/);
 });
 
+test('_handleRemindIntent: a duplicate add is silent and broadcasts no new schedule', () => {
+  const { m, session, replies, ipc, calls } = mkRemind({ addResult: { ok: true, id: 'ab12', duplicate: true, record: { id: 'ab12', kind: 'onctx' } } });
+  m._handleRemindIntent(session, 'on context 150k', 'clear');
+  assert.strictEqual(calls.add.length, 1, 'ENTER: the add reached the scheduler');
+  assert.strictEqual(replies.length, 0);
+  assert.strictEqual(ipc.some((x) => /scheduled/.test(x.body || '')), false);
+});
+
 test('_handleRemindIntent: a bad spec bounces loudly with the parser error', () => {
   const { m, session, replies, calls } = mkRemind();
   m._handleRemindIntent(session, 'every 10s', 'x'); // under the 60s floor
@@ -14603,6 +14611,17 @@ test('_deliverReminder: a row stamped by an earlier seat of the name is gone and
   assert.strictEqual(injected.length, 2);
   assert.match(injected[0], /\[ab12 every 2h\] mine/);
   assert.match(injected[1], /\[ab12 every 2h\] legacy/);
+});
+
+test('_deliverReminder: an event-kind row (onctx, oncompact) outlives a seat restart; a timed row from an earlier seat still drops', () => {
+  const { m, injected } = mkDeliver();
+  m.sessions.set('t1', { name: 't1', agentType: 'claude', createdAt: 2000 });
+  assert.strictEqual(m._deliverReminder('t1', '[ab12 on context 150k] clear', 1000, { kind: 'onctx' }), 'delivered');
+  assert.strictEqual(m._deliverReminder('t1', '[cd34 on compact] reread', 1000, { kind: 'oncompact' }), 'delivered');
+  assert.strictEqual(m._deliverReminder('t1', '[ef56 every 2h] rebase', 1000, { kind: 'every' }), 'gone');
+  assert.strictEqual(injected.length, 2);
+  assert.match(injected[0], /\[ab12 on context 150k\] clear/);
+  assert.match(injected[1], /\[cd34 on compact\] reread/);
 });
 
 test('_deliverReminder: live session → injected via the DM path, returns "delivered"', () => {
@@ -22409,6 +22428,36 @@ test('stream ctx: an assistant usage record pushes session-ctx, sets ctxInfo and
   assert.deepStrictEqual(h.m.sessions.get('st-ctx').ctxInfo,
     { pct: null, tok: 5000, size: 0, cost: null, modelName: null, model: 'claude-haiku-4-5-20251001' });
   assert.deepStrictEqual(fired[1], ['st-ctx', { tok: 5000, pct: null }]);
+});
+
+test('_noteCtx: an onctx reminder survives [agent:context clear] and re-arms on the first post-clear read below its threshold', async (t) => {
+  const userData = mkTmpRoot('clx-onctx-ud-');
+  const registryDir = mkTmpRoot('clx-onctx-reg-');
+  const stores = initStoresReal(userData, { log: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} }, registryDir });
+  const fires = [];
+  const sched = createRemindSchedulerReal({
+    now: () => 1_700_000_000_000, setTimer: () => null, clearTimer: () => {},
+    store: stores.reminders, deliver: (agent, id, spec, body) => fires.push({ agent, id, body }),
+  });
+  const h = mkStreamSeatManager({ extraDeps: { getRemindScheduler: () => sched } });
+  t.after(() => h.stopAll());
+  await h.create('st-oc');
+  const s = h.m.sessions.get('st-oc');
+  t.after(() => h.m._clearPostClearValve(s));
+  const id = sched.add('st-oc', 'on context 150k', '[agent:context clear]').record.id;
+  const usage = (tok) => ({ type: 'assistant', message: { model: 'claude-opus-5-5', content: [], usage: { input_tokens: tok } } });
+  h.line('st-oc', usage(160000));
+  assert.deepStrictEqual(fires, [{ agent: 'st-oc', id, body: '[agent:context clear]' }]);
+  assert.strictEqual(stores.reminders.get(id).armed, false);
+  h.m._handleContextIntent(s, 'clear', '');
+  assert.strictEqual(stores.reminders.get(id).armed, false, 'ENTER: the record is still in the store after the clear is handled');
+  h.line('st-oc', { type: 'conversation_reset', new_conversation_id: 'f4e5ec04-01f1-4123-90ad-00452a8e350e', trigger: 'clear' });
+  h.line('st-oc', usage(5000));
+  assert.strictEqual(stores.reminders.get(id).armed, true);
+  h.line('st-oc', usage(155000));
+  assert.strictEqual(fires.length, 2);
+  fsReal.rmSync(userData, { recursive: true, force: true });
+  fsReal.rmSync(registryDir, { recursive: true, force: true });
 });
 
 test('assistant wake: single-flight — racing callers share one restart, a settled or rejected wake clears the slot', async (t) => {

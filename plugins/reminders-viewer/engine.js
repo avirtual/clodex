@@ -49,6 +49,7 @@ function toRow(r, live) {
     createdAt: typeof r.createdAt === 'number' ? r.createdAt : null,
     lastFiredAt: typeof r.lastFiredAt === 'number' ? r.lastFiredAt : null,
     ticket: r.ticket ? String(r.ticket) : null,
+    ...(r.kind === 'onctx' ? { armed: r.armed !== false } : {}),
     live,
     ...(r.by === 'operator' || r.by === 'ticket-loop' ? { by: r.by } : {}),
   };

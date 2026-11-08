@@ -220,7 +220,7 @@ test('on compact: no timer fire; fireCompactFor delivers and persists (recurring
   } finally { cleanup(); }
 });
 
-test('on context: fireContextFor fires once when crossed, then the record is gone', () => {
+test('on context: fires once when crossed, stays latched above, re-arms below, fires again on the next climb', () => {
   const { scheduler, clock, fires, store, cleanup } = freshEngine(T0);
   try {
     const r = scheduler.add('t1', 'on context 150k', 'compact now');
@@ -233,9 +233,72 @@ test('on context: fireContextFor fires once when crossed, then the record is gon
     assert.strictEqual(scheduler.fireContextFor('t2', { tok: 999999, pct: 99 }), 0);
     assert.strictEqual(scheduler.fireContextFor('t1', { tok: 150000, pct: 75 }), 1);
     assert.deepStrictEqual(fires, [{ agent: 't1', id: r.record.id, spec: 'on context 150k', body: 'compact now' }]);
-    assert.strictEqual(store.get(r.record.id), null);
+    assert.strictEqual(store.get(r.record.id).armed, false);
+    assert.strictEqual(store.get(r.record.id).lastFiredAt, T0 + 10 * HOUR);
     assert.strictEqual(scheduler.fireContextFor('t1', { tok: 160000, pct: 80 }), 0);
     assert.strictEqual(fires.length, 1);
+    assert.strictEqual(scheduler.fireContextFor('t1', { tok: 20000, pct: 10 }), 0);
+    assert.strictEqual(store.get(r.record.id).armed, true);
+    assert.strictEqual(fires.length, 1);
+    assert.strictEqual(scheduler.fireContextFor('t1', { tok: 151000, pct: 76 }), 1);
+    assert.strictEqual(fires.length, 2);
+    assert.strictEqual(store.get(r.record.id).armed, false);
+  } finally { cleanup(); }
+});
+
+test('on context: fireNow delivers and keeps the record, armed state untouched', () => {
+  const { scheduler, fires, store, cleanup } = freshEngine(T0);
+  try {
+    const r = scheduler.add('t1', 'on context 150k', 'compact now');
+    assert.deepStrictEqual(scheduler.fireNow('t1', r.record.id), { ok: true, kept: true });
+    assert.strictEqual(fires.length, 1);
+    assert.strictEqual('armed' in store.get(r.record.id), false);
+    scheduler.fireContextFor('t1', { tok: 150000, pct: 75 });
+    assert.deepStrictEqual(scheduler.fireNow('t1', r.record.id), { ok: true, kept: true });
+    assert.strictEqual(fires.length, 3);
+    assert.strictEqual(store.get(r.record.id).armed, false);
+  } finally { cleanup(); }
+});
+
+test('add: an identical (agent, kind, spec, body) is a duplicate, spec compared case- and whitespace-insensitively', () => {
+  const { scheduler, store, cleanup } = freshEngine(T0);
+  try {
+    const first = scheduler.add('t1', 'on context 150k', '[agent:context clear]');
+    const again = scheduler.add('t1', '  On   Context 150K ', '[agent:context clear]');
+    assert.deepStrictEqual({ ok: again.ok, id: again.id, duplicate: again.duplicate }, { ok: true, id: first.record.id, duplicate: true });
+    assert.strictEqual(store.list().length, 1);
+    const other = scheduler.add('t1', 'on context 150k', '[agent:context compact]');
+    assert.strictEqual(other.ok, true);
+    assert.strictEqual(other.duplicate, undefined);
+    assert.strictEqual(store.list().length, 2);
+    assert.strictEqual(scheduler.add('t2', 'on context 150k', '[agent:context clear]').duplicate, undefined);
+    assert.strictEqual(store.list().length, 3);
+  } finally { cleanup(); }
+});
+
+test('add: a timed row stamped by an earlier seat of the name is not a duplicate; an event-kind row still is', () => {
+  const { scheduler, store, cleanup } = freshEngine(T0);
+  try {
+    const old = scheduler.add('t1', 'every 30m', 'x', { born: 1000 });
+    const fresh = scheduler.add('t1', 'every 30m', 'x', { born: 2000 });
+    assert.strictEqual(fresh.ok, true);
+    assert.strictEqual(fresh.duplicate, undefined);
+    assert.notStrictEqual(fresh.record.id, old.record.id);
+    assert.strictEqual(store.list().length, 2);
+    const ctxOld = scheduler.add('t1', 'on context 150k', 'x', { born: 1000 });
+    const ctxNew = scheduler.add('t1', 'on context 150k', 'x', { born: 2000 });
+    assert.deepStrictEqual({ duplicate: ctxNew.duplicate, id: ctxNew.id }, { duplicate: true, id: ctxOld.record.id });
+    assert.strictEqual(store.list().length, 3);
+  } finally { cleanup(); }
+});
+
+test('add: an operator row and a seat row with the same spec and body are not duplicates of each other', () => {
+  const { scheduler, store, cleanup } = freshEngine(T0);
+  try {
+    scheduler.add('t1', 'every 30m', 'x', { by: 'operator' });
+    assert.strictEqual(scheduler.add('t1', 'every 30m', 'x').duplicate, undefined);
+    assert.strictEqual(scheduler.add('t1', 'every 30m', 'x', { by: 'operator' }).duplicate, true);
+    assert.strictEqual(store.list().length, 2);
   } finally { cleanup(); }
 });
 
@@ -248,7 +311,7 @@ test('on context: a percent record is not crossed by a tok-only read, only by pc
     assert.ok(store.get(r.record.id), 'ENTER: still armed below its pct');
     assert.strictEqual(scheduler.fireContextFor('t1', { tok: 1, pct: 80 }), 1);
     assert.strictEqual(fires.length, 1);
-    assert.strictEqual(store.get(r.record.id), null);
+    assert.strictEqual(store.get(r.record.id).armed, false);
   } finally { cleanup(); }
 });
 
@@ -499,13 +562,13 @@ function fireNowEngine(startMs) {
   };
 }
 
-test('fireNow: an on context row delivers once and is removed', () => {
+test('fireNow: an on context row delivers once and is kept', () => {
   const { scheduler, delivered, store, cleanup } = fireNowEngine(T0);
   try {
     const r = scheduler.add('t1', 'on context 80%', 'clear with a briefing');
-    assert.deepStrictEqual(scheduler.fireNow('t1', r.record.id), { ok: true, kept: false });
+    assert.deepStrictEqual(scheduler.fireNow('t1', r.record.id), { ok: true, kept: true });
     assert.deepStrictEqual(delivered, [{ agent: 't1', id: r.record.id, spec: 'on context 80%', body: 'clear with a briefing', by: undefined }]);
-    assert.strictEqual(store.get(r.record.id), null);
+    assert.strictEqual(store.get(r.record.id).id, r.record.id);
   } finally { cleanup(); }
 });
 

@@ -364,7 +364,12 @@ inject queue to empty (capped at `INJECT_BOOT_MAXWAIT` past the edge), so a spaw
 Reminders are stamped with the setting seat's birth (`born`, from `_bornFor`): a
 fire whose stamp differs from the seat now holding the name is dropped and its
 row removed (`_deliverReminder` returns `'gone'`), and deleting or forgetting a
-seat removes its rows (`dropReminders`). Unstamped rows deliver as before.
+seat removes its rows (`dropReminders`). Unstamped rows deliver as before. Event
+kinds (`onctx`, `oncompact`) skip the stamp check: they are delivered to whichever
+seat holds the name now. `add` discards a reminder identical to one the seat
+already holds (same kind, spec up to case and whitespace, body and setter, and for
+a timed kind the same stamp) and returns the existing id with `duplicate: true`;
+for a relative `in` the earlier row is kept, so it fires at its own time.
 An offline seat with no parked-mail drain (a Codex or Muse PTY record: `caps.park` false, not `io: 'stream'`) gets `'deferred'`: nothing is parked and `_fireRecord` keeps the row with a retry `RETRY_MS` (60s) later, as it does for a one-shot whose deliver returned `'error'` or threw.
 
 ## 4. DM federation (`name@origin`)

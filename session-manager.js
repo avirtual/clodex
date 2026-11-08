@@ -7473,6 +7473,10 @@ function createSessionManager(deps) {
         this._broadcast('ipc-message', { type: 'remind', from: who, to: who, body: `err: ${r.error}` });
         return;
       }
+      if (r.duplicate) {
+        log.info('intent', `remind dup by ${who}: ${r.id} kept`);
+        return;
+      }
       log.info('intent', `remind ${r.record.kind} by ${who}: scheduled ${r.record.id}`);
       this._broadcast('ipc-message', { type: 'remind', from: who, to: who, body: `scheduled ${r.record.id} (${spec})` });
     }
@@ -9296,9 +9300,10 @@ function createSessionManager(deps) {
       return written.map((w) => w.file);
     }
 
-    _deliverReminder(agent, body, born = null) {
+    _deliverReminder(agent, body, born = null, { kind } = {}) {
       const seatBorn = this._bornFor(agent);
-      if (typeof born === 'number' && typeof seatBorn === 'number' && born !== seatBorn) {
+      const eventKind = kind === 'onctx' || kind === 'oncompact';
+      if (!eventKind && typeof born === 'number' && typeof seatBorn === 'number' && born !== seatBorn) {
         log.info('intent', `remind fire for ${agent} dropped — set by seat born ${born}, name now held by seat born ${seatBorn}`);
         return 'gone';
       }
