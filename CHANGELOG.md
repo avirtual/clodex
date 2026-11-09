@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 - Sidebar Minimal filter: a group header shows a red count of hidden ephemeral seats that are working (tooltip names them; click shows them), so a node is not mistaken for idle before a reboot.
+- Team lead prompt: a new "Who does the work" section routes work by the judgment it needs (scout for bounded lookups, a mid-tier seat for a whole investigation, probe only for reads that need the lead's context) and bans harness subagents and forks on the lead's own model. Reaches leads spawned after the upgrade; a team that keeps its own copy of the lead prompt must resync it.
 
 ## 5.164.4 — 2026-11-08
 

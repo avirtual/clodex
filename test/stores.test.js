@@ -2604,6 +2604,17 @@ test('seed: shipped team prompts pair the spec base-commit check', () => {
     'lead is told to supply the commit the hand checks against');
 });
 
+test('seed: the lead prompt routes work by tier and bans same-model subagents', () => {
+  const lead = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-lead.md'), 'utf-8');
+  const protect = lead.indexOf('## The one number you protect');
+  const who = lead.indexOf('## Who does the work');
+  const rules = lead.indexOf('## Delegation rules');
+  assert.ok(protect >= 0 && rules >= 0, 'both neighbour headings present');
+  assert.ok(protect < who && who < rules, 'Who does the work sits between the two');
+  assert.ok(lead.includes('Never run a harness subagent or a fork on your own model'));
+  assert.ok(!lead.includes('throwaway subagent'));
+});
+
 test('seed: the hand prompt delegates lookups and keeps red-proofs on the monitor', () => {
   const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
   assert.match(hand, /Delegate lookups: spawn `clodex-agents:clodex-locate`/,
