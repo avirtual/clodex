@@ -13,6 +13,7 @@ blocks a release.
 
 ## Unreleased
 - Sidebar Minimal filter: a group header shows a red count of hidden ephemeral seats that are working (tooltip names them; click shows them), so a node is not mistaken for idle before a reboot.
+- Team hand prompt: the lookup rule now delegates reading the spec did not map (callers, pins, pattern surveys, or a question still open after three reads) instead of triggering on how many files a spec names, which hands never followed.
 
 ## 5.164.4 — 2026-11-08
 

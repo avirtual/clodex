@@ -17,6 +17,13 @@ function bullet(text, head) {
   return text.slice(at, next < 0 ? undefined : at + 1 + next);
 }
 
+test('the hand prompt delegates unmapped reading, not a file count, and drops the cheap-context claim', () => {
+  assert.ok(hand.includes('a question still open'), 'the open-question trigger is named');
+  assert.ok(hand.includes('clodex-agents:clodex-locate'), 'and the agent it hands the survey to');
+  assert.ok(!hand.includes('names more than two files'), 'the file-count trigger is gone');
+  assert.ok(!hand.includes('yours is cheap'), 'the opening no longer calls the hand context cheap');
+});
+
 test('C11: a blocked hand dms its lead urgently', () => {
   assert.match(hand, /dm <lead> urgent/);
 });

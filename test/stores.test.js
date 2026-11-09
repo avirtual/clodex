@@ -2606,7 +2606,7 @@ test('seed: shipped team prompts pair the spec base-commit check', () => {
 
 test('seed: the hand prompt delegates lookups and keeps red-proofs on the monitor', () => {
   const hand = fs.readFileSync(path.join(REPO_SYSTEM_DIR, 'clodex-team-hand.md'), 'utf-8');
-  assert.match(hand, /Delegate lookups: spawn `clodex-agents:clodex-locate`/,
+  assert.match(hand, /Hand a survey to\s+`clodex-agents:clodex-locate`/,
     'the prompt names what to hand off, and the baked agent that takes it');
   assert.match(hand, /Never delegate an edit or a commit/,
     'and what must stay on the hand itself');
