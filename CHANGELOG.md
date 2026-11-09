@@ -17,6 +17,7 @@ blocks a release.
 - Team hand prompt: the lookup rule now delegates reading the spec did not map (callers, pins, pattern surveys, or a question still open after three reads) instead of triggering on how many files a spec names, which hands never followed.
 - Team lead prompt: a new "Who does the work" section routes work by the judgment it needs (scout for bounded lookups, a mid-tier seat for a whole investigation, probe only for reads that need the lead's context) and bans harness subagents and forks on the lead's own model. Reaches leads spawned after the upgrade; a team that keeps its own copy of the lead prompt must resync it.
 - Vendored wirescope v0.6.86: the proxy prices Fable 5.2 and Mythos 5.2 (standard and fast mode); Clodex's own fast-mode table gains the Mythos 5.2 row to match.
+- Team popover: right-clicking a team header shows the popover at once with a loading state instead of after eleven sequential loads, and a second click can no longer race the first.
 
 ## 5.164.4 — 2026-11-08
 
