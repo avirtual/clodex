@@ -879,7 +879,7 @@ function createTicketMethods(deps, shared) {
 
     teamActivity(teamName) {
       const team = loadManifest(teamName);
-      const tickets = ticketsStore.load(team.root).filter((t) => t && t.id);
+      const tickets = ticketsStore.read(team.root).filter((t) => t && t.id);
 
       const roles = {};
       for (const [key, def] of Object.entries(team.roles || {})) {
