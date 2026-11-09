@@ -325,7 +325,7 @@ function createRemoteWiring(deps) {
     for (const team of names) {
       let root;
       try { root = loadManifest(team).root; } catch { continue; }
-      for (const t of ticketsStore.load(root)) {
+      for (const t of ticketsStore.read(root)) {
         if (t && t.id) out.push({ ...t, team });
       }
     }

@@ -845,7 +845,7 @@ function createTicketMethods(deps, shared) {
       } catch { seats.add('<persisted-seat check unavailable>'); }
       const tickets = [];
       try {
-        for (const tk of ticketsStore.load(team.root)) {
+        for (const tk of ticketsStore.read(team.root)) {
           if (!tk || (tk.role !== roleKey && tk.assignee !== roleKey)) continue;
           if (tk.state === 'open' || (tk.state === 'done' && (tk.loopStep || tk.mergeWaiting))) tickets.push(tk.id);
         }
@@ -1118,7 +1118,7 @@ function createTicketMethods(deps, shared) {
       if (!seat) { reply('error: unbind needs a seat — [agent:team unbind <seat>]'); return; }
       let ids = [];
       try {
-        const board = ticketsStore.load(team.root);
+        const board = ticketsStore.read(team.root);
         ids = board.filter((t) => t && t.state === 'open' && t.assignee === seat).map((t) => t.id);
         ids = [...new Set([...ids, ...this._openTicketsFor(team, seat).map((t) => t.id)])];
       } catch { ids = ['<ticket check unavailable>']; }
@@ -1738,7 +1738,7 @@ function createTicketMethods(deps, shared) {
         try { team = loadManifest(name); } catch { continue; }
         if (!team || !team.root) continue;
         let tickets;
-        try { tickets = ticketsStore.load(team.root); } catch { continue; }
+        try { tickets = ticketsStore.read(team.root); } catch { continue; }
         const own = this._ownRowFilter(team);
         for (const t of tickets) {
           if (!isWaiting(t) || !own(t)) continue;
@@ -2948,7 +2948,7 @@ function createTicketMethods(deps, shared) {
     _liveHandCount(team) {
       const inflight = this._capInflight || (this._capInflight = new Set());
       const names = new Set();
-      const tickets = ticketsStore.load(team.root);
+      const tickets = ticketsStore.read(team.root);
       const holdsUnaccepted = (name) => tickets.some((t) => t.assignee === name && t.startedAt
         && (t.state === 'open' || (t.state === 'done' && !t.acceptedAt)));
       for (const s of this.sessions.values()) {
@@ -2979,7 +2979,7 @@ function createTicketMethods(deps, shared) {
       if (!lead || lead.name !== team.lead) return;
       const num = (t) => Number(String(t.id).replace(/^t/, '')) || 0;
       const own = this._ownRowFilter(team);
-      const queue = ticketsStore.load(team.root)
+      const queue = ticketsStore.read(team.root)
         .filter((t) => own(t) && t.state === 'open' && t.parked && t.parkedBy === 'cap')
         .sort((a, b) => num(a) - num(b));
       const reply = (msg) => this._injectText(lead, `[agent:task] cap freed: ${msg}`, { parkable: true });
@@ -3556,7 +3556,7 @@ function createTicketMethods(deps, shared) {
         try { team = loadManifest(name); } catch { continue; }
         if (!team || !team.root || team.sandboxed) continue;
         let tickets;
-        try { tickets = ticketsStore.load(team.root); } catch { continue; }
+        try { tickets = ticketsStore.read(team.root); } catch { continue; }
         if (!tickets.some((t) => t.id === ticketId && t.assignee === senderTag && (!t.team || t.team === team.name))) continue;
         const pseudo = { name: senderTag, cwd: team.root, agentType: null, remote: true };
         let captured = null;
@@ -6865,7 +6865,7 @@ function createTicketMethods(deps, shared) {
       const lead = this.sessions.get(team.lead);
       if (!lead) return;
       let rec = null;
-      try { rec = ticketsStore.load(team.root).find((t) => t.id === ticketId) || null; } catch {}
+      try { rec = ticketsStore.read(team.root).find((t) => t.id === ticketId) || null; } catch {}
       if (!rec || !rec.loopStep) return;
       (lead._parkedEscalations || (lead._parkedEscalations = new Map())).set(ticketId, { team, step: rec.loopStep });
     },
@@ -6878,7 +6878,7 @@ function createTicketMethods(deps, shared) {
         if (texts.some((t) => t.includes(tag))) continue;
         s._parkedEscalations.delete(ticketId);
         let rec = null;
-        try { rec = ticketsStore.load(team.root).find((t) => t.id === ticketId) || null; } catch {}
+        try { rec = ticketsStore.read(team.root).find((t) => t.id === ticketId) || null; } catch {}
         if (!rec || rec.loopStep !== step) continue;
         this._setLoopStep(team, ticketId, null);
         log.info('ticket', `ticket ${ticketId} parked escalation drained by ${s.name} — loopStep ${step} released`);
@@ -7738,7 +7738,7 @@ function createTicketMethods(deps, shared) {
     },
 
     _taskListText(team, filter, now, own = null) {
-      const board = ticketsStore.load(team.root).slice().sort((a, b) => {
+      const board = ticketsStore.read(team.root).slice().sort((a, b) => {
         const na = Number(String(a.id).replace(/^t/, '')) || 0;
         const nb = Number(String(b.id).replace(/^t/, '')) || 0;
         return na - nb;
@@ -8170,7 +8170,7 @@ function createTicketMethods(deps, shared) {
 
     _alarmCapParked(team, ticket, now, stallMs) {
       const tid = ticket.id;
-      const t = ticketsStore.load(team.root).find((x) => x.id === tid);
+      const t = ticketsStore.read(team.root).find((x) => x.id === tid);
       if (!t || t.state !== 'open' || !t.parked || t.parkedBy !== 'cap') return;
       const last = t.lastActivityAt || t.openedAt || now;
       if (now - last < stallMs) return;

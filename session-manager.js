@@ -4227,7 +4227,7 @@ function createSessionManager(deps) {
       if (team) {
         let ids;
         try {
-          const board = ticketsStore.load(team.root);
+          const board = ticketsStore.read(team.root);
           const byName = board.filter((t) => t && t.state === 'open' && t.assignee === name).map((t) => t.id);
           ids = [...new Set([...byName, ...this._openTicketsFor(team, name).map((t) => t.id)])];
         } catch { ids = ['<ticket check unavailable>']; }
