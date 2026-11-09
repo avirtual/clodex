@@ -423,11 +423,12 @@ test('t702 wiring: the popover loads the uses map on every refresh and renders a
 
   const refresh = src.slice(src.indexOf('async function refresh'));
   const body = refresh.slice(0, refresh.indexOf('\n  }\n'));
-  assert.ok(/await loadUses\(res\.team\.name, Object\.keys\(\(res\.team && res\.team\.roles\) \|\| \{\}\)\)/.test(body),
+  assert.ok(/loadUses\(r\.team\.name, Object\.keys\(\(r\.team && r\.team\.roles\) \|\| \{\}\)\)/.test(body),
     'refresh loads the uses map with the manifest role keys, so a Gather apply flips the badges');
   // The CALL, not the bare word: `renderRows` is named in a comment further up
   // this same body, and matching that instead made the ordering unassertable.
-  assert.ok(body.indexOf('await loadUses') < body.indexOf('renderRows(res.team)'),
+  assert.ok(body.indexOf('loadUses(r.team') < body.indexOf('apply()')
+    && body.indexOf('apply()') < body.indexOf('renderRows(res.team)'),
     'and it loads BEFORE renderRows, or the rows paint the previous team\'s badges');
 
   assert.ok(/team-role-badge team-role-where \$\{u\.where\}/.test(src), 'each piece gets a where-badge');
