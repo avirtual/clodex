@@ -29,3 +29,17 @@ already ruled out "no items at all" by returning `null`.
 Two placeholders seen in real ACCEPT verdicts (t1105): `(empty)` and `(none blocking)`.
 The `none` arm takes at most three qualifier words, so a sentence that merely starts
 with "none" (`none of the guards are checked`) still counts as a must-fix.
+
+## read
+
+The shared parse, cached per board path on `statSync`'s `mtimeMs` + `size` and
+deep-frozen, so a caller that mutates it throws instead of corrupting the next
+reader. `load` stays a fresh parse per call for every load-mutate-save path.
+Measured on a 26 MB, 2,190-ticket board: a miss costs ~79 ms (parse + freeze,
+freeze ~8 ms), a hit ~0.1 ms.
+
+## boardCache
+
+`save` drops the parse and keeps only the written file's stat as a known-valid
+marker, so the next `save`'s `refuseReason` skips its own full parse while the
+file is unchanged; the next `read` parses once.

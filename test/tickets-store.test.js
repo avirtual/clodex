@@ -501,3 +501,99 @@ test('ticketTitle keeps the board listing\'s 80-char cap: 77 characters plus an 
   assert.strictEqual(ticketTitle('w'.repeat(80)), 'w'.repeat(80));
   assert.strictEqual(ticketTitle('w'.repeat(81)), `${'w'.repeat(77)}…`);
 });
+
+function countingStore(home) {
+  const reads = [];
+  const spyFs = { ...fs, readFileSync: (file, ...rest) => { reads.push(String(file)); return fs.readFileSync(file, ...rest); } };
+  const store = createTicketsStore({ fs: spyFs, clodexHome: home });
+  return { store, boardReads: (root) => reads.filter((f) => f === store.ticketsPath(root)).length };
+}
+
+function writeBoard(store, root, tickets) {
+  fs.mkdirSync(path.dirname(store.ticketsPath(root)), { recursive: true });
+  fs.writeFileSync(store.ticketsPath(root), JSON.stringify(tickets));
+}
+
+test('tickets-store read: two reads of an unchanged board read and parse it once', () => {
+  const root = tmpRoot();
+  const { store, boardReads } = countingStore(tmpHome());
+  writeBoard(store, root, [{ id: 't1', title: 'a' }]);
+  const first = store.read(root);
+  const second = store.read(root);
+  assert.deepStrictEqual(second, [{ id: 't1', title: 'a' }]);
+  assert.strictEqual(second, first);
+  assert.strictEqual(boardReads(root), 1);
+});
+
+test('tickets-store read: a save drops the cached parse and keeps a valid-file marker for the next save', () => {
+  const root = tmpRoot();
+  const { store, boardReads } = countingStore(tmpHome());
+  store.save(root, [{ id: 't1', title: 'old' }]);
+  assert.deepStrictEqual(store.read(root), [{ id: 't1', title: 'old' }]);
+  const written = [{ id: 't1', title: 'new' }, { id: 't2', title: 'more' }];
+  const before = boardReads(root);
+  store.save(root, written);
+  assert.strictEqual(boardReads(root), before, 'the save trusts the cached stat instead of re-parsing the board');
+  const after = store.read(root);
+  assert.deepStrictEqual(after, written);
+  assert.notStrictEqual(after, written, 'the saved object is not adopted as the cache');
+  assert.strictEqual(boardReads(root), before + 1);
+  const third = [{ id: 't3' }];
+  store.save(root, third);
+  const fourth = [{ id: 't4' }];
+  store.save(root, fourth);
+  assert.strictEqual(boardReads(root), before + 1, 'a save right after a save skips the refuse-check parse');
+  fourth[0].id = 'mutated after save';
+  assert.deepStrictEqual(store.read(root), [{ id: 't4' }]);
+  assert.strictEqual(boardReads(root), before + 2);
+});
+
+test('tickets-store read: an external rewrite with a different size is seen', () => {
+  const root = tmpRoot();
+  const { store } = countingStore(tmpHome());
+  writeBoard(store, root, [{ id: 't1' }]);
+  assert.deepStrictEqual(store.read(root), [{ id: 't1' }]);
+  writeBoard(store, root, [{ id: 't1' }, { id: 't2' }]);
+  assert.deepStrictEqual(store.read(root), [{ id: 't1' }, { id: 't2' }]);
+});
+
+test('tickets-store read: an external rewrite with the same size and a later mtime is seen', () => {
+  const root = tmpRoot();
+  const { store } = countingStore(tmpHome());
+  const file = store.ticketsPath(root);
+  writeBoard(store, root, [{ id: 't1', title: 'aaaa' }]);
+  const was = fs.statSync(file);
+  assert.deepStrictEqual(store.read(root), [{ id: 't1', title: 'aaaa' }]);
+  writeBoard(store, root, [{ id: 't1', title: 'bbbb' }]);
+  fs.utimesSync(file, was.atime, new Date(was.mtimeMs + 5000));
+  assert.strictEqual(fs.statSync(file).size, was.size);
+  assert.deepStrictEqual(store.read(root), [{ id: 't1', title: 'bbbb' }]);
+});
+
+test('tickets-store read: a caller mutating the shared parse cannot change what the next reader gets', () => {
+  const root = tmpRoot();
+  const { store } = countingStore(tmpHome());
+  writeBoard(store, root, [{ id: 't1', events: [{ kind: 'add' }] }]);
+  const got = store.read(root);
+  assert.throws(() => { got[0].state = 'closed'; }, TypeError);
+  assert.throws(() => { got[0].events.push({ kind: 'x' }); }, TypeError);
+  assert.throws(() => { got.push({ id: 't2' }); }, TypeError);
+  const own = store.load(root);
+  own[0].state = 'closed';
+  own.push({ id: 't2' });
+  assert.deepStrictEqual(store.read(root), [{ id: 't1', events: [{ kind: 'add' }] }]);
+});
+
+test('tickets-store read: a missing or unparseable board reads as empty, as load does', () => {
+  const root = tmpRoot();
+  const { store } = countingStore(tmpHome());
+  assert.deepStrictEqual(store.read(root), []);
+  fs.mkdirSync(path.dirname(store.ticketsPath(root)), { recursive: true });
+  fs.writeFileSync(store.ticketsPath(root), '{not json');
+  assert.deepStrictEqual(store.read(root), []);
+  assert.deepStrictEqual(store.load(root), []);
+  fs.writeFileSync(store.ticketsPath(root), '{"a":1}');
+  assert.deepStrictEqual(store.read(root), []);
+  writeBoard(store, root, [{ id: 't9' }]);
+  assert.deepStrictEqual(store.read(root), [{ id: 't9' }]);
+});

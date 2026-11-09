@@ -29,7 +29,55 @@ function createTicketsStore({ fs = require('fs'), path = require('path'), clodex
     }
   }
 
+  const boardCache = new Map();
+
+  function statKey(file) {
+    try {
+      const st = fs.statSync(file);
+      return { mtimeMs: st.mtimeMs, size: st.size };
+    } catch {
+      return null;
+    }
+  }
+
+  function sameKey(a, b) {
+    return !!a && !!b && a.mtimeMs === b.mtimeMs && a.size === b.size;
+  }
+
+  function deepFreeze(root) {
+    const stack = [root];
+    while (stack.length) {
+      const o = stack.pop();
+      Object.freeze(o);
+      for (const k in o) {
+        const v = o[k];
+        if (v !== null && typeof v === 'object' && !Object.isFrozen(v)) stack.push(v);
+      }
+    }
+    return root;
+  }
+
+  function read(projectRoot) {
+    const file = ticketsPath(projectRoot);
+    const key = statKey(file);
+    const hit = boardCache.get(file);
+    if (hit && hit.tickets && sameKey(hit.key, key)) return hit.tickets;
+    boardCache.delete(file);
+    let arr;
+    try {
+      arr = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    } catch {
+      return Object.freeze([]);
+    }
+    if (!Array.isArray(arr)) return Object.freeze([]);
+    deepFreeze(arr);
+    if (key) boardCache.set(file, { key, tickets: arr });
+    return arr;
+  }
+
   function refuseReason(file) {
+    const hit = boardCache.get(file);
+    if (hit && sameKey(hit.key, statKey(file))) return null;
     let raw;
     try {
       raw = fs.readFileSync(file, 'utf-8');
@@ -51,10 +99,13 @@ function createTicketsStore({ fs = require('fs'), path = require('path'), clodex
     const reason = refuseReason(file);
     if (reason) throw new Error(`tickets board at ${file} is ${reason}; refusing to overwrite`);
     ensureDir(boardDir(projectRoot));
+    boardCache.delete(file);
     atomicWriteFileSync(file, JSON.stringify(tickets, null, 2));
+    const key = statKey(file);
+    if (key) boardCache.set(file, { key, tickets: null });
   }
 
-  return { load, save, ticketsPath };
+  return { load, read, save, ticketsPath };
 }
 
 // Closed records stay in the array so max+1 never reuses an id: an id is a public

@@ -5152,7 +5152,7 @@ function createSessionManager(deps) {
         try {
           const t = resolvedTeamFor(s);
           if (!t || !t.root) return null;
-          if (!ticketsByRoot.has(t.root)) ticketsByRoot.set(t.root, ticketsStore.load(t.root));
+          if (!ticketsByRoot.has(t.root)) ticketsByRoot.set(t.root, ticketsStore.read(t.root));
           const role = roleFor(s);
           const live = liveSeatsFor(t);
           // Same filter as _reconcileTickets: a term missing there shows the ticket on first paint
