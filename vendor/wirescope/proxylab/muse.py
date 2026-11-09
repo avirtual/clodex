@@ -264,7 +264,9 @@ def learn_catalog(body, now=None):
     if models:
         _MUSE_STATS["catalog_learned_at"] = round(now if now is not None else time.time(), 3)
         _MUSE_STATS["catalog_models"] = models
-        unpriced = [m for m in models if not any(m.startswith(p) for p in PRICES_META)]
+        unpriced = [m for m in models
+                    if not any(m.startswith(p) and not m[len(p):len(p) + 1].isdigit()
+                               for p in PRICES_META)]
         if unpriced:
             print(f"[muse] catalog names {unpriced} with no PRICES_META row — "
                   "their traffic will be unpriced (catalog carries no cost)", flush=True)
