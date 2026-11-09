@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 - Sidebar Minimal filter: a group header shows a red count of hidden ephemeral seats that are working (tooltip names them; click shows them), so a node is not mistaken for idle before a reboot.
 - Claude Fable 5.2: priced (`$8/$40`, cache read `$0.20`) instead of falling through to the Fable 5.0 row, context nudges at 200k/250k like 5.1, and the `fable` model alias now means 5.2.
+- Vendored wirescope v0.6.86: the proxy prices Fable 5.2 and Mythos 5.2 (standard and fast mode); Clodex's own fast-mode table gains the Mythos 5.2 row to match.
 
 ## 5.164.4 — 2026-11-08
 
