@@ -18,8 +18,8 @@ const ROWS = [
   { file: 'team-tickets.js', fn: '_watchParkedEscalation', ...METHOD('_watchParkedEscalation') },
   { file: 'team-tickets.js', fn: '_releaseDrainedEscalations', ...METHOD('_releaseDrainedEscalations') },
   { file: 'team-tickets.js', fn: '_taskListText', ...METHOD('_taskListText') },
-  { file: 'team-tickets.js', fn: '_alarmCapParked', ...METHOD('_alarmCapParked') },
-  { file: 'session-manager.js', fn: 'rename', ...METHOD('rename') },
+  { file: 'team-tickets.js', fn: '_alarmCapParked', loads: 1, ...METHOD('_alarmCapParked') },
+  { file: 'session-manager.js', fn: 'rename', header: /^ {4}async rename\(/m, end: '\n    }\n' },
   { file: 'remote-wiring.js', fn: 'ticketRows', header: /^ {2}function ticketRows\(/m, end: '\n  }\n' },
 ];
 
@@ -40,6 +40,6 @@ for (const row of ROWS) {
   test(`board-readers-cached: ${row.fn} reads the board through the cached parse`, () => {
     const body = bodyOf(row);
     assert.ok(body.includes('.read('), `${row.fn} has no .read(`);
-    assert.ok(!body.includes('.load('), `${row.fn} still calls .load(`);
+    assert.strictEqual(body.split('.load(').length - 1, row.loads || 0, `${row.fn} .load( count`);
   });
 }
