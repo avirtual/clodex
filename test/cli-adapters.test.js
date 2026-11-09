@@ -267,7 +267,7 @@ test('clodent: the Messages-API CLI row — Claude model aliases, Claude efforts
     cmd: 'clodent',
     model: {
       flags: ['--model'],
-      aliases: { opus: 'claude-opus-5-5[1m]', sonnet: 'claude-sonnet-5-5[1m]', haiku: 'claude-haiku-5-5[1m]', fable: 'claude-fable-5-1[1m]' },
+      aliases: { opus: 'claude-opus-5-5[1m]', sonnet: 'claude-sonnet-5-5[1m]', haiku: 'claude-haiku-5-5[1m]', fable: 'claude-fable-5-2[1m]' },
       idRe: ADAPTERS.claude.model.idRe,
     },
     effort: { values: ['low', 'medium', 'high', 'xhigh', 'max'], apply: 'flag' },

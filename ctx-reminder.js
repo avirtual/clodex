@@ -60,6 +60,7 @@ const CTX_REMINDER_ESCALATE_TOKENS = 200_000;
 // operator's price data (2026-09-20).
 const CTX_MODEL_THRESHOLDS = new Map([
   ['fable-5-1', { nudge: 200_000, escalate: 250_000 }],
+  ['fable-5-2', { nudge: 200_000, escalate: 250_000 }],
   ['haiku-5-5', { nudge: 75_000, escalate: 100_000, stop: true }],
 ]);
 
