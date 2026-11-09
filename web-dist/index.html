@@ -47860,35 +47860,39 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           } catch {
             res = null;
           }
-          preflight = preflightByRole(res && res.ok ? res.findings : []);
+          return () => {
+            preflight = preflightByRole(res && res.ok ? res.findings : []);
+          };
         }
         let stockRoles = null;
         async function loadStockRoles() {
-          if (typeof window.api.teamStockRoles !== "function") {
+          if (typeof window.api.teamStockRoles !== "function") return () => {
             stockRoles = null;
-            return;
-          }
+          };
           let res;
           try {
             res = await window.api.teamStockRoles();
           } catch {
             res = null;
           }
-          stockRoles = res && res.ok ? res.roles : null;
+          return () => {
+            stockRoles = res && res.ok ? res.roles : null;
+          };
         }
         let activity = null;
         async function loadActivity(name) {
-          if (typeof window.api.teamActivity !== "function") {
+          if (typeof window.api.teamActivity !== "function") return () => {
             activity = null;
-            return;
-          }
+          };
           let res;
           try {
             res = await window.api.teamActivity(name);
           } catch {
             res = null;
           }
-          activity = res && res.ok ? res : null;
+          return () => {
+            activity = res && res.ok ? res : null;
+          };
         }
         let uses = null;
         async function loadUses(name, roleKeys) {
@@ -47898,29 +47902,32 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           } catch {
             res = null;
           }
-          if (!res || !res.ok) {
-            uses = null;
-            setStatus(res && res.error || "could not read what these roles use", true);
-            return;
-          }
-          uses = usesByRole(res.items, roleKeys);
+          return () => {
+            if (!res || !res.ok) {
+              uses = null;
+              setStatus(res && res.error || "could not read what these roles use", true);
+              return;
+            }
+            uses = usesByRole(res.items, roleKeys);
+          };
         }
         let leadSessions = [];
         let leadKnown = [];
         let currentRoot = "";
         let trunkInfo = null;
         async function loadTrunk(name) {
-          if (typeof window.api.teamTrunk !== "function") {
+          if (typeof window.api.teamTrunk !== "function") return () => {
             trunkInfo = null;
-            return;
-          }
+          };
           let res;
           try {
             res = await window.api.teamTrunk(name);
           } catch {
             res = null;
           }
-          trunkInfo = res && res.ok ? res : null;
+          return () => {
+            trunkInfo = res && res.ok ? res : null;
+          };
         }
         function buildTrunkField() {
           const wrap = document.createElement("div");
@@ -47953,20 +47960,14 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           return wrap;
         }
         async function loadLeadSeats() {
-          let live;
-          try {
-            live = await window.api.listSessions();
-          } catch {
-            live = null;
-          }
-          leadSessions = Array.isArray(live) ? live : [];
-          let known;
-          try {
-            known = await window.api.reservedSessionNames();
-          } catch {
-            known = null;
-          }
-          leadKnown = known && known.ok && Array.isArray(known.names) ? known.names : [];
+          const [live, known] = await Promise.all([
+            Promise.resolve().then(() => window.api.listSessions()).catch(() => null),
+            Promise.resolve().then(() => window.api.reservedSessionNames()).catch(() => null)
+          ]);
+          return () => {
+            leadSessions = Array.isArray(live) ? live : [];
+            leadKnown = known && known.ok && Array.isArray(known.names) ? known.names : [];
+          };
         }
         function buildLeadSeatBlock(manifest) {
           const box = document.createElement("div");
@@ -48528,25 +48529,33 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             }
           }
         }
-        async function refresh(teamName2) {
-          const res = await window.api.teamGet(teamName2);
+        async function refresh(teamName2, isCurrent = () => popover.dataset.name === teamName2) {
+          const got = Promise.resolve(window.api.teamGet(teamName2));
+          const usesLoad = got.then((r) => r && r.ok ? loadUses(r.team.name, Object.keys(r.team && r.team.roles || {})) : () => {
+          });
+          const [res, ...applies] = await Promise.all([
+            got,
+            loadPreflight(teamName2),
+            loadStockRoles(),
+            loadActivity(teamName2),
+            usesLoad,
+            loadLeadSeats(),
+            loadTrunk(teamName2)
+          ]);
+          if (!isCurrent()) return false;
           if (!res || !res.ok) {
             setStatus(res && res.error ? res.error : "team not found", true);
             return false;
           }
           nameEl.textContent = res.team.name;
           currentRoot = res.team.root || "";
-          await loadPreflight(res.team.name);
-          await loadStockRoles();
-          await loadActivity(res.team.name);
-          await loadUses(res.team.name, Object.keys(res.team && res.team.roles || {}));
-          await loadLeadSeats();
-          await loadTrunk(res.team.name);
+          for (const apply of applies) apply();
           renderRows(res.team);
           watchdogInput.value = res.team.watchdogMs != null ? formatDuration(res.team.watchdogMs) : "";
           return true;
         }
         const teamName = () => popover.dataset.name || null;
+        let openSeq = 0;
         async function afterMutation(res, okMsg, name) {
           if (teamName() !== name) return;
           if (!res || !res.ok) {
@@ -48568,13 +48577,15 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           } catch {
             res = null;
           }
-          promptsListingOk = !!(res && res.ok);
-          const prompts = res && res.prompts || [];
-          promptNames = prompts;
-          allPromptNames = res && res.all || [];
-          teamOwnedPrompts = res && res.teamOwned || [];
-          addPrompt.innerHTML = '<option value="">(no prompt)</option>';
-          appendPromptOptions(addPrompt, prompts, team);
+          return () => {
+            promptsListingOk = !!(res && res.ok);
+            const prompts = res && res.prompts || [];
+            promptNames = prompts;
+            allPromptNames = res && res.all || [];
+            teamOwnedPrompts = res && res.teamOwned || [];
+            addPrompt.innerHTML = '<option value="">(no prompt)</option>';
+            appendPromptOptions(addPrompt, prompts, team);
+          };
         }
         function appendPromptOptions(sel, names, team) {
           for (const group of promptOptionGroups(names, teamOwnedPrompts, team)) {
@@ -48600,7 +48611,9 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           } catch {
             rows = null;
           }
-          templateRows = Array.isArray(rows) ? rows : [];
+          return () => {
+            templateRows = Array.isArray(rows) ? rows : [];
+          };
         }
         let accountRows = [];
         async function populateAccountOptions() {
@@ -48610,7 +48623,9 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           } catch {
             res = null;
           }
-          accountRows = res && res.ok && Array.isArray(res.accounts) ? res.accounts : [];
+          return () => {
+            accountRows = res && res.ok && Array.isArray(res.accounts) ? res.accounts : [];
+          };
         }
         function paintAccountSelect(sel, stored) {
           if (!sel) return;
@@ -48628,33 +48643,52 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         }
         async function openTeamRolesPopover(name, anchorEl) {
           if (!popover.classList.contains("hidden") && !confirmDiscardRoleEdits(listEl, (m) => window.confirm(m))) return;
-          setStatus("");
+          const seq = ++openSeq;
+          const isCurrent = () => seq === openSeq;
+          const r = anchorRect(anchorEl);
+          const loadingStatus = "loading\u2026";
+          setStatus(loadingStatus);
           helpPanel.classList.add("hidden");
           resetDrag(popover);
-          await populatePromptOptions(name);
-          await populateTemplateOptions();
-          await populateAccountOptions();
-          paintAccountSelect(addAccount, "");
           expandedRole = null;
           setAddPanel(false);
           closeGatherPanel();
           watchdogSection.classList.add("hidden");
           settingsBtn.setAttribute("aria-expanded", "false");
           popover.dataset.name = name;
-          const ok = await refresh(name);
+          nameEl.textContent = name;
+          listEl.replaceChildren();
+          addPrompt.innerHTML = '<option value="">(no prompt)</option>';
+          watchdogInput.value = "";
+          popover.classList.remove("hidden");
+          const place = () => {
+            const w = popover.offsetWidth;
+            popover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
+            const wantTop = r.bottom + 6;
+            const maxTop = Math.max(8, window.innerHeight - popover.offsetHeight - 8);
+            popover.style.top = `${Math.min(wantTop, maxTop)}px`;
+            popover.style.bottom = "auto";
+          };
+          place();
+          let ok = false;
+          try {
+            const options = await Promise.all([populatePromptOptions(name), populateTemplateOptions(), populateAccountOptions()]);
+            if (!isCurrent()) return;
+            for (const apply of options) apply();
+            paintAccountSelect(addAccount, "");
+            ok = await refresh(name, isCurrent);
+          } catch (err) {
+            console.error("team roles popover: open failed", err);
+            ok = false;
+          }
+          if (!isCurrent()) return;
           if (!ok) {
             popover.dataset.name = "";
             popover.classList.add("hidden");
             return;
           }
-          popover.classList.remove("hidden");
-          const r = anchorRect(anchorEl);
-          const w = popover.offsetWidth;
-          popover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
-          const wantTop = r.bottom + 6;
-          const maxTop = Math.max(8, window.innerHeight - popover.offsetHeight - 8);
-          popover.style.top = `${Math.min(wantTop, maxTop)}px`;
-          popover.style.bottom = "auto";
+          if (statusEl.textContent === loadingStatus) setStatus("");
+          place();
         }
         listEl.addEventListener("click", async (e) => {
           const btn = e.target.closest("button[data-act]");

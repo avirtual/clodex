@@ -1644,7 +1644,7 @@ test('t792 wiring: the template listing is fetched once per open, and the field 
 
   const open = pop.slice(pop.indexOf('async function openTeamRolesPopover'));
   const openBody = open.slice(0, open.indexOf('\n  }\n'));
-  assert.match(openBody, /await populateTemplateOptions\(\)/,
+  assert.match(openBody, /populateTemplateOptions\(\)/,
     'the listing is fetched on OPEN — renderRows runs again per disclose and after every mutation');
   const rows = pop.slice(pop.indexOf('function renderRows'));
   assert.ok(!/window\.api\.listTemplates/.test(rows.slice(0, rows.indexOf('\n  }\n'))),

@@ -98,35 +98,37 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
   async function loadPreflight(name) {
     let res;
     try { res = await window.api.teamPreflight(name); } catch { res = null; }
-    preflight = preflightByRole(res && res.ok ? res.findings : []);
+    return () => { preflight = preflightByRole(res && res.ok ? res.findings : []); };
   }
 
   let stockRoles = null;
   async function loadStockRoles() {
-    if (typeof window.api.teamStockRoles !== 'function') { stockRoles = null; return; }
+    if (typeof window.api.teamStockRoles !== 'function') return () => { stockRoles = null; };
     let res;
     try { res = await window.api.teamStockRoles(); } catch { res = null; }
-    stockRoles = res && res.ok ? res.roles : null;
+    return () => { stockRoles = res && res.ok ? res.roles : null; };
   }
 
   let activity = null;
   async function loadActivity(name) {
-    if (typeof window.api.teamActivity !== 'function') { activity = null; return; }
+    if (typeof window.api.teamActivity !== 'function') return () => { activity = null; };
     let res;
     try { res = await window.api.teamActivity(name); } catch { res = null; }
-    activity = res && res.ok ? res : null;
+    return () => { activity = res && res.ok ? res : null; };
   }
 
   let uses = null;
   async function loadUses(name, roleKeys) {
     let res;
     try { res = await window.api.teamGather(name, { dry: true }); } catch { res = null; }
-    if (!res || !res.ok) {
-      uses = null;
-      setStatus((res && res.error) || 'could not read what these roles use', true);
-      return;
-    }
-    uses = usesByRole(res.items, roleKeys);
+    return () => {
+      if (!res || !res.ok) {
+        uses = null;
+        setStatus((res && res.error) || 'could not read what these roles use', true);
+        return;
+      }
+      uses = usesByRole(res.items, roleKeys);
+    };
   }
 
   // Who could be this team's lead, and does the current pointer resolve (t420).
@@ -152,10 +154,10 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
   let currentRoot = '';
   let trunkInfo = null;
   async function loadTrunk(name) {
-    if (typeof window.api.teamTrunk !== 'function') { trunkInfo = null; return; }
+    if (typeof window.api.teamTrunk !== 'function') return () => { trunkInfo = null; };
     let res;
     try { res = await window.api.teamTrunk(name); } catch { res = null; }
-    trunkInfo = res && res.ok ? res : null;
+    return () => { trunkInfo = res && res.ok ? res : null; };
   }
 
   function buildTrunkField() {
@@ -192,12 +194,14 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
   }
 
   async function loadLeadSeats() {
-    let live;
-    try { live = await window.api.listSessions(); } catch { live = null; }
-    leadSessions = Array.isArray(live) ? live : [];
-    let known;
-    try { known = await window.api.reservedSessionNames(); } catch { known = null; }
-    leadKnown = known && known.ok && Array.isArray(known.names) ? known.names : [];
+    const [live, known] = await Promise.all([
+      Promise.resolve().then(() => window.api.listSessions()).catch(() => null),
+      Promise.resolve().then(() => window.api.reservedSessionNames()).catch(() => null),
+    ]);
+    return () => {
+      leadSessions = Array.isArray(live) ? live : [];
+      leadKnown = known && known.ok && Array.isArray(known.names) ? known.names : [];
+    };
   }
 
   // The lead ROLE is locked; the SEAT filling it is not. Built as DOM nodes, not
@@ -1026,23 +1030,23 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     }
   }
 
-  async function refresh(teamName) {
-    const res = await window.api.teamGet(teamName);
-    if (!res || !res.ok) { setStatus(res && res.error ? res.error : 'team not found', true); return false; }
-    nameEl.textContent = res.team.name;
-    currentRoot = res.team.root || '';
+  async function refresh(teamName, isCurrent = () => popover.dataset.name === teamName) {
+    const got = Promise.resolve(window.api.teamGet(teamName));
+    const usesLoad = got.then((r) => (r && r.ok
+      ? loadUses(r.team.name, Object.keys((r.team && r.team.roles) || {}))
+      : () => {}));
     // BEFORE renderRows, and on every refresh rather than only on open: a role
     // whose prompt was just re-pointed by a Save must re-badge against the new
     // name, and a stale checklist accusing the previous value is worse than none.
-    await loadPreflight(res.team.name);
-    await loadStockRoles();
-    await loadActivity(res.team.name);
-    await loadUses(res.team.name, Object.keys((res.team && res.team.roles) || {}));
-    // Before renderRows, same reason as the preflight above: the lead row's
-    // status line is rendered FROM these listings, so a stale one would state a
-    // resolution the manifest no longer has.
-    await loadLeadSeats();
-    await loadTrunk(res.team.name);
+    const [res, ...applies] = await Promise.all([
+      got, loadPreflight(teamName), loadStockRoles(), loadActivity(teamName), usesLoad,
+      loadLeadSeats(), loadTrunk(teamName),
+    ]);
+    if (!isCurrent()) return false;
+    if (!res || !res.ok) { setStatus(res && res.error ? res.error : 'team not found', true); return false; }
+    nameEl.textContent = res.team.name;
+    currentRoot = res.team.root || '';
+    for (const apply of applies) apply();
     renderRows(res.team);
     // Show the stored (read-clamped) watchdog back in friendly units, not raw ms.
     watchdogInput.value = res.team.watchdogMs != null ? formatDuration(res.team.watchdogMs) : '';
@@ -1051,6 +1055,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
 
   // The current team name the popover is bound to (from the group header).
   const teamName = () => popover.dataset.name || null;
+  let openSeq = 0;
 
   async function afterMutation(res, okMsg, name) {
     if (teamName() !== name) return;
@@ -1082,13 +1087,15 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
   async function populatePromptOptions(team) {
     let res;
     try { res = await window.api.teamRolePrompts(team); } catch { res = null; }
-    promptsListingOk = !!(res && res.ok);
-    const prompts = (res && res.prompts) || [];
-    promptNames = prompts;
-    allPromptNames = (res && res.all) || [];
-    teamOwnedPrompts = (res && res.teamOwned) || [];
-    addPrompt.innerHTML = '<option value="">(no prompt)</option>';
-    appendPromptOptions(addPrompt, prompts, team);
+    return () => {
+      promptsListingOk = !!(res && res.ok);
+      const prompts = (res && res.prompts) || [];
+      promptNames = prompts;
+      allPromptNames = (res && res.all) || [];
+      teamOwnedPrompts = (res && res.teamOwned) || [];
+      addPrompt.innerHTML = '<option value="">(no prompt)</option>';
+      appendPromptOptions(addPrompt, prompts, team);
+    };
   }
 
   // Labels/values set by PROPERTY throughout (agent-writable strings must never
@@ -1113,14 +1120,14 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
   async function populateTemplateOptions() {
     let rows;
     try { rows = await window.api.listTemplates(); } catch { rows = null; }
-    templateRows = Array.isArray(rows) ? rows : [];
+    return () => { templateRows = Array.isArray(rows) ? rows : []; };
   }
 
   let accountRows = [];
   async function populateAccountOptions() {
     let res;
     try { res = await window.api.accountsList(); } catch { res = null; }
-    accountRows = (res && res.ok && Array.isArray(res.accounts)) ? res.accounts : [];
+    return () => { accountRows = (res && res.ok && Array.isArray(res.accounts)) ? res.accounts : []; };
   }
 
   function paintAccountSelect(sel, stored) {
@@ -1140,13 +1147,13 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
 
   async function openTeamRolesPopover(name, anchorEl) {
     if (!popover.classList.contains('hidden') && !confirmDiscardRoleEdits(listEl, (m) => window.confirm(m))) return;
-    setStatus('');
+    const seq = ++openSeq;
+    const isCurrent = () => seq === openSeq;
+    const r = anchorRect(anchorEl);
+    const loadingStatus = 'loading…';
+    setStatus(loadingStatus);
     helpPanel.classList.add('hidden'); // help starts collapsed on every open
     resetDrag(popover);                // a fresh open re-anchors; drop any drag offset
-    await populatePromptOptions(name);
-    await populateTemplateOptions();
-    await populateAccountOptions();
-    paintAccountSelect(addAccount, '');
     // Every open starts fully collapsed — the acceptance test (lead + hand +
     // reviewer + one custom role fitting without scrolling) is measured in this
     // state, so it must be the state an open lands in, not one the operator has
@@ -1161,18 +1168,32 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     watchdogSection.classList.add('hidden');
     settingsBtn.setAttribute('aria-expanded', 'false');
     popover.dataset.name = name;
-    const ok = await refresh(name);
-    if (!ok) { popover.dataset.name = ''; popover.classList.add('hidden'); return; } // not a team / unreadable → show nothing
+    nameEl.textContent = name;
+    listEl.replaceChildren();
+    addPrompt.innerHTML = '<option value="">(no prompt)</option>';
+    watchdogInput.value = '';
     popover.classList.remove('hidden');
-    // Anchor just below the header, clamped to the viewport. anchorRect absorbs
-    // the anchor-less open the Teams menu (t288) performs.
-    const r = anchorRect(anchorEl);
-    const w = popover.offsetWidth;
-    popover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
-    const wantTop = r.bottom + 6;
-    const maxTop = Math.max(8, window.innerHeight - popover.offsetHeight - 8);
-    popover.style.top = `${Math.min(wantTop, maxTop)}px`;
-    popover.style.bottom = 'auto';
+    const place = () => {
+      const w = popover.offsetWidth;
+      popover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
+      const wantTop = r.bottom + 6;
+      const maxTop = Math.max(8, window.innerHeight - popover.offsetHeight - 8);
+      popover.style.top = `${Math.min(wantTop, maxTop)}px`;
+      popover.style.bottom = 'auto';
+    };
+    place();
+    let ok = false;
+    try {
+      const options = await Promise.all([populatePromptOptions(name), populateTemplateOptions(), populateAccountOptions()]);
+      if (!isCurrent()) return;
+      for (const apply of options) apply();
+      paintAccountSelect(addAccount, '');
+      ok = await refresh(name, isCurrent);
+    } catch (err) { console.error('team roles popover: open failed', err); ok = false; }
+    if (!isCurrent()) return;
+    if (!ok) { popover.dataset.name = ''; popover.classList.add('hidden'); return; } // not a team / unreadable → show nothing
+    if (statusEl.textContent === loadingStatus) setStatus('');
+    place();
   }
 
   // Per-role actions (Save/Rename/Remove) via event delegation on the list.
