@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Team hand prompt: reads a needed function whole instead of in 60-line slices, which were a third of measured hand spend. Team lead prompt: one rule for probe versus scout (does the read need the lead's context). Reaches seats spawned after the upgrade; a team that keeps its own copy of either prompt must resync it.
+
 ## 5.165.0 — 2026-11-09
 - Sidebar Minimal filter: a group header shows a red count of hidden ephemeral seats that are working (tooltip names them; click shows them), so a node is not mistaken for idle before a reboot.
 - Claude Fable 5.2: priced (`$8/$40`, cache read `$0.20`) instead of falling through to the Fable 5.0 row, context nudges at 200k/250k like 5.1, and the `fable` model alias now means 5.2.

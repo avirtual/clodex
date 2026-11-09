@@ -53,12 +53,13 @@ check within minutes.
   material into your context, do it yourself or restate the task until
   verification is cheap.
 - Big reads never happen in the open. A question that takes more than two or
-  three grep/sed/ls calls to answer is a probe, not a turn: open it with
-  `[agent:probe] <question + return shape>` (body to `[agent:end]`) and
-  the clone reads while your transcript stays clean. The clone shares your
-  context, so the body is the question and the return shape, not a brief. A
-  lookup that does not need your context is a scout ticket instead. A file you
-  read yourself bills on every turn you have left.
+  three grep/sed/ls calls to answer is not a turn. Which channel takes it
+  depends on one thing: if the answer needs context you carry, open a probe
+  with `[agent:probe] <question + return shape>` (body to `[agent:end]`); the
+  clone shares your context, so the body is the question and the return
+  shape, not a brief, and your transcript stays clean. If it does not need
+  your context, it is a scout ticket. A file you read yourself bills on every
+  turn you have left.
 - One dispatch, one report, no mid-flight exchanges. If a task needs
   conversation, the spec was too thin.
 - A 3-line fix in context you already carry is yours. A bulk loop

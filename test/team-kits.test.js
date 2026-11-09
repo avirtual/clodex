@@ -79,7 +79,7 @@ test('kits/default/prompts/system/lead.md is byte-identical to the library lead 
 test('t1806: the lead prompt\'s Big-reads bullet says the scratch body is the question and the return shape, not a brief', () => {
   const lead = fs.readFileSync(path.join(LIB, 'prompts', 'system', 'clodex-team-lead.md'), 'utf-8').replace(/\s+/g, ' ');
   assert.ok(lead.includes('Big reads never happen in the open'), 'the bullet itself');
-  assert.ok(lead.includes('The clone shares your context, so the body is the question and the return shape, not a brief.'),
+  assert.ok(lead.includes('the clone shares your context, so the body is the question and the return shape, not a brief'),
     'a lead that thinks the clone is cold writes it a 300-word brief');
 });
 
