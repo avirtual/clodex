@@ -103,6 +103,9 @@ test('priceFor: fable-5-2 and mythos-5-2 own their rows and are not swallowed by
   }
   assert.equal(priceFor('claude-fable-5').cache_read, 1.00);
   assert.equal(priceFor('claude-mythos-5').cache_read, 1.00);
+  assert.equal(priceFor('claude-fable-5-20260601').cache_read, 1.00);
+  assert.equal(priceFor('claude-mythos-5-20260601').cache_read, 1.00);
+  assert.equal(priceFor('claude-fable-5-1-20260901').cache_read, 0.25);
   assert.deepEqual({ ...priceFor('claude-fable-5-2[1m]', { speed: 'fast' }) },
     { in: 16.0, out: 80.0, cache_write_5m: 20.0, cache_write_1h: 32.0, cache_read: 0.40 });
 });

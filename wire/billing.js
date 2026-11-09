@@ -139,7 +139,7 @@ function priceFor(model, { table = null, now = null, speed = null, promptTokens 
   if (!model) return null;
   let best = null;
   for (const [pfx, p] of Object.entries(table || PRICES)) {
-    if (model.startsWith(pfx) && (best === null || pfx.length > best[0].length)) {
+    if (model.startsWith(pfx) && !/[0-9]/.test(model.charAt(pfx.length)) && (best === null || pfx.length > best[0].length)) {
       best = [pfx, p];
     }
   }
