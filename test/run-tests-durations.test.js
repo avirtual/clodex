@@ -98,3 +98,10 @@ test('durations: an unwritable target changes neither exit code nor TOTALS line'
   assert.strictEqual(r.doc, null);
   assert.match(r.out, /^TOTALS: 2 pass, 0 fail, 2 tests$/m);
 });
+
+test('durations: the file and its temp name are git-ignored', () => {
+  for (const name of ['last-run-durations.json', 'last-run-durations.json.tmp']) {
+    const r = spawnSync('git', ['check-ignore', '-q', name], { cwd: ROOT });
+    assert.strictEqual(r.status, 0, `${name} must be ignored`);
+  }
+});
