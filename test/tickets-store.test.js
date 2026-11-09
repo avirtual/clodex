@@ -540,9 +540,12 @@ test('tickets-store read: a save drops the cached parse and keeps a valid-file m
   assert.strictEqual(boardReads(root), before + 1);
   const third = [{ id: 't3' }];
   store.save(root, third);
+  const fourth = [{ id: 't4' }];
+  store.save(root, fourth);
   assert.strictEqual(boardReads(root), before + 1, 'a save right after a save skips the refuse-check parse');
-  written[0].title = 'mutated after save';
-  assert.deepStrictEqual(store.read(root), third);
+  fourth[0].id = 'mutated after save';
+  assert.deepStrictEqual(store.read(root), [{ id: 't4' }]);
+  assert.strictEqual(boardReads(root), before + 2);
 });
 
 test('tickets-store read: an external rewrite with a different size is seen', () => {
