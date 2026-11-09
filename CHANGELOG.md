@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+- Test runner: a full run records each test file's duration, and `scripts/run-tests.js --durations` lists the 25 slowest from the last full run.
 
 ## 5.165.0 — 2026-11-09
 - Sidebar Minimal filter: a group header shows a red count of hidden ephemeral seats that are working (tooltip names them; click shows them), so a node is not mistaken for idle before a reboot.
