@@ -174,7 +174,8 @@ def _parse_response_meta(raw_bytes):
 # --- billing -----------------------------------------------------------------
 # Approximate public list prices, USD per 1M tokens. EDIT as rates change.
 # Matched by LONGEST model-name prefix (so "claude-opus-4-8" beats the legacy
-# bare "claude-opus-4" entry). est_usd is a DERIVED estimate; the authoritative
+# bare "claude-opus-4" entry) not followed by a digit, so "claude-fable-5-2" never
+# claims dated "claude-fable-5-20260601". est_usd is a DERIVED estimate; the authoritative
 # billing signal is the token breakdown itself. Write premiums: 5m=1.25x,
 # 1h=2x; reads=0.10x of input EXCEPT fable/mythos-5.1 and 5.2 (0.025x) and
 # opus-5.5 (0.05x) — a read rate is a per-row fact now, never derive it from `in`.
@@ -193,7 +194,7 @@ PRICES = {
     "claude-fable-5-1":  {"in": 10.0, "out": 50.0, "cache_write_5m": 12.5,  "cache_write_1h": 20.0, "cache_read": 0.25},
     "claude-mythos-5-1": {"in": 10.0, "out": 50.0, "cache_write_5m": 12.5,  "cache_write_1h": 20.0, "cache_read": 0.25},
     # fable/mythos 5.2 (2026-11-09, ids `claude-fable-5-2` / `claude-mythos-5-2`):
-    # $8/$40, writes 10/16, read 0.025x base ($0.20/MTok); no prompt-length tier.
+    # read 0.025x base ($0.20/MTok); no prompt-length tier.
     # Read off the Anthropic pricing page + fable-5-2 overview, 2026-11-09. SAME
     # TRAP AS 5.1: "claude-fable-5" IS a prefix of "claude-fable-5-2", so without
     # these rows 5.2 traffic silently prices at fable-5's $10/$50/$1.00 (reads 5x
@@ -313,8 +314,7 @@ _UNPRICED_WARNED = set()
 # reflects what was billed).
 # FAST MODE (research preview, beta `fast-mode-2026-02-01`): opus-5 / opus-4-8
 # run at a PREMIUM — $10/$50 vs $5/$25 — across the full context window. The
-# universal cache multipliers still apply on top (5m 1.25x, 1h 2x, read 0.1x),
-# so the effective row equals fable-5's. Detected from `usage.speed` on the
+# universal cache multipliers still apply on top. Detected from `usage.speed` on the
 # RESPONSE, which is authoritative for BILLING (the request's `speed:"fast"` is
 # only an ASK: opus-4-6 silently downgrades and a 429/529 can refuse it — in
 # both cases usage.speed says "standard" and standard rates are what's charged).
@@ -364,7 +364,10 @@ def _prompt_tokens(tokens):
 
 def _price_for(model, table=None, now=None, speed=None, *, prompt_tokens=None):
     """Longest-prefix match (the old first-dict-hit walk silently shadowed
-    "claude-opus-4-8" with the legacy "claude-opus-4" entry). None = unpriced.
+    "claude-opus-4-8" with the legacy "claude-opus-4" entry). A key matches only
+    where `model` ends or continues with a non-digit, so a minor-version key never
+    claims a dated id of its parent ("claude-fable-5-2" vs "claude-fable-5-20260601")
+    — the rule clodex's wire/billing.js priceFor uses. None = unpriced.
     Scheduled repricings (PRICES_DATED) overlay the base PRICES table once
     their effective date is reached; `now` is injectable for tests.
     `speed="fast"` (from the response's usage.speed) overlays the fast-mode
@@ -374,7 +377,8 @@ def _price_for(model, table=None, now=None, speed=None, *, prompt_tokens=None):
         return None
     best = None
     for pfx, p in (PRICES if table is None else table).items():
-        if model.startswith(pfx) and (best is None or len(pfx) > len(best[0])):
+        if (model.startswith(pfx) and not model[len(pfx):len(pfx) + 1].isdigit()
+                and (best is None or len(pfx) > len(best[0]))):
             best = (pfx, p)
     if best is None:
         return None
