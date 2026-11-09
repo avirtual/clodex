@@ -34,7 +34,7 @@ with "none" (`none of the guards are checked`) still counts as a must-fix.
 
 The shared parse, cached per board path on `statSync`'s `mtimeMs` + `size` and
 deep-frozen, so a caller that mutates it throws instead of corrupting the next
-reader. `load` stays a fresh parse per call for every load-mutate-save path.
+reader. `load` stays a fresh parse per call for every load-mutate-save path. A caller that only reads uses `read()`; one that changes and saves uses `load()`.
 Measured on a 26 MB, 2,190-ticket board: a miss costs ~79 ms (parse + freeze,
 freeze ~8 ms), a hit ~0.1 ms.
 
