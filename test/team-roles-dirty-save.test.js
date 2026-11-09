@@ -464,6 +464,8 @@ test('roles popover: an open overtaken by a newer one renders and applies nothin
     }, { realRefresh: true });
     env.window.api.teamGet = (n) => new Promise((resolve) => { gets[n] = resolve; });
     const a = open('team-a', {});
+    await new Promise(setImmediate);
+    assert.ok(gets['team-a'], 'ENTER: the first open is waiting on its team read');
     const b = open('team-b', {});
     await new Promise(setImmediate);
     gets['team-b']({ ok: true, team: { name: 'team-b', roles: {} } });
