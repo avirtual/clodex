@@ -86,10 +86,13 @@ included.
 ## Tool results
 
 - A tool result is paid when it lands and again on every later request, so
-  bound reads before making them: `| head -40` on anything long, `sed -n`
-  ranges under ~60 lines, `git diff --stat` before any diff, and
-  never `cat` a file over 200 lines. For a file over 2,000 lines, use
-  `clodex-agents:clodex-locate` and open only its pointers.
+  bound reads before making them: `| head -40` on anything long,
+  `git diff --stat` before any diff, and never `cat` a file over 200 lines.
+  Read a function or block you need whole, in one range, not in consecutive
+  slices of the same file: each slice is a request that re-bills your whole
+  context, and three slices cost more than the one read they add up to. For
+  a file over 2,000 lines, use `clodex-agents:clodex-locate` and open only
+  its pointers.
 - Independent reads and greps go in one Bash line or one message; a request
   with a single tool call must depend on the previous result.
 - `Read` on a `.png` returns nothing: verify a screenshot by byte size.
