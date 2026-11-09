@@ -402,7 +402,7 @@ test('roles popover: a mutation that lands after the popover re-bound to another
 
 function compileOpen(overrides = {}, { realRefresh = false } = {}) {
   const openBody = sliceBetween(POPOVER, '  async function openTeamRolesPopover(name, anchorEl) {', '\n  }\n');
-  const refreshBody = realRefresh ? sliceBetween(POPOVER, '  async function refresh(teamName, isCurrent = () => true) {', '\n  }\n') : '';
+  const refreshBody = realRefresh ? sliceBetween(POPOVER, '  async function refresh(teamName, isCurrent = () => popover.dataset.name === teamName) {', '\n  }\n') : '';
   const noop = () => {};
   const statusEl = { textContent: '' };
   const env = {
@@ -412,7 +412,7 @@ function compileOpen(overrides = {}, { realRefresh = false } = {}) {
     statusEl, setStatus: (m) => { statusEl.textContent = m || ''; }, nameEl: { textContent: '' },
     helpPanel: { classList: fakeClassList([]) }, resetDrag: noop,
     populatePromptOptions: async () => noop, populateTemplateOptions: async () => noop, populateAccountOptions: async () => noop,
-    paintAccountSelect: noop, addAccount: {}, setAddPanel: noop, closeGatherPanel: noop,
+    paintAccountSelect: noop, addAccount: {}, addPrompt: {}, console: { error: noop }, setAddPanel: noop, closeGatherPanel: noop,
     watchdogSection: { classList: fakeClassList([]) }, settingsBtn: { setAttribute: noop },
     refresh: async () => true, anchorRect: () => ({ left: 40, bottom: 100 }),
     currentRoot: '', renderRows: noop, watchdogInput: {}, formatDuration: String,
@@ -458,9 +458,11 @@ test('roles popover: an open overtaken by a newer one renders and applies nothin
     const gets = {};
     const rendered = [];
     const applied = [];
+    const optionsApplied = [];
     const { open, env } = compileOpen({
       renderRows: (team) => rendered.push(team.name),
       loadPreflight: async (n) => () => applied.push(n),
+      populatePromptOptions: async (n) => () => optionsApplied.push(n),
     }, { realRefresh: true });
     env.window.api.teamGet = (n) => new Promise((resolve) => { gets[n] = resolve; });
     const a = open('team-a', {});
@@ -476,7 +478,32 @@ test('roles popover: an open overtaken by a newer one renders and applies nothin
     assert.strictEqual(env.nameEl.textContent, 'team-b');
     assert.deepStrictEqual(rendered, ['team-b']);
     assert.deepStrictEqual(applied, ['team-b']);
+    assert.deepStrictEqual(optionsApplied, ['team-a', 'team-b'], 'each open stores its pickers while it is still the latest');
     assert.strictEqual(env.popover.classList.contains('hidden'), false, 'the stale open leaves the newer one on screen');
     assert.strictEqual(env.statusEl.textContent, '');
   }
+});
+
+test('roles popover: an open overtaken while its pickers load never stores them nor reads its team', async () => {
+  const gets = {};
+  const optionsApplied = [];
+  let releaseA;
+  const { open, env } = compileOpen({
+    populatePromptOptions: (n) => (n === 'team-a'
+      ? new Promise((resolve) => { releaseA = () => resolve(() => optionsApplied.push(n)); })
+      : Promise.resolve(() => optionsApplied.push(n))),
+  }, { realRefresh: true });
+  env.window.api.teamGet = (n) => new Promise((resolve) => {
+    gets[n] = resolve;
+    resolve({ ok: true, team: { name: n, roles: {} } });
+  });
+  const a = open('team-a', {});
+  const b = open('team-b', {});
+  await b;
+  releaseA();
+  await a;
+  assert.deepStrictEqual(optionsApplied, ['team-b']);
+  assert.strictEqual(gets['team-a'], undefined, 'the stale open stops before refresh');
+  assert.ok(gets['team-b'], 'ENTER: the newer open read its team');
+  assert.strictEqual(env.popover.dataset.name, 'team-b');
 });

@@ -1030,7 +1030,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     }
   }
 
-  async function refresh(teamName, isCurrent = () => true) {
+  async function refresh(teamName, isCurrent = () => popover.dataset.name === teamName) {
     const got = Promise.resolve(window.api.teamGet(teamName));
     const usesLoad = got.then((r) => (r && r.ok
       ? loadUses(r.team.name, Object.keys((r.team && r.team.roles) || {}))
@@ -1038,9 +1038,6 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     // BEFORE renderRows, and on every refresh rather than only on open: a role
     // whose prompt was just re-pointed by a Save must re-badge against the new
     // name, and a stale checklist accusing the previous value is worse than none.
-    // The lead seats load before renderRows for the same reason: the lead row's
-    // status line is rendered FROM these listings, so a stale one would state a
-    // resolution the manifest no longer has.
     const [res, ...applies] = await Promise.all([
       got, loadPreflight(teamName), loadStockRoles(), loadActivity(teamName), usesLoad,
       loadLeadSeats(), loadTrunk(teamName),
@@ -1173,9 +1170,9 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     popover.dataset.name = name;
     nameEl.textContent = name;
     listEl.replaceChildren();
+    addPrompt.innerHTML = '<option value="">(no prompt)</option>';
+    watchdogInput.value = '';
     popover.classList.remove('hidden');
-    // Anchor just below the header, clamped to the viewport. anchorRect absorbs
-    // the anchor-less open the Teams menu (t288) performs.
     const place = () => {
       const w = popover.offsetWidth;
       popover.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - w - 8))}px`;
@@ -1192,7 +1189,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
       for (const apply of options) apply();
       paintAccountSelect(addAccount, '');
       ok = await refresh(name, isCurrent);
-    } catch { ok = false; }
+    } catch (err) { console.error('team roles popover: open failed', err); ok = false; }
     if (!isCurrent()) return;
     if (!ok) { popover.dataset.name = ''; popover.classList.add('hidden'); return; } // not a team / unreadable → show nothing
     if (statusEl.textContent === loadingStatus) setStatus('');
