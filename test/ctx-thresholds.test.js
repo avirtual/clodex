@@ -260,11 +260,14 @@ const FABLE_IDS = [
   ['claude-fable-5-1', 'fable-5-1'],
   ['claude-fable-5-1[1m]', 'fable-5-1'],
   ['us.anthropic.claude-fable-5-1-20260601-v1:0', 'fable-5-1'],
+  ['claude-fable-5-2', 'fable-5-2'],
+  ['claude-fable-5-2[1m]', 'fable-5-2'],
 ];
 
-test('the shipped table carries two rows, fable 5.1 and haiku 5.5, and fable resolves through builtin-model', () => {
+test('the shipped table carries three rows, fable 5.1, fable 5.2 and haiku 5.5, and fable resolves through builtin-model', () => {
   assert.deepStrictEqual([...CTX_MODEL_THRESHOLDS], [
     ['fable-5-1', { nudge: 200_000, escalate: 250_000 }],
+    ['fable-5-2', { nudge: 200_000, escalate: 250_000 }],
     ['haiku-5-5', { nudge: 75_000, escalate: 100_000, stop: true }],
   ]);
 

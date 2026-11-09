@@ -54,7 +54,7 @@ test('deriveModelTemplate strips the listing decoration, not just id', () => {
 test('t890: the four aliases resolve to their 1M ids', () => {
   assert.strictEqual(resolveModelId('claude', 'opus'), 'claude-opus-5-5[1m]');
   assert.strictEqual(resolveModelId('claude', 'sonnet'), 'claude-sonnet-5-5[1m]');
-  assert.strictEqual(resolveModelId('claude', 'fable'), 'claude-fable-5-1[1m]');
+  assert.strictEqual(resolveModelId('claude', 'fable'), 'claude-fable-5-2[1m]');
   assert.strictEqual(resolveModelId('claude', 'haiku'), 'claude-haiku-5-5[1m]');
 });
 

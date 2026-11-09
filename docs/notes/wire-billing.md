@@ -13,3 +13,5 @@ The `claude-opus-5-5` fast row's cache columns (10.0/16.0 writes, 0.40 read on $
 The `PRICES_LONG_PROMPT` tier is per REQUEST: prompt tokens = input + cache_read + cache_creation of that one request (the CLI's own rule, read off its binary by wirescope), so a mostly-cached long request crosses `LONG_PROMPT_TOKENS`.
 Over the boundary every category bills at the long row for the whole request, not only the tokens past 100k.
 Nothing sums usage across requests before pricing today; any future aggregation must price each request before summing.
+A prefix matches only when the next character of the model id is not a digit: `claude-fable-5-2` is a string prefix of the dated 5.0 id `claude-fable-5-20260601`, and a plain longest-prefix walk prices that 5.0 traffic at the 5.2 row.
+The `claude-fable-5-2` fast row's cache columns (20.0/32.0 writes, 0.40 read on $16/$80) are derived from the 5.2 standard row's ratios (writes 1.25x/2x, read 0.025x); the pricing announcement gives only $16/$80 for fast mode.

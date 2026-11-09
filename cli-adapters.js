@@ -12,7 +12,7 @@ const CLAUDE_MODEL_ALIASES = Object.freeze({
   opus: 'claude-opus-5-5[1m]',
   sonnet: 'claude-sonnet-5-5[1m]',
   haiku: 'claude-haiku-5-5[1m]',
-  fable: 'claude-fable-5-1[1m]',
+  fable: 'claude-fable-5-2[1m]',
 });
 
 const CLAUDE_STREAM = Object.freeze({

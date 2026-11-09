@@ -34,8 +34,10 @@ const PRICES = {
   // catch it. The inverse of the opus-5 trap below: there the legacy row was too
   // short to match, here the legacy row matches too much.
   'claude-fable-5-1': { in: 10.0, out: 50.0, cache_write_5m: 12.5, cache_write_1h: 20.0, cache_read: 0.25 },
+  'claude-fable-5-2': { in: 8.0, out: 40.0, cache_write_5m: 10.0, cache_write_1h: 16.0, cache_read: 0.20 },
   'claude-fable-5':  { in: 10.0, out: 50.0, cache_write_5m: 12.5,  cache_write_1h: 20.0, cache_read: 1.00 },
   'claude-mythos-5-1': { in: 10.0, out: 50.0, cache_write_5m: 12.5, cache_write_1h: 20.0, cache_read: 0.25 },
+  'claude-mythos-5-2': { in: 8.0, out: 40.0, cache_write_5m: 10.0, cache_write_1h: 16.0, cache_read: 0.20 },
   'claude-mythos-5':  { in: 10.0, out: 50.0, cache_write_5m: 12.5,  cache_write_1h: 20.0, cache_read: 1.00 },
   'claude-sonnet-5-5': { in: 2.0, out: 10.0, cache_write_5m: 2.50, cache_write_1h: 4.0, cache_read: 0.10 },
   'claude-sonnet-5': { in: 2.0,  out: 10.0, cache_write_5m: 2.50,  cache_write_1h: 4.0,  cache_read: 0.20 },
@@ -80,6 +82,7 @@ const PRICES_OPENAI = {
 // Absent field (every non-beta request) => standard, the base PRICES row.
 // Mirrors proxylab billing.py PRICES_SPEED_FAST; keep the two in lock-step.
 const PRICES_SPEED_FAST = {
+  'claude-fable-5-2': { in: 16.0, out: 80.0, cache_write_5m: 20.0, cache_write_1h: 32.0, cache_read: 0.40 },
   'claude-opus-5-5': { in: 8.0,  out: 40.0, cache_write_5m: 10.0, cache_write_1h: 16.0, cache_read: 0.40 },
   'claude-opus-5':   { in: 10.0, out: 50.0, cache_write_5m: 12.5, cache_write_1h: 20.0, cache_read: 1.00 },
   'claude-opus-4-8': { in: 10.0, out: 50.0, cache_write_5m: 12.5, cache_write_1h: 20.0, cache_read: 1.00 },
@@ -136,7 +139,7 @@ function priceFor(model, { table = null, now = null, speed = null, promptTokens 
   if (!model) return null;
   let best = null;
   for (const [pfx, p] of Object.entries(table || PRICES)) {
-    if (model.startsWith(pfx) && (best === null || pfx.length > best[0].length)) {
+    if (model.startsWith(pfx) && !/[0-9]/.test(model.charAt(pfx.length)) && (best === null || pfx.length > best[0].length)) {
       best = [pfx, p];
     }
   }

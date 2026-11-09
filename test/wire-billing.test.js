@@ -96,6 +96,20 @@ test('priceFor: fable-5-1 keeps its own read rate and is not swallowed by fable-
   assert.equal(priceFor('claude-fable-5-1').cache_write_1h, 20.0);
 });
 
+test('priceFor: fable-5-2 and mythos-5-2 own their rows and are not swallowed by the bare -5 rows', () => {
+  const want = { in: 8.0, out: 40.0, cache_write_5m: 10.0, cache_write_1h: 16.0, cache_read: 0.20 };
+  for (const id of ['claude-fable-5-2', 'claude-fable-5-2[1m]', 'claude-fable-5-2-20261109', 'claude-mythos-5-2', 'claude-mythos-5-2[1m]']) {
+    assert.deepEqual({ ...priceFor(id) }, want, id);
+  }
+  assert.equal(priceFor('claude-fable-5').cache_read, 1.00);
+  assert.equal(priceFor('claude-mythos-5').cache_read, 1.00);
+  assert.equal(priceFor('claude-fable-5-20260601').cache_read, 1.00);
+  assert.equal(priceFor('claude-mythos-5-20260601').cache_read, 1.00);
+  assert.equal(priceFor('claude-fable-5-1-20260901').cache_read, 0.25);
+  assert.deepEqual({ ...priceFor('claude-fable-5-2[1m]', { speed: 'fast' }) },
+    { in: 16.0, out: 80.0, cache_write_5m: 20.0, cache_write_1h: 32.0, cache_read: 0.40 });
+});
+
 test('priceFor: opus-5-5 keeps its own rates and is not swallowed by opus-5', () => {
   const std = priceFor('claude-opus-5-5');
   assert.equal(std.in, 4.0);
