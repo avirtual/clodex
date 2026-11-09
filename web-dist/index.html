@@ -48529,7 +48529,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             }
           }
         }
-        async function refresh(teamName2, isCurrent = () => true) {
+        async function refresh(teamName2, isCurrent = () => popover.dataset.name === teamName2) {
           const got = Promise.resolve(window.api.teamGet(teamName2));
           const usesLoad = got.then((r) => r && r.ok ? loadUses(r.team.name, Object.keys(r.team && r.team.roles || {})) : () => {
           });
@@ -48658,6 +48658,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           popover.dataset.name = name;
           nameEl.textContent = name;
           listEl.replaceChildren();
+          addPrompt.innerHTML = '<option value="">(no prompt)</option>';
+          watchdogInput.value = "";
           popover.classList.remove("hidden");
           const place = () => {
             const w = popover.offsetWidth;
@@ -48675,7 +48677,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             for (const apply of options) apply();
             paintAccountSelect(addAccount, "");
             ok = await refresh(name, isCurrent);
-          } catch {
+          } catch (err) {
+            console.error("team roles popover: open failed", err);
             ok = false;
           }
           if (!isCurrent()) return;
