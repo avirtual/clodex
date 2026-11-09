@@ -15,6 +15,7 @@ blocks a release.
 - Sidebar Minimal filter: a group header shows a red count of hidden ephemeral seats that are working (tooltip names them; click shows them), so a node is not mistaken for idle before a reboot.
 - Claude Fable 5.2: priced (`$8/$40`, cache read `$0.20`) instead of falling through to the Fable 5.0 row, context nudges at 200k/250k like 5.1, and the `fable` model alias now means 5.2.
 - Team hand prompt: the lookup rule now delegates reading the spec did not map (callers, pins, pattern surveys, or a question still open after three reads) instead of triggering on how many files a spec names, which hands never followed.
+- Team lead prompt: a new "Who does the work" section routes work by the judgment it needs (scout for bounded lookups, a mid-tier seat for a whole investigation, probe only for reads that need the lead's context) and bans harness subagents and forks on the lead's own model. Reaches leads spawned after the upgrade; a team that keeps its own copy of the lead prompt must resync it.
 
 ## 5.164.4 — 2026-11-08
 
