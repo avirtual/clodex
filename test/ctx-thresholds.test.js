@@ -68,9 +68,7 @@ const SWEEP = [
 
 // The model axis is REAL here: each id is resolved through ctxThresholdsFor with
 // no overrides, so the loop asserts that every one of them lands on the same
-// baseline pair. fable-5-1 is deliberately absent — it is the one family that
-// ships a row, and its exclusion is asserted below rather than assumed, so a
-// second row appearing without a decision to add it fails here.
+// baseline pair.
 const UNCHANGED_MODELS = [
   null,
   'claude-opus-5',

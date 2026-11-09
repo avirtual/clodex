@@ -9,7 +9,7 @@ curve bends upward past 200k.
 
 ## CTX_MODEL_THRESHOLDS
 
-Two rows ship. Fable 5.1 sits at 200k/250k (operator price data, 2026-09-20). Its
+Three rows ship. Fable 5.1 and 5.2 sit at 200k/250k (operator price data, 2026-09-20). Their
 price shape is inverted against Opus: a warm cache read is 1/40 of a cold read
 and a cache write is 80x a warm read, so Fable reads at about half Opus's rate
 and writes at about twice. The compact is the most expensive event in a Fable

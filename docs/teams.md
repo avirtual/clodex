@@ -397,7 +397,7 @@ time before it rejects — a green re-run proceeds to review and the record name
 the first run, while a second red rejects carrying both runs' failing names.
 Each suite run leaves a `ticket-loop` row in the IPC traffic: `verify: suite running`, then `suite red (…) — re-measuring` or `suite green (…) — spawning reviewer`, and `post-merge suite running` before the `merged:` row.
 A rework is never handed to a ticket seat whose context is already past the
-compact threshold of its model row, resolved from the model id in the seat's ctx file (Fable 5.1 200k, Haiku 5.5 75k, 150k by default): that seat is archived, a fresh one is
+compact threshold of its model row, resolved from the model id in the seat's ctx file (Fable 5.1/5.2 200k, Haiku 5.5 75k, 150k by default): that seat is archived, a fresh one is
 spawned onto the same branch and the same worktree, the must-fixes are delivered
 there, and the reject reply names both seats.
 

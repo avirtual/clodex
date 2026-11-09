@@ -7,6 +7,7 @@
 ## PRICES_SPEED_FAST
 
 The `claude-opus-5-5` fast row's cache columns (10.0/16.0 writes, 0.40 read on $8/$40) are DERIVED by wirescope — the pricing page prints only $8/$40 — and are kept byte-for-byte with the vendor's row. To be verified on the first real fast receipt.
+The `claude-fable-5-2` and `claude-mythos-5-2` fast rows' cache columns (20.0/32.0 writes, 0.40 read on $16/$80) are derived from the 5.2 standard row's ratios (writes 1.25x/2x, read 0.025x); the pricing announcement gives only $16/$80 for fast mode.
 
 ## priceFor
 
@@ -14,4 +15,3 @@ The `PRICES_LONG_PROMPT` tier is per REQUEST: prompt tokens = input + cache_read
 Over the boundary every category bills at the long row for the whole request, not only the tokens past 100k.
 Nothing sums usage across requests before pricing today; any future aggregation must price each request before summing.
 A prefix matches only when the next character of the model id is not a digit: `claude-fable-5-2` is a string prefix of the dated 5.0 id `claude-fable-5-20260601`, and a plain longest-prefix walk prices that 5.0 traffic at the 5.2 row.
-The `claude-fable-5-2` fast row's cache columns (20.0/32.0 writes, 0.40 read on $16/$80) are derived from the 5.2 standard row's ratios (writes 1.25x/2x, read 0.025x); the pricing announcement gives only $16/$80 for fast mode.

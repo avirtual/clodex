@@ -223,9 +223,9 @@ popovers the owner will answer.
   re-renders on preference changes. The template is a bash heredoc —
   byte-sensitive, test-pinned.
 - **Ctx reminders** (ctx-reminder.js): absolute thresholds (nudge 150k,
-  escalate 200k; Fable 5.1 200k/250k — cost scales with absolute context size, not window %),
+  escalate 200k; Fable 5.1/5.2 200k/250k — cost scales with absolute context size, not window %),
   per-model-capable and operator-overridable (`CTX_MODEL_THRESHOLDS` ships the
-  Fable 5.1 row and the Haiku 5.5 row (75k nudge, 100k stop)).
+  Fable 5.1/5.2 rows and the Haiku 5.5 row (75k nudge, 100k stop)).
   `ctxThresholdsFor` resolves settings-model > builtin-model >
   settings-default > builtin-default and names which layer answered, so a
   lookup that found nothing is distinguishable from one that found the

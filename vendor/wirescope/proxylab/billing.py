@@ -176,8 +176,8 @@ def _parse_response_meta(raw_bytes):
 # Matched by LONGEST model-name prefix (so "claude-opus-4-8" beats the legacy
 # bare "claude-opus-4" entry). est_usd is a DERIVED estimate; the authoritative
 # billing signal is the token breakdown itself. Write premiums: 5m=1.25x,
-# 1h=2x; reads=0.10x of input EXCEPT fable/mythos-5.1 (0.025x) and opus-5.5
-# (0.05x) — a read rate is a per-row fact now, never derive it from `in`.
+# 1h=2x; reads=0.10x of input EXCEPT fable/mythos-5.1 and 5.2 (0.025x) and
+# opus-5.5 (0.05x) — a read rate is a per-row fact now, never derive it from `in`.
 # Verified against the API reference 2026-06-09; opus-5.5 rows 2026-09-22.
 # NOTE: opus REPRICED at 4.5 — $15/$75 is 4.0/4.1 ONLY; 4.5+ is $5/$25. Until
 # this split, all opus-4.5+ captures (logs_opus) were over-priced ~3x.
@@ -192,6 +192,14 @@ PRICES = {
     # match, here the legacy row matches too much.
     "claude-fable-5-1":  {"in": 10.0, "out": 50.0, "cache_write_5m": 12.5,  "cache_write_1h": 20.0, "cache_read": 0.25},
     "claude-mythos-5-1": {"in": 10.0, "out": 50.0, "cache_write_5m": 12.5,  "cache_write_1h": 20.0, "cache_read": 0.25},
+    # fable/mythos 5.2 (2026-11-09, ids `claude-fable-5-2` / `claude-mythos-5-2`):
+    # $8/$40, writes 10/16, read 0.025x base ($0.20/MTok); no prompt-length tier.
+    # Read off the Anthropic pricing page + fable-5-2 overview, 2026-11-09. SAME
+    # TRAP AS 5.1: "claude-fable-5" IS a prefix of "claude-fable-5-2", so without
+    # these rows 5.2 traffic silently prices at fable-5's $10/$50/$1.00 (reads 5x
+    # over, everything else 1.25x) with no unpriced warning.
+    "claude-fable-5-2":  {"in": 8.0,  "out": 40.0, "cache_write_5m": 10.0,  "cache_write_1h": 16.0, "cache_read": 0.20},
+    "claude-mythos-5-2": {"in": 8.0,  "out": 40.0, "cache_write_5m": 10.0,  "cache_write_1h": 16.0, "cache_read": 0.20},
     "claude-mythos-5": {"in": 10.0, "out": 50.0, "cache_write_5m": 12.5,  "cache_write_1h": 20.0, "cache_read": 1.00},
     "claude-fable-5":  {"in": 10.0, "out": 50.0, "cache_write_5m": 12.5,  "cache_write_1h": 20.0, "cache_read": 1.00},
     # opus-5.5 (2026-09-22, id `claude-opus-5-5`): $4/$20, and the read is
@@ -321,6 +329,12 @@ PRICES_SPEED_FAST = {
     "claude-opus-5-5": {"in": 8.0,  "out": 40.0, "cache_write_5m": 10.0, "cache_write_1h": 16.0, "cache_read": 0.40},
     "claude-opus-5":   {"in": 10.0, "out": 50.0, "cache_write_5m": 12.5, "cache_write_1h": 20.0, "cache_read": 1.00},
     "claude-opus-4-8": {"in": 10.0, "out": 50.0, "cache_write_5m": 12.5, "cache_write_1h": 20.0, "cache_read": 1.00},
+    # fable/mythos-5.2 fast = $16/$80 published; the cache columns are DERIVED
+    # the same way as opus-5.5's (5m 1.25x, 1h 2x, read 0.025x on the fast base)
+    # — the page prints no fast cache figures. Without these rows a fast 5.2 turn
+    # keeps standard 5.2 rates (half price). Fable 5.0/5.1 have no fast mode.
+    "claude-fable-5-2":  {"in": 16.0, "out": 80.0, "cache_write_5m": 20.0, "cache_write_1h": 32.0, "cache_read": 0.40},
+    "claude-mythos-5-2": {"in": 16.0, "out": 80.0, "cache_write_5m": 20.0, "cache_write_1h": 32.0, "cache_read": 0.40},
 }
 
 PRICES_DATED = {

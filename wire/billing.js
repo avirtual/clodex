@@ -83,7 +83,8 @@ const PRICES_OPENAI = {
 // Mirrors proxylab billing.py PRICES_SPEED_FAST; keep the two in lock-step.
 const PRICES_SPEED_FAST = {
   'claude-fable-5-2': { in: 16.0, out: 80.0, cache_write_5m: 20.0, cache_write_1h: 32.0, cache_read: 0.40 },
-  'claude-opus-5-5': { in: 8.0,  out: 40.0, cache_write_5m: 10.0, cache_write_1h: 16.0, cache_read: 0.40 },
+  'claude-mythos-5-2': { in: 16.0, out: 80.0, cache_write_5m: 20.0, cache_write_1h: 32.0, cache_read: 0.40 },
+  'claude-opus-5-5': { in: 8.0, out: 40.0, cache_write_5m: 10.0, cache_write_1h: 16.0, cache_read: 0.40 },
   'claude-opus-5':   { in: 10.0, out: 50.0, cache_write_5m: 12.5, cache_write_1h: 20.0, cache_read: 1.00 },
   'claude-opus-4-8': { in: 10.0, out: 50.0, cache_write_5m: 12.5, cache_write_1h: 20.0, cache_read: 1.00 },
 };
