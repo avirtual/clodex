@@ -29,11 +29,18 @@ const { parseEscapes, formatEscapes } = require('./test-escapes.js');
 
 const ROOT = path.join(__dirname, '..');
 
+if (require.main !== module) {
+  module.exports = { parseJunit, durationRows, renderDurations };
+  return;
+}
+
 let reporter = process.env.CLODEX_TEST_REPORTER || 'spec';
 const passthrough = [];
+let showDurations = false;
 for (const arg of process.argv.slice(2)) {
   const m = /^--reporter=(.+)$/.exec(arg);
   if (m) reporter = m[1];
+  else if (arg === '--durations') showDurations = true;
   else passthrough.push(arg);
 }
 
@@ -135,6 +142,55 @@ function recordRunMs(ms) {
   } catch {
     try { fs.rmSync(tmp, { force: true }); } catch {}
   }
+}
+
+const DURATIONS = path.join(path.dirname(LOCK), 'last-run-durations.json');
+
+function durationRows(entries, root) {
+  const byFile = new Map();
+  for (const e of entries) {
+    if (e.tag !== 'testcase' || !e.file) continue;
+    const rel = path.relative(root, e.file);
+    const row = byFile.get(rel) || { file: rel, ms: 0, tests: 0 };
+    row.ms += e.ms;
+    row.tests += 1;
+    byFile.set(rel, row);
+  }
+  return [...byFile.values()]
+    .map((r) => ({ file: r.file, ms: Math.round(r.ms), tests: r.tests }))
+    .sort((a, b) => b.ms - a.ms);
+}
+
+function renderDurations(doc) {
+  const files = Array.isArray(doc && doc.files) ? doc.files : [];
+  const lines = files.slice(0, 25).map((f) => `${f.ms} ms  ${f.tests} tests  ${f.file}`);
+  const sum = files.reduce((n, f) => n + f.ms, 0);
+  lines.push(`sum of files ${sum} ms  recorded runMs ${doc.runMs} ms`);
+  return lines;
+}
+
+function recordDurations(entries, runMs) {
+  const tmp = `${DURATIONS}.tmp`;
+  try {
+    const head = spawnSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: ROOT, encoding: 'utf8' });
+    const doc = {
+      at: new Date().toISOString(),
+      head: head.status === 0 && head.stdout.trim() ? head.stdout.trim() : null,
+      runMs: Math.round(runMs),
+      files: durationRows(entries, ROOT),
+    };
+    fs.writeFileSync(tmp, `${JSON.stringify(doc)}\n`);
+    fs.renameSync(tmp, DURATIONS);
+  } catch {
+    try { fs.rmSync(tmp, { force: true }); } catch {}
+  }
+}
+
+if (showDurations) {
+  let doc = null;
+  try { doc = JSON.parse(fs.readFileSync(DURATIONS, 'utf8')); } catch {}
+  console.log(doc ? renderDurations(doc).join('\n') : 'no recorded full run');
+  process.exit(0);
 }
 
 function clock(ms) {
@@ -499,6 +555,8 @@ const stale = sweeping && !filters.length
   ? Object.keys(allow).filter((n) => !seen.has(n))
   : [];
 
+if (sweeping && !filters.length) recordDurations(junitFiles(), runMs);
+
 const advisory = process.env.CLODEX_TEST_SLOW_ADVISORY === '1' && !lockHeld;
 const RETIME_CAP = ((n) => (Number.isInteger(n) && n > 0 ? n : 12))(Number(process.env.CLODEX_TEST_RETIME_CAP));
 const retime = process.env.CLODEX_TEST_SLOW_RETIME !== '0';
@@ -534,6 +592,10 @@ function xmlUnescape(s) {
 function junitFiles() {
   let xml = '';
   try { xml = fs.readFileSync(junitFile, 'utf8'); } catch { return []; }
+  return parseJunit(xml);
+}
+
+function parseJunit(xml) {
   const out = [];
   const open = [];
   for (const m of xml.matchAll(/<(\/?)(testsuite|testcase)\b([^>]*?)(\/?)>/g)) {
@@ -546,7 +608,7 @@ function junitFiles() {
       const a = new RegExp(`\\s${k}="([^"]*)"`).exec(attrs);
       return a ? xmlUnescape(a[1]) : null;
     };
-    const entry = { name: attr('name'), ms: Number(attr('time')) * 1000, file: attr('file') };
+    const entry = { name: attr('name'), ms: Number(attr('time')) * 1000, file: attr('file'), tag };
     out.push(entry);
     if (tag === 'testsuite') {
       if (!self) open.push(entry);
