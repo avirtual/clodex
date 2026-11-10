@@ -201,7 +201,31 @@ function ctxReminderFor(tokens, thresholds) {
     + '</system-reminder>';
 }
 
+const CTX_STATUS_STALE_MS = 10 * 60 * 1000;
+const CTX_DEFAULT_WINDOW = 200_000;
+
+function contextStatusOf(rec, nowMs) {
+  if (!rec || typeof rec.tok !== 'number' || typeof rec.at !== 'number') {
+    return { known: false, reason: 'no context measurement since this session started or last reset', stale: true };
+  }
+  const window = rec.size > 0 ? rec.size : CTX_DEFAULT_WINDOW;
+  const out = {
+    known: true,
+    used_tokens: rec.tok,
+    window,
+    window_source: rec.size > 0 ? rec.source : 'default',
+    used_percentage: Math.round((rec.tok / window) * 1000) / 10,
+    model: rec.model || null,
+    measured_at: new Date(rec.at).toISOString(),
+    age_s: Math.max(0, Math.floor((nowMs - rec.at) / 1000)),
+  };
+  if (nowMs - rec.at > CTX_STATUS_STALE_MS) out.stale = true;
+  return out;
+}
+
 module.exports = {
+  contextStatusOf,
+  CTX_STATUS_STALE_MS,
   ctxReminderFor,
   ctxThresholdsFor,
   modelFamily,

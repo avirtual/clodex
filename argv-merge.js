@@ -129,7 +129,15 @@ function parseCtxFile(raw) {
   return { pct, tok, size, model, cost, modelName };
 }
 
+function ctxWindowSource(raw) {
+  const parts = String(raw).trim().split('\t');
+  const reported = parseInt(parts[2], 10);
+  const size = effectiveWindowSize((parts[3] || '').trim() || null, isNaN(reported) ? null : reported);
+  if (!(size > 0)) return 'default';
+  return size === reported ? 'cli' : 'table';
+}
+
 module.exports = {
   mergeClaudeSystemPrompt, mergeCodexInstructions, mergeInstructionBodies,
-  MODEL_WINDOWS, effectiveWindowSize, parseCtxFile,
+  MODEL_WINDOWS, effectiveWindowSize, parseCtxFile, ctxWindowSource,
 };

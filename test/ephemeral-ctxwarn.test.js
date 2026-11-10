@@ -338,3 +338,16 @@ test('a compact end removes the ctxwarn file', async (t) => {
   h.m._onCompactEnd(s, 'done');
   assert.ok(!fs.existsSync(h.warnPath()));
 });
+
+for (const row of [
+  { model: 'claude-sonnet-5', size: 400000, source: 'cli' },
+  { model: 'claude-fable-5', size: 1000000, source: 'table' },
+]) {
+  test(`the statusline ctx record keeps the window ${row.size} and its source ${row.source} for context_status`, async (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: 1_700_000_000_000 });
+    const h = harness(t);
+    h.writeCtx(100_000, row.model);
+    await h.spawn();
+    assert.deepStrictEqual(h.session()._ctxStatus, { tok: 100_000, size: row.size, model: row.model, source: row.source, at: 1_700_000_000_000 });
+  });
+}
