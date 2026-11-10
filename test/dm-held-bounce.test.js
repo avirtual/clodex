@@ -59,7 +59,7 @@ test('t1647 the dm bounce block reads the reason through why, never ${r.reason}'
 });
 
 function coldSeat(agentType, extra = {}) {
-  const { m, injected } = mkPark({ shouldHoldDm: require('../proxy-util').shouldHoldDm });
+  const { m, injected } = mkPark({ shouldHoldDm: require('../proxy-util').shouldHoldDm, randBase36: (n) => 'p'.repeat(n), parkIdInUse: require('../pending-store').parkIdInUse });
   m._proxyPoller = { snapshot: () => ({ linked: true, warmth: { state: 'cold' }, ts: Date.now() }) };
   m._sendToSession = () => {};
   m._armDmConfirm = () => {};
@@ -87,5 +87,5 @@ test('t2238 a plain dm to a cold idle claude seat is still parked, not delivered
   const { m, injected } = coldSeat('claude');
   await m._handleIntent('a', { type: 'dm', target: 't', body: 'the question' });
   assert.ok(!injected.some((t) => t.startsWith('[agent:from a]')), JSON.stringify(injected));
-  assert.ok(injected.some((t) => t.startsWith('[agent:dm] parked for t (idle 2h with a cold cache')), JSON.stringify(injected));
+  assert.ok(injected.some((t) => t.startsWith('[agent:dm] parked for t (idle 2h with a cold cache — waking it re-bills its full context) as ppppp')), JSON.stringify(injected));
 });
