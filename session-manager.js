@@ -131,7 +131,8 @@ const CODEX_LINK_SLOW_POLL_MS = 5000;
 const { mergeSessionEnv, sanitizeFlat, withUtf8Charset } = require('./env-scopes');
 const { seatBinsFor, materializeSeatBins, seatBinEnv } = require('./bin-materialize');
 const voiceEngineSpec = require('./voice-engine');
-const { effectiveWindowSize } = require('./argv-merge');
+const { effectiveWindowSize, ctxWindowSource } = require('./argv-merge');
+const { contextStatusOf } = require('./ctx-reminder');
 const { CTRLU_SETTLE_MS } = require('./inject-queue');
 const { agentDir: pendingAgentDir, claimsDir: pendingClaimsDir, isReservedSeatName, claimTag, rehomeOrphans, CLAIM_TAG_RE, LEGACY_CLAIM_RE } = require('./pending-store');
 const { VOICE_MODES, voiceModeOf } = require('./voice-settings');
@@ -2638,9 +2639,10 @@ function createSessionManager(deps) {
             const raw = fs.readFileSync(ctxPath, 'utf-8').trim();
             const fresh = raw !== lastRaw;
             lastRaw = raw;
-            const c = parseCtxFile(raw, { trustReported: agentType === 'clodent' });
+            const trust = { trustReported: agentType === 'clodent' };
+            const c = parseCtxFile(raw, trust);
             if (c.pct != null) {
-              if (fresh) this._noteCtx(session, c);
+              if (fresh) this._noteCtx(session, { ...c, windowSource: ctxWindowSource(raw, trust) });
               const warnPath = pathFor(REGISTRY_DIR, name, 'ctxwarn');
               // Gate on the CTX_THRESHOLD_MIN floor, not the shipped nudge: sanitizeThresholdPair drops rows below it, so this skips the
               // ui-settings re-parse for a quiet session without capping how low an operator can set the threshold.
@@ -3325,6 +3327,7 @@ function createSessionManager(deps) {
       const name = session.name;
       this._sendToSession(name, 'session-ctx', name, c.pct, c.tok, c.size, c.cost, c.modelName);
       session.ctxInfo = { pct: c.pct, tok: c.tok, size: c.size, cost: c.cost, modelName: c.modelName, model: c.model };
+      session._ctxStatus = { tok: c.tok, size: c.size, model: c.model || null, source: c.windowSource || null, at: Date.now() };
       if (getRemoteServer()) {
         try { getRemoteServer().pushTelemetry(name, { ctx: session.ctxInfo }); } catch {}
       }
@@ -3338,10 +3341,12 @@ function createSessionManager(deps) {
       if (typeof rec.tok !== 'number' || rec.tok <= 0) return;
       if (s.ctxInfo && s.ctxInfo.tok === rec.tok) return;
       const model = rec.model || s.streamModel || null;
-      const size = s._streamWindow || effectiveWindowSize(model, 0) || 200_000;
+      const tableSize = effectiveWindowSize(model, 0);
+      const size = s._streamWindow || tableSize || 200_000;
       const pct = size > 0 ? Math.round((rec.tok / size) * 100) : null;
       const cost = s._costSeen && typeof s._costSeen.usd === 'number' ? s._costSeen.usd : null;
-      this._noteCtx(s, { pct, tok: rec.tok, size, cost, modelName: null, model });
+      const windowSource = s._streamWindow ? 'cli' : tableSize ? 'table' : 'default';
+      this._noteCtx(s, { pct, tok: rec.tok, size, cost, modelName: null, model, windowSource });
     }
 
     _noteSeatCost(s, usd) {
@@ -3605,6 +3610,7 @@ function createSessionManager(deps) {
         case 'reset':
           this._dropStreamPermissions(s);
           s.ctxInfo = null;
+          s._ctxStatus = null;
           this._sendToSession(s.name, 'session-ctx', s.name, null, null, null, null, null);
           log.info('session', `stream ${s.name}: conversation reset (${rec.newConversationId}); the next init carries the resumable id`);
           break;
@@ -8350,6 +8356,10 @@ function createSessionManager(deps) {
     }
 
     _handleContextIntent(session, sub, body = '') {
+      if (sub === 'status') {
+        this._injectText(session, JSON.stringify(contextStatusOf(session._ctxStatus, Date.now())), { parkable: true });
+        return;
+      }
       if (sub === 'reload') {
         const name = session.name;
         const entry = getPersistence().get(name);

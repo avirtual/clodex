@@ -352,6 +352,19 @@ const TERM_READ_TOOL = Object.freeze({
   },
 });
 
+const CONTEXT_STATUS_TOOL = Object.freeze({
+  name: 'context_status',
+  description: "This seat's context use from the CLI's last measurement, as JSON: used_tokens, window (the window Clodex uses for warnings and `remind on context`), window_source (cli, table or default), used_percentage of that window, model, measured_at, age_s, and stale: true when the figure is over 10 minutes old. {\"known\": false} when nothing has been measured yet.",
+  inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  logKeys: [],
+  anyCaller: true,
+  toIntent(args) {
+    const extra = Object.keys(args == null ? {} : args)[0];
+    if (extra) throw new Error(`unknown argument: ${extra} (context_status takes none)`);
+    return '[agent:context status]';
+  },
+});
+
 const DM_TOOL = Object.freeze({
   name: 'dm',
   description: 'Send a direct message to another Clodex seat on this host as yourself. The recipient sees you as <seat>/<name> and can reply to that name. Local seats only, never urgent, at most 10 per minute; a refusal comes back as text and will not succeed on retry. For subagents. A main agent should write the [agent:dm <seat>] intent in its reply instead; a main call is still delivered, once, with a reminder.',
@@ -402,7 +415,7 @@ const CORE_ROWS = [
   { type: 'resend', parse: parseResend, bodyMode: NONE },
   { type: 'who', parse: parseWho, bodyMode: NONE },
   { type: 'name', parse: parseName, bodyMode: NONE },
-  { type: 'context', parse: parseContext, bodyMode: (i) => (i.sub === 'compact' || i.sub === 'reload' || i.sub === 'clear' ? 'greedy' : 'none') },
+  { type: 'context', parse: parseContext, bodyMode: (i) => (i.sub === 'compact' || i.sub === 'reload' || i.sub === 'clear' ? 'greedy' : 'none'), tools: [CONTEXT_STATUS_TOOL] },
   { type: 'scratch', parse: parseScratch, bodyMode: (i) => (i.sub === 'end' || (i.sub === 'begin' && i.body) ? 'greedy' : 'none') },
   { type: 'probe', parse: parseProbe, bodyMode: (i) => (i.sub === 'begin' || i.sub === 'end' ? 'greedy' : 'none') },
   { type: 'memory', parse: parseMemory, bodyMode: (i) => (i.sub === 'remember' ? 'greedy' : 'none') },
@@ -824,6 +837,7 @@ module.exports = {
   toolIntentFor,
   TERM_EXEC_TOOL,
   TERM_READ_TOOL,
+  CONTEXT_STATUS_TOOL,
   DM_TOOL,
   EXEC_TOOL,
   DM_REF_RE,

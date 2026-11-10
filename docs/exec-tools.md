@@ -464,3 +464,13 @@ A grant refusal names the seat's granted commands (`(granted: a, b)` / `(granted
 on both doors. The socket intent form `clodex-send '[agent:exec …]'` now waits for the
 reply and returns it inline too, like term and ctl.
 
+
+## The context_status MCP tool
+
+`context_status {}` on the clodex MCP server, listed while the seat's `context` intent is
+enabled. It maps to `[agent:context status]` (`CONTEXT_STATUS_TOOL`, intent-registry.js) and
+answers in the same call with `contextStatusOf` (ctx-reminder.js) over the seat's last ctx
+record: `used_tokens`, `window` (the corrected window), `window_source` (`cli`, `table`,
+`default`), `used_percentage` of `window`, `model`, `measured_at`, `age_s`, and `stale: true`
+past 10 minutes; `{"known": false, "reason", "stale": true}` with no record. Any caller,
+main or subagent: the tool is `anyCaller`, so the socket skips the identity stamp.

@@ -404,6 +404,7 @@ function createIntentRequestHandler({
     const intents = parse(text).filter((i) => i && i.type !== 'end' && i.type !== 'escape');
     if (intents.length !== 1 || intents[0].type !== row.type) return foreign(toolName);
     if (row.subagent) return run(intents[0], { subagent: true }, ctl);
+    if (row.tools.find((t) => t.name === name).anyCaller === true) return run(intents[0], { subagent: false }, ctl);
     const ident = callerIdentity({
       req, isCodex, sessionId: sessionIdOf(), cred, crypto, seen: identSeen, now: now(), consumeMainToolUse,
       onReplay: () => { if (log) log.warn('intent-socket', `${seat}: replayed identity stamp refused`); },

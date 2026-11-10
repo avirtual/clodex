@@ -215,10 +215,11 @@ test('spawn: a seat with no intents list still writes, and writes the default ca
   const { m, catalogs, stop } = mkManager();
   await spawn(m, 'cat2', { intents: null, plugins: ['browser-pane'] });
   stop('cat2');
-  const { DM_TOOL, EXEC_TOOL } = require('../intent-registry');
+  const { DM_TOOL, EXEC_TOOL, CONTEXT_STATUS_TOOL } = require('../intent-registry');
   const dm = { name: DM_TOOL.name, description: DM_TOOL.description, inputSchema: DM_TOOL.inputSchema, logKeys: DM_TOOL.logKeys };
+  const ctx = { name: CONTEXT_STATUS_TOOL.name, description: CONTEXT_STATUS_TOOL.description, inputSchema: CONTEXT_STATUS_TOOL.inputSchema, logKeys: CONTEXT_STATUS_TOOL.logKeys };
   const exec = { name: EXEC_TOOL.name, description: EXEC_TOOL.description, inputSchema: EXEC_TOOL.inputSchema, logKeys: EXEC_TOOL.logKeys };
-  assert.deepStrictEqual(catalogs.map((c) => [c.name, c.catalog]), [['cat2', { tools: [dm, exec], briefs: [DM_TOOL.brief] }]]);
+  assert.deepStrictEqual(catalogs.map((c) => [c.name, c.catalog]), [['cat2', { tools: [dm, ctx, exec], briefs: [DM_TOOL.brief] }]]);
 }));
 
 test('spawn: a seat whose args carry --mcp-config still writes its catalog', () => withBrowserVerb(async () => {

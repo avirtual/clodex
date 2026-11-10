@@ -22543,9 +22543,9 @@ for (const row of [
 }
 
 for (const row of [
-  { type: 'clodent', window: 200000, size: 200000, pct: 25 },
-  { type: 'clodent', window: 1000000, size: 1000000, pct: 5 },
-  { type: 'claude', window: 200000, size: 1000000, pct: 5 },
+  { type: 'clodent', window: 200000, size: 200000, pct: 25, source: 'cli' },
+  { type: 'clodent', window: 1000000, size: 1000000, pct: 5, source: 'cli' },
+  { type: 'claude', window: 200000, size: 1000000, pct: 5, source: 'table' },
 ]) {
   test(`stream ctx: a ${row.type} seat whose clodent 0.7.0 init (clodent/test/stream/stream.test.js) reports ${row.window} sizes a sonnet-5-5 usage at ${row.size}`, async (t) => {
     const h = mkStreamSeatManager({ extraDeps: { probeClodentVersion: () => 'clodent 0.7.0\n' } });
@@ -22560,6 +22560,7 @@ for (const row of [
     h.line('st-win', { type: 'assistant', message: { model: 'claude-sonnet-5-5', content: [], usage: { input_tokens: 50000 } } });
     assert.deepStrictEqual(h.m.sessions.get('st-win').ctxInfo,
       { pct: row.pct, tok: 50000, size: row.size, cost: null, modelName: null, model: 'claude-sonnet-5-5' });
+    assert.strictEqual(h.m.sessions.get('st-win')._ctxStatus.source, row.source);
   });
 }
 
@@ -22574,6 +22575,32 @@ test('stream ctx: a conversation reset clears ctxInfo and pushes an empty sessio
   h.line('st-rst', { type: 'conversation_reset', new_conversation_id: 'c2' });
   assert.strictEqual(h.m.sessions.get('st-rst').ctxInfo, null);
   assert.deepStrictEqual(pushes, [['st-rst', 30, 300000, 1000000, null, null], ['st-rst', null, null, null, null, null]]);
+});
+
+test('context status: the intent answers in the same call from the seat\'s last ctx record, and a reset makes it unknown', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-10T10:00:00.000Z') });
+  const h = mkStreamSeatManager({ extraDeps: { intentEnabledForSeat: require('../intent-registry').intentEnabledForSeat } });
+  t.after(() => h.stopAll());
+  await h.create('st-cs');
+  const ask = async () => {
+    const lines = [];
+    await h.m._handleIntent('st-cs', { type: 'context', sub: 'status', body: '' }, { replyTo: (x) => { lines.push(x); return true; } });
+    assert.strictEqual(lines.length, 1);
+    return JSON.parse(lines[0]);
+  };
+  h.line('st-cs', { type: 'assistant', message: { model: 'claude-opus-5-5', content: [], usage: { input_tokens: 250000 } } });
+  t.mock.timers.tick(90_000);
+  assert.deepStrictEqual(await ask(), {
+    known: true, used_tokens: 250000, window: 1000000, window_source: 'table', used_percentage: 25,
+    model: 'claude-opus-5-5', measured_at: '2026-11-10T10:00:00.000Z', age_s: 90,
+  });
+  h.line('st-cs', { type: 'assistant', message: { model: 'some-unlisted-model', content: [], usage: { input_tokens: 30000 } } });
+  assert.deepStrictEqual(await ask(), {
+    known: true, used_tokens: 30000, window: 200000, window_source: 'default', used_percentage: 15,
+    model: 'some-unlisted-model', measured_at: '2026-11-10T10:01:30.000Z', age_s: 0,
+  });
+  h.line('st-cs', { type: 'conversation_reset', new_conversation_id: 'c2' });
+  assert.deepStrictEqual(await ask(), { known: false, reason: 'no context measurement since this session started or last reset', stale: true });
 });
 
 test('_noteCtx: an onctx reminder survives [agent:context clear] and re-arms on the first post-clear read below its threshold', async (t) => {
