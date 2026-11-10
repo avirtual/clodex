@@ -2496,7 +2496,7 @@ test('t1092: an ordinary role removed with an account gets it back unless the re
   assert.deepStrictEqual(stashOnDisk(home), { runner: 'work' });
   const own = tm.addRole('shop', 'runner', { brief: 'r', account: 'other' });
   assert.deepStrictEqual(own.roles.runner, {
-    template: null, prompt: null, brief: 'r', dispatch: 'standing', cwd: null, account: 'other',
+    template: null, prompt: null, brief: 'r', dispatch: 'standing', cwd: null, account: 'other', idleClear: null,
   });
   assert.strictEqual(own.accountCarried, null);
   assert.strictEqual(stashOnDisk(home), undefined, 'the stash entry is deleted even when the def brought its own account');

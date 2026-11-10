@@ -152,7 +152,7 @@ test('roles popover: the dirty check reads the same fields the save patch sends'
   assert.deepStrictEqual(rowFormValues(row), { ...HAND, cwd: 'api', dispatch: 'worktree', idleClear: '' },
     'dispatch is the CHECKED segment, not the first one a plain [data-f] lookup returns');
   const { row: bare } = fakeRow({ fields: { account: 'a' }, readOnly: true });
-  assert.deepStrictEqual(rowFormValues(bare), { brief: '', prompt: '', template: '', dispatch: 'standing', cwd: '', account: 'a' },
+  assert.deepStrictEqual(rowFormValues(bare), { brief: '', prompt: '', template: '', dispatch: 'standing', cwd: '', account: 'a', idleClear: '' },
     'an absent field reads blank');
 });
 

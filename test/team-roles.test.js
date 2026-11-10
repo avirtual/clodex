@@ -46,7 +46,7 @@ test('teamRoleRows: one row per role in key order, reserved keys marked read-onl
   // buildSavePatch then drops — a Save that silently declines to save.
   // `cwd` normalizes to '' (unlike dispatch): absent means "the team root", and
   // the row's control is a free-text input whose empty state says exactly that.
-  assert.deepStrictEqual(rows[3], { key: 'bare', account: '', brief: '', prompt: '', template: '', dispatch: 'standing', cwd: '', readOnly: false });
+  assert.deepStrictEqual(rows[3], { key: 'bare', account: '', idleClear: '', brief: '', prompt: '', template: '', dispatch: 'standing', cwd: '', readOnly: false });
 });
 
 test('teamRoleRows: a role cwd reaches the row it belongs to', () => {
