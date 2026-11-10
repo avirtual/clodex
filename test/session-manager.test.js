@@ -25862,7 +25862,7 @@ test('t2217: a clodent stream seat sends /compact as a user turn; compact_bounda
   assert.match(injected[0], /pick up t2217/);
 });
 
-test('t2236: a clodent stream seat whose compact fails (compact_result failed) ends the compact at once and releases the guard', async (t) => {
+test('t2236: a clodent stream seat whose compact fails (compact_result failed) ends the compact at once and releases the guard (_onStreamCompactFailed)', async (t) => {
   const { h, s, mock, injected } = await mkClodentStreamSeat(t, 'cs3');
   h.m._handleContextIntent(s, 'compact', 'pick up t2236');
   h.m._routeAttnEntry(s, { hook_event_name: 'PreCompact', trigger: 'manual' });
