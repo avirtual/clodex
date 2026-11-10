@@ -268,7 +268,8 @@ for (const [label, handRole, template, want] of [
 test('by-name team spawn: a seat resolving to a role gets the role value over the template\'s', async (t) => {
   const tplDir = mkTmpRoot('t2248-tpl-');
   t.after(() => fs.rmSync(tplDir, { recursive: true, force: true }));
-  const tpl = path.join(tplDir, 'hand.json');
+  fs.mkdirSync(path.join(tplDir, 'library', 'templates'), { recursive: true });
+  const tpl = path.join(tplDir, 'library', 'templates', 'hand.json');
   fs.writeFileSync(tpl, JSON.stringify({ type: 'claude', idleClear: { afterMs: 7200000 } }));
   const store = fakePersistence();
   const team = { name: 'team', root: tplDir, lead: 'lead', roles: { lead: {}, hand: { idleClear: { afterMs: 900000 } } } };
