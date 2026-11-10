@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Teams: a lead's ticket dispatch keeps only the plugins and MCP servers the lead itself has, and a lead's template-save keeps flags that only restrict a seat (plan mode, a tool denylist, a read-only sandbox).
+
 ## 5.170.0 — 2026-11-10
 
 - Sandbox: the team box image installs the clodent CLI, so clodent seats can run inside a box and survive a rebuild.

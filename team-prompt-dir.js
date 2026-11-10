@@ -125,7 +125,7 @@ function mayGrantIntent(rec, grants, type) {
   return intentEnabledForSeat(type, rec) || grants.intents.includes(type);
 }
 
-const NARROWING_FLAG_VALUES = { '--disallowedTools': null, '--permission-mode': ['plan', 'default', 'dontAsk'] };
+const NARROWING_FLAG_VALUES = { '--disallowedTools': null, '--permission-mode': ['plan', 'default', 'dontAsk'], '--sandbox': ['read-only'] };
 
 function narrowsOnly(group) {
   return group.pairs.length > 0 && group.pairs.every(([f, v]) => Object.prototype.hasOwnProperty.call(NARROWING_FLAG_VALUES, f)
@@ -222,7 +222,7 @@ function teamTemplateSave(deps, team, stem, body, opts = {}) {
       for (const g of privilegedGroups(out.extraArgs)) {
         if (g.name === null) { kept.push(...g.tokens); continue; }
         privilegedSeen = true;
-        if (g.pairs.every((p) => heldFlags.has(flagKey(p)))) keptPrivileged.push(g.tokens);
+        if (narrowsOnly(g) || g.pairs.every((p) => heldFlags.has(flagKey(p)))) keptPrivileged.push(g.tokens);
         else if (!stripped.includes(g.name)) stripped.push(g.name);
       }
       const keptJson = keptPrivileged.map((t) => JSON.stringify(t));

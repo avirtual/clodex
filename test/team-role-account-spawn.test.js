@@ -58,7 +58,7 @@ const SHIPPED_REVIEWER_TEMPLATE = {
   },
 };
 
-function mkFixture({ handRole = {}, reviewerRole = {}, accounts = ACCOUNTS, templates, realManifest = false, accountsThrow = false } = {}) {
+function mkFixture({ handRole = {}, reviewerRole = {}, accounts = ACCOUNTS, templates, realManifest = false, accountsThrow = false, leadMcp = null } = {}) {
   const home = mkTmpRoot('clodex-t830-');
   const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
   const teamsDir = pathReal.join(home, 'teams');
@@ -88,7 +88,7 @@ function mkFixture({ handRole = {}, reviewerRole = {}, accounts = ACCOUNTS, temp
   const store = [];
   const persistence = {
     list: () => store,
-    get: (n) => store.find((e) => e.name === n) || (n === 'lead' ? { name: 'lead', extraArgs: [] } : null),
+    get: (n) => store.find((e) => e.name === n) || (n === 'lead' ? { name: 'lead', extraArgs: [], ...(leadMcp ? { mcpServers: leadMcp } : {}) } : null),
     upsert: (e) => {
       const i = store.findIndex((x) => x.name === e.name);
       if (i >= 0) store[i] = { ...store[i], ...e }; else store.push({ ...e });
@@ -440,7 +440,7 @@ test('t1842: a reviewer template protectCredentials list reaches the reviewer cr
 });
 
 test('a hand template mcpServers list reaches the ticket seat create() as the 28th positional', async () => {
-  const f = mkFixture({ templates: [{ ...HAND_TEMPLATE, mcpServers: ['jira'] }, SHIPPED_REVIEWER_TEMPLATE] });
+  const f = mkFixture({ templates: [{ ...HAND_TEMPLATE, mcpServers: ['jira'] }, SHIPPED_REVIEWER_TEMPLATE], leadMcp: ['jira'] });
   await dispatchTicket(f);
   assert.strictEqual(f.created.length, 1, 'ENTER: the ticket seat must have spawned');
   assert.deepStrictEqual([f.created[0].length, f.created[0][27]], [28, ['jira']]);
