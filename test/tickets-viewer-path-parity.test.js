@@ -141,6 +141,11 @@ test('viewer nextTicketId agrees with core tickets-store', () => {
   // Both sides agree AND agree on the right answer: two copies that drifted
   // together would satisfy the equality above and nothing else.
   assert.strictEqual(viewer.nextTicketId(boards[2]), 't8');
+  for (const floor of [0, 3, 40, -1, 1.5, '9']) {
+    assert.strictEqual(viewer.nextTicketId(boards[2], floor), coreStore.nextTicketId(boards[2], floor),
+      `diverged on floor ${JSON.stringify(floor)}`);
+  }
+  assert.strictEqual(viewer.nextTicketId(boards[2], 40), 't41');
 });
 
 test('viewer ticketTitle agrees with core tickets-store', () => {

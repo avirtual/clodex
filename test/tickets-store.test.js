@@ -145,6 +145,13 @@ test('nextTicketId: monotonic from the max, never reuses even past a gap', () =>
   assert.strictEqual(nextTicketId([{ id: 't3' }, { id: 't1' }, { id: 'bogus' }]), 't4');
 });
 
+test('nextTicketId: a floor above the board max wins, a floor below it does not', () => {
+  assert.strictEqual(nextTicketId([{ id: 't5' }], 9), 't10');
+  assert.strictEqual(nextTicketId([{ id: 't5' }], 0), 't6');
+  assert.strictEqual(nextTicketId([{ id: 't5' }], 3), 't6');
+  assert.strictEqual(nextTicketId([], 40), 't41');
+});
+
 test('ticketTitle: first non-empty line, trimmed and capped; empty → (untitled)', () => {
   assert.strictEqual(ticketTitle('  build the widget\nmore detail'), 'build the widget');
   assert.strictEqual(ticketTitle('\n\n   second-first line'), 'second-first line');

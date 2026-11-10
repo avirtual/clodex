@@ -5045,7 +5045,7 @@ function createTicketMethods(deps, shared) {
       // Written only when true: a stored `parked: false` would be a second spelling of the absent state.
       const parked = !!intent.park;
       const ticket = {
-        id: nextTicketId(tickets), title, spec,
+        id: nextTicketId(tickets, ticketsStore.readMeta(team.root).maxId), title, spec,
         assignee, opener: session.name, state: 'open',
         openedAt: now, closedAt: null, lastActivityAt: now, nudgedAt: null,
         // Explicit null, unlike `parked`: `ticketStarted` reads an absent key as a pre-upgrade record that was dispatched,

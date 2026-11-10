@@ -4,12 +4,14 @@
 // .projectDirFor owns that grammar, do not re-join it here. Under ~/.clodex and
 // not userData, because the standalone clodex-team exec reads it.
 
-const { ensureDir, atomicWriteFileSync } = require('./fs-util');
+const { ensureDir, atomicWriteFileSync, writeAllSync } = require('./fs-util');
 const { projectDirFor, defaultClodexHome } = require('./clodex-paths');
 
 const TICKETS_FILE = 'tickets.json';
+const ARCHIVE_FILE = 'tickets-archive.jsonl';
+const ARCHIVE_META_FILE = 'tickets-archive.meta.json';
 
-function createTicketsStore({ fs = require('fs'), path = require('path'), clodexHome } = {}) {
+function createTicketsStore({ fs = require('fs'), path = require('path'), clodexHome, warn = (msg) => console.warn(msg) } = {}) {
   const home = clodexHome || defaultClodexHome();
 
   function boardDir(projectRoot) {
@@ -105,13 +107,116 @@ function createTicketsStore({ fs = require('fs'), path = require('path'), clodex
     if (key) boardCache.set(file, { key, tickets: null });
   }
 
-  return { load, read, save, ticketsPath };
+  function archivePath(projectRoot) {
+    return path.join(boardDir(projectRoot), ARCHIVE_FILE);
+  }
+
+  function metaPath(projectRoot) {
+    return path.join(boardDir(projectRoot), ARCHIVE_META_FILE);
+  }
+
+  const archiveCache = new Map();
+
+  function archiveLineOp(line) {
+    let rec;
+    try {
+      rec = JSON.parse(line);
+    } catch {
+      return null;
+    }
+    if (!rec || typeof rec !== 'object') return null;
+    if (rec.op === 'archive' && rec.row && typeof rec.row === 'object' && typeof rec.row.id === 'string' && rec.row.id) {
+      return { op: 'archive', id: rec.row.id, row: rec.row };
+    }
+    if (rec.op === 'restore' && typeof rec.id === 'string' && rec.id) return { op: 'restore', id: rec.id };
+    return null;
+  }
+
+  function readArchive(projectRoot) {
+    const file = archivePath(projectRoot);
+    const key = statKey(file);
+    const hit = archiveCache.get(file);
+    if (hit && sameKey(hit.key, key)) return hit.rows;
+    archiveCache.delete(file);
+    let raw;
+    try {
+      raw = fs.readFileSync(file, 'utf-8');
+    } catch (e) {
+      if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return new Map();
+      throw e;
+    }
+    const lines = raw.split('\n');
+    let last = lines.length - 1;
+    while (last >= 0 && !lines[last].trim()) last -= 1;
+    const rows = new Map();
+    let bad = 0;
+    for (let i = 0; i <= last; i++) {
+      if (!lines[i].trim()) continue;
+      const op = archiveLineOp(lines[i]);
+      if (!op) {
+        if (i !== last) bad += 1;
+        continue;
+      }
+      if (op.op === 'archive') rows.set(op.id, op.row);
+      else rows.delete(op.id);
+    }
+    if (bad) warn(`tickets archive ${file}: skipped ${bad} unparseable line(s)`);
+    if (key) archiveCache.set(file, { key, rows });
+    return rows;
+  }
+
+  function appendLines(projectRoot, lines) {
+    if (!lines.length) return;
+    const file = archivePath(projectRoot);
+    ensureDir(boardDir(projectRoot));
+    let text = lines.map((l) => `${JSON.stringify(l)}\n`).join('');
+    const fd = fs.openSync(file, 'a+');
+    try {
+      const size = fs.fstatSync(fd).size;
+      if (size > 0) {
+        const tail = Buffer.alloc(1);
+        fs.readSync(fd, tail, 0, 1, size - 1);
+        if (tail[0] !== 0x0a) text = `\n${text}`;
+      }
+      writeAllSync(fd, text, file);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    archiveCache.delete(file);
+  }
+
+  function appendArchive(projectRoot, rows) {
+    const at = new Date().toISOString();
+    appendLines(projectRoot, (rows || []).map((row) => ({ op: 'archive', at, row })));
+  }
+
+  function appendRestore(projectRoot, id) {
+    appendLines(projectRoot, [{ op: 'restore', at: new Date().toISOString(), id }]);
+  }
+
+  function readMeta(projectRoot) {
+    try {
+      const meta = JSON.parse(fs.readFileSync(metaPath(projectRoot), 'utf-8'));
+      const maxId = meta && meta.maxId;
+      if (Number.isSafeInteger(maxId) && maxId >= 0) return { maxId };
+    } catch {}
+    return { maxId: 0 };
+  }
+
+  function writeMeta(projectRoot, { maxId } = {}) {
+    if (!Number.isSafeInteger(maxId) || maxId < 0) throw new Error(`tickets archive meta: invalid maxId ${maxId}`);
+    ensureDir(boardDir(projectRoot));
+    atomicWriteFileSync(metaPath(projectRoot), JSON.stringify({ maxId }));
+  }
+
+  return { load, read, save, ticketsPath, archivePath, metaPath, readArchive, appendArchive, appendRestore, readMeta, writeMeta };
 }
 
 // Closed records stay in the array so max+1 never reuses an id: an id is a public
 // reference (branches, artifact dirs, commits) and a re-issued one still resolves.
-function nextTicketId(tickets) {
-  let max = 0;
+function nextTicketId(tickets, floor = 0) {
+  let max = Number.isSafeInteger(floor) && floor > 0 ? floor : 0;
   for (const t of tickets || []) {
     const m = /^t(\d+)$/.exec(t && t.id);
     if (m) {

@@ -284,6 +284,61 @@ test('mergeBoards: a NATIVE destination record does not suppress a team record w
   assert.strictEqual(merged[1].formerId, 't1');
 });
 
+test('mergeBoards: an ARCHIVED migrated row is not re-copied, and an id colliding with an archived id re-issues above the floor', () => {
+  const dest = [{ id: 't1', k: 'native' }];
+  const archived = [{ id: 't7', originTeam: 'alpha', k: 'archived alpha t2', formerId: 't2' }, { id: 't12', k: 'archived native' }];
+  const source = [{ id: 't2', k: 'alpha t2' }, { id: 't12', k: 'alpha t12' }];
+  const merged = mergeBoards(dest, source, 'alpha', archived, 20);
+  assert.strictEqual(merged.length, 2, 'ENTER: exactly one arrival survives');
+  assert.deepStrictEqual(merged, [
+    { id: 't1', k: 'native' },
+    { id: 't21', k: 'alpha t12', originTeam: 'alpha', formerId: 't12' },
+  ]);
+  const lowMeta = mergeBoards(dest, [{ id: 't12', k: 'alpha t12' }], 'alpha', archived, 0);
+  assert.strictEqual(lowMeta[1].id, 't13', 'the highest archived id is a floor even when meta is lower');
+});
+
+test('tickets-migrate: an archived row on disk is not re-copied by a later run', () => {
+  const home = mkHome();
+  const root = '/proj/archived';
+  mkTeam(home, 'alpha', { root, tickets: [{ id: 't1', state: 'done', k: 'old' }, { id: 't2', state: 'open', k: 'live' }] });
+  const store = createTicketsStore({ clodexHome: home });
+  store.appendArchive(root, [{ id: 't1', state: 'done', k: 'old', originTeam: 'alpha' }]);
+  store.writeMeta(root, { maxId: 5 });
+  fs.writeFileSync(store.ticketsPath(root), JSON.stringify([{ id: 't3', k: 'native' }]));
+
+  const res = runTicketsMigration({ root: home, fs });
+  assert.strictEqual(res.migrated, 1);
+  assert.deepStrictEqual(store.load(root), [
+    { id: 't3', k: 'native' },
+    { id: 't2', state: 'open', k: 'live', originTeam: 'alpha' },
+  ]);
+});
+
+test('mergeBoards / migrate: with no archive and no meta the output is unchanged', () => {
+  const dest = [{ id: 't1', k: 'dest1' }, { id: 't2', k: 'dest2', originTeam: 'beta' }];
+  const source = [{ id: 't1', k: 'a' }, { id: 't2', k: 'b' }, { id: 't9', k: 'c' }];
+  const expected = [
+    { id: 't1', k: 'dest1' },
+    { id: 't2', k: 'dest2', originTeam: 'beta' },
+    { id: 't3', k: 'a', originTeam: 'alpha', formerId: 't1' },
+    { id: 't4', k: 'b', originTeam: 'alpha', formerId: 't2' },
+    { id: 't9', k: 'c', originTeam: 'alpha' },
+  ];
+  assert.deepStrictEqual(mergeBoards(dest, source, 'alpha'), expected);
+  assert.deepStrictEqual(mergeBoards(dest, source, 'alpha', [], 0), expected);
+
+  const home = mkHome();
+  const root = '/proj/plain';
+  mkTeam(home, 'alpha', { root, tickets: source });
+  const store = createTicketsStore({ clodexHome: home });
+  fs.mkdirSync(path.dirname(store.ticketsPath(root)), { recursive: true });
+  fs.writeFileSync(store.ticketsPath(root), JSON.stringify(dest));
+  runTicketsMigration({ root: home, fs });
+  assert.deepStrictEqual(store.load(root), expected);
+  assert.ok(!fs.existsSync(store.archivePath(root)) && !fs.existsSync(store.metaPath(root)), 'migrate writes no archive files');
+});
+
 test('tickets-migrate: no teams dir at all is a silent no-op', () => {
   const res = runTicketsMigration({ root: mkHome(), fs });
   assert.deepStrictEqual(res, { migrated: 0, reconciled: 0, teams: [] });
