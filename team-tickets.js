@@ -203,11 +203,13 @@ const TICKET_SUITE_TIMEOUT_MS = TICKET_SUITE_LOCK_WAIT_MS + 21 * 60 * 1000;
 // a deadline alone lets a fast lock flap spin the timer hundreds of times.
 const MERGE_RETRY_DELAY_MS = 30 * 1000;
 const MERGE_RETRY_MAX_WAIT_MS = 20 * 60 * 1000;
-const ARCHIVE_PASS_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const MERGE_RETRY_MAX_ATTEMPTS = Math.ceil(MERGE_RETRY_MAX_WAIT_MS / MERGE_RETRY_DELAY_MS);
 const MERGE_RETRY_HARD_CAP_MS = 60 * 60 * 1000;
 const BOOT_REQUEUE_LEAD_WAIT_MS = 5 * 60 * 1000;
 const BOOT_REQUEUE_LEAD_POLL_MS = 2 * 1000;
+
+const ARCHIVE_PASS_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const ARCHIVE_DRAIN_MAX_PASSES = 20;
 
 // team.json is agent-writable, so the effective allowlist is the intersection of this cap
 // and any manifest `tools`: a manifest may narrow it, never widen past it.
@@ -7903,8 +7905,10 @@ function createTicketMethods(deps, shared) {
     _archivePassFor(root, now = Date.now()) {
       if (!this._lastArchiveAt) this._lastArchiveAt = new Map();
       const last = this._lastArchiveAt.get(root);
-      if (last && !last.remaining && now - last.at < ARCHIVE_PASS_INTERVAL_MS) return null;
-      this._lastArchiveAt.set(root, { at: now, remaining: 0 });
+      const draining = !!(last && last.remaining > 0 && last.moved > 0 && last.passes < ARCHIVE_DRAIN_MAX_PASSES);
+      if (last && !draining && now - last.at < ARCHIVE_PASS_INTERVAL_MS) return null;
+      const passes = draining ? last.passes + 1 : 1;
+      this._lastArchiveAt.set(root, { at: now, remaining: 0, moved: 0, passes });
       let res;
       try {
         res = ticketsStore.archiveOldTickets(root, { now });
@@ -7912,7 +7916,7 @@ function createTicketMethods(deps, shared) {
         log.error('ticket', `archive: ${root} failed: ${e && e.message ? e.message : String(e)}`);
         return null;
       }
-      this._lastArchiveAt.set(root, { at: now, remaining: res.remaining });
+      this._lastArchiveAt.set(root, { at: now, remaining: res.remaining, moved: res.moved, passes });
       if (res.moved) log.info('ticket', `archive: ${root} moved ${res.moved}, ${res.remaining} remain, ${res.ms}ms`);
       return res;
     },
@@ -8077,8 +8081,7 @@ function createTicketMethods(deps, shared) {
 
     // The wake line carries a no-spec exit: the eaten draft may have been the spec with
     // its latch retry spent, and a seat knowing only a ticket id could not say so.
-    _wakeText(ticket, now, lead) {
-      const last = ticket.lastActivityAt || ticket.openedAt || now;
+    _wakeText(ticket, now, lead, last = ticket.lastActivityAt || ticket.openedAt || now) {
       return `[ticket ${ticket.id} wake] this ticket has had no activity for ${humanizeAge(now - last)} `
         + `and this seat has taken no turn in that time, so this is an automated wake — nothing new is being asked. `
         + `If your last turn was interrupted (an API error, a lost delivery), resume the ticket and close with `
@@ -8088,11 +8091,11 @@ function createTicketMethods(deps, shared) {
 
     // No `parkable`: a parked wake drains on the seat's next turn, which never comes.
     // produce aborts inside the queue's critical section so null cancels the Ctrl-U.
-    _wakeStalledSeat(team, ticket, seat, now, stallMs) {
+    _wakeStalledSeat(team, ticket, seat, now, stallMs, last) {
       const tid = ticket.id;
       const seenAt = ticket.lastActivityAt || null;
       const finalText = this._buildDeliveryText(seat, 'ticket-watchdog',
-        this._wakeText(ticket, now, team.lead), 'dm', `[ticket ${tid} wake]`);
+        this._wakeText(ticket, now, team.lead, last), 'dm', `[ticket ${tid} wake]`);
       this._injectText(seat, '', {
         produce: () => {
           try {
@@ -8322,6 +8325,7 @@ function createTicketMethods(deps, shared) {
           // Re-read after the await: a seat that woke while git ran would otherwise get a false alarm.
           const after = ticketsStore.load(team.root).find((x) => x.id === tid);
           if (!after || !ticketInFlight(after) || (after.lastActivityAt || null) !== seenAt) continue;
+          if (assigneeSession && typeof assigneeSession.activityTs === 'number' && assigneeSession.activityTs > seatActivityTs) continue;
           // Re-resolve the seat after the await instead of reusing `live`: a seat spawned during the
           // git probe touches no record, so only a fresh walk flips the orphan classification.
           const seatNow = this._ticketAssigneeSeat(team, after);
@@ -8341,7 +8345,7 @@ function createTicketMethods(deps, shared) {
               try { verdict = (await this._sampleSeatLiveness(wakeSeat, now, stallMs, 'stall')).verdict; }
               catch { verdict = null; }
               if (verdict === 'wedged') {
-                this._wakeStalledSeat(team, after, wakeSeat, now, stallMs);
+                this._wakeStalledSeat(team, after, wakeSeat, now, stallMs, last);
                 continue;
               }
               continue;
@@ -8384,8 +8388,6 @@ function createTicketMethods(deps, shared) {
               // `ticketInFlight` as the eligibility gate, or the nudge repeats on every sweep.
               if (!ticketInFlight(rec)) return;
               if ((rec.lastActivityAt || null) !== seenAt) return;
-              // Stamp the sweep's instant, not Date.now(): the doubling gate reads nudgedAt - lastActivityAt
-              // as the alarm's age, and wall-clock makes the schedule untestable.
               rec.nudgedAt = now;
               // orphanNudgedAt records which message was sent (nudgedAt is one field for two); it is deleted
               // on the stall arm so orphan, live, orphan again is not suppressed by the first stamp.

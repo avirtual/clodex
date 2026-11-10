@@ -10667,6 +10667,32 @@ function mkWake(seatProps = {}, extra = {}, agoMs = WAKE_STALL_MS) {
   };
 }
 
+test('t2216 the wake text measures quiet from the sweep baseline, seat activity included', async () => {
+  const w = mkWake({}, {}, 40 * 60 * 1000);
+  w.hand.activityTs = w.at(5);
+  w.f.m._stallEvidence = async () => ({ tool: null, commits: null, dirty: null, apiError: null });
+  w.f.m._sampleSeatLiveness = async () => ({ verdict: 'wedged', cpuRead: true });
+  w.f.m._wakeSeatEligible = () => true;
+  await w.f.m._sweepTeamTickets({ ...w.f.team, watchdogMs: 31 * 60 * 1000 }, w.at(40));
+  assert.strictEqual(w.wakes().length, 1, 'ENTER: the wedged seat was woken');
+  assert.match(w.wakes()[0], /no activity for 35m /);
+});
+
+test('t2216 seat activity during the stall probe skips the alarm', async () => {
+  const run = async (advance) => {
+    const w = mkWake({}, {}, 60 * 60 * 1000);
+    w.hand.activityTs = w.quiet;
+    w.f.m._stallEvidence = async () => {
+      if (advance) w.hand.activityTs = w.at(59);
+      return { tool: null, commits: null, dirty: null, apiError: null };
+    };
+    await w.sweep(60);
+    return w.alarms().length;
+  };
+  assert.strictEqual(await run(false), 1, 'ENTER: without seat activity the 60m-quiet ticket alarms');
+  assert.strictEqual(await run(true), 0);
+});
+
 test('t400 the wake needs a CONFIRMED wedge: the first wedged sweep defers, the second wakes', async () => {
   const w = mkWake();
   await w.sweep(30);

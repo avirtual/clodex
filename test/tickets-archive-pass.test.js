@@ -8,6 +8,7 @@ const pathReal = require('node:path');
 const { mkPark } = require('./lib/session-fixtures');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const ticketsMod = require('../tickets-store');
+const { createTicketMethods } = require('../team-tickets');
 
 const T0 = 1_700_000_000_000;
 const DAY = 24 * 60 * 60 * 1000;
@@ -222,6 +223,35 @@ test('archive hook: a pass that left rows past the cap runs again on the next sw
   assert.deepStrictEqual(f.board().map((t) => t.id), ['t1', 't202'], 'ENTER: the cap left one row');
   await f.m._sweepTickets(NOW + 60 * 1000);
   assert.deepStrictEqual(f.board().map((t) => t.id), ['t1']);
+});
+
+function mkDrain(result) {
+  const calls = [];
+  const methods = createTicketMethods({ log: { info() {}, warn() {}, error() {} } }, {
+    ticketsStore: { archiveOldTickets: (root, { now }) => { calls.push(now); return { ms: 1, ...result(calls.length) }; } },
+  });
+  return { m: Object.create(methods), calls };
+}
+
+test('archive drain: a pass that moves 0 rows falls back to daily even with rows remaining', () => {
+  const d = mkDrain((n) => (n === 1 ? { moved: 200, remaining: 50 } : { moved: 0, remaining: 50 }));
+  d.m._archivePassFor('/r', NOW);
+  d.m._archivePassFor('/r', NOW + 60 * 1000);
+  d.m._archivePassFor('/r', NOW + 2 * 60 * 1000);
+  d.m._archivePassFor('/r', NOW + DAY - 1);
+  assert.deepStrictEqual(d.calls, [NOW, NOW + 60 * 1000]);
+  d.m._archivePassFor('/r', NOW + 60 * 1000 + DAY);
+  assert.strictEqual(d.calls.length, 3);
+});
+
+test('archive drain: at most 20 consecutive passes per root, then daily', () => {
+  const d = mkDrain(() => ({ moved: 200, remaining: 1000 }));
+  for (let i = 0; i < 30; i++) d.m._archivePassFor('/r', NOW + i * 60 * 1000);
+  d.m._archivePassFor('/other', NOW);
+  assert.strictEqual(d.calls.length, 21);
+  assert.strictEqual(d.calls[19], NOW + 19 * 60 * 1000);
+  d.m._archivePassFor('/r', NOW + 19 * 60 * 1000 + DAY);
+  assert.strictEqual(d.calls.length, 22);
 });
 
 test('archive hook: _archivePassFor reports the pass, then returns null inside the day', () => {
