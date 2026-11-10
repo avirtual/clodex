@@ -22,7 +22,7 @@ const {
   DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone,
 } = require('./team-manifest');
 const {
-  readTeamJson, teamTemplatePath, teamTemplateSave, mayGrantOf, clampToGrantor, teamTemplateRemove, teamPromptSave, teamPromptRemove,
+  readTeamJson, teamTemplatePath, teamTemplateSave, mayGrantOf, ownTeamExecGrants, clampToGrantor, teamTemplateRemove, teamPromptSave, teamPromptRemove,
   teamPromptFile,
 } = require('./team-prompt-dir');
 const { resolveModelId, deriveModelTemplate, deriveEffortTemplate } = require('./team-template-derive');
@@ -646,7 +646,7 @@ function createTicketMethods(deps, shared) {
       const leadByCreator = leadRoleTemplate && typeof intentEnabledForSeat === 'function'
         && intentEnabledForSeat('team-create', spawnerRec);
       const spawnerIsLead = !!(spawnerTeam && spawnerTeam.lead === spawner.name);
-      const mayGrant = spawnerIsLead ? mayGrantOf(spawnerRec) : { execCommands: spawnerRec.execCommands, extraArgs: spawnerArgs };
+      const mayGrant = spawnerIsLead ? mayGrantOf(spawnerRec, ownTeamExecGrants({ fs, path }, spawnerTeam, spawner.name, spawnerRec)) : { execCommands: spawnerRec.execCommands, extraArgs: spawnerArgs };
       const clampToSpawner = (list, key) => {
         if (!Array.isArray(list)) return [];
         if (operator || leadByCreator) return list;
@@ -4770,7 +4770,7 @@ function createTicketMethods(deps, shared) {
         ? splitPrivilegedArgs(seatAdapter.readOnlyCap.args).pairs.map((p) => p.join('\0')) : [];
       const keepGroup = (g) => (postureArgs.length > 0 && setsPosture(seatAdapter, g.tokens))
         || (capPairs.length > 0 && g.pairs.every((p) => capPairs.includes(p.join('\0'))));
-      const grantClamp = (rawShape && team && team.lead === opener.name) ? clampToGrantor(openerRec, rawShape, keepGroup) : null;
+      const grantClamp = (rawShape && team && team.lead === opener.name) ? clampToGrantor(openerRec, rawShape, keepGroup, ownTeamExecGrants({ fs, path }, team, opener.name, openerRec)) : null;
       const bundles = grantClamp && typeof getPluginBundles === 'function' ? (getPluginBundles() || []) : [];
       const leadHasPlugin = (p) => {
         const b = bundles.find((x) => x && String(x.id) === p);
