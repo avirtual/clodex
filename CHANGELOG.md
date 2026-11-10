@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Browser pane: a handback says "signed in" only when the page shows it (a logout link or account menu); a handback from a 2FA or security-key step now says it is still on a sign-in page.
+
 ## 5.168.0 — 2026-11-10
 
 - clodent seats: the context bar and context-size reminders use the window clodent reports (1M with a [1m] model, 200k without).

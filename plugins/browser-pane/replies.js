@@ -521,8 +521,10 @@ function waitReply(service, r, forText) {
   return reply(`${service} ${idleLabel(r)}`);
 }
 
-function handbackReply(service, frame) {
-  const signed = frame.login && frame.login.password ? 'still on a sign-in page' : 'signed in';
+const HANDBACK_LOGIN = { 'logged-in': 'signed in', 'login-page': 'still on a sign-in page', 'idp-refused': 'still on a sign-in page' };
+
+function handbackReply(service, frame, login) {
+  const signed = HANDBACK_LOGIN[login && login.state] || 'sign-in not confirmed';
   return reply(`the operator handed ${service} back · now ${redactUrl(frame.url || '')} (${JSON.stringify(String(frame.title || ''))}) · ${signed} · read to continue`);
 }
 
