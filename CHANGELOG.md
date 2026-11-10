@@ -17,6 +17,7 @@ blocks a release.
 - Team hand prompt: reads a needed function whole instead of in 60-line slices, which were a third of measured hand spend. Team lead prompt: one rule for probe versus scout (does the read need the lead's context). Reaches seats spawned after the upgrade; a team that keeps its own copy of either prompt must resync it.
 - Test runner: a full run records each test file's duration, and `scripts/run-tests.js --durations` lists the 25 slowest from the last full run.
 - Accounts on a remote node: a window attached to a remote Clodex (or its web page) can now list, add, remove and move accounts on that node, where the panel used to say accounts were unavailable. An API key is accepted only over a local or encrypted connection, and never appears in a reply or log.
+- Security: a credential-sandboxed seat's shell commands and file tools can no longer read the API key in another account's `settings.json` under the Clodex data dir. A seat on an API-key account still has its own key in its shell environment.
 
 ## 5.165.0 — 2026-11-09
 - Sidebar Minimal filter: a group header shows a red count of hidden ephemeral seats that are working (tooltip names them; click shows them), so a node is not mistaken for idle before a reboot.
