@@ -388,6 +388,16 @@ function createRemoteWiring(deps) {
     return cbs;
   }
 
+  function pushReattach(name, fallback) {
+    const rec = getPersistence().get(name) || fallback || {};
+    manager._sendToSession(name, 'session:context-action', { ...manager._reattachAction(name, rec.type, manager.resumeCwdOf(rec)), background: true });
+  }
+
+  function pushRowAfterRestart(name, out, entry) {
+    if (out && out.ok && out.restarted) pushReattach(name, entry);
+    else if (out && !out.ok && !out.inPlace) manager._sendRespawnFailed(name, getPersistence().get(name) || entry, out.error);
+  }
+
   function spawnViaHandler(intent, cwd, onOk, label, handlerOpts = {}) {
     return new Promise((resolve) => {
       let settled = false;
@@ -920,6 +930,7 @@ function createRemoteWiring(deps) {
             // so NO agentDefaults fallback (Decision 6). Absent key → no seed, box
             // behavior unchanged.
             if (b.stripLevel === 1 || b.stripLevel === 2) getPersistence().setStripLevel(name, b.stripLevel);
+            pushReattach(name, { type: t, cwd: dir });
             const answer = {
               ok: true, name: out.name, type: out.type, pid: out.pid,
 // Echo the env keys actually applied so a caller can detect a silent drop by
@@ -996,6 +1007,7 @@ function createRemoteWiring(deps) {
           let out;
           try { out = await restartSession(name, { fresh: !!(opts && opts.fresh) }, wsId); }
           finally { if (cap) manager.releaseAwakeRoom(entry.template || null, name); }
+          pushRowAfterRestart(name, out, entry);
           if (out && out.ok && entry && entry.class === 'assistant') getPersistence().upsert({ name, awokeAt: Date.now() });
           if (out && out.ok) notifySessions();
           log.info('session', `restart ${name} via peer (${opts && opts.fresh ? 'fresh' : 'resume'})${out && out.ok ? '' : ` failed: ${out && out.error}`}`);
@@ -1029,6 +1041,7 @@ function createRemoteWiring(deps) {
             if (!Object.keys(safePatch).length) return { ok: true, restarted: false };
           }
           const out = await applySessionArgs(name, safePatch, wsId);
+          pushRowAfterRestart(name, out, entry);
           if (out && out.ok && (out.restarted || out.modelSwitched) && getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
           log.info('session', `setArgs ${name} via peer${out && out.ok ? (out.restarted ? ' (respawned)' : out.modelSwitched ? ' (model switched)' : '') : ` failed: ${out && out.error}`}`);
           return out;

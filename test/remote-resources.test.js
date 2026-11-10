@@ -126,6 +126,9 @@ function makeDeps() {
     ]),
     create: async (...args) => { createCalls.push(args); return { name: args[0], type: args[1], pid: 7 }; },
     teamActivity: (name) => ({ roles: { lead: { dispatch: 'session', live: [`${name}-lead`], open: [], last: null } } }),
+    _sendToSession: () => {},
+    _reattachAction: (name, type, cwd) => ({ action: 'reattach', name, type, cwd }),
+    resumeCwdOf: (e) => e.cwd,
   };
   const workspaces = {
     list: () => WORKSPACES.map(w => ({ ...w })),

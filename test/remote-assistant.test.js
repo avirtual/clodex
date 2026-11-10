@@ -30,6 +30,7 @@ function makeDeps(overrides = {}) {
   const roomCalls = [];
   const spawnOpts = [];
   const order = [];
+  const sent = [];
   const files = new Map(Object.entries(overrides.files || {}));
   const manager = {
     sessions: new Map(Object.entries(overrides.sessions || {})),
@@ -55,6 +56,10 @@ function makeDeps(overrides = {}) {
     sleep: async (name, opts) => { sleepCalls.push([name, opts]); return overrides.sleepOut || { ok: true, state: 'asleep' }; },
     destroy: async (name) => { destroyCalls.push(name); records.delete(name); manager.sessions.delete(name); return { ok: true }; },
     kill: async (name) => { killCalls.push(name); },
+    _sendToSession: (...a) => { sent.push(a); },
+    _sendRespawnFailed: (name, entry, error) => { sent.push(['respawnFailed', name, entry, error]); },
+    _reattachAction: (name, type, cwd) => ({ action: 'reattach', name, type, cwd }),
+    resumeCwdOf: (e) => e.cwd,
     awaitTurn: (name, opts) => { awaitCalls.push([name, opts]); return Promise.resolve(overrides.turn === undefined ? null : overrides.turn); },
     _deliverMessage: (...args) => {
       deliverCalls.push({ args, awaitsBefore: awaitCalls.length });
@@ -111,7 +116,7 @@ function makeDeps(overrides = {}) {
   };
   return {
     deps, manager, records, createCalls, spawnCalls, wakeCalls, sleepCalls, destroyCalls, killCalls,
-    deliverCalls, awaitCalls, unlinkCalls, rmCalls, roomCalls, spawnOpts, order,
+    deliverCalls, awaitCalls, unlinkCalls, rmCalls, roomCalls, spawnOpts, order, sent,
   };
 }
 
@@ -885,3 +890,28 @@ test('POST /api/sessions/:name/restart: a refusal carrying a code is sent with t
     assert.deepStrictEqual([gone.status, gone.json], [404, { ok: false, error: 'Session not found in persistence' }]);
   });
 });
+
+const SEAT = { type: 'clodent', cwd: '/w', io: 'stream', workspaceId: 'default' };
+const REATTACH = (name, type) => [name, 'session:context-action', { action: 'reattach', name, type, cwd: '/w', background: true }];
+
+for (const row of [
+  { label: 'restart, restarted', call: (o) => o.restartSession('seat'), engine: 'restart', out: { ok: true, restarted: true }, sent: [REATTACH('seat', 'clodent')] },
+  { label: 'restart failed', call: (o) => o.restartSession('seat'), engine: 'restart', out: { ok: false, error: 'old process did not exit in time' }, sent: [['respawnFailed', 'seat', { name: 'seat', ...SEAT }, 'old process did not exit in time']] },
+  { label: 'patch with restart', call: (o) => o.setSessionArgs('seat', { extraArgs: ['--x'], restart: true }), engine: 'args', out: { ok: true, restarted: true }, sent: [REATTACH('seat', 'clodent')] },
+  { label: 'patch without restart', call: (o) => o.setSessionArgs('seat', { extraArgs: ['--x'] }), engine: 'args', out: { ok: true, restarted: false }, sent: [] },
+  { label: 'patch switched the model in place', call: (o) => o.setSessionArgs('seat', { model: 'opus' }), engine: 'args', out: { ok: true, restarted: false, modelSwitched: true }, sent: [] },
+  { label: 'in-place model switch failed', call: (o) => o.setSessionArgs('seat', { model: 'opus' }), engine: 'args', out: { ok: false, error: 'set_model failed', inPlace: true }, sent: [] },
+  { label: 'restart of an asleep assistant wakes it', call: (o) => o.restartSession('avh-7'), engine: 'wake', out: null, sent: [] },
+  { label: 'bare create', call: (o) => o.createSession({ name: 'w9', type: 'claude', cwd: '/w' }), engine: 'create', out: null, sent: [REATTACH('w9', 'claude')] },
+]) {
+  test(`wire row push: ${row.label} → ${row.sent.length} send(s)`, async () => {
+    const h = makeDeps({ records: { seat: SEAT, 'avh-7': ASLEEP } });
+    const calls = { restart: [], args: [] };
+    h.deps.restartSession = async (...a) => { calls.restart.push(a); return row.out; };
+    h.deps.applySessionArgs = async (...a) => { calls.args.push(a); return row.out; };
+    await row.call(captureOptions(h.deps));
+    const entered = { restart: calls.restart.length, args: calls.args.length, wake: h.wakeCalls.length, create: h.createCalls.length };
+    assert.deepStrictEqual(entered, { restart: 0, args: 0, wake: 0, create: 0, [row.engine]: 1 }, 'ENTER: exactly the expected engine path ran');
+    assert.deepStrictEqual(h.sent, row.sent);
+  });
+}
