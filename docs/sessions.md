@@ -93,8 +93,8 @@ arg** (which is why restart paths must re-assert it; kill drops the entry).
   `_deliverRide`); the other parks and account moves stay Claude-only. A clodent permission ask
   (`notification_type: "permission_prompt"`) classifies as `permission`; it
   is answered in the terminal (`seatPermission` answers stream seats only).
-  A team role naming an `account` on a clodent template is refused with
-  reason `platform`. The operator keys a clodent account by pasting an API
+  A team role naming an `account` on a clodent template boots the seat with
+  `CLODENT_HOME` set to that account's dir. The operator keys a clodent account by pasting an API
   key on an `api` account in Preferences ▸ Accounts: Clodex writes it as
   `env.ANTHROPIC_API_KEY` into that account's own `settings.json` (0600) and
   nowhere else — never into a seat env, a log or the wire, and no IPC returns
