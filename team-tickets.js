@@ -7348,6 +7348,11 @@ function createTicketMethods(deps, shared) {
     async _cancelTeardown(team, ticket, { seatName, rec, branch }) {
       const busy = this._openTicketsFor(team, seatName, ticket.id).filter((t) => this._ticketAssigneeSeat(team, t) === seatName);
       if (busy.length > 0) return { text: `${seatName} was left in place because it holds ${busy[0].id}` };
+      if (!(rec.worktree && rec.worktree.path)) {
+        if (!this.sessions.has(seatName)) return { text: `${seatName} is not running, so nothing was archived` };
+        await this.archive(seatName);
+        return { text: `${seatName} was a one-shot seat and was ARCHIVED (resumable; anything it left uncommitted is still in the checkout)` };
+      }
       const baseSha = (rec.worktree && rec.worktree.baseSha) || (ticket.worktree && ticket.worktree.baseSha) || null;
       const branchName = branch || 'its branch';
       let kept = null;

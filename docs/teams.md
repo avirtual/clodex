@@ -546,6 +546,7 @@ A second accept after that other ticket closes finishes the cleanup.
 |---|---|---|---|
 | seat minted for this ticket, tree clean, 0 commits past the recorded fork point | retired, record dropped | removed | deleted only if still at the tip read before removal |
 | seat minted for this ticket, commits ahead, tree dirty or unreadable, or no fork point recorded | stopped, record kept as archived | kept — the cancel ack says `kept <path> (<n> commits on <branch>)` or why | kept |
+| seat minted for this ticket, no worktree (shared checkout) | archived | — | — |
 | standing assignee, a seat minted for another ticket, or a seat holding another open ticket | untouched | kept | kept |
 | backlog ticket (never started) | nothing attempted | — | — |
 

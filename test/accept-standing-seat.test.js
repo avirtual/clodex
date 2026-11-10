@@ -1968,3 +1968,21 @@ test('cancel: a backlog ticket attempts no teardown', async (t) => {
   assert.strictEqual(out[0], 'ticket t1 cancelled');
   assert.strictEqual(f.one('t1').state, 'cancelled');
 });
+
+test('cancel: a minted seat with no worktree is archived, not destroyed', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  const destroyed = [];
+  f.m.destroy = async (name) => { destroyed.push(name); return { ok: true }; };
+  f.persistence.upsert({ name: 'team-hand-t1', cwd: f.repoDir, ephemeral: true, ticketId: 't1' });
+  f.seat('team-hand-t1');
+  f.tstore.save(f.team.root, [{ id: 't1', state: 'open', spec: 'spec for t1', assignee: 'team-hand-t1', role: 'hand', startedAt: 1, openedAt: 1, lastActivityAt: 1 }]);
+
+  const out = await cancel(f, 't1');
+
+  assert.deepStrictEqual(destroyed, []);
+  assert.deepStrictEqual(f.killed, []);
+  assert.deepStrictEqual(f.archived, ['team-hand-t1']);
+  assert.ok(f.persistence.get('team-hand-t1').archivedAt);
+  assert.strictEqual(out[0], 'ticket t1 cancelled — team-hand-t1 was a one-shot seat and was ARCHIVED (resumable; anything it left uncommitted is still in the checkout)');
+});
