@@ -270,7 +270,7 @@ test('a bypass lead\'s own role template and exec catalog never gain its team ex
   const b = handlerBox(lead, { lead: { template: 'pm' } });
   const teamDir = path.dirname(path.dirname(b.tplFile('x')));
   fs.mkdirSync(path.join(teamDir, 'exec'), { recursive: true });
-  fs.writeFileSync(path.join(teamDir, '..', 'exec', 'avh-chat.json'), JSON.stringify({ description: 'chat', argv: ['true'] }));
+  fs.writeFileSync(path.join(teamDir, 'exec', 'avh-chat.json'), JSON.stringify({ description: 'chat', argv: ['true'] }));
   const body = '{"type":"claude","execCommands":["avh-chat"]}';
   b.m._handleTeam(b.lead, { type: 'team', sub: 'template-save', stem: 'pm', body });
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(b.tplFile('pm'), 'utf8')), { type: 'claude' });
