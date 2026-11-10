@@ -11,6 +11,7 @@ function elapsedText(ms) {
 
 function noticeTextFor(outcome, ms) {
   if (outcome === 'done') return `Compacted in ${elapsedText(ms)}`;
+  if (outcome === 'failed') return 'Compact failed';
   return 'Compact did not report back';
 }
 

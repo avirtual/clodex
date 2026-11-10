@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Teams: a lead's ticket dispatch keeps only the plugins and MCP servers the lead itself has, and a lead's template-save keeps flags that only restrict a seat (plan mode, a tool denylist, a read-only sandbox).
+- Stream seats (claude and clodent): a compact that fails, for example with nothing to compact, now ends at once instead of holding the seat for five minutes.
 
 ## 5.170.0 — 2026-11-10
 
