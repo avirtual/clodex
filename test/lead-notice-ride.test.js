@@ -201,3 +201,20 @@ test('_flushDueRides holds an overdue ride while the lead is busy, then flushes 
   assert.strictEqual(f.injected.length, 1);
   assert.deepStrictEqual(f.parked(), []);
 });
+
+test('_verdictOwesLeadNothing: one route per verdict row', () => {
+  const rows = [
+    { ticket: { mergeWaiting: 'queued' }, verdict: 'ACCEPT', dispatch: null, rides: true },
+    { ticket: { done: 'report' }, verdict: 'ACCEPT', dispatch: null, rides: true },
+    { ticket: {}, verdict: 'ACCEPT', dispatch: null, rides: false },
+    { ticket: {}, verdict: 'REWORK', dispatch: { ok: true }, rides: true },
+    { ticket: {}, verdict: 'REWORK', dispatch: { ok: false }, rides: false },
+    { ticket: {}, verdict: 'REWORK', dispatch: null, rides: false },
+    { ticket: { mergeWaiting: 'queued' }, verdict: 'ESCALATED', dispatch: { ok: true }, rides: false },
+  ];
+  for (const row of rows) {
+    const f = mkLoop({ ticket: row.ticket });
+    const rides = f.m._verdictOwesLeadNothing(f.lead, 't1', { verdict: row.verdict }, row.dispatch);
+    assert.deepStrictEqual({ ...row, rides }, row);
+  }
+});
