@@ -234,8 +234,8 @@ test('t1039: scratch is gateable — a seat without it sees none of the three pr
 // still has exactly one owner: a row whose kv list runs past the intent's `]`
 // renders a grammar no parse accepts.
 test('t767/t830/t890: the role-add row documents model: and account:, closes the intent, and says the aliases are the 1M ids', () => {
-  const ROW = /^ {2}\[agent:team role-add <role>.*\[model:<id\|opus\|sonnet\|haiku\|fable>\] \[account:<label>\]\]/m;
-  assert.ok(ROW.test(leadPrompt(null)), 'the lead\'s prompt carries account: as the last kv in the row, closing the intent');
+  const ROW = /^ {2}\[agent:team role-add <role>.*\[model:<id\|opus\|sonnet\|haiku\|fable>\] \[account:<label>\] \[idle-clear:<minutes\|off>\]\]/m;
+  assert.ok(ROW.test(leadPrompt(null)), 'the lead\'s prompt carries account: then idle-clear: as the last kvs in the row, closing the intent');
   assert.ok(ROW.test(leadPrompt([])), 'and so does a fully-gated lead\'s');
   for (const src of [leadPrompt(null), leadPrompt([])]) {
     assert.ok(/model: derives templates\/<role>\.json from the role's template \(or clodex-team-hand\) with that --model and points the role at it/.test(src),

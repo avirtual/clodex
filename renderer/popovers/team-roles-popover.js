@@ -31,6 +31,7 @@ const {
   reconcileReveal, clearableFields,
   reservedRemovalWarning, REMOVABLE_RESERVED_ROLE_KEYS, usesByRole,
   promptOptionGroups, storedPromptNote, templateOptionGroups, templateRowFor, templatePlatform, accountOptions,
+  idleClearOptions, idleClearApplies, IDLE_CLEAR_TITLE, IDLE_CLEAR_STREAM_ONLY_TITLE,
   reviewerTemplateOptionGroups,
   rowFormValues, syncRowDirty, snapshotRowForm, confirmDiscardRoleEdits,
 } = require('../lib/team-roles');
@@ -51,6 +52,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
   const addTemplate = document.getElementById('team-roles-add-template');
   const addCwd = document.getElementById('team-roles-add-cwd');
   const addAccount = document.getElementById('team-roles-add-account');
+  const addIdleClear = document.getElementById('team-roles-add-idleClear');
   const addDispatch = document.getElementById('team-roles-add-dispatch');
   const addBtn = document.getElementById('team-roles-add-btn');
   // B1: the Add Role controls live behind a disclosure now. The section wrapper
@@ -859,6 +861,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
           `<label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label>` +
           `<label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label>` +
           `<label class="team-role-field" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><select data-f="account"></select></label>` +
+          `<label class="team-role-field"><span>idle clear</span><select data-f="idleClear"></select></label>` +
           `<div class="team-role-dispatch" data-f-group="dispatch"><span class="team-role-dispatch-label">dispatch</span></div>` +
           `<div class="team-role-reveal" data-reveal></div>` +
           `<div class="team-role-actions">` +
@@ -868,6 +871,8 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
           `</div>`;
         body.querySelector('input[data-f="brief"]').value = row.brief;
         paintAccountSelect(body.querySelector('select[data-f="account"]'), row.account);
+        paintIdleClearSelect(body.querySelector('select[data-f="idleClear"]'), row.idleClear,
+          idleClearApplies(templateRows, teamName(), row.template));
         // Prompt is a picker (a stem the resolver can find — free text just fails
         // at spawn time; matches the Add Role form). Options come from the same
         // rail-filtered list; a stored prompt the list does not offer still has
@@ -1145,6 +1150,23 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     sel.value = chosen ? chosen.value : '';
   }
 
+  function paintIdleClearSelect(sel, stored, applies) {
+    if (!sel) return;
+    sel.innerHTML = '';
+    const opts = idleClearOptions(stored);
+    for (const o of opts) {
+      const opt = document.createElement('option');
+      opt.value = o.value;
+      opt.textContent = o.text;
+      sel.appendChild(opt);
+    }
+    const chosen = opts.find((o) => o.selected);
+    sel.value = chosen ? chosen.value : '';
+    sel.disabled = !applies;
+    const field = sel.closest('.team-role-field');
+    if (field) field.title = applies ? IDLE_CLEAR_TITLE : IDLE_CLEAR_STREAM_ONLY_TITLE;
+  }
+
   async function openTeamRolesPopover(name, anchorEl) {
     if (!popover.classList.contains('hidden') && !confirmDiscardRoleEdits(listEl, (m) => window.confirm(m))) return;
     const seq = ++openSeq;
@@ -1315,7 +1337,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
   // on the next open would read as saved state for a role that was never added.
   const resetAddForm = () => {
     addName.value = ''; addBrief.value = ''; addTemplate.value = '';
-    addPrompt.value = ''; addCwd.value = ''; paintAccountSelect(addAccount, '');
+    addPrompt.value = ''; addCwd.value = ''; paintAccountSelect(addAccount, ''); addIdleClear.value = '';
     addDispatch.value = DEFAULT_DISPATCH;
     paintAddReveal();
   };
@@ -1343,10 +1365,17 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
       if (field) field.classList.toggle('hidden', reveal[f] === 'hidden');
     }
     addDispatchHelp.textContent = DISPATCH_HELP[addDispatch.value] || '';
+    paintAddIdleClear();
+  }
+  function paintAddIdleClear() {
+    const shown = fieldReveal(addDispatch.value, { cwd: '', template: '' }).template !== 'hidden';
+    paintIdleClearSelect(addIdleClear, addIdleClear.value,
+      shown && idleClearApplies(templateRows, teamName(), addTemplate.value.trim()));
   }
   addToggle.addEventListener('click', () => setAddPanel(addPanel.classList.contains('hidden')));
   addCancel.addEventListener('click', () => setAddPanel(false));
   addDispatch.addEventListener('change', paintAddReveal);
+  addTemplate.addEventListener('input', paintAddIdleClear);
 
   const closeGatherPanel = () => {
     gatherPanel.classList.add('hidden');
@@ -1447,6 +1476,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     if (cwd && addReveal.cwd !== 'hidden') def.cwd = cwd;
     const account = addAccount.value.trim();
     if (account) def.account = account;
+    if (addIdleClear.value && !addIdleClear.disabled) def.idleClear = { afterMs: Number(addIdleClear.value) };
     // Only the non-default is written: absent already reads as `standing`, so an
     // explicit one would put a value on disk that means exactly what its absence
     // does (the same rule migrateRoles follows).

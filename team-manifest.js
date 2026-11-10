@@ -8,6 +8,7 @@ const { defaultClodexHome } = require('./clodex-paths');
 const { createTicketsStore } = require('./tickets-store');
 const { badStem, TEAM_STEM_RE } = require('./team-prompt-dir');
 const { LISTING_KEYS } = require('./team-template-derive');
+const { idleClearAfterMs } = require('./assistant-sleep');
 
 const TEAM_FILE = 'team.json';
 const ROSTER_FILE = 'roster.json';
@@ -33,7 +34,7 @@ const MANIFEST_VERSION = 3;
 
 // Unmodeled keys are dropped at load with a warning, never a throw: every caller
 // resolves teams inside a best-effort catch, so a throw reads as "no team".
-const ROLE_KEYS = new Set(['template', 'prompt', 'brief', 'dispatch', 'cwd', 'account']);
+const ROLE_KEYS = new Set(['template', 'prompt', 'brief', 'dispatch', 'cwd', 'account', 'idleClear']);
 
 const ROLE_DISPATCH_VALUES = new Set(['standing', 'spawn', 'worktree']);
 const DEFAULT_ROLE_DISPATCH = 'standing';
@@ -52,7 +53,7 @@ const CUT_ROLE_FIELDS = ['instantiate', 'standing', 'tools', 'type', 'ephemeral'
 // was", never "this occurrence is honored".
 const HONORED_CUT_FIELDS = new Map([['worktree', 'dispatch: "worktree"']]);
 
-const EDITABLE_ROLE_FIELDS = ['account', 'brief', 'cwd', 'dispatch', 'prompt', 'template'];
+const EDITABLE_ROLE_FIELDS = ['account', 'brief', 'cwd', 'dispatch', 'idleClear', 'prompt', 'template'];
 
 // team.json is agent-writable and these keys are trusted downstream: the mutators
 // must never create, destroy or rename them.
@@ -122,6 +123,7 @@ function normalizeRoleDef(roleName, def, file) {
     // path.resolve(root, '') is root, so '' would mean what its absence means.
     cwd: (typeof def.cwd === 'string' && def.cwd.trim()) ? def.cwd.trim() : null,
     account: (typeof def.account === 'string' && def.account.trim()) ? def.account.trim() : null,
+    idleClear: idleClearAfterMs(def.idleClear) ? { afterMs: idleClearAfterMs(def.idleClear) } : null,
   };
 }
 
@@ -150,6 +152,10 @@ function pickRoleKeys(def) {
   if (!def || typeof def !== 'object' || Array.isArray(def)) return def;
   const out = {};
   for (const [k, v] of Object.entries(def)) {
+    if (k === 'idleClear') {
+      if (idleClearAfterMs(v)) out[k] = { afterMs: idleClearAfterMs(v) };
+      continue;
+    }
     // Trimmed so the bytes on disk are the ones the validators saw, which check
     // the trimmed form. Only these two: `brief`/`prompt` are prose whose
     // whitespace is the author's.
@@ -1398,6 +1404,11 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
     // without it the merge below lands untrimmed bytes assertRoleCwd never saw.
     if (typeof clean.cwd === 'string') clean.cwd = clean.cwd.trim();
     if (typeof clean.account === 'string') clean.account = clean.account.trim();
+    const idleClearOff = 'idleClear' in clean && (clean.idleClear == null || clean.idleClear === 'off');
+    if ('idleClear' in clean) {
+      if (idleClearAfterMs(clean.idleClear)) clean.idleClear = { afterMs: idleClearAfterMs(clean.idleClear) };
+      else delete clean.idleClear;
+    }
     const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
     raw.roles = raw.roles || {};
     // NOT picked down to the schema, unlike addRole's new role: this preserves an
@@ -1411,6 +1422,7 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
     if ('account' in clean && !String(clean.account == null ? '' : clean.account).trim()) {
       delete raw.roles[roleName].account;
     }
+    if (idleClearOff) delete raw.roles[roleName].idleClear;
     normalizeRoleDef(roleName, raw.roles[roleName], team.file);
     atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
     return loadManifest(teamName);

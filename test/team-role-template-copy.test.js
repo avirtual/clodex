@@ -564,6 +564,7 @@ test('t891 createTeam: the reviewer role reads back WHOLE, pointing at the team\
     dispatch: 'standing',
     cwd: null,
     account: null,
+    idleClear: null,
   }, 'the WHOLE def, not a substring: a role that kept the library stem while the file was written under the role name would satisfy any single-field check on `prompt` or `brief`');
 
   assert.deepStrictEqual(readTpl(home, 'x', 'reviewer'), { ...LIB_REVIEWER, name: 'reviewer' },

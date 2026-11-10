@@ -49,7 +49,7 @@ function addRoleFormFields() {
   const html = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.html'), 'utf-8');
   const block = /<div class="team-roles-add">([\s\S]*?)<\/div>/.exec(html);
   assert.ok(block, 'ENTER: the Add Role form block was found in index.html — a renamed container would silently reduce this test to asserting nothing');
-  const ids = [...block[1].matchAll(/id="team-roles-add-([a-z]+)"/g)].map((m) => m[1]);
+  const ids = [...block[1].matchAll(/id="team-roles-add-([a-zA-Z]+)"/g)].map((m) => m[1]);
   assert.ok(ids.length > 1, 'ENTER: the form block yielded inputs');
   return ids.filter((id) => id !== 'name' && id !== 'btn');
 }
@@ -79,7 +79,7 @@ function addRoleWritableFields() {
   tm.createTeam({ name: 'shop', root, lead: 'shop-lead' });
   tm.addRole('shop', 'runner', {
     // The full surviving schema...
-    template: 'fable-lead', prompt: 'p', brief: 'b', dispatch: 'worktree', cwd: 'api', account: 'work',
+    template: 'fable-lead', prompt: 'p', brief: 'b', dispatch: 'worktree', cwd: 'api', account: 'work', idleClear: { afterMs: 1800000 },
     // ...every field a version bump cut EXCEPT `worktree`, which addRole now
     // refuses loudly rather than dropping (pinned in team-manifest.test.js):
     // pickRoleKeys would drop it without emitting a `dispatch`, so a def
@@ -151,11 +151,11 @@ test('legibility: the popover row model shows exactly the editable fields', () =
 // The union check above is true of any set that happens to add up. This pins the
 // membership itself, so a swap (drop `brief`, add `standing`) that keeps the
 // count cannot pass, and re-adding a cut field has to come through here.
-test('legibility: the schema is exactly the six surviving fields', () => {
-  assert.deepStrictEqual(sorted(ROLE_KEYS), ['account', 'brief', 'cwd', 'dispatch', 'prompt', 'template'],
-    'the role schema is six fields: the seat\'s shape source, its standing instructions, '
+test('legibility: the schema is exactly the seven surviving fields', () => {
+  assert.deepStrictEqual(sorted(ROLE_KEYS), ['account', 'brief', 'cwd', 'dispatch', 'idleClear', 'prompt', 'template'],
+    'the role schema is seven fields: the seat\'s shape source, its standing instructions, '
     + 'the human label, what dispatching a ticket to the role does, where in the team its seats work, '
-    + 'and which account the seats the loop mints for it boot on');
+    + 'which account the seats the loop mints for it boot on, and how long they may idle before a clear');
   // Membership pin FIRST, then the real constant: iterating CUT_ROLE_FIELDS
   // alone would silently stop checking a field someone removed from it, and the
   // literal alone stops checking a field someone adds. `worktree` is a cut field

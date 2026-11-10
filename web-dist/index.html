@@ -10627,6 +10627,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         <label class="team-role-field" data-field="template"><span>template</span><input type="text" id="team-roles-add-template" placeholder="optional: spawn template name"></label>
         <label class="team-role-field" data-field="cwd" title="Relative to the team root — where seats holding this role start. Blank = the team root."><span>cwd</span><input type="text" id="team-roles-add-cwd" placeholder="optional: subdirectory (e.g. api)"></label>
         <label class="team-role-field" data-field="account" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><select id="team-roles-add-account"></select></label>
+        <label class="team-role-field" data-field="idleClear"><span>idle clear</span><select id="team-roles-add-idleClear"></select></label>
         <span class="team-roles-add-actions"><button type="button" id="team-roles-add-btn">Add</button><button type="button" id="team-roles-newrole-cancel" class="secondary">Cancel</button></span>
       </div>
       </div>
@@ -33564,9 +33565,10 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const modelM = argStr.match(/\bmodel:(\S+)/);
         const accountM = argStr.match(/\baccount:(\S+)/);
         const effortM = argStr.match(/\beffort:(\S+)/);
-        const positional = argStr.trim().split(/\s+/).filter((t) => t && !/^\w+:/.test(t));
+        const idleClearM = argStr.match(/\bidle-clear:(\S+)/);
+        const positional = argStr.trim().split(/\s+/).filter((t) => t && !/^[\w-]+:/.test(t));
         if (sub === "role-add" || sub === "role-set") {
-          return { type: "team", sub, name: positional[0] || null, prompt: promptM ? promptM[1] : null, template: templateM ? templateM[1] : null, dispatch: dispatchM ? dispatchM[1] : null, cwd: cwdM ? cwdM[1] : null, model: modelM ? modelM[1] : null, account: accountM ? accountM[1] : null, effort: effortM ? effortM[1] : null, body };
+          return { type: "team", sub, name: positional[0] || null, prompt: promptM ? promptM[1] : null, template: templateM ? templateM[1] : null, dispatch: dispatchM ? dispatchM[1] : null, cwd: cwdM ? cwdM[1] : null, model: modelM ? modelM[1] : null, account: accountM ? accountM[1] : null, effort: effortM ? effortM[1] : null, idleClear: idleClearM ? idleClearM[1] : null, body };
         }
         if (sub === "role-rm" || sub === "set-lead" || sub === "unbind") return { type: "team", sub, name: positional[0] || null, body: "" };
         if (sub === "bind") return { type: "team", sub, name: positional[0] || null, role: positional[1] || null, body: "" };
@@ -33617,7 +33619,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       }
       var NONE = () => "none";
       var GREEDY = () => "greedy";
-      var TEAM_ROLE_KV_KEYS = ["prompt", "template", "dispatch", "cwd", "model", "account", "effort"];
+      var TEAM_ROLE_KV_KEYS = ["prompt", "template", "dispatch", "cwd", "model", "account", "effort", "idleClear"];
       function teamBodyMode(intent) {
         if (intent.sub === "template-save" || intent.sub === "prompt-save") return "greedy";
         if (intent.sub === "sandbox" && intent.action === "bootstrap" && (intent.op === "setup" || intent.op === "start")) return "greedy";
@@ -47397,7 +47399,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
   var require_team_roles = __commonJS({
     "renderer/lib/team-roles.js"(exports, module) {
       "use strict";
-      var { DEFAULT_TYPE } = require_cli_adapters();
+      var { DEFAULT_TYPE, streamFor } = require_cli_adapters();
       var RESERVED_ROLE_KEYS = /* @__PURE__ */ new Set(["lead", "reviewer"]);
       var REMOVABLE_RESERVED_ROLE_KEYS = /* @__PURE__ */ new Set(["reviewer"]);
       var ROLE_RE = /^[a-zA-Z0-9._-]{1,32}$/;
@@ -47409,6 +47411,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         return Object.entries(roles).map(([key, def]) => ({
           key,
           account: def && def.account || "",
+          idleClear: def && def.idleClear && def.idleClear.afterMs ? String(def.idleClear.afterMs) : "",
           brief: def && def.brief || "",
           // Relative to the team root; '' means the seat boots at the root itself.
           cwd: def && def.cwd || "",
@@ -47442,6 +47445,10 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         if (DISPATCH_VALUES.includes(dispatch)) patch.dispatch = dispatch;
         patch.cwd = trim(formValues && formValues.cwd);
         patch.account = trim(formValues && formValues.account);
+        if (formValues && "idleClear" in formValues) {
+          const ms = trim(formValues.idleClear);
+          patch.idleClear = ms ? { afterMs: Number(ms) } : null;
+        }
         return patch;
       }
       function rowFormValues(rowEl) {
@@ -47456,7 +47463,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           template: val("template"),
           dispatch: on ? on.value : "",
           cwd: val("cwd"),
-          account: val("account")
+          account: val("account"),
+          idleClear: val("idleClear")
         };
       }
       function syncRowDirty(rowEl) {
@@ -47554,6 +47562,21 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           label: `${prompt2} (missing from library)`,
           title: "no system prompt by this name is installed"
         };
+      }
+      var IDLE_CLEAR_CHOICES = [["", "off"], ["900000", "15 min"], ["1800000", "30 min"], ["3600000", "1 h"], ["7200000", "2 h"]];
+      var IDLE_CLEAR_TITLE = "Clears a seat's context after it has been idle this long with nothing outstanding. For seats that keep their state in files.";
+      var IDLE_CLEAR_STREAM_ONLY_TITLE = "Idle clear applies to stream seats only, and this role's template does not run its seats over a stream transport.";
+      function idleClearOptions(stored) {
+        const want = String(stored == null ? "" : stored).trim();
+        const out = IDLE_CLEAR_CHOICES.map(([value, text]) => ({ value, text, selected: value === want }));
+        if (want && !out.some((o) => o.selected)) {
+          out.push({ value: want, text: `custom (${Math.round(Number(want) / 6e3) / 10} min)`, selected: true });
+        }
+        return out;
+      }
+      function idleClearApplies(rows, team, template) {
+        const row = templateRowFor(rows, team, template);
+        return !!row && !row.unreadable && row.io === "stream" && !!streamFor(row.type || DEFAULT_TYPE);
       }
       var DEFAULT_ACCOUNT_LABEL = "default";
       function accountOptions(accounts, stored) {
@@ -47850,6 +47873,10 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         templateRowFor,
         templatePlatform,
         accountOptions,
+        idleClearOptions,
+        idleClearApplies,
+        IDLE_CLEAR_TITLE,
+        IDLE_CLEAR_STREAM_ONLY_TITLE,
         isReviewerTemplateRow,
         reviewerTemplateOptionGroups,
         reservedRemovalWarning,
@@ -47917,6 +47944,10 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         templateRowFor,
         templatePlatform,
         accountOptions,
+        idleClearOptions,
+        idleClearApplies,
+        IDLE_CLEAR_TITLE,
+        IDLE_CLEAR_STREAM_ONLY_TITLE,
         reviewerTemplateOptionGroups,
         rowFormValues,
         syncRowDirty,
@@ -47934,6 +47965,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         const addTemplate = document.getElementById("team-roles-add-template");
         const addCwd = document.getElementById("team-roles-add-cwd");
         const addAccount = document.getElementById("team-roles-add-account");
+        const addIdleClear = document.getElementById("team-roles-add-idleClear");
         const addDispatch = document.getElementById("team-roles-add-dispatch");
         const addBtn = document.getElementById("team-roles-add-btn");
         const addToggle = document.getElementById("team-roles-newrole-toggle");
@@ -48530,9 +48562,14 @@ This starts a NEW conversation \u2014 the current session's history will be clea
                 body.querySelector(".team-role-actions").appendChild(rm);
               }
             } else {
-              body.innerHTML = `<label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label><label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label><label class="team-role-field" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><select data-f="account"></select></label><div class="team-role-dispatch" data-f-group="dispatch"><span class="team-role-dispatch-label">dispatch</span></div><div class="team-role-reveal" data-reveal></div><div class="team-role-actions"><button type="button" data-act="save">Save</button><button type="button" data-act="rename" class="secondary">Rename</button><button type="button" data-act="remove" class="secondary">Remove</button></div>`;
+              body.innerHTML = `<label class="team-role-field"><span>brief</span><input type="text" data-f="brief" placeholder="one line: what this role is for"></label><label class="team-role-field" title="Sets how this teammate behaves"><span>prompt</span><select data-f="prompt"></select></label><label class="team-role-field" title="Account label every seat the loop mints for this role boots on. Blank = the account Clodex itself runs on."><span>account</span><select data-f="account"></select></label><label class="team-role-field"><span>idle clear</span><select data-f="idleClear"></select></label><div class="team-role-dispatch" data-f-group="dispatch"><span class="team-role-dispatch-label">dispatch</span></div><div class="team-role-reveal" data-reveal></div><div class="team-role-actions"><button type="button" data-act="save">Save</button><button type="button" data-act="rename" class="secondary">Rename</button><button type="button" data-act="remove" class="secondary">Remove</button></div>`;
               body.querySelector('input[data-f="brief"]').value = row.brief;
               paintAccountSelect(body.querySelector('select[data-f="account"]'), row.account);
+              paintIdleClearSelect(
+                body.querySelector('select[data-f="idleClear"]'),
+                row.idleClear,
+                idleClearApplies(templateRows, teamName(), row.template)
+              );
               const sel = body.querySelector('select[data-f="prompt"]');
               {
                 const none = document.createElement("option");
@@ -48751,6 +48788,22 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           const chosen = opts.find((o) => o.selected);
           sel.value = chosen ? chosen.value : "";
         }
+        function paintIdleClearSelect(sel, stored, applies) {
+          if (!sel) return;
+          sel.innerHTML = "";
+          const opts = idleClearOptions(stored);
+          for (const o of opts) {
+            const opt = document.createElement("option");
+            opt.value = o.value;
+            opt.textContent = o.text;
+            sel.appendChild(opt);
+          }
+          const chosen = opts.find((o) => o.selected);
+          sel.value = chosen ? chosen.value : "";
+          sel.disabled = !applies;
+          const field = sel.closest(".team-role-field");
+          if (field) field.title = applies ? IDLE_CLEAR_TITLE : IDLE_CLEAR_STREAM_ONLY_TITLE;
+        }
         async function openTeamRolesPopover(name, anchorEl) {
           if (!popover.classList.contains("hidden") && !confirmDiscardRoleEdits(listEl, (m) => window.confirm(m))) return;
           const seq = ++openSeq;
@@ -48896,6 +48949,7 @@ You can add it back from this popover.` : "";
           addPrompt.value = "";
           addCwd.value = "";
           paintAccountSelect(addAccount, "");
+          addIdleClear.value = "";
           addDispatch.value = DEFAULT_DISPATCH;
           paintAddReveal();
         };
@@ -48913,10 +48967,20 @@ You can add it back from this popover.` : "";
             if (field) field.classList.toggle("hidden", reveal[f] === "hidden");
           }
           addDispatchHelp.textContent = DISPATCH_HELP[addDispatch.value] || "";
+          paintAddIdleClear();
+        }
+        function paintAddIdleClear() {
+          const shown = fieldReveal(addDispatch.value, { cwd: "", template: "" }).template !== "hidden";
+          paintIdleClearSelect(
+            addIdleClear,
+            addIdleClear.value,
+            shown && idleClearApplies(templateRows, teamName(), addTemplate.value.trim())
+          );
         }
         addToggle.addEventListener("click", () => setAddPanel(addPanel.classList.contains("hidden")));
         addCancel.addEventListener("click", () => setAddPanel(false));
         addDispatch.addEventListener("change", paintAddReveal);
+        addTemplate.addEventListener("input", paintAddIdleClear);
         const closeGatherPanel = () => {
           gatherPanel.classList.add("hidden");
           gatherPanel.innerHTML = "";
@@ -49008,6 +49072,7 @@ You can add it back from this popover.` : "";
           if (cwd && addReveal.cwd !== "hidden") def.cwd = cwd;
           const account = addAccount.value.trim();
           if (account) def.account = account;
+          if (addIdleClear.value && !addIdleClear.disabled) def.idleClear = { afterMs: Number(addIdleClear.value) };
           if (addDispatch.value !== DEFAULT_DISPATCH && DISPATCH_VALUES.includes(addDispatch.value)) {
             def.dispatch = addDispatch.value;
           }

@@ -1003,6 +1003,17 @@ the spawn rather than quietly booting the seat on the subscription the role was
 moved off, and a registry that cannot be READ says so in its own words instead of
 reporting a deletion that may not have happened.
 
+`idle-clear:<minutes|off>` sets the role's `idleClear: {afterMs}` (the seat
+setting in [sessions.md](sessions.md)). Every seat minted for the role — a
+ticket hand, a cold reviewer, a by-name spawn that resolves to the role — gets
+it on its record, over any `idleClear` its template carries; a role without one
+leaves the template's alone. Changing the role's value also rewrites it on the
+role's roster seats, live or saved, and `off` removes it from them. An invalid
+value is refused by the intent and stores nothing from the popover, where the
+field is a select (off, 15 min, 30 min, 1 h, 2 h; a stored value off that list
+shows as "custom") that is disabled unless the role's template runs its seats
+over a stream transport (`io: "stream"`), since only stream seats are cleared.
+
 `lead` and `reviewer` are operator-owned topology: every role verb refuses them
 except an `account:`-only `role-set`, so a team you meant to run solo still
 carries a reviewer definition — harmless, and the roster renders it as not

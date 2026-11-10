@@ -17,7 +17,7 @@ const { maskSecrets } = require('./log-mask');
 const { resolveAccountLabel, accountMissingError } = require('./accounts');
 const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
-const { idleClearAfterMs } = require('./assistant-sleep');
+const { idleClearAfterMs, IDLE_CLEAR_MIN_MS } = require('./assistant-sleep');
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
   DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone,
@@ -739,6 +739,7 @@ function createTicketMethods(deps, shared) {
 
       let roleNote = '';
       let bindTo = null;
+      let spawnRoleDef = null;
       {
         let seatTeam = targetTeam;
         const onRoster = (t, seat) => {
@@ -756,6 +757,8 @@ function createTicketMethods(deps, shared) {
             bindTo = { team: seatTeam.name, role: nameRole(seatTeam, name), by: 'inferred' };
           }
         }
+        const spawnRole = bindTo ? bindTo.role : (onRoster(seatTeam, name) ? matchSeatRole(seatTeam, name) : null);
+        spawnRoleDef = (spawnRole && seatTeam && seatTeam.roles && seatTeam.roles[spawnRole]) || null;
         if (!seatTeam) {
           const shared = this._teamsOf({ cwd });
           if (shared.length > 1) roleNote = ` — WARNING: root shared by ${shared.join(', ')}: seat joins neither — a lead binds it with [agent:team bind ${name} <role>]`;
@@ -819,6 +822,7 @@ function createTicketMethods(deps, shared) {
             try { getPersistence().setWorktree(name, wt); } catch { /* best-effort */ }
           }
           this._applyTemplatePersistence(name, tpl);
+          this._applyRoleIdleClear(name, spawnRoleDef);
           try {
             getPersistence().upsert({ name, spawnedBy: (!operator && spawnerTeam && spawnerTeam.lead === spawner.name) ? spawner.name : null });
           } catch (e) { log.warn('intent', `spawn ${name}: spawnedBy not recorded (${e.message})`); }
@@ -1364,6 +1368,7 @@ function createTicketMethods(deps, shared) {
             ? ` — WARNING: ${spawned.missingPrompt}` : '';
           // After create(): the setters resolve the entry by name and silently no-op before it exists, leaving the reviewer unstripped.
           this._applyTemplatePersistence(name, shape.tpl);
+          this._applyRoleIdleClear(name, shape);
           this._sendToSession(name, 'session:context-action', {
             action: 'reattach', name, type, cwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire, io: (this.sessions.get(name) || {}).io || 'pty',
             ephemeral: this._isEphemeralSeat(name),
@@ -2697,10 +2702,15 @@ function createTicketMethods(deps, shared) {
               if (!acct.ok) { reply(`error: ${acct.error}`); return; }
               if (acct.label) def.account = acct.label;
             }
+            if (intent.idleClear) {
+              const ic = this._parseRoleIdleClear(intent.idleClear);
+              if (!ic.ok) { reply(`error: ${ic.error}`); return; }
+              if (ic.value) def.idleClear = ic.value;
+            }
             const stockDef = STOCK_ROLE_DEFS[name];
             const stockSubstituted = !!stockDef && !team.roles[name] && !RESERVED_ROLE_KEYS.has(name)
               && !brief && !intent.prompt && !intent.template && !intent.dispatch && !intent.cwd
-              && !intent.account && !intent.model && !intent.effort;
+              && !intent.account && !intent.model && !intent.effort && !intent.idleClear;
             if (stockSubstituted) def = { ...stockDef };
             let addClause = '';
             let addUndo = null;
@@ -2746,6 +2756,11 @@ function createTicketMethods(deps, shared) {
               if (!acct.ok) { reply(`error: ${acct.error}`); return; }
               patch.account = acct.label || '';
             }
+            if (intent.idleClear) {
+              const ic = this._parseRoleIdleClear(intent.idleClear);
+              if (!ic.ok) { reply(`error: ${ic.error}`); return; }
+              patch.idleClear = ic.value;
+            }
             let setClause = '';
             let setUndo = null;
             if (intent.model) {
@@ -2774,11 +2789,14 @@ function createTicketMethods(deps, shared) {
                 return;
               }
             }
+            let savedTeam;
             try {
-              if (ownDerivedTemplate) setRole(team.name, name, patch, { ownDerivedTemplate: true });
-              else setRole(team.name, name, patch);
+              if (ownDerivedTemplate) savedTeam = setRole(team.name, name, patch, { ownDerivedTemplate: true });
+              else savedTeam = setRole(team.name, name, patch);
             }
             catch (err) { if (setUndo) setUndo(); throw err; }
+            const idleSeats = 'idleClear' in patch ? this._syncRoleIdleClear(team, savedTeam, name) : [];
+            if (idleSeats.length) setClause += `; idle clear applied to ${idleSeats.join(', ')}`;
             reply(`role "${name}" updated on ${team.name}${setClause}`);
             return;
           }
@@ -4797,6 +4815,7 @@ function createTicketMethods(deps, shared) {
       const workspaceId = opener.workspaceId || DEFAULT_WORKSPACE_ID;
       const roleCwd = this._resolveRoleCwd(team, def);
       const accountLabel = (def && typeof def.account === 'string' && def.account) ? def.account : null;
+      const roleIdleClear = idleClearAfterMs(def && def.idleClear) ? { afterMs: idleClearAfterMs(def.idleClear) } : null;
       const acct = !accountLabel ? { ok: true, configDir: null }
         : ((seatAdapter.account.bootstrap || !seatAdapter.account.envKey) ? { ok: false, label: accountLabel, reason: 'platform' } : resolveAccount(accountLabel));
       const accountDir = acct.ok ? (acct.configDir || null) : null;
@@ -4841,6 +4860,7 @@ function createTicketMethods(deps, shared) {
           env: withAccount(homeEnv.env),
           account: accountLabel,
           accountMissing,
+          idleClear: roleIdleClear,
           envDropped: (shape && shape.envDropped) || [],
           envBadType: (shape && shape.envBadType) || [],
           envClamped: homeEnv.clamped,
@@ -4929,6 +4949,7 @@ function createTicketMethods(deps, shared) {
         env: withAccount(tplSuppliedEnv ? { ...(homeEnv.env || {}) } : { ...REVIEWER_FALLBACK.env }),
         account: accountLabel,
         accountMissing,
+        idleClear: roleIdleClear,
         envDropped: (shape && shape.envDropped) || [],
         envBadType: (shape && shape.envBadType) || [],
         envClamped: homeEnv.clamped,
@@ -4956,6 +4977,28 @@ function createTicketMethods(deps, shared) {
         const live = this.sessions.get(name);
         if (live) live._assistant = true;
       }
+    },
+
+    _applyRoleIdleClear(name, def) {
+      const afterMs = idleClearAfterMs(def && def.idleClear);
+      if (afterMs) getPersistence().setIdleClear(name, { afterMs });
+    },
+
+    _syncRoleIdleClear(before, saved, roleKey) {
+      const roleOf = (t) => (t && t.roles && t.roles[roleKey]) || null;
+      const was = idleClearAfterMs(roleOf(before) && roleOf(before).idleClear);
+      const now = idleClearAfterMs(roleOf(saved) && roleOf(saved).idleClear);
+      if (was === now || !saved) return [];
+      const seats = (Array.isArray(saved.roster) ? saved.roster : []).filter((r) => r && r.role === roleKey && r.seat).map((r) => r.seat);
+      return seats.filter((seat) => getPersistence().setIdleClear(seat, now ? { afterMs: now } : null));
+    },
+
+    _parseRoleIdleClear(v) {
+      const s = String(v).trim().toLowerCase();
+      if (s === 'off') return { ok: true, value: null };
+      const afterMs = /^\d+$/.test(s) ? idleClearAfterMs({ afterMs: Number(s) * 60000 }) : 0;
+      if (!afterMs) return { ok: false, error: `idle-clear:${v} — give whole minutes (at least ${IDLE_CLEAR_MIN_MS / 60000}) or off` };
+      return { ok: true, value: { afterMs } };
     },
 
     // `mode` defaults to 'worktree', never 'spawn', so a path that never asked for one cannot put a seat in the operator's checkout.
@@ -5102,6 +5145,7 @@ function createTicketMethods(deps, shared) {
           // to it and session:kill orphans the checkout.
           claimTree(wt);
           this._applyTemplatePersistence(seat.name, shape.tpl);
+          this._applyRoleIdleClear(seat.name, shape);
           this._sendToSession(seat.name, 'session:context-action', {
             // The cwd create() actually got: it feeds the sidebar row's dataset.cwd, and after a restart the row is rebuilt from the persistence record, which is this path.
             action: 'reattach', name: seat.name, type: (this.sessions.get(seat.name) || {}).agentType || null,
