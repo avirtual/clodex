@@ -1052,6 +1052,21 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
     });
   }
 
+  function dropSeatRows(seat) {
+    return onChain(() => {
+      const dropped = [];
+      for (const { team } of loadAll()) {
+        if (team.lead === seat) continue;
+        const row = team.roster.find((r) => r.seat === seat);
+        if (!row) continue;
+        writeRoster(team.name, team.roster.filter((r) => r.seat !== seat));
+        dropped.push(team.name);
+        logLine('info', `team ${team.name}: row ${seat} (role ${row.role}) dropped — seat deleted`);
+      }
+      return { ok: true, teams: dropped };
+    });
+  }
+
   function renameSeatRow(oldName, newName) {
     return onChain(() => {
       const moved = [];
@@ -1622,7 +1637,7 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
 
   return {
     resolveTeam: teamOfCwd, teamOfCwd, teamsOfCwd, teamOfSeat, teamOf, findProjectRoot, loadManifest, listTeams, cwdInProject,
-    bindSeat, unbindSeat, renameSeatRow, rosterOf, pruneStaleRows, synthesiseRosters, setSeatLookup,
+    bindSeat, unbindSeat, dropSeatRows, renameSeatRow, rosterOf, pruneStaleRows, synthesiseRosters, setSeatLookup,
     createTeam, deleteTeam, addRole, setRole, removeRole, renameRole, setTeamWatchdog, setTeamTrunk, setTeamDone, setTeamWorktrees, setTeamMaxHands, setLead,
     listKits, kitCatalog, resolveKit,
     teamsDir, TEAM_FILE, ROSTER_FILE,

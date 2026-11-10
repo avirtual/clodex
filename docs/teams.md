@@ -991,7 +991,11 @@ be written in this kv (the arg list ends at the first `]`), so use the alias —
 
 `account:` names a label from Accounts (the registry behind the quota chip), and
 every seat the LOOP mints for that role — a ticket hand, a cold reviewer, a
-one-shot `dispatch: spawn` seat — boots on that account's config dir. It is a
+one-shot `dispatch: spawn` seat — boots on that account's config dir. A seat a
+lead spawns by name gets it too when the seat lands on a role of the spawner's
+own team, through its name or the row the spawn writes; the role's account beats
+a template env value for the same key, and a seat that lands on no role, or on
+another team, gets nothing. It is a
 role field rather than a template one because those seats are ephemeral: nobody
 can open Edit Session on a reviewer that lives six minutes, and a template cannot
 carry the key at all — template env is filtered to an allowlist that drops

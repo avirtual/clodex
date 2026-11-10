@@ -1098,9 +1098,9 @@ test('t486: the source pin actually discriminates — the edits that must redden
   // 3. r1's original bug, once more, through the new scanner: hoisting the drop
   //    above the removal leaves the two calls collapsed into one early one.
   const hoisted = real
-    .replace('      if (!worktree) { dropRecord(); dropSeatDir(); return { ok: true, live: wasLive }; }',
-      '      dropRecord();\n      if (!worktree) { dropSeatDir(); return { ok: true, live: wasLive }; }')
-    .replace('        dropRecord();\n        dropSeatDir();\n        log.info', '        dropSeatDir();\n        log.info');
+    .replace('      if (!worktree) { dropRecord(); dropSeatDir(); await dropRows(); return { ok: true, live: wasLive }; }',
+      '      dropRecord();\n      if (!worktree) { dropSeatDir(); await dropRows(); return { ok: true, live: wasLive }; }')
+    .replace('        dropRecord();\n        dropSeatDir();\n        await dropRows();\n        log.info', '        dropSeatDir();\n        await dropRows();\n        log.info');
   assert.ok(hoisted !== real, 'ENTER: the hoist really applied');
   assert.strictEqual(scanDestroy(hoisted).calls.length, 1,
     'the hoisted drop is one unconditional call, not two guarded ones — the count alone catches r1\'s bug');
@@ -1112,8 +1112,8 @@ test('t486: the source pin actually discriminates — the edits that must redden
   //    false because the call missed a 40-byte window before the return; the span
   //    check sees it wherever on the failure path it sits.
   const movedOntoFailurePath = real
-    .replace('      if (!worktree) { dropRecord(); dropSeatDir(); return { ok: true, live: wasLive }; }',
-      '      if (!worktree) { dropSeatDir(); return { ok: true, live: wasLive }; }')
+    .replace('      if (!worktree) { dropRecord(); dropSeatDir(); await dropRows(); return { ok: true, live: wasLive }; }',
+      '      if (!worktree) { dropSeatDir(); await dropRows(); return { ok: true, live: wasLive }; }')
     .replace("      const error = (r && r.error) || 'unknown error';",
       "      dropRecord();\n      const error = (r && r.error) || 'unknown error';");
   assert.ok(movedOntoFailurePath !== real, 'ENTER: the move really applied');

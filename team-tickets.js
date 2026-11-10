@@ -729,7 +729,7 @@ function createTicketMethods(deps, shared) {
       const appendPromptFiles = (tpl && tpl.appendPromptFiles) || [];
       const plugins = (tpl && Array.isArray(tpl.plugins)) ? tpl.plugins.map(String) : null;
       const { sessionEnv: tplEnv, dropped: envDropped, badType: envBadType } = filterTemplateEnv(tpl && tpl.env);
-      const { env: sessionEnv, clamped: envClamped } = operator
+      let { env: sessionEnv, clamped: envClamped } = operator
         ? { env: tplEnv, clamped: [] } : this._clampSeatHomeEnv(tplEnv, spawnerRec.env);
 
       const grantWarn = (targetTeam && name === targetTeam.lead && !seatGrants.includes('clodex-team'))
@@ -757,13 +757,24 @@ function createTicketMethods(deps, shared) {
             bindTo = { team: seatTeam.name, role: nameRole(seatTeam, name), by: 'inferred' };
           }
         }
-        const spawnRole = bindTo ? bindTo.role : (onRoster(seatTeam, name) ? matchSeatRole(seatTeam, name) : null);
+        const heldRow = (!bindTo && seatTeam && seatTeam.lead !== name && Array.isArray(seatTeam.roster))
+          ? seatTeam.roster.find((r) => r && r.seat === name) || null : null;
+        const recreated = !!(heldRow && heldRow.gen != null);
+        const spawnRole = bindTo ? bindTo.role : (!recreated && onRoster(seatTeam, name) ? matchSeatRole(seatTeam, name) : null);
         spawnRoleDef = (spawnRole && seatTeam && seatTeam.roles && seatTeam.roles[spawnRole]) || null;
+        if (spawnRoleDef && spawnerTeam && seatTeam.name === spawnerTeam.name) {
+          const pin = this._roleAccountPin(spawnRoleDef, type);
+          if (!pin.ok) { reply(`error: ${accountMissingError(spawnRole, pin.missing)}`); return; }
+          sessionEnv = this._withAccountPin(sessionEnv, pin);
+        }
         if (!seatTeam) {
           const shared = this._teamsOf({ cwd });
           if (shared.length > 1) roleNote = ` — WARNING: root shared by ${shared.join(', ')}: seat joins neither — a lead binds it with [agent:team bind ${name} <role>]`;
         }
-        if (seatTeam && matchSeatRole(seatTeam, name) === null) {
+        if (recreated) {
+          roleNote = ` — NOTE: "${name}" lands on NO team: team ${seatTeam.name}'s row for that name belongs to an earlier seat`
+            + ` — a lead binds it with [agent:team bind ${name} ${heldRow.role}]`;
+        } else if (seatTeam && matchSeatRole(seatTeam, name) === null) {
           const roles = seatTeam.roles || {};
           const has = (k) => Object.prototype.hasOwnProperty.call(roles, k);
           let concrete = null;
@@ -4816,14 +4827,10 @@ function createTicketMethods(deps, shared) {
       const roleCwd = this._resolveRoleCwd(team, def);
       const accountLabel = (def && typeof def.account === 'string' && def.account) ? def.account : null;
       const roleIdleClear = idleClearAfterMs(def && def.idleClear) ? { afterMs: idleClearAfterMs(def.idleClear) } : null;
-      const acct = !accountLabel ? { ok: true, configDir: null }
-        : ((seatAdapter.account.bootstrap || !seatAdapter.account.envKey) ? { ok: false, label: accountLabel, reason: 'platform' } : resolveAccount(accountLabel));
-      const accountDir = acct.ok ? (acct.configDir || null) : null;
-      const accountMissing = acct.ok ? null : { label: acct.label, reason: acct.reason };
-      const withAccount = (env) => {
-        if (!accountDir) return env;
-        return { ...(env || {}), [seatAdapter.account.envKey]: accountDir };
-      };
+      const accountPin = this._roleAccountPin(def, type);
+      const accountDir = accountPin.ok ? accountPin.dir : null;
+      const accountMissing = accountPin.ok ? null : accountPin.missing;
+      const withAccount = (env) => this._withAccountPin(env, accountPin);
 
       if (!review) {
         return {
@@ -4982,6 +4989,20 @@ function createTicketMethods(deps, shared) {
     _applyRoleIdleClear(name, def) {
       const afterMs = idleClearAfterMs(def && def.idleClear);
       if (afterMs) getPersistence().setIdleClear(name, { afterMs });
+    },
+
+    _roleAccountPin(def, type) {
+      const label = (def && typeof def.account === 'string' && def.account) ? def.account : null;
+      if (!label) return { ok: true, envKey: null, dir: null };
+      const account = adapterFor(type).account;
+      const acct = (account.bootstrap || !account.envKey) ? { ok: false, label, reason: 'platform' } : resolveAccount(label);
+      if (!acct.ok) return { ok: false, missing: { label: acct.label, reason: acct.reason } };
+      return { ok: true, envKey: account.envKey, dir: acct.configDir || null };
+    },
+
+    _withAccountPin(env, pin) {
+      if (!pin || !pin.ok || !pin.dir) return env;
+      return { ...(env || {}), [pin.envKey]: pin.dir };
     },
 
     _syncRoleIdleClear(before, saved, roleKey) {

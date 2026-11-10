@@ -704,6 +704,7 @@ function createSessionManager(deps) {
     gitWorktree,
     resolveTeam,
     renameSeatRow,
+    dropSeatRows,
     addRole,
     setRole,
     removeRole,
@@ -4008,6 +4009,12 @@ function createSessionManager(deps) {
         }
         this._dropPendingDir(name);
       };
+      const dropRows = async () => {
+        if (typeof dropSeatRows !== 'function') return;
+        try { await dropSeatRows(name); } catch (e) {
+          log.warn('session', `destroy ${name}: roster rows not dropped (${e.message})`);
+        }
+      };
       const injectQueue = wasLive ? this.sessions.get(name)._injectPtyQueue || null : null;
       if (!worktree) this._markDropHeld(name);
       await this.kill(name);
@@ -4015,7 +4022,7 @@ function createSessionManager(deps) {
       if (!worktree && injectQueue && injectQueue.length) {
         if (await this._waitForExit(name)) await this._settleInjectQueue(injectQueue);
       }
-      if (!worktree) { dropRecord(); dropSeatDir(); return { ok: true, live: wasLive }; }
+      if (!worktree) { dropRecord(); dropSeatDir(); await dropRows(); return { ok: true, live: wasLive }; }
       const keepRecord = () => {
         if (!wasLive) return;
         try {
@@ -4043,6 +4050,7 @@ function createSessionManager(deps) {
       if (r && r.ok) {
         dropRecord();
         dropSeatDir();
+        await dropRows();
         log.info('worktree', `removed ${worktree.path} (branch ${worktree.branch}) and its pending mail after destroying ${name}: seat deleted`);
         return { ok: true, worktreeRemoved: true, live: wasLive };
       }

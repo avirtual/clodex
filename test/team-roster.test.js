@@ -192,13 +192,15 @@ function mkSeats(t, { sharedRoot = false } = {}) {
     list: () => [...h.records.values()],
     get: (n) => h.records.get(n) || null,
     upsert: (e) => h.records.set(e.name, { ...(h.records.get(e.name) || {}), ...e }),
+    remove: (n) => h.records.delete(n),
+    setArchived: (n, v) => h.records.set(n, { ...(h.records.get(n) || {}), archived: v }),
   };
   const { m, injected } = mkPark({
     fs, path, os: require('node:os'), REGISTRY_DIR: h.home,
     AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/, DEFAULT_WORKSPACE_ID: 'default', ensureDir: () => {},
     getPersistence: () => persistence,
     resolveTeam: h.tm.resolveTeam, teamOf: h.tm.teamOf, teamsOfCwd: h.tm.teamsOfCwd,
-    bindSeat: h.tm.bindSeat, unbindSeat: h.tm.unbindSeat, rosterOf: h.tm.rosterOf,
+    bindSeat: h.tm.bindSeat, unbindSeat: h.tm.unbindSeat, dropSeatRows: h.tm.dropSeatRows, rosterOf: h.tm.rosterOf,
     loadManifest: h.tm.loadManifest, listTeams: h.tm.listTeams, teamOfSeat: h.tm.teamOfSeat,
   });
   m._sendToSession = () => {};
@@ -361,4 +363,76 @@ test('a bind queued ahead of setLead loses to the new lead pointer: the seat is 
   assert.strictEqual(h.tm.loadManifest('b').lead, 'x');
   assert.ok(!fs.existsSync(path.join(h.home, 'teams', 'a', ROSTER_FILE)), 'team a wrote no row for x');
   assert.deepStrictEqual(h.readRoster('b').map((row) => [row.seat, row.role]), [['x', 'lead']]);
+});
+
+const settleSpawn = async () => {
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+};
+
+test('deleting a seat drops its row, so a respawn by name lands on its team and role on the first attempt', async (t) => {
+  const { h, m, seat } = mkSeats(t);
+  h.writeRoster('a', [
+    { seat: 'a-lead', role: 'lead', gen: 1, since: 1, by: 'create' },
+    { seat: 'a-scout-9', role: 'scout', gen: 100, since: h.now(), by: 'a-lead' },
+  ]);
+  const lead = seat('a-lead', h.rootA);
+  h.records.set('a-scout-9', { name: 'a-scout-9', cwd: h.rootA, createdAt: 100 });
+  assert.strictEqual(h.tm.teamOfSeat('a-scout-9').name, 'a', 'ENTER: the seat is on team a before the delete');
+  await m.destroy('a-scout-9');
+  assert.strictEqual(h.records.has('a-scout-9'), false, 'ENTER: the delete dropped the record');
+  assert.deepStrictEqual(h.readRoster('a'), [{ seat: 'a-lead', role: 'lead', gen: 1, since: 1, by: 'create' }]);
+  m.create = async (name, type, cwd) => {
+    h.records.set(name, { name, cwd, createdAt: 900 });
+    m.sessions.set(name, { name, type, agentType: type, cwd });
+    return {};
+  };
+  const replies = [];
+  m._handleSpawnIntent(lead, { type: 'spawn', name: 'a-scout-9', cwd: h.rootA }, { onReply: (r) => replies.push(r) });
+  await settleSpawn();
+  assert.ok(replies.some((r) => /^ok: spawned "a-scout-9"/.test(r)), `ENTER: the spawn succeeded (${JSON.stringify(replies)})`);
+  assert.strictEqual(h.tm.teamOfSeat('a-scout-9').name, 'a');
+  assert.strictEqual(h.readRoster('a').find((r) => r.seat === 'a-scout-9').role, 'scout');
+  assert.deepStrictEqual(h.logs.filter(([, msg]) => /was recreated/.test(msg)), []);
+});
+
+test('archive, restart and a delete that keeps its worktree keep the roster row', async (t) => {
+  const { h, m, seat } = mkSeats(t);
+  const rows = [
+    { seat: 'a-lead', role: 'lead', gen: 1, since: 1, by: 'create' },
+    { seat: 'a-scout', role: 'scout', gen: 1, since: 1, by: 'a-lead' },
+    { seat: 'a-hand', role: 'hand', gen: 1, since: 1, by: 'a-lead' },
+    { seat: 'a-hand-2', role: 'hand', gen: 1, since: 1, by: 'a-lead' },
+  ];
+  h.writeRoster('a', rows);
+  seat('a-scout', h.rootA).stream = { kill() {} };
+  seat('a-hand', h.rootA).stream = { kill() {} };
+  h.records.set('a-hand-2', { name: 'a-hand-2', cwd: h.rootA, createdAt: 1, worktree: { path: path.join(h.rootA, 'wt'), branch: 'b' } });
+  await m.archive('a-scout');
+  await m.kill('a-hand', { respawn: true });
+  const kept = await m.destroy('a-hand-2', { beforeRemove: async () => ({ keep: true, why: 'dirty' }) });
+  assert.strictEqual(kept.kept, true, 'ENTER: the delete took its keep arm');
+  assert.strictEqual(h.records.get('a-scout').archived, true, 'ENTER: the archive ran');
+  assert.deepStrictEqual(h.readRoster('a'), rows);
+});
+
+test('the spawn reply names NO team, not a role, when the name\'s row belongs to an earlier seat', async (t) => {
+  const { h, m, seat } = mkSeats(t);
+  h.writeRoster('a', [
+    { seat: 'a-lead', role: 'lead', gen: 1, since: 1, by: 'create' },
+    { seat: 'a-steward-9', role: 'scout', gen: 100, since: h.now(), by: 'a-lead' },
+  ]);
+  const lead = seat('a-lead', h.rootA);
+  m.create = async (name, type, cwd) => {
+    h.records.set(name, { name, cwd, createdAt: 900 });
+    return {};
+  };
+  const replies = [];
+  m._handleSpawnIntent(lead, { type: 'spawn', name: 'a-steward-9', cwd: h.rootA }, { onReply: (r) => replies.push(r) });
+  await settleSpawn();
+  assert.strictEqual(replies.length, 1, `ENTER: one reply (${JSON.stringify(replies)})`);
+  assert.strictEqual(h.tm.teamOfSeat('a-steward-9'), null, 'ENTER: the seat landed on no team');
+  assert.strictEqual(replies[0], `ok: spawned "a-steward-9" (claude) @ ${h.rootA}`
+    + ' — NOTE: "a-steward-9" lands on NO team: team a\'s row for that name belongs to an earlier seat'
+    + ' — a lead binds it with [agent:team bind a-steward-9 scout]');
 });

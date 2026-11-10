@@ -265,14 +265,17 @@ for (const [label, handRole, template, want] of [
   });
 }
 
-test('by-name team spawn: a seat resolving to a role gets the role value over the template\'s', async (t) => {
+for (const [label, hand, want] of [
+  ['a seat resolving to a role gets the role value over the template\'s', { idleClear: { afterMs: 900000 } }, { afterMs: 900000 }],
+  ['a role with no value leaves the template\'s value on the record', {}, { afterMs: 7200000 }],
+]) test(`by-name team spawn: ${label}`, async (t) => {
   const tplDir = mkTmpRoot('t2248-tpl-');
   t.after(() => fs.rmSync(tplDir, { recursive: true, force: true }));
   fs.mkdirSync(path.join(tplDir, 'library', 'templates'), { recursive: true });
   const tpl = path.join(tplDir, 'library', 'templates', 'hand.json');
   fs.writeFileSync(tpl, JSON.stringify({ type: 'claude', idleClear: { afterMs: 7200000 } }));
   const store = fakePersistence();
-  const team = { name: 'team', root: tplDir, lead: 'lead', roles: { lead: {}, hand: { idleClear: { afterMs: 900000 } } } };
+  const team = { name: 'team', root: tplDir, lead: 'lead', roles: { lead: {}, hand } };
   const SessionManager = createSessionManager({
     knownSkillNames: () => [], os, fs, path,
     log: { warn() {}, info() {}, error() {} },
@@ -296,7 +299,7 @@ test('by-name team spawn: a seat resolving to a role gets the role value over th
   await settle();
   await settle();
   assert.ok(store.get('team-hand'), `ENTER: the seat was created (replies: ${JSON.stringify(replies)})`);
-  assert.deepStrictEqual(store.get('team-hand').idleClear, { afterMs: 900000 });
+  assert.deepStrictEqual(store.get('team-hand').idleClear, want);
 });
 
 function compilePaint(env) {
