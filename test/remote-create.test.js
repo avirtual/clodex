@@ -48,6 +48,10 @@ function makeDeps(overrides = {}) {
       setImmediate(() => opts.onReply(line));
     },
     _resolveSpawnTemplate: () => ({ ok: false, error: 'no template' }),
+    _sendToSession: () => {},
+    _sendRespawnFailed: () => {},
+    _reattachAction: (name, type, cwd) => ({ action: 'reattach', name, type, cwd }),
+    resumeCwdOf: (e) => e.cwd,
   };
   const persistence = { get: () => undefined, setStripLevel: (n, l) => stripCalls.push([n, l]) };
   const argsCalls = [];
