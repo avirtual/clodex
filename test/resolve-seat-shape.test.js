@@ -258,7 +258,7 @@ test('ticket purpose: the whole shape, WITH a template', () => {
     cwd: '/repo',
     cwdFallback: null,
     tpl: shape.tpl,
-    extraArgs: ['--foo'],
+    extraArgs: ['--foo', '--dangerously-skip-permissions'],
     agents: ['a'],
     denyBuiltins: ['d'],
     disabledTools: ['X'],
@@ -838,13 +838,22 @@ test('t1076: a Codex-template hand naming an account is refused with reason plat
     'role hand: account "work" is a Claude config dir; Codex roles take no account yet');
 });
 
-test('a template extraArgs REPLACES the inherited permission posture on the ticket path', () => {
+test('a template extraArgs with no posture flag keeps the inherited permission posture on the ticket path', () => {
   const m = managerWith(
     [{ name: 'ht', type: 'claude', cwd: '/repo', extraArgs: ['--foo'] }],
     { leadArgs: ['--dangerously-skip-permissions'] },
   );
   const team = teamWith({ hand: { worktree: true, template: 'ht' } });
-  assert.deepStrictEqual(m.resolveSeatShape(team, 'hand', 'ticket', LEAD).extraArgs, ['--foo']);
+  assert.deepStrictEqual(m.resolveSeatShape(team, 'hand', 'ticket', LEAD).extraArgs, ['--foo', '--dangerously-skip-permissions']);
+});
+
+test('a template extraArgs carrying a posture flag REPLACES the inherited permission posture on the ticket path', () => {
+  const m = managerWith(
+    [{ name: 'ht', type: 'claude', cwd: '/repo', extraArgs: ['--foo', '--permission-mode', 'acceptEdits'] }],
+    { leadArgs: ['--dangerously-skip-permissions'] },
+  );
+  const team = teamWith({ hand: { worktree: true, template: 'ht' } });
+  assert.deepStrictEqual(m.resolveSeatShape(team, 'hand', 'ticket', LEAD).extraArgs, ['--foo', '--permission-mode', 'acceptEdits']);
 });
 
 test('the lead permission posture is inherited when no template overrides it', () => {
