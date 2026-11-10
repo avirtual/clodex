@@ -8677,7 +8677,7 @@ function createSessionManager(deps) {
         payload: this._proxyPoller ? this._proxyPoller.snapshot(targetName) : null,
         attention: target.needsAttention ? target.needsAttention.kind : null,
       });
-      if (verdict.hold) {
+      if (verdict.hold && (verdict.noUrgent || adapterFor(target.agentType)?.caps.park === true)) {
         const canPark = adapterFor(target.agentType)?.caps.park === true && !target._dead;
         let parkBody = null;
         if (canPark && opts && typeof opts.rebody === 'function') {
