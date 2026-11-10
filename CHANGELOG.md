@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.170.0 — 2026-11-10
+
 - Sandbox: the team box image installs the clodent CLI, so clodent seats can run inside a box and survive a rebuild.
 
 ## 5.169.0 — 2026-11-10
