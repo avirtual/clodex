@@ -53,7 +53,7 @@ own git worktree). The template's `mcpServers`, `execCommands` and privileged
 flags) are set in the app's template editor (`templates:saveTeam`). A lead's
 `template-save` keeps the exec commands, plugin intents and flags the lead holds or the operator
 marked "may grant" for it (the seat record's `grantable`, set only in the app),
-strips the rest and names each one; holding a grant implies being able to grant it.
+strips the rest and names each one; holding a grant implies being able to grant it. A lead running with bypass and no credential sandbox or shell denylist may also grant its own team's exec commands without holding them; library commands need hold or "may grant".
 Ticket and review seats the lead dispatches get the same clamp at spawn, so a revoked grant or a hand-edited
 template file never reaches them; flags that only narrow a seat (`--disallowedTools`, `--permission-mode plan|default|dontAsk`, the seat's read-only cap) are always kept, a posture flag also when the lead holds the bypass flag, and the dispatch ack
 names every drop. A `role-set lead` onto a template granting more than the lead's seat holds is refused.

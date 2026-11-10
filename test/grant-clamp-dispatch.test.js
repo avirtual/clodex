@@ -240,7 +240,7 @@ test('a template asking bypass for the child does not make a non-bypass lead eli
   const tpl = { ...TEAM_EXEC_TPL, extraArgs: ['--dangerously-skip-permissions'] };
   const shape = teamExecDispatch({ name: 'lead', type: 'claude', extraArgs: [], execCommands: [] }, tpl);
   assert.deepStrictEqual([shape.execCommands, shape.extraArgs, shape.grantDropped],
-    [[], null, ['avh-chat', 'u-cmd', 'lib-cmd', '--dangerously-skip-permissions']]);
+    [[], [], ['avh-chat', 'u-cmd', 'lib-cmd', '--dangerously-skip-permissions']]);
 });
 
 test('a template saved by a bypass lead loses the team exec command at dispatch once the lead loses bypass', () => {
