@@ -6669,12 +6669,7 @@ function createSessionManager(deps) {
                     ? `[agent:dm] parked for ${intent.target} (${why}) as ${parkId} — it'll be delivered with ${intent.target}'s next turn.`
                     : `[agent:dm] parked for ${intent.target} (${why}) as ${parkId} — it'll be delivered with ${intent.target}'s next turn. If it can't wait, emit \`[agent:resend ${parkId}]\` to wake them now (delivers the parked copy — don't retype the message).`;
                 } else {
-                  const retry = r.noUrgent
-                    ? `Nothing was kept. Resend after ${intent.target} is unblocked (a human has to answer the dialog).`
-                    : fromIdent
-                    ? `Nothing was kept (${intent.target} cannot park messages).`
-                    : `Nothing was kept (${intent.target} cannot park messages). Resend as \`[agent:dm ${intent.target} urgent] <message>\` to deliver it now.`;
-                  notice = `[agent:dm] NOT delivered to ${intent.target}: ${why}. ${retry}`;
+                  notice = `[agent:dm] NOT delivered to ${intent.target}: ${why}. Nothing was kept. Resend after ${intent.target} is unblocked (a human has to answer the dialog).`;
                 }
                 this._injectText(session, notice, { parkable: true });
                 if (routedNotice) this._injectText(session, routedNotice, { parkable: true });
@@ -8690,9 +8685,8 @@ function createSessionManager(deps) {
         // onWrite fires for a park but never for a bare hold, and passes 'parked' explicitly:
         // an argument-less call reads as 'injected' to a caller confirming a write.
         if (parkId && typeof onWrite === 'function') { try { onWrite('parked'); } catch {} }
-        return parkId
-          ? { parked: parkId, reason: verdict.reason, noUrgent: verdict.noUrgent }
-          : { held: verdict.reason, noUrgent: verdict.noUrgent };
+        if (parkId) return { parked: parkId, reason: verdict.reason, noUrgent: verdict.noUrgent };
+        if (verdict.noUrgent) return { held: verdict.reason, noUrgent: true };
       }
       const superseded = urgent === true ? claimParkedByKey(PENDING_DIR, targetName, key) : null;
       if (opts && opts.parkBehindQueue === true && this._parkBehindQueue(target, senderTag, body, tag, key)) {

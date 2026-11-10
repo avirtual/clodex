@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { mk } = require('./lib/session-fixtures');
+const { mk, mkPark } = require('./lib/session-fixtures');
 
 async function bounce(verdict) {
   const injected = [];
@@ -23,12 +23,6 @@ async function bounce(verdict) {
 const REASON = 'idle 5h with a cold cache — would re-read the whole context';
 
 const rows = [
-  {
-    name: 'held on a non-parking seat',
-    verdict: { held: REASON, noUrgent: false },
-    has: ['NOT delivered to contrarian: idle 5h with a cold cache', 'Nothing was kept (contrarian cannot park messages)', '[agent:dm contrarian urgent]'],
-    ipc: `HELD (${REASON}): the payload`,
-  },
   {
     name: 'held behind a dialog',
     verdict: { held: 'blocked on a permission dialog', noUrgent: true },
@@ -62,4 +56,36 @@ test('t1647 the dm bounce block reads the reason through why, never ${r.reason}'
   assert.ok(block.includes('const why = r.parked ? r.reason : r.held;'));
   assert.ok(!block.includes('${r.reason}'));
   assert.ok(block.includes('Nothing was kept'));
+});
+
+function coldSeat(agentType, extra = {}) {
+  const { m, injected } = mkPark({ shouldHoldDm: require('../proxy-util').shouldHoldDm });
+  m._proxyPoller = { snapshot: () => ({ linked: true, warmth: { state: 'cold' }, ts: Date.now() }) };
+  m._sendToSession = () => {};
+  m._armDmConfirm = () => {};
+  m.sessions.set('a', { name: 'a', agentType: 'claude', workspaceId: 'ws1', activityState: 'idle', activityTs: Date.now() });
+  m.sessions.set('t', { name: 't', agentType, workspaceId: 'ws1', activityState: 'idle', activityTs: Date.now() - 2 * 3600_000, ...extra });
+  return { m, injected };
+}
+
+for (const agentType of ['clodent', 'codex']) {
+  test(`t2238 a plain dm to a cold idle ${agentType} seat is delivered, and the sender hears nothing`, async () => {
+    const { m, injected } = coldSeat(agentType);
+    await m._handleIntent('a', { type: 'dm', target: 't', body: 'the question' });
+    assert.ok(injected.some((t) => t.startsWith('[agent:from a]') && t.includes('the question')), JSON.stringify(injected));
+    assert.deepStrictEqual(injected.filter((t) => t.startsWith('[agent:dm]')), []);
+  });
+
+  test(`t2238 a plain dm to a ${agentType} seat on a permission dialog is still held with the dialog wording`, async () => {
+    const { m, injected } = coldSeat(agentType, { needsAttention: { kind: 'permission' } });
+    await m._handleIntent('a', { type: 'dm', target: 't', body: 'the question' });
+    assert.deepStrictEqual(injected, ['[agent:dm] NOT delivered to t: blocked on a permission dialog — injecting now would answer the dialog. Nothing was kept. Resend after t is unblocked (a human has to answer the dialog).']);
+  });
+}
+
+test('t2238 a plain dm to a cold idle claude seat is still parked, not delivered', async () => {
+  const { m, injected } = coldSeat('claude');
+  await m._handleIntent('a', { type: 'dm', target: 't', body: 'the question' });
+  assert.ok(!injected.some((t) => t.startsWith('[agent:from a]')), JSON.stringify(injected));
+  assert.ok(injected.some((t) => t.startsWith('[agent:dm] parked for t (idle 2h with a cold cache')), JSON.stringify(injected));
 });

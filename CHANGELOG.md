@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A message to an idle Codex, Muse or clodent seat with a cold cache is now delivered at once instead of being dropped. These seats cannot hold a message for their next turn, so holding it only lost it. A seat waiting on a permission dialog still refuses messages.
+
 ## 5.171.0 — 2026-11-10
 
 - Teams: a lead's ticket dispatch keeps only the plugins and MCP servers the lead itself has, and a lead's template-save keeps flags that only restrict a seat (plan mode, a tool denylist, a read-only sandbox).

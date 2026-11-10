@@ -184,8 +184,10 @@ dm, the wire `/api/dm` entry, and claimed federated mail) consults
 (`noUrgent`); `urgent`, thinking, recent activity (`DM_HOLD_IDLE_MS`), or a
 warm cache deliver immediately; otherwise it holds (cold-cache — waking a
 cold session re-bills its whole context). Held Claude targets get the message
-**parked** (`_parkHeldDelivery`); Codex/dead targets get a plain bounce
-(Codex has no drain hook, so it can't be a park target).
+**parked** (`_parkHeldDelivery`). A cold hold on a target that cannot park
+(Codex, Muse, clodent, dead, or a failed park write) delivers as if urgent,
+since holding it would only drop it; a dialog hold on such a target gets a
+plain bounce with nothing kept.
 
 **Build** — `_buildDeliveryText`: `[agent:from <senderTag>]` prefix + body (an operator dm whose POST named a `client` reads `[agent:from user] (via <client>) body`; only `user`'s tag rides inline, every other sender's tag labels the spill pointer alone), and
 on a dm whose reply would DROP, the marker `(no reply path)`. Polarity is
