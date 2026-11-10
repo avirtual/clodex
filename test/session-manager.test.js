@@ -18413,7 +18413,7 @@ function mkTicketWt(repo, roleExtra = {}, extraDeps = {}) {
     list: () => upserted.map((n) => ({ ...(fieldsByName.get(n) || {}), name: n, ...(wtByName.has(n) ? { worktree: wtByName.get(n) } : {}) })),
     get: (n) => (upserted.includes(n)
       ? { ...(fieldsByName.get(n) || {}), name: n, ...(wtByName.has(n) ? { worktree: wtByName.get(n) } : {}) }
-      : (n === 'lead' ? { extraArgs: [] } : null)),
+      : (n === 'lead' ? { extraArgs: [], execCommands: ['clodex-run-tests'] } : null)),
     // Dedupe: the real store keys by name, so a name pushed twice would appear
     // twice in list() and be cleared twice by the pointer scan.
     //

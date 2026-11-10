@@ -4735,8 +4735,10 @@ function createTicketMethods(deps, shared) {
       const capArgs = !!capMode && capMode.argv;
       const toolsGated = !capArgs || cap.denylist === true;
       const openerRec = getPersistence().get(opener.name) || {};
+      const leadArgs = openerRec.extraArgs || [];
+      const postureArgs = hasBypass(openerAdapter, leadArgs) ? [...seatAdapter.posture.bypassArgs] : [];
       const grantClamp = (rawShape && team && team.lead === opener.name) ? clampToGrantor(openerRec, rawShape,
-        hasBypass(openerAdapter, mayGrantOf(openerRec).extraArgs) ? (tokens) => setsPosture(seatAdapter, tokens) : null) : null;
+        postureArgs.length ? (tokens) => setsPosture(seatAdapter, tokens) : null) : null;
       const shape = grantClamp ? {
         ...rawShape,
         execCommands: grantClamp.execCommands,
@@ -4744,9 +4746,7 @@ function createTicketMethods(deps, shared) {
         intents: grantClamp.intents,
       } : rawShape;
       const grantDropped = grantClamp ? grantClamp.dropped : [];
-      const leadArgs = openerRec.extraArgs || [];
       const homeEnv = this._clampSeatHomeEnv((shape && shape.sessionEnv) || null, openerRec.env);
-      const postureArgs = hasBypass(openerAdapter, leadArgs) ? [...seatAdapter.posture.bypassArgs] : [];
       const workspaceId = opener.workspaceId || DEFAULT_WORKSPACE_ID;
       const roleCwd = this._resolveRoleCwd(team, def);
       const accountLabel = (def && typeof def.account === 'string' && def.account) ? def.account : null;
