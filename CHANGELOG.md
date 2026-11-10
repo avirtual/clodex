@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Teams: idle clear is now a per-role option in the Roles panel (off, 15 min to 2 h). It applies to the role's existing seats when saved and to every seat minted for the role. A lead can set it with `[agent:team role-set <role> idle-clear:<minutes|off>]`.
+
 ## 5.172.1 — 2026-11-10
 
 - Cancelling a ticket now retires its hand and removes its worktree and branch when the branch holds no commits. A branch with commits is kept, and the cancel reply says where.
