@@ -239,25 +239,31 @@ function freshMergeMarker() {
   let marker = null;
   try { marker = JSON.parse(raw); } catch {}
   const at = marker && Number(marker.at);
-  if (marker && typeof marker.ticket === 'string' && at > 0 && Date.now() - at < MERGE_MARKER_FRESH_MS) return marker;
-  try { if (fs.readFileSync(MERGE_MARKER, 'utf8') === raw) fs.rmSync(MERGE_MARKER, { force: true }); } catch {}
+  const valid = marker && typeof marker.ticket === 'string' && at > 0;
+  if (valid && Date.now() - at < MERGE_MARKER_FRESH_MS) return marker;
+  if (!valid || Date.now() - at >= 2 * MERGE_MARKER_FRESH_MS) {
+    try { if (fs.readFileSync(MERGE_MARKER, 'utf8') === raw) fs.rmSync(MERGE_MARKER, { force: true }); } catch {}
+  }
   return null;
 }
 
-function yieldToQueuedMerge(deadline) {
-  if (process.env.CLODEX_TEST_LOCK_MERGE === '1') return;
-  const until = Math.min(deadline, Date.now() + MERGE_YIELD_MAX_MS);
-  let noted = null;
-  while (Date.now() < until) {
-    const marker = freshMergeMarker();
-    if (!marker) return;
-    if (noted !== marker.ticket) {
-      noted = marker.ticket;
-      lockNote(`waiting for the queued merge of ${marker.ticket} to take the suite lock first`);
+function mergeYield(state) {
+  if (process.env.CLODEX_TEST_LOCK_MERGE === '1') return false;
+  const marker = freshMergeMarker();
+  if (!marker) return false;
+  if (Date.now() >= state.until) {
+    if (state.noted && !state.capped) {
+      state.capped = true;
+      lockNote(`stopped waiting for the merge of ${state.noted}: the wait is capped`);
     }
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+    return false;
   }
-  if (noted) lockNote(`stopped waiting for the merge of ${noted}: the wait is capped`);
+  if (state.noted !== marker.ticket) {
+    state.noted = marker.ticket;
+    lockNote(`waiting for the queued merge of ${marker.ticket} to take the suite lock first`);
+  }
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+  return true;
 }
 
 function acquireLock() {
@@ -271,7 +277,7 @@ function acquireLock() {
   try { fs.mkdirSync(path.dirname(LOCK), { recursive: true }); } catch (e) {
     die(`could not create the lock directory ${path.dirname(LOCK)}: ${e.message}`);
   }
-  yieldToQueuedMerge(deadline);
+  const yieldState = { until: Math.min(deadline, Date.now() + MERGE_YIELD_MAX_MS), noted: null, capped: false };
   // Bounded like the original: a reclaim that does not then win the lock means
   // something is racing or the dir is unwritable, and spinning on it forever is
   // a wedge with no message. Waiting on a LIVE holder is not a reclaim and does
@@ -280,6 +286,7 @@ function acquireLock() {
   const startedAt = Date.now();
   let queued = false;
   for (;;) {
+    if (mergeYield(yieldState)) continue;
     const tmp = `${LOCK}.tmp-${process.pid}`;
     try {
       fs.rmSync(tmp, { recursive: true, force: true });

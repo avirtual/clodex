@@ -4775,6 +4775,7 @@ for (const row of [
 
     await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
     assert.deepStrictEqual(mergeMarker(repo), { ticket: 't1', at: 5_000_000 }, 'the deferral wrote the marker');
+    assert.ok(r.scheduled[0].ms < 180_000, 'the retry rewrites the marker inside run-tests.js\'s three-minute freshness window');
 
     row.finish(repo, f, clock);
     await stepRetry(r, f);
