@@ -55921,7 +55921,7 @@ ${detail}` });
         return capsFor(inputType.value).plugins ? collectPluginChecklist(inputPluginList) : defaultPluginTicks();
       }
       function newSessionExecScope() {
-        if (dialogMode === "template") return editingTemplateTeam ? { team: editingTemplateTeam } : null;
+        if (dialogMode === "template" && editingTemplateTeam) return { team: editingTemplateTeam };
         return { cwd: expandPath(inputCwd.value.trim()) || homeDir };
       }
       async function refreshNewSessionExecCommands(enabledSet = /* @__PURE__ */ new Set()) {
@@ -56329,7 +56329,7 @@ ${detail}` });
       inputCwd.addEventListener("change", () => refreshWorktreeForCwd());
       inputCwd.addEventListener("change", () => refreshTeamForCwd());
       inputCwd.addEventListener("change", () => {
-        if (dialogMode !== "template") refreshNewSessionExecCommands(currentOr("execCommands", collectExecChecklist, inputExecList, /* @__PURE__ */ new Set()));
+        refreshNewSessionExecCommands(currentOr("execCommands", collectExecChecklist, inputExecList, /* @__PURE__ */ new Set()));
       });
       if (teamToggle) {
         teamToggle.addEventListener("change", () => {
