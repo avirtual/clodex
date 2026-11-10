@@ -337,11 +337,7 @@ with `/` or `~/`; anything else is dropped.
   Each seat's `seat.json` mirror (with the writer's `.seat.json.tmp.*` copy),
   its `client-token` file, each minted account's `.credentials.json` under
   `<data>/accounts`, and the default login's `~/.claude/.credentials.json` and
-  `~/.claude.json` are read-denied as well. So is each account's
-  `settings.json` under `<data>/accounts` (with the writer's
-  `settings.json.tmp`): an API-key account's key lives in its `env`.
-  Account dirs registered outside `<data>/accounts` are not covered, for
-  either file.
+  `~/.claude.json` are read-denied as well.
   The app data dir's (`<userData>`) `remote.env`, `ui-settings.json` (peer
   tokens), `env-scopes.json` and `sessions.json` (each with its `.bak` and
   `.corrupt-*` copies, via a `*` suffix), `wire-hold-entries.json`,
