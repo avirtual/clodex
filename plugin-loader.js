@@ -6,7 +6,20 @@ const {
   PLUGIN_METHOD_SURFACES, PLUGIN_CAPABILITIES, readsOf, PLUGIN_REQUIREMENTS, requiresOf,
 } = require('./plugin-api');
 const { AGENT_NAME_RE } = require('./catalogs');
+const { ENV_KEY_RE } = require('./env-scopes');
+const { PLUGIN_VERB_RE } = require('./intent-registry');
 const { createPluginSource } = require('./plugin-source');
+
+function seatBinError(sb) {
+  if (typeof sb !== 'object' || Array.isArray(sb)) return 'manifest.seatBin must be an object';
+  if (typeof sb.name !== 'string' || !AGENT_NAME_RE.test(sb.name)) return `invalid seatBin.name: ${JSON.stringify(sb.name)} — letters, digits, . _ - (1-64), not dots only`;
+  if (typeof sb.src !== 'string' || !sb.src) return 'manifest.seatBin.src must name a file in the plugin directory';
+  if (sb.env != null && (!Array.isArray(sb.env) || !sb.env.every((k) => typeof k === 'string' && ENV_KEY_RE.test(k)))) {
+    return 'manifest.seatBin.env must be an array of environment variable names';
+  }
+  if (sb.verb != null && (typeof sb.verb !== 'string' || !PLUGIN_VERB_RE.test(sb.verb))) return `invalid seatBin.verb: ${JSON.stringify(sb.verb)}`;
+  return null;
+}
 
 function validateManifest(m, dirName, hasBundle = false) {
   if (!m || typeof m !== 'object') return 'manifest is not a JSON object';
@@ -56,6 +69,10 @@ function validateManifest(m, dirName, hasBundle = false) {
         return `invalid requirement: ${JSON.stringify(r)} — must be ${PLUGIN_REQUIREMENTS.map((x) => JSON.stringify(x)).join(' or ')}`;
       }
     }
+  }
+  if (m.seatBin != null) {
+    const why = seatBinError(m.seatBin);
+    if (why) return why;
   }
   if (!m.entry || typeof m.entry !== 'object') return 'manifest.entry is missing';
   if (m.entry.engine && typeof m.entry.engine !== 'string') return 'manifest.entry.engine must be a string';
@@ -266,6 +283,7 @@ function checkEntryPaths(path, dir, manifest) {
     if (entry[half] && !insideDir(path, dir, entry[half])) return `entry.${half} escapes the plugin directory`;
   }
   if (manifest && manifest.style && !insideDir(path, dir, manifest.style)) return 'style escapes the plugin directory';
+  if (manifest && manifest.seatBin && typeof manifest.seatBin.src === 'string' && (!insideDir(path, dir, manifest.seatBin.src) || path.resolve(dir, manifest.seatBin.src) === dir)) return 'seatBin.src escapes the plugin directory';
   return null;
 }
 

@@ -13,10 +13,19 @@ blocks a release.
 
 ## Unreleased
 
+- clodent seats: the context bar and context-size reminders use the window clodent reports (1M with a [1m] model, 200k without).
+- Team tickets: notices that owe the lead nothing (ACCEPT before its merge, a REWORK already sent to the hand) no longer wake the lead; they arrive with its next turn, or within 30 minutes.
+- Teams: a seat a lead spawns from a template inherits the lead's permission posture (--yolo is accepted for --dangerously-skip-permissions), and its permission requests now reach that lead; a template can no longer point a seat at an arbitrary CLODENT_HOME or CLAUDE_CONFIG_DIR.
+- Plugins: a manifest seatBin installs a plugin command on seats holding the plugin's intent, with optional env vars pointing at it.
+- Browser pane: seats with the browser grant get BROWSER, GH_BROWSER and npm_config_browser pointing at clodex-browse, so gh and other web logins open in the seat's browser pane (profile from CLODEX_BROWSE_SERVICE).
+
+## 5.167.0 — 2026-11-10
+
 - Remote accounts: a node whose web GUI is reached through an encrypted tunnel it cannot see (e.g. a container behind ssh) can set CLODEX_WEB_TRUSTED_TRANSPORT=1 to accept API keys; the refusal message now names it.
 - Stream seats: a context-size reminder now fires on models with no known window size (assumed 200k), and a cleared conversation no longer reports its old context size until the next turn.
 - Team tickets: a seat that works a whole ticket in one long turn is no longer reported as stalled while it is still making requests.
 - Team tickets: closed tickets older than 7 days move from the project board to an archive file beside it, so board writes stay fast as history grows; listing, search, history views and reopening a ticket read the archive transparently.
+- clodent seats: [agent:context compact] and [agent:context clear] now work, in terminal and stream mode.
 - Seats with the context intent get a context_status tool: tokens used, the real window and how fresh the figure is, answered in the same turn.
 
 ## 5.166.0 — 2026-11-10

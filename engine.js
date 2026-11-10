@@ -782,7 +782,7 @@ const { extractFileTouches, noteFileTouches, vetFileIntent } = require('./file-t
 const { createSubagentStore, noteSubagentTurn, feedSince } = require('./subagent-ring');
 const { classifyNotification } = require('./attention');
 const { InjectQueue, isInjectInFlight, canFireCompact } = require('./inject-queue');
-const { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, parkedTexts, parkIdInUse, claimParkedById, claimParkedByKey } = require('./pending-store');
+const { parkDelivery, drainPending, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, oldestDueRide, parkedTexts, parkIdInUse, claimParkedById, claimParkedByKey } = require('./pending-store');
 const { createTeamDelete } = require('./team-delete');
 const { createTeamManifest } = require('./team-manifest');
 const {
@@ -1179,6 +1179,7 @@ const SessionManager = createSessionManager({
     drainPending,
     countPending,
     oldestActiveParkTs,
+    oldestDueRide,
     peekPending,
     parkedTexts,
     enqueueOutbox,
@@ -1296,11 +1297,12 @@ const SessionManager = createSessionManager({
     listAllTemplates,
     listAllPrompts,
     getPluginBundles: () => (pluginHost ? pluginHost.bundles() : []),
+    getSeatBins: () => (pluginHost ? pluginHost.seatBins() : []),
   getPersistence: () => persistence,
   getTemplates: () => templates,
   getUiSettings: () => uiSettings,
   getWorkspaces: () => workspaces,
-  readCtxFor: (n) => readCtxFor(n),
+  readCtxFor: (n, t) => readCtxFor(n, t),
   getEnvScopes: () => envScopes,
   getMcpLibrary: () => mcpLibrary,
   getAccounts: () => accounts,
@@ -1595,9 +1597,9 @@ async function restartSession(name, opts = {}, wsId = DEFAULT_WORKSPACE_ID) {
   }
 }
 
-const readCtxFor = (name) => {
+const readCtxFor = (name, agentType) => {
   try {
-    const c = parseCtxFile(fs.readFileSync(pathFor(REGISTRY_DIR, name, 'ctx'), 'utf-8'));
+    const c = parseCtxFile(fs.readFileSync(pathFor(REGISTRY_DIR, name, 'ctx'), 'utf-8'), { trustReported: agentType === 'clodent' });
     return { ctx: c.pct, ctxTok: c.tok, ctxSize: c.size, ctxCost: c.cost, ctxModel: c.modelName };
   } catch { return { ctx: null, ctxTok: null, ctxSize: null, ctxCost: null, ctxModel: null }; }
 };

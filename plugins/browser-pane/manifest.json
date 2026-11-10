@@ -7,5 +7,6 @@
   "style": "style.css",
   "enabledByDefault": false,
   "requires": ["electron"],
+  "seatBin": { "name": "clodex-browse", "src": "clodex-browse.js", "env": ["BROWSER", "GH_BROWSER", "npm_config_browser"] },
   "announce": "Gives agents granted the [agent:browser] verb a logged-in browser window per service that you can watch and take over; you sign in yourself."
 }

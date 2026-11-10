@@ -228,7 +228,7 @@ function createRemoteWiring(deps) {
     const p = proxyPoller.snapshot(sess.name);
     let ctx = null;
     try {
-      ctx = parseCtxFile(fs.readFileSync(pathFor(REGISTRY_DIR, sess.name, 'ctx'), 'utf-8'));
+      ctx = parseCtxFile(fs.readFileSync(pathFor(REGISTRY_DIR, sess.name, 'ctx'), 'utf-8'), { trustReported: sess.agentType === 'clodent' });
     } catch {}
     const wireTok = p && p.context && typeof p.context.inputTokens === 'number'
       ? p.context.inputTokens : null;

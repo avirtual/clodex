@@ -178,3 +178,77 @@ test('pty seat: a permit is not a stream seat', async () => {
 test('the permit grammar rejects a choice other than allow or deny', () => {
   assert.strictEqual(parseIntent('[agent:permit hand-9 req-1 always]'), null);
 });
+
+function mkSpawnedRig(spawner = 'L') {
+  const m = mk({
+    log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+    getPersistence: () => ({ list: () => [], get: (n) => (n === 'kid' ? { spawnedBy: spawner } : null) }),
+  });
+  const dms = [];
+  const injected = [];
+  const answered = [];
+  m._gatedDeliver = (to, from, body, urgent, tag) => { dms.push({ to, from, body, urgent, tag }); return { queued: true }; };
+  m._injectText = (s, text) => injected.push([s.name, text]);
+  m._shadowLog = () => {};
+  m._broadcast = () => {};
+  m._sendToSession = () => {};
+  m._streamSend = () => {};
+  m.windowForSession = () => null;
+  m._teamOfOrNull = (s) => ({ L: { name: 'tm', lead: 'L' }, H: { name: 'tm', lead: 'L' }, L2: { name: 'tm2', lead: 'L2' } }[s && s.name] || null);
+  m.seatPermission = (name, id, choiceId) => { answered.push([name, id, choiceId]); return { ok: true }; };
+  const kid = { name: 'kid', agentType: 'clodent', io: 'stream', streamCodec: { encodePermission: (id, choiceId) => ({ answer: id, choiceId }) } };
+  m.sessions.set('kid', kid);
+  m.sessions.set('L', { name: 'L', agentType: 'claude' });
+  m.sessions.set('L2', { name: 'L2', agentType: 'claude' });
+  m.sessions.set('H', { name: 'H', agentType: 'claude' });
+  m._onStreamPermission(kid, { id: 'req-s', toolName: 'Bash', displayName: 'Bash', preview: 'rm x', choices: CHOICES.claude });
+  return { m, dms, injected, answered };
+}
+
+test('relay: a name-spawned seat with no ticket dms its spawner', () => {
+  const r = mkSpawnedRig();
+  assert.deepStrictEqual(r.dms.map((d) => [d.to, d.from, d.body.split('\n')[0]]), [['L', 'permission', '[permission kid req-s] spawned by you: Bash — rm x']]);
+});
+
+test('permit: the spawner of a name-spawned seat is accepted, another lead is refused', async () => {
+  const r = mkSpawnedRig();
+  await r.m._handleIntent('L2', parseIntent('[agent:permit kid req-s allow]'));
+  assert.deepStrictEqual(r.answered, []);
+  await r.m._handleIntent('L', parseIntent('[agent:permit kid req-s allow]'));
+  assert.deepStrictEqual(r.answered, [['kid', 'req-s', 'allow']]);
+  assert.deepStrictEqual(r.injected, [['L2', "permit: only kid's lead can answer its requests"], ['L', '[agent:permit] kid req-s: allowed']]);
+});
+
+for (const [label, spawnedBy, live, want] of [
+  ['a live spawner', 'L', true, ['Seat kid (spawned by L) is waiting on a permission dialog: Bash: ls. Allow or deny it in the attention view; it waits until you do.', 'Its lead can answer it: [agent:permit kid req-n allow] or [agent:permit kid req-n deny]']],
+  ['a spawner that is gone', 'L', false, null],
+  ['no spawner', null, true, null],
+]) {
+  test(`the inbox note for a no-ticket seat with ${label}`, () => {
+    const notes = [];
+    const m2 = mk({
+      getPersistence: () => ({ list: () => [], get: () => (spawnedBy ? { spawnedBy } : {}) }),
+      getNotifications: () => ({ add: (n) => notes.push(n) }),
+    });
+    if (live) m2.sessions.set('L', { name: 'L' });
+    m2._teamOfOrNull = (s) => (s && s.name === 'L' ? { name: 'tm', lead: 'L' } : null);
+    const ts = 4321;
+    const s = { name: 'kid', streamPermissions: new Map([['req-n', { id: 'req-n', ts }]]) };
+    m2._notePermissionInbox(s, { kind: 'permission', ts, message: 'Bash: ls' });
+    assert.deepStrictEqual(notes.map((n) => n.body.split('\n')), want ? [want] : []);
+  });
+}
+
+test('a seat spawned by a non-lead gets no relay, and its spawner\'s permit is refused', async () => {
+  const r = mkSpawnedRig('H');
+  assert.deepStrictEqual(r.dms, []);
+  await r.m._handleIntent('H', parseIntent('[agent:permit kid req-s allow]'));
+  assert.deepStrictEqual(r.answered, []);
+  assert.deepStrictEqual(r.injected, [['H', "permit: only kid's lead can answer its requests"]]);
+});
+
+test('a spawner that no longer leads a team loses the relay', () => {
+  const r = mkSpawnedRig();
+  r.m._teamOfOrNull = (s) => (s && s.name === 'L' ? { name: 'tm', lead: 'L2' } : null);
+  assert.strictEqual(r.m._seatTicketLead(r.m.sessions.get('kid')), null);
+});

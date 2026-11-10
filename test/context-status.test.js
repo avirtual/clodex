@@ -48,6 +48,8 @@ test('ctxWindowSource: cli, table and default each from a literal statusline lin
   assert.strictEqual(ctxWindowSource('20\t100000\t200000\tclaude-fable-5'), 'table');
   assert.strictEqual(ctxWindowSource('20\t100000\t200000\tclaude-opus-5-5[1m]'), 'table');
   assert.strictEqual(ctxWindowSource('20\t100000\t1000000\tclaude-opus-5-5'), 'cli');
+  assert.strictEqual(ctxWindowSource('20\t100000\t200000\tclaude-fable-5', { trustReported: true }), 'cli');
+  assert.strictEqual(ctxWindowSource('20\t100000\t0\tclaude-fable-5', { trustReported: true }), 'table');
   assert.strictEqual(ctxWindowSource('42'), 'default');
   assert.strictEqual(ctxWindowSource('5\t9000\t0\tsome-model'), 'default');
 });

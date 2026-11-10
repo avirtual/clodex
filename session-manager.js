@@ -14,6 +14,7 @@ const REBOOT_MIN_INTERVAL = 5 * 60 * 1000;
 
 const EXEC_ACK_MIN_TIMEOUT_MS = 60 * 1000;
 const EXEC_REPLY_WAIT_MS = EXEC_ACK_MIN_TIMEOUT_MS + 10 * 1000;
+const RIDE_MAX_MS = 30 * 60 * 1000;
 const SANDBOX_RELAY_TIMEOUT_MS = 60 * 1000;
 const EXEC_STATUS_DEFAULT_MS = 3 * 60 * 1000;
 const EXEC_STATUS_MIN_MS = 30 * 1000;
@@ -128,6 +129,7 @@ const CODEX_LINK_POLL_MS = 250;
 const CODEX_LINK_DEADLINE_MS = 60000;
 const CODEX_LINK_SLOW_POLL_MS = 5000;
 const { mergeSessionEnv, sanitizeFlat, withUtf8Charset } = require('./env-scopes');
+const { seatBinsFor, materializeSeatBins, seatBinEnv } = require('./bin-materialize');
 const voiceEngineSpec = require('./voice-engine');
 const { effectiveWindowSize, ctxWindowSource } = require('./argv-merge');
 const { contextStatusOf } = require('./ctx-reminder');
@@ -384,7 +386,7 @@ function nearMissFormHint(text) {
 
 // Add a field only if no caller can regrow it and none re-asserts it after create(), else two writers own it; keepWarmAlways and holdUntil stay a pair.
 // An absent worktree pointer is the dangerous state: destroy() would drop the record and orphan the checkout.
-const ALWAYS_PRESERVE = ['sessionIds', 'retiredSessionIds', 'pluginGrants', 'wireLabel', 'ticketId', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested', 'voice', 'reviewerTemplate', 'class', 'sleep', 'template', 'cost', 'wakes', 'awokeAt'];
+const ALWAYS_PRESERVE = ['sessionIds', 'retiredSessionIds', 'pluginGrants', 'wireLabel', 'ticketId', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested', 'voice', 'reviewerTemplate', 'class', 'sleep', 'template', 'cost', 'wakes', 'awokeAt', 'spawnedBy'];
 
 const defaultKillPid = (pid, sig) => process.kill(pid, sig);
 
@@ -693,6 +695,7 @@ function createSessionManager(deps) {
     drainPending,
     countPending,
     oldestActiveParkTs,
+    oldestDueRide,
     peekPending,
     enqueueOutbox,
     ensureDir,
@@ -787,6 +790,7 @@ function createSessionManager(deps) {
     writeAgentPlugin,
     writeBundlePlugins,
     getPluginBundles,
+    getSeatBins,
     readSystemPromptBody,
     getPersistence, getTemplates, getUiSettings, getEnvScopes, getMcpLibrary, getAccounts, getPromptLibrary, getAgentLibrary, getRemoteServer, getPeerManager, getRemindScheduler, getReminders, getMisfires, getNotifications,
     getWorkspaces, readCtxFor,
@@ -1657,21 +1661,22 @@ function createSessionManager(deps) {
         }
         log.info('session', `stream reap ${name}: ${decision}${record ? ` pid=${record.pid}` : ' (no record)'}`);
       }
-      let mergedEnv;
+      let scopedEnv;
       const baseEnv = { ...process.env };
       try {
         const store = getEnvScopes && getEnvScopes();
         const all = store ? store.all() : { global: {}, workspaces: {} };
-        mergedEnv = mergeSessionEnv({
-          base: baseEnv,
+        scopedEnv = mergeSessionEnv({
+          base: {},
           global: all.global,
           workspace: (all.workspaces && all.workspaces[workspaceId]) || null,
           session: (sessionEnv && typeof sessionEnv === 'object') ? sessionEnv : null,
           overrideFile: path.join(getUserDataPath(), 'env-override.env'),
         });
       } catch {
-        mergedEnv = { ...baseEnv };
+        scopedEnv = {};
       }
+      const mergedEnv = { ...baseEnv, ...scopedEnv };
 
       const accountEnvKey = adapterFor(type)?.account.envKey || null;
       const accountDir = accountEnvKey ? mergedEnv[accountEnvKey] : null;
@@ -2239,6 +2244,13 @@ function createSessionManager(deps) {
       if (intentChannel) {
         Object.assign(env, seatChannelEnv({ name, sockPath: intentChannel.sockPath, cred: intentChannel.cred }));
         env.PATH = [path.join(REGISTRY_DIR, 'bin'), env.PATH].filter(Boolean).join(path.delimiter);
+        const seatBins = seatBinsFor({ bins: getSeatBins ? getSeatBins() : [], intents, plugins });
+        const seatBinDir = path.join(runDirFor(REGISTRY_DIR, name), 'bin');
+        const installed = seatBins.length ? materializeSeatBins({ binDir: seatBinDir, bins: seatBins, log }) : [];
+        if (installed.length) {
+          env.PATH = [seatBinDir, env.PATH].filter(Boolean).join(path.delimiter);
+          Object.assign(env, seatBinEnv({ installed, explicit: scopedEnv }));
+        }
       }
       if (type === 'muse') env.MUSE_NO_AUTO_UPDATE = '1';
       if (type === 'claude' && !streamIo && resumeId && !fork && !mint && existingEntry && existingEntry.exitedAt && !existingEntry.archivedAt) env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN = '1';
@@ -2627,9 +2639,10 @@ function createSessionManager(deps) {
             const raw = fs.readFileSync(ctxPath, 'utf-8').trim();
             const fresh = raw !== lastRaw;
             lastRaw = raw;
-            const c = parseCtxFile(raw);
+            const trust = { trustReported: agentType === 'clodent' };
+            const c = parseCtxFile(raw, trust);
             if (c.pct != null) {
-              if (fresh) this._noteCtx(session, { ...c, windowSource: ctxWindowSource(raw) });
+              if (fresh) this._noteCtx(session, { ...c, windowSource: ctxWindowSource(raw, trust) });
               const warnPath = pathFor(REGISTRY_DIR, name, 'ctxwarn');
               // Gate on the CTX_THRESHOLD_MIN floor, not the shipped nudge: sanitizeThresholdPair drops rows below it, so this skips the
               // ui-settings re-parse for a quiet session without capping how low an operator can set the threshold.
@@ -3329,10 +3342,11 @@ function createSessionManager(deps) {
       if (s.ctxInfo && s.ctxInfo.tok === rec.tok) return;
       const model = rec.model || s.streamModel || null;
       const tableSize = effectiveWindowSize(model, 0);
-      const size = tableSize || 200_000;
+      const size = s._streamWindow || tableSize || 200_000;
       const pct = size > 0 ? Math.round((rec.tok / size) * 100) : null;
       const cost = s._costSeen && typeof s._costSeen.usd === 'number' ? s._costSeen.usd : null;
-      this._noteCtx(s, { pct, tok: rec.tok, size, cost, modelName: null, model, windowSource: tableSize ? 'table' : 'default' });
+      const windowSource = s._streamWindow ? 'cli' : tableSize ? 'table' : 'default';
+      this._noteCtx(s, { pct, tok: rec.tok, size, cost, modelName: null, model, windowSource });
     }
 
     _noteSeatCost(s, usd) {
@@ -3548,6 +3562,7 @@ function createSessionManager(deps) {
           if (Array.isArray(rec.slashCommands)) s._slashCommands = rec.slashCommands.filter((c) => typeof c === 'string');
           if (Array.isArray(rec.terminalSlashCommands)) s._terminalSlashCommands = rec.terminalSlashCommands.filter((c) => typeof c === 'string');
           if (rec.model) s.streamModel = rec.model;
+          if (s.agentType === 'clodent' && rec.contextWindow > 0) s._streamWindow = rec.contextWindow;
           if (Array.isArray(rec.pluginErrors)) {
             const entries = rec.pluginErrors.map((e) => `${e.path || e.plugin || '?'}: ${String(e.message || '').split('\n')[0]}`).join('; ');
             if (entries && entries !== s._pluginErrorEntries) {
@@ -5851,14 +5866,17 @@ function createSessionManager(deps) {
         if (session._permInboxTs === attn.ts) return;
         const rec = getPersistence && getPersistence().get(session.name);
         const ticketId = rec && rec.ticketId;
-        if (!ticketId) return;
+        const owner = this._seatTicketLead(session);
+        if (!ticketId && !owner) return;
         const store = getNotifications && getNotifications();
         if (!store) return;
         session._permInboxTs = attn.ts;
-        const pending = session.streamPermissions && this._seatTicketLead(session) ? [...session.streamPermissions.values()].filter((p) => p.ts === attn.ts).pop() : null;
+        const pending = session.streamPermissions && owner ? [...session.streamPermissions.values()].filter((p) => p.ts === attn.ts).pop() : null;
         store.add({
           from: 'clodex', workspaceId: session.workspaceId || null,
-          body: `Seat ${session.name} (ticket ${ticketId}) is waiting on a permission dialog: ${attn.message || '(no message)'}. Allow or deny it in the attention view; it holds the ticket until you do.`
+          body: (ticketId
+            ? `Seat ${session.name} (ticket ${ticketId}) is waiting on a permission dialog: ${attn.message || '(no message)'}. Allow or deny it in the attention view; it holds the ticket until you do.`
+            : `Seat ${session.name} (spawned by ${owner.lead}) is waiting on a permission dialog: ${attn.message || '(no message)'}. Allow or deny it in the attention view; it waits until you do.`)
             + (pending ? `\nIts lead can answer it: [agent:permit ${session.name} ${pending.id} allow] or [agent:permit ${session.name} ${pending.id} deny]` : ''),
         });
       } catch (e) {
@@ -8241,6 +8259,7 @@ function createSessionManager(deps) {
       claude: { compact: '/compact', clear: '/clear' },
       codex: { compact: '/compact', clear: '/clear' },
       muse: { compact: '/compact', clear: '/clear' },
+      clodent: { compact: '/compact', clear: '/clear' },
     };
 
     _promptDeltaPending(name, out = {}) {
@@ -8373,8 +8392,9 @@ function createSessionManager(deps) {
       const wireCtx = session.io === 'stream' && session.streamCodec && typeof session.streamCodec.encodeContext === 'function';
       const unsupported = () => {
         console.warn(`[agent:context ${sub}] from ${session.name}: unsupported for type ${session.type}`);
+        const supported = [...(wireCtx ? ['compact', 'clear'] : Object.keys(map || {})), 'reload'].join('|');
         this._injectText(session,
-          `[agent:context] unknown or unsupported sub-command "${sub}" for a ${session.type} session (use compact|clear|reload)`,
+          `[agent:context] unknown or unsupported sub-command "${sub}" for a ${session.type} session (use ${supported})`,
           { parkable: true });
       };
       const encode = () => (wireCtx ? session.streamCodec.encodeContext(sub) : (map && map[sub]));
@@ -9428,6 +9448,8 @@ function createSessionManager(deps) {
         if (oldest === null && typeof oldestActiveParkTs === 'function' && countPending(PENDING_DIR, target.name) > 0) return;
         const left = oldest === null ? 0 : INJECT_QUIET_MAXWAIT - (Date.now() - oldest);
         if (left > 0) { this._armParkCap(target, Math.min(left, INJECT_QUIET_MAXWAIT)); return; }
+        const ride = typeof oldestDueRide === 'function' ? oldestDueRide(PENDING_DIR, target.name) : null;
+        if (ride && ride.due <= Date.now()) { this._flushDueRides(target); return; }
         this._flushParkedNow(target, claimTag('cap'), 'park-cap');
       }, delay);
     }
@@ -9447,7 +9469,9 @@ function createSessionManager(deps) {
       const plural = count === 1 ? 'y' : 'ies';
       const body = kind === 'park-cap'
         ? `park cap fired (${INJECT_QUIET_MAXWAIT / 1000}s, no submit) — injecting ${count} parked deliver${plural}`
-        : `flushed ${count} parked deliver${plural} (operator)`;
+        : kind === 'ride-cap'
+          ? `ride cap fired (${RIDE_MAX_MS / 1000}s, no turn) — injecting ${count} parked deliver${plural}`
+          : `flushed ${count} parked deliver${plural} (operator)`;
       log.warn('inject', `${kind} for ${target.name} — draining ${count} parked deliver${plural} via queue`);
       this._broadcast('ipc-message', { ts: Date.now(), from: 'clodex', to: target.name, kind, body });
       this._injectText(target, '', {
@@ -9685,7 +9709,7 @@ function createSessionManager(deps) {
     _deliverPassive(targetName, senderName, body, mtype) {
       const target = this.sessions.get(targetName);
       if (!target || (target.clone && senderName !== target.name)) return;
-      if (target.agentType !== 'claude' || target._dead) {
+      if (!runsClaudeHooks(target.agentType) || target._dead) {
         this._deliverMessage(targetName, senderName, body, mtype);
         return;
       }
@@ -9701,6 +9725,41 @@ function createSessionManager(deps) {
         ts: Date.now(), from: senderName, to: targetName, kind: 'passive',
         body: body.length > 200 ? `${body.slice(0, 200)}…` : body,
       });
+    }
+
+    _deliverRide(targetName, senderTag, body, opts = {}) {
+      const tag = typeof opts.tag === 'string' ? opts.tag : '';
+      const ticket = opts.ticket || null;
+      const kind = opts.kind || null;
+      const target = this.sessions.get(targetName);
+      const canRide = !!(typeof parkDelivery === 'function' && target && target.agentType && !target.clone && !target._dead
+        && runsClaudeHooks(target.agentType) && this._injectHoldReason(target) !== 'dialog');
+      if (!canRide) return this._gatedDeliver(targetName, senderTag, body, false, tag);
+      const due = Date.now() + RIDE_MAX_MS;
+      try {
+        parkDelivery(PENDING_DIR, target.name, this._buildDeliveryText(target, senderTag, body, 'dm', tag),
+          this._nextParkSeq(), null, true, this._bornFor(target.name), null, { due, ticket, kind });
+      } catch (e) {
+        log.error('inject', `ride park failed for ${target.name}: ${e.message} — waking instead`);
+        return this._gatedDeliver(targetName, senderTag, body, false, tag);
+      }
+      log.info('inject', `notice-ride ${target.name} ${ticket || '-'} ${kind || '-'}`);
+      this._broadcast('ipc-message', {
+        ts: Date.now(), from: senderTag, to: targetName, kind: 'passive',
+        body: body.length > 200 ? `${body.slice(0, 200)}…` : body,
+      });
+      return { ride: true, due };
+    }
+
+    _flushDueRides(target, now = Date.now()) {
+      if (!target || target._dead || !runsClaudeHooks(target.agentType)) return null;
+      if (typeof oldestDueRide !== 'function') return null;
+      const ride = oldestDueRide(PENDING_DIR, target.name);
+      if (!ride || ride.due > now) return null;
+      if (this._injectHoldReason(target)) return null;
+      const age = Math.round((now - (ride.at || ride.due - RIDE_MAX_MS)) / 1000);
+      log.info('inject', `notice-ride-cap ${target.name} ${ride.ticket || '-'} age=${age}`);
+      return this._flushParkedNow(target, claimTag('ride'), 'ride-cap');
     }
 
     _injectTextPassive(session, text) {

@@ -28147,6 +28147,24 @@ ${i3.join("\n")}
         }
         return { kept, privileged, flags, pairs };
       }
+      var BYPASS_FLAG_ALIAS = Object.fromEntries(Object.values(ADAPTERS).filter((a) => Array.isArray(a.posture.aliases) && a.posture.bypass.length === 1 && a.posture.bypass[0].length === 1).flatMap((a) => a.posture.aliases.map((alias) => [alias, a.posture.bypass[0][0]])));
+      function canonicalBypassFlag(flag) {
+        return Object.prototype.hasOwnProperty.call(BYPASS_FLAG_ALIAS, flag) ? BYPASS_FLAG_ALIAS[flag] : flag;
+      }
+      var POSTURE_FLAGS = /* @__PURE__ */ new Set([
+        ...Object.values(ADAPTERS).flatMap((a) => [...a.posture.bypass.map((opt) => opt[0]), ...a.posture.aliases || []]),
+        ...Object.values(ADAPTERS).flatMap((a) => {
+          const cap = a.readOnlyCap && a.readOnlyCap.args;
+          return Array.isArray(cap) ? cap.filter((_, i) => i % 2 === 0) : [];
+        }),
+        "--permission-mode",
+        "--full-auto",
+        "--allow-dangerously-skip-permissions"
+      ]);
+      function setsPosture(adapter, argv) {
+        if (postureOf(adapter, argv) !== "default") return true;
+        return splitPrivilegedArgs(argv).flags.some((f) => POSTURE_FLAGS.has(f));
+      }
       module.exports = {
         ADAPTERS,
         PLATFORMS,
@@ -28167,7 +28185,9 @@ ${i3.join("\n")}
         hasReadOnlyCap,
         postureOf,
         PRIVILEGED_FLAG_ARITY,
-        splitPrivilegedArgs
+        splitPrivilegedArgs,
+        canonicalBypassFlag,
+        setsPosture
       };
     }
   });

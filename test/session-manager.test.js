@@ -13497,10 +13497,12 @@ test('create → PTY env: a deny-listed scope key never reaches the PTY', async 
 
 const RESUME_KEY = 'CLAUDE_CODE_RESUME_INTERRUPTED_TURN';
 delete process.env[RESUME_KEY];
-async function resumeEnvProbe({ entry = null, resumeId = null, sessionEnv = null, global = {} } = {}) {
+async function resumeEnvProbe({ entry = null, resumeId = null, sessionEnv = null, global = {}, intents = null, plugins = null, seatBins = [] } = {}) {
   let capturedEnv = null;
+  let seatBinFiles = null;
   const rig = mkSkillsOffRig({
-    pty: { spawn: (_cmd, _args, opts) => { capturedEnv = opts.env; return { onData() {}, onExit() {}, pid: 999 }; } },
+    getSeatBins: () => seatBins,
+    pty: { spawn: (_cmd, _args, opts) => { capturedEnv = opts.env; seatBinFiles = (() => { try { return fs.readdirSync(path.join(opts.env.CLODEX_HOME, 'run', 'rs', 'bin')); } catch { return []; } })(); return { onData() {}, onExit() {}, pid: 999 }; } },
     mergeSessionEnv: (args) => require('../env-scopes').mergeSessionEnv({ ...args, base: { ...process.env }, global, overrideFile: null }),
   });
   const exitedCalls = [];
@@ -13512,9 +13514,9 @@ async function resumeEnvProbe({ entry = null, resumeId = null, sessionEnv = null
   if (entry) rig.persistence.upsert({ name: 'rs', ...entry });
   try {
     await rig.m.create('rs', 'claude', os.tmpdir(), [], resumeId, 'ws', null, false, null,
-      [], [], [], [], [], null, [], [], null, sessionEnv);
+      [], [], [], [], [], null, [], [], intents, sessionEnv, false, false, plugins);
   } finally { rig.stop('rs'); }
-  return { env: capturedEnv, exitedCalls, entryAfter: rig.persistence.get('rs') };
+  return { env: capturedEnv, seatBinFiles, exitedCalls, entryAfter: rig.persistence.get('rs') };
 }
 
 test('create → PTY env: a claude --resume of an exitedAt-stamped entry carries CLAUDE_CODE_RESUME_INTERRUPTED_TURN=1', async () => {
@@ -13526,6 +13528,46 @@ test('create → PTY env: a claude --resume of an exitedAt-stamped entry carries
   assert.deepStrictEqual(crashedRest, { ...plainRest, [RESUME_KEY]: '1' });
   assert.deepStrictEqual(crashed.exitedCalls, [['rs', null]], 'the exitedAt stamp is cleared after the env is built');
   assert.strictEqual('exitedAt' in crashed.entryAfter, false);
+});
+
+function withoutBrowserEnv(t) {
+  const keys = ['BROWSER', 'GH_BROWSER', 'npm_config_browser'];
+  const saved = keys.map((k) => [k, process.env[k]]);
+  for (const k of keys) delete process.env[k];
+  t.after(() => { for (const [k, v] of saved) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
+}
+
+const BROWSE_SEAT_BIN = {
+  id: 'browser-pane', shipped: true, dir: path.join(__dirname, '..', 'plugins', 'browser-pane'),
+  name: 'clodex-browse', src: 'clodex-browse.js', env: ['BROWSER', 'GH_BROWSER', 'npm_config_browser'], verb: 'browser',
+};
+
+test('create → PTY env: a seat holding the seatBin verb and plugin gets the bin on PATH and its env; one lacking either gets neither', async (t) => {
+  withoutBrowserEnv(t);
+  const granted = await resumeEnvProbe({ entry: {}, intents: ['dm', 'browser'], plugins: ['browser-pane'], seatBins: [BROWSE_SEAT_BIN] });
+  const binDir = path.join(granted.env.CLODEX_HOME, 'run', 'rs', 'bin');
+  const verb = path.join(binDir, 'clodex-browse');
+  assert.deepStrictEqual([granted.env.BROWSER, granted.env.GH_BROWSER, granted.env.npm_config_browser], [verb, verb, verb]);
+  assert.deepStrictEqual(granted.seatBinFiles, ['clodex-browse']);
+  assert.deepStrictEqual(granted.env.PATH.split(path.delimiter).slice(0, 2), [binDir, path.join(granted.env.CLODEX_HOME, 'bin')]);
+  for (const [label, opts] of [
+    ['no verb', { intents: ['dm'], plugins: ['browser-pane'] }],
+    ['no plugin', { intents: ['dm', 'browser'], plugins: ['other'] }],
+    ['absent intents list', { intents: null, plugins: ['browser-pane'] }],
+  ]) {
+    const r = await resumeEnvProbe({ entry: {}, seatBins: [BROWSE_SEAT_BIN], ...opts });
+    assert.ok(r.env.CLODEX_INTENT_SOCK, `ENTER (${label}): the seat still has its intent channel`);
+    assert.deepStrictEqual(['BROWSER', 'GH_BROWSER', 'npm_config_browser'].filter((k) => k in r.env), [], label);
+    assert.deepStrictEqual(r.seatBinFiles, [], label);
+    assert.strictEqual(r.env.PATH.split(path.delimiter)[0], path.join(r.env.CLODEX_HOME, 'bin'), label);
+  }
+});
+
+test('create → PTY env: a template env BROWSER wins over the seatBin; the keys it does not set still point at the bin', async (t) => {
+  withoutBrowserEnv(t);
+  const r = await resumeEnvProbe({ entry: {}, intents: ['browser'], plugins: ['browser-pane'], seatBins: [BROWSE_SEAT_BIN], sessionEnv: { BROWSER: '/usr/local/bin/firefox' } });
+  const verb = path.join(r.env.CLODEX_HOME, 'run', 'rs', 'bin', 'clodex-browse');
+  assert.deepStrictEqual([r.env.BROWSER, r.env.GH_BROWSER, r.env.npm_config_browser], ['/usr/local/bin/firefox', verb, verb]);
 });
 
 test('create → PTY env: a claude seat carries its intent channel and the clodex verb dir on PATH', async () => {
@@ -22500,6 +22542,28 @@ for (const row of [
   });
 }
 
+for (const row of [
+  { type: 'clodent', window: 200000, size: 200000, pct: 25, source: 'cli' },
+  { type: 'clodent', window: 1000000, size: 1000000, pct: 5, source: 'cli' },
+  { type: 'claude', window: 200000, size: 1000000, pct: 5, source: 'table' },
+]) {
+  test(`stream ctx: a ${row.type} seat whose clodent 0.7.0 init (clodent/test/stream/stream.test.js) reports ${row.window} sizes a sonnet-5-5 usage at ${row.size}`, async (t) => {
+    const h = mkStreamSeatManager({ extraDeps: { probeClodentVersion: () => 'clodent 0.7.0\n' } });
+    t.after(() => h.stopAll());
+    await h.create('st-win', null, 'stream', row.type);
+    h.line('st-win', {
+      type: 'system', subtype: 'init', cwd: '/tmp/w', session_id: '11111111-1111-4111-8111-111111111111',
+      model: 'claude-sonnet-5-5', tools: ['Read', 'Write', 'Edit', 'Bash', 'Grep'], permissionMode: 'acceptEdits',
+      slash_commands: ['compact', 'clear', 'cost', 'model', 'help', 'quit', 'exit'], apiKeySource: 'ANTHROPIC_API_KEY',
+      clodent_version: '0.7.0', context_window_size: row.window, instruction_files: [],
+    });
+    h.line('st-win', { type: 'assistant', message: { model: 'claude-sonnet-5-5', content: [], usage: { input_tokens: 50000 } } });
+    assert.deepStrictEqual(h.m.sessions.get('st-win').ctxInfo,
+      { pct: row.pct, tok: 50000, size: row.size, cost: null, modelName: null, model: 'claude-sonnet-5-5' });
+    assert.strictEqual(h.m.sessions.get('st-win')._ctxStatus.source, row.source);
+  });
+}
+
 test('stream ctx: a conversation reset clears ctxInfo and pushes an empty session-ctx', async (t) => {
   const h = mkStreamSeatManager();
   t.after(() => h.stopAll());
@@ -25711,4 +25775,104 @@ test('selectionDrain: a Claude seat whose settings carry the hook is marked; one
   await spawn(['--settings', '/x/own-settings.json']);
   assert.ok(h.m.sessions.get('sd1'), 'ENTER: the custom-settings seat spawned');
   assert.strictEqual(h.m.sessions.get('sd1').selectionDrain, false);
+});
+
+function mkClodentPtyBounce() {
+  const injected = [];
+  const m = mk({
+    getPersistence: () => ({ list: () => [], get: () => null }),
+    registry: { listPeers: () => [], getPeer: () => null },
+    getPeerManager: () => null,
+    peerStatusLabel: () => 'idle',
+    parseIntent: parseIntentReal,
+    looksLikeIntent: looksLikeIntentReal,
+    isInjectInFlight: require('../inject-queue').isInjectInFlight,
+    log: { info: () => {}, warn: () => {} },
+  });
+  m._injectText = (_s, text) => injected.push(text);
+  m._broadcast = () => {};
+  m._armInjectValve = () => {};
+  m._armCompactValve = () => {};
+  m._armCompactGuard = () => {};
+  m._armPostClearValve = () => {};
+  m.sessions.set('cd', { name: 'cd', type: 'clodent', agentType: 'clodent', io: 'pty', workspaceId: 'ws1' });
+  m.sessions.set('bx', { name: 'bx', type: 'nosuch', agentType: null, io: 'pty', workspaceId: 'ws1' });
+  return { m, injected };
+}
+
+test('t2217: a clodent PTY seat types /compact for [agent:context compact] and /clear for [agent:context clear]', async () => {
+  const { m, injected } = mkClodentPtyBounce();
+  await m._handleIntent('cd', { type: 'context', sub: 'compact', body: 'pick up t2217' });
+  await m._handleIntent('cd', { type: 'context', sub: 'clear', body: 'carry on' });
+  assert.deepStrictEqual(injected, ['/compact', '/clear']);
+  assert.strictEqual(m.sessions.get('cd')._postClearContinuation, 'carry on');
+});
+
+test('t2217: the context refusal lists only the sub-commands the seat type supports', async () => {
+  const { m, injected } = mkClodentPtyBounce();
+  m._handleContextIntent(m.sessions.get('cd'), 'compress', '');
+  m._handleContextIntent(m.sessions.get('bx'), 'clear', '');
+  assert.deepStrictEqual(injected, [
+    '[agent:context] unknown or unsupported sub-command "compress" for a clodent session (use compact|clear|reload)',
+    '[agent:context] unknown or unsupported sub-command "clear" for a nosuch session (use reload)',
+  ]);
+});
+
+const CLODENT_SID = '0b6f3c1e-7d2a-4c55-9e10-3f8a2b4c6d01';
+const CLODENT_SID2 = '5e2d9a40-1c3b-4f6e-8a7d-2b9c0e1f3a42';
+const clodentInit = (sid) => ({ type: 'system', subtype: 'init', cwd: '/w', session_id: sid, model: 'claude-opus-5-5', tools: [], permissionMode: 'bypassPermissions', slash_commands: ['compact', 'clear'], apiKeySource: 'ANTHROPIC_API_KEY', clodent_version: '0.6.1', uuid: 'u-init' });
+const clodentResult = (sid) => ({ type: 'result', subtype: 'success', is_error: false, result: '', duration_ms: 3, duration_api_ms: 0, num_turns: 0, session_id: sid, total_cost_usd: 0, uuid: 'u-res' });
+
+async function mkClodentStreamSeat(t, name) {
+  const { mock } = require('node:test');
+  const h = mkStreamSeatManager({ extraDeps: { probeClodentVersion: () => 'clodent 0.6.1\n', isInjectInFlight: require('../inject-queue').isInjectInFlight } });
+  t.after(() => h.stopAll());
+  mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 });
+  t.after(() => mock.timers.reset());
+  await h.create(name, null, 'stream', 'clodent');
+  const s = h.m.sessions.get(name);
+  t.after(() => { h.m._clearCompactValve(s); h.m._clearPostClearValve(s); clearTimeout(s._compactingValveTimer); clearTimeout(s._injectHoldTimer); });
+  h.line(name, clodentInit(CLODENT_SID));
+  h.line(name, clodentResult(CLODENT_SID));
+  const injected = [];
+  h.m._injectText = (_s, text) => injected.push(text);
+  return { h, s, mock, injected, sent: () => h.handles[h.handles.length - 1].sent };
+}
+
+test('t2217: a clodent stream seat sends /compact as a user turn; compact_boundary from clodent src/stream/output.js ends it and the src/session/recorder.js summary fires the continuation', async (t) => {
+  const { readerFor } = require('../transcript-readers');
+  const { h, s, mock, injected, sent } = await mkClodentStreamSeat(t, 'cs1');
+  assert.strictEqual(s.streamBusy, false, 'ENTER: the seat is idle after the opening result');
+  const before = sent().length;
+  h.m._handleContextIntent(s, 'compact', 'pick up t2217');
+  assert.deepStrictEqual(sent().slice(before), [{ type: 'user', message: { role: 'user', content: '/compact' } }]);
+  h.m._routeAttnEntry(s, { hook_event_name: 'PreCompact', trigger: 'manual' });
+  assert.ok(s.compacting, 'ENTER: PreCompact armed the compact');
+  h.line('cs1', { type: 'system', subtype: 'status', status: 'compacting', session_id: CLODENT_SID, uuid: 'u1' });
+  h.line('cs1', { type: 'system', subtype: 'compact_boundary', session_id: CLODENT_SID, uuid: 'u2', compact_metadata: { trigger: 'manual', pre_tokens: 90000, post_tokens: 4000 } });
+  assert.strictEqual(s.compacting, null);
+  h.line('cs1', { type: 'system', subtype: 'status', status: null, compact_result: 'success', session_id: CLODENT_SID, uuid: 'u3' });
+  h.line('cs1', clodentResult(CLODENT_SID));
+  const summary = { type: 'user', message: { role: 'user', content: 'This session continues an earlier conversation that was compacted.' }, isVisibleInTranscriptOnly: true, isCompactSummary: true };
+  assert.strictEqual(readerFor('claude').classify(summary).compactSummary, true);
+  const watcher = h.watchers.find((a) => a[0] === 'cs1');
+  watcher[4]();
+  mock.timers.tick(1);
+  assert.strictEqual(injected.length, 1);
+  assert.match(injected[0], /pick up t2217/);
+});
+
+test('t2217: a clodent stream seat sends /clear as a user turn; conversation_reset then init from clodent src/stream/output.js fires the clear continuation', async (t) => {
+  const { h, s, mock, injected, sent } = await mkClodentStreamSeat(t, 'cs2');
+  const before = sent().length;
+  h.m._handleContextIntent(s, 'clear', 'carry on with t2217');
+  assert.deepStrictEqual(sent().slice(before), [{ type: 'user', message: { role: 'user', content: '/clear' } }]);
+  assert.strictEqual(s._postClearContinuation, 'carry on with t2217', 'ENTER: the continuation is latched');
+  h.line('cs2', { type: 'conversation_reset', new_conversation_id: CLODENT_SID2, trigger: 'clear', session_id: CLODENT_SID, uuid: 'u4' });
+  h.line('cs2', clodentInit(CLODENT_SID2));
+  h.line('cs2', clodentResult(CLODENT_SID2));
+  mock.timers.tick(1);
+  assert.strictEqual(s._postClearContinuation, null);
+  assert.strictEqual(injected.length, 1);
+  assert.match(injected[0], /carry on with t2217/);
 });
