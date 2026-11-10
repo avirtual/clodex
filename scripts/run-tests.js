@@ -144,7 +144,7 @@ function recordRunMs(ms) {
   }
 }
 
-const DURATIONS = path.join(path.dirname(LOCK), 'last-run-durations.json');
+const DURATIONS = path.join(path.dirname(LOCK), '.test-durations.last.json');
 
 function durationRows(entries, root) {
   const byFile = new Map();
@@ -183,6 +183,9 @@ function recordDurations(entries, runMs) {
     fs.renameSync(tmp, DURATIONS);
   } catch {
     try { fs.rmSync(tmp, { force: true }); } catch {}
+  }
+  for (const legacy of ['last-run-durations.json', 'last-run-durations.json.tmp']) {
+    try { fs.rmSync(path.join(path.dirname(DURATIONS), legacy), { force: true }); } catch {}
   }
 }
 

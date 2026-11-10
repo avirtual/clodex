@@ -15,7 +15,7 @@ blocks a release.
 - Team board: the remaining read-only readers (task list, hand cap, parked-ticket checks, remote ticket rows, rename and unbind guards) share the cached parse, so they no longer re-read the whole board file on each call.
 
 - Team hand prompt: reads a needed function whole instead of in 60-line slices, which were a third of measured hand spend. Team lead prompt: one rule for probe versus scout (does the read need the lead's context). Reaches seats spawned after the upgrade; a team that keeps its own copy of either prompt must resync it.
-- Test runner: a full run records each test file's duration, and `scripts/run-tests.js --durations` lists the 25 slowest from the last full run.
+- Test runner: a full run records each test file's duration in a hidden file, and `scripts/run-tests.js --durations` lists the 25 slowest from the last full run.
 
 ## 5.165.0 — 2026-11-09
 - Sidebar Minimal filter: a group header shows a red count of hidden ephemeral seats that are working (tooltip names them; click shows them), so a node is not mistaken for idle before a reboot.

@@ -99,4 +99,4 @@ root's stale children by age. A new test needs no registration.
 
 ## Per-file durations of the last full run
 
-A full `scripts/run-tests.js` run writes `last-run-durations.json` beside `.test-digest.last` (the repo root, or `CLODEX_TEST_LOCK_DIR`'s parent). `node scripts/run-tests.js --durations` prints the 25 slowest files from it without running tests.
+A full `scripts/run-tests.js` run writes `.test-durations.last.json` beside `.test-digest.last` (the repo root, or `CLODEX_TEST_LOCK_DIR`'s parent). `node scripts/run-tests.js --durations` prints the 25 slowest files from it without running tests.
