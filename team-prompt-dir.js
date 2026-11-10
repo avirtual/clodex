@@ -125,7 +125,7 @@ function mayGrantIntent(rec, grants, type) {
   return intentEnabledForSeat(type, rec) || grants.intents.includes(type);
 }
 
-function clampToGrantor(rec, { execCommands, extraArgs, intents }) {
+function clampToGrantor(rec, { execCommands, extraArgs, intents }, keepGroup = null) {
   const grants = mayGrantOf(rec);
   const dropped = [];
   const drop = (x) => { if (!dropped.includes(x)) dropped.push(x); };
@@ -140,7 +140,7 @@ function clampToGrantor(rec, { execCommands, extraArgs, intents }) {
     const held = new Set(splitPrivilegedArgs(grants.extraArgs).pairs.map(flagKey));
     keptArgs = [];
     for (const g of privilegedGroups(extraArgs)) {
-      if (g.name === null || g.pairs.every((p) => held.has(flagKey(p)))) keptArgs.push(...g.tokens);
+      if (g.name === null || (keepGroup && keepGroup(g.tokens)) || g.pairs.every((p) => held.has(flagKey(p)))) keptArgs.push(...g.tokens);
       else drop(g.name);
     }
   }

@@ -111,6 +111,7 @@ function handlerBox(leadRec, roles) {
     resolveTeam: (cwd) => (cwd === '/proj' ? team : null),
     refreshAppMenu: () => {},
     getPersistence: () => ({ get: (n) => (n === 'lead' ? leadRec : null) }),
+    withoutPrivilegedIntentsFor: (x) => x,
     log: { info() {}, warn() {}, error() {} },
   }, {});
   const injected = [];

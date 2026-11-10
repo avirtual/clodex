@@ -4735,7 +4735,8 @@ function createTicketMethods(deps, shared) {
       const capArgs = !!capMode && capMode.argv;
       const toolsGated = !capArgs || cap.denylist === true;
       const openerRec = getPersistence().get(opener.name) || {};
-      const grantClamp = (rawShape && team && team.lead === opener.name) ? clampToGrantor(openerRec, rawShape) : null;
+      const grantClamp = (rawShape && team && team.lead === opener.name) ? clampToGrantor(openerRec, rawShape,
+        hasBypass(openerAdapter, mayGrantOf(openerRec).extraArgs) ? (tokens) => setsPosture(seatAdapter, tokens) : null) : null;
       const shape = grantClamp ? {
         ...rawShape,
         execCommands: grantClamp.execCommands,
@@ -4830,7 +4831,7 @@ function createTicketMethods(deps, shared) {
       // with no env, but the first asked for an env and must not get the default.
       const tplSuppliedEnv = !!(tpl && tpl.env && typeof tpl.env === 'object' && !Array.isArray(tpl.env));
 
-      const modelArgs = reviewerModelArgs(shape && shape.extraArgs, seatAdapter);
+      const modelArgs = reviewerModelArgs(rawShape && rawShape.extraArgs, seatAdapter);
 
       let systemPromptFile = this._teamRolePromptStem(team, roleKey, templateOverride)
         || ((tpl && typeof tpl.systemPromptFile === 'string' && tpl.systemPromptFile)

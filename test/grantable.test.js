@@ -79,8 +79,8 @@ test('the Args dialog and the intents popover draw a may-grant toggle and save i
   assert.ok(lists.includes("if (mayGrantSet) row.appendChild(mayGrantToggle(c.name, mayGrantSet.has(c.name)));"));
   assert.ok(lists.includes(":checked:not(.may-grant):not(.may-grant-flags)')"));
   assert.ok(rnd.includes('renderExecChecklist(argsExecList, new Set(res.execCommands || []), argsGrantable ? new Set(argsGrantable.execCommands) : null)'));
-  assert.ok(rnd.includes('if (!source && grantableNext) await window.api.setSessionGrantable(name, grantableNext);'));
-  assert.ok(pop.includes('if (grantableNext) await window.api.setSessionGrantable(name, grantableNext);'));
+  assert.ok(rnd.includes('const gr = await window.api.setSessionGrantable(name, grantableNext);'));
+  assert.ok(pop.includes('const gr = await window.api.setSessionGrantable(name, grantableNext);'));
 });
 
 test('session:setGrantable and session:grantable write and read the record through the operator IPC', () => {
