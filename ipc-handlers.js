@@ -1591,6 +1591,20 @@ function registerIpcHandlers(deps) {
     return { ok: true };
   });
 
+  handle('session:setGrantable', (_e, name, grantable) => {
+    if (!persistence.get(name)) return { ok: false, error: 'Session not found in persistence' };
+    persistence.setGrantable(name, grantable);
+    return { ok: true, grantable: persistence.get(name).grantable || null };
+  });
+
+  handle('session:grantable', (_e, name) => {
+    const entry = persistence.get(name);
+    if (!entry) return { ok: false, error: 'Session not found in persistence' };
+    const g = entry.grantable && typeof entry.grantable === 'object' ? entry.grantable : {};
+    const list = (v) => (Array.isArray(v) ? [...v] : []);
+    return { ok: true, grantable: { execCommands: list(g.execCommands), intents: list(g.intents), flags: list(g.flags) } };
+  });
+
   handle('session:pluginGrants', (_e, name, override) => {
     const entry = persistence.get(name);
     if (!entry) return { ok: false, error: 'Session not found in persistence' };

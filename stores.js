@@ -920,6 +920,19 @@ function initStores(userDataPath, {
     //
     // No agent-facing writer, by omission: a seat granting a plugin the right to
     // read its own thinking is not a decision the seat gets to make.
+    setGrantable(name, grantable) {
+      const all = this._load();
+      const entry = all.find(s => s.name === name);
+      if (!entry) return;
+      const src = grantable && typeof grantable === 'object' && !Array.isArray(grantable) ? grantable : null;
+      const list = (v) => (Array.isArray(v) ? [...new Set(v.filter((x) => typeof x === 'string' && x))] : []);
+      const prev = src && entry.grantable && typeof entry.grantable === 'object' ? entry.grantable : {};
+      const pick = (k) => list(src && k in src ? src[k] : prev[k]);
+      const next = { execCommands: pick('execCommands'), intents: pick('intents'), flags: pick('flags') };
+      if (next.execCommands.length || next.intents.length || next.flags.length) entry.grantable = next;
+      else delete entry.grantable;
+      this._save(all, name);
+    },
     setPluginGrants(name, grants) {
       const all = this._load();
       const entry = all.find(s => s.name === name);

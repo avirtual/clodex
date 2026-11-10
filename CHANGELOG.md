@@ -15,6 +15,7 @@ blocks a release.
 
 - Browser pane: a handback says "signed in" only when the page shows it (a logout link or account menu); a handback from a 2FA or security-key step now says it is still on a sign-in page.
 - Templates: the template editor's exec checklist lists the team's own exec commands when the template's folder is inside a team.
+- Teams: the operator can mark exec commands, plugin intents and the permission flag as "may grant" for a lead without granting them to it; the lead's template-save and spawns keep what it holds or may grant, and name anything they strip.
 
 ## 5.168.0 — 2026-11-10
 

@@ -50,12 +50,18 @@ the shared checkout, `worktree` mints a one-shot seat on its own branch in its
 own git worktree). The template's `mcpServers`, `execCommands` and privileged
 `extraArgs` flags (`--settings`, `--dangerously-skip-permissions`,
 `--permission-mode`, `--mcp-config`, `--add-dir` and the other CLIs' bypass
-flags) are set only in the app's template editor (`templates:saveTeam`), never by
-`template-save`, which strips them and keeps the stored values; a `model:` or
+flags) are set in the app's template editor (`templates:saveTeam`). A lead's
+`template-save` keeps the exec commands, plugin intents and flags the lead holds or the operator
+marked "may grant" for it (the seat record's `grantable`, set only in the app),
+strips the rest and names each one; holding a grant implies being able to grant it.
+Ticket and review seats the lead dispatches get the same clamp at spawn, so a revoked grant or a hand-edited
+template file never reaches them; flags that only narrow a seat (`--disallowedTools`, `--permission-mode plan|default|dontAsk`, the seat's read-only cap) are always kept, a posture flag also when the lead holds the bypass flag, and the dispatch ack
+names every drop. A `role-set lead` onto a template granting more than the lead's seat holds is refused.
+Any other saver's `template-save` strips them all and keeps the stored values; a `model:` or
 `effort:` derive copies the base template's exec grants and flags but not its
 `mcpServers`. Reviewer seats load no `mcpServers`. An `[agent:spawn]` child gets
-the template's exec grants and `mcpServers` only where its spawner holds them (except the lead role below),
-is refused a privileged flag and value its spawner's own args lack, inherits the
+the template's exec grants only where its spawner holds them or, as its team lead, may grant them, and `mcpServers` only where it holds them (except the lead role below),
+is refused a privileged flag and value its spawner's own args (or a lead's may-grant flags) lack, inherits the
 spawner's `protectCredentials` (a Codex or Muse child that would inherit a non-empty list is refused, since only Claude and clodent seats enforce it), and takes a `template:<path>` only from under
 `~/.clodex/library/templates/` or the team's `templates/` dir. A clodent template that wants plan mode spells it
 `--read-only`: `--permission-mode` is a privileged flag, refused when the spawner's args lack it.

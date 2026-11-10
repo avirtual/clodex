@@ -3835,6 +3835,7 @@ input.env-locked { opacity: 0.6; cursor: not-allowed; }
 }
 
 .agent-check:last-child { margin-bottom: 0; }
+.agent-check .may-grant-toggle { margin-left: auto; display: inline-flex; gap: 4px; white-space: nowrap; color: var(--text-dim, inherit); }
 
 #dialog label.agent-check { display: flex; margin-bottom: 4px; color: var(--text); }
 #dialog label.agent-check:last-child { margin-bottom: 0; }

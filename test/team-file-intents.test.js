@@ -53,6 +53,7 @@ function mkBox({ roles, teams = ['clodex'] } = {}) {
       .filter((e) => e.isDirectory()).map((e) => e.name).sort(),
     resolveTeam: (cwd) => (cwd === '/proj' ? team : null),
     refreshAppMenu: () => { refreshes++; },
+    getPersistence: () => ({ get: () => null }),
     log: { info() {}, warn() {}, error() {} },
   }, {});
   const injected = [];
@@ -278,6 +279,7 @@ test('a throwing refreshAppMenu is swallowed: the write still reports success', 
     listTeams: () => ['clodex'],
     resolveTeam: () => team,
     refreshAppMenu: () => { throw new Error('menu is on fire'); },
+    getPersistence: () => ({ get: () => null }),
     log: { info() {}, warn() {}, error() {} },
   }, {});
   const injected = [];
@@ -318,7 +320,7 @@ test('templates:saveTeam and template-save produce byte-identical files', () => 
   const team = { name: 'viaIntent', lead: 'lead', roles: {}, dir: path.join(teamsDir, 'viaIntent') };
   const methods = createTicketMethods({
     fs, path, teamsDir, listTeams, resolveTeam: () => team,
-    refreshAppMenu: () => {}, log: { info() {}, warn() {}, error() {} },
+    refreshAppMenu: () => {}, getPersistence: () => ({ get: () => null }), log: { info() {}, warn() {}, error() {} },
   }, {});
   const m = Object.create(methods);
   m._injectText = () => {};

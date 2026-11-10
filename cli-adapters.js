@@ -334,30 +334,40 @@ function privilegedFlagOf(tok) {
   return { name: short, inline: tok.length > 2 ? tok.slice(2).replace(/^=/, '') : null };
 }
 
+function privilegedGroups(argv) {
+  const groups = [];
+  const list = Array.isArray(argv) ? argv : [];
+  for (let i = 0; i < list.length; i += 1) {
+    const tok = list[i];
+    const parsed = privilegedFlagOf(tok);
+    if (!parsed || !Object.prototype.hasOwnProperty.call(PRIVILEGED_FLAG_ARITY, parsed.name)) { groups.push({ name: null, tokens: [tok], pairs: [] }); continue; }
+    const name = PRIVILEGED_FLAG_ALIAS[parsed.name] || parsed.name;
+    const tokens = [tok];
+    const pairs = [];
+    if (parsed.inline !== null) { groups.push({ name, tokens, pairs: [[name, parsed.inline]] }); continue; }
+    let left = PRIVILEGED_FLAG_ARITY[parsed.name];
+    while (left > 0 && i + 1 < list.length && !(typeof list[i + 1] === 'string' && list[i + 1].startsWith('-'))) {
+      tokens.push(list[i + 1]);
+      pairs.push([name, list[i + 1]]);
+      i += 1;
+      left -= 1;
+    }
+    if (!pairs.length) pairs.push([name, null]);
+    groups.push({ name, tokens, pairs });
+  }
+  return groups;
+}
+
 function splitPrivilegedArgs(argv) {
   const kept = [];
   const privileged = [];
   const flags = [];
   const pairs = [];
-  const list = Array.isArray(argv) ? argv : [];
-  for (let i = 0; i < list.length; i += 1) {
-    const tok = list[i];
-    const parsed = privilegedFlagOf(tok);
-    if (!parsed || !Object.prototype.hasOwnProperty.call(PRIVILEGED_FLAG_ARITY, parsed.name)) { kept.push(tok); continue; }
-    const name = PRIVILEGED_FLAG_ALIAS[parsed.name] || parsed.name;
-    if (!flags.includes(name)) flags.push(name);
-    privileged.push(tok);
-    if (parsed.inline !== null) { pairs.push([name, parsed.inline]); continue; }
-    let left = PRIVILEGED_FLAG_ARITY[parsed.name];
-    let took = 0;
-    while (left > 0 && i + 1 < list.length && !(typeof list[i + 1] === 'string' && list[i + 1].startsWith('-'))) {
-      privileged.push(list[i + 1]);
-      pairs.push([name, list[i + 1]]);
-      i += 1;
-      left -= 1;
-      took += 1;
-    }
-    if (!took) pairs.push([name, null]);
+  for (const g of privilegedGroups(argv)) {
+    if (g.name === null) { kept.push(...g.tokens); continue; }
+    if (!flags.includes(g.name)) flags.push(g.name);
+    privileged.push(...g.tokens);
+    pairs.push(...g.pairs);
   }
   return { kept, privileged, flags, pairs };
 }
@@ -387,5 +397,5 @@ function setsPosture(adapter, argv) {
 module.exports = {
   ADAPTERS, PLATFORMS, DEFAULT_TYPE, CAP_KEYS,
   adapterFor, isAgentType, capsFor, toolsFor, accountEnvKey, runsClaudeHooks, streamFor, seatType, resolveModelId, resolveEffort, stripModelArgs, hasBypass, hasReadOnlyCap, postureOf,
-  PRIVILEGED_FLAG_ARITY, splitPrivilegedArgs, canonicalBypassFlag, setsPosture,
+  PRIVILEGED_FLAG_ARITY, privilegedGroups, splitPrivilegedArgs, canonicalBypassFlag, setsPosture,
 };

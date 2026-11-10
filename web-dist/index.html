@@ -5690,6 +5690,13 @@ input.env-locked {
 .agent-check:last-child {
   margin-bottom: 0;
 }
+.agent-check .may-grant-toggle {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 4px;
+  white-space: nowrap;
+  color: var(--text-dim, inherit);
+}
 #dialog label.agent-check {
   display: flex;
   margin-bottom: 4px;
@@ -12245,6 +12252,8 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         // silently clear the other.
         { name: "getSessionPluginGrants", kind: "invoke", channel: "session:pluginGrants" },
         { name: "setSessionPluginGrants", kind: "invoke", channel: "session:setPluginGrants" },
+        { name: "getSessionGrantable", kind: "invoke", channel: "session:grantable" },
+        { name: "setSessionGrantable", kind: "invoke", channel: "session:setGrantable" },
         { name: "helpIndex", kind: "invoke", channel: "help:index" },
         { name: "helpPage", kind: "invoke", channel: "help:page" }
       ];
@@ -28114,36 +28123,48 @@ ${i3.join("\n")}
         if (!/^-[^-]$/.test(short) || !Object.prototype.hasOwnProperty.call(PRIVILEGED_FLAG_ALIAS, short)) return null;
         return { name: short, inline: tok.length > 2 ? tok.slice(2).replace(/^=/, "") : null };
       }
-      function splitPrivilegedArgs(argv) {
-        const kept = [];
-        const privileged = [];
-        const flags = [];
-        const pairs = [];
+      function privilegedGroups(argv) {
+        const groups = [];
         const list = Array.isArray(argv) ? argv : [];
         for (let i = 0; i < list.length; i += 1) {
           const tok = list[i];
           const parsed = privilegedFlagOf(tok);
           if (!parsed || !Object.prototype.hasOwnProperty.call(PRIVILEGED_FLAG_ARITY, parsed.name)) {
-            kept.push(tok);
+            groups.push({ name: null, tokens: [tok], pairs: [] });
             continue;
           }
           const name = PRIVILEGED_FLAG_ALIAS[parsed.name] || parsed.name;
-          if (!flags.includes(name)) flags.push(name);
-          privileged.push(tok);
+          const tokens = [tok];
+          const pairs = [];
           if (parsed.inline !== null) {
-            pairs.push([name, parsed.inline]);
+            groups.push({ name, tokens, pairs: [[name, parsed.inline]] });
             continue;
           }
           let left = PRIVILEGED_FLAG_ARITY[parsed.name];
-          let took = 0;
           while (left > 0 && i + 1 < list.length && !(typeof list[i + 1] === "string" && list[i + 1].startsWith("-"))) {
-            privileged.push(list[i + 1]);
+            tokens.push(list[i + 1]);
             pairs.push([name, list[i + 1]]);
             i += 1;
             left -= 1;
-            took += 1;
           }
-          if (!took) pairs.push([name, null]);
+          if (!pairs.length) pairs.push([name, null]);
+          groups.push({ name, tokens, pairs });
+        }
+        return groups;
+      }
+      function splitPrivilegedArgs(argv) {
+        const kept = [];
+        const privileged = [];
+        const flags = [];
+        const pairs = [];
+        for (const g of privilegedGroups(argv)) {
+          if (g.name === null) {
+            kept.push(...g.tokens);
+            continue;
+          }
+          if (!flags.includes(g.name)) flags.push(g.name);
+          privileged.push(...g.tokens);
+          pairs.push(...g.pairs);
         }
         return { kept, privileged, flags, pairs };
       }
@@ -28185,6 +28206,7 @@ ${i3.join("\n")}
         hasReadOnlyCap,
         postureOf,
         PRIVILEGED_FLAG_ARITY,
+        privilegedGroups,
         splitPrivilegedArgs,
         canonicalBypassFlag,
         setsPosture
@@ -30879,7 +30901,36 @@ ${String(body || "").trim()}
       function collectAgentChecklist(container) {
         return Array.from(container.querySelectorAll('input[type="checkbox"]:checked:not(:disabled)')).map((cb) => cb.value);
       }
-      function renderExecChecklist(container, enabledSet) {
+      var BYPASS_GRANT_FLAG = "--dangerously-skip-permissions";
+      function mayGrantToggle(value, checked, cls = "may-grant", text = "may grant") {
+        const wrap = document.createElement("span");
+        wrap.className = "may-grant-toggle";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.className = cls;
+        cb.value = value;
+        cb.checked = checked;
+        const label = document.createElement("span");
+        label.textContent = text;
+        wrap.appendChild(cb);
+        wrap.appendChild(label);
+        wrap.addEventListener("click", (e) => {
+          if (e.target === cb) return;
+          e.preventDefault();
+          cb.checked = !cb.checked;
+        });
+        return wrap;
+      }
+      function renderMayGrantFlags(container, flags) {
+        const row = document.createElement("div");
+        row.className = "agent-check may-grant-flags-row";
+        row.appendChild(mayGrantToggle(BYPASS_GRANT_FLAG, Array.isArray(flags) && flags.includes(BYPASS_GRANT_FLAG), "may-grant-flags", "may grant the Claude bypass flag (--dangerously-skip-permissions)"));
+        container.appendChild(row);
+      }
+      function collectMayGrant(container, cls = "may-grant") {
+        return Array.from(container.querySelectorAll(`input.${cls}[type="checkbox"]:checked`)).map((cb) => cb.value);
+      }
+      function renderExecChecklist(container, enabledSet, mayGrantSet = null) {
         container.innerHTML = "";
         if (!execLibCache.length) {
           container.innerHTML = '<span class="hint-text">No exec commands in library \u2014 register some via File \u25B8 Exec Commands\u2026.</span>';
@@ -30899,12 +30950,13 @@ ${String(body || "").trim()}
           txt.innerHTML = `<strong>${esc(c.name)}</strong>${owner}${detail ? " \u2014 " + esc(detail) : ""}`;
           row.appendChild(cb);
           row.appendChild(txt);
+          if (mayGrantSet) row.appendChild(mayGrantToggle(c.name, mayGrantSet.has(c.name)));
           container.appendChild(row);
         }
         return execLibCache.map((c) => c.name);
       }
       function collectExecChecklist(container) {
-        return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
+        return Array.from(container.querySelectorAll('input[type="checkbox"]:checked:not(.may-grant):not(.may-grant-flags)')).map((cb) => cb.value);
       }
       function mcpBadges(row, cli, ready) {
         const out = [];
@@ -30973,7 +31025,7 @@ ${String(body || "").trim()}
       function defaultPluginTicks() {
         return pluginCatalogCache.filter((p) => p.shipped).map((p) => String(p.id));
       }
-      function renderIntentChecklist(container, intentsList) {
+      function renderIntentChecklist(container, intentsList, mayGrantSet = null) {
         container.innerHTML = "";
         const nameOf = new Map(pluginCatalogCache.map((p) => [String(p.id), p.name || p.id]));
         const headed = /* @__PURE__ */ new Set();
@@ -30995,11 +31047,12 @@ ${String(body || "").trim()}
           txt.innerHTML = `<strong>${esc(it.label)}</strong>`;
           row.appendChild(cb);
           row.appendChild(txt);
+          if (mayGrantSet && it.source && it.source !== "core") row.appendChild(mayGrantToggle(it.type, mayGrantSet.has(it.type)));
           container.appendChild(row);
         }
       }
       function collectIntentChecklist(container) {
-        return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
+        return Array.from(container.querySelectorAll('input[type="checkbox"]:checked:not(.may-grant):not(.may-grant-flags)')).map((cb) => cb.value);
       }
       var { BUILTIN_AGENTS } = require_agents_util();
       function renderBuiltinChecklist(container, deniedSet) {
@@ -31023,7 +31076,7 @@ ${String(body || "").trim()}
         return Array.from(container.querySelectorAll('input[type="checkbox"]:not(:checked)')).map((cb) => cb.value);
       }
       function setChecklistAll(listEl, checked) {
-        listEl.querySelectorAll('input[type="checkbox"]:not(:disabled)').forEach((cb) => {
+        listEl.querySelectorAll('input[type="checkbox"]:not(:disabled):not(.may-grant):not(.may-grant-flags)').forEach((cb) => {
           cb.checked = checked;
         });
       }
@@ -31168,6 +31221,8 @@ ${String(body || "").trim()}
         repaintBundleSections,
         renderExecChecklist,
         collectExecChecklist,
+        renderMayGrantFlags,
+        collectMayGrant,
         renderMcpChecklist,
         collectMcpChecklist,
         renderIntentChecklist,
@@ -46794,6 +46849,7 @@ void main() {
         wireBulkToggles,
         renderIntentChecklist,
         collectIntentChecklist,
+        collectMayGrant,
         renderPluginChecklist,
         collectPluginChecklist,
         setClaudeToolsCache,
@@ -47100,6 +47156,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         }
         const intentsPluginsList = document.getElementById("intents-popover-plugins-list");
         let intentsPluginsPersisted = null;
+        let intentsGrantable = null;
         let intentsPluginsRendered = [];
         async function repaintPluginChildren(name) {
           const ticked = collectPluginChecklist(intentsPluginsList);
@@ -47179,7 +47236,13 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           renderPluginChecklist(intentsPluginsList, res.plugins);
           const ticked = collectPluginChecklist(intentsPluginsList);
           setIntentCatalogCache(await window.api.getIntentCatalog(name, ticked) || []);
-          renderIntentChecklist(popoverIntentsList, res.intents);
+          let grantableRes = null;
+          try {
+            grantableRes = await window.api.getSessionGrantable(name);
+          } catch {
+          }
+          intentsGrantable = grantableRes && grantableRes.ok ? grantableRes.grantable : null;
+          renderIntentChecklist(popoverIntentsList, res.intents, intentsGrantable ? new Set(intentsGrantable.intents) : null);
           renderExecGrantReadout(res.execCommands || []);
           let grantsRes = null;
           try {
@@ -47206,6 +47269,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           ) : null;
           const grantsShown = !intentsGrantsBlock.classList.contains("hidden");
           const grants = grantsShown ? collectPluginGrants() : null;
+          const shownMayGrant = Array.from(popoverIntentsList.querySelectorAll("input.may-grant")).map((cb) => cb.value);
+          const grantableNext = intentsGrantable ? { intents: mergeLists(collectMayGrant(popoverIntentsList), unlistedOf(intentsGrantable.intents, shownMayGrant)) } : null;
           const restart = intentsPopoverRestart.checked;
           closeIntentsPopover();
           if (plugins) {
@@ -47225,6 +47290,13 @@ This starts a NEW conversation \u2014 the current session's history will be clea
             const g = await window.api.setSessionPluginGrants(name, grants);
             if (!g || !g.ok) {
               alert(`Update plugin access failed: ${g && g.error ? g.error : "unknown error"}`);
+              return;
+            }
+          }
+          if (grantableNext) {
+            const gr = await window.api.setSessionGrantable(name, grantableNext);
+            if (!gr || !gr.ok) {
+              alert(`Update may-grant failed: ${gr && gr.error ? gr.error : "unknown error"}`);
               return;
             }
           }
@@ -52512,7 +52584,7 @@ ${detail}` });
       var { composerReadlineEdit, composerHeightFor, isAttachKey } = require_composer_keys();
       var { slashQuery, filterCommands, slashMenuKey } = require_composer_slash();
       var { turnSeg, reqSeg, costSeg } = require_turn_stat();
-      var { renderAppendChecklist, collectAppendChecklist, appendRepaintTicks, mergeUnrendered, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderMcpChecklist, collectMcpChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setMcpLibCache, setIntentCatalogCache, setClaudeToolsCache, toolListFor, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require_checklists();
+      var { renderAppendChecklist, collectAppendChecklist, appendRepaintTicks, mergeUnrendered, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderMayGrantFlags, collectMayGrant, renderMcpChecklist, collectMcpChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setMcpLibCache, setIntentCatalogCache, setClaudeToolsCache, toolListFor, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require_checklists();
       var { autoEnabledFor, reconcilePartialSelection } = require_scope_util();
       var { parseSkillFrontmatter } = require_skills_util();
       var skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
@@ -61754,7 +61826,7 @@ ${res.stderr}` : "");
         argsPluginList.addEventListener("change", async () => {
           const checked = collectIntentChecklist(argsIntentsList);
           setIntentCatalogCache(await window.api.getIntentCatalog(argsEditingName, collectPluginChecklist(argsPluginList)) || []);
-          renderIntentChecklist(argsIntentsList, checked);
+          renderIntentChecklist(argsIntentsList, checked, argsGrantable ? new Set(collectMayGrant(argsIntentsList)) : null);
           const seat = argsSeat();
           repaintBundleSections(argsAgentsList, "agents", seat);
           if (argsInjectSkillsSection.style.display !== "none") {
@@ -61799,6 +61871,7 @@ ${res.stderr}` : "");
       var argsPluginsPersisted = null;
       var argsPluginsRendered = [];
       var argsExecPersisted = [];
+      var argsGrantable = null;
       var argsExecRendered = [];
       var argsMcpPersisted = [];
       var argsMcpRendered = [];
@@ -61894,13 +61967,16 @@ ${res.stderr}` : "");
         argsToolsRendered = renderToolChecklist(argsToolsList, new Set(res.disabledTools || []), res.effectiveTools || {});
         argsIntentsSection.style.display = isAgent ? "" : "none";
         setIntentCatalogCache(await window.api.getIntentCatalog(name, collectPluginChecklist(argsPluginList)) || []);
-        renderIntentChecklist(argsIntentsList, res.intents);
         const isExecEditable = isAgent && !argsSource;
+        const grantableRes = isExecEditable ? await window.api.getSessionGrantable(name) : null;
+        argsGrantable = grantableRes && grantableRes.ok ? grantableRes.grantable : null;
+        renderIntentChecklist(argsIntentsList, res.intents, argsGrantable ? new Set(argsGrantable.intents) : null);
         argsExecSection.style.display = isExecEditable ? "" : "none";
         if (isExecEditable) {
           setExecLibCache(await window.api.listExecCommands({ session: name }) || []);
           argsExecPersisted = res.execCommands || [];
-          argsExecRendered = renderExecChecklist(argsExecList, new Set(res.execCommands || []));
+          argsExecRendered = renderExecChecklist(argsExecList, new Set(res.execCommands || []), argsGrantable ? new Set(argsGrantable.execCommands) : null);
+          if (argsGrantable) renderMayGrantFlags(argsExecList, argsGrantable.flags);
         }
         argsMcpSection.style.display = isExecEditable ? "" : "none";
         if (isExecEditable) {
@@ -61992,6 +62068,12 @@ ${res.stderr}` : "");
           pluginsForUnlistedPlugins(argsPluginsPersisted, argsPluginsRendered)
         );
         const execCommandsGrant = argsExecSection.style.display === "none" ? void 0 : mergeLists(collectExecChecklist(argsExecList), unlistedOf(argsExecPersisted, argsExecRendered));
+        const mayGrantShown = (list) => Array.from(list.querySelectorAll("input.may-grant")).map((cb) => cb.value);
+        const grantableNext = argsExecSection.style.display === "none" || !argsGrantable ? void 0 : {
+          execCommands: mergeLists(collectMayGrant(argsExecList), unlistedOf(argsGrantable.execCommands, mayGrantShown(argsExecList))),
+          intents: mergeLists(collectMayGrant(argsIntentsList), unlistedOf(argsGrantable.intents, mayGrantShown(argsIntentsList))),
+          flags: collectMayGrant(argsExecList, "may-grant-flags")
+        };
         const mcpServers = argsMcpSection.style.display === "none" ? void 0 : mergeLists(collectMcpChecklist(argsMcpList), unlistedOf(argsMcpPersisted, argsMcpRendered));
         const io = !argsStreamIoRow || argsStreamIoRow.style.display === "none" || !argsStreamIo ? void 0 : argsStreamIo.checked ? "stream" : "pty";
         const noWire = !argsNoWireRow || argsNoWireRow.style.display === "none" || !argsNoWire ? void 0 : argsNoWire.checked;
@@ -62030,6 +62112,10 @@ ${res.stderr}` : "");
         if (!res || !res.ok) {
           alert(`Save settings failed: ${res && res.error ? res.error : "unknown error"}`);
           return;
+        }
+        if (!source && grantableNext) {
+          const gr = await window.api.setSessionGrantable(name, grantableNext);
+          if (!gr || !gr.ok) alert(`Update may-grant failed: ${gr && gr.error ? gr.error : "unknown error"}`);
         }
         if (!source) refreshSeatMcp(name);
         if (res.restarted) {

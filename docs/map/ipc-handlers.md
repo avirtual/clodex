@@ -320,6 +320,8 @@
 | `handle:intents:catalog` | the intent checklist rows for a seat's plugins, a live override, or the global set | sessions.json (read) | intent-registry.catalogRows | plugin-scope.test.js api-shim.test.js plugin-kill-switch.test.js |
 | `handle:session:setPlugins` | stores a seat's plugin list (ids filtered) and prunes intents and grants that no longer apply | sessions.json plugins, intents, pluginGrants | plugin-api.isValidPluginId, intent-registry.pruneForPlugins | plugin-scope.test.js plugins-popover.test.js api-shim.test.js |
 | `handle:session:setPluginGrants` | stores sanitized grants and drops verbs of revoked session-scoped plugins from the intent allowlist | sessions.json pluginGrants, intents | plugin-api.sanitizeGrants, intent-registry.pruneForPlugins | plugin-scope.test.js api-shim.test.js plugin-text-feed.test.js |
+| `handle:session:setGrantable` | stores what the operator lets a lead grant without holding: exec commands, intents, flags | sessions.json grantable | stores.setGrantable | grantable.test.js |
+| `handle:session:grantable` | a seat's grant-only lists, each an array | sessions.json (read) | none | grantable.test.js |
 | `handle:session:pluginGrants` | the session-scoped plugins a seat can grant, the capability list, and what it has granted | sessions.json (read), plugin host | host.status, plugin-api.seatHasPlugin | plugin-scope.test.js api-shim.test.js |
 
 ### Invariants

@@ -32,7 +32,7 @@ const REVIEWER_CAP = ['Read', 'Grep', 'Glob'];
 // default answers "this path belongs to no team", which is what the guard must
 // treat as "not re-parented" — a null owner is the ordinary case (no nested
 // team.json anywhere), not a reason to fall back.
-function managerWith(templatesList, { leadArgs = [], leadEnv = undefined, accounts = undefined, resolveTeam = () => null, listAllTemplates } = {}) {
+function managerWith(templatesList, { leadArgs = [], leadExec = undefined, leadEnv = undefined, accounts = undefined, resolveTeam = () => null, listAllTemplates } = {}) {
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
     os,
@@ -41,7 +41,7 @@ function managerWith(templatesList, { leadArgs = [], leadEnv = undefined, accoun
     resolveTeam,
     log: { warn() {}, info() {}, error() {} },
     getPersistence: () => ({
-      get: (n) => (n === 'lead' ? { name: 'lead', extraArgs: leadArgs, ...(leadEnv ? { env: leadEnv } : {}) } : null),
+      get: (n) => (n === 'lead' ? { name: 'lead', extraArgs: leadArgs, ...(leadExec ? { execCommands: leadExec } : {}), ...(leadEnv ? { env: leadEnv } : {}) } : null),
       setStripLevel() {}, setAutoCompact() {},
     }),
     getTemplates: () => ({ list: () => templatesList }),
@@ -103,6 +103,7 @@ test('ticket purpose: the whole shape, with no template', () => {
     envDropped: [],
     envBadType: [],
     envClamped: [],
+    grantDropped: [],
     beyondCap: [],
     capNote: null,
     toolsIgnored: false,
@@ -154,6 +155,7 @@ test('review purpose: the whole shape, with no template', () => {
     envDropped: [],
     envBadType: [],
     envClamped: [],
+    grantDropped: [],
     beyondCap: [],
     capNote: null,
     toolsIgnored: false,
@@ -229,6 +231,7 @@ test('review purpose: the whole shape, WITH a template (the production config)',
     envDropped: [],
     envBadType: [],
     envClamped: [],
+    grantDropped: [],
     beyondCap: [],
     capNote: null,
     toolsIgnored: false,
@@ -254,7 +257,7 @@ test('ticket purpose: the whole shape, WITH a template', () => {
     agents: ['a'], denyBuiltins: ['d'], disabledTools: ['X'],
     disabledSkills: ['s'], injectSkills: ['i'],
     appendPromptFiles: ['ap'], execCommands: ['ec'], mcpServers: ['jira'], extraArgs: ['--foo'],
-  }], { leadArgs: ['--dangerously-skip-permissions'] });
+  }], { leadArgs: ['--dangerously-skip-permissions'], leadExec: ['ec'] });
   const team = teamWith({ hand: { worktree: true, template: 'ht', prompt: 'role-brief' } });
   const shape = m.resolveSeatShape(team, 'hand', 'ticket', LEAD);
   assert.deepStrictEqual(shape, {
@@ -296,6 +299,7 @@ test('ticket purpose: the whole shape, WITH a template', () => {
     envDropped: [],
     envBadType: [],
     envClamped: [],
+    grantDropped: [],
     workspaceId: 'ws-7',
     ephemeral: true,
   });
@@ -1120,7 +1124,7 @@ test('t386: the TICKET path is untouched — it still takes template argv verbat
   // ticket does not authorize, so it is pinned from the other side.
   const m = managerWith(
     [{ name: 'ht', type: 'claude', cwd: '/repo', extraArgs: ['--model', 'opus', '--dangerously-skip-permissions'] }],
-    { leadArgs: [] },
+    { leadArgs: ['--dangerously-skip-permissions'] },
   );
   const team = teamWith({ hand: { worktree: true, template: 'ht' } });
   assert.deepStrictEqual(
@@ -1196,6 +1200,7 @@ test('role cwd: the ticket arm resolves the role subdirectory of the main checko
     envDropped: [],
     envBadType: [],
     envClamped: [],
+    grantDropped: [],
     beyondCap: [],
     capNote: null,
     toolsIgnored: false,
@@ -1242,6 +1247,7 @@ test('role cwd: a role WITHOUT one still resolves to the team root — whole sha
     envDropped: [],
     envBadType: [],
     envClamped: [],
+    grantDropped: [],
     beyondCap: [],
     capNote: null,
     toolsIgnored: false,
@@ -1297,6 +1303,7 @@ test('role cwd: the REVIEW arm honors it too (D4) — whole shape', () => {
     envDropped: [],
     envBadType: [],
     envClamped: [],
+    grantDropped: [],
     beyondCap: [],
     capNote: null,
     toolsIgnored: false,

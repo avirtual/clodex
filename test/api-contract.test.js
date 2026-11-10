@@ -175,7 +175,7 @@ const PINNED_NAMES = [
   // t190: per-session plugin capability grants. NOT part of the five-row plugin
   // transport — these are core chrome editing a core persistence field, the same
   // shape as setIntents, and no plugin can reach them.
-  'getSessionPluginGrants', 'setSessionPluginGrants',
+  'getSessionPluginGrants', 'setSessionPluginGrants', 'getSessionGrantable', 'setSessionGrantable',
   // T5: the Plugins menu's "Manage Plugins…" open request. Core chrome opening
   // a core dialog — the same shape as onRequestOpenPeersDialog — so it does NOT
   // widen the plugin transport, which is still exactly the five rows above.
@@ -254,8 +254,8 @@ test('no duplicate names and no duplicate channels', () => {
   assert.equal(new Set(channels).size, channels.length, 'channels are unique');
 });
 
-test('contract covers exactly the pinned 351-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 351, 'pinned list is the full 351-method surface');
+test('contract covers exactly the pinned 353-method surface', () => {
+  assert.equal(PINNED_NAMES.length, 353, 'pinned list is the full 353-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -279,7 +279,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 351, 'window.api has exactly 351 methods');
+    assert.equal(generated.length, 353, 'window.api has exactly 353 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);

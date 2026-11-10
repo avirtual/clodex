@@ -14,7 +14,7 @@ const {
   renderToolChecklist, collectToolChecklist, renderSkillChecklist, collectSkillChecklist,
   renderInjectChecklist, collectInjectChecklist, renderAgentChecklist, collectAgentChecklist,
   renderBuiltinChecklist, collectBuiltinChecklist, wireBulkToggles,
-  renderIntentChecklist, collectIntentChecklist,
+  renderIntentChecklist, collectIntentChecklist, collectMayGrant,
   renderPluginChecklist, collectPluginChecklist,
   setClaudeToolsCache, toolListFor, setSkillLibCache, setAgentLibCache, getSkillLibCache,
   setIntentCatalogCache, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf,
@@ -381,6 +381,7 @@ function initChecklistPopovers({ restartOrFailRow, refreshSidebarMeta, seatPlugi
   // argument on both reads is for exactly that.
   const intentsPluginsList = document.getElementById('intents-popover-plugins-list');
   let intentsPluginsPersisted = null;
+  let intentsGrantable = null;
   let intentsPluginsRendered = [];
 
   async function repaintPluginChildren(name) {
@@ -475,7 +476,10 @@ function initChecklistPopovers({ restartOrFailRow, refreshSidebarMeta, seatPlugi
     renderPluginChecklist(intentsPluginsList, res.plugins);
     const ticked = collectPluginChecklist(intentsPluginsList);
     setIntentCatalogCache((await window.api.getIntentCatalog(name, ticked)) || []);
-    renderIntentChecklist(popoverIntentsList, res.intents);
+    let grantableRes = null;
+    try { grantableRes = await window.api.getSessionGrantable(name); } catch {}
+    intentsGrantable = grantableRes && grantableRes.ok ? grantableRes.grantable : null;
+    renderIntentChecklist(popoverIntentsList, res.intents, intentsGrantable ? new Set(intentsGrantable.intents) : null);
     // res.execCommands is the seat's persisted grant list (local session, never
     // stripped — the wire strip is peer-only). Readout dims live off the exec box.
     renderExecGrantReadout(res.execCommands || []);
@@ -507,6 +511,8 @@ function initChecklistPopovers({ restartOrFailRow, refreshSidebarMeta, seatPlugi
     // must describe the same dialog state, and a later read is a later state.
     const grantsShown = !intentsGrantsBlock.classList.contains('hidden');
     const grants = grantsShown ? collectPluginGrants() : null;
+    const shownMayGrant = Array.from(popoverIntentsList.querySelectorAll('input.may-grant')).map((cb) => cb.value);
+    const grantableNext = intentsGrantable ? { intents: mergeLists(collectMayGrant(popoverIntentsList), unlistedOf(intentsGrantable.intents, shownMayGrant)) } : null;
     const restart = intentsPopoverRestart.checked;
     closeIntentsPopover();
     // PARENT FIRST: the server prunes both children against the list it has just
@@ -523,6 +529,10 @@ function initChecklistPopovers({ restartOrFailRow, refreshSidebarMeta, seatPlugi
     if (grants) {
       const g = await window.api.setSessionPluginGrants(name, grants);
       if (!g || !g.ok) { alert(`Update plugin access failed: ${g && g.error ? g.error : 'unknown error'}`); return; }
+    }
+    if (grantableNext) {
+      const gr = await window.api.setSessionGrantable(name, grantableNext);
+      if (!gr || !gr.ok) { alert(`Update may-grant failed: ${gr && gr.error ? gr.error : 'unknown error'}`); return; }
     }
     if (!restart) return;
     // Same re-attach dance as the tools popover's restart path.
