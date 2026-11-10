@@ -171,7 +171,7 @@ function dupIdentity(intent) {
 const { createTicketsStore, ticketTerminalReason } = require('./tickets-store');
 const { findRepoRoot } = require('./project-root');
 const { atomicWriteFileSync } = require('./fs-util');
-const { composeBrief, idleDecision, briefPathFor, clientTokenPathFor, pickMaxAwakeVictim, splitTurnText, BRIEF_TAIL, BRIEF_MAX_BYTES } = require('./assistant-sleep');
+const { composeBrief, idleDecision, idleClearAfterMs, idleClearDecision, briefPathFor, clientTokenPathFor, pickMaxAwakeVictim, splitTurnText, BRIEF_TAIL, BRIEF_MAX_BYTES } = require('./assistant-sleep');
 const { cachedMessages } = require('./transcript');
 const { isAgentType, adapterFor, accountEnvKey, runsClaudeHooks, streamFor: adapterStreamFor, hasBypass, hasReadOnlyCap, postureOf, resolveModelId, resolveEffort } = require('./cli-adapters');
 
@@ -386,7 +386,7 @@ function nearMissFormHint(text) {
 
 // Add a field only if no caller can regrow it and none re-asserts it after create(), else two writers own it; keepWarmAlways and holdUntil stay a pair.
 // An absent worktree pointer is the dangerous state: destroy() would drop the record and orphan the checkout.
-const ALWAYS_PRESERVE = ['sessionIds', 'retiredSessionIds', 'pluginGrants', 'grantable', 'wireLabel', 'ticketId', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested', 'voice', 'reviewerTemplate', 'class', 'sleep', 'template', 'cost', 'wakes', 'awokeAt', 'spawnedBy'];
+const ALWAYS_PRESERVE = ['sessionIds', 'retiredSessionIds', 'pluginGrants', 'grantable', 'wireLabel', 'ticketId', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested', 'voice', 'reviewerTemplate', 'class', 'sleep', 'template', 'cost', 'wakes', 'awokeAt', 'spawnedBy', 'idleClear', 'lastClear'];
 
 const defaultKillPid = (pid, sig) => process.kill(pid, sig);
 
@@ -3191,6 +3191,7 @@ function createSessionManager(deps) {
     }
 
     _streamSent(s, items) {
+      if (items.some((q) => !q.wire && !q.solo)) s._idleCleared = false;
       for (const q of items) {
         if (typeof q.onSend === 'function') { try { q.onSend(); } catch {} }
       }
@@ -4199,6 +4200,7 @@ function createSessionManager(deps) {
     _assistantSweep(now) {
       for (const s of [...this.sessions.values()]) {
         if (s._dead || s.clone || s.io !== 'stream' || !s.stream) continue;
+        this._idleClearTick(s, now);
         const policy = this._assistantPolicy(s.name);
         if (!policy) continue;
         const verdict = idleDecision({
@@ -4212,6 +4214,49 @@ function createSessionManager(deps) {
         if (verdict !== 'sleep') continue;
         this.sleep(s.name, { reason: 'idle' }).catch((e) => log.warn('session', `idle sleep ${s.name} failed: ${e && e.message}`));
       }
+    }
+
+    _idleClearTicketBound(s) {
+      const team = this._teamOfOrNull(s);
+      if (!team) return false;
+      try {
+        return ticketsStore.read(team.root).some((t) => t && t.state === 'open' && t.assignee === s.name)
+          || this._openTicketsFor(team, s.name).length > 0;
+      } catch { return true; }
+    }
+
+    _idleClearTick(s, now) {
+      const rec = getPersistence().get(s.name);
+      const afterMs = idleClearAfterMs(rec && rec.idleClear);
+      if (!afterMs) return false;
+      const verdict = idleClearDecision({
+        now,
+        activityTs: s.activityTs || now,
+        afterMs,
+        state: s.streamBusy ? 'thinking' : (s.activityState || 'idle'),
+        outbox: s.outbox ? s.outbox.length : 0,
+        permissions: s.streamPermissions ? s.streamPermissions.size : 0,
+        queued: (s._injectQueue ? s._injectQueue.length : 0) + (s._injectPtyQueue ? s._injectPtyQueue.length : 0),
+        parked: hasActivePending(PENDING_DIR, s.name),
+        inFlight: !!(s._reloadInFlight || s._postClearContinuation || s._compactPending || s._compactGuard || s._compactContinuation),
+        ticketBound: this._idleClearTicketBound(s),
+        cleared: !!s._idleCleared,
+      });
+      if (verdict !== 'clear') return false;
+      const operatorAt = this._lastOperatorInputAt;
+      const res = this.seatControl(s.name, 'clear');
+      this._lastOperatorInputAt = operatorAt;
+      if (!res || !res.ok) {
+        const why = (res && res.error) || 'refused';
+        if (s._idleClearSkip !== why) log.info('session', `idle clear ${s.name} skipped: ${why}`);
+        s._idleClearSkip = why;
+        return false;
+      }
+      s._idleCleared = true;
+      s._idleClearSkip = null;
+      getPersistence().upsert({ name: s.name, lastClear: { at: now, reason: 'idle' } });
+      log.info('session', `idle clear ${s.name} after ${afterMs}ms idle`);
+      return true;
     }
 
     async _stopForRespawn(s, name) {

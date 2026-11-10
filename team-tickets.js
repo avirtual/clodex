@@ -17,6 +17,7 @@ const { maskSecrets } = require('./log-mask');
 const { resolveAccountLabel, accountMissingError } = require('./accounts');
 const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
+const { idleClearAfterMs } = require('./assistant-sleep');
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
   DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone,
@@ -4948,6 +4949,8 @@ function createTicketMethods(deps, shared) {
       if (tpl.stripLevel === 1 || tpl.stripLevel === 2) getPersistence().setStripLevel(name, tpl.stripLevel);
       if (tpl.autoCompact === false) getPersistence().setAutoCompact(name, false);
       if (Array.isArray(tpl.plugins)) getPersistence().setPlugins(name, tpl.plugins);
+      const idleClearMs = idleClearAfterMs(tpl.idleClear);
+      if (idleClearMs) getPersistence().upsert({ name, idleClear: { afterMs: idleClearMs } });
       if (tpl.class === 'assistant') {
         getPersistence().upsert({ name, class: 'assistant', template: tpl.name || null, awokeAt: Date.now(), ...(tpl.sleep && typeof tpl.sleep === 'object' ? { sleep: { ...tpl.sleep } } : {}) });
         const live = this.sessions.get(name);
