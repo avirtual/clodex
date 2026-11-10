@@ -384,7 +384,7 @@ function nearMissFormHint(text) {
 
 // Add a field only if no caller can regrow it and none re-asserts it after create(), else two writers own it; keepWarmAlways and holdUntil stay a pair.
 // An absent worktree pointer is the dangerous state: destroy() would drop the record and orphan the checkout.
-const ALWAYS_PRESERVE = ['sessionIds', 'retiredSessionIds', 'pluginGrants', 'wireLabel', 'ticketId', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested', 'voice', 'reviewerTemplate', 'class', 'sleep', 'template', 'cost', 'wakes', 'awokeAt'];
+const ALWAYS_PRESERVE = ['sessionIds', 'retiredSessionIds', 'pluginGrants', 'wireLabel', 'ticketId', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested', 'voice', 'reviewerTemplate', 'class', 'sleep', 'template', 'cost', 'wakes', 'awokeAt', 'spawnedBy'];
 
 const defaultKillPid = (pid, sig) => process.kill(pid, sig);
 
@@ -5850,14 +5850,17 @@ function createSessionManager(deps) {
         if (session._permInboxTs === attn.ts) return;
         const rec = getPersistence && getPersistence().get(session.name);
         const ticketId = rec && rec.ticketId;
-        if (!ticketId) return;
+        const owner = this._seatTicketLead(session);
+        if (!ticketId && !owner) return;
         const store = getNotifications && getNotifications();
         if (!store) return;
         session._permInboxTs = attn.ts;
-        const pending = session.streamPermissions && this._seatTicketLead(session) ? [...session.streamPermissions.values()].filter((p) => p.ts === attn.ts).pop() : null;
+        const pending = session.streamPermissions && owner ? [...session.streamPermissions.values()].filter((p) => p.ts === attn.ts).pop() : null;
         store.add({
           from: 'clodex', workspaceId: session.workspaceId || null,
-          body: `Seat ${session.name} (ticket ${ticketId}) is waiting on a permission dialog: ${attn.message || '(no message)'}. Allow or deny it in the attention view; it holds the ticket until you do.`
+          body: (ticketId
+            ? `Seat ${session.name} (ticket ${ticketId}) is waiting on a permission dialog: ${attn.message || '(no message)'}. Allow or deny it in the attention view; it holds the ticket until you do.`
+            : `Seat ${session.name} (spawned by ${owner.lead}) is waiting on a permission dialog: ${attn.message || '(no message)'}. Allow or deny it in the attention view; it waits until you do.`)
             + (pending ? `\nIts lead can answer it: [agent:permit ${session.name} ${pending.id} allow] or [agent:permit ${session.name} ${pending.id} deny]` : ''),
         });
       } catch (e) {

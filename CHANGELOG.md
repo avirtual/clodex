@@ -15,6 +15,7 @@ blocks a release.
 
 - clodent seats: the context bar and context-size reminders use the window clodent reports (1M with a [1m] model, 200k without).
 - Team tickets: notices that owe the lead nothing (ACCEPT before its merge, a REWORK already sent to the hand) no longer wake the lead; they arrive with its next turn, or within 30 minutes.
+- Teams: a seat a lead spawns from a template inherits the lead's permission posture (--yolo is accepted for --dangerously-skip-permissions), and its permission requests now reach that lead; a template can no longer point a seat at an arbitrary CLODENT_HOME or CLAUDE_CONFIG_DIR.
 
 ## 5.167.0 — 2026-11-10
 

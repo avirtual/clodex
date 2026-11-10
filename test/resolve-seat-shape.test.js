@@ -32,7 +32,7 @@ const REVIEWER_CAP = ['Read', 'Grep', 'Glob'];
 // default answers "this path belongs to no team", which is what the guard must
 // treat as "not re-parented" — a null owner is the ordinary case (no nested
 // team.json anywhere), not a reason to fall back.
-function managerWith(templatesList, { leadArgs = [], resolveTeam = () => null, listAllTemplates } = {}) {
+function managerWith(templatesList, { leadArgs = [], leadEnv = undefined, accounts = undefined, resolveTeam = () => null, listAllTemplates } = {}) {
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
     os,
@@ -41,10 +41,11 @@ function managerWith(templatesList, { leadArgs = [], resolveTeam = () => null, l
     resolveTeam,
     log: { warn() {}, info() {}, error() {} },
     getPersistence: () => ({
-      get: (n) => (n === 'lead' ? { name: 'lead', extraArgs: leadArgs } : null),
+      get: (n) => (n === 'lead' ? { name: 'lead', extraArgs: leadArgs, ...(leadEnv ? { env: leadEnv } : {}) } : null),
       setStripLevel() {}, setAutoCompact() {},
     }),
     getTemplates: () => ({ list: () => templatesList }),
+    getAccounts: accounts ? () => accounts : undefined,
     listAllTemplates,
     // Identity, deliberately: these tests are about the SHAPE the resolver
     // assembles. The privileged-intent strip has its own tests, and stubbing it
@@ -101,6 +102,7 @@ test('ticket purpose: the whole shape, with no template', () => {
     accountMissing: null,
     envDropped: [],
     envBadType: [],
+    envClamped: [],
     beyondCap: [],
     capNote: null,
     toolsIgnored: false,
@@ -151,6 +153,7 @@ test('review purpose: the whole shape, with no template', () => {
     accountMissing: null,
     envDropped: [],
     envBadType: [],
+    envClamped: [],
     beyondCap: [],
     capNote: null,
     toolsIgnored: false,
@@ -225,6 +228,7 @@ test('review purpose: the whole shape, WITH a template (the production config)',
     accountMissing: null,
     envDropped: [],
     envBadType: [],
+    envClamped: [],
     beyondCap: [],
     capNote: null,
     toolsIgnored: false,
@@ -258,7 +262,7 @@ test('ticket purpose: the whole shape, WITH a template', () => {
     cwd: '/repo',
     cwdFallback: null,
     tpl: shape.tpl,
-    extraArgs: ['--foo'],
+    extraArgs: ['--foo', '--dangerously-skip-permissions'],
     agents: ['a'],
     denyBuiltins: ['d'],
     disabledTools: ['X'],
@@ -291,6 +295,7 @@ test('ticket purpose: the whole shape, WITH a template', () => {
     accountMissing: null,
     envDropped: [],
     envBadType: [],
+    envClamped: [],
     workspaceId: 'ws-7',
     ephemeral: true,
   });
@@ -821,12 +826,34 @@ test('t2163: a clodent reviewer asking for Bash gets it under the cap, beyond-ca
   assert.deepStrictEqual(shape.beyondCap, ['Edit']);
 });
 
-test('t2163: a reviewer template env keeps CLODENT_HOME and still drops CLAUDE_CONFIG_DIR', () => {
-  const m = managerWith([{ name: 'rk', type: 'clodent', cwd: '/repo', env: { CLODENT_HOME: '/home/u/.clodent-side', CLAUDE_CONFIG_DIR: '/home/u/.claude-side' } }]);
+test('t2163: a reviewer template env keeps a CLODENT_HOME the lead runs with and still drops CLAUDE_CONFIG_DIR', () => {
+  const m = managerWith([{ name: 'rk', type: 'clodent', cwd: '/repo', env: { CLODENT_HOME: '/home/u/.clodent-side', CLAUDE_CONFIG_DIR: '/home/u/.claude-side' } }],
+    { leadEnv: { CLODENT_HOME: '/home/u/.clodent-side' } });
   const shape = m.resolveSeatShape(teamWith({ reviewer: { template: 'rk' } }), 'reviewer', 'review', LEAD);
   assert.deepStrictEqual(shape.env, { CLODENT_HOME: '/home/u/.clodent-side' });
   assert.deepStrictEqual(shape.envDropped, ['CLAUDE_CONFIG_DIR']);
 });
+
+const HOME_ACCOUNTS = {
+  labelFor: (dir) => ({ '/acct/work': 'work' }[dir] || path.basename(dir)),
+  configDirFor: (label) => ({ work: '/acct/work' }[label] || null),
+};
+
+for (const [purpose, roleKey, base] of [['review', 'reviewer', {}], ['ticket', 'hand', { FORCE_PROMPT_CACHING_5M: '1' }]]) {
+  for (const [label, dir, kept] of [
+    ['a registered account dir', '/acct/work', true],
+    ['the lead\'s own value', '/home/u/.clodent-lead', true],
+    ['an arbitrary dir', '/tmp/evil', false],
+  ]) {
+    test(`(e) ${purpose} seat: template env CLODENT_HOME at ${label}`, () => {
+      const m = managerWith([{ name: 'rk', type: 'clodent', cwd: '/repo', env: { ...base, CLODENT_HOME: dir } }],
+        { leadEnv: { CLODENT_HOME: '/home/u/.clodent-lead' }, accounts: HOME_ACCOUNTS });
+      const shape = m.resolveSeatShape(teamWith({ [roleKey]: { template: 'rk' } }), roleKey, purpose, LEAD);
+      assert.deepStrictEqual([shape.env, shape.envClamped],
+        kept ? [{ ...base, CLODENT_HOME: dir }, []] : [purpose === 'review' ? {} : base, ['CLODENT_HOME']]);
+    });
+  }
+}
 
 test('t1076: a Codex-template hand naming an account is refused with reason platform', () => {
   const m = managerWith([{ name: 'hc', type: 'codex', cwd: '/repo' }]);
@@ -838,13 +865,22 @@ test('t1076: a Codex-template hand naming an account is refused with reason plat
     'role hand: account "work" is a Claude config dir; Codex roles take no account yet');
 });
 
-test('a template extraArgs REPLACES the inherited permission posture on the ticket path', () => {
+test('a template extraArgs with no posture flag keeps the inherited permission posture on the ticket path', () => {
   const m = managerWith(
     [{ name: 'ht', type: 'claude', cwd: '/repo', extraArgs: ['--foo'] }],
     { leadArgs: ['--dangerously-skip-permissions'] },
   );
   const team = teamWith({ hand: { worktree: true, template: 'ht' } });
-  assert.deepStrictEqual(m.resolveSeatShape(team, 'hand', 'ticket', LEAD).extraArgs, ['--foo']);
+  assert.deepStrictEqual(m.resolveSeatShape(team, 'hand', 'ticket', LEAD).extraArgs, ['--foo', '--dangerously-skip-permissions']);
+});
+
+test('a template extraArgs carrying a posture flag REPLACES the inherited permission posture on the ticket path', () => {
+  const m = managerWith(
+    [{ name: 'ht', type: 'claude', cwd: '/repo', extraArgs: ['--foo', '--permission-mode', 'acceptEdits'] }],
+    { leadArgs: ['--dangerously-skip-permissions'] },
+  );
+  const team = teamWith({ hand: { worktree: true, template: 'ht' } });
+  assert.deepStrictEqual(m.resolveSeatShape(team, 'hand', 'ticket', LEAD).extraArgs, ['--foo', '--permission-mode', 'acceptEdits']);
 });
 
 test('the lead permission posture is inherited when no template overrides it', () => {
@@ -1157,6 +1193,7 @@ test('role cwd: the ticket arm resolves the role subdirectory of the main checko
     accountMissing: null,
     envDropped: [],
     envBadType: [],
+    envClamped: [],
     beyondCap: [],
     capNote: null,
     toolsIgnored: false,
@@ -1202,6 +1239,7 @@ test('role cwd: a role WITHOUT one still resolves to the team root — whole sha
     accountMissing: null,
     envDropped: [],
     envBadType: [],
+    envClamped: [],
     beyondCap: [],
     capNote: null,
     toolsIgnored: false,
@@ -1256,6 +1294,7 @@ test('role cwd: the REVIEW arm honors it too (D4) — whole shape', () => {
     accountMissing: null,
     envDropped: [],
     envBadType: [],
+    envClamped: [],
     beyondCap: [],
     capNote: null,
     toolsIgnored: false,
