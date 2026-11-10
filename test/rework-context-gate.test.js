@@ -525,6 +525,25 @@ for (const arm of [
   });
 }
 
+test('a stream seat at 200k whose conversation was reset keeps the rework', async () => {
+  const world = mkWorld();
+  const f = mkFixture(world);
+  ready(f, world, { tok: OVER });
+  const s = f.m.sessions.get('team-hand-1');
+  s.streamCodec = { decode: () => ({ kind: 'reset', newConversationId: 'c2' }) };
+  f.m._onStreamEvent(s, { line: '{}' }, () => {}, () => {});
+  assert.strictEqual(s.ctxInfo, null, 'ENTER: the reset cleared the pre-clear size');
+
+  leadReject(f, 'the guard is inverted');
+  await settle();
+
+  const t = f.one();
+  assert.strictEqual(t.state, 'open', 'ENTER: the reject landed');
+  assert.strictEqual(t.assignee, 'team-hand-1');
+  assert.deepStrictEqual(f.archived, []);
+  assert.deepStrictEqual(f.created, []);
+});
+
 // ── an operator-lowered threshold governs this gate too ────────────────────
 
 test('an operator threshold below the shipped one replaces a seat the default would have kept', async () => {
