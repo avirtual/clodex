@@ -223,3 +223,10 @@ test('archive hook: a pass that left rows past the cap runs again on the next sw
   await f.m._sweepTickets(NOW + 60 * 1000);
   assert.deepStrictEqual(f.board().map((t) => t.id), ['t1']);
 });
+
+test('archive hook: _archivePassFor reports the pass, then returns null inside the day', () => {
+  const f = mkBoard({ board: [row('t1'), row('t2', { state: 'cancelled', closedAt: T0, events: [] })] });
+  assert.deepStrictEqual([f.m._archivePassFor(f.root, NOW)].map((r) => [r.moved, r.remaining]), [[1, 0]]);
+  assert.strictEqual(f.m._archivePassFor(f.root, NOW + DAY - 1), null);
+  assert.notStrictEqual(f.m._archivePassFor(f.root, NOW + DAY), null);
+});
