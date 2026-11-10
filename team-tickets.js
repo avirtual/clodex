@@ -7329,7 +7329,57 @@ function createTicketMethods(deps, shared) {
       log.info('intent', `task cancel ${ticket.id} by ${session.name}`);
       const dropped = this._cancelTicketReminders(session.name, ticket.id);
       const nextSuffix = next ? this._ticketDeliverySuffix(adv.d || {}, seat, team, next) : '';
-      (nextSuffix ? reply : ack)(`ticket ${ticket.id} cancelled${next ? ` — next: ${next.id} delivered to ${seat}${nextSuffix}` : ''}${dropped ? ` ${dropped}` : ''}`);
+      const head = `ticket ${ticket.id} cancelled${next ? ` — next: ${next.id} delivered to ${seat}${nextSuffix}` : ''}`;
+      const tail = dropped ? ` ${dropped}` : '';
+      const facts = next ? null : this._cancelTeardownFacts(team, ticket);
+      if (!facts) { (nextSuffix ? reply : ack)(`${head}${tail}`); return; }
+      return this._cancelTeardown(team, ticket, facts)
+        .then((r) => (r.failed ? reply : ack)(`${head} — ${r.text}${tail}`))
+        .catch((e) => reply(`${head} — but its teardown failed (${e.message}); the seat, worktree and branch may still be there${tail}`));
+    },
+
+    _cancelTeardownFacts(team, ticket) {
+      if (!ticketStarted(ticket)) return null;
+      const facts = this._acceptSeatFacts(ticket);
+      if (!facts.seatName || facts.remoteTree || facts.seatName === team.lead || !mintedForTicket(facts.rec, ticket)) return null;
+      return facts;
+    },
+
+    async _cancelTeardown(team, ticket, { seatName, rec, branch }) {
+      const busy = this._openTicketsFor(team, seatName, ticket.id).filter((t) => this._ticketAssigneeSeat(team, t) === seatName);
+      if (busy.length > 0) return { text: `${seatName} was left in place because it holds ${busy[0].id}` };
+      if (!(rec.worktree && rec.worktree.path)) {
+        if (!this.sessions.has(seatName)) return { text: `${seatName} is not running, so nothing was archived` };
+        await this.archive(seatName);
+        return { text: `${seatName} was a one-shot seat and was ARCHIVED (resumable; anything it left uncommitted is still in the checkout)` };
+      }
+      const baseSha = (rec.worktree && rec.worktree.baseSha) || (ticket.worktree && ticket.worktree.baseSha) || null;
+      const branchName = branch || 'its branch';
+      let kept = null;
+      let tip = null;
+      const beforeRemove = async (treePath) => {
+        const d = await gitWorktree.isDirty(treePath).catch((e) => ({ ok: false, error: e.message }));
+        if (!d.ok) kept = `kept ${treePath} and ${branchName} (the tree could not be read: ${d.error || 'git could not read the tree'})`;
+        else if (d.dirty) kept = `kept ${treePath} and ${branchName} (uncommitted work)`;
+        else if (!branch) kept = `kept ${treePath} (no branch recorded)`;
+        else {
+          tip = await gitWorktree.revParse(team.root, branch).catch(() => null);
+          const c = await gitWorktree.commitsOnBranch(team.root, branch, baseSha).catch((e) => ({ ok: false, error: e.message }));
+          if (!c.ok || !tip) kept = `kept ${treePath} (the commits on ${branch} could not be counted: ${(c && c.error) || 'no tip'})`;
+          else if (!baseSha || c.base !== String(baseSha).trim()) kept = `kept ${treePath} (no recorded fork point to count ${branch} against)`;
+          else if (c.count > 0) kept = `kept ${treePath} (${c.count} commit${c.count === 1 ? '' : 's'} on ${branch})`;
+        }
+        return kept ? { keep: true, why: 'cancel keeps work' } : null;
+      };
+      const r = await this.destroy(seatName, { beforeRemove }).catch((e) => ({ ok: false, error: e.message }));
+      if (kept) return { text: `${seatName} retired; ${kept}` };
+      if (!r || !r.ok) return { failed: true, text: `${seatName} could NOT be retired (${(r && r.error) || 'unknown error'}); its worktree and branch were kept` };
+      if (r.error) return { failed: true, text: `${seatName} retired but its worktree could NOT be removed (${r.error})${r.path ? ` — remove ${r.path} by hand` : ''}` };
+      if (!r.worktreeRemoved) return { text: `${seatName} retired` };
+      const del = await gitWorktree.deleteBranchIfAt(team.root, branch, tip).catch((e) => ({ ok: false, error: e.message }));
+      return del.ok
+        ? { text: `${seatName} retired, its empty worktree removed and branch ${branch} deleted` }
+        : { failed: true, text: `${seatName} retired and its empty worktree removed, but branch ${branch} could NOT be deleted (${del.error})` };
     },
 
     // Called from accept and cancel only: a reject reopens a done ticket and its reminder is wanted through the rework round.
