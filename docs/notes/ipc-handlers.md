@@ -13,10 +13,19 @@ still have it.
 The `accounts:*` family is gated by ABSENCE of registration, the
 `enableDrawerServices` shape, not by a flag the handler consults: web-host
 dispatches any registered channel by name, so registration IS the capability
-there. It joins the DECLINED set rather than the granted one because
-`accounts:list` hands out the filesystem path of each account's credential
-store and `accounts:move-by-model` kills and respawns live seats — neither is
-something the ungated `session:create` already grants a web client.
+there. web-host.js grants it: every web caller already reaches the ungated
+`session:create` (a `$SHELL` on the box) and `session:setArgs` /
+`session:restart`, which move a seat to any `CLAUDE_CONFIG_DIR`, so refusing
+the family protected nothing.
+
+## secureTransportOfSender
+
+`accounts:setApiKey` refuses unless this dep answers exactly `true`; an absent
+dep refuses. main.js answers `true`; web-host.js answers `true` only for a
+connection whose peer address was loopback or whose `Origin` was `https:` when
+the socket was accepted. The other six `accounts:*` channels are not gated.
+Unverified: a client behind a published Docker port likely arrives from the
+bridge gateway, not loopback, so `http://localhost:<port>` would be refused.
 
 ## envLockedSettings
 

@@ -289,7 +289,7 @@
 | `handle:accounts:add` | adds an account (label, email, plan, configDir) | accounts store | accounts.add | accounts-ipc.test.js drawer-services-seam.test.js |
 | `handle:accounts:remove` | removes an account by label | accounts store | accounts.remove | accounts-ipc.test.js drawer-services-seam.test.js |
 | `handle:accounts:resync` | re-reads one account's config dir | accounts store | accounts.resync | accounts-ipc.test.js drawer-services-seam.test.js |
-| `handle:accounts:setApiKey` | writes an Anthropic API key into a registered account's settings.json env (0600); returns only ok/error, never the key | account settings.json | accounts.setApiKey | accounts-ipc.test.js drawer-services-seam.test.js |
+| `handle:accounts:setApiKey` | writes an Anthropic API key into a registered account's settings.json env (0600); returns only ok/error, never the key; refuses unless secureTransportOfSender answers true | account settings.json | accounts.setApiKey, secureTransportOfSender | accounts-ipc.test.js drawer-services-seam.test.js web-accounts-transport.test.js |
 | `handle:accounts:clearApiKey` | deletes ANTHROPIC_API_KEY from a registered account's settings.json env, keeping the rest | account settings.json | accounts.clearApiKey | accounts-ipc.test.js drawer-services-seam.test.js |
 | `handle:accounts:move-by-model` | moves the sender workspace's seats on a model onto an account, reporting moved and skipped | sessions via moveAccountByModel | moveAccountByModel, workspaceOfSender | accounts-ipc.test.js drawer-services-seam.test.js accounts-move-reattach.test.js |
 | `handle:envDefaults:get` | the shipped env defaults | env defaults store (read) | envDefaults.list | env-scopes-ipc.test.js |
@@ -304,7 +304,7 @@
 
 ### Hazards
 - Spreading ui-settings into `handle:settings:get` would ship every stored peer token to the renderer and to web clients.
-- `handle:accounts:list` and the other accounts channels are desktop-only: web-host sets enableAccounts false, so they are absent there, not refused.
+- Every `accounts:*` channel is served to web callers too; one that accepts a secret must consult `secureTransportOfSender` as `handle:accounts:setApiKey` does.
 - Guarding `syncTerminalReports` with a typeof check in `handle:settings:set` makes an unwired revocation silently never sweep.
 
 ## Plugins, help corpus, intent catalog and plugin grants — pluginRefusal … handle:session:pluginGrants

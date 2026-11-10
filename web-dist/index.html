@@ -30202,6 +30202,10 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
       var { DEFAULT_LABEL, abbrevHome } = require_account_select();
       var API_KEY_PLACEHOLDER = "API key (sk-ant-\u2026)";
       var MODEL_ALIASES = ["fable", "opus", "sonnet", "haiku"];
+      var INSECURE_KEY_REFUSAL = "an API key is accepted only over a local or encrypted connection";
+      function keyTransportRefusal(win) {
+        return win && win.isSecureContext === false ? INSECURE_KEY_REFUSAL : null;
+      }
       function modelOptions(rows) {
         const out = new Set(MODEL_ALIASES);
         for (const r of Array.isArray(rows) ? rows : []) {
@@ -30296,7 +30300,7 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         save.textContent = "Save key";
         return { input, save };
       }
-      module.exports = { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, modelOptions, MODEL_ALIASES, API_KEY_PLACEHOLDER };
+      module.exports = { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, keyTransportRefusal, modelOptions, MODEL_ALIASES, API_KEY_PLACEHOLDER, INSECURE_KEY_REFUSAL };
     }
   });
 
@@ -52467,7 +52471,7 @@ ${detail}` });
       var { envRowView, buildEnvRow } = require_env_row();
       var { envLockView, applyEnvLock, patchUnlessEnvLocked } = require_env_lock();
       var { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require_account_select();
-      var { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, modelOptions } = require_account_row();
+      var { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, keyTransportRefusal, modelOptions } = require_account_row();
       var { isToolInstallSession } = require_tool_doctor();
       var { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require_placement();
       var { dropText } = require_drop_paths();
@@ -58739,6 +58743,11 @@ Click for live activity`;
               const submit = async () => {
                 const key = input.value;
                 input.value = "";
+                const refusal = keyTransportRefusal(window);
+                if (refusal) {
+                  setPrefsAccountsState(refusal, "error");
+                  return;
+                }
                 const r = await window.api.accountsSetApiKey(account.label, key);
                 if (!r || r.ok === false) {
                   setPrefsAccountsState(r && r.error || "Set key failed.", "error");
@@ -58875,6 +58884,11 @@ Click for live activity`;
         if (prefsAccountKey) prefsAccountKey.value = "";
         if (!label) {
           setPrefsAccountsState("Enter a label first.", "error");
+          return;
+        }
+        const refusal = key ? keyTransportRefusal(window) : null;
+        if (refusal) {
+          setPrefsAccountsState(refusal, "error");
           return;
         }
         const res = await window.api.accountsAdd({ label, email: email || null, plan, configDir: configDir || null });

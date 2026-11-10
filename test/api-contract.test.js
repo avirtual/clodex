@@ -164,8 +164,7 @@ const PINNED_NAMES = [
   // row tooltips and its shipped marker, and re-seeds deleted ones.
   'envDefaultsGet', 'envDefaultsRestore',
   // t811: registered Claude subscriptions — the registry behind every seat's
-  // CLAUDE_CONFIG_DIR plus the bulk model->account move. Bound on both surfaces;
-  // the handlers are gated on enableAccounts, which the web host declines.
+  // CLAUDE_CONFIG_DIR plus the bulk model->account move. Bound on both surfaces.
   'accountsList', 'accountsAdd', 'accountsRemove', 'accountsResync', 'accountsSetApiKey', 'accountsClearApiKey',
   'accountsMoveByModel',
   // Plugin transport (plugin-plan.md [internal design doc, not in this repo] §1) — the five rows that carry EVERY

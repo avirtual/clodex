@@ -734,6 +734,7 @@ app.whenReady().then(() => {
     // supplied per-transport, exactly like workspaceOfSender, so a transport
     // that supplies nothing lands in the restricted branch by default.
     surfaceOfSender: () => 'desktop',
+    secureTransportOfSender: () => true,
     refreshAppMenu, refreshTrayMenu, setUiTheme, revealSession,
     getUpdateInfo: () => updateInfo,
     getReleasesCache: () => releasesCache,

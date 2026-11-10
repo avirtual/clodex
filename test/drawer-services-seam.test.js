@@ -294,13 +294,11 @@ test('the web-host surface REGISTERS console:read and console:live', () => {
     // host that simply granted everything.
     assert.ok(!registered.has('drawer:armSelection'), 'the selection hint stays off the web surface');
     assert.ok(!registered.has('peer:wtermOpen'), 'and the shell on a third machine');
-    // Accounts are LOCAL-only by the registration-is-the-capability rule: the
-    // renderer's Preferences ▸ Accounts pane and the dialogs' Account select
-    // both ship in the web bundle, so nothing in the browser frontend stops an
-    // operator reaching them — only the absent handlers do.
-    for (const ch of ['accounts:list', 'accounts:add', 'accounts:remove', 'accounts:resync', 'accounts:setApiKey', 'accounts:clearApiKey', 'accounts:move-by-model']) {
-      assert.ok(!registered.has(ch), `${ch} must not register on the web surface`);
-    }
+    assert.deepStrictEqual(
+      [...registered].filter((ch) => ch.startsWith('accounts:')).sort(),
+      ['accounts:add', 'accounts:clearApiKey', 'accounts:list', 'accounts:move-by-model', 'accounts:remove', 'accounts:resync', 'accounts:setApiKey'],
+      'the web surface serves the whole accounts family',
+    );
   } finally {
     host.close();
   }
@@ -740,14 +738,7 @@ test('the console tab gates on the seat type and NOT on the surface', () => {
     'the console sits between the activity feed and clodexctl');
 });
 
-// t811. The accounts family joins the DECLINED set, and the reason is the one
-// that ungated `wterm:*` running the OTHER way: `accounts:list` hands out the
-// filesystem path of each account's credential store and
-// `accounts:move-by-model` kills and respawns live seats on this box, and
-// `session:create` — ungated here — grants a web client neither. The stub engine
-// carries `enableAccounts: true` for the same teeth as the block above: a
-// spread-ordering mistake must show up as the engine's value surviving.
-test('engine: enableAccounts defaults ON; web-host declines it', () => {
+test('engine: enableAccounts defaults ON; web-host enables it', () => {
   const eng = mkEngine({});
   assert.ok('enableAccounts' in eng, 'the engine must expose the flag, not leave it undefined');
   assert.notStrictEqual(eng.enableAccounts, false, 'default is not the opt-out');
@@ -756,7 +747,7 @@ test('engine: enableAccounts defaults ON; web-host declines it', () => {
 
   let seen = null;
   const host = createWebHost({
-    engine: { stores: {}, enableAccounts: true },
+    engine: { stores: {}, enableAccounts: false },
     log: silentLog,
     port: 0,
     host: '127.0.0.1',
@@ -766,8 +757,7 @@ test('engine: enableAccounts defaults ON; web-host declines it', () => {
   try {
     assert.ok(seen, 'ENTER: registerHandlers ran — otherwise the assertion below is vacuous');
     assert.ok('enableAccounts' in seen, 'the dep must be present, not absent');
-    assert.notStrictEqual(seen.enableAccounts, true, 'the web surface must not enable the accounts family');
-    assert.strictEqual(seen.enableAccounts, false, 'exactly the opt-out value');
+    assert.strictEqual(seen.enableAccounts, true, 'the web surface serves the accounts family');
   } finally {
     host.close();
   }

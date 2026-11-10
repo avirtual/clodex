@@ -236,10 +236,12 @@ off the persisted entry's env (a dir outside the registry shows as its basename,
 so a hand-typed `~/sub-2` still reads `sub-2`), and a claude row also carries
 `model` — that same effective model, `null` on a non-claude row — and `effort`, the level the seat was spawned with, `null` when none was set. `create()` refuses to spawn when
 the merged env names a `CLAUDE_CONFIG_DIR` that is not a directory — the CLI
-would otherwise mint an empty config there and loop on onboarding silently. Like
-session env and exec grants the whole family is LOCAL-only, and by the
-registration-is-the-capability rule: the `accounts:*` handlers register only
-under `enableAccounts`, which web-host.js declines.
+would otherwise mint an empty config there and loop on onboarding silently. The
+`accounts:*` handlers register under `enableAccounts`, and both hosts set it, so
+a window attached to a remote node manages that node's accounts. An API key is
+accepted only over a local or encrypted connection (`secureTransportOfSender`).
+Session env and exec grants remain local-only as product policy, not as
+protection against a caller who already has a shell through `session:create`.
 
 The UI half (t812) adds no state of its own — the env TEXT stays the single
 source. Preferences ▸ Accounts lists every row from `accounts:list` with its
