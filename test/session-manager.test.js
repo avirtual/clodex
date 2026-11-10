@@ -25735,7 +25735,7 @@ const clodentResult = (sid) => ({ type: 'result', subtype: 'success', is_error: 
 
 async function mkClodentStreamSeat(t, name) {
   const { mock } = require('node:test');
-  const h = mkStreamSeatManager();
+  const h = mkStreamSeatManager({ extraDeps: { probeClodentVersion: () => 'clodent 0.6.1\n', isInjectInFlight: require('../inject-queue').isInjectInFlight } });
   t.after(() => h.stopAll());
   mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 });
   t.after(() => mock.timers.reset());
