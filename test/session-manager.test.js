@@ -9710,6 +9710,7 @@ test('watchdog: activity resets the stall episode (nudge fires again after a re-
   arr = f.load();
   arr[0].lastActivityAt = Date.now() - 60 * 60 * 1000;
   f.tstore.save(f.team.root, arr);
+  f.m.sessions.get('team-hand').activityTs = Date.now() - 60 * 60 * 1000;
   f.gated.length = 0;
   await f.m._sweepTickets(Date.now());
   assert.strictEqual(f.gated.filter((g) => /stalled/.test(g.body)).length, 1, 're-nudged after the reset');
