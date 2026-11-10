@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Sandbox: the team box image installs the clodent CLI, so clodent seats can run inside a box and survive a rebuild.
+
 ## 5.169.0 — 2026-11-10
 
 - Team tickets: an accepted ticket's merge now takes the test-suite lock ahead of hands' own suite runs, so merges no longer queue behind a stream of hand runs.

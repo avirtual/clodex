@@ -65,7 +65,7 @@ COPY --from=git-build /git-root/usr/local/ /usr/local/
 RUN git --version | awk '{split($3,v,"."); if (v[1]<2 || (v[1]==2 && v[2]<45)) exit 1}'
 
 # The agent CLIs, globally. Pin nothing — agents self-update.
-RUN npm i -g @anthropic-ai/claude-code @openai/codex \
+RUN npm i -g @anthropic-ai/claude-code @openai/codex clodent \
  && npm cache clean --force
 
 # Non-root user with a real home: agent-transport creates ~/.clodex 0700 and

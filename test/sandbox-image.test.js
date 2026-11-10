@@ -112,6 +112,8 @@ test('docker/web/Dockerfile ships no duplicate layer and no build cache', () => 
   const npmRuns = all.slice(runtime).filter((i) => /^RUN\b/.test(i) && /\bnpm i -g\b|\bnpm ci\b/.test(i));
   assert.strictEqual(npmRuns.length, 2, 'ENTER: the npm i -g RUN and the npm ci RUN');
   for (const r of npmRuns) assert.ok(r.includes('npm cache clean --force'), `cache cleaned in the same RUN: ${r}`);
+  const globalRun = npmRuns.find((i) => /\bnpm i -g\b/.test(i));
+  assert.match(globalRun, /\bnpm i -g\b[^&]*\sclodent(\s|$)/, 'the runtime npm i -g RUN installs clodent');
   const ci = npmRuns.find((i) => /\bnpm ci\b/.test(i));
   assert.ok(ci.includes('rm -rf /root/.cache/node-gyp'));
   assert.ok(ci.includes('rm -rf node_modules/node-pty/prebuilds'));
