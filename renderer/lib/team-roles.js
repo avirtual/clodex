@@ -7,7 +7,7 @@
 
 'use strict';
 
-const { DEFAULT_TYPE } = require('../../cli-adapters');
+const { DEFAULT_TYPE, streamFor } = require('../../cli-adapters');
 
 // Operator-owned topology (T29 C1) — the popover shows these rows but offers no
 // edit/rename/remove controls (the mutators would bounce them anyway). Kept in
@@ -42,6 +42,7 @@ function teamRoleRows(manifest) {
   return Object.entries(roles).map(([key, def]) => ({
     key,
     account: (def && def.account) || '',
+    idleClear: (def && def.idleClear && def.idleClear.afterMs) ? String(def.idleClear.afterMs) : '',
     brief: (def && def.brief) || '',
     // Relative to the team root; '' means the seat boots at the root itself.
     cwd: (def && def.cwd) || '',
@@ -101,6 +102,10 @@ function buildSavePatch(formValues) {
   // non-blank cases — a bad path, an unknown label — and refuses with the reason.
   patch.cwd = trim(formValues && formValues.cwd);
   patch.account = trim(formValues && formValues.account);
+  if (formValues && 'idleClear' in formValues) {
+    const ms = trim(formValues.idleClear);
+    patch.idleClear = ms ? { afterMs: Number(ms) } : null;
+  }
   return patch;
 }
 
@@ -112,7 +117,7 @@ function rowFormValues(rowEl) {
   const on = rowEl.querySelector('input[data-f="dispatch"]:checked');
   return {
     brief: val('brief'), prompt: val('prompt'), template: val('template'),
-    dispatch: on ? on.value : '', cwd: val('cwd'), account: val('account'),
+    dispatch: on ? on.value : '', cwd: val('cwd'), account: val('account'), idleClear: val('idleClear'),
   };
 }
 
@@ -229,6 +234,24 @@ function storedPromptNote(prompt, opts = {}) {
     label: `${prompt} (missing from library)`,
     title: 'no system prompt by this name is installed',
   };
+}
+
+const IDLE_CLEAR_CHOICES = [['', 'off'], ['900000', '15 min'], ['1800000', '30 min'], ['3600000', '1 h'], ['7200000', '2 h']];
+const IDLE_CLEAR_TITLE = "Clears a seat's context after it has been idle this long with nothing outstanding. For seats that keep their state in files.";
+const IDLE_CLEAR_STREAM_ONLY_TITLE = "Idle clear applies to stream seats only, and this role's template does not run its seats over a stream transport.";
+
+function idleClearOptions(stored) {
+  const want = String(stored == null ? '' : stored).trim();
+  const out = IDLE_CLEAR_CHOICES.map(([value, text]) => ({ value, text, selected: value === want }));
+  if (want && !out.some((o) => o.selected)) {
+    out.push({ value: want, text: `custom (${Math.round(Number(want) / 6000) / 10} min)`, selected: true });
+  }
+  return out;
+}
+
+function idleClearApplies(rows, team, template) {
+  const row = templateRowFor(rows, team, template);
+  return !!row && !row.unreadable && row.io === 'stream' && !!streamFor(row.type || DEFAULT_TYPE);
 }
 
 const DEFAULT_ACCOUNT_LABEL = 'default';
@@ -760,6 +783,7 @@ function usesByRole(planItems, roleKeys) {
 module.exports = {
   teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote, reservedRoleTemplate, preflightByRole, usesByRole,
   promptOptionGroups, storedPromptNote, templateOptionGroups, templateRowFor, templatePlatform, accountOptions,
+  idleClearOptions, idleClearApplies, IDLE_CLEAR_TITLE, IDLE_CLEAR_STREAM_ONLY_TITLE,
   isReviewerTemplateRow, reviewerTemplateOptionGroups,
   reservedRemovalWarning,
   rowFormValues, syncRowDirty, snapshotRowForm, confirmDiscardRoleEdits, DISCARD_ROLE_EDITS_PROMPT,

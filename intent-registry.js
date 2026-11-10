@@ -246,9 +246,10 @@ function parseTeam(cleaned) {
   const modelM = argStr.match(/\bmodel:(\S+)/);
   const accountM = argStr.match(/\baccount:(\S+)/);
   const effortM = argStr.match(/\beffort:(\S+)/);
-  const positional = argStr.trim().split(/\s+/).filter((t) => t && !/^\w+:/.test(t));
+  const idleClearM = argStr.match(/\bidle-clear:(\S+)/);
+  const positional = argStr.trim().split(/\s+/).filter((t) => t && !/^[\w-]+:/.test(t));
   if (sub === 'role-add' || sub === 'role-set') {
-    return { type: 'team', sub, name: positional[0] || null, prompt: promptM ? promptM[1] : null, template: templateM ? templateM[1] : null, dispatch: dispatchM ? dispatchM[1] : null, cwd: cwdM ? cwdM[1] : null, model: modelM ? modelM[1] : null, account: accountM ? accountM[1] : null, effort: effortM ? effortM[1] : null, body };
+    return { type: 'team', sub, name: positional[0] || null, prompt: promptM ? promptM[1] : null, template: templateM ? templateM[1] : null, dispatch: dispatchM ? dispatchM[1] : null, cwd: cwdM ? cwdM[1] : null, model: modelM ? modelM[1] : null, account: accountM ? accountM[1] : null, effort: effortM ? effortM[1] : null, idleClear: idleClearM ? idleClearM[1] : null, body };
   }
   if (sub === 'role-rm' || sub === 'set-lead' || sub === 'unbind') return { type: 'team', sub, name: positional[0] || null, body: '' };
   if (sub === 'bind') return { type: 'team', sub, name: positional[0] || null, role: positional[1] || null, body: '' };
@@ -302,7 +303,7 @@ function parseSpawn(cleaned) {
 const NONE = () => 'none';
 const GREEDY = () => 'greedy';
 
-const TEAM_ROLE_KV_KEYS = ['prompt', 'template', 'dispatch', 'cwd', 'model', 'account', 'effort'];
+const TEAM_ROLE_KV_KEYS = ['prompt', 'template', 'dispatch', 'cwd', 'model', 'account', 'effort', 'idleClear'];
 
 function teamBodyMode(intent) {
   if (intent.sub === 'template-save' || intent.sub === 'prompt-save') return 'greedy';

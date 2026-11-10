@@ -266,8 +266,13 @@ function registerIpcHandlers(deps) {
         const notReviewer = reviewerTemplateError(team, patch.template);
         if (notReviewer) return { ok: false, error: notReviewer };
       }
+      const before = patch && typeof patch === 'object' && 'idleClear' in patch ? loadManifest(team) : null;
       const saved = setRole(team, role, patch, { operator: true });
       log.info('team', `role "${role}" on team "${team}" saved: ${fmtPatch(patch)}`);
+      if (before) {
+        const seats = manager._syncRoleIdleClear(before, saved, role);
+        if (seats.length) log.info('team', `role "${role}" idle clear applied to ${seats.join(', ')}`);
+      }
       return { ok: true, team: saved };
     } catch (err) { return { ok: false, error: err.message }; }
   });
