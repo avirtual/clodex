@@ -803,7 +803,9 @@ function createTicketMethods(deps, shared) {
             try { getPersistence().setWorktree(name, wt); } catch { /* best-effort */ }
           }
           this._applyTemplatePersistence(name, tpl);
-          try { getPersistence().upsert({ name, spawnedBy: spawner.name }); } catch (e) { log.warn('intent', `spawn ${name}: spawnedBy not recorded (${e.message})`); }
+          try {
+            getPersistence().upsert({ name, spawnedBy: (!operator && spawnerTeam && spawnerTeam.lead === spawner.name) ? spawner.name : null });
+          } catch (e) { log.warn('intent', `spawn ${name}: spawnedBy not recorded (${e.message})`); }
           this._sendToSession(name, 'session:context-action', {
             action: 'reattach', name, type, cwd: spawnCwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire, io: (this.sessions.get(name) || {}).io || 'pty',
             ephemeral: this._isEphemeralSeat(name),
@@ -1235,7 +1237,8 @@ function createTicketMethods(deps, shared) {
         : '')
         + (shape.envBadType.length
           ? ` — reviewer template env keys [${shape.envBadType.join(', ')}] are allowed but their values are not strings — dropped (quote the value in the template)`
-          : '');
+          : '')
+        + ((shape.envClamped || []).length ? ` — reviewer template env ${shape.envClamped.join(', ')} is neither the opener's own value nor a registered account dir, dropped` : '');
       const capNote = shape.capNote
         ? ` — ${shape.capNote}${shape.toolsIgnored ? ' (template tools ignored)' : ''}`
         : '';
@@ -3507,7 +3510,8 @@ function createTicketMethods(deps, shared) {
       const ticketId = rec && rec.ticketId;
       if (!ticketId) {
         const by = rec && typeof rec.spawnedBy === 'string' ? rec.spawnedBy : null;
-        return (by && by !== seat.name && this.sessions.has(by)) ? { lead: by, ticketId: null } : null;
+        const byTeam = (by && by !== seat.name && this.sessions.has(by)) ? this._teamOfOrNull(this.sessions.get(by)) : null;
+        return (byTeam && byTeam.lead === by) ? { lead: by, ticketId: null } : null;
       }
       const team = this._teamOfOrNull(seat);
       if (!team || !team.lead || team.lead === seat.name) return null;
@@ -4679,7 +4683,9 @@ function createTicketMethods(deps, shared) {
       }
       const capArgs = !!capMode && capMode.argv;
       const toolsGated = !capArgs || cap.denylist === true;
-      const leadArgs = (getPersistence().get(opener.name)?.extraArgs) || [];
+      const openerRec = getPersistence().get(opener.name) || {};
+      const leadArgs = openerRec.extraArgs || [];
+      const homeEnv = this._clampSeatHomeEnv((shape && shape.sessionEnv) || null, openerRec.env);
       const postureArgs = hasBypass(openerAdapter, leadArgs) ? [...seatAdapter.posture.bypassArgs] : [];
       const workspaceId = opener.workspaceId || DEFAULT_WORKSPACE_ID;
       const roleCwd = this._resolveRoleCwd(team, def);
@@ -4725,11 +4731,12 @@ function createTicketMethods(deps, shared) {
           plugins: shape ? shape.plugins : null,
           protectCredentials: (shape && shape.protectCredentials) || null,
           io: (shape && shape.io) || 'pty',
-          env: withAccount((shape && shape.sessionEnv) || null),
+          env: withAccount(homeEnv.env),
           account: accountLabel,
           accountMissing,
           envDropped: (shape && shape.envDropped) || [],
           envBadType: (shape && shape.envBadType) || [],
+          envClamped: homeEnv.clamped,
           beyondCap: [],
           capNote: null,
           toolsIgnored: false,
@@ -4811,11 +4818,12 @@ function createTicketMethods(deps, shared) {
         io: (shape && shape.io) || 'pty',
         // An object always; the fallback applies when the template supplied no env object, else the reviewer boots without CLODEX_DISABLE_IPC_PROMPT.
         // REVIEWER_FALLBACK.env skips the allowlist pass: it is the shipped set and is not agent-writable.
-        env: withAccount(tplSuppliedEnv ? { ...((shape && shape.sessionEnv) || {}) } : { ...REVIEWER_FALLBACK.env }),
+        env: withAccount(tplSuppliedEnv ? { ...(homeEnv.env || {}) } : { ...REVIEWER_FALLBACK.env }),
         account: accountLabel,
         accountMissing,
         envDropped: (shape && shape.envDropped) || [],
         envBadType: (shape && shape.envBadType) || [],
+        envClamped: homeEnv.clamped,
         beyondCap: toolsGated ? beyondCap : [],
         capNote: (cap && cap.note) || (capMode ? capMode.note : null),
         toolsIgnored: !toolsGated && rawTools !== undefined,
@@ -5005,7 +5013,8 @@ function createTicketMethods(deps, shared) {
             : '')
             + (shape.envBadType.length
               ? ` — template env keys [${shape.envBadType.join(', ')}] are allowed but their values are not strings — dropped (quote the value in the template)`
-              : '');
+              : '')
+            + ((shape.envClamped || []).length ? ` — template env ${shape.envClamped.join(', ')} is neither the opener's own value nor a registered account dir, dropped` : '');
           const promptWarn = (spawned && spawned.missingPrompt) ? ` — WARNING: ${spawned.missingPrompt}` : '';
           const cwdWarn = shape.cwdFallback ? ` — NOTE: ${shape.cwdFallback}` : '';
           const seatSuffix = this._ticketDeliverySuffix(d, seat.name, team, ticket);

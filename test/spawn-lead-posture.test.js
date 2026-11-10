@@ -11,14 +11,14 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 const EXTRA_ARGS = 3;
 const SESSION_ENV = 18;
 
-function harness({ rec = null, accounts = null, templates = [] } = {}) {
+function harness({ rec = null, accounts = null, templates = [], team = null } = {}) {
   const calls = [];
   const replies = [];
   const upserts = [];
   const home = fs.realpathSync(mkTmpRoot('clx-posture-home-'));
   const SessionManager = createSessionManager({
     knownSkillNames: () => [], os, fs, path,
-    resolveTeam: () => null,
+    resolveTeam: () => team,
     log: { warn() {}, info() {}, error() {} },
     getPersistence: () => ({
       get: (n) => (n === 'lead' ? rec : null),
@@ -49,10 +49,11 @@ function harness({ rec = null, accounts = null, templates = [] } = {}) {
   return { m, calls, replies, upserts, writeTpl };
 }
 
-async function spawn(h, template, leadType = 'clodent') {
+async function spawn(h, template, leadType = 'clodent', opts = undefined) {
   h.m._handleSpawnIntent(
     { name: 'lead', cwd: os.tmpdir(), workspaceId: 'default', type: leadType },
     { name: 'child', template },
+    opts,
   );
   await new Promise((r) => setImmediate(r));
   await new Promise((r) => setImmediate(r));
@@ -102,12 +103,18 @@ for (const [held, asked] of [['--yolo', '--dangerously-skip-permissions'], ['--d
   });
 }
 
-test('(d) a spawn records spawnedBy on the child\'s record', async () => {
-  const h = harness({ rec: {} });
-  await spawn(h, h.writeTpl({}));
-  assert.strictEqual(h.calls.length, 1, `ENTER: create was called (${JSON.stringify(h.replies)})`);
-  assert.deepStrictEqual(h.upserts, [{ name: 'child', spawnedBy: 'lead' }]);
-});
+for (const [label, lead, opts, want] of [
+  ['a team lead\'s spawn records it as spawnedBy', 'lead', undefined, 'lead'],
+  ['a non-lead\'s spawn records no spawner', 'other-lead', undefined, null],
+  ['an operator-door spawn records no spawner', 'lead', { operator: true }, null],
+]) {
+  test(`(d) ${label}`, async () => {
+    const h = harness({ rec: {}, team: { name: 'crew', lead, root: os.tmpdir(), roles: {} } });
+    await spawn(h, h.writeTpl({}), 'clodent', opts && { ...opts, onReply: (r) => h.replies.push(r) });
+    assert.strictEqual(h.calls.length, 1, `ENTER: create was called (${JSON.stringify(h.replies)})`);
+    assert.deepStrictEqual(h.upserts, [{ name: 'child', spawnedBy: want }]);
+  });
+}
 
 const ACCOUNTS = {
   labelFor: (dir) => ({ '/acct/work': 'work' }[dir] || path.basename(dir)),
@@ -130,7 +137,7 @@ for (const [label, env, leadEnv, want, note] of [
   });
 }
 
-test('(e) the clamp keeps a CLAUDE_CONFIG_DIR only at a registered account dir', () => {
+test('(e) direct call, defence in depth only (filterTemplateEnv already drops CLAUDE_CONFIG_DIR): the clamp keeps it only at a registered account dir', () => {
   const h = harness({ accounts: ACCOUNTS });
   assert.deepStrictEqual(h.m._clampSeatHomeEnv({ CLAUDE_CONFIG_DIR: '/tmp/evil' }, {}), { env: null, clamped: ['CLAUDE_CONFIG_DIR'] });
   assert.deepStrictEqual(h.m._clampSeatHomeEnv({ CLAUDE_CONFIG_DIR: '/acct/work' }, {}), { env: { CLAUDE_CONFIG_DIR: '/acct/work' }, clamped: [] });

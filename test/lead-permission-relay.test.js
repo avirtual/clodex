@@ -179,10 +179,10 @@ test('the permit grammar rejects a choice other than allow or deny', () => {
   assert.strictEqual(parseIntent('[agent:permit hand-9 req-1 always]'), null);
 });
 
-function mkSpawnedRig() {
+function mkSpawnedRig(spawner = 'L') {
   const m = mk({
     log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
-    getPersistence: () => ({ list: () => [], get: (n) => (n === 'kid' ? { spawnedBy: 'L' } : null) }),
+    getPersistence: () => ({ list: () => [], get: (n) => (n === 'kid' ? { spawnedBy: spawner } : null) }),
   });
   const dms = [];
   const injected = [];
@@ -194,12 +194,13 @@ function mkSpawnedRig() {
   m._sendToSession = () => {};
   m._streamSend = () => {};
   m.windowForSession = () => null;
-  m._teamOfOrNull = () => null;
+  m._teamOfOrNull = (s) => ({ L: { name: 'tm', lead: 'L' }, H: { name: 'tm', lead: 'L' }, L2: { name: 'tm2', lead: 'L2' } }[s && s.name] || null);
   m.seatPermission = (name, id, choiceId) => { answered.push([name, id, choiceId]); return { ok: true }; };
   const kid = { name: 'kid', agentType: 'clodent', io: 'stream', streamCodec: { encodePermission: (id, choiceId) => ({ answer: id, choiceId }) } };
   m.sessions.set('kid', kid);
   m.sessions.set('L', { name: 'L', agentType: 'claude' });
   m.sessions.set('L2', { name: 'L2', agentType: 'claude' });
+  m.sessions.set('H', { name: 'H', agentType: 'claude' });
   m._onStreamPermission(kid, { id: 'req-s', toolName: 'Bash', displayName: 'Bash', preview: 'rm x', choices: CHOICES.claude });
   return { m, dms, injected, answered };
 }
@@ -230,9 +231,24 @@ for (const [label, spawnedBy, live, want] of [
       getNotifications: () => ({ add: (n) => notes.push(n) }),
     });
     if (live) m2.sessions.set('L', { name: 'L' });
+    m2._teamOfOrNull = (s) => (s && s.name === 'L' ? { name: 'tm', lead: 'L' } : null);
     const ts = 4321;
     const s = { name: 'kid', streamPermissions: new Map([['req-n', { id: 'req-n', ts }]]) };
     m2._notePermissionInbox(s, { kind: 'permission', ts, message: 'Bash: ls' });
     assert.deepStrictEqual(notes.map((n) => n.body.split('\n')), want ? [want] : []);
   });
 }
+
+test('a seat spawned by a non-lead gets no relay, and its spawner\'s permit is refused', async () => {
+  const r = mkSpawnedRig('H');
+  assert.deepStrictEqual(r.dms, []);
+  await r.m._handleIntent('H', parseIntent('[agent:permit kid req-s allow]'));
+  assert.deepStrictEqual(r.answered, []);
+  assert.deepStrictEqual(r.injected, [['H', "permit: only kid's lead can answer its requests"]]);
+});
+
+test('a spawner that no longer leads a team loses the relay', () => {
+  const r = mkSpawnedRig();
+  r.m._teamOfOrNull = (s) => (s && s.name === 'L' ? { name: 'tm', lead: 'L2' } : null);
+  assert.strictEqual(r.m._seatTicketLead(r.m.sessions.get('kid')), null);
+});
