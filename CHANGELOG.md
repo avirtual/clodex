@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.167.0 — 2026-11-10
+
 - Remote accounts: a node whose web GUI is reached through an encrypted tunnel it cannot see (e.g. a container behind ssh) can set CLODEX_WEB_TRUSTED_TRANSPORT=1 to accept API keys; the refusal message now names it.
 - Stream seats: a context-size reminder now fires on models with no known window size (assumed 200k), and a cleared conversation no longer reports its old context size until the next turn.
 - Team tickets: a seat that works a whole ticket in one long turn is no longer reported as stalled while it is still making requests.
