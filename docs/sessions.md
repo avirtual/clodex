@@ -240,7 +240,10 @@ would otherwise mint an empty config there and loop on onboarding silently. The
 `accounts:*` handlers register under `enableAccounts`, and both hosts set it, so
 a window attached to a remote node manages that node's accounts. An API key is
 accepted only over a local or encrypted connection (`secureTransportOfSender`).
-Session env and exec grants remain local-only as product policy, not as
+A headless node whose web GUI is reached through an encrypted tunnel it cannot
+see (a container behind ssh) sets `CLODEX_WEB_TRUSTED_TRANSPORT=1` to count every
+web connection as encrypted; it vouches for the wire only, never for the caller.
+Session env and exec grants are not carried over the peer wire, as product policy, not as
 protection against a caller who already has a shell through `session:create`.
 
 The UI half (t812) adds no state of its own — the env TEXT stays the single

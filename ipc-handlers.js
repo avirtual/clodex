@@ -1451,7 +1451,7 @@ function registerIpcHandlers(deps) {
     handle('accounts:setApiKey', (e, label, key) => {
       if (!accounts) return { ok: false, error: 'accounts not supported on this host' };
       if (typeof secureTransportOfSender !== 'function' || secureTransportOfSender(e) !== true) {
-        return { ok: false, error: 'an API key is accepted only over a local or encrypted connection' };
+        return { ok: false, error: 'an API key is accepted only over a local or encrypted connection (set CLODEX_WEB_TRUSTED_TRANSPORT=1 on the node if its tunnel is encrypted)' };
       }
       try {
         const r = accounts.setApiKey(label, key);

@@ -30202,7 +30202,7 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
       var { DEFAULT_LABEL, abbrevHome } = require_account_select();
       var API_KEY_PLACEHOLDER = "API key (sk-ant-\u2026)";
       var MODEL_ALIASES = ["fable", "opus", "sonnet", "haiku"];
-      var INSECURE_KEY_REFUSAL = "an API key is accepted only over a local or encrypted connection";
+      var INSECURE_KEY_REFUSAL = "an API key is accepted only over a local or encrypted connection (set CLODEX_WEB_TRUSTED_TRANSPORT=1 on the node if its tunnel is encrypted)";
       function keyTransportRefusal(win) {
         return win && win.isSecureContext === false ? INSECURE_KEY_REFUSAL : null;
       }
