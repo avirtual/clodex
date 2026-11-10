@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Cancelling a ticket now retires its hand and removes its worktree and branch when the branch holds no commits. A branch with commits is kept, and the cancel reply says where.
+
 ## 5.172.0 — 2026-11-10
 
 - A message to an idle Codex, Muse or clodent seat with a cold cache is now delivered at once instead of being dropped. These seats cannot hold a message for their next turn, so holding it only lost it. A seat waiting on a permission dialog still refuses messages.

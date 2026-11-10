@@ -540,6 +540,15 @@ On the merged arm, what goes depends on the seat and the tree:
 
 A second accept after that other ticket closes finishes the cleanup.
 
+`[agent:task cancel <id>]` on a started ticket runs a teardown of its own, judged on the tree after the seat exited:
+
+| on cancel | seat | worktree | branch |
+|---|---|---|---|
+| seat minted for this ticket, tree clean, 0 commits past the recorded fork point | retired, record dropped | removed | deleted only if still at the tip read before removal |
+| seat minted for this ticket, commits ahead, tree dirty or unreadable, or no fork point recorded | stopped, record kept as archived | kept — the cancel ack says `kept <path> (<n> commits on <branch>)` or why | kept |
+| standing assignee, a seat minted for another ticket, or a seat holding another open ticket | untouched | kept | kept |
+| backlog ticket (never started) | nothing attempted | — | — |
+
 Destruction is gated on the tree read after the seat exited: a loop-minted seat is stopped first, and only then is its tree judged clean or dirty, so a file it writes on the way out keeps the tree. The branch is deleted by compare-and-swap (`git update-ref -d` against the tip read before the merge check, which is asked about that exact sha), so a commit made after that read keeps the branch, reported as `KEPT — it moved past`.
 
 - A branch delete ordinarily fails wherever the tree survived: `git branch -d`
