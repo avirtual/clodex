@@ -6,6 +6,7 @@
 
 const { ensureDir, atomicWriteFileSync, writeAllSync } = require('./fs-util');
 const { projectDirFor, defaultClodexHome } = require('./clodex-paths');
+const { isDeepStrictEqual } = require('util');
 
 const TICKETS_FILE = 'tickets.json';
 const ARCHIVE_FILE = 'tickets-archive.jsonl';
@@ -262,7 +263,60 @@ function createTicketsStore({ fs = require('fs'), path = require('path'), clodex
     return rows.concat([...archived.values()]);
   }
 
-  return { load, read, save, ticketsPath, archivePath, metaPath, readArchive, archivedOffBoard, archiveMaxId, appendArchive, appendRestore, restore, withArchive, readMeta, writeMeta };
+  function archiveOldTickets(projectRoot, { now = Date.now(), minAgeMs = ARCHIVE_MIN_AGE_MS, maxRows = ARCHIVE_MAX_ROWS } = {}) {
+    const started = Date.now();
+    const tickets = load(projectRoot);
+    const eligible = tickets
+      .filter((t) => t && typeof t.id === 'string' && t.id && archivable(t, now, minAgeMs))
+      .map((t) => ({ t, at: lastTouch(t) }))
+      .sort((a, b) => a.at - b.at);
+    const picked = eligible.slice(0, Math.max(0, maxRows)).map((e) => e.t);
+    if (!picked.length) return { moved: 0, remaining: 0, ms: Date.now() - started };
+    const meta = readMeta(projectRoot);
+    const scan = scanArchive(projectRoot);
+    const fresh = picked.filter((t) => !(scan.rows.has(t.id) && isDeepStrictEqual(scan.rows.get(t.id), t)));
+    appendArchive(projectRoot, fresh);
+    writeMeta(projectRoot, { maxId: Math.max(meta.maxId, idNumber(nextTicketId(tickets)) - 1) });
+    const gone = new Set(picked);
+    save(projectRoot, tickets.filter((t) => !gone.has(t)));
+    return { moved: picked.length, remaining: eligible.length - picked.length, ms: Date.now() - started };
+  }
+
+  return { load, read, save, ticketsPath, archivePath, metaPath, readArchive, archivedOffBoard, archiveMaxId, appendArchive, appendRestore, restore, withArchive, readMeta, writeMeta, archiveOldTickets };
+}
+
+const ARCHIVE_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const ARCHIVE_MAX_ROWS = 200;
+
+function idNumber(id) {
+  const m = /^t(\d+)$/.exec(id);
+  return m ? Number(m[1]) : 0;
+}
+
+function timeOf(v) {
+  if (v == null || v === '') return NaN;
+  return new Date(v).getTime();
+}
+
+function lastTouch(t) {
+  let max = -Infinity;
+  const stamps = [t.closedAt, t.acceptedAt];
+  if (Array.isArray(t.events)) for (const ev of t.events) stamps.push(ev && ev.at);
+  for (const v of stamps) {
+    const ms = timeOf(v);
+    if (Number.isFinite(ms) && ms > max) max = ms;
+  }
+  return max;
+}
+
+function archivable(t, now, minAgeMs = ARCHIVE_MIN_AGE_MS) {
+  if (!t || typeof t !== 'object') return false;
+  const closed = t.state === 'cancelled' || (t.state === 'done' && !!(t.acceptedAt || t.closedOut || t.loopClosedOut));
+  if (!closed) return false;
+  if (t.loopStep || t.verifyHold || t.verifyPhase || t.mergeWaiting) return false;
+  const touched = lastTouch(t);
+  if (!Number.isFinite(touched)) return false;
+  return now - touched >= minAgeMs;
 }
 
 function nextTicketId(tickets, floor = 0) {
@@ -600,4 +654,4 @@ function ticketTerminalReason(ticket) {
   return null;
 }
 
-module.exports = { createTicketsStore, appendReworkReason, nextTicketId, recordEvent, titleLine, ticketTitle, extractTaskDir, TASK_DIR_ABS_RE, TASK_DIR_REL_RE, extractMustFix, scanVerdict, countMustFix, mustFixTitles, ticketStarted, ticketInFlight, ticketTerminalReason, branchSlug, TICKETS_FILE };
+module.exports = { createTicketsStore, archivable, ARCHIVE_MIN_AGE_MS, ARCHIVE_MAX_ROWS, appendReworkReason, nextTicketId, recordEvent, titleLine, ticketTitle, extractTaskDir, TASK_DIR_ABS_RE, TASK_DIR_REL_RE, extractMustFix, scanVerdict, countMustFix, mustFixTitles, ticketStarted, ticketInFlight, ticketTerminalReason, branchSlug, TICKETS_FILE };

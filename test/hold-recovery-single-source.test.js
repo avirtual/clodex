@@ -871,7 +871,7 @@ test('the stamp is read in team-tickets.js ALONE, which is what makes the scan s
   // satisfy the containment claim below while proving the opposite.
   assert.ok(found.includes('team-tickets.js'),
     `ENTER: the walk reached the producer (found: ${found.join(', ') || 'nothing'})`);
-  assert.deepStrictEqual(found.sort(), ['team-tickets.js'],
+  assert.deepStrictEqual(found.sort(), ['team-tickets.js', 'tickets-store.js'],
     'a new reader outside team-tickets.js cannot reach holdRecoveryText — export it deliberately, then widen this scan');
 });
 

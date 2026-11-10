@@ -1486,7 +1486,7 @@ module.exports._internals = {
   confineOrThrow, confineUnder, stripFileTail, resolveTaskDir,
   taskDirRuleClause, ticketTaskDirLine, ticketTaskDirLineFor,
   add, editSpec, assign, closeTicket, sessions,
-  ticketDetail, search, closed, diffStat, parseVerdict, ticketRounds, deriveRounds,
+  ticketDetail, search, closed, diffStat, parseVerdict, ticketRounds, deriveRounds, scanArchiveAt,
   VERDICT_RE, TEXT_CAP, TEXT_CAP_MARKER, SEARCH_HIT_CAP, SNIPPET_CHARS,
   CLOSED_PAGE_DEFAULT, CLOSED_PAGE_MAX,
   feed, FEED_LIMIT_DEFAULT, FEED_LIMIT_MAX,

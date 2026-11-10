@@ -203,6 +203,7 @@ const TICKET_SUITE_TIMEOUT_MS = TICKET_SUITE_LOCK_WAIT_MS + 21 * 60 * 1000;
 // a deadline alone lets a fast lock flap spin the timer hundreds of times.
 const MERGE_RETRY_DELAY_MS = 30 * 1000;
 const MERGE_RETRY_MAX_WAIT_MS = 20 * 60 * 1000;
+const ARCHIVE_PASS_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const MERGE_RETRY_MAX_ATTEMPTS = Math.ceil(MERGE_RETRY_MAX_WAIT_MS / MERGE_RETRY_DELAY_MS);
 const MERGE_RETRY_HARD_CAP_MS = 60 * 60 * 1000;
 const BOOT_REQUEUE_LEAD_WAIT_MS = 5 * 60 * 1000;
@@ -7883,6 +7884,7 @@ function createTicketMethods(deps, shared) {
         if (!sweptTeams.has(team.file)) {
           sweptTeams.add(team.file);
           const unstamped = !sweptBoards.has(team.root);
+          if (unstamped) this._archivePassFor(team.root, now);
           sweptBoards.add(team.root);
           // Not awaited: a slow git probe must not hold up the badge reconcile;
           // overlap is handled by _stallProbing.
@@ -7896,6 +7898,23 @@ function createTicketMethods(deps, shared) {
         }
       }
       return Promise.all(sweeps);
+    },
+
+    _archivePassFor(root, now = Date.now()) {
+      if (!this._lastArchiveAt) this._lastArchiveAt = new Map();
+      const last = this._lastArchiveAt.get(root);
+      if (last && !last.remaining && now - last.at < ARCHIVE_PASS_INTERVAL_MS) return null;
+      this._lastArchiveAt.set(root, { at: now, remaining: 0 });
+      let res;
+      try {
+        res = ticketsStore.archiveOldTickets(root, { now });
+      } catch (e) {
+        log.error('ticket', `archive: ${root} failed: ${e && e.message ? e.message : String(e)}`);
+        return null;
+      }
+      this._lastArchiveAt.set(root, { at: now, remaining: res.remaining });
+      if (res.moved) log.info('ticket', `archive: ${root} moved ${res.moved}, ${res.remaining} remain, ${res.ms}ms`);
+      return res;
     },
 
     async _stallEvidence(team, ticket) {

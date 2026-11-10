@@ -315,6 +315,25 @@ test('tickets-migrate: an archived row on disk is not re-copied by a later run',
   ]);
 });
 
+test('tickets-migrate: a collision re-issues above every id ever archived, even with a garbage meta and the top id restored', () => {
+  const home = mkHome();
+  const root = '/proj/archive-floor';
+  mkTeam(home, 'alpha', { root, tickets: [{ id: 't2', state: 'open', k: 'alpha t2' }] });
+  const store = createTicketsStore({ clodexHome: home, warn: () => {} });
+  store.appendArchive(root, [{ id: 't50', state: 'done', k: 'archived' }]);
+  store.appendRestore(root, 't50');
+  fs.writeFileSync(store.metaPath(root), 'garbage');
+  fs.writeFileSync(store.ticketsPath(root), JSON.stringify([{ id: 't2', k: 'native' }]));
+  assert.deepStrictEqual(store.readMeta(root), { maxId: 0 }, 'ENTER: the meta reads as no floor');
+  assert.strictEqual(store.readArchive(root).size, 0, 'ENTER: nothing reads as still archived');
+
+  runTicketsMigration({ root: home, fs });
+  assert.deepStrictEqual(store.load(root), [
+    { id: 't2', k: 'native' },
+    { id: 't51', state: 'open', k: 'alpha t2', originTeam: 'alpha', formerId: 't2' },
+  ]);
+});
+
 test('mergeBoards / migrate: with no archive and no meta the output is unchanged', () => {
   const dest = [{ id: 't1', k: 'dest1' }, { id: 't2', k: 'dest2', originTeam: 'beta' }];
   const source = [{ id: 't1', k: 'a' }, { id: 't2', k: 'b' }, { id: 't9', k: 'c' }];

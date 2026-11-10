@@ -206,7 +206,7 @@ function runTicketsMigration({ root, fs = require('fs'), log = null } = {}) {
       // error: no marker, so the next launch retries.
       const before = readDestination(fs, store.ticketsPath(projectRoot));
       const archived = [...store.readArchive(projectRoot).values()];
-      const merged = mergeBoards(before, source, name, archived, store.readMeta(projectRoot).maxId);
+      const merged = mergeBoards(before, source, name, archived, Math.max(store.readMeta(projectRoot).maxId, store.archiveMaxId(projectRoot)));
       const added = merged.length - before.length;
       const { board, reconciled } = reconcileBoard(merged, source, name);
       if (added > 0 || reconciled > 0) store.save(projectRoot, board);
