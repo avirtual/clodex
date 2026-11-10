@@ -408,6 +408,37 @@ test('setSessionArgs: a peer patch cannot set wire-off', async () => {
   assert.ok(!('noWire' in argsCalls[0][1]), 'noWire is dropped from a peer patch');
 });
 
+function idleClearDeps() {
+  const { deps, argsCalls } = makeDeps();
+  const setCalls = [];
+  deps.getPersistence().setIdleClear = (n, v) => { setCalls.push([n, v]); return true; };
+  return { opts: captureOptions(deps), argsCalls, setCalls };
+}
+
+test('setSessionArgs: an idleClear-only patch sets the key and never reaches applySessionArgs', async () => {
+  const { opts, argsCalls, setCalls } = idleClearDeps();
+  assert.deepStrictEqual(await opts.setSessionArgs('box1', { idleClear: null }), { ok: true, restarted: false });
+  assert.deepStrictEqual(setCalls, [['box1', null]]);
+  assert.strictEqual(argsCalls.length, 0);
+});
+
+test('setSessionArgs: idleClear beside other args is set and stripped from the resolver patch', async () => {
+  const { opts, argsCalls, setCalls } = idleClearDeps();
+  await opts.setSessionArgs('box1', { idleClear: { afterMs: 120000 }, extraArgs: ['--x'] });
+  assert.deepStrictEqual(setCalls, [['box1', { afterMs: 120000 }]]);
+  assert.strictEqual(argsCalls.length, 1, 'ENTER: the rest reaches applySessionArgs');
+  assert.deepStrictEqual(argsCalls[0][1], { extraArgs: ['--x'] });
+});
+
+test('setSessionArgs: an idleClear below 60000 is refused and nothing is written', async () => {
+  const { opts, argsCalls, setCalls } = idleClearDeps();
+  const out = await opts.setSessionArgs('box1', { idleClear: { afterMs: 5000 } });
+  assert.strictEqual(out.ok, false);
+  assert.match(out.error, /at least 60000/);
+  assert.deepStrictEqual(setCalls, []);
+  assert.strictEqual(argsCalls.length, 0);
+});
+
 for (const row of [
   { result: { ok: true }, notifies: 0, suffix: '' },
   { result: { ok: true, restarted: true }, notifies: 1, suffix: ' (respawned)' },
