@@ -1956,3 +1956,14 @@ test('a peer-API profile write or delete rebakes the live seat digest; a refused
     assert.deepStrictEqual(rebaked, ['asst', 'asst']);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
+
+test('listTickets: a row only in a team\'s archive is listed with its team', () => {
+  const { deps } = makeDeps();
+  const alphaRoot = deps.loadManifest('alpha').root;
+  createTicketsStore({ fs, path, clodexHome: deps.REGISTRY_DIR })
+    .appendArchive(alphaRoot, [{ id: 't50', state: 'done', assignee: 'hand', title: 'alpha archived' }]);
+  const rows = captureOptions(deps).listTickets();
+  assert.ok(rows.some((r) => r.team === 'alpha' && r.id === 't1'), 'ENTER: the board rows are listed');
+  assert.deepStrictEqual(rows.filter((r) => r.id === 't50'),
+    [{ id: 't50', state: 'done', assignee: 'hand', title: 'alpha archived', team: 'alpha' }]);
+});

@@ -93,6 +93,15 @@ test('sharing is refused while the board holds rows without a team, naming the c
     { message: `team "a" owns root ${h.root} and its board holds 2 ticket row(s) without a team — the root cannot be shared until team a's board reconciles and stamps them` });
 });
 
+test('sharing is refused while an unstamped row sits only in the archive', (t) => {
+  const h = mkHome(t);
+  h.tm.createTeam({ name: 'a', root: h.root, lead: 'a-lead' });
+  h.store.save(h.root, [row('t2', 'a')]);
+  h.store.appendArchive(h.root, [row('t50', null)]);
+  assert.throws(() => h.tm.createTeam({ name: 'b', root: h.root, lead: 'b-lead', shareRoot: true }),
+    { message: `team "a" owns root ${h.root} and its board holds 1 ticket row(s) without a team — the root cannot be shared until team a's board reconciles and stamps them` });
+});
+
 test('_reconcileTickets stamps legacy rows only while the team is alone on its root', (t) => {
   const { h, m } = mkShared(t, { teams: ['a'] });
   h.store.save(h.root, [row('t1', null), row('t2', 'a')]);

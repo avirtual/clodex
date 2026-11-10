@@ -629,7 +629,7 @@ test('on a shared root the in-use gate counts only the team\'s own tickets', asy
 // file: the channel's whole value is that the board and the live session map
 // agree, and a stub of either lets one half assert a truth the other denies.
 
-function mkActivityDoor({ manifest = 'ok', roles = null, tickets = [], sessions = [] } = {}) {
+function mkActivityDoor({ manifest = 'ok', roles = null, tickets = [], archived = [], sessions = [] } = {}) {
   const home = mkTmpRoot('ipc-act-home-');
   const root = mkTmpRoot('ipc-act-root-');
   const dir = path.join(home, 'teams', 'shop');
@@ -645,6 +645,7 @@ function mkActivityDoor({ manifest = 'ok', roles = null, tickets = [], sessions 
   const tm = createTeamManifest({ fs, clodexHome: home });
   const tstore = createTicketsStore({ fs, path, clodexHome: home });
   if (tickets.length) tstore.save(root, tickets);
+  if (archived.length) tstore.appendArchive(root, archived);
 
   const { createTicketMethods } = require('../team-tickets');
   const methods = createTicketMethods(
@@ -755,6 +756,19 @@ test('team:activity caps the landed list at five, newest first, whatever the boa
       'the five newest closedAt, newest first — the cap belongs on the WIRE, not in the renderer, '
       + 'and an uncapped payload ships a whole archive for a list that shows five');
     assert.deepStrictEqual(landed[0], { id: 't1', title: 't1', at: NOW - 1000, outcome: 'accepted', rounds: 1 });
+  } finally { d.cleanup(); }
+});
+
+test('team:activity counts a landing that sits only in the archive', () => {
+  const d = mkActivityDoor({
+    tickets: [{ id: 't1', state: 'open', role: 'hand', assignee: 'shop-hand-1', title: 'one' }],
+    archived: [{ id: 't50', state: 'done', role: 'hand', title: 'fifty', closedOut: true, closedAt: NOW - 1000, reviewRound: 2 }],
+    sessions: [],
+  });
+  try {
+    const res = d.activity();
+    assert.deepStrictEqual(res.tickets.landed, [{ id: 't50', title: 'fifty', at: NOW - 1000, outcome: 'accepted', rounds: 2 }]);
+    assert.deepStrictEqual(res.roles.hand.last, { id: 't50', title: 'fifty', at: NOW - 1000, outcome: 'accepted' });
   } finally { d.cleanup(); }
 });
 

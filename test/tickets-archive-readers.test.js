@@ -159,7 +159,7 @@ test('archive: _taskAdd allocates above the meta floor, not the board max', () =
   assert.deepStrictEqual(f.board().map((t) => t.id), ['t1', 't3', 't41'], f.replies.join(' | '));
 });
 
-test('archive: _taskAdd refuses when the meta file exists but cannot be read', (t) => {
+test('archive: _taskAdd refuses when the meta file exists but cannot be read', { skip: process.getuid && process.getuid() === 0 }, (t) => {
   const f = mkBoard({ board: [row('t1')] });
   f.tstore.writeMeta(f.root, { maxId: 40 });
   fsReal.chmodSync(f.tstore.metaPath(f.root), 0o000);
@@ -168,4 +168,35 @@ test('archive: _taskAdd refuses when the meta file exists but cannot be read', (
   assert.throws(() => f.m._taskAdd(f.lead, f.team, { type: 'task', sub: 'add', who: null, body: 'next ticket', park: true }, f.reply),
     { code: 'EACCES' });
   assert.deepStrictEqual(f.board().map((x) => x.id), ['t1'], 'no id was issued');
+});
+
+test('archive: a crashed half-restore stays visible to task list all and _loadTicket, and restore repairs it', () => {
+  const archived = row('t4', { title: 'archived one', state: 'done', closedAt: T0 });
+  const f = mkBoard({ board: [row('t9', { title: 'live one' })], archived: [archived] });
+  f.tstore.appendRestore(f.root, 't4');
+  assert.strictEqual(f.lastOp('t4'), 'restore', 'ENTER: the restore line is the last op');
+  assert.deepStrictEqual(f.board().map((t) => t.id), ['t9'], 'ENTER: and the board was never saved with the row');
+  const all = f.m._taskListText(f.team, 'all', T0 + 30 * 24 * 60 * 60 * 1000, 'team');
+  assert.ok(all.includes('live one'), `ENTER: the live row is listed:\n${all}`);
+  assert.ok(all.includes('t4') && all.includes('archived one'), `the half-restored row is listed:\n${all}`);
+  assert.deepStrictEqual(f.m._loadTicket(f.team, 't4'), archived);
+  assert.deepStrictEqual(f.tstore.restore(f.root, 't4'), archived);
+  assert.deepStrictEqual(f.board(), [row('t9', { title: 'live one' }), archived]);
+});
+
+test('archive: _taskAdd floors the id at the highest id ever archived when the meta is garbage', () => {
+  const f = mkBoard({ board: [row('t1'), row('t3', { state: 'done', closedAt: T0 })], archived: [row('t20'), row('t50')] });
+  f.tstore.appendRestore(f.root, 't50');
+  fsReal.writeFileSync(f.tstore.metaPath(f.root), 'garbage');
+  assert.deepStrictEqual(f.tstore.readMeta(f.root), { maxId: 0 }, 'ENTER: the meta reads as no floor');
+  f.m._taskAdd(f.lead, f.team, { type: 'task', sub: 'add', who: null, body: 'next ticket', park: true }, f.reply);
+  assert.deepStrictEqual(f.board().map((t) => t.id), ['t1', 't3', 't51'], f.replies.join(' | '));
+});
+
+test('archive: _stampTicketRevival by seat restores the seat\'s archived row and stamps it', () => {
+  const f = mkBoard({ board: [row('t9')], archived: [row('t4', { assignee: 'team-hand-t4', state: 'done', closedAt: T0 })] });
+  const out = f.m._stampTicketRevival(f.team, 'team-hand-t4');
+  assert.ok(out, 'a ticket was stamped');
+  const back = assertRestored(f, 't4');
+  assert.strictEqual(back.revival.seat, 'team-hand-t4');
 });

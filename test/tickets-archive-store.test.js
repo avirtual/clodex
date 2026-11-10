@@ -81,7 +81,9 @@ test('tickets-archive: readArchive is cached on mtime+size and re-read when the 
   const { store, root } = mkStore();
   store.appendArchive(root, [{ id: 't1' }]);
   const first = store.readArchive(root);
-  assert.strictEqual(store.readArchive(root), first, 'an unchanged file answers from the cache');
+  assert.strictEqual(store.readArchive(root).get('t1'), first.get('t1'), 'an unchanged file answers from the cache');
+  first.delete('t1');
+  assert.deepStrictEqual([...store.readArchive(root).keys()], ['t1'], 'a caller mutating its Map does not change the next read');
   fs.appendFileSync(store.archivePath(root), `${JSON.stringify({ op: 'archive', at: 'x', row: { id: 't2' } })}\n`);
   const second = store.readArchive(root);
   assert.notStrictEqual(second, first);
