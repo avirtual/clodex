@@ -3500,7 +3500,7 @@ function newSessionPluginTicks() {
 }
 
 function newSessionExecScope() {
-  if (dialogMode === 'template') return editingTemplateTeam ? { team: editingTemplateTeam } : null;
+  if (dialogMode === 'template' && editingTemplateTeam) return { team: editingTemplateTeam };
   return { cwd: expandPath(inputCwd.value.trim()) || homeDir };
 }
 
@@ -3900,7 +3900,7 @@ inputCwd.addEventListener('change', () => redrawGatesForCwd());
 inputCwd.addEventListener('change', () => refreshWorktreeForCwd());
 inputCwd.addEventListener('change', () => refreshTeamForCwd());
 inputCwd.addEventListener('change', () => {
-  if (dialogMode !== 'template') refreshNewSessionExecCommands(currentOr('execCommands', collectExecChecklist, inputExecList, new Set()));
+  refreshNewSessionExecCommands(currentOr('execCommands', collectExecChecklist, inputExecList, new Set()));
 });
 
 if (teamToggle) {
