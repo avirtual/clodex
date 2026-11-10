@@ -320,7 +320,7 @@ test('addPrefsAccount keys an api account after the add, and clears the key fiel
 
 test('the per-row Set key submit checks the transport before it sends the key', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
-  const start = src.indexOf('const submit = async () => {');
+  const start = src.indexOf('const submit = async () => {', src.indexOf('buildKeyPrompt(document)'));
   assert.ok(start >= 0, 'ENTER: the Set key submit closure was located');
   const body = src.slice(start, src.indexOf('};', start));
   const check = body.indexOf('const refusal = keyTransportRefusal(window);');
