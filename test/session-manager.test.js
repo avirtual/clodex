@@ -22506,7 +22506,7 @@ for (const row of [
   { type: 'claude', window: 200000, size: 1000000, pct: 5 },
 ]) {
   test(`stream ctx: a ${row.type} seat whose clodent 0.7.0 init (clodent/test/stream/stream.test.js) reports ${row.window} sizes a sonnet-5-5 usage at ${row.size}`, async (t) => {
-    const h = mkStreamSeatManager();
+    const h = mkStreamSeatManager({ extraDeps: { probeClodentVersion: () => 'clodent 0.7.0\n' } });
     t.after(() => h.stopAll());
     await h.create('st-win', null, 'stream', row.type);
     h.line('st-win', {
