@@ -4813,7 +4813,7 @@ function createTicketMethods(deps, shared) {
           cwd: roleCwd.cwd,
           // Carried on the shape, not re-resolved at call sites, where it could disagree with the directory actually used.
           cwdFallback: roleCwd.fallback,
-          tpl,
+          tpl: (shape && shape.tpl) || tpl,
           extraArgs: (shape && shape.extraArgs) ? (setsPosture(seatAdapter, shape.extraArgs) ? shape.extraArgs : [...shape.extraArgs, ...postureArgs]) : postureArgs,
           effort: (shape && shape.effort) || null,
           agents: (shape && shape.agents) || [],
@@ -4895,7 +4895,7 @@ function createTicketMethods(deps, shared) {
         // Honored on this arm too; the reviewer stays agent-unwritable via RESERVED_ROLE_KEYS, so only the operator's GUI can set its cwd.
         cwd: roleCwd.cwd,
         cwdFallback: roleCwd.fallback,
-        tpl,
+        tpl: (shape && shape.tpl) || tpl,
         // reviewerModelArgs is an allowlist of one flag: a reviewer template's extraArgs are deliberately dropped,
         // and mirroring the ticket arm here reverts that.
         extraArgs: capArgs ? [...modelArgs.args, ...cap.args] : [...postureArgs, ...modelArgs.args],
