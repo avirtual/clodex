@@ -2832,7 +2832,7 @@ function createTicketMethods(deps, shared) {
             const res = teamTemplateSave(this._teamFileDeps(), team.name, stem, parsed, { saver });
             if (!res.ok) { reply(`error: ${res.error}`); return; }
             this._refreshAppMenuQuietly();
-            const execNamed = (res.stripped || []).filter((s) => s !== 'grantable').map((s) => (s === 'execCommands' && Array.isArray(parsed.execCommands) && parsed.execCommands.length
+            const execNamed = (res.stripped || []).filter((s) => s !== 'grantable' && s !== 'extraArgs').map((s) => (s === 'execCommands' && Array.isArray(parsed.execCommands) && parsed.execCommands.length
               ? `execCommands (${parsed.execCommands.map(String).join(', ')})` : s));
             const savedIntents = Array.isArray(parsed.intents) ? parsed.intents.map(String) : [];
             const pluginHeld = savedIntents.filter((t) => pluginRowFor(t) && !(res.stripped || []).includes(t));
@@ -2842,6 +2842,7 @@ function createTicketMethods(deps, shared) {
             reply(`template "${stem}" saved to ${res.file}${res.mcpIgnored ? ': mcpServers is operator-set; the stored list is unchanged' : ''}`
               + (execNamed.length ? `; stripped ${execNamed.join(', ')}, ${whyStripped} — the stored values are unchanged` : '')
               + ((res.stripped || []).includes('grantable') ? '; grantable is operator-only and was ignored' : '')
+              + ((res.stripped || []).includes('extraArgs') ? '; extraArgs was ignored: it must be an array of strings' : '')
               + (corePrivileged.length ? `; privileged intents are operator grants a template cannot carry, every spawn drops: ${corePrivileged.join(', ')}` : '')
               + (pluginHeld.length ? `; plugin intents ${pluginHeld.join(', ')} reach a spawned seat only when its spawner holds them or, as its team lead, may grant them` : ''));
             return;
@@ -4737,8 +4738,12 @@ function createTicketMethods(deps, shared) {
       const openerRec = getPersistence().get(opener.name) || {};
       const leadArgs = openerRec.extraArgs || [];
       const postureArgs = hasBypass(openerAdapter, leadArgs) ? [...seatAdapter.posture.bypassArgs] : [];
-      const grantClamp = (rawShape && team && team.lead === opener.name) ? clampToGrantor(openerRec, rawShape,
-        postureArgs.length ? (tokens) => setsPosture(seatAdapter, tokens) : null) : null;
+      const capPairs = (seatAdapter.readOnlyCap && Array.isArray(seatAdapter.readOnlyCap.args) && rawShape
+        && hasReadOnlyCap(seatAdapter, rawShape.extraArgs || []))
+        ? splitPrivilegedArgs(seatAdapter.readOnlyCap.args).pairs.map((p) => p.join('\0')) : [];
+      const keepGroup = (g) => (postureArgs.length > 0 && setsPosture(seatAdapter, g.tokens))
+        || (capPairs.length > 0 && g.pairs.every((p) => capPairs.includes(p.join('\0'))));
+      const grantClamp = (rawShape && team && team.lead === opener.name) ? clampToGrantor(openerRec, rawShape, keepGroup) : null;
       const shape = grantClamp ? {
         ...rawShape,
         execCommands: grantClamp.execCommands,

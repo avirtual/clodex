@@ -125,6 +125,13 @@ function mayGrantIntent(rec, grants, type) {
   return intentEnabledForSeat(type, rec) || grants.intents.includes(type);
 }
 
+const NARROWING_FLAG_VALUES = { '--disallowedTools': null, '--permission-mode': ['plan', 'default', 'dontAsk'] };
+
+function narrowsOnly(group) {
+  return group.pairs.length > 0 && group.pairs.every(([f, v]) => Object.prototype.hasOwnProperty.call(NARROWING_FLAG_VALUES, f)
+    && (NARROWING_FLAG_VALUES[f] === null || NARROWING_FLAG_VALUES[f].includes(v)));
+}
+
 function clampToGrantor(rec, { execCommands, extraArgs, intents }, keepGroup = null) {
   const grants = mayGrantOf(rec);
   const dropped = [];
@@ -140,7 +147,7 @@ function clampToGrantor(rec, { execCommands, extraArgs, intents }, keepGroup = n
     const held = new Set(splitPrivilegedArgs(grants.extraArgs).pairs.map(flagKey));
     keptArgs = [];
     for (const g of privilegedGroups(extraArgs)) {
-      if (g.name === null || (keepGroup && keepGroup(g.tokens)) || g.pairs.every((p) => held.has(flagKey(p)))) keptArgs.push(...g.tokens);
+      if (g.name === null || narrowsOnly(g) || (keepGroup && keepGroup(g)) || g.pairs.every((p) => held.has(flagKey(p)))) keptArgs.push(...g.tokens);
       else drop(g.name);
     }
   }

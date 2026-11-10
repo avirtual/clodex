@@ -93,6 +93,32 @@ test('ticket dispatch from a lead holding every item passes the template through
   );
 });
 
+test('ticket dispatch from a lead without bypass keeps plan mode and a tool denylist, dropping nothing', () => {
+  const tpl = { name: 'hand-tpl', type: 'claude', extraArgs: ['--permission-mode', 'plan', '--disallowedTools', 'WebFetch'] };
+  const shape = shapeManager({ name: 'lead', extraArgs: [] }, [tpl]).resolveSeatShape(CREW, 'hand', 'ticket', OPENER('lead'));
+  assert.deepStrictEqual([shape.extraArgs, shape.grantDropped], [['--permission-mode', 'plan', '--disallowedTools', 'WebFetch'], []]);
+});
+
+test('ticket dispatch from a --yolo lead keeps the bypass and the tool denylist beside it', () => {
+  const tpl = { name: 'hand-tpl', type: 'claude', extraArgs: ['--dangerously-skip-permissions', '--disallowedTools', 'WebFetch'] };
+  const shape = shapeManager({ name: 'lead', extraArgs: ['--yolo'] }, [tpl]).resolveSeatShape(CREW, 'hand', 'ticket', OPENER('lead'));
+  assert.deepStrictEqual([shape.extraArgs, shape.grantDropped], [['--dangerously-skip-permissions', '--disallowedTools', 'WebFetch'], []]);
+});
+
+test('ticket dispatch of a codex hand keeps its read-only sandbox cap under a lead that holds neither flag', () => {
+  const tpl = { name: 'hand-tpl', type: 'codex', extraArgs: ['--sandbox', 'read-only', '--ask-for-approval', 'never'] };
+  const shape = shapeManager({ name: 'lead', extraArgs: [] }, [tpl]).resolveSeatShape(CREW, 'hand', 'ticket', OPENER('lead'));
+  assert.deepStrictEqual([shape.extraArgs, shape.grantDropped], [['--sandbox', 'read-only', '--ask-for-approval', 'never'], []]);
+});
+
+test('a lead\'s template-save names a malformed extraArgs as a type error, not as an ungranted item', () => {
+  const b = handlerBox(GRANT_ONLY_CHAT, { lead: { prompt: 'p' } });
+  b.m._handleTeam(b.lead, { type: 'team', sub: 'template-save', stem: 'runner', body: '{"type":"claude","extraArgs":"--yolo"}' });
+  const last = b.injected[b.injected.length - 1];
+  assert.match(last, /extraArgs was ignored: it must be an array of strings/);
+  assert.doesNotMatch(last, /stripped/);
+});
+
 test('a review spawn from the lead drops a plugin intent the lead neither holds nor may grant', () => {
   const team = { ...CREW, roles: { reviewer: { template: 'rv' } } };
   const rv = { name: 'rv', type: 'claude', plugins: ['avh-ops'], intents: ['dm', 'avh-select'], execCommands: ['avh-chat'] };
