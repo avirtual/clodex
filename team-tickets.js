@@ -1665,13 +1665,27 @@ function createTicketMethods(deps, shared) {
           where,
         ].join('\n');
         // Not urgent: the verdict is durable before this runs, so waking a busy lead buys nothing; a hold or park is logged, not retried.
-        const r = this._gatedDeliver(lead, 'ticket-loop', body, false, `[ticket ${ticketId} ${landedOn.verdict}]`);
+        const tag = `[ticket ${ticketId} ${landedOn.verdict}]`;
+        const r = this._verdictOwesLeadNothing(session, ticketId, landedOn, dispatch)
+          ? this._deliverRide(lead, 'ticket-loop', body, { tag, ticket: ticketId, kind: landedOn.verdict })
+          : this._gatedDeliver(lead, 'ticket-loop', body, false, tag);
         if (r && r.error) {
           log.warn('intent', `ticket ${ticketId}: verdict landed but lead ${lead} not notified — ${r.error}`);
         }
       } catch (e) {
         log.error('intent', `ticket ${ticketId}: verdict landed but lead notification failed: ${e.message}`);
       }
+    },
+
+    _verdictOwesLeadNothing(session, ticketId, landedOn, dispatch) {
+      if (landedOn.verdict === 'REWORK') return !!(dispatch && dispatch.ok === true);
+      if (landedOn.verdict !== 'ACCEPT') return false;
+      let ticket = null;
+      try {
+        const team = this._teamOfOrNull(session);
+        ticket = team ? this._loadTicket(team, ticketId) : null;
+      } catch { ticket = null; }
+      return !!(ticket && (ticket.mergeWaiting === 'queued' || ticket.done === 'report'));
     },
 
     // The merge chain is process-wide, not per team: the suite binds real ports, so two
@@ -6200,7 +6214,8 @@ function createTicketMethods(deps, shared) {
             : 'The rework reached the seat and the ticket is open again; the failing test names are on'
               + " the record and in the seat's copy. ") + NOTHING_TORN_DOWN,
         ].join('\n');
-        const r = this._gatedDeliver(team.lead, 'ticket-loop', body, false, `[ticket ${ticket.id} REJECTED] round ${round} → ${seat}`);
+        const r = this._deliverRide(team.lead, 'ticket-loop', body,
+          { tag: `[ticket ${ticket.id} REJECTED] round ${round} → ${seat}`, ticket: ticket.id, kind: 'REJECTED' });
         if (r && r.error) {
           log.warn('intent', `ticket ${ticket.id} rejected to ${seat} but lead ${team.lead} not notified — ${r.error}`);
         }
@@ -7897,6 +7912,7 @@ function createTicketMethods(deps, shared) {
           this._reconcileTickets(team);
           this._resumeOrphanedVerify(team);
           this._startCapParked(team, this.sessions.get(team.lead));
+          try { this._flushDueRides(this.sessions.get(team.lead), now); } catch (e) { log.error('ticket', `ride backstop for ${team.lead} failed: ${e.message}`); }
         }
       }
       return Promise.all(sweeps);
