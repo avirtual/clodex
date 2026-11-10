@@ -32,6 +32,18 @@ const { seatLayoutActive } = require('./seat-layout');
 const { migrateLivingAllowlist } = require('./intent-catalog');
 const { VOICE_MODES } = require('./voice-settings');
 
+function execRowOf(name, obj) {
+  return {
+    name,
+    argv: Array.isArray(obj.argv) ? obj.argv : [],
+    cwd: typeof obj.cwd === 'string' ? obj.cwd : '',
+    description: typeof obj.description === 'string' ? obj.description : '',
+    inProcess: typeof obj.inProcess === 'string' ? obj.inProcess : '',
+    ...(obj.proposal === true ? { proposal: true } : {}),
+    file: `${name}.json`,
+  };
+}
+
 const PROMPT_KINDS = ['system', 'append'];
 const MISFIRE_KINDS = Object.freeze(['unclosed-body', 'empty-body', 'disabled', 'schema', 'exec-refused', 'bounce', 'truncated-head']);
 const MISFIRE_KEEP = 5000;
@@ -1486,16 +1498,7 @@ function initStores(userDataPath, {
         try {
           const obj = JSON.parse(fs.readFileSync(path.join(EXEC_DIR, f), 'utf-8'));
           if (!obj || typeof obj !== 'object') continue;
-          const name = f.replace(/\.json$/, '');
-          out.push({
-            name,
-            argv: Array.isArray(obj.argv) ? obj.argv : [],
-            cwd: typeof obj.cwd === 'string' ? obj.cwd : '',
-            description: typeof obj.description === 'string' ? obj.description : '',
-            inProcess: typeof obj.inProcess === 'string' ? obj.inProcess : '',
-            ...(obj.proposal === true ? { proposal: true } : {}),
-            file: f,
-          });
+          out.push(execRowOf(f.replace(/\.json$/, ''), obj));
         } catch { /* skip unreadable/garbled file */ }
       }
       return out.sort((a, b) => a.name.localeCompare(b.name));
@@ -2479,4 +2482,4 @@ function initStores(userDataPath, {
   };
 }
 
-module.exports = { initStores, sanitizeSandbox, SETUP_CHOICES, MISFIRE_KINDS, MISFIRE_KEEP, MISFIRE_PRUNE_AT };
+module.exports = { initStores, sanitizeSandbox, execRowOf, SETUP_CHOICES, MISFIRE_KINDS, MISFIRE_KEEP, MISFIRE_PRUNE_AT };

@@ -30895,7 +30895,8 @@ ${String(body || "").trim()}
           const argv = (c.argv || []).join(" ");
           const txt = document.createElement("span");
           const detail = c.description || argv || (c.inProcess ? `in-process: ${c.inProcess}` : "");
-          txt.innerHTML = `<strong>${esc(c.name)}</strong>${detail ? " \u2014 " + esc(detail) : ""}`;
+          const owner = c.team ? ` <em>(team ${esc(c.team)})</em>` : "";
+          txt.innerHTML = `<strong>${esc(c.name)}</strong>${owner}${detail ? " \u2014 " + esc(detail) : ""}`;
           row.appendChild(cb);
           row.appendChild(txt);
           container.appendChild(row);
@@ -55919,9 +55920,13 @@ ${detail}` });
       function newSessionPluginTicks() {
         return capsFor(inputType.value).plugins ? collectPluginChecklist(inputPluginList) : defaultPluginTicks();
       }
+      function newSessionExecScope() {
+        if (dialogMode === "template") return editingTemplateTeam ? { team: editingTemplateTeam } : null;
+        return { cwd: expandPath(inputCwd.value.trim()) || homeDir };
+      }
       async function refreshNewSessionExecCommands(enabledSet = /* @__PURE__ */ new Set()) {
         if (!newSessionIsAgent()) return;
-        setExecLibCache(await window.api.listExecCommands() || []);
+        setExecLibCache(await window.api.listExecCommands(newSessionExecScope()) || []);
         formRendered.execCommands = renderExecChecklist(inputExecList, enabledSet);
       }
       async function mcpChecklistData(workspaceId) {
@@ -56323,6 +56328,9 @@ ${detail}` });
       inputCwd.addEventListener("change", () => redrawGatesForCwd());
       inputCwd.addEventListener("change", () => refreshWorktreeForCwd());
       inputCwd.addEventListener("change", () => refreshTeamForCwd());
+      inputCwd.addEventListener("change", () => {
+        if (dialogMode !== "template") refreshNewSessionExecCommands(currentOr("execCommands", collectExecChecklist, inputExecList, /* @__PURE__ */ new Set()));
+      });
       if (teamToggle) {
         teamToggle.addEventListener("change", () => {
           if (teamFields) teamFields.style.display = teamToggle.checked ? "" : "none";
@@ -61890,7 +61898,7 @@ ${res.stderr}` : "");
         const isExecEditable = isAgent && !argsSource;
         argsExecSection.style.display = isExecEditable ? "" : "none";
         if (isExecEditable) {
-          setExecLibCache(await window.api.listExecCommands() || []);
+          setExecLibCache(await window.api.listExecCommands({ session: name }) || []);
           argsExecPersisted = res.execCommands || [];
           argsExecRendered = renderExecChecklist(argsExecList, new Set(res.execCommands || []));
         }
