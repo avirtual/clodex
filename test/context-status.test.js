@@ -77,7 +77,7 @@ function handler(entry) {
     seat: 'h1', parse, entryOf: () => entry, sessionIdOf: () => 'main-thread', cred: 'c'.repeat(64),
     refusal: registry.subagentRefusal,
     tools: { rowFor: registry.toolRowFor, intentFor: registry.toolIntentFor, enabled: registry.intentEnabledForSeat },
-    dispatch: async (intent, opts) => { seen.push({ raw: intent.raw, fromLabel: opts.fromLabel }); opts.replyTo('{"known":false}'); },
+    dispatch: async (intent, opts) => { seen.push({ type: intent.type, sub: intent.sub, fromLabel: opts.fromLabel }); opts.replyTo('{"known":false}'); },
   });
   return { handle, seen };
 }
@@ -87,7 +87,7 @@ const ctl = { closed: () => false };
 test('socket: an unstamped call reaches the context handler and gets its reply in the same call', async () => {
   const { handle, seen } = handler({ intents: ['context'] });
   assert.deepStrictEqual(await handle({ tool: 'context_status', args: {} }, ctl), { ok: true, status: 'ok', reply: '{"known":false}' });
-  assert.deepStrictEqual(seen, [{ raw: '[agent:context status]', fromLabel: null }]);
+  assert.deepStrictEqual(seen, [{ type: 'context', sub: 'status', fromLabel: null }]);
 });
 
 test('socket: a seat without context cannot call it, and an argument is refused', async () => {

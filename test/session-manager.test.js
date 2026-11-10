@@ -22515,7 +22515,7 @@ test('stream ctx: a conversation reset clears ctxInfo and pushes an empty sessio
 
 test('context status: the intent answers in the same call from the seat\'s last ctx record, and a reset makes it unknown', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-10T10:00:00.000Z') });
-  const h = mkStreamSeatManager();
+  const h = mkStreamSeatManager({ extraDeps: { intentEnabledForSeat: require('../intent-registry').intentEnabledForSeat } });
   t.after(() => h.stopAll());
   await h.create('st-cs');
   const ask = async () => {
