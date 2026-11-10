@@ -13,26 +13,34 @@ function tc(name, secs, file) {
   return `<testcase name="${name}" time="${secs}" classname="test" file="${file}"/>`;
 }
 
-function runRunner(args, { blockWrite = false, seed = null } = {}) {
+function runRunner(args, { blockWrite = false, seed = null, legacy = false } = {}) {
   const root = fs.realpathSync(mkTmpRoot('clx-dur-'));
   fs.mkdirSync(path.join(root, 'scripts'));
   for (const f of ['run-tests.js', 'test-escapes.js']) {
     fs.copyFileSync(path.join(ROOT, 'scripts', f), path.join(root, 'scripts', f));
   }
   fs.writeFileSync(path.join(root, 'stub.test.js'), STUB);
-  if (blockWrite) fs.mkdirSync(path.join(root, 'last-run-durations.json.tmp'));
-  if (seed) fs.writeFileSync(path.join(root, 'last-run-durations.json'), JSON.stringify(seed));
+  if (blockWrite) fs.mkdirSync(path.join(root, '.test-durations.last.json.tmp'));
+  if (seed) fs.writeFileSync(path.join(root, '.test-durations.last.json'), JSON.stringify(seed));
+  if (legacy) {
+    for (const name of ['last-run-durations.json', 'last-run-durations.json.tmp']) {
+      fs.writeFileSync(path.join(root, name), '{"files":[{"file":"test/workbench-pilot.test.js","ms":1,"tests":1}]}');
+    }
+  }
+  const before = new Set(fs.readdirSync(root));
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
   try {
     const res = spawnSync(process.execPath, [path.join(root, 'scripts', 'run-tests.js'), ...args],
       { encoding: 'utf-8', cwd: root, timeout: 120000, env });
-    const file = path.join(root, 'last-run-durations.json');
+    const file = path.join(root, '.test-durations.last.json');
     return {
       out: `${res.stdout || ''}`,
       code: res.status,
       doc: fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null,
       root,
+      entries: fs.readdirSync(root),
+      created: fs.readdirSync(root).filter((n) => !before.has(n)),
     };
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 }
@@ -60,7 +68,7 @@ ${tc('c2', 0.75, '/r/test/c.test.js')}
 test('durations: a full run records the file, an own-style file run writes none', () => {
   const full = runRunner([]);
   assert.strictEqual(full.code, 0);
-  assert.ok(full.doc, 'a full run writes last-run-durations.json');
+  assert.ok(full.doc, 'a full run writes .test-durations.last.json');
   assert.deepStrictEqual(Object.keys(full.doc), ['at', 'head', 'runMs', 'files']);
   const stub = full.doc.files.find((f) => f.file === 'stub.test.js');
   assert.strictEqual(stub.tests, 1);
@@ -100,8 +108,27 @@ test('durations: an unwritable target changes neither exit code nor TOTALS line'
 });
 
 test('durations: the file and its temp name are git-ignored', () => {
-  for (const name of ['last-run-durations.json', 'last-run-durations.json.tmp']) {
+  for (const name of ['.test-durations.last.json', '.test-durations.last.json.tmp']) {
     const r = spawnSync('git', ['check-ignore', '-q', name], { cwd: ROOT });
     assert.strictEqual(r.status, 0, `${name} must be ignored`);
   }
+});
+
+test('durations: everything a full run writes into the root is dot-named', () => {
+  const r = runRunner([]);
+  assert.strictEqual(r.code, 0);
+  assert.ok(r.created.length > 0, 'ENTER: a full run created something in the root');
+  for (const name of r.created) {
+    assert.ok(name.startsWith('.'),
+      `${name}: tree-scanning tests skip dot-named entries; a visible generated JSON holding test file names trips them`);
+  }
+});
+
+test('durations: a full run removes a leftover legacy file and its temp, exit code unchanged', () => {
+  const r = runRunner([], { legacy: true });
+  assert.strictEqual(r.code, 0);
+  assert.ok(r.doc, 'ENTER: the new file was written');
+  assert.ok(!r.entries.includes('last-run-durations.json'));
+  assert.ok(!r.entries.includes('last-run-durations.json.tmp'));
+  assert.match(r.out, /^TOTALS: 2 pass, 0 fail, 2 tests$/m);
 });
