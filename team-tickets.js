@@ -8214,14 +8214,17 @@ function createTicketMethods(deps, shared) {
           continue;
         }
         if (!ticketInFlight(t) || t.assignee == null || !ticketStarted(t) || t.parked) continue;
-        const last = t.lastActivityAt || t.openedAt || now;
-        if (now - last < stallMs) continue;
         // A loop-held ticket is never orphan-tested: the hand is gone by construction, and an
         // orphan verdict would replace the alarm that names the stuck step.
         const loopHeld = t.state === 'done' && !!t.loopStep;
         const foreignRole = !!(t.role && !(team.roles
           && Object.prototype.hasOwnProperty.call(team.roles, t.role)));
-        const orphan = !loopHeld && !this._ticketAssigneeSeat(team, t, live);
+        const assigneeSeat = loopHeld ? null : this._ticketAssigneeSeat(team, t, live);
+        const orphan = !loopHeld && !assigneeSeat;
+        const assigneeSession = assigneeSeat ? this.sessions.get(assigneeSeat) : null;
+        const seatActivityTs = assigneeSession && typeof assigneeSession.activityTs === 'number' ? assigneeSession.activityTs : 0;
+        const last = Math.max(t.lastActivityAt || t.openedAt || now, seatActivityTs);
+        if (now - last < stallMs) continue;
         // Gate on both nudgedAt and orphanNudgedAt: nudgedAt alone silences the orphan alarm
         // forever for a ticket that first alarmed as a live but quiet stall.
         if (orphan && t.nudgedAt && t.orphanNudgedAt) continue;

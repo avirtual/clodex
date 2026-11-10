@@ -9715,6 +9715,32 @@ test('watchdog: activity resets the stall episode (nudge fires again after a re-
   assert.strictEqual(f.gated.filter((g) => /stalled/.test(g.body)).length, 1, 're-nudged after the reset');
 });
 
+for (const row of [
+  { label: 'a live seat with a request 1m ago is not stalled', live: true, activityAgoMs: 60 * 1000, alarms: 0 },
+  { label: 'a live seat whose last request is 40m old alarms', live: true, activityAgoMs: 40 * 60 * 1000, alarms: 1 },
+  { label: 'no live assignee session falls back to lastActivityAt and alarms', live: false, activityAgoMs: 60 * 1000, alarms: 1 },
+]) {
+  test(`watchdog: per-request activity — ${row.label}`, async () => {
+    const f = mkTasks();
+    const now = 1_800_000_000_000;
+    f.team.watchdogMs = 30 * 60 * 1000;
+    f.seat('lead');
+    const hand = f.seat('team-hand', '/proj', { activityTs: now - row.activityAgoMs });
+    f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'add', who: 'hand', id: null, body: 'the spec' });
+    f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'start', who: null, id: 't1', body: '' });
+    const arr = f.load();
+    arr[0].lastActivityAt = now - 40 * 60 * 1000;
+    f.tstore.save(f.team.root, arr);
+    if (!row.live) f.m.sessions.delete('team-hand');
+    assert.strictEqual(f.m.sessions.get('team-hand') === hand, row.live, 'ENTER: the assignee session is live exactly when the row says');
+    f.gated.length = 0;
+    await f.m._sweepTeamTickets(f.team, now);
+    const alarms = f.gated.filter((g) => /stalled/.test(g.body));
+    assert.strictEqual(alarms.length, row.alarms);
+    if (row.alarms) assert.match(alarms[0].body, /quiet 40m/);
+  });
+}
+
 test('task add start: files the ticket AND dispatches it, in one reply naming the id', () => {
   const f = mkTasks();
   f.seat('lead'); f.seat('team-hand');
