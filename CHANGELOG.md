@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.173.0 — 2026-11-10
+
 - Teams: idle clear is now a per-role option in the Roles panel (off, 15 min to 2 h). It applies to the role's existing seats when saved and to every seat minted for the role. A lead can set it with `[agent:team role-set <role> idle-clear:<minutes|off>]`.
 - Teams: a role's account now applies to a seat a lead spawns by name for that role, not only to seats the ticket loop creates. A standing role's account used to be ignored, so a respawned seat could start with no login.
 - Deleting a seat removes it from its team's roster at once. Respawning the same name straight afterwards used to land the seat on no team, depending on timing.
