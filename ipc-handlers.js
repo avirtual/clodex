@@ -1448,9 +1448,9 @@ function registerIpcHandlers(deps) {
         return { ok: false, error: String((e && e.message) || e) };
       }
     });
-    handle('accounts:setApiKey', (_e, label, key) => {
+    handle('accounts:setApiKey', (e, label, key) => {
       if (!accounts) return { ok: false, error: 'accounts not supported on this host' };
-      if (typeof secureTransportOfSender !== 'function' || secureTransportOfSender(_e) !== true) {
+      if (typeof secureTransportOfSender !== 'function' || secureTransportOfSender(e) !== true) {
         return { ok: false, error: 'an API key is accepted only over a local or encrypted connection' };
       }
       try {

@@ -318,6 +318,18 @@ test('addPrefsAccount keys an api account after the add, and clears the key fiel
   assert.strictEqual(max.ctx.prefsAccountKey.value, '');
 });
 
+test('the per-row Set key submit checks the transport before it sends the key', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
+  const start = src.indexOf('const submit = async () => {');
+  assert.ok(start >= 0, 'ENTER: the Set key submit closure was located');
+  const body = src.slice(start, src.indexOf('};', start));
+  const check = body.indexOf('const refusal = keyTransportRefusal(window);');
+  const bail = body.indexOf("if (refusal) { setPrefsAccountsState(refusal, 'error'); return; }");
+  const send = body.indexOf('await window.api.accountsSetApiKey(account.label, key)');
+  assert.ok(send > 0, 'ENTER: the closure sends the key');
+  assert.ok(check > 0 && check < bail && bail < send, 'the refusal check and bail precede the send');
+});
+
 test('addPrefsAccount on an insecure context sends nothing, shows the refusal and clears the field', async () => {
   const insecure = await runAdd({ plan: 'api', addOk: true, isSecureContext: false });
   assert.deepStrictEqual(insecure.calls, []);

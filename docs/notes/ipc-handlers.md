@@ -24,6 +24,8 @@ the family protected nothing.
 dep refuses. main.js answers `true`; web-host.js answers `true` only for a
 connection whose peer address was loopback or whose `Origin` was `https:` when
 the socket was accepted. The other six `accounts:*` channels are not gated.
+Unverified: a client behind a published Docker port likely arrives from the
+bridge gateway, not loopback, so `http://localhost:<port>` would be refused.
 
 ## envLockedSettings
 
