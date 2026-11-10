@@ -1834,3 +1834,137 @@ test('t2007: a green close-out leaves a one-shot seat that holds another started
   assert.match(r.text, /left in place because it holds t2/);
   assert.strictEqual(f.one('t1').loopClosedOut, undefined, 'the loop close-out is not stamped');
 });
+
+const masterSha = (f) => execFileSync('git', ['-C', f.repoDir, 'rev-parse', 'master'], { encoding: 'utf8' }).trim();
+
+const openTicket = (f, { id = 't1', assignee, branch, started = true }) => {
+  f.tstore.save(f.team.root, [{
+    id, state: 'open', spec: `spec for ${id}`, assignee,
+    ...(started ? { role: 'hand', startedAt: 1, worktree: { branch } } : { startedAt: null }),
+    openedAt: 1, lastActivityAt: 1,
+  }]);
+  return f.one(id);
+};
+
+const mintedSeat = (f, name, branch, { ephemeral = true, ticketId = 't1' } = {}) => {
+  const wt = f.worktreeSeat(name, branch, { ephemeral, baseSha: masterSha(f) });
+  if (ticketId) f.persistence.upsert({ name, ticketId });
+  return wt;
+};
+
+const cancel = async (f, id) => {
+  const out = [];
+  const push = (msg) => { out.push(msg); f.replies.push(msg); };
+  await f.m._taskCancel(f.m.sessions.get('lead'), f.team, { type: 'task', sub: 'cancel', id, who: null, body: 'drop it' }, push, push);
+  return out;
+};
+
+test('cancel: a minted seat on a 0-commit clean tree is retired, its tree removed and its branch deleted', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  const wt = mintedSeat(f, 'team-hand-t1', 'landed');
+  openTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
+  assert.ok(exists(wt) && branches(f).includes('landed'), 'ENTER: tree and branch exist');
+
+  const out = await cancel(f, 't1');
+
+  assert.strictEqual(out.length, 1);
+  assert.match(out[0], /^ticket t1 cancelled — team-hand-t1 retired, its empty worktree removed and branch landed deleted/);
+  assert.deepStrictEqual(f.killed, ['team-hand-t1']);
+  assert.strictEqual(exists(wt), false);
+  assert.strictEqual(branches(f).includes('landed'), false);
+  assert.strictEqual(f.persistence.get('team-hand-t1'), null);
+  assert.strictEqual(f.one('t1').state, 'cancelled');
+});
+
+test('cancel: commits ahead retire the seat but keep the tree and branch, and the ack names them', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  const wt = mintedSeat(f, 'team-hand-t1', 'pending');
+  openTicket(f, { assignee: 'team-hand-t1', branch: 'pending' });
+
+  const out = await cancel(f, 't1');
+
+  assert.deepStrictEqual(f.killed, ['team-hand-t1']);
+  assert.strictEqual(exists(wt), true);
+  assert.ok(branches(f).includes('pending'));
+  assert.strictEqual(out[0], `ticket t1 cancelled — team-hand-t1 retired; kept ${wt} (1 commit on pending)`);
+  assert.ok(f.persistence.get('team-hand-t1').archivedAt, 'the record naming the kept tree survives, archived');
+});
+
+test('cancel: a dirty 0-commit tree is kept with its branch', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  const wt = mintedSeat(f, 'team-hand-t1', 'landed');
+  fsReal.writeFileSync(pathReal.join(wt, 'scratch.txt'), 'wip\n');
+  openTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
+
+  const out = await cancel(f, 't1');
+
+  assert.deepStrictEqual(f.killed, ['team-hand-t1']);
+  assert.strictEqual(exists(wt), true);
+  assert.ok(branches(f).includes('landed'));
+  assert.match(out[0], new RegExp(`kept ${wt.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} and landed \\(uncommitted work\\)`));
+});
+
+test('cancel: an unreadable tree is kept', async (t) => {
+  const realGw = require('../git-worktree');
+  const f = mkFixture(t, { gitWorktree: { ...realGw, isDirty: async () => ({ ok: false, error: 'boom' }) } });
+  f.seat('lead');
+  const wt = mintedSeat(f, 'team-hand-t1', 'landed');
+  openTicket(f, { assignee: 'team-hand-t1', branch: 'landed' });
+
+  const out = await cancel(f, 't1');
+
+  assert.strictEqual(exists(wt), true);
+  assert.ok(branches(f).includes('landed'));
+  assert.match(out[0], /the tree could not be read: boom/);
+});
+
+test('cancel: a standing assignee is not retired and its tree is untouched', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  const destroyed = [];
+  f.m.destroy = async (name) => { destroyed.push(name); return { ok: true }; };
+  const wt = mintedSeat(f, 'team-hand', 'landed', { ephemeral: false, ticketId: null });
+  openTicket(f, { assignee: 'team-hand', branch: 'landed' });
+
+  const out = await cancel(f, 't1');
+
+  assert.deepStrictEqual(destroyed, []);
+  assert.ok(f.m.sessions.has('team-hand'));
+  assert.strictEqual(exists(wt), true);
+  assert.ok(branches(f).includes('landed'));
+  assert.strictEqual(out[0], 'ticket t1 cancelled');
+});
+
+test('cancel: a seat minted for another ticket is not retired', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  const destroyed = [];
+  f.m.destroy = async (name) => { destroyed.push(name); return { ok: true }; };
+  mintedSeat(f, 'team-hand-t7', 'landed', { ticketId: 't7' });
+  openTicket(f, { assignee: 'team-hand-t7', branch: 'landed' });
+
+  await cancel(f, 't1');
+
+  assert.deepStrictEqual(destroyed, []);
+  assert.ok(f.m.sessions.has('team-hand-t7'));
+});
+
+test('cancel: a backlog ticket attempts no teardown', async (t) => {
+  const f = mkFixture(t);
+  f.seat('lead');
+  const destroyed = [];
+  f.m.destroy = async (name) => { destroyed.push(name); return { ok: true }; };
+  const wt = mintedSeat(f, 'team-hand-t1', 'landed');
+  openTicket(f, { assignee: 'team-hand-t1', branch: 'landed', started: false });
+  assert.strictEqual(require('../tickets-store').ticketStarted(f.one('t1')), false, 'ENTER: the ticket was never started');
+
+  const out = await cancel(f, 't1');
+
+  assert.deepStrictEqual(destroyed, []);
+  assert.strictEqual(exists(wt), true);
+  assert.strictEqual(out[0], 'ticket t1 cancelled');
+  assert.strictEqual(f.one('t1').state, 'cancelled');
+});
