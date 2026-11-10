@@ -11,6 +11,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { seatHasPlugin } = require('./plugin-api');
 
 // The exec-intent helper scripts. These are dependency-free
 // (node builtins only), so a flat copy by relative path is
@@ -58,4 +59,43 @@ function materializeSeatVerb({ root, srcDir = __dirname, log } = {}) {
   }
 }
 
-module.exports = { EXEC_SCRIPTS, SEAT_VERB_SRC, SEAT_VERB_NAME, materializeExecScripts, materializeSeatVerb };
+const SEAT_BIN_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
+
+function seatBinsFor({ bins, intents, plugins }) {
+  if (!Array.isArray(bins) || !Array.isArray(intents)) return [];
+  return bins.filter((b) => b && typeof b.verb === 'string' && intents.includes(b.verb)
+    && seatHasPlugin(b.id, Array.isArray(plugins) ? plugins : null, b.shipped)
+    && typeof b.name === 'string' && SEAT_BIN_NAME_RE.test(b.name));
+}
+
+function materializeSeatBins({ binDir, bins, log }) {
+  const installed = [];
+  for (const b of bins) {
+    const dir = path.resolve(b.dir);
+    const src = path.resolve(dir, String(b.src));
+    if (!src.startsWith(dir + path.sep)) continue;
+    const dest = path.join(binDir, b.name);
+    try {
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.writeFileSync(dest, fs.readFileSync(src));
+      fs.chmodSync(dest, 0o755);
+      installed.push({ name: b.name, path: dest, env: Array.isArray(b.env) ? b.env : [] });
+    } catch (e) {
+      if (log) log.info('bin', `seat bin ${b.id}/${b.name} skipped (${e && e.message})`);
+    }
+  }
+  return installed;
+}
+
+function seatBinEnv({ installed, explicit = {} }) {
+  const out = {};
+  for (const b of installed) {
+    for (const k of b.env) if (!Object.prototype.hasOwnProperty.call(explicit, k)) out[k] = b.path;
+  }
+  return out;
+}
+
+module.exports = {
+  EXEC_SCRIPTS, SEAT_VERB_SRC, SEAT_VERB_NAME, SEAT_BIN_NAME_RE,
+  materializeExecScripts, materializeSeatVerb, seatBinsFor, materializeSeatBins, seatBinEnv,
+};

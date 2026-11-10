@@ -271,6 +271,27 @@ test('discover refuses a style path that escapes the plugin directory', () => {
   assert.ok(logged.some((l) => /style escapes/.test(l)));
 });
 
+test('discover refuses a seatBin.src that escapes the plugin directory, with a message', () => {
+  const root = mkTree({
+    evil: { manifest: { ...OK_MANIFEST, id: 'evil', seatBin: { name: 'evil-open', src: '../../session-manager.js' } } },
+  });
+  const { loader, logged } = mkLoader(root);
+  assert.deepStrictEqual(loader.discover(), []);
+  assert.ok(logged.some((l) => /skipping evil: seatBin\.src escapes the plugin directory/.test(l)), logged.join('\n'));
+});
+
+test('validateManifest refuses a seatBin with a bad name, src, env or verb, and accepts a well-formed one', () => {
+  const m = (seatBin) => ({ ...OK_MANIFEST, seatBin });
+  assert.strictEqual(validateManifest(m({ name: '../x', src: 'b.js' }), 'alpha'), 'invalid seatBin.name: "../x" — letters, digits, . _ - (1-64), not dots only');
+  assert.strictEqual(validateManifest(m({ name: '..', src: 'b.js' }), 'alpha'), 'invalid seatBin.name: ".." — letters, digits, . _ - (1-64), not dots only');
+  assert.strictEqual(validateManifest(m({ name: 'a b', src: 'b.js' }), 'alpha'), 'invalid seatBin.name: "a b" — letters, digits, . _ - (1-64), not dots only');
+  assert.strictEqual(validateManifest(m({ name: 'ok' }), 'alpha'), 'manifest.seatBin.src must name a file in the plugin directory');
+  assert.strictEqual(validateManifest(m({ name: 'ok', src: 'b.js', env: ['BAD-KEY'] }), 'alpha'), 'manifest.seatBin.env must be an array of environment variable names');
+  assert.strictEqual(validateManifest(m({ name: 'ok', src: 'b.js', verb: 'Bad Verb' }), 'alpha'), 'invalid seatBin.verb: "Bad Verb"');
+  assert.strictEqual(validateManifest(m(['x']), 'alpha'), 'manifest.seatBin must be an object');
+  assert.strictEqual(validateManifest(m({ name: 'ok-open', src: 'b.js', env: ['BROWSER'], verb: 'ok' }), 'alpha'), null);
+});
+
 test('discover is deterministic (sorted) across plugins', () => {
   const root = mkTree({
     zeta: { manifest: { ...OK_MANIFEST, id: 'zeta' } },

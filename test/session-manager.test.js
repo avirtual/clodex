@@ -13497,10 +13497,12 @@ test('create → PTY env: a deny-listed scope key never reaches the PTY', async 
 
 const RESUME_KEY = 'CLAUDE_CODE_RESUME_INTERRUPTED_TURN';
 delete process.env[RESUME_KEY];
-async function resumeEnvProbe({ entry = null, resumeId = null, sessionEnv = null, global = {} } = {}) {
+async function resumeEnvProbe({ entry = null, resumeId = null, sessionEnv = null, global = {}, intents = null, plugins = null, seatBins = [] } = {}) {
   let capturedEnv = null;
+  let seatBinFiles = null;
   const rig = mkSkillsOffRig({
-    pty: { spawn: (_cmd, _args, opts) => { capturedEnv = opts.env; return { onData() {}, onExit() {}, pid: 999 }; } },
+    getSeatBins: () => seatBins,
+    pty: { spawn: (_cmd, _args, opts) => { capturedEnv = opts.env; seatBinFiles = (() => { try { return fs.readdirSync(path.join(opts.env.CLODEX_HOME, 'run', 'rs', 'bin')); } catch { return []; } })(); return { onData() {}, onExit() {}, pid: 999 }; } },
     mergeSessionEnv: (args) => require('../env-scopes').mergeSessionEnv({ ...args, base: { ...process.env }, global, overrideFile: null }),
   });
   const exitedCalls = [];
@@ -13512,9 +13514,9 @@ async function resumeEnvProbe({ entry = null, resumeId = null, sessionEnv = null
   if (entry) rig.persistence.upsert({ name: 'rs', ...entry });
   try {
     await rig.m.create('rs', 'claude', os.tmpdir(), [], resumeId, 'ws', null, false, null,
-      [], [], [], [], [], null, [], [], null, sessionEnv);
+      [], [], [], [], [], null, [], [], intents, sessionEnv, false, false, plugins);
   } finally { rig.stop('rs'); }
-  return { env: capturedEnv, exitedCalls, entryAfter: rig.persistence.get('rs') };
+  return { env: capturedEnv, seatBinFiles, exitedCalls, entryAfter: rig.persistence.get('rs') };
 }
 
 test('create → PTY env: a claude --resume of an exitedAt-stamped entry carries CLAUDE_CODE_RESUME_INTERRUPTED_TURN=1', async () => {
@@ -13526,6 +13528,46 @@ test('create → PTY env: a claude --resume of an exitedAt-stamped entry carries
   assert.deepStrictEqual(crashedRest, { ...plainRest, [RESUME_KEY]: '1' });
   assert.deepStrictEqual(crashed.exitedCalls, [['rs', null]], 'the exitedAt stamp is cleared after the env is built');
   assert.strictEqual('exitedAt' in crashed.entryAfter, false);
+});
+
+function withoutBrowserEnv(t) {
+  const keys = ['BROWSER', 'GH_BROWSER', 'npm_config_browser'];
+  const saved = keys.map((k) => [k, process.env[k]]);
+  for (const k of keys) delete process.env[k];
+  t.after(() => { for (const [k, v] of saved) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } });
+}
+
+const BROWSE_SEAT_BIN = {
+  id: 'browser-pane', shipped: true, dir: path.join(__dirname, '..', 'plugins', 'browser-pane'),
+  name: 'clodex-browse', src: 'clodex-browse.js', env: ['BROWSER', 'GH_BROWSER', 'npm_config_browser'], verb: 'browser',
+};
+
+test('create → PTY env: a seat holding the seatBin verb and plugin gets the bin on PATH and its env; one lacking either gets neither', async (t) => {
+  withoutBrowserEnv(t);
+  const granted = await resumeEnvProbe({ entry: {}, intents: ['dm', 'browser'], plugins: ['browser-pane'], seatBins: [BROWSE_SEAT_BIN] });
+  const binDir = path.join(granted.env.CLODEX_HOME, 'run', 'rs', 'bin');
+  const verb = path.join(binDir, 'clodex-browse');
+  assert.deepStrictEqual([granted.env.BROWSER, granted.env.GH_BROWSER, granted.env.npm_config_browser], [verb, verb, verb]);
+  assert.deepStrictEqual(granted.seatBinFiles, ['clodex-browse']);
+  assert.deepStrictEqual(granted.env.PATH.split(path.delimiter).slice(0, 2), [binDir, path.join(granted.env.CLODEX_HOME, 'bin')]);
+  for (const [label, opts] of [
+    ['no verb', { intents: ['dm'], plugins: ['browser-pane'] }],
+    ['no plugin', { intents: ['dm', 'browser'], plugins: ['other'] }],
+    ['absent intents list', { intents: null, plugins: ['browser-pane'] }],
+  ]) {
+    const r = await resumeEnvProbe({ entry: {}, seatBins: [BROWSE_SEAT_BIN], ...opts });
+    assert.ok(r.env.CLODEX_INTENT_SOCK, `ENTER (${label}): the seat still has its intent channel`);
+    assert.deepStrictEqual(['BROWSER', 'GH_BROWSER', 'npm_config_browser'].filter((k) => k in r.env), [], label);
+    assert.deepStrictEqual(r.seatBinFiles, [], label);
+    assert.strictEqual(r.env.PATH.split(path.delimiter)[0], path.join(r.env.CLODEX_HOME, 'bin'), label);
+  }
+});
+
+test('create → PTY env: a template env BROWSER wins over the seatBin; the keys it does not set still point at the bin', async (t) => {
+  withoutBrowserEnv(t);
+  const r = await resumeEnvProbe({ entry: {}, intents: ['browser'], plugins: ['browser-pane'], seatBins: [BROWSE_SEAT_BIN], sessionEnv: { BROWSER: '/usr/local/bin/firefox' } });
+  const verb = path.join(r.env.CLODEX_HOME, 'run', 'rs', 'bin', 'clodex-browse');
+  assert.deepStrictEqual([r.env.BROWSER, r.env.GH_BROWSER, r.env.npm_config_browser], ['/usr/local/bin/firefox', verb, verb]);
 });
 
 test('create → PTY env: a claude seat carries its intent channel and the clodex verb dir on PATH', async () => {

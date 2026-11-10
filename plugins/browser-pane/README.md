@@ -128,6 +128,10 @@ Operator checks (by hand, in the app):
 `CXB_ONLY=handover node manual/browser-pane-live.js` drives the same through the
 ipc handlers (step 12).
 
+## Shell logins: `clodex-browse`
+
+A seat granted `browser` that holds this plugin gets `clodex-browse` on its `PATH` and `BROWSER`, `GH_BROWSER` and `npm_config_browser` pointing at it (the manifest's `seatBin`), unless the seat's env scopes or template env set that key explicitly. `gh auth login` and npm's web login then open their URL in the browser pane instead of the system browser. `clodex-browse <url>` accepts http(s) only and sends the seat's `[agent:browser open <service> --show] <url>` over the intent socket, so the denylist and URL policy apply unchanged; it runs without an identity stamp, so the subagent policy applies too. The service is `$CLODEX_BROWSE_SERVICE`, default `web` — sign in there once. It exits 0 once the pane accepted the open; on a refusal, a missing grant or channel, or a non-http URL it prints the reason and the URL to stderr and exits non-zero.
+
 ## Limits
 
 - **Google sign-in** is handled like any sign-in — the operator signs in in the

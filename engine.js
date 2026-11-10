@@ -1297,6 +1297,7 @@ const SessionManager = createSessionManager({
     listAllTemplates,
     listAllPrompts,
     getPluginBundles: () => (pluginHost ? pluginHost.bundles() : []),
+    getSeatBins: () => (pluginHost ? pluginHost.seatBins() : []),
   getPersistence: () => persistence,
   getTemplates: () => templates,
   getUiSettings: () => uiSettings,

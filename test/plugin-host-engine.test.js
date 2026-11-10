@@ -1541,3 +1541,18 @@ test('runtime.electronChild: a deactivated plugin is refused', () => {
   assert.deepStrictEqual(host.runtime.electronChild(path.join(pluginDir, 'child.js')), { error: 'plugin is deactivated' });
   assert.deepStrictEqual(calls, []);
 });
+
+test('seatBins lists each registered manifest seatBin; verb defaults to the plugin\'s registered intent, and an explicit verb wins', () => {
+  try {
+    const { engine } = makeHost();
+    engine.register('demo', {
+      activate(h) { h.intents.register({ verb: 'branch', parse: () => null }); },
+    }, { id: 'demo', hostApi: '1', seatBin: { name: 'demo-open', src: 'bin.js', env: ['DEMO_OPENER'] } }, { dir: '/plugins/demo', shipped: true });
+    engine.register('other', { activate() {} }, { id: 'other', hostApi: '1', seatBin: { name: 'other-run', src: 'o.js', verb: 'leaf' } }, { dir: '/plugins/other' });
+    engine.register('plain', { activate() {} }, { id: 'plain', hostApi: '1' }, { dir: '/plugins/plain' });
+    assert.deepStrictEqual(engine.seatBins(), [
+      { id: 'demo', shipped: true, dir: '/plugins/demo', name: 'demo-open', src: 'bin.js', env: ['DEMO_OPENER'], verb: 'branch' },
+      { id: 'other', shipped: false, dir: '/plugins/other', name: 'other-run', src: 'o.js', env: [], verb: 'leaf' },
+    ]);
+  } finally { intentRegistry._resetPluginRows(); }
+});
