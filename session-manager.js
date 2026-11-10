@@ -9708,7 +9708,7 @@ function createSessionManager(deps) {
       const ticket = opts.ticket || null;
       const kind = opts.kind || null;
       const target = this.sessions.get(targetName);
-      const canRide = !!(target && target.agentType && !target.clone && !target._dead
+      const canRide = !!(typeof parkDelivery === 'function' && target && target.agentType && !target.clone && !target._dead
         && runsClaudeHooks(target.agentType) && this._injectHoldReason(target) !== 'dialog');
       if (!canRide) return this._gatedDeliver(targetName, senderTag, body, false, tag);
       const due = Date.now() + RIDE_MAX_MS;

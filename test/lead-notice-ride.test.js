@@ -179,3 +179,25 @@ test('(f) seat-type gate: a passive delivery to a clodent seat parks', () => {
   assert.strictEqual(woke, 0);
   assert.strictEqual(f.parked().length, 1);
 });
+
+test('_deliverRide to a lead behind a permission dialog wakes instead of parking', () => {
+  const f = mkLoop();
+  f.lead.needsAttention = { kind: 'permission' };
+  const r = f.m._deliverRide('lead', 'ticket-loop', '[ticket t1 ACCEPT] x', { tag: '[ticket t1 ACCEPT]', ticket: 't1', kind: 'ACCEPT' });
+  assert.deepStrictEqual(r, { queued: true });
+  assert.strictEqual(f.gated.length, 1);
+  assert.deepStrictEqual(f.parked(), []);
+});
+
+test('_flushDueRides holds an overdue ride while the lead is busy, then flushes it', () => {
+  const f = mkLoop();
+  f.m._deliverRide('lead', 'ticket-loop', '[ticket t1 REJECTED] x', { tag: 't', ticket: 't1', kind: 'REJECTED' });
+  const late = Date.now() + THIRTY_ONE_MIN;
+  f.lead.activityState = 'thinking';
+  assert.strictEqual(f.m._flushDueRides(f.lead, late), null);
+  assert.strictEqual(f.parked().length, 1);
+  f.lead.activityState = 'idle';
+  assert.deepStrictEqual(f.m._flushDueRides(f.lead, late), { ok: true, count: 1 });
+  assert.strictEqual(f.injected.length, 1);
+  assert.deepStrictEqual(f.parked(), []);
+});
