@@ -776,12 +776,14 @@ test('t1076 review arm: a CODEX lead with the Codex bypass flag gives its claude
   assert.deepStrictEqual(shape.extraArgs, ['--dangerously-skip-permissions']);
 });
 
-test('clodent: a clodent-template hand naming an account is refused with reason platform — no Claude account dir becomes CLODENT_HOME', () => {
-  const m = managerWith([{ name: 'hk', type: 'clodent', cwd: '/repo' }]);
+test('clodent: a clodent-template hand naming an account gets that account dir as CLODENT_HOME', () => {
+  const m = managerWith([{ name: 'hk', type: 'clodent', cwd: '/repo' }], {
+    accounts: { configDirFor: (l) => (l === 'work' ? '/home/u/.clodex/accounts/work' : null), list: () => [{ label: 'work' }] },
+  });
   const shape = m.resolveSeatShape(teamWith({ hand: { worktree: true, template: 'hk', account: 'work' } }), 'hand', 'ticket', LEAD);
   assert.strictEqual(shape.type, 'clodent', 'ENTER: the clodent template resolved');
-  assert.deepStrictEqual(shape.accountMissing, { label: 'work', reason: 'platform' });
-  assert.deepStrictEqual(Object.keys(shape.env || {}), [], 'no CLODENT_HOME reaches the seat env');
+  assert.strictEqual(shape.accountMissing, null);
+  assert.deepStrictEqual(shape.env, { CLODENT_HOME: '/home/u/.clodex/accounts/work' });
 });
 
 test('clodent: a clodent reviewer gets --permission-mode plan last and the clodent cap note, not the OS-sandbox one', () => {

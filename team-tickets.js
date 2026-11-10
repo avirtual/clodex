@@ -34,7 +34,7 @@ const { expandTeamRoot } = require('./team-root-expand');
 const { CLAUDE_TOOLS } = require('./catalogs');
 const { BOX_ID_RE, sizeToBytes, runningInSandboxBox, normalizeBootstrap, bootstrapFieldText, bootstrapSha, bootstrapScripts, HEALTH_TIMEOUT_MS, SETUP_TIMEOUT_S } = require('./sandbox');
 const { SANDBOX_RELAY_VERBS, SANDBOX_RELAY_BODY_MAX } = require('./relay-protocol');
-const { parseWithRegistry } = require('./intent-registry');
+const { parseWithRegistry, pluginRowFor, intentEnabledForSeat: registryHolds } = require('./intent-registry');
 const { ensureDir: ensureDirMode700, atomicWriteFileSync } = require('./fs-util');
 const { seedSandboxSessions } = require('./sandbox-seeds');
 const RUNNER_OWNER = require('crypto').randomUUID();
@@ -698,6 +698,15 @@ function createTicketMethods(deps, shared) {
       const shellDeny = shellDenyList.length ? shellDenyList : null;
       const seatGrants = clampToSpawner(tpl && tpl.execCommands, 'execCommands');
       const mcpServers = clampToSpawner(tpl && tpl.mcpServers, 'mcpServers').map(String);
+      const execDropped = Array.isArray(tpl && tpl.execCommands)
+        ? tpl.execCommands.map(String).filter((c) => !seatGrants.map(String).includes(c)) : [];
+      const tplIntents = Array.isArray(tpl && tpl.intents) ? tpl.intents : null;
+      const pluginIntents = tplIntents ? tplIntents.filter((t) => pluginRowFor(t)) : [];
+      const keptPlugin = pluginIntents.filter((t) => operator || registryHolds(t, spawnerRec));
+      const childIntents = tplIntents
+        ? [...withoutPrivilegedIntentsFor(tplIntents).filter((t) => !pluginRowFor(t)), ...keptPlugin] : null;
+      const pluginDropped = pluginIntents.filter((t) => !keptPlugin.includes(t));
+      const coreDropped = tplIntents ? tplIntents.filter((t) => !pluginRowFor(t) && !childIntents.includes(t)) : [];
       const noWire = (tpl && tpl.noWire) === true && (operator || spawnerRec.noWire === true || spawner.noWire === true);
       const credLists = [spawnerRec.protectCredentials, tpl && tpl.protectCredentials].filter(Array.isArray);
       const protectCredentials = credLists.length
@@ -791,7 +800,7 @@ function createTicketMethods(deps, shared) {
             seatGrants,
             // `[]` intents (everything gated) is a real value that must apply; an absent key passes null so create() keeps the
             // all-enabled default.
-            withoutPrivilegedIntentsFor(Array.isArray(tpl && tpl.intents) ? tpl.intents : null),
+            childIntents,
             sessionEnv, true,
             noWire,
             plugins, shellDeny, null,
@@ -823,6 +832,9 @@ function createTicketMethods(deps, shared) {
             + roleNote
             + grantWarn
             + promptWarn
+            + (coreDropped.length ? ` — privileged intents are operator grants a template cannot carry, dropped: ${coreDropped.join(', ')}` : '')
+            + (pluginDropped.length ? ` — plugin intents ${spawner.name} does not hold, dropped: ${pluginDropped.join(', ')} (the operator grants them in the seat's Intents checklist)` : '')
+            + (execDropped.length ? ` — exec commands ${spawner.name} does not hold, dropped: ${execDropped.join(', ')}` : '')
             + (envDropped.length ? ` — env keys not allowed, dropped: ${envDropped.join(', ')}` : '')
             + (envClamped.length ? ` — env ${envClamped.join(', ')} is neither ${spawner.name}'s own value nor a registered account dir, dropped` : '')
             + (envBadType.length ? ` — env keys [${envBadType.join(', ')}] are allowed but their values are not strings — dropped (quote the value in the template)` : ''));
@@ -2805,8 +2817,16 @@ function createTicketMethods(deps, shared) {
             const res = teamTemplateSave(this._teamFileDeps(), team.name, stem, parsed);
             if (!res.ok) { reply(`error: ${res.error}`); return; }
             this._refreshAppMenuQuietly();
+            const execNamed = (res.stripped || []).map((s) => (s === 'execCommands' && Array.isArray(parsed.execCommands) && parsed.execCommands.length
+              ? `execCommands (${parsed.execCommands.map(String).join(', ')})` : s));
+            const savedIntents = Array.isArray(parsed.intents) ? parsed.intents.map(String) : [];
+            const pluginHeld = savedIntents.filter((t) => pluginRowFor(t));
+            const corePrivileged = typeof withoutPrivilegedIntentsFor === 'function'
+              ? savedIntents.filter((t) => !pluginRowFor(t) && !withoutPrivilegedIntentsFor([t]).length) : [];
             reply(`template "${stem}" saved to ${res.file}${res.mcpIgnored ? ': mcpServers is operator-set; the stored list is unchanged' : ''}`
-              + (res.stripped ? `; stripped operator-only ${res.stripped.join(', ')} — the stored values are unchanged` : ''));
+              + (res.stripped ? `; stripped operator-only ${execNamed.join(', ')} — the stored values are unchanged` : '')
+              + (corePrivileged.length ? `; privileged intents are operator grants a template cannot carry, every spawn drops: ${corePrivileged.join(', ')}` : '')
+              + (pluginHeld.length ? `; plugin intents ${pluginHeld.join(', ')} reach a spawned seat only when its spawner holds them` : ''));
             return;
           }
           case 'template-rm': {
@@ -4705,7 +4725,7 @@ function createTicketMethods(deps, shared) {
       const roleCwd = this._resolveRoleCwd(team, def);
       const accountLabel = (def && typeof def.account === 'string' && def.account) ? def.account : null;
       const acct = !accountLabel ? { ok: true, configDir: null }
-        : ((seatAdapter.account.bootstrap || !seatAdapter.account.envKey || (!review && seatAdapter.account.envKey !== 'CLAUDE_CONFIG_DIR')) ? { ok: false, label: accountLabel, reason: 'platform' } : resolveAccount(accountLabel));
+        : ((seatAdapter.account.bootstrap || !seatAdapter.account.envKey) ? { ok: false, label: accountLabel, reason: 'platform' } : resolveAccount(accountLabel));
       const accountDir = acct.ok ? (acct.configDir || null) : null;
       const accountMissing = acct.ok ? null : { label: acct.label, reason: acct.reason };
       const withAccount = (env) => {

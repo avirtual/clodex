@@ -18,6 +18,7 @@ blocks a release.
 - Teams: a seat a lead spawns from a template inherits the lead's permission posture (--yolo is accepted for --dangerously-skip-permissions), and its permission requests now reach that lead; a template can no longer point a seat at an arbitrary CLODENT_HOME or CLAUDE_CONFIG_DIR.
 - Plugins: a manifest seatBin installs a plugin command on seats holding the plugin's intent, with optional env vars pointing at it.
 - Browser pane: seats with the browser grant get BROWSER, GH_BROWSER and npm_config_browser pointing at clodex-browse, so gh and other web logins open in the seat's browser pane (profile from CLODEX_BROWSE_SERVICE).
+- Teams: a lead's spawn keeps the plugin intents the lead itself holds, spawn and template-save replies name any intent or exec command they drop, and a clodent role accepts account:.
 
 ## 5.167.0 — 2026-11-10
 
