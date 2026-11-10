@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Teams: a seat a lead spawns from a template inherits the lead's permission posture (--yolo is accepted for --dangerously-skip-permissions), and its permission requests now reach that lead; a template can no longer point a seat at an arbitrary CLODENT_HOME or CLAUDE_CONFIG_DIR.
+
 ## 5.167.0 — 2026-11-10
 
 - Remote accounts: a node whose web GUI is reached through an encrypted tunnel it cannot see (e.g. a container behind ssh) can set CLODEX_WEB_TRUSTED_TRANSPORT=1 to accept API keys; the refusal message now names it.

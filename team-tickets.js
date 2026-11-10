@@ -26,7 +26,7 @@ const {
   teamPromptFile,
 } = require('./team-prompt-dir');
 const { resolveModelId, deriveModelTemplate, deriveEffortTemplate } = require('./team-template-derive');
-const { seatType, adapterFor, DEFAULT_TYPE, PLATFORMS, hasBypass, hasReadOnlyCap, runsClaudeHooks, resolveEffort, splitPrivilegedArgs } = require('./cli-adapters');
+const { seatType, adapterFor, DEFAULT_TYPE, PLATFORMS, hasBypass, hasReadOnlyCap, runsClaudeHooks, resolveEffort, splitPrivilegedArgs, canonicalBypassFlag, setsPosture } = require('./cli-adapters');
 const { readerFor } = require('./transcript-readers');
 const { ctxThresholdsFor } = require('./ctx-reminder');
 const { formatGatherReport } = require('./team-gather');
@@ -247,6 +247,8 @@ const REVIEWER_ENV_ALLOWLIST = new Set([
   'CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS',
   'CLODENT_HOME',
 ]);
+
+const SEAT_HOME_ENV_KEYS = ['CLODENT_HOME', 'CLAUDE_CONFIG_DIR'];
 
 function filterTemplateEnv(rawEnv) {
   const env = {};
@@ -648,21 +650,22 @@ function createTicketMethods(deps, shared) {
       };
 
       const proxy = tpl ? (tpl.proxy ?? null) : (spawner.proxy ?? null);
-      const childArgs = (tpl && Array.isArray(tpl.extraArgs) && tpl.extraArgs.length)
-        ? tpl.extraArgs : postureArgs;
-      if (childArgs !== postureArgs && childArgs.some((t) => typeof t !== 'string')) {
+      const tplArgs = (tpl && Array.isArray(tpl.extraArgs) && tpl.extraArgs.length) ? tpl.extraArgs : null;
+      if (tplArgs && tplArgs.some((t) => typeof t !== 'string')) {
         reply(`error: template "${tplLabel}" extraArgs must be strings`);
         return;
       }
-      if (!operator && childArgs !== postureArgs) {
-        const key = ([f, v]) => `${f}\0${v}`;
+      if (!operator && tplArgs) {
+        const key = ([f, v]) => `${canonicalBypassFlag(f)}\0${v}`;
         const own = new Set(splitPrivilegedArgs(spawnerArgs).pairs.map(key));
-        const unheld = [...new Set(splitPrivilegedArgs(childArgs).pairs.filter((p) => !own.has(key(p))).map(([f]) => f))];
+        const unheld = [...new Set(splitPrivilegedArgs(tplArgs).pairs.filter((p) => !own.has(key(p))).map(([f]) => f))];
         if (unheld.length) {
           reply(`error: template "${tplLabel}" carries ${unheld.join(', ')}, which ${spawner.name} does not — a spawned seat cannot hold more than its spawner`);
           return;
         }
       }
+      const childArgs = !tplArgs ? postureArgs
+        : (setsPosture(adapterFor(type), tplArgs) ? tplArgs : [...tplArgs, ...postureArgs]);
       let spawnArgs = childArgs;
       if (!operator && hasReadOnlyCap(spawnerAdapter, spawnerArgs)) {
         const childAdapter = adapterFor(type);
@@ -709,7 +712,9 @@ function createTicketMethods(deps, shared) {
       const systemPromptFile = (tpl && tpl.systemPromptFile) || null;
       const appendPromptFiles = (tpl && tpl.appendPromptFiles) || [];
       const plugins = (tpl && Array.isArray(tpl.plugins)) ? tpl.plugins.map(String) : null;
-      const { sessionEnv, dropped: envDropped, badType: envBadType } = filterTemplateEnv(tpl && tpl.env);
+      const { sessionEnv: tplEnv, dropped: envDropped, badType: envBadType } = filterTemplateEnv(tpl && tpl.env);
+      const { env: sessionEnv, clamped: envClamped } = operator
+        ? { env: tplEnv, clamped: [] } : this._clampSeatHomeEnv(tplEnv, spawnerRec.env);
 
       const grantWarn = (targetTeam && name === targetTeam.lead && !seatGrants.includes('clodex-team'))
         ? ` — WARNING: lead seat has no clodex-team exec grant (${tplLabel ? `template "${tplLabel}"` : 'no template'} carries none, or the spawner holds none);`
@@ -798,6 +803,7 @@ function createTicketMethods(deps, shared) {
             try { getPersistence().setWorktree(name, wt); } catch { /* best-effort */ }
           }
           this._applyTemplatePersistence(name, tpl);
+          try { getPersistence().upsert({ name, spawnedBy: spawner.name }); } catch (e) { log.warn('intent', `spawn ${name}: spawnedBy not recorded (${e.message})`); }
           this._sendToSession(name, 'session:context-action', {
             action: 'reattach', name, type, cwd: spawnCwd, backend: (this.sessions.get(name) || {}).backend || null, noWire: !!(this.sessions.get(name) || {}).noWire, io: (this.sessions.get(name) || {}).io || 'pty',
             ephemeral: this._isEphemeralSeat(name),
@@ -816,6 +822,7 @@ function createTicketMethods(deps, shared) {
             + grantWarn
             + promptWarn
             + (envDropped.length ? ` — env keys not allowed, dropped: ${envDropped.join(', ')}` : '')
+            + (envClamped.length ? ` — env ${envClamped.join(', ')} is neither ${spawner.name}'s own value nor a registered account dir, dropped` : '')
             + (envBadType.length ? ` — env keys [${envBadType.join(', ')}] are allowed but their values are not strings — dropped (quote the value in the template)` : ''));
         } catch (err) {
           log.error('intent', `spawn by ${spawner.name} → ${name} failed: ${err.message}`);
@@ -3498,7 +3505,10 @@ function createTicketMethods(deps, shared) {
     _seatTicketLead(seat) {
       const rec = getPersistence().get(seat.name);
       const ticketId = rec && rec.ticketId;
-      if (!ticketId) return null;
+      if (!ticketId) {
+        const by = rec && typeof rec.spawnedBy === 'string' ? rec.spawnedBy : null;
+        return (by && by !== seat.name && this.sessions.has(by)) ? { lead: by, ticketId: null } : null;
+      }
       const team = this._teamOfOrNull(seat);
       if (!team || !team.lead || team.lead === seat.name) return null;
       return { lead: team.lead, ticketId };
@@ -3518,7 +3528,7 @@ function createTicketMethods(deps, shared) {
         const preview = flat(rec.preview || rec.displayName).slice(0, 300);
         const tool = flat(rec.toolName || rec.displayName || 'a tool').slice(0, 80);
         const r = this._gatedDeliver(owner.lead, 'permission',
-          `${tag} ticket ${owner.ticketId}: ${tool} — ${preview}\n`
+          `${tag} ${owner.ticketId ? `ticket ${owner.ticketId}` : 'spawned by you'}: ${tool} — ${preview}\n`
           + `Answer: [agent:permit ${seat.name} ${flat(id)} allow] or [agent:permit ${seat.name} ${flat(id)} deny]; the Requests list in the attention view still works.`,
           false, tag);
         if (r && r.error) {
@@ -4604,6 +4614,30 @@ function createTicketMethods(deps, shared) {
       return resolveAccount(label);
     },
 
+    _clampSeatHomeEnv(env, spawnerEnv) {
+      if (!env) return { env, clamped: [] };
+      const norm = (p) => (typeof p === 'string' && path.isAbsolute(p) ? path.resolve(p) : '');
+      const registered = (dir) => {
+        const store = accountStore();
+        if (!store || typeof store.labelFor !== 'function') return false;
+        let label;
+        try { label = store.labelFor(dir); } catch { return false; }
+        const r = resolveAccount(label);
+        return !!(r.ok && r.configDir && norm(r.configDir) === dir);
+      };
+      const own = (spawnerEnv && typeof spawnerEnv === 'object') ? spawnerEnv : {};
+      const out = { ...env };
+      const clamped = [];
+      for (const key of SEAT_HOME_ENV_KEYS) {
+        if (!Object.prototype.hasOwnProperty.call(out, key)) continue;
+        const dir = norm(out[key]);
+        if (dir && (dir === norm(own[key]) || registered(dir))) continue;
+        delete out[key];
+        clamped.push(key);
+      }
+      return { env: Object.keys(out).length ? out : null, clamped };
+    },
+
     _teamRolePromptStem(team, roleKey, templateOverride) {
       const def = (team && team.roles && team.roles[roleKey]) || null;
       const seededTpl = !!(def && def.template && def.template === roleKey);
@@ -4668,7 +4702,7 @@ function createTicketMethods(deps, shared) {
           // Carried on the shape, not re-resolved at call sites, where it could disagree with the directory actually used.
           cwdFallback: roleCwd.fallback,
           tpl,
-          extraArgs: (shape && shape.extraArgs) || postureArgs,
+          extraArgs: (shape && shape.extraArgs) ? (setsPosture(seatAdapter, shape.extraArgs) ? shape.extraArgs : [...shape.extraArgs, ...postureArgs]) : postureArgs,
           effort: (shape && shape.effort) || null,
           agents: (shape && shape.agents) || [],
           denyBuiltins: (shape && shape.denyBuiltins) || [],
