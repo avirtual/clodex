@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.171.0 — 2026-11-10
+
 - Teams: a lead's ticket dispatch keeps only the plugins and MCP servers the lead itself has, and a lead's template-save keeps flags that only restrict a seat (plan mode, a tool denylist, a read-only sandbox).
 - Stream seats (claude and clodent): a compact that fails, for example with nothing to compact, now ends at once instead of holding the seat for five minutes.
 - Teams: a lead running with the permission bypass (and no credential sandbox) can grant its own team's exec commands to the seats it spawns and dispatches, without holding them or an operator "may grant" tick.
