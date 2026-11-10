@@ -51,9 +51,12 @@ own git worktree). The template's `mcpServers`, `execCommands` and privileged
 `extraArgs` flags (`--settings`, `--dangerously-skip-permissions`,
 `--permission-mode`, `--mcp-config`, `--add-dir` and the other CLIs' bypass
 flags) are set in the app's template editor (`templates:saveTeam`). A lead's
-`template-save` keeps the exec commands and flags the lead holds or the operator
+`template-save` keeps the exec commands, plugin intents and flags the lead holds or the operator
 marked "may grant" for it (the seat record's `grantable`, set only in the app),
 strips the rest and names each one; holding a grant implies being able to grant it.
+Ticket and review seats the lead dispatches get the same clamp at spawn, so a revoked grant or a hand-edited
+template file never reaches them; a posture flag is kept when the lead holds the bypass flag, and the dispatch ack
+names every drop. A `role-set lead` onto a template granting more than the lead's seat holds is refused.
 Any other saver's `template-save` strips them all and keeps the stored values; a `model:` or
 `effort:` derive copies the base template's exec grants and flags but not its
 `mcpServers`. Reviewer seats load no `mcpServers`. An `[agent:spawn]` child gets
