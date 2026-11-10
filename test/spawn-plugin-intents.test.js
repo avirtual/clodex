@@ -24,7 +24,7 @@ function harness(rec) {
     knownSkillNames: () => [], os, fs, path,
     resolveTeam: () => null,
     log: { warn() {}, info() {}, error() {} },
-    getPersistence: () => ({ get: (n) => (n === 'spawner' ? rec : null), setStripLevel() {}, setAutoCompact() {} }),
+    getPersistence: () => ({ get: (n) => (n === 'spawner' ? rec : null), setStripLevel() {}, setAutoCompact() {}, setPlugins() {} }),
     withoutPrivilegedIntentsFor: registry.withoutPrivilegedIntentsFor,
     ensureDir: () => {},
     AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
