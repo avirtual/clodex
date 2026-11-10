@@ -432,3 +432,26 @@ test('t738: every ticket-loop create() call site threads the template plugin lis
       `create() call site ${i + 1} in team-tickets.js passes no plugin list — its seat falls back to every shipped bundle`);
   }
 });
+
+for (const row of [
+  { label: 'lacks', lead: { plugins: ['builder'], mcpServers: ['sentry'] }, record: [[], undefined], ack: /template grants github, linear, which lead neither holds nor may grant, dropped/ },
+  { label: 'holds', lead: { plugins: ['github'], mcpServers: ['linear'] }, record: [['github'], ['linear']], ack: null },
+]) {
+  test(`a lead's ticket dispatch of a hand-edited template whose plugin and MCP server the lead ${row.label}`, async () => {
+    const w = mkWorld({ tplPlugins: ['github'], tplExtra: { mcpServers: ['linear'] } });
+    const injected = [];
+    w.m._injectText = (_s, text) => { injected.push(String(text)); };
+    w.persistence.upsert({ name: 'lead', ...row.lead });
+    try {
+      const seat = await spawnHand(w);
+      assert.strictEqual(w.spawns.length, 1, 'ENTER: exactly one pty spawn');
+      const rec = w.persistence.get(seat);
+      assert.ok(rec, `ENTER: ${seat} has a record`);
+      assert.deepStrictEqual([rec.plugins, rec.mcpServers], row.record);
+      const acks = injected.filter((t) => t.includes(seat));
+      assert.ok(acks.length > 0, `ENTER: the lead got the dispatch ack for ${seat}`);
+      if (row.ack) assert.match(acks.join('\n'), row.ack);
+      else assert.doesNotMatch(acks.join('\n'), /template grants/);
+    } finally { w.stop(); }
+  });
+}

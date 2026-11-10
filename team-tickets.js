@@ -32,6 +32,7 @@ const { ctxThresholdsFor } = require('./ctx-reminder');
 const { formatGatherReport } = require('./team-gather');
 const { expandTeamRoot } = require('./team-root-expand');
 const { CLAUDE_TOOLS } = require('./catalogs');
+const { seatHasPlugin } = require('./plugin-api');
 const { BOX_ID_RE, sizeToBytes, runningInSandboxBox, normalizeBootstrap, bootstrapFieldText, bootstrapSha, bootstrapScripts, HEALTH_TIMEOUT_MS, SETUP_TIMEOUT_S } = require('./sandbox');
 const { SANDBOX_RELAY_VERBS, SANDBOX_RELAY_BODY_MAX } = require('./relay-protocol');
 const { parseWithRegistry, pluginRowFor, intentEnabledForSeat: registryHolds } = require('./intent-registry');
@@ -452,6 +453,7 @@ function createTicketMethods(deps, shared) {
     pathFor,
     getAccounts,
     getPeerManager,
+    getPluginBundles,
     getPersistence,
     getRemindScheduler,
     getSandboxManager,
@@ -4769,13 +4771,27 @@ function createTicketMethods(deps, shared) {
       const keepGroup = (g) => (postureArgs.length > 0 && setsPosture(seatAdapter, g.tokens))
         || (capPairs.length > 0 && g.pairs.every((p) => capPairs.includes(p.join('\0'))));
       const grantClamp = (rawShape && team && team.lead === opener.name) ? clampToGrantor(openerRec, rawShape, keepGroup) : null;
+      const bundles = grantClamp && typeof getPluginBundles === 'function' ? (getPluginBundles() || []) : [];
+      const leadHasPlugin = (p) => {
+        const b = bundles.find((x) => x && String(x.id) === p);
+        return seatHasPlugin(p, Array.isArray(openerRec.plugins) ? openerRec.plugins.map(String) : null, !!b && b.shipped === true);
+      };
+      const leadMcp = Array.isArray(openerRec.mcpServers) ? openerRec.mcpServers.map(String) : [];
+      const keptPlugins = grantClamp && Array.isArray(rawShape.plugins) ? rawShape.plugins.filter(leadHasPlugin) : null;
+      const keptMcp = grantClamp ? rawShape.mcpServers.filter((s) => leadMcp.includes(s)) : null;
       const shape = grantClamp ? {
         ...rawShape,
         execCommands: grantClamp.execCommands,
         extraArgs: grantClamp.extraArgs && grantClamp.extraArgs.length ? grantClamp.extraArgs : null,
         intents: grantClamp.intents,
+        mcpServers: keptMcp,
+        ...(keptPlugins ? { plugins: keptPlugins, tpl: { ...rawShape.tpl, plugins: keptPlugins } } : {}),
       } : rawShape;
-      const grantDropped = grantClamp ? grantClamp.dropped : [];
+      const grantDropped = grantClamp ? [
+        ...grantClamp.dropped,
+        ...(keptPlugins ? rawShape.plugins.filter((p) => !keptPlugins.includes(p)) : []),
+        ...rawShape.mcpServers.filter((s) => !keptMcp.includes(s)),
+      ] : [];
       const homeEnv = this._clampSeatHomeEnv((shape && shape.sessionEnv) || null, openerRec.env);
       const workspaceId = opener.workspaceId || DEFAULT_WORKSPACE_ID;
       const roleCwd = this._resolveRoleCwd(team, def);

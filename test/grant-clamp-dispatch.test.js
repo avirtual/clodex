@@ -80,7 +80,7 @@ test('ticket dispatch from the team lead keeps only what the lead holds or may g
   const shape = shapeManager(lead, [HAND_TPL]).resolveSeatShape(CREW, 'hand', 'ticket', OPENER('lead'));
   assert.deepStrictEqual(
     [shape.execCommands, shape.extraArgs, shape.intents, shape.grantDropped],
-    [['avh-chat'], ['--model', 'opus'], ['dm'], ['avh-warden', '--dangerously-skip-permissions', 'avh-select']],
+    [['avh-chat'], ['--model', 'opus'], ['dm'], ['avh-warden', '--dangerously-skip-permissions', 'avh-select', 'avh-ops']],
   );
 });
 
@@ -177,4 +177,20 @@ test('role-set refuses a lead role template granting more than the lead seat hol
   fs.writeFileSync(b.tplFile('big'), JSON.stringify({ type: 'claude', execCommands: ['avh-chat'] }));
   b.m._handleTeam(b.lead, { type: 'team', sub: 'role-set', name: 'lead', template: 'big', body: '' });
   assert.match(b.injected[b.injected.length - 1], /error: template "big" grants avh-chat, which lead does not hold/);
+});
+
+test('a lead without bypass keeps plan mode and a tool denylist at template-save, and still loses a widening flag', () => {
+  const { deps, file } = saveDeps();
+  const body = { type: 'claude', extraArgs: ['--permission-mode', 'plan', '--disallowedTools', 'WebFetch', '--dangerously-skip-permissions'] };
+  const res = teamTemplateSave(deps, 'core', 'pm', body, LEAD_SAVER({ extraArgs: [] }));
+  assert.deepStrictEqual(res, { ok: true, file, stripped: ['--dangerously-skip-permissions'] });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')),
+    { type: 'claude', extraArgs: ['--permission-mode', 'plan', '--disallowedTools', 'WebFetch'] });
+});
+
+test('a lead without the flag keeps a codex read-only sandbox at template-save', () => {
+  const { deps, file } = saveDeps();
+  const res = teamTemplateSave(deps, 'core', 'pm', { type: 'codex', extraArgs: ['--sandbox', 'read-only'] }, LEAD_SAVER({ extraArgs: [] }));
+  assert.deepStrictEqual(res, { ok: true, file });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { type: 'codex', extraArgs: ['--sandbox', 'read-only'] });
 });
