@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.169.0 — 2026-11-10
+
 - Team tickets: an accepted ticket's merge now takes the test-suite lock ahead of hands' own suite runs, so merges no longer queue behind a stream of hand runs.
 - Browser pane: a handback says "signed in" only when the page shows it (a logout link or account menu); a handback from a 2FA or security-key step now says it is still on a sign-in page.
 - Templates: the template editor's exec checklist lists the team's own exec commands when the template's folder is inside a team.
