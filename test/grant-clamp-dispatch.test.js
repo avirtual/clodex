@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
 const { createTicketMethods } = require('../team-tickets');
-const { teamTemplateSave } = require('../team-prompt-dir');
+const { teamTemplateSave, mayGrantOf } = require('../team-prompt-dir');
 const registry = require('../intent-registry');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -193,4 +193,91 @@ test('a lead without the flag keeps a codex read-only sandbox at template-save',
   const res = teamTemplateSave(deps, 'core', 'pm', { type: 'codex', extraArgs: ['--sandbox', 'read-only'] }, LEAD_SAVER({ extraArgs: [] }));
   assert.deepStrictEqual(res, { ok: true, file });
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { type: 'codex', extraArgs: ['--sandbox', 'read-only'] });
+});
+
+function teamsWithExec() {
+  const teamsDir = mkTmpRoot('clx-grant-team-exec-');
+  for (const [team, cmd] of [['core', 'avh-chat'], ['other', 'u-cmd']]) {
+    fs.mkdirSync(path.join(teamsDir, team, 'exec'), { recursive: true });
+    fs.writeFileSync(path.join(teamsDir, team, 'exec', `${cmd}.json`), JSON.stringify({ description: cmd, argv: ['true'] }));
+  }
+  return teamsDir;
+}
+
+const TEAM_EXEC_TPL = { name: 'hand-tpl', type: 'claude', execCommands: ['avh-chat', 'u-cmd', 'lib-cmd'] };
+const BYPASS_LEAD = () => ({ name: 'lead', type: 'claude', extraArgs: ['--dangerously-skip-permissions'], execCommands: [] });
+
+function teamExecDispatch(leadRec, tpl = TEAM_EXEC_TPL) {
+  const teamsDir = teamsWithExec();
+  const team = { ...CREW, dir: path.join(teamsDir, 'core') };
+  return shapeManager(leadRec, [tpl]).resolveSeatShape(team, 'hand', 'ticket', OPENER('lead'));
+}
+
+test('ticket dispatch from a bypass lead keeps its own team\'s exec command, dropping another team\'s and an unheld library command', () => {
+  const lead = BYPASS_LEAD();
+  const shape = teamExecDispatch(lead);
+  assert.deepStrictEqual([shape.execCommands, shape.grantDropped], [['avh-chat'], ['u-cmd', 'lib-cmd']]);
+  assert.deepStrictEqual(lead, { name: 'lead', type: 'claude', extraArgs: ['--dangerously-skip-permissions'], execCommands: [] });
+});
+
+test('ticket dispatch drops the team exec command from a lead without bypass, or with a credential sandbox or shell denylist', () => {
+  for (const lead of [
+    { name: 'lead', type: 'claude', extraArgs: [], execCommands: [] },
+    { ...BYPASS_LEAD(), protectCredentials: [] },
+    { ...BYPASS_LEAD(), shellDeny: ['curl'] },
+  ]) {
+    const shape = teamExecDispatch(lead);
+    assert.deepStrictEqual([shape.execCommands, shape.grantDropped], [[], ['avh-chat', 'u-cmd', 'lib-cmd']]);
+  }
+});
+
+test('a bypass lead with an empty shellDeny still grants its team exec command', () => {
+  const shape = teamExecDispatch({ ...BYPASS_LEAD(), shellDeny: [] });
+  assert.deepStrictEqual(shape.execCommands, ['avh-chat']);
+});
+
+test('a template asking bypass for the child does not make a non-bypass lead eligible for its team exec command', () => {
+  const tpl = { ...TEAM_EXEC_TPL, extraArgs: ['--dangerously-skip-permissions'] };
+  const shape = teamExecDispatch({ name: 'lead', type: 'claude', extraArgs: [], execCommands: [] }, tpl);
+  assert.deepStrictEqual([shape.execCommands, shape.extraArgs, shape.grantDropped],
+    [[], [], ['avh-chat', 'u-cmd', 'lib-cmd', '--dangerously-skip-permissions']]);
+});
+
+test('a template saved by a bypass lead loses the team exec command at dispatch once the lead loses bypass', () => {
+  const teamsDir = teamsWithExec();
+  const deps = { fs, path, teamsDir, listTeams: () => ['core', 'other'] };
+  const lead = BYPASS_LEAD();
+  const res = teamTemplateSave(deps, 'core', 'hand-tpl', { type: 'claude', execCommands: ['avh-chat', 'u-cmd', 'lib-cmd'] }, LEAD_SAVER(lead));
+  const file = path.join(teamsDir, 'core', 'templates', 'hand-tpl.json');
+  assert.deepStrictEqual(res, { ok: true, file, stripped: ['u-cmd', 'lib-cmd'] });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { type: 'claude', execCommands: ['avh-chat'] });
+  assert.deepStrictEqual(lead, { name: 'lead', type: 'claude', extraArgs: ['--dangerously-skip-permissions'], execCommands: [] });
+  lead.extraArgs = [];
+  const team = { ...CREW, dir: path.join(teamsDir, 'core') };
+  const shape = shapeManager(lead, [{ name: 'hand-tpl', type: 'claude', execCommands: ['avh-chat'] }]).resolveSeatShape(team, 'hand', 'ticket', OPENER('lead'));
+  assert.deepStrictEqual([shape.execCommands, shape.grantDropped], [[], ['avh-chat']]);
+});
+
+test('template-save by a lead without bypass strips its team exec command and names it', () => {
+  const teamsDir = teamsWithExec();
+  const deps = { fs, path, teamsDir, listTeams: () => ['core', 'other'] };
+  const res = teamTemplateSave(deps, 'core', 'pm', { type: 'claude', execCommands: ['avh-chat'] }, LEAD_SAVER({ type: 'claude', extraArgs: [] }));
+  assert.deepStrictEqual(res, { ok: true, file: path.join(teamsDir, 'core', 'templates', 'pm.json'), stripped: ['avh-chat'] });
+});
+
+test('a bypass lead\'s own role template and exec catalog never gain its team exec command', () => {
+  const lead = { ...BYPASS_LEAD(), name: 'lead' };
+  const b = handlerBox(lead, { lead: { template: 'pm' } });
+  const teamDir = path.dirname(path.dirname(b.tplFile('x')));
+  fs.mkdirSync(path.join(teamDir, 'exec'), { recursive: true });
+  fs.writeFileSync(path.join(teamDir, 'exec', 'avh-chat.json'), JSON.stringify({ description: 'chat', argv: ['true'] }));
+  const body = '{"type":"claude","execCommands":["avh-chat"]}';
+  b.m._handleTeam(b.lead, { type: 'team', sub: 'template-save', stem: 'pm', body });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(b.tplFile('pm'), 'utf8')), { type: 'claude' });
+  b.m._handleTeam(b.lead, { type: 'team', sub: 'template-save', stem: 'runner', body });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(b.tplFile('runner'), 'utf8')), { type: 'claude', execCommands: ['avh-chat'] });
+  b.m._handleTeam(b.lead, { type: 'team', sub: 'role-set', name: 'lead', template: 'runner', body: '' });
+  assert.match(b.injected[b.injected.length - 1], /error: template "runner" grants avh-chat, which lead does not hold/);
+  assert.deepStrictEqual(lead, { name: 'lead', type: 'claude', extraArgs: ['--dangerously-skip-permissions'], execCommands: [] });
+  assert.deepStrictEqual(mayGrantOf(lead).execCommands, []);
 });
