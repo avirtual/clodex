@@ -11,6 +11,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { seatHasPlugin } = require('./plugin-api');
 
 // The exec-intent helper scripts. These are dependency-free
 // (node builtins only), so a flat copy by relative path is
@@ -58,33 +59,43 @@ function materializeSeatVerb({ root, srcDir = __dirname, log } = {}) {
   }
 }
 
-const BROWSE_VERB_SRC = 'cli/bin/clodex-browse.js';
-const BROWSE_VERB_NAME = 'clodex-browse';
-const BROWSER_ENV_KEYS = ['BROWSER', 'GH_BROWSER', 'npm_config_browser'];
+const SEAT_BIN_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 
-function materializeBrowseVerb({ root, srcDir = __dirname, log } = {}) {
-  const binDir = path.join(root, 'bin');
-  const dest = path.join(binDir, BROWSE_VERB_NAME);
-  try {
-    fs.mkdirSync(binDir, { recursive: true });
-    fs.writeFileSync(dest, fs.readFileSync(path.join(srcDir, BROWSE_VERB_SRC)));
-    fs.chmodSync(dest, 0o755);
-    return { binDir, path: dest };
-  } catch (e) {
-    if (log) log.info('bin', `browse verb materialize skipped (${e && e.message})`);
-    return { binDir, path: null };
-  }
+function seatBinsFor({ bins, intents, plugins }) {
+  if (!Array.isArray(bins) || !Array.isArray(intents)) return [];
+  return bins.filter((b) => b && typeof b.verb === 'string' && intents.includes(b.verb)
+    && seatHasPlugin(b.id, Array.isArray(plugins) ? plugins : null, b.shipped)
+    && typeof b.name === 'string' && SEAT_BIN_NAME_RE.test(b.name));
 }
 
-function browseVerbEnv({ root, intents, explicit = {} }) {
-  if (!Array.isArray(intents) || !intents.includes('browser')) return {};
-  const verb = path.join(root, 'bin', BROWSE_VERB_NAME);
+function materializeSeatBins({ binDir, bins, log }) {
+  const installed = [];
+  for (const b of bins) {
+    const dir = path.resolve(b.dir);
+    const src = path.resolve(dir, String(b.src));
+    if (!src.startsWith(dir + path.sep)) continue;
+    const dest = path.join(binDir, b.name);
+    try {
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.writeFileSync(dest, fs.readFileSync(src));
+      fs.chmodSync(dest, 0o755);
+      installed.push({ name: b.name, path: dest, env: Array.isArray(b.env) ? b.env : [] });
+    } catch (e) {
+      if (log) log.info('bin', `seat bin ${b.id}/${b.name} skipped (${e && e.message})`);
+    }
+  }
+  return installed;
+}
+
+function seatBinEnv({ installed, explicit = {} }) {
   const out = {};
-  for (const k of BROWSER_ENV_KEYS) if (!Object.prototype.hasOwnProperty.call(explicit, k)) out[k] = verb;
+  for (const b of installed) {
+    for (const k of b.env) if (!Object.prototype.hasOwnProperty.call(explicit, k)) out[k] = b.path;
+  }
   return out;
 }
 
 module.exports = {
-  EXEC_SCRIPTS, SEAT_VERB_SRC, SEAT_VERB_NAME, BROWSE_VERB_SRC, BROWSE_VERB_NAME, BROWSER_ENV_KEYS,
-  materializeExecScripts, materializeSeatVerb, materializeBrowseVerb, browseVerbEnv,
+  EXEC_SCRIPTS, SEAT_VERB_SRC, SEAT_VERB_NAME, SEAT_BIN_NAME_RE,
+  materializeExecScripts, materializeSeatVerb, seatBinsFor, materializeSeatBins, seatBinEnv,
 };

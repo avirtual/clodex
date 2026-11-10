@@ -2,14 +2,11 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert');
-const fs = require('node:fs');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const { mkTmpRoot } = require('./lib/tmp-roots');
-const browse = require('../cli/bin/clodex-browse.js');
-const { materializeBrowseVerb, browseVerbEnv } = require('../bin-materialize');
+const browse = require('../plugins/browser-pane/clodex-browse.js');
 
-const ROOT = path.join(__dirname, '..');
 const ENV = { CLODEX_INTENT_SOCK: '/seat/run/a/intent.sock', CLODEX_INTENT_CRED: 'k1' };
 
 function sink() {
@@ -95,20 +92,11 @@ test('an ok reply whose status is error is not an accepted open', async () => {
   assert.strictEqual(r.err, 'clodex-browse: [agent:browser] error: no such window; open this URL yourself:\nhttps://example.com/\n');
 });
 
-test('browseVerbEnv points the three keys at <root>/bin/clodex-browse on a browser grant only, and leaves explicit keys alone', () => {
-  const verb = path.join('/h', 'bin', 'clodex-browse');
-  assert.deepStrictEqual(browseVerbEnv({ root: '/h', intents: ['browser'] }), { BROWSER: verb, GH_BROWSER: verb, npm_config_browser: verb });
-  assert.deepStrictEqual(browseVerbEnv({ root: '/h', intents: ['dm'] }), {});
-  assert.deepStrictEqual(browseVerbEnv({ root: '/h', intents: null }), {});
-  assert.deepStrictEqual(browseVerbEnv({ root: '/h', intents: ['browser'], explicit: { GH_BROWSER: 'w3m' } }), { BROWSER: verb, npm_config_browser: verb });
-});
 
-test('the verb is materialized as executable clodex-browse in <root>/bin with no local requires', () => {
-  const root = mkTmpRoot('browse-bin-');
-  const r = materializeBrowseVerb({ root, srcDir: ROOT });
-  assert.strictEqual(r.path, path.join(root, 'bin', 'clodex-browse'));
-  assert.strictEqual(fs.statSync(r.path).mode & 0o111, 0o111);
-  const src = fs.readFileSync(r.path, 'utf8');
-  assert.strictEqual(src, fs.readFileSync(path.join(ROOT, 'cli', 'bin', 'clodex-browse.js'), 'utf8'));
+test('browser-pane declares clodex-browse as its seatBin with the three opener env keys, and the CLI has no local requires', () => {
+  const dir = path.join(__dirname, '..', 'plugins', 'browser-pane');
+  const manifest = JSON.parse(require('node:fs').readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
+  assert.deepStrictEqual(manifest.seatBin, { name: 'clodex-browse', src: 'clodex-browse.js', env: ['BROWSER', 'GH_BROWSER', 'npm_config_browser'] });
+  const src = require('node:fs').readFileSync(path.join(dir, 'clodex-browse.js'), 'utf8');
   assert.deepStrictEqual([...src.matchAll(/require\('([^']+)'\)/g)].map((m) => m[1]), ['net']);
 });

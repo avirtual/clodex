@@ -30,7 +30,7 @@ const { createSpeaker, createVoiceCatalog } = require('./speaker');
 const { runTicketsMigration } = require('./tickets-migrate');
 const { validOrigin } = require('./peer-outbox');
 const { boxLabel } = require('./sandbox');
-const { materializeExecScripts, materializeSeatVerb, materializeBrowseVerb } = require('./bin-materialize');
+const { materializeExecScripts, materializeSeatVerb } = require('./bin-materialize');
 const { loadHelpCorpus } = require('./help-corpus');
 const { mcpLeaks, mcpServerOf } = require('./mcp-plan');
 // Module-level, not inside createEngine: sweepSpilledMessages is module-level and a
@@ -1296,6 +1296,7 @@ const SessionManager = createSessionManager({
     listAllTemplates,
     listAllPrompts,
     getPluginBundles: () => (pluginHost ? pluginHost.bundles() : []),
+    getSeatBins: () => (pluginHost ? pluginHost.seatBins() : []),
   getPersistence: () => persistence,
   getTemplates: () => templates,
   getUiSettings: () => uiSettings,
@@ -2280,7 +2281,6 @@ const toolCache = createToolCache({ whichBin });
   try { synthesiseRosters(persistence.list()); } catch (e) { log.error('team', `roster synthesis failed: ${e.message}`); }
   try { reconcileCodexSwaps(persistence.list()); } catch (e) { log.error('session', `codex hooks reconcile failed: ${e.message}`); }
   try { materializeSeatVerb({ root: REGISTRY_DIR, srcDir: __dirname, log }); } catch {}
-  try { materializeBrowseVerb({ root: REGISTRY_DIR, srcDir: __dirname, log }); } catch {}
 
   proxyPoller.start();
   manager.startPendingPoll();

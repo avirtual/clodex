@@ -128,7 +128,7 @@ const CODEX_LINK_POLL_MS = 250;
 const CODEX_LINK_DEADLINE_MS = 60000;
 const CODEX_LINK_SLOW_POLL_MS = 5000;
 const { mergeSessionEnv, sanitizeFlat, withUtf8Charset } = require('./env-scopes');
-const { browseVerbEnv } = require('./bin-materialize');
+const { seatBinsFor, materializeSeatBins, seatBinEnv } = require('./bin-materialize');
 const voiceEngineSpec = require('./voice-engine');
 const { effectiveWindowSize } = require('./argv-merge');
 const { CTRLU_SETTLE_MS } = require('./inject-queue');
@@ -787,6 +787,7 @@ function createSessionManager(deps) {
     writeAgentPlugin,
     writeBundlePlugins,
     getPluginBundles,
+    getSeatBins,
     readSystemPromptBody,
     getPersistence, getTemplates, getUiSettings, getEnvScopes, getMcpLibrary, getAccounts, getPromptLibrary, getAgentLibrary, getRemoteServer, getPeerManager, getRemindScheduler, getReminders, getMisfires, getNotifications,
     getWorkspaces, readCtxFor,
@@ -2240,7 +2241,13 @@ function createSessionManager(deps) {
       if (intentChannel) {
         Object.assign(env, seatChannelEnv({ name, sockPath: intentChannel.sockPath, cred: intentChannel.cred }));
         env.PATH = [path.join(REGISTRY_DIR, 'bin'), env.PATH].filter(Boolean).join(path.delimiter);
-        Object.assign(env, browseVerbEnv({ root: REGISTRY_DIR, intents, explicit: scopedEnv }));
+        const seatBins = seatBinsFor({ bins: getSeatBins ? getSeatBins() : [], intents, plugins });
+        const seatBinDir = path.join(runDirFor(REGISTRY_DIR, name), 'bin');
+        const installed = seatBins.length ? materializeSeatBins({ binDir: seatBinDir, bins: seatBins, log }) : [];
+        if (installed.length) {
+          env.PATH = [seatBinDir, env.PATH].filter(Boolean).join(path.delimiter);
+          Object.assign(env, seatBinEnv({ installed, explicit: scopedEnv }));
+        }
       }
       if (type === 'muse') env.MUSE_NO_AUTO_UPDATE = '1';
       if (type === 'claude' && !streamIo && resumeId && !fork && !mint && existingEntry && existingEntry.exitedAt && !existingEntry.archivedAt) env.CLAUDE_CODE_RESUME_INTERRUPTED_TURN = '1';

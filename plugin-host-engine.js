@@ -12,7 +12,7 @@ const {
   NO_SUCH_METHOD, NOT_ON_THIS_SURFACE, errorEnvelope, scopeOf, pluginGranted,
   seatHasPlugin, methodSurfaceOf, surfaceAllows,
 } = require('./plugin-api');
-const { registerIntent, unregisterSource } = require('./intent-registry');
+const { registerIntent, unregisterSource, rows } = require('./intent-registry');
 
 const README_MAX = 64 * 1024;
 const UPDATE_REFRESH_TIMEOUT_MS = 20 * 1000;
@@ -1000,6 +1000,24 @@ function createPluginHostEngine(deps) {
         editable: r.editable === true,
         dir: r.dir || null,
       }));
+    },
+    seatBins() {
+      const regRows = rows();
+      return [...registered.values()]
+        .filter((r) => r.dir && r.manifest && r.manifest.seatBin)
+        .map((r) => {
+          const sb = r.manifest.seatBin;
+          const own = regRows.find((row) => row.source === r.id);
+          return {
+            id: r.id,
+            shipped: r.shipped === true,
+            dir: r.dir,
+            name: sb.name,
+            src: sb.src,
+            env: Array.isArray(sb.env) ? [...sb.env] : [],
+            verb: sb.verb || (own ? own.type : null),
+          };
+        });
     },
     bundles() {
       return [...registered.values()]
