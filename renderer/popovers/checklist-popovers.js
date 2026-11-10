@@ -512,7 +512,7 @@ function initChecklistPopovers({ restartOrFailRow, refreshSidebarMeta, seatPlugi
     const grantsShown = !intentsGrantsBlock.classList.contains('hidden');
     const grants = grantsShown ? collectPluginGrants() : null;
     const shownMayGrant = Array.from(popoverIntentsList.querySelectorAll('input.may-grant')).map((cb) => cb.value);
-    const grantableNext = intentsGrantable ? { ...intentsGrantable, intents: mergeLists(collectMayGrant(popoverIntentsList), unlistedOf(intentsGrantable.intents, shownMayGrant)) } : null;
+    const grantableNext = intentsGrantable ? { intents: mergeLists(collectMayGrant(popoverIntentsList), unlistedOf(intentsGrantable.intents, shownMayGrant)) } : null;
     const restart = intentsPopoverRestart.checked;
     closeIntentsPopover();
     // PARENT FIRST: the server prunes both children against the list it has just
@@ -530,7 +530,10 @@ function initChecklistPopovers({ restartOrFailRow, refreshSidebarMeta, seatPlugi
       const g = await window.api.setSessionPluginGrants(name, grants);
       if (!g || !g.ok) { alert(`Update plugin access failed: ${g && g.error ? g.error : 'unknown error'}`); return; }
     }
-    if (grantableNext) await window.api.setSessionGrantable(name, grantableNext);
+    if (grantableNext) {
+      const gr = await window.api.setSessionGrantable(name, grantableNext);
+      if (!gr || !gr.ok) { alert(`Update may-grant failed: ${gr && gr.error ? gr.error : 'unknown error'}`); return; }
+    }
     if (!restart) return;
     // Same re-attach dance as the tools popover's restart path.
     await restartOrFailRow(name);

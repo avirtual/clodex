@@ -924,9 +924,11 @@ function initStores(userDataPath, {
       const all = this._load();
       const entry = all.find(s => s.name === name);
       if (!entry) return;
-      const src = grantable && typeof grantable === 'object' && !Array.isArray(grantable) ? grantable : {};
+      const src = grantable && typeof grantable === 'object' && !Array.isArray(grantable) ? grantable : null;
       const list = (v) => (Array.isArray(v) ? [...new Set(v.filter((x) => typeof x === 'string' && x))] : []);
-      const next = { execCommands: list(src.execCommands), intents: list(src.intents), flags: list(src.flags) };
+      const prev = src && entry.grantable && typeof entry.grantable === 'object' ? entry.grantable : {};
+      const pick = (k) => list(src && k in src ? src[k] : prev[k]);
+      const next = { execCommands: pick('execCommands'), intents: pick('intents'), flags: pick('flags') };
       if (next.execCommands.length || next.intents.length || next.flags.length) entry.grantable = next;
       else delete entry.grantable;
       this._save(all, name);

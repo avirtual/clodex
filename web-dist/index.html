@@ -30924,7 +30924,7 @@ ${String(body || "").trim()}
       function renderMayGrantFlags(container, flags) {
         const row = document.createElement("div");
         row.className = "agent-check may-grant-flags-row";
-        row.appendChild(mayGrantToggle(BYPASS_GRANT_FLAG, Array.isArray(flags) && flags.includes(BYPASS_GRANT_FLAG), "may-grant-flags", "may grant permission flags"));
+        row.appendChild(mayGrantToggle(BYPASS_GRANT_FLAG, Array.isArray(flags) && flags.includes(BYPASS_GRANT_FLAG), "may-grant-flags", "may grant the Claude bypass flag (--dangerously-skip-permissions)"));
         container.appendChild(row);
       }
       function collectMayGrant(container, cls = "may-grant") {
@@ -47270,7 +47270,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           const grantsShown = !intentsGrantsBlock.classList.contains("hidden");
           const grants = grantsShown ? collectPluginGrants() : null;
           const shownMayGrant = Array.from(popoverIntentsList.querySelectorAll("input.may-grant")).map((cb) => cb.value);
-          const grantableNext = intentsGrantable ? { ...intentsGrantable, intents: mergeLists(collectMayGrant(popoverIntentsList), unlistedOf(intentsGrantable.intents, shownMayGrant)) } : null;
+          const grantableNext = intentsGrantable ? { intents: mergeLists(collectMayGrant(popoverIntentsList), unlistedOf(intentsGrantable.intents, shownMayGrant)) } : null;
           const restart = intentsPopoverRestart.checked;
           closeIntentsPopover();
           if (plugins) {
@@ -47293,7 +47293,13 @@ This starts a NEW conversation \u2014 the current session's history will be clea
               return;
             }
           }
-          if (grantableNext) await window.api.setSessionGrantable(name, grantableNext);
+          if (grantableNext) {
+            const gr = await window.api.setSessionGrantable(name, grantableNext);
+            if (!gr || !gr.ok) {
+              alert(`Update may-grant failed: ${gr && gr.error ? gr.error : "unknown error"}`);
+              return;
+            }
+          }
           if (!restart) return;
           await restartOrFailRow(name);
         });
@@ -62107,7 +62113,10 @@ ${res.stderr}` : "");
           alert(`Save settings failed: ${res && res.error ? res.error : "unknown error"}`);
           return;
         }
-        if (!source && grantableNext) await window.api.setSessionGrantable(name, grantableNext);
+        if (!source && grantableNext) {
+          const gr = await window.api.setSessionGrantable(name, grantableNext);
+          if (!gr || !gr.ok) alert(`Update may-grant failed: ${gr && gr.error ? gr.error : "unknown error"}`);
+        }
         if (!source) refreshSeatMcp(name);
         if (res.restarted) {
           if (source) source.onRestarted();

@@ -278,7 +278,7 @@ function mayGrantToggle(value, checked, cls = 'may-grant', text = 'may grant') {
 function renderMayGrantFlags(container, flags) {
   const row = document.createElement('div');
   row.className = 'agent-check may-grant-flags-row';
-  row.appendChild(mayGrantToggle(BYPASS_GRANT_FLAG, Array.isArray(flags) && flags.includes(BYPASS_GRANT_FLAG), 'may-grant-flags', 'may grant permission flags'));
+  row.appendChild(mayGrantToggle(BYPASS_GRANT_FLAG, Array.isArray(flags) && flags.includes(BYPASS_GRANT_FLAG), 'may-grant-flags', 'may grant the Claude bypass flag (--dangerously-skip-permissions)'));
   container.appendChild(row);
 }
 function collectMayGrant(container, cls = 'may-grant') {

@@ -30,6 +30,15 @@ test('setGrantable stores the three lists, an empty value clears it, and execCom
   assert.ok(!('grantable' in p.get('lead')));
 });
 
+test('setGrantable leaves an omitted sub-list unchanged, and null clears the field', () => {
+  const p = store();
+  p.setGrantable('lead', { execCommands: ['avh-chat'], intents: ['workbench'], flags: ['--dangerously-skip-permissions'] });
+  p.setGrantable('lead', { intents: ['avh-select'] });
+  assert.deepStrictEqual(p.get('lead').grantable, { execCommands: ['avh-chat'], intents: ['avh-select'], flags: ['--dangerously-skip-permissions'] });
+  p.setGrantable('lead', null);
+  assert.ok(!('grantable' in p.get('lead')));
+});
+
 test('a restart re-seeds grantable onto the record', () => {
   const upserts = [];
   const SessionManager = createSessionManager({
@@ -66,7 +75,7 @@ test('the Args dialog and the intents popover draw a may-grant toggle and save i
   const rnd = fs.readFileSync(path.join(ROOT, 'renderer', 'renderer.js'), 'utf8');
   const pop = fs.readFileSync(path.join(ROOT, 'renderer', 'popovers', 'checklist-popovers.js'), 'utf8');
   assert.ok(lists.includes("function mayGrantToggle(value, checked, cls = 'may-grant', text = 'may grant')"));
-  assert.ok(lists.includes("'may-grant-flags', 'may grant permission flags'"));
+  assert.ok(lists.includes("'may-grant-flags', 'may grant the Claude bypass flag (--dangerously-skip-permissions)'"));
   assert.ok(lists.includes("if (mayGrantSet) row.appendChild(mayGrantToggle(c.name, mayGrantSet.has(c.name)));"));
   assert.ok(lists.includes(":checked:not(.may-grant):not(.may-grant-flags)')"));
   assert.ok(rnd.includes('renderExecChecklist(argsExecList, new Set(res.execCommands || []), argsGrantable ? new Set(argsGrantable.execCommands) : null)'));

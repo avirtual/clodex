@@ -9790,7 +9790,10 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
     alert(`Save settings failed: ${res && res.error ? res.error : 'unknown error'}`);
     return;
   }
-  if (!source && grantableNext) await window.api.setSessionGrantable(name, grantableNext);
+  if (!source && grantableNext) {
+    const gr = await window.api.setSessionGrantable(name, grantableNext);
+    if (!gr || !gr.ok) alert(`Update may-grant failed: ${gr && gr.error ? gr.error : 'unknown error'}`);
+  }
   if (!source) refreshSeatMcp(name);
   if (res.restarted) {
     if (source) source.onRestarted();

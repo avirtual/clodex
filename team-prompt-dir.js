@@ -2,6 +2,7 @@
 
 const { ensureDir, atomicWriteFileSync } = require('./fs-util');
 const { splitPrivilegedArgs, privilegedGroups, canonicalBypassFlag } = require('./cli-adapters');
+const { pluginRowFor, intentEnabledForSeat } = require('./intent-registry');
 
 const KINDS = ['system', 'append'];
 const JSON_KINDS = ['templates', 'exec'];
@@ -113,11 +114,42 @@ function priorTemplate(deps, file) {
   } catch { return {}; }
 }
 
-function saverHolding(saver) {
+function saverRecord(saver) {
   if (!saver || typeof saver !== 'object' || typeof saver.name !== 'string' || saver.name !== saver.lead) return null;
   const rec = saver.record;
   if (!rec || typeof rec !== 'object' || Array.isArray(rec)) return null;
-  return mayGrantOf(saver.holdOnly === true ? { ...rec, grantable: null } : rec);
+  return saver.holdOnly === true ? { ...rec, grantable: null } : rec;
+}
+
+function mayGrantIntent(rec, grants, type) {
+  return intentEnabledForSeat(type, rec) || grants.intents.includes(type);
+}
+
+function clampToGrantor(rec, { execCommands, extraArgs, intents }) {
+  const grants = mayGrantOf(rec);
+  const dropped = [];
+  const drop = (x) => { if (!dropped.includes(x)) dropped.push(x); };
+  const keptExec = (Array.isArray(execCommands) ? execCommands : []).filter((c) => {
+    if (typeof c === 'string' && grants.execCommands.includes(c)) return true;
+    drop(String(c));
+    return false;
+  });
+  let keptArgs = extraArgs;
+  if (Array.isArray(extraArgs)) {
+    const flagKey = ([f, v]) => `${canonicalBypassFlag(f)}\0${v}`;
+    const held = new Set(splitPrivilegedArgs(grants.extraArgs).pairs.map(flagKey));
+    keptArgs = [];
+    for (const g of privilegedGroups(extraArgs)) {
+      if (g.name === null || g.pairs.every((p) => held.has(flagKey(p)))) keptArgs.push(...g.tokens);
+      else drop(g.name);
+    }
+  }
+  const keptIntents = Array.isArray(intents) ? intents.filter((t) => {
+    if (!pluginRowFor(t) || mayGrantIntent(rec, grants, t)) return true;
+    drop(String(t));
+    return false;
+  }) : intents;
+  return { execCommands: keptExec, extraArgs: keptArgs, intents: keptIntents, dropped };
 }
 
 function mayGrantOf(rec) {
@@ -146,7 +178,18 @@ function teamTemplateSave(deps, team, stem, body, opts = {}) {
     if (grantable !== undefined) stripped.push('grantable');
     out = Array.isArray(prior.mcpServers) ? { ...rest, mcpServers: prior.mcpServers } : rest;
     if (!(opts && opts.derived === true)) {
-      const holder = saverHolding(opts && opts.saver);
+      const holderRec = saverRecord(opts && opts.saver);
+      const holder = holderRec ? mayGrantOf(holderRec) : null;
+      if (holder && Array.isArray(out.intents)) {
+        const kept = [];
+        for (const t of out.intents) {
+          if (!pluginRowFor(t) || mayGrantIntent(holderRec, holder, t)) kept.push(t);
+          else if (!stripped.includes(String(t))) stripped.push(String(t));
+        }
+        const priorPlugin = (Array.isArray(prior.intents) ? prior.intents : [])
+          .filter((t) => pluginRowFor(t) && !kept.includes(t) && !mayGrantIntent(holderRec, holder, t));
+        out = { ...out, intents: [...kept, ...priorPlugin] };
+      }
       const { execCommands, ...noExec } = out;
       const keptExec = [];
       if (holder && Array.isArray(execCommands)) {
@@ -232,6 +275,7 @@ module.exports = {
   teamPromptPath,
   teamTemplateSave,
   mayGrantOf,
+  clampToGrantor,
   teamTemplateRemove,
   teamPromptSave,
   teamPromptRemove,

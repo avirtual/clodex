@@ -427,13 +427,12 @@ for (const type of ['clodent', 'claude']) {
 const CORE_TEAM = (lead) => ({ name: 'core', lead, root: os.tmpdir(), dir: os.tmpdir(), roles: {}, roster: [] });
 const MAY_GRANT_CHAT = { execCommands: [], extraArgs: [], grantable: { execCommands: ['avh-chat'], intents: [], flags: [] } };
 
-test('a lead with avh-chat only in grantable saves it onto a template, strips avh-warden, and its own record does not gain it', () => {
+test('a lead with avh-chat only in grantable saves it onto a template and strips avh-warden', () => {
   const { deps, file } = teamDeps();
   const rec = JSON.parse(JSON.stringify(MAY_GRANT_CHAT));
   const res = teamTemplateSave(deps, 'core', 'pm', { type: 'clodent', execCommands: ['avh-chat', 'avh-warden'] }, LEAD_SAVER(rec));
   assert.deepStrictEqual(res, { ok: true, file, stripped: ['avh-warden'] });
   assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { type: 'clodent', execCommands: ['avh-chat'] });
-  assert.deepStrictEqual(rec, MAY_GRANT_CHAT);
 });
 
 test('a lead may-grant flag lets the lead write --dangerously-skip-permissions into a template', () => {

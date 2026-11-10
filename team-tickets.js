@@ -22,7 +22,7 @@ const {
   DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone,
 } = require('./team-manifest');
 const {
-  readTeamJson, teamTemplatePath, teamTemplateSave, mayGrantOf, teamTemplateRemove, teamPromptSave, teamPromptRemove,
+  readTeamJson, teamTemplatePath, teamTemplateSave, mayGrantOf, clampToGrantor, teamTemplateRemove, teamPromptSave, teamPromptRemove,
   teamPromptFile,
 } = require('./team-prompt-dir');
 const { resolveModelId, deriveModelTemplate, deriveEffortTemplate } = require('./team-template-derive');
@@ -1253,7 +1253,8 @@ function createTicketMethods(deps, shared) {
         + (shape.envBadType.length
           ? ` — reviewer template env keys [${shape.envBadType.join(', ')}] are allowed but their values are not strings — dropped (quote the value in the template)`
           : '')
-        + ((shape.envClamped || []).length ? ` — reviewer template env ${shape.envClamped.join(', ')} is neither the opener's own value nor a registered account dir, dropped` : '');
+        + ((shape.envClamped || []).length ? ` — reviewer template env ${shape.envClamped.join(', ')} is neither the opener's own value nor a registered account dir, dropped` : '')
+        + ((shape.grantDropped || []).length ? ` — reviewer template grants ${shape.grantDropped.join(', ')}, which ${session.name} neither holds nor may grant, dropped` : '');
       const capNote = shape.capNote
         ? ` — ${shape.capNote}${shape.toolsIgnored ? ' (template tools ignored)' : ''}`
         : '';
@@ -2736,6 +2737,15 @@ function createTicketMethods(deps, shared) {
               const priorUndo = setUndo;
               setUndo = () => { derivedE.undo(); if (priorUndo) priorUndo(); };
             }
+            if (name === 'lead' && patch.template) {
+              const leadShape = this._templateShape(patch.template, team);
+              const over = leadShape ? clampToGrantor({ ...(getPersistence().get(session.name) || {}), grantable: null }, leadShape).dropped : [];
+              if (over.length) {
+                if (setUndo) setUndo();
+                reply(`error: template "${patch.template}" grants ${over.join(', ')}, which ${session.name} does not hold — only the operator can give the lead role more than its seat holds`);
+                return;
+              }
+            }
             try {
               if (ownDerivedTemplate) setRole(team.name, name, patch, { ownDerivedTemplate: true });
               else setRole(team.name, name, patch);
@@ -2822,14 +2832,16 @@ function createTicketMethods(deps, shared) {
             const res = teamTemplateSave(this._teamFileDeps(), team.name, stem, parsed, { saver });
             if (!res.ok) { reply(`error: ${res.error}`); return; }
             this._refreshAppMenuQuietly();
-            const execNamed = (res.stripped || []).map((s) => (s === 'execCommands' && Array.isArray(parsed.execCommands) && parsed.execCommands.length
+            const execNamed = (res.stripped || []).filter((s) => s !== 'grantable').map((s) => (s === 'execCommands' && Array.isArray(parsed.execCommands) && parsed.execCommands.length
               ? `execCommands (${parsed.execCommands.map(String).join(', ')})` : s));
             const savedIntents = Array.isArray(parsed.intents) ? parsed.intents.map(String) : [];
-            const pluginHeld = savedIntents.filter((t) => pluginRowFor(t));
+            const pluginHeld = savedIntents.filter((t) => pluginRowFor(t) && !(res.stripped || []).includes(t));
+            const whyStripped = session.name === team.lead ? `which ${session.name} neither holds nor may grant` : 'which only the team lead may carry into a template';
             const corePrivileged = typeof withoutPrivilegedIntentsFor === 'function'
               ? savedIntents.filter((t) => !pluginRowFor(t) && !withoutPrivilegedIntentsFor([t]).length) : [];
             reply(`template "${stem}" saved to ${res.file}${res.mcpIgnored ? ': mcpServers is operator-set; the stored list is unchanged' : ''}`
-              + (res.stripped ? `; stripped ${execNamed.join(', ')}, which ${session.name} neither holds nor may grant — the stored values are unchanged` : '')
+              + (execNamed.length ? `; stripped ${execNamed.join(', ')}, ${whyStripped} — the stored values are unchanged` : '')
+              + ((res.stripped || []).includes('grantable') ? '; grantable is operator-only and was ignored' : '')
               + (corePrivileged.length ? `; privileged intents are operator grants a template cannot carry, every spawn drops: ${corePrivileged.join(', ')}` : '')
               + (pluginHeld.length ? `; plugin intents ${pluginHeld.join(', ')} reach a spawned seat only when its spawner holds them or, as its team lead, may grant them` : ''));
             return;
@@ -4699,13 +4711,13 @@ function createTicketMethods(deps, shared) {
       }
       const def = (team && team.roles && team.roles[roleKey]) || null;
       const review = purpose === 'review';
-      const shape = this._templateShape(
+      const rawShape = this._templateShape(
         review
           ? (templateOverride || (def && def.template) || DEFAULT_REVIEWER_TEMPLATE)
           : (def && def.template),
         team,
       );
-      const tpl = (shape && shape.tpl) || null;
+      const tpl = (rawShape && rawShape.tpl) || null;
       if (tpl && tpl.class === 'assistant') throw new Error('assistant templates cannot back a ticket or review seat');
       const type = review ? seatType(tpl, null) : seatType(tpl, opener);
       const openerAdapter = adapterFor(opener.type) || adapterFor(DEFAULT_TYPE);
@@ -4723,6 +4735,14 @@ function createTicketMethods(deps, shared) {
       const capArgs = !!capMode && capMode.argv;
       const toolsGated = !capArgs || cap.denylist === true;
       const openerRec = getPersistence().get(opener.name) || {};
+      const grantClamp = (rawShape && team && team.lead === opener.name) ? clampToGrantor(openerRec, rawShape) : null;
+      const shape = grantClamp ? {
+        ...rawShape,
+        execCommands: grantClamp.execCommands,
+        extraArgs: grantClamp.extraArgs && grantClamp.extraArgs.length ? grantClamp.extraArgs : null,
+        intents: grantClamp.intents,
+      } : rawShape;
+      const grantDropped = grantClamp ? grantClamp.dropped : [];
       const leadArgs = openerRec.extraArgs || [];
       const homeEnv = this._clampSeatHomeEnv((shape && shape.sessionEnv) || null, openerRec.env);
       const postureArgs = hasBypass(openerAdapter, leadArgs) ? [...seatAdapter.posture.bypassArgs] : [];
@@ -4776,6 +4796,7 @@ function createTicketMethods(deps, shared) {
           envDropped: (shape && shape.envDropped) || [],
           envBadType: (shape && shape.envBadType) || [],
           envClamped: homeEnv.clamped,
+          grantDropped,
           beyondCap: [],
           capNote: null,
           toolsIgnored: false,
@@ -4863,6 +4884,7 @@ function createTicketMethods(deps, shared) {
         envDropped: (shape && shape.envDropped) || [],
         envBadType: (shape && shape.envBadType) || [],
         envClamped: homeEnv.clamped,
+        grantDropped: grantDropped.filter((t) => Array.isArray(rawShape && rawShape.intents) && rawShape.intents.includes(t)),
         beyondCap: toolsGated ? beyondCap : [],
         capNote: (cap && cap.note) || (capMode ? capMode.note : null),
         toolsIgnored: !toolsGated && rawTools !== undefined,
@@ -5053,7 +5075,8 @@ function createTicketMethods(deps, shared) {
             + (shape.envBadType.length
               ? ` — template env keys [${shape.envBadType.join(', ')}] are allowed but their values are not strings — dropped (quote the value in the template)`
               : '')
-            + ((shape.envClamped || []).length ? ` — template env ${shape.envClamped.join(', ')} is neither the opener's own value nor a registered account dir, dropped` : '');
+            + ((shape.envClamped || []).length ? ` — template env ${shape.envClamped.join(', ')} is neither the opener's own value nor a registered account dir, dropped` : '')
+            + ((shape.grantDropped || []).length ? ` — template grants ${shape.grantDropped.join(', ')}, which ${opener.name} neither holds nor may grant, dropped` : '');
           const promptWarn = (spawned && spawned.missingPrompt) ? ` — WARNING: ${spawned.missingPrompt}` : '';
           const cwdWarn = shape.cwdFallback ? ` — NOTE: ${shape.cwdFallback}` : '';
           const seatSuffix = this._ticketDeliverySuffix(d, seat.name, team, ticket);
