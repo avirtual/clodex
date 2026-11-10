@@ -101,7 +101,7 @@ test('every accounts:* handler answers { ok:false } rather than throwing on a ho
   const handlers = new Map();
   registerIpcHandlers({
     handle: (ch, fn) => handlers.set(ch, fn), on: (ch, fn) => handlers.set(ch, fn),
-    enableAccounts: true, workspaceOfSender: () => 'ws-1', log: { info() {}, error() {} },
+    enableAccounts: true, workspaceOfSender: () => 'ws-1', secureTransportOfSender: () => true, log: { info() {}, error() {} },
   });
   for (const ch of ['accounts:list', 'accounts:add', 'accounts:remove', 'accounts:resync', 'accounts:setApiKey', 'accounts:clearApiKey']) {
     const res = handlers.get(ch)(null, { label: 'sub-2' });
@@ -412,7 +412,7 @@ function realFixture() {
   const handlers = new Map();
   registerIpcHandlers({
     handle: (ch, fn) => handlers.set(ch, fn), on: (ch, fn) => handlers.set(ch, fn),
-    accounts, enableAccounts: true, workspaceOfSender: () => 'ws-1',
+    accounts, enableAccounts: true, workspaceOfSender: () => 'ws-1', secureTransportOfSender: () => true,
     log: { info: capture, warn: capture, error: capture, debug: capture },
   });
   return { handlers, dir, logged, call: (ch, ...args) => handlers.get(ch)(null, ...args) };
@@ -448,7 +448,7 @@ test('accounts:setApiKey turns a store throw into a fixed error that cannot carr
   registerIpcHandlers({
     handle: (ch, fn) => handlers.set(ch, fn), on: (ch, fn) => handlers.set(ch, fn),
     accounts: { setApiKey: (_l, k) => { throw new Error(`boom ${k}`); }, clearApiKey: () => { throw new Error('boom'); } },
-    enableAccounts: true, workspaceOfSender: () => 'ws-1', log: { info() {}, error() {} },
+    enableAccounts: true, workspaceOfSender: () => 'ws-1', secureTransportOfSender: () => true, log: { info() {}, error() {} },
   });
   const r = handlers.get('accounts:setApiKey')(null, 'api-1', KEY);
   assert.deepStrictEqual(r, { ok: false, error: 'could not write the account settings.json' });

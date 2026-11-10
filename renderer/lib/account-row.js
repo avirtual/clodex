@@ -4,6 +4,11 @@ const { DEFAULT_LABEL, abbrevHome } = require('./account-select');
 
 const API_KEY_PLACEHOLDER = 'API key (sk-ant-…)';
 const MODEL_ALIASES = ['fable', 'opus', 'sonnet', 'haiku'];
+const INSECURE_KEY_REFUSAL = 'an API key is accepted only over a local or encrypted connection';
+
+function keyTransportRefusal(win) {
+  return win && win.isSecureContext === false ? INSECURE_KEY_REFUSAL : null;
+}
 
 function modelOptions(rows) {
   const out = new Set(MODEL_ALIASES);
@@ -113,4 +118,4 @@ function buildKeyPrompt(doc) {
   return { input, save };
 }
 
-module.exports = { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, modelOptions, MODEL_ALIASES, API_KEY_PLACEHOLDER };
+module.exports = { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, keyTransportRefusal, modelOptions, MODEL_ALIASES, API_KEY_PLACEHOLDER, INSECURE_KEY_REFUSAL };

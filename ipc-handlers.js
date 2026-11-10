@@ -118,7 +118,7 @@ function registerIpcHandlers(deps) {
     enableDrawerServices, enableCtl, enableLocalTerminal, enableConsole, enableAccounts, getCtlService, getBashLive, getDrawerPtys, workspaceOfSenderStrict,
     accounts, moveAccountByModel,
     syncTerminalReports,
-    getPluginHost, getPluginLoader, listAllTemplates, listAllPrompts, surfaceOfSender,
+    getPluginHost, getPluginLoader, listAllTemplates, listAllPrompts, surfaceOfSender, secureTransportOfSender,
     getHelpCorpus, SELF_LABEL, openRequests, revealSession,
   } = deps;
 
@@ -1450,6 +1450,9 @@ function registerIpcHandlers(deps) {
     });
     handle('accounts:setApiKey', (_e, label, key) => {
       if (!accounts) return { ok: false, error: 'accounts not supported on this host' };
+      if (typeof secureTransportOfSender !== 'function' || secureTransportOfSender(_e) !== true) {
+        return { ok: false, error: 'an API key is accepted only over a local or encrypted connection' };
+      }
       try {
         const r = accounts.setApiKey(label, key);
         return r && r.ok ? { ok: true } : { ok: false, error: String((r && r.error) || 'set key failed') };

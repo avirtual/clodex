@@ -47,7 +47,7 @@ const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { envRowView, buildEnvRow } = require('./lib/env-row');
 const { envLockView, applyEnvLock, patchUnlessEnvLocked } = require('./lib/env-lock');
 const { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require('./lib/account-select');
-const { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, modelOptions } = require('./lib/account-row');
+const { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, keyTransportRefusal, modelOptions } = require('./lib/account-row');
 const { isToolInstallSession } = require('../tool-doctor');
 const { SANDBOX_PLACEMENT_CWD, showPlacementSelector, nextCwd: placementNextCwd, richFieldsGreyed } = require('./lib/placement');
 const { dropText } = require('./lib/drop-paths');
@@ -6564,6 +6564,8 @@ async function refreshPrefsAccounts() {
         const submit = async () => {
           const key = input.value;
           input.value = '';
+          const refusal = keyTransportRefusal(window);
+          if (refusal) { setPrefsAccountsState(refusal, 'error'); return; }
           const r = await window.api.accountsSetApiKey(account.label, key);
           if (!r || r.ok === false) { setPrefsAccountsState((r && r.error) || 'Set key failed.', 'error'); return; }
           setPrefsAccountsState(`Key saved for ${account.label}.`);
@@ -6650,6 +6652,8 @@ async function addPrefsAccount() {
   const key = prefsAccountKey && keyFieldVisible(plan) ? prefsAccountKey.value : '';
   if (prefsAccountKey) prefsAccountKey.value = '';
   if (!label) { setPrefsAccountsState('Enter a label first.', 'error'); return; }
+  const refusal = key ? keyTransportRefusal(window) : null;
+  if (refusal) { setPrefsAccountsState(refusal, 'error'); return; }
   const res = await window.api.accountsAdd({ label, email: email || null, plan, configDir: configDir || null });
   if (!res || res.ok === false) { setPrefsAccountsState((res && res.error) || 'Add failed.', 'error'); return; }
   prefsAccountLabel.value = '';

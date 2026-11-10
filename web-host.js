@@ -19,6 +19,11 @@ function viewerOnHost(remoteAddress) {
   const a = String(remoteAddress || '').toLowerCase().replace(/^::ffff:/, '');
   return a === '::1' || /^127\.\d+\.\d+\.\d+$/.test(a);
 }
+
+function secureTransport(req) {
+  if (viewerOnHost(req && req.socket && req.socket.remoteAddress)) return true;
+  return /^https:\/\//i.test(String((req && req.headers && req.headers.origin) || ''));
+}
 const UPDATE_REPO = 'avirtual/clodex'; // mirrors main.js — the deploy-briefing URL fallback
 const MAX_SCROLLBACK = 2 * 1024 * 1024; // per-session ring; matches the engine's 2MB pendingOutput cap
 const DEFAULT_WORKSPACE_ID = 'default';
@@ -270,7 +275,8 @@ function createWebHost({ engine, log, port, host, token, insecure = false, userD
     enableLocalTerminal: true,
     enableCtl: true,
     enableConsole: true,
-    enableAccounts: false,
+    enableAccounts: true,
+    secureTransportOfSender: (e) => (e && e.sender && e.sender.conn && e.sender.conn.secureTransport) === true,
   };
   (registerHandlers || require('./ipc-handlers').registerIpcHandlers)(deps);
 
@@ -383,7 +389,7 @@ function createWebHost({ engine, log, port, host, token, insecure = false, userD
 
   wss.on('connection', (ws, req) => {
     const conn = {
-      ws, authed: false, viewerOnHost: viewerOnHost(req && req.socket && req.socket.remoteAddress), visible: true, workspaceId: DEFAULT_WORKSPACE_ID,
+      ws, authed: false, viewerOnHost: viewerOnHost(req && req.socket && req.socket.remoteAddress), secureTransport: secureTransport(req), visible: true, workspaceId: DEFAULT_WORKSPACE_ID,
       pendingMenus: new Map(), pendingDialogs: new Map(),
       send: (frame) => { try { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(frame)); } catch (err) { log.error('web', `send: ${err.message}`); } },
       pushEvent: (channel, args) => conn.send({ t: 'event', channel, args: args.map(encodeBuffers) }),
@@ -432,7 +438,7 @@ function createWebHost({ engine, log, port, host, token, insecure = false, userD
       if (!addr || typeof addr.port !== 'number' || addr.port <= 0) return null;
       return { port: addr.port, tokenGated: gate.configured };
     },
-    _server: server, _handlers: handlers, _scrollback: scrollback, _workspaceConns: workspaceConns,
+    _server: server, _wss: wss, _handlers: handlers, _scrollback: scrollback, _workspaceConns: workspaceConns,
   };
 }
 
