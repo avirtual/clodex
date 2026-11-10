@@ -11,7 +11,7 @@ const { REVIEWER_PROMPT_PREFIX } = require('./team-tickets');
 const { resolveAccountLabel } = require('./accounts');
 const { teamPreflight } = require('./team-preflight');
 const {
-  teamPromptFile, readTeamJson, teamTemplateSave, teamTemplateRemove,
+  teamPromptFile, readTeamJson, listTeamJson, TEAM_STEM_RE, teamTemplateSave, teamTemplateRemove,
   teamPromptSave, teamPromptRemove,
 } = require('./team-prompt-dir');
 const { appendRailPrompts } = require('./prompt-rails');
@@ -23,7 +23,7 @@ const { pathToFileURL } = require('node:url');
 const { randomBytes } = require('node:crypto');
 const { validateSeatFiles } = require('./seat-files');
 const { BOX_ID_RE, runningInSandboxBox } = require('./sandbox');
-const { SETUP_CHOICES } = require('./stores');
+const { SETUP_CHOICES, execRowOf } = require('./stores');
 const sessionDiscovery = require('./session-discovery');
 const gitWorktree = require('./git-worktree');
 const { NO_SUCH_METHOD, errorEnvelope, sanitizeGrants, isValidPluginId, PLUGIN_CAPABILITIES, seatHasPlugin } = require('./plugin-api');
@@ -721,7 +721,28 @@ function registerIpcHandlers(deps) {
     refreshAppMenu();
     return { ok: true, skills };
   });
-  handle('exec:list', () => execLibrary.list());
+  const execScopeTeam = (scope) => {
+    if (!scope || typeof scope !== 'object') return null;
+    try {
+      if (typeof scope.team === 'string' && TEAM_STEM_RE.test(scope.team)) return loadManifest(scope.team);
+      if (typeof scope.session === 'string' && scope.session) {
+        const entry = persistence.get(scope.session);
+        const teamName = manager.teamNameOf(scope.session, entry && entry.cwd);
+        return teamName ? loadManifest(teamName) : null;
+      }
+      if (typeof scope.cwd === 'string' && scope.cwd) return resolveTeam(scope.cwd);
+    } catch { return null; }
+    return null;
+  };
+  handle('exec:list', (_e, scope) => {
+    const lib = execLibrary.list();
+    const team = execScopeTeam(scope);
+    if (!team) return lib;
+    const own = listTeamJson({ fs, path }, team, 'exec').map(({ stem, obj }) => ({ ...execRowOf(stem, obj), team: team.name }));
+    if (!own.length) return lib;
+    const ownNames = new Set(own.map((r) => r.name));
+    return [...own, ...lib.filter((r) => !ownNames.has(r.name))].sort((a, b) => a.name.localeCompare(b.name));
+  });
   handle('exec:get', (_e, name) => execLibrary.raw(name));
   handle('exec:save', (_e, name, content) => {
     let def;

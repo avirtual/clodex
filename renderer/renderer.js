@@ -3499,9 +3499,14 @@ function newSessionPluginTicks() {
   return capsFor(inputType.value).plugins ? collectPluginChecklist(inputPluginList) : defaultPluginTicks();
 }
 
+function newSessionExecScope() {
+  if (dialogMode === 'template') return editingTemplateTeam ? { team: editingTemplateTeam } : null;
+  return { cwd: expandPath(inputCwd.value.trim()) || homeDir };
+}
+
 async function refreshNewSessionExecCommands(enabledSet = new Set()) {
   if (!newSessionIsAgent()) return;
-  setExecLibCache((await window.api.listExecCommands()) || []);
+  setExecLibCache((await window.api.listExecCommands(newSessionExecScope())) || []);
   formRendered.execCommands = renderExecChecklist(inputExecList, enabledSet);
 }
 
@@ -3894,6 +3899,9 @@ function redrawGatesForCwd() {
 inputCwd.addEventListener('change', () => redrawGatesForCwd());
 inputCwd.addEventListener('change', () => refreshWorktreeForCwd());
 inputCwd.addEventListener('change', () => refreshTeamForCwd());
+inputCwd.addEventListener('change', () => {
+  if (dialogMode !== 'template') refreshNewSessionExecCommands(currentOr('execCommands', collectExecChecklist, inputExecList, new Set()));
+});
 
 if (teamToggle) {
   teamToggle.addEventListener('change', () => {
@@ -9638,7 +9646,7 @@ async function openArgsDialog(name, argsSource = null) {
   const isExecEditable = isAgent && !argsSource;
   argsExecSection.style.display = isExecEditable ? '' : 'none';
   if (isExecEditable) {
-    setExecLibCache((await window.api.listExecCommands()) || []);
+    setExecLibCache((await window.api.listExecCommands({ session: name })) || []);
     argsExecPersisted = res.execCommands || [];
     argsExecRendered = renderExecChecklist(argsExecList, new Set(res.execCommands || []));
   }

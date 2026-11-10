@@ -63,6 +63,22 @@ function readTeamJson(deps, team, kind, stem) {
   } catch { return null; }
 }
 
+function listTeamJson(deps, team, kind) {
+  const io = teamDir(deps, team);
+  if (!io || !JSON_KINDS.includes(kind)) return [];
+  let files;
+  try { files = io.fs.readdirSync(io.path.join(team.dir, kind)); } catch { return []; }
+  const out = [];
+  for (const f of files) {
+    if (typeof f !== 'string' || !f.endsWith('.json')) continue;
+    const stem = f.slice(0, -'.json'.length);
+    if (!TEAM_STEM_RE.test(stem)) continue;
+    const obj = readTeamJson(deps, team, kind, stem);
+    if (obj) out.push({ stem, obj });
+  }
+  return out.sort((a, b) => a.stem.localeCompare(b.stem));
+}
+
 function teamOwnedDir(deps, team, ...segments) {
   const path = deps && deps.path;
   const teamsDir = deps && deps.teamsDir;
@@ -169,6 +185,7 @@ module.exports = {
   teamPromptFile,
   teamJsonFile,
   readTeamJson,
+  listTeamJson,
   TEAM_STEM_RE,
   teamTemplatePath,
   teamPromptPath,
