@@ -22360,7 +22360,7 @@ test('idle clear (_idleClearTick): a seat with idleClear clears at afterMs idle,
   assert.strictEqual(h.store.get('ic1').lastClear, undefined);
   h.m._assistantSweep(s.activityTs + 300000);
   assert.deepStrictEqual(idleClearTexts(seat), ['/clear']);
-  assert.deepStrictEqual(h.store.get('ic1').lastClear, { at: 1_300_000, reason: 'idle' });
+  assert.deepStrictEqual(h.store.get('ic1').lastClear, { at: 1_300_000, reason: 'idle', pending: true });
   assert.strictEqual(h.m._lastOperatorInputAt, 42);
 });
 
@@ -22368,15 +22368,30 @@ test('idle clear: never clears twice in a row; a delivered turn re-arms it', asy
   const { h, s, seat } = await idleClearSeat(t, 'ic2');
   h.m._assistantSweep(1_300_000);
   h.line('ic2', t2177Result);
+  s.activityTs = 1_000_000;
   s.activityState = 'idle';
-  h.m._assistantSweep(5_000_000);
-  assert.deepStrictEqual(idleClearTexts(seat), ['/clear'], 'ENTER: one clear, the second sweep held');
+  h.m._assistantSweep(1_000_000 + 10 * 300000);
+  assert.deepStrictEqual(idleClearTexts(seat), ['/clear'], 'the second sweep is idle past afterMs and still held');
+  assert.strictEqual(h.store.get('ic2').lastClear.pending, true);
   h.m._injectText(s, 'a new turn');
   h.line('ic2', t2177Result);
+  assert.deepStrictEqual(h.store.get('ic2').lastClear, { at: 1_300_000, reason: 'idle', pending: false });
   s.activityTs = 6_000_000;
   s.activityState = 'idle';
   h.m._assistantSweep(6_300_000);
   assert.deepStrictEqual(idleClearTexts(seat), ['/clear', 'a new turn', '/clear']);
+});
+
+test('idle clear: a seat respawned on a record whose lastClear is pending is not cleared again until a turn lands', async (t) => {
+  const { h, s, seat } = await idleClearSeat(t, 'ic6', { idleClear: { afterMs: 300000 }, lastClear: { at: 5, reason: 'idle', pending: true } });
+  h.m._assistantSweep(1_000_000 + 10 * 300000);
+  assert.deepStrictEqual(idleClearTexts(seat), []);
+  h.m._injectText(s, 'after restart');
+  h.line('ic6', t2177Result);
+  s.activityTs = 6_000_000;
+  s.activityState = 'idle';
+  h.m._assistantSweep(6_300_000);
+  assert.deepStrictEqual(idleClearTexts(seat), ['after restart', '/clear']);
 });
 
 test('idle clear: a dm that lands while the clear is in flight is delivered after it', async (t) => {

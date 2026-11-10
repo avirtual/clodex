@@ -2370,6 +2370,7 @@ function createSessionManager(deps) {
         name, type, cwd, pty: ptyProc, transport, socketPath,
         io: streamIo ? 'stream' : 'pty',
         _assistant: !!(existingEntry && existingEntry.class === 'assistant'),
+        _idleCleared: !!(existingEntry && existingEntry.lastClear && existingEntry.lastClear.pending),
         ...(streamIo ? {
           stream: streamSeat,
           _streamStopping: false,
@@ -3191,7 +3192,12 @@ function createSessionManager(deps) {
     }
 
     _streamSent(s, items) {
-      if (items.some((q) => !q.wire && !q.solo)) s._idleCleared = false;
+      if (s._idleCleared && items.some((q) => !q.wire && !q.solo)) {
+        s._idleCleared = false;
+        const rec = getPersistence().get(s.name);
+        const lastClear = rec && rec.lastClear ? { ...rec.lastClear, pending: false } : null;
+        if (lastClear) getPersistence().upsert({ name: s.name, lastClear });
+      }
       for (const q of items) {
         if (typeof q.onSend === 'function') { try { q.onSend(); } catch {} }
       }
@@ -4254,7 +4260,7 @@ function createSessionManager(deps) {
       }
       s._idleCleared = true;
       s._idleClearSkip = null;
-      const lastClear = { at: now, reason: 'idle' };
+      const lastClear = { at: now, reason: 'idle', pending: true };
       getPersistence().upsert({ name: s.name, lastClear });
       log.info('session', `idle clear ${s.name} after ${afterMs}ms idle`);
       return true;
