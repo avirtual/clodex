@@ -646,7 +646,7 @@ function createTicketMethods(deps, shared) {
       const leadByCreator = leadRoleTemplate && typeof intentEnabledForSeat === 'function'
         && intentEnabledForSeat('team-create', spawnerRec);
       const spawnerIsLead = !!(spawnerTeam && spawnerTeam.lead === spawner.name);
-      const mayGrant = spawnerIsLead ? mayGrantOf(spawnerRec, ownTeamExecGrants({ fs, path }, spawnerTeam, spawner.name, spawnerRec)) : { execCommands: spawnerRec.execCommands, extraArgs: spawnerArgs };
+      const mayGrant = spawnerIsLead ? mayGrantOf(spawnerRec, targetTeam && spawnerTeam && targetTeam.name === spawnerTeam.name ? ownTeamExecGrants({ fs, path }, spawnerTeam, spawner.name, spawnerRec) : []) : { execCommands: spawnerRec.execCommands, extraArgs: spawnerArgs };
       const clampToSpawner = (list, key) => {
         if (!Array.isArray(list)) return [];
         if (operator || leadByCreator) return list;

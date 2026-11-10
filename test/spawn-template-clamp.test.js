@@ -19,13 +19,13 @@ const DENY_BUILTINS = 10;
 const DISABLED_TOOLS = 11;
 const SHELL_DENY = 22;
 
-function harness({ rec = null, team = null, others = {} } = {}) {
+function harness({ rec = null, team = null, others = {}, resolve = null } = {}) {
   const calls = [];
   const replies = [];
   const home = fs.realpathSync(mkTmpRoot('clx-clamp-home-'));
   const SessionManager = createSessionManager({
     knownSkillNames: () => [], os, fs, path,
-    resolveTeam: () => team,
+    resolveTeam: resolve || (() => team),
     log: { warn() {}, info() {}, error() {} },
     getPersistence: () => ({ get: (n) => (n === 'spawner' ? rec : (others[n] || null)), setStripLevel() {}, setAutoCompact() {} }),
     withoutPrivilegedIntentsFor: (x) => x,
@@ -547,4 +547,18 @@ test('a bypass lead spawning by name grants its own team\'s exec command, and a 
     assert.strictEqual(h.calls.length, 1, `ENTER: create was called (${JSON.stringify(h.replies)})`);
     assert.deepStrictEqual(h.calls[0][EXEC], want);
   }
+});
+
+test('a bypass lead spawning a child outside its own team grants none of its team\'s exec commands', async () => {
+  const tmp = fs.realpathSync(mkTmpRoot('clx-clamp-team-exec-out-'));
+  const team = { name: 't', root: os.tmpdir(), lead: 'spawner', dir: path.join(tmp, 'teams', 't'), roles: {} };
+  fs.mkdirSync(path.join(team.dir, 'exec'), { recursive: true });
+  fs.writeFileSync(path.join(team.dir, 'exec', 'avh-chat.json'), JSON.stringify({ description: 'chat', argv: ['true'] }));
+  const outside = path.join(tmp, 'elsewhere');
+  fs.mkdirSync(outside);
+  const h = harness({ rec: { type: 'claude', extraArgs: ['--dangerously-skip-permissions'], execCommands: [] }, team, resolve: (cwd) => (cwd === os.tmpdir() ? team : null) });
+  await spawn(h, h.writeTpl({ cwd: outside, execCommands: ['avh-chat'] }));
+  assert.strictEqual(h.calls.length, 1, `ENTER: create was called (${JSON.stringify(h.replies)})`);
+  assert.strictEqual(h.calls[0][2], outside);
+  assert.deepStrictEqual(h.calls[0][EXEC], []);
 });
