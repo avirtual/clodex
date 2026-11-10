@@ -849,7 +849,7 @@ function findVerifyHoldReaders(root) {
   return found;
 }
 
-test('the stamp is read in team-tickets.js ALONE, which is what makes the scan sufficient', () => {
+test('the stamp is read in team-tickets.js and tickets-store.js only, and tickets-store.js reads it as a boolean', () => {
   // The scan reads one file. That is only enough while the field is read in one
   // file — and `holdRecoveryText` is NOT exported (module.exports carries
   // ticketCloseLine, ticketCloseVerb, ticketTaskDirLine), so a reader added
@@ -872,7 +872,11 @@ test('the stamp is read in team-tickets.js ALONE, which is what makes the scan s
   assert.ok(found.includes('team-tickets.js'),
     `ENTER: the walk reached the producer (found: ${found.join(', ') || 'nothing'})`);
   assert.deepStrictEqual(found.sort(), ['team-tickets.js', 'tickets-store.js'],
-    'a new reader outside team-tickets.js cannot reach holdRecoveryText — export it deliberately, then widen this scan');
+    'the readers are team-tickets.js and tickets-store.js — a new reader cannot reach holdRecoveryText; export it deliberately, then widen this scan');
+  const storeReads = fs.readFileSync(path.join(root, 'tickets-store.js'), 'utf8').split('\n').filter((l) => l.includes('verifyHold'));
+  assert.ok(storeReads.length >= 1, 'ENTER: tickets-store.js reads the stamp');
+  assert.deepStrictEqual(storeReads.filter((l) => /verifyHold\s*\.|verifyHold\s*\[|\$\{[^}]*verifyHold|['"`][^'"`]*verifyHold/.test(l)), [],
+    'tickets-store.js may test verifyHold as a boolean but must not read its fields or print it');
 });
 
 test('the helper is the only place HOLD_RECOVERY is read', () => {
