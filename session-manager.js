@@ -8237,6 +8237,7 @@ function createSessionManager(deps) {
       claude: { compact: '/compact', clear: '/clear' },
       codex: { compact: '/compact', clear: '/clear' },
       muse: { compact: '/compact', clear: '/clear' },
+      clodent: { compact: '/compact', clear: '/clear' },
     };
 
     _promptDeltaPending(name, out = {}) {
@@ -8365,8 +8366,9 @@ function createSessionManager(deps) {
       const wireCtx = session.io === 'stream' && session.streamCodec && typeof session.streamCodec.encodeContext === 'function';
       const unsupported = () => {
         console.warn(`[agent:context ${sub}] from ${session.name}: unsupported for type ${session.type}`);
+        const supported = [...(wireCtx ? ['compact', 'clear'] : Object.keys(map || {})), 'reload'].join('|');
         this._injectText(session,
-          `[agent:context] unknown or unsupported sub-command "${sub}" for a ${session.type} session (use compact|clear|reload)`,
+          `[agent:context] unknown or unsupported sub-command "${sub}" for a ${session.type} session (use ${supported})`,
           { parkable: true });
       };
       const encode = () => (wireCtx ? session.streamCodec.encodeContext(sub) : (map && map[sub]));
