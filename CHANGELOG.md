@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.172.1 — 2026-11-10
+
 - Cancelling a ticket now retires its hand and removes its worktree and branch when the branch holds no commits. A branch with commits is kept, and the cancel reply says where.
 - A seat restarted from the command line (`clodexctl restart session`, or `patch session … --restart`) keeps its sidebar row. The row used to vanish while the seat kept running, until the page was reloaded or the app restarted. A seat made with `clodexctl create session` now gets its row without a reload too.
 
