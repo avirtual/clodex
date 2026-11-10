@@ -116,7 +116,11 @@ test('openTransport(localPort): pins the local end, reports it, waitExit resolve
 
 test('waitForPort rejects with child stderr when the child dies first', async () => {
   let dead = false;
-  const p = T.waitForPort(59999, {
+  const srv = net.createServer();
+  await new Promise((res) => srv.listen(0, '127.0.0.1', res));
+  const port = srv.address().port;
+  await new Promise((res) => srv.close(res));
+  const p = T.waitForPort(port, {
     deadlineMs: 2000,
     isDead: () => dead,
     stderr: () => 'ssh: could not resolve hostname box',
