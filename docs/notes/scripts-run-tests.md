@@ -118,7 +118,3 @@ test/test-digest-lock.test.js, so a wedged run ends in this runner's own
 file named. The file is from node's SIGTERM `# Interrupted while running:` tap
 line, or the given one for a one-file run killed before node wrote it.
 `CLODEX_TEST_RUN_TIMEOUT_MS` overrides it for the runner's own tests.
-
-## MERGE_MARKER
-
-A sibling of `LOCK`, never inside it: every acquirer renames the lock dir in and out whole, so a file inside would vanish with each release. `team-tickets.js` writes it while an auto-merge is deferred on a held lock; it is rewritten every 30s retry, which `MERGE_MARKER_FRESH_MS` must stay well above.
