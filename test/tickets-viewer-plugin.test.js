@@ -1230,7 +1230,7 @@ function archiveOpsAt(home, key) {
   return fs.readFileSync(path.join(home, 'projects', key, 'tickets-archive.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
 }
 
-test('tickets-viewer: add refuses when the archive meta exists but cannot be read', async (t) => {
+test('tickets-viewer: add refuses when the archive meta exists but cannot be read', { skip: process.getuid && process.getuid() === 0 }, async (t) => {
   const { host, home, cleanup } = boot();
   const metaFile = () => path.join(home, 'projects', key, 'tickets-archive.meta.json');
   let key;
@@ -1270,7 +1270,7 @@ test('tickets-viewer: counts, closed, search and detail read archived rows too',
   const { host, home, cleanup } = boot();
   try {
     const key = mkProject(home, '/solo/history');
-    writeTicketsAt(home, key, [ticket('t9'), ticket('t8', { state: 'cancelled', closedAt: 1_700_000_000_000 })]);
+    writeTicketsAt(home, key, [ticket('t9'), ticket('t8', { state: 'cancelled', closedAt: 1_700_000_000_000 }), ticket('t3')]);
     writeArchiveAt(home, key, [
       { op: 'archive', at: 'x', row: ticket('t4', { state: 'done', closedAt: 1_700_000_000_000, spec: 'zorblax' }) },
       { op: 'archive', at: 'x', row: ticket('t3', { state: 'done', closedAt: 1_700_000_000_000 }) },
@@ -1287,7 +1287,44 @@ test('tickets-viewer: counts, closed, search and detail read archived rows too',
     const d = await host.dispatch('tickets-viewer', 'ticket', [{ project: key, id: 't4' }], 'desktop');
     assert.equal(d.ok, true, d.error);
     assert.equal(d.ticket.id, 't4');
-    assert.deepEqual(onDisk(home, key).map((x) => x.id), ['t9', 't8'], 'reading restored nothing');
+    assert.deepEqual(onDisk(home, key).map((x) => x.id), ['t9', 't8', 't3'], 'reading restored nothing');
+  } finally { cleanup(); }
+});
+
+test('tickets-viewer: a crashed half-restore stays visible in detail, and editSpec repairs it', async () => {
+  const { host, home, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/solo/half-restore');
+    writeTicketsAt(home, key, [ticket('t9')]);
+    writeArchiveAt(home, key, [
+      { op: 'archive', at: 'x', row: ticket('t4', { state: 'done', closedAt: 1_700_000_000_000 }) },
+      { op: 'restore', at: 'x', id: 't4' },
+    ]);
+    assertWritesLandInFixture(home, key);
+    const d = await host.dispatch('tickets-viewer', 'ticket', [{ project: key, id: 't4' }], 'desktop');
+    assert.equal(d.ok, true, d.error);
+    assert.equal(d.ticket.id, 't4');
+    const res = await host.dispatch('tickets-viewer', 'editSpec', [{ project: key, id: 't4', spec: 'fixed record' }], 'desktop');
+    assert.equal(res.ok, true, res.error);
+    assert.deepEqual(onDisk(home, key).map((x) => [x.id, x.spec]), [['t9', ticket('t9').spec], ['t4', 'fixed record']]);
+    assert.deepEqual(archiveOpsAt(home, key).map((o) => o.op), ['archive', 'restore'], 'the repair writes no second restore line');
+  } finally { cleanup(); }
+});
+
+test('tickets-viewer: add floors the id at the highest id ever archived when the meta is garbage', async () => {
+  const { host, home, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/solo/garbage-meta');
+    writeTicketsAt(home, key, [ticket('t1'), ticket('t3', { state: 'done', closedAt: Date.now() })]);
+    writeArchiveAt(home, key, [
+      { op: 'archive', at: 'x', row: ticket('t20', { state: 'done', closedAt: 1_700_000_000_000 }) },
+      { op: 'archive', at: 'x', row: ticket('t50', { state: 'done', closedAt: 1_700_000_000_000 }) },
+      { op: 'restore', at: 'x', id: 't50' },
+    ]);
+    fs.writeFileSync(path.join(home, 'projects', key, 'tickets-archive.meta.json'), 'garbage');
+    assertWritesLandInFixture(home, key);
+    const res = await host.dispatch('tickets-viewer', 'add', [{ project: key, spec: 'next' }], 'desktop');
+    assert.equal(res.id, 't51');
   } finally { cleanup(); }
 });
 

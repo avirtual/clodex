@@ -5045,7 +5045,7 @@ function createTicketMethods(deps, shared) {
       // Written only when true: a stored `parked: false` would be a second spelling of the absent state.
       const parked = !!intent.park;
       const ticket = {
-        id: nextTicketId(tickets, ticketsStore.readMeta(team.root).maxId), title, spec,
+        id: nextTicketId(tickets, Math.max(ticketsStore.readMeta(team.root).maxId, ticketsStore.archiveMaxId(team.root))), title, spec,
         assignee, opener: session.name, state: 'open',
         openedAt: now, closedAt: null, lastActivityAt: now, nudgedAt: null,
         // Explicit null, unlike `parked`: `ticketStarted` reads an absent key as a pre-upgrade record that was dispatched,
@@ -6270,7 +6270,7 @@ function createTicketMethods(deps, shared) {
     _loadTicket(team, ticketId, { boardOnly = false } = {}) {
       try {
         const tickets = ticketsStore.load(team.root);
-        return tickets.find((t) => t.id === ticketId) || (boardOnly ? null : ticketsStore.readArchive(team.root).get(ticketId)) || null;
+        return tickets.find((t) => t.id === ticketId) || (boardOnly ? null : ticketsStore.archivedOffBoard(team.root, tickets).get(ticketId)) || null;
       } catch { return null; }
     },
 
@@ -7226,7 +7226,7 @@ function createTicketMethods(deps, shared) {
       let seatId = null;
       try {
         if (ticketId == null) {
-          const archived = [...ticketsStore.readArchive(team.root).values()].find((t) => t.assignee === seatName && !t.revival);
+          const archived = [...ticketsStore.archivedOffBoard(team.root, ticketsStore.load(team.root)).values()].find((t) => t.assignee === seatName && !t.revival);
           if (archived && ticketsStore.restore(team.root, archived.id)) seatId = archived.id;
         }
         tickets = ticketsStore.load(team.root);

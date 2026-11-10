@@ -687,6 +687,41 @@ test('listing parity: holds on a board with nothing open', async () => {
   assert.deepStrictEqual(listingFacts(r.err), mine, 'the no-open reply paths drifted');
 });
 
+test('tickets: a row only in the archive is listed, and a crashed half-restore still is', async () => {
+  const home = mkHome();
+  const proj = path.join(home, 'proj');
+  mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {} } });
+  reg(home, 'alead', proj);
+  const now = Date.now();
+  mkTicketRegistry(home, proj, [{ id: 't1', title: 'live one', assignee: 'hand', state: 'open', openedAt: now }]);
+  const store = createTicketsStore({ clodexHome: home });
+  store.appendArchive(proj, [
+    { id: 't50', title: 'archived fifty', assignee: 'hand', state: 'done', openedAt: now - 40 * HOUR, closedAt: now - HOUR },
+    { id: 't51', title: 'half restored', assignee: 'hand', state: 'done', openedAt: now - 40 * HOUR, closedAt: now - HOUR },
+  ]);
+  store.appendRestore(proj, 't51');
+  const r = await launch(home, { action: 'tickets', agent: 'alead', filter: 'all' }, 'proj');
+  assert.strictEqual(r.code, 0, r.err);
+  assert.ok(r.err.includes('live one'), `ENTER: the board row is listed:\n${r.err}`);
+  assert.ok(r.err.includes('archived fifty'), `the archived row is listed:\n${r.err}`);
+  assert.ok(r.err.includes('half restored'), `the half-restored row is listed:\n${r.err}`);
+});
+
+test('tickets: an archive that exists but cannot be read fails the command', { skip: process.getuid && process.getuid() === 0 }, async (t) => {
+  const home = mkHome();
+  const proj = path.join(home, 'proj');
+  mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {} } });
+  reg(home, 'alead', proj);
+  mkTicketRegistry(home, proj, [{ id: 't1', title: 'live one', assignee: 'hand', state: 'open', openedAt: Date.now() }]);
+  const store = createTicketsStore({ clodexHome: home });
+  store.appendArchive(proj, [{ id: 't50', title: 'archived fifty', state: 'done' }]);
+  fs.chmodSync(store.archivePath(proj), 0o000);
+  t.after(() => fs.chmodSync(store.archivePath(proj), 0o600));
+  const r = await launch(home, { action: 'tickets', agent: 'alead', filter: 'all' }, 'proj');
+  assert.strictEqual(r.code, 1, r.err);
+  assert.match(r.err, /could not read tickets-archive\.jsonl \(EACCES\)/);
+});
+
 // The exec-def gates payloads BEFORE they reach the script; pin that the
 // SHIPPED schema accepts exactly what clodex-team.js handles and rejects the
 // rest, via the real exec-schema validator.
