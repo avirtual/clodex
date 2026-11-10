@@ -185,16 +185,25 @@ function readArchiveMaxId(boardDir) {
   return 0;
 }
 
+const archiveScanCache = new Map();
+
 function scanArchiveAt(boardDir) {
+  const file = path.join(boardDir, ARCHIVE_FILE);
+  let st = null;
+  try { st = fs.statSync(file); } catch (_) { st = null; }
+  const hit = archiveScanCache.get(file);
+  if (st && hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.scan;
+  archiveScanCache.delete(file);
   let raw;
   try {
-    raw = fs.readFileSync(path.join(boardDir, ARCHIVE_FILE), 'utf8');
+    raw = fs.readFileSync(file, 'utf8');
   } catch (e) {
-    if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return { rows: new Map(), lastArchived: new Map() };
+    if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return { rows: new Map(), lastArchived: new Map(), maxId: 0 };
     throw e;
   }
   const rows = new Map();
   const lastArchived = new Map();
+  let maxId = 0;
   for (const line of raw.split('\n')) {
     if (!line.trim()) continue;
     let rec;
@@ -203,22 +212,26 @@ function scanArchiveAt(boardDir) {
     if (rec.op === 'archive' && rec.row && typeof rec.row === 'object' && typeof rec.row.id === 'string' && rec.row.id) {
       rows.set(rec.row.id, rec.row);
       lastArchived.set(rec.row.id, rec.row);
+      const m = /^t(\d+)$/.exec(rec.row.id);
+      if (m && Number(m[1]) > maxId) maxId = Number(m[1]);
     } else if (rec.op === 'restore' && typeof rec.id === 'string' && rec.id) rows.delete(rec.id);
   }
-  return { rows, lastArchived };
+  const scan = { rows, lastArchived, maxId };
+  if (st) archiveScanCache.set(file, { mtimeMs: st.mtimeMs, size: st.size, scan });
+  return scan;
 }
 
 function withHistory(boardDir, read) {
   if (!read.ok) return read;
-  let archived;
+  let lastArchived;
   try {
-    archived = scanArchiveAt(boardDir).rows;
+    lastArchived = scanArchiveAt(boardDir).lastArchived;
   } catch (e) {
     return { ok: false, error: `could not read ${ARCHIVE_FILE} (${(e && e.code) || (e && e.message) || 'unknown error'})` };
   }
-  if (!archived.size) return read;
+  if (!lastArchived.size) return read;
   const onBoard = new Set(read.tickets.map((t) => t.id));
-  return { ...read, tickets: read.tickets.concat([...archived.values()].filter((t) => !onBoard.has(t.id))) };
+  return { ...read, tickets: read.tickets.concat([...lastArchived.values()].filter((t) => !onBoard.has(t.id))) };
 }
 
 function restoreInto(tickets, boardDir, id) {
@@ -1281,6 +1294,11 @@ function add(payload) {
       floor = readArchiveMaxId(boardDir);
     } catch (e) {
       return { error: `refusing to add: could not read ${ARCHIVE_META_FILE} (${(e && e.code) || (e && e.message) || 'unknown error'})` };
+    }
+    try {
+      floor = Math.max(floor, scanArchiveAt(boardDir).maxId);
+    } catch (e) {
+      return { error: `refusing to add: could not read ${ARCHIVE_FILE} (${(e && e.code) || (e && e.message) || 'unknown error'})` };
     }
     const now = Date.now();
     const ticket = {

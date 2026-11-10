@@ -242,6 +242,23 @@ function staleHostLineFor(host) {
     + ' restart the app if a fix you expect to be live is not)';
 }
 
+function archivedTickets(boardDir) {
+  let raw;
+  try {
+    raw = fs.readFileSync(path.join(boardDir, 'tickets-archive.jsonl'), 'utf-8');
+  } catch (e) {
+    if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return [];
+    die(`could not read tickets-archive.jsonl (${(e && e.code) || (e && e.message) || 'unknown error'})`);
+  }
+  const lastArchived = new Map();
+  for (const line of raw.split('\n')) {
+    let rec;
+    try { rec = JSON.parse(line); } catch { continue; }
+    if (rec && rec.op === 'archive' && rec.row && typeof rec.row.id === 'string' && rec.row.id) lastArchived.set(rec.row.id, rec.row);
+  }
+  return [...lastArchived.values()];
+}
+
 // Mirror of session-manager.js _taskList — same default (open, plus a capped
 // recently-closed-done section and a tail counting done and cancelled
 // separately), same filter set, same bounce. The two must change together or
@@ -262,23 +279,6 @@ function staleHostLineFor(host) {
 //
 // Cited by NAME, not by line: this comment carried a line range for exactly one
 // commit before the range pointed at unrelated code (t105).
-function archivedTickets(boardDir) {
-  let raw;
-  try {
-    raw = fs.readFileSync(path.join(boardDir, 'tickets-archive.jsonl'), 'utf-8');
-  } catch {
-    return [];
-  }
-  const rows = new Map();
-  for (const line of raw.split('\n')) {
-    let rec;
-    try { rec = JSON.parse(line); } catch { continue; }
-    if (rec && rec.op === 'archive' && rec.row && typeof rec.row.id === 'string' && rec.row.id) rows.set(rec.row.id, rec.row);
-    else if (rec && rec.op === 'restore') rows.delete(rec.id);
-  }
-  return [...rows.values()];
-}
-
 function doTickets(payload) {
   const team = teamFromEnv();
   const filter = payload.filter || 'open';

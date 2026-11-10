@@ -142,7 +142,7 @@ function createTicketsStore({ fs = require('fs'), path = require('path'), clodex
     try {
       raw = fs.readFileSync(file, 'utf-8');
     } catch (e) {
-      if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return { rows: new Map(), lastArchived: new Map() };
+      if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return { rows: new Map(), lastArchived: new Map(), maxId: 0 };
       throw e;
     }
     const lines = raw.split('\n');
@@ -151,6 +151,7 @@ function createTicketsStore({ fs = require('fs'), path = require('path'), clodex
     const rows = new Map();
     const lastArchived = new Map();
     let bad = 0;
+    let maxId = 0;
     for (let i = 0; i <= last; i++) {
       if (!lines[i].trim()) continue;
       const op = archiveLineOp(lines[i]);
@@ -162,16 +163,31 @@ function createTicketsStore({ fs = require('fs'), path = require('path'), clodex
         deepFreeze(op.row);
         rows.set(op.id, op.row);
         lastArchived.set(op.id, op.row);
+        const m = /^t(\d+)$/.exec(op.id);
+        if (m && Number(m[1]) > maxId) maxId = Number(m[1]);
       } else rows.delete(op.id);
     }
     if (bad) warn(`tickets archive ${file}: skipped ${bad} unparseable line(s)`);
-    const scan = { key, rows, lastArchived };
+    const scan = { key, rows, lastArchived, maxId };
     if (key) archiveCache.set(file, scan);
     return scan;
   }
 
   function readArchive(projectRoot) {
-    return scanArchive(projectRoot).rows;
+    return new Map(scanArchive(projectRoot).rows);
+  }
+
+  function archivedOffBoard(projectRoot, board) {
+    const onBoard = new Set((board || []).map((t) => t && t.id));
+    const out = new Map();
+    for (const [id, row] of scanArchive(projectRoot).lastArchived) {
+      if (!onBoard.has(id)) out.set(id, row);
+    }
+    return out;
+  }
+
+  function archiveMaxId(projectRoot) {
+    return scanArchive(projectRoot).maxId;
   }
 
   function restore(projectRoot, id) {
@@ -241,13 +257,12 @@ function createTicketsStore({ fs = require('fs'), path = require('path'), clodex
 
   function withArchive(projectRoot, board) {
     const rows = board || read(projectRoot);
-    const archived = readArchive(projectRoot);
+    const archived = archivedOffBoard(projectRoot, rows);
     if (!archived.size) return rows;
-    const onBoard = new Set(rows.map((t) => t && t.id));
-    return rows.concat([...archived.values()].filter((t) => !onBoard.has(t.id)));
+    return rows.concat([...archived.values()]);
   }
 
-  return { load, read, save, ticketsPath, archivePath, metaPath, readArchive, appendArchive, appendRestore, restore, withArchive, readMeta, writeMeta };
+  return { load, read, save, ticketsPath, archivePath, metaPath, readArchive, archivedOffBoard, archiveMaxId, appendArchive, appendRestore, restore, withArchive, readMeta, writeMeta };
 }
 
 function nextTicketId(tickets, floor = 0) {
