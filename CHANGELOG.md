@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - clodent seats: the context bar and context-size reminders use the window clodent reports (1M with a [1m] model, 200k without).
+- Browser pane: seats with the browser grant get BROWSER, GH_BROWSER and npm_config_browser pointing at clodex-browse, so npm/gh web logins open in the seat's browser pane (profile from CLODEX_BROWSE_SERVICE).
 
 ## 5.167.0 — 2026-11-10
 
