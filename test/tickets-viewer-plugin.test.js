@@ -1222,6 +1222,75 @@ test('tickets-viewer: add honours the archive meta high-water over a lower board
   } finally { cleanup(); }
 });
 
+function writeArchiveAt(home, key, lines) {
+  fs.writeFileSync(path.join(home, 'projects', key, 'tickets-archive.jsonl'), lines.map((l) => `${JSON.stringify(l)}\n`).join(''));
+}
+
+function archiveOpsAt(home, key) {
+  return fs.readFileSync(path.join(home, 'projects', key, 'tickets-archive.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+}
+
+test('tickets-viewer: add refuses when the archive meta exists but cannot be read', async (t) => {
+  const { host, home, cleanup } = boot();
+  const metaFile = () => path.join(home, 'projects', key, 'tickets-archive.meta.json');
+  let key;
+  t.after(() => { try { fs.chmodSync(metaFile(), 0o600); } catch (_) {} cleanup(); });
+  key = mkProject(home, '/solo/meta-eacces');
+  writeTicketsAt(home, key, [ticket('t1')]);
+  fs.writeFileSync(metaFile(), JSON.stringify({ maxId: 40 }));
+  fs.chmodSync(metaFile(), 0o000);
+  assertWritesLandInFixture(home, key);
+  const res = await host.dispatch('tickets-viewer', 'add', [{ project: key, spec: 'next' }], 'desktop');
+  assert.equal(res.ok, false);
+  assert.match(res.error, /EACCES/);
+  assert.deepEqual(onDisk(home, key).map((x) => x.id), ['t1'], 'no id was issued');
+});
+
+test('tickets-viewer: editSpec on an archived ticket restores it, then edits it', async () => {
+  const { host, home, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/solo/restore');
+    const archived = ticket('t4', { state: 'done', closedAt: 1_700_000_000_000, report: 'r' });
+    writeTicketsAt(home, key, [ticket('t9')]);
+    writeArchiveAt(home, key, [{ op: 'archive', at: 'x', row: archived }]);
+    assertWritesLandInFixture(home, key);
+
+    const res = await host.dispatch('tickets-viewer', 'editSpec', [{ project: key, id: 't4', spec: 'fixed record' }], 'desktop');
+    assert.equal(res.ok, true, res.error);
+    const back = onDisk(home, key).find((x) => x.id === 't4');
+    assert.ok(back, 'the row is back on the board');
+    assert.equal(back.spec, 'fixed record');
+    assert.equal(back.report, 'r', 'with its other fields');
+    assert.deepEqual(archiveOpsAt(home, key).map((o) => o.op), ['archive', 'restore'], "the archive's last op for t4 is restore");
+    assert.equal(archiveOpsAt(home, key)[1].id, 't4');
+  } finally { cleanup(); }
+});
+
+test('tickets-viewer: counts, closed, search and detail read archived rows too', async () => {
+  const { host, home, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/solo/history');
+    writeTicketsAt(home, key, [ticket('t9'), ticket('t8', { state: 'cancelled', closedAt: 1_700_000_000_000 })]);
+    writeArchiveAt(home, key, [
+      { op: 'archive', at: 'x', row: ticket('t4', { state: 'done', closedAt: 1_700_000_000_000, spec: 'zorblax' }) },
+      { op: 'archive', at: 'x', row: ticket('t3', { state: 'done', closedAt: 1_700_000_000_000 }) },
+      { op: 'restore', at: 'x', id: 't3' },
+    ]);
+    const b = await host.dispatch('tickets-viewer', 'board', [key], 'desktop');
+    assert.equal(b.counts.done, 1, 'the archived done row is counted; the restored one is not');
+    assert.equal(b.counts.cancelled, 1, 'ENTER: the board row is still counted');
+    const c = await host.dispatch('tickets-viewer', 'closed', [{ project: key }], 'desktop');
+    assert.deepEqual(c.rows.map((r) => r.id).sort(), ['t4', 't8']);
+    assert.equal(c.total, 2);
+    const s = await host.dispatch('tickets-viewer', 'search', [{ project: key, q: 'zorblax' }], 'desktop');
+    assert.deepEqual(s.hits.map((h) => h.id), ['t4']);
+    const d = await host.dispatch('tickets-viewer', 'ticket', [{ project: key, id: 't4' }], 'desktop');
+    assert.equal(d.ok, true, d.error);
+    assert.equal(d.ticket.id, 't4');
+    assert.deepEqual(onDisk(home, key).map((x) => x.id), ['t9', 't8'], 'reading restored nothing');
+  } finally { cleanup(); }
+});
+
 test('tickets-viewer: add mints the next id over the WHOLE board, closed records included', async () => {
   const { host, home, cleanup } = boot();
   try {

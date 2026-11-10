@@ -1179,7 +1179,8 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
       throw new Error(`team "${owners[0]}" already owns root ${resolvedRoot} — add share-root:yes to share it`);
     }
     if (owners.length) {
-      const unstamped = createTicketsStore({ fs, clodexHome: home }).load(resolvedRoot)
+      const shared = createTicketsStore({ fs, clodexHome: home });
+      const unstamped = shared.withArchive(resolvedRoot, shared.load(resolvedRoot))
         .filter((t) => t && typeof t === 'object' && !t.team).length;
       if (unstamped) {
         throw new Error(`team "${owners[0]}" owns root ${resolvedRoot} and its board holds ${unstamped} ticket row(s) without a team — the root cannot be shared until team ${owners[0]}'s board reconciles and stamps them`);

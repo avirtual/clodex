@@ -861,7 +861,7 @@ function createSessionManager(deps) {
 
   // clodexHome is injected, not the store default, so a test repointing REGISTRY_DIR
   // cannot read or write the operator's real ~/.clodex board.
-  const ticketsStore = createTicketsStore({ fs, path, clodexHome: REGISTRY_DIR });
+  const ticketsStore = createTicketsStore({ fs, path, clodexHome: REGISTRY_DIR, warn: (msg) => log.warn('tickets', msg) });
 
   const SLASH_COMMAND_RE = /^\/[\w:-]+(\s|$)/;
 

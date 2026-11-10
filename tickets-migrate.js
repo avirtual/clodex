@@ -169,7 +169,7 @@ function reconcileBoard(board, source, teamName) {
 // Returns a per-team summary for the log.
 function runTicketsMigration({ root, fs = require('fs'), log = null } = {}) {
   const teamsDir = path.join(root, 'teams');
-  const store = createTicketsStore({ fs, clodexHome: root });
+  const store = createTicketsStore({ fs, clodexHome: root, warn: (msg) => (log ? log.warn('migrate', msg) : console.warn(msg)) });
   const result = { migrated: 0, reconciled: 0, teams: [] };
 
   let names;
