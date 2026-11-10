@@ -4949,8 +4949,8 @@ function createTicketMethods(deps, shared) {
       if (tpl.stripLevel === 1 || tpl.stripLevel === 2) getPersistence().setStripLevel(name, tpl.stripLevel);
       if (tpl.autoCompact === false) getPersistence().setAutoCompact(name, false);
       if (Array.isArray(tpl.plugins)) getPersistence().setPlugins(name, tpl.plugins);
-      const idleClearMs = idleClearAfterMs(tpl.idleClear);
-      if (idleClearMs) getPersistence().upsert({ name, idleClear: { afterMs: idleClearMs } });
+      const idleClear = { afterMs: idleClearAfterMs(tpl.idleClear) };
+      if (idleClear.afterMs) getPersistence().upsert({ name, idleClear });
       if (tpl.class === 'assistant') {
         getPersistence().upsert({ name, class: 'assistant', template: tpl.name || null, awokeAt: Date.now(), ...(tpl.sleep && typeof tpl.sleep === 'object' ? { sleep: { ...tpl.sleep } } : {}) });
         const live = this.sessions.get(name);

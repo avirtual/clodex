@@ -4254,7 +4254,8 @@ function createSessionManager(deps) {
       }
       s._idleCleared = true;
       s._idleClearSkip = null;
-      getPersistence().upsert({ name: s.name, lastClear: { at: now, reason: 'idle' } });
+      const lastClear = { at: now, reason: 'idle' };
+      getPersistence().upsert({ name: s.name, lastClear });
       log.info('session', `idle clear ${s.name} after ${afterMs}ms idle`);
       return true;
     }

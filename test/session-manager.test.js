@@ -22352,7 +22352,7 @@ async function idleClearSeat(t, name, row = { idleClear: { afterMs: 300000 } }) 
   return { h, s, seat: h.handles[0] };
 }
 
-test('idle clear: a seat with idleClear clears at afterMs idle, not a millisecond before, stamps lastClear, and leaves the operator-input stamp alone', async (t) => {
+test('idle clear (_idleClearTick): a seat with idleClear clears at afterMs idle, not a millisecond before, stamps lastClear, and leaves the operator-input stamp alone', async (t) => {
   const { h, s, seat } = await idleClearSeat(t, 'ic1');
   h.m._lastOperatorInputAt = 42;
   h.m._assistantSweep(s.activityTs + 299999);
@@ -22404,7 +22404,7 @@ for (const [why, row, arrange] of [
   ['a clear continuation is in flight', undefined, (h, s) => { s._postClearContinuation = 'go on'; }],
   ['a compact is in flight', undefined, (h, s) => { s._compactContinuation = 'go on'; }],
   ['a reload is in flight', undefined, (h, s) => { s._reloadInFlight = true; }],
-  ['an open ticket is bound to it', undefined, (h) => { h.m._teamOfOrNull = () => ({ root: h.root }); h.m._openTicketsFor = () => [{ id: 't1' }]; }],
+  ['an open ticket is bound to it (_idleClearTicketBound)', undefined, (h) => { h.m._teamOfOrNull = () => ({ root: h.root }); h.m._openTicketsFor = () => [{ id: 't1' }]; }],
 ]) {
   test(`idle clear: no clear when ${why}`, async (t) => {
     const { h, s, seat } = await idleClearSeat(t, 'icx', row);
