@@ -4,7 +4,7 @@ const { DEFAULT_LABEL, abbrevHome } = require('./account-select');
 
 const API_KEY_PLACEHOLDER = 'API key (sk-ant-…)';
 const MODEL_ALIASES = ['fable', 'opus', 'sonnet', 'haiku'];
-const INSECURE_KEY_REFUSAL = 'an API key is accepted only over a local or encrypted connection';
+const INSECURE_KEY_REFUSAL = 'an API key is accepted only over a local or encrypted connection (set CLODEX_WEB_TRUSTED_TRANSPORT=1 on the node if its tunnel is encrypted)';
 
 function keyTransportRefusal(win) {
   return win && win.isSecureContext === false ? INSECURE_KEY_REFUSAL : null;

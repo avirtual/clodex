@@ -242,8 +242,10 @@ if (Number.isInteger(webPort) && webPort > 0) {
       host: (process.env.CLODEX_WEB_HOST || '').trim() || null,
       token: process.env.CLODEX_WEB_TOKEN || null,
       insecure: process.env.CLODEX_WEB_INSECURE === '1',
+      trustedTransport: process.env.CLODEX_WEB_TRUSTED_TRANSPORT === '1',
       userDataPath,
     });
+    if (process.env.CLODEX_WEB_TRUSTED_TRANSPORT === '1') log.info('web', 'CLODEX_WEB_TRUSTED_TRANSPORT=1: every web connection counts as an encrypted transport for API keys');
   } catch (e) { log.error('app', `web host failed to start: ${e && e.message}`); }
 }
 

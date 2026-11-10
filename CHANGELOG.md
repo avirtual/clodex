@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Remote accounts: a node whose web GUI is reached through an encrypted tunnel it cannot see (e.g. a container behind ssh) can set CLODEX_WEB_TRUSTED_TRANSPORT=1 to accept API keys; the refusal message now names it.
+
 ## 5.166.0 — 2026-11-10
 - Team board: the remaining read-only readers (task list, hand cap, parked-ticket checks, remote ticket rows, rename and unbind guards) share the cached parse, so they no longer re-read the whole board file on each call.
 - Team hand prompt: reads a needed function whole instead of in 60-line slices, which were a third of measured hand spend. Team lead prompt: one rule for probe versus scout (does the read need the lead's context). Reaches seats spawned after the upgrade; a team that keeps its own copy of either prompt must resync it.

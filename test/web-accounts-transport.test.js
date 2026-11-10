@@ -14,9 +14,9 @@ const { INSECURE_KEY_REFUSAL, keyTransportRefusal } = require('../renderer/lib/a
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const KEY = 'sk-test-LEAKCANARY';
-const REFUSAL = 'an API key is accepted only over a local or encrypted connection';
+const REFUSAL = 'an API key is accepted only over a local or encrypted connection (set CLODEX_WEB_TRUSTED_TRANSPORT=1 on the node if its tunnel is encrypted)';
 
-function rig({ dropDep = false } = {}) {
+function rig({ dropDep = false, trustedTransport } = {}) {
   const root = mkTmpRoot('clx-web-accounts-');
   const claudeHome = path.join(root, 'home', '.claude');
   fs.mkdirSync(claudeHome, { recursive: true });
@@ -29,7 +29,7 @@ function rig({ dropDep = false } = {}) {
   const manager = { registerWindow() {}, unregisterWindow() {}, listForWorkspace: () => [] };
   const host = createWebHost({
     engine: { stores: {}, manager, accounts },
-    log, host: '127.0.0.1', port: 0, userDataPath: root,
+    log, host: '127.0.0.1', port: 0, userDataPath: root, ...(trustedTransport === undefined ? {} : { trustedTransport }),
     registerHandlers: (deps) => {
       if (!dropDep) return registerIpcHandlers(deps);
       const rest = { ...deps };
@@ -132,4 +132,36 @@ test('the renderer refuses on an insecure context only, with the host\'s text', 
   assert.strictEqual(keyTransportRefusal({ isSecureContext: false }), REFUSAL);
   assert.strictEqual(keyTransportRefusal({ isSecureContext: true }), null);
   assert.strictEqual(keyTransportRefusal({}), null, 'undefined is not insecure');
+});
+
+test('trustedTransport: true vouches for a non-loopback, non-https connection, and setApiKey proceeds', async () => {
+  const r = rig({ trustedTransport: true });
+  try {
+    const c = r.connect({ remoteAddress: '172.17.0.1', origin: 'http://172.17.0.1:8080' });
+    assert.ok(c.frames.some((f) => f.t === 'welcome'), 'ENTER: the hello was accepted');
+    assert.deepStrictEqual((await c.invoke('accounts:setApiKey', 'api-1', KEY)).value, { ok: true });
+    assert.strictEqual(r.settingsKey(), KEY);
+  } finally { r.host.close(); }
+});
+
+test('with trustedTransport absent, the same connection is refused with the text naming the variable', async () => {
+  const r = rig();
+  try {
+    const c = r.connect({ remoteAddress: '172.17.0.1', origin: 'http://172.17.0.1:8080' });
+    assert.ok(c.frames.some((f) => f.t === 'welcome'), 'ENTER: the hello was accepted');
+    const reply = await c.invoke('accounts:setApiKey', 'api-1', KEY);
+    assert.deepStrictEqual(reply.value, { ok: false, error: REFUSAL });
+    assert.ok(REFUSAL.includes('CLODEX_WEB_TRUSTED_TRANSPORT=1'));
+    assert.strictEqual(r.settingsKey(), undefined, 'nothing written');
+  } finally { r.host.close(); }
+});
+
+test('headless-main enables trustedTransport only on CLODEX_WEB_TRUSTED_TRANSPORT === \'1\'', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'headless-main.js'), 'utf-8');
+  assert.match(src, /\n\s+trustedTransport: process\.env\.CLODEX_WEB_TRUSTED_TRANSPORT === '1',\n/);
+  const reads = src.match(/process\.env\.CLODEX_WEB_TRUSTED_TRANSPORT[^\n,)]*/g);
+  assert.deepStrictEqual(reads, [
+    "process.env.CLODEX_WEB_TRUSTED_TRANSPORT === '1'",
+    "process.env.CLODEX_WEB_TRUSTED_TRANSPORT === '1'",
+  ]);
 });

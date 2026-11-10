@@ -56,7 +56,7 @@ function contentDisposition(base) {
   return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(base).replace(/['()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase())}`;
 }
 
-function createWebHost({ engine, log, port, host, token, insecure = false, userDataPath, registerHandlers } = {}) {
+function createWebHost({ engine, log, port, host, token, insecure = false, trustedTransport = false, userDataPath, registerHandlers } = {}) {
   const manager = engine.manager;
   const exportsDir = path.join(userDataPath || os.homedir(), 'exports');
   const webDist = path.join(__dirname, 'web-dist'); // P3b esbuild output (may not exist yet)
@@ -389,7 +389,7 @@ function createWebHost({ engine, log, port, host, token, insecure = false, userD
 
   wss.on('connection', (ws, req) => {
     const conn = {
-      ws, authed: false, viewerOnHost: viewerOnHost(req && req.socket && req.socket.remoteAddress), secureTransport: secureTransport(req), visible: true, workspaceId: DEFAULT_WORKSPACE_ID,
+      ws, authed: false, viewerOnHost: viewerOnHost(req && req.socket && req.socket.remoteAddress), secureTransport: trustedTransport === true || secureTransport(req), visible: true, workspaceId: DEFAULT_WORKSPACE_ID,
       pendingMenus: new Map(), pendingDialogs: new Map(),
       send: (frame) => { try { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(frame)); } catch (err) { log.error('web', `send: ${err.message}`); } },
       pushEvent: (channel, args) => conn.send({ t: 'event', channel, args: args.map(encodeBuffers) }),
