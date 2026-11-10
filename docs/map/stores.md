@@ -119,6 +119,7 @@
 | `setEnv` | stores a copy of a non-empty env object, deleting the key otherwise | sessions.json | _save | stores.test.js session-args.test.js |
 | `setStripLevel` | stores the wirescope strip level as a divergence and migrates off the legacy stripThinking boolean | sessions.json | _save | stores.test.js default-set-seeding.test.js |
 | `setAutoCompact` | stores only the autoCompact false opt-out, deleting the field to enable | sessions.json | _save | resolve-seat-shape.test.js |
+| `setIdleClear` | stores a valid idleClear afterMs, deleting the field otherwise; false when the record is missing | sessions.json | _save | stores.test.js remote-create.test.js |
 | `markDigested` | appends a session id to digested, deduped and capped at the last 50 | sessions.json | _save | hint-arm.test.js memory-load.test.js |
 
 ### Invariants

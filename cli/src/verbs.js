@@ -893,7 +893,11 @@ async function patchSession({ client, ctx, printer, flags, args }) {
   else if (flags.arg) body.extraArgs = [String(flags.arg)];
   if (flags.proxy != null) body.proxy = String(flags.proxy);
   if (flags.restart) body.restart = true;
-  if (Object.keys(body).length === 0) throw new CliError(EXIT.USAGE, 'patch session needs at least one of --arg / --proxy / --restart');
+  if (flags['idle-clear'] != null) {
+    const v = String(flags['idle-clear']);
+    body.idleClear = v === 'off' ? null : { afterMs: parseIntOr(v, 'idle-clear') };
+  }
+  if (Object.keys(body).length === 0) throw new CliError(EXIT.USAGE, 'patch session needs at least one of --arg / --proxy / --restart / --idle-clear');
   await R.requireResource(client, 'sessions', 'patch', R.ctxLabel(ctx, flags), 'args');
   const res = await client.patch(`/api/sessions/${encodeURIComponent(name)}/args`, 'patch session', body);
   if (flags.json) printer.json(res);

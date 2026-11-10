@@ -80,6 +80,19 @@ function idleDecision({ now, activityTs, idleMs, state, outbox, permissions } = 
   return sleep ? 'sleep' : 'keep';
 }
 
+const IDLE_CLEAR_MIN_MS = 60000;
+
+function idleClearAfterMs(idleClear) {
+  const ms = idleClear && typeof idleClear === 'object' ? idleClear.afterMs : undefined;
+  return typeof ms === 'number' && Number.isFinite(ms) && ms >= IDLE_CLEAR_MIN_MS ? ms : 0;
+}
+
+function idleClearDecision({ now, activityTs, afterMs, state, outbox, permissions, queued, parked, inFlight, ticketBound, cleared } = {}) {
+  const clear = afterMs > 0 && state === 'idle' && !outbox && !permissions && !queued && !parked
+    && !inFlight && !ticketBound && !cleared && now - activityTs >= afterMs;
+  return clear ? 'clear' : 'keep';
+}
+
 function pickMaxAwakeVictim(rows, maxAwake) {
   const list = Array.isArray(rows) ? rows : [];
   if (!(maxAwake > 0) || list.length < maxAwake) return null;
@@ -91,4 +104,4 @@ function pickMaxAwakeVictim(rows, maxAwake) {
   return victim ? victim.name : null;
 }
 
-module.exports = { BRIEF_MAX_BYTES, BRIEF_TAIL, briefPathFor, clientTokenPathFor, composeBrief, idleDecision, pickMaxAwakeVictim, splitTurnText };
+module.exports = { BRIEF_MAX_BYTES, BRIEF_TAIL, briefPathFor, clientTokenPathFor, composeBrief, idleClearAfterMs, idleClearDecision, idleDecision, IDLE_CLEAR_MIN_MS, pickMaxAwakeVictim, splitTurnText };

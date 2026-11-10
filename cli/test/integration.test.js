@@ -402,6 +402,19 @@ test('patch session: a node whose args subresource carries no patch verb is the 
   server.close();
 });
 
+for (const [flag, sent] of [['off', null], ['300000', { afterMs: 300000 }]]) {
+  test(`patch session --idle-clear ${flag} sends idleClear ${JSON.stringify(sent)} and nothing else`, async (t) => {
+    const { server, seen } = stub((req, res) => { res.writeHead(200); res.end(JSON.stringify({ ok: true, restarted: false })); });
+    t.after(() => server.close());
+    const port = await listen(server);
+    const { code } = await cli(['patch', 'session', 'b', '--idle-clear', flag], port);
+    assert.strictEqual(code, 0);
+    const patch = seen.find((s) => s.method === 'PATCH');
+    assert.strictEqual(patch.url, '/api/sessions/b/args');
+    assert.deepStrictEqual(patch.body, { idleClear: sent });
+  });
+}
+
 test('delete session: a node whose sessions row carries no delete verb is the D.5 line, exit 1', async () => {
   const { server, seen } = stub((req, res, rec) => {
     if (rec.url === '/api/peer/hello') { res.writeHead(200); return res.end(JSON.stringify({ ok: true, host: 'oldbox', version: '5.69.0', caps: ['create'] })); }

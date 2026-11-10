@@ -235,7 +235,9 @@
 | `makeAwakeRoom` | count live rows plus names granted room but not yet live; below the cap reserve the holder and answer null; at it, reserve and sleep the idlest non-busy awake assistant (reason `evicted`), or answer the 503 at-capacity refusal | `this._awakeReserved` | `_awakeAssistantRows` `pickMaxAwakeVictim` `_sleepNow` | session-manager.test.js |
 | `releaseAwakeRoom` | drop a holder's reservation once its wake or create settled | `this._awakeReserved` | none | session-manager.test.js |
 | `startAssistantSweep` | arm the unref'd idle-sweep interval once | `this._assistantSweepTimer` | `_assistantSweep` | unpinned |
-| `_assistantSweep` | sleep every live non-clone assistant stream seat `idleDecision` calls idle | none | `idleDecision` `sleep` | session-manager.test.js |
+| `_assistantSweep` | idle-clear every live non-clone stream seat, then sleep every assistant one `idleDecision` calls idle | none | `_idleClearTick` `idleDecision` `sleep` | session-manager.test.js |
+| `_idleClearTicketBound` | whether an open ticket on the seat's team board is bound to it; an unreadable board counts as bound | none | `_teamOfOrNull` `_openTicketsFor` | session-manager.test.js |
+| `_idleClearTick` | clear a seat with a valid `idleClear` once `idleClearDecision` says so, stamping `lastClear` | `s._idleCleared`, `s._idleClearSkip`, `lastClear` | `idleClearDecision` `seatControl` `_idleClearTicketBound` | session-manager.test.js |
 | `_stopForRespawn` | the record-keeping stop shared by rename, move and moveToPeer: stream kill, or captured-pid SIGKILL timer plus descendant reap | none (the process only) | `sigkillPid` `reapPtyDescendants` | unpinned |
 | `rename` | give a seat a new name: refuse ticket/assignee seats and collisions, stop it, move name-keyed state, respawn with --resume | `this._movingNames`, `s._moving`, sessions.json key, seat dirs, pending/<name>, library/memory-loadlog/<name>.jsonl, team lead pointer, roster row | `_stopForRespawn` `_waitForExit` `rehomeOrphans` `_claimEntries` `_renameDirs` `renameSeatRow` `create` | session-rename.test.js |
 

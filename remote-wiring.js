@@ -27,7 +27,7 @@ const { shellCapGranted } = require('./peer-shell');
 const { readVoiceCapabilityCached } = require('./voice-capability');
 const { trackedSessionIds } = require('./session-info');
 const { SESSION_ID_RE } = require('./seat-import');
-const { briefPathFor, clientTokenPathFor } = require('./assistant-sleep');
+const { briefPathFor, clientTokenPathFor, idleClearAfterMs, IDLE_CLEAR_MIN_MS } = require('./assistant-sleep');
 const { claudeProjectSlug } = require('./clodex-paths');
 const { parseProfileYaml } = require('./memory-store');
 
@@ -198,6 +198,7 @@ function createRemoteWiring(deps) {
         turns: messages.filter((m) => m && m.role === 'assistant').length,
         lastTurnTs: (last && last.ts) || null,
         pendingMail: countParked(name),
+        lastClear: (entry && entry.lastClear) || null,
         transcriptPath,
       },
     };
@@ -1019,6 +1020,14 @@ function createRemoteWiring(deps) {
           const safePatch = withoutLocalOnly(patch || {});
           delete safePatch.noWire;
           if (Array.isArray(safePatch.intents)) safePatch.intents = withoutPrivilegedIntentsFor(safePatch.intents);
+          if (Object.prototype.hasOwnProperty.call(safePatch, 'idleClear')) {
+            const idleClear = safePatch.idleClear;
+            delete safePatch.idleClear;
+            if (idleClear !== null && !idleClearAfterMs(idleClear)) return { ok: false, error: `idleClear.afterMs must be a finite number of at least ${IDLE_CLEAR_MIN_MS}, or null to remove it` };
+            if (!getPersistence().setIdleClear(name, idleClear)) return { ok: false, error: 'Session not found in persistence' };
+            log.info('session', `setArgs ${name} via peer: idleClear ${idleClear ? idleClear.afterMs : 'off'}`);
+            if (!Object.keys(safePatch).length) return { ok: true, restarted: false };
+          }
           const out = await applySessionArgs(name, safePatch, wsId);
           if (out && out.ok && (out.restarted || out.modelSwitched) && getRemoteServer()) { try { getRemoteServer().notifySessions(); } catch {} }
           log.info('session', `setArgs ${name} via peer${out && out.ok ? (out.restarted ? ' (respawned)' : out.modelSwitched ? ' (model switched)' : '') : ` failed: ${out && out.error}`}`);

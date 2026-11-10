@@ -8,6 +8,7 @@ const { envKeyError } = require('./env-scopes');
 const { loadEnvDefaults, planEnvSeed } = require('./env-defaults');
 const { parseAgentFrontmatter, BUILTIN_AGENTS } = require('./agents-util');
 const { parseSkillFrontmatter } = require('./skills-util');
+const { idleClearAfterMs } = require('./assistant-sleep');
 // The CLI's own context validator, entered by its PUBLIC door (validateEntry).
 // Reused rather than re-implemented so a peer's typed cloud transport and a CLI
 // context can never drift into two different ideas of a valid ssm block. The
@@ -1013,6 +1014,15 @@ function initStores(userDataPath, {
         if (on === false) entry.autoCompact = false; else delete entry.autoCompact;
         this._save(all, name);
       }
+    },
+    setIdleClear(name, idleClear) {
+      const all = this._load();
+      const entry = all.find(s => s.name === name);
+      if (!entry) return false;
+      const afterMs = idleClearAfterMs(idleClear);
+      if (afterMs) entry.idleClear = { afterMs }; else delete entry.idleClear;
+      this._save(all, name);
+      return true;
     },
     markDigested(name, sessionId) {
       if (!sessionId) return;
