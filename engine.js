@@ -786,7 +786,7 @@ const { parkDelivery, drainPending, hasPending, hasActivePending, countPending, 
 const { createTeamDelete } = require('./team-delete');
 const { createTeamManifest } = require('./team-manifest');
 const {
-  findProjectRoot, resolveTeam, teamOf, teamOfSeat, teamsOfCwd, bindSeat, unbindSeat, renameSeatRow, rosterOf, pruneStaleRows, synthesiseRosters, setSeatLookup,
+  findProjectRoot, resolveTeam, teamOf, teamOfSeat, teamsOfCwd, bindSeat, unbindSeat, dropSeatRows, renameSeatRow, rosterOf, pruneStaleRows, synthesiseRosters, setSeatLookup,
   createTeam, addRole, listTeams, loadManifest,
   setRole, removeRole, renameRole, setTeamWatchdog, setLead, setTeamTrunk, setTeamDone, setTeamWorktrees, setTeamMaxHands, teamsDir, deleteTeam,
   kitCatalog, resolveKit,
@@ -1193,6 +1193,7 @@ const SessionManager = createSessionManager({
     teamsOfCwd,
     bindSeat,
     unbindSeat,
+    dropSeatRows,
     renameSeatRow,
     rosterOf,
     pruneStaleRows,
