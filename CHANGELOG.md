@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.172.0 — 2026-11-10
+
 - A message to an idle Codex, Muse or clodent seat with a cold cache is now delivered at once instead of being dropped. These seats cannot hold a message for their next turn, so holding it only lost it. A seat waiting on a permission dialog still refuses messages.
 - New opt-in seat setting: `idleClear: {afterMs}` clears a seat's context once it has sat idle that long with nothing outstanding. The next message lands on a fresh context instead of re-billing a cold history. The seat shows when it was last cleared.
 
