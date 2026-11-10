@@ -66,7 +66,7 @@ function expectedFilesystem(R, ud) {
     `${R}/cli/contexts.json`, `${R}/teams/*/sandbox.json`, `${R}/boxes`, '/h/.clodex/cli/contexts.json',
     `${R}/run/*/mcp.json`, `${R}/sessions/*/run/mcp.json`, `${R}/peer-outbox/outbox-key`, `${R}/run/.agent-sock.cred`,
     `${R}/sessions/*/seat.json`, `${R}/sessions/*/.seat.json.tmp.*`, `${R}/sessions/*/client-token`, `${R}/accounts/*/.credentials.json`,
-    `${R}/monitors/*/*.cred`, `${R}/sessions/*/monitors/*.cred`,
+    `${R}/accounts/*/settings.json`, `${R}/accounts/*/settings.json.tmp`, `${R}/monitors/*/*.cred`, `${R}/sessions/*/monitors/*.cred`,
     '/h/.claude/.credentials.json', '/h/.claude.json', '/h/.clodent/settings.json',
     ...(ud ? ['/ud/remote.env', '/ud/ui-settings.json*', '/ud/env-scopes.json*', '/ud/sessions.json*', '/ud/wire-hold-entries.json', '/ud/env-override.env',
       '/ud/.ui-settings.json*', '/ud/.env-scopes.json*', '/ud/.sessions.json*', '/ud/.wire-hold-entries.json.tmp.*', '/ud/remote.env.tmp', '/ud/sandbox*/auth.env'] : []),
@@ -334,6 +334,22 @@ test('buildCredentialSandbox: the seat mirror, temp copy, client token and accou
     assert.ok(g.sandbox.filesystem.denyRead.includes(p), `denyRead lists ${p}`);
     assert.ok(g.sandbox.credentials.files.some((f) => f.path === p && f.mode === 'deny'), `credentials.files lists ${p}`);
     for (const r of rules) assert.ok(g.deny.includes(r), `permissions deny ${r}`);
+  }
+});
+
+test('buildCredentialSandbox: an account settings.json and its writer temp are read-denied, a sibling history file is not', () => {
+  const R = seededRoot();
+  const g = buildCredentialSandbox({ registryDir: R, list: [], home: '/h' });
+  const denied = (p, set) => set.some((glob) => path.matchesGlob(p, glob));
+  const rows = [
+    [`${R}/accounts/work/settings.json`, true],
+    [`${R}/accounts/work/settings.json.tmp`, true],
+    [`${R}/accounts/work/history.jsonl`, false],
+  ];
+  for (const [p, want] of rows) {
+    assert.strictEqual(denied(p, g.sandbox.filesystem.denyRead), want, `denyRead ${p}`);
+    assert.strictEqual(denied(p, g.sandbox.credentials.files.map((f) => f.path)), want, `credentials.files ${p}`);
+    assert.strictEqual(g.deny.includes(`Read(/${R}/accounts/*/${path.basename(p)})`), want, `permissions deny ${p}`);
   }
 });
 
