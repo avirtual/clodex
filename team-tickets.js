@@ -879,7 +879,7 @@ function createTicketMethods(deps, shared) {
 
     teamActivity(teamName) {
       const team = loadManifest(teamName);
-      const tickets = ticketsStore.withArchive(team.root).filter((t) => t && t.id);
+      const tickets = ticketsStore.withArchive(team.root, ticketsStore.read(team.root)).filter((t) => t && t.id);
 
       const roles = {};
       for (const [key, def] of Object.entries(team.roles || {})) {
@@ -7751,7 +7751,7 @@ function createTicketMethods(deps, shared) {
     },
 
     _taskListText(team, filter, now, own = null) {
-      const board = ticketsStore.withArchive(team.root).slice().sort((a, b) => {
+      const board = ticketsStore.withArchive(team.root, ticketsStore.read(team.root)).slice().sort((a, b) => {
         const na = Number(String(a.id).replace(/^t/, '')) || 0;
         const nb = Number(String(b.id).replace(/^t/, '')) || 0;
         return na - nb;
