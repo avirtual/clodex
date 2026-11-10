@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- clodent seats: the context bar and context-size reminders use the window clodent reports (1M with a [1m] model, 200k without).
+
 ## 5.167.0 — 2026-11-10
 
 - Remote accounts: a node whose web GUI is reached through an encrypted tunnel it cannot see (e.g. a container behind ssh) can set CLODEX_WEB_TRUSTED_TRANSPORT=1 to accept API keys; the refusal message now names it.

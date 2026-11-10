@@ -76,7 +76,7 @@ function liveSnapshotFor({ manager, entry, session, readCtxFor, proxyPoller }) {
     attention: session.needsAttention || null,
     pendingCount: manager.pendingCountFor(entry.name),
     createdAt: entry.createdAt || null,
-    ...readCtxFor(entry.name),
+    ...readCtxFor(entry.name, entry.type),
     proxy: proxyPoller.snapshot(entry.name),
   };
 }
@@ -166,7 +166,7 @@ async function restoreSessionsForWorkspace({
         backend: (manager.sessions.get(entry.name) || {}).backend || null,
         team: manager.teamNameFor(cwd, entry.name),
         createdAt: entry.createdAt || null,
-        ...readCtxFor(entry.name),
+        ...readCtxFor(entry.name, entry.type),
         proxy: proxyPoller.snapshot(entry.name),
       });
     } catch (err) {

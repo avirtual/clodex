@@ -57,6 +57,22 @@ for (const [label, idx, want] of ROWS) {
   });
 }
 
+for (const size of [200000, 1000000]) {
+  test(`decode: a clodent 0.7.0 init (clodent/test/stream/stream.test.js) with context_window_size ${size} decodes contextWindow`, () => {
+    const init = {
+      type: 'system', subtype: 'init', cwd: '/tmp/w', session_id: '11111111-1111-4111-8111-111111111111',
+      model: 'claude-sonnet-5-5', tools: ['Read', 'Write', 'Edit', 'Bash', 'Grep'], permissionMode: 'acceptEdits',
+      slash_commands: ['compact', 'clear', 'cost', 'model', 'help', 'quit', 'exit'], apiKeySource: 'ANTHROPIC_API_KEY',
+      clodent_version: '0.7.0', context_window_size: size, instruction_files: [],
+    };
+    assert.strictEqual(decode(init).contextWindow, size);
+  });
+}
+
+test('decode: a claude init without context_window_size carries no contextWindow key', () => {
+  assert.strictEqual('contextWindow' in decode(JSON.parse(LINES[0])), false);
+});
+
 test('decode: an init without terminal_slash_commands reports an empty terminal set', () => {
   assert.deepStrictEqual(decode({ type: 'system', subtype: 'init', session_id: 's', slash_commands: ['compact'] }).terminalSlashCommands, []);
 });
