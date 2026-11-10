@@ -55,8 +55,8 @@ function projectDirFor(root, projectPath) {
 
 // nextTicketId scans the WHOLE array, closed records included: an id is a public
 // reference, so a re-issued one still resolves — to the wrong work.
-function nextTicketId(tickets) {
-  let max = 0;
+function nextTicketId(tickets, floor = 0) {
+  let max = Number.isSafeInteger(floor) && floor > 0 ? floor : 0;
   for (const t of tickets || []) {
     const m = /^t(\d+)$/.exec(t && t.id);
     if (m) {
@@ -168,6 +168,16 @@ function atomicWriteFileSync(filePath, data) {
 }
 
 const TICKETS_FILE = 'tickets.json';
+const ARCHIVE_META_FILE = 'tickets-archive.meta.json';
+
+function readArchiveMaxId(boardDir) {
+  try {
+    const meta = JSON.parse(fs.readFileSync(path.join(boardDir, ARCHIVE_META_FILE), 'utf8'));
+    const maxId = meta && meta.maxId;
+    if (Number.isSafeInteger(maxId) && maxId >= 0) return maxId;
+  } catch (_) {}
+  return 0;
+}
 // A directory under teams/ is a team only when it carries this, or every stray
 // directory lists as an empty team.
 const TEAM_FILE = 'team.json';
@@ -1139,7 +1149,7 @@ function mutateBoard(projectKey, mutate) {
     return { ok: false, error: `refusing to write: ${read.malformed} malformed record(s) in ${TICKETS_FILE} would be erased` };
   }
 
-  const outcome = mutate(read.tickets);
+  const outcome = mutate(read.tickets, loc.dir);
   if (outcome && outcome.error) return { ok: false, error: outcome.error };
 
   try {
@@ -1196,10 +1206,10 @@ function add(payload) {
   const who = str(assignee);
 
   let delivered = false;
-  const res = mutateBoard(project, (tickets) => {
+  const res = mutateBoard(project, (tickets, boardDir) => {
     const now = Date.now();
     const ticket = {
-      id: nextTicketId(tickets),
+      id: nextTicketId(tickets, readArchiveMaxId(boardDir)),
       title: ticketTitle(text),
       spec: text,
       assignee: who,

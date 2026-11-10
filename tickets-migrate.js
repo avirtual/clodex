@@ -81,7 +81,7 @@ function readDestination(fs, file) {
 
 // PURE. Given the destination board and one team's source board, return the
 // merged array. Destination records are returned untouched, in order, first.
-function mergeBoards(dest, source, teamName) {
+function mergeBoards(dest, source, teamName, archived = [], metaMaxId = 0) {
   const out = (dest || []).slice();
   const seen = new Set();
   for (const d of out) {
@@ -89,6 +89,15 @@ function mergeBoards(dest, source, teamName) {
     if (k) seen.add(k);
   }
   const takenIds = new Set(out.map((d) => d && d.id).filter((id) => id != null));
+  let floor = Number.isSafeInteger(metaMaxId) && metaMaxId > 0 ? metaMaxId : 0;
+  for (const a of archived || []) {
+    if (!a || typeof a !== 'object') continue;
+    const k = originKey(a);
+    if (k) seen.add(k);
+    if (a.id != null) takenIds.add(a.id);
+    const m = /^t(\d+)$/.exec(a.id);
+    if (m && Number(m[1]) > floor) floor = Number(m[1]);
+  }
   for (const src of source || []) {
     if (!src || typeof src !== 'object' || Array.isArray(src)) continue;
     const key = `${teamName}/${src.id}`;   // same alphabet argument as originKey
@@ -99,7 +108,7 @@ function mergeBoards(dest, source, teamName) {
       // Re-issued ABOVE the whole merged board's max, recomputed each time so two
       // arriving collisions cannot be handed the same new id.
       rec.formerId = src.id;
-      rec.id = nextTicketId(out);
+      rec.id = nextTicketId(out, floor);
     }
     takenIds.add(rec.id);
     out.push(rec);
@@ -196,7 +205,8 @@ function runTicketsMigration({ root, fs = require('fs'), log = null } = {}) {
       // whole design is copy-never-move. Present-but-unreadable is a per-team
       // error: no marker, so the next launch retries.
       const before = readDestination(fs, store.ticketsPath(projectRoot));
-      const merged = mergeBoards(before, source, name);
+      const archived = [...store.readArchive(projectRoot).values()];
+      const merged = mergeBoards(before, source, name, archived, store.readMeta(projectRoot).maxId);
       const added = merged.length - before.length;
       const { board, reconciled } = reconcileBoard(merged, source, name);
       if (added > 0 || reconciled > 0) store.save(projectRoot, board);
