@@ -16,7 +16,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, modelOptions, MODEL_ALIASES } = require('../renderer/lib/account-row');
+const { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, keyTransportRefusal, INSECURE_KEY_REFUSAL, modelOptions, MODEL_ALIASES } = require('../renderer/lib/account-row');
 
 const css = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'styles.css'), 'utf8');
 
@@ -277,7 +277,7 @@ test('#prefs-account-key ships as a hidden password input and shows only for pla
   assert.match(src, /prefsAccountPlan\.addEventListener\('change', syncPrefsAccountKey\)/);
 });
 
-async function runAdd({ plan, addOk }) {
+async function runAdd({ plan, addOk, isSecureContext }) {
   const vm = require('node:vm');
   const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
   const start = src.indexOf('async function addPrefsAccount(');
@@ -285,11 +285,11 @@ async function runAdd({ plan, addOk }) {
   const calls = [];
   const field = (value) => ({ value });
   const ctx = {
-    keyFieldVisible, abbrevHome: (d) => d, refreshPrefsAccounts() {},
+    keyFieldVisible, keyTransportRefusal, abbrevHome: (d) => d, refreshPrefsAccounts() {},
     prefsAccountLabel: field('api-1'), prefsAccountEmail: field(''), prefsAccountDir: field(''),
     prefsAccountPlan: field(plan), prefsAccountKey: field(KEY_LITERAL),
     state: null, setPrefsAccountsState(msg, kind) { ctx.state = [msg, kind]; },
-    window: { api: {
+    window: { isSecureContext, api: {
       accountsAdd: async (p) => { calls.push(['add', p]); return addOk ? { ok: true, account: { configDir: '/d' } } : { ok: false, error: 'dup' }; },
       accountsSetApiKey: async (label, key) => { calls.push(['setKey', label, key]); return { ok: true }; },
     } },
@@ -316,4 +316,14 @@ test('addPrefsAccount keys an api account after the add, and clears the key fiel
   const max = await runAdd({ plan: 'max', addOk: true });
   assert.deepStrictEqual(max.calls.map((c) => c[0]), ['add'], 'a non-api plan sends no key');
   assert.strictEqual(max.ctx.prefsAccountKey.value, '');
+});
+
+test('addPrefsAccount on an insecure context sends nothing, shows the refusal and clears the field', async () => {
+  const insecure = await runAdd({ plan: 'api', addOk: true, isSecureContext: false });
+  assert.deepStrictEqual(insecure.calls, []);
+  assert.deepStrictEqual(insecure.ctx.state, [INSECURE_KEY_REFUSAL, 'error']);
+  assert.strictEqual(insecure.ctx.prefsAccountKey.value, '');
+
+  const secure = await runAdd({ plan: 'api', addOk: true, isSecureContext: true });
+  assert.deepStrictEqual(secure.calls.map((c) => c[0]), ['add', 'setKey'], 'ENTER: a secure context still keys the account');
 });
