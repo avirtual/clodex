@@ -61,17 +61,17 @@ test('a subagent dm is capped at 10 per 60 s per agent', () => withNow(async (se
   assert.strictEqual(h.delivered.length, 12);
 }));
 
-const MAIN_HELD = '[agent:dm] NOT delivered to b: dialog. Nothing was kept. Resend after b is unblocked (a human has to answer the dialog).';
+const MAIN_HELD = "[agent:dm] NOT delivered to b: cold. Nothing was kept (b cannot park messages). Resend as `[agent:dm b urgent] <message>` to deliver it now.";
 
 test('a parked or held subagent dm answers without the resend or urgent clause; the dialog texts and main texts are unchanged', async () => {
   const h = harness();
   h.verdicts.push({ parked: 'p1', reason: 'cold' });
   assert.deepStrictEqual(await h.send({}, ALICE), ["[agent:dm] parked for b (cold) as p1 — it'll be delivered with b's next turn."]);
-  h.verdicts.push({ held: 'dialog', noUrgent: true });
-  assert.deepStrictEqual(await h.send({}, ALICE), [MAIN_HELD]);
+  h.verdicts.push({ held: 'cold' });
+  assert.deepStrictEqual(await h.send({}, ALICE), ['[agent:dm] NOT delivered to b: cold. Nothing was kept (b cannot park messages).']);
   h.verdicts.push({ parked: 'p1', reason: 'dialog', noUrgent: true });
   assert.deepStrictEqual(await h.send({}, ALICE), ["[agent:dm] parked for b (dialog) as p1 — it'll be delivered after the human answers the dialog."]);
-  h.verdicts.push({ held: 'dialog', noUrgent: true });
+  h.verdicts.push({ held: 'cold' });
   assert.deepStrictEqual(await h.send({}, null), [MAIN_HELD]);
 });
 
@@ -101,6 +101,6 @@ test('a subagent dm to <gone>/<name> reports NOT delivered first, so it classifi
 
 test('on the fallback the outcome line comes first and the routed notice after it', async () => {
   const h = harness({ REGISTRY_DIR: mkTmpRoot('clodex-sm-'), path: require('node:path'), pathFor: require('../clodex-paths').pathFor });
-  h.verdicts.push({ held: 'dialog', noUrgent: true });
-  assert.deepStrictEqual(await h.send({ target: 'b/alice' }, ALICE), [MAIN_HELD, '[agent:dm] subagent alice is not running; routed to b']);
+  h.verdicts.push({ held: 'cold' });
+  assert.deepStrictEqual(await h.send({ target: 'b/alice' }, ALICE), ['[agent:dm] NOT delivered to b: cold. Nothing was kept (b cannot park messages).', '[agent:dm] subagent alice is not running; routed to b']);
 });

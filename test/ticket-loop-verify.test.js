@@ -1130,9 +1130,12 @@ test('an escalation the lead never RECEIVED keeps the hold, so the watchdog re-s
 });
 
 test('a HELD delivery that never parked also keeps the hold', async () => {
+  // The second reachable failure: shouldHoldDm holds and the target cannot park
+  // (a codex lead, or one _dead mid-restart), so _gatedDeliver returns {held}
+  // with no parkId — nobody was reached.
   const repo = mkRepo();
   const f = mkLoop({ repo });
-  f.m._gatedDeliver = (target, sender, body) => { f.gated.push({ target, sender, body }); return { held: 'busy', noUrgent: true }; };
+  f.m._gatedDeliver = (target, sender, body) => { f.gated.push({ target, sender, body }); return { held: 'busy' }; };
   f.tstore.save(f.team.root, [{ ...f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
 
   await f.m._runTicketLoop(f.team, 't1');

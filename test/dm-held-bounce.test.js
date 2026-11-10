@@ -24,6 +24,12 @@ const REASON = 'idle 5h with a cold cache — would re-read the whole context';
 
 const rows = [
   {
+    name: 'held on a non-parking seat',
+    verdict: { held: REASON, noUrgent: false },
+    has: ['NOT delivered to contrarian: idle 5h with a cold cache', 'Nothing was kept (contrarian cannot park messages)', '[agent:dm contrarian urgent]'],
+    ipc: `HELD (${REASON}): the payload`,
+  },
+  {
     name: 'held behind a dialog',
     verdict: { held: 'blocked on a permission dialog', noUrgent: true },
     has: ['NOT delivered to contrarian: blocked on a permission dialog', 'Nothing was kept. Resend after contrarian is unblocked'],

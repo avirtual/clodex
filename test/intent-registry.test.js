@@ -1692,7 +1692,7 @@ test('t1719 a dm refusal or rate limit is refused, an undelivered dm is an error
   for (const [line, want] of [
     ['[agent:dm] refused: a subagent dm is never urgent', 'refused'],
     ['dm: rate limit — 10 in 60 s from a/alice', 'refused'],
-    ['[agent:dm] NOT delivered to b: dialog. Nothing was kept. Resend after b is unblocked (a human has to answer the dialog).', 'error'],
+    ['[agent:dm] NOT delivered to b: cold. Nothing was kept (b cannot park messages).', 'error'],
     ['[agent:dm] NOT delivered: no agent named "b". Check [agent:who] for reachable peers.', 'error'],
     ['[agent:dm] delivered to b/alice (a note after its next tool call)', 'ok'],
     ["[agent:dm] parked for b (cold) as p1 — it'll be delivered with b's next turn.", 'ok'],
