@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- New opt-in seat setting: `idleClear: {afterMs}` clears a seat's context once it has sat idle that long with nothing outstanding. The next message lands on a fresh context instead of re-billing a cold history. The seat shows when it was last cleared.
+
 ## 5.171.0 — 2026-11-10
 
 - Teams: a lead's ticket dispatch keeps only the plugins and MCP servers the lead itself has, and a lead's template-save keeps flags that only restrict a seat (plan mode, a tool denylist, a read-only sandbox).

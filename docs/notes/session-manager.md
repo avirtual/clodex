@@ -118,3 +118,7 @@ The DEPLOY OK self-archive sends `session:context-action` `retired` BEFORE `arch
 ## _awakeAssistantRows
 
 An evicted victim needs no exclusion set: `archive` sets `s._archived` synchronously before its first await, and `_sleepNow` reaches `archive` without awaiting anything first, so the `s._archived` test already drops the victim before a second `makeAwakeRoom` counts rows.
+
+## _idleClearTick
+
+The clear goes through `seatControl`, which stamps `_lastOperatorInputAt`; the tick restores the prior value because a sweep is not operator input. `_streamSent` re-arms `_idleCleared` only for an item that is neither `wire` nor `solo`, since those two shapes are exactly the context commands.
