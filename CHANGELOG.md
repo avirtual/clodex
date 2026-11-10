@@ -25,6 +25,7 @@ blocks a release.
 - Seats with the context intent get a context_status tool: tokens used, the real window and how fresh the figure is, answered in the same turn.
 - Teams: a lead's spawn keeps the plugin intents the lead itself holds, spawn and template-save replies name any intent or exec command they drop, and a clodent role accepts account:.
 - Teams: the app's exec checklists (new seat, a seat's grants, team templates) now list the team's own exec commands, so the operator can grant them to any seat type, clodent included.
+- Team tickets: an accepted ticket's merge now takes the test-suite lock ahead of hands' own suite runs, so merges no longer queue behind a stream of hand runs.
 
 ## 5.167.0 — 2026-11-10
 

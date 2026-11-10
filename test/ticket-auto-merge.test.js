@@ -136,7 +136,7 @@ function seedRepo(trunk) {
   // ignored here: the suite-in-flight subjects PLANT one, and step 3 refuses a
   // dirty tree — without this they would measure a clean-tree escalation and
   // never reach the gate they are about.
-  fsReal.writeFileSync(pathReal.join(dir, '.gitignore'), 'node_modules/\nscripts/\nwt/\nwt2/\n.test-digest.lock/\n');
+  fsReal.writeFileSync(pathReal.join(dir, '.gitignore'), 'node_modules/\nscripts/\nwt/\nwt2/\n.test-digest.lock/\n.test-digest.merge-waiting*\n');
   fsReal.writeFileSync(pathReal.join(dir, 'base.txt'), 'base\n');
   git(dir, ['add', '.gitignore', 'base.txt']);
   git(dir, ['commit', '-q', '-m', 'base']);
@@ -4753,4 +4753,47 @@ test('a branch that moves CHANGELOG.md out of the root is not told no entry is o
   assert.strictEqual(notes.length, 1, 'ENTER: exactly one merge notification');
   assert.ok(!fsReal.existsSync(pathReal.join(repo.dir, 'CHANGELOG.md')), 'ENTER: the root CHANGELOG.md is gone');
   assert.doesNotMatch(notes[0].body, /no entry is owed/);
+});
+
+function mergeMarker(repo) {
+  try { return JSON.parse(fsReal.readFileSync(pathReal.join(repo.dir, '.test-digest.merge-waiting'), 'utf8')); } catch { return null; }
+}
+
+for (const row of [
+  { terminal: 'merged', finish: (repo) => { clearLock(repo); }, escalations: 0 },
+  { terminal: 'failed at clean-tree', finish: (repo) => { clearLock(repo); fsReal.writeFileSync(pathReal.join(repo.dir, 'dirty.txt'), 'x\n'); }, escalations: 1 },
+  { terminal: 'escalated at the one-hour cap', finish: (repo, f, clock) => { clock.now = 8_600_001; }, escalations: 1 },
+]) {
+  test(`t2228: a deferred merge leaves a merge-waiting marker and clears it once ${row.terminal}`, async () => {
+    const repo = mkRepo();
+    commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+    const f = mkMerge({ repo });
+    const r = captureRetries(f);
+    const clock = { now: 5_000_000 };
+    f.m._mergeRetryNow = () => clock.now;
+    plantLock(repo);
+
+    await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+    assert.deepStrictEqual(mergeMarker(repo), { ticket: 't1', at: 5_000_000 }, 'the deferral wrote the marker');
+    assert.ok(r.scheduled[0].ms < 180_000, 'the retry rewrites the marker inside run-tests.js\'s three-minute freshness window');
+
+    row.finish(repo, f, clock);
+    await stepRetry(r, f);
+
+    assert.strictEqual(r.scheduled.length, 0, 'ENTER: the retry reached a terminal state');
+    assert.strictEqual(f.esc().length, row.escalations);
+    assert.strictEqual(mergeMarker(repo), null, 'the marker is gone');
+  });
+}
+
+test('t2228: a merge does not clear a marker another queued merge wrote', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  fsReal.writeFileSync(pathReal.join(repo.dir, '.test-digest.merge-waiting'), '{"ticket":"t7","at":5000000}\n');
+
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+
+  assert.match(f.masterLog(), /Merge t1:/, 'ENTER: t1 merged');
+  assert.deepStrictEqual(mergeMarker(repo), { ticket: 't7', at: 5_000_000 });
 });

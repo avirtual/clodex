@@ -35,6 +35,7 @@ plugin-context.lean.md
 .test-digest.lock/
 .test-digest.lock.*/
 .test-digest.last*
+.test-digest.merge-waiting*
 .test-durations.last.json*
 
 # Team task artifacts. These live in ~/.clodex/projects/<leaf>-<hash>/tasks/

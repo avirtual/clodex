@@ -229,6 +229,43 @@ function readLockHolder(dir) {
   try { process.kill(holder, 0); return { holder, alive: true }; } catch { return { holder, alive: false }; }
 }
 
+const MERGE_MARKER = path.join(path.dirname(LOCK), '.test-digest.merge-waiting');
+const MERGE_MARKER_FRESH_MS = 3 * 60 * 1000;
+const MERGE_YIELD_MAX_MS = 10 * 60 * 1000;
+
+function freshMergeMarker() {
+  let raw;
+  try { raw = fs.readFileSync(MERGE_MARKER, 'utf8'); } catch { return null; }
+  let marker = null;
+  try { marker = JSON.parse(raw); } catch {}
+  const at = marker && Number(marker.at);
+  const valid = marker && typeof marker.ticket === 'string' && at > 0;
+  if (valid && Date.now() - at < MERGE_MARKER_FRESH_MS) return marker;
+  if (!valid || Date.now() - at >= 2 * MERGE_MARKER_FRESH_MS) {
+    try { if (fs.readFileSync(MERGE_MARKER, 'utf8') === raw) fs.rmSync(MERGE_MARKER, { force: true }); } catch {}
+  }
+  return null;
+}
+
+function mergeYield(state) {
+  if (process.env.CLODEX_TEST_LOCK_MERGE === '1') return false;
+  const marker = freshMergeMarker();
+  if (!marker) return false;
+  if (Date.now() >= state.until) {
+    if (state.noted && !state.capped) {
+      state.capped = true;
+      lockNote(`stopped waiting for the merge of ${state.noted}: the wait is capped`);
+    }
+    return false;
+  }
+  if (state.noted !== marker.ticket) {
+    state.noted = marker.ticket;
+    lockNote(`waiting for the queued merge of ${marker.ticket} to take the suite lock first`);
+  }
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+  return true;
+}
+
 function acquireLock() {
   const deadline = Date.now() + LOCK_WAIT_MS;
   // The PARENT is created recursively (an override may name a dir that does not
@@ -240,6 +277,7 @@ function acquireLock() {
   try { fs.mkdirSync(path.dirname(LOCK), { recursive: true }); } catch (e) {
     die(`could not create the lock directory ${path.dirname(LOCK)}: ${e.message}`);
   }
+  const yieldState = { until: Math.min(deadline, Date.now() + MERGE_YIELD_MAX_MS), noted: null, capped: false };
   // Bounded like the original: a reclaim that does not then win the lock means
   // something is racing or the dir is unwritable, and spinning on it forever is
   // a wedge with no message. Waiting on a LIVE holder is not a reclaim and does
@@ -248,6 +286,7 @@ function acquireLock() {
   const startedAt = Date.now();
   let queued = false;
   for (;;) {
+    if (mergeYield(yieldState)) continue;
     const tmp = `${LOCK}.tmp-${process.pid}`;
     try {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -383,6 +422,7 @@ delete childEnv.CLODEX_TEST_LOCK_DIR;
 delete childEnv.CLODEX_TEST_LOCK_WAIT_MS;
 delete childEnv.CLODEX_TEST_LOCK;
 delete childEnv.CLODEX_TEST_LOCK_NOTE_FD;
+delete childEnv.CLODEX_TEST_LOCK_MERGE;
 delete childEnv.CLODEX_TEST_SLOW_ADVISORY;
 delete childEnv.CLODEX_TEST_SLOW_RETIME;
 delete childEnv.CLODEX_TEST_RETIME_CAP;
