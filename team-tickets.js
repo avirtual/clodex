@@ -22,7 +22,7 @@ const {
   DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone,
 } = require('./team-manifest');
 const {
-  readTeamJson, teamTemplatePath, teamTemplateSave, teamTemplateRemove, teamPromptSave, teamPromptRemove,
+  readTeamJson, teamTemplatePath, teamTemplateSave, mayGrantOf, teamTemplateRemove, teamPromptSave, teamPromptRemove,
   teamPromptFile,
 } = require('./team-prompt-dir');
 const { resolveModelId, deriveModelTemplate, deriveEffortTemplate } = require('./team-template-derive');
@@ -642,10 +642,13 @@ function createTicketMethods(deps, shared) {
       const operator = opts.operator === true;
       const leadByCreator = leadRoleTemplate && typeof intentEnabledForSeat === 'function'
         && intentEnabledForSeat('team-create', spawnerRec);
+      const spawnerIsLead = !!(spawnerTeam && spawnerTeam.lead === spawner.name);
+      const mayGrant = spawnerIsLead ? mayGrantOf(spawnerRec) : { execCommands: spawnerRec.execCommands, extraArgs: spawnerArgs };
       const clampToSpawner = (list, key) => {
         if (!Array.isArray(list)) return [];
         if (operator || leadByCreator) return list;
-        const own = Array.isArray(spawnerRec[key]) ? spawnerRec[key].map(String) : [];
+        const src = key === 'execCommands' ? mayGrant.execCommands : spawnerRec[key];
+        const own = Array.isArray(src) ? src.map(String) : [];
         return list.filter((x) => own.includes(String(x)));
       };
 
@@ -657,7 +660,7 @@ function createTicketMethods(deps, shared) {
       }
       if (!operator && tplArgs) {
         const key = ([f, v]) => `${canonicalBypassFlag(f)}\0${v}`;
-        const own = new Set(splitPrivilegedArgs(spawnerArgs).pairs.map(key));
+        const own = new Set(splitPrivilegedArgs(mayGrant.extraArgs).pairs.map(key));
         const unheld = [...new Set(splitPrivilegedArgs(tplArgs).pairs.filter((p) => !own.has(key(p))).map(([f]) => f))];
         if (unheld.length) {
           reply(`error: template "${tplLabel}" carries ${unheld.join(', ')}, which ${spawner.name} does not — a spawned seat cannot hold more than its spawner`);
@@ -702,7 +705,7 @@ function createTicketMethods(deps, shared) {
         ? tpl.execCommands.map(String).filter((c) => !seatGrants.map(String).includes(c)) : [];
       const tplIntents = Array.isArray(tpl && tpl.intents) ? tpl.intents : null;
       const pluginIntents = tplIntents ? tplIntents.filter((t) => pluginRowFor(t)) : [];
-      const keptPlugin = pluginIntents.filter((t) => operator || registryHolds(t, spawnerRec));
+      const keptPlugin = pluginIntents.filter((t) => operator || registryHolds(t, spawnerRec) || (mayGrant.intents || []).includes(t));
       const childIntents = tplIntents
         ? [...withoutPrivilegedIntentsFor(tplIntents).filter((t) => !pluginRowFor(t)), ...keptPlugin] : null;
       const pluginDropped = pluginIntents.filter((t) => !keptPlugin.includes(t));
@@ -2814,7 +2817,9 @@ function createTicketMethods(deps, shared) {
             let parsed;
             try { parsed = JSON.parse(raw); }
             catch (err) { reply(`error: template body is not JSON (${err.message})`); return; }
-            const res = teamTemplateSave(this._teamFileDeps(), team.name, stem, parsed);
+            const leadStem = (team.roles && team.roles.lead && team.roles.lead.template) || DEFAULT_LEAD_TEMPLATE;
+            const saver = { name: session.name, lead: team.lead, record: getPersistence().get(session.name) || null, holdOnly: stem === leadStem };
+            const res = teamTemplateSave(this._teamFileDeps(), team.name, stem, parsed, { saver });
             if (!res.ok) { reply(`error: ${res.error}`); return; }
             this._refreshAppMenuQuietly();
             const execNamed = (res.stripped || []).map((s) => (s === 'execCommands' && Array.isArray(parsed.execCommands) && parsed.execCommands.length
@@ -2824,9 +2829,9 @@ function createTicketMethods(deps, shared) {
             const corePrivileged = typeof withoutPrivilegedIntentsFor === 'function'
               ? savedIntents.filter((t) => !pluginRowFor(t) && !withoutPrivilegedIntentsFor([t]).length) : [];
             reply(`template "${stem}" saved to ${res.file}${res.mcpIgnored ? ': mcpServers is operator-set; the stored list is unchanged' : ''}`
-              + (res.stripped ? `; stripped operator-only ${execNamed.join(', ')} — the stored values are unchanged` : '')
+              + (res.stripped ? `; stripped ${execNamed.join(', ')}, which ${session.name} neither holds nor may grant — the stored values are unchanged` : '')
               + (corePrivileged.length ? `; privileged intents are operator grants a template cannot carry, every spawn drops: ${corePrivileged.join(', ')}` : '')
-              + (pluginHeld.length ? `; plugin intents ${pluginHeld.join(', ')} reach a spawned seat only when its spawner holds them` : ''));
+              + (pluginHeld.length ? `; plugin intents ${pluginHeld.join(', ')} reach a spawned seat only when its spawner holds them or, as its team lead, may grant them` : ''));
             return;
           }
           case 'template-rm': {

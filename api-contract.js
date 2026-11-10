@@ -507,6 +507,8 @@ const API_CONTRACT = [
   // silently clear the other.
   { name: 'getSessionPluginGrants', kind: 'invoke', channel: 'session:pluginGrants' },
   { name: 'setSessionPluginGrants', kind: 'invoke', channel: 'session:setPluginGrants' },
+  { name: 'getSessionGrantable', kind: 'invoke', channel: 'session:grantable' },
+  { name: 'setSessionGrantable', kind: 'invoke', channel: 'session:setGrantable' },
   { name: 'helpIndex', kind: 'invoke', channel: 'help:index' },
   { name: 'helpPage', kind: 'invoke', channel: 'help:page' },
 ];

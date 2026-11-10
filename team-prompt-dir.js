@@ -1,7 +1,7 @@
 'use strict';
 
 const { ensureDir, atomicWriteFileSync } = require('./fs-util');
-const { splitPrivilegedArgs } = require('./cli-adapters');
+const { splitPrivilegedArgs, privilegedGroups, canonicalBypassFlag } = require('./cli-adapters');
 
 const KINDS = ['system', 'append'];
 const JSON_KINDS = ['templates', 'exec'];
@@ -113,6 +113,23 @@ function priorTemplate(deps, file) {
   } catch { return {}; }
 }
 
+function saverHolding(saver) {
+  if (!saver || typeof saver !== 'object' || typeof saver.name !== 'string' || saver.name !== saver.lead) return null;
+  const rec = saver.record;
+  if (!rec || typeof rec !== 'object' || Array.isArray(rec)) return null;
+  return mayGrantOf(saver.holdOnly === true ? { ...rec, grantable: null } : rec);
+}
+
+function mayGrantOf(rec) {
+  const list = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === 'string') : []);
+  const g = rec.grantable && typeof rec.grantable === 'object' && !Array.isArray(rec.grantable) ? rec.grantable : {};
+  return {
+    execCommands: [...new Set([...list(rec.execCommands), ...list(g.execCommands)])],
+    intents: list(g.intents),
+    extraArgs: [...list(rec.extraArgs), ...list(g.flags)],
+  };
+}
+
 function teamTemplateSave(deps, team, stem, body, opts = {}) {
   const file = teamTemplatePath(deps, team, stem);
   if (!file) return { ok: false, error: noTeamOrStem(team, stem, 'template') };
@@ -124,22 +141,46 @@ function teamTemplateSave(deps, team, stem, body, opts = {}) {
   const stripped = [];
   if (!(opts && opts.operator === true)) {
     const prior = priorTemplate(deps, file);
-    const { mcpServers, ...rest } = body;
+    const { mcpServers, grantable, ...rest } = body;
     mcpIgnored = mcpServers !== undefined;
+    if (grantable !== undefined) stripped.push('grantable');
     out = Array.isArray(prior.mcpServers) ? { ...rest, mcpServers: prior.mcpServers } : rest;
     if (!(opts && opts.derived === true)) {
+      const holder = saverHolding(opts && opts.saver);
       const { execCommands, ...noExec } = out;
-      if (execCommands !== undefined) stripped.push('execCommands');
-      out = Array.isArray(prior.execCommands) ? { ...noExec, execCommands: prior.execCommands } : noExec;
+      const keptExec = [];
+      if (holder && Array.isArray(execCommands)) {
+        const held = Array.isArray(holder.execCommands) ? holder.execCommands.map(String) : [];
+        for (const c of execCommands) {
+          if (typeof c === 'string' && held.includes(c)) { if (!keptExec.includes(c)) keptExec.push(c); }
+          else if (!stripped.includes(String(c))) stripped.push(String(c));
+        }
+      } else if (execCommands !== undefined) stripped.push('execCommands');
+      const priorExec = Array.isArray(prior.execCommands) ? prior.execCommands : null;
+      if (keptExec.length) out = { ...noExec, execCommands: [...keptExec, ...(priorExec || []).filter((c) => !keptExec.includes(c))] };
+      else out = priorExec ? { ...noExec, execCommands: priorExec } : noExec;
       if (out.extraArgs !== undefined && !(Array.isArray(out.extraArgs) && out.extraArgs.every((t) => typeof t === 'string'))) {
         const { extraArgs, ...noArgs } = out;
         stripped.push('extraArgs');
         out = noArgs;
       }
-      const { kept, flags } = splitPrivilegedArgs(out.extraArgs);
-      const priorPrivileged = splitPrivilegedArgs(prior.extraArgs).privileged;
-      stripped.push(...flags);
-      if (flags.length || priorPrivileged.length) out = { ...out, extraArgs: [...kept, ...priorPrivileged] };
+      const flagKey = ([f, v]) => `${canonicalBypassFlag(f)}\0${v}`;
+      const heldFlags = new Set(holder ? splitPrivilegedArgs(holder.extraArgs).pairs.map(flagKey) : []);
+      const kept = [];
+      const keptPrivileged = [];
+      let privilegedSeen = false;
+      for (const g of privilegedGroups(out.extraArgs)) {
+        if (g.name === null) { kept.push(...g.tokens); continue; }
+        privilegedSeen = true;
+        if (g.pairs.every((p) => heldFlags.has(flagKey(p)))) keptPrivileged.push(g.tokens);
+        else if (!stripped.includes(g.name)) stripped.push(g.name);
+      }
+      const keptJson = keptPrivileged.map((t) => JSON.stringify(t));
+      const priorPrivileged = privilegedGroups(prior.extraArgs)
+        .filter((g) => g.name !== null && !keptJson.includes(JSON.stringify(g.tokens)));
+      if (privilegedSeen || priorPrivileged.length) {
+        out = { ...out, extraArgs: [...kept, ...keptPrivileged.flat(), ...priorPrivileged.flatMap((g) => g.tokens)] };
+      }
     }
   }
   try {
@@ -190,6 +231,7 @@ module.exports = {
   teamTemplatePath,
   teamPromptPath,
   teamTemplateSave,
+  mayGrantOf,
   teamTemplateRemove,
   teamPromptSave,
   teamPromptRemove,

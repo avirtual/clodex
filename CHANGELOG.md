@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Teams: the operator can mark exec commands, plugin intents and the permission flag as "may grant" for a lead without granting them to it; the lead's template-save and spawns keep what it holds or may grant, and name anything they strip.
+
 ## 5.168.0 — 2026-11-10
 
 - clodent seats: the context bar and context-size reminders use the window clodent reports (1M with a [1m] model, 200k without).

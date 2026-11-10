@@ -54,7 +54,7 @@ const { dropText } = require('./lib/drop-paths');
 const { composerReadlineEdit, composerHeightFor, isAttachKey } = require('./lib/composer-keys');
 const { slashQuery, filterCommands, slashMenuKey } = require('./lib/composer-slash');
 const { turnSeg, reqSeg, costSeg } = require('./lib/turn-stat');
-const { renderAppendChecklist, collectAppendChecklist, appendRepaintTicks, mergeUnrendered, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderMcpChecklist, collectMcpChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setMcpLibCache, setIntentCatalogCache, setClaudeToolsCache, toolListFor, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require('./lib/checklists');
+const { renderAppendChecklist, collectAppendChecklist, appendRepaintTicks, mergeUnrendered, renderAgentChecklist, collectAgentChecklist, renderExecChecklist, collectExecChecklist, renderMayGrantFlags, collectMayGrant, renderMcpChecklist, collectMcpChecklist, renderIntentChecklist, collectIntentChecklist, renderPluginChecklist, collectPluginChecklist, defaultPluginTicks, setPluginCatalogCache, getPluginCatalogCache, bundleSectionsOf, repaintBundleSections, renderBuiltinChecklist, collectBuiltinChecklist, renderInjectChecklist, collectInjectChecklist, renderToolChecklist, collectToolChecklist, renderToolAllowChecklist, collectToolAllowChecklist, renderSkillChecklist, collectSkillChecklist, setChecklistAll, wireBulkToggles, libraryPromptCache, setPromptLibCache, setAgentLibCache, setSkillLibCache, setExecLibCache, setMcpLibCache, setIntentCatalogCache, setClaudeToolsCache, toolListFor, setDefaultToolDenyCache, setDefaultSkillDenyCache, setDefaultBuiltinDenyCache, getPromptLibCache, getSkillLibCache, getDefaultToolDenyCache, getDefaultSkillDenyCache, getDefaultBuiltinDenyCache } = require('./lib/checklists');
 const { autoEnabledFor, reconcilePartialSelection } = require('../scope-util');
 const { parseSkillFrontmatter } = require('../skills-util');
 const skillAutoSet = (skillLib, session) => new Set(autoEnabledFor(
@@ -9501,7 +9501,7 @@ if (argsPluginList) {
   argsPluginList.addEventListener('change', async () => {
     const checked = collectIntentChecklist(argsIntentsList);
     setIntentCatalogCache((await window.api.getIntentCatalog(argsEditingName, collectPluginChecklist(argsPluginList))) || []);
-    renderIntentChecklist(argsIntentsList, checked);
+    renderIntentChecklist(argsIntentsList, checked, argsGrantable ? new Set(collectMayGrant(argsIntentsList)) : null);
     const seat = argsSeat();
     repaintBundleSections(argsAgentsList, 'agents', seat);
     if (argsInjectSkillsSection.style.display !== 'none') {
@@ -9545,6 +9545,7 @@ let argsAppendRendered = [];
 let argsPluginsPersisted = null;
 let argsPluginsRendered = [];
 let argsExecPersisted = [];
+let argsGrantable = null;
 let argsExecRendered = [];
 let argsMcpPersisted = [];
 let argsMcpRendered = [];
@@ -9642,13 +9643,16 @@ async function openArgsDialog(name, argsSource = null) {
   // Keyed on the list this dialog just painted: the override is what makes a
   // live untick repaint the verbs.
   setIntentCatalogCache((await window.api.getIntentCatalog(name, collectPluginChecklist(argsPluginList))) || []);
-  renderIntentChecklist(argsIntentsList, res.intents);
   const isExecEditable = isAgent && !argsSource;
+  const grantableRes = isExecEditable ? await window.api.getSessionGrantable(name) : null;
+  argsGrantable = grantableRes && grantableRes.ok ? grantableRes.grantable : null;
+  renderIntentChecklist(argsIntentsList, res.intents, argsGrantable ? new Set(argsGrantable.intents) : null);
   argsExecSection.style.display = isExecEditable ? '' : 'none';
   if (isExecEditable) {
     setExecLibCache((await window.api.listExecCommands({ session: name })) || []);
     argsExecPersisted = res.execCommands || [];
-    argsExecRendered = renderExecChecklist(argsExecList, new Set(res.execCommands || []));
+    argsExecRendered = renderExecChecklist(argsExecList, new Set(res.execCommands || []), argsGrantable ? new Set(argsGrantable.execCommands) : null);
+    if (argsGrantable) renderMayGrantFlags(argsExecList, argsGrantable.flags);
   }
   argsMcpSection.style.display = isExecEditable ? '' : 'none';
   if (isExecEditable) {
@@ -9736,6 +9740,12 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
       pluginsForUnlistedPlugins(argsPluginsPersisted, argsPluginsRendered));
   const execCommandsGrant = argsExecSection.style.display === 'none'
     ? undefined : mergeLists(collectExecChecklist(argsExecList), unlistedOf(argsExecPersisted, argsExecRendered));
+  const mayGrantShown = (list) => Array.from(list.querySelectorAll('input.may-grant')).map((cb) => cb.value);
+  const grantableNext = (argsExecSection.style.display === 'none' || !argsGrantable) ? undefined : {
+    execCommands: mergeLists(collectMayGrant(argsExecList), unlistedOf(argsGrantable.execCommands, mayGrantShown(argsExecList))),
+    intents: mergeLists(collectMayGrant(argsIntentsList), unlistedOf(argsGrantable.intents, mayGrantShown(argsIntentsList))),
+    flags: collectMayGrant(argsExecList, 'may-grant-flags'),
+  };
   const mcpServers = argsMcpSection.style.display === 'none'
     ? undefined : mergeLists(collectMcpChecklist(argsMcpList), unlistedOf(argsMcpPersisted, argsMcpRendered));
   const io = (!argsStreamIoRow || argsStreamIoRow.style.display === 'none' || !argsStreamIo)
@@ -9780,6 +9790,7 @@ document.getElementById('btn-args-save').addEventListener('click', async () => {
     alert(`Save settings failed: ${res && res.error ? res.error : 'unknown error'}`);
     return;
   }
+  if (!source && grantableNext) await window.api.setSessionGrantable(name, grantableNext);
   if (!source) refreshSeatMcp(name);
   if (res.restarted) {
     if (source) source.onRestarted();

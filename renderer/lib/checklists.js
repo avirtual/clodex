@@ -255,8 +255,37 @@ function collectAgentChecklist(container) {
   return Array.from(container.querySelectorAll('input[type="checkbox"]:checked:not(:disabled)')).map(cb => cb.value);
 }
 
+const BYPASS_GRANT_FLAG = '--dangerously-skip-permissions';
+function mayGrantToggle(value, checked, cls = 'may-grant', text = 'may grant') {
+  const wrap = document.createElement('span');
+  wrap.className = 'may-grant-toggle';
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.className = cls;
+  cb.value = value;
+  cb.checked = checked;
+  const label = document.createElement('span');
+  label.textContent = text;
+  wrap.appendChild(cb);
+  wrap.appendChild(label);
+  wrap.addEventListener('click', (e) => {
+    if (e.target === cb) return;
+    e.preventDefault();
+    cb.checked = !cb.checked;
+  });
+  return wrap;
+}
+function renderMayGrantFlags(container, flags) {
+  const row = document.createElement('div');
+  row.className = 'agent-check may-grant-flags-row';
+  row.appendChild(mayGrantToggle(BYPASS_GRANT_FLAG, Array.isArray(flags) && flags.includes(BYPASS_GRANT_FLAG), 'may-grant-flags', 'may grant permission flags'));
+  container.appendChild(row);
+}
+function collectMayGrant(container, cls = 'may-grant') {
+  return Array.from(container.querySelectorAll(`input.${cls}[type="checkbox"]:checked`)).map(cb => cb.value);
+}
 // Checked = this seat MAY run that registered command.
-function renderExecChecklist(container, enabledSet) {
+function renderExecChecklist(container, enabledSet, mayGrantSet = null) {
   container.innerHTML = '';
   if (!execLibCache.length) {
     container.innerHTML = '<span class="hint-text">No exec commands in library — register some via File ▸ Exec Commands….</span>';
@@ -276,12 +305,13 @@ function renderExecChecklist(container, enabledSet) {
     txt.innerHTML = `<strong>${esc(c.name)}</strong>${owner}${detail ? ' — ' + esc(detail) : ''}`;
     row.appendChild(cb);
     row.appendChild(txt);
+    if (mayGrantSet) row.appendChild(mayGrantToggle(c.name, mayGrantSet.has(c.name)));
     container.appendChild(row);
   }
   return execLibCache.map((c) => c.name);
 }
 function collectExecChecklist(container) {
-  return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+  return Array.from(container.querySelectorAll('input[type="checkbox"]:checked:not(.may-grant):not(.may-grant-flags)')).map(cb => cb.value);
 }
 
 function mcpBadges(row, cli, ready) {
@@ -371,7 +401,7 @@ function defaultPluginTicks() {
 // Core rows first and unchanged, then ONE `popover-subhead` per contributing
 // plugin — an unticked plugin has no header and no rows at all. A SET, not the
 // previous row: non-contiguous rows would draw a second header for one plugin.
-function renderIntentChecklist(container, intentsList) {
+function renderIntentChecklist(container, intentsList, mayGrantSet = null) {
   container.innerHTML = '';
   const nameOf = new Map(pluginCatalogCache.map((p) => [String(p.id), p.name || p.id]));
   const headed = new Set();
@@ -393,6 +423,7 @@ function renderIntentChecklist(container, intentsList) {
     txt.innerHTML = `<strong>${esc(it.label)}</strong>`;
     row.appendChild(cb);
     row.appendChild(txt);
+    if (mayGrantSet && it.source && it.source !== 'core') row.appendChild(mayGrantToggle(it.type, mayGrantSet.has(it.type)));
     container.appendChild(row);
   }
 }
@@ -404,7 +435,7 @@ function renderIntentChecklist(container, intentsList) {
 // grant or manufacture one (plugin plan MUST-FIX 3). `[]` (nothing checked) stays a
 // real "everything gated" value on the wire.
 function collectIntentChecklist(container) {
-  return Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map(cb => cb.value);
+  return Array.from(container.querySelectorAll('input[type="checkbox"]:checked:not(.may-grant):not(.may-grant-flags)')).map(cb => cb.value);
 }
 
 // The built-in subagents the CLI injects into the roster — single-sourced in
@@ -442,7 +473,7 @@ function collectBuiltinChecklist(container) {
 // something clodex can't actually toggle. `wireBulkToggles` hooks the
 // data-bulk="all"/"none" buttons sitting above `listEl` to it.
 function setChecklistAll(listEl, checked) {
-  listEl.querySelectorAll('input[type="checkbox"]:not(:disabled)').forEach(cb => { cb.checked = checked; });
+  listEl.querySelectorAll('input[type="checkbox"]:not(:disabled):not(.may-grant):not(.may-grant-flags)').forEach(cb => { cb.checked = checked; });
 }
 function wireBulkToggles(popoverEl, listEl) {
   popoverEl.querySelectorAll('.popover-bulk [data-bulk]').forEach(btn => {
@@ -611,7 +642,7 @@ module.exports = {
   renderAppendChecklist, collectAppendChecklist, appendRepaintTicks, mergeUnrendered,
   renderAgentChecklist, collectAgentChecklist,
   bundleSectionsOf, repaintBundleSections,
-  renderExecChecklist, collectExecChecklist,
+  renderExecChecklist, collectExecChecklist, renderMayGrantFlags, collectMayGrant,
   renderMcpChecklist, collectMcpChecklist,
   renderIntentChecklist, collectIntentChecklist, intentRowChecked,
   renderPluginChecklist, collectPluginChecklist, defaultPluginTicks,

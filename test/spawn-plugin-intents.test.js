@@ -16,13 +16,13 @@ const INTENTS = 17;
 registry.registerIntent({ verb: 'avh-select', label: 'AVH select', parse: () => null }, 'avh-ops');
 after(() => registry.unregisterSource('avh-ops'));
 
-function harness(rec) {
+function harness(rec, team = null) {
   const calls = [];
   const replies = [];
   const home = fs.realpathSync(mkTmpRoot('clx-plugin-intents-'));
   const SessionManager = createSessionManager({
     knownSkillNames: () => [], os, fs, path,
-    resolveTeam: () => null,
+    resolveTeam: () => team,
     log: { warn() {}, info() {}, error() {} },
     getPersistence: () => ({ get: (n) => (n === 'spawner' ? rec : null), setStripLevel() {}, setAutoCompact() {}, setPlugins() {} }),
     withoutPrivilegedIntentsFor: registry.withoutPrivilegedIntentsFor,
@@ -112,6 +112,7 @@ test('template-save names the exec commands it strips and the intents a spawn ma
     listTeams: () => ['clodex'],
     resolveTeam: (cwd) => (cwd === '/proj' ? team : null),
     refreshAppMenu: () => {},
+    getPersistence: () => ({ get: () => null }),
     withoutPrivilegedIntentsFor: registry.withoutPrivilegedIntentsFor,
     log: { info() {}, warn() {}, error() {} },
   }, {});
@@ -126,7 +127,19 @@ test('template-save names the exec commands it strips and the intents a spawn ma
   const file = path.join(teamsDir, 'clodex', 'templates', 'keeper.json');
   assert.strictEqual(injected.length, 1);
   assert.strictEqual(injected[0], `[agent:team] template "keeper" saved to ${file}`
-    + '; stripped operator-only execCommands (clodex-ctl-admin) — the stored values are unchanged'
+    + '; stripped execCommands (clodex-ctl-admin), which lead neither holds nor may grant — the stored values are unchanged'
     + '; privileged intents are operator grants a template cannot carry, every spawn drops: team-create'
-    + '; plugin intents avh-select reach a spawned seat only when its spawner holds them');
+    + '; plugin intents avh-select reach a spawned seat only when its spawner holds them or, as its team lead, may grant them');
+});
+
+test('a team lead with avh-select and clodex-ctl-admin only in grantable gives them to the child; a non-lead does not', async () => {
+  const rec = { plugins: ['avh-ops'], intents: ['dm'], execCommands: ['clodex-team'], grantable: { execCommands: ['clodex-ctl-admin'], intents: ['avh-select'], flags: [] } };
+  const lead = harness(rec, { name: 'core', lead: 'spawner', root: os.tmpdir(), roles: {}, roster: [] });
+  await spawn(lead);
+  assert.strictEqual(lead.calls.length, 1, `ENTER: create was called (${JSON.stringify(lead.replies)})`);
+  assert.deepStrictEqual([lead.calls[0][INTENTS], lead.calls[0][EXEC]], [['dm', 'avh-select'], ['clodex-team', 'clodex-ctl-admin']]);
+  const other = harness(rec, { name: 'core', lead: 'someone-else', root: os.tmpdir(), roles: {}, roster: [] });
+  await spawn(other);
+  assert.strictEqual(other.calls.length, 1, `ENTER: create was called (${JSON.stringify(other.replies)})`);
+  assert.deepStrictEqual([other.calls[0][INTENTS], other.calls[0][EXEC]], [['dm'], ['clodex-team']]);
 });

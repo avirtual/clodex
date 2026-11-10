@@ -7,6 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { createSessionManager } = require('../session-manager');
 const { teamTemplateSave } = require('../team-prompt-dir');
+const { restoreSessionsForWorkspace } = require('../session-restore');
 const { splitPrivilegedArgs } = require('../cli-adapters');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -18,7 +19,7 @@ const DENY_BUILTINS = 10;
 const DISABLED_TOOLS = 11;
 const SHELL_DENY = 22;
 
-function harness({ rec = null, team = null } = {}) {
+function harness({ rec = null, team = null, others = {} } = {}) {
   const calls = [];
   const replies = [];
   const home = fs.realpathSync(mkTmpRoot('clx-clamp-home-'));
@@ -26,7 +27,7 @@ function harness({ rec = null, team = null } = {}) {
     knownSkillNames: () => [], os, fs, path,
     resolveTeam: () => team,
     log: { warn() {}, info() {}, error() {} },
-    getPersistence: () => ({ get: (n) => (n === 'spawner' ? rec : null), setStripLevel() {}, setAutoCompact() {} }),
+    getPersistence: () => ({ get: (n) => (n === 'spawner' ? rec : (others[n] || null)), setStripLevel() {}, setAutoCompact() {} }),
     withoutPrivilegedIntentsFor: (x) => x,
     ensureDir: () => {},
     AGENT_NAME_RE: /^[a-zA-Z0-9._-]{1,64}$/,
@@ -359,4 +360,179 @@ test('deny lists are read off the spawner\'s live session when the record has no
   await spawn(h, h.writeTpl({}));
   assert.strictEqual(h.calls.length, 1, `ENTER: create was called (${JSON.stringify(h.replies)})`);
   assert.deepStrictEqual([h.calls[0][DISABLED_TOOLS], h.calls[0][SHELL_DENY]], [['WebFetch'], ['curl']]);
+});
+
+const LEAD_SAVER = (record) => ({ saver: { name: 'lead', lead: 'lead', record } });
+
+test('a lead\'s template-save keeps the exec commands it holds and names the rest as stripped', () => {
+  const { deps, file } = teamDeps();
+  const res = teamTemplateSave(deps, 'core', 'pm', { type: 'claude', execCommands: ['avh-chat', 'avh-warden'] }, LEAD_SAVER({ execCommands: ['avh-chat'] }));
+  assert.deepStrictEqual(res, { ok: true, file, stripped: ['avh-warden'] });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { type: 'claude', execCommands: ['avh-chat'] });
+});
+
+test('a lead holding --yolo keeps --dangerously-skip-permissions on a template; a lead without it has it stripped', () => {
+  const { deps, file } = teamDeps();
+  const body = { type: 'claude', extraArgs: ['--model', 'x', '--dangerously-skip-permissions'] };
+  assert.deepStrictEqual(teamTemplateSave(deps, 'core', 'pm', body, LEAD_SAVER({ extraArgs: ['--yolo'] })), { ok: true, file });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), body);
+  fs.unlinkSync(file);
+  assert.deepStrictEqual(teamTemplateSave(deps, 'core', 'pm', body, LEAD_SAVER({ extraArgs: ['--model', 'x'] })),
+    { ok: true, file, stripped: ['--dangerously-skip-permissions'] });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { type: 'claude', extraArgs: ['--model', 'x'] });
+});
+
+test('a saver that is not the team lead, or has no record, keeps nothing privileged', () => {
+  const { deps, file } = teamDeps();
+  const body = { type: 'claude', execCommands: ['avh-chat'], extraArgs: ['--yolo'] };
+  const record = { execCommands: ['avh-chat'], extraArgs: ['--yolo'] };
+  for (const saver of [{ name: 'hand', lead: 'lead', record }, { name: 'lead', lead: 'lead', record: null }]) {
+    if (fs.existsSync(file)) fs.unlinkSync(file);
+    assert.deepStrictEqual(teamTemplateSave(deps, 'core', 'pm', body, { saver }), { ok: true, file, stripped: ['execCommands', '--yolo'] });
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { type: 'claude', extraArgs: [] });
+  }
+});
+
+for (const type of ['clodent', 'claude']) {
+  test(`a lead-saved avh-chat grant reaches a spawned ${type} seat and survives its restore`, async () => {
+    const { deps, file } = teamDeps();
+    const lead = { execCommands: ['avh-chat'], extraArgs: [] };
+    teamTemplateSave(deps, 'core', 'pm', { type, cwd: os.tmpdir(), execCommands: ['avh-chat', 'avh-warden'] }, LEAD_SAVER(lead));
+    const h = harness({ rec: lead });
+    await spawn(h, h.writeTpl(JSON.parse(fs.readFileSync(file, "utf8"))), undefined, type);
+    assert.strictEqual(h.calls.length, 1, `ENTER: create was called (${JSON.stringify(h.replies)})`);
+    assert.deepStrictEqual([h.calls[0][1], h.calls[0][EXEC]], [type, ['avh-chat']]);
+    const created = [];
+    const manager = {
+      sessions: new Map(),
+      async create(...args) { created.push(args); manager.sessions.set(args[0], { backend: type }); },
+      resumeCwdOf: (e) => e.cwd,
+      pendingCountFor: () => 0,
+      teamNameFor: () => 'core',
+    };
+    const entry = { name: 'child', type, cwd: os.tmpdir(), sessionId: 'sid-1', execCommands: h.calls[0][EXEC] };
+    await restoreSessionsForWorkspace({
+      workspaceId: 'default', manager,
+      persistence: { listForWorkspace: () => [entry], upsert() {}, remove() {} },
+      proxyPoller: { snapshot: () => null },
+      maybeCompactBeforeResume: async () => {},
+      readCtxFor: () => ({}),
+      log: { error() {}, warn() {} },
+    });
+    assert.strictEqual(created.length, 1);
+    assert.deepStrictEqual(created[0][EXEC], ['avh-chat']);
+  });
+}
+
+const CORE_TEAM = (lead) => ({ name: 'core', lead, root: os.tmpdir(), dir: os.tmpdir(), roles: {}, roster: [] });
+const MAY_GRANT_CHAT = { execCommands: [], extraArgs: [], grantable: { execCommands: ['avh-chat'], intents: [], flags: [] } };
+
+test('a lead with avh-chat only in grantable saves it onto a template, strips avh-warden, and its own record does not gain it', () => {
+  const { deps, file } = teamDeps();
+  const rec = JSON.parse(JSON.stringify(MAY_GRANT_CHAT));
+  const res = teamTemplateSave(deps, 'core', 'pm', { type: 'clodent', execCommands: ['avh-chat', 'avh-warden'] }, LEAD_SAVER(rec));
+  assert.deepStrictEqual(res, { ok: true, file, stripped: ['avh-warden'] });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { type: 'clodent', execCommands: ['avh-chat'] });
+  assert.deepStrictEqual(rec, MAY_GRANT_CHAT);
+});
+
+test('a lead may-grant flag lets the lead write --dangerously-skip-permissions into a template', () => {
+  const { deps, file } = teamDeps();
+  const body = { type: 'claude', extraArgs: ['--dangerously-skip-permissions'] };
+  const rec = { extraArgs: [], grantable: { execCommands: [], intents: [], flags: ['--dangerously-skip-permissions'] } };
+  assert.deepStrictEqual(teamTemplateSave(deps, 'core', 'pm', body, LEAD_SAVER(rec)), { ok: true, file });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), body);
+});
+
+test('the lead role template keeps only what the lead holds, never its grant-only items', () => {
+  const { deps, file } = teamDeps();
+  const res = teamTemplateSave(deps, 'core', 'pm', { type: 'claude', execCommands: ['avh-chat'] },
+    { saver: { name: 'lead', lead: 'lead', record: MAY_GRANT_CHAT, holdOnly: true } });
+  assert.deepStrictEqual(res, { ok: true, file, stripped: ['avh-chat'] });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { type: 'claude' });
+});
+
+test('template-save drops a grantable key from any non-operator body', () => {
+  const { deps, file } = teamDeps();
+  const res = teamTemplateSave(deps, 'core', 'pm', { type: 'claude', grantable: { execCommands: ['avh-chat'] } }, LEAD_SAVER(MAY_GRANT_CHAT));
+  assert.deepStrictEqual(res, { ok: true, file, stripped: ['grantable'] });
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(file, 'utf8')), { type: 'claude' });
+});
+
+for (const type of ['clodent', 'claude']) {
+  test(`[agent:spawn] from a lead with avh-chat grant-only gives a ${type} child avh-chat, no grantable, and restore keeps it`, async () => {
+    const h = harness({ rec: MAY_GRANT_CHAT, team: CORE_TEAM('spawner') });
+    await spawn(h, h.writeTpl({ type, execCommands: ['avh-chat', 'avh-warden'], grantable: { execCommands: ['avh-warden'] } }), undefined, type);
+    assert.strictEqual(h.calls.length, 1, `ENTER: create was called (${JSON.stringify(h.replies)})`);
+    assert.deepStrictEqual([h.calls[0][1], h.calls[0][EXEC]], [type, ['avh-chat']]);
+    assert.ok(!JSON.stringify(h.calls[0]).includes('grantable'), JSON.stringify(h.calls[0]));
+    const created = [];
+    const manager = {
+      sessions: new Map(),
+      async create(...args) { created.push(args); manager.sessions.set(args[0], { backend: type }); },
+      resumeCwdOf: (e) => e.cwd,
+      pendingCountFor: () => 0,
+      teamNameFor: () => 'core',
+    };
+    await restoreSessionsForWorkspace({
+      workspaceId: 'default', manager,
+      persistence: { listForWorkspace: () => [{ name: 'child', type, cwd: os.tmpdir(), sessionId: 'sid-1', execCommands: ['avh-chat'] }], upsert() {}, remove() {} },
+      proxyPoller: { snapshot: () => null },
+      maybeCompactBeforeResume: async () => {},
+      readCtxFor: () => ({}),
+      log: { error() {}, warn() {} },
+    });
+    assert.deepStrictEqual(created.map((a) => a[EXEC]), [['avh-chat']]);
+  });
+}
+
+test('a non-lead spawner with the same grantable passes nothing it does not hold', async () => {
+  const h = harness({ rec: MAY_GRANT_CHAT, team: CORE_TEAM('someone-else') });
+  await spawn(h, h.writeTpl({ execCommands: ['avh-chat'] }));
+  assert.strictEqual(h.calls.length, 1, `ENTER: create was called (${JSON.stringify(h.replies)})`);
+  assert.deepStrictEqual(h.calls[0][EXEC], []);
+});
+
+test('a lead holding avh-chat passes it to a child without any grantable', async () => {
+  const h = harness({ rec: { execCommands: ['avh-chat'] }, team: CORE_TEAM('spawner') });
+  await spawn(h, h.writeTpl({ execCommands: ['avh-chat', 'avh-warden'] }));
+  assert.strictEqual(h.calls.length, 1, `ENTER: create was called (${JSON.stringify(h.replies)})`);
+  assert.deepStrictEqual(h.calls[0][EXEC], ['avh-chat']);
+});
+
+test('a lead may-grant flag is not inherited by a child whose template is silent', async () => {
+  const h = harness({ rec: { extraArgs: [], grantable: { flags: ['--dangerously-skip-permissions'] } }, team: CORE_TEAM('spawner') });
+  await spawn(h, h.writeTpl({}));
+  assert.strictEqual(h.calls.length, 1, `ENTER: create was called (${JSON.stringify(h.replies)})`);
+  assert.deepStrictEqual(h.calls[0][EXTRA_ARGS], []);
+});
+
+test('a spawn cannot rebuild the lead\'s existing record from a template naming its grant-only items', async () => {
+  const lead = { execCommands: ['clodex-team'], extraArgs: [], grantable: { execCommands: ['avh-chat'], flags: ['--dangerously-skip-permissions'] } };
+  const h = harness({ rec: { execCommands: ['clodex-team', 'avh-chat'], extraArgs: [] }, team: CORE_TEAM('child'), others: { child: lead } });
+  await spawn(h, h.writeTpl({ execCommands: ['clodex-team', 'avh-chat'] }));
+  assert.deepStrictEqual([h.calls, h.replies], [[], ['[agent:spawn] error: name taken "child"']]);
+});
+
+test('restoring a lead replays only its held execCommands, never its grantable', async () => {
+  const created = [];
+  const manager = {
+    sessions: new Map(),
+    async create(...args) { created.push(args); manager.sessions.set(args[0], { backend: 'claude' }); },
+    resumeCwdOf: (e) => e.cwd,
+    pendingCountFor: () => 0,
+    teamNameFor: () => 'core',
+  };
+  const entry = { name: 'lead', type: 'claude', cwd: os.tmpdir(), sessionId: 'sid-1', execCommands: ['clodex-team'], grantable: { execCommands: ['avh-chat'], intents: [], flags: [] } };
+  await restoreSessionsForWorkspace({
+    workspaceId: 'default', manager,
+    persistence: { listForWorkspace: () => [entry], upsert() {}, remove() {} },
+    proxyPoller: { snapshot: () => null },
+    maybeCompactBeforeResume: async () => {},
+    readCtxFor: () => ({}),
+    log: { error() {}, warn() {} },
+  });
+  assert.strictEqual(created.length, 1);
+  assert.deepStrictEqual(created[0][EXEC], ['clodex-team']);
+  assert.ok(!JSON.stringify(created[0]).includes('avh-chat'), JSON.stringify(created[0]));
 });

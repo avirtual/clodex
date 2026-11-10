@@ -87,7 +87,7 @@ function resolveSessionArgsPatch(patch = {}, prev = null) {
 
 function withoutExecGrants(obj) {
   if (!obj || typeof obj !== 'object') return obj;
-  const { execCommands, mcpServers, ...rest } = obj;
+  const { execCommands, mcpServers, grantable, ...rest } = obj;
   return rest;
 }
 
@@ -100,7 +100,7 @@ function withoutExecGrants(obj) {
 // passes through unchanged.
 function withoutLocalOnly(obj) {
   if (!obj || typeof obj !== 'object') return obj;
-  const { execCommands, env, mcpServers, ...rest } = obj;
+  const { execCommands, env, mcpServers, grantable, ...rest } = obj;
   return rest;
 }
 

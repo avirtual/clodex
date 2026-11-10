@@ -386,7 +386,7 @@ function nearMissFormHint(text) {
 
 // Add a field only if no caller can regrow it and none re-asserts it after create(), else two writers own it; keepWarmAlways and holdUntil stay a pair.
 // An absent worktree pointer is the dangerous state: destroy() would drop the record and orphan the checkout.
-const ALWAYS_PRESERVE = ['sessionIds', 'retiredSessionIds', 'pluginGrants', 'wireLabel', 'ticketId', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested', 'voice', 'reviewerTemplate', 'class', 'sleep', 'template', 'cost', 'wakes', 'awokeAt', 'spawnedBy'];
+const ALWAYS_PRESERVE = ['sessionIds', 'retiredSessionIds', 'pluginGrants', 'grantable', 'wireLabel', 'ticketId', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested', 'voice', 'reviewerTemplate', 'class', 'sleep', 'template', 'cost', 'wakes', 'awokeAt', 'spawnedBy'];
 
 const defaultKillPid = (pid, sig) => process.kill(pid, sig);
 
@@ -597,7 +597,7 @@ function dmContentKey(senderTag, body) {
 
 const MOVE_TO_PEER_OMIT = [
   'execCommands', 'worktree', 'archivedAt', 'exitedAt', 'exitCode', 'exitSignal', 'failed', 'movedTo',
-  'ephemeral', 'reviewFor', 'reviewTicket', 'reviewerTemplate', 'pluginGrants',
+  'ephemeral', 'reviewFor', 'reviewTicket', 'reviewerTemplate', 'pluginGrants', 'grantable',
   'wireLabel', 'ticketId', 'rosterSentAt', 'streamPid', 'mcpServers', 'mcpApplied', 'mcpUnmanaged',
 ];
 
