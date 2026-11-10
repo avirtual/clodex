@@ -3326,7 +3326,7 @@ function createSessionManager(deps) {
       if (typeof rec.tok !== 'number' || rec.tok <= 0) return;
       if (s.ctxInfo && s.ctxInfo.tok === rec.tok) return;
       const model = rec.model || s.streamModel || null;
-      const size = effectiveWindowSize(model, 0) || 0;
+      const size = effectiveWindowSize(model, 0) || 200_000;
       const pct = size > 0 ? Math.round((rec.tok / size) * 100) : null;
       const cost = s._costSeen && typeof s._costSeen.usd === 'number' ? s._costSeen.usd : null;
       this._noteCtx(s, { pct, tok: rec.tok, size, cost, modelName: null, model });
@@ -3591,6 +3591,8 @@ function createSessionManager(deps) {
           break;
         case 'reset':
           this._dropStreamPermissions(s);
+          s.ctxInfo = null;
+          this._sendToSession(s.name, 'session-ctx', s.name, null, null, null, null, null);
           log.info('session', `stream ${s.name}: conversation reset (${rec.newConversationId}); the next init carries the resumable id`);
           break;
         case 'status':

@@ -22426,8 +22426,38 @@ test('stream ctx: an assistant usage record pushes session-ctx, sets ctxInfo and
   assert.strictEqual(pushes.length, 1);
   h.line('st-ctx', { type: 'assistant', message: { model: 'claude-haiku-4-5-20251001', content: [], usage: { input_tokens: 5000 } } });
   assert.deepStrictEqual(h.m.sessions.get('st-ctx').ctxInfo,
-    { pct: null, tok: 5000, size: 0, cost: null, modelName: null, model: 'claude-haiku-4-5-20251001' });
-  assert.deepStrictEqual(fired[1], ['st-ctx', { tok: 5000, pct: null }]);
+    { pct: 3, tok: 5000, size: 200000, cost: null, modelName: null, model: 'claude-haiku-4-5-20251001' });
+  assert.deepStrictEqual(fired[1], ['st-ctx', { tok: 5000, pct: 3 }]);
+});
+
+for (const row of [
+  { model: 'claude-haiku-4-5-20251001', size: 200000, pct: 25 },
+  { model: 'claude-opus-5-5', size: 1000000, pct: 5 },
+]) {
+  test(`stream ctx: a usage record on ${row.model} at 50k reports size ${row.size} and ${row.pct}%`, async (t) => {
+    const fired = [];
+    const sched = { fireContextFor: (n, c) => fired.push([n, c]) };
+    const h = mkStreamSeatManager({ extraDeps: { getRemindScheduler: () => sched } });
+    t.after(() => h.stopAll());
+    await h.create('st-ctx2');
+    h.line('st-ctx2', { type: 'assistant', message: { model: row.model, content: [], usage: { input_tokens: 50000 } } });
+    assert.deepStrictEqual(h.m.sessions.get('st-ctx2').ctxInfo,
+      { pct: row.pct, tok: 50000, size: row.size, cost: null, modelName: null, model: row.model });
+    assert.deepStrictEqual(fired, [['st-ctx2', { tok: 50000, pct: row.pct }]]);
+  });
+}
+
+test('stream ctx: a conversation reset clears ctxInfo and pushes an empty session-ctx', async (t) => {
+  const h = mkStreamSeatManager();
+  t.after(() => h.stopAll());
+  await h.create('st-rst');
+  const pushes = [];
+  h.m._sendToSession = (n, channel, ...args) => { if (channel === 'session-ctx') pushes.push(args); };
+  h.line('st-rst', { type: 'assistant', message: { model: 'claude-opus-5-5', content: [], usage: { input_tokens: 300000 } } });
+  assert.strictEqual(h.m.sessions.get('st-rst').ctxInfo.tok, 300000, 'ENTER: the seat reported a size before the reset');
+  h.line('st-rst', { type: 'conversation_reset', new_conversation_id: 'c2' });
+  assert.strictEqual(h.m.sessions.get('st-rst').ctxInfo, null);
+  assert.deepStrictEqual(pushes, [['st-rst', 30, 300000, 1000000, null, null], ['st-rst', null, null, null, null, null]]);
 });
 
 test('_noteCtx: an onctx reminder survives [agent:context clear] and re-arms on the first post-clear read below its threshold', async (t) => {
