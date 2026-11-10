@@ -21,7 +21,7 @@ const DATA_WRITE_OPEN = new Set(['projects']);
 const GLOB_RE = /[*?[]/;
 const USER_DATA_READ_DENY = ['remote.env', 'ui-settings.json*', 'env-scopes.json*', 'sessions.json*', 'wire-hold-entries.json', 'env-override.env',
   '.ui-settings.json*', '.env-scopes.json*', '.sessions.json*', '.wire-hold-entries.json.tmp.*', 'remote.env.tmp'];
-const T0_FILE_GLOBS = [['sessions', '*', 'seat.json'], ['sessions', '*', '.seat.json.tmp.*'], ['sessions', '*', 'client-token'], ['accounts', '*', '.credentials.json'], ['monitors', '*', '*.cred'], ['sessions', '*', 'monitors', '*.cred']];
+const T0_FILE_GLOBS = [['sessions', '*', 'seat.json'], ['sessions', '*', '.seat.json.tmp.*'], ['sessions', '*', 'client-token'], ['accounts', '*', '.credentials.json'], ['accounts', '*', 'settings.json'], ['accounts', '*', 'settings.json.tmp'], ['monitors', '*', '*.cred'], ['sessions', '*', 'monitors', '*.cred']];
 const CWD_AGENT_DIRS = ['.codex', '.claude'];
 const GIT_DIR_WRITE_DENY = [['config', false], ['config.worktree', false], ['commondir', false], ['hooks', true], [path.join('info', 'attributes'), false]];
 
