@@ -1208,6 +1208,20 @@ test('tickets-viewer: a ticket added WITH an assignee is stamped as started (t32
   } finally { cleanup(); }
 });
 
+test('tickets-viewer: add honours the archive meta high-water over a lower board max', async () => {
+  const { host, home, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/solo/meta');
+    writeTicketsAt(home, key, [ticket('t1'), ticket('t3', { state: 'done', closedAt: Date.now() })]);
+    fs.writeFileSync(path.join(home, 'projects', key, 'tickets-archive.meta.json'), JSON.stringify({ maxId: 40 }));
+    assertWritesLandInFixture(home, key);
+
+    const res = await host.dispatch('tickets-viewer', 'add', [{ project: key, spec: 'next' }], 'desktop');
+    assert.equal(res.id, 't41');
+    assert.deepEqual(onDisk(home, key).map((t) => t.id), ['t1', 't3', 't41']);
+  } finally { cleanup(); }
+});
+
 test('tickets-viewer: add mints the next id over the WHOLE board, closed records included', async () => {
   const { host, home, cleanup } = boot();
   try {
