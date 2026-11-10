@@ -86,9 +86,10 @@ test('(b) a lead without the bypass gets none: a --model template stays bare, a 
   assert.deepStrictEqual(bare.calls[0][EXTRA_ARGS], ['--model', 'claude-opus-5-5']);
   for (const flag of ['--dangerously-skip-permissions', '--yolo']) {
     const asks = harness({ rec: { extraArgs: ['--model', 'x'] } });
-    await spawn(asks, asks.writeTpl({ extraArgs: ['--model', 'x', flag] }));
+    const file = asks.writeTpl({ extraArgs: ['--model', 'x', flag] });
+    await spawn(asks, file);
     assert.deepStrictEqual(asks.calls, [], flag);
-    assert.deepStrictEqual(asks.replies, [`[agent:spawn] error: template "tpl" carries ${flag}, which lead does not — a spawned seat cannot hold more than its spawner`]);
+    assert.deepStrictEqual(asks.replies, [`[agent:spawn] error: template "${file}" carries ${flag}, which lead does not — a spawned seat cannot hold more than its spawner`]);
   }
 });
 

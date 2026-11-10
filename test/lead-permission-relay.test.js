@@ -180,7 +180,10 @@ test('the permit grammar rejects a choice other than allow or deny', () => {
 });
 
 function mkSpawnedRig() {
-  const m = mk({ getPersistence: () => ({ list: () => [], get: (n) => (n === 'kid' ? { spawnedBy: 'L' } : null) }) });
+  const m = mk({
+    log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+    getPersistence: () => ({ list: () => [], get: (n) => (n === 'kid' ? { spawnedBy: 'L' } : null) }),
+  });
   const dms = [];
   const injected = [];
   const answered = [];
