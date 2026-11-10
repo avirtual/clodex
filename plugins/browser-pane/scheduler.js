@@ -11,10 +11,19 @@ const { NO_TAB_OPEN } = require('./subagent');
 
 const NO_SERVICE = 'no service — name one, e.g. [agent:browser read <service>]';
 
-function storedLogin(login, now) {
+const SIGNIN_SEGMENTS = new Set(['login', 'signin', 'sign-in', 'auth', 'webauthn', '2fa', 'mfa', 'otp', 'verify', 'challenge']);
+
+function signinPath(url) {
+  let p;
+  try { p = new URL(url).pathname; } catch { return false; }
+  return p.toLowerCase().split('/').some((s) => SIGNIN_SEGMENTS.has(s));
+}
+
+function storedLogin(login, now, url) {
+  if (login && typeof login === 'object' && login.googleRejected) return { state: 'idp-refused', at: now, via: 'google' };
+  if (login && typeof login === 'object' && (login.password || login.otp || login.captcha || login.idp)) return { state: 'login-page', at: now, via: 'password-field' };
+  if (url && signinPath(url)) return { state: 'login-page', at: now, via: 'signin-path' };
   if (!login || typeof login !== 'object') return { state: 'unknown', at: now };
-  if (login.googleRejected) return { state: 'idp-refused', at: now, via: 'google' };
-  if (login.password || login.otp || login.captcha || login.idp) return { state: 'login-page', at: now, via: 'password-field' };
   if (login.logoutLink) return { state: 'logged-in', at: now, via: 'logout-link' };
   if (login.loggedInHint) return { state: 'logged-in', at: now, via: 'account-ui' };
   return { state: 'unknown', at: now };
@@ -597,13 +606,11 @@ function createScheduler({
       const login = storedLogin(frame.login, now());
       if (login.state !== 'unknown') recordLogin(service, login);
     }
-    if (frame.handback) {
-      const pw = !!(frame.login && (frame.login.password || frame.login.otp));
-      recordLogin(service, { state: pw ? 'login-page' : 'logged-in', at: now(), via: 'handback' });
-    }
+    const back = storedLogin(frame.login, now(), frame.url);
+    if (frame.handback && back.state !== 'unknown') recordLogin(service, { ...back, via: 'handback' });
     if (was === 'held' && frame.state !== 'held') {
       if (frame.state === 'closed') settleWaiters(s, replies.errorReply(`the ${service} window was closed — open it again`));
-      else settleWaiters(s, replies.handbackReply(service, frame));
+      else settleWaiters(s, replies.handbackReply(service, frame, back));
     }
   }
 

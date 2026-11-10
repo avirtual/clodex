@@ -117,7 +117,7 @@ test('scheduler lease: paused while held and while the holder has a held-wait pe
   assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser wait utility --ms=1800000]']]), []);
   h.advance(10 * 60 * 1000);
   assert.match((await h.run([['hand-b', '[agent:browser read utility]']]))[0][1], /in use by hand-a \(last command 10m ago\)/);
-  h.sched.onState({ event: 'state', service: 'utility', state: 'idle', handback: true, url: 'https://portal.example.com/account', title: 'Account', login: {} });
+  h.sched.onState({ event: 'state', service: 'utility', state: 'idle', handback: true, url: 'https://portal.example.com/account', title: 'Account', login: { logoutLink: true } });
   await h.settle();
   assert.deepStrictEqual(h.out.splice(0), [['hand-a',
     '[agent:browser] the operator handed utility back · now https://portal.example.com/account ("Account") · signed in · read to continue']]);
@@ -404,7 +404,7 @@ test('scheduler: a wait queued behind a command becomes a held waiter when the s
   h.sched.onState({ ...HELD_STATE, reason: 'takeover' });
   assert.deepStrictEqual(await read, [['hand-a', READ_REPLY]]);
   h.sched.onState({ event: 'state', service: 'utility', state: 'idle', handback: true, url: 'u', title: 't', login: {} });
-  assert.deepStrictEqual(h.out.splice(0), [['hand-a', '[agent:browser] the operator handed utility back · now u ("t") · signed in · read to continue']]);
+  assert.deepStrictEqual(h.out.splice(0), [['hand-a', '[agent:browser] the operator handed utility back · now u ("t") · sign-in not confirmed · read to continue']]);
 });
 
 test('scheduler: a sign-in failure keeps the seat\'s queued wait and drops the rest', async () => {
@@ -416,7 +416,7 @@ test('scheduler: a sign-in failure keeps the seat\'s queued wait and drops the r
   assert.strictEqual(got.length, 1);
   assert.match(got[0][1], /^\[agent:browser\] sign-in needed on utility .* — dropped 1 queued command after it: key Tab$/);
   h.sched.onState({ event: 'state', service: 'utility', state: 'idle', handback: true, url: 'u', title: 't', login: {} });
-  assert.deepStrictEqual(h.out.splice(0), [['hand-a', '[agent:browser] the operator handed utility back · now u ("t") · signed in · read to continue']]);
+  assert.deepStrictEqual(h.out.splice(0), [['hand-a', '[agent:browser] the operator handed utility back · now u ("t") · sign-in not confirmed · read to continue']]);
 });
 
 test('scheduler: a closed window forgets the seats\' numbers for it', async () => {
@@ -434,14 +434,42 @@ test('scheduler: a takeover during open adds the suffix', async () => {
     [['hand-a', `${OPENED} · the operator took over during this command`]]);
 });
 
-test('scheduler: handback records the login as logged-in via handback', async () => {
+async function handedBack(frame) {
   const h = harness();
   await h.run([['hand-a', '[agent:browser open utility] https://portal.example.com/bills']]);
   h.sched.onState(HELD_STATE);
-  assert.strictEqual(h.storage.get().services.utility.login.state, 'login-page');
-  h.sched.onState({ event: 'state', service: 'utility', state: 'idle', handback: true, url: 'u', title: 't', login: {} });
-  const { state, via } = h.storage.get().services.utility.login;
-  assert.deepStrictEqual({ state, via }, { state: 'logged-in', via: 'handback' });
+  const prior = h.storage.get().services.utility.login;
+  assert.strictEqual(prior.state, 'login-page');
+  assert.deepStrictEqual(await h.run([['hand-a', '[agent:browser wait utility --ms=1800000]']]), []);
+  h.sched.onState({ event: 'state', service: 'utility', state: 'idle', handback: true, title: 't', ...frame });
+  await h.settle();
+  return { prior, login: h.storage.get().services.utility.login, out: h.out.splice(0) };
+}
+
+test('scheduler: a handback from a WebAuthn step with no fields says still on a sign-in page and records no logged-in', async () => {
+  const { login, out } = await handedBack({ url: 'https://www.npmjs.com/login/webauthn', login: {} });
+  assert.deepStrictEqual(out, [['hand-a', '[agent:browser] the operator handed utility back · now https://www.npmjs.com/login/webauthn ("t") · still on a sign-in page · read to continue']]);
+  assert.deepStrictEqual({ state: login.state, via: login.via }, { state: 'login-page', via: 'handback' });
+});
+
+test('scheduler: a handback with no evidence on a neutral URL says sign-in not confirmed and keeps the prior record', async () => {
+  const { prior, login, out } = await handedBack({ url: 'https://portal.example.com/dashboard', login: {} });
+  assert.deepStrictEqual(out, [['hand-a', '[agent:browser] the operator handed utility back · now https://portal.example.com/dashboard ("t") · sign-in not confirmed · read to continue']]);
+  assert.deepStrictEqual(login, prior);
+});
+
+test('scheduler: a handback showing a logout link says signed in and records logged-in via handback', async () => {
+  const { login, out } = await handedBack({ url: 'https://portal.example.com/dashboard', login: { logoutLink: true } });
+  assert.deepStrictEqual(out, [['hand-a', '[agent:browser] the operator handed utility back · now https://portal.example.com/dashboard ("t") · signed in · read to continue']]);
+  assert.deepStrictEqual({ state: login.state, via: login.via }, { state: 'logged-in', via: 'handback' });
+});
+
+test('storedLogin: each sign-in path segment reads as a sign-in page; a lookalike segment does not', () => {
+  for (const seg of ['login', 'signin', 'sign-in', 'auth', 'webauthn', '2fa', 'mfa', 'otp', 'verify', 'challenge']) {
+    assert.deepStrictEqual(storedLogin({ logoutLink: true }, 5, `https://x.example.com/a/${seg}/b`), { state: 'login-page', at: 5, via: 'signin-path' }, seg);
+  }
+  assert.deepStrictEqual(storedLogin({}, 5, 'https://x.example.com/oauth2/authors'), { state: 'unknown', at: 5 });
+  assert.deepStrictEqual(storedLogin({}, 5, 'u'), { state: 'unknown', at: 5 });
 });
 
 test('scheduler: click --text works before any read; a numbered click still needs one; it passes the text and no doc for the stale-doc check', async () => {
