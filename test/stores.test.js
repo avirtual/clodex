@@ -56,6 +56,23 @@ test('persistence: missing file -> [], upsert/list/remove round-trip', () => {
   } finally { cleanup(); }
 });
 
+test('persistence.setIdleClear: a valid afterMs is stored, an invalid one or null deletes the key, a missing record is false', () => {
+  const { stores, cleanup } = freshStores();
+  try {
+    const p = stores.persistence;
+    p.upsert({ name: 'ic', type: 'claude', workspaceId: 'default' });
+    assert.strictEqual(p.setIdleClear('ic', { afterMs: 300000, extra: 1 }), true);
+    assert.deepStrictEqual(p.get('ic').idleClear, { afterMs: 300000 });
+    p.setIdleClear('ic', { afterMs: 59999 });
+    assert.strictEqual('idleClear' in p.get('ic'), false);
+    p.setIdleClear('ic', { afterMs: 60000 });
+    assert.deepStrictEqual(p.get('ic').idleClear, { afterMs: 60000 }, 'ENTER: re-enabled at the floor');
+    p.setIdleClear('ic', null);
+    assert.strictEqual('idleClear' in p.get('ic'), false);
+    assert.strictEqual(p.setIdleClear('nobody', { afterMs: 300000 }), false);
+  } finally { cleanup(); }
+});
+
 test('persistence: an unreadable sessions.json is not replaced by an upsert', { skip: isRoot && 'root reads a 000 file' }, () => {
   const { stores, cleanup, userData, registryDir } = freshStores();
   const file = path.join(userData, 'sessions.json');

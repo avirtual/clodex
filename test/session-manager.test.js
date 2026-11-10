@@ -22338,6 +22338,107 @@ test('assistant sweep: an idle assistant sleeps at idleMs, not a millisecond bef
   assert.strictEqual(rec.sessionId, null);
 });
 
+const idleClearTexts = (seat) => seat.sent.filter((o) => o && o.message).map((o) => o.message.content);
+
+async function idleClearSeat(t, name, row = { idleClear: { afterMs: 300000 } }) {
+  const h = mkStreamSeatManager({ persisted: { [name]: { ...row } } });
+  t.after(() => h.stopAll());
+  await h.create(name);
+  h.line(name, { type: 'system', subtype: 'init', session_id: 'sid-a', model: 'm', slash_commands: [] });
+  const s = h.m.sessions.get(name);
+  t.after(() => h.m._clearPostClearValve(s));
+  s.activityTs = 1_000_000;
+  s.activityState = 'idle';
+  return { h, s, seat: h.handles[0] };
+}
+
+test('idle clear: a seat with idleClear clears at afterMs idle, not a millisecond before, stamps lastClear, and leaves the operator-input stamp alone', async (t) => {
+  const { h, s, seat } = await idleClearSeat(t, 'ic1');
+  h.m._lastOperatorInputAt = 42;
+  h.m._assistantSweep(s.activityTs + 299999);
+  assert.deepStrictEqual(idleClearTexts(seat), []);
+  assert.strictEqual(h.store.get('ic1').lastClear, undefined);
+  h.m._assistantSweep(s.activityTs + 300000);
+  assert.deepStrictEqual(idleClearTexts(seat), ['/clear']);
+  assert.deepStrictEqual(h.store.get('ic1').lastClear, { at: 1_300_000, reason: 'idle' });
+  assert.strictEqual(h.m._lastOperatorInputAt, 42);
+});
+
+test('idle clear: never clears twice in a row; a delivered turn re-arms it', async (t) => {
+  const { h, s, seat } = await idleClearSeat(t, 'ic2');
+  h.m._assistantSweep(1_300_000);
+  h.line('ic2', t2177Result);
+  s.activityState = 'idle';
+  h.m._assistantSweep(5_000_000);
+  assert.deepStrictEqual(idleClearTexts(seat), ['/clear'], 'ENTER: one clear, the second sweep held');
+  h.m._injectText(s, 'a new turn');
+  h.line('ic2', t2177Result);
+  s.activityTs = 6_000_000;
+  s.activityState = 'idle';
+  h.m._assistantSweep(6_300_000);
+  assert.deepStrictEqual(idleClearTexts(seat), ['/clear', 'a new turn', '/clear']);
+});
+
+test('idle clear: a dm that lands while the clear is in flight is delivered after it', async (t) => {
+  const { h, s, seat } = await idleClearSeat(t, 'ic3');
+  h.m._assistantSweep(1_300_000);
+  assert.deepStrictEqual(idleClearTexts(seat), ['/clear'], 'ENTER: the clear is in flight');
+  h.m._injectText(s, '[agent:from peer] mid-clear');
+  assert.deepStrictEqual(idleClearTexts(seat), ['/clear']);
+  h.line('ic3', t2177Result);
+  assert.deepStrictEqual(idleClearTexts(seat), ['/clear', '[agent:from peer] mid-clear']);
+});
+
+for (const [why, row, arrange] of [
+  ['the seat has no idleClear key', {}, () => {}],
+  ['afterMs is below 60000', { idleClear: { afterMs: 59999 } }, () => {}],
+  ['afterMs is a string', { idleClear: { afterMs: '300000' } }, () => {}],
+  ['afterMs is Infinity', { idleClear: { afterMs: Infinity } }, () => {}],
+  ['idleClear is not an object', { idleClear: true }, () => {}],
+  ['the seat is thinking', undefined, (h, s) => { s.activityState = 'thinking'; }],
+  ['the seat is stream-busy', undefined, (h, s) => { s.streamBusy = true; }],
+  ['a permission prompt is pending', undefined, (h, s) => { s.streamPermissions = new Map([['p1', {}]]); }],
+  ['the outbox holds an item', undefined, (h, s) => { s.outbox.push({ text: 'queued', images: [], origin: 'system' }); }],
+  ['the inject queue holds an item', undefined, (h, s) => { s._injectQueue = [{ text: 'held' }]; }],
+  ['a delivery is parked for it', undefined, (h) => { require('../pending-store').parkDelivery(require('node:path').join(h.root, 'pending'), 'icx', '[agent:from x] hi', '1'); }],
+  ['a clear continuation is in flight', undefined, (h, s) => { s._postClearContinuation = 'go on'; }],
+  ['a compact is in flight', undefined, (h, s) => { s._compactContinuation = 'go on'; }],
+  ['a reload is in flight', undefined, (h, s) => { s._reloadInFlight = true; }],
+  ['an open ticket is bound to it', undefined, (h) => { h.m._teamOfOrNull = () => ({ root: h.root }); h.m._openTicketsFor = () => [{ id: 't1' }]; }],
+]) {
+  test(`idle clear: no clear when ${why}`, async (t) => {
+    const { h, s, seat } = await idleClearSeat(t, 'icx', row);
+    arrange(h, s);
+    h.m._assistantSweep(s.activityTs + 10 * 300000);
+    assert.deepStrictEqual(idleClearTexts(seat).filter((x) => x === '/clear'), []);
+    assert.strictEqual(h.store.get('icx').lastClear, undefined);
+  });
+}
+
+test('idle clear: a seat whose transport has no clear is skipped and logged once', async (t) => {
+  const { h, s, seat } = await idleClearSeat(t, 'ic4');
+  s.streamCodec = { ...s.streamCodec, encodeContext: () => null };
+  h.m._assistantSweep(1_300_000);
+  h.m._assistantSweep(1_400_000);
+  assert.deepStrictEqual(idleClearTexts(seat), []);
+  assert.strictEqual(h.logs.filter(([, , msg]) => /^idle clear ic4 skipped: clear is not available/.test(msg)).length, 1);
+  assert.strictEqual(h.store.get('ic4').lastClear, undefined);
+});
+
+test('idle clear: idleClear and lastClear survive a restart, and a template carries a valid idleClear onto the record', async (t) => {
+  const { h } = await idleClearSeat(t, 'ic5');
+  const prior = { name: 'ic5', idleClear: { afterMs: 300000 }, lastClear: { at: 7, reason: 'idle' } };
+  h.store.delete('ic5');
+  h.m._preserveAcrossRestart('ic5', prior, []);
+  assert.deepStrictEqual(h.store.get('ic5'), prior);
+  h.store.set('tp', { name: 'tp' });
+  h.m._applyTemplatePersistence('tp', { idleClear: { afterMs: 120000 } });
+  assert.deepStrictEqual(h.store.get('tp'), { name: 'tp', idleClear: { afterMs: 120000 } });
+  h.store.set('tq', { name: 'tq' });
+  h.m._applyTemplatePersistence('tq', { idleClear: { afterMs: 1000 } });
+  assert.deepStrictEqual(h.store.get('tq'), { name: 'tq' });
+});
+
 test('assistant sleep: the transcript tail becomes sessions/<name>/brief.md', async (t) => {
   const fs = require('node:fs');
   const path = require('node:path');

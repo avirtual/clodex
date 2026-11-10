@@ -1764,7 +1764,7 @@ test('GET /api/sessions/:name/describe: a live stream seat answers session, capa
     assert.ok(!JSON.stringify(body).includes('SECRET'), 'an env key reached the body');
     assert.deepStrictEqual(body.capabilities.extraArgs, ['--model', 'gpt-5']);
     assert.deepStrictEqual(body.activity, {
-      turns: 2, lastTurnTs: '2026-10-01T00:00:03.000Z', pendingMail: 0, transcriptPath: fs.realpathSync(jsonl),
+      turns: 2, lastTurnTs: '2026-10-01T00:00:03.000Z', pendingMail: 0, lastClear: null, transcriptPath: fs.realpathSync(jsonl),
     });
   });
 });
@@ -1785,10 +1785,10 @@ test('GET .../describe: an unknown name is 404 Session not found', async () => {
   });
 });
 
-test('GET .../describe: a sleeper with persisted args has capabilities and its activity from the sleeper transcript', async () => {
+test('GET .../describe: a sleeper with persisted args has capabilities, its lastClear, and its activity from the sleeper transcript', async () => {
   const sleepy = {
     name: 'sleepy', type: 'claude', class: 'assistant', archivedAt: 1, cwd: '/w/sleepy', workspaceId: 'ws-alpha',
-    sessionId: '11111111-2222-3333-4444-555555555555',
+    sessionId: '11111111-2222-3333-4444-555555555555', lastClear: { at: 1790000000000, reason: 'idle' },
   };
   await withDescribeNode({ persisted: { sleepy }, args: { sleepy: DESCRIBE_ARGS } }, async (port) => {
     const r = await req(port, '/api/sessions/sleepy/describe');
@@ -1797,7 +1797,7 @@ test('GET .../describe: a sleeper with persisted args has capabilities and its a
     assert.strictEqual(body.session.activity, 'asleep');
     assert.deepStrictEqual(body.capabilities.execGrants, ['alpha-check', 'zeta-run']);
     assert.deepStrictEqual(body.capabilities.extraArgs, ['--model', 'gpt-5']);
-    assert.deepStrictEqual(body.activity, { turns: 1, lastTurnTs: '2026-09-01T00:00:05.000Z', pendingMail: 0, transcriptPath: null });
+    assert.deepStrictEqual(body.activity, { turns: 1, lastTurnTs: '2026-09-01T00:00:05.000Z', pendingMail: 0, lastClear: { at: 1790000000000, reason: 'idle' }, transcriptPath: null });
   });
 });
 
