@@ -4965,6 +4965,20 @@ function createTicketMethods(deps, shared) {
 
     // These are persistence writes that must land after create() mints the entry, since setStripLevel on a missing entry is a silent no-op.
     // Takes the template, not a shape: one caller has none, and a synthetic `{ tpl }` there goes inert once this reads another shape field.
+    _applyTemplatePersistence(name, tpl) {
+      if (!tpl) return;
+      if (tpl.stripLevel === 1 || tpl.stripLevel === 2) getPersistence().setStripLevel(name, tpl.stripLevel);
+      if (tpl.autoCompact === false) getPersistence().setAutoCompact(name, false);
+      if (Array.isArray(tpl.plugins)) getPersistence().setPlugins(name, tpl.plugins);
+      const idleClear = { afterMs: idleClearAfterMs(tpl.idleClear) };
+      if (idleClear.afterMs) getPersistence().upsert({ name, idleClear });
+      if (tpl.class === 'assistant') {
+        getPersistence().upsert({ name, class: 'assistant', template: tpl.name || null, awokeAt: Date.now(), ...(tpl.sleep && typeof tpl.sleep === 'object' ? { sleep: { ...tpl.sleep } } : {}) });
+        const live = this.sessions.get(name);
+        if (live) live._assistant = true;
+      }
+    },
+
     _applyRoleIdleClear(name, def) {
       const afterMs = idleClearAfterMs(def && def.idleClear);
       if (afterMs) getPersistence().setIdleClear(name, { afterMs });
@@ -4985,20 +4999,6 @@ function createTicketMethods(deps, shared) {
       const afterMs = /^\d+$/.test(s) ? idleClearAfterMs({ afterMs: Number(s) * 60000 }) : 0;
       if (!afterMs) return { ok: false, error: `idle-clear:${v} — give whole minutes (at least ${IDLE_CLEAR_MIN_MS / 60000}) or off` };
       return { ok: true, value: { afterMs } };
-    },
-
-    _applyTemplatePersistence(name, tpl) {
-      if (!tpl) return;
-      if (tpl.stripLevel === 1 || tpl.stripLevel === 2) getPersistence().setStripLevel(name, tpl.stripLevel);
-      if (tpl.autoCompact === false) getPersistence().setAutoCompact(name, false);
-      if (Array.isArray(tpl.plugins)) getPersistence().setPlugins(name, tpl.plugins);
-      const idleClear = { afterMs: idleClearAfterMs(tpl.idleClear) };
-      if (idleClear.afterMs) getPersistence().upsert({ name, idleClear });
-      if (tpl.class === 'assistant') {
-        getPersistence().upsert({ name, class: 'assistant', template: tpl.name || null, awokeAt: Date.now(), ...(tpl.sleep && typeof tpl.sleep === 'object' ? { sleep: { ...tpl.sleep } } : {}) });
-        const live = this.sessions.get(name);
-        if (live) live._assistant = true;
-      }
     },
 
     // `mode` defaults to 'worktree', never 'spawn', so a path that never asked for one cannot put a seat in the operator's checkout.
