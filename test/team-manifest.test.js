@@ -2453,7 +2453,7 @@ test('t1092: removing reviewer with an account and re-adding it carries the acco
   const stock = tm.loadManifest('shop');
   assert.deepStrictEqual(team.roles.reviewer, {
     template: STOCK_ROLE_DEFS.reviewer.template || null, prompt: STOCK_ROLE_DEFS.reviewer.prompt,
-    brief: STOCK_ROLE_DEFS.reviewer.brief || null, dispatch: 'standing', cwd: null, account: 'work',
+    brief: STOCK_ROLE_DEFS.reviewer.brief || null, dispatch: 'standing', cwd: null, account: 'work', idleClear: null,
   });
   assert.deepStrictEqual(stock.roles.reviewer, team.roles.reviewer, 'and the same on disk');
   assert.strictEqual(team.accountCarried, 'work');
@@ -2487,7 +2487,7 @@ test('t1092: an ordinary role removed with an account gets it back unless the re
 
   const back = tm.addRole('shop', 'runner', { brief: 'r' });
   assert.deepStrictEqual(back.roles.runner, {
-    template: null, prompt: null, brief: 'r', dispatch: 'standing', cwd: null, account: 'work',
+    template: null, prompt: null, brief: 'r', dispatch: 'standing', cwd: null, account: 'work', idleClear: null,
   });
   assert.strictEqual(back.accountCarried, 'work');
   assert.strictEqual(stashOnDisk(home), undefined);

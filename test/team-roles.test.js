@@ -40,7 +40,7 @@ test('teamRoleRows: one row per role in key order, reserved keys marked read-onl
   // Descriptive fields surfaced; missing ones normalize to ''. WHOLE row: the
   // legibility test pins this model's keys against the schema, and a partial
   // probe here would let a field the row shows but nothing sets slip through.
-  assert.deepStrictEqual(rows[2], { key: 'runner', account: '', brief: 'runs things', prompt: 'p', template: 'fable-lead', dispatch: 'worktree', cwd: '', readOnly: false });
+  assert.deepStrictEqual(rows[2], { key: 'runner', account: '', idleClear: '', brief: 'runs things', prompt: 'p', template: 'fable-lead', dispatch: 'worktree', cwd: '', readOnly: false });
   // `dispatch` normalizes to 'standing', NOT to '': absent IS standing on disk,
   // and a blank would leave the row's picker with no selected option, which
   // buildSavePatch then drops — a Save that silently declines to save.
