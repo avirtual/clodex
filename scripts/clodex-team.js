@@ -262,6 +262,23 @@ function staleHostLineFor(host) {
 //
 // Cited by NAME, not by line: this comment carried a line range for exactly one
 // commit before the range pointed at unrelated code (t105).
+function archivedTickets(boardDir) {
+  let raw;
+  try {
+    raw = fs.readFileSync(path.join(boardDir, 'tickets-archive.jsonl'), 'utf-8');
+  } catch {
+    return [];
+  }
+  const rows = new Map();
+  for (const line of raw.split('\n')) {
+    let rec;
+    try { rec = JSON.parse(line); } catch { continue; }
+    if (rec && rec.op === 'archive' && rec.row && typeof rec.row.id === 'string' && rec.row.id) rows.set(rec.row.id, rec.row);
+    else if (rec && rec.op === 'restore') rows.delete(rec.id);
+  }
+  return [...rows.values()];
+}
+
 function doTickets(payload) {
   const team = teamFromEnv();
   const filter = payload.filter || 'open';
@@ -269,10 +286,13 @@ function doTickets(payload) {
     die(`unknown filter "${filter}" — use one of: ${TICKET_FILTERS.join(', ')}`);
   }
   let tickets = [];
+  const boardDir = projectDirFor(CLODEX_HOME, team.root);
   try {
-    const arr = JSON.parse(fs.readFileSync(path.join(projectDirFor(CLODEX_HOME, team.root), 'tickets.json'), 'utf-8'));
+    const arr = JSON.parse(fs.readFileSync(path.join(boardDir, 'tickets.json'), 'utf-8'));
     if (Array.isArray(arr)) tickets = arr;
   } catch { /* no registry yet — empty */ }
+  const onBoard = new Set(tickets.map((t) => t && t.id));
+  tickets = tickets.concat(archivedTickets(boardDir).filter((t) => !onBoard.has(t.id)));
   const known = new Map();
   const mine = (t) => {
     if (!t || !t.team || t.team === team.name) return true;

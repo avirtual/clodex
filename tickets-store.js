@@ -132,23 +132,24 @@ function createTicketsStore({ fs = require('fs'), path = require('path'), clodex
     return null;
   }
 
-  function readArchive(projectRoot) {
+  function scanArchive(projectRoot) {
     const file = archivePath(projectRoot);
     const key = statKey(file);
     const hit = archiveCache.get(file);
-    if (hit && sameKey(hit.key, key)) return hit.rows;
+    if (hit && sameKey(hit.key, key)) return hit;
     archiveCache.delete(file);
     let raw;
     try {
       raw = fs.readFileSync(file, 'utf-8');
     } catch (e) {
-      if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return new Map();
+      if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return { rows: new Map(), lastArchived: new Map() };
       throw e;
     }
     const lines = raw.split('\n');
     let last = lines.length - 1;
     while (last >= 0 && !lines[last].trim()) last -= 1;
     const rows = new Map();
+    const lastArchived = new Map();
     let bad = 0;
     for (let i = 0; i <= last; i++) {
       if (!lines[i].trim()) continue;
@@ -157,12 +158,33 @@ function createTicketsStore({ fs = require('fs'), path = require('path'), clodex
         if (i !== last) bad += 1;
         continue;
       }
-      if (op.op === 'archive') rows.set(op.id, op.row);
-      else rows.delete(op.id);
+      if (op.op === 'archive') {
+        deepFreeze(op.row);
+        rows.set(op.id, op.row);
+        lastArchived.set(op.id, op.row);
+      } else rows.delete(op.id);
     }
     if (bad) warn(`tickets archive ${file}: skipped ${bad} unparseable line(s)`);
-    if (key) archiveCache.set(file, { key, rows });
-    return rows;
+    const scan = { key, rows, lastArchived };
+    if (key) archiveCache.set(file, scan);
+    return scan;
+  }
+
+  function readArchive(projectRoot) {
+    return scanArchive(projectRoot).rows;
+  }
+
+  function restore(projectRoot, id) {
+    const tickets = load(projectRoot);
+    if (tickets.some((t) => t && t.id === id)) return null;
+    const scan = scanArchive(projectRoot);
+    const archived = scan.lastArchived.get(id);
+    if (!archived) return null;
+    if (scan.rows.has(id)) appendRestore(projectRoot, id);
+    const row = JSON.parse(JSON.stringify(archived));
+    tickets.push(row);
+    save(projectRoot, tickets);
+    return row;
   }
 
   function appendLines(projectRoot, lines) {
@@ -196,8 +218,15 @@ function createTicketsStore({ fs = require('fs'), path = require('path'), clodex
   }
 
   function readMeta(projectRoot) {
+    let raw;
     try {
-      const meta = JSON.parse(fs.readFileSync(metaPath(projectRoot), 'utf-8'));
+      raw = fs.readFileSync(metaPath(projectRoot), 'utf-8');
+    } catch (e) {
+      if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return { maxId: 0 };
+      throw e;
+    }
+    try {
+      const meta = JSON.parse(raw);
       const maxId = meta && meta.maxId;
       if (Number.isSafeInteger(maxId) && maxId >= 0) return { maxId };
     } catch {}
@@ -210,11 +239,17 @@ function createTicketsStore({ fs = require('fs'), path = require('path'), clodex
     atomicWriteFileSync(metaPath(projectRoot), JSON.stringify({ maxId }));
   }
 
-  return { load, read, save, ticketsPath, archivePath, metaPath, readArchive, appendArchive, appendRestore, readMeta, writeMeta };
+  function withArchive(projectRoot, board) {
+    const rows = board || read(projectRoot);
+    const archived = readArchive(projectRoot);
+    if (!archived.size) return rows;
+    const onBoard = new Set(rows.map((t) => t && t.id));
+    return rows.concat([...archived.values()].filter((t) => !onBoard.has(t.id)));
+  }
+
+  return { load, read, save, ticketsPath, archivePath, metaPath, readArchive, appendArchive, appendRestore, restore, withArchive, readMeta, writeMeta };
 }
 
-// Closed records stay in the array so max+1 never reuses an id: an id is a public
-// reference (branches, artifact dirs, commits) and a re-issued one still resolves.
 function nextTicketId(tickets, floor = 0) {
   let max = Number.isSafeInteger(floor) && floor > 0 ? floor : 0;
   for (const t of tickets || []) {

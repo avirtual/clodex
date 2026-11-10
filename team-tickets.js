@@ -879,7 +879,7 @@ function createTicketMethods(deps, shared) {
 
     teamActivity(teamName) {
       const team = loadManifest(teamName);
-      const tickets = ticketsStore.read(team.root).filter((t) => t && t.id);
+      const tickets = ticketsStore.withArchive(team.root).filter((t) => t && t.id);
 
       const roles = {};
       for (const [key, def] of Object.entries(team.roles || {})) {
@@ -5408,7 +5408,7 @@ function createTicketMethods(deps, shared) {
       const report = String(intent.body == null ? '' : intent.body).trim();
       if (!intent.id) { reply(`error: done needs a ticket id — [agent:task done <id>] <report>${this._spillRejectedPayload(session, 'task done', report)}`); return; }
       if (!report) { reply('error: done needs a report — [agent:task done <id>] <what you did>'); return; }
-      const tickets = ticketsStore.load(team.root);
+      const tickets = team.lead === session.name ? this._loadBoardForId(team, intent.id) : ticketsStore.load(team.root);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task done', report)}`); return; }
       const foreign = this._foreignRowRefusal(team, ticket);
@@ -5606,7 +5606,7 @@ function createTicketMethods(deps, shared) {
       };
       let atStep = 'verify';
       try {
-        const ticket = this._loadTicket(team, ticketId);
+        const ticket = this._loadTicket(team, ticketId, { boardOnly: true });
         if (!ticket || ticket.loopStep !== 'verify') return;
         const round = ticket.reworkRound || 0;
         const current = (t) => {
@@ -6267,11 +6267,17 @@ function createTicketMethods(deps, shared) {
         + `your must-fixes were delivered to ${rework.seat} as a follow-up, not as a new reopen${replaced}`);
     },
 
-    _loadTicket(team, ticketId) {
+    _loadTicket(team, ticketId, { boardOnly = false } = {}) {
       try {
         const tickets = ticketsStore.load(team.root);
-        return tickets.find((t) => t.id === ticketId) || null;
+        return tickets.find((t) => t.id === ticketId) || (boardOnly ? null : ticketsStore.readArchive(team.root).get(ticketId)) || null;
       } catch { return null; }
+    },
+
+    _loadBoardForId(team, ticketId) {
+      const tickets = ticketsStore.load(team.root);
+      if (!ticketId || tickets.some((t) => t && t.id === ticketId)) return tickets;
+      return ticketsStore.restore(team.root, ticketId) ? ticketsStore.load(team.root) : tickets;
     },
 
     _notifyHandOfHold(team, ticketId, step, evidence) {
@@ -7003,7 +7009,7 @@ function createTicketMethods(deps, shared) {
       if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can reject a ticket${this._spillRejectedPayload(session, 'task reject', reason)}`); return; }
       if (!intent.id) { reply(`error: reject needs a ticket id — [agent:task reject <id>] <reason>${this._spillRejectedPayload(session, 'task reject', reason)}`); return; }
       if (!reason) { reply('error: reject needs a reason — [agent:task reject <id>] <what to fix>'); return; }
-      const tickets = ticketsStore.load(team.root);
+      const tickets = this._loadBoardForId(team, intent.id);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task reject', reason)}`); return; }
       const foreign = this._foreignRowRefusal(team, ticket);
@@ -7080,7 +7086,7 @@ function createTicketMethods(deps, shared) {
       if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can respec a ticket${this._spillRejectedPayload(session, 'task respec', spec)}`); return; }
       if (!intent.id) { reply(`error: respec needs a ticket id — [agent:task respec <id>] <new spec>${this._spillRejectedPayload(session, 'task respec', spec)}`); return; }
       if (!spec) { reply('error: respec needs a new spec — [agent:task respec <id>] <the corrected spec>'); return; }
-      const tickets = ticketsStore.load(team.root);
+      const tickets = this._loadBoardForId(team, intent.id);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task respec', spec)}`); return; }
       const foreign = this._foreignRowRefusal(team, ticket);
@@ -7141,7 +7147,7 @@ function createTicketMethods(deps, shared) {
       const reason = String(intent.body == null ? '' : intent.body).trim();
       if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can cancel a ticket${this._spillRejectedPayload(session, 'task cancel', reason)}`); return; }
       if (!intent.id) { reply(`error: cancel needs a ticket id — [agent:task cancel <id>] [reason]${this._spillRejectedPayload(session, 'task cancel', reason)}`); return; }
-      const tickets = ticketsStore.load(team.root);
+      const tickets = this._loadBoardForId(team, intent.id);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task cancel', reason)}`); return; }
       const foreign = this._foreignRowRefusal(team, ticket);
@@ -7217,12 +7223,19 @@ function createTicketMethods(deps, shared) {
       let rec = null;
       try { rec = getPersistence().get(seatName); } catch { rec = null; }
       let tickets;
-      try { tickets = ticketsStore.load(team.root); } catch { return null; }
+      let seatId = null;
+      try {
+        if (ticketId == null) {
+          const archived = [...ticketsStore.readArchive(team.root).values()].find((t) => t.assignee === seatName && !t.revival);
+          if (archived && ticketsStore.restore(team.root, archived.id)) seatId = archived.id;
+        }
+        tickets = ticketsStore.load(team.root);
+      } catch { return null; }
       // `ticketId != null`, not truthiness: a falsy id is a caller bug and must fail closed (match nothing)
       // rather than fall back to the ambiguous seat-name lookup.
       const ticket = ticketId != null
         ? tickets.find((t) => t.id === ticketId && !t.revival)
-        : tickets.find((t) => t.assignee === seatName && !t.revival);
+        : tickets.find((t) => (seatId ? t.id === seatId : t.assignee === seatName) && !t.revival);
       if (!ticket) return null;
       const wt = rec && rec.worktree ? rec.worktree : null;
       ticket.revival = {
@@ -7359,7 +7372,7 @@ function createTicketMethods(deps, shared) {
       const note = String(intent.body == null ? '' : intent.body).trim();
       if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can accept a ticket${this._spillRejectedPayload(session, 'task accept', note)}`); return; }
       if (!intent.id) { reply(`error: accept needs a ticket id — [agent:task accept <id>] [note]${this._spillRejectedPayload(session, 'task accept', note)}`); return; }
-      const tickets = ticketsStore.load(team.root);
+      const tickets = this._loadBoardForId(team, intent.id);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}${this._spillRejectedPayload(session, 'task accept', note)}`); return; }
       const foreign = this._foreignRowRefusal(team, ticket);
@@ -7738,7 +7751,7 @@ function createTicketMethods(deps, shared) {
     },
 
     _taskListText(team, filter, now, own = null) {
-      const board = ticketsStore.read(team.root).slice().sort((a, b) => {
+      const board = ticketsStore.withArchive(team.root).slice().sort((a, b) => {
         const na = Number(String(a.id).replace(/^t/, '')) || 0;
         const nb = Number(String(b.id).replace(/^t/, '')) || 0;
         return na - nb;

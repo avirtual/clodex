@@ -53,8 +53,6 @@ function projectDirFor(root, projectPath) {
   return path.join(root, 'projects', `${path.basename(real)}-${hash}`);
 }
 
-// nextTicketId scans the WHOLE array, closed records included: an id is a public
-// reference, so a re-issued one still resolves — to the wrong work.
 function nextTicketId(tickets, floor = 0) {
   let max = Number.isSafeInteger(floor) && floor > 0 ? floor : 0;
   for (const t of tickets || []) {
@@ -168,15 +166,86 @@ function atomicWriteFileSync(filePath, data) {
 }
 
 const TICKETS_FILE = 'tickets.json';
+const ARCHIVE_FILE = 'tickets-archive.jsonl';
 const ARCHIVE_META_FILE = 'tickets-archive.meta.json';
 
 function readArchiveMaxId(boardDir) {
+  let raw;
   try {
-    const meta = JSON.parse(fs.readFileSync(path.join(boardDir, ARCHIVE_META_FILE), 'utf8'));
+    raw = fs.readFileSync(path.join(boardDir, ARCHIVE_META_FILE), 'utf8');
+  } catch (e) {
+    if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return 0;
+    throw e;
+  }
+  try {
+    const meta = JSON.parse(raw);
     const maxId = meta && meta.maxId;
     if (Number.isSafeInteger(maxId) && maxId >= 0) return maxId;
   } catch (_) {}
   return 0;
+}
+
+function scanArchiveAt(boardDir) {
+  let raw;
+  try {
+    raw = fs.readFileSync(path.join(boardDir, ARCHIVE_FILE), 'utf8');
+  } catch (e) {
+    if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return { rows: new Map(), lastArchived: new Map() };
+    throw e;
+  }
+  const rows = new Map();
+  const lastArchived = new Map();
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    let rec;
+    try { rec = JSON.parse(line); } catch (_) { continue; }
+    if (!rec || typeof rec !== 'object') continue;
+    if (rec.op === 'archive' && rec.row && typeof rec.row === 'object' && typeof rec.row.id === 'string' && rec.row.id) {
+      rows.set(rec.row.id, rec.row);
+      lastArchived.set(rec.row.id, rec.row);
+    } else if (rec.op === 'restore' && typeof rec.id === 'string' && rec.id) rows.delete(rec.id);
+  }
+  return { rows, lastArchived };
+}
+
+function withHistory(boardDir, read) {
+  if (!read.ok) return read;
+  let archived;
+  try {
+    archived = scanArchiveAt(boardDir).rows;
+  } catch (e) {
+    return { ok: false, error: `could not read ${ARCHIVE_FILE} (${(e && e.code) || (e && e.message) || 'unknown error'})` };
+  }
+  if (!archived.size) return read;
+  const onBoard = new Set(read.tickets.map((t) => t.id));
+  return { ...read, tickets: read.tickets.concat([...archived.values()].filter((t) => !onBoard.has(t.id))) };
+}
+
+function restoreInto(tickets, boardDir, id) {
+  if (tickets.some((t) => str(t.id) === id)) return null;
+  const scan = scanArchiveAt(boardDir);
+  const archived = scan.lastArchived.get(id);
+  if (!archived) return null;
+  if (scan.rows.has(id)) {
+    const file = path.join(boardDir, ARCHIVE_FILE);
+    let text = `${JSON.stringify({ op: 'restore', at: new Date().toISOString(), id })}\n`;
+    const fd = fs.openSync(file, 'a+');
+    try {
+      const size = fs.fstatSync(fd).size;
+      if (size > 0) {
+        const tail = Buffer.alloc(1);
+        fs.readSync(fd, tail, 0, 1, size - 1);
+        if (tail[0] !== 0x0a) text = `\n${text}`;
+      }
+      writeAllSync(fd, text, file);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+  const row = JSON.parse(JSON.stringify(archived));
+  tickets.push(row);
+  return row;
 }
 // A directory under teams/ is a team only when it carries this, or every stray
 // directory lists as an empty team.
@@ -730,7 +799,7 @@ function board(projectKey) {
   if (!loc.ok) return loc;
 
   const known = teamIndex().get(projectKey);
-  const read = readTicketsAt(loc.dir);
+  const read = withHistory(loc.dir, readTicketsAt(loc.dir));
   if (!read.ok) return known && known.warning ? { ...read, warning: known.warning } : read;
 
   const now = Date.now();
@@ -924,7 +993,7 @@ function ticketDetail(payload) {
   if (!loc.ok) return loc;
   if (!id) return { ok: false, error: 'a ticket id is required' };
 
-  const read = readTicketsAt(loc.dir);
+  const read = withHistory(loc.dir, readTicketsAt(loc.dir));
   if (!read.ok) return read;
   const rec = read.tickets.find((t) => str(t.id) === id);
   if (!rec) return { ok: false, error: `no ticket "${id}" on ${projectKey}` };
@@ -989,7 +1058,7 @@ function search(payload) {
   const q = str(payload && payload.q);
   const loc = resolveProject(projectKey);
   if (!loc.ok) return loc;
-  const read = readTicketsAt(loc.dir);
+  const read = withHistory(loc.dir, readTicketsAt(loc.dir));
   if (!read.ok) return read;
   if (!q) return { ok: true, hits: [] };
 
@@ -1036,7 +1105,7 @@ function closed(payload) {
   }
   const loc = resolveProject(projectKey);
   if (!loc.ok) return loc;
-  const read = readTicketsAt(loc.dir);
+  const read = withHistory(loc.dir, readTicketsAt(loc.dir));
   if (!read.ok) return read;
 
   const offset = closedOffset(payload && payload.offset);
@@ -1207,9 +1276,15 @@ function add(payload) {
 
   let delivered = false;
   const res = mutateBoard(project, (tickets, boardDir) => {
+    let floor;
+    try {
+      floor = readArchiveMaxId(boardDir);
+    } catch (e) {
+      return { error: `refusing to add: could not read ${ARCHIVE_META_FILE} (${(e && e.code) || (e && e.message) || 'unknown error'})` };
+    }
     const now = Date.now();
     const ticket = {
-      id: nextTicketId(tickets, readArchiveMaxId(boardDir)),
+      id: nextTicketId(tickets, floor),
       title: ticketTitle(text),
       spec: text,
       assignee: who,
@@ -1264,8 +1339,13 @@ function editSpec(payload) {
   if (!ticketId) return { ok: false, error: 'a ticket id is required' };
   if (!text.trim()) return { ok: false, error: 'a ticket needs a spec' };
 
-  return mutateBoard(project, (tickets) => {
-    const t = tickets.find((x) => str(x.id) === ticketId);
+  return mutateBoard(project, (tickets, boardDir) => {
+    let t;
+    try {
+      t = tickets.find((x) => str(x.id) === ticketId) || restoreInto(tickets, boardDir, ticketId);
+    } catch (e) {
+      return { error: `could not restore "${ticketId}" from ${ARCHIVE_FILE} (${(e && e.code) || (e && e.message) || 'unknown error'})` };
+    }
     // Editable in any state, unlike the lifecycle verbs: correcting a closed
     // ticket's record is not a lifecycle change.
     if (!t) return { error: `no ticket "${ticketId}" on this board` };
