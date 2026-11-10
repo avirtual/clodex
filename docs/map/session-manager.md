@@ -616,7 +616,9 @@
 | `_parkDivertFor` | Builds the write-time divert that parks the text when a turn start is pending or a typed or dictated draft is open | pending/<name>/ | _turnStartPending, _anyDraftOpen, parkDelivery, _armParkCap | dictated-draft-protection.test.js dm-delivery-latch.test.js |
 | `_injectQueueFor` | Lazily builds the seat's InjectQueue with quiet, speaking, boot-ready and dead gates and the re-park of undelivered text | `s._injectPtyQueue`, `s._bootReadySeen`, `s._awaitingTurnSince`, `s._rebootNoticeWrittenAt` | inject-queue.InjectQueue, parkDelivery, _armSubmitNudge | injected-turn-bit.test.js speaking-defers-inject.test.js dictated-draft-protection.test.js session-manager.test.js |
 | `_onIncoming` | Socket dispatcher: passive delivery, box-wide voice and team-retire requests, else a normal delivery | none | _deliverPassive, voiceTap, _handleTeamRetire, _deliverMessage | external-tap-trigger.test.js session-manager.test.js |
-| `_deliverPassive` | Parks a never-turn-earning passive entry for a claude seat, falling back to normal delivery | pending/<name>/ | _buildDeliveryText, parkDelivery, _deliverMessage | dm-delivery-latch.test.js session-move.test.js session-manager.test.js |
+| `_deliverPassive` | Parks a never-turn-earning passive entry for a seat that runs the Claude-shape hooks (claude, clodent), falling back to normal delivery | pending/<name>/ | _buildDeliveryText, parkDelivery, _deliverMessage | dm-delivery-latch.test.js session-move.test.js session-manager.test.js lead-notice-ride.test.js |
+| `_deliverRide` | Parks a passive entry stamped with a `due` RIDE_MAX_MS out, for a notice that owes the recipient nothing; a seat without the hooks, dead, behind a dialog, or a throwing park wakes via `_gatedDeliver` | pending/<name>/ | _buildDeliveryText, parkDelivery, _gatedDeliver | lead-notice-ride.test.js |
+| `_flushDueRides` | Ride backstop: flushes the whole pending dir as one turn once the oldest ride is past `due` and no inject hold is set | pending/<name>/ | oldestDueRide, _injectHoldReason, _flushParkedNow | lead-notice-ride.test.js |
 | `_deliverParkedActive` | Parks a turn-earning entry for a booting pty claude seat so the boot-ready edge drains it, arming the fallback timer; a stream seat gets `_deliverMessage` | pending/<name>/ | parkDelivery, _armParkedDrainFallback, _deliverMessage | parked-drain-fallback.test.js review-scope-in-prompt.test.js session-manager.test.js stream-parked-active.test.js |
 | `_armParkedDrainFallback` | Second drain edge for an active park whose boot-ready drain never fired, re-checking until the file is claimed | `s._parkedDrainFallbackTimer`, `s._parkedDrainFallbackFiles`, `s._bootDrainTimer` | _drainPendingAtBootReady | parked-drain-fallback.test.js |
 
@@ -632,7 +634,7 @@
 
 ### Hazards
 
-- `_deliverPassive` excludes dead and non-claude seats but not stream seats, so a claude stream seat gets a pending-store park instead of a stream enqueue.
+- `_deliverPassive` excludes dead seats and seats without the Claude-shape hooks but not stream seats, so a claude or clodent stream seat gets a pending-store park instead of a stream enqueue.
 - `_armParkedDrainFallback` falls through to a forced drain once its deadline passes even while the boot-ready latch is still missing.
 - `_maybeParkDelivery` and `_parkDivertFor` arm `_armParkCap`, which forces the park through `_flushParkedNow` after INJECT_QUIET_MAXWAIT with no submit, so a draft left open that long is spliced subject only to the queue's own gates.
 
