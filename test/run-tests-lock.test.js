@@ -25,6 +25,7 @@ function childEnv(extra = {}) {
   delete env.CLODEX_TEST_LOCK_DIR;
   delete env.CLODEX_TEST_LOCK_NOTE_FD;
   if (!('CLODEX_TEST_LOCK_WAIT_MS' in extra)) delete env.CLODEX_TEST_LOCK_WAIT_MS;
+  if (!('CLODEX_TEST_LOCK_MERGE' in extra)) delete env.CLODEX_TEST_LOCK_MERGE;
   return env;
 }
 
@@ -131,5 +132,67 @@ process.kill = function (pid, sig) {
     assert.notStrictEqual(res.status, 0);
     assert.strictEqual(fs.readFileSync(path.join(lockDir, 'pid'), 'utf8'), String(process.pid));
     assert.deepStrictEqual(fs.readdirSync(root).filter((n) => n.startsWith('.test-digest.lock')), ['.test-digest.lock']);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+function clockHook(root, nowMs) {
+  const hook = path.join(root, 'clock.js');
+  fs.writeFileSync(hook, `const real = Date.now; const shift = ${nowMs} - real(); Date.now = () => real() + shift;\n`);
+  return hook;
+}
+
+function plantMergeMarker(root, ticket, at) {
+  fs.writeFileSync(path.join(root, '.test-digest.merge-waiting'), `${JSON.stringify({ ticket, at })}\n`);
+}
+
+test('merge marker: a fresh marker makes a hand run wait without the lock, then it proceeds once the marker clears', async () => {
+  const { root, lockDir } = mkRoot();
+  plantMergeMarker(root, 't9', 1_000_000);
+  const hook = clockHook(root, 1_060_000);
+  try {
+    const child = spawn(process.execPath, ['-r', hook, path.join(root, 'scripts', 'run-tests.js')],
+      { cwd: root, env: childEnv({ CLODEX_TEST_LOCK_WAIT_MS: '100000' }) });
+    let out = '';
+    let err = '';
+    let cleared = false;
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => {
+      err += d;
+      if (!cleared && /waiting for the queued merge of t9 to take the suite lock first/.test(err)) {
+        cleared = true;
+        assert.ok(!fs.existsSync(lockDir), 'the waiting run took the lock ahead of the merge');
+        fs.rmSync(path.join(root, '.test-digest.merge-waiting'));
+      }
+    });
+    const code = await new Promise((resolve) => child.on('close', resolve));
+    assert.ok(cleared, `ENTER: the run never waited on the marker; stderr ${JSON.stringify(err)}`);
+    assert.match(out, /TOTALS: [1-9]\d* pass, 0 fail, [1-9]\d* tests/);
+    assert.strictEqual(code, 0);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('merge marker: a marker three minutes old is stale, ignored and removed', () => {
+  const { root } = mkRoot();
+  plantMergeMarker(root, 't9', 1_000_000);
+  const hook = clockHook(root, 1_180_000);
+  try {
+    const res = spawnSync(process.execPath, ['-r', hook, path.join(root, 'scripts', 'run-tests.js')],
+      { encoding: 'utf-8', cwd: root, timeout: 120000, env: childEnv({ CLODEX_TEST_LOCK_WAIT_MS: '2000' }) });
+    assert.match(res.stdout, /TOTALS: [1-9]\d* pass, 0 fail, [1-9]\d* tests/);
+    assert.doesNotMatch(res.stderr, /waiting for the queued merge/);
+    assert.ok(!fs.existsSync(path.join(root, '.test-digest.merge-waiting')), 'the stale marker was removed');
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('merge marker: the merge\'s own suite run does not wait on a fresh marker', () => {
+  const { root } = mkRoot();
+  plantMergeMarker(root, 't9', 1_000_000);
+  const hook = clockHook(root, 1_060_000);
+  try {
+    const res = spawnSync(process.execPath, ['-r', hook, path.join(root, 'scripts', 'run-tests.js')],
+      { encoding: 'utf-8', cwd: root, timeout: 120000, env: childEnv({ CLODEX_TEST_LOCK_WAIT_MS: '2000', CLODEX_TEST_LOCK_MERGE: '1' }) });
+    assert.match(res.stdout, /TOTALS: [1-9]\d* pass, 0 fail, [1-9]\d* tests/);
+    assert.doesNotMatch(res.stderr, /waiting for the queued merge/);
+    assert.ok(fs.existsSync(path.join(root, '.test-digest.merge-waiting')), 'ENTER: the marker was fresh, so nothing removed it');
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

@@ -136,7 +136,7 @@ function seedRepo(trunk) {
   // ignored here: the suite-in-flight subjects PLANT one, and step 3 refuses a
   // dirty tree — without this they would measure a clean-tree escalation and
   // never reach the gate they are about.
-  fsReal.writeFileSync(pathReal.join(dir, '.gitignore'), 'node_modules/\nscripts/\nwt/\nwt2/\n.test-digest.lock/\n');
+  fsReal.writeFileSync(pathReal.join(dir, '.gitignore'), 'node_modules/\nscripts/\nwt/\nwt2/\n.test-digest.lock/\n.test-digest.merge-waiting*\n');
   fsReal.writeFileSync(pathReal.join(dir, 'base.txt'), 'base\n');
   git(dir, ['add', '.gitignore', 'base.txt']);
   git(dir, ['commit', '-q', '-m', 'base']);

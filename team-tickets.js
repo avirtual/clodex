@@ -205,6 +205,7 @@ const MERGE_RETRY_DELAY_MS = 30 * 1000;
 const MERGE_RETRY_MAX_WAIT_MS = 20 * 60 * 1000;
 const MERGE_RETRY_MAX_ATTEMPTS = Math.ceil(MERGE_RETRY_MAX_WAIT_MS / MERGE_RETRY_DELAY_MS);
 const MERGE_RETRY_HARD_CAP_MS = 60 * 60 * 1000;
+const SUITE_MERGE_MARKER = '.test-digest.merge-waiting';
 const BOOT_REQUEUE_LEAD_WAIT_MS = 5 * 60 * 1000;
 const BOOT_REQUEUE_LEAD_POLL_MS = 2 * 1000;
 
@@ -1873,6 +1874,26 @@ function createTicketMethods(deps, shared) {
       return { pid, tree };
     },
 
+    _writeMergeMarker(team, ticketId, at) {
+      const file = path.join(team.root, SUITE_MERGE_MARKER);
+      const tmp = `${file}.tmp-${process.pid}`;
+      try {
+        fs.writeFileSync(tmp, `${JSON.stringify({ ticket: ticketId, at })}\n`);
+        fs.renameSync(tmp, file);
+      } catch (e) {
+        try { fs.rmSync(tmp, { force: true }); } catch {}
+        log.error('ticket', `merge-waiting marker for ${ticketId} could not be written: ${e.message}`);
+      }
+    },
+
+    _clearMergeMarker(team, ticketId) {
+      const file = path.join(team.root, SUITE_MERGE_MARKER);
+      let owner = null;
+      try { owner = JSON.parse(fs.readFileSync(file, 'utf8')).ticket; } catch { return; }
+      if (owner !== ticketId) return;
+      try { fs.rmSync(file, { force: true }); } catch {}
+    },
+
     _stampMergeError(team, ticketId, step) {
       try {
         const tickets = ticketsStore.load(team.root);
@@ -2071,6 +2092,7 @@ function createTicketMethods(deps, shared) {
             if (!abandonedWhy()) {
               deferred = true;
               this._stampMergeWaiting(team, ticketId, 'suite-in-flight');
+              this._writeMergeMarker(team, ticketId, now);
             }
             return;
           }
@@ -2142,7 +2164,7 @@ function createTicketMethods(deps, shared) {
         // Revert first, escalate second: a red trunk blocks every ticket, so the undo is not a
         // question for the lead.
         this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: `ticket ${ticketId} post-merge suite running on ${target}` });
-        const suite = await this._runTicketSuite(team, ticket, team.root);
+        const suite = await this._runTicketSuite(team, ticket, team.root, { merge: true });
         const mergeSlowOwned = suite.ran && suite.slowOnly
           ? await this._slowTestsOwned(team, ticket, suite.slow, ownBase && ownBase.ok ? ownBase.sha : null)
           : [];
@@ -2250,7 +2272,10 @@ function createTicketMethods(deps, shared) {
             ? `the merge commit ${merged.sha} IS on ${target} and was NOT verified — \`git -C ${team.root} revert -m 1 ${merged.sha}\` undoes it`
             : 'nothing was merged');
       } finally {
-        if (!deferred) this._stampMergeWaiting(team, ticketId, null);
+        if (!deferred) {
+          this._stampMergeWaiting(team, ticketId, null);
+          this._clearMergeMarker(team, ticketId);
+        }
       }
     },
 
@@ -6018,6 +6043,7 @@ function createTicketMethods(deps, shared) {
               CLODEX_TEST_LOCK_DIR: path.join(team.root, '.test-digest.lock'),
               // Wait for the lock, never refuse: a refusal escalates a ticket whose only fault was closing at a busy moment.
               CLODEX_TEST_LOCK_WAIT_MS: String(TICKET_SUITE_LOCK_WAIT_MS),
+              CLODEX_TEST_LOCK_MERGE: opts && opts.merge ? '1' : '0',
             },
             stdio: ['ignore', 'pipe', 'pipe'],
             // Own process group so the timeout can kill the grandchildren: an orphaned sweep keeps binding the test ports

@@ -229,6 +229,37 @@ function readLockHolder(dir) {
   try { process.kill(holder, 0); return { holder, alive: true }; } catch { return { holder, alive: false }; }
 }
 
+const MERGE_MARKER = path.join(path.dirname(LOCK), '.test-digest.merge-waiting');
+const MERGE_MARKER_FRESH_MS = 3 * 60 * 1000;
+const MERGE_YIELD_MAX_MS = 10 * 60 * 1000;
+
+function freshMergeMarker() {
+  let raw;
+  try { raw = fs.readFileSync(MERGE_MARKER, 'utf8'); } catch { return null; }
+  let marker = null;
+  try { marker = JSON.parse(raw); } catch {}
+  const at = marker && Number(marker.at);
+  if (marker && typeof marker.ticket === 'string' && at > 0 && Date.now() - at < MERGE_MARKER_FRESH_MS) return marker;
+  try { if (fs.readFileSync(MERGE_MARKER, 'utf8') === raw) fs.rmSync(MERGE_MARKER, { force: true }); } catch {}
+  return null;
+}
+
+function yieldToQueuedMerge(deadline) {
+  if (process.env.CLODEX_TEST_LOCK_MERGE === '1') return;
+  const until = Math.min(deadline, Date.now() + MERGE_YIELD_MAX_MS);
+  let noted = null;
+  while (Date.now() < until) {
+    const marker = freshMergeMarker();
+    if (!marker) return;
+    if (noted !== marker.ticket) {
+      noted = marker.ticket;
+      lockNote(`waiting for the queued merge of ${marker.ticket} to take the suite lock first`);
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+  }
+  if (noted) lockNote(`stopped waiting for the merge of ${noted}: the wait is capped`);
+}
+
 function acquireLock() {
   const deadline = Date.now() + LOCK_WAIT_MS;
   // The PARENT is created recursively (an override may name a dir that does not
@@ -240,6 +271,7 @@ function acquireLock() {
   try { fs.mkdirSync(path.dirname(LOCK), { recursive: true }); } catch (e) {
     die(`could not create the lock directory ${path.dirname(LOCK)}: ${e.message}`);
   }
+  yieldToQueuedMerge(deadline);
   // Bounded like the original: a reclaim that does not then win the lock means
   // something is racing or the dir is unwritable, and spinning on it forever is
   // a wedge with no message. Waiting on a LIVE holder is not a reclaim and does
@@ -383,6 +415,7 @@ delete childEnv.CLODEX_TEST_LOCK_DIR;
 delete childEnv.CLODEX_TEST_LOCK_WAIT_MS;
 delete childEnv.CLODEX_TEST_LOCK;
 delete childEnv.CLODEX_TEST_LOCK_NOTE_FD;
+delete childEnv.CLODEX_TEST_LOCK_MERGE;
 delete childEnv.CLODEX_TEST_SLOW_ADVISORY;
 delete childEnv.CLODEX_TEST_SLOW_RETIME;
 delete childEnv.CLODEX_TEST_RETIME_CAP;
