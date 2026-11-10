@@ -25862,6 +25862,41 @@ test('t2217: a clodent stream seat sends /compact as a user turn; compact_bounda
   assert.match(injected[0], /pick up t2217/);
 });
 
+test('t2236: a clodent stream seat whose compact fails (compact_result failed) ends the compact at once and releases the guard', async (t) => {
+  const { h, s, mock, injected } = await mkClodentStreamSeat(t, 'cs3');
+  h.m._handleContextIntent(s, 'compact', 'pick up t2236');
+  h.m._routeAttnEntry(s, { hook_event_name: 'PreCompact', trigger: 'manual' });
+  assert.ok(s.compacting, 'ENTER: PreCompact armed the compact');
+  assert.strictEqual(s._compactGuard, true, 'ENTER: the guard is held');
+  assert.strictEqual(s._compactContinuation, 'pick up t2236', 'ENTER: the continuation is latched');
+  assert.ok(s._compactValveTimer, 'ENTER: the in-flight valve is armed');
+  let flushed = 0;
+  const flush = h.m._maybeFlushInjectQueue.bind(h.m);
+  h.m._maybeFlushInjectQueue = (sess, force) => { flushed++; return flush(sess, force); };
+  h.line('cs3', { type: 'system', subtype: 'status', status: 'compacting', session_id: CLODENT_SID, uuid: 'u5' });
+  h.line('cs3', { type: 'system', subtype: 'status', status: null, compact_result: 'failed', session_id: CLODENT_SID, uuid: 'u6' });
+  assert.strictEqual(s.compacting, null);
+  assert.strictEqual(s._compactGuard, false);
+  assert.strictEqual(s._compactContinuation, null);
+  assert.strictEqual(s._compactValveTimer, null);
+  assert.strictEqual(flushed, 1);
+  assert.deepStrictEqual(s._compactNotices.map((n) => [n.outcome, n.text]), [['failed', 'Compact failed']]);
+  mock.timers.tick(1);
+  assert.deepStrictEqual(injected, []);
+});
+
+test('t2236: a compact_result success status alone does not end a clodent stream seat compact', async (t) => {
+  const { h, s } = await mkClodentStreamSeat(t, 'cs4');
+  h.m._handleContextIntent(s, 'compact', 'pick up t2236');
+  h.m._routeAttnEntry(s, { hook_event_name: 'PreCompact', trigger: 'manual' });
+  assert.ok(s.compacting, 'ENTER: PreCompact armed the compact');
+  h.line('cs4', { type: 'system', subtype: 'status', status: null, compact_result: 'success', session_id: CLODENT_SID, uuid: 'u7' });
+  assert.ok(s.compacting);
+  assert.strictEqual(s._compactGuard, true);
+  assert.strictEqual(s._compactContinuation, 'pick up t2236');
+  assert.ok(s._compactValveTimer);
+});
+
 test('t2217: a clodent stream seat sends /clear as a user turn; conversation_reset then init from clodent src/stream/output.js fires the clear continuation', async (t) => {
   const { h, s, mock, injected, sent } = await mkClodentStreamSeat(t, 'cs2');
   const before = sent().length;

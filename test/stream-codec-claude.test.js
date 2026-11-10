@@ -40,8 +40,8 @@ const ROWS = [
   ['result/error_during_execution', 2, { kind: 'result', durationMs: 0, costUsd: 0, isError: true, text: null }],
   ['conversation_reset', 3, { kind: 'reset', newConversationId: 'f4e5ec04-01f1-4123-90ad-00452a8e350e' }],
   ['system/compact_boundary', 4, { kind: 'compact', pre: 15292, post: 1383 }],
-  ['system/status compacting', 5, { kind: 'status', status: 'compacting' }],
-  ['system/status null', 6, { kind: 'status', status: null }],
+  ['system/status compacting', 5, { kind: 'status', status: 'compacting', compactResult: null }],
+  ['system/status null', 6, { kind: 'status', status: null, compactResult: 'success' }],
   ['system/permission_denied', 7, { kind: 'permission-denied', toolName: 'Write' }],
   ['rate_limit_event', 8, { kind: 'other' }],
   ['control_response', 9, { kind: 'other' }],
@@ -56,6 +56,16 @@ for (const [label, idx, want] of ROWS) {
     assert.deepStrictEqual(decode(JSON.parse(LINES[idx])), want);
   });
 }
+
+test('decode: system/status compact_result failed', () => {
+  const line = { type: 'system', subtype: 'status', status: null, compact_result: 'failed', session_id: '7a630e03-b46c-4e4a-becf-c47074bd4e54', uuid: 'u-failed' };
+  assert.deepStrictEqual(decode(line), { kind: 'status', status: null, compactResult: 'failed' });
+});
+
+test('decode: system/status with an unknown compact_result reads as null', () => {
+  const line = { type: 'system', subtype: 'status', status: null, compact_result: 'partial', session_id: '7a630e03-b46c-4e4a-becf-c47074bd4e54', uuid: 'u-unknown' };
+  assert.deepStrictEqual(decode(line), { kind: 'status', status: null, compactResult: null });
+});
 
 for (const size of [200000, 1000000]) {
   test(`decode: a clodent 0.7.0 init (clodent/test/stream/stream.test.js) with context_window_size ${size} decodes contextWindow`, () => {

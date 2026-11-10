@@ -100,7 +100,7 @@ function decode(obj) {
       };
     }
     case 'status':
-      return { kind: 'status', status: obj.status === undefined ? null : obj.status };
+      return { kind: 'status', status: obj.status === undefined ? null : obj.status, compactResult: obj.compact_result === 'success' || obj.compact_result === 'failed' ? obj.compact_result : null };
     case 'permission_denied':
       return { kind: 'permission-denied', toolName: obj.tool_name || null };
     default:

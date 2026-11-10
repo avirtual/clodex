@@ -3616,6 +3616,7 @@ function createSessionManager(deps) {
           break;
         case 'status':
           if (rec.status) this._emitActivity(s.name, 'thinking', false);
+          if (rec.compactResult === 'failed') this._onStreamCompactFailed(s);
           break;
         case 'tool-boundary':
           this._onStreamToolBoundary(s);
@@ -5842,6 +5843,18 @@ function createSessionManager(deps) {
           body: `compact finished in ${Math.round(ms / 1000)}s`,
         });
       }
+    }
+
+    _onStreamCompactFailed(session) {
+      if (!session.compacting && !session._compactGuard && !session._compactContinuation) return;
+      session._compactContinuation = null;
+      this._onCompactEnd(session, 'failed');
+      this._releaseCompactGuard(session);
+      log.warn('intent', `compact ${session.name} failed — cleared in-flight state (no retry)`);
+      this._broadcast('ipc-message', {
+        type: 'context', from: session.name, to: session.name,
+        body: 'context compact → failed (nothing compacted)',
+      });
     }
 
     compactNoticesFor(name) {
