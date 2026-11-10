@@ -72,7 +72,7 @@ function parkFileHasId(f, id) {
 // name inherits its predecessor's parked mail (see drainPending). It lives in the
 // PAYLOAD rather than the path so the `<seq>[.<id>].json` grammar and
 // parkFileHasId's segment split stay exactly as they are.
-function parkDelivery(root, name, text, seq, id = null, passive = false, born = null, key = null) {
+function parkDelivery(root, name, text, seq, id = null, passive = false, born = null, key = null, ride = null) {
   const dir = agentDir(root, name);
       // `.passive.` occupies the id segment slot (4 dot-segments) — safe from
       // parkFileHasId collisions because minted resend ids are 5 or 10 base36
@@ -81,7 +81,10 @@ function parkDelivery(root, name, text, seq, id = null, passive = false, born = 
   const fin = path.join(dir, base);
   const payload = JSON.stringify(Object.assign({ text }, id ? { id } : null,
     typeof born === 'number' ? { born } : null,
-    (typeof key === 'string' && key) ? { key } : null));
+    (typeof key === 'string' && key) ? { key } : null,
+    (passive && ride && typeof ride.due === 'number')
+      ? { due: ride.due, ride: { ticket: ride.ticket || null, kind: ride.kind || null } }
+      : null));
   try {
     atomicWriteFileSync(fin, payload);
   } catch (e) {
@@ -250,7 +253,7 @@ function peekPending(root, name, { max = 5, snipLen = 60 } = {}) {
   return out;
 }
 
-function oldestActiveParkTs(root, name) {
+function oldestActiveParkTs(root, name, now = Date.now()) {
   let files;
   try {
     rehomeOrphans(root, name);
@@ -258,12 +261,45 @@ function oldestActiveParkTs(root, name) {
   } catch { return null; }
   let oldest = null;
   for (const f of files) {
-    if (!f.endsWith('.json') || f.startsWith('.') || f.endsWith('.passive.json')) continue;
+    if (!f.endsWith('.json') || f.startsWith('.')) continue;
+    if (f.endsWith('.passive.json')) {
+      const due = readDue(path.join(agentDir(root, name), f));
+      if (due === null || due > now) continue;
+      oldest = 0;
+      continue;
+    }
     const ts = Number(f.split('.')[0]);
     const at = Number.isFinite(ts) ? ts : 0;
     if (oldest === null || at < oldest) oldest = at;
   }
   return oldest;
+}
+
+function readDue(file) {
+  try {
+    const obj = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return obj && typeof obj.due === 'number' ? obj.due : null;
+  } catch { return null; }
+}
+
+function oldestDueRide(root, name) {
+  let files;
+  try {
+    rehomeOrphans(root, name);
+    files = fs.readdirSync(agentDir(root, name));
+  } catch { return null; }
+  let best = null;
+  for (const f of files) {
+    if (f.startsWith('.') || !f.endsWith('.passive.json')) continue;
+    let obj;
+    try { obj = JSON.parse(fs.readFileSync(path.join(agentDir(root, name), f), 'utf8')); } catch { continue; }
+    if (!obj || typeof obj.due !== 'number') continue;
+    if (best && best.due <= obj.due) continue;
+    const ts = Number(f.split('.')[0]);
+    const ride = obj.ride && typeof obj.ride === 'object' ? obj.ride : {};
+    best = { due: obj.due, at: Number.isFinite(ts) ? ts : null, ticket: ride.ticket || null, kind: ride.kind || null };
+  }
+  return best;
 }
 
 function parkedTexts(root, name) {
@@ -387,4 +423,4 @@ function claimParkedByKey(root, name, key) {
   return { ids, claimed };
 }
 
-module.exports = { isClaimEntry, parkDelivery, drainPending, rehomeOrphans, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, parkedTexts, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir, claimsDir, CLAIM_STALE_MS, RESERVED_SEAT_NAMES, LEGACY_CLAIM_RE, CLAIM_TAG_RE, claimTag, isReservedSeatName };
+module.exports = { isClaimEntry, parkDelivery, drainPending, rehomeOrphans, hasPending, hasActivePending, countPending, peekPending, oldestActiveParkTs, oldestDueRide, parkedTexts, allParkedTexts, parkIdInUse, claimParkedById, claimParkedByKey, agentDir, claimsDir, CLAIM_STALE_MS, RESERVED_SEAT_NAMES, LEGACY_CLAIM_RE, CLAIM_TAG_RE, claimTag, isReservedSeatName };

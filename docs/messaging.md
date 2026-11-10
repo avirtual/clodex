@@ -301,9 +301,24 @@ inject queue to empty (capped at `INJECT_BOOT_MAXWAIT` past the edge), so a spaw
      happening anyway. The turn-GENERATING idle-edge drain gates on
      `hasActivePending` — a passive-only store never earns a turn; a mixed
      store drains fully (the active justifies the turn, passives ride along).
-     Never arms the cap, takes no resend id, no session-mention badge. Claude
-     targets only; Codex and absent-park-failure fall back to a normal wake
-     (degraded to noisy, never dropped).
+     Never arms the cap, takes no resend id, no session-mention badge. Targets
+     that run the Claude-shape hooks only (claude, clodent: `runsClaudeHooks`);
+     Codex and a failed park fall back to a normal wake (degraded to noisy,
+     never dropped).
+  4. **Ride park** (`_deliverRide`) — a passive park for a lead notice that
+     owes the lead nothing because a waking follow-up is guaranteed: an ACCEPT
+     whose merge is queued or whose ticket is a report ticket, a REWORK already
+     dispatched to the hand, a loop rejection (`_verdictOwesLeadNothing`,
+     `_notifyLeadOfLoopRejection`). The payload carries `due` (`RIDE_MAX_MS`,
+     30 min) and `ride: {ticket, kind}`, so the deadline survives a restart.
+     `_sweepTickets` calls `_flushDueRides` for each team lead every 60 s: past
+     `due` and with no inject hold, the whole directory goes as one turn
+     (`ride-cap`); `oldestActiveParkTs` counts an overdue ride as active, so an
+     armed park cap flushes it too. A target without the hooks, dead, behind a
+     dialog, or a park that throws wakes through `_gatedDeliver`. ESCALATED,
+     HELD, OWED, MERGED, urgent, permission, watchdog and quota notices never
+     ride. Logs `notice-ride <seat> <ticket> <kind>` and
+     `notice-ride-cap <seat> <ticket> age=<s>` at info.
 - **Resend**: cost/cold-hold parks mint a 5-char base36 id (unique across
   all pending dirs) and the bounce notice teaches `[agent:resend <id>]`.
   Resend claims by single-file rename (ENOENT = already delivered = success)

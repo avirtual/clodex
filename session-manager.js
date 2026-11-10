@@ -14,6 +14,7 @@ const REBOOT_MIN_INTERVAL = 5 * 60 * 1000;
 
 const EXEC_ACK_MIN_TIMEOUT_MS = 60 * 1000;
 const EXEC_REPLY_WAIT_MS = EXEC_ACK_MIN_TIMEOUT_MS + 10 * 1000;
+const RIDE_MAX_MS = 30 * 60 * 1000;
 const SANDBOX_RELAY_TIMEOUT_MS = 60 * 1000;
 const EXEC_STATUS_DEFAULT_MS = 3 * 60 * 1000;
 const EXEC_STATUS_MIN_MS = 30 * 1000;
@@ -692,6 +693,7 @@ function createSessionManager(deps) {
     drainPending,
     countPending,
     oldestActiveParkTs,
+    oldestDueRide,
     peekPending,
     enqueueOutbox,
     ensureDir,
@@ -9423,6 +9425,8 @@ function createSessionManager(deps) {
         if (oldest === null && typeof oldestActiveParkTs === 'function' && countPending(PENDING_DIR, target.name) > 0) return;
         const left = oldest === null ? 0 : INJECT_QUIET_MAXWAIT - (Date.now() - oldest);
         if (left > 0) { this._armParkCap(target, Math.min(left, INJECT_QUIET_MAXWAIT)); return; }
+        const ride = typeof oldestDueRide === 'function' ? oldestDueRide(PENDING_DIR, target.name) : null;
+        if (ride && ride.due <= Date.now()) { this._flushDueRides(target); return; }
         this._flushParkedNow(target, claimTag('cap'), 'park-cap');
       }, delay);
     }
@@ -9442,7 +9446,9 @@ function createSessionManager(deps) {
       const plural = count === 1 ? 'y' : 'ies';
       const body = kind === 'park-cap'
         ? `park cap fired (${INJECT_QUIET_MAXWAIT / 1000}s, no submit) — injecting ${count} parked deliver${plural}`
-        : `flushed ${count} parked deliver${plural} (operator)`;
+        : kind === 'ride-cap'
+          ? `ride cap fired (${RIDE_MAX_MS / 1000}s, no turn) — injecting ${count} parked deliver${plural}`
+          : `flushed ${count} parked deliver${plural} (operator)`;
       log.warn('inject', `${kind} for ${target.name} — draining ${count} parked deliver${plural} via queue`);
       this._broadcast('ipc-message', { ts: Date.now(), from: 'clodex', to: target.name, kind, body });
       this._injectText(target, '', {
@@ -9680,7 +9686,7 @@ function createSessionManager(deps) {
     _deliverPassive(targetName, senderName, body, mtype) {
       const target = this.sessions.get(targetName);
       if (!target || (target.clone && senderName !== target.name)) return;
-      if (target.agentType !== 'claude' || target._dead) {
+      if (!runsClaudeHooks(target.agentType) || target._dead) {
         this._deliverMessage(targetName, senderName, body, mtype);
         return;
       }
@@ -9696,6 +9702,41 @@ function createSessionManager(deps) {
         ts: Date.now(), from: senderName, to: targetName, kind: 'passive',
         body: body.length > 200 ? `${body.slice(0, 200)}…` : body,
       });
+    }
+
+    _deliverRide(targetName, senderTag, body, opts = {}) {
+      const tag = typeof opts.tag === 'string' ? opts.tag : '';
+      const ticket = opts.ticket || null;
+      const kind = opts.kind || null;
+      const target = this.sessions.get(targetName);
+      const canRide = !!(typeof parkDelivery === 'function' && target && target.agentType && !target.clone && !target._dead
+        && runsClaudeHooks(target.agentType) && this._injectHoldReason(target) !== 'dialog');
+      if (!canRide) return this._gatedDeliver(targetName, senderTag, body, false, tag);
+      const due = Date.now() + RIDE_MAX_MS;
+      try {
+        parkDelivery(PENDING_DIR, target.name, this._buildDeliveryText(target, senderTag, body, 'dm', tag),
+          this._nextParkSeq(), null, true, this._bornFor(target.name), null, { due, ticket, kind });
+      } catch (e) {
+        log.error('inject', `ride park failed for ${target.name}: ${e.message} — waking instead`);
+        return this._gatedDeliver(targetName, senderTag, body, false, tag);
+      }
+      log.info('inject', `notice-ride ${target.name} ${ticket || '-'} ${kind || '-'}`);
+      this._broadcast('ipc-message', {
+        ts: Date.now(), from: senderTag, to: targetName, kind: 'passive',
+        body: body.length > 200 ? `${body.slice(0, 200)}…` : body,
+      });
+      return { ride: true, due };
+    }
+
+    _flushDueRides(target, now = Date.now()) {
+      if (!target || target._dead || !runsClaudeHooks(target.agentType)) return null;
+      if (typeof oldestDueRide !== 'function') return null;
+      const ride = oldestDueRide(PENDING_DIR, target.name);
+      if (!ride || ride.due > now) return null;
+      if (this._injectHoldReason(target)) return null;
+      const age = Math.round((now - (ride.at || ride.due - RIDE_MAX_MS)) / 1000);
+      log.info('inject', `notice-ride-cap ${target.name} ${ride.ticket || '-'} age=${age}`);
+      return this._flushParkedNow(target, claimTag('ride'), 'ride-cap');
     }
 
     _injectTextPassive(session, text) {
