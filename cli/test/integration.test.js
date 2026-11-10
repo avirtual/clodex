@@ -403,15 +403,15 @@ test('patch session: a node whose args subresource carries no patch verb is the 
 });
 
 for (const [flag, sent] of [['off', null], ['300000', { afterMs: 300000 }]]) {
-  test(`patch session --idle-clear ${flag} sends idleClear ${JSON.stringify(sent)} and nothing else`, async () => {
+  test(`patch session --idle-clear ${flag} sends idleClear ${JSON.stringify(sent)} and nothing else`, async (t) => {
     const { server, seen } = stub((req, res) => { res.writeHead(200); res.end(JSON.stringify({ ok: true, restarted: false })); });
+    t.after(() => server.close());
     const port = await listen(server);
     const { code } = await cli(['patch', 'session', 'b', '--idle-clear', flag], port);
     assert.strictEqual(code, 0);
     const patch = seen.find((s) => s.method === 'PATCH');
     assert.strictEqual(patch.url, '/api/sessions/b/args');
     assert.deepStrictEqual(patch.body, { idleClear: sent });
-    server.close();
   });
 }
 
