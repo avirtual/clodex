@@ -128,6 +128,22 @@ test('parseCtxFile: no override keeps the reported pct/size (no cost/model → n
   assert.deepStrictEqual(r, { pct: 35, tok: 70000, size: 200000, model: 'claude-sonnet-5', cost: null, modelName: null });
 });
 
+for (const row of [
+  { raw: '6\t12345\t200000\tclaude-sonnet-5-5', tok: 12345, model: 'claude-sonnet-5-5', size: 200000, pct: 6 },
+  { raw: '25\t250000\t1000000\tclaude-sonnet-5-5[1m]', tok: 250000, model: 'claude-sonnet-5-5[1m]', size: 1000000, pct: 25 },
+]) {
+  test(`parseCtxFile: trustReported keeps the clodent-reported window ${row.size} on a sonnet-5-5 model`, () => {
+    assert.deepStrictEqual(parseCtxFile(row.raw, { trustReported: true }),
+      { pct: row.pct, tok: row.tok, size: row.size, model: row.model, cost: null, modelName: null });
+  });
+}
+
+test('parseCtxFile: a claude seat (no trustReported) still bumps a 200k sonnet-5-5 report to 1M', () => {
+  const r = parseCtxFile('6\t12345\t200000\tclaude-sonnet-5-5');
+  assert.strictEqual(r.size, 1_000_000);
+  assert.strictEqual(r.pct, 1);
+});
+
 test('parseCtxFile: trailing cost + model fields parse (wire-off cost/model)', () => {
   const r = parseCtxFile('7\t14497\t200000\tus.anthropic.claude-sonnet-4-6\t0.0342\tSonnet 4.6');
   assert.deepStrictEqual(r, {

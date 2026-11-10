@@ -2626,7 +2626,7 @@ function createSessionManager(deps) {
             const raw = fs.readFileSync(ctxPath, 'utf-8').trim();
             const fresh = raw !== lastRaw;
             lastRaw = raw;
-            const c = parseCtxFile(raw);
+            const c = parseCtxFile(raw, { trustReported: agentType === 'clodent' });
             if (c.pct != null) {
               if (fresh) this._noteCtx(session, c);
               const warnPath = pathFor(REGISTRY_DIR, name, 'ctxwarn');
@@ -3326,7 +3326,7 @@ function createSessionManager(deps) {
       if (typeof rec.tok !== 'number' || rec.tok <= 0) return;
       if (s.ctxInfo && s.ctxInfo.tok === rec.tok) return;
       const model = rec.model || s.streamModel || null;
-      const size = effectiveWindowSize(model, 0) || 200_000;
+      const size = s._streamWindow || effectiveWindowSize(model, 0) || 200_000;
       const pct = size > 0 ? Math.round((rec.tok / size) * 100) : null;
       const cost = s._costSeen && typeof s._costSeen.usd === 'number' ? s._costSeen.usd : null;
       this._noteCtx(s, { pct, tok: rec.tok, size, cost, modelName: null, model });
@@ -3545,6 +3545,7 @@ function createSessionManager(deps) {
           if (Array.isArray(rec.slashCommands)) s._slashCommands = rec.slashCommands.filter((c) => typeof c === 'string');
           if (Array.isArray(rec.terminalSlashCommands)) s._terminalSlashCommands = rec.terminalSlashCommands.filter((c) => typeof c === 'string');
           if (rec.model) s.streamModel = rec.model;
+          if (s.agentType === 'clodent' && rec.contextWindow > 0) s._streamWindow = rec.contextWindow;
           if (Array.isArray(rec.pluginErrors)) {
             const entries = rec.pluginErrors.map((e) => `${e.path || e.plugin || '?'}: ${String(e.message || '').split('\n')[0]}`).join('; ');
             if (entries && entries !== s._pluginErrorEntries) {

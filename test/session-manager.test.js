@@ -22500,6 +22500,27 @@ for (const row of [
   });
 }
 
+for (const row of [
+  { type: 'clodent', window: 200000, size: 200000, pct: 25 },
+  { type: 'clodent', window: 1000000, size: 1000000, pct: 5 },
+  { type: 'claude', window: 200000, size: 1000000, pct: 5 },
+]) {
+  test(`stream ctx: a ${row.type} seat whose clodent 0.7.0 init (clodent/test/stream/stream.test.js) reports ${row.window} sizes a sonnet-5-5 usage at ${row.size}`, async (t) => {
+    const h = mkStreamSeatManager({ extraDeps: { probeClodentVersion: () => 'clodent 0.7.0\n' } });
+    t.after(() => h.stopAll());
+    await h.create('st-win', null, 'stream', row.type);
+    h.line('st-win', {
+      type: 'system', subtype: 'init', cwd: '/tmp/w', session_id: '11111111-1111-4111-8111-111111111111',
+      model: 'claude-sonnet-5-5', tools: ['Read', 'Write', 'Edit', 'Bash', 'Grep'], permissionMode: 'acceptEdits',
+      slash_commands: ['compact', 'clear', 'cost', 'model', 'help', 'quit', 'exit'], apiKeySource: 'ANTHROPIC_API_KEY',
+      clodent_version: '0.7.0', context_window_size: row.window, instruction_files: [],
+    });
+    h.line('st-win', { type: 'assistant', message: { model: 'claude-sonnet-5-5', content: [], usage: { input_tokens: 50000 } } });
+    assert.deepStrictEqual(h.m.sessions.get('st-win').ctxInfo,
+      { pct: row.pct, tok: 50000, size: row.size, cost: null, modelName: null, model: 'claude-sonnet-5-5' });
+  });
+}
+
 test('stream ctx: a conversation reset clears ctxInfo and pushes an empty session-ctx', async (t) => {
   const h = mkStreamSeatManager();
   t.after(() => h.stopAll());

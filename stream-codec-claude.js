@@ -81,6 +81,7 @@ function decode(obj) {
         kind: 'init',
         sessionId: obj.session_id || null,
         model: obj.model || null,
+        ...(typeof obj.context_window_size === 'number' && obj.context_window_size > 0 ? { contextWindow: obj.context_window_size } : {}),
         slashCommands: Array.isArray(obj.slash_commands) ? obj.slash_commands : [],
         terminalSlashCommands: Array.isArray(obj.terminal_slash_commands) ? obj.terminal_slash_commands : [],
         pluginErrors: Array.isArray(obj.plugin_errors) ? obj.plugin_errors.filter((e) => e && typeof e === 'object').map((e) => ({

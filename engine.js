@@ -1300,7 +1300,7 @@ const SessionManager = createSessionManager({
   getTemplates: () => templates,
   getUiSettings: () => uiSettings,
   getWorkspaces: () => workspaces,
-  readCtxFor: (n) => readCtxFor(n),
+  readCtxFor: (n, t) => readCtxFor(n, t),
   getEnvScopes: () => envScopes,
   getMcpLibrary: () => mcpLibrary,
   getAccounts: () => accounts,
@@ -1595,9 +1595,9 @@ async function restartSession(name, opts = {}, wsId = DEFAULT_WORKSPACE_ID) {
   }
 }
 
-const readCtxFor = (name) => {
+const readCtxFor = (name, agentType) => {
   try {
-    const c = parseCtxFile(fs.readFileSync(pathFor(REGISTRY_DIR, name, 'ctx'), 'utf-8'));
+    const c = parseCtxFile(fs.readFileSync(pathFor(REGISTRY_DIR, name, 'ctx'), 'utf-8'), { trustReported: agentType === 'clodent' });
     return { ctx: c.pct, ctxTok: c.tok, ctxSize: c.size, ctxCost: c.cost, ctxModel: c.modelName };
   } catch { return { ctx: null, ctxTok: null, ctxSize: null, ctxCost: null, ctxModel: null }; }
 };

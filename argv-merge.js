@@ -112,7 +112,7 @@ function effectiveWindowSize(modelId, reported) {
 // telemetry (model + cost) is absent. `model` is returned alongside it because
 // it is the axis anything priced per-model must key on — the display name is
 // vendor prose and two ids can share one.
-function parseCtxFile(raw) {
+function parseCtxFile(raw, { trustReported = false } = {}) {
   const parts = String(raw).trim().split('\t');
   const num = (s) => { const n = parseInt(s, 10); return isNaN(n) ? null : n; };
   const flt = (s) => { const n = parseFloat(s); return isNaN(n) ? null : n; };
@@ -122,7 +122,7 @@ function parseCtxFile(raw) {
   const model = (parts[3] || '').trim() || null;
   const cost = flt(parts[4]);
   const modelName = (parts[5] || '').trim() || null;
-  const size = effectiveWindowSize(model, reported);
+  const size = trustReported && reported > 0 ? reported : effectiveWindowSize(model, reported);
   if (size !== reported && tok != null && size > 0) {
     pct = Math.round((tok / size) * 100);
   }
