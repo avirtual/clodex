@@ -1328,6 +1328,43 @@ test('tickets-viewer: add floors the id at the highest id ever archived when the
   } finally { cleanup(); }
 });
 
+test('tickets-viewer: the archive scan is cached on an unchanged file and re-read after an append', async () => {
+  const { host, home, cleanup } = boot();
+  try {
+    const key = mkProject(home, '/solo/archive-cache');
+    const dir = path.join(home, 'projects', key);
+    writeTicketsAt(home, key, [ticket('t9')]);
+    writeArchiveAt(home, key, [{ op: 'archive', at: 'x', row: ticket('t4', { state: 'done', closedAt: 1_700_000_000_000 }) }]);
+    const first = await host.dispatch('tickets-viewer', 'board', [key], 'desktop');
+    const scan = viewerEngine._internals.scanArchiveAt(dir);
+    const second = await host.dispatch('tickets-viewer', 'board', [key], 'desktop');
+    assert.strictEqual(viewerEngine._internals.scanArchiveAt(dir), scan, 'an unchanged archive is not re-parsed');
+    assert.deepEqual(second.counts, first.counts);
+    assert.equal(first.counts.done, 1, 'ENTER: the archived row is counted');
+    fs.appendFileSync(path.join(dir, 'tickets-archive.jsonl'), `${JSON.stringify({ op: 'archive', at: 'x', row: ticket('t5', { state: 'done', closedAt: 1_700_000_000_000 }) })}\n`);
+    assert.notStrictEqual(viewerEngine._internals.scanArchiveAt(dir), scan, 'an appended archive is re-parsed');
+    const third = await host.dispatch('tickets-viewer', 'board', [key], 'desktop');
+    assert.equal(third.counts.done, 2, 'the appended row is counted');
+  } finally { cleanup(); }
+});
+
+test('tickets-viewer: add refuses when the archive file exists but cannot be read', { skip: process.getuid && process.getuid() === 0 }, async (t) => {
+  const { host, home, cleanup } = boot();
+  const archiveFile = () => path.join(home, 'projects', key, 'tickets-archive.jsonl');
+  let key;
+  t.after(() => { try { fs.chmodSync(archiveFile(), 0o600); } catch (_) {} cleanup(); });
+  key = mkProject(home, '/solo/archive-eacces');
+  writeTicketsAt(home, key, [ticket('t1')]);
+  writeArchiveAt(home, key, [{ op: 'archive', at: 'x', row: ticket('t40', { state: 'done', closedAt: 1_700_000_000_000 }) }]);
+  fs.chmodSync(archiveFile(), 0o000);
+  assertWritesLandInFixture(home, key);
+  const res = await host.dispatch('tickets-viewer', 'add', [{ project: key, spec: 'next' }], 'desktop');
+  assert.equal(res.ok, false);
+  assert.match(res.error, /EACCES/);
+  assert.match(res.error, /tickets-archive\.jsonl/);
+  assert.deepEqual(onDisk(home, key).map((x) => x.id), ['t1'], 'no id was issued');
+});
+
 test('tickets-viewer: add mints the next id over the WHOLE board, closed records included', async () => {
   const { host, home, cleanup } = boot();
   try {
