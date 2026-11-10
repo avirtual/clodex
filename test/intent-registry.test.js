@@ -1565,7 +1565,7 @@ test('subagentCatalogFor lists term_exec only for a seat whose intents name term
   const listedCtx = { name: 'context_status', description: CONTEXT_STATUS_TOOL.description, inputSchema: CONTEXT_STATUS_TOOL.inputSchema, logKeys: [] };
   assert.deepStrictEqual(registry.subagentCatalogFor({ intents: ['*', 'term'] }), { tools: [listedDm, listedCtx, listed, listedRead, listedExec], briefs: [DM_TOOL.brief] });
   for (const entry of [{ intents: ['*'] }, undefined]) {
-    assert.deepStrictEqual(registry.subagentCatalogFor(entry), { tools: [listedDm, listedExec], briefs: [DM_TOOL.brief] }, JSON.stringify(entry));
+    assert.deepStrictEqual(registry.subagentCatalogFor(entry), { tools: [listedDm, listedCtx, listedExec], briefs: [DM_TOOL.brief] }, JSON.stringify(entry));
   }
   assert.deepStrictEqual(registry.subagentCatalogFor({ intents: ['exec'] }), { tools: [listedExec], briefs: [] });
   assert.deepStrictEqual(registry.subagentCatalogFor({ intents: [] }), { tools: [], briefs: [] });
