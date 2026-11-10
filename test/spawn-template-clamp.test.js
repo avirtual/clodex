@@ -535,3 +535,16 @@ test('restoring a lead replays only its held execCommands, never its grantable',
   assert.deepStrictEqual(created[0][EXEC], ['clodex-team']);
   assert.ok(!JSON.stringify(created[0]).includes('avh-chat'), JSON.stringify(created[0]));
 });
+
+test('a bypass lead spawning by name grants its own team\'s exec command, and a non-bypass lead does not', async () => {
+  for (const [extraArgs, want] of [[['--dangerously-skip-permissions'], ['avh-chat']], [[], []]]) {
+    const tmp = fs.realpathSync(mkTmpRoot('clx-clamp-team-exec-'));
+    const team = { name: 't', root: tmp, lead: 'spawner', dir: path.join(tmp, 'teams', 't'), roles: {} };
+    fs.mkdirSync(path.join(team.dir, 'exec'), { recursive: true });
+    fs.writeFileSync(path.join(team.dir, 'exec', 'avh-chat.json'), JSON.stringify({ description: 'chat', argv: ['true'] }));
+    const h = harness({ rec: { type: 'claude', extraArgs, execCommands: [] }, team });
+    await spawn(h, h.writeTpl({ execCommands: ['avh-chat', 'lib-cmd'] }));
+    assert.strictEqual(h.calls.length, 1, `ENTER: create was called (${JSON.stringify(h.replies)})`);
+    assert.deepStrictEqual(h.calls[0][EXEC], want);
+  }
+});
