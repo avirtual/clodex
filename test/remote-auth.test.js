@@ -99,10 +99,12 @@ const JSON_ROUTES = [
   ['POST', '/api/dm/claim'],
   ['POST', '/api/peer/roster'],
   ['POST', '/api/inbox/reply/n1'],
+  ['POST', '/api/suite/jobs'],
+  ['POST', '/api/suite/jobs/j1/commit'],
 ];
 
 test('every JSON body route: text/plain is a 415, application/json is not', async () => {
-  assert.equal(JSON_ROUTES.length, 17);
+  assert.equal(JSON_ROUTES.length, 19);
   const stub = () => Promise.resolve({ ok: true });
   const deps = {
     host: '127.0.0.1', query: stub, restartSession: stub, sendInput: stub, resizePty: stub,
@@ -111,6 +113,7 @@ test('every JSON body route: text/plain is a 415, application/json is not', asyn
     wtermInput: stub, wtermResize: stub, createSession: stub,
     deliverDm: stub, claimDms: stub, receiveRoster: stub,
     notifications: { page: () => [], unreadCount: () => 0, get: () => null }, replyNote: stub,
+    suiteRunner: { submit: stub, commit: stub },
   };
   await withServer(deps, async (port) => {
     const origin = `http://127.0.0.1:${port}`;
@@ -251,5 +254,63 @@ test('SSE stream is gated: 401 without a token, connects with one', async () => 
     });
     assert.equal(opened.status, 200);
     assert.match(opened.ctype, /text\/event-stream/);
+  });
+});
+
+test('the suite token reaches hello and /api/suite/* only: every other route family is 403', async () => {
+  const fs = require('node:fs');
+  const stub = () => Promise.resolve({ ok: true });
+  const deps = {
+    host: '127.0.0.1', token: 'op-secret', suiteToken: 'suite-secret',
+    suiteRunner: { info: () => Promise.resolve({ ok: true, bootId: 'b' }) },
+    createSession: stub, deliverDm: stub, seatImport: { begin: () => ({ ok: true }) }, importCreate: stub,
+    restartApp: stub, nodeLogFile: () => '/nonexistent', notifications: { page: () => [], unreadCount: () => 0, get: () => null },
+  };
+  const rows = [
+    ['GET', '/'],
+    ['GET', '/api/sessions'],
+    ['GET', '/api/events'],
+    ['GET', '/api/resources'],
+    ['POST', '/api/sessions'],
+    ['POST', '/api/dm'],
+    ['POST', '/api/import/begin'],
+    ['POST', '/api/restart'],
+    ['GET', '/api/node/logs'],
+    ['GET', '/api/inbox'],
+  ];
+  await withServer(deps, async (port) => {
+    const auth = { authorization: 'Bearer suite-secret', 'content-type': 'application/json' };
+    const enter = await req(port, '/api/suite/info', { headers: auth });
+    assert.equal(enter.status, 200, 'ENTER: the suite token is admitted to /api/suite/info');
+    const got = [];
+    for (const [method, pathname] of rows) {
+      const r = await req(port, pathname, { method, headers: auth, body: method === 'POST' ? '{}' : undefined });
+      got.push([method, pathname, r.status, r.status === 403 ? JSON.parse(r.body).error : r.body.slice(0, 40)]);
+    }
+    assert.deepStrictEqual(got, rows.map(([m, p]) => [m, p, 403, 'this token is scoped to suite jobs']));
+    const hello = await req(port, '/api/peer/hello', { headers: auth });
+    assert.equal(hello.status, 200);
+    assert.equal(hello.headers['set-cookie'], undefined);
+    const viaQuery = await req(port, '/api/sessions?token=suite-secret');
+    assert.equal(viaQuery.status, 403);
+    assert.equal(viaQuery.headers['set-cookie'], undefined, 'a scoped token never seeds the cookie');
+    const operator = await req(port, '/api/suite/info', { headers: { authorization: 'Bearer op-secret' } });
+    assert.equal(operator.status, 200, 'the operator token is also accepted on suite routes');
+    const wrong = await req(port, '/api/suite/info', { headers: { authorization: 'Bearer nope' } });
+    assert.equal(wrong.status, 401);
+  });
+  const src = fs.readFileSync(path.join(__dirname, '..', 'remote.js'), 'utf8');
+  const body = src.slice(src.indexOf('  _route(req, res) {'));
+  const scope = body.indexOf('if (req.suiteScoped &&');
+  const firstMatch = body.search(/if \(req\.method === '[A-Z]+' && \(?p ===/);
+  assert.ok(scope > 0 && firstMatch > 0, 'ENTER: both the scope check and a route match are in _route');
+  assert.ok(scope < firstMatch, 'the scope check precedes the first route match');
+  assert.ok(scope < body.indexOf("p.startsWith('/api/suite/')) return this._handleSuite"), 'and the suite dispatch');
+});
+
+test('the operator fail-closed rule stays keyed on the operator token: a suite token alone does not open a non-loopback bind', async () => {
+  await withServer({ host: '0.0.0.0', suiteToken: 'suite-secret' }, async (port) => {
+    const r = await req(port, '/api/peer/hello', { headers: { authorization: 'Bearer suite-secret' } });
+    assert.equal(r.status, 503);
   });
 });
