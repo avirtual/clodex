@@ -57,6 +57,10 @@ rel_path() {
   done
 }
 
+kill_suite() {
+  setpriv --reuid="$SUITE_USER" --regid="$SUITE_USER" --clear-groups kill -KILL -1 || true
+}
+
 verb="${1:-}"
 [ $# -ge 2 ] || die "usage: clodex-suite-exec prepare|run|seal|reap <job> ..."
 shift
@@ -89,7 +93,7 @@ case "$verb" in
     [ $# -ge 1 ] || die "seal needs an entry"
     entry="$(entry_path "$1")"
     shift
-    pkill -KILL -u "$SUITE_USER" || true
+    kill_suite
     [ -d "$job/tree" ] && [ ! -L "$job/tree" ] || die "refusing $job/tree: not a directory"
     owner="${SUDO_UID:-$(id -u)}:${SUDO_GID:-$(id -g)}"
     for rel in "$@"; do
@@ -106,7 +110,7 @@ case "$verb" in
     chmod -R a-w,a+rX "$entry"
     ;;
   reap)
-    pkill -KILL -u "$SUITE_USER" || true
+    kill_suite
     rm -rf "$job"
     ;;
   *)
