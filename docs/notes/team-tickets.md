@@ -118,3 +118,8 @@ real defect the hand must clear.
 Ownership is read out of GIT (`diffNames` + `fileAt` against the branch), not off
 the worktree: the merge arm asks after the branch has landed, and a torn-down
 tree would answer "nothing owned" for a branch that owns everything.
+
+## _runnerReach
+Every field of the runner's info answer is flattened of control characters before it enters the
+lead's reply: the env identity is runner-authored, and a newline plus a column-1 verb would fire as
+an intent in the lead's context.

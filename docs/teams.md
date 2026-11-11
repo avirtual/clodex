@@ -862,6 +862,38 @@ lead parked with `task park` is never auto-started. `[agent:team hands <n|off>]`
 (lead only) sets it and starts any cap-parked tickets the new value allows; bare
 `[agent:team hands]` shows the effective value and its source.
 
+A team can name a peered node as its test runner (a node started with
+`CLODEX_SUITE_RUNNER=1`, see docs/peering.md). The setting lives in team.json:
+
+```json
+"testRunner": {
+  "peer": "runner-1",
+  "hands": "off | full | all",
+  "gate": "off | shadow | on",
+  "setup": { "run": "npm ci", "key": ["package-lock.json"], "paths": ["node_modules"], "timeoutMs": 900000 },
+  "env": { "NODE_ENV": "test" }
+}
+```
+
+`peer` follows the session-name grammar; `hands` and `gate` read `off` when absent.
+`setup.run` is at most 2,000 chars; `key` (at most 16) and `paths` (at most 8) are
+relative paths without a `..` segment; `timeoutMs` is 10 s to 30 min; `env` has at
+most 32 keys matching `^[A-Z_][A-Z0-9_]*$` with string values of at most 1,000
+chars. Any other key, or one value out of bounds, drops the whole setting: it is
+never applied in part, the load warns once, and `team.droppedFields` carries
+`{ field: 'testRunner', status: 'invalid' }`. `setup` and `env` are edited in
+team.json only.
+
+`[agent:team runner <peer>]` (lead only) sets the peer: it must be a known peer;
+an offline one is accepted with a warning, one online without the `suite`
+capability is refused. A first peer starts at `hands:full`.
+`[agent:team runner hands:off|full|all]` sets the mode once a peer is set;
+`[agent:team runner off]` removes the whole setting; bare `[agent:team runner]`
+shows the peer, the mode, and whether the runner is reachable, with its queue
+length and environment identity. `full` will send full-scope hand runs to the
+runner and keep own-scope runs local; `all` will send both. Routing is not wired
+yet, and `gate:` is not accepted by the verb until gate routing lands.
+
 Five things here are deliberate simplifications, not gaps. `lead` and `reviewer` are reserved role keys
 (team-manifest.js RESERVED_ROLE_KEYS): the dispatch and verdict protocol is keyed on them, so they cannot be renamed.
 The cold reviewer is spawned by the loop, never by hand: a hand-spawned one has no tools cap and its verdict lands

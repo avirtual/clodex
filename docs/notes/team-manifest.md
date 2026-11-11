@@ -74,3 +74,9 @@ A row with no record and no session counts as live in `rowState` until it is
 its record, and both the minute prune and the one-claim scan must treat that
 reservation as held. A row is pruned only when two consecutive sweeps found it
 stale, which covers the gap between a restart's kill and `_preserveAcrossRestart`.
+
+## normalizeTestRunner
+`runnerRelPath` and the limits mirror `validateSubmit`'s rules in suite-runner.js, so a setting the
+manifest accepts is one the runner accepts; the runner also refuses its base env keys and `CLODEX_*`,
+which the manifest does not check. An invalid setting is dropped whole into `droppedFields` with
+`role: null, status: 'invalid'`, which `retiredFieldLines` and the version warns skip.
