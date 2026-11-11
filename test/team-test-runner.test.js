@@ -112,7 +112,7 @@ test('setTeamTestRunner patches one key and leaves a hand-written setup and env 
   assert.deepStrictEqual(m.testRunner.setup, HAND_WRITTEN.setup);
   assert.deepStrictEqual(m.testRunner.env, HAND_WRITTEN.env);
   assert.deepStrictEqual(disk(file), {
-    root, lead: 'lead', roles,
+    root, lead: 'lead', roles, version: 3,
     testRunner: {
       peer: 'runner-1', hands: 'full',
       setup: { run: 'npm ci && npx electron-rebuild', key: ['package-lock.json', 'package.json'], paths: ['node_modules'], timeoutMs: 600000 },
@@ -123,7 +123,7 @@ test('setTeamTestRunner patches one key and leaves a hand-written setup and env 
   assert.throws(() => tm.setTeamTestRunner('team', { env: {} }), /testRunner patch must name peer, hands or gate/);
   assert.strictEqual(disk(file).testRunner.hands, 'full', 'a refused patch writes nothing');
   assert.strictEqual(tm.setTeamTestRunner('team', null).testRunner, undefined);
-  assert.deepStrictEqual(disk(file), { root, lead: 'lead', roles });
+  assert.deepStrictEqual(disk(file), { root, lead: 'lead', roles, version: 3 });
 });
 
 function mkVerbFixture({ manifestExtra = {}, peers = [], reach = null } = {}) {
