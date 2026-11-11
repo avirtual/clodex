@@ -120,6 +120,7 @@ function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entrie
         return { onData() {}, onExit(fn) { exit = fn; }, pid: 999, kill() { if (exit) exit({ exitCode: 0, signal: null }); } };
       },
     },
+    spawnStreamSeat: (o) => { spawns.push({ cmd: o.cmd, args: o.args, opts: { env: o.env } }); return { pid: 998, startedAt: 1, startTime: 1, stderrTail: '', send: () => Promise.resolve(), close() {}, kill() {} }; },
     notifyOS: () => {},
     collectSystemDiagnostics: () => ({}),
     whichBin: () => null,
@@ -145,10 +146,10 @@ function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entrie
     clearTimeout(s._replayFallbackTimer);
     m.sessions.delete(name);
   };
-  const create = (name, { type = 'clodent', extraArgs = [], resumeId = null, fork = false, sessionEnv = { ANTHROPIC_API_KEY: 'sk-test' }, effort = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], shellDeny = null, protectCredentials = null, noWire = false } = {}) => m.create(
+  const create = (name, { type = 'clodent', extraArgs = [], resumeId = null, fork = false, sessionEnv = { ANTHROPIC_API_KEY: 'sk-test' }, effort = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], shellDeny = null, protectCredentials = null, noWire = false, io = 'pty' } = {}) => m.create(
     name, type, cwd, extraArgs, resumeId, 'ws', null, fork, null,
     [], denyBuiltins, disabledTools, disabledSkills, [], null, [], [], null, sessionEnv,
-    false, noWire, null, shellDeny, null, 'pty', effort, protectCredentials,
+    false, noWire, null, shellDeny, null, io, effort, protectCredentials,
   );
   const wireRegs = [];
   if (wire) {
@@ -669,14 +670,15 @@ function renderSettings(hookArgs) {
 const cacheKeys = (settings) => Object.fromEntries(Object.entries(settings).filter(([k]) => /cache/i.test(k)));
 
 for (const [label, entry, opts, want, wantFlags] of [
-  ['idle clear 600000 gets both keys', { idleClear: { afterMs: 600000 } }, {}, { cacheTtl: '1h', messageCacheTtl: '5m' }, []],
-  ['idle clear 60000 gets both keys', { idleClear: { afterMs: 60000 } }, {}, { cacheTtl: '1h', messageCacheTtl: '5m' }, []],
-  ['idle clear 600001 gets cacheTtl only', { idleClear: { afterMs: 600001 } }, {}, { cacheTtl: '1h' }, []],
-  ['idle clear off gets cacheTtl only', {}, {}, { cacheTtl: '1h' }, []],
-  ['an ephemeral seat with idle clear 300000 gets neither key', { ephemeral: true, idleClear: { afterMs: 300000 } }, {}, {}, []],
-  ['own --message-cache-ttl in the args with idle clear 300000 gets cacheTtl only', { idleClear: { afterMs: 300000 } }, { extraArgs: ['--message-cache-ttl', '1h'] }, { cacheTtl: '1h' }, ['--message-cache-ttl']],
-  ['own --message-cache-ttl=1h in the args with idle clear 300000 gets cacheTtl only', { idleClear: { afterMs: 300000 } }, { extraArgs: ['--message-cache-ttl=1h'] }, { cacheTtl: '1h' }, ['--message-cache-ttl=1h']],
-  ['a claude seat with idle clear 300000 gets no cache keys', { idleClear: { afterMs: 300000 } }, { type: 'claude' }, {}, []],
+  ['idle clear 600000 gets both keys', { idleClear: { afterMs: 600000 } }, { io: 'stream' }, { cacheTtl: '1h', messageCacheTtl: '5m' }, []],
+  ['idle clear 60000 gets both keys', { idleClear: { afterMs: 60000 } }, { io: 'stream' }, { cacheTtl: '1h', messageCacheTtl: '5m' }, []],
+  ['idle clear 600001 gets cacheTtl only', { idleClear: { afterMs: 600001 } }, { io: 'stream' }, { cacheTtl: '1h' }, []],
+  ['idle clear off gets cacheTtl only', {}, { io: 'stream' }, { cacheTtl: '1h' }, []],
+  ['an ephemeral seat with idle clear 300000 gets neither key', { ephemeral: true, idleClear: { afterMs: 300000 } }, { io: 'stream' }, {}, []],
+  ['own --message-cache-ttl in the args with idle clear 300000 gets cacheTtl only', { idleClear: { afterMs: 300000 } }, { io: 'stream', extraArgs: ['--message-cache-ttl', '1h'] }, { cacheTtl: '1h' }, ['--message-cache-ttl']],
+  ['own --message-cache-ttl=1h in the args with idle clear 300000 gets cacheTtl only', { idleClear: { afterMs: 300000 } }, { io: 'stream', extraArgs: ['--message-cache-ttl=1h'] }, { cacheTtl: '1h' }, ['--message-cache-ttl=1h']],
+  ['a claude seat with idle clear 300000 gets no cache keys', { idleClear: { afterMs: 300000 } }, { io: 'stream', type: 'claude' }, {}, []],
+  ['a PTY clodent seat with idle clear 300000 gets cacheTtl only', { idleClear: { afterMs: 300000 } }, { io: 'pty' }, { cacheTtl: '1h' }, []],
 ]) {
   test(`clodent message cache: ${label}`, async () => {
     const f = mkClodent({ entries: { seat: { name: 'seat', ...entry } } });
@@ -695,11 +697,11 @@ test('clodent message cache: the spawn-time idle clear reaches the first spawn, 
   const entries = { seat: { name: 'seat' } };
   const f = mkClodent({ entries });
   f.m._spawnIdleClear.set('seat', { afterMs: 300000 });
-  await f.create('seat');
+  await f.create('seat', { io: 'stream' });
   f.stop('seat');
   f.m._spawnIdleClear.delete('seat');
   entries.seat.idleClear = { afterMs: 300000 };
-  await f.create('seat');
+  await f.create('seat', { io: 'stream' });
   f.stop('seat');
   assert.strictEqual(f.hooks.length, 2, 'ENTER: first spawn and restart both wrote settings');
   assert.deepStrictEqual(f.hooks.map((h) => cacheKeys(renderSettings(h))), [

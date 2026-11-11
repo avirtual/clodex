@@ -16,6 +16,7 @@ const EXEC_ACK_MIN_TIMEOUT_MS = 60 * 1000;
 const EXEC_REPLY_WAIT_MS = EXEC_ACK_MIN_TIMEOUT_MS + 10 * 1000;
 const RIDE_MAX_MS = 30 * 60 * 1000;
 const SHORT_MESSAGE_CACHE_IDLE_MS = 10 * 60 * 1000;
+const idleClearsIo = (io) => io === 'stream';
 const SANDBOX_RELAY_TIMEOUT_MS = 60 * 1000;
 const EXEC_STATUS_DEFAULT_MS = 3 * 60 * 1000;
 const EXEC_STATUS_MIN_MS = 30 * 1000;
@@ -1936,7 +1937,7 @@ function createSessionManager(deps) {
             const longCache = type === 'clodent' && !(existingEntry && existingEntry.ephemeral === true);
             const idleClearMs = idleClearAfterMs(this._spawnIdleClear.get(name) || (existingEntry && existingEntry.idleClear));
             const ownMessageTtl = args.some((a) => typeof a === 'string' && (a === '--message-cache-ttl' || a.startsWith('--message-cache-ttl=')));
-            const messageCacheTtl = longCache && idleClearMs && idleClearMs <= SHORT_MESSAGE_CACHE_IDLE_MS && !ownMessageTtl ? '5m' : null;
+            const messageCacheTtl = longCache && idleClearsIo(io) && idleClearMs && idleClearMs <= SHORT_MESSAGE_CACHE_IDLE_MS && !ownMessageTtl ? '5m' : null;
             const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, skillsOff, wireBase, createdAt, Array.isArray(shellDeny) ? shellDeny : [], streamIo, effortFlag ? null : effortLevel, Array.isArray(protectCredentials) ? protectCredentials : null, mcpSecretNames, mcpSel ? mcpSel.applied.denyRules : [], cwd || null, mergedEnv.CLODENT_HOME || null, longCache ? '1h' : null, messageCacheTtl);
             args.push('--settings', settingsPath);
             hookInstalled = true;
@@ -4219,7 +4220,7 @@ function createSessionManager(deps) {
 
     _assistantSweep(now) {
       for (const s of [...this.sessions.values()]) {
-        if (s._dead || s.clone || s.io !== 'stream' || !s.stream) continue;
+        if (s._dead || s.clone || !idleClearsIo(s.io) || !s.stream) continue;
         this._idleClearTick(s, now);
         const policy = this._assistantPolicy(s.name);
         if (!policy) continue;

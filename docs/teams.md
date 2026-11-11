@@ -1018,7 +1018,7 @@ field is a select (off, 15 min, 30 min, 1 h, 2 h; a stored value off that list
 shows as "custom") that is disabled unless the role's template runs its seats
 over a stream transport (`io: "stream"`), since only stream seats are cleared.
 
-A standing (non-ephemeral) clodent seat whose idle clear is 10 minutes or less
+A standing (non-ephemeral) clodent stream seat whose idle clear is 10 minutes or less
 gets `messageCacheTtl: "5m"` beside its `cacheTtl: "1h"` in the generated
 settings file: a one-hour cache for the preamble, a five-minute one for
 messages. The idle clear is read at every spawn from the seat's record, or for a

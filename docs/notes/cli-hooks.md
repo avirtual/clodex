@@ -65,4 +65,4 @@ The caller passes `1h` only for a clodent seat whose persistence record is not `
 
 ## messageCacheTtl
 
-The caller passes `5m` only beside `cacheTtl: 1h` when the seat's idle clear is 600000 ms or less. Measured on one seat's 24 h (988 requests): 1h preamble + 5m messages 5,252 input-token-equivalents per request, 1h for both 5,781, 5m for both 5,701.
+The caller passes `5m` only beside `cacheTtl: 1h` for a stream seat whose idle clear is 600000 ms or less; a PTY seat is never idle-cleared, so its long in-conversation gaps would make the 5m message cache cost more. Measured on one seat's 24 h (988 requests): 1h preamble + 5m messages 5,252 input-token-equivalents per request, 1h for both 5,781, 5m for both 5,701.
