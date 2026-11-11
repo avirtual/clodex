@@ -11,7 +11,7 @@ die() { echo "clodex-suite-exec: $*" >&2; exit 2; }
 WORK="$(cd "$WORK" && pwd -P)"
 
 no_dots() {
-  case "/$1/" in
+  case "/${1#/}/" in
     */../*|*/./*|*//*) return 1 ;;
   esac
   return 0

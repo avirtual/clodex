@@ -341,7 +341,9 @@ function createSuiteRunner({
   function enqueue(job) {
     seq += 1;
     setState(job, 'queued', { seq, committedAt: now() });
+    const answer = { ok: true, id: job.id, state: job.state, position: positionOf(job) };
     pump();
+    return answer;
   }
 
   function pump() {
@@ -598,8 +600,7 @@ function createSuiteRunner({
     if (!body.full && await snapshot.mirrorHolds(mirror, [job.snap, job.indexTree, ...Object.values(job.refs)])) {
       if (job.state !== 'awaiting-pack') return { ok: true, id: job.id, state: job.state };
       await keep(job, mirror);
-      enqueue(job);
-      return { ok: true, id: job.id, state: job.state, position: positionOf(job) };
+      return enqueue(job);
     }
     job.have = body.full ? [] : await snapshot.mirrorHave(mirror, (body.candidates || []).map(String));
     save(job);
@@ -648,8 +649,7 @@ function createSuiteRunner({
     await keep(job, mirror);
     touchCache(path.join('mirrors', `${job.repoKey}.git`));
     forceRemove(packFile(id));
-    enqueue(job);
-    return { ok: true, state: job.state, position: positionOf(job) };
+    return enqueue(job);
   }
 
   function touch(ids) {

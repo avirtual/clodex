@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { mkTmpRoot } = require('./lib/tmp-roots');
-const { snapshotTree, releaseSnapshot, buildPack, ingestPack, materialize, treeHashOf } = require('../suite-snapshot');
+const { snapshotTree, releaseSnapshot, buildPack, ingestPack, materialize, treeHashOf, keepRefs, mirrorHave, DEFAULT_PACK_MAX } = require('../suite-snapshot');
 
 const ENV = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_'))), GIT_AUTHOR_DATE: '2026-01-02T03:04:05Z', GIT_COMMITTER_DATE: '2026-01-02T03:04:05Z' };
 const IDENT = ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgSign=false', '-c', 'core.hooksPath=/dev/null', '-c', 'core.autocrlf=false'];
@@ -303,6 +303,58 @@ test('materialize refuses a tree over the cap before any checkout', async () => 
     const done = await materialize({ mirror: r.mirror, dir, snap: snap.snap, treeHash: snap.treeHash, indexTree: snap.indexTree, head: snap.head, branch: snap.branch, refs: snap.refs, treeCap: 10 });
     assert.deepStrictEqual(done, { ok: false, reason: 'too-large' });
     assert.strictEqual(fs.existsSync(dir), false);
+  } finally {
+    releaseSnapshot(snap);
+  }
+});
+
+test('the default pack limit is 256 MiB', () => {
+  assert.strictEqual(DEFAULT_PACK_MAX, 268435456);
+});
+
+test('materialize pins core.autocrlf=false in the far checkout over a global autocrlf=true', async () => {
+  const { root, repo } = baseRepo();
+  const home = path.join(root, 'home');
+  fs.mkdirSync(home);
+  fs.writeFileSync(path.join(home, '.gitconfig'), '[core]\n\tautocrlf = true\n');
+  const snap = await snapshotTree(repo);
+  const savedHome = process.env.HOME;
+  const savedXdg = process.env.XDG_CONFIG_HOME;
+  process.env.HOME = home;
+  delete process.env.XDG_CONFIG_HOME;
+  try {
+    const homeEnv = { ...ENV, HOME: home };
+    delete homeEnv.XDG_CONFIG_HOME;
+    assert.strictEqual(execFileSync('git', ['config', '--global', 'core.autocrlf'], { env: homeEnv, encoding: 'utf8' }).trim(), 'true');
+    const workDir = path.join(root, 'work');
+    const r = await ingestPack(await buildPack(snap), { workDir, repoKey: snap.repoKey, snap: snap.snap, indexTree: snap.indexTree, refs: snap.refs });
+    const dir = path.join(root, 'job', 'tree');
+    const done = await materialize({ mirror: r.mirror, dir, snap: snap.snap, treeHash: snap.treeHash, indexTree: snap.indexTree, head: snap.head, branch: snap.branch, refs: snap.refs });
+    assert.deepStrictEqual(done, { ok: true, dir });
+    assert.strictEqual(execFileSync('git', ['-C', dir, 'config', 'core.autocrlf'], { env: homeEnv, encoding: 'utf8' }).trim(), 'false');
+  } finally {
+    process.env.HOME = savedHome;
+    if (savedXdg === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = savedXdg;
+    releaseSnapshot(snap);
+  }
+});
+
+test('keepRefs keeps the trunk and the newest 20 job heads; mirrorHave answers only kept commits', async () => {
+  const { root, repo } = baseRepo();
+  const snap = await snapshotTree(repo);
+  try {
+    const workDir = path.join(root, 'work');
+    const r = await ingestPack(await buildPack(snap), { workDir, repoKey: snap.repoKey, snap: snap.snap, indexTree: snap.indexTree, refs: snap.refs });
+    assert.deepStrictEqual(await mirrorHave(r.mirror, [snap.head]), []);
+    for (let i = 1; i <= 22; i++) {
+      await keepRefs(r.mirror, { stamp: i, id: `job${i}`, snap: snap.snap, indexTree: snap.indexTree, trunkSha: snap.refs.master });
+    }
+    const jobRefs = g(r.mirror, 'for-each-ref', '--format=%(refname)', 'refs/keep/job/').trim().split('\n');
+    assert.strictEqual(jobRefs.length, 20);
+    assert.strictEqual(jobRefs[0], 'refs/keep/job/000000000000003-job3');
+    assert.strictEqual(jobRefs[19], 'refs/keep/job/000000000000022-job22');
+    assert.strictEqual(g(r.mirror, 'rev-parse', 'refs/keep/trunk').trim(), snap.refs.master);
+    assert.deepStrictEqual(await mirrorHave(r.mirror, [snap.head, 'f'.repeat(40)]), [snap.head]);
   } finally {
     releaseSnapshot(snap);
   }
