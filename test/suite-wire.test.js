@@ -370,3 +370,49 @@ test('failure matrix: a late result for another job is discarded and cancelled; 
   const wrong = await clientFor(peerFor(t, b.port).conn).client.run({ peer: 'runner-1', tree: repo });
   assert.deepStrictEqual([wrong.unknown, wrong.res, wrong.record.outcome], [`runner answered for tree eeeeeeee, not ${tree.slice(0, 8)}`, null, 'unknown']);
 });
+
+test('failure matrix: a duplicate submit returns the held job, another treeHash on the same id is 409, and a refused submit is unknown with no PUT', async (t) => {
+  const root = mkTmpRoot('suite-wire-');
+  const repo = makeRepo(root);
+  const { snapshotTree, releaseSnapshot } = require('../suite-snapshot');
+  const snap = await snapshotTree(repo);
+  t.after(() => releaseSnapshot(snap));
+  const runner = realRunner(t, root, {});
+  const { port } = await startServer(t, { suiteRunner: runner });
+  const body = (treeHash) => JSON.stringify({
+    id: 'dup-1', attempt: 1, repoKey: snap.repoKey, kind: 'hand', scope: 'full', snap: snap.snap, treeHash,
+    indexTree: snap.indexTree, sha: snap.head, branch: snap.branch, trunk: snap.trunk, refs: snap.refs,
+    candidates: snap.candidates, files: [], flags: {},
+  });
+  const post = (b) => req(port, '/api/suite/jobs', { method: 'POST', token: SUITE_TOKEN, body: b });
+  const first = await post(body(snap.treeHash));
+  const again = await post(body(snap.treeHash));
+  assert.strictEqual(first.status, 200, `ENTER: the first submit was accepted: ${first.text}`);
+  assert.deepStrictEqual([again.status, JSON.parse(again.text)], [200, JSON.parse(first.text)]);
+  const clash = await post(body('f'.repeat(40)));
+  const engine = await runner.submit(JSON.parse(body('f'.repeat(40))));
+  assert.strictEqual(engine.status, 409);
+  assert.deepStrictEqual([clash.status, JSON.parse(clash.text).error], [409, engine.error]);
+
+  const refused = stubRunner({ submit: async () => ({ ok: false, status: 409, error: 'job dup-2 exists with another treeHash' }) });
+  const b = await startServer(t, { suiteRunner: refused.runner });
+  const out = await clientFor(peerFor(t, b.port).conn, { randomUUID: () => 'dup-2' }).client.run({ peer: 'runner-1', tree: repo });
+  assert.deepStrictEqual([out.unknown, out.res, out.record.outcome], ['runner refused the job: job dup-2 exists with another treeHash', null, 'unknown']);
+  assert.deepStrictEqual(refused.calls.map((c) => c[0]).filter((k) => k !== 'info'), ['submit']);
+});
+
+test('a client-side throw mid-upload ends unknown with an end record and cancels the job', async (t) => {
+  const root = mkTmpRoot('suite-wire-');
+  const repo = makeRepo(root);
+  const snapshot = { ...require('../suite-snapshot'), buildPack: async () => { throw new Error('pack exceeds maxBuffer'); } };
+  const { runner, calls } = stubRunner({ submit: async (b) => ({ ok: true, id: b.id, state: 'awaiting-pack', have: [] }) });
+  const { port } = await startServer(t, { suiteRunner: runner });
+  const { conn } = peerFor(t, port);
+  const ledgerFile = path.join(root, 'logs', 'suite-runs.jsonl');
+  const { client } = clientFor(conn, { ledgerFile, snapshot, randomUUID: () => 'run-t' });
+  const out = await client.run({ peer: 'runner-1', tree: repo });
+  assert.deepStrictEqual([out.unknown, out.res, out.record.outcome], ['client error: pack exceeds maxBuffer', null, 'unknown']);
+  assert.deepStrictEqual(calls.filter((c) => c[0] !== 'info').map((c) => c.slice(0, 1).concat(c[0] === 'submit' ? [c[1].id] : c.slice(1))), [['submit', 'run-t'], ['cancel', 'run-t']]);
+  const lines = fs.readFileSync(ledgerFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepStrictEqual(lines.map((l) => [l.phase, l.jobId, l.outcome]), [['end', 'run-t', 'unknown']]);
+});

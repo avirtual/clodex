@@ -426,6 +426,7 @@ function createSuiteRunner({
   }
 
   function killRunning(state, child, jobDir) {
+    if (state.killing) return;
     try { state.killing = Promise.resolve(isolation.kill(child, jobDir)).catch((e) => log(`suite-runner: kill failed: ${e.message}`)); } catch (e) { log(`suite-runner: kill failed: ${e.message}`); }
   }
 

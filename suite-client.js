@@ -99,7 +99,13 @@ function createSuiteClient({
       let full = false;
       for (let attempt = 1; ; attempt += 1) {
         const job = { attempt, full, files, flags, setup, env, onJob, progress };
-        const out = await attemptJob(ctx, snap, job);
+        let out;
+        try {
+          out = await attemptJob(ctx, snap, job);
+        } catch (e) {
+          if (ctx.jobId) await cancel(peer, ctx.jobId);
+          return conclude(ctx, { unknown: `client error: ${e.message}` });
+        }
         if (out.retry && !used.has(out.retry) && now() < ctx.deadline) {
           used.add(out.retry);
           if (out.retry === 'incomplete') full = true;

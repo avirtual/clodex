@@ -317,6 +317,38 @@ test('a cancel kill still in flight holds the next job until it lands', async (t
   assert.deepStrictEqual(seen, [['spawn', 'first'], ['kill', 'first'], ['kill-landed', 'first'], ['reap', 'first'], ['spawn', 'next'], ['reap', 'next']]);
 });
 
+test('a cancel after the timeout kill sends no second kill and the next job waits for the first one to land', async (t) => {
+  const seen = [];
+  const children = {};
+  let release = null;
+  const f = await fixture(t, {
+    onSpawn: (c) => { seen.push(['spawn', c.job]); children[c.job] = c.child; if (c.job !== 'first') c.child.finish(0); },
+    wrap: (base) => ({
+      ...base,
+      kill: (child, jobDir) => {
+        const n = seen.filter((s) => s[0] === 'kill').length + 1;
+        seen.push(['kill', path.basename(jobDir)]);
+        return new Promise((resolve) => { if (n === 1) release = () => { seen.push(['kill-landed', path.basename(jobDir)]); resolve(); }; else resolve(); });
+      },
+      reap: (jobDir) => { seen.push(['reap', path.basename(jobDir)]); return base.reap(jobDir); },
+    }),
+  });
+  await f.upload(f.body('first', 'hand', { timeoutMs: 5000 }));
+  await waitState(f.runner, 'first', 'running');
+  assert.strictEqual((await f.runner.submit(f.body('next', 'hand'))).state, 'queued');
+  const timer = f.pending.find((h) => h.ms === 5000);
+  assert.ok(timer, 'ENTER: the run armed its 5000 ms timer');
+  timer.fn();
+  await f.runner.cancel('first');
+  children.first.finish(null, 'SIGKILL');
+  await waitState(f.runner, 'first', 'done');
+  for (let i = 0; i < 20; i += 1) await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(seen, [['spawn', 'first'], ['kill', 'first']]);
+  release();
+  await waitState(f.runner, 'next', 'done');
+  assert.deepStrictEqual(seen, [['spawn', 'first'], ['kill', 'first'], ['kill-landed', 'first'], ['reap', 'first'], ['spawn', 'next'], ['reap', 'next']]);
+});
+
 test('the test process gets an environment built from empty: no parent token reaches it', async (t) => {
   const planted = { CLODEX_SUITE_TOKEN: 'planted-suite', CLAUDE_CODE_OAUTH_TOKEN: 'planted-oauth', CLODEX_REMOTE_TOKEN: 'planted-remote' };
   const saved = Object.fromEntries(Object.keys(planted).map((k) => [k, process.env[k]]));
