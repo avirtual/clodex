@@ -363,13 +363,69 @@ function releaseLock() {
 // are not the collision the lock exists to prevent, and taking it would make the
 // suite deadlock against itself.
 const sweeping = !passthrough.some((a) => !a.startsWith('-'));
+let ledgerKilled = false;
 if (sweeping || process.env.CLODEX_TEST_LOCK === '1') { acquireLock(); lockHeld = true; }
 // Covers the normal exit and the signals a Ctrl-C or a kill delivers; without
 // this an interrupted run leaves a lock whose pid is briefly still alive, and
 // the next run refuses against a ghost.
 process.on('exit', releaseLock);
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
-  process.on(sig, () => { releaseLock(); process.exit(130); });
+  process.on(sig, () => { ledgerKilled = true; releaseLock(); process.exit(130); });
+}
+
+const LEDGER = process.env.CLODEX_SUITE_LEDGER || '';
+const LEDGER_ROTATE_BYTES = 5 * 1024 * 1024;
+let ledgerTotals = null;
+
+function ledgerAppend(rec) {
+  try {
+    fs.mkdirSync(path.dirname(LEDGER), { recursive: true });
+    fs.appendFileSync(LEDGER, `${JSON.stringify(rec)}\n`);
+  } catch {}
+}
+
+function gitAt(args) {
+  try {
+    const r = spawnSync('git', ['-C', ROOT, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    return r.status === 0 ? r.stdout : null;
+  } catch { return null; }
+}
+
+if (LEDGER) {
+  const ledgerId = process.env.CLODEX_SUITE_RUN_ID || require('crypto').randomUUID();
+  try {
+    if (fs.statSync(LEDGER).size > LEDGER_ROTATE_BYTES) fs.renameSync(LEDGER, `${LEDGER}.1`);
+  } catch {}
+  const head = gitAt(['rev-parse', 'HEAD']);
+  const status = gitAt(['status', '--porcelain', '--untracked-files=no']);
+  const ledgerStart = Date.now();
+  ledgerAppend({
+    id: ledgerId,
+    phase: 'start',
+    kind: process.env.CLODEX_SUITE_KIND || 'manual',
+    scope: sweeping ? 'full' : 'own',
+    ticket: process.env.CLODEX_SUITE_TICKET || null,
+    seat: process.env.CLODEX_SUITE_SEAT || null,
+    tree: path.resolve(ROOT),
+    sha: head === null ? null : head.trim(),
+    dirty: status === null ? null : status.trim() !== '',
+    pid: process.pid,
+    startedAt: new Date(ledgerStart).toISOString(),
+  });
+  process.on('exit', (code) => {
+    if (ledgerKilled) return;
+    const ended = Date.now();
+    ledgerAppend({
+      id: ledgerId,
+      phase: 'end',
+      outcome: !ledgerTotals ? 'no-summary' : code === 0 ? 'pass' : 'fail',
+      pass: ledgerTotals ? ledgerTotals.pass : null,
+      fail: ledgerTotals ? ledgerTotals.fail : null,
+      tests: ledgerTotals ? ledgerTotals.tests : null,
+      endedAt: new Date(ended).toISOString(),
+      durationMs: ended - ledgerStart,
+    });
+  });
 }
 
 const suiteTmp = path.join(os.tmpdir(), 'clodex-suite');
@@ -426,6 +482,9 @@ delete childEnv.CLODEX_TEST_LOCK_MERGE;
 delete childEnv.CLODEX_TEST_SLOW_ADVISORY;
 delete childEnv.CLODEX_TEST_SLOW_RETIME;
 delete childEnv.CLODEX_TEST_RETIME_CAP;
+for (const k of ['CLODEX_SUITE_LEDGER', 'CLODEX_SUITE_KIND', 'CLODEX_SUITE_TICKET', 'CLODEX_SUITE_SEAT', 'CLODEX_SUITE_RUN_ID']) {
+  delete childEnv[k];
+}
 
 const RUN_TIMEOUT_MS = 20 * 60 * 1000;
 const runTimeoutMs = Number(process.env.CLODEX_TEST_RUN_TIMEOUT_MS) > 0
@@ -718,6 +777,7 @@ if (unsampled.length) {
 }
 
 console.log(`\nTOTALS: ${pass} pass, ${fail} fail, ${tests} tests`);
+ledgerTotals = { pass, fail, tests };
 console.log(formatEscapes(escapes));
 
 if (advisory && offenders.length) {

@@ -9,7 +9,20 @@ const { spawnSync, execFileSync } = require('child_process');
 const ROOT = process.cwd();
 const LEAF = path.basename(ROOT);
 
-const KEEP_DIR = path.join(process.env.CLODEX_HOME || path.join(os.homedir(), '.clodex'), 'test-failures');
+const HOME_DIR = process.env.CLODEX_HOME || path.join(os.homedir(), '.clodex');
+const KEEP_DIR = path.join(HOME_DIR, 'test-failures');
+function ledgerEnv(base) {
+  const env = {
+    ...base,
+    CLODEX_SUITE_LEDGER: path.join(HOME_DIR, 'logs', 'suite-runs.jsonl'),
+    CLODEX_SUITE_KIND: 'hand',
+  };
+  if (base.CLODEX_SEAT) env.CLODEX_SUITE_SEAT = base.CLODEX_SEAT;
+  else delete env.CLODEX_SUITE_SEAT;
+  delete env.CLODEX_SUITE_TICKET;
+  delete env.CLODEX_SUITE_RUN_ID;
+  return env;
+}
 const KEEP = path.join(KEEP_DIR, 'last.txt');
 const KEEP_RED = path.join(KEEP_DIR, 'last-red.txt');
 const FAIL_CAP = 2000;
@@ -361,7 +374,7 @@ function reexecInMeasured(measure, rawStdin) {
     cwd: ROOT,
     input: rawStdin,
     stdio: ['pipe', 'inherit', 'inherit'],
-    env: { ...process.env, CLODEX_RUN_TESTS_REEXEC: '1' },
+    env: ledgerEnv({ ...process.env, CLODEX_RUN_TESTS_REEXEC: '1' }),
   });
   if (res.error) emit(`[${LEAF}] own: re-exec of ${theirs} failed: ${res.error.message}`, 1, 400);
   if (res.status === null) {
@@ -403,7 +416,7 @@ const headBefore = gitRead(measure, ['rev-parse', 'HEAD']);
 const startedIso = nowIso();
 const startedAt = Date.now();
 const childEnv = {
-  ...process.env,
+  ...ledgerEnv(process.env),
   CLODEX_TEST_LOCK_DIR: path.join(ROOT, '.test-digest.lock'),
   CLODEX_TEST_LOCK_WAIT_MS: String(LOCK_WAIT_MS),
   CLODEX_TEST_LOCK_NOTE_FD: '3',
