@@ -216,6 +216,7 @@ test('the test process gets an environment built from empty: no parent token rea
     USER: 'suite-test',
     LOGNAME: 'suite-test',
     SHELL: '/bin/sh',
+    ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
   });
   assert.deepStrictEqual([call.cmd, ...call.args], [process.execPath, 'scripts/run-tests.js', '--reporter=dot', 'test/a.test.js']);
 });
