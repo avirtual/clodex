@@ -17,8 +17,10 @@ const CANDIDATES_PER_LINE = 16;
 const NEAR_CONFIG = ['-c', 'core.splitIndex=false'];
 const RUNNER_CONFIG = ['-c', 'core.autocrlf=false', '-c', 'core.hooksPath=/dev/null', '-c', 'core.splitIndex=false'];
 const DEFAULT_TREE_CAP = 2 * 1024 ** 3;
-const DEFAULT_PACK_MAX = 2 * 1024 ** 3;
+const DEFAULT_PACK_MAX = 256 * 1024 ** 2;
 const SHA_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+const KEEP_JOBS = 20;
+const GC_PACKS = 50;
 
 function cleanEnv(extra) {
   const env = {};
@@ -199,4 +201,49 @@ async function materialize({ mirror, dir, snap, treeHash, indexTree, head, branc
   return { ok: true, dir };
 }
 
-module.exports = { snapshotTree, releaseSnapshot, buildPack, ingestPack, materialize, treeHashOf };
+async function mirrorHave(mirror, candidates = []) {
+  const asked = candidates.filter((c) => SHA_RE.test(String(c)));
+  if (!asked.length || !fs.existsSync(mirror)) return [];
+  const reachable = await tryRun(mirror, [...RUNNER_CONFIG, 'rev-list', '--all']);
+  if (!reachable.ok) return [];
+  const all = new Set(lines(reachable));
+  return asked.filter((c) => all.has(c));
+}
+
+async function mirrorHolds(mirror, tips) {
+  assertShas(tips);
+  if (!fs.existsSync(mirror)) return false;
+  return (await tryRun(mirror, [...RUNNER_CONFIG, 'rev-list', '--objects', '--quiet', ...tips])).ok;
+}
+
+async function keepRefs(mirror, { stamp, id, snap, indexTree, trunkSha = null, keep = KEEP_JOBS }) {
+  assertShas([snap, indexTree, ...(trunkSha ? [trunkSha] : [])]);
+  const tag = `${String(stamp).padStart(15, '0')}-${id}`;
+  if (!/^[0-9]{15}-[A-Za-z0-9._-]{1,64}$/.test(tag)) throw new Error(`bad keep tag: ${tag}`);
+  if (trunkSha) await run(mirror, [...RUNNER_CONFIG, 'update-ref', 'refs/keep/trunk', trunkSha]);
+  await run(mirror, [...RUNNER_CONFIG, 'update-ref', `refs/keep/job/${tag}`, snap]);
+  await run(mirror, [...RUNNER_CONFIG, 'update-ref', `refs/keep/index/${tag}`, indexTree]);
+  for (const kind of ['job', 'index']) {
+    const names = lines(await run(mirror, [...RUNNER_CONFIG, 'for-each-ref', '--format=%(refname)', `refs/keep/${kind}/`])).sort();
+    for (const name of names.slice(0, Math.max(0, names.length - keep))) {
+      await run(mirror, [...RUNNER_CONFIG, 'update-ref', '-d', name]);
+    }
+  }
+}
+
+function packCount(mirror) {
+  try {
+    return fs.readdirSync(path.join(mirror, 'objects', 'pack')).filter((f) => f.endsWith('.pack')).length;
+  } catch { return 0; }
+}
+
+async function gcMirror(mirror, { maxPacks = GC_PACKS } = {}) {
+  if (packCount(mirror) <= maxPacks) return false;
+  await run(mirror, [...RUNNER_CONFIG, 'gc', '-q', '--prune=now']);
+  return true;
+}
+
+module.exports = {
+  snapshotTree, releaseSnapshot, buildPack, ingestPack, materialize, treeHashOf,
+  mirrorPath, mirrorHave, mirrorHolds, keepRefs, packCount, gcMirror, DEFAULT_PACK_MAX,
+};

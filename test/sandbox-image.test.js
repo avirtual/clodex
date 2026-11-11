@@ -125,7 +125,7 @@ test('docker/web/Dockerfile ships no duplicate layer and no build cache', () => 
 
   const workdir = all.indexOf('WORKDIR /app');
   assert.ok(workdir >= 0, 'ENTER: WORKDIR /app');
-  const appCopies = all.slice(workdir).filter((i) => /^COPY\b/.test(i) && !/\s\/usr\/local\/bin\//.test(i));
+  const appCopies = all.slice(workdir).filter((i) => /^COPY\b/.test(i) && !/\s\/usr\/local\/(?:bin|libexec)\//.test(i));
   assert.strictEqual(appCopies.length, 3, 'ENTER: the three COPYs into /app');
   for (const c of appCopies) assert.match(c, /^COPY (?:--\S+ )*--chown=clodex:clodex\b/);
 });

@@ -22,6 +22,7 @@ deploy
 docker
 !docker/web/entrypoint.sh
 !docker/web/clodex-hooks.sh
+!docker/web/clodex-suite-exec
 
 # Not needed at build or runtime.
 .git

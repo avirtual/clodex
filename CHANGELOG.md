@@ -15,6 +15,7 @@ blocks a release.
 
 - A standing clodent stream seat whose idle clear is 10 minutes or less now keeps its one-hour cache for the preamble and uses a five-minute cache for messages, which measured about 10% cheaper on input for such a seat. A template that passes `--message-cache-ttl` keeps its own value.
 - Suite snapshot: a module that packs a working tree — commit, tracked changes and untracked files — and rebuilds it elsewhere with a verified tree hash.
+- Runner mode (engine): a headless node can queue suite jobs one at a time and run each in a disposable checkout as an unprivileged user with an empty environment; the container image gains the clodex-suite user and its helper.
 
 ## 5.174.0 — 2026-11-11
 

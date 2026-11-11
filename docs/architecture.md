@@ -366,6 +366,21 @@ bundle), whose packaged form is the Docker image under
   mirror and answers `incomplete` when prerequisites are missing; `materialize`
   checks it out with the hand's HEAD and index and proves the tree hash with
   `treeHashOf`. Shells git through `git-worktree.js`'s `git`; no caller yet; in
+  SCANNED_MODULES. The mirror side also keeps `refs/keep/*` (`keepRefs`),
+  answers `have` (`mirrorHave`, `mirrorHolds`) and repacks (`gcMirror`).
+- **suite-runner.js** — runner-mode engine for remote suite jobs, plain methods
+  with no HTTP and no caller yet. `createSuiteRunner({root, work, isolation,
+  limits, spawn, now, log, timers})` returns `info`, `submit`, `putPack`,
+  `commit`, `poll`, `output`, `cancel`, plus `tick`/`start`/`close`. Job records
+  and outputs live under `<root>/suite-runner/jobs/<id>/` (never `run/`);
+  mirrors, deps cache entries and job trees under `<work>`. One slot, queue
+  order post-merge → verify → hand, FIFO within a kind; a job not polled for
+  the lease is cancelled; restart turns setup/running into `runner-restart`.
+  Each job is rebuilt with `suite-snapshot.js`, gets its declared setup from a
+  sealed deps cache, and runs `scripts/run-tests.js --reporter=dot` with an
+  environment built from empty. Isolation is a strategy: `userIsolation`
+  (through `docker/web/clodex-suite-exec` and sudo) or `noneIsolation`. Never
+  decides pass or fail: returns exit, output and a ledger-shaped record. In
   SCANNED_MODULES.
 - **git-safe.js** — `safeGitArgs` prefixes app-process git calls in a seat cwd
   with `-c` overrides for core.fsmonitor, core.hooksPath (/dev/null by

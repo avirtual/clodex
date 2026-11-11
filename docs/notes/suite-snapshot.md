@@ -10,3 +10,6 @@ The far index is the near index's tree (`read-tree -m <indexTree>`), not a reset
 
 ## ingestPack
 `git index-pack --strict` refuses a pack whose prerequisites are missing with "did not receive expected object", indistinguishable by exit code from a corrupt pack; `--fsck-objects` plus the `rev-list --objects` connectivity check separates `bad-pack` from `incomplete` (git 2.52).
+
+## keepRefs
+Each job keeps `refs/keep/job/<stamp>-<id>` (the snapshot commit) and `refs/keep/index/<stamp>-<id>` (its index tree), plus `refs/keep/trunk`; the stamp is zero-padded so a name sort is age order and the oldest beyond `KEEP_JOBS` are dropped. `mirrorHave` answers only commits reachable from these refs: a commit left by a failed ingest may lack its history.
