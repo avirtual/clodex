@@ -189,8 +189,8 @@ test('a job past its timeout has its process group killed and ends as timeout', 
   assert.ok(timer, 'ENTER: the run armed its 5000 ms timer');
   assert.deepStrictEqual(f.kills, []);
   timer.fn();
-  const done = await waitState(f.runner, 'slow', 'done');
   assert.deepStrictEqual(f.kills, [[-4000, 'SIGKILL']]);
+  const done = await waitState(f.runner, 'slow', 'done');
   assert.deepStrictEqual([done.reason, done.exit, done.record.outcome], ['timeout', { code: null, signal: 'SIGKILL' }, 'unknown']);
 });
 
