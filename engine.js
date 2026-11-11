@@ -788,7 +788,7 @@ const { createTeamManifest } = require('./team-manifest');
 const {
   findProjectRoot, resolveTeam, teamOf, teamOfSeat, teamsOfCwd, bindSeat, unbindSeat, dropSeatRows, renameSeatRow, rosterOf, pruneStaleRows, synthesiseRosters, setSeatLookup,
   createTeam, addRole, listTeams, loadManifest,
-  setRole, removeRole, renameRole, setTeamWatchdog, setLead, setTeamTrunk, setTeamDone, setTeamWorktrees, setTeamMaxHands, teamsDir, deleteTeam,
+  setRole, removeRole, renameRole, setTeamWatchdog, setLead, setTeamTrunk, setTeamDone, setTeamWorktrees, setTeamMaxHands, setTeamTestRunner, teamsDir, deleteTeam,
   kitCatalog, resolveKit,
   // clodexHome is passed, not defaulted: defaultClodexHome reads CLODEX_HOME and
   // would put teams on a different tree than every other subsystem.
@@ -1211,6 +1211,8 @@ const SessionManager = createSessionManager({
     setTeamDone,
     setTeamWorktrees,
     setTeamMaxHands,
+    setTeamTestRunner,
+    getSuiteClient: () => suiteClient,
     setLead,
     teamsDir,
     gatherTeam,

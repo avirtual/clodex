@@ -20,7 +20,7 @@ const { hostNotice } = require('./host-stamp');
 const { idleClearAfterMs, IDLE_CLEAR_MIN_MS } = require('./assistant-sleep');
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
-  DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone,
+  DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS,
 } = require('./team-manifest');
 const {
   readTeamJson, teamTemplatePath, teamTemplateSave, mayGrantOf, ownTeamExecGrants, clampToGrantor, teamTemplateRemove, teamPromptSave, teamPromptRemove,
@@ -2964,12 +2964,15 @@ function createTicketMethods(deps, shared) {
             this._handleTeamHands(session, team, intent, reply);
             return;
           }
+          case 'runner': {
+            return this._handleTeamRunner(team, intent, reply).catch((err) => reply(`error: ${(err && err.message) || err}`));
+          }
           case 'sandbox': {
             this._handleTeamSandbox(team, intent, reply, session).catch((err) => reply(`error: ${(err && err.message) || err}`));
             return;
           }
           default:
-            reply(`error: unknown team verb "${intent.sub}" — use role-add | role-set | role-rm | role-rename | set-lead | watchdog | gather | template-save | template-rm | prompt-save | prompt-rm | sandbox | trunk | done | worktrees | hands`);
+            reply(`error: unknown team verb "${intent.sub}" — use role-add | role-set | role-rm | role-rename | set-lead | watchdog | gather | template-save | template-rm | prompt-save | prompt-rm | sandbox | trunk | done | worktrees | hands | runner`);
         }
       } catch (err) {
         reply(`error: ${err.message}`);
@@ -3056,6 +3059,87 @@ function createTicketMethods(deps, shared) {
         ? `hand cap of ${team.name} set to off — task start no longer parks for a cap`
         : `hand cap of ${team.name} set to ${m.maxHands} — a task start past it parks the ticket until a hand retires`);
       this._startCapParked(m, session);
+    },
+
+    _runnerPeerStatus(name) {
+      const pm = typeof getPeerManager === 'function' ? getPeerManager() : null;
+      if (!pm || typeof findPeerByOrigin !== 'function') return null;
+      return findPeerByOrigin(pm.statuses() || [], name) || null;
+    },
+
+    async _runnerReach(peer) {
+      const flat = (v) => String(v == null ? '?' : v).replace(/[\x00-\x1f\x7f]+/g, ' ').slice(0, 120);
+      if (!peer) return 'not a known peer';
+      if (!peer.online) return 'offline';
+      if (!Array.isArray(peer.caps) || !peer.caps.includes('suite')) return 'online without the suite capability';
+      const client = typeof deps.getSuiteClient === 'function' ? deps.getSuiteClient() : null;
+      if (!client) return 'online with the suite capability; no suite client on this node';
+      const r = await client.reachable(peer.id);
+      if (!r || !r.ok) return `online with the suite capability, but its info route failed: ${flat(r && r.why)}`;
+      const q = (r.info && r.info.queue) || {};
+      const queue = (q.running ? 1 : 0) + (Array.isArray(q.queued) ? q.queued.length : 0);
+      const e = (r.info && r.info.env) || {};
+      return `reachable, suite capability, queue ${queue}, env ${flat(e.runner)} ${flat(e.platform)}/${flat(e.arch)} node ${flat(e.node)} key ${flat(e.envKey)}`;
+    },
+
+    async _handleTeamRunner(team, intent, reply) {
+      const cur = team.testRunner || null;
+      if (intent.gate != null) {
+        reply('error: gate routing is not available yet — [agent:team runner] sets the peer and hands:<off|full|all> only');
+        return;
+      }
+      if (intent.hands != null && intent.value) {
+        reply('error: set the peer and the hands mode in two separate [agent:team runner] intents');
+        return;
+      }
+      if (intent.hands != null) {
+        if (!TEST_RUNNER_HANDS.includes(intent.hands)) {
+          reply(`error: hands must be one of ${TEST_RUNNER_HANDS.join(' | ')}, not "${intent.hands}"`);
+          return;
+        }
+        if (!cur) {
+          reply('error: no test runner is set — name one first with [agent:team runner <peer>]');
+          return;
+        }
+        const m = deps.setTeamTestRunner(team.name, { hands: intent.hands });
+        reply(`test runner hands mode of ${team.name} set to ${m.testRunner.hands}`);
+        return;
+      }
+      if (!intent.value) {
+        if (!cur) {
+          const bad = (team.droppedFields || []).some((d) => d && d.field === 'testRunner' && d.status === 'invalid');
+          reply(`test runner of ${team.name}: off${bad ? ' (team.json testRunner is invalid and ignored)' : ''} — [agent:team runner <peer>] names one`);
+          return;
+        }
+        const reach = await this._runnerReach(this._runnerPeerStatus(cur.peer));
+        reply(`test runner of ${team.name}: ${cur.peer}, hands ${cur.hands} — ${reach}`);
+        return;
+      }
+      if (intent.value === 'off') {
+        deps.setTeamTestRunner(team.name, null);
+        reply(`test runner of ${team.name} removed`);
+        return;
+      }
+      if (!NODE_NAME_RE.test(intent.value)) {
+        reply(`error: "${intent.value}" is not a peer name`);
+        return;
+      }
+      const peer = this._runnerPeerStatus(intent.value);
+      if (!peer) {
+        reply(`error: "${intent.value}" is not a known peer — add it as a peer first`);
+        return;
+      }
+      if (peer.online && !(Array.isArray(peer.caps) && peer.caps.includes('suite'))) {
+        reply(`error: peer ${intent.value} is online but does not advertise the suite capability — the runner node needs CLODEX_SUITE_RUNNER=1`);
+        return;
+      }
+      const m = deps.setTeamTestRunner(team.name, cur ? { peer: intent.value } : { peer: intent.value, hands: 'full' });
+      const tr = m.testRunner;
+      if (!peer.online) {
+        reply(`test runner of ${team.name} set to ${tr.peer}, hands ${tr.hands} — warning: the peer is offline, so its suite capability is unchecked`);
+        return;
+      }
+      reply(`test runner of ${team.name} set to ${tr.peer}, hands ${tr.hands} — ${await this._runnerReach(peer)}`);
     },
 
     _handCap(team) {
