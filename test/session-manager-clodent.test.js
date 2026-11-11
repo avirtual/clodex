@@ -120,6 +120,10 @@ function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entrie
         return { onData() {}, onExit(fn) { exit = fn; }, pid: 999, kill() { if (exit) exit({ exitCode: 0, signal: null }); } };
       },
     },
+    parkDelivery: require('../pending-store').parkDelivery,
+    drainPending: require('../pending-store').drainPending,
+    countPending: require('../pending-store').countPending,
+    hasActivePending: require('../pending-store').hasActivePending,
     spawnStreamSeat: (o) => { spawns.push({ cmd: o.cmd, args: o.args, opts: { env: o.env } }); return { pid: 998, startedAt: 1, startTime: 1, stderrTail: '', send: () => Promise.resolve(), close() {}, kill() {} }; },
     notifyOS: () => {},
     collectSystemDiagnostics: () => ({}),
