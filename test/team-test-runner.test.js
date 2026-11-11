@@ -194,7 +194,7 @@ const INFO = {
   },
 };
 
-test('[agent:team runner] with no setting shows off and how to name one', async () => {
+test('_handleTeamRunner: [agent:team runner] with no setting shows off and how to name one', async () => {
   const f = mkVerbFixture();
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner]'),
     ['[agent:team] test runner of team: off — [agent:team runner <peer>] names one']);
