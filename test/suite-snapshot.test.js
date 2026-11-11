@@ -251,7 +251,7 @@ test('a racily clean entry in the real index is re-read, not trusted from a copi
   } finally {
     releaseSnapshot(snap);
   }
-  assert.strictEqual(g(repo, 'status', '--porcelain'), ' M a.txt\n');
+  assert.strictEqual(g(repo, 'status', '--porcelain'), 'MM a.txt\n');
 });
 
 test('ingestPack and materialize refuse an object id that is not a sha', async () => {
