@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.174.0 — 2026-11-11
+
 - Every test-suite run now leaves a start and an end record in `logs/suite-runs.jsonl` (who ran it, ticket, tree, commit, duration, outcome), so suite load on a host can be measured.
 
 ## 5.173.0 — 2026-11-10
