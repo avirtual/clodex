@@ -15,7 +15,7 @@ Runs the suite as the engine user with the scrubbed env only; it does not meet t
 
 ## userIsolation
 `sudo` resets the environment, so the job env travels to the helper as `KEY=VALUE` arguments for `env -i`, and `CLODEX_SUITE_WORK` / `CLODEX_SUITE_USER` cannot be overridden through sudo; they exist for the helper's shell test. `kill` calls the helper's `reap`: the engine user cannot signal the suite user's processes.
-`reap` is `pkill -u` on the suite user, so `finish` reaps only a job that reached `setup`. The helper's `prepare` chowns `tree`, `home` and `tmp` but leaves the job directory engine-owned, so the suite user cannot swap `tree` for a symlink before `seal` moves paths out of it as root; `seal` also kills the suite user's processes before checking `tree`. Chowning only those three directories needs root, so no test covers it; the manual check below covers it.
+`reap` and `seal` kill every process of the suite user with one `kill -KILL -1` issued as that user (`setpriv`), which the kernel delivers in a single pass a forking process cannot outrun; `pkill` walks a process list and can miss a child forked after the walk. Because the kill reaches every suite process, `finish` reaps only a job that reached `setup`. The helper's `prepare` chowns `tree`, `home` and `tmp` but leaves the job directory engine-owned, so the suite user cannot swap `tree` for a symlink before `seal` moves paths out of it as root; `seal` also kills the suite user's processes before checking `tree`. Chowning only those three directories needs root, so no test covers it; the manual check below covers it.
 
 Manual check, not machine-verifiable: the privilege drop and the image build need one run in the published image.
 

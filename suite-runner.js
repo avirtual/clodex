@@ -160,7 +160,7 @@ function userIsolation({ helper = HELPER, user = SUITE_USER, spawn = childProces
         env: { PATH: SAFE_PATH }, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
       });
     },
-    kill(child, jobDir) { call([helper, 'reap', jobDir]); },
+    kill(child, jobDir) { return call([helper, 'reap', jobDir]); },
     seal: (jobDir, entry, rels) => must('seal', [jobDir, entry, ...rels]),
     reap: (jobDir) => must('reap', [jobDir]),
   };
@@ -334,12 +334,13 @@ function createSuiteRunner({
     try { fs.appendFileSync(ledgerFile, `${JSON.stringify(job.record)}\n`); } catch (e) { log(`suite-runner: ledger write failed: ${e.message}`); }
   }
 
-  async function finish(job, outcome) {
+  async function finish(job, outcome, killing = null) {
     if (job.state === 'done') return;
     finishRecord(job, outcome);
     save(job);
     notify(job.id);
     if (job.startedAt == null) return;
+    if (killing) await killing;
     try { await isolation.reap(jobWork(job.id)); } catch (e) { log(`suite-runner: reap ${job.id} failed: ${e.message}`); }
   }
 
@@ -424,6 +425,11 @@ function createSuiteRunner({
     return env;
   }
 
+  function killRunning(state, child, jobDir) {
+    if (state.killing) return;
+    try { state.killing = Promise.resolve(isolation.kill(child, jobDir)).catch((e) => log(`suite-runner: kill failed: ${e.message}`)); } catch (e) { log(`suite-runner: kill failed: ${e.message}`); }
+  }
+
   function exec(job, jobDir, argv, ms) {
     return new Promise((resolve) => {
       const fds = { stdout: fs.openSync(outFile(job.id, 'stdout'), 'a'), stderr: fs.openSync(outFile(job.id, 'stderr'), 'a') };
@@ -437,10 +443,10 @@ function createSuiteRunner({
         resolve({ code: null, signal: null, error: e.message });
         return;
       }
-      const state = { timedOut: false, stopped: null };
+      const state = { timedOut: false, stopped: null, killing: null };
       running = { job, child, jobDir, state };
       job.pid = child.pid || null;
-      const timer = timers.setTimeout(() => { state.timedOut = true; isolation.kill(child, jobDir); }, ms);
+      const timer = timers.setTimeout(() => { state.timedOut = true; killRunning(state, child, jobDir); }, ms);
       for (const s of ['stdout', 'stderr']) {
         if (!child[s]) continue;
         child[s].on('data', (chunk) => {
@@ -459,7 +465,7 @@ function createSuiteRunner({
         timers.clearTimeout(timer);
         closeFds();
         running = null;
-        resolve({ code, signal, error, timedOut: state.timedOut, stopped: state.stopped });
+        resolve({ code, signal, error, timedOut: state.timedOut, stopped: state.stopped, killing: state.killing });
       };
       child.on('error', (e) => done(null, null, e.message));
       child.on('close', (code, signal) => done(code, signal));
@@ -495,8 +501,8 @@ function createSuiteRunner({
     if (job.stop) return finish(job, { reason: job.stop, exit: null });
     if (deps && !deps.hit) {
       const r = await exec(job, jobDir, ['/bin/sh', '-c', job.setup.run], job.setup.timeoutMs || lim.setupTimeoutMs);
-      if (job.stop) return finish(job, { reason: job.stop, exit: null });
-      if (r.code !== 0) return finish(job, { reason: 'setup-failed', exit: { code: r.code, signal: r.signal || null } });
+      if (job.stop) return finish(job, { reason: job.stop, exit: null }, r.killing);
+      if (r.code !== 0) return finish(job, { reason: 'setup-failed', exit: { code: r.code, signal: r.signal || null } }, r.killing);
       forceRemove(deps.entry);
       fs.mkdirSync(deps.entry, { recursive: true });
       await isolation.seal(jobDir, deps.entry, job.setup.paths);
@@ -510,7 +516,7 @@ function createSuiteRunner({
     const r = await exec(job, jobDir, [process.execPath, ...TEST_ARGV, ...(job.files || [])], ms);
     job.runMs = now() - runStartedAt;
     const reason = job.stop || (r.timedOut ? 'timeout' : null);
-    return finish(job, { reason, exit: { code: r.code, signal: r.signal || null } });
+    return finish(job, { reason, exit: { code: r.code, signal: r.signal || null } }, r.killing);
   }
 
   function retain() {
@@ -671,7 +677,8 @@ function createSuiteRunner({
     const list = [...new Set((ids || []).map(String))].filter((id) => ID_RE.test(id));
     touch(list);
     const before = list.map((id) => (jobs.get(id) || {}).state).join(',');
-    if (wait > 0 && list.length) {
+    const settled = list.some((id) => !jobs.has(id) || jobs.get(id).state === 'done');
+    if (wait > 0 && list.length && !settled) {
       await new Promise((resolve) => {
         const w = { ids: new Set(list) };
         const timer = timers.setTimeout(() => w.wake(), Math.min(wait, lim.waitMax));
@@ -713,7 +720,7 @@ function createSuiteRunner({
     job.stop = reason;
     if (running && running.job === job) {
       running.state.stopped = reason;
-      isolation.kill(running.child, running.jobDir);
+      killRunning(running.state, running.child, running.jobDir);
     }
   }
 

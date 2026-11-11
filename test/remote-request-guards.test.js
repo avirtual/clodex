@@ -70,6 +70,7 @@ test('a JSON null body is a 400 on every body route, never an uncaught throw', a
     query: ok, setProfile: ok, restartSession: ok, setSessionArgs: ok, setSessionSkills: ok, setClientToken: ok,
     createSession: ok, seatImport: { begin: ok }, importCreate: { check: ok },
     notifications: { list: () => [], markRead: () => false, remove: () => false }, replyNote: ok,
+    suiteRunner: { submit: ok, commit: ok },
   }, async (server) => {
     server._wterm.set('seat', new Set([{}]));
     const rows = [
@@ -79,7 +80,7 @@ test('a JSON null body is a 400 on every body route, never an uncaught throw', a
       ['POST', '/api/sessions/alpha/query'], ['POST', '/api/sessions/alpha/dm'], ['PUT', '/api/sessions/alpha/memory/profile'],
       ['POST', '/api/sessions/alpha/restart'], ['PATCH', '/api/sessions/alpha/args'], ['PATCH', '/api/sessions/alpha/skills'],
       ['PUT', '/api/sessions/alpha/client-token'], ['POST', '/api/import/begin'], ['POST', '/api/sessions'],
-      ['POST', '/api/inbox/reply/n1'],
+      ['POST', '/api/inbox/reply/n1'], ['POST', '/api/suite/jobs'], ['POST', '/api/suite/jobs/j1/commit'],
     ];
     const src = fs.readFileSync(path.join(__dirname, '..', 'remote.js'), 'utf8');
     assert.equal(rows.length, src.split('this._readBody(').length - 1, 'every _readBody call site has a null-body row');

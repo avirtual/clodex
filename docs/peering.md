@@ -450,6 +450,45 @@ staging or other) and an unreached re-send both archive the local copy as
 `unknown` without a respawn. A local respawn happens only for a refusal the box
 returned to the ORIGINAL commit.
 
+### 2c. Suite jobs (owner side: runner mode)
+
+A node started with `CLODEX_SUITE_RUNNER=1` is a test runner: remote-wiring
+builds one `suite-runner.js` engine (`suiteRunnerOptions`: work root
+`CLODEX_SUITE_WORK`, default `/var/lib/clodex-suite`; `CLODEX_SUITE_ISOLATION=none`
+for a loopback throwaway box; `CLODEX_SUITE_PACK_MAX_MB`) and injects it as
+`suiteRunner`. Without it every `/api/suite/*` route answers 501 and hello
+carries no `suite` cap.
+
+- `GET /api/suite/info` → `{ok, bootId, env, isolation, limits:{packMaxBytes, chunkMax, queueMax}, queue}`.
+- `POST /api/suite/jobs` (JSON, ≤ 256 KiB) → `{ok, id, state:'awaiting-pack', have}` or `{ok, id, state:'queued', position}`; idempotent on `id`, a different `treeHash` under the same id is 409.
+- `PUT /api/suite/jobs/<id>/pack` raw chunk ≤ 4 MiB with `Content-Range: bytes a-b/*` → `{ok, size}`; an offset that is not the current size → 409 `{have}`.
+- `POST /api/suite/jobs/<id>/commit` `{bytes, sha256}` → `{ok, state:'queued'}`; 400 on a size or hash mismatch; 409 `{incomplete:true}` when objects are missing.
+- `GET /api/suite/jobs?ids=a,b&wait=<ms≤25000>` → `{ok, bootId, jobs:[…]}`, early on any state change; the poll is the job's lease.
+- `GET /api/suite/jobs/<id>/output?stream=stdout|stderr&offset=&length=` → `{ok, total, offset, text}`.
+- `DELETE /api/suite/jobs/<id>` → `{ok}`, idempotent.
+
+A runner error answers with the status the engine names (`{ok:false, status, error, …}`).
+
+**The suite token.** `CLODEX_SUITE_TOKEN` is a second credential checked by
+`_authGate` only after the operator token fails. A request it admits is marked
+`req.suiteScoped`; `_route` refuses everything except `GET /api/peer/hello` and
+`/api/suite/*` with 403 `{error:'this token is scoped to suite jobs'}`, after the
+base-path strip and before the first route match. A scoped hello is exactly
+`{ok, app, host, version, bootId, caps:['suite'], scope:'suite'}`; no cookie is
+set for it. The operator token is accepted on the suite routes too. The
+fail-closed non-loopback rule stays keyed on the operator token.
+
+**Lead side.** The runner is an ordinary peer row whose `token` is the suite
+token. A hello with `scope:'suite'` skips the dialect probe, the session list,
+the event stream, attachments, DM claims and the roster push. Suite calls go
+through `PeerConnection.suiteAsk` / `suitePut` on their own keep-alive pool
+(`_suiteAgent`, two sockets), so a 25 s long-poll never pins the request pool
+the hello loop uses. `suite-client.js` (`reachable`, `run`, `cancel`) drives one
+job: snapshot, submit, chunked upload with resume from `have`, commit, poll,
+output; it returns `{res, unknown, record}` and writes the `where:'remote'`
+records of `logs/suite-runs.jsonl`. A timeout, an unreachable runner, a lost
+job or a result for another job or tree is `unknown`, never a pass.
+
 ## 4. Settings reconciliation (peer-wiring.js)
 
 `syncPeerManager` lazily constructs both managers, then reconciles from

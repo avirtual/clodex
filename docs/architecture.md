@@ -369,7 +369,7 @@ bundle), whose packaged form is the Docker image under
   SCANNED_MODULES. The mirror side also keeps `refs/keep/*` (`keepRefs`),
   answers `have` (`mirrorHave`, `mirrorHolds`) and repacks (`gcMirror`).
 - **suite-runner.js** — runner-mode engine for remote suite jobs, plain methods
-  with no HTTP and no caller yet. `createSuiteRunner({root, work, isolation,
+  served by `remote.js` `_handleSuite` under `/api/suite/*` when remote-wiring builds it (`CLODEX_SUITE_RUNNER=1`). `createSuiteRunner({root, work, isolation,
   limits, spawn, now, log, timers})` returns `info`, `submit`, `putPack`,
   `commit`, `poll`, `output`, `cancel`, plus `tick`/`start`/`close`. Job records
   and outputs live under `<root>/suite-runner/jobs/<id>/` (never `run/`);
@@ -381,6 +381,15 @@ bundle), whose packaged form is the Docker image under
   environment built from empty. Isolation is a strategy: `userIsolation`
   (through `docker/web/clodex-suite-exec` and sudo) or `noneIsolation`. Never
   decides pass or fail: returns exit, output and a ledger-shaped record. In
+  SCANNED_MODULES.
+- **suite-client.js** — the lead's side of a remote suite job.
+  `createSuiteClient({getPeerManager, ledgerFile, log, now, sleep, randomUUID,
+  snapshot})` returns `reachable(peer)`, `run({peer, tree, kind, scope, …})`
+  and `cancel(peer, jobId)`. `run` snapshots the tree, submits, uploads the pack
+  in chunks (resuming from the runner's `have`), commits, long-polls and reads
+  the output through `PeerConnection.suiteAsk` / `suitePut`, and returns
+  `{res, unknown, record}`; it writes the `where:'remote'` start and end records
+  of `logs/suite-runs.jsonl`. Built in engine.js; no routing policy yet. In
   SCANNED_MODULES.
 - **git-safe.js** — `safeGitArgs` prefixes app-process git calls in a seat cwd
   with `-c` overrides for core.fsmonitor, core.hooksPath (/dev/null by

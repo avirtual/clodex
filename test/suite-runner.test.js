@@ -125,6 +125,18 @@ test('submit is idempotent on id and refuses the same id with another treeHash',
   assert.deepStrictEqual(other, { ok: false, status: 409, error: 'job id already submitted with a different treeHash' });
 });
 
+test('a long-poll on a finished or unknown job answers at once and arms no wait', async (t) => {
+  const f = await fixture(t);
+  assert.strictEqual((await f.upload(f.body('j1'))).state, 'queued');
+  await waitState(f.runner, 'j1', 'done');
+  const armed = f.pending.length;
+  const rows = [[['j1'], ['done']], [['nope'], ['gone']], [['j1', 'nope'], ['done', 'gone']]];
+  const got = [];
+  for (const [ids] of rows) got.push([ids, (await f.runner.poll(ids, { wait: 25000 })).jobs.map((j) => j.state)]);
+  assert.deepStrictEqual(got, rows);
+  assert.strictEqual(f.pending.length, armed);
+});
+
 test('a pack upload at the wrong offset answers 409 with the size held', async (t) => {
   const f = await fixture(t);
   await f.runner.submit(f.body('j1'));
@@ -275,6 +287,68 @@ test('a job past its timeout has its process group killed and ends as timeout', 
   assert.deepStrictEqual([done.reason, done.exit, done.record.outcome], ['timeout', { code: null, signal: 'SIGKILL' }, 'unknown']);
 });
 
+test('a cancel kill still in flight holds the next job until it lands', async (t) => {
+  const seen = [];
+  const children = {};
+  let release = null;
+  const f = await fixture(t, {
+    onSpawn: (c) => { seen.push(['spawn', c.job]); children[c.job] = c.child; if (c.job !== 'first') c.child.finish(0); },
+    wrap: (base) => ({
+      ...base,
+      kill: (child, jobDir) => {
+        seen.push(['kill', path.basename(jobDir)]);
+        return new Promise((resolve) => { release = () => { seen.push(['kill-landed', path.basename(jobDir)]); resolve(); }; });
+      },
+      reap: (jobDir) => { seen.push(['reap', path.basename(jobDir)]); return base.reap(jobDir); },
+    }),
+  });
+  await f.upload(f.body('first', 'hand'));
+  await waitState(f.runner, 'first', 'running');
+  assert.strictEqual((await f.runner.submit(f.body('next', 'hand'))).state, 'queued');
+  await f.runner.cancel('first');
+  children.first.finish(null, 'SIGKILL');
+  const first = await waitState(f.runner, 'first', 'done');
+  assert.strictEqual(first.reason, 'cancelled', 'ENTER: the first job ended cancelled');
+  for (let i = 0; i < 20; i += 1) await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(seen, [['spawn', 'first'], ['kill', 'first']]);
+  assert.strictEqual((await f.runner.poll(['next'])).jobs[0].state, 'queued');
+  release();
+  await waitState(f.runner, 'next', 'done');
+  assert.deepStrictEqual(seen, [['spawn', 'first'], ['kill', 'first'], ['kill-landed', 'first'], ['reap', 'first'], ['spawn', 'next'], ['reap', 'next']]);
+});
+
+test('a cancel after the timeout kill sends no second kill and the next job waits for the first one to land', async (t) => {
+  const seen = [];
+  const children = {};
+  let release = null;
+  const f = await fixture(t, {
+    onSpawn: (c) => { seen.push(['spawn', c.job]); children[c.job] = c.child; if (c.job !== 'first') c.child.finish(0); },
+    wrap: (base) => ({
+      ...base,
+      kill: (child, jobDir) => {
+        const n = seen.filter((s) => s[0] === 'kill').length + 1;
+        seen.push(['kill', path.basename(jobDir)]);
+        return new Promise((resolve) => { if (n === 1) release = () => { seen.push(['kill-landed', path.basename(jobDir)]); resolve(); }; else resolve(); });
+      },
+      reap: (jobDir) => { seen.push(['reap', path.basename(jobDir)]); return base.reap(jobDir); },
+    }),
+  });
+  await f.upload(f.body('first', 'hand', { timeoutMs: 5000 }));
+  await waitState(f.runner, 'first', 'running');
+  assert.strictEqual((await f.runner.submit(f.body('next', 'hand'))).state, 'queued');
+  const timer = f.pending.find((h) => h.ms === 5000);
+  assert.ok(timer, 'ENTER: the run armed its 5000 ms timer');
+  timer.fn();
+  await f.runner.cancel('first');
+  children.first.finish(null, 'SIGKILL');
+  await waitState(f.runner, 'first', 'done');
+  for (let i = 0; i < 20; i += 1) await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(seen, [['spawn', 'first'], ['kill', 'first']]);
+  release();
+  await waitState(f.runner, 'next', 'done');
+  assert.deepStrictEqual(seen, [['spawn', 'first'], ['kill', 'first'], ['kill-landed', 'first'], ['reap', 'first'], ['spawn', 'next'], ['reap', 'next']]);
+});
+
 test('the test process gets an environment built from empty: no parent token reaches it', async (t) => {
   const planted = { CLODEX_SUITE_TOKEN: 'planted-suite', CLAUDE_CODE_OAUTH_TOKEN: 'planted-oauth', CLODEX_REMOTE_TOKEN: 'planted-remote' };
   const saved = Object.fromEntries(Object.keys(planted).map((k) => [k, process.env[k]]));
@@ -420,4 +494,15 @@ test('clodex-suite-exec refuses every path outside its work root', (t) => {
   const enter = run('reap', inside);
   assert.strictEqual(enter.status, 0, `ENTER: an inside job is reaped (${enter.stderr})`);
   assert.strictEqual(fs.existsSync(inside), false);
+});
+
+test('clodex-suite-exec seal and reap kill the suite user with one kill -1 issued as that user, never pkill', () => {
+  const src = fs.readFileSync(HELPER, 'utf8');
+  const fn = /^kill_suite\(\) \{\n([^}]*)\n\}$/m.exec(src);
+  assert.ok(fn, 'ENTER: the helper defines kill_suite');
+  assert.strictEqual(fn[1].trim(), 'setpriv --reuid="$SUITE_USER" --regid="$SUITE_USER" --clear-groups kill -KILL -1 || true');
+  const arm = (verb) => new RegExp(`^  ${verb}\\)\\n([\\s\\S]*?)\\n    ;;$`, 'm').exec(src)[1];
+  const kills = ['seal', 'reap'].map((verb) => [verb, arm(verb).split('\n').map((l) => l.trim()).filter((l) => /kill/.test(l))]);
+  assert.deepStrictEqual(kills, [['seal', ['kill_suite']], ['reap', ['kill_suite']]]);
+  assert.strictEqual(/\bpkill\b/.test(src), false);
 });
