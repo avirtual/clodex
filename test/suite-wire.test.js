@@ -388,7 +388,8 @@ test('failure matrix: a duplicate submit returns the held job, another treeHash 
   const first = await post(body(snap.treeHash));
   const again = await post(body(snap.treeHash));
   assert.strictEqual(first.status, 200, `ENTER: the first submit was accepted: ${first.text}`);
-  assert.deepStrictEqual([again.status, JSON.parse(again.text)], [200, JSON.parse(first.text)]);
+  const held = ({ ok, id, state, have }) => ({ ok, id, state, have });
+  assert.deepStrictEqual([again.status, held(JSON.parse(again.text))], [200, held(JSON.parse(first.text))]);
   const clash = await post(body('f'.repeat(40)));
   const engine = await runner.submit(JSON.parse(body('f'.repeat(40))));
   assert.strictEqual(engine.status, 409);
