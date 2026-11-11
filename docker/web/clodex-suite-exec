@@ -66,7 +66,10 @@ shift
 case "$verb" in
   prepare)
     [ -d "$job" ] || die "no job directory $job"
-    chown -R "$SUITE_USER:$SUITE_USER" "$job"
+    for d in "$job/tree" "$job/home" "$job/tmp"; do
+      [ -d "$d" ] && [ ! -L "$d" ] || die "refusing $d: not a directory"
+    done
+    chown -R "$SUITE_USER:$SUITE_USER" "$job/tree" "$job/home" "$job/tmp"
     ;;
   run)
     envs=()
@@ -86,6 +89,8 @@ case "$verb" in
     [ $# -ge 1 ] || die "seal needs an entry"
     entry="$(entry_path "$1")"
     shift
+    pkill -KILL -u "$SUITE_USER" || true
+    [ -d "$job/tree" ] && [ ! -L "$job/tree" ] || die "refusing $job/tree: not a directory"
     owner="${SUDO_UID:-$(id -u)}:${SUDO_GID:-$(id -g)}"
     for rel in "$@"; do
       rel_path "$rel" "$job/tree"

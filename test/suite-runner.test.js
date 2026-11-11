@@ -25,7 +25,7 @@ function sha256(buf) {
   return crypto.createHash('sha256').update(buf).digest('hex');
 }
 
-async function fixture(t, { onSpawn, now, limits, kill } = {}) {
+async function fixture(t, { onSpawn, now, limits, kill, wrap } = {}) {
   const root = mkTmpRoot('suite-runner-');
   const repo = path.join(root, 'near');
   fs.mkdirSync(repo);
@@ -62,7 +62,8 @@ async function fixture(t, { onSpawn, now, limits, kill } = {}) {
     (onSpawn || ((c) => { c.child.stdout.write('TOTALS: 1 pass, 0 fail, 1 tests\n'); c.child.finish(0); }))(call);
     return child;
   };
-  const isolation = noneIsolation({ user: 'suite-test', kill: kill || ((pid, sig) => kills.push([pid, sig])) });
+  const base = noneIsolation({ user: 'suite-test', kill: kill || ((pid, sig) => kills.push([pid, sig])) });
+  const isolation = wrap ? wrap(base) : base;
   const make = () => createSuiteRunner({ root, work, isolation, limits, spawn, now, timers });
   const runner = make();
   t.after(() => {
@@ -175,6 +176,86 @@ test('a restarted runner recovers each state as the table says', async (t) => {
   const got = (await runner.poll(rows.map((r) => r.id))).jobs.map((j) => [j.id, j.state, j.reason]);
   assert.deepStrictEqual(got, rows.map((r) => [r.id, ...r.want]));
   assert.strictEqual(fs.existsSync(path.join(store, 'r-await')), false);
+});
+
+test('cancelling a queued job reaps and kills nothing while another job runs', async (t) => {
+  const seen = [];
+  let blocker = null;
+  const f = await fixture(t, {
+    onSpawn: (c) => { if (c.job === 'blocker') blocker = c.child; else c.child.finish(0); },
+    wrap: (base) => ({
+      ...base,
+      kill: (child, jobDir) => { seen.push(['kill', path.basename(jobDir)]); return base.kill(child, jobDir); },
+      reap: (jobDir) => { seen.push(['reap', path.basename(jobDir)]); return base.reap(jobDir); },
+    }),
+  });
+  await f.upload(f.body('blocker', 'hand'));
+  await waitState(f.runner, 'blocker', 'running');
+  assert.strictEqual((await f.runner.submit(f.body('waiting', 'hand'))).state, 'queued');
+  await f.runner.cancel('waiting');
+  const states = (await f.runner.poll(['blocker', 'waiting'])).jobs.map((j) => [j.id, j.state, j.reason]);
+  assert.deepStrictEqual(states, [['blocker', 'running', null], ['waiting', 'done', 'cancelled']]);
+  assert.deepStrictEqual(seen, []);
+  blocker.finish(0);
+  await waitState(f.runner, 'blocker', 'done');
+});
+
+test('a cancel that lands while submit or commit keeps the mirror refs leaves the job cancelled and unrun', async (t) => {
+  let armed = null;
+  let runner = null;
+  const f = await fixture(t, {
+    now: () => {
+      if (armed && /\bat keep \(/.test(new Error().stack)) { const id = armed; armed = null; runner.cancel(id); }
+      return Date.now();
+    },
+  });
+  runner = f.runner;
+  const viaCommit = await f.runner.submit(f.body('via-commit'));
+  assert.strictEqual(viaCommit.state, 'awaiting-pack', 'ENTER: the first job needs a pack');
+  const pack = await buildPack(f.snap, { have: viaCommit.have });
+  assert.strictEqual((await f.runner.putPack('via-commit', 0, pack)).ok, true);
+  armed = 'via-commit';
+  const committed = await f.runner.commit('via-commit', { bytes: pack.length, sha256: sha256(pack) });
+  armed = 'via-submit';
+  const submitted = await f.runner.submit(f.body('via-submit'));
+  assert.deepStrictEqual([committed, submitted], [
+    { ok: false, status: 409, error: 'job is done', state: 'done' },
+    { ok: false, status: 409, error: 'job is done', state: 'done' },
+  ]);
+  const states = (await f.runner.poll(['via-commit', 'via-submit'])).jobs.map((j) => [j.id, j.state, j.reason]);
+  assert.deepStrictEqual(states, [['via-commit', 'done', 'cancelled'], ['via-submit', 'done', 'cancelled']]);
+  assert.deepStrictEqual(f.calls.map((c) => c.job), []);
+});
+
+test('start() runs nothing until the restart reaps have finished', async (t) => {
+  const reaps = [];
+  let gate = null;
+  const f = await fixture(t, {
+    wrap: (base) => ({ ...base, reap: (jobDir) => { reaps.push(path.basename(jobDir)); return gate ? gate.then(() => base.reap(jobDir)) : base.reap(jobDir); } }),
+  });
+  await f.upload(f.body('first'));
+  await waitState(f.runner, 'first', 'done');
+  f.runner.close();
+  const store = path.join(f.root, 'suite-runner', 'jobs');
+  const stored = (id, state, seq) => {
+    fs.mkdirSync(path.join(store, id), { recursive: true });
+    fs.writeFileSync(path.join(store, id, 'job.json'), JSON.stringify({ ...f.body(id), state, reason: null, exit: null, seq, queuedAt: 1, startedAt: state === 'running' ? 2 : null, endedAt: null, lastSeen: Date.now(), out: { stdoutBytes: 0, stderrBytes: 0, truncated: false } }));
+  };
+  stored('was-running', 'running', 50);
+  stored('next', 'queued', 51);
+  let release;
+  gate = new Promise((r) => { release = r; });
+  reaps.length = 0;
+  const runner = f.make();
+  t.after(() => runner.close());
+  runner.start();
+  for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(reaps, ['was-running'], 'ENTER: the restart reap is in flight');
+  const held = (await runner.poll(['was-running', 'next'])).jobs.map((j) => [j.id, j.state, j.reason]);
+  assert.deepStrictEqual(held, [['was-running', 'done', 'runner-restart'], ['next', 'queued', null]]);
+  release();
+  await waitState(runner, 'next', 'done');
+  assert.deepStrictEqual(f.calls.map((c) => c.job), ['first', 'next']);
 });
 
 test('a job past its timeout has its process group killed and ends as timeout', async (t) => {
@@ -309,26 +390,33 @@ test('clodex-suite-exec refuses every path outside its work root', (t) => {
   const root = mkTmpRoot('suite-exec-');
   const work = path.join(fs.realpathSync(root), 'work');
   const inside = path.join(work, 'jobs', 'job1');
+  const linked = path.join(work, 'jobs', 'job2');
   const entry = path.join(work, 'deps', 'a'.repeat(40), 'b'.repeat(64));
-  fs.mkdirSync(inside, { recursive: true });
+  fs.mkdirSync(path.join(inside, 'tree'), { recursive: true });
+  fs.mkdirSync(linked, { recursive: true });
   fs.mkdirSync(entry, { recursive: true });
   const outside = path.join(fs.realpathSync(root), 'elsewhere');
-  fs.mkdirSync(outside);
+  fs.mkdirSync(path.join(outside, 'node_modules'), { recursive: true });
+  fs.writeFileSync(path.join(outside, 'node_modules', 'keep.txt'), 'kept\n');
+  fs.symlinkSync(outside, path.join(linked, 'tree'));
   const env = { PATH: process.env.PATH, CLODEX_SUITE_WORK: work, CLODEX_SUITE_USER: 'clodex-suite-test-nouser' };
   const run = (...args) => spawnSync('bash', [HELPER, ...args], { env, encoding: 'utf8' });
   const rows = [
     ['prepare', outside],
-    ['prepare', path.join(work, 'jobs', '..', '..', 'elsewhere')],
+    ['prepare', `${work}/jobs/../../elsewhere`],
     ['run', outside, '--', '/bin/echo', 'hi'],
     ['seal', outside, entry, 'node_modules'],
     ['seal', inside, outside, 'node_modules'],
     ['seal', inside, entry, '../escape'],
+    ['seal', linked, entry, 'node_modules'],
     ['reap', outside],
     ['reap', path.join(work, 'jobs')],
   ];
   const got = rows.map((args) => { const r = run(...args); return [args[0], r.status, /refusing/.test(r.stderr)]; });
   assert.deepStrictEqual(got, rows.map((args) => [args[0], 2, true]));
   assert.strictEqual(fs.existsSync(outside), true);
+  assert.strictEqual(fs.lstatSync(path.join(outside, 'node_modules')).isDirectory(), true);
+  assert.deepStrictEqual(fs.readdirSync(entry), []);
   const enter = run('reap', inside);
   assert.strictEqual(enter.status, 0, `ENTER: an inside job is reaped (${enter.stderr})`);
   assert.strictEqual(fs.existsSync(inside), false);

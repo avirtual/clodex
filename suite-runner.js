@@ -243,6 +243,8 @@ function createSuiteRunner({
   let maintenance = null;
   let interval = null;
   let closed = false;
+  let recovering = true;
+  let pumpAfterRecovery = false;
   let isoState = null;
   let identity = null;
 
@@ -294,6 +296,7 @@ function createSuiteRunner({
   }
 
   function recover() {
+    const reaps = [];
     for (const id of fs.readdirSync(storeDir)) {
       const job = readJson(path.join(jobStore(id), 'job.json'), null);
       if (!job || job.id !== id) { forceRemove(jobStore(id)); continue; }
@@ -304,9 +307,10 @@ function createSuiteRunner({
       if (job.state === 'setup' || job.state === 'running') {
         finishRecord(job, { reason: 'runner-restart', exit: null });
         save(job);
-        Promise.resolve().then(() => isolation.reap(jobWork(id))).catch((e) => log(`suite-runner: reap ${id} after restart failed: ${e.message}`));
+        reaps.push(Promise.resolve().then(() => isolation.reap(jobWork(id))).catch((e) => log(`suite-runner: reap ${id} after restart failed: ${e.message}`)));
       }
     }
+    return Promise.all(reaps);
   }
 
   function finishRecord(job, { reason, exit }) {
@@ -335,6 +339,7 @@ function createSuiteRunner({
     finishRecord(job, outcome);
     save(job);
     notify(job.id);
+    if (job.startedAt == null) return;
     try { await isolation.reap(jobWork(job.id)); } catch (e) { log(`suite-runner: reap ${job.id} failed: ${e.message}`); }
   }
 
@@ -347,6 +352,7 @@ function createSuiteRunner({
   }
 
   function pump() {
+    if (recovering) { pumpAfterRecovery = true; return; }
     if (closed || active || maintenance) return;
     const next = queue()[0];
     if (!next) return;
@@ -600,6 +606,7 @@ function createSuiteRunner({
     if (!body.full && await snapshot.mirrorHolds(mirror, [job.snap, job.indexTree, ...Object.values(job.refs)])) {
       if (job.state !== 'awaiting-pack') return { ok: true, id: job.id, state: job.state };
       await keep(job, mirror);
+      if (job.state !== 'awaiting-pack') return fail(409, `job is ${job.state}`, { state: job.state });
       return enqueue(job);
     }
     job.have = body.full ? [] : await snapshot.mirrorHave(mirror, (body.candidates || []).map(String));
@@ -647,6 +654,7 @@ function createSuiteRunner({
       return fail(400, `bad pack: ${res.error || res.reason}`);
     }
     await keep(job, mirror);
+    if (job.state !== 'awaiting-pack') return fail(409, `job is ${job.state}`, { state: job.state });
     touchCache(path.join('mirrors', `${job.repoKey}.git`));
     forceRemove(packFile(id));
     return enqueue(job);
@@ -742,7 +750,7 @@ function createSuiteRunner({
     for (const w of [...waiters]) w.wake();
   }
 
-  recover();
+  recover().then(() => { recovering = false; if (pumpAfterRecovery) pump(); });
 
   return { info, submit, putPack, commit, poll, output, cancel, tick, start, close };
 }
