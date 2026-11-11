@@ -358,6 +358,15 @@ bundle), whose packaged form is the Docker image under
   worktree:<branch>]`, and the delete flow's awaited `removeWorktree`.
   `execFile`, never a shell; in SCANNED_MODULES. Its ticket-seat consumers are
   under *Teams and tickets*.
+- **suite-snapshot.js** — exact-tree transfer for the remote test runner.
+  `snapshotTree` mints a commit of the working tree (HEAD, tracked changes,
+  untracked non-ignored files) through a temporary object store and index, so
+  the source repo gains no objects, refs or index writes; `buildPack` packs it
+  minus the runner's `have`; `ingestPack` indexes it into a per-`repoKey` bare
+  mirror and answers `incomplete` when prerequisites are missing; `materialize`
+  checks it out with the hand's HEAD and index and proves the tree hash with
+  `treeHashOf`. Shells git through `git-worktree.js`'s `git`; no caller yet; in
+  SCANNED_MODULES.
 - **git-safe.js** — `safeGitArgs` prefixes app-process git calls in a seat cwd
   with `-c` overrides for core.fsmonitor, core.hooksPath (/dev/null by
   default), diff.external, core.sshCommand (`ssh` by default) and core.pager,
