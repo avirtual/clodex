@@ -180,7 +180,7 @@ function parseIntentLegacy(rawLine) {
     };
   }
 
-  const teamMatch = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|bind|unbind|roster|template-save|template-rm|prompt-save|prompt-rm|sandbox|trunk|done|worktrees|hands)\b([^\]]*)\]\s*(.*)/s);
+  const teamMatch = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|bind|unbind|roster|template-save|template-rm|prompt-save|prompt-rm|sandbox|trunk|done|worktrees|hands|runner)\b([^\]]*)\]\s*(.*)/s);
   if (teamMatch) {
     const sub = teamMatch[1];
     const argStr = teamMatch[2];
@@ -204,6 +204,11 @@ function parseIntentLegacy(rawLine) {
     if (sub === 'done') return { type: 'team', sub, mode: positional[0] || null, body: '' };
     if (sub === 'worktrees') return { type: 'team', sub, value: positional[0] || null, body: '' };
     if (sub === 'hands') return { type: 'team', sub, value: positional[0] || null, body: '' };
+    if (sub === 'runner') {
+      const handsM = argStr.match(/\bhands:(\S+)/);
+      const gateM = argStr.match(/\bgate:(\S+)/);
+      return { type: 'team', sub, value: positional[0] || null, hands: handsM ? handsM[1] : null, gate: gateM ? gateM[1] : null, body: '' };
+    }
     if (sub === 'role-rename') return { type: 'team', sub, name: positional[0] || null, to: positional[1] || null, body: '' };
     // t701's gather, landed here in the same commit as parseTeam's — the same
     // lockstep rule the task copy above states, and the reason it is stated:
