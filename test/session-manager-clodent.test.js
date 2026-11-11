@@ -144,6 +144,9 @@ function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entrie
     clearTimeout(s._bootSettleTimer);
     clearTimeout(s._bootNudgeTimer);
     clearTimeout(s._replayFallbackTimer);
+    try { if (s.sentinel) s.sentinel.stop(); } catch {}
+    s._dead = true;
+    for (const k of ['_injectHoldTimer', '_parkCapTimer', '_parkedDrainFallbackTimer', '_reviewStartTimer', '_streamInitTimer', '_streamHoldTimer', '_resultHold']) clearTimeout(s[k]);
     m.sessions.delete(name);
   };
   const create = (name, { type = 'clodent', extraArgs = [], resumeId = null, fork = false, sessionEnv = { ANTHROPIC_API_KEY: 'sk-test' }, effort = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], shellDeny = null, protectCredentials = null, noWire = false, io = 'pty' } = {}) => m.create(
