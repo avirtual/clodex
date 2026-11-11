@@ -1056,6 +1056,10 @@ makes a repo and a first commit inside whatever directory it is handed.
 `hasCommit` returns metadata and would fit the lent set on shape alone — it is
 withheld because the classification is core's end to end and nothing has asked
 for the probe on its own. Ask, with the use case.
+
+`git` is the module's raw runner: it runs any git subcommand in any directory,
+so it is the mutation rule with no bound at all. Withheld.
+
 Every function the module exports is either lent or explicitly withheld, and the
 partition is test-pinned — a new export fails the suite until it is classified,
 so it can never arrive here by default.
