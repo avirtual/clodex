@@ -8,7 +8,7 @@ const { execFileSync } = require('node:child_process');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { snapshotTree, releaseSnapshot, buildPack, ingestPack, materialize, treeHashOf } = require('../suite-snapshot');
 
-const ENV = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')));
+const ENV = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_'))), GIT_AUTHOR_DATE: '2026-01-02T03:04:05Z', GIT_COMMITTER_DATE: '2026-01-02T03:04:05Z' };
 const IDENT = ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgSign=false', '-c', 'core.hooksPath=/dev/null', '-c', 'core.autocrlf=false'];
 
 function g(dir, ...args) {
@@ -175,7 +175,7 @@ test('the same tree snapshotted twice gives the same id', async () => {
   releaseSnapshot(first);
   const second = await snapshotTree(repo);
   releaseSnapshot(second);
-  assert.match(first.snap, /^[0-9a-f]{40}$/);
+  assert.strictEqual(first.snap, 'b662f690a302a59c67704aedf068d18a1cc5f1fd');
   assert.strictEqual(second.snap, first.snap);
   assert.strictEqual(second.treeHash, first.treeHash);
 });
