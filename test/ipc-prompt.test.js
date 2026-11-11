@@ -582,14 +582,15 @@ test('the profile row renders only when the caller says the seat is a Claude ass
   assert.ok(!buildIpcPrompt(null, undefined, undefined, { profileSeat: false, teamLead: true }).includes(ROW), 'nor a lead that is not a profile seat');
 });
 
-test('t1407: the lead variant is IPC_PROMPT plus the nine team rows, first role-add and last done', () => {
+test('t1407: the lead variant is IPC_PROMPT plus the ten team rows, first role-add and last runner', () => {
   const lead = leadPrompt(null);
   const rows = lead.split('\n').filter((l) => l.startsWith('  [agent:team '));
-  assert.strictEqual(rows.length, 9, 'role-add, template-save, prompt-save, template-rm, prompt-rm, sandbox, bind, trunk, done');
+  assert.strictEqual(rows.length, 10, 'role-add, template-save, prompt-save, template-rm, prompt-rm, sandbox, bind, trunk, done, runner');
   assert.match(rows[0], /^ {2}\[agent:team role-add <role> \[prompt:<stem>\] \[template:<stem>\]/);
   assert.match(rows[6], /^ {2}\[agent:team bind <seat> <role>\] {2}Put an existing seat on your team's roster/);
   assert.match(rows[7], /^ {2}\[agent:team trunk <branch>\] {6}Set the branch accepted tickets merge into/);
   assert.match(rows[8], /^ {2}\[agent:team done code\|report\] {4}How tickets filed from now on close: code \(default\) = branch/);
+  assert.match(rows[9], /^ {2}\[agent:team runner <peer>\|off\] {3}Name a peered node with the suite capability/);
   const permitRows = lead.split('\n').filter((l) => l.startsWith('  [agent:permit '));
   assert.deepStrictEqual(permitRows.map((l) => l.split(/\s{2,}/)[1]), ['[agent:permit <seat> <id> allow]']);
   assert.strictEqual(lead.split('\n').filter((l) => !l.startsWith('  [agent:team ') && !l.startsWith('  [agent:permit ')).join('\n'), IPC_PROMPT,
@@ -601,15 +602,15 @@ test('t1407: the team rows sit after team-create and before plugin rows, where t
   const plugin = '  [agent:gh pr]  a plugin row';
   const lines = leadPrompt(['team-create', ...ALL_GATEABLE], [plugin]).split('\n');
   const first = lines.findIndex((l) => l.startsWith('  [agent:team role-add '));
-  const last = lines.findIndex((l) => l.startsWith('  [agent:team done '));
+  const last = lines.findIndex((l) => l.startsWith('  [agent:team runner '));
   assert.ok(lines[first - 1].startsWith('  [agent:team create <name> root:<abs-path>'), 'team-create is directly above');
-  assert.strictEqual(last - first, 8, 'the nine rows are contiguous');
+  assert.strictEqual(last - first, 9, 'the ten rows are contiguous');
   assert.strictEqual(lines[last + 1], plugin, 'the plugin row is directly below');
   const plain = leadPrompt(null).split('\n');
   const at = plain.findIndex((l) => l.startsWith('  [agent:team role-add '));
   assert.ok(plain[at - 1].startsWith('  [agent:file open PATH]'), 'with no privileged grant the file rows are directly above');
-  assert.strictEqual(plain[at + 9], '', 'and the grammar block ends at done');
-  assert.ok(plain[at + 10].startsWith('Replies arrive later'), 'before the replies line');
+  assert.strictEqual(plain[at + 10], '', 'and the grammar block ends at runner');
+  assert.ok(plain[at + 11].startsWith('Replies arrive later'), 'before the replies line');
 });
 
 // t798. The line is the ONLY description of the create a granted seat reads, so

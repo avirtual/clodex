@@ -457,6 +457,7 @@ const ADVERSARIAL = [
   '[agent:team done report]', '[agent:team done]', '[agent:team donex]',
   '[agent:team worktrees in-root]', '[agent:team worktrees]', '[agent:team worktreesx]',
   '[agent:team hands 3]', '[agent:team hands off]', '[agent:team hands]', '[agent:team handsx]',
+  '[agent:team runner runner-1]', '[agent:team runner off]', '[agent:team runner hands:full]', '[agent:team runner gate:on]', '[agent:team runner]', '[agent:team runnerx]',
   '[agent:team template-save hand-seat] {"type":"claude"}', '[agent:team template-save]',
   '[agent:team template-rm hand-seat]', '[agent:team template-rmx hand-seat]',
   '[agent:team prompt-save system lead] body text', '[agent:team prompt-save append lead] body',

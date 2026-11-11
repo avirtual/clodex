@@ -174,7 +174,7 @@ const GRAMMAR_LINES = [
   [agent:team bind <seat> <role>]  Put an existing seat on your team's roster (needs team-create; refused while another team holds it); its grants do not change. [agent:team unbind <seat>] drops it; [agent:team roster] lists rows.
   [agent:team trunk <branch>]      Set the branch accepted tickets merge into (the team's trunk; must exist in the root repo). Bare [agent:team trunk] shows the effective value and whether it is set or derived from the repo's default branch (origin/HEAD, else main or master).
   [agent:team done code|report]    How tickets filed from now on close: code (default) = branch, suite, diff review, merge; report = cold review of the snapshotted task-dir artifacts (the report text counts), no suite, no merge. Bare shows it; done:report on create sets it.
-  [agent:team runner <peer>|off]   Name a peered node as the team's test runner (stored in team.json; refused when it is online without the suite capability) or remove it; hands:off|full|all sets which hand runs will go there. Bare shows the peer, the mode and whether the runner is reachable.` },
+  [agent:team runner <peer>|off]   Name a peered node with the suite capability as the team's test runner, or remove it; hands:off|full|all sets which hand runs go there. Bare shows it and whether it is reachable.` },
 ];
 
 const REPLIES_LINE = `Replies arrive later as separate \`[agent:from SENDER]\` messages in your input; answer one with [agent:dm SENDER]. A dm line ending in (no reply path) has no route back — the sender is not reachable or your dm intent is off — so do not dm it.`;
