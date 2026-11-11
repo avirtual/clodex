@@ -6789,18 +6789,18 @@ for (const [label, opts, kind] of [['verify', {}, 'verify'], ['post-merge', { me
 
 test('t2254: a run killed by the suite timeout gets its end record from the loop, under the id it handed the runner', async () => {
   const repo = mkRepo();
-  const f = mkLoop({ repo, suite: 'green', suiteTimeoutMs: 200 });
+  const f = mkLoop({ repo, suite: 'green', suiteTimeoutMs: 3000 });
   const probe = pathReal.join(repo.dir, 'suite-env.json');
   fsReal.writeFileSync(pathReal.join(repo.dir, 'wt', 'scripts', 'run-tests.js'),
     SUITE_ENV_PROBE(probe, 'setTimeout(() => process.exit(0), 60000);\n'));
   const r = await f.m._runTicketSuite(f.team, f.one());
-  assert.match(String(r.error), /did not finish within 200ms/, 'ENTER: the timeout arm killed the run');
+  assert.match(String(r.error), /did not finish within 3000ms/, 'ENTER: the timeout arm killed the run');
   const id = JSON.parse(fsReal.readFileSync(probe, 'utf8')).CLODEX_SUITE_RUN_ID;
   const lines = fsReal.readFileSync(pathReal.join(f.home, 'logs', 'suite-runs.jsonl'), 'utf8').split('\n').filter(Boolean);
   assert.strictEqual(lines.length, 1);
   const rec = JSON.parse(lines[0]);
   assert.match(rec.endedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
-  assert.ok(Number.isInteger(rec.durationMs) && rec.durationMs >= 200, `durationMs covers the wait: ${rec.durationMs}`);
+  assert.ok(Number.isInteger(rec.durationMs) && rec.durationMs >= 3000, `durationMs covers the wait: ${rec.durationMs}`);
   assert.deepStrictEqual({ ...rec, endedAt: 'x', durationMs: 'x' }, {
     id, phase: 'end', outcome: 'timeout', pass: null, fail: null, tests: null, endedAt: 'x', durationMs: 'x',
   });
