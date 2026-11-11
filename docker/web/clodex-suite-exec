@@ -1,0 +1,110 @@
+#!/bin/bash
+set -euo pipefail
+
+WORK="${CLODEX_SUITE_WORK:-/var/lib/clodex-suite}"
+SUITE_USER="${CLODEX_SUITE_USER:-clodex-suite}"
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+die() { echo "clodex-suite-exec: $*" >&2; exit 2; }
+
+[ -d "$WORK" ] || die "work root $WORK does not exist"
+WORK="$(cd "$WORK" && pwd -P)"
+
+no_dots() {
+  case "/$1/" in
+    */../*|*/./*|*//*) return 1 ;;
+  esac
+  return 0
+}
+
+job_path() {
+  local p="$1" name
+  no_dots "$p" || die "refusing $p: not a plain path"
+  case "$p" in
+    "$WORK"/jobs/*) ;;
+    *) die "refusing $p: outside $WORK/jobs" ;;
+  esac
+  name="${p#"$WORK"/jobs/}"
+  [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$ ]] || die "refusing $p: not a job directory"
+  [ ! -L "$p" ] || die "refusing $p: a symlink"
+  printf '%s' "$p"
+}
+
+entry_path() {
+  local p="$1" rest
+  no_dots "$p" || die "refusing $p: not a plain path"
+  case "$p" in
+    "$WORK"/deps/*/*) ;;
+    *) die "refusing $p: outside $WORK/deps" ;;
+  esac
+  rest="${p#"$WORK"/deps/}"
+  [[ "$rest" =~ ^[0-9a-f]{40,64}/[0-9a-f]{64}$ ]] || die "refusing $p: not a deps entry"
+  [ -d "$p" ] && [ ! -L "$p" ] || die "refusing $p: not a directory"
+  printf '%s' "$p"
+}
+
+rel_path() {
+  local rel="$1" base="$2" cur
+  no_dots "$rel" || die "refusing $rel: not a plain relative path"
+  case "$rel" in
+    /*|-*|'') die "refusing $rel: not a relative path" ;;
+  esac
+  cur="$base"
+  IFS=/ read -ra parts <<< "$rel"
+  for part in "${parts[@]}"; do
+    cur="$cur/$part"
+    [ ! -L "$cur" ] || die "refusing $rel: $cur is a symlink"
+  done
+}
+
+verb="${1:-}"
+[ $# -ge 2 ] || die "usage: clodex-suite-exec prepare|run|seal|reap <job> ..."
+shift
+job="$(job_path "$1")"
+shift
+
+case "$verb" in
+  prepare)
+    [ -d "$job" ] || die "no job directory $job"
+    chown -R "$SUITE_USER:$SUITE_USER" "$job"
+    ;;
+  run)
+    envs=()
+    while [ $# -gt 0 ] && [ "$1" != "--" ]; do
+      [[ "$1" =~ ^[A-Z_][A-Z0-9_]*= ]] || die "refusing env entry $1"
+      envs+=("$1")
+      shift
+    done
+    [ "${1:-}" = "--" ] || die "run needs -- before the command"
+    shift
+    [ $# -ge 1 ] || die "run needs a command"
+    cd "$job/tree"
+    exec setpriv --reuid="$SUITE_USER" --regid="$SUITE_USER" --clear-groups --no-new-privs \
+      env -i ${envs[@]+"${envs[@]}"} "$@"
+    ;;
+  seal)
+    [ $# -ge 1 ] || die "seal needs an entry"
+    entry="$(entry_path "$1")"
+    shift
+    owner="${SUDO_UID:-$(id -u)}:${SUDO_GID:-$(id -g)}"
+    for rel in "$@"; do
+      rel_path "$rel" "$job/tree"
+      rel_path "$rel" "$entry"
+      src="$job/tree/$rel"
+      [ -e "$src" ] || continue
+      mkdir -p "$(dirname "$entry/$rel")"
+      mv "$src" "$entry/$rel"
+      ln -s "$entry/$rel" "$src"
+      chown -h "$SUITE_USER:$SUITE_USER" "$src"
+    done
+    chown -R "$owner" "$entry"
+    chmod -R a-w,a+rX "$entry"
+    ;;
+  reap)
+    pkill -KILL -u "$SUITE_USER" || true
+    rm -rf "$job"
+    ;;
+  *)
+    die "unknown verb $verb"
+    ;;
+esac
