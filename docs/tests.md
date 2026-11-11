@@ -100,3 +100,7 @@ root's stale children by age. A new test needs no registration.
 ## Per-file durations of the last full run
 
 A full `scripts/run-tests.js` run writes `.test-durations.last.json` beside `.test-digest.last` (the repo root, or `CLODEX_TEST_LOCK_DIR`'s parent). `node scripts/run-tests.js --durations` prints the 25 slowest files from it without running tests.
+
+## Suite-run ledger
+
+`scripts/run-tests.js` appends two JSONL lines per run to `CLODEX_SUITE_LEDGER` when it is set (nothing when unset or empty), written once the lock is held: `{id, phase:"start", kind, scope, ticket, seat, tree, sha, dirty, pid, startedAt}` and `{id, phase:"end", outcome, pass, fail, tests, endedAt, durationMs}`. `kind`/`ticket`/`seat` come from `CLODEX_SUITE_KIND` (default `manual`), `CLODEX_SUITE_TICKET`, `CLODEX_SUITE_SEAT`; `id` from `CLODEX_SUITE_RUN_ID` or a fresh UUID; `outcome` is `pass`, `fail` or `no-summary`. A killed run leaves a start with no end. Over 5 MB at start the file is renamed to `<name>.1`. `clodex-run-tests.js` sets kind `hand` and the seat from `CLODEX_SEAT`; `_runTicketSuite` sets `verify` or `post-merge`, the ticket id and the run id, and writes the `outcome:"timeout"` end itself when it kills the run. Both write `<clodex home>/logs/suite-runs.jsonl`. The runner scrubs every `CLODEX_SUITE_*` key from the `node --test` env, so fixtures never write the real ledger.
