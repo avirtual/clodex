@@ -182,3 +182,14 @@ test('ledger: the digest script hands the runner kind hand, the seat and the led
     CLODEX_SUITE_SEAT: 'hand-7',
   });
 });
+
+test('ledger: the runner scrubs CLODEX_SUITE_* from the test files it runs, so fixtures cannot write the real ledger', () => {
+  const { root } = mkRunnerRoot("const { test } = require('node:test');\n"
+    + "test('env', () => { const k = Object.keys(process.env).filter((x) => x.startsWith('CLODEX_SUITE_')); if (k.length) throw new Error(k.join(',')); });\n");
+  const file = path.join(root, 'ledger.jsonl');
+  const r = runRunner(root, {
+    CLODEX_SUITE_LEDGER: file, CLODEX_SUITE_RUN_ID: 'run-7', CLODEX_SUITE_KIND: 'hand', CLODEX_SUITE_SEAT: 's', CLODEX_SUITE_TICKET: 't',
+  });
+  assert.ok(fs.existsSync(file), 'ENTER: the outer run had the ledger set');
+  assert.strictEqual(r.totals, 'TOTALS: 1 pass, 0 fail, 1 tests', r.stdout);
+});
