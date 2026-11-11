@@ -1951,6 +1951,13 @@ const {
   persistWebWindows: !!seams.openRemoteWindow,
 });
 
+const { createSuiteClient } = require('./suite-client');
+const suiteClient = createSuiteClient({
+  getPeerManager: () => peerManager,
+  ledgerFile: path.join(REGISTRY_DIR, 'logs', 'suite-runs.jsonl'),
+  log: (m) => log.info('suite-client', m),
+});
+
 const { createSandboxManager } = require('./sandbox');
 const sandboxManager = enableSandbox ? createSandboxManager({
   getUserDataPath: () => userDataPath,
@@ -2482,7 +2489,7 @@ const toolCache = createToolCache({ whichBin });
     getPeerManager: () => peerManager,
     getTunnelManager: () => tunnelManager,
     getWebTunnelManager: () => webTunnelManager,
-    openPeerWeb, closePeerWeb, openRemoteWindow,
+    openPeerWeb, closePeerWeb, openRemoteWindow, suiteClient,
     getSandbox: (boxId) => (sandboxManager ? sandboxManager.get(boxId) : null),
     getSandboxManager: () => sandboxManager,
     enableDrawerServices,

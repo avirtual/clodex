@@ -279,6 +279,7 @@ const SCANNED_MODULES = [
   'stream-codec-muse.js',
   'suite-snapshot.js',
   'suite-runner.js',
+  'suite-client.js',
 ];
 
 // NOT scanned: anything under plugins/. This list answers "did an extraction
