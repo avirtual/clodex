@@ -6168,6 +6168,7 @@ function createTicketMethods(deps, shared) {
               CLODEX_SUITE_LEDGER: ledgerFile,
               CLODEX_SUITE_KIND: opts && opts.merge ? 'post-merge' : 'verify',
               CLODEX_SUITE_TICKET: String(ticket.id),
+              CLODEX_SUITE_SEAT: undefined,
               CLODEX_SUITE_RUN_ID: ledgerId,
             },
             stdio: ['ignore', 'pipe', 'pipe'],
