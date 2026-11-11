@@ -206,6 +206,27 @@ fixed once peers know it.
 container's engine*; peering makes the container a *peer of your desktop's
 engine*. Both can be used at once.)
 
+## Test runner user (runner mode)
+
+The image carries what a remote test runner needs, unused until runner mode is
+switched on: a `clodex-suite` system user with no sudo rights and no home, and a
+root-owned helper at `/usr/local/libexec/clodex-suite-exec` with four verbs —
+`prepare <job>` (hand the job tree to `clodex-suite`), `run <job> [KEY=VALUE…] --
+<argv>` (drop to `clodex-suite` with `setpriv --no-new-privs` and an environment
+built from empty), `seal <job> <entry> <path…>` (move a built dependency folder
+into the cache, make it read-only and owned by `clodex`, and link it back) and
+`reap <job>` (kill every `clodex-suite` process and remove the job tree). It
+refuses any path outside `/var/lib/clodex-suite`, the runner's work root (owned
+by `clodex`, mode 0711). `/data` and `/home/clodex` are mode 0700, so a test
+process cannot read the engine's tokens, logins or session state.
+`/etc/clodex/image.json` records the build's `CLODEX_VERSION` and
+`CLODEX_GIT_SHA` build args; set `CLODEX_IMAGE_DIGEST` when deploying so each
+result names the image it ran in.
+
+On a headless node outside this image the operator creates the user, installs
+the helper root-owned and adds one sudoers line:
+`<engine user> ALL=(root) NOPASSWD: /usr/local/libexec/clodex-suite-exec`.
+
 ## Operating notes
 
 - **Logs**: `docker compose -f docker/web/compose.yaml logs -f`.

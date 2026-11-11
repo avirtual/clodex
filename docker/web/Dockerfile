@@ -131,6 +131,18 @@ RUN mkdir -p /data /home/clodex/.clodex /home/clodex/.claude /home/clodex/.confi
  && chown clodex:clodex /app \
  && chown -R clodex:clodex /data /home/clodex
 
+ARG CLODEX_VERSION=unknown
+ARG CLODEX_GIT_SHA=unknown
+COPY docker/web/clodex-suite-exec /usr/local/libexec/clodex-suite-exec
+RUN useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin clodex-suite \
+ && chown root:root /usr/local/libexec/clodex-suite-exec \
+ && chmod 0755 /usr/local/libexec/clodex-suite-exec \
+ && mkdir -p /var/lib/clodex-suite \
+ && chown clodex:clodex /var/lib/clodex-suite \
+ && chmod 0711 /var/lib/clodex-suite \
+ && chmod 0700 /data /home/clodex \
+ && printf '{"version":"%s","rev":"%s"}\n' "$CLODEX_VERSION" "$CLODEX_GIT_SHA" > /etc/clodex/image.json
+
 ENV HOME=/home/clodex \
     SHELL=/bin/bash \
     TBH_CREDENTIAL_BACKEND=file \
