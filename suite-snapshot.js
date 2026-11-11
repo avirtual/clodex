@@ -75,8 +75,11 @@ async function snapshotTree(treeDir, { trunk, tmpRoot } = {}) {
   try {
     const hasIndex = fs.existsSync(index);
     if (hasIndex) {
-      fs.copyFileSync(index, path.join(tmpDir, 'index'));
-      fs.copyFileSync(index, path.join(tmpDir, 'index-staged'));
+      const st = fs.statSync(index);
+      for (const copy of ['index', 'index-staged']) {
+        fs.copyFileSync(index, path.join(tmpDir, copy));
+        fs.utimesSync(path.join(tmpDir, copy), st.atime, st.mtime);
+      }
     }
     const env = storeEnv(tmpDir, objects, 'index');
     const headTree = text(await run(top, ['rev-parse', `${head}^{tree}`]));
@@ -126,12 +129,17 @@ async function buildPack(snapshot, { have = [] } = {}) {
   return r.stdout;
 }
 
+function assertShas(shas) {
+  for (const sha of shas) if (!SHA_RE.test(String(sha))) throw new Error(`bad object id: ${sha}`);
+}
+
 function mirrorPath(workDir, repoKey) {
   if (!SHA_RE.test(String(repoKey))) throw new Error(`bad repoKey: ${repoKey}`);
   return path.join(workDir, 'mirrors', `${repoKey}.git`);
 }
 
 async function ingestPack(pack, { workDir, repoKey, snap, indexTree, refs = {}, maxInputSize = DEFAULT_PACK_MAX }) {
+  assertShas([snap, indexTree, ...Object.values(refs)]);
   const mirror = mirrorPath(workDir, repoKey);
   if (!fs.existsSync(mirror)) {
     fs.mkdirSync(path.dirname(mirror), { recursive: true });
@@ -139,7 +147,7 @@ async function ingestPack(pack, { workDir, repoKey, snap, indexTree, refs = {}, 
   }
   const indexed = await tryRun(mirror, [...RUNNER_CONFIG, 'index-pack', '--stdin', '--fsck-objects', `--max-input-size=${maxInputSize}`], { input: pack });
   if (!indexed.ok) return { ok: false, reason: 'bad-pack', mirror, error: String(indexed.stderr).trim() };
-  const tips = [snap, indexTree, ...Object.values(refs)].filter(Boolean);
+  const tips = [snap, indexTree, ...Object.values(refs)];
   const connected = await tryRun(mirror, [...RUNNER_CONFIG, 'rev-list', '--objects', '--quiet', ...tips]);
   if (!connected.ok) return { ok: false, reason: 'incomplete', mirror };
   return { ok: true, mirror };
@@ -169,6 +177,7 @@ async function treeHashOf(dir, { base = 'HEAD', tmpRoot } = {}) {
 }
 
 async function materialize({ mirror, dir, snap, treeHash, indexTree, head, branch = null, refs = {}, treeCap = DEFAULT_TREE_CAP, tmpRoot }) {
+  assertShas([snap, treeHash, indexTree, head, ...Object.values(refs)]);
   if (await treeSize(mirror, snap) > treeCap) return { ok: false, reason: 'too-large' };
   fs.mkdirSync(path.dirname(dir), { recursive: true });
   await run(path.dirname(dir), [...RUNNER_CONFIG, 'init', '-q', dir]);

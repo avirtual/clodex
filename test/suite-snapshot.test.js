@@ -73,6 +73,15 @@ const ROWS = [
     check: (d) => assert.strictEqual(fs.readFileSync(path.join(d, 'b.txt'), 'utf8'), 'bravo staged\n'),
   },
   {
+    name: 'staged then modified',
+    mutate: (r) => { write(r, 'b.txt', 'bravo staged\n'); g(r, 'add', 'b.txt'); write(r, 'b.txt', 'bravo worktree\n'); },
+    status: 'MM b.txt\n',
+    check: (d) => {
+      assert.strictEqual(fs.readFileSync(path.join(d, 'b.txt'), 'utf8'), 'bravo worktree\n');
+      assert.strictEqual(g(d, 'show', ':b.txt'), 'bravo staged\n');
+    },
+  },
+  {
     name: 'deleted file',
     mutate: (r) => fs.rmSync(path.join(r, 'c.txt')),
     status: ' D c.txt\n',
@@ -103,7 +112,7 @@ const ROWS = [
     name: 'exec bit',
     mutate: (r) => { write(r, 'run.sh', '#!/bin/sh\necho hi\n'); fs.chmodSync(path.join(r, 'run.sh'), 0o755); },
     status: '?? run.sh\n',
-    check: (d) => assert.strictEqual(fs.statSync(path.join(d, 'run.sh')).mode & 0o111, 0o111),
+    check: (d) => assert.strictEqual(fs.statSync(path.join(d, 'run.sh')).mode & 0o100, 0o100),
   },
   {
     name: 'CRLF content',
@@ -217,6 +226,47 @@ test('an incremental pack over a mirror that has the base ingests and round-trip
     assert.strictEqual(fs.readFileSync(path.join(dir, 'a.txt'), 'utf8'), 'alpha second job\n');
   } finally {
     releaseSnapshot(second);
+  }
+});
+
+test('a racily clean entry in the real index is re-read, not trusted from a copied index', async () => {
+  const { root, repo } = baseRepo();
+  g(repo, 'config', 'core.trustctime', 'false');
+  const T = new Date('2020-01-01T00:00:00Z');
+  const file = path.join(repo, 'a.txt');
+  write(repo, 'a.txt', 'aaaa\n');
+  fs.utimesSync(file, T, T);
+  g(repo, 'add', 'a.txt');
+  write(repo, 'a.txt', 'bbbb\n');
+  fs.utimesSync(file, T, T);
+  fs.utimesSync(path.join(repo, '.git', 'index'), T, T);
+  const snap = await snapshotTree(repo);
+  try {
+    const workDir = path.join(root, 'work');
+    const r = await ingestPack(await buildPack(snap), { workDir, repoKey: snap.repoKey, snap: snap.snap, indexTree: snap.indexTree, refs: snap.refs });
+    const dir = path.join(root, 'job', 'tree');
+    const done = await materialize({ mirror: r.mirror, dir, snap: snap.snap, treeHash: snap.treeHash, indexTree: snap.indexTree, head: snap.head, branch: snap.branch, refs: snap.refs });
+    assert.deepStrictEqual(done, { ok: true, dir });
+    assert.strictEqual(fs.readFileSync(path.join(dir, 'a.txt'), 'utf8'), 'bbbb\n');
+  } finally {
+    releaseSnapshot(snap);
+  }
+  assert.strictEqual(g(repo, 'status', '--porcelain'), ' M a.txt\n');
+});
+
+test('ingestPack and materialize refuse an object id that is not a sha', async () => {
+  const { root, repo } = baseRepo();
+  const snap = await snapshotTree(repo);
+  try {
+    const workDir = path.join(root, 'work');
+    const job = { workDir, repoKey: snap.repoKey, snap: snap.snap, indexTree: '--index-output=/tmp/x', refs: snap.refs };
+    await assert.rejects(ingestPack(Buffer.alloc(0), job), /bad object id: --index-output=\/tmp\/x/);
+    assert.strictEqual(fs.existsSync(path.join(workDir, 'mirrors')), false);
+    const far = { mirror: path.join(workDir, 'm.git'), dir: path.join(root, 'job', 'tree'), snap: snap.snap, treeHash: snap.treeHash, indexTree: snap.indexTree, head: snap.head, branch: snap.branch, refs: { master: '-q' } };
+    await assert.rejects(materialize(far), /bad object id: -q/);
+    assert.strictEqual(fs.existsSync(path.join(root, 'job')), false);
+  } finally {
+    releaseSnapshot(snap);
   }
 });
 
