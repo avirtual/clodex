@@ -6147,6 +6147,9 @@ function createTicketMethods(deps, shared) {
       // child) stays uncovered; `headEnd` below reports whether HEAD moved.
       out.startedAt = new Date().toISOString();
       out.head = await gitWorktree.currentBranch(cwd).catch(() => null);
+      const ledgerFile = typeof REGISTRY_DIR === 'string' && REGISTRY_DIR ? path.join(REGISTRY_DIR, 'logs', 'suite-runs.jsonl') : '';
+      const ledgerId = require('crypto').randomUUID();
+      const ledgerStart = Date.now();
 
       const res = await new Promise((resolve) => {
         let child;
@@ -6162,6 +6165,11 @@ function createTicketMethods(deps, shared) {
               // Wait for the lock, never refuse: a refusal escalates a ticket whose only fault was closing at a busy moment.
               CLODEX_TEST_LOCK_WAIT_MS: String(TICKET_SUITE_LOCK_WAIT_MS),
               CLODEX_TEST_LOCK_MERGE: opts && opts.merge ? '1' : '0',
+              CLODEX_SUITE_LEDGER: ledgerFile,
+              CLODEX_SUITE_KIND: opts && opts.merge ? 'post-merge' : 'verify',
+              CLODEX_SUITE_TICKET: String(ticket.id),
+              CLODEX_SUITE_SEAT: undefined,
+              CLODEX_SUITE_RUN_ID: ledgerId,
             },
             stdio: ['ignore', 'pipe', 'pipe'],
             // Own process group so the timeout can kill the grandchildren: an orphaned sweep keeps binding the test ports
@@ -6198,6 +6206,16 @@ function createTicketMethods(deps, shared) {
           // not the sweep beneath it.
           if (!this._killRunner(child.pid)) {
             try { child.kill('SIGKILL'); } catch {}
+          }
+          if (ledgerFile) {
+            try {
+              const ended = Date.now();
+              fs.mkdirSync(path.dirname(ledgerFile), { recursive: true });
+              fs.appendFileSync(ledgerFile, `${JSON.stringify({
+                id: ledgerId, phase: 'end', outcome: 'timeout', pass: null, fail: null, tests: null,
+                endedAt: new Date(ended).toISOString(), durationMs: ended - ledgerStart,
+              })}\n`);
+            } catch {}
           }
           finish({ error: `the suite did not finish within ${TICKET_SUITE_TIMEOUT}ms (killed)`, stdout, stderr });
         }, TICKET_SUITE_TIMEOUT);

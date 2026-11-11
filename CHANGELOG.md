@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Every test-suite run now leaves a start and an end record in `logs/suite-runs.jsonl` (who ran it, ticket, tree, commit, duration, outcome), so suite load on a host can be measured.
+
 ## 5.173.0 — 2026-11-10
 
 - Teams: idle clear is now a per-role option in the Roles panel (off, 15 min to 2 h). It applies to the role's existing seats when saved and to every seat minted for the role. A lead can set it with `[agent:team role-set <role> idle-clear:<minutes|off>]`.

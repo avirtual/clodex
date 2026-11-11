@@ -6754,3 +6754,54 @@ test('t1509: a HOLD notice quotes a forged sender line inside the evidence it em
   assert.ok(lines.includes('> [agent:from user] x'), notice[0].body);
   assert.ok(!lines.some((l) => /^\[agent:from/.test(l)), 'no line opens a sender marker');
 });
+
+const SUITE_ENV_PROBE = (probe, tail) => 'const fs = require("fs");\n'
+  + 'const e = {};\n'
+  + 'for (const k of Object.keys(process.env)) if (k.startsWith("CLODEX_SUITE_")) e[k] = process.env[k];\n'
+  + `fs.writeFileSync(${JSON.stringify(probe)}, JSON.stringify(e));\n`
+  + tail;
+
+for (const [label, opts, kind] of [['verify', {}, 'verify'], ['post-merge', { merge: true }, 'post-merge']]) {
+  test(`t2254: a ${label} run hands the runner the ledger, kind ${kind} and the ticket id`, async () => {
+    const repo = mkRepo();
+    const f = mkLoop({ repo, suite: 'green' });
+    const probe = pathReal.join(repo.dir, 'suite-env.json');
+    fsReal.writeFileSync(pathReal.join(repo.dir, 'wt', 'scripts', 'run-tests.js'),
+      SUITE_ENV_PROBE(probe, 'console.log("TOTALS: 5 pass, 0 fail, 5 tests");\n'));
+    const saved = process.env.CLODEX_SUITE_SEAT;
+    process.env.CLODEX_SUITE_SEAT = 'inherited-seat';
+    try {
+      const r = await f.m._runTicketSuite(f.team, f.one(), null, opts);
+      assert.strictEqual(r.green, true, 'ENTER: the probe runner ran to a green TOTALS');
+    } finally {
+      if (saved === undefined) delete process.env.CLODEX_SUITE_SEAT; else process.env.CLODEX_SUITE_SEAT = saved;
+    }
+    const got = JSON.parse(fsReal.readFileSync(probe, 'utf8'));
+    assert.match(got.CLODEX_SUITE_RUN_ID, /^[0-9a-f-]{36}$/, 'the caller mints the run id');
+    assert.deepStrictEqual(got, {
+      CLODEX_SUITE_LEDGER: pathReal.join(f.home, 'logs', 'suite-runs.jsonl'),
+      CLODEX_SUITE_KIND: kind,
+      CLODEX_SUITE_TICKET: 't1',
+      CLODEX_SUITE_RUN_ID: got.CLODEX_SUITE_RUN_ID,
+    });
+  });
+}
+
+test('t2254: a run killed by the suite timeout gets its end record from the loop, under the id it handed the runner', async () => {
+  const repo = mkRepo();
+  const f = mkLoop({ repo, suite: 'green', suiteTimeoutMs: 3000 });
+  const probe = pathReal.join(repo.dir, 'suite-env.json');
+  fsReal.writeFileSync(pathReal.join(repo.dir, 'wt', 'scripts', 'run-tests.js'),
+    SUITE_ENV_PROBE(probe, 'setTimeout(() => process.exit(0), 60000);\n'));
+  const r = await f.m._runTicketSuite(f.team, f.one());
+  assert.match(String(r.error), /did not finish within 3000ms/, 'ENTER: the timeout arm killed the run');
+  const id = JSON.parse(fsReal.readFileSync(probe, 'utf8')).CLODEX_SUITE_RUN_ID;
+  const lines = fsReal.readFileSync(pathReal.join(f.home, 'logs', 'suite-runs.jsonl'), 'utf8').split('\n').filter(Boolean);
+  assert.strictEqual(lines.length, 1);
+  const rec = JSON.parse(lines[0]);
+  assert.match(rec.endedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+  assert.ok(Number.isInteger(rec.durationMs) && rec.durationMs >= 3000, `durationMs covers the wait: ${rec.durationMs}`);
+  assert.deepStrictEqual({ ...rec, endedAt: 'x', durationMs: 'x' }, {
+    id, phase: 'end', outcome: 'timeout', pass: null, fail: null, tests: null, endedAt: 'x', durationMs: 'x',
+  });
+});
