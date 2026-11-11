@@ -132,6 +132,8 @@ const MAX_BODY = 64 * 1024;          // matches the IPC message cap
 const DM_MAX_BODY = SEAT_IMAGE_MAX * Math.ceil(SEAT_IMAGE_MAX_BYTES / 3) * 4 + MAX_BODY;
 const IMPORT_ID_RE = /^[0-9a-f]{16}$/;
 const CONTENT_RANGE_RE = /^bytes\s+(\d+)-(\d+)\/\*$/i;
+const SUITE_SUBMIT_MAX = 256 * 1024;
+const SUITE_JOB_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const SSE_HEARTBEAT_MS = 25000;
 const DM_AWAIT_MAX_MS = 60000;
 const ATTACH_MAX_BUFFERED = 4 * 1024 * 1024;
@@ -179,7 +181,7 @@ class RemoteServer {
                 getProfile, setProfile, deleteProfile,
                 deliverDm, claimDms, listDmOrigins, receiveRoster, notifications, openRequests, replyNote,
                 wtermOpen, wtermInput, wtermResize, wtermClose, onWtermStreams,
-                token, insecure }) {
+                suiteRunner, suiteToken, token, insecure }) {
     this._port = port;
     this._host = host || '127.0.0.1';
     this._basePath = resolveRemoteBasePath(basePath, warn);
@@ -278,6 +280,8 @@ class RemoteServer {
     this._resizePending = new Map(); // name -> { cols, rows, timer }
     this._resizeLast = new Map();    // name -> 'colsxrows' last flushed
     this._gate = makeTokenGate(token);
+    this._suiteGate = makeTokenGate(suiteToken);
+    this._suiteRunner = suiteRunner || null;
     this._insecure = !!insecure;
     this._loopback = isLoopbackHost(this._host);
   }
@@ -718,7 +722,12 @@ class RemoteServer {
       res.end(`forbidden: ${failed} header does not match this host`);
       return false;
     }
-    if (!this._gate.check(this._gate.fromReq(req))) {
+    const provided = this._gate.fromReq(req);
+    if (!this._gate.check(provided)) {
+      if (this._suiteGate.configured && this._suiteGate.check(provided)) {
+        req.suiteScoped = true;
+        return true;
+      }
       res.writeHead(401, {
         'Content-Type': 'text/plain; charset=utf-8',
         'Cache-Control': 'no-store',
@@ -1152,6 +1161,62 @@ class RemoteServer {
       .catch((e) => ({ code: 500, body: { ok: false, error: e.message, installed } }));
   }
 
+  _suiteReply(res, work) {
+    return Promise.resolve()
+      .then(work)
+      .then((out) => this._json(res, out && out.ok ? 200 : (out && out.status) || 500, out || { ok: false, error: 'no answer' }))
+      .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
+  }
+
+  _handleSuite(req, res, p, url) {
+    const runner = this._suiteRunner;
+    if (!runner) return this._json(res, 501, { ok: false, error: 'this node is not a test runner' });
+    const rest = p.slice('/api/suite/'.length).split('/');
+    if (req.method === 'GET' && p === '/api/suite/info') return this._suiteReply(res, () => runner.info());
+    if (rest[0] !== 'jobs') return this._json(res, 404, { ok: false, error: 'not found' });
+    if (rest.length === 1) {
+      if (req.method === 'GET') {
+        const ids = String(url.searchParams.get('ids') || '').split(',').filter(Boolean);
+        const wait = Math.max(0, Number(url.searchParams.get('wait')) || 0);
+        return this._suiteReply(res, () => runner.poll(ids, { wait }));
+      }
+      if (req.method === 'POST') {
+        if (!this._jsonBody(req, res)) return;
+        return this._readBody(req, res, (body) => {
+          const msg = parseJsonObject(body);
+          if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
+          return this._suiteReply(res, () => runner.submit(msg));
+        }, SUITE_SUBMIT_MAX);
+      }
+      return this._json(res, 404, { ok: false, error: 'not found' });
+    }
+    const id = decodeSeg(rest[1]);
+    if (id == null || !SUITE_JOB_ID_RE.test(id)) return this._json(res, 400, { ok: false, error: 'bad job id' });
+    if (req.method === 'DELETE' && rest.length === 2) return this._suiteReply(res, () => runner.cancel(id));
+    if (req.method === 'PUT' && rest.length === 3 && rest[2] === 'pack') {
+      const m = CONTENT_RANGE_RE.exec(String(req.headers['content-range'] || '').trim());
+      if (!m) return this._json(res, 400, { ok: false, error: 'bad Content-Range (expected bytes <start>-<end>/*)' });
+      const offset = Number(m[1]);
+      if (!Number.isSafeInteger(offset)) return this._json(res, 400, { ok: false, error: 'bad Content-Range start' });
+      return this._readRaw(req, res, (bytes) => this._suiteReply(res, () => runner.putPack(id, offset, bytes)));
+    }
+    if (req.method === 'POST' && rest.length === 3 && rest[2] === 'commit') {
+      if (!this._jsonBody(req, res)) return;
+      return this._readBody(req, res, (body) => {
+        const msg = parseJsonObject(body);
+        if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
+        return this._suiteReply(res, () => runner.commit(id, { bytes: msg.bytes, sha256: msg.sha256 }));
+      });
+    }
+    if (req.method === 'GET' && rest.length === 3 && rest[2] === 'output') {
+      const q = url.searchParams;
+      const opts = { stream: q.get('stream') || 'stdout', offset: Number(q.get('offset')) || 0 };
+      if (q.get('length') != null) opts.length = Number(q.get('length')) || 0;
+      return this._suiteReply(res, () => runner.output(id, opts));
+    }
+    return this._json(res, 404, { ok: false, error: 'not found' });
+  }
+
   _route(req, res) {
     if (!this._authGate(req, res)) return;
     const url = new URL(req.url, 'http://localhost');
@@ -1168,6 +1233,10 @@ class RemoteServer {
       }
       if (p.startsWith(`${base}/`)) p = p.slice(base.length);
     }
+    if (req.suiteScoped && !(req.method === 'GET' && p === '/api/peer/hello') && !p.startsWith('/api/suite/')) {
+      return this._json(res, 403, { ok: false, error: 'this token is scoped to suite jobs' });
+    }
+    if (p.startsWith('/api/suite/')) return this._handleSuite(req, res, p, url);
 
     if (req.method === 'GET' && (p === '/' || p === '/index.html')) {
       return this._page(res);
@@ -1230,6 +1299,12 @@ class RemoteServer {
     // Identity comes from response content, never from the port — SSH
     // tunnels make every peer look like localhost.
     if (req.method === 'GET' && p === '/api/peer/hello') {
+      if (req.suiteScoped) {
+        return this._json(res, 200, {
+          ok: true, app: 'clodex', host: this._hostLabel, version: this._version, bootId: BOOT_ID,
+          caps: this._suiteRunner ? ['suite'] : [], scope: 'suite',
+        });
+      }
       const caps = ['transcript', 'transcript-since', 'transcript-after', 'send'];
       if (this._getAttachInfo) caps.push('attach');
       if (this._sendInput) caps.push('control');
@@ -1251,6 +1326,7 @@ class RemoteServer {
       if (this._voiceCapable) caps.push('voice');
       if (this._seatImport && this._importCreate) caps.push('import');
       if (this._sleepSession && this._wakeSession) caps.push('assistant');
+      if (this._suiteRunner) caps.push('suite');
       caps.push('resources');
       caps.push('images');
       caps.push('transcript-images');

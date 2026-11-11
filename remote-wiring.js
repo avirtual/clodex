@@ -121,6 +121,17 @@ function remoteReadRoots({ fs, path, REGISTRY_DIR, MSG_DIR }, sess, name) {
   return dirs.filter(Boolean).map((d) => realpathNearest(fs, path, d)).filter((r) => r.ok).map((r) => r.real);
 }
 
+function suiteRunnerOptions(env, root) {
+  if (env.CLODEX_SUITE_RUNNER !== '1') return null;
+  const mb = Number(env.CLODEX_SUITE_PACK_MAX_MB);
+  return {
+    root,
+    work: env.CLODEX_SUITE_WORK || '/var/lib/clodex-suite',
+    isolation: env.CLODEX_SUITE_ISOLATION === 'none' ? 'none' : 'user',
+    limits: mb > 0 ? { packMaxBytes: Math.floor(mb * 1024 * 1024) } : {},
+  };
+}
+
 function createRemoteWiring(deps) {
   const {
     path, fs, os, log,
@@ -761,6 +772,8 @@ function createRemoteWiring(deps) {
         warn: (m) => log.error('remote', m),
         token: remoteToken,
         insecure: remoteInsecure,
+        suiteRunner: getSuiteRunner(),
+        suiteToken: process.env.CLODEX_SUITE_TOKEN || null,
         pagePath: path.join(__dirname, 'renderer', 'remote.html'),
         notifications: (getNotifications && getNotifications()) || null,
         openRequests: openRequests || null,
@@ -1339,8 +1352,29 @@ function createRemoteWiring(deps) {
     syncRemoteServer();
   }
 
+  let suiteRunner;
+  function getSuiteRunner() {
+    if (suiteRunner !== undefined) return suiteRunner;
+    suiteRunner = null;
+    const opts = suiteRunnerOptions(process.env, REGISTRY_DIR);
+    if (!opts) return null;
+    try {
+      const { createSuiteRunner, noneIsolation, userIsolation } = require('./suite-runner');
+      suiteRunner = createSuiteRunner({
+        ...opts,
+        isolation: opts.isolation === 'none' ? noneIsolation() : userIsolation(),
+        log: (m) => log.warn('suite-runner', m),
+      });
+      suiteRunner.start();
+    } catch (e) {
+      log.error('suite-runner', `runner mode is off: ${e.message}`);
+    }
+    return suiteRunner;
+  }
+
   function shutdownRemoteServer() {
     closed = true;
+    if (suiteRunner) suiteRunner.close();
     resyncWanted = false;
     tokenRefreshWanted = false;
     if (getRemoteServer()) { getRemoteServer().stop(); setRemoteServer(null); }
@@ -1349,4 +1383,4 @@ function createRemoteWiring(deps) {
   return { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer };
 }
 
-module.exports = { createRemoteWiring };
+module.exports = { createRemoteWiring, suiteRunnerOptions };

@@ -44,6 +44,7 @@ const REQUEST_TIMEOUT_MS = 5000;
 const QUERY_TIMEOUT_MS = 20000;
 const REPLY_MAX_BYTES = 1024 * 1024;
 const FILE_PEEK_REPLY_MAX_BYTES = 8 * 1024 * 1024;
+const SUITE_REPLY_MAX_BYTES = 8 * 1024 * 1024;
 const IMPORT_TIMEOUT_MS = 120000;
 const OVERFLOW_LOG_INTERVAL_MS = 60000;
 const CLAIM_FAIL_LOG_INTERVAL_MS = 60000;
@@ -156,6 +157,7 @@ class PeerConnection {
     const Agent = this._secure ? https.Agent : http.Agent;
     this._reqAgent = new Agent({ keepAlive: true, maxSockets: 8 });
     this._sseAgent = new Agent({ keepAlive: false, maxSockets: Infinity });
+    this._suiteAgent = new Agent({ keepAlive: true, maxSockets: 2 });
     this.online = false;
     this.needsUpgrade = false;
     this.hello = null;                // { host, version, caps, platform, srcDir }
@@ -207,6 +209,7 @@ class PeerConnection {
     // destroy), keeping teardown airtight.
     this._reqAgent.destroy();
     this._sseAgent.destroy();
+    this._suiteAgent.destroy();
     this._setOnline(false);
   }
 
@@ -231,11 +234,13 @@ class PeerConnection {
     }
     this._reqAgent.destroy();
     this._sseAgent.destroy();
+    this._suiteAgent.destroy();
     this.url = url.replace(/\/+$/, '');
     this._secure = isSecureBase(this.url);
     const Agent = this._secure ? https.Agent : http.Agent;
     this._reqAgent = new Agent({ keepAlive: true, maxSockets: 8 });
     this._sseAgent = new Agent({ keepAlive: false, maxSockets: Infinity });
+    this._suiteAgent = new Agent({ keepAlive: true, maxSockets: 2 });
     this._setOnline(false);
     this._helloLoop();
   }
@@ -252,6 +257,7 @@ class PeerConnection {
       caps: this.hello ? this.hello.caps : [],
       platform: this.hello ? this.hello.platform : null,
       srcDir: this.hello ? this.hello.srcDir : null,
+      scope: this.hello ? this.hello.scope : null,
       webHost: this.hello ? this.hello.webHost : null,
       wirescope: this.hello ? this.hello.wirescope : null,
       sessions: this.sessions,
@@ -280,7 +286,8 @@ class PeerConnection {
         const wirescope = (wr && Number.isInteger(wr.port) && wr.port > 0 && wr.port <= 65535)
           ? { port: wr.port }
           : null;
-        const next = { host: body.host, version: body.version, caps: body.caps || [], platform: body.platform || null, srcDir: body.srcDir || null, webHost, wirescope };
+        const scope = body.scope === 'suite' ? 'suite' : null;
+        const next = { host: body.host, version: body.version, caps: body.caps || [], platform: body.platform || null, srcDir: body.srcDir || null, webHost, wirescope, scope };
 // Edge-triggered identity check: an in-place Update restarts the box faster
 // than the hello cadence can observe an offline dip, so _setOnline sees no
 // transition and never emits — leaving a stale version in the renderer.
@@ -288,6 +295,7 @@ class PeerConnection {
           prev.version !== next.version ||
           prev.platform !== next.platform ||
           prev.srcDir !== next.srcDir ||
+          prev.scope !== next.scope ||
           webHostKey(prev.webHost) !== webHostKey(next.webHost) ||
           wirescopeKey(prev.wirescope) !== wirescopeKey(next.wirescope) ||
           (prev.caps || []).join(',') !== (next.caps || []).join(',');
@@ -297,6 +305,14 @@ class PeerConnection {
         // our backoff would otherwise keep reopening against a 501.
         const lostShell = prev && peerHasShellCap(prev.caps) && !peerHasShellCap(next.caps);
         this.hello = next;
+        if (scope === 'suite') {
+          this._dialectKnown = true;
+          this.needsUpgrade = false;
+          this._setOnline(true);
+          if (!wasOffline && identityChanged) this._emit('peer-state', this.id, this.status());
+          this._helloTimer = setTimeout(() => this._helloLoop(), this._helloIntervalMs);
+          return;
+        }
         if (lostShell) this._dropAllWterm('revoked');
         if (identityChanged) { this._dialectKnown = false; this._helloGen++; }
         if (identityChanged || (!this._dialectKnown && !this._dialectProbing)) this._probeDialect(next);
@@ -816,6 +832,22 @@ class PeerConnection {
     });
   }
 
+  suiteAsk(method, path, payload = null, timeout = REQUEST_TIMEOUT_MS) {
+    return new Promise((resolve) => {
+      this._request(method, path, payload, (err, body, status) => {
+        resolve(err ? { status: 0, body: null, error: err.message } : { status, body, error: null });
+      }, timeout, SUITE_REPLY_MAX_BYTES, this._suiteAgent);
+    });
+  }
+
+  suitePut(path, buffer, headers, timeout = IMPORT_TIMEOUT_MS) {
+    return new Promise((resolve) => {
+      this._requestRaw('PUT', path, buffer, headers, (err, body, status) => {
+        resolve(err ? { status: 0, body: null, error: err.message } : { status, body, error: null });
+      }, timeout, this._suiteAgent);
+    });
+  }
+
   async importBegin({ name, record } = {}) {
     if (!this._hasCap('import')) {
       return { ok: false, error: `${this.label} does not accept seat imports` };
@@ -1028,14 +1060,14 @@ class PeerConnection {
     });
   }
 
-  _request(method, path, payload, cb, timeout = REQUEST_TIMEOUT_MS, maxBytes = REPLY_MAX_BYTES) {
+  _request(method, path, payload, cb, timeout = REQUEST_TIMEOUT_MS, maxBytes = REPLY_MAX_BYTES, agent = this._reqAgent) {
     let d;
     try { d = dialOptions(this.url, path); } catch (e) { return cb(e); }
     const body = payload ? JSON.stringify(payload) : null;
     const req = (d.secure ? https : http).request({
       hostname: d.hostname, port: d.port,
       path: d.path, method,
-      agent: this._reqAgent, timeout,
+      agent, timeout,
       headers: {
         ...(body ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } : {}),
         ...this._authHeaders(),
@@ -1052,7 +1084,7 @@ class PeerConnection {
       });
       res.on('end', () => {
         if (tooLarge) return;
-        try { cb(null, JSON.parse(buf)); }
+        try { cb(null, JSON.parse(buf), res.statusCode); }
         catch { cb(new Error('bad response')); }
       });
     });
@@ -1062,14 +1094,14 @@ class PeerConnection {
     req.end();
   }
 
-  _requestRaw(method, path, buffer, headers, cb, timeout = IMPORT_TIMEOUT_MS) {
+  _requestRaw(method, path, buffer, headers, cb, timeout = IMPORT_TIMEOUT_MS, agent = this._reqAgent) {
     let d;
     try { d = dialOptions(this.url, path); } catch (e) { return cb(e); }
     const body = Buffer.isBuffer(buffer) ? buffer : Buffer.alloc(0);
     const req = (d.secure ? https : http).request({
       hostname: d.hostname, port: d.port,
       path: d.path, method,
-      agent: this._reqAgent, timeout,
+      agent, timeout,
       headers: {
         'Content-Type': 'application/octet-stream',
         'Content-Length': body.length,
@@ -1088,7 +1120,7 @@ class PeerConnection {
       });
       res.on('end', () => {
         if (tooLarge) return;
-        try { cb(null, JSON.parse(buf)); }
+        try { cb(null, JSON.parse(buf), res.statusCode); }
         catch { cb(new Error('bad response')); }
       });
     });
