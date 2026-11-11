@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A standing clodent seat whose idle clear is 10 minutes or less now keeps its one-hour cache for the preamble and uses a five-minute cache for messages, which measured about 10% cheaper on input for such a seat. A template that passes `--message-cache-ttl` keeps its own value.
+
 ## 5.174.0 — 2026-11-11
 
 - Every test-suite run now leaves a start and an end record in `logs/suite-runs.jsonl` (who ran it, ticket, tree, commit, duration, outcome), so suite load on a host can be measured.

@@ -815,6 +815,8 @@ function createTicketMethods(deps, shared) {
           } else {
             ensureDir(cwd);
           }
+          const spawnIdleMs = idleClearAfterMs(spawnRoleDef && spawnRoleDef.idleClear) || idleClearAfterMs(tpl && tpl.idleClear);
+          if (spawnIdleMs) this._spawnIdleClear.set(name, { afterMs: spawnIdleMs });
           const spawned = await this.create(
             name, type, spawnCwd, spawnArgs, null, workspaceId,
             null, false, proxy, agents, denyBuiltins, disabledTools, disabledSkills, injectSkills, systemPromptFile, appendPromptFiles,
@@ -828,7 +830,7 @@ function createTicketMethods(deps, shared) {
             (tpl && tpl.io) === 'stream' ? 'stream' : 'pty',
             (tpl && typeof tpl.effort === 'string' && tpl.effort) ? tpl.effort : null,
             protectCredentials, mcpServers, (tpl && tpl.class) || null,
-          );
+          ).finally(() => this._spawnIdleClear.delete(name));
           if (wt) {
             try { getPersistence().setWorktree(name, wt); } catch { /* best-effort */ }
           }

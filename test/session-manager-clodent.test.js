@@ -652,3 +652,59 @@ test('clodent: a user --plugin-dir in the extra args skips skill delivery and cl
     assert.deepStrictEqual(f.spawns[0].args.filter((a, i, all) => a === '--plugin-dir' || all[i - 1] === '--plugin-dir'), ['--plugin-dir', '/mine']);
   } finally { f.stop('seat'); }
 });
+
+function renderSettings(hookArgs) {
+  const hookRoot = mkTmpRoot('clodex-clodent-ttl-');
+  try {
+    const realHooks = createCliHooks({
+      REGISTRY_DIR: hookRoot,
+      memoryStore: { list: () => [] },
+      getUiSettings: () => ({ get: () => ({ statusline: { claude: [], claudeCommand: '' } }) }),
+      nodeInterp: process.execPath,
+    });
+    return JSON.parse(fsReal.readFileSync(realHooks.setupClaudeHook(...hookArgs), 'utf-8'));
+  } finally { fsReal.rmSync(hookRoot, { recursive: true, force: true }); }
+}
+
+const cacheKeys = (settings) => Object.fromEntries(Object.entries(settings).filter(([k]) => /cache/i.test(k)));
+
+for (const [label, entry, opts, want, wantFlags] of [
+  ['idle clear 600000 gets both keys', { idleClear: { afterMs: 600000 } }, {}, { cacheTtl: '1h', messageCacheTtl: '5m' }, []],
+  ['idle clear 60000 gets both keys', { idleClear: { afterMs: 60000 } }, {}, { cacheTtl: '1h', messageCacheTtl: '5m' }, []],
+  ['idle clear 600001 gets cacheTtl only', { idleClear: { afterMs: 600001 } }, {}, { cacheTtl: '1h' }, []],
+  ['idle clear off gets cacheTtl only', {}, {}, { cacheTtl: '1h' }, []],
+  ['an ephemeral seat with idle clear 300000 gets neither key', { ephemeral: true, idleClear: { afterMs: 300000 } }, {}, {}, []],
+  ['own --message-cache-ttl in the args with idle clear 300000 gets cacheTtl only', { idleClear: { afterMs: 300000 } }, { extraArgs: ['--message-cache-ttl', '1h'] }, { cacheTtl: '1h' }, ['--message-cache-ttl']],
+  ['own --message-cache-ttl=1h in the args with idle clear 300000 gets cacheTtl only', { idleClear: { afterMs: 300000 } }, { extraArgs: ['--message-cache-ttl=1h'] }, { cacheTtl: '1h' }, ['--message-cache-ttl=1h']],
+  ['a claude seat with idle clear 300000 gets no cache keys', { idleClear: { afterMs: 300000 } }, { type: 'claude' }, {}, []],
+]) {
+  test(`clodent message cache: ${label}`, async () => {
+    const f = mkClodent({ entries: { seat: { name: 'seat', ...entry } } });
+    await f.create('seat', opts);
+    try {
+      assert.strictEqual(f.hooks.length, 1, 'ENTER: one hook settings write');
+      const written = renderSettings(f.hooks[0]);
+      assert.ok(written.hooks && written.statusLine, 'ENTER: the whole generated settings object was rendered');
+      assert.deepStrictEqual(cacheKeys(written), want);
+      assert.deepStrictEqual(f.spawns[0].args.filter((a) => String(a).startsWith('--message-cache-ttl')), wantFlags);
+    } finally { f.stop('seat'); }
+  });
+}
+
+test('clodent message cache: the spawn-time idle clear reaches the first spawn, and the record carries it to the restart', async () => {
+  const entries = { seat: { name: 'seat' } };
+  const f = mkClodent({ entries });
+  f.m._spawnIdleClear.set('seat', { afterMs: 300000 });
+  await f.create('seat');
+  f.stop('seat');
+  f.m._spawnIdleClear.delete('seat');
+  entries.seat.idleClear = { afterMs: 300000 };
+  await f.create('seat');
+  f.stop('seat');
+  assert.strictEqual(f.hooks.length, 2, 'ENTER: first spawn and restart both wrote settings');
+  assert.deepStrictEqual(f.hooks.map((h) => cacheKeys(renderSettings(h))), [
+    { cacheTtl: '1h', messageCacheTtl: '5m' },
+    { cacheTtl: '1h', messageCacheTtl: '5m' },
+  ]);
+  assert.deepStrictEqual(f.spawns.map((s) => s.args.filter((a) => String(a).startsWith('--message-cache'))), [[], []]);
+});

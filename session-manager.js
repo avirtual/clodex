@@ -15,6 +15,7 @@ const REBOOT_MIN_INTERVAL = 5 * 60 * 1000;
 const EXEC_ACK_MIN_TIMEOUT_MS = 60 * 1000;
 const EXEC_REPLY_WAIT_MS = EXEC_ACK_MIN_TIMEOUT_MS + 10 * 1000;
 const RIDE_MAX_MS = 30 * 60 * 1000;
+const SHORT_MESSAGE_CACHE_IDLE_MS = 10 * 60 * 1000;
 const SANDBOX_RELAY_TIMEOUT_MS = 60 * 1000;
 const EXEC_STATUS_DEFAULT_MS = 3 * 60 * 1000;
 const EXEC_STATUS_MIN_MS = 30 * 1000;
@@ -875,6 +876,7 @@ function createSessionManager(deps) {
     constructor() {
       this.sessions = new Map();
       this._freshBakeOnce = new Set();
+      this._spawnIdleClear = new Map();
       this._creating = new Set();
       this._clodentVersion = undefined;
       this.windows = new Map();
@@ -1931,7 +1933,11 @@ function createSessionManager(deps) {
               known: Array.isArray(disabledSkills) && disabledSkills.includes('*') ? knownSkillNames() : [],
               injectSkills,
             });
-            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, skillsOff, wireBase, createdAt, Array.isArray(shellDeny) ? shellDeny : [], streamIo, effortFlag ? null : effortLevel, Array.isArray(protectCredentials) ? protectCredentials : null, mcpSecretNames, mcpSel ? mcpSel.applied.denyRules : [], cwd || null, mergedEnv.CLODENT_HOME || null, type === 'clodent' && !(existingEntry && existingEntry.ephemeral === true) ? '1h' : null);
+            const longCache = type === 'clodent' && !(existingEntry && existingEntry.ephemeral === true);
+            const idleClearMs = idleClearAfterMs(this._spawnIdleClear.get(name) || (existingEntry && existingEntry.idleClear));
+            const ownMessageTtl = args.some((a) => typeof a === 'string' && (a === '--message-cache-ttl' || a.startsWith('--message-cache-ttl=')));
+            const messageCacheTtl = longCache && idleClearMs && idleClearMs <= SHORT_MESSAGE_CACHE_IDLE_MS && !ownMessageTtl ? '5m' : null;
+            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, skillsOff, wireBase, createdAt, Array.isArray(shellDeny) ? shellDeny : [], streamIo, effortFlag ? null : effortLevel, Array.isArray(protectCredentials) ? protectCredentials : null, mcpSecretNames, mcpSel ? mcpSel.applied.denyRules : [], cwd || null, mergedEnv.CLODENT_HOME || null, longCache ? '1h' : null, messageCacheTtl);
             args.push('--settings', settingsPath);
             hookInstalled = true;
             selectionDrain = true;
