@@ -304,7 +304,7 @@ test('failure matrix: a runner restart mid-run resubmits once with attempt 2; a 
         if (lost < losses) { lost += 1; return { ok: true, bootId: `boot-${lost}`, jobs: [doneView(ids[0], tree, { reason: 'runner-restart', exit: null })] }; }
         return { ok: true, bootId: 'boot-x', jobs: [doneView(ids[0], tree)] };
       },
-      output: async (id, o) => ({ ok: true, total: o.stream === 'stdout' ? 33 : 0, offset: 0, text: o.stream === 'stdout' ? 'TOTALS: 1 pass, 0 fail, 1 tests\n' : '' }),
+      output: async (id, o) => ({ ok: true, total: o.stream === 'stdout' ? 32 : 0, offset: 0, text: o.stream === 'stdout' ? 'TOTALS: 1 pass, 0 fail, 1 tests\n' : '' }),
     });
     const { server, port } = await startServer(t, { suiteRunner: runner });
     const { conn } = peerFor(t, port);
@@ -358,7 +358,7 @@ test('failure matrix: a late result for another job is discarded and cancelled; 
       if (polls === 1) return { ok: true, bootId: 'b', jobs: [doneView('old-job', 'f'.repeat(40)), doneView(ids[0], tree, { state: 'running', exit: null })] };
       return { ok: true, bootId: 'b', jobs: [doneView(ids[0], tree, { exit: { code: 1, signal: null } })] };
     },
-    output: async (id, o) => ({ ok: true, total: o.stream === 'stdout' ? 33 : 0, offset: 0, text: o.stream === 'stdout' ? 'TOTALS: 0 pass, 1 fail, 1 tests\n' : '' }),
+    output: async (id, o) => ({ ok: true, total: o.stream === 'stdout' ? 32 : 0, offset: 0, text: o.stream === 'stdout' ? 'TOTALS: 0 pass, 1 fail, 1 tests\n' : '' }),
   });
   const { port } = await startServer(t, { suiteRunner: runner });
   const { client } = clientFor(peerFor(t, port).conn, { randomUUID: () => 'run-l' });

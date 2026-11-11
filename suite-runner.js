@@ -676,7 +676,8 @@ function createSuiteRunner({
     const list = [...new Set((ids || []).map(String))].filter((id) => ID_RE.test(id));
     touch(list);
     const before = list.map((id) => (jobs.get(id) || {}).state).join(',');
-    if (wait > 0 && list.length) {
+    const settled = list.some((id) => !jobs.has(id) || jobs.get(id).state === 'done');
+    if (wait > 0 && list.length && !settled) {
       await new Promise((resolve) => {
         const w = { ids: new Set(list) };
         const timer = timers.setTimeout(() => w.wake(), Math.min(wait, lim.waitMax));

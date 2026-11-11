@@ -125,6 +125,18 @@ test('submit is idempotent on id and refuses the same id with another treeHash',
   assert.deepStrictEqual(other, { ok: false, status: 409, error: 'job id already submitted with a different treeHash' });
 });
 
+test('a long-poll on a finished or unknown job answers at once and arms no wait', async (t) => {
+  const f = await fixture(t);
+  assert.strictEqual((await f.upload(f.body('j1'))).state, 'queued');
+  await waitState(f.runner, 'j1', 'done');
+  const armed = f.pending.length;
+  const rows = [[['j1'], ['done']], [['nope'], ['gone']], [['j1', 'nope'], ['done', 'gone']]];
+  const got = [];
+  for (const [ids] of rows) got.push([ids, (await f.runner.poll(ids, { wait: 25000 })).jobs.map((j) => j.state)]);
+  assert.deepStrictEqual(got, rows);
+  assert.strictEqual(f.pending.length, armed);
+});
+
 test('a pack upload at the wrong offset answers 409 with the size held', async (t) => {
   const f = await fixture(t);
   await f.runner.submit(f.body('j1'));
