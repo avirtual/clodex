@@ -1018,6 +1018,17 @@ field is a select (off, 15 min, 30 min, 1 h, 2 h; a stored value off that list
 shows as "custom") that is disabled unless the role's template runs its seats
 over a stream transport (`io: "stream"`), since only stream seats are cleared.
 
+A standing (non-ephemeral) clodent stream seat whose idle clear is 10 minutes or less
+gets `messageCacheTtl: "5m"` beside its `cacheTtl: "1h"` in the generated
+settings file: a one-hour cache for the preamble, a five-minute one for
+messages. The idle clear is read at every spawn from the seat's record, or for a
+by-name spawn from the role (else the template) before the record has it, so a
+restart, restore, reload, rename or move keeps it. Changing a role's idle clear
+does not rewrite a running seat's settings; it takes effect at the seat's next
+spawn. Extra args carrying `--message-cache-ttl` or their own `--settings` get
+no key. The default never travels as a flag, since clodent before 0.8.1 exits
+on an unknown option but ignores an unknown settings key.
+
 `lead` and `reviewer` are operator-owned topology: every role verb refuses them
 except an `account:`-only `role-set`, so a team you meant to run solo still
 carries a reviewer definition — harmless, and the roster renders it as not

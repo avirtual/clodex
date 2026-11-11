@@ -120,6 +120,11 @@ function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entrie
         return { onData() {}, onExit(fn) { exit = fn; }, pid: 999, kill() { if (exit) exit({ exitCode: 0, signal: null }); } };
       },
     },
+    parkDelivery: require('../pending-store').parkDelivery,
+    drainPending: require('../pending-store').drainPending,
+    countPending: require('../pending-store').countPending,
+    hasActivePending: require('../pending-store').hasActivePending,
+    spawnStreamSeat: (o) => { spawns.push({ cmd: o.cmd, args: o.args, opts: { env: o.env } }); return { pid: 998, startedAt: 1, startTime: 1, stderrTail: '', send: () => Promise.resolve(), close() {}, kill() {} }; },
     notifyOS: () => {},
     collectSystemDiagnostics: () => ({}),
     whichBin: () => null,
@@ -143,12 +148,15 @@ function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entrie
     clearTimeout(s._bootSettleTimer);
     clearTimeout(s._bootNudgeTimer);
     clearTimeout(s._replayFallbackTimer);
+    try { if (s.sentinel) s.sentinel.stop(); } catch {}
+    s._dead = true;
+    for (const k of ['_injectHoldTimer', '_parkCapTimer', '_parkedDrainFallbackTimer', '_reviewStartTimer', '_streamInitTimer', '_streamHoldTimer', '_resultHold']) clearTimeout(s[k]);
     m.sessions.delete(name);
   };
-  const create = (name, { type = 'clodent', extraArgs = [], resumeId = null, fork = false, sessionEnv = { ANTHROPIC_API_KEY: 'sk-test' }, effort = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], shellDeny = null, protectCredentials = null, noWire = false } = {}) => m.create(
+  const create = (name, { type = 'clodent', extraArgs = [], resumeId = null, fork = false, sessionEnv = { ANTHROPIC_API_KEY: 'sk-test' }, effort = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], shellDeny = null, protectCredentials = null, noWire = false, io = 'pty' } = {}) => m.create(
     name, type, cwd, extraArgs, resumeId, 'ws', null, fork, null,
     [], denyBuiltins, disabledTools, disabledSkills, [], null, [], [], null, sessionEnv,
-    false, noWire, null, shellDeny, null, 'pty', effort, protectCredentials,
+    false, noWire, null, shellDeny, null, io, effort, protectCredentials,
   );
   const wireRegs = [];
   if (wire) {
@@ -651,4 +659,61 @@ test('clodent: a user --plugin-dir in the extra args skips skill delivery and cl
     assert.strictEqual(fsReal.readFileSync(f.prompt('seat'), 'utf-8'), 'IPC|freeze=false|snapshot=null');
     assert.deepStrictEqual(f.spawns[0].args.filter((a, i, all) => a === '--plugin-dir' || all[i - 1] === '--plugin-dir'), ['--plugin-dir', '/mine']);
   } finally { f.stop('seat'); }
+});
+
+function renderSettings(hookArgs) {
+  const hookRoot = mkTmpRoot('clodex-clodent-ttl-');
+  try {
+    const realHooks = createCliHooks({
+      REGISTRY_DIR: hookRoot,
+      memoryStore: { list: () => [] },
+      getUiSettings: () => ({ get: () => ({ statusline: { claude: [], claudeCommand: '' } }) }),
+      nodeInterp: process.execPath,
+    });
+    return JSON.parse(fsReal.readFileSync(realHooks.setupClaudeHook(...hookArgs), 'utf-8'));
+  } finally { fsReal.rmSync(hookRoot, { recursive: true, force: true }); }
+}
+
+const cacheKeys = (settings) => Object.fromEntries(Object.entries(settings).filter(([k]) => /cache/i.test(k)));
+
+for (const [label, entry, opts, want, wantFlags] of [
+  ['idle clear 600000 gets both keys', { idleClear: { afterMs: 600000 } }, { io: 'stream' }, { cacheTtl: '1h', messageCacheTtl: '5m' }, []],
+  ['idle clear 60000 gets both keys', { idleClear: { afterMs: 60000 } }, { io: 'stream' }, { cacheTtl: '1h', messageCacheTtl: '5m' }, []],
+  ['idle clear 600001 gets cacheTtl only', { idleClear: { afterMs: 600001 } }, { io: 'stream' }, { cacheTtl: '1h' }, []],
+  ['idle clear off gets cacheTtl only', {}, { io: 'stream' }, { cacheTtl: '1h' }, []],
+  ['an ephemeral seat with idle clear 300000 gets neither key', { ephemeral: true, idleClear: { afterMs: 300000 } }, { io: 'stream' }, {}, []],
+  ['own --message-cache-ttl in the args with idle clear 300000 gets cacheTtl only', { idleClear: { afterMs: 300000 } }, { io: 'stream', extraArgs: ['--message-cache-ttl', '1h'] }, { cacheTtl: '1h' }, ['--message-cache-ttl']],
+  ['own --message-cache-ttl=1h in the args with idle clear 300000 gets cacheTtl only', { idleClear: { afterMs: 300000 } }, { io: 'stream', extraArgs: ['--message-cache-ttl=1h'] }, { cacheTtl: '1h' }, ['--message-cache-ttl=1h']],
+  ['a claude seat with idle clear 300000 gets no cache keys', { idleClear: { afterMs: 300000 } }, { io: 'stream', type: 'claude' }, {}, []],
+  ['a PTY clodent seat with idle clear 300000 gets cacheTtl only', { idleClear: { afterMs: 300000 } }, { io: 'pty' }, { cacheTtl: '1h' }, []],
+]) {
+  test(`clodent message cache: ${label}`, async () => {
+    const f = mkClodent({ entries: { seat: { name: 'seat', ...entry } } });
+    await f.create('seat', opts);
+    try {
+      assert.strictEqual(f.hooks.length, 1, 'ENTER: one hook settings write');
+      const written = renderSettings(f.hooks[0]);
+      assert.ok(written.hooks && written.statusLine, 'ENTER: the whole generated settings object was rendered');
+      assert.deepStrictEqual(cacheKeys(written), want);
+      assert.deepStrictEqual(f.spawns[0].args.filter((a) => String(a).startsWith('--message-cache-ttl')), wantFlags);
+    } finally { f.stop('seat'); }
+  });
+}
+
+test('clodent message cache: the spawn-time idle clear reaches the first spawn, and the record carries it to the restart', async () => {
+  const entries = { seat: { name: 'seat' } };
+  const f = mkClodent({ entries });
+  f.m._spawnIdleClear.set('seat', { afterMs: 300000 });
+  await f.create('seat', { io: 'stream' });
+  f.stop('seat');
+  f.m._spawnIdleClear.delete('seat');
+  entries.seat.idleClear = { afterMs: 300000 };
+  await f.create('seat', { io: 'stream' });
+  f.stop('seat');
+  assert.strictEqual(f.hooks.length, 2, 'ENTER: first spawn and restart both wrote settings');
+  assert.deepStrictEqual(f.hooks.map((h) => cacheKeys(renderSettings(h))), [
+    { cacheTtl: '1h', messageCacheTtl: '5m' },
+    { cacheTtl: '1h', messageCacheTtl: '5m' },
+  ]);
+  assert.deepStrictEqual(f.spawns.map((s) => s.args.filter((a) => String(a).startsWith('--message-cache'))), [[], []]);
 });

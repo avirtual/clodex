@@ -294,12 +294,15 @@ for (const [label, hand, want] of [
   m._broadcast = () => {};
   m._sendToSession = () => {};
   m._bindRosterSeat = async () => ({ ok: true });
-  m.create = async (name) => { store.upsert({ name }); return undefined; };
+  const atCreate = [];
+  m.create = async (name) => { atCreate.push(m._spawnIdleClear.get(name)); store.upsert({ name }); return undefined; };
   m._handleSpawnIntent({ name: 'lead', cwd: tplDir, workspaceId: 'default', type: 'claude' }, { name: 'team-hand', template: tpl, cwd: tplDir });
   await settle();
   await settle();
   assert.ok(store.get('team-hand'), `ENTER: the seat was created (replies: ${JSON.stringify(replies)})`);
   assert.deepStrictEqual(store.get('team-hand').idleClear, want);
+  assert.deepStrictEqual(atCreate, [want], 'the idle clear the record gets after create is in hand at create');
+  assert.strictEqual(m._spawnIdleClear.size, 0);
 });
 
 function compilePaint(env) {
