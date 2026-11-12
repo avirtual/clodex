@@ -228,6 +228,7 @@ async function describe({ client, ctx, printer, flags, args }) {
     printer.line(out.renderDescribe(body.catalogs || {}));
     return;
   }
+  if (target.resource === 'offers') throw new CliError(EXIT.USAGE, 'describe offers is not supported (try: get offers)');
   if (target.resource === 'sessions') {
     const name = requireName(target.name, 'describe session');
     await R.requireResource(client, 'sessions', 'get', label, 'describe');

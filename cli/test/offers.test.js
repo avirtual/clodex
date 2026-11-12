@@ -93,3 +93,13 @@ test('get offers -o json prints the route body', async () => {
     assert.deepStrictEqual(JSON.parse(stdout), body);
   });
 });
+
+test('describe offers is refused with a usage error and sends no request', async () => {
+  await withNode({ ok: true, own: OWN, offers: [] }, async (port, seen) => {
+    const { code, stdout, stderr } = await cli(['describe', 'offers'], port);
+    assert.strictEqual(code, 2);
+    assert.strictEqual(stdout, '');
+    assert.match(stderr, /describe offers is not supported \(try: get offers\)/);
+    assert.deepStrictEqual(seen, []);
+  });
+});
