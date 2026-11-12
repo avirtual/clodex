@@ -299,9 +299,10 @@ test('a field forced by env reports the value in effect, not the stored one', as
   const { wiring, tmp } = wiringFixture(t, settings);
   process.env.CLODEX_SUITE_ISOLATION = 'none';
   process.env.CLODEX_SUITE_WORK = '/x';
+  process.env.CLODEX_SUITE_BOX_IMAGE = IMG;
   assert.deepStrictEqual(wiring.suiteRunnerState(), {
     setting: { enabled: true, isolation: 'user', work: null },
-    forced: ['isolation', 'work'], effective: { isolation: 'none', work: '/x' }, defaultWork: platformDefault(tmp),
+    forced: ['isolation', 'work', 'boxImage'], effective: { isolation: 'none', work: '/x', boxImage: IMG }, defaultWork: platformDefault(tmp),
     remoteEnabled: true, status: 'starting', error: null,
   });
 });
