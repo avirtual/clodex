@@ -48,6 +48,7 @@ const TABLE_LITERAL = [
   { plural: 'docs', singular: 'doc' },
   { plural: 'worktrees', singular: 'worktree' },
   { plural: 'catalogs', singular: 'catalogs' },
+  { plural: 'offers', singular: 'offers' },
 ];
 
 test('TABLE is exactly the shipped resource spellings, docs included', () => {

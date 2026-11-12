@@ -356,6 +356,7 @@ Read (all but `describe` — except `describe session` — support `-o json` —
 | `get doc <name> [--section SLUG]` / `describe doc <name>` | `GET /api/resources` → `GET /api/docs/:name[?section=]` |
 | `get worktrees --repo DIR` | `GET /api/resources` → `GET /api/worktrees?repo=` (DIR is resolved to an absolute path client-side) |
 | `get catalogs` | `GET /api/catalogs` |
+| `get offers` | `GET /api/resources` → `GET /api/offers` (this node's own offer as `self`, then the directory rows) |
 | `describe <singular> <name>` / `describe catalogs` | the same routes, `/:name` for a single object, rendered as a labeled block (no `-o json`) |
 | `get nodes [--current]` | none — the local nodes file; `--current` prints the current node name alone (exit `5` when none) |
 | `get nodes --versions` | the local nodes file, then `GET /api/peer/hello` on every node (4 at a time, 10 s each) for the VERSION column |
