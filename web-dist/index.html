@@ -10095,6 +10095,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
 #prefs-suite-runner-enabled-env.hidden,
 #prefs-suite-runner-isolation-env.hidden,
 #prefs-suite-runner-work-env.hidden,
+#prefs-suite-runner-boxImage-env.hidden,
 #prefs-suite-runner-none-note.hidden,
 #prefs-box-offer-block.hidden,
 #prefs-box-offer-schedule.hidden,
@@ -11527,9 +11528,15 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           <div class="prefs-row" style="margin-top: 6px;">
             <span>Work folder</span>
             <input type="text" id="prefs-suite-runner-work" placeholder="default for this platform" autocomplete="off" spellcheck="false" style="flex: 1;">
-            <button id="prefs-suite-runner-apply" class="secondary" type="button" style="flex: none;">Apply</button>
           </div>
           <p id="prefs-suite-runner-work-env" class="hint-text hidden">set by environment</p>
+          <div class="prefs-row" style="margin-top: 6px;">
+            <span>Box image</span>
+            <input type="text" id="prefs-suite-runner-boxImage" placeholder="sha256:…" autocomplete="off" spellcheck="false" style="flex: 1;">
+            <button id="prefs-suite-runner-apply" class="secondary" type="button" style="flex: none;">Apply</button>
+          </div>
+          <p class="hint-text">Image id of a hand-built image; jobs that ask for a box run in a fresh container of it. Leave empty to run only native jobs.</p>
+          <p id="prefs-suite-runner-boxImage-env" class="hint-text hidden">set by environment</p>
           <span id="prefs-suite-runner-status" class="hint-text" style="display: block; margin-top: 6px;"></span>
         </div>
         <div id="prefs-box-offer-block">
@@ -30553,6 +30560,18 @@ Allow?`;
         rec.peers = (peers || []).map((name) => ({ name }));
         return rec;
       }
+      function suiteRunnerRecordFromForm(shown, form) {
+        const stored = shown && shown.setting || { enabled: false, isolation: "user", work: null };
+        const forced = new Set(shown && shown.forced || []);
+        const pick = (k, v) => forced.has(k) ? stored[k] : v;
+        const boxImage = pick("boxImage", form.boxImage.trim() || null);
+        return {
+          enabled: pick("enabled", form.enabled),
+          isolation: pick("isolation", form.isolation),
+          work: pick("work", form.work.trim() || null),
+          ...boxImage ? { boxImage } : {}
+        };
+      }
       function claimLines(claims, now = Date.now()) {
         return (Array.isArray(claims) ? claims : []).filter((c) => c && typeof c.name === "string").map((c) => {
           if (c.state === "runner-off") return `${c.name}: runner mode off`;
@@ -30583,6 +30602,7 @@ Allow?`;
         offerFormProblem,
         offerRecordFromForm,
         offerStatusText,
+        suiteRunnerRecordFromForm,
         claimLines
       };
     }
@@ -53343,7 +53363,7 @@ ${detail}` });
       var { parseEnvLines, formatEnvLines } = require_env_edit();
       var { envRowView, buildEnvRow } = require_env_row();
       var { envLockView, applyEnvLock, patchUnlessEnvLocked } = require_env_lock();
-      var { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, offerRunnerFrom, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText, claimLines: offerClaimLines } = require_offer_view();
+      var { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, offerRunnerFrom, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText, suiteRunnerRecordFromForm, claimLines: offerClaimLines } = require_offer_view();
       var { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require_account_select();
       var { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, keyTransportRefusal, modelOptions } = require_account_row();
       var { isToolInstallSession } = require_tool_doctor();
@@ -59454,6 +59474,7 @@ Click for live activity`;
       var prefsSuiteRunnerEnabled = document.getElementById("prefs-suite-runner-enabled");
       var prefsSuiteRunnerIsolation = document.getElementById("prefs-suite-runner-isolation");
       var prefsSuiteRunnerWork = document.getElementById("prefs-suite-runner-work");
+      var prefsSuiteRunnerBoxImage = document.getElementById("prefs-suite-runner-boxImage");
       var prefsSuiteRunnerApply = document.getElementById("prefs-suite-runner-apply");
       var prefsSuiteRunnerStatus = document.getElementById("prefs-suite-runner-status");
       var prefsSuiteRunnerNoneNote = document.getElementById("prefs-suite-runner-none-note");
@@ -62586,7 +62607,9 @@ ${res.stderr}` : "");
         prefsSuiteRunnerWork.value = forced.has("work") ? eff.work || "" : rec.work || "";
         prefsSuiteRunnerWork.disabled = forced.has("work");
         prefsSuiteRunnerWork.placeholder = st.defaultWork || "default for this platform";
-        for (const k of ["enabled", "isolation", "work"]) {
+        prefsSuiteRunnerBoxImage.value = forced.has("boxImage") ? eff.boxImage || "" : rec.boxImage || "";
+        prefsSuiteRunnerBoxImage.disabled = forced.has("boxImage");
+        for (const k of ["enabled", "isolation", "work", "boxImage"]) {
           document.getElementById(`prefs-suite-runner-${k}-env`).classList.toggle("hidden", !forced.has(k));
         }
         prefsSuiteRunnerNoneNote.classList.toggle("hidden", prefsSuiteRunnerIsolation.value !== "none");
@@ -62609,15 +62632,12 @@ ${res.stderr}` : "");
         if (st) renderSuiteRunnerPrefs(st);
       }
       function suiteRunnerRecordToSave() {
-        const shown = prefsSuiteRunnerShown || {};
-        const stored = shown.setting || { enabled: false, isolation: "user", work: null };
-        const forced = new Set(shown.forced || []);
-        const work = prefsSuiteRunnerWork.value.trim() || null;
-        return {
-          enabled: forced.has("enabled") ? stored.enabled : prefsSuiteRunnerEnabled.checked,
-          isolation: forced.has("isolation") ? stored.isolation : prefsSuiteRunnerIsolation.value,
-          work: forced.has("work") ? stored.work : work
-        };
+        return suiteRunnerRecordFromForm(prefsSuiteRunnerShown, {
+          enabled: prefsSuiteRunnerEnabled.checked,
+          isolation: prefsSuiteRunnerIsolation.value,
+          work: prefsSuiteRunnerWork.value,
+          boxImage: prefsSuiteRunnerBoxImage.value
+        });
       }
       if (prefsSuiteRunnerBlock) {
         prefsSuiteRunnerIsolation.addEventListener("change", () => {

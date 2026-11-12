@@ -1007,7 +1007,10 @@ comparisons agreed and disagreed and the test names that failed on one side
 only, with counts — e.g. `net binds (remote only, 2x)`. A new runner image
 changes `envKey` and starts a new tally. A pair counts as agreeing when the
 outcome, the three counts and the failing-name set match; the slow-gate names, recorded apart as `slow`, play no part; a remote `unknown`
-counts as a disagreement, and only pairs where both sides measured (pass or
+counts as a disagreement, except one where the lead could not build or send the
+tree (`client error: …`, `snapshot failed: …`, `pack of N bytes exceeds …`): that
+pair is recorded with `skipped: 'not-sent'` and shown on the line as
+`, N skipped (tree not sent)`, and only pairs where both sides measured (pass or
 fail) contribute one-sided names. A name that fails remote-only on two
 different trees is an incompatibility to fix; a single occurrence is a flake
 candidate. Nothing is re-run on either side.

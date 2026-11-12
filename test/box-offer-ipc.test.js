@@ -303,7 +303,7 @@ test('offer:set accepts a run record carrying the confirmed peer list, then refu
 });
 
 test('offer:get reports the test runner status and isolation the run scope would use', async () => {
-  const suiteRunnerState = () => ({ setting: null, forced: [], effective: { isolation: 'none', work: '/w' }, status: 'running' });
+  const suiteRunnerState = () => ({ setting: null, forced: [], effective: { isolation: 'none', work: '/w', boxImage: null }, status: 'running' });
   const { handlers } = ipcFixture({ initial: VALID, suiteRunnerState });
   assert.deepStrictEqual((await handlers.get('offer:get')({})).runner, { status: 'running', isolation: 'none' });
 });

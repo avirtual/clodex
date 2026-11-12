@@ -185,7 +185,7 @@ function submitBody(snap, id) {
 async function snapOf(t, repo) {
   const snap = await snapshotTree(repo);
   t.after(() => releaseSnapshot(snap));
-  const pack = await buildPack(snap, { have: [] });
+  const pack = fs.readFileSync((await buildPack(snap, { have: [] })).file);
   return { snap, pack, sha256: crypto.createHash('sha256').update(pack).digest('hex') };
 }
 

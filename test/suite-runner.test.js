@@ -82,7 +82,7 @@ async function fixture(t, { onSpawn, now, limits, kill, wrap, runnerOver } = {})
   const upload = async (b) => {
     const r = await runner.submit(b);
     if (r.state !== 'awaiting-pack') return r;
-    const pack = await buildPack(snap, { have: r.have });
+    const pack = fs.readFileSync((await buildPack(snap, { have: r.have })).file);
     assert.strictEqual((await runner.putPack(b.id, 0, pack)).ok, true);
     return runner.commit(b.id, { bytes: pack.length, sha256: sha256(pack) });
   };
@@ -146,6 +146,25 @@ test('a pack upload at the wrong offset answers 409 with the size held', async (
   assert.deepStrictEqual(await f.runner.putPack('j1', 5, Buffer.from('abc')), { ok: false, status: 409, error: 'offset is not the current size', have: 0 });
   assert.deepStrictEqual(await f.runner.putPack('j1', 0, Buffer.from('abc')), { ok: true, size: 3 });
   assert.deepStrictEqual(await f.runner.putPack('j1', 0, Buffer.from('abc')), { ok: false, status: 409, error: 'offset is not the current size', have: 3 });
+});
+
+test('commit hashes and ingests the pack from its file in readChunk slices, never reading it whole', async (t) => {
+  const f = await fixture(t, { limits: { readChunk: 64 } });
+  const read = [];
+  const real = fs.readFileSync;
+  fs.readFileSync = function spy(p, ...rest) { read.push(String(p)); return real.call(this, p, ...rest); };
+  t.after(() => { fs.readFileSync = real; });
+  const sub = await f.runner.submit(f.body('j1'));
+  assert.strictEqual(sub.state, 'awaiting-pack');
+  const pack = real((await buildPack(f.snap, { have: sub.have })).file);
+  assert.ok(pack.length > 4 * 64, `ENTER: the pack spans several read chunks (${pack.length} bytes)`);
+  assert.strictEqual((await f.runner.putPack('j1', 0, pack)).ok, true);
+  const committed = await f.runner.commit('j1', { bytes: pack.length, sha256: sha256(pack) });
+  fs.readFileSync = real;
+  assert.strictEqual(committed.state, 'queued', JSON.stringify(committed));
+  assert.deepStrictEqual(read.filter((p) => path.basename(p) === 'pack'), []);
+  await waitState(f.runner, 'j1', 'done');
+  assert.strictEqual((await f.runner.poll(['j1'])).jobs[0].reason, null);
 });
 
 test('a commit whose sha256 does not match the uploaded pack is refused', async (t) => {
@@ -227,7 +246,7 @@ test('a cancel that lands while submit or commit keeps the mirror refs leaves th
   runner = f.runner;
   const viaCommit = await f.runner.submit(f.body('via-commit'));
   assert.strictEqual(viaCommit.state, 'awaiting-pack', 'ENTER: the first job needs a pack');
-  const pack = await buildPack(f.snap, { have: viaCommit.have });
+  const pack = fs.readFileSync((await buildPack(f.snap, { have: viaCommit.have })).file);
   assert.strictEqual((await f.runner.putPack('via-commit', 0, pack)).ok, true);
   armed = 'via-commit';
   const committed = await f.runner.commit('via-commit', { bytes: pack.length, sha256: sha256(pack) });

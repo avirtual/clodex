@@ -3214,14 +3214,16 @@ function createTicketMethods(deps, shared) {
       if (t === undefined) return '';
       const shadowing = cur.gate === 'shadow';
       if (!t || !t.envKey) return shadowing ? '; comparisons: none yet' : '';
-      if (!t.agree && !t.disagree && !shadowing) return '';
+      if (!t.agree && !t.disagree && !t.skipped && !shadowing) return '';
       const one = (t.oneSided || []).slice(0, 10).map((o) => `${flat(o.name)} (${o.side} only, ${o.count}x)`);
       const more = (t.oneSided || []).length > 10 ? ` (+${t.oneSided.length - 10} more)` : '';
       const p = t.platforms;
       const where = p && p.local && p.remote
         ? ` (local ${flat(p.local.os)}/${flat(p.local.arch)}, runner ${flat(p.remote.os)}/${flat(p.remote.arch)}${p.remote.isolation === 'container' ? ' box' : ''})`
         : '';
-      return `; comparisons under env ${flat(t.envKey)}: ${t.agree} agree, ${t.disagree} disagree${where}`
+      return `; comparisons under env ${flat(t.envKey)}: ${t.agree} agree, ${t.disagree} disagree`
+        + (t.skipped ? `, ${t.skipped} skipped (tree not sent)` : '')
+        + where
         + (one.length ? `; failed on one side only: ${one.join(', ')}${more}` : '');
     },
 

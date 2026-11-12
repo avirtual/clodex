@@ -34,19 +34,19 @@ for (const [label, raw] of REFUSALS) {
 
 test('suiteRunnerOptions: setting on and no env takes every field from the setting', () => {
   assert.deepStrictEqual(suiteRunnerOptions({}, '/h', { platform: 'linux', setting: { enabled: true, isolation: 'none', work: '/w' } }), {
-    root: '/h', work: '/w', isolation: 'none', limits: {}, forced: [],
+    root: '/h', work: '/w', isolation: 'none', boxImage: null, limits: {}, forced: [],
   });
 });
 
 test('suiteRunnerOptions: CLODEX_SUITE_RUNNER=1 turns on a node whose setting is off, and names enabled as forced', () => {
   assert.deepStrictEqual(suiteRunnerOptions({ CLODEX_SUITE_RUNNER: '1' }, '/h', { platform: 'linux', setting: null }), {
-    root: '/h', work: '/var/lib/clodex-suite', isolation: 'user', limits: {}, forced: ['enabled'],
+    root: '/h', work: '/var/lib/clodex-suite', isolation: 'user', boxImage: null, limits: {}, forced: ['enabled'],
   });
 });
 
 test('suiteRunnerOptions: CLODEX_SUITE_ISOLATION wins over the stored isolation', () => {
   assert.deepStrictEqual(suiteRunnerOptions({ CLODEX_SUITE_ISOLATION: 'none' }, '/h', { platform: 'linux', setting: { enabled: true, isolation: 'user', work: null } }), {
-    root: '/h', work: '/var/lib/clodex-suite', isolation: 'none', limits: {}, forced: ['isolation'],
+    root: '/h', work: '/var/lib/clodex-suite', isolation: 'none', boxImage: null, limits: {}, forced: ['isolation'],
   });
 });
 
@@ -57,7 +57,7 @@ test('suiteRunnerOptions: setting off and no env is off', () => {
 
 test('suiteRunnerOptions: CLODEX_SUITE_RUNNER other than 1 cannot force a stored setting off', () => {
   assert.deepStrictEqual(suiteRunnerOptions({ CLODEX_SUITE_RUNNER: '0' }, '/h', { platform: 'linux', setting: { enabled: true, isolation: 'user', work: '/w' } }), {
-    root: '/h', work: '/w', isolation: 'user', limits: {}, forced: [],
+    root: '/h', work: '/w', isolation: 'user', boxImage: null, limits: {}, forced: [],
   });
 });
 
@@ -194,7 +194,7 @@ test('no module but ipc-handlers writes the test runner setting', () => {
   assert.deepStrictEqual(writers, ['ipc-handlers.js']);
 });
 
-const SUITE_ENV = ['CLODEX_SUITE_RUNNER', 'CLODEX_SUITE_ISOLATION', 'CLODEX_SUITE_WORK', 'CLODEX_DATA_DIR', 'CLODEX_REMOTE_ENABLE'];
+const SUITE_ENV = ['CLODEX_SUITE_RUNNER', 'CLODEX_SUITE_ISOLATION', 'CLODEX_SUITE_WORK', 'CLODEX_SUITE_BOX_IMAGE', 'CLODEX_DATA_DIR', 'CLODEX_REMOTE_ENABLE'];
 
 function wiringFixture(t, settings) {
   const saved = Object.fromEntries(SUITE_ENV.map((k) => [k, process.env[k]]));
@@ -266,7 +266,7 @@ test('saving the setting rebuilds the wire with the new runner, no restart', asy
   assert.strictEqual(typeof (built[1].suiteRunner && built[1].suiteRunner.submit), 'function', 'the new wire carries a runner');
   assert.deepStrictEqual(wiring.suiteRunnerState(), {
     setting: { enabled: true, isolation: 'none', work: path.join(tmp, 'work') },
-    forced: [], effective: { isolation: 'none', work: path.join(tmp, 'work') }, defaultWork: platformDefault(tmp),
+    forced: [], effective: { isolation: 'none', work: path.join(tmp, 'work'), boxImage: null }, defaultWork: platformDefault(tmp),
     remoteEnabled: true, status: 'running', error: null,
   });
   assert.strictEqual(wiring.suiteRunnerBusy(), false);
@@ -284,7 +284,7 @@ test('a stored runner on a node with remote access off is pull-only, then runnin
   const { wiring, tmp } = wiringFixture(t, settings);
   const state = (status) => ({
     setting: { enabled: true, isolation: 'none', work: null },
-    forced: [], effective: { isolation: 'none', work: platformDefault(tmp) }, defaultWork: platformDefault(tmp),
+    forced: [], effective: { isolation: 'none', work: platformDefault(tmp), boxImage: null }, defaultWork: platformDefault(tmp),
     remoteEnabled: false, status, error: null,
   });
   assert.deepStrictEqual(wiring.suiteRunnerState(), state('pull-only'));
@@ -299,9 +299,10 @@ test('a field forced by env reports the value in effect, not the stored one', as
   const { wiring, tmp } = wiringFixture(t, settings);
   process.env.CLODEX_SUITE_ISOLATION = 'none';
   process.env.CLODEX_SUITE_WORK = '/x';
+  process.env.CLODEX_SUITE_BOX_IMAGE = IMG;
   assert.deepStrictEqual(wiring.suiteRunnerState(), {
     setting: { enabled: true, isolation: 'user', work: null },
-    forced: ['isolation', 'work'], effective: { isolation: 'none', work: '/x' }, defaultWork: platformDefault(tmp),
+    forced: ['isolation', 'work', 'boxImage'], effective: { isolation: 'none', work: '/x', boxImage: IMG }, defaultWork: platformDefault(tmp),
     remoteEnabled: true, status: 'starting', error: null,
   });
 });
@@ -336,4 +337,65 @@ test('startSuiteRunner builds the box adapter from boxImage and otherwise passes
     ['with', null, 'function', { root: '/home/c', work: '/srv/w', isolation: 'none-iso', limits: {}, box: { sweep: SWEEP, image: IMAGE }, boxSweep: null }, [{ image: IMAGE, work: '/srv/w', stateDir: '/home/c/suite-runner' }]],
     ['without', null, 'function', { root: '/home/c', work: '/srv/w', isolation: 'none-iso', limits: {}, box: null, boxSweep: SWEEP }, [{ image: null, work: '/srv/w', stateDir: '/home/c/suite-runner' }]],
   ]);
+});
+
+const IMG = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+
+const BOX_IMAGE_ROWS = [
+  ['absent', { enabled: true, isolation: 'user', work: null }, { enabled: true, isolation: 'user', work: null }],
+  ['null', { enabled: true, isolation: 'user', work: null, boxImage: null }, { enabled: true, isolation: 'user', work: null }],
+  ['a valid id', { enabled: true, isolation: 'user', work: null, boxImage: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' },
+    { enabled: true, isolation: 'user', work: null, boxImage: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' }],
+  ["a tag 'node:24'", { enabled: true, isolation: 'user', work: null, boxImage: 'node:24' }, null],
+  ['a short hash', { enabled: true, isolation: 'user', work: null, boxImage: 'sha256:0123456789abcdef' }, null],
+  ['uppercase hex', { enabled: true, isolation: 'user', work: null, boxImage: 'sha256:0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef' }, null],
+];
+
+for (const [label, raw, want] of BOX_IMAGE_ROWS) {
+  test(`sanitiser boxImage ${label}`, () => {
+    assert.deepStrictEqual(sanitizeSuiteRunner(raw), want);
+  });
+}
+
+test('suiteRunnerOptions: a stored boxImage is returned, and CLODEX_SUITE_BOX_IMAGE wins over it and is named as forced', () => {
+  const setting = { enabled: true, isolation: 'user', work: '/w', boxImage: IMG };
+  assert.deepStrictEqual(suiteRunnerOptions({}, '/h', { platform: 'linux', setting }), {
+    root: '/h', work: '/w', isolation: 'user', boxImage: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', limits: {}, forced: [],
+  });
+  const other = 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
+  assert.deepStrictEqual(suiteRunnerOptions({ CLODEX_SUITE_BOX_IMAGE: other }, '/h', { platform: 'linux', setting }), {
+    root: '/h', work: '/w', isolation: 'user', boxImage: 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff', limits: {}, forced: ['boxImage'],
+  });
+  assert.deepStrictEqual(suiteRunnerOptions({ CLODEX_SUITE_BOX_IMAGE: 'node:24' }, '/h', { platform: 'linux', setting }), {
+    root: '/h', work: '/w', isolation: 'user', boxImage: null, limits: {}, forced: ['boxImage'],
+  });
+});
+
+test('a stored boxImage survives an Apply that changes only isolation', () => {
+  const { suiteRunnerRecordFromForm } = require('../renderer/lib/offer-view');
+  const stored = { enabled: true, isolation: 'user', work: '/srv/suite-work', boxImage: IMG };
+  const { set, store } = ipcFixture({ initial: stored });
+  const shown = { setting: stored, forced: [] };
+  const rec = suiteRunnerRecordFromForm(shown, { enabled: true, isolation: 'none', work: '/srv/suite-work', boxImage: IMG });
+  assert.strictEqual(set({}, rec).ok, true);
+  assert.deepStrictEqual(store.suiteRunner, { enabled: true, isolation: 'none', work: '/srv/suite-work', boxImage: IMG });
+});
+
+test('a forced boxImage keeps the stored one on Apply, and an emptied field drops the key', () => {
+  const { suiteRunnerRecordFromForm } = require('../renderer/lib/offer-view');
+  const stored = { enabled: true, isolation: 'user', work: null, boxImage: IMG };
+  assert.deepStrictEqual(suiteRunnerRecordFromForm({ setting: stored, forced: ['boxImage'] }, { enabled: true, isolation: 'none', work: '', boxImage: 'sha256:ffff' }),
+    { enabled: true, isolation: 'none', work: null, boxImage: IMG });
+  assert.deepStrictEqual(suiteRunnerRecordFromForm({ setting: stored, forced: [] }, { enabled: true, isolation: 'user', work: '', boxImage: '  ' }),
+    { enabled: true, isolation: 'user', work: null });
+});
+
+test('the runner state reports a stored boxImage under setting and effective', (t) => {
+  const settings = { remoteEnabled: false, remotePort: 0, peers: [], suiteRunner: { enabled: true, isolation: 'none', work: null, boxImage: IMG } };
+  const { wiring, tmp } = wiringFixture(t, settings);
+  assert.deepStrictEqual(wiring.suiteRunnerState(), {
+    setting: { enabled: true, isolation: 'none', work: null, boxImage: IMG },
+    forced: [], effective: { isolation: 'none', work: platformDefault(tmp), boxImage: IMG }, defaultWork: platformDefault(tmp),
+    remoteEnabled: false, status: 'pull-only', error: null,
+  });
 });

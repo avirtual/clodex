@@ -3,7 +3,10 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
+const { spawn } = require('child_process');
 const { git, mergeTargetFor } = require('./git-worktree');
+const { safeGitArgsFor } = require('./git-safe');
 
 const SNAP_IDENT = {
   GIT_AUTHOR_NAME: 'Clodex',
@@ -17,7 +20,7 @@ const CANDIDATES_PER_LINE = 16;
 const NEAR_CONFIG = ['-c', 'core.splitIndex=false'];
 const RUNNER_CONFIG = ['-c', 'core.autocrlf=false', '-c', 'core.hooksPath=/dev/null', '-c', 'core.splitIndex=false'];
 const DEFAULT_TREE_CAP = 2 * 1024 ** 3;
-const DEFAULT_PACK_MAX = 256 * 1024 ** 2;
+const DEFAULT_PACK_MAX = 1024 ** 3;
 const SHA_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 const KEEP_JOBS = 20;
 const GC_PACKS = 50;
@@ -116,7 +119,7 @@ function releaseSnapshot(snapshot) {
   if (snapshot && snapshot.tmpDir) fs.rmSync(snapshot.tmpDir, { recursive: true, force: true });
 }
 
-async function buildPack(snapshot, { have = [] } = {}) {
+async function buildPack(snapshot, { have = [], maxBytes = Infinity } = {}) {
   const env = storeEnv(snapshot.tmpDir, snapshot.alternate, 'index');
   const asked = have.filter((h) => SHA_RE.test(h));
   let known = [];
@@ -125,10 +128,56 @@ async function buildPack(snapshot, { have = [] } = {}) {
     known = lines(check).filter((l) => / commit /.test(l)).map((l) => l.split(' ')[0]);
   }
   const revs = [snapshot.snap, snapshot.indexTree, ...Object.values(snapshot.refs), ...known.map((h) => `^${h}`)];
-  const r = await run(snapshot.cwd, ['pack-objects', '--revs', '--stdout', '-q', '--delta-base-offset'], {
-    env, input: `${revs.join('\n')}\n`, encoding: 'buffer', maxBuffer: DEFAULT_PACK_MAX,
+  const argv = await safeGitArgsFor(snapshot.cwd, ['pack-objects', '--revs', '--stdout', '-q', '--delta-base-offset']);
+  const file = path.join(snapshot.tmpDir, `pack-${crypto.randomUUID()}.pack`);
+  const fd = fs.openSync(file, 'wx', 0o600);
+  const hash = crypto.createHash('sha256');
+  let bytes = 0;
+  let over = false;
+  let stderr = '';
+  let failed = null;
+  let child;
+  try {
+    child = spawn('git', argv, { env: cleanEnv(env), stdio: ['pipe', 'pipe', 'pipe'] });
+  } catch (e) {
+    fs.closeSync(fd);
+    fs.rmSync(file, { force: true });
+    throw e;
+  }
+  let signal = null;
+  const closed = new Promise((resolve) => {
+    child.on('error', (e) => { failed = e; });
+    child.on('close', (code, sig) => { signal = sig; resolve(code); });
   });
-  return r.stdout;
+  child.stdin.on('error', () => {});
+  child.stdin.end(`${revs.join('\n')}\n`);
+  child.stderr.on('data', (d) => { if (stderr.length < 4096) stderr += String(d); });
+  child.stdout.on('data', (chunk) => {
+    if (over || failed) return;
+    if (bytes + chunk.length > maxBytes) {
+      over = true;
+      bytes += chunk.length;
+      child.kill('SIGKILL');
+      return;
+    }
+    try {
+      fs.writeSync(fd, chunk);
+    } catch (e) {
+      failed = e;
+      child.kill('SIGKILL');
+      return;
+    }
+    hash.update(chunk);
+    bytes += chunk.length;
+  });
+  const code = await closed;
+  fs.closeSync(fd);
+  if (over) return { file, bytes, over: true, signal };
+  if (failed || code !== 0) {
+    fs.rmSync(file, { force: true });
+    throw new Error(`git pack-objects failed: ${failed ? failed.message : stderr.trim()}`);
+  }
+  return { file, bytes, sha256: hash.digest('hex') };
 }
 
 function assertShas(shas) {
@@ -140,7 +189,23 @@ function mirrorPath(workDir, repoKey) {
   return path.join(workDir, 'mirrors', `${repoKey}.git`);
 }
 
-async function ingestPack(pack, { workDir, repoKey, snap, indexTree, refs = {}, maxInputSize = DEFAULT_PACK_MAX }) {
+async function gitFromFile(cwd, args, { file, bytes }, readChunk) {
+  const argv = await safeGitArgsFor(cwd, args);
+  return new Promise((resolve) => {
+    const child = spawn('git', argv, { env: cleanEnv(), stdio: ['pipe', 'ignore', 'pipe'] });
+    let stderr = '';
+    let failed = null;
+    child.stderr.on('data', (d) => { if (stderr.length < 4096) stderr += String(d); });
+    child.stdin.on('error', () => {});
+    const input = fs.createReadStream(file, { highWaterMark: readChunk, start: 0, end: Math.max(bytes - 1, 0) });
+    input.on('error', (e) => { failed = e; child.kill('SIGKILL'); });
+    input.pipe(child.stdin);
+    child.on('error', (e) => { failed = e; });
+    child.on('close', (code) => { input.destroy(); resolve({ ok: !failed && code === 0, code, stderr: failed ? failed.message : stderr }); });
+  });
+}
+
+async function ingestPack(pack, { workDir, repoKey, snap, indexTree, refs = {}, maxInputSize = DEFAULT_PACK_MAX, readChunk = 1024 ** 2 }) {
   assertShas([snap, indexTree, ...Object.values(refs)]);
   const mirror = mirrorPath(workDir, repoKey);
   if (!fs.existsSync(path.join(mirror, 'HEAD'))) {
@@ -148,7 +213,10 @@ async function ingestPack(pack, { workDir, repoKey, snap, indexTree, refs = {}, 
     fs.chmodSync(mirror, 0o700);
     await run(path.dirname(mirror), [...RUNNER_CONFIG, 'init', '-q', '--bare', mirror]);
   }
-  const indexed = await tryRun(mirror, [...RUNNER_CONFIG, 'index-pack', '--stdin', '--fsck-objects', `--max-input-size=${maxInputSize}`], { input: pack });
+  const indexArgs = [...RUNNER_CONFIG, 'index-pack', '--stdin', '--fsck-objects', `--max-input-size=${maxInputSize}`];
+  const indexed = Buffer.isBuffer(pack)
+    ? await tryRun(mirror, indexArgs, { input: pack })
+    : await gitFromFile(mirror, indexArgs, pack, readChunk);
   if (!indexed.ok) return { ok: false, reason: 'bad-pack', mirror, error: String(indexed.stderr).trim() };
   const tips = [snap, indexTree, ...Object.values(refs)];
   const connected = await tryRun(mirror, [...RUNNER_CONFIG, 'rev-list', '--objects', '--quiet', ...tips]);

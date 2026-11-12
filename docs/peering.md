@@ -486,21 +486,25 @@ A node started with `CLODEX_SUITE_RUNNER=1` is a test runner: remote-wiring
 builds one `suite-runner.js` engine (`suiteRunnerOptions`: work root
 `CLODEX_SUITE_WORK`, default `/var/lib/clodex-suite` on Linux and
 `<Clodex home>/suite-work` on macOS; `CLODEX_SUITE_ISOLATION=none`
-for a loopback throwaway box; `CLODEX_SUITE_PACK_MAX_MB`) and injects it as
+for a loopback throwaway box; `CLODEX_SUITE_PACK_MAX_MB`, default 1 GiB) and injects it as
 `suiteRunner`. Without it every `/api/suite/*` route answers 501 and hello
 carries no `suite` cap.
 
 The same choice is stored as the ui-setting `suiteRunner`
-(`{ enabled, isolation: 'user'|'none', work: <absolute path>|null }`, default
+(`{ enabled, isolation: 'user'|'none', work: <absolute path>|null, boxImage? }`, default
 `null` = off; `sanitizeSuiteRunner` in stores.js loads an invalid or absent
-record as off). Preferences ▸ Test boxes ▸ Test runner edits it through the
+record as off). `boxImage` is optional: an image id `sha256:<64 lowercase hex>`
+for box jobs; a tag or any other string invalidates the record, and null or
+absent is stored as no key. Preferences ▸ Test boxes ▸ Test runner edits it through the
 `suiteRunner:get` / `suiteRunner:set` IPC, registered under the
 `enableTestBoxes` seam on both hosts, so the browser view of a headless node
 (operator token) can make it a runner; `settings:set` drops the key, and no intent, clodexctl
 command or remote route writes it. Each env var, when set, wins over its field:
 `CLODEX_SUITE_RUNNER=1` forces on (any other value forces nothing),
 `CLODEX_SUITE_ISOLATION` forces isolation, `CLODEX_SUITE_WORK` forces the work
-root; `suiteRunnerOptions` returns the forced fields as `forced` and the UI
+root, `CLODEX_SUITE_BOX_IMAGE` forces the box image (a value that is not an
+image id forces it to none); `suiteRunnerOptions` returns the forced fields as `forced`,
+the image as `boxImage` (null when unset) and the UI
 shows them as "set by environment". A save applies without a restart
 (`reloadSuiteRunner` closes the old engine and rebuilds the remote server, so
 hello caps follow) and is refused while a job is live (`busy()`).

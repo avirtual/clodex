@@ -20,6 +20,10 @@ function write(dir, rel, content) {
   fs.writeFileSync(path.join(dir, rel), content);
 }
 
+async function packOf(snap, opts) {
+  return fs.readFileSync((await buildPack(snap, opts)).file);
+}
+
 function baseRepo() {
   const root = mkTmpRoot('suite-snap-');
   const repo = path.join(root, 'near');
@@ -44,7 +48,7 @@ async function roundTrip(root, near, { have = [] } = {}) {
   const status = g(near, 'status', '--porcelain');
   const snap = await snapshotTree(near);
   try {
-    const pack = await buildPack(snap, { have });
+    const pack = await packOf(snap, { have });
     const workDir = path.join(root, 'work');
     const ingest = await ingestPack(pack, { workDir, repoKey: snap.repoKey, snap: snap.snap, indexTree: snap.indexTree, refs: snap.refs });
     assert.deepStrictEqual(ingest, { ok: true, mirror: path.join(workDir, 'mirrors', `${snap.repoKey}.git`) });
@@ -166,7 +170,7 @@ test('a snapshot leaves the source repo untouched: refs, objects, real index byt
   const before = { refs: g(repo, 'for-each-ref'), head: g(repo, 'rev-parse', 'HEAD'), objects: g(repo, 'count-objects', '-v'), index: fs.readFileSync(indexPath) };
   const snap = await snapshotTree(repo);
   try {
-    const pack = await buildPack(snap);
+    const pack = await packOf(snap);
     assert.ok(pack.length > 0);
     assert.notStrictEqual(snap.treeHash, g(repo, 'rev-parse', 'HEAD^{tree}').trim());
   } finally {
@@ -174,6 +178,45 @@ test('a snapshot leaves the source repo untouched: refs, objects, real index byt
   }
   const after = { refs: g(repo, 'for-each-ref'), head: g(repo, 'rev-parse', 'HEAD'), objects: g(repo, 'count-objects', '-v'), index: fs.readFileSync(indexPath) };
   assert.deepStrictEqual(after, before);
+});
+
+test('buildPack streams to a file under the snapshot tmpDir and stops git once the file would pass maxBytes', async () => {
+  const { repo } = baseRepo();
+  write(repo, 'big.bin', require('node:crypto').randomBytes(4 * 1024 * 1024));
+  const snap = await snapshotTree(repo);
+  try {
+    const full = await buildPack(snap);
+    assert.strictEqual(path.dirname(full.file), snap.tmpDir);
+    assert.ok(full.bytes > 4 * 1024 * 1024, `ENTER: the full pack holds the 4 MiB blob (${full.bytes} bytes)`);
+    const body = fs.readFileSync(full.file);
+    assert.deepStrictEqual([full.over, body.length, full.sha256], [undefined, full.bytes, require('node:crypto').createHash('sha256').update(body).digest('hex')]);
+    const limit = 64 * 1024;
+    const capped = await buildPack(snap, { maxBytes: limit });
+    assert.deepStrictEqual([capped.over, capped.signal], [true, 'SIGKILL']);
+    assert.ok(capped.bytes > limit, `the refused pack reports the bytes it saw past the limit (${capped.bytes})`);
+    assert.ok(fs.statSync(capped.file).size <= limit, `the file stayed within the limit (${fs.statSync(capped.file).size})`);
+  } finally {
+    releaseSnapshot(snap);
+  }
+});
+
+test('ingestPack reads a pack file in readChunk slices and the tree materializes with the same hash', async () => {
+  const { root, repo } = baseRepo();
+  write(repo, 'a.txt', 'alpha from a file\n');
+  const snap = await snapshotTree(repo);
+  try {
+    const built = await buildPack(snap);
+    assert.ok(built.bytes > 4 * 64, `ENTER: the pack spans several read chunks (${built.bytes} bytes)`);
+    const workDir = path.join(root, 'work');
+    const r = await ingestPack({ file: built.file, bytes: built.bytes }, { workDir, repoKey: snap.repoKey, snap: snap.snap, indexTree: snap.indexTree, refs: snap.refs, readChunk: 64 });
+    assert.deepStrictEqual(r, { ok: true, mirror: path.join(workDir, 'mirrors', `${snap.repoKey}.git`) });
+    const dir = path.join(root, 'job', 'tree');
+    const done = await materialize({ mirror: r.mirror, dir, snap: snap.snap, treeHash: snap.treeHash, indexTree: snap.indexTree, head: snap.head, branch: snap.branch, refs: snap.refs });
+    assert.deepStrictEqual(done, { ok: true, dir });
+    assert.strictEqual(await treeHashOf(dir, { base: snap.snap }), snap.treeHash);
+  } finally {
+    releaseSnapshot(snap);
+  }
 });
 
 test('the same tree snapshotted twice gives the same id', async () => {
@@ -194,7 +237,7 @@ test('a pack missing its prerequisites fails ingestPack as incomplete', async ()
   write(repo, 'a.txt', 'alpha incremental\n');
   const snap = await snapshotTree(repo);
   try {
-    const pack = await buildPack(snap, { have: [g(repo, 'rev-parse', 'HEAD~1').trim()] });
+    const pack = await packOf(snap, { have: [g(repo, 'rev-parse', 'HEAD~1').trim()] });
     const workDir = path.join(root, 'work');
     const r = await ingestPack(pack, { workDir, repoKey: snap.repoKey, snap: snap.snap, indexTree: snap.indexTree, refs: snap.refs });
     assert.deepStrictEqual(r, { ok: false, reason: 'incomplete', mirror: path.join(workDir, 'mirrors', `${snap.repoKey}.git`) });
@@ -209,7 +252,7 @@ test('an incremental pack over a mirror that has the base ingests and round-trip
   const first = await snapshotTree(repo);
   const workDir = path.join(root, 'work');
   try {
-    const r = await ingestPack(await buildPack(first), { workDir, repoKey: first.repoKey, snap: first.snap, indexTree: first.indexTree, refs: first.refs });
+    const r = await ingestPack(await packOf(first), { workDir, repoKey: first.repoKey, snap: first.snap, indexTree: first.indexTree, refs: first.refs });
     assert.strictEqual(r.ok, true);
   } finally {
     releaseSnapshot(first);
@@ -217,7 +260,7 @@ test('an incremental pack over a mirror that has the base ingests and round-trip
   write(repo, 'a.txt', 'alpha second job\n');
   const second = await snapshotTree(repo);
   try {
-    const pack = await buildPack(second, { have: [first.head] });
+    const pack = await packOf(second, { have: [first.head] });
     const r = await ingestPack(pack, { workDir, repoKey: second.repoKey, snap: second.snap, indexTree: second.indexTree, refs: second.refs });
     assert.strictEqual(r.ok, true);
     const dir = path.join(root, 'job2', 'tree');
@@ -243,7 +286,7 @@ test('a racily clean entry in the real index is re-read, not trusted from a copi
   const snap = await snapshotTree(repo);
   try {
     const workDir = path.join(root, 'work');
-    const r = await ingestPack(await buildPack(snap), { workDir, repoKey: snap.repoKey, snap: snap.snap, indexTree: snap.indexTree, refs: snap.refs });
+    const r = await ingestPack(await packOf(snap), { workDir, repoKey: snap.repoKey, snap: snap.snap, indexTree: snap.indexTree, refs: snap.refs });
     const dir = path.join(root, 'job', 'tree');
     const done = await materialize({ mirror: r.mirror, dir, snap: snap.snap, treeHash: snap.treeHash, indexTree: snap.indexTree, head: snap.head, branch: snap.branch, refs: snap.refs });
     assert.deepStrictEqual(done, { ok: true, dir });
@@ -284,7 +327,7 @@ test('materialize ends tree-mismatch when the checkout does not hash to the job 
   const snap = await snapshotTree(repo);
   try {
     const workDir = path.join(root, 'work');
-    const r = await ingestPack(await buildPack(snap), { workDir, repoKey: snap.repoKey, snap: snap.snap, indexTree: snap.indexTree, refs: snap.refs });
+    const r = await ingestPack(await packOf(snap), { workDir, repoKey: snap.repoKey, snap: snap.snap, indexTree: snap.indexTree, refs: snap.refs });
     const headTree = g(repo, 'rev-parse', 'HEAD^{tree}').trim();
     const done = await materialize({ mirror: r.mirror, dir: path.join(root, 'job', 'tree'), snap: snap.snap, treeHash: headTree, indexTree: snap.indexTree, head: snap.head, branch: snap.branch, refs: snap.refs });
     assert.deepStrictEqual(done, { ok: false, reason: 'tree-mismatch', treeHash: snap.treeHash });
@@ -298,7 +341,7 @@ test('materialize refuses a tree over the cap before any checkout', async () => 
   const snap = await snapshotTree(repo);
   try {
     const workDir = path.join(root, 'work');
-    const r = await ingestPack(await buildPack(snap), { workDir, repoKey: snap.repoKey, snap: snap.snap, indexTree: snap.indexTree, refs: snap.refs });
+    const r = await ingestPack(await packOf(snap), { workDir, repoKey: snap.repoKey, snap: snap.snap, indexTree: snap.indexTree, refs: snap.refs });
     const dir = path.join(root, 'job', 'tree');
     const done = await materialize({ mirror: r.mirror, dir, snap: snap.snap, treeHash: snap.treeHash, indexTree: snap.indexTree, head: snap.head, branch: snap.branch, refs: snap.refs, treeCap: 10 });
     assert.deepStrictEqual(done, { ok: false, reason: 'too-large' });
@@ -308,8 +351,8 @@ test('materialize refuses a tree over the cap before any checkout', async () => 
   }
 });
 
-test('the default pack limit is 256 MiB', () => {
-  assert.strictEqual(DEFAULT_PACK_MAX, 268435456);
+test('the default pack limit is 1 GiB', () => {
+  assert.strictEqual(DEFAULT_PACK_MAX, 1073741824);
 });
 
 test('materialize pins core.autocrlf=false in the far checkout over a global autocrlf=true', async () => {
@@ -327,7 +370,7 @@ test('materialize pins core.autocrlf=false in the far checkout over a global aut
     delete homeEnv.XDG_CONFIG_HOME;
     assert.strictEqual(execFileSync('git', ['config', '--global', 'core.autocrlf'], { env: homeEnv, encoding: 'utf8' }).trim(), 'true');
     const workDir = path.join(root, 'work');
-    const r = await ingestPack(await buildPack(snap), { workDir, repoKey: snap.repoKey, snap: snap.snap, indexTree: snap.indexTree, refs: snap.refs });
+    const r = await ingestPack(await packOf(snap), { workDir, repoKey: snap.repoKey, snap: snap.snap, indexTree: snap.indexTree, refs: snap.refs });
     const dir = path.join(root, 'job', 'tree');
     const done = await materialize({ mirror: r.mirror, dir, snap: snap.snap, treeHash: snap.treeHash, indexTree: snap.indexTree, head: snap.head, branch: snap.branch, refs: snap.refs });
     assert.deepStrictEqual(done, { ok: true, dir });
@@ -344,7 +387,7 @@ test('keepRefs keeps the trunk and the newest 20 job heads; mirrorHave answers o
   const snap = await snapshotTree(repo);
   try {
     const workDir = path.join(root, 'work');
-    const r = await ingestPack(await buildPack(snap), { workDir, repoKey: snap.repoKey, snap: snap.snap, indexTree: snap.indexTree, refs: snap.refs });
+    const r = await ingestPack(await packOf(snap), { workDir, repoKey: snap.repoKey, snap: snap.snap, indexTree: snap.indexTree, refs: snap.refs });
     assert.deepStrictEqual(await mirrorHave(r.mirror, [snap.head]), []);
     for (let i = 1; i <= 22; i++) {
       await keepRefs(r.mirror, { stamp: i, id: `job${i}`, snap: snap.snap, indexTree: snap.indexTree, trunkSha: snap.refs.master });
