@@ -901,6 +901,13 @@ leaves a `ticket-loop` traffic row to the lead. A routed hand run waits at most
 15 minutes for the runner to take the job (queue and upload) and at most 21
 minutes for it to run; past either it is cancelled and reported unknown.
 
+The team popover shows the same setting under the merge-target row
+(`team:runner`, `team:setRunner`): the peer, both modes, reachability and the
+shadow agree/disagree counts, with a set button per key. It sets through
+`_handleTeamRunner`, so its refusals and warnings are the verb's text; `hands`
+and `gate` are disabled until a peer is set, `gate:on` is not offered, and
+`setup`/`env` are shown as set in team.json, not edited.
+
 `[agent:team runner gate:off|shadow]` (lead only, a peer must be set) sets the
 gate mode; `gate:on` is refused, not available yet. Under `gate:shadow` every
 `_runTicketSuite` call (verify, the verify re-measure, post-merge) snapshots the

@@ -417,7 +417,7 @@ function compileOpen(overrides = {}, { realRefresh = false } = {}) {
     refresh: async () => true, anchorRect: () => ({ left: 40, bottom: 100 }),
     currentRoot: '', renderRows: noop, watchdogInput: {}, formatDuration: String,
     loadPreflight: async () => noop, loadStockRoles: async () => noop, loadActivity: async () => noop,
-    loadUses: async () => noop, loadLeadSeats: async () => noop, loadTrunk: async () => noop,
+    loadUses: async () => noop, loadLeadSeats: async () => noop, loadTrunk: async () => noop, loadRunner: async () => noop,
     ...overrides,
   };
   if (realRefresh) delete env.refresh;
