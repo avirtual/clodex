@@ -575,7 +575,7 @@ test('t8 F2: a plugin cannot repoint a host.lib leaf that core itself calls', ()
   const WITHHELD_KEYS = new Set([
     'deleteBranch', 'deleteBranchIfAt', 'isMerged', 'diffText', 'diffNames', 'mergeBase', 'fileAt', 'mergeNoFf', 'mergeCheck', 'revertCommit',
     'initRepo', 'hasCommit', 'checkoutDetached', 'headSha', 'headShaSync', 'headLogSync',
-    'defaultBranchSync', 'mergeTargetFor', 'mergeTargetForSync', 'localBranches', 'revParse', 'refState', 'relativizeWorktreePointers', 'git',
+    'defaultBranchSync', 'mergeTargetFor', 'mergeTargetForSync', 'localBranches', 'revParse', 'refState', 'relativizeWorktreePointers', 'relativePointersRefusal', 'git',
   ]);
 
   // The façade is frozen, so the assignment is a silent no-op in sloppy mode and
