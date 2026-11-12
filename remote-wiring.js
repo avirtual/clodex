@@ -159,13 +159,16 @@ function offerCallbacks({ getBoxOffer, getOfferFacts, offerDirectory, dialers, o
   };
 }
 
-function startSuiteRunner(opts, { log, load = () => require('./suite-runner') }) {
+function startSuiteRunner(opts, { log, load = () => require('./suite-runner'), loadBox = () => require('./suite-box') }) {
   try {
-    const { createSuiteRunner, noneIsolation, userIsolation } = load();
-    const { forced, ...runnerOpts } = opts;
+    const { createSuiteRunner, noneIsolation, userIsolation, statePaths } = load();
+    const { forced, boxImage, ...runnerOpts } = opts;
+    const docker = loadBox().boxIsolation({ image: boxImage || null, work: opts.work, stateDir: statePaths(opts.root).dir });
     const runner = createSuiteRunner({
       ...runnerOpts,
       isolation: opts.isolation === 'none' ? noneIsolation() : userIsolation(),
+      box: boxImage ? docker : null,
+      boxSweep: boxImage ? null : docker.sweep,
       log: (m) => log.warn('suite-runner', m),
     });
     runner.start();
