@@ -181,7 +181,7 @@ class RemoteServer {
                 getProfile, setProfile, deleteProfile,
                 deliverDm, claimDms, listDmOrigins, receiveRoster, notifications, openRequests, replyNote,
                 wtermOpen, wtermInput, wtermResize, wtermClose, onWtermStreams,
-                suiteRunner, suiteToken, token, insecure }) {
+                suiteRunner, suiteRunnerError, suiteToken, token, insecure }) {
     this._port = port;
     this._host = host || '127.0.0.1';
     this._basePath = resolveRemoteBasePath(basePath, warn);
@@ -282,6 +282,7 @@ class RemoteServer {
     this._gate = makeTokenGate(token);
     this._suiteGate = makeTokenGate(suiteToken);
     this._suiteRunner = suiteRunner || null;
+    this._suiteRunnerError = typeof suiteRunnerError === 'function' ? suiteRunnerError : () => null;
     this._insecure = !!insecure;
     this._loopback = isLoopbackHost(this._host);
   }
@@ -1175,7 +1176,10 @@ class RemoteServer {
 
   _handleSuite(req, res, p, url) {
     const runner = this._suiteRunner;
-    if (!runner) return this._json(res, 501, { ok: false, error: 'this node is not a test runner' });
+    if (!runner) {
+      const reason = this._suiteRunnerError();
+      return this._json(res, 501, { ok: false, error: 'this node is not a test runner', ...(reason ? { reason } : {}) });
+    }
     const rest = p.slice('/api/suite/'.length).split('/');
     if (req.method === 'GET' && p === '/api/suite/info') return this._suiteReply(res, () => runner.info());
     if (rest[0] !== 'jobs') return this._json(res, 404, { ok: false, error: 'not found' });

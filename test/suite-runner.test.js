@@ -10,7 +10,7 @@ const { PassThrough } = require('node:stream');
 const { execFileSync, spawnSync } = require('node:child_process');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { snapshotTree, releaseSnapshot, buildPack } = require('../suite-snapshot');
-const { createSuiteRunner, noneIsolation, envIdentity, jobPaths } = require('../suite-runner');
+const { createSuiteRunner, noneIsolation, envIdentity, jobPaths, jobPath, jobLang } = require('../suite-runner');
 
 const ENV = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_'))), GIT_AUTHOR_DATE: '2026-01-02T03:04:05Z', GIT_COMMITTER_DATE: '2026-01-02T03:04:05Z' };
 const IDENT = ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgSign=false', '-c', 'core.hooksPath=/dev/null', '-c', 'core.autocrlf=false'];
@@ -28,7 +28,7 @@ function sha256(buf) {
   return crypto.createHash('sha256').update(buf).digest('hex');
 }
 
-async function fixture(t, { onSpawn, now, limits, kill, wrap } = {}) {
+async function fixture(t, { onSpawn, now, limits, kill, wrap, runnerOver } = {}) {
   const root = mkTmpRoot('suite-runner-');
   const repo = path.join(root, 'near');
   fs.mkdirSync(repo);
@@ -67,8 +67,8 @@ async function fixture(t, { onSpawn, now, limits, kill, wrap } = {}) {
   };
   const base = noneIsolation({ user: 'suite-test', kill: kill || ((pid, sig) => kills.push([pid, sig])) });
   const isolation = wrap ? wrap(base) : base;
-  const make = (over = {}) => createSuiteRunner({ root, work, isolation, limits, spawn, now, timers, ...over });
-  const runner = make();
+  const make = (over = {}) => createSuiteRunner({ root, work, isolation, limits, spawn, now, timers, platform: 'linux', arch: 'x64', ...over });
+  const runner = make(runnerOver);
   t.after(() => {
     runner.close();
     releaseSnapshot(snap);
@@ -377,6 +377,31 @@ test('the test process gets an environment built from empty: no parent token rea
     ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
   });
   assert.deepStrictEqual([call.cmd, ...call.args], [process.execPath, 'scripts/run-tests.js', '--reporter=dot', 'test/a.test.js']);
+});
+
+test('the job PATH and LANG are fixed per platform and arch', () => {
+  assert.deepStrictEqual([
+    ['linux', 'x64', jobPath('linux', 'x64'), jobLang('linux')],
+    ['linux', 'arm64', jobPath('linux', 'arm64'), jobLang('linux')],
+    ['darwin', 'arm64', jobPath('darwin', 'arm64'), jobLang('darwin')],
+    ['darwin', 'x64', jobPath('darwin', 'x64'), jobLang('darwin')],
+  ], [
+    ['linux', 'x64', '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', 'C.UTF-8'],
+    ['linux', 'arm64', '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', 'C.UTF-8'],
+    ['darwin', 'arm64', '/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', 'en_US.UTF-8'],
+    ['darwin', 'x64', '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', 'en_US.UTF-8'],
+  ]);
+});
+
+test('a darwin arm64 runner hands the test process the Homebrew PATH and en_US.UTF-8', async (t) => {
+  const f = await fixture(t, { runnerOver: { platform: 'darwin', arch: 'arm64' } });
+  await f.upload(f.body('macjob', 'hand', { files: ['test/a.test.js'] }));
+  await waitState(f.runner, 'macjob', 'done');
+  const call = f.calls.find((c) => c.job === 'macjob');
+  assert.ok(call, 'ENTER: the job spawned');
+  assert.deepStrictEqual([call.opts.env.PATH, call.opts.env.LANG], [
+    '/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', 'en_US.UTF-8',
+  ]);
 });
 
 const LONG_ID = 't2267-runner-fixes-from-the-first-real-run-hand-attempt-0001-abc';
