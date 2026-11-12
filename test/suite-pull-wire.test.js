@@ -133,7 +133,7 @@ function engineAt(t, root, { sp = spawner(), timers } = {}) {
     root, work, isolation: noneIsolation({ user: 'suite-test', kill: sp.kill }), spawn: sp.spawn,
     ...(timers ? { timers } : {}),
   });
-  t.after(() => { runner.close(); spawnSync('chmod', ['-R', 'u+w', root]); });
+  t.after(() => { sp.hold = false; sp.release(); for (const c of sp.children) c.end('', null, 'SIGKILL'); runner.close(); spawnSync('chmod', ['-R', 'u+w', root]); });
   return { runner, sp, root };
 }
 
