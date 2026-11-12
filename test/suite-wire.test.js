@@ -138,13 +138,13 @@ function doneView(id, treeHash, extra = {}) {
 test('suiteRunnerOptions builds the runner deps from the environment, and nothing without runner mode', () => {
   assert.strictEqual(suiteRunnerOptions({ CLODEX_SUITE_TOKEN: 'x' }, '/h'), null);
   assert.deepStrictEqual(suiteRunnerOptions({ CLODEX_SUITE_RUNNER: '1' }, '/h', { platform: 'linux' }), {
-    root: '/h', work: '/var/lib/clodex-suite', isolation: 'user', limits: {},
+    root: '/h', work: '/var/lib/clodex-suite', isolation: 'user', limits: {}, forced: ['enabled'],
   });
   assert.deepStrictEqual(suiteRunnerOptions({ CLODEX_SUITE_RUNNER: '1', CLODEX_SUITE_WORK: '/w', CLODEX_SUITE_ISOLATION: 'none', CLODEX_SUITE_PACK_MAX_MB: '2' }, '/h', { platform: 'linux' }), {
-    root: '/h', work: '/w', isolation: 'none', limits: { packMaxBytes: 2 * 1024 * 1024 },
+    root: '/h', work: '/w', isolation: 'none', limits: { packMaxBytes: 2 * 1024 * 1024 }, forced: ['enabled', 'isolation', 'work'],
   });
   assert.deepStrictEqual(suiteRunnerOptions({ CLODEX_SUITE_RUNNER: '1', CLODEX_DATA_DIR: '/data' }, '/home/clodex/.clodex', { platform: 'linux' }), {
-    root: '/data', oldRoot: '/home/clodex/.clodex', work: '/var/lib/clodex-suite', isolation: 'user', limits: {},
+    root: '/data', oldRoot: '/home/clodex/.clodex', work: '/var/lib/clodex-suite', isolation: 'user', limits: {}, forced: ['enabled'],
   });
 });
 

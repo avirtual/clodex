@@ -6408,6 +6408,13 @@ const prefsRemoteTokenSave = document.getElementById('prefs-remote-token-save');
 const prefsRemoteTokenClear = document.getElementById('prefs-remote-token-clear');
 const prefsRemoteTokenState = document.getElementById('prefs-remote-token-state');
 const prefsPeerShell = document.getElementById('prefs-peer-shell');
+const prefsSuiteRunnerBlock = document.getElementById('prefs-suite-runner-block');
+const prefsSuiteRunnerEnabled = document.getElementById('prefs-suite-runner-enabled');
+const prefsSuiteRunnerIsolation = document.getElementById('prefs-suite-runner-isolation');
+const prefsSuiteRunnerWork = document.getElementById('prefs-suite-runner-work');
+const prefsSuiteRunnerApply = document.getElementById('prefs-suite-runner-apply');
+const prefsSuiteRunnerStatus = document.getElementById('prefs-suite-runner-status');
+const prefsSuiteRunnerNoneNote = document.getElementById('prefs-suite-runner-none-note');
 
 const prefsEnvScope = document.getElementById('prefs-env-scope');
 const prefsEnvList = document.getElementById('prefs-env-list');
@@ -9272,6 +9279,7 @@ async function openPrefs(group = null) {
       prefsRemoteBasePathApplies);
   }
   if (prefsPeerShell) prefsPeerShell.checked = !!s.peerShellEnabled;
+  refreshSuiteRunnerPrefs();
   prefsRemoteToken.value = '';
   renderRemoteTokenState(!!s.remoteHasToken, !!s.remoteEnvTokenPinned);
   if (prefsEnvScope) prefsEnvScope.value = 'global';
@@ -9442,6 +9450,73 @@ if (prefsPeerShell) {
       const s = await window.api.getSettings();
       prefsPeerShell.checked = !!(s && s.peerShellEnabled);
     } catch {}
+  });
+}
+
+function suiteRunnerStatusText(st) {
+  if (st.status === 'running') return 'Running — peers can send test suites here.';
+  if (st.status === 'needs-remote') return 'Off — turn phone access on above; the runner serves over that wire.';
+  if (st.status === 'failed') return st.error || 'Off — the runner failed to start.';
+  if (st.status === 'starting') return 'Starts with the wire.';
+  return st.remoteEnabled ? 'Off.' : 'Off. Phone access is off too; the runner needs it on.';
+}
+
+let prefsSuiteRunnerShown = null;
+
+function renderSuiteRunnerPrefs(st) {
+  prefsSuiteRunnerShown = st;
+  const rec = st.setting || { enabled: false, isolation: 'user', work: null };
+  const eff = st.effective || {};
+  const forced = new Set(st.forced || []);
+  prefsSuiteRunnerEnabled.checked = forced.has('enabled') || rec.enabled;
+  prefsSuiteRunnerEnabled.disabled = forced.has('enabled');
+  prefsSuiteRunnerIsolation.value = forced.has('isolation') ? eff.isolation : rec.isolation;
+  prefsSuiteRunnerIsolation.disabled = forced.has('isolation');
+  prefsSuiteRunnerWork.value = forced.has('work') ? (eff.work || '') : (rec.work || '');
+  prefsSuiteRunnerWork.disabled = forced.has('work');
+  prefsSuiteRunnerWork.placeholder = st.defaultWork || 'default for this platform';
+  for (const k of ['enabled', 'isolation', 'work']) {
+    document.getElementById(`prefs-suite-runner-${k}-env`).classList.toggle('hidden', !forced.has(k));
+  }
+  prefsSuiteRunnerNoneNote.classList.toggle('hidden', prefsSuiteRunnerIsolation.value !== 'none');
+  prefsSuiteRunnerStatus.textContent = suiteRunnerStatusText(st);
+}
+
+async function refreshSuiteRunnerPrefs() {
+  if (!prefsSuiteRunnerBlock) return;
+  let st = null;
+  try { st = await window.api.suiteRunnerGet(); } catch { st = null; }
+  if (!st || typeof st.status !== 'string') st = null;
+  prefsSuiteRunnerBlock.classList.toggle('hidden', !st);
+  if (st) renderSuiteRunnerPrefs(st);
+}
+
+function suiteRunnerRecordToSave() {
+  const shown = prefsSuiteRunnerShown || {};
+  const stored = shown.setting || { enabled: false, isolation: 'user', work: null };
+  const forced = new Set(shown.forced || []);
+  const work = prefsSuiteRunnerWork.value.trim() || null;
+  return {
+    enabled: forced.has('enabled') ? stored.enabled : prefsSuiteRunnerEnabled.checked,
+    isolation: forced.has('isolation') ? stored.isolation : prefsSuiteRunnerIsolation.value,
+    work: forced.has('work') ? stored.work : work,
+  };
+}
+
+if (prefsSuiteRunnerBlock) {
+  prefsSuiteRunnerIsolation.addEventListener('change', () => {
+    prefsSuiteRunnerNoneNote.classList.toggle('hidden', prefsSuiteRunnerIsolation.value !== 'none');
+  });
+  prefsSuiteRunnerApply.addEventListener('click', async () => {
+    let res = null;
+    try { res = await window.api.suiteRunnerSet(suiteRunnerRecordToSave()); } catch { res = null; }
+    if (!res || res.ok !== true) {
+      showToast(`Test runner not changed: ${(res && res.error) || 'the change failed'}`, { kind: 'warn' });
+    }
+    if (res && res.state) renderSuiteRunnerPrefs(res.state);
+    if (res && res.state && res.state.status === 'starting') {
+      setTimeout(() => { if (!prefsOverlay.classList.contains('hidden')) refreshSuiteRunnerPrefs(); }, 1500);
+    }
   });
 }
 

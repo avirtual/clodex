@@ -1900,7 +1900,7 @@ const getBoxOffer = () => (envBoxOffer !== undefined ? envBoxOffer : uiSettings.
 const getOfferFacts = () => hostFacts({ osModule: os, platform: process.platform, arch: process.arch, runtime: runtimeProbe.current() });
 const { createRemoteWiring } = require('./remote-wiring');
 const { readRemoteEnvToken, writeRemoteEnvToken, hasRemoteEnvToken, resolveRemoteToken } = require('./remote-token');
-const { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer } = createRemoteWiring({
+const { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer, suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner } = createRemoteWiring({
   path, fs, os, log,
   DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, REGISTRY_DIR, MSG_DIR, OUTBOX_DIR, SELF_LABEL,
   parseCtxFile, cachedMessages, sliceSince, jsonlToMessages, ensureDir, homeRelativize,
@@ -2501,7 +2501,7 @@ const toolCache = createToolCache({ whichBin });
     manager, stores, openRequests, syncRemoteServer, syncPeerManager, restoreSessionsForWorkspace, shutdown,
     reconcileCodexSwaps,
     knownSkillNames,
-    refreshRemoteToken,
+    refreshRemoteToken, suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner,
     setRemoteToken: (token) => writeRemoteEnvToken(userDataPath, token),
     hasRemoteToken: () => hasRemoteEnvToken(userDataPath),
     listSpeakVoices: () => voiceCatalog.list(),

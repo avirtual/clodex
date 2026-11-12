@@ -866,7 +866,7 @@ function createSuiteRunner({
 
   recover().then(reconcile).catch((e) => log(`suite-runner: reconcile failed: ${e.message}`)).then(() => { recovering = false; if (pumpAfterRecovery) pump(); });
 
-  return { info, submit, putPack, commit, poll, output, cancel, tick, start, close };
+  return { info, submit, putPack, commit, poll, output, cancel, tick, start, close, busy: anyLive };
 }
 
 module.exports = { createSuiteRunner, noneIsolation, userIsolation, envIdentity, jobPaths, statePaths, jobPath, jobLang, DEFAULT_LIMITS };

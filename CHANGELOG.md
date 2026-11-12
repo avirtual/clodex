@@ -19,6 +19,7 @@ blocks a release.
 - Runner mode starts on a macOS node without extra configuration: the work folder, tool search path and locale now have macOS defaults, and a runner that fails to start says why.
 - Peers that dial a node offering test boxes see the offer and the node's capabilities (operating system, architecture, cores, memory, container runtime) in its hello; `GET /api/offers` lists the offers a node knows.
 - A node announces its test-box offer to the peers it dials and records theirs, so two peered nodes see each other's offers whichever one opened the link.
+- Preferences ▸ Test runner turns this machine into a test runner for its peers and keeps the choice across restarts; the environment variables still work and take precedence.
 
 ## 5.176.0 — 2026-11-12
 

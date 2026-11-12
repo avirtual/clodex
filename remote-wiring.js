@@ -122,17 +122,29 @@ function remoteReadRoots({ fs, path, REGISTRY_DIR, MSG_DIR }, sess, name) {
   return dirs.filter(Boolean).map((d) => realpathNearest(fs, path, d)).filter((r) => r.ok).map((r) => r.real);
 }
 
-function suiteRunnerOptions(env, root, { platform = process.platform } = {}) {
-  if (env.CLODEX_SUITE_RUNNER !== '1') return null;
+function suiteRunnerForced(env) {
+  return [
+    ...(env.CLODEX_SUITE_RUNNER === '1' ? ['enabled'] : []),
+    ...(env.CLODEX_SUITE_ISOLATION ? ['isolation'] : []),
+    ...(env.CLODEX_SUITE_WORK ? ['work'] : []),
+  ];
+}
+
+function suiteRunnerOptions(env, root, { platform = process.platform, setting = null } = {}) {
+  const forced = suiteRunnerForced(env);
+  const s = setting || {};
+  if (!forced.includes('enabled') && s.enabled !== true) return null;
   const mb = Number(env.CLODEX_SUITE_PACK_MAX_MB);
   const data = env.CLODEX_DATA_DIR ? require('path').resolve(env.CLODEX_DATA_DIR) : null;
   const defaultWork = platform === 'darwin' ? require('path').join(root, 'suite-work') : '/var/lib/clodex-suite';
+  const isolation = forced.includes('isolation') ? env.CLODEX_SUITE_ISOLATION : s.isolation;
   return {
     root: data || root,
     ...(data ? { oldRoot: root } : {}),
-    work: env.CLODEX_SUITE_WORK || defaultWork,
-    isolation: env.CLODEX_SUITE_ISOLATION === 'none' ? 'none' : 'user',
+    work: env.CLODEX_SUITE_WORK || s.work || defaultWork,
+    isolation: isolation === 'none' ? 'none' : 'user',
     limits: mb > 0 ? { packMaxBytes: Math.floor(mb * 1024 * 1024) } : {},
+    forced,
   };
 }
 
@@ -148,15 +160,16 @@ function offerCallbacks({ getBoxOffer, getOfferFacts, offerDirectory } = {}) {
 function startSuiteRunner(opts, { log, load = () => require('./suite-runner') }) {
   try {
     const { createSuiteRunner, noneIsolation, userIsolation } = load();
+    const { forced, ...runnerOpts } = opts;
     const runner = createSuiteRunner({
-      ...opts,
+      ...runnerOpts,
       isolation: opts.isolation === 'none' ? noneIsolation() : userIsolation(),
       log: (m) => log.warn('suite-runner', m),
     });
     runner.start();
     return { runner, error: null };
   } catch (e) {
-    const error = `runner mode is off: ${e.message} (work root ${opts.work}; set CLODEX_SUITE_WORK to a folder this node can create and write)`;
+    const error = `runner mode is off: ${e.message} (work root ${opts.work}; set the work folder in Preferences ▸ Test runner, or CLODEX_SUITE_WORK, to a folder this node can create and write)`;
     log.error('suite-runner', error);
     return { runner: null, error };
   }
@@ -1390,12 +1403,47 @@ function createRemoteWiring(deps) {
   function getSuiteRunner() {
     if (suiteRunner !== undefined) return suiteRunner;
     suiteRunner = null;
-    const opts = suiteRunnerOptions(process.env, REGISTRY_DIR);
+    const opts = suiteRunnerOptions(process.env, REGISTRY_DIR, { setting: getUiSettings().get().suiteRunner });
     if (!opts) return null;
     const started = startSuiteRunner(opts, { log });
     suiteRunner = started.runner;
     suiteRunnerError = started.error;
     return suiteRunner;
+  }
+
+  function suiteRunnerState() {
+    const s = getUiSettings().get();
+    const wanted = !!suiteRunnerOptions(process.env, REGISTRY_DIR, { setting: s.suiteRunner });
+    const remoteOn = !!s.remoteEnabled || process.env.CLODEX_REMOTE_ENABLE === '1';
+    const base = s.suiteRunner || { isolation: 'user', work: null };
+    const inEffect = suiteRunnerOptions(process.env, REGISTRY_DIR, { setting: { ...base, enabled: true } });
+    const defaults = suiteRunnerOptions({}, REGISTRY_DIR, { setting: { enabled: true, isolation: 'user', work: null } });
+    let status = 'off';
+    if (wanted && !remoteOn) status = 'needs-remote';
+    else if (wanted && suiteRunner) status = 'running';
+    else if (wanted && suiteRunnerError) status = 'failed';
+    else if (wanted) status = 'starting';
+    return {
+      setting: s.suiteRunner || null,
+      forced: suiteRunnerForced(process.env),
+      effective: { isolation: inEffect.isolation, work: inEffect.work },
+      defaultWork: defaults.work,
+      remoteEnabled: remoteOn,
+      status,
+      error: status === 'failed' ? suiteRunnerError : null,
+    };
+  }
+
+  function suiteRunnerBusy() {
+    return !!(suiteRunner && typeof suiteRunner.busy === 'function' && suiteRunner.busy());
+  }
+
+  function reloadSuiteRunner() {
+    if (closed) return;
+    if (suiteRunner) suiteRunner.close();
+    suiteRunner = undefined;
+    suiteRunnerError = null;
+    refreshRemoteToken();
   }
 
   function shutdownRemoteServer() {
@@ -1406,7 +1454,7 @@ function createRemoteWiring(deps) {
     if (getRemoteServer()) { getRemoteServer().stop(); setRemoteServer(null); }
   }
 
-  return { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer };
+  return { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer, suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner };
 }
 
-module.exports = { createRemoteWiring, suiteRunnerOptions, startSuiteRunner, offerCallbacks };
+module.exports = { createRemoteWiring, suiteRunnerOptions, suiteRunnerForced, startSuiteRunner, offerCallbacks };

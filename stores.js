@@ -34,6 +34,21 @@ const { migrateLivingAllowlist } = require('./intent-catalog');
 const { VOICE_MODES } = require('./voice-settings');
 const { sanitizeBoxOffer } = require('./box-offer');
 
+const SUITE_RUNNER_KEYS = ['enabled', 'isolation', 'work'];
+
+function sanitizeSuiteRunner(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const keys = Object.keys(v);
+  if (keys.length !== SUITE_RUNNER_KEYS.length || !keys.every((k) => SUITE_RUNNER_KEYS.includes(k))) return null;
+  if (typeof v.enabled !== 'boolean') return null;
+  if (v.isolation !== 'user' && v.isolation !== 'none') return null;
+  if (v.work !== null) {
+    if (typeof v.work !== 'string' || v.work.length > 1024 || !path.isAbsolute(v.work)) return null;
+    if (v.work.split(/[\\/]/).includes('..')) return null;
+  }
+  return { enabled: v.enabled, isolation: v.isolation, work: v.work };
+}
+
 function execRowOf(name, obj) {
   return {
     name,
@@ -157,6 +172,7 @@ const DEFAULT_UI_SETTINGS = {
   // settings file without the key agree by construction.
   peerShellEnabled: false,
   boxOffer: null,
+  suiteRunner: null,
   peers: [],
   // Auto-reattach of peer tabs across app restarts: { [peerId]: [name, ...] }.
   // Kept OUTSIDE the peers array on purpose — the prefs dialog rebuilds that
@@ -1956,6 +1972,7 @@ function initStores(userDataPath, {
             ? raw.peerShellEnabled === true
             : legacyShellGrant(raw?.peers),
           boxOffer: sanitizeBoxOffer(raw?.boxOffer),
+          suiteRunner: sanitizeSuiteRunner(raw?.suiteRunner),
           peers,
           peerAttached: sanitizePeerAttached(raw?.peerAttached) ?? {},
           peerVisible: sanitizePeerVisible(raw?.peerVisible) ?? {},
@@ -2057,6 +2074,9 @@ function initStores(userDataPath, {
         boxOffer: (partial && 'boxOffer' in partial)
           ? (partial.boxOffer === null ? null : (sanitizeBoxOffer(partial.boxOffer) ?? cur.boxOffer))
           : cur.boxOffer,
+        suiteRunner: (partial && 'suiteRunner' in partial)
+          ? (partial.suiteRunner === null ? null : (sanitizeSuiteRunner(partial.suiteRunner) ?? cur.suiteRunner))
+          : cur.suiteRunner,
         peers: sanitizePeers(partial?.peers, cur.peers) ?? cur.peers,
         peerAttached: sanitizePeerAttached(partial?.peerAttached) ?? cur.peerAttached,
         peerVisible: sanitizePeerVisible(partial?.peerVisible) ?? cur.peerVisible,
@@ -2511,4 +2531,4 @@ function initStores(userDataPath, {
   };
 }
 
-module.exports = { initStores, sanitizeSandbox, execRowOf, SETUP_CHOICES, MISFIRE_KINDS, MISFIRE_KEEP, MISFIRE_PRUNE_AT };
+module.exports = { initStores, sanitizeSandbox, sanitizeSuiteRunner, execRowOf, SETUP_CHOICES, MISFIRE_KINDS, MISFIRE_KEEP, MISFIRE_PRUNE_AT };

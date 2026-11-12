@@ -23,7 +23,7 @@ const { pathToFileURL } = require('node:url');
 const { randomBytes } = require('node:crypto');
 const { validateSeatFiles } = require('./seat-files');
 const { BOX_ID_RE, runningInSandboxBox } = require('./sandbox');
-const { SETUP_CHOICES, execRowOf } = require('./stores');
+const { SETUP_CHOICES, execRowOf, sanitizeSuiteRunner } = require('./stores');
 const sessionDiscovery = require('./session-discovery');
 const gitWorktree = require('./git-worktree');
 const { NO_SUCH_METHOD, errorEnvelope, sanitizeGrants, isValidPluginId, PLUGIN_CAPABILITIES, seatHasPlugin } = require('./plugin-api');
@@ -107,6 +107,7 @@ function registerIpcHandlers(deps) {
     readSkillCatalog, applySessionSkills, setUiTheme, sshRun,
     stripLevelOf, syncPeerManager, syncRemoteServer, updateApplies,
     setRemoteToken, hasRemoteToken, refreshRemoteToken, listSpeakVoices,
+    suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner,
     wirescope, workspaceOfSender,
     sessionScopeCtx, renameWorkspaceScope,
     templates, workspaces, promptLibrary, agentDefaults,
@@ -1402,7 +1403,8 @@ function registerIpcHandlers(deps) {
   handle('settings:set', (_e, partial) => {
     // Read before the write: the revocation below needs the previous value.
     const prevTerminalReports = uiSettings.get().terminalReports;
-    const next = uiSettings.set(partial);
+    const { suiteRunner: _suiteRunner, ...rest } = (partial && typeof partial === 'object') ? partial : {};
+    const next = uiSettings.set(rest);
     // No typeof guard: an unwired revocation must throw here, not silently
     // leave undrained reports unswept.
     syncTerminalReports(prevTerminalReports);
@@ -1852,6 +1854,21 @@ function registerIpcHandlers(deps) {
     log.info('peer', `terminal sharing ${on ? 'ENABLED' : 'revoked'}`);
     return { ok: true };
   });
+  if (enableDrawerServices) {
+    handle('suiteRunner:get', () => suiteRunnerState());
+    handle('suiteRunner:set', (_e, rec) => {
+      const clean = rec === null ? null : sanitizeSuiteRunner(rec);
+      if (rec !== null && !clean) return { ok: false, error: 'invalid test runner setting', state: suiteRunnerState() };
+      if (JSON.stringify(clean) === JSON.stringify(uiSettings.get().suiteRunner || null)) return { ok: true, state: suiteRunnerState() };
+      if (suiteRunnerBusy()) {
+        return { ok: false, error: 'a test job is running on this machine — change the test runner when it finishes', state: suiteRunnerState() };
+      }
+      uiSettings.set({ suiteRunner: clean });
+      reloadSuiteRunner();
+      log.info('remote', `test runner setting ${clean && clean.enabled ? 'ON' : 'off'}`);
+      return { ok: true, state: suiteRunnerState() };
+    });
+  }
   handle('peer:visible', () => uiSettings.get().peerVisible || {});
   const visibleNames = (names) => names.filter((n) => typeof n === 'string' && /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(n));
   const writeVisible = (id, next) => {
