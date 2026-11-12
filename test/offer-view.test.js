@@ -4,7 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const {
   PEER_NOTE, ownFactsLine, peerOfferLine, peerChoices, peerNameToAdd, selfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText,
-  runIsolationLine, runConsentText, offerRunnerFrom, RUN_PEER_NOTE,
+  runIsolationLine, runConsentText, offerRunnerFrom, RUN_PEER_NOTE, claimLines,
 } = require('../renderer/lib/offer-view');
 const { sanitizeBoxOffer } = require('../box-offer');
 
@@ -145,4 +145,22 @@ test('the run line names phone access when the runner waits for it', () => {
 
 test('the run peer note does not claim the list is exclusive', () => {
   assert.strictEqual(RUN_PEER_NOTE, 'The ticked peers may run test jobs here while the offer is on and open. A node that dials this machine is named by its own label, which is its hostname unless it set one.');
+});
+
+test('claimLines gives one status line per claim row', () => {
+  const now = 10 * 60000;
+  assert.deepStrictEqual(claimLines([
+    { name: 'murmur', state: 'claiming', lastClaim: now - 5000 },
+    { name: 'desk', state: 'claiming', lastClaim: now - 3 * 60000 },
+    { name: 'fresh', state: 'claiming', lastClaim: null },
+    { name: 'far', state: 'not-connected', lastClaim: null },
+    { name: 'off', state: 'runner-off', lastClaim: null },
+  ], now), [
+    'murmur: claiming, last claim just now',
+    'desk: claiming, last claim 3m ago',
+    'fresh: claiming, last claim not yet',
+    'far: not connected',
+    'off: runner mode off',
+  ]);
+  assert.deepStrictEqual(claimLines(null), []);
 });

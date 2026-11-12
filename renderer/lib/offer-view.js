@@ -125,6 +125,14 @@ function offerRecordFromForm({ scope, enabled, boxes, availability, schedule, pe
   return rec;
 }
 
+function claimLines(claims, now = Date.now()) {
+  return (Array.isArray(claims) ? claims : []).filter((c) => c && typeof c.name === 'string').map((c) => {
+    if (c.state === 'runner-off') return `${c.name}: runner mode off`;
+    if (c.state !== 'claiming') return `${c.name}: not connected`;
+    return `${c.name}: claiming, last claim ${Number.isFinite(c.lastClaim) ? agoText(now - c.lastClaim) : 'not yet'}`;
+  });
+}
+
 function offerStatusText(st) {
   if (!st) return '';
   if (st.forced) return 'Set by environment (CLODEX_BOX_OFFER); change it there.';
@@ -149,4 +157,5 @@ module.exports = {
   offerFormProblem,
   offerRecordFromForm,
   offerStatusText,
+  claimLines,
 };

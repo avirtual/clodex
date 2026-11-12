@@ -283,6 +283,7 @@ const SCANNED_MODULES = [
   'suite-client.js',
   'suite-dispatch.js',
   'suite-desk.js',
+  'suite-claimer.js',
   'box-offer.js',
   'offer-directory.js',
 ];

@@ -12,7 +12,7 @@ const { offerCallbacks } = require('../remote-wiring');
 const VALID = { scope: 'discovery', enabled: true, boxes: 2, availability: 'always', peers: [{ name: 'murmur' }] };
 const FACTS = { os: 'linux', arch: 'x64', cpus: 8, memMb: 16384, runtime: null };
 
-function ipcFixture({ initial = null, forced = false, envOffer = null, rawStored, peers = [], dialers = createDialerLog(), suiteRunnerState } = {}) {
+function ipcFixture({ initial = null, forced = false, envOffer = null, rawStored, peers = [], dialers = createDialerLog(), suiteRunnerState, suiteClaimStatus } = {}) {
   const handlers = new Map();
   const store = { boxOffer: initial, peers, terminalReports: 'on' };
   const calls = { set: [], broadcast: [] };
@@ -33,6 +33,7 @@ function ipcFixture({ initial = null, forced = false, envOffer = null, rawStored
     getOfferFacts: () => FACTS,
     readOfferFacts: async () => FACTS,
     ...(suiteRunnerState ? { suiteRunnerState } : {}),
+    ...(suiteClaimStatus ? { suiteClaimStatus } : {}),
     offerDirectory,
     dialers,
     SELF_LABEL: 'workbox',
@@ -58,7 +59,7 @@ test('offer:set stores a valid record and broadcasts offers-changed', async () =
   assert.strictEqual(res.ok, true);
   assert.deepStrictEqual(store.boxOffer, VALID);
   assert.deepStrictEqual(calls.broadcast, ['offers-changed']);
-  assert.deepStrictEqual(res.state, { self: 'workbox', stored: VALID, effective: VALID, forced: false, warning: null, facts: FACTS, peers: [], runner: null });
+  assert.deepStrictEqual(res.state, { self: 'workbox', stored: VALID, effective: VALID, forced: false, warning: null, facts: FACTS, peers: [], runner: null, claims: [] });
 });
 
 test('offer:set rejects an invalid record and leaves the stored one', async () => {
@@ -86,7 +87,7 @@ test('offer:set refuses with the reason while CLODEX_BOX_OFFER forces the offer'
 test('offer:get reports an invalid stored offer as off', async () => {
   const { handlers } = ipcFixture({ initial: null, rawStored: { ...VALID, boxes: 99 }, peers: [{ label: 'murmur' }, { label: 'bad label' }] });
   const st = await handlers.get('offer:get')({});
-  assert.deepStrictEqual(st, { self: 'workbox', stored: null, effective: null, forced: false, warning: 'stored offer invalid, treated as off', facts: FACTS, peers: [{ name: 'murmur', from: 'peer' }], runner: null });
+  assert.deepStrictEqual(st, { self: 'workbox', stored: null, effective: null, forced: false, warning: 'stored offer invalid, treated as off', facts: FACTS, peers: [{ name: 'murmur', from: 'peer' }], runner: null, claims: [] });
   const clean = ipcFixture({ initial: VALID });
   assert.strictEqual((await clean.handlers.get('offer:get')({})).warning, null);
 });
@@ -245,6 +246,14 @@ test('offer:get reports the test runner status and isolation the run scope would
   const suiteRunnerState = () => ({ setting: null, forced: [], effective: { isolation: 'none', work: '/w' }, status: 'running' });
   const { handlers } = ipcFixture({ initial: VALID, suiteRunnerState });
   assert.deepStrictEqual((await handlers.get('offer:get')({})).runner, { status: 'running', isolation: 'none' });
+});
+
+test('offer:get carries the claim status rows, and none when the status throws', async () => {
+  const rows = [{ name: 'murmur', state: 'claiming', lastClaim: 1234 }, { name: 'desk', state: 'not-connected', lastClaim: null }];
+  const { handlers } = ipcFixture({ initial: VALID, suiteClaimStatus: () => rows });
+  assert.deepStrictEqual((await handlers.get('offer:get')({})).claims, rows);
+  const broken = ipcFixture({ initial: VALID, suiteClaimStatus: () => { throw new Error('boom'); } });
+  assert.deepStrictEqual((await broken.handlers.get('offer:get')({})).claims, []);
 });
 
 test('offer:set accepts a disabled run record without a confirmation', async () => {

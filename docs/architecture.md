@@ -405,6 +405,15 @@ bundle), whose packaged form is the Docker image under
   `PeerConnection` shape), `claim`, `blob`, `reply`, `attached`, `origins`,
   `retained` and `close`. Built in engine.js, injected into remote.js as
   `suiteDesk` through remote-wiring.js. In SCANNED_MODULES.
+- **suite-claimer.js** — the runner's side of the pull wire (docs/peering.md
+  §3). `createSuiteClaimer({claim, blob, reply, execute, grant, ready, log,
+  now, session, concurrency})` returns `ring()`, `stop()` and `status()`: a
+  ring claims calls (serialised, coalesced), runs them concurrently with a
+  bound that a cancel bypasses, skips a call past its deadline, refuses a
+  submit while `grant().admit` is false and cancels the jobs it submitted when
+  `grant().serve` turns false. Built per `PeerConnection` by peer-wiring.js
+  `suiteClaimerFor`, which injects `runGrant` and `suiteDispatch` over
+  remote-wiring's `getSuiteEngine`. In SCANNED_MODULES.
 - **box-offer.js** — pure validation of the `boxOffer` ui-setting (a
   discovery-only offer to host test boxes for named peers): `sanitizeBoxOffer`
   (whole record or null), `offerFromEnv` (`CLODEX_BOX_OFFER`), `scheduleOpen`,

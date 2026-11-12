@@ -172,7 +172,7 @@ test('GET /api/offers returns own plus the stored rows; equal facts from two rou
 test('suite code never reads the box offer or the offers directory', () => {
   const root = path.join(__dirname, '..');
   const banned = /boxOffer|box-offer|runGrant|offer-directory|offerDirectory|_offerFor|_receiveOffers|_listOffers/;
-  for (const file of ['suite-runner.js', 'suite-client.js', 'suite-dispatch.js']) {
+  for (const file of ['suite-runner.js', 'suite-client.js', 'suite-dispatch.js', 'suite-desk.js', 'suite-claimer.js']) {
     const src = fs.readFileSync(path.join(root, file), 'utf8');
     assert.ok(src.length > 1000, `ENTER: ${file} was read`);
     assert.ok(!banned.test(src), `${file} references the box offer`);

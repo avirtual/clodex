@@ -46,7 +46,7 @@ const { anyOverlayOpen, dialogOverlayIds, performCloseChord } = require('./lib/c
 const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { envRowView, buildEnvRow } = require('./lib/env-row');
 const { envLockView, applyEnvLock, patchUnlessEnvLocked } = require('./lib/env-lock');
-const { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, offerRunnerFrom, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText } = require('./lib/offer-view');
+const { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, offerRunnerFrom, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText, claimLines: offerClaimLines } = require('./lib/offer-view');
 const { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require('./lib/account-select');
 const { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, keyTransportRefusal, modelOptions } = require('./lib/account-row');
 const { isToolInstallSession } = require('../tool-doctor');
@@ -6432,6 +6432,7 @@ const prefsBoxOfferStatus = document.getElementById('prefs-box-offer-status');
 const prefsBoxOfferApply = document.getElementById('prefs-box-offer-apply');
 const prefsBoxOfferScope = document.getElementById('prefs-box-offer-scope');
 const prefsBoxOfferRunNote = document.getElementById('prefs-box-offer-run-note');
+const prefsBoxOfferClaims = document.getElementById('prefs-box-offer-claims');
 
 const prefsEnvScope = document.getElementById('prefs-env-scope');
 const prefsEnvList = document.getElementById('prefs-env-list');
@@ -9618,6 +9619,13 @@ function syncBoxOfferScope() {
   prefsBoxOfferPeersNote.textContent = run ? OFFER_RUN_PEER_NOTE : OFFER_PEER_NOTE;
   prefsBoxOfferRunNote.textContent = run ? offerRunIsolationLine(prefsBoxOfferShown && prefsBoxOfferShown.runner) : '';
   prefsBoxOfferRunNote.classList.toggle('hidden', !run);
+  const lines = run ? offerClaimLines(prefsBoxOfferShown && prefsBoxOfferShown.claims) : [];
+  prefsBoxOfferClaims.replaceChildren(...lines.map((text) => {
+    const row = document.createElement('div');
+    row.textContent = text;
+    return row;
+  }));
+  prefsBoxOfferClaims.classList.toggle('hidden', !lines.length);
 }
 
 function renderBoxOfferPrefs(st) {

@@ -1905,7 +1905,7 @@ const { createSuiteDesk } = require('./suite-desk');
 const suiteDesk = createSuiteDesk({ notify: (origin) => { if (remoteServer) remoteServer.notifySuiteMail(origin); } });
 const { createRemoteWiring } = require('./remote-wiring');
 const { readRemoteEnvToken, writeRemoteEnvToken, hasRemoteEnvToken, resolveRemoteToken } = require('./remote-token');
-const { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer, suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner } = createRemoteWiring({
+const { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer, suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner, getSuiteEngine } = createRemoteWiring({
   path, fs, os, log,
   DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, REGISTRY_DIR, MSG_DIR, OUTBOX_DIR, SELF_LABEL,
   parseCtxFile, cachedMessages, sliceSince, jsonlToMessages, ensureDir, homeRelativize,
@@ -1962,10 +1962,10 @@ const { createPeerWiring } = require('./peer-wiring');
 const {
   forgetPeerAttached, forgetPeerControlled, rememberPeerControlled,
   syncPeerManager, resolvePeerUrls, openPeerWeb, closePeerWeb,
-  stopPeerWirescopeTunnels,
+  stopPeerWirescopeTunnels, suiteClaimStatus,
 } = createPeerWiring({
   manager, log, SELF_LABEL, scheduleAppMenuRefresh,
-  getBoxOffer, getOfferFacts, offerDirectory,
+  getBoxOffer, getOfferFacts, offerDirectory, getSuiteEngine,
   getUiSettings: () => uiSettings,
   getPeerManager: () => peerManager,
   setPeerManager: (v) => { peerManager = v; },
@@ -2508,7 +2508,7 @@ const toolCache = createToolCache({ whichBin });
     manager, stores, openRequests, syncRemoteServer, syncPeerManager, restoreSessionsForWorkspace, shutdown,
     reconcileCodexSwaps,
     knownSkillNames,
-    refreshRemoteToken, suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner,
+    refreshRemoteToken, suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner, suiteClaimStatus,
     getBoxOffer, boxOfferForced: envBoxOffer !== undefined, readStoredBoxOffer, getOfferFacts, offerDirectory, dialers,
     readOfferFacts: () => runtimeProbe.refresh().then(() => getOfferFacts()),
     setRemoteToken: (token) => writeRemoteEnvToken(userDataPath, token),

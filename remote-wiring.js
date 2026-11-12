@@ -1458,7 +1458,10 @@ function createRemoteWiring(deps) {
     if (getRemoteServer()) { getRemoteServer().stop(); setRemoteServer(null); }
   }
 
-  return { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer, suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner };
+  return {
+    syncRemoteServer, refreshRemoteToken, shutdownRemoteServer, suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner,
+    getSuiteEngine: () => (closed ? null : getSuiteRunner()),
+  };
 }
 
 module.exports = { createRemoteWiring, suiteRunnerOptions, suiteRunnerForced, startSuiteRunner, offerCallbacks };

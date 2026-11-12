@@ -53,13 +53,14 @@ async function startDialed(t, { offer }) {
   return { port: server.port, state, offerDirectory };
 }
 
-function dial(t, port, { offer = null, fakeCallbacks = null } = {}) {
+function dial(t, port, { offer = null, fakeCallbacks = null, engine = true } = {}) {
   const state = { offer, factsCalls: 0, seen: 0, computed: 0 };
   const offerDirectory = createOfferDirectory();
   const cb = fakeCallbacks || offerPeerCallbacks({
     getBoxOffer: () => state.offer,
     getOfferFacts: () => { state.factsCalls++; return DIALER_FACTS; },
     offerDirectory,
+    getSuiteEngine: () => (engine ? {} : null),
   });
   const conn = new PeerConnection({
     id: 'p1', label: 'murmur', url: `http://127.0.0.1:${port}`, token: TOKEN, emit: () => {},
@@ -208,14 +209,15 @@ function startCapFake(t, caps) {
 }
 
 const RUN_ANNOUNCES = [
-  ['a peer without suite-pull', ['offers'], 'discovery'],
-  ['a peer with suite-pull', ['offers', 'suite-pull'], 'run'],
+  ['a peer without suite-pull', ['offers'], true, 'discovery'],
+  ['a peer with suite-pull', ['offers', 'suite-pull'], true, 'run'],
+  ['a peer with suite-pull while this node has no engine', ['offers', 'suite-pull'], false, 'discovery'],
 ];
 
-for (const [label, caps, scope] of RUN_ANNOUNCES) {
+for (const [label, caps, engine, scope] of RUN_ANNOUNCES) {
   test(`a run offer announces scope ${scope} to ${label}`, async (t) => {
     const fake = await startCapFake(t, caps);
-    const dialer = dial(t, fake.port, { offer: { ...offerFor(['murmur'], 2), scope: 'run' } });
+    const dialer = dial(t, fake.port, { offer: { ...offerFor(['murmur'], 2), scope: 'run' }, engine });
     dialer.tick();
     await waitFor(() => fake.posted.length === 1, 'the announce');
     assert.deepStrictEqual(fake.posted[0], { v: 1, from: 'laptop', own: { ...entry(2, DIALER_FACTS), scope } });

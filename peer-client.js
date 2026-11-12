@@ -12,6 +12,7 @@ const { makeSseDecoder, MAX_BUFFER_BYTES } = require('./cli/src/sse-frame');
 const { peerHasShellCap, peerShellRefusal, vetWireResize } = require('./peer-shell');
 const { IMPORT_CHUNK_MAX } = require('./seat-import');
 const { sanitizeWireOffers, OFFERS_WIRE_VERSION } = require('./box-offer');
+const { SUITE_DESK_V, DESK_LIMITS } = require('./suite-desk');
 
 const HELLO_INTERVAL_MS = 15000;      // offline poll cadence
 const RECONNECT_MIN_MS = 1000;        // attach/events stream backoff
@@ -122,7 +123,7 @@ function withoutAssistants(rows) {
 }
 
 class PeerConnection {
-  constructor({ id, label, url, token, emit, selfLabel, helloIntervalMs, computeRoster, computeOffers, onOffers, staleMs, timers, sseMaxBufferBytes, claimInbox, direct }) {
+  constructor({ id, label, url, token, emit, selfLabel, helloIntervalMs, computeRoster, computeOffers, onOffers, staleMs, timers, sseMaxBufferBytes, claimInbox, direct, suiteClaimer }) {
     this.id = id;
     this.label = label;
     this.url = url.replace(/\/+$/, '');
@@ -192,6 +193,7 @@ class PeerConnection {
     // empties, so one window's close cannot tear down another window's view.
     this._wterms = new Map();
     this._stopped = false;
+    this._suiteClaimer = typeof suiteClaimer === 'function' ? suiteClaimer(this) : null;
   }
 
   start() {
@@ -215,6 +217,7 @@ class PeerConnection {
     this._reqAgent.destroy();
     this._sseAgent.destroy();
     this._suiteAgent.destroy();
+    if (this._suiteClaimer) this._suiteClaimer.stop();
     this._setOnline(false);
   }
 
@@ -342,6 +345,7 @@ class PeerConnection {
           this._claimAndEmit();
         }
         this._claimInboxIfBox();
+        this._ringSuite();
 // Only push when the spoke advertised the 'relay' cap — else it 501s.
         if (this._computeRoster && Array.isArray(next.caps) && next.caps.includes('relay')) {
           let roster = null;
@@ -427,6 +431,8 @@ class PeerConnection {
           this._emit('peer-activity', this.id, data.name, data.state);
         } else if (event === 'dm-mail' && data && data.origin === this._selfLabel) {
           this._claimAndEmit();
+        } else if (event === 'suite-mail' && data && data.origin === this._selfLabel) {
+          this._ringSuite();
         } else if (event === 'inbox' && data && data.kind === 'added') {
           this._claimInboxIfBox();
         }
@@ -855,6 +861,40 @@ class PeerConnection {
     });
   }
 
+  _ringSuite() {
+    if (this._suiteClaimer && !this._stopped) this._suiteClaimer.ring();
+  }
+
+  suiteClaimStatus() {
+    return this._suiteClaimer ? this._suiteClaimer.status() : null;
+  }
+
+  suiteDeskClaim(session) {
+    return new Promise((resolve) => {
+      this._request('POST', '/api/suite-desk/claim', { v: SUITE_DESK_V, origin: this._selfLabel, session }, (err, body, status) => {
+        resolve(err ? { status: status || 0, body: null, error: err.message } : { status, body, error: null });
+      }, REQUEST_TIMEOUT_MS, SUITE_REPLY_MAX_BYTES);
+    });
+  }
+
+  suiteDeskBlob(id, claim) {
+    const path = `/api/suite-desk/calls/${encodeURIComponent(id)}/blob?claim=${encodeURIComponent(claim)}`;
+    return new Promise((resolve) => {
+      this._requestBytes(path, (err, bytes, status) => {
+        resolve(err ? { status: status || 0, bytes: null, error: err.message } : { status, bytes, error: null });
+      }, IMPORT_TIMEOUT_MS, DESK_LIMITS.chunkMax + 64 * 1024, this._suiteAgent);
+    });
+  }
+
+  suiteDeskReply(id, claim, answer) {
+    const payload = { v: SUITE_DESK_V, claim, status: answer && answer.status, body: answer && answer.body };
+    return new Promise((resolve) => {
+      this._request('POST', `/api/suite-desk/calls/${encodeURIComponent(id)}/reply`, payload, (err, body, status) => {
+        resolve(err ? { status: status || 0, body: null, error: err.message } : { status, body, error: null });
+      }, IMPORT_TIMEOUT_MS);
+    });
+  }
+
   async importBegin({ name, record } = {}) {
     if (!this._hasCap('import')) {
       return { ok: false, error: `${this.label} does not accept seat imports` };
@@ -1159,6 +1199,40 @@ class PeerConnection {
     req.end();
   }
 
+  _requestBytes(path, cb, timeout, maxBytes, agent = this._reqAgent) {
+    let d;
+    try { d = dialOptions(this.url, path); } catch (e) { return cb(e); }
+    const req = (d.secure ? https : http).request({
+      hostname: d.hostname, port: d.port, path: d.path, method: 'GET',
+      agent, timeout, headers: { ...this._authHeaders() },
+    }, (res) => {
+      const chunks = [];
+      let total = 0;
+      let tooLarge = false;
+      res.on('data', (c) => {
+        if (tooLarge) return;
+        total += c.length;
+        if (total > maxBytes) {
+          tooLarge = true;
+          req.destroy(new Error('response too large'));
+          return;
+        }
+        chunks.push(c);
+      });
+      res.on('end', () => {
+        if (tooLarge) return;
+        const raw = Buffer.concat(chunks);
+        if (res.statusCode === 200 && /^application\/octet-stream\b/i.test(String(res.headers['content-type'] || ''))) return cb(null, raw, 200);
+        let msg = null;
+        try { msg = JSON.parse(raw.toString('utf8')); } catch {}
+        cb(new Error((msg && msg.error) || `status ${res.statusCode}`), null, res.statusCode);
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.on('error', (e) => cb(e));
+    req.end();
+  }
+
 // onClose is the ONE reconnect door: every death — server end, transport
 // error, or the staleness watchdog — goes through it exactly once.
 // A half-open socket emits no 'end' and no 'error', so the watchdog re-arms on
@@ -1261,12 +1335,13 @@ class PeerConnection {
 }
 
 class PeerManager {
-  constructor({ emit, selfLabel, computeRoster, computeOffers, onOffers }) {
+  constructor({ emit, selfLabel, computeRoster, computeOffers, onOffers, suiteClaimer }) {
     this._emit = emit;
     this._selfLabel = selfLabel || null; // our origin on the wire (DM federation)
     this._computeRoster = computeRoster || null;
     this._computeOffers = computeOffers || null;
     this._onOffers = onOffers || null;
+    this._suiteClaimer = suiteClaimer || null;
     this._peers = new Map();          // id -> PeerConnection
   }
 
@@ -1310,7 +1385,7 @@ class PeerManager {
     }
     for (const [id, w] of wanted) {
       if (!this._peers.has(id)) {
-        const conn = new PeerConnection({ ...w, emit: this._emit, selfLabel: this._selfLabel, computeRoster: this._computeRoster, computeOffers: this._computeOffers, onOffers: this._onOffers });
+        const conn = new PeerConnection({ ...w, emit: this._emit, selfLabel: this._selfLabel, computeRoster: this._computeRoster, computeOffers: this._computeOffers, onOffers: this._onOffers, suiteClaimer: this._suiteClaimer });
         conn._dest = w.dest;
         this._peers.set(id, conn);
         conn.start();
@@ -1336,6 +1411,8 @@ class PeerManager {
   statuses() { return [...this._peers.values()].map((c) => c.status()); }
 
   get(id) { return this._peers.get(String(id)) || null; }
+
+  connections() { return [...this._peers.values()]; }
 }
 
 module.exports = { PeerManager, PeerConnection, dialOptions };
