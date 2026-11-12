@@ -34659,13 +34659,66 @@ ${m[2].replace(/^\r?\n/, "")}`;
         const cleaned = cleanLine(rawLine).trim();
         return cleaned.startsWith("[agent:") ? cleaned : null;
       }
-      var KEY_FIELDS = ["sub", "target", "name", "id", "cmd", "spec", "who", "to", "filter", "template", "cwd", "worktree", "park", "start", "dup", "reviewer", "ms", "label", "raw", "key"];
+      var KEY_FIELDS = [
+        "sub",
+        "target",
+        "name",
+        "id",
+        "cmd",
+        "spec",
+        "who",
+        "to",
+        "filter",
+        "template",
+        "cwd",
+        "worktree",
+        "park",
+        "start",
+        "dup",
+        "reviewer",
+        "ms",
+        "label",
+        "raw",
+        "key",
+        "ref",
+        "ctx",
+        "line",
+        "seat",
+        "choice",
+        "board",
+        "value",
+        "hands",
+        "gate",
+        "prompt",
+        "dispatch",
+        "model",
+        "account",
+        "effort",
+        "idleClear",
+        "role",
+        "branch",
+        "mode",
+        "dry",
+        "stem",
+        "kind",
+        "action",
+        "op",
+        "proto",
+        "field",
+        "packages",
+        "root",
+        "lead",
+        "kit",
+        "done",
+        "shareRoot",
+        "shareRootError"
+      ];
       function shadowIntentKey(agent, intent) {
         const parts = [];
         for (const f of KEY_FIELDS) {
           const v = intent[f];
-          if (v === null || v === void 0 || v === "" || v === false) continue;
-          parts.push(String(v));
+          const s = v === null || v === void 0 || v === false ? "" : Array.isArray(v) ? v.join(" ") : String(v);
+          if (s) parts.push(`${f}=${s}`);
         }
         const head = parts.join("/") + (intent.urgent ? "+urgent" : "");
         const body = (intent.body || intent.path || intent.text || "").trim().slice(0, 200);

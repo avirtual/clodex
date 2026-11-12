@@ -15,6 +15,8 @@ blocks a release.
 
 - A shadow comparison whose runner disconnects part-way through is now recorded as skipped instead of as a disagreement.
 - Preferences has a Test boxes group holding the test runner and the box offer, and both can now be set from the browser view of a headless node.
+- Two `[agent:team …]` settings in one reply are no longer collapsed into one when they differ.
+- A session whose name matches a built-in sender name (such as a team lead named `clodex`) can now dm an agent on a peer.
 
 ## 5.179.0 — 2026-11-12 — A team can use a test runner that connects to it
 

@@ -18172,6 +18172,16 @@ test('t823: two `task start` with distinct ids echo NOTHING (both really ran)', 
   assert.deepStrictEqual(injected, []);
 });
 
+test('t2307: a runner host and a runner gate in one reply both fire; an identical pair fires once', async () => {
+  const two = await wireRig('[agent:team runner Bogdans-MacBook-Pro]\n[agent:team runner gate:shadow]');
+  assert.deepStrictEqual(two.fired, ['team:runner:', 'team:runner:']);
+  assert.deepStrictEqual(two.injected, []);
+  const dup = await wireRig('[agent:team runner gate:shadow]\n[agent:team runner gate:shadow]');
+  assert.deepStrictEqual(dup.fired, ['team:runner:']);
+  assert.strictEqual(dup.injected.length, 1);
+  assert.match(dup.injected[0][1], /^\[agent:team\] skipped: duplicate of an intent earlier in this same reply/);
+});
+
 test('t823: a double-pasted dm is swallowed SILENTLY (echoing one is noise)', async () => {
   const { fired, warns, injected } = await wireRig('[agent:dm bob] ping\n[agent:dm bob] ping');
   assert.deepStrictEqual(fired, ['dm:undefined:'], 'ENTER: the repeat was swallowed');

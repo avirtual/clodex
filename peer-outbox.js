@@ -96,9 +96,9 @@ function outboxSigOk(root, obj) {
 
 const CLAIM_REF_RE = /^[A-Za-z0-9._-]{1,48}$/;
 
-function claimedSenderFault(from) {
+function claimedSenderFault(from, seat = false) {
   if (typeof from !== 'string' || !ORIGIN_RE.test(from)) return 'bad sender name';
-  if (SYSTEM_SENDERS.has(from)) return 'system sender name';
+  if (SYSTEM_SENDERS.has(from) && seat !== true) return 'system sender name';
   return null;
 }
 
@@ -108,7 +108,7 @@ function claimedRecordFault(m) {
   if (typeof m.body !== 'string') return 'bad body';
   if (m.ref != null && (typeof m.ref !== 'string' || !CLAIM_REF_RE.test(m.ref))) return 'bad ref';
   if (isRelayEnvelope(m)) return isQualifiedSender(m.from) ? null : 'bad relay sender';
-  return claimedSenderFault(m.from);
+  return claimedSenderFault(m.from, m.seat);
 }
 
 function originDir(root, origin) { return path.join(root, origin); }
@@ -146,6 +146,7 @@ function enqueueOutbox(root, origin, msg, seq) {
     ...(msg && Number.isInteger(msg.rv) ? { rv: msg.rv } : {}),
     ...(msg && typeof msg.ref === 'string' && msg.ref ? { ref: msg.ref } : {}),
     ...(msg && msg.task && typeof msg.task === 'object' ? { task: msg.task } : {}),
+    ...(msg && msg.seat === true ? { seat: true } : {}),
   };
   const fault = claimedRecordFault(fields);
   if (fault) return { ok: false, error: fault };
@@ -201,6 +202,7 @@ function claimOutbox(root, origin, onSkip = null) {
           ...(Number.isInteger(obj.rv) ? { rv: obj.rv } : {}),
           ...(typeof obj.ref === 'string' && obj.ref ? { ref: obj.ref } : {}),
           ...(obj.task && typeof obj.task === 'object' ? { task: obj.task } : {}),
+          ...(obj.seat === true ? { seat: true } : {}),
         });
       }
     } catch { skip(f, 'unreadable'); }

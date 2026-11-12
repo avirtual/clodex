@@ -9100,8 +9100,9 @@ function createSessionManager(deps) {
         return { queued: true, ref };
       }
       if (this._knownDmOrigins.has(origin) || outboxKnowsOrigin(OUTBOX_DIR, origin)) {
+        const seatSess = SYSTEM_SENDERS.has(senderName) ? this.sessions.get(senderName) : null;
         const r = enqueueOutbox(OUTBOX_DIR, origin,
-          { from: senderName, to: name, body, urgent, ts: Date.now(), ref, task },
+          { from: senderName, to: name, body, urgent, ts: Date.now(), ref, task, seat: !!(seatSess && seatSess.agentType && !seatSess._dead) },
           this._nextParkSeq());
         if (!r.ok) return fail(`could not queue for ${target}: ${r.error} (ref ${ref})`);
         if (getRemoteServer()) { try { getRemoteServer().notifyDmMail(origin); } catch {} }

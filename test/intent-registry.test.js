@@ -1032,7 +1032,7 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
     || (i.type === 'probe' && (i.sub === 'begin' || i.sub === 'end'));
   const deliberatelyNarrowed = (i) => (i.type === 'team'
     && (i.sub === 'role-add' || i.sub === 'role-set')
-    && ['prompt', 'template', 'dispatch', 'cwd', 'model', 'account'].some((k) => i[k] != null)
+    && ['prompt', 'template', 'dispatch', 'cwd', 'model', 'account', 'effort', 'idleClear'].some((k) => i[k] != null)
     && !(i.body || '').trim())
     || (i.type === 'remind' && ['list', 'cancel'].includes(String(i.spec || '').split(/\s+/)[0]));
   let sawTerm = 0;

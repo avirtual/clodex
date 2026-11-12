@@ -189,3 +189,50 @@ test('claimOutbox reports each skipped file with its reason', () => {
   assert.deepStrictEqual(got.map((g) => g.body), ['real']);
   assert.deepStrictEqual(skipped, [['2.json', 'missing or bad signature'], ['3.json', 'unreadable']]);
 });
+
+function outboxSender(sessions) {
+  const root = outboxRoot();
+  const m = mk({
+    AGENT_NAME_RE,
+    OUTBOX_DIR: root,
+    enqueueOutbox,
+    getPeerManager: () => ({ statuses: () => [] }),
+    getRemoteServer: () => null,
+  });
+  m._broadcast = () => {};
+  for (const s of sessions) m.sessions.set(s.name, s);
+  m._rememberDmOrigin('laptop');
+  return { m, root };
+}
+
+test('t2307: a live session named clodex queues a peer dm, claimed with its name', () => {
+  const { m, root } = outboxSender([{ name: 'clodex', agentType: 'claude' }]);
+  const notices = [];
+  const out = m._sendToFederatedTarget('clodex', 'alpha@laptop', 'hi', false, { onBounce: (n) => notices.push(n) });
+  assert.deepStrictEqual(notices, []);
+  assert.strictEqual(out.queued, true);
+  const r = claimRig();
+  r.m._deliverClaimedDms('p1', claimOutbox(root, 'laptop'));
+  assert.deepStrictEqual(r.delivered, [{ to: 'alpha', from: 'clodex@hub', body: 'hi' }]);
+});
+
+test('t2307: a system sender with no live session is still refused with the system sender name reason', () => {
+  for (const sessions of [[], [{ name: 'clodex', agentType: 'claude', _dead: true }]]) {
+    const { m, root } = outboxSender(sessions);
+    for (const from of ['clodex', 'ticket-loop', 'reminder', 'team']) {
+      const out = m._sendToFederatedTarget(from, 'alpha@laptop', 'hi', false);
+      assert.match(out.error, /^could not queue for alpha@laptop: system sender name /, from);
+    }
+    assert.deepStrictEqual(claimOutbox(root, 'laptop'), []);
+  }
+});
+
+test('t2307: the claiming hub delivers a seat-marked system-named sender qualified, and still drops an unmarked one', () => {
+  const r = claimRig();
+  r.m._deliverClaimedDms('p1', [
+    { from: 'clodex', to: 'alpha', body: 'unmarked' },
+    { from: 'clodex', to: 'alpha', body: 'from the lead seat', seat: true },
+  ]);
+  assert.deepStrictEqual(r.delivered, [{ to: 'alpha', from: 'clodex@hub', body: 'from the lead seat' }]);
+  assert.strictEqual(r.warns.length, 1);
+});
