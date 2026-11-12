@@ -71,9 +71,9 @@ function openStores(dir) {
 
 test('a settings file without suiteRunner loads as off', () => {
   const dir = mkTmpRoot('clodex-suite-setting-');
-  fs.writeFileSync(path.join(dir, 'ui-settings.json'), JSON.stringify({ theme: 'dark', remoteEnabled: true }));
+  fs.writeFileSync(path.join(dir, 'ui-settings.json'), JSON.stringify({ remotePort: 7311 }));
   const s = openStores(dir).uiSettings.get();
-  assert.strictEqual(s.theme, 'dark', 'ENTER: the file was read');
+  assert.strictEqual(s.remotePort, 7311, 'ENTER: the file was read');
   assert.strictEqual(s.suiteRunner, null);
 });
 
@@ -112,6 +112,7 @@ function ipcFixture({ busy = false, initial = null } = {}) {
     suiteRunnerState: () => ({ setting: store.suiteRunner, forced: [], remoteEnabled: true, status: 'off', error: null }),
     suiteRunnerBusy: () => busy,
     reloadSuiteRunner: () => { calls.reload += 1; },
+    wirescope: { autoStartWanted: () => false, stop() {} },
     log: { info() {}, warn() {}, error() {} },
   };
   const stub = () => () => {};
