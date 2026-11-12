@@ -161,8 +161,12 @@ The installer decides the recipe from the target's platform. A Linux node runs
 the headless engine: `npm ci --omit=dev --ignore-scripts`, then
 `npm rebuild node-pty`. A macOS target is a desktop checkout started with
 `npm start`, so it installs with dev dependencies, which fetches the Electron
-binary (`npm ci`), then runs `npx electron-rebuild`. It installs no service on
-macOS and does not start the app.
+binary (`npm ci`), then runs `npx electron-rebuild`. If the rebuild fails (a
+Command Line Tools-only Mac can lack the C++ headers), it deletes the partial
+`node_modules/node-pty/build` and keeps node-pty's prebuilt addon when
+`scripts/setup.sh --check` shows it can spawn a shell under Electron. It fails
+only if that check fails too. It installs no service on macOS and does not start
+the app.
 
 ```sh
 clodexctl deploy node ec2box --ssh ubuntu@ec2-host --claude-token-file ./token
