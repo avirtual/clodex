@@ -232,14 +232,14 @@ test('run drives submit, a multi-chunk pack with a refused offset, commit, poll 
   assert.deepStrictEqual([out.res.status, out.res.jobId, out.res.attempt, out.res.stdout], [0, 'run-0001', 1, 'ran tree\nTOTALS: 3 pass, 0 fail, 3 tests\n']);
   const { endedAt, durationMs, queuedAt, queueMs, setupMs, runMs, env, ...rest } = out.record;
   assert.deepStrictEqual(rest, {
-    id: 'run-0001', phase: 'end', where: 'remote', runner: 'runner-1', jobId: 'run-0001', attempt: 1,
+    id: 'run-0001', phase: 'end', where: 'runner-1', runner: 'runner-1', jobId: 'run-0001', attempt: 1,
     kind: 'verify', scope: 'full', team: null, ticket: 't9', seat: null,
-    sha: g(repo, 'rev-parse', 'HEAD').trim(), treeHash: out.res.treeHash,
+    tree: path.resolve(repo), sha: g(repo, 'rev-parse', 'HEAD').trim(), treeHash: out.res.treeHash, route: null, override: null,
     outcome: 'pass', reason: null, pass: 3, fail: 0, tests: 3,
   });
   assert.strictEqual(typeof env.envKey, 'string');
   const lines = fs.readFileSync(ledgerFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-  assert.deepStrictEqual(lines.map((l) => [l.phase, l.jobId, l.where]), [['start', 'run-0001', 'remote'], ['end', 'run-0001', 'remote']]);
+  assert.deepStrictEqual(lines.map((l) => [l.phase, l.jobId, l.where]), [['start', 'run-0001', 'runner-1'], ['end', 'run-0001', 'runner-1']]);
   const said = [...logs, ...progress].join('\n');
   assert.ok(logs.length > 0 && said.includes('runner-1'), 'ENTER: the client logged the run');
   assert.strictEqual(said.includes(SUITE_TOKEN), false);
