@@ -249,7 +249,15 @@ USER clodex
 ```
 
 A different Node major means replacing `/usr/local/bin/node` in the derived
-image, since the runner runs the suite with the engine's own executable.
+image, since the runner runs the suite with the engine's own executable. The
+engine loads the native `node-pty` module, built for the base image's Node, so
+rebuild it for the new one in the derived image, before `USER clodex`, or the engine fails at
+start with a `NODE_MODULE_VERSION` mismatch:
+
+```dockerfile
+RUN cd /app && npm rebuild node-pty && chown -R clodex:clodex node_modules
+```
+
 Per-job dependency installs (`npm ci` and the like) belong in the job's `setup`,
 which the runner caches by its key files.
 

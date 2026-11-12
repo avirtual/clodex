@@ -407,6 +407,18 @@ test('a job runs in its short paths, the record keeps the full id, and prepare o
   assert.deepStrictEqual(prepared, [[short.dir, mirror]]);
   const mode = (p) => (fs.statSync(p).mode & 0o777).toString(8);
   assert.deepStrictEqual([mode(path.join(f.work, 'mirrors')), mode(mirror), mode(path.join(f.work, 'deps'))], ['711', '700', '711']);
+  await f.runner.tick();
+  assert.deepStrictEqual([fs.existsSync(path.join(f.root, 'suite-runner', 'cache.json')), fs.existsSync(path.join(f.work, 'cache.json'))], [true, false], 'the cache index names every repo\'s deps, so it stays out of the work root');
+});
+
+test('a runner moves a cache index left in the work root into its data root', async (t) => {
+  const f = await fixture(t);
+  f.runner.close();
+  fs.writeFileSync(path.join(f.work, 'cache.json'), JSON.stringify({ 'deps/x/y': 7 }));
+  const runner = f.make();
+  t.after(() => runner.close());
+  assert.strictEqual(fs.existsSync(path.join(f.work, 'cache.json')), false);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(f.root, 'suite-runner', 'cache.json'), 'utf8')), { 'deps/x/y': 7 });
 });
 
 test('a runner chmods every mirror it finds at start to 0700', async (t) => {
@@ -499,7 +511,7 @@ test('cache eviction never runs while a job is live', async (t) => {
   const rel = path.join('deps', f.snap.repoKey, 'a'.repeat(64));
   fs.mkdirSync(path.join(f.work, rel), { recursive: true });
   fs.writeFileSync(path.join(f.work, `${rel}.json`), '{}');
-  fs.writeFileSync(path.join(f.work, 'cache.json'), JSON.stringify({ [rel]: 0 }));
+  fs.writeFileSync(path.join(f.root, 'suite-runner', 'cache.json'), JSON.stringify({ [rel]: 0 }));
   await f.runner.submit(f.body('live'));
   assert.strictEqual((await f.runner.poll(['live'])).jobs[0].state, 'awaiting-pack', 'ENTER: a live job');
   await f.runner.tick();

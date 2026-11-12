@@ -246,7 +246,12 @@ function createSuiteRunner({
   for (const name of fs.readdirSync(path.join(work, 'mirrors'))) {
     if (name.endsWith('.git')) fs.chmodSync(path.join(work, 'mirrors', name), 0o700);
   }
-  const cacheFile = path.join(work, 'cache.json');
+  const cacheFile = path.join(root, 'suite-runner', 'cache.json');
+  const workCache = path.join(work, 'cache.json');
+  if (fs.existsSync(workCache)) {
+    if (!fs.existsSync(cacheFile)) writeJson(cacheFile, readJson(workCache, {}));
+    fs.rmSync(workCache, { force: true });
+  }
   const bootId = crypto.randomUUID();
   const jobs = new Map();
   const waiters = new Set();
