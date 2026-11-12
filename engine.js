@@ -1882,6 +1882,19 @@ const openRequests = createOpenRequests({
   listSeatAttention: () => manager.listSeatAttention(),
   getNotifications: () => notifications,
 });
+const { offerFromEnv, warnStoredOffer } = require('./box-offer');
+const { createOfferDirectory, createRuntimeProbe, hostFacts } = require('./offer-directory');
+const envBoxOffer = offerFromEnv(process.env, { error: (m) => log.error('offers', m) });
+if (envBoxOffer === undefined) warnStoredOffer(() => JSON.parse(fs.readFileSync(path.join(userDataPath, 'ui-settings.json'), 'utf8')), (m) => log.warn('offers', m));
+const offerDirectory = createOfferDirectory();
+const runtimeProbe = createRuntimeProbe({
+  enabled: enableSandbox,
+  run: (timeoutMs) => new Promise((resolve, reject) => {
+    execFile('docker', ['version', '--format', '{{.Server.Os}}/{{.Server.Arch}}'], { timeout: timeoutMs }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
+  }),
+});
+const getBoxOffer = () => (envBoxOffer !== undefined ? envBoxOffer : uiSettings.get().boxOffer);
+const getOfferFacts = () => hostFacts({ osModule: os, platform: process.platform, arch: process.arch, runtime: runtimeProbe.current() });
 const { createRemoteWiring } = require('./remote-wiring');
 const { readRemoteEnvToken, writeRemoteEnvToken, hasRemoteEnvToken, resolveRemoteToken } = require('./remote-token');
 const { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer, suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner } = createRemoteWiring({
@@ -1927,6 +1940,7 @@ const { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer, suiteRunnerS
   getWirescopeInfo: () => wirescope.localReach(),
   getNodeLogFile: logFile ? () => logFile : undefined,
   thumbnail,
+  getBoxOffer, getOfferFacts, offerDirectory,
   getUserDataPath: () => userDataPath,
 });
 
@@ -2285,6 +2299,7 @@ const toolCache = createToolCache({ whichBin });
     } : {}) });
   const { persistence, templates, workspaces, promptLibrary,
     agentDefaults, agentLibrary, skillLibrary, execLibrary, mcpLibrary, reminders, misfires, notifications, uiSettings, envScopes, skillsSeen, renameWorkspaceScope } = stores;
+  if (getBoxOffer()?.enabled === true) runtimeProbe.refresh();
 
   const accounts = createAccounts({ fs, path, os, clodexHome: REGISTRY_DIR });
 
