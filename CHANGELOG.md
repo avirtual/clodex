@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — Test boxes get their own Preferences group; fixes from the pull-wire proof
 
 - A shadow comparison whose runner disconnects part-way through is now recorded as skipped instead of as a disagreement.
 - Preferences has a Test boxes group holding the test runner and the box offer, and both can now be set from the browser view of a headless node.
