@@ -42,7 +42,7 @@ const CONTROLS = [
   'prefs-suite-runner-work', 'prefs-suite-runner-apply', 'prefs-suite-runner-work-env', 'prefs-suite-runner-status',
   'prefs-box-offer-block', 'prefs-box-offer-enabled', 'prefs-box-offer-boxes', 'prefs-box-offer-availability',
   'prefs-box-offer-schedule', 'prefs-box-offer-schedule-add', 'prefs-box-offer-peers', 'prefs-box-offer-peers-note',
-  'prefs-box-offer-facts', 'prefs-box-offer-status', 'prefs-box-offer-apply', 'prefs-box-offer-scope', 'prefs-box-offer-run-note',
+  'prefs-box-offer-facts', 'prefs-box-offer-status', 'prefs-box-offer-apply', 'prefs-box-offer-scope', 'prefs-box-offer-run-note', 'prefs-box-offer-claims',
   'prefs-box-offer-peer-name', 'prefs-box-offer-peer-add', 'prefs-box-offer-self',
   'prefs-env-scope', 'prefs-env-list', 'prefs-env-key', 'prefs-env-value',
   'prefs-env-secret', 'prefs-env-add', 'prefs-env-restore-row', 'prefs-env-restore', 'prefs-env-state',

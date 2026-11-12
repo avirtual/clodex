@@ -1877,7 +1877,9 @@ function registerIpcHandlers(deps) {
       return offerRunnerFrom(st);
     };
     const offerClaims = () => {
-      try { return typeof suiteClaimStatus === 'function' ? suiteClaimStatus() : []; } catch { return []; }
+      let rows = null;
+      try { rows = typeof suiteClaimStatus === 'function' ? suiteClaimStatus() : null; } catch { rows = null; }
+      return Array.isArray(rows) ? rows : [];
     };
     const offerState = async ({ fresh = true } = {}) => {
       let raw;
