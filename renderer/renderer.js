@@ -9473,11 +9473,13 @@ if (prefsPeerShell) {
 }
 
 function suiteRunnerStatusText(st) {
-  if (st.status === 'running') return 'Running — peers can send test suites here.';
-  if (st.status === 'needs-remote') return 'Off — turn phone access on above; the runner serves over that wire.';
+  if (st.status === 'running') {
+    return st.remoteEnabled ? 'Running — peers can send test suites here.' : 'Running — phone access is off: only leads this machine dials can send test suites here.';
+  }
+  if (st.status === 'pull-only') return 'On — phone access is off: only leads this machine dials can send test suites here; it starts on the first one.';
   if (st.status === 'failed') return st.error || 'Off — the runner failed to start.';
   if (st.status === 'starting') return 'Starts with the wire.';
-  return st.remoteEnabled ? 'Off.' : 'Off. Phone access is off too; the runner needs it on.';
+  return 'Off.';
 }
 
 let prefsSuiteRunnerShown = null;

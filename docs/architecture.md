@@ -407,7 +407,7 @@ bundle), whose packaged form is the Docker image under
   `suiteDesk` through remote-wiring.js. In SCANNED_MODULES.
 - **suite-claimer.js** — the runner's side of the pull wire (docs/peering.md
   §3). `createSuiteClaimer({claim, blob, reply, execute, grant, ready, log,
-  now, session, concurrency})` returns `ring()`, `stop()` and `status()`: a
+  now, session, concurrency})` returns `ring()`, `stop()`, `status()` and `session`: a
   ring claims calls (serialised, coalesced), runs them concurrently with a
   bound that a cancel bypasses, skips a call past its deadline, refuses a
   submit while `grant().admit` is false and cancels the jobs it submitted when

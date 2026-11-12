@@ -1423,9 +1423,9 @@ function createRemoteWiring(deps) {
     const inEffect = suiteRunnerOptions(process.env, REGISTRY_DIR, { setting: { ...base, enabled: true } });
     const defaults = suiteRunnerOptions({}, REGISTRY_DIR, { setting: { enabled: true, isolation: 'user', work: null } });
     let status = 'off';
-    if (wanted && !remoteOn) status = 'needs-remote';
-    else if (wanted && suiteRunner) status = 'running';
+    if (wanted && suiteRunner) status = 'running';
     else if (wanted && suiteRunnerError) status = 'failed';
+    else if (wanted && !remoteOn) status = 'pull-only';
     else if (wanted) status = 'starting';
     return {
       setting: s.suiteRunner || null,

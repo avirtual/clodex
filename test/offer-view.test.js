@@ -139,8 +139,9 @@ for (const [label, st, want] of RUNNER_ROWS) {
   });
 }
 
-test('the run line names phone access when the runner waits for it', () => {
-  assert.strictEqual(runIsolationLine({ status: 'needs-remote', isolation: 'none' }), 'Test runner needs phone access: nothing runs until it is turned on above.');
+test('the run line gives the isolation and names the pull-only reach when phone access is off', () => {
+  assert.strictEqual(runIsolationLine({ status: 'pull-only', isolation: 'none' }), "Jobs run through this machine's test runner, isolation none: suites run as this user, unisolated. Phone access is off: only leads this machine dials can reach the runner.");
+  assert.strictEqual(runIsolationLine({ status: 'pull-only', isolation: 'user' }), "Jobs run through this machine's test runner, isolation user: suites run as a separate user account. Phone access is off: only leads this machine dials can reach the runner.");
 });
 
 test('the run peer note does not claim the list is exclusive', () => {

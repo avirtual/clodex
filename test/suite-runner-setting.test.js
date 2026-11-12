@@ -279,14 +279,19 @@ test('saving the setting rebuilds the wire with the new runner, no restart', asy
   assert.strictEqual(wiring.suiteRunnerState().status, 'off');
 });
 
-test('a stored runner on a node with remote access off reports needs-remote', async (t) => {
+test('a stored runner on a node with remote access off is pull-only, then running once the claimer builds it', async (t) => {
   const settings = { remoteEnabled: false, remotePort: 0, peers: [], suiteRunner: { enabled: true, isolation: 'none', work: null } };
   const { wiring, tmp } = wiringFixture(t, settings);
-  assert.deepStrictEqual(wiring.suiteRunnerState(), {
+  const state = (status) => ({
     setting: { enabled: true, isolation: 'none', work: null },
     forced: [], effective: { isolation: 'none', work: platformDefault(tmp) }, defaultWork: platformDefault(tmp),
-    remoteEnabled: false, status: 'needs-remote', error: null,
+    remoteEnabled: false, status, error: null,
   });
+  assert.deepStrictEqual(wiring.suiteRunnerState(), state('pull-only'));
+  assert.ok(wiring.getSuiteEngine(), 'the engine is built with remote access off');
+  assert.deepStrictEqual(wiring.suiteRunnerState(), state('running'));
+  wiring.shutdownRemoteServer();
+  assert.strictEqual(wiring.getSuiteEngine(), null);
 });
 
 test('a field forced by env reports the value in effect, not the stored one', async (t) => {

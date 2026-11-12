@@ -481,6 +481,39 @@ test('a claimed call past its local deadline is not executed', async () => {
   assert.deepStrictEqual(seen, [['blob took 500 of 1000 ms', 1, 1], ['blob took 1500 of 1000 ms', 0, 0]]);
 });
 
+test('a submit that returns after the grant was revoked is cancelled at once', async () => {
+  let serve = true;
+  const executed = [];
+  const replied = [];
+  let batch = [{ id: 'c1', claim: 'k1', ttlMs: 60000, method: 'POST', path: '/api/suite/jobs', headers: {}, body: { team: 't' } }];
+  const claimer = createSuiteClaimer({
+    claim: async () => { const calls = batch; batch = []; return { status: 200, body: { ok: true, calls } }; },
+    blob: async () => ({ status: 404 }),
+    execute: async (call) => {
+      executed.push(`${call.method} ${call.path}`);
+      if (call.method === 'POST') serve = false;
+      return call.method === 'POST' ? { status: 200, body: { ok: true, id: 'job-9' } } : { status: 200, body: { ok: true } };
+    },
+    reply: async (id, claim, answer) => { replied.push(answer.status); return { status: 200 }; },
+    grant: () => ({ admit: serve, serve }),
+  });
+  await claimer.ring();
+  await waitFor(() => executed.length === 2 && replied.length === 1, 'the submit to reply and its cancel to run');
+  assert.deepStrictEqual(executed, ['POST /api/suite/jobs', 'DELETE /api/suite/jobs/job-9']);
+});
+
+test('a claim that keeps failing the same way is logged once, and again after a success', async () => {
+  const answers = [{ status: 409 }, { status: 409 }, { status: 409 }, { status: 200, body: { ok: true, calls: [] } }, { status: 409 }];
+  const logs = [];
+  const claimer = createSuiteClaimer({
+    claim: async () => answers.shift(),
+    blob: async () => ({ status: 404 }), execute: async () => ({ status: 200, body: {} }), reply: async () => ({ status: 200 }),
+    log: (m) => logs.push(m),
+  });
+  for (let i = 0; i < 5; i++) await claimer.ring();
+  assert.deepStrictEqual(logs, ['claim failed (409)', 'claim failed (409)']);
+});
+
 test('claim status rows: claiming, not connected and runner off, one per ticked peer of a run offer', () => {
   const conn = (label, online, caps, lastClaim) => ({
     label, online, hello: { caps }, suiteClaimStatus: () => ({ session: 's', lastClaim, serving: true, active: 0, waiting: 0 }),

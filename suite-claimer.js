@@ -33,6 +33,7 @@ function createSuiteClaimer({
   let stopped = false;
   let served = false;
   let lastClaim = null;
+  let lastFailure = null;
   let active = 0;
   const waiting = [];
   const jobs = new Set();
@@ -53,14 +54,16 @@ function createSuiteClaimer({
     while (jobs.size > JOB_MEMORY) jobs.delete(jobs.values().next().value);
   }
 
+  function cancelJob(id) {
+    Promise.resolve()
+      .then(() => execute({ method: 'DELETE', path: `/api/suite/jobs/${encodeURIComponent(id)}`, headers: {}, body: null }))
+      .catch((e) => log(`cancel of job ${id} after the run grant was revoked failed: ${e.message}`));
+  }
+
   function revoke() {
     const ids = [...jobs];
     jobs.clear();
-    for (const id of ids) {
-      Promise.resolve()
-        .then(() => execute({ method: 'DELETE', path: `/api/suite/jobs/${encodeURIComponent(id)}`, headers: {}, body: null }))
-        .catch((e) => log(`cancel of job ${id} after the run grant was revoked failed: ${e.message}`));
-    }
+    for (const id of ids) cancelJob(id);
     if (ids.length) log(`run grant revoked: cancelled ${ids.length} job(s)`);
   }
 
@@ -68,7 +71,13 @@ function createSuiteClaimer({
     const verb = verbOf(call);
     if (verb === 'submit' && !readGrant().admit) return { status: 503, body: { ...OFFER_CLOSED } };
     const out = await execute({ method: call.method, path: call.path, headers: call.headers || {}, body: call.body == null ? null : call.body, bytes });
-    if (verb === 'submit' && out && out.status === 200 && out.body) remember(out.body.id);
+    if (verb === 'submit' && out && out.status === 200 && out.body && typeof out.body.id === 'string') {
+      if (readGrant().serve) remember(out.body.id);
+      else {
+        cancelJob(out.body.id);
+        log(`run grant revoked while job ${out.body.id} was submitted: cancelled it`);
+      }
+    }
     return out;
   }
 
@@ -135,9 +144,12 @@ function createSuiteClaimer({
       if (stopped) return;
       const calls = got && got.status === 200 && got.body && Array.isArray(got.body.calls) ? got.body.calls : null;
       if (!calls) {
-        log(`claim failed (${(got && (got.error || got.status)) || 'no answer'})`);
+        const why = String((got && (got.error || got.status)) || 'no answer');
+        if (why !== lastFailure) log(`claim failed (${why})`);
+        lastFailure = why;
         return;
       }
+      lastFailure = null;
       lastClaim = now();
       for (const c of calls) dispatch(c, lastClaim);
       if (calls.length) again = true;

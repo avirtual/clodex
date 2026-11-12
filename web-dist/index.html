@@ -30520,14 +30520,12 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         return { status: st.status, isolation: st.effective ? st.effective.isolation : null };
       }
       function runIsolationLine(runner) {
-        if (runner && runner.status === "needs-remote") {
-          return "Test runner needs phone access: nothing runs until it is turned on above.";
-        }
-        if (!runner || runner.status !== "running" && runner.status !== "starting") {
+        if (!runner || !["running", "starting", "pull-only"].includes(runner.status)) {
           return "Test runner is off: nothing runs until it is turned on above.";
         }
-        if (runner.isolation === "none") return "Jobs run through this machine's test runner, isolation none: suites run as this user, unisolated.";
-        return "Jobs run through this machine's test runner, isolation user: suites run as a separate user account.";
+        const line = runner.isolation === "none" ? "Jobs run through this machine's test runner, isolation none: suites run as this user, unisolated." : "Jobs run through this machine's test runner, isolation user: suites run as a separate user account.";
+        if (runner.status === "pull-only") return `${line} Phone access is off: only leads this machine dials can reach the runner.`;
+        return line;
       }
       function runConsentText(peers, runner) {
         const names = (peers || []).filter((n) => typeof n === "string");
@@ -62510,11 +62508,13 @@ ${res.stderr}` : "");
         });
       }
       function suiteRunnerStatusText(st) {
-        if (st.status === "running") return "Running \u2014 peers can send test suites here.";
-        if (st.status === "needs-remote") return "Off \u2014 turn phone access on above; the runner serves over that wire.";
+        if (st.status === "running") {
+          return st.remoteEnabled ? "Running \u2014 peers can send test suites here." : "Running \u2014 phone access is off: only leads this machine dials can send test suites here.";
+        }
+        if (st.status === "pull-only") return "On \u2014 phone access is off: only leads this machine dials can send test suites here; it starts on the first one.";
         if (st.status === "failed") return st.error || "Off \u2014 the runner failed to start.";
         if (st.status === "starting") return "Starts with the wire.";
-        return st.remoteEnabled ? "Off." : "Off. Phone access is off too; the runner needs it on.";
+        return "Off.";
       }
       var prefsSuiteRunnerShown = null;
       function renderSuiteRunnerPrefs(st) {

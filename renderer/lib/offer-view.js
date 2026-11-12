@@ -93,14 +93,14 @@ function offerRunnerFrom(st) {
 }
 
 function runIsolationLine(runner) {
-  if (runner && runner.status === 'needs-remote') {
-    return 'Test runner needs phone access: nothing runs until it is turned on above.';
-  }
-  if (!runner || (runner.status !== 'running' && runner.status !== 'starting')) {
+  if (!runner || !['running', 'starting', 'pull-only'].includes(runner.status)) {
     return 'Test runner is off: nothing runs until it is turned on above.';
   }
-  if (runner.isolation === 'none') return "Jobs run through this machine's test runner, isolation none: suites run as this user, unisolated.";
-  return "Jobs run through this machine's test runner, isolation user: suites run as a separate user account.";
+  const line = runner.isolation === 'none'
+    ? "Jobs run through this machine's test runner, isolation none: suites run as this user, unisolated."
+    : "Jobs run through this machine's test runner, isolation user: suites run as a separate user account.";
+  if (runner.status === 'pull-only') return `${line} Phone access is off: only leads this machine dials can reach the runner.`;
+  return line;
 }
 
 function runConsentText(peers, runner) {
