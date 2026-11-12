@@ -3,7 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const {
-  PEER_NOTE, ownFactsLine, peerOfferLine, peerChoices, offerRecordFromForm, offerStatusText,
+  PEER_NOTE, ownFactsLine, peerOfferLine, peerChoices, peerNameToAdd, selfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText,
 } = require('../renderer/lib/offer-view');
 const { sanitizeBoxOffer } = require('../box-offer');
 
@@ -35,16 +35,53 @@ test('the facts line shows os/arch, cores, memory and the runtime or none found'
   );
 });
 
-test('the peer note says the list is not an access control', () => {
-  assert.strictEqual(PEER_NOTE, 'This list decides which peers are shown this offer. It is not an access control, and nothing runs on this machine because of it yet.');
+test('the peer note says the list is not an access control and how a dialing node is named', () => {
+  assert.strictEqual(PEER_NOTE, 'This list decides which peers are shown this offer. It is not an access control. Nothing runs on this machine because of it yet. A node that dials this machine is named by its own label, which is its hostname unless it set one.');
   assert.ok(!/can use/.test(PEER_NOTE));
+  assert.strictEqual(selfLabelLine('laptop'), "This machine's label is laptop: a node it dials sees it by that name.");
+  assert.strictEqual(selfLabelLine(null), '');
 });
 
-test('peer choices keep configured valid labels and stored names, ticking the stored ones', () => {
+test('peer choices list configured peers, then dialed-in nodes with when they were seen, then stored names', () => {
+  const rows = [
+    { name: 'murmur', from: 'peer' }, { name: 'has space', from: 'peer' }, { name: 'laptop', from: 'peer' }, { name: 'murmur', from: 'peer' },
+    { name: 'studio', from: 'dialed', seenAt: 1000 }, { name: 'attic', from: 'dialed', seenAt: 3 * 3600000 },
+  ];
+  const now = 3 * 3600000 + 120000;
   assert.deepStrictEqual(
-    peerChoices(['murmur', 'has space', 'laptop', 'murmur'], { peers: [{ name: 'laptop' }, { name: 'gone' }] }),
-    [{ name: 'murmur', ticked: false }, { name: 'laptop', ticked: true }, { name: 'gone', ticked: true }],
+    peerChoices(rows, { peers: [{ name: 'laptop' }, { name: 'gone' }, { name: 'studio' }] }, now),
+    [
+      { name: 'murmur', note: null, ticked: false },
+      { name: 'laptop', note: null, ticked: true },
+      { name: 'studio', note: 'dials this machine, seen 3h ago', ticked: true },
+      { name: 'attic', note: 'dials this machine, seen 2m ago', ticked: false },
+      { name: 'gone', note: null, ticked: true },
+    ],
   );
+});
+
+test('a stored ticked name that is neither configured nor seen is still listed and ticked', () => {
+  assert.deepStrictEqual(peerChoices([], { peers: [{ name: 'gone' }] }, 0), [{ name: 'gone', note: null, ticked: true }]);
+});
+
+test('a typed name is trimmed and validated, and a duplicate is ignored', () => {
+  assert.deepStrictEqual(peerNameToAdd(' laptop ', ['murmur']), { name: 'laptop' });
+  assert.deepStrictEqual(peerNameToAdd('murmur', ['murmur']), { name: 'murmur', duplicate: true });
+  for (const bad of ['', 'has space', '..', 'x'.repeat(65)]) {
+    assert.deepStrictEqual(peerNameToAdd(bad, []), { error: 'a name is 1-64 letters, digits, dot, dash or underscore' }, bad);
+  }
+});
+
+test('the form problem names the cause the sanitiser would refuse', () => {
+  const base = { boxes: '2', availability: 'schedule', peers: [] };
+  for (const bad of ['0', '17', '1.5', '']) {
+    assert.strictEqual(offerFormProblem({ ...base, boxes: bad, schedule: [] }), 'boxes must be a whole number from 1 to 16', bad);
+  }
+  assert.strictEqual(offerFormProblem({ ...base, schedule: [{ days: [], from: '09:00', to: '17:00' }] }), 'a schedule window has no day ticked');
+  assert.strictEqual(offerFormProblem({ ...base, schedule: [{ days: [1], from: '', to: '17:00' }] }), 'a schedule window has an empty time');
+  assert.strictEqual(offerFormProblem({ ...base, schedule: [{ days: [1], from: '09:00', to: '09:00' }] }), 'a schedule window starts and ends at the same time');
+  assert.strictEqual(offerFormProblem({ boxes: '16', availability: 'always', schedule: [{ days: [] }], peers: Array.from({ length: 33 }, (_, i) => `n${i}`) }), 'more than 32 peers ticked');
+  assert.strictEqual(offerFormProblem({ ...base, schedule: [{ days: [1], from: '22:00', to: '07:00' }] }), null);
 });
 
 test('the form record passes the sanitiser for always and schedule, scope discovery', () => {

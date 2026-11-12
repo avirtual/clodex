@@ -219,6 +219,9 @@ function bootOffer(env, readStored, log) {
 const offerEnabled = (raw) => sanitizeBoxOffer(raw)?.enabled === true;
 
 module.exports = {
+  NODE_NAME_RE,
+  MAX_PEERS,
+  MAX_BOXES,
   sanitizeBoxOffer,
   offerFromEnv,
   scheduleOpen,

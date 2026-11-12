@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const { NODE_NAME_RE } = require('./box-offer');
 
 const OFFER_TTL_MS = 60000;
 const RUNTIME_TTL_MS = 15000;
@@ -9,6 +10,7 @@ const PROVENANCES = ['hello', 'announce'];
 const PLATFORM_RE = /^[a-z0-9]{1,16}\/[a-z0-9_]{1,16}$/;
 const MAX_PLATFORMS = 8;
 const MAX_ROWS = 256;
+const MAX_DIALERS = 64;
 
 const newRouteHandle = () => crypto.randomBytes(12).toString('base64url');
 
@@ -55,6 +57,24 @@ function createOfferDirectory({ now = Date.now, ttlMs = OFFER_TTL_MS, maxRows = 
   }
 
   return { set, list };
+}
+
+function createDialerLog({ now = Date.now, cap = MAX_DIALERS } = {}) {
+  const seen = new Map();
+
+  function note(name) {
+    if (typeof name !== 'string' || !NODE_NAME_RE.test(name)) return false;
+    seen.delete(name);
+    seen.set(name, now());
+    while (seen.size > cap) seen.delete(seen.keys().next().value);
+    return true;
+  }
+
+  function list() {
+    return [...seen].reverse().map(([name, at]) => ({ name, at }));
+  }
+
+  return { note, list };
 }
 
 function setNotifying(directory, row, onChange) {
@@ -133,6 +153,7 @@ function hostFacts({ osModule, platform, arch, runtime }) {
 module.exports = {
   OFFER_TTL_MS,
   createOfferDirectory,
+  createDialerLog,
   createRuntimeProbe,
   parsePlatforms,
   setNotifying,

@@ -11546,7 +11546,12 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           <div id="prefs-box-offer-schedule" class="hidden" style="margin-top: 6px;"></div>
           <button id="prefs-box-offer-schedule-add" class="secondary hidden" type="button" style="margin-top: 4px;">Add window</button>
           <div id="prefs-box-offer-peers" style="margin-top: 6px;"></div>
+          <div class="prefs-row" style="margin-top: 4px;">
+            <input type="text" id="prefs-box-offer-peer-name" placeholder="Add a node by name" spellcheck="false" autocomplete="off">
+            <button id="prefs-box-offer-peer-add" class="secondary" type="button" style="flex: none;">Add</button>
+          </div>
           <p id="prefs-box-offer-peers-note" class="hint-text"></p>
+          <p id="prefs-box-offer-self" class="hint-text"></p>
           <p id="prefs-box-offer-facts" class="hint-text"></p>
           <div class="prefs-row" style="margin-top: 6px;">
             <span id="prefs-box-offer-status" class="hint-text" style="flex: 1;"></span>
@@ -30185,13 +30190,232 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
     }
   });
 
+  // box-offer.js
+  var require_box_offer = __commonJS({
+    "box-offer.js"(exports, module) {
+      "use strict";
+      var NODE_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
+      var HHMM_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
+      var PLATFORM_RE = /^[a-z0-9]{1,16}\/[a-z0-9_]{1,16}$/;
+      var SCOPE = "discovery";
+      var OFFERS_WIRE_VERSION = 1;
+      var AVAILABILITY = ["always", "schedule"];
+      var MAX_BOXES = 16;
+      var MAX_PEERS = 32;
+      var MAX_WINDOWS = 8;
+      var MAX_PLATFORMS = 8;
+      var RECORD_KEYS = ["scope", "enabled", "boxes", "availability", "schedule", "peers"];
+      var WINDOW_KEYS = ["days", "from", "to"];
+      var PEER_KEYS = ["name"];
+      var WIRE_KEYS = ["scope", "boxes", "open", "kinds", "facts"];
+      var FACT_KEYS = ["os", "arch", "cpus", "memMb", "runtime"];
+      var RUNTIME_KEYS = ["platforms"];
+      var KINDS = ["container", "native"];
+      var PRODUCED_KINDS = ["container"];
+      var TOKEN_RE = /^[a-z0-9_]{1,32}$/;
+      var MAX_CPUS = 4096;
+      var MAX_MEM_MB = 16777216;
+      var isPlainObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+      var onlyKeys = (obj, allowed) => Object.keys(obj).every((k) => allowed.includes(k));
+      var isBoxCount = (n) => Number.isInteger(n) && n >= 1 && n <= MAX_BOXES;
+      function toMinutes(hhmm) {
+        const m = HHMM_RE.exec(hhmm);
+        return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+      }
+      function sanitizeWindow(raw) {
+        if (!isPlainObject(raw) || !onlyKeys(raw, WINDOW_KEYS)) return null;
+        const { from, to } = raw;
+        if (!Array.isArray(raw.days)) return null;
+        const days = Array.from(raw.days);
+        if (days.length === 0 || days.length > 7) return null;
+        if (!days.every((d) => Number.isInteger(d) && d >= 0 && d <= 6)) return null;
+        if (new Set(days).size !== days.length) return null;
+        if (typeof from !== "string" || typeof to !== "string") return null;
+        const f = toMinutes(from);
+        const t = toMinutes(to);
+        if (f === null || t === null || f === t) return null;
+        return { days: [...days], from, to };
+      }
+      function sanitizePeerList(raw) {
+        if (!Array.isArray(raw) || raw.length > MAX_PEERS) return null;
+        const seen = /* @__PURE__ */ new Set();
+        const out = [];
+        for (const p of raw) {
+          if (!isPlainObject(p) || !onlyKeys(p, PEER_KEYS)) return null;
+          if (typeof p.name !== "string" || !NODE_NAME_RE.test(p.name)) return null;
+          if (seen.has(p.name)) return null;
+          seen.add(p.name);
+          out.push({ name: p.name });
+        }
+        return out;
+      }
+      function sanitizeBoxOffer(raw) {
+        if (!isPlainObject(raw) || !onlyKeys(raw, RECORD_KEYS)) return null;
+        if (raw.scope !== SCOPE) return null;
+        if (typeof raw.enabled !== "boolean") return null;
+        if (!isBoxCount(raw.boxes)) return null;
+        if (!AVAILABILITY.includes(raw.availability)) return null;
+        const peers = sanitizePeerList(raw.peers);
+        if (!peers) return null;
+        const out = { scope: SCOPE, enabled: raw.enabled, boxes: raw.boxes, availability: raw.availability };
+        if (raw.availability === "schedule") {
+          if (!Array.isArray(raw.schedule) || raw.schedule.length === 0 || raw.schedule.length > MAX_WINDOWS) return null;
+          const windows = Array.from(raw.schedule, sanitizeWindow);
+          if (windows.some((w) => w === null)) return null;
+          out.schedule = windows;
+        } else if ("schedule" in raw) {
+          return null;
+        }
+        out.peers = peers;
+        return out;
+      }
+      function offerFromEnv(env = process.env, log = console) {
+        const text = env.CLODEX_BOX_OFFER;
+        if (typeof text !== "string" || !text.trim()) return void 0;
+        let parsed;
+        try {
+          parsed = JSON.parse(text);
+        } catch (e) {
+          log.error(`CLODEX_BOX_OFFER is not valid JSON; box offer off: ${e.message}`);
+          return null;
+        }
+        const offer = sanitizeBoxOffer(parsed);
+        if (!offer) log.error("CLODEX_BOX_OFFER is not a valid box offer; box offer off");
+        return offer;
+      }
+      function scheduleOpen(offer, now = /* @__PURE__ */ new Date()) {
+        if (!offer || offer.enabled !== true) return false;
+        if (offer.availability === "always") return true;
+        if (offer.availability !== "schedule" || !Array.isArray(offer.schedule)) return false;
+        const day = now.getDay();
+        const prevDay = (day + 6) % 7;
+        const minute = now.getHours() * 60 + now.getMinutes();
+        return offer.schedule.some((w) => {
+          const from = toMinutes(w.from);
+          const to = toMinutes(w.to);
+          if (from === null || to === null) return false;
+          if (from < to) return w.days.includes(day) && minute >= from && minute < to;
+          return w.days.includes(day) && minute >= from || w.days.includes(prevDay) && minute < to;
+        });
+      }
+      function sanitizePlatforms(raw) {
+        if (!Array.isArray(raw)) return [];
+        const out = [];
+        for (const p of Array.from(raw)) {
+          if (typeof p === "string" && PLATFORM_RE.test(p) && !out.includes(p)) out.push(p);
+          if (out.length === MAX_PLATFORMS) break;
+        }
+        return out;
+      }
+      var intOrNull = (n, max) => Number.isInteger(n) && n >= 1 && n <= max ? n : null;
+      var tokenOrNull = (s) => typeof s === "string" && TOKEN_RE.test(s) ? s : null;
+      var validInt = (n, max) => n === null || intOrNull(n, max) !== null;
+      var validToken = (s) => s === null || tokenOrNull(s) !== null;
+      function produceFacts(raw) {
+        const f = isPlainObject(raw) ? raw : {};
+        const platforms = isPlainObject(f.runtime) ? sanitizePlatforms(f.runtime.platforms) : [];
+        return {
+          os: tokenOrNull(f.os),
+          arch: tokenOrNull(f.arch),
+          cpus: intOrNull(f.cpus, MAX_CPUS),
+          memMb: intOrNull(f.memMb, MAX_MEM_MB),
+          runtime: platforms.length ? { platforms } : null
+        };
+      }
+      function offerEntry(offer, facts, now) {
+        const clean = sanitizeBoxOffer(offer);
+        if (!clean || !clean.enabled) return null;
+        return {
+          scope: SCOPE,
+          boxes: clean.boxes,
+          open: scheduleOpen(clean, now instanceof Date ? now : /* @__PURE__ */ new Date()),
+          kinds: [...PRODUCED_KINDS],
+          facts: produceFacts(typeof facts === "function" ? facts() : facts)
+        };
+      }
+      function wireEntry(offer, facts, peerName, now) {
+        const clean = sanitizeBoxOffer(offer);
+        if (!clean || typeof peerName !== "string" || !clean.peers.some((p) => p.name === peerName)) return null;
+        return offerEntry(clean, facts, now);
+      }
+      function sanitizeWireRuntime(raw) {
+        if (raw === null) return null;
+        if (!isPlainObject(raw) || !onlyKeys(raw, RUNTIME_KEYS) || !Array.isArray(raw.platforms)) return void 0;
+        const platforms = Array.from(raw.platforms);
+        if (platforms.length === 0 || platforms.length > MAX_PLATFORMS) return void 0;
+        if (!platforms.every((p) => typeof p === "string" && PLATFORM_RE.test(p))) return void 0;
+        return { platforms: [...new Set(platforms)] };
+      }
+      function sanitizeWireFacts(raw) {
+        if (!isPlainObject(raw) || !onlyKeys(raw, FACT_KEYS) || !FACT_KEYS.every((k) => k in raw)) return null;
+        if (!validToken(raw.os) || !validToken(raw.arch)) return null;
+        if (!validInt(raw.cpus, MAX_CPUS) || !validInt(raw.memMb, MAX_MEM_MB)) return null;
+        const runtime = sanitizeWireRuntime(raw.runtime);
+        if (runtime === void 0) return null;
+        return { os: raw.os, arch: raw.arch, cpus: raw.cpus, memMb: raw.memMb, runtime };
+      }
+      function sanitizeWireKinds(raw) {
+        if (!Array.isArray(raw)) return null;
+        const kinds = Array.from(raw);
+        if (kinds.length === 0 || !kinds.every((k) => KINDS.includes(k))) return null;
+        return new Set(kinds).size === kinds.length ? kinds : null;
+      }
+      function sanitizeWireEntry(raw) {
+        if (!isPlainObject(raw) || !onlyKeys(raw, WIRE_KEYS)) return null;
+        if (raw.scope !== SCOPE || !isBoxCount(raw.boxes) || typeof raw.open !== "boolean") return null;
+        const kinds = sanitizeWireKinds(raw.kinds);
+        const facts = sanitizeWireFacts(raw.facts);
+        if (!kinds || !facts) return null;
+        return { scope: SCOPE, boxes: raw.boxes, open: raw.open, kinds, facts };
+      }
+      function sanitizeWireOffers(raw) {
+        if (!isPlainObject(raw)) return null;
+        if (raw.own == null) return { own: null };
+        const own = sanitizeWireEntry(raw.own);
+        return own ? { own } : null;
+      }
+      function warnStoredOffer(readRaw, warn) {
+        let raw;
+        try {
+          raw = readRaw();
+        } catch {
+          return false;
+        }
+        if (!isPlainObject(raw) || raw.boxOffer == null || sanitizeBoxOffer(raw.boxOffer)) return false;
+        warn("ui-settings boxOffer is not a valid box offer; box offer off");
+        return true;
+      }
+      function bootOffer(env, readStored, log) {
+        const fromEnv = offerFromEnv(env, log);
+        if (fromEnv === void 0) warnStoredOffer(readStored, (m) => log.warn(m));
+        return fromEnv;
+      }
+      var offerEnabled = (raw) => sanitizeBoxOffer(raw)?.enabled === true;
+      module.exports = {
+        NODE_NAME_RE,
+        MAX_PEERS,
+        MAX_BOXES,
+        sanitizeBoxOffer,
+        offerFromEnv,
+        scheduleOpen,
+        offerEntry,
+        wireEntry,
+        sanitizeWireOffers,
+        OFFERS_WIRE_VERSION,
+        warnStoredOffer,
+        bootOffer,
+        offerEnabled
+      };
+    }
+  });
+
   // renderer/lib/offer-view.js
   var require_offer_view = __commonJS({
     "renderer/lib/offer-view.js"(exports, module) {
       "use strict";
-      var OFFER_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
+      var { NODE_NAME_RE, MAX_PEERS, MAX_BOXES } = require_box_offer();
       var DAY_LETTERS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
-      var PEER_NOTE = "This list decides which peers are shown this offer. It is not an access control, and nothing runs on this machine because of it yet.";
+      var PEER_NOTE = "This list decides which peers are shown this offer. It is not an access control. Nothing runs on this machine because of it yet. A node that dials this machine is named by its own label, which is its hostname unless it set one.";
       function osArch(facts) {
         if (!facts || !facts.os && !facts.arch) return "unknown os";
         return `${facts.os || "?"}/${facts.arch || "?"}`;
@@ -30219,14 +30443,48 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         const runtime = facts && facts.runtime && Array.isArray(facts.runtime.platforms) && facts.runtime.platforms.length ? `runtime ${facts.runtime.platforms.join(", ")}` : "no container runtime";
         return `${count} \xB7 ${open ? "open now" : "closed now"} \xB7 ${osArch(facts)} \xB7 ${runtime}`;
       }
-      function peerChoices(configuredLabels, stored) {
+      function agoText(ms) {
+        if (!Number.isFinite(ms) || ms < 6e4) return "just now";
+        const min = Math.floor(ms / 6e4);
+        if (min < 60) return `${min}m ago`;
+        const h = Math.floor(min / 60);
+        if (h < 24) return `${h}h ago`;
+        return `${Math.floor(h / 24)}d ago`;
+      }
+      function peerChoices(rows, stored, now = Date.now()) {
         const out = [];
-        for (const label of Array.isArray(configuredLabels) ? configuredLabels : []) {
-          if (typeof label === "string" && OFFER_NAME_RE.test(label) && !out.includes(label)) out.push(label);
+        for (const row of Array.isArray(rows) ? rows : []) {
+          const name = row && row.name;
+          if (typeof name !== "string" || !NODE_NAME_RE.test(name) || out.some((c) => c.name === name)) continue;
+          const note = row.from === "dialed" ? `dials this machine, seen ${agoText(now - row.seenAt)}` : null;
+          out.push({ name, note });
         }
         const ticked = (stored && Array.isArray(stored.peers) ? stored.peers : []).map((p) => p && p.name).filter((n) => typeof n === "string");
-        for (const name of ticked) if (!out.includes(name)) out.push(name);
-        return out.map((name) => ({ name, ticked: ticked.includes(name) }));
+        for (const name of ticked) if (!out.some((c) => c.name === name)) out.push({ name, note: null });
+        return out.map((c) => ({ ...c, ticked: ticked.includes(c.name) }));
+      }
+      function peerNameToAdd(text, existing) {
+        const name = String(text || "").trim();
+        if (!NODE_NAME_RE.test(name)) return { error: "a name is 1-64 letters, digits, dot, dash or underscore" };
+        if ((existing || []).includes(name)) return { name, duplicate: true };
+        return { name };
+      }
+      function selfLabelLine(self2) {
+        if (typeof self2 !== "string" || !self2) return "";
+        return `This machine's label is ${self2}: a node it dials sees it by that name.`;
+      }
+      function offerFormProblem({ boxes, availability, schedule, peers }) {
+        const n = Number(boxes);
+        if (!Number.isInteger(n) || n < 1 || n > MAX_BOXES) return `boxes must be a whole number from 1 to ${MAX_BOXES}`;
+        if (availability === "schedule") {
+          for (const w of schedule || []) {
+            if (!w.days || !w.days.length) return "a schedule window has no day ticked";
+            if (!w.from || !w.to) return "a schedule window has an empty time";
+            if (w.from === w.to) return "a schedule window starts and ends at the same time";
+          }
+        }
+        if ((peers || []).length > MAX_PEERS) return `more than ${MAX_PEERS} peers ticked`;
+        return null;
       }
       function offerRecordFromForm({ enabled, boxes, availability, schedule, peers }) {
         const rec = {
@@ -30255,6 +30513,9 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         ownFactsLine,
         peerOfferLine,
         peerChoices,
+        peerNameToAdd,
+        selfLabelLine,
+        offerFormProblem,
         offerRecordFromForm,
         offerStatusText
       };
@@ -52962,7 +53223,7 @@ ${detail}` });
       var { parseEnvLines, formatEnvLines } = require_env_edit();
       var { envRowView, buildEnvRow } = require_env_row();
       var { envLockView, applyEnvLock, patchUnlessEnvLocked } = require_env_lock();
-      var { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, ownFactsLine, peerChoices: offerPeerChoices, offerRecordFromForm, offerStatusText } = require_offer_view();
+      var { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText } = require_offer_view();
       var { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require_account_select();
       var { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, keyTransportRefusal, modelOptions } = require_account_row();
       var { isToolInstallSession } = require_tool_doctor();
@@ -59084,6 +59345,9 @@ Click for live activity`;
       var prefsBoxOfferScheduleAdd = document.getElementById("prefs-box-offer-schedule-add");
       var prefsBoxOfferPeers = document.getElementById("prefs-box-offer-peers");
       var prefsBoxOfferPeersNote = document.getElementById("prefs-box-offer-peers-note");
+      var prefsBoxOfferPeerName = document.getElementById("prefs-box-offer-peer-name");
+      var prefsBoxOfferPeerAdd = document.getElementById("prefs-box-offer-peer-add");
+      var prefsBoxOfferSelf = document.getElementById("prefs-box-offer-self");
       var prefsBoxOfferFacts = document.getElementById("prefs-box-offer-facts");
       var prefsBoxOfferStatus = document.getElementById("prefs-box-offer-status");
       var prefsBoxOfferApply = document.getElementById("prefs-box-offer-apply");
@@ -62302,6 +62566,24 @@ ${res.stderr}` : "");
         prefsBoxOfferSchedule.classList.toggle("hidden", !scheduled);
         prefsBoxOfferScheduleAdd.classList.toggle("hidden", !scheduled || prefsBoxOfferSchedule.children.length >= 8);
       }
+      function boxOfferPeerRow({ name, ticked, note }) {
+        const label = document.createElement("label");
+        label.className = "prefs-check";
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.dataset.peer = name;
+        box.checked = ticked;
+        const text = document.createElement("span");
+        text.textContent = name;
+        label.append(box, text);
+        if (note) {
+          const hint = document.createElement("span");
+          hint.className = "hint-text";
+          hint.textContent = ` (${note})`;
+          label.append(hint);
+        }
+        return label;
+      }
       function renderBoxOfferPrefs(st) {
         prefsBoxOfferShown = st;
         const rec = (st.forced ? st.effective : st.stored) || null;
@@ -62310,25 +62592,17 @@ ${res.stderr}` : "");
         prefsBoxOfferAvailability.value = rec ? rec.availability : "always";
         prefsBoxOfferSchedule.replaceChildren(...(rec && rec.schedule || []).map(boxOfferWindowRow));
         const choices = offerPeerChoices(st.peers, rec);
-        prefsBoxOfferPeers.replaceChildren(...choices.map(({ name, ticked }) => {
-          const label = document.createElement("label");
-          label.className = "prefs-check";
-          const box = document.createElement("input");
-          box.type = "checkbox";
-          box.dataset.peer = name;
-          box.checked = ticked;
-          const text = document.createElement("span");
-          text.textContent = name;
-          label.append(box, text);
-          return label;
-        }));
+        prefsBoxOfferPeers.replaceChildren(...choices.map(boxOfferPeerRow));
         if (!choices.length) {
           const none = document.createElement("span");
           none.className = "hint-text";
-          none.textContent = "No peers configured.";
+          none.dataset.empty = "1";
+          none.textContent = "No peers configured and no node has dialed in.";
           prefsBoxOfferPeers.append(none);
         }
+        prefsBoxOfferPeerName.value = "";
         prefsBoxOfferPeersNote.textContent = OFFER_PEER_NOTE;
+        prefsBoxOfferSelf.textContent = offerSelfLabelLine(st.self);
         prefsBoxOfferFacts.textContent = `This machine would announce: ${ownFactsLine(st.facts)}`;
         prefsBoxOfferStatus.textContent = offerStatusText(st);
         syncBoxOfferSchedule();
@@ -62352,14 +62626,42 @@ ${res.stderr}` : "");
           prefsBoxOfferSchedule.append(boxOfferWindowRow({ days: [1, 2, 3, 4, 5], from: "09:00", to: "17:00" }));
           syncBoxOfferSchedule();
         });
+        const addBoxOfferPeer = () => {
+          const boxes = [...prefsBoxOfferPeers.querySelectorAll("input[data-peer]")];
+          const add = offerPeerNameToAdd(prefsBoxOfferPeerName.value, boxes.map((b) => b.dataset.peer));
+          if (add.error) {
+            showToast(`Name not added: ${add.error}`, { kind: "warn" });
+            return;
+          }
+          prefsBoxOfferPeerName.value = "";
+          if (add.duplicate) {
+            for (const b of boxes) if (b.dataset.peer === add.name) b.checked = true;
+            return;
+          }
+          for (const el of prefsBoxOfferPeers.querySelectorAll("[data-empty]")) el.remove();
+          prefsBoxOfferPeers.append(boxOfferPeerRow({ name: add.name, ticked: true, note: null }));
+        };
+        prefsBoxOfferPeerAdd.addEventListener("click", addBoxOfferPeer);
+        prefsBoxOfferPeerName.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            addBoxOfferPeer();
+          }
+        });
         prefsBoxOfferApply.addEventListener("click", async () => {
-          const rec = offerRecordFromForm({
+          const form = {
             enabled: prefsBoxOfferEnabled.checked,
             boxes: prefsBoxOfferBoxes.value,
             availability: prefsBoxOfferAvailability.value,
             schedule: readBoxOfferSchedule(),
             peers: [...prefsBoxOfferPeers.querySelectorAll("input[data-peer]")].filter((b) => b.checked).map((b) => b.dataset.peer)
-          });
+          };
+          const problem = offerFormProblem(form);
+          if (problem) {
+            showToast(`Box offer not changed: ${problem}`, { kind: "warn" });
+            return;
+          }
+          const rec = offerRecordFromForm(form);
           let res = null;
           try {
             res = await window.api.offerSet(rec);

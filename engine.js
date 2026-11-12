@@ -1883,7 +1883,7 @@ const openRequests = createOpenRequests({
   getNotifications: () => notifications,
 });
 const { bootOffer, offerEnabled } = require('./box-offer');
-const { createOfferDirectory, createRuntimeProbe, hostFacts } = require('./offer-directory');
+const { createOfferDirectory, createDialerLog, createRuntimeProbe, hostFacts } = require('./offer-directory');
 const readStoredSettings = () => JSON.parse(fs.readFileSync(path.join(userDataPath, 'ui-settings.json'), 'utf8'));
 const readStoredBoxOffer = () => readStoredSettings()?.boxOffer;
 const envBoxOffer = bootOffer(
@@ -1892,6 +1892,7 @@ const envBoxOffer = bootOffer(
   { error: (m) => log.error('offers', m), warn: (m) => log.warn('offers', m) },
 );
 const offerDirectory = createOfferDirectory();
+const dialers = createDialerLog();
 const runtimeProbe = createRuntimeProbe({
   enabled: enableSandbox,
   run: (timeoutMs) => new Promise((resolve, reject) => {
@@ -1945,7 +1946,7 @@ const { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer, suiteRunnerS
   getWirescopeInfo: () => wirescope.localReach(),
   getNodeLogFile: logFile ? () => logFile : undefined,
   thumbnail,
-  getBoxOffer, getOfferFacts, offerDirectory,
+  getBoxOffer, getOfferFacts, offerDirectory, dialers,
   getUserDataPath: () => userDataPath,
 });
 
@@ -2504,7 +2505,7 @@ const toolCache = createToolCache({ whichBin });
     reconcileCodexSwaps,
     knownSkillNames,
     refreshRemoteToken, suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner,
-    getBoxOffer, boxOfferForced: envBoxOffer !== undefined, readStoredBoxOffer, getOfferFacts, offerDirectory,
+    getBoxOffer, boxOfferForced: envBoxOffer !== undefined, readStoredBoxOffer, getOfferFacts, offerDirectory, dialers,
     readOfferFacts: () => runtimeProbe.refresh().then(() => getOfferFacts()),
     setRemoteToken: (token) => writeRemoteEnvToken(userDataPath, token),
     hasRemoteToken: () => hasRemoteEnvToken(userDataPath),
