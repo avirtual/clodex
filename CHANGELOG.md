@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A team can keep a versioned Dockerfile for its test box (`[agent:team box set|init|show|clear]`); it is checked for form and not built yet.
+
 ## 5.176.0 — 2026-11-12
 
 - `[agent:team runner gate:shadow]`: the ticket loop's verify and post-merge suites also run on the team's test runner and each pair of results is recorded in `logs/suite-compare.jsonl`; the local run stays the only authority, and `[agent:team runner]` shows the agreement tally.

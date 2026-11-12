@@ -270,6 +270,7 @@ const SCANNED_MODULES = [
   // test/ticket-mixin-surface.test.js; this entry only catches the module-scope
   // half (a moved body still reaching for a coordinator const).
   'team-tickets.js',
+  'team-box.js',
   'seat-layout.js',
   'muse-skills.js',
   'stream-seat.js',

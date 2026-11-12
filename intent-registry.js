@@ -234,7 +234,7 @@ function parseTeamCreate(cleaned) {
 }
 
 function parseTeam(cleaned) {
-  const m = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|bind|unbind|roster|template-save|template-rm|prompt-save|prompt-rm|sandbox|trunk|done|worktrees|hands|runner)\b([^\]]*)\]\s*(.*)/s);
+  const m = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|bind|unbind|roster|template-save|template-rm|prompt-save|prompt-rm|sandbox|box|trunk|done|worktrees|hands|runner)\b([^\]]*)\]\s*(.*)/s);
   if (!m) return null;
   const sub = m[1];
   const argStr = m[2];
@@ -269,6 +269,10 @@ function parseTeam(cleaned) {
   if (sub === 'template-rm') return { type: 'team', sub, stem: positional[0] || null, body: '' };
   if (sub === 'prompt-save') return { type: 'team', sub, kind: positional[0] || null, stem: positional[1] || null, body };
   if (sub === 'prompt-rm') return { type: 'team', sub, kind: positional[0] || null, stem: positional[1] || null, body: '' };
+  if (sub === 'box') {
+    const action = positional[0] || 'show';
+    return { type: 'team', sub, action, body: action === 'set' ? body : '' };
+  }
   if (sub === 'sandbox') {
     const refM = argStr.match(/\bref:(\S+)/);
     const action = positional[0] || 'up';
@@ -312,6 +316,7 @@ const TEAM_ROLE_KV_KEYS = ['prompt', 'template', 'dispatch', 'cwd', 'model', 'ac
 
 function teamBodyMode(intent) {
   if (intent.sub === 'template-save' || intent.sub === 'prompt-save') return 'greedy';
+  if (intent.sub === 'box' && intent.action === 'set') return 'greedy';
   if (intent.sub === 'sandbox' && intent.action === 'bootstrap' && (intent.op === 'setup' || intent.op === 'start')) return 'greedy';
   if (intent.sub === 'role-add' || intent.sub === 'role-set') {
     const carriesKv = TEAM_ROLE_KV_KEYS.some((k) => intent[k] != null);
