@@ -1696,6 +1696,11 @@ and are not, which is why the judgement worth testing is pushed down here.
 - **popover-drag.js** — make a `position:fixed` popover draggable by its title
   bar; openers call `resetDrag()` so a fresh open re-anchors instead of
   inheriting the last drag offset.
+- **team-runner-row.js** — the roles popover's test-runner row: the peer
+  field, the `hands` and `gate` selects (disabled with no peer) and the state
+  line built from the `team:runner` answer, repainted alone by `paintRunnerState`
+  when `team:runnerReach` answers; the set buttons send one key to
+  `team:setRunner`.
 - **popover-place.js** — where a bar-anchored popover goes: the live-anchor
   re-query and the clamped above-the-button geometry, with an all-zero (detached)
   anchor rect falling back to the viewport's bottom-left corner instead of off

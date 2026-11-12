@@ -96,7 +96,7 @@ test('roles popover: a lead-seat or trunk edit does not touch the row\'s Save', 
   const handlers = {};
   const block = rowEditBlock();
   new Function('listEl', 'syncRowDirty', block)({ addEventListener: (t, fn) => { handlers[t] = fn; } }, syncRowDirty);
-  for (const f of ['lead-seat', 'lead-pick', 'trunk']) {
+  for (const f of ['lead-seat', 'lead-pick', 'trunk', 'runner-peer', 'runner-hands', 'runner-gate']) {
     const inp = { dataset: { f }, value: 'x' };
     inp.closest = (sel) => (sel === '[data-f]' ? inp : row);
     handlers.input({ target: inp });
@@ -347,7 +347,7 @@ test('roles popover: collapsing or switching a dirty row asks before re-renderin
   assert.deepStrictEqual(clean.asked, []);
   assert.strictEqual(clean.rendered.length, 1, 'ENTER: a clean list re-renders without asking');
 
-  for (const act of ['set-lead', 'set-trunk', 'rename', 'remove', 'readd']) {
+  for (const act of ['set-lead', 'set-trunk', 'set-runner-peer', 'set-runner-hands', 'set-runner-gate', 'rename', 'remove', 'readd']) {
     const rig = compileListClick({ dirty: true, answer: false, teamName: () => 'clodex', teamGet: async () => ({ ok: true, team: {} }) });
     await rig.fire(act);
     assert.deepStrictEqual(rig.asked, [DISCARD_ROLE_EDITS_PROMPT], `${act} asks first`);
@@ -417,7 +417,7 @@ function compileOpen(overrides = {}, { realRefresh = false } = {}) {
     refresh: async () => true, anchorRect: () => ({ left: 40, bottom: 100 }),
     currentRoot: '', renderRows: noop, watchdogInput: {}, formatDuration: String,
     loadPreflight: async () => noop, loadStockRoles: async () => noop, loadActivity: async () => noop,
-    loadUses: async () => noop, loadLeadSeats: async () => noop, loadTrunk: async () => noop,
+    loadUses: async () => noop, loadLeadSeats: async () => noop, loadTrunk: async () => noop, loadRunner: async () => noop,
     ...overrides,
   };
   if (realRefresh) delete env.refresh;

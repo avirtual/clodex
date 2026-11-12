@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - `[agent:team runner gate:shadow]`: the ticket loop's verify and post-merge suites also run on the team's test runner and each pair of results is recorded in `logs/suite-compare.jsonl`; the local run stays the only authority, and `[agent:team runner]` shows the agreement tally.
+- The team popover shows the team's test runner (peer, which hand runs go there, shadow mode) with its reachability and agreement tally, and can set it.
 
 ## 5.175.0 — 2026-11-12
 

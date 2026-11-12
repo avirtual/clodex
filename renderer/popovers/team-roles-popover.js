@@ -23,6 +23,7 @@
 // lib/team-roles.js are tested instead; wire fidelity is the guarantee here.
 
 const { esc } = require('../lib/format');
+const { RUNNER_FIELDS, runnerPatchFor, buildRunnerField, paintRunnerState } = require('../lib/team-runner-row');
 const {
   teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote, reservedRoleTemplate, DISPATCH_VALUES, DEFAULT_DISPATCH,
   parseDuration, formatDuration, formatBlockedBy, preflightByRole,
@@ -160,6 +161,29 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     let res;
     try { res = await window.api.teamTrunk(name); } catch { res = null; }
     return () => { trunkInfo = res && res.ok ? res : null; };
+  }
+
+  let runnerInfo = null;
+  async function loadRunner(name) {
+    if (typeof window.api.teamRunner !== 'function') return () => { runnerInfo = null; };
+    let res;
+    try { res = await window.api.teamRunner(name); } catch { res = null; }
+    return () => {
+      runnerInfo = res && res.ok ? res : null;
+      const seq = ++runnerProbeSeq;
+      if (runnerInfo && runnerInfo.peer) probeRunner(name, seq);
+    };
+  }
+
+  let runnerProbeSeq = 0;
+  async function probeRunner(name, seq) {
+    if (typeof window.api.teamRunnerReach !== 'function') return;
+    let res;
+    try { res = await window.api.teamRunnerReach(name); } catch (err) { res = { ok: false, error: (err && err.message) || String(err) }; }
+    if (seq !== runnerProbeSeq || teamName() !== name || !runnerInfo) return;
+    const { ok, error, ...probe } = res || { ok: false, error: 'no answer' };
+    runnerInfo = { ...runnerInfo, ...(ok ? probe : { reach: `reachability unknown: ${error || 'no answer'}` }) };
+    paintRunnerState(listEl.querySelector('.team-runner'), runnerInfo);
   }
 
   function buildTrunkField() {
@@ -313,6 +337,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
       + 'Nothing is handed over — the new lead starts fresh, and you can point it back at any time.';
     box.appendChild(hint);
     box.appendChild(buildTrunkField());
+    box.appendChild(buildRunnerField(document, runnerInfo));
 
     return box;
   }
@@ -1045,7 +1070,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     // name, and a stale checklist accusing the previous value is worse than none.
     const [res, ...applies] = await Promise.all([
       got, loadPreflight(teamName), loadStockRoles(), loadActivity(teamName), usesLoad,
-      loadLeadSeats(), loadTrunk(teamName),
+      loadLeadSeats(), loadTrunk(teamName), loadRunner(teamName),
     ]);
     if (!isCurrent()) return false;
     if (!res || !res.ok) { setStatus(res && res.error ? res.error : 'team not found', true); return false; }
@@ -1258,6 +1283,15 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
       if (!trunkInfo.trunk && want === (trunkInfo.derived || '')) { setStatus(`merge target is already the repo default (${want})`); return; }
       const res = await window.api.teamSetTrunk(name, want || null);
       await afterMutation(res, want ? `merge target set to "${want}"` : 'merge target cleared (back to the repo default)', name);
+      return;
+    }
+    if (act === 'set-runner-peer' || act === 'set-runner-hands' || act === 'set-runner-gate') {
+      const field = Object.keys(RUNNER_FIELDS).find((f) => RUNNER_FIELDS[f] === act);
+      const inp = rowEl.querySelector(`[data-f="${field}"]`);
+      if (!runnerInfo || typeof window.api.teamSetRunner !== 'function') { setStatus('the test runner cannot be read here', true); return; }
+      runnerProbeSeq += 1;
+      const res = await window.api.teamSetRunner(name, runnerPatchFor(act, inp && inp.value));
+      await afterMutation(res, res && res.message, name);
       return;
     }
     if (act === 'create-lead') {
@@ -1548,7 +1582,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
   // delegation on the list — same shape as the click delegation above. Enter in a
   // row input fires that row's Save button. The prompt and template <select>s are
   // excluded (Enter there is native option-commit, not a submit).
-  const ROW_SAVE_EXEMPT_FIELDS = new Set(['lead-seat', 'lead-pick', 'trunk']);
+  const ROW_SAVE_EXEMPT_FIELDS = new Set(['lead-seat', 'lead-pick', 'trunk', 'runner-peer', 'runner-hands', 'runner-gate']);
   const onRowFieldEdit = (e) => {
     const inp = e.target && typeof e.target.closest === 'function' ? e.target.closest('[data-f]') : null;
     if (!inp || ROW_SAVE_EXEMPT_FIELDS.has(inp.dataset.f)) return;
@@ -1570,7 +1604,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     // The lead row has no Save — its input pairs with Set lead. Matched on the
     // field rather than on the row's role so a row that grows both buttons later
     // still fires the one belonging to the focused input.
-    const act = inp.dataset.f === 'lead-seat' ? 'set-lead' : inp.dataset.f === 'trunk' ? 'set-trunk' : 'save';
+    const act = inp.dataset.f === 'lead-seat' ? 'set-lead' : inp.dataset.f === 'trunk' ? 'set-trunk' : RUNNER_FIELDS[inp.dataset.f] || 'save';
     const btn = rowEl && rowEl.querySelector(`button[data-act="${act}"]`);
     if (!btn) return;
     e.preventDefault();

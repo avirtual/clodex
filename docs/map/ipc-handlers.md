@@ -40,6 +40,9 @@
 | `handle:team:setWatchdog` | sets the team's watchdog interval and returns the saved team | team.json | setTeamWatchdog | team-frontdoor-seam.test.js |
 | `handle:team:trunk` | the team's configured trunk, the repo-derived merge target and the effective one | team.json (read) | loadManifest, git-worktree.mergeTargetFor | unpinned |
 | `handle:team:setTrunk` | sets or clears the trunk after checking the branch exists in the team root | team.json | git-worktree.localBranches, setTeamTrunk | unpinned |
+| `handle:team:runner` | the team's stored test runner setting as an object (peer, modes, invalid, setup/env present, latest shadow tally); no network call | none | loadManifest, manager._runnerStored | team-test-runner.test.js |
+| `handle:team:runnerReach` | the runner's reachability, suite capability and the tally for its env key, through the verb's reach probe | none | loadManifest, manager._runnerProbe | team-test-runner.test.js |
+| `handle:team:setRunner` | sets the runner peer, hands or gate through the verb's handler and returns its reply as message or error | team.json testRunner | loadManifest, manager._handleTeamRunner | team-test-runner.test.js |
 | `handle:team:setLead` | re-points the manifest's top-level lead seat name (not a role edit) | team.json lead | setLead | team-frontdoor-seam.test.js |
 | `handle:team:preflight` | the team's preflight findings table (missing templates, prompts, exec defs) with disk probes bound here | none (reads team dir, libraries) | team-preflight.teamPreflight, readTeamJson, execLibrary.raw | team-frontdoor-seam.test.js team-templates-exec.test.js team-prompt-dir.test.js |
 | `handle:team:names` | every team name | none | listTeams | team-frontdoor-seam.test.js |
