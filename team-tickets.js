@@ -370,6 +370,36 @@ function humanizeAge(ms) {
   return `${Math.round(h / 24)}d`;
 }
 
+function recordCapEnd(ticket, kind, by, now) {
+  const evs = Array.isArray(ticket.events) ? ticket.events : [];
+  const park = [...evs].reverse().find((e) => e && e.kind === 'cap-park');
+  const waitMs = park && Number.isFinite(park.at) ? Math.max(0, now - park.at) : undefined;
+  recordEvent(ticket, { at: now, kind, by, waitMs });
+}
+
+const CAP_PARK_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+function capParkSummary(tickets, now) {
+  const head = 'cap parks in the last 7 days:';
+  let parks = 0;
+  const waits = [];
+  for (const t of tickets) {
+    const evs = Array.isArray(t && t.events) ? t.events : [];
+    evs.forEach((e, i) => {
+      if (!e || e.kind !== 'cap-park' || !(e.at >= now - CAP_PARK_WINDOW_MS)) return;
+      parks++;
+      const end = evs.slice(i + 1).find((x) => x && ['cap-park', 'cap-start', 'cap-drop'].includes(x.kind));
+      if (end && end.kind !== 'cap-park' && Number.isFinite(end.waitMs)) waits.push(end.waitMs);
+    });
+  }
+  if (!parks) return `${head} no parks recorded`;
+  if (!waits.length) return `${head} ${parks} — none started or dropped yet`;
+  waits.sort((a, b) => a - b);
+  const mid = waits.length >> 1;
+  const median = waits.length % 2 ? waits[mid] : Math.round((waits[mid - 1] + waits[mid]) / 2);
+  return `${head} ${parks} — median wait ${humanizeAge(median)}, longest ${humanizeAge(waits[waits.length - 1])}`;
+}
+
 function closeOutDetail(ticketId, text) {
   const s = String(text == null ? '' : text).trim();
   const head = `ticket ${ticketId} accepted — `;
@@ -3052,7 +3082,9 @@ function createTicketMethods(deps, shared) {
     _handleTeamHands(session, team, intent, reply) {
       if (!intent.value) {
         const { cap, source } = this._handCap(team);
-        reply(`hand cap of ${team.name}: ${cap == null ? 'off' : `${cap} (${source})`} — [agent:team hands <n|off>] sets it`);
+        const own = this._ownRowFilter(team);
+        const summary = capParkSummary(ticketsStore.read(team.root).filter(own), this._capClockNow());
+        reply(`hand cap of ${team.name}: ${cap == null ? 'off' : `${cap} (${source})`} — [agent:team hands <n|off>] sets it\n${summary}`);
         return;
       }
       const n = intent.value === 'off' ? null : (/^[0-9]+$/.test(intent.value) ? Number(intent.value) : NaN);
@@ -3066,6 +3098,8 @@ function createTicketMethods(deps, shared) {
         : `hand cap of ${team.name} set to ${m.maxHands} — a task start past it parks the ticket until a hand retires`);
       this._startCapParked(m, session);
     },
+
+    _capClockNow() { return Date.now(); },
 
     _runnerPeerStatus(name) {
       const pm = typeof getPeerManager === 'function' ? getPeerManager() : null;
@@ -5576,6 +5610,7 @@ function createTicketMethods(deps, shared) {
         const { cap } = this._handCap(team);
         const live = cap == null ? 0 : this._liveHandCount(team);
         if (cap != null && live >= cap) {
+          if (ticket.parkedBy !== 'cap') recordEvent(ticket, { at: this._capClockNow(), kind: 'cap-park', by: session.name, cap: `${live}/${cap}` });
           ticket.parked = true;
           ticket.parkedBy = 'cap';
           ticket.parkedCap = `${live}/${cap}`;
@@ -5591,6 +5626,7 @@ function createTicketMethods(deps, shared) {
       }
       // Start is the dispatch, so it unparks: a started ticket left flagged is exempt from the stall watchdog, the backstop for a dead loop step.
       const wasParked = !!ticket.parked;
+      const wasCapParked = ticket.parkedBy === 'cap';
       delete ticket.parked;
       delete ticket.parkedBy;
       delete ticket.parkedCap;
@@ -5600,6 +5636,7 @@ function createTicketMethods(deps, shared) {
       // Stamped above both arms and every save, so no path dispatches unrecorded: an unstamped dispatched ticket is startable twice and collides on the tree.
       ticket.startedAt = ticket.lastActivityAt;
       recordEvent(ticket, { at: ticket.startedAt, kind: 'start', by: session.name, to: (minted && minted.ok) ? minted.name : assignee });
+      if (wasCapParked) recordCapEnd(ticket, 'cap-start', session.name, this._capClockNow());
       this._armLoopWatch(team, ticket, 'started', (minted && minted.ok) ? minted.name : (this._ticketAssigneeSeat(team, ticket) || assignee));
       if (startReviewer) ticket.reviewerTemplate = startReviewer;
       const rvNote = startReviewer ? ` — reviewer template: ${startReviewer}` : '';
@@ -5767,6 +5804,7 @@ function createTicketMethods(deps, shared) {
       ticket.nudgedAt = null;
       // Assign is the dispatch, so it unparks: a delivered ticket left parked is invisible to advance, replay and the badge.
       const wasParked = !!ticket.parked;
+      if (ticket.parkedBy === 'cap') recordCapEnd(ticket, reassigning ? 'cap-drop' : 'cap-start', session.name, this._capClockNow());
       delete ticket.parked;
       delete ticket.parkedBy;
       delete ticket.parkedCap;
@@ -7622,6 +7660,7 @@ function createTicketMethods(deps, shared) {
       ticket.closedBy = session.name;
       ticket.lastActivityAt = ticket.closedAt;
       recordEvent(ticket, { at: ticket.closedAt, kind: 'cancel', by: session.name, reason: reason.split('\n')[0] });
+      if (ticket.parked && ticket.parkedBy === 'cap') recordCapEnd(ticket, 'cap-drop', session.name, this._capClockNow());
       ticketsStore.save(team.root, tickets);
       const seat = ticketStarted(ticket) && !ticket.parked ? this._ticketAssigneeSeat(team, ticket) : null;
       if (seat && seat !== team.lead) this._gatedDeliver(seat, session.name, `[ticket ${ticket.id} cancelled] ${reason || 'cancelled by the lead — stop work on it'}`, false, `[ticket ${ticket.id} cancelled]`);
@@ -8227,6 +8266,7 @@ function createTicketMethods(deps, shared) {
       const parking = !ticket.parked;
       if (parking) ticket.parked = true;
       else delete ticket.parked;
+      if (ticket.parkedBy === 'cap') recordCapEnd(ticket, 'cap-drop', session.name, this._capClockNow());
       delete ticket.parkedBy;
       delete ticket.parkedCap;
       ticket.lastActivityAt = Date.now();

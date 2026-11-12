@@ -360,7 +360,7 @@ test('[agent:team hands] verb table', () => {
     ['[agent:team] hand cap of team set to 3 — a task start past it parks the ticket until a hand retires']);
   assert.strictEqual(f.team.maxHands, 3);
   assert.deepStrictEqual(teamVerb(f, 'lead', '[agent:team hands]'),
-    ['[agent:team] hand cap of team: 3 (set) — [agent:team hands <n|off>] sets it']);
+    ['[agent:team] hand cap of team: 3 (set) — [agent:team hands <n|off>] sets it\ncap parks in the last 7 days: no parks recorded']);
   assert.deepStrictEqual(teamVerb(f, 'lead', '[agent:team hands 0]'),
     ['[agent:team] error: hands must be a positive integer or off, not "0"']);
   assert.deepStrictEqual(teamVerb(f, 'lead', '[agent:team hands x]'),
@@ -370,7 +370,7 @@ test('[agent:team hands] verb table', () => {
     ['[agent:team] hand cap of team set to off — task start no longer parks for a cap']);
   assert.strictEqual(f.team.maxHands, null);
   assert.deepStrictEqual(teamVerb(f, 'lead', '[agent:team hands]'),
-    ['[agent:team] hand cap of team: off — [agent:team hands <n|off>] sets it']);
+    ['[agent:team] hand cap of team: off — [agent:team hands <n|off>] sets it\ncap parks in the last 7 days: no parks recorded']);
   assert.deepStrictEqual(teamVerb(f, 'team-hand-1', '[agent:team hands 2]'),
     ['[agent:team] error: only the team lead (lead) can edit team metadata']);
 });
@@ -378,5 +378,82 @@ test('[agent:team hands] verb table', () => {
 test('bare [agent:team hands] inside a box names the box default and its source', () => {
   const f = mkFixture({ env: { CLODEX_IN_SANDBOX: '1' }, cpus: 6 });
   assert.deepStrictEqual(teamVerb(f, 'lead', '[agent:team hands]'),
-    ['[agent:team] hand cap of team: 3 (box default (6 vCPU → 3)) — [agent:team hands <n|off>] sets it']);
+    ['[agent:team] hand cap of team: 3 (box default (6 vCPU → 3)) — [agent:team hands <n|off>] sets it\ncap parks in the last 7 days: no parks recorded']);
 });
+
+const capEvents = (t) => (t.events || []).filter((e) => e.kind.startsWith('cap-'));
+
+function cappedAt(parkAt) {
+  const f = mkFixture({ maxHands: 3 });
+  for (const n of ['team-hand-91', 'team-hand-92', 'team-hand-93']) f.hold(n);
+  f.add();
+  f.m._capClockNow = () => parkAt;
+  f.start('t1');
+  return f;
+}
+
+test('a cap park then its auto-start writes cap-park and cap-start, the wait their difference', () => {
+  const f = cappedAt(1700000000000);
+  assert.deepStrictEqual(capEvents(f.one('t1')), [{ at: 1700000000000, kind: 'cap-park', by: 'lead', cap: '3/3' }]);
+  f.m._capClockNow = () => 1700000600000;
+  f.retire('team-hand-91');
+  assert.deepStrictEqual(f.spawned, [{ id: 't1', name: 'team-hand-1' }], 'ENTER: the parked ticket started');
+  assert.deepStrictEqual(capEvents(f.one('t1')), [
+    { at: 1700000000000, kind: 'cap-park', by: 'lead', cap: '3/3' },
+    { at: 1700000600000, kind: 'cap-start', by: 'lead', waitMs: 600000 },
+  ]);
+});
+
+test('a second start refused by the cap does not write a second cap-park', () => {
+  const f = cappedAt(1700000000000);
+  f.m._capClockNow = () => 1700000060000;
+  f.start('t1');
+  assert.strictEqual(f.one('t1').parkedBy, 'cap', 'ENTER: still parked');
+  assert.deepStrictEqual(capEvents(f.one('t1')), [{ at: 1700000000000, kind: 'cap-park', by: 'lead', cap: '3/3' }]);
+});
+
+test('a cap-parked ticket cancelled before it starts gets cap-drop with its wait', () => {
+  const f = cappedAt(1700000000000);
+  f.m._capClockNow = () => 1700000090000;
+  f.m._handleTask(f.seat('lead'), { type: 'task', sub: 'cancel', who: null, id: 't1', body: 'not needed' });
+  assert.strictEqual(f.one('t1').state, 'cancelled', 'ENTER: cancelled');
+  assert.deepStrictEqual(capEvents(f.one('t1')), [
+    { at: 1700000000000, kind: 'cap-park', by: 'lead', cap: '3/3' },
+    { at: 1700000090000, kind: 'cap-drop', by: 'lead', waitMs: 90000 },
+  ]);
+});
+
+test('a start that was never cap-parked writes no cap event', () => {
+  const f = mkFixture({ maxHands: 1 });
+  f.add({ body: 'first' });
+  f.add({ body: 'second' });
+  f.m._capClockNow = () => 1700000000000;
+  f.start('t1');
+  f.start('t2');
+  assert.deepStrictEqual(capEvents(f.one('t2')), [{ at: 1700000000000, kind: 'cap-park', by: 'lead', cap: '1/1' }], 'ENTER: t2 was parked');
+  assert.ok(f.one('t1').startedAt, 'ENTER: t1 started');
+  assert.deepStrictEqual(capEvents(f.one('t1')), []);
+});
+
+for (const [name, waits, want] of [
+  ['one park', [300000], 'cap parks in the last 7 days: 1 — median wait 5m, longest 5m'],
+  ['three parks', [60000, 7200000, 600000], 'cap parks in the last 7 days: 3 — median wait 10m, longest 2h'],
+]) {
+  test(`bare [agent:team hands] summarises cap waits: ${name}`, () => {
+    const f = mkFixture({ maxHands: 2 });
+    const now = 1700000000000;
+    const all = f.tstore.load(f.root);
+    waits.forEach((w, i) => all.push({ id: `c${i}`, state: 'open', spec: 's', events: [
+      { at: now - 3600000 * (i + 1) - w, kind: 'cap-park', by: 'lead', cap: '2/2' },
+      { at: now - 3600000 * (i + 1), kind: 'cap-start', by: 'lead', waitMs: w },
+    ] }));
+    all.push({ id: 'old', state: 'open', spec: 's', events: [
+      { at: now - 8 * 86400000, kind: 'cap-park', by: 'lead', cap: '2/2' },
+      { at: now - 8 * 86400000 + 1000, kind: 'cap-start', by: 'lead', waitMs: 1000 },
+    ] });
+    f.tstore.save(f.root, all);
+    f.m._capClockNow = () => now;
+    assert.deepStrictEqual(teamVerb(f, 'lead', '[agent:team hands]'),
+      [`[agent:team] hand cap of team: 2 (set) — [agent:team hands <n|off>] sets it\n${want}`]);
+  });
+}
