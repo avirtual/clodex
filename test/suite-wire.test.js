@@ -287,7 +287,7 @@ test('failure matrix: a runner down at submit waits in 15 s steps, then reports 
   const progress = [];
   const { client } = clientFor(conn, { now: clock.now, sleep: clock.sleep });
   const out = await client.run({ peer: 'runner-1', tree: repo, budgetMs: 50000, onProgress: (l) => progress.push(l) });
-  assert.deepStrictEqual(clock.slept, [15000, 15000, 15000]);
+  assert.deepStrictEqual(clock.slept, [15000, 15000, 15000, 5000]);
   assert.ok(progress.includes('waiting for runner runner-1'), 'ENTER: the wait was announced');
   assert.match(out.unknown, /^runner unreachable/);
   assert.deepStrictEqual([out.res, out.record.outcome], [null, 'unknown']);
