@@ -46,7 +46,7 @@ const { anyOverlayOpen, dialogOverlayIds, performCloseChord } = require('./lib/c
 const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { envRowView, buildEnvRow } = require('./lib/env-row');
 const { envLockView, applyEnvLock, patchUnlessEnvLocked } = require('./lib/env-lock');
-const { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, offerRunnerFrom, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText, claimLines: offerClaimLines } = require('./lib/offer-view');
+const { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, offerRunnerFrom, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText, suiteRunnerRecordFromForm, claimLines: offerClaimLines } = require('./lib/offer-view');
 const { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require('./lib/account-select');
 const { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, keyTransportRefusal, modelOptions } = require('./lib/account-row');
 const { isToolInstallSession } = require('../tool-doctor');
@@ -6413,6 +6413,7 @@ const prefsSuiteRunnerBlock = document.getElementById('prefs-suite-runner-block'
 const prefsSuiteRunnerEnabled = document.getElementById('prefs-suite-runner-enabled');
 const prefsSuiteRunnerIsolation = document.getElementById('prefs-suite-runner-isolation');
 const prefsSuiteRunnerWork = document.getElementById('prefs-suite-runner-work');
+const prefsSuiteRunnerBoxImage = document.getElementById('prefs-suite-runner-boxImage');
 const prefsSuiteRunnerApply = document.getElementById('prefs-suite-runner-apply');
 const prefsSuiteRunnerStatus = document.getElementById('prefs-suite-runner-status');
 const prefsSuiteRunnerNoneNote = document.getElementById('prefs-suite-runner-none-note');
@@ -9496,7 +9497,9 @@ function renderSuiteRunnerPrefs(st) {
   prefsSuiteRunnerWork.value = forced.has('work') ? (eff.work || '') : (rec.work || '');
   prefsSuiteRunnerWork.disabled = forced.has('work');
   prefsSuiteRunnerWork.placeholder = st.defaultWork || 'default for this platform';
-  for (const k of ['enabled', 'isolation', 'work']) {
+  prefsSuiteRunnerBoxImage.value = forced.has('boxImage') ? (eff.boxImage || '') : (rec.boxImage || '');
+  prefsSuiteRunnerBoxImage.disabled = forced.has('boxImage');
+  for (const k of ['enabled', 'isolation', 'work', 'boxImage']) {
     document.getElementById(`prefs-suite-runner-${k}-env`).classList.toggle('hidden', !forced.has(k));
   }
   prefsSuiteRunnerNoneNote.classList.toggle('hidden', prefsSuiteRunnerIsolation.value !== 'none');
@@ -9514,15 +9517,12 @@ async function refreshSuiteRunnerPrefs() {
 }
 
 function suiteRunnerRecordToSave() {
-  const shown = prefsSuiteRunnerShown || {};
-  const stored = shown.setting || { enabled: false, isolation: 'user', work: null };
-  const forced = new Set(shown.forced || []);
-  const work = prefsSuiteRunnerWork.value.trim() || null;
-  return {
-    enabled: forced.has('enabled') ? stored.enabled : prefsSuiteRunnerEnabled.checked,
-    isolation: forced.has('isolation') ? stored.isolation : prefsSuiteRunnerIsolation.value,
-    work: forced.has('work') ? stored.work : work,
-  };
+  return suiteRunnerRecordFromForm(prefsSuiteRunnerShown, {
+    enabled: prefsSuiteRunnerEnabled.checked,
+    isolation: prefsSuiteRunnerIsolation.value,
+    work: prefsSuiteRunnerWork.value,
+    boxImage: prefsSuiteRunnerBoxImage.value,
+  });
 }
 
 if (prefsSuiteRunnerBlock) {
