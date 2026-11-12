@@ -128,6 +128,7 @@ function suiteRunnerForced(env) {
     ...(env.CLODEX_SUITE_RUNNER === '1' ? ['enabled'] : []),
     ...(env.CLODEX_SUITE_ISOLATION ? ['isolation'] : []),
     ...(env.CLODEX_SUITE_WORK ? ['work'] : []),
+    ...(env.CLODEX_SUITE_BOX_IMAGE ? ['boxImage'] : []),
   ];
 }
 
@@ -139,11 +140,13 @@ function suiteRunnerOptions(env, root, { platform = process.platform, setting = 
   const data = env.CLODEX_DATA_DIR ? require('path').resolve(env.CLODEX_DATA_DIR) : null;
   const defaultWork = platform === 'darwin' ? require('path').join(root, 'suite-work') : '/var/lib/clodex-suite';
   const isolation = forced.includes('isolation') ? env.CLODEX_SUITE_ISOLATION : s.isolation;
+  const boxImage = forced.includes('boxImage') ? env.CLODEX_SUITE_BOX_IMAGE : s.boxImage;
   return {
     root: data || root,
     ...(data ? { oldRoot: root } : {}),
     work: env.CLODEX_SUITE_WORK || s.work || defaultWork,
     isolation: isolation === 'none' ? 'none' : 'user',
+    boxImage: typeof boxImage === 'string' && /^sha256:[0-9a-f]{64}$/.test(boxImage) ? boxImage : null,
     limits: mb > 0 ? { packMaxBytes: Math.floor(mb * 1024 * 1024) } : {},
     forced,
   };
@@ -1430,7 +1433,7 @@ function createRemoteWiring(deps) {
     return {
       setting: s.suiteRunner || null,
       forced: suiteRunnerForced(process.env),
-      effective: { isolation: inEffect.isolation, work: inEffect.work },
+      effective: { isolation: inEffect.isolation, work: inEffect.work, boxImage: inEffect.boxImage },
       defaultWork: defaults.work,
       remoteEnabled: remoteOn,
       status,

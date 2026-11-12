@@ -125,6 +125,19 @@ function offerRecordFromForm({ scope, enabled, boxes, availability, schedule, pe
   return rec;
 }
 
+function suiteRunnerRecordFromForm(shown, form) {
+  const stored = (shown && shown.setting) || { enabled: false, isolation: 'user', work: null };
+  const forced = new Set((shown && shown.forced) || []);
+  const pick = (k, v) => (forced.has(k) ? stored[k] : v);
+  const boxImage = pick('boxImage', form.boxImage.trim() || null);
+  return {
+    enabled: pick('enabled', form.enabled),
+    isolation: pick('isolation', form.isolation),
+    work: pick('work', form.work.trim() || null),
+    ...(boxImage ? { boxImage } : {}),
+  };
+}
+
 function claimLines(claims, now = Date.now()) {
   return (Array.isArray(claims) ? claims : []).filter((c) => c && typeof c.name === 'string').map((c) => {
     if (c.state === 'runner-off') return `${c.name}: runner mode off`;
@@ -157,5 +170,6 @@ module.exports = {
   offerFormProblem,
   offerRecordFromForm,
   offerStatusText,
+  suiteRunnerRecordFromForm,
   claimLines,
 };
