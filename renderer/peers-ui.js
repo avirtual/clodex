@@ -14,6 +14,7 @@ const { placeAboveAnchor } = require('./lib/popover-place');
 const { classifySender } = require('./lib/sender-class');
 const { farCwdGuess, localFromHome } = require('./lib/far-cwd-guess');
 const { sandboxRebuiltLine } = require('./lib/sandbox-view');
+const { peerOfferLine } = require('./lib/offer-view');
 
 function initPeersUi({
   sessions, sessionList, getActiveSession, createTerminal, switchSession,
@@ -1289,6 +1290,26 @@ function initPeersUi({
     peerInfoRelayCheck.onchange = null;
   }
 
+  function renderPeerOfferLine(id) {
+    const st = peerStatuses.get(id);
+    if (!st) return;
+    window.api.offerDirectory().then((d) => {
+      if (peerInfoPopover.classList.contains('hidden') || peerInfoPopover.dataset.peerId !== String(id)) return;
+      for (const old of peerInfoBody.querySelectorAll('.peer-info-offer')) old.remove();
+      const line = peerOfferLine(d && d.offers, st.label);
+      if (!line) return;
+      const div = document.createElement('div');
+      div.className = 'peer-info-line peer-info-offer';
+      div.innerHTML = `<span class="peer-info-key">Boxes</span> ${esc(line)}`;
+      peerInfoBody.append(div);
+    }).catch(() => {});
+  }
+  window.api.onOffersChanged(() => {
+    if (peerInfoPopover.classList.contains('hidden') || !peerInfoPopover.dataset.peerId) return;
+    const id = [...peerStatuses.keys()].find((k) => String(k) === peerInfoPopover.dataset.peerId);
+    if (id !== undefined) renderPeerOfferLine(id);
+  });
+
   function openPeerInfoPopover(id, anchorBtn) {
     const st = peerStatuses.get(id);
     if (!st) return;
@@ -1311,6 +1332,7 @@ function initPeersUi({
     }
     peerInfoBody.innerHTML = rows.join('');
     peerInfoPopover.dataset.peerId = id;
+    renderPeerOfferLine(id);
     peerInfoPopover.classList.remove('hidden');
     peerInfoUpdateBtn.classList.add('hidden');
     peerInfoUpdateBtn.onclick = null;

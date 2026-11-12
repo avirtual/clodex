@@ -46,6 +46,7 @@ const { anyOverlayOpen, dialogOverlayIds, performCloseChord } = require('./lib/c
 const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { envRowView, buildEnvRow } = require('./lib/env-row');
 const { envLockView, applyEnvLock, patchUnlessEnvLocked } = require('./lib/env-lock');
+const { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, ownFactsLine, peerChoices: offerPeerChoices, offerRecordFromForm, offerStatusText } = require('./lib/offer-view');
 const { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require('./lib/account-select');
 const { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, keyTransportRefusal, modelOptions } = require('./lib/account-row');
 const { isToolInstallSession } = require('../tool-doctor');
@@ -6415,6 +6416,17 @@ const prefsSuiteRunnerWork = document.getElementById('prefs-suite-runner-work');
 const prefsSuiteRunnerApply = document.getElementById('prefs-suite-runner-apply');
 const prefsSuiteRunnerStatus = document.getElementById('prefs-suite-runner-status');
 const prefsSuiteRunnerNoneNote = document.getElementById('prefs-suite-runner-none-note');
+const prefsBoxOfferBlock = document.getElementById('prefs-box-offer-block');
+const prefsBoxOfferEnabled = document.getElementById('prefs-box-offer-enabled');
+const prefsBoxOfferBoxes = document.getElementById('prefs-box-offer-boxes');
+const prefsBoxOfferAvailability = document.getElementById('prefs-box-offer-availability');
+const prefsBoxOfferSchedule = document.getElementById('prefs-box-offer-schedule');
+const prefsBoxOfferScheduleAdd = document.getElementById('prefs-box-offer-schedule-add');
+const prefsBoxOfferPeers = document.getElementById('prefs-box-offer-peers');
+const prefsBoxOfferPeersNote = document.getElementById('prefs-box-offer-peers-note');
+const prefsBoxOfferFacts = document.getElementById('prefs-box-offer-facts');
+const prefsBoxOfferStatus = document.getElementById('prefs-box-offer-status');
+const prefsBoxOfferApply = document.getElementById('prefs-box-offer-apply');
 
 const prefsEnvScope = document.getElementById('prefs-env-scope');
 const prefsEnvList = document.getElementById('prefs-env-list');
@@ -9280,6 +9292,7 @@ async function openPrefs(group = null) {
   }
   if (prefsPeerShell) prefsPeerShell.checked = !!s.peerShellEnabled;
   refreshSuiteRunnerPrefs();
+  refreshBoxOfferPrefs();
   prefsRemoteToken.value = '';
   renderRemoteTokenState(!!s.remoteHasToken, !!s.remoteEnvTokenPinned);
   if (prefsEnvScope) prefsEnvScope.value = 'global';
@@ -9517,6 +9530,132 @@ if (prefsSuiteRunnerBlock) {
     if (res && res.state && res.state.status === 'starting') {
       setTimeout(() => { if (!prefsOverlay.classList.contains('hidden')) refreshSuiteRunnerPrefs(); }, 1500);
     }
+  });
+}
+
+let prefsBoxOfferShown = null;
+
+function boxOfferWindowRow(w) {
+  const row = document.createElement('div');
+  row.className = 'prefs-row prefs-box-offer-window';
+  row.style.marginTop = '4px';
+  OFFER_DAY_LETTERS.forEach((letter, day) => {
+    const label = document.createElement('label');
+    label.className = 'prefs-check';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.dataset.day = String(day);
+    box.checked = w.days.includes(day);
+    const text = document.createElement('span');
+    text.textContent = letter;
+    label.append(box, text);
+    row.append(label);
+  });
+  for (const key of ['from', 'to']) {
+    const text = document.createElement('span');
+    text.textContent = key;
+    const input = document.createElement('input');
+    input.type = 'time';
+    input.dataset.key = key;
+    input.value = w[key];
+    input.style.flex = 'none';
+    row.append(text, input);
+  }
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'secondary';
+  remove.textContent = 'Remove';
+  remove.style.flex = 'none';
+  remove.addEventListener('click', () => { row.remove(); syncBoxOfferSchedule(); });
+  row.append(remove);
+  return row;
+}
+
+function readBoxOfferSchedule() {
+  return [...prefsBoxOfferSchedule.querySelectorAll('.prefs-box-offer-window')].map((row) => ({
+    days: [...row.querySelectorAll('input[data-day]')].filter((b) => b.checked).map((b) => Number(b.dataset.day)),
+    from: row.querySelector('input[data-key="from"]').value,
+    to: row.querySelector('input[data-key="to"]').value,
+  }));
+}
+
+function syncBoxOfferSchedule() {
+  const scheduled = prefsBoxOfferAvailability.value === 'schedule';
+  if (scheduled && !prefsBoxOfferSchedule.children.length) {
+    prefsBoxOfferSchedule.append(boxOfferWindowRow({ days: [1, 2, 3, 4, 5], from: '22:00', to: '07:00' }));
+  }
+  prefsBoxOfferSchedule.classList.toggle('hidden', !scheduled);
+  prefsBoxOfferScheduleAdd.classList.toggle('hidden', !scheduled || prefsBoxOfferSchedule.children.length >= 8);
+}
+
+function renderBoxOfferPrefs(st) {
+  prefsBoxOfferShown = st;
+  const rec = (st.forced ? st.effective : st.stored) || null;
+  prefsBoxOfferEnabled.checked = !!(rec && rec.enabled);
+  prefsBoxOfferBoxes.value = String(rec ? rec.boxes : 1);
+  prefsBoxOfferAvailability.value = rec ? rec.availability : 'always';
+  prefsBoxOfferSchedule.replaceChildren(...((rec && rec.schedule) || []).map(boxOfferWindowRow));
+  const choices = offerPeerChoices(st.peers, rec);
+  prefsBoxOfferPeers.replaceChildren(...choices.map(({ name, ticked }) => {
+    const label = document.createElement('label');
+    label.className = 'prefs-check';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.dataset.peer = name;
+    box.checked = ticked;
+    const text = document.createElement('span');
+    text.textContent = name;
+    label.append(box, text);
+    return label;
+  }));
+  if (!choices.length) {
+    const none = document.createElement('span');
+    none.className = 'hint-text';
+    none.textContent = 'No peers configured.';
+    prefsBoxOfferPeers.append(none);
+  }
+  prefsBoxOfferPeersNote.textContent = OFFER_PEER_NOTE;
+  prefsBoxOfferFacts.textContent = `This machine would announce: ${ownFactsLine(st.facts)}`;
+  prefsBoxOfferStatus.textContent = offerStatusText(st);
+  syncBoxOfferSchedule();
+  for (const el of prefsBoxOfferBlock.querySelectorAll('input, select, button')) el.disabled = st.forced;
+}
+
+async function refreshBoxOfferPrefs() {
+  if (!prefsBoxOfferBlock) return;
+  let st = null;
+  try { st = await window.api.offerGet(); } catch { st = null; }
+  if (!st || typeof st.forced !== 'boolean') st = null;
+  prefsBoxOfferBlock.classList.toggle('hidden', !st);
+  if (st) renderBoxOfferPrefs(st);
+}
+
+if (prefsBoxOfferBlock) {
+  prefsBoxOfferAvailability.addEventListener('change', syncBoxOfferSchedule);
+  prefsBoxOfferScheduleAdd.addEventListener('click', () => {
+    prefsBoxOfferSchedule.append(boxOfferWindowRow({ days: [1, 2, 3, 4, 5], from: '09:00', to: '17:00' }));
+    syncBoxOfferSchedule();
+  });
+  prefsBoxOfferApply.addEventListener('click', async () => {
+    const rec = offerRecordFromForm({
+      enabled: prefsBoxOfferEnabled.checked,
+      boxes: prefsBoxOfferBoxes.value,
+      availability: prefsBoxOfferAvailability.value,
+      schedule: readBoxOfferSchedule(),
+      peers: [...prefsBoxOfferPeers.querySelectorAll('input[data-peer]')].filter((b) => b.checked).map((b) => b.dataset.peer),
+    });
+    let res = null;
+    try { res = await window.api.offerSet(rec); } catch { res = null; }
+    if (!res || res.ok !== true) {
+      showToast(`Box offer not changed: ${(res && res.error) || 'the change failed'}`, { kind: 'warn' });
+    }
+    if (res && res.state) renderBoxOfferPrefs(res.state);
+  });
+  window.api.onOffersChanged(async () => {
+    if (prefsOverlay.classList.contains('hidden') || !prefsBoxOfferShown) return;
+    let st = null;
+    try { st = await window.api.offerGet(); } catch { return; }
+    if (st && JSON.stringify(st.stored) !== JSON.stringify(prefsBoxOfferShown.stored)) renderBoxOfferPrefs(st);
   });
 }
 

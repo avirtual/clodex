@@ -334,6 +334,7 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/lib/checklists.js',
   'renderer/lib/team-roles.js',
   'renderer/lib/team-runner-row.js',
+  'renderer/lib/offer-view.js',
   'renderer/lib/popover-drag.js',
   // The bar-popover placement leaf. A pure leaf read by four DOM-bound islands,
   // and its whole job is to reach for document/window — so the guard that it

@@ -11524,6 +11524,32 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           <p id="prefs-suite-runner-work-env" class="hint-text hidden">set by environment</p>
           <span id="prefs-suite-runner-status" class="hint-text" style="display: block; margin-top: 6px;"></span>
         </div>
+        <div id="prefs-box-offer-block">
+          <h5 style="margin-top: 14px;">Offer test boxes</h5>
+          <p class="hint-text">Tells the peers you tick below that this machine offers test boxes. Discovery only: nothing is built or run here. Applies when you press Apply; peers see the change at their next hello.</p>
+          <label class="prefs-check">
+            <input type="checkbox" id="prefs-box-offer-enabled">
+            <span>Offer test boxes from this machine</span>
+          </label>
+          <div class="prefs-row" style="margin-top: 6px;">
+            <span>Boxes</span>
+            <input type="number" id="prefs-box-offer-boxes" min="1" max="16" step="1" value="1" style="flex: none; width: 5em;">
+            <span>Available</span>
+            <select id="prefs-box-offer-availability" style="flex: none;">
+              <option value="always">Always</option>
+              <option value="schedule">On a schedule</option>
+            </select>
+          </div>
+          <div id="prefs-box-offer-schedule" class="hidden" style="margin-top: 6px;"></div>
+          <button id="prefs-box-offer-schedule-add" class="secondary hidden" type="button" style="margin-top: 4px;">Add window</button>
+          <div id="prefs-box-offer-peers" style="margin-top: 6px;"></div>
+          <p id="prefs-box-offer-peers-note" class="hint-text"></p>
+          <p id="prefs-box-offer-facts" class="hint-text"></p>
+          <div class="prefs-row" style="margin-top: 6px;">
+            <span id="prefs-box-offer-status" class="hint-text" style="flex: 1;"></span>
+            <button id="prefs-box-offer-apply" class="secondary" type="button" style="flex: none;">Apply</button>
+          </div>
+        </div>
       </details>
       <details class="prefs-group" data-group="discovery">
         <summary><h4>Sessions</h4><span class="prefs-group-sub">Defaults for new sessions and discovery</span></summary>
@@ -12112,6 +12138,9 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "peerSetShellAllowed", kind: "invoke", channel: "peer:setShellAllowed" },
         { name: "suiteRunnerGet", kind: "invoke", channel: "suiteRunner:get" },
         { name: "suiteRunnerSet", kind: "invoke", channel: "suiteRunner:set" },
+        { name: "offerGet", kind: "invoke", channel: "offer:get" },
+        { name: "offerSet", kind: "invoke", channel: "offer:set" },
+        { name: "offerDirectory", kind: "invoke", channel: "offer:directory" },
         { name: "peerControlledNames", kind: "invoke", channel: "peer:controlledNames" },
         { name: "peerForgetControlled", kind: "invoke", channel: "peer:forgetControlled" },
         { name: "peerVisible", kind: "invoke", channel: "peer:visible" },
@@ -12151,6 +12180,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         // The GRANT changed in some window. Payload-free on purpose: the listener
         // re-reads settings, so every window derives the chip the same way.
         { name: "onPeerShellAllowed", kind: "on", channel: "peer-shell-allowed" },
+        { name: "onOffersChanged", kind: "on", channel: "offers-changed" },
         { name: "onPeerState", kind: "on", channel: "peer-state" },
         { name: "onPeerActivity", kind: "on", channel: "peer-activity" },
         { name: "onPeerReplay", kind: "on", channel: "peer-replay" },
@@ -30149,6 +30179,82 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         return envLockFor(locked, key) ? {} : { [key]: value };
       }
       module.exports = { envLockFor, envLockView, applyEnvLock, patchUnlessEnvLocked };
+    }
+  });
+
+  // renderer/lib/offer-view.js
+  var require_offer_view = __commonJS({
+    "renderer/lib/offer-view.js"(exports, module) {
+      "use strict";
+      var OFFER_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
+      var DAY_LETTERS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+      var PEER_NOTE = "This list decides which peers are shown this offer. It is not an access control, and nothing runs on this machine because of it yet.";
+      function osArch(facts) {
+        if (!facts || !facts.os && !facts.arch) return "unknown os";
+        return `${facts.os || "?"}/${facts.arch || "?"}`;
+      }
+      function memoryText(memMb) {
+        if (!Number.isInteger(memMb)) return "? memory";
+        if (memMb < 1024) return `${memMb} MB memory`;
+        return `${Math.round(memMb / 1024)} GB memory`;
+      }
+      function runtimeText(runtime) {
+        const platforms = runtime && Array.isArray(runtime.platforms) ? runtime.platforms : [];
+        return platforms.length ? `container runtime ${platforms.join(", ")}` : "container runtime: none found";
+      }
+      function ownFactsLine(facts) {
+        const f = facts || {};
+        const cpus = Number.isInteger(f.cpus) ? `${f.cpus} cores` : "? cores";
+        return `${osArch(f)} \xB7 ${cpus} \xB7 ${memoryText(f.memMb)} \xB7 ${runtimeText(f.runtime)}`;
+      }
+      function peerOfferLine(rows, peerLabel) {
+        if (!Array.isArray(rows) || typeof peerLabel !== "string" || !peerLabel) return null;
+        const row = rows.find((r) => r && r.provenance === "hello" && r.name === peerLabel && r.offer);
+        if (!row) return null;
+        const { boxes, open, facts } = row.offer;
+        const count = `${boxes} box${boxes === 1 ? "" : "es"}`;
+        const runtime = facts && facts.runtime && Array.isArray(facts.runtime.platforms) && facts.runtime.platforms.length ? `runtime ${facts.runtime.platforms.join(", ")}` : "no container runtime";
+        return `${count} \xB7 ${open ? "open now" : "closed now"} \xB7 ${osArch(facts)} \xB7 ${runtime}`;
+      }
+      function peerChoices(configuredLabels, stored) {
+        const out = [];
+        for (const label of Array.isArray(configuredLabels) ? configuredLabels : []) {
+          if (typeof label === "string" && OFFER_NAME_RE.test(label) && !out.includes(label)) out.push(label);
+        }
+        const ticked = (stored && Array.isArray(stored.peers) ? stored.peers : []).map((p) => p && p.name).filter((n) => typeof n === "string");
+        for (const name of ticked) if (!out.includes(name)) out.push(name);
+        return out.map((name) => ({ name, ticked: ticked.includes(name) }));
+      }
+      function offerRecordFromForm({ enabled, boxes, availability, schedule, peers }) {
+        const rec = {
+          scope: "discovery",
+          enabled: !!enabled,
+          boxes: Number(boxes),
+          availability
+        };
+        if (availability === "schedule") {
+          rec.schedule = (schedule || []).map((w) => ({ days: [...w.days].sort((a, b) => a - b), from: w.from, to: w.to }));
+        }
+        rec.peers = (peers || []).map((name) => ({ name }));
+        return rec;
+      }
+      function offerStatusText(st) {
+        if (!st) return "";
+        if (st.forced) return "Set by environment (CLODEX_BOX_OFFER); change it there.";
+        if (st.warning) return `${st.warning[0].toUpperCase()}${st.warning.slice(1)}.`;
+        const eff = st.effective;
+        if (!eff || !eff.enabled) return "Off.";
+        return "Announced to the ticked peers at the next hello.";
+      }
+      module.exports = {
+        DAY_LETTERS,
+        PEER_NOTE,
+        ownFactsLine,
+        peerOfferLine,
+        peerChoices,
+        offerRecordFromForm,
+        offerStatusText
+      };
     }
   });
 
@@ -50637,6 +50743,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
       var { classifySender } = require_sender_class();
       var { farCwdGuess, localFromHome } = require_far_cwd_guess();
       var { sandboxRebuiltLine } = require_sandbox_view();
+      var { peerOfferLine } = require_offer_view();
       function initPeersUi({
         sessions,
         sessionList,
@@ -51780,6 +51887,26 @@ ${detail}` });
           peerInfoRelayRow.classList.add("hidden");
           peerInfoRelayCheck.onchange = null;
         }
+        function renderPeerOfferLine(id) {
+          const st = peerStatuses.get(id);
+          if (!st) return;
+          window.api.offerDirectory().then((d) => {
+            if (peerInfoPopover.classList.contains("hidden") || peerInfoPopover.dataset.peerId !== String(id)) return;
+            for (const old of peerInfoBody.querySelectorAll(".peer-info-offer")) old.remove();
+            const line = peerOfferLine(d && d.offers, st.label);
+            if (!line) return;
+            const div = document.createElement("div");
+            div.className = "peer-info-line peer-info-offer";
+            div.innerHTML = `<span class="peer-info-key">Boxes</span> ${esc(line)}`;
+            peerInfoBody.append(div);
+          }).catch(() => {
+          });
+        }
+        window.api.onOffersChanged(() => {
+          if (peerInfoPopover.classList.contains("hidden") || !peerInfoPopover.dataset.peerId) return;
+          const id = [...peerStatuses.keys()].find((k) => String(k) === peerInfoPopover.dataset.peerId);
+          if (id !== void 0) renderPeerOfferLine(id);
+        });
         function openPeerInfoPopover(id, anchorBtn) {
           const st = peerStatuses.get(id);
           if (!st) return;
@@ -51802,6 +51929,7 @@ ${detail}` });
           }
           peerInfoBody.innerHTML = rows.join("");
           peerInfoPopover.dataset.peerId = id;
+          renderPeerOfferLine(id);
           peerInfoPopover.classList.remove("hidden");
           peerInfoUpdateBtn.classList.add("hidden");
           peerInfoUpdateBtn.onclick = null;
@@ -52831,6 +52959,7 @@ ${detail}` });
       var { parseEnvLines, formatEnvLines } = require_env_edit();
       var { envRowView, buildEnvRow } = require_env_row();
       var { envLockView, applyEnvLock, patchUnlessEnvLocked } = require_env_lock();
+      var { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, ownFactsLine, peerChoices: offerPeerChoices, offerRecordFromForm, offerStatusText } = require_offer_view();
       var { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require_account_select();
       var { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, keyTransportRefusal, modelOptions } = require_account_row();
       var { isToolInstallSession } = require_tool_doctor();
@@ -58944,6 +59073,17 @@ Click for live activity`;
       var prefsSuiteRunnerApply = document.getElementById("prefs-suite-runner-apply");
       var prefsSuiteRunnerStatus = document.getElementById("prefs-suite-runner-status");
       var prefsSuiteRunnerNoneNote = document.getElementById("prefs-suite-runner-none-note");
+      var prefsBoxOfferBlock = document.getElementById("prefs-box-offer-block");
+      var prefsBoxOfferEnabled = document.getElementById("prefs-box-offer-enabled");
+      var prefsBoxOfferBoxes = document.getElementById("prefs-box-offer-boxes");
+      var prefsBoxOfferAvailability = document.getElementById("prefs-box-offer-availability");
+      var prefsBoxOfferSchedule = document.getElementById("prefs-box-offer-schedule");
+      var prefsBoxOfferScheduleAdd = document.getElementById("prefs-box-offer-schedule-add");
+      var prefsBoxOfferPeers = document.getElementById("prefs-box-offer-peers");
+      var prefsBoxOfferPeersNote = document.getElementById("prefs-box-offer-peers-note");
+      var prefsBoxOfferFacts = document.getElementById("prefs-box-offer-facts");
+      var prefsBoxOfferStatus = document.getElementById("prefs-box-offer-status");
+      var prefsBoxOfferApply = document.getElementById("prefs-box-offer-apply");
       var prefsEnvScope = document.getElementById("prefs-env-scope");
       var prefsEnvList = document.getElementById("prefs-env-list");
       var prefsEnvKey = document.getElementById("prefs-env-key");
@@ -61876,6 +62016,7 @@ ${res.stderr}` : "");
         }
         if (prefsPeerShell) prefsPeerShell.checked = !!s.peerShellEnabled;
         refreshSuiteRunnerPrefs();
+        refreshBoxOfferPrefs();
         prefsRemoteToken.value = "";
         renderRemoteTokenState(!!s.remoteHasToken, !!s.remoteEnvTokenPinned);
         if (prefsEnvScope) prefsEnvScope.value = "global";
@@ -62102,6 +62243,140 @@ ${res.stderr}` : "");
               if (!prefsOverlay.classList.contains("hidden")) refreshSuiteRunnerPrefs();
             }, 1500);
           }
+        });
+      }
+      var prefsBoxOfferShown = null;
+      function boxOfferWindowRow(w) {
+        const row = document.createElement("div");
+        row.className = "prefs-row prefs-box-offer-window";
+        row.style.marginTop = "4px";
+        OFFER_DAY_LETTERS.forEach((letter, day) => {
+          const label = document.createElement("label");
+          label.className = "prefs-check";
+          const box = document.createElement("input");
+          box.type = "checkbox";
+          box.dataset.day = String(day);
+          box.checked = w.days.includes(day);
+          const text = document.createElement("span");
+          text.textContent = letter;
+          label.append(box, text);
+          row.append(label);
+        });
+        for (const key of ["from", "to"]) {
+          const text = document.createElement("span");
+          text.textContent = key;
+          const input = document.createElement("input");
+          input.type = "time";
+          input.dataset.key = key;
+          input.value = w[key];
+          input.style.flex = "none";
+          row.append(text, input);
+        }
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "secondary";
+        remove.textContent = "Remove";
+        remove.style.flex = "none";
+        remove.addEventListener("click", () => {
+          row.remove();
+          syncBoxOfferSchedule();
+        });
+        row.append(remove);
+        return row;
+      }
+      function readBoxOfferSchedule() {
+        return [...prefsBoxOfferSchedule.querySelectorAll(".prefs-box-offer-window")].map((row) => ({
+          days: [...row.querySelectorAll("input[data-day]")].filter((b) => b.checked).map((b) => Number(b.dataset.day)),
+          from: row.querySelector('input[data-key="from"]').value,
+          to: row.querySelector('input[data-key="to"]').value
+        }));
+      }
+      function syncBoxOfferSchedule() {
+        const scheduled = prefsBoxOfferAvailability.value === "schedule";
+        if (scheduled && !prefsBoxOfferSchedule.children.length) {
+          prefsBoxOfferSchedule.append(boxOfferWindowRow({ days: [1, 2, 3, 4, 5], from: "22:00", to: "07:00" }));
+        }
+        prefsBoxOfferSchedule.classList.toggle("hidden", !scheduled);
+        prefsBoxOfferScheduleAdd.classList.toggle("hidden", !scheduled || prefsBoxOfferSchedule.children.length >= 8);
+      }
+      function renderBoxOfferPrefs(st) {
+        prefsBoxOfferShown = st;
+        const rec = (st.forced ? st.effective : st.stored) || null;
+        prefsBoxOfferEnabled.checked = !!(rec && rec.enabled);
+        prefsBoxOfferBoxes.value = String(rec ? rec.boxes : 1);
+        prefsBoxOfferAvailability.value = rec ? rec.availability : "always";
+        prefsBoxOfferSchedule.replaceChildren(...(rec && rec.schedule || []).map(boxOfferWindowRow));
+        const choices = offerPeerChoices(st.peers, rec);
+        prefsBoxOfferPeers.replaceChildren(...choices.map(({ name, ticked }) => {
+          const label = document.createElement("label");
+          label.className = "prefs-check";
+          const box = document.createElement("input");
+          box.type = "checkbox";
+          box.dataset.peer = name;
+          box.checked = ticked;
+          const text = document.createElement("span");
+          text.textContent = name;
+          label.append(box, text);
+          return label;
+        }));
+        if (!choices.length) {
+          const none = document.createElement("span");
+          none.className = "hint-text";
+          none.textContent = "No peers configured.";
+          prefsBoxOfferPeers.append(none);
+        }
+        prefsBoxOfferPeersNote.textContent = OFFER_PEER_NOTE;
+        prefsBoxOfferFacts.textContent = `This machine would announce: ${ownFactsLine(st.facts)}`;
+        prefsBoxOfferStatus.textContent = offerStatusText(st);
+        syncBoxOfferSchedule();
+        for (const el of prefsBoxOfferBlock.querySelectorAll("input, select, button")) el.disabled = st.forced;
+      }
+      async function refreshBoxOfferPrefs() {
+        if (!prefsBoxOfferBlock) return;
+        let st = null;
+        try {
+          st = await window.api.offerGet();
+        } catch {
+          st = null;
+        }
+        if (!st || typeof st.forced !== "boolean") st = null;
+        prefsBoxOfferBlock.classList.toggle("hidden", !st);
+        if (st) renderBoxOfferPrefs(st);
+      }
+      if (prefsBoxOfferBlock) {
+        prefsBoxOfferAvailability.addEventListener("change", syncBoxOfferSchedule);
+        prefsBoxOfferScheduleAdd.addEventListener("click", () => {
+          prefsBoxOfferSchedule.append(boxOfferWindowRow({ days: [1, 2, 3, 4, 5], from: "09:00", to: "17:00" }));
+          syncBoxOfferSchedule();
+        });
+        prefsBoxOfferApply.addEventListener("click", async () => {
+          const rec = offerRecordFromForm({
+            enabled: prefsBoxOfferEnabled.checked,
+            boxes: prefsBoxOfferBoxes.value,
+            availability: prefsBoxOfferAvailability.value,
+            schedule: readBoxOfferSchedule(),
+            peers: [...prefsBoxOfferPeers.querySelectorAll("input[data-peer]")].filter((b) => b.checked).map((b) => b.dataset.peer)
+          });
+          let res = null;
+          try {
+            res = await window.api.offerSet(rec);
+          } catch {
+            res = null;
+          }
+          if (!res || res.ok !== true) {
+            showToast(`Box offer not changed: ${res && res.error || "the change failed"}`, { kind: "warn" });
+          }
+          if (res && res.state) renderBoxOfferPrefs(res.state);
+        });
+        window.api.onOffersChanged(async () => {
+          if (prefsOverlay.classList.contains("hidden") || !prefsBoxOfferShown) return;
+          let st = null;
+          try {
+            st = await window.api.offerGet();
+          } catch {
+            return;
+          }
+          if (st && JSON.stringify(st.stored) !== JSON.stringify(prefsBoxOfferShown.stored)) renderBoxOfferPrefs(st);
         });
       }
       prefsRemoteTokenSave.addEventListener("click", () => {
