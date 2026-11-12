@@ -18,7 +18,7 @@ function gitAvailable() {
 function makeRepo() {
   const dir = mkTmpRoot('clodex-wt-');
   const run = (...a) => execFileSync('git', ['-C', dir, ...a], { stdio: 'ignore' });
-  run('init', '-q');
+  run('init', '-q', '-b', 'master');
   run('config', 'user.email', 't@example.com');
   run('config', 'user.name', 'Test');
   fs.writeFileSync(path.join(dir, 'a.txt'), 'hi\n');

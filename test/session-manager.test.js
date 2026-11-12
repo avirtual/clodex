@@ -18231,7 +18231,7 @@ function mkGitRepo() {
   const repo = path.join(root, 'repo');
   fsReal.mkdirSync(repo);
   const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
-  require('node:child_process').execFileSync('git', ['-C', repo, 'init', '-q'], { stdio: 'pipe', env });
+  require('node:child_process').execFileSync('git', ['-C', repo, 'init', '-q', '-b', 'master'], { stdio: 'pipe', env });
   require('node:child_process').execFileSync('git', ['-C', repo, 'commit', '-q', '--allow-empty', '-m', 'init'], { stdio: 'pipe', env });
   return { root, repo };
 }
