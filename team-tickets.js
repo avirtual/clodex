@@ -3126,7 +3126,14 @@ function createTicketMethods(deps, shared) {
       const e = (r.info && r.info.env) || {};
       seen.envKey = typeof e.envKey === 'string' && e.envKey ? e.envKey : null;
       seen.reachable = true;
-      return `queue ${queue}, env ${flat(e.runner)} ${flat(e.platform)}/${flat(e.arch)} node ${flat(e.node)} key ${flat(e.envKey)}`;
+      const b = (r.info && r.info.box) || null;
+      const be = (b && b.env) || {};
+      seen.boxEnvKey = b && b.state === 'ready' && typeof be.envKey === 'string' && be.envKey ? be.envKey : null;
+      const id12 = String((be.box && be.box.imageId) || '').replace(/^sha256:/, '').slice(0, 12);
+      const box = !b ? '' : b.state === 'ready'
+        ? `, box ready ${flat(be.platform)}/${flat(be.arch)} image ${flat(id12 || null)} key ${flat(be.envKey)}`
+        : `, box unavailable: ${flat(b.why)}`;
+      return `queue ${queue}, env ${flat(e.runner)} ${flat(e.platform)}/${flat(e.arch)} node ${flat(e.node)} key ${flat(e.envKey)}${box}`;
     },
 
     async _runnerPullReach(name, seen = {}) {
@@ -3210,7 +3217,11 @@ function createTicketMethods(deps, shared) {
       if (!t.agree && !t.disagree && !shadowing) return '';
       const one = (t.oneSided || []).slice(0, 10).map((o) => `${flat(o.name)} (${o.side} only, ${o.count}x)`);
       const more = (t.oneSided || []).length > 10 ? ` (+${t.oneSided.length - 10} more)` : '';
-      return `; comparisons under env ${flat(t.envKey)}: ${t.agree} agree, ${t.disagree} disagree`
+      const p = t.platforms;
+      const where = p && p.local && p.remote
+        ? ` (local ${flat(p.local.os)}/${flat(p.local.arch)}, runner ${flat(p.remote.os)}/${flat(p.remote.arch)}${p.remote.isolation === 'container' ? ' box' : ''})`
+        : '';
+      return `; comparisons under env ${flat(t.envKey)}: ${t.agree} agree, ${t.disagree} disagree${where}`
         + (one.length ? `; failed on one side only: ${one.join(', ')}${more}` : '');
     },
 
@@ -3266,7 +3277,7 @@ function createTicketMethods(deps, shared) {
         }
         const seen = {};
         const reach = await this._runnerReachFor(cur, seen);
-        reply(`test runner of ${team.name}: ${cur.peer}, wire ${cur.wire || WIRE_PUSH}, hands ${cur.hands}, gate ${cur.gate || 'off'} — ${reach}${this._runnerTally(team, cur, seen.envKey)}`);
+        reply(`test runner of ${team.name}: ${cur.peer}, wire ${cur.wire || WIRE_PUSH}, hands ${cur.hands}, gate ${cur.gate || 'off'} — ${reach}${this._runnerTally(team, cur, cur.box === true ? seen.boxEnvKey : seen.envKey)}`);
         return;
       }
       if (intent.value === 'off') {
@@ -6399,7 +6410,7 @@ function createTicketMethods(deps, shared) {
         }
         return await client.shadow({
           ...via, name: tr.peer, tree: cwd, kind, team: team.name, ticket: String(ticket.id),
-          setup: tr.setup || null, env: tr.env || {}, route: 'gate:shadow',
+          setup: tr.setup || null, env: tr.env || {}, route: 'gate:shadow', box: tr.box === true,
           queueBudgetMs: TICKET_SUITE_LOCK_WAIT_MS, budgetMs: TICKET_SUITE_TIMEOUT,
         });
       } catch (e) {

@@ -201,7 +201,7 @@ const TEST_RUNNER_HANDS = ['off', 'full', 'all'];
 const TEST_RUNNER_GATE = ['off', 'shadow', 'on'];
 const TEST_RUNNER_WIRE_PUSH = 'push';
 const TEST_RUNNER_WIRE = [TEST_RUNNER_WIRE_PUSH, 'pull'];
-const TEST_RUNNER_KEYS = ['peer', 'hands', 'gate', 'wire', 'setup', 'env'];
+const TEST_RUNNER_KEYS = ['peer', 'hands', 'gate', 'wire', 'setup', 'env', 'box'];
 const TEST_RUNNER_SETUP_KEYS = ['run', 'key', 'paths', 'timeoutMs'];
 const TEST_RUNNER_ENV_RE = /^[A-Z_][A-Z0-9_]*$/;
 const TEST_RUNNER_TIMEOUT_MIN_MS = 10 * 1000;
@@ -241,10 +241,11 @@ function normalizeTestRunner(v) {
   const gate = v.gate === undefined ? 'off' : v.gate;
   if (!TEST_RUNNER_HANDS.includes(hands) || !TEST_RUNNER_GATE.includes(gate)) return null;
   if (v.wire !== undefined && !TEST_RUNNER_WIRE.includes(v.wire)) return null;
+  if (v.box !== undefined && typeof v.box !== 'boolean') return null;
   const setup = v.setup === undefined ? undefined : normalizeRunnerSetup(v.setup);
   const env = v.env === undefined ? undefined : normalizeRunnerEnv(v.env);
   if (setup === null || env === null) return null;
-  return { peer: v.peer, hands, gate, ...(v.wire !== undefined ? { wire: v.wire } : {}), ...(setup ? { setup } : {}), ...(env ? { env } : {}) };
+  return { peer: v.peer, hands, gate, ...(v.wire !== undefined ? { wire: v.wire } : {}), ...(setup ? { setup } : {}), ...(env ? { env } : {}), ...(v.box !== undefined ? { box: v.box } : {}) };
 }
 
 function boxCpus(cpuMax, cpus) {
