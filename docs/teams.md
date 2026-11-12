@@ -968,7 +968,7 @@ runner's current environment key (`envKey`, from its info route), how many
 comparisons agreed and disagreed and the test names that failed on one side
 only, with counts — e.g. `net binds (remote only, 2x)`. A new runner image
 changes `envKey` and starts a new tally. A pair counts as agreeing when the
-outcome, the three counts and the failing-name set match; a remote `unknown`
+outcome, the three counts and the failing-name set match; the slow-gate names, recorded apart as `slow`, play no part; a remote `unknown`
 counts as a disagreement, and only pairs where both sides measured (pass or
 fail) contribute one-sided names. A name that fails remote-only on two
 different trees is an incompatibility to fix; a single occurrence is a flake
