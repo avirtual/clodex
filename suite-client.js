@@ -205,27 +205,42 @@ function createSuiteClient({
   }
 
   async function upload(ctx, snap, jobPath, have, limits, progress) {
-    const pack = await snapshot.buildPack(snap, { have });
-    if (limits.packMaxBytes && pack.length > limits.packMaxBytes) return { unknown: `pack of ${pack.length} bytes exceeds the runner's ${limits.packMaxBytes} byte limit` };
-    const chunkMax = limits.chunkMax || 4 * 1024 * 1024;
-    let offset = 0;
-    let resumes = 0;
-    while (offset < pack.length) {
-      const chunk = pack.subarray(offset, offset + chunkMax);
-      const headers = { 'Content-Range': `bytes ${offset}-${offset + chunk.length - 1}/*` };
-      const r = await ask(ctx, (c) => c.suitePut(`${jobPath}/pack`, chunk, headers), progress);
-      if (r.unreachable) return { unknown: 'runner unreachable' };
-      if (r.body && r.body.ok) { offset = r.body.size; continue; }
-      if (r.status === 409 && r.body && Number.isInteger(r.body.have) && r.body.have <= pack.length && resumes < MAX_RESUMES) {
-        resumes += 1;
-        offset = r.body.have;
-        continue;
-      }
-      if (r.status === 404) return { retry: 'runner-restart' };
-      return { retry: 'upload' };
+    const pack = await snapshot.buildPack(snap, { have, maxBytes: limits.packMaxBytes || Infinity });
+    try {
+      if (pack.over) return { unknown: `pack of ${pack.bytes} bytes exceeds the runner's ${limits.packMaxBytes} byte limit` };
+      return await sendPack(ctx, jobPath, pack, limits, progress);
+    } finally {
+      fs.rmSync(pack.file, { force: true });
     }
-    const sha256 = crypto.createHash('sha256').update(pack).digest('hex');
-    const done = await ask(ctx, (c) => c.suiteAsk('POST', `${jobPath}/commit`, { bytes: pack.length, sha256 }, COMMIT_TIMEOUT_MS), progress);
+  }
+
+  async function sendPack(ctx, jobPath, pack, limits, progress) {
+    const chunkMax = limits.chunkMax || 4 * 1024 * 1024;
+    const buf = Buffer.alloc(Math.min(chunkMax, Math.max(pack.bytes, 1)));
+    const fd = fs.openSync(pack.file, 'r');
+    try {
+      let offset = 0;
+      let resumes = 0;
+      while (offset < pack.bytes) {
+        const n = fs.readSync(fd, buf, 0, Math.min(buf.length, pack.bytes - offset), offset);
+        const chunk = Buffer.from(buf.subarray(0, n));
+        const headers = { 'Content-Range': `bytes ${offset}-${offset + chunk.length - 1}/*` };
+        const r = await ask(ctx, (c) => c.suitePut(`${jobPath}/pack`, chunk, headers), progress);
+        if (r.unreachable) return { unknown: 'runner unreachable' };
+        if (r.body && r.body.ok) { offset = r.body.size; continue; }
+        if (r.status === 409 && r.body && Number.isInteger(r.body.have) && r.body.have <= pack.bytes && resumes < MAX_RESUMES) {
+          resumes += 1;
+          offset = r.body.have;
+          continue;
+        }
+        if (r.status === 404) return { retry: 'runner-restart' };
+        return { retry: 'upload' };
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+    const { bytes, sha256 } = pack;
+    const done = await ask(ctx, (c) => c.suiteAsk('POST', `${jobPath}/commit`, { bytes, sha256 }, COMMIT_TIMEOUT_MS), progress);
     if (done.unreachable) return { unknown: 'runner unreachable' };
     if (done.body && done.body.ok) return null;
     if (done.status === 409 && done.body && done.body.incomplete) return { retry: 'incomplete' };
@@ -385,9 +400,11 @@ function createSuiteClient({
       }
       const remote = remoteHalf(me.remote);
       const rec = me.remote.record || {};
+      const notSent = remote.outcome === 'unknown' && NOT_SENT.test(remote.reason || '');
       appendCompare({
         at: iso(now()), team: opts.team, kind: opts.kind, ticket: opts.ticket, treeHash: snap.treeHash, sha: snap.head || null,
-        envKey: (rec.env && rec.env.envKey) || null, wire: me.wire, local: me.local, remote, agree: halvesAgree(me.local, remote),
+        envKey: (rec.env && rec.env.envKey) || null, wire: me.wire, local: me.local, remote,
+        ...(notSent ? { skipped: 'not-sent', agree: null } : { agree: halvesAgree(me.local, remote) }),
       });
     };
     Promise.resolve()
@@ -425,7 +442,7 @@ function createSuiteClient({
     }
     const latest = [...recs].reverse().find((r) => r.envKey);
     const key = envKey || (latest ? latest.envKey : null);
-    const out = { envKey: key, agree: 0, disagree: 0, oneSided: [] };
+    const out = { envKey: key, agree: 0, disagree: 0, skipped: 0, oneSided: [] };
     if (!key) return out;
     const counts = new Map();
     const bump = (side, name) => {
@@ -436,6 +453,7 @@ function createSuiteClient({
     };
     for (const r of recs) {
       if (r.envKey !== key) continue;
+      if (r.skipped) { out.skipped += 1; continue; }
       if (r.agree === true) out.agree += 1; else out.disagree += 1;
       if (!r.local || !r.remote || !MEASURED.has(r.local.outcome) || !MEASURED.has(r.remote.outcome)) continue;
       const mine = new Set(r.local.failing || []);
@@ -451,6 +469,7 @@ function createSuiteClient({
 }
 
 const MEASURED = new Set(['pass', 'fail']);
+const NOT_SENT = /^(?:client error: |snapshot failed: |pack of \d+ bytes exceeds )/;
 
 function failingNames(text) {
   const names = [];

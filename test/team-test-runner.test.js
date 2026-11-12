@@ -328,6 +328,20 @@ test('t2264: [agent:team runner] under gate:shadow shows the tally for the curre
       + '; comparisons under env 0123456789ab: 1 agree, 2 disagree; failed on one side only: net binds (remote only, 2x)']);
 });
 
+test('t2310: [agent:team runner] counts a not-sent row as skipped, not as disagree', async () => {
+  const f = mkVerbFixture({
+    manifestExtra: { testRunner: { peer: 'runner-1', hands: 'full', gate: 'shadow' } }, peers: [SUITE_PEER], reach: INFO,
+    compare: [
+      cmp('0123456789ab', true, [], []),
+      cmp('0123456789ab', false, [], ['net binds']),
+      { ...cmp('0123456789ab', null, [], []), remote: { outcome: 'unknown', reason: 'client error: boom', failing: [] }, skipped: 'not-sent' },
+    ],
+  });
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner]'),
+    ['[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab'
+      + '; comparisons under env 0123456789ab: 1 agree, 1 disagree, 1 skipped (tree not sent); failed on one side only: net binds (remote only, 1x)']);
+});
+
 test('t2264: a new env key starts a new tally', async () => {
   const f = mkVerbFixture({
     manifestExtra: { testRunner: { peer: 'runner-1', hands: 'full', gate: 'shadow' } }, peers: [SUITE_PEER], reach: INFO,

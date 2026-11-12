@@ -3,7 +3,10 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
+const { spawn } = require('child_process');
 const { git, mergeTargetFor } = require('./git-worktree');
+const { safeGitArgsFor } = require('./git-safe');
 
 const SNAP_IDENT = {
   GIT_AUTHOR_NAME: 'Clodex',
@@ -116,7 +119,7 @@ function releaseSnapshot(snapshot) {
   if (snapshot && snapshot.tmpDir) fs.rmSync(snapshot.tmpDir, { recursive: true, force: true });
 }
 
-async function buildPack(snapshot, { have = [] } = {}) {
+async function buildPack(snapshot, { have = [], maxBytes = Infinity } = {}) {
   const env = storeEnv(snapshot.tmpDir, snapshot.alternate, 'index');
   const asked = have.filter((h) => SHA_RE.test(h));
   let known = [];
@@ -125,10 +128,48 @@ async function buildPack(snapshot, { have = [] } = {}) {
     known = lines(check).filter((l) => / commit /.test(l)).map((l) => l.split(' ')[0]);
   }
   const revs = [snapshot.snap, snapshot.indexTree, ...Object.values(snapshot.refs), ...known.map((h) => `^${h}`)];
-  const r = await run(snapshot.cwd, ['pack-objects', '--revs', '--stdout', '-q', '--delta-base-offset'], {
-    env, input: `${revs.join('\n')}\n`, encoding: 'buffer', maxBuffer: DEFAULT_PACK_MAX,
+  const argv = await safeGitArgsFor(snapshot.cwd, ['pack-objects', '--revs', '--stdout', '-q', '--delta-base-offset']);
+  const file = path.join(snapshot.tmpDir, `pack-${crypto.randomUUID()}.pack`);
+  const fd = fs.openSync(file, 'wx', 0o600);
+  const hash = crypto.createHash('sha256');
+  let bytes = 0;
+  let over = false;
+  let stderr = '';
+  let failed = null;
+  const child = spawn('git', argv, { env: cleanEnv(env), stdio: ['pipe', 'pipe', 'pipe'] });
+  const closed = new Promise((resolve) => {
+    child.on('error', (e) => { failed = e; });
+    child.on('close', (code) => resolve(code));
   });
-  return r.stdout;
+  child.stdin.on('error', () => {});
+  child.stdin.end(`${revs.join('\n')}\n`);
+  child.stderr.on('data', (d) => { if (stderr.length < 4096) stderr += String(d); });
+  child.stdout.on('data', (chunk) => {
+    if (over || failed) return;
+    if (bytes + chunk.length > maxBytes) {
+      over = true;
+      bytes += chunk.length;
+      child.kill('SIGKILL');
+      return;
+    }
+    try {
+      fs.writeSync(fd, chunk);
+    } catch (e) {
+      failed = e;
+      child.kill('SIGKILL');
+      return;
+    }
+    hash.update(chunk);
+    bytes += chunk.length;
+  });
+  const code = await closed;
+  fs.closeSync(fd);
+  if (over) return { file, bytes, over: true };
+  if (failed || code !== 0) {
+    fs.rmSync(file, { force: true });
+    throw new Error(`git pack-objects failed: ${failed ? failed.message : stderr.trim()}`);
+  }
+  return { file, bytes, sha256: hash.digest('hex') };
 }
 
 function assertShas(shas) {

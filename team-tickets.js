@@ -3207,10 +3207,11 @@ function createTicketMethods(deps, shared) {
       if (t === undefined) return '';
       const shadowing = cur.gate === 'shadow';
       if (!t || !t.envKey) return shadowing ? '; comparisons: none yet' : '';
-      if (!t.agree && !t.disagree && !shadowing) return '';
+      if (!t.agree && !t.disagree && !t.skipped && !shadowing) return '';
       const one = (t.oneSided || []).slice(0, 10).map((o) => `${flat(o.name)} (${o.side} only, ${o.count}x)`);
       const more = (t.oneSided || []).length > 10 ? ` (+${t.oneSided.length - 10} more)` : '';
       return `; comparisons under env ${flat(t.envKey)}: ${t.agree} agree, ${t.disagree} disagree`
+        + (t.skipped ? `, ${t.skipped} skipped (tree not sent)` : '')
         + (one.length ? `; failed on one side only: ${one.join(', ')}${more}` : '');
     },
 

@@ -173,9 +173,9 @@ test('tally: counts agreements and one-sided failing names under one env key; an
     rec('k1', false, [], ['other team'], 'tm2'),
   ]);
   assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k1' }), {
-    envKey: 'k1', agree: 1, disagree: 2, oneSided: [{ side: 'remote', name: 'net test', count: 2 }],
+    envKey: 'k1', agree: 1, disagree: 2, skipped: 0, oneSided: [{ side: 'remote', name: 'net test', count: 2 }],
   });
-  assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k2' }), { envKey: 'k2', agree: 0, disagree: 0, oneSided: [] });
+  assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k2' }), { envKey: 'k2', agree: 0, disagree: 0, skipped: 0, oneSided: [] });
 });
 
 test('t2303: a detached skip row is written as its own kind and is counted as neither agreement nor disagreement', () => {
@@ -187,8 +187,51 @@ test('t2303: a detached skip row is written as its own kind and is counted as ne
   assert.deepStrictEqual(lines[1], {
     at: '1970-01-01T00:00:01.000Z', team: 'tm', kind: 'post-merge', ticket: 't1', wire: 'pull', runner: 'laptop', skipped: 'detached', agree: null,
   });
-  assert.deepStrictEqual(client.tally({ team: 'tm' }), { envKey: 'k1', agree: 1, disagree: 0, oneSided: [] });
-  assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k1' }), { envKey: 'k1', agree: 1, disagree: 0, oneSided: [] });
+  assert.deepStrictEqual(client.tally({ team: 'tm' }), { envKey: 'k1', agree: 1, disagree: 0, skipped: 0, oneSided: [] });
+  assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k1' }), { envKey: 'k1', agree: 1, disagree: 0, skipped: 0, oneSided: [] });
+});
+
+test('t2310: a remote half whose tree could not be sent writes a not-sent skip row and is not counted as disagree, after a counted disagreement', async () => {
+  const red = remoteConn({ stdout: RED_A, code: 1 });
+  let packing = false;
+  const conn = {
+    suiteAsk: async (method, p, ...rest) => (packing && method === 'POST' && p === '/api/suite/jobs'
+      ? { status: 200, body: { ok: true, state: 'awaiting-pack', have: [] } }
+      : red.conn.suiteAsk(method, p, ...rest)),
+  };
+  const f = shadowClient(conn);
+  const compareFile = f.compareFile;
+  let n = 0;
+  const client = createSuiteClient({
+    getPeerManager: () => ({ get: (id) => (id === 'p1' ? conn : null) }),
+    compareFile,
+    now: () => 1000,
+    randomUUID: () => `run-${(n += 1)}`,
+    snapshot: {
+      snapshotTree: async () => ({ treeHash: TREE, head: HEAD, headTree: TREE }),
+      releaseSnapshot: () => {},
+      buildPack: async () => { throw new Error('git pack-objects failed: stdout maxBuffer length exceeded'); },
+    },
+    sleep: async () => {},
+  });
+  const first = await client.shadow(OPTS);
+  await turns();
+  first.local(localHalf({ code: 0, stdout: GREEN, stderr: '', durationMs: 70 }));
+  assert.deepStrictEqual(f.records().map((r) => [r.agree, r.skipped]), [[false, undefined]], 'ENTER: a normal disagreement was written');
+  assert.deepStrictEqual(client.tally({ team: 'tm' }), { envKey: 'k1', agree: 0, disagree: 1, skipped: 0, oneSided: [{ side: 'remote', name: 'alpha', count: 1 }] });
+  packing = true;
+  const second = await client.shadow(OPTS);
+  await turns();
+  second.local(localHalf({ code: 0, stdout: GREEN, stderr: '', durationMs: 70 }));
+  const rows = f.records();
+  assert.strictEqual(rows.length, 2);
+  const { at, ...row } = rows[1];
+  assert.deepStrictEqual(row, {
+    team: 'tm', kind: 'verify', ticket: 't1', treeHash: TREE, sha: HEAD, envKey: 'k1', wire: 'push', local: LOCAL(),
+    remote: { outcome: 'unknown', reason: 'client error: git pack-objects failed: stdout maxBuffer length exceeded', pass: null, fail: null, tests: null, failing: [], slow: [], jobId: 'run-2', queueMs: null, runMs: null },
+    skipped: 'not-sent', agree: null,
+  });
+  assert.deepStrictEqual(client.tally({ team: 'tm' }), { envKey: 'k1', agree: 0, disagree: 1, skipped: 1, oneSided: [{ side: 'remote', name: 'alpha', count: 1 }] });
 });
 
 function pullShadowClient(desk) {
@@ -251,7 +294,7 @@ test('t2304: a pull runner that detaches mid-job writes one skip row naming the 
     PULL_ROW(REMOTE(), true),
     { team: 'tm', kind: 'verify', ticket: 't1', wire: 'pull', runner: 'laptop', skipped: 'detached', agree: null, midJob: true, jobId: 'run-2' },
   ]);
-  assert.deepStrictEqual(f.client.tally({ team: 'tm' }), { envKey: 'k1', agree: 1, disagree: 0, oneSided: [] });
+  assert.deepStrictEqual(f.client.tally({ team: 'tm' }), { envKey: 'k1', agree: 1, disagree: 0, skipped: 0, oneSided: [] });
 });
 
 test('t2304: a pull runner that detaches past the 120 s lease and comes back with lease-expired before the deadline writes one skip row', async () => {
@@ -267,7 +310,7 @@ test('t2304: a pull runner that detaches past the 120 s lease and comes back wit
   assert.deepStrictEqual(f.records(), [
     { team: 'tm', kind: 'verify', ticket: 't1', wire: 'pull', runner: 'laptop', skipped: 'detached', agree: null, midJob: true, jobId: 'run-1' },
   ]);
-  assert.deepStrictEqual(f.client.tally({ team: 'tm' }), { envKey: null, agree: 0, disagree: 0, oneSided: [] });
+  assert.deepStrictEqual(f.client.tally({ team: 'tm' }), { envKey: null, agree: 0, disagree: 0, skipped: 0, oneSided: [] });
 });
 
 test('t2304: an attached pull runner whose own 503 (offer closed) outlasts the budget writes a normal unknown row, not a skip row', async () => {
