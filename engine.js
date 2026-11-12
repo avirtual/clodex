@@ -1940,6 +1940,7 @@ const { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer } = createRem
   getWirescopeInfo: () => wirescope.localReach(),
   getNodeLogFile: logFile ? () => logFile : undefined,
   thumbnail,
+  getBoxOffer, getOfferFacts, offerDirectory,
   getUserDataPath: () => userDataPath,
 });
 
