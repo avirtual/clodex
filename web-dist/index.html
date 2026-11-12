@@ -11799,6 +11799,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "teamTrunk", kind: "invoke", channel: "team:trunk" },
         { name: "teamSetTrunk", kind: "invoke", channel: "team:setTrunk" },
         { name: "teamRunner", kind: "invoke", channel: "team:runner" },
+        { name: "teamRunnerReach", kind: "invoke", channel: "team:runnerReach" },
         { name: "teamSetRunner", kind: "invoke", channel: "team:setRunner" },
         { name: "teamGather", kind: "invoke", channel: "team:gather" },
         // Which SEAT is the team's lead (t420) — the manifest's top-level pointer, not
@@ -47416,7 +47417,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           return info.invalid ? "invalid: the testRunner in team.json is invalid and ignored \u2014 fix it there, or remove it to set a peer here" : "none: hand and gate suites run on this machine";
         }
         const tally = info.tally ? `; shadow comparisons: ${info.tally.agree} agree, ${info.tally.disagree} disagree` : "";
-        return `${info.reach || "reachability unknown"}${tally}`;
+        return `${info.reach == null ? "checking reachability\u2026" : info.reach}${tally}`;
       }
       function runnerPatchFor(act, value) {
         const key = RUNNER_ACTS[act];
@@ -47491,7 +47492,11 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         }
         return wrap;
       }
-      module.exports = { RUNNER_HANDS_OPTIONS, RUNNER_GATE_OPTIONS, RUNNER_FIELDS, runnerStateLine, runnerPatchFor, buildRunnerField };
+      function paintRunnerState(wrap, info) {
+        const state = wrap && Array.from(wrap.childNodes).find((n) => n.dataset && n.dataset.runner === "state");
+        if (state) state.textContent = runnerStateLine(info);
+      }
+      module.exports = { RUNNER_HANDS_OPTIONS, RUNNER_GATE_OPTIONS, RUNNER_FIELDS, runnerStateLine, runnerPatchFor, buildRunnerField, paintRunnerState };
     }
   });
 
@@ -48012,7 +48017,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
   var require_team_roles_popover = __commonJS({
     "renderer/popovers/team-roles-popover.js"(exports, module) {
       var { esc } = require_format();
-      var { RUNNER_FIELDS, runnerPatchFor, buildRunnerField } = require_team_runner_row();
+      var { RUNNER_FIELDS, runnerPatchFor, buildRunnerField, paintRunnerState } = require_team_runner_row();
       var {
         teamRoleRows,
         validateAddRole,
@@ -48185,7 +48190,23 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           }
           return () => {
             runnerInfo = res && res.ok ? res : null;
+            const seq = ++runnerProbeSeq;
+            if (runnerInfo && runnerInfo.peer) probeRunner(name, seq);
           };
+        }
+        let runnerProbeSeq = 0;
+        async function probeRunner(name, seq) {
+          if (typeof window.api.teamRunnerReach !== "function") return;
+          let res;
+          try {
+            res = await window.api.teamRunnerReach(name);
+          } catch (err) {
+            res = { ok: false, error: err && err.message || String(err) };
+          }
+          if (seq !== runnerProbeSeq || teamName() !== name || !runnerInfo) return;
+          const { ok, error, ...probe } = res || { ok: false, error: "no answer" };
+          runnerInfo = { ...runnerInfo, ...ok ? probe : { reach: `reachability unknown: ${error || "no answer"}` } };
+          paintRunnerState(listEl.querySelector(".team-runner"), runnerInfo);
         }
         function buildTrunkField() {
           const wrap = document.createElement("div");
@@ -49020,6 +49041,7 @@ This starts a NEW conversation \u2014 the current session's history will be clea
               setStatus("the test runner cannot be read here", true);
               return;
             }
+            runnerProbeSeq += 1;
             const res = await window.api.teamSetRunner(name, runnerPatchFor(act, inp && inp.value));
             await afterMutation(res, res && res.message, name);
             return;
