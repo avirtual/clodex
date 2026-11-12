@@ -360,6 +360,25 @@ function registerIpcHandlers(deps) {
     } catch (err) { return { ok: false, error: err.message }; }
   });
 
+  handle('team:runner', async (_e, name) => {
+    try { return { ok: true, ...(await manager._runnerView(loadManifest(name))) }; }
+    catch (err) { return { ok: false, error: err.message }; }
+  });
+
+  handle('team:setRunner', async (_e, name, patch) => {
+    try {
+      const p = patch && typeof patch === 'object' ? patch : {};
+      const intent = {
+        value: p.peer === undefined ? null : (p.peer || 'off'),
+        hands: p.hands === undefined ? null : p.hands,
+        gate: p.gate === undefined ? null : p.gate,
+      };
+      let text = '';
+      await manager._handleTeamRunner(loadManifest(name), intent, (t) => { text = String(t); });
+      return text.startsWith('error: ') ? { ok: false, error: text } : { ok: true, message: text };
+    } catch (err) { return { ok: false, error: err.message }; }
+  });
+
   // Writes only the manifest's top-level `lead` pointer; setRole('lead') still refuses. A seat name
   // with no record is accepted on purpose (a stopped lead is the same string).
   handle('team:setLead', (_e, team, seat) => {

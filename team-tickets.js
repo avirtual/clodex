@@ -3081,15 +3081,41 @@ function createTicketMethods(deps, shared) {
       const queue = (q.running ? 1 : 0) + (Array.isArray(q.queued) ? q.queued.length : 0);
       const e = (r.info && r.info.env) || {};
       seen.envKey = typeof e.envKey === 'string' && e.envKey ? e.envKey : null;
+      seen.reachable = true;
       return `reachable, suite capability, queue ${queue}, env ${flat(e.runner)} ${flat(e.platform)}/${flat(e.arch)} node ${flat(e.node)} key ${flat(e.envKey)}`;
+    },
+
+    _runnerInvalid(team) {
+      return (team.droppedFields || []).some((d) => d && d.field === 'testRunner' && d.status === 'invalid');
+    },
+
+    _runnerTallyData(team, envKey) {
+      const client = typeof deps.getSuiteClient === 'function' ? deps.getSuiteClient() : null;
+      if (!client || typeof client.tally !== 'function') return undefined;
+      try { return client.tally({ team: team.name, envKey: envKey || null }) || null; } catch { return null; }
+    },
+
+    async _runnerView(team) {
+      const cur = team.testRunner || null;
+      if (!cur) {
+        return { peer: null, hands: 'off', gate: 'off', invalid: this._runnerInvalid(team), setup: false, env: false, online: false, suite: false, reachable: false, reach: null, tally: null };
+      }
+      const status = this._runnerPeerStatus(cur.peer);
+      const seen = {};
+      const reach = await this._runnerReach(status, seen);
+      const t = this._runnerTallyData(team, seen.envKey);
+      return {
+        peer: cur.peer, hands: cur.hands, gate: cur.gate || 'off', invalid: false, setup: !!cur.setup, env: !!cur.env,
+        online: !!(status && status.online), suite: !!(status && Array.isArray(status.caps) && status.caps.includes('suite')),
+        reachable: seen.reachable === true, reach,
+        tally: t && t.envKey && (t.agree || t.disagree) ? { envKey: t.envKey, agree: t.agree, disagree: t.disagree } : null,
+      };
     },
 
     _runnerTally(team, cur, envKey) {
       const flat = (v) => String(v == null ? '?' : v).replace(/[\x00-\x1f\x7f]+/g, ' ').slice(0, 120);
-      const client = typeof deps.getSuiteClient === 'function' ? deps.getSuiteClient() : null;
-      if (!client || typeof client.tally !== 'function') return '';
-      let t;
-      try { t = client.tally({ team: team.name, envKey: envKey || null }); } catch { t = null; }
+      const t = this._runnerTallyData(team, envKey);
+      if (t === undefined) return '';
       const shadowing = cur.gate === 'shadow';
       if (!t || !t.envKey) return shadowing ? '; comparisons: none yet' : '';
       if (!t.agree && !t.disagree && !shadowing) return '';
@@ -3141,7 +3167,7 @@ function createTicketMethods(deps, shared) {
       }
       if (!intent.value) {
         if (!cur) {
-          const bad = (team.droppedFields || []).some((d) => d && d.field === 'testRunner' && d.status === 'invalid');
+          const bad = this._runnerInvalid(team);
           reply(`test runner of ${team.name}: off${bad ? ' (team.json testRunner is invalid and ignored)' : ''} — [agent:team runner <peer>] names one`);
           return;
         }

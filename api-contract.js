@@ -52,6 +52,8 @@ const API_CONTRACT = [
   { name: 'teamSetWatchdog', kind: 'invoke', channel: 'team:setWatchdog' },
   { name: 'teamTrunk', kind: 'invoke', channel: 'team:trunk' },
   { name: 'teamSetTrunk', kind: 'invoke', channel: 'team:setTrunk' },
+  { name: 'teamRunner', kind: 'invoke', channel: 'team:runner' },
+  { name: 'teamSetRunner', kind: 'invoke', channel: 'team:setRunner' },
   { name: 'teamGather', kind: 'invoke', channel: 'team:gather' },
   // Which SEAT is the team's lead (t420) — the manifest's top-level pointer, not
   // the reserved `lead` ROLE (that stays locked). The only door to a team whose

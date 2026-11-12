@@ -19,7 +19,7 @@ const PINNED_NAMES = [
   // Teams front door (teams-design.md [internal design doc, not in this repo]) — added with the front-door build.
   'teamCreate', 'teamCreateBare', 'teamJoin', 'teamForCwd', 'teamNames', 'teamRolePrompts',
   // Team-management GUI (T29 Layer A Slice 3).
-  'teamGet', 'teamStockRoles', 'teamAddRole', 'teamSetRole', 'teamRemoveRole', 'teamRenameRole', 'teamSetWatchdog', 'teamTrunk', 'teamSetTrunk',
+  'teamGet', 'teamStockRoles', 'teamAddRole', 'teamSetRole', 'teamRemoveRole', 'teamRenameRole', 'teamSetWatchdog', 'teamTrunk', 'teamSetTrunk', 'teamRunner', 'teamSetRunner',
   // Which SEAT is the team's lead (t420) — the manifest pointer, not the role.
   'teamSetLead',
   // The manifest preflight the roles popover renders as a per-role checklist (t414).
