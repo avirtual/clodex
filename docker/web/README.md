@@ -211,17 +211,55 @@ engine*. Both can be used at once.)
 The image carries what a remote test runner needs, unused until runner mode is
 switched on: a `clodex-suite` system user with no sudo rights and no home, and a
 root-owned helper at `/usr/local/libexec/clodex-suite-exec` with four verbs —
-`prepare <job>` (hand the job tree to `clodex-suite`), `run <job> [KEY=VALUE…] --
+`prepare <job> <mirror>` (hand the job tree to `clodex-suite` and open only that
+job's repo mirror to it, read-only), `run <job> [KEY=VALUE…] --
 <argv>` (drop to `clodex-suite` with `setpriv --no-new-privs` and an environment
 built from empty), `seal <job> <entry> <path…>` (move a built dependency folder
 into the cache, make it read-only and owned by `clodex`, and link it back) and
-`reap <job>` (kill every `clodex-suite` process and remove the job tree). It
+`reap <job>` (kill every `clodex-suite` process, close every mirror and remove
+the job tree). It
 refuses any path outside `/var/lib/clodex-suite`, the runner's work root (owned
-by `clodex`, mode 0711). `/data` and `/home/clodex` are mode 0700, so a test
+by `clodex`, mode 0711). A job reads its own repo's mirror and nothing else
+there: mirrors are 0700 except the running job's. Each job works in
+`jobs/<8 hex>/{tree,home,tmp}` (at most 40 bytes each), so Unix sockets a suite
+creates under `TMPDIR` fit the 108-byte limit. `/data` and `/home/clodex` are mode 0700, so a test
 process cannot read the engine's tokens, logins or session state.
 `/etc/clodex/image.json` records the build's `CLODEX_VERSION` and
-`CLODEX_GIT_SHA` build args; set `CLODEX_IMAGE_DIGEST` when deploying so each
-result names the image it ran in.
+`CLODEX_GIT_SHA` build args, which `scripts/publish-image.sh` sets to the
+release version and commit; a runner's info reports them as `imageVersion` and
+`imageRev`, and both change its `envKey`. Set `CLODEX_IMAGE_DIGEST` when
+deploying so each result names the image it ran in.
+
+A runner needs only `CLODEX_SUITE_RUNNER=1` and `CLODEX_SUITE_TOKEN`: with no
+`CLODEX_REMOTE_TOKEN` the wire serves hello and `/api/suite/*` to the suite
+token and refuses everything else, so the runner holds no full-control token.
+
+**The published image is a base.** It carries the engine's own Node and git,
+not any project's platform or toolchain. A team's runner runs that team's suite,
+so it must carry what the suite needs — the project's Node major (the suite
+runs under the engine's `node`, which `setup` cannot change), system packages,
+shells, native libraries. Extend the image rather than installing at job time:
+
+```
+FROM ghcr.io/avirtual/clodex:<version>
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends <packages> \
+ && rm -rf /var/lib/apt/lists/*
+USER clodex
+```
+
+A different Node major means replacing `/usr/local/bin/node` in the derived
+image, since the runner runs the suite with the engine's own executable. The
+engine loads the native `node-pty` module, built for the base image's Node, so
+rebuild it for the new one in the derived image, before `USER clodex`, or the engine fails at
+start with a `NODE_MODULE_VERSION` mismatch:
+
+```dockerfile
+RUN cd /app && npm rebuild node-pty && chown -R clodex:clodex node_modules
+```
+
+Per-job dependency installs (`npm ci` and the like) belong in the job's `setup`,
+which the runner caches by its key files.
 
 On a headless node outside this image the operator creates the user, installs
 the helper root-owned and adds one sudoers line:

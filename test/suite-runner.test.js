@@ -10,7 +10,7 @@ const { PassThrough } = require('node:stream');
 const { execFileSync, spawnSync } = require('node:child_process');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { snapshotTree, releaseSnapshot, buildPack } = require('../suite-snapshot');
-const { createSuiteRunner, noneIsolation } = require('../suite-runner');
+const { createSuiteRunner, noneIsolation, envIdentity, jobPaths } = require('../suite-runner');
 
 const ENV = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_'))), GIT_AUTHOR_DATE: '2026-01-02T03:04:05Z', GIT_COMMITTER_DATE: '2026-01-02T03:04:05Z' };
 const IDENT = ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgSign=false', '-c', 'core.hooksPath=/dev/null', '-c', 'core.autocrlf=false'];
@@ -20,6 +20,9 @@ const SOURCE = path.join(__dirname, '..', 'suite-runner.js');
 function g(dir, ...args) {
   return execFileSync('git', ['-C', dir, ...IDENT, ...args], { env: ENV, encoding: 'utf8' });
 }
+
+const SLOTS = new Map();
+const jobOf = (dir) => SLOTS.get(path.basename(dir)) || path.basename(dir);
 
 function sha256(buf) {
   return crypto.createHash('sha256').update(buf).digest('hex');
@@ -57,7 +60,7 @@ async function fixture(t, { onSpawn, now, limits, kill, wrap } = {}) {
       child.stderr.end();
       setImmediate(() => child.emit('close', code, signal));
     };
-    const call = { cmd, args, opts, child, job: path.basename(path.dirname(opts.cwd)), parentEnv: { ...process.env } };
+    const call = { cmd, args, opts, child, job: jobOf(path.dirname(opts.cwd)), parentEnv: { ...process.env } };
     calls.push(call);
     (onSpawn || ((c) => { c.child.stdout.write('TOTALS: 1 pass, 0 fail, 1 tests\n'); c.child.finish(0); }))(call);
     return child;
@@ -71,7 +74,7 @@ async function fixture(t, { onSpawn, now, limits, kill, wrap } = {}) {
     releaseSnapshot(snap);
     spawnSync('chmod', ['-R', 'u+w', root]);
   });
-  const body = (id, kind = 'hand', extra = {}) => ({
+  const body = (id, kind = 'hand', extra = {}) => (SLOTS.set(path.basename(jobPaths(work, id).dir), id), {
     id, attempt: 1, repoKey: snap.repoKey, kind, scope: 'full', snap: snap.snap, treeHash: snap.treeHash,
     indexTree: snap.indexTree, sha: snap.head, branch: snap.branch, trunk: snap.trunk, refs: snap.refs,
     candidates: snap.candidates, files: [], flags: {}, ...extra,
@@ -197,8 +200,8 @@ test('cancelling a queued job reaps and kills nothing while another job runs', a
     onSpawn: (c) => { if (c.job === 'blocker') blocker = c.child; else c.child.finish(0); },
     wrap: (base) => ({
       ...base,
-      kill: (child, jobDir) => { seen.push(['kill', path.basename(jobDir)]); return base.kill(child, jobDir); },
-      reap: (jobDir) => { seen.push(['reap', path.basename(jobDir)]); return base.reap(jobDir); },
+      kill: (child, jobDir) => { seen.push(['kill', jobOf(jobDir)]); return base.kill(child, jobDir); },
+      reap: (jobDir) => { seen.push(['reap', jobOf(jobDir)]); return base.reap(jobDir); },
     }),
   });
   await f.upload(f.body('blocker', 'hand'));
@@ -243,7 +246,7 @@ test('start() runs nothing until the restart reaps have finished', async (t) => 
   const reaps = [];
   let gate = null;
   const f = await fixture(t, {
-    wrap: (base) => ({ ...base, reap: (jobDir) => { reaps.push(path.basename(jobDir)); return gate ? gate.then(() => base.reap(jobDir)) : base.reap(jobDir); } }),
+    wrap: (base) => ({ ...base, reap: (jobDir) => { reaps.push(jobOf(jobDir)); return gate ? gate.then(() => base.reap(jobDir)) : base.reap(jobDir); } }),
   });
   await f.upload(f.body('first'));
   await waitState(f.runner, 'first', 'done');
@@ -296,10 +299,10 @@ test('a cancel kill still in flight holds the next job until it lands', async (t
     wrap: (base) => ({
       ...base,
       kill: (child, jobDir) => {
-        seen.push(['kill', path.basename(jobDir)]);
-        return new Promise((resolve) => { release = () => { seen.push(['kill-landed', path.basename(jobDir)]); resolve(); }; });
+        seen.push(['kill', jobOf(jobDir)]);
+        return new Promise((resolve) => { release = () => { seen.push(['kill-landed', jobOf(jobDir)]); resolve(); }; });
       },
-      reap: (jobDir) => { seen.push(['reap', path.basename(jobDir)]); return base.reap(jobDir); },
+      reap: (jobDir) => { seen.push(['reap', jobOf(jobDir)]); return base.reap(jobDir); },
     }),
   });
   await f.upload(f.body('first', 'hand'));
@@ -327,10 +330,10 @@ test('a cancel after the timeout kill sends no second kill and the next job wait
       ...base,
       kill: (child, jobDir) => {
         const n = seen.filter((s) => s[0] === 'kill').length + 1;
-        seen.push(['kill', path.basename(jobDir)]);
-        return new Promise((resolve) => { if (n === 1) release = () => { seen.push(['kill-landed', path.basename(jobDir)]); resolve(); }; else resolve(); });
+        seen.push(['kill', jobOf(jobDir)]);
+        return new Promise((resolve) => { if (n === 1) release = () => { seen.push(['kill-landed', jobOf(jobDir)]); resolve(); }; else resolve(); });
       },
-      reap: (jobDir) => { seen.push(['reap', path.basename(jobDir)]); return base.reap(jobDir); },
+      reap: (jobDir) => { seen.push(['reap', jobOf(jobDir)]); return base.reap(jobDir); },
     }),
   });
   await f.upload(f.body('first', 'hand', { timeoutMs: 5000 }));
@@ -359,7 +362,7 @@ test('the test process gets an environment built from empty: no parent token rea
   await waitState(f.runner, 'envjob', 'done');
   const call = f.calls.find((c) => c.job === 'envjob');
   assert.strictEqual(call.parentEnv.CLODEX_SUITE_TOKEN, 'planted-suite', 'ENTER: the token was in the parent env at spawn');
-  const jobDir = path.join(f.work, 'jobs', 'envjob');
+  const jobDir = jobPaths(f.work, 'envjob').dir;
   assert.deepStrictEqual(call.opts.env, {
     TEAM_VAR: 'team value',
     CLODEX_TEST_LOCK: '0',
@@ -374,6 +377,74 @@ test('the test process gets an environment built from empty: no parent token rea
     ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
   });
   assert.deepStrictEqual([call.cmd, ...call.args], [process.execPath, 'scripts/run-tests.js', '--reporter=dot', 'test/a.test.js']);
+});
+
+const LONG_ID = 't2267-runner-fixes-from-the-first-real-run-hand-attempt-0001-abc';
+const LONG_ID_2 = 't2267-runner-fixes-from-the-first-real-run-hand-attempt-0002-abc';
+
+test('under the default work root a 64-character job id gets a tree, home and temp dir of at most 40 bytes each, distinct per id', () => {
+  assert.strictEqual(LONG_ID.length, 64);
+  const a = jobPaths('/var/lib/clodex-suite', LONG_ID);
+  const b = jobPaths('/var/lib/clodex-suite', LONG_ID_2);
+  const lengths = [a.tree, a.home, a.tmp, b.tree, b.home, b.tmp].map((p) => Buffer.byteLength(p));
+  assert.deepStrictEqual(lengths.map((n) => n <= 40), [true, true, true, true, true, true], `lengths ${lengths}`);
+  assert.strictEqual(new Set([a.tree, a.home, a.tmp, b.tree, b.home, b.tmp]).size, 6);
+  for (const p of [a.tree, a.home, a.tmp]) assert.ok(p.startsWith('/var/lib/clodex-suite/jobs/'), p);
+});
+
+test('a job runs in its short paths, the record keeps the full id, and prepare opens only its own mirror', async (t) => {
+  const prepared = [];
+  const f = await fixture(t, { wrap: (base) => ({ ...base, async prepare(jobDir, mirror) { prepared.push([jobDir, mirror]); } }) });
+  await f.upload(f.body(LONG_ID));
+  const done = await waitState(f.runner, LONG_ID, 'done');
+  const short = jobPaths(f.work, LONG_ID);
+  const call = f.calls.find((c) => c.job === LONG_ID);
+  assert.ok(call, 'ENTER: the long-id job spawned');
+  assert.deepStrictEqual([call.opts.cwd, call.opts.env.HOME, call.opts.env.TMPDIR], [short.tree, short.home, short.tmp]);
+  assert.strictEqual(done.record.id, LONG_ID);
+  assert.strictEqual(JSON.parse(fs.readFileSync(path.join(f.root, 'suite-runner', 'jobs', LONG_ID, 'job.json'), 'utf8')).id, LONG_ID);
+  const mirror = path.join(f.work, 'mirrors', `${f.snap.repoKey}.git`);
+  assert.deepStrictEqual(prepared, [[short.dir, mirror]]);
+  const mode = (p) => (fs.statSync(p).mode & 0o777).toString(8);
+  assert.deepStrictEqual([mode(path.join(f.work, 'mirrors')), mode(mirror), mode(path.join(f.work, 'deps'))], ['711', '700', '711']);
+  await f.runner.tick();
+  assert.deepStrictEqual([fs.existsSync(path.join(f.root, 'suite-runner', 'cache.json')), fs.existsSync(path.join(f.work, 'cache.json'))], [true, false], 'the cache index names every repo\'s deps, so it stays out of the work root');
+});
+
+test('a runner moves a cache index left in the work root into its data root', async (t) => {
+  const f = await fixture(t);
+  f.runner.close();
+  fs.writeFileSync(path.join(f.work, 'cache.json'), JSON.stringify({ 'deps/x/y': 7 }));
+  const runner = f.make();
+  t.after(() => runner.close());
+  assert.strictEqual(fs.existsSync(path.join(f.work, 'cache.json')), false);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(f.root, 'suite-runner', 'cache.json'), 'utf8')), { 'deps/x/y': 7 });
+});
+
+test('a runner chmods every mirror it finds at start to 0700', async (t) => {
+  const f = await fixture(t);
+  f.runner.close();
+  const stale = path.join(f.work, 'mirrors', `${'c'.repeat(40)}.git`);
+  fs.mkdirSync(stale, { mode: 0o755 });
+  fs.chmodSync(stale, 0o755);
+  const runner = f.make();
+  t.after(() => runner.close());
+  assert.strictEqual((fs.statSync(stale).mode & 0o777).toString(8), '700');
+});
+
+test('the environment key changes with the image version and with the image revision', async (t) => {
+  const root = mkTmpRoot('suite-image-');
+  const keyOf = async (image) => {
+    const file = path.join(root, `${crypto.randomUUID()}.json`);
+    fs.writeFileSync(file, JSON.stringify(image));
+    return envIdentity({ isolation: 'user', env: {}, imageFile: file });
+  };
+  const base = await keyOf({ version: '5.175.0', rev: '924a9e23d4a1f0c2b3e4f5a6b7c8d9e0f1a2b3c4' });
+  const rev = await keyOf({ version: '5.175.0', rev: '0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c' });
+  const ver = await keyOf({ version: '5.176.0', rev: '924a9e23d4a1f0c2b3e4f5a6b7c8d9e0f1a2b3c4' });
+  assert.deepStrictEqual([base.imageVersion, base.imageRev], ['5.175.0', '924a9e23d4a1f0c2b3e4f5a6b7c8d9e0f1a2b3c4']);
+  assert.strictEqual(new Set([base.envKey, rev.envKey, ver.envKey]).size, 3);
+  assert.ok(fs.readFileSync(SOURCE, 'utf8').includes("imageFile = '/etc/clodex/image.json'"), 'the default is the file the Dockerfile writes');
 });
 
 function listing(dir) {
@@ -412,6 +483,7 @@ test('deps cache: a miss runs setup once and seals the entry, a hit links it and
   assert.deepStrictEqual(setupRuns, [['d1', 'setup'], ['d1', 'test'], ['d2', 'test']]);
   const repoDeps = path.join(f.work, 'deps', f.snap.repoKey);
   const entries = fs.readdirSync(repoDeps).filter((n) => !n.endsWith('.json'));
+  assert.strictEqual((fs.statSync(repoDeps).mode & 0o777).toString(8), '711', 'a job cannot list the repo\'s deps entries');
   assert.strictEqual(entries.length, 1);
   const entry = path.join(repoDeps, entries[0]);
   assert.deepStrictEqual(listing(entry), {
@@ -439,7 +511,7 @@ test('cache eviction never runs while a job is live', async (t) => {
   const rel = path.join('deps', f.snap.repoKey, 'a'.repeat(64));
   fs.mkdirSync(path.join(f.work, rel), { recursive: true });
   fs.writeFileSync(path.join(f.work, `${rel}.json`), '{}');
-  fs.writeFileSync(path.join(f.work, 'cache.json'), JSON.stringify({ [rel]: 0 }));
+  fs.writeFileSync(path.join(f.root, 'suite-runner', 'cache.json'), JSON.stringify({ [rel]: 0 }));
   await f.runner.submit(f.body('live'));
   assert.strictEqual((await f.runner.poll(['live'])).jobs[0].state, 'awaiting-pack', 'ENTER: a live job');
   await f.runner.tick();
@@ -466,18 +538,29 @@ test('clodex-suite-exec refuses every path outside its work root', (t) => {
   const inside = path.join(work, 'jobs', 'job1');
   const linked = path.join(work, 'jobs', 'job2');
   const entry = path.join(work, 'deps', 'a'.repeat(40), 'b'.repeat(64));
-  fs.mkdirSync(path.join(inside, 'tree'), { recursive: true });
+  for (const d of ['tree', 'home', 'tmp']) fs.mkdirSync(path.join(inside, d), { recursive: true });
   fs.mkdirSync(linked, { recursive: true });
   fs.mkdirSync(entry, { recursive: true });
   const outside = path.join(fs.realpathSync(root), 'elsewhere');
   fs.mkdirSync(path.join(outside, 'node_modules'), { recursive: true });
   fs.writeFileSync(path.join(outside, 'node_modules', 'keep.txt'), 'kept\n');
   fs.symlinkSync(outside, path.join(linked, 'tree'));
+  const mirrors = path.join(work, 'mirrors');
+  const own = path.join(mirrors, `${'a'.repeat(40)}.git`);
+  const other = path.join(mirrors, `${'b'.repeat(64)}.git`);
+  for (const m of [own, other]) { fs.mkdirSync(m, { recursive: true }); fs.chmodSync(m, 0o750); }
+  fs.symlinkSync(outside, path.join(mirrors, `${'d'.repeat(40)}.git`));
+  fs.mkdirSync(path.join(mirrors, 'not-a-mirror.git'));
   const env = { PATH: process.env.PATH, CLODEX_SUITE_WORK: work, CLODEX_SUITE_USER: 'clodex-suite-test-nouser' };
   const run = (...args) => spawnSync('bash', [HELPER, ...args], { env, encoding: 'utf8' });
   const rows = [
     ['prepare', outside],
     ['prepare', `${work}/jobs/../../elsewhere`],
+    ['prepare', inside],
+    ['prepare', inside, outside],
+    ['prepare', inside, `${mirrors}/../elsewhere`],
+    ['prepare', inside, path.join(mirrors, 'not-a-mirror.git')],
+    ['prepare', inside, path.join(mirrors, `${'d'.repeat(40)}.git`)],
     ['run', outside, '--', '/bin/echo', 'hi'],
     ['seal', outside, entry, 'node_modules'],
     ['seal', inside, outside, 'node_modules'],
@@ -494,6 +577,7 @@ test('clodex-suite-exec refuses every path outside its work root', (t) => {
   const enter = run('reap', inside);
   assert.strictEqual(enter.status, 0, `ENTER: an inside job is reaped (${enter.stderr})`);
   assert.strictEqual(fs.existsSync(inside), false);
+  assert.deepStrictEqual([own, other].map((m) => (fs.statSync(m).mode & 0o777).toString(8)), ['700', '700'], 'reap closes every mirror');
 });
 
 test('clodex-suite-exec seal and reap kill the suite user with one kill -1 issued as that user, never pkill', () => {
@@ -505,4 +589,18 @@ test('clodex-suite-exec seal and reap kill the suite user with one kill -1 issue
   const kills = ['seal', 'reap'].map((verb) => [verb, arm(verb).split('\n').map((l) => l.trim()).filter((l) => /kill/.test(l))]);
   assert.deepStrictEqual(kills, [['seal', ['kill_suite']], ['reap', ['kill_suite']]]);
   assert.strictEqual(/\bpkill\b/.test(src), false);
+});
+
+test('clodex-suite-exec prepare closes every mirror before it opens the job\'s own one to the suite group, read-only', () => {
+  const src = fs.readFileSync(HELPER, 'utf8');
+  const arm = /^ {2}prepare\)\n([\s\S]*?)\n {4};;$/m.exec(src);
+  assert.ok(arm, 'ENTER: the helper has a prepare arm');
+  const lines = arm[1].split('\n').map((l) => l.trim()).filter((l) => /mirror/.test(l));
+  assert.deepStrictEqual(lines, [
+    '[ $# -ge 1 ] || die "refusing prepare without the job\'s mirror"',
+    'mirror="$(mirror_path "$1")"',
+    'close_mirrors',
+    'chgrp "$SUITE_USER" "$mirror"',
+    'chmod 0750 "$mirror"',
+  ]);
 });

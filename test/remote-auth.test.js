@@ -257,6 +257,19 @@ test('SSE stream is gated: 401 without a token, connects with one', async () => 
   });
 });
 
+const SCOPED_ROWS = [
+  ['GET', '/'],
+  ['GET', '/api/sessions'],
+  ['GET', '/api/events'],
+  ['GET', '/api/resources'],
+  ['POST', '/api/sessions'],
+  ['POST', '/api/dm'],
+  ['POST', '/api/import/begin'],
+  ['POST', '/api/restart'],
+  ['GET', '/api/node/logs'],
+  ['GET', '/api/inbox'],
+];
+
 test('the suite token reaches hello and /api/suite/* only: every other route family is 403', async () => {
   const fs = require('node:fs');
   const stub = () => Promise.resolve({ ok: true });
@@ -266,18 +279,7 @@ test('the suite token reaches hello and /api/suite/* only: every other route fam
     createSession: stub, deliverDm: stub, seatImport: { begin: () => ({ ok: true }) }, importCreate: stub,
     restartApp: stub, nodeLogFile: () => '/nonexistent', notifications: { page: () => [], unreadCount: () => 0, get: () => null },
   };
-  const rows = [
-    ['GET', '/'],
-    ['GET', '/api/sessions'],
-    ['GET', '/api/events'],
-    ['GET', '/api/resources'],
-    ['POST', '/api/sessions'],
-    ['POST', '/api/dm'],
-    ['POST', '/api/import/begin'],
-    ['POST', '/api/restart'],
-    ['GET', '/api/node/logs'],
-    ['GET', '/api/inbox'],
-  ];
+  const rows = SCOPED_ROWS;
   await withServer(deps, async (port) => {
     const auth = { authorization: 'Bearer suite-secret', 'content-type': 'application/json' };
     const enter = await req(port, '/api/suite/info', { headers: auth });
@@ -308,9 +310,41 @@ test('the suite token reaches hello and /api/suite/* only: every other route fam
   assert.ok(scope < body.indexOf("p.startsWith('/api/suite/')) return this._handleSuite"), 'and the suite dispatch');
 });
 
-test('the operator fail-closed rule stays keyed on the operator token: a suite token alone does not open a non-loopback bind', async () => {
-  await withServer({ host: '0.0.0.0', suiteToken: 'suite-secret' }, async (port) => {
-    const r = await req(port, '/api/peer/hello', { headers: { authorization: 'Bearer suite-secret' } });
-    assert.equal(r.status, 503);
+test('a suite token alone on a non-loopback bind: hello and /api/suite/* under that token, every other route family refused for every caller', async () => {
+  const stub = () => Promise.resolve({ ok: true });
+  const deps = {
+    host: '0.0.0.0', suiteToken: 'suite-secret',
+    suiteRunner: { info: () => Promise.resolve({ ok: true, bootId: 'b' }) },
+    createSession: stub, deliverDm: stub, seatImport: { begin: () => ({ ok: true }) }, importCreate: stub,
+    restartApp: stub, nodeLogFile: () => '/nonexistent', notifications: { page: () => [], unreadCount: () => 0, get: () => null },
+  };
+  const callers = [
+    ['suite token', { authorization: 'Bearer suite-secret' }, 403],
+    ['no token', {}, 503],
+    ['wrong token', { authorization: 'Bearer nope' }, 503],
+  ];
+  await withServer(deps, async (port) => {
+    const enter = await req(port, '/api/suite/info', { headers: { authorization: 'Bearer suite-secret' } });
+    assert.equal(enter.status, 200, 'ENTER: the suite token is admitted to /api/suite/info');
+    const hello = await req(port, '/api/peer/hello', { headers: { authorization: 'Bearer suite-secret' } });
+    assert.equal(hello.status, 200);
+    assert.equal(JSON.parse(hello.body).scope, 'suite');
+    const got = [];
+    const want = [];
+    for (const [who, headers, status] of callers) {
+      for (const [method, pathname] of SCOPED_ROWS) {
+        const r = await req(port, pathname, { method, headers: { ...headers, 'content-type': 'application/json' }, body: method === 'POST' ? '{}' : undefined });
+        got.push([who, method, pathname, r.status]);
+        want.push([who, method, pathname, status]);
+      }
+    }
+    assert.deepStrictEqual(got, want);
+    for (const [who, headers] of callers.slice(1)) {
+      const r = await req(port, '/api/suite/info', { headers });
+      assert.equal(r.status, 503, `${who} on /api/suite/info`);
+    }
+    const viaQuery = await req(port, '/api/sessions?token=suite-secret');
+    assert.equal(viaQuery.status, 403);
+    assert.equal(viaQuery.headers['set-cookie'], undefined);
   });
 });

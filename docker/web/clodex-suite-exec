@@ -43,6 +43,27 @@ entry_path() {
   printf '%s' "$p"
 }
 
+mirror_path() {
+  local p="$1" name
+  no_dots "$p" || die "refusing $p: not a plain path"
+  case "$p" in
+    "$WORK"/mirrors/*) ;;
+    *) die "refusing $p: outside $WORK/mirrors" ;;
+  esac
+  name="${p#"$WORK"/mirrors/}"
+  [[ "$name" =~ ^[0-9a-f]{40}([0-9a-f]{24})?\.git$ ]] || die "refusing $p: not a mirror"
+  [ -d "$p" ] && [ ! -L "$p" ] || die "refusing $p: not a directory"
+  printf '%s' "$p"
+}
+
+close_mirrors() {
+  local m
+  for m in "$WORK"/mirrors/*.git; do
+    [ -d "$m" ] && [ ! -L "$m" ] || continue
+    chmod 0700 "$m"
+  done
+}
+
 rel_path() {
   local rel="$1" base="$2" cur
   no_dots "$rel" || die "refusing $rel: not a plain relative path"
@@ -69,11 +90,16 @@ shift
 
 case "$verb" in
   prepare)
+    [ $# -ge 1 ] || die "refusing prepare without the job's mirror"
+    mirror="$(mirror_path "$1")"
     [ -d "$job" ] || die "no job directory $job"
     for d in "$job/tree" "$job/home" "$job/tmp"; do
       [ -d "$d" ] && [ ! -L "$d" ] || die "refusing $d: not a directory"
     done
     chown -R "$SUITE_USER:$SUITE_USER" "$job/tree" "$job/home" "$job/tmp"
+    close_mirrors
+    chgrp "$SUITE_USER" "$mirror"
+    chmod 0750 "$mirror"
     ;;
   run)
     envs=()
@@ -111,6 +137,7 @@ case "$verb" in
     ;;
   reap)
     kill_suite
+    close_mirrors
     rm -rf "$job"
     ;;
   *)
