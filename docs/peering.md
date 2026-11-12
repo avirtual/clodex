@@ -454,10 +454,23 @@ returned to the ORIGINAL commit.
 
 A node started with `CLODEX_SUITE_RUNNER=1` is a test runner: remote-wiring
 builds one `suite-runner.js` engine (`suiteRunnerOptions`: work root
-`CLODEX_SUITE_WORK`, default `/var/lib/clodex-suite`; `CLODEX_SUITE_ISOLATION=none`
+`CLODEX_SUITE_WORK`, default `/var/lib/clodex-suite` on Linux and
+`<Clodex home>/suite-work` on macOS; `CLODEX_SUITE_ISOLATION=none`
 for a loopback throwaway box; `CLODEX_SUITE_PACK_MAX_MB`) and injects it as
 `suiteRunner`. Without it every `/api/suite/*` route answers 501 and hello
 carries no `suite` cap.
+
+The job's PATH is a fixed list (`jobPath`), never the node's own:
+`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`, with
+`/opt/homebrew/bin:/opt/homebrew/sbin` ahead of it on macOS arm64. Its `LANG`
+(`jobLang`) is `C.UTF-8` on Linux and `en_US.UTF-8` on macOS, which has no
+`C.UTF-8`.
+
+When `CLODEX_SUITE_RUNNER=1` is set but the runner cannot be built (most often
+an uncreatable work root), runner mode stays off and `startSuiteRunner` logs one
+`suite-runner` error naming the cause, the work root and `CLODEX_SUITE_WORK`.
+The same text is the `reason` field of the 501 every `/api/suite/*` route
+answers, so `GET /api/suite/info` shows it without the log.
 
 - `GET /api/suite/info` → `{ok, bootId, env, isolation, limits:{packMaxBytes, chunkMax, queueMax}, queue}`.
 - `POST /api/suite/jobs` (JSON, ≤ 256 KiB) → `{ok, id, state:'awaiting-pack', have}` or `{ok, id, state:'queued', position}`; idempotent on `id`, a different `treeHash` under the same id is 409.

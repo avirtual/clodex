@@ -244,9 +244,113 @@ test('applyImport: same token, drifted url → refreshed without --force; any ot
   }
 });
 
+
+test('applyImport: ssh drift under an equal token refreshes the transport in place', () => {
+  const store = { current: 'local', contexts: { work: { ssh: '192.168.0.217', token: 'W' } } };
+  const out = imp.applyImport(store, [
+    { name: 'work', entry: { ssh: '192.168.68.53', token: 'W' }, action: 'add', tokenState: 'set' },
+  ], { force: false });
+  assert.strictEqual(out.results[0].result, 'refreshed');
+  assert.strictEqual(out.results[0].reason, 'ssh drifted 192.168.0.217 → 192.168.68.53');
+  assert.deepStrictEqual(out.store, { current: 'local', contexts: { work: { ssh: '192.168.68.53', token: 'W' } } });
+  assert.match(imp.renderReport(out.results, { dir: '/x', source: 'flag' }), /1 context\(s\) written, 0 skipped/);
+});
+
+test('applyImport: ssh drift with no token on either side refreshes', () => {
+  const store = { current: null, contexts: { work: { ssh: 'old-host' } } };
+  const out = imp.applyImport(store, [
+    { name: 'work', entry: { ssh: 'new-host' }, action: 'add', tokenState: 'none' },
+  ], { force: false });
+  assert.strictEqual(out.results[0].result, 'refreshed');
+  assert.deepStrictEqual(out.store.contexts.work, { ssh: 'new-host' });
+});
+
+test('applyImport: ssh drift keeps webPort and deploy, and the ssh deploy host follows the new address', () => {
+  const store = { current: null, contexts: { work: {
+    ssh: 'u@old-host', remotePort: 7901, token: 'W', webPort: 7950, deploy: { flavor: 'ssh', host: 'u@old-host' },
+  } } };
+  const out = imp.applyImport(store, [
+    { name: 'work', entry: { ssh: 'u@new-host', remotePort: 7901, token: 'W' }, action: 'add', tokenState: 'set' },
+  ], { force: false });
+  assert.strictEqual(out.results[0].result, 'refreshed');
+  assert.deepStrictEqual(out.store.contexts.work, {
+    ssh: 'u@new-host', remotePort: 7901, token: 'W', webPort: 7950, deploy: { flavor: 'ssh', host: 'u@new-host' },
+  });
+});
+
+test('applyImport: ssh drift rewrites a docker deploy dockerHost on the old address, keeping its port', () => {
+  const store = { current: null, contexts: { work: {
+    ssh: 'u@old-host', deploy: { flavor: 'docker', container: 'clodex-work', dockerHost: 'ssh://u@old-host:2222' },
+  } } };
+  const out = imp.applyImport(store, [
+    { name: 'work', entry: { ssh: 'u@new-host' }, action: 'add', tokenState: 'none' },
+  ], { force: false });
+  assert.strictEqual(out.results[0].result, 'refreshed');
+  assert.deepStrictEqual(out.store.contexts.work, {
+    ssh: 'u@new-host', deploy: { flavor: 'docker', container: 'clodex-work', dockerHost: 'ssh://u@new-host:2222' },
+  });
+});
+
+test('applyImport: a deploy host naming another machine is left alone on ssh drift', () => {
+  const store = { current: null, contexts: { work: { ssh: 'old-host', deploy: { flavor: 'ssh', host: 'jump-host' } } } };
+  const out = imp.applyImport(store, [
+    { name: 'work', entry: { ssh: 'new-host' }, action: 'add', tokenState: 'none' },
+  ], { force: false });
+  assert.deepStrictEqual(out.store.contexts.work, { ssh: 'new-host', deploy: { flavor: 'ssh', host: 'jump-host' } });
+});
+
+test('applyImport: a stored explicit remotePort 7900 is not drift against an imported default', () => {
+  const store = { current: null, contexts: { work: { ssh: 'host', remotePort: 7900, token: 'W' } } };
+  const out = imp.applyImport(store, [
+    { name: 'work', entry: { ssh: 'host', token: 'W' }, action: 'add', tokenState: 'set' },
+  ], { force: false });
+  assert.strictEqual(out.results[0].result, 'skipped');
+  assert.strictEqual(out.results[0].reason, 'exists, skipped — --force to overwrite');
+  assert.deepStrictEqual(out.store.contexts.work, { ssh: 'host', remotePort: 7900, token: 'W' });
+});
+
+test('applyImport: a stored tunnel context meeting an imported ssh entry names both kinds', () => {
+  const store = { current: null, contexts: { work: { tunnel: ['ssh', '-N', 'x'], token: 'W' } } };
+  const out = imp.applyImport(store, [
+    { name: 'work', entry: { ssh: 'host', token: 'W' }, action: 'add', tokenState: 'set' },
+  ], { force: false });
+  assert.strictEqual(out.results[0].result, 'skipped');
+  assert.strictEqual(out.results[0].reason, 'transport kind changed tunnel → ssh, skipped — --force to overwrite');
+});
+
+test('applyImport: ssh drift under a different token is skipped and the stored entry kept', () => {
+  const store = { current: null, contexts: { work: { ssh: 'old-host', token: 'W' } } };
+  const out = imp.applyImport(store, [
+    { name: 'work', entry: { ssh: 'new-host', token: 'X' }, action: 'add', tokenState: 'set' },
+  ], { force: false });
+  assert.strictEqual(out.results[0].result, 'skipped');
+  assert.strictEqual(out.results[0].reason, 'exists, skipped — --force to overwrite');
+  assert.deepStrictEqual(out.store.contexts.work, { ssh: 'old-host', token: 'W' });
+});
+
+test('applyImport: a transport kind change ssh → url is skipped naming both kinds', () => {
+  const store = { current: null, contexts: { work: { ssh: 'old-host', token: 'W' } } };
+  const out = imp.applyImport(store, [
+    { name: 'work', entry: { url: 'http://10.0.0.5:7900', token: 'W' }, action: 'add', tokenState: 'set' },
+  ], { force: false });
+  assert.strictEqual(out.results[0].result, 'skipped');
+  assert.strictEqual(out.results[0].reason, 'transport kind changed ssh → url, skipped — --force to overwrite');
+  assert.deepStrictEqual(out.store.contexts.work, { ssh: 'old-host', token: 'W' });
+});
+
+test('applyImport: an identical entry is skipped and nothing is written', () => {
+  const store = { current: null, contexts: { work: { ssh: 'host', token: 'W', webPort: 7950 } } };
+  const out = imp.applyImport(store, [
+    { name: 'work', entry: { ssh: 'host', token: 'W' }, action: 'add', tokenState: 'set' },
+  ], { force: false });
+  assert.strictEqual(out.results[0].result, 'skipped');
+  assert.strictEqual(out.results[0].reason, 'exists, skipped — --force to overwrite');
+  assert.deepStrictEqual(out.store.contexts.work, { ssh: 'host', token: 'W', webPort: 7950 });
+  assert.match(imp.renderReport(out.results, { dir: '/x', source: 'flag' }), /0 context\(s\) written, 1 skipped/);
+});
 // ── applyImport: collisions, force, current untouched ────────────────────────
 test('applyImport: collision skips by default, --force overwrites, current untouched', () => {
-  const store = { current: 'local', contexts: { local: { url: 'http://old' }, other: { url: 'http://o' } } };
+  const store = { current: 'local', contexts: { local: { url: 'http://old', token: 'OLD' }, other: { url: 'http://o' } } };
   const cands = [
     { name: 'local', entry: { url: 'http://new' }, action: 'add', tokenState: 'none' },
     { name: 'fresh', entry: { url: 'http://f' }, action: 'add', tokenState: 'none' },

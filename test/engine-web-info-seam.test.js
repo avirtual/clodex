@@ -222,3 +222,24 @@ test('remote-wiring passes a working seam straight through, and it stays LIVE', 
   info = { port: 7999 };
   assert.deepStrictEqual(opts.getWirescopeInfo(), { port: 7999 }, 'and it tracks a move');
 });
+
+test('runner mode with an uncreatable work root: the wire gets no runner and a getter carrying the reason', (t) => {
+  const root = mkTmpRoot('suite-wiring-badwork-');
+  fs.writeFileSync(path.join(root, 'blocker'), 'x');
+  const work = path.join(root, 'blocker', 'suite-work');
+  const keys = ['CLODEX_SUITE_RUNNER', 'CLODEX_SUITE_ISOLATION', 'CLODEX_SUITE_WORK'];
+  const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  t.after(() => { for (const k of keys) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } });
+  Object.assign(process.env, { CLODEX_SUITE_RUNNER: '1', CLODEX_SUITE_ISOLATION: 'none', CLODEX_SUITE_WORK: work });
+  const errors = [];
+  const opts = captureRemoteOptions({
+    REGISTRY_DIR: path.join(root, 'home'),
+    log: { info() {}, warn() {}, error: (tag, m) => errors.push([tag, m]) },
+  });
+  assert.strictEqual(opts.suiteRunner, null);
+  assert.strictEqual(errors.length, 1, 'ENTER: the failed start was logged');
+  const reason = opts.suiteRunnerError();
+  assert.strictEqual(reason, errors[0][1]);
+  assert.ok(reason.includes(work), reason);
+  assert.ok(reason.includes('CLODEX_SUITE_WORK'), reason);
+});

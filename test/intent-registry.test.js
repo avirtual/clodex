@@ -180,7 +180,7 @@ function parseIntentLegacy(rawLine) {
     };
   }
 
-  const teamMatch = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|bind|unbind|roster|template-save|template-rm|prompt-save|prompt-rm|sandbox|trunk|done|worktrees|hands|runner)\b([^\]]*)\]\s*(.*)/s);
+  const teamMatch = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|bind|unbind|roster|template-save|template-rm|prompt-save|prompt-rm|sandbox|box|trunk|done|worktrees|hands|runner)\b([^\]]*)\]\s*(.*)/s);
   if (teamMatch) {
     const sub = teamMatch[1];
     const argStr = teamMatch[2];
@@ -220,6 +220,7 @@ function parseIntentLegacy(rawLine) {
     if (sub === 'template-rm') return { type: 'team', sub, stem: positional[0] || null, body: '' };
     if (sub === 'prompt-save') return { type: 'team', sub, kind: positional[0] || null, stem: positional[1] || null, body };
     if (sub === 'prompt-rm') return { type: 'team', sub, kind: positional[0] || null, stem: positional[1] || null, body: '' };
+    if (sub === 'box') return { type: 'team', sub, action: positional[0] || 'show', body: (positional[0] || 'show') === 'set' ? body : '' };
     // t808's sandbox verb, mirrored here in the same commit as parseTeam's —
     // same lockstep rule as gather and the four file verbs above.
     if (sub === 'sandbox') {
@@ -472,7 +473,7 @@ const ADVERSARIAL = [
   '[agent:team sandbox status]', '[agent:team sandbox ref:release/1.2]', '[agent:team sandboxx]',
   '[agent:team sandbox port add 3000:3100 proto:http dev server]', '[agent:team sandbox port rm 3000]', '[agent:team sandbox port list]',
   '[agent:team sandbox bootstrap packages smbclient mariadb-server]', '[agent:team sandbox bootstrap setup] echo hi',
-  '[agent:team sandbox bootstrap show setup]', '[agent:team sandbox bootstrap clear]', '[agent:team sandbox restart]',
+  '[agent:team sandbox bootstrap show setup]', '[agent:team sandbox bootstrap clear]', '[agent:team sandbox restart]', '[agent:team box]', '[agent:team box set] FROM node:25', '[agent:team box init]', '[agent:team box show]', '[agent:team box clear]',
   '[agent:team create shop root:/proj/shop]',
   '[agent:team create shop root:/proj/shop share-root:yes]', '[agent:team create share-root:no shop root:/proj/shop]',
   '[agent:team create shop root:/proj/shop done:report]',
@@ -1023,6 +1024,7 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
   const newSinceLegacy = (i) => (i.type === 'task' && (i.sub === 'accept' || i.sub === 'respec'))
     || (i.type === 'team' && (i.sub === 'template-save' || i.sub === 'prompt-save'))
     || (i.type === 'team' && i.sub === 'sandbox' && i.action === 'bootstrap' && (i.op === 'setup' || i.op === 'start'))
+    || (i.type === 'team' && i.sub === 'box' && i.action === 'set')
     || i.type === 'team-create'
     || (i.type === 'profile' && i.sub === 'set')
     || i.type === 'sub'

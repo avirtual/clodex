@@ -14,7 +14,7 @@ const { RemoteServer } = require('../remote');
 const { PeerConnection } = require('../peer-client');
 const { createSuiteRunner, noneIsolation, statePaths } = require('../suite-runner');
 const { createSuiteClient } = require('../suite-client');
-const { suiteRunnerOptions } = require('../remote-wiring');
+const { suiteRunnerOptions, startSuiteRunner } = require('../remote-wiring');
 
 const SUITE_TOKEN = 'suite-token-PLANTED-7f3a9c';
 const OP_TOKEN = 'operator-token-1b2c3d';
@@ -137,13 +137,13 @@ function doneView(id, treeHash, extra = {}) {
 
 test('suiteRunnerOptions builds the runner deps from the environment, and nothing without runner mode', () => {
   assert.strictEqual(suiteRunnerOptions({ CLODEX_SUITE_TOKEN: 'x' }, '/h'), null);
-  assert.deepStrictEqual(suiteRunnerOptions({ CLODEX_SUITE_RUNNER: '1' }, '/h'), {
+  assert.deepStrictEqual(suiteRunnerOptions({ CLODEX_SUITE_RUNNER: '1' }, '/h', { platform: 'linux' }), {
     root: '/h', work: '/var/lib/clodex-suite', isolation: 'user', limits: {},
   });
-  assert.deepStrictEqual(suiteRunnerOptions({ CLODEX_SUITE_RUNNER: '1', CLODEX_SUITE_WORK: '/w', CLODEX_SUITE_ISOLATION: 'none', CLODEX_SUITE_PACK_MAX_MB: '2' }, '/h'), {
+  assert.deepStrictEqual(suiteRunnerOptions({ CLODEX_SUITE_RUNNER: '1', CLODEX_SUITE_WORK: '/w', CLODEX_SUITE_ISOLATION: 'none', CLODEX_SUITE_PACK_MAX_MB: '2' }, '/h', { platform: 'linux' }), {
     root: '/h', work: '/w', isolation: 'none', limits: { packMaxBytes: 2 * 1024 * 1024 },
   });
-  assert.deepStrictEqual(suiteRunnerOptions({ CLODEX_SUITE_RUNNER: '1', CLODEX_DATA_DIR: '/data' }, '/home/clodex/.clodex'), {
+  assert.deepStrictEqual(suiteRunnerOptions({ CLODEX_SUITE_RUNNER: '1', CLODEX_DATA_DIR: '/data' }, '/home/clodex/.clodex', { platform: 'linux' }), {
     root: '/data', oldRoot: '/home/clodex/.clodex', work: '/var/lib/clodex-suite', isolation: 'user', limits: {},
   });
 });
@@ -157,6 +157,42 @@ test('the runner state lives under the data dir when one is set and under the Cl
     dir: '/home/clodex/.clodex/suite-runner', jobs: '/home/clodex/.clodex/suite-runner/jobs',
     cache: '/home/clodex/.clodex/suite-runner/cache.json', ledger: '/home/clodex/.clodex/suite-runner/ledger.jsonl',
   });
+});
+
+test('the work root defaults by platform and CLODEX_SUITE_WORK wins on both', () => {
+  const work = (env, platform) => suiteRunnerOptions({ CLODEX_SUITE_RUNNER: '1', ...env }, '/Users/op/.clodex', { platform }).work;
+  assert.deepStrictEqual([
+    work({}, 'linux'),
+    work({}, 'darwin'),
+    work({ CLODEX_SUITE_WORK: '/w' }, 'linux'),
+    work({ CLODEX_SUITE_WORK: '/w' }, 'darwin'),
+    work({ CLODEX_DATA_DIR: '/data' }, 'darwin'),
+  ], [
+    '/var/lib/clodex-suite',
+    '/Users/op/.clodex/suite-work',
+    '/w',
+    '/w',
+    '/Users/op/.clodex/suite-work',
+  ]);
+});
+
+test('a runner asked for with an uncreatable work root stays off, logs one line naming the path and CLODEX_SUITE_WORK, and suite/info carries the reason', async (t) => {
+  const root = mkTmpRoot('suite-wire-badwork-');
+  fs.writeFileSync(path.join(root, 'blocker'), 'x');
+  const work = path.join(root, 'blocker', 'suite-work');
+  const lines = [];
+  const log = { warn: () => {}, error: (tag, m) => lines.push([tag, m]) };
+  const started = startSuiteRunner({ root: path.join(root, 'home'), work, isolation: 'none', limits: {} }, { log });
+  assert.strictEqual(started.runner, null);
+  assert.strictEqual(lines.length, 1);
+  assert.strictEqual(lines[0][0], 'suite-runner');
+  assert.ok(lines[0][1].includes(work), lines[0][1]);
+  assert.ok(lines[0][1].includes('CLODEX_SUITE_WORK'), lines[0][1]);
+  assert.strictEqual(started.error, lines[0][1]);
+  const { port } = await startServer(t, { suiteRunner: started.runner, suiteRunnerError: () => started.error });
+  const info = await req(port, '/api/suite/info', { token: SUITE_TOKEN });
+  assert.strictEqual(info.status, 501);
+  assert.deepStrictEqual(JSON.parse(info.text), { ok: false, error: 'this node is not a test runner', reason: started.error });
 });
 
 test('a scoped hello answers identity, bootId, the suite cap and scope, and nothing else', async (t) => {

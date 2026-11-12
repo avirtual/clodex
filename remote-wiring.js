@@ -122,14 +122,15 @@ function remoteReadRoots({ fs, path, REGISTRY_DIR, MSG_DIR }, sess, name) {
   return dirs.filter(Boolean).map((d) => realpathNearest(fs, path, d)).filter((r) => r.ok).map((r) => r.real);
 }
 
-function suiteRunnerOptions(env, root) {
+function suiteRunnerOptions(env, root, { platform = process.platform } = {}) {
   if (env.CLODEX_SUITE_RUNNER !== '1') return null;
   const mb = Number(env.CLODEX_SUITE_PACK_MAX_MB);
   const data = env.CLODEX_DATA_DIR ? require('path').resolve(env.CLODEX_DATA_DIR) : null;
+  const defaultWork = platform === 'darwin' ? require('path').join(root, 'suite-work') : '/var/lib/clodex-suite';
   return {
     root: data || root,
     ...(data ? { oldRoot: root } : {}),
-    work: env.CLODEX_SUITE_WORK || '/var/lib/clodex-suite',
+    work: env.CLODEX_SUITE_WORK || defaultWork,
     isolation: env.CLODEX_SUITE_ISOLATION === 'none' ? 'none' : 'user',
     limits: mb > 0 ? { packMaxBytes: Math.floor(mb * 1024 * 1024) } : {},
   };
@@ -144,6 +145,23 @@ function offerCallbacks({ getBoxOffer, getOfferFacts, offerDirectory } = {}) {
     },
     listOffers: () => ({ own: offerEntry(getBoxOffer(), getOfferFacts), offers: offerDirectory.list() }),
   };
+}
+
+function startSuiteRunner(opts, { log, load = () => require('./suite-runner') }) {
+  try {
+    const { createSuiteRunner, noneIsolation, userIsolation } = load();
+    const runner = createSuiteRunner({
+      ...opts,
+      isolation: opts.isolation === 'none' ? noneIsolation() : userIsolation(),
+      log: (m) => log.warn('suite-runner', m),
+    });
+    runner.start();
+    return { runner, error: null };
+  } catch (e) {
+    const error = `runner mode is off: ${e.message} (work root ${opts.work}; set CLODEX_SUITE_WORK to a folder this node can create and write)`;
+    log.error('suite-runner', error);
+    return { runner: null, error };
+  }
 }
 
 function createRemoteWiring(deps) {
@@ -788,6 +806,7 @@ function createRemoteWiring(deps) {
         token: remoteToken,
         insecure: remoteInsecure,
         suiteRunner: getSuiteRunner(),
+        suiteRunnerError: () => suiteRunnerError,
         suiteToken: process.env.CLODEX_SUITE_TOKEN || null,
         pagePath: path.join(__dirname, 'renderer', 'remote.html'),
         notifications: (getNotifications && getNotifications()) || null,
@@ -1369,22 +1388,15 @@ function createRemoteWiring(deps) {
   }
 
   let suiteRunner;
+  let suiteRunnerError = null;
   function getSuiteRunner() {
     if (suiteRunner !== undefined) return suiteRunner;
     suiteRunner = null;
     const opts = suiteRunnerOptions(process.env, REGISTRY_DIR);
     if (!opts) return null;
-    try {
-      const { createSuiteRunner, noneIsolation, userIsolation } = require('./suite-runner');
-      suiteRunner = createSuiteRunner({
-        ...opts,
-        isolation: opts.isolation === 'none' ? noneIsolation() : userIsolation(),
-        log: (m) => log.warn('suite-runner', m),
-      });
-      suiteRunner.start();
-    } catch (e) {
-      log.error('suite-runner', `runner mode is off: ${e.message}`);
-    }
+    const started = startSuiteRunner(opts, { log });
+    suiteRunner = started.runner;
+    suiteRunnerError = started.error;
     return suiteRunner;
   }
 
@@ -1399,4 +1411,4 @@ function createRemoteWiring(deps) {
   return { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer };
 }
 
-module.exports = { createRemoteWiring, suiteRunnerOptions, offerCallbacks };
+module.exports = { createRemoteWiring, suiteRunnerOptions, startSuiteRunner, offerCallbacks };

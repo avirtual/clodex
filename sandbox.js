@@ -1772,7 +1772,7 @@ module.exports = {
   // Pure parts, exported for the unit suite.
   createDetectCache, dockerUnavailableError, probeDocker, probeDockerFigures, parseFigures, parseComposePlatform, parseStatsLine, parseAppliedLimits,
   validateLimitsForSave, normalizePlatform, sizeToBytes, OPERATOR_ONLY_MSG,
-  validateBootstrapForSave, normalizeBootstrap, bootstrapFieldText, bootstrapSha, bootstrapScripts, writeBootstrapScripts,
+  validateBootstrapForSave, normalizeBootstrap, bootstrapFieldText, bootstrapSha, bootstrapScripts, writeBootstrapScripts, BOOTSTRAP_SECRET_RE, BOOTSTRAP_SCRIPT_MAX, GHCR_REPO,
   resolveImage, describeImage, resolvePorts, nextFreePort, generateCompose,
   parseOwnPorts, parsePortOwners, parseOwnPortMap, normalizePorts, gatewayServiceName, probeDockerLocal, parsePsRows, parseComposeState, defaultIsPortInUse, waitHealthy,
   defaultMountTarget, normalizeMounts, translatePath, relUnder, composeProjectName,

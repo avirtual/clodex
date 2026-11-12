@@ -62,9 +62,8 @@ for (const [name, text] of [['docker/web/Dockerfile', DOCKERFILE], ['docker/Dock
 }
 
 test('the image creates the runner work root as clodex:clodex 0711 at the path CLODEX_SUITE_WORK defaults to, and compose mounts its volume there', () => {
-  const wiring = fs.readFileSync(path.join(__dirname, '..', 'remote-wiring.js'), 'utf8');
   const compose = fs.readFileSync(path.join(__dirname, '..', 'docker', 'web', 'compose.yaml'), 'utf8');
-  const work = (wiring.match(/env\.CLODEX_SUITE_WORK \|\| '([^']+)'/) || [])[1];
+  const work = require('../remote-wiring').suiteRunnerOptions({ CLODEX_SUITE_RUNNER: '1' }, '/h', { platform: 'linux' }).work;
   assert.strictEqual(work, '/var/lib/clodex-suite');
   const setUp = instructions(DOCKERFILE).filter((i) => /^RUN\b/.test(i) && i.includes('mkdir -p /var/lib/clodex-suite'));
   assert.strictEqual(setUp.length, 1);
