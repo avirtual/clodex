@@ -361,11 +361,13 @@ bundle), whose packaged form is the Docker image under
 - **suite-snapshot.js** — exact-tree transfer for the remote test runner.
   `snapshotTree` mints a commit of the working tree (HEAD, tracked changes,
   untracked non-ignored files) through a temporary object store and index, so
-  the source repo gains no objects, refs or index writes; `buildPack` packs it
-  minus the runner's `have`; `ingestPack` indexes it into a per-`repoKey` bare
+  the source repo gains no objects, refs or index writes; `buildPack` streams it
+  minus the runner's `have` into a file under the snapshot's `tmpDir`, stopping git
+  once the file would pass `maxBytes`; `ingestPack` indexes it into a per-`repoKey` bare
   mirror and answers `incomplete` when prerequisites are missing; `materialize`
   checks it out with the hand's HEAD and index and proves the tree hash with
-  `treeHashOf`. Shells git through `git-worktree.js`'s `git`; no caller yet; in
+  `treeHashOf`. Shells git through `git-worktree.js`'s `git` (`buildPack` spawns it
+  with `git-safe.js`'s `safeGitArgsFor`); no caller yet; in
   SCANNED_MODULES. The mirror side also keeps `refs/keep/*` (`keepRefs`),
   answers `have` (`mirrorHave`, `mirrorHolds`) and repacks (`gcMirror`).
 - **suite-runner.js** — runner-mode engine for remote suite jobs, plain methods

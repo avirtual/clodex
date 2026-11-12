@@ -82,7 +82,7 @@ async function fixture(t, { onSpawn, now, limits, kill, wrap, runnerOver } = {})
   const upload = async (b) => {
     const r = await runner.submit(b);
     if (r.state !== 'awaiting-pack') return r;
-    const pack = await buildPack(snap, { have: r.have });
+    const pack = fs.readFileSync((await buildPack(snap, { have: r.have })).file);
     assert.strictEqual((await runner.putPack(b.id, 0, pack)).ok, true);
     return runner.commit(b.id, { bytes: pack.length, sha256: sha256(pack) });
   };
@@ -227,7 +227,7 @@ test('a cancel that lands while submit or commit keeps the mirror refs leaves th
   runner = f.runner;
   const viaCommit = await f.runner.submit(f.body('via-commit'));
   assert.strictEqual(viaCommit.state, 'awaiting-pack', 'ENTER: the first job needs a pack');
-  const pack = await buildPack(f.snap, { have: viaCommit.have });
+  const pack = fs.readFileSync((await buildPack(f.snap, { have: viaCommit.have })).file);
   assert.strictEqual((await f.runner.putPack('via-commit', 0, pack)).ok, true);
   armed = 'via-commit';
   const committed = await f.runner.commit('via-commit', { bytes: pack.length, sha256: sha256(pack) });
