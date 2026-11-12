@@ -3,6 +3,7 @@
 const { NODE_NAME_RE, MAX_PEERS, MAX_BOXES } = require('../../box-offer');
 const DAY_LETTERS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 const PEER_NOTE = 'This list decides which peers are shown this offer. It is not an access control. Nothing runs on this machine because of it yet. A node that dials this machine is named by its own label, which is its hostname unless it set one.';
+const RUN_PEER_NOTE = 'Only the ticked peers may run test jobs here, and only while the offer is on and open. A node that dials this machine is named by its own label, which is its hostname unless it set one.';
 
 function osArch(facts) {
   if (!facts || (!facts.os && !facts.arch)) return 'unknown os';
@@ -86,9 +87,25 @@ function offerFormProblem({ boxes, availability, schedule, peers }) {
   return null;
 }
 
-function offerRecordFromForm({ enabled, boxes, availability, schedule, peers }) {
+function runIsolationLine(runner) {
+  if (!runner || (runner.status !== 'running' && runner.status !== 'starting')) {
+    return 'Test runner is off: nothing runs until it is turned on above.';
+  }
+  if (runner.isolation === 'none') return "Jobs run through this machine's test runner, isolation none: suites run as this user, unisolated.";
+  return "Jobs run through this machine's test runner, isolation user: suites run as a separate user account.";
+}
+
+function runConsentText(peers, runner) {
+  const names = (peers || []).filter((n) => typeof n === 'string');
+  const who = names.length
+    ? `These peers may run their teams' test jobs on this machine:\n${names.map((n) => `  ${n}`).join('\n')}`
+    : 'No peer is ticked: no one may run test jobs here until one is.';
+  return `${who}\n\n${runIsolationLine(runner)}\n\nAllow?`;
+}
+
+function offerRecordFromForm({ scope, enabled, boxes, availability, schedule, peers }) {
   const rec = {
-    scope: 'discovery',
+    scope: scope === 'run' ? 'run' : 'discovery',
     enabled: !!enabled,
     boxes: Number(boxes),
     availability,
@@ -112,7 +129,10 @@ function offerStatusText(st) {
 module.exports = {
   DAY_LETTERS,
   PEER_NOTE,
+  RUN_PEER_NOTE,
   ownFactsLine,
+  runIsolationLine,
+  runConsentText,
   peerOfferLine,
   peerChoices,
   peerNameToAdd,

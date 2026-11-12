@@ -46,7 +46,7 @@ const { anyOverlayOpen, dialogOverlayIds, performCloseChord } = require('./lib/c
 const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { envRowView, buildEnvRow } = require('./lib/env-row');
 const { envLockView, applyEnvLock, patchUnlessEnvLocked } = require('./lib/env-lock');
-const { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText } = require('./lib/offer-view');
+const { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText } = require('./lib/offer-view');
 const { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require('./lib/account-select');
 const { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, keyTransportRefusal, modelOptions } = require('./lib/account-row');
 const { isToolInstallSession } = require('../tool-doctor');
@@ -6430,6 +6430,8 @@ const prefsBoxOfferSelf = document.getElementById('prefs-box-offer-self');
 const prefsBoxOfferFacts = document.getElementById('prefs-box-offer-facts');
 const prefsBoxOfferStatus = document.getElementById('prefs-box-offer-status');
 const prefsBoxOfferApply = document.getElementById('prefs-box-offer-apply');
+const prefsBoxOfferScope = document.getElementById('prefs-box-offer-scope');
+const prefsBoxOfferRunNote = document.getElementById('prefs-box-offer-run-note');
 
 const prefsEnvScope = document.getElementById('prefs-env-scope');
 const prefsEnvList = document.getElementById('prefs-env-list');
@@ -9610,6 +9612,13 @@ function boxOfferPeerRow({ name, ticked, note }) {
   return label;
 }
 
+function syncBoxOfferScope() {
+  const run = prefsBoxOfferScope.value === 'run';
+  prefsBoxOfferPeersNote.textContent = run ? OFFER_RUN_PEER_NOTE : OFFER_PEER_NOTE;
+  prefsBoxOfferRunNote.textContent = run ? offerRunIsolationLine(prefsBoxOfferShown && prefsBoxOfferShown.runner) : '';
+  prefsBoxOfferRunNote.classList.toggle('hidden', !run);
+}
+
 function renderBoxOfferPrefs(st) {
   prefsBoxOfferShown = st;
   const rec = (st.forced ? st.effective : st.stored) || null;
@@ -9627,7 +9636,8 @@ function renderBoxOfferPrefs(st) {
     prefsBoxOfferPeers.append(none);
   }
   prefsBoxOfferPeerName.value = '';
-  prefsBoxOfferPeersNote.textContent = OFFER_PEER_NOTE;
+  prefsBoxOfferScope.value = rec && rec.scope === 'run' ? 'run' : 'discovery';
+  syncBoxOfferScope();
   prefsBoxOfferSelf.textContent = offerSelfLabelLine(st.self);
   prefsBoxOfferFacts.textContent = `This machine would announce: ${ownFactsLine(st.facts)}`;
   prefsBoxOfferStatus.textContent = offerStatusText(st);
@@ -9646,6 +9656,7 @@ async function refreshBoxOfferPrefs() {
 
 if (prefsBoxOfferBlock) {
   prefsBoxOfferAvailability.addEventListener('change', syncBoxOfferSchedule);
+  prefsBoxOfferScope.addEventListener('change', syncBoxOfferScope);
   prefsBoxOfferScheduleAdd.addEventListener('click', () => {
     prefsBoxOfferSchedule.append(boxOfferWindowRow({ days: [1, 2, 3, 4, 5], from: '09:00', to: '17:00' }));
     syncBoxOfferSchedule();
@@ -9668,6 +9679,7 @@ if (prefsBoxOfferBlock) {
   });
   prefsBoxOfferApply.addEventListener('click', async () => {
     const form = {
+      scope: prefsBoxOfferScope.value,
       enabled: prefsBoxOfferEnabled.checked,
       boxes: prefsBoxOfferBoxes.value,
       availability: prefsBoxOfferAvailability.value,
@@ -9677,8 +9689,14 @@ if (prefsBoxOfferBlock) {
     const problem = offerFormProblem(form);
     if (problem) { showToast(`Box offer not changed: ${problem}`, { kind: 'warn' }); return; }
     const rec = offerRecordFromForm(form);
+    let confirm;
+    if (rec.scope === 'run') {
+      const names = rec.peers.map((p) => p.name);
+      if (!window.confirm(offerRunConsentText(names, prefsBoxOfferShown && prefsBoxOfferShown.runner))) return;
+      confirm = { peers: names };
+    }
     let res = null;
-    try { res = await window.api.offerSet(rec); } catch { res = null; }
+    try { res = await window.api.offerSet(rec, confirm); } catch { res = null; }
     if (!res || res.ok !== true) {
       showToast(`Box offer not changed: ${(res && res.error) || 'the change failed'}`, { kind: 'warn' });
     }

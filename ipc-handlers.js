@@ -24,7 +24,7 @@ const { randomBytes } = require('node:crypto');
 const { validateSeatFiles } = require('./seat-files');
 const { BOX_ID_RE, runningInSandboxBox } = require('./sandbox');
 const { SETUP_CHOICES, execRowOf, sanitizeSuiteRunner } = require('./stores');
-const { sanitizeBoxOffer, offerEntry, NODE_NAME_RE } = require('./box-offer');
+const { sanitizeBoxOffer, runConfirmed, offerEntry, NODE_NAME_RE } = require('./box-offer');
 const sessionDiscovery = require('./session-discovery');
 const gitWorktree = require('./git-worktree');
 const { NO_SUCH_METHOD, errorEnvelope, sanitizeGrants, isValidPluginId, PLUGIN_CAPABILITIES, seatHasPlugin } = require('./plugin-api');
@@ -1870,11 +1870,17 @@ function registerIpcHandlers(deps) {
       log.info('remote', `test runner setting ${clean && clean.enabled ? 'ON' : 'off'}`);
       return { ok: true, state: suiteRunnerState() };
     });
-    const offerState = async () => {
+    const offerRunner = () => {
+      let st = null;
+      try { st = typeof suiteRunnerState === 'function' ? suiteRunnerState() : null; } catch { st = null; }
+      if (!st || typeof st.status !== 'string') return null;
+      return { status: st.status, isolation: st.effective ? st.effective.isolation : null };
+    };
+    const offerState = async ({ fresh = true } = {}) => {
       let raw;
       try { raw = readStoredBoxOffer(); } catch { raw = undefined; }
       let facts = null;
-      try { facts = await readOfferFacts(); } catch { facts = null; }
+      try { facts = fresh ? await readOfferFacts() : getOfferFacts(); } catch { facts = null; }
       const configured = [];
       for (const p of uiSettings.get().peers || []) {
         const label = p && p.label;
@@ -1893,21 +1899,26 @@ function registerIpcHandlers(deps) {
         warning: raw != null && !sanitizeBoxOffer(raw) ? 'stored offer invalid, treated as off' : null,
         facts,
         peers,
+        runner: offerRunner(),
       };
     };
     handle('offer:get', () => offerState());
-    handle('offer:set', async (_e, rec) => {
+    handle('offer:set', async (_e, rec, confirm) => {
+      const cached = { fresh: false };
       if (boxOfferForced === true) {
-        return { ok: false, error: 'the box offer is set by CLODEX_BOX_OFFER on this machine; change it there', state: await offerState() };
+        return { ok: false, error: 'the box offer is set by CLODEX_BOX_OFFER on this machine; change it there', state: await offerState(cached) };
       }
       const clean = rec === null ? null : sanitizeBoxOffer(rec);
-      if (rec !== null && !clean) return { ok: false, error: 'invalid box offer', state: await offerState() };
+      if (rec !== null && !clean) return { ok: false, error: 'invalid box offer', state: await offerState(cached) };
+      if (!runConfirmed(clean, confirm)) {
+        return { ok: false, error: 'a run offer needs the confirmed list of the peers it authorises', state: await offerState(cached) };
+      }
       if (JSON.stringify(clean) !== JSON.stringify(uiSettings.get().boxOffer || null)) {
         uiSettings.set({ boxOffer: clean });
         manager._broadcast('offers-changed');
         log.info('offers', `box offer ${clean && clean.enabled ? `ON (${clean.boxes} boxes, ${clean.peers.length} peers)` : 'off'}`);
       }
-      return { ok: true, state: await offerState() };
+      return { ok: true, state: await offerState(cached) };
     });
     handle('offer:directory', () => ({ own: offerEntry(getBoxOffer(), getOfferFacts), offers: offerDirectory.list() }));
   }

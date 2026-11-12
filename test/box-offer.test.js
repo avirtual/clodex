@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 
 const {
-  sanitizeBoxOffer, offerFromEnv, scheduleOpen, wireEntry, offerEntry, sanitizeWireOffers, warnStoredOffer, bootOffer, offerEnabled,
+  sanitizeBoxOffer, offerFromEnv, scheduleOpen, wireEntry, offerEntry, sanitizeWireOffers, warnStoredOffer, bootOffer, offerEnabled, runGrant,
 } = require('../box-offer');
 const { initStores } = require('../stores.js');
 const { mkTmpRoot } = require('./lib/tmp-roots');
@@ -54,7 +54,7 @@ const REFUSALS = [
   ['a duplicate peer name', with_({ peers: [{ name: 'murmur' }, { name: 'murmur' }] })],
   ['availability: "idle"', { ...ALWAYS, availability: 'idle' }],
   ['a missing scope', (() => { const r = { ...VALID }; delete r.scope; return r; })()],
-  ['scope: "run"', with_({ scope: 'run' })],
+  ['scope: "build"', with_({ scope: 'build' })],
   ['a peer entry carrying passOn', with_({ peers: [{ name: 'murmur', passOn: false }] })],
   ['a wildcard peer', with_({ peers: [{ name: '*' }] })],
   ['schedule with availability always', { ...ALWAYS, schedule: [{ days: [1], from: '22:00', to: '07:00' }] }],
@@ -128,7 +128,7 @@ test('sanitizeWireOffers accepts own and drops relayed', () => {
 
 const WIRE_REFUSALS = [
   ['an extra entry key', { ...WIRE_OWN, host: 'murmur' }],
-  ['scope: "run"', { ...WIRE_OWN, scope: 'run' }],
+  ['scope: "build"', { ...WIRE_OWN, scope: 'build' }],
   ['an unknown kind', { ...WIRE_OWN, kinds: ['vm'] }],
   ['empty kinds', { ...WIRE_OWN, kinds: [] }],
   ['an extra fact', { ...WIRE_OWN, facts: { ...WIRE_OWN.facts, version: '5.176.0' } }],
@@ -159,7 +159,7 @@ test('a sparse schedule array is refused', () => {
 test('warnStoredOffer warns once naming boxOffer for an invalid stored record, never for a valid or absent one', () => {
   const warnings = [];
   const warn = (m) => warnings.push(m);
-  assert.strictEqual(warnStoredOffer(() => ({ boxOffer: with_({ scope: 'run' }) }), warn), true);
+  assert.strictEqual(warnStoredOffer(() => ({ boxOffer: with_({ scope: 'build' }) }), warn), true);
   assert.deepStrictEqual(warnings, ['ui-settings boxOffer is not a valid box offer; box offer off']);
   assert.strictEqual(warnStoredOffer(() => ({ boxOffer: VALID }), warn), false);
   assert.strictEqual(warnStoredOffer(() => ({ theme: 'dark' }), warn), false);
@@ -174,7 +174,7 @@ test('offerFromEnv: unset is undefined, bad JSON or bad record is null with one 
   assert.deepStrictEqual(offerFromEnv({ CLODEX_BOX_OFFER: JSON.stringify(ALWAYS) }, log), ALWAYS);
   assert.strictEqual(errors.length, 0);
   assert.strictEqual(offerFromEnv({ CLODEX_BOX_OFFER: '{nope' }, log), null);
-  assert.strictEqual(offerFromEnv({ CLODEX_BOX_OFFER: JSON.stringify(with_({ scope: 'run' })) }, log), null);
+  assert.strictEqual(offerFromEnv({ CLODEX_BOX_OFFER: JSON.stringify(with_({ scope: 'build' })) }, log), null);
   assert.strictEqual(errors.length, 2);
 });
 
@@ -194,7 +194,7 @@ test('a settings file without boxOffer loads as off', () => {
 
 test('an invalid stored record loads as off', () => {
   const dir = mkTmpRoot('clodex-boxoffer-');
-  fs.writeFileSync(path.join(dir, 'ui-settings.json'), JSON.stringify({ boxOffer: with_({ scope: 'run' }) }));
+  fs.writeFileSync(path.join(dir, 'ui-settings.json'), JSON.stringify({ boxOffer: with_({ scope: 'build' }) }));
   assert.strictEqual(openStores(dir).uiSettings.get().boxOffer, null);
 });
 
@@ -215,7 +215,7 @@ test('bootOffer: a set CLODEX_BOX_OFFER wins and the stored setting is never rea
   const lines = [];
   const log = { error: (m) => lines.push(['error', m]), warn: (m) => lines.push(['warn', m]) };
   let reads = 0;
-  const readStored = () => { reads++; return { boxOffer: with_({ scope: 'run' }) }; };
+  const readStored = () => { reads++; return { boxOffer: with_({ scope: 'build' }) }; };
   assert.deepStrictEqual(bootOffer({ CLODEX_BOX_OFFER: JSON.stringify(VALID) }, readStored, log), sanitizeBoxOffer(VALID));
   assert.strictEqual(bootOffer({ CLODEX_BOX_OFFER: '{nope' }, readStored, log), null);
   assert.strictEqual(reads, 0, 'the stored setting was read while the env var is set');
@@ -227,11 +227,59 @@ test('bootOffer: a set CLODEX_BOX_OFFER wins and the stored setting is never rea
 
 test('offerEnabled decides on the sanitised record, not the raw enabled flag', () => {
   assert.strictEqual(offerEnabled(VALID), true);
-  assert.strictEqual(offerEnabled(with_({ scope: 'run' })), false);
-  assert.strictEqual(with_({ scope: 'run' }).enabled, true);
+  assert.strictEqual(offerEnabled(with_({ scope: 'build' })), false);
+  assert.strictEqual(with_({ scope: 'build' }).enabled, true);
   assert.strictEqual(offerEnabled(with_({ enabled: false })), false);
   assert.strictEqual(offerEnabled(null), false);
   const engine = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
   assert.ok(engine.includes('if (offerEnabled(getBoxOffer())) runtimeProbe.refresh();'), 'engine.js boot probe does not decide on offerEnabled');
   assert.ok(engine.includes('const envBoxOffer = bootOffer('), 'engine.js does not boot the offer through bootOffer');
+});
+
+const RUN = with_({ scope: 'run' });
+const FRIDAY_23 = new Date(2026, 10, 13, 23, 0);
+const FRIDAY_2159 = new Date(2026, 10, 13, 21, 59);
+
+test('a run record passes the sanitiser whole and keeps its scope', () => {
+  assert.deepStrictEqual(sanitizeBoxOffer(RUN), {
+    scope: 'run',
+    enabled: true,
+    boxes: 2,
+    availability: 'schedule',
+    schedule: [{ days: [1, 2, 3, 4, 5], from: '22:00', to: '07:00' }],
+    peers: [{ name: 'murmur' }, { name: 'laptop' }],
+  });
+});
+
+const GRANTS = [
+  ['a discovery record', VALID, 'laptop', FRIDAY_23, { admit: false, serve: false }],
+  ['a disabled run record', { ...RUN, enabled: false }, 'laptop', FRIDAY_23, { admit: false, serve: false }],
+  ['an unlisted peer', RUN, 'stranger', FRIDAY_23, { admit: false, serve: false }],
+  ['a closed schedule', RUN, 'laptop', FRIDAY_2159, { admit: false, serve: true }],
+  ['a ticked peer inside the window', RUN, 'laptop', FRIDAY_23, { admit: true, serve: true }],
+];
+
+for (const [label, offer, peer, now, want] of GRANTS) {
+  test(`runGrant for ${label}`, () => {
+    assert.deepStrictEqual(runGrant(offer, peer, now), want);
+  });
+}
+
+test('a stored discovery record loads as discovery and grants nothing', () => {
+  const dir = mkTmpRoot('clodex-boxoffer-');
+  fs.writeFileSync(path.join(dir, 'ui-settings.json'), JSON.stringify({ boxOffer: ALWAYS }));
+  const loaded = openStores(dir).uiSettings.get().boxOffer;
+  assert.deepStrictEqual(loaded, ALWAYS);
+  assert.deepStrictEqual(runGrant(loaded, 'murmur', FRIDAY_23), { admit: false, serve: false });
+});
+
+test('a run record\'s entry says run only when asked for, so hello stays discovery', () => {
+  const facts = { os: 'linux', arch: 'x64', cpus: 4, memMb: 8192, runtime: null };
+  assert.strictEqual(wireEntry(RUN, facts, 'laptop', FRIDAY_23).scope, 'discovery');
+  assert.strictEqual(wireEntry(RUN, facts, 'laptop', FRIDAY_23, { run: true }).scope, 'run');
+  assert.strictEqual(wireEntry(VALID, facts, 'laptop', FRIDAY_23, { run: true }).scope, 'discovery');
+});
+
+test('sanitizeWireOffers accepts an own with scope run', () => {
+  assert.deepStrictEqual(sanitizeWireOffers({ own: { ...WIRE_OWN, scope: 'run' } }), { own: { ...WIRE_OWN, scope: 'run' } });
 });

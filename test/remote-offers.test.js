@@ -126,10 +126,10 @@ test('POST /api/peer/offers stores a valid own as an announce row with a route h
   ]);
 });
 
-test('POST /api/peer/offers refuses an own with an extra key or scope run whole', async (t) => {
+test('POST /api/peer/offers refuses an own with an extra key or an unknown scope whole', async (t) => {
   const { port, offerDirectory } = await startNode(t);
   assert.strictEqual((await announce(port, 'laptop', { ...ANNOUNCED, host: 'laptop.local' })).status, 400);
-  assert.strictEqual((await announce(port, 'laptop', { ...ANNOUNCED, scope: 'run' })).status, 400);
+  assert.strictEqual((await announce(port, 'laptop', { ...ANNOUNCED, scope: 'build' })).status, 400);
   assert.strictEqual((await announce(port, 'bad name', ANNOUNCED)).status, 400);
   const badVersion = await req(port, '/api/peer/offers', { method: 'POST', body: JSON.stringify({ v: 2, from: 'laptop', own: ANNOUNCED }) });
   assert.strictEqual(badVersion.status, 400);

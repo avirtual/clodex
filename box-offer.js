@@ -3,7 +3,9 @@
 const NODE_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const HHMM_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const PLATFORM_RE = /^[a-z0-9]{1,16}\/[a-z0-9_]{1,16}$/;
-const SCOPE = 'discovery';
+const DISCOVERY = 'discovery';
+const RUN = 'run';
+const SCOPES = [DISCOVERY, RUN];
 const OFFERS_WIRE_VERSION = 1;
 const AVAILABILITY = ['always', 'schedule'];
 const MAX_BOXES = 16;
@@ -62,13 +64,13 @@ function sanitizePeerList(raw) {
 
 function sanitizeBoxOffer(raw) {
   if (!isPlainObject(raw) || !onlyKeys(raw, RECORD_KEYS)) return null;
-  if (raw.scope !== SCOPE) return null;
+  if (!SCOPES.includes(raw.scope)) return null;
   if (typeof raw.enabled !== 'boolean') return null;
   if (!isBoxCount(raw.boxes)) return null;
   if (!AVAILABILITY.includes(raw.availability)) return null;
   const peers = sanitizePeerList(raw.peers);
   if (!peers) return null;
-  const out = { scope: SCOPE, enabled: raw.enabled, boxes: raw.boxes, availability: raw.availability };
+  const out = { scope: raw.scope, enabled: raw.enabled, boxes: raw.boxes, availability: raw.availability };
   if (raw.availability === 'schedule') {
     if (!Array.isArray(raw.schedule) || raw.schedule.length === 0 || raw.schedule.length > MAX_WINDOWS) return null;
     const windows = Array.from(raw.schedule, sanitizeWindow);
@@ -139,11 +141,27 @@ function produceFacts(raw) {
   };
 }
 
-function offerEntry(offer, facts, now) {
+function runGrant(offer, peerName, now = new Date()) {
+  const clean = sanitizeBoxOffer(offer);
+  const serve = !!clean && clean.scope === RUN && clean.enabled
+    && typeof peerName === 'string' && clean.peers.some((p) => p.name === peerName);
+  return { admit: serve && scheduleOpen(clean, now), serve };
+}
+
+function runConfirmed(offer, confirm) {
+  const clean = sanitizeBoxOffer(offer);
+  if (!clean || clean.scope !== RUN) return true;
+  if (!isPlainObject(confirm) || !Array.isArray(confirm.peers)) return false;
+  const want = clean.peers.map((p) => p.name).sort();
+  const got = Array.from(confirm.peers).sort();
+  return want.length === got.length && want.every((n, i) => n === got[i]);
+}
+
+function offerEntry(offer, facts, now, { run = false } = {}) {
   const clean = sanitizeBoxOffer(offer);
   if (!clean || !clean.enabled) return null;
   return {
-    scope: SCOPE,
+    scope: clean.scope === RUN && run === true ? RUN : DISCOVERY,
     boxes: clean.boxes,
     open: scheduleOpen(clean, now instanceof Date ? now : new Date()),
     kinds: [...PRODUCED_KINDS],
@@ -151,10 +169,10 @@ function offerEntry(offer, facts, now) {
   };
 }
 
-function wireEntry(offer, facts, peerName, now) {
+function wireEntry(offer, facts, peerName, now, opts) {
   const clean = sanitizeBoxOffer(offer);
   if (!clean || typeof peerName !== 'string' || !clean.peers.some((p) => p.name === peerName)) return null;
-  return offerEntry(clean, facts, now);
+  return offerEntry(clean, facts, now, opts);
 }
 
 function sanitizeWireRuntime(raw) {
@@ -184,11 +202,11 @@ function sanitizeWireKinds(raw) {
 
 function sanitizeWireEntry(raw) {
   if (!isPlainObject(raw) || !onlyKeys(raw, WIRE_KEYS)) return null;
-  if (raw.scope !== SCOPE || !isBoxCount(raw.boxes) || typeof raw.open !== 'boolean') return null;
+  if (!SCOPES.includes(raw.scope) || !isBoxCount(raw.boxes) || typeof raw.open !== 'boolean') return null;
   const kinds = sanitizeWireKinds(raw.kinds);
   const facts = sanitizeWireFacts(raw.facts);
   if (!kinds || !facts) return null;
-  return { scope: SCOPE, boxes: raw.boxes, open: raw.open, kinds, facts };
+  return { scope: raw.scope, boxes: raw.boxes, open: raw.open, kinds, facts };
 }
 
 function sanitizeWireOffers(raw) {
@@ -225,6 +243,8 @@ module.exports = {
   sanitizeBoxOffer,
   offerFromEnv,
   scheduleOpen,
+  runGrant,
+  runConfirmed,
   offerEntry,
   wireEntry,
   sanitizeWireOffers,

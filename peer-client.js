@@ -348,7 +348,7 @@ class PeerConnection {
           try { roster = this._computeRoster(this.id); } catch { roster = null; }
           if (Array.isArray(roster)) this.pushRoster(roster);
         }
-        if (Array.isArray(next.caps) && next.caps.includes('offers')) this._syncOffers(body.offers);
+        if (Array.isArray(next.caps) && next.caps.includes('offers')) this._syncOffers(body.offers, next.caps);
       } else {
         this._setOnline(false);
       }
@@ -1037,14 +1037,14 @@ class PeerConnection {
       (err, resp) => { if (cb) cb(err ? { ok: false, error: err.message } : resp || { ok: false }); });
   }
 
-  _syncOffers(offers) {
+  _syncOffers(offers, caps) {
     if (this._onOffers) {
       const got = sanitizeWireOffers(offers);
       try { this._onOffers(this.id, this.label, got ? got.own : null); } catch {}
     }
     if (!this._computeOffers || !this._selfLabel) return;
     let own = null;
-    try { own = this._computeOffers(this.id, this.label) || null; } catch { own = null; }
+    try { own = this._computeOffers(this.id, this.label, Array.isArray(caps) ? caps : []) || null; } catch { own = null; }
     if (own === null && this._offersPosted === null) return;
     const seq = ++this._offersSeq;
     this.pushOffers(own, (resp) => {

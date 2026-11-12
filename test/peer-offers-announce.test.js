@@ -185,3 +185,39 @@ test('an older announce reply arriving after a newer one does not overwrite the 
   conn._syncOffers(undefined);
   assert.strictEqual(replies.length, 2, 'an acknowledged empty offer is not re-posted');
 });
+
+function startCapFake(t, caps) {
+  const posted = [];
+  const server = http.createServer((req, res) => {
+    const p = req.url.split('?')[0];
+    res.setHeader('content-type', 'application/json');
+    if (p === '/api/peer/hello') return res.end(JSON.stringify({ ok: true, app: 'clodex', host: 'murmur', version: '1.0.0', caps }));
+    if (p === '/api/peer/offers') {
+      let text = '';
+      req.on('data', (d) => { text += d; });
+      req.on('end', () => { posted.push(JSON.parse(text)); res.end(JSON.stringify({ ok: true })); });
+      return undefined;
+    }
+    res.statusCode = 404;
+    return res.end(JSON.stringify({ ok: false }));
+  });
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => {
+    t.after(() => { server.closeAllConnections(); server.close(); });
+    resolve({ port: server.address().port, posted });
+  }));
+}
+
+const RUN_ANNOUNCES = [
+  ['a peer without suite-pull', ['offers'], 'discovery'],
+  ['a peer with suite-pull', ['offers', 'suite-pull'], 'run'],
+];
+
+for (const [label, caps, scope] of RUN_ANNOUNCES) {
+  test(`a run offer announces scope ${scope} to ${label}`, async (t) => {
+    const fake = await startCapFake(t, caps);
+    const dialer = dial(t, fake.port, { offer: { ...offerFor(['murmur'], 2), scope: 'run' } });
+    dialer.tick();
+    await waitFor(() => fake.posted.length === 1, 'the announce');
+    assert.deepStrictEqual(fake.posted[0], { v: 1, from: 'laptop', own: { ...entry(2, DIALER_FACTS), scope } });
+  });
+}
