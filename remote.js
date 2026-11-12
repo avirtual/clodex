@@ -1658,7 +1658,9 @@ class RemoteServer {
     }
     if (req.method === 'GET' && p === '/api/offers') {
       if (!this._listOffers) return this._json(res, 501, { ok: false, error: 'offers not available' });
-      const { own = null, offers = [] } = this._listOffers() || {};
+      let listed;
+      try { listed = this._listOffers() || {}; } catch (e) { return this._json(res, 500, { ok: false, error: e.message }); }
+      const { own = null, offers = [] } = listed;
       return this._json(res, 200, { ok: true, own, offers });
     }
     if (req.method === 'GET' && p === '/api/peers') {

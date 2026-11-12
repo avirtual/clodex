@@ -44,10 +44,10 @@ function req(port, pathname, { method = 'GET', token = OP_TOKEN, body = null } =
 
 async function startNode(t, { offer = OFFER, wired = true } = {}) {
   let n = 0;
-  const state = { offer, clock: 5000 };
+  const state = { offer, clock: 5000, factsCalls: 0 };
   const offerDirectory = createOfferDirectory({ now: () => state.clock, newRoute: () => `route-${++n}` });
   const callbacks = wired
-    ? offerCallbacks({ getBoxOffer: () => state.offer, getOfferFacts: () => FACTS, offerDirectory })
+    ? offerCallbacks({ getBoxOffer: () => state.offer, getOfferFacts: () => { state.factsCalls++; return FACTS; }, offerDirectory })
     : {};
   const server = new RemoteServer({
     port: 0, host: '127.0.0.1', pagePath: '/nonexistent', hostLabel: 'murmur', version: '9.9.9',
@@ -184,4 +184,33 @@ test('suite code never reads the box offer or the offers directory', () => {
   const suite = remote.slice(start, end);
   assert.ok(suite.includes('/api/suite/'), 'ENTER: the slice is the suite routes');
   assert.ok(!banned.test(suite), 'remote.js suite routes reference the box offer');
+});
+
+test('facts are probed only for an enabled offer and a listed origin', async (t) => {
+  const { port, state } = await startNode(t);
+  await req(port, '/api/peer/hello?origin=stranger');
+  await req(port, '/api/peer/hello');
+  assert.strictEqual(state.factsCalls, 0, 'an unlisted or absent origin probed facts');
+  const listed = (await req(port, '/api/peer/hello?origin=laptop')).json;
+  assert.deepStrictEqual(listed.offers, { own: OWN });
+  assert.strictEqual(state.factsCalls, 1);
+  state.offer = { ...OFFER, enabled: false };
+  await req(port, '/api/peer/hello?origin=laptop');
+  assert.strictEqual(state.factsCalls, 1, 'a disabled offer probed facts');
+  state.offer = null;
+  const doc = (await req(port, '/api/offers')).json;
+  assert.deepStrictEqual([doc.ok, doc.own], [true, null]);
+  assert.strictEqual(state.factsCalls, 1, 'GET /api/offers with no offer probed facts');
+});
+
+test('GET /api/offers answers 500 when the offer source throws', async (t) => {
+  const server = new RemoteServer({
+    port: 0, host: '127.0.0.1', pagePath: '/nonexistent',
+    getSessions: () => [], getTranscript: () => ({ ok: true, messages: [] }), send: () => ({ ok: true }),
+    token: OP_TOKEN, listOffers: () => { throw new Error('facts exploded'); },
+  });
+  await server.start();
+  t.after(() => server.stop());
+  const r = await req(server.port, '/api/offers');
+  assert.deepStrictEqual([r.status, r.json], [500, { ok: false, error: 'facts exploded' }]);
 });

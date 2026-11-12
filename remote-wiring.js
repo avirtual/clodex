@@ -138,11 +138,11 @@ function suiteRunnerOptions(env, root) {
 function offerCallbacks({ getBoxOffer, getOfferFacts, offerDirectory } = {}) {
   if (!offerDirectory || typeof getBoxOffer !== 'function' || typeof getOfferFacts !== 'function') return {};
   return {
-    offerFor: (origin) => wireEntry(getBoxOffer(), getOfferFacts(), origin),
+    offerFor: (origin) => wireEntry(getBoxOffer(), getOfferFacts, origin),
     receiveOffers: ({ from, own }) => {
       offerDirectory.set({ provenance: 'announce', source: from, name: from, offer: own });
     },
-    listOffers: () => ({ own: offerEntry(getBoxOffer(), getOfferFacts()), offers: offerDirectory.list() }),
+    listOffers: () => ({ own: offerEntry(getBoxOffer(), getOfferFacts), offers: offerDirectory.list() }),
   };
 }
 

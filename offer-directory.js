@@ -8,6 +8,7 @@ const RUNTIME_TIMEOUT_MS = 5000;
 const PROVENANCES = ['hello', 'announce'];
 const PLATFORM_RE = /^[a-z0-9]{1,16}\/[a-z0-9_]{1,16}$/;
 const MAX_PLATFORMS = 8;
+const MAX_ROWS = 256;
 
 const newRouteHandle = () => crypto.randomBytes(12).toString('base64url');
 
@@ -17,7 +18,7 @@ const unrefTimer = (fn, ms) => {
   return t;
 };
 
-function createOfferDirectory({ now = Date.now, ttlMs = OFFER_TTL_MS, newRoute = newRouteHandle } = {}) {
+function createOfferDirectory({ now = Date.now, ttlMs = OFFER_TTL_MS, maxRows = MAX_ROWS, newRoute = newRouteHandle } = {}) {
   const rows = new Map();
   const keyOf = (provenance, source) => `${provenance}\u0000${source}`;
 
@@ -37,6 +38,7 @@ function createOfferDirectory({ now = Date.now, ttlMs = OFFER_TTL_MS, newRoute =
       return true;
     }
     const prev = rows.get(key);
+    if (!prev && rows.size >= maxRows) return false;
     rows.set(key, {
       route: prev ? prev.route : newRoute(),
       provenance,

@@ -1885,7 +1885,7 @@ const openRequests = createOpenRequests({
 const { offerFromEnv, warnStoredOffer } = require('./box-offer');
 const { createOfferDirectory, createRuntimeProbe, hostFacts } = require('./offer-directory');
 const envBoxOffer = offerFromEnv(process.env, { error: (m) => log.error('offers', m) });
-warnStoredOffer(() => JSON.parse(fs.readFileSync(path.join(userDataPath, 'ui-settings.json'), 'utf8')), (m) => log.warn('offers', m));
+if (envBoxOffer === undefined) warnStoredOffer(() => JSON.parse(fs.readFileSync(path.join(userDataPath, 'ui-settings.json'), 'utf8')), (m) => log.warn('offers', m));
 const offerDirectory = createOfferDirectory();
 const runtimeProbe = createRuntimeProbe({
   enabled: enableSandbox,
@@ -1895,6 +1895,7 @@ const runtimeProbe = createRuntimeProbe({
 });
 const getBoxOffer = () => (envBoxOffer !== undefined ? envBoxOffer : uiSettings.get().boxOffer);
 const getOfferFacts = () => hostFacts({ osModule: os, platform: process.platform, arch: process.arch, runtime: runtimeProbe.current() });
+if (getBoxOffer()?.enabled === true) runtimeProbe.refresh();
 const { createRemoteWiring } = require('./remote-wiring');
 const { readRemoteEnvToken, writeRemoteEnvToken, hasRemoteEnvToken, resolveRemoteToken } = require('./remote-token');
 const { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer } = createRemoteWiring({

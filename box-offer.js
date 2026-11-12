@@ -147,7 +147,7 @@ function offerEntry(offer, facts, now) {
     boxes: clean.boxes,
     open: scheduleOpen(clean, now instanceof Date ? now : new Date()),
     kinds: [...PRODUCED_KINDS],
-    facts: produceFacts(facts),
+    facts: produceFacts(typeof facts === 'function' ? facts() : facts),
   };
 }
 

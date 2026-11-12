@@ -132,3 +132,17 @@ test('hostFacts reads os, arch, cores and memory', () => {
     os: 'linux', arch: 'x64', cpus: 4, memMb: 8192, runtime: null,
   });
 });
+
+test('a full directory refuses a new source but refreshes a known one', () => {
+  let t = 0;
+  let n = 0;
+  const dir = createOfferDirectory({ now: () => t, maxRows: 2, newRoute: () => `r${++n}` });
+  assert.strictEqual(dir.set({ provenance: 'announce', source: 'a', offer: ENTRY }), true);
+  assert.strictEqual(dir.set({ provenance: 'announce', source: 'b', offer: ENTRY }), true);
+  assert.strictEqual(dir.set({ provenance: 'announce', source: 'c', offer: ENTRY }), false);
+  t = 10;
+  assert.strictEqual(dir.set({ provenance: 'announce', source: 'a', offer: ENTRY }), true);
+  assert.deepStrictEqual(dir.list().map((r) => [r.name, r.at]), [['a', 10], ['b', 0]]);
+  t = OFFER_TTL_MS;
+  assert.strictEqual(dir.set({ provenance: 'announce', source: 'c', offer: ENTRY }), true, 'an expired row frees its slot');
+});
