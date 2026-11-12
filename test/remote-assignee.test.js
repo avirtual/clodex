@@ -27,7 +27,33 @@ function makeRepo() {
 
 const SPEC = 'build the remote widget\nartifact tasks/remote-widget/SPEC.md';
 
-function rig({ online = true, caps = ['dm'], label = 'p', gitWorktree = require('../git-worktree') } = {}) {
+const realGw = require('../git-worktree');
+const gitAt = (version) => ({
+  ...realGw,
+  relativePointersRefusal: () => realGw.relativePointersRefusal({ readVersion: () => version }),
+  relativizeWorktreePointers: (top, tree) => realGw.relativizeWorktreePointers(top, tree, { readVersion: () => version }),
+});
+const NEW_GIT = 'git version 2.52.0';
+const OLD_GIT = 'git version 2.39.5 (Apple Git-154)';
+const HOST_GIT_TOO_OLD = realGw.relativePointersRefusal() || false;
+const OLD_GIT_REFUSAL = /ticket t1: worktree "t1-[^"]+" could not be created \(git 2\.39\.5 cannot read relative worktree pointers \(its worktree prune would delete the tree\); git 2\.48 or newer is needed\) — nothing sent, ticket left assigned to "x@p" and unstarted/;
+
+async function refusedOnOldGit() {
+  const r = rig({ gitWorktree: gitAt(OLD_GIT) });
+  r.task({ sub: 'add', who: 'x@p', start: true, body: SPEC });
+  await r.settle();
+  assert.match(r.injected.join('\n'), OLD_GIT_REFUSAL);
+  assert.strictEqual(r.one('t1').state, 'open');
+  assert.strictEqual(r.one('t1').assignee, 'x@p');
+  assert.strictEqual(r.one('t1').startedAt, null);
+  assert.strictEqual(r.one('t1').worktree, undefined);
+  assert.deepStrictEqual(r.sent, []);
+  assert.strictEqual(fsReal.existsSync(pathReal.join(r.team.root, '.clodex-wt')), false);
+  assert.strictEqual(execFileSync('git', ['-C', r.team.root, 'branch', '--list', 't1-*'], { encoding: 'utf8' }).trim(), '');
+  return r;
+}
+
+function rig({ online = true, caps = ['dm'], label = 'p', gitWorktree = gitAt(NEW_GIT) } = {}) {
   const root = makeRepo();
   const home = mkTmpRoot('clodex-ts-');
   const tstore = ticketsMod.createTicketsStore({ clodexHome: home });
@@ -308,7 +334,7 @@ test('C2a task add x@p start: the lead hears the late dispatch result', async ()
 });
 
 test('C2a a failed remote mint is replied, unstarts the ticket and sends nothing', async () => {
-  const real = require('../git-worktree');
+  const real = gitAt(NEW_GIT);
   const r = rig({ gitWorktree: { ...real, createWorktree: async () => ({ ok: false, error: 'boom' }) } });
   r.task({ sub: 'add', who: 'x@p', start: true, body: SPEC });
   await r.settle();
@@ -318,8 +344,8 @@ test('C2a a failed remote mint is replied, unstarts the ticket and sends nothing
   assert.deepStrictEqual(r.sent, []);
 });
 
-test('C2a a ticket cancelled during the mint gets no spec, and the tree and its new branch are removed', async () => {
-  const real = require('../git-worktree');
+test('C2a a ticket cancelled during the mint gets no spec, and the tree and its new branch are removed', { skip: HOST_GIT_TOO_OLD }, async () => {
+  const real = gitAt(NEW_GIT);
   let r = null;
   const gw = { ...real, createWorktree: async (...a) => {
     const all = r.tstore.load(r.team.root);
@@ -336,6 +362,18 @@ test('C2a a ticket cancelled during the mint gets no spec, and the tree and its 
   const branches = execFileSync('git', ['-C', r.team.root, 'branch', '--list', 't1-*'], { encoding: 'utf8' });
   assert.strictEqual(branches.trim(), '');
   assert.match(fsReal.readFileSync(pathReal.join(r.team.root, '.git', 'info', 'exclude'), 'utf8'), /^\.clodex-wt\/$/m);
+});
+
+test('C2a below git 2.48 the remote dispatch is refused before any tree or branch is minted', async () => {
+  let mints = 0;
+  const gw = { ...gitAt(OLD_GIT), createWorktree: async (...a) => { mints++; return realGw.createWorktree(...a); } };
+  const r = rig({ gitWorktree: gw });
+  r.task({ sub: 'add', who: 'x@p', start: true, body: SPEC });
+  await r.settle();
+  assert.match(r.injected.join('\n'), OLD_GIT_REFUSAL);
+  assert.strictEqual(mints, 0);
+  assert.deepStrictEqual(r.sent, []);
+  assert.strictEqual(fsReal.existsSync(pathReal.join(r.team.root, '.clodex-wt')), false);
 });
 
 test('C2a boxPathFor names no box path for a tree outside the root', () => {
@@ -365,7 +403,7 @@ const closeOut = (r) => {
   return r.m._closeOutMergedTicket(r.team, tickets.find((x) => x.id === 't1'), tickets, { by: 'ticket-loop' });
 };
 
-test('C2b (a) a remote-worked ticket runs verify and accept removes its in-root tree and branch, retiring no seat', async () => {
+test('C2b (a) a remote-worked ticket runs verify and accept removes its in-root tree and branch, retiring no seat', { skip: HOST_GIT_TOO_OLD }, async () => {
   const r = rig();
   const t = await remoteWorked(r);
   const after = r.one('t1');
@@ -384,6 +422,10 @@ test('C2b (a) a remote-worked ticket runs verify and accept removes its in-root 
   assert.strictEqual(retired, 0);
   assert.strictEqual(res.ok, true);
   assert.strictEqual(res.remote, true);
+});
+
+test('C2b (a) below git 2.48 a remote ticket is refused at dispatch, so no in-root tree is left for accept to remove', async () => {
+  await refusedOnOldGit();
 });
 
 test('C2b (b) a dirty remote tree at accept keeps the tree and the branch with the remote wording', async () => {
@@ -411,7 +453,7 @@ test('C2b (c) a loop rejection to a remote seat carries the box WORK IN line and
   assert.match(body, /the suite FAILS on your branch/);
 });
 
-test('C2b (d) a second ticket to the same remote seat gets its own tree and leaves the first alone', async () => {
+test('C2b (d) a second ticket to the same remote seat gets its own tree and leaves the first alone', { skip: HOST_GIT_TOO_OLD }, async () => {
   const r = rig();
   r.task({ sub: 'add', who: 'x@p', start: true, body: SPEC });
   await r.settle();
@@ -427,6 +469,16 @@ test('C2b (d) a second ticket to the same remote seat gets its own tree and leav
   assert.deepStrictEqual(r.one('t1').worktree, first);
   assert.strictEqual(fsReal.readFileSync(pathReal.join(first.path, 'mark.txt'), 'utf8'), 'first\n');
   assert.strictEqual(gitIn(first.path, 'rev-parse', '--abbrev-ref', 'HEAD').trim(), first.branch);
+});
+
+test('C2b (d) below git 2.48 a second ticket to the same remote seat is refused too, and no tree is minted for either', async () => {
+  const r = await refusedOnOldGit();
+  r.task({ sub: 'add', who: 'x@p', start: true, body: 'build the second gadget\nartifact tasks/second/SPEC.md' });
+  await r.settle();
+  assert.match(r.injected.join('\n'), /ticket t2: worktree "t2-[^"]+" could not be created \(git 2\.39\.5 cannot read relative worktree pointers/);
+  assert.strictEqual(r.one('t2').worktree, undefined);
+  assert.deepStrictEqual(r.sent, []);
+  assert.strictEqual(fsReal.existsSync(pathReal.join(r.team.root, '.clodex-wt')), false);
 });
 
 test('C2b (e) stall evidence on a remote ticket reads branch progress from the host tree', async () => {

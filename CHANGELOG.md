@@ -17,6 +17,7 @@ blocks a release.
 - An offer of test boxes can be widened from visible to runnable: named peers may then run test jobs on this machine once it is also a test runner. Off by default; switching it on asks for confirmation and lists the peers.
 - `[agent:team hands]` now reports how often the hand cap parked a ticket in the last week and how long those tickets waited.
 - A shadow comparison no longer counts slow-but-passing tests as failures; they are listed separately.
+- On a machine whose git is older than 2.48, Clodex no longer rewrites a ticket's worktree pointers in a way that git then deletes; it says which git version is needed.
 
 ## 5.177.1 — 2026-11-12
 
