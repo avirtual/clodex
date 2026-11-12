@@ -266,7 +266,12 @@ if [ "$IS_MAC" = "1" ]; then
   echo "::log macOS desktop checkout: installing with dev dependencies (Electron) and rebuilding node-pty for Electron"
   npm ci --no-audit --no-fund --loglevel=error >&2 \
     || fail npm-install "npm-ci-failed"
-  npx electron-rebuild >&2 || fail npm-install "electron-rebuild-failed"
+  if ! npx electron-rebuild >&2; then
+    rm -rf node_modules/node-pty/build
+    bash scripts/setup.sh --check --quiet >&2 \
+      || fail npm-install "electron-rebuild-failed-and-prebuilt-node-pty-cannot-spawn-under-electron"
+    echo "::log electron-rebuild failed; node-pty spawns under Electron with its prebuilt addon, using that"
+  fi
 else
   npm ci --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error >&2 \
     || fail npm-install "npm-ci-failed"
