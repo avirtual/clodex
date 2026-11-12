@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — Test-box offers between peers, team box definitions, runner mode in Preferences
 
 - A node can record an offer to host test boxes for named peers (off by default, discovery only).
 - `clodexctl create node --import` updates a context whose peer address changed in the app (ssh host or url) instead of skipping it; other settings on the context are kept.
