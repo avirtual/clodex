@@ -417,3 +417,12 @@ test('a client-side throw mid-upload ends unknown with an end record and cancels
   const lines = fs.readFileSync(ledgerFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.deepStrictEqual(lines.map((l) => [l.phase, l.jobId, l.outcome]), [['end', 'run-t', 'unknown']]);
 });
+
+test('a wrong suite token keeps its 401 through suiteAsk, and reachable names the refusal', async (t) => {
+  const { port } = await startServer(t, {});
+  const { conn } = peerFor(t, port, 'w'.repeat(SUITE_TOKEN.length));
+  const r = await conn.suiteAsk('GET', '/api/suite/info');
+  assert.deepStrictEqual([r.status, r.body], [401, null]);
+  const { client } = clientFor(conn);
+  assert.deepStrictEqual(await client.reachable('runner-1'), { ok: false, why: 'runner refused the token (status 401)' });
+});
