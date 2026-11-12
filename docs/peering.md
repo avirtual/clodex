@@ -510,7 +510,8 @@ job or a result for another job or tree is `unknown`, never a pass.
 ### 2d. Box offers (owner side)
 
 A node may offer test boxes to named peers (`boxOffer` ui-setting, or env
-`CLODEX_BOX_OFFER`, which wins when set; box-offer.js validates both). This is
+`CLODEX_BOX_OFFER`, which wins when set; box-offer.js validates both). While the
+env var is set the stored setting is not read or checked at all. This is
 discovery only: nothing is built or run. remote-wiring injects `offerFor`,
 `receiveOffers` and `listOffers` (`offerCallbacks`); without them hello has no
 `offers` cap, both routes answer 501 and `offers` is absent from
@@ -529,7 +530,23 @@ discovery only: nothing is built or run. remote-wiring injects `offerFor`,
   `{v:1, from:<dialer label>, own:<entry>|null}`. `own` is sanitised by
   `sanitizeWireOffers`; an entry with an unknown key, a missing fact or any scope
   but `discovery` is a 400 and nothing is stored. A `null` own removes that
-  dialer's row. Any `relayed` field is ignored. Reply `{ok:true}`.
+  dialer's row. Any `relayed` field is ignored. Reply `{ok:true}`, or 503
+  `{ok:false, error:'offers directory full'}` when the directory refused a new
+  row.
+- **The dialer's half** (peer-client.js `_syncOffers`, wired by peer-wiring.js
+  `offerPeerCallbacks`). Every hello carries `?origin=<SELF_LABEL>`, the name
+  this node also sends as a DM `origin` and a roster `via`. After a non-scoped
+  hello whose caps include `offers`, the dialer stores the reply's `offers.own`
+  as a `hello` row keyed by the peer id (an absent field clears that row), then
+  POSTs its own entry for that peer, or `own:null` when it has none; a repeat
+  `null` after an acknowledged `null` is not sent. It rides the hello tick, so
+  the dialed node's `announce` row stays fresh while the link lives and expires
+  by the TTL when it goes quiet. A far side without the cap gets no POST; a
+  suite-scoped hello returns before any of this. `offers` is not part of
+  `identityChanged`, so an offer change never re-runs the dialect probe.
+- **Which name is matched.** The offer's `peers` holds this operator's names.
+  Dialed side: the dialer's self-asserted `origin` (its `SELF_LABEL`). Dialer
+  side: the label of the peer row being dialed.
 - **`GET /api/offers`** → `{ok, own, offers}`: `own` is this node's entry
   without the peer filter (or `null`), `offers` the directory rows
   `{route, provenance, name, offer, at}` (offer-directory.js, in memory, 60 s
