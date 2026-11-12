@@ -18,6 +18,7 @@ const { resolveAccountLabel, accountMissingError } = require('./accounts');
 const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const { idleClearAfterMs, IDLE_CLEAR_MIN_MS } = require('./assistant-sleep');
+const { localHalf } = require('./suite-client');
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
   DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS,
@@ -3067,7 +3068,7 @@ function createTicketMethods(deps, shared) {
       return findPeerByOrigin(pm.statuses() || [], name) || null;
     },
 
-    async _runnerReach(peer) {
+    async _runnerReach(peer, seen = {}) {
       const flat = (v) => String(v == null ? '?' : v).replace(/[\x00-\x1f\x7f]+/g, ' ').slice(0, 120);
       if (!peer) return 'not a known peer';
       if (!peer.online) return 'offline';
@@ -3079,13 +3080,46 @@ function createTicketMethods(deps, shared) {
       const q = (r.info && r.info.queue) || {};
       const queue = (q.running ? 1 : 0) + (Array.isArray(q.queued) ? q.queued.length : 0);
       const e = (r.info && r.info.env) || {};
+      seen.envKey = typeof e.envKey === 'string' && e.envKey ? e.envKey : null;
       return `reachable, suite capability, queue ${queue}, env ${flat(e.runner)} ${flat(e.platform)}/${flat(e.arch)} node ${flat(e.node)} key ${flat(e.envKey)}`;
+    },
+
+    _runnerTally(team, cur, envKey) {
+      const flat = (v) => String(v == null ? '?' : v).replace(/[\x00-\x1f\x7f]+/g, ' ').slice(0, 120);
+      const client = typeof deps.getSuiteClient === 'function' ? deps.getSuiteClient() : null;
+      if (!client || typeof client.tally !== 'function') return '';
+      let t;
+      try { t = client.tally({ team: team.name, envKey: envKey || null }); } catch { t = null; }
+      const shadowing = cur.gate === 'shadow';
+      if (!t || !t.envKey) return shadowing ? '; comparisons: none yet' : '';
+      if (!t.agree && !t.disagree && !shadowing) return '';
+      const one = (t.oneSided || []).slice(0, 10).map((o) => `${flat(o.name)} (${o.side} only, ${o.count}x)`);
+      const more = (t.oneSided || []).length > 10 ? ` (+${t.oneSided.length - 10} more)` : '';
+      return `; comparisons under env ${flat(t.envKey)}: ${t.agree} agree, ${t.disagree} disagree`
+        + (one.length ? `; failed on one side only: ${one.join(', ')}${more}` : '');
     },
 
     async _handleTeamRunner(team, intent, reply) {
       const cur = team.testRunner || null;
       if (intent.gate != null) {
-        reply('error: gate routing is not available yet — [agent:team runner] sets the peer and hands:<off|full|all> only');
+        if (intent.value || intent.hands != null) {
+          reply('error: set the peer, the hands mode and the gate mode in separate [agent:team runner] intents');
+          return;
+        }
+        if (intent.gate === 'on') {
+          reply('error: gate:on is not available yet — gate:shadow runs the loop\'s suites on the runner beside the local run, and [agent:team runner] shows how often they agree');
+          return;
+        }
+        if (intent.gate !== 'off' && intent.gate !== 'shadow') {
+          reply(`error: gate must be one of off | shadow, not "${intent.gate}"`);
+          return;
+        }
+        if (!cur) {
+          reply('error: no test runner is set — name one first with [agent:team runner <peer>]');
+          return;
+        }
+        const m = deps.setTeamTestRunner(team.name, { gate: intent.gate });
+        reply(`test runner gate mode of ${team.name} set to ${m.testRunner.gate}`);
         return;
       }
       if (intent.hands != null && intent.value) {
@@ -3111,8 +3145,9 @@ function createTicketMethods(deps, shared) {
           reply(`test runner of ${team.name}: off${bad ? ' (team.json testRunner is invalid and ignored)' : ''} — [agent:team runner <peer>] names one`);
           return;
         }
-        const reach = await this._runnerReach(this._runnerPeerStatus(cur.peer));
-        reply(`test runner of ${team.name}: ${cur.peer}, hands ${cur.hands} — ${reach}`);
+        const seen = {};
+        const reach = await this._runnerReach(this._runnerPeerStatus(cur.peer), seen);
+        reply(`test runner of ${team.name}: ${cur.peer}, hands ${cur.hands}, gate ${cur.gate || 'off'} — ${reach}${this._runnerTally(team, cur, seen.envKey)}`);
         return;
       }
       if (intent.value === 'off') {
@@ -6172,6 +6207,26 @@ function createTicketMethods(deps, shared) {
       return null;
     },
 
+    async _shadowSubmit(team, ticket, cwd, opts) {
+      const tr = team && team.testRunner;
+      if (!tr || !tr.peer || tr.gate !== 'shadow') return null;
+      const kind = opts && opts.merge ? 'post-merge' : 'verify';
+      try {
+        const client = typeof deps.getSuiteClient === 'function' ? deps.getSuiteClient() : null;
+        if (!client || typeof client.shadow !== 'function') throw new Error('no suite client on this node');
+        const peer = this._runnerPeerStatus(tr.peer);
+        if (!peer) throw new Error(`runner ${tr.peer} is not a known peer`);
+        return await client.shadow({
+          peer: peer.id, name: tr.peer, tree: cwd, kind, team: team.name, ticket: String(ticket.id),
+          setup: tr.setup || null, env: tr.env || {}, route: 'gate:shadow',
+          queueBudgetMs: TICKET_SUITE_LOCK_WAIT_MS, budgetMs: TICKET_SUITE_TIMEOUT,
+        });
+      } catch (e) {
+        log.warn('ticket', `ticket ${ticket.id}: ${kind} shadow run not submitted — ${e && e.message ? e.message : e}`);
+        return null;
+      }
+    },
+
     // The test lock stays pinned to team.root through CLODEX_TEST_LOCK_DIR, also under `runIn`: the runner's own default roots it at the
     // tree it runs in, a different mutex from the lead's, and the port-binding tests would deadlock.
     async _runTicketSuite(team, ticket, runIn = null, opts = {}) {
@@ -6229,6 +6284,7 @@ function createTicketMethods(deps, shared) {
         }
       }
 
+      const shadow = await this._shadowSubmit(team, ticket, cwd, opts);
       // Read before the run and never later: a sha newer than what ran sends a hand editing correct work. The lock wait (taken by the
       // child) stays uncovered; `headEnd` below reports whether HEAD moved.
       out.startedAt = new Date().toISOString();
@@ -6303,7 +6359,7 @@ function createTicketMethods(deps, shared) {
               })}\n`);
             } catch {}
           }
-          finish({ error: `the suite did not finish within ${TICKET_SUITE_TIMEOUT}ms (killed)`, stdout, stderr });
+          finish({ error: `the suite did not finish within ${TICKET_SUITE_TIMEOUT}ms (killed)`, stdout, stderr, timedOut: true });
         }, TICKET_SUITE_TIMEOUT);
         child.on('error', (e) => finish({ error: `the runner could not start: ${e.message}`, stdout, stderr }));
         child.on('close', (code) => finish({ code, stdout, stderr }));
@@ -6312,6 +6368,13 @@ function createTicketMethods(deps, shared) {
       // Second HEAD read, kept apart from `head` (the header's pre-run capture): the writer only uses it to say HEAD moved.
       // It sits before the `res.error` return so the timeout and crash arms are covered too.
       out.headEnd = await gitWorktree.currentBranch(cwd).catch(() => null);
+      if (shadow) {
+        try {
+          shadow.local(localHalf({ ...res, durationMs: Date.now() - ledgerStart }));
+        } catch (e) {
+          log.warn('ticket', `ticket ${ticket.id}: shadow comparison dropped — ${e && e.message ? e.message : e}`);
+        }
+      }
 
       const text = `${res.stdout || ''}\n${res.stderr || ''}`;
       // Error and no-TOTALS arms carry the raw capture like the red arm: a crashed post-merge run reverts master just as a red one does.

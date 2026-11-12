@@ -1957,6 +1957,7 @@ const { createSuiteClient } = require('./suite-client');
 const suiteClient = createSuiteClient({
   getPeerManager: () => peerManager,
   ledgerFile: path.join(REGISTRY_DIR, 'logs', 'suite-runs.jsonl'),
+  compareFile: path.join(REGISTRY_DIR, 'logs', 'suite-compare.jsonl'),
   log: (m) => log.info('suite-client', m),
 });
 

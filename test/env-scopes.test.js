@@ -91,7 +91,7 @@ test('CLODEX_REMOTE_TOKEN is deny-listed in the merge (every scope)', () => {
   assert.strictEqual(merged.CLODEX_REMOTE_TOKEN, 'real-gate');
 });
 
-for (const key of ['CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_ENVIRONMENT_KIND', 'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST']) {
+for (const key of ['CLODEX_SUITE_TOKEN', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_ENVIRONMENT_KIND', 'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST']) {
   test(`${key} is deny-listed in the merge (every scope)`, () => {
     assert.ok(DENY_KEYS.has(key));
     assert.match(envKeyError(key, 'x'), /not allowed/);

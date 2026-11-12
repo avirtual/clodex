@@ -4797,3 +4797,26 @@ test('t2228: a merge does not clear a marker another queued merge wrote', async 
   assert.match(f.masterLog(), /Merge t1:/, 'ENTER: t1 merged');
   assert.deepStrictEqual(mergeMarker(repo), { ticket: 't7', at: 5_000_000 });
 });
+
+test('t2264: under gate:shadow the post-merge shadow job carries the merge commit\'s sha, not the branch\'s', async () => {
+  const { createSuiteClient } = require('../suite-client');
+  const repo = mkRepo();
+  const branchSha = commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const f = mkMerge({ repo });
+  const posts = [];
+  const conn = {
+    suiteAsk: async (method, p, body) => {
+      if (p === '/api/suite/info') return { status: 200, body: { ok: true, limits: {}, env: { envKey: 'k' } } };
+      if (method === 'POST' && p === '/api/suite/jobs') { posts.push(body); return { status: 200, body: { ok: false, error: 'stop here' } }; }
+      return { status: 200, body: { ok: true } };
+    },
+  };
+  f.deps.getSuiteClient = () => createSuiteClient({ getPeerManager: () => ({ get: () => conn }), sleep: async () => {} });
+  f.m._runnerPeerStatus = () => ({ id: 'p1' });
+  f.team.testRunner = { peer: 'runner-1', hands: 'off', gate: 'shadow' };
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+  assert.deepStrictEqual(f.esc(), [], 'ENTER: the merge landed green');
+  const merged = f.masterHead();
+  assert.notStrictEqual(merged, branchSha);
+  assert.deepStrictEqual(posts.map((b) => [b.kind, b.ticket, b.sha]), [['post-merge', 't1', merged]]);
+});
