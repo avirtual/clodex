@@ -471,6 +471,7 @@ test('deps cache: a miss runs setup once and seals the entry, a hit links it and
   assert.deepStrictEqual(setupRuns, [['d1', 'setup'], ['d1', 'test'], ['d2', 'test']]);
   const repoDeps = path.join(f.work, 'deps', f.snap.repoKey);
   const entries = fs.readdirSync(repoDeps).filter((n) => !n.endsWith('.json'));
+  assert.strictEqual((fs.statSync(repoDeps).mode & 0o777).toString(8), '711', 'a job cannot list the repo\'s deps entries');
   assert.strictEqual(entries.length, 1);
   const entry = path.join(repoDeps, entries[0]);
   assert.deepStrictEqual(listing(entry), {
@@ -537,6 +538,7 @@ test('clodex-suite-exec refuses every path outside its work root', (t) => {
   const other = path.join(mirrors, `${'b'.repeat(64)}.git`);
   for (const m of [own, other]) { fs.mkdirSync(m, { recursive: true }); fs.chmodSync(m, 0o750); }
   fs.symlinkSync(outside, path.join(mirrors, `${'d'.repeat(40)}.git`));
+  fs.mkdirSync(path.join(mirrors, 'not-a-mirror.git'));
   const env = { PATH: process.env.PATH, CLODEX_SUITE_WORK: work, CLODEX_SUITE_USER: 'clodex-suite-test-nouser' };
   const run = (...args) => spawnSync('bash', [HELPER, ...args], { env, encoding: 'utf8' });
   const rows = [
