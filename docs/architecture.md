@@ -589,6 +589,11 @@ not by size:
   The gate is `_teamInUse` on the manager (live role seats, non-terminal tickets);
   a team whose manifest will not load skips it and is deletable, because that is
   the team an operator most wants gone.
+- **team-box.js** — the team's test-box definition, `teams/<name>/box/Dockerfile`
+  with `box.json` beside it: the form check (`validateBoxDefinition`), the
+  definition hash, `rev` and a 20-deep history (`writeBox`, `clearBox`), and the
+  Dockerfile `init` generates from the sandbox bootstrap. Pure fs; the
+  `[agent:team box]` verb in team-tickets.js (`_handleTeamBox`) is its only caller.
 - **team-preflight.js** — "does this team's manifest name anything that resolves
   to nothing?", as findings rather than as N scattered warns. One resolver, and
   every surface (roles popover, Create Team…, the spawn/dispatch replies) is a
