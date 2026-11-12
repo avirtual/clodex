@@ -62,7 +62,7 @@ const OPTS = { peer: 'p1', name: 'runner-1', tree: '/w', kind: 'verify', team: '
 const REMOTE = (over) => ({ outcome: 'pass', reason: null, pass: 5, fail: 0, tests: 5, failing: [], slow: [], jobId: 'run-1', queueMs: 3, runMs: 40, ...over });
 const LOCAL = (over) => ({ outcome: 'pass', pass: 5, fail: 0, tests: 5, failing: [], slow: [], durationMs: 70, ...over });
 const RECORD = (local, remote, agree) => ({
-  at: '1970-01-01T00:00:01.000Z', team: 'tm', kind: 'verify', ticket: 't1', treeHash: TREE, sha: HEAD, envKey: 'k1', local, remote, agree,
+  at: '1970-01-01T00:00:01.000Z', team: 'tm', kind: 'verify', ticket: 't1', treeHash: TREE, sha: HEAD, envKey: 'k1', wire: 'push', local, remote, agree,
 });
 
 const RECORD_ROWS = [
@@ -177,3 +177,79 @@ test('tally: counts agreements and one-sided failing names under one env key; an
   });
   assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k2' }), { envKey: 'k2', agree: 0, disagree: 0, oneSided: [] });
 });
+
+test('t2303: a detached skip row is written as its own kind and is counted as neither agreement nor disagreement', () => {
+  const file = path.join(mkTmpRoot('suite-skip-'), 'suite-compare.jsonl');
+  const client = createSuiteClient({ getPeerManager: () => null, compareFile: file, now: () => 1000 });
+  fs.writeFileSync(file, `${JSON.stringify(rec('k1', true, [], []))}\n`);
+  client.shadowSkip({ team: 'tm', kind: 'post-merge', ticket: 't1', runner: 'laptop', skipped: 'detached' });
+  const lines = fs.readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepStrictEqual(lines[1], {
+    at: '1970-01-01T00:00:01.000Z', team: 'tm', kind: 'post-merge', ticket: 't1', wire: 'pull', runner: 'laptop', skipped: 'detached', agree: null,
+  });
+  assert.deepStrictEqual(client.tally({ team: 'tm' }), { envKey: 'k1', agree: 1, disagree: 0, oneSided: [] });
+  assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k1' }), { envKey: 'k1', agree: 1, disagree: 0, oneSided: [] });
+});
+
+function runPair(conn, wire) {
+  let n = 0;
+  return createSuiteClient({
+    getPeerManager: () => ({ get: (id) => (wire === 'push' && id === 'p1' ? conn : null) }),
+    getSuiteDesk: () => ({ conn: (origin) => (wire === 'pull' && origin === 'laptop' ? conn : null) }),
+    now: () => 1000,
+    randomUUID: () => `run-${(n += 1)}`,
+    snapshot: { snapshotTree: async () => ({ treeHash: TREE, head: HEAD, headTree: TREE }), releaseSnapshot: () => {} },
+    sleep: async () => {},
+  });
+}
+
+test('t2303: run over a desk conn returns what the push arm returns for the same answers, apart from wire and runner', async () => {
+  const RUN = { tree: '/w', kind: 'verify', team: 'tm', ticket: 't1', name: 'runner' };
+  const push = remoteConn({ stdout: RED_A, code: 1 });
+  const pull = remoteConn({ stdout: RED_A, code: 1 });
+  const a = await runPair(push.conn, 'push').run({ ...RUN, peer: 'p1' });
+  const b = await runPair(pull.conn, 'pull').run({ ...RUN, peer: 'laptop', wire: 'pull' });
+  assert.strictEqual(a.record.outcome, 'fail', 'ENTER: the push arm measured a red run');
+  assert.deepStrictEqual([a.record.wire, a.record.runner, b.record.wire, b.record.runner], ['push', 'p1', 'pull', 'laptop']);
+  assert.deepStrictEqual(pull.calls, push.calls);
+  const strip = (out) => ({ ...out, record: { ...out.record, wire: '-', runner: '-' } });
+  assert.deepStrictEqual(strip(b), strip(a));
+});
+
+const RESTART = { status: 404, body: { ok: false, error: 'runner session replaced', reason: 'runner-restart' }, error: null };
+
+function restartConn(where, times) {
+  const base = remoteConn();
+  let left = times;
+  const conn = {
+    suiteAsk: async (method, p, ...rest) => {
+      const hit = (where === 'info' && p === '/api/suite/info') || (where === 'submit' && method === 'POST')
+        || (where === 'output' && p.includes('/output?'));
+      if (hit && left > 0) {
+        left -= 1;
+        base.calls.push(`${method} ${p.split('?')[0]} -> restart`);
+        return RESTART;
+      }
+      return base.conn.suiteAsk(method, p, ...rest);
+    },
+  };
+  return { conn, calls: base.calls };
+}
+
+const RESTART_ROWS = [
+  ['info, once', 'info', 1, { outcome: 'pass', reason: null, attempt: 2 }],
+  ['info, twice', 'info', 2, { outcome: 'unknown', reason: 'runner restarted', attempt: 2 }],
+  ['submit, once', 'submit', 1, { outcome: 'pass', reason: null, attempt: 2 }],
+  ['submit, twice', 'submit', 2, { outcome: 'unknown', reason: 'runner restarted', attempt: 2 }],
+  ['output read, once', 'output', 1, { outcome: 'pass', reason: null, attempt: 2 }],
+  ['output read, twice', 'output', 2, { outcome: 'unknown', reason: 'runner restarted', attempt: 2 }],
+];
+
+for (const [name, where, times, want] of RESTART_ROWS) {
+  test(`t2303: a runner-restart answer on ${name} is retried once against the new session, then the run ends unknown`, async () => {
+    const { conn, calls } = restartConn(where, times);
+    const out = await runPair(conn, 'pull').run({ tree: '/w', kind: 'verify', team: 'tm', ticket: 't1', peer: 'laptop', wire: 'pull' });
+    assert.ok(calls.some((c) => c.endsWith('-> restart')), 'ENTER: the desk answered runner-restart');
+    assert.deepStrictEqual({ outcome: out.record.outcome, reason: out.record.reason, attempt: out.record.attempt }, want);
+  });
+}

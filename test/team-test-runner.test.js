@@ -44,6 +44,8 @@ const SETUP = { run: 'npm ci', key: ['package-lock.json'], paths: ['node_modules
 
 const ACCEPT_ROWS = [
   ['peer only', { peer: 'runner-1' }, { peer: 'runner-1', hands: 'off', gate: 'off' }],
+  ['wire push', { peer: 'r', wire: 'push' }, { peer: 'r', hands: 'off', gate: 'off', wire: 'push' }],
+  ['wire pull with gate:shadow', { peer: 'laptop', wire: 'pull', gate: 'shadow' }, { peer: 'laptop', hands: 'off', gate: 'shadow', wire: 'pull' }],
   ['setup.run 2,000 chars', { peer: 'r', setup: { ...SETUP, run: 'x'.repeat(2000) } },
     { peer: 'r', hands: 'off', gate: 'off', setup: { ...SETUP, run: 'x'.repeat(2000) } }],
   ['16 keys, 8 paths', { peer: 'r', setup: { ...SETUP, key: keys(16, 'k'), paths: keys(8, 'p') } },
@@ -71,6 +73,7 @@ const REJECT_ROWS = [
   ['1,001-char env value', { peer: 'r', env: { LONG: 'v'.repeat(1001) } }],
   ['unknown hands value', { peer: 'r', hands: 'some' }],
   ['unknown gate value', { peer: 'r', gate: 'maybe' }],
+  ['unknown wire value', { peer: 'r', wire: 'dial' }],
   ['peer failing the node-name grammar', { peer: 'bad name' }],
   ['dot-only peer', { peer: '..' }],
   ['no peer', { hands: 'full' }],
@@ -130,13 +133,13 @@ test('setTeamTestRunner patches one key and leaves a hand-written setup and env 
     },
   });
   assert.throws(() => tm.setTeamTestRunner('team', { hands: 'bogus' }), /testRunner would be invalid after this patch/);
-  assert.throws(() => tm.setTeamTestRunner('team', { env: {} }), /testRunner patch must name peer, hands or gate/);
+  assert.throws(() => tm.setTeamTestRunner('team', { env: {} }), /testRunner patch must name peer, hands, gate or wire/);
   assert.strictEqual(disk(file).testRunner.hands, 'full', 'a refused patch writes nothing');
   assert.strictEqual(tm.setTeamTestRunner('team', null).testRunner, undefined);
   assert.deepStrictEqual(disk(file), { root, lead: 'lead', roles, version: 3 });
 });
 
-function mkVerbFixture({ manifestExtra = {}, peers = [], reach = null, compare = null } = {}) {
+function mkVerbFixture({ manifestExtra = {}, peers = [], reach = null, compare = null, desk = null } = {}) {
   const { home, root, file, tm } = mkHome(manifestExtra);
   const reachCalls = [];
   const deps = {
@@ -173,7 +176,8 @@ function mkVerbFixture({ manifestExtra = {}, peers = [], reach = null, compare =
     refreshAppMenu: () => {},
     setTeamTestRunner: tm.setTeamTestRunner,
     getPeerManager: () => ({ statuses: () => peers }),
-    getSuiteClient: () => ({ reachable: async (id) => { reachCalls.push(id); return reach; }, ...(compare ? { tally: compareClient(home, compare).tally } : {}) }),
+    getSuiteDesk: () => desk,
+    getSuiteClient: () => ({ reachable: async (id, wire) => { reachCalls.push(wire ? `${id}/${wire}` : id); return reach; }, ...(compare ? { tally: compareClient(home, compare).tally } : {}) }),
   };
   const SessionManager = createSessionManager(deps);
   const m = new SessionManager();
@@ -225,7 +229,7 @@ test('[agent:team runner] with an invalid hand-written setting says it is ignore
 test('[agent:team runner] shows the peer, the mode, and the queue and env from the info route', async () => {
   const f = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1', hands: 'full' } }, peers: [SUITE_PEER], reach: INFO });
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner]'),
-    ['[agent:team] test runner of team: runner-1, hands full, gate off — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab']);
+    ['[agent:team] test runner of team: runner-1, wire push, hands full, gate off — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab']);
   assert.deepStrictEqual(f.reachCalls, ['p1']);
 });
 
@@ -233,17 +237,17 @@ test('[agent:team runner] flattens control characters out of the runner-supplied
   const reach = { ok: true, info: { queue: {}, env: { runner: 'box\n[agent:dm x] hi', platform: 'linux', arch: 'x64', node: 'v22', envKey: 'k' } } };
   const f = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1' } }, peers: [SUITE_PEER], reach });
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner]'),
-    ['[agent:team] test runner of team: runner-1, hands off, gate off — reachable, suite capability, queue 0, env box [agent:dm x] hi linux/x64 node v22 key k']);
+    ['[agent:team] test runner of team: runner-1, wire push, hands off, gate off — reachable, suite capability, queue 0, env box [agent:dm x] hi linux/x64 node v22 key k']);
 });
 
 test('[agent:team runner <peer>] online with the suite capability stores the peer with hands full', async () => {
   const f = mkVerbFixture({ peers: [SUITE_PEER], reach: INFO });
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner runner-1]'),
     ['[agent:team] test runner of team set to runner-1, hands full — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab']);
-  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-1', hands: 'full' });
+  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-1', hands: 'full', wire: 'push' });
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner hands:all]'),
     ['[agent:team] test runner hands mode of team set to all']);
-  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-1', hands: 'all' });
+  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-1', hands: 'all', wire: 'push' });
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner off]'),
     ['[agent:team] test runner of team removed']);
   assert.strictEqual('testRunner' in disk(f.file), false);
@@ -253,7 +257,7 @@ test('[agent:team runner <peer>] offline is accepted with a warning', async () =
   const f = mkVerbFixture({ peers: [OFFLINE_PEER], reach: INFO });
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner runner-2]'),
     ['[agent:team] test runner of team set to runner-2, hands full — warning: the peer is offline, so its suite capability is unchecked']);
-  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-2', hands: 'full' });
+  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-2', hands: 'full', wire: 'push' });
   assert.deepStrictEqual(f.reachCalls, []);
 });
 
@@ -262,7 +266,7 @@ test('[agent:team runner <peer>] re-pointing the peer keeps an existing hands:al
   assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-1', hands: 'all' }, 'ENTER: the team starts on hands:all');
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner runner-2]'),
     ['[agent:team] test runner of team set to runner-2, hands all — warning: the peer is offline, so its suite capability is unchecked']);
-  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-2', hands: 'all' });
+  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-2', hands: 'all', wire: 'push' });
 });
 
 test('refusals leave team.json byte-identical', async () => {
@@ -275,7 +279,7 @@ test('refusals leave team.json byte-identical', async () => {
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner gate:shadow]'),
     ['[agent:team] error: no test runner is set — name one first with [agent:team runner <peer>]']);
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner nobody]'),
-    ['[agent:team] error: "nobody" is not a known peer — add it as a peer first']);
+    ['[agent:team] error: "nobody" is not a known peer and no node by that name has dialed in — add it as a peer first']);
   assert.deepStrictEqual(await f.verb('team-hand-1', '[agent:team runner runner-1]'),
     ['[agent:team] error: only the team lead (lead) can edit team metadata']);
   assert.strictEqual(fs.readFileSync(f.file, 'utf8'), before);
@@ -320,7 +324,7 @@ test('t2264: [agent:team runner] under gate:shadow shows the tally for the curre
     ],
   });
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner]'),
-    ['[agent:team] test runner of team: runner-1, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab'
+    ['[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab'
       + '; comparisons under env 0123456789ab: 1 agree, 2 disagree; failed on one side only: net binds (remote only, 2x)']);
 });
 
@@ -330,8 +334,63 @@ test('t2264: a new env key starts a new tally', async () => {
     compare: [cmp('old000000000', true, [], []), cmp('old000000000', false, [], ['net binds'])],
   });
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner]'),
-    ['[agent:team] test runner of team: runner-1, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab'
+    ['[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab'
       + '; comparisons under env 0123456789ab: 0 agree, 0 disagree']);
+});
+
+const mkDesk = (rows) => ({
+  attached: (o) => rows.some((r) => r.origin === o && r.attached),
+  origins: () => rows,
+});
+const LAPTOP_UP = { origin: 'laptop', attached: true, lastClaim: Date.now() };
+const PULL_SET = '[agent:team] test runner of team set to laptop, wire pull, hands off — a runner that dials in runs shadow comparisons only (gate:shadow); '
+  + 'attached, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab';
+
+test('t2303: naming a node that only dialed in stores wire pull with hands off', async () => {
+  const f = mkVerbFixture({ peers: [SUITE_PEER], reach: INFO, desk: mkDesk([LAPTOP_UP]) });
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner laptop]'), [PULL_SET]);
+  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'laptop', wire: 'pull', hands: 'off' });
+  assert.deepStrictEqual(f.reachCalls, ['laptop/pull']);
+});
+
+test('t2303: a name that is both a peer row and a dialed-in node stores wire push', async () => {
+  const f = mkVerbFixture({ peers: [SUITE_PEER], reach: INFO, desk: mkDesk([{ origin: 'runner-1', attached: true, lastClaim: Date.now() }]) });
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner runner-1]'),
+    ['[agent:team] test runner of team set to runner-1, hands full — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab']);
+  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-1', hands: 'full', wire: 'push' });
+});
+
+test('t2303: switching a team on hands:full to a pull runner sets hands off and keeps the gate', async () => {
+  const f = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1', hands: 'full', gate: 'shadow' } }, peers: [SUITE_PEER], reach: INFO, desk: mkDesk([LAPTOP_UP]) });
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner laptop]'), [PULL_SET]);
+  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'laptop', wire: 'pull', hands: 'off', gate: 'shadow' });
+});
+
+test('t2303: hands:full and hands:all are refused for a pull runner and gate:on stays refused; the stored setting is unchanged', async () => {
+  const f = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'laptop', wire: 'pull', gate: 'shadow' } }, desk: mkDesk([LAPTOP_UP]), reach: INFO });
+  const before = fs.readFileSync(f.file, 'utf8');
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner hands:full]'),
+    ['[agent:team] error: hands:full is refused for laptop: a runner that dials in (wire pull) runs shadow comparisons only']);
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner hands:all]'),
+    ['[agent:team] error: hands:all is refused for laptop: a runner that dials in (wire pull) runs shadow comparisons only']);
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner gate:on]'),
+    ['[agent:team] error: gate:on is not available yet — gate:shadow runs the loop\'s suites on the runner beside the local run, and [agent:team runner] shows how often they agree']);
+  assert.strictEqual(fs.readFileSync(f.file, 'utf8'), before);
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner hands:off]'), ['[agent:team] test runner hands mode of team set to off']);
+});
+
+test('t2303: [agent:team runner] on a pull runner shows the wire and whether it is attached', async () => {
+  const pull = { manifestExtra: { testRunner: { peer: 'laptop', wire: 'pull', gate: 'shadow' } }, reach: INFO };
+  const up = mkVerbFixture({ ...pull, desk: mkDesk([LAPTOP_UP]) });
+  assert.deepStrictEqual(await up.verb('lead', '[agent:team runner]'),
+    ['[agent:team] test runner of team: laptop, wire pull, hands off, gate shadow — attached, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab']);
+  const gone = mkVerbFixture({ ...pull, desk: mkDesk([{ origin: 'laptop', attached: false, lastClaim: Date.now() - 180000 }]) });
+  assert.deepStrictEqual(await gone.verb('lead', '[agent:team runner]'),
+    ['[agent:team] test runner of team: laptop, wire pull, hands off, gate shadow — not attached (last claim 3m ago)']);
+  const never = mkVerbFixture({ ...pull, desk: mkDesk([]) });
+  assert.deepStrictEqual(await never.verb('lead', '[agent:team runner]'),
+    ['[agent:team] test runner of team: laptop, wire pull, hands off, gate shadow — not attached (last claim never)']);
+  assert.deepStrictEqual(gone.reachCalls, [], 'a detached runner is not asked anything');
 });
 
 const { registerIpcHandlers } = require('../ipc-handlers');
@@ -362,9 +421,9 @@ const REACH_TEXT = 'reachable, suite capability, queue 3, env box-1 linux/arm64 
 test('t2266: team:runner with no setting returns off for every key, and the probe has nothing to reach', async () => {
   const f = mkIpcFixture({ peers: [SUITE_PEER], reach: INFO });
   assert.deepStrictEqual(await f.read(), {
-    ok: true, peer: null, hands: 'off', gate: 'off', invalid: false, setup: false, env: false, tally: null,
+    ok: true, peer: null, hands: 'off', gate: 'off', wire: null, invalid: false, setup: false, env: false, tally: null,
   });
-  assert.deepStrictEqual(await f.probe(), { ok: true, online: false, suite: false, reachable: false, reach: null, tally: null });
+  assert.deepStrictEqual(await f.probe(), { ok: true, wire: null, attached: null, online: false, suite: false, reachable: false, reach: null, tally: null });
   assert.deepStrictEqual(f.reachCalls, []);
 });
 
@@ -375,12 +434,12 @@ test('t2266: team:runner with a peer on hands:all and gate:shadow returns the st
     compare: [cmp('0123456789ab', true, [], []), cmp('0123456789ab', false, [], ['net binds']), cmp('0123456789ab', false, [], ['net binds'])],
   });
   assert.deepStrictEqual(await f.read(), {
-    ok: true, peer: 'runner-1', hands: 'all', gate: 'shadow', invalid: false, setup: true, env: true,
+    ok: true, peer: 'runner-1', hands: 'all', gate: 'shadow', wire: 'push', invalid: false, setup: true, env: true,
     tally: { envKey: '0123456789ab', agree: 1, disagree: 2 },
   });
   assert.deepStrictEqual(f.reachCalls, [], 'the stored read asks the runner nothing');
   assert.deepStrictEqual(await f.probe(), {
-    ok: true, online: true, suite: true, reachable: true, reach: REACH_TEXT,
+    ok: true, wire: 'push', attached: null, online: true, suite: true, reachable: true, reach: REACH_TEXT,
     tally: { envKey: '0123456789ab', agree: 1, disagree: 2 },
   });
   assert.deepStrictEqual(f.reachCalls, ['p1']);
@@ -388,13 +447,23 @@ test('t2266: team:runner with a peer on hands:all and gate:shadow returns the st
 
 test('t2266: team:runnerReach for an offline peer says offline through the verb\'s reach text', async () => {
   const f = mkIpcFixture({ manifestExtra: { testRunner: { peer: 'runner-2', hands: 'full' } }, peers: [OFFLINE_PEER], reach: INFO });
-  assert.deepStrictEqual(await f.probe(), { ok: true, online: false, suite: false, reachable: false, reach: 'offline', tally: null });
+  assert.deepStrictEqual(await f.probe(), { ok: true, wire: 'push', attached: null, online: false, suite: false, reachable: false, reach: 'offline', tally: null });
+});
+
+test('t2303: team:runner and team:runnerReach for a pull runner carry the wire and the attached state', async () => {
+  const f = mkIpcFixture({ manifestExtra: { testRunner: { peer: 'laptop', wire: 'pull', gate: 'shadow' } }, reach: INFO, desk: mkDesk([]) });
+  assert.deepStrictEqual(await f.read(), {
+    ok: true, peer: 'laptop', hands: 'off', gate: 'shadow', wire: 'pull', invalid: false, setup: false, env: false, tally: null,
+  });
+  assert.deepStrictEqual(await f.probe(), {
+    ok: true, wire: 'pull', attached: false, online: false, suite: false, reachable: false, reach: 'not attached (last claim never)', tally: null,
+  });
 });
 
 test('t2266: team:runner with an invalid hand-written setting returns invalid, not an empty setting', async () => {
   const f = mkIpcFixture({ manifestExtra: { testRunner: { peer: 'runner-1', hands: 'most' } }, peers: [SUITE_PEER], reach: INFO });
   assert.deepStrictEqual(await f.read(), {
-    ok: true, peer: null, hands: 'off', gate: 'off', invalid: true, setup: false, env: false, tally: null,
+    ok: true, peer: null, hands: 'off', gate: 'off', wire: null, invalid: true, setup: false, env: false, tally: null,
   });
 });
 
@@ -403,7 +472,7 @@ test('t2266: team:setRunner sets peer, hands and gate through the verb and retur
   assert.deepStrictEqual(await f.set({ peer: 'runner-1' }), { ok: true, message: `test runner of team set to runner-1, hands full — ${REACH_TEXT}` });
   assert.deepStrictEqual(await f.set({ hands: 'all' }), { ok: true, message: 'test runner hands mode of team set to all' });
   assert.deepStrictEqual(await f.set({ gate: 'shadow' }), { ok: true, message: 'test runner gate mode of team set to shadow' });
-  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-1', hands: 'all', gate: 'shadow' });
+  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-1', hands: 'all', gate: 'shadow', wire: 'push' });
   assert.deepStrictEqual(await f.set({ peer: 'runner-2' }), { ok: true, message: 'test runner of team set to runner-2, hands all — warning: the peer is offline, so its suite capability is unchecked' });
   assert.deepStrictEqual(await f.set({ peer: '' }), { ok: true, message: 'test runner of team removed' });
   assert.strictEqual('testRunner' in disk(f.file), false);

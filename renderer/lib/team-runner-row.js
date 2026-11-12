@@ -13,7 +13,8 @@ function runnerStateLine(info) {
       : 'none: hand and gate suites run on this machine';
   }
   const tally = info.tally ? `; shadow comparisons: ${info.tally.agree} agree, ${info.tally.disagree} disagree` : '';
-  return `${info.reach == null ? 'checking reachability…' : info.reach}${tally}`;
+  const wire = info.wire === 'pull' ? 'dials in (wire pull, shadow only): ' : '';
+  return `${wire}${info.reach == null ? 'checking reachability…' : info.reach}${tally}`;
 }
 
 function runnerPatchFor(act, value) {

@@ -1213,6 +1213,7 @@ const SessionManager = createSessionManager({
     setTeamMaxHands,
     setTeamTestRunner,
     getSuiteClient: () => suiteClient,
+    getSuiteDesk: () => suiteDesk,
     setLead,
     teamsDir,
     gatherTeam,
@@ -1980,6 +1981,7 @@ const {
 const { createSuiteClient } = require('./suite-client');
 const suiteClient = createSuiteClient({
   getPeerManager: () => peerManager,
+  getSuiteDesk: () => suiteDesk,
   ledgerFile: path.join(REGISTRY_DIR, 'logs', 'suite-runs.jsonl'),
   compareFile: path.join(REGISTRY_DIR, 'logs', 'suite-compare.jsonl'),
   log: (m) => log.info('suite-client', m),

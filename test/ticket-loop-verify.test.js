@@ -6815,7 +6815,7 @@ const SHADOW_LOCAL = {
   'zero-tests': 'console.log("TOTALS: 0 pass, 0 fail, 0 tests");\nprocess.exit(0);\n',
 };
 
-function shadowRemote(mode) {
+function shadowRemote(mode, { desk = null } = {}) {
   const out = { green: 'TOTALS: 5 pass, 0 fail, 5 tests\n', red: ' ✖ c (2ms)\nTOTALS: 4 pass, 1 fail, 5 tests\n' };
   const conn = {
     suiteAsk: (method, p) => {
@@ -6834,6 +6834,7 @@ function shadowRemote(mode) {
   const compareFile = pathReal.join(mkTmpRoot('clodex-shadow-'), 'suite-compare.jsonl');
   const client = createShadowClient({
     getPeerManager: () => ({ get: () => conn }),
+    getSuiteDesk: () => desk,
     compareFile,
     snapshot: { snapshotTree: async () => ({ treeHash: 'a'.repeat(40), head: 'b'.repeat(40), headTree: 'a'.repeat(40) }), releaseSnapshot: () => {} },
     sleep: async () => {},
@@ -6841,13 +6842,14 @@ function shadowRemote(mode) {
   return { ...client, compareFile, conn };
 }
 
-function shadowLoop(script) {
+function shadowLoop(script, { desk = null } = {}) {
   const repo = mkRepo();
   const spawns = [];
   const cp = require('node:child_process');
   const holder = { client: null, submits: 0 };
   const f = mkLoop({ repo, extraDeps: {
     getSuiteClient: () => holder.client,
+    getSuiteDesk: () => desk,
     childProcess: { ...cp, spawn: (cmd, args, opts) => { spawns.push({ cmd, args, env: { ...opts.env, CLODEX_SUITE_RUN_ID: '<id>' } }); return cp.spawn(cmd, args, opts); } },
   } });
   fsReal.writeFileSync(pathReal.join(repo.dir, 'wt', 'scripts', 'run-tests.js'), script);
@@ -6907,6 +6909,34 @@ test('t2264: no runner and gate:off submit nothing; gate:shadow submits once', a
     const r = await f.run(testRunner, shadowRemote('green'));
     assert.strictEqual(r.submits, want, name);
   }
+});
+
+test('t2303: an attached pull runner gets the shadow job over the desk; detached, nothing starts and exactly one skip row is written', async () => {
+  const PULL = { peer: 'laptop', hands: 'off', gate: 'shadow', wire: 'pull' };
+  const desk = { up: true, conns: [], remote: null };
+  desk.attached = (o) => desk.up && o === 'laptop';
+  desk.origins = () => [];
+  desk.conn = (o) => { desk.conns.push(o); return desk.remote.conn; };
+  desk.remote = shadowRemote('green', { desk });
+  const rows = () => (fsReal.existsSync(desk.remote.compareFile)
+    ? fsReal.readFileSync(desk.remote.compareFile, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
+  const f = shadowLoop(SHADOW_LOCAL.green, { desk });
+  const on = await f.run(PULL, desk.remote);
+  assert.strictEqual(on.submits, 1, 'ENTER: the attached pull runner was submitted');
+  for (let i = 0; i < 200 && rows().length < 1; i += 1) await new Promise((r) => setImmediate(r));
+  assert.ok(desk.conns.length > 0 && desk.conns.every((o) => o === 'laptop'), 'ENTER: the job went over the desk');
+  assert.deepStrictEqual(rows().map((r) => [r.wire, r.agree, r.skipped]), [['pull', true, undefined]]);
+  desk.up = false;
+  desk.conns.length = 0;
+  const off = await f.run(PULL, desk.remote);
+  assert.strictEqual(off.submits, 0);
+  assert.deepStrictEqual(desk.conns, []);
+  assert.deepStrictEqual(off.out, on.out, 'the local run is unchanged');
+  const [first, skip] = rows();
+  assert.strictEqual(rows().length, 2);
+  assert.deepStrictEqual({ ...skip, at: '<at>' }, {
+    at: '<at>', team: first.team, kind: 'verify', ticket: first.ticket, wire: 'pull', runner: 'laptop', skipped: 'detached', agree: null,
+  });
 });
 
 test('t2264: a shadow snapshot that never settles holds the local spawn only until the 2000ms wait passes, submits nothing, and is released when it settles late', async () => {

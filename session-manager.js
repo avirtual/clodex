@@ -7830,6 +7830,7 @@ function createSessionManager(deps) {
             seat: who,
             listWorktrees: (root) => gitWorktree.listWorktrees(root),
             resolvePeer: (name) => {
+              if (execTeam && execTeam.testRunner && execTeam.testRunner.wire === 'pull') return null;
               const peer = this._runnerPeerStatus(name);
               return peer ? peer.id : null;
             },

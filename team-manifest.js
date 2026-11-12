@@ -199,7 +199,8 @@ function normalizeMaxHands(v) {
 
 const TEST_RUNNER_HANDS = ['off', 'full', 'all'];
 const TEST_RUNNER_GATE = ['off', 'shadow', 'on'];
-const TEST_RUNNER_KEYS = ['peer', 'hands', 'gate', 'setup', 'env'];
+const TEST_RUNNER_WIRE = ['push', 'pull'];
+const TEST_RUNNER_KEYS = ['peer', 'hands', 'gate', 'wire', 'setup', 'env'];
 const TEST_RUNNER_SETUP_KEYS = ['run', 'key', 'paths', 'timeoutMs'];
 const TEST_RUNNER_ENV_RE = /^[A-Z_][A-Z0-9_]*$/;
 const TEST_RUNNER_TIMEOUT_MIN_MS = 10 * 1000;
@@ -238,10 +239,11 @@ function normalizeTestRunner(v) {
   const hands = v.hands === undefined ? 'off' : v.hands;
   const gate = v.gate === undefined ? 'off' : v.gate;
   if (!TEST_RUNNER_HANDS.includes(hands) || !TEST_RUNNER_GATE.includes(gate)) return null;
+  if (v.wire !== undefined && !TEST_RUNNER_WIRE.includes(v.wire)) return null;
   const setup = v.setup === undefined ? undefined : normalizeRunnerSetup(v.setup);
   const env = v.env === undefined ? undefined : normalizeRunnerEnv(v.env);
   if (setup === null || env === null) return null;
-  return { peer: v.peer, hands, gate, ...(setup ? { setup } : {}), ...(env ? { env } : {}) };
+  return { peer: v.peer, hands, gate, ...(v.wire !== undefined ? { wire: v.wire } : {}), ...(setup ? { setup } : {}), ...(env ? { env } : {}) };
 }
 
 function boxCpus(cpuMax, cpus) {
@@ -1694,8 +1696,8 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
   function setTeamTestRunner(teamName, patch) {
     const team = loadManifest(teamName);
     if (patch !== null && (!isPlainObject(patch) || !Object.keys(patch).length
-      || Object.keys(patch).some((k) => !['peer', 'hands', 'gate'].includes(k)))) {
-      throw new Error(`testRunner patch must name peer, hands or gate, or be null for off (${team.file})`);
+      || Object.keys(patch).some((k) => !['peer', 'hands', 'gate', 'wire'].includes(k)))) {
+      throw new Error(`testRunner patch must name peer, hands, gate or wire, or be null for off (${team.file})`);
     }
     const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
     if (patch === null) {
@@ -1887,6 +1889,6 @@ module.exports = {
   // Exported so the retired-field warn test iterates the REAL list — a copy in
   // the test would keep passing over a field added here and never warned about.
   ROLE_KEYS, CUT_ROLE_FIELDS, HONORED_CUT_FIELDS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, MANIFEST_VERSION,
-  ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH, normalizeTrunk, TRUNK_HEAD, DONE_VALUES, DEFAULT_DONE, normalizeDone, WORKTREES_VALUES, normalizeWorktrees, normalizeMaxHands, effectiveHandCap, normalizeTestRunner, TEST_RUNNER_HANDS, TEST_RUNNER_GATE,
+  ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH, normalizeTrunk, TRUNK_HEAD, DONE_VALUES, DEFAULT_DONE, normalizeDone, WORKTREES_VALUES, normalizeWorktrees, normalizeMaxHands, effectiveHandCap, normalizeTestRunner, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_WIRE,
   ROLE_RE, RESERVED_ROLE_KEYS, RESERVED_ROLE_PATCH_FIELDS, NAME_RE,
 };

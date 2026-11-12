@@ -17,6 +17,18 @@ const HEAD = 'b'.repeat(40);
 
 const teamWith = (hands) => ({ name: 'tm', lead: 'lead-1', root: '/r', testRunner: { peer: 'runner-1', hands } });
 
+function pullTeam(hands) {
+  const home = mkTmpRoot('clodex-pull-route-');
+  const dir = path.join(home, 'teams', 'tm');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'team.json'), JSON.stringify({
+    root: home, lead: 'lead-1', roles: { lead: { brief: 'the lead' } }, testRunner: { peer: 'laptop', hands, wire: 'pull' },
+  }));
+  const team = require('../team-manifest').createTeamManifest({ fs, clodexHome: home }).loadManifest('tm');
+  assert.deepStrictEqual(team.testRunner, { peer: 'laptop', hands, gate: 'off', wire: 'pull' }, 'ENTER: the hand-edited manifest loads');
+  return team;
+}
+
 const ROUTE_ROWS = [
   ['no setting', { team: { name: 'tm', root: '/r' }, scope: 'full' }, { where: 'local', why: 'no test runner' }],
   ['hands:off', { team: teamWith('off'), scope: 'full' }, { where: 'local', why: 'hands:off' }],
@@ -25,6 +37,8 @@ const ROUTE_ROWS = [
   ['hands:full, own scope', { team: teamWith('full'), scope: 'own' }, { where: 'local', why: 'hands:full leaves own scope local' }],
   ['hands:all, full scope', { team: teamWith('all'), scope: 'full' }, { where: 'remote', peer: 'runner-1', why: 'hands:all' }],
   ['hands:all, own scope', { team: teamWith('all'), scope: 'own' }, { where: 'remote', peer: 'runner-1', why: 'hands:all' }],
+  ['wire:pull, hands:full', { team: pullTeam('full'), scope: 'full' }, { where: 'local', why: 'wire:pull runs shadow comparisons only' }],
+  ['wire:pull, hands:all', { team: pullTeam('all'), scope: 'full' }, { where: 'local', why: 'wire:pull runs shadow comparisons only' }],
 ];
 
 for (const [name, input, want] of ROUTE_ROWS) {
