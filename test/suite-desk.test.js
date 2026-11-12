@@ -124,7 +124,9 @@ test('the 33rd unsettled call for one origin is 429, claimed calls count, a repl
   const { calls } = desk.claim('laptop', SESSION);
   assert.strictEqual(calls.length, 32);
   assert.deepStrictEqual(desk.retained('laptop'), { unsettled: 32, bytes: 0 });
-  assert.deepStrictEqual(await c.suiteAsk('GET', '/api/suite/info', null, 30000), { status: 429, body: null, error: 'suite desk is full' });
+  const afterClaim = settled(c.suiteAsk('GET', '/api/suite/info', null, 30000));
+  await tick();
+  assert.deepStrictEqual(afterClaim(), { status: 429, body: null, error: 'suite desk is full' });
   desk.reply(calls[0].id, calls[0].claim, { status: 200, body: { ok: true } });
   const more = settled(c.suiteAsk('GET', '/api/suite/info', null, 30000));
   await tick();
