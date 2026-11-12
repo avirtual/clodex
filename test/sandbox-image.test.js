@@ -61,6 +61,22 @@ for (const [name, text] of [['docker/web/Dockerfile', DOCKERFILE], ['docker/Dock
   });
 }
 
+test('the image and the compose file declare the runner work root as a volume at the path CLODEX_SUITE_WORK defaults to, after the image sets its owner and mode', () => {
+  const wiring = fs.readFileSync(path.join(__dirname, '..', 'remote-wiring.js'), 'utf8');
+  const compose = fs.readFileSync(path.join(__dirname, '..', 'docker', 'web', 'compose.yaml'), 'utf8');
+  const work = (wiring.match(/env\.CLODEX_SUITE_WORK \|\| '([^']+)'/) || [])[1];
+  assert.strictEqual(work, '/var/lib/clodex-suite');
+  const steps = instructions(DOCKERFILE);
+  const volumes = steps.filter((i) => /^VOLUME\b/.test(i));
+  assert.deepStrictEqual(volumes, ['VOLUME /var/lib/clodex-suite']);
+  const setUp = steps.findIndex((i) => /^RUN\b/.test(i) && i.includes('chown clodex:clodex /var/lib/clodex-suite') && i.includes('chmod 0711 /var/lib/clodex-suite'));
+  assert.ok(setUp >= 0 && setUp < steps.indexOf(volumes[0]), 'the owner and mode a fresh volume is seeded with are set before the VOLUME line');
+  assert.ok(!steps.slice(steps.indexOf(volumes[0]) + 1).some((i) => i.includes('/var/lib/clodex-suite')), 'a step after VOLUME would not reach the volume');
+  const mounts = [...compose.matchAll(/^ {6}- ([a-z-]+):(\/var\/lib\/clodex-suite)$/gm)].map((m) => [m[1], m[2]]);
+  assert.deepStrictEqual(mounts, [['clodex-suite-work', '/var/lib/clodex-suite']]);
+  assert.match(compose, /^volumes:\n(?: {2}[a-z-]+:\n)*? {2}clodex-suite-work:$/m);
+});
+
 test('docker/web/Dockerfile pre-creates ~/.config and ~/.codex, the state-dir bind mount points', () => {
   const mk = instructions(DOCKERFILE).filter((i) => /^RUN mkdir -p /.test(i) && i.includes('/home/clodex/.config/muse'));
   assert.strictEqual(mk.length, 1);
