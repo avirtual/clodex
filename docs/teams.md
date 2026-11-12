@@ -890,9 +890,15 @@ capability is refused. A first peer starts at `hands:full`.
 `[agent:team runner hands:off|full|all]` sets the mode once a peer is set;
 `[agent:team runner off]` removes the whole setting; bare `[agent:team runner]`
 shows the peer, the mode, and whether the runner is reachable, with its queue
-length and environment identity. `full` will send full-scope hand runs to the
-runner and keep own-scope runs local; `all` will send both. Routing is not wired
-yet, and `gate:` is not accepted by the verb until gate routing lands.
+length and environment identity. `full` sends full-scope hand runs
+(`clodex-run-tests`) to the runner and keeps own-scope runs local; `all` sends
+both. The decision is `route()` in suite-client.js. A routed run prints the same
+digest a local one would; a run the runner cannot complete (unreachable,
+timeout, disconnect, restart, tree mismatch) prints `result unknown — …` and
+exits non-zero, never a green line and never a local fallback. `{"local": true}`
+in the payload runs it here, records `override:'call'` in the suite ledger and
+leaves a `ticket-loop` traffic row to the lead. `gate:` is not accepted by the
+verb until gate routing lands; verify and post-merge suites stay local.
 
 Five things here are deliberate simplifications, not gaps. `lead` and `reviewer` are reserved role keys
 (team-manifest.js RESERVED_ROLE_KEYS): the dispatch and verdict protocol is keyed on them, so they cannot be renamed.

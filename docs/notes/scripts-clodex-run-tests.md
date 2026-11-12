@@ -118,3 +118,10 @@ assembles — `path.join(__dirname, '..', 'scripts', 'x.js')`, a name built from
 variable — is matched by neither, and no pattern work closes that without
 executing the test. Hence `OWN_SCANNERS` unconditionally: the repo-wide checks
 are the floor under a selection rule that cannot be complete.
+
+## askHost
+
+Runs only when the script has a Node IPC channel. `reexecInMeasured` runs only after a
+`local` answer: on the remote arm the runner executes the branch's own
+`scripts/run-tests.js`, so a branch that edits this file exercises its copy with
+`{"local": true}`. An `unknown` answer is never followed by a local run.
