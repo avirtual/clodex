@@ -198,6 +198,7 @@ test('t2303: a detached skip row is written as its own kind and is counted as ne
 test('t2310: a remote half whose tree could not be sent writes a not-sent skip row and is not counted as disagree, after a counted disagreement', async () => {
   const red = remoteConn({ stdout: RED_A, code: 1 });
   let packing = false;
+  let over = false;
   const conn = {
     suiteAsk: async (method, p, ...rest) => (packing && method === 'POST' && p === '/api/suite/jobs'
       ? { status: 200, body: { ok: true, state: 'awaiting-pack', have: [] } }
@@ -214,7 +215,7 @@ test('t2310: a remote half whose tree could not be sent writes a not-sent skip r
     snapshot: {
       snapshotTree: async () => ({ treeHash: TREE, head: HEAD, headTree: TREE }),
       releaseSnapshot: () => {},
-      buildPack: async () => { throw new Error('git pack-objects failed: stdout maxBuffer length exceeded'); },
+      buildPack: async () => { if (over) return { file: path.join(f.compareFile, '..', 'none.pack'), bytes: 99, over: true }; throw new Error('git pack-objects failed: stdout maxBuffer length exceeded'); },
     },
     sleep: async () => {},
   });
@@ -236,6 +237,14 @@ test('t2310: a remote half whose tree could not be sent writes a not-sent skip r
     skipped: 'not-sent', agree: null,
   });
   assert.deepStrictEqual(client.tally({ team: 'tm' }), { envKey: 'k1', agree: 0, disagree: 1, skipped: 1, oneSided: [{ side: 'remote', name: 'alpha', count: 1 }], platforms: { local: DARWIN, remote: UNSTAMPED } });
+  over = true;
+  const third = await client.shadow(OPTS);
+  await turns();
+  third.local(localHalf({ code: 0, stdout: GREEN, stderr: '', durationMs: 70 }));
+  const last = f.records()[2];
+  assert.match(last.remote.reason, /^pack of 99 bytes exceeds the runner's /);
+  assert.deepStrictEqual([last.remote.outcome, last.skipped, last.agree], ['unknown', 'not-sent', null]);
+  assert.deepStrictEqual(client.tally({ team: 'tm' }).skipped, 2);
 });
 
 function pullShadowClient(desk) {

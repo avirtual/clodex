@@ -136,10 +136,18 @@ async function buildPack(snapshot, { have = [], maxBytes = Infinity } = {}) {
   let over = false;
   let stderr = '';
   let failed = null;
-  const child = spawn('git', argv, { env: cleanEnv(env), stdio: ['pipe', 'pipe', 'pipe'] });
+  let child;
+  try {
+    child = spawn('git', argv, { env: cleanEnv(env), stdio: ['pipe', 'pipe', 'pipe'] });
+  } catch (e) {
+    fs.closeSync(fd);
+    fs.rmSync(file, { force: true });
+    throw e;
+  }
+  let signal = null;
   const closed = new Promise((resolve) => {
     child.on('error', (e) => { failed = e; });
-    child.on('close', (code) => resolve(code));
+    child.on('close', (code, sig) => { signal = sig; resolve(code); });
   });
   child.stdin.on('error', () => {});
   child.stdin.end(`${revs.join('\n')}\n`);
@@ -164,7 +172,7 @@ async function buildPack(snapshot, { have = [], maxBytes = Infinity } = {}) {
   });
   const code = await closed;
   fs.closeSync(fd);
-  if (over) return { file, bytes, over: true };
+  if (over) return { file, bytes, over: true, signal };
   if (failed || code !== 0) {
     fs.rmSync(file, { force: true });
     throw new Error(`git pack-objects failed: ${failed ? failed.message : stderr.trim()}`);
@@ -193,7 +201,7 @@ async function gitFromFile(cwd, args, { file, bytes }, readChunk) {
     input.on('error', (e) => { failed = e; child.kill('SIGKILL'); });
     input.pipe(child.stdin);
     child.on('error', (e) => { failed = e; });
-    child.on('close', (code) => resolve({ ok: !failed && code === 0, code, stderr: failed ? failed.message : stderr }));
+    child.on('close', (code) => { input.destroy(); resolve({ ok: !failed && code === 0, code, stderr: failed ? failed.message : stderr }); });
   });
 }
 

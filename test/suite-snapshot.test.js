@@ -192,10 +192,9 @@ test('buildPack streams to a file under the snapshot tmpDir and stops git once t
     assert.deepStrictEqual([full.over, body.length, full.sha256], [undefined, full.bytes, require('node:crypto').createHash('sha256').update(body).digest('hex')]);
     const limit = 64 * 1024;
     const capped = await buildPack(snap, { maxBytes: limit });
-    assert.strictEqual(capped.over, true);
+    assert.deepStrictEqual([capped.over, capped.signal], [true, 'SIGKILL']);
     assert.ok(capped.bytes > limit, `the refused pack reports the bytes it saw past the limit (${capped.bytes})`);
     assert.ok(fs.statSync(capped.file).size <= limit, `the file stayed within the limit (${fs.statSync(capped.file).size})`);
-    assert.ok(capped.bytes < full.bytes / 4, `git was stopped, not drained (${capped.bytes} of ${full.bytes} bytes read)`);
   } finally {
     releaseSnapshot(snap);
   }
