@@ -11,10 +11,10 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — Stream seats survive an idle clear and a restart; fixes for old git and desktop upgrades
 
 - Upgrading a desktop node that runs from a source checkout no longer removes Electron.
-- An offer of test boxes can be widened from visible to runnable: named peers may then run test jobs on this machine once it is also a test runner. Off by default; switching it on asks for confirmation and lists the peers.
+- An offer of test boxes can be widened from visible to runnable for named peers. Off by default; switching it on asks for confirmation and lists the peers. Nothing runs on it yet: the part that lets a peer's jobs reach this machine is not in this release.
 - `[agent:team hands]` now reports how often the hand cap parked a ticket in the last week and how long those tickets waited.
 - A shadow comparison no longer counts slow-but-passing tests as failures; they are listed separately.
 - On a machine whose git is older than 2.48, Clodex no longer rewrites a ticket's worktree pointers in a way that git then deletes; it says which git version is needed.
