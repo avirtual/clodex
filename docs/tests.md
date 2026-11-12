@@ -97,6 +97,22 @@ The suite mints its scratch directories under `$TMPDIR/clodex-suite`, through
 `mkTmpRoot` in `test/lib/tmp-roots.js`. `scripts/tmp-sweep.sh` removes that
 root's stale children by age. A new test needs no registration.
 
+## Do not build scratch on the ambient temp when the code gates on its shape
+
+`tmp-sweep-behavior.test.js` mints under `getconf DARWIN_USER_TEMP_DIR` (`mkTmpRoot(prefix, base)`), because the script refuses a `TMPDIR` outside `/var/folders/…/T` and a runner job's `TMPDIR` is not one.
+
+## Name the branch in a fixture repo
+
+A fixture that later says `master` or `main` runs `git init -b <name>`: Apple's packaged git config sets `init.defaultBranch=main`, so a bare `git init` names a different branch on another machine.
+
+## Never read the developer's home or login
+
+A test that needs a login or config file builds a fixture home and passes it through the seam the code takes (the muse seats in `session-manager.test.js` take `XDG_CONFIG_HOME` from `getEnvScopes`); a runner job's `HOME` is empty.
+
+## Wait on a condition, not a fixed time
+
+A test waiting for async work polls for the state it asserts, with a generous deadline; a fixed window that git fits in here misses on a slower disk. A test asserting something did NOT happen keeps a fixed window, started after the last thing that did.
+
 ## Per-file durations of the last full run
 
 A full `scripts/run-tests.js` run writes `.test-durations.last.json` beside `.test-digest.last` (the repo root, or `CLODEX_TEST_LOCK_DIR`'s parent). `node scripts/run-tests.js --durations` prints the 25 slowest files from it without running tests.

@@ -9,6 +9,21 @@ const { mkTmpRoot } = require('./lib/tmp-roots.js');
 
 const SCRIPT = path.join(__dirname, '..', 'scripts', 'tmp-sweep.sh');
 
+function userTempDir() {
+  if (process.platform !== 'darwin') return null;
+  try {
+    return cp.execFileSync('getconf', ['DARWIN_USER_TEMP_DIR'], { encoding: 'utf8' }).trim().replace(/\/+$/, '') || null;
+  } catch {
+    return null;
+  }
+}
+
+const USER_TMP = userTempDir();
+const NO_USER_TMP = USER_TMP ? false
+  : 'no per-user temp dir from `getconf DARWIN_USER_TEMP_DIR`, and the script refuses every TMPDIR outside one';
+const gated = (name, fn) => test(name, { skip: NO_USER_TMP }, fn);
+const scratchParent = () => path.join(mkTmpRoot(MINE, USER_TMP), 'T');
+
 const AGED_DAYS = 30;
 
 function age(target, days) {
@@ -28,7 +43,7 @@ function plant(parent, name, ageDays, fill) {
 const MINE = 'clodex-sweeptest-';
 
 function fixture() {
-  const parent = path.join(mkTmpRoot(MINE), 'T');
+  const parent = scratchParent();
   fs.mkdirSync(path.join(parent, 'clodex-suite'), { recursive: true });
   return parent;
 }
@@ -43,7 +58,7 @@ function run(parent, args = []) {
   });
 }
 
-test('ENTER: plant() ages a root AFTER filling it, so the fixtures below are really as old as they claim', () => {
+gated('ENTER: plant() ages a root AFTER filling it, so the fixtures below are really as old as they claim', () => {
   const parent = fixture();
   const filled = plant(parent, `${MINE}aging`, AGED_DAYS,
     (dir) => fs.mkdirSync(path.join(dir, 'inner'), { recursive: true }));
@@ -53,7 +68,7 @@ test('ENTER: plant() ages a root AFTER filling it, so the fixtures below are rea
     + `as fresh and every age-gate case below would be measuring nothing. Age was ${Math.round(ageMs / 1000)}s.`);
 });
 
-test('ENTER: the scratch parent satisfies the per-user-temp gate, or every case below is only testing a refusal', () => {
+gated('ENTER: the scratch parent satisfies the per-user-temp gate, or every case below is only testing a refusal', () => {
   const parent = fixture();
   plant(suite(parent), 'aaaaaa', AGED_DAYS);
   const r = run(parent);
@@ -63,7 +78,7 @@ test('ENTER: the scratch parent satisfies the per-user-temp gate, or every case 
     'ENTER: the planted aged child of the suite root must be found, or the gates below are measured against an empty scan');
 });
 
-test('a bare invocation removes nothing — dry-run is the default, not an option', () => {
+gated('a bare invocation removes nothing — dry-run is the default, not an option', () => {
   const parent = fixture();
   const aged = plant(suite(parent), 'bbbbbb', AGED_DAYS);
   const r = run(parent);
@@ -73,7 +88,7 @@ test('a bare invocation removes nothing — dry-run is the default, not an optio
   assert.doesNotMatch(r.stdout, /^tmp-sweep: removed/m, 'a bare run must not claim to have removed anything');
 });
 
-test('--yes removes an aged child of the suite root and spares everything else', () => {
+gated('--yes removes an aged child of the suite root and spares everything else', () => {
   const parent = fixture();
   const aged = plant(suite(parent), 'cccccc', AGED_DAYS);
   const fresh = plant(suite(parent), 'dddddd', 0);
@@ -92,7 +107,7 @@ test('--yes removes an aged child of the suite root and spares everything else',
   assert.ok(fs.existsSync(suite(parent)), 'the suite root itself is never removed');
 });
 
-test('--older-than widens the age gate but never reaches a root younger than it', () => {
+gated('--older-than widens the age gate but never reaches a root younger than it', () => {
   const parent = fixture();
   const twoDays = plant(suite(parent), 'gggggg', 2);
   const tenDays = plant(suite(parent), 'hhhhhh', 10);
@@ -110,8 +125,8 @@ test('--older-than widens the age gate but never reaches a root younger than it'
   assert.ok(!fs.existsSync(tenDays));
 });
 
-test('a symlinked suite root is refused, not followed', () => {
-  const parent = path.join(mkTmpRoot(MINE), 'T');
+gated('a symlinked suite root is refused, not followed', () => {
+  const parent = scratchParent();
   const elsewhere = path.join(parent, 'elsewhere');
   fs.mkdirSync(elsewhere, { recursive: true });
   const victim = plant(elsewhere, 'kkkkkk', AGED_DAYS);
@@ -123,8 +138,8 @@ test('a symlinked suite root is refused, not followed', () => {
   assert.ok(fs.existsSync(victim), 'the aged directory behind the symlink must survive');
 });
 
-test('no suite root means nothing to remove, not an error', () => {
-  const parent = path.join(mkTmpRoot(MINE), 'T');
+gated('no suite root means nothing to remove, not an error', () => {
+  const parent = scratchParent();
   fs.mkdirSync(parent, { recursive: true });
   const outside = plant(parent, 'llllll', AGED_DAYS);
   const r = run(parent, ['--yes']);
@@ -133,7 +148,7 @@ test('no suite root means nothing to remove, not an error', () => {
   assert.ok(fs.existsSync(outside));
 });
 
-test('a root whose INNER directory blocks removal is still counted as a survivor', () => {
+gated('a root whose INNER directory blocks removal is still counted as a survivor', () => {
   const parent = fixture();
   const root = plant(suite(parent), 'mmmmmm', AGED_DAYS, (dir) => {
     fs.mkdirSync(path.join(dir, 'locked', 'deeper'), { recursive: true });
@@ -159,7 +174,7 @@ test('a root whose INNER directory blocks removal is still counted as a survivor
   }
 });
 
-test('a root that cannot be removed is reported, not fatal, and the rest of the batch still goes', () => {
+gated('a root that cannot be removed is reported, not fatal, and the rest of the batch still goes', () => {
   const parent = fixture();
   const poisoned = plant(suite(parent), 'iiiiii', AGED_DAYS,
     (dir) => fs.mkdirSync(path.join(dir, 'inner'), { recursive: true }));

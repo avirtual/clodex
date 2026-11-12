@@ -18231,7 +18231,7 @@ function mkGitRepo() {
   const repo = path.join(root, 'repo');
   fsReal.mkdirSync(repo);
   const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
-  require('node:child_process').execFileSync('git', ['-C', repo, 'init', '-q'], { stdio: 'pipe', env });
+  require('node:child_process').execFileSync('git', ['-C', repo, 'init', '-q', '-b', 'master'], { stdio: 'pipe', env });
   require('node:child_process').execFileSync('git', ['-C', repo, 'commit', '-q', '--allow-empty', '-m', 'init'], { stdio: 'pipe', env });
   return { root, repo };
 }
@@ -24236,6 +24236,16 @@ test('t1172: on a codex stream seat the codec\'s compact record fires the compac
   s._dead = true;
 });
 
+function museLoginFixture(root) {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const source = path.join(root, 'login-config');
+  fs.mkdirSync(path.join(source, 'muse'), { recursive: true });
+  fs.writeFileSync(path.join(source, 'muse', 'auth.json'), '{}\n');
+  fs.writeFileSync(path.join(source, 'muse', 'trust.json'), '{}\n');
+  return { getEnvScopes: () => ({ all: () => ({ global: { XDG_CONFIG_HOME: source }, workspaces: {} }) }) };
+}
+
 function mkMuseStreamSeat({ extraArgs = [], mcpServers = null, deps = null } = {}) {
   const { streamFor: realStreamFor } = require('../cli-adapters');
   const created = [];
@@ -24254,6 +24264,7 @@ function mkMuseStreamSeat({ extraArgs = [], mcpServers = null, deps = null } = {
     extraDeps: (root) => ({
       isInjectInFlight: require('../inject-queue').isInjectInFlight,
       mergeInstructionBodies: require('../argv-merge').mergeInstructionBodies,
+      ...museLoginFixture(root),
       ...(deps ? deps(root) : {}),
     }),
   });
