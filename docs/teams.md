@@ -894,7 +894,14 @@ minute ticket sweep retries too, so a failed spawn, a restart or a lead that was
 down when the hand left does not strand it. A ticket the
 lead parked with `task park` is never auto-started. `[agent:team hands <n|off>]`
 (lead only) sets it and starts any cap-parked tickets the new value allows; bare
-`[agent:team hands]` shows the effective value and its source.
+`[agent:team hands]` shows the effective value and its source, then one line
+counting cap parks in the last 7 days with the median and longest wait.
+
+The ticket's `events` record the cap: `cap-park` (time and the `live/cap`
+reading, written once per park, not on a repeated refused start), then either
+`cap-start` when it starts (by `task start`, the cap-freed auto-start or `task
+assign` to the same target) or `cap-drop` when it is cancelled, reassigned or
+unparked with `task park` first; both carry `waitMs` since the `cap-park`.
 
 A team can name a peered node as its test runner (a node started with
 `CLODEX_SUITE_RUNNER=1`, see docs/peering.md). The setting lives in team.json:
