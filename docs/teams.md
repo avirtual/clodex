@@ -982,10 +982,11 @@ popover's state line says the same. When a pull runner is not attached at
 submit time, `_shadowSubmit` starts nothing and the compare log gets one row
 `{at, team, kind, ticket, wire: 'pull', runner, skipped: 'detached', agree: null}`
 with no `remote` half; the tally never counts it. A pull runner attached at
-submit that detaches mid-job (its run ends `unknown` while the desk reports it
-not attached) writes the same row with `midJob: true` and the `jobId`, instead
-of a compare pair. The lead does not cancel that job when the runner returns:
-the runner's own lease (`leaseMs`, 120 s without a poll) stops it.
+submit that detaches mid-job (the desk answered 503 "not attached" to one of
+the run's calls, and the run ends `unknown`, including a `lease-expired` from a
+runner that came back) writes the same row with `midJob: true` and the `jobId`,
+instead of a compare pair. A cancel the lead sends while the runner is detached
+is lost; the runner's lease (`leaseMs`, 120 s without a poll) stops the job.
 
 Reading it: bare `[agent:team runner]` also shows the gate mode and, for the
 runner's current environment key (`envKey`, from its info route), how many

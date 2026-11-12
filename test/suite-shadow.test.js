@@ -208,13 +208,20 @@ function pullShadowClient(desk) {
   return { client, records };
 }
 
-function detachingConn(desk) {
+function detachingConn(desk, { backAfter = Infinity } = {}) {
   const base = remoteConn();
+  let refused = 0;
   const conn = {
     suiteAsk: async (method, p, ...rest) => {
       if (!desk.attached) {
         base.calls.push(`${method} ${p.split('?')[0]} -> 503`);
+        if ((refused += 1) >= backAfter) desk.attached = true;
         return { status: 503, body: null, error: 'runner laptop is not attached' };
+      }
+      if (refused && method === 'GET' && p.startsWith('/api/suite/jobs?')) {
+        const id = decodeURIComponent(/ids=([^&]+)/.exec(p)[1]);
+        base.calls.push(`${method} /api/suite/jobs -> lease-expired`);
+        return { status: 200, body: { ok: true, jobs: [{ id, state: 'done', treeHash: TREE, exit: { code: null, signal: 'SIGTERM' }, reason: 'lease-expired', queueMs: 3, setupMs: 1, runMs: 40, out: {} }] } };
       }
       const r = await base.conn.suiteAsk(method, p, ...rest);
       if (method === 'POST') desk.attached = false;
@@ -245,6 +252,22 @@ test('t2304: a pull runner that detaches mid-job writes one skip row naming the 
     { team: 'tm', kind: 'verify', ticket: 't1', wire: 'pull', runner: 'laptop', skipped: 'detached', agree: null, midJob: true, jobId: 'run-2' },
   ]);
   assert.deepStrictEqual(f.client.tally({ team: 'tm' }), { envKey: 'k1', agree: 1, disagree: 0, oneSided: [] });
+});
+
+test('t2304: a pull runner that detaches past the 120 s lease and comes back with lease-expired before the deadline writes one skip row', async () => {
+  const desk = { attached: true, conn: null };
+  const back = detachingConn(desk, { backAfter: 9 });
+  desk.conn = back.conn;
+  const f = pullShadowClient(desk);
+  const h = await f.client.shadow({ ...PULL_OPTS, budgetMs: 600000 });
+  await turns(400);
+  h.local(localHalf({ code: 0, stdout: GREEN, stderr: '', durationMs: 70 }));
+  assert.strictEqual(back.calls.filter((c) => c.endsWith('-> 503')).length, 9, back.calls.join('\n'));
+  assert.ok(back.calls.includes('GET /api/suite/jobs -> lease-expired'), `ENTER: the reattached runner answered lease-expired\n${back.calls.join('\n')}`);
+  assert.deepStrictEqual(f.records(), [
+    { team: 'tm', kind: 'verify', ticket: 't1', wire: 'pull', runner: 'laptop', skipped: 'detached', agree: null, midJob: true, jobId: 'run-1' },
+  ]);
+  assert.deepStrictEqual(f.client.tally({ team: 'tm' }), { envKey: null, agree: 0, disagree: 0, oneSided: [] });
 });
 
 test('t2304: an attached pull runner that answers unknown still writes a normal row', async () => {

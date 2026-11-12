@@ -89,14 +89,14 @@ function createSuiteClient({
     const {
       peer, tree, kind = 'hand', scope = 'full', team = null, ticket = null, seat = null,
       files = [], flags = {}, setup = null, env = {}, timeoutMs = null, budgetMs = DEFAULT_BUDGET_MS,
-      onProgress = () => {}, onJob = () => {}, onSubmitted = () => {}, shouldStop = () => false,
+      onProgress = () => {}, onJob = () => {}, onSubmitted = () => {}, onDetach = () => {}, shouldStop = () => false,
       queueBudgetMs = null, runBudgetMs = null,
     } = opts;
     const ctx = {
       id: opts.runId || randomUUID(), peer, wire: opts.wire === 'pull' ? 'pull' : 'push', where: opts.name || peer, route: opts.route || null, override: opts.override || null,
       tree: typeof tree === 'string' && tree ? path.resolve(tree) : null, kind, scope, team, ticket, seat,
       jobId: null, attempt: 0, treeHash: null, sha: null, dirty: null, queuedAt: null, startedAt: null, env: null, started: false,
-      t0: now(), budgetMs, queueBudgetMs, runBudgetMs, timeoutMs, onSubmitted, shouldStop,
+      t0: now(), budgetMs, queueBudgetMs, runBudgetMs, timeoutMs, onSubmitted, onDetach, shouldStop,
     };
     const progress = (line) => {
       log(line);
@@ -142,6 +142,7 @@ function createSuiteClient({
   async function ask(ctx, fn, progress) {
     for (;;) {
       const r = await once(ctx.peer, fn, ctx.wire);
+      if (ctx.wire === 'pull' && r.status === 503) { try { ctx.onDetach(); } catch {} }
       if (REFUSED.has(r.status)) throw Object.assign(new Error('runner refused the token'), { refused: true });
       if (!UNREACHABLE.has(r.status)) return r;
       const left = deadlineOf(ctx) - now();
@@ -360,7 +361,7 @@ function createSuiteClient({
       return null;
     }
     const key = JSON.stringify([opts.team, opts.ticket, opts.kind]);
-    const me = { treeHash: snap.treeHash, peer: opts.peer, wire: opts.wire === 'pull' ? 'pull' : 'push', jobId: null, superseded: false, local: null, remote: null, settled: false, detached: false };
+    const me = { treeHash: snap.treeHash, peer: opts.peer, wire: opts.wire === 'pull' ? 'pull' : 'push', jobId: null, superseded: false, local: null, remote: null, settled: false, sawDetach: false, detached: false };
     const prev = shadows.get(key);
     if (prev && prev.treeHash !== me.treeHash) {
       prev.superseded = true;
@@ -390,12 +391,11 @@ function createSuiteClient({
       });
     };
     Promise.resolve()
-      .then(() => run({ ...opts, snap, scope: 'full', onJob: ({ jobId }) => { me.jobId = jobId; } }))
+      .then(() => run({ ...opts, snap, scope: 'full', onJob: ({ jobId }) => { me.jobId = jobId; }, onDetach: () => { me.sawDetach = true; } }))
       .catch((e) => ({ unknown: `client error: ${e.message}`, res: null, record: null }))
       .then((out) => {
         me.remote = out;
-        const desk = me.wire === 'pull' && out.unknown ? getSuiteDesk() : null;
-        if (desk && !desk.attached(me.peer)) me.detached = true;
+        if (out.unknown && me.sawDetach) me.detached = true;
         settle();
       });
     return {
