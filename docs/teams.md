@@ -117,6 +117,8 @@ Everything below is what you add so that loop is *productive* on your code.
   prompts/append/<stem>.md  project knowledge the team owns
   templates/<stem>.json     seat templates the team owns
   exec/<name>.json          exec grants the team owns
+  box/Dockerfile            the team's test-box definition (Team sandbox ▸ Box definition)
+  box/box.json              its rev, definition hash, ancestry and prior definitions
   cost.jsonl                what the team has spent, append-only
   cost-cursor.json          per standing seat: what has been booked already
 ```
@@ -825,6 +827,38 @@ same rows (or `ports: none`) after its status line. The intent is loopback-only:
 remove an entry that carries it. The intent is desktop-only for now: like
 `sandbox up` it is refused inside the box, so a lead seated there dms a desktop
 seat or asks the operator, who uses the panel. Label words may not contain `:`, which the parser reads as a key.
+
+### Box definition
+
+A team keeps one Dockerfile for its test box at `teams/<name>/box/Dockerfile`,
+lead-owned like the rest of the team dir, so no hand's branch changes it. The box
+is a plain container the tests run in; it does not contain Clodex, so any image
+will do, and stages feed each other through `COPY --from=`. A file may still
+build on the Clodex base with `ARG CLODEX_BASE` and `FROM ${CLODEX_BASE}`, as
+`init` generates. The check is a form check (a lint) and nothing builds the file
+yet: it refuses a file with no `FROM`, `# syntax=` and `# escape=`, `COPY`/`ADD`
+without `--from=` (there is no build context: the definition is one file),
+secret and ssh mounts, secret-looking lines (in `RUN` heredocs too), and a file
+over 16384 bytes or 400 lines.
+
+- `[agent:team box set]` + the Dockerfile as body, closed by `[agent:end]`: a
+  refused body leaves the stored file as it was.
+- `[agent:team box init]`: generates the first Dockerfile from the team sandbox
+  bootstrap (`packages` and `setup`; `start` stays runtime-only). Refused when a
+  definition exists (`box clear` first) or the team has no sandbox box config.
+- `[agent:team box show]`, or bare `[agent:team box]`: `rev` and the definition
+  hash on the first line, then `generated from bootstrap <hash>; edited since:
+  yes|no` (or `not generated from bootstrap`), then one `docker build` line to
+  run by hand (with `--build-arg CLODEX_BASE=…` only when the file declares that
+  ARG), then the file.
+- `[agent:team box clear]`: removes the file; the rev count continues.
+
+`rev` starts at 1 and goes up by one on every `set` or `init` whose text,
+with CRLF read as LF and one trailing newline, differs from the stored one; an
+identical `set` writes nothing. The definition hash is the sha256 of that text,
+a hash of the definition only, not of any built image. `box.json` keeps the 20
+most recent prior definitions with their rev, hash and text: that is the
+recovery path.
 
 ## Scaling the team
 

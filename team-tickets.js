@@ -40,6 +40,7 @@ const { SANDBOX_RELAY_VERBS, SANDBOX_RELAY_BODY_MAX } = require('./relay-protoco
 const { parseWithRegistry, pluginRowFor, intentEnabledForSeat: registryHolds } = require('./intent-registry');
 const { ensureDir: ensureDirMode700, atomicWriteFileSync } = require('./fs-util');
 const { seedSandboxSessions } = require('./sandbox-seeds');
+const teamBox = require('./team-box');
 const RUNNER_OWNER = require('crypto').randomUUID();
 const { createHash } = require('crypto');
 
@@ -55,7 +56,7 @@ const SANDBOX_PORT_COVERAGE = 'URLs are for this machine; a remote Docker host s
 const SANDBOX_DEFAULT_REF = 'master';
 const SANDBOX_HOME_DIR = '/home/clodex';
 const SANDBOX_WORK_DIR = '/home/clodex/work';
-const SANDBOX_TEAM_SUBDIRS = ['prompts', 'templates', 'exec'];
+const SANDBOX_TEAM_SUBDIRS = ['prompts', 'templates', 'exec', 'box'];
 
 function seedClaudeToken(mgr, box) {
   if (typeof box.hasAuthToken !== 'function' || box.hasAuthToken()) return { state: 'present' };
@@ -2972,8 +2973,12 @@ function createTicketMethods(deps, shared) {
             this._handleTeamSandbox(team, intent, reply, session).catch((err) => reply(`error: ${(err && err.message) || err}`));
             return;
           }
+          case 'box': {
+            reply(this._handleTeamBox(team, intent, session));
+            return;
+          }
           default:
-            reply(`error: unknown team verb "${intent.sub}" — use role-add | role-set | role-rm | role-rename | set-lead | watchdog | gather | template-save | template-rm | prompt-save | prompt-rm | sandbox | trunk | done | worktrees | hands | runner`);
+            reply(`error: unknown team verb "${intent.sub}" — use role-add | role-set | role-rm | role-rename | set-lead | watchdog | gather | template-save | template-rm | prompt-save | prompt-rm | sandbox | box | trunk | done | worktrees | hands | runner`);
         }
       } catch (err) {
         reply(`error: ${err.message}`);
@@ -3298,6 +3303,38 @@ function createTicketMethods(deps, shared) {
       delete obj.sandboxed;
       atomicWriteFileSync(manifest, `${JSON.stringify(obj, null, 2)}\n`);
       return { dir: dest, line: `team ${team.name} shipped into the box (teams/${team.name})` };
+    },
+
+    _handleTeamBox(team, intent, session) {
+      const action = intent.action || 'show';
+      const seat = session ? session.name : null;
+      const teamDir = team.dir || path.join(teamsDir, team.name);
+      const head = (r) => `box definition rev ${r.rev} · definition hash ${r.definitionHash}`;
+      if (action === 'show') return teamBox.showBox(teamDir);
+      if (action === 'clear') {
+        const r = teamBox.clearBox(teamDir, { seat });
+        return r.removed
+          ? `box definition cleared (was rev ${r.rev}); kept in history — the next set or init is rev ${r.rev + 1}`
+          : 'no box definition to clear';
+      }
+      if (action === 'set') {
+        const r = teamBox.writeBox(teamDir, String(intent.body == null ? '' : intent.body), { seat });
+        if (!r.ok) return `error: box definition refused, the stored one is unchanged: ${r.error}`;
+        return `${head(r)} — ${r.changed ? `saved to ${r.file}` : 'unchanged, nothing written'}; checked for form; not built`;
+      }
+      if (action === 'init') {
+        if (teamBox.readBox(teamDir).definition != null) return 'error: this team already has a box definition — [agent:team box clear] first';
+        const mgr = typeof getSandboxManager === 'function' ? getSandboxManager() : null;
+        const box = mgr ? mgr.get(`team-${team.name}`) : null;
+        if (!box) return 'error: this team has no sandbox box config to generate from — [agent:team box set] <Dockerfile> instead';
+        const bootstrap = box.getConfig().bootstrap;
+        const text = teamBox.definitionFromBootstrap(bootstrap);
+        if (text == null) return 'error: the team sandbox bootstrap has no packages and no setup to generate from — [agent:team box set] <Dockerfile> instead';
+        const r = teamBox.writeBox(teamDir, text, { seat, fromBootstrap: teamBox.bootstrapAncestor(bootstrap) });
+        if (!r.ok) return `error: the generated definition was refused: ${r.error}`;
+        return `${head(r)} — generated from bootstrap ${r.meta.fromBootstrap}, saved to ${r.file}; checked for form; not built`;
+      }
+      return `error: box action must be set | init | show | clear (got "${action}")`;
     },
 
     async _handleTeamSandbox(team, intent, reply, session = null) {
