@@ -48,7 +48,7 @@ function stubClient({ hang = false, result = null } = {}) {
     release: (v) => gate.release(v),
     run(opts) {
       runs.push(opts);
-      opts.onJob({ jobId: 'job-1', attempt: 1 });
+      opts.onSubmitted({ jobId: 'job-1', attempt: 1 });
       opts.onProgress('runner runner-1: job queued');
       return hang ? new Promise((r) => { gate.release = r; }) : Promise.resolve(result);
     },
@@ -132,11 +132,11 @@ test('host: a remote run goes through the client as kind hand and streams its pr
     run: 'remote', runner: 'runner-1', status: 1, signal: null, stdout: res.stdout, stderr: 'e\n',
     error: null, unknown: null, treeHash: TREE, note: null,
   });
-  const { onJob, onProgress, ...opts } = client.runs[0];
+  const { onSubmitted, onProgress, shouldStop, ...opts } = client.runs[0];
   assert.deepStrictEqual(opts, {
     peer: 'p1', name: 'runner-1', tree: f.dir, kind: 'hand', scope: 'own', team: 'tm', ticket: null, seat: 'hand-1',
     files: ['test/a.test.js'], flags: { CLODEX_TEST_LOCK: '1' }, setup: null, env: {},
-    budgetMs: 35 * 60 * 1000, timeoutMs: 21 * 60 * 1000, route: 'hands:all',
+    queueBudgetMs: 15 * 60 * 1000, runBudgetMs: 21 * 60 * 1000, timeoutMs: 21 * 60 * 1000, route: 'hands:all',
   });
   assert.deepStrictEqual(f.sent[0], { progress: 'runner runner-1: job queued' });
 });
@@ -168,6 +168,7 @@ function execFixture(t, bin, { client = null, team = null } = {}) {
   }));
   const spawned = [];
   const children = [];
+  const broadcasts = [];
   const SessionManager = createSessionManager({
     knownSkillNames: () => [], REGISTRY_DIR, isFilenameToken, parseAndValidate, os, fs, path,
     log: { warn() {}, info() {}, error() {} },
@@ -182,7 +183,7 @@ function execFixture(t, bin, { client = null, team = null } = {}) {
         ee.stderr = new EventEmitter();
         ee.kills = [];
         ee.kill = (sig) => ee.kills.push(sig);
-        if (opts.stdio[3] === 'ipc') ee.send = () => true;
+        if (opts.stdio[3] === 'ipc') { ee.connected = true; ee.sends = []; ee.send = (m) => { ee.sends.push(m); return true; }; }
         children.push(ee);
         return ee;
       },
@@ -190,7 +191,7 @@ function execFixture(t, bin, { client = null, team = null } = {}) {
   });
   const m = new SessionManager();
   m._injectText = () => {};
-  m._broadcast = () => {};
+  m._broadcast = (ch, p) => broadcasts.push(p);
   m._teamOfOrNull = () => team;
   m._runnerPeerStatus = (n) => (n === 'runner-1' ? { id: 'p1' } : null);
   mock.timers.enable({ apis: ['setTimeout'] });
@@ -199,7 +200,7 @@ function execFixture(t, bin, { client = null, team = null } = {}) {
     mock.timers.reset();
   });
   m._handleExecIntent({ name: 'hand-1', agentType: 'claude', workspaceId: 'ws1', cwd: '/x' }, 'cmd', '{}');
-  return { spawned, children };
+  return { spawned, children, broadcasts };
 }
 
 const turns = async (n = 20) => { for (let i = 0; i < n; i += 1) await new Promise((r) => setImmediate(r)); };
@@ -491,4 +492,107 @@ test('client: a non-ok poll cancels the old job before resubmitting, and the res
   const secondPost = calls.lastIndexOf('POST /api/suite/jobs');
   assert.ok(firstDelete !== -1 && firstDelete < secondPost, calls.join('\n'));
   assert.strictEqual(out.record.queuedAt, '1970-01-01T00:00:01.000Z');
+});
+
+test('host: an unreachable runner reports unknown at the 15-minute queue budget', async () => {
+  let clock = 0;
+  const { conn } = stubConn(() => ({ status: 0, body: null, error: 'connect ECONNREFUSED' }));
+  const { client } = clientWith(conn, { now: () => clock, sleep: async (ms) => { clock += ms; } });
+  const f = hostFor({ client });
+  f.host.onMessage(ask(f.dir));
+  assert.deepStrictEqual(await f.done, { run: 'remote', runner: 'runner-1', unknown: 'runner unreachable: connect ECONNREFUSED' });
+  assert.strictEqual(clock, 15 * 60 * 1000);
+});
+
+test('host: a job that keeps running reports unknown at the 21-minute run budget and is cancelled', async () => {
+  let clock = 0;
+  const { conn, calls } = stubConn((m, p) => {
+    const w = /[?&]wait=(\d+)/.exec(p);
+    if (w) clock += Number(w[1]);
+    return jobsAnswer(m, p, { state: 'running' });
+  });
+  const { client } = clientWith(conn, { now: () => clock });
+  const f = hostFor({ client });
+  f.host.onMessage(ask(f.dir));
+  assert.deepStrictEqual(await f.done, { run: 'remote', runner: 'runner-1', unknown: 'no result within the 1260000ms run budget (cancelled)' });
+  assert.strictEqual(clock, 25000 + 21 * 60 * 1000);
+  assert.ok(calls.includes('DELETE /api/suite/jobs/run-1'), calls.join('\n'));
+});
+
+test('host: a cancel while the submit is in flight stops the job once the submit lands', async () => {
+  let land;
+  const landed = new Promise((r) => { land = r; });
+  const events = [];
+  const { conn, calls } = stubConn(async (m, p) => {
+    if (m === 'POST') {
+      await landed;
+      events.push('POST landed');
+    }
+    if (m === 'DELETE') events.push(`DELETE ${p}`);
+    return jobsAnswer(m, p);
+  });
+  const { client } = clientWith(conn);
+  const f = hostFor({ client });
+  f.host.onMessage(ask(f.dir));
+  await turns();
+  assert.ok(calls.includes('POST /api/suite/jobs'), 'ENTER: the submit is in flight');
+  f.host.cancel();
+  await turns();
+  land();
+  await f.done;
+  assert.deepStrictEqual(events, ['POST landed', 'DELETE /api/suite/jobs/run-1']);
+});
+
+test('host: a cancel before the submit means no job is submitted', async () => {
+  let open;
+  const gate = new Promise((r) => { open = r; });
+  const { conn, calls } = stubConn(async (m, p) => {
+    if (p === '/api/suite/info') await gate;
+    return jobsAnswer(m, p);
+  });
+  const { client } = clientWith(conn);
+  const f = hostFor({ client });
+  f.host.onMessage(ask(f.dir));
+  await turns();
+  assert.deepStrictEqual(calls, ['GET /api/suite/info'], 'ENTER: the client is waiting on the runner');
+  f.host.cancel();
+  open();
+  assert.deepStrictEqual(await f.done, { run: 'remote', runner: 'runner-1', unknown: 'cancelled by the caller before submit' });
+  assert.ok(!calls.includes('POST /api/suite/jobs'), calls.join('\n'));
+});
+
+test('exec: a progress line after the channel closed is not sent', async (t) => {
+  const { client, child } = await inflightExec(t);
+  assert.deepStrictEqual(child.sends, [{ progress: 'runner runner-1: job queued' }], 'ENTER: progress reached the open channel');
+  child.connected = false;
+  client.runs[0].onProgress('late line');
+  assert.deepStrictEqual(child.sends, [{ progress: 'runner runner-1: job queued' }]);
+});
+
+test('exec: a local:true call under hands:all leaves the lead one ticket-loop traffic row', async (t) => {
+  const client = stubClient();
+  const team = { ...teamWith('all'), root: fs.realpathSync(mkTmpRoot('suite-route-tree-')) };
+  const f = execFixture(t, 'clodex-run-tests.js', { client, team });
+  await turns(2);
+  f.children[0].emit('message', ask(team.root, { local: true }));
+  await turns();
+  assert.deepStrictEqual(f.children[0].sends, [{ run: 'local', why: 'local:true in the call', override: 'call' }], 'ENTER: the host answered local');
+  assert.deepStrictEqual(f.broadcasts.filter((b) => b && b.from === 'ticket-loop'), [{
+    type: 'task', from: 'ticket-loop', to: 'lead-1',
+    body: 'hand-1: clodex-run-tests ran here on request ({"local": true}); team tm routes hand runs to runner-1',
+  }]);
+});
+
+test('reexecInMeasured runs only on the local arm: the measured tree\'s own script runs after a local answer, never after a remote one', async () => {
+  const root = mkRoot(CAPTURED.green);
+  const marker = path.join(root, 'reexec-marker');
+  fs.writeFileSync(path.join(root, 'scripts', 'clodex-run-tests.js'),
+    `require('fs').writeFileSync(${JSON.stringify(marker)}, 'ran');\nprocess.exit(0);\n`);
+  const remote = await runWithHost(root, '{}', path.join(root, 'h1'), () => [
+    { run: 'remote', runner: 'runner-1', ...CAPTURED.green, signal: null, error: null, unknown: null, treeHash: TREE, note: null },
+  ]);
+  assert.strictEqual(remote.code, 0, 'ENTER: the remote arm completed');
+  assert.strictEqual(fs.existsSync(marker), false);
+  await runWithHost(root, '{}', path.join(root, 'h2'), () => [{ run: 'local', why: 'hands:off', override: null }]);
+  assert.strictEqual(fs.readFileSync(marker, 'utf8'), 'ran');
 });
