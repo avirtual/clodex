@@ -103,7 +103,7 @@ async function snapshotTree(treeDir, { trunk, tmpRoot } = {}) {
       if (base.ok && text(base)) candidates.add(text(base));
     }
     return {
-      snap, treeHash, indexTree, head, branch, trunk: trunkSha ? trunkName : null, repoKey, refs,
+      snap, treeHash, indexTree, headTree, head, branch, trunk: trunkSha ? trunkName : null, repoKey, refs,
       candidates: [...candidates], cwd: top, alternate: objects, tmpDir,
     };
   } catch (e) {

@@ -14,7 +14,8 @@
     "additionalProperties": false,
     "properties": {
       "tree": { "type": "string", "minLength": 1, "maxLength": 1000 },
-      "scope": { "type": "string", "enum": ["full", "own"] }
+      "scope": { "type": "string", "enum": ["full", "own"] },
+      "local": { "type": "boolean" }
     }
   }
 }

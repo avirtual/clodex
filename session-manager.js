@@ -281,7 +281,10 @@ const { SEAT_KINDS, seatPathFor, legacySeatPathFor, claudeProjectSlug } = requir
 const { LIVING_MARK } = require('./intent-catalog');
 const { resolveSubagent, nameOfSubagent, clearSubq, SUBQ_DM_SUFFIX, SUBQ_NAME_RE } = require('./subq');
 
+const { createChannelHost } = require('./suite-client');
+
 const AGENT_SOCK_WRITER_BINS = new Set(['clodex-team.js', 'clodex-monitor.js', 'clodex-ctl-admin.js']);
+const SUITE_CHANNEL_BINS = new Set(['clodex-run-tests.js']);
 
 const EXT_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 
@@ -293,11 +296,19 @@ function isExtSender(name) {
   return typeof name === 'string' && name.startsWith('ext:') && EXT_NAME_RE.test(name.slice(4));
 }
 
-function agentSockWriterArgv(argv, binDir) {
+function execBinIn(argv, binDir, bins) {
   const i = nodePath.basename(String(argv[0])) === 'env' ? 1 : 0;
   const j = /^node(\.exe)?$/.test(nodePath.basename(String(argv[i]))) || argv[i] === process.execPath ? i + 1 : i;
   const script = String(argv[j] || '');
-  return nodePath.dirname(script) === binDir && AGENT_SOCK_WRITER_BINS.has(nodePath.basename(script));
+  return nodePath.dirname(script) === binDir && bins.has(nodePath.basename(script));
+}
+
+function agentSockWriterArgv(argv, binDir) {
+  return execBinIn(argv, binDir, AGENT_SOCK_WRITER_BINS);
+}
+
+function suiteChannelArgv(argv, binDir) {
+  return execBinIn(argv, binDir, SUITE_CHANNEL_BINS);
 }
 
 function isSubagentSender(name) {
@@ -7762,6 +7773,7 @@ function createSessionManager(deps) {
       const execTeam = this._teamOfOrNull(session);
       let clientToken = '';
       try { clientToken = fs.readFileSync(clientTokenPathFor(REGISTRY_DIR, who), 'utf8').trim(); } catch { clientToken = ''; }
+      const suiteChannel = suiteChannelArgv(argv, CLODEX_BIN);
       setImmediate(() => {
         let child;
         try {
@@ -7782,11 +7794,29 @@ function createSessionManager(deps) {
               CLODEX_CLIENT_TOKEN: clientToken,
               CLODEX_AGENT_CRED: agentSockWriterArgv(argv, CLODEX_BIN) ? (AGENT_SOCK_CRED || '') : '',
             },
-            stdio: ['pipe', 'ignore', 'pipe'],
+            stdio: suiteChannel ? ['pipe', 'ignore', 'pipe', 'ipc'] : ['pipe', 'ignore', 'pipe'],
           });
         } catch (e) {
           fail(`spawn failed (${(e && e.message) || e})`);
           return;
+        }
+        let suiteHost = null;
+        if (suiteChannel && typeof child.send === 'function') {
+          suiteHost = createChannelHost({
+            client: typeof deps.getSuiteClient === 'function' ? deps.getSuiteClient() : null,
+            team: execTeam,
+            seat: who,
+            listWorktrees: (root) => gitWorktree.listWorktrees(root),
+            resolvePeer: (name) => {
+              const peer = this._runnerPeerStatus(name);
+              return peer ? peer.id : null;
+            },
+            send: (m) => child.send(m),
+            notifyLead: (body) => this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: execTeam ? execTeam.lead : null, body }),
+            log: (m) => log.warn('intent', m),
+          });
+          child.on('message', (m) => suiteHost.onMessage(m));
+          child.on('disconnect', () => suiteHost.cancel());
         }
         // The collector keeps the head of stderr, so the cap must clear the reply budget; the 1024 is slack
         // (nothing in it is delivered), and a cut sets stderrTruncated so the loss is reported.
@@ -7860,6 +7890,7 @@ function createSessionManager(deps) {
         };
         const timer = setTimeout(() => {
           try { child.kill('SIGKILL'); } catch {}
+          if (suiteHost) suiteHost.cancel();
           // Ceilings under 1s print in ms: Math.round would state them as 0s, which reads as a reporter bug.
           const ceiling = timeoutMs >= 1000
             ? `${Math.round(timeoutMs / 1000)}s (${timeoutMs}ms)`
