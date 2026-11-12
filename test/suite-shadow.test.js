@@ -18,7 +18,7 @@ const COUNT_OFF = 'TOTALS: 6 pass, 0 fail, 6 tests\n';
 
 const turns = async (n = 50) => { for (let i = 0; i < n; i += 1) await new Promise((r) => setImmediate(r)); };
 
-function remoteConn({ stdout = GREEN, code = 0, refuse = false, holds = {} } = {}) {
+function remoteConn({ stdout = GREEN, stderr = '', code = 0, refuse = false, holds = {} } = {}) {
   const calls = [];
   const conn = {
     suiteAsk: async (method, p) => {
@@ -27,7 +27,7 @@ function remoteConn({ stdout = GREEN, code = 0, refuse = false, holds = {} } = {
       if (method === 'POST') return refuse ? { status: 200, body: { ok: false, error: 'nope' } } : { status: 200, body: { ok: true, state: 'queued' } };
       if (method === 'DELETE') return { status: 200, body: { ok: true } };
       if (p.includes('/output?')) {
-        const text = p.includes('stream=stdout') ? stdout : '';
+        const text = p.includes('stream=stdout') ? stdout : p.includes('stream=stderr') ? stderr : '';
         return { status: 200, body: { ok: true, text, offset: 0, total: Buffer.byteLength(text) } };
       }
       const id = decodeURIComponent(/ids=([^&]+)/.exec(p)[1]);
@@ -59,8 +59,8 @@ function shadowClient(conn, { trees = [TREE] } = {}) {
 
 const OPTS = { peer: 'p1', name: 'runner-1', tree: '/w', kind: 'verify', team: 'tm', ticket: 't1' };
 
-const REMOTE = (over) => ({ outcome: 'pass', reason: null, pass: 5, fail: 0, tests: 5, failing: [], jobId: 'run-1', queueMs: 3, runMs: 40, ...over });
-const LOCAL = (over) => ({ outcome: 'pass', pass: 5, fail: 0, tests: 5, failing: [], durationMs: 70, ...over });
+const REMOTE = (over) => ({ outcome: 'pass', reason: null, pass: 5, fail: 0, tests: 5, failing: [], slow: [], jobId: 'run-1', queueMs: 3, runMs: 40, ...over });
+const LOCAL = (over) => ({ outcome: 'pass', pass: 5, fail: 0, tests: 5, failing: [], slow: [], durationMs: 70, ...over });
 const RECORD = (local, remote, agree) => ({
   at: '1970-01-01T00:00:01.000Z', team: 'tm', kind: 'verify', ticket: 't1', treeHash: TREE, sha: HEAD, envKey: 'k1', local, remote, agree,
 });
@@ -87,6 +87,43 @@ for (const [name, remote, local, want] of RECORD_ROWS) {
     assert.deepStrictEqual(f.records(), [want]);
   });
 }
+
+const SLOW_RED_STDOUT = [
+  '..X..X..',
+  'Failed tests:',
+  '',
+  '✖ alpha (1.5ms)',
+  '  AssertionError: red',
+  '✖ beta (2ms)',
+  '  AssertionError: red',
+  '',
+  'TOTALS: 6 pass, 2 fail, 8 tests',
+  'SLOW: 8691ms gamma',
+  'SLOW: 19409ms delta',
+  'SLOW: 11858ms epsilon',
+  'SLOW: inject the clock or constant through a seam, or list the test in test/slow-tests.json with the mechanism it waits on',
+  '',
+].join('\n');
+const SLOW_RED_STDERR = ' ✖ gamma (8691ms)\n ✖ delta (19409ms)\n ✖ epsilon (11858ms)\n';
+const TWO_RED_STDOUT = 'Failed tests:\n\n✖ alpha (1ms)\n✖ beta (3ms)\n\nTOTALS: 6 pass, 2 fail, 8 tests\n';
+
+test('localHalf: failing takes only real failures; the slow-gate names land in slow', () => {
+  const half = localHalf({ code: 1, stdout: SLOW_RED_STDOUT, stderr: SLOW_RED_STDERR, durationMs: 70 });
+  assert.deepStrictEqual(half, LOCAL({ outcome: 'fail', pass: 6, fail: 2, tests: 8, failing: ['alpha', 'beta'], slow: ['gamma', 'delta', 'epsilon'] }));
+});
+
+test('shadow: a remote half whose slow gate fired agrees with a local half carrying the same two failures and no slow lines', async () => {
+  const { conn } = remoteConn({ stdout: SLOW_RED_STDOUT, stderr: SLOW_RED_STDERR, code: 1 });
+  const f = shadowClient(conn);
+  const h = await f.client.shadow(OPTS);
+  await turns();
+  h.local(localHalf({ code: 1, stdout: TWO_RED_STDOUT, stderr: '', durationMs: 70 }));
+  assert.deepStrictEqual(f.records(), [RECORD(
+    LOCAL({ outcome: 'fail', pass: 6, fail: 2, tests: 8, failing: ['alpha', 'beta'] }),
+    REMOTE({ outcome: 'fail', pass: 6, fail: 2, tests: 8, failing: ['alpha', 'beta'], slow: ['gamma', 'delta', 'epsilon'] }),
+    true,
+  )]);
+});
 
 test('shadow: a late result for a job superseded by a newer tree writes no record and cancels the stale job', async () => {
   let release;

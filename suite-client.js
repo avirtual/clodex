@@ -435,12 +435,22 @@ function failingNames(text) {
   return names;
 }
 
-function localHalf({ code = null, stdout = '', stderr = '', error = null, timedOut = false, durationMs = null } = {}) {
+function slowNames(text) {
+  const names = [];
+  for (const line of String(text).split('\n')) {
+    const m = /^SLOW: \d+ms (.+?)\s*$/.exec(line);
+    if (m && !names.includes(m[1])) names.push(m[1]);
+    if (names.length >= 200) break;
+  }
+  return names;
+}
+
+function localHalf({ code = null, stdout = '', error = null, timedOut = false, durationMs = null } = {}) {
   const totals = error ? null : lastTotals(String(stdout || ''));
   const outcome = timedOut ? 'timeout' : error ? 'unknown' : !totals ? 'no-summary' : code === 0 ? 'pass' : 'fail';
   return {
     outcome, pass: totals ? totals.pass : null, fail: totals ? totals.fail : null, tests: totals ? totals.tests : null,
-    failing: totals ? failingNames(`${stdout || ''}\n${stderr || ''}`) : [], durationMs,
+    failing: totals ? failingNames(stdout || '') : [], slow: totals ? slowNames(stdout || '') : [], durationMs,
   };
 }
 
@@ -450,7 +460,7 @@ function remoteHalf(out) {
   return {
     outcome: rec.outcome || 'unknown', reason: (out && out.unknown) || null,
     pass: rec.pass == null ? null : rec.pass, fail: rec.fail == null ? null : rec.fail, tests: rec.tests == null ? null : rec.tests,
-    failing: measured ? failingNames(`${out.res.stdout || ''}\n${out.res.stderr || ''}`) : [],
+    failing: measured ? failingNames(out.res.stdout || '') : [], slow: measured ? slowNames(out.res.stdout || '') : [],
     jobId: rec.jobId || null, queueMs: rec.queueMs == null ? null : rec.queueMs, runMs: rec.runMs == null ? null : rec.runMs,
   };
 }
