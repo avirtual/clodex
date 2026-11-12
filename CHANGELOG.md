@@ -16,6 +16,7 @@ blocks a release.
 - Upgrading a desktop node that runs from a source checkout no longer removes Electron.
 - An offer of test boxes can be widened from visible to runnable: named peers may then run test jobs on this machine once it is also a test runner. Off by default; switching it on asks for confirmation and lists the peers.
 - `[agent:team hands]` now reports how often the hand cap parked a ticket in the last week and how long those tickets waited.
+- A shadow comparison no longer counts slow-but-passing tests as failures; they are listed separately.
 
 ## 5.177.1 — 2026-11-12
 
