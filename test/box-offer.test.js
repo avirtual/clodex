@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 
 const {
-  sanitizeBoxOffer, offerFromEnv, scheduleOpen, wireEntry, sanitizeWireOffers,
+  sanitizeBoxOffer, offerFromEnv, scheduleOpen, wireEntry, offerEntry, sanitizeWireOffers, warnStoredOffer,
 } = require('../box-offer');
 const { initStores } = require('../stores.js');
 const { mkTmpRoot } = require('./lib/tmp-roots');
@@ -84,26 +84,87 @@ test('scheduleOpen: always is open, a disabled or absent offer is closed', () =>
   assert.strictEqual(scheduleOpen(null, new Date(2026, 10, 14, 3, 0)), false);
 });
 
-test('wireEntry carries only scope, boxes, platforms, runtime and open', () => {
+
+test('wireEntry carries exactly scope, boxes, open, kinds and facts', () => {
   const facts = {
-    platforms: ['linux/arm64'], runtime: true, now: new Date(2026, 10, 13, 23, 0),
+    os: 'darwin', arch: 'arm64', cpus: 10, memMb: 32768, runtime: { platforms: ['linux/arm64'] },
     host: 'murmur', version: '5.176.0',
   };
-  assert.deepStrictEqual(wireEntry(VALID, facts, 'laptop'), {
-    scope: 'discovery', boxes: 2, platforms: ['linux/arm64'], runtime: true, open: true,
+  const friday23 = new Date(2026, 10, 13, 23, 0);
+  assert.deepStrictEqual(wireEntry(VALID, facts, 'laptop', friday23), {
+    scope: 'discovery', boxes: 2, open: true, kinds: ['container'],
+    facts: { os: 'darwin', arch: 'arm64', cpus: 10, memMb: 32768, runtime: { platforms: ['linux/arm64'] } },
   });
-  assert.strictEqual(wireEntry(VALID, facts, 'stranger'), null);
-  assert.strictEqual(wireEntry({ ...VALID, enabled: false }, facts, 'laptop'), null);
-  assert.strictEqual(wireEntry(null, facts, 'laptop'), null);
+  assert.strictEqual(wireEntry(VALID, facts, 'stranger', friday23), null);
+  assert.strictEqual(wireEntry({ ...VALID, enabled: false }, facts, 'laptop', friday23), null);
+  assert.strictEqual(wireEntry(null, facts, 'laptop', friday23), null);
 });
 
+test('wireEntry reports runtime null when no platform was probed', () => {
+  const entry = wireEntry(ALWAYS, { os: 'linux', arch: 'x64', cpus: 4, memMb: 8192, runtime: null }, 'murmur');
+  assert.deepStrictEqual(entry.facts, { os: 'linux', arch: 'x64', cpus: 4, memMb: 8192, runtime: null });
+});
+
+test('offerEntry is the entry without the peer filter', () => {
+  const facts = { os: 'linux', arch: 'x64', cpus: 4, memMb: 8192, runtime: null };
+  assert.deepStrictEqual(offerEntry(ALWAYS, facts), {
+    scope: 'discovery', boxes: 1, open: true, kinds: ['container'], facts,
+  });
+  assert.strictEqual(offerEntry({ ...ALWAYS, enabled: false }, facts), null);
+});
+
+const WIRE_OWN = {
+  scope: 'discovery', boxes: 2, open: true, kinds: ['container'],
+  facts: { os: 'linux', arch: 'x64', cpus: 8, memMb: 16384, runtime: { platforms: ['linux/amd64'] } },
+};
+
 test('sanitizeWireOffers accepts own and drops relayed', () => {
-  const own = { scope: 'discovery', boxes: 2, platforms: ['linux/amd64'], runtime: false, open: true };
-  assert.deepStrictEqual(sanitizeWireOffers({ own, relayed: [own] }), { own });
-  assert.deepStrictEqual(sanitizeWireOffers({ own: { ...own, host: 'murmur' } }), { own: null });
-  assert.deepStrictEqual(sanitizeWireOffers({ own: { ...own, scope: 'run' } }), { own: null });
+  assert.deepStrictEqual(sanitizeWireOffers({ own: WIRE_OWN, relayed: [WIRE_OWN] }), { own: WIRE_OWN });
+  assert.deepStrictEqual(sanitizeWireOffers({ own: { ...WIRE_OWN, kinds: ['native'] } }), { own: { ...WIRE_OWN, kinds: ['native'] } });
   assert.deepStrictEqual(sanitizeWireOffers({}), { own: null });
+  assert.deepStrictEqual(sanitizeWireOffers({ own: null }), { own: null });
   assert.strictEqual(sanitizeWireOffers('x'), null);
+});
+
+const WIRE_REFUSALS = [
+  ['an extra entry key', { ...WIRE_OWN, host: 'murmur' }],
+  ['scope: "run"', { ...WIRE_OWN, scope: 'run' }],
+  ['an unknown kind', { ...WIRE_OWN, kinds: ['vm'] }],
+  ['empty kinds', { ...WIRE_OWN, kinds: [] }],
+  ['an extra fact', { ...WIRE_OWN, facts: { ...WIRE_OWN.facts, version: '5.176.0' } }],
+  ['a missing fact', { ...WIRE_OWN, facts: { os: 'linux', arch: 'x64', cpus: 8, memMb: 16384 } }],
+  ['cpus: 0', { ...WIRE_OWN, facts: { ...WIRE_OWN.facts, cpus: 0 } }],
+  ['a runtime with no platform', { ...WIRE_OWN, facts: { ...WIRE_OWN.facts, runtime: { platforms: [] } } }],
+  ['runtime: true', { ...WIRE_OWN, facts: { ...WIRE_OWN.facts, runtime: true } }],
+];
+
+for (const [label, own] of WIRE_REFUSALS) {
+  test(`sanitizeWireOffers refuses an own with ${label} whole`, () => {
+    assert.strictEqual(sanitizeWireOffers({ own }), null);
+  });
+}
+
+test('a sparse days array is refused', () => {
+  const days = [1, 2, 3];
+  delete days[1];
+  assert.strictEqual(sanitizeBoxOffer(with_({ schedule: [{ days, from: '22:00', to: '07:00' }] })), null);
+});
+
+test('a sparse schedule array is refused', () => {
+  const schedule = [{ days: [1], from: '22:00', to: '07:00' }, { days: [2], from: '22:00', to: '07:00' }];
+  delete schedule[0];
+  assert.strictEqual(sanitizeBoxOffer(with_({ schedule })), null);
+});
+
+test('warnStoredOffer warns once naming boxOffer for an invalid stored record, never for a valid or absent one', () => {
+  const warnings = [];
+  const warn = (m) => warnings.push(m);
+  assert.strictEqual(warnStoredOffer(() => ({ boxOffer: with_({ scope: 'run' }) }), warn), true);
+  assert.deepStrictEqual(warnings, ['ui-settings boxOffer is not a valid box offer; box offer off']);
+  assert.strictEqual(warnStoredOffer(() => ({ boxOffer: VALID }), warn), false);
+  assert.strictEqual(warnStoredOffer(() => ({ theme: 'dark' }), warn), false);
+  assert.strictEqual(warnStoredOffer(() => { throw new Error('ENOENT'); }, warn), false);
+  assert.strictEqual(warnings.length, 1);
 });
 
 test('offerFromEnv: unset is undefined, bad JSON or bad record is null with one error', () => {
