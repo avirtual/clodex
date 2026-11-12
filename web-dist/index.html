@@ -11492,6 +11492,31 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           <input type="checkbox" id="prefs-peer-shell">
           <span>Let peers open a terminal on this box</span>
         </label>
+        <div id="prefs-suite-runner-block">
+          <h5 style="margin-top: 14px;">Test runner</h5>
+          <p class="hint-text">Runs test suites that your peers send to this machine. Needs phone access on: peers reach the runner over the same wire. Applies when you press Apply, with no restart; refused while a job is running.</p>
+          <label class="prefs-check">
+            <input type="checkbox" id="prefs-suite-runner-enabled">
+            <span>Run tests for peers on this machine</span>
+          </label>
+          <span id="prefs-suite-runner-enabled-env" class="hint-text hidden" style="display: block;">set by environment</span>
+          <div class="prefs-row" style="margin-top: 6px;">
+            <span>Isolation</span>
+            <select id="prefs-suite-runner-isolation" style="flex: none;">
+              <option value="user">Separate user account</option>
+              <option value="none">None</option>
+            </select>
+            <span id="prefs-suite-runner-isolation-env" class="hint-text hidden">set by environment</span>
+          </div>
+          <p id="prefs-suite-runner-none-note" class="hint-text hidden">Suites run as this user, unisolated.</p>
+          <div class="prefs-row" style="margin-top: 6px;">
+            <span>Work folder</span>
+            <input type="text" id="prefs-suite-runner-work" placeholder="default for this platform" autocomplete="off" spellcheck="false" style="flex: 1;">
+            <button id="prefs-suite-runner-apply" class="secondary" type="button" style="flex: none;">Apply</button>
+          </div>
+          <span id="prefs-suite-runner-work-env" class="hint-text hidden" style="display: block;">set by environment</span>
+          <span id="prefs-suite-runner-status" class="hint-text" style="display: block; margin-top: 6px;"></span>
+        </div>
       </details>
       <details class="prefs-group" data-group="discovery">
         <summary><h4>Sessions</h4><span class="prefs-group-sub">Defaults for new sessions and discovery</span></summary>
@@ -12078,6 +12103,8 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "peerSetDisabled", kind: "invoke", channel: "peer:setDisabled" },
         { name: "peerSetRelayAllowed", kind: "invoke", channel: "peer:setRelayAllowed" },
         { name: "peerSetShellAllowed", kind: "invoke", channel: "peer:setShellAllowed" },
+        { name: "suiteRunnerGet", kind: "invoke", channel: "suiteRunner:get" },
+        { name: "suiteRunnerSet", kind: "invoke", channel: "suiteRunner:set" },
         { name: "peerControlledNames", kind: "invoke", channel: "peer:controlledNames" },
         { name: "peerForgetControlled", kind: "invoke", channel: "peer:forgetControlled" },
         { name: "peerVisible", kind: "invoke", channel: "peer:visible" },
@@ -58903,6 +58930,13 @@ Click for live activity`;
       var prefsRemoteTokenClear = document.getElementById("prefs-remote-token-clear");
       var prefsRemoteTokenState = document.getElementById("prefs-remote-token-state");
       var prefsPeerShell = document.getElementById("prefs-peer-shell");
+      var prefsSuiteRunnerBlock = document.getElementById("prefs-suite-runner-block");
+      var prefsSuiteRunnerEnabled = document.getElementById("prefs-suite-runner-enabled");
+      var prefsSuiteRunnerIsolation = document.getElementById("prefs-suite-runner-isolation");
+      var prefsSuiteRunnerWork = document.getElementById("prefs-suite-runner-work");
+      var prefsSuiteRunnerApply = document.getElementById("prefs-suite-runner-apply");
+      var prefsSuiteRunnerStatus = document.getElementById("prefs-suite-runner-status");
+      var prefsSuiteRunnerNoneNote = document.getElementById("prefs-suite-runner-none-note");
       var prefsEnvScope = document.getElementById("prefs-env-scope");
       var prefsEnvList = document.getElementById("prefs-env-list");
       var prefsEnvKey = document.getElementById("prefs-env-key");
@@ -61834,6 +61868,7 @@ ${res.stderr}` : "");
           );
         }
         if (prefsPeerShell) prefsPeerShell.checked = !!s.peerShellEnabled;
+        refreshSuiteRunnerPrefs();
         prefsRemoteToken.value = "";
         renderRemoteTokenState(!!s.remoteHasToken, !!s.remoteEnvTokenPinned);
         if (prefsEnvScope) prefsEnvScope.value = "global";
@@ -61989,6 +62024,63 @@ ${res.stderr}` : "");
             prefsPeerShell.checked = !!(s && s.peerShellEnabled);
           } catch {
           }
+        });
+      }
+      function suiteRunnerStatusText(st) {
+        if (st.status === "running") return "Running \u2014 peers can send test suites here.";
+        if (st.status === "needs-remote") return "Off \u2014 turn phone access on above; the runner serves over that wire.";
+        if (st.status === "failed") return st.error || "Off \u2014 the runner failed to start.";
+        if (st.status === "starting") return "Starts with the wire.";
+        return st.remoteEnabled ? "Off." : "Off. Phone access is off too; the runner needs it on.";
+      }
+      var prefsSuiteRunnerShown = null;
+      function renderSuiteRunnerPrefs(st) {
+        prefsSuiteRunnerShown = st;
+        const rec = st.setting || { enabled: false, isolation: "user", work: null };
+        const forced = new Set(st.forced || []);
+        prefsSuiteRunnerEnabled.checked = forced.has("enabled") || rec.enabled;
+        prefsSuiteRunnerEnabled.disabled = forced.has("enabled");
+        prefsSuiteRunnerIsolation.value = rec.isolation;
+        prefsSuiteRunnerIsolation.disabled = forced.has("isolation");
+        prefsSuiteRunnerWork.value = rec.work || "";
+        prefsSuiteRunnerWork.disabled = forced.has("work");
+        for (const k of ["enabled", "isolation", "work"]) {
+          document.getElementById(`prefs-suite-runner-${k}-env`).classList.toggle("hidden", !forced.has(k));
+        }
+        prefsSuiteRunnerNoneNote.classList.toggle("hidden", prefsSuiteRunnerIsolation.value !== "none");
+        prefsSuiteRunnerStatus.textContent = suiteRunnerStatusText(st);
+      }
+      async function refreshSuiteRunnerPrefs() {
+        if (!prefsSuiteRunnerBlock) return;
+        let st = null;
+        try {
+          st = await window.api.suiteRunnerGet();
+        } catch {
+          st = null;
+        }
+        if (!st || typeof st.status !== "string") st = null;
+        prefsSuiteRunnerBlock.classList.toggle("hidden", !st);
+        if (st) renderSuiteRunnerPrefs(st);
+      }
+      if (prefsSuiteRunnerBlock) {
+        prefsSuiteRunnerIsolation.addEventListener("change", () => {
+          prefsSuiteRunnerNoneNote.classList.toggle("hidden", prefsSuiteRunnerIsolation.value !== "none");
+        });
+        prefsSuiteRunnerApply.addEventListener("click", async () => {
+          const work = prefsSuiteRunnerWork.value.trim();
+          const keep = prefsSuiteRunnerEnabled.disabled && prefsSuiteRunnerShown && prefsSuiteRunnerShown.setting;
+          const enabled = prefsSuiteRunnerEnabled.disabled ? !!(keep && keep.enabled) : prefsSuiteRunnerEnabled.checked;
+          const rec = { enabled, isolation: prefsSuiteRunnerIsolation.value, work: work || null };
+          let res = null;
+          try {
+            res = await window.api.suiteRunnerSet(rec);
+          } catch {
+            res = null;
+          }
+          if (!res || res.ok !== true) {
+            showToast(`Test runner not changed: ${res && res.error || "the change failed"}`, { kind: "warn" });
+          }
+          if (res && res.state) renderSuiteRunnerPrefs(res.state);
         });
       }
       prefsRemoteTokenSave.addEventListener("click", () => {

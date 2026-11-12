@@ -460,13 +460,27 @@ for a loopback throwaway box; `CLODEX_SUITE_PACK_MAX_MB`) and injects it as
 `suiteRunner`. Without it every `/api/suite/*` route answers 501 and hello
 carries no `suite` cap.
 
+The same choice is stored as the ui-setting `suiteRunner`
+(`{ enabled, isolation: 'user'|'none', work: <absolute path>|null }`, default
+`null` = off; `sanitizeSuiteRunner` in stores.js loads an invalid or absent
+record as off). Preferences ▸ Phone access ▸ Test runner edits it through the
+desktop-only `suiteRunner:get` / `suiteRunner:set` IPC; the web surface does
+not register them, `settings:set` drops the key, and no intent, clodexctl
+command or remote route writes it. Each env var, when set, wins over its field:
+`CLODEX_SUITE_RUNNER=1` forces on (any other value forces nothing),
+`CLODEX_SUITE_ISOLATION` forces isolation, `CLODEX_SUITE_WORK` forces the work
+root; `suiteRunnerOptions` returns the forced fields as `forced` and the UI
+shows them as "set by environment". A save applies without a restart
+(`reloadSuiteRunner` closes the old engine and rebuilds the remote server, so
+hello caps follow) and is refused while a job is live (`busy()`).
+
 The job's PATH is a fixed list (`jobPath`), never the node's own:
 `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`, with
 `/opt/homebrew/bin:/opt/homebrew/sbin` ahead of it on macOS arm64. Its `LANG`
 (`jobLang`) is `C.UTF-8` on Linux and `en_US.UTF-8` on macOS, which has no
 `C.UTF-8`.
 
-When `CLODEX_SUITE_RUNNER=1` is set but the runner cannot be built (most often
+When runner mode is asked for (setting or env) but the runner cannot be built (most often
 an uncreatable work root), runner mode stays off and `startSuiteRunner` logs one
 `suite-runner` error naming the cause, the work root and `CLODEX_SUITE_WORK`.
 The same text is the `reason` field of the 501 every `/api/suite/*` route
