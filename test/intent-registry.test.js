@@ -180,7 +180,7 @@ function parseIntentLegacy(rawLine) {
     };
   }
 
-  const teamMatch = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|bind|unbind|roster|template-save|template-rm|prompt-save|prompt-rm|sandbox|trunk|done|worktrees|hands)\b([^\]]*)\]\s*(.*)/s);
+  const teamMatch = cleaned.match(/^\[agent:team\s+(role-add|role-set|role-rm|role-rename|watchdog|gather|set-lead|bind|unbind|roster|template-save|template-rm|prompt-save|prompt-rm|sandbox|trunk|done|worktrees|hands|runner)\b([^\]]*)\]\s*(.*)/s);
   if (teamMatch) {
     const sub = teamMatch[1];
     const argStr = teamMatch[2];
@@ -204,6 +204,11 @@ function parseIntentLegacy(rawLine) {
     if (sub === 'done') return { type: 'team', sub, mode: positional[0] || null, body: '' };
     if (sub === 'worktrees') return { type: 'team', sub, value: positional[0] || null, body: '' };
     if (sub === 'hands') return { type: 'team', sub, value: positional[0] || null, body: '' };
+    if (sub === 'runner') {
+      const handsM = argStr.match(/\bhands:(\S+)/);
+      const gateM = argStr.match(/\bgate:(\S+)/);
+      return { type: 'team', sub, value: positional[0] || null, hands: handsM ? handsM[1] : null, gate: gateM ? gateM[1] : null, body: '' };
+    }
     if (sub === 'role-rename') return { type: 'team', sub, name: positional[0] || null, to: positional[1] || null, body: '' };
     // t701's gather, landed here in the same commit as parseTeam's — the same
     // lockstep rule the task copy above states, and the reason it is stated:
@@ -457,6 +462,7 @@ const ADVERSARIAL = [
   '[agent:team done report]', '[agent:team done]', '[agent:team donex]',
   '[agent:team worktrees in-root]', '[agent:team worktrees]', '[agent:team worktreesx]',
   '[agent:team hands 3]', '[agent:team hands off]', '[agent:team hands]', '[agent:team handsx]',
+  '[agent:team runner runner-1]', '[agent:team runner off]', '[agent:team runner hands:full]', '[agent:team runner gate:on]', '[agent:team runner]', '[agent:team runnerx]',
   '[agent:team template-save hand-seat] {"type":"claude"}', '[agent:team template-save]',
   '[agent:team template-rm hand-seat]', '[agent:team template-rmx hand-seat]',
   '[agent:team prompt-save system lead] body text', '[agent:team prompt-save append lead] body',

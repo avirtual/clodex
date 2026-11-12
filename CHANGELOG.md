@@ -17,6 +17,7 @@ blocks a release.
 - Suite snapshot: a module that packs a working tree — commit, tracked changes and untracked files — and rebuilds it elsewhere with a verified tree hash.
 - Runner mode (engine): a headless node can queue suite jobs one at a time and run each in a disposable checkout as an unprivileged user with an empty environment; the container image gains the clodex-suite user and its helper.
 - Suite-job routes on the peer wire (/api/suite/*, runner mode only) with a token that can do nothing else: CLODEX_SUITE_TOKEN is refused on every other route.
+- A team can name a peered node as its test runner: `[agent:team runner <peer>]` and `hands:off|full|all` store the setting and show whether the runner is reachable. Routing of suite runs follows in a later change.
 
 ## 5.174.0 — 2026-11-11
 

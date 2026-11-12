@@ -197,6 +197,53 @@ function normalizeMaxHands(v) {
   return (typeof v === 'number' && Number.isInteger(v) && v > 0) ? v : null;
 }
 
+const TEST_RUNNER_HANDS = ['off', 'full', 'all'];
+const TEST_RUNNER_GATE = ['off', 'shadow', 'on'];
+const TEST_RUNNER_KEYS = ['peer', 'hands', 'gate', 'setup', 'env'];
+const TEST_RUNNER_SETUP_KEYS = ['run', 'key', 'paths', 'timeoutMs'];
+const TEST_RUNNER_ENV_RE = /^[A-Z_][A-Z0-9_]*$/;
+const TEST_RUNNER_TIMEOUT_MIN_MS = 10 * 1000;
+const TEST_RUNNER_TIMEOUT_MAX_MS = 30 * 60 * 1000;
+
+const isPlainObject = (v) => v != null && typeof v === 'object' && !Array.isArray(v);
+
+function runnerRelPath(p) {
+  return typeof p === 'string' && p.length > 0 && p.length <= 1024 && !p.startsWith('-') && !path.isAbsolute(p)
+    && !p.split(/[\\/]/).some((seg) => seg === '..' || seg === '') && !p.includes('\0');
+}
+
+function normalizeRunnerSetup(s) {
+  if (!isPlainObject(s) || Object.keys(s).some((k) => !TEST_RUNNER_SETUP_KEYS.includes(k))) return null;
+  if (typeof s.run !== 'string' || !s.run || s.run.length > 2000) return null;
+  if (!Array.isArray(s.key) || s.key.length > 16 || !s.key.every(runnerRelPath)) return null;
+  if (!Array.isArray(s.paths) || s.paths.length > 8 || !s.paths.every(runnerRelPath)) return null;
+  const t = s.timeoutMs;
+  if (t !== undefined && !(Number.isInteger(t) && t >= TEST_RUNNER_TIMEOUT_MIN_MS && t <= TEST_RUNNER_TIMEOUT_MAX_MS)) return null;
+  return { run: s.run, key: [...s.key], paths: [...s.paths], ...(t !== undefined ? { timeoutMs: t } : {}) };
+}
+
+function normalizeRunnerEnv(e) {
+  if (!isPlainObject(e)) return null;
+  const entries = Object.entries(e);
+  if (entries.length > 32) return null;
+  for (const [k, v] of entries) {
+    if (!TEST_RUNNER_ENV_RE.test(k) || typeof v !== 'string' || v.length > 1000) return null;
+  }
+  return Object.fromEntries(entries);
+}
+
+function normalizeTestRunner(v) {
+  if (!isPlainObject(v) || Object.keys(v).some((k) => !TEST_RUNNER_KEYS.includes(k))) return null;
+  if (typeof v.peer !== 'string' || !NAME_RE.test(v.peer)) return null;
+  const hands = v.hands === undefined ? 'off' : v.hands;
+  const gate = v.gate === undefined ? 'off' : v.gate;
+  if (!TEST_RUNNER_HANDS.includes(hands) || !TEST_RUNNER_GATE.includes(gate)) return null;
+  const setup = v.setup === undefined ? undefined : normalizeRunnerSetup(v.setup);
+  const env = v.env === undefined ? undefined : normalizeRunnerEnv(v.env);
+  if (setup === null || env === null) return null;
+  return { peer: v.peer, hands, gate, ...(setup ? { setup } : {}), ...(env ? { env } : {}) };
+}
+
 function boxCpus(cpuMax, cpus) {
   const [quota, period] = String(cpuMax == null ? '' : cpuMax).trim().split(/\s+/).map(Number);
   if (Number.isFinite(quota) && quota > 0 && Number.isFinite(period) && period > 0) return quota / period;
@@ -608,8 +655,17 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
     const sharedRoot = m.sharedRoot === true;
     const worktrees = normalizeWorktrees(m.worktrees);
     const maxHands = m.maxHands === null ? null : (normalizeMaxHands(m.maxHands) || undefined);
+    const testRunner = m.testRunner == null ? null : normalizeTestRunner(m.testRunner);
+    if (m.testRunner != null && !testRunner) {
+      droppedFields.push({ role: null, field: 'testRunner', status: 'invalid', remedy: null });
+      const seen = `invalid|${file}|testRunner`;
+      if (!warnedDrops.has(seen)) {
+        warnedDrops.add(seen);
+        console.warn(`team "${name}": testRunner is invalid and ignored as a whole — see docs/teams.md for its shape and limits (${file})`);
+      }
+    }
     const rosterState = readRoster(name, roles, lead);
-    const team = { name, root: path.resolve(root), sandboxed: m.sandboxed === true, lead, roles, kit, file, dir: path.dirname(file), watchdogMs, ...(watchMs != null ? { watchMs } : {}), trunk, done, sharedRoot, ...(worktrees ? { worktrees } : {}), ...(maxHands !== undefined ? { maxHands } : {}), version, droppedFields, roster: rosterState.rows };
+    const team = { name, root: path.resolve(root), sandboxed: m.sandboxed === true, lead, roles, kit, file, dir: path.dirname(file), watchdogMs, ...(watchMs != null ? { watchMs } : {}), trunk, done, sharedRoot, ...(worktrees ? { worktrees } : {}), ...(maxHands !== undefined ? { maxHands } : {}), ...(testRunner ? { testRunner } : {}), version, droppedFields, roster: rosterState.rows };
     return { team, rosterState };
   }
 
@@ -1635,10 +1691,28 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
     return loadManifest(teamName);
   }
 
+  function setTeamTestRunner(teamName, patch) {
+    const team = loadManifest(teamName);
+    if (patch !== null && (!isPlainObject(patch) || !Object.keys(patch).length
+      || Object.keys(patch).some((k) => !['peer', 'hands', 'gate'].includes(k)))) {
+      throw new Error(`testRunner patch must name peer, hands or gate, or be null for off (${team.file})`);
+    }
+    const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
+    if (patch === null) {
+      delete raw.testRunner;
+    } else {
+      const next = { ...(isPlainObject(raw.testRunner) ? raw.testRunner : {}), ...patch };
+      if (!normalizeTestRunner(next)) throw new Error(`testRunner would be invalid after this patch (${team.file})`);
+      raw.testRunner = next;
+    }
+    atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
+    return loadManifest(teamName);
+  }
+
   return {
     resolveTeam: teamOfCwd, teamOfCwd, teamsOfCwd, teamOfSeat, teamOf, findProjectRoot, loadManifest, listTeams, cwdInProject,
     bindSeat, unbindSeat, dropSeatRows, renameSeatRow, rosterOf, pruneStaleRows, synthesiseRosters, setSeatLookup,
-    createTeam, deleteTeam, addRole, setRole, removeRole, renameRole, setTeamWatchdog, setTeamTrunk, setTeamDone, setTeamWorktrees, setTeamMaxHands, setLead,
+    createTeam, deleteTeam, addRole, setRole, removeRole, renameRole, setTeamWatchdog, setTeamTrunk, setTeamDone, setTeamWorktrees, setTeamMaxHands, setTeamTestRunner, setLead,
     listKits, kitCatalog, resolveKit,
     teamsDir, TEAM_FILE, ROSTER_FILE,
   };
@@ -1813,6 +1887,6 @@ module.exports = {
   // Exported so the retired-field warn test iterates the REAL list — a copy in
   // the test would keep passing over a field added here and never warned about.
   ROLE_KEYS, CUT_ROLE_FIELDS, HONORED_CUT_FIELDS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, MANIFEST_VERSION,
-  ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH, normalizeTrunk, TRUNK_HEAD, DONE_VALUES, DEFAULT_DONE, normalizeDone, WORKTREES_VALUES, normalizeWorktrees, normalizeMaxHands, effectiveHandCap,
+  ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH, normalizeTrunk, TRUNK_HEAD, DONE_VALUES, DEFAULT_DONE, normalizeDone, WORKTREES_VALUES, normalizeWorktrees, normalizeMaxHands, effectiveHandCap, normalizeTestRunner, TEST_RUNNER_HANDS, TEST_RUNNER_GATE,
   ROLE_RE, RESERVED_ROLE_KEYS, RESERVED_ROLE_PATCH_FIELDS, NAME_RE,
 };
