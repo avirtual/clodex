@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Preferences ▸ Offer test boxes can name a node that dials this machine even when it is not in the peer list: nodes that have dialed in are listed, and a name can be typed in.
+
 ## 5.177.0 — 2026-11-12 — Test-box offers between peers, team box definitions, runner mode in Preferences
 
 - A node can record an offer to host test boxes for named peers (off by default, discovery only).

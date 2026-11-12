@@ -545,6 +545,10 @@ discovery only: nothing is built or run. remote-wiring injects `offerFor`,
   the node has no sandbox manager), else `{platforms:[…]}`. Facts are probed
   when the entry is built, never stored; no host name, version or schedule
   times cross the wire.
+- **Dialers.** Every operator hello (not a suite-scoped one) whose `origin` is a
+  valid node name is noted by `noteDialer` (offer-directory.js
+  `createDialerLog`): name and last-seen time only, in memory, at most 64 names,
+  the least recently seen dropped first. No token or address is kept.
 - **`POST /api/peer/offers`** (a dialer's announce): body
   `{v:1, from:<dialer label>, own:<entry>|null}`. `own` is sanitised by
   `sanitizeWireOffers`; an entry with an unknown key, a missing fact or any scope
@@ -580,13 +584,22 @@ discovery only: nothing is built or run. remote-wiring injects `offerFor`,
   `offers`.
 - **Setting the offer.** Preferences ▸ Offer test boxes (desktop only): on/off,
   box count, availability `always` or `schedule` with up to 8 windows, and a
-  checklist of this node's configured peers by label. The ticked peers are the
+  checklist of names: this node's configured peers by label, then the nodes
+  that have dialed in (see **Dialers**, labelled "dials this machine, seen 2m
+  ago"), then any stored ticked name that is neither, so a restart does not hide
+  it. A text field adds a name by hand (node-name grammar; a duplicate is
+  ignored). A node that dials this machine is named by its own label: its
+  hostname unless it set `CLODEX_LABEL`. The block shows this machine's label,
+  the name a node it dials will see. The ticked peers are the
   ones shown the offer; the list is not an access control and nothing runs on
   this machine because of it. A read-only line shows the facts this machine
   would announce. It saves through IPC `offer:set`, which runs
   `sanitizeBoxOffer` and refuses an invalid record (the stored one is kept) and
   refuses with the reason while `CLODEX_BOX_OFFER` is set. `offer:get` returns
-  `{stored, effective, forced, warning, facts, peers}`; `warning` is
+  `{self, stored, effective, forced, warning, facts, peers}`; `self` is this
+  node's label and `peers` is `[{name, from:'peer'}]` for configured labels
+  followed by `[{name, from:'dialed', seenAt}]` for dialers not configured;
+  `warning` is
   `stored offer invalid, treated as off` when the file holds a record the
   sanitiser rejects. No intent, clodexctl verb or wire route writes the offer,
   and `settings:set` drops a `boxOffer` key. A saved change reaches each peer at
