@@ -21,6 +21,9 @@ function g(dir, ...args) {
   return execFileSync('git', ['-C', dir, ...IDENT, ...args], { env: ENV, encoding: 'utf8' });
 }
 
+const SLOTS = new Map();
+const jobOf = (dir) => SLOTS.get(path.basename(dir)) || path.basename(dir);
+
 function sha256(buf) {
   return crypto.createHash('sha256').update(buf).digest('hex');
 }
@@ -39,7 +42,6 @@ async function fixture(t, { onSpawn, now, limits, kill, wrap } = {}) {
   const work = path.join(root, 'work');
   fs.mkdirSync(work);
   const calls = [];
-  const slots = new Map();
   const kills = [];
   const pending = [];
   const timers = {
@@ -58,7 +60,7 @@ async function fixture(t, { onSpawn, now, limits, kill, wrap } = {}) {
       child.stderr.end();
       setImmediate(() => child.emit('close', code, signal));
     };
-    const call = { cmd, args, opts, child, job: slots.get(path.basename(path.dirname(opts.cwd))), parentEnv: { ...process.env } };
+    const call = { cmd, args, opts, child, job: jobOf(path.dirname(opts.cwd)), parentEnv: { ...process.env } };
     calls.push(call);
     (onSpawn || ((c) => { c.child.stdout.write('TOTALS: 1 pass, 0 fail, 1 tests\n'); c.child.finish(0); }))(call);
     return child;
@@ -72,7 +74,7 @@ async function fixture(t, { onSpawn, now, limits, kill, wrap } = {}) {
     releaseSnapshot(snap);
     spawnSync('chmod', ['-R', 'u+w', root]);
   });
-  const body = (id, kind = 'hand', extra = {}) => (slots.set(path.basename(jobPaths(work, id).dir), id), {
+  const body = (id, kind = 'hand', extra = {}) => (SLOTS.set(path.basename(jobPaths(work, id).dir), id), {
     id, attempt: 1, repoKey: snap.repoKey, kind, scope: 'full', snap: snap.snap, treeHash: snap.treeHash,
     indexTree: snap.indexTree, sha: snap.head, branch: snap.branch, trunk: snap.trunk, refs: snap.refs,
     candidates: snap.candidates, files: [], flags: {}, ...extra,
@@ -198,8 +200,8 @@ test('cancelling a queued job reaps and kills nothing while another job runs', a
     onSpawn: (c) => { if (c.job === 'blocker') blocker = c.child; else c.child.finish(0); },
     wrap: (base) => ({
       ...base,
-      kill: (child, jobDir) => { seen.push(['kill', path.basename(jobDir)]); return base.kill(child, jobDir); },
-      reap: (jobDir) => { seen.push(['reap', path.basename(jobDir)]); return base.reap(jobDir); },
+      kill: (child, jobDir) => { seen.push(['kill', jobOf(jobDir)]); return base.kill(child, jobDir); },
+      reap: (jobDir) => { seen.push(['reap', jobOf(jobDir)]); return base.reap(jobDir); },
     }),
   });
   await f.upload(f.body('blocker', 'hand'));
@@ -244,7 +246,7 @@ test('start() runs nothing until the restart reaps have finished', async (t) => 
   const reaps = [];
   let gate = null;
   const f = await fixture(t, {
-    wrap: (base) => ({ ...base, reap: (jobDir) => { reaps.push(path.basename(jobDir)); return gate ? gate.then(() => base.reap(jobDir)) : base.reap(jobDir); } }),
+    wrap: (base) => ({ ...base, reap: (jobDir) => { reaps.push(jobOf(jobDir)); return gate ? gate.then(() => base.reap(jobDir)) : base.reap(jobDir); } }),
   });
   await f.upload(f.body('first'));
   await waitState(f.runner, 'first', 'done');
@@ -297,10 +299,10 @@ test('a cancel kill still in flight holds the next job until it lands', async (t
     wrap: (base) => ({
       ...base,
       kill: (child, jobDir) => {
-        seen.push(['kill', path.basename(jobDir)]);
-        return new Promise((resolve) => { release = () => { seen.push(['kill-landed', path.basename(jobDir)]); resolve(); }; });
+        seen.push(['kill', jobOf(jobDir)]);
+        return new Promise((resolve) => { release = () => { seen.push(['kill-landed', jobOf(jobDir)]); resolve(); }; });
       },
-      reap: (jobDir) => { seen.push(['reap', path.basename(jobDir)]); return base.reap(jobDir); },
+      reap: (jobDir) => { seen.push(['reap', jobOf(jobDir)]); return base.reap(jobDir); },
     }),
   });
   await f.upload(f.body('first', 'hand'));
@@ -328,10 +330,10 @@ test('a cancel after the timeout kill sends no second kill and the next job wait
       ...base,
       kill: (child, jobDir) => {
         const n = seen.filter((s) => s[0] === 'kill').length + 1;
-        seen.push(['kill', path.basename(jobDir)]);
-        return new Promise((resolve) => { if (n === 1) release = () => { seen.push(['kill-landed', path.basename(jobDir)]); resolve(); }; else resolve(); });
+        seen.push(['kill', jobOf(jobDir)]);
+        return new Promise((resolve) => { if (n === 1) release = () => { seen.push(['kill-landed', jobOf(jobDir)]); resolve(); }; else resolve(); });
       },
-      reap: (jobDir) => { seen.push(['reap', path.basename(jobDir)]); return base.reap(jobDir); },
+      reap: (jobDir) => { seen.push(['reap', jobOf(jobDir)]); return base.reap(jobDir); },
     }),
   });
   await f.upload(f.body('first', 'hand', { timeoutMs: 5000 }));
