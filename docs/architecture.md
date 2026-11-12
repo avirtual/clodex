@@ -369,7 +369,7 @@ bundle), whose packaged form is the Docker image under
   SCANNED_MODULES. The mirror side also keeps `refs/keep/*` (`keepRefs`),
   answers `have` (`mirrorHave`, `mirrorHolds`) and repacks (`gcMirror`).
 - **suite-runner.js** — runner-mode engine for remote suite jobs, plain methods
-  served by `remote.js` `_handleSuite` under `/api/suite/*` when remote-wiring builds it (`CLODEX_SUITE_RUNNER=1`). `createSuiteRunner({root, work, isolation,
+  served through `suite-dispatch.js` under `/api/suite/*` when remote-wiring builds it (`CLODEX_SUITE_RUNNER=1`). `createSuiteRunner({root, work, isolation,
   limits, spawn, now, log, timers})` returns `info`, `submit`, `putPack`,
   `commit`, `poll`, `output`, `cancel`, plus `tick`/`start`/`close`. Job records
   and outputs live under `<root>/suite-runner/jobs/<id>/` (never `run/`);
@@ -381,6 +381,14 @@ bundle), whose packaged form is the Docker image under
   environment built from empty. Isolation is a strategy: `userIsolation`
   (through `docker/web/clodex-suite-exec` and sudo) or `noneIsolation`. Never
   decides pass or fail: returns exit, output and a ledger-shaped record. In
+  SCANNED_MODULES.
+- **suite-dispatch.js** — the runner's suite verb table, transport-free.
+  `SUITE_VERBS` is an exact allowlist, one row per verb (method, path pattern,
+  body kind and byte cap); `suiteRoute({method, path, headers})` matches a row
+  and checks the job id and `Content-Range` before any body is read;
+  `suiteDispatch(runner, {method, path, headers, body, bytes})` resolves the
+  `{status, body}` the HTTP route sends, 404 for anything off the table.
+  `remote.js` `_handleSuite` only reads the request and writes that answer. In
   SCANNED_MODULES.
 - **suite-client.js** — the lead's side of a remote suite job.
   `createSuiteClient({getPeerManager, ledgerFile, log, now, sleep, randomUUID,
