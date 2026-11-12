@@ -11552,6 +11552,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
             </select>
           </div>
           <p id="prefs-box-offer-run-note" class="hint-text hidden"></p>
+          <div id="prefs-box-offer-claims" class="hint-text hidden"></div>
           <div id="prefs-box-offer-schedule" class="hidden" style="margin-top: 6px;"></div>
           <button id="prefs-box-offer-schedule-add" class="secondary hidden" type="button" style="margin-top: 4px;">Add window</button>
           <div id="prefs-box-offer-peers" style="margin-top: 6px;"></div>
@@ -30550,6 +30551,13 @@ Allow?`;
         rec.peers = (peers || []).map((name) => ({ name }));
         return rec;
       }
+      function claimLines(claims, now = Date.now()) {
+        return (Array.isArray(claims) ? claims : []).filter((c) => c && typeof c.name === "string").map((c) => {
+          if (c.state === "runner-off") return `${c.name}: runner mode off`;
+          if (c.state !== "claiming") return `${c.name}: not connected`;
+          return `${c.name}: claiming, last claim ${Number.isFinite(c.lastClaim) ? agoText(now - c.lastClaim) : "not yet"}`;
+        });
+      }
       function offerStatusText(st) {
         if (!st) return "";
         if (st.forced) return "Set by environment (CLODEX_BOX_OFFER); change it there.";
@@ -30572,7 +30580,8 @@ Allow?`;
         selfLabelLine,
         offerFormProblem,
         offerRecordFromForm,
-        offerStatusText
+        offerStatusText,
+        claimLines
       };
     }
   });
@@ -53278,7 +53287,7 @@ ${detail}` });
       var { parseEnvLines, formatEnvLines } = require_env_edit();
       var { envRowView, buildEnvRow } = require_env_row();
       var { envLockView, applyEnvLock, patchUnlessEnvLocked } = require_env_lock();
-      var { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, offerRunnerFrom, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText } = require_offer_view();
+      var { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, offerRunnerFrom, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText, claimLines: offerClaimLines } = require_offer_view();
       var { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require_account_select();
       var { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, keyTransportRefusal, modelOptions } = require_account_row();
       var { isToolInstallSession } = require_tool_doctor();
@@ -59408,6 +59417,7 @@ Click for live activity`;
       var prefsBoxOfferApply = document.getElementById("prefs-box-offer-apply");
       var prefsBoxOfferScope = document.getElementById("prefs-box-offer-scope");
       var prefsBoxOfferRunNote = document.getElementById("prefs-box-offer-run-note");
+      var prefsBoxOfferClaims = document.getElementById("prefs-box-offer-claims");
       var prefsEnvScope = document.getElementById("prefs-env-scope");
       var prefsEnvList = document.getElementById("prefs-env-list");
       var prefsEnvKey = document.getElementById("prefs-env-key");
@@ -62650,6 +62660,13 @@ ${res.stderr}` : "");
         prefsBoxOfferPeersNote.textContent = run ? OFFER_RUN_PEER_NOTE : OFFER_PEER_NOTE;
         prefsBoxOfferRunNote.textContent = run ? offerRunIsolationLine(prefsBoxOfferShown && prefsBoxOfferShown.runner) : "";
         prefsBoxOfferRunNote.classList.toggle("hidden", !run);
+        const lines = run ? offerClaimLines(prefsBoxOfferShown && prefsBoxOfferShown.claims) : [];
+        prefsBoxOfferClaims.replaceChildren(...lines.map((text) => {
+          const row = document.createElement("div");
+          row.textContent = text;
+          return row;
+        }));
+        prefsBoxOfferClaims.classList.toggle("hidden", !lines.length);
       }
       function renderBoxOfferPrefs(st) {
         prefsBoxOfferShown = st;
