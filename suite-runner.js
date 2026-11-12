@@ -15,7 +15,7 @@ const SHA_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 const REF_RE = /^(?![-/.])(?!.*\.\.)(?!.*\/\/)[A-Za-z0-9._/-]{1,200}$/;
 const ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
 const FLAG_KEYS = ['CLODEX_TEST_LOCK', 'CLODEX_TEST_SLOW_ADVISORY'];
-const BASE_ENV_KEYS = ['PATH', 'HOME', 'TMPDIR', 'LANG', 'TZ', 'USER', 'LOGNAME', 'SHELL', 'ELECTRON_RUN_AS_NODE'];
+const BASE_ENV_KEYS = ['PATH', 'HOME', 'TMPDIR', 'LANG', 'TZ', 'USER', 'LOGNAME', 'SHELL', 'ELECTRON_RUN_AS_NODE', 'GIT_CEILING_DIRECTORIES'];
 const SAFE_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 const HOMEBREW_ARM_PATH = '/opt/homebrew/bin:/opt/homebrew/sbin';
 
@@ -165,6 +165,23 @@ function jobPaths(work, id) {
   return { dir, tree: path.join(dir, 'tree'), home: path.join(dir, 'home'), tmp: path.join(dir, 'tmp') };
 }
 
+function enclosingRepo(dir) {
+  let p = path.resolve(dir);
+  const rest = [];
+  while (!fs.existsSync(p) && path.dirname(p) !== p) {
+    rest.unshift(path.basename(p));
+    p = path.dirname(p);
+  }
+  p = path.join(fs.realpathSync(p), ...rest);
+  for (;;) {
+    if (path.basename(p) === '.git') return path.dirname(p);
+    if (fs.existsSync(path.join(p, '.git'))) return p;
+    const up = path.dirname(p);
+    if (up === p) return null;
+    p = up;
+  }
+}
+
 function noneIsolation({ user = os.userInfo().username, kill = process.kill.bind(process) } = {}) {
   return {
     mode: 'none',
@@ -221,7 +238,7 @@ function userIsolation({ helper = HELPER, user = SUITE_USER, spawn = childProces
   };
 }
 
-async function envIdentity({ isolation, env = process.env, imageFile = '/etc/clodex/image.json' } = {}) {
+async function envIdentity({ isolation, env = process.env, imageFile = '/etc/clodex/image.json', platform = process.platform } = {}) {
   const gitRun = await git(os.tmpdir(), ['--version']);
   const image = readJson(imageFile, {});
   let clodex = null;
@@ -239,7 +256,7 @@ async function envIdentity({ isolation, env = process.env, imageFile = '/etc/clo
     git: gitRun.ok ? String(gitRun.stdout).trim().replace(/^git version /, '') : null,
     cpus: os.cpus().length,
     tz: Intl.DateTimeFormat().resolvedOptions().timeZone || null,
-    lang: env.LANG || null,
+    lang: jobLang(platform),
     isolation: isolation || null,
   };
   const { runner, ...rest } = id;
@@ -283,6 +300,8 @@ function createSuiteRunner({
   root, oldRoot = null, work, isolation = userIsolation(), limits = {}, spawn = childProcess.spawn,
   now = Date.now, log = () => {}, timers = DEFAULT_TIMERS, platform = process.platform, arch = process.arch,
 }) {
+  const repo = enclosingRepo(work);
+  if (repo) throw new Error(`the work root is inside the git repository ${repo}; choose a work folder outside any repository`);
   const lim = { ...DEFAULT_LIMITS, ...limits };
   const state = statePaths(root);
   const storeDir = state.jobs;
@@ -364,7 +383,7 @@ function createSuiteRunner({
 
   async function ensureIdentity() {
     if (!isoState) isoState = await isolation.probe();
-    if (!identity) identity = await envIdentity({ isolation: isoState.mode });
+    if (!identity) identity = await envIdentity({ isolation: isoState.mode, platform });
     return identity;
   }
 
@@ -515,6 +534,7 @@ function createSuiteRunner({
       PATH: jobPath(platform, arch),
       HOME: path.join(jobDir, 'home'),
       TMPDIR: path.join(jobDir, 'tmp'),
+      GIT_CEILING_DIRECTORIES: jobDir,
       LANG: jobLang(platform),
       TZ: 'UTC',
       USER: isolation.user,
