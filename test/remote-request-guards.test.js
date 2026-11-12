@@ -64,7 +64,7 @@ function fakeRes() {
 test('a JSON null body is a 400 on every body route, never an uncaught throw', async () => {
   const ok = () => ({ ok: true });
   await withServer({
-    deliverDm: ok, claimDms: () => [], receiveRoster: ok,
+    deliverDm: ok, claimDms: () => [], receiveRoster: ok, offerFor: () => null, receiveOffers: ok,
     sendInput: ok, resizePty: ok, getAttachInfo: () => ({ ok: true }),
     wtermOpen: ok, wtermInput: ok, wtermResize: ok,
     query: ok, setProfile: ok, restartSession: ok, setSessionArgs: ok, setSessionSkills: ok, setClientToken: ok,
@@ -74,7 +74,7 @@ test('a JSON null body is a 400 on every body route, never an uncaught throw', a
   }, async (server) => {
     server._wterm.set('seat', new Set([{}]));
     const rows = [
-      ['POST', '/api/dm'], ['POST', '/api/dm/claim'], ['POST', '/api/peer/roster'],
+      ['POST', '/api/dm'], ['POST', '/api/dm/claim'], ['POST', '/api/peer/roster'], ['POST', '/api/peer/offers'],
       ['POST', '/api/sessions/alpha/control'], ['POST', '/api/sessions/alpha/input'], ['POST', '/api/sessions/alpha/resize'],
       ['POST', '/api/wterm-input/seat'], ['POST', '/api/wterm-resize/seat'],
       ['POST', '/api/sessions/alpha/query'], ['POST', '/api/sessions/alpha/dm'], ['PUT', '/api/sessions/alpha/memory/profile'],

@@ -9,6 +9,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 const { createRemoteWiring } = require('../remote-wiring');
+const { createOfferDirectory } = require('../offer-directory');
 const { RemoteServer, RESOURCES, DM_MAX_BODY } = require('../remote');
 const { createTicketsStore } = require('../tickets-store');
 const { mkTmpRoot } = require('./lib/tmp-roots');
@@ -183,6 +184,7 @@ function makeDeps() {
     readRemoteEnvToken: () => null, resolveRemoteToken: (a, b) => a || b || null,
     appVersion: '9.9.9', isPackaged: () => false,
     getNodeLogFile: () => nodeLog,
+    getBoxOffer: () => null, getOfferFacts: () => ({}), offerDirectory: createOfferDirectory(),
   };
   return { deps, createCalls, nodeLog };
 }
@@ -434,10 +436,10 @@ test('RESOURCES: every (resource, verb) answers on a fully-injected node, and ev
     'peers.list', 'peers.get', 'teams.list', 'teams.get', 'tickets.list', 'tickets.get',
     'sandboxes.list', 'sandboxes.get', 'agents.list', 'agents.get',
     'docs.list', 'docs.get', 'worktrees.list', 'catalogs.get',
-    'node/logs.get',
+    'node/logs.get', 'offers.list',
   ], 'the walk must visit every shipped row — an empty or shortened walk passes vacuously');
-  assert.strictEqual(seen.length, 40, 'the walk entered 18 resource verbs, the sessions delete, and the 21 session subresource verbs');
-  assert.strictEqual(RESOURCES.length, 11, 'the walk covered fewer than the 11 shipped resources');
+  assert.strictEqual(seen.length, 41, 'the walk entered 19 resource verbs, the sessions delete, and the 21 session subresource verbs');
+  assert.strictEqual(RESOURCES.length, 12, 'the walk covered fewer than the 12 shipped resources');
 });
 
 test('GET /api/sessions/:name/transcript: the status and body the deleted /api/transcript/ served, limit and since threaded', async () => {
@@ -931,7 +933,7 @@ test('GET /api/resources: the document a fully-injected node serves', async () =
     const r = await req(port, '/api/resources');
     assert.strictEqual(r.status, 200);
     const doc = JSON.parse(r.body);
-    assert.deepStrictEqual(doc, { ok: true, version: 4, resources: RESOURCES });
+    assert.deepStrictEqual(doc, { ok: true, version: 5, resources: RESOURCES });
     assert.deepStrictEqual(doc.resources.find((x) => x.name === 'sessions').subresources['client-token'], ['put']);
   });
 });
@@ -961,14 +963,14 @@ test('workspaces: 501 and absent from /api/resources when listWorkspaces is not 
   await withNode({ listWorkspaces: null }, async (port) => {
     assert.strictEqual((await req(port, '/api/workspaces')).status, 501);
     const names = JSON.parse((await req(port, '/api/resources')).body).resources.map(r => r.name);
-    assert.deepStrictEqual(names, ['sessions', 'peers', 'teams', 'tickets', 'sandboxes', 'agents', 'docs', 'worktrees', 'catalogs', 'node/logs']);
+    assert.deepStrictEqual(names, ['sessions', 'peers', 'teams', 'tickets', 'sandboxes', 'agents', 'docs', 'worktrees', 'catalogs', 'node/logs', 'offers']);
   });
 });
 
 test('catalogs: absent from /api/resources when getCatalogs is not injected', async () => {
   await withNode({ getCatalogs: null }, async (port) => {
     const names = JSON.parse((await req(port, '/api/resources')).body).resources.map(r => r.name);
-    assert.deepStrictEqual(names, ['sessions', 'workspaces', 'peers', 'teams', 'tickets', 'sandboxes', 'agents', 'docs', 'worktrees', 'node/logs']);
+    assert.deepStrictEqual(names, ['sessions', 'workspaces', 'peers', 'teams', 'tickets', 'sandboxes', 'agents', 'docs', 'worktrees', 'node/logs', 'offers']);
   });
 });
 
