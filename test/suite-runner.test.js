@@ -526,7 +526,7 @@ test('clodex-suite-exec refuses every path outside its work root', (t) => {
   const inside = path.join(work, 'jobs', 'job1');
   const linked = path.join(work, 'jobs', 'job2');
   const entry = path.join(work, 'deps', 'a'.repeat(40), 'b'.repeat(64));
-  fs.mkdirSync(path.join(inside, 'tree'), { recursive: true });
+  for (const d of ['tree', 'home', 'tmp']) fs.mkdirSync(path.join(inside, d), { recursive: true });
   fs.mkdirSync(linked, { recursive: true });
   fs.mkdirSync(entry, { recursive: true });
   const outside = path.join(fs.realpathSync(root), 'elsewhere');
