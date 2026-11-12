@@ -93,14 +93,14 @@ function offerRunnerFrom(st) {
 }
 
 function runIsolationLine(runner) {
-  if (runner && runner.status === 'needs-remote') {
-    return 'Test runner needs phone access: nothing runs until it is turned on above.';
-  }
-  if (!runner || (runner.status !== 'running' && runner.status !== 'starting')) {
+  if (!runner || !['running', 'starting', 'pull-only'].includes(runner.status)) {
     return 'Test runner is off: nothing runs until it is turned on above.';
   }
-  if (runner.isolation === 'none') return "Jobs run through this machine's test runner, isolation none: suites run as this user, unisolated.";
-  return "Jobs run through this machine's test runner, isolation user: suites run as a separate user account.";
+  const line = runner.isolation === 'none'
+    ? "Jobs run through this machine's test runner, isolation none: suites run as this user, unisolated."
+    : "Jobs run through this machine's test runner, isolation user: suites run as a separate user account.";
+  if (runner.status === 'pull-only') return `${line} Phone access is off: only leads this machine dials can reach the runner.`;
+  return line;
 }
 
 function runConsentText(peers, runner) {
@@ -123,6 +123,14 @@ function offerRecordFromForm({ scope, enabled, boxes, availability, schedule, pe
   }
   rec.peers = (peers || []).map((name) => ({ name }));
   return rec;
+}
+
+function claimLines(claims, now = Date.now()) {
+  return (Array.isArray(claims) ? claims : []).filter((c) => c && typeof c.name === 'string').map((c) => {
+    if (c.state === 'runner-off') return `${c.name}: runner mode off`;
+    if (c.state !== 'claiming') return `${c.name}: not connected`;
+    return `${c.name}: claiming, last claim ${Number.isFinite(c.lastClaim) ? agoText(now - c.lastClaim) : 'not yet'}`;
+  });
 }
 
 function offerStatusText(st) {
@@ -149,4 +157,5 @@ module.exports = {
   offerFormProblem,
   offerRecordFromForm,
   offerStatusText,
+  claimLines,
 };

@@ -109,7 +109,7 @@ function registerIpcHandlers(deps) {
     readSkillCatalog, applySessionSkills, setUiTheme, sshRun,
     stripLevelOf, syncPeerManager, syncRemoteServer, updateApplies,
     setRemoteToken, hasRemoteToken, refreshRemoteToken, listSpeakVoices,
-    suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner,
+    suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner, suiteClaimStatus,
     getBoxOffer, boxOfferForced, readStoredBoxOffer, getOfferFacts, readOfferFacts, offerDirectory, dialers,
     wirescope, workspaceOfSender,
     sessionScopeCtx, renameWorkspaceScope,
@@ -1876,6 +1876,11 @@ function registerIpcHandlers(deps) {
       try { st = typeof suiteRunnerState === 'function' ? suiteRunnerState() : null; } catch { st = null; }
       return offerRunnerFrom(st);
     };
+    const offerClaims = () => {
+      let rows = null;
+      try { rows = typeof suiteClaimStatus === 'function' ? suiteClaimStatus() : null; } catch { rows = null; }
+      return Array.isArray(rows) ? rows : [];
+    };
     const offerState = async ({ fresh = true } = {}) => {
       let raw;
       try { raw = readStoredBoxOffer(); } catch { raw = undefined; }
@@ -1900,6 +1905,7 @@ function registerIpcHandlers(deps) {
         facts,
         peers,
         runner: offerRunner(),
+        claims: offerClaims(),
       };
     };
     handle('offer:get', () => offerState());

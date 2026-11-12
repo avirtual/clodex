@@ -14,15 +14,53 @@
 // destructure) are all defined at the call site and value-inject byte-identical.
 
 const { directWebUrl } = require('./peer-web-url');
-const { wireEntry } = require('./box-offer');
+const { wireEntry, runGrant, sanitizeBoxOffer } = require('./box-offer');
 const { setNotifying } = require('./offer-directory');
+const { createSuiteClaimer } = require('./suite-claimer');
+const { suiteDispatch } = require('./suite-dispatch');
 
-function offerPeerCallbacks({ getBoxOffer, getOfferFacts, offerDirectory, onChange } = {}) {
+const peerCaps = (conn) => (conn && conn.hello && Array.isArray(conn.hello.caps) ? conn.hello.caps : []);
+
+function engineUp(getSuiteEngine) {
+  if (typeof getSuiteEngine !== 'function') return false;
+  try { return !!getSuiteEngine(); } catch { return false; }
+}
+
+function offerPeerCallbacks({ getBoxOffer, getOfferFacts, offerDirectory, getSuiteEngine, onChange } = {}) {
   if (!offerDirectory || typeof getBoxOffer !== 'function' || typeof getOfferFacts !== 'function') return {};
   return {
-    computeOffers: (_targetId, label, caps) => wireEntry(getBoxOffer(), getOfferFacts, label, undefined, { run: Array.isArray(caps) && caps.includes('suite-pull') }),
+    computeOffers: (_targetId, label, caps) => wireEntry(getBoxOffer(), getOfferFacts, label, undefined, { run: Array.isArray(caps) && caps.includes('suite-pull') && engineUp(getSuiteEngine) }),
     onOffers: (peerId, label, own) => setNotifying(offerDirectory, { provenance: 'hello', source: String(peerId), name: label, offer: own }, onChange),
   };
+}
+
+function suiteClaimerFor({ getBoxOffer, getSuiteEngine, log, now = () => new Date(), concurrency } = {}) {
+  if (typeof getBoxOffer !== 'function' || typeof getSuiteEngine !== 'function') return null;
+  return (conn) => createSuiteClaimer({
+    claim: (session) => conn.suiteDeskClaim(session),
+    blob: (id, claim) => conn.suiteDeskBlob(id, claim),
+    reply: (id, claim, answer) => conn.suiteDeskReply(id, claim, answer),
+    execute: (call) => suiteDispatch(getSuiteEngine(), call),
+    grant: () => runGrant(getBoxOffer(), conn.label, now()),
+    ready: () => peerCaps(conn).includes('suite-pull') && engineUp(getSuiteEngine),
+    log: (m) => { if (log) log.warn('suite-claimer', `${conn.label}: ${m}`); },
+    ...(concurrency ? { concurrency } : {}),
+  });
+}
+
+function suiteClaimRows({ getBoxOffer, getSuiteEngine, getPeerManager } = {}) {
+  const offer = typeof getBoxOffer === 'function' ? sanitizeBoxOffer(getBoxOffer()) : null;
+  if (!offer || offer.scope !== 'run' || !offer.enabled) return [];
+  const up = engineUp(getSuiteEngine);
+  const pm = typeof getPeerManager === 'function' ? getPeerManager() : null;
+  const conns = pm && typeof pm.connections === 'function' ? pm.connections() : [];
+  return offer.peers.map(({ name }) => {
+    if (!up) return { name, state: 'runner-off', lastClaim: null };
+    const conn = conns.find((c) => c.label === name);
+    const st = conn && typeof conn.suiteClaimStatus === 'function' ? conn.suiteClaimStatus() : null;
+    if (!conn || !conn.online || !peerCaps(conn).includes('suite-pull') || !st) return { name, state: 'not-connected', lastClaim: null };
+    return { name, state: 'claiming', lastClaim: st.lastClaim };
+  });
 }
 
 function createPeerWiring(deps) {
@@ -35,6 +73,7 @@ function createPeerWiring(deps) {
     openRemoteWindow, closeRemoteWindow, onRemoteWindowClosed, onRemoteWindowBounds,
     persistWebWindows = false,
     getBoxOffer, getOfferFacts, offerDirectory,
+    getSuiteEngine,
   } = deps;
 
   // Last-logged online state per peer id — the ops log records online/offline
@@ -97,7 +136,8 @@ function createPeerWiring(deps) {
       const { computeRosterFor } = require('./relay-protocol');
       setPeerManager(new PeerManager({
         selfLabel: SELF_LABEL,
-        ...offerPeerCallbacks({ getBoxOffer, getOfferFacts, offerDirectory, onChange: () => manager._broadcast('offers-changed') }),
+        ...offerPeerCallbacks({ getBoxOffer, getOfferFacts, offerDirectory, getSuiteEngine, onChange: () => manager._broadcast('offers-changed') }),
+        suiteClaimer: suiteClaimerFor({ getBoxOffer, getSuiteEngine, log }),
         // Hub-relay: the roster pushed to spoke `targetId` — agents on our OTHER
         // relayAllowed peers plus OUR OWN, all under the symmetric gate. Re-reads
         // settings, statuses and sessions per call, so a relayAllowed toggle lands
@@ -563,6 +603,7 @@ function createPeerWiring(deps) {
   return {
     forgetPeerAttached, forgetPeerControlled, rememberPeerControlled,
     syncPeerManager, resolvePeerUrls, openPeerWeb, closePeerWeb,
+    suiteClaimStatus: () => suiteClaimRows({ getBoxOffer, getSuiteEngine, getPeerManager }),
     // App shutdown. The companion forwards are ssh/vendor CHILD processes with
     // no persistence record behind them, so a quit that skipped this would
     // orphan one holding a local port — the same reason the web manager is
@@ -575,4 +616,4 @@ function createPeerWiring(deps) {
   };
 }
 
-module.exports = { createPeerWiring, offerPeerCallbacks };
+module.exports = { createPeerWiring, offerPeerCallbacks, suiteClaimerFor, suiteClaimRows };

@@ -320,6 +320,36 @@ down the peer keeps a dead-placeholder URL
 (`http://127.0.0.1:1`) so the connection object and sidebar presence stay
 alive-but-offline.
 
+**Suite claims (the runner side of §2e).** peer-wiring.js gives every
+`PeerConnection` a `suite-claimer.js` claimer (`suiteClaimerFor`). It rings on
+every hello tick and on a `suite-mail` doorbell naming this node's label (its
+own arm in `_openEvents`, not tied to dm claims or `identityChanged`). A ring
+claims only when the peer row's label has a run grant (`runGrant(...).serve`),
+the hello carries `suite-pull` and this node's engine exists; the engine is
+reached through remote-wiring's lazy `getSuiteEngine`, so runner mode works
+with remote access off. Each claim sends the claimer's `session`, minted once
+per connection. Only the claim fetch is serialised: claimed calls run
+concurrently, at most 4 at a time (`CLAIMER_CONCURRENCY`), and a `DELETE`
+(cancel) bypasses that bound, so it never waits behind a long poll. A call
+with a blob fetches it first (`suiteDeskBlob`, a raw GET capped at 4 MiB plus
+64 KiB). A call whose deadline (receipt time plus `ttlMs`) has passed is not
+executed. Everything else goes through `suiteDispatch` against the current
+engine, so a call outside the suite verb table is answered 404, and the answer
+is posted with `suiteDeskReply`. A reply the desk refuses is logged and
+dropped; the lead's own retry reissues the request.
+
+- While the schedule is closed (`admit` false) a `POST /api/suite/jobs` is
+  answered 503 `offer closed`; poll, output and cancel for existing jobs are
+  still served.
+- When the grant is withdrawn (offer off, scope back to discovery, or the
+  peer unticked), the next ring cancels every job this claimer submitted and
+  claims stop.
+- The announce to a peer says scope `run` only while the hello carries
+  `suite-pull` and the engine exists.
+- `offer:get` carries `claims`, one row per ticked peer under a run offer:
+  `claiming` with `lastClaim`, `not-connected` or `runner-off`. Preferences ▸
+  Offer test boxes shows them as status lines.
+
 ### 2a. Web view + the wirescope forward (t30b, t443)
 
 Two hello fields advertise loopback services a consumer may FORWARD to, both
@@ -636,8 +666,8 @@ The pull wire runs the §2c requests in reverse: the lead queues each one as a
 *call* on `suite-desk.js`, a runner that dials the lead claims it, runs it
 locally and posts the answer back. engine.js builds one desk and remote-wiring
 injects it as `suiteDesk`; with it, the non-scoped hello carries the cap
-`suite-pull`. Nothing queues calls yet: the claimer and team routing come in
-later slices.
+`suite-pull`. Nothing queues calls yet: team routing comes in a later slice.
+The runner's side is the claimer (§3, "Suite claims").
 
 - `desk.conn(origin)` offers `suiteAsk(method, path, payload, timeout)` and
   `suitePut(path, buffer, headers, timeout)`, resolving `{status, body, error}`

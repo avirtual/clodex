@@ -10099,7 +10099,8 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
 #prefs-box-offer-block.hidden,
 #prefs-box-offer-schedule.hidden,
 #prefs-box-offer-schedule-add.hidden,
-#prefs-box-offer-run-note.hidden {
+#prefs-box-offer-run-note.hidden,
+#prefs-box-offer-claims.hidden {
   display: none;
 }
 
@@ -11552,6 +11553,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
             </select>
           </div>
           <p id="prefs-box-offer-run-note" class="hint-text hidden"></p>
+          <div id="prefs-box-offer-claims" class="hint-text hidden"></div>
           <div id="prefs-box-offer-schedule" class="hidden" style="margin-top: 6px;"></div>
           <button id="prefs-box-offer-schedule-add" class="secondary hidden" type="button" style="margin-top: 4px;">Add window</button>
           <div id="prefs-box-offer-peers" style="margin-top: 6px;"></div>
@@ -30518,14 +30520,12 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         return { status: st.status, isolation: st.effective ? st.effective.isolation : null };
       }
       function runIsolationLine(runner) {
-        if (runner && runner.status === "needs-remote") {
-          return "Test runner needs phone access: nothing runs until it is turned on above.";
-        }
-        if (!runner || runner.status !== "running" && runner.status !== "starting") {
+        if (!runner || !["running", "starting", "pull-only"].includes(runner.status)) {
           return "Test runner is off: nothing runs until it is turned on above.";
         }
-        if (runner.isolation === "none") return "Jobs run through this machine's test runner, isolation none: suites run as this user, unisolated.";
-        return "Jobs run through this machine's test runner, isolation user: suites run as a separate user account.";
+        const line = runner.isolation === "none" ? "Jobs run through this machine's test runner, isolation none: suites run as this user, unisolated." : "Jobs run through this machine's test runner, isolation user: suites run as a separate user account.";
+        if (runner.status === "pull-only") return `${line} Phone access is off: only leads this machine dials can reach the runner.`;
+        return line;
       }
       function runConsentText(peers, runner) {
         const names = (peers || []).filter((n) => typeof n === "string");
@@ -30550,6 +30550,13 @@ Allow?`;
         rec.peers = (peers || []).map((name) => ({ name }));
         return rec;
       }
+      function claimLines(claims, now = Date.now()) {
+        return (Array.isArray(claims) ? claims : []).filter((c) => c && typeof c.name === "string").map((c) => {
+          if (c.state === "runner-off") return `${c.name}: runner mode off`;
+          if (c.state !== "claiming") return `${c.name}: not connected`;
+          return `${c.name}: claiming, last claim ${Number.isFinite(c.lastClaim) ? agoText(now - c.lastClaim) : "not yet"}`;
+        });
+      }
       function offerStatusText(st) {
         if (!st) return "";
         if (st.forced) return "Set by environment (CLODEX_BOX_OFFER); change it there.";
@@ -30572,7 +30579,8 @@ Allow?`;
         selfLabelLine,
         offerFormProblem,
         offerRecordFromForm,
-        offerStatusText
+        offerStatusText,
+        claimLines
       };
     }
   });
@@ -53278,7 +53286,7 @@ ${detail}` });
       var { parseEnvLines, formatEnvLines } = require_env_edit();
       var { envRowView, buildEnvRow } = require_env_row();
       var { envLockView, applyEnvLock, patchUnlessEnvLocked } = require_env_lock();
-      var { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, offerRunnerFrom, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText } = require_offer_view();
+      var { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, offerRunnerFrom, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText, claimLines: offerClaimLines } = require_offer_view();
       var { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require_account_select();
       var { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, keyTransportRefusal, modelOptions } = require_account_row();
       var { isToolInstallSession } = require_tool_doctor();
@@ -59408,6 +59416,7 @@ Click for live activity`;
       var prefsBoxOfferApply = document.getElementById("prefs-box-offer-apply");
       var prefsBoxOfferScope = document.getElementById("prefs-box-offer-scope");
       var prefsBoxOfferRunNote = document.getElementById("prefs-box-offer-run-note");
+      var prefsBoxOfferClaims = document.getElementById("prefs-box-offer-claims");
       var prefsEnvScope = document.getElementById("prefs-env-scope");
       var prefsEnvList = document.getElementById("prefs-env-list");
       var prefsEnvKey = document.getElementById("prefs-env-key");
@@ -62499,11 +62508,13 @@ ${res.stderr}` : "");
         });
       }
       function suiteRunnerStatusText(st) {
-        if (st.status === "running") return "Running \u2014 peers can send test suites here.";
-        if (st.status === "needs-remote") return "Off \u2014 turn phone access on above; the runner serves over that wire.";
+        if (st.status === "running") {
+          return st.remoteEnabled ? "Running \u2014 peers can send test suites here." : "Running \u2014 phone access is off: only leads this machine dials can send test suites here.";
+        }
+        if (st.status === "pull-only") return "On \u2014 phone access is off: only leads this machine dials can send test suites here; it starts on the first one.";
         if (st.status === "failed") return st.error || "Off \u2014 the runner failed to start.";
         if (st.status === "starting") return "Starts with the wire.";
-        return st.remoteEnabled ? "Off." : "Off. Phone access is off too; the runner needs it on.";
+        return "Off.";
       }
       var prefsSuiteRunnerShown = null;
       function renderSuiteRunnerPrefs(st) {
@@ -62650,6 +62661,13 @@ ${res.stderr}` : "");
         prefsBoxOfferPeersNote.textContent = run ? OFFER_RUN_PEER_NOTE : OFFER_PEER_NOTE;
         prefsBoxOfferRunNote.textContent = run ? offerRunIsolationLine(prefsBoxOfferShown && prefsBoxOfferShown.runner) : "";
         prefsBoxOfferRunNote.classList.toggle("hidden", !run);
+        const lines = run ? offerClaimLines(prefsBoxOfferShown && prefsBoxOfferShown.claims) : [];
+        prefsBoxOfferClaims.replaceChildren(...lines.map((text) => {
+          const row = document.createElement("div");
+          row.textContent = text;
+          return row;
+        }));
+        prefsBoxOfferClaims.classList.toggle("hidden", !lines.length);
       }
       function renderBoxOfferPrefs(st) {
         prefsBoxOfferShown = st;

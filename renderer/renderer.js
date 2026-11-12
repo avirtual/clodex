@@ -46,7 +46,7 @@ const { anyOverlayOpen, dialogOverlayIds, performCloseChord } = require('./lib/c
 const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { envRowView, buildEnvRow } = require('./lib/env-row');
 const { envLockView, applyEnvLock, patchUnlessEnvLocked } = require('./lib/env-lock');
-const { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, offerRunnerFrom, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText } = require('./lib/offer-view');
+const { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, offerRunnerFrom, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText, claimLines: offerClaimLines } = require('./lib/offer-view');
 const { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require('./lib/account-select');
 const { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, keyTransportRefusal, modelOptions } = require('./lib/account-row');
 const { isToolInstallSession } = require('../tool-doctor');
@@ -6432,6 +6432,7 @@ const prefsBoxOfferStatus = document.getElementById('prefs-box-offer-status');
 const prefsBoxOfferApply = document.getElementById('prefs-box-offer-apply');
 const prefsBoxOfferScope = document.getElementById('prefs-box-offer-scope');
 const prefsBoxOfferRunNote = document.getElementById('prefs-box-offer-run-note');
+const prefsBoxOfferClaims = document.getElementById('prefs-box-offer-claims');
 
 const prefsEnvScope = document.getElementById('prefs-env-scope');
 const prefsEnvList = document.getElementById('prefs-env-list');
@@ -9472,11 +9473,13 @@ if (prefsPeerShell) {
 }
 
 function suiteRunnerStatusText(st) {
-  if (st.status === 'running') return 'Running — peers can send test suites here.';
-  if (st.status === 'needs-remote') return 'Off — turn phone access on above; the runner serves over that wire.';
+  if (st.status === 'running') {
+    return st.remoteEnabled ? 'Running — peers can send test suites here.' : 'Running — phone access is off: only leads this machine dials can send test suites here.';
+  }
+  if (st.status === 'pull-only') return 'On — phone access is off: only leads this machine dials can send test suites here; it starts on the first one.';
   if (st.status === 'failed') return st.error || 'Off — the runner failed to start.';
   if (st.status === 'starting') return 'Starts with the wire.';
-  return st.remoteEnabled ? 'Off.' : 'Off. Phone access is off too; the runner needs it on.';
+  return 'Off.';
 }
 
 let prefsSuiteRunnerShown = null;
@@ -9618,6 +9621,13 @@ function syncBoxOfferScope() {
   prefsBoxOfferPeersNote.textContent = run ? OFFER_RUN_PEER_NOTE : OFFER_PEER_NOTE;
   prefsBoxOfferRunNote.textContent = run ? offerRunIsolationLine(prefsBoxOfferShown && prefsBoxOfferShown.runner) : '';
   prefsBoxOfferRunNote.classList.toggle('hidden', !run);
+  const lines = run ? offerClaimLines(prefsBoxOfferShown && prefsBoxOfferShown.claims) : [];
+  prefsBoxOfferClaims.replaceChildren(...lines.map((text) => {
+    const row = document.createElement('div');
+    row.textContent = text;
+    return row;
+  }));
+  prefsBoxOfferClaims.classList.toggle('hidden', !lines.length);
 }
 
 function renderBoxOfferPrefs(st) {
