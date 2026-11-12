@@ -191,6 +191,71 @@ test('t2303: a detached skip row is written as its own kind and is counted as ne
   assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k1' }), { envKey: 'k1', agree: 1, disagree: 0, oneSided: [] });
 });
 
+function pullShadowClient(desk) {
+  const compareFile = path.join(mkTmpRoot('suite-shadow-pull-'), 'suite-compare.jsonl');
+  let t = 1000;
+  let n = 0;
+  const client = createSuiteClient({
+    getPeerManager: () => null,
+    getSuiteDesk: () => ({ conn: (o) => (o === 'laptop' ? desk.conn : null), attached: (o) => o === 'laptop' && desk.attached }),
+    compareFile,
+    now: () => t,
+    randomUUID: () => `run-${(n += 1)}`,
+    snapshot: { snapshotTree: async () => ({ treeHash: TREE, head: HEAD, headTree: TREE }), releaseSnapshot: () => {} },
+    sleep: async (ms) => { t += ms; },
+  });
+  const records = () => fs.readFileSync(compareFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).map(({ at, ...r }) => r);
+  return { client, records };
+}
+
+function detachingConn(desk) {
+  const base = remoteConn();
+  const conn = {
+    suiteAsk: async (method, p, ...rest) => {
+      if (!desk.attached) {
+        base.calls.push(`${method} ${p.split('?')[0]} -> 503`);
+        return { status: 503, body: null, error: 'runner laptop is not attached' };
+      }
+      const r = await base.conn.suiteAsk(method, p, ...rest);
+      if (method === 'POST') desk.attached = false;
+      return r;
+    },
+  };
+  return { conn, calls: base.calls };
+}
+
+const PULL_OPTS = { peer: 'laptop', name: 'laptop', wire: 'pull', tree: '/w', kind: 'verify', team: 'tm', ticket: 't1', budgetMs: 60000 };
+const PULL_ROW = (remote, agree) => ({ team: 'tm', kind: 'verify', ticket: 't1', treeHash: TREE, sha: HEAD, envKey: 'k1', wire: 'pull', local: LOCAL(), remote, agree });
+
+test('t2304: a pull runner that detaches mid-job writes one skip row naming the job, after an attached run wrote a normal row; the tally counts no disagreement', async () => {
+  const desk = { attached: true, conn: remoteConn().conn };
+  const f = pullShadowClient(desk);
+  const first = await f.client.shadow(PULL_OPTS);
+  await turns();
+  first.local(localHalf({ code: 0, stdout: GREEN, stderr: '', durationMs: 70 }));
+  assert.deepStrictEqual(f.records(), [PULL_ROW(REMOTE(), true)], 'ENTER: the attached runner wrote a normal row');
+  const gone = detachingConn(desk);
+  desk.conn = gone.conn;
+  const second = await f.client.shadow(PULL_OPTS);
+  await turns(400);
+  second.local(localHalf({ code: 0, stdout: GREEN, stderr: '', durationMs: 70 }));
+  assert.ok(gone.calls.includes('GET /api/suite/jobs -> 503'), gone.calls.join('\n'));
+  assert.deepStrictEqual(f.records(), [
+    PULL_ROW(REMOTE(), true),
+    { team: 'tm', kind: 'verify', ticket: 't1', wire: 'pull', runner: 'laptop', skipped: 'detached', agree: null, midJob: true, jobId: 'run-2' },
+  ]);
+  assert.deepStrictEqual(f.client.tally({ team: 'tm' }), { envKey: 'k1', agree: 1, disagree: 0, oneSided: [] });
+});
+
+test('t2304: an attached pull runner that answers unknown still writes a normal row', async () => {
+  const desk = { attached: true, conn: remoteConn({ refuse: true }).conn };
+  const f = pullShadowClient(desk);
+  const h = await f.client.shadow(PULL_OPTS);
+  await turns();
+  h.local(localHalf({ code: 0, stdout: GREEN, stderr: '', durationMs: 70 }));
+  assert.deepStrictEqual(f.records(), [PULL_ROW(REMOTE({ outcome: 'unknown', reason: 'runner refused the job: nope', pass: null, fail: null, tests: null, queueMs: null, runMs: null }), false)]);
+});
+
 function runPair(conn, wire) {
   let n = 0;
   return createSuiteClient({

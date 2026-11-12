@@ -199,7 +199,8 @@ function normalizeMaxHands(v) {
 
 const TEST_RUNNER_HANDS = ['off', 'full', 'all'];
 const TEST_RUNNER_GATE = ['off', 'shadow', 'on'];
-const TEST_RUNNER_WIRE = ['push', 'pull'];
+const TEST_RUNNER_WIRE_PUSH = 'push';
+const TEST_RUNNER_WIRE = [TEST_RUNNER_WIRE_PUSH, 'pull'];
 const TEST_RUNNER_KEYS = ['peer', 'hands', 'gate', 'wire', 'setup', 'env'];
 const TEST_RUNNER_SETUP_KEYS = ['run', 'key', 'paths', 'timeoutMs'];
 const TEST_RUNNER_ENV_RE = /^[A-Z_][A-Z0-9_]*$/;
@@ -1889,6 +1890,6 @@ module.exports = {
   // Exported so the retired-field warn test iterates the REAL list — a copy in
   // the test would keep passing over a field added here and never warned about.
   ROLE_KEYS, CUT_ROLE_FIELDS, HONORED_CUT_FIELDS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, MANIFEST_VERSION,
-  ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH, normalizeTrunk, TRUNK_HEAD, DONE_VALUES, DEFAULT_DONE, normalizeDone, WORKTREES_VALUES, normalizeWorktrees, normalizeMaxHands, effectiveHandCap, normalizeTestRunner, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_WIRE,
+  ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH, normalizeTrunk, TRUNK_HEAD, DONE_VALUES, DEFAULT_DONE, normalizeDone, WORKTREES_VALUES, normalizeWorktrees, normalizeMaxHands, effectiveHandCap, normalizeTestRunner, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_WIRE, TEST_RUNNER_WIRE_PUSH,
   ROLE_RE, RESERVED_ROLE_KEYS, RESERVED_ROLE_PATCH_FIELDS, NAME_RE,
 };

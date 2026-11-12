@@ -360,7 +360,7 @@ function createSuiteClient({
       return null;
     }
     const key = JSON.stringify([opts.team, opts.ticket, opts.kind]);
-    const me = { treeHash: snap.treeHash, peer: opts.peer, wire: opts.wire === 'pull' ? 'pull' : 'push', jobId: null, superseded: false, local: null, remote: null, settled: false };
+    const me = { treeHash: snap.treeHash, peer: opts.peer, wire: opts.wire === 'pull' ? 'pull' : 'push', jobId: null, superseded: false, local: null, remote: null, settled: false, detached: false };
     const prev = shadows.get(key);
     if (prev && prev.treeHash !== me.treeHash) {
       prev.superseded = true;
@@ -375,6 +375,13 @@ function createSuiteClient({
         log(`suite-client: discarded the shadow result of superseded job ${me.jobId}`);
         return;
       }
+      if (me.detached) {
+        appendCompare({
+          at: iso(now()), team: opts.team, kind: opts.kind, ticket: opts.ticket, wire: 'pull', runner: me.peer,
+          skipped: 'detached', agree: null, midJob: true, jobId: me.jobId,
+        });
+        return;
+      }
       const remote = remoteHalf(me.remote);
       const rec = me.remote.record || {};
       appendCompare({
@@ -387,6 +394,8 @@ function createSuiteClient({
       .catch((e) => ({ unknown: `client error: ${e.message}`, res: null, record: null }))
       .then((out) => {
         me.remote = out;
+        const desk = me.wire === 'pull' && out.unknown ? getSuiteDesk() : null;
+        if (desk && !desk.attached(me.peer)) me.detached = true;
         settle();
       });
     return {
