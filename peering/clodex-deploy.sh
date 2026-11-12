@@ -253,7 +253,6 @@ DEPLOYED_SHA="$(git -C "$SRC_DIR" rev-parse --short HEAD 2>/dev/null || echo unk
 echo "::log deployed $BRANCH@$DEPLOYED_SHA"
 ok source
 
-# --- npm install: prod deps only, then rebuild node-pty for the Node ABI ----
 # The HEADLESS engine needs the runtime deps + node-pty, NOT the Electron devDep
 # (or its ~100MB binary / the chrome-sandbox SUID / electron-rebuild). This is
 # the proven headless-image recipe: `npm ci --omit=dev --ignore-scripts` installs
@@ -263,9 +262,16 @@ ok source
 # Electron-dev-only postinstall (dev-rename-electron.js / fix-pty-helper.js); the
 # node-pty native addon is then built against the NODE ABI by an explicit rebuild.
 step npm-install
-npm ci --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error >&2 \
-  || fail npm-install "npm-ci-failed"
-npm rebuild node-pty >&2 || fail npm-install "node-pty-rebuild-failed"
+if [ "$IS_MAC" = "1" ]; then
+  echo "::log macOS desktop checkout: installing with dev dependencies (Electron) and rebuilding node-pty for Electron"
+  npm ci --no-audit --no-fund --loglevel=error >&2 \
+    || fail npm-install "npm-ci-failed"
+  npx electron-rebuild >&2 || fail npm-install "electron-rebuild-failed"
+else
+  npm ci --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error >&2 \
+    || fail npm-install "npm-ci-failed"
+  npm rebuild node-pty >&2 || fail npm-install "node-pty-rebuild-failed"
+fi
 ok npm-install
 
 # --- clodexctl: on PATH next to the node ensure_node links ------------------
