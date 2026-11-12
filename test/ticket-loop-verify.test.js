@@ -6831,12 +6831,14 @@ function shadowRemote(mode) {
       return Promise.resolve({ status: 200, body: { ok: true, jobs: [{ id, state: 'done', treeHash: 'a'.repeat(40), exit: { code: mode === 'green' ? 0 : 1, signal: null }, reason: null, queueMs: 0, setupMs: 0, runMs: 1, out: {} }] } });
     },
   };
-  return createShadowClient({
+  const compareFile = pathReal.join(mkTmpRoot('clodex-shadow-'), 'suite-compare.jsonl');
+  const client = createShadowClient({
     getPeerManager: () => ({ get: () => conn }),
-    compareFile: pathReal.join(mkTmpRoot('clodex-shadow-'), 'suite-compare.jsonl'),
+    compareFile,
     snapshot: { snapshotTree: async () => ({ treeHash: 'a'.repeat(40), head: 'b'.repeat(40), headTree: 'a'.repeat(40) }), releaseSnapshot: () => {} },
     sleep: async () => {},
   });
+  return { ...client, compareFile };
 }
 
 function shadowLoop(script) {
@@ -6879,13 +6881,20 @@ for (const [local, script] of Object.entries(SHADOW_LOCAL)) {
     assert.strictEqual(off.spawns.length, 1, 'ENTER: the local arm spawned once');
     assert.strictEqual(off.submits, 0);
     for (const [remote, mk] of SHADOW_REMOTES) {
-      const sh = await f.run(SHADOW_ON, mk());
+      const client = mk();
+      const sh = await f.run(SHADOW_ON, client);
       assert.strictEqual(sh.submits, 1, `ENTER: ${remote} remote was submitted`);
       assert.deepStrictEqual(sh.out, off.out, `${local} local, ${remote} remote`);
       assert.deepStrictEqual(sh.spawns, off.spawns, `${local} local, ${remote} remote`);
+      if (remote !== 'green') continue;
+      for (let i = 0; i < 100 && !fsReal.existsSync(client.compareFile); i += 1) await new Promise((r) => setImmediate(r));
+      const rec = JSON.parse(fsReal.readFileSync(client.compareFile, 'utf8'));
+      assert.deepStrictEqual([rec.kind, rec.ticket, rec.local.outcome, rec.remote.outcome], ['verify', 't1', SHADOW_OUTCOME[local], 'pass']);
     }
   });
 }
+
+const SHADOW_OUTCOME = { green: 'pass', red: 'fail', 'no-TOTALS': 'no-summary', 'zero-tests': 'pass' };
 
 test('t2264: no runner and gate:off submit nothing; gate:shadow submits once', async () => {
   const f = shadowLoop(SHADOW_LOCAL.green);
