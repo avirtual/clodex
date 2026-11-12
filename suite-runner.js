@@ -401,7 +401,7 @@ function createSuiteRunner({
         forceRemove(path.join(dir, name));
       }
     }
-    writeJson(cacheFile, kept);
+    if (JSON.stringify(kept) !== JSON.stringify(cache)) writeJson(cacheFile, kept);
   }
 
   function finishRecord(job, { reason, exit }) {
