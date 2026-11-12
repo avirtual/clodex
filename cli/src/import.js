@@ -220,12 +220,33 @@ function publishedWirePort(dataDir, subdir) {
   return m ? Number(m[1]) : null;
 }
 
-function urlDriftOnly(existing, entry) {
-  if (!existing || typeof existing !== 'object' || !entry) return false;
-  const a = Object.keys(existing).sort();
-  const b = Object.keys(entry).sort();
-  if (a.join(',') !== 'token,url' || b.join(',') !== 'token,url') return false;
-  return existing.token === entry.token && existing.url !== entry.url;
+const TRANSPORT_KEYS = ['url', 'ssh', 'remotePort', 'kubectl', 'ssm'];
+const TRANSPORT_KINDS = ['ssh', 'url', 'kubectl', 'ssm'];
+
+function transportKind(e) {
+  return TRANSPORT_KINDS.find((k) => e[k] !== undefined) || null;
+}
+
+function shown(v) {
+  if (v === undefined) return '(unset)';
+  return typeof v === 'string' ? v : JSON.stringify(v);
+}
+
+function transportDrift(existing, entry) {
+  if (!existing || typeof existing !== 'object' || !entry) return null;
+  if (Object.keys(entry).some((k) => k !== 'token' && !TRANSPORT_KEYS.includes(k))) return null;
+  if (existing.token !== entry.token) return null;
+  const was = transportKind(existing);
+  const now = transportKind(entry);
+  if (!was || !now) return null;
+  if (was !== now) return { kindChange: `transport kind changed ${was} → ${now}, skipped — --force to overwrite` };
+  const drifted = TRANSPORT_KEYS.filter((k) => JSON.stringify(existing[k]) !== JSON.stringify(entry[k]));
+  if (drifted.length === 0) return null;
+  const merged = { ...existing };
+  for (const k of TRANSPORT_KEYS) delete merged[k];
+  for (const k of TRANSPORT_KEYS) if (entry[k] !== undefined) merged[k] = entry[k];
+  const reason = drifted.map((k) => `${k} drifted ${shown(existing[k])} → ${shown(entry[k])}`).join('; ');
+  return { merged, reason };
 }
 
 // Apply collected candidates against the existing store. Mutates a COPY of the
@@ -243,9 +264,14 @@ function applyImport(store, candidates, { force = false } = {}) {
     }
     seen.add(c.name);
     const exists = Object.prototype.hasOwnProperty.call(onEntry, c.name);
-    if (exists && !force && urlDriftOnly(onEntry[c.name], c.entry)) {
-      next.contexts[c.name] = c.entry;
-      results.push({ ...c, result: 'refreshed', reason: `url drifted ${onEntry[c.name].url} → ${c.entry.url}` });
+    const drift = exists && !force ? transportDrift(onEntry[c.name], c.entry) : null;
+    if (drift && drift.kindChange) {
+      results.push({ ...c, result: 'skipped', reason: drift.kindChange });
+      continue;
+    }
+    if (drift) {
+      next.contexts[c.name] = drift.merged;
+      results.push({ ...c, result: 'refreshed', reason: drift.reason });
       continue;
     }
     if (exists && !force) {

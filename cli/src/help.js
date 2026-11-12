@@ -260,7 +260,7 @@ const VERB_REGISTRY = [
       'Post-create liveness check: a child that dies on exec (e.g. the agent CLI isn\'t on the node\'s PATH) STILL returns a pid, so create waits a beat and re-checks the live list — gone → it says WHY instead of reporting a dead pid.',
       '--env is applied ONLY at create; `exec`/`dm` target an existing session and cannot change its env. A node predating env support drops the keys silently on its side — create detects the missing ack echo and warns.',
       'create node writes the LOCAL contexts file and opens nothing. Exactly one transport flag; --ssm and --ssm-ecs are mutually exclusive; --tunnel is greedy (must be LAST, and needs a {port} placeholder). The first node created becomes the current one.',
-      'The typed cloud kinds (ssm/ssm-ecs/kubectl/gcloud-iap/az-bastion) are DATA — safe to --import or to commit to a shared team file; a raw --tunnel argv is code and is never shared by import. --import skips collisions unless --force, writes nothing under --dry-run, and never touches which node is current; tokens flow file→file and are never printed.',
+      'The typed cloud kinds (ssm/ssm-ecs/kubectl/gcloud-iap/az-bastion) are DATA — safe to --import or to commit to a shared team file; a raw --tunnel argv is code and is never shared by import. --import skips collisions unless --force — a node whose address (ssh host or url) changed under the same token is refreshed in place, keeping its other settings — writes nothing under --dry-run, and never touches which node is current; tokens flow file→file and are never printed.',
       'session and node are the creatable resources; any other resource word is a usage error naming what is supported.',
     ],
   },
