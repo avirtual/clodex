@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — Stream seats survive an idle clear and a restart; fixes for old git and desktop upgrades
+## Unreleased
+
+## 5.178.0 — 2026-11-12 — Stream seats survive an idle clear and a restart; fixes for old git and desktop upgrades
 
 - Upgrading a desktop node that runs from a source checkout no longer removes Electron.
 - An offer of test boxes can be widened from visible to runnable for named peers. Off by default; switching it on asks for confirmation and lists the peers. Nothing runs on it yet: the part that lets a peer's jobs reach this machine is not in this release.
