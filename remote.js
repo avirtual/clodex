@@ -17,6 +17,7 @@ const { DM_REF_RE } = require('./intent-registry');
 const { annotate: annotateNote } = require('./open-requests');
 const { isReservedSeatName } = require('./pending-store');
 const { isReservedSenderName, reservedSenderError } = require('./system-senders');
+const { sanitizeWireOffers, OFFERS_WIRE_VERSION } = require('./box-offer');
 
 const BOOT_ID = String(process.pid) + ':' + kernelStartTime(process.pid);
 
@@ -81,9 +82,10 @@ const RESOURCES = [
   { name: 'worktrees', singular: 'worktree', scope: 'node', verbs: ['list'] },
   { name: 'catalogs', singular: 'catalogs', scope: 'node', verbs: ['get'] },
   { name: 'node/logs', singular: 'node/logs', scope: 'node', verbs: ['get'] },
+  { name: 'offers', singular: 'offers', scope: 'node', verbs: ['list'] },
 ];
 
-const RESOURCES_VERSION = 4;
+const RESOURCES_VERSION = 5;
 
 const RESOURCE_CALLBACK = {
   'node/logs': '_nodeLogFile',
@@ -96,6 +98,7 @@ const RESOURCE_CALLBACK = {
   docs: '_listDocs',
   worktrees: '_listWorktrees',
   catalogs: '_getCatalogs',
+  offers: '_listOffers',
 };
 
 const SUBRESOURCE_CALLBACK = {
@@ -179,7 +182,8 @@ class RemoteServer {
                 getSkillCatalog, setSessionSkills,
                 listSleepers, getSleeper, sleepSession, wakeSession, exportMemory,
                 getProfile, setProfile, deleteProfile,
-                deliverDm, claimDms, listDmOrigins, receiveRoster, notifications, openRequests, replyNote,
+                deliverDm, claimDms, listDmOrigins, receiveRoster, offerFor, receiveOffers, listOffers,
+                notifications, openRequests, replyNote,
                 wtermOpen, wtermInput, wtermResize, wtermClose, onWtermStreams,
                 suiteRunner, suiteToken, token, insecure }) {
     this._port = port;
@@ -250,6 +254,9 @@ class RemoteServer {
     this._claimDms = claimDms || null;
     this._listDmOrigins = listDmOrigins || null;
     this._receiveRoster = receiveRoster || null;
+    this._offerFor = offerFor || null;
+    this._receiveOffers = receiveOffers || null;
+    this._listOffers = listOffers || null;
     this._notifications = notifications || null;
     this._openRequests = openRequests || null;
     this._replyNote = replyNote || null;
@@ -681,6 +688,13 @@ class RemoteServer {
     for (const res of this._clients) {
       try { res.write(frame); } catch {}
     }
+  }
+
+  _helloOffers(origin) {
+    if (!this._offerFor || !this._receiveOffers || !origin || !NAME_RE.test(origin)) return null;
+    let own = null;
+    try { own = this._offerFor(origin); } catch { return null; }
+    return own ? { own } : null;
   }
 
   _webHost() {
@@ -1332,10 +1346,11 @@ class RemoteServer {
       if (this._seatImport && this._importCreate) caps.push('import');
       if (this._sleepSession && this._wakeSession) caps.push('assistant');
       if (this._suiteRunner) caps.push('suite');
+      if (this._offerFor && this._receiveOffers) caps.push('offers');
       caps.push('resources');
       caps.push('images');
       caps.push('transcript-images');
-      return this._json(res, 200, {
+      const hello = {
         ok: true, app: 'clodex', host: this._hostLabel,
         version: this._version, bootId: BOOT_ID, caps,
         platform: process.platform,
@@ -1348,7 +1363,10 @@ class RemoteServer {
         // consumer distinguishes "this box has no wirescope" from "this box is
         // too old to say" — both mean no forward, but only one is a bug report.
         wirescope: this._wirescope(),
-      });
+      };
+      const offers = this._helloOffers(url.searchParams.get('origin'));
+      if (offers) hello.offers = offers;
+      return this._json(res, 200, hello);
     }
     // ---- Peer terminal (t219) ----
     // A shell on THIS box, driven from a peer. Everything below exists only
@@ -1620,6 +1638,28 @@ class RemoteServer {
           .then(() => this._json(res, 200, { ok: true }))
           .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
       });
+    }
+    if (req.method === 'POST' && p === '/api/peer/offers') {
+      if (!this._receiveOffers) return this._json(res, 501, { ok: false, error: 'offers not available' });
+      if (!this._jsonBody(req, res)) return;
+      return this._readBody(req, res, (body) => {
+        const msg = parseJsonObject(body);
+        if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
+        if (msg.v !== OFFERS_WIRE_VERSION) return this._json(res, 400, { ok: false, error: 'unsupported offers version' });
+        const from = typeof msg.from === 'string' ? msg.from : '';
+        if (!NAME_RE.test(from)) return this._json(res, 400, { ok: false, error: 'bad from' });
+        const offers = sanitizeWireOffers(msg);
+        if (!offers) return this._json(res, 400, { ok: false, error: 'bad offer' });
+        Promise.resolve()
+          .then(() => this._receiveOffers({ from, own: offers.own }))
+          .then(() => this._json(res, 200, { ok: true }))
+          .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
+      });
+    }
+    if (req.method === 'GET' && p === '/api/offers') {
+      if (!this._listOffers) return this._json(res, 501, { ok: false, error: 'offers not available' });
+      const { own = null, offers = [] } = this._listOffers() || {};
+      return this._json(res, 200, { ok: true, own, offers });
     }
     if (req.method === 'GET' && p === '/api/peers') {
       if (!this._listPeers) return this._json(res, 501, { ok: false, error: 'peers not available' });

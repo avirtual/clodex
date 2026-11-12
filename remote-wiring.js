@@ -32,6 +32,7 @@ const { claudeProjectSlug } = require('./clodex-paths');
 const { parseProfileYaml } = require('./memory-store');
 
 const crypto = require('crypto');
+const { wireEntry, offerEntry } = require('./box-offer');
 
 const CLIENT_TOKEN_RE = /^[\x21-\x7e]{16,512}$/;
 
@@ -160,9 +161,21 @@ function createRemoteWiring(deps) {
     getWirescopeInfo,
     getNodeLogFile,
     getUserDataPath,
+    getBoxOffer, getOfferFacts, offerDirectory,
     thumbnail,
   } = deps;
   const thumbPage = createThumbnailer(thumbnail, log);
+
+  function offerCallbacks() {
+    if (!offerDirectory || typeof getBoxOffer !== 'function' || typeof getOfferFacts !== 'function') return {};
+    return {
+      offerFor: (origin) => wireEntry(getBoxOffer(), getOfferFacts(), origin),
+      receiveOffers: ({ from, own }) => {
+        offerDirectory.set({ provenance: 'announce', source: from, name: from, offer: own });
+      },
+      listOffers: () => ({ own: offerEntry(getBoxOffer(), getOfferFacts()), offers: offerDirectory.list() }),
+    };
+  }
 
   function argsProjection(base) {
     return {
@@ -1119,6 +1132,7 @@ function createRemoteWiring(deps) {
           if (roster.some((e) => e && e.origin === via)) manager._rememberDmOrigin(via);
           log.info('peer', `relay roster from ${via}: ${roster.length} agent(s)`);
         },
+        ...offerCallbacks(),
         // ---- Peer terminal (t219) ----
         // Spread, not four properties: the four are passed TOGETHER or not at
         // all, and `shell` in the hello is derived from wtermOpen's presence, so
