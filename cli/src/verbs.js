@@ -51,6 +51,10 @@ async function get({ client, ctx, printer, flags, args, io = {} }) {
     if (target.name) throw new CliError(EXIT.USAGE, 'get catalogs takes no name');
     return getCatalogs({ client, printer, flags });
   }
+  if (target.resource === 'offers') {
+    if (target.name) throw new CliError(EXIT.USAGE, 'get offers takes no name');
+    return getOffers({ client, printer, flags, label });
+  }
   throw new CliError(EXIT.USAGE, `get ${target.plural} is not supported (try: describe ${target.singular} <name>)`);
 }
 
@@ -207,6 +211,13 @@ async function getCatalogs({ client, printer, flags }) {
   printer.line(out.renderDescribe(body.catalogs || {}));
 }
 
+async function getOffers({ client, printer, flags, label }) {
+  await R.requireResource(client, 'offers', 'list', label);
+  const body = await client.get('/api/offers', 'get offers');
+  if (flags.json) { printer.json(body); return; }
+  printer.line(out.renderOffers(body));
+}
+
 async function describe({ client, ctx, printer, flags, args }) {
   const target = R.parseTarget(args, 'describe');
   if (target.resource === 'nodes') throw new CliError(EXIT.USAGE, NODE_IS_LOCAL);
@@ -217,6 +228,7 @@ async function describe({ client, ctx, printer, flags, args }) {
     printer.line(out.renderDescribe(body.catalogs || {}));
     return;
   }
+  if (target.resource === 'offers') throw new CliError(EXIT.USAGE, 'describe offers is not supported (try: get offers)');
   if (target.resource === 'sessions') {
     const name = requireName(target.name, 'describe session');
     await R.requireResource(client, 'sessions', 'get', label, 'describe');

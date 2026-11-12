@@ -102,6 +102,27 @@ function renderSandboxes(sandboxes) {
   return table(['ID', 'LABEL'], (sandboxes || []).map((s) => [s.id || '', s.label || '']));
 }
 
+function offerCells(source, peer, offer) {
+  const o = offer || {};
+  const f = o.facts || {};
+  const platforms = f.runtime && Array.isArray(f.runtime.platforms) ? f.runtime.platforms : [];
+  let memory = '';
+  if (Number.isInteger(f.memMb)) memory = f.memMb >= 1024 ? `${Math.round(f.memMb / 1024)}G` : `${f.memMb}M`;
+  return [
+    source, peer, o.boxes == null ? '' : String(o.boxes), o.open ? 'yes' : 'no',
+    `${f.os || '?'}/${f.arch || '?'}`, f.cpus == null ? '' : String(f.cpus), memory,
+    platforms.length ? platforms.join(',') : 'none',
+  ];
+}
+
+function renderOffers(body) {
+  const b = body || {};
+  const rows = [];
+  if (b.own) rows.push(offerCells('self', '-', b.own));
+  for (const r of b.offers || []) rows.push(offerCells(r.provenance || '', r.name || '', r.offer));
+  return table(['SOURCE', 'PEER', 'BOXES', 'OPEN', 'OS/ARCH', 'CPUS', 'MEMORY', 'RUNTIME'], rows);
+}
+
 function renderAgents(agents) {
   const rows = (agents || []).map((a) => [a.name || '', a.model || '', a.description || '']);
   return table(['NAME', 'MODEL', 'DESCRIPTION'], rows);
@@ -299,7 +320,7 @@ function makePrinter(write = (s) => process.stdout.write(s)) {
 
 module.exports = {
   jsonLine, stripAnsi, ANSI_RE, renderSessions, renderSessionsWide, renderNames, renderWorkspaces,
-  renderPeers, renderPeersWide, renderTeams, renderTickets, renderTicketsWide, renderSandboxes,
+  renderPeers, renderPeersWide, renderTeams, renderTickets, renderTicketsWide, renderSandboxes, renderOffers,
   renderAgents, renderAgentsWide, renderDocs, renderDocHits, renderWorktrees, renderWorktreesWide,
   renderResources, renderDescribe, renderProfile,
   describeSession, describePeer, describeTeam, describeSandbox, describeAgent, describeDoc,

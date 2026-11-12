@@ -1,12 +1,12 @@
 # Renderer event push surface — the other half of the browser contract
 
 The contract map for every event the main process pushes at a renderer.
-`preload.js` invoke/send is the request half of `window.api` (284 endpoints);
+`preload.js` invoke/send is the request half of `window.api` (287 endpoints);
 THIS is the push half. A browser frontend must receive each of these over WS
 exactly as the Electron renderer receives them over `ipcRenderer.on`.
 
 **Authoritative receiver list**: the `ipcRenderer.on(channel, …)` calls in
-`preload.js` (74 channels). This doc maps each to its emission point, its
+`preload.js` (75 channels). This doc maps each to its emission point, its
 payload shape (field NAMES, not full types), and the interception point a web
 host subscribes to.
 
@@ -100,6 +100,7 @@ Every live window; a web host fans to every connection.
 | `peer-tunnel` | `id, status` | peer-wiring (TunnelManager onState) |
 | `peer-web-tunnel` | `id, status` | peer-wiring (WebTunnelManager onState) |
 | `peer-shell-allowed` | none | ipc-handlers (`peer:setShellAllowed`) |
+| `offers-changed` | none — the listener re-reads `offer:get` / `offer:directory` | ipc-handlers (`offer:set`), peer-wiring `offerPeerCallbacks` (hello ingest), remote-wiring `offerCallbacks` (announce ingest); ingest emits only when the directory listing changed (offer-directory.js `setNotifying`) |
 | `peer-activity` | `id, name, state` | peer-client |
 | `peer-replay` | `id, name, info` | peer-client |
 | `peer-data` | `id, name, data` (remote PTY bytes) | peer-client |

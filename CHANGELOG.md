@@ -20,6 +20,7 @@ blocks a release.
 - Peers that dial a node offering test boxes see the offer and the node's capabilities (operating system, architecture, cores, memory, container runtime) in its hello; `GET /api/offers` lists the offers a node knows.
 - A node announces its test-box offer to the peers it dials and records theirs, so two peered nodes see each other's offers whichever one opened the link.
 - Preferences ▸ Test runner turns this machine into a test runner for its peers and keeps the choice across restarts; the environment variables still work and take precedence.
+- Preferences ▸ Offer test boxes sets what this machine offers and which peers are shown it; `clodexctl get offers` and the peer info popover show what peers offer.
 
 ## 5.176.0 — 2026-11-12
 

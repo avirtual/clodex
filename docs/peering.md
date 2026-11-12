@@ -548,7 +548,8 @@ discovery only: nothing is built or run. remote-wiring injects `offerFor`,
   `{ok:false, error:'offers directory full'}` when the directory refused a new
   row.
 - **The dialer's half** (peer-client.js `_syncOffers`, wired by peer-wiring.js
-  `offerPeerCallbacks`). Every hello carries `?origin=<SELF_LABEL>`, the name
+  `offerPeerCallbacks`). A hello carries `?origin=<SELF_LABEL>` when the node has a
+  self label (none without one), the name
   this node also sends as a DM `origin` and a roster `via`. After a non-scoped
   hello whose caps include `offers`, the dialer stores the reply's `offers.own`
   as a `hello` row keyed by the peer id (an absent field clears that row), then
@@ -572,6 +573,26 @@ discovery only: nothing is built or run. remote-wiring injects `offerFor`,
   display filter, not authorisation. Both routes ride the operator token; a
   suite-scoped token gets the scoped 403 on both and its hello never carries
   `offers`.
+- **Setting the offer.** Preferences ▸ Offer test boxes (desktop only): on/off,
+  box count, availability `always` or `schedule` with up to 8 windows, and a
+  checklist of this node's configured peers by label. The ticked peers are the
+  ones shown the offer; the list is not an access control and nothing runs on
+  this machine because of it. A read-only line shows the facts this machine
+  would announce. It saves through IPC `offer:set`, which runs
+  `sanitizeBoxOffer` and refuses an invalid record (the stored one is kept) and
+  refuses with the reason while `CLODEX_BOX_OFFER` is set. `offer:get` returns
+  `{stored, effective, forced, warning, facts, peers}`; `warning` is
+  `stored offer invalid, treated as off` when the file holds a record the
+  sanitiser rejects. No intent, clodexctl verb or wire route writes the offer,
+  and `settings:set` drops a `boxOffer` key. A saved change reaches each peer at
+  its next hello; there is no extra timer.
+- **Seeing offers.** `clodexctl get offers` reads `GET /api/offers` and prints
+  `SOURCE PEER BOXES OPEN OS/ARCH CPUS MEMORY RUNTIME`: this node's own offer as
+  `self`, then one row per directory entry with its provenance (`hello` or
+  `announce`). The peer ⓘ popover shows one `Boxes` line when the `hello` row
+  for that peer's label carries an offer (`offer:directory`), and none
+  otherwise. The popover and Preferences re-read on the `offers-changed` broadcast, sent by `offer:set`
+  and by either ingest when the directory listing changed.
 
 ## 4. Settings reconciliation (peer-wiring.js)
 

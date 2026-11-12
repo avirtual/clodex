@@ -1392,6 +1392,32 @@
           <p id="prefs-suite-runner-work-env" class="hint-text hidden">set by environment</p>
           <span id="prefs-suite-runner-status" class="hint-text" style="display: block; margin-top: 6px;"></span>
         </div>
+        <div id="prefs-box-offer-block">
+          <h5 style="margin-top: 14px;">Offer test boxes</h5>
+          <p class="hint-text">Tells the peers you tick below that this machine offers test boxes. Discovery only: nothing is built or run here. Applies when you press Apply; peers see the change at their next hello.</p>
+          <label class="prefs-check">
+            <input type="checkbox" id="prefs-box-offer-enabled">
+            <span>Offer test boxes from this machine</span>
+          </label>
+          <div class="prefs-row" style="margin-top: 6px;">
+            <span>Boxes</span>
+            <input type="number" id="prefs-box-offer-boxes" min="1" max="16" step="1" value="1" style="flex: none; width: 5em;">
+            <span>Available</span>
+            <select id="prefs-box-offer-availability" style="flex: none;">
+              <option value="always">Always</option>
+              <option value="schedule">On a schedule</option>
+            </select>
+          </div>
+          <div id="prefs-box-offer-schedule" class="hidden" style="margin-top: 6px;"></div>
+          <button id="prefs-box-offer-schedule-add" class="secondary hidden" type="button" style="margin-top: 4px;">Add window</button>
+          <div id="prefs-box-offer-peers" style="margin-top: 6px;"></div>
+          <p id="prefs-box-offer-peers-note" class="hint-text"></p>
+          <p id="prefs-box-offer-facts" class="hint-text"></p>
+          <div class="prefs-row" style="margin-top: 6px;">
+            <span id="prefs-box-offer-status" class="hint-text" style="flex: 1;"></span>
+            <button id="prefs-box-offer-apply" class="secondary" type="button" style="flex: none;">Apply</button>
+          </div>
+        </div>
       </details>
       <details class="prefs-group" data-group="discovery">
         <summary><h4>Sessions</h4><span class="prefs-group-sub">Defaults for new sessions and discovery</span></summary>
