@@ -476,7 +476,12 @@ A runner error answers with the status the engine names (`{ok:false, status, err
 base-path strip and before the first route match. A scoped hello is exactly
 `{ok, app, host, version, bootId, caps:['suite'], scope:'suite'}`; no cookie is
 set for it. The operator token is accepted on the suite routes too. The
-fail-closed non-loopback rule stays keyed on the operator token.
+fail-closed non-loopback rule stays keyed on the operator token, with one
+opening: a runner can run on the suite token alone. On a non-loopback bind with
+no `CLODEX_REMOTE_TOKEN`, a request carrying the suite token is admitted as
+`req.suiteScoped` (Origin compared as for a token-gated bind), so hello and
+`/api/suite/*` work and every other route is the scoped 403; a request without
+it gets the same 503 as before. With both tokens set nothing changes.
 
 **Lead side.** The runner is an ordinary peer row whose `token` is the suite
 token. A hello with `scope:'suite'` skips the dialect probe, the session list,
