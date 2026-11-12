@@ -16,6 +16,7 @@ blocks a release.
 - The tree sent to a remote test runner is no longer held in memory on the sending side, and a tree larger than the runner accepts is refused as soon as that is known.
 - A shadow run whose tree could not be sent is recorded as skipped, not as a disagreement.
 - The default size limit for a tree sent to a remote test runner is now 1 GiB (was 256 MiB), so a repository with a long history can use one.
+- A node running as a test runner can run each shadow test job in a fresh Docker container built from an image the operator sets in Preferences ▸ Test boxes ▸ Test runner ▸ Box image; a team asks for it with `testRunner.box: true` in its team.json, for shadow runs only. A job asking for a box is refused when the runner has no image, and held while containers of interrupted box jobs are not confirmed cleaned up; comparison records note each half's operating system and architecture, and the runner's image.
 
 ## 5.180.0 — 2026-11-12 — Test boxes get their own Preferences group; fixes from the pull-wire proof
 

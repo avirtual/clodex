@@ -536,6 +536,45 @@ answers, so `GET /api/suite/info` shows it without the log.
 
 A runner error answers with the status the engine names (`{ok:false, status, error, …}`).
 
+**Box jobs.** With a box image set (`boxImage` above, from Preferences ▸ Test
+boxes ▸ Test runner ▸ Box image, or `CLODEX_SUITE_BOX_IMAGE`), `startSuiteRunner`
+gives the engine a second adapter, `boxIsolation` in suite-box.js; native jobs
+are unchanged. A submit asks for it with `isolation: 'container'` (any other
+value is 400 `bad isolation`); the lead sends it only for `gate:shadow` runs of a
+team whose team.json has `testRunner.box: true`. Each exec of a box job is a
+fresh `docker run -i --rm --init --pull never` of the image as the engine's
+uid:gid, the job tree bind-mounted at `/job/tree`, labelled `clodex.suite=1`,
+`clodex.suite.runner=<runnerKey>` (`runnerKeyOf` the runner state dir) and
+`clodex.suite.job=<id>`. The engine never writes or closes the CLI's stdin: when
+the CLI dies its stdin closes and the container's wrapper (`DEADMAN`) kills it.
+A box job's tree is detached from the mirror (`detachTree`) before it runs.
+
+- `info.box` is `null` without an image; `{state:'ready', env}` when Docker
+  answers and the image is present, `env` being the box identity
+  (`isolation:'container'`, `platform:'linux'`, the image's arch, the daemon's
+  CPU count, `box:{imageId}`, `host`, its own `envKey`); otherwise
+  `{state:'unavailable', why}`: a tag instead of an id, `docker` not on PATH,
+  the daemon not reachable, the image absent, an OS or arch mismatch, an engine
+  running as uid 0, a comma in the work root, or `cleanup not confirmed: <why>`.
+  The probe is cached 30 s.
+- A box submit is 409 `this runner has no box image configured` without an
+  image, and 503 `box unavailable: <why>` when `info.box` is not ready.
+- Every box job end clears containers by its job label (up to three
+  `docker ps` / `docker rm -f` rounds; a failed `ps` is never read as empty),
+  then removes the job dir; cancel, timeout and lease expiry first SIGKILL the
+  CLI's process group. At start the engine clears its runner label before any
+  job runs.
+- A cleanup Docker does not confirm enters the box hold, written to
+  `box-hold.json` in the runner state dir as `{why, dirs}`: the dirs are kept,
+  box jobs stay queued, box submits are 503 and native jobs run. A tick with no
+  box job active retries the runner-label sweep; once it is confirmed the held
+  dirs are removed and the file is dropped. After a restart with the image
+  removed, the interrupted box jobs' dirs are held the same way, and a queued
+  box job ends `box-unavailable`.
+- A CLI exit of 125 on a box job (Docker's own failure) ends it `box-failed`.
+- Removing every suite container on the machine by hand:
+  `docker rm -f $(docker ps -aq --filter label=clodex.suite=1)`.
+
 **The suite token.** `CLODEX_SUITE_TOKEN` is a second credential checked by
 `_authGate` only after the operator token fails. A request it admits is marked
 `req.suiteScoped`; `_route` refuses everything except `GET /api/peer/hello` and

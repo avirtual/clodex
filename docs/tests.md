@@ -113,6 +113,17 @@ A test that needs a login or config file builds a fixture home and passes it thr
 
 A test waiting for async work polls for the state it asserts, with a generous deadline; a fixed window that git fits in here misses on a slower disk. A test asserting something did NOT happen keeps a fixed window, started after the last thing that did.
 
+## The live box test
+
+`test/suite-box-live.test.js` runs the suite runner's box adapter against the
+real Docker daemon. Without `CLODEX_TEST_BOX_IMAGE` it is one skipped test. Set
+it to a local image (name or id) that holds `node` and `git` for the daemon's
+own platform, for example `node:22-bookworm`; the test never pulls or builds.
+Run it alone, outside the suite's six-second gate:
+`CLODEX_TEST_BOX_IMAGE=node:22-bookworm node --test test/suite-box-live.test.js`.
+Its engines run on temporary state roots, so their containers carry a runner
+label no live runner shares; teardown removes them by that label.
+
 ## Per-file durations of the last full run
 
 A full `scripts/run-tests.js` run writes `.test-durations.last.json` beside `.test-digest.last` (the repo root, or `CLODEX_TEST_LOCK_DIR`'s parent). `node scripts/run-tests.js --durations` prints the 25 slowest files from it without running tests.
