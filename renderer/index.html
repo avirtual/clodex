@@ -1367,6 +1367,31 @@
           <input type="checkbox" id="prefs-peer-shell">
           <span>Let peers open a terminal on this box</span>
         </label>
+        <div id="prefs-suite-runner-block">
+          <h5 style="margin-top: 14px;">Test runner</h5>
+          <p class="hint-text">Runs test suites that your peers send to this machine. Needs phone access on: peers reach the runner over the same wire. Applies when you press Apply, with no restart; refused while a job is running.</p>
+          <label class="prefs-check">
+            <input type="checkbox" id="prefs-suite-runner-enabled">
+            <span>Run tests for peers on this machine</span>
+          </label>
+          <span id="prefs-suite-runner-enabled-env" class="hint-text hidden" style="display: block;">set by environment</span>
+          <div class="prefs-row" style="margin-top: 6px;">
+            <span>Isolation</span>
+            <select id="prefs-suite-runner-isolation" style="flex: none;">
+              <option value="user">Separate user account</option>
+              <option value="none">None</option>
+            </select>
+            <span id="prefs-suite-runner-isolation-env" class="hint-text hidden">set by environment</span>
+          </div>
+          <p id="prefs-suite-runner-none-note" class="hint-text hidden">Suites run as this user, unisolated.</p>
+          <div class="prefs-row" style="margin-top: 6px;">
+            <span>Work folder</span>
+            <input type="text" id="prefs-suite-runner-work" placeholder="default for this platform" autocomplete="off" spellcheck="false" style="flex: 1;">
+            <button id="prefs-suite-runner-apply" class="secondary" type="button" style="flex: none;">Apply</button>
+          </div>
+          <span id="prefs-suite-runner-work-env" class="hint-text hidden" style="display: block;">set by environment</span>
+          <span id="prefs-suite-runner-status" class="hint-text" style="display: block; margin-top: 6px;"></span>
+        </div>
       </details>
       <details class="prefs-group" data-group="discovery">
         <summary><h4>Sessions</h4><span class="prefs-group-sub">Defaults for new sessions and discovery</span></summary>
