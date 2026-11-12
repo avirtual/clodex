@@ -69,3 +69,101 @@ test('t2266: the runner row set buttons send one key each, an empty peer as the 
   assert.deepStrictEqual(runnerPatchFor('set-runner-gate', 'shadow'), { gate: 'shadow' });
   assert.strictEqual(runnerPatchFor('save', 'x'), null);
 });
+
+const fs = require('node:fs');
+const path = require('node:path');
+const { paintRunnerState } = require('../renderer/lib/team-runner-row');
+
+const POPOVER = fs.readFileSync(path.join(__dirname, '..', 'renderer/popovers/team-roles-popover.js'), 'utf8');
+
+function slice(start, end) {
+  const a = POPOVER.indexOf(start);
+  assert.ok(a >= 0, `ENTER: found ${JSON.stringify(start)}`);
+  const b = POPOVER.indexOf(end, a + start.length);
+  assert.ok(b >= 0, `ENTER: found ${JSON.stringify(end)} after it`);
+  return POPOVER.slice(a, b + end.length);
+}
+
+const STORED = { ok: true, peer: 'runner-1', hands: 'all', gate: 'shadow', invalid: false, setup: true, env: false, tally: { envKey: '0123456789ab', agree: 1, disagree: 2 } };
+const PROBED = { ok: true, online: true, suite: true, reachable: true, reach: SET.reach, tally: { envKey: '0123456789ab', agree: 1, disagree: 2 } };
+const tick = () => new Promise(setImmediate);
+
+function compileRefresh() {
+  const runnerSrc = slice('  let runnerInfo = null;\n', "    paintRunnerState(listEl.querySelector('.team-runner'), runnerInfo);\n  }\n");
+  const refreshSrc = slice('  async function refresh(teamName, isCurrent = () => popover.dataset.name === teamName) {', '\n  }\n');
+  const doc = fakeDocument();
+  const noop = () => {};
+  const rendered = [];
+  const reaches = [];
+  const list = { runner: null, querySelector: (sel) => (sel === '.team-runner' ? list.runner : null) };
+  const popover = { dataset: { name: 'team' } };
+  let info = () => null;
+  const env = {
+    window: { api: {
+      teamGet: async (n) => ({ ok: true, team: { name: n, root: '/r', roles: { lead: {} } } }),
+      teamRunner: async () => ({ ...STORED }),
+      teamRunnerReach: () => new Promise((resolve) => reaches.push(resolve)),
+    } },
+    popover, listEl: list, teamName: () => popover.dataset.name || null, paintRunnerState,
+    setStatus: noop, nameEl: { textContent: '' }, watchdogInput: {}, formatDuration: String,
+    renderRows: (team) => { rendered.push(team.name); list.runner = buildRunnerField(doc, info()); },
+    loadPreflight: async () => noop, loadStockRoles: async () => noop, loadActivity: async () => noop,
+    loadUses: async () => noop, loadLeadSeats: async () => noop, loadTrunk: async () => noop,
+  };
+  const names = Object.keys(env);
+  const out = new Function(...names, `let currentRoot = '';\n${runnerSrc}\n${refreshSrc}\nreturn { refresh, info: () => runnerInfo };`)(...names.map((n) => env[n]));
+  info = out.info;
+  const stateLine = () => textOf(list.runner.childNodes.find((n) => n.dataset.runner === 'state'));
+  const fieldOf = (f) => walk(list.runner).find((n) => n.dataset && n.dataset.f === f);
+  return { refresh: out.refresh, rendered, reaches, popover, stateLine, fieldOf };
+}
+
+test('t2266: the popover renders at once with the stored runner setting while the reach probe is still out', async () => {
+  const r = compileRefresh();
+  assert.strictEqual(await r.refresh('team'), true, 'refresh finishes with the probe unresolved');
+  assert.deepStrictEqual(r.rendered, ['team'], 'the other rows are rendered');
+  assert.strictEqual(r.reaches.length, 1, 'ENTER: one probe is out');
+  assert.strictEqual(r.fieldOf('runner-peer').value, 'runner-1');
+  assert.strictEqual(r.fieldOf('runner-hands').value, 'all');
+  assert.strictEqual(r.fieldOf('runner-gate').value, 'shadow');
+  assert.strictEqual(r.stateLine(), 'checking reachability…; shadow comparisons: 1 agree, 2 disagree');
+  r.reaches[0](PROBED);
+  await tick();
+  assert.strictEqual(r.stateLine(), `${SET.reach}; shadow comparisons: 1 agree, 2 disagree`);
+});
+
+test('t2266: a reach probe that lands after a newer refresh, or after the popover closed, changes nothing', async () => {
+  const r = compileRefresh();
+  await r.refresh('team');
+  await r.refresh('team');
+  assert.strictEqual(r.reaches.length, 2, 'ENTER: two probes are out');
+  r.reaches[0]({ ...PROBED, reach: 'stale answer' });
+  await tick();
+  assert.strictEqual(r.stateLine(), 'checking reachability…; shadow comparisons: 1 agree, 2 disagree');
+  r.reaches[1]({ ...PROBED, reach: 'offline', reachable: false });
+  await tick();
+  assert.strictEqual(r.stateLine(), 'offline; shadow comparisons: 1 agree, 2 disagree', 'the current probe does paint the row');
+
+  const closed = compileRefresh();
+  await closed.refresh('team');
+  closed.popover.dataset.name = '';
+  closed.reaches[0](PROBED);
+  await tick();
+  assert.strictEqual(closed.stateLine(), 'checking reachability…; shadow comparisons: 1 agree, 2 disagree');
+});
+
+test('t2266: a runner set retires the reach probe in flight before it writes', () => {
+  const at = POPOVER.indexOf("    if (act === 'set-runner-peer' || act === 'set-runner-hands' || act === 'set-runner-gate') {");
+  assert.ok(at >= 0, 'ENTER: found the runner set branch');
+  const branch = POPOVER.slice(at, POPOVER.indexOf('      return;\n    }\n', at));
+  const bump = branch.indexOf('runnerProbeSeq += 1;');
+  assert.ok(bump >= 0 && bump < branch.indexOf('window.api.teamSetRunner('), 'the probe sequence moves before the set call');
+});
+
+test('t2266: paintRunnerState rewrites only the state line', () => {
+  const v = view({ ...SET, reach: undefined });
+  assert.deepStrictEqual(v.hints[0], ['state', 'checking reachability…; shadow comparisons: 1 agree, 2 disagree']);
+  paintRunnerState(v.wrap, SET);
+  assert.strictEqual(textOf(v.wrap.childNodes.find((n) => n.dataset.runner === 'state')), `${SET.reach}; shadow comparisons: 1 agree, 2 disagree`);
+  assert.strictEqual(v.field('runner-peer').value, 'runner-1');
+});
