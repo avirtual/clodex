@@ -1,8 +1,7 @@
 'use strict';
 
-const OFFER_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
+const { NODE_NAME_RE, MAX_PEERS, MAX_BOXES } = require('../../box-offer');
 const DAY_LETTERS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
-const MAX_OFFER_PEERS = 32;
 const PEER_NOTE = 'This list decides which peers are shown this offer. It is not an access control. Nothing runs on this machine because of it yet. A node that dials this machine is named by its own label, which is its hostname unless it set one.';
 
 function osArch(facts) {
@@ -52,7 +51,7 @@ function peerChoices(rows, stored, now = Date.now()) {
   const out = [];
   for (const row of Array.isArray(rows) ? rows : []) {
     const name = row && row.name;
-    if (typeof name !== 'string' || !OFFER_NAME_RE.test(name) || out.some((c) => c.name === name)) continue;
+    if (typeof name !== 'string' || !NODE_NAME_RE.test(name) || out.some((c) => c.name === name)) continue;
     const note = row.from === 'dialed' ? `dials this machine, seen ${agoText(now - row.seenAt)}` : null;
     out.push({ name, note });
   }
@@ -63,8 +62,8 @@ function peerChoices(rows, stored, now = Date.now()) {
 
 function peerNameToAdd(text, existing) {
   const name = String(text || '').trim();
-  if (!OFFER_NAME_RE.test(name)) return { error: 'a name is 1-64 letters, digits, dot, dash or underscore' };
-  if ((existing || []).includes(name)) return { duplicate: true };
+  if (!NODE_NAME_RE.test(name)) return { error: 'a name is 1-64 letters, digits, dot, dash or underscore' };
+  if ((existing || []).includes(name)) return { name, duplicate: true };
   return { name };
 }
 
@@ -73,7 +72,9 @@ function selfLabelLine(self) {
   return `This machine's label is ${self}: a node it dials sees it by that name.`;
 }
 
-function offerFormProblem({ availability, schedule, peers }) {
+function offerFormProblem({ boxes, availability, schedule, peers }) {
+  const n = Number(boxes);
+  if (!Number.isInteger(n) || n < 1 || n > MAX_BOXES) return `boxes must be a whole number from 1 to ${MAX_BOXES}`;
   if (availability === 'schedule') {
     for (const w of schedule || []) {
       if (!w.days || !w.days.length) return 'a schedule window has no day ticked';
@@ -81,7 +82,7 @@ function offerFormProblem({ availability, schedule, peers }) {
       if (w.from === w.to) return 'a schedule window starts and ends at the same time';
     }
   }
-  if ((peers || []).length > MAX_OFFER_PEERS) return `more than ${MAX_OFFER_PEERS} peers ticked`;
+  if ((peers || []).length > MAX_PEERS) return `more than ${MAX_PEERS} peers ticked`;
   return null;
 }
 

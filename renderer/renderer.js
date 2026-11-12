@@ -9651,11 +9651,14 @@ if (prefsBoxOfferBlock) {
     syncBoxOfferSchedule();
   });
   const addBoxOfferPeer = () => {
-    const existing = [...prefsBoxOfferPeers.querySelectorAll('input[data-peer]')].map((b) => b.dataset.peer);
-    const add = offerPeerNameToAdd(prefsBoxOfferPeerName.value, existing);
+    const boxes = [...prefsBoxOfferPeers.querySelectorAll('input[data-peer]')];
+    const add = offerPeerNameToAdd(prefsBoxOfferPeerName.value, boxes.map((b) => b.dataset.peer));
     if (add.error) { showToast(`Name not added: ${add.error}`, { kind: 'warn' }); return; }
     prefsBoxOfferPeerName.value = '';
-    if (add.duplicate) return;
+    if (add.duplicate) {
+      for (const b of boxes) if (b.dataset.peer === add.name) b.checked = true;
+      return;
+    }
     for (const el of prefsBoxOfferPeers.querySelectorAll('[data-empty]')) el.remove();
     prefsBoxOfferPeers.append(boxOfferPeerRow({ name: add.name, ticked: true, note: null }));
   };

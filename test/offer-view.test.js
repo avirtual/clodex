@@ -66,18 +66,21 @@ test('a stored ticked name that is neither configured nor seen is still listed a
 
 test('a typed name is trimmed and validated, and a duplicate is ignored', () => {
   assert.deepStrictEqual(peerNameToAdd(' laptop ', ['murmur']), { name: 'laptop' });
-  assert.deepStrictEqual(peerNameToAdd('murmur', ['murmur']), { duplicate: true });
+  assert.deepStrictEqual(peerNameToAdd('murmur', ['murmur']), { name: 'murmur', duplicate: true });
   for (const bad of ['', 'has space', '..', 'x'.repeat(65)]) {
     assert.deepStrictEqual(peerNameToAdd(bad, []), { error: 'a name is 1-64 letters, digits, dot, dash or underscore' }, bad);
   }
 });
 
 test('the form problem names the cause the sanitiser would refuse', () => {
-  const base = { availability: 'schedule', peers: [] };
+  const base = { boxes: '2', availability: 'schedule', peers: [] };
+  for (const bad of ['0', '17', '1.5', '']) {
+    assert.strictEqual(offerFormProblem({ ...base, boxes: bad, schedule: [] }), 'boxes must be a whole number from 1 to 16', bad);
+  }
   assert.strictEqual(offerFormProblem({ ...base, schedule: [{ days: [], from: '09:00', to: '17:00' }] }), 'a schedule window has no day ticked');
   assert.strictEqual(offerFormProblem({ ...base, schedule: [{ days: [1], from: '', to: '17:00' }] }), 'a schedule window has an empty time');
   assert.strictEqual(offerFormProblem({ ...base, schedule: [{ days: [1], from: '09:00', to: '09:00' }] }), 'a schedule window starts and ends at the same time');
-  assert.strictEqual(offerFormProblem({ availability: 'always', schedule: [{ days: [] }], peers: Array.from({ length: 33 }, (_, i) => `n${i}`) }), 'more than 32 peers ticked');
+  assert.strictEqual(offerFormProblem({ boxes: '16', availability: 'always', schedule: [{ days: [] }], peers: Array.from({ length: 33 }, (_, i) => `n${i}`) }), 'more than 32 peers ticked');
   assert.strictEqual(offerFormProblem({ ...base, schedule: [{ days: [1], from: '22:00', to: '07:00' }] }), null);
 });
 
