@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const { initStores, sanitizeSuiteRunner } = require('../stores.js');
-const { suiteRunnerOptions, createRemoteWiring } = require('../remote-wiring');
+const { suiteRunnerOptions, createRemoteWiring, startSuiteRunner } = require('../remote-wiring');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
 const VALID = { enabled: true, isolation: 'none', work: '/srv/suite-work' };
@@ -313,6 +313,30 @@ test('suiteRunner:set with the stored record answers ok without reloading the wi
   assert.strictEqual(res.ok, true);
   assert.deepStrictEqual(calls.set, []);
   assert.strictEqual(calls.reload, 0);
+});
+
+test('startSuiteRunner builds the box adapter from boxImage and otherwise passes its sweep alone', () => {
+  const IMAGE = `sha256:${'a'.repeat(64)}`;
+  const SWEEP = async () => {};
+  const rows = [['with', IMAGE], ['without', undefined]].map(([label, boxImage]) => {
+    const made = [];
+    const built = [];
+    const load = () => ({
+      createSuiteRunner: (o) => { made.push(o); return { start() {} }; },
+      noneIsolation: () => 'none-iso',
+      userIsolation: () => 'user-iso',
+      statePaths: (root) => ({ dir: `${root}/suite-runner` }),
+    });
+    const loadBox = () => ({ boxIsolation: (o) => { built.push(o); return { sweep: SWEEP, image: o.image }; } });
+    const opts = { root: '/home/c', work: '/srv/w', isolation: 'none', limits: {}, forced: [], ...(boxImage ? { boxImage } : {}) };
+    const started = startSuiteRunner(opts, { log: { warn() {}, error() {} }, load, loadBox });
+    const { log, ...rest } = made[0];
+    return [label, started.error, typeof log, rest, built];
+  });
+  assert.deepStrictEqual(rows, [
+    ['with', null, 'function', { root: '/home/c', work: '/srv/w', isolation: 'none-iso', limits: {}, box: { sweep: SWEEP, image: IMAGE }, boxSweep: null }, [{ image: IMAGE, work: '/srv/w', stateDir: '/home/c/suite-runner' }]],
+    ['without', null, 'function', { root: '/home/c', work: '/srv/w', isolation: 'none-iso', limits: {}, box: null, boxSweep: SWEEP }, [{ image: null, work: '/srv/w', stateDir: '/home/c/suite-runner' }]],
+  ]);
 });
 
 const IMG = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';

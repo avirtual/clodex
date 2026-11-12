@@ -1004,3 +1004,311 @@ test('sealing deps holding an Electron archive chmods the archive itself, not it
   assert.strictEqual(realFs.statSync(archive).mode & 0o222, 0);
   assert.strictEqual(realFs.readlinkSync(path.join(jobDir, 'tree', 'node_modules')), path.join(entry, 'node_modules'));
 });
+
+const { runArgv } = require('../suite-box');
+const BOX_IMAGE = `sha256:${'b'.repeat(64)}`;
+const BOX_IDENTITY = { runner: 'box-host', platform: 'linux', arch: 'arm64', isolation: 'container', box: { imageId: BOX_IMAGE }, envKey: 'b0b0b0b0b0b0' };
+const BOX_FIXED_ENV = { HOME: '/tmp/home', TMPDIR: '/tmp', GIT_CEILING_DIRECTORIES: '/job', LANG: 'C.UTF-8', TZ: 'UTC', USER: 'box', LOGNAME: 'box', SHELL: '/bin/sh' };
+const drain = async () => { for (let i = 0; i < 40; i++) await new Promise((r) => setImmediate(r)); };
+
+function fakeBox(opts = {}) {
+  const calls = [];
+  const box = {
+    mode: 'container', user: 'box', node: 'node', detach: true,
+    async probe() { return opts.probe ? opts.probe() : { state: 'ready', env: BOX_IDENTITY }; },
+    async sweep() { calls.push(['sweep']); if (opts.sweep) await opts.sweep(); },
+    env() { return { ...BOX_FIXED_ENV }; },
+    async prepare(jobDir, mirror, entry) { calls.push(['prepare', jobOf(jobDir), entry ? 'entry' : null]); },
+    spawn({ jobDir, cwd, argv, env, spawn: sp, job }) {
+      runArgv({ image: BOX_IMAGE, runnerKey: 'k', n: 1, uid: 501, gid: 20, jobDir, job, argv, env });
+      calls.push(['spawn', job.id, argv[0], env]);
+      return sp(argv[0], argv.slice(1), { cwd, env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    },
+    async kill(child, jobDir, job) { calls.push(['kill', job.id]); },
+    attach(deps, tree, rels) {
+      calls.push(['attach', ...rels]);
+      for (const rel of rels) {
+        if (!fs.existsSync(path.join(deps.entry, rel))) continue;
+        fs.rmSync(path.join(tree, rel), { recursive: true, force: true });
+        fs.mkdirSync(path.join(tree, rel), { recursive: true });
+      }
+    },
+    async seal(jobDir, entry, rels) {
+      calls.push(['seal', jobOf(jobDir), ...rels]);
+      for (const rel of rels) {
+        const from = path.join(jobDir, 'tree', rel);
+        if (!fs.existsSync(from)) continue;
+        fs.renameSync(from, path.join(entry, rel));
+        fs.mkdirSync(from);
+      }
+    },
+    async reap(jobDir, entry, job) {
+      calls.push(['reap', jobOf(jobDir), job.id]);
+      if (opts.reap) await opts.reap(job);
+      fs.rmSync(jobDir, { recursive: true, force: true });
+    },
+  };
+  return { box, calls };
+}
+
+function storeJob(f, id, state, extra = {}) {
+  const store = path.join(f.root, 'suite-runner', 'jobs');
+  fs.mkdirSync(path.join(store, id), { recursive: true });
+  fs.writeFileSync(path.join(store, id, 'job.json'), JSON.stringify({
+    ...f.body(id), state, reason: null, exit: null, seq: 90, queuedAt: 1, startedAt: state === 'queued' ? null : 2,
+    endedAt: null, lastSeen: Date.now(), out: { stdoutBytes: 0, stderrBytes: 0, truncated: false }, ...extra,
+  }));
+}
+
+test('one engine runs a native job then a box job, each stamped with its own identity and reaped by its own adapter', async (t) => {
+  const native = [];
+  const fb = fakeBox();
+  const f = await fixture(t, {
+    wrap: (base) => ({ ...base, reap: (jobDir, ...rest) => { native.push(['reap', jobOf(jobDir), rest]); return base.reap(jobDir, ...rest); } }),
+    runnerOver: { box: fb.box },
+  });
+  await f.upload(f.body('nat'));
+  const nat = await waitState(f.runner, 'nat', 'done');
+  assert.strictEqual((await f.runner.submit(f.body('boxed', 'hand', { isolation: 'container' }))).state, 'queued');
+  const boxed = await waitState(f.runner, 'boxed', 'done');
+  assert.deepStrictEqual([nat.env.isolation, nat.reason, nat.exit], ['none', null, { code: 0, signal: null }]);
+  assert.deepStrictEqual([boxed.env, boxed.reason, boxed.exit], [BOX_IDENTITY, null, { code: 0, signal: null }]);
+  assert.deepStrictEqual(native, [['reap', 'nat', [null]]]);
+  assert.deepStrictEqual(fb.calls, [
+    ['sweep'],
+    ['prepare', 'boxed', null],
+    ['spawn', 'boxed', 'node', BOX_FIXED_ENV],
+    ['reap', 'boxed', 'boxed'],
+  ]);
+  assert.deepStrictEqual(f.calls.map((c) => [c.job, c.cmd]), [['nat', process.execPath], ['boxed', 'node']]);
+  assert.strictEqual(fs.existsSync(jobPaths(f.work, 'boxed').dir), false);
+});
+
+test('a detached box tree answers git status, log and rev-parse with its mirror gone; a native tree does not', async (t) => {
+  const seen = [];
+  let f = null;
+  const fb = fakeBox();
+  f = await fixture(t, {
+    runnerOver: { box: fb.box },
+    onSpawn: (c) => {
+      const mirror = path.join(f.work, 'mirrors', `${f.snap.repoKey}.git`);
+      fs.renameSync(mirror, `${mirror}.away`);
+      const run = (...args) => {
+        const r = spawnSync('git', ['-C', c.opts.cwd, ...args], { env: ENV, encoding: 'utf8' });
+        return [r.status, r.status === 0 ? r.stdout : ''];
+      };
+      seen.push([c.job, run('status', '--porcelain'), run('log', '-1', '--format=%H'), run('rev-parse', 'HEAD')]);
+      fs.renameSync(`${mirror}.away`, mirror);
+      c.child.finish(0);
+    },
+  });
+  await f.upload(f.body('nat'));
+  await waitState(f.runner, 'nat', 'done');
+  await f.runner.submit(f.body('boxed', 'hand', { isolation: 'container' }));
+  await waitState(f.runner, 'boxed', 'done');
+  const head = g(f.repo, 'rev-parse', 'HEAD').trim();
+  assert.deepStrictEqual(seen.map(([job, st, lg, rp]) => [job, st[0], lg[0], rp[0]]), [['nat', 128, 128, 0], ['boxed', 0, 0, 0]], 'ENTER: the native tree needs its mirror');
+  assert.deepStrictEqual(seen[1], ['boxed', [0, ' M a.txt\n'], [0, `${head}\n`], [0, `${head}\n`]]);
+});
+
+test('a box submit is 409 with no box, 503 with the box unavailable, and info.box says which', async (t) => {
+  const plain = await fixture(t);
+  assert.strictEqual((await plain.upload(plain.body('native-ok'))).ok, true, 'ENTER: a native submit is accepted');
+  assert.deepStrictEqual(await plain.runner.submit(plain.body('want-box', 'hand', { isolation: 'container' })), { ok: false, status: 409, error: 'this runner has no box image configured' });
+  assert.deepStrictEqual(await plain.runner.submit(plain.body('want-vm', 'hand', { isolation: 'vm' })), { ok: false, status: 400, error: 'bad isolation' });
+  assert.strictEqual((await plain.runner.info()).box, null);
+  let answer = { state: 'ready', env: BOX_IDENTITY };
+  const fb = fakeBox({ probe: () => answer });
+  const f = await fixture(t, { runnerOver: { box: fb.box } });
+  assert.deepStrictEqual((await f.runner.info()).box, { state: 'ready', env: BOX_IDENTITY });
+  assert.strictEqual((await f.runner.submit(f.body('box-ok', 'hand', { isolation: 'container' }))).ok, true, 'ENTER: a box submit is accepted while ready');
+  answer = { state: 'unavailable', why: 'docker daemon not reachable: boom' };
+  assert.deepStrictEqual(await f.runner.submit(f.body('box-down', 'hand', { isolation: 'container' })), { ok: false, status: 503, error: 'box unavailable: docker daemon not reachable: boom' });
+  assert.deepStrictEqual((await f.runner.info()).box, { state: 'unavailable', why: 'docker daemon not reachable: boom' });
+});
+
+test('a box reap that throws holds box jobs and keeps the dir while a native job runs; a tick with a passing sweep removes the dir and runs the box job', async (t) => {
+  let b1 = null;
+  let sweepFails = false;
+  const fb = fakeBox({
+    reap: (job) => { if (job.id === 'b1') throw new Error('box cleanup not confirmed: c0ffee'); },
+    sweep: () => { if (sweepFails) throw new Error('docker ps failed: down'); },
+  });
+  const f = await fixture(t, {
+    runnerOver: { box: fb.box },
+    onSpawn: (c) => { if (c.job === 'b1') b1 = c.child; else { c.child.stdout.write('TOTALS: 1 pass, 0 fail, 1 tests\n'); c.child.finish(0); } },
+  });
+  await f.upload(f.body('b1', 'hand', { isolation: 'container' }));
+  await waitState(f.runner, 'b1', 'running');
+  assert.strictEqual((await f.runner.submit(f.body('b2', 'hand', { isolation: 'container' }))).state, 'queued');
+  b1.finish(0);
+  await waitState(f.runner, 'b1', 'done');
+  await drain();
+  const b1Dir = jobPaths(f.work, 'b1').dir;
+  assert.strictEqual(fs.existsSync(b1Dir), true);
+  assert.deepStrictEqual((await f.runner.info()).box, { state: 'unavailable', why: 'cleanup not confirmed: box cleanup not confirmed: c0ffee' });
+  assert.deepStrictEqual(await f.runner.submit(f.body('b3', 'hand', { isolation: 'container' })), { ok: false, status: 503, error: 'box unavailable: cleanup not confirmed: box cleanup not confirmed: c0ffee' });
+  assert.strictEqual((await f.runner.submit(f.body('n1'))).state, 'queued');
+  const n1 = await waitState(f.runner, 'n1', 'done');
+  assert.deepStrictEqual([n1.reason, n1.exit], [null, { code: 0, signal: null }]);
+  assert.strictEqual((await f.runner.poll(['b2'])).jobs[0].state, 'queued');
+  sweepFails = true;
+  await f.runner.tick();
+  await drain();
+  assert.deepStrictEqual([fs.existsSync(b1Dir), (await f.runner.poll(['b2'])).jobs[0].state], [true, 'queued']);
+  assert.deepStrictEqual((await f.runner.info()).box, { state: 'unavailable', why: 'cleanup not confirmed: docker ps failed: down' });
+  sweepFails = false;
+  await f.runner.tick();
+  const b2 = await waitState(f.runner, 'b2', 'done');
+  assert.deepStrictEqual([fs.existsSync(b1Dir), b2.reason, (await f.runner.info()).box.state], [false, null, 'ready']);
+  assert.deepStrictEqual(f.calls.map((c) => c.job), ['b1', 'n1', 'b2']);
+  assert.deepStrictEqual(fb.calls.filter(([verb]) => verb !== 'spawn' && verb !== 'prepare'), [
+    ['sweep'], ['reap', 'b1', 'b1'], ['sweep'], ['sweep'], ['reap', 'b2', 'b2'],
+  ]);
+});
+
+test('no box job reaches setup before the boot sweep resolves', async (t) => {
+  let release = null;
+  const fb = fakeBox({ sweep: () => (release ? new Promise((r) => { release = r; }) : null) });
+  const f = await fixture(t, { runnerOver: { box: fb.box } });
+  await f.upload(f.body('warm', 'hand', { isolation: 'container' }));
+  await waitState(f.runner, 'warm', 'done');
+  f.runner.close();
+  storeJob(f, 'waits', 'queued', { isolation: 'container', identity: BOX_IDENTITY });
+  release = true;
+  const runner = f.make({ box: fb.box });
+  t.after(() => runner.close());
+  runner.start();
+  await drain();
+  assert.strictEqual(typeof release, 'function', 'ENTER: the boot sweep is in flight');
+  assert.deepStrictEqual([(await runner.poll(['waits'])).jobs[0].state, f.calls.map((c) => c.job)], ['queued', ['warm']]);
+  release();
+  await waitState(runner, 'waits', 'done');
+  assert.deepStrictEqual(f.calls.map((c) => c.job), ['warm', 'waits']);
+});
+
+test('recovery with the box removed keeps an interrupted box job dir until a sweep confirms; a failed sweep is not empty', async (t) => {
+  const fb = fakeBox();
+  const f = await fixture(t, { runnerOver: { box: fb.box } });
+  await f.upload(f.body('first-box', 'hand', { isolation: 'container' }));
+  await waitState(f.runner, 'first-box', 'done');
+  assert.strictEqual(fs.existsSync(jobPaths(f.work, 'first-box').dir), false, 'ENTER: a normal box job is reaped and its dir removed');
+  f.runner.close();
+  storeJob(f, 'cut-box', 'running', { isolation: 'container', identity: BOX_IDENTITY });
+  storeJob(f, 'queued-box', 'queued', { isolation: 'container', identity: BOX_IDENTITY });
+  const cutDir = jobPaths(f.work, 'cut-box').dir;
+  fs.mkdirSync(path.join(cutDir, 'tree'), { recursive: true });
+  const holdFile = path.join(f.root, 'suite-runner', 'box-hold.json');
+  const boot = async (over) => {
+    const runner = f.make(over);
+    t.after(() => runner.close());
+    await drain();
+    return runner;
+  };
+  const r1 = await boot({ box: null });
+  const states = (await r1.poll(['cut-box', 'queued-box'])).jobs.map((j) => [j.id, j.state, j.reason]);
+  assert.deepStrictEqual(states, [['cut-box', 'done', 'runner-restart'], ['queued-box', 'done', 'box-unavailable']]);
+  assert.strictEqual(fs.existsSync(cutDir), true);
+  assert.strictEqual((await r1.submit(f.body('nat-held'))).state, 'queued');
+  r1.start();
+  const nat = await waitState(r1, 'nat-held', 'done');
+  assert.deepStrictEqual([nat.reason, nat.exit, fs.existsSync(cutDir)], [null, { code: 0, signal: null }, true]);
+  r1.close();
+  const sweeps = [];
+  const r2 = await boot({ box: null, boxSweep: async () => { sweeps.push('fail'); throw new Error('docker ps failed: down'); } });
+  await r2.tick();
+  assert.deepStrictEqual([sweeps, fs.existsSync(cutDir), JSON.parse(fs.readFileSync(holdFile, 'utf8'))], [['fail', 'fail'], true, { why: 'docker ps failed: down', dirs: [cutDir] }]);
+  r2.close();
+  await boot({ box: null, boxSweep: async () => { sweeps.push('pass'); } });
+  assert.deepStrictEqual([sweeps, fs.existsSync(cutDir), fs.existsSync(holdFile)], [['fail', 'fail', 'pass'], false, false]);
+});
+
+test('a box test exec whose setup path cannot be mounted ends setup-failed with the reason, at setup or at the test exec, and exit 125 or a CLI error ends box-failed', async (t) => {
+  const fb = fakeBox();
+  const f = await fixture(t, {
+    runnerOver: { box: fb.box },
+    onSpawn: (c) => {
+      if (c.cmd === '/bin/sh') {
+        fs.mkdirSync(path.join(c.opts.cwd, 'node_modules'));
+        fs.writeFileSync(path.join(c.opts.cwd, 'node_modules', 'x.txt'), 'built\n');
+      }
+      if (c.job === 'b-err') setImmediate(() => c.child.emit('error', new Error('spawn docker ENOENT')));
+      else c.child.finish(c.job === 'b-125' ? 125 : 0);
+    },
+  });
+  const setup = { run: 'npm ci', key: ['package.json'], paths: ['node_modules'], timeoutMs: 60000 };
+  await f.upload(f.body('b-ok', 'hand', { isolation: 'container', setup }));
+  const ok = await waitState(f.runner, 'b-ok', 'done');
+  assert.deepStrictEqual([ok.reason, ok.exit], [null, { code: 0, signal: null }], 'ENTER: a box job with mountable setup paths passes');
+  await f.runner.submit(f.body('b-bad', 'hand', { isolation: 'container', setup: { ...setup, paths: ['node_modules', 'dep,x'] } }));
+  const bad = await waitState(f.runner, 'b-bad', 'done');
+  assert.deepStrictEqual([bad.reason, bad.exit], ['setup-failed', null]);
+  assert.strictEqual((await f.runner.output('b-bad', { stream: 'stderr' })).text, 'suite-runner: spawn failed: setup path not mountable: "dep,x"\n');
+  await f.runner.submit(f.body('b-125', 'hand', { isolation: 'container' }));
+  const failed = await waitState(f.runner, 'b-125', 'done');
+  assert.deepStrictEqual([failed.reason, failed.exit], ['box-failed', { code: 125, signal: null }]);
+  await f.runner.submit(f.body('b-miss', 'hand', { isolation: 'container', setup: { ...setup, run: 'npm ci --fresh', paths: ['dep,x'] } }));
+  const miss = await waitState(f.runner, 'b-miss', 'done');
+  assert.deepStrictEqual([miss.reason, miss.exit], ['setup-failed', null]);
+  await f.runner.submit(f.body('b-err', 'hand', { isolation: 'container' }));
+  const errored = await waitState(f.runner, 'b-err', 'done');
+  assert.deepStrictEqual([errored.reason, errored.exit], ['box-failed', { code: null, signal: null }]);
+  assert.deepStrictEqual(fb.calls.filter(([verb]) => verb === 'seal' || verb === 'attach'), [['seal', 'b-ok', 'node_modules'], ['attach', 'node_modules', 'dep,x']]);
+});
+
+test('native and box jobs on the same tree and setup get different deps entries', async (t) => {
+  const fb = fakeBox();
+  const f = await fixture(t, {
+    runnerOver: { box: fb.box },
+    onSpawn: (c) => {
+      if (c.cmd === '/bin/sh') {
+        fs.mkdirSync(path.join(c.opts.cwd, 'node_modules'));
+        fs.writeFileSync(path.join(c.opts.cwd, 'node_modules', 'x.txt'), 'built\n');
+      }
+      c.child.finish(0);
+    },
+  });
+  const setup = { run: 'npm ci', key: ['package.json'], paths: ['node_modules'], timeoutMs: 60000 };
+  await f.upload(f.body('d-nat', 'hand', { setup }));
+  await waitState(f.runner, 'd-nat', 'done');
+  await f.runner.submit(f.body('d-box', 'hand', { isolation: 'container', setup }));
+  await waitState(f.runner, 'd-box', 'done');
+  assert.deepStrictEqual(f.calls.map((c) => [c.job, c.cmd === '/bin/sh' ? 'setup' : 'test']), [['d-nat', 'setup'], ['d-nat', 'test'], ['d-box', 'setup'], ['d-box', 'test']]);
+  const entries = fs.readdirSync(path.join(f.work, 'deps', f.snap.repoKey)).filter((n) => !n.endsWith('.json'));
+  assert.strictEqual(entries.length, 2);
+});
+
+test('two ticks share one release sweep: a stale failure cannot rewrite a cleared hold or sweep under the next box job', async (t) => {
+  const pending = [];
+  let held = false;
+  const fb = fakeBox({
+    reap: (job) => { if (job.id === 'b1') throw new Error('box cleanup not confirmed: c0ffee'); },
+    sweep: () => (held ? new Promise((resolve, reject) => { pending.push({ resolve, reject }); }) : null),
+  });
+  let b1 = null;
+  const f = await fixture(t, {
+    runnerOver: { box: fb.box },
+    onSpawn: (c) => { if (c.job === 'b1') b1 = c.child; else { c.child.stdout.write('TOTALS: 1 pass, 0 fail, 1 tests\n'); c.child.finish(0); } },
+  });
+  await f.upload(f.body('b1', 'hand', { isolation: 'container' }));
+  await waitState(f.runner, 'b1', 'running');
+  assert.strictEqual((await f.runner.submit(f.body('b2', 'hand', { isolation: 'container' }))).state, 'queued');
+  b1.finish(0);
+  await waitState(f.runner, 'b1', 'done');
+  await drain();
+  const holdFile = path.join(f.root, 'suite-runner', 'box-hold.json');
+  assert.strictEqual(fs.existsSync(holdFile), true, 'ENTER: the failed reap holds the box');
+  held = true;
+  const ticks = [f.runner.tick(), f.runner.tick()];
+  await drain();
+  for (let i = pending.length - 1; i >= 1; i--) pending[i].resolve();
+  await drain();
+  if (pending.length > 1) pending[0].reject(new Error('box cleanup not confirmed: c0ffee'));
+  else pending[0].resolve();
+  await Promise.all(ticks);
+  const b2 = await waitState(f.runner, 'b2', 'done');
+  await drain();
+  assert.deepStrictEqual([b2.reason, fs.existsSync(holdFile), (await f.runner.info()).box.state], [null, false, 'ready']);
+  const tail = fb.calls.slice(fb.calls.findIndex(([verb, id]) => verb === 'reap' && id === 'b1'));
+  assert.deepStrictEqual(tail.map(([verb, id]) => [verb, id || null]), [['reap', 'b1'], ['sweep', null], ['prepare', 'b2'], ['spawn', 'b2'], ['reap', 'b2']]);
+});

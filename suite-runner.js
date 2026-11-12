@@ -297,6 +297,7 @@ function validateSubmit(b, limits) {
     if (s.timeoutMs != null && !(s.timeoutMs >= 10000 && s.timeoutMs <= 30 * MIN)) return 'bad setup.timeoutMs';
   }
   if (b.timeoutMs != null && !(b.timeoutMs > 0 && b.timeoutMs <= limits.maxTimeoutMs)) return 'bad timeoutMs';
+  if (b.isolation != null && b.isolation !== 'container') return 'bad isolation';
   return null;
 }
 
@@ -314,6 +315,7 @@ function fileSha256({ file, bytes }, readChunk) {
 function createSuiteRunner({
   root, oldRoot = null, work, isolation = userIsolation(), limits = {}, spawn = childProcess.spawn,
   now = Date.now, log = () => {}, timers = DEFAULT_TIMERS, platform = process.platform, arch = process.arch,
+  box = null, boxSweep = null,
 }) {
   const repo = enclosingRepo(work);
   if (repo) throw new Error(`the work root is inside the git repository ${repo}; choose a work folder outside any repository`);
@@ -354,7 +356,14 @@ function createSuiteRunner({
   let pumpAfterRecovery = false;
   let isoState = null;
   let identity = null;
+  const holdFile = path.join(state.dir, 'box-hold.json');
+  let boxHold = readJson(holdFile, null);
+  let sweeping = null;
+  const sweepBox = box ? () => box.sweep() : boxSweep;
 
+  const isBox = (job) => job.isolation === 'container';
+  const isoOf = (job) => (isBox(job) ? box : isolation);
+  const jobArg = (job) => (isBox(job) ? [job] : []);
   const jobStore = (id) => path.join(storeDir, id);
   const jobWork = (id) => jobPaths(work, id).dir;
   const outFile = (id, stream) => path.join(jobStore(id), stream);
@@ -402,8 +411,58 @@ function createSuiteRunner({
     return identity;
   }
 
+  function setHold(next) {
+    boxHold = next;
+    if (next) writeJson(holdFile, next, 0o600);
+    else fs.rmSync(holdFile, { force: true });
+  }
+
+  function enterHold(why, dirs) {
+    setHold({ why, dirs: [...new Set([...(boxHold ? boxHold.dirs : []), ...dirs])] });
+    log(`suite-runner: box cleanup held: ${why}`);
+  }
+
+  function sweepOnce() {
+    if (!sweeping) {
+      sweeping = Promise.resolve().then(() => sweepBox()).then(() => null, (e) => e.message)
+        .finally(() => { sweeping = null; });
+    }
+    return sweeping;
+  }
+
+  function clearHold(held) {
+    for (const dir of held.dirs) forceRemove(dir);
+    setHold(null);
+  }
+
+  async function releaseHold() {
+    const held = boxHold;
+    if (!held || !sweepBox) return false;
+    const error = await sweepOnce();
+    if (boxHold !== held) return false;
+    if (error != null) { setHold({ ...held, why: error }); return false; }
+    clearHold(held);
+    return true;
+  }
+
+  async function recoverBox(interrupted) {
+    const dirs = interrupted.map((job) => jobWork(job.id));
+    if (!box) {
+      if (dirs.length) enterHold('no box is configured to confirm cleanup', dirs);
+      await releaseHold();
+      return;
+    }
+    const error = await sweepOnce();
+    if (error != null) { enterHold(error, dirs); return; }
+    if (boxHold) clearHold(boxHold);
+    for (const job of interrupted) {
+      try { await box.reap(jobWork(job.id), null, job); } catch (e) { enterHold(e.message, [jobWork(job.id)]); }
+    }
+  }
+
   function recover() {
     const reaps = [];
+    const boxed = [];
     for (const id of fs.readdirSync(storeDir)) {
       const job = readJson(path.join(jobStore(id), 'job.json'), null);
       if (!job || job.id !== id) { forceRemove(jobStore(id)); continue; }
@@ -411,12 +470,18 @@ function createSuiteRunner({
       if (job.state === 'awaiting-pack') { forceRemove(jobStore(id)); continue; }
       jobs.set(id, job);
       if (job.state === 'queued') job.lastSeen = now();
+      if (job.state === 'queued' && isBox(job) && !box) {
+        finishRecord(job, { reason: 'box-unavailable', exit: null });
+        save(job);
+      }
       if (job.state === 'setup' || job.state === 'running') {
         finishRecord(job, { reason: 'runner-restart', exit: null });
         save(job);
-        reaps.push(Promise.resolve().then(() => isolation.reap(jobWork(id))).catch((e) => log(`suite-runner: reap ${id} after restart failed: ${e.message}`)));
+        if (isBox(job)) boxed.push(job);
+        else reaps.push(Promise.resolve().then(() => isolation.reap(jobWork(id))).catch((e) => log(`suite-runner: reap ${id} after restart failed: ${e.message}`)));
       }
     }
+    if (box || boxed.length || boxHold) reaps.push(recoverBox(boxed).catch((e) => log(`suite-runner: box recovery failed: ${e.message}`)));
     return Promise.all(reaps);
   }
 
@@ -475,7 +540,12 @@ function createSuiteRunner({
     notify(job.id);
     if (job.startedAt == null) return;
     if (killing) await killing;
-    try { await isolation.reap(jobWork(job.id), job.depsEntry || null); } catch (e) { log(`suite-runner: reap ${job.id} failed: ${e.message}`); }
+    try {
+      await isoOf(job).reap(jobWork(job.id), job.depsEntry || null, ...jobArg(job));
+    } catch (e) {
+      log(`suite-runner: reap ${job.id} failed: ${e.message}`);
+      if (isBox(job)) enterHold(e.message, [jobWork(job.id)]);
+    }
   }
 
   function enqueue(job) {
@@ -489,7 +559,7 @@ function createSuiteRunner({
   function pump() {
     if (recovering) { pumpAfterRecovery = true; return; }
     if (closed || active || maintenance) return;
-    const next = queue()[0];
+    const next = queue().find((j) => !isBox(j) || !boxHold);
     if (!next) return;
     active = next.id;
     runJob(next)
@@ -545,6 +615,8 @@ function createSuiteRunner({
   function childEnv(job, jobDir) {
     const env = { ...(job.env || {}) };
     for (const k of FLAG_KEYS) if (job.flags && typeof job.flags[k] === 'string') env[k] = job.flags[k];
+    const iso = isoOf(job);
+    if (iso.env) return Object.assign(env, iso.env(jobDir));
     Object.assign(env, {
       PATH: jobPath(platform, arch),
       HOME: path.join(jobDir, 'home'),
@@ -560,9 +632,9 @@ function createSuiteRunner({
     return env;
   }
 
-  function killRunning(state, child, jobDir) {
+  function killRunning(state, child, jobDir, job) {
     if (state.killing) return;
-    try { state.killing = Promise.resolve(isolation.kill(child, jobDir)).catch((e) => log(`suite-runner: kill failed: ${e.message}`)); } catch (e) { log(`suite-runner: kill failed: ${e.message}`); }
+    try { state.killing = Promise.resolve(isoOf(job).kill(child, jobDir, ...jobArg(job))).catch((e) => log(`suite-runner: kill failed: ${e.message}`)); } catch (e) { log(`suite-runner: kill failed: ${e.message}`); }
   }
 
   function exec(job, jobDir, argv, ms) {
@@ -571,17 +643,17 @@ function createSuiteRunner({
       const closeFds = () => { for (const fd of Object.values(fds)) { try { fs.closeSync(fd); } catch {} } };
       let child;
       try {
-        child = isolation.spawn({ jobDir, cwd: path.join(jobDir, 'tree'), argv, env: childEnv(job, jobDir), spawn });
+        child = isoOf(job).spawn({ jobDir, cwd: path.join(jobDir, 'tree'), argv, env: childEnv(job, jobDir), spawn, ...(isBox(job) ? { job } : {}) });
       } catch (e) {
         fs.writeSync(fds.stderr, `suite-runner: spawn failed: ${e.message}\n`);
         closeFds();
-        resolve({ code: null, signal: null, error: e.message });
+        resolve({ code: null, signal: null, error: e.message, spawnFailed: true });
         return;
       }
       const state = { timedOut: false, stopped: null, killing: null };
       running = { job, child, jobDir, state };
       job.pid = child.pid || null;
-      const timer = timers.setTimeout(() => { state.timedOut = true; killRunning(state, child, jobDir); }, ms);
+      const timer = timers.setTimeout(() => { state.timedOut = true; killRunning(state, child, jobDir, job); }, ms);
       for (const s of ['stdout', 'stderr']) {
         if (!child[s]) continue;
         child[s].on('data', (chunk) => {
@@ -608,6 +680,7 @@ function createSuiteRunner({
   }
 
   async function runJob(job) {
+    const isolation = isoOf(job);
     const startedAt = now();
     setState(job, 'setup', { startedAt });
     resetOutputs(job);
@@ -627,6 +700,15 @@ function createSuiteRunner({
       fs.appendFileSync(outFile(job.id, 'stderr'), `suite-runner: ${built.reason}${built.treeHash ? ` (${built.treeHash} != ${job.treeHash})` : ''}\n`);
       return finish(job, { reason: built.reason, exit: null });
     }
+    if (isolation.detach) {
+      const detached = await snapshot.detachTree(tree);
+      log(`suite-runner: detached ${job.id} in ${detached.ms} ms`);
+      if (job.stop) return finish(job, { reason: job.stop, exit: null });
+      if (!detached.ok) {
+        fs.appendFileSync(outFile(job.id, 'stderr'), `suite-runner: detach failed: ${detached.error}\n`);
+        return finish(job, { reason: 'setup-failed', exit: null });
+      }
+    }
     const deps = job.setup ? depsEntry(job, tree) : null;
     if (deps) {
       fs.mkdirSync(path.dirname(deps.entry), { recursive: true });
@@ -637,7 +719,8 @@ function createSuiteRunner({
       job.depsEntry = deps.entry;
     }
     if (deps && deps.hit) {
-      linkDeps(deps, tree, job.setup.paths);
+      if (isolation.attach) isolation.attach(deps, tree, job.setup.paths);
+      else linkDeps(deps, tree, job.setup.paths);
       writeJson(deps.marker, { ...readJson(deps.marker, {}), usedAt: now() }, 0o600);
       touchCache(deps.rel);
     }
@@ -646,6 +729,7 @@ function createSuiteRunner({
     if (deps && !deps.hit) {
       const r = await exec(job, jobDir, ['/bin/sh', '-c', job.setup.run], job.setup.timeoutMs || lim.setupTimeoutMs);
       if (job.stop) return finish(job, { reason: job.stop, exit: null }, r.killing);
+      if (r.spawnFailed && isolation.mode === 'container') return finish(job, { reason: 'setup-failed', exit: null });
       if (r.code !== 0) return finish(job, { reason: 'setup-failed', exit: { code: r.code, signal: r.signal || null } }, r.killing);
       await isolation.seal(jobDir, deps.entry, job.setup.paths);
       writeJson(deps.marker, { createdAt: now(), usedAt: now() }, 0o600);
@@ -655,9 +739,11 @@ function createSuiteRunner({
     const runStartedAt = now();
     setState(job, 'running', { setupMs: runStartedAt - startedAt, runStartedAt });
     const ms = Math.min(job.timeoutMs || lim.timeoutMs, lim.maxTimeoutMs);
-    const r = await exec(job, jobDir, [process.execPath, ...TEST_ARGV, ...(job.files || [])], ms);
+    const r = await exec(job, jobDir, [isolation.node || process.execPath, ...TEST_ARGV, ...(job.files || [])], ms);
     job.runMs = now() - runStartedAt;
-    const reason = job.stop || (r.timedOut ? 'timeout' : null);
+    const boxed = isolation.mode === 'container';
+    if (boxed && r.spawnFailed && !job.stop) return finish(job, { reason: 'setup-failed', exit: null });
+    const reason = job.stop || (r.timedOut ? 'timeout' : null) || (boxed && (r.code === 125 || r.error) ? 'box-failed' : null);
     return finish(job, { reason, exit: { code: r.code, signal: r.signal || null } }, r.killing);
   }
 
@@ -715,10 +801,18 @@ function createSuiteRunner({
     try { return await maintenance; } finally { maintenance = null; pump(); }
   }
 
+  async function boxState() {
+    if (!box) return null;
+    if (boxHold) return { state: 'unavailable', why: `cleanup not confirmed: ${boxHold.why}` };
+    let found;
+    try { found = await box.probe(); } catch (e) { return { state: 'unavailable', why: e.message }; }
+    return found && found.state === 'ready' ? { state: 'ready', env: found.env } : { state: 'unavailable', why: (found && found.why) || 'no answer' };
+  }
+
   async function info() {
     const env = await ensureIdentity();
     return {
-      ok: true, bootId, env, isolation: isoState,
+      ok: true, bootId, env, isolation: isoState, box: await boxState(),
       limits: { packMaxBytes: lim.packMaxBytes, chunkMax: lim.chunkMax, queueMax: lim.queueMax },
       queue: { running: active, queued: queue().map((j) => j.id) },
     };
@@ -733,8 +827,17 @@ function createSuiteRunner({
       existing.lastSeen = now();
       return { ok: true, id: existing.id, state: existing.state, position: positionOf(existing), have: existing.have || [] };
     }
-    await ensureIdentity();
-    if (isoState.mode === 'unavailable') return fail(503, `isolation unavailable: ${isoState.why}`);
+    const boxed = body.isolation === 'container';
+    let stamp;
+    if (boxed) {
+      if (!box) return fail(409, 'this runner has no box image configured');
+      const b = await boxState();
+      if (b.state !== 'ready') return fail(503, `box unavailable: ${b.why}`);
+      stamp = b.env;
+    } else {
+      stamp = await ensureIdentity();
+      if (isoState.mode === 'unavailable') return fail(503, `isolation unavailable: ${isoState.why}`);
+    }
     const waiting = [...jobs.values()].filter((j) => j.state === 'awaiting-pack' || j.state === 'queued').length;
     if (waiting >= lim.queueMax) return fail(429, 'queue full');
     const job = {
@@ -744,7 +847,8 @@ function createSuiteRunner({
       branch: body.branch || null, trunk: body.trunk || null, refs: body.refs || {},
       files: body.files || [], flags: body.flags || {}, setup: body.setup || null, env: body.env || {},
       timeoutMs: body.timeoutMs || null, state: 'awaiting-pack', reason: null, exit: null,
-      queuedAt: now(), lastSeen: now(), identity, out: { stdoutBytes: 0, stderrBytes: 0, truncated: false },
+      queuedAt: now(), lastSeen: now(), identity: stamp, out: { stdoutBytes: 0, stderrBytes: 0, truncated: false },
+      ...(boxed ? { isolation: 'container' } : {}),
     };
     jobs.set(job.id, job);
     fs.mkdirSync(jobStore(job.id), { recursive: true });
@@ -862,7 +966,7 @@ function createSuiteRunner({
     job.stop = reason;
     if (running && running.job === job) {
       running.state.stopped = reason;
-      killRunning(running.state, running.child, running.jobDir);
+      killRunning(running.state, running.child, running.jobDir, job);
     }
   }
 
@@ -879,6 +983,8 @@ function createSuiteRunner({
       }
     }
     retain();
+    const boxActive = active && jobs.has(active) && isBox(jobs.get(active));
+    if (boxHold && !boxActive && !recovering) await releaseHold();
     if (!anyLive()) return maintain();
     pump();
     return { ran: false };

@@ -69,3 +69,12 @@ Manual check, cache across a replacement: create two named volumes and start the
 
 ## resolveFs
 Inside Electron (main process and `ELECTRON_RUN_AS_NODE`) `fs` presents a `.asar` file as a directory: `lstatSync` says directory, `readdirSync` lists its members and `chmodSync` on a member fails `ENOTDIR`, so sealing a deps folder holding `electron/dist/.../default_app.asar` failed the job as `setup-failed`. `original-fs` is Electron's unpatched module; plain node (headless-main.js) has none and falls back to `fs`. `process.noAsar` would fix the walk too but changes how the host app loads its own archive. `scripts/electron-smoke.js` seals a real archive under Electron. suite-client.js only appends and reads its ledger files and suite-snapshot.js only touches the mirror and its temporary object dir, so neither walks job- or setup-produced content.
+
+## recoverBox
+An interrupted box job's dir is never removed on configuration alone: with `box` null at start it joins the box hold, and only a sweep that Docker confirms empty (the box's `sweep`, or `boxSweep` when no image is configured) removes it. A failed `docker ps` is never read as empty. The hold is persisted as `box-hold.json` in the state dir, because a restart finishes the interrupted job and nothing else would remember the dir.
+
+## boxState
+With `box` null, `info.box` is null and a box submit is 409 even while dirs are held: the hold only gates box jobs on a runner that has a box.
+
+## detachTree
+`detachTree` runs after the tree-hash proof and before the deps key, for box jobs only; `HEAD` and the index survive the repack, so `git status`, `git log -1` and `git rev-parse HEAD` work in a detached tree with the mirror gone (pinned in `test/suite-runner.test.js`). `runJob` binds `isolation` to the job's adapter so the source-shape pin on `isolation.prepare` keeps applying to both adapters.
