@@ -478,7 +478,12 @@ The job's PATH is a fixed list (`jobPath`), never the node's own:
 `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`, with
 `/opt/homebrew/bin:/opt/homebrew/sbin` ahead of it on macOS arm64. Its `LANG`
 (`jobLang`) is `C.UTF-8` on Linux and `en_US.UTF-8` on macOS, which has no
-`C.UTF-8`.
+`C.UTF-8`. That locale is the `lang` stamped in the runner's `env` (`envIdentity`).
+The job env sets `GIT_CEILING_DIRECTORIES` to the job dir, in both isolation
+modes, so git inside a job finds the job tree but no repository above the job
+dir; a submit cannot override it. A work root inside a git work tree or a `.git`
+dir is refused at start: runner mode stays off with a reason naming the
+enclosing repository's top level.
 
 When runner mode is asked for (setting or env) but the runner cannot be built (most often
 an uncreatable work root), runner mode stays off and `startSuiteRunner` logs one

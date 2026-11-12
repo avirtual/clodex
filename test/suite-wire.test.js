@@ -195,6 +195,31 @@ test('a runner asked for with an uncreatable work root stays off, logs one line 
   assert.deepStrictEqual(JSON.parse(info.text), { ok: false, error: 'this node is not a test runner', reason: started.error });
 });
 
+test('a work root inside a git work tree or a .git dir keeps runner mode off with a reason naming the enclosing repository; outside any repository it starts', async (t) => {
+  const root = fs.realpathSync(mkTmpRoot('suite-wire-inrepo-'));
+  g(root, 'init', '-q', '-b', 'master', 'outer');
+  g(path.join(root, 'outer'), 'commit', '-q', '--allow-empty', '-m', 'outer');
+  g(path.join(root, 'outer'), 'worktree', 'add', '-q', path.join(root, 'linked'));
+  g(root, 'init', '-q', '--bare', path.join('bare', '.git'));
+  fs.mkdirSync(path.join(root, 'clean'));
+  assert.strictEqual(fs.statSync(path.join(root, 'linked', '.git')).isFile(), true, 'ENTER: the linked worktree has a .git file');
+  const rows = [
+    ['dir', path.join(root, 'outer', 'deep', 'suite-work'), path.join(root, 'outer')],
+    ['file', path.join(root, 'linked', 'suite-work'), path.join(root, 'linked')],
+    ['bare', path.join(root, 'bare', '.git', 'suite-work'), path.join(root, 'bare')],
+    ['clean', path.join(root, 'clean', 'suite-work'), null],
+  ];
+  const seen = rows.map(([label, work]) => {
+    const lines = [];
+    const log = { warn: () => {}, error: (tag, m) => lines.push(m) };
+    const started = startSuiteRunner({ root: path.join(root, `home-${label}`), work, isolation: 'none', limits: {} }, { log });
+    if (started.runner) started.runner.close();
+    const named = started.error && started.error.match(/inside the git repository (\S+?);/);
+    return [label, !!started.runner, named ? named[1] : null, lines.length === 0 ? null : lines[0] === started.error, fs.existsSync(work)];
+  });
+  assert.deepStrictEqual(seen, rows.map(([label, , top]) => [label, top === null, top, top === null ? null : true, top === null]));
+});
+
 test('a scoped hello answers identity, bootId, the suite cap and scope, and nothing else', async (t) => {
   const { runner } = stubRunner();
   const { port } = await startServer(t, { suiteRunner: runner });

@@ -24,6 +24,13 @@ A job's work dir is `jobs/<first 8 hex of sha256(id)>`, so the tree, home and te
 
 ## envIdentity
 `imageVersion` and `imageRev` come from `/etc/clodex/image.json`, which the Dockerfile writes from the `CLODEX_VERSION` and `CLODEX_GIT_SHA` build args that `scripts/publish-image.sh` passes; both are in the hash behind `envKey`.
+`lang` is the locale jobs run with (`jobLang` of the runner's platform), not the node process's `LANG`; switching to it changed the `envKey` of every existing runner once.
+
+## childEnv
+`GIT_CEILING_DIRECTORIES` is the job dir: git does not search the ceiling itself or above it, so `tree` (its own `.git`) is found and `tmp`, `home` and anything created under them never reach a repository enclosing the work root. Measured on a Mac whose home is a work tree: without it, job fixtures created a branch, worktree metadata and a fetch in the operator's repository. The engine's own git calls need no ceiling: they run in the mirror (a bare repo, found as the cwd) or in `tree` only after `init` succeeded.
+
+## enclosingRepo
+`createSuiteRunner` refuses a work root at or under a directory holding a `.git` entry (directory, linked-worktree file, or a work root inside `.git` itself). It walks parents instead of spawning git so it works without git; it does not detect a bare repository not named `.git`.
 
 ## moveState
 The runner's state (`statePaths`: the job store, `cache.json` and `ledger.jsonl`) lives under `CLODEX_DATA_DIR` when it is set (`/data/suite-runner` in the image, on the data volume and under `/data` at 0700), else under the Clodex home; `suiteRunnerOptions` in remote-wiring.js passes the Clodex home as `oldRoot`, and `moveState` moves what it finds there on start. The container layer and the volume are different filesystems, so the move falls back from `rename` to a copy on `EXDEV`. A job id already at the new place keeps the new copy, and the old ledger is prepended to the new one.

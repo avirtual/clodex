@@ -21,6 +21,7 @@ blocks a release.
 - A node announces its test-box offer to the peers it dials and records theirs, so two peered nodes see each other's offers whichever one opened the link.
 - Preferences ▸ Test runner turns this machine into a test runner for its peers and keeps the choice across restarts; the environment variables still work and take precedence.
 - Preferences ▸ Offer test boxes sets what this machine offers and which peers are shown it; `clodexctl get offers` and the peer info popover show what peers offer.
+- A test runner no longer lets a job see a git repository above its own folder, and refuses to start when its work folder is inside a repository; results now record the locale the job ran with (the environment key of an existing runner changes once).
 
 ## 5.176.0 — 2026-11-12
 

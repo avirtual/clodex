@@ -10,7 +10,7 @@ const { PassThrough } = require('node:stream');
 const { execFileSync, spawnSync } = require('node:child_process');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { snapshotTree, releaseSnapshot, buildPack } = require('../suite-snapshot');
-const { createSuiteRunner, noneIsolation, envIdentity, jobPaths, jobPath, jobLang } = require('../suite-runner');
+const { createSuiteRunner, noneIsolation, userIsolation, envIdentity, jobPaths, jobPath, jobLang } = require('../suite-runner');
 
 const ENV = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_'))), GIT_AUTHOR_DATE: '2026-01-02T03:04:05Z', GIT_COMMITTER_DATE: '2026-01-02T03:04:05Z' };
 const IDENT = ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgSign=false', '-c', 'core.hooksPath=/dev/null', '-c', 'core.autocrlf=false'];
@@ -60,7 +60,7 @@ async function fixture(t, { onSpawn, now, limits, kill, wrap, runnerOver } = {})
       child.stderr.end();
       setImmediate(() => child.emit('close', code, signal));
     };
-    const call = { cmd, args, opts, child, job: jobOf(path.dirname(opts.cwd)), parentEnv: { ...process.env } };
+    const call = { cmd, args, opts, child, job: jobOf(opts.cwd ? path.dirname(opts.cwd) : args[3]), parentEnv: { ...process.env } };
     calls.push(call);
     (onSpawn || ((c) => { c.child.stdout.write('TOTALS: 1 pass, 0 fail, 1 tests\n'); c.child.finish(0); }))(call);
     return child;
@@ -369,6 +369,7 @@ test('the test process gets an environment built from empty: no parent token rea
     PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
     HOME: path.join(jobDir, 'home'),
     TMPDIR: path.join(jobDir, 'tmp'),
+    GIT_CEILING_DIRECTORIES: jobDir,
     LANG: 'C.UTF-8',
     TZ: 'UTC',
     USER: 'suite-test',
@@ -402,6 +403,89 @@ test('a darwin arm64 runner hands the test process the Homebrew PATH and en_US.U
   assert.deepStrictEqual([call.opts.env.PATH, call.opts.env.LANG], [
     '/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', 'en_US.UTF-8',
   ]);
+});
+
+function gitProbe(jobDir, env, tag) {
+  const run = (rel, ...args) => {
+    const r = spawnSync('git', ['-C', path.join(jobDir, rel), ...args], { env: { ...env, PATH: ENV.PATH }, encoding: 'utf8' });
+    return r.status === 0 ? r.stdout.trim() : `fail: ${/not a git repository/.test(r.stderr) ? 'not a git repository' : r.stderr.trim()}`;
+  };
+  for (const d of [`fresh-${tag}`, `sub-${tag}`]) fs.mkdirSync(path.join(jobDir, 'tmp', d));
+  return {
+    tmp: run('tmp', 'rev-parse', '--show-toplevel'),
+    fresh: run(path.join('tmp', `fresh-${tag}`), 'rev-parse', '--show-toplevel'),
+    tree: run('tree', 'rev-parse', '--show-toplevel'),
+    init: run(path.join('tmp', `sub-${tag}`), 'init', '-q'),
+    subRepo: fs.existsSync(path.join(jobDir, 'tmp', `sub-${tag}`, '.git')),
+  };
+}
+
+test('with the job env git finds the job tree but no repository above the job dir, even when the work root parent is a repository; without the ceiling it walks up', async (t) => {
+  const seen = {};
+  const f = await fixture(t, {
+    onSpawn: (c) => {
+      const jobDir = path.dirname(c.opts.cwd);
+      const { GIT_CEILING_DIRECTORIES, ...bare } = c.opts.env;
+      seen.jobDir = jobDir;
+      seen.ceiling = GIT_CEILING_DIRECTORIES;
+      seen.without = gitProbe(jobDir, bare, 'without');
+      seen.withJobEnv = gitProbe(jobDir, c.opts.env, 'with');
+      c.child.finish(0);
+    },
+  });
+  g(f.root, 'init', '-q', '-b', 'master');
+  g(f.root, 'commit', '-q', '--allow-empty', '-m', 'outer');
+  const refs = () => g(f.root, 'for-each-ref') + g(f.root, 'worktree', 'list', '--porcelain');
+  const before = refs();
+  await f.upload(f.body('ceil', 'hand'));
+  await waitState(f.runner, 'ceil', 'done');
+  const outer = fs.realpathSync(f.root);
+  const jobDir = jobPaths(f.work, 'ceil').dir;
+  assert.strictEqual(seen.jobDir, jobDir, 'ENTER: the job spawned in its job dir');
+  assert.deepStrictEqual(seen.without, {
+    tmp: outer, fresh: outer, tree: path.join(jobDir, 'tree'), init: '', subRepo: true,
+  });
+  assert.deepStrictEqual(seen.withJobEnv, {
+    tmp: 'fail: not a git repository', fresh: 'fail: not a git repository', tree: path.join(jobDir, 'tree'), init: '', subRepo: true,
+  });
+  assert.strictEqual(refs(), before);
+  assert.strictEqual(seen.ceiling, jobDir);
+});
+
+test('the setup step env carries GIT_CEILING_DIRECTORIES set to the job dir under both isolation modes', async (t) => {
+  const seen = {};
+  const want = {};
+  for (const mode of ['none', 'user']) {
+    const f = await fixture(t, {
+      onSpawn: (c) => c.child.finish(1),
+      wrap: mode === 'user' ? (base) => ({ ...base, mode: 'user', spawn: userIsolation({ user: 'suite-test' }).spawn }) : undefined,
+    });
+    const id = `ceil-setup-${mode}`;
+    await f.upload(f.body(id, 'hand', { setup: { run: 'npm ci', key: ['package.json'], paths: ['node_modules'] } }));
+    await waitState(f.runner, id, 'done');
+    assert.strictEqual(f.calls.length, 1, 'ENTER: only the setup step ran');
+    const c = f.calls[0];
+    const env = mode === 'user'
+      ? Object.fromEntries(c.args.slice(4, c.args.indexOf('--')).map((p) => [p.slice(0, p.indexOf('=')), p.slice(p.indexOf('=') + 1)]))
+      : c.opts.env;
+    seen[mode] = [mode === 'user' ? c.args[c.args.indexOf('--') + 1] : c.cmd, Object.fromEntries(Object.entries(env).filter(([k]) => k.startsWith('GIT_')))];
+    want[mode] = ['/bin/sh', { GIT_CEILING_DIRECTORIES: jobPaths(f.work, id).dir }];
+  }
+  assert.deepStrictEqual(seen, want);
+});
+
+test('a submit may not set GIT_CEILING_DIRECTORIES', async (t) => {
+  const f = await fixture(t);
+  const r = await f.runner.submit(f.body('ceil-env', 'hand', { env: { GIT_CEILING_DIRECTORIES: '/' } }));
+  assert.deepStrictEqual([r.ok, r.error], [false, 'env key not allowed: GIT_CEILING_DIRECTORIES']);
+});
+
+test('envIdentity stamps the job locale of the platform, not the node process LANG', async () => {
+  const env = { LANG: 'de_DE.ISO8859-1' };
+  const ids = {};
+  for (const platform of ['linux', 'darwin']) ids[platform] = await envIdentity({ isolation: 'user', env, imageFile: '/nonexistent/image.json', platform });
+  assert.deepStrictEqual([ids.linux.lang, ids.darwin.lang], ['C.UTF-8', 'en_US.UTF-8']);
+  assert.notStrictEqual(ids.linux.envKey, ids.darwin.envKey);
 });
 
 const LONG_ID = 't2267-runner-fixes-from-the-first-real-run-hand-attempt-0001-abc';
