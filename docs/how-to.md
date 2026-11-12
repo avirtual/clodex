@@ -157,6 +157,13 @@ prod-only `npm ci`, the headless engine as a systemd `--user` service on
 127.0.0.1:7900 — then verifies the wire and saves a context. Re-running is the
 update path.
 
+The installer decides the recipe from the target's platform. A Linux node runs
+the headless engine: `npm ci --omit=dev --ignore-scripts`, then
+`npm rebuild node-pty`. A macOS target is a desktop checkout started with
+`npm start`, so it installs with dev dependencies, which fetches the Electron
+binary (`npm ci`), then runs `npx electron-rebuild`. It installs no service on
+macOS and does not start the app.
+
 ```sh
 clodexctl deploy node ec2box --ssh ubuntu@ec2-host --claude-token-file ./token
 ```
