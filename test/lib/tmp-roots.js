@@ -27,14 +27,14 @@ const ROOTS = [];
 // Mint a scratch root and register it for the sweep. Registration happens AT
 // MINT TIME, before the caller can do anything with the directory, so a subject
 // that throws half way through still gets its root reaped.
-function suiteRoot() {
-  const root = path.join(os.tmpdir(), 'clodex-suite');
+function suiteRoot(base) {
+  const root = path.join(base, 'clodex-suite');
   fs.mkdirSync(root, { recursive: true });
   return root;
 }
 
-function mkTmpRoot(prefix) {
-  const root = fs.mkdtempSync(path.join(suiteRoot(), prefix));
+function mkTmpRoot(prefix, base = os.tmpdir()) {
+  const root = fs.mkdtempSync(path.join(suiteRoot(base), prefix));
   ROOTS.push(root);
   return root;
 }
