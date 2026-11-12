@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const childProcess = require('child_process');
 
 const IMAGE_RE = /^sha256:[0-9a-f]{64}$/;
+const MOUNT_REL_RE = /^[A-Za-z0-9._@+/-]+$/;
 const DEADMAN = 'mkdir -p "$HOME"; exec 3<&0; "$@" </dev/null & pid=$!; { cat <&3 >/dev/null; kill -KILL $$; } & wait $pid; exit $?';
 const BOX_ENV = {
   HOME: '/tmp/home',
@@ -96,6 +97,7 @@ function runArgv({ image, runnerKey, n, uid, gid, jobDir, job, argv, env }) {
   const rels = (job.setup && job.depsEntry) ? job.setup.paths : [];
   const mounts = [];
   for (const rel of rels) {
+    if (!MOUNT_REL_RE.test(rel)) throw new Error(`setup path not mountable: ${JSON.stringify(rel)}`);
     const src = path.join(job.depsEntry, rel);
     if (fs.existsSync(src)) mounts.push('--mount', `type=bind,src=${src},dst=/job/tree/${rel},readonly`);
   }

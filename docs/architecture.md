@@ -371,7 +371,7 @@ bundle), whose packaged form is the Docker image under
 - **suite-box.js** — the container adapter for suite jobs, beside the
   native `userIsolation`/`noneIsolation`. `createDocker({spawn, timeoutMs})`
   wraps the Docker CLI as `call(args)`; `boxIsolation({image, work, stateDir,
-  docker, kill, uid, gid})` returns the adapter (`probe`, `sweep`, `env`,
+  docker, kill, uid, gid})` returns the adapter (`probe`, `sweep`, `env`, `prepare`,
   `spawn`, `kill`, `attach`, `seal`, `reap`, `clear`). `runArgv` builds the
   `docker run -i --rm --init` line with the stdin dead-man wrapper and read-only
   deps mounts; `clear(label)` is the only cleanup primitive and throws when

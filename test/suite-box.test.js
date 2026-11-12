@@ -78,6 +78,24 @@ test('runArgv: deps mounts appear only for setup paths present in the entry', ()
   assert.strictEqual(tests.indexOf('--platform') + 1, tests.indexOf('linux/arm64'));
 });
 
+test('runArgv refuses a setup path that would rewrite the mount record', () => {
+  const root = mkTmpRoot('suite-box-');
+  const entry = path.join(root, 'deps', 'r', 'k');
+  const rows = [
+    { rel: 'node_modules', ok: true },
+    { rel: 'x,src=/Users/runner/.ssh', ok: false },
+    { rel: 'x,dst=/job/tree/x\ny', ok: false },
+    { rel: 'x"y', ok: false },
+  ];
+  for (const { rel, ok } of rows) {
+    fs.mkdirSync(path.join(entry, rel), { recursive: true });
+    const job = { id: 'j-3', identity: { arch: 'arm64' }, depsEntry: entry, setup: { run: 'true', key: [], paths: [rel] } };
+    const call = () => runArgv({ image: IMAGE, runnerKey: RUNNER_KEY, n: 1, uid: 501, gid: 20, jobDir: path.join(root, 'jobs', 'a'), job, argv: ['true'], env: {} });
+    if (ok) assert.ok(call().includes(`type=bind,src=${entry}/node_modules,dst=/job/tree/node_modules,readonly`), 'ENTER: a plain path mounts');
+    else assert.throws(call, { message: `setup path not mountable: ${JSON.stringify(rel)}` });
+  }
+});
+
 test('spawn: detached, three pipes, a fresh name per exec, and no stdin write', () => {
   const box = adapter();
   const spawned = [];
@@ -265,4 +283,8 @@ test('createDocker.call: output, ENOENT and a timeout that kills the CLI', async
   pending[2].fn();
   const slow = await slowP;
   assert.deepStrictEqual([slow.ok, slow.timedOut, slow.error, children[2].kills], [false, true, 'docker info timed out after 5000 ms', ['SIGKILL']]);
+  const failP = docker.call(['ps', '-aq']);
+  children[3].stderr.emit('data', `${DOWN}\n`);
+  children[3].emit('close', 1);
+  assert.deepStrictEqual(await failP, { ok: false, code: 1, stdout: '', stderr: `${DOWN}\n`, notFound: false, timedOut: false, error: 'docker ps exited 1' });
 });
