@@ -13,7 +13,8 @@ blocks a release.
 
 ## Unreleased
 
-- A node can record an offer to host test boxes for named peers (off by default, discovery only); nothing is announced yet.
+- A node can record an offer to host test boxes for named peers (off by default, discovery only).
+- Peers that dial a node offering test boxes see the offer and the node's capabilities (operating system, architecture, cores, memory, container runtime) in its hello; `GET /api/offers` lists the offers a node knows.
 
 ## 5.176.0 — 2026-11-12
 

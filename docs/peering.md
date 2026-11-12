@@ -49,7 +49,7 @@ disk is the source of truth — SSE signals "changed", clients refetch.
 
 Endpoints: phone page (`/`), `GET /api/sessions|events`
 (global SSE), `GET /api/resources` (the node's resource/verb document —
-`{ok, version, resources}`, now `version: 4`, filtered to what this node's
+`{ok, version, resources}`, now `version: 5`, filtered to what this node's
 injected callbacks actually serve; advertised as the `resources` cap, which is
 unconditional),
 `GET /api/sessions/:name` (one session, `{ok, session}`; 404 unknown or dead; every
@@ -494,6 +494,41 @@ output; it returns `{res, unknown, record}` and writes the `where:'remote'`
 records of `logs/suite-runs.jsonl`. A timeout, an unreachable runner, a lost
 job or a result for another job or tree is `unknown`, never a pass.
 
+### 2d. Box offers (owner side)
+
+A node may offer test boxes to named peers (`boxOffer` ui-setting, or env
+`CLODEX_BOX_OFFER`, which wins when set; box-offer.js validates both). This is
+discovery only: nothing is built or run. remote-wiring injects `offerFor`,
+`receiveOffers` and `listOffers` (`offerCallbacks`); without them hello has no
+`offers` cap, both routes answer 501 and `offers` is absent from
+`/api/resources`.
+
+- **Hello.** Cap `offers` means this node reads `?origin=<name>` on
+  `GET /api/peer/hello` and serves `POST /api/peer/offers`. When the origin is a
+  valid node name listed in the offer's `peers` and the offer is enabled, hello
+  carries `offers: { own }`; otherwise the key is absent. `own` is exactly
+  `{scope:'discovery', boxes, open, kinds:['container'], facts:{os, arch, cpus,
+  memMb, runtime}}`; `runtime` is `null` when no container runtime answers (or
+  the node has no sandbox manager), else `{platforms:[…]}`. Facts are probed
+  when the entry is built, never stored; no host name, version or schedule
+  times cross the wire.
+- **`POST /api/peer/offers`** (a dialer's announce): body
+  `{v:1, from:<dialer label>, own:<entry>|null}`. `own` is sanitised by
+  `sanitizeWireOffers`; an entry with an unknown key, a missing fact or any scope
+  but `discovery` is a 400 and nothing is stored. A `null` own removes that
+  dialer's row. Any `relayed` field is ignored. Reply `{ok:true}`.
+- **`GET /api/offers`** → `{ok, own, offers}`: `own` is this node's entry
+  without the peer filter (or `null`), `offers` the directory rows
+  `{route, provenance, name, offer, at}` (offer-directory.js, in memory, 60 s
+  TTL). `route` is an opaque handle, `provenance` is `announce` (a dialer's
+  POST) or `hello` (a peer this node dials). Two routes to one installation
+  stay two rows; box counts are never summed.
+- **Not an access boundary.** The per-peer list decides who is shown the
+  offer. A dialer's `origin` and `from` are self-asserted, so the list is a
+  display filter, not authorisation. Both routes ride the operator token; a
+  suite-scoped token gets the scoped 403 on both and its hello never carries
+  `offers`.
+
 ## 4. Settings reconciliation (peer-wiring.js)
 
 `syncPeerManager` lazily constructs both managers, then reconciles from
@@ -646,3 +681,6 @@ anything else leaves it running.
   claims every ~15 s, so the loss is bounded to that window. A record the
   claim would drop is refused at enqueue, so its sender is told, and every
   skipped file is logged on the box with its reason.
+- A box offer is discovery only and its per-peer list is a display filter, not
+  an access boundary (a dialer's name is self-asserted). Suite code never reads
+  `boxOffer` or the offers directory (`test/remote-offers.test.js`).

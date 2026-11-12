@@ -394,8 +394,15 @@ bundle), whose packaged form is the Docker image under
 - **box-offer.js** — pure validation of the `boxOffer` ui-setting (a
   discovery-only offer to host test boxes for named peers): `sanitizeBoxOffer`
   (whole record or null), `offerFromEnv` (`CLODEX_BOX_OFFER`), `scheduleOpen`,
-  `wireEntry` (the per-peer announce view) and `sanitizeWireOffers`. Read by
-  stores.js only. In SCANNED_MODULES.
+  `offerEntry` / `wireEntry` (the announce entry, unfiltered / per peer),
+  `sanitizeWireOffers` and `warnStoredOffer`. Read by stores.js, remote.js,
+  remote-wiring.js and engine.js. In SCANNED_MODULES.
+- **offer-directory.js** — the in-memory offers directory
+  (`createOfferDirectory`: rows keyed by provenance and source in a `Map`, an
+  opaque route handle each, `OFFER_TTL_MS` swept on read, injectable clock),
+  `createRuntimeProbe` (one bounded, cached `docker` call behind an injected
+  `run`) and `hostFacts`. Built in engine.js; served by remote.js through
+  remote-wiring's `offerCallbacks`. In SCANNED_MODULES.
 - **git-safe.js** — `safeGitArgs` prefixes app-process git calls in a seat cwd
   with `-c` overrides for core.fsmonitor, core.hooksPath (/dev/null by
   default), diff.external, core.sshCommand (`ssh` by default) and core.pager,
