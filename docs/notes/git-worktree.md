@@ -51,3 +51,8 @@ a bad ref) for a failure to run, so only exit 1 with a tree oid reads as a
 conflict; every other outcome is `ok:false`, an infra error, never a conflict.
 A conflict on `CHANGELOG.md` alone reads `clean:true, changelogOnly:true`:
 `mergeNoFf`'s `unionChangelogConflict` resolves that case at merge time.
+
+## relativePointersRefusal
+
+The 2.48 floor is from git's release notes (RelNotes 2.48.0: worktree linkage switched to relative paths, plus the extension that keeps older git from misreading them); by behaviour, 2.39.5 lists such a tree `prunable` and its `worktree prune` deletes the live tree's admin dir, 2.52.0 reads it. 2.47 was not run.
+A failed version read is not cached, so a transient spawn failure refuses only that dispatch.
