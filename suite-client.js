@@ -37,7 +37,7 @@ function defaultSleep(ms) {
 }
 
 function createSuiteClient({
-  getPeerManager, ledgerFile = null, log = () => {}, now = Date.now, sleep = defaultSleep,
+  getPeerManager, ledgerFile = null, compareFile = null, log = () => {}, now = Date.now, sleep = defaultSleep,
   randomUUID = () => crypto.randomUUID(), snapshot = snapshotLib, pollWaitMs = POLL_WAIT_MS, retryMs = RETRY_MS,
 }) {
   function connFor(peer) {
@@ -77,24 +77,27 @@ function createSuiteClient({
     const {
       peer, tree, kind = 'hand', scope = 'full', team = null, ticket = null, seat = null,
       files = [], flags = {}, setup = null, env = {}, timeoutMs = null, budgetMs = DEFAULT_BUDGET_MS,
-      onProgress = () => {}, onJob = () => {},
+      onProgress = () => {}, onJob = () => {}, onSubmitted = () => {}, shouldStop = () => false,
+      queueBudgetMs = null, runBudgetMs = null,
     } = opts;
     const ctx = {
       id: opts.runId || randomUUID(), peer, where: opts.name || peer, route: opts.route || null, override: opts.override || null,
       tree: typeof tree === 'string' && tree ? path.resolve(tree) : null, kind, scope, team, ticket, seat,
       jobId: null, attempt: 0, treeHash: null, sha: null, dirty: null, queuedAt: null, startedAt: null, env: null, started: false,
-      deadline: now() + budgetMs, budgetMs, timeoutMs,
+      t0: now(), budgetMs, queueBudgetMs, runBudgetMs, timeoutMs, onSubmitted, shouldStop,
     };
     const progress = (line) => {
       log(line);
       try { onProgress(line); } catch {}
     };
-    if (!ctx.tree) return conclude(ctx, { unknown: 'no tree to measure' });
-    let snap;
-    try {
-      snap = await snapshot.snapshotTree(ctx.tree);
-    } catch (e) {
-      return conclude(ctx, { unknown: `snapshot failed: ${e.message}` });
+    let snap = opts.snap || null;
+    if (!ctx.tree && !snap) return conclude(ctx, { unknown: 'no tree to measure' });
+    if (!snap) {
+      try {
+        snap = await snapshot.snapshotTree(ctx.tree);
+      } catch (e) {
+        return conclude(ctx, { unknown: `snapshot failed: ${e.message}` });
+      }
     }
     ctx.treeHash = snap.treeHash;
     ctx.sha = snap.head;
@@ -111,7 +114,7 @@ function createSuiteClient({
           if (ctx.jobId) await cancel(peer, ctx.jobId);
           return conclude(ctx, { unknown: e.refused ? 'runner refused the token' : `client error: ${e.message}` });
         }
-        if (out.retry && !used.has(out.retry) && now() < ctx.deadline) {
+        if (out.retry && !used.has(out.retry) && now() < deadlineOf(ctx)) {
           used.add(out.retry);
           if (out.retry === 'incomplete') full = true;
           progress(`runner ${peer}: ${RETRY_TEXT[out.retry]}, resubmitting`);
@@ -129,10 +132,28 @@ function createSuiteClient({
       const r = await once(ctx.peer, fn);
       if (REFUSED.has(r.status)) throw Object.assign(new Error('runner refused the token'), { refused: true });
       if (!UNREACHABLE.has(r.status)) return r;
-      if (now() + retryMs >= ctx.deadline) return { ...r, unreachable: true };
+      const left = deadlineOf(ctx) - now();
+      if (left <= 0) return { ...r, unreachable: true };
       progress(`waiting for runner ${ctx.peer}`);
-      await sleep(retryMs);
+      await sleep(Math.min(retryMs, left));
     }
+  }
+
+  function deadlineOf(ctx) {
+    let d = ctx.t0 + ctx.budgetMs;
+    if (!ctx.started && ctx.queueBudgetMs != null) d = Math.min(d, ctx.t0 + ctx.queueBudgetMs);
+    if (ctx.started && ctx.runBudgetMs != null) d = Math.min(d, ctx.startedAt + ctx.runBudgetMs);
+    return d;
+  }
+
+  function budgetText(ctx) {
+    if (!ctx.started && ctx.queueBudgetMs != null && ctx.queueBudgetMs < ctx.budgetMs) {
+      return `the job did not start within the ${ctx.queueBudgetMs}ms queue budget (cancelled)`;
+    }
+    if (ctx.started && ctx.runBudgetMs != null && ctx.startedAt + ctx.runBudgetMs < ctx.t0 + ctx.budgetMs) {
+      return `no result within the ${ctx.runBudgetMs}ms run budget (cancelled)`;
+    }
+    return `no result within the ${ctx.budgetMs}ms budget (cancelled)`;
   }
 
   async function attemptJob(ctx, snap, { attempt, full, files, flags, setup, env, onJob, progress }) {
@@ -153,9 +174,11 @@ function createSuiteClient({
       files, flags, env, setup, timeoutMs: ctx.timeoutMs, full,
     };
     ctx.queuedAt = now();
+    if (ctx.shouldStop()) return { unknown: 'cancelled by the caller before submit' };
     const sub = await ask(ctx, (c) => c.suiteAsk('POST', '/api/suite/jobs', body), progress);
     if (sub.unreachable) return { unknown: 'runner unreachable' };
     if (!sub.body || !sub.body.ok) return { unknown: `runner refused the job: ${(sub.body && sub.body.error) || sub.error || `status ${sub.status}`}` };
+    try { ctx.onSubmitted({ jobId, attempt }); } catch {}
     if (sub.body.state === 'awaiting-pack') {
       const sent = await upload(ctx, snap, jobPath, sub.body.have || [], limits, progress);
       if (sent) {
@@ -224,10 +247,10 @@ function createSuiteClient({
   async function waitDone(ctx, jobId, progress) {
     let last = null;
     for (;;) {
-      const left = ctx.deadline - now();
+      const left = deadlineOf(ctx) - now();
       if (left <= 0) {
         await cancel(ctx.peer, jobId);
-        return { unknown: `no result within the ${ctx.budgetMs}ms budget (cancelled)`, outcome: 'timeout' };
+        return { unknown: budgetText(ctx), outcome: 'timeout' };
       }
       const wait = Math.min(pollWaitMs, left);
       const r = await ask(ctx, (c) => c.suiteAsk('GET', `/api/suite/jobs?ids=${encodeURIComponent(jobId)}&wait=${wait}`, null, wait + POLL_SLACK_MS), progress);
@@ -297,10 +320,140 @@ function createSuiteClient({
     return { res, unknown, record };
   }
 
-  return { reachable, run, cancel };
+  const shadows = new Map();
+
+  function appendCompare(rec) {
+    if (!compareFile) return;
+    try {
+      fs.mkdirSync(path.dirname(compareFile), { recursive: true });
+      fs.appendFileSync(compareFile, `${JSON.stringify(rec)}\n`);
+    } catch (e) {
+      log(`suite-client: comparison write failed: ${e.message}`);
+    }
+  }
+
+  async function shadow(opts) {
+    const snap = await snapshot.snapshotTree(path.resolve(opts.tree));
+    const key = JSON.stringify([opts.team, opts.ticket, opts.kind]);
+    const me = { treeHash: snap.treeHash, peer: opts.peer, jobId: null, superseded: false, local: null, remote: null, settled: false };
+    const prev = shadows.get(key);
+    if (prev && prev.treeHash !== me.treeHash) {
+      prev.superseded = true;
+      if (prev.jobId && !prev.remote) Promise.resolve().then(() => cancel(prev.peer, prev.jobId)).catch(() => {});
+    }
+    shadows.set(key, me);
+    const settle = () => {
+      if (!me.local || !me.remote || me.settled) return;
+      me.settled = true;
+      if (shadows.get(key) === me) shadows.delete(key);
+      if (me.superseded) {
+        log(`suite-client: discarded the shadow result of superseded job ${me.jobId}`);
+        return;
+      }
+      const remote = remoteHalf(me.remote);
+      const rec = me.remote.record || {};
+      appendCompare({
+        at: iso(now()), team: opts.team, kind: opts.kind, ticket: opts.ticket, treeHash: snap.treeHash, sha: snap.head || null,
+        envKey: (rec.env && rec.env.envKey) || null, local: me.local, remote, agree: halvesAgree(me.local, remote),
+      });
+    };
+    Promise.resolve()
+      .then(() => run({ ...opts, snap, scope: 'full', onJob: ({ jobId }) => { me.jobId = jobId; } }))
+      .catch((e) => ({ unknown: `client error: ${e.message}`, res: null, record: null }))
+      .then((out) => {
+        me.remote = out;
+        settle();
+      });
+    return {
+      treeHash: snap.treeHash,
+      sha: snap.head || null,
+      local(half) {
+        me.local = half;
+        settle();
+      },
+    };
+  }
+
+  function tally({ team, envKey = null }) {
+    let text = '';
+    try { text = compareFile ? fs.readFileSync(compareFile, 'utf8') : ''; } catch { text = ''; }
+    const recs = [];
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        const r = JSON.parse(line);
+        if (r && r.team === team) recs.push(r);
+      } catch {}
+    }
+    const latest = [...recs].reverse().find((r) => r.envKey);
+    const key = envKey || (latest ? latest.envKey : null);
+    const out = { envKey: key, agree: 0, disagree: 0, oneSided: [] };
+    if (!key) return out;
+    const counts = new Map();
+    const bump = (side, name) => {
+      const k = `${side}\0${name}`;
+      const c = counts.get(k) || { side, name, count: 0 };
+      c.count += 1;
+      counts.set(k, c);
+    };
+    for (const r of recs) {
+      if (r.envKey !== key) continue;
+      if (r.agree === true) out.agree += 1; else out.disagree += 1;
+      if (!r.local || !r.remote || !MEASURED.has(r.local.outcome) || !MEASURED.has(r.remote.outcome)) continue;
+      const mine = new Set(r.local.failing || []);
+      const theirs = new Set(r.remote.failing || []);
+      for (const n of mine) if (!theirs.has(n)) bump('local', n);
+      for (const n of theirs) if (!mine.has(n)) bump('remote', n);
+    }
+    out.oneSided = [...counts.values()].sort((a, b) => b.count - a.count || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0) || (a.side < b.side ? -1 : 1));
+    return out;
+  }
+
+  return { reachable, run, cancel, shadow, tally };
 }
 
-const HAND_BUDGET_MS = 35 * 60 * 1000;
+const MEASURED = new Set(['pass', 'fail']);
+
+function failingNames(text) {
+  const names = [];
+  for (const line of String(text).split('\n')) {
+    const m = /^ *✖ (.+?) \(\d+(?:\.\d+)?ms\)\s*$/.exec(line);
+    if (m && !names.includes(m[1].trim())) names.push(m[1].trim());
+    if (names.length >= 200) break;
+  }
+  return names;
+}
+
+function localHalf({ code = null, stdout = '', stderr = '', error = null, timedOut = false, durationMs = null } = {}) {
+  const totals = error ? null : lastTotals(String(stdout || ''));
+  const outcome = timedOut ? 'timeout' : error ? 'unknown' : !totals ? 'no-summary' : code === 0 ? 'pass' : 'fail';
+  return {
+    outcome, pass: totals ? totals.pass : null, fail: totals ? totals.fail : null, tests: totals ? totals.tests : null,
+    failing: totals ? failingNames(`${stdout || ''}\n${stderr || ''}`) : [], durationMs,
+  };
+}
+
+function remoteHalf(out) {
+  const rec = (out && out.record) || {};
+  const measured = out && !out.unknown && out.res && rec.tests != null;
+  return {
+    outcome: rec.outcome || 'unknown', reason: (out && out.unknown) || null,
+    pass: rec.pass == null ? null : rec.pass, fail: rec.fail == null ? null : rec.fail, tests: rec.tests == null ? null : rec.tests,
+    failing: measured ? failingNames(`${out.res.stdout || ''}\n${out.res.stderr || ''}`) : [],
+    jobId: rec.jobId || null, queueMs: rec.queueMs == null ? null : rec.queueMs, runMs: rec.runMs == null ? null : rec.runMs,
+  };
+}
+
+function halvesAgree(a, b) {
+  if (a.outcome === 'unknown' || b.outcome === 'unknown') return false;
+  if (a.outcome !== b.outcome || a.pass !== b.pass || a.fail !== b.fail || a.tests !== b.tests) return false;
+  const x = new Set(a.failing);
+  const y = new Set(b.failing);
+  return x.size === y.size && [...x].every((n) => y.has(n));
+}
+
+const HAND_QUEUE_MS = 15 * 60 * 1000;
+const HAND_RUN_MS = 21 * 60 * 1000;
 const FLAG_KEYS = ['CLODEX_TEST_LOCK', 'CLODEX_TEST_SLOW_ADVISORY'];
 
 function route({ team = null, kind = 'hand', scope = 'full', local = false } = {}) {
@@ -335,18 +488,20 @@ function requestError(msg) {
 function createChannelHost({
   client, team, seat = null, ticket = null, listWorktrees, resolvePeer, send,
   notifyLead = () => {}, log = () => {}, snapshot = snapshotLib, realpath = fs.realpathSync,
-  budgetMs = HAND_BUDGET_MS, runMs = DEFAULT_RUN_MS,
+  queueBudgetMs = HAND_QUEUE_MS, runMs = HAND_RUN_MS,
 }) {
   let asked = false;
   let finished = false;
   let wantCancel = false;
   let cancelSent = false;
   let inflight = null;
+  const cancelled = new Set();
   const say = (m) => {
     try { send(m); } catch (e) { log(`suite channel: reply to ${seat} failed: ${e.message}`); }
   };
   const fireCancel = () => {
-    if (!wantCancel || cancelSent || finished || !inflight || !inflight.jobId) return;
+    if (!wantCancel || finished || !inflight || !inflight.jobId || cancelled.has(inflight.jobId)) return;
+    cancelled.add(inflight.jobId);
     cancelSent = true;
     Promise.resolve(client.cancel(inflight.peer, inflight.jobId)).catch(() => {});
   };
@@ -390,14 +545,16 @@ function createChannelHost({
     if (!client) return say({ run: 'remote', runner: d.peer, unknown: 'no suite client on this node' });
     const peer = resolvePeer(d.peer);
     if (!peer) return say({ run: 'remote', runner: d.peer, unknown: `runner ${d.peer} is not a known peer` });
+    if (wantCancel) return say({ run: 'remote', runner: d.peer, unknown: 'cancelled by the caller' });
     inflight = { peer, jobId: null };
     const tr = team.testRunner;
     const out = await client.run({
       peer, name: d.peer, tree, kind: 'hand', scope: msg.scope, team: team.name, ticket, seat,
       files: msg.files || [], flags: msg.flags || {}, setup: tr.setup || null, env: tr.env || {},
-      budgetMs, timeoutMs: runMs, route: d.why,
-      onJob: ({ jobId }) => { inflight.jobId = jobId; },
-      onProgress: (line) => { fireCancel(); say({ progress: line }); },
+      queueBudgetMs, runBudgetMs: runMs, timeoutMs: runMs, route: d.why,
+      shouldStop: () => wantCancel,
+      onSubmitted: ({ jobId }) => { inflight.jobId = jobId; fireCancel(); },
+      onProgress: (line) => say({ progress: line }),
     });
     finished = true;
     if (out.unknown || !out.res) return say({ run: 'remote', runner: d.peer, unknown: out.unknown || 'no result' });
@@ -426,4 +583,4 @@ function createChannelHost({
   };
 }
 
-module.exports = { createSuiteClient, createChannelHost, route, lastTotals };
+module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, HAND_QUEUE_MS, HAND_RUN_MS };
