@@ -897,8 +897,32 @@ digest a local one would; a run the runner cannot complete (unreachable,
 timeout, disconnect, restart, tree mismatch) prints `result unknown — …` and
 exits non-zero, never a green line and never a local fallback. `{"local": true}`
 in the payload runs it here, records `override:'call'` in the suite ledger and
-leaves a `ticket-loop` traffic row to the lead. `gate:` is not accepted by the
-verb until gate routing lands; verify and post-merge suites stay local.
+leaves a `ticket-loop` traffic row to the lead. A routed hand run waits at most
+15 minutes for the runner to take the job (queue and upload) and at most 21
+minutes for it to run; past either it is cancelled and reported unknown.
+
+`[agent:team runner gate:off|shadow]` (lead only, a peer must be set) sets the
+gate mode; `gate:on` is refused, not available yet. Under `gate:shadow` every
+`_runTicketSuite` call (verify, the verify re-measure, post-merge) snapshots the
+tree it is about to measure, submits it to the runner as kind `verify` or
+`post-merge` with the ticket id, and then runs the local suite exactly as with
+`gate:off`. The local run stays the only authority: a snapshot or submit
+failure is logged and dropped, the loop never waits for the remote job, and the
+pair is written to `logs/suite-compare.jsonl` (docs/tests.md) when both halves
+are in. A post-merge job measures the merge commit in the root checkout. A
+remote result for a job superseded by a newer tree of the same ticket and kind
+is discarded and the stale job cancelled.
+
+Reading it: bare `[agent:team runner]` also shows the gate mode and, for the
+runner's current environment key (`envKey`, from its info route), how many
+comparisons agreed and disagreed and the test names that failed on one side
+only, with counts — e.g. `net binds (remote only, 2x)`. A new runner image
+changes `envKey` and starts a new tally. A pair counts as agreeing when the
+outcome, the three counts and the failing-name set match; a remote `unknown`
+counts as a disagreement, and only pairs where both sides measured (pass or
+fail) contribute one-sided names. A name that fails remote-only on two
+different trees is an incompatibility to fix; a single occurrence is a flake
+candidate. Nothing is re-run on either side.
 
 Five things here are deliberate simplifications, not gaps. `lead` and `reviewer` are reserved role keys
 (team-manifest.js RESERVED_ROLE_KEYS): the dispatch and verdict protocol is keyed on them, so they cannot be renamed.

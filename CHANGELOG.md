@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- `[agent:team runner gate:shadow]`: the ticket loop's verify and post-merge suites also run on the team's test runner and each pair of results is recorded in `logs/suite-compare.jsonl`; the local run stays the only authority, and `[agent:team runner]` shows the agreement tally.
+
 ## 5.175.0 — 2026-11-12
 
 - A standing clodent stream seat whose idle clear is 10 minutes or less now keeps its one-hour cache for the preamble and uses a five-minute cache for messages, which measured about 10% cheaper on input for such a seat. A template that passes `--message-cache-ttl` keeps its own value.
