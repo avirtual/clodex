@@ -280,6 +280,7 @@ const SCANNED_MODULES = [
   'suite-snapshot.js',
   'suite-runner.js',
   'suite-client.js',
+  'box-offer.js',
 ];
 
 // NOT scanned: anything under plugins/. This list answers "did an extraction

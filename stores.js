@@ -32,6 +32,7 @@ const { seatDirFor } = require('./clodex-paths');
 const { seatLayoutActive } = require('./seat-layout');
 const { migrateLivingAllowlist } = require('./intent-catalog');
 const { VOICE_MODES } = require('./voice-settings');
+const { sanitizeBoxOffer } = require('./box-offer');
 
 function execRowOf(name, obj) {
   return {
@@ -155,6 +156,7 @@ const DEFAULT_UI_SETTINGS = {
   // absent-key answer below is the migration's `false`, so a new install and a
   // settings file without the key agree by construction.
   peerShellEnabled: false,
+  boxOffer: null,
   peers: [],
   // Auto-reattach of peer tabs across app restarts: { [peerId]: [name, ...] }.
   // Kept OUTSIDE the peers array on purpose — the prefs dialog rebuilds that
@@ -1953,6 +1955,7 @@ function initStores(userDataPath, {
           peerShellEnabled: (raw && typeof raw === 'object' && 'peerShellEnabled' in raw)
             ? raw.peerShellEnabled === true
             : legacyShellGrant(raw?.peers),
+          boxOffer: sanitizeBoxOffer(raw?.boxOffer),
           peers,
           peerAttached: sanitizePeerAttached(raw?.peerAttached) ?? {},
           peerVisible: sanitizePeerVisible(raw?.peerVisible) ?? {},
@@ -2051,6 +2054,9 @@ function initStores(userDataPath, {
         // partial must not be able to write a non-boolean that reads back as
         // itself and makes the grant depend on truthiness.
         peerShellEnabled: typeof partial?.peerShellEnabled === 'boolean' ? partial.peerShellEnabled : cur.peerShellEnabled,
+        boxOffer: (partial && 'boxOffer' in partial)
+          ? (partial.boxOffer === null ? null : (sanitizeBoxOffer(partial.boxOffer) ?? cur.boxOffer))
+          : cur.boxOffer,
         peers: sanitizePeers(partial?.peers, cur.peers) ?? cur.peers,
         peerAttached: sanitizePeerAttached(partial?.peerAttached) ?? cur.peerAttached,
         peerVisible: sanitizePeerVisible(partial?.peerVisible) ?? cur.peerVisible,
