@@ -44,6 +44,8 @@ const SETUP = { run: 'npm ci', key: ['package-lock.json'], paths: ['node_modules
 
 const ACCEPT_ROWS = [
   ['peer only', { peer: 'runner-1' }, { peer: 'runner-1', hands: 'off', gate: 'off' }],
+  ['box true', { peer: 'r', gate: 'shadow', box: true }, { peer: 'r', hands: 'off', gate: 'shadow', box: true }],
+  ['box false', { peer: 'r', box: false }, { peer: 'r', hands: 'off', gate: 'off', box: false }],
   ['wire push', { peer: 'r', wire: 'push' }, { peer: 'r', hands: 'off', gate: 'off', wire: 'push' }],
   ['wire pull with gate:shadow', { peer: 'laptop', wire: 'pull', gate: 'shadow' }, { peer: 'laptop', hands: 'off', gate: 'shadow', wire: 'pull' }],
   ['setup.run 2,000 chars', { peer: 'r', setup: { ...SETUP, run: 'x'.repeat(2000) } },
@@ -74,6 +76,7 @@ const REJECT_ROWS = [
   ['unknown hands value', { peer: 'r', hands: 'some' }],
   ['unknown gate value', { peer: 'r', gate: 'maybe' }],
   ['unknown wire value', { peer: 'r', wire: 'dial' }],
+  ['box a string', { peer: 'r', box: 'yes' }],
   ['peer failing the node-name grammar', { peer: 'bad name' }],
   ['dot-only peer', { peer: '..' }],
   ['no peer', { hands: 'full' }],
@@ -139,7 +142,7 @@ test('setTeamTestRunner patches one key and leaves a hand-written setup and env 
   assert.deepStrictEqual(disk(file), { root, lead: 'lead', roles, version: 3 });
 });
 
-function mkVerbFixture({ manifestExtra = {}, peers = [], reach = null, compare = null, desk = null } = {}) {
+function mkVerbFixture({ manifestExtra = {}, peers = [], reach = null, compare = null, desk = null, shadow = null } = {}) {
   const { home, root, file, tm } = mkHome(manifestExtra);
   const reachCalls = [];
   const deps = {
@@ -177,7 +180,7 @@ function mkVerbFixture({ manifestExtra = {}, peers = [], reach = null, compare =
     setTeamTestRunner: tm.setTeamTestRunner,
     getPeerManager: () => ({ statuses: () => peers }),
     getSuiteDesk: () => desk,
-    getSuiteClient: () => ({ reachable: async (id, wire) => { reachCalls.push(wire ? `${id}/${wire}` : id); return reach; }, ...(compare ? { tally: compareClient(home, compare).tally } : {}) }),
+    getSuiteClient: () => ({ reachable: async (id, wire) => { reachCalls.push(wire ? `${id}/${wire}` : id); return reach; }, ...(compare ? { tally: compareClient(home, compare).tally } : {}), ...(shadow ? { shadow } : {}) }),
   };
   const SessionManager = createSessionManager(deps);
   const m = new SessionManager();
@@ -537,4 +540,50 @@ test('t2266: the team:runner handlers hold no validation of their own', () => {
   for (const body of [set, read, reach]) {
     assert.doesNotMatch(body, /NODE_NAME_RE|NAME_RE|TEST_RUNNER_|normalizeTestRunner|setTeamTestRunner|caps|'suite'|'on'|'shadow'|'full'|'all'|droppedFields|\.test\(/);
   }
+});
+
+test('t2312: setTeamTestRunner({gate}) keeps a hand-written box:true', () => {
+  const { tm, file } = mkHome({ testRunner: { peer: 'runner-1', hands: 'off', box: true } });
+  assert.strictEqual(tm.loadManifest('team').testRunner.box, true, 'ENTER: the hand-written box loads');
+  tm.setTeamTestRunner('team', { gate: 'shadow' });
+  assert.deepStrictEqual(disk(file).testRunner, { peer: 'runner-1', hands: 'off', box: true, gate: 'shadow' });
+  assert.deepStrictEqual(tm.loadManifest('team').testRunner, { peer: 'runner-1', hands: 'off', gate: 'shadow', box: true });
+});
+
+const BOX_IMAGE = `sha256:${'e'.repeat(64)}`;
+const INFO_BOX = (box) => ({ ...INFO, info: { ...INFO.info, box } });
+const BOX_READY = { state: 'ready', env: { platform: 'linux', arch: 'arm64', isolation: 'container', envKey: 'b0b0b0b0b0b0', box: { imageId: BOX_IMAGE } } };
+const boxCmp = (envKey, agree, isolation) => ({
+  ...cmp(envKey, agree, [], []),
+  localEnv: { os: 'darwin', arch: 'arm64' }, remoteEnv: { os: 'linux', arch: 'arm64', isolation, imageId: isolation === 'container' ? BOX_IMAGE : null },
+});
+const RUNNER_HEAD = '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab';
+
+const BOX_INFO_ROWS = [
+  ['box ready, team asks for a box: the box key\'s tally with both platforms', true, BOX_READY,
+    `${RUNNER_HEAD}, box ready linux/arm64 image eeeeeeeeeeee key b0b0b0b0b0b0; comparisons under env b0b0b0b0b0b0: 0 agree, 1 disagree (local darwin/arm64, runner linux/arm64 box)`],
+  ['box ready, native team: the native key\'s tally', undefined, BOX_READY,
+    `${RUNNER_HEAD}, box ready linux/arm64 image eeeeeeeeeeee key b0b0b0b0b0b0; comparisons under env 0123456789ab: 2 agree, 0 disagree (local darwin/arm64, runner linux/arm64)`],
+  ['box unavailable', true, { state: 'unavailable', why: 'docker daemon not reachable: refused' },
+    `${RUNNER_HEAD}, box unavailable: docker daemon not reachable: refused; comparisons under env 0123456789ab: 2 agree, 0 disagree (local darwin/arm64, runner linux/arm64)`],
+];
+
+for (const [name, box, infoBox, want] of BOX_INFO_ROWS) {
+  test(`t2312: [agent:team runner] with ${name}`, async () => {
+    const f = mkVerbFixture({
+      manifestExtra: { testRunner: { peer: 'runner-1', hands: 'full', gate: 'shadow', ...(box ? { box } : {}) } }, peers: [SUITE_PEER], reach: INFO_BOX(infoBox),
+      compare: [boxCmp('b0b0b0b0b0b0', false, 'container'), boxCmp('0123456789ab', true, 'none'), boxCmp('0123456789ab', true, 'none')],
+    });
+    assert.deepStrictEqual(await f.verb('lead', '[agent:team runner]'), [want]);
+  });
+}
+
+test('t2312: a gate:shadow submit carries box:true only when team.json asks for it', async () => {
+  const seen = [];
+  const shadow = async (o) => { seen.push(o.box); return null; };
+  for (const testRunner of [{ peer: 'runner-1', gate: 'shadow' }, { peer: 'runner-1', gate: 'shadow', box: true }, { peer: 'runner-1', gate: 'shadow', box: false }]) {
+    const f = mkVerbFixture({ manifestExtra: { testRunner }, peers: [SUITE_PEER], shadow });
+    await f.m._shadowSubmit(f.tm.loadManifest('team'), { id: 't1' }, '/w', {});
+  }
+  assert.deepStrictEqual(seen, [false, true, false]);
 });
