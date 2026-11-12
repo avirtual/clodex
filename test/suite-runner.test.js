@@ -148,6 +148,25 @@ test('a pack upload at the wrong offset answers 409 with the size held', async (
   assert.deepStrictEqual(await f.runner.putPack('j1', 0, Buffer.from('abc')), { ok: false, status: 409, error: 'offset is not the current size', have: 3 });
 });
 
+test('commit hashes and ingests the pack from its file in readChunk slices, never reading it whole', async (t) => {
+  const f = await fixture(t, { limits: { readChunk: 64 } });
+  const read = [];
+  const real = fs.readFileSync;
+  fs.readFileSync = function spy(p, ...rest) { read.push(String(p)); return real.call(this, p, ...rest); };
+  t.after(() => { fs.readFileSync = real; });
+  const sub = await f.runner.submit(f.body('j1'));
+  assert.strictEqual(sub.state, 'awaiting-pack');
+  const pack = real((await buildPack(f.snap, { have: sub.have })).file);
+  assert.ok(pack.length > 4 * 64, `ENTER: the pack spans several read chunks (${pack.length} bytes)`);
+  assert.strictEqual((await f.runner.putPack('j1', 0, pack)).ok, true);
+  const committed = await f.runner.commit('j1', { bytes: pack.length, sha256: sha256(pack) });
+  fs.readFileSync = real;
+  assert.strictEqual(committed.state, 'queued', JSON.stringify(committed));
+  assert.deepStrictEqual(read.filter((p) => path.basename(p) === 'pack'), []);
+  await waitState(f.runner, 'j1', 'done');
+  assert.strictEqual((await f.runner.poll(['j1'])).jobs[0].reason, null);
+});
+
 test('a commit whose sha256 does not match the uploaded pack is refused', async (t) => {
   const f = await fixture(t);
   await f.runner.submit(f.body('j1'));

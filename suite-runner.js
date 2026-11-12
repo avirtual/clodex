@@ -39,6 +39,7 @@ const DAY = 24 * 60 * MIN;
 const DEFAULT_LIMITS = {
   packMaxBytes: snapshot.DEFAULT_PACK_MAX,
   chunkMax: 4 * 1024 ** 2,
+  readChunk: 1024 ** 2,
   queueMax: 32,
   leaseMs: 2 * MIN,
   keepMs: DAY,
@@ -297,6 +298,17 @@ function validateSubmit(b, limits) {
   }
   if (b.timeoutMs != null && !(b.timeoutMs > 0 && b.timeoutMs <= limits.maxTimeoutMs)) return 'bad timeoutMs';
   return null;
+}
+
+function fileSha256({ file, bytes }, readChunk) {
+  if (!bytes) return Promise.resolve(crypto.createHash('sha256').digest('hex'));
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const input = fs.createReadStream(file, { highWaterMark: readChunk, start: 0, end: bytes - 1 });
+    input.on('data', (d) => hash.update(d));
+    input.on('error', reject);
+    input.on('end', () => resolve(hash.digest('hex')));
+  });
 }
 
 function createSuiteRunner({
@@ -775,13 +787,13 @@ function createSuiteRunner({
     if (!job) return fail(404, 'no such job');
     if (job.state !== 'awaiting-pack') return fail(409, `job is ${job.state}`, { state: job.state });
     job.lastSeen = now();
-    const pack = fs.readFileSync(packFile(id));
-    if (pack.length !== bytes) return fail(400, 'pack size mismatch', { have: pack.length });
-    if (crypto.createHash('sha256').update(pack).digest('hex') !== sha256) return fail(400, 'pack hash mismatch');
+    const pack = { file: packFile(id), bytes: fs.statSync(packFile(id)).size };
+    if (pack.bytes !== bytes) return fail(400, 'pack size mismatch', { have: pack.bytes });
+    if (await fileSha256(pack, lim.readChunk) !== sha256) return fail(400, 'pack hash mismatch');
     while (maintenance) await maintenance.catch(() => {});
     const mirror = snapshot.mirrorPath(work, job.repoKey);
     const res = await snapshot.ingestPack(pack, {
-      workDir: work, repoKey: job.repoKey, snap: job.snap, indexTree: job.indexTree, refs: job.refs, maxInputSize: lim.packMaxBytes,
+      workDir: work, repoKey: job.repoKey, snap: job.snap, indexTree: job.indexTree, refs: job.refs, maxInputSize: lim.packMaxBytes, readChunk: lim.readChunk,
     });
     if (job.state !== 'awaiting-pack') return fail(409, `job is ${job.state}`, { state: job.state });
     if (!res.ok) {

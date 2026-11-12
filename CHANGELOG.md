@@ -13,7 +13,7 @@ blocks a release.
 
 ## Unreleased
 
-- A team with a large repository can now use a remote test runner: the tree is sent as a file instead of being held in memory.
+- The tree sent to a remote test runner is no longer held in memory on the sending side, and a tree larger than the runner accepts is refused as soon as that is known.
 - A shadow run whose tree could not be sent is recorded as skipped, not as a disagreement.
 
 ## 5.180.0 — 2026-11-12 — Test boxes get their own Preferences group; fixes from the pull-wire proof

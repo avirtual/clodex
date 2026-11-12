@@ -181,7 +181,23 @@ function mirrorPath(workDir, repoKey) {
   return path.join(workDir, 'mirrors', `${repoKey}.git`);
 }
 
-async function ingestPack(pack, { workDir, repoKey, snap, indexTree, refs = {}, maxInputSize = DEFAULT_PACK_MAX }) {
+async function gitFromFile(cwd, args, { file, bytes }, readChunk) {
+  const argv = await safeGitArgsFor(cwd, args);
+  return new Promise((resolve) => {
+    const child = spawn('git', argv, { env: cleanEnv(), stdio: ['pipe', 'ignore', 'pipe'] });
+    let stderr = '';
+    let failed = null;
+    child.stderr.on('data', (d) => { if (stderr.length < 4096) stderr += String(d); });
+    child.stdin.on('error', () => {});
+    const input = fs.createReadStream(file, { highWaterMark: readChunk, start: 0, end: Math.max(bytes - 1, 0) });
+    input.on('error', (e) => { failed = e; child.kill('SIGKILL'); });
+    input.pipe(child.stdin);
+    child.on('error', (e) => { failed = e; });
+    child.on('close', (code) => resolve({ ok: !failed && code === 0, code, stderr: failed ? failed.message : stderr }));
+  });
+}
+
+async function ingestPack(pack, { workDir, repoKey, snap, indexTree, refs = {}, maxInputSize = DEFAULT_PACK_MAX, readChunk = 1024 ** 2 }) {
   assertShas([snap, indexTree, ...Object.values(refs)]);
   const mirror = mirrorPath(workDir, repoKey);
   if (!fs.existsSync(path.join(mirror, 'HEAD'))) {
@@ -189,7 +205,10 @@ async function ingestPack(pack, { workDir, repoKey, snap, indexTree, refs = {}, 
     fs.chmodSync(mirror, 0o700);
     await run(path.dirname(mirror), [...RUNNER_CONFIG, 'init', '-q', '--bare', mirror]);
   }
-  const indexed = await tryRun(mirror, [...RUNNER_CONFIG, 'index-pack', '--stdin', '--fsck-objects', `--max-input-size=${maxInputSize}`], { input: pack });
+  const indexArgs = [...RUNNER_CONFIG, 'index-pack', '--stdin', '--fsck-objects', `--max-input-size=${maxInputSize}`];
+  const indexed = Buffer.isBuffer(pack)
+    ? await tryRun(mirror, indexArgs, { input: pack })
+    : await gitFromFile(mirror, indexArgs, pack, readChunk);
   if (!indexed.ok) return { ok: false, reason: 'bad-pack', mirror, error: String(indexed.stderr).trim() };
   const tips = [snap, indexTree, ...Object.values(refs)];
   const connected = await tryRun(mirror, [...RUNNER_CONFIG, 'rev-list', '--objects', '--quiet', ...tips]);

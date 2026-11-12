@@ -201,6 +201,25 @@ test('buildPack streams to a file under the snapshot tmpDir and stops git once t
   }
 });
 
+test('ingestPack reads a pack file in readChunk slices and the tree materializes with the same hash', async () => {
+  const { root, repo } = baseRepo();
+  write(repo, 'a.txt', 'alpha from a file\n');
+  const snap = await snapshotTree(repo);
+  try {
+    const built = await buildPack(snap);
+    assert.ok(built.bytes > 4 * 64, `ENTER: the pack spans several read chunks (${built.bytes} bytes)`);
+    const workDir = path.join(root, 'work');
+    const r = await ingestPack({ file: built.file, bytes: built.bytes }, { workDir, repoKey: snap.repoKey, snap: snap.snap, indexTree: snap.indexTree, refs: snap.refs, readChunk: 64 });
+    assert.deepStrictEqual(r, { ok: true, mirror: path.join(workDir, 'mirrors', `${snap.repoKey}.git`) });
+    const dir = path.join(root, 'job', 'tree');
+    const done = await materialize({ mirror: r.mirror, dir, snap: snap.snap, treeHash: snap.treeHash, indexTree: snap.indexTree, head: snap.head, branch: snap.branch, refs: snap.refs });
+    assert.deepStrictEqual(done, { ok: true, dir });
+    assert.strictEqual(await treeHashOf(dir, { base: snap.snap }), snap.treeHash);
+  } finally {
+    releaseSnapshot(snap);
+  }
+});
+
 test('the same tree snapshotted twice gives the same id', async () => {
   const { repo } = baseRepo();
   write(repo, 'a.txt', 'alpha twice\n');
