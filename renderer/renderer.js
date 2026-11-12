@@ -46,7 +46,7 @@ const { anyOverlayOpen, dialogOverlayIds, performCloseChord } = require('./lib/c
 const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { envRowView, buildEnvRow } = require('./lib/env-row');
 const { envLockView, applyEnvLock, patchUnlessEnvLocked } = require('./lib/env-lock');
-const { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, ownFactsLine, peerChoices: offerPeerChoices, offerRecordFromForm, offerStatusText } = require('./lib/offer-view');
+const { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText } = require('./lib/offer-view');
 const { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require('./lib/account-select');
 const { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, keyTransportRefusal, modelOptions } = require('./lib/account-row');
 const { isToolInstallSession } = require('../tool-doctor');
@@ -6424,6 +6424,9 @@ const prefsBoxOfferSchedule = document.getElementById('prefs-box-offer-schedule'
 const prefsBoxOfferScheduleAdd = document.getElementById('prefs-box-offer-schedule-add');
 const prefsBoxOfferPeers = document.getElementById('prefs-box-offer-peers');
 const prefsBoxOfferPeersNote = document.getElementById('prefs-box-offer-peers-note');
+const prefsBoxOfferPeerName = document.getElementById('prefs-box-offer-peer-name');
+const prefsBoxOfferPeerAdd = document.getElementById('prefs-box-offer-peer-add');
+const prefsBoxOfferSelf = document.getElementById('prefs-box-offer-self');
 const prefsBoxOfferFacts = document.getElementById('prefs-box-offer-facts');
 const prefsBoxOfferStatus = document.getElementById('prefs-box-offer-status');
 const prefsBoxOfferApply = document.getElementById('prefs-box-offer-apply');
@@ -9588,6 +9591,25 @@ function syncBoxOfferSchedule() {
   prefsBoxOfferScheduleAdd.classList.toggle('hidden', !scheduled || prefsBoxOfferSchedule.children.length >= 8);
 }
 
+function boxOfferPeerRow({ name, ticked, note }) {
+  const label = document.createElement('label');
+  label.className = 'prefs-check';
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.dataset.peer = name;
+  box.checked = ticked;
+  const text = document.createElement('span');
+  text.textContent = name;
+  label.append(box, text);
+  if (note) {
+    const hint = document.createElement('span');
+    hint.className = 'hint-text';
+    hint.textContent = ` (${note})`;
+    label.append(hint);
+  }
+  return label;
+}
+
 function renderBoxOfferPrefs(st) {
   prefsBoxOfferShown = st;
   const rec = (st.forced ? st.effective : st.stored) || null;
@@ -9596,25 +9618,17 @@ function renderBoxOfferPrefs(st) {
   prefsBoxOfferAvailability.value = rec ? rec.availability : 'always';
   prefsBoxOfferSchedule.replaceChildren(...((rec && rec.schedule) || []).map(boxOfferWindowRow));
   const choices = offerPeerChoices(st.peers, rec);
-  prefsBoxOfferPeers.replaceChildren(...choices.map(({ name, ticked }) => {
-    const label = document.createElement('label');
-    label.className = 'prefs-check';
-    const box = document.createElement('input');
-    box.type = 'checkbox';
-    box.dataset.peer = name;
-    box.checked = ticked;
-    const text = document.createElement('span');
-    text.textContent = name;
-    label.append(box, text);
-    return label;
-  }));
+  prefsBoxOfferPeers.replaceChildren(...choices.map(boxOfferPeerRow));
   if (!choices.length) {
     const none = document.createElement('span');
     none.className = 'hint-text';
-    none.textContent = 'No peers configured.';
+    none.dataset.empty = '1';
+    none.textContent = 'No peers configured and no node has dialed in.';
     prefsBoxOfferPeers.append(none);
   }
+  prefsBoxOfferPeerName.value = '';
   prefsBoxOfferPeersNote.textContent = OFFER_PEER_NOTE;
+  prefsBoxOfferSelf.textContent = offerSelfLabelLine(st.self);
   prefsBoxOfferFacts.textContent = `This machine would announce: ${ownFactsLine(st.facts)}`;
   prefsBoxOfferStatus.textContent = offerStatusText(st);
   syncBoxOfferSchedule();
@@ -9636,14 +9650,30 @@ if (prefsBoxOfferBlock) {
     prefsBoxOfferSchedule.append(boxOfferWindowRow({ days: [1, 2, 3, 4, 5], from: '09:00', to: '17:00' }));
     syncBoxOfferSchedule();
   });
+  const addBoxOfferPeer = () => {
+    const existing = [...prefsBoxOfferPeers.querySelectorAll('input[data-peer]')].map((b) => b.dataset.peer);
+    const add = offerPeerNameToAdd(prefsBoxOfferPeerName.value, existing);
+    if (add.error) { showToast(`Name not added: ${add.error}`, { kind: 'warn' }); return; }
+    prefsBoxOfferPeerName.value = '';
+    if (add.duplicate) return;
+    for (const el of prefsBoxOfferPeers.querySelectorAll('[data-empty]')) el.remove();
+    prefsBoxOfferPeers.append(boxOfferPeerRow({ name: add.name, ticked: true, note: null }));
+  };
+  prefsBoxOfferPeerAdd.addEventListener('click', addBoxOfferPeer);
+  prefsBoxOfferPeerName.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); addBoxOfferPeer(); }
+  });
   prefsBoxOfferApply.addEventListener('click', async () => {
-    const rec = offerRecordFromForm({
+    const form = {
       enabled: prefsBoxOfferEnabled.checked,
       boxes: prefsBoxOfferBoxes.value,
       availability: prefsBoxOfferAvailability.value,
       schedule: readBoxOfferSchedule(),
       peers: [...prefsBoxOfferPeers.querySelectorAll('input[data-peer]')].filter((b) => b.checked).map((b) => b.dataset.peer),
-    });
+    };
+    const problem = offerFormProblem(form);
+    if (problem) { showToast(`Box offer not changed: ${problem}`, { kind: 'warn' }); return; }
+    const rec = offerRecordFromForm(form);
     let res = null;
     try { res = await window.api.offerSet(rec); } catch { res = null; }
     if (!res || res.ok !== true) {

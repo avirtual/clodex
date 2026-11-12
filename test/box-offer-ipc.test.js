@@ -4,12 +4,15 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createOfferDirectory, setNotifying } = require('../offer-directory');
+const http = require('node:http');
+const { createOfferDirectory, createDialerLog, setNotifying } = require('../offer-directory');
+const { RemoteServer } = require('../remote');
+const { offerCallbacks } = require('../remote-wiring');
 
 const VALID = { scope: 'discovery', enabled: true, boxes: 2, availability: 'always', peers: [{ name: 'murmur' }] };
 const FACTS = { os: 'linux', arch: 'x64', cpus: 8, memMb: 16384, runtime: null };
 
-function ipcFixture({ initial = null, forced = false, envOffer = null, rawStored, peers = [] } = {}) {
+function ipcFixture({ initial = null, forced = false, envOffer = null, rawStored, peers = [], dialers = createDialerLog() } = {}) {
   const handlers = new Map();
   const store = { boxOffer: initial, peers, terminalReports: 'on' };
   const calls = { set: [], broadcast: [] };
@@ -30,6 +33,8 @@ function ipcFixture({ initial = null, forced = false, envOffer = null, rawStored
     getOfferFacts: () => FACTS,
     readOfferFacts: async () => FACTS,
     offerDirectory,
+    dialers,
+    SELF_LABEL: 'workbox',
     wirescope: { autoStartWanted: () => false, stop() {} },
     log: { info() {}, warn() {}, error() {} },
   };
@@ -41,7 +46,7 @@ function ipcFixture({ initial = null, forced = false, envOffer = null, rawStored
     },
     has(target, prop) { return prop in target; },
   }));
-  return { handlers, store, calls, offerDirectory };
+  return { handlers, store, calls, offerDirectory, dialers };
 }
 
 test('offer:set stores a valid record and broadcasts offers-changed', async () => {
@@ -52,7 +57,7 @@ test('offer:set stores a valid record and broadcasts offers-changed', async () =
   assert.strictEqual(res.ok, true);
   assert.deepStrictEqual(store.boxOffer, VALID);
   assert.deepStrictEqual(calls.broadcast, ['offers-changed']);
-  assert.deepStrictEqual(res.state, { stored: VALID, effective: VALID, forced: false, warning: null, facts: FACTS, peers: [] });
+  assert.deepStrictEqual(res.state, { self: 'workbox', stored: VALID, effective: VALID, forced: false, warning: null, facts: FACTS, peers: [] });
 });
 
 test('offer:set rejects an invalid record and leaves the stored one', async () => {
@@ -80,7 +85,7 @@ test('offer:set refuses with the reason while CLODEX_BOX_OFFER forces the offer'
 test('offer:get reports an invalid stored offer as off', async () => {
   const { handlers } = ipcFixture({ initial: null, rawStored: { ...VALID, boxes: 99 }, peers: [{ label: 'murmur' }, { label: 'bad label' }] });
   const st = await handlers.get('offer:get')({});
-  assert.deepStrictEqual(st, { stored: null, effective: null, forced: false, warning: 'stored offer invalid, treated as off', facts: FACTS, peers: ['murmur'] });
+  assert.deepStrictEqual(st, { self: 'workbox', stored: null, effective: null, forced: false, warning: 'stored offer invalid, treated as off', facts: FACTS, peers: [{ name: 'murmur', from: 'peer' }] });
   const clean = ipcFixture({ initial: VALID });
   assert.strictEqual((await clean.handlers.get('offer:get')({})).warning, null);
 });
@@ -145,4 +150,75 @@ test('setNotifying calls back only when the listing changed', () => {
   assert.strictEqual(n, 2);
   setNotifying(dir, { provenance: 'hello', source: 'p1', name: 'murmur', offer: null }, onChange);
   assert.strictEqual(n, 3);
+});
+
+function helloOrigin(port, origin) {
+  const q = origin === undefined ? '' : `?origin=${encodeURIComponent(origin)}`;
+  return new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: `/api/peer/hello${q}` }, (res) => {
+      let text = '';
+      res.on('data', (d) => { text += d; });
+      res.on('end', () => resolve(JSON.parse(text)));
+    }).on('error', reject);
+  });
+}
+
+async function startOfferNode(t, fx) {
+  const server = new RemoteServer({
+    port: 0, host: '127.0.0.1', pagePath: '/nonexistent', hostLabel: 'workbox', version: '9.9.9',
+    getSessions: () => [], getTranscript: () => ({ ok: true, messages: [] }), send: () => ({ ok: true }),
+    ...offerCallbacks({ getBoxOffer: () => fx.store.boxOffer, getOfferFacts: () => FACTS, offerDirectory: fx.offerDirectory, dialers: fx.dialers }),
+  });
+  await server.start();
+  t.after(() => server.stop());
+  return server.port;
+}
+
+test('a hello with a valid origin is listed by offer:get as dialed in; an invalid or missing origin is not', async (t) => {
+  let clock = 1000;
+  const fx = ipcFixture({ peers: [{ label: 'murmur' }], dialers: createDialerLog({ now: () => clock }) });
+  const port = await startOfferNode(t, fx);
+  await helloOrigin(port, 'laptop');
+  clock = 2000;
+  await helloOrigin(port, 'murmur');
+  await helloOrigin(port, 'bad name');
+  await helloOrigin(port, '..');
+  await helloOrigin(port, '');
+  await helloOrigin(port);
+  const st = await fx.handlers.get('offer:get')({});
+  assert.deepStrictEqual(st.peers, [
+    { name: 'murmur', from: 'peer' },
+    { name: 'laptop', from: 'dialed', seenAt: 1000 },
+  ]);
+});
+
+test('the dialer log keeps the most recent 64 names and drops the oldest', () => {
+  let clock = 0;
+  const log = createDialerLog({ now: () => clock });
+  for (let i = 0; i < 64; i += 1) { clock += 1; log.note(`node${i}`); }
+  clock += 1;
+  log.note('node0');
+  clock += 1;
+  assert.strictEqual(log.note('node64'), true);
+  const names = log.list().map((d) => d.name);
+  assert.strictEqual(names.length, 64);
+  assert.deepStrictEqual(names.slice(0, 2), ['node64', 'node0']);
+  assert.ok(!names.includes('node1'), 'node1 was the oldest and is dropped');
+  assert.ok(names.includes('node2'));
+  assert.strictEqual(log.note('bad name'), false);
+});
+
+test('a hand-added name round-trips through offer:set and is then served in hello to that origin', async (t) => {
+  const { peerNameToAdd, offerRecordFromForm } = require('../renderer/lib/offer-view');
+  const fx = ipcFixture({ peers: [{ label: 'murmur' }] });
+  const add = peerNameToAdd('  laptop ', ['murmur']);
+  assert.deepStrictEqual(add, { name: 'laptop' });
+  const rec = offerRecordFromForm({ enabled: true, boxes: '2', availability: 'always', schedule: [], peers: [add.name] });
+  const res = await fx.handlers.get('offer:set')({}, rec);
+  assert.strictEqual(res.ok, true);
+  assert.deepStrictEqual(res.state.stored.peers, [{ name: 'laptop' }]);
+  const port = await startOfferNode(t, fx);
+  const hello = await helloOrigin(port, 'laptop');
+  assert.deepStrictEqual(hello.offers, { own: { scope: 'discovery', boxes: 2, open: true, kinds: ['container'], facts: FACTS } });
+  assert.ok(!('offers' in await helloOrigin(port, 'murmur')));
 });

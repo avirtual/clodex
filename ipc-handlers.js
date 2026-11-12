@@ -24,7 +24,7 @@ const { randomBytes } = require('node:crypto');
 const { validateSeatFiles } = require('./seat-files');
 const { BOX_ID_RE, runningInSandboxBox } = require('./sandbox');
 const { SETUP_CHOICES, execRowOf, sanitizeSuiteRunner } = require('./stores');
-const { sanitizeBoxOffer, offerEntry } = require('./box-offer');
+const { sanitizeBoxOffer, offerEntry, NODE_NAME_RE } = require('./box-offer');
 const sessionDiscovery = require('./session-discovery');
 const gitWorktree = require('./git-worktree');
 const { NO_SUCH_METHOD, errorEnvelope, sanitizeGrants, isValidPluginId, PLUGIN_CAPABILITIES, seatHasPlugin } = require('./plugin-api');
@@ -109,7 +109,7 @@ function registerIpcHandlers(deps) {
     stripLevelOf, syncPeerManager, syncRemoteServer, updateApplies,
     setRemoteToken, hasRemoteToken, refreshRemoteToken, listSpeakVoices,
     suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner,
-    getBoxOffer, boxOfferForced, readStoredBoxOffer, getOfferFacts, readOfferFacts, offerDirectory,
+    getBoxOffer, boxOfferForced, readStoredBoxOffer, getOfferFacts, readOfferFacts, offerDirectory, dialers,
     wirescope, workspaceOfSender,
     sessionScopeCtx, renameWorkspaceScope,
     templates, workspaces, promptLibrary, agentDefaults,
@@ -1875,10 +1875,18 @@ function registerIpcHandlers(deps) {
       try { raw = readStoredBoxOffer(); } catch { raw = undefined; }
       let facts = null;
       try { facts = await readOfferFacts(); } catch { facts = null; }
-      const peers = (uiSettings.get().peers || [])
-        .map((p) => p && p.label)
-        .filter((l) => typeof l === 'string' && /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(l));
+      const configured = [];
+      for (const p of uiSettings.get().peers || []) {
+        const label = p && p.label;
+        if (typeof label === 'string' && NODE_NAME_RE.test(label) && !configured.includes(label)) configured.push(label);
+      }
+      const peers = configured.map((name) => ({ name, from: 'peer' }));
+      const dialedIn = dialers && typeof dialers.list === 'function' ? dialers.list() : [];
+      for (const { name, at } of dialedIn) {
+        if (!configured.includes(name)) peers.push({ name, from: 'dialed', seenAt: at });
+      }
       return {
+        self: typeof SELF_LABEL === 'string' && SELF_LABEL ? SELF_LABEL : null,
         stored: uiSettings.get().boxOffer || null,
         effective: getBoxOffer() || null,
         forced: boxOfferForced === true,

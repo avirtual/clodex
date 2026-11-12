@@ -149,12 +149,13 @@ function suiteRunnerOptions(env, root, { platform = process.platform, setting = 
   };
 }
 
-function offerCallbacks({ getBoxOffer, getOfferFacts, offerDirectory, onChange } = {}) {
+function offerCallbacks({ getBoxOffer, getOfferFacts, offerDirectory, dialers, onChange } = {}) {
   if (!offerDirectory || typeof getBoxOffer !== 'function' || typeof getOfferFacts !== 'function') return {};
   return {
     offerFor: (origin) => wireEntry(getBoxOffer(), getOfferFacts, origin),
     receiveOffers: ({ from, own }) => setNotifying(offerDirectory, { provenance: 'announce', source: from, name: from, offer: own }, onChange),
     listOffers: () => ({ own: offerEntry(getBoxOffer(), getOfferFacts), offers: offerDirectory.list() }),
+    ...(dialers ? { noteDialer: (origin) => dialers.note(origin) } : {}),
   };
 }
 
@@ -202,7 +203,7 @@ function createRemoteWiring(deps) {
     getWirescopeInfo,
     getNodeLogFile,
     getUserDataPath,
-    getBoxOffer, getOfferFacts, offerDirectory,
+    getBoxOffer, getOfferFacts, offerDirectory, dialers,
     thumbnail,
   } = deps;
   const thumbPage = createThumbnailer(thumbnail, log);
@@ -1163,7 +1164,7 @@ function createRemoteWiring(deps) {
           if (roster.some((e) => e && e.origin === via)) manager._rememberDmOrigin(via);
           log.info('peer', `relay roster from ${via}: ${roster.length} agent(s)`);
         },
-        ...offerCallbacks({ getBoxOffer, getOfferFacts, offerDirectory, onChange: () => manager._broadcast('offers-changed') }),
+        ...offerCallbacks({ getBoxOffer, getOfferFacts, offerDirectory, dialers, onChange: () => manager._broadcast('offers-changed') }),
         // ---- Peer terminal (t219) ----
         // Spread, not four properties: the four are passed TOGETHER or not at
         // all, and `shell` in the hello is derived from wtermOpen's presence, so

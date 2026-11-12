@@ -2,7 +2,8 @@
 
 const OFFER_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const DAY_LETTERS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
-const PEER_NOTE = 'This list decides which peers are shown this offer. It is not an access control, and nothing runs on this machine because of it yet.';
+const MAX_OFFER_PEERS = 32;
+const PEER_NOTE = 'This list decides which peers are shown this offer. It is not an access control. Nothing runs on this machine because of it yet. A node that dials this machine is named by its own label, which is its hostname unless it set one.';
 
 function osArch(facts) {
   if (!facts || (!facts.os && !facts.arch)) return 'unknown os';
@@ -38,14 +39,50 @@ function peerOfferLine(rows, peerLabel) {
   return `${count} · ${open ? 'open now' : 'closed now'} · ${osArch(facts)} · ${runtime}`;
 }
 
-function peerChoices(configuredLabels, stored) {
+function agoText(ms) {
+  if (!Number.isFinite(ms) || ms < 60000) return 'just now';
+  const min = Math.floor(ms / 60000);
+  if (min < 60) return `${min}m ago`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function peerChoices(rows, stored, now = Date.now()) {
   const out = [];
-  for (const label of Array.isArray(configuredLabels) ? configuredLabels : []) {
-    if (typeof label === 'string' && OFFER_NAME_RE.test(label) && !out.includes(label)) out.push(label);
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const name = row && row.name;
+    if (typeof name !== 'string' || !OFFER_NAME_RE.test(name) || out.some((c) => c.name === name)) continue;
+    const note = row.from === 'dialed' ? `dials this machine, seen ${agoText(now - row.seenAt)}` : null;
+    out.push({ name, note });
   }
   const ticked = (stored && Array.isArray(stored.peers) ? stored.peers : []).map((p) => p && p.name).filter((n) => typeof n === 'string');
-  for (const name of ticked) if (!out.includes(name)) out.push(name);
-  return out.map((name) => ({ name, ticked: ticked.includes(name) }));
+  for (const name of ticked) if (!out.some((c) => c.name === name)) out.push({ name, note: null });
+  return out.map((c) => ({ ...c, ticked: ticked.includes(c.name) }));
+}
+
+function peerNameToAdd(text, existing) {
+  const name = String(text || '').trim();
+  if (!OFFER_NAME_RE.test(name)) return { error: 'a name is 1-64 letters, digits, dot, dash or underscore' };
+  if ((existing || []).includes(name)) return { duplicate: true };
+  return { name };
+}
+
+function selfLabelLine(self) {
+  if (typeof self !== 'string' || !self) return '';
+  return `This machine's label is ${self}: a node it dials sees it by that name.`;
+}
+
+function offerFormProblem({ availability, schedule, peers }) {
+  if (availability === 'schedule') {
+    for (const w of schedule || []) {
+      if (!w.days || !w.days.length) return 'a schedule window has no day ticked';
+      if (!w.from || !w.to) return 'a schedule window has an empty time';
+      if (w.from === w.to) return 'a schedule window starts and ends at the same time';
+    }
+  }
+  if ((peers || []).length > MAX_OFFER_PEERS) return `more than ${MAX_OFFER_PEERS} peers ticked`;
+  return null;
 }
 
 function offerRecordFromForm({ enabled, boxes, availability, schedule, peers }) {
@@ -77,6 +114,9 @@ module.exports = {
   ownFactsLine,
   peerOfferLine,
   peerChoices,
+  peerNameToAdd,
+  selfLabelLine,
+  offerFormProblem,
   offerRecordFromForm,
   offerStatusText,
 };

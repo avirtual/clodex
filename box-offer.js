@@ -219,6 +219,7 @@ function bootOffer(env, readStored, log) {
 const offerEnabled = (raw) => sanitizeBoxOffer(raw)?.enabled === true;
 
 module.exports = {
+  NODE_NAME_RE,
   sanitizeBoxOffer,
   offerFromEnv,
   scheduleOpen,

@@ -182,7 +182,7 @@ class RemoteServer {
                 getSkillCatalog, setSessionSkills,
                 listSleepers, getSleeper, sleepSession, wakeSession, exportMemory,
                 getProfile, setProfile, deleteProfile,
-                deliverDm, claimDms, listDmOrigins, receiveRoster, offerFor, receiveOffers, listOffers,
+                deliverDm, claimDms, listDmOrigins, receiveRoster, offerFor, receiveOffers, listOffers, noteDialer,
                 notifications, openRequests, replyNote,
                 wtermOpen, wtermInput, wtermResize, wtermClose, onWtermStreams,
                 suiteRunner, suiteRunnerError, suiteToken, token, insecure }) {
@@ -257,6 +257,7 @@ class RemoteServer {
     this._offerFor = offerFor || null;
     this._receiveOffers = receiveOffers || null;
     this._listOffers = listOffers || null;
+    this._noteDialer = noteDialer || null;
     this._notifications = notifications || null;
     this._openRequests = openRequests || null;
     this._replyNote = replyNote || null;
@@ -1368,7 +1369,11 @@ class RemoteServer {
         // too old to say" — both mean no forward, but only one is a bug report.
         wirescope: this._wirescope(),
       };
-      const offers = this._helloOffers(url.searchParams.get('origin'));
+      const origin = url.searchParams.get('origin');
+      if (this._noteDialer && origin && NAME_RE.test(origin)) {
+        try { this._noteDialer(origin); } catch {}
+      }
+      const offers = this._helloOffers(origin);
       if (offers) hello.offers = offers;
       return this._json(res, 200, hello);
     }
