@@ -1417,6 +1417,9 @@ function createRemoteWiring(deps) {
     const s = getUiSettings().get();
     const wanted = !!suiteRunnerOptions(process.env, REGISTRY_DIR, { setting: s.suiteRunner });
     const remoteOn = !!s.remoteEnabled || process.env.CLODEX_REMOTE_ENABLE === '1';
+    const base = s.suiteRunner || { isolation: 'user', work: null };
+    const inEffect = suiteRunnerOptions(process.env, REGISTRY_DIR, { setting: { ...base, enabled: true } });
+    const defaults = suiteRunnerOptions({}, REGISTRY_DIR, { setting: { enabled: true, isolation: 'user', work: null } });
     let status = 'off';
     if (wanted && !remoteOn) status = 'needs-remote';
     else if (wanted && suiteRunner) status = 'running';
@@ -1425,6 +1428,8 @@ function createRemoteWiring(deps) {
     return {
       setting: s.suiteRunner || null,
       forced: suiteRunnerForced(process.env),
+      effective: { isolation: inEffect.isolation, work: inEffect.work },
+      defaultWork: defaults.work,
       remoteEnabled: remoteOn,
       status,
       error: status === 'failed' ? suiteRunnerError : null,

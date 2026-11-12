@@ -188,7 +188,7 @@ test('no module but ipc-handlers writes the test runner setting', () => {
     for (const f of fs.readdirSync(path.join(root, d))) {
       if (!f.endsWith('.js')) continue;
       const rel = path.join(d, f);
-      if (/\.set\(\{\s*suiteRunner\b/.test(fs.readFileSync(path.join(root, rel), 'utf8'))) writers.push(path.normalize(rel));
+      if (/\.set\([^;]*\bsuiteRunner\b/.test(fs.readFileSync(path.join(root, rel), 'utf8'))) writers.push(path.normalize(rel));
     }
   }
   assert.deepStrictEqual(writers, ['ipc-handlers.js']);
@@ -247,6 +247,7 @@ function wiringFixture(t, settings) {
 }
 
 const settle = () => new Promise((r) => setImmediate(r));
+const platformDefault = (home) => (process.platform === 'darwin' ? path.join(home, 'suite-work') : '/var/lib/clodex-suite');
 
 test('saving the setting rebuilds the wire with the new runner, no restart', async (t) => {
   const settings = { remoteEnabled: true, remotePort: 0, peerShellEnabled: false, peers: [], suiteRunner: null };
@@ -265,7 +266,8 @@ test('saving the setting rebuilds the wire with the new runner, no restart', asy
   assert.strictEqual(typeof (built[1].suiteRunner && built[1].suiteRunner.submit), 'function', 'the new wire carries a runner');
   assert.deepStrictEqual(wiring.suiteRunnerState(), {
     setting: { enabled: true, isolation: 'none', work: path.join(tmp, 'work') },
-    forced: [], remoteEnabled: true, status: 'running', error: null,
+    forced: [], effective: { isolation: 'none', work: path.join(tmp, 'work') }, defaultWork: platformDefault(tmp),
+    remoteEnabled: true, status: 'running', error: null,
   });
   assert.strictEqual(wiring.suiteRunnerBusy(), false);
 
@@ -279,9 +281,30 @@ test('saving the setting rebuilds the wire with the new runner, no restart', asy
 
 test('a stored runner on a node with remote access off reports needs-remote', async (t) => {
   const settings = { remoteEnabled: false, remotePort: 0, peers: [], suiteRunner: { enabled: true, isolation: 'none', work: null } };
-  const { wiring } = wiringFixture(t, settings);
+  const { wiring, tmp } = wiringFixture(t, settings);
   assert.deepStrictEqual(wiring.suiteRunnerState(), {
     setting: { enabled: true, isolation: 'none', work: null },
-    forced: [], remoteEnabled: false, status: 'needs-remote', error: null,
+    forced: [], effective: { isolation: 'none', work: platformDefault(tmp) }, defaultWork: platformDefault(tmp),
+    remoteEnabled: false, status: 'needs-remote', error: null,
   });
+});
+
+test('a field forced by env reports the value in effect, not the stored one', async (t) => {
+  const settings = { remoteEnabled: true, remotePort: 0, peers: [], suiteRunner: { enabled: true, isolation: 'user', work: null } };
+  const { wiring, tmp } = wiringFixture(t, settings);
+  process.env.CLODEX_SUITE_ISOLATION = 'none';
+  process.env.CLODEX_SUITE_WORK = '/x';
+  assert.deepStrictEqual(wiring.suiteRunnerState(), {
+    setting: { enabled: true, isolation: 'user', work: null },
+    forced: ['isolation', 'work'], effective: { isolation: 'none', work: '/x' }, defaultWork: platformDefault(tmp),
+    remoteEnabled: true, status: 'starting', error: null,
+  });
+});
+
+test('suiteRunner:set with the stored record answers ok without reloading the wire', () => {
+  const { set, calls } = ipcFixture({ initial: VALID });
+  const res = set({}, { enabled: true, isolation: 'none', work: '/srv/suite-work' });
+  assert.strictEqual(res.ok, true);
+  assert.deepStrictEqual(calls.set, []);
+  assert.strictEqual(calls.reload, 0);
 });

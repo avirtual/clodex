@@ -1859,6 +1859,7 @@ function registerIpcHandlers(deps) {
     handle('suiteRunner:set', (_e, rec) => {
       const clean = rec === null ? null : sanitizeSuiteRunner(rec);
       if (rec !== null && !clean) return { ok: false, error: 'invalid test runner setting', state: suiteRunnerState() };
+      if (JSON.stringify(clean) === JSON.stringify(uiSettings.get().suiteRunner || null)) return { ok: true, state: suiteRunnerState() };
       if (suiteRunnerBusy()) {
         return { ok: false, error: 'a test job is running on this machine — change the test runner when it finishes', state: suiteRunnerState() };
       }

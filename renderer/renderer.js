@@ -9466,13 +9466,15 @@ let prefsSuiteRunnerShown = null;
 function renderSuiteRunnerPrefs(st) {
   prefsSuiteRunnerShown = st;
   const rec = st.setting || { enabled: false, isolation: 'user', work: null };
+  const eff = st.effective || {};
   const forced = new Set(st.forced || []);
   prefsSuiteRunnerEnabled.checked = forced.has('enabled') || rec.enabled;
   prefsSuiteRunnerEnabled.disabled = forced.has('enabled');
-  prefsSuiteRunnerIsolation.value = rec.isolation;
+  prefsSuiteRunnerIsolation.value = forced.has('isolation') ? eff.isolation : rec.isolation;
   prefsSuiteRunnerIsolation.disabled = forced.has('isolation');
-  prefsSuiteRunnerWork.value = rec.work || '';
+  prefsSuiteRunnerWork.value = forced.has('work') ? (eff.work || '') : (rec.work || '');
   prefsSuiteRunnerWork.disabled = forced.has('work');
+  prefsSuiteRunnerWork.placeholder = st.defaultWork || 'default for this platform';
   for (const k of ['enabled', 'isolation', 'work']) {
     document.getElementById(`prefs-suite-runner-${k}-env`).classList.toggle('hidden', !forced.has(k));
   }
@@ -9489,21 +9491,32 @@ async function refreshSuiteRunnerPrefs() {
   if (st) renderSuiteRunnerPrefs(st);
 }
 
+function suiteRunnerRecordToSave() {
+  const shown = prefsSuiteRunnerShown || {};
+  const stored = shown.setting || { enabled: false, isolation: 'user', work: null };
+  const forced = new Set(shown.forced || []);
+  const work = prefsSuiteRunnerWork.value.trim() || null;
+  return {
+    enabled: forced.has('enabled') ? stored.enabled : prefsSuiteRunnerEnabled.checked,
+    isolation: forced.has('isolation') ? stored.isolation : prefsSuiteRunnerIsolation.value,
+    work: forced.has('work') ? stored.work : work,
+  };
+}
+
 if (prefsSuiteRunnerBlock) {
   prefsSuiteRunnerIsolation.addEventListener('change', () => {
     prefsSuiteRunnerNoneNote.classList.toggle('hidden', prefsSuiteRunnerIsolation.value !== 'none');
   });
   prefsSuiteRunnerApply.addEventListener('click', async () => {
-    const work = prefsSuiteRunnerWork.value.trim();
-    const keep = prefsSuiteRunnerEnabled.disabled && prefsSuiteRunnerShown && prefsSuiteRunnerShown.setting;
-    const enabled = prefsSuiteRunnerEnabled.disabled ? !!(keep && keep.enabled) : prefsSuiteRunnerEnabled.checked;
-    const rec = { enabled, isolation: prefsSuiteRunnerIsolation.value, work: work || null };
     let res = null;
-    try { res = await window.api.suiteRunnerSet(rec); } catch { res = null; }
+    try { res = await window.api.suiteRunnerSet(suiteRunnerRecordToSave()); } catch { res = null; }
     if (!res || res.ok !== true) {
       showToast(`Test runner not changed: ${(res && res.error) || 'the change failed'}`, { kind: 'warn' });
     }
     if (res && res.state) renderSuiteRunnerPrefs(res.state);
+    if (res && res.state && res.state.status === 'starting') {
+      setTimeout(() => { if (!prefsOverlay.classList.contains('hidden')) refreshSuiteRunnerPrefs(); }, 1500);
+    }
   });
 }
 
