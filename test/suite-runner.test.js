@@ -442,7 +442,6 @@ test('with the job env git finds the job tree but no repository above the job di
   const outer = fs.realpathSync(f.root);
   const jobDir = jobPaths(f.work, 'ceil').dir;
   assert.strictEqual(seen.jobDir, jobDir, 'ENTER: the job spawned in its job dir');
-  assert.strictEqual(seen.ceiling, jobDir);
   assert.deepStrictEqual(seen.without, {
     tmp: outer, fresh: outer, tree: path.join(jobDir, 'tree'), init: '', subRepo: true,
   });
@@ -450,6 +449,7 @@ test('with the job env git finds the job tree but no repository above the job di
     tmp: 'fail: not a git repository', fresh: 'fail: not a git repository', tree: path.join(jobDir, 'tree'), init: '', subRepo: true,
   });
   assert.strictEqual(refs(), before);
+  assert.strictEqual(seen.ceiling, jobDir);
 });
 
 test('the setup step env carries GIT_CEILING_DIRECTORIES set to the job dir under both isolation modes', async (t) => {
