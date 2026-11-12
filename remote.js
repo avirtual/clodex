@@ -19,6 +19,7 @@ const { isReservedSeatName } = require('./pending-store');
 const { isReservedSenderName, reservedSenderError } = require('./system-senders');
 const { sanitizeWireOffers, OFFERS_WIRE_VERSION } = require('./box-offer');
 const { suiteDispatch, suiteRoute } = require('./suite-dispatch');
+const { SUITE_DESK_V, CALL_ID_RE: SUITE_CALL_ID_RE, SUITE_DESK_REPLY_MAX } = require('./suite-desk');
 
 const BOOT_ID = String(process.pid) + ':' + kernelStartTime(process.pid);
 
@@ -184,7 +185,7 @@ class RemoteServer {
                 deliverDm, claimDms, listDmOrigins, receiveRoster, offerFor, receiveOffers, listOffers, noteDialer,
                 notifications, openRequests, replyNote,
                 wtermOpen, wtermInput, wtermResize, wtermClose, onWtermStreams,
-                suiteRunner, suiteRunnerError, suiteToken, token, insecure }) {
+                suiteRunner, suiteRunnerError, suiteDesk, suiteToken, token, insecure }) {
     this._port = port;
     this._host = host || '127.0.0.1';
     this._basePath = resolveRemoteBasePath(basePath, warn);
@@ -290,6 +291,7 @@ class RemoteServer {
     this._suiteGate = makeTokenGate(suiteToken);
     this._suiteRunner = suiteRunner || null;
     this._suiteRunnerError = typeof suiteRunnerError === 'function' ? suiteRunnerError : () => null;
+    this._suiteDesk = suiteDesk || null;
     this._insecure = !!insecure;
     this._loopback = isLoopbackHost(this._host);
   }
@@ -478,6 +480,10 @@ class RemoteServer {
 
   notifyDmMail(origin) {
     this._broadcast('dm-mail', { origin });
+  }
+
+  notifySuiteMail(origin) {
+    this._broadcast('suite-mail', { origin });
   }
 
   notifyFiled(name) {
@@ -1310,6 +1316,7 @@ class RemoteServer {
       if (this._seatImport && this._importCreate) caps.push('import');
       if (this._sleepSession && this._wakeSession) caps.push('assistant');
       if (this._suiteRunner) caps.push('suite');
+      if (this._suiteDesk) caps.push('suite-pull');
       if (this._offerFor && this._receiveOffers) caps.push('offers');
       caps.push('resources');
       caps.push('images');
@@ -1562,6 +1569,7 @@ class RemoteServer {
           .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
       });
     }
+    if (p.startsWith('/api/suite-desk/')) return this._handleSuiteDesk(req, res, p, url);
     if (req.method === 'POST' && p === '/api/dm/claim') {
       if (!this._claimDms) return this._json(res, 501, { ok: false, error: 'dm not available' });
       if (!this._jsonBody(req, res)) return;
@@ -1896,6 +1904,51 @@ class RemoteServer {
     if (/^application\/json\b/i.test(String(req.headers['content-type'] || ''))) return true;
     this._json(res, 415, { ok: false, error: 'Content-Type must be application/json' });
     return false;
+  }
+
+  _handleSuiteDesk(req, res, p, url) {
+    const desk = this._suiteDesk;
+    if (!desk) return this._json(res, 501, { ok: false, error: 'suite desk not available' });
+    if (p === '/api/suite-desk/claim') {
+      if (req.method !== 'POST') return this._json(res, 404, { ok: false, error: 'not found' });
+      if (!this._jsonBody(req, res)) return;
+      return this._readBody(req, res, (body) => {
+        const msg = parseJsonObject(body);
+        if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
+        if (msg.v !== SUITE_DESK_V) return this._json(res, 400, { ok: false, error: `unsupported suite desk version (this node speaks ${SUITE_DESK_V})` });
+        const origin = String(msg.origin || '');
+        if (!NAME_RE.test(origin)) return this._json(res, 400, { ok: false, error: 'bad origin' });
+        const out = desk.claim(origin, msg.session);
+        if (out.status !== 200) return this._json(res, out.status, { ok: false, error: out.error });
+        return this._json(res, 200, { ok: true, v: SUITE_DESK_V, calls: out.calls });
+      });
+    }
+    const m = /^\/api\/suite-desk\/calls\/([^/]+)\/(blob|reply)$/.exec(p);
+    if (!m) return this._json(res, 404, { ok: false, error: 'not found' });
+    const id = decodeSeg(m[1]);
+    if (id == null || !SUITE_CALL_ID_RE.test(id)) return this._json(res, 400, { ok: false, error: 'bad call id' });
+    if (req.method === 'GET' && m[2] === 'blob') {
+      const out = desk.blob(id, String(url.searchParams.get('claim') || ''));
+      if (out.status !== 200) return this._json(res, out.status, { ok: false, error: out.error });
+      return this._bytes(res, 200, out.bytes);
+    }
+    if (req.method === 'POST' && m[2] === 'reply') {
+      if (!this._jsonBody(req, res)) return;
+      return this._readBody(req, res, (body) => {
+        const msg = parseJsonObject(body);
+        if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
+        if (msg.v !== SUITE_DESK_V) return this._json(res, 400, { ok: false, error: `unsupported suite desk version (this node speaks ${SUITE_DESK_V})` });
+        const out = desk.reply(id, String(msg.claim || ''), { status: msg.status, body: msg.body });
+        return this._json(res, out.status, out.status === 200 ? { ok: true } : { ok: false, error: out.error });
+      }, SUITE_DESK_REPLY_MAX);
+    }
+    return this._json(res, 404, { ok: false, error: 'not found' });
+  }
+
+  _bytes(res, code, buf) {
+    if (res.writableEnded) return;
+    res.writeHead(code, { 'Content-Type': 'application/octet-stream', 'Content-Length': buf.length, 'Cache-Control': 'no-store' });
+    res.end(buf);
   }
 
   _readBody(req, res, cb, max = MAX_BODY) {

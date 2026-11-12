@@ -71,6 +71,7 @@ test('a JSON null body is a 400 on every body route, never an uncaught throw', a
     createSession: ok, seatImport: { begin: ok }, importCreate: { check: ok },
     notifications: { list: () => [], markRead: () => false, remove: () => false }, replyNote: ok,
     suiteRunner: { submit: ok, commit: ok },
+    suiteDesk: { claim: ok, reply: ok },
   }, async (server) => {
     server._wterm.set('seat', new Set([{}]));
     const rows = [
@@ -81,6 +82,7 @@ test('a JSON null body is a 400 on every body route, never an uncaught throw', a
       ['POST', '/api/sessions/alpha/restart'], ['PATCH', '/api/sessions/alpha/args'], ['PATCH', '/api/sessions/alpha/skills'],
       ['PUT', '/api/sessions/alpha/client-token'], ['POST', '/api/import/begin'], ['POST', '/api/sessions'],
       ['POST', '/api/inbox/reply/n1'], ['POST', '/api/suite/jobs'], ['POST', '/api/suite/jobs/j1/commit'],
+      ['POST', '/api/suite-desk/claim'], ['POST', '/api/suite-desk/calls/0123456789abcdef/reply'],
     ];
     const src = fs.readFileSync(path.join(__dirname, '..', 'remote.js'), 'utf8');
     const suiteRows = rows.filter(([, p]) => p.startsWith('/api/suite/'));
