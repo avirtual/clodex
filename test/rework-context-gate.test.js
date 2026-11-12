@@ -259,13 +259,22 @@ async function settle() {
   for (let i = 0; i < 40; i += 1) await new Promise((r) => setTimeout(r, 5));
 }
 
-async function waitForFile(file, { ms = 5000 } = {}) {
+async function waitUntil(what, pred, { ms = 5000 } = {}) {
   for (let waited = 0; waited < ms; waited += 10) {
-    if (fsReal.existsSync(file)) return;
+    if (pred()) return;
     await new Promise((r) => setTimeout(r, 10));
   }
-  if (fsReal.existsSync(file)) return;
-  throw new Error(`waitForFile: ${file} did not appear within ${ms} ms`);
+  if (pred()) return;
+  throw new Error(`waitUntil: ${what} did not happen within ${ms} ms`);
+}
+
+async function waitForFile(file, opts) {
+  await waitUntil(`${file} to appear`, () => fsReal.existsSync(file), opts);
+}
+
+async function freshSeatWritten(f) {
+  await waitUntil(`a write to ${FRESH}`, () => f.gated.some((g) => g.target === FRESH));
+  await settle();
 }
 
 const FRESH = 'team-hand-1-r2';
@@ -291,7 +300,7 @@ test("a lead reject at 200k archives the heavy seat and spawns a fresh one on th
     `ENTER: ${OVER} is past the shipped nudge threshold — otherwise this subject measures the under-threshold arm`);
 
   leadReject(f);
-  await settle();
+  await freshSeatWritten(f);
 
   const t = f.one();
   assert.strictEqual(t.state, 'open', 'ENTER: the reject landed and reopened the ticket');
@@ -336,7 +345,7 @@ test("the fresh seat's first write opens with the rework prefix, ahead of the sp
   ready(f, world, { tok: OVER });
 
   leadReject(f, 'the retry bound is still off by one');
-  await settle();
+  await freshSeatWritten(f);
 
   const to = f.gated.filter((g) => g.target === FRESH);
   assert.strictEqual(to.length, 1,
@@ -599,7 +608,7 @@ test("the loop's reject replaces a heavy seat the same way the lead's does", asy
   ready(f, world, { tok: OVER });
 
   const r = f.m._rejectTicketFromLoop(f.team, 't1', 'SUITE RED: three failures in widget.test.js');
-  await settle();
+  await freshSeatWritten(f);
 
   assert.strictEqual(r.ok, true, 'ENTER: the loop reject succeeded');
   assert.strictEqual(r.seat, FRESH, 'and reports the seat the rework actually reached, not the one it found');
@@ -625,7 +634,7 @@ test('a replacement seat that fails to spawn is not reported as reached', async 
   f.m.create = async () => { throw new Error('boom'); };
 
   const r = f.m._rejectTicketFromLoop(f.team, 't1', 'SUITE RED: three failures in widget.test.js', { notifyLead: true });
-  await settle();
+  await waitUntil('the spawn failure to reach the lead', () => f.injected.some((t) => /boom/.test(t)));
 
   assert.strictEqual(r.ok, true, 'ENTER: the loop reject succeeded');
   const toLead = f.gated.filter((g) => g.target === 'lead');
@@ -651,7 +660,7 @@ test('a follow-up must-fix onto a heavy seat replaces it, exactly as a reopen do
   // was in when its SECOND round of must-fixes arrived.
   f.m.sessions.get('team-hand-1').ctxInfo = { tok: OVER, pct: 60, size: 1000000 };
   leadReject(f, 'and the empty case is still wrong');
-  await settle();
+  await freshSeatWritten(f);
 
   assert.match(f.injected.join('\n'), /already open for rework/, 'ENTER: the follow-up arm was taken, not a second reopen');
   assert.strictEqual(f.one().assignee, FRESH, 'the follow-up went to a fresh seat');
