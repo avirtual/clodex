@@ -33,7 +33,7 @@ docker run --rm --entrypoint bash clodex-runner-check -c '
   set -e
   W=/var/lib/clodex-suite; mkdir -p $W/jobs/check1/tree $W/jobs/check1/home $W/jobs/check1/tmp
   M=$W/mirrors; A=$M/$(printf "a%.0s" {1..40}).git; B=$M/$(printf "b%.0s" {1..40}).git
-  mkdir -p -m 0711 $M; mkdir -m 0700 $A $B; echo own > $A/HEAD; echo other > $B/HEAD
+  mkdir -p -m 0711 $M $W/deps; mkdir -m 0700 $A $B; echo own > $A/HEAD; echo other > $B/HEAD
   sudo -n /usr/local/libexec/clodex-suite-exec prepare $W/jobs/check1 $A; stat -c "%U %n" $W/jobs/check1 $W/jobs/check1/tree; stat -c "%a %G" $A $B
   sudo -n /usr/local/libexec/clodex-suite-exec run $W/jobs/check1 HOME=/tmp -- sh -c "id -un; env | sort; cat /home/clodex/.clodex/x 2>&1 | head -1; cat $A/HEAD; ls $M 2>&1 | head -1; cat $B/HEAD 2>&1 | head -1; ls $W/deps 2>&1 | head -1; cat $W/cache.json /data/suite-runner/cache.json 2>&1 | head -2"
   sudo -n /usr/local/libexec/clodex-suite-exec prepare /etc || echo refused
