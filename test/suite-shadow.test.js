@@ -18,12 +18,14 @@ const COUNT_OFF = 'TOTALS: 6 pass, 0 fail, 6 tests\n';
 
 const turns = async (n = 50) => { for (let i = 0; i < n; i += 1) await new Promise((r) => setImmediate(r)); };
 
-function remoteConn({ stdout = GREEN, stderr = '', code = 0, refuse = false, holds = {} } = {}) {
+function remoteConn({ stdout = GREEN, stderr = '', code = 0, refuse = false, holds = {}, box, stamp, reason = null } = {}) {
   const calls = [];
+  const bodies = [];
   const conn = {
-    suiteAsk: async (method, p) => {
+    suiteAsk: async (method, p, body) => {
       calls.push(`${method} ${p.split('?')[0]}`);
-      if (p === '/api/suite/info') return { status: 200, body: { ok: true, limits: {}, env: { envKey: 'k1' } } };
+      if (p === '/api/suite/info') return { status: 200, body: { ok: true, limits: {}, env: { envKey: 'k1' }, ...(box !== undefined ? { box } : {}) } };
+      if (method === 'POST') bodies.push(body);
       if (method === 'POST') return refuse ? { status: 200, body: { ok: false, error: 'nope' } } : { status: 200, body: { ok: true, state: 'queued' } };
       if (method === 'DELETE') return { status: 200, body: { ok: true } };
       if (p.includes('/output?')) {
@@ -32,10 +34,10 @@ function remoteConn({ stdout = GREEN, stderr = '', code = 0, refuse = false, hol
       }
       const id = decodeURIComponent(/ids=([^&]+)/.exec(p)[1]);
       if (holds[id]) await holds[id];
-      return { status: 200, body: { ok: true, jobs: [{ id, state: 'done', treeHash: holds.tree ? holds.tree(id) : TREE, exit: { code, signal: null }, reason: null, queueMs: 3, setupMs: 1, runMs: 40, out: {} }] } };
+      return { status: 200, body: { ok: true, jobs: [{ id, state: 'done', treeHash: holds.tree ? holds.tree(id) : TREE, exit: { code, signal: null }, reason, queueMs: 3, setupMs: 1, runMs: 40, out: {}, ...(stamp ? { env: stamp } : {}) }] } };
     },
   };
-  return { calls, conn };
+  return { calls, conn, bodies };
 }
 
 function shadowClient(conn, { trees = [TREE] } = {}) {
@@ -46,7 +48,7 @@ function shadowClient(conn, { trees = [TREE] } = {}) {
     getPeerManager: () => ({ get: (id) => (id === 'p1' ? conn : null) }),
     compareFile,
     now: () => 1000,
-    randomUUID: () => `run-${(n += 1)}`,
+    randomUUID: () => `run-${(n += 1)}`, platform: 'darwin', arch: 'arm64',
     snapshot: {
       snapshotTree: async () => ({ treeHash: trees[Math.min((snaps += 1) - 1, trees.length - 1)], head: HEAD, headTree: TREE }),
       releaseSnapshot: () => {},
@@ -59,10 +61,12 @@ function shadowClient(conn, { trees = [TREE] } = {}) {
 
 const OPTS = { peer: 'p1', name: 'runner-1', tree: '/w', kind: 'verify', team: 'tm', ticket: 't1' };
 
+const DARWIN = { os: 'darwin', arch: 'arm64' };
+const UNSTAMPED = { os: null, arch: null, isolation: null, imageId: null };
 const REMOTE = (over) => ({ outcome: 'pass', reason: null, pass: 5, fail: 0, tests: 5, failing: [], slow: [], jobId: 'run-1', queueMs: 3, runMs: 40, ...over });
 const LOCAL = (over) => ({ outcome: 'pass', pass: 5, fail: 0, tests: 5, failing: [], slow: [], durationMs: 70, ...over });
 const RECORD = (local, remote, agree) => ({
-  at: '1970-01-01T00:00:01.000Z', team: 'tm', kind: 'verify', ticket: 't1', treeHash: TREE, sha: HEAD, envKey: 'k1', wire: 'push', local, remote, agree,
+  at: '1970-01-01T00:00:01.000Z', team: 'tm', kind: 'verify', ticket: 't1', treeHash: TREE, sha: HEAD, envKey: 'k1', wire: 'push', localEnv: DARWIN, remoteEnv: UNSTAMPED, local, remote, agree,
 });
 
 const RECORD_ROWS = [
@@ -173,9 +177,9 @@ test('tally: counts agreements and one-sided failing names under one env key; an
     rec('k1', false, [], ['other team'], 'tm2'),
   ]);
   assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k1' }), {
-    envKey: 'k1', agree: 1, disagree: 2, oneSided: [{ side: 'remote', name: 'net test', count: 2 }],
+    envKey: 'k1', agree: 1, disagree: 2, oneSided: [{ side: 'remote', name: 'net test', count: 2 }], platforms: null,
   });
-  assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k2' }), { envKey: 'k2', agree: 0, disagree: 0, oneSided: [] });
+  assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k2' }), { envKey: 'k2', agree: 0, disagree: 0, oneSided: [], platforms: null });
 });
 
 test('t2303: a detached skip row is written as its own kind and is counted as neither agreement nor disagreement', () => {
@@ -187,8 +191,8 @@ test('t2303: a detached skip row is written as its own kind and is counted as ne
   assert.deepStrictEqual(lines[1], {
     at: '1970-01-01T00:00:01.000Z', team: 'tm', kind: 'post-merge', ticket: 't1', wire: 'pull', runner: 'laptop', skipped: 'detached', agree: null,
   });
-  assert.deepStrictEqual(client.tally({ team: 'tm' }), { envKey: 'k1', agree: 1, disagree: 0, oneSided: [] });
-  assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k1' }), { envKey: 'k1', agree: 1, disagree: 0, oneSided: [] });
+  assert.deepStrictEqual(client.tally({ team: 'tm' }), { envKey: 'k1', agree: 1, disagree: 0, oneSided: [], platforms: null });
+  assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k1' }), { envKey: 'k1', agree: 1, disagree: 0, oneSided: [], platforms: null });
 });
 
 function pullShadowClient(desk) {
@@ -199,7 +203,7 @@ function pullShadowClient(desk) {
     getPeerManager: () => null,
     getSuiteDesk: () => ({ conn: (o) => (o === 'laptop' ? desk.conn : null), attached: (o) => o === 'laptop' && desk.attached }),
     compareFile,
-    now: () => t,
+    now: () => t, platform: 'darwin', arch: 'arm64',
     randomUUID: () => `run-${(n += 1)}`,
     snapshot: { snapshotTree: async () => ({ treeHash: TREE, head: HEAD, headTree: TREE }), releaseSnapshot: () => {} },
     sleep: async (ms) => { t += ms; },
@@ -232,7 +236,7 @@ function detachingConn(desk, { backAfter = Infinity } = {}) {
 }
 
 const PULL_OPTS = { peer: 'laptop', name: 'laptop', wire: 'pull', tree: '/w', kind: 'verify', team: 'tm', ticket: 't1', budgetMs: 60000 };
-const PULL_ROW = (remote, agree) => ({ team: 'tm', kind: 'verify', ticket: 't1', treeHash: TREE, sha: HEAD, envKey: 'k1', wire: 'pull', local: LOCAL(), remote, agree });
+const PULL_ROW = (remote, agree) => ({ team: 'tm', kind: 'verify', ticket: 't1', treeHash: TREE, sha: HEAD, envKey: 'k1', wire: 'pull', localEnv: DARWIN, remoteEnv: UNSTAMPED, local: LOCAL(), remote, agree });
 
 test('t2304: a pull runner that detaches mid-job writes one skip row naming the job, after an attached run wrote a normal row; the tally counts no disagreement', async () => {
   const desk = { attached: true, conn: remoteConn().conn };
@@ -251,7 +255,7 @@ test('t2304: a pull runner that detaches mid-job writes one skip row naming the 
     PULL_ROW(REMOTE(), true),
     { team: 'tm', kind: 'verify', ticket: 't1', wire: 'pull', runner: 'laptop', skipped: 'detached', agree: null, midJob: true, jobId: 'run-2' },
   ]);
-  assert.deepStrictEqual(f.client.tally({ team: 'tm' }), { envKey: 'k1', agree: 1, disagree: 0, oneSided: [] });
+  assert.deepStrictEqual(f.client.tally({ team: 'tm' }), { envKey: 'k1', agree: 1, disagree: 0, oneSided: [], platforms: { local: DARWIN, remote: UNSTAMPED } });
 });
 
 test('t2304: a pull runner that detaches past the 120 s lease and comes back with lease-expired before the deadline writes one skip row', async () => {
@@ -267,7 +271,7 @@ test('t2304: a pull runner that detaches past the 120 s lease and comes back wit
   assert.deepStrictEqual(f.records(), [
     { team: 'tm', kind: 'verify', ticket: 't1', wire: 'pull', runner: 'laptop', skipped: 'detached', agree: null, midJob: true, jobId: 'run-1' },
   ]);
-  assert.deepStrictEqual(f.client.tally({ team: 'tm' }), { envKey: null, agree: 0, disagree: 0, oneSided: [] });
+  assert.deepStrictEqual(f.client.tally({ team: 'tm' }), { envKey: null, agree: 0, disagree: 0, oneSided: [], platforms: null });
 });
 
 test('t2304: an attached pull runner whose own 503 (offer closed) outlasts the budget writes a normal unknown row, not a skip row', async () => {
@@ -359,3 +363,105 @@ for (const [name, where, times, want] of RESTART_ROWS) {
     assert.deepStrictEqual({ outcome: out.record.outcome, reason: out.record.reason, attempt: out.record.attempt }, want);
   });
 }
+
+const IMAGE = `sha256:${'e'.repeat(64)}`;
+const BOX_ENV = { platform: 'linux', arch: 'arm64', isolation: 'container', envKey: 'b0b0b0b0b0b0', box: { imageId: IMAGE } };
+const READY = { state: 'ready', env: BOX_ENV };
+const NATIVE_STAMP = { platform: 'linux', arch: 'arm64', isolation: 'none', envKey: 'k1' };
+
+function boxClient(conn) {
+  const compareFile = path.join(mkTmpRoot('suite-box-'), 'suite-compare.jsonl');
+  let n = 0;
+  const client = createSuiteClient({
+    getPeerManager: () => ({ get: (id) => (id === 'p1' ? conn : null) }),
+    compareFile, now: () => 1000, randomUUID: () => `run-${(n += 1)}`, platform: 'darwin', arch: 'arm64', sleep: async () => {},
+    snapshot: {
+      snapshotTree: async () => ({ repoKey: 'rk', snap: 's1', treeHash: TREE, indexTree: TREE, head: HEAD, headTree: TREE, branch: 'b', trunk: 'master', refs: [], candidates: [] }),
+      releaseSnapshot: () => {},
+    },
+  });
+  const records = () => fs.readFileSync(compareFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  return { client, records };
+}
+
+const SUBMIT = {
+  id: 'run-1', attempt: 1, repoKey: 'rk', kind: 'verify', scope: 'full', team: 'tm', ticket: 't1', seat: null,
+  snap: 's1', treeHash: TREE, indexTree: TREE, sha: HEAD, branch: 'b', trunk: 'master', refs: [], candidates: [],
+  files: [], flags: {}, env: {}, setup: null, timeoutMs: null, full: false,
+};
+
+test('t2312: a box ask submits isolation:container; a native ask carries no isolation key', async () => {
+  const boxed = remoteConn({ box: READY, stamp: BOX_ENV });
+  const a = await boxClient(boxed.conn).client.run({ ...OPTS, box: true });
+  assert.strictEqual(a.record.outcome, 'pass', 'ENTER: the box run passed');
+  assert.deepStrictEqual(boxed.bodies, [{ ...SUBMIT, isolation: 'container' }]);
+  const native = remoteConn({ box: READY, stamp: NATIVE_STAMP });
+  const b = await boxClient(native.conn).client.run(OPTS);
+  assert.strictEqual(b.record.outcome, 'pass', 'ENTER: the native run passed');
+  assert.deepStrictEqual(native.bodies, [SUBMIT]);
+});
+
+const NOT_READY_ROWS = [
+  ['info.box null', null, 'runner has no box: not configured'],
+  ['no box key in info', undefined, 'runner has no box: not configured'],
+  ['info.box unavailable', { state: 'unavailable', why: 'docker not found on PATH' }, 'runner has no box: docker not found on PATH'],
+];
+
+for (const [name, box, reason] of NOT_READY_ROWS) {
+  test(`t2312: ${name} ends a box ask unknown and submits nothing, after a ready runner took one`, async () => {
+    const ready = remoteConn({ box: READY, stamp: BOX_ENV });
+    await boxClient(ready.conn).client.run({ ...OPTS, box: true });
+    assert.strictEqual(ready.calls.filter((c) => c.startsWith('POST')).length, 1, 'ENTER: a ready runner got the box submit');
+    const down = remoteConn({ box, stamp: BOX_ENV });
+    const out = await boxClient(down.conn).client.run({ ...OPTS, box: true });
+    assert.deepStrictEqual([out.record.outcome, out.record.reason], ['unknown', reason]);
+    assert.strictEqual(down.calls.filter((c) => c.startsWith('POST')).length, 0, down.calls.join('\n'));
+  });
+}
+
+const STAMP_ROWS = [
+  ['a box ask stamped container', true, BOX_ENV, ['pass', null]],
+  ['a native ask stamped none', false, NATIVE_STAMP, ['pass', null]],
+  ['a box ask stamped none', true, NATIVE_STAMP, ['unknown', 'box mismatch: asked container, runner ran none']],
+  ['a native ask stamped container', false, BOX_ENV, ['unknown', 'box mismatch: asked native, runner ran container']],
+  ['a box ask with no stamp', true, undefined, ['unknown', 'box mismatch: asked container, runner ran unstamped']],
+];
+
+for (const [name, box, stamp, want] of STAMP_ROWS) {
+  test(`t2312: the done stamp is checked against the ask: ${name}`, async () => {
+    const { conn } = remoteConn({ box: READY, stamp });
+    const out = await boxClient(conn).client.run({ ...OPTS, box });
+    assert.deepStrictEqual([out.record.outcome, out.record.reason], want);
+  });
+}
+
+const BOX_REMOTE_ENV = { os: 'linux', arch: 'arm64', isolation: 'container', imageId: IMAGE };
+const BOX_ROW = (local, remote, agree) => ({
+  at: '1970-01-01T00:00:01.000Z', team: 'tm', kind: 'verify', ticket: 't1', treeHash: TREE, sha: HEAD, envKey: 'b0b0b0b0b0b0', wire: 'push',
+  localEnv: { os: 'darwin', arch: 'arm64' }, remoteEnv: BOX_REMOTE_ENV, local, remote, agree,
+});
+
+test('t2312: a darwin/arm64 lead against a linux/arm64 box writes both platforms; the disagreement is counted and labelled', async () => {
+  const { conn } = remoteConn({ box: READY, stamp: BOX_ENV, stdout: RED_A, code: 1 });
+  const f = boxClient(conn);
+  const h = await f.client.shadow({ ...OPTS, box: true });
+  await turns();
+  h.local(localHalf({ code: 0, stdout: GREEN, stderr: '', durationMs: 70 }));
+  assert.deepStrictEqual(f.records(), [BOX_ROW(LOCAL(), REMOTE({ outcome: 'fail', pass: 4, fail: 1, failing: ['alpha'] }), false)]);
+  assert.deepStrictEqual(f.client.tally({ team: 'tm' }), {
+    envKey: 'b0b0b0b0b0b0', agree: 0, disagree: 1, oneSided: [{ side: 'remote', name: 'alpha', count: 1 }],
+    platforms: { local: { os: 'darwin', arch: 'arm64' }, remote: BOX_REMOTE_ENV },
+  });
+});
+
+test('t2312: a box-failed job reads unknown and counts as a disagreement, like any unknown', async () => {
+  const { conn } = remoteConn({ box: READY, stamp: BOX_ENV, reason: 'box-failed', code: 125 });
+  const f = boxClient(conn);
+  const h = await f.client.shadow({ ...OPTS, box: true });
+  await turns();
+  h.local(localHalf({ code: 0, stdout: GREEN, stderr: '', durationMs: 70 }));
+  assert.deepStrictEqual(f.records(), [BOX_ROW(LOCAL(), REMOTE({ outcome: 'unknown', reason: 'box-failed on runner', pass: null, fail: null, tests: null }), false)]);
+  assert.deepStrictEqual(f.client.tally({ team: 'tm' }), {
+    envKey: 'b0b0b0b0b0b0', agree: 0, disagree: 1, oneSided: [], platforms: { local: { os: 'darwin', arch: 'arm64' }, remote: BOX_REMOTE_ENV },
+  });
+});

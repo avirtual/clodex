@@ -913,7 +913,8 @@ A team can name a peered node as its test runner (a node started with
   "gate": "off | shadow | on",
   "wire": "push | pull",
   "setup": { "run": "npm ci", "key": ["package-lock.json"], "paths": ["node_modules"], "timeoutMs": 900000 },
-  "env": { "NODE_ENV": "test" }
+  "env": { "NODE_ENV": "test" },
+  "box": true
 }
 ```
 
@@ -923,8 +924,20 @@ relative paths without a `..` segment; `timeoutMs` is 10 s to 30 min; `env` has 
 most 32 keys matching `^[A-Z_][A-Z0-9_]*$` with string values of at most 1,000
 chars. Any other key, or one value out of bounds, drops the whole setting: it is
 never applied in part, the load warns once, and `team.droppedFields` carries
-`{ field: 'testRunner', status: 'invalid' }`. `setup` and `env` are edited in
+`{ field: 'testRunner', status: 'invalid' }`. `setup`, `env` and `box` are edited in
 team.json only.
+
+`box` is a boolean and reads `false` when absent; any other value drops the
+setting. `box: true` asks the runner for a container box on `gate:shadow` runs
+(hand routing stays native): the lead reads the runner's `info.box` first and,
+unless it is `ready`, ends the run `unknown: runner has no box: <why>` without
+submitting. The submit carries `isolation: 'container'`, and a done job whose
+stamp (`env.isolation === 'container'`) does not match the ask, either way,
+reads `unknown: box mismatch: asked <container|native>, runner ran <isolation>`.
+Comparison rows carry `localEnv: {os, arch}` and
+`remoteEnv: {os, arch, isolation, imageId}`; a cross-platform disagreement is
+still counted as one. `[agent:team runner]` appends the box state and, beside the
+counts, both platforms; with `box: true` the tally shown is the box's env key.
 
 `[agent:team runner <peer>]` (lead only) sets the peer: it must be a known peer;
 an offline one is accepted with a warning, one online without the `suite`
