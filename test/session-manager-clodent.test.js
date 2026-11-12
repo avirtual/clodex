@@ -85,6 +85,7 @@ function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entrie
     crypto: require('node:crypto'),
     effectiveInjectedSkills: () => (library ? library.skills : []),
     probeClodentVersion,
+    stripLevelOf: () => 0,
     getPersistence: () => ({ list: () => [], get: (n) => entries[n] || null, upsert: () => {}, setSessionId: () => {}, remove: (n) => { removals.push(n); } }),
     getUiSettings: () => ({ get: () => ({}) }),
     getEnvScopes: () => ({ all: () => ({ global: {}, workspaces: {} }) }),
@@ -766,7 +767,7 @@ function mkRefusing({ stderr, failSecond = false }) {
   });
   entries.seat.cwd = f.cwd;
   const failed = [];
-  f.m._sendRespawnFailed = (name, entry, error) => failed.push({ name, error, kept: entry === entries.seat });
+  f.m._sendRespawnFailed = (name, entry, error) => failed.push({ name, error: error.split(' [')[0], kept: entry === entries.seat });
   return { f, failed };
 }
 
