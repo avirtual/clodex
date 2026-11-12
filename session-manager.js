@@ -475,6 +475,17 @@ function missingToolOnExit({ expected, exitCode, signal, elapsedMs, cmd, whichBi
   return resolved ? null : (cmd || null);
 }
 
+const RESUME_REFUSED_LINE = {
+  clodent: (id) => `clodent: no session ${id}`,
+  claude: (id) => `No conversation found with session ID: ${id}`,
+};
+
+function resumeRefusedOnExit({ agentType, resumeId, exitCode, expected, inited, stderr }) {
+  const line = resumeId && RESUME_REFUSED_LINE[agentType];
+  if (!line || expected || inited || !exitCode) return false;
+  return String(stderr || '').includes(line(resumeId));
+}
+
 const CLODENT_MIN_VERSION = [0, 5, 2];
 const CLODENT_NATIVE_TOOLS_VERSION = [0, 6, 0];
 
@@ -1675,6 +1686,10 @@ function createSessionManager(deps) {
           log.warn('session', `stream reap ${name} failed: ${e.message}`);
         }
         log.info('session', `stream reap ${name}: ${decision}${record ? ` pid=${record.pid}` : ' (no record)'}`);
+        if (!fork && prior && prior.sessionId === resumeId && prior.lastClear && prior.lastClear.pending) {
+          log.info('session', `stream ${name}: ${resumeId} was cleared idle and has had no turn since; starting a fresh conversation instead of resuming it`);
+          resumeId = null;
+        }
       }
       let scopedEnv;
       const baseEnv = { ...process.env };
@@ -2787,6 +2802,11 @@ function createSessionManager(deps) {
           expected, exitCode, signal,
           elapsedMs: Date.now() - (session.spawnedAt || 0), cmd, whichBin,
         });
+        const refusedResume = !!session.stream && resumeRefusedOnExit({
+          agentType, resumeId, exitCode, expected,
+          inited: !!session._streamInitSeen, stderr: session.stream.stderrTail,
+        });
+        if (refusedResume) session._respawning = true;
         // Send session-exit before _cleanup so the renderer can still resolve session to workspace to window,
         // or the sidebar tab sticks around as a dead entry.
         this._sendToSession(name, 'session-exit', name, exitCode, { expected, signal: signal || null, agentType: agentType || null, missingTool });
@@ -2808,6 +2828,7 @@ function createSessionManager(deps) {
         try { getPluginHooks && getPluginHooks() && getPluginHooks().fireExit(name); } catch {}
         this._parkStreamOutbox(session, `seat exited code=${exitCode}`);
         this._cleanup(name);
+        if (refusedResume) this._respawnAfterRefusedResume(session, resumeId);
         if (!session._shuttingDown && !session._moving && !session._respawning && !session.clone) {
           try { this._handSeatGone(session); } catch (e) { log.warn('ticket', `hand cap auto-start after ${name} exit failed: ${e.message}`); }
         }
@@ -3578,6 +3599,7 @@ function createSessionManager(deps) {
       if (Array.isArray(rec.send)) for (const obj of rec.send) this._streamSend(s, obj);
       switch (rec.kind) {
         case 'init':
+          s._streamInitSeen = true;
           this._clearStreamResultHold(s);
           this._clearStreamInitWatchdog(s);
           if (s._streamInitStalled) {
@@ -8392,6 +8414,14 @@ function createSessionManager(deps) {
         this._shadowLog({ type: 'prompt-refresh-error', agent: name, error: e.message });
         return false;
       }
+    }
+
+    _respawnAfterRefusedResume(session, resumeId) {
+      const name = session.name;
+      const entry = getPersistence().get(name);
+      if (!entry) return;
+      log.warn('session', `stream ${name}: the CLI has no session ${resumeId}; dropped it, respawning once as a fresh conversation`);
+      this._coldRespawn(name, entry, session, '', 'resume-refused', { onKilled: () => this._dropRosterSent(name) });
     }
 
     _coldRespawn(name, entry, session, handoff, why, opts = {}) {

@@ -18,6 +18,7 @@ blocks a release.
 - `[agent:team hands]` now reports how often the hand cap parked a ticket in the last week and how long those tickets waited.
 - A shadow comparison no longer counts slow-but-passing tests as failures; they are listed separately.
 - On a machine whose git is older than 2.48, Clodex no longer rewrites a ticket's worktree pointers in a way that git then deletes; it says which git version is needed.
+- A stream seat that was cleared while idle and received nothing since now comes back after a restart; a resume the CLI refuses falls back to a fresh conversation.
 
 ## 5.177.1 — 2026-11-12
 
