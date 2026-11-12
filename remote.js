@@ -18,6 +18,7 @@ const { annotate: annotateNote } = require('./open-requests');
 const { isReservedSeatName } = require('./pending-store');
 const { isReservedSenderName, reservedSenderError } = require('./system-senders');
 const { sanitizeWireOffers, OFFERS_WIRE_VERSION } = require('./box-offer');
+const { suiteDispatch, suiteRoute } = require('./suite-dispatch');
 
 const BOOT_ID = String(process.pid) + ':' + kernelStartTime(process.pid);
 
@@ -135,8 +136,6 @@ const MAX_BODY = 64 * 1024;          // matches the IPC message cap
 const DM_MAX_BODY = SEAT_IMAGE_MAX * Math.ceil(SEAT_IMAGE_MAX_BYTES / 3) * 4 + MAX_BODY;
 const IMPORT_ID_RE = /^[0-9a-f]{16}$/;
 const CONTENT_RANGE_RE = /^bytes\s+(\d+)-(\d+)\/\*$/i;
-const SUITE_SUBMIT_MAX = 256 * 1024;
-const SUITE_JOB_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const SSE_HEARTBEAT_MS = 25000;
 const DM_AWAIT_MAX_MS = 60000;
 const ATTACH_MAX_BUFFERED = 4 * 1024 * 1024;
@@ -1182,63 +1181,23 @@ class RemoteServer {
       .catch((e) => ({ code: 500, body: { ok: false, error: e.message, installed } }));
   }
 
-  _suiteReply(res, work) {
-    return Promise.resolve()
-      .then(work)
-      .then((out) => this._json(res, out && out.ok ? 200 : (out && out.status) || 500, out || { ok: false, error: 'no answer' }))
-      .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
-  }
-
   _handleSuite(req, res, p, url) {
     const runner = this._suiteRunner;
     if (!runner) {
       const reason = this._suiteRunnerError();
       return this._json(res, 501, { ok: false, error: 'this node is not a test runner', ...(reason ? { reason } : {}) });
     }
-    const rest = p.slice('/api/suite/'.length).split('/');
-    if (req.method === 'GET' && p === '/api/suite/info') return this._suiteReply(res, () => runner.info());
-    if (rest[0] !== 'jobs') return this._json(res, 404, { ok: false, error: 'not found' });
-    if (rest.length === 1) {
-      if (req.method === 'GET') {
-        const ids = String(url.searchParams.get('ids') || '').split(',').filter(Boolean);
-        const wait = Math.max(0, Number(url.searchParams.get('wait')) || 0);
-        return this._suiteReply(res, () => runner.poll(ids, { wait }));
-      }
-      if (req.method === 'POST') {
-        if (!this._jsonBody(req, res)) return;
-        return this._readBody(req, res, (body) => {
-          const msg = parseJsonObject(body);
-          if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
-          return this._suiteReply(res, () => runner.submit(msg));
-        }, SUITE_SUBMIT_MAX);
-      }
-      return this._json(res, 404, { ok: false, error: 'not found' });
-    }
-    const id = decodeSeg(rest[1]);
-    if (id == null || !SUITE_JOB_ID_RE.test(id)) return this._json(res, 400, { ok: false, error: 'bad job id' });
-    if (req.method === 'DELETE' && rest.length === 2) return this._suiteReply(res, () => runner.cancel(id));
-    if (req.method === 'PUT' && rest.length === 3 && rest[2] === 'pack') {
-      const m = CONTENT_RANGE_RE.exec(String(req.headers['content-range'] || '').trim());
-      if (!m) return this._json(res, 400, { ok: false, error: 'bad Content-Range (expected bytes <start>-<end>/*)' });
-      const offset = Number(m[1]);
-      if (!Number.isSafeInteger(offset)) return this._json(res, 400, { ok: false, error: 'bad Content-Range start' });
-      return this._readRaw(req, res, (bytes) => this._suiteReply(res, () => runner.putPack(id, offset, bytes)));
-    }
-    if (req.method === 'POST' && rest.length === 3 && rest[2] === 'commit') {
+    const call = { method: req.method, path: p + url.search, headers: req.headers };
+    const route = suiteRoute(call);
+    if (route.answer) return this._json(res, route.answer.status, route.answer.body);
+    const answer = (extra) => suiteDispatch(runner, { ...call, ...extra })
+      .then(({ status, body }) => this._json(res, status, body));
+    if (route.row.body === 'raw') return this._readRaw(req, res, (bytes) => answer({ bytes }));
+    if (route.row.body === 'json') {
       if (!this._jsonBody(req, res)) return;
-      return this._readBody(req, res, (body) => {
-        const msg = parseJsonObject(body);
-        if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
-        return this._suiteReply(res, () => runner.commit(id, { bytes: msg.bytes, sha256: msg.sha256 }));
-      });
+      return this._readBody(req, res, (body) => answer({ body }), route.row.max);
     }
-    if (req.method === 'GET' && rest.length === 3 && rest[2] === 'output') {
-      const q = url.searchParams;
-      const opts = { stream: q.get('stream') || 'stdout', offset: Number(q.get('offset')) || 0 };
-      if (q.get('length') != null) opts.length = Number(q.get('length')) || 0;
-      return this._suiteReply(res, () => runner.output(id, opts));
-    }
-    return this._json(res, 404, { ok: false, error: 'not found' });
+    return answer({});
   }
 
   _route(req, res) {

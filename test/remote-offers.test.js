@@ -172,7 +172,7 @@ test('GET /api/offers returns own plus the stored rows; equal facts from two rou
 test('suite code never reads the box offer or the offers directory', () => {
   const root = path.join(__dirname, '..');
   const banned = /boxOffer|box-offer|runGrant|offer-directory|offerDirectory|_offerFor|_receiveOffers|_listOffers/;
-  for (const file of ['suite-runner.js', 'suite-client.js']) {
+  for (const file of ['suite-runner.js', 'suite-client.js', 'suite-dispatch.js']) {
     const src = fs.readFileSync(path.join(root, file), 'utf8');
     assert.ok(src.length > 1000, `ENTER: ${file} was read`);
     assert.ok(!banned.test(src), `${file} references the box offer`);
@@ -182,7 +182,7 @@ test('suite code never reads the box offer or the offers directory', () => {
   assert.ok(start > 0, 'ENTER: remote.js has its suite handler');
   const end = remote.indexOf('\n  }\n', start);
   const suite = remote.slice(start, end);
-  assert.ok(suite.includes('/api/suite/'), 'ENTER: the slice is the suite routes');
+  assert.ok(suite.includes('suiteDispatch('), 'ENTER: the slice is the suite handler');
   assert.ok(!banned.test(suite), 'remote.js suite routes reference the box offer');
 });
 
