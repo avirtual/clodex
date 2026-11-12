@@ -346,6 +346,7 @@ function createSuiteRunner({
   let identity = null;
   const holdFile = path.join(state.dir, 'box-hold.json');
   let boxHold = readJson(holdFile, null);
+  let releasing = null;
   const sweepBox = box ? () => box.sweep() : boxSweep;
 
   const isBox = (job) => job.isolation === 'container';
@@ -409,26 +410,30 @@ function createSuiteRunner({
     log(`suite-runner: box cleanup held: ${why}`);
   }
 
-  async function releaseHold() {
-    if (!boxHold || !sweepBox) return false;
-    try { await sweepBox(); } catch (e) { setHold({ ...boxHold, why: e.message }); return false; }
-    for (const dir of boxHold.dirs) forceRemove(dir);
+  async function releaseOnce() {
+    const held = boxHold;
+    if (!held || !sweepBox) return false;
+    let error = null;
+    try { await sweepBox(); } catch (e) { error = e.message; }
+    if (boxHold !== held) return false;
+    if (error != null) { setHold({ ...held, why: error }); return false; }
+    for (const dir of held.dirs) forceRemove(dir);
     setHold(null);
     return true;
   }
 
+  function releaseHold() {
+    if (!releasing) releasing = releaseOnce().finally(() => { releasing = null; });
+    return releasing;
+  }
+
   async function recoverBox(interrupted) {
     const dirs = interrupted.map((job) => jobWork(job.id));
-    if (!box) {
-      if (dirs.length) enterHold('no box is configured to confirm cleanup', dirs);
-      await releaseHold();
-      return;
+    if (box || dirs.length) {
+      const why = box ? 'the boot sweep has not answered' : 'no box is configured to confirm cleanup';
+      setHold({ why, dirs: [...new Set([...(boxHold ? boxHold.dirs : []), ...dirs])] });
     }
-    try { await box.sweep(); } catch (e) { enterHold(e.message, dirs); return; }
-    if (boxHold) { for (const dir of boxHold.dirs) forceRemove(dir); setHold(null); }
-    for (const job of interrupted) {
-      try { await box.reap(jobWork(job.id), null, job); } catch (e) { enterHold(e.message, [jobWork(job.id)]); }
-    }
+    if (!(await releaseHold()) && boxHold) log(`suite-runner: box cleanup held: ${boxHold.why}`);
   }
 
   function recover() {
@@ -700,6 +705,7 @@ function createSuiteRunner({
     if (deps && !deps.hit) {
       const r = await exec(job, jobDir, ['/bin/sh', '-c', job.setup.run], job.setup.timeoutMs || lim.setupTimeoutMs);
       if (job.stop) return finish(job, { reason: job.stop, exit: null }, r.killing);
+      if (r.spawnFailed && isolation.mode === 'container') return finish(job, { reason: 'setup-failed', exit: null });
       if (r.code !== 0) return finish(job, { reason: 'setup-failed', exit: { code: r.code, signal: r.signal || null } }, r.killing);
       await isolation.seal(jobDir, deps.entry, job.setup.paths);
       writeJson(deps.marker, { createdAt: now(), usedAt: now() }, 0o600);
@@ -713,7 +719,7 @@ function createSuiteRunner({
     job.runMs = now() - runStartedAt;
     const boxed = isolation.mode === 'container';
     if (boxed && r.spawnFailed && !job.stop) return finish(job, { reason: 'setup-failed', exit: null });
-    const reason = job.stop || (r.timedOut ? 'timeout' : null) || (boxed && r.code === 125 ? 'box-failed' : null);
+    const reason = job.stop || (r.timedOut ? 'timeout' : null) || (boxed && (r.code === 125 || r.error) ? 'box-failed' : null);
     return finish(job, { reason, exit: { code: r.code, signal: r.signal || null } }, r.killing);
   }
 
@@ -954,7 +960,7 @@ function createSuiteRunner({
     }
     retain();
     const boxActive = active && jobs.has(active) && isBox(jobs.get(active));
-    if (boxHold && !boxActive) await releaseHold();
+    if (boxHold && !boxActive && !recovering) await releaseHold();
     if (!anyLive()) return maintain();
     pump();
     return { ran: false };

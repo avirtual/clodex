@@ -1204,7 +1204,7 @@ test('recovery with the box removed keeps an interrupted box job dir until a swe
   assert.deepStrictEqual([sweeps, fs.existsSync(cutDir), fs.existsSync(holdFile)], [['fail', 'fail', 'pass'], false, false]);
 });
 
-test('a box test exec whose setup path cannot be mounted ends setup-failed with the reason, and exit 125 ends box-failed', async (t) => {
+test('a box test exec whose setup path cannot be mounted ends setup-failed with the reason, at setup or at the test exec, and exit 125 or a CLI error ends box-failed', async (t) => {
   const fb = fakeBox();
   const f = await fixture(t, {
     runnerOver: { box: fb.box },
@@ -1213,7 +1213,8 @@ test('a box test exec whose setup path cannot be mounted ends setup-failed with 
         fs.mkdirSync(path.join(c.opts.cwd, 'node_modules'));
         fs.writeFileSync(path.join(c.opts.cwd, 'node_modules', 'x.txt'), 'built\n');
       }
-      c.child.finish(c.job === 'b-125' ? 125 : 0);
+      if (c.job === 'b-err') setImmediate(() => c.child.emit('error', new Error('spawn docker ENOENT')));
+      else c.child.finish(c.job === 'b-125' ? 125 : 0);
     },
   });
   const setup = { run: 'npm ci', key: ['package.json'], paths: ['node_modules'], timeoutMs: 60000 };
@@ -1227,6 +1228,12 @@ test('a box test exec whose setup path cannot be mounted ends setup-failed with 
   await f.runner.submit(f.body('b-125', 'hand', { isolation: 'container' }));
   const failed = await waitState(f.runner, 'b-125', 'done');
   assert.deepStrictEqual([failed.reason, failed.exit], ['box-failed', { code: 125, signal: null }]);
+  await f.runner.submit(f.body('b-miss', 'hand', { isolation: 'container', setup: { ...setup, run: 'npm ci --fresh', paths: ['dep,x'] } }));
+  const miss = await waitState(f.runner, 'b-miss', 'done');
+  assert.deepStrictEqual([miss.reason, miss.exit], ['setup-failed', null]);
+  await f.runner.submit(f.body('b-err', 'hand', { isolation: 'container' }));
+  const errored = await waitState(f.runner, 'b-err', 'done');
+  assert.deepStrictEqual([errored.reason, errored.exit], ['box-failed', { code: null, signal: null }]);
   assert.deepStrictEqual(fb.calls.filter(([verb]) => verb === 'seal' || verb === 'attach'), [['seal', 'b-ok', 'node_modules'], ['attach', 'node_modules', 'dep,x']]);
 });
 
@@ -1250,4 +1257,39 @@ test('native and box jobs on the same tree and setup get different deps entries'
   assert.deepStrictEqual(f.calls.map((c) => [c.job, c.cmd === '/bin/sh' ? 'setup' : 'test']), [['d-nat', 'setup'], ['d-nat', 'test'], ['d-box', 'setup'], ['d-box', 'test']]);
   const entries = fs.readdirSync(path.join(f.work, 'deps', f.snap.repoKey)).filter((n) => !n.endsWith('.json'));
   assert.strictEqual(entries.length, 2);
+});
+
+test('two ticks share one release sweep: a stale failure cannot rewrite a cleared hold or sweep under the next box job', async (t) => {
+  const pending = [];
+  let held = false;
+  const fb = fakeBox({
+    reap: (job) => { if (job.id === 'b1') throw new Error('box cleanup not confirmed: c0ffee'); },
+    sweep: () => (held ? new Promise((resolve, reject) => { pending.push({ resolve, reject }); }) : null),
+  });
+  let b1 = null;
+  const f = await fixture(t, {
+    runnerOver: { box: fb.box },
+    onSpawn: (c) => { if (c.job === 'b1') b1 = c.child; else { c.child.stdout.write('TOTALS: 1 pass, 0 fail, 1 tests\n'); c.child.finish(0); } },
+  });
+  await f.upload(f.body('b1', 'hand', { isolation: 'container' }));
+  await waitState(f.runner, 'b1', 'running');
+  assert.strictEqual((await f.runner.submit(f.body('b2', 'hand', { isolation: 'container' }))).state, 'queued');
+  b1.finish(0);
+  await waitState(f.runner, 'b1', 'done');
+  await drain();
+  const holdFile = path.join(f.root, 'suite-runner', 'box-hold.json');
+  assert.strictEqual(fs.existsSync(holdFile), true, 'ENTER: the failed reap holds the box');
+  held = true;
+  const ticks = [f.runner.tick(), f.runner.tick()];
+  await drain();
+  for (let i = pending.length - 1; i >= 1; i--) pending[i].resolve();
+  await drain();
+  if (pending.length > 1) pending[0].reject(new Error('box cleanup not confirmed: c0ffee'));
+  else pending[0].resolve();
+  await Promise.all(ticks);
+  const b2 = await waitState(f.runner, 'b2', 'done');
+  await drain();
+  assert.deepStrictEqual([b2.reason, fs.existsSync(holdFile), (await f.runner.info()).box.state], [null, false, 'ready']);
+  const tail = fb.calls.slice(fb.calls.findIndex(([verb, id]) => verb === 'reap' && id === 'b1'));
+  assert.deepStrictEqual(tail.map(([verb, id]) => [verb, id || null]), [['reap', 'b1'], ['sweep', null], ['prepare', 'b2'], ['spawn', 'b2'], ['reap', 'b2']]);
 });
