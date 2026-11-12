@@ -906,7 +906,7 @@ gate mode; `gate:on` is refused, not available yet. Under `gate:shadow` every
 `_runTicketSuite` call (verify, the verify re-measure, post-merge) snapshots the
 tree it is about to measure, submits it to the runner as kind `verify` or
 `post-merge` with the ticket id, and then runs the local suite exactly as with
-`gate:off`. The local run stays the only authority: a snapshot or submit
+`gate:off`. The local run stays the only authority: a snapshot not taken within 2 s (0.2 s measured on this repo), or a snapshot or submit
 failure is logged and dropped, the loop never waits for the remote job, and the
 pair is written to `logs/suite-compare.jsonl` (docs/tests.md) when both halves
 are in. A post-merge job measures the merge commit in the root checkout. A
