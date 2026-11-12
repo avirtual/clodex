@@ -68,6 +68,8 @@ docker buildx build \
   --builder clodex-multiarch \
   --platform "$PLATFORMS" \
   -f docker/web/Dockerfile \
+  --build-arg CLODEX_VERSION="$VERSION" \
+  --build-arg CLODEX_GIT_SHA="$(git rev-parse HEAD)" \
   "${TAGS[@]}" \
   --push \
   .

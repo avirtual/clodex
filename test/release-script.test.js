@@ -320,6 +320,20 @@ test('publish-image: refuses an untagged HEAD and moves :latest only for the new
   assert.doesNotMatch(src, /^\s+-t "\$IMAGE:latest" \\$/m);
 });
 
+test('publish-image: passes the version and the commit as build args, and the Dockerfile records both in image.json', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'scripts', 'publish-image.sh'), 'utf-8');
+  const build = src.slice(src.indexOf('docker buildx build \\'), src.indexOf('step "verify manifest"'));
+  assert.ok(build.includes('  --push \\'), 'ENTER: the build command was sliced');
+  assert.match(build, /^ {2}--build-arg CLODEX_VERSION="\$VERSION" \\$/m);
+  assert.match(build, /^ {2}--build-arg CLODEX_GIT_SHA="\$\(git rev-parse HEAD\)" \\$/m);
+  const df = fs.readFileSync(path.join(ROOT, 'docker', 'web', 'Dockerfile'), 'utf-8');
+  const lastFrom = df.lastIndexOf('\nFROM ');
+  const args = ['ARG CLODEX_VERSION=unknown', 'ARG CLODEX_GIT_SHA=unknown'].map((a) => df.indexOf(`\n${a}\n`));
+  const write = df.indexOf(`printf '{"version":"%s","rev":"%s"}\\n' "$CLODEX_VERSION" "$CLODEX_GIT_SHA" > /etc/clodex/image.json`);
+  assert.ok(write > 0, 'the Dockerfile writes both args into /etc/clodex/image.json');
+  assert.ok(args.every((i) => i > lastFrom && i < write), 'both ARGs are declared in the final stage before the write');
+});
+
 const ROLLBACK_FILES = ['package.json', 'package-lock.json', 'CHANGELOG.md', 'cli/deploy/helm/clodex/values.yaml',
   'cli/deploy/helm/clodex/Chart.yaml', 'cli/deploy/clodex-fargate.yaml'];
 

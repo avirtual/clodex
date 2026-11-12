@@ -143,8 +143,9 @@ function mirrorPath(workDir, repoKey) {
 async function ingestPack(pack, { workDir, repoKey, snap, indexTree, refs = {}, maxInputSize = DEFAULT_PACK_MAX }) {
   assertShas([snap, indexTree, ...Object.values(refs)]);
   const mirror = mirrorPath(workDir, repoKey);
-  if (!fs.existsSync(mirror)) {
-    fs.mkdirSync(path.dirname(mirror), { recursive: true });
+  if (!fs.existsSync(path.join(mirror, 'HEAD'))) {
+    fs.mkdirSync(mirror, { recursive: true });
+    fs.chmodSync(mirror, 0o700);
     await run(path.dirname(mirror), [...RUNNER_CONFIG, 'init', '-q', '--bare', mirror]);
   }
   const indexed = await tryRun(mirror, [...RUNNER_CONFIG, 'index-pack', '--stdin', '--fsck-objects', `--max-input-size=${maxInputSize}`], { input: pack });

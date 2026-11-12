@@ -112,6 +112,11 @@ function waitChild(child) {
   });
 }
 
+function jobPaths(work, id) {
+  const dir = path.join(work, 'jobs', crypto.createHash('sha256').update(String(id)).digest('hex').slice(0, 8));
+  return { dir, tree: path.join(dir, 'tree'), home: path.join(dir, 'home'), tmp: path.join(dir, 'tmp') };
+}
+
 function noneIsolation({ user = os.userInfo().username, kill = process.kill.bind(process) } = {}) {
   return {
     mode: 'none',
@@ -153,7 +158,7 @@ function userIsolation({ helper = HELPER, user = SUITE_USER, spawn = childProces
       const r = await call(['-l', helper]);
       return r.ok ? { mode: 'user' } : { mode: 'unavailable', why: r.error || `sudo -n ${helper} is not allowed` };
     },
-    prepare: (jobDir) => must('prepare', [jobDir]),
+    prepare: (jobDir, mirror) => must('prepare', [jobDir, mirror]),
     spawn({ jobDir, argv, env, spawn: sp }) {
       const pairs = Object.entries(env).map(([k, v]) => `${k}=${v}`);
       return sp('sudo', ['-n', helper, 'run', jobDir, ...pairs, '--', ...argv], {
@@ -166,14 +171,15 @@ function userIsolation({ helper = HELPER, user = SUITE_USER, spawn = childProces
   };
 }
 
-async function envIdentity({ isolation, env = process.env } = {}) {
+async function envIdentity({ isolation, env = process.env, imageFile = '/etc/clodex/image.json' } = {}) {
   const gitRun = await git(os.tmpdir(), ['--version']);
-  const image = readJson('/etc/clodex/image.json', {});
+  const image = readJson(imageFile, {});
   let clodex = null;
   try { clodex = require('./package.json').version; } catch {}
   const id = {
     runner: env.CLODEX_NODE_NAME || os.hostname(),
     clodex,
+    imageVersion: image.version || null,
     imageRev: image.rev || null,
     imageDigest: env.CLODEX_IMAGE_DIGEST || null,
     platform: process.platform,
@@ -233,6 +239,13 @@ function createSuiteRunner({
   fs.mkdirSync(storeDir, { recursive: true });
   fs.mkdirSync(path.join(work, 'jobs'), { recursive: true });
   work = fs.realpathSync(work);
+  for (const d of ['mirrors', 'deps']) {
+    fs.mkdirSync(path.join(work, d), { recursive: true });
+    fs.chmodSync(path.join(work, d), 0o711);
+  }
+  for (const name of fs.readdirSync(path.join(work, 'mirrors'))) {
+    if (name.endsWith('.git')) fs.chmodSync(path.join(work, 'mirrors', name), 0o700);
+  }
   const cacheFile = path.join(work, 'cache.json');
   const bootId = crypto.randomUUID();
   const jobs = new Map();
@@ -249,7 +262,7 @@ function createSuiteRunner({
   let identity = null;
 
   const jobStore = (id) => path.join(storeDir, id);
-  const jobWork = (id) => path.join(work, 'jobs', id);
+  const jobWork = (id) => jobPaths(work, id).dir;
   const outFile = (id, stream) => path.join(jobStore(id), stream);
   const packFile = (id) => path.join(jobStore(id), 'pack');
   const save = (job) => writeJson(path.join(jobStore(job.id), 'job.json'), job);
@@ -478,11 +491,12 @@ function createSuiteRunner({
     resetOutputs(job);
     const jobDir = jobWork(job.id);
     const tree = path.join(jobDir, 'tree');
+    const mirror = snapshot.mirrorPath(work, job.repoKey);
     forceRemove(jobDir);
     for (const d of ['home', 'tmp']) fs.mkdirSync(path.join(jobDir, d), { recursive: true });
     touchCache(path.join('mirrors', `${job.repoKey}.git`));
     const built = await snapshot.materialize({
-      mirror: snapshot.mirrorPath(work, job.repoKey), dir: tree, snap: job.snap, treeHash: job.treeHash,
+      mirror, dir: tree, snap: job.snap, treeHash: job.treeHash,
       indexTree: job.indexTree, head: job.sha, branch: job.branch || null, refs: job.refs || {},
       treeCap: lim.treeCap, tmpRoot: jobDir,
     });
@@ -497,13 +511,15 @@ function createSuiteRunner({
       writeJson(deps.marker, { ...readJson(deps.marker, {}), usedAt: now() });
       touchCache(deps.rel);
     }
-    await isolation.prepare(jobDir);
+    await isolation.prepare(jobDir, mirror);
     if (job.stop) return finish(job, { reason: job.stop, exit: null });
     if (deps && !deps.hit) {
       const r = await exec(job, jobDir, ['/bin/sh', '-c', job.setup.run], job.setup.timeoutMs || lim.setupTimeoutMs);
       if (job.stop) return finish(job, { reason: job.stop, exit: null }, r.killing);
       if (r.code !== 0) return finish(job, { reason: 'setup-failed', exit: { code: r.code, signal: r.signal || null } }, r.killing);
       forceRemove(deps.entry);
+      fs.mkdirSync(path.dirname(deps.entry), { recursive: true });
+      fs.chmodSync(path.dirname(deps.entry), 0o711);
       fs.mkdirSync(deps.entry, { recursive: true });
       await isolation.seal(jobDir, deps.entry, job.setup.paths);
       writeJson(deps.marker, { createdAt: now(), usedAt: now() });
@@ -762,4 +778,4 @@ function createSuiteRunner({
   return { info, submit, putPack, commit, poll, output, cancel, tick, start, close };
 }
 
-module.exports = { createSuiteRunner, noneIsolation, userIsolation, envIdentity, DEFAULT_LIMITS };
+module.exports = { createSuiteRunner, noneIsolation, userIsolation, envIdentity, jobPaths, DEFAULT_LIMITS };
