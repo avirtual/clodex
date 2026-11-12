@@ -10,7 +10,7 @@ const { PassThrough } = require('node:stream');
 const { execFileSync, spawnSync } = require('node:child_process');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { snapshotTree, releaseSnapshot, buildPack } = require('../suite-snapshot');
-const { createSuiteRunner, noneIsolation, userIsolation, envIdentity, jobPaths, jobPath, jobLang } = require('../suite-runner');
+const { createSuiteRunner, noneIsolation, resolveFs, userIsolation, envIdentity, jobPaths, jobPath, jobLang } = require('../suite-runner');
 
 const ENV = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_'))), GIT_AUTHOR_DATE: '2026-01-02T03:04:05Z', GIT_COMMITTER_DATE: '2026-01-02T03:04:05Z' };
 const IDENT = ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgSign=false', '-c', 'core.hooksPath=/dev/null', '-c', 'core.autocrlf=false'];
@@ -936,4 +936,52 @@ test('clodex-suite-exec prepare closes every deps entry before it opens only the
     'chmod 0700 "$e"',
     'done',
   ]);
+});
+
+test('suite-runner.js takes its fs only through resolveFs', () => {
+  const src = fs.readFileSync(SOURCE, 'utf8');
+  assert.match(src, /^const fs = resolveFs\(\);$/m);
+  assert.deepStrictEqual(src.match(/require\(\s*['"](?:node:)?fs(?:\/promises)?['"]\s*\)/g), null);
+  assert.deepStrictEqual(src.match(/load\(\s*['"][^'"]+['"]\s*\)/g), ["load('original-fs')", "load('fs')"]);
+});
+
+test('resolveFs falls back to fs when original-fs does not resolve', () => {
+  const plain = { name: 'fs' };
+  const load = (id) => { if (id === 'fs') return plain; throw Object.assign(new Error(`Cannot find module '${id}'`), { code: 'MODULE_NOT_FOUND' }); };
+  assert.strictEqual(resolveFs(load), plain);
+});
+
+test('sealing deps holding an Electron archive chmods the archive itself, not its members', async (t) => {
+  const realFs = resolveFs();
+  const root = mkTmpRoot('suite-asar-');
+  t.after(() => { spawnSync('chmod', ['-R', 'u+w', root]); realFs.rmSync(root, { recursive: true, force: true }); });
+  const jobDir = path.join(root, 'job');
+  const entry = path.join(root, 'entry');
+  const app = path.join(jobDir, 'tree', 'node_modules', 'electron');
+  realFs.mkdirSync(app, { recursive: true });
+  realFs.writeFileSync(path.join(app, 'default_app.asar'), 'archive');
+  const isArchive = (p) => p.endsWith('.asar');
+  const inArchive = (p) => p.includes('.asar/');
+  const electronFs = {
+    ...realFs,
+    lstatSync: (p) => {
+      if (inArchive(p)) return { mode: 0o644, isDirectory: () => false, isSymbolicLink: () => false, isFile: () => true };
+      if (isArchive(p)) return { mode: realFs.lstatSync(p).mode, isDirectory: () => true, isSymbolicLink: () => false, isFile: () => false };
+      return realFs.lstatSync(p);
+    },
+    readdirSync: (p, ...rest) => (isArchive(p) ? ['default_app.js'] : realFs.readdirSync(p, ...rest)),
+    chmodSync: (p, mode) => {
+      if (inArchive(p)) throw Object.assign(new Error(`ENOTDIR: not a directory, chmod '${p}'`), { code: 'ENOTDIR' });
+      realFs.chmodSync(p, mode);
+    },
+  };
+  const chmods = [];
+  const originalFs = { ...realFs, chmodSync: (p, mode) => { chmods.push(p); realFs.chmodSync(p, mode); } };
+  const io = resolveFs((id) => ({ 'original-fs': originalFs, fs: electronFs })[id]);
+  await noneIsolation({ user: 'suite-test', fs: io }).seal(jobDir, entry, ['node_modules']);
+  const archive = path.join(entry, 'node_modules', 'electron', 'default_app.asar');
+  assert.ok(chmods.includes(archive), `ENTER: ${chmods.join(', ')}`);
+  assert.deepStrictEqual(chmods.filter(inArchive), []);
+  assert.strictEqual(realFs.statSync(archive).mode & 0o222, 0);
+  assert.strictEqual(realFs.readlinkSync(path.join(jobDir, 'tree', 'node_modules')), path.join(entry, 'node_modules'));
 });

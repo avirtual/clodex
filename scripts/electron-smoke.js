@@ -71,8 +71,42 @@ check('warmth record/query round-trip', () => {
   w.close();
 });
 
-if (failures.length) {
-  console.error(`\nelectron-smoke: ${failures.length} failure(s): ${failures.join(', ')}`);
-  process.exit(1);
+function writeAsar(ofs, file, name, body) {
+  const json = Buffer.from(JSON.stringify({ files: { [name]: { size: body.length, offset: '0' } } }));
+  const padded = Buffer.alloc(Math.ceil(json.length / 4) * 4);
+  json.copy(padded);
+  const head = Buffer.alloc(16);
+  head.writeUInt32LE(4, 0);
+  head.writeUInt32LE(8 + padded.length, 4);
+  head.writeUInt32LE(4 + padded.length, 8);
+  head.writeUInt32LE(json.length, 12);
+  ofs.writeFileSync(file, Buffer.concat([head, padded, Buffer.from(body)]));
 }
-console.log('\nelectron-smoke: all green');
+
+async function sealAsar() {
+  const ofs = require('original-fs');
+  const { noneIsolation } = require(path.join(ROOT, 'suite-runner.js'));
+  const root = fs.mkdtempSync(path.join(require('os').tmpdir(), 'clodex-smoke-asar-'));
+  try {
+    const app = path.join(root, 'job', 'tree', 'node_modules', 'electron');
+    fs.mkdirSync(app, { recursive: true });
+    writeAsar(ofs, path.join(app, 'default_app.asar'), 'default_app.js', 'x');
+    if (!fs.lstatSync(path.join(app, 'default_app.asar')).isDirectory()) throw new Error('fs no longer opens .asar as a directory; this check proves nothing');
+    await noneIsolation({ user: 'smoke' }).seal(path.join(root, 'job'), path.join(root, 'entry'), ['node_modules']);
+    const sealed = ofs.lstatSync(path.join(root, 'entry', 'node_modules', 'electron', 'default_app.asar'));
+    if (!sealed.isFile() || (sealed.mode & 0o222)) throw new Error(`archive not sealed read-only: mode ${sealed.mode.toString(8)}`);
+  } finally {
+    require('child_process').spawnSync('chmod', ['-R', 'u+w', root]);
+    ofs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+(async () => {
+  try { await sealAsar(); console.log('ok   suite-runner seals deps holding an .asar'); }
+  catch (e) { failures.push('suite-runner asar seal'); console.error(`FAIL suite-runner asar seal: ${e.message}`); }
+  if (failures.length) {
+    console.error(`\nelectron-smoke: ${failures.length} failure(s): ${failures.join(', ')}`);
+    process.exit(1);
+  }
+  console.log('\nelectron-smoke: all green');
+})();
