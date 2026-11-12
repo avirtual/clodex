@@ -583,6 +583,28 @@ test('exec: a progress line after the channel closed is not sent', async (t) => 
   assert.deepStrictEqual(child.sends, [{ progress: 'runner runner-1: job queued' }]);
 });
 
+test('t2304: the channel host\'s resolvePeer answers null under a pull runner for a name that resolves to a peer row', async (t) => {
+  const sc = require('../suite-client');
+  const smPath = require.resolve('../session-manager');
+  const real = sc.createChannelHost;
+  const cached = require.cache[smPath];
+  const seen = [];
+  sc.createChannelHost = (opts) => { seen.push(opts); return real(opts); };
+  delete require.cache[smPath];
+  t.after(() => {
+    sc.createChannelHost = real;
+    if (cached) require.cache[smPath] = cached; else delete require.cache[smPath];
+  });
+  const push = { ...teamWith('all'), root: fs.realpathSync(mkTmpRoot('suite-route-tree-')) };
+  execFixture(t, 'clodex-run-tests.js', { team: push });
+  mock.timers.reset();
+  execFixture(t, 'clodex-run-tests.js', { team: { ...push, testRunner: { peer: 'runner-1', hands: 'all', wire: 'pull' } } });
+  await turns(2);
+  assert.strictEqual(seen.length, 2, 'ENTER: both exec children got a channel host');
+  assert.strictEqual(seen[0].resolvePeer('runner-1'), 'p1', 'ENTER: runner-1 resolves to a peer row under push');
+  assert.strictEqual(seen[1].resolvePeer('runner-1'), null);
+});
+
 test('exec: a local:true call under hands:all leaves the lead one ticket-loop traffic row', async (t) => {
   const client = stubClient();
   const team = { ...teamWith('all'), root: fs.realpathSync(mkTmpRoot('suite-route-tree-')) };

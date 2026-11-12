@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A shadow comparison whose runner disconnects part-way through is now recorded as skipped instead of as a disagreement.
+
 ## 5.179.0 — 2026-11-12 — A team can use a test runner that connects to it
 
 - A team can now name as its test runner a machine that connects to it, not only one it connects to: `[agent:team runner <name>]` works for a node that dials in and has allowed this one to run jobs. Such a runner is used for shadow comparisons only; when it is not connected the comparison is recorded as skipped.
