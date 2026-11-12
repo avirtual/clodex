@@ -61,6 +61,24 @@ for (const [name, text] of [['docker/web/Dockerfile', DOCKERFILE], ['docker/Dock
   });
 }
 
+test('the image creates the runner work root as clodex:clodex 0711 at the path CLODEX_SUITE_WORK defaults to, and compose mounts its volume there', () => {
+  const wiring = fs.readFileSync(path.join(__dirname, '..', 'remote-wiring.js'), 'utf8');
+  const compose = fs.readFileSync(path.join(__dirname, '..', 'docker', 'web', 'compose.yaml'), 'utf8');
+  const work = (wiring.match(/env\.CLODEX_SUITE_WORK \|\| '([^']+)'/) || [])[1];
+  assert.strictEqual(work, '/var/lib/clodex-suite');
+  const setUp = instructions(DOCKERFILE).filter((i) => /^RUN\b/.test(i) && i.includes('mkdir -p /var/lib/clodex-suite'));
+  assert.strictEqual(setUp.length, 1);
+  assert.match(setUp[0], / && chown clodex:clodex \/var\/lib\/clodex-suite \\\n && chmod 0711 \/var\/lib\/clodex-suite \\\n/);
+  const mounts = [...compose.matchAll(/^ {6}- ([a-z-]+):(\/var\/lib\/clodex-suite)$/gm)].map((m) => [m[1], m[2]]);
+  assert.deepStrictEqual(mounts, [['clodex-suite-work', '/var/lib/clodex-suite']]);
+  assert.match(compose, /^volumes:\n(?: {2}[a-z-]+:\n)*? {2}clodex-suite-work:$/m);
+});
+
+test('docker/web/Dockerfile declares no VOLUME: each container without a mount there would leave an anonymous volume behind', () => {
+  assert.ok(instructions(DOCKERFILE).some((i) => /^RUN\b/.test(i)), 'ENTER: the Dockerfile parses into instructions');
+  assert.deepStrictEqual(instructions(DOCKERFILE).filter((i) => /^VOLUME\b/i.test(i)), []);
+});
+
 test('docker/web/Dockerfile pre-creates ~/.config and ~/.codex, the state-dir bind mount points', () => {
   const mk = instructions(DOCKERFILE).filter((i) => /^RUN mkdir -p /.test(i) && i.includes('/home/clodex/.config/muse'));
   assert.strictEqual(mk.length, 1);

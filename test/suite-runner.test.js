@@ -415,6 +415,8 @@ test('a runner moves a cache index left in the work root into its data root', as
   const f = await fixture(t);
   f.runner.close();
   fs.writeFileSync(path.join(f.work, 'cache.json'), JSON.stringify({ 'deps/x/y': 7 }));
+  fs.mkdirSync(path.join(f.work, 'deps', 'x', 'y'), { recursive: true });
+  fs.writeFileSync(path.join(f.work, 'deps', 'x', 'y.json'), '{}');
   const runner = f.make();
   t.after(() => runner.close());
   assert.strictEqual(fs.existsSync(path.join(f.work, 'cache.json')), false);
@@ -526,6 +528,130 @@ test('a runner closes every deps entry and marker it finds at start', async (t) 
   assert.deepStrictEqual([path.join(f.work, 'deps'), repo, entry, `${entry}.json`].map(mode), ['711', '711', '700', '600']);
 });
 
+const settle = async () => { for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r)); };
+
+test('a runner chmods its work root to 0711 at start', async (t) => {
+  const f = await fixture(t);
+  f.runner.close();
+  fs.chmodSync(f.work, 0o755);
+  const runner = f.make();
+  t.after(() => runner.close());
+  assert.strictEqual((fs.statSync(f.work).mode & 0o777).toString(8), '711');
+});
+
+test('at start the runner reconciles the cache index with the disk as the table says', async (t) => {
+  const f = await fixture(t);
+  f.runner.close();
+  const repo = 'c'.repeat(40);
+  const rows = [
+    { name: 'a'.repeat(64), index: 11, dir: true, marker: true, want: 'kept' },
+    { name: 'b'.repeat(64), index: 12, dir: false, marker: false, want: 'dropped' },
+    { name: 'd'.repeat(64), index: null, dir: true, marker: true, want: 'removed' },
+    { name: 'e'.repeat(64), index: 13, dir: true, marker: false, want: 'removed' },
+  ];
+  const cache = {};
+  for (const row of rows) {
+    const entry = path.join(f.work, 'deps', repo, row.name);
+    if (row.dir) fs.mkdirSync(path.join(entry, 'node_modules'), { recursive: true });
+    if (row.marker) fs.writeFileSync(`${entry}.json`, '{}');
+    if (row.index != null) cache[path.join('deps', repo, row.name)] = row.index;
+  }
+  fs.mkdirSync(path.join(f.work, 'mirrors', `${'f'.repeat(40)}.git`));
+  cache[path.join('mirrors', `${'9'.repeat(40)}.git`)] = 14;
+  const cacheFile = path.join(f.root, 'suite-runner', 'cache.json');
+  fs.writeFileSync(cacheFile, JSON.stringify(cache));
+  const runner = f.make();
+  t.after(() => runner.close());
+  await settle();
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(cacheFile, 'utf8')), { [`deps/${repo}/${'a'.repeat(64)}`]: 11 });
+  assert.deepStrictEqual(listing(path.join(f.work, 'deps')), {
+    [repo]: { type: 'dir', mode: 0o711 },
+    [`${repo}/${'a'.repeat(64)}`]: { type: 'dir', mode: 0o700 },
+    [`${repo}/${'a'.repeat(64)}/node_modules`]: { type: 'dir', mode: 0o755 },
+    [`${repo}/${'a'.repeat(64)}.json`]: { type: 'file', mode: 0o600, text: '{}' },
+  }, 'ENTER: the kept row survives on disk');
+  assert.deepStrictEqual(fs.readdirSync(path.join(f.work, 'mirrors')), [`${'f'.repeat(40)}.git`]);
+});
+
+test('reconciliation finishes before the first job runs, and a later start with a live job does not run it', async (t) => {
+  let gate = null;
+  const seen = [];
+  const repo = 'c'.repeat(40);
+  const orphan = (name) => { const p = path.join(f.work, 'deps', repo, name); fs.mkdirSync(p, { recursive: true }); return p; };
+  let f = null;
+  f = await fixture(t, {
+    now: () => 1000,
+    wrap: (base) => ({
+      ...base,
+      reap: (jobDir, ...rest) => (gate ? gate.then(() => base.reap(jobDir, ...rest)) : base.reap(jobDir, ...rest)),
+      prepare: (jobDir, ...rest) => { seen.push([jobOf(jobDir), fs.existsSync(path.join(f.work, 'deps', repo, 'a'.repeat(64)))]); return base.prepare(jobDir, ...rest); },
+    }),
+    onSpawn: (c) => { if (c.job !== 'held') { c.child.stdout.write('TOTALS: 1 pass, 0 fail, 1 tests\n'); c.child.finish(0); } },
+  });
+  await f.upload(f.body('first'));
+  await waitState(f.runner, 'first', 'done');
+  f.runner.close();
+  const store = path.join(f.root, 'suite-runner', 'jobs');
+  const stored = (id, state, seq) => {
+    fs.mkdirSync(path.join(store, id), { recursive: true });
+    fs.writeFileSync(path.join(store, id, 'job.json'), JSON.stringify({ ...f.body(id), state, reason: null, exit: null, seq, queuedAt: 1, startedAt: state === 'running' ? 2 : null, endedAt: null, lastSeen: Date.now(), out: { stdoutBytes: 0, stderrBytes: 0, truncated: false } }));
+  };
+  stored('was-running', 'running', 50);
+  stored('next', 'queued', 51);
+  const stale = orphan('a'.repeat(64));
+  let release;
+  gate = new Promise((r) => { release = r; });
+  seen.length = 0;
+  const runner = f.make();
+  t.after(() => runner.close());
+  runner.start();
+  await settle();
+  assert.deepStrictEqual((await runner.poll(['next'])).jobs.map((j) => [j.id, j.state]), [['next', 'queued']]);
+  assert.deepStrictEqual([seen, fs.existsSync(stale)], [[], true], 'ENTER: reconciliation is held and no job has started');
+  release();
+  gate = null;
+  await waitState(runner, 'next', 'done');
+  assert.deepStrictEqual(seen, [['next', false]]);
+  await runner.submit(f.body('held'));
+  await waitState(runner, 'held', 'running');
+  const later = orphan('b'.repeat(64));
+  runner.start();
+  await settle();
+  assert.strictEqual(fs.existsSync(later), true);
+});
+
+test('a job whose cache entry was dropped at start is a plain miss: setup runs once and the job passes', async (t) => {
+  const onSpawn = (c) => {
+    if (c.cmd === '/bin/sh') {
+      fs.mkdirSync(path.join(c.opts.cwd, 'node_modules'));
+      fs.writeFileSync(path.join(c.opts.cwd, 'node_modules', 'x.txt'), 'built\n');
+    } else c.child.stdout.write('TOTALS: 1 pass, 0 fail, 1 tests\n');
+    c.child.finish(0);
+  };
+  const f = await fixture(t, { onSpawn });
+  const setup = { run: 'npm ci', key: ['package.json'], paths: ['node_modules'], timeoutMs: 60000 };
+  await f.upload(f.body('d1', 'hand', { setup }));
+  await waitState(f.runner, 'd1', 'done');
+  f.runner.close();
+  const repoDeps = path.join(f.work, 'deps', f.snap.repoKey);
+  const [name] = fs.readdirSync(repoDeps).filter((n) => !n.endsWith('.json'));
+  fs.chmodSync(path.join(repoDeps, name), 0o700);
+  spawnSync('chmod', ['-R', 'u+w', path.join(repoDeps, name)]);
+  fs.rmSync(path.join(repoDeps, name), { recursive: true });
+  assert.strictEqual(fs.existsSync(path.join(repoDeps, `${name}.json`)), true, 'ENTER: the marker outlived its entry');
+  f.calls.length = 0;
+  const runner = f.make();
+  t.after(() => runner.close());
+  await runner.submit(f.body('d2', 'hand', { setup }));
+  const done = await waitState(runner, 'd2', 'done');
+  assert.deepStrictEqual(f.calls.map((c) => [c.job, c.cmd === '/bin/sh' ? 'setup' : 'test']), [['d2', 'setup'], ['d2', 'test']]);
+  assert.deepStrictEqual([done.reason, done.exit], [null, { code: 0, signal: null }]);
+  assert.deepStrictEqual(listing(path.join(repoDeps, name)), {
+    node_modules: { type: 'dir', mode: 0o555 },
+    'node_modules/x.txt': { type: 'file', mode: 0o444, text: 'built\n' },
+  });
+});
+
 test('a runner moves its state from the old root into its data root, and a fresh start leaves the old root empty', async (t) => {
   const f = await fixture(t);
   f.runner.close();
@@ -535,6 +661,8 @@ test('a runner moves its state from the old root into its data root, and a fresh
   fs.mkdirSync(path.join(oldState, 'jobs', 'm1'), { recursive: true });
   fs.writeFileSync(path.join(oldState, 'jobs', 'm1', 'job.json'), JSON.stringify({ ...f.body('m1'), state: 'done', reason: null, exit: null, seq: 4, queuedAt: 1, endedAt: Date.now(), out: { stdoutBytes: 0, stderrBytes: 0, truncated: false } }));
   fs.writeFileSync(path.join(oldState, 'cache.json'), '{"deps/x/y":7}');
+  fs.mkdirSync(path.join(f.work, 'deps', 'x', 'y'), { recursive: true });
+  fs.writeFileSync(path.join(f.work, 'deps', 'x', 'y.json'), '{}');
   fs.writeFileSync(path.join(oldState, 'ledger.jsonl'), '{"id":"m1"}\n');
   const moved = f.make({ root: data, oldRoot: old });
   t.after(() => moved.close());

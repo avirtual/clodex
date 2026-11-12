@@ -17,6 +17,7 @@ blocks a release.
 - The team popover shows the team's test runner (peer, which hand runs go there, shadow mode) with its reachability and agreement tally, and can set it.
 - Test runner fixes from the first real run: jobs get short work and temp paths (Unix sockets fit), a dedicated runner works on the suite token alone, the runner reports its image version and commit, and a job can no longer read other repositories' mirrors.
 - Test runner: a job can no longer read another repository's dependency cache, and the runner's job store, cache index and ledger now live on the node's data volume so they survive a container replacement.
+- Test runner: repository mirrors and the dependency cache now live on their own volume and survive a container replacement, and the runner reconciles its cache index with the disk at start.
 
 ## 5.175.0 — 2026-11-12
 

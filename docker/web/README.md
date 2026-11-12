@@ -97,6 +97,7 @@ on volumes, which survive `down`, rebuilds, and image upgrades:
 | `clodex-dot` | `/home/clodex/.clodex` | agent registry, inter-agent messages, log |
 | `claude-auth` | `/home/clodex/.claude` | Claude login (see below) |
 | `clodex-work` | `/home/clodex/work` | the agents' workspace |
+| `clodex-suite-work` | `/var/lib/clodex-suite` | the test runner's work root: repository mirrors and the dependency cache (`mirrors/`, `deps/`) |
 
 Only `down -v` deletes the volumes — that is the "wipe everything" switch
 (sessions, login, and the work volume included).
@@ -233,6 +234,22 @@ deploying so each result names the image it ran in.
 A runner needs only `CLODEX_SUITE_RUNNER=1` and `CLODEX_SUITE_TOKEN`: with no
 `CLODEX_REMOTE_TOKEN` the wire serves hello and `/api/suite/*` to the suite
 token and refuses everything else, so the runner holds no full-control token.
+
+A runner keeps its state on two volumes, and a container replacement keeps its
+cache only when both survive: `/data` (`clodex-data`) holds the job store,
+the cache index and the ledger, and `/var/lib/clodex-suite`
+(`clodex-suite-work`) holds the repository
+mirrors and the dependency cache. The work root stays off `/data` because the
+`clodex-suite` user must traverse it and `/data` is closed to it. Keep only
+`/data` and every repo's next job uploads its full pack and reruns its setup;
+keep only the work root and the finished jobs, outputs and ledger are gone, and
+with no index the runner removes every cached dependency entry at start. At
+every start the runner reconciles the index with the disk, dropping rows whose
+entry is gone and removing dependency entries the index does not list.
+The image declares no volume there: a runner started with plain `docker run`
+must pass `-v <name>:/var/lib/clodex-suite` (a named volume, which Docker
+seeds with the directory's `clodex` owner and 0711 mode) to keep its mirrors and
+dependency cache.
 
 **The published image is a base.** It carries the engine's own Node and git,
 not any project's platform or toolchain. A team's runner runs that team's suite,

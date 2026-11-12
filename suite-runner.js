@@ -283,6 +283,7 @@ function createSuiteRunner({
   moveState(oldRoot ? statePaths(oldRoot) : null, state);
   fs.mkdirSync(path.join(work, 'jobs'), { recursive: true });
   work = fs.realpathSync(work);
+  fs.chmodSync(work, 0o711);
   for (const d of ['mirrors', 'deps']) {
     fs.mkdirSync(path.join(work, d), { recursive: true });
     fs.chmodSync(path.join(work, d), 0o711);
@@ -374,6 +375,33 @@ function createSuiteRunner({
       }
     }
     return Promise.all(reaps);
+  }
+
+  function reconcile() {
+    const cache = readJson(cacheFile, {});
+    const kept = {};
+    for (const [rel, at] of Object.entries(cache)) if (fs.existsSync(path.join(work, rel))) kept[rel] = at;
+    const depsRoot = path.join(work, 'deps');
+    for (const repo of fs.readdirSync(depsRoot)) {
+      const dir = path.join(depsRoot, repo);
+      if (!fs.lstatSync(dir).isDirectory()) continue;
+      const names = fs.readdirSync(dir);
+      const isDir = (name) => fs.lstatSync(path.join(dir, name)).isDirectory();
+      const dirs = new Set();
+      for (const name of names.filter(isDir)) {
+        const rel = path.join('deps', repo, name);
+        let marker = null;
+        try { marker = fs.lstatSync(path.join(dir, `${name}.json`)); } catch {}
+        if (rel in kept && marker && marker.isFile()) { dirs.add(name); continue; }
+        forceRemove(path.join(dir, name));
+        delete kept[rel];
+      }
+      for (const name of names) {
+        if (dirs.has(name) || (name.endsWith('.json') && dirs.has(name.slice(0, -5)))) continue;
+        forceRemove(path.join(dir, name));
+      }
+    }
+    if (JSON.stringify(kept) !== JSON.stringify(cache)) writeJson(cacheFile, kept);
   }
 
   function finishRecord(job, { reason, exit }) {
@@ -617,7 +645,7 @@ function createSuiteRunner({
   }
 
   async function maintain() {
-    if (maintenance || anyLive()) return { ran: false };
+    if (recovering || maintenance || anyLive()) return { ran: false };
     maintenance = (async () => {
       const mirrors = path.join(work, 'mirrors');
       for (const name of (fs.existsSync(mirrors) ? fs.readdirSync(mirrors) : [])) {
@@ -827,7 +855,7 @@ function createSuiteRunner({
     for (const w of [...waiters]) w.wake();
   }
 
-  recover().then(() => { recovering = false; if (pumpAfterRecovery) pump(); });
+  recover().then(reconcile).catch((e) => log(`suite-runner: reconcile failed: ${e.message}`)).then(() => { recovering = false; if (pumpAfterRecovery) pump(); });
 
   return { info, submit, putPack, commit, poll, output, cancel, tick, start, close };
 }
