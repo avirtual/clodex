@@ -9543,6 +9543,11 @@ if (prefsSuiteRunnerBlock) {
 }
 
 let prefsBoxOfferShown = null;
+let prefsBoxOfferEdited = false;
+
+function markBoxOfferEdited() {
+  prefsBoxOfferEdited = true;
+}
 
 function boxOfferWindowRow(w) {
   const row = document.createElement('div');
@@ -9575,7 +9580,7 @@ function boxOfferWindowRow(w) {
   remove.className = 'secondary';
   remove.textContent = 'Remove';
   remove.style.flex = 'none';
-  remove.addEventListener('click', () => { row.remove(); syncBoxOfferSchedule(); });
+  remove.addEventListener('click', () => { row.remove(); markBoxOfferEdited(); syncBoxOfferSchedule(); });
   row.append(remove);
   return row;
 }
@@ -9630,24 +9635,27 @@ function syncBoxOfferScope() {
   prefsBoxOfferClaims.classList.toggle('hidden', !lines.length);
 }
 
-function renderBoxOfferPrefs(st) {
+function renderBoxOfferPrefs(st, { keepForm = false } = {}) {
   prefsBoxOfferShown = st;
-  const rec = (st.forced ? st.effective : st.stored) || null;
-  prefsBoxOfferEnabled.checked = !!(rec && rec.enabled);
-  prefsBoxOfferBoxes.value = String(rec ? rec.boxes : 1);
-  prefsBoxOfferAvailability.value = rec ? rec.availability : 'always';
-  prefsBoxOfferSchedule.replaceChildren(...((rec && rec.schedule) || []).map(boxOfferWindowRow));
-  const choices = offerPeerChoices(st.peers, rec);
-  prefsBoxOfferPeers.replaceChildren(...choices.map(boxOfferPeerRow));
-  if (!choices.length) {
-    const none = document.createElement('span');
-    none.className = 'hint-text';
-    none.dataset.empty = '1';
-    none.textContent = 'No peers configured and no node has dialed in.';
-    prefsBoxOfferPeers.append(none);
+  if (!keepForm) {
+    prefsBoxOfferEdited = false;
+    const rec = (st.forced ? st.effective : st.stored) || null;
+    prefsBoxOfferEnabled.checked = !!(rec && rec.enabled);
+    prefsBoxOfferBoxes.value = String(rec ? rec.boxes : 1);
+    prefsBoxOfferAvailability.value = rec ? rec.availability : 'always';
+    prefsBoxOfferSchedule.replaceChildren(...((rec && rec.schedule) || []).map(boxOfferWindowRow));
+    const choices = offerPeerChoices(st.peers, rec);
+    prefsBoxOfferPeers.replaceChildren(...choices.map(boxOfferPeerRow));
+    if (!choices.length) {
+      const none = document.createElement('span');
+      none.className = 'hint-text';
+      none.dataset.empty = '1';
+      none.textContent = 'No peers configured and no node has dialed in.';
+      prefsBoxOfferPeers.append(none);
+    }
+    prefsBoxOfferPeerName.value = '';
+    prefsBoxOfferScope.value = rec && rec.scope === 'run' ? 'run' : 'discovery';
   }
-  prefsBoxOfferPeerName.value = '';
-  prefsBoxOfferScope.value = rec && rec.scope === 'run' ? 'run' : 'discovery';
   syncBoxOfferScope();
   prefsBoxOfferSelf.textContent = offerSelfLabelLine(st.self);
   prefsBoxOfferFacts.textContent = `This machine would announce: ${ownFactsLine(st.facts)}`;
@@ -9656,20 +9664,30 @@ function renderBoxOfferPrefs(st) {
   for (const el of prefsBoxOfferBlock.querySelectorAll('input, select, button')) el.disabled = st.forced;
 }
 
+function boxOfferKeepsForm(st) {
+  return prefsBoxOfferEdited && !!prefsBoxOfferShown && JSON.stringify(prefsBoxOfferShown.stored) === JSON.stringify(st.stored);
+}
+
 async function refreshBoxOfferPrefs() {
   if (!prefsBoxOfferBlock) return;
+  if (prefsBoxOfferShown) renderBoxOfferPrefs(prefsBoxOfferShown);
+  else for (const el of prefsBoxOfferBlock.querySelectorAll('input, select, button')) el.disabled = true;
+  prefsBoxOfferEdited = false;
   let st = null;
   try { st = await window.api.offerGet(); } catch { st = null; }
   if (!st || typeof st.forced !== 'boolean') st = null;
   prefsBoxOfferBlock.classList.toggle('hidden', !st);
-  if (st) renderBoxOfferPrefs(st);
+  if (st) renderBoxOfferPrefs(st, { keepForm: boxOfferKeepsForm(st) });
 }
 
 if (prefsBoxOfferBlock) {
+  prefsBoxOfferBlock.addEventListener('input', markBoxOfferEdited);
+  prefsBoxOfferBlock.addEventListener('change', markBoxOfferEdited);
   prefsBoxOfferAvailability.addEventListener('change', syncBoxOfferSchedule);
   prefsBoxOfferScope.addEventListener('change', syncBoxOfferScope);
   prefsBoxOfferScheduleAdd.addEventListener('click', () => {
     prefsBoxOfferSchedule.append(boxOfferWindowRow({ days: [1, 2, 3, 4, 5], from: '09:00', to: '17:00' }));
+    markBoxOfferEdited();
     syncBoxOfferSchedule();
   });
   const addBoxOfferPeer = () => {

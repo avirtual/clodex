@@ -5,6 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
+const os = require('node:os');
 const { createOfferDirectory, createDialerLog, setNotifying } = require('../offer-directory');
 const { RemoteServer } = require('../remote');
 const { offerCallbacks } = require('../remote-wiring');
@@ -21,7 +22,7 @@ function ipcFixture({ initial = null, forced = false, envOffer = null, rawStored
   const deps = {
     handle: (ch, fn) => handlers.set(ch, fn),
     on: (ch, fn) => handlers.set(ch, fn),
-    enableDrawerServices: true,
+    enableTestBoxes: true,
     uiSettings: {
       get: () => store,
       set: (patch) => { calls.set.push(patch); Object.assign(store, patch); return store; },
@@ -110,20 +111,79 @@ test('settings:set drops a boxOffer key', () => {
   assert.strictEqual(store.boxOffer, null);
 });
 
-test('the web surface registers no offer channel; the desktop surface registers all three', () => {
-  const capture = (enableDrawerServices) => {
+test('the test-box handlers ride their own seam, not the drawer gate', () => {
+  const capture = (enableTestBoxes) => {
     const registered = new Set();
-    const target = { handle: (ch) => registered.add(ch), on: (ch) => registered.add(ch), enableDrawerServices, enableLocalTerminal: true, enableCtl: true };
+    const target = { handle: (ch) => registered.add(ch), on: (ch) => registered.add(ch), enableDrawerServices: false, enableTestBoxes, enableLocalTerminal: true, enableCtl: true };
     require('../ipc-handlers').registerIpcHandlers(new Proxy(target, {
       get(t, prop) { return prop in t ? t[prop] : () => {}; },
       has(t, prop) { return prop in t; },
     }));
     return registered;
   };
-  const web = capture(false);
-  assert.ok(web.has('session:list'), 'ENTER: the registrar ran');
-  assert.deepStrictEqual([...web].filter((ch) => ch.startsWith('offer:')), []);
-  assert.deepStrictEqual([...capture(true)].filter((ch) => ch.startsWith('offer:')).sort(), ['offer:directory', 'offer:get', 'offer:set']);
+  const off = capture(false);
+  assert.ok(off.has('session:list'), 'ENTER: the registrar ran');
+  assert.deepStrictEqual([...off].filter((ch) => ch.startsWith('offer:') || ch.startsWith('suiteRunner:')), []);
+  const on = capture(true);
+  assert.deepStrictEqual([...on].filter((ch) => ch.startsWith('offer:') || ch.startsWith('suiteRunner:')).sort(),
+    ['offer:directory', 'offer:get', 'offer:set', 'suiteRunner:get', 'suiteRunner:set']);
+  assert.ok(!on.has('drawer:armSelection'), 'the drawer gate stays shut');
+});
+
+test('the web host answers suiteRunner:get and offer:get and still refuses an unconfirmed run offer', async () => {
+  const { createWebHost } = require('../web-host');
+  const store = { boxOffer: null, suiteRunner: null, peers: [{ label: 'murmur' }], terminalReports: 'on' };
+  const sets = [];
+  const runner = { setting: null, forced: [], remoteEnabled: false, status: 'off', error: null };
+  const handlers = new Map();
+  const silent = { info() {}, warn() {}, error() {} };
+  const host = createWebHost({
+    engine: {
+      stores: { uiSettings: { get: () => store, set: (patch) => { sets.push(patch); Object.assign(store, patch); return store; } } },
+      enableTestBoxes: false,
+      manager: { _broadcast() {} },
+      getBoxOffer: () => store.boxOffer,
+      boxOfferForced: false,
+      readStoredBoxOffer: () => store.boxOffer,
+      getOfferFacts: () => FACTS,
+      readOfferFacts: async () => FACTS,
+      suiteRunnerState: () => runner,
+      offerDirectory: createOfferDirectory(),
+      dialers: createDialerLog(),
+      SELF_LABEL: 'workbox',
+      wirescope: { autoStartWanted: () => false, stop() {} },
+    },
+    log: silent,
+    port: 0,
+    host: '127.0.0.1',
+    userDataPath: os.tmpdir(),
+    registerHandlers: (deps) => {
+      const capture = { ...deps, handle: (ch, fn) => handlers.set(ch, fn), on: (ch, fn) => handlers.set(ch, fn) };
+      require('../ipc-handlers').registerIpcHandlers(new Proxy(capture, {
+        get(target, prop) {
+          if (typeof prop === 'string' && prop.startsWith('enable')) return target[prop];
+          return prop in target ? target[prop] : () => () => {};
+        },
+        has(target, prop) { return prop in target; },
+      }));
+    },
+  });
+  try {
+    assert.ok(handlers.has('session:list'), "ENTER: the registrar ran against the web host's own deps");
+    assert.ok(!handlers.has('drawer:armSelection'), 'the drawer services stay off the web surface');
+    assert.deepStrictEqual(await handlers.get('suiteRunner:get')({}), { setting: null, forced: [], remoteEnabled: false, status: 'off', error: null });
+    assert.deepStrictEqual(await handlers.get('offer:get')({}), {
+      self: 'workbox', stored: null, effective: null, forced: false, warning: null, facts: FACTS,
+      peers: [{ name: 'murmur', from: 'peer' }], runner: { status: 'off', isolation: null }, claims: [],
+    });
+    const res = await handlers.get('offer:set')({}, { ...VALID, scope: 'run' });
+    assert.strictEqual(res.ok, false);
+    assert.strictEqual(res.error, 'a run offer needs the confirmed list of the peers it authorises');
+    assert.deepStrictEqual(sets, []);
+    assert.strictEqual(store.boxOffer, null);
+  } finally {
+    host.close();
+  }
 });
 
 test('no module but ipc-handlers writes the box offer setting', () => {

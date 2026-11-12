@@ -103,9 +103,9 @@ test('engine: enableLocalTerminal defaults ON and is INDEPENDENT of the drawer f
   // would all pass against a single flag aliased under several names.
   const declined = mkEngine({ enableDrawerServices: false });
   assert.deepStrictEqual(
-    { drawer: declined.enableDrawerServices, localTerminal: declined.enableLocalTerminal, console: declined.enableConsole, ctl: declined.enableCtl },
-    { drawer: false, localTerminal: true, console: true, ctl: true },
-    'declining drawer services must not drag the local terminal, the console or the clodexctl runner down with it',
+    { drawer: declined.enableDrawerServices, localTerminal: declined.enableLocalTerminal, console: declined.enableConsole, ctl: declined.enableCtl, testBoxes: declined.enableTestBoxes },
+    { drawer: false, localTerminal: true, console: true, ctl: true, testBoxes: true },
+    'declining drawer services must not drag the local terminal, the console, the clodexctl runner or the test boxes down with it',
   );
 });
 
@@ -136,7 +136,7 @@ test('web-host hands registerIpcHandlers enableDrawerServices:false', () => {
   const host = createWebHost({
     // Every flag carries the value web-host must OVERRIDE, so a spread-ordering
     // mistake shows up as the engine's value surviving rather than as a match.
-    engine: { stores: {}, enableDrawerServices: true, enableLocalTerminal: false, enableCtl: false, enableConsole: false },
+    engine: { stores: {}, enableDrawerServices: true, enableLocalTerminal: false, enableCtl: false, enableConsole: false, enableTestBoxes: false },
     log: silentLog,
     port: 0,
     host: '127.0.0.1',
@@ -157,9 +157,9 @@ test('web-host hands registerIpcHandlers enableDrawerServices:false', () => {
     assert.ok('enableConsole' in seen, 'the console flag must be present, not absent');
     assert.ok('enableCtl' in seen, 'the ctl flag must be present, not absent');
     assert.deepStrictEqual(
-      { drawer: seen.enableDrawerServices, localTerminal: seen.enableLocalTerminal, console: seen.enableConsole, ctl: seen.enableCtl },
-      { drawer: false, localTerminal: true, console: true, ctl: true },
-      'web surface: drawer services declined, local drawer terminal, console and clodexctl granted',
+      { drawer: seen.enableDrawerServices, localTerminal: seen.enableLocalTerminal, console: seen.enableConsole, ctl: seen.enableCtl, testBoxes: seen.enableTestBoxes },
+      { drawer: false, localTerminal: true, console: true, ctl: true, testBoxes: true },
+      'web surface: drawer services declined, local drawer terminal, console, clodexctl and the test boxes granted',
     );
   } finally {
     host.close();

@@ -273,6 +273,7 @@ function createWebHost({ engine, log, port, host, token, insecure = false, trust
     // than left to the engine default so this host's answer is readable here,
     // beside the refusal it deliberately does not share.
     enableLocalTerminal: true,
+    enableTestBoxes: true,
     enableCtl: true,
     enableConsole: true,
     enableAccounts: true,

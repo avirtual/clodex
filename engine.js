@@ -197,6 +197,8 @@ function createEngine({ userDataPath, seams = {}, log }) {
   // Desktop-only, and this flag is the boundary, not the renderer's `available()`:
   // web-host.js dispatches any registered channel by name without consulting api-contract.
   const enableDrawerServices = seams.enableDrawerServices !== false;
+
+  const enableTestBoxes = seams.enableTestBoxes !== false;
   const enableCtl = seams.enableCtl !== false;
   // Split off enableDrawerServices and defaults ON: `wterm:*` spawns `$SHELL` on this box, which
   // the ungated `session:create` (type 'bash') already reaches. Still gates the pty service.
@@ -2526,6 +2528,7 @@ const toolCache = createToolCache({ whichBin });
     getSandbox: (boxId) => (sandboxManager ? sandboxManager.get(boxId) : null),
     getSandboxManager: () => sandboxManager,
     enableDrawerServices,
+    enableTestBoxes,
     enableCtl,
     enableLocalTerminal,
     enableConsole,

@@ -104,7 +104,7 @@ function ipcFixture({ busy = false, initial = null } = {}) {
   const deps = {
     handle: (ch, fn) => handlers.set(ch, fn),
     on: (ch, fn) => handlers.set(ch, fn),
-    enableDrawerServices: true,
+    enableTestBoxes: true,
     uiSettings: {
       get: () => store,
       set: (patch) => { calls.set.push(patch); Object.assign(store, patch); return store; },
@@ -164,19 +164,19 @@ test('settings:set cannot write the test runner setting', () => {
   assert.strictEqual(store.suiteRunner, null);
 });
 
-test('the web surface registers no suiteRunner channel; the desktop surface registers both', () => {
-  const capture = (enableDrawerServices) => {
+test('the suiteRunner channels follow enableTestBoxes, not enableDrawerServices', () => {
+  const capture = (enableTestBoxes) => {
     const registered = new Set();
-    const target = { handle: (ch) => registered.add(ch), on: (ch) => registered.add(ch), enableDrawerServices, enableLocalTerminal: true, enableCtl: true };
+    const target = { handle: (ch) => registered.add(ch), on: (ch) => registered.add(ch), enableDrawerServices: false, enableTestBoxes, enableLocalTerminal: true, enableCtl: true };
     require('../ipc-handlers').registerIpcHandlers(new Proxy(target, {
       get(t, prop) { return prop in t ? t[prop] : () => {}; },
       has(t, prop) { return prop in t; },
     }));
     return registered;
   };
-  const web = capture(false);
-  assert.ok(web.has('session:list'), 'ENTER: the registrar ran');
-  assert.deepStrictEqual([...web].filter((ch) => ch.startsWith('suiteRunner:')), []);
+  const off = capture(false);
+  assert.ok(off.has('session:list'), 'ENTER: the registrar ran');
+  assert.deepStrictEqual([...off].filter((ch) => ch.startsWith('suiteRunner:')), []);
   assert.deepStrictEqual([...capture(true)].filter((ch) => ch.startsWith('suiteRunner:')).sort(), ['suiteRunner:get', 'suiteRunner:set']);
 });
 

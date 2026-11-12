@@ -119,7 +119,7 @@ function registerIpcHandlers(deps) {
     getUpdateInfo, getReleasesCache,
     getWebTunnelManager, openPeerWeb, closePeerWeb,
     getSandbox, getSandboxManager,
-    enableDrawerServices, enableCtl, enableLocalTerminal, enableConsole, enableAccounts, getCtlService, getBashLive, getDrawerPtys, workspaceOfSenderStrict,
+    enableDrawerServices, enableTestBoxes, enableCtl, enableLocalTerminal, enableConsole, enableAccounts, getCtlService, getBashLive, getDrawerPtys, workspaceOfSenderStrict,
     accounts, moveAccountByModel,
     syncTerminalReports,
     getPluginHost, getPluginLoader, listAllTemplates, listAllPrompts, surfaceOfSender, secureTransportOfSender,
@@ -1857,7 +1857,7 @@ function registerIpcHandlers(deps) {
     log.info('peer', `terminal sharing ${on ? 'ENABLED' : 'revoked'}`);
     return { ok: true };
   });
-  if (enableDrawerServices) {
+  if (enableTestBoxes) {
     handle('suiteRunner:get', () => suiteRunnerState());
     handle('suiteRunner:set', (_e, rec) => {
       const clean = rec === null ? null : sanitizeSuiteRunner(rec);
