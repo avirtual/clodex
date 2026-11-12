@@ -919,7 +919,35 @@ test('checkoutDetached: the fallback fetch runs with a timeout and no terminal p
   assert.deepStrictEqual(calls.map((c) => c.args[0]), ['rev-parse', 'rev-parse', 'fetch', 'rev-parse']);
 });
 
-test('relativizeWorktreePointers: an in-root tree survives a copy of the repo to another path, with no extension set', { skip: !gitAvailable() }, async () => {
+test('relativePointersRefusal: git below 2.48, or an unreadable version, is refused with the version found and the one needed', () => {
+  const rows = [
+    ['git version 2.39.5 (Apple Git-154)', 'git 2.39.5 cannot read relative worktree pointers (its worktree prune would delete the tree); git 2.48 or newer is needed'],
+    ['2.47.1', 'git 2.47.1 cannot read relative worktree pointers (its worktree prune would delete the tree); git 2.48 or newer is needed'],
+    ['2.48.0', null],
+    ['2.52.0', null],
+    ['', 'the git version could not be read; relative worktree pointers need git 2.48 or newer'],
+  ];
+  for (const [version, want] of rows) {
+    assert.strictEqual(wt.relativePointersRefusal({ readVersion: () => version }), want, version);
+  }
+  const thrown = wt.relativePointersRefusal({ readVersion: () => { throw new Error('spawn git ENOENT'); } });
+  assert.strictEqual(thrown, 'the git version could not be read; relative worktree pointers need git 2.48 or newer');
+});
+
+test('relativizeWorktreePointers: below git 2.48 it refuses and leaves both pointers absolute', { skip: !gitAvailable() }, async () => {
+  const repo = makeRepo();
+  const r = await wt.createWorktree(repo, 'b1', { base: 'HEAD', targetPath: path.join(repo, '.clodex-wt', 'b1') });
+  assert.strictEqual(r.ok, true, r.error);
+  const dotGit = fs.readFileSync(path.join(r.path, '.git'), 'utf8');
+  const admin = fs.readFileSync(path.join(repo, '.git', 'worktrees', 'b1', 'gitdir'), 'utf8');
+  const rel = wt.relativizeWorktreePointers(repo, r.path, { readVersion: () => 'git version 2.39.5 (Apple Git-154)' });
+  assert.deepStrictEqual(rel, { ok: false, error: 'git 2.39.5 cannot read relative worktree pointers (its worktree prune would delete the tree); git 2.48 or newer is needed' });
+  assert.strictEqual(fs.readFileSync(path.join(r.path, '.git'), 'utf8'), dotGit);
+  assert.strictEqual(fs.readFileSync(path.join(repo, '.git', 'worktrees', 'b1', 'gitdir'), 'utf8'), admin);
+  assert.ok(path.isAbsolute(dotGit.replace(/^gitdir:\s*/, '').trim()), dotGit);
+});
+
+test('relativizeWorktreePointers: an in-root tree survives a copy of the repo to another path, with no extension set', { skip: !gitAvailable() || wt.relativePointersRefusal() || false }, async () => {
   const repo = makeRepo();
   const r = await wt.createWorktree(repo, 'b1', { base: 'HEAD', targetPath: path.join(repo, '.clodex-wt', 'b1') });
   assert.strictEqual(r.ok, true, r.error);

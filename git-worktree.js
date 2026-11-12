@@ -83,8 +83,29 @@ function defaultWorktreePath(repoTop, branch) {
   return path.join(path.dirname(repoTop), `${repoName}-${safeBranch}`);
 }
 
-function relativizeWorktreePointers(repoTop, treePath) {
+let hostGitVersion = null;
+
+function relativePointersRefusal({ readVersion = null } = {}) {
+  let text = null;
+  if (readVersion) {
+    try { text = readVersion(); } catch { text = null; }
+  } else {
+    if (!hostGitVersion) {
+      const r = gitSync(os.tmpdir(), ['--version']);
+      if (r.ok && /\d+\.\d+/.test(r.stdout)) hostGitVersion = r.stdout;
+    }
+    text = hostGitVersion;
+  }
+  const v = /(\d+)\.(\d+)(?:\.(\d+))?/.exec(String(text || ''));
+  if (!v) return 'the git version could not be read; relative worktree pointers need git 2.48 or newer';
+  if (+v[1] > 2 || (+v[1] === 2 && +v[2] >= 48)) return null;
+  return `git ${v[0]} cannot read relative worktree pointers (its worktree prune would delete the tree); git 2.48 or newer is needed`;
+}
+
+function relativizeWorktreePointers(repoTop, treePath, { readVersion = null } = {}) {
   const real = (p) => { try { return fs.realpathSync(p); } catch { return path.resolve(p); } };
+  const refusal = relativePointersRefusal({ readVersion });
+  if (refusal) return { ok: false, error: refusal };
   try {
     const top = real(String(repoTop));
     const tree = real(String(treePath));
@@ -847,5 +868,5 @@ module.exports = {
   repoToplevel, createWorktree, removeWorktree, isDirty, defaultWorktreePath,
   defaultBranch, defaultBranchSync, mergeTargetFor, mergeTargetForSync, localBranches, repoInfo, listWorktrees, commitsOnBranch, isMerged, deleteBranch, deleteBranchIfAt,
   diffText, diffNames, mergeBase, fileAt, currentBranch, mergeNoFf, mergeCheck, revertCommit, initRepo, hasCommit,
-  checkoutDetached, headSha, headShaSync, headLogSync, revParse, refState, relativizeWorktreePointers, git,
+  checkoutDetached, headSha, headShaSync, headLogSync, revParse, refState, relativizeWorktreePointers, relativePointersRefusal, git,
 };

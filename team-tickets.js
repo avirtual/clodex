@@ -5705,6 +5705,14 @@ function createTicketMethods(deps, shared) {
     },
 
     async _mintRemoteTicketTree(team, ticketId, branch, reply, assignee) {
+      const oldGit = gitWorktree.relativePointersRefusal();
+      if (oldGit) {
+        const all = ticketsStore.load(team.root);
+        const rec = all.find((x) => x.id === ticketId);
+        if (rec) { rec.startedAt = null; ticketsStore.save(team.root, all); }
+        reply(`ticket ${ticketId}: worktree "${branch}" could not be created (${oldGit}) — nothing sent, ticket left assigned to "${assignee}" and unstarted`);
+        return null;
+      }
       const { targetPath } = this._inRootTreeTarget(team, branch);
       const base = await this._rootBaseBranch(team);
       if (base.error) {
