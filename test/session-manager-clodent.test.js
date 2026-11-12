@@ -21,13 +21,14 @@ const { buildSkillPlugin, skillMd, parseSkillFrontmatter } = require('../skills-
 const RESUME = '6a1f0c2e-1111-4222-8333-944455556666';
 const WIRE_BASE = 'http://127.0.0.1:9/wire';
 
-function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entries = {}, probeClodentVersion = () => 'clodent 0.5.2\n', wire = false, library = null } = {}) {
+function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entries = {}, probeClodentVersion = () => 'clodent 0.5.2\n', wire = false, library = null, streamSeat = null } = {}) {
   const root = mkTmpRoot('clodex-clodent-');
   const home = pathReal.join(root, 'home');
   fsReal.mkdirSync(home, { recursive: true });
   const cwd = pathReal.join(root, 'proj.x');
   fsReal.mkdirSync(cwd, { recursive: true });
   const spawns = [];
+  const removals = [];
   const hooks = [];
   const watchers = [];
   const probes = [];
@@ -84,7 +85,7 @@ function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entrie
     crypto: require('node:crypto'),
     effectiveInjectedSkills: () => (library ? library.skills : []),
     probeClodentVersion,
-    getPersistence: () => ({ list: () => [], get: (n) => entries[n] || null, upsert: () => {}, setSessionId: () => {}, remove: () => {} }),
+    getPersistence: () => ({ list: () => [], get: (n) => entries[n] || null, upsert: () => {}, setSessionId: () => {}, remove: (n) => { removals.push(n); } }),
     getUiSettings: () => ({ get: () => ({}) }),
     getEnvScopes: () => ({ all: () => ({ global: {}, workspaces: {} }) }),
     getUserDataPath: () => root,
@@ -124,7 +125,11 @@ function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entrie
     drainPending: require('../pending-store').drainPending,
     countPending: require('../pending-store').countPending,
     hasActivePending: require('../pending-store').hasActivePending,
-    spawnStreamSeat: (o) => { spawns.push({ cmd: o.cmd, args: o.args, opts: { env: o.env } }); return { pid: 998, startedAt: 1, startTime: 1, stderrTail: '', send: () => Promise.resolve(), close() {}, kill() {} }; },
+    spawnStreamSeat: (o) => {
+      spawns.push({ cmd: o.cmd, args: o.args, opts: { env: o.env } });
+      const seat = { pid: 998, startedAt: 1, startTime: 1, stderrTail: '', send: () => Promise.resolve(), close() {}, kill() {} };
+      return streamSeat ? streamSeat(o, seat, spawns.length) : seat;
+    },
     notifyOS: () => {},
     collectSystemDiagnostics: () => ({}),
     whichBin: () => null,
@@ -169,7 +174,7 @@ function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entrie
   const link = (name) => pathForReal(root, name, 'transcript');
   const agentDir = (name) => pathReal.join(root, 'agent-plugins', name);
   const bundleDir = (name) => pathReal.join(root, 'bundles', name, 'bundle-a');
-  return { m, root, home, cwd, skillPluginsDir, spawns, hooks, watchers, probes, registers, hints, broadcasts, skillCalls, mcpWrites, cleanups, create, stop, settings, prompt, link, agentDir, bundleDir, wireRegs };
+  return { m, root, home, cwd, skillPluginsDir, spawns, removals, hooks, watchers, probes, registers, hints, broadcasts, skillCalls, mcpWrites, cleanups, create, stop, settings, prompt, link, agentDir, bundleDir, wireRegs };
 }
 
 function noMcpFlags(args) {
@@ -716,4 +721,90 @@ test('clodent message cache: the spawn-time idle clear reaches the first spawn, 
     { cacheTtl: '1h', messageCacheTtl: '5m' },
   ]);
   assert.deepStrictEqual(f.spawns.map((s) => s.args.filter((a) => String(a).startsWith('--message-cache'))), [[], []]);
+});
+
+const STREAM_HEAD = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'];
+
+async function settle(cond) {
+  for (let i = 0; i < 500 && !cond(); i++) await new Promise((r) => setImmediate(r));
+}
+
+for (const [label, lastClear, want] of [
+  ['an idle-cleared seat with no turn since starts a fresh conversation', { at: 1, reason: 'idle', pending: true }, 'fresh'],
+  ['an idle-cleared seat with a turn since resumes its id', { at: 1, reason: 'idle', pending: false }, 'resume'],
+]) {
+  test(`stream resume: ${label}`, async () => {
+    const f = mkClodent({ entries: { seat: { name: 'seat', type: 'clodent', io: 'stream', sessionId: RESUME, lastClear } } });
+    await f.create('seat', { io: 'stream', resumeId: RESUME });
+    try {
+      assert.strictEqual(f.spawns.length, 1, 'ENTER: one stream spawn');
+      const args = f.spawns[0].args;
+      assert.deepStrictEqual(args.slice(0, 6), STREAM_HEAD);
+      if (want === 'fresh') {
+        assert.strictEqual(args[6], '--session-id');
+        assert.ok(!args.includes('--resume'), 'no --resume in the argv');
+        assert.ok(!args.includes(RESUME), 'the cleared id is not in the argv');
+      } else {
+        assert.deepStrictEqual(args.slice(6, 8), ['--resume', RESUME]);
+      }
+    } finally { f.stop('seat'); }
+  });
+}
+
+function mkRefusing({ stderr, failSecond = false }) {
+  const entries = { seat: { name: 'seat', type: 'clodent', io: 'stream', sessionId: RESUME, workspaceId: 'ws', env: { ANTHROPIC_API_KEY: 'sk-test' } } };
+  const f = mkClodent({
+    entries,
+    streamSeat: (o, seat, n) => {
+      if (n === 1) {
+        seat.stderrTail = stderr;
+        setImmediate(() => o.onClose(2, null));
+      }
+      if (n === 2 && failSecond) throw new Error('second spawn failed');
+      return seat;
+    },
+  });
+  entries.seat.cwd = f.cwd;
+  const failed = [];
+  f.m._sendRespawnFailed = (name, entry, error) => failed.push({ name, error, kept: entry === entries.seat });
+  return { f, failed };
+}
+
+test('stream resume: a resume the CLI refuses respawns exactly once as a fresh conversation and keeps the record', async () => {
+  const { f, failed } = mkRefusing({ stderr: `clodent: no session ${RESUME}\n` });
+  await f.create('seat', { io: 'stream', resumeId: RESUME });
+  try {
+    await settle(() => f.spawns.length >= 2 && f.m.sessions.has('seat'));
+    await settle(() => false);
+    assert.strictEqual(f.spawns.length, 2, 'ENTER: the refused resume and one fresh respawn');
+    assert.deepStrictEqual(f.spawns[0].args.slice(6, 8), ['--resume', RESUME]);
+    assert.strictEqual(f.spawns[1].args[6], '--session-id');
+    assert.ok(!f.spawns[1].args.includes('--resume'), 'the respawn carries no --resume');
+    assert.ok(f.m.sessions.has('seat'), 'the seat is live again');
+    assert.deepStrictEqual(f.removals, []);
+    assert.deepStrictEqual(failed, []);
+  } finally { f.stop('seat'); }
+});
+
+test('stream resume: an early exit without the no-session line is not retried', async () => {
+  const { f } = mkRefusing({ stderr: 'clodent: ANTHROPIC_API_KEY is not set\n' });
+  await f.create('seat', { io: 'stream', resumeId: RESUME });
+  try {
+    await settle(() => !f.m.sessions.has('seat'));
+    await settle(() => false);
+    assert.ok(!f.m.sessions.has('seat'), 'ENTER: the seat exited');
+    assert.strictEqual(f.spawns.length, 1);
+  } finally { f.stop('seat'); }
+});
+
+test('stream resume: a failed fresh respawn yields the failed row and never removes the record', async () => {
+  const { f, failed } = mkRefusing({ stderr: `clodent: no session ${RESUME}\n`, failSecond: true });
+  await f.create('seat', { io: 'stream', resumeId: RESUME });
+  try {
+    await settle(() => failed.length > 0);
+    await settle(() => false);
+    assert.strictEqual(f.spawns.length, 2, 'ENTER: the refused resume and one fresh attempt');
+    assert.deepStrictEqual(failed, [{ name: 'seat', error: 'second spawn failed', kept: true }]);
+    assert.deepStrictEqual(f.removals, []);
+  } finally { f.stop('seat'); }
 });
