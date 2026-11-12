@@ -4,6 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const {
   PEER_NOTE, ownFactsLine, peerOfferLine, peerChoices, peerNameToAdd, selfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText,
+  runIsolationLine, runConsentText, offerRunnerFrom, RUN_PEER_NOTE,
 } = require('../renderer/lib/offer-view');
 const { sanitizeBoxOffer } = require('../box-offer');
 
@@ -98,4 +99,50 @@ test('status text: forced, invalid stored, off, on', () => {
   assert.strictEqual(offerStatusText({ forced: false, warning: 'stored offer invalid, treated as off', effective: null }), 'Stored offer invalid, treated as off.');
   assert.strictEqual(offerStatusText({ forced: false, warning: null, effective: null }), 'Off.');
   assert.strictEqual(offerStatusText({ forced: false, warning: null, effective: { enabled: true } }), 'Announced to the ticked peers at the next hello.');
+});
+
+test('the form record carries scope run only when run is chosen', () => {
+  const run = offerRecordFromForm({ scope: 'run', enabled: true, boxes: '1', availability: 'always', schedule: [], peers: ['murmur'] });
+  assert.deepStrictEqual(run, { scope: 'run', enabled: true, boxes: 1, availability: 'always', peers: [{ name: 'murmur' }] });
+  assert.deepStrictEqual(sanitizeBoxOffer(run), run);
+  assert.strictEqual(offerRecordFromForm({ scope: 'other', enabled: true, boxes: '1', availability: 'always', peers: [] }).scope, 'discovery');
+});
+
+test('the run line states the isolation in force, or that the runner is off', () => {
+  assert.strictEqual(runIsolationLine({ status: 'running', isolation: 'none' }), "Jobs run through this machine's test runner, isolation none: suites run as this user, unisolated.");
+  assert.strictEqual(runIsolationLine({ status: 'starting', isolation: 'user' }), "Jobs run through this machine's test runner, isolation user: suites run as a separate user account.");
+  assert.strictEqual(runIsolationLine({ status: 'off', isolation: 'none' }), 'Test runner is off: nothing runs until it is turned on above.');
+  assert.strictEqual(runIsolationLine(null), 'Test runner is off: nothing runs until it is turned on above.');
+});
+
+test('the run confirmation lists every peer being authorised and the isolation', () => {
+  assert.strictEqual(
+    runConsentText(['murmur', 'laptop'], { status: 'running', isolation: 'none' }),
+    "These peers may run their teams' test jobs on this machine:\n  murmur\n  laptop\n\nJobs run through this machine's test runner, isolation none: suites run as this user, unisolated.\n\nAllow?",
+  );
+  assert.strictEqual(
+    runConsentText([], { status: 'off', isolation: 'user' }),
+    'No peer is ticked: no one may run test jobs here until one is.\n\nTest runner is off: nothing runs until it is turned on above.\n\nAllow?',
+  );
+});
+
+const RUNNER_ROWS = [
+  ['running with isolation none', { setting: null, forced: [], effective: { isolation: 'none', work: '/w' }, status: 'running' }, { status: 'running', isolation: 'none' }],
+  ['starting with isolation user', { setting: null, forced: [], effective: { isolation: 'user', work: '/w' }, status: 'starting' }, { status: 'starting', isolation: 'user' }],
+  ['off', { setting: null, forced: [], effective: { isolation: 'user', work: '/w' }, status: 'off' }, { status: 'off', isolation: 'user' }],
+  ['no state', null, null],
+];
+
+for (const [label, st, want] of RUNNER_ROWS) {
+  test(`offerRunnerFrom: ${label}`, () => {
+    assert.deepStrictEqual(offerRunnerFrom(st), want);
+  });
+}
+
+test('the run line names phone access when the runner waits for it', () => {
+  assert.strictEqual(runIsolationLine({ status: 'needs-remote', isolation: 'none' }), 'Test runner needs phone access: nothing runs until it is turned on above.');
+});
+
+test('the run peer note does not claim the list is exclusive', () => {
+  assert.strictEqual(RUN_PEER_NOTE, 'The ticked peers may run test jobs here while the offer is on and open. A node that dials this machine is named by its own label, which is its hostname unless it set one.');
 });

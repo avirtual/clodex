@@ -1394,7 +1394,7 @@
         </div>
         <div id="prefs-box-offer-block">
           <h5 style="margin-top: 14px;">Offer test boxes</h5>
-          <p class="hint-text">Tells the peers you tick below that this machine offers test boxes. Discovery only: nothing is built or run here. Applies when you press Apply; peers see the change at their next hello.</p>
+          <p class="hint-text">Tells the peers you tick below that this machine offers test boxes. Applies when you press Apply; peers see the change at their next hello.</p>
           <label class="prefs-check">
             <input type="checkbox" id="prefs-box-offer-enabled">
             <span>Offer test boxes from this machine</span>
@@ -1408,6 +1408,14 @@
               <option value="schedule">On a schedule</option>
             </select>
           </div>
+          <div class="prefs-row" style="margin-top: 6px;">
+            <span>Ticked peers may</span>
+            <select id="prefs-box-offer-scope" style="flex: none;">
+              <option value="discovery">see this offer</option>
+              <option value="run">see it and run their teams' test jobs on this machine</option>
+            </select>
+          </div>
+          <p id="prefs-box-offer-run-note" class="hint-text hidden"></p>
           <div id="prefs-box-offer-schedule" class="hidden" style="margin-top: 6px;"></div>
           <button id="prefs-box-offer-schedule-add" class="secondary hidden" type="button" style="margin-top: 4px;">Add window</button>
           <div id="prefs-box-offer-peers" style="margin-top: 6px;"></div>

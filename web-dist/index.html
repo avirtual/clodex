@@ -10098,7 +10098,8 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
 #prefs-suite-runner-none-note.hidden,
 #prefs-box-offer-block.hidden,
 #prefs-box-offer-schedule.hidden,
-#prefs-box-offer-schedule-add.hidden {
+#prefs-box-offer-schedule-add.hidden,
+#prefs-box-offer-run-note.hidden {
   display: none;
 }
 
@@ -11529,7 +11530,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         </div>
         <div id="prefs-box-offer-block">
           <h5 style="margin-top: 14px;">Offer test boxes</h5>
-          <p class="hint-text">Tells the peers you tick below that this machine offers test boxes. Discovery only: nothing is built or run here. Applies when you press Apply; peers see the change at their next hello.</p>
+          <p class="hint-text">Tells the peers you tick below that this machine offers test boxes. Applies when you press Apply; peers see the change at their next hello.</p>
           <label class="prefs-check">
             <input type="checkbox" id="prefs-box-offer-enabled">
             <span>Offer test boxes from this machine</span>
@@ -11543,6 +11544,14 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
               <option value="schedule">On a schedule</option>
             </select>
           </div>
+          <div class="prefs-row" style="margin-top: 6px;">
+            <span>Ticked peers may</span>
+            <select id="prefs-box-offer-scope" style="flex: none;">
+              <option value="discovery">see this offer</option>
+              <option value="run">see it and run their teams' test jobs on this machine</option>
+            </select>
+          </div>
+          <p id="prefs-box-offer-run-note" class="hint-text hidden"></p>
           <div id="prefs-box-offer-schedule" class="hidden" style="margin-top: 6px;"></div>
           <button id="prefs-box-offer-schedule-add" class="secondary hidden" type="button" style="margin-top: 4px;">Add window</button>
           <div id="prefs-box-offer-peers" style="margin-top: 6px;"></div>
@@ -30197,7 +30206,9 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
       var NODE_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
       var HHMM_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
       var PLATFORM_RE = /^[a-z0-9]{1,16}\/[a-z0-9_]{1,16}$/;
-      var SCOPE = "discovery";
+      var DISCOVERY = "discovery";
+      var RUN = "run";
+      var SCOPES = [DISCOVERY, RUN];
       var OFFERS_WIRE_VERSION = 1;
       var AVAILABILITY = ["always", "schedule"];
       var MAX_BOXES = 16;
@@ -30251,13 +30262,13 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
       }
       function sanitizeBoxOffer(raw) {
         if (!isPlainObject(raw) || !onlyKeys(raw, RECORD_KEYS)) return null;
-        if (raw.scope !== SCOPE) return null;
+        if (!SCOPES.includes(raw.scope)) return null;
         if (typeof raw.enabled !== "boolean") return null;
         if (!isBoxCount(raw.boxes)) return null;
         if (!AVAILABILITY.includes(raw.availability)) return null;
         const peers = sanitizePeerList(raw.peers);
         if (!peers) return null;
-        const out = { scope: SCOPE, enabled: raw.enabled, boxes: raw.boxes, availability: raw.availability };
+        const out = { scope: raw.scope, enabled: raw.enabled, boxes: raw.boxes, availability: raw.availability };
         if (raw.availability === "schedule") {
           if (!Array.isArray(raw.schedule) || raw.schedule.length === 0 || raw.schedule.length > MAX_WINDOWS) return null;
           const windows = Array.from(raw.schedule, sanitizeWindow);
@@ -30322,21 +30333,34 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
           runtime: platforms.length ? { platforms } : null
         };
       }
-      function offerEntry(offer, facts, now) {
+      function runGrant(offer, peerName, now = /* @__PURE__ */ new Date()) {
+        const clean = sanitizeBoxOffer(offer);
+        const serve = !!clean && clean.scope === RUN && clean.enabled && typeof peerName === "string" && clean.peers.some((p) => p.name === peerName);
+        return { admit: serve && scheduleOpen(clean, now), serve };
+      }
+      function runConfirmed(offer, confirm2) {
+        const clean = sanitizeBoxOffer(offer);
+        if (!clean || clean.scope !== RUN || !clean.enabled) return true;
+        if (!isPlainObject(confirm2) || !Array.isArray(confirm2.peers)) return false;
+        const want = clean.peers.map((p) => p.name).sort();
+        const got = Array.from(confirm2.peers).sort();
+        return want.length === got.length && want.every((n, i) => n === got[i]);
+      }
+      function offerEntry(offer, facts, now, { run = false } = {}) {
         const clean = sanitizeBoxOffer(offer);
         if (!clean || !clean.enabled) return null;
         return {
-          scope: SCOPE,
+          scope: clean.scope === RUN && run === true ? RUN : DISCOVERY,
           boxes: clean.boxes,
           open: scheduleOpen(clean, now instanceof Date ? now : /* @__PURE__ */ new Date()),
           kinds: [...PRODUCED_KINDS],
           facts: produceFacts(typeof facts === "function" ? facts() : facts)
         };
       }
-      function wireEntry(offer, facts, peerName, now) {
+      function wireEntry(offer, facts, peerName, now, opts) {
         const clean = sanitizeBoxOffer(offer);
         if (!clean || typeof peerName !== "string" || !clean.peers.some((p) => p.name === peerName)) return null;
-        return offerEntry(clean, facts, now);
+        return offerEntry(clean, facts, now, opts);
       }
       function sanitizeWireRuntime(raw) {
         if (raw === null) return null;
@@ -30362,11 +30386,11 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
       }
       function sanitizeWireEntry(raw) {
         if (!isPlainObject(raw) || !onlyKeys(raw, WIRE_KEYS)) return null;
-        if (raw.scope !== SCOPE || !isBoxCount(raw.boxes) || typeof raw.open !== "boolean") return null;
+        if (!SCOPES.includes(raw.scope) || !isBoxCount(raw.boxes) || typeof raw.open !== "boolean") return null;
         const kinds = sanitizeWireKinds(raw.kinds);
         const facts = sanitizeWireFacts(raw.facts);
         if (!kinds || !facts) return null;
-        return { scope: SCOPE, boxes: raw.boxes, open: raw.open, kinds, facts };
+        return { scope: raw.scope, boxes: raw.boxes, open: raw.open, kinds, facts };
       }
       function sanitizeWireOffers(raw) {
         if (!isPlainObject(raw)) return null;
@@ -30398,6 +30422,8 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         sanitizeBoxOffer,
         offerFromEnv,
         scheduleOpen,
+        runGrant,
+        runConfirmed,
         offerEntry,
         wireEntry,
         sanitizeWireOffers,
@@ -30416,6 +30442,7 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
       var { NODE_NAME_RE, MAX_PEERS, MAX_BOXES } = require_box_offer();
       var DAY_LETTERS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
       var PEER_NOTE = "This list decides which peers are shown this offer. It is not an access control. Nothing runs on this machine because of it yet. A node that dials this machine is named by its own label, which is its hostname unless it set one.";
+      var RUN_PEER_NOTE = "The ticked peers may run test jobs here while the offer is on and open. A node that dials this machine is named by its own label, which is its hostname unless it set one.";
       function osArch(facts) {
         if (!facts || !facts.os && !facts.arch) return "unknown os";
         return `${facts.os || "?"}/${facts.arch || "?"}`;
@@ -30486,9 +30513,33 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         if ((peers || []).length > MAX_PEERS) return `more than ${MAX_PEERS} peers ticked`;
         return null;
       }
-      function offerRecordFromForm({ enabled, boxes, availability, schedule, peers }) {
+      function offerRunnerFrom(st) {
+        if (!st || typeof st.status !== "string") return null;
+        return { status: st.status, isolation: st.effective ? st.effective.isolation : null };
+      }
+      function runIsolationLine(runner) {
+        if (runner && runner.status === "needs-remote") {
+          return "Test runner needs phone access: nothing runs until it is turned on above.";
+        }
+        if (!runner || runner.status !== "running" && runner.status !== "starting") {
+          return "Test runner is off: nothing runs until it is turned on above.";
+        }
+        if (runner.isolation === "none") return "Jobs run through this machine's test runner, isolation none: suites run as this user, unisolated.";
+        return "Jobs run through this machine's test runner, isolation user: suites run as a separate user account.";
+      }
+      function runConsentText(peers, runner) {
+        const names = (peers || []).filter((n) => typeof n === "string");
+        const who = names.length ? `These peers may run their teams' test jobs on this machine:
+${names.map((n) => `  ${n}`).join("\n")}` : "No peer is ticked: no one may run test jobs here until one is.";
+        return `${who}
+
+${runIsolationLine(runner)}
+
+Allow?`;
+      }
+      function offerRecordFromForm({ scope, enabled, boxes, availability, schedule, peers }) {
         const rec = {
-          scope: "discovery",
+          scope: scope === "run" ? "run" : "discovery",
           enabled: !!enabled,
           boxes: Number(boxes),
           availability
@@ -30510,7 +30561,11 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
       module.exports = {
         DAY_LETTERS,
         PEER_NOTE,
+        RUN_PEER_NOTE,
         ownFactsLine,
+        offerRunnerFrom,
+        runIsolationLine,
+        runConsentText,
         peerOfferLine,
         peerChoices,
         peerNameToAdd,
@@ -53223,7 +53278,7 @@ ${detail}` });
       var { parseEnvLines, formatEnvLines } = require_env_edit();
       var { envRowView, buildEnvRow } = require_env_row();
       var { envLockView, applyEnvLock, patchUnlessEnvLocked } = require_env_lock();
-      var { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText } = require_offer_view();
+      var { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, offerRunnerFrom, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText } = require_offer_view();
       var { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require_account_select();
       var { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, keyTransportRefusal, modelOptions } = require_account_row();
       var { isToolInstallSession } = require_tool_doctor();
@@ -59351,6 +59406,8 @@ Click for live activity`;
       var prefsBoxOfferFacts = document.getElementById("prefs-box-offer-facts");
       var prefsBoxOfferStatus = document.getElementById("prefs-box-offer-status");
       var prefsBoxOfferApply = document.getElementById("prefs-box-offer-apply");
+      var prefsBoxOfferScope = document.getElementById("prefs-box-offer-scope");
+      var prefsBoxOfferRunNote = document.getElementById("prefs-box-offer-run-note");
       var prefsEnvScope = document.getElementById("prefs-env-scope");
       var prefsEnvList = document.getElementById("prefs-env-list");
       var prefsEnvKey = document.getElementById("prefs-env-key");
@@ -62466,6 +62523,10 @@ ${res.stderr}` : "");
         }
         prefsSuiteRunnerNoneNote.classList.toggle("hidden", prefsSuiteRunnerIsolation.value !== "none");
         prefsSuiteRunnerStatus.textContent = suiteRunnerStatusText(st);
+        if (prefsBoxOfferShown) {
+          prefsBoxOfferShown.runner = offerRunnerFrom(st);
+          syncBoxOfferScope();
+        }
       }
       async function refreshSuiteRunnerPrefs() {
         if (!prefsSuiteRunnerBlock) return;
@@ -62584,6 +62645,12 @@ ${res.stderr}` : "");
         }
         return label;
       }
+      function syncBoxOfferScope() {
+        const run = prefsBoxOfferScope.value === "run";
+        prefsBoxOfferPeersNote.textContent = run ? OFFER_RUN_PEER_NOTE : OFFER_PEER_NOTE;
+        prefsBoxOfferRunNote.textContent = run ? offerRunIsolationLine(prefsBoxOfferShown && prefsBoxOfferShown.runner) : "";
+        prefsBoxOfferRunNote.classList.toggle("hidden", !run);
+      }
       function renderBoxOfferPrefs(st) {
         prefsBoxOfferShown = st;
         const rec = (st.forced ? st.effective : st.stored) || null;
@@ -62601,7 +62668,8 @@ ${res.stderr}` : "");
           prefsBoxOfferPeers.append(none);
         }
         prefsBoxOfferPeerName.value = "";
-        prefsBoxOfferPeersNote.textContent = OFFER_PEER_NOTE;
+        prefsBoxOfferScope.value = rec && rec.scope === "run" ? "run" : "discovery";
+        syncBoxOfferScope();
         prefsBoxOfferSelf.textContent = offerSelfLabelLine(st.self);
         prefsBoxOfferFacts.textContent = `This machine would announce: ${ownFactsLine(st.facts)}`;
         prefsBoxOfferStatus.textContent = offerStatusText(st);
@@ -62622,6 +62690,7 @@ ${res.stderr}` : "");
       }
       if (prefsBoxOfferBlock) {
         prefsBoxOfferAvailability.addEventListener("change", syncBoxOfferSchedule);
+        prefsBoxOfferScope.addEventListener("change", syncBoxOfferScope);
         prefsBoxOfferScheduleAdd.addEventListener("click", () => {
           prefsBoxOfferSchedule.append(boxOfferWindowRow({ days: [1, 2, 3, 4, 5], from: "09:00", to: "17:00" }));
           syncBoxOfferSchedule();
@@ -62650,6 +62719,7 @@ ${res.stderr}` : "");
         });
         prefsBoxOfferApply.addEventListener("click", async () => {
           const form = {
+            scope: prefsBoxOfferScope.value,
             enabled: prefsBoxOfferEnabled.checked,
             boxes: prefsBoxOfferBoxes.value,
             availability: prefsBoxOfferAvailability.value,
@@ -62662,9 +62732,21 @@ ${res.stderr}` : "");
             return;
           }
           const rec = offerRecordFromForm(form);
+          let confirm2;
+          if (rec.scope === "run" && rec.enabled) {
+            const names = rec.peers.map((p) => p.name);
+            let runnerSt = null;
+            try {
+              runnerSt = await window.api.suiteRunnerGet();
+            } catch {
+              runnerSt = null;
+            }
+            if (!window.confirm(offerRunConsentText(names, offerRunnerFrom(runnerSt)))) return;
+            confirm2 = { peers: names };
+          }
           let res = null;
           try {
-            res = await window.api.offerSet(rec);
+            res = await window.api.offerSet(rec, confirm2);
           } catch {
             res = null;
           }

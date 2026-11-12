@@ -20,7 +20,7 @@ const { setNotifying } = require('./offer-directory');
 function offerPeerCallbacks({ getBoxOffer, getOfferFacts, offerDirectory, onChange } = {}) {
   if (!offerDirectory || typeof getBoxOffer !== 'function' || typeof getOfferFacts !== 'function') return {};
   return {
-    computeOffers: (_targetId, label) => wireEntry(getBoxOffer(), getOfferFacts, label),
+    computeOffers: (_targetId, label, caps) => wireEntry(getBoxOffer(), getOfferFacts, label, undefined, { run: Array.isArray(caps) && caps.includes('suite-pull') }),
     onOffers: (peerId, label, own) => setNotifying(offerDirectory, { provenance: 'hello', source: String(peerId), name: label, offer: own }, onChange),
   };
 }

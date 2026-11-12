@@ -126,10 +126,10 @@ test('POST /api/peer/offers stores a valid own as an announce row with a route h
   ]);
 });
 
-test('POST /api/peer/offers refuses an own with an extra key or scope run whole', async (t) => {
+test('POST /api/peer/offers refuses an own with an extra key or an unknown scope whole', async (t) => {
   const { port, offerDirectory } = await startNode(t);
   assert.strictEqual((await announce(port, 'laptop', { ...ANNOUNCED, host: 'laptop.local' })).status, 400);
-  assert.strictEqual((await announce(port, 'laptop', { ...ANNOUNCED, scope: 'run' })).status, 400);
+  assert.strictEqual((await announce(port, 'laptop', { ...ANNOUNCED, scope: 'build' })).status, 400);
   assert.strictEqual((await announce(port, 'bad name', ANNOUNCED)).status, 400);
   const badVersion = await req(port, '/api/peer/offers', { method: 'POST', body: JSON.stringify({ v: 2, from: 'laptop', own: ANNOUNCED }) });
   assert.strictEqual(badVersion.status, 400);
@@ -171,7 +171,7 @@ test('GET /api/offers returns own plus the stored rows; equal facts from two rou
 
 test('suite code never reads the box offer or the offers directory', () => {
   const root = path.join(__dirname, '..');
-  const banned = /boxOffer|offer-directory|offerDirectory|_offerFor|_receiveOffers|_listOffers/;
+  const banned = /boxOffer|box-offer|runGrant|offer-directory|offerDirectory|_offerFor|_receiveOffers|_listOffers/;
   for (const file of ['suite-runner.js', 'suite-client.js', 'suite-dispatch.js']) {
     const src = fs.readFileSync(path.join(root, file), 'utf8');
     assert.ok(src.length > 1000, `ENTER: ${file} was read`);
