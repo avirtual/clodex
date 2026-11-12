@@ -346,7 +346,7 @@ function createSuiteRunner({
   let identity = null;
   const holdFile = path.join(state.dir, 'box-hold.json');
   let boxHold = readJson(holdFile, null);
-  let releasing = null;
+  let sweeping = null;
   const sweepBox = box ? () => box.sweep() : boxSweep;
 
   const isBox = (job) => job.isolation === 'container';
@@ -410,30 +410,42 @@ function createSuiteRunner({
     log(`suite-runner: box cleanup held: ${why}`);
   }
 
-  async function releaseOnce() {
-    const held = boxHold;
-    if (!held || !sweepBox) return false;
-    let error = null;
-    try { await sweepBox(); } catch (e) { error = e.message; }
-    if (boxHold !== held) return false;
-    if (error != null) { setHold({ ...held, why: error }); return false; }
-    for (const dir of held.dirs) forceRemove(dir);
-    setHold(null);
-    return true;
+  function sweepOnce() {
+    if (!sweeping) {
+      sweeping = Promise.resolve().then(() => sweepBox()).then(() => null, (e) => e.message)
+        .finally(() => { sweeping = null; });
+    }
+    return sweeping;
   }
 
-  function releaseHold() {
-    if (!releasing) releasing = releaseOnce().finally(() => { releasing = null; });
-    return releasing;
+  function clearHold(held) {
+    for (const dir of held.dirs) forceRemove(dir);
+    setHold(null);
+  }
+
+  async function releaseHold() {
+    const held = boxHold;
+    if (!held || !sweepBox) return false;
+    const error = await sweepOnce();
+    if (boxHold !== held) return false;
+    if (error != null) { setHold({ ...held, why: error }); return false; }
+    clearHold(held);
+    return true;
   }
 
   async function recoverBox(interrupted) {
     const dirs = interrupted.map((job) => jobWork(job.id));
-    if (box || dirs.length) {
-      const why = box ? 'the boot sweep has not answered' : 'no box is configured to confirm cleanup';
-      setHold({ why, dirs: [...new Set([...(boxHold ? boxHold.dirs : []), ...dirs])] });
+    if (!box) {
+      if (dirs.length) enterHold('no box is configured to confirm cleanup', dirs);
+      await releaseHold();
+      return;
     }
-    if (!(await releaseHold()) && boxHold) log(`suite-runner: box cleanup held: ${boxHold.why}`);
+    const error = await sweepOnce();
+    if (error != null) { enterHold(error, dirs); return; }
+    if (boxHold) clearHold(boxHold);
+    for (const job of interrupted) {
+      try { await box.reap(jobWork(job.id), null, job); } catch (e) { enterHold(e.message, [jobWork(job.id)]); }
+    }
   }
 
   function recover() {
