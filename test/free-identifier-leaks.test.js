@@ -279,6 +279,7 @@ const SCANNED_MODULES = [
   'stream-codec-codex.js',
   'stream-codec-muse.js',
   'suite-snapshot.js',
+  'suite-box.js',
   'suite-runner.js',
   'suite-client.js',
   'suite-dispatch.js',
