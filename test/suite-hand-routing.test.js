@@ -267,7 +267,7 @@ function mkRoot(captured) {
     "'use strict';",
     "const fs = require('fs');",
     `fs.writeFileSync(${JSON.stringify(path.join(root, ARGV_FILE))}, JSON.stringify({`,
-    '  channel: process.env.NODE_CHANNEL_FD || null,',
+    "  channel: typeof process.send === 'function' ? 'ipc' : (process.env.NODE_CHANNEL_FD || null),",
     '  route: process.env.CLODEX_SUITE_ROUTE || null,',
     '  override: process.env.CLODEX_SUITE_OVERRIDE || null,',
     '}));',
