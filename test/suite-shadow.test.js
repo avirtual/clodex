@@ -270,6 +270,24 @@ test('t2304: a pull runner that detaches past the 120 s lease and comes back wit
   assert.deepStrictEqual(f.client.tally({ team: 'tm' }), { envKey: null, agree: 0, disagree: 0, oneSided: [] });
 });
 
+test('t2304: an attached pull runner whose own 503 (offer closed) outlasts the budget writes a normal unknown row, not a skip row', async () => {
+  const base = remoteConn();
+  const calls = [];
+  const conn = {
+    suiteAsk: async (method, p, ...rest) => {
+      if (method !== 'POST') return base.conn.suiteAsk(method, p, ...rest);
+      calls.push('POST -> offer closed');
+      return { status: 503, body: { ok: false, error: 'offer closed' }, error: null };
+    },
+  };
+  const f = pullShadowClient({ attached: true, conn });
+  const h = await f.client.shadow(PULL_OPTS);
+  await turns(400);
+  h.local(localHalf({ code: 0, stdout: GREEN, stderr: '', durationMs: 70 }));
+  assert.ok(calls.length > 1, 'ENTER: the runner refused the submit with its own 503 more than once');
+  assert.deepStrictEqual(f.records(), [PULL_ROW(REMOTE({ outcome: 'unknown', reason: 'runner unreachable', pass: null, fail: null, tests: null, queueMs: null, runMs: null }), false)]);
+});
+
 test('t2304: an attached pull runner that answers unknown still writes a normal row', async () => {
   const desk = { attached: true, conn: remoteConn({ refuse: true }).conn };
   const f = pullShadowClient(desk);

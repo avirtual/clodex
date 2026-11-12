@@ -142,7 +142,7 @@ function createSuiteClient({
   async function ask(ctx, fn, progress) {
     for (;;) {
       const r = await once(ctx.peer, fn, ctx.wire);
-      if (ctx.wire === 'pull' && r.status === 503) { try { ctx.onDetach(); } catch {} }
+      if (ctx.wire === 'pull' && r.status === 503 && r.body == null) { try { ctx.onDetach(); } catch {} }
       if (REFUSED.has(r.status)) throw Object.assign(new Error('runner refused the token'), { refused: true });
       if (!UNREACHABLE.has(r.status)) return r;
       const left = deadlineOf(ctx) - now();
@@ -361,7 +361,7 @@ function createSuiteClient({
       return null;
     }
     const key = JSON.stringify([opts.team, opts.ticket, opts.kind]);
-    const me = { treeHash: snap.treeHash, peer: opts.peer, wire: opts.wire === 'pull' ? 'pull' : 'push', jobId: null, superseded: false, local: null, remote: null, settled: false, sawDetach: false, detached: false };
+    const me = { treeHash: snap.treeHash, peer: opts.peer, wire: opts.wire === 'pull' ? 'pull' : 'push', jobId: null, superseded: false, local: null, remote: null, settled: false, submitted: null, sawDetach: false, detached: false };
     const prev = shadows.get(key);
     if (prev && prev.treeHash !== me.treeHash) {
       prev.superseded = true;
@@ -379,7 +379,7 @@ function createSuiteClient({
       if (me.detached) {
         appendCompare({
           at: iso(now()), team: opts.team, kind: opts.kind, ticket: opts.ticket, wire: 'pull', runner: me.peer,
-          skipped: 'detached', agree: null, midJob: true, jobId: me.jobId,
+          skipped: 'detached', agree: null, midJob: true, jobId: me.submitted,
         });
         return;
       }
@@ -391,7 +391,7 @@ function createSuiteClient({
       });
     };
     Promise.resolve()
-      .then(() => run({ ...opts, snap, scope: 'full', onJob: ({ jobId }) => { me.jobId = jobId; }, onDetach: () => { me.sawDetach = true; } }))
+      .then(() => run({ ...opts, snap, scope: 'full', onJob: ({ jobId }) => { me.jobId = jobId; me.sawDetach = false; }, onSubmitted: ({ jobId }) => { me.submitted = jobId; }, onDetach: () => { me.sawDetach = true; } }))
       .catch((e) => ({ unknown: `client error: ${e.message}`, res: null, record: null }))
       .then((out) => {
         me.remote = out;

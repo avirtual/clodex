@@ -984,7 +984,7 @@ submit time, `_shadowSubmit` starts nothing and the compare log gets one row
 with no `remote` half; the tally never counts it. A pull runner attached at
 submit that detaches mid-job (the desk answered 503 "not attached" to one of
 the run's calls, and the run ends `unknown`, including a `lease-expired` from a
-runner that came back) writes the same row with `midJob: true` and the `jobId`,
+runner that came back) writes the same row with `midJob: true` and the submitted `jobId` (null if no submit landed),
 instead of a compare pair. A cancel the lead sends while the runner is detached
 is lost; the runner's lease (`leaseMs`, 120 s without a poll) stops the job.
 
