@@ -548,7 +548,8 @@ discovery only: nothing is built or run. remote-wiring injects `offerFor`,
   `{ok:false, error:'offers directory full'}` when the directory refused a new
   row.
 - **The dialer's half** (peer-client.js `_syncOffers`, wired by peer-wiring.js
-  `offerPeerCallbacks`). Every hello carries `?origin=<SELF_LABEL>`, the name
+  `offerPeerCallbacks`). A hello carries `?origin=<SELF_LABEL>` when the node has a
+  self label (none without one), the name
   this node also sends as a DM `origin` and a roster `via`. After a non-scoped
   hello whose caps include `offers`, the dialer stores the reply's `offers.own`
   as a `hello` row keyed by the peer id (an absent field clears that row), then

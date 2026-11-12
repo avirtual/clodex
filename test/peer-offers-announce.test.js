@@ -167,3 +167,21 @@ test('identityChanged in _helloLoop does not reference offers', () => {
   assert.ok(expr.includes('prev.caps'), 'ENTER: the slice is the identity comparison');
   assert.ok(!/offer/i.test(expr), 'identityChanged references offers');
 });
+
+test('an older announce reply arriving after a newer one does not overwrite the acknowledged state', () => {
+  const offers = [entry(2, DIALER_FACTS), null, null];
+  const replies = [];
+  const conn = new PeerConnection({
+    id: 'p1', label: 'murmur', url: 'http://127.0.0.1:1', emit: () => {}, selfLabel: 'laptop',
+    helloIntervalMs: 600000, computeOffers: () => offers.shift(),
+  });
+  conn.pushOffers = (own, cb) => replies.push({ own, cb });
+  conn._syncOffers(undefined);
+  conn._syncOffers(undefined);
+  assert.deepStrictEqual(replies.map((r) => r.own), [entry(2, DIALER_FACTS), null], 'ENTER: two POSTs in flight');
+  replies[1].cb({ ok: true });
+  replies[0].cb({ ok: true });
+  assert.strictEqual(conn._offersPosted, null);
+  conn._syncOffers(undefined);
+  assert.strictEqual(replies.length, 2, 'an acknowledged empty offer is not re-posted');
+});

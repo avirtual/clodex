@@ -140,6 +140,7 @@ class PeerConnection {
     this._computeOffers = computeOffers || null;
     this._onOffers = onOffers || null;
     this._offersPosted = undefined;
+    this._offersSeq = 0;
     this._helloIntervalMs = helloIntervalMs || HELLO_INTERVAL_MS;
     this._staleMs = Number.isInteger(staleMs) ? staleMs : STALE_MS;
     this._timers = timers || { setTimeout, clearTimeout };
@@ -1045,7 +1046,11 @@ class PeerConnection {
     let own = null;
     try { own = this._computeOffers(this.id, this.label) || null; } catch { own = null; }
     if (own === null && this._offersPosted === null) return;
-    this.pushOffers(own, (resp) => { this._offersPosted = resp.ok ? own : undefined; });
+    const seq = ++this._offersSeq;
+    this.pushOffers(own, (resp) => {
+      if (seq !== this._offersSeq) return;
+      this._offersPosted = resp.ok ? own : undefined;
+    });
   }
 
   pushOffers(own, cb) {
