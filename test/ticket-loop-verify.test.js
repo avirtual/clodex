@@ -291,6 +291,12 @@ function commitOnBranch(dir, branch, file, body) {
   return sha;
 }
 
+const SPAWN_DEADLINE_MS = 5000;
+async function untilSpawned(f) {
+  const end = Date.now() + SPAWN_DEADLINE_MS;
+  while (f.created.length === 0 && Date.now() < end) await new Promise((r) => setTimeout(r, 25));
+}
+
 // `suite` defaults to 'green' so the subjects that predate CHECK 4 keep
 // measuring what they were written to measure. A fixture with no runner would
 // escalate at the suite check, and every green-path assertion downstream would
@@ -1625,7 +1631,7 @@ test('task done actually DRIVES the loop, not merely marks it', async () => {
 
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'did it; suite green at 4999' });
   // The loop is fired unawaited from a sync handler, so let its git calls settle.
-  for (let i = 0; i < 40 && f.created.length === 0; i++) await new Promise((r) => setTimeout(r, 25));
+  await untilSpawned(f);
 
   assert.strictEqual(f.created.length, 1, 'closing the ticket reached an actual reviewer spawn');
   assert.strictEqual(f.one().loopStep, 'review', 'and the ticket advanced past verify');
@@ -2498,9 +2504,7 @@ test('the SPAWN links node_modules too, so the hand does not start in a dep-less
   // the SPAWN, not on the recorded worktree path: that path is written before
   // the link step, so waking on it would leave the assertions free to run in
   // the gap before the step under test.
-  for (let i = 0; i < 40 && f.created.length === 0; i += 1) {
-    await new Promise((r) => setTimeout(r, 25));
-  }
+  await untilSpawned(f);
   const wtPath = (f.one().worktree || {}).path;
   assert.ok(wtPath, 'ENTER: the dispatch minted a real worktree and recorded it');
   assert.ok(fsReal.existsSync(pathReal.join(wtPath, '.git')), 'ENTER: and it is a real checkout on disk');
@@ -2539,9 +2543,7 @@ test('a node_modules the spawn cannot link WARNS on the reply and spawns anyway'
   f.tstore.save(f.team.root, [{ ...f.one(), worktree: undefined, role: undefined, assignee: 'hand', startedAt: null }]);
 
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', id: 't1', who: null, body: '' });
-  for (let i = 0; i < 40 && f.created.length === 0; i += 1) {
-    await new Promise((r) => setTimeout(r, 25));
-  }
+  await untilSpawned(f);
 
   assert.strictEqual(f.created.length, 1, 'the seat spawns regardless — a dep-less tree is still writable');
   const warned = f.injected.filter((t) => /cannot resolve its dependencies/.test(t));
@@ -2565,9 +2567,7 @@ test('a NON-node team root is not told to run npm install, and still spawns', as
   f.tstore.save(f.team.root, [{ ...f.one(), worktree: undefined, role: undefined, assignee: 'hand', startedAt: null }]);
 
   f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'start', id: 't1', who: null, body: '' });
-  for (let i = 0; i < 40 && f.created.length === 0; i += 1) {
-    await new Promise((r) => setTimeout(r, 25));
-  }
+  await untilSpawned(f);
 
   // BOTH halves. The absence alone is true of a dispatch that never spawned at
   // all, so it would pass over the failure it is meant to exclude.
@@ -4891,7 +4891,7 @@ test('t345: task done RE-ENTERS the loop on a held ticket and REACHES A REVIEWER
   // The hand fixes exactly what the escalation named, and closes again.
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'committed it this time' });
-  for (let i = 0; i < 40 && f.created.length === 0; i++) await new Promise((r) => setTimeout(r, 25));
+  await untilSpawned(f);
 
   assert.strictEqual(f.created.length, 1, 'the re-entry reached an actual reviewer spawn');
   const t = f.one();
@@ -4909,7 +4909,7 @@ test('t345: the re-entry replaces the report, so the reviewer reads the CURRENT 
   await strand(f);
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'ROUND TWO REPORT' });
-  for (let i = 0; i < 40 && f.created.length === 0; i++) await new Promise((r) => setTimeout(r, 25));
+  await untilSpawned(f);
 
   assert.strictEqual(f.one().report, 'ROUND TWO REPORT', 'the record carries the report that describes the tree being reviewed');
 });
@@ -5496,7 +5496,7 @@ test('t345 r4 nit2: a re-close does not move the ticket\'s recorded close time',
 
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed' });
-  for (let i = 0; i < 40 && f.created.length === 0; i++) await new Promise((r) => setTimeout(r, 25));
+  await untilSpawned(f);
 
   assert.strictEqual(f.one().closedAt, first.closedAt, 'the close time is the FIRST close, not the re-close');
   assert.strictEqual(f.one().closedBy, first.closedBy, 'and so is the closer');
@@ -5538,7 +5538,7 @@ test('t345 r4: a LEGACY hold with no recovery class still renders a route everyw
   // READER 3: the re-entry, which must still work on a legacy stamp.
   commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed' });
-  for (let i = 0; i < 40 && f.created.length === 0; i++) await new Promise((r) => setTimeout(r, 25));
+  await untilSpawned(f);
   assert.strictEqual(f.created.length, 1, 'a legacy hold is still re-enterable, and reaches a reviewer');
 
   // READER 4: the bounce, on a ticket that is held but NOT re-closable.
@@ -5938,7 +5938,7 @@ test('t1016: the silence is only the REPLY — the report, the broadcast and the
   f.gated.length = 0; f.broadcasts.length = 0;
 
   f.m._handleTask(f.seat('team-hand'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'shipped it' });
-  for (let i = 0; i < 40 && f.created.length === 0; i++) await new Promise((r) => setTimeout(r, 25));
+  await untilSpawned(f);
 
   assert.strictEqual(f.gated.filter((g) => g.target === 'lead' && /shipped it/.test(g.body)).length, 1,
     'the report still reaches the lead — the silence is toward the SENDER only, and an early return would take this with it');
