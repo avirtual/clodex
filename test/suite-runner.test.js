@@ -415,6 +415,8 @@ test('a runner moves a cache index left in the work root into its data root', as
   const f = await fixture(t);
   f.runner.close();
   fs.writeFileSync(path.join(f.work, 'cache.json'), JSON.stringify({ 'deps/x/y': 7 }));
+  fs.mkdirSync(path.join(f.work, 'deps', 'x', 'y'), { recursive: true });
+  fs.writeFileSync(path.join(f.work, 'deps', 'x', 'y.json'), '{}');
   const runner = f.make();
   t.after(() => runner.close());
   assert.strictEqual(fs.existsSync(path.join(f.work, 'cache.json')), false);
@@ -578,6 +580,7 @@ test('reconciliation finishes before the first job runs, and a later start with 
   const orphan = (name) => { const p = path.join(f.work, 'deps', repo, name); fs.mkdirSync(p, { recursive: true }); return p; };
   let f = null;
   f = await fixture(t, {
+    now: () => 1000,
     wrap: (base) => ({
       ...base,
       reap: (jobDir, ...rest) => (gate ? gate.then(() => base.reap(jobDir, ...rest)) : base.reap(jobDir, ...rest)),
@@ -658,6 +661,8 @@ test('a runner moves its state from the old root into its data root, and a fresh
   fs.mkdirSync(path.join(oldState, 'jobs', 'm1'), { recursive: true });
   fs.writeFileSync(path.join(oldState, 'jobs', 'm1', 'job.json'), JSON.stringify({ ...f.body('m1'), state: 'done', reason: null, exit: null, seq: 4, queuedAt: 1, endedAt: Date.now(), out: { stdoutBytes: 0, stderrBytes: 0, truncated: false } }));
   fs.writeFileSync(path.join(oldState, 'cache.json'), '{"deps/x/y":7}');
+  fs.mkdirSync(path.join(f.work, 'deps', 'x', 'y'), { recursive: true });
+  fs.writeFileSync(path.join(f.work, 'deps', 'x', 'y.json'), '{}');
   fs.writeFileSync(path.join(oldState, 'ledger.jsonl'), '{"id":"m1"}\n');
   const moved = f.make({ root: data, oldRoot: old });
   t.after(() => moved.close());
