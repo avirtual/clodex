@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — A team can use a test runner that connects to it
+## Unreleased
+
+## 5.179.0 — 2026-11-12 — A team can use a test runner that connects to it
 
 - A team can now name as its test runner a machine that connects to it, not only one it connects to: `[agent:team runner <name>]` works for a node that dials in and has allowed this one to run jobs. Such a runner is used for shadow comparisons only; when it is not connected the comparison is recorded as skipped.
 
