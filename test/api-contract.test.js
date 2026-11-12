@@ -254,8 +254,8 @@ test('no duplicate names and no duplicate channels', () => {
   assert.equal(new Set(channels).size, channels.length, 'channels are unique');
 });
 
-test('contract covers exactly the pinned 356-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 356, 'pinned list is the full 356-method surface');
+test('contract covers exactly the pinned 358-method surface', () => {
+  assert.equal(PINNED_NAMES.length, 358, 'pinned list is the full 358-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -279,7 +279,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 356, 'window.api has exactly 356 methods');
+    assert.equal(generated.length, 358, 'window.api has exactly 358 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);

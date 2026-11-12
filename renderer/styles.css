@@ -7025,3 +7025,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main { top: var(--rail-t
 }
 
 #mcp-error.mcp-error { color: #e94560; }
+
+#prefs-suite-runner-block.hidden, #prefs-suite-runner-enabled-env.hidden, #prefs-suite-runner-isolation-env.hidden, #prefs-suite-runner-work-env.hidden, #prefs-suite-runner-none-note.hidden {
+  display: none;
+}
