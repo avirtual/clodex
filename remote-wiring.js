@@ -204,6 +204,7 @@ function createRemoteWiring(deps) {
     getNodeLogFile,
     getUserDataPath,
     getBoxOffer, getOfferFacts, offerDirectory, dialers,
+    suiteDesk,
     thumbnail,
   } = deps;
   const thumbPage = createThumbnailer(thumbnail, log);
@@ -820,6 +821,7 @@ function createRemoteWiring(deps) {
         insecure: remoteInsecure,
         suiteRunner: getSuiteRunner(),
         suiteRunnerError: () => suiteRunnerError,
+        suiteDesk: suiteDesk || null,
         suiteToken: process.env.CLODEX_SUITE_TOKEN || null,
         pagePath: path.join(__dirname, 'renderer', 'remote.html'),
         notifications: (getNotifications && getNotifications()) || null,

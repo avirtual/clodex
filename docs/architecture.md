@@ -399,6 +399,12 @@ bundle), whose packaged form is the Docker image under
   `{res, unknown, record}`; it writes the `where:'remote'` start and end records
   of `logs/suite-runs.jsonl`. Built in engine.js; no routing policy yet. In
   SCANNED_MODULES.
+- **suite-desk.js** — the lead's in-memory queue of suite calls for runners
+  that dial in (docs/peering.md §2e). `createSuiteDesk({now, timers, notify,
+  limits, presenceMs})` returns `conn(origin)` (`suiteAsk` / `suitePut`, the
+  `PeerConnection` shape), `claim`, `blob`, `reply`, `attached`, `origins`,
+  `retained` and `close`. Built in engine.js, injected into remote.js as
+  `suiteDesk` through remote-wiring.js. In SCANNED_MODULES.
 - **box-offer.js** — pure validation of the `boxOffer` ui-setting (a
   discovery-only offer to host test boxes for named peers): `sanitizeBoxOffer`
   (whole record or null), `offerFromEnv` (`CLODEX_BOX_OFFER`), `scheduleOpen`,

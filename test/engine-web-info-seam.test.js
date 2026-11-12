@@ -243,3 +243,14 @@ test('runner mode with an uncreatable work root: the wire gets no runner and a g
   assert.ok(reason.includes(work), reason);
   assert.ok(reason.includes('CLODEX_SUITE_WORK'), reason);
 });
+
+test('the engine builds one suite desk and threads it into the RemoteServer', () => {
+  const opts = engineRemoteOptions({});
+  assert.deepStrictEqual(Object.keys(opts.suiteDesk).sort(), ['attached', 'blob', 'claim', 'close', 'conn', 'origins', 'reply', 'retained']);
+});
+
+test('remote-wiring passes the suite desk through unchanged, and null without one', () => {
+  const desk = { conn() {} };
+  assert.strictEqual(captureRemoteOptions({ suiteDesk: desk }).suiteDesk, desk);
+  assert.strictEqual(captureRemoteOptions({}).suiteDesk, null);
+});

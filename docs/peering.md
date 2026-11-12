@@ -612,6 +612,52 @@ discovery only: nothing is built or run. remote-wiring injects `offerFor`,
   otherwise. The popover and Preferences re-read on the `offers-changed` broadcast, sent by `offer:set`
   and by either ingest when the directory listing changed.
 
+### 2e. Suite desk (owner side: the lead's queue for a runner that dials in)
+
+The pull wire runs the §2c requests in reverse: the lead queues each one as a
+*call* on `suite-desk.js`, a runner that dials the lead claims it, runs it
+locally and posts the answer back. engine.js builds one desk and remote-wiring
+injects it as `suiteDesk`; with it, the non-scoped hello carries the cap
+`suite-pull`. Nothing queues calls yet: the claimer and team routing come in
+later slices.
+
+- `desk.conn(origin)` offers `suiteAsk(method, path, payload, timeout)` and
+  `suitePut(path, buffer, headers, timeout)`, resolving `{status, body, error}`
+  like `PeerConnection`. An origin that is not attached answers 503 at once.
+  A call's timeout is floored at 20 s; on expiry it resolves status 0.
+- Caps (`DESK_LIMITS`): 32 unsettled calls per origin (pending plus claimed and
+  not replied), 128 in all, 32 MiB of held chunk bytes per origin; past a cap
+  the call answers 429. A JSON body over 256 KiB or a chunk over 4 MiB is 413.
+  A buffer is released when its call is replied to, expires or is failed.
+- **Attachment.** Each claim carries the claimer's `session` id
+  (`[A-Za-z0-9_-]{8,128}`, minted once per runner instance). An origin is
+  attached for `presenceMs` (45 s, provisional) after its last claim. A claim
+  from another session while the current one is attached is 409. A new session
+  replacing a lapsed one fails every pending and claimed call of that origin
+  with 404 `{reason:'runner-restart'}`, which suite-client reads as a runner
+  restart.
+- A call is delivered once. A second claim never returns a call an earlier
+  claim took.
+
+Routes take the operator token. They sit outside `/api/suite/`, so a
+suite-scoped token gets the scoped 403 on all three. Without a desk they
+answer 501.
+
+- `POST /api/suite-desk/claim` `{v:1, origin, session}` → `{ok, v:1, calls:[…]}`;
+  marks `origin` attached. A call is `{id, claim, ttlMs, method, path, headers,
+  body, blob}`; `blob` is `{bytes}` for a chunk, else null. A batch stops once
+  bodies pass 512 KiB, always holding at least one call. Bad JSON, origin,
+  session or `v` is 400.
+- `GET /api/suite-desk/calls/<id>/blob?claim=<token>` → the chunk as raw
+  `application/octet-stream`.
+- `POST /api/suite-desk/calls/<id>/reply` `{v:1, claim, status, body}` (≤ 2 MiB)
+  → `{ok}`. `status` must be an integer 100–599 and `body` a plain object;
+  otherwise the call resolves 502 and the route answers 400.
+- On blob and reply: unknown id 404, wrong claim token 409, expired or already
+  settled 410.
+- SSE `suite-mail` `{origin}` on `/api/events` (`notifySuiteMail`) rings when a
+  call is queued. It is a doorbell only, separate from `dm-mail`.
+
 ## 4. Settings reconciliation (peer-wiring.js)
 
 `syncPeerManager` lazily constructs both managers, then reconciles from
