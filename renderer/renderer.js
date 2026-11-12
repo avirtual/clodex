@@ -46,7 +46,7 @@ const { anyOverlayOpen, dialogOverlayIds, performCloseChord } = require('./lib/c
 const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { envRowView, buildEnvRow } = require('./lib/env-row');
 const { envLockView, applyEnvLock, patchUnlessEnvLocked } = require('./lib/env-lock');
-const { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText } = require('./lib/offer-view');
+const { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, offerRunnerFrom, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText } = require('./lib/offer-view');
 const { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require('./lib/account-select');
 const { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, keyTransportRefusal, modelOptions } = require('./lib/account-row');
 const { isToolInstallSession } = require('../tool-doctor');
@@ -9498,6 +9498,7 @@ function renderSuiteRunnerPrefs(st) {
   }
   prefsSuiteRunnerNoneNote.classList.toggle('hidden', prefsSuiteRunnerIsolation.value !== 'none');
   prefsSuiteRunnerStatus.textContent = suiteRunnerStatusText(st);
+  if (prefsBoxOfferShown) { prefsBoxOfferShown.runner = offerRunnerFrom(st); syncBoxOfferScope(); }
 }
 
 async function refreshSuiteRunnerPrefs() {
@@ -9690,9 +9691,11 @@ if (prefsBoxOfferBlock) {
     if (problem) { showToast(`Box offer not changed: ${problem}`, { kind: 'warn' }); return; }
     const rec = offerRecordFromForm(form);
     let confirm;
-    if (rec.scope === 'run') {
+    if (rec.scope === 'run' && rec.enabled) {
       const names = rec.peers.map((p) => p.name);
-      if (!window.confirm(offerRunConsentText(names, prefsBoxOfferShown && prefsBoxOfferShown.runner))) return;
+      let runnerSt = null;
+      try { runnerSt = await window.api.suiteRunnerGet(); } catch { runnerSt = null; }
+      if (!window.confirm(offerRunConsentText(names, offerRunnerFrom(runnerSt)))) return;
       confirm = { peers: names };
     }
     let res = null;

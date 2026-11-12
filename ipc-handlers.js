@@ -25,6 +25,7 @@ const { validateSeatFiles } = require('./seat-files');
 const { BOX_ID_RE, runningInSandboxBox } = require('./sandbox');
 const { SETUP_CHOICES, execRowOf, sanitizeSuiteRunner } = require('./stores');
 const { sanitizeBoxOffer, runConfirmed, offerEntry, NODE_NAME_RE } = require('./box-offer');
+const { offerRunnerFrom } = require('./renderer/lib/offer-view');
 const sessionDiscovery = require('./session-discovery');
 const gitWorktree = require('./git-worktree');
 const { NO_SUCH_METHOD, errorEnvelope, sanitizeGrants, isValidPluginId, PLUGIN_CAPABILITIES, seatHasPlugin } = require('./plugin-api');
@@ -1873,8 +1874,7 @@ function registerIpcHandlers(deps) {
     const offerRunner = () => {
       let st = null;
       try { st = typeof suiteRunnerState === 'function' ? suiteRunnerState() : null; } catch { st = null; }
-      if (!st || typeof st.status !== 'string') return null;
-      return { status: st.status, isolation: st.effective ? st.effective.isolation : null };
+      return offerRunnerFrom(st);
     };
     const offerState = async ({ fresh = true } = {}) => {
       let raw;

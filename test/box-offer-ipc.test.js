@@ -246,3 +246,11 @@ test('offer:get reports the test runner status and isolation the run scope would
   const { handlers } = ipcFixture({ initial: VALID, suiteRunnerState });
   assert.deepStrictEqual((await handlers.get('offer:get')({})).runner, { status: 'running', isolation: 'none' });
 });
+
+test('offer:set accepts a disabled run record without a confirmation', async () => {
+  const { handlers, store } = ipcFixture({ initial: VALID });
+  const off = { ...VALID, scope: 'run', enabled: false };
+  const res = await handlers.get('offer:set')({}, off);
+  assert.strictEqual(res.ok, true);
+  assert.deepStrictEqual(store.boxOffer, off);
+});

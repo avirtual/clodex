@@ -605,11 +605,11 @@ or run) or `run` (see **Run scope**). remote-wiring injects `offerFor`,
   "see this offer" (`discovery`: the list is not an access control and nothing
   runs here because of it) or "see it and run their teams' test jobs on this
   machine" (`run`). Under `run` a line states the test runner's isolation in
-  force, or that the runner is off and nothing runs until it is on, and Apply
+  force, or why nothing runs yet (runner off, or waiting for phone access), and Apply on an enabled `run` offer
   first asks for confirmation listing every ticked peer. A read-only line shows the facts this machine
   would announce. It saves through IPC `offer:set(record, confirm)`, which runs
   `sanitizeBoxOffer` and refuses an invalid record (the stored one is kept),
-  refuses a `run` record unless `confirm.peers` names exactly the record's peers
+  refuses an enabled `run` record unless `confirm.peers` names exactly the record's peers
   (`runConfirmed`), and
   refuses with the reason while `CLODEX_BOX_OFFER` is set; its reply's facts are
   the cached ones (`getOfferFacts`), never a fresh probe. `offer:get` returns

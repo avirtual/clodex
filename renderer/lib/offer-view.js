@@ -3,7 +3,7 @@
 const { NODE_NAME_RE, MAX_PEERS, MAX_BOXES } = require('../../box-offer');
 const DAY_LETTERS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 const PEER_NOTE = 'This list decides which peers are shown this offer. It is not an access control. Nothing runs on this machine because of it yet. A node that dials this machine is named by its own label, which is its hostname unless it set one.';
-const RUN_PEER_NOTE = 'Only the ticked peers may run test jobs here, and only while the offer is on and open. A node that dials this machine is named by its own label, which is its hostname unless it set one.';
+const RUN_PEER_NOTE = 'The ticked peers may run test jobs here while the offer is on and open. A node that dials this machine is named by its own label, which is its hostname unless it set one.';
 
 function osArch(facts) {
   if (!facts || (!facts.os && !facts.arch)) return 'unknown os';
@@ -87,7 +87,15 @@ function offerFormProblem({ boxes, availability, schedule, peers }) {
   return null;
 }
 
+function offerRunnerFrom(st) {
+  if (!st || typeof st.status !== 'string') return null;
+  return { status: st.status, isolation: st.effective ? st.effective.isolation : null };
+}
+
 function runIsolationLine(runner) {
+  if (runner && runner.status === 'needs-remote') {
+    return 'Test runner needs phone access: nothing runs until it is turned on above.';
+  }
   if (!runner || (runner.status !== 'running' && runner.status !== 'starting')) {
     return 'Test runner is off: nothing runs until it is turned on above.';
   }
@@ -131,6 +139,7 @@ module.exports = {
   PEER_NOTE,
   RUN_PEER_NOTE,
   ownFactsLine,
+  offerRunnerFrom,
   runIsolationLine,
   runConsentText,
   peerOfferLine,

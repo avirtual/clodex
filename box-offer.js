@@ -150,7 +150,7 @@ function runGrant(offer, peerName, now = new Date()) {
 
 function runConfirmed(offer, confirm) {
   const clean = sanitizeBoxOffer(offer);
-  if (!clean || clean.scope !== RUN) return true;
+  if (!clean || clean.scope !== RUN || !clean.enabled) return true;
   if (!isPlainObject(confirm) || !Array.isArray(confirm.peers)) return false;
   const want = clean.peers.map((p) => p.name).sort();
   const got = Array.from(confirm.peers).sort();

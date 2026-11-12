@@ -30340,7 +30340,7 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
       }
       function runConfirmed(offer, confirm2) {
         const clean = sanitizeBoxOffer(offer);
-        if (!clean || clean.scope !== RUN) return true;
+        if (!clean || clean.scope !== RUN || !clean.enabled) return true;
         if (!isPlainObject(confirm2) || !Array.isArray(confirm2.peers)) return false;
         const want = clean.peers.map((p) => p.name).sort();
         const got = Array.from(confirm2.peers).sort();
@@ -30442,7 +30442,7 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
       var { NODE_NAME_RE, MAX_PEERS, MAX_BOXES } = require_box_offer();
       var DAY_LETTERS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
       var PEER_NOTE = "This list decides which peers are shown this offer. It is not an access control. Nothing runs on this machine because of it yet. A node that dials this machine is named by its own label, which is its hostname unless it set one.";
-      var RUN_PEER_NOTE = "Only the ticked peers may run test jobs here, and only while the offer is on and open. A node that dials this machine is named by its own label, which is its hostname unless it set one.";
+      var RUN_PEER_NOTE = "The ticked peers may run test jobs here while the offer is on and open. A node that dials this machine is named by its own label, which is its hostname unless it set one.";
       function osArch(facts) {
         if (!facts || !facts.os && !facts.arch) return "unknown os";
         return `${facts.os || "?"}/${facts.arch || "?"}`;
@@ -30513,7 +30513,14 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         if ((peers || []).length > MAX_PEERS) return `more than ${MAX_PEERS} peers ticked`;
         return null;
       }
+      function offerRunnerFrom(st) {
+        if (!st || typeof st.status !== "string") return null;
+        return { status: st.status, isolation: st.effective ? st.effective.isolation : null };
+      }
       function runIsolationLine(runner) {
+        if (runner && runner.status === "needs-remote") {
+          return "Test runner needs phone access: nothing runs until it is turned on above.";
+        }
         if (!runner || runner.status !== "running" && runner.status !== "starting") {
           return "Test runner is off: nothing runs until it is turned on above.";
         }
@@ -30556,6 +30563,7 @@ Allow?`;
         PEER_NOTE,
         RUN_PEER_NOTE,
         ownFactsLine,
+        offerRunnerFrom,
         runIsolationLine,
         runConsentText,
         peerOfferLine,
@@ -53270,7 +53278,7 @@ ${detail}` });
       var { parseEnvLines, formatEnvLines } = require_env_edit();
       var { envRowView, buildEnvRow } = require_env_row();
       var { envLockView, applyEnvLock, patchUnlessEnvLocked } = require_env_lock();
-      var { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText } = require_offer_view();
+      var { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, offerRunnerFrom, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText } = require_offer_view();
       var { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require_account_select();
       var { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, keyTransportRefusal, modelOptions } = require_account_row();
       var { isToolInstallSession } = require_tool_doctor();
@@ -62515,6 +62523,10 @@ ${res.stderr}` : "");
         }
         prefsSuiteRunnerNoneNote.classList.toggle("hidden", prefsSuiteRunnerIsolation.value !== "none");
         prefsSuiteRunnerStatus.textContent = suiteRunnerStatusText(st);
+        if (prefsBoxOfferShown) {
+          prefsBoxOfferShown.runner = offerRunnerFrom(st);
+          syncBoxOfferScope();
+        }
       }
       async function refreshSuiteRunnerPrefs() {
         if (!prefsSuiteRunnerBlock) return;
@@ -62721,9 +62733,15 @@ ${res.stderr}` : "");
           }
           const rec = offerRecordFromForm(form);
           let confirm2;
-          if (rec.scope === "run") {
+          if (rec.scope === "run" && rec.enabled) {
             const names = rec.peers.map((p) => p.name);
-            if (!window.confirm(offerRunConsentText(names, prefsBoxOfferShown && prefsBoxOfferShown.runner))) return;
+            let runnerSt = null;
+            try {
+              runnerSt = await window.api.suiteRunnerGet();
+            } catch {
+              runnerSt = null;
+            }
+            if (!window.confirm(offerRunConsentText(names, offerRunnerFrom(runnerSt)))) return;
             confirm2 = { peers: names };
           }
           let res = null;
