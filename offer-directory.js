@@ -57,6 +57,15 @@ function createOfferDirectory({ now = Date.now, ttlMs = OFFER_TTL_MS, maxRows = 
   return { set, list };
 }
 
+function setNotifying(directory, row, onChange) {
+  if (typeof onChange !== 'function') return directory.set(row);
+  const listing = () => JSON.stringify(directory.list().map(({ at, ...rest }) => rest));
+  const before = listing();
+  const ok = directory.set(row);
+  if (listing() !== before) onChange();
+  return ok;
+}
+
 function parsePlatforms(text) {
   const out = [];
   for (const p of String(text || '').split(/[\s,]+/)) {
@@ -126,5 +135,6 @@ module.exports = {
   createOfferDirectory,
   createRuntimeProbe,
   parsePlatforms,
+  setNotifying,
   hostFacts,
 };

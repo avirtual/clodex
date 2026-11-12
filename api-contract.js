@@ -334,6 +334,9 @@ const API_CONTRACT = [
   { name: 'peerSetShellAllowed', kind: 'invoke', channel: 'peer:setShellAllowed' },
   { name: 'suiteRunnerGet', kind: 'invoke', channel: 'suiteRunner:get' },
   { name: 'suiteRunnerSet', kind: 'invoke', channel: 'suiteRunner:set' },
+  { name: 'offerGet', kind: 'invoke', channel: 'offer:get' },
+  { name: 'offerSet', kind: 'invoke', channel: 'offer:set' },
+  { name: 'offerDirectory', kind: 'invoke', channel: 'offer:directory' },
   { name: 'peerControlledNames', kind: 'invoke', channel: 'peer:controlledNames' },
   { name: 'peerForgetControlled', kind: 'invoke', channel: 'peer:forgetControlled' },
   { name: 'peerVisible', kind: 'invoke', channel: 'peer:visible' },
@@ -373,6 +376,7 @@ const API_CONTRACT = [
   // The GRANT changed in some window. Payload-free on purpose: the listener
   // re-reads settings, so every window derives the chip the same way.
   { name: 'onPeerShellAllowed', kind: 'on', channel: 'peer-shell-allowed' },
+  { name: 'onOffersChanged', kind: 'on', channel: 'offers-changed' },
   { name: 'onPeerState', kind: 'on', channel: 'peer-state' },
   { name: 'onPeerActivity', kind: 'on', channel: 'peer-activity' },
   { name: 'onPeerReplay', kind: 'on', channel: 'peer-replay' },

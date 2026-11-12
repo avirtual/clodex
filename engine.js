@@ -1884,9 +1884,11 @@ const openRequests = createOpenRequests({
 });
 const { bootOffer, offerEnabled } = require('./box-offer');
 const { createOfferDirectory, createRuntimeProbe, hostFacts } = require('./offer-directory');
+const readStoredSettings = () => JSON.parse(fs.readFileSync(path.join(userDataPath, 'ui-settings.json'), 'utf8'));
+const readStoredBoxOffer = () => readStoredSettings()?.boxOffer;
 const envBoxOffer = bootOffer(
   process.env,
-  () => JSON.parse(fs.readFileSync(path.join(userDataPath, 'ui-settings.json'), 'utf8')),
+  readStoredSettings,
   { error: (m) => log.error('offers', m), warn: (m) => log.warn('offers', m) },
 );
 const offerDirectory = createOfferDirectory();
@@ -2502,6 +2504,8 @@ const toolCache = createToolCache({ whichBin });
     reconcileCodexSwaps,
     knownSkillNames,
     refreshRemoteToken, suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner,
+    getBoxOffer, boxOfferForced: envBoxOffer !== undefined, readStoredBoxOffer, getOfferFacts, offerDirectory,
+    readOfferFacts: () => runtimeProbe.refresh().then(() => getOfferFacts()),
     setRemoteToken: (token) => writeRemoteEnvToken(userDataPath, token),
     hasRemoteToken: () => hasRemoteEnvToken(userDataPath),
     listSpeakVoices: () => voiceCatalog.list(),

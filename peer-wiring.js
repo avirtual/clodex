@@ -15,12 +15,13 @@
 
 const { directWebUrl } = require('./peer-web-url');
 const { wireEntry } = require('./box-offer');
+const { setNotifying } = require('./offer-directory');
 
-function offerPeerCallbacks({ getBoxOffer, getOfferFacts, offerDirectory } = {}) {
+function offerPeerCallbacks({ getBoxOffer, getOfferFacts, offerDirectory, onChange } = {}) {
   if (!offerDirectory || typeof getBoxOffer !== 'function' || typeof getOfferFacts !== 'function') return {};
   return {
     computeOffers: (_targetId, label) => wireEntry(getBoxOffer(), getOfferFacts, label),
-    onOffers: (peerId, label, own) => offerDirectory.set({ provenance: 'hello', source: String(peerId), name: label, offer: own }),
+    onOffers: (peerId, label, own) => setNotifying(offerDirectory, { provenance: 'hello', source: String(peerId), name: label, offer: own }, onChange),
   };
 }
 
@@ -96,7 +97,7 @@ function createPeerWiring(deps) {
       const { computeRosterFor } = require('./relay-protocol');
       setPeerManager(new PeerManager({
         selfLabel: SELF_LABEL,
-        ...offerPeerCallbacks({ getBoxOffer, getOfferFacts, offerDirectory }),
+        ...offerPeerCallbacks({ getBoxOffer, getOfferFacts, offerDirectory, onChange: () => manager._broadcast('offers-changed') }),
         // Hub-relay: the roster pushed to spoke `targetId` — agents on our OTHER
         // relayAllowed peers plus OUR OWN, all under the symmetric gate. Re-reads
         // settings, statuses and sessions per call, so a relayAllowed toggle lands
