@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { mkTmpRoot } = require('./lib/tmp-roots');
-const { snapshotTree, releaseSnapshot, buildPack, ingestPack, materialize, treeHashOf, keepRefs, mirrorHave, DEFAULT_PACK_MAX } = require('../suite-snapshot');
+const { snapshotTree, releaseSnapshot, buildPack, ingestPack, materialize, treeHashOf, keepRefs, mirrorHave, detachTree, DEFAULT_PACK_MAX } = require('../suite-snapshot');
 
 const ENV = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_'))), GIT_AUTHOR_DATE: '2026-01-02T03:04:05Z', GIT_COMMITTER_DATE: '2026-01-02T03:04:05Z' };
 const IDENT = ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgSign=false', '-c', 'core.hooksPath=/dev/null', '-c', 'core.autocrlf=false'];
@@ -358,4 +358,55 @@ test('keepRefs keeps the trunk and the newest 20 job heads; mirrorHave answers o
   } finally {
     releaseSnapshot(snap);
   }
+});
+
+test('detachTree: the tree works with its mirror moved away, and fails without it', async () => {
+  for (const detach of [false, true]) {
+    const { root, repo } = baseRepo();
+    write(repo, 'a.txt', 'alpha modified\n');
+    const { snap, dir, status } = await roundTrip(root, repo);
+    const alternates = path.join(dir, '.git', 'objects', 'info', 'alternates');
+    assert.ok(fs.existsSync(alternates), 'ENTER: the far tree borrows the mirror');
+    if (detach) {
+      const r = await detachTree(dir);
+      assert.strictEqual(r.ok, true);
+      assert.strictEqual(r.error, null);
+      assert.strictEqual(typeof r.ms, 'number');
+      assert.strictEqual(fs.existsSync(alternates), false);
+    }
+    const mirror = path.join(root, 'work', 'mirrors', `${snap.repoKey}.git`);
+    fs.renameSync(mirror, `${mirror}.moved`);
+    const cmds = [['status', '--porcelain'], ['log', '-1'], ['diff', '--cached'], ['fsck']];
+    if (!detach) {
+      for (const c of cmds) assert.throws(() => g(dir, ...c), undefined, `ENTER: git ${c[0]} fails without detachTree`);
+      await assert.rejects(treeHashOf(dir));
+      continue;
+    }
+    assert.strictEqual(g(dir, 'status', '--porcelain'), status);
+    assert.match(g(dir, 'log', '-1'), /three/);
+    assert.strictEqual(g(dir, 'diff', '--cached'), '');
+    g(dir, 'fsck');
+    assert.strictEqual(await treeHashOf(dir), snap.treeHash);
+  }
+});
+
+test('detachTree on a --shared clone leaves no alternates and fsck passes with the source moved away', async () => {
+  const { root, repo } = baseRepo();
+  const clone = path.join(root, 'clone');
+  execFileSync('git', ['clone', '-q', '--shared', repo, clone], { env: ENV });
+  const alternates = path.join(clone, '.git', 'objects', 'info', 'alternates');
+  assert.ok(fs.existsSync(alternates), 'ENTER: the clone borrows the source');
+  const r = await detachTree(clone);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(fs.existsSync(alternates), false);
+  fs.renameSync(repo, `${repo}.moved`);
+  g(clone, 'fsck');
+  assert.match(g(clone, 'log', '-1'), /three/);
+});
+
+test('detachTree reports a failed repack', async () => {
+  const root = mkTmpRoot('suite-snap-');
+  const r = await detachTree(path.join(root, 'nope'));
+  assert.strictEqual(r.ok, false);
+  assert.match(r.error, /^git repack failed: /);
 });
