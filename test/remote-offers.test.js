@@ -42,10 +42,10 @@ function req(port, pathname, { method = 'GET', token = OP_TOKEN, body = null } =
   });
 }
 
-async function startNode(t, { offer = OFFER, wired = true } = {}) {
+async function startNode(t, { offer = OFFER, wired = true, maxRows } = {}) {
   let n = 0;
   const state = { offer, clock: 5000, factsCalls: 0 };
-  const offerDirectory = createOfferDirectory({ now: () => state.clock, newRoute: () => `route-${++n}` });
+  const offerDirectory = createOfferDirectory({ now: () => state.clock, newRoute: () => `route-${++n}`, ...(maxRows ? { maxRows } : {}) });
   const callbacks = wired
     ? offerCallbacks({ getBoxOffer: () => state.offer, getOfferFacts: () => { state.factsCalls++; return FACTS; }, offerDirectory })
     : {};
@@ -213,4 +213,13 @@ test('GET /api/offers answers 500 when the offer source throws', async (t) => {
   t.after(() => server.stop());
   const r = await req(server.port, '/api/offers');
   assert.deepStrictEqual([r.status, r.json], [500, { ok: false, error: 'facts exploded' }]);
+});
+
+test('POST /api/peer/offers answers 503 when the directory is full', async (t) => {
+  const { port, offerDirectory } = await startNode(t, { maxRows: 1 });
+  const first = await announce(port, 'laptop', ANNOUNCED);
+  assert.deepStrictEqual([first.status, first.json], [200, { ok: true }]);
+  const second = await announce(port, 'constructor', ANNOUNCED);
+  assert.deepStrictEqual([second.status, second.json], [503, { ok: false, error: 'offers directory full' }]);
+  assert.deepStrictEqual(offerDirectory.list().map((r) => r.name), ['laptop']);
 });

@@ -210,6 +210,14 @@ function warnStoredOffer(readRaw, warn) {
   return true;
 }
 
+function bootOffer(env, readStored, log) {
+  const fromEnv = offerFromEnv(env, log);
+  if (fromEnv === undefined) warnStoredOffer(readStored, (m) => log.warn(m));
+  return fromEnv;
+}
+
+const offerEnabled = (raw) => sanitizeBoxOffer(raw)?.enabled === true;
+
 module.exports = {
   sanitizeBoxOffer,
   offerFromEnv,
@@ -219,4 +227,6 @@ module.exports = {
   sanitizeWireOffers,
   OFFERS_WIRE_VERSION,
   warnStoredOffer,
+  bootOffer,
+  offerEnabled,
 };

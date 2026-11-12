@@ -11,6 +11,7 @@ const { makeWatchdog, STALE_MS } = require('./cli/src/sse-guard');
 const { makeSseDecoder, MAX_BUFFER_BYTES } = require('./cli/src/sse-frame');
 const { peerHasShellCap, peerShellRefusal, vetWireResize } = require('./peer-shell');
 const { IMPORT_CHUNK_MAX } = require('./seat-import');
+const { sanitizeWireOffers, OFFERS_WIRE_VERSION } = require('./box-offer');
 
 const HELLO_INTERVAL_MS = 15000;      // offline poll cadence
 const RECONNECT_MIN_MS = 1000;        // attach/events stream backoff
@@ -121,7 +122,7 @@ function withoutAssistants(rows) {
 }
 
 class PeerConnection {
-  constructor({ id, label, url, token, emit, selfLabel, helloIntervalMs, computeRoster, staleMs, timers, sseMaxBufferBytes, claimInbox, direct }) {
+  constructor({ id, label, url, token, emit, selfLabel, helloIntervalMs, computeRoster, computeOffers, onOffers, staleMs, timers, sseMaxBufferBytes, claimInbox, direct }) {
     this.id = id;
     this.label = label;
     this.url = url.replace(/\/+$/, '');
@@ -136,6 +137,9 @@ class PeerConnection {
     this._inboxClaiming = false;
     this._inboxClaimAgain = false;
     this._computeRoster = computeRoster || null;
+    this._computeOffers = computeOffers || null;
+    this._onOffers = onOffers || null;
+    this._offersPosted = undefined;
     this._helloIntervalMs = helloIntervalMs || HELLO_INTERVAL_MS;
     this._staleMs = Number.isInteger(staleMs) ? staleMs : STALE_MS;
     this._timers = timers || { setTimeout, clearTimeout };
@@ -268,7 +272,8 @@ class PeerConnection {
   _helloLoop() {
     if (this._stopped) return;
     const loopGen = this._helloLoopGen;
-    this._request('GET', '/api/peer/hello', null, (err, body) => {
+    const helloPath = this._selfLabel ? `/api/peer/hello?origin=${encodeURIComponent(this._selfLabel)}` : '/api/peer/hello';
+    this._request('GET', helloPath, null, (err, body) => {
       if (this._stopped || loopGen !== this._helloLoopGen) return;
       if (!err && body && body.ok && body.app === 'clodex') {
         const wasOffline = !this.online;
@@ -342,6 +347,7 @@ class PeerConnection {
           try { roster = this._computeRoster(this.id); } catch { roster = null; }
           if (Array.isArray(roster)) this.pushRoster(roster);
         }
+        if (Array.isArray(next.caps) && next.caps.includes('offers')) this._syncOffers(body.offers);
       } else {
         this._setOnline(false);
       }
@@ -1030,6 +1036,24 @@ class PeerConnection {
       (err, resp) => { if (cb) cb(err ? { ok: false, error: err.message } : resp || { ok: false }); });
   }
 
+  _syncOffers(offers) {
+    if (this._onOffers) {
+      const got = sanitizeWireOffers(offers);
+      try { this._onOffers(this.id, this.label, got ? got.own : null); } catch {}
+    }
+    if (!this._computeOffers || !this._selfLabel) return;
+    let own = null;
+    try { own = this._computeOffers(this.id, this.label) || null; } catch { own = null; }
+    if (own === null && this._offersPosted === null) return;
+    this.pushOffers(own, (resp) => { this._offersPosted = resp.ok ? own : undefined; });
+  }
+
+  pushOffers(own, cb) {
+    this._request('POST', '/api/peer/offers',
+      { v: OFFERS_WIRE_VERSION, from: this._selfLabel, own: own || null },
+      (err, resp) => { if (cb) cb(err ? { ok: false, error: err.message } : resp || { ok: false }); });
+  }
+
 
   _authHeaders() {
     return this._token ? { Authorization: `Bearer ${this._token}` } : {};
@@ -1232,10 +1256,12 @@ class PeerConnection {
 }
 
 class PeerManager {
-  constructor({ emit, selfLabel, computeRoster }) {
+  constructor({ emit, selfLabel, computeRoster, computeOffers, onOffers }) {
     this._emit = emit;
     this._selfLabel = selfLabel || null; // our origin on the wire (DM federation)
     this._computeRoster = computeRoster || null;
+    this._computeOffers = computeOffers || null;
+    this._onOffers = onOffers || null;
     this._peers = new Map();          // id -> PeerConnection
   }
 
@@ -1279,7 +1305,7 @@ class PeerManager {
     }
     for (const [id, w] of wanted) {
       if (!this._peers.has(id)) {
-        const conn = new PeerConnection({ ...w, emit: this._emit, selfLabel: this._selfLabel, computeRoster: this._computeRoster });
+        const conn = new PeerConnection({ ...w, emit: this._emit, selfLabel: this._selfLabel, computeRoster: this._computeRoster, computeOffers: this._computeOffers, onOffers: this._onOffers });
         conn._dest = w.dest;
         this._peers.set(id, conn);
         conn.start();

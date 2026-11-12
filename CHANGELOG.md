@@ -18,6 +18,7 @@ blocks a release.
 - A team can keep a versioned Dockerfile for its test box (`[agent:team box set|init|show|clear]`); it is checked for form and not built yet.
 - Runner mode starts on a macOS node without extra configuration: the work folder, tool search path and locale now have macOS defaults, and a runner that fails to start says why.
 - Peers that dial a node offering test boxes see the offer and the node's capabilities (operating system, architecture, cores, memory, container runtime) in its hello; `GET /api/offers` lists the offers a node knows.
+- A node announces its test-box offer to the peers it dials and records theirs, so two peered nodes see each other's offers whichever one opened the link.
 
 ## 5.176.0 — 2026-11-12
 

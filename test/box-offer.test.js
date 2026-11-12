@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 
 const {
-  sanitizeBoxOffer, offerFromEnv, scheduleOpen, wireEntry, offerEntry, sanitizeWireOffers, warnStoredOffer,
+  sanitizeBoxOffer, offerFromEnv, scheduleOpen, wireEntry, offerEntry, sanitizeWireOffers, warnStoredOffer, bootOffer, offerEnabled,
 } = require('../box-offer');
 const { initStores } = require('../stores.js');
 const { mkTmpRoot } = require('./lib/tmp-roots');
@@ -209,4 +209,29 @@ test('set stores a valid record, keeps it across an invalid set, and clears on n
   assert.deepStrictEqual(openStores(dir).uiSettings.get().boxOffer, VALID);
   ui.set({ boxOffer: null });
   assert.strictEqual(openStores(dir).uiSettings.get().boxOffer, null);
+});
+
+test('bootOffer: a set CLODEX_BOX_OFFER wins and the stored setting is never read or warned about', () => {
+  const lines = [];
+  const log = { error: (m) => lines.push(['error', m]), warn: (m) => lines.push(['warn', m]) };
+  let reads = 0;
+  const readStored = () => { reads++; return { boxOffer: with_({ scope: 'run' }) }; };
+  assert.deepStrictEqual(bootOffer({ CLODEX_BOX_OFFER: JSON.stringify(VALID) }, readStored, log), sanitizeBoxOffer(VALID));
+  assert.strictEqual(bootOffer({ CLODEX_BOX_OFFER: '{nope' }, readStored, log), null);
+  assert.strictEqual(reads, 0, 'the stored setting was read while the env var is set');
+  assert.deepStrictEqual(lines.map(([level]) => level), ['error']);
+  assert.strictEqual(bootOffer({}, readStored, log), undefined);
+  assert.strictEqual(reads, 1);
+  assert.deepStrictEqual(lines[1], ['warn', 'ui-settings boxOffer is not a valid box offer; box offer off']);
+});
+
+test('offerEnabled decides on the sanitised record, not the raw enabled flag', () => {
+  assert.strictEqual(offerEnabled(VALID), true);
+  assert.strictEqual(offerEnabled(with_({ scope: 'run' })), false);
+  assert.strictEqual(with_({ scope: 'run' }).enabled, true);
+  assert.strictEqual(offerEnabled(with_({ enabled: false })), false);
+  assert.strictEqual(offerEnabled(null), false);
+  const engine = fs.readFileSync(path.join(__dirname, '..', 'engine.js'), 'utf8');
+  assert.ok(engine.includes('if (offerEnabled(getBoxOffer())) runtimeProbe.refresh();'), 'engine.js boot probe does not decide on offerEnabled');
+  assert.ok(engine.includes('const envBoxOffer = bootOffer('), 'engine.js does not boot the offer through bootOffer');
 });

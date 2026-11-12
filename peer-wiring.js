@@ -14,6 +14,15 @@
 // destructure) are all defined at the call site and value-inject byte-identical.
 
 const { directWebUrl } = require('./peer-web-url');
+const { wireEntry } = require('./box-offer');
+
+function offerPeerCallbacks({ getBoxOffer, getOfferFacts, offerDirectory } = {}) {
+  if (!offerDirectory || typeof getBoxOffer !== 'function' || typeof getOfferFacts !== 'function') return {};
+  return {
+    computeOffers: (_targetId, label) => wireEntry(getBoxOffer(), getOfferFacts, label),
+    onOffers: (peerId, label, own) => offerDirectory.set({ provenance: 'hello', source: String(peerId), name: label, offer: own }),
+  };
+}
 
 function createPeerWiring(deps) {
   const {
@@ -24,6 +33,7 @@ function createPeerWiring(deps) {
     getWebTunnelManager, setWebTunnelManager,
     openRemoteWindow, closeRemoteWindow, onRemoteWindowClosed, onRemoteWindowBounds,
     persistWebWindows = false,
+    getBoxOffer, getOfferFacts, offerDirectory,
   } = deps;
 
   // Last-logged online state per peer id — the ops log records online/offline
@@ -86,6 +96,7 @@ function createPeerWiring(deps) {
       const { computeRosterFor } = require('./relay-protocol');
       setPeerManager(new PeerManager({
         selfLabel: SELF_LABEL,
+        ...offerPeerCallbacks({ getBoxOffer, getOfferFacts, offerDirectory }),
         // Hub-relay: the roster pushed to spoke `targetId` — agents on our OTHER
         // relayAllowed peers plus OUR OWN, all under the symmetric gate. Re-reads
         // settings, statuses and sessions per call, so a relayAllowed toggle lands
@@ -563,4 +574,4 @@ function createPeerWiring(deps) {
   };
 }
 
-module.exports = { createPeerWiring };
+module.exports = { createPeerWiring, offerPeerCallbacks };

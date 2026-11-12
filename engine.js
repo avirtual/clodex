@@ -1882,10 +1882,13 @@ const openRequests = createOpenRequests({
   listSeatAttention: () => manager.listSeatAttention(),
   getNotifications: () => notifications,
 });
-const { offerFromEnv, warnStoredOffer } = require('./box-offer');
+const { bootOffer, offerEnabled } = require('./box-offer');
 const { createOfferDirectory, createRuntimeProbe, hostFacts } = require('./offer-directory');
-const envBoxOffer = offerFromEnv(process.env, { error: (m) => log.error('offers', m) });
-if (envBoxOffer === undefined) warnStoredOffer(() => JSON.parse(fs.readFileSync(path.join(userDataPath, 'ui-settings.json'), 'utf8')), (m) => log.warn('offers', m));
+const envBoxOffer = bootOffer(
+  process.env,
+  () => JSON.parse(fs.readFileSync(path.join(userDataPath, 'ui-settings.json'), 'utf8')),
+  { error: (m) => log.error('offers', m), warn: (m) => log.warn('offers', m) },
+);
 const offerDirectory = createOfferDirectory();
 const runtimeProbe = createRuntimeProbe({
   enabled: enableSandbox,
@@ -1956,6 +1959,7 @@ const {
   stopPeerWirescopeTunnels,
 } = createPeerWiring({
   manager, log, SELF_LABEL, scheduleAppMenuRefresh,
+  getBoxOffer, getOfferFacts, offerDirectory,
   getUiSettings: () => uiSettings,
   getPeerManager: () => peerManager,
   setPeerManager: (v) => { peerManager = v; },
@@ -2299,7 +2303,7 @@ const toolCache = createToolCache({ whichBin });
     } : {}) });
   const { persistence, templates, workspaces, promptLibrary,
     agentDefaults, agentLibrary, skillLibrary, execLibrary, mcpLibrary, reminders, misfires, notifications, uiSettings, envScopes, skillsSeen, renameWorkspaceScope } = stores;
-  if (getBoxOffer()?.enabled === true) runtimeProbe.refresh();
+  if (offerEnabled(getBoxOffer())) runtimeProbe.refresh();
 
   const accounts = createAccounts({ fs, path, os, clodexHome: REGISTRY_DIR });
 

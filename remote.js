@@ -1656,7 +1656,9 @@ class RemoteServer {
         if (!offers) return this._json(res, 400, { ok: false, error: 'bad offer' });
         Promise.resolve()
           .then(() => this._receiveOffers({ from, own: offers.own }))
-          .then(() => this._json(res, 200, { ok: true }))
+          .then((stored) => (stored === false
+            ? this._json(res, 503, { ok: false, error: 'offers directory full' })
+            : this._json(res, 200, { ok: true })))
           .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
       });
     }
