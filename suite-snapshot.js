@@ -20,7 +20,7 @@ const CANDIDATES_PER_LINE = 16;
 const NEAR_CONFIG = ['-c', 'core.splitIndex=false'];
 const RUNNER_CONFIG = ['-c', 'core.autocrlf=false', '-c', 'core.hooksPath=/dev/null', '-c', 'core.splitIndex=false'];
 const DEFAULT_TREE_CAP = 2 * 1024 ** 3;
-const DEFAULT_PACK_MAX = 256 * 1024 ** 2;
+const DEFAULT_PACK_MAX = 1024 ** 3;
 const SHA_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 const KEEP_JOBS = 20;
 const GC_PACKS = 50;

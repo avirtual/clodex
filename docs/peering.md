@@ -486,7 +486,7 @@ A node started with `CLODEX_SUITE_RUNNER=1` is a test runner: remote-wiring
 builds one `suite-runner.js` engine (`suiteRunnerOptions`: work root
 `CLODEX_SUITE_WORK`, default `/var/lib/clodex-suite` on Linux and
 `<Clodex home>/suite-work` on macOS; `CLODEX_SUITE_ISOLATION=none`
-for a loopback throwaway box; `CLODEX_SUITE_PACK_MAX_MB`) and injects it as
+for a loopback throwaway box; `CLODEX_SUITE_PACK_MAX_MB`, default 1 GiB) and injects it as
 `suiteRunner`. Without it every `/api/suite/*` route answers 501 and hello
 carries no `suite` cap.
 

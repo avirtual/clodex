@@ -351,8 +351,8 @@ test('materialize refuses a tree over the cap before any checkout', async () => 
   }
 });
 
-test('the default pack limit is 256 MiB', () => {
-  assert.strictEqual(DEFAULT_PACK_MAX, 268435456);
+test('the default pack limit is 1 GiB', () => {
+  assert.strictEqual(DEFAULT_PACK_MAX, 1073741824);
 });
 
 test('materialize pins core.autocrlf=false in the far checkout over a global autocrlf=true', async () => {
