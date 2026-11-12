@@ -12,6 +12,7 @@ absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
 ## Unreleased
+
 - A node can record an offer to host test boxes for named peers (off by default, discovery only); nothing is announced yet.
 
 ## 5.176.0 — 2026-11-12
