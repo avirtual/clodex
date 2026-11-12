@@ -461,7 +461,7 @@ test('client: the remote ledger start carries where (the runner name), queuedAt,
   assert.strictEqual(out.unknown, null, 'ENTER: the run concluded');
   const [start, end] = fs.readFileSync(ledgerFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.deepStrictEqual(start, {
-    id: 'run-1', phase: 'start', where: 'runner-1', runner: 'p1', jobId: 'run-1', attempt: 1,
+    id: 'run-1', phase: 'start', where: 'runner-1', runner: 'p1', wire: 'push', jobId: 'run-1', attempt: 1,
     kind: 'hand', scope: 'full', team: null, ticket: null, seat: null,
     tree: '/w', sha: HEAD, treeHash: TREE, dirty: true, pid: null, route: 'hands:all', override: null,
     queuedAt: '1970-01-01T00:00:01.000Z', startedAt: '1970-01-01T00:00:01.000Z', env: { envKey: 'k' },

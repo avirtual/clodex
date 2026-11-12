@@ -167,3 +167,10 @@ test('t2266: paintRunnerState rewrites only the state line', () => {
   assert.strictEqual(textOf(v.wrap.childNodes.find((n) => n.dataset.runner === 'state')), `${SET.reach}; shadow comparisons: 1 agree, 2 disagree`);
   assert.strictEqual(v.field('runner-peer').value, 'runner-1');
 });
+
+test('t2303: the state line of a pull runner names the wire and whether it is attached', () => {
+  const { runnerStateLine } = require('../renderer/lib/team-runner-row');
+  assert.strictEqual(runnerStateLine({ peer: 'laptop', wire: 'pull', reach: 'not attached (last claim never)', tally: null }),
+    'dials in (wire pull, shadow only): not attached (last claim never)');
+  assert.strictEqual(runnerStateLine({ peer: 'runner-1', wire: 'push', reach: 'offline', tally: null }), 'offline');
+});

@@ -21,8 +21,9 @@ const { idleClearAfterMs, IDLE_CLEAR_MIN_MS } = require('./assistant-sleep');
 const { localHalf } = require('./suite-client');
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
-  DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS,
+  DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS, TEST_RUNNER_WIRE,
 } = require('./team-manifest');
+const [WIRE_PUSH] = TEST_RUNNER_WIRE;
 const {
   readTeamJson, teamTemplatePath, teamTemplateSave, mayGrantOf, ownTeamExecGrants, clampToGrantor, teamTemplateRemove, teamPromptSave, teamPromptRemove,
   teamPromptFile,
@@ -3181,7 +3182,7 @@ function createTicketMethods(deps, shared) {
       const cur = team.testRunner || null;
       if (!cur) return { peer: null, hands: 'off', gate: 'off', wire: null, invalid: this._runnerInvalid(team), setup: false, env: false, tally: null };
       return {
-        peer: cur.peer, hands: cur.hands, gate: cur.gate || 'off', wire: cur.wire || 'push', invalid: false, setup: !!cur.setup, env: !!cur.env,
+        peer: cur.peer, hands: cur.hands, gate: cur.gate || 'off', wire: cur.wire || WIRE_PUSH, invalid: false, setup: !!cur.setup, env: !!cur.env,
         tally: this._runnerTallyView(team, null),
       };
     },
@@ -3194,7 +3195,7 @@ function createTicketMethods(deps, shared) {
       const seen = {};
       const reach = await this._runnerReachFor(cur, seen);
       return {
-        wire: pull ? 'pull' : 'push', attached: pull ? seen.attached === true : null,
+        wire: pull ? 'pull' : WIRE_PUSH, attached: pull ? seen.attached === true : null,
         online: pull ? seen.attached === true : !!(status && status.online),
         suite: pull ? seen.attached === true : !!(status && Array.isArray(status.caps) && status.caps.includes('suite')),
         reachable: seen.reachable === true, reach, tally: this._runnerTallyView(team, seen.envKey),
@@ -3266,7 +3267,7 @@ function createTicketMethods(deps, shared) {
         }
         const seen = {};
         const reach = await this._runnerReachFor(cur, seen);
-        reply(`test runner of ${team.name}: ${cur.peer}, wire ${cur.wire || 'push'}, hands ${cur.hands}, gate ${cur.gate || 'off'} — ${reach}${this._runnerTally(team, cur, seen.envKey)}`);
+        reply(`test runner of ${team.name}: ${cur.peer}, wire ${cur.wire || WIRE_PUSH}, hands ${cur.hands}, gate ${cur.gate || 'off'} — ${reach}${this._runnerTally(team, cur, seen.envKey)}`);
         return;
       }
       if (intent.value === 'off') {
@@ -3293,7 +3294,7 @@ function createTicketMethods(deps, shared) {
         reply(`error: peer ${intent.value} is online but does not advertise the suite capability — the runner node needs CLODEX_SUITE_RUNNER=1`);
         return;
       }
-      const m = deps.setTeamTestRunner(team.name, cur ? { peer: intent.value, wire: 'push' } : { peer: intent.value, hands: 'full', wire: 'push' });
+      const m = deps.setTeamTestRunner(team.name, cur ? { peer: intent.value, wire: WIRE_PUSH } : { peer: intent.value, hands: 'full', wire: WIRE_PUSH });
       const tr = m.testRunner;
       if (!peer.online) {
         reply(`test runner of ${team.name} set to ${tr.peer}, hands ${tr.hands} — warning: the peer is offline, so its suite capability is unchecked`);
