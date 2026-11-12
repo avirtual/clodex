@@ -361,7 +361,12 @@ function registerIpcHandlers(deps) {
   });
 
   handle('team:runner', async (_e, name) => {
-    try { return { ok: true, ...(await manager._runnerView(loadManifest(name))) }; }
+    try { return { ok: true, ...manager._runnerStored(loadManifest(name)) }; }
+    catch (err) { return { ok: false, error: err.message }; }
+  });
+
+  handle('team:runnerReach', async (_e, name) => {
+    try { return { ok: true, ...(await manager._runnerProbe(loadManifest(name))) }; }
     catch (err) { return { ok: false, error: err.message }; }
   });
 

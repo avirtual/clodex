@@ -19,7 +19,7 @@ const PINNED_NAMES = [
   // Teams front door (teams-design.md [internal design doc, not in this repo]) — added with the front-door build.
   'teamCreate', 'teamCreateBare', 'teamJoin', 'teamForCwd', 'teamNames', 'teamRolePrompts',
   // Team-management GUI (T29 Layer A Slice 3).
-  'teamGet', 'teamStockRoles', 'teamAddRole', 'teamSetRole', 'teamRemoveRole', 'teamRenameRole', 'teamSetWatchdog', 'teamTrunk', 'teamSetTrunk', 'teamRunner', 'teamSetRunner',
+  'teamGet', 'teamStockRoles', 'teamAddRole', 'teamSetRole', 'teamRemoveRole', 'teamRenameRole', 'teamSetWatchdog', 'teamTrunk', 'teamSetTrunk', 'teamRunner', 'teamRunnerReach', 'teamSetRunner',
   // Which SEAT is the team's lead (t420) — the manifest pointer, not the role.
   'teamSetLead',
   // The manifest preflight the roles popover renders as a per-role checklist (t414).
@@ -254,8 +254,8 @@ test('no duplicate names and no duplicate channels', () => {
   assert.equal(new Set(channels).size, channels.length, 'channels are unique');
 });
 
-test('contract covers exactly the pinned 355-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 355, 'pinned list is the full 355-method surface');
+test('contract covers exactly the pinned 356-method surface', () => {
+  assert.equal(PINNED_NAMES.length, 356, 'pinned list is the full 356-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -279,7 +279,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 355, 'window.api has exactly 355 methods');
+    assert.equal(generated.length, 356, 'window.api has exactly 356 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);

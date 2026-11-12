@@ -3095,20 +3095,29 @@ function createTicketMethods(deps, shared) {
       try { return client.tally({ team: team.name, envKey: envKey || null }) || null; } catch { return null; }
     },
 
-    async _runnerView(team) {
+    _runnerTallyView(team, envKey) {
+      const t = this._runnerTallyData(team, envKey);
+      return t && t.envKey && (t.agree || t.disagree) ? { envKey: t.envKey, agree: t.agree, disagree: t.disagree } : null;
+    },
+
+    _runnerStored(team) {
       const cur = team.testRunner || null;
-      if (!cur) {
-        return { peer: null, hands: 'off', gate: 'off', invalid: this._runnerInvalid(team), setup: false, env: false, online: false, suite: false, reachable: false, reach: null, tally: null };
-      }
+      if (!cur) return { peer: null, hands: 'off', gate: 'off', invalid: this._runnerInvalid(team), setup: false, env: false, tally: null };
+      return {
+        peer: cur.peer, hands: cur.hands, gate: cur.gate || 'off', invalid: false, setup: !!cur.setup, env: !!cur.env,
+        tally: this._runnerTallyView(team, null),
+      };
+    },
+
+    async _runnerProbe(team) {
+      const cur = team.testRunner || null;
+      if (!cur) return { online: false, suite: false, reachable: false, reach: null, tally: null };
       const status = this._runnerPeerStatus(cur.peer);
       const seen = {};
       const reach = await this._runnerReach(status, seen);
-      const t = this._runnerTallyData(team, seen.envKey);
       return {
-        peer: cur.peer, hands: cur.hands, gate: cur.gate || 'off', invalid: false, setup: !!cur.setup, env: !!cur.env,
         online: !!(status && status.online), suite: !!(status && Array.isArray(status.caps) && status.caps.includes('suite')),
-        reachable: seen.reachable === true, reach,
-        tally: t && t.envKey && (t.agree || t.disagree) ? { envKey: t.envKey, agree: t.agree, disagree: t.disagree } : null,
+        reachable: seen.reachable === true, reach, tally: this._runnerTallyView(team, seen.envKey),
       };
     },
 

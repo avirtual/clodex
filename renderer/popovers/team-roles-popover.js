@@ -23,7 +23,7 @@
 // lib/team-roles.js are tested instead; wire fidelity is the guarantee here.
 
 const { esc } = require('../lib/format');
-const { RUNNER_FIELDS, runnerPatchFor, buildRunnerField } = require('../lib/team-runner-row');
+const { RUNNER_FIELDS, runnerPatchFor, buildRunnerField, paintRunnerState } = require('../lib/team-runner-row');
 const {
   teamRoleRows, validateAddRole, buildSavePatch, reservedRoleNote, reservedRoleTemplate, DISPATCH_VALUES, DEFAULT_DISPATCH,
   parseDuration, formatDuration, formatBlockedBy, preflightByRole,
@@ -168,7 +168,22 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
     if (typeof window.api.teamRunner !== 'function') return () => { runnerInfo = null; };
     let res;
     try { res = await window.api.teamRunner(name); } catch { res = null; }
-    return () => { runnerInfo = res && res.ok ? res : null; };
+    return () => {
+      runnerInfo = res && res.ok ? res : null;
+      const seq = ++runnerProbeSeq;
+      if (runnerInfo && runnerInfo.peer) probeRunner(name, seq);
+    };
+  }
+
+  let runnerProbeSeq = 0;
+  async function probeRunner(name, seq) {
+    if (typeof window.api.teamRunnerReach !== 'function') return;
+    let res;
+    try { res = await window.api.teamRunnerReach(name); } catch (err) { res = { ok: false, error: (err && err.message) || String(err) }; }
+    if (seq !== runnerProbeSeq || teamName() !== name || !runnerInfo) return;
+    const { ok, error, ...probe } = res || { ok: false, error: 'no answer' };
+    runnerInfo = { ...runnerInfo, ...(ok ? probe : { reach: `reachability unknown: ${error || 'no answer'}` }) };
+    paintRunnerState(listEl.querySelector('.team-runner'), runnerInfo);
   }
 
   function buildTrunkField() {
@@ -1274,6 +1289,7 @@ function initTeamRolesPopover({ promptText, openSessionDialog, openTemplate } = 
       const field = Object.keys(RUNNER_FIELDS).find((f) => RUNNER_FIELDS[f] === act);
       const inp = rowEl.querySelector(`[data-f="${field}"]`);
       if (!runnerInfo || typeof window.api.teamSetRunner !== 'function') { setStatus('the test runner cannot be read here', true); return; }
+      runnerProbeSeq += 1;
       const res = await window.api.teamSetRunner(name, runnerPatchFor(act, inp && inp.value));
       await afterMutation(res, res && res.message, name);
       return;

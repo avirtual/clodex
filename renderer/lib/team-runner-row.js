@@ -13,7 +13,7 @@ function runnerStateLine(info) {
       : 'none: hand and gate suites run on this machine';
   }
   const tally = info.tally ? `; shadow comparisons: ${info.tally.agree} agree, ${info.tally.disagree} disagree` : '';
-  return `${info.reach || 'reachability unknown'}${tally}`;
+  return `${info.reach == null ? 'checking reachability…' : info.reach}${tally}`;
 }
 
 function runnerPatchFor(act, value) {
@@ -97,4 +97,9 @@ function buildRunnerField(document, info) {
   return wrap;
 }
 
-module.exports = { RUNNER_HANDS_OPTIONS, RUNNER_GATE_OPTIONS, RUNNER_FIELDS, runnerStateLine, runnerPatchFor, buildRunnerField };
+function paintRunnerState(wrap, info) {
+  const state = wrap && Array.from(wrap.childNodes).find((n) => n.dataset && n.dataset.runner === 'state');
+  if (state) state.textContent = runnerStateLine(info);
+}
+
+module.exports = { RUNNER_HANDS_OPTIONS, RUNNER_GATE_OPTIONS, RUNNER_FIELDS, runnerStateLine, runnerPatchFor, buildRunnerField, paintRunnerState };

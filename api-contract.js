@@ -53,6 +53,7 @@ const API_CONTRACT = [
   { name: 'teamTrunk', kind: 'invoke', channel: 'team:trunk' },
   { name: 'teamSetTrunk', kind: 'invoke', channel: 'team:setTrunk' },
   { name: 'teamRunner', kind: 'invoke', channel: 'team:runner' },
+  { name: 'teamRunnerReach', kind: 'invoke', channel: 'team:runnerReach' },
   { name: 'teamSetRunner', kind: 'invoke', channel: 'team:setRunner' },
   { name: 'teamGather', kind: 'invoke', channel: 'team:gather' },
   // Which SEAT is the team's lead (t420) — the manifest's top-level pointer, not

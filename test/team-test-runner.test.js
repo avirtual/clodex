@@ -352,21 +352,23 @@ function mkIpcFixture(opts) {
   return {
     ...f, intents,
     read: () => handlers.get('team:runner')(null, 'team'),
+    probe: () => handlers.get('team:runnerReach')(null, 'team'),
     set: (patch) => handlers.get('team:setRunner')(null, 'team', patch),
   };
 }
 
 const REACH_TEXT = 'reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab';
 
-test('t2266: team:runner with no setting returns off for every key', async () => {
+test('t2266: team:runner with no setting returns off for every key, and the probe has nothing to reach', async () => {
   const f = mkIpcFixture({ peers: [SUITE_PEER], reach: INFO });
   assert.deepStrictEqual(await f.read(), {
-    ok: true, peer: null, hands: 'off', gate: 'off', invalid: false, setup: false, env: false,
-    online: false, suite: false, reachable: false, reach: null, tally: null,
+    ok: true, peer: null, hands: 'off', gate: 'off', invalid: false, setup: false, env: false, tally: null,
   });
+  assert.deepStrictEqual(await f.probe(), { ok: true, online: false, suite: false, reachable: false, reach: null, tally: null });
+  assert.deepStrictEqual(f.reachCalls, []);
 });
 
-test('t2266: team:runner with a peer on hands:all and gate:shadow returns reachability and the tally', async () => {
+test('t2266: team:runner with a peer on hands:all and gate:shadow returns the stored setting and tally without a network call', async () => {
   const f = mkIpcFixture({
     manifestExtra: { testRunner: { peer: 'runner-1', hands: 'all', gate: 'shadow', setup: SETUP, env: { NODE_ENV: 'test' } } },
     peers: [SUITE_PEER], reach: INFO,
@@ -374,17 +376,25 @@ test('t2266: team:runner with a peer on hands:all and gate:shadow returns reacha
   });
   assert.deepStrictEqual(await f.read(), {
     ok: true, peer: 'runner-1', hands: 'all', gate: 'shadow', invalid: false, setup: true, env: true,
-    online: true, suite: true, reachable: true, reach: REACH_TEXT,
+    tally: { envKey: '0123456789ab', agree: 1, disagree: 2 },
+  });
+  assert.deepStrictEqual(f.reachCalls, [], 'the stored read asks the runner nothing');
+  assert.deepStrictEqual(await f.probe(), {
+    ok: true, online: true, suite: true, reachable: true, reach: REACH_TEXT,
     tally: { envKey: '0123456789ab', agree: 1, disagree: 2 },
   });
   assert.deepStrictEqual(f.reachCalls, ['p1']);
 });
 
+test('t2266: team:runnerReach for an offline peer says offline through the verb\'s reach text', async () => {
+  const f = mkIpcFixture({ manifestExtra: { testRunner: { peer: 'runner-2', hands: 'full' } }, peers: [OFFLINE_PEER], reach: INFO });
+  assert.deepStrictEqual(await f.probe(), { ok: true, online: false, suite: false, reachable: false, reach: 'offline', tally: null });
+});
+
 test('t2266: team:runner with an invalid hand-written setting returns invalid, not an empty setting', async () => {
   const f = mkIpcFixture({ manifestExtra: { testRunner: { peer: 'runner-1', hands: 'most' } }, peers: [SUITE_PEER], reach: INFO });
   assert.deepStrictEqual(await f.read(), {
-    ok: true, peer: null, hands: 'off', gate: 'off', invalid: true, setup: false, env: false,
-    online: false, suite: false, reachable: false, reach: null, tally: null,
+    ok: true, peer: null, hands: 'off', gate: 'off', invalid: true, setup: false, env: false, tally: null,
   });
 });
 
@@ -438,8 +448,10 @@ test('t2266: the team:runner handlers hold no validation of their own', () => {
   const set = block("  handle('team:setRunner',");
   const read = block("  handle('team:runner',");
   assert.ok(set.includes('manager._handleTeamRunner('), 'the set path calls the verb\'s handler');
-  assert.ok(read.includes('manager._runnerView('), 'the read path calls the verb\'s view');
-  for (const body of [set, read]) {
+  const reach = block("  handle('team:runnerReach',");
+  assert.ok(read.includes('manager._runnerStored('), 'the read path calls the stored view');
+  assert.ok(reach.includes('manager._runnerProbe('), 'the reach path calls the verb\'s probe');
+  for (const body of [set, read, reach]) {
     assert.doesNotMatch(body, /NODE_NAME_RE|NAME_RE|TEST_RUNNER_|normalizeTestRunner|setTeamTestRunner|caps|'suite'|'on'|'shadow'|'full'|'all'|droppedFields|\.test\(/);
   }
 });
