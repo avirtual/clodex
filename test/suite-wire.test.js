@@ -307,7 +307,7 @@ test('run drives submit, a multi-chunk pack with a refused offset, commit, poll 
   assert.deepStrictEqual([out.res.status, out.res.jobId, out.res.attempt, out.res.stdout], [0, 'run-0001', 1, 'ran tree\nTOTALS: 3 pass, 0 fail, 3 tests\n']);
   const { endedAt, durationMs, queuedAt, queueMs, setupMs, runMs, env, ...rest } = out.record;
   assert.deepStrictEqual(rest, {
-    id: 'run-0001', phase: 'end', where: 'runner-1', runner: 'runner-1', jobId: 'run-0001', attempt: 1,
+    id: 'run-0001', phase: 'end', where: 'runner-1', runner: 'runner-1', wire: 'push', jobId: 'run-0001', attempt: 1,
     kind: 'verify', scope: 'full', team: null, ticket: 't9', seat: null,
     tree: path.resolve(repo), sha: g(repo, 'rev-parse', 'HEAD').trim(), treeHash: out.res.treeHash, route: null, override: null,
     outcome: 'pass', reason: null, pass: 3, fail: 0, tests: 3,

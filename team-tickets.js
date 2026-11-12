@@ -21,8 +21,9 @@ const { idleClearAfterMs, IDLE_CLEAR_MIN_MS } = require('./assistant-sleep');
 const { localHalf } = require('./suite-client');
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
-  DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS,
+  DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS, TEST_RUNNER_WIRE,
 } = require('./team-manifest');
+const [WIRE_PUSH] = TEST_RUNNER_WIRE;
 const {
   readTeamJson, teamTemplatePath, teamTemplateSave, mayGrantOf, ownTeamExecGrants, clampToGrantor, teamTemplateRemove, teamPromptSave, teamPromptRemove,
   teamPromptFile,
@@ -3107,6 +3108,45 @@ function createTicketMethods(deps, shared) {
       return findPeerByOrigin(pm.statuses() || [], name) || null;
     },
 
+    _runnerDesk() {
+      return typeof deps.getSuiteDesk === 'function' ? deps.getSuiteDesk() : null;
+    },
+
+    _runnerDialedIn(name) {
+      const desk = this._runnerDesk();
+      if (!desk) return null;
+      const row = (desk.origins() || []).find((o) => o && o.origin === name) || null;
+      if (!row && !desk.attached(name)) return null;
+      return { attached: desk.attached(name), lastClaim: row ? row.lastClaim : null };
+    },
+
+    _runnerInfoText(r, seen) {
+      const flat = (v) => String(v == null ? '?' : v).replace(/[\x00-\x1f\x7f]+/g, ' ').slice(0, 120);
+      const q = (r.info && r.info.queue) || {};
+      const queue = (q.running ? 1 : 0) + (Array.isArray(q.queued) ? q.queued.length : 0);
+      const e = (r.info && r.info.env) || {};
+      seen.envKey = typeof e.envKey === 'string' && e.envKey ? e.envKey : null;
+      seen.reachable = true;
+      return `queue ${queue}, env ${flat(e.runner)} ${flat(e.platform)}/${flat(e.arch)} node ${flat(e.node)} key ${flat(e.envKey)}`;
+    },
+
+    async _runnerPullReach(name, seen = {}) {
+      const flat = (v) => String(v == null ? '?' : v).replace(/[\x00-\x1f\x7f]+/g, ' ').slice(0, 120);
+      const dialed = this._runnerDialedIn(name);
+      seen.attached = !!(dialed && dialed.attached);
+      if (!this._runnerDesk()) return 'not attached (no suite desk on this node)';
+      if (!seen.attached) {
+        const ago = dialed && dialed.lastClaim != null ? Math.max(0, Date.now() - dialed.lastClaim) : null;
+        const when = ago == null ? 'never' : ago < 60000 ? `${Math.floor(ago / 1000)}s ago` : `${Math.floor(ago / 60000)}m ago`;
+        return `not attached (last claim ${when})`;
+      }
+      const client = typeof deps.getSuiteClient === 'function' ? deps.getSuiteClient() : null;
+      if (!client) return 'attached; no suite client on this node';
+      const r = await client.reachable(name, 'pull');
+      if (!r || !r.ok) return `attached, but its info route failed: ${flat(r && r.why)}`;
+      return `attached, ${this._runnerInfoText(r, seen)}`;
+    },
+
     async _runnerReach(peer, seen = {}) {
       const flat = (v) => String(v == null ? '?' : v).replace(/[\x00-\x1f\x7f]+/g, ' ').slice(0, 120);
       if (!peer) return 'not a known peer';
@@ -3116,12 +3156,11 @@ function createTicketMethods(deps, shared) {
       if (!client) return 'online with the suite capability; no suite client on this node';
       const r = await client.reachable(peer.id);
       if (!r || !r.ok) return `online with the suite capability, but its info route failed: ${flat(r && r.why)}`;
-      const q = (r.info && r.info.queue) || {};
-      const queue = (q.running ? 1 : 0) + (Array.isArray(q.queued) ? q.queued.length : 0);
-      const e = (r.info && r.info.env) || {};
-      seen.envKey = typeof e.envKey === 'string' && e.envKey ? e.envKey : null;
-      seen.reachable = true;
-      return `reachable, suite capability, queue ${queue}, env ${flat(e.runner)} ${flat(e.platform)}/${flat(e.arch)} node ${flat(e.node)} key ${flat(e.envKey)}`;
+      return `reachable, suite capability, ${this._runnerInfoText(r, seen)}`;
+    },
+
+    _runnerReachFor(cur, seen = {}) {
+      return cur.wire === 'pull' ? this._runnerPullReach(cur.peer, seen) : this._runnerReach(this._runnerPeerStatus(cur.peer), seen);
     },
 
     _runnerInvalid(team) {
@@ -3141,21 +3180,24 @@ function createTicketMethods(deps, shared) {
 
     _runnerStored(team) {
       const cur = team.testRunner || null;
-      if (!cur) return { peer: null, hands: 'off', gate: 'off', invalid: this._runnerInvalid(team), setup: false, env: false, tally: null };
+      if (!cur) return { peer: null, hands: 'off', gate: 'off', wire: null, invalid: this._runnerInvalid(team), setup: false, env: false, tally: null };
       return {
-        peer: cur.peer, hands: cur.hands, gate: cur.gate || 'off', invalid: false, setup: !!cur.setup, env: !!cur.env,
+        peer: cur.peer, hands: cur.hands, gate: cur.gate || 'off', wire: cur.wire || WIRE_PUSH, invalid: false, setup: !!cur.setup, env: !!cur.env,
         tally: this._runnerTallyView(team, null),
       };
     },
 
     async _runnerProbe(team) {
       const cur = team.testRunner || null;
-      if (!cur) return { online: false, suite: false, reachable: false, reach: null, tally: null };
-      const status = this._runnerPeerStatus(cur.peer);
+      if (!cur) return { wire: null, attached: null, online: false, suite: false, reachable: false, reach: null, tally: null };
+      const pull = cur.wire === 'pull';
+      const status = pull ? null : this._runnerPeerStatus(cur.peer);
       const seen = {};
-      const reach = await this._runnerReach(status, seen);
+      const reach = await this._runnerReachFor(cur, seen);
       return {
-        online: !!(status && status.online), suite: !!(status && Array.isArray(status.caps) && status.caps.includes('suite')),
+        wire: pull ? 'pull' : WIRE_PUSH, attached: pull ? seen.attached === true : null,
+        online: pull ? seen.attached === true : !!(status && status.online),
+        suite: pull ? seen.attached === true : !!(status && Array.isArray(status.caps) && status.caps.includes('suite')),
         reachable: seen.reachable === true, reach, tally: this._runnerTallyView(team, seen.envKey),
       };
     },
@@ -3209,6 +3251,10 @@ function createTicketMethods(deps, shared) {
           reply('error: no test runner is set — name one first with [agent:team runner <peer>]');
           return;
         }
+        if (cur.wire === 'pull' && intent.hands !== 'off') {
+          reply(`error: hands:${intent.hands} is refused for ${cur.peer}: a runner that dials in (wire pull) runs shadow comparisons only`);
+          return;
+        }
         const m = deps.setTeamTestRunner(team.name, { hands: intent.hands });
         reply(`test runner hands mode of ${team.name} set to ${m.testRunner.hands}`);
         return;
@@ -3220,8 +3266,8 @@ function createTicketMethods(deps, shared) {
           return;
         }
         const seen = {};
-        const reach = await this._runnerReach(this._runnerPeerStatus(cur.peer), seen);
-        reply(`test runner of ${team.name}: ${cur.peer}, hands ${cur.hands}, gate ${cur.gate || 'off'} — ${reach}${this._runnerTally(team, cur, seen.envKey)}`);
+        const reach = await this._runnerReachFor(cur, seen);
+        reply(`test runner of ${team.name}: ${cur.peer}, wire ${cur.wire || WIRE_PUSH}, hands ${cur.hands}, gate ${cur.gate || 'off'} — ${reach}${this._runnerTally(team, cur, seen.envKey)}`);
         return;
       }
       if (intent.value === 'off') {
@@ -3234,15 +3280,21 @@ function createTicketMethods(deps, shared) {
         return;
       }
       const peer = this._runnerPeerStatus(intent.value);
+      if (!peer && this._runnerDialedIn(intent.value)) {
+        const m = deps.setTeamTestRunner(team.name, { peer: intent.value, wire: 'pull', hands: 'off' });
+        const tr = m.testRunner;
+        reply(`test runner of ${team.name} set to ${tr.peer}, wire pull, hands ${tr.hands} — a runner that dials in runs shadow comparisons only (gate:shadow); ${await this._runnerPullReach(tr.peer)}`);
+        return;
+      }
       if (!peer) {
-        reply(`error: "${intent.value}" is not a known peer — add it as a peer first`);
+        reply(`error: "${intent.value}" is not a known peer and no node by that name has dialed in — add it as a peer first`);
         return;
       }
       if (peer.online && !(Array.isArray(peer.caps) && peer.caps.includes('suite'))) {
         reply(`error: peer ${intent.value} is online but does not advertise the suite capability — the runner node needs CLODEX_SUITE_RUNNER=1`);
         return;
       }
-      const m = deps.setTeamTestRunner(team.name, cur ? { peer: intent.value } : { peer: intent.value, hands: 'full' });
+      const m = deps.setTeamTestRunner(team.name, cur ? { peer: intent.value, wire: WIRE_PUSH } : { peer: intent.value, hands: 'full', wire: WIRE_PUSH });
       const tr = m.testRunner;
       if (!peer.online) {
         reply(`test runner of ${team.name} set to ${tr.peer}, hands ${tr.hands} — warning: the peer is offline, so its suite capability is unchecked`);
@@ -6332,10 +6384,22 @@ function createTicketMethods(deps, shared) {
       try {
         const client = typeof deps.getSuiteClient === 'function' ? deps.getSuiteClient() : null;
         if (!client || typeof client.shadow !== 'function') throw new Error('no suite client on this node');
-        const peer = this._runnerPeerStatus(tr.peer);
-        if (!peer) throw new Error(`runner ${tr.peer} is not a known peer`);
+        let via;
+        if (tr.wire === 'pull') {
+          const desk = this._runnerDesk();
+          if (!desk || !desk.attached(tr.peer)) {
+            log.warn('ticket', `ticket ${ticket.id}: ${kind} shadow run skipped — runner ${tr.peer} dials in and is not attached`);
+            if (typeof client.shadowSkip === 'function') client.shadowSkip({ team: team.name, kind, ticket: String(ticket.id), runner: tr.peer, skipped: 'detached' });
+            return null;
+          }
+          via = { peer: tr.peer, wire: 'pull' };
+        } else {
+          const peer = this._runnerPeerStatus(tr.peer);
+          if (!peer) throw new Error(`runner ${tr.peer} is not a known peer`);
+          via = { peer: peer.id };
+        }
         return await client.shadow({
-          peer: peer.id, name: tr.peer, tree: cwd, kind, team: team.name, ticket: String(ticket.id),
+          ...via, name: tr.peer, tree: cwd, kind, team: team.name, ticket: String(ticket.id),
           setup: tr.setup || null, env: tr.env || {}, route: 'gate:shadow',
           queueBudgetMs: TICKET_SUITE_LOCK_WAIT_MS, budgetMs: TICKET_SUITE_TIMEOUT,
         });

@@ -17,6 +17,18 @@ const HEAD = 'b'.repeat(40);
 
 const teamWith = (hands) => ({ name: 'tm', lead: 'lead-1', root: '/r', testRunner: { peer: 'runner-1', hands } });
 
+function pullTeam(hands) {
+  const home = mkTmpRoot('clodex-pull-route-');
+  const dir = path.join(home, 'teams', 'tm');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'team.json'), JSON.stringify({
+    root: home, lead: 'lead-1', roles: { lead: { brief: 'the lead' } }, testRunner: { peer: 'laptop', hands, wire: 'pull' },
+  }));
+  const team = require('../team-manifest').createTeamManifest({ fs, clodexHome: home }).loadManifest('tm');
+  assert.deepStrictEqual(team.testRunner, { peer: 'laptop', hands, gate: 'off', wire: 'pull' }, 'ENTER: the hand-edited manifest loads');
+  return team;
+}
+
 const ROUTE_ROWS = [
   ['no setting', { team: { name: 'tm', root: '/r' }, scope: 'full' }, { where: 'local', why: 'no test runner' }],
   ['hands:off', { team: teamWith('off'), scope: 'full' }, { where: 'local', why: 'hands:off' }],
@@ -25,6 +37,8 @@ const ROUTE_ROWS = [
   ['hands:full, own scope', { team: teamWith('full'), scope: 'own' }, { where: 'local', why: 'hands:full leaves own scope local' }],
   ['hands:all, full scope', { team: teamWith('all'), scope: 'full' }, { where: 'remote', peer: 'runner-1', why: 'hands:all' }],
   ['hands:all, own scope', { team: teamWith('all'), scope: 'own' }, { where: 'remote', peer: 'runner-1', why: 'hands:all' }],
+  ['wire:pull, hands:full', { team: pullTeam('full'), scope: 'full' }, { where: 'local', why: 'wire:pull runs shadow comparisons only' }],
+  ['wire:pull, hands:all', { team: pullTeam('all'), scope: 'full' }, { where: 'local', why: 'wire:pull runs shadow comparisons only' }],
 ];
 
 for (const [name, input, want] of ROUTE_ROWS) {
@@ -447,7 +461,7 @@ test('client: the remote ledger start carries where (the runner name), queuedAt,
   assert.strictEqual(out.unknown, null, 'ENTER: the run concluded');
   const [start, end] = fs.readFileSync(ledgerFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.deepStrictEqual(start, {
-    id: 'run-1', phase: 'start', where: 'runner-1', runner: 'p1', jobId: 'run-1', attempt: 1,
+    id: 'run-1', phase: 'start', where: 'runner-1', runner: 'p1', wire: 'push', jobId: 'run-1', attempt: 1,
     kind: 'hand', scope: 'full', team: null, ticket: null, seat: null,
     tree: '/w', sha: HEAD, treeHash: TREE, dirty: true, pid: null, route: 'hands:all', override: null,
     queuedAt: '1970-01-01T00:00:01.000Z', startedAt: '1970-01-01T00:00:01.000Z', env: { envKey: 'k' },

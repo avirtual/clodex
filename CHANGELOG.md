@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A team can now name as its test runner a machine that connects to it, not only one it connects to: `[agent:team runner <name>]` works for a node that dials in and has allowed this one to run jobs. Such a runner is used for shadow comparisons only; when it is not connected the comparison is recorded as skipped.
+
 ## 5.178.0 — 2026-11-12 — Stream seats survive an idle clear and a restart; fixes for old git and desktop upgrades
 
 - Upgrading a desktop node that runs from a source checkout no longer removes Electron.

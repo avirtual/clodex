@@ -22,6 +22,12 @@ const RETRY_TEXT = {
   incomplete: 'runner could not complete the pack',
 };
 
+const RESTARTED = Symbol('runner-restart');
+
+function restarted(r) {
+  return !!(r && r.body && r.body.reason === 'runner-restart');
+}
+
 function lastTotals(text) {
   const re = /^TOTALS: (\d+) pass, (\d+) fail, (\d+) tests$/gm;
   let last = null;
@@ -40,9 +46,13 @@ function defaultSleep(ms) {
 function createSuiteClient({
   getPeerManager, ledgerFile = null, compareFile = null, log = () => {}, now = Date.now, sleep = defaultSleep,
   randomUUID = () => crypto.randomUUID(), snapshot = snapshotLib, pollWaitMs = POLL_WAIT_MS, retryMs = RETRY_MS,
-  snapshotSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms).unref()),
+  snapshotSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms).unref()), getSuiteDesk = () => null,
 }) {
-  function connFor(peer) {
+  function connFor(peer, wire = 'push') {
+    if (wire === 'pull') {
+      const desk = getSuiteDesk();
+      return desk ? desk.conn(peer) : null;
+    }
     const pm = getPeerManager();
     return pm ? pm.get(peer) : null;
   }
@@ -57,21 +67,21 @@ function createSuiteClient({
     }
   }
 
-  async function once(peer, fn) {
-    const conn = connFor(peer);
+  async function once(peer, fn, wire = 'push') {
+    const conn = connFor(peer, wire);
     if (!conn) return { status: 0, body: null, error: `no peer ${peer}` };
     return fn(conn);
   }
 
-  async function reachable(peer) {
-    const r = await once(peer, (c) => c.suiteAsk('GET', '/api/suite/info'));
+  async function reachable(peer, wire = 'push') {
+    const r = await once(peer, (c) => c.suiteAsk('GET', '/api/suite/info'), wire);
     if (r.body && r.body.ok) return { ok: true, info: r.body };
     if (REFUSED.has(r.status)) return { ok: false, why: `runner refused the token (status ${r.status})` };
     return { ok: false, why: r.error || (r.body && r.body.error) || `status ${r.status}` };
   }
 
-  async function cancel(peer, jobId) {
-    const r = await once(peer, (c) => c.suiteAsk('DELETE', `/api/suite/jobs/${encodeURIComponent(jobId)}`));
+  async function cancel(peer, jobId, wire = 'push') {
+    const r = await once(peer, (c) => c.suiteAsk('DELETE', `/api/suite/jobs/${encodeURIComponent(jobId)}`), wire);
     return r.body && r.body.ok ? { ok: true } : { ok: false, error: r.error || (r.body && r.body.error) || `status ${r.status}` };
   }
 
@@ -83,7 +93,7 @@ function createSuiteClient({
       queueBudgetMs = null, runBudgetMs = null,
     } = opts;
     const ctx = {
-      id: opts.runId || randomUUID(), peer, where: opts.name || peer, route: opts.route || null, override: opts.override || null,
+      id: opts.runId || randomUUID(), peer, wire: opts.wire === 'pull' ? 'pull' : 'push', where: opts.name || peer, route: opts.route || null, override: opts.override || null,
       tree: typeof tree === 'string' && tree ? path.resolve(tree) : null, kind, scope, team, ticket, seat,
       jobId: null, attempt: 0, treeHash: null, sha: null, dirty: null, queuedAt: null, startedAt: null, env: null, started: false,
       t0: now(), budgetMs, queueBudgetMs, runBudgetMs, timeoutMs, onSubmitted, shouldStop,
@@ -113,7 +123,7 @@ function createSuiteClient({
         try {
           out = await attemptJob(ctx, snap, job);
         } catch (e) {
-          if (ctx.jobId) await cancel(peer, ctx.jobId);
+          if (ctx.jobId) await cancel(peer, ctx.jobId, ctx.wire);
           return conclude(ctx, { unknown: e.refused ? 'runner refused the token' : `client error: ${e.message}` });
         }
         if (out.retry && !used.has(out.retry) && now() < deadlineOf(ctx)) {
@@ -131,7 +141,7 @@ function createSuiteClient({
 
   async function ask(ctx, fn, progress) {
     for (;;) {
-      const r = await once(ctx.peer, fn);
+      const r = await once(ctx.peer, fn, ctx.wire);
       if (REFUSED.has(r.status)) throw Object.assign(new Error('runner refused the token'), { refused: true });
       if (!UNREACHABLE.has(r.status)) return r;
       const left = deadlineOf(ctx) - now();
@@ -165,6 +175,7 @@ function createSuiteClient({
     try { onJob({ jobId, attempt }); } catch {}
     const jobPath = `/api/suite/jobs/${encodeURIComponent(jobId)}`;
     const info = await ask(ctx, (c) => c.suiteAsk('GET', '/api/suite/info'), progress);
+    if (restarted(info)) return { retry: 'runner-restart' };
     if (info.unreachable || !info.body || !info.body.ok) return { unknown: `runner unreachable: ${info.error || (info.body && info.body.error) || `status ${info.status}`}` };
     const limits = info.body.limits || {};
     ctx.env = info.body.env || null;
@@ -179,12 +190,13 @@ function createSuiteClient({
     if (ctx.shouldStop()) return { unknown: 'cancelled by the caller before submit' };
     const sub = await ask(ctx, (c) => c.suiteAsk('POST', '/api/suite/jobs', body), progress);
     if (sub.unreachable) return { unknown: 'runner unreachable' };
+    if (restarted(sub)) return { retry: 'runner-restart' };
     if (!sub.body || !sub.body.ok) return { unknown: `runner refused the job: ${(sub.body && sub.body.error) || sub.error || `status ${sub.status}`}` };
     try { ctx.onSubmitted({ jobId, attempt }); } catch {}
     if (sub.body.state === 'awaiting-pack') {
       const sent = await upload(ctx, snap, jobPath, sub.body.have || [], limits, progress);
       if (sent) {
-        await cancel(ctx.peer, jobId);
+        await cancel(ctx.peer, jobId, ctx.wire);
         return sent;
       }
     }
@@ -226,7 +238,8 @@ function createSuiteClient({
     let offset = 0;
     for (;;) {
       const q = `stream=${stream}&offset=${offset}&length=${SLICE_BYTES}`;
-      const r = await once(ctx.peer, (c) => c.suiteAsk('GET', `/api/suite/jobs/${encodeURIComponent(jobId)}/output?${q}`));
+      const r = await once(ctx.peer, (c) => c.suiteAsk('GET', `/api/suite/jobs/${encodeURIComponent(jobId)}/output?${q}`), ctx.wire);
+      if (restarted(r)) return RESTARTED;
       if (!r.body || !r.body.ok) return null;
       text += r.body.text;
       offset = r.body.offset + Buffer.byteLength(r.body.text);
@@ -239,7 +252,7 @@ function createSuiteClient({
     ctx.started = true;
     ctx.startedAt = job.state === 'done' && job.queueMs != null ? ctx.queuedAt + job.queueMs : now();
     appendLedger({
-      id: ctx.id, phase: 'start', where: ctx.where, runner: ctx.peer, jobId: ctx.jobId, attempt: ctx.attempt,
+      id: ctx.id, phase: 'start', where: ctx.where, runner: ctx.peer, wire: ctx.wire, jobId: ctx.jobId, attempt: ctx.attempt,
       kind: ctx.kind, scope: ctx.scope, team: ctx.team, ticket: ctx.ticket, seat: ctx.seat,
       tree: ctx.tree, sha: ctx.sha, treeHash: ctx.treeHash, dirty: ctx.dirty, pid: null, route: ctx.route, override: ctx.override,
       queuedAt: iso(ctx.queuedAt), startedAt: iso(ctx.startedAt), env: ctx.env,
@@ -251,23 +264,23 @@ function createSuiteClient({
     for (;;) {
       const left = deadlineOf(ctx) - now();
       if (left <= 0) {
-        await cancel(ctx.peer, jobId);
+        await cancel(ctx.peer, jobId, ctx.wire);
         return { unknown: budgetText(ctx), outcome: 'timeout' };
       }
       const wait = Math.min(pollWaitMs, left);
       const r = await ask(ctx, (c) => c.suiteAsk('GET', `/api/suite/jobs?ids=${encodeURIComponent(jobId)}&wait=${wait}`, null, wait + POLL_SLACK_MS), progress);
       if (r.unreachable) {
-        await cancel(ctx.peer, jobId);
+        await cancel(ctx.peer, jobId, ctx.wire);
         return { unknown: 'runner unreachable' };
       }
       if (!r.body || !r.body.ok) {
-        await cancel(ctx.peer, jobId);
+        await cancel(ctx.peer, jobId, ctx.wire);
         return { retry: 'runner-restart' };
       }
       const jobs = Array.isArray(r.body.jobs) ? r.body.jobs : [];
       for (const stale of jobs.filter((j) => j && j.id !== jobId)) {
         log(`suite-client: discarded a result for job ${stale.id} while waiting on ${jobId}`);
-        await cancel(ctx.peer, stale.id);
+        await cancel(ctx.peer, stale.id, ctx.wire);
       }
       const job = jobs.find((j) => j && j.id === jobId);
       if (!job || job.state === 'gone') return { retry: 'runner-restart' };
@@ -282,7 +295,8 @@ function createSuiteClient({
       if (job.reason === 'runner-restart') return { retry: 'runner-restart', job };
       if (job.queueMs != null) markStarted(ctx, job);
       const stdout = await readOutput(ctx, jobId, 'stdout');
-      const stderr = await readOutput(ctx, jobId, 'stderr');
+      const stderr = stdout === RESTARTED ? RESTARTED : await readOutput(ctx, jobId, 'stderr');
+      if (stdout === RESTARTED || stderr === RESTARTED) return { retry: 'runner-restart', job };
       if (stdout == null || stderr == null) return { unknown: 'runner output unavailable', job };
       return { job, stdout, stderr, ...doneVerdict(ctx, job, stderr) };
     }
@@ -310,7 +324,7 @@ function createSuiteClient({
     const outcome = out.outcome || (unknown ? 'unknown' : !totals ? 'no-summary' : res.status === 0 ? 'pass' : 'fail');
     const endedAt = now();
     const record = {
-      id: ctx.id, phase: 'end', where: ctx.where, runner: ctx.peer, jobId: ctx.jobId, attempt: ctx.attempt,
+      id: ctx.id, phase: 'end', where: ctx.where, runner: ctx.peer, wire: ctx.wire, jobId: ctx.jobId, attempt: ctx.attempt,
       kind: ctx.kind, scope: ctx.scope, team: ctx.team, ticket: ctx.ticket, seat: ctx.seat,
       tree: ctx.tree, sha: ctx.sha, treeHash: ctx.treeHash, queuedAt: iso(ctx.queuedAt), route: ctx.route, override: ctx.override,
       outcome, reason: unknown, pass: totals ? totals.pass : null, fail: totals ? totals.fail : null, tests: totals ? totals.tests : null,
@@ -346,11 +360,11 @@ function createSuiteClient({
       return null;
     }
     const key = JSON.stringify([opts.team, opts.ticket, opts.kind]);
-    const me = { treeHash: snap.treeHash, peer: opts.peer, jobId: null, superseded: false, local: null, remote: null, settled: false };
+    const me = { treeHash: snap.treeHash, peer: opts.peer, wire: opts.wire === 'pull' ? 'pull' : 'push', jobId: null, superseded: false, local: null, remote: null, settled: false };
     const prev = shadows.get(key);
     if (prev && prev.treeHash !== me.treeHash) {
       prev.superseded = true;
-      if (prev.jobId && !prev.remote) Promise.resolve().then(() => cancel(prev.peer, prev.jobId)).catch(() => {});
+      if (prev.jobId && !prev.remote) Promise.resolve().then(() => cancel(prev.peer, prev.jobId, prev.wire)).catch(() => {});
     }
     shadows.set(key, me);
     const settle = () => {
@@ -365,7 +379,7 @@ function createSuiteClient({
       const rec = me.remote.record || {};
       appendCompare({
         at: iso(now()), team: opts.team, kind: opts.kind, ticket: opts.ticket, treeHash: snap.treeHash, sha: snap.head || null,
-        envKey: (rec.env && rec.env.envKey) || null, local: me.local, remote, agree: halvesAgree(me.local, remote),
+        envKey: (rec.env && rec.env.envKey) || null, wire: me.wire, local: me.local, remote, agree: halvesAgree(me.local, remote),
       });
     };
     Promise.resolve()
@@ -383,6 +397,10 @@ function createSuiteClient({
         settle();
       },
     };
+  }
+
+  function shadowSkip({ team, kind, ticket, runner, skipped }) {
+    appendCompare({ at: iso(now()), team, kind, ticket, wire: 'pull', runner, skipped, agree: null });
   }
 
   function tally({ team, envKey = null }) {
@@ -420,7 +438,7 @@ function createSuiteClient({
     return out;
   }
 
-  return { reachable, run, cancel, shadow, tally };
+  return { reachable, run, cancel, shadow, shadowSkip, tally };
 }
 
 const MEASURED = new Set(['pass', 'fail']);
@@ -480,6 +498,7 @@ const FLAG_KEYS = ['CLODEX_TEST_LOCK', 'CLODEX_TEST_SLOW_ADVISORY'];
 function route({ team = null, kind = 'hand', scope = 'full', local = false } = {}) {
   const tr = team && team.testRunner;
   if (!tr || !tr.peer) return { where: 'local', why: 'no test runner' };
+  if (tr.wire === 'pull') return { where: 'local', why: 'wire:pull runs shadow comparisons only' };
   if (kind !== 'hand') return { where: 'local', why: `${kind} runs are not routed` };
   const hands = tr.hands || 'off';
   if (hands !== 'full' && hands !== 'all') return { where: 'local', why: `hands:${hands}` };
