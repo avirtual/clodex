@@ -163,3 +163,18 @@ test('a malformed reply is 400 at the route and 502 to the caller', async (t) =>
   assert.deepStrictEqual([r.status, r.json], [400, { ok: false, error: 'bad reply' }]);
   assert.deepStrictEqual(await p, { status: 502, body: null, error: 'runner sent a malformed reply' });
 });
+
+test('a claim token with other bytes is 409 on reply and blob, and the server keeps answering', async (t) => {
+  const { port, desk } = await withDesk(t);
+  await claim(port);
+  const p = desk.conn('laptop').suitePut('/api/suite/jobs/j/pack', Buffer.from('xyz'), {}, 30000);
+  const [call] = (await claim(port)).json.calls;
+  const forged = 'é' + '0'.repeat(31);
+  const r = await reply(port, call.id, { claim: forged, status: 200, body: { ok: true } });
+  assert.deepStrictEqual([r.status, r.json], [409, { ok: false, error: 'wrong claim token' }]);
+  const b = await req(port, `/api/suite-desk/calls/${call.id}/blob?claim=${encodeURIComponent(forged)}`);
+  assert.deepStrictEqual([b.status, b.json], [409, { ok: false, error: 'wrong claim token' }]);
+  const ok = await reply(port, call.id, { claim: call.claim, status: 200, body: { ok: true, size: 3 } });
+  assert.strictEqual(ok.status, 200);
+  assert.deepStrictEqual(await p, { status: 200, body: { ok: true, size: 3 }, error: null });
+});

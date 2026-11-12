@@ -235,3 +235,37 @@ test('origins lists claimers with their attachment; close settles everything', a
   assert.strictEqual(clock.armed(), 0);
   assert.deepStrictEqual(desk.origins(), []);
 });
+
+test('a claim token with the right character count but other bytes is 409, not a throw, and the call stays live', async () => {
+  const { desk } = mkDesk();
+  desk.claim('laptop', SESSION);
+  const p = desk.conn('laptop').suitePut('/api/suite/jobs/j/pack', Buffer.from('abc'), {}, 30000);
+  const [call] = desk.claim('laptop', SESSION).calls;
+  const forged = 'é' + '0'.repeat(31);
+  assert.strictEqual(forged.length, call.claim.length, 'ENTER: same string length, different byte length');
+  assert.deepStrictEqual(desk.reply(call.id, forged, { status: 200, body: { ok: true } }), { status: 409, error: 'wrong claim token' });
+  assert.deepStrictEqual(desk.blob(call.id, forged), { status: 409, error: 'wrong claim token' });
+  assert.deepStrictEqual(desk.retained('laptop'), { unsettled: 1, bytes: 3 });
+  desk.reply(call.id, call.claim, { status: 200, body: { ok: true, size: 3 } });
+  assert.deepStrictEqual(await p, { status: 200, body: { ok: true, size: 3 }, error: null });
+});
+
+test('suitePut with no timeout gets the push wire default of 120 s', () => {
+  const { desk } = mkDesk();
+  desk.claim('laptop', SESSION);
+  desk.conn('laptop').suitePut('/api/suite/jobs/j/pack', Buffer.from('a'), {});
+  assert.strictEqual(desk.claim('laptop', SESSION).calls[0].ttlMs, 120000);
+});
+
+test('origins are capped: a new one evicts the oldest idle detached origin, else 429', () => {
+  const { desk, clock } = mkDesk({ limits: { origins: 2 }, presenceMs: 1000 });
+  desk.claim('a', SESSION);
+  clock.advance(10);
+  desk.claim('b', SESSION);
+  desk.conn('b').suiteAsk('GET', '/api/suite/info', null, 60000);
+  assert.deepStrictEqual(desk.claim('c', SESSION), { status: 429, error: 'suite desk tracks too many runners' });
+  clock.advance(1000);
+  assert.strictEqual(desk.claim('c', SESSION).status, 200);
+  assert.deepStrictEqual(desk.origins().map((o) => o.origin).sort(), ['b', 'c']);
+  assert.deepStrictEqual(desk.claim('d', SESSION), { status: 429, error: 'suite desk tracks too many runners' });
+});

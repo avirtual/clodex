@@ -16,6 +16,8 @@ const DESK_LIMITS = Object.freeze({
   chunkMax: 4 * 1024 * 1024,
   submitMax: 256 * 1024,
   floorMs: 20000,
+  putMs: 120000,
+  origins: 256,
 });
 const RUNNER_RESTART = Object.freeze({ ok: false, error: 'runner session replaced', reason: 'runner-restart' });
 
@@ -30,8 +32,11 @@ function plainObject(v) {
 }
 
 function sameToken(a, b) {
-  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length || !a.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  if (!x.length || x.length !== y.length) return false;
+  return crypto.timingSafeEqual(x, y);
 }
 
 function createSuiteDesk({
@@ -54,6 +59,17 @@ function createSuiteDesk({
       slots.set(origin, s);
     }
     return s;
+  }
+
+  function evictIdle() {
+    let oldest = null;
+    for (const [origin, s] of slots) {
+      if (attached(origin) || s.pending.length || s.claimed.size) continue;
+      if (!oldest || s.lastClaim < slots.get(oldest).lastClaim) oldest = origin;
+    }
+    if (oldest == null) return false;
+    slots.delete(oldest);
+    return true;
   }
 
   function attached(origin) {
@@ -126,7 +142,7 @@ function createSuiteDesk({
           body: text == null ? null : JSON.parse(text), bodyBytes, blob: null,
         }, timeout);
       },
-      suitePut(path, buffer, headers, timeout) {
+      suitePut(path, buffer, headers, timeout = lim.putMs) {
         if (!Buffer.isBuffer(buffer)) return Promise.resolve(answer(400, { ok: false, error: 'body must be a buffer' }));
         if (buffer.length > lim.chunkMax) return Promise.resolve(answer(413, { ok: false, error: 'chunk too large' }));
         const copied = {};
@@ -138,6 +154,9 @@ function createSuiteDesk({
 
   function claim(origin, session) {
     if (typeof session !== 'string' || !SESSION_RE.test(session)) return { status: 400, error: 'bad session' };
+    if (!slots.has(origin) && slots.size >= lim.origins && !evictIdle()) {
+      return { status: 429, error: 'suite desk tracks too many runners' };
+    }
     const s = slot(origin);
     const t = now();
     if (s.session && s.session !== session) {
