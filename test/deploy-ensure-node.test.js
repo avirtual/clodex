@@ -391,3 +391,32 @@ test('link_clodexctl: a fresh HOME gets ~/.local/bin/clodexctl symlinked to the 
   assert.ok(call > script.indexOf('\nok npm-install\n'), 'the link step runs after the source + npm-install steps');
   assert.ok(script.indexOf('\nok npm-install\n') > script.indexOf('\ncd "$SRC_DIR"'), 'ENTER: anchors found in order');
 });
+
+function runNpmInstallStep(isMac) {
+  const root = mkTmpRoot(`npm-install-mac${isMac}-`);
+  const { bin, log } = shimDir(root, 'npmbin-', { npm: 'exit 0', npx: 'exit 0' });
+  const program = [
+    'set -uo pipefail', `IS_MAC=${isMac}`,
+    'step() { echo "::step $1"; }', 'ok() { echo "::ok $1"; }', 'log() { echo "$*" >&2; }',
+    'fail() { echo "::fail $1 ${2:-}"; exit 1; }',
+    extractRange(/^step npm-install$/, /^ok npm-install$/),
+  ].join('\n');
+  const r = spawnSync(BASH, ['-c', program], { encoding: 'utf8', env: { HOME: mkTmpDirIn(root, 'home-'), PATH: bin } });
+  assert.strictEqual(r.status, 0, `npm-install exited ${r.status}: ${r.stdout} ${r.stderr}`);
+  assert.ok(r.stdout.includes('::ok npm-install'), 'ENTER: the npm-install block ran to its ok marker');
+  return fs.readFileSync(log, 'utf8').trim().split('\n');
+}
+
+test('npm-install on a macOS desktop checkout keeps dev deps (Electron) and rebuilds node-pty for Electron', () => {
+  assert.deepStrictEqual(runNpmInstallStep(1), [
+    'npm ci --no-audit --no-fund --loglevel=error',
+    'npx electron-rebuild',
+  ]);
+});
+
+test('npm-install on a headless Linux node still omits dev deps and rebuilds node-pty for Node', () => {
+  assert.deepStrictEqual(runNpmInstallStep(0), [
+    'npm ci --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error',
+    'npm rebuild node-pty',
+  ]);
+});
