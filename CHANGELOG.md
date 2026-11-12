@@ -15,6 +15,7 @@ blocks a release.
 
 - A node can record an offer to host test boxes for named peers (off by default, discovery only); nothing is announced yet.
 - `clodexctl create node --import` updates a context whose peer address changed in the app (ssh host or url) instead of skipping it; other settings on the context are kept.
+- Runner mode starts on a macOS node without extra configuration: the work folder, tool search path and locale now have macOS defaults, and a runner that fails to start says why.
 
 ## 5.176.0 — 2026-11-12
 
