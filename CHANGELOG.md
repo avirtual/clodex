@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A test runner hosted by the desktop app no longer fails to prepare dependencies that contain an Electron archive.
+
 ## 5.177.0 — 2026-11-12 — Test-box offers between peers, team box definitions, runner mode in Preferences
 
 - A node can record an offer to host test boxes for named peers (off by default, discovery only).
