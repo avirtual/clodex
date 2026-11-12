@@ -47889,7 +47889,8 @@ This starts a NEW conversation \u2014 the current session's history will be clea
           return info.invalid ? "invalid: the testRunner in team.json is invalid and ignored \u2014 fix it there, or remove it to set a peer here" : "none: hand and gate suites run on this machine";
         }
         const tally = info.tally ? `; shadow comparisons: ${info.tally.agree} agree, ${info.tally.disagree} disagree` : "";
-        return `${info.reach == null ? "checking reachability\u2026" : info.reach}${tally}`;
+        const wire = info.wire === "pull" ? "dials in (wire pull, shadow only): " : "";
+        return `${wire}${info.reach == null ? "checking reachability\u2026" : info.reach}${tally}`;
       }
       function runnerPatchFor(act, value) {
         const key = RUNNER_ACTS[act];

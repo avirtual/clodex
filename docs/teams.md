@@ -911,6 +911,7 @@ A team can name a peered node as its test runner (a node started with
   "peer": "runner-1",
   "hands": "off | full | all",
   "gate": "off | shadow | on",
+  "wire": "push | pull",
   "setup": { "run": "npm ci", "key": ["package-lock.json"], "paths": ["node_modules"], "timeoutMs": 900000 },
   "env": { "NODE_ENV": "test" }
 }
@@ -962,6 +963,25 @@ pair is written to `logs/suite-compare.jsonl` (docs/tests.md) when both halves
 are in. A post-merge job measures the merge commit in the root checkout. A
 remote result for a job superseded by a newer tree of the same ticket and kind
 is discarded and the stale job cancelled.
+
+A runner can also be a node that dials this one (`wire: pull`, see
+docs/peering.md §2e): it has granted this node `run` in its box offer and
+claims suite calls from the suite desk instead of being called. `wire` is
+`push` or `pull`, read as `push` when absent; any other value drops the whole
+setting. `[agent:team runner <name>]` resolves the wire once, at set time, and
+stores it: a configured peer row means `push`; otherwise a name the suite desk
+has seen claim (attached now or earlier) means `pull`; a name that is both is
+`push`; neither is refused ("not a known peer and no node by that name has
+dialed in"). A pull runner is used for `gate:shadow` comparisons only: naming
+one sets `hands` to `off`, `hands:full` and `hands:all` are refused for it, and
+`route()` keeps every hand run local whatever a hand-edited `hands` says, as
+does the channel host's runner lookup. Bare `[agent:team runner]` shows the
+wire, and for a pull runner `attached` (with the queue and environment line,
+fetched through the desk) or `not attached (last claim <age> | never)`; the
+popover's state line says the same. When a pull runner is not attached at
+submit time, `_shadowSubmit` starts nothing and the compare log gets one row
+`{at, team, kind, ticket, wire: 'pull', runner, skipped: 'detached', agree: null}`
+with no `remote` half; the tally never counts it.
 
 Reading it: bare `[agent:team runner]` also shows the gate mode and, for the
 runner's current environment key (`envKey`, from its info route), how many
