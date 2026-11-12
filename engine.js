@@ -1895,7 +1895,6 @@ const runtimeProbe = createRuntimeProbe({
 });
 const getBoxOffer = () => (envBoxOffer !== undefined ? envBoxOffer : uiSettings.get().boxOffer);
 const getOfferFacts = () => hostFacts({ osModule: os, platform: process.platform, arch: process.arch, runtime: runtimeProbe.current() });
-if (getBoxOffer()?.enabled === true) runtimeProbe.refresh();
 const { createRemoteWiring } = require('./remote-wiring');
 const { readRemoteEnvToken, writeRemoteEnvToken, hasRemoteEnvToken, resolveRemoteToken } = require('./remote-token');
 const { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer } = createRemoteWiring({
@@ -2300,6 +2299,7 @@ const toolCache = createToolCache({ whichBin });
     } : {}) });
   const { persistence, templates, workspaces, promptLibrary,
     agentDefaults, agentLibrary, skillLibrary, execLibrary, mcpLibrary, reminders, misfires, notifications, uiSettings, envScopes, skillsSeen, renameWorkspaceScope } = stores;
+  if (getBoxOffer()?.enabled === true) runtimeProbe.refresh();
 
   const accounts = createAccounts({ fs, path, os, clodexHome: REGISTRY_DIR });
 
