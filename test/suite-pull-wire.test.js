@@ -292,11 +292,12 @@ test('a delayed tick: a call claimed inside its deadline is answered; one past i
   const inside = lead.conn.suiteAsk('GET', '/api/suite/info');
   lead.clock.advance(19000);
   await r.tick();
+  const insideGot = await within(inside, 3000, 'the inside answer');
   const late = lead.conn.suiteAsk('GET', '/api/suite/info');
   lead.clock.advance(20001);
   const lateGot = await late;
   await r.tick();
-  assert.deepStrictEqual([(await inside).status, lateGot.status, lateGot.error, infos], [200, 0, 'runner did not answer in time', 1]);
+  assert.deepStrictEqual([insideGot.status, lateGot.status, lateGot.error, infos], [200, 0, 'runner did not answer in time', 1]);
 });
 
 test('a cancel that arrives while a long poll holds the only slot is answered without waiting for the poll', async (t) => {
@@ -334,24 +335,24 @@ test('a reply lost after execution: the lead retries and the retry does not exec
     return Promise.resolve({ status: 0, body: null, error: 'dropped' });
   };
   const s = await snapOf(t, repo);
-  const lostThenRetry = async (issue) => {
+  const lostThenRetry = async (label, issue) => {
     drop = true;
     const n = dropped.length;
     const first = issue();
     await waitFor(() => dropped.length > n, 'the dropped reply');
     lead.clock.advance(20001);
-    const lost = await first;
-    const again = await issue();
+    const lost = await within(first, 3000, `${label}: the expired call`);
+    const again = await within(issue(), 3000, `${label}: the retry`);
     return [lost.status, dropped[n].status, again.status];
   };
   const rows = [];
-  rows.push(['submit', ...await lostThenRetry(() => lead.conn.suiteAsk('POST', '/api/suite/jobs', submitBody(s.snap, 'lost-1')))]);
-  rows.push(['putPack', ...await lostThenRetry(() => lead.conn.suitePut('/api/suite/jobs/lost-1/pack', s.pack, { 'Content-Range': `bytes 0-${s.pack.length - 1}/*` }))]);
-  rows.push(['commit', ...await lostThenRetry(() => lead.conn.suiteAsk('POST', '/api/suite/jobs/lost-1/commit', { bytes: s.pack.length, sha256: s.sha256 }))]);
+  rows.push(['submit', ...await lostThenRetry('submit', () => lead.conn.suiteAsk('POST', '/api/suite/jobs', submitBody(s.snap, 'lost-1')))]);
+  rows.push(['putPack', ...await lostThenRetry('putPack', () => lead.conn.suitePut('/api/suite/jobs/lost-1/pack', s.pack, { 'Content-Range': `bytes 0-${s.pack.length - 1}/*` }, 20000))]);
+  rows.push(['commit', ...await lostThenRetry('commit', () => lead.conn.suiteAsk('POST', '/api/suite/jobs/lost-1/commit', { bytes: s.pack.length, sha256: s.sha256 }))]);
   await waitFor(() => b.sp.count === 1, 'the job to run');
   const sub2 = await lead.conn.suiteAsk('POST', '/api/suite/jobs', submitBody(s.snap, 'lost-2'));
   assert.strictEqual(sub2.body.state, 'awaiting-pack');
-  rows.push(['cancel', ...await lostThenRetry(() => lead.conn.suiteAsk('DELETE', '/api/suite/jobs/lost-2'))]);
+  rows.push(['cancel', ...await lostThenRetry('cancel', () => lead.conn.suiteAsk('DELETE', '/api/suite/jobs/lost-2'))]);
   assert.deepStrictEqual(rows, [
     ['submit', 0, 200, 200],
     ['putPack', 0, 200, 409],
