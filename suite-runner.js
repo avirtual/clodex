@@ -174,7 +174,6 @@ function enclosingRepo(dir) {
   }
   p = path.join(fs.realpathSync(p), ...rest);
   for (;;) {
-    if (path.basename(p) === '.git') return path.dirname(p);
     if (fs.existsSync(path.join(p, '.git'))) return p;
     const up = path.dirname(p);
     if (up === p) return null;
