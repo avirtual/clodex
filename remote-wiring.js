@@ -124,8 +124,10 @@ function remoteReadRoots({ fs, path, REGISTRY_DIR, MSG_DIR }, sess, name) {
 function suiteRunnerOptions(env, root) {
   if (env.CLODEX_SUITE_RUNNER !== '1') return null;
   const mb = Number(env.CLODEX_SUITE_PACK_MAX_MB);
+  const data = env.CLODEX_DATA_DIR ? require('path').resolve(env.CLODEX_DATA_DIR) : null;
   return {
-    root,
+    root: data || root,
+    ...(data ? { oldRoot: root } : {}),
     work: env.CLODEX_SUITE_WORK || '/var/lib/clodex-suite',
     isolation: env.CLODEX_SUITE_ISOLATION === 'none' ? 'none' : 'user',
     limits: mb > 0 ? { packMaxBytes: Math.floor(mb * 1024 * 1024) } : {},

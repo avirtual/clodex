@@ -64,6 +64,14 @@ close_mirrors() {
   done
 }
 
+close_deps() {
+  local e
+  for e in "$WORK"/deps/*/*; do
+    [ -d "$e" ] && [ ! -L "$e" ] || continue
+    chmod 0700 "$e"
+  done
+}
+
 rel_path() {
   local rel="$1" base="$2" cur
   no_dots "$rel" || die "refusing $rel: not a plain relative path"
@@ -92,6 +100,9 @@ case "$verb" in
   prepare)
     [ $# -ge 1 ] || die "refusing prepare without the job's mirror"
     mirror="$(mirror_path "$1")"
+    shift
+    entry=""
+    if [ $# -ge 1 ]; then entry="$(entry_path "$1")"; fi
     [ -d "$job" ] || die "no job directory $job"
     for d in "$job/tree" "$job/home" "$job/tmp"; do
       [ -d "$d" ] && [ ! -L "$d" ] || die "refusing $d: not a directory"
@@ -100,6 +111,11 @@ case "$verb" in
     close_mirrors
     chgrp "$SUITE_USER" "$mirror"
     chmod 0750 "$mirror"
+    close_deps
+    if [ -n "$entry" ]; then
+      chgrp "$SUITE_USER" "$entry"
+      chmod 0750 "$entry"
+    fi
     ;;
   run)
     envs=()
@@ -134,10 +150,15 @@ case "$verb" in
     done
     chown -R "$owner" "$entry"
     chmod -R a-w,a+rX "$entry"
+    chgrp "$SUITE_USER" "$entry"
+    chmod 0750 "$entry"
     ;;
   reap)
+    entry=""
+    if [ $# -ge 1 ]; then entry="$(entry_path "$1")"; fi
     kill_suite
     close_mirrors
+    if [ -n "$entry" ]; then chmod 0700 "$entry"; fi
     rm -rf "$job"
     ;;
   *)

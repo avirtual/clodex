@@ -53,10 +53,49 @@ function relSafe(p) {
     && !p.split(/[\\/]/).some((seg) => seg === '..' || seg === '') && !p.includes('\0');
 }
 
-function writeJson(file, value) {
+function writeJson(file, value, mode) {
   const tmp = `${file}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(value));
+  if (mode != null) fs.chmodSync(tmp, mode);
   fs.renameSync(tmp, file);
+}
+
+function movePath(from, to) {
+  try { fs.renameSync(from, to); return; } catch (e) { if (e.code !== 'EXDEV') throw e; }
+  fs.cpSync(from, to, { recursive: true, verbatimSymlinks: true });
+  forceRemove(from);
+}
+
+function statePaths(root) {
+  const dir = path.join(root, 'suite-runner');
+  return { dir, jobs: path.join(dir, 'jobs'), cache: path.join(dir, 'cache.json'), ledger: path.join(dir, 'ledger.jsonl') };
+}
+
+function moveState(from, to) {
+  if (!from || path.resolve(from.dir) === path.resolve(to.dir) || !fs.existsSync(from.dir)) return;
+  for (const id of (fs.existsSync(from.jobs) ? fs.readdirSync(from.jobs) : [])) {
+    if (!fs.existsSync(path.join(to.jobs, id))) movePath(path.join(from.jobs, id), path.join(to.jobs, id));
+  }
+  if (fs.existsSync(from.cache) && !fs.existsSync(to.cache)) movePath(from.cache, to.cache);
+  if (fs.existsSync(from.ledger)) {
+    if (fs.existsSync(to.ledger)) fs.writeFileSync(to.ledger, Buffer.concat([fs.readFileSync(from.ledger), fs.readFileSync(to.ledger)]));
+    else movePath(from.ledger, to.ledger);
+  }
+  forceRemove(from.dir);
+}
+
+function closeDeps(depsRoot) {
+  fs.chmodSync(depsRoot, 0o711);
+  for (const repo of fs.readdirSync(depsRoot)) {
+    const dir = path.join(depsRoot, repo);
+    if (!fs.lstatSync(dir).isDirectory()) continue;
+    fs.chmodSync(dir, 0o711);
+    for (const name of fs.readdirSync(dir)) {
+      const st = fs.lstatSync(path.join(dir, name));
+      if (st.isDirectory()) fs.chmodSync(path.join(dir, name), 0o700);
+      else if (st.isFile()) fs.chmodSync(path.join(dir, name), 0o600);
+    }
+  }
 }
 
 function readJson(file, fallback) {
@@ -145,6 +184,8 @@ function noneIsolation({ user = os.userInfo().username, kill = process.kill.bind
   };
 }
 
+const entryArg = (entry) => (entry ? [entry] : []);
+
 function userIsolation({ helper = HELPER, user = SUITE_USER, spawn = childProcess.spawn } = {}) {
   const call = (args) => waitChild(spawn('sudo', ['-n', ...args], { env: { PATH: SAFE_PATH }, stdio: ['ignore', 'ignore', 'pipe'] }));
   const must = async (verb, args) => {
@@ -158,7 +199,7 @@ function userIsolation({ helper = HELPER, user = SUITE_USER, spawn = childProces
       const r = await call(['-l', helper]);
       return r.ok ? { mode: 'user' } : { mode: 'unavailable', why: r.error || `sudo -n ${helper} is not allowed` };
     },
-    prepare: (jobDir, mirror) => must('prepare', [jobDir, mirror]),
+    prepare: (jobDir, mirror, entry) => must('prepare', [jobDir, mirror, ...entryArg(entry)]),
     spawn({ jobDir, argv, env, spawn: sp }) {
       const pairs = Object.entries(env).map(([k, v]) => `${k}=${v}`);
       return sp('sudo', ['-n', helper, 'run', jobDir, ...pairs, '--', ...argv], {
@@ -167,7 +208,7 @@ function userIsolation({ helper = HELPER, user = SUITE_USER, spawn = childProces
     },
     kill(child, jobDir) { return call([helper, 'reap', jobDir]); },
     seal: (jobDir, entry, rels) => must('seal', [jobDir, entry, ...rels]),
-    reap: (jobDir) => must('reap', [jobDir]),
+    reap: (jobDir, entry) => must('reap', [jobDir, ...entryArg(entry)]),
   };
 }
 
@@ -230,13 +271,16 @@ function validateSubmit(b, limits) {
 }
 
 function createSuiteRunner({
-  root, work, isolation = userIsolation(), limits = {}, spawn = childProcess.spawn,
+  root, oldRoot = null, work, isolation = userIsolation(), limits = {}, spawn = childProcess.spawn,
   now = Date.now, log = () => {}, timers = DEFAULT_TIMERS,
 }) {
   const lim = { ...DEFAULT_LIMITS, ...limits };
-  const storeDir = path.join(root, 'suite-runner', 'jobs');
-  const ledgerFile = path.join(root, 'suite-runner', 'ledger.jsonl');
+  const state = statePaths(root);
+  const storeDir = state.jobs;
+  const ledgerFile = state.ledger;
   fs.mkdirSync(storeDir, { recursive: true });
+  fs.chmodSync(state.dir, 0o700);
+  moveState(oldRoot ? statePaths(oldRoot) : null, state);
   fs.mkdirSync(path.join(work, 'jobs'), { recursive: true });
   work = fs.realpathSync(work);
   for (const d of ['mirrors', 'deps']) {
@@ -246,7 +290,8 @@ function createSuiteRunner({
   for (const name of fs.readdirSync(path.join(work, 'mirrors'))) {
     if (name.endsWith('.git')) fs.chmodSync(path.join(work, 'mirrors', name), 0o700);
   }
-  const cacheFile = path.join(root, 'suite-runner', 'cache.json');
+  closeDeps(path.join(work, 'deps'));
+  const cacheFile = state.cache;
   const workCache = path.join(work, 'cache.json');
   if (fs.existsSync(workCache)) {
     if (!fs.existsSync(cacheFile)) writeJson(cacheFile, readJson(workCache, {}));
@@ -359,7 +404,7 @@ function createSuiteRunner({
     notify(job.id);
     if (job.startedAt == null) return;
     if (killing) await killing;
-    try { await isolation.reap(jobWork(job.id)); } catch (e) { log(`suite-runner: reap ${job.id} failed: ${e.message}`); }
+    try { await isolation.reap(jobWork(job.id), job.depsEntry || null); } catch (e) { log(`suite-runner: reap ${job.id} failed: ${e.message}`); }
   }
 
   function enqueue(job) {
@@ -511,23 +556,27 @@ function createSuiteRunner({
       return finish(job, { reason: built.reason, exit: null });
     }
     const deps = job.setup ? depsEntry(job, tree) : null;
+    if (deps) {
+      fs.mkdirSync(path.dirname(deps.entry), { recursive: true });
+      fs.chmodSync(path.dirname(deps.entry), 0o711);
+      if (!deps.hit) forceRemove(deps.entry);
+      fs.mkdirSync(deps.entry, { recursive: true });
+      fs.chmodSync(deps.entry, 0o700);
+      job.depsEntry = deps.entry;
+    }
     if (deps && deps.hit) {
       linkDeps(deps, tree, job.setup.paths);
-      writeJson(deps.marker, { ...readJson(deps.marker, {}), usedAt: now() });
+      writeJson(deps.marker, { ...readJson(deps.marker, {}), usedAt: now() }, 0o600);
       touchCache(deps.rel);
     }
-    await isolation.prepare(jobDir, mirror);
+    await isolation.prepare(jobDir, mirror, deps ? deps.entry : null);
     if (job.stop) return finish(job, { reason: job.stop, exit: null });
     if (deps && !deps.hit) {
       const r = await exec(job, jobDir, ['/bin/sh', '-c', job.setup.run], job.setup.timeoutMs || lim.setupTimeoutMs);
       if (job.stop) return finish(job, { reason: job.stop, exit: null }, r.killing);
       if (r.code !== 0) return finish(job, { reason: 'setup-failed', exit: { code: r.code, signal: r.signal || null } }, r.killing);
-      forceRemove(deps.entry);
-      fs.mkdirSync(path.dirname(deps.entry), { recursive: true });
-      fs.chmodSync(path.dirname(deps.entry), 0o711);
-      fs.mkdirSync(deps.entry, { recursive: true });
       await isolation.seal(jobDir, deps.entry, job.setup.paths);
-      writeJson(deps.marker, { createdAt: now(), usedAt: now() });
+      writeJson(deps.marker, { createdAt: now(), usedAt: now() }, 0o600);
       touchCache(deps.rel);
       resetOutputs(job);
     }
@@ -783,4 +832,4 @@ function createSuiteRunner({
   return { info, submit, putPack, commit, poll, output, cancel, tick, start, close };
 }
 
-module.exports = { createSuiteRunner, noneIsolation, userIsolation, envIdentity, jobPaths, DEFAULT_LIMITS };
+module.exports = { createSuiteRunner, noneIsolation, userIsolation, envIdentity, jobPaths, statePaths, DEFAULT_LIMITS };
