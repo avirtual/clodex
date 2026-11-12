@@ -590,7 +590,7 @@ test('t1407: the lead variant is IPC_PROMPT plus the ten team rows, first role-a
   assert.match(rows[6], /^ {2}\[agent:team bind <seat> <role>\] {2}Put an existing seat on your team's roster/);
   assert.match(rows[7], /^ {2}\[agent:team trunk <branch>\] {6}Set the branch accepted tickets merge into/);
   assert.match(rows[8], /^ {2}\[agent:team done code\|report\] {4}How tickets filed from now on close: code \(default\) = branch/);
-  assert.match(rows[9], /^ {2}\[agent:team runner <peer>\|off\] {3}Name a peered node with the suite capability/);
+  assert.match(rows[9], /^ {2}\[agent:team runner <peer>\|off\] {3}Name a peered node with the suite capability.*; gate:off\|shadow also runs the loop's suites there\. Bare/);
   const permitRows = lead.split('\n').filter((l) => l.startsWith('  [agent:permit '));
   assert.deepStrictEqual(permitRows.map((l) => l.split(/\s{2,}/)[1]), ['[agent:permit <seat> <id> allow]']);
   assert.strictEqual(lead.split('\n').filter((l) => !l.startsWith('  [agent:team ') && !l.startsWith('  [agent:permit ')).join('\n'), IPC_PROMPT,
