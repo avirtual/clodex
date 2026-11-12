@@ -220,7 +220,7 @@ test('parseIntent: exec parses cmd + JSON body (single + multi-line)', () => {
 
 test('shadowIntentKey: exec keys on cmd + body', () => {
   const a = parseIntent('[agent:exec bridge-reply] {"id":"r1.json"}');
-  assert.strictEqual(shadowIntentKey('t2', a), 't2|exec|bridge-reply|{"id":"r1.json"}');
+  assert.strictEqual(shadowIntentKey('t2', a), 't2|exec|cmd=bridge-reply|{"id":"r1.json"}');
   // Different payloads → different keys; identical → identical (differ stability).
   const b = parseIntent('[agent:exec bridge-reply] {"id":"r2.json"}');
   assert.notStrictEqual(shadowIntentKey('t2', a), shadowIntentKey('t2', b));
@@ -258,7 +258,7 @@ test('parseIntent: remind body spans multiple lines and keeps ] after the spec b
 
 test('shadowIntentKey: remind keys on spec + body', () => {
   const a = parseIntent('[agent:remind every 30m] check the build');
-  assert.strictEqual(shadowIntentKey('t2', a), 't2|remind|every 30m|check the build');
+  assert.strictEqual(shadowIntentKey('t2', a), 't2|remind|spec=every 30m|check the build');
   // Different spec or body → different key; identical → identical (differ stability).
   const b = parseIntent('[agent:remind every 2h] check the build');
   assert.notStrictEqual(shadowIntentKey('t2', a), shadowIntentKey('t2', b));
@@ -550,8 +550,8 @@ test('parseIntent: non-intent / blank lines return null', () => {
 test('shadowIntentKey: stable + urgent is part of identity', () => {
   const plain = parseIntent('[agent:dm bob] hi');
   const urgent = parseIntent('[agent:dm bob urgent] hi');
-  assert.strictEqual(shadowIntentKey('alice', plain), 'alice|dm|bob|hi');
-  assert.strictEqual(shadowIntentKey('alice', urgent), 'alice|dm|bob+urgent|hi');
+  assert.strictEqual(shadowIntentKey('alice', plain), 'alice|dm|target=bob|hi');
+  assert.strictEqual(shadowIntentKey('alice', urgent), 'alice|dm|target=bob+urgent|hi');
   assert.notStrictEqual(shadowIntentKey('alice', plain), shadowIntentKey('alice', urgent));
 });
 
@@ -564,7 +564,7 @@ test('shadowIntentKey: identical intents hash identically (wire == jsonl)', () =
 test('shadowIntentKey: body is trimmed and capped at 200 chars', () => {
   const long = parseIntent('[agent:dm bob] ' + 'z'.repeat(500));
   const key = shadowIntentKey('a', long);
-  assert.strictEqual(key, 'a|dm|bob|' + 'z'.repeat(200));
+  assert.strictEqual(key, 'a|dm|target=bob|' + 'z'.repeat(200));
 });
 
 // ── t313: the head must not short-circuit on `sub` ──────────────────────────
@@ -628,9 +628,9 @@ test('shadowIntentKey: every discriminator behind `sub` reaches the key', () => 
 
 test('shadowIntentKey: two retired scratch intents in one reply key by their head — different heads differ, the same head collapses', () => {
   const key = (l) => shadowIntentKey('me', parseIntent(l));
-  assert.strictEqual(key('[agent:scratch cancel probe2]'), 'me|scratch|cancel probe2|');
-  assert.strictEqual(key('[agent:scratch cancel probe]'), 'me|scratch|cancel probe|');
-  assert.strictEqual(key('[agent:scratch  cancel   probe]  '), 'me|scratch|cancel probe|');
+  assert.strictEqual(key('[agent:scratch cancel probe2]'), 'me|scratch|sub=cancel probe2|');
+  assert.strictEqual(key('[agent:scratch cancel probe]'), 'me|scratch|sub=cancel probe|');
+  assert.strictEqual(key('[agent:scratch  cancel   probe]  '), 'me|scratch|sub=cancel probe|');
 });
 
 test('shadowIntentKey: two browser intents in one reply key by their raw text — distinct commands differ, an exact repeat collapses', () => {
@@ -643,8 +643,8 @@ test('shadowIntentKey: two browser intents in one reply key by their raw text �
     assert.strictEqual(a.raw, 'click np 3');
     assert.strictEqual(b.raw, 'click np 5');
     assert.notStrictEqual(shadowIntentKey('me', a), shadowIntentKey('me', b));
-    assert.strictEqual(shadowIntentKey('me', a), 'me|browser|click np 3|');
-    assert.strictEqual(shadowIntentKey('me', { type: 'browser', raw: 'click np 3', body: '' }), 'me|browser|click np 3|');
+    assert.strictEqual(shadowIntentKey('me', a), 'me|browser|raw=click np 3|');
+    assert.strictEqual(shadowIntentKey('me', { type: 'browser', raw: 'click np 3', body: '' }), 'me|browser|raw=click np 3|');
     assert.strictEqual(shadowIntentKey('me', a), shadowIntentKey('me', parseIntent('[agent:browser click np 3]')));
   } finally {
     unregisterSource('browser-pane-test');
@@ -895,4 +895,47 @@ test('shadowIntentKey: profile keys on the note key, so two notes in one reply s
   assert.notStrictEqual(k('[agent:profile drop mood]'), k('[agent:profile drop plan]'));
   assert.notStrictEqual(k('[agent:profile set a] yes'), k('[agent:profile set b] yes'));
   assert.strictEqual(k('[agent:profile drop mood]'), k('[agent:profile drop mood]'));
+});
+
+test('shadowIntentKey: two emissions differing only in an argument the key used to ignore do NOT collide (t2307)', () => {
+  const rows = [
+    ['[agent:team runner Bogdans-MacBook-Pro]', '[agent:team runner gate:shadow]'],
+    ['[agent:team runner gate:shadow]', '[agent:team runner gate:off]'],
+    ['[agent:team runner hands:box]', '[agent:team runner box]'],
+    ['[agent:team runner hands:a]', '[agent:team runner hands:b]'],
+    ['[agent:team worktrees on]', '[agent:team worktrees off]'],
+    ['[agent:team hands 2]', '[agent:team hands 3]'],
+    ['[agent:team trunk main]', '[agent:team trunk dev]'],
+    ['[agent:team done merge]', '[agent:team done pr]'],
+    ['[agent:team bind seat-a hand]', '[agent:team bind seat-a reviewer]'],
+    ['[agent:team role-add hand template:x]', '[agent:team role-add hand cwd:x]'],
+    ['[agent:team role-set hand model:opus]', '[agent:team role-set hand model:sonnet]'],
+    ['[agent:team role-set hand effort:low]', '[agent:team role-set hand account:low]'],
+    ['[agent:team role-set hand dispatch:auto]', '[agent:team role-set hand prompt:auto]'],
+    ['[agent:team role-set hand idle-clear:5m]', '[agent:team role-set hand idle-clear:9m]'],
+    ['[agent:team gather]', '[agent:team gather dry]'],
+    ['[agent:team template-rm a]', '[agent:team template-rm b]'],
+    ['[agent:team prompt-rm hand a]', '[agent:team prompt-rm lead a]'],
+    ['[agent:team box show]', '[agent:team box rebuild]'],
+    ['[agent:team sandbox up ref:a]', '[agent:team sandbox up ref:b]'],
+    ['[agent:team sandbox port add 3000]', '[agent:team sandbox port rm 3000]'],
+    ['[agent:team sandbox port add 3000 proto:udp]', '[agent:team sandbox port add 3000 proto:tcp]'],
+    ['[agent:team sandbox bootstrap packages git]', '[agent:team sandbox bootstrap packages jq]'],
+    ['[agent:team create alpha root:/a]', '[agent:team create alpha root:/b]'],
+    ['[agent:team create alpha lead:x]', '[agent:team create alpha kit:x]'],
+    ['[agent:task done t1@boarda] ok', '[agent:task done t1@boardb] ok'],
+    ['[agent:dm bob ref:r1] hi', '[agent:dm bob ref:r2] hi'],
+    ['[agent:ctl home] get sessions', '[agent:ctl home] get nodes'],
+    ['[agent:ctl home] get sessions', '[agent:ctl work] get sessions'],
+    ['[agent:permit seat-a p1 allow]', '[agent:permit seat-a p1 deny]'],
+    ['[agent:permit seat-a p1 allow]', '[agent:permit seat-b p1 allow]'],
+  ];
+  for (const [l1, l2] of rows) {
+    const a = parseIntent(l1);
+    const b = parseIntent(l2);
+    assert.ok(a && b, `ENTER: both parse — ${l1} / ${l2}`);
+    assert.strictEqual(a.type, b.type, `ENTER: same family — ${l1} / ${l2}`);
+    assert.notStrictEqual(shadowIntentKey('me', a), shadowIntentKey('me', b), `${l1} and ${l2} are two emissions`);
+    assert.strictEqual(shadowIntentKey('me', a), shadowIntentKey('me', parseIntent(l1)), `a double-pasted ${l1} still collapses`);
+  }
 });
