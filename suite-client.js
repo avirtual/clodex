@@ -14,6 +14,7 @@ const MAX_RESUMES = 8;
 const DEFAULT_BUDGET_MS = 36 * 60 * 1000;
 const DEFAULT_RUN_MS = 21 * 60 * 1000;
 const UNREACHABLE = new Set([0, 429, 502, 503, 504]);
+const REFUSED = new Set([401, 403]);
 const RETRY_TEXT = {
   'runner-restart': 'runner restarted',
   upload: 'upload failed',
@@ -63,6 +64,7 @@ function createSuiteClient({
   async function reachable(peer) {
     const r = await once(peer, (c) => c.suiteAsk('GET', '/api/suite/info'));
     if (r.body && r.body.ok) return { ok: true, info: r.body };
+    if (REFUSED.has(r.status)) return { ok: false, why: `runner refused the token (status ${r.status})` };
     return { ok: false, why: r.error || (r.body && r.body.error) || `status ${r.status}` };
   }
 
@@ -78,22 +80,25 @@ function createSuiteClient({
       onProgress = () => {}, onJob = () => {},
     } = opts;
     const ctx = {
-      id: opts.runId || randomUUID(), peer, tree: path.resolve(tree), kind, scope, team, ticket, seat,
-      jobId: null, attempt: 0, treeHash: null, sha: null, queuedAt: null, startedAt: null, env: null, started: false,
+      id: opts.runId || randomUUID(), peer, where: opts.name || peer, route: opts.route || null, override: opts.override || null,
+      tree: typeof tree === 'string' && tree ? path.resolve(tree) : null, kind, scope, team, ticket, seat,
+      jobId: null, attempt: 0, treeHash: null, sha: null, dirty: null, queuedAt: null, startedAt: null, env: null, started: false,
       deadline: now() + budgetMs, budgetMs, timeoutMs,
     };
     const progress = (line) => {
       log(line);
       try { onProgress(line); } catch {}
     };
+    if (!ctx.tree) return conclude(ctx, { unknown: 'no tree to measure' });
     let snap;
     try {
-      snap = await snapshot.snapshotTree(tree);
+      snap = await snapshot.snapshotTree(ctx.tree);
     } catch (e) {
       return conclude(ctx, { unknown: `snapshot failed: ${e.message}` });
     }
     ctx.treeHash = snap.treeHash;
     ctx.sha = snap.head;
+    ctx.dirty = snap.headTree ? snap.treeHash !== snap.headTree : null;
     try {
       const used = new Set();
       let full = false;
@@ -104,7 +109,7 @@ function createSuiteClient({
           out = await attemptJob(ctx, snap, job);
         } catch (e) {
           if (ctx.jobId) await cancel(peer, ctx.jobId);
-          return conclude(ctx, { unknown: `client error: ${e.message}` });
+          return conclude(ctx, { unknown: e.refused ? 'runner refused the token' : `client error: ${e.message}` });
         }
         if (out.retry && !used.has(out.retry) && now() < ctx.deadline) {
           used.add(out.retry);
@@ -115,13 +120,14 @@ function createSuiteClient({
         return conclude(ctx, out.retry ? { unknown: RETRY_TEXT[out.retry], job: out.job } : out);
       }
     } finally {
-      snapshot.releaseSnapshot(snap);
+      try { snapshot.releaseSnapshot(snap); } catch (e) { log(`suite-client: snapshot release failed: ${e.message}`); }
     }
   }
 
   async function ask(ctx, fn, progress) {
     for (;;) {
       const r = await once(ctx.peer, fn);
+      if (REFUSED.has(r.status)) throw Object.assign(new Error('runner refused the token'), { refused: true });
       if (!UNREACHABLE.has(r.status)) return r;
       if (now() + retryMs >= ctx.deadline) return { ...r, unreachable: true };
       progress(`waiting for runner ${ctx.peer}`);
@@ -146,7 +152,7 @@ function createSuiteClient({
       branch: snap.branch, trunk: snap.trunk, refs: snap.refs, candidates: snap.candidates,
       files, flags, env, setup, timeoutMs: ctx.timeoutMs, full,
     };
-    if (ctx.queuedAt == null) ctx.queuedAt = now();
+    ctx.queuedAt = now();
     const sub = await ask(ctx, (c) => c.suiteAsk('POST', '/api/suite/jobs', body), progress);
     if (sub.unreachable) return { unknown: 'runner unreachable' };
     if (!sub.body || !sub.body.ok) return { unknown: `runner refused the job: ${(sub.body && sub.body.error) || sub.error || `status ${sub.status}`}` };
@@ -208,9 +214,9 @@ function createSuiteClient({
     ctx.started = true;
     ctx.startedAt = job.state === 'done' && job.queueMs != null ? ctx.queuedAt + job.queueMs : now();
     appendLedger({
-      id: ctx.id, phase: 'start', where: 'remote', runner: ctx.peer, jobId: ctx.jobId, attempt: ctx.attempt,
+      id: ctx.id, phase: 'start', where: ctx.where, runner: ctx.peer, jobId: ctx.jobId, attempt: ctx.attempt,
       kind: ctx.kind, scope: ctx.scope, team: ctx.team, ticket: ctx.ticket, seat: ctx.seat,
-      tree: ctx.tree, sha: ctx.sha, treeHash: ctx.treeHash, pid: null,
+      tree: ctx.tree, sha: ctx.sha, treeHash: ctx.treeHash, dirty: ctx.dirty, pid: null, route: ctx.route, override: ctx.override,
       queuedAt: iso(ctx.queuedAt), startedAt: iso(ctx.startedAt), env: ctx.env,
     });
   }
@@ -229,7 +235,10 @@ function createSuiteClient({
         await cancel(ctx.peer, jobId);
         return { unknown: 'runner unreachable' };
       }
-      if (!r.body || !r.body.ok) return { retry: 'runner-restart' };
+      if (!r.body || !r.body.ok) {
+        await cancel(ctx.peer, jobId);
+        return { retry: 'runner-restart' };
+      }
       const jobs = Array.isArray(r.body.jobs) ? r.body.jobs : [];
       for (const stale of jobs.filter((j) => j && j.id !== jobId)) {
         log(`suite-client: discarded a result for job ${stale.id} while waiting on ${jobId}`);
@@ -276,9 +285,9 @@ function createSuiteClient({
     const outcome = out.outcome || (unknown ? 'unknown' : !totals ? 'no-summary' : res.status === 0 ? 'pass' : 'fail');
     const endedAt = now();
     const record = {
-      id: ctx.id, phase: 'end', where: 'remote', runner: ctx.peer, jobId: ctx.jobId, attempt: ctx.attempt,
+      id: ctx.id, phase: 'end', where: ctx.where, runner: ctx.peer, jobId: ctx.jobId, attempt: ctx.attempt,
       kind: ctx.kind, scope: ctx.scope, team: ctx.team, ticket: ctx.ticket, seat: ctx.seat,
-      sha: ctx.sha, treeHash: ctx.treeHash, queuedAt: iso(ctx.queuedAt),
+      tree: ctx.tree, sha: ctx.sha, treeHash: ctx.treeHash, queuedAt: iso(ctx.queuedAt), route: ctx.route, override: ctx.override,
       outcome, reason: unknown, pass: totals ? totals.pass : null, fail: totals ? totals.fail : null, tests: totals ? totals.tests : null,
       endedAt: iso(endedAt), durationMs: ctx.startedAt != null ? endedAt - ctx.startedAt : null,
       queueMs: job ? job.queueMs : null, setupMs: job ? job.setupMs : null, runMs: job ? job.runMs : null,
@@ -291,4 +300,130 @@ function createSuiteClient({
   return { reachable, run, cancel };
 }
 
-module.exports = { createSuiteClient, lastTotals };
+const HAND_BUDGET_MS = 35 * 60 * 1000;
+const FLAG_KEYS = ['CLODEX_TEST_LOCK', 'CLODEX_TEST_SLOW_ADVISORY'];
+
+function route({ team = null, kind = 'hand', scope = 'full', local = false } = {}) {
+  const tr = team && team.testRunner;
+  if (!tr || !tr.peer) return { where: 'local', why: 'no test runner' };
+  if (kind !== 'hand') return { where: 'local', why: `${kind} runs are not routed` };
+  const hands = tr.hands || 'off';
+  if (hands !== 'full' && hands !== 'all') return { where: 'local', why: `hands:${hands}` };
+  if (hands === 'full' && scope !== 'full') return { where: 'local', why: 'hands:full leaves own scope local' };
+  if (local === true) return { where: 'local', why: 'local:true in the call', override: 'call' };
+  return { where: 'remote', peer: tr.peer, why: `hands:${hands}` };
+}
+
+function safeFile(f) {
+  return typeof f === 'string' && f.length > 0 && f.length <= 1000 && !f.startsWith('-') && !f.startsWith('/')
+    && !f.includes('\0') && !f.split(/[\\/]/).includes('..');
+}
+
+function requestError(msg) {
+  if (!msg || typeof msg !== 'object' || msg.op !== 'suite') return 'not a suite request';
+  if (msg.scope !== 'full' && msg.scope !== 'own') return `bad scope ${JSON.stringify(msg.scope)}`;
+  if (msg.files != null && !Array.isArray(msg.files)) return 'files must be a list';
+  const bad = (msg.files || []).find((f) => !safeFile(f));
+  if (bad !== undefined) return `bad file entry ${JSON.stringify(bad)}`;
+  const flags = msg.flags == null ? {} : msg.flags;
+  if (typeof flags !== 'object' || Array.isArray(flags)) return 'flags must be an object';
+  for (const [k, v] of Object.entries(flags)) if (!FLAG_KEYS.includes(k) || typeof v !== 'string') return `flag not allowed: ${k}`;
+  if (msg.local != null && typeof msg.local !== 'boolean') return 'local must be a boolean';
+  return null;
+}
+
+function createChannelHost({
+  client, team, seat = null, ticket = null, listWorktrees, resolvePeer, send,
+  notifyLead = () => {}, log = () => {}, snapshot = snapshotLib, realpath = fs.realpathSync,
+  budgetMs = HAND_BUDGET_MS, runMs = DEFAULT_RUN_MS,
+}) {
+  let asked = false;
+  let finished = false;
+  let wantCancel = false;
+  let cancelSent = false;
+  let inflight = null;
+  const say = (m) => {
+    try { send(m); } catch (e) { log(`suite channel: reply to ${seat} failed: ${e.message}`); }
+  };
+  const fireCancel = () => {
+    if (!wantCancel || cancelSent || finished || !inflight || !inflight.jobId) return;
+    cancelSent = true;
+    Promise.resolve(client.cancel(inflight.peer, inflight.jobId)).catch(() => {});
+  };
+  const real = (p) => {
+    try { return realpath(p); } catch { return null; }
+  };
+
+  async function measured(measure) {
+    if (typeof measure !== 'string' || !measure) return null;
+    const want = real(measure);
+    if (!want) return null;
+    const listed = await listWorktrees(team.root);
+    const trees = listed && listed.ok && Array.isArray(listed.worktrees) ? listed.worktrees : [];
+    return trees.some((w) => w && real(w.path) === want) ? want : null;
+  }
+
+  async function treeNote(tree, treeHash) {
+    let again = null;
+    try {
+      again = await snapshot.snapshotTree(tree);
+      return again.treeHash !== treeHash ? `(tree changed during the run; the suite measured ${String(treeHash).slice(0, 8)})` : null;
+    } catch (e) {
+      log(`suite channel: tree re-check failed: ${e.message}`);
+      return null;
+    } finally {
+      try { snapshot.releaseSnapshot(again); } catch {}
+    }
+  }
+
+  async function handle(msg) {
+    const bad = requestError(msg);
+    if (bad) return say({ run: 'refused', why: bad });
+    if (!team) return say({ run: 'local', why: 'no team' });
+    const tree = await measured(msg.measure);
+    if (!tree) return say({ run: 'refused', why: `not a worktree of team ${team.name}: ${String(msg.measure).slice(0, 300)}` });
+    const d = route({ team, ticket, kind: 'hand', scope: msg.scope, local: msg.local === true });
+    if (d.where === 'local') {
+      if (d.override) notifyLead(`${seat}: clodex-run-tests ran here on request ({"local": true}); team ${team.name} routes hand runs to ${team.testRunner.peer}`);
+      return say({ run: 'local', why: d.why, override: d.override || null });
+    }
+    if (!client) return say({ run: 'remote', runner: d.peer, unknown: 'no suite client on this node' });
+    const peer = resolvePeer(d.peer);
+    if (!peer) return say({ run: 'remote', runner: d.peer, unknown: `runner ${d.peer} is not a known peer` });
+    inflight = { peer, jobId: null };
+    const tr = team.testRunner;
+    const out = await client.run({
+      peer, name: d.peer, tree, kind: 'hand', scope: msg.scope, team: team.name, ticket, seat,
+      files: msg.files || [], flags: msg.flags || {}, setup: tr.setup || null, env: tr.env || {},
+      budgetMs, timeoutMs: runMs, route: d.why,
+      onJob: ({ jobId }) => { inflight.jobId = jobId; },
+      onProgress: (line) => { fireCancel(); say({ progress: line }); },
+    });
+    finished = true;
+    if (out.unknown || !out.res) return say({ run: 'remote', runner: d.peer, unknown: out.unknown || 'no result' });
+    const r = out.res;
+    const note = await treeNote(tree, r.treeHash);
+    return say({
+      run: 'remote', runner: d.peer, status: r.status, signal: r.signal, stdout: r.stdout, stderr: r.stderr,
+      error: null, unknown: null, treeHash: r.treeHash, note,
+    });
+  }
+
+  return {
+    onMessage(msg) {
+      if (asked) return;
+      asked = true;
+      handle(msg).catch((e) => {
+        finished = true;
+        say({ run: 'remote', unknown: `host error: ${e.message}` });
+      });
+    },
+    cancel() {
+      wantCancel = true;
+      fireCancel();
+      return cancelSent;
+    },
+  };
+}
+
+module.exports = { createSuiteClient, createChannelHost, route, lastTotals };

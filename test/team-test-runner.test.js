@@ -66,6 +66,8 @@ const REJECT_ROWS = [
   ['peer failing the node-name grammar', { peer: 'bad name' }],
   ['dot-only peer', { peer: '..' }],
   ['no peer', { hands: 'full' }],
+  ['unknown top-level key', { peer: 'r', extra: 1 }],
+  ['unknown key inside setup', { peer: 'r', setup: { ...SETUP, extra: 1 } }],
 ];
 
 for (const [name, input, want] of ACCEPT_ROWS) {
@@ -245,6 +247,14 @@ test('[agent:team runner <peer>] offline is accepted with a warning', async () =
     ['[agent:team] test runner of team set to runner-2, hands full — warning: the peer is offline, so its suite capability is unchecked']);
   assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-2', hands: 'full' });
   assert.deepStrictEqual(f.reachCalls, []);
+});
+
+test('[agent:team runner <peer>] re-pointing the peer keeps an existing hands:all', async () => {
+  const f = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1', hands: 'all' } }, peers: [SUITE_PEER, OFFLINE_PEER], reach: INFO });
+  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-1', hands: 'all' }, 'ENTER: the team starts on hands:all');
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner runner-2]'),
+    ['[agent:team] test runner of team set to runner-2, hands all — warning: the peer is offline, so its suite capability is unchecked']);
+  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-2', hands: 'all' });
 });
 
 test('refusals leave team.json byte-identical', async () => {

@@ -83,9 +83,9 @@ test('ledger: a green own run writes one start and one end with the same id', ()
   assert.strictEqual(r.totals, 'TOTALS: 3 pass, 0 fail, 3 tests', 'ENTER: the fixture counts are the known ones');
   const recs = readLedger(file);
   assert.strictEqual(recs.length, 2);
-  assert.deepStrictEqual(settle(recs[0], ['startedAt']), {
+  assert.deepStrictEqual(settle(recs[0], ['queuedAt', 'startedAt']), {
     id: 'run-1', phase: 'start', kind: 'hand', scope: 'own', ticket: 't9', seat: 'seat-a',
-    tree: root, sha, dirty: false, pid: r.pid,
+    tree: root, sha, dirty: false, pid: r.pid, where: 'local', route: null, override: null,
   });
   assert.deepStrictEqual(settle(recs[1], ['endedAt', 'durationMs']), {
     id: 'run-1', phase: 'end', outcome: 'pass', pass: 3, fail: 0, tests: 3,
@@ -99,9 +99,9 @@ test('ledger: absent kind/seat/ticket read as manual/null/null, a full run is sc
   const r = runRunner(root, { CLODEX_SUITE_LEDGER: file, CLODEX_SUITE_RUN_ID: 'run-2' }, []);
   assert.match(String(r.totals), /^TOTALS: \d+ pass, 0 fail, \d+ tests$/, 'ENTER: the sweep ran to a green TOTALS');
   const [start] = readLedger(file);
-  assert.deepStrictEqual(settle(start, ['startedAt']), {
+  assert.deepStrictEqual(settle(start, ['queuedAt', 'startedAt']), {
     id: 'run-2', phase: 'start', kind: 'manual', scope: 'full', ticket: null, seat: null,
-    tree: root, sha, dirty: true, pid: r.pid,
+    tree: root, sha, dirty: true, pid: r.pid, where: 'local', route: null, override: null,
   });
 });
 
@@ -189,7 +189,22 @@ test('ledger: the runner scrubs CLODEX_SUITE_* from the test files it runs, so f
   const file = path.join(root, 'ledger.jsonl');
   const r = runRunner(root, {
     CLODEX_SUITE_LEDGER: file, CLODEX_SUITE_RUN_ID: 'run-7', CLODEX_SUITE_KIND: 'hand', CLODEX_SUITE_SEAT: 's', CLODEX_SUITE_TICKET: 't',
+    CLODEX_SUITE_ROUTE: 'hands:off', CLODEX_SUITE_OVERRIDE: 'call',
   });
   assert.ok(fs.existsSync(file), 'ENTER: the outer run had the ledger set');
   assert.strictEqual(r.totals, 'TOTALS: 1 pass, 0 fail, 1 tests', r.stdout);
+});
+
+test('ledger: the start carries where local, queuedAt no later than startedAt, and the route and override the digest handed down', () => {
+  const { root } = mkRunnerRoot();
+  const file = path.join(root, 'ledger.jsonl');
+  const r = runRunner(root, {
+    CLODEX_SUITE_LEDGER: file, CLODEX_SUITE_RUN_ID: 'run-8',
+    CLODEX_SUITE_ROUTE: 'local:true in the call', CLODEX_SUITE_OVERRIDE: 'call',
+  });
+  assert.strictEqual(r.totals, 'TOTALS: 3 pass, 0 fail, 3 tests', 'ENTER: the run was green');
+  const [start] = readLedger(file);
+  assert.deepStrictEqual([start.where, start.route, start.override], ['local', 'local:true in the call', 'call']);
+  assert.match(start.queuedAt, ISO);
+  assert.ok(Date.parse(start.queuedAt) <= Date.parse(start.startedAt), `${start.queuedAt} <= ${start.startedAt}`);
 });

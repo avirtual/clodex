@@ -11,7 +11,7 @@ const LEAF = path.basename(ROOT);
 
 const HOME_DIR = process.env.CLODEX_HOME || path.join(os.homedir(), '.clodex');
 const KEEP_DIR = path.join(HOME_DIR, 'test-failures');
-function ledgerEnv(base) {
+function ledgerEnv(base, keepRoute = false) {
   const env = {
     ...base,
     CLODEX_SUITE_LEDGER: path.join(HOME_DIR, 'logs', 'suite-runs.jsonl'),
@@ -21,6 +21,10 @@ function ledgerEnv(base) {
   else delete env.CLODEX_SUITE_SEAT;
   delete env.CLODEX_SUITE_TICKET;
   delete env.CLODEX_SUITE_RUN_ID;
+  if (!keepRoute) {
+    delete env.CLODEX_SUITE_ROUTE;
+    delete env.CLODEX_SUITE_OVERRIDE;
+  }
   return env;
 }
 const KEEP = path.join(KEEP_DIR, 'last.txt');
@@ -363,7 +367,7 @@ function readIfFile(p) {
   }
 }
 
-function reexecInMeasured(measure, rawStdin) {
+function reexecInMeasured(measure, rawStdin, routeEnv) {
   if (process.env.CLODEX_RUN_TESTS_REEXEC === '1') return;
   const theirs = path.join(measure, 'scripts', 'clodex-run-tests.js');
   const theirBytes = readIfFile(theirs);
@@ -374,7 +378,7 @@ function reexecInMeasured(measure, rawStdin) {
     cwd: ROOT,
     input: rawStdin,
     stdio: ['pipe', 'inherit', 'inherit'],
-    env: ledgerEnv({ ...process.env, CLODEX_RUN_TESTS_REEXEC: '1' }),
+    env: { ...ledgerEnv({ ...process.env, CLODEX_RUN_TESTS_REEXEC: '1' }), ...routeEnv },
   });
   if (res.error) emit(`[${LEAF}] own: re-exec of ${theirs} failed: ${res.error.message}`, 1, 400);
   if (res.status === null) {
@@ -383,13 +387,26 @@ function reexecInMeasured(measure, rawStdin) {
   process.exit(res.status);
 }
 
+function wallShow(ms) {
+  const s = Math.floor(ms / 1000);
+  return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+}
+
+function lockRefusal(lines) {
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (/another suite run is already going/.test(lines[i])) return lines[i].replace(/^run-tests: /, '');
+  }
+  return null;
+}
+
 module.exports = { TEST_ROOTS, failureRows };
 if (require.main !== module) return;
 
+const CHANNEL = typeof process.send === 'function';
 const rawStdin = readStdin();
 const payload = parsePayload(rawStdin);
 const measure = resolveMeasure(payload);
-reexecInMeasured(measure, rawStdin);
+if (!CHANNEL) reexecInMeasured(measure, rawStdin, {});
 const runner = path.join(measure, 'scripts', 'run-tests.js');
 
 const scope = Object.prototype.hasOwnProperty.call(payload, 'scope') ? payload.scope : 'full';
@@ -413,119 +430,157 @@ const selected = scope === 'own' ? selectSet(measure) : null;
 
 const headLine = `${gitRead(measure, ['rev-parse', '--abbrev-ref', 'HEAD'])} ${gitRead(measure, ['log', '-1', '--format=%h %s'])}`.trim();
 const headBefore = gitRead(measure, ['rev-parse', 'HEAD']);
-const startedIso = nowIso();
-const startedAt = Date.now();
-const childEnv = {
-  ...ledgerEnv(process.env),
-  CLODEX_TEST_LOCK_DIR: path.join(ROOT, '.test-digest.lock'),
-  CLODEX_TEST_LOCK_WAIT_MS: String(LOCK_WAIT_MS),
-  CLODEX_TEST_LOCK_NOTE_FD: '3',
-};
-if (selected && selected.locked) childEnv.CLODEX_TEST_LOCK = '1';
-else delete childEnv.CLODEX_TEST_LOCK;
-if (selected && !selected.locked) childEnv.CLODEX_TEST_SLOW_ADVISORY = '1';
-else delete childEnv.CLODEX_TEST_SLOW_ADVISORY;
-const res = spawnSync(process.execPath, [runner, '--reporter=dot', ...(selected ? selected.files : [])], {
-  cwd: measure,
-  env: childEnv,
-  stdio: ['pipe', 'pipe', 'pipe', 2],
-  maxBuffer: 64 * 1024 * 1024,
-  encoding: 'utf8',
-});
+let startedIso = nowIso();
+let startedAt = Date.now();
 
-const wallMs = Date.now() - startedAt;
-const headAfter = gitRead(measure, ['rev-parse', 'HEAD']);
-if (headBefore && headAfter && headAfter !== headBefore) {
-  headSuffix = ` (HEAD moved to ${headAfter.slice(0, 9)} during the queue; the suite measured the tree at its start)`;
+function runLocal(routeEnv) {
+  startedIso = nowIso();
+  startedAt = Date.now();
+  const childEnv = {
+    ...ledgerEnv(process.env, process.env.CLODEX_RUN_TESTS_REEXEC === '1'),
+    ...routeEnv,
+    CLODEX_TEST_LOCK_DIR: path.join(ROOT, '.test-digest.lock'),
+    CLODEX_TEST_LOCK_WAIT_MS: String(LOCK_WAIT_MS),
+    CLODEX_TEST_LOCK_NOTE_FD: '3',
+  };
+  if (selected && selected.locked) childEnv.CLODEX_TEST_LOCK = '1';
+  else delete childEnv.CLODEX_TEST_LOCK;
+  if (selected && !selected.locked) childEnv.CLODEX_TEST_SLOW_ADVISORY = '1';
+  else delete childEnv.CLODEX_TEST_SLOW_ADVISORY;
+  const res = spawnSync(process.execPath, [runner, '--reporter=dot', ...(selected ? selected.files : [])], {
+    cwd: measure,
+    env: childEnv,
+    stdio: ['pipe', 'pipe', 'pipe', 2],
+    maxBuffer: 64 * 1024 * 1024,
+    encoding: 'utf8',
+  });
+  digest(res, Date.now() - startedAt, null);
 }
 
-function wallShow(ms) {
-  const s = Math.floor(ms / 1000);
-  return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+function askHost() {
+  const flags = {};
+  if (selected && selected.locked) flags.CLODEX_TEST_LOCK = '1';
+  if (selected && !selected.locked) flags.CLODEX_TEST_SLOW_ADVISORY = '1';
+  let answered = false;
+  process.on('disconnect', () => {
+    if (!answered) emit(`[${LEAF}] ${TAG}result unknown — the host closed the suite channel before it answered`, 1, 300);
+  });
+  process.on('message', (m) => {
+    if (!m || typeof m !== 'object') return;
+    if (typeof m.progress === 'string') {
+      process.stderr.write(`${m.progress.slice(0, 400)}\n`);
+      return;
+    }
+    if (answered) return;
+    answered = true;
+    if (m.run === 'refused') emit(`[${LEAF}] refused, nothing measured: ${m.why}`, 1, 300);
+    if (m.run === 'local') {
+      const routeEnv = { CLODEX_SUITE_ROUTE: String(m.why || '') };
+      if (m.override) routeEnv.CLODEX_SUITE_OVERRIDE = String(m.override);
+      reexecInMeasured(measure, rawStdin, routeEnv);
+      runLocal(routeEnv);
+      return;
+    }
+    if (m.run !== 'remote' || m.unknown) {
+      emit(`[${LEAF}] ${TAG}result unknown — the suite did not complete on runner ${m.runner || '?'}: ${m.unknown || `unexpected reply ${JSON.stringify(m.run)}`}`, 1, 400);
+    }
+    digest({
+      status: m.status, signal: m.signal, stdout: m.stdout, stderr: m.stderr, error: null,
+    }, Date.now() - startedAt, m.note || null);
+  });
+  startedIso = nowIso();
+  startedAt = Date.now();
+  process.send({
+    op: 'suite', measure, scope, files: selected ? selected.files : [], flags, local: payload.local === true,
+  });
 }
 
-function lockRefusal(lines) {
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    if (/another suite run is already going/.test(lines[i])) return lines[i].replace(/^run-tests: /, '');
+if (CHANNEL) askHost();
+else runLocal({});
+
+function digest(res, wallMs, note) {
+  const headAfter = gitRead(measure, ['rev-parse', 'HEAD']);
+  if (headBefore && headAfter && headAfter !== headBefore) {
+    headSuffix = ` (HEAD moved to ${headAfter.slice(0, 9)} during the queue; the suite measured the tree at its start)`;
   }
-  return null;
-}
+  if (note) headSuffix += ` ${note}`;
 
-const stdout = res.stdout || '';
-const stderr = res.stderr || '';
-const code = res.status;
-const exitCode = code || 1;
+  const stdout = res.stdout || '';
+  const stderr = res.stderr || '';
+  const code = res.status;
+  const exitCode = code || 1;
 
-let totals = null;
-const TOTALS_RE = /TOTALS: (\d+) pass, (\d+) fail, (\d+) tests/g;
-for (let m = TOTALS_RE.exec(stdout); m; m = TOTALS_RE.exec(stdout)) totals = m;
+  let totals = null;
+  const TOTALS_RE = /TOTALS: (\d+) pass, (\d+) fail, (\d+) tests/g;
+  for (let m = TOTALS_RE.exec(stdout); m; m = TOTALS_RE.exec(stdout)) totals = m;
 
-const hay = `${stdout}\n${stderr}`;
+  const hay = `${stdout}\n${stderr}`;
 
-const keptFor = (count, structured, body = hay) => (preserve({
-  measure, head: headLine, startedIso, count, hay: body, structured,
-}) ? ` (${keepShow()})` : '');
+  const keptFor = (count, structured, body = hay) => (preserve({
+    measure, head: headLine, startedIso, count, hay: body, structured,
+  }) ? ` (${keepShow()})` : '');
 
-if (!totals) {
-  const combined = `${hay}${res.error ? `\n${res.error.message}` : ''}`;
-  const lines = combined.split('\n').map((l) => l.trim()).filter(Boolean);
-  const refusal = lockRefusal(lines);
-  if (refusal) emit(refusal, 1, 200);
-  const last = lines.length ? lines[lines.length - 1].slice(0, 160) : '';
-  const at = keptFor(`no summary (exit ${code})`, false, combined);
-  emit(
-    `[${LEAF}] ${TAG}no "TOTALS: <n> pass, <n> fail, <n> tests" line (exit ${code})${at}; last: ${last}`,
-    exitCode,
-  );
-}
-
-const pass = Number(totals[1]);
-const fail = Number(totals[2]);
-const tests = Number(totals[3]);
-
-if (tests === 0) {
-  const at = keptFor(`0/0, exit ${code}`, false);
-  emit(`[${LEAF}] ${TAG}runner executed ZERO tests (exit ${code})${at}`, 1);
-}
-
-if (code === 0 && fail === 0) {
-  retireKeep();
-  const breakdown = selected ? ` — ${selected.counts}` : '';
-  const ADVISORY_RE = /^SLOW \(advisory, unlocked run\): (\d+)ms (.+)$/gm;
-  const advised = [];
-  for (let m = ADVISORY_RE.exec(stdout); m; m = ADVISORY_RE.exec(stdout)) {
-    const name = m[2].length > 60 ? `${m[2].slice(0, 59)}…` : m[2];
-    advised.push(` — SLOW(advisory): ${name} ${m[1]}ms`);
-  }
-  const slow = advised.slice(0, 3).join('') + (advised.length > 3 ? `; +${advised.length - 3} more` : '');
-  emit(`[${LEAF}] ${TAG}${pass}/${tests} green (${wallShow(wallMs)})${breakdown}${slow}`, 0);
-}
-
-const SLOW_RE = /^SLOW: (?:(\d+)ms (.+)|(stale allowlist entry .+))$/gm;
-const ESCAPED_RE = /^ESCAPES: [1-9]/m;
-if (code !== 0 && fail === 0 && !ESCAPED_RE.test(stdout) && !ESCAPED_RE.test(stderr)) {
-  const slow = [];
-  for (let m = SLOW_RE.exec(stdout); m; m = SLOW_RE.exec(stdout)) {
-    slow.push(m[3] ? m[3] : `${m[2]} ${m[1]}ms`);
-  }
-  if (slow.length) {
-    const shown = slow.slice(0, 3).join('; ') + (slow.length > 3 ? `; +${slow.length - 3} more` : '');
-    const at = keptFor(`${pass}/${tests} green, 0 failing — slow gate`, false);
+  if (!totals) {
+    const combined = `${hay}${res.error ? `\n${res.error.message}` : ''}`;
+    const lines = combined.split('\n').map((l) => l.trim()).filter(Boolean);
+    const refusal = lockRefusal(lines);
+    if (refusal) emit(refusal, 1, 200);
+    const last = lines.length ? lines[lines.length - 1].slice(0, 160) : '';
+    const at = keptFor(`no summary (exit ${code})`, false, combined);
     emit(
-      `[${LEAF}] ${TAG}${pass}/${tests} green, 0 failing${at} — SLOW GATE (not a test failure): ${shown}`
-      + ' — a test outside your diff tripping the bar is box load: do not re-run, name it in your report',
+      `[${LEAF}] ${TAG}no "TOTALS: <n> pass, <n> fail, <n> tests" line (exit ${code})${at}; last: ${last}`,
       exitCode,
     );
   }
+
+  const pass = Number(totals[1]);
+  const fail = Number(totals[2]);
+  const tests = Number(totals[3]);
+
+  if (tests === 0) {
+    const at = keptFor(`0/0, exit ${code}`, false);
+    emit(`[${LEAF}] ${TAG}runner executed ZERO tests (exit ${code})${at}`, 1);
+  }
+
+  if (code === 0 && fail === 0) {
+    retireKeep();
+    const breakdown = selected ? ` — ${selected.counts}` : '';
+    const ADVISORY_RE = /^SLOW \(advisory, unlocked run\): (\d+)ms (.+)$/gm;
+    const advised = [];
+    for (let m = ADVISORY_RE.exec(stdout); m; m = ADVISORY_RE.exec(stdout)) {
+      const name = m[2].length > 60 ? `${m[2].slice(0, 59)}…` : m[2];
+      advised.push(` — SLOW(advisory): ${name} ${m[1]}ms`);
+    }
+    const slow = advised.slice(0, 3).join('') + (advised.length > 3 ? `; +${advised.length - 3} more` : '');
+    emit(`[${LEAF}] ${TAG}${pass}/${tests} green (${wallShow(wallMs)})${breakdown}${slow}`, 0);
+  }
+
+  const SLOW_RE = /^SLOW: (?:(\d+)ms (.+)|(stale allowlist entry .+))$/gm;
+  const ESCAPED_RE = /^ESCAPES: [1-9]/m;
+  if (code !== 0 && fail === 0 && !ESCAPED_RE.test(stdout) && !ESCAPED_RE.test(stderr)) {
+    const slow = [];
+    for (let m = SLOW_RE.exec(stdout); m; m = SLOW_RE.exec(stdout)) {
+      slow.push(m[3] ? m[3] : `${m[2]} ${m[1]}ms`);
+    }
+    if (slow.length) {
+      const shown = slow.slice(0, 3).join('; ') + (slow.length > 3 ? `; +${slow.length - 3} more` : '');
+      const at = keptFor(`${pass}/${tests} green, 0 failing — slow gate`, false);
+      emit(
+        `[${LEAF}] ${TAG}${pass}/${tests} green, 0 failing${at} — SLOW GATE (not a test failure): ${shown}`
+        + ' — a test outside your diff tripping the bar is box load: do not re-run, name it in your report',
+        exitCode,
+      );
+    }
+  }
+
+  const names = [];
+  const NAME_RE = /^ *✖ (.+?) \(\d+(?:\.\d+)?ms\)\s*$/gm;
+  for (let m = NAME_RE.exec(hay); m; m = NAME_RE.exec(hay)) names.push(m[1]);
+
+  const at = keptFor(`${pass}/${tests} green, ${fail} failing (exit ${code})`, true);
+  emit(
+    `[${LEAF}] ${TAG}${pass}/${tests} green, ${fail} failing (${wallShow(wallMs)})${at}: ${names.join('; ')}`,
+    exitCode,
+    180,
+  );
 }
-
-const names = [];
-const NAME_RE = /^ *✖ (.+?) \(\d+(?:\.\d+)?ms\)\s*$/gm;
-for (let m = NAME_RE.exec(hay); m; m = NAME_RE.exec(hay)) names.push(m[1]);
-
-const at = keptFor(`${pass}/${tests} green, ${fail} failing (exit ${code})`, true);
-emit(
-  `[${LEAF}] ${TAG}${pass}/${tests} green, ${fail} failing (${wallShow(wallMs)})${at}: ${names.join('; ')}`,
-  exitCode,
-  180,
-);

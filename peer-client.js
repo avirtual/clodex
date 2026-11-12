@@ -835,7 +835,7 @@ class PeerConnection {
   suiteAsk(method, path, payload = null, timeout = REQUEST_TIMEOUT_MS) {
     return new Promise((resolve) => {
       this._request(method, path, payload, (err, body, status) => {
-        resolve(err ? { status: 0, body: null, error: err.message } : { status, body, error: null });
+        resolve(err ? { status: status === 401 || status === 403 ? status : 0, body: null, error: err.message } : { status, body, error: null });
       }, timeout, SUITE_REPLY_MAX_BYTES, this._suiteAgent);
     });
   }
@@ -843,7 +843,7 @@ class PeerConnection {
   suitePut(path, buffer, headers, timeout = IMPORT_TIMEOUT_MS) {
     return new Promise((resolve) => {
       this._requestRaw('PUT', path, buffer, headers, (err, body, status) => {
-        resolve(err ? { status: 0, body: null, error: err.message } : { status, body, error: null });
+        resolve(err ? { status: status === 401 || status === 403 ? status : 0, body: null, error: err.message } : { status, body, error: null });
       }, timeout, this._suiteAgent);
     });
   }
@@ -1085,7 +1085,7 @@ class PeerConnection {
       res.on('end', () => {
         if (tooLarge) return;
         try { cb(null, JSON.parse(buf), res.statusCode); }
-        catch { cb(new Error('bad response')); }
+        catch { cb(new Error('bad response'), null, res.statusCode); }
       });
     });
     req.on('timeout', () => req.destroy(new Error('timeout')));
@@ -1121,7 +1121,7 @@ class PeerConnection {
       res.on('end', () => {
         if (tooLarge) return;
         try { cb(null, JSON.parse(buf), res.statusCode); }
-        catch { cb(new Error('bad response')); }
+        catch { cb(new Error('bad response'), null, res.statusCode); }
       });
     });
     req.on('timeout', () => req.destroy(new Error('timeout')));

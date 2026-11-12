@@ -425,6 +425,16 @@ no terminal tabs `no terminal on this host`. The `term_read` MCP tool
   A `clodex-run-tests` run that finds the suite lock held queues behind the
   holder (up to 15 min) and its status pings say so; the agent never re-emits
   or schedules a reminder for it.
+- **`clodex-run-tests` gets a Node IPC channel; no other exec child does.**
+  `_handleExecIntent` spawns a bin named in `SUITE_CHANNEL_BINS` with an `ipc`
+  stdio slot and answers its one `{op:'suite', measure, scope, files, flags,
+  local}` request through `createChannelHost` (suite-client.js): it re-checks
+  the tree against the team's worktrees and each file entry (relative, no `..`,
+  no leading `-`), then answers `{run:'local'}`, `{run:'refused'}` or streams
+  `{progress}` lines and ends with `{run:'remote', status, stdout, stderr,
+  unknown, treeHash, note}`. The exec timeout kill and a channel disconnect each
+  cancel the in-flight runner job once. A script with no channel (a shell, an
+  older host) runs locally.
 - **`[agent:exec status] {}` is a reserved name, not a registered command.** It
   answers from `session.execRuns` (last 3 runs, newest first, or one via
   `{"seq":N}`) without a grant and without spawning; a registry def named
