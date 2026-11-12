@@ -1,12 +1,16 @@
 'use strict';
 
-const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const childProcess = require('child_process');
 const snapshot = require('./suite-snapshot');
 const { git } = require('./git-worktree');
+
+function resolveFs(load = require) {
+  try { return load('original-fs'); } catch { return load('fs'); }
+}
+const fs = resolveFs();
 
 const LIVE = new Set(['awaiting-pack', 'queued', 'setup', 'running']);
 const KIND_ORDER = { 'post-merge': 0, verify: 1, hand: 2 };
@@ -121,11 +125,11 @@ function forceRemove(p) {
   fs.rmSync(p, { recursive: true, force: true });
 }
 
-function makeReadOnly(p) {
-  const st = fs.lstatSync(p);
+function makeReadOnly(p, io = fs) {
+  const st = io.lstatSync(p);
   if (st.isSymbolicLink()) return;
-  if (st.isDirectory()) for (const name of fs.readdirSync(p)) makeReadOnly(path.join(p, name));
-  fs.chmodSync(p, (st.mode & 0o555) | 0o444 | (st.isDirectory() ? 0o111 : 0));
+  if (st.isDirectory()) for (const name of io.readdirSync(p)) makeReadOnly(path.join(p, name), io);
+  io.chmodSync(p, (st.mode & 0o555) | 0o444 | (st.isDirectory() ? 0o111 : 0));
 }
 
 function bytesOf(p) {
@@ -181,7 +185,7 @@ function enclosingRepo(dir) {
   }
 }
 
-function noneIsolation({ user = os.userInfo().username, kill = process.kill.bind(process) } = {}) {
+function noneIsolation({ user = os.userInfo().username, kill = process.kill.bind(process), fs: io = fs } = {}) {
   return {
     mode: 'none',
     user,
@@ -198,11 +202,11 @@ function noneIsolation({ user = os.userInfo().username, kill = process.kill.bind
       for (const rel of rels) {
         const from = path.join(tree, rel);
         const to = path.join(entry, rel);
-        if (!fs.existsSync(from)) continue;
-        fs.mkdirSync(path.dirname(to), { recursive: true });
-        fs.renameSync(from, to);
-        makeReadOnly(to);
-        fs.symlinkSync(to, from);
+        if (!io.existsSync(from)) continue;
+        io.mkdirSync(path.dirname(to), { recursive: true });
+        io.renameSync(from, to);
+        makeReadOnly(to, io);
+        io.symlinkSync(to, from);
       }
     },
     async reap(jobDir) { forceRemove(jobDir); },
@@ -888,4 +892,4 @@ function createSuiteRunner({
   return { info, submit, putPack, commit, poll, output, cancel, tick, start, close, busy: anyLive };
 }
 
-module.exports = { createSuiteRunner, noneIsolation, userIsolation, envIdentity, jobPaths, statePaths, jobPath, jobLang, DEFAULT_LIMITS };
+module.exports = { createSuiteRunner, noneIsolation, resolveFs, userIsolation, envIdentity, jobPaths, statePaths, jobPath, jobLang, DEFAULT_LIMITS };
