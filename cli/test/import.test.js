@@ -265,16 +265,57 @@ test('applyImport: ssh drift with no token on either side refreshes', () => {
   assert.deepStrictEqual(out.store.contexts.work, { ssh: 'new-host' });
 });
 
-test('applyImport: ssh drift keeps the stored webPort and deploy keys', () => {
-  const deploy = { kind: 'ssh', image: 'clodex:1' };
-  const store = { current: null, contexts: { work: { ssh: 'old-host', remotePort: 7901, token: 'W', webPort: 7950, deploy } } };
+test('applyImport: ssh drift keeps webPort and deploy, and the ssh deploy host follows the new address', () => {
+  const store = { current: null, contexts: { work: {
+    ssh: 'u@old-host', remotePort: 7901, token: 'W', webPort: 7950, deploy: { flavor: 'ssh', host: 'u@old-host' },
+  } } };
   const out = imp.applyImport(store, [
-    { name: 'work', entry: { ssh: 'new-host', remotePort: 7901, token: 'W' }, action: 'add', tokenState: 'set' },
+    { name: 'work', entry: { ssh: 'u@new-host', remotePort: 7901, token: 'W' }, action: 'add', tokenState: 'set' },
   ], { force: false });
   assert.strictEqual(out.results[0].result, 'refreshed');
   assert.deepStrictEqual(out.store.contexts.work, {
-    ssh: 'new-host', remotePort: 7901, token: 'W', webPort: 7950, deploy: { kind: 'ssh', image: 'clodex:1' },
+    ssh: 'u@new-host', remotePort: 7901, token: 'W', webPort: 7950, deploy: { flavor: 'ssh', host: 'u@new-host' },
   });
+});
+
+test('applyImport: ssh drift rewrites a docker deploy dockerHost on the old address, keeping its port', () => {
+  const store = { current: null, contexts: { work: {
+    ssh: 'u@old-host', deploy: { flavor: 'docker', container: 'clodex-work', dockerHost: 'ssh://u@old-host:2222' },
+  } } };
+  const out = imp.applyImport(store, [
+    { name: 'work', entry: { ssh: 'u@new-host' }, action: 'add', tokenState: 'none' },
+  ], { force: false });
+  assert.strictEqual(out.results[0].result, 'refreshed');
+  assert.deepStrictEqual(out.store.contexts.work, {
+    ssh: 'u@new-host', deploy: { flavor: 'docker', container: 'clodex-work', dockerHost: 'ssh://u@new-host:2222' },
+  });
+});
+
+test('applyImport: a deploy host naming another machine is left alone on ssh drift', () => {
+  const store = { current: null, contexts: { work: { ssh: 'old-host', deploy: { flavor: 'ssh', host: 'jump-host' } } } };
+  const out = imp.applyImport(store, [
+    { name: 'work', entry: { ssh: 'new-host' }, action: 'add', tokenState: 'none' },
+  ], { force: false });
+  assert.deepStrictEqual(out.store.contexts.work, { ssh: 'new-host', deploy: { flavor: 'ssh', host: 'jump-host' } });
+});
+
+test('applyImport: a stored explicit remotePort 7900 is not drift against an imported default', () => {
+  const store = { current: null, contexts: { work: { ssh: 'host', remotePort: 7900, token: 'W' } } };
+  const out = imp.applyImport(store, [
+    { name: 'work', entry: { ssh: 'host', token: 'W' }, action: 'add', tokenState: 'set' },
+  ], { force: false });
+  assert.strictEqual(out.results[0].result, 'skipped');
+  assert.strictEqual(out.results[0].reason, 'exists, skipped — --force to overwrite');
+  assert.deepStrictEqual(out.store.contexts.work, { ssh: 'host', remotePort: 7900, token: 'W' });
+});
+
+test('applyImport: a stored tunnel context meeting an imported ssh entry names both kinds', () => {
+  const store = { current: null, contexts: { work: { tunnel: ['ssh', '-N', 'x'], token: 'W' } } };
+  const out = imp.applyImport(store, [
+    { name: 'work', entry: { ssh: 'host', token: 'W' }, action: 'add', tokenState: 'set' },
+  ], { force: false });
+  assert.strictEqual(out.results[0].result, 'skipped');
+  assert.strictEqual(out.results[0].reason, 'transport kind changed tunnel → ssh, skipped — --force to overwrite');
 });
 
 test('applyImport: ssh drift under a different token is skipped and the stored entry kept', () => {

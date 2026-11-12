@@ -221,7 +221,7 @@ function publishedWirePort(dataDir, subdir) {
 }
 
 const TRANSPORT_KEYS = ['url', 'ssh', 'remotePort', 'kubectl', 'ssm'];
-const TRANSPORT_KINDS = ['ssh', 'url', 'kubectl', 'ssm'];
+const TRANSPORT_KINDS = ['ssh', 'url', 'kubectl', 'ssm', 'tunnel', 'gcloud', 'az'];
 
 function transportKind(e) {
   return TRANSPORT_KINDS.find((k) => e[k] !== undefined) || null;
@@ -232,6 +232,22 @@ function shown(v) {
   return typeof v === 'string' ? v : JSON.stringify(v);
 }
 
+function sameTransportValue(k, a, b) {
+  if (k === 'remotePort') return (a ?? DEFAULT_REMOTE_PORT) === (b ?? DEFAULT_REMOTE_PORT);
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function followSshHost(deploy, oldSsh, newSsh) {
+  if (!deploy || typeof deploy !== 'object') return deploy;
+  const out = { ...deploy };
+  if (out.host === oldSsh) out.host = newSsh;
+  const m = typeof out.dockerHost === 'string' ? /^ssh:\/\/([^/]+)/i.exec(out.dockerHost) : null;
+  if (m && m[1].replace(/:\d+$/, '') === oldSsh) {
+    out.dockerHost = `ssh://${newSsh}${out.dockerHost.slice('ssh://'.length + oldSsh.length)}`;
+  }
+  return out;
+}
+
 function transportDrift(existing, entry) {
   if (!existing || typeof existing !== 'object' || !entry) return null;
   if (Object.keys(entry).some((k) => k !== 'token' && !TRANSPORT_KEYS.includes(k))) return null;
@@ -240,11 +256,12 @@ function transportDrift(existing, entry) {
   const now = transportKind(entry);
   if (!was || !now) return null;
   if (was !== now) return { kindChange: `transport kind changed ${was} → ${now}, skipped — --force to overwrite` };
-  const drifted = TRANSPORT_KEYS.filter((k) => JSON.stringify(existing[k]) !== JSON.stringify(entry[k]));
+  const drifted = TRANSPORT_KEYS.filter((k) => !sameTransportValue(k, existing[k], entry[k]));
   if (drifted.length === 0) return null;
   const merged = { ...existing };
   for (const k of TRANSPORT_KEYS) delete merged[k];
   for (const k of TRANSPORT_KEYS) if (entry[k] !== undefined) merged[k] = entry[k];
+  if (drifted.includes('ssh') && merged.deploy !== undefined) merged.deploy = followSshHost(merged.deploy, existing.ssh, entry.ssh);
   const reason = drifted.map((k) => `${k} drifted ${shown(existing[k])} → ${shown(entry[k])}`).join('; ');
   return { merged, reason };
 }
