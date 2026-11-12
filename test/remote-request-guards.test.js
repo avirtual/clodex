@@ -83,7 +83,9 @@ test('a JSON null body is a 400 on every body route, never an uncaught throw', a
       ['POST', '/api/inbox/reply/n1'], ['POST', '/api/suite/jobs'], ['POST', '/api/suite/jobs/j1/commit'],
     ];
     const src = fs.readFileSync(path.join(__dirname, '..', 'remote.js'), 'utf8');
-    assert.equal(rows.length, src.split('this._readBody(').length - 1, 'every _readBody call site has a null-body row');
+    const suiteRows = rows.filter(([, p]) => p.startsWith('/api/suite/'));
+    assert.equal(suiteRows.length, 2, 'ENTER: both suite JSON verbs have a null-body row');
+    assert.equal(rows.length - suiteRows.length + 1, src.split('this._readBody(').length - 1, 'every _readBody call site has a null-body row; the suite verbs share one');
     const trap = trapUncaught();
     try {
       for (const [method, p] of rows) {
