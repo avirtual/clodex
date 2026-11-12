@@ -62706,8 +62706,13 @@ ${res.stderr}` : "");
         syncBoxOfferSchedule();
         for (const el of prefsBoxOfferBlock.querySelectorAll("input, select, button")) el.disabled = st.forced;
       }
+      function boxOfferKeepsForm(st) {
+        return prefsBoxOfferEdited && !!prefsBoxOfferShown && JSON.stringify(prefsBoxOfferShown.stored) === JSON.stringify(st.stored);
+      }
       async function refreshBoxOfferPrefs() {
         if (!prefsBoxOfferBlock) return;
+        if (prefsBoxOfferShown) renderBoxOfferPrefs(prefsBoxOfferShown);
+        else for (const el of prefsBoxOfferBlock.querySelectorAll("input, select, button")) el.disabled = true;
         prefsBoxOfferEdited = false;
         let st = null;
         try {
@@ -62717,7 +62722,7 @@ ${res.stderr}` : "");
         }
         if (!st || typeof st.forced !== "boolean") st = null;
         prefsBoxOfferBlock.classList.toggle("hidden", !st);
-        if (st) renderBoxOfferPrefs(st, { keepForm: prefsBoxOfferEdited });
+        if (st) renderBoxOfferPrefs(st, { keepForm: boxOfferKeepsForm(st) });
       }
       if (prefsBoxOfferBlock) {
         prefsBoxOfferBlock.addEventListener("input", markBoxOfferEdited);
@@ -62797,7 +62802,7 @@ ${res.stderr}` : "");
           } catch {
             return;
           }
-          if (st && JSON.stringify(st.stored) !== JSON.stringify(prefsBoxOfferShown.stored)) renderBoxOfferPrefs(st, { keepForm: prefsBoxOfferEdited });
+          if (st && JSON.stringify(st.stored) !== JSON.stringify(prefsBoxOfferShown.stored)) renderBoxOfferPrefs(st);
         });
       }
       prefsRemoteTokenSave.addEventListener("click", () => {

@@ -197,6 +197,7 @@ function createEngine({ userDataPath, seams = {}, log }) {
   // Desktop-only, and this flag is the boundary, not the renderer's `available()`:
   // web-host.js dispatches any registered channel by name without consulting api-contract.
   const enableDrawerServices = seams.enableDrawerServices !== false;
+
   const enableTestBoxes = seams.enableTestBoxes !== false;
   const enableCtl = seams.enableCtl !== false;
   // Split off enableDrawerServices and defaults ON: `wterm:*` spawns `$SHELL` on this box, which

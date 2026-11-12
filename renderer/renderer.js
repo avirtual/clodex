@@ -9664,14 +9664,20 @@ function renderBoxOfferPrefs(st, { keepForm = false } = {}) {
   for (const el of prefsBoxOfferBlock.querySelectorAll('input, select, button')) el.disabled = st.forced;
 }
 
+function boxOfferKeepsForm(st) {
+  return prefsBoxOfferEdited && !!prefsBoxOfferShown && JSON.stringify(prefsBoxOfferShown.stored) === JSON.stringify(st.stored);
+}
+
 async function refreshBoxOfferPrefs() {
   if (!prefsBoxOfferBlock) return;
+  if (prefsBoxOfferShown) renderBoxOfferPrefs(prefsBoxOfferShown);
+  else for (const el of prefsBoxOfferBlock.querySelectorAll('input, select, button')) el.disabled = true;
   prefsBoxOfferEdited = false;
   let st = null;
   try { st = await window.api.offerGet(); } catch { st = null; }
   if (!st || typeof st.forced !== 'boolean') st = null;
   prefsBoxOfferBlock.classList.toggle('hidden', !st);
-  if (st) renderBoxOfferPrefs(st, { keepForm: prefsBoxOfferEdited });
+  if (st) renderBoxOfferPrefs(st, { keepForm: boxOfferKeepsForm(st) });
 }
 
 if (prefsBoxOfferBlock) {
@@ -9731,7 +9737,7 @@ if (prefsBoxOfferBlock) {
     if (prefsOverlay.classList.contains('hidden') || !prefsBoxOfferShown) return;
     let st = null;
     try { st = await window.api.offerGet(); } catch { return; }
-    if (st && JSON.stringify(st.stored) !== JSON.stringify(prefsBoxOfferShown.stored)) renderBoxOfferPrefs(st, { keepForm: prefsBoxOfferEdited });
+    if (st && JSON.stringify(st.stored) !== JSON.stringify(prefsBoxOfferShown.stored)) renderBoxOfferPrefs(st);
   });
 }
 

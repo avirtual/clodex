@@ -28,20 +28,23 @@ function el(extra = {}) {
   };
 }
 
-function harness() {
+function harness({ shown = null } = {}) {
   const pending = [];
-  const ctx = {
-    window: { api: { offerGet: () => new Promise((resolve) => pending.push(resolve)) } },
-    document: { createElement: () => el({ dataset: {} }) },
-    prefsBoxOfferShown: null,
-    prefsBoxOfferBlock: el(),
+  const controls = {
     prefsBoxOfferEnabled: el(),
     prefsBoxOfferBoxes: el(),
     prefsBoxOfferAvailability: el(),
-    prefsBoxOfferSchedule: el(),
-    prefsBoxOfferPeers: el(),
     prefsBoxOfferPeerName: el(),
     prefsBoxOfferScope: el(),
+  };
+  const ctx = {
+    window: { api: { offerGet: () => new Promise((resolve) => pending.push(resolve)) } },
+    document: { createElement: () => el({ dataset: {} }) },
+    prefsBoxOfferShown: shown,
+    prefsBoxOfferBlock: el({ querySelectorAll: () => Object.values(controls) }),
+    ...controls,
+    prefsBoxOfferSchedule: el(),
+    prefsBoxOfferPeers: el(),
     prefsBoxOfferSelf: el(),
     prefsBoxOfferFacts: el(),
     prefsBoxOfferStatus: el(),
@@ -59,6 +62,7 @@ function harness() {
     'let prefsBoxOfferEdited = false;',
     fnSource('markBoxOfferEdited'),
     fnSource('renderBoxOfferPrefs'),
+    fnSource('boxOfferKeepsForm'),
     fnSource('refreshBoxOfferPrefs'),
     'globalThis.ui = { render: renderBoxOfferPrefs, refresh: refreshBoxOfferPrefs, mark: markBoxOfferEdited };',
   ].join('\n'), ctx);
@@ -66,27 +70,56 @@ function harness() {
   return { ctx, ui: ctx.ui, answer, pending };
 }
 
-const OFF = { scope: 'run', enabled: false, boxes: 1, availability: 'always', peers: [] };
+const OFF = { scope: 'run', enabled: false, boxes: 1, availability: 'always', peers: [{ name: 'murmur' }] };
 const state = (stored) => ({ self: 'workbox', stored, effective: stored, forced: false, warning: null, facts: null, peers: [{ name: 'murmur', from: 'peer' }], runner: null, claims: [] });
 
-test('a slow offer:get on open does not untick an Offer box the operator ticked meanwhile', async () => {
-  const { ctx, ui, answer, pending } = harness();
+test('reopen: a slow offer:get does not untick an Offer box ticked meanwhile when the stored record is unchanged', async () => {
+  const { ctx, ui, answer, pending } = harness({ shown: state(OFF) });
   const opening = ui.refresh();
   assert.strictEqual(pending.length, 1, 'ENTER: the refresh is waiting on offer:get');
+  assert.deepStrictEqual(ctx.prefsBoxOfferPeers.children, [{ peer: 'murmur', checked: true }], 'the form already shows the stored record');
+  assert.strictEqual(ctx.prefsBoxOfferEnabled.disabled, false, 'a filled form stays editable during the wait');
   ctx.prefsBoxOfferEnabled.checked = true;
   ui.mark();
   await answer(state(OFF));
   await opening;
   assert.strictEqual(ctx.prefsBoxOfferEnabled.checked, true, 'the tick survives the late render');
-  assert.strictEqual(ctx.prefsBoxOfferShown.stored, OFF, 'the state itself is still taken in');
+  assert.strictEqual(ctx.prefsBoxOfferScope.value, 'run');
+  assert.deepStrictEqual(ctx.prefsBoxOfferPeers.children, [{ peer: 'murmur', checked: true }]);
 });
 
-test('an untouched form is filled from the stored record when offer:get answers', async () => {
-  const { ctx, ui, answer } = harness();
+test('reopen: last session leftovers are cleared before the answer arrives', async () => {
+  const { ctx, ui, answer } = harness({ shown: state(OFF) });
   ctx.prefsBoxOfferEnabled.checked = true;
+  ctx.prefsBoxOfferScope.value = 'discovery';
   const opening = ui.refresh();
-  await answer(state({ ...OFF, peers: [{ name: 'murmur' }] }));
+  assert.strictEqual(ctx.prefsBoxOfferEnabled.checked, false);
+  assert.strictEqual(ctx.prefsBoxOfferScope.value, 'run');
+  await answer(state(OFF));
   await opening;
+});
+
+test('an edit during the wait yields to a stored record that changed since the form was filled', async () => {
+  const { ctx, ui, answer } = harness({ shown: state(OFF) });
+  const opening = ui.refresh();
+  ctx.prefsBoxOfferEnabled.checked = true;
+  ui.mark();
+  const changed = { ...OFF, boxes: 3, peers: [{ name: 'murmur' }, { name: 'hollow' }] };
+  await answer(state(changed));
+  await opening;
+  assert.strictEqual(ctx.prefsBoxOfferEnabled.checked, false);
+  assert.strictEqual(ctx.prefsBoxOfferBoxes.value, '3');
+  assert.deepStrictEqual(ctx.prefsBoxOfferPeers.children, [{ peer: 'murmur', checked: true }, { peer: 'hollow', checked: true }]);
+});
+
+test('first open: the controls are disabled until offer:get answers, then filled from the stored record', async () => {
+  const { ctx, ui, answer } = harness();
+  const opening = ui.refresh();
+  assert.strictEqual(ctx.prefsBoxOfferEnabled.disabled, true, 'a blank form cannot be ticked during the wait');
+  assert.strictEqual(ctx.prefsBoxOfferScope.disabled, true);
+  await answer(state(OFF));
+  await opening;
+  assert.strictEqual(ctx.prefsBoxOfferEnabled.disabled, false);
   assert.strictEqual(ctx.prefsBoxOfferEnabled.checked, false);
   assert.strictEqual(ctx.prefsBoxOfferScope.value, 'run');
   assert.deepStrictEqual(ctx.prefsBoxOfferPeers.children, [{ peer: 'murmur', checked: true }]);
