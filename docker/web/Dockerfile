@@ -143,8 +143,6 @@ RUN useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/
  && chmod 0700 /data /home/clodex \
  && printf '{"version":"%s","rev":"%s"}\n' "$CLODEX_VERSION" "$CLODEX_GIT_SHA" > /etc/clodex/image.json
 
-VOLUME /var/lib/clodex-suite
-
 ENV HOME=/home/clodex \
     SHELL=/bin/bash \
     TBH_CREDENTIAL_BACKEND=file \

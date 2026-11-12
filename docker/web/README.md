@@ -238,7 +238,7 @@ token and refuses everything else, so the runner holds no full-control token.
 A runner keeps its state on two volumes, and a container replacement keeps its
 cache only when both survive: `/data` (`clodex-data`) holds the job store,
 the cache index and the ledger, and `/var/lib/clodex-suite`
-(`clodex-suite-work`, declared as a `VOLUME` by the image) holds the repository
+(`clodex-suite-work`) holds the repository
 mirrors and the dependency cache. The work root stays off `/data` because the
 `clodex-suite` user must traverse it and `/data` is closed to it. Keep only
 `/data` and every repo's next job uploads its full pack and reruns its setup;
@@ -246,6 +246,10 @@ keep only the work root and the finished jobs, outputs and ledger are gone, and
 with no index the runner removes every cached dependency entry at start. At
 every start the runner reconciles the index with the disk, dropping rows whose
 entry is gone and removing dependency entries the index does not list.
+The image declares no volume there: a runner started with plain `docker run`
+must pass `-v <name>:/var/lib/clodex-suite` (a named volume, which Docker
+seeds with the directory's `clodex` owner and 0711 mode) to keep its mirrors and
+dependency cache.
 
 **The published image is a base.** It carries the engine's own Node and git,
 not any project's platform or toolchain. A team's runner runs that team's suite,
