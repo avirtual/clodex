@@ -13,3 +13,6 @@ The far index is the near index's tree (`read-tree -m <indexTree>`), not a reset
 
 ## keepRefs
 Each job keeps `refs/keep/job/<stamp>-<id>` (the snapshot commit) and `refs/keep/index/<stamp>-<id>` (its index tree), plus `refs/keep/trunk`; the stamp is zero-padded so a name sort is age order and the oldest beyond `KEEP_JOBS` are dropped. `mirrorHave` answers only commits reachable from these refs: a commit left by a failed ingest may lack its history.
+
+## detachTree
+`git repack -a` keeps only what the tree's refs, HEAD and index reach, so the job's snapshot commit is gone afterwards: `treeHashOf(dir, {base: snap})` fails on a detached tree. Run it after the `materialize` proof, never before.
