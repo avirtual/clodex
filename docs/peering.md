@@ -530,8 +530,9 @@ job or a result for another job or tree is `unknown`, never a pass.
 
 A node may offer test boxes to named peers (`boxOffer` ui-setting, or env
 `CLODEX_BOX_OFFER`, which wins when set; box-offer.js validates both). While the
-env var is set the stored setting is not read or checked at all. This is
-discovery only: nothing is built or run. remote-wiring injects `offerFor`,
+env var is set the stored setting is not read or checked at all. The record's
+`scope` is `discovery` (the default: peers are shown the offer, nothing is built
+or run) or `run` (see **Run scope**). remote-wiring injects `offerFor`,
 `receiveOffers` and `listOffers` (`offerCallbacks`); without them hello has no
 `offers` cap, both routes answer 501 and `offers` is absent from
 `/api/resources`.
@@ -551,8 +552,8 @@ discovery only: nothing is built or run. remote-wiring injects `offerFor`,
   the least recently seen dropped first. No token or address is kept.
 - **`POST /api/peer/offers`** (a dialer's announce): body
   `{v:1, from:<dialer label>, own:<entry>|null}`. `own` is sanitised by
-  `sanitizeWireOffers`; an entry with an unknown key, a missing fact or any scope
-  but `discovery` is a 400 and nothing is stored. A `null` own removes that
+  `sanitizeWireOffers`; an entry with an unknown key, a missing fact or a scope
+  other than `discovery` or `run` is a 400 and nothing is stored. A `null` own removes that
   dialer's row. Any `relayed` field is ignored. Reply `{ok:true}`, or 503
   `{ok:false, error:'offers directory full'}` when the directory refused a new
   row.
@@ -562,7 +563,9 @@ discovery only: nothing is built or run. remote-wiring injects `offerFor`,
   this node also sends as a DM `origin` and a roster `via`. After a non-scoped
   hello whose caps include `offers`, the dialer stores the reply's `offers.own`
   as a `hello` row keyed by the peer id (an absent field clears that row), then
-  POSTs its own entry for that peer, or `own:null` when it has none; a repeat
+  POSTs its own entry for that peer, or `own:null` when it has none. The entry
+  says `scope:'run'` only for a `run` record and a peer whose hello caps include
+  `suite-pull`; otherwise it says `discovery`, and hello's `own` always does. A repeat
   `null` after an acknowledged `null` is not sent. It rides the hello tick, so
   the dialed node's `announce` row stays fresh while the link lives and expires
   by the TTL when it goes quiet. A far side without the cap gets no POST; a
@@ -582,6 +585,14 @@ discovery only: nothing is built or run. remote-wiring injects `offerFor`,
   display filter, not authorisation. Both routes ride the operator token; a
   suite-scoped token gets the scoped 403 on both and its hello never carries
   `offers`.
+- **Run scope.** `runGrant(offer, peerName, now)` (box-offer.js) answers
+  `{admit, serve}` for one peer row label: `serve` is true for a valid, enabled
+  `run` record that lists the peer; `admit` (new jobs) also needs the schedule
+  open (`scheduleOpen`). A closed schedule keeps `serve`, so jobs that already
+  exist are still serviced; disabling the offer or unticking the peer clears
+  both. A stored `discovery` record loads as `discovery` and grants nothing.
+  Nothing calls `runGrant` yet; suite-runner.js, suite-client.js and remote.js's
+  suite routes never read the offer.
 - **Setting the offer.** Preferences ▸ Offer test boxes (desktop only): on/off,
   box count, availability `always` or `schedule` with up to 8 windows, and a
   checklist of names: this node's configured peers by label, then the nodes
@@ -590,13 +601,20 @@ discovery only: nothing is built or run. remote-wiring injects `offerFor`,
   it. A text field adds a name by hand (node-name grammar; a duplicate is
   ignored). A node that dials this machine is named by its own label: its
   hostname unless it set `CLODEX_LABEL`. The block shows this machine's label,
-  the name a node it dials will see. The ticked peers are the
-  ones shown the offer; the list is not an access control and nothing runs on
-  this machine because of it. A read-only line shows the facts this machine
-  would announce. It saves through IPC `offer:set`, which runs
-  `sanitizeBoxOffer` and refuses an invalid record (the stored one is kept) and
-  refuses with the reason while `CLODEX_BOX_OFFER` is set. `offer:get` returns
-  `{self, stored, effective, forced, warning, facts, peers}`; `self` is this
+  the name a node it dials will see. "Ticked peers may" chooses the scope:
+  "see this offer" (`discovery`: the list is not an access control and nothing
+  runs here because of it) or "see it and run their teams' test jobs on this
+  machine" (`run`). Under `run` a line states the test runner's isolation in
+  force, or that the runner is off and nothing runs until it is on, and Apply
+  first asks for confirmation listing every ticked peer. A read-only line shows the facts this machine
+  would announce. It saves through IPC `offer:set(record, confirm)`, which runs
+  `sanitizeBoxOffer` and refuses an invalid record (the stored one is kept),
+  refuses a `run` record unless `confirm.peers` names exactly the record's peers
+  (`runConfirmed`), and
+  refuses with the reason while `CLODEX_BOX_OFFER` is set; its reply's facts are
+  the cached ones (`getOfferFacts`), never a fresh probe. `offer:get` returns
+  `{self, stored, effective, forced, warning, facts, peers, runner}`; `runner` is
+  `{status, isolation}` from the test runner state, or `null`; `self` is this
   node's label and `peers` is `[{name, from:'peer'}]` for configured labels
   followed by `[{name, from:'dialed', seenAt}]` for dialers not configured;
   `warning` is

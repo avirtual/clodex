@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- An offer of test boxes can be widened from visible to runnable: named peers may then run test jobs on this machine once it is also a test runner. Off by default; switching it on asks for confirmation and lists the peers.
+
 ## 5.177.1 — 2026-11-12
 
 - Preferences ▸ Offer test boxes can name a node that dials this machine even when it is not in the peer list: nodes that have dialed in are listed, and a name can be typed in.
