@@ -6805,3 +6805,97 @@ test('t2254: a run killed by the suite timeout gets its end record from the loop
     id, phase: 'end', outcome: 'timeout', pass: null, fail: null, tests: null, endedAt: 'x', durationMs: 'x',
   });
 });
+
+const { createSuiteClient: createShadowClient } = require('../suite-client');
+
+const SHADOW_LOCAL = {
+  green: 'console.log("TOTALS: 5 pass, 0 fail, 5 tests");\nprocess.exit(0);\n',
+  red: 'console.log(" ✖ b (1.5ms)");\nconsole.log("TOTALS: 4 pass, 1 fail, 5 tests");\nprocess.exit(1);\n',
+  'no-TOTALS': 'console.log("partial");\nprocess.exit(0);\n',
+  'zero-tests': 'console.log("TOTALS: 0 pass, 0 fail, 0 tests");\nprocess.exit(0);\n',
+};
+
+function shadowRemote(mode) {
+  const out = { green: 'TOTALS: 5 pass, 0 fail, 5 tests\n', red: ' ✖ c (2ms)\nTOTALS: 4 pass, 1 fail, 5 tests\n' };
+  const conn = {
+    suiteAsk: (method, p) => {
+      if (mode === 'throwing') throw new Error('socket hang up');
+      if (mode === 'never-resolving') return new Promise(() => {});
+      if (p === '/api/suite/info') return Promise.resolve({ status: 200, body: { ok: true, limits: {}, env: { envKey: 'k' } } });
+      if (method === 'POST') return Promise.resolve(mode === 'unknown' ? { status: 200, body: { ok: false, error: 'nope' } } : { status: 200, body: { ok: true, state: 'queued' } });
+      if (p.includes('/output?')) {
+        const text = p.includes('stream=stdout') ? out[mode] : '';
+        return Promise.resolve({ status: 200, body: { ok: true, text, offset: 0, total: Buffer.byteLength(text) } });
+      }
+      const id = decodeURIComponent(/ids=([^&]+)/.exec(p)[1]);
+      return Promise.resolve({ status: 200, body: { ok: true, jobs: [{ id, state: 'done', treeHash: 'a'.repeat(40), exit: { code: mode === 'green' ? 0 : 1, signal: null }, reason: null, queueMs: 0, setupMs: 0, runMs: 1, out: {} }] } });
+    },
+  };
+  return createShadowClient({
+    getPeerManager: () => ({ get: () => conn }),
+    compareFile: pathReal.join(mkTmpRoot('clodex-shadow-'), 'suite-compare.jsonl'),
+    snapshot: { snapshotTree: async () => ({ treeHash: 'a'.repeat(40), head: 'b'.repeat(40), headTree: 'a'.repeat(40) }), releaseSnapshot: () => {} },
+    sleep: async () => {},
+  });
+}
+
+function shadowLoop(script) {
+  const repo = mkRepo();
+  const spawns = [];
+  const cp = require('node:child_process');
+  const holder = { client: null, submits: 0 };
+  const f = mkLoop({ repo, extraDeps: {
+    getSuiteClient: () => holder.client,
+    childProcess: { ...cp, spawn: (cmd, args, opts) => { spawns.push({ cmd, args, env: { ...opts.env, CLODEX_SUITE_RUN_ID: '<id>' } }); return cp.spawn(cmd, args, opts); } },
+  } });
+  fsReal.writeFileSync(pathReal.join(repo.dir, 'wt', 'scripts', 'run-tests.js'), script);
+  f.m._runnerPeerStatus = (n) => (n === 'runner-1' ? { id: 'p1' } : null);
+  const counted = (client) => (client ? { ...client, shadow: (o) => { holder.submits += 1; return client.shadow(o); } } : null);
+  const run = async (testRunner, client) => {
+    holder.client = counted(client);
+    holder.submits = 0;
+    spawns.length = 0;
+    const team = { ...f.team, testRunner };
+    const out = await f.m._runTicketSuite(team, f.one());
+    return { out: { ...out, startedAt: '<at>', runnerPid: typeof out.runnerPid }, spawns: spawns.slice(), submits: holder.submits };
+  };
+  return { run };
+}
+
+const SHADOW_ON = { peer: 'runner-1', hands: 'off', gate: 'shadow' };
+const SHADOW_REMOTES = [
+  ['green', () => shadowRemote('green')],
+  ['red', () => shadowRemote('red')],
+  ['unknown', () => shadowRemote('unknown')],
+  ['throwing', () => shadowRemote('throwing')],
+  ['never-resolving', () => shadowRemote('never-resolving')],
+  ['a client whose submit throws', () => ({ shadow: async () => { throw new Error('snapshot failed'); } })],
+];
+
+for (const [local, script] of Object.entries(SHADOW_LOCAL)) {
+  test(`t2264: gate:shadow returns the gate:off object and spawns the same argv and env for a ${local} local run, whatever the remote does`, async () => {
+    const f = shadowLoop(script);
+    const off = await f.run({ peer: 'runner-1', hands: 'off', gate: 'off' }, shadowRemote('green'));
+    assert.strictEqual(off.spawns.length, 1, 'ENTER: the local arm spawned once');
+    assert.strictEqual(off.submits, 0);
+    for (const [remote, mk] of SHADOW_REMOTES) {
+      const sh = await f.run(SHADOW_ON, mk());
+      assert.strictEqual(sh.submits, 1, `ENTER: ${remote} remote was submitted`);
+      assert.deepStrictEqual(sh.out, off.out, `${local} local, ${remote} remote`);
+      assert.deepStrictEqual(sh.spawns, off.spawns, `${local} local, ${remote} remote`);
+    }
+  });
+}
+
+test('t2264: no runner and gate:off submit nothing; gate:shadow submits once', async () => {
+  const f = shadowLoop(SHADOW_LOCAL.green);
+  const rows = [
+    ['no runner', null, 0],
+    ['gate:off', { peer: 'runner-1', hands: 'all', gate: 'off' }, 0],
+    ['gate:shadow', SHADOW_ON, 1],
+  ];
+  for (const [name, testRunner, want] of rows) {
+    const r = await f.run(testRunner, shadowRemote('green'));
+    assert.strictEqual(r.submits, want, name);
+  }
+});
