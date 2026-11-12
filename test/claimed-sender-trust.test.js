@@ -211,7 +211,9 @@ test('t2307: a live session named clodex queues a peer dm, claimed with its name
   const out = m._sendToFederatedTarget('clodex', 'alpha@laptop', 'hi', false, { onBounce: (n) => notices.push(n) });
   assert.deepStrictEqual(notices, []);
   assert.strictEqual(out.queued, true);
-  assert.deepStrictEqual(claimOutbox(root, 'laptop').map((g) => [g.from, g.to, g.body]), [['clodex', 'alpha', 'hi']]);
+  const r = claimRig();
+  r.m._deliverClaimedDms('p1', claimOutbox(root, 'laptop'));
+  assert.deepStrictEqual(r.delivered, [{ to: 'alpha', from: 'clodex@hub', body: 'hi' }]);
 });
 
 test('t2307: a system sender with no live session is still refused with the system sender name reason', () => {
