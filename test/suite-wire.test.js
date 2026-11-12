@@ -12,7 +12,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const { RemoteServer } = require('../remote');
 const { PeerConnection } = require('../peer-client');
-const { createSuiteRunner, noneIsolation } = require('../suite-runner');
+const { createSuiteRunner, noneIsolation, statePaths } = require('../suite-runner');
 const { createSuiteClient } = require('../suite-client');
 const { suiteRunnerOptions } = require('../remote-wiring');
 
@@ -142,6 +142,20 @@ test('suiteRunnerOptions builds the runner deps from the environment, and nothin
   });
   assert.deepStrictEqual(suiteRunnerOptions({ CLODEX_SUITE_RUNNER: '1', CLODEX_SUITE_WORK: '/w', CLODEX_SUITE_ISOLATION: 'none', CLODEX_SUITE_PACK_MAX_MB: '2' }, '/h'), {
     root: '/h', work: '/w', isolation: 'none', limits: { packMaxBytes: 2 * 1024 * 1024 },
+  });
+  assert.deepStrictEqual(suiteRunnerOptions({ CLODEX_SUITE_RUNNER: '1', CLODEX_DATA_DIR: '/data' }, '/home/clodex/.clodex'), {
+    root: '/data', oldRoot: '/home/clodex/.clodex', work: '/var/lib/clodex-suite', isolation: 'user', limits: {},
+  });
+});
+
+test('the runner state lives under the data dir when one is set and under the Clodex home otherwise', () => {
+  const at = (env) => statePaths(suiteRunnerOptions({ CLODEX_SUITE_RUNNER: '1', ...env }, '/home/clodex/.clodex').root);
+  assert.deepStrictEqual(at({ CLODEX_DATA_DIR: '/data' }), {
+    dir: '/data/suite-runner', jobs: '/data/suite-runner/jobs', cache: '/data/suite-runner/cache.json', ledger: '/data/suite-runner/ledger.jsonl',
+  });
+  assert.deepStrictEqual(at({}), {
+    dir: '/home/clodex/.clodex/suite-runner', jobs: '/home/clodex/.clodex/suite-runner/jobs',
+    cache: '/home/clodex/.clodex/suite-runner/cache.json', ledger: '/home/clodex/.clodex/suite-runner/ledger.jsonl',
   });
 });
 

@@ -67,7 +67,7 @@ async function fixture(t, { onSpawn, now, limits, kill, wrap } = {}) {
   };
   const base = noneIsolation({ user: 'suite-test', kill: kill || ((pid, sig) => kills.push([pid, sig])) });
   const isolation = wrap ? wrap(base) : base;
-  const make = () => createSuiteRunner({ root, work, isolation, limits, spawn, now, timers });
+  const make = (over = {}) => createSuiteRunner({ root, work, isolation, limits, spawn, now, timers, ...over });
   const runner = make();
   t.after(() => {
     runner.close();
@@ -462,7 +462,18 @@ function listing(dir) {
 
 test('deps cache: a miss runs setup once and seals the entry, a hit links it and runs no setup', async (t) => {
   const links = [];
+  const iso = [];
+  const mode = (p) => (fs.statSync(p).mode & 0o777).toString(8);
   const f = await fixture(t, {
+    wrap: (base) => ({
+      ...base,
+      async prepare(jobDir, mirror, ...rest) {
+        const entry = rest[0];
+        iso.push(['prepare', jobOf(jobDir), rest, [path.dirname(path.dirname(entry)), path.dirname(entry), entry].map(mode)]);
+        fs.chmodSync(entry, 0o750);
+      },
+      reap: (jobDir, ...rest) => { iso.push(['reap', jobOf(jobDir), rest]); return base.reap(jobDir); },
+    }),
     onSpawn: (c) => {
       if (c.cmd === '/bin/sh') {
         fs.mkdirSync(path.join(c.opts.cwd, 'node_modules'));
@@ -492,6 +503,53 @@ test('deps cache: a miss runs setup once and seals the entry, a hit links it and
   });
   const target = path.join(entry, 'node_modules');
   assert.deepStrictEqual(links, [['d1', true, target], ['d2', true, target]]);
+  assert.deepStrictEqual(iso, [
+    ['prepare', 'd1', [entry], ['711', '711', '700']],
+    ['reap', 'd1', [entry]],
+    ['prepare', 'd2', [entry], ['711', '711', '700']],
+    ['reap', 'd2', [entry]],
+  ]);
+  assert.strictEqual(mode(`${entry}.json`), '600');
+});
+
+test('a runner closes every deps entry and marker it finds at start', async (t) => {
+  const f = await fixture(t);
+  f.runner.close();
+  const repo = path.join(f.work, 'deps', 'c'.repeat(40));
+  const entry = path.join(repo, 'e'.repeat(64));
+  fs.mkdirSync(entry, { recursive: true });
+  fs.writeFileSync(`${entry}.json`, '{}');
+  for (const [p, m] of [[path.join(f.work, 'deps'), 0o755], [repo, 0o755], [entry, 0o755], [`${entry}.json`, 0o644]]) fs.chmodSync(p, m);
+  const runner = f.make();
+  t.after(() => runner.close());
+  const mode = (p) => (fs.statSync(p).mode & 0o777).toString(8);
+  assert.deepStrictEqual([path.join(f.work, 'deps'), repo, entry, `${entry}.json`].map(mode), ['711', '711', '700', '600']);
+});
+
+test('a runner moves its state from the old root into its data root, and a fresh start leaves the old root empty', async (t) => {
+  const f = await fixture(t);
+  f.runner.close();
+  const data = path.join(f.root, 'data');
+  const old = path.join(f.root, 'home');
+  const oldState = path.join(old, 'suite-runner');
+  fs.mkdirSync(path.join(oldState, 'jobs', 'm1'), { recursive: true });
+  fs.writeFileSync(path.join(oldState, 'jobs', 'm1', 'job.json'), JSON.stringify({ ...f.body('m1'), state: 'done', reason: null, exit: null, seq: 4, queuedAt: 1, endedAt: Date.now(), out: { stdoutBytes: 0, stderrBytes: 0, truncated: false } }));
+  fs.writeFileSync(path.join(oldState, 'cache.json'), '{"deps/x/y":7}');
+  fs.writeFileSync(path.join(oldState, 'ledger.jsonl'), '{"id":"m1"}\n');
+  const moved = f.make({ root: data, oldRoot: old });
+  t.after(() => moved.close());
+  assert.deepStrictEqual((await moved.poll(['m1'])).jobs.map((j) => [j.id, j.state]), [['m1', 'done']]);
+  assert.deepStrictEqual([
+    fs.readFileSync(path.join(data, 'suite-runner', 'cache.json'), 'utf8'),
+    fs.readFileSync(path.join(data, 'suite-runner', 'ledger.jsonl'), 'utf8'),
+    (fs.statSync(path.join(data, 'suite-runner')).mode & 0o777).toString(8),
+    fs.readdirSync(old),
+  ], ['{"deps/x/y":7}', '{"id":"m1"}\n', '700', []]);
+  const freshOld = path.join(f.root, 'fresh-home');
+  fs.mkdirSync(freshOld);
+  const fresh = f.make({ root: path.join(f.root, 'fresh-data'), oldRoot: freshOld });
+  t.after(() => fresh.close());
+  assert.deepStrictEqual([fs.readdirSync(freshOld), fs.existsSync(path.join(f.root, 'fresh-data', 'suite-runner', 'jobs'))], [[], true]);
 });
 
 test('a failing setup ends the job setup-failed with the setup output and runs no tests', async (t) => {
@@ -568,16 +626,26 @@ test('clodex-suite-exec refuses every path outside its work root', (t) => {
     ['seal', linked, entry, 'node_modules'],
     ['reap', outside],
     ['reap', path.join(work, 'jobs')],
+    ['prepare', inside, own, outside],
+    ['prepare', inside, own, path.join(work, 'deps', 'a'.repeat(40))],
+    ['prepare', inside, own, `${work}/deps/../elsewhere`],
+    ['reap', inside, outside],
+    ['reap', inside, path.join(work, 'deps', 'a'.repeat(40))],
   ];
   const got = rows.map((args) => { const r = run(...args); return [args[0], r.status, /refusing/.test(r.stderr)]; });
   assert.deepStrictEqual(got, rows.map((args) => [args[0], 2, true]));
   assert.strictEqual(fs.existsSync(outside), true);
   assert.strictEqual(fs.lstatSync(path.join(outside, 'node_modules')).isDirectory(), true);
   assert.deepStrictEqual(fs.readdirSync(entry), []);
-  const enter = run('reap', inside);
+  assert.strictEqual(fs.existsSync(inside), true, 'a refused reap removes nothing');
+  const sibling = path.join(work, 'deps', 'a'.repeat(40), 'c'.repeat(64));
+  fs.mkdirSync(sibling);
+  for (const e of [entry, sibling]) fs.chmodSync(e, 0o750);
+  const enter = run('reap', inside, entry);
   assert.strictEqual(enter.status, 0, `ENTER: an inside job is reaped (${enter.stderr})`);
   assert.strictEqual(fs.existsSync(inside), false);
   assert.deepStrictEqual([own, other].map((m) => (fs.statSync(m).mode & 0o777).toString(8)), ['700', '700'], 'reap closes every mirror');
+  assert.deepStrictEqual([entry, sibling].map((e) => (fs.statSync(e).mode & 0o777).toString(8)), ['700', '750'], 'reap closes exactly the named deps entry');
 });
 
 test('clodex-suite-exec seal and reap kill the suite user with one kill -1 issued as that user, never pkill', () => {
@@ -602,5 +670,33 @@ test('clodex-suite-exec prepare closes every mirror before it opens the job\'s o
     'close_mirrors',
     'chgrp "$SUITE_USER" "$mirror"',
     'chmod 0750 "$mirror"',
+  ]);
+});
+
+test('clodex-suite-exec prepare closes every deps entry before it opens only the named one, and seal leaves the sealed entry open to the suite group alone', () => {
+  const src = fs.readFileSync(HELPER, 'utf8');
+  const arm = (verb) => new RegExp(`^  ${verb}\\)\\n([\\s\\S]*?)\\n    ;;$`, 'm').exec(src)[1].split('\n').map((l) => l.trim());
+  assert.deepStrictEqual(arm('prepare').filter((l) => /entry|deps/.test(l)), [
+    'entry=""',
+    'if [ $# -ge 1 ]; then entry="$(entry_path "$1")"; fi',
+    'close_deps',
+    'if [ -n "$entry" ]; then',
+    'chgrp "$SUITE_USER" "$entry"',
+    'chmod 0750 "$entry"',
+  ]);
+  assert.deepStrictEqual(arm('seal').slice(-4), [
+    'chown -R "$owner" "$entry"',
+    'chmod -R a-w,a+rX "$entry"',
+    'chgrp "$SUITE_USER" "$entry"',
+    'chmod 0750 "$entry"',
+  ]);
+  const fn = /^close_deps\(\) \{\n([^}]*)\n\}$/m.exec(src);
+  assert.ok(fn, 'ENTER: the helper defines close_deps');
+  assert.deepStrictEqual(fn[1].split('\n').map((l) => l.trim()), [
+    'local e',
+    'for e in "$WORK"/deps/*/*; do',
+    '[ -d "$e" ] && [ ! -L "$e" ] || continue',
+    'chmod 0700 "$e"',
+    'done',
   ]);
 });

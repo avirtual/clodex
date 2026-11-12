@@ -93,7 +93,7 @@ on volumes, which survive `down`, rebuilds, and image upgrades:
 
 | Volume | Mount | Holds |
 |---|---|---|
-| `clodex-data` | `/data` | `sessions.json`, stores, saved exports |
+| `clodex-data` | `/data` | `sessions.json`, stores, saved exports, the test runner's job store, cache index and ledger (`suite-runner/`) |
 | `clodex-dot` | `/home/clodex/.clodex` | agent registry, inter-agent messages, log |
 | `claude-auth` | `/home/clodex/.claude` | Claude login (see below) |
 | `clodex-work` | `/home/clodex/work` | the agents' workspace |
@@ -211,16 +211,16 @@ engine*. Both can be used at once.)
 The image carries what a remote test runner needs, unused until runner mode is
 switched on: a `clodex-suite` system user with no sudo rights and no home, and a
 root-owned helper at `/usr/local/libexec/clodex-suite-exec` with four verbs —
-`prepare <job> <mirror>` (hand the job tree to `clodex-suite` and open only that
-job's repo mirror to it, read-only), `run <job> [KEY=VALUE…] --
+`prepare <job> <mirror> [<entry>]` (hand the job tree to `clodex-suite` and open
+only that job's repo mirror and deps cache entry to it, read-only), `run <job> [KEY=VALUE…] --
 <argv>` (drop to `clodex-suite` with `setpriv --no-new-privs` and an environment
 built from empty), `seal <job> <entry> <path…>` (move a built dependency folder
 into the cache, make it read-only and owned by `clodex`, and link it back) and
-`reap <job>` (kill every `clodex-suite` process, close every mirror and remove
-the job tree). It
+`reap <job> [<entry>]` (kill every `clodex-suite` process, close every mirror and
+the job's deps entry, and remove the job tree). It
 refuses any path outside `/var/lib/clodex-suite`, the runner's work root (owned
-by `clodex`, mode 0711). A job reads its own repo's mirror and nothing else
-there: mirrors are 0700 except the running job's. Each job works in
+by `clodex`, mode 0711). A job reads its own repo's mirror and deps entry and
+nothing else there: mirrors and deps entries are 0700 except the running job's. Each job works in
 `jobs/<8 hex>/{tree,home,tmp}` (at most 40 bytes each), so Unix sockets a suite
 creates under `TMPDIR` fit the 108-byte limit. `/data` and `/home/clodex` are mode 0700, so a test
 process cannot read the engine's tokens, logins or session state.
