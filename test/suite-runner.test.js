@@ -952,35 +952,36 @@ test('resolveFs falls back to fs when original-fs does not resolve', () => {
 });
 
 test('sealing deps holding an Electron archive chmods the archive itself, not its members', async (t) => {
+  const realFs = resolveFs();
   const root = mkTmpRoot('suite-asar-');
-  t.after(() => { spawnSync('chmod', ['-R', 'u+w', root]); fs.rmSync(root, { recursive: true, force: true }); });
+  t.after(() => { spawnSync('chmod', ['-R', 'u+w', root]); realFs.rmSync(root, { recursive: true, force: true }); });
   const jobDir = path.join(root, 'job');
   const entry = path.join(root, 'entry');
   const app = path.join(jobDir, 'tree', 'node_modules', 'electron');
-  fs.mkdirSync(app, { recursive: true });
-  fs.writeFileSync(path.join(app, 'default_app.asar'), 'archive');
+  realFs.mkdirSync(app, { recursive: true });
+  realFs.writeFileSync(path.join(app, 'default_app.asar'), 'archive');
   const isArchive = (p) => p.endsWith('.asar');
   const inArchive = (p) => p.includes('.asar/');
   const electronFs = {
-    ...fs,
+    ...realFs,
     lstatSync: (p) => {
       if (inArchive(p)) return { mode: 0o644, isDirectory: () => false, isSymbolicLink: () => false, isFile: () => true };
-      if (isArchive(p)) return { mode: fs.lstatSync(p).mode, isDirectory: () => true, isSymbolicLink: () => false, isFile: () => false };
-      return fs.lstatSync(p);
+      if (isArchive(p)) return { mode: realFs.lstatSync(p).mode, isDirectory: () => true, isSymbolicLink: () => false, isFile: () => false };
+      return realFs.lstatSync(p);
     },
-    readdirSync: (p, ...rest) => (isArchive(p) ? ['default_app.js'] : fs.readdirSync(p, ...rest)),
+    readdirSync: (p, ...rest) => (isArchive(p) ? ['default_app.js'] : realFs.readdirSync(p, ...rest)),
     chmodSync: (p, mode) => {
       if (inArchive(p)) throw Object.assign(new Error(`ENOTDIR: not a directory, chmod '${p}'`), { code: 'ENOTDIR' });
-      fs.chmodSync(p, mode);
+      realFs.chmodSync(p, mode);
     },
   };
   const chmods = [];
-  const originalFs = { ...fs, chmodSync: (p, mode) => { chmods.push(p); fs.chmodSync(p, mode); } };
+  const originalFs = { ...realFs, chmodSync: (p, mode) => { chmods.push(p); realFs.chmodSync(p, mode); } };
   const io = resolveFs((id) => ({ 'original-fs': originalFs, fs: electronFs })[id]);
   await noneIsolation({ user: 'suite-test', fs: io }).seal(jobDir, entry, ['node_modules']);
   const archive = path.join(entry, 'node_modules', 'electron', 'default_app.asar');
   assert.ok(chmods.includes(archive), `ENTER: ${chmods.join(', ')}`);
   assert.deepStrictEqual(chmods.filter(inArchive), []);
-  assert.strictEqual(fs.statSync(archive).mode & 0o222, 0);
-  assert.strictEqual(fs.readlinkSync(path.join(jobDir, 'tree', 'node_modules')), path.join(entry, 'node_modules'));
+  assert.strictEqual(realFs.statSync(archive).mode & 0o222, 0);
+  assert.strictEqual(realFs.readlinkSync(path.join(jobDir, 'tree', 'node_modules')), path.join(entry, 'node_modules'));
 });
