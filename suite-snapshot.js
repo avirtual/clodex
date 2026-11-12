@@ -244,7 +244,20 @@ async function gcMirror(mirror, { maxPacks = GC_PACKS } = {}) {
   return true;
 }
 
+async function detachTree(dir) {
+  const started = Date.now();
+  const r = await tryRun(dir, [...RUNNER_CONFIG, 'repack', '-a', '-d', '-q']);
+  if (!r.ok) return { ok: false, ms: Date.now() - started, error: `git repack failed: ${String(r.stderr).trim()}` };
+  try {
+    fs.rmSync(path.join(dir, '.git', 'objects', 'info', 'alternates'), { force: true });
+  } catch (e) {
+    return { ok: false, ms: Date.now() - started, error: e.message };
+  }
+  return { ok: true, ms: Date.now() - started, error: null };
+}
+
 module.exports = {
   snapshotTree, releaseSnapshot, buildPack, ingestPack, materialize, treeHashOf,
   mirrorPath, mirrorHave, mirrorHolds, keepRefs, packCount, gcMirror, DEFAULT_PACK_MAX,
+  detachTree,
 };

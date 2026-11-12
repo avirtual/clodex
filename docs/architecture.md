@@ -368,6 +368,16 @@ bundle), whose packaged form is the Docker image under
   `treeHashOf`. Shells git through `git-worktree.js`'s `git`; no caller yet; in
   SCANNED_MODULES. The mirror side also keeps `refs/keep/*` (`keepRefs`),
   answers `have` (`mirrorHave`, `mirrorHolds`) and repacks (`gcMirror`).
+- **suite-box.js** — the container adapter for suite jobs, beside the
+  native `userIsolation`/`noneIsolation`. `createDocker({spawn, timeoutMs})`
+  wraps the Docker CLI as `call(args)`; `boxIsolation({image, work, stateDir,
+  docker, kill, uid, gid})` returns the adapter (`probe`, `sweep`, `env`, `prepare`,
+  `spawn`, `kill`, `attach`, `seal`, `reap`, `clear`). `runArgv` builds the
+  `docker run -i --rm --init` line with the stdin dead-man wrapper and read-only
+  deps mounts; `clear(label)` is the only cleanup primitive and throws when
+  Docker cannot confirm an empty list. Not wired yet. `suite-snapshot.js`
+  `detachTree` repacks a job tree off its mirror's alternates. In
+  SCANNED_MODULES.
 - **suite-runner.js** — runner-mode engine for remote suite jobs, plain methods
   served through `suite-dispatch.js` under `/api/suite/*` when remote-wiring builds it (`CLODEX_SUITE_RUNNER=1`). `createSuiteRunner({root, work, isolation,
   limits, spawn, now, log, timers})` returns `info`, `submit`, `putPack`,
