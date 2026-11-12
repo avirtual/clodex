@@ -68,11 +68,29 @@ test('the WebGL toggle sits inside the Appearance group', () => {
   assert.ok(at > start && at < end, 'prefs-terminal-webgl must live inside data-group="appearance"');
 });
 
+test('the test runner and the box offer sit in the Test boxes group, not in Phone access', () => {
+  const m = prefsMarkup();
+  const span = (group) => {
+    const start = m.indexOf(`<details class="prefs-group" data-group="${group}">`);
+    assert.ok(start >= 0, `${group} group not found`);
+    return [start, m.indexOf('</details>', start)];
+  };
+  const [boxStart, boxEnd] = span('test-boxes');
+  const [phoneStart, phoneEnd] = span('phone');
+  assert.match(m.slice(boxStart, boxEnd), /<summary><h4>Test boxes<\/h4><span class="prefs-group-sub">Run other nodes' test suites on this machine, and say who may<\/span><\/summary>/);
+  assert.ok(boxStart > phoneEnd, 'Test boxes comes after Phone access');
+  for (const id of ['prefs-suite-runner-block', 'prefs-box-offer-block', 'prefs-box-offer-apply']) {
+    const at = m.indexOf(`id="${id}"`);
+    assert.ok(at > boxStart && at < boxEnd, `${id} must live inside data-group="test-boxes"`);
+    assert.ok(!(at > phoneStart && at < phoneEnd), `${id} must not live inside data-group="phone"`);
+  }
+});
+
 test('every group is collapsible and named', () => {
   const groups = [...prefsMarkup().matchAll(/<details class="prefs-group" data-group="([^"]+)"/g)]
     .map((m) => m[1]);
   assert.deepStrictEqual(groups, [
-    'appearance', 'voice', 'statusline', 'new-sessions', 'env', 'accounts', 'traffic', 'phone', 'discovery',
+    'appearance', 'voice', 'statusline', 'new-sessions', 'env', 'accounts', 'traffic', 'phone', 'test-boxes', 'discovery',
   ], 'group set/order changed — update this list deliberately');
   // One summary per group, or a group has no header to click.
   assert.strictEqual((prefsMarkup().match(/<summary>/g) || []).length, groups.length);

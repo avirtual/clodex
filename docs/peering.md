@@ -347,7 +347,7 @@ dropped; the lead's own retry reissues the request.
 - The announce to a peer says scope `run` only while the hello carries
   `suite-pull` and the engine exists.
 - `offer:get` carries `claims`, one row per ticked peer under a run offer:
-  `claiming` with `lastClaim`, `not-connected` or `runner-off`. Preferences ▸
+  `claiming` with `lastClaim`, `not-connected` or `runner-off`. Preferences ▸ Test boxes ▸
   Offer test boxes shows them as status lines.
 
 ### 2a. Web view + the wirescope forward (t30b, t443)
@@ -493,9 +493,10 @@ carries no `suite` cap.
 The same choice is stored as the ui-setting `suiteRunner`
 (`{ enabled, isolation: 'user'|'none', work: <absolute path>|null }`, default
 `null` = off; `sanitizeSuiteRunner` in stores.js loads an invalid or absent
-record as off). Preferences ▸ Phone access ▸ Test runner edits it through the
-desktop-only `suiteRunner:get` / `suiteRunner:set` IPC; the web surface does
-not register them, `settings:set` drops the key, and no intent, clodexctl
+record as off). Preferences ▸ Test boxes ▸ Test runner edits it through the
+`suiteRunner:get` / `suiteRunner:set` IPC, registered under the
+`enableTestBoxes` seam on both hosts, so the browser view of a headless node
+(operator token) can make it a runner; `settings:set` drops the key, and no intent, clodexctl
 command or remote route writes it. Each env var, when set, wins over its field:
 `CLODEX_SUITE_RUNNER=1` forces on (any other value forces nothing),
 `CLODEX_SUITE_ISOLATION` forces isolation, `CLODEX_SUITE_WORK` forces the work
@@ -623,7 +624,7 @@ or run) or `run` (see **Run scope**). remote-wiring injects `offerFor`,
   both. A stored `discovery` record loads as `discovery` and grants nothing.
   Nothing calls `runGrant` yet; suite-runner.js, suite-client.js and remote.js's
   suite routes never read the offer.
-- **Setting the offer.** Preferences ▸ Offer test boxes (desktop only): on/off,
+- **Setting the offer.** Preferences ▸ Test boxes ▸ Offer test boxes (both hosts, `enableTestBoxes`): on/off,
   box count, availability `always` or `schedule` with up to 8 windows, and a
   checklist of names: this node's configured peers by label, then the nodes
   that have dialed in (see **Dialers**, labelled "dials this machine, seen 2m

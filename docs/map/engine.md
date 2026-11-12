@@ -37,6 +37,7 @@ seams.restartHostWhenIdle idleWaiter.arm(...)                headlessRestart.res
 seams.restartUnavailable  —                                  headlessRestart.restartUnavailable      () => null
 seams.enableSandbox       —                                  !runningInSandboxBox(env)               true
 seams.enableDrawerServices —                                 —                                       true
+seams.enableTestBoxes     —                                  —                                       true
 seams.enableCtl           —                                  —                                       true
 seams.enableLocalTerminal —                                  —                                       true
 seams.enableConsole       —                                  —                                       true
@@ -407,7 +408,7 @@ accessors    getRemoteServer, getRemoteError, getPeerManager, getTunnelManager, 
              getPluginLoader, getPluginUpdates, refreshPluginUpdates, getHelpCorpus, checkTools, invalidateToolCache
 remote       refreshRemoteToken, setRemoteToken, hasRemoteToken, openPeerWeb, closePeerWeb,
              forgetPeerAttached, forgetPeerControlled, rememberPeerControlled
-host flags   enableDrawerServices, enableCtl, enableLocalTerminal, enableConsole, enableAccounts
+host flags   enableDrawerServices, enableTestBoxes, enableCtl, enableLocalTerminal, enableConsole, enableAccounts
 session      restartClodex (= seams.restartHost), restartUnavailable, restartSession, waitForSessionExit,
              readSessionArgs, applySessionArgs, readSkillCatalog, applySessionSkills, moveAccountByModel,
              sessionScopeCtx, readSessionMeta, claudeProjectDir, rebuildAllStatusScripts, syncTerminalReports
