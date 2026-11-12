@@ -17,6 +17,15 @@ const ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
 const FLAG_KEYS = ['CLODEX_TEST_LOCK', 'CLODEX_TEST_SLOW_ADVISORY'];
 const BASE_ENV_KEYS = ['PATH', 'HOME', 'TMPDIR', 'LANG', 'TZ', 'USER', 'LOGNAME', 'SHELL', 'ELECTRON_RUN_AS_NODE'];
 const SAFE_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+const HOMEBREW_ARM_PATH = '/opt/homebrew/bin:/opt/homebrew/sbin';
+
+function jobPath(platform, arch) {
+  return platform === 'darwin' && arch === 'arm64' ? `${HOMEBREW_ARM_PATH}:${SAFE_PATH}` : SAFE_PATH;
+}
+
+function jobLang(platform) {
+  return platform === 'darwin' ? 'en_US.UTF-8' : 'C.UTF-8';
+}
 const HELPER = '/usr/local/libexec/clodex-suite-exec';
 const SUITE_USER = 'clodex-suite';
 const TEST_ARGV = ['scripts/run-tests.js', '--reporter=dot'];
@@ -272,7 +281,7 @@ function validateSubmit(b, limits) {
 
 function createSuiteRunner({
   root, oldRoot = null, work, isolation = userIsolation(), limits = {}, spawn = childProcess.spawn,
-  now = Date.now, log = () => {}, timers = DEFAULT_TIMERS,
+  now = Date.now, log = () => {}, timers = DEFAULT_TIMERS, platform = process.platform, arch = process.arch,
 }) {
   const lim = { ...DEFAULT_LIMITS, ...limits };
   const state = statePaths(root);
@@ -503,10 +512,10 @@ function createSuiteRunner({
     const env = { ...(job.env || {}) };
     for (const k of FLAG_KEYS) if (job.flags && typeof job.flags[k] === 'string') env[k] = job.flags[k];
     Object.assign(env, {
-      PATH: SAFE_PATH,
+      PATH: jobPath(platform, arch),
       HOME: path.join(jobDir, 'home'),
       TMPDIR: path.join(jobDir, 'tmp'),
-      LANG: 'C.UTF-8',
+      LANG: jobLang(platform),
       TZ: 'UTC',
       USER: isolation.user,
       LOGNAME: isolation.user,
@@ -860,4 +869,4 @@ function createSuiteRunner({
   return { info, submit, putPack, commit, poll, output, cancel, tick, start, close };
 }
 
-module.exports = { createSuiteRunner, noneIsolation, userIsolation, envIdentity, jobPaths, statePaths, DEFAULT_LIMITS };
+module.exports = { createSuiteRunner, noneIsolation, userIsolation, envIdentity, jobPaths, statePaths, jobPath, jobLang, DEFAULT_LIMITS };
