@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.176.0 — 2026-11-12
+
 - `[agent:team runner gate:shadow]`: the ticket loop's verify and post-merge suites also run on the team's test runner and each pair of results is recorded in `logs/suite-compare.jsonl`; the local run stays the only authority, and `[agent:team runner]` shows the agreement tally.
 - The team popover shows the team's test runner (peer, which hand runs go there, shadow mode) with its reachability and agreement tally, and can set it.
 - Test runner fixes from the first real run: jobs get short work and temp paths (Unix sockets fit), a dedicated runner works on the suite token alone, the runner reports its image version and commit, and a job can no longer read other repositories' mirrors.
