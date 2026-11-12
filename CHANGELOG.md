@@ -13,6 +13,9 @@ blocks a release.
 
 ## Unreleased
 
+- A team with a large repository can now use a remote test runner: the tree is sent as a file instead of being held in memory.
+- A shadow run whose tree could not be sent is recorded as skipped, not as a disagreement.
+
 ## 5.180.0 — 2026-11-12 — Test boxes get their own Preferences group; fixes from the pull-wire proof
 
 - A shadow comparison whose runner disconnects part-way through is now recorded as skipped instead of as a disagreement.
