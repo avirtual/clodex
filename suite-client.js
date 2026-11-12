@@ -13,6 +13,7 @@ const SLICE_BYTES = 256 * 1024;
 const MAX_RESUMES = 8;
 const DEFAULT_BUDGET_MS = 36 * 60 * 1000;
 const DEFAULT_RUN_MS = 21 * 60 * 1000;
+const SNAPSHOT_WAIT_MS = 2000;
 const UNREACHABLE = new Set([0, 429, 502, 503, 504]);
 const REFUSED = new Set([401, 403]);
 const RETRY_TEXT = {
@@ -39,6 +40,7 @@ function defaultSleep(ms) {
 function createSuiteClient({
   getPeerManager, ledgerFile = null, compareFile = null, log = () => {}, now = Date.now, sleep = defaultSleep,
   randomUUID = () => crypto.randomUUID(), snapshot = snapshotLib, pollWaitMs = POLL_WAIT_MS, retryMs = RETRY_MS,
+  snapshotSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms).unref()),
 }) {
   function connFor(peer) {
     const pm = getPeerManager();
@@ -333,7 +335,16 @@ function createSuiteClient({
   }
 
   async function shadow(opts) {
-    const snap = await snapshot.snapshotTree(path.resolve(opts.tree));
+    const taking = Promise.resolve().then(() => snapshot.snapshotTree(path.resolve(opts.tree)));
+    const LATE = {};
+    const snap = await Promise.race([taking, snapshotSleep(SNAPSHOT_WAIT_MS).then(() => LATE)]);
+    if (snap === LATE) {
+      log(`suite-client: the shadow snapshot of ${opts.tree} took over ${SNAPSHOT_WAIT_MS}ms; ${opts.kind} shadow run for ticket ${opts.ticket} dropped`);
+      taking.then((late) => {
+        try { snapshot.releaseSnapshot(late); } catch (e) { log(`suite-client: snapshot release failed: ${e.message}`); }
+      }, () => {});
+      return null;
+    }
     const key = JSON.stringify([opts.team, opts.ticket, opts.kind]);
     const me = { treeHash: snap.treeHash, peer: opts.peer, jobId: null, superseded: false, local: null, remote: null, settled: false };
     const prev = shadows.get(key);

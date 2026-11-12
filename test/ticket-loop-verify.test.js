@@ -6838,7 +6838,7 @@ function shadowRemote(mode) {
     snapshot: { snapshotTree: async () => ({ treeHash: 'a'.repeat(40), head: 'b'.repeat(40), headTree: 'a'.repeat(40) }), releaseSnapshot: () => {} },
     sleep: async () => {},
   });
-  return { ...client, compareFile };
+  return { ...client, compareFile, conn };
 }
 
 function shadowLoop(script) {
@@ -6861,7 +6861,7 @@ function shadowLoop(script) {
     const out = await f.m._runTicketSuite(team, f.one());
     return { out: { ...out, startedAt: '<at>', runnerPid: typeof out.runnerPid }, spawns: spawns.slice(), submits: holder.submits };
   };
-  return { run };
+  return { run, spawnCount: () => spawns.length };
 }
 
 const SHADOW_ON = { peer: 'runner-1', hands: 'off', gate: 'shadow' };
@@ -6907,4 +6907,49 @@ test('t2264: no runner and gate:off submit nothing; gate:shadow submits once', a
     const r = await f.run(testRunner, shadowRemote('green'));
     assert.strictEqual(r.submits, want, name);
   }
+});
+
+test('t2264: a shadow snapshot that never settles holds the local spawn only until the 2000ms wait passes, submits nothing, and is released when it settles late', async () => {
+  const f = shadowLoop(SHADOW_LOCAL.green);
+  const off = await f.run({ peer: 'runner-1', hands: 'off', gate: 'off' }, shadowRemote('green'));
+  const mkClient = (hang) => {
+    const t = { posts: 0, waits: [], fire: null, settle: null, released: [] };
+    const remote = shadowRemote('green');
+    const snapshotTree = hang
+      ? () => new Promise((resolve) => { t.settle = resolve; })
+      : async () => ({ treeHash: 'a'.repeat(40), head: 'b'.repeat(40), headTree: 'a'.repeat(40) });
+    t.client = createShadowClient({
+      getPeerManager: () => ({ get: () => ({ suiteAsk: (method, p) => {
+        if (method === 'POST') t.posts += 1;
+        return remote.conn.suiteAsk(method, p);
+      } }) }),
+      compareFile: remote.compareFile,
+      snapshot: { snapshotTree, releaseSnapshot: (s) => t.released.push(s) },
+      sleep: async () => {},
+      snapshotSleep: (ms) => new Promise((resolve) => { t.waits.push(ms); t.fire = resolve; }),
+    });
+    return t;
+  };
+  const spawned = f.spawnCount;
+  const hung = mkClient(true);
+  const pending = f.run(SHADOW_ON, hung.client);
+  for (let i = 0; i < 50; i += 1) await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(hung.waits, [2000], 'ENTER: the snapshot wait is armed at 2000ms');
+  assert.strictEqual(spawned(), 0, 'the local spawn waits for the snapshot bound');
+  hung.fire();
+  const sh = await pending;
+  assert.strictEqual(sh.spawns.length, 1);
+  assert.deepStrictEqual(sh.out, off.out);
+  assert.deepStrictEqual(sh.spawns, off.spawns);
+  assert.strictEqual(hung.posts, 0, 'a dropped shadow run submits nothing');
+  const late = { treeHash: 'c'.repeat(40) };
+  hung.settle(late);
+  for (let i = 0; i < 10 && !hung.released.length; i += 1) await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(hung.released, [late], 'the late snapshot is released');
+
+  const prompt = mkClient(false);
+  const ok = await f.run(SHADOW_ON, prompt.client);
+  assert.deepStrictEqual(ok.out, off.out);
+  for (let i = 0; i < 100 && !prompt.posts; i += 1) await new Promise((r) => setImmediate(r));
+  assert.strictEqual(prompt.posts, 1, 'a prompt snapshot is submitted');
 });
