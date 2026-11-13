@@ -6,10 +6,8 @@ const crypto = require('crypto');
 const childProcess = require('child_process');
 const snapshot = require('./suite-snapshot');
 const { git } = require('./git-worktree');
+const { resolveFs } = require('./resolve-fs');
 
-function resolveFs(load = require) {
-  try { return load('original-fs'); } catch { return load('fs'); }
-}
 const fs = resolveFs();
 
 const LIVE = new Set(['awaiting-pack', 'queued', 'setup', 'running']);

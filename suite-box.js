@@ -1,10 +1,12 @@
 'use strict';
 
-const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const childProcess = require('child_process');
+const { resolveFs } = require('./resolve-fs');
+
+const fs = resolveFs();
 
 const IMAGE_RE = /^sha256:[0-9a-f]{64}$/;
 const MOUNT_REL_RE = /^[A-Za-z0-9._@+/-]+$/;

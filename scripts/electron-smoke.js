@@ -83,16 +83,15 @@ function writeAsar(ofs, file, name, body) {
   ofs.writeFileSync(file, Buffer.concat([head, padded, Buffer.from(body)]));
 }
 
-async function sealAsar() {
+async function sealAsar(adapter) {
   const ofs = require('original-fs');
-  const { noneIsolation } = require(path.join(ROOT, 'suite-runner.js'));
   const root = fs.mkdtempSync(path.join(require('os').tmpdir(), 'clodex-smoke-asar-'));
   try {
     const app = path.join(root, 'job', 'tree', 'node_modules', 'electron');
     fs.mkdirSync(app, { recursive: true });
     writeAsar(ofs, path.join(app, 'default_app.asar'), 'default_app.js', 'x');
     if (!fs.lstatSync(path.join(app, 'default_app.asar')).isDirectory()) throw new Error('fs no longer opens .asar as a directory; this check proves nothing');
-    await noneIsolation({ user: 'smoke' }).seal(path.join(root, 'job'), path.join(root, 'entry'), ['node_modules']);
+    await adapter(root).seal(path.join(root, 'job'), path.join(root, 'entry'), ['node_modules']);
     const sealed = ofs.lstatSync(path.join(root, 'entry', 'node_modules', 'electron', 'default_app.asar'));
     if (!sealed.isFile() || (sealed.mode & 0o222)) throw new Error(`archive not sealed read-only: mode ${sealed.mode.toString(8)}`);
   } finally {
@@ -102,8 +101,16 @@ async function sealAsar() {
 }
 
 (async () => {
-  try { await sealAsar(); console.log('ok   suite-runner seals deps holding an .asar'); }
-  catch (e) { failures.push('suite-runner asar seal'); console.error(`FAIL suite-runner asar seal: ${e.message}`); }
+  const { noneIsolation } = require(path.join(ROOT, 'suite-runner.js'));
+  const { boxIsolation } = require(path.join(ROOT, 'suite-box.js'));
+  const adapters = {
+    'suite-runner': () => noneIsolation({ user: 'smoke' }),
+    'suite-box': (root) => boxIsolation({ image: `sha256:${'0'.repeat(64)}`, work: root, stateDir: root }),
+  };
+  for (const [name, adapter] of Object.entries(adapters)) {
+    try { await sealAsar(adapter); console.log(`ok   ${name} seals deps holding an .asar`); }
+    catch (e) { failures.push(`${name} asar seal`); console.error(`FAIL ${name} asar seal: ${e.message}`); }
+  }
   if (failures.length) {
     console.error(`\nelectron-smoke: ${failures.length} failure(s): ${failures.join(', ')}`);
     process.exit(1);

@@ -957,11 +957,15 @@ test('clodex-suite-exec prepare closes every deps entry before it opens only the
   ]);
 });
 
-test('suite-runner.js takes its fs only through resolveFs', () => {
-  const src = fs.readFileSync(SOURCE, 'utf8');
-  assert.match(src, /^const fs = resolveFs\(\);$/m);
-  assert.deepStrictEqual(src.match(/require\(\s*['"](?:node:)?fs(?:\/promises)?['"]\s*\)/g), null);
-  assert.deepStrictEqual(src.match(/load\(\s*['"][^'"]+['"]\s*\)/g), ["load('original-fs')", "load('fs')"]);
+test('suite-runner.js and suite-box.js take their fs only through resolve-fs.js', () => {
+  for (const file of [SOURCE, path.join(__dirname, '..', 'suite-box.js')]) {
+    const src = fs.readFileSync(file, 'utf8');
+    assert.match(src, /^const \{ resolveFs \} = require\('\.\/resolve-fs'\);$/m, file);
+    assert.match(src, /^const fs = resolveFs\(\);$/m, file);
+    assert.deepStrictEqual(src.match(/require\(\s*['"](?:node:)?(?:original-)?fs(?:\/promises)?['"]\s*\)/g), null, file);
+  }
+  const helper = fs.readFileSync(path.join(__dirname, '..', 'resolve-fs.js'), 'utf8');
+  assert.deepStrictEqual(helper.match(/load\(\s*['"][^'"]+['"]\s*\)/g), ["load('original-fs')", "load('fs')"]);
 });
 
 test('resolveFs falls back to fs when original-fs does not resolve', () => {
