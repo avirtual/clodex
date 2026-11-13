@@ -849,8 +849,10 @@ over 16384 bytes or 400 lines.
 - `[agent:team box show]`, or bare `[agent:team box]`: `rev` and the definition
   hash on the first line, then `generated from bootstrap <hash>; edited since:
   yes|no` (or `not generated from bootstrap`), then one `docker build` line to
-  run by hand (with `--build-arg CLODEX_BASE=…` only when the file declares that
-  ARG), then the file.
+  run by hand (`--label clodex.box=<definition hash>`, by which a test runner
+  finds the image for this team's jobs — see peering.md, "A job names its
+  image"; `--build-arg CLODEX_BASE=…` only when the file declares that ARG),
+  then the file.
 - `[agent:team box clear]`: removes the file; the rev count continues.
 
 `rev` starts at 1 and goes up by one on every `set` or `init` whose text,

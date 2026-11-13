@@ -552,7 +552,7 @@ A box job's tree is detached from the mirror (`detachTree`) before it runs.
 - `info.box` is `null` without an image; `{state:'ready', env}` when Docker
   answers and the image is present, `env` being the box identity
   (`isolation:'container'`, `platform:'linux'`, the image's arch, the daemon's
-  CPU count, `box:{imageId}`, `host`, its own `envKey`); otherwise
+  CPU count, `box:{imageId, definitionHash:null, rev:null}`, `host`, its own `envKey`); otherwise
   `{state:'unavailable', why}`: a tag instead of an id, `docker` not on PATH,
   the daemon not reachable, the image absent, an OS or arch mismatch, an engine
   running as uid 0, a comma in the work root, or `cleanup not confirmed: <why>`.
@@ -574,6 +574,47 @@ A box job's tree is detached from the mirror (`detachTree`) before it runs.
 - A CLI exit of 125 on a box job (Docker's own failure) ends it `box-failed`.
 - Removing every suite container on the machine by hand:
   `docker rm -f $(docker ps -aq --filter label=clodex.suite=1)`.
+
+**A job names its image.** One runner can hold a box image per team. A team
+with `testRunner.box: true` and a box definition (`[agent:team box set]`)
+sends, beside `isolation: 'container'`, `box: {definitionHash, rev,
+definition}`: the sha256 of its Dockerfile text (the hash `[agent:team box
+show]` prints), its rev, and the text, which this runner does not read. A team
+with `box: true` and no definition, or a lead on an older version, sends no
+`box` key and runs in `boxImage` as before.
+
+- The runner finds the image by the Docker label `clodex.box=<definitionHash>`,
+  with `docker image ls -q --no-trunc --filter label=clodex.box=<hash>` and
+  then `docker image inspect` on the ids it listed; it never reads labels any
+  other way. Images whose OS/arch is not the daemon's are dropped before
+  choosing. The look is fresh on every submit, never cached.
+- Exactly one image left: the job is accepted and stamped `box:{imageId,
+  definitionHash, rev}`, and every `docker run` of the job uses that stamped
+  id, even if another image gets the label while the job queues.
+- A named job does not use `boxImage` and never falls back to it: it runs
+  while `boxImage` names an image that is gone. `startSuiteRunner` still turns
+  the box adapter on only when `boxImage` is set, so a runner with no
+  `boxImage` answers a named job 409 `this runner has no box image configured`.
+- Refusals, all before anything runs: no matching image is 409 `no image for
+  box <hash12> on this runner` (`code: 'no-image'`); two or more distinct
+  matching ids is 409 `more than one image carries box <hash12> on this
+  runner: <ids>` (`code: 'ambiguous-image'`) — remove or relabel one; Docker
+  down or the cleanup hold is 503 `box unavailable: <why>` (`code:
+  'box-unavailable'`); a malformed `box` is 400.
+- An image removed after the job was accepted makes `docker run --pull never`
+  exit 125: the job ends `box-failed` and the next job runs.
+- The lead checks the done stamp: a `definitionHash` other than the one it
+  sent, or none (a runner that ignores `box` and runs its `boxImage`), reads
+  `box mismatch: asked box <hash12>, runner ran image <id12>`. Compare rows
+  carry `remoteEnv.definitionHash`.
+- Building an image: run the line `[agent:team box show]` prints, `docker build
+  --label clodex.box=<hash> … - < Dockerfile`. An image that already exists is
+  labelled without a rebuild: `echo 'FROM sha256:<id>' | docker build --label
+  clodex.box=<hash> -`. That gives a new image id, so the envKey, and with it
+  the agreement tally on that runner, starts over once.
+- The label is the operator's assertion that the image serves that
+  definition, not provenance: nothing checks that the image was built from the
+  team's Dockerfile. The stamp records the actual image id each job ran in.
 
 **The suite token.** `CLODEX_SUITE_TOKEN` is a second credential checked by
 `_authGate` only after the operator token fails. A request it admits is marked
