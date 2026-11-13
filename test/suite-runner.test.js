@@ -1490,3 +1490,74 @@ test('with no boxImage an interrupted box job dir is held until Docker confirms 
   await drain();
   assert.deepStrictEqual([up.calls[0].args.slice(0, 2), fs.existsSync(cutDir), fs.existsSync(holdFile)], [['ps', '-aq'], false, false]);
 });
+
+test('activity lists the running box job, the waiting jobs in queue order, the last finished jobs and the box state, and carries no secrets', async (t) => {
+  let clock = 100000;
+  const fb = fakeBox();
+  const plain = fb.box.probe;
+  fb.box.probe = async (want) => (want
+    ? { state: 'ready', env: { ...BOX_IDENTITY, box: { imageId: BOX_IMAGE, definitionHash: want.definitionHash, rev: want.rev } } }
+    : plain());
+  const f = await fixture(t, { now: () => clock, onSpawn: () => {} });
+  f.runner.close();
+  storeJob(f, 'old-pass', 'done', { kind: 'verify', team: 'avh', ticket: 't1500', origin: 'murmur', exit: { code: 0, signal: null }, queuedAt: 1000, startedAt: 4000, endedAt: 64000 });
+  fs.writeFileSync(path.join(f.root, 'suite-runner', 'jobs', 'old-pass', 'stdout'), 'noise\nTOTALS: 5 pass, 0 fail, 5 tests\n');
+  storeJob(f, 'old-box', 'done', { team: 'avh', ticket: 't1501', isolation: 'container', identity: BOX_IDENTITY, reason: 'box-failed', queuedAt: 2000, startedAt: 70000, endedAt: 75000 });
+  storeJob(f, 'old-cut', 'running', { team: 'zed', ticket: 't9', queuedAt: 3000, startedAt: 5000 });
+  const runner = f.make({ box: fb.box });
+  t.after(() => runner.close());
+  await drain();
+  const upload = async (b, origin) => {
+    const r = await runner.submit(b, { origin });
+    if (r.state !== 'awaiting-pack') return r;
+    const pack = fs.readFileSync((await buildPack(f.snap, { have: r.have })).file);
+    assert.strictEqual((await runner.putPack(b.id, 0, pack)).ok, true);
+    return runner.commit(b.id, { bytes: pack.length, sha256: sha256(pack) });
+  };
+  const token = `ghp_${'Z'.repeat(36)}`;
+  clock = 200000;
+  await upload(f.body('run-box', 'verify', { isolation: 'container', team: 'avh', ticket: 't1579', env: { PLAIN_VALUE: 'hunter2-env-value', API_TOKEN: token } }), 'avh-laptop');
+  await waitState(runner, 'run-box', 'running');
+  const stored = fs.readFileSync(path.join(f.root, 'suite-runner', 'jobs', 'run-box', 'job.json'), 'utf8');
+  assert.ok(stored.includes('hunter2-env-value') && stored.includes(token), 'ENTER: the running job carries an env value and a token-shaped string');
+  clock = 210000;
+  assert.strictEqual((await upload(f.body('q-nat', 'hand', { team: 'avh', ticket: 't1580' }))).state, 'queued');
+  clock = 220000;
+  assert.strictEqual((await upload(f.body('q-def', 'verify', { isolation: 'container', box: { definitionHash: 'd'.repeat(64), rev: 2 }, team: 'kite', ticket: 't1581' }))).state, 'queued');
+  clock = 600000;
+  const snap = await runner.activity();
+  const text = JSON.stringify(snap);
+  assert.deepStrictEqual(['hunter2-env-value', token, f.work, f.repo].filter((s) => text.includes(s)), []);
+  assert.deepStrictEqual(snap, {
+    at: 600000,
+    slots: { total: 1, inUse: 1 },
+    running: [
+      { id: 'run-box', team: 'avh', ticket: 't1579', kind: 'verify', origin: 'avh-laptop', isolation: 'container', image: 'bbbbbbbbbbbb', definition: null, phase: 'run', queuedAt: 200000, startedAt: 200000 },
+    ],
+    waiting: [
+      { id: 'q-def', team: 'kite', ticket: 't1581', kind: 'verify', origin: null, isolation: 'container', image: 'bbbbbbbbbbbb', definition: 'dddddddddddd', phase: 'queued', queuedAt: 220000, startedAt: null },
+      { id: 'q-nat', team: 'avh', ticket: 't1580', kind: 'hand', origin: null, isolation: 'native', image: null, definition: null, phase: 'queued', queuedAt: 210000, startedAt: null },
+    ],
+    recent: [
+      { id: 'old-cut', team: 'zed', ticket: 't9', kind: 'hand', origin: null, isolation: 'native', image: null, definition: null, queuedAt: 3000, startedAt: 5000, outcome: 'runner-restart', pass: null, fail: null, endedAt: 100000, waitMs: 2000, runMs: 95000 },
+      { id: 'old-box', team: 'avh', ticket: 't1501', kind: 'hand', origin: null, isolation: 'container', image: 'bbbbbbbbbbbb', definition: null, queuedAt: 2000, startedAt: 70000, outcome: 'box-failed', pass: null, fail: null, endedAt: 75000, waitMs: 68000, runMs: 5000 },
+      { id: 'old-pass', team: 'avh', ticket: 't1500', kind: 'verify', origin: 'murmur', isolation: 'native', image: null, definition: null, queuedAt: 1000, startedAt: 4000, outcome: 'pass', pass: 5, fail: 0, endedAt: 64000, waitMs: 3000, runMs: 60000 },
+    ],
+    box: { state: 'ready', image: 'bbbbbbbbbbbb' },
+  });
+});
+
+test('job transitions ask for one activity refresh per burst', async (t) => {
+  let calls = 0;
+  const f = await fixture(t, { runnerOver: { onActivity: () => { calls += 1; } } });
+  const armed = () => f.pending.filter((h) => h.ms === 1000);
+  await f.upload(f.body('j1'));
+  await waitState(f.runner, 'j1', 'done');
+  assert.strictEqual(armed().length, 1, 'queued, setup, running and done coalesce into one timer');
+  assert.strictEqual(calls, 0);
+  armed()[0].fn();
+  assert.strictEqual(calls, 1);
+  await f.upload(f.body('j2'));
+  await waitState(f.runner, 'j2', 'done');
+  assert.strictEqual(armed().length, 2, 'the next burst arms a fresh timer');
+});

@@ -105,7 +105,7 @@ function normalizeWeb(rows) {
 // ── Desktop harness. app-menus.js requires('electron') at module load AND uses
 // it while buildAppMenu runs, so the stub must be live for both; follows
 // test/app-menus-plugins.test.js's buildTemplateWith. ────────────────────────
-function desktopTemplate({ peers = [], boxes = [], pluginHost = null, helpCorpus = null } = {}) {
+function desktopTemplate({ peers = [], boxes = [], pluginHost = null, helpCorpus = null, testBoxes } = {}) {
   let captured = null;
   const win = { webContents: { send: () => {} } };
   const stub = {
@@ -136,6 +136,7 @@ function desktopTemplate({ peers = [], boxes = [], pluginHost = null, helpCorpus
       getWorkspaces: nothing,
       getPeerManager: () => ({ statuses: () => peers }),
       getSandboxManager: () => ({ list: () => boxes }),
+      ...(testBoxes !== undefined ? { getSuiteActivity: () => testBoxes } : {}),
       getUpdateInfo: () => null, getUiSettings: nothing,
       getAgentLibrary: nothing, getSkillLibrary: nothing, getEnvScopes: () => null,
       getPromptLibrary: nothing, getTemplates: nothing, getExecLibrary: nothing,
@@ -152,11 +153,11 @@ function desktopTemplate({ peers = [], boxes = [], pluginHost = null, helpCorpus
 
 const desktopMenu = (template, label) => (template.find((m) => m && m.label === label) || {});
 
-async function webWindowRows({ peers = [], boxes = [] } = {}) {
+async function webWindowRows({ peers = [], boxes = [], testBoxes } = {}) {
   const { ctx } = recordingCtx();
   const win = buildMenus({
     ...ctx,
-    api: { ...ctx.api, peerList: async () => peers, sandboxListBoxes: async () => boxes },
+    api: { ...ctx.api, peerList: async () => peers, sandboxListBoxes: async () => boxes, ...(testBoxes !== undefined ? { suiteRunnerActivity: async () => testBoxes } : {}) },
   }).find((m) => m.label === 'Window');
   return normalizeWeb(await Promise.resolve(win.items()));
 }
@@ -349,4 +350,37 @@ test('t989: desktop and web Help menus carry the same section → page tree', as
   }
   assert.ok(web.length > 0, 'ENTER: web — the Help menu has section submenus');
   assert.deepStrictEqual(web, HELP_TREE);
+});
+
+const HELD_RUNNER = { enabled: true, snapshot: { at: 1, slots: { total: 1, inUse: 0 }, running: [], waiting: [], recent: [], box: { state: 'held', why: 'docker ps failed: down' } } };
+const WITH_TEST_BOXES = [
+  ...FRESH_INSTALL,
+  '[Test Boxes]',
+  '[idle]',
+  '[Box held: docker ps failed: down]',
+  'Test Box Activity…',
+];
+
+test('desktop and web Window menus end with the same Test Boxes section, and neither shows it with the runner off', async () => {
+  const desktop = peersSection(desktopWindowRows({ testBoxes: HELD_RUNNER }), 'desktop');
+  const web = peersSection(await webWindowRows({ testBoxes: HELD_RUNNER }), 'web');
+  assert.deepStrictEqual([desktop, web], [WITH_TEST_BOXES, WITH_TEST_BOXES]);
+  const off = { enabled: false, snapshot: null };
+  assert.deepStrictEqual([peersSection(desktopWindowRows({ testBoxes: off }), 'desktop'), peersSection(await webWindowRows({ testBoxes: off }), 'web')],
+    [FRESH_INSTALL, FRESH_INSTALL]);
+});
+
+test('desktop Window menu job rows read a clock time that does not change as time passes', (t) => {
+  const tz = process.env.TZ;
+  process.env.TZ = 'UTC';
+  t.after(() => { if (tz === undefined) delete process.env.TZ; else process.env.TZ = tz; });
+  const startedAt = Date.UTC(2026, 10, 13, 10, 42, 40);
+  const running = { id: 'j1', team: 'avh', ticket: 't1579', kind: 'verify', origin: null, isolation: 'container', image: 'bbbbbbbbbbbb', definition: null, phase: 'run', queuedAt: startedAt - 1000, startedAt };
+  const testBoxes = { enabled: true, snapshot: { at: startedAt, slots: { total: 1, inUse: 1 }, running: [running], waiting: [], recent: [], box: { state: 'ready', image: 'bbbbbbbbbbbb' } } };
+  t.mock.timers.enable({ apis: ['Date'], now: startedAt + 5000 });
+  const early = peersSection(desktopWindowRows({ testBoxes }), 'desktop early');
+  t.mock.timers.tick(7 * 60000);
+  const late = peersSection(desktopWindowRows({ testBoxes }), 'desktop late');
+  assert.ok(early.includes('[avh · t1579 · verify · box · since 10:42]'), `ENTER: the running job row reads since 10:42: ${early.join(' | ')}`);
+  assert.deepStrictEqual(late, early);
 });

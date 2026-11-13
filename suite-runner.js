@@ -5,6 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const childProcess = require('child_process');
 const snapshot = require('./suite-snapshot');
+const { lastTotals } = require('./suite-client');
 const { git } = require('./git-worktree');
 const { resolveFs } = require('./resolve-fs');
 
@@ -58,6 +59,55 @@ const DEFAULT_LIMITS = {
 };
 
 const DEFAULT_TIMERS = { setTimeout, clearTimeout, setInterval, clearInterval };
+
+const ACTIVITY_RECENT = 10;
+const ACTIVITY_MS = 1000;
+const TOTALS_TAIL = 64 * 1024;
+const PHASES = { 'awaiting-pack': 'upload', queued: 'queued', setup: 'setup', running: 'run' };
+
+function shortImage(id) {
+  return id ? String(id).replace(/^sha256:/, '').slice(0, 12) : null;
+}
+
+function tailTotals(file) {
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r');
+    const size = fs.fstatSync(fd).size;
+    const len = Math.min(size, TOTALS_TAIL);
+    const buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, size - len);
+    return lastTotals(buf.toString('utf8'));
+  } catch {
+    return null;
+  } finally {
+    if (fd != null) fs.closeSync(fd);
+  }
+}
+
+function activityJob(job) {
+  const container = job.isolation === 'container';
+  const box = container && job.identity && job.identity.box ? job.identity.box : null;
+  return {
+    id: job.id, team: job.team || null, ticket: job.ticket || null, kind: job.kind, origin: job.origin || null,
+    isolation: container ? 'container' : 'native',
+    image: box ? shortImage(box.imageId) : null,
+    definition: box && box.definitionHash ? String(box.definitionHash).slice(0, 12) : null,
+    phase: PHASES[job.state] || null,
+    queuedAt: job.queuedAt, startedAt: job.startedAt != null ? job.startedAt : null,
+  };
+}
+
+function finishedJob(job, totals) {
+  let outcome = job.reason;
+  if (outcome == null) outcome = totals ? (totals.fail > 0 ? 'fail' : 'pass') : 'no-summary';
+  const { phase, ...row } = activityJob(job);
+  return {
+    ...row, outcome, pass: totals ? totals.pass : null, fail: totals ? totals.fail : null, endedAt: job.endedAt,
+    waitMs: (job.startedAt != null ? job.startedAt : job.endedAt) - job.queuedAt,
+    runMs: job.startedAt != null ? job.endedAt - job.startedAt : null,
+  };
+}
 
 function fail(status, error, extra) {
   return { ok: false, status, error, ...extra };
@@ -323,7 +373,7 @@ function fileSha256({ file, bytes }, readChunk) {
 function createSuiteRunner({
   root, oldRoot = null, work, isolation = userIsolation(), limits = {}, spawn = childProcess.spawn,
   now = Date.now, log = () => {}, timers = DEFAULT_TIMERS, platform = process.platform, arch = process.arch,
-  box = null, boxSweep = null,
+  box = null, boxSweep = null, onActivity = null, activityMs = ACTIVITY_MS,
 }) {
   const repo = enclosingRepo(work);
   if (repo) throw new Error(`the work root is inside the git repository ${repo}; choose a work folder outside any repository`);
@@ -360,6 +410,7 @@ function createSuiteRunner({
   let maintenance = null;
   let interval = null;
   let closed = false;
+  let activityTimer = null;
   let recovering = true;
   let pumpAfterRecovery = false;
   let isoState = null;
@@ -389,8 +440,17 @@ function createSuiteRunner({
     return job.state === 'queued' ? queue().indexOf(job) + 1 : null;
   }
 
+  function changed() {
+    if (!onActivity || activityTimer || closed) return;
+    activityTimer = timers.setTimeout(() => {
+      activityTimer = null;
+      try { onActivity(); } catch (e) { log(`suite-runner: activity listener failed: ${e.message}`); }
+    }, activityMs);
+  }
+
   function notify(id) {
     for (const w of [...waiters]) if (w.ids.has(id)) w.wake();
+    changed();
   }
 
   function setState(job, state, patch = {}) {
@@ -424,6 +484,7 @@ function createSuiteRunner({
     boxHold = next;
     if (next) writeJson(holdFile, next, 0o600);
     else fs.rmSync(holdFile, { force: true });
+    changed();
   }
 
   function enterHold(why, dirs) {
@@ -829,7 +890,32 @@ function createSuiteRunner({
     };
   }
 
-  async function submit(body) {
+  async function boxLine() {
+    if (!box) return { state: 'none' };
+    if (boxHold) return { state: 'held', why: boxHold.why };
+    if (box.labelsOnly) return { state: 'labels-only' };
+    const b = await boxState();
+    if (b && b.state === 'ready') return { state: 'ready', image: shortImage(b.env && b.env.box && b.env.box.imageId) };
+    return { state: 'unavailable', why: (b && b.why) || 'no answer' };
+  }
+
+  async function activity() {
+    const at = now();
+    const all = [...jobs.values()];
+    const live = all.filter((j) => j.state === 'setup' || j.state === 'running').sort((a, b) => a.startedAt - b.startedAt);
+    const uploading = all.filter((j) => j.state === 'awaiting-pack').sort((a, b) => a.queuedAt - b.queuedAt);
+    const done = all.filter((j) => j.state === 'done').sort((a, b) => b.endedAt - a.endedAt).slice(0, ACTIVITY_RECENT);
+    return {
+      at,
+      slots: { total: 1, inUse: live.length },
+      running: live.map(activityJob),
+      waiting: [...queue(), ...uploading].map(activityJob),
+      recent: done.map((j) => finishedJob(j, j.reason == null ? tailTotals(outFile(j.id, 'stdout')) : null)),
+      box: await boxLine(),
+    };
+  }
+
+  async function submit(body, { origin = null } = {}) {
     const bad = validateSubmit(body, lim);
     if (bad) return fail(400, bad);
     const existing = jobs.get(body.id);
@@ -862,6 +948,7 @@ function createSuiteRunner({
       timeoutMs: body.timeoutMs || null, state: 'awaiting-pack', reason: null, exit: null,
       queuedAt: now(), lastSeen: now(), identity: stamp, out: { stdoutBytes: 0, stderrBytes: 0, truncated: false },
       ...(boxed ? { isolation: 'container' } : {}),
+      ...(typeof origin === 'string' && origin ? { origin: origin.slice(0, 64) } : {}),
     };
     jobs.set(job.id, job);
     fs.mkdirSync(jobStore(job.id), { recursive: true });
@@ -1015,12 +1102,14 @@ function createSuiteRunner({
     closed = true;
     if (interval) timers.clearInterval(interval);
     interval = null;
+    if (activityTimer) timers.clearTimeout(activityTimer);
+    activityTimer = null;
     for (const w of [...waiters]) w.wake();
   }
 
   recover().then(reconcile).catch((e) => log(`suite-runner: reconcile failed: ${e.message}`)).then(() => { recovering = false; if (pumpAfterRecovery) pump(); });
 
-  return { info, submit, putPack, commit, poll, output, cancel, tick, start, close, busy: anyLive };
+  return { info, activity, submit, putPack, commit, poll, output, cancel, tick, start, close, busy: anyLive };
 }
 
 module.exports = { createSuiteRunner, noneIsolation, resolveFs, userIsolation, envIdentity, jobPaths, statePaths, jobPath, jobLang, DEFAULT_LIMITS };

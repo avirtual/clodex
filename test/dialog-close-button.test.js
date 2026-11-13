@@ -307,7 +307,7 @@ test('the dialog head is sticky in every dialog that scrolls itself', () => {
   const scrollers = idBlocks((body, id) => /dialog$/.test(id) && /overflow(-y)?:\s*auto/.test(body));
   assert.deepStrictEqual(scrollers.sort(), [
     '#args-dialog', '#dialog', '#peer-session-dialog',
-    '#peers-dialog', '#prefs-dialog', '#sandbox-dialog',
+    '#peers-dialog', '#prefs-dialog', '#sandbox-dialog', '#test-activity-dialog',
   ], `ENTER: the self-scrolling dialogs are ${scrollers.join(', ')} — a dialog joined or left the `
     + 'set; add it to this literal list deliberately, after checking its head is a direct child');
   for (const id of scrollers) {

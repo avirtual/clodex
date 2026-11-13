@@ -109,7 +109,7 @@ function registerIpcHandlers(deps) {
     readSkillCatalog, applySessionSkills, setUiTheme, sshRun,
     stripLevelOf, syncPeerManager, syncRemoteServer, updateApplies,
     setRemoteToken, hasRemoteToken, refreshRemoteToken, listSpeakVoices,
-    suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner, suiteClaimStatus,
+    suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner, suiteClaimStatus, suiteActivity,
     getBoxOffer, boxOfferForced, readStoredBoxOffer, getOfferFacts, readOfferFacts, offerDirectory, dialers,
     wirescope, workspaceOfSender,
     sessionScopeCtx, renameWorkspaceScope,
@@ -1859,6 +1859,7 @@ function registerIpcHandlers(deps) {
   });
   if (enableTestBoxes) {
     handle('suiteRunner:get', () => suiteRunnerState());
+    handle('suiteRunner:activity', () => (typeof suiteActivity === 'function' ? suiteActivity() : { enabled: false, snapshot: null }));
     handle('suiteRunner:set', (_e, rec) => {
       const clean = rec === null ? null : sanitizeSuiteRunner(rec);
       if (rec !== null && !clean) return { ok: false, error: 'invalid test runner setting', state: suiteRunnerState() };

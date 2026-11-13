@@ -9,6 +9,7 @@ const MODAL_OVERLAY_IDS = [
   'plugins-overlay',
   'peers-overlay',
   'sandbox-overlay',
+  'test-activity-overlay',
   'setup-overlay',
   'report-overlay',
   'help-overlay',

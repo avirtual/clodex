@@ -177,7 +177,7 @@ test('the suiteRunner channels follow enableTestBoxes, not enableDrawerServices'
   const off = capture(false);
   assert.ok(off.has('session:list'), 'ENTER: the registrar ran');
   assert.deepStrictEqual([...off].filter((ch) => ch.startsWith('suiteRunner:')), []);
-  assert.deepStrictEqual([...capture(true)].filter((ch) => ch.startsWith('suiteRunner:')).sort(), ['suiteRunner:get', 'suiteRunner:set']);
+  assert.deepStrictEqual([...capture(true)].filter((ch) => ch.startsWith('suiteRunner:')).sort(), ['suiteRunner:activity', 'suiteRunner:get', 'suiteRunner:set']);
 });
 
 test('no module but ipc-handlers writes the test runner setting', () => {

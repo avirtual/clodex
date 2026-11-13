@@ -57,7 +57,7 @@ const ROWS = [
   { verb: 'poll', method: 'GET', path: '/api/suite/jobs?ids=job-1,job-2&wait=250',
     call: ['poll', ['job-1', 'job-2'], { wait: 250 }], status: 200 },
   { verb: 'submit', method: 'POST', path: '/api/suite/jobs', body: '{"id":"job-1","treeHash":"abc"}',
-    call: ['submit', { id: 'job-1', treeHash: 'abc' }], status: 200 },
+    call: ['submit', { id: 'job-1', treeHash: 'abc' }, { origin: null }], status: 200 },
   { verb: 'cancel', method: 'DELETE', path: '/api/suite/jobs/job-1',
     call: ['cancel', 'job-1'], status: 200 },
   { verb: 'putPack', method: 'PUT', path: '/api/suite/jobs/job-1/pack', headers: { 'content-range': 'bytes 12-15/*' }, bytes: Buffer.from('PACK'),
@@ -146,5 +146,5 @@ test('a direct call is held to the row body kind and cap', async () => {
     { status: 400, body: { ok: false, error: 'bad Content-Range (expected bytes <start>-<end>/*)' } });
   assert.deepStrictEqual(await suiteDispatch(null, { method: 'GET', path: '/api/suite/info' }),
     { status: 501, body: { ok: false, error: 'this node is not a test runner' } });
-  assert.deepStrictEqual(calls, [['submit', { id: 'job-1' }]]);
+  assert.deepStrictEqual(calls, [['submit', { id: 'job-1' }, { origin: null }]]);
 });

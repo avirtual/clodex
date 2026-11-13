@@ -67,6 +67,7 @@ const DIALOGS = [
   { label: 'Peers', overlay: 'peersOverlay', id: 'peers-overlay', close: 'closePeersDialog' },
   { label: 'Plugins', overlay: 'pluginsOverlay', id: 'plugins-overlay', close: 'closePluginsDialog' },
   { label: 'Sandbox', overlay: 'sandboxOverlay', id: 'sandbox-overlay', close: 'closeSandboxDialog' },
+  { label: 'Test Box Activity', overlay: 'testActivityOverlay', id: 'test-activity-overlay', close: 'closeTestActivity' },
   { label: 'Preferences', overlay: 'prefsOverlay', id: 'prefs-overlay', close: 'closePrefs' },
   { label: 'Edit Session', overlay: 'argsOverlay', id: 'args-overlay', close: 'closeArgsDialog' },
 ];

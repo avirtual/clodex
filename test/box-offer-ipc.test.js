@@ -126,7 +126,7 @@ test('the test-box handlers ride their own seam, not the drawer gate', () => {
   assert.deepStrictEqual([...off].filter((ch) => ch.startsWith('offer:') || ch.startsWith('suiteRunner:')), []);
   const on = capture(true);
   assert.deepStrictEqual([...on].filter((ch) => ch.startsWith('offer:') || ch.startsWith('suiteRunner:')).sort(),
-    ['offer:directory', 'offer:get', 'offer:set', 'suiteRunner:get', 'suiteRunner:set']);
+    ['offer:directory', 'offer:get', 'offer:set', 'suiteRunner:activity', 'suiteRunner:get', 'suiteRunner:set']);
   assert.ok(!on.has('drawer:armSelection'), 'the drawer gate stays shut');
 });
 

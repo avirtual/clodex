@@ -1,12 +1,12 @@
 # Renderer event push surface — the other half of the browser contract
 
 The contract map for every event the main process pushes at a renderer.
-`preload.js` invoke/send is the request half of `window.api` (287 endpoints);
+`preload.js` invoke/send is the request half of `window.api` (288 endpoints);
 THIS is the push half. A browser frontend must receive each of these over WS
 exactly as the Electron renderer receives them over `ipcRenderer.on`.
 
 **Authoritative receiver list**: the `ipcRenderer.on(channel, …)` calls in
-`preload.js` (75 channels). This doc maps each to its emission point, its
+`preload.js` (76 channels). This doc maps each to its emission point, its
 payload shape (field NAMES, not full types), and the interception point a web
 host subscribes to.
 
@@ -180,7 +180,8 @@ them.
   named from its per-page items), `request-toggle-raw-terminal` (View ▸ Raw
   terminal; the active seat's transcript pane toggles off and on),
   `request-open-discovery`, `request-open-plugins-dialog`,
-  `request-open-sandbox-dialog`.
+  `request-open-sandbox-dialog`, `request-open-test-activity` (Window ▸ Test Box Activity…;
+  the browser menu bar emits it in-page).
   - `request-open-prompts-drawer` — library `{ kind, name }`, plugin `{ plugin, kind, name }`, team `{ team, kind, name }`, `:new`, or `null` (Manage).
   - `request-open-templates-drawer` — library the template id (or name), plugin `{ plugin, name }`, team `{ team, name }`, `:new`, or `null`.
   - `request-open-agents-drawer` — library a bare name, plugin `{ plugin, name }`, `:new`, or `null`.

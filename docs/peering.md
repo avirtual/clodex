@@ -509,6 +509,30 @@ shows them as "set by environment". A save applies without a restart
 (`reloadSuiteRunner` closes the old engine and rebuilds the remote server, so
 hello caps follow) and is refused while a job is live (`busy()`).
 
+The runner's `activity()` is the operator's read of what it is doing; it is
+never on the wire (`info()` keeps only job ids). It returns
+`{ at, slots: { total, inUse }, running: [job], waiting: [job], recent: [done], box }`:
+a job is `{ id, team, ticket, kind, origin, isolation: 'native'|'container', image, definition, phase, queuedAt, startedAt }`
+(`image` the 12-hex short id of the box image, `definition` the 12-hex short
+box definition hash when the job named one, `phase` `upload`/`queued`/`setup`/`run`,
+`origin` the dialled peer's label for a claimed job and null for a pushed one);
+`waiting` is queue order then uploads; `recent` is the last ten finished jobs,
+newest first, adding `{ outcome, pass, fail, endedAt, waitMs, runMs }`, where
+`outcome` is the stop reason (`runner-restart`, `setup-failed`, `box-failed`,
+`cancelled`, …) or `pass`/`fail` from the job's last stdout `TOTALS:` line, or
+`no-summary`. `box` is `{state:'ready', image}`, `{state:'held'|'unavailable', why}`,
+`{state:'labels-only'}` or `{state:'none'}`. Durations are left to the reader's
+clock. It reads the job records the runner already keeps and copies no env,
+setup command, ref or path. A job transition or hold change calls the runner's
+`onActivity` at most once per second; the host refreshes its cached snapshot
+then and rebuilds the Window menu, whose Test Boxes section (shown while the
+runner setting is on) lists the summary, up to eight running and waiting jobs
+and a held or unavailable box. Its job rows show since when (local `HH:MM`),
+never a duration, so they cannot go stale; the browser view's menu, read fresh
+on open, shows durations. Test Box Activity… opens a dialog that polls the `suiteRunner:activity` IPC (under
+`enableTestBoxes`, so the browser view of a headless node has it, with the same
+section in its Window menu) every three seconds while open.
+
 The job's PATH is a fixed list (`jobPath`), never the node's own:
 `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`, with
 `/opt/homebrew/bin:/opt/homebrew/sbin` ahead of it on macOS arm64. Its `LANG`

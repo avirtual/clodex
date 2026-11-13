@@ -46,6 +46,7 @@ const { anyOverlayOpen, dialogOverlayIds, performCloseChord } = require('./lib/c
 const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { envRowView, buildEnvRow } = require('./lib/env-row');
 const { envLockView, applyEnvLock, patchUnlessEnvLocked } = require('./lib/env-lock');
+const { activityView: testActivityView } = require('../suite-activity-view');
 const { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, offerRunnerFrom, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText, suiteRunnerRecordFromForm, claimLines: offerClaimLines } = require('./lib/offer-view');
 const { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require('./lib/account-select');
 const { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, keyTransportRefusal, modelOptions } = require('./lib/account-row');
@@ -6021,6 +6022,7 @@ const ESCAPE_CLOSES = [
   ['peers-overlay', () => closePeersDialog()],
   ['plugins-overlay', () => closePluginsDialog()],
   ['sandbox-overlay', () => closeSandboxDialog()],
+  ['test-activity-overlay', () => closeTestActivity()],
   ['prefs-overlay', () => closePrefs()],
   ['args-overlay', () => closeArgsDialog()],
   ['peer-session-overlay', () => closePeerSessionDialog()],
@@ -9098,6 +9100,50 @@ document.getElementById('btn-sandbox-close').addEventListener('click', closeSand
 sandboxOverlay.addEventListener('mousedown', (e) => { if (e.target === sandboxOverlay) closeSandboxDialog(); });
 document.getElementById('btn-peers-sandbox').addEventListener('click', () => { closePeersDialog(); openSandboxDialog(); });
 window.api.onRequestOpenSandboxDialog(() => openSandboxDialog());
+
+const testActivityOverlay = document.getElementById('test-activity-overlay');
+const TEST_ACTIVITY_POLL_MS = 3000;
+let testActivityTimer = null;
+
+function testActivityRow(text) {
+  const row = document.createElement('div');
+  row.className = 'test-activity-row';
+  row.textContent = text;
+  return row;
+}
+
+function paintTestActivity(state) {
+  const view = testActivityView(state, Date.now());
+  document.getElementById('test-activity-summary').textContent = view.summary;
+  const box = document.getElementById('test-activity-box');
+  box.textContent = view.box || '';
+  box.style.display = view.box ? '' : 'none';
+  const live = [...view.running, ...view.waiting];
+  document.getElementById('test-activity-live').replaceChildren(...(view.empty ? [testActivityRow(view.empty)] : live.map(testActivityRow)));
+  document.getElementById('test-activity-recent').replaceChildren(...(view.recent.length ? view.recent : ['None yet']).map(testActivityRow));
+}
+
+async function refreshTestActivity() {
+  let state = null;
+  try { state = await window.api.suiteRunnerActivity(); } catch { state = null; }
+  if (testActivityOverlay.classList.contains('hidden')) return;
+  paintTestActivity(state);
+}
+
+function openTestActivity() {
+  testActivityOverlay.classList.remove('hidden');
+  refreshTestActivity();
+  if (!testActivityTimer) testActivityTimer = setInterval(refreshTestActivity, TEST_ACTIVITY_POLL_MS);
+}
+
+function closeTestActivity() {
+  testActivityOverlay.classList.add('hidden');
+  if (testActivityTimer) clearInterval(testActivityTimer);
+  testActivityTimer = null;
+}
+
+testActivityOverlay.addEventListener('mousedown', (e) => { if (e.target === testActivityOverlay) closeTestActivity(); });
+window.api.onRequestOpenTestActivity(() => openTestActivity());
 window.api.onRequestOpenPeerSession((id, name) => openPeerSession(id, name));
 
 // Which groups the operator left open. Every group ships CLOSED, so this is

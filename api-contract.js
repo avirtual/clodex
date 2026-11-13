@@ -334,6 +334,8 @@ const API_CONTRACT = [
   { name: 'peerSetShellAllowed', kind: 'invoke', channel: 'peer:setShellAllowed' },
   { name: 'suiteRunnerGet', kind: 'invoke', channel: 'suiteRunner:get' },
   { name: 'suiteRunnerSet', kind: 'invoke', channel: 'suiteRunner:set' },
+  { name: 'suiteRunnerActivity', kind: 'invoke', channel: 'suiteRunner:activity' },
+  { name: 'onRequestOpenTestActivity', kind: 'on', channel: 'request-open-test-activity' },
   { name: 'offerGet', kind: 'invoke', channel: 'offer:get' },
   { name: 'offerSet', kind: 'invoke', channel: 'offer:set' },
   { name: 'offerDirectory', kind: 'invoke', channel: 'offer:directory' },

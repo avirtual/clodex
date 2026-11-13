@@ -83,7 +83,7 @@ function checkBody(row, body, bytes) {
   return readJson(row, body);
 }
 
-function invoke(runner, route, msg, bytes) {
+function invoke(runner, route, msg, bytes, origin) {
   const { row, id, query } = route;
   switch (row.verb) {
     case 'info': return runner.info();
@@ -92,7 +92,7 @@ function invoke(runner, route, msg, bytes) {
       const wait = Math.max(0, Number(query.get('wait')) || 0);
       return runner.poll(ids, { wait });
     }
-    case 'submit': return runner.submit(msg);
+    case 'submit': return runner.submit(msg, { origin });
     case 'cancel': return runner.cancel(id);
     case 'putPack': return runner.putPack(id, route.offset, bytes);
     case 'commit': return runner.commit(id, { bytes: msg.bytes, sha256: msg.sha256 });
@@ -105,14 +105,14 @@ function invoke(runner, route, msg, bytes) {
   }
 }
 
-function suiteDispatch(runner, { method, path, headers, body, bytes } = {}) {
+function suiteDispatch(runner, { method, path, headers, body, bytes, origin = null } = {}) {
   if (!runner) return Promise.resolve({ status: 501, body: { ok: false, error: 'this node is not a test runner' } });
   const route = suiteRoute({ method, path, headers });
   if (route.answer) return Promise.resolve(route.answer);
   const checked = checkBody(route.row, body, bytes);
   if (checked.answer) return Promise.resolve(checked.answer);
   return Promise.resolve()
-    .then(() => invoke(runner, route, checked.msg, bytes))
+    .then(() => invoke(runner, route, checked.msg, bytes, origin))
     .then((out) => ({ status: out && out.ok ? 200 : (out && out.status) || 500, body: out || { ok: false, error: 'no answer' } }))
     .catch((e) => ({ status: 500, body: { ok: false, error: e.message } }));
 }
