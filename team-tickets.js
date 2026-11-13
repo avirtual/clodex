@@ -18,7 +18,7 @@ const { resolveAccountLabel, accountMissingError } = require('./accounts');
 const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const { idleClearAfterMs, IDLE_CLEAR_MIN_MS } = require('./assistant-sleep');
-const { localHalf } = require('./suite-client');
+const { localHalf, failingNames } = require('./suite-client');
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
   DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS, TEST_RUNNER_WIRE_PUSH: WIRE_PUSH,
@@ -6610,13 +6610,7 @@ function createTicketMethods(deps, shared) {
       // Green needs both: `fail 0` alone misses an async escape counted as a pass, and exit 0 alone trusts a reporter that never counted.
       out.green = res.code === 0 && Number(failed) === 0;
       if (!out.green) {
-        // Parse the dot reporter's `✖ name (Nms)` lines, not tap `not ok`: the runner sends tap to a temp file, so stdout never
-        // carries it and a tap parser yields no names.
-        const names = [];
-        for (const line of text.split('\n')) {
-          const m = /^ *✖ (.+?) \(\d+(?:\.\d+)?ms\)\s*$/.exec(line);
-          if (m && !names.includes(m[1].trim())) names.push(m[1].trim());
-        }
+        const names = failingNames(text);
         out.failing = names.slice(0, 20).join('; ').slice(0, 1000);
         out.output = text;
         if (!out.failing) {
