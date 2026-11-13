@@ -395,3 +395,24 @@ test('a pre-t752 record — tree gone, no main — is left exactly as it was', (
     + 'takes the tree and the checkout together — so guessing here lands in the ABSENT state '
     + 'ALWAYS_PRESERVE calls the dangerous one');
 });
+
+test('a resume that falls back to main links <main slug>/<sid>.jsonl to the transcript the tree was writing', () => {
+  const eng = mkEngine();
+  const root = mkTmpRoot('clx-resumecwd-carry-');
+  const claudeDir = mkTmpRoot('clx-resumecwd-claude-');
+  const tree = path.join(root, 'repo-t46');
+  const main = path.join(root, 'repo');
+  fs.mkdirSync(main);
+  const slugFile = (cwd) => path.join(claudeDir, 'projects', cwd.replace(/[/.]/g, '-'), 'sess-46.jsonl');
+  fs.mkdirSync(path.dirname(slugFile(tree)), { recursive: true });
+  fs.writeFileSync(slugFile(tree), '{"type":"user"}\n');
+  const entry = {
+    name: 'hand-46', type: 'claude', cwd: tree, sessionId: 'sess-46', workspaceId: 'default',
+    env: { CLAUDE_CONFIG_DIR: claudeDir }, worktree: { path: tree, branch: 't46', main },
+  };
+  eng.stores.persistence.upsert(entry);
+  assert.strictEqual(fs.existsSync(slugFile(main)), false, 'ENTER: nothing at the main slug yet');
+
+  assert.strictEqual(eng.manager.resumeCwdOf(entry), main);
+  assert.strictEqual(fs.realpathSync(slugFile(main)), fs.realpathSync(slugFile(tree)));
+});

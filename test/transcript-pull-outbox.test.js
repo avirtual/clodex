@@ -331,3 +331,32 @@ test('transcript:pull MF3 identity: repointing between two session.jsonl files c
   rows.render(after.records, after.source);
   assert.strictEqual(toggle().getAttribute('aria-expanded'), 'false');
 });
+
+for (const [row, seatFields, reason] of [
+  ['a fresh seat with no turn', {}, 'not-started'],
+  ['a resumed seat with no turn', { bootResumeId: 'sess-r' }, 'unavailable'],
+  ['a fresh seat after a turn', { _turnStartedAt: 1000 }, 'unavailable'],
+]) {
+  test(`transcript:pull on a dangling link for ${row} fails ${reason}`, () => {
+    const reg = mkTmpRoot('ipc-tpull-');
+    const link = pathFor(reg, 'pty', 'transcript');
+    fs.mkdirSync(path.dirname(link), { recursive: true });
+    fs.symlinkSync(path.join(reg, 'project', 'sid.jsonl'), link);
+    const handlers = new Map();
+    const seat = { name: 'pty', agentType: 'claude', _dead: false, bootResumeId: null, ...seatFields };
+    registerIpcHandlers({
+      handle: (ch, fn) => handlers.set(ch, fn),
+      on: (ch, fn) => handlers.set(ch, fn),
+      log: { info() {}, error() {}, warn() {}, debug() {} },
+      REGISTRY_DIR: reg,
+      manager: {
+        sessions: new Map([['pty', seat]]),
+        seatOutbox: () => null,
+        seatPermissions: () => null,
+        compactNoticesFor: () => null,
+        _sendToSession() {},
+      },
+    });
+    assert.deepStrictEqual(handlers.get('transcript:pull')(null, 'pty'), { ok: false, reason });
+  });
+}

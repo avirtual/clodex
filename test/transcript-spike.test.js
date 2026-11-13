@@ -203,3 +203,20 @@ test('source: KNOWN LIMITATION — a same-size rewrite between reads is not dete
   assert.deepStrictEqual([a.records[0].text, b.records[0].text], ['aaaa', 'bbbb'], 'ENTER: the rewrite was re-read');
   assert.strictEqual(b.source, a.source);
 });
+
+for (const [row, linked, turned, reason] of [
+  ['a dangling link on a seat with no turn', true, false, 'not-started'],
+  ['the same dangling link after a turn was recorded', true, true, 'unavailable'],
+  ['a missing link on a seat with no turn', false, false, 'unavailable'],
+]) {
+  test(`pull on ${row} fails ${reason}`, (t) => {
+    const root = mkTmpRoot('clodex-tspike-');
+    const link = path.join(root, 'transcript.jsonl');
+    if (linked) fs.symlinkSync(path.join(root, 'project', 'sid.jsonl'), link);
+    const asked = [];
+    const reader = createTranscriptSpikeReader({ linkPathFor: () => link, started: (n) => { asked.push(n); return turned; }, watch: () => null });
+    t.after(() => reader.dispose());
+    assert.deepStrictEqual(reader.pull('s'), { ok: false, reason });
+    if (linked && !turned) assert.deepStrictEqual(asked, ['s']);
+  });
+}

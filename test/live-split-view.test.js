@@ -1884,3 +1884,15 @@ test('a pull that turns ok clears the unread notice without a reload', async () 
     assert.deepStrictEqual([m.view.state().mode, m.pane.hidden, m.notice.hidden], ['split', false, true]);
   } finally { unmount(m); }
 });
+
+for (const [reason, noticeHidden] of [['not-started', true], ['unavailable', false]]) {
+  test(`a pull failing ${reason} past the grace period: notice hidden is ${noticeHidden}`, async () => {
+    const m = await mountUnread({ ok: false, reason });
+    try {
+      m.elapse(UNREAD_GRACE_MS + 2000);
+      m.write();
+      await settle();
+      assert.strictEqual(m.notice.hidden, noticeHidden);
+    } finally { unmount(m); }
+  });
+}
