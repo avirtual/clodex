@@ -25,6 +25,9 @@ const PROBE_MS = 5000;
 const PROBE_TTL_MS = 30000;
 const CLEAR_MS = 10000;
 const CLEAR_ROUNDS = 3;
+const CLEAR_WAIT_MS = 30000;
+const CLEAR_PAUSE_MS = 250;
+const CLEAR_PAUSE_MAX_MS = 2000;
 const BOX_LABEL = 'clodex.box';
 const DOCKER_ARCH = { aarch64: 'arm64', x86_64: 'amd64' };
 const DEFAULT_TIMERS = { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (t) => clearTimeout(t) };
@@ -152,21 +155,32 @@ function boxIdentity({ imageId, arch, cpus, definitionHash = null, rev = null, e
 function boxIsolation({
   image, work, stateDir, docker = createDocker(), kill = process.kill.bind(process),
   uid = process.getuid(), gid = process.getgid(), now = Date.now, env = process.env,
-  platform = process.platform, arch = process.arch,
+  platform = process.platform, arch = process.arch, timers = DEFAULT_TIMERS,
 }) {
   const runnerKey = runnerKeyOf(stateDir);
   let counter = 0;
   let cached = null;
 
   async function clear(label) {
+    const deadline = now() + CLEAR_WAIT_MS;
     let last = '';
-    for (let round = 0; round < CLEAR_ROUNDS; round++) {
+    let strikes = 0;
+    let pause = CLEAR_PAUSE_MS;
+    for (;;) {
       const r = await docker.call(['ps', '-aq', '--filter', `label=${label}`], { timeoutMs: CLEAR_MS });
-      if (!r.ok) { last = `docker ps failed: ${callError(r)}`; continue; }
+      if (!r.ok) {
+        last = `docker ps failed: ${callError(r)}`;
+        if (++strikes >= CLEAR_ROUNDS) break;
+        continue;
+      }
       const ids = String(r.stdout).split('\n').map((s) => s.trim()).filter(Boolean);
       if (!ids.length) return;
       last = ids.join(' ');
       await docker.call(['rm', '-f', ...ids], { timeoutMs: CLEAR_MS });
+      const left = deadline - now();
+      if (left <= 0) break;
+      await new Promise((resolve) => timers.setTimeout(resolve, Math.min(pause, left)));
+      pause = Math.min(pause * 2, CLEAR_PAUSE_MAX_MS);
     }
     throw new Error(`box cleanup not confirmed: ${last}`);
   }
