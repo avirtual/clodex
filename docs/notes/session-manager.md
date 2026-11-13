@@ -15,6 +15,12 @@ anywhere is a different case — the CLI prints "No conversation found with sess
 ID: <id>" and exits nonzero, which happens AFTER `create()` has returned, so a
 move cannot detect a bad resume id and report it.
 
+## _carryClaudeTranscript
+
+Measured on Claude Code 2.1.323: `--resume <id>` from a new cwd keeps appending to the
+ORIGINAL slug's file, yet its SessionStart hook names `<new slug>/<id>.jsonl`, which the CLI
+never creates; it does write through a symlink placed there, so the run link resolves.
+
 ## _renameDirs
 
 One row, `pending/`: the seat kinds moved out to `seat-layout.js` `renameSeat`,

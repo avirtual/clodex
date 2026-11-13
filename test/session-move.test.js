@@ -64,7 +64,7 @@ for (const row of [
 // re-derivation is resolved the way the shipped code resolves it — a stub
 // keyed on a path prefix would agree with itself about which cwd joins a team,
 // which is the whole assertion.
-function mkMove({ entries = [], teamHome = null, createThrows = null, getWorkspaces = undefined } = {}) {
+function mkMove({ entries = [], teamHome = null, createThrows = null, getWorkspaces = undefined, registryDir = null, claudeDir = null } = {}) {
   const store = entries.map((e) => ({ ...e }));
   const persistence = {
     list: () => store,
@@ -106,6 +106,8 @@ function mkMove({ entries = [], teamHome = null, createThrows = null, getWorkspa
     stripLevelOf: (e) => (e && e.stripLevel) || 0,
     log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
     notifyOS: () => {},
+    ...(registryDir ? { REGISTRY_DIR: registryDir } : {}),
+    ...(claudeDir ? { claudeHome: () => claudeDir } : {}),
   });
   const m = new SessionManager();
   const created = [];
@@ -281,6 +283,69 @@ test('move respawns with --resume, in the same workspace, in the NEW cwd', async
   assert.deepStrictEqual(extraArgs, ['--x']);
   assert.strictEqual(resumeId, 'sess-abc', 'the conversation is carried by --resume');
   assert.strictEqual(wsId, 'ws1', 'same workspace — moving across workspaces is out of scope');
+});
+
+function mkTranscriptMove() {
+  const registryDir = mkTmpRoot('clodex-move-run-');
+  const claudeDir = mkTmpRoot('clodex-move-claude-');
+  const moved = mkMove({ entries: [BASE], registryDir, claudeDir });
+  const slugFile = (cwd) => pathReal.join(claudeDir, 'projects', cwd.replace(/[/.]/g, '-'), 'sess-abc.jsonl');
+  const runLink = pathReal.join(registryDir, 'seat', 'transcript.jsonl');
+  const hookLinks = (cwd) => {
+    fsReal.mkdirSync(pathReal.dirname(runLink), { recursive: true });
+    try { fsReal.unlinkSync(runLink); } catch {}
+    fsReal.symlinkSync(slugFile(cwd), runLink);
+  };
+  const original = slugFile('/old');
+  fsReal.mkdirSync(pathReal.dirname(original), { recursive: true });
+  fsReal.writeFileSync(original, '{"type":"user"}\n');
+  hookLinks('/old');
+  const s = seedLive(moved.m, 'seat');
+  s.pty.kill = () => { moved.m.sessions.delete('seat'); fsReal.rmSync(pathReal.dirname(runLink), { recursive: true, force: true }); };
+  return { ...moved, slugFile, original, hookLinks };
+}
+
+test('a moved claude seat: <new slug>/<sid>.jsonl resolves to the transcript it was writing, which stays a regular file', async () => {
+  const dir = mkTmpRoot('clodex-move-');
+  const { m, slugFile, original } = mkTranscriptMove();
+  const r = await m.move('seat', dir);
+  assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
+  assert.strictEqual(fsReal.realpathSync(slugFile(dir)), fsReal.realpathSync(original));
+  assert.ok(fsReal.lstatSync(slugFile(dir)).isSymbolicLink(), 'the new slug holds a link, not a copy');
+  assert.ok(fsReal.lstatSync(original).isFile(), 'the old transcript is still the one real file');
+});
+
+test('a real file already at the new slug is left untouched by a move', async () => {
+  const dir = mkTmpRoot('clodex-move-');
+  const { m, slugFile } = mkTranscriptMove();
+  fsReal.mkdirSync(pathReal.dirname(slugFile(dir)), { recursive: true });
+  fsReal.writeFileSync(slugFile(dir), 'theirs\n');
+  const r = await m.move('seat', dir);
+  assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
+  assert.ok(fsReal.lstatSync(slugFile(dir)).isFile(), 'still a regular file');
+  assert.strictEqual(fsReal.readFileSync(slugFile(dir), 'utf8'), 'theirs\n');
+});
+
+test('a move A→B→C links C straight to the original file, never to B\'s link', async () => {
+  const b = mkTmpRoot('clodex-move-b-');
+  const c = mkTmpRoot('clodex-move-c-');
+  const { m, slugFile, original, hookLinks } = mkTranscriptMove();
+  assert.strictEqual((await m.move('seat', b)).ok, true);
+  hookLinks(b);
+  assert.strictEqual((await m.move('seat', c)).ok, true);
+  assert.strictEqual(fsReal.readlinkSync(slugFile(c)), fsReal.realpathSync(original));
+  assert.ok(fsReal.lstatSync(original).isFile());
+});
+
+test('a transcript link that cannot be made does not fail the move', async () => {
+  const dir = mkTmpRoot('clodex-move-');
+  const { m, slugFile, created } = mkTranscriptMove();
+  fsReal.mkdirSync(pathReal.dirname(pathReal.dirname(slugFile(dir))), { recursive: true });
+  fsReal.writeFileSync(pathReal.dirname(slugFile(dir)), 'not a dir');
+  const r = await m.move('seat', dir);
+  assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
+  assert.strictEqual(created.length, 1, 'the respawn still happened');
+  assert.ok(fsReal.lstatSync(pathReal.dirname(slugFile(dir))).isFile(), 'ENTER: the link really could not be made');
 });
 
 test('move does NOT go through kill() — kill drops the record unconditionally', async () => {
