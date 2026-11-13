@@ -13,7 +13,7 @@ blocks a release.
 
 ## Unreleased
 
-- A test-runner node can serve several teams' box images at once: a team's job names its box definition, and the runner uses the local image labelled `clodex.box=<definition hash>`. `[agent:team box show]` prints the build line with that label. A job naming a definition with no matching image, or with more than one, is refused. The runner still accepts box jobs only while a Box image is set in Preferences ▸ Test boxes ▸ Test runner.
+- A test-runner node can serve several teams' box images at once: a team's job names its box definition, and the runner uses the local image labelled `clodex.box=<definition hash>`. `[agent:team box show]` prints the build line with that label. A job naming a definition with no matching image, or with more than one, is refused. A runner with no Box image set serves these named jobs too; a job naming no definition still needs the Box image.
 
 ## 5.181.1 — 2026-11-13
 

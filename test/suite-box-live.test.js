@@ -211,7 +211,7 @@ if (process.argv.includes(CHILD_FLAG)) {
     });
     const { mkTmpRoot } = require('./lib/tmp-roots');
 
-    async function fixture({ box: withBox = true, dockerOver = null } = {}) {
+    async function fixture({ box: withBox = true, dockerOver = null, defaultImage = true } = {}) {
       const r = makeRoots(mkTmpRoot);
       cleanups.push(() => childProcess.spawnSync('chmod', ['-R', 'u+w', r.root]));
       const image = imageId();
@@ -219,7 +219,7 @@ if (process.argv.includes(CHILD_FLAG)) {
       const logs = [];
       const dockerCalls = createDocker();
       const call = dockerOver ? dockerOver(dockerCalls.call, events) : dockerCalls.call;
-      const box = boxIsolation({ image, work: r.work, stateDir: r.stateDir, docker: { call } });
+      const box = boxIsolation({ image: defaultImage ? image : null, work: r.work, stateDir: r.stateDir, docker: { call } });
       scopes.add(`clodex.suite.runner=${box.runnerKey}`);
       const repo = makeRepo(r.root);
       const snap = await snapshotTree(repo);
@@ -312,9 +312,11 @@ if (process.argv.includes(CHILD_FLAG)) {
       assert.deepStrictEqual(gitLines(boxOut), gitLines(out));
     });
 
-    test('two images labelled for two box definitions: each named job runs in a container of its own image', async () => {
-      const f = await fixture();
+    test('an engine with no default image: two labelled images, each named job runs in a container of its own image, a job naming nothing is refused', async () => {
+      const f = await fixture({ defaultImage: false });
       const runner = f.make();
+      assert.strictEqual((await runner.info()).box, null);
+      assert.deepStrictEqual(await runner.submit(bodyOf(f.snap, 'live-unnamed', { isolation: 'container' })), { ok: false, status: 409, error: 'this runner has no box image configured' });
       const run = crypto.randomBytes(6).toString('hex');
       const hashes = [0, 1].map((i) => crypto.createHash('sha256').update(`suite-box-live ${run} ${i}`).digest('hex'));
       const built = hashes.map((h) => {

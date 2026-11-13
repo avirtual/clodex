@@ -536,9 +536,12 @@ answers, so `GET /api/suite/info` shows it without the log.
 
 A runner error answers with the status the engine names (`{ok:false, status, error, …}`).
 
-**Box jobs.** With a box image set (`boxImage` above, from Preferences ▸ Test
-boxes ▸ Test runner ▸ Box image, or `CLODEX_SUITE_BOX_IMAGE`), `startSuiteRunner`
-gives the engine a second adapter, `boxIsolation` in suite-box.js; native jobs
+**Box jobs.** An enabled runner's `startSuiteRunner` gives the engine a second
+adapter, `boxIsolation` in suite-box.js, whose default image is the box image
+(`boxImage` above, from Preferences ▸ Test boxes ▸ Test runner ▸ Box image, or
+`CLODEX_SUITE_BOX_IMAGE`). Without one the adapter is `labelsOnly`: it serves
+only jobs that name their image (below), and a job naming none is treated as
+on a runner with no box; native jobs
 are unchanged. A submit asks for it with `isolation: 'container'` (any other
 value is 400 `bad isolation`); the lead sends it only for `gate:shadow` runs of a
 team whose team.json has `testRunner.box: true`. Each exec of a box job is a
@@ -549,7 +552,8 @@ uid:gid, the job tree bind-mounted at `/job/tree`, labelled `clodex.suite=1`,
 the CLI dies its stdin closes and the container's wrapper (`DEADMAN`) kills it.
 A box job's tree is detached from the mirror (`detachTree`) before it runs.
 
-- `info.box` is `null` without an image; `{state:'ready', env}` when Docker
+- `info.box` is `null` without a default image, even on a runner that serves
+  named jobs, and then no Docker call answers it; `{state:'ready', env}` when Docker
   answers and the image is present, `env` being the box identity
   (`isolation:'container'`, `platform:'linux'`, the image's arch, the daemon's
   CPU count, `box:{imageId, definitionHash:null, rev:null}`, `host`, its own `envKey`); otherwise
@@ -557,20 +561,23 @@ A box job's tree is detached from the mirror (`detachTree`) before it runs.
   the daemon not reachable, the image absent, an OS or arch mismatch, an engine
   running as uid 0, a comma in the work root, or `cleanup not confirmed: <why>`.
   The probe is cached 30 s.
-- A box submit is 409 `this runner has no box image configured` without an
-  image, and 503 `box unavailable: <why>` when `info.box` is not ready.
+- A box submit naming no image is 409 `this runner has no box image configured`
+  without a default image, and 503 `box unavailable: <why>` when `info.box` is not ready.
 - Every box job end clears containers by its job label (up to three
   `docker ps` / `docker rm -f` rounds; a failed `ps` is never read as empty),
   then removes the job dir; cancel, timeout and lease expiry first SIGKILL the
   CLI's process group. At start the engine clears its runner label before any
-  job runs.
+  job runs; without a default image it does so only when a box job was
+  interrupted or a hold is on file, so a runner with no box image and no box
+  job behind it makes no Docker call at start.
 - A cleanup Docker does not confirm enters the box hold, written to
   `box-hold.json` in the runner state dir as `{why, dirs}`: the dirs are kept,
   box jobs stay queued, box submits are 503 and native jobs run. A tick with no
   box job active retries the runner-label sweep; once it is confirmed the held
   dirs are removed and the file is dropped. After a restart with the image
-  removed, the interrupted box jobs' dirs are held the same way, and a queued
-  box job ends `box-unavailable`.
+  removed, the interrupted box jobs' dirs are held the same way until that
+  sweep is confirmed, a queued box job naming no image ends `box-unavailable`,
+  and a queued named one stays queued.
 - A CLI exit of 125 on a box job (Docker's own failure) ends it `box-failed`.
 - Removing every suite container on the machine by hand:
   `docker rm -f $(docker ps -aq --filter label=clodex.suite=1)`.
@@ -597,9 +604,12 @@ with `box: true` and no definition, or a lead on an older version, sends no
   definitionHash, rev}`, and every `docker run` of the job uses that stamped
   id, even if another image gets the label while the job queues.
 - A named job does not use `boxImage` and never falls back to it: it runs
-  while `boxImage` names an image that is gone. `startSuiteRunner` still turns
-  the box adapter on only when `boxImage` is set, so a runner with no
-  `boxImage` answers a named job 409 `this runner has no box image configured`.
+  while `boxImage` names an image that is gone or is not set at all. A runner
+  with no `boxImage` touches Docker only for a named submit (`info`, `image
+  ls`, `image inspect`) and for the jobs it accepts. The lead does not consult
+  `info.box` before a named submit, so its `null` there refuses nothing; an
+  older lead sends `box: true` and reads `null` as `runner has no box: not
+  configured`, as before.
 - Refusals, all before anything runs: no matching image is 409 `no image for
   box <hash12> on this runner` (`code: 'no-image'`); two or more distinct
   matching ids is 409 `more than one image carries box <hash12> on this

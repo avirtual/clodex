@@ -931,8 +931,8 @@ team.json only.
 
 `box` is a boolean and reads `false` when absent; any other value drops the
 setting. `box: true` asks the runner for a container box on `gate:shadow` runs
-(hand routing stays native): the lead reads the runner's `info.box` first and,
-unless it is `ready`, ends the run `unknown: runner has no box: <why>` without
+(hand routing stays native): for a team with no box definition the lead reads
+the runner's `info.box` first and, unless it is `ready`, ends the run `unknown: runner has no box: <why>` without
 submitting. The submit carries `isolation: 'container'`, and a done job whose
 stamp (`env.isolation === 'container'`) does not match the ask, either way,
 reads `unknown: box mismatch: asked <container|native>, runner ran <isolation>`.
