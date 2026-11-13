@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('fs');
+const path = require('path');
 const crypto = require('crypto');
 const { RECORD_CAP, recordsOf } = require('./transcript-records');
 
@@ -12,7 +13,13 @@ function parseTranscript(text, max = MAX_ENTRIES) {
 
 const CHANGE_DEBOUNCE_MS = 100;
 
-function createTranscriptSpikeReader({ linkPathFor, watch = fs.watch, onChange = null, setTimer = setTimeout, clearTimer = clearTimeout }) {
+function targetNotCreated(link) {
+  let target;
+  try { target = path.resolve(path.dirname(link), fs.readlinkSync(link)); } catch { return false; }
+  try { fs.lstatSync(target); return false; } catch (e) { return e.code === 'ENOENT'; }
+}
+
+function createTranscriptSpikeReader({ linkPathFor, hasTurn = () => true, watch = fs.watch, onChange = null, setTimer = setTimeout, clearTimer = clearTimeout }) {
   const cache = new Map();
   let nextRev = 0;
 
@@ -34,7 +41,11 @@ function createTranscriptSpikeReader({ linkPathFor, watch = fs.watch, onChange =
 
   function pull(name) {
     let real;
-    try { real = fs.realpathSync(linkPathFor(name)); } catch { drop(name); return { ok: false, reason: 'unavailable' }; }
+    const link = linkPathFor(name);
+    try { real = fs.realpathSync(link); } catch {
+      drop(name);
+      return { ok: false, reason: !hasTurn(name) && targetNotCreated(link) ? 'not-started' : 'unavailable' };
+    }
     let c = cache.get(name);
     if (c && c.path !== real) { drop(name); c = null; }
     if (!c) {
