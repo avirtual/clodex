@@ -26,8 +26,15 @@ function stubDocker(answer) {
   };
 }
 
-function adapter(over = {}) {
-  return boxIsolation({ image: IMAGE, work: '/w', stateDir: STATE, uid: 501, gid: 20, docker: stubDocker(() => ({})), ...over });
+function fakeClock() {
+  const clock = { t: 0, pauses: [] };
+  clock.now = () => clock.t;
+  clock.timers = { setTimeout: (fn, ms) => { clock.pauses.push(ms); clock.t += ms; queueMicrotask(fn); return clock.pauses.length; }, clearTimeout: () => {} };
+  return clock;
+}
+
+function adapter(over = {}, clock = fakeClock()) {
+  return boxIsolation({ image: IMAGE, work: '/w', stateDir: STATE, uid: 501, gid: 20, docker: stubDocker(() => ({})), now: clock.now, timers: clock.timers, ...over });
 }
 
 const ARM_JOB = { id: 'j-1', identity: { arch: 'arm64' } };
@@ -270,25 +277,54 @@ test('kill: process-group SIGKILL, then ps, rm, ps on the job label', async () =
   assert.deepStrictEqual(docker.calls.map((c) => c.opts), Array(3).fill({ timeoutMs: 10000 }));
 });
 
-test('clear: an empty list returns at once; three non-empty lists throw', async () => {
+test('clear: an empty list returns at once; a list that never empties throws at the deadline', async () => {
   const quiet = stubDocker(() => ({ stdout: '' }));
   await adapter({ docker: quiet }).clear('clodex.suite.job=j-1');
   assert.deepStrictEqual(quiet.calls.map((c) => c.args), [PS('clodex.suite.job=j-1')]);
-  const stuck = stubDocker((args) => (args[0] === 'ps' ? { stdout: 'c1\n' } : { ok: false, code: 1 }));
-  await assert.rejects(adapter({ docker: stuck }).clear('clodex.suite.job=j-1'), { message: 'box cleanup not confirmed: c1' });
-  assert.deepStrictEqual(stuck.calls.map((c) => c.args[0]), ['ps', 'rm', 'ps', 'rm', 'ps', 'rm']);
+  const clock = fakeClock();
+  const psAt = [];
+  const stuck = stubDocker((args) => {
+    if (args[0] !== 'ps') return { ok: false, code: 1 };
+    psAt.push(clock.t);
+    return { stdout: 'c1\n' };
+  });
+  await assert.rejects(adapter({ docker: stuck }, clock).clear('clodex.suite.job=j-1'), { message: 'box cleanup not confirmed: c1' });
+  assert.ok(psAt.length > 3, `ENTER: more than three rounds ran (${psAt.length})`);
+  assert.ok(psAt[psAt.length - 1] >= 30000, `last ps at ${psAt[psAt.length - 1]} ms`);
+  assert.ok(psAt[psAt.length - 2] < 30000, `the ps before it at ${psAt[psAt.length - 2]} ms`);
+  assert.strictEqual(stuck.calls[stuck.calls.length - 1].args[0], 'rm');
+});
+
+test('a listed container whose removal is in progress is waited for', async () => {
+  const clock = fakeClock();
+  let lists = 0;
+  const busy = stubDocker((args) => {
+    if (args[0] === 'rm') return { ok: false, code: 1, stderr: 'Error response from daemon: removal of container c1 is already in progress\n' };
+    lists += 1;
+    return { stdout: lists <= 5 ? 'c1\n' : '' };
+  });
+  await adapter({ docker: busy }, clock).clear('clodex.suite.job=j-1');
+  assert.deepStrictEqual(busy.calls.map((c) => c.args[0]), ['ps', 'rm', 'ps', 'rm', 'ps', 'rm', 'ps', 'rm', 'ps', 'rm', 'ps']);
+  assert.strictEqual(clock.pauses.length, 5);
+  clock.pauses.forEach((ms, i) => {
+    assert.ok(ms > 0, `pause ${i} is ${ms}`);
+    assert.ok(ms <= 2000, `pause ${i} is ${ms}`);
+    if (i) assert.ok(ms >= clock.pauses[i - 1], `pause ${i} (${ms}) is shorter than ${clock.pauses[i - 1]}`);
+  });
 });
 
 test('clear: a failed docker ps is never an empty list (R5)', async () => {
   const ok = stubDocker(() => ({ stdout: '' }));
   await adapter({ docker: ok }).clear('clodex.suite.runner=68ce9ee28045');
   assert.strictEqual(ok.calls.length, 1, 'ENTER: a list that answers empty confirms');
+  const clock = fakeClock();
   const down = stubDocker(() => ({ ok: false, code: 1, stdout: '', stderr: `${DOWN}\n` }));
-  await assert.rejects(adapter({ docker: down }).clear('clodex.suite.runner=68ce9ee28045'), { message: `box cleanup not confirmed: docker ps failed: ${DOWN}` });
+  await assert.rejects(adapter({ docker: down }, clock).clear('clodex.suite.runner=68ce9ee28045'), { message: `box cleanup not confirmed: docker ps failed: ${DOWN}` });
   assert.deepStrictEqual(down.calls.map((c) => c.args[0]), ['ps', 'ps', 'ps']);
+  assert.deepStrictEqual(clock.pauses, []);
   const flaky = stubDocker((args, n) => (n === 1 ? { stdout: 'c1\n' } : args[0] === 'rm' ? {} : { ok: false, code: 1, stdout: '', stderr: `${DOWN}\n` }));
   await assert.rejects(adapter({ docker: flaky }).clear('clodex.suite.job=j-1'), /box cleanup not confirmed: docker ps failed/);
-  assert.deepStrictEqual(flaky.calls.map((c) => c.args[0]), ['ps', 'rm', 'ps', 'ps']);
+  assert.deepStrictEqual(flaky.calls.map((c) => c.args[0]), ['ps', 'rm', 'ps', 'ps', 'ps']);
 });
 
 test('sweep clears the runner label', async () => {

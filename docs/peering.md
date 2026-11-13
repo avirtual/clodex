@@ -592,8 +592,10 @@ A box job's tree is detached from the mirror (`detachTree`) before it runs.
   The probe is cached 30 s.
 - A box submit naming no image is 409 `this runner has no box image configured`
   without a default image, and 503 `box unavailable: <why>` when `info.box` is not ready.
-- Every box job end clears containers by its job label (up to three
-  `docker ps` / `docker rm -f` rounds; a failed `ps` is never read as empty),
+- Every box job end clears containers by its job label (`docker ps` /
+  `docker rm -f` rounds, pausing 250 ms doubling to 2 s while a container is
+  still listed, for up to 30 s; a failed `ps` is never read as empty, and a
+  third failed `ps` gives up at once),
   then removes the job dir; cancel, timeout and lease expiry first SIGKILL the
   CLI's process group. At start the engine clears its runner label before any
   job runs; without a default image it does so only when a box job was
