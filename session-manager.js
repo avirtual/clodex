@@ -4493,6 +4493,7 @@ function createSessionManager(deps) {
       this._movingNames.add(name);
       try {
         const s = this.sessions.get(name);
+        const transcript = this._claudeTranscriptSource(name, entry);
         if (s) {
           log.info('session', `move ${name} ${entry.cwd} → ${newCwd} pid=${this._procPid(s)}`);
           s._moving = true;
@@ -4514,6 +4515,7 @@ function createSessionManager(deps) {
         };
         getPersistence().setCwd(name, newCwd);
         if (entry.archivedAt) getPersistence().setArchived(name, false);
+        this._carryClaudeTranscript(entry, transcript, newCwd);
         const workspaceId = entry.workspaceId || DEFAULT_WORKSPACE_ID;
         try {
           await this.create(
@@ -4947,6 +4949,37 @@ function createSessionManager(deps) {
       return path.join(home, 'projects', claudeProjectSlug(cwd), `${sid}.jsonl`);
     }
 
+    _claudeTranscriptSource(name, entry) {
+      if (!entry || entry.type !== 'claude' || !entry.sessionId) return null;
+      const accountDir = entry.env && entry.env.CLAUDE_CONFIG_DIR;
+      const candidates = [
+        () => pathFor(REGISTRY_DIR, name, 'transcript'),
+        () => (entry.cwd ? this._claudeTranscriptPath(entry.cwd, accountDir, entry.sessionId) : null),
+      ];
+      for (const at of candidates) {
+        let real = null;
+        try { real = fs.realpathSync(at()); } catch { continue; }
+        if (path.basename(real) === `${entry.sessionId}.jsonl`) return real;
+      }
+      return null;
+    }
+
+    _carryClaudeTranscript(entry, source, newCwd) {
+      if (!source || !entry || entry.type !== 'claude' || !entry.sessionId || !newCwd) return;
+      const dest = this._claudeTranscriptPath(newCwd, entry.env && entry.env.CLAUDE_CONFIG_DIR, entry.sessionId);
+      try {
+        if (fs.existsSync(dest)) return;
+        let dangling = false;
+        try { dangling = fs.lstatSync(dest).isSymbolicLink(); } catch {}
+        if (dangling) fs.unlinkSync(dest);
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.symlinkSync(source, dest);
+        log.info('session', `${entry.name}: linked ${dest} → ${source}`);
+      } catch (e) {
+        log.warn('session', `${entry.name}: transcript carry to ${dest} failed: ${e.message}`);
+      }
+    }
+
     _snapshotBlockFor(name, cwd, accountDir, sid) {
       const candidates = [];
       if (sid && cwd) candidates.push(this._claudeTranscriptPath(cwd, accountDir, sid));
@@ -5096,6 +5129,7 @@ function createSessionManager(deps) {
         getPersistence().setCwd(entry.name, main);
         getPersistence().setWorktree(entry.name, null);
       } catch {}
+      this._carryClaudeTranscript(entry, this._claudeTranscriptSource(entry.name, entry), main);
       return main;
     }
 
