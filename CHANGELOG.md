@@ -15,6 +15,7 @@ blocks a release.
 
 - A seat whose transcript cannot be read keeps its view tabs and says so, instead of silently showing only the raw screen.
 - A Claude seat moved to another folder keeps its conversation view: the tab bar no longer disappears after the move.
+- `[agent:team runner]` shows the team's box definition instead of `null` on a runner that picks images by label.
 
 ## 5.183.0 — 2026-11-13 — The Window menu shows what a node's test boxes are doing
 
