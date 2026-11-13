@@ -1526,6 +1526,8 @@ test('activity lists the running box job, the waiting jobs in queue order, the l
   assert.strictEqual((await upload(f.body('q-def', 'verify', { isolation: 'container', box: { definitionHash: 'd'.repeat(64), rev: 2 }, team: 'kite', ticket: 't1581' }))).state, 'queued');
   clock = 600000;
   const snap = await runner.activity();
+  const text = JSON.stringify(snap);
+  assert.deepStrictEqual(['hunter2-env-value', token, f.work, f.repo].filter((s) => text.includes(s)), []);
   assert.deepStrictEqual(snap, {
     at: 600000,
     slots: { total: 1, inUse: 1 },
@@ -1543,8 +1545,6 @@ test('activity lists the running box job, the waiting jobs in queue order, the l
     ],
     box: { state: 'ready', image: 'bbbbbbbbbbbb' },
   });
-  const text = JSON.stringify(snap);
-  assert.deepStrictEqual(['hunter2-env-value', token, f.work, f.repo].filter((s) => text.includes(s)), []);
 });
 
 test('job transitions ask for one activity refresh per burst', async (t) => {
