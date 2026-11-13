@@ -420,7 +420,7 @@ The runner contract `_runTicketSuite` holds a runner to:
   — tests > 0 for a real run; `TOTALS: 0 pass, 0 fail, 0 tests` is an empty
   suite, which verified nothing and escalates. No such line escalates the
   ticket as `verify: suite`, whatever the exit code.
-- optional failure lines `✖ <test name> (<n>ms)` name the failing tests.
+- optional failure lines name the failing tests: `✖ <test name> (<n>ms)`, `not ok <n> - <test name>`, `FAIL <test name>`, `FAILED: <test name>` or `✗ <test name>`.
 - optional `SLOW: <n>ms <test name>` lines name tests over the time budget.
 - stderr is ignored for the summary.
 

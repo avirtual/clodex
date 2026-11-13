@@ -6983,3 +6983,32 @@ test('t2264: a shadow snapshot that never settles holds the local spawn only unt
   for (let i = 0; i < 100 && !prompt.posts; i += 1) await new Promise((r) => setImmediate(r));
   assert.strictEqual(prompt.posts, 1, 'a prompt snapshot is submitted');
 });
+
+const GATE_SHAPES = [
+  {
+    shape: 'clodex dot reporter',
+    lines: ['.XX', '', 'Failed tests:', '', '✖ the thing that broke (1.15ms)', '✖ the other thing (0.42ms)',
+      '✖ the thing that broke (1.15ms)'],
+    failing: 'the thing that broke; the other thing',
+  },
+  { shape: 'tap not ok', lines: ['ok 1 - fine', 'not ok 2 - parses the header'], failing: 'parses the header' },
+  { shape: 'FAIL <file> :: <name>', lines: ['PASS test/b.test.js :: fine', 'FAIL test/a.test.js :: rejects empty'], failing: 'test/a.test.js :: rejects empty' },
+  { shape: 'FAILED: pytest', lines: ['FAILED: tests/test_x.py::test_y', 'FAILED (failures=1)'], failing: 'tests/test_x.py::test_y' },
+  { shape: 'cross mark', lines: ['✓ fine', '✗ drops the trailing slash (3 ms)'], failing: 'drops the trailing slash' },
+];
+
+for (const row of GATE_SHAPES) {
+  test(`t2325: the gate names the failing tests of a ${row.shape} run`, async () => {
+    SUITE_STUBS[`t2325 ${row.shape}`] = `${row.lines.map((l) => `console.log(${JSON.stringify(l)});\n`).join('')}`
+      + 'console.log("TOTALS: 3 pass, 1 fail, 4 tests");\nprocess.exit(1);\n';
+    const repo = mkRepo();
+    const f = mkLoop({ repo, suite: `t2325 ${row.shape}` });
+
+    const r = await f.m._runTicketSuite(f.team, f.one());
+
+    assert.strictEqual(r.ran, true, 'ENTER: the run produced a summary');
+    assert.strictEqual(r.green, false, 'ENTER: and it is the red arm');
+    assert.ok(r.failing.length > 0, 'ENTER: a name was read');
+    assert.strictEqual(r.failing, row.failing);
+  });
+}

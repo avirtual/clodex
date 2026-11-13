@@ -40,8 +40,13 @@ test('a runner built from the doc\'s TOTALS sentence satisfies the loop\'s parse
   assert.ok(Number(tests) > 0);
 });
 
-test('the doc\'s failure-line shape matches the loop\'s ✖ parser', () => {
+test('the doc\'s failure-line shapes are the ones the loop\'s parser reads', () => {
   assert.ok(DOC.includes('`✖ <test name> (<n>ms)`'));
-  assert.ok(SRC.includes('/^ *✖ (.+?) \\(\\d+(?:\\.\\d+)?ms\\)\\s*$/'));
-  assert.ok(/^ *✖ (.+?) \(\d+(?:\.\d+)?ms\)\s*$/.test('✖ the thing (3ms)'));
+  assert.ok(SRC.includes("const { localHalf, failingNames } = require('./suite-client');"));
+  assert.ok(SRC.includes('const names = failingNames(text);'));
+  const { failingNames } = require('../suite-client');
+  const docShapes = [...DOC.matchAll(/`((?:✖|not ok|FAIL|FAILED:|✗) [^`]*<test name>[^`]*)`/g)].map((m) => m[1]);
+  assert.deepStrictEqual(docShapes, ['✖ <test name> (<n>ms)', 'not ok <n> - <test name>', 'FAIL <test name>', 'FAILED: <test name>', '✗ <test name>']);
+  assert.deepStrictEqual(failingNames('✖ the thing (3ms)\nnot ok 2 - tap one\nFAIL plain one\nFAILED: colon one\n✗ cross one'),
+    ['the thing', 'tap one', 'plain one', 'colon one', 'cross one']);
 });
