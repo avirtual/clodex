@@ -85,9 +85,10 @@ const RESOURCES = [
   { name: 'catalogs', singular: 'catalogs', scope: 'node', verbs: ['get'] },
   { name: 'node/logs', singular: 'node/logs', scope: 'node', verbs: ['get'] },
   { name: 'offers', singular: 'offers', scope: 'node', verbs: ['list'] },
+  { name: 'testjobs', singular: 'testjobs', scope: 'node', verbs: ['list'] },
 ];
 
-const RESOURCES_VERSION = 5;
+const RESOURCES_VERSION = 6;
 
 const RESOURCE_CALLBACK = {
   'node/logs': '_nodeLogFile',
@@ -101,6 +102,7 @@ const RESOURCE_CALLBACK = {
   worktrees: '_listWorktrees',
   catalogs: '_getCatalogs',
   offers: '_listOffers',
+  testjobs: '_listTestjobs',
 };
 
 const SUBRESOURCE_CALLBACK = {
@@ -182,7 +184,7 @@ class RemoteServer {
                 getSkillCatalog, setSessionSkills,
                 listSleepers, getSleeper, sleepSession, wakeSession, exportMemory,
                 getProfile, setProfile, deleteProfile,
-                deliverDm, claimDms, listDmOrigins, receiveRoster, offerFor, receiveOffers, listOffers, noteDialer,
+                deliverDm, claimDms, listDmOrigins, receiveRoster, offerFor, receiveOffers, listOffers, listTestjobs, noteDialer,
                 notifications, openRequests, replyNote,
                 wtermOpen, wtermInput, wtermResize, wtermClose, onWtermStreams,
                 suiteRunner, suiteRunnerError, suiteDesk, suiteToken, token, insecure }) {
@@ -257,6 +259,7 @@ class RemoteServer {
     this._offerFor = offerFor || null;
     this._receiveOffers = receiveOffers || null;
     this._listOffers = listOffers || null;
+    this._listTestjobs = listTestjobs || null;
     this._noteDialer = noteDialer || null;
     this._notifications = notifications || null;
     this._openRequests = openRequests || null;
@@ -1640,6 +1643,16 @@ class RemoteServer {
       try { listed = this._listOffers() || {}; } catch (e) { return this._json(res, 500, { ok: false, error: e.message }); }
       const { own = null, offers = [] } = listed;
       return this._json(res, 200, { ok: true, own, offers });
+    }
+    if (req.method === 'GET' && p === '/api/testjobs') {
+      if (!this._listTestjobs) return this._json(res, 501, { ok: false, error: 'testjobs not available' });
+      return Promise.resolve()
+        .then(() => this._listTestjobs())
+        .then((got) => {
+          const { enabled = false, snapshot = null } = got || {};
+          return this._json(res, 200, { ok: true, enabled: !!enabled, snapshot });
+        })
+        .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
     }
     if (req.method === 'GET' && p === '/api/peers') {
       if (!this._listPeers) return this._json(res, 501, { ok: false, error: 'peers not available' });

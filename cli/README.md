@@ -308,6 +308,7 @@ adds the bracketed columns; `-o name` prints `<singular>/<id>` per line.
 | `docs` | NAME SECTION TITLE (`-q TERMS` searches: NAME HEADING SNIPPET) | `describe doc <name> [--section <slug>]` — the page, raw markdown |
 | `worktrees` | PATH BRANCH HEAD [MAIN, DETACHED, LOCKED, PRUNABLE] | none — list only, `--repo DIR` required |
 | `catalogs` | a labeled block (a singleton, no rows) | `describe catalogs` |
+| `testjobs` | a slots and box line, then STATE TEAM TICKET KIND ISOLATION IMAGE AGE PASS/FAIL: running, waiting, then recent | none — list only |
 
 `docs` is the **help corpus** — the same pages the desktop Help window shows,
 served as raw markdown. `get docs -q "park resend"` searches it; `--section
@@ -357,6 +358,7 @@ Read (all but `describe` — except `describe session` — support `-o json` —
 | `get worktrees --repo DIR` | `GET /api/resources` → `GET /api/worktrees?repo=` (DIR is resolved to an absolute path client-side) |
 | `get catalogs` | `GET /api/catalogs` |
 | `get offers` | `GET /api/resources` → `GET /api/offers` (this node's own offer as `self`, then the directory rows) |
+| `get testjobs` | `GET /api/resources` → `GET /api/testjobs` (operator token only; a suite token gets 403) |
 | `describe <singular> <name>` / `describe catalogs` | the same routes, `/:name` for a single object, rendered as a labeled block (no `-o json`) |
 | `get nodes [--current]` | none — the local nodes file; `--current` prints the current node name alone (exit `5` when none) |
 | `get nodes --versions` | the local nodes file, then `GET /api/peer/hello` on every node (4 at a time, 10 s each) for the VERSION column |

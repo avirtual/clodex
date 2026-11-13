@@ -123,6 +123,54 @@ function renderOffers(body) {
   return table(['SOURCE', 'PEER', 'BOXES', 'OPEN', 'OS/ARCH', 'CPUS', 'MEMORY', 'RUNTIME'], rows);
 }
 
+function fmtSpan(ms) {
+  const s = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h) return `${h}h${String(m).padStart(2, '0')}m`;
+  if (m) return `${m}m${String(sec).padStart(2, '0')}s`;
+  return `${sec}s`;
+}
+
+function testjobsBoxText(box) {
+  const b = box || {};
+  if (b.state === 'ready') return `box image ${b.image || '?'}`;
+  if (b.state === 'held') return `box held: ${b.why || ''}`;
+  if (b.state === 'unavailable') return `box unavailable: ${b.why || ''}`;
+  if (b.state === 'labels-only') return 'no default box image';
+  return 'no box configured';
+}
+
+function testjobCells(job, state, age, passFail) {
+  return [
+    state, job.team || '-', job.ticket || job.id || '-', job.kind || '-',
+    job.isolation || '-', job.image || '-', age, passFail,
+  ];
+}
+
+function renderTestjobs(body) {
+  const b = body || {};
+  if (!b.enabled) return 'test runner: off on this node';
+  const snap = b.snapshot;
+  if (!snap) return 'test runner: on, not started on this node';
+  const at = Number(snap.at) || 0;
+  const slots = snap.slots || {};
+  const live = (job) => {
+    const since = job.startedAt != null ? job.startedAt : job.queuedAt;
+    return testjobCells(job, job.phase || '-', fmtSpan(at - since), '');
+  };
+  const rows = [
+    ...(snap.running || []).map(live),
+    ...(snap.waiting || []).map(live),
+    ...(snap.recent || []).map((job) => testjobCells(
+      job, job.outcome || '-', job.runMs != null ? fmtSpan(job.runMs) : '-',
+      job.pass != null ? `${job.pass}/${job.fail}` : '-')),
+  ];
+  const head = `slots ${slots.inUse == null ? '?' : slots.inUse}/${slots.total == null ? '?' : slots.total} in use, ${testjobsBoxText(snap.box)}`;
+  return `${head}\n${table(['STATE', 'TEAM', 'TICKET', 'KIND', 'ISOLATION', 'IMAGE', 'AGE', 'PASS/FAIL'], rows)}`;
+}
+
 function renderAgents(agents) {
   const rows = (agents || []).map((a) => [a.name || '', a.model || '', a.description || '']);
   return table(['NAME', 'MODEL', 'DESCRIPTION'], rows);
@@ -320,7 +368,7 @@ function makePrinter(write = (s) => process.stdout.write(s)) {
 
 module.exports = {
   jsonLine, stripAnsi, ANSI_RE, renderSessions, renderSessionsWide, renderNames, renderWorkspaces,
-  renderPeers, renderPeersWide, renderTeams, renderTickets, renderTicketsWide, renderSandboxes, renderOffers,
+  renderPeers, renderPeersWide, renderTeams, renderTickets, renderTicketsWide, renderSandboxes, renderOffers, renderTestjobs,
   renderAgents, renderAgentsWide, renderDocs, renderDocHits, renderWorktrees, renderWorktreesWide,
   renderResources, renderDescribe, renderProfile,
   describeSession, describePeer, describeTeam, describeSandbox, describeAgent, describeDoc,

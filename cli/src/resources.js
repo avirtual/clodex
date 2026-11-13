@@ -15,6 +15,7 @@ const TABLE = [
   { plural: 'worktrees', singular: 'worktree' },
   { plural: 'catalogs', singular: 'catalogs' },
   { plural: 'offers', singular: 'offers' },
+  { plural: 'testjobs', singular: 'testjobs' },
 ];
 
 const SPELLINGS = new Map();

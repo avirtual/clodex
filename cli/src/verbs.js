@@ -55,6 +55,10 @@ async function get({ client, ctx, printer, flags, args, io = {} }) {
     if (target.name) throw new CliError(EXIT.USAGE, 'get offers takes no name');
     return getOffers({ client, printer, flags, label });
   }
+  if (target.resource === 'testjobs') {
+    if (target.name) throw new CliError(EXIT.USAGE, 'get testjobs takes no name');
+    return getTestjobs({ client, printer, flags, label });
+  }
   throw new CliError(EXIT.USAGE, `get ${target.plural} is not supported (try: describe ${target.singular} <name>)`);
 }
 
@@ -218,6 +222,13 @@ async function getOffers({ client, printer, flags, label }) {
   printer.line(out.renderOffers(body));
 }
 
+async function getTestjobs({ client, printer, flags, label }) {
+  await R.requireResource(client, 'testjobs', 'list', label);
+  const body = await client.get('/api/testjobs', 'get testjobs');
+  if (flags.json) { printer.json(body); return; }
+  printer.line(out.renderTestjobs(body));
+}
+
 async function describe({ client, ctx, printer, flags, args }) {
   const target = R.parseTarget(args, 'describe');
   if (target.resource === 'nodes') throw new CliError(EXIT.USAGE, NODE_IS_LOCAL);
@@ -229,6 +240,7 @@ async function describe({ client, ctx, printer, flags, args }) {
     return;
   }
   if (target.resource === 'offers') throw new CliError(EXIT.USAGE, 'describe offers is not supported (try: get offers)');
+  if (target.resource === 'testjobs') throw new CliError(EXIT.USAGE, 'describe testjobs is not supported (try: get testjobs)');
   if (target.resource === 'sessions') {
     const name = requireName(target.name, 'describe session');
     await R.requireResource(client, 'sessions', 'get', label, 'describe');

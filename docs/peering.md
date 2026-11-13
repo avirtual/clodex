@@ -532,6 +532,11 @@ never a duration, so they cannot go stale; the browser view's menu, read fresh
 on open, shows durations. Test Box Activity… opens a dialog that polls the `suiteRunner:activity` IPC (under
 `enableTestBoxes`, so the browser view of a headless node has it, with the same
 section in its Window menu) every three seconds while open.
+The same `{ enabled, snapshot }` is served on `GET /api/testjobs` as
+`{ ok, enabled, snapshot }` (operator token only: a suite-scoped token gets 403,
+since rows name other teams' tickets; 501 when the host wires no source), and
+`clodexctl get testjobs` prints it as one table, running then waiting then
+recent, under a slots-and-box line.
 
 The job's PATH is a fixed list (`jobPath`), never the node's own:
 `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`, with

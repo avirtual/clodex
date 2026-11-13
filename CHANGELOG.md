@@ -18,6 +18,7 @@ blocks a release.
 - Fixed: a new seat that has not taken a turn no longer shows the unreadable-transcript notice.
 - The merge gate's report names the failing tests for any supported test reporter, not only Clodex's own.
 - `[agent:team runner]` shows the team's box definition instead of `null` on a runner that picks images by label.
+- `clodexctl get testjobs` lists a node's test box jobs: what is running, what is waiting and the most recent results.
 
 ## 5.183.0 — 2026-11-13 — The Window menu shows what a node's test boxes are doing
 
