@@ -1343,7 +1343,7 @@ function labelledBox(over = {}) {
 
 test('one engine runs a job per named box and one naming nothing, each stamped with and run in its own image id', async (t) => {
   const f = await fixture(t, { runnerOver: { box: labelledBox().box } });
-  await f.upload(f.body('job-a', 'hand', NAMED(HASH_A)));
+  assert.strictEqual((await f.upload(f.body('job-a', 'hand', NAMED(HASH_A)))).ok, true);
   const a = await waitState(f.runner, 'job-a', 'done');
   assert.strictEqual((await f.runner.submit(f.body('job-b', 'hand', NAMED(HASH_B, 2)))).state, 'queued');
   const b = await waitState(f.runner, 'job-b', 'done');
@@ -1359,7 +1359,7 @@ test('one engine runs a job per named box and one naming nothing, each stamped w
 
 test('a named box with no image or two images is refused 409 with zero executions while a valid boxImage exists', async (t) => {
   const f = await fixture(t, { runnerOver: { box: labelledBox().box } });
-  await f.upload(f.body('job-a', 'hand', NAMED(HASH_A)));
+  assert.strictEqual((await f.upload(f.body('job-a', 'hand', NAMED(HASH_A)))).ok, true);
   assert.strictEqual((await waitState(f.runner, 'job-a', 'done')).reason, null, 'ENTER: a named box with one image is accepted and runs');
   assert.strictEqual((await f.runner.info()).box.state, 'ready', 'ENTER: the default boxImage is valid');
   assert.deepStrictEqual(await f.runner.submit(f.body('job-none', 'hand', NAMED(HASH_NONE))), {
@@ -1378,7 +1378,7 @@ for (const [name, image, why] of [
 ]) {
   test(`a named box runs in its labelled image with the boxImage ${name}; a job naming nothing is refused`, async (t) => {
     const f = await fixture(t, { runnerOver: { box: labelledBox({ image }).box } });
-    await f.upload(f.body('job-a', 'hand', NAMED(HASH_A)));
+    assert.strictEqual((await f.upload(f.body('job-a', 'hand', NAMED(HASH_A)))).ok, true);
     const a = await waitState(f.runner, 'job-a', 'done');
     assert.deepStrictEqual([a.reason, a.env.box.imageId], [null, IMG_A]);
     assert.deepStrictEqual(await f.runner.submit(f.body('job-d', 'hand', { isolation: 'container' })), { ok: false, status: 503, error: `box unavailable: ${why}` });
@@ -1399,7 +1399,7 @@ test('an image pruned after the job was accepted ends that job box-failed and th
       }
     },
   });
-  await f.upload(f.body('job-a', 'hand', NAMED(HASH_A)));
+  assert.strictEqual((await f.upload(f.body('job-a', 'hand', NAMED(HASH_A)))).ok, true);
   const a = await waitState(f.runner, 'job-a', 'done');
   assert.deepStrictEqual([a.reason, a.exit, a.env.box.imageId], ['box-failed', { code: 125, signal: null }, IMG_A]);
   assert.strictEqual((await f.runner.submit(f.body('job-b', 'hand', NAMED(HASH_B)))).state, 'queued');
