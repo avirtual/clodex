@@ -15,6 +15,7 @@ blocks a release.
 
 - A seat whose transcript cannot be read keeps its view tabs and says so, instead of silently showing only the raw screen.
 - A Claude seat moved to another folder keeps its conversation view: the tab bar no longer disappears after the move.
+- The merge gate's report names the failing tests for any supported test reporter, not only Clodex's own.
 
 ## 5.183.0 — 2026-11-13 — The Window menu shows what a node's test boxes are doing
 
