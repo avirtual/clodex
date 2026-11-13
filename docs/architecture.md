@@ -383,9 +383,11 @@ bundle), whose packaged form is the Docker image under
   Docker cannot confirm an empty list. Not wired yet. `suite-snapshot.js`
   `detachTree` repacks a job tree off its mirror's alternates. In
   SCANNED_MODULES.
+- **suite-activity-view.js** — pure rows from the runner's `activity()` snapshot: `menuRows`
+  (the Window menu Test Boxes section, desktop and browser) and `activityView` (the Test Box Activity dialog).
 - **suite-runner.js** — runner-mode engine for remote suite jobs, plain methods
   served through `suite-dispatch.js` under `/api/suite/*` when remote-wiring builds it (`CLODEX_SUITE_RUNNER=1`). `createSuiteRunner({root, work, isolation,
-  limits, spawn, now, log, timers})` returns `info`, `submit`, `putPack`,
+  limits, spawn, now, log, timers, onActivity})` returns `info`, `activity`, `submit`, `putPack`,
   `commit`, `poll`, `output`, `cancel`, plus `tick`/`start`/`close`. Job records
   and outputs live under `<root>/suite-runner/jobs/<id>/` (never `run/`);
   mirrors, deps cache entries and job trees under `<work>`. One slot, queue
