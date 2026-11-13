@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The Window menu has a Test Boxes section on a node that runs tests for others: the job running in each box and the jobs waiting, with how long each has run or waited. Test Box Activity… opens the full view with the last ten finished jobs.
+
 ## 5.182.0 — 2026-11-13 — One runner node serves several teams' box images; shadow comparisons name failing tests for any reporter
 
 - A test-runner node can serve several teams' box images at once: a team's job names its box definition, and the runner uses the local image labelled `clodex.box=<definition hash>`. `[agent:team box show]` prints the build line with that label. A job naming a definition with no matching image, or with more than one, is refused. A runner with no Box image set serves these named jobs too; a job naming no definition still needs the Box image.

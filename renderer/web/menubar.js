@@ -20,6 +20,8 @@
 // This module is browser-ONLY: never loaded by the Electron renderer, bundled
 // only by build/build-web.js.
 
+const { menuRows: testBoxMenuRows } = require('../../suite-activity-view');
+
 const BAR_H = 30; // px — kept in sync with the .has-web-menubar offset in styles.css
 
 const FOLD_AT = 16;
@@ -160,9 +162,10 @@ function buildMenus(ctx) {
             return p.sessions.map((s) => ({ label: s.name, run: () => emit('request-open-peer-session', p.id, s.name) }));
           },
         });
-        const [allStatuses, boxes] = await Promise.all([
+        const [allStatuses, boxes, testBoxes] = await Promise.all([
           Promise.resolve(api.peerList ? api.peerList() : []).catch(() => []),
           Promise.resolve(api.sandboxListBoxes ? api.sandboxListBoxes() : []).catch(() => []),
+          Promise.resolve(api.suiteRunnerActivity ? api.suiteRunnerActivity() : null).catch(() => null),
         ]);
         const boxIds = new Set((boxes || []).map((b) => b && b.id).filter(Boolean));
         const peers = (allStatuses || []).filter((p) => !boxIds.has(p.id));
@@ -180,6 +183,13 @@ function buildMenus(ctx) {
           for (const b of boxList) rows.push(peerRow(b));
         }
         rows.push({ label: 'Manage Clodex Sandboxes…', run: () => emit('request-open-sandbox-dialog') });
+        const testBoxRows = testBoxMenuRows(testBoxes, Date.now());
+        if (testBoxRows.length) rows.push({ sep: true });
+        for (const row of testBoxRows) {
+          if (row.kind === 'head') rows.push({ head: row.label });
+          else if (row.kind === 'open') rows.push({ label: row.label, run: () => emit('request-open-test-activity') });
+          else rows.push({ label: row.label, disabled: true });
+        }
         return rows;
       },
     },

@@ -180,7 +180,8 @@ them.
   named from its per-page items), `request-toggle-raw-terminal` (View ▸ Raw
   terminal; the active seat's transcript pane toggles off and on),
   `request-open-discovery`, `request-open-plugins-dialog`,
-  `request-open-sandbox-dialog`.
+  `request-open-sandbox-dialog`, `request-open-test-activity` (Window ▸ Test Box Activity…;
+  the browser menu bar emits it in-page).
   - `request-open-prompts-drawer` — library `{ kind, name }`, plugin `{ plugin, kind, name }`, team `{ team, kind, name }`, `:new`, or `null` (Manage).
   - `request-open-templates-drawer` — library the template id (or name), plugin `{ plugin, name }`, team `{ team, name }`, `:new`, or `null`.
   - `request-open-agents-drawer` — library a bare name, plugin `{ plugin, name }`, `:new`, or `null`.

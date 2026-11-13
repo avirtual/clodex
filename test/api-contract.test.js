@@ -86,7 +86,7 @@ const PINNED_NAMES = [
   // The peer-terminal grant (t219). UNGATED, unlike the peer:wterm* channels
   // below: this writes a setting on THIS box, it does not open a shell.
   'peerSetShellAllowed',
-  'suiteRunnerGet', 'suiteRunnerSet', 'offerGet', 'offerSet', 'offerDirectory', 'onOffersChanged',
+  'suiteRunnerGet', 'suiteRunnerSet', 'suiteRunnerActivity', 'onRequestOpenTestActivity', 'offerGet', 'offerSet', 'offerDirectory', 'onOffersChanged',
   'peerControlledNames', 'peerForgetControlled', 'peerVisible', 'peerSetVisible',
   'peerVisibleAdd', 'peerVisibleRemove', 'onPeerVisible',
   'peerControl', 'peerResize', 'peerInput', 'peerQuery',

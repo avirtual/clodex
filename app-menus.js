@@ -19,6 +19,7 @@ const { app, BrowserWindow, Menu, Tray, dialog, shell, nativeImage } = require('
 const os = require('os');
 const fs = require('fs');
 const { categoryMenu } = require('./library-menu-shape');
+const { menuRows: testBoxMenuRows } = require('./suite-activity-view');
 
 const CLODEX_REPO_URL = 'https://github.com/avirtual/clodex';
 const CLODEX_PLUGINS_REPO_URL = 'https://github.com/avirtual/clodex-plugins';
@@ -132,7 +133,7 @@ function createAppMenus(deps) {
     DEFAULT_WORKSPACE_ID, LOG_FILE, THEME_KEYS, path,
     checkForUpdate, confirmRestartClodex, createWindow,
     // getter deps (TDZ / whenReady-assigned when this factory runs)
-    getManager, getPeerManager, getSandboxManager, getUpdateInfo,
+    getManager, getPeerManager, getSandboxManager, getSuiteActivity, getUpdateInfo,
     getUiSettings, getWorkspaces, getAgentLibrary, getSkillLibrary, getEnvScopes,
     getPromptLibrary, getTemplates, getExecLibrary, getMcpLibrary, getPluginUpdates, getHelpCorpus,
     // The plugin host (T5) — null under CLODEX_PLUGINS=0 or a failed
@@ -1084,6 +1085,12 @@ function createAppMenus(deps) {
         label: 'Manage Clodex Sandboxes…',
         click: () => sendToFocused('request-open-sandbox-dialog'),
       });
+      const testBoxRows = testBoxMenuRows(typeof getSuiteActivity === 'function' ? getSuiteActivity() : null, Date.now());
+      if (testBoxRows.length) wsMenu.submenu.push({ type: 'separator' });
+      for (const row of testBoxRows) {
+        if (row.kind === 'open') wsMenu.submenu.push({ label: row.label, click: () => sendToFocused('request-open-test-activity') });
+        else wsMenu.submenu.push({ label: row.label, enabled: false });
+      }
     }
 
     Menu.setApplicationMenu(Menu.buildFromTemplate(template));

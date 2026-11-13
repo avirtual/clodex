@@ -162,7 +162,7 @@ function offerCallbacks({ getBoxOffer, getOfferFacts, offerDirectory, dialers, o
   };
 }
 
-function startSuiteRunner(opts, { log, load = () => require('./suite-runner'), loadBox = () => require('./suite-box') }) {
+function startSuiteRunner(opts, { log, onActivity = null, load =() => require('./suite-runner'), loadBox = () => require('./suite-box') }) {
   try {
     const { createSuiteRunner, noneIsolation, userIsolation, statePaths } = load();
     const { forced, boxImage, ...runnerOpts } = opts;
@@ -172,6 +172,7 @@ function startSuiteRunner(opts, { log, load = () => require('./suite-runner'), l
       isolation: opts.isolation === 'none' ? noneIsolation() : userIsolation(),
       box: docker,
       log: (m) => log.warn('suite-runner', m),
+      ...(onActivity ? { onActivity } : {}),
     });
     runner.start();
     return { runner, error: null };
@@ -211,6 +212,7 @@ function createRemoteWiring(deps) {
     getBoxOffer, getOfferFacts, offerDirectory, dialers,
     suiteDesk,
     thumbnail,
+    onSuiteActivity = () => {},
   } = deps;
   const thumbPage = createThumbnailer(thumbnail, log);
 
@@ -1414,10 +1416,40 @@ function createRemoteWiring(deps) {
     suiteRunner = null;
     const opts = suiteRunnerOptions(process.env, REGISTRY_DIR, { setting: getUiSettings().get().suiteRunner });
     if (!opts) return null;
-    const started = startSuiteRunner(opts, { log });
+    const started = startSuiteRunner(opts, { log, onActivity: () => refreshActivity() });
     suiteRunner = started.runner;
     suiteRunnerError = started.error;
+    refreshActivity();
     return suiteRunner;
+  }
+
+  let activitySnap = null;
+  function refreshActivity() {
+    const runner = suiteRunner;
+    if (!runner || typeof runner.activity !== 'function') return;
+    runner.activity().then((snap) => {
+      if (suiteRunner !== runner) return;
+      activitySnap = snap;
+      onSuiteActivity();
+    }, (e) => log.warn('suite-runner', `activity snapshot failed: ${e.message}`));
+  }
+
+  function dropActivity() {
+    activitySnap = null;
+    onSuiteActivity();
+  }
+
+  function suiteRunnerWanted() {
+    return !!suiteRunnerOptions(process.env, REGISTRY_DIR, { setting: getUiSettings().get().suiteRunner });
+  }
+
+  function suiteActivityNow() {
+    return { enabled: suiteRunnerWanted(), snapshot: suiteRunner ? activitySnap : null };
+  }
+
+  async function suiteActivity() {
+    const runner = closed ? null : suiteRunner;
+    return { enabled: suiteRunnerWanted(), snapshot: runner && typeof runner.activity === 'function' ? await runner.activity() : null };
   }
 
   function suiteRunnerState() {
@@ -1452,12 +1484,14 @@ function createRemoteWiring(deps) {
     if (suiteRunner) suiteRunner.close();
     suiteRunner = undefined;
     suiteRunnerError = null;
+    dropActivity();
     refreshRemoteToken();
   }
 
   function shutdownRemoteServer() {
     closed = true;
     if (suiteRunner) suiteRunner.close();
+    activitySnap = null;
     resyncWanted = false;
     tokenRefreshWanted = false;
     if (getRemoteServer()) { getRemoteServer().stop(); setRemoteServer(null); }
@@ -1465,7 +1499,8 @@ function createRemoteWiring(deps) {
 
   return {
     syncRemoteServer, refreshRemoteToken, shutdownRemoteServer, suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner,
-    getSuiteEngine: () => (closed ? null : getSuiteRunner()),
+    suiteActivity, suiteActivityNow,
+    getSuiteEngine:() => (closed ? null : getSuiteRunner()),
   };
 }
 

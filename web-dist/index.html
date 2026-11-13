@@ -10104,6 +10104,47 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
 #prefs-box-offer-claims.hidden {
   display: none;
 }
+#test-activity-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--scrim);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+#test-activity-overlay.hidden {
+  display: none;
+}
+#test-activity-dialog {
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xl);
+  padding: var(--sp-5);
+  box-shadow: var(--shadow-overlay);
+  width: 680px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+}
+#test-activity-dialog .dialog-head h3 {
+  margin: 0;
+}
+#test-activity-dialog .hint-text {
+  display: block;
+  margin-bottom: 8px;
+}
+#test-activity-dialog h5 {
+  margin: 14px 0 6px;
+}
+#test-activity-recent-wrap {
+  margin-top: 14px;
+}
+.test-activity-row {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  padding: 2px 0;
+}
 
 /* renderer/web/app.css */
 /*! Bundled license information:
@@ -11693,6 +11734,23 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
     </div>
   </div>
 
+  <div id="test-activity-overlay" class="hidden">
+    <div id="test-activity-dialog">
+      <div class="dialog-head">
+        <h3>Test Box Activity</h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
+      <span id="test-activity-summary" class="hint-text"></span>
+      <span id="test-activity-box" class="hint-text"></span>
+      <h5>Running and waiting</h5>
+      <div id="test-activity-live"></div>
+      <details id="test-activity-recent-wrap">
+        <summary>Last ten finished</summary>
+        <div id="test-activity-recent"></div>
+      </details>
+    </div>
+  </div>
+
   <!-- Managed Docker sandboxes: N local containers, each run as its own peer -->
   <div id="sandbox-overlay" class="hidden">
     <div id="sandbox-dialog">
@@ -12167,6 +12225,8 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "peerSetShellAllowed", kind: "invoke", channel: "peer:setShellAllowed" },
         { name: "suiteRunnerGet", kind: "invoke", channel: "suiteRunner:get" },
         { name: "suiteRunnerSet", kind: "invoke", channel: "suiteRunner:set" },
+        { name: "suiteRunnerActivity", kind: "invoke", channel: "suiteRunner:activity" },
+        { name: "onRequestOpenTestActivity", kind: "on", channel: "request-open-test-activity" },
         { name: "offerGet", kind: "invoke", channel: "offer:get" },
         { name: "offerSet", kind: "invoke", channel: "offer:set" },
         { name: "offerDirectory", kind: "invoke", channel: "offer:directory" },
@@ -12886,10 +12946,89 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
     }
   });
 
+  // suite-activity-view.js
+  var require_suite_activity_view = __commonJS({
+    "suite-activity-view.js"(exports, module) {
+      "use strict";
+      var MENU_JOB_ROWS = 8;
+      var KIND_LABELS = { verify: "verify", "post-merge": "post-merge", hand: "own run" };
+      var EMPTY_TEXT = "No test jobs right now";
+      var OFF_TEXT = "The test runner is off on this machine.";
+      function fmtSpan(ms) {
+        const s = Math.max(0, Math.floor((Number(ms) || 0) / 1e3));
+        const h = Math.floor(s / 3600);
+        const m = Math.floor(s % 3600 / 60);
+        const sec = s % 60;
+        if (h) return `${h}h${String(m).padStart(2, "0")}m`;
+        if (m) return `${m}m${String(sec).padStart(2, "0")}s`;
+        return `${sec}s`;
+      }
+      function jobHead(job) {
+        return [
+          job.team || "\u2014",
+          job.ticket || job.id,
+          KIND_LABELS[job.kind] || job.kind,
+          job.isolation === "container" ? "box" : "native"
+        ].join(" \xB7 ");
+      }
+      function liveLine(job, at) {
+        if (job.startedAt != null) return `${jobHead(job)} \xB7 ${job.phase === "setup" ? "setting up" : "running"} ${fmtSpan(at - job.startedAt)}`;
+        return `${jobHead(job)} \xB7 ${job.phase === "upload" ? "uploading" : "waiting"} ${fmtSpan(at - job.queuedAt)}`;
+      }
+      function outcomeText(job) {
+        if (job.pass != null) return `${job.outcome} (${job.pass} pass, ${job.fail} fail)`;
+        return job.outcome;
+      }
+      function recentLine(job) {
+        const ran = job.runMs != null ? `ran ${fmtSpan(job.runMs)}` : "did not start";
+        return `${jobHead(job)} \xB7 ${outcomeText(job)} \xB7 waited ${fmtSpan(job.waitMs)} \xB7 ${ran}`;
+      }
+      function summaryLine(snap) {
+        if (!snap || !snap.running.length && !snap.waiting.length) return "idle";
+        return `${snap.slots.inUse} of ${snap.slots.total} in use \xB7 ${snap.waiting.length} waiting`;
+      }
+      function boxText(box) {
+        if (!box) return null;
+        if (box.state === "held") return `Box held: ${box.why}`;
+        if (box.state === "unavailable") return `Box unavailable: ${box.why}`;
+        if (box.state === "ready") return `Box image ${box.image}`;
+        if (box.state === "labels-only") return "No default box image: only jobs naming a box definition run in a box";
+        return "No box configured: native jobs only";
+      }
+      function menuRows(state, at) {
+        if (!state || !state.enabled) return [];
+        const snap = state.snapshot;
+        const rows = [{ kind: "head", label: "Test Boxes" }, { kind: "info", label: summaryLine(snap) }];
+        const jobs = snap ? [...snap.running, ...snap.waiting] : [];
+        for (const job of jobs.slice(0, MENU_JOB_ROWS)) rows.push({ kind: "info", label: liveLine(job, at) });
+        if (jobs.length > MENU_JOB_ROWS) rows.push({ kind: "info", label: `+${jobs.length - MENU_JOB_ROWS} more` });
+        if (snap && snap.box && (snap.box.state === "held" || snap.box.state === "unavailable")) rows.push({ kind: "info", label: boxText(snap.box) });
+        rows.push({ kind: "open", label: "Test Box Activity\u2026" });
+        return rows;
+      }
+      function activityView(state, at) {
+        if (!state || !state.enabled) return { summary: OFF_TEXT, box: null, running: [], waiting: [], empty: null, recent: [] };
+        const snap = state.snapshot;
+        const running = snap ? snap.running.map((j) => liveLine(j, at)) : [];
+        const waiting = snap ? snap.waiting.map((j) => liveLine(j, at)) : [];
+        return {
+          summary: summaryLine(snap),
+          box: snap ? boxText(snap.box) : null,
+          running,
+          waiting,
+          empty: running.length || waiting.length ? null : EMPTY_TEXT,
+          recent: snap ? snap.recent.map(recentLine) : []
+        };
+      }
+      module.exports = { menuRows, activityView, fmtSpan, MENU_JOB_ROWS };
+    }
+  });
+
   // renderer/web/menubar.js
   var require_menubar = __commonJS({
     "renderer/web/menubar.js"(exports, module) {
       "use strict";
+      var { menuRows: testBoxMenuRows } = require_suite_activity_view();
       var BAR_H = 30;
       var FOLD_AT = 16;
       var CLODEX_REPO_URL = "https://github.com/avirtual/clodex";
@@ -13006,9 +13145,10 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
                   return p.sessions.map((s) => ({ label: s.name, run: () => emit("request-open-peer-session", p.id, s.name) }));
                 }
               });
-              const [allStatuses, boxes] = await Promise.all([
+              const [allStatuses, boxes, testBoxes] = await Promise.all([
                 Promise.resolve(api.peerList ? api.peerList() : []).catch(() => []),
-                Promise.resolve(api.sandboxListBoxes ? api.sandboxListBoxes() : []).catch(() => [])
+                Promise.resolve(api.sandboxListBoxes ? api.sandboxListBoxes() : []).catch(() => []),
+                Promise.resolve(api.suiteRunnerActivity ? api.suiteRunnerActivity() : null).catch(() => null)
               ]);
               const boxIds = new Set((boxes || []).map((b) => b && b.id).filter(Boolean));
               const peers = (allStatuses || []).filter((p) => !boxIds.has(p.id));
@@ -13026,6 +13166,13 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
                 for (const b of boxList) rows.push(peerRow(b));
               }
               rows.push({ label: "Manage Clodex Sandboxes\u2026", run: () => emit("request-open-sandbox-dialog") });
+              const testBoxRows = testBoxMenuRows(testBoxes, Date.now());
+              if (testBoxRows.length) rows.push({ sep: true });
+              for (const row of testBoxRows) {
+                if (row.kind === "head") rows.push({ head: row.label });
+                else if (row.kind === "open") rows.push({ label: row.label, run: () => emit("request-open-test-activity") });
+                else rows.push({ label: row.label, disabled: true });
+              }
               return rows;
             }
           },
@@ -30027,6 +30174,7 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         "plugins-overlay",
         "peers-overlay",
         "sandbox-overlay",
+        "test-activity-overlay",
         "setup-overlay",
         "report-overlay",
         "help-overlay",
@@ -53363,6 +53511,7 @@ ${detail}` });
       var { parseEnvLines, formatEnvLines } = require_env_edit();
       var { envRowView, buildEnvRow } = require_env_row();
       var { envLockView, applyEnvLock, patchUnlessEnvLocked } = require_env_lock();
+      var { activityView: testActivityView } = require_suite_activity_view();
       var { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, offerRunnerFrom, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText, suiteRunnerRecordFromForm, claimLines: offerClaimLines } = require_offer_view();
       var { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require_account_select();
       var { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, keyTransportRefusal, modelOptions } = require_account_row();
@@ -59117,6 +59266,7 @@ Click for live activity`;
         ["peers-overlay", () => closePeersDialog()],
         ["plugins-overlay", () => closePluginsDialog()],
         ["sandbox-overlay", () => closeSandboxDialog()],
+        ["test-activity-overlay", () => closeTestActivity()],
         ["prefs-overlay", () => closePrefs()],
         ["args-overlay", () => closeArgsDialog()],
         ["peer-session-overlay", () => closePeerSessionDialog()],
@@ -62245,6 +62395,49 @@ ${res.stderr}` : "");
         openSandboxDialog();
       });
       window.api.onRequestOpenSandboxDialog(() => openSandboxDialog());
+      var testActivityOverlay = document.getElementById("test-activity-overlay");
+      var TEST_ACTIVITY_POLL_MS = 3e3;
+      var testActivityTimer = null;
+      function testActivityRow(text) {
+        const row = document.createElement("div");
+        row.className = "test-activity-row";
+        row.textContent = text;
+        return row;
+      }
+      function paintTestActivity(state) {
+        const view = testActivityView(state, Date.now());
+        document.getElementById("test-activity-summary").textContent = view.summary;
+        const box = document.getElementById("test-activity-box");
+        box.textContent = view.box || "";
+        box.style.display = view.box ? "" : "none";
+        const live = [...view.running, ...view.waiting];
+        document.getElementById("test-activity-live").replaceChildren(...view.empty ? [testActivityRow(view.empty)] : live.map(testActivityRow));
+        document.getElementById("test-activity-recent").replaceChildren(...(view.recent.length ? view.recent : ["None yet"]).map(testActivityRow));
+      }
+      async function refreshTestActivity() {
+        let state = null;
+        try {
+          state = await window.api.suiteRunnerActivity();
+        } catch {
+          state = null;
+        }
+        if (testActivityOverlay.classList.contains("hidden")) return;
+        paintTestActivity(state);
+      }
+      function openTestActivity() {
+        testActivityOverlay.classList.remove("hidden");
+        refreshTestActivity();
+        if (!testActivityTimer) testActivityTimer = setInterval(refreshTestActivity, TEST_ACTIVITY_POLL_MS);
+      }
+      function closeTestActivity() {
+        testActivityOverlay.classList.add("hidden");
+        if (testActivityTimer) clearInterval(testActivityTimer);
+        testActivityTimer = null;
+      }
+      testActivityOverlay.addEventListener("mousedown", (e) => {
+        if (e.target === testActivityOverlay) closeTestActivity();
+      });
+      window.api.onRequestOpenTestActivity(() => openTestActivity());
       window.api.onRequestOpenPeerSession((id, name) => openPeerSession(id, name));
       var PREFS_OPEN_KEY = "clodex-prefs-open";
       function prefsGroups() {
