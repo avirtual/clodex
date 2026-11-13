@@ -6221,7 +6221,9 @@ body.web-frontend #sidebar-header {
 .transcript-help-btn, .transcript-terminal-btn { height: auto; font: inherit; color: var(--text-tertiary); background: transparent; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0 var(--sp-2); cursor: pointer; }
 .transcript-help-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 .transcript-pane[data-raw] { height: auto; overflow: hidden; }
-.transcript-pane[data-raw] > :not(.transcript-bar) { display: none; }
+.transcript-pane[data-raw] > :not(.transcript-bar):not(.transcript-unread) { display: none; }
+.transcript-unread { color: var(--text-secondary); font-size: var(--fs-sm); padding: var(--sp-1) 0; }
+.transcript-unread[hidden] { display: none; }
 
 .tr-box { margin: 0; }
 .tr-box-head {

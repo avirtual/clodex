@@ -9,6 +9,9 @@ const { createPaintDelta, mergeByTs, isBusyScreen, blockText } = require('./lib/
 const { readStatusRows } = require('./lib/status-rows');
 
 const TRANSCRIPT_PULL_MS = 1000;
+const UNREAD_GRACE_MS = 15000;
+const UNREAD_REASONS = new Set(['unavailable', 'unreadable']);
+const UNREAD_TEXT = 'The transcript for this seat cannot be read (no transcript file yet, or its link is missing or broken).';
 const PAINT_TAG_MS = 10000;
 const PAINT_PLATFORMS = new Set(['codex', 'muse']);
 const views = new WeakMap();
@@ -180,6 +183,14 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     if (raw) setRawView(false);
     onMode(next);
   }, { onHelp, onTerminal: onTerminal || (() => setRawView(!raw)) });
+  const noticeEl = document.createElement('div');
+  noticeEl.className = 'transcript-unread';
+  noticeEl.textContent = UNREAD_TEXT;
+  noticeEl.hidden = true;
+  paneEl.appendChild(noticeEl);
+  const createdAt = now();
+  let unread = false;
+  const noticeOn = () => unread && !raw && isEligible() && now() - createdAt >= UNREAD_GRACE_MS;
   const menuEl = menuMirror ? document.createElement('div') : null;
   if (menuEl) {
     menuEl.className = 'seat-slash-menu seat-slash-menu-pty';
@@ -243,7 +254,9 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       pulling = false;
       if (disposed) return;
       const was = available;
+      const shown = noticeOn();
       available = !!(res && res.ok);
+      unread = !available && !!res && UNREAD_REASONS.has(res.reason);
       if (available && res.rev !== rev) {
         rev = res.rev;
         fileRecords = Array.isArray(res.records) ? res.records : [];
@@ -251,6 +264,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
         paint();
         evaluate();
       } else if (available !== was) evaluate();
+      if (noticeOn() !== shown) layout();
     }).catch(() => { pulling = false; });
   }
 
@@ -429,7 +443,8 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       wrapperEl.classList.remove('live-sheet');
       paneEl.hidden = true;
       if (composerEl) showComposer(false);
-      showRawBar(raw && isEligible());
+      const notice = noticeOn();
+      showRawBar((raw && isEligible()) || notice, notice);
       return;
     }
     showRawBar(false);
@@ -523,6 +538,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     lastPull = 0;
     pull();
   }) : null;
+  const graceTimer = setTimeout(() => { if (!disposed && unread) layout(); }, UNREAD_GRACE_MS);
   const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(() => layout()) : null;
   if (ro) ro.observe(wrapperEl);
   if (ro && composerEl) ro.observe(composerEl);
@@ -540,7 +556,8 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     if (layouts === before) layout();
   }
 
-  function showRawBar(on) {
+  function showRawBar(on, notice = false) {
+    noticeEl.hidden = !notice;
     if (on) {
       paneEl.dataset.raw = '1';
       wrapperEl.classList.add('live-raw');
@@ -593,6 +610,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     dispose() {
       disposed = true;
       clearTimeout(wakeTimer);
+      clearTimeout(graceTimer);
       dropPaint();
       for (const d of subs) { try { d.dispose(); } catch {} }
       if (typeof unsubTranscript === 'function') unsubTranscript();
@@ -608,4 +626,4 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
   };
 }
 
-module.exports = { TRANSCRIPT_PULL_MS, transcriptRowsFor, renderTranscript, renderMenuMirror, renderStatusChips, modeBar, createLiveSplitView };
+module.exports = { TRANSCRIPT_PULL_MS, UNREAD_GRACE_MS, UNREAD_TEXT, transcriptRowsFor, renderTranscript, renderMenuMirror, renderStatusChips, modeBar, createLiveSplitView };
