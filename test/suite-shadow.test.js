@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { mkTmpRoot } = require('./lib/tmp-roots');
-const { createSuiteClient, localHalf } = require('../suite-client');
+const { createSuiteClient, localHalf, failingNames } = require('../suite-client');
 
 const TREE = 'a'.repeat(40);
 const TREE2 = 'd'.repeat(40);
@@ -78,6 +78,10 @@ const RECORD_ROWS = [
     RECORD(LOCAL({ outcome: 'fail', pass: 4, fail: 1, failing: ['alpha'] }), REMOTE({ outcome: 'fail', pass: 4, fail: 1, failing: ['beta'] }), false)],
   ['a remote unknown', { refuse: true }, { code: 0, stdout: GREEN },
     RECORD(LOCAL(), REMOTE({ outcome: 'unknown', reason: 'runner refused the job: nope', pass: null, fail: null, tests: null, queueMs: null, runMs: null }), false)],
+  ['three failures neither runner named', { stdout: 'TOTALS: 2 pass, 3 fail, 5 tests\n', code: 1 }, { code: 1, stdout: 'TOTALS: 2 pass, 3 fail, 5 tests\n' },
+    { ...RECORD(LOCAL({ outcome: 'fail', pass: 2, fail: 3 }), REMOTE({ outcome: 'fail', pass: 2, fail: 3 }), true), names: 'unknown' }],
+  ['one failure named locally and unnamed remotely', { stdout: 'TOTALS: 4 pass, 1 fail, 5 tests\n', code: 1 }, { code: 1, stdout: RED_A },
+    { ...RECORD(LOCAL({ outcome: 'fail', pass: 4, fail: 1, failing: ['alpha'] }), REMOTE({ outcome: 'fail', pass: 4, fail: 1 }), true), names: 'unknown' }],
 ];
 
 for (const [name, remote, local, want] of RECORD_ROWS) {
@@ -91,6 +95,54 @@ for (const [name, remote, local, want] of RECORD_ROWS) {
     assert.deepStrictEqual(f.records(), [want]);
   });
 }
+
+const FAIL_LINE_ROWS = [
+  [' ✖ alpha (1.5ms)', 'alpha'],
+  ['✖ beta gamma (12ms)', 'beta gamma'],
+  ['not ok 3 - tap name', 'tap name'],
+  ['    not ok 12 nested tap', 'nested tap'],
+  ['not ok 4 - timed tap (7ms)', 'timed tap'],
+  ['FAIL test/a.test.js :: does a thing', 'test/a.test.js :: does a thing'],
+  ['  FAIL src/b.test.js (2.3 s)', 'src/b.test.js'],
+  ['FAILED tests/c.py::test_x - AssertionError', 'tests/c.py::test_x - AssertionError'],
+  ['FAIL: test_y (pkg.Case)', 'test_y (pkg.Case)'],
+  ['  ✗ crossed name (40ms)', 'crossed name'],
+  ['FAILED (11):', null],
+  ['FAILED (failures=2)', null],
+  ['# fail 3', null],
+  ['ℹ fail 3', null],
+  ['✖ failing tests:', null],
+  ['failing tests:', null],
+  ['not ok 5 - pending # TODO later', null],
+  ['ok 6 - fine', null],
+  ['     -> mariadb-install-db / mariadbd / mariadb not installed', null],
+  ['TOTALS: 7870 pass, 11 fail, 7881 tests', null],
+  ['FAILURES', null],
+];
+
+for (const [line, want] of FAIL_LINE_ROWS) {
+  test(`failingNames: ${JSON.stringify(line)} names ${want === null ? 'nothing' : JSON.stringify(want)}`, () => {
+    assert.deepStrictEqual(failingNames(line), want === null ? [] : [want]);
+  });
+}
+
+test('failingNames: a FAIL line with its reason, the FAILED summary and TOTALS name exactly the failing test', () => {
+  const stdout = [
+    'FAIL test/v1-create-player.test.js :: throwaway mariadbd from db/schema.rb: create, refuse a second time, log in through v1, no pageList route is 500',
+    '     -> mariadb-install-db / mariadbd / mariadb not installed',
+    'FAILED (11):',
+    'TOTALS: 7870 pass, 11 fail, 7881 tests',
+  ].join('\n');
+  assert.deepStrictEqual(failingNames(stdout), ['test/v1-create-player.test.js :: throwaway mariadbd from db/schema.rb: create, refuse a second time, log in through v1, no pageList route is 500']);
+});
+
+test('failingNames: a repeated name is kept once and the list stops at 200', () => {
+  const lines = ['FAIL dup', 'FAIL dup', ...Array.from({ length: 250 }, (_, i) => `FAIL n${i}`)];
+  const names = failingNames(lines.join('\n'));
+  assert.strictEqual(names.length, 200);
+  assert.deepStrictEqual(names.slice(0, 3), ['dup', 'n0', 'n1']);
+  assert.strictEqual(names[199], 'n198');
+});
 
 const SLOW_RED_STDOUT = [
   '..X..X..',
@@ -180,6 +232,16 @@ test('tally: counts agreements and one-sided failing names under one env key; an
     envKey: 'k1', agree: 1, disagree: 2, skipped: 0, oneSided: [{ side: 'remote', name: 'net test', count: 2 }], platforms: null,
   });
   assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k2' }), { envKey: 'k2', agree: 0, disagree: 0, skipped: 0, oneSided: [], platforms: null });
+});
+
+test('tally: a row whose failing names are unknown counts as agreement and contributes no one-sided names', () => {
+  const client = tallyFile([
+    { ...rec('k1', true, ['alpha'], []), names: 'unknown' },
+    rec('k1', false, [], ['net test']),
+  ]);
+  assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k1' }), {
+    envKey: 'k1', agree: 1, disagree: 1, skipped: 0, oneSided: [{ side: 'remote', name: 'net test', count: 1 }], platforms: null,
+  });
 });
 
 test('t2303: a detached skip row is written as its own kind and is counted as neither agreement nor disagreement', () => {

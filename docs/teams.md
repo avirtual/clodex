@@ -1008,7 +1008,7 @@ runner's current environment key (`envKey`, from its info route), how many
 comparisons agreed and disagreed and the test names that failed on one side
 only, with counts — e.g. `net binds (remote only, 2x)`. A new runner image
 changes `envKey` and starts a new tally. A pair counts as agreeing when the
-outcome, the three counts and the failing-name set match; the slow-gate names, recorded apart as `slow`, play no part; a remote `unknown`
+outcome, the three counts and the failing-name set match; the slow-gate names, recorded apart as `slow`, play no part; when a side failed but its runner printed no failure line Clodex recognises (docs/tests.md lists the shapes), the pair agrees on outcome and counts only and is recorded with `names: 'unknown'`; a remote `unknown`
 counts as a disagreement, except one where the lead could not build or send the
 tree (`client error: …`, `snapshot failed: …`, `pack of N bytes exceeds …`): that
 pair is recorded with `skipped: 'not-sent'` and shown on the line as
