@@ -25,6 +25,7 @@ const PROBE_MS = 5000;
 const PROBE_TTL_MS = 30000;
 const CLEAR_MS = 10000;
 const CLEAR_ROUNDS = 3;
+const BOX_LABEL = 'clodex.box';
 const DOCKER_ARCH = { aarch64: 'arm64', x86_64: 'amd64' };
 const DEFAULT_TIMERS = { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (t) => clearTimeout(t) };
 
@@ -123,7 +124,7 @@ function runArgv({ image, runnerKey, n, uid, gid, jobDir, job, argv, env }) {
   ];
 }
 
-function boxIdentity({ imageId, arch, cpus, env = process.env, platform = process.platform, hostArch = process.arch }) {
+function boxIdentity({ imageId, arch, cpus, definitionHash = null, rev = null, env = process.env, platform = process.platform, hostArch = process.arch }) {
   const boxArch = arch === 'amd64' ? 'x64' : arch;
   let clodex = null;
   try { clodex = require('./package.json').version; } catch {}
@@ -142,7 +143,7 @@ function boxIdentity({ imageId, arch, cpus, env = process.env, platform = proces
     tz: 'UTC',
     lang: 'C.UTF-8',
     isolation: 'container',
-    box: { imageId },
+    box: { imageId, definitionHash, rev },
     host: { platform, arch: hostArch },
     envKey: crypto.createHash('sha256').update(JSON.stringify(['container', imageId, 'linux', boxArch, cpus, 'UTC', 'C.UTF-8'])).digest('hex').slice(0, 12),
   };
@@ -170,23 +171,56 @@ function boxIsolation({
     throw new Error(`box cleanup not confirmed: ${last}`);
   }
 
+  function hostWhy() {
+    if (uid === 0) return 'the suite runner must not run as uid 0';
+    if (String(work).includes(',')) return `the work root contains a comma: ${work}`;
+    return null;
+  }
+
+  async function daemon() {
+    const d = await docker.call(['info', '--format', '{{.ServerVersion}} {{.OSType}} {{.Architecture}} {{.NCPU}}'], { timeoutMs: PROBE_MS });
+    if (d.notFound) return { why: 'docker not found on PATH' };
+    if (!d.ok) return { why: `docker daemon not reachable: ${callError(d)}` };
+    const [, daemonOs, daemonArch, ncpu] = String(d.stdout).trim().split(/\s+/);
+    return { os: daemonOs, arch: DOCKER_ARCH[daemonArch] || daemonArch, cpus: Number(ncpu) };
+  }
+
   async function look() {
     if (!IMAGE_RE.test(String(image))) return { state: 'unavailable', why: 'CLODEX_SUITE_BOX_IMAGE must be an image id (sha256:…), not a tag' };
-    if (uid === 0) return { state: 'unavailable', why: 'the suite runner must not run as uid 0' };
-    if (String(work).includes(',')) return { state: 'unavailable', why: `the work root contains a comma: ${work}` };
+    const host = hostWhy();
+    if (host) return { state: 'unavailable', why: host };
     const id12 = image.slice('sha256:'.length, 'sha256:'.length + 12);
-    const d = await docker.call(['info', '--format', '{{.ServerVersion}} {{.OSType}} {{.Architecture}} {{.NCPU}}'], { timeoutMs: PROBE_MS });
-    if (d.notFound) return { state: 'unavailable', why: 'docker not found on PATH' };
-    if (!d.ok) return { state: 'unavailable', why: `docker daemon not reachable: ${callError(d)}` };
-    const [, daemonOs, daemonArch, ncpu] = String(d.stdout).trim().split(/\s+/);
+    const d = await daemon();
+    if (d.why) return { state: 'unavailable', why: d.why };
     const i = await docker.call(['image', 'inspect', '--format', '{{.Id}} {{.Os}} {{.Architecture}}', image], { timeoutMs: PROBE_MS });
     const [imageId, imageOs, imageArch] = i.ok ? String(i.stdout).trim().split(/\s+/) : [];
     if (!i.ok || imageId !== image) return { state: 'unavailable', why: `image ${id12} is not present on this runner` };
-    if (daemonOs !== 'linux') return { state: 'unavailable', why: `docker daemon OS is ${daemonOs}, not linux` };
-    const vmArch = DOCKER_ARCH[daemonArch] || daemonArch;
-    if (imageOs !== 'linux' || imageArch !== vmArch) return { state: 'unavailable', why: `image ${id12} is ${imageOs}/${imageArch}, the daemon is linux/${vmArch}` };
-    const cpus = Number(ncpu);
-    return { state: 'ready', env: boxIdentity({ imageId: image, arch: imageArch, cpus, env, platform, hostArch: arch }) };
+    if (d.os !== 'linux') return { state: 'unavailable', why: `docker daemon OS is ${d.os}, not linux` };
+    if (imageOs !== 'linux' || imageArch !== d.arch) return { state: 'unavailable', why: `image ${id12} is ${imageOs}/${imageArch}, the daemon is linux/${d.arch}` };
+    return { state: 'ready', env: boxIdentity({ imageId: image, arch: imageArch, cpus: d.cpus, env, platform, hostArch: arch }) };
+  }
+
+  async function lookNamed({ definitionHash, rev = null }) {
+    const hash12 = String(definitionHash).slice(0, 12);
+    const host = hostWhy();
+    if (host) return { state: 'unavailable', why: host };
+    const d = await daemon();
+    if (d.why) return { state: 'unavailable', why: d.why };
+    if (d.os !== 'linux') return { state: 'unavailable', why: `docker daemon OS is ${d.os}, not linux` };
+    const ls = await docker.call(['image', 'ls', '-q', '--no-trunc', '--filter', `label=${BOX_LABEL}=${definitionHash}`], { timeoutMs: PROBE_MS });
+    if (!ls.ok) return { state: 'unavailable', why: `docker image ls failed: ${callError(ls)}` };
+    const ids = [...new Set(String(ls.stdout).split('\n').map((s) => s.trim()).filter((s) => IMAGE_RE.test(s)))];
+    if (!ids.length) return { state: 'no-image', why: `no image for box ${hash12} on this runner` };
+    const i = await docker.call(['image', 'inspect', '--format', '{{.Id}} {{.Os}} {{.Architecture}}', ...ids], { timeoutMs: PROBE_MS });
+    if (!i.ok) return { state: 'unavailable', why: `docker image inspect failed: ${callError(i)}` };
+    const fit = new Set();
+    for (const line of String(i.stdout).split('\n')) {
+      const [imageId, imageOs, imageArch] = line.trim().split(/\s+/);
+      if (ids.includes(imageId) && imageOs === 'linux' && imageArch === d.arch) fit.add(imageId);
+    }
+    if (!fit.size) return { state: 'no-image', why: `no image for box ${hash12} on this runner for linux/${d.arch}` };
+    if (fit.size > 1) return { state: 'ambiguous', why: `more than one image carries box ${hash12} on this runner: ${[...fit].join(', ')}` };
+    return { state: 'ready', env: boxIdentity({ imageId: [...fit][0], arch: d.arch, cpus: d.cpus, definitionHash, rev, env, platform, hostArch: arch }) };
   }
 
   return {
@@ -196,7 +230,8 @@ function boxIsolation({
     detach: true,
     runnerKey,
     clear,
-    async probe() {
+    async probe(want = null) {
+      if (want) return lookNamed(want);
       if (cached && now() - cached.at < PROBE_TTL_MS) return cached.answer;
       const answer = await look();
       cached = { at: now(), answer };
@@ -207,7 +242,8 @@ function boxIsolation({
     async prepare() {},
     spawn({ jobDir, argv, env: jobEnv, spawn, job }) {
       counter += 1;
-      const full = runArgv({ image, runnerKey, n: counter, uid, gid, jobDir, job, argv, env: jobEnv });
+      const stamped = job.identity && job.identity.box ? job.identity.box.imageId : null;
+      const full = runArgv({ image: stamped || image, runnerKey, n: counter, uid, gid, jobDir, job, argv, env: jobEnv });
       return spawn(full[0], full.slice(1), { detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
     },
     async kill(child, jobDir, job) {

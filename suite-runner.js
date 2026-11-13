@@ -14,6 +14,9 @@ const LIVE = new Set(['awaiting-pack', 'queued', 'setup', 'running']);
 const KIND_ORDER = { 'post-merge': 0, verify: 1, hand: 2 };
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const SHA_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+const BOX_HASH_RE = /^[0-9a-f]{64}$/;
+const BOX_DEFINITION_MAX = 16384;
+const BOX_REFUSALS = { 'no-image': 'no-image', ambiguous: 'ambiguous-image' };
 const REF_RE = /^(?![-/.])(?!.*\.\.)(?!.*\/\/)[A-Za-z0-9._/-]{1,200}$/;
 const ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
 const FLAG_KEYS = ['CLODEX_TEST_LOCK', 'CLODEX_TEST_SLOW_ADVISORY'];
@@ -296,6 +299,13 @@ function validateSubmit(b, limits) {
   }
   if (b.timeoutMs != null && !(b.timeoutMs > 0 && b.timeoutMs <= limits.maxTimeoutMs)) return 'bad timeoutMs';
   if (b.isolation != null && b.isolation !== 'container') return 'bad isolation';
+  if (b.box != null) {
+    const x = b.box;
+    if (typeof x !== 'object' || Array.isArray(x) || b.isolation !== 'container') return 'bad box';
+    if (!BOX_HASH_RE.test(String(x.definitionHash))) return 'bad box.definitionHash';
+    if (!(Number.isInteger(x.rev) && x.rev >= 1)) return 'bad box.rev';
+    if (x.definition != null && !(typeof x.definition === 'string' && Buffer.byteLength(x.definition) <= BOX_DEFINITION_MAX)) return 'bad box.definition';
+  }
   return null;
 }
 
@@ -799,11 +809,12 @@ function createSuiteRunner({
     try { return await maintenance; } finally { maintenance = null; pump(); }
   }
 
-  async function boxState() {
+  async function boxState(want = null) {
     if (!box) return null;
     if (boxHold) return { state: 'unavailable', why: `cleanup not confirmed: ${boxHold.why}` };
     let found;
-    try { found = await box.probe(); } catch (e) { return { state: 'unavailable', why: e.message }; }
+    try { found = await (want ? box.probe(want) : box.probe()); } catch (e) { return { state: 'unavailable', why: e.message }; }
+    if (want && found && BOX_REFUSALS[found.state]) return { state: found.state, why: found.why };
     return found && found.state === 'ready' ? { state: 'ready', env: found.env } : { state: 'unavailable', why: (found && found.why) || 'no answer' };
   }
 
@@ -829,8 +840,10 @@ function createSuiteRunner({
     let stamp;
     if (boxed) {
       if (!box) return fail(409, 'this runner has no box image configured');
-      const b = await boxState();
-      if (b.state !== 'ready') return fail(503, `box unavailable: ${b.why}`);
+      const want = body.box ? { definitionHash: body.box.definitionHash, rev: body.box.rev } : null;
+      const b = await boxState(want);
+      if (BOX_REFUSALS[b.state]) return fail(409, b.why, { code: BOX_REFUSALS[b.state] });
+      if (b.state !== 'ready') return fail(503, `box unavailable: ${b.why}`, want ? { code: 'box-unavailable' } : undefined);
       stamp = b.env;
     } else {
       stamp = await ensureIdentity();

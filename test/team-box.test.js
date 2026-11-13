@@ -81,7 +81,7 @@ for (const [label, text] of ACCEPTED) {
 test('show passes --build-arg CLODEX_BASE only when the file declares that ARG', () => {
   const t = mkTeam();
   t.fire(t.lead, 'set', 'FROM node:25-bookworm\nRUN true\n');
-  assert.strictEqual(t.fire(t.lead, 'show').split('\n')[2], `checked for form; not built — build it by hand: docker build - < ${t.file}`);
+  assert.strictEqual(t.fire(t.lead, 'show').split('\n')[2], `checked for form; not built — build it by hand: docker build --label clodex.box=fa502f955d138e4a78faa0ef2c6525d18955f6e2d5dbeac135c8f9ab60ae884f - < ${t.file}`);
 });
 
 test('definitionHash: CRLF equals LF, a one-byte edit differs', () => {
@@ -161,7 +161,7 @@ test('show: rev and definition hash on line 1, the bootstrap line in all three s
   assert.strictEqual(shown[0], `[agent:team] box definition rev 1 · definition hash ${hash}`);
   assert.strictEqual(shown[1], 'not generated from bootstrap');
   assert.strictEqual(shown.filter((l) => l.includes('docker build')).length, 1);
-  assert.match(shown[2], /^checked for form; not built — build it by hand: docker build --build-arg CLODEX_BASE=ghcr\.io\/avirtual\/clodex:\d+\.\d+\.\d+ - < .*\/box\/Dockerfile$/);
+  assert.match(shown[2], /^checked for form; not built — build it by hand: docker build --label clodex\.box=f79656bcd1b67f19a5ffe0ae5fe6dd9dff3db6f4476b500d5c4613834039fde4 --build-arg CLODEX_BASE=ghcr\.io\/avirtual\/clodex:\d+\.\d+\.\d+ - < .*\/box\/Dockerfile$/);
 
   t.fire(t.lead, 'clear');
   t.fire(t.lead, 'init');
