@@ -19,7 +19,7 @@ function targetNotCreated(link) {
   try { fs.lstatSync(target); return false; } catch (e) { return e.code === 'ENOENT'; }
 }
 
-function createTranscriptSpikeReader({ linkPathFor, hasTurn = () => true, watch = fs.watch, onChange = null, setTimer = setTimeout, clearTimer = clearTimeout }) {
+function createTranscriptSpikeReader({ linkPathFor, started = () => true, watch = fs.watch, onChange = null, setTimer = setTimeout, clearTimer = clearTimeout }) {
   const cache = new Map();
   let nextRev = 0;
 
@@ -44,7 +44,7 @@ function createTranscriptSpikeReader({ linkPathFor, hasTurn = () => true, watch 
     const link = linkPathFor(name);
     try { real = fs.realpathSync(link); } catch {
       drop(name);
-      return { ok: false, reason: !hasTurn(name) && targetNotCreated(link) ? 'not-started' : 'unavailable' };
+      return { ok: false, reason: !started(name) && targetNotCreated(link) ? 'not-started' : 'unavailable' };
     }
     let c = cache.get(name);
     if (c && c.path !== real) { drop(name); c = null; }

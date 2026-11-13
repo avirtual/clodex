@@ -214,7 +214,7 @@ for (const [row, linked, turned, reason] of [
     const link = path.join(root, 'transcript.jsonl');
     if (linked) fs.symlinkSync(path.join(root, 'project', 'sid.jsonl'), link);
     const asked = [];
-    const reader = createTranscriptSpikeReader({ linkPathFor: () => link, hasTurn: (n) => { asked.push(n); return turned; }, watch: () => null });
+    const reader = createTranscriptSpikeReader({ linkPathFor: () => link, started: (n) => { asked.push(n); return turned; }, watch: () => null });
     t.after(() => reader.dispose());
     assert.deepStrictEqual(reader.pull('s'), { ok: false, reason });
     if (linked && !turned) assert.deepStrictEqual(asked, ['s']);

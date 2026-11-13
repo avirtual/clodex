@@ -918,7 +918,7 @@ function registerIpcHandlers(deps) {
 
   const transcriptSpike = createTranscriptSpikeReader({
     linkPathFor: (name) => pathFor(REGISTRY_DIR, name, 'transcript'),
-    hasTurn: (name) => { const s = manager.sessions.get(name); return !s || Number.isFinite(s._turnStartedAt); },
+    started: (name) => { const s = manager.sessions.get(name); return !s || !!s.bootResumeId || Number.isFinite(s._turnStartedAt); },
     onChange: (name) => manager._sendToSession(name, 'transcript-changed', name),
   });
   handle('transcript:pull', (_e, name, since) => {
