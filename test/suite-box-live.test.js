@@ -157,8 +157,8 @@ function instrumentedSpawn(events) {
 
 function makeRoots(mkTmpRoot) {
   const root = mkTmpRoot('suite-box-live-');
-  const work = path.join(root, 'work');
-  fs.mkdirSync(work);
+  fs.mkdirSync(path.join(root, 'work'));
+  const work = fs.realpathSync(path.join(root, 'work'));
   const stateDir = statePaths(root).dir;
   return { root, work, stateDir };
 }
@@ -180,7 +180,6 @@ if (process.argv.includes(CHILD_FLAG)) {
 } else {
   const { test, after } = require('node:test');
   const assert = require('node:assert');
-  const { mkTmpRoot } = require('./lib/tmp-roots');
 
   if (!IMAGE_NAME) {
     test('suite box live: needs CLODEX_TEST_BOX_IMAGE naming a local image with node and git', { skip: 'CLODEX_TEST_BOX_IMAGE is not set' }, () => {});
@@ -191,15 +190,24 @@ if (process.argv.includes(CHILD_FLAG)) {
     const children = [];
     const runners = [];
 
-    after(() => {
+    after(async () => {
       for (const c of children) { try { c.kill('SIGKILL'); } catch {} }
-      for (const r of runners) r.close();
+      for (const r of runners) {
+        const q = (await r.info()).queue;
+        for (const id of [q.running, ...q.queued].filter(Boolean)) await r.cancel(id);
+        r.close();
+      }
       for (const label of scopes) {
         try { const ids = idsOf(label); if (ids.length) docker('rm', '-f', ...ids); } catch {}
       }
+      await until('every engine idle after teardown', async () => {
+        for (const r of runners) if ((await r.info()).queue.running) return false;
+        return true;
+      }, 30000).catch(() => {});
       for (const s of snaps) releaseSnapshot(s);
       for (const fn of cleanups) { try { fn(); } catch {} }
     });
+    const { mkTmpRoot } = require('./lib/tmp-roots');
 
     async function fixture({ box: withBox = true, dockerOver = null } = {}) {
       const r = makeRoots(mkTmpRoot);
@@ -373,7 +381,7 @@ if (process.argv.includes(CHILD_FLAG)) {
       let failJobPs = false;
       const f = await fixture({
         dockerOver: (call, events) => (args, o) => {
-          if (failJobPs && args[0] === 'ps' && String(args[3]).startsWith('clodex.suite.job=')) {
+          if (failJobPs && args[0] === 'ps' && String(args[3]).startsWith('label=clodex.suite.job=')) {
             return Promise.resolve({ ok: false, code: 1, stdout: '', stderr: 'injected: docker ps failed', notFound: false, timedOut: false, error: 'docker ps exited 1' });
           }
           return call(args, o).then((r) => { events.push({ at: 'call', args, ok: r.ok }); return r; });
