@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A seat whose transcript cannot be read keeps its view tabs and says so, instead of silently showing only the raw screen.
+
 ## 5.183.0 — 2026-11-13 — The Window menu shows what a node's test boxes are doing
 
 - The Window menu has a Test Boxes section on a node that runs tests for others: the job running in each box and the jobs waiting, with the time each started or began waiting. Test Box Activity… opens the full view with how long each has run or waited and the last ten finished jobs.

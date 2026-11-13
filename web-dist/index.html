@@ -8874,7 +8874,15 @@ body.web-frontend #sidebar-header {
   height: auto;
   overflow: hidden;
 }
-.transcript-pane[data-raw] > :not(.transcript-bar) {
+.transcript-pane[data-raw] > :not(.transcript-bar):not(.transcript-unread) {
+  display: none;
+}
+.transcript-unread {
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  padding: var(--sp-1) 0;
+}
+.transcript-unread[hidden] {
   display: none;
 }
 .tr-box {
@@ -38555,6 +38563,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var { createPaintDelta, mergeByTs, isBusyScreen, blockText } = require_paint_delta();
       var { readStatusRows } = require_status_rows();
       var TRANSCRIPT_PULL_MS = 1e3;
+      var UNREAD_GRACE_MS = 15e3;
+      var UNREAD_REASONS = /* @__PURE__ */ new Set(["unavailable", "unreadable"]);
+      var UNREAD_TEXT = "The transcript for this seat cannot be read (no transcript file yet, or its link is missing or broken).";
       var PAINT_TAG_MS = 1e4;
       var PAINT_PLATFORMS = /* @__PURE__ */ new Set(["codex", "muse"]);
       var views = /* @__PURE__ */ new WeakMap();
@@ -38715,6 +38726,14 @@ ${m[2].replace(/^\r?\n/, "")}`;
           if (raw) setRawView(false);
           onMode(next);
         }, { onHelp, onTerminal: onTerminal || (() => setRawView(!raw)) });
+        const noticeEl = document.createElement("div");
+        noticeEl.className = "transcript-unread";
+        noticeEl.textContent = UNREAD_TEXT;
+        noticeEl.hidden = true;
+        paneEl.appendChild(noticeEl);
+        const createdAt = now();
+        let unread = false;
+        const noticeOn = () => unread && !raw && isEligible() && now() - createdAt >= UNREAD_GRACE_MS;
         const menuEl = menuMirror ? document.createElement("div") : null;
         if (menuEl) {
           menuEl.className = "seat-slash-menu seat-slash-menu-pty";
@@ -38775,7 +38794,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
             pulling = false;
             if (disposed) return;
             const was = available;
+            const shown = noticeOn();
             available = !!(res && res.ok);
+            unread = !available && !!res && UNREAD_REASONS.has(res.reason);
             if (available && res.rev !== rev) {
               rev = res.rev;
               fileRecords = Array.isArray(res.records) ? res.records : [];
@@ -38783,6 +38804,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
               paint();
               evaluate();
             } else if (available !== was) evaluate();
+            if (noticeOn() !== shown) layout();
           }).catch(() => {
             pulling = false;
           });
@@ -38946,7 +38968,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
             wrapperEl.classList.remove("live-sheet");
             paneEl.hidden = true;
             if (composerEl) showComposer(false);
-            showRawBar(raw && isEligible());
+            const notice = noticeOn();
+            showRawBar(raw && isEligible() || notice, notice);
             return;
           }
           showRawBar(false);
@@ -39043,6 +39066,9 @@ ${m[2].replace(/^\r?\n/, "")}`;
           lastPull = 0;
           pull();
         }) : null;
+        const graceTimer = setTimeout(() => {
+          if (!disposed && unread) layout();
+        }, UNREAD_GRACE_MS);
         const ro = typeof ResizeObserver === "function" ? new ResizeObserver(() => layout()) : null;
         if (ro) ro.observe(wrapperEl);
         if (ro && composerEl) ro.observe(composerEl);
@@ -39058,7 +39084,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
           evaluate();
           if (layouts === before) layout();
         }
-        function showRawBar(on) {
+        function showRawBar(on, notice = false) {
+          noticeEl.hidden = !notice;
           if (on) {
             paneEl.dataset.raw = "1";
             wrapperEl.classList.add("live-raw");
@@ -39109,6 +39136,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           dispose() {
             disposed = true;
             clearTimeout(wakeTimer);
+            clearTimeout(graceTimer);
             dropPaint();
             for (const d of subs) {
               try {
@@ -39128,7 +39156,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
         };
       }
-      module.exports = { TRANSCRIPT_PULL_MS, transcriptRowsFor, renderTranscript, renderMenuMirror, renderStatusChips, modeBar, createLiveSplitView };
+      module.exports = { TRANSCRIPT_PULL_MS, UNREAD_GRACE_MS, UNREAD_TEXT, transcriptRowsFor, renderTranscript, renderMenuMirror, renderStatusChips, modeBar, createLiveSplitView };
     }
   });
 
