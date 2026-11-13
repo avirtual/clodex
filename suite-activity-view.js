@@ -24,9 +24,20 @@ function jobHead(job) {
   ].join(' · ');
 }
 
-function liveLine(job, at) {
-  if (job.startedAt != null) return `${jobHead(job)} · ${job.phase === 'setup' ? 'setting up' : 'running'} ${fmtSpan(at - job.startedAt)}`;
-  return `${jobHead(job)} · ${job.phase === 'upload' ? 'uploading' : 'waiting'} ${fmtSpan(at - job.queuedAt)}`;
+function fmtClock(ts) {
+  const d = new Date(Number(ts) || 0);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function liveLine(job, at, mode = 'span') {
+  const started = job.startedAt != null;
+  const since = started ? job.startedAt : job.queuedAt;
+  if (mode === 'clock') {
+    const verb = started ? (job.phase === 'setup' ? 'setting up since' : 'since') : (job.phase === 'upload' ? 'uploading since' : 'waiting since');
+    return `${jobHead(job)} · ${verb} ${fmtClock(since)}`;
+  }
+  const verb = started ? (job.phase === 'setup' ? 'setting up' : 'running') : (job.phase === 'upload' ? 'uploading' : 'waiting');
+  return `${jobHead(job)} · ${verb} ${fmtSpan(at - since)}`;
 }
 
 function outcomeText(job) {
@@ -53,12 +64,12 @@ function boxText(box) {
   return 'No box configured: native jobs only';
 }
 
-function menuRows(state, at) {
+function menuRows(state, at, mode = 'clock') {
   if (!state || !state.enabled) return [];
   const snap = state.snapshot;
   const rows = [{ kind: 'head', label: 'Test Boxes' }, { kind: 'info', label: summaryLine(snap) }];
   const jobs = snap ? [...snap.running, ...snap.waiting] : [];
-  for (const job of jobs.slice(0, MENU_JOB_ROWS)) rows.push({ kind: 'info', label: liveLine(job, at) });
+  for (const job of jobs.slice(0, MENU_JOB_ROWS)) rows.push({ kind: 'info', label: liveLine(job, at, mode) });
   if (jobs.length > MENU_JOB_ROWS) rows.push({ kind: 'info', label: `+${jobs.length - MENU_JOB_ROWS} more` });
   if (snap && snap.box && (snap.box.state === 'held' || snap.box.state === 'unavailable')) rows.push({ kind: 'info', label: boxText(snap.box) });
   rows.push({ kind: 'open', label: 'Test Box Activity…' });
@@ -80,4 +91,4 @@ function activityView(state, at) {
   };
 }
 
-module.exports = { menuRows, activityView, fmtSpan, MENU_JOB_ROWS };
+module.exports = { menuRows, activityView, fmtSpan, fmtClock, MENU_JOB_ROWS };

@@ -13,7 +13,7 @@ blocks a release.
 
 ## Unreleased
 
-- The Window menu has a Test Boxes section on a node that runs tests for others: the job running in each box and the jobs waiting, with how long each has run or waited. Test Box Activity… opens the full view with the last ten finished jobs.
+- The Window menu has a Test Boxes section on a node that runs tests for others: the job running in each box and the jobs waiting, with the time each started or began waiting. Test Box Activity… opens the full view with how long each has run or waited and the last ten finished jobs.
 
 ## 5.182.0 — 2026-11-13 — One runner node serves several teams' box images; shadow comparisons name failing tests for any reporter
 

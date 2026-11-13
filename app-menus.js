@@ -1085,7 +1085,7 @@ function createAppMenus(deps) {
         label: 'Manage Clodex Sandboxes…',
         click: () => sendToFocused('request-open-sandbox-dialog'),
       });
-      const testBoxRows = testBoxMenuRows(typeof getSuiteActivity === 'function' ? getSuiteActivity() : null, Date.now());
+      const testBoxRows = testBoxMenuRows(typeof getSuiteActivity === 'function' ? getSuiteActivity() : null, Date.now(), 'clock');
       if (testBoxRows.length) wsMenu.submenu.push({ type: 'separator' });
       for (const row of testBoxRows) {
         if (row.kind === 'open') wsMenu.submenu.push({ label: row.label, click: () => sendToFocused('request-open-test-activity') });

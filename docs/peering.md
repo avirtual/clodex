@@ -527,8 +527,9 @@ setup command, ref or path. A job transition or hold change calls the runner's
 `onActivity` at most once per second; the host refreshes its cached snapshot
 then and rebuilds the Window menu, whose Test Boxes section (shown while the
 runner setting is on) lists the summary, up to eight running and waiting jobs
-and a held or unavailable box. Its durations are as of that rebuild. Test Box
-Activity… opens a dialog that polls the `suiteRunner:activity` IPC (under
+and a held or unavailable box. Its job rows show since when (local `HH:MM`),
+never a duration, so they cannot go stale; the browser view's menu, read fresh
+on open, shows durations. Test Box Activity… opens a dialog that polls the `suiteRunner:activity` IPC (under
 `enableTestBoxes`, so the browser view of a headless node has it, with the same
 section in its Window menu) every three seconds while open.
 

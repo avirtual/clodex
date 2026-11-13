@@ -183,7 +183,7 @@ function buildMenus(ctx) {
           for (const b of boxList) rows.push(peerRow(b));
         }
         rows.push({ label: 'Manage Clodex Sandboxes…', run: () => emit('request-open-sandbox-dialog') });
-        const testBoxRows = testBoxMenuRows(testBoxes, Date.now());
+        const testBoxRows = testBoxMenuRows(testBoxes, Date.now(), 'span');
         if (testBoxRows.length) rows.push({ sep: true });
         for (const row of testBoxRows) {
           if (row.kind === 'head') rows.push({ head: row.label });
