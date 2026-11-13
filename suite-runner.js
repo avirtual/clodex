@@ -370,6 +370,7 @@ function createSuiteRunner({
   const sweepBox = box ? () => box.sweep() : boxSweep;
 
   const isBox = (job) => job.isolation === 'container';
+  const namedBox = (job) => Boolean(job.identity && job.identity.box && job.identity.box.definitionHash);
   const isoOf = (job) => (isBox(job) ? box : isolation);
   const jobArg = (job) => (isBox(job) ? [job] : []);
   const jobStore = (id) => path.join(storeDir, id);
@@ -478,7 +479,7 @@ function createSuiteRunner({
       if (job.state === 'awaiting-pack') { forceRemove(jobStore(id)); continue; }
       jobs.set(id, job);
       if (job.state === 'queued') job.lastSeen = now();
-      if (job.state === 'queued' && isBox(job) && !box) {
+      if (job.state === 'queued' && isBox(job) && (!box || (box.labelsOnly && !namedBox(job)))) {
         finishRecord(job, { reason: 'box-unavailable', exit: null });
         save(job);
       }
@@ -489,7 +490,7 @@ function createSuiteRunner({
         else reaps.push(Promise.resolve().then(() => isolation.reap(jobWork(id))).catch((e) => log(`suite-runner: reap ${id} after restart failed: ${e.message}`)));
       }
     }
-    if (box || boxed.length || boxHold) reaps.push(recoverBox(boxed).catch((e) => log(`suite-runner: box recovery failed: ${e.message}`)));
+    if ((box && !box.labelsOnly) || boxed.length || boxHold) reaps.push(recoverBox(boxed).catch((e) => log(`suite-runner: box recovery failed: ${e.message}`)));
     return Promise.all(reaps);
   }
 
@@ -810,7 +811,7 @@ function createSuiteRunner({
   }
 
   async function boxState(want = null) {
-    if (!box) return null;
+    if (!box || (!want && box.labelsOnly)) return null;
     if (boxHold) return { state: 'unavailable', why: `cleanup not confirmed: ${boxHold.why}` };
     let found;
     try { found = await (want ? box.probe(want) : box.probe()); } catch (e) { return { state: 'unavailable', why: e.message }; }
@@ -839,8 +840,8 @@ function createSuiteRunner({
     const boxed = body.isolation === 'container';
     let stamp;
     if (boxed) {
-      if (!box) return fail(409, 'this runner has no box image configured');
       const want = body.box ? { definitionHash: body.box.definitionHash, rev: body.box.rev } : null;
+      if (!box || (!want && box.labelsOnly)) return fail(409, 'this runner has no box image configured');
       const b = await boxState(want);
       if (BOX_REFUSALS[b.state]) return fail(409, b.why, { code: BOX_REFUSALS[b.state] });
       if (b.state !== 'ready') return fail(503, `box unavailable: ${b.why}`, want ? { code: 'box-unavailable' } : undefined);

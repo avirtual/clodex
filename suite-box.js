@@ -235,6 +235,7 @@ function boxIsolation({
     node: 'node',
     detach: true,
     runnerKey,
+    labelsOnly: !image,
     clear,
     async probe(want = null) {
       if (want) return lookNamed(want);

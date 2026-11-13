@@ -1372,16 +1372,16 @@ test('a named box with no image or two images is refused 409 with zero execution
   assert.deepStrictEqual(f.calls.map(imageOf), [IMG_A]);
 });
 
-for (const [name, image, why] of [
-  ['absent', null, 'CLODEX_SUITE_BOX_IMAGE must be an image id (sha256:…), not a tag'],
-  ['stale', `sha256:${'9'.repeat(64)}`, 'image 999999999999 is not present on this runner'],
+for (const [name, image, refusal] of [
+  ['absent', null, { ok: false, status: 409, error: 'this runner has no box image configured' }],
+  ['stale', `sha256:${'9'.repeat(64)}`, { ok: false, status: 503, error: 'box unavailable: image 999999999999 is not present on this runner' }],
 ]) {
   test(`a named box runs in its labelled image with the boxImage ${name}; a job naming nothing is refused`, async (t) => {
     const f = await fixture(t, { runnerOver: { box: labelledBox({ image }).box } });
     assert.strictEqual((await f.upload(f.body('job-a', 'hand', NAMED(HASH_A)))).ok, true);
     const a = await waitState(f.runner, 'job-a', 'done');
     assert.deepStrictEqual([a.reason, a.env.box.imageId], [null, IMG_A]);
-    assert.deepStrictEqual(await f.runner.submit(f.body('job-d', 'hand', { isolation: 'container' })), { ok: false, status: 503, error: `box unavailable: ${why}` });
+    assert.deepStrictEqual(await f.runner.submit(f.body('job-d', 'hand', { isolation: 'container' })), refusal);
     assert.deepStrictEqual(f.calls.map(imageOf), [IMG_A]);
   });
 }
@@ -1427,4 +1427,61 @@ test('submit validates the named box before any Docker call', async (t) => {
   for (const [name, extra] of BAD_BOX_ROWS) got.push([name, await f.runner.submit(f.body(`bad-${got.length}`, 'hand', extra))]);
   assert.deepStrictEqual(got, BAD_BOX_ROWS.map(([name, , error]) => [name, { ok: false, status: 400, error }]));
   assert.strictEqual(lb.docker.calls.length, before);
+});
+
+const { suiteRunnerOptions, startSuiteRunner } = require('../remote-wiring');
+const NAMED_IDENTITY = { ...BOX_IDENTITY, box: { imageId: IMG_A, definitionHash: HASH_A, rev: 1 } };
+const labelsOnlyBox = (docker) => boxIsolation({ image: null, work: '/w', stateDir: '/state/suite-runner', docker, uid: 501, gid: 20, env: { CLODEX_NODE_NAME: 'box-host' } });
+
+test('a runner wired from a setting with no boxImage runs a named job in its labelled image and refuses one naming nothing, with no Docker call at start or info', async (t) => {
+  const f = await fixture(t);
+  assert.strictEqual((await f.upload(f.body('seed'))).ok, true);
+  await waitState(f.runner, 'seed', 'done');
+  f.runner.close();
+  const docker = imagesDocker(LABELLED);
+  const opts = suiteRunnerOptions({}, f.root, { setting: { enabled: true, isolation: 'none', work: f.work } });
+  assert.strictEqual(opts.boxImage, null, 'ENTER: the setting has no boxImage');
+  const started = startSuiteRunner(opts, {
+    log: { warn() {}, error() {} },
+    load: () => ({ ...require('../suite-runner'), createSuiteRunner: (o) => f.make(o) }),
+    loadBox: () => ({ boxIsolation: (o) => boxIsolation({ ...o, docker, uid: 501, gid: 20, env: { CLODEX_NODE_NAME: 'box-host' } }) }),
+  });
+  t.after(() => started.runner && started.runner.close());
+  const { runner } = started;
+  await drain();
+  assert.deepStrictEqual([started.error, (await runner.info()).box, docker.calls], [null, null, []]);
+  assert.deepStrictEqual(await runner.submit(f.body('unnamed', 'hand', { isolation: 'container' })), { ok: false, status: 409, error: 'this runner has no box image configured' });
+  assert.deepStrictEqual(docker.calls, []);
+  assert.strictEqual((await runner.submit(f.body('named', 'hand', NAMED(HASH_A)))).state, 'queued');
+  const named = await waitState(runner, 'named', 'done');
+  assert.deepStrictEqual([named.reason, named.env.box], [null, { imageId: IMG_A, definitionHash: HASH_A, rev: 1 }]);
+  assert.deepStrictEqual(f.calls.filter((c) => c.cmd === 'docker').map((c) => [c.args[0], imageOf(c)]), [['run', IMG_A]]);
+});
+
+test('with no boxImage an interrupted box job dir is held until Docker confirms the runner-label sweep, a queued unnamed box job ends box-unavailable and a named one stays queued', async (t) => {
+  const f = await fixture(t);
+  f.runner.close();
+  const quiet = imagesDocker(LABELLED);
+  f.make({ box: labelsOnlyBox(quiet) }).close();
+  await drain();
+  assert.deepStrictEqual(quiet.calls, [], 'a start with nothing interrupted calls Docker');
+  storeJob(f, 'cut-box', 'running', { isolation: 'container', identity: NAMED_IDENTITY });
+  storeJob(f, 'queued-plain', 'queued', { isolation: 'container', identity: BOX_IDENTITY });
+  storeJob(f, 'queued-named', 'queued', { isolation: 'container', identity: NAMED_IDENTITY });
+  const cutDir = jobPaths(f.work, 'cut-box').dir;
+  fs.mkdirSync(path.join(cutDir, 'tree'), { recursive: true });
+  const holdFile = path.join(f.root, 'suite-runner', 'box-hold.json');
+  const down = imagesDocker(LABELLED, { fail: { ps: { ok: false, code: 1, stderr: 'injected: docker ps down', error: 'docker ps exited 1' } } });
+  const r1 = f.make({ box: labelsOnlyBox(down) });
+  t.after(() => r1.close());
+  await drain();
+  const states = (await r1.poll(['cut-box', 'queued-plain', 'queued-named'])).jobs.map((j) => [j.id, j.state, j.reason]);
+  assert.deepStrictEqual(states, [['cut-box', 'done', 'runner-restart'], ['queued-plain', 'done', 'box-unavailable'], ['queued-named', 'queued', null]]);
+  assert.deepStrictEqual([fs.existsSync(cutDir), JSON.parse(fs.readFileSync(holdFile, 'utf8')).dirs], [true, [cutDir]]);
+  r1.close();
+  const up = imagesDocker(LABELLED);
+  const r2 = f.make({ box: labelsOnlyBox(up) });
+  t.after(() => r2.close());
+  await drain();
+  assert.deepStrictEqual([up.calls[0].args.slice(0, 2), fs.existsSync(cutDir), fs.existsSync(holdFile)], [['ps', '-aq'], false, false]);
 });

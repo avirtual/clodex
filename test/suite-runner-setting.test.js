@@ -315,7 +315,7 @@ test('suiteRunner:set with the stored record answers ok without reloading the wi
   assert.strictEqual(calls.reload, 0);
 });
 
-test('startSuiteRunner builds the box adapter from boxImage and otherwise passes its sweep alone', () => {
+test('startSuiteRunner builds the box adapter with or without boxImage', () => {
   const IMAGE = `sha256:${'a'.repeat(64)}`;
   const SWEEP = async () => {};
   const rows = [['with', IMAGE], ['without', undefined]].map(([label, boxImage]) => {
@@ -334,8 +334,8 @@ test('startSuiteRunner builds the box adapter from boxImage and otherwise passes
     return [label, started.error, typeof log, rest, built];
   });
   assert.deepStrictEqual(rows, [
-    ['with', null, 'function', { root: '/home/c', work: '/srv/w', isolation: 'none-iso', limits: {}, box: { sweep: SWEEP, image: IMAGE }, boxSweep: null }, [{ image: IMAGE, work: '/srv/w', stateDir: '/home/c/suite-runner' }]],
-    ['without', null, 'function', { root: '/home/c', work: '/srv/w', isolation: 'none-iso', limits: {}, box: null, boxSweep: SWEEP }, [{ image: null, work: '/srv/w', stateDir: '/home/c/suite-runner' }]],
+    ['with', null, 'function', { root: '/home/c', work: '/srv/w', isolation: 'none-iso', limits: {}, box: { sweep: SWEEP, image: IMAGE } }, [{ image: IMAGE, work: '/srv/w', stateDir: '/home/c/suite-runner' }]],
+    ['without', null, 'function', { root: '/home/c', work: '/srv/w', isolation: 'none-iso', limits: {}, box: { sweep: SWEEP, image: null } }, [{ image: null, work: '/srv/w', stateDir: '/home/c/suite-runner' }]],
   ]);
 });
 
