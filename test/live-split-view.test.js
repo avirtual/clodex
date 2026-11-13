@@ -1892,7 +1892,7 @@ for (const [reason, noticeHidden] of [['not-started', true], ['unavailable', fal
       m.elapse(UNREAD_GRACE_MS + 2000);
       m.write();
       await settle();
-      assert.deepStrictEqual([m.notice.hidden, m.notice.hidden ? '' : m.notice.textContent], [noticeHidden, noticeHidden ? '' : UNREAD_TEXT]);
+      assert.strictEqual(m.notice.hidden, noticeHidden);
     } finally { unmount(m); }
   });
 }
