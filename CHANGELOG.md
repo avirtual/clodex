@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.184.0 — 2026-11-13
+
 - A seat whose transcript cannot be read keeps its view tabs and says so, instead of silently showing only the raw screen.
 - A Claude seat moved to another folder keeps its conversation view: the tab bar no longer disappears after the move.
 - Fixed: a new seat that has not taken a turn no longer shows the unreadable-transcript notice.
