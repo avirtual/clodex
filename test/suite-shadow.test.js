@@ -560,3 +560,18 @@ test('t2319: the compare row of a named box carries its definition hash', async 
     { os: 'linux', arch: 'arm64', isolation: 'container', imageId: IMAGE, definitionHash: 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' },
   ]);
 });
+
+test('t2319: a named box submit answered 503 box-unavailable ends at once with the runner\'s reason', async () => {
+  const r = remoteConn({ box: null, stamp: NAMED_ENV });
+  const posts = [];
+  const inner = r.conn.suiteAsk;
+  r.conn.suiteAsk = async (method, p, body) => {
+    if (method !== 'POST') return inner(method, p, body);
+    posts.push(p);
+    return posts.length === 1
+      ? { status: 503, body: { ok: false, status: 503, error: 'box unavailable: docker not found on PATH', code: 'box-unavailable' } }
+      : inner(method, p, body);
+  };
+  const out = await boxClient(r.conn).client.run({ ...OPTS, box: DEF });
+  assert.deepStrictEqual([posts, out.record.outcome, out.record.reason], [['/api/suite/jobs'], 'unknown', 'runner refused the job: box unavailable: docker not found on PATH']);
+});

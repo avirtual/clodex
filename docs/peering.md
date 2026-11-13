@@ -605,8 +605,7 @@ with `box: true` and no definition, or a lead on an older version, sends no
   id, even if another image gets the label while the job queues.
 - A named job does not use `boxImage` and never falls back to it: it runs
   while `boxImage` names an image that is gone or is not set at all. A runner
-  with no `boxImage` touches Docker only for a named submit (`info`, `image
-  ls`, `image inspect`) and for the jobs it accepts. The lead does not consult
+  with no `boxImage` answers `info` without a Docker call. The lead does not consult
   `info.box` before a named submit, so its `null` there refuses nothing; an
   older lead sends `box: true` and reads `null` as `runner has no box: not
   configured`, as before.
@@ -615,9 +614,11 @@ with `box: true` and no definition, or a lead on an older version, sends no
   matching ids is 409 `more than one image carries box <hash12> on this
   runner: <ids>` (`code: 'ambiguous-image'`) — remove or relabel one; Docker
   down or the cleanup hold is 503 `box unavailable: <why>` (`code:
-  'box-unavailable'`); a malformed `box` is 400.
+  'box-unavailable'`), which the lead does not retry: the run ends `runner
+  refused the job: box unavailable: <why>`; a malformed `box` is 400.
 - An image removed after the job was accepted makes `docker run --pull never`
-  exit 125: the job ends `box-failed` and the next job runs.
+  exit 125, at the setup exec or the test exec: the job ends `box-failed` and
+  the next job runs.
 - The lead checks the done stamp: a `definitionHash` other than the one it
   sent, or none (a runner that ignores `box` and runs its `boxImage`), reads
   `box mismatch: asked box <hash12>, runner ran image <id12>`. Compare rows

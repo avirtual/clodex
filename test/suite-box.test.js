@@ -259,7 +259,7 @@ test('spawn runs the image stamped on the job, not the adapter default', () => {
   assert.deepStrictEqual(spawned, [IMG_A, IMAGE]);
 });
 
-const PS =(label) => ['ps', '-aq', '--filter', `label=${label}`];
+const PS = (label) => ['ps', '-aq', '--filter', `label=${label}`];
 
 test('kill: process-group SIGKILL, then ps, rm, ps on the job label', async () => {
   const log = [];

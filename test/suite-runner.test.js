@@ -1386,7 +1386,10 @@ for (const [name, image, refusal] of [
   });
 }
 
-test('an image pruned after the job was accepted ends that job box-failed and the next job runs', async (t) => {
+for (const [phase, extra, firstExec] of [
+  ['test', {}, 'test'],
+  ['setup', { setup: { run: 'npm ci', key: ['package.json'], paths: ['node_modules'] } }, 'npm ci'],
+]) test(`an image pruned after the job was accepted ends that job box-failed at its ${phase} exec and the next job runs`, async (t) => {
   const f = await fixture(t, {
     runnerOver: { box: labelledBox().box },
     onSpawn: (c) => {
@@ -1399,10 +1402,12 @@ test('an image pruned after the job was accepted ends that job box-failed and th
       }
     },
   });
-  assert.strictEqual((await f.upload(f.body('job-a', 'hand', NAMED(HASH_A)))).ok, true);
+  assert.strictEqual((await f.upload(f.body('job-a', 'hand', { ...NAMED(HASH_A), ...extra }))).ok, true);
   const a = await waitState(f.runner, 'job-a', 'done');
   assert.deepStrictEqual([a.reason, a.exit, a.env.box.imageId], ['box-failed', { code: 125, signal: null }, IMG_A]);
-  assert.strictEqual((await f.runner.submit(f.body('job-b', 'hand', NAMED(HASH_B)))).state, 'queued');
+  const aExecs = f.calls.filter((c) => c.job === 'job-a').map((c) => (c.args.includes('npm ci') ? 'npm ci' : 'test'));
+  assert.deepStrictEqual(aExecs, [firstExec]);
+  assert.strictEqual((await f.runner.submit(f.body('job-b', 'hand', { ...NAMED(HASH_B), ...extra }))).state, 'queued');
   const b = await waitState(f.runner, 'job-b', 'done');
   assert.deepStrictEqual([b.reason, b.exit], [null, { code: 0, signal: null }]);
   const info = await f.runner.info();

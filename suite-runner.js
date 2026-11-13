@@ -739,6 +739,7 @@ function createSuiteRunner({
       const r = await exec(job, jobDir, ['/bin/sh', '-c', job.setup.run], job.setup.timeoutMs || lim.setupTimeoutMs);
       if (job.stop) return finish(job, { reason: job.stop, exit: null }, r.killing);
       if (r.spawnFailed && isolation.mode === 'container') return finish(job, { reason: 'setup-failed', exit: null });
+      if (isolation.mode === 'container' && r.code === 125) return finish(job, { reason: 'box-failed', exit: { code: 125, signal: r.signal || null } }, r.killing);
       if (r.code !== 0) return finish(job, { reason: 'setup-failed', exit: { code: r.code, signal: r.signal || null } }, r.killing);
       await isolation.seal(jobDir, deps.entry, job.setup.paths);
       writeJson(deps.marker, { createdAt: now(), usedAt: now() }, 0o600);

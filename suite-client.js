@@ -150,7 +150,7 @@ function createSuiteClient({
       const r = await once(ctx.peer, fn, ctx.wire);
       if (ctx.wire === 'pull' && r.status === 503 && r.body == null) { try { ctx.onDetach(); } catch {} }
       if (REFUSED.has(r.status)) throw Object.assign(new Error('runner refused the token'), { refused: true });
-      if (!UNREACHABLE.has(r.status)) return r;
+      if (!UNREACHABLE.has(r.status) || (r.body && r.body.code === 'box-unavailable')) return r;
       const left = deadlineOf(ctx) - now();
       if (left <= 0) return { ...r, unreachable: true };
       progress(`waiting for runner ${ctx.peer}`);
