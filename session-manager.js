@@ -4952,11 +4952,13 @@ function createSessionManager(deps) {
     _claudeTranscriptSource(name, entry) {
       if (!entry || entry.type !== 'claude' || !entry.sessionId) return null;
       const accountDir = entry.env && entry.env.CLAUDE_CONFIG_DIR;
-      const candidates = [pathFor(REGISTRY_DIR, name, 'transcript')];
-      if (entry.cwd) candidates.push(this._claudeTranscriptPath(entry.cwd, accountDir, entry.sessionId));
-      for (const p of candidates) {
+      const candidates = [
+        () => pathFor(REGISTRY_DIR, name, 'transcript'),
+        () => (entry.cwd ? this._claudeTranscriptPath(entry.cwd, accountDir, entry.sessionId) : null),
+      ];
+      for (const at of candidates) {
         let real = null;
-        try { real = fs.realpathSync(p); } catch { continue; }
+        try { real = fs.realpathSync(at()); } catch { continue; }
         if (path.basename(real) === `${entry.sessionId}.jsonl`) return real;
       }
       return null;
@@ -4966,15 +4968,10 @@ function createSessionManager(deps) {
       if (!source || !entry || entry.type !== 'claude' || !entry.sessionId || !newCwd) return;
       const dest = this._claudeTranscriptPath(newCwd, entry.env && entry.env.CLAUDE_CONFIG_DIR, entry.sessionId);
       try {
-        let st = null;
-        try { st = fs.lstatSync(dest); } catch {}
-        if (st && !st.isSymbolicLink()) return;
-        if (st) {
-          let resolved = null;
-          try { resolved = fs.realpathSync(dest); } catch {}
-          if (resolved) return;
-          fs.unlinkSync(dest);
-        }
+        if (fs.existsSync(dest)) return;
+        let dangling = false;
+        try { dangling = fs.lstatSync(dest).isSymbolicLink(); } catch {}
+        if (dangling) fs.unlinkSync(dest);
         fs.mkdirSync(path.dirname(dest), { recursive: true });
         fs.symlinkSync(source, dest);
         log.info('session', `${entry.name}: linked ${dest} → ${source}`);

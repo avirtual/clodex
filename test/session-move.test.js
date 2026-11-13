@@ -106,7 +106,7 @@ function mkMove({ entries = [], teamHome = null, createThrows = null, getWorkspa
     stripLevelOf: (e) => (e && e.stripLevel) || 0,
     log: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
     notifyOS: () => {},
-    ...(registryDir ? { REGISTRY_DIR: registryDir } : {}),
+    ...(registryDir ? { REGISTRY_DIR: registryDir, pathFor: pathForReal } : {}),
     ...(claudeDir ? { claudeHome: () => claudeDir } : {}),
   });
   const m = new SessionManager();
@@ -285,7 +285,7 @@ test('move respawns with --resume, in the same workspace, in the NEW cwd', async
   assert.strictEqual(wsId, 'ws1', 'same workspace — moving across workspaces is out of scope');
 });
 
-function mkTranscriptMove() {
+function mkTranscriptMove({ origin = '/old' } = {}) {
   const registryDir = mkTmpRoot('clodex-move-run-');
   const claudeDir = mkTmpRoot('clodex-move-claude-');
   const moved = mkMove({ entries: [BASE], registryDir, claudeDir });
@@ -296,10 +296,10 @@ function mkTranscriptMove() {
     try { fsReal.unlinkSync(runLink); } catch {}
     fsReal.symlinkSync(slugFile(cwd), runLink);
   };
-  const original = slugFile('/old');
+  const original = slugFile(origin);
   fsReal.mkdirSync(pathReal.dirname(original), { recursive: true });
   fsReal.writeFileSync(original, '{"type":"user"}\n');
-  hookLinks('/old');
+  hookLinks(origin);
   const s = seedLive(moved.m, 'seat');
   s.pty.kill = () => { moved.m.sessions.delete('seat'); fsReal.rmSync(pathReal.dirname(runLink), { recursive: true, force: true }); };
   return { ...moved, slugFile, original, hookLinks };
@@ -307,7 +307,8 @@ function mkTranscriptMove() {
 
 test('a moved claude seat: <new slug>/<sid>.jsonl resolves to the transcript it was writing, which stays a regular file', async () => {
   const dir = mkTmpRoot('clodex-move-');
-  const { m, slugFile, original } = mkTranscriptMove();
+  const { m, slugFile, original } = mkTranscriptMove({ origin: '/first' });
+  assert.ok(!fsReal.existsSync(slugFile('/old')), 'ENTER: only the run link knows where the transcript is');
   const r = await m.move('seat', dir);
   assert.strictEqual(r.ok, true, `expected ok (got: ${r.error})`);
   assert.strictEqual(fsReal.realpathSync(slugFile(dir)), fsReal.realpathSync(original));
