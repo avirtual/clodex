@@ -606,8 +606,8 @@ test('t2319: a box:true team with a box definition submits its hash, rev and tex
 
 const LABEL_DEF = 'FROM node:25-bookworm\nRUN true\n';
 const LABEL_HASH = 'fa502f955d138e4a78faa0ef2c6525d18955f6e2d5dbeac135c8f9ab60ae884f';
-const labelCmp = (agree, imageId) => ({
-  ...cmp('c1c1c1c1c1c1', agree, [], []),
+const labelCmp = (envKey, agree, imageId) => ({
+  ...cmp(envKey, agree, [], []),
   localEnv: { os: 'darwin', arch: 'arm64' }, remoteEnv: { os: 'linux', arch: 'arm64', isolation: 'container', imageId, definitionHash: LABEL_HASH },
 });
 const LABEL_ROWS = [
@@ -615,10 +615,10 @@ const LABEL_ROWS = [
     [boxCmp('b0b0b0b0b0b0', false, 'container'), boxCmp('0123456789ab', true, 'none')],
     '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab, box ready linux/arm64 image eeeeeeeeeeee key b0b0b0b0b0b0; comparisons under env b0b0b0b0b0b0: 0 agree, 1 disagree (local darwin/arm64, runner linux/arm64 box)'],
   ['a label-only runner and a team box definition', null, true,
-    [labelCmp(false, null), labelCmp(true, null), boxCmp('0123456789ab', true, 'none')],
+    [labelCmp('c0c0c0c0c0c0', false, null), labelCmp('c1c1c1c1c1c1', true, null), boxCmp('0123456789ab', true, 'none')],
     '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; comparisons under box definition fa502f955d13: 1 agree, 1 disagree (local darwin/arm64, runner linux/arm64 box)'],
   ['a label-only runner, a team box definition and a stamped image', null, true,
-    [labelCmp(false, null), labelCmp(true, `sha256:${'d'.repeat(64)}`), boxCmp('0123456789ab', true, 'none')],
+    [labelCmp('c0c0c0c0c0c0', false, null), labelCmp('c1c1c1c1c1c1', true, `sha256:${'d'.repeat(64)}`), boxCmp('0123456789ab', true, 'none')],
     '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; comparisons under box definition fa502f955d13 image dddddddddddd: 1 agree, 1 disagree (local darwin/arm64, runner linux/arm64 box)'],
   ['a label-only runner and no team box definition', null, false,
     [boxCmp('0123456789ab', true, 'none')],
