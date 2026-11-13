@@ -307,38 +307,39 @@ function loadBoxWith(builtins) {
 }
 
 test('seal and reap walk an Electron archive as a file under the resolved fs', async (t) => {
+  const realFs = require('../resolve-fs').resolveFs();
   const root = mkTmpRoot('suite-box-asar-');
-  t.after(() => { require('node:child_process').spawnSync('chmod', ['-R', 'u+w', root]); fs.rmSync(root, { recursive: true, force: true }); });
+  t.after(() => { require('node:child_process').spawnSync('chmod', ['-R', 'u+w', root]); realFs.rmSync(root, { recursive: true, force: true }); });
   const jobDir = path.join(root, 'jobs', 'a');
   const entry = path.join(root, 'deps', 'r', 'k');
   const app = path.join(jobDir, 'tree', 'node_modules', 'electron');
-  const putArchive = () => { fs.mkdirSync(app, { recursive: true }); fs.writeFileSync(path.join(app, 'default_app.asar'), 'archive'); };
+  const putArchive = () => { realFs.mkdirSync(app, { recursive: true }); realFs.writeFileSync(path.join(app, 'default_app.asar'), 'archive'); };
   putArchive();
   const isArchive = (p) => String(p).endsWith('.asar');
   const inArchive = (p) => String(p).includes('.asar/');
   const beneath = [];
   const watch = (name, real) => (p, ...rest) => { if (inArchive(p)) beneath.push(`${name} ${p}`); return real(p, ...rest); };
   const electronFs = {
-    ...fs,
+    ...realFs,
     lstatSync: watch('lstatSync', (p) => {
       if (inArchive(p)) return { mode: 0o644, isDirectory: () => false, isSymbolicLink: () => false, isFile: () => true };
-      if (isArchive(p)) return { mode: fs.lstatSync(p).mode, isDirectory: () => true, isSymbolicLink: () => false, isFile: () => false };
-      return fs.lstatSync(p);
+      if (isArchive(p)) return { mode: realFs.lstatSync(p).mode, isDirectory: () => true, isSymbolicLink: () => false, isFile: () => false };
+      return realFs.lstatSync(p);
     }),
-    readdirSync: (p, ...rest) => (isArchive(p) ? ['default_app.js'] : fs.readdirSync(p, ...rest)),
+    readdirSync: (p, ...rest) => (isArchive(p) ? ['default_app.js'] : realFs.readdirSync(p, ...rest)),
     chmodSync: watch('chmodSync', (p, mode) => {
       if (inArchive(p)) throw Object.assign(new Error(`ENOTDIR: not a directory, chmod '${p}'`), { code: 'ENOTDIR' });
-      fs.chmodSync(p, mode);
+      realFs.chmodSync(p, mode);
     }),
-    rmSync: watch('rmSync', (p, opts) => { if (!inArchive(p)) fs.rmSync(p, opts); }),
+    rmSync: watch('rmSync', (p, opts) => { if (!inArchive(p)) realFs.rmSync(p, opts); }),
   };
   const chmods = [];
   const originalFs = {
-    ...fs,
-    lstatSync: watch('lstatSync', fs.lstatSync),
-    readdirSync: watch('readdirSync', fs.readdirSync),
-    chmodSync: watch('chmodSync', (p, mode) => { chmods.push(p); fs.chmodSync(p, mode); }),
-    rmSync: watch('rmSync', fs.rmSync),
+    ...realFs,
+    lstatSync: watch('lstatSync', realFs.lstatSync),
+    readdirSync: watch('readdirSync', realFs.readdirSync),
+    chmodSync: watch('chmodSync', (p, mode) => { chmods.push(p); realFs.chmodSync(p, mode); }),
+    rmSync: watch('rmSync', realFs.rmSync),
   };
   const { boxIsolation: box } = loadBoxWith({ fs: electronFs, 'original-fs': originalFs });
   const docker = stubDocker(() => ({ stdout: '' }));
@@ -346,9 +347,9 @@ test('seal and reap walk an Electron archive as a file under the resolved fs', a
   await adapterAsar.seal(jobDir, entry, ['node_modules']);
   const archive = path.join(entry, 'node_modules', 'electron', 'default_app.asar');
   assert.ok(chmods.includes(archive), `ENTER: ${chmods.join(', ')}`);
-  assert.strictEqual(fs.lstatSync(archive).mode & 0o222, 0);
+  assert.strictEqual(realFs.lstatSync(archive).mode & 0o222, 0);
   putArchive();
   await adapterAsar.reap(jobDir, entry, ARM_JOB);
-  assert.strictEqual(fs.existsSync(jobDir), false);
+  assert.strictEqual(realFs.existsSync(jobDir), false);
   assert.deepStrictEqual(beneath, []);
 });
