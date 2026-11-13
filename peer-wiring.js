@@ -40,7 +40,7 @@ function suiteClaimerFor({ getBoxOffer, getSuiteEngine, log, now = () => new Dat
     claim: (session) => conn.suiteDeskClaim(session),
     blob: (id, claim) => conn.suiteDeskBlob(id, claim),
     reply: (id, claim, answer) => conn.suiteDeskReply(id, claim, answer),
-    execute: (call) => suiteDispatch(getSuiteEngine(), call),
+    execute: (call) => suiteDispatch(getSuiteEngine(), { ...call, origin: conn.label }),
     grant: () => runGrant(getBoxOffer(), conn.label, now()),
     ready: () => peerCaps(conn).includes('suite-pull') && engineUp(getSuiteEngine),
     log: (m) => { if (log) log.warn('suite-claimer', `${conn.label}: ${m}`); },
