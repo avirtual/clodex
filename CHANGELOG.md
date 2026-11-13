@@ -11,7 +11,7 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased
+## Unreleased — Test jobs can run in Docker boxes on a runner node; large repositories can use a remote runner
 
 - The tree sent to a remote test runner is no longer held in memory on the sending side, and a tree larger than the runner accepts is refused as soon as that is known.
 - A shadow run whose tree could not be sent is recorded as skipped, not as a disagreement.
