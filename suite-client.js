@@ -35,6 +35,11 @@ function lastTotals(text) {
   return last;
 }
 
+function boxDefOf(box) {
+  if (!box || typeof box !== 'object' || typeof box.definitionHash !== 'string') return null;
+  return { definitionHash: box.definitionHash, rev: box.rev, definition: box.definition };
+}
+
 function iso(ms) {
   return ms == null ? null : new Date(ms).toISOString();
 }
@@ -94,7 +99,7 @@ function createSuiteClient({
       queueBudgetMs = null, runBudgetMs = null, box = false,
     } = opts;
     const ctx = {
-      id: opts.runId || randomUUID(), peer, box: box === true, wire: opts.wire === 'pull' ? 'pull' : 'push', where: opts.name || peer, route: opts.route || null, override: opts.override || null,
+      id: opts.runId || randomUUID(), peer, box: box === true || boxDefOf(box) != null, boxDef: boxDefOf(box), wire: opts.wire === 'pull' ? 'pull' : 'push', where: opts.name || peer, route: opts.route || null, override: opts.override || null,
       tree: typeof tree === 'string' && tree ? path.resolve(tree) : null, kind, scope, team, ticket, seat,
       jobId: null, attempt: 0, treeHash: null, sha: null, dirty: null, queuedAt: null, startedAt: null, env: null, started: false,
       t0: now(), budgetMs, queueBudgetMs, runBudgetMs, timeoutMs, onSubmitted, onDetach, shouldStop,
@@ -145,7 +150,7 @@ function createSuiteClient({
       const r = await once(ctx.peer, fn, ctx.wire);
       if (ctx.wire === 'pull' && r.status === 503 && r.body == null) { try { ctx.onDetach(); } catch {} }
       if (REFUSED.has(r.status)) throw Object.assign(new Error('runner refused the token'), { refused: true });
-      if (!UNREACHABLE.has(r.status)) return r;
+      if (!UNREACHABLE.has(r.status) || (r.body && r.body.code === 'box-unavailable')) return r;
       const left = deadlineOf(ctx) - now();
       if (left <= 0) return { ...r, unreachable: true };
       progress(`waiting for runner ${ctx.peer}`);
@@ -181,11 +186,11 @@ function createSuiteClient({
     if (info.unreachable || !info.body || !info.body.ok) return { unknown: `runner unreachable: ${info.error || (info.body && info.body.error) || `status ${info.status}`}` };
     const limits = info.body.limits || {};
     const boxInfo = info.body.box || null;
-    if (ctx.box && (!boxInfo || boxInfo.state !== 'ready')) {
+    if (ctx.box && !ctx.boxDef && (!boxInfo || boxInfo.state !== 'ready')) {
       ctx.env = null;
       return { unknown: `runner has no box: ${(boxInfo && boxInfo.why) || 'not configured'}` };
     }
-    ctx.env = ctx.box ? boxInfo.env || null : info.body.env || null;
+    ctx.env = ctx.boxDef ? null : ctx.box ? boxInfo.env || null : info.body.env || null;
     const body = {
       id: jobId, attempt, repoKey: snap.repoKey, kind: ctx.kind, scope: ctx.scope,
       team: ctx.team, ticket: ctx.ticket, seat: ctx.seat,
@@ -193,6 +198,7 @@ function createSuiteClient({
       branch: snap.branch, trunk: snap.trunk, refs: snap.refs, candidates: snap.candidates,
       files, flags, env, setup, timeoutMs: ctx.timeoutMs, full,
       ...(ctx.box ? { isolation: 'container' } : {}),
+      ...(ctx.boxDef ? { box: ctx.boxDef } : {}),
     };
     ctx.queuedAt = now();
     if (ctx.shouldStop()) return { unknown: 'cancelled by the caller before submit' };
@@ -330,6 +336,10 @@ function createSuiteClient({
     if ((ran === 'container') !== ctx.box) {
       return { unknown: `box mismatch: asked ${ctx.box ? 'container' : 'native'}, runner ran ${ran == null ? 'unstamped' : ran}` };
     }
+    const stamped = job.env && job.env.box ? job.env.box : {};
+    if (ctx.boxDef && stamped.definitionHash !== ctx.boxDef.definitionHash) {
+      return { unknown: `box mismatch: asked box ${ctx.boxDef.definitionHash.slice(0, 12)}, runner ran image ${String(stamped.imageId || 'unstamped').replace(/^sha256:/, '').slice(0, 12)}` };
+    }
     if (job.reason == null) return {};
     if (job.reason === 'timeout') return { unknown: `the suite did not finish within ${ctx.timeoutMs || DEFAULT_RUN_MS}ms (killed)`, outcome: 'timeout' };
     if (job.reason === 'tree-mismatch') {
@@ -417,7 +427,7 @@ function createSuiteClient({
         at: iso(now()), team: opts.team, kind: opts.kind, ticket: opts.ticket, treeHash: snap.treeHash, sha: snap.head || null,
         envKey: e.envKey || null, wire: me.wire,
         localEnv: { os: platform, arch },
-        remoteEnv: { os: e.platform || null, arch: e.arch || null, isolation: e.isolation || null, imageId: (e.box && e.box.imageId) || null },
+        remoteEnv: { os: e.platform || null, arch: e.arch || null, isolation: e.isolation || null, imageId: (e.box && e.box.imageId) || null, definitionHash: (e.box && e.box.definitionHash) || null },
         local: me.local, remote,
         ...(notSent ? { skipped: 'not-sent', agree: null } : { agree: halvesAgree(me.local, remote) }),
       });

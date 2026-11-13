@@ -555,7 +555,7 @@ const INFO_BOX = (box) => ({ ...INFO, info: { ...INFO.info, box } });
 const BOX_READY = { state: 'ready', env: { platform: 'linux', arch: 'arm64', isolation: 'container', envKey: 'b0b0b0b0b0b0', box: { imageId: BOX_IMAGE } } };
 const boxCmp = (envKey, agree, isolation) => ({
   ...cmp(envKey, agree, [], []),
-  localEnv: { os: 'darwin', arch: 'arm64' }, remoteEnv: { os: 'linux', arch: 'arm64', isolation, imageId: isolation === 'container' ? BOX_IMAGE : null },
+  localEnv: { os: 'darwin', arch: 'arm64' }, remoteEnv: { os: 'linux', arch: 'arm64', isolation, imageId: isolation === 'container' ? BOX_IMAGE : null, definitionHash: null },
 });
 const RUNNER_HEAD = '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab';
 
@@ -586,4 +586,20 @@ test('t2312: a gate:shadow submit carries box:true only when team.json asks for 
     await f.m._shadowSubmit(f.tm.loadManifest('team'), { id: 't1' }, '/w', {});
   }
   assert.deepStrictEqual(seen, [false, true, false]);
+});
+
+test('t2319: a box:true team with a box definition submits its hash, rev and text; box:false sends none', async () => {
+  const seen = [];
+  const shadow = async (o) => { seen.push(o.box); return null; };
+  for (const box of [true, false]) {
+    const f = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1', gate: 'shadow', box } }, peers: [SUITE_PEER], shadow });
+    const dir = path.dirname(f.file);
+    require('../team-box').writeBox(dir, 'FROM node:24-bookworm\n');
+    require('../team-box').writeBox(dir, 'FROM node:25-bookworm\nRUN true\n');
+    await f.m._shadowSubmit(f.tm.loadManifest('team'), { id: 't1' }, '/w', {});
+  }
+  assert.deepStrictEqual(seen, [
+    { definitionHash: 'fa502f955d138e4a78faa0ef2c6525d18955f6e2d5dbeac135c8f9ab60ae884f', rev: 2, definition: 'FROM node:25-bookworm\nRUN true\n' },
+    false,
+  ]);
 });

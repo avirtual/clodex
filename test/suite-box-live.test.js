@@ -189,6 +189,7 @@ if (process.argv.includes(CHILD_FLAG)) {
     const snaps = [];
     const children = [];
     const runners = [];
+    const builtImages = [];
 
     after(async () => {
       for (const c of children) { try { c.kill('SIGKILL'); } catch {} }
@@ -204,12 +205,13 @@ if (process.argv.includes(CHILD_FLAG)) {
         for (const r of runners) if ((await r.info()).queue.running) return false;
         return true;
       }, 30000).catch(() => {});
+      for (const id of builtImages) { try { docker('image', 'rm', '-f', id); } catch {} }
       for (const s of snaps) releaseSnapshot(s);
       for (const fn of cleanups) { try { fn(); } catch {} }
     });
     const { mkTmpRoot } = require('./lib/tmp-roots');
 
-    async function fixture({ box: withBox = true, dockerOver = null } = {}) {
+    async function fixture({ box: withBox = true, dockerOver = null, defaultImage = true } = {}) {
       const r = makeRoots(mkTmpRoot);
       cleanups.push(() => childProcess.spawnSync('chmod', ['-R', 'u+w', r.root]));
       const image = imageId();
@@ -217,7 +219,7 @@ if (process.argv.includes(CHILD_FLAG)) {
       const logs = [];
       const dockerCalls = createDocker();
       const call = dockerOver ? dockerOver(dockerCalls.call, events) : dockerCalls.call;
-      const box = boxIsolation({ image, work: r.work, stateDir: r.stateDir, docker: { call } });
+      const box = boxIsolation({ image: defaultImage ? image : null, work: r.work, stateDir: r.stateDir, docker: { call } });
       scopes.add(`clodex.suite.runner=${box.runnerKey}`);
       const repo = makeRepo(r.root);
       const snap = await snapshotTree(repo);
@@ -308,6 +310,39 @@ if (process.argv.includes(CHILD_FLAG)) {
       const gitLines = (s) => s.split('\n').filter((l) => /^[AB] STATUS=/.test(l));
       assert.strictEqual(gitLines(out).length, 2, 'ENTER: both fixture tests printed their git line');
       assert.deepStrictEqual(gitLines(boxOut), gitLines(out));
+    });
+
+    test('an engine with no default image: two labelled images, each named job runs in a container of its own image, a job naming nothing is refused', async () => {
+      const f = await fixture({ defaultImage: false });
+      const runner = f.make();
+      assert.strictEqual((await runner.info()).box, null);
+      assert.deepStrictEqual(await runner.submit(bodyOf(f.snap, 'live-unnamed', { isolation: 'container' })), { ok: false, status: 409, error: 'this runner has no box image configured' });
+      const run = crypto.randomBytes(6).toString('hex');
+      const hashes = [0, 1].map((i) => crypto.createHash('sha256').update(`suite-box-live ${run} ${i}`).digest('hex'));
+      const built = hashes.map((h) => {
+        const r = childProcess.spawnSync('docker', ['build', '-q', '--label', `clodex.box=${h}`, '-'], { input: `FROM ${IMAGE_NAME}\n`, encoding: 'utf8', timeout: WAIT_MS, killSignal: 'SIGKILL' });
+        if (r.status !== 0) throw new Error(`docker build failed: ${(r.stderr || '').trim() || r.error || r.status}`);
+        const id = r.stdout.trim();
+        builtImages.push(id);
+        return id;
+      });
+      assert.notStrictEqual(built[0], built[1], 'ENTER: the two labels give two image ids');
+      const seen = [];
+      for (const [i, definitionHash] of hashes.entries()) {
+        const id = `live-label-${i}`;
+        const r = await upload(runner, f.snap, bodyOf(f.snap, id, { isolation: 'container', files: ['test/wait.test.js'], box: { definitionHash, rev: 1 } }));
+        assert.strictEqual(r.state, 'queued', `submit ${id}: ${JSON.stringify(r)}`);
+        await until(`${id} printing WAIT-STARTED`, async () => (await stdoutOf(runner, id)).includes('WAIT-STARTED'));
+        const containers = idsOf(`clodex.suite.job=${id}`);
+        assert.strictEqual(containers.length, 1, `ENTER: one container for ${id}`);
+        seen.push([docker('inspect', '--format', '{{.Image}}', containers[0]), (await viewOf(runner, id)).env.box]);
+        await runner.cancel(id);
+        await settled(runner, id);
+      }
+      assert.deepStrictEqual(seen, [
+        [built[0], { imageId: built[0], definitionHash: hashes[0], rev: 1 }],
+        [built[1], { imageId: built[1], definitionHash: hashes[1], rev: 1 }],
+      ]);
     });
 
     test('a box job cancelled mid-run leaves no container with its label and no job dir', async () => {

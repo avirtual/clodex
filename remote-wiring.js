@@ -170,8 +170,7 @@ function startSuiteRunner(opts, { log, load = () => require('./suite-runner'), l
     const runner = createSuiteRunner({
       ...runnerOpts,
       isolation: opts.isolation === 'none' ? noneIsolation() : userIsolation(),
-      box: boxImage ? docker : null,
-      boxSweep: boxImage ? null : docker.sweep,
+      box: docker,
       log: (m) => log.warn('suite-runner', m),
     });
     runner.start();

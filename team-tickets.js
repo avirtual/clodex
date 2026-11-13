@@ -6389,6 +6389,13 @@ function createTicketMethods(deps, shared) {
       return null;
     },
 
+    _shadowBox(team) {
+      const cur = teamBox.readBox(team.dir || path.join(teamsDir, team.name));
+      if (cur.definition == null) return true;
+      const rev = cur.meta && Number.isInteger(cur.meta.rev) ? cur.meta.rev : 1;
+      return { definitionHash: teamBox.boxFingerprint(cur.definition), rev, definition: cur.definition };
+    },
+
     async _shadowSubmit(team, ticket, cwd, opts) {
       const tr = team && team.testRunner;
       if (!tr || !tr.peer || tr.gate !== 'shadow') return null;
@@ -6412,7 +6419,7 @@ function createTicketMethods(deps, shared) {
         }
         return await client.shadow({
           ...via, name: tr.peer, tree: cwd, kind, team: team.name, ticket: String(ticket.id),
-          setup: tr.setup || null, env: tr.env || {}, route: 'gate:shadow', box: tr.box === true,
+          setup: tr.setup || null, env: tr.env || {}, route: 'gate:shadow', box: tr.box === true ? this._shadowBox(team) : false,
           queueBudgetMs: TICKET_SUITE_LOCK_WAIT_MS, budgetMs: TICKET_SUITE_TIMEOUT,
         });
       } catch (e) {

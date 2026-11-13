@@ -849,8 +849,10 @@ over 16384 bytes or 400 lines.
 - `[agent:team box show]`, or bare `[agent:team box]`: `rev` and the definition
   hash on the first line, then `generated from bootstrap <hash>; edited since:
   yes|no` (or `not generated from bootstrap`), then one `docker build` line to
-  run by hand (with `--build-arg CLODEX_BASE=…` only when the file declares that
-  ARG), then the file.
+  run by hand (`-t clodex-box:<hash12> --label clodex.box=<definition hash>`; the label is how a test runner
+  finds the image for this team's jobs — see peering.md, "A job names its
+  image"; `--build-arg CLODEX_BASE=…` only when the file declares that ARG),
+  then the file.
 - `[agent:team box clear]`: removes the file; the rev count continues.
 
 `rev` starts at 1 and goes up by one on every `set` or `init` whose text,
@@ -929,8 +931,8 @@ team.json only.
 
 `box` is a boolean and reads `false` when absent; any other value drops the
 setting. `box: true` asks the runner for a container box on `gate:shadow` runs
-(hand routing stays native): the lead reads the runner's `info.box` first and,
-unless it is `ready`, ends the run `unknown: runner has no box: <why>` without
+(hand routing stays native): for a team with no box definition the lead reads
+the runner's `info.box` first and, unless it is `ready`, ends the run `unknown: runner has no box: <why>` without
 submitting. The submit carries `isolation: 'container'`, and a done job whose
 stamp (`env.isolation === 'container'`) does not match the ask, either way,
 reads `unknown: box mismatch: asked <container|native>, runner ran <isolation>`.

@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const { mkTmpRoot } = require('./lib/tmp-roots');
+const { imagesDocker } = require('./lib/box-images');
 const { createDocker, boxIsolation, runArgv } = require('../suite-box');
 
 const IMAGE = 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
@@ -138,7 +139,7 @@ const PROBE_ROWS = [
     want: { state: 'ready', env: {
       runner: 'node-a', clodex: CLODEX_VERSION, imageVersion: null, imageRev: null, imageDigest: null,
       platform: 'linux', arch: 'arm64', osRelease: null, node: null, git: null, cpus: 8, tz: 'UTC', lang: 'C.UTF-8',
-      isolation: 'container', box: { imageId: IMAGE }, host: { platform: 'darwin', arch: 'arm64' }, envKey: 'b2d0badeb218',
+      isolation: 'container', box: { imageId: IMAGE, definitionHash: null, rev: null }, host: { platform: 'darwin', arch: 'arm64' }, envKey: 'b2d0badeb218',
     } },
   },
   {
@@ -146,7 +147,7 @@ const PROBE_ROWS = [
     want: { state: 'ready', env: {
       runner: 'node-a', clodex: CLODEX_VERSION, imageVersion: null, imageRev: null, imageDigest: null,
       platform: 'linux', arch: 'x64', osRelease: null, node: null, git: null, cpus: 4, tz: 'UTC', lang: 'C.UTF-8',
-      isolation: 'container', box: { imageId: IMAGE }, host: { platform: 'darwin', arch: 'arm64' }, envKey: 'b4bedef734e4',
+      isolation: 'container', box: { imageId: IMAGE, definitionHash: null, rev: null }, host: { platform: 'darwin', arch: 'arm64' }, envKey: 'b4bedef734e4',
     } },
   },
 ];
@@ -175,6 +176,87 @@ test('probe: the two docker calls, cached for 30 s', async () => {
   t += 1;
   await box.probe();
   assert.strictEqual(docker.calls.length, 4);
+});
+
+const HASH_A = 'a'.repeat(64);
+const IMG_A = `sha256:${'1'.repeat(64)}`;
+const IMG_A2 = `sha256:${'2'.repeat(64)}`;
+const IMG_X = `sha256:${'3'.repeat(64)}`;
+const NAMED_ENV = (imageId, envKey) => ({
+  runner: 'node-a', clodex: CLODEX_VERSION, imageVersion: null, imageRev: null, imageDigest: null,
+  platform: 'linux', arch: 'arm64', osRelease: null, node: null, git: null, cpus: 8, tz: 'UTC', lang: 'C.UTF-8',
+  isolation: 'container', box: { imageId, definitionHash: HASH_A, rev: 3 }, host: { platform: 'darwin', arch: 'arm64' }, envKey,
+});
+const LABEL_A = 'clodex.box=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const NAMED_ROWS = [
+  { name: 'one labelled image, its inspect object has no Parent key', images: [{ id: IMG_A, labels: [LABEL_A] }], want: { state: 'ready', env: NAMED_ENV(IMG_A, 'b10f4e11e71d') }, verbs: ['info', 'ls', 'inspect'] },
+  { name: 'one labelled image and no boxImage', over: { image: null }, images: [{ id: IMG_A, labels: [LABEL_A] }], want: { state: 'ready', env: NAMED_ENV(IMG_A, 'b10f4e11e71d') }, verbs: ['info', 'ls', 'inspect'] },
+  { name: 'one labelled image under two tags', images: [{ id: IMG_A, labels: [LABEL_A] }, { id: IMG_A, labels: [LABEL_A] }], want: { state: 'ready', env: NAMED_ENV(IMG_A, 'b10f4e11e71d') }, verbs: ['info', 'ls', 'inspect'] },
+  { name: 'an untagged labelled image', images: [{ id: IMG_A, untagged: true, labels: [LABEL_A] }], want: { state: 'ready', env: NAMED_ENV(IMG_A, 'b10f4e11e71d') }, verbs: ['info', 'ls', 'inspect'] },
+  {
+    name: 'a labelled intermediate layer under its final image', images: [{ id: IMG_A2, untagged: true, labels: [LABEL_A] }, { id: IMG_A, parent: IMG_A2, labels: [LABEL_A] }],
+    want: { state: 'ready', env: NAMED_ENV(IMG_A, 'b10f4e11e71d') }, verbs: ['info', 'ls', 'inspect'],
+  },
+  { name: 'one labelled image with Parent ""', images: [{ id: IMG_A, parent: '', labels: [LABEL_A] }], want: { state: 'ready', env: NAMED_ENV(IMG_A, 'b10f4e11e71d') }, verbs: ['info', 'ls', 'inspect'] },
+  {
+    name: 'two compatible images with Parent "" carry it', images: [{ id: IMG_A, parent: '', labels: [LABEL_A] }, { id: IMG_A2, parent: '', labels: [LABEL_A] }],
+    want: { state: 'ambiguous', why: `more than one image carries box aaaaaaaaaaaa on this runner: ${IMG_A}, ${IMG_A2}` }, verbs: ['info', 'ls', 'inspect'],
+  },
+  {
+    name: 'inspect answers no JSON list', fail: { 'image inspect': { stdout: 'template parsing error\n' } }, images: [{ id: IMG_A, labels: [LABEL_A] }],
+    want: { state: 'unavailable', why: 'docker image inspect answered no JSON list' }, verbs: ['info', 'ls', 'inspect'],
+  },
+  {
+    name: 'inspect fails', fail: { 'image inspect': { ok: false, code: 1, stderr: 'Error: No such image\n' } }, images: [{ id: IMG_A, labels: [LABEL_A] }],
+    want: { state: 'unavailable', why: 'docker image inspect failed: Error: No such image' }, verbs: ['info', 'ls', 'inspect'],
+  },
+  { name: 'no image carries the label', images: [{ id: IMAGE, labels: [] }], want: { state: 'no-image', why: 'no image for box aaaaaaaaaaaa on this runner' }, verbs: ['info', 'ls'] },
+  { name: 'only a wrong-arch image carries it', images: [{ id: IMG_X, arch: 'amd64', labels: [LABEL_A] }], want: { state: 'no-image', why: 'no image for box aaaaaaaaaaaa on this runner for linux/arm64' }, verbs: ['info', 'ls', 'inspect'] },
+  { name: 'a newer wrong-arch image beside the right one', images: [{ id: IMG_A, labels: [LABEL_A] }, { id: IMG_X, arch: 'amd64', labels: [LABEL_A] }], want: { state: 'ready', env: NAMED_ENV(IMG_A, 'b10f4e11e71d') }, verbs: ['info', 'ls', 'inspect'] },
+  {
+    name: 'two compatible images carry it', images: [{ id: IMG_A, labels: [LABEL_A] }, { id: IMG_A2, labels: [LABEL_A] }],
+    want: { state: 'ambiguous', why: `more than one image carries box aaaaaaaaaaaa on this runner: ${IMG_A}, ${IMG_A2}` }, verbs: ['info', 'ls', 'inspect'],
+  },
+  { name: 'daemon not linux', info: '29.9.2 windows x86_64 8\n', images: [{ id: IMG_A, labels: [LABEL_A] }], want: { state: 'unavailable', why: 'docker daemon OS is windows, not linux' }, verbs: ['info'] },
+  { name: 'image ls fails', fail: { 'image ls': { ok: false, code: 1, stderr: 'Error: boom\n' } }, images: [], want: { state: 'unavailable', why: 'docker image ls failed: Error: boom' }, verbs: ['info', 'ls'] },
+  { name: 'uid 0', over: { uid: 0 }, images: [{ id: IMG_A, labels: [LABEL_A] }], want: { state: 'unavailable', why: 'the suite runner must not run as uid 0' }, verbs: [] },
+];
+
+for (const row of NAMED_ROWS) {
+  test(`probe(want): ${row.name}`, async () => {
+    const docker = imagesDocker(row.images, { ...(row.info ? { info: row.info } : {}), ...(row.fail ? { fail: row.fail } : {}) });
+    const box = adapter({ docker, env: { CLODEX_NODE_NAME: 'node-a' }, platform: 'darwin', arch: 'arm64', ...row.over });
+    assert.deepStrictEqual(await box.probe({ definitionHash: HASH_A, rev: 3 }), row.want);
+    assert.deepStrictEqual(docker.calls.map((c) => (c.args[0] === 'image' ? c.args[1] : c.args[0])), row.verbs);
+    assert.deepStrictEqual(docker.calls.map((c) => c.opts), Array(row.verbs.length).fill({ timeoutMs: 5000 }));
+  });
+}
+
+test('probe(want): labels are read only through image ls --filter, ids go as separate argv entries, and every named look is fresh', async () => {
+  let t = 1000;
+  const docker = imagesDocker([{ id: IMG_A, labels: [LABEL_A] }, { id: IMG_X, arch: 'amd64', labels: [LABEL_A] }, { id: IMAGE, labels: [] }]);
+  const box = adapter({ docker, now: () => t });
+  assert.strictEqual((await box.probe({ definitionHash: HASH_A, rev: 1 })).state, 'ready');
+  assert.deepStrictEqual(docker.calls.map((c) => c.args), [
+    ['info', '--format', '{{.ServerVersion}} {{.OSType}} {{.Architecture}} {{.NCPU}}'],
+    ['image', 'ls', '-a', '-q', '--no-trunc', '--filter', `label=${LABEL_A}`],
+    ['image', 'inspect', IMG_A, IMG_X],
+  ]);
+  t += 1;
+  await box.probe({ definitionHash: HASH_A, rev: 1 });
+  assert.strictEqual(docker.calls.length, 6);
+  assert.strictEqual((await box.probe()).env.box.imageId, IMAGE);
+  assert.strictEqual(docker.calls.length, 8, 'a named look leaves the default cache empty');
+});
+
+test('spawn runs the image stamped on the job, not the adapter default', () => {
+  const box = adapter();
+  const spawned = [];
+  const spawn = (cmd, args) => { spawned.push(args[args.indexOf('-c') - 1]); return { pid: 7 }; };
+  const jobDir = '/w/jobs/abcd1234';
+  box.spawn({ jobDir, argv: ['node', 'x'], env: box.env(jobDir), spawn, job: { id: 'j-a', identity: { arch: 'arm64', box: { imageId: IMG_A, definitionHash: HASH_A, rev: 1 } } } });
+  box.spawn({ jobDir, argv: ['node', 'x'], env: box.env(jobDir), spawn, job: { id: 'j-d', identity: { arch: 'arm64', box: { imageId: IMAGE, definitionHash: null, rev: null } } } });
+  assert.deepStrictEqual(spawned, [IMG_A, IMAGE]);
 });
 
 const PS = (label) => ['ps', '-aq', '--filter', `label=${label}`];

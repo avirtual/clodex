@@ -199,7 +199,8 @@ function ancestryLine(meta, definition) {
 
 function buildLine(file, definition, version) {
   const declaresBase = logicalLines(normalizeDefinition(definition)).some((l) => BASE_ARG_RE.test(l.text));
-  return `docker build ${declaresBase ? `--build-arg CLODEX_BASE=${GHCR_REPO}:${version} ` : ''}- < ${file}`;
+  const hash = boxFingerprint(definition);
+  return `docker build -t clodex-box:${hash.slice(0, 12)} --label clodex.box=${hash} ${declaresBase ? `--build-arg CLODEX_BASE=${GHCR_REPO}:${version} ` : ''}- < ${file}`;
 }
 
 function showBox(teamDir, { version = require('./package.json').version } = {}) {

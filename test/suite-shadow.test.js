@@ -62,7 +62,7 @@ function shadowClient(conn, { trees = [TREE] } = {}) {
 const OPTS = { peer: 'p1', name: 'runner-1', tree: '/w', kind: 'verify', team: 'tm', ticket: 't1' };
 
 const DARWIN = { os: 'darwin', arch: 'arm64' };
-const UNSTAMPED = { os: null, arch: null, isolation: null, imageId: null };
+const UNSTAMPED = { os: null, arch: null, isolation: null, imageId: null, definitionHash: null };
 const REMOTE = (over) => ({ outcome: 'pass', reason: null, pass: 5, fail: 0, tests: 5, failing: [], slow: [], jobId: 'run-1', queueMs: 3, runMs: 40, ...over });
 const LOCAL = (over) => ({ outcome: 'pass', pass: 5, fail: 0, tests: 5, failing: [], slow: [], durationMs: 70, ...over });
 const RECORD = (local, remote, agree) => ({
@@ -487,7 +487,7 @@ for (const [name, box, stamp, want] of STAMP_ROWS) {
   });
 }
 
-const BOX_REMOTE_ENV = { os: 'linux', arch: 'arm64', isolation: 'container', imageId: IMAGE };
+const BOX_REMOTE_ENV = { os: 'linux', arch: 'arm64', isolation: 'container', imageId: IMAGE, definitionHash: null };
 const BOX_ROW = (local, remote, agree) => ({
   at: '1970-01-01T00:00:01.000Z', team: 'tm', kind: 'verify', ticket: 't1', treeHash: TREE, sha: HEAD, envKey: 'b0b0b0b0b0b0', wire: 'push',
   localEnv: { os: 'darwin', arch: 'arm64' }, remoteEnv: BOX_REMOTE_ENV, local, remote, agree,
@@ -516,4 +516,62 @@ test('t2312: a box-failed job reads unknown and counts as a disagreement, like a
   assert.deepStrictEqual(f.client.tally({ team: 'tm' }), {
     envKey: 'b0b0b0b0b0b0', agree: 0, disagree: 1, skipped: 0, oneSided: [], platforms: { local: { os: 'darwin', arch: 'arm64' }, remote: BOX_REMOTE_ENV },
   });
+});
+
+const DEF_HASH = 'f'.repeat(64);
+const DEF = { definitionHash: DEF_HASH, rev: 2, definition: 'FROM scratch\n' };
+const NAMED_ENV = { ...BOX_ENV, box: { imageId: IMAGE, definitionHash: DEF_HASH, rev: 2 } };
+
+for (const [name, infoBox] of [['ready', READY], ['null', null], ['unavailable', { state: 'unavailable', why: 'image eeeeeeeeeeee is not present on this runner' }]]) {
+  test(`t2319: a named box ask submits the definition beside isolation:container with info.box ${name}`, async () => {
+    const r = remoteConn({ box: infoBox, stamp: NAMED_ENV });
+    const out = await boxClient(r.conn).client.run({ ...OPTS, box: DEF });
+    assert.strictEqual(out.record.outcome, 'pass');
+    assert.deepStrictEqual(r.bodies, [{
+      ...SUBMIT, isolation: 'container',
+      box: { definitionHash: 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff', rev: 2, definition: 'FROM scratch\n' },
+    }]);
+  });
+}
+
+const NAMED_STAMP_ROWS = [
+  ['stamped with the asked hash', NAMED_ENV, ['pass', null]],
+  ['stamped with another hash', { ...BOX_ENV, box: { imageId: `sha256:${'7'.repeat(64)}`, definitionHash: '0'.repeat(64), rev: 1 } }, ['unknown', 'box mismatch: asked box ffffffffffff, runner ran image 777777777777']],
+  ['stamped by a runner that ignores box', BOX_ENV, ['unknown', 'box mismatch: asked box ffffffffffff, runner ran image eeeeeeeeeeee']],
+  ['stamped with the default image', { ...BOX_ENV, box: { imageId: IMAGE, definitionHash: null, rev: null } }, ['unknown', 'box mismatch: asked box ffffffffffff, runner ran image eeeeeeeeeeee']],
+  ['stamped native', NATIVE_STAMP, ['unknown', 'box mismatch: asked container, runner ran none']],
+];
+
+for (const [name, stamp, want] of NAMED_STAMP_ROWS) {
+  test(`t2319: a named box done stamp is checked against the asked hash: ${name}`, async () => {
+    const { conn } = remoteConn({ box: READY, stamp });
+    const out = await boxClient(conn).client.run({ ...OPTS, box: DEF });
+    assert.deepStrictEqual([out.record.outcome, out.record.reason], want);
+  });
+}
+
+test('t2319: the compare row of a named box carries its definition hash', async () => {
+  const { conn } = remoteConn({ box: null, stamp: NAMED_ENV });
+  const f = boxClient(conn);
+  const h = await f.client.shadow({ ...OPTS, box: DEF });
+  await turns();
+  h.local(localHalf({ code: 0, stdout: GREEN, stderr: '', durationMs: 70 }));
+  assert.deepStrictEqual(f.records().map((r) => r.remoteEnv), [
+    { os: 'linux', arch: 'arm64', isolation: 'container', imageId: IMAGE, definitionHash: 'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' },
+  ]);
+});
+
+test('t2319: a named box submit answered 503 box-unavailable ends at once with the runner\'s reason', async () => {
+  const r = remoteConn({ box: null, stamp: NAMED_ENV });
+  const posts = [];
+  const inner = r.conn.suiteAsk;
+  r.conn.suiteAsk = async (method, p, body) => {
+    if (method !== 'POST') return inner(method, p, body);
+    posts.push(p);
+    return posts.length === 1
+      ? { status: 503, body: { ok: false, status: 503, error: 'box unavailable: docker not found on PATH', code: 'box-unavailable' } }
+      : inner(method, p, body);
+  };
+  const out = await boxClient(r.conn).client.run({ ...OPTS, box: DEF });
+  assert.deepStrictEqual([posts, out.record.outcome, out.record.reason], [['/api/suite/jobs'], 'unknown', 'runner refused the job: box unavailable: docker not found on PATH']);
 });
