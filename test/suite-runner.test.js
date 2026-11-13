@@ -1405,7 +1405,7 @@ for (const [phase, extra, firstExec] of [
   assert.strictEqual((await f.upload(f.body('job-a', 'hand', { ...NAMED(HASH_A), ...extra }))).ok, true);
   const a = await waitState(f.runner, 'job-a', 'done');
   assert.deepStrictEqual([a.reason, a.exit, a.env.box.imageId], ['box-failed', { code: 125, signal: null }, IMG_A]);
-  const aExecs = f.calls.filter((c) => c.job === 'job-a').map((c) => (c.args.includes('npm ci') ? 'npm ci' : 'test'));
+  const aExecs = f.calls.filter((c) => imageOf(c) === IMG_A).map((c) => (c.args.includes('npm ci') ? 'npm ci' : 'test'));
   assert.deepStrictEqual(aExecs, [firstExec]);
   assert.strictEqual((await f.runner.submit(f.body('job-b', 'hand', { ...NAMED(HASH_B), ...extra }))).state, 'queued');
   const b = await waitState(f.runner, 'job-b', 'done');
