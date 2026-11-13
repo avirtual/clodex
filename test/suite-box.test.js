@@ -189,13 +189,26 @@ const NAMED_ENV = (imageId, envKey) => ({
 });
 const LABEL_A = 'clodex.box=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const NAMED_ROWS = [
-  { name: 'one labelled image', images: [{ id: IMG_A, labels: [LABEL_A] }], want: { state: 'ready', env: NAMED_ENV(IMG_A, 'b10f4e11e71d') }, verbs: ['info', 'ls', 'inspect'] },
+  { name: 'one labelled image, its inspect object has no Parent key', images: [{ id: IMG_A, labels: [LABEL_A] }], want: { state: 'ready', env: NAMED_ENV(IMG_A, 'b10f4e11e71d') }, verbs: ['info', 'ls', 'inspect'] },
   { name: 'one labelled image and no boxImage', over: { image: null }, images: [{ id: IMG_A, labels: [LABEL_A] }], want: { state: 'ready', env: NAMED_ENV(IMG_A, 'b10f4e11e71d') }, verbs: ['info', 'ls', 'inspect'] },
   { name: 'one labelled image under two tags', images: [{ id: IMG_A, labels: [LABEL_A] }, { id: IMG_A, labels: [LABEL_A] }], want: { state: 'ready', env: NAMED_ENV(IMG_A, 'b10f4e11e71d') }, verbs: ['info', 'ls', 'inspect'] },
   { name: 'an untagged labelled image', images: [{ id: IMG_A, untagged: true, labels: [LABEL_A] }], want: { state: 'ready', env: NAMED_ENV(IMG_A, 'b10f4e11e71d') }, verbs: ['info', 'ls', 'inspect'] },
   {
     name: 'a labelled intermediate layer under its final image', images: [{ id: IMG_A2, untagged: true, labels: [LABEL_A] }, { id: IMG_A, parent: IMG_A2, labels: [LABEL_A] }],
     want: { state: 'ready', env: NAMED_ENV(IMG_A, 'b10f4e11e71d') }, verbs: ['info', 'ls', 'inspect'],
+  },
+  { name: 'one labelled image with Parent ""', images: [{ id: IMG_A, parent: '', labels: [LABEL_A] }], want: { state: 'ready', env: NAMED_ENV(IMG_A, 'b10f4e11e71d') }, verbs: ['info', 'ls', 'inspect'] },
+  {
+    name: 'two compatible images with Parent "" carry it', images: [{ id: IMG_A, parent: '', labels: [LABEL_A] }, { id: IMG_A2, parent: '', labels: [LABEL_A] }],
+    want: { state: 'ambiguous', why: `more than one image carries box aaaaaaaaaaaa on this runner: ${IMG_A}, ${IMG_A2}` }, verbs: ['info', 'ls', 'inspect'],
+  },
+  {
+    name: 'inspect answers no JSON list', fail: { 'image inspect': { stdout: 'template parsing error\n' } }, images: [{ id: IMG_A, labels: [LABEL_A] }],
+    want: { state: 'unavailable', why: 'docker image inspect answered no JSON list' }, verbs: ['info', 'ls', 'inspect'],
+  },
+  {
+    name: 'inspect fails', fail: { 'image inspect': { ok: false, code: 1, stderr: 'Error: No such image\n' } }, images: [{ id: IMG_A, labels: [LABEL_A] }],
+    want: { state: 'unavailable', why: 'docker image inspect failed: Error: No such image' }, verbs: ['info', 'ls', 'inspect'],
   },
   { name: 'no image carries the label', images: [{ id: IMAGE, labels: [] }], want: { state: 'no-image', why: 'no image for box aaaaaaaaaaaa on this runner' }, verbs: ['info', 'ls'] },
   { name: 'only a wrong-arch image carries it', images: [{ id: IMG_X, arch: 'amd64', labels: [LABEL_A] }], want: { state: 'no-image', why: 'no image for box aaaaaaaaaaaa on this runner for linux/arm64' }, verbs: ['info', 'ls', 'inspect'] },
@@ -227,7 +240,7 @@ test('probe(want): labels are read only through image ls --filter, ids go as sep
   assert.deepStrictEqual(docker.calls.map((c) => c.args), [
     ['info', '--format', '{{.ServerVersion}} {{.OSType}} {{.Architecture}} {{.NCPU}}'],
     ['image', 'ls', '-a', '-q', '--no-trunc', '--filter', `label=${LABEL_A}`],
-    ['image', 'inspect', '--format', '{{.Id}} {{.Os}} {{.Architecture}} {{.Parent}}', IMG_A, IMG_X],
+    ['image', 'inspect', IMG_A, IMG_X],
   ]);
   t += 1;
   await box.probe({ definitionHash: HASH_A, rev: 1 });

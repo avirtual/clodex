@@ -585,7 +585,8 @@ with `box: true` and no definition, or a lead on an older version, sends no
 
 - The runner finds the image by the Docker label `clodex.box=<definitionHash>`,
   with `docker image ls -a -q --no-trunc --filter label=clodex.box=<hash>` and
-  then `docker image inspect` on the ids it listed; it never reads labels any
+  then `docker image inspect <ids>` (its JSON, no `--format` template: the
+  containerd image store has no `Parent` key) on the ids it listed; it never reads labels any
   other way. `-a` is there because an image built with a label and no tag is
   dangling, and `image ls` without `-a` does not list it. Images whose OS/arch
   is not the daemon's are dropped before choosing, and so is any listed image

@@ -211,14 +211,17 @@ function boxIsolation({
     if (!ls.ok) return { state: 'unavailable', why: `docker image ls failed: ${callError(ls)}` };
     const ids = [...new Set(String(ls.stdout).split('\n').map((s) => s.trim()).filter((s) => IMAGE_RE.test(s)))];
     if (!ids.length) return { state: 'no-image', why: `no image for box ${hash12} on this runner` };
-    const i = await docker.call(['image', 'inspect', '--format', '{{.Id}} {{.Os}} {{.Architecture}} {{.Parent}}', ...ids], { timeoutMs: PROBE_MS });
+    const i = await docker.call(['image', 'inspect', ...ids], { timeoutMs: PROBE_MS });
     if (!i.ok) return { state: 'unavailable', why: `docker image inspect failed: ${callError(i)}` };
+    let rows;
+    try { rows = JSON.parse(String(i.stdout)); } catch { rows = null; }
+    if (!Array.isArray(rows)) return { state: 'unavailable', why: 'docker image inspect answered no JSON list' };
     const fit = new Set();
     const parents = new Set();
-    for (const line of String(i.stdout).split('\n')) {
-      const [imageId, imageOs, imageArch, parent] = line.trim().split(/\s+/);
-      if (ids.includes(imageId) && imageOs === 'linux' && imageArch === d.arch) fit.add(imageId);
-      if (parent) parents.add(parent);
+    for (const row of rows) {
+      if (!row || typeof row !== 'object') continue;
+      if (ids.includes(row.Id) && row.Os === 'linux' && row.Architecture === d.arch) fit.add(row.Id);
+      if (typeof row.Parent === 'string' && row.Parent) parents.add(row.Parent);
     }
     for (const id of parents) fit.delete(id);
     if (!fit.size) return { state: 'no-image', why: `no image for box ${hash12} on this runner for linux/${d.arch}` };

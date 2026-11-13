@@ -13,9 +13,14 @@ function imagesDocker(images, { info = '29.9.2 linux aarch64 8\n', fail = {} } =
       return { stdout: images.filter((im) => (im.labels || []).includes(want) && (all || !im.untagged)).map((im) => `${im.id}\n`).join('') };
     }
     if (args[0] === 'image' && args[1] === 'inspect') {
-      const ids = args.slice(4);
+      const formatted = args[2] === '--format';
+      const ids = args.slice(formatted ? 4 : 2);
       const found = ids.map((id) => images.find((im) => im.id === id));
-      const out = found.filter(Boolean).map((im) => `${im.id} ${im.os || 'linux'} ${im.arch || 'arm64'} ${im.parent || ''}\n`).join('');
+      const out = formatted
+        ? found.filter(Boolean).map((im) => `${im.id} ${im.os || 'linux'} ${im.arch || 'arm64'}\n`).join('')
+        : JSON.stringify(found.filter(Boolean).map((im) => ({
+          Id: im.id, Os: im.os || 'linux', Architecture: im.arch || 'arm64', ...(im.parent !== undefined ? { Parent: im.parent } : {}),
+        })));
       return found.every(Boolean) ? { stdout: out } : { ok: false, code: 1, stdout: out, stderr: `Error: No such image: ${ids[found.indexOf(undefined)]}` };
     }
     return {};
