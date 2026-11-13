@@ -3128,6 +3128,7 @@ function createTicketMethods(deps, shared) {
       seen.reachable = true;
       const b = (r.info && r.info.box) || null;
       const be = (b && b.env) || {};
+      seen.box = b;
       seen.boxEnvKey = b && b.state === 'ready' && typeof be.envKey === 'string' && be.envKey ? be.envKey : null;
       const id12 = String((be.box && be.box.imageId) || '').replace(/^sha256:/, '').slice(0, 12);
       const box = !b ? '' : b.state === 'ready'
@@ -3173,10 +3174,11 @@ function createTicketMethods(deps, shared) {
       return (team.droppedFields || []).some((d) => d && d.field === 'testRunner' && d.status === 'invalid');
     },
 
-    _runnerTallyData(team, envKey) {
+    _runnerTallyData(team, envKey, definitionHash = null) {
       const client = typeof deps.getSuiteClient === 'function' ? deps.getSuiteClient() : null;
       if (!client || typeof client.tally !== 'function') return undefined;
-      try { return client.tally({ team: team.name, envKey: envKey || null }) || null; } catch { return null; }
+      const q = { team: team.name, envKey: envKey || null, ...(definitionHash ? { definitionHash } : {}) };
+      try { return client.tally(q) || null; } catch { return null; }
     },
 
     _runnerTallyView(team, envKey) {
@@ -3208,12 +3210,23 @@ function createTicketMethods(deps, shared) {
       };
     },
 
-    _runnerTally(team, cur, envKey) {
+    _runnerLabelTally(team, cur) {
+      const def = this._shadowBox(team);
+      if (def === true) return '; box comparisons: none — the team has no box definition and the runner has no box image';
+      return this._runnerTally(team, cur, null, def.definitionHash);
+    },
+
+    _runnerTally(team, cur, envKey, definitionHash = null) {
       const flat = (v) => String(v == null ? '?' : v).replace(/[\x00-\x1f\x7f]+/g, ' ').slice(0, 120);
-      const t = this._runnerTallyData(team, envKey);
+      const short = (v) => flat(String(v).replace(/^sha256:/, '').slice(0, 12));
+      const t = this._runnerTallyData(team, envKey, definitionHash);
       if (t === undefined) return '';
       const shadowing = cur.gate === 'shadow';
-      if (!t || !t.envKey) return shadowing ? '; comparisons: none yet' : '';
+      const image = definitionHash && t && t.platforms && t.platforms.remote && t.platforms.remote.imageId;
+      const under = definitionHash ? `box definition ${short(definitionHash)}${image ? ` image ${short(image)}` : ''}` : `env ${flat(t && t.envKey)}`;
+      if (definitionHash ? !t || !(t.agree || t.disagree || t.skipped) : !t || !t.envKey) {
+        return !shadowing ? '' : definitionHash ? `; comparisons under ${under}: none yet` : '; comparisons: none yet';
+      }
       if (!t.agree && !t.disagree && !t.skipped && !shadowing) return '';
       const one = (t.oneSided || []).slice(0, 10).map((o) => `${flat(o.name)} (${o.side} only, ${o.count}x)`);
       const more = (t.oneSided || []).length > 10 ? ` (+${t.oneSided.length - 10} more)` : '';
@@ -3221,7 +3234,7 @@ function createTicketMethods(deps, shared) {
       const where = p && p.local && p.remote
         ? ` (local ${flat(p.local.os)}/${flat(p.local.arch)}, runner ${flat(p.remote.os)}/${flat(p.remote.arch)}${p.remote.isolation === 'container' ? ' box' : ''})`
         : '';
-      return `; comparisons under env ${flat(t.envKey)}: ${t.agree} agree, ${t.disagree} disagree`
+      return `; comparisons under ${under}: ${t.agree} agree, ${t.disagree} disagree`
         + (t.skipped ? `, ${t.skipped} skipped (tree not sent)` : '')
         + where
         + (one.length ? `; failed on one side only: ${one.join(', ')}${more}` : '');
@@ -3279,7 +3292,7 @@ function createTicketMethods(deps, shared) {
         }
         const seen = {};
         const reach = await this._runnerReachFor(cur, seen);
-        reply(`test runner of ${team.name}: ${cur.peer}, wire ${cur.wire || WIRE_PUSH}, hands ${cur.hands}, gate ${cur.gate || 'off'} — ${reach}${this._runnerTally(team, cur, cur.box === true ? seen.boxEnvKey : seen.envKey)}`);
+        reply(`test runner of ${team.name}: ${cur.peer}, wire ${cur.wire || WIRE_PUSH}, hands ${cur.hands}, gate ${cur.gate || 'off'} — ${reach}${cur.box === true && seen.reachable === true && !seen.box ? this._runnerLabelTally(team, cur) : this._runnerTally(team, cur, cur.box === true ? seen.boxEnvKey : seen.envKey)}`);
         return;
       }
       if (intent.value === 'off') {
