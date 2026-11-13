@@ -828,6 +828,7 @@ function createRemoteWiring(deps) {
         insecure: remoteInsecure,
         suiteRunner: getSuiteRunner(),
         suiteRunnerError: () => suiteRunnerError,
+        listTestjobs: suiteActivity,
         suiteDesk: suiteDesk || null,
         suiteToken: process.env.CLODEX_SUITE_TOKEN || null,
         pagePath: path.join(__dirname, 'renderer', 'remote.html'),
