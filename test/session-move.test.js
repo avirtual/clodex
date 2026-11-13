@@ -290,7 +290,7 @@ function mkTranscriptMove({ origin = '/old' } = {}) {
   const claudeDir = mkTmpRoot('clodex-move-claude-');
   const moved = mkMove({ entries: [BASE], registryDir, claudeDir });
   const slugFile = (cwd) => pathReal.join(claudeDir, 'projects', cwd.replace(/[/.]/g, '-'), 'sess-abc.jsonl');
-  const runLink = pathReal.join(registryDir, 'seat', 'transcript.jsonl');
+  const runLink = pathForReal(registryDir, 'seat', 'transcript');
   const hookLinks = (cwd) => {
     fsReal.mkdirSync(pathReal.dirname(runLink), { recursive: true });
     try { fsReal.unlinkSync(runLink); } catch {}

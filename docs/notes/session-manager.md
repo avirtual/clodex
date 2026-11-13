@@ -6,20 +6,11 @@
 
 ## move
 
-`--resume <id>` is NOT confined to the transcript's project directory. Measured
-against the real `claude` binary (Claude Code 2.1.261, 2026-09-07): a conversation started in
-one directory resumed successfully from an unrelated one, replaying 27,717 cached
-tokens, with the transcript left under the ORIGINAL project dir. So a moved seat
-keeps its conversation and no transcript is copied. An id that does not exist
-anywhere is a different case — the CLI prints "No conversation found with session
-ID: <id>" and exits nonzero, which happens AFTER `create()` has returned, so a
-move cannot detect a bad resume id and report it.
+`--resume <id>` is NOT confined to the transcript's project directory. Measured against the real `claude` binary (Claude Code 2.1.261, 2026-09-07): a conversation started in one directory resumed successfully from an unrelated one, replaying 27,717 cached tokens, with the transcript left under the ORIGINAL project dir. So a moved seat keeps its conversation and no transcript is copied. An id that does not exist anywhere is a different case — the CLI prints "No conversation found with session ID: <id>" and exits nonzero, which happens AFTER `create()` has returned, so a move cannot detect a bad resume id and report it.
 
 ## _carryClaudeTranscript
 
-Measured on Claude Code 2.1.323: `--resume <id>` from a new cwd keeps appending to the
-ORIGINAL slug's file, yet its SessionStart hook names `<new slug>/<id>.jsonl`, which the CLI
-never creates; it does write through a symlink placed there, so the run link resolves.
+Measured on Claude Code 2.1.323: `--resume <id>` from a new cwd keeps appending to the ORIGINAL slug's file, yet its SessionStart hook names `<new slug>/<id>.jsonl`, which the CLI never creates; it does write through a symlink placed there, so the run link resolves.
 
 ## _renameDirs
 
