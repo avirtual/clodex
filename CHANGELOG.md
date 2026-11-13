@@ -11,7 +11,9 @@ release. Text after `## Unreleased —` becomes the release subtitle. An empty o
 absent `Unreleased` falls back to auto-generated commit subjects, so this never
 blocks a release.
 
-## Unreleased — The Window menu shows what a node's test boxes are doing
+## Unreleased
+
+## 5.183.0 — 2026-11-13 — The Window menu shows what a node's test boxes are doing
 
 - The Window menu has a Test Boxes section on a node that runs tests for others: the job running in each box and the jobs waiting, with the time each started or began waiting. Test Box Activity… opens the full view with how long each has run or waited and the last ten finished jobs.
 
