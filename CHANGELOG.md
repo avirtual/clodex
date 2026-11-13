@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A test job run in a Docker box no longer fails at setup when the project's dependencies contain an Electron `.asar` archive.
+
 ## 5.181.0 — 2026-11-13 — Test jobs can run in Docker boxes on a runner node; large repositories can use a remote runner
 
 - The tree sent to a remote test runner is no longer held in memory on the sending side, and a tree larger than the runner accepts is refused as soon as that is known.

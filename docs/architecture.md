@@ -370,6 +370,9 @@ bundle), whose packaged form is the Docker image under
   with `git-safe.js`'s `safeGitArgsFor`); no caller yet; in
   SCANNED_MODULES. The mirror side also keeps `refs/keep/*` (`keepRefs`),
   answers `have` (`mirrorHave`, `mirrorHolds`) and repacks (`gcMirror`).
+- **resolve-fs.js** — `resolveFs(load)`: `original-fs` under Electron, `fs`
+  under node, so a walk over a job tree or deps cache sees an `.asar` archive
+  as a file. The fs of `suite-runner.js` and `suite-box.js`.
 - **suite-box.js** — the container adapter for suite jobs, beside the
   native `userIsolation`/`noneIsolation`. `createDocker({spawn, timeoutMs})`
   wraps the Docker CLI as `call(args)`; `boxIsolation({image, work, stateDir,
