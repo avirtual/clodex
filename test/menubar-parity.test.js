@@ -369,3 +369,18 @@ test('desktop and web Window menus end with the same Test Boxes section, and nei
   assert.deepStrictEqual([peersSection(desktopWindowRows({ testBoxes: off }), 'desktop'), peersSection(await webWindowRows({ testBoxes: off }), 'web')],
     [FRESH_INSTALL, FRESH_INSTALL]);
 });
+
+test('desktop Window menu job rows read a clock time that does not change as time passes', (t) => {
+  const tz = process.env.TZ;
+  process.env.TZ = 'UTC';
+  t.after(() => { if (tz === undefined) delete process.env.TZ; else process.env.TZ = tz; });
+  const startedAt = Date.UTC(2026, 10, 13, 10, 42, 40);
+  const running = { id: 'j1', team: 'avh', ticket: 't1579', kind: 'verify', origin: null, isolation: 'container', image: 'bbbbbbbbbbbb', definition: null, phase: 'run', queuedAt: startedAt - 1000, startedAt };
+  const testBoxes = { enabled: true, snapshot: { at: startedAt, slots: { total: 1, inUse: 1 }, running: [running], waiting: [], recent: [], box: { state: 'ready', image: 'bbbbbbbbbbbb' } } };
+  t.mock.timers.enable({ apis: ['Date'], now: startedAt + 5000 });
+  const early = peersSection(desktopWindowRows({ testBoxes }), 'desktop early');
+  t.mock.timers.tick(7 * 60000);
+  const late = peersSection(desktopWindowRows({ testBoxes }), 'desktop late');
+  assert.ok(early.includes('[avh · t1579 · verify · box · since 10:42]'), `ENTER: the running job row reads since 10:42: ${early.join(' | ')}`);
+  assert.deepStrictEqual(late, early);
+});
