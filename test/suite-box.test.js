@@ -192,6 +192,11 @@ const NAMED_ROWS = [
   { name: 'one labelled image', images: [{ id: IMG_A, labels: [LABEL_A] }], want: { state: 'ready', env: NAMED_ENV(IMG_A, 'b10f4e11e71d') }, verbs: ['info', 'ls', 'inspect'] },
   { name: 'one labelled image and no boxImage', over: { image: null }, images: [{ id: IMG_A, labels: [LABEL_A] }], want: { state: 'ready', env: NAMED_ENV(IMG_A, 'b10f4e11e71d') }, verbs: ['info', 'ls', 'inspect'] },
   { name: 'one labelled image under two tags', images: [{ id: IMG_A, labels: [LABEL_A] }, { id: IMG_A, labels: [LABEL_A] }], want: { state: 'ready', env: NAMED_ENV(IMG_A, 'b10f4e11e71d') }, verbs: ['info', 'ls', 'inspect'] },
+  { name: 'an untagged labelled image', images: [{ id: IMG_A, untagged: true, labels: [LABEL_A] }], want: { state: 'ready', env: NAMED_ENV(IMG_A, 'b10f4e11e71d') }, verbs: ['info', 'ls', 'inspect'] },
+  {
+    name: 'a labelled intermediate layer under its final image', images: [{ id: IMG_A2, untagged: true, labels: [LABEL_A] }, { id: IMG_A, parent: IMG_A2, labels: [LABEL_A] }],
+    want: { state: 'ready', env: NAMED_ENV(IMG_A, 'b10f4e11e71d') }, verbs: ['info', 'ls', 'inspect'],
+  },
   { name: 'no image carries the label', images: [{ id: IMAGE, labels: [] }], want: { state: 'no-image', why: 'no image for box aaaaaaaaaaaa on this runner' }, verbs: ['info', 'ls'] },
   { name: 'only a wrong-arch image carries it', images: [{ id: IMG_X, arch: 'amd64', labels: [LABEL_A] }], want: { state: 'no-image', why: 'no image for box aaaaaaaaaaaa on this runner for linux/arm64' }, verbs: ['info', 'ls', 'inspect'] },
   { name: 'a newer wrong-arch image beside the right one', images: [{ id: IMG_A, labels: [LABEL_A] }, { id: IMG_X, arch: 'amd64', labels: [LABEL_A] }], want: { state: 'ready', env: NAMED_ENV(IMG_A, 'b10f4e11e71d') }, verbs: ['info', 'ls', 'inspect'] },
@@ -221,8 +226,8 @@ test('probe(want): labels are read only through image ls --filter, ids go as sep
   assert.strictEqual((await box.probe({ definitionHash: HASH_A, rev: 1 })).state, 'ready');
   assert.deepStrictEqual(docker.calls.map((c) => c.args), [
     ['info', '--format', '{{.ServerVersion}} {{.OSType}} {{.Architecture}} {{.NCPU}}'],
-    ['image', 'ls', '-q', '--no-trunc', '--filter', `label=${LABEL_A}`],
-    ['image', 'inspect', '--format', '{{.Id}} {{.Os}} {{.Architecture}}', IMG_A, IMG_X],
+    ['image', 'ls', '-a', '-q', '--no-trunc', '--filter', `label=${LABEL_A}`],
+    ['image', 'inspect', '--format', '{{.Id}} {{.Os}} {{.Architecture}} {{.Parent}}', IMG_A, IMG_X],
   ]);
   t += 1;
   await box.probe({ definitionHash: HASH_A, rev: 1 });

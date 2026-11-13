@@ -584,10 +584,14 @@ with `box: true` and no definition, or a lead on an older version, sends no
 `box` key and runs in `boxImage` as before.
 
 - The runner finds the image by the Docker label `clodex.box=<definitionHash>`,
-  with `docker image ls -q --no-trunc --filter label=clodex.box=<hash>` and
+  with `docker image ls -a -q --no-trunc --filter label=clodex.box=<hash>` and
   then `docker image inspect` on the ids it listed; it never reads labels any
-  other way. Images whose OS/arch is not the daemon's are dropped before
-  choosing. The look is fresh on every submit, never cached.
+  other way. `-a` is there because an image built with a label and no tag is
+  dangling, and `image ls` without `-a` does not list it. Images whose OS/arch
+  is not the daemon's are dropped before choosing, and so is any listed image
+  that is the `Parent` of another listed one (an intermediate layer of a legacy
+  build whose Dockerfile carries the label itself). The look is fresh on every
+  submit, never cached.
 - Exactly one image left: the job is accepted and stamped `box:{imageId,
   definitionHash, rev}`, and every `docker run` of the job uses that stamped
   id, even if another image gets the label while the job queues.
@@ -608,10 +612,16 @@ with `box: true` and no definition, or a lead on an older version, sends no
   `box mismatch: asked box <hash12>, runner ran image <id12>`. Compare rows
   carry `remoteEnv.definitionHash`.
 - Building an image: run the line `[agent:team box show]` prints, `docker build
-  --label clodex.box=<hash> … - < Dockerfile`. An image that already exists is
-  labelled without a rebuild: `echo 'FROM sha256:<id>' | docker build --label
-  clodex.box=<hash> -`. That gives a new image id, so the envKey, and with it
-  the agreement tally on that runner, starts over once.
+  -t clodex-box:<hash12> --label clodex.box=<hash> … - < Dockerfile`. An image
+  that already exists is labelled without a rebuild: `echo 'FROM sha256:<id>' |
+  docker build -t clodex-box:<hash12> --label clodex.box=<hash> -`. The tag
+  keeps the image from being pruned as dangling. Labelling gives a new image
+  id, so the envKey, and with it the agreement tally on that runner, starts
+  over once.
+- Rebuilding the same definition moves the tag to the new image, and the old
+  one stays, untagged but still labelled: the hash then matches two images and
+  is refused until `docker image prune` (or `docker image rm <old id>`)
+  removes the old one.
 - The label is the operator's assertion that the image serves that
   definition, not provenance: nothing checks that the image was built from the
   team's Dockerfile. The stamp records the actual image id each job ran in.

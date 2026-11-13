@@ -207,17 +207,20 @@ function boxIsolation({
     const d = await daemon();
     if (d.why) return { state: 'unavailable', why: d.why };
     if (d.os !== 'linux') return { state: 'unavailable', why: `docker daemon OS is ${d.os}, not linux` };
-    const ls = await docker.call(['image', 'ls', '-q', '--no-trunc', '--filter', `label=${BOX_LABEL}=${definitionHash}`], { timeoutMs: PROBE_MS });
+    const ls = await docker.call(['image', 'ls', '-a', '-q', '--no-trunc', '--filter', `label=${BOX_LABEL}=${definitionHash}`], { timeoutMs: PROBE_MS });
     if (!ls.ok) return { state: 'unavailable', why: `docker image ls failed: ${callError(ls)}` };
     const ids = [...new Set(String(ls.stdout).split('\n').map((s) => s.trim()).filter((s) => IMAGE_RE.test(s)))];
     if (!ids.length) return { state: 'no-image', why: `no image for box ${hash12} on this runner` };
-    const i = await docker.call(['image', 'inspect', '--format', '{{.Id}} {{.Os}} {{.Architecture}}', ...ids], { timeoutMs: PROBE_MS });
+    const i = await docker.call(['image', 'inspect', '--format', '{{.Id}} {{.Os}} {{.Architecture}} {{.Parent}}', ...ids], { timeoutMs: PROBE_MS });
     if (!i.ok) return { state: 'unavailable', why: `docker image inspect failed: ${callError(i)}` };
     const fit = new Set();
+    const parents = new Set();
     for (const line of String(i.stdout).split('\n')) {
-      const [imageId, imageOs, imageArch] = line.trim().split(/\s+/);
+      const [imageId, imageOs, imageArch, parent] = line.trim().split(/\s+/);
       if (ids.includes(imageId) && imageOs === 'linux' && imageArch === d.arch) fit.add(imageId);
+      if (parent) parents.add(parent);
     }
+    for (const id of parents) fit.delete(id);
     if (!fit.size) return { state: 'no-image', why: `no image for box ${hash12} on this runner for linux/${d.arch}` };
     if (fit.size > 1) return { state: 'ambiguous', why: `more than one image carries box ${hash12} on this runner: ${[...fit].join(', ')}` };
     return { state: 'ready', env: boxIdentity({ imageId: [...fit][0], arch: d.arch, cpus: d.cpus, definitionHash, rev, env, platform, hostArch: arch }) };

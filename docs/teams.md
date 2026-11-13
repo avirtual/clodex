@@ -849,7 +849,7 @@ over 16384 bytes or 400 lines.
 - `[agent:team box show]`, or bare `[agent:team box]`: `rev` and the definition
   hash on the first line, then `generated from bootstrap <hash>; edited since:
   yes|no` (or `not generated from bootstrap`), then one `docker build` line to
-  run by hand (`--label clodex.box=<definition hash>`, by which a test runner
+  run by hand (`-t clodex-box:<hash12> --label clodex.box=<definition hash>`; the label is how a test runner
   finds the image for this team's jobs — see peering.md, "A job names its
   image"; `--build-arg CLODEX_BASE=…` only when the file declares that ARG),
   then the file.

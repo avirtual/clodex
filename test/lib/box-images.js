@@ -9,12 +9,13 @@ function imagesDocker(images, { info = '29.9.2 linux aarch64 8\n', fail = {} } =
     if (args[0] === 'ps') return { stdout: '' };
     if (args[0] === 'image' && args[1] === 'ls') {
       const want = args[args.length - 1].replace(/^label=/, '');
-      return { stdout: images.filter((im) => (im.labels || []).includes(want)).map((im) => `${im.id}\n`).join('') };
+      const all = args.includes('-a');
+      return { stdout: images.filter((im) => (im.labels || []).includes(want) && (all || !im.untagged)).map((im) => `${im.id}\n`).join('') };
     }
     if (args[0] === 'image' && args[1] === 'inspect') {
       const ids = args.slice(4);
       const found = ids.map((id) => images.find((im) => im.id === id));
-      const out = found.filter(Boolean).map((im) => `${im.id} ${im.os || 'linux'} ${im.arch || 'arm64'}\n`).join('');
+      const out = found.filter(Boolean).map((im) => `${im.id} ${im.os || 'linux'} ${im.arch || 'arm64'} ${im.parent || ''}\n`).join('');
       return found.every(Boolean) ? { stdout: out } : { ok: false, code: 1, stdout: out, stderr: `Error: No such image: ${ids[found.indexOf(undefined)]}` };
     }
     return {};
