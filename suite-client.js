@@ -430,6 +430,7 @@ function createSuiteClient({
         remoteEnv: { os: e.platform || null, arch: e.arch || null, isolation: e.isolation || null, imageId: (e.box && e.box.imageId) || null, definitionHash: (e.box && e.box.definitionHash) || null },
         local: me.local, remote,
         ...(notSent ? { skipped: 'not-sent', agree: null } : { agree: halvesAgree(me.local, remote) }),
+        ...(!notSent && namesUnknown(me.local, remote) ? { names: 'unknown' } : {}),
       });
     };
     Promise.resolve()
@@ -482,7 +483,7 @@ function createSuiteClient({
       if (r.envKey !== key) continue;
       if (r.skipped) { out.skipped += 1; continue; }
       if (r.agree === true) out.agree += 1; else out.disagree += 1;
-      if (!r.local || !r.remote || !MEASURED.has(r.local.outcome) || !MEASURED.has(r.remote.outcome)) continue;
+      if (!r.local || !r.remote || !MEASURED.has(r.local.outcome) || !MEASURED.has(r.remote.outcome) || r.names === 'unknown') continue;
       const mine = new Set(r.local.failing || []);
       const theirs = new Set(r.remote.failing || []);
       for (const n of mine) if (!theirs.has(n)) bump('local', n);
@@ -498,14 +499,43 @@ function createSuiteClient({
 const MEASURED = new Set(['pass', 'fail']);
 const NOT_SENT = /^(?:client error: |snapshot failed: |pack of \d+ bytes exceeds )/;
 
+const FAIL_SUMMARY_LINES = [
+  /^\s*FAILED\s*\(/,
+  /^\s*#\s*fail\s+\d+\s*$/i,
+  /^\s*ℹ\s*fail\s+\d+\s*$/,
+  /failing tests:\s*$/i,
+  /^\s*not ok\b.*#\s*TODO\b/i,
+];
+
+const FAIL_LINE_SHAPES = [
+  /^\s*✖ (.+?) \(\d+(?:\.\d+)?ms\)\s*$/,
+  /^\s*not ok\s+\d+(?:\s+-)?\s+(.+)$/,
+  /^\s*FAIL(?:ED)?:?\s+(.+)$/,
+  /^\s*✗\s+(.+)$/,
+];
+
+function failingName(line) {
+  if (FAIL_SUMMARY_LINES.some((re) => re.test(line))) return null;
+  for (const re of FAIL_LINE_SHAPES) {
+    const m = re.exec(line);
+    if (!m) continue;
+    return m[1].replace(/\s*\(\d+(?:\.\d+)?\s*m?s\)\s*$/, '').trim() || null;
+  }
+  return null;
+}
+
 function failingNames(text) {
   const names = [];
   for (const line of String(text).split('\n')) {
-    const m = /^ *✖ (.+?) \(\d+(?:\.\d+)?ms\)\s*$/.exec(line);
-    if (m && !names.includes(m[1].trim())) names.push(m[1].trim());
+    const name = failingName(line);
+    if (name && !names.includes(name)) names.push(name);
     if (names.length >= 200) break;
   }
   return names;
+}
+
+function namesUnknown(a, b) {
+  return [a, b].some((h) => h.fail > 0 && !(h.failing || []).length);
 }
 
 function slowNames(text) {
@@ -541,6 +571,7 @@ function remoteHalf(out) {
 function halvesAgree(a, b) {
   if (a.outcome === 'unknown' || b.outcome === 'unknown') return false;
   if (a.outcome !== b.outcome || a.pass !== b.pass || a.fail !== b.fail || a.tests !== b.tests) return false;
+  if (namesUnknown(a, b)) return true;
   const x = new Set(a.failing);
   const y = new Set(b.failing);
   return x.size === y.size && [...x].every((n) => y.has(n));
@@ -678,4 +709,4 @@ function createChannelHost({
   };
 }
 
-module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, HAND_QUEUE_MS, HAND_RUN_MS };
+module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, HAND_QUEUE_MS, HAND_RUN_MS };
