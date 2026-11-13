@@ -939,7 +939,7 @@ reads `unknown: box mismatch: asked <container|native>, runner ran <isolation>`.
 Comparison rows carry `localEnv: {os, arch}` and
 `remoteEnv: {os, arch, isolation, imageId}`; a cross-platform disagreement is
 still counted as one. `[agent:team runner]` appends the box state and, beside the
-counts, both platforms; with `box: true` the tally shown is the box's env key.
+counts, both platforms; with `box: true` the tally shown is the box's env key. On a reachable runner whose info has no `box` (one that picks images by label), a `box: true` team's tally counts the comparisons whose runner stamp names the team's definition hash, shown as `box definition <hash12>` with the newest stamped `image <id12>` when there is one; a team with no box definition gets `box comparisons: none` and the reason.
 
 `[agent:team runner <peer>]` (lead only) sets the peer: it must be a known peer;
 an offline one is accepted with a warning, one online without the `suite`

@@ -603,3 +603,39 @@ test('t2319: a box:true team with a box definition submits its hash, rev and tex
     false,
   ]);
 });
+
+const LABEL_DEF = 'FROM node:25-bookworm\nRUN true\n';
+const LABEL_HASH = 'fa502f955d138e4a78faa0ef2c6525d18955f6e2d5dbeac135c8f9ab60ae884f';
+const labelCmp = (envKey, agree, imageId) => ({
+  ...cmp(envKey, agree, [], []),
+  localEnv: { os: 'darwin', arch: 'arm64' }, remoteEnv: { os: 'linux', arch: 'arm64', isolation: 'container', imageId, definitionHash: LABEL_HASH },
+});
+const LABEL_ROWS = [
+  ['a configured box image', BOX_READY, false,
+    [boxCmp('b0b0b0b0b0b0', false, 'container'), boxCmp('0123456789ab', true, 'none')],
+    '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab, box ready linux/arm64 image eeeeeeeeeeee key b0b0b0b0b0b0; comparisons under env b0b0b0b0b0b0: 0 agree, 1 disagree (local darwin/arm64, runner linux/arm64 box)'],
+  ['a label-only runner and a team box definition', null, true,
+    [labelCmp('c0c0c0c0c0c0', false, null), labelCmp('c1c1c1c1c1c1', true, null), boxCmp('0123456789ab', true, 'none')],
+    '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; comparisons under box definition fa502f955d13: 1 agree, 1 disagree (local darwin/arm64, runner linux/arm64 box)'],
+  ['a label-only runner, a team box definition and a stamped image', null, true,
+    [labelCmp('c0c0c0c0c0c0', false, null), labelCmp('c1c1c1c1c1c1', true, `sha256:${'d'.repeat(64)}`), boxCmp('0123456789ab', true, 'none')],
+    '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; comparisons under box definition fa502f955d13 image dddddddddddd: 1 agree, 1 disagree (local darwin/arm64, runner linux/arm64 box)'],
+  ['a label-only runner and no team box definition', null, false,
+    [boxCmp('0123456789ab', true, 'none')],
+    '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; box comparisons: none — the team has no box definition and the runner has no box image'],
+];
+
+for (const [name, infoBox, withDef, compare, want] of LABEL_ROWS) {
+  test(`t2328: [agent:team runner] for a box:true team with ${name}`, async () => {
+    const f = mkVerbFixture({
+      manifestExtra: { testRunner: { peer: 'runner-1', hands: 'full', gate: 'shadow', box: true } }, peers: [SUITE_PEER], reach: INFO_BOX(infoBox), compare,
+    });
+    if (withDef) require('../team-box').writeBox(path.dirname(f.file), LABEL_DEF);
+    assert.deepStrictEqual(await f.verb('lead', '[agent:team runner]'), [want]);
+  });
+}
+
+test('t2328: no runner line in the label table prints null or undefined', () => {
+  assert.strictEqual(LABEL_ROWS.length, 4, 'ENTER: all four rows are in the table');
+  for (const [name, , , , want] of LABEL_ROWS) assert.doesNotMatch(want, /null|undefined/, name);
+});

@@ -455,7 +455,7 @@ function createSuiteClient({
     appendCompare({ at: iso(now()), team, kind, ticket, wire: 'pull', runner, skipped, agree: null });
   }
 
-  function tally({ team, envKey = null }) {
+  function tally({ team, envKey = null, definitionHash = null }) {
     let text = '';
     try { text = compareFile ? fs.readFileSync(compareFile, 'utf8') : ''; } catch { text = ''; }
     const recs = [];
@@ -466,12 +466,14 @@ function createSuiteClient({
         if (r && r.team === team) recs.push(r);
       } catch {}
     }
-    const latest = [...recs].reverse().find((r) => r.envKey);
-    const key = envKey || (latest ? latest.envKey : null);
-    const newest = [...recs].reverse().find((r) => key && r.envKey === key);
+    const ofDef = (r) => !!(r.remoteEnv && r.remoteEnv.definitionHash === definitionHash);
+    const latest = [...recs].reverse().find((r) => (definitionHash ? ofDef(r) : r.envKey));
+    const key = definitionHash ? (latest && latest.envKey) || null : envKey || (latest ? latest.envKey : null);
+    const counted = definitionHash ? ofDef : (r) => !!key && r.envKey === key;
+    const newest = [...recs].reverse().find(counted);
     const platforms = newest && newest.localEnv && newest.remoteEnv ? { local: newest.localEnv, remote: newest.remoteEnv } : null;
     const out = { envKey: key, agree: 0, disagree: 0, skipped: 0, oneSided: [], platforms };
-    if (!key) return out;
+    if (!newest) return out;
     const counts = new Map();
     const bump = (side, name) => {
       const k = `${side}\0${name}`;
@@ -480,7 +482,7 @@ function createSuiteClient({
       counts.set(k, c);
     };
     for (const r of recs) {
-      if (r.envKey !== key) continue;
+      if (!counted(r)) continue;
       if (r.skipped) { out.skipped += 1; continue; }
       if (r.agree === true) out.agree += 1; else out.disagree += 1;
       if (!r.local || !r.remote || !MEASURED.has(r.local.outcome) || !MEASURED.has(r.remote.outcome) || r.names === 'unknown') continue;
