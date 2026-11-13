@@ -6,7 +6,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { parseTranscript } = require('../transcript-spike');
-const { renderTranscript, renderStatusChips, createLiveSplitView, modeBar } = require('../renderer/live-split-view');
+const { renderTranscript, renderStatusChips, createLiveSplitView, modeBar, UNREAD_GRACE_MS, UNREAD_TEXT } = require('../renderer/live-split-view');
 const { OUTPUT_LINE_CAP } = require('../renderer/transcript-rows');
 const { segmentsOf } = require('../transcript-records');
 const { fakeDocument, textOf } = require('./lib/fake-dom');
@@ -1816,4 +1816,71 @@ test('the live view hands its peekFile to the rows, so unfolding a filed body re
     assert.deepStrictEqual(peeked, [spill]);
     assert.strictEqual(findByClass([m.pane], 'tr-spill-body').textContent, 'body');
   } finally { m.view.dispose(); m.restore(); }
+});
+
+async function mountUnread(first) {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  let t = 5000;
+  let res = first;
+  const m = mountView({ now: () => t, pullTranscript: () => res }, { geometry: true });
+  m.show(ANCHORED);
+  m.write();
+  await settle();
+  const notice = findByClass([m.pane], 'transcript-unread');
+  assert.ok(notice, 'the pane carries the unread notice row');
+  const elapse = (ms) => { t += ms; mock.timers.tick(ms); };
+  return { ...m, notice, elapse, answer: (next) => { res = next; } };
+}
+
+const unmount = (m) => { m.view.dispose(); m.restore(); mock.timers.reset(); };
+
+for (const reason of ['unavailable', 'unreadable']) {
+  test(`a pull failing ${reason} past the grace period keeps the bar and says why; Screen still toggles`, async () => {
+    const m = await mountUnread({ ok: false, reason });
+    try {
+      m.elapse(UNREAD_GRACE_MS);
+      assert.ok(barOf(m), 'the pane carries its bar');
+      assert.deepStrictEqual([m.pane.hidden, m.pane.dataset.raw, m.notice.hidden, m.notice.textContent], [false, '1', false, UNREAD_TEXT]);
+      assert.deepStrictEqual(pressed(m), ['false', 'true', 'false']);
+      terminalButton(m).listeners.click();
+      assert.deepStrictEqual([m.view.raw(), pressed(m), m.pane.hidden, m.notice.hidden], [true, ['false', 'false', 'true'], false, true]);
+      terminalButton(m).listeners.click();
+      assert.deepStrictEqual([m.view.raw(), m.notice.hidden, m.pane.dataset.raw], [false, false, '1']);
+    } finally { unmount(m); }
+  });
+}
+
+test('a pull failing unavailable inside the grace period shows nothing', async () => {
+  const m = await mountUnread({ ok: false, reason: 'unavailable' });
+  try {
+    m.elapse(UNREAD_GRACE_MS - 1000);
+    m.write();
+    await settle();
+    assert.deepStrictEqual([m.pane.hidden, m.pane.dataset.raw, m.notice.hidden], [true, undefined, true]);
+  } finally { unmount(m); }
+});
+
+test('a not-agent pull keeps the bare terminal past the grace period', async () => {
+  const m = await mountUnread({ ok: false, reason: 'not-agent' });
+  try {
+    m.elapse(UNREAD_GRACE_MS + 2000);
+    m.write();
+    await settle();
+    assert.deepStrictEqual([m.pane.hidden, m.pane.dataset.raw, m.notice.hidden], [true, undefined, true]);
+  } finally { unmount(m); }
+});
+
+test('a pull that turns ok clears the unread notice without a reload', async () => {
+  const m = await mountUnread({ ok: false, reason: 'unavailable' });
+  try {
+    m.elapse(UNREAD_GRACE_MS);
+    assert.strictEqual(m.notice.hidden, false);
+    m.answer({ ok: true, rev: 1, records: recordsAt(1) });
+    m.write();
+    await settle();
+    assert.deepStrictEqual([m.notice.hidden, m.pane.dataset.raw], [true, undefined]);
+    m.elapse(300);
+    m.write();
+    assert.deepStrictEqual([m.view.state().mode, m.pane.hidden, m.notice.hidden], ['split', false, true]);
+  } finally { unmount(m); }
 });
