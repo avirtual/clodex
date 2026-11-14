@@ -245,3 +245,44 @@ test('peerOriginSuffix: label, else host, else id, else null', () => {
   assert.strictEqual(peerOriginSuffix({ label: 'x y', host: 'no good', id: 'bad id' }), null);
   assert.strictEqual(peerOriginSuffix(null), null);
 });
+
+test('computeRosterFor: every agent type crosses the relay, hub and peer alike; bash never does', () => {
+  const statuses = [
+    { id: 'rl', label: 'remote-linux', online: true, caps: ['dm'], sessions: [
+      { name: 'w', type: 'claude' }, { name: 'c', type: 'codex' }, { name: 'm', type: 'muse' },
+      { name: 'k', type: 'clodent' }, { name: 'sh', type: 'bash' },
+    ] },
+  ];
+  const local = [
+    { name: 'lead', type: 'claude' }, { name: 'cx', type: 'codex' }, { name: 'muse', type: 'muse' },
+    { name: 'clay', type: 'clodent' }, { name: 'shell', type: 'bash' },
+  ];
+  const roster = computeRosterFor('dk', statuses, new Set(['dk', 'rl']), local, 'hub');
+  assert.ok(roster.some((r) => r.name === 'm' && r.type === 'muse'), 'ENTER: the peer muse row is pushed');
+  assert.ok(roster.some((r) => r.name === 'clay' && r.type === 'clodent'), 'ENTER: the hub clodent row is pushed');
+  assert.deepStrictEqual(roster, [
+    { name: 'w', origin: 'remote-linux', type: 'claude' },
+    { name: 'c', origin: 'remote-linux', type: 'codex' },
+    { name: 'm', origin: 'remote-linux', type: 'muse' },
+    { name: 'k', origin: 'remote-linux', type: 'clodent' },
+    { name: 'lead', origin: 'hub', type: 'claude' },
+    { name: 'cx', origin: 'hub', type: 'codex' },
+    { name: 'muse', origin: 'hub', type: 'muse' },
+    { name: 'clay', origin: 'hub', type: 'clodent' },
+  ]);
+});
+
+test('computeRosterFor: a peer whose only seat is clodent still gets a roster row to route by', () => {
+  const statuses = [{ id: 'mf', label: 'murmurfi', online: true, caps: ['dm'], sessions: [{ name: 'avh-keeper', type: 'clodent' }] }];
+  assert.deepStrictEqual(computeRosterFor('dk', statuses, new Set(['dk', 'mf'])),
+    [{ name: 'avh-keeper', origin: 'murmurfi', type: 'clodent' }]);
+});
+
+test('computeRosterFor: a scratch clone is not advertised, as local who skips it', () => {
+  const local = [
+    { name: 'lead', type: 'claude' },
+    { name: 'lead-scratch', type: 'claude', clone: { of: 'lead' } },
+  ];
+  assert.deepStrictEqual(computeRosterFor('dk', [], new Set(['dk']), local, 'hub'),
+    [{ name: 'lead', origin: 'hub', type: 'claude' }]);
+});

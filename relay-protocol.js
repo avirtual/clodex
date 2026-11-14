@@ -1,5 +1,5 @@
 // relay-protocol.js — the bytes-on-the-wire commitments for hub-relay DM
-// federation. Single, dependency-free source of truth for the two shapes clodex
+// federation. Single source of truth for the two shapes clodex
 // blessed (see docs/messaging.md §4 for the prose): the relay ENVELOPE and the
 // POST /api/peer/roster payload. Pure functions only — no electron, no fs — so
 // both the main-process router (session-manager.js) and the wire layer
@@ -33,9 +33,11 @@
 
 'use strict';
 
+const { isAgentType } = require('./cli-adapters');
+
 // Session/label charset — a wire-supplied name/origin/label is only usable as a
 // dm target or a path segment if it matches this (mirrors the box's NAME_RE and
-// the outbox ORIGIN_RE). Kept local so this leaf stays dependency-free.
+// the outbox ORIGIN_RE).
 const RELAY_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 
 // How long a spoke trusts a cached relay roster after its last refresh. The hub
@@ -135,8 +137,8 @@ function peerOriginSuffix(p, nameRe = RELAY_NAME_RE) {
 //   * split-horizon — never advertise the target's own agents back to it.
 //   * both-endpoints gate — only include peer Y where Y is relayAllowed too.
 //   * liveness — only online peers.
-//   * type filter — only claude/codex; bash can't process intents and a bash
-//     session is private by design, so it must never reach a spoke's roster.
+//   * type filter — agent types only, no scratch clone; bash can't process
+//     intents and a bash session is private, so it never reaches a spoke's roster.
 // Returns [{name, origin, type}]. Dedup guards a duplicate name on one origin.
 function computeRosterFor(targetId, statuses, relayAllowedIds, localSessions, selfLabel) {
   const allowed = relayAllowedIds instanceof Set ? relayAllowedIds : new Set(relayAllowedIds || []);
@@ -144,7 +146,7 @@ function computeRosterFor(targetId, statuses, relayAllowedIds, localSessions, se
   const roster = [];
   const seen = new Set();
   const admit = (sess, origin) => {
-    if (!sess || (sess.type !== 'claude' && sess.type !== 'codex')) return;
+    if (!sess || !isAgentType(sess.type) || sess.clone) return;
     if (!RELAY_NAME_RE.test(String(sess.name || ''))) return;
     const key = `${sess.name}@${origin}`;
     if (seen.has(key)) return;

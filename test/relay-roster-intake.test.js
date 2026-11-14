@@ -273,3 +273,30 @@ test('_routeFederatedDm sends an origin that is both a known dm origin and relay
   assert.deepStrictEqual(injected, [],
     'no bounce and no "relayed via" notice — the outbox branch delivers silently');
 });
+
+test('POST /api/peer/roster keeps muse and clodent row types and maps an unknown type to claude', async () => {
+  const seen = [];
+  await withServer((arg) => seen.push(arg), async (server) => {
+    await post(server, '/api/peer/roster', {
+      rv: 1,
+      via: HUB,
+      roster: [
+        { name: 'muse', origin: HUB, type: 'muse' },
+        { name: 'avh-keeper', origin: 'murmurfi', type: 'clodent' },
+        { name: 'odd', origin: HUB, type: 'gemini' },
+        { name: 'ci', origin: HUB, type: 'codex' },
+      ],
+    });
+    assert.deepStrictEqual(seen[0].roster, [
+      { name: 'muse', origin: HUB, type: 'muse' },
+      { name: 'avh-keeper', origin: 'murmurfi', type: 'clodent' },
+      { name: 'odd', origin: HUB, type: 'claude' },
+      { name: 'ci', origin: HUB, type: 'codex' },
+    ]);
+  });
+});
+
+test('_relayViaForOrigin routes to an origin whose only relayed seat is clodent', () => {
+  const m = withRoster([{ name: 'avh-keeper', origin: 'murmurfi', type: 'clodent' }]);
+  assert.strictEqual(m._relayViaForOrigin('murmurfi'), HUB);
+});

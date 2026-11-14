@@ -468,7 +468,7 @@ distinct `relay` cap.
   relayAllowed(Y)` gate) **and its own local agents**, under the hub's
   `SELF_LABEL`. The local rows ride the symmetric gate alone — the
   both-endpoints gate is about a third party Y and the hub is not one — and the
-  claude/codex type filter keeps bash sessions private. It **pushes** the result
+  agent-type filter (`isAgentType`: claude, codex, muse, clodent; no scratch clone) keeps bash sessions private. It **pushes** the result
   to X via `POST /api/peer/roster`
   (served by the spoke, called by the hub each hello tick — but only to a spoke
   advertising the `relay` cap, never 501-spamming an old box). Payload

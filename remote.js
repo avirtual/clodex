@@ -7,6 +7,7 @@ const path = require('path');
 
 const crypto = require('crypto');
 const { relayVersionOk, isQualifiedSender, isDoneTaskEnvelope, isSandboxEnvelope } = require('./relay-protocol');
+const { isAgentType } = require('./cli-adapters');
 const { makeTokenGate, isLoopbackHost, originRefusal, originMismatch } = require('./auth-token');
 const { BOX_ID_RE } = require('./sandbox');
 const { maskSecrets } = require('./log-mask');
@@ -1608,7 +1609,7 @@ class RemoteServer {
           if (!e || typeof e !== 'object') continue;
           const name = String(e.name || '');
           const origin = String(e.origin || '');
-          const type = e.type === 'codex' ? 'codex' : 'claude';
+          const type = isAgentType(e.type) ? e.type : 'claude';
           if (!NAME_RE.test(name) || !NAME_RE.test(origin)) continue;
           roster.push({ name, origin, type });
         }
