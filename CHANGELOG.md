@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Fixed: `[agent:who]` on a node that reaches other nodes through a hub now lists Muse and clodent seats, and such seats are reachable by DM through the hub.
+
 ## 5.184.0 — 2026-11-13
 
 - A seat whose transcript cannot be read keeps its view tabs and says so, instead of silently showing only the raw screen.
