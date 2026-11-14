@@ -54,3 +54,11 @@ test('m0: team-tickets.js reads posture and the cwd dir from the adapter', () =>
   assert.ok(!src.includes('ignoreCodexDir'));
   assert.strictEqual(src.split('hasBypass(').length - 1, 2);
 });
+
+test('m0: relay-protocol.js and remote.js compare no seat type to a claude or codex literal', () => {
+  for (const rel of ['relay-protocol.js', 'remote.js']) {
+    const src = read(rel);
+    assert.doesNotMatch(src, /\.type\s*[!=]==?\s*'(claude|codex)'/, rel);
+    assert.ok(src.includes('isAgentType('), rel);
+  }
+});
