@@ -126,6 +126,6 @@ test('logs testjob against a node that serves no testjobs output is the upgrade 
     const r = await cli(['logs', 'testjob', 'j1'], port);
     assert.strictEqual(r.code, 1);
     assert.match(r.stderr, /testjobs\/output/);
-    assert.deepStrictEqual(seen, ['/api/resources']);
+    assert.deepStrictEqual(seen, ['/api/resources', '/api/peer/hello']);
   }, { subresources: {} });
 });
