@@ -68,7 +68,7 @@ function createOutputBuffer({ cap = PANE_CAP_CHARS } = {}) {
     return dropped ? `${DROPPED_LINE}\n${text}` : text;
   }
 
-  return { append, reset: () => mark(RESET_LINE), render, get dropped() { return dropped; }, get length() { return text.length; } };
+  return { append, reset: () => mark(RESET_LINE), markDropped: () => { dropped = true; }, render, get dropped() { return dropped; }, get length() { return text.length; } };
 }
 
 function statusText(r) {
@@ -153,9 +153,11 @@ function createOutputFollower({
       schedule(0);
       return;
     }
+    if (offset == null && r.offset > 0) buffer.markDropped();
     if (r.text) buffer.append(r.text);
+    const from = offset;
     offset = r.next;
-    const behind = r.next < r.total;
+    const behind = r.next < r.total && (from == null || r.next > from);
     if (!r.live && !behind) stop();
     emit();
     if (behind) schedule(0);

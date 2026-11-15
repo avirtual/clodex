@@ -132,6 +132,39 @@ test('close stops the timer, an error doubles the delay, two ticks never overlap
   assert.strictEqual(calls, 3);
 });
 
+test('a finished job whose file ends in a held-back partial character stops instead of re-reading at once', async () => {
+  const timers = fakeTimers();
+  const answers = [
+    page({ phase: 'done', live: false, endedAt: 99000, total: 4, offset: 0, next: 3, text: 'abc' }),
+    page({ phase: 'done', live: false, endedAt: 99000, total: 4, offset: 3, next: 3, text: '' }),
+  ];
+  let view = null;
+  const f = T.createOutputFollower({ read: async () => answers.shift(), onUpdate: (v) => { view = v; }, timers });
+  f.start();
+  assert.strictEqual(await timers.fire(), 0);
+  assert.strictEqual(await timers.fire(), 0);
+  assert.deepStrictEqual([timers.pending, view.stopped, view.text], [[], true, 'abc']);
+});
+
+test('a live job stalled on a partial character falls back to the poll interval', async () => {
+  const timers = fakeTimers();
+  const answers = [page({ total: 4, offset: 0, next: 3, text: 'abc' }), page({ total: 4, offset: 3, next: 3, text: '' })];
+  const f = T.createOutputFollower({ read: async () => answers.shift(), onUpdate: () => {}, timers });
+  f.start();
+  await timers.fire();
+  await timers.fire();
+  assert.deepStrictEqual(timers.pending.map((h) => h.ms), [2000]);
+});
+
+test('opening a long job shows the tail under the earlier-output line', async () => {
+  const timers = fakeTimers();
+  let view = null;
+  const f = T.createOutputFollower({ read: async () => page({ total: 1004, offset: 1000, next: 1004, text: 'end\n' }), onUpdate: (v) => { view = v; }, timers });
+  f.start();
+  await timers.fire();
+  assert.strictEqual(view.text, '… earlier output not shown …\nend\n');
+});
+
 test('a job that ends gets one final read and then stops; a paused follow does not poll', async () => {
   const timers = fakeTimers();
   const answers = [page({ total: 2, next: 2, text: 'a\n' }), page({ phase: 'done', live: false, endedAt: 99000, total: 4, offset: 2, next: 4, text: 'b\n' })];
