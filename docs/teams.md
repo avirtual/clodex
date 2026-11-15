@@ -843,6 +843,14 @@ over 16384 bytes or 400 lines.
 
 - `[agent:team box set]` + the Dockerfile as body, closed by `[agent:end]`: a
   refused body leaves the stored file as it was.
+- `[agent:team box set file:<path>]`, no body: reads the Dockerfile from a file
+  and stores it exactly as the body form would (same form check, rev and
+  definition hash); the reply also names the file and its byte count. The path
+  is relative to the team root, or absolute inside it, and must still be inside
+  the root after symlinks resolve. Refused: a path outside the root, a missing
+  file, a directory, a file over 64 KiB, and `file:` together with a body; every
+  refusal leaves the stored file as it was. The 16384-byte form cap still applies
+  to the text read.
 - `[agent:team box init]`: generates the first Dockerfile from the team sandbox
   bootstrap (`packages` and `setup`; `start` stays runtime-only). Refused when a
   definition exists (`box clear` first) or the team has no sandbox box config.

@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- `[agent:team box set file:<path>]` reads a team's box Dockerfile from a file in the team root instead of the message body.
+
 ## 5.186.0 — 2026-11-15
 
 - A test box runner can run several jobs at once: set the slot count in the runner's settings (default 1).
