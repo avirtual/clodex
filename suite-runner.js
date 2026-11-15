@@ -100,12 +100,20 @@ function activityJob(job, lastOutputAt = null) {
   };
 }
 
-function finishedJob(job, totals, lastOutputAt = null) {
-  let outcome = job.reason;
-  if (outcome == null) outcome = totals ? (totals.fail > 0 ? 'fail' : 'pass') : 'no-summary';
+function resultOf(totals, exit) {
+  return {
+    outcome: !totals ? 'no-summary' : exit && exit.code === 0 ? 'pass' : 'fail',
+    pass: totals ? totals.pass : null, fail: totals ? totals.fail : null, tests: totals ? totals.tests : null,
+  };
+}
+
+function finishedJob(job, stdoutFile, lastOutputAt = null) {
+  const rec = job.record;
+  const result = job.reason != null ? { outcome: job.reason, pass: null, fail: null }
+    : rec && rec.outcome != null ? rec : resultOf(tailTotals(stdoutFile), job.exit);
   const { phase, ...row } = activityJob(job, lastOutputAt);
   return {
-    ...row, outcome, pass: totals ? totals.pass : null, fail: totals ? totals.fail : null, endedAt: job.endedAt,
+    ...row, outcome: result.outcome, pass: result.pass, fail: result.fail, endedAt: job.endedAt,
     waitMs: (job.startedAt != null ? job.startedAt : job.endedAt) - job.queuedAt,
     runMs: job.startedAt != null ? job.endedAt - job.startedAt : null,
   };
@@ -610,14 +618,15 @@ function createSuiteRunner({
     job.reason = reason;
     job.exit = exit;
     job.endedAt = endedAt;
+    const result = reason == null ? resultOf(tailTotals(outFile(job.id, 'stdout')), exit) : { outcome: 'unknown', pass: null, fail: null, tests: null };
     job.record = {
       id: job.id, jobId: job.id, attempt: job.attempt, kind: job.kind, scope: job.scope || null,
       team: job.team || null, ticket: job.ticket || null, seat: job.seat || null,
       sha: job.sha, branch: job.branch || null, treeHash: job.treeHash, pid: job.pid || null,
       queuedAt: job.queuedAt, startedAt: job.startedAt != null ? job.startedAt : null, endedAt,
       durationMs: job.startedAt != null ? endedAt - job.startedAt : null,
-      outcome: reason == null ? null : 'unknown', reason, exit,
-      pass: null, fail: null, tests: null,
+      outcome: result.outcome, reason, exit,
+      pass: result.pass, fail: result.fail, tests: result.tests,
       queueMs: job.startedAt != null ? job.startedAt - job.queuedAt : null,
       setupMs: job.setupMs != null ? job.setupMs : null, runMs: job.runMs != null ? job.runMs : null,
       env: job.identity || null, where: 'runner',
@@ -972,7 +981,7 @@ function createSuiteRunner({
       slots: { total: slotTotal, inUse: live.length },
       running: live.map((j) => activityJob(j, lastOutputOf(j.id))),
       waiting: [...queue(), ...uploading].map((j) => activityJob(j, lastOutputOf(j.id))),
-      recent: done.map((j) => finishedJob(j, j.reason == null ? tailTotals(outFile(j.id, 'stdout')) : null, lastOutputOf(j.id))),
+      recent: done.map((j) => finishedJob(j, outFile(j.id, 'stdout'), lastOutputOf(j.id))),
       box: await boxLine(),
     };
   }

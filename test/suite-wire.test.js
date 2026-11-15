@@ -501,3 +501,38 @@ test('a wrong suite token keeps its 401 through suiteAsk, and reachable names th
   const { client } = clientFor(conn);
   assert.deepStrictEqual(await client.reachable('runner-1'), { ok: false, why: 'runner refused the token (status 401)' });
 });
+
+test('a failed output slice is asked again up to three times within the deadline; a 404 is asked once', async (t) => {
+  const root = mkTmpRoot('suite-wire-');
+  const repo = makeRepo(root);
+  const tree = treeOf(repo);
+  const STDOUT = 'TOTALS: 4 pass, 0 fail, 4 tests\n';
+  const cases = [
+    ['fails twice, then answers', 2, 503, 0, [3, 1], [15000, 15000], [null, 'pass', 4]],
+    ['fails three times', 3, 503, 0, [3, 1], [15000, 15000], ['runner output unavailable', 'unknown', null]],
+    ['a 404', 1, 404, 0, [1, 1], [], ['runner output unavailable', 'unknown', null]],
+    ['the deadline passes on the first failure', 3, 503, 60000, [1, 1], [], ['runner output unavailable', 'unknown', null]],
+  ];
+  for (const [name, failures, status, lateMs, wantCalls, wantSlept, want] of cases) {
+    const clock = fakeClock();
+    const asked = { stdout: 0, stderr: 0 };
+    const { runner } = stubRunner({
+      poll: async (ids) => ({ ok: true, bootId: 'b', jobs: [doneView(ids[0], tree)] }),
+      output: async (id, o) => {
+        asked[o.stream] += 1;
+        if (o.stream === 'stdout' && asked.stdout <= failures) {
+          clock.t += lateMs;
+          return { ok: false, status, error: 'slice failed' };
+        }
+        return { ok: true, total: o.stream === 'stdout' ? STDOUT.length : 0, offset: 0, text: o.stream === 'stdout' ? STDOUT : '' };
+      },
+    });
+    const { server, port } = await startServer(t, { suiteRunner: runner });
+    const { client } = clientFor(peerFor(t, port).conn, { now: clock.now, sleep: clock.sleep });
+    const out = await client.run({ peer: 'runner-1', tree: repo, budgetMs: 50000 });
+    assert.deepStrictEqual([asked.stdout, asked.stderr], wantCalls, name);
+    assert.deepStrictEqual(clock.slept, wantSlept, name);
+    assert.deepStrictEqual([out.unknown || null, out.record.outcome, out.record.pass], want, name);
+    server.stop();
+  }
+});
