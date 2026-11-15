@@ -1604,23 +1604,26 @@ const slotsOf = async (runner) => {
 
 function holdingFixture(t, over = {}) {
   const held = new Map();
+  const waiting = new Map();
+  const one = (id) => (held.has(id) ? Promise.resolve() : new Promise((resolve) => waiting.set(id, resolve)));
   return fixture(t, {
     ...over,
     onSpawn: (c) => {
       if (over.release && over.release(c)) { c.child.stdout.write('TOTALS: 1 pass, 0 fail, 1 tests\n'); c.child.finish(0); return; }
       held.set(c.job, c.child);
+      if (waiting.has(c.job)) waiting.get(c.job)();
     },
-  }).then((f) => ({ ...f, held }));
+  }).then((f) => ({ ...f, held, spawned: (ids) => Promise.all(ids.map(one)) }));
 }
 
 test('with two slots three queued jobs start two at once, the third when either ends, in queue order', async (t) => {
   const f = await holdingFixture(t, { runnerOver: { slots: 2 } });
   for (const id of ['s1', 's2', 's3']) assert.strictEqual((await f.upload(f.body(id))).state, 'queued');
-  await waitState(f.runner, 's2', 'running');
+  await f.spawned(['s1', 's2']);
   await drain();
   assert.deepStrictEqual(await slotsOf(f.runner), { slots: { total: 2, inUse: 2 }, running: ['s1', 's2'], waiting: ['s3'] });
   f.held.get('s2').finish(0);
-  await waitState(f.runner, 's3', 'running');
+  await f.spawned(['s3']);
   await drain();
   assert.deepStrictEqual(await slotsOf(f.runner), { slots: { total: 2, inUse: 2 }, running: ['s1', 's3'], waiting: [] });
   f.held.get('s1').finish(0);
@@ -1642,7 +1645,7 @@ for (const [label, slots, total, started] of [
   test(`a slot count of ${label} runs ${total} at a time`, async (t) => {
     const f = await holdingFixture(t, { runnerOver: slots === undefined ? {} : { slots } });
     for (const id of ['u1', 'u2', 'u3']) assert.strictEqual((await f.upload(f.body(id))).state, 'queued');
-    await waitState(f.runner, started[started.length - 1], 'running');
+    await f.spawned(started);
     await drain();
     const snap = await slotsOf(f.runner);
     assert.deepStrictEqual([snap.slots, snap.running, f.calls.map((c) => c.job)], [{ total, inUse: started.length }, started, started]);
@@ -1655,7 +1658,7 @@ test('a hold set while two box jobs run lets both finish with their own results,
   const f = await holdingFixture(t, { runnerOver: { box: fb.box, slots: 2 }, release: (c) => c.job === 'n1' || c.job === 'b3' });
   await f.upload(f.body('b1', 'hand', { isolation: 'container' }));
   assert.strictEqual((await f.runner.submit(f.body('b2', 'hand', { isolation: 'container' }))).state, 'queued');
-  await waitState(f.runner, 'b2', 'running');
+  await f.spawned(['b1', 'b2']);
   assert.strictEqual((await f.runner.submit(f.body('b3', 'hand', { isolation: 'container' }))).state, 'queued');
   assert.strictEqual((await f.runner.submit(f.body('n1'))).state, 'queued');
   f.held.get('b1').stdout.write('TOTALS: 3 pass, 0 fail, 3 tests\n');
@@ -1704,8 +1707,7 @@ test('cancelling one of two live jobs kills only it and leaves the other running
   const f = await holdingFixture(t, { runnerOver: { slots: 2 } });
   await f.upload(f.body('c1'));
   await f.runner.submit(f.body('c2'));
-  await waitState(f.runner, 'c2', 'running');
-  await waitState(f.runner, 'c1', 'running');
+  await f.spawned(['c1', 'c2']);
   await f.runner.cancel('c1');
   assert.deepStrictEqual(f.kills, [[-f.held.get('c1').pid, 'SIGKILL']]);
   f.held.get('c1').finish(null, 'SIGKILL');
@@ -1725,7 +1727,7 @@ test('the release sweep after one of two box jobs ends keeps the live one\'s con
   const f = await holdingFixture(t, { runnerOver: { box: fb.box, slots: 2 } });
   await f.upload(f.body('b1', 'hand', { isolation: 'container' }));
   await f.runner.submit(f.body('b2', 'hand', { isolation: 'container' }));
-  await waitState(f.runner, 'b2', 'running');
+  await f.spawned(['b1', 'b2']);
   f.held.get('b1').finish(0);
   await waitState(f.runner, 'b1', 'done');
   await drain();
@@ -1747,12 +1749,11 @@ test('an isolation that cannot run two native jobs keeps them one at a time whil
   await f.upload(f.body('n1'));
   await f.runner.submit(f.body('n2'));
   await f.runner.submit(f.body('bx', 'hand', { isolation: 'container' }));
-  await waitState(f.runner, 'bx', 'running');
-  await waitState(f.runner, 'n1', 'running');
+  await f.spawned(['n1', 'bx']);
   await drain();
   assert.deepStrictEqual(await slotsOf(f.runner), { slots: { total: 3, inUse: 2 }, running: ['n1', 'bx'], waiting: ['n2'] });
   f.held.get('n1').finish(0);
-  await waitState(f.runner, 'n2', 'running');
+  await f.spawned(['n2']);
   f.held.get('n2').finish(0);
   f.held.get('bx').finish(0);
   await waitState(f.runner, 'n2', 'done');
