@@ -376,7 +376,7 @@ test('desktop Window menu job rows read a clock time that does not change as tim
   process.env.TZ = 'UTC';
   t.after(() => { if (tz === undefined) delete process.env.TZ; else process.env.TZ = tz; });
   const startedAt = Date.UTC(2026, 10, 13, 10, 42, 40);
-  const running = { id: 'j1', team: 'avh', ticket: 't1579', kind: 'verify', origin: null, isolation: 'container', image: 'bbbbbbbbbbbb', definition: null, phase: 'run', queuedAt: startedAt - 1000, startedAt, lastOutputAt: startedAt + 5000 };
+  const running = { id: 'j1', team: 'avh', ticket: 't1579', kind: 'verify', origin: null, isolation: 'container', image: 'bbbbbbbbbbbb', definition: null, phase: 'run', queuedAt: startedAt - 1000, startedAt, runStartedAt: startedAt, lastOutputAt: startedAt + 5000 };
   const testBoxes = { enabled: true, snapshot: { at: startedAt, slots: { total: 1, inUse: 1 }, running: [running], waiting: [], recent: [], box: { state: 'ready', image: 'bbbbbbbbbbbb' } } };
   t.mock.timers.enable({ apis: ['Date'], now: startedAt + 5000 });
   const early = peersSection(desktopWindowRows({ testBoxes }), 'desktop early');
@@ -391,7 +391,7 @@ test('desktop Window menu rebuilds itself when a silent job crosses the quiet th
   process.env.TZ = 'UTC';
   t.after(() => { if (tz === undefined) delete process.env.TZ; else process.env.TZ = tz; });
   const now = Date.UTC(2026, 10, 13, 10, 42, 40);
-  const running = { id: 'j1', team: 'avh', ticket: 't1579', kind: 'verify', origin: null, isolation: 'container', image: 'bbbbbbbbbbbb', definition: null, phase: 'run', queuedAt: now - 601000, startedAt: now - 600000, lastOutputAt: now - 241000 };
+  const running = { id: 'j1', team: 'avh', ticket: 't1579', kind: 'verify', origin: null, isolation: 'container', image: 'bbbbbbbbbbbb', definition: null, phase: 'run', queuedAt: now - 601000, startedAt: now - 600000, runStartedAt: now - 600000, lastOutputAt: now - 241000 };
   const live = { enabled: true, snapshot: { at: now, slots: { total: 1, inUse: 1 }, running: [running], waiting: [], recent: [], box: { state: 'ready', image: 'bbbbbbbbbbbb' } } };
   const idle = { enabled: true, snapshot: { at: now, slots: { total: 1, inUse: 0 }, running: [], waiting: [], recent: [], box: { state: 'ready', image: 'bbbbbbbbbbbb' } } };
   t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now });

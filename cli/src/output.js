@@ -152,8 +152,8 @@ function testjobCells(job, state, age, quiet, passFail) {
 }
 
 function testjobQuietMs(job, at) {
-  if (job.phase !== 'run' || job.startedAt == null) return null;
-  const gap = at - (job.lastOutputAt != null ? job.lastOutputAt : job.startedAt);
+  if (job.phase !== 'run' || job.runStartedAt == null) return null;
+  const gap = at - (job.lastOutputAt != null && job.lastOutputAt > job.runStartedAt ? job.lastOutputAt : job.runStartedAt);
   return gap > TESTJOB_QUIET_MS ? gap : null;
 }
 

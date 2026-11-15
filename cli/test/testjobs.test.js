@@ -11,7 +11,7 @@ const NO_CTX_ROOT = mkTmpRoot('testjobs-noctx-');
 
 const RUNNING = {
   id: 'j2', team: 'clodex', ticket: 't7', kind: 'verify', origin: 'laptop', isolation: 'container',
-  image: 'abc123def456', definition: null, phase: 'run', queuedAt: 1700000000000, startedAt: 1700000040000,
+  image: 'abc123def456', definition: null, phase: 'run', queuedAt: 1700000000000, startedAt: 1700000040000, runStartedAt: 1700000040000,
 };
 const WAITING = {
   id: 'j3', team: 'other', ticket: 't9', kind: 'hand', origin: null, isolation: 'native',
@@ -92,10 +92,11 @@ test('get testjobs prints the slot and box line, then running, waiting and recen
 });
 
 test('get testjobs shows QUIET for a live row silent past the threshold and counts it in the head line', async () => {
-  const quiet = { ...RUNNING, id: 'j4', ticket: 't8', startedAt: 1700000100000 - 900000, lastOutputAt: 1700000100000 - 400000 };
+  const quiet = { ...RUNNING, id: 'j4', ticket: 't8', startedAt: 1700000100000 - 900000, runStartedAt: 1700000100000 - 890000, lastOutputAt: 1700000100000 - 400000 };
   const normal = { ...RUNNING, lastOutputAt: 1700000100000 - 5000 };
-  const silentFromStart = { ...RUNNING, id: 'j5', ticket: 't6', startedAt: 1700000100000 - 400000, lastOutputAt: null };
-  const snapshot = { ...SNAPSHOT, slots: { total: 3, inUse: 3 }, running: [quiet, normal, silentFromStart], waiting: [], recent: [] };
+  const silentFromStart = { ...RUNNING, id: 'j5', ticket: 't6', startedAt: 1700000100000 - 400000, runStartedAt: 1700000100000 - 400000, lastOutputAt: null };
+  const longSetup = { ...RUNNING, id: 'j6', ticket: 't5', startedAt: 1700000100000 - 900000, runStartedAt: 1700000100000 - 30000, lastOutputAt: 1700000100000 - 900000 };
+  const snapshot = { ...SNAPSHOT, slots: { total: 4, inUse: 4 }, running: [quiet, normal, silentFromStart, longSetup], waiting: [], recent: [] };
   await withNode({ ok: true, enabled: true, snapshot }, async (port) => {
     const { code, stdout } = await cli(['get', 'testjobs'], port);
     assert.strictEqual(code, 0);
@@ -103,12 +104,14 @@ test('get testjobs shows QUIET for a live row silent past the threshold and coun
     assert.ok(lines.some((l) => l.includes('t8')), `ENTER: quiet row missing:\n${stdout}`);
     assert.ok(lines.some((l) => l.includes('t7')), `ENTER: normal row missing:\n${stdout}`);
     assert.ok(lines.some((l) => l.includes('t6')), `ENTER: silent-from-start row missing:\n${stdout}`);
+    assert.ok(lines.some((l) => l.includes('t5')), `ENTER: long-setup row missing:\n${stdout}`);
     assert.strictEqual(stdout, [
-      'slots 3/3 in use, 2 quiet, box image abc123def456',
+      'slots 4/4 in use, 2 quiet, box image abc123def456',
       'STATE  TEAM    TICKET  KIND    ISOLATION  IMAGE         AGE     QUIET  PASS/FAIL',
       'run    clodex  t8      verify  container  abc123def456  15m00s  6m40s',
       'run    clodex  t7      verify  container  abc123def456  1m00s   -',
       'run    clodex  t6      verify  container  abc123def456  6m40s   6m40s',
+      'run    clodex  t5      verify  container  abc123def456  15m00s  -',
       '',
     ].join('\n'));
   });

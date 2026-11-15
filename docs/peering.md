@@ -512,8 +512,8 @@ hello caps follow) and is refused while a job is live (`busy()`).
 The runner's `activity()` is the operator's read of what it is doing; it is
 never on the wire (`info()` keeps only job ids). It returns
 `{ at, slots: { total, inUse }, running: [job], waiting: [job], recent: [done], box }`:
-a job is `{ id, team, ticket, kind, origin, isolation: 'native'|'container', image, definition, phase, queuedAt, startedAt, lastOutputAt }`
-(`lastOutputAt` the mtime in ms of the later-written of the job's stdout and stderr files, null when neither exists; `image` the 12-hex short id of the box image, `definition` the 12-hex short
+a job is `{ id, team, ticket, kind, origin, isolation: 'native'|'container', image, definition, phase, queuedAt, startedAt, runStartedAt, lastOutputAt }`
+(`startedAt` when setup began, `runStartedAt` when the run phase began and null before it; `lastOutputAt` the mtime in ms of the later-written of the job's stdout and stderr files, null when neither exists; `image` the 12-hex short id of the box image, `definition` the 12-hex short
 box definition hash when the job named one, `phase` `upload`/`queued`/`setup`/`run`,
 `origin` the dialled peer's label for a claimed job and null for a pushed one);
 `waiting` is queue order then uploads; `recent` is the last ten finished jobs,

@@ -7,7 +7,7 @@ const { menuRows, activityView, nextQuietAt, fmtSpan, fmtClock } = require('../s
 
 const job = (over) => ({ id: 'j', team: 'avh', ticket: 't1579', kind: 'verify', origin: null, isolation: 'container', image: 'bbbbbbbbbbbb', definition: null, phase: 'run', queuedAt: 0, startedAt: 0, ...over });
 const AT = Date.UTC(2026, 10, 13, 10, 45, 52);
-const RUNNING = job({ startedAt: AT - 192000, queuedAt: AT - 200000, lastOutputAt: AT - 5000 });
+const RUNNING = job({ startedAt: AT - 192000, runStartedAt: AT - 190000, queuedAt: AT - 200000, lastOutputAt: AT - 5000 });
 const WAIT_NATIVE = job({ id: 'q1', ticket: 't1580', kind: 'hand', isolation: 'native', image: null, phase: 'queued', startedAt: null, queuedAt: AT - 400000 });
 const WAIT_UPLOAD = job({ id: 'q2', team: null, ticket: null, kind: 'post-merge', phase: 'upload', startedAt: null, queuedAt: AT - 5000 });
 const snap = (over) => ({ at: AT, slots: { total: 1, inUse: 0 }, running: [], waiting: [], recent: [], box: { state: 'ready', image: 'bbbbbbbbbbbb' }, ...over });
@@ -105,11 +105,13 @@ test('activity view: off, empty, and busy with finished jobs', () => {
 });
 
 test('quiet rows: a running job silent past the threshold says so; under it, in setup, or finished it never does', () => {
-  const under = job({ startedAt: AT - 192000, queuedAt: AT - 200000, lastOutputAt: AT - 60000 });
-  const over = job({ ticket: 't1662', kind: 'post-merge', startedAt: AT - 863000, queuedAt: AT - 870000, lastOutputAt: AT - 430000 });
+  const under = job({ startedAt: AT - 192000, runStartedAt: AT - 190000, queuedAt: AT - 200000, lastOutputAt: AT - 60000 });
+  const over = job({ ticket: 't1662', kind: 'post-merge', startedAt: AT - 863000, runStartedAt: AT - 860000, queuedAt: AT - 870000, lastOutputAt: AT - 430000 });
   const setupNone = job({ ticket: 't1663', phase: 'setup', startedAt: AT - 600000, queuedAt: AT - 610000, lastOutputAt: null });
-  const runNoneUnder = job({ ticket: 't1665', startedAt: AT - 192000, queuedAt: AT - 200000, lastOutputAt: null });
-  const runNoneOver = job({ ticket: 't1666', startedAt: AT - 400000, queuedAt: AT - 410000, lastOutputAt: null });
+  const runNoneUnder = job({ ticket: 't1665', startedAt: AT - 192000, runStartedAt: AT - 190000, queuedAt: AT - 200000, lastOutputAt: null });
+  const runNoneOver = job({ ticket: 't1666', startedAt: AT - 400000, runStartedAt: AT - 400000, queuedAt: AT - 410000, lastOutputAt: null });
+  const longSetup = job({ ticket: 't1667', startedAt: AT - 900000, runStartedAt: AT - 30000, queuedAt: AT - 910000, lastOutputAt: AT - 900000 });
+  const olderRunner = job({ ticket: 't1668', startedAt: AT - 900000, runStartedAt: null, queuedAt: AT - 910000, lastOutputAt: AT - 800000 });
   const setupStale = job({ ticket: 't1664', phase: 'setup', startedAt: AT - 600000, queuedAt: AT - 610000, lastOutputAt: AT - 590000 });
   const finished = { ...job({ id: 'r1', ticket: 't1500' }), lastOutputAt: AT - 3600000, outcome: 'pass', pass: 5, fail: 0, endedAt: AT - 3600000, waitMs: 3000, runMs: 60000 };
   const view = (j) => activityView({ enabled: true, snapshot: snap({ slots: { total: 1, inUse: 1 }, running: [j] }) }, AT);
@@ -120,6 +122,8 @@ test('quiet rows: a running job silent past the threshold says so; under it, in 
     ['setup, no output', view(setupNone).running[0]],
     ['run, no output yet, under threshold', view(runNoneUnder).running[0]],
     ['run, no output yet, over threshold', view(runNoneOver).running[0]],
+    ['long setup, fresh run phase', view(longSetup).running[0]],
+    ['run phase, older runner without runStartedAt', view(olderRunner).running[0]],
     ['setup, stale output', view(setupStale).running[0]],
     ['finished', activityView({ enabled: true, snapshot: snap({ recent: [finished] }) }, AT).recent[0]],
     ['summary, one quiet', view(over).summary],
@@ -134,6 +138,8 @@ test('quiet rows: a running job silent past the threshold says so; under it, in 
     ['setup, no output', 'avh · t1663 · verify · box · setting up 10m00s'],
     ['run, no output yet, under threshold', 'avh · t1665 · verify · box · running 3m12s'],
     ['run, no output yet, over threshold', 'avh · t1666 · verify · box · running 6m40s · quiet 6m40s'],
+    ['long setup, fresh run phase', 'avh · t1667 · verify · box · running 15m00s'],
+    ['run phase, older runner without runStartedAt', 'avh · t1668 · verify · box · running 15m00s'],
     ['setup, stale output', 'avh · t1664 · verify · box · setting up 10m00s'],
     ['finished', 'avh · t1500 · verify · box · pass (5 pass, 0 fail) · waited 3s · ran 1m00s'],
     ['summary, one quiet', '1 of 1 in use · 0 waiting · 1 quiet'],
@@ -147,9 +153,9 @@ test('the CLI and the desktop rows share one quiet threshold', () => {
 
 test('nextQuietAt is the earliest moment a live run-phase job not yet quiet crosses the threshold', () => {
   const running = [
-    job({ id: 'a', startedAt: AT - 192000, lastOutputAt: AT - 60000 }),
-    job({ id: 'b', startedAt: AT - 192000, lastOutputAt: null }),
-    job({ id: 'c', startedAt: AT - 863000, lastOutputAt: AT - 430000 }),
+    job({ id: 'a', startedAt: AT - 192000, runStartedAt: AT - 190000, lastOutputAt: AT - 60000 }),
+    job({ id: 'b', startedAt: AT - 192000, runStartedAt: AT - 190000, lastOutputAt: null }),
+    job({ id: 'c', startedAt: AT - 863000, runStartedAt: AT - 860000, lastOutputAt: AT - 430000 }),
     job({ id: 'd', phase: 'setup', startedAt: AT - 290000, lastOutputAt: null }),
   ];
   assert.deepStrictEqual([
@@ -158,5 +164,5 @@ test('nextQuietAt is the earliest moment a live run-phase job not yet quiet cros
     nextQuietAt({ enabled: true, snapshot: snap({ running: [running[2], running[3]] }) }, AT),
     nextQuietAt({ enabled: true, snapshot: snap() }, AT),
     nextQuietAt({ enabled: false, snapshot: null }, AT),
-  ], [AT + 108001, AT + 240001, null, null, null]);
+  ], [AT + 110001, AT + 240001, null, null, null]);
 });

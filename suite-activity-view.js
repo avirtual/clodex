@@ -31,8 +31,8 @@ function fmtClock(ts) {
 }
 
 function silentSince(job) {
-  if (job.phase !== 'run' || job.startedAt == null) return null;
-  return job.lastOutputAt != null ? job.lastOutputAt : job.startedAt;
+  if (job.phase !== 'run' || job.runStartedAt == null) return null;
+  return job.lastOutputAt != null && job.lastOutputAt > job.runStartedAt ? job.lastOutputAt : job.runStartedAt;
 }
 
 function isQuiet(job, at) {
