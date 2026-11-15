@@ -221,11 +221,11 @@ test('box set file: stores the file with the hash the body form gives for the sa
     `[agent:team] box definition rev 1 · definition hash ${expected} — read ops/Dockerfile.box (${Buffer.byteLength(GOOD)} bytes), saved to ${t.file}; checked for form; not built`);
   assert.strictEqual(fs.existsSync(t.file), true);
   assert.strictEqual(fs.readFileSync(t.file, 'utf8'), GOOD);
-  assert.strictEqual(tb.readBox(t.dir).definitionHash, expected);
+  assert.strictEqual(readMeta(t).definitionHash, expected);
   const b = mkTeam();
   assert.strictEqual(b.fire(b.lead, 'set', GOOD),
     `[agent:team] box definition rev 1 · definition hash ${expected} — saved to ${b.file}; checked for form; not built`);
-  assert.strictEqual(tb.readBox(b.dir).definitionHash, expected);
+  assert.strictEqual(readMeta(b).definitionHash, expected);
 });
 
 const FILE_REFUSALS = [
@@ -249,11 +249,11 @@ for (const [label, args, why] of FILE_REFUSALS) {
     fs.writeFileSync(path.join(t.home, 'elsewhere', 'Dockerfile'), `${GOOD}RUN false\n`);
     fs.symlinkSync(path.join(t.home, 'elsewhere', 'Dockerfile'), path.join(t.root, 'link.box'));
     t.fire(t.lead, 'set', GOOD);
-    const before = tb.readBox(t.dir);
+    const before = readMeta(t);
     assert.strictEqual(before.rev, 1);
     const [file, body] = args(t);
     assert.strictEqual(t.fireFile(t.lead, file, body), `[agent:team] error: ${why(t)} — the stored box definition is unchanged`);
-    const after = tb.readBox(t.dir);
+    const after = readMeta(t);
     assert.deepStrictEqual([after.rev, after.definitionHash], [1, before.definitionHash]);
     assert.strictEqual(fs.readFileSync(t.file, 'utf8'), GOOD);
   });
