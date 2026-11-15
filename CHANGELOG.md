@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.184.1 — 2026-11-15
+
 - Fixed: `[agent:who]` on a node that reaches other nodes through a hub now lists Muse and clodent seats, and such seats are reachable by DM through the hub.
 
 ## 5.184.0 — 2026-11-13
