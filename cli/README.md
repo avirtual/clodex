@@ -308,7 +308,7 @@ adds the bracketed columns; `-o name` prints `<singular>/<id>` per line.
 | `docs` | NAME SECTION TITLE (`-q TERMS` searches: NAME HEADING SNIPPET) | `describe doc <name> [--section <slug>]` — the page, raw markdown |
 | `worktrees` | PATH BRANCH HEAD [MAIN, DETACHED, LOCKED, PRUNABLE] | none — list only, `--repo DIR` required |
 | `catalogs` | a labeled block (a singleton, no rows) | `describe catalogs` |
-| `testjobs` | a slots and box line, then STATE TEAM TICKET KIND ISOLATION IMAGE AGE PASS/FAIL: running, waiting, then recent | none — list only; one job's output: `logs testjob <id>` |
+| `testjobs` | a slots, quiet-count and box line, then STATE TEAM TICKET KIND ISOLATION IMAGE AGE QUIET PASS/FAIL (QUIET: a running job silent over 5 minutes, else `-`): running, waiting, then recent | none — list only; one job's output: `logs testjob <id>` |
 
 `docs` is the **help corpus** — the same pages the desktop Help window shows,
 served as raw markdown. `get docs -q "park resend"` searches it; `--section
