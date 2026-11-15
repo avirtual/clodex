@@ -839,7 +839,8 @@ build on the Clodex base with `ARG CLODEX_BASE` and `FROM ${CLODEX_BASE}`, as
 yet: it refuses a file with no `FROM`, `# syntax=` and `# escape=`, `COPY`/`ADD`
 without `--from=` (there is no build context: the definition is one file),
 secret and ssh mounts, secret-looking lines (in `RUN` heredocs too), and a file
-over 65536 bytes or 1000 lines.
+over the cap. A box definition is at most 64 KiB and 1000 lines, on both the team
+and the runner; a runner older than this release refuses definitions over 16 KiB.
 
 - `[agent:team box set]` + the Dockerfile as body, closed by `[agent:end]`: a
   refused body leaves the stored file as it was.

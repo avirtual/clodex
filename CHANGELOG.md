@@ -13,7 +13,7 @@ blocks a release.
 
 ## Unreleased
 
-- `[agent:team box set file:<path>]` reads a team's box Dockerfile from a file in the team root instead of the message body.
+- `[agent:team box set file:<path>]` reads a team's box Dockerfile from a file in the team root instead of the message body. A box definition may now be up to 64 KiB.
 
 ## 5.186.0 — 2026-11-15
 
