@@ -1508,7 +1508,7 @@ function createRemoteWiring(deps) {
 
   return {
     syncRemoteServer, refreshRemoteToken, shutdownRemoteServer, suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner,
-    suiteActivity, suiteActivityNow, suiteOutput,
+    suiteActivity, suiteActivityNow, refreshSuiteActivity: refreshActivity, suiteOutput,
     getSuiteEngine:() => (closed ? null : getSuiteRunner()),
   };
 }

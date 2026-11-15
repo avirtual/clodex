@@ -528,7 +528,7 @@ setup command, ref or path. A job transition or hold change calls the runner's
 then and rebuilds the Window menu, whose Test Boxes section (shown while the
 runner setting is on) lists the summary, up to eight running and waiting jobs
 and a held or unavailable box. Its job rows show since when (local `HH:MM`),
-never a duration, so they cannot go stale; the browser view's menu, read fresh
+never a duration, plus `quiet since HH:MM` for a run silent past `QUIET_MS`; a timer for the next such crossing refreshes the snapshot, which rebuilds the menu; the browser view's menu, read fresh
 on open, shows durations. Test Box Activity… opens a dialog that polls the `suiteRunner:activity` IPC (under
 `enableTestBoxes`, so the browser view of a headless node has it, with the same
 section in its Window menu) every three seconds while open.

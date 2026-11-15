@@ -133,7 +133,7 @@ function createAppMenus(deps) {
     DEFAULT_WORKSPACE_ID, LOG_FILE, THEME_KEYS, path,
     checkForUpdate, confirmRestartClodex, createWindow,
     // getter deps (TDZ / whenReady-assigned when this factory runs)
-    getManager, getPeerManager, getSandboxManager, getSuiteActivity, getUpdateInfo,
+    getManager, getPeerManager, getSandboxManager, getSuiteActivity, refreshSuiteActivity, getUpdateInfo,
     getUiSettings, getWorkspaces, getAgentLibrary, getSkillLibrary, getEnvScopes,
     getPromptLibrary, getTemplates, getExecLibrary, getMcpLibrary, getPluginUpdates, getHelpCorpus,
     // The plugin host (T5) — null under CLODEX_PLUGINS=0 or a failed
@@ -768,7 +768,8 @@ function createAppMenus(deps) {
     if (due == null) return;
     quietRefreshTimer = setTimeout(() => {
       quietRefreshTimer = null;
-      refreshAppMenu();
+      if (typeof refreshSuiteActivity === 'function') refreshSuiteActivity();
+      else refreshAppMenu();
     }, Math.max(0, due - at));
     if (typeof quietRefreshTimer.unref === 'function') quietRefreshTimer.unref();
   }
