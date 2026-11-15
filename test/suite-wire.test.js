@@ -509,9 +509,9 @@ test('a failed output slice is asked again up to three times within the deadline
   const STDOUT = 'TOTALS: 4 pass, 0 fail, 4 tests\n';
   const cases = [
     ['fails twice, then answers', 2, 503, 0, [3, 1], [15000, 15000], [null, 'pass', 4]],
-    ['fails three times', 3, 503, 0, [3, 0], [15000, 15000], ['runner output unavailable', 'unknown', null]],
-    ['a 404', 1, 404, 0, [1, 0], [], ['runner output unavailable', 'unknown', null]],
-    ['the deadline passes on the first failure', 3, 503, 60000, [1, 0], [], ['runner output unavailable', 'unknown', null]],
+    ['fails three times', 3, 503, 0, [3, 1], [15000, 15000], ['runner output unavailable', 'unknown', null]],
+    ['a 404', 1, 404, 0, [1, 1], [], ['runner output unavailable', 'unknown', null]],
+    ['the deadline passes on the first failure', 3, 503, 60000, [1, 1], [], ['runner output unavailable', 'unknown', null]],
   ];
   for (const [name, failures, status, lateMs, wantCalls, wantSlept, want] of cases) {
     const clock = fakeClock();
