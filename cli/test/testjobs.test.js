@@ -81,13 +81,33 @@ test('get testjobs prints the slot and box line, then running, waiting and recen
     assert.ok(lines.some((l) => l.startsWith('pass ') && l.includes('j0')), `ENTER: finished row missing:\n${stdout}`);
     assert.strictEqual(stdout, [
       'slots 1/1 in use, box image abc123def456',
-      'STATE   TEAM    TICKET  KIND        ISOLATION  IMAGE         AGE    PASS/FAIL',
-      'run     clodex  t7      verify      container  abc123def456  1m00s',
-      'queued  other   t9      hand        native     -             5s',
-      'pass    clodex  j0      post-merge  native     -             2m05s  812/0',
+      'STATE   TEAM    TICKET  KIND        ISOLATION  IMAGE         AGE    QUIET  PASS/FAIL',
+      'run     clodex  t7      verify      container  abc123def456  1m00s  -',
+      'queued  other   t9      hand        native     -             5s     -',
+      'pass    clodex  j0      post-merge  native     -             2m05s  -      812/0',
       '',
     ].join('\n'));
     assert.deepStrictEqual(seen, ['/api/resources', '/api/testjobs']);
+  });
+});
+
+test('get testjobs shows QUIET for a live row silent past the threshold and counts it in the head line', async () => {
+  const quiet = { ...RUNNING, id: 'j4', ticket: 't8', startedAt: 1700000100000 - 900000, lastOutputAt: 1700000100000 - 400000 };
+  const normal = { ...RUNNING, lastOutputAt: 1700000100000 - 5000 };
+  const snapshot = { ...SNAPSHOT, slots: { total: 2, inUse: 2 }, running: [quiet, normal], waiting: [], recent: [] };
+  await withNode({ ok: true, enabled: true, snapshot }, async (port) => {
+    const { code, stdout } = await cli(['get', 'testjobs'], port);
+    assert.strictEqual(code, 0);
+    const lines = stdout.split('\n');
+    assert.ok(lines.some((l) => l.includes('t8')), `ENTER: quiet row missing:\n${stdout}`);
+    assert.ok(lines.some((l) => l.includes('t7')), `ENTER: normal row missing:\n${stdout}`);
+    assert.strictEqual(stdout, [
+      'slots 2/2 in use, 1 quiet, box image abc123def456',
+      'STATE  TEAM    TICKET  KIND    ISOLATION  IMAGE         AGE     QUIET  PASS/FAIL',
+      'run    clodex  t8      verify  container  abc123def456  15m00s  6m40s',
+      'run    clodex  t7      verify  container  abc123def456  1m00s   -',
+      '',
+    ].join('\n'));
   });
 });
 

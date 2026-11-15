@@ -103,3 +103,38 @@ test('activity view: off, empty, and busy with finished jobs', () => {
     ],
   });
 });
+
+test('quiet rows: a running job silent past the threshold says so; under it, in setup, or finished it never does', () => {
+  const under = job({ startedAt: AT - 192000, queuedAt: AT - 200000, lastOutputAt: AT - 60000 });
+  const over = job({ ticket: 't1662', kind: 'post-merge', startedAt: AT - 863000, queuedAt: AT - 870000, lastOutputAt: AT - 430000 });
+  const setupNone = job({ ticket: 't1663', phase: 'setup', startedAt: AT - 600000, queuedAt: AT - 610000, lastOutputAt: null });
+  const setupStale = job({ ticket: 't1664', phase: 'setup', startedAt: AT - 600000, queuedAt: AT - 610000, lastOutputAt: AT - 590000 });
+  const finished = { ...job({ id: 'r1', ticket: 't1500' }), lastOutputAt: AT - 3600000, outcome: 'pass', pass: 5, fail: 0, endedAt: AT - 3600000, waitMs: 3000, runMs: 60000 };
+  const view = (j) => activityView({ enabled: true, snapshot: snap({ slots: { total: 1, inUse: 1 }, running: [j] }) }, AT);
+  const rows = [
+    ['under threshold', view(under).running[0]],
+    ['over threshold', view(over).running[0]],
+    ['over threshold, desktop clock', menuRows({ enabled: true, snapshot: snap({ slots: { total: 1, inUse: 1 }, running: [over] }) }, AT, 'clock')[2].label],
+    ['setup, no output', view(setupNone).running[0]],
+    ['setup, stale output', view(setupStale).running[0]],
+    ['finished', activityView({ enabled: true, snapshot: snap({ recent: [finished] }) }, AT).recent[0]],
+    ['summary, one quiet', view(over).summary],
+    ['summary, none quiet', view(under).summary],
+  ];
+  for (const [name, text] of rows) assert.ok(typeof text === 'string' && text.length, `ENTER: ${name} row exists`);
+  assert.strictEqual(view(under).running[0], activityView({ enabled: true, snapshot: snap({ slots: { total: 1, inUse: 1 }, running: [RUNNING] }) }, AT).running[0]);
+  assert.deepStrictEqual(rows, [
+    ['under threshold', 'avh · t1579 · verify · box · running 3m12s'],
+    ['over threshold', 'avh · t1662 · post-merge · box · running 14m23s · quiet 7m10s'],
+    ['over threshold, desktop clock', 'avh · t1662 · post-merge · box · since 10:31 · quiet since 10:38'],
+    ['setup, no output', 'avh · t1663 · verify · box · setting up 10m00s'],
+    ['setup, stale output', 'avh · t1664 · verify · box · setting up 10m00s'],
+    ['finished', 'avh · t1500 · verify · box · pass (5 pass, 0 fail) · waited 3s · ran 1m00s'],
+    ['summary, one quiet', '1 of 1 in use · 0 waiting · 1 quiet'],
+    ['summary, none quiet', '1 of 1 in use · 0 waiting'],
+  ]);
+});
+
+test('the CLI and the desktop rows share one quiet threshold', () => {
+  assert.strictEqual(require('../cli/src/output').TESTJOB_QUIET_MS, require('../suite-activity-view').QUIET_MS);
+});

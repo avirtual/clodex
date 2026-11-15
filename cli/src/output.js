@@ -133,6 +133,8 @@ function fmtSpan(ms) {
   return `${sec}s`;
 }
 
+const TESTJOB_QUIET_MS = 5 * 60000;
+
 function testjobsBoxText(box) {
   const b = box || {};
   if (b.state === 'ready') return `box image ${b.image || '?'}`;
@@ -142,11 +144,17 @@ function testjobsBoxText(box) {
   return 'no box configured';
 }
 
-function testjobCells(job, state, age, passFail) {
+function testjobCells(job, state, age, quiet, passFail) {
   return [
     state, job.team || '-', job.ticket || job.id || '-', job.kind || '-',
-    job.isolation || '-', job.image || '-', age, passFail,
+    job.isolation || '-', job.image || '-', age, quiet, passFail,
   ];
+}
+
+function testjobQuietMs(job, at) {
+  if (job.phase !== 'run' || job.startedAt == null || job.lastOutputAt == null) return null;
+  const gap = at - job.lastOutputAt;
+  return gap > TESTJOB_QUIET_MS ? gap : null;
 }
 
 function renderTestjobs(body) {
@@ -158,17 +166,19 @@ function renderTestjobs(body) {
   const slots = snap.slots || {};
   const live = (job) => {
     const since = job.startedAt != null ? job.startedAt : job.queuedAt;
-    return testjobCells(job, job.phase || '-', fmtSpan(at - since), '');
+    const quiet = testjobQuietMs(job, at);
+    return testjobCells(job, job.phase || '-', fmtSpan(at - since), quiet == null ? '-' : fmtSpan(quiet), '');
   };
   const rows = [
     ...(snap.running || []).map(live),
     ...(snap.waiting || []).map(live),
     ...(snap.recent || []).map((job) => testjobCells(
-      job, job.outcome || '-', job.runMs != null ? fmtSpan(job.runMs) : '-',
+      job, job.outcome || '-', job.runMs != null ? fmtSpan(job.runMs) : '-', '-',
       job.pass != null ? `${job.pass}/${job.fail}` : '-')),
   ];
-  const head = `slots ${slots.inUse == null ? '?' : slots.inUse}/${slots.total == null ? '?' : slots.total} in use, ${testjobsBoxText(snap.box)}`;
-  return `${head}\n${table(['STATE', 'TEAM', 'TICKET', 'KIND', 'ISOLATION', 'IMAGE', 'AGE', 'PASS/FAIL'], rows)}`;
+  const quietCount = (snap.running || []).filter((job) => testjobQuietMs(job, at) != null).length;
+  const head = `slots ${slots.inUse == null ? '?' : slots.inUse}/${slots.total == null ? '?' : slots.total} in use, ${quietCount ? `${quietCount} quiet, ` : ''}${testjobsBoxText(snap.box)}`;
+  return `${head}\n${table(['STATE', 'TEAM', 'TICKET', 'KIND', 'ISOLATION', 'IMAGE', 'AGE', 'QUIET', 'PASS/FAIL'], rows)}`;
 }
 
 function inertOutput(text) {
@@ -388,7 +398,7 @@ function makePrinter(write = (s) => process.stdout.write(s)) {
 
 module.exports = {
   jsonLine, stripAnsi, ANSI_RE, renderSessions, renderSessionsWide, renderNames, renderWorkspaces,
-  renderPeers, renderPeersWide, renderTeams, renderTickets, renderTicketsWide, renderSandboxes, renderOffers, renderTestjobs, renderTestjobOutput, inertOutput,
+  renderPeers, renderPeersWide, renderTeams, renderTickets, renderTicketsWide, renderSandboxes, renderOffers, renderTestjobs, renderTestjobOutput, inertOutput, TESTJOB_QUIET_MS,
   renderAgents, renderAgentsWide, renderDocs, renderDocHits, renderWorktrees, renderWorktreesWide,
   renderResources, renderDescribe, renderProfile,
   describeSession, describePeer, describeTeam, describeSandbox, describeAgent, describeDoc,

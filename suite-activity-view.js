@@ -3,6 +3,7 @@
 const MENU_JOB_ROWS = 8;
 const KIND_LABELS = { verify: 'verify', 'post-merge': 'post-merge', hand: 'own run' };
 const EMPTY_TEXT = 'No test jobs right now';
+const QUIET_MS = 5 * 60000;
 const OFF_TEXT = 'The test runner is off on this machine.';
 
 function fmtSpan(ms) {
@@ -29,15 +30,21 @@ function fmtClock(ts) {
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
+function isQuiet(job, at) {
+  if (job.phase !== 'run' || job.startedAt == null || job.lastOutputAt == null) return false;
+  return at - job.lastOutputAt > QUIET_MS;
+}
+
 function liveLine(job, at, mode = 'span') {
   const started = job.startedAt != null;
   const since = started ? job.startedAt : job.queuedAt;
+  const quiet = isQuiet(job, at);
   if (mode === 'clock') {
     const verb = started ? (job.phase === 'setup' ? 'setting up since' : 'since') : (job.phase === 'upload' ? 'uploading since' : 'waiting since');
-    return `${jobHead(job)} · ${verb} ${fmtClock(since)}`;
+    return `${jobHead(job)} · ${verb} ${fmtClock(since)}${quiet ? ` · quiet since ${fmtClock(job.lastOutputAt)}` : ''}`;
   }
   const verb = started ? (job.phase === 'setup' ? 'setting up' : 'running') : (job.phase === 'upload' ? 'uploading' : 'waiting');
-  return `${jobHead(job)} · ${verb} ${fmtSpan(at - since)}`;
+  return `${jobHead(job)} · ${verb} ${fmtSpan(at - since)}${quiet ? ` · quiet ${fmtSpan(at - job.lastOutputAt)}` : ''}`;
 }
 
 function outcomeText(job) {
@@ -50,9 +57,10 @@ function recentLine(job) {
   return `${jobHead(job)} · ${outcomeText(job)} · waited ${fmtSpan(job.waitMs)} · ${ran}`;
 }
 
-function summaryLine(snap) {
+function summaryLine(snap, at) {
   if (!snap || (!snap.running.length && !snap.waiting.length)) return 'idle';
-  return `${snap.slots.inUse} of ${snap.slots.total} in use · ${snap.waiting.length} waiting`;
+  const quiet = snap.running.filter((j) => isQuiet(j, at)).length;
+  return `${snap.slots.inUse} of ${snap.slots.total} in use · ${snap.waiting.length} waiting${quiet ? ` · ${quiet} quiet` : ''}`;
 }
 
 function boxText(box) {
@@ -67,7 +75,7 @@ function boxText(box) {
 function menuRows(state, at, mode = 'clock') {
   if (!state || !state.enabled) return [];
   const snap = state.snapshot;
-  const rows = [{ kind: 'head', label: 'Test Boxes' }, { kind: 'info', label: summaryLine(snap) }];
+  const rows = [{ kind: 'head', label: 'Test Boxes' }, { kind: 'info', label: summaryLine(snap, at) }];
   const jobs = snap ? [...snap.running, ...snap.waiting] : [];
   for (const job of jobs.slice(0, MENU_JOB_ROWS)) rows.push({ kind: 'info', label: liveLine(job, at, mode) });
   if (jobs.length > MENU_JOB_ROWS) rows.push({ kind: 'info', label: `+${jobs.length - MENU_JOB_ROWS} more` });
@@ -82,7 +90,7 @@ function activityView(state, at) {
   const running = snap ? snap.running.map((j) => liveLine(j, at)) : [];
   const waiting = snap ? snap.waiting.map((j) => liveLine(j, at)) : [];
   return {
-    summary: summaryLine(snap),
+    summary: summaryLine(snap, at),
     box: snap ? boxText(snap.box) : null,
     running,
     waiting,
@@ -91,4 +99,4 @@ function activityView(state, at) {
   };
 }
 
-module.exports = { menuRows, activityView, fmtSpan, fmtClock, MENU_JOB_ROWS };
+module.exports = { menuRows, activityView, fmtSpan, fmtClock, MENU_JOB_ROWS, QUIET_MS };
