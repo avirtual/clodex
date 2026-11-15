@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Fixed: a test box runner's job ledger records each job's outcome and test totals, and a client retries a failed read of a job's output instead of reporting it unavailable.
+
 ## 5.186.0 — 2026-11-15
 
 - A test box runner can run several jobs at once: set the slot count in the runner's settings (default 1).
