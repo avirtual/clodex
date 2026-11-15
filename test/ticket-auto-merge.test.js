@@ -4820,3 +4820,59 @@ test('t2264: under gate:shadow the post-merge shadow job carries the merge commi
   assert.notStrictEqual(merged, branchSha);
   assert.deepStrictEqual(posts.map((b) => [b.kind, b.ticket, b.sha]), [['post-merge', 't1', merged]]);
 });
+
+function boxMergeClient(mode, posts) {
+  const { createSuiteClient } = require('../suite-client');
+  const def = 'FROM node:24-bookworm\nRUN true\n';
+  const env = { isolation: 'container', envKey: 'bk', platform: 'linux', arch: 'arm64', box: { imageId: 'sha256:e', definitionHash: require('../team-box').boxFingerprint(def) } };
+  const stdout = mode === 'green' ? 'TOTALS: 5 pass, 0 fail, 5 tests\n' : ' ✖ box only (2ms)\nTOTALS: 4 pass, 1 fail, 5 tests\n';
+  const conn = {
+    suiteAsk: async (method, p) => {
+      if (p === '/api/suite/info') return { status: 200, body: { ok: true, limits: {}, env: { envKey: 'k' } } };
+      if (method === 'POST') { posts.push(p); return { status: 200, body: { ok: true, state: 'queued' } }; }
+      if (method === 'DELETE') return { status: 200, body: { ok: true } };
+      if (p.includes('/output?')) {
+        const text = p.includes('stream=stdout') ? stdout : '';
+        return { status: 200, body: { ok: true, text, offset: 0, total: Buffer.byteLength(text) } };
+      }
+      const id = decodeURIComponent(/ids=([^&]+)/.exec(p)[1]);
+      return { status: 200, body: { ok: true, jobs: [{ id, state: 'done', treeHash: 'a'.repeat(40), env, exit: { code: mode === 'green' ? 0 : 1, signal: null }, reason: null, queueMs: 0, setupMs: 0, runMs: 1, out: {} }] } };
+    },
+  };
+  const client = createSuiteClient({
+    getPeerManager: () => ({ get: () => conn }), sleep: async () => {},
+    snapshot: { snapshotTree: async () => ({ treeHash: 'a'.repeat(40), head: 'b'.repeat(40), headTree: 'a'.repeat(40) }), releaseSnapshot: () => {} },
+  });
+  return { client, def };
+}
+
+for (const [box, home] of [['green', 'red'], ['red', 'green']]) {
+  test(`t2338: under gate:on a post-merge box ${box} decides over a ${home} home suite, which never runs`, async () => {
+    const repo = mkRepo();
+    commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+    const f = mkMerge({ repo, suite: home });
+    const posts = [];
+    const b = boxMergeClient(box, posts);
+    f.deps.getSuiteClient = () => b.client;
+    f.m._runnerPeerStatus = () => ({ id: 'p1' });
+    f.team.testRunner = { peer: 'runner-1', hands: 'off', gate: 'on' };
+    f.team.dir = mkTmpRoot('clodex-box-merge-');
+    require('../team-box').writeBox(f.team.dir, b.def);
+    const homeRuns = [];
+    const real = f.m._runTicketSuite.bind(f.m);
+    f.m._runTicketSuite = async (...args) => { const out = await real(...args); homeRuns.push(out.runnerPid); return out; };
+    await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+    assert.deepStrictEqual(posts.length, 1, 'ENTER: one box job');
+    assert.deepStrictEqual(homeRuns, [null], 'the home suite never spawned');
+    if (box === 'green') {
+      assert.deepStrictEqual(f.esc(), []);
+      assert.strictEqual(f.landed().length, 1, 'ENTER: merged');
+      assert.match(f.landed()[0].body, /Suite on master after the merge: 5\/5 passing, 0 failing \(exit 0\) \(box\)\./);
+    } else {
+      const esc = f.esc();
+      assert.strictEqual(esc.length, 1, 'ENTER: the red box escalated');
+      assert.match(esc[0].body, /REVERTED the merge/);
+      assert.match(esc[0].body, /after the merge — 4\/5 passing, 1 failing \(exit 1\) \(box\)\nFAILING: box only/);
+    }
+  });
+}

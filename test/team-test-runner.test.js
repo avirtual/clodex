@@ -180,7 +180,7 @@ function mkVerbFixture({ manifestExtra = {}, peers = [], reach = null, compare =
     setTeamTestRunner: tm.setTeamTestRunner,
     getPeerManager: () => ({ statuses: () => peers }),
     getSuiteDesk: () => desk,
-    getSuiteClient: () => ({ reachable: async (id, wire) => { reachCalls.push(wire ? `${id}/${wire}` : id); return reach; }, ...(compare ? { tally: compareClient(home, compare).tally } : {}), ...(shadow ? { shadow } : {}) }),
+    getSuiteClient: () => ({ reachable: async (id, wire) => { reachCalls.push(wire ? `${id}/${wire}` : id); return reach; }, ...(compare ? { tally: compareClient(home, compare).tally, decideTally: compareClient(home, compare).decideTally } : {}), ...(shadow ? { shadow } : {}) }),
   };
   const SessionManager = createSessionManager(deps);
   const m = new SessionManager();
@@ -288,13 +288,13 @@ test('refusals leave team.json byte-identical', async () => {
   assert.strictEqual(fs.readFileSync(f.file, 'utf8'), before);
 });
 
-test('gate:on and an unknown gate value are refused with a runner set, and the stored setting is unchanged', async () => {
+test('t2338: gate:on without a box definition and an unknown gate value are refused with a runner set, and the stored setting is unchanged', async () => {
   const f = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1', hands: 'full' } }, peers: [SUITE_PEER], reach: INFO });
   const before = fs.readFileSync(f.file, 'utf8');
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner gate:on]'),
-    ['[agent:team] error: gate:on is not available yet — gate:shadow runs the loop\'s suites on the runner beside the local run, and [agent:team runner] shows how often they agree']);
+    ['[agent:team] error: gate:on needs a box definition — only a container result can decide the gate; set one with [agent:team box set] first']);
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner gate:maybe]'),
-    ['[agent:team] error: gate must be one of off | shadow, not "maybe"']);
+    ['[agent:team] error: gate must be one of off | shadow | on, not "maybe"']);
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner hands:most]'),
     ['[agent:team] error: hands must be one of off | full | all, not "most"']);
   assert.strictEqual(fs.readFileSync(f.file, 'utf8'), before);
@@ -308,6 +308,25 @@ test('t2264: gate:shadow and gate:off set the gate key and keep the rest', async
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner gate:off]'),
     ['[agent:team] test runner gate mode of team set to off']);
   assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-1', hands: 'full', gate: 'off' });
+});
+
+test('t2338: gate:on with a box definition is stored and keeps the rest', async () => {
+  const f = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1', hands: 'full' } }, peers: [SUITE_PEER], reach: INFO });
+  require('../team-box').writeBox(path.dirname(f.file), 'FROM node:24-bookworm\n');
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner gate:on]'),
+    ['[agent:team] test runner gate mode of team set to on']);
+  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-1', hands: 'full', gate: 'on' });
+});
+
+test('t2338: [agent:team runner] under gate:on counts box-decided runs and home fallbacks by reason', async () => {
+  const on = (decidedBy, fallback) => ({ team: 'team', kind: 'verify', ticket: 't1', agree: null, decidedBy, fallback });
+  const f = mkVerbFixture({
+    manifestExtra: { testRunner: { peer: 'runner-1', hands: 'full', gate: 'on' } }, peers: [SUITE_PEER], reach: INFO,
+    compare: [on('box', null), on('home', 'queue budget'), on('box', null), on('home', 'runner unreachable'), on('box', null), cmp('0123456789ab', true, [], [])],
+  });
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner]'), [
+    '[agent:team] test runner of team: runner-1, wire push, hands full, gate on — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; gate runs: 3 decided by the box, 2 fell back to home (queue budget 1, runner unreachable 1)',
+  ]);
 });
 
 const cmp = (envKey, agree, localFailing, remoteFailing) => ({
@@ -391,7 +410,7 @@ test('t2303: hands:full and hands:all are refused for a pull runner and gate:on 
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner hands:all]'),
     ['[agent:team] error: hands:all is refused for laptop: a runner that dials in (wire pull) runs shadow comparisons only']);
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner gate:on]'),
-    ['[agent:team] error: gate:on is not available yet — gate:shadow runs the loop\'s suites on the runner beside the local run, and [agent:team runner] shows how often they agree']);
+    ['[agent:team] error: gate:on needs a box definition — only a container result can decide the gate; set one with [agent:team box set] first']);
   assert.strictEqual(fs.readFileSync(f.file, 'utf8'), before);
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner hands:off]'), ['[agent:team] test runner hands mode of team set to off']);
 });
@@ -509,7 +528,7 @@ test('t2266: team:setRunner returns the verb\'s refusal text unchanged and leave
     ok: false, error: 'error: peer plain-1 is online but does not advertise the suite capability — the runner node needs CLODEX_SUITE_RUNNER=1',
   });
   assert.deepStrictEqual(await f.set({ gate: 'on' }), {
-    ok: false, error: 'error: gate:on is not available yet — gate:shadow runs the loop\'s suites on the runner beside the local run, and [agent:team runner] shows how often they agree',
+    ok: false, error: 'error: gate:on needs a box definition — only a container result can decide the gate; set one with [agent:team box set] first',
   });
   assert.strictEqual(fs.readFileSync(f.file, 'utf8'), before);
   assert.deepStrictEqual(f.intents, [{ value: 'plain-1', hands: null, gate: null }, { value: null, hands: null, gate: 'on' }]);
