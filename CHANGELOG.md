@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Test Box Activity: open a job to read its output while it runs or after it ends; `clodexctl logs testjob <id>` prints the same from the command line.
+
 ## 5.184.1 — 2026-11-15
 
 - Fixed: `[agent:who]` on a node that reaches other nodes through a hub now lists Muse and clodent seats, and such seats are reachable by DM through the hub.

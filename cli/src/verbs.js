@@ -338,7 +338,20 @@ function filterAfter(messages, after) {
 
 async function logs(bundle) {
   if (bundle.args[0] === 'node') return logsNode({ ...bundle, args: bundle.args.slice(1) });
+  if (bundle.args[0] === 'testjob') return logsTestjob({ ...bundle, args: bundle.args.slice(1) });
   return logsSession(bundle);
+}
+
+async function logsTestjob({ client, ctx, printer, flags, args }) {
+  if (!args[0]) throw new CliError(EXIT.USAGE, 'logs testjob needs a job id');
+  if (args.length > 1) throw new CliError(EXIT.USAGE, `logs testjob: unexpected argument "${args[1]}"`);
+  if (flags.follow) throw new CliError(EXIT.USAGE, 'logs testjob does not follow');
+  const tail = flags.tail ? parseIntOr(flags.tail, 'tail') : null;
+  await R.requireResource(client, 'testjobs', 'get', R.ctxLabel(ctx, flags), 'output');
+  const stream = flags.stderr ? 'stderr' : 'stdout';
+  const body = await client.get(`/api/testjobs/${encodeURIComponent(args[0])}/output?stream=${stream}`, 'logs testjob');
+  if (flags.json) { printer.json(body); return; }
+  printer.line(out.renderTestjobOutput(body, { tail }));
 }
 
 async function logsSession({ client, ctx, printer, flags, args, io = {} }) {

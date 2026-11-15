@@ -168,7 +168,7 @@ test('help([]) is the index; help([verb]) is the entry; help([bad]) is usage', (
   assert.match(help(['ctx']).text, /no help for "ctx"/);
 });
 
-test('P7 `logs --help` prints BOTH forms, each prefixed with clodexctl', async () => {
+test('P7 `logs --help` prints all three forms, each prefixed with clodexctl', async () => {
   const { code, stdout } = await cli(['logs', '--help']);
   assert.strictEqual(code, 0);
   const all = stdout.split('\n');
@@ -176,9 +176,10 @@ test('P7 `logs --help` prints BOTH forms, each prefixed with clodexctl', async (
   assert.ok(from > 0, 'ENTER: the entry has a USAGE section');
   const to = all.indexOf('', from);
   const forms = all.slice(from, to === -1 ? undefined : to);
-  assert.strictEqual(forms.length, 2, `expected two usage forms, got ${JSON.stringify(forms)}`);
+  assert.strictEqual(forms.length, 3, `expected three usage forms, got ${JSON.stringify(forms)}`);
   assert.match(forms[0], /^ {2}clodexctl logs <name>/, 'the session form comes first');
   assert.match(forms[1], /^ {2}clodexctl logs node/, 'the node form is a form of its own, not a continuation');
+  assert.match(forms[2], /^ {2}clodexctl logs testjob <id>/, 'the testjob form is a form of its own');
   assert.ok(!stdout.includes('\n       logs node'),
     'no hand-aligned continuation line survives — that is the shape that lost its prefix');
 });

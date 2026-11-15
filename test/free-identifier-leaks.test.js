@@ -325,6 +325,7 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/lib/menu-cells.js',
   'renderer/lib/menu-mirror.js',
   'renderer/lib/ansi-html.js',
+  'renderer/lib/testjob-output.js',
   'renderer/live-split-view.js',
   'renderer/transcript-rows.js',
   'renderer/lib/transcript-surface.js',

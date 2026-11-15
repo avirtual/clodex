@@ -1525,6 +1525,10 @@ test('activity lists the running box job, the waiting jobs in queue order, the l
   clock = 220000;
   assert.strictEqual((await upload(f.body('q-def', 'verify', { isolation: 'container', box: { definitionHash: 'd'.repeat(64), rev: 2 }, team: 'kite', ticket: 't1581' }))).state, 'queued');
   clock = 600000;
+  const jobsDir = path.join(f.root, 'suite-runner', 'jobs');
+  fs.utimesSync(path.join(jobsDir, 'run-box', 'stdout'), 640, 640);
+  fs.utimesSync(path.join(jobsDir, 'run-box', 'stderr'), 650, 650);
+  fs.utimesSync(path.join(jobsDir, 'old-pass', 'stdout'), 64, 64);
   const snap = await runner.activity();
   const text = JSON.stringify(snap);
   assert.deepStrictEqual(['hunter2-env-value', token, f.work, f.repo].filter((s) => text.includes(s)), []);
@@ -1532,16 +1536,16 @@ test('activity lists the running box job, the waiting jobs in queue order, the l
     at: 600000,
     slots: { total: 1, inUse: 1 },
     running: [
-      { id: 'run-box', team: 'avh', ticket: 't1579', kind: 'verify', origin: 'avh-laptop', isolation: 'container', image: 'bbbbbbbbbbbb', definition: null, phase: 'run', queuedAt: 200000, startedAt: 200000 },
+      { id: 'run-box', team: 'avh', ticket: 't1579', kind: 'verify', origin: 'avh-laptop', isolation: 'container', image: 'bbbbbbbbbbbb', definition: null, phase: 'run', queuedAt: 200000, startedAt: 200000, lastOutputAt: 650000 },
     ],
     waiting: [
-      { id: 'q-def', team: 'kite', ticket: 't1581', kind: 'verify', origin: null, isolation: 'container', image: 'bbbbbbbbbbbb', definition: 'dddddddddddd', phase: 'queued', queuedAt: 220000, startedAt: null },
-      { id: 'q-nat', team: 'avh', ticket: 't1580', kind: 'hand', origin: null, isolation: 'native', image: null, definition: null, phase: 'queued', queuedAt: 210000, startedAt: null },
+      { id: 'q-def', team: 'kite', ticket: 't1581', kind: 'verify', origin: null, isolation: 'container', image: 'bbbbbbbbbbbb', definition: 'dddddddddddd', phase: 'queued', queuedAt: 220000, startedAt: null, lastOutputAt: null },
+      { id: 'q-nat', team: 'avh', ticket: 't1580', kind: 'hand', origin: null, isolation: 'native', image: null, definition: null, phase: 'queued', queuedAt: 210000, startedAt: null, lastOutputAt: null },
     ],
     recent: [
-      { id: 'old-cut', team: 'zed', ticket: 't9', kind: 'hand', origin: null, isolation: 'native', image: null, definition: null, queuedAt: 3000, startedAt: 5000, outcome: 'runner-restart', pass: null, fail: null, endedAt: 100000, waitMs: 2000, runMs: 95000 },
-      { id: 'old-box', team: 'avh', ticket: 't1501', kind: 'hand', origin: null, isolation: 'container', image: 'bbbbbbbbbbbb', definition: null, queuedAt: 2000, startedAt: 70000, outcome: 'box-failed', pass: null, fail: null, endedAt: 75000, waitMs: 68000, runMs: 5000 },
-      { id: 'old-pass', team: 'avh', ticket: 't1500', kind: 'verify', origin: 'murmur', isolation: 'native', image: null, definition: null, queuedAt: 1000, startedAt: 4000, outcome: 'pass', pass: 5, fail: 0, endedAt: 64000, waitMs: 3000, runMs: 60000 },
+      { id: 'old-cut', team: 'zed', ticket: 't9', kind: 'hand', origin: null, isolation: 'native', image: null, definition: null, queuedAt: 3000, startedAt: 5000, lastOutputAt: null, outcome: 'runner-restart', pass: null, fail: null, endedAt: 100000, waitMs: 2000, runMs: 95000 },
+      { id: 'old-box', team: 'avh', ticket: 't1501', kind: 'hand', origin: null, isolation: 'container', image: 'bbbbbbbbbbbb', definition: null, queuedAt: 2000, startedAt: 70000, lastOutputAt: null, outcome: 'box-failed', pass: null, fail: null, endedAt: 75000, waitMs: 68000, runMs: 5000 },
+      { id: 'old-pass', team: 'avh', ticket: 't1500', kind: 'verify', origin: 'murmur', isolation: 'native', image: null, definition: null, queuedAt: 1000, startedAt: 4000, lastOutputAt: 64000, outcome: 'pass', pass: 5, fail: 0, endedAt: 64000, waitMs: 3000, runMs: 60000 },
     ],
     box: { state: 'ready', image: 'bbbbbbbbbbbb' },
   });
@@ -1560,4 +1564,35 @@ test('job transitions ask for one activity refresh per burst', async (t) => {
   await f.upload(f.body('j2'));
   await waitState(f.runner, 'j2', 'done');
   assert.strictEqual(armed().length, 2, 'the next burst arms a fresh timer');
+});
+
+test('readOutput reads a job stream by id: tail by default, whole characters, expired distinct from no output yet', async (t) => {
+  const f = await fixture(t, { onSpawn: () => {}, limits: { peekMax: 4 } });
+  await f.upload(f.body('live'));
+  await waitState(f.runner, 'live', 'running');
+  const live = await f.runner.readOutput('live', { stream: 'stderr' });
+  assert.deepStrictEqual({ ...live, at: 0, queuedAt: 0, startedAt: 0, lastOutputAt: 0 }, {
+    ok: true, id: 'live', stream: 'stderr', phase: 'run', live: true, at: 0, queuedAt: 0, startedAt: 0, endedAt: null,
+    lastOutputAt: 0, expired: false, total: 0, offset: 0, next: 0, text: '',
+  });
+  assert.ok(live.lastOutputAt > 0, 'the running job has written its empty files');
+  f.runner.close();
+  const jobsDir = path.join(f.root, 'suite-runner', 'jobs');
+  storeJob(f, 'done-a', 'done', { queuedAt: 1000, startedAt: 2000, endedAt: Date.now() });
+  fs.writeFileSync(path.join(jobsDir, 'done-a', 'stdout'), Buffer.from([0x61, 0xc3, 0xa9, 0x62, 0x63, 0x64, 0x65]));
+  fs.utimesSync(path.join(jobsDir, 'done-a', 'stdout'), 900, 900);
+  storeJob(f, 'gone', 'done', { queuedAt: 1000, startedAt: 2000, endedAt: Date.now() });
+  storeJob(f, 'never', 'done', { queuedAt: 1000, startedAt: null, endedAt: Date.now(), reason: 'cancelled' });
+  const runner = f.make();
+  t.after(() => runner.close());
+  const pick = (r) => [r.ok, r.phase, r.live, r.expired, r.total, r.offset, r.next, r.text, r.lastOutputAt];
+  assert.deepStrictEqual(pick(await runner.readOutput('done-a', { offset: 0, length: 2 })), [true, 'done', false, false, 7, 0, 1, 'a', 900000]);
+  assert.deepStrictEqual(pick(await runner.readOutput('done-a', { offset: 1, length: 4 })), [true, 'done', false, false, 7, 1, 5, 'ébc', 900000]);
+  assert.deepStrictEqual(pick(await runner.readOutput('done-a', { length: 99 })), [true, 'done', false, false, 7, 3, 7, 'bcde', 900000]);
+  assert.deepStrictEqual(pick(await runner.readOutput('done-a', { offset: 99 })), [true, 'done', false, false, 7, 7, 7, '', 900000]);
+  assert.deepStrictEqual(pick(await runner.readOutput('gone')), [true, 'done', false, true, 0, 0, 0, '', null]);
+  assert.deepStrictEqual(pick(await runner.readOutput('never')), [true, 'done', false, false, 0, 0, 0, '', null]);
+  assert.deepStrictEqual(await runner.readOutput('nope'), { ok: false, status: 404, error: 'no such job' });
+  assert.deepStrictEqual(await runner.readOutput('done-a', { stream: 'both' }), { ok: false, status: 400, error: 'bad stream' });
+  assert.deepStrictEqual(await runner.output('done-a', { offset: 1, length: 4 }), { ok: true, total: 7, offset: 1, text: 'ébc' });
 });

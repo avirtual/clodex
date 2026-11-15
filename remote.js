@@ -86,7 +86,7 @@ const RESOURCES = [
   { name: 'catalogs', singular: 'catalogs', scope: 'node', verbs: ['get'] },
   { name: 'node/logs', singular: 'node/logs', scope: 'node', verbs: ['get'] },
   { name: 'offers', singular: 'offers', scope: 'node', verbs: ['list'] },
-  { name: 'testjobs', singular: 'testjobs', scope: 'node', verbs: ['list'] },
+  { name: 'testjobs', singular: 'testjobs', scope: 'node', verbs: ['list'], subresources: { output: ['get'] } },
 ];
 
 const RESOURCES_VERSION = 6;
@@ -107,6 +107,7 @@ const RESOURCE_CALLBACK = {
 };
 
 const SUBRESOURCE_CALLBACK = {
+  testjobs: { output: '_readTestjobOutput' },
   sessions: {
     attach: '_getAttachInfo',
     control: '_sendInput',
@@ -131,6 +132,7 @@ const VERB_CALLBACK = {
 
 const NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const TICKET_ID_RE = /^t\d+$/;
+const TESTJOB_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const DM_CLIENT_RE = /^[a-z][a-z0-9-]{0,15}$/;
 const DM_REF_MAX = 128;
 const DM_CLIENT_REF_RE = new RegExp(`^[A-Za-z0-9._:-]{1,${DM_REF_MAX}}$`);
@@ -185,7 +187,7 @@ class RemoteServer {
                 getSkillCatalog, setSessionSkills,
                 listSleepers, getSleeper, sleepSession, wakeSession, exportMemory,
                 getProfile, setProfile, deleteProfile,
-                deliverDm, claimDms, listDmOrigins, receiveRoster, offerFor, receiveOffers, listOffers, listTestjobs, noteDialer,
+                deliverDm, claimDms, listDmOrigins, receiveRoster, offerFor, receiveOffers, listOffers, listTestjobs, readTestjobOutput, noteDialer,
                 notifications, openRequests, replyNote,
                 wtermOpen, wtermInput, wtermResize, wtermClose, onWtermStreams,
                 suiteRunner, suiteRunnerError, suiteDesk, suiteToken, token, insecure }) {
@@ -261,6 +263,7 @@ class RemoteServer {
     this._receiveOffers = receiveOffers || null;
     this._listOffers = listOffers || null;
     this._listTestjobs = listTestjobs || null;
+    this._readTestjobOutput = readTestjobOutput || null;
     this._noteDialer = noteDialer || null;
     this._notifications = notifications || null;
     this._openRequests = openRequests || null;
@@ -1652,6 +1655,35 @@ class RemoteServer {
         .then((got) => {
           const { enabled = false, snapshot = null } = got || {};
           return this._json(res, 200, { ok: true, enabled: !!enabled, snapshot });
+        })
+        .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
+    }
+    if (req.method === 'GET' && p.startsWith('/api/testjobs/')) {
+      const [rawId, sub, ...extra] = p.slice('/api/testjobs/'.length).split('/');
+      if (!(sub === 'output') || extra.length) return this._json(res, 404, { ok: false, error: 'not found' });
+      if (!this._readTestjobOutput) return this._json(res, 501, { ok: false, error: 'testjobs not available' });
+      const id = decodeSeg(rawId);
+      if (!id || !TESTJOB_ID_RE.test(id)) return this._json(res, 400, { ok: false, error: 'bad job id' });
+      const stream = url.searchParams.get('stream') || 'stdout';
+      if (stream !== 'stdout' && stream !== 'stderr') return this._json(res, 400, { ok: false, error: 'bad stream' });
+      const num = (key) => {
+        const raw = url.searchParams.get(key);
+        if (raw == null || raw === '') return null;
+        return /^\d{1,15}$/.test(raw) ? Number(raw) : NaN;
+      };
+      const offset = num('offset');
+      const length = num('length');
+      if (Number.isNaN(offset)) return this._json(res, 400, { ok: false, error: 'bad offset' });
+      if (Number.isNaN(length)) return this._json(res, 400, { ok: false, error: 'bad length' });
+      const opts = { stream, offset };
+      if (length != null) opts.length = length;
+      return Promise.resolve()
+        .then(() => this._readTestjobOutput(id, opts))
+        .then((got) => {
+          if (!got || !got.ok) {
+            return this._json(res, (got && got.status) || 500, { ok: false, error: (got && got.error) || 'no answer' });
+          }
+          return this._json(res, 200, got);
         })
         .catch((e) => this._json(res, 500, { ok: false, error: e.message }));
     }

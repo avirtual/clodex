@@ -10153,6 +10153,40 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
   font-size: var(--fs-sm);
   padding: 2px 0;
 }
+.test-activity-row.openable {
+  cursor: pointer;
+}
+.test-activity-row.openable:hover {
+  text-decoration: underline;
+}
+#test-output-pane {
+  margin-top: 14px;
+  border-top: 1px solid var(--border-strong);
+  padding-top: 8px;
+}
+#test-output-pane.hidden {
+  display: none;
+}
+#test-output-pane .test-output-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+#test-output-pane .test-output-controls {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+#test-output-text {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 360px;
+  overflow: auto;
+  margin: 0;
+  user-select: text;
+}
 
 /* renderer/web/app.css */
 /*! Bundled license information:
@@ -11756,6 +11790,20 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         <summary>Last ten finished</summary>
         <div id="test-activity-recent"></div>
       </details>
+      <div id="test-output-pane" class="hidden">
+        <div class="test-output-head">
+          <h5 id="test-output-title"></h5>
+          <button type="button" id="test-output-close">Close output</button>
+        </div>
+        <span id="test-output-header" class="hint-text"></span>
+        <div class="test-output-controls">
+          <label><input type="radio" name="test-output-stream" value="stdout" checked> stdout</label>
+          <label><input type="radio" name="test-output-stream" value="stderr"> stderr</label>
+          <label id="test-output-follow-wrap"><input type="checkbox" id="test-output-follow" checked> Follow</label>
+        </div>
+        <span id="test-output-status" class="hint-text"></span>
+        <pre id="test-output-text"></pre>
+      </div>
     </div>
   </div>
 
@@ -12234,6 +12282,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "suiteRunnerGet", kind: "invoke", channel: "suiteRunner:get" },
         { name: "suiteRunnerSet", kind: "invoke", channel: "suiteRunner:set" },
         { name: "suiteRunnerActivity", kind: "invoke", channel: "suiteRunner:activity" },
+        { name: "suiteRunnerOutput", kind: "invoke", channel: "suiteRunner:output" },
         { name: "onRequestOpenTestActivity", kind: "on", channel: "request-open-test-activity" },
         { name: "offerGet", kind: "invoke", channel: "offer:get" },
         { name: "offerSet", kind: "invoke", channel: "offer:set" },
@@ -30374,6 +30423,223 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         return envLockFor(locked, key) ? {} : { [key]: value };
       }
       module.exports = { envLockFor, envLockView, applyEnvLock, patchUnlessEnvLocked };
+    }
+  });
+
+  // renderer/lib/testjob-output.js
+  var require_testjob_output = __commonJS({
+    "renderer/lib/testjob-output.js"(exports, module) {
+      "use strict";
+      var { fmtSpan } = require_suite_activity_view();
+      var PANE_CAP_CHARS = 256 * 1024;
+      var READ_BYTES = 256 * 1024;
+      var POLL_MS = 2e3;
+      var MAX_BACKOFF_MS = 3e4;
+      var HELD_MAX = 4096;
+      var DROPPED_LINE = "\u2026 earlier output not shown \u2026";
+      var RESET_LINE = "\u2014 output restarted from the beginning \u2014";
+      var EXPIRED_TEXT = "output expired";
+      var EMPTY_TEXT = "no output yet";
+      var NONE_TEXT = "no output";
+      var UNKNOWN_TEXT = "job not found";
+      var STRING_SEQ = /(?:\x1b[\]P^_X]|[\x90\x98\x9d\x9e\x9f])[\s\S]*?(?:\x07|\x1b\\|\x9c|$)/g;
+      var CSI_SEQ = /(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]/g;
+      var ESC_SEQ = /\x1b[ -/]*[0-~]/g;
+      var CONTROLS = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/g;
+      var OPEN_TAIL = /\x1b(?:\[[0-?]*[ -/]*|[\]P^_X][^\x07\x1b\x9c]*\x1b?|[ -/]*)$/;
+      function sanitizeOutput(text) {
+        return String(text).replace(STRING_SEQ, "").replace(CSI_SEQ, "").replace(ESC_SEQ, "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(CONTROLS, "");
+      }
+      function createOutputBuffer({ cap = PANE_CAP_CHARS } = {}) {
+        let text = "";
+        let held = "";
+        let dropped = false;
+        function trim() {
+          if (text.length <= cap) return;
+          dropped = true;
+          const from = text.length - cap;
+          const atLineStart = text[from - 1] === "\n";
+          text = text.slice(from);
+          const nl = atLineStart ? -1 : text.indexOf("\n");
+          if (nl >= 0 && nl < text.length - 1) text = text.slice(nl + 1);
+        }
+        function append(chunk) {
+          let raw = held + String(chunk);
+          held = "";
+          const open = OPEN_TAIL.exec(raw);
+          if (open && open[0].length <= HELD_MAX) {
+            held = open[0];
+            raw = raw.slice(0, raw.length - held.length);
+          }
+          text += sanitizeOutput(raw);
+          trim();
+        }
+        function mark(line) {
+          held = "";
+          if (text && !text.endsWith("\n")) text += "\n";
+          text += `${line}
+`;
+          trim();
+        }
+        function render() {
+          return dropped ? `${DROPPED_LINE}
+${text}` : text;
+        }
+        return { append, reset: () => mark(RESET_LINE), markDropped: () => {
+          dropped = true;
+        }, render, get dropped() {
+          return dropped;
+        }, get length() {
+          return text.length;
+        } };
+      }
+      function statusText(r) {
+        if (!r) return "";
+        if (r.unknown) return UNKNOWN_TEXT;
+        if (r.expired) return EXPIRED_TEXT;
+        if (r.total === 0) return r.live ? EMPTY_TEXT : NONE_TEXT;
+        return "";
+      }
+      function headerText(r) {
+        if (!r || !r.ok) return "";
+        const since = r.startedAt != null ? r.startedAt : r.queuedAt;
+        const end = r.endedAt != null ? r.endedAt : r.at;
+        const last = r.lastOutputAt == null ? "no output" : `last output ${fmtSpan(r.at - r.lastOutputAt)} ago`;
+        return `${r.phase} \xB7 age ${fmtSpan(end - since)} \xB7 ${last}`;
+      }
+      function createOutputFollower({
+        read,
+        onUpdate = () => {
+        },
+        timers = { setTimeout, clearTimeout },
+        pollMs = POLL_MS,
+        maxBackoffMs = MAX_BACKOFF_MS,
+        cap = PANE_CAP_CHARS,
+        readBytes = READ_BYTES
+      } = {}) {
+        const buffer = createOutputBuffer({ cap });
+        let offset = null;
+        let timer = null;
+        let inFlight = false;
+        let closed = false;
+        let stopped = false;
+        let follow = true;
+        let delay = pollMs;
+        let last = null;
+        let error = null;
+        function emit() {
+          onUpdate({
+            text: buffer.render(),
+            header: headerText(last),
+            status: error || statusText(last),
+            live: !!(last && last.live) && !stopped,
+            follow,
+            stopped
+          });
+        }
+        function schedule(ms) {
+          if (closed || stopped || timer) return;
+          timer = timers.setTimeout(tick, ms);
+        }
+        function stop() {
+          stopped = true;
+          if (timer) timers.clearTimeout(timer);
+          timer = null;
+        }
+        async function tick() {
+          timer = null;
+          if (closed || stopped || inFlight) return;
+          inFlight = true;
+          let r;
+          try {
+            r = await read({ offset, length: readBytes });
+          } catch (e) {
+            r = { ok: false, error: e && e.message ? e.message : String(e) };
+          }
+          inFlight = false;
+          if (closed) return;
+          if (!r || !r.ok) {
+            const status = r && r.status;
+            if (status === 404 || status === 400) {
+              last = status === 404 ? { unknown: true } : last;
+              error = status === 404 ? null : r.error || "bad request";
+              stop();
+              emit();
+              return;
+            }
+            error = `read failed: ${r && r.error || "no answer"}`;
+            delay = Math.min(delay * 2, maxBackoffMs);
+            emit();
+            schedule(delay);
+            return;
+          }
+          error = null;
+          delay = pollMs;
+          last = r;
+          if (offset != null && r.total < offset) {
+            buffer.reset();
+            offset = 0;
+            emit();
+            schedule(0);
+            return;
+          }
+          if (offset == null && r.offset > 0) buffer.markDropped();
+          if (r.text) buffer.append(r.text);
+          const from = offset;
+          offset = r.next;
+          const behind = r.next < r.total && (from == null || r.next > from);
+          if (!r.live && !behind) stop();
+          emit();
+          if (behind) schedule(0);
+          else if (follow) schedule(pollMs);
+        }
+        function setFollow(on) {
+          follow = !!on;
+          if (!follow && timer) {
+            timers.clearTimeout(timer);
+            timer = null;
+          }
+          if (follow) schedule(0);
+          emit();
+        }
+        function close() {
+          closed = true;
+          if (timer) timers.clearTimeout(timer);
+          timer = null;
+        }
+        return {
+          start: () => schedule(0),
+          setFollow,
+          close,
+          buffer,
+          get inFlight() {
+            return inFlight;
+          },
+          get pending() {
+            return timer != null;
+          },
+          get delay() {
+            return delay;
+          }
+        };
+      }
+      module.exports = {
+        sanitizeOutput,
+        createOutputBuffer,
+        createOutputFollower,
+        headerText,
+        statusText,
+        PANE_CAP_CHARS,
+        READ_BYTES,
+        POLL_MS,
+        MAX_BACKOFF_MS,
+        DROPPED_LINE,
+        RESET_LINE,
+        EXPIRED_TEXT,
+        EMPTY_TEXT,
+        NONE_TEXT,
+        UNKNOWN_TEXT
+      };
     }
   });
 
@@ -53550,6 +53816,7 @@ ${detail}` });
       var { envRowView, buildEnvRow } = require_env_row();
       var { envLockView, applyEnvLock, patchUnlessEnvLocked } = require_env_lock();
       var { activityView: testActivityView } = require_suite_activity_view();
+      var { createOutputFollower } = require_testjob_output();
       var { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, offerRunnerFrom, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText, suiteRunnerRecordFromForm, claimLines: offerClaimLines } = require_offer_view();
       var { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require_account_select();
       var { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, keyTransportRefusal, modelOptions } = require_account_row();
@@ -62436,21 +62703,81 @@ ${res.stderr}` : "");
       var testActivityOverlay = document.getElementById("test-activity-overlay");
       var TEST_ACTIVITY_POLL_MS = 3e3;
       var testActivityTimer = null;
-      function testActivityRow(text) {
+      function testActivityRow(text, jobId = null) {
         const row = document.createElement("div");
-        row.className = "test-activity-row";
+        row.className = jobId ? "test-activity-row openable" : "test-activity-row";
         row.textContent = text;
+        if (jobId) {
+          row.title = "Show this job's output";
+          row.addEventListener("click", () => openTestOutput(jobId, text));
+        }
         return row;
       }
+      var testOutputPane = document.getElementById("test-output-pane");
+      var testOutputFollower = null;
+      var testOutputJob = null;
+      function paintTestOutput(view) {
+        document.getElementById("test-output-header").textContent = view.header;
+        const status = document.getElementById("test-output-status");
+        status.textContent = view.status;
+        status.style.display = view.status ? "" : "none";
+        const pre = document.getElementById("test-output-text");
+        pre.textContent = view.text;
+        if (view.follow) pre.scrollTop = pre.scrollHeight;
+        document.getElementById("test-output-follow-wrap").style.display = view.live ? "" : "none";
+      }
+      function testOutputStream() {
+        const picked = testOutputPane.querySelector('input[name="test-output-stream"]:checked');
+        return picked ? picked.value : "stdout";
+      }
+      function followTestOutput() {
+        if (testOutputFollower) testOutputFollower.close();
+        const id = testOutputJob;
+        const stream = testOutputStream();
+        const follower = createOutputFollower({
+          read: ({ offset, length }) => window.api.suiteRunnerOutput(id, { stream, offset, length }),
+          onUpdate: (view) => {
+            if (testOutputFollower === follower) paintTestOutput(view);
+          }
+        });
+        testOutputFollower = follower;
+        document.getElementById("test-output-text").textContent = "";
+        follower.setFollow(document.getElementById("test-output-follow").checked);
+        follower.start();
+      }
+      function openTestOutput(id, title) {
+        testOutputJob = id;
+        document.getElementById("test-output-title").textContent = title;
+        testOutputPane.classList.remove("hidden");
+        followTestOutput();
+      }
+      function closeTestOutput() {
+        if (testOutputFollower) testOutputFollower.close();
+        testOutputFollower = null;
+        testOutputJob = null;
+        testOutputPane.classList.add("hidden");
+      }
+      document.getElementById("test-output-close").addEventListener("click", closeTestOutput);
+      for (const radio of testOutputPane.querySelectorAll('input[name="test-output-stream"]')) {
+        radio.addEventListener("change", () => {
+          if (testOutputJob) followTestOutput();
+        });
+      }
+      document.getElementById("test-output-follow").addEventListener("change", (e) => {
+        if (testOutputFollower) testOutputFollower.setFollow(e.target.checked);
+      });
       function paintTestActivity(state) {
         const view = testActivityView(state, Date.now());
+        const snap = state && state.enabled ? state.snapshot : null;
+        const runningIds = snap ? snap.running.map((j) => j.id) : [];
+        const recentIds = snap ? snap.recent.map((j) => j.id) : [];
         document.getElementById("test-activity-summary").textContent = view.summary;
         const box = document.getElementById("test-activity-box");
         box.textContent = view.box || "";
         box.style.display = view.box ? "" : "none";
-        const live = [...view.running, ...view.waiting];
-        document.getElementById("test-activity-live").replaceChildren(...view.empty ? [testActivityRow(view.empty)] : live.map(testActivityRow));
-        document.getElementById("test-activity-recent").replaceChildren(...(view.recent.length ? view.recent : ["None yet"]).map(testActivityRow));
+        const live = [...view.running.map((t, i) => testActivityRow(t, runningIds[i])), ...view.waiting.map((t) => testActivityRow(t))];
+        document.getElementById("test-activity-live").replaceChildren(...view.empty ? [testActivityRow(view.empty)] : live);
+        document.getElementById("test-activity-recent").replaceChildren(...view.recent.length ? view.recent.map((t, i) => testActivityRow(t, recentIds[i])) : [testActivityRow("None yet")]);
       }
       async function refreshTestActivity() {
         let state = null;
@@ -62468,6 +62795,7 @@ ${res.stderr}` : "");
         if (!testActivityTimer) testActivityTimer = setInterval(refreshTestActivity, TEST_ACTIVITY_POLL_MS);
       }
       function closeTestActivity() {
+        closeTestOutput();
         testActivityOverlay.classList.add("hidden");
         if (testActivityTimer) clearInterval(testActivityTimer);
         testActivityTimer = null;

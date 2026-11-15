@@ -47,6 +47,7 @@ const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { envRowView, buildEnvRow } = require('./lib/env-row');
 const { envLockView, applyEnvLock, patchUnlessEnvLocked } = require('./lib/env-lock');
 const { activityView: testActivityView } = require('../suite-activity-view');
+const { createOutputFollower } = require('./lib/testjob-output');
 const { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, offerRunnerFrom, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText, suiteRunnerRecordFromForm, claimLines: offerClaimLines } = require('./lib/offer-view');
 const { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require('./lib/account-select');
 const { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, keyTransportRefusal, modelOptions } = require('./lib/account-row');
@@ -9105,22 +9106,87 @@ const testActivityOverlay = document.getElementById('test-activity-overlay');
 const TEST_ACTIVITY_POLL_MS = 3000;
 let testActivityTimer = null;
 
-function testActivityRow(text) {
+function testActivityRow(text, jobId = null) {
   const row = document.createElement('div');
-  row.className = 'test-activity-row';
+  row.className = jobId ? 'test-activity-row openable' : 'test-activity-row';
   row.textContent = text;
+  if (jobId) {
+    row.title = 'Show this job\'s output';
+    row.addEventListener('click', () => openTestOutput(jobId, text));
+  }
   return row;
 }
 
+const testOutputPane = document.getElementById('test-output-pane');
+let testOutputFollower = null;
+let testOutputJob = null;
+
+function paintTestOutput(view) {
+  document.getElementById('test-output-header').textContent = view.header;
+  const status = document.getElementById('test-output-status');
+  status.textContent = view.status;
+  status.style.display = view.status ? '' : 'none';
+  const pre = document.getElementById('test-output-text');
+  pre.textContent = view.text;
+  if (view.follow) pre.scrollTop = pre.scrollHeight;
+  document.getElementById('test-output-follow-wrap').style.display = view.live ? '' : 'none';
+}
+
+function testOutputStream() {
+  const picked = testOutputPane.querySelector('input[name="test-output-stream"]:checked');
+  return picked ? picked.value : 'stdout';
+}
+
+function followTestOutput() {
+  if (testOutputFollower) testOutputFollower.close();
+  const id = testOutputJob;
+  const stream = testOutputStream();
+  const follower = createOutputFollower({
+    read: ({ offset, length }) => window.api.suiteRunnerOutput(id, { stream, offset, length }),
+    onUpdate: (view) => { if (testOutputFollower === follower) paintTestOutput(view); },
+  });
+  testOutputFollower = follower;
+  document.getElementById('test-output-text').textContent = '';
+  follower.setFollow(document.getElementById('test-output-follow').checked);
+  follower.start();
+}
+
+function openTestOutput(id, title) {
+  testOutputJob = id;
+  document.getElementById('test-output-title').textContent = title;
+  testOutputPane.classList.remove('hidden');
+  followTestOutput();
+}
+
+function closeTestOutput() {
+  if (testOutputFollower) testOutputFollower.close();
+  testOutputFollower = null;
+  testOutputJob = null;
+  testOutputPane.classList.add('hidden');
+}
+
+document.getElementById('test-output-close').addEventListener('click', closeTestOutput);
+for (const radio of testOutputPane.querySelectorAll('input[name="test-output-stream"]')) {
+  radio.addEventListener('change', () => { if (testOutputJob) followTestOutput(); });
+}
+document.getElementById('test-output-follow').addEventListener('change', (e) => {
+  if (testOutputFollower) testOutputFollower.setFollow(e.target.checked);
+});
+
 function paintTestActivity(state) {
   const view = testActivityView(state, Date.now());
+  const snap = state && state.enabled ? state.snapshot : null;
+  const runningIds = snap ? snap.running.map((j) => j.id) : [];
+  const recentIds = snap ? snap.recent.map((j) => j.id) : [];
   document.getElementById('test-activity-summary').textContent = view.summary;
   const box = document.getElementById('test-activity-box');
   box.textContent = view.box || '';
   box.style.display = view.box ? '' : 'none';
-  const live = [...view.running, ...view.waiting];
-  document.getElementById('test-activity-live').replaceChildren(...(view.empty ? [testActivityRow(view.empty)] : live.map(testActivityRow)));
-  document.getElementById('test-activity-recent').replaceChildren(...(view.recent.length ? view.recent : ['None yet']).map(testActivityRow));
+  const live = [...view.running.map((t, i) => testActivityRow(t, runningIds[i])), ...view.waiting.map((t) => testActivityRow(t))];
+  document.getElementById('test-activity-live').replaceChildren(...(view.empty ? [testActivityRow(view.empty)] : live));
+  document.getElementById('test-activity-recent').replaceChildren(...(view.recent.length
+    ? view.recent.map((t, i) => testActivityRow(t, recentIds[i]))
+    : [testActivityRow('None yet')]));
 }
 
 async function refreshTestActivity() {
@@ -9137,6 +9203,7 @@ function openTestActivity() {
 }
 
 function closeTestActivity() {
+  closeTestOutput();
   testActivityOverlay.classList.add('hidden');
   if (testActivityTimer) clearInterval(testActivityTimer);
   testActivityTimer = null;

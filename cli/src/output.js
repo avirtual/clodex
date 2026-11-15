@@ -171,6 +171,26 @@ function renderTestjobs(body) {
   return `${head}\n${table(['STATE', 'TEAM', 'TICKET', 'KIND', 'ISOLATION', 'IMAGE', 'AGE', 'PASS/FAIL'], rows)}`;
 }
 
+function inertOutput(text) {
+  return String(text)
+    .replace(/(?:\x1b[\]P^_X]|[\x90\x98\x9d\x9e\x9f])[\s\S]*?(?:\x07|\x1b\\|\x9c|$)/g, '')
+    .replace(/(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1b[ -/]*[0-~]/g, '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '');
+}
+
+function renderTestjobOutput(body, { tail = null } = {}) {
+  if (body.expired) return 'output expired';
+  if (!body.total) return body.live ? 'no output yet' : 'no output';
+  let lines = inertOutput(body.text).split('\n');
+  if (lines.length && lines[lines.length - 1] === '') lines.pop();
+  let cut = body.offset > 0;
+  if (tail != null && lines.length > tail) { lines = lines.slice(lines.length - tail); cut = true; }
+  return [...(cut ? ['… earlier output not shown …'] : []), ...lines].join('\n');
+}
+
 function renderAgents(agents) {
   const rows = (agents || []).map((a) => [a.name || '', a.model || '', a.description || '']);
   return table(['NAME', 'MODEL', 'DESCRIPTION'], rows);
@@ -368,7 +388,7 @@ function makePrinter(write = (s) => process.stdout.write(s)) {
 
 module.exports = {
   jsonLine, stripAnsi, ANSI_RE, renderSessions, renderSessionsWide, renderNames, renderWorkspaces,
-  renderPeers, renderPeersWide, renderTeams, renderTickets, renderTicketsWide, renderSandboxes, renderOffers, renderTestjobs,
+  renderPeers, renderPeersWide, renderTeams, renderTickets, renderTicketsWide, renderSandboxes, renderOffers, renderTestjobs, renderTestjobOutput, inertOutput,
   renderAgents, renderAgentsWide, renderDocs, renderDocHits, renderWorktrees, renderWorktreesWide,
   renderResources, renderDescribe, renderProfile,
   describeSession, describePeer, describeTeam, describeSandbox, describeAgent, describeDoc,

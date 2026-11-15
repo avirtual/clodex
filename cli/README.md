@@ -308,7 +308,7 @@ adds the bracketed columns; `-o name` prints `<singular>/<id>` per line.
 | `docs` | NAME SECTION TITLE (`-q TERMS` searches: NAME HEADING SNIPPET) | `describe doc <name> [--section <slug>]` — the page, raw markdown |
 | `worktrees` | PATH BRANCH HEAD [MAIN, DETACHED, LOCKED, PRUNABLE] | none — list only, `--repo DIR` required |
 | `catalogs` | a labeled block (a singleton, no rows) | `describe catalogs` |
-| `testjobs` | a slots and box line, then STATE TEAM TICKET KIND ISOLATION IMAGE AGE PASS/FAIL: running, waiting, then recent | none — list only |
+| `testjobs` | a slots and box line, then STATE TEAM TICKET KIND ISOLATION IMAGE AGE PASS/FAIL: running, waiting, then recent | none — list only; one job's output: `logs testjob <id>` |
 
 `docs` is the **help corpus** — the same pages the desktop Help window shows,
 served as raw markdown. `get docs -q "park resend"` searches it; `--section
@@ -369,6 +369,7 @@ Read (all but `describe` — except `describe session` — support `-o json` —
 | `api-resources` | `GET /api/resources` — what this node serves |
 | `version` | `GET /api/peer/hello` — client version plus the node's |
 | `logs <name> [--tail N] [-f\|--follow]` | `GET /api/resources` (capability check) → `GET /api/sessions/:name/transcript?limit=N` (+ `GET /api/events` when `-f`) |
+| `logs testjob <id> [--stderr] [--tail N]` | `GET /api/resources` → `GET /api/testjobs/:id/output?stream=stdout\|stderr` (operator token only; a suite token gets 403); a one-shot tail, no follow |
 | `query <name> <kind>` | `GET /api/resources` → `POST /api/sessions/:name/query` — kind ∈ `ctx report bust files filePeek fileDiff` (`--path`, `--detail`) |
 | `get session <name> --subresource args` | `GET /api/resources` → `GET /api/sessions/:name/args` |
 | `get session <name> --subresource skills` | `GET /api/resources` → `GET /api/sessions/:name/skills` |

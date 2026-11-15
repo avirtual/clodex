@@ -512,8 +512,8 @@ hello caps follow) and is refused while a job is live (`busy()`).
 The runner's `activity()` is the operator's read of what it is doing; it is
 never on the wire (`info()` keeps only job ids). It returns
 `{ at, slots: { total, inUse }, running: [job], waiting: [job], recent: [done], box }`:
-a job is `{ id, team, ticket, kind, origin, isolation: 'native'|'container', image, definition, phase, queuedAt, startedAt }`
-(`image` the 12-hex short id of the box image, `definition` the 12-hex short
+a job is `{ id, team, ticket, kind, origin, isolation: 'native'|'container', image, definition, phase, queuedAt, startedAt, lastOutputAt }`
+(`lastOutputAt` the mtime in ms of the later-written of the job's stdout and stderr files, null when neither exists; `image` the 12-hex short id of the box image, `definition` the 12-hex short
 box definition hash when the job named one, `phase` `upload`/`queued`/`setup`/`run`,
 `origin` the dialled peer's label for a claimed job and null for a pushed one);
 `waiting` is queue order then uploads; `recent` is the last ten finished jobs,
@@ -537,6 +537,27 @@ The same `{ enabled, snapshot }` is served on `GET /api/testjobs` as
 since rows name other teams' tickets; 501 when the host wires no source), and
 `clodexctl get testjobs` prints it as one table, running then waiting then
 recent, under a slots-and-box line.
+
+One job's output is the runner's `readOutput(id, { stream, offset, length })`,
+built on the same slice as the submitter's `output` verb (which is unchanged):
+`offset` null reads the tail, every read is capped at `peekMax` and cut on UTF-8
+boundaries, and the answer is `{ ok, id, stream, phase, live, at, queuedAt,
+startedAt, endedAt, lastOutputAt, expired, total, offset, next, text }`, where
+`next` is the byte offset to read from next and `expired` is true when a finished
+job that ran has no file for the stream (a running job with empty files is
+`total: 0`, an unknown job is 404). The desktop reads it over the
+`suiteRunner:output` IPC, the operator over `GET /api/testjobs/<id>/output?stream=stdout|stderr&offset=&length=`
+(operator token only, like `/api/testjobs`; bad stream, offset, length or id is
+400), and `clodexctl logs testjob <id> [--stderr] [--tail N]` prints a one-shot
+tail. In Test Box Activity a running or recent row opens a read-only pane
+(`renderer/lib/testjob-output.js`): one stream at a time, set as text content
+after ANSI CSI/OSC sequences and C0/C1 controls other than newline and tab are
+stripped (a bare carriage return becomes a newline; the CLI strips the same
+set), a buffer capped at 256 KiB characters that drops from the top under an
+"earlier output not shown" line, and a Follow toggle while the job runs. The
+pane polls every two seconds with one read in flight, doubles the delay on an
+error up to 30 s, restarts from zero under a marker when the file shrank below
+its offset, and stops when it closes or after the read that finds the job ended.
 
 The job's PATH is a fixed list (`jobPath`), never the node's own:
 `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`, with
