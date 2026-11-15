@@ -18,7 +18,8 @@ const { resolveAccountLabel, accountMissingError } = require('./accounts');
 const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const { idleClearAfterMs, IDLE_CLEAR_MIN_MS } = require('./assistant-sleep');
-const { localHalf, failingNames, boxVerdict } = require('./suite-client');
+const { localHalf, failingNames } = require('./suite-client');
+const { boxVerdict } = require('./suite-client');
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
   DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_WIRE_PUSH: WIRE_PUSH,
@@ -6460,7 +6461,7 @@ function createTicketMethods(deps, shared) {
     async _boxDecide(team, ticket, cwd, opts) {
       const tr = team.testRunner;
       const kind = opts && opts.merge ? 'post-merge' : 'verify';
-      const ret = { decided: false, fallback: null, out: null, client: null, wire: tr.wire === 'pull' ? 'pull' : 'push', kind };
+      const ret = { decided: false, fallback: null, out: null, client: null, wire: tr.wire === 'pull' ? 'pull' : WIRE_PUSH, kind };
       const fall = (fallback, why) => {
         log.warn('ticket', `ticket ${ticket.id}: ${kind} box run did not decide (${fallback}) — ${why}; running the suite here`);
         return { ...ret, fallback };
