@@ -164,6 +164,23 @@ test('settings:set cannot write the test runner setting', () => {
   assert.strictEqual(store.suiteRunner, null);
 });
 
+test('suiteRunner:output hands the job id and read options to the wired source', async () => {
+  const handlers = new Map();
+  const calls = [];
+  const target = {
+    handle: (ch, fn) => handlers.set(ch, fn), on: () => {}, enableDrawerServices: false, enableTestBoxes: true, enableLocalTerminal: true, enableCtl: true,
+    suiteOutput: async (id, opts) => { calls.push([id, opts]); return { ok: true, text: 'hi' }; },
+  };
+  require('../ipc-handlers').registerIpcHandlers(new Proxy(target, {
+    get(t, prop) { return prop in t ? t[prop] : () => {}; },
+    has(t, prop) { return prop in t; },
+  }));
+  const read = handlers.get('suiteRunner:output');
+  assert.strictEqual(typeof read, 'function', 'ENTER: suiteRunner:output is registered');
+  assert.deepStrictEqual(await read({}, 'j1', { stream: 'stderr', offset: 5, length: 10 }), { ok: true, text: 'hi' });
+  assert.deepStrictEqual(calls, [['j1', { stream: 'stderr', offset: 5, length: 10 }]]);
+});
+
 test('the suiteRunner channels follow enableTestBoxes, not enableDrawerServices', () => {
   const capture = (enableTestBoxes) => {
     const registered = new Set();

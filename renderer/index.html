@@ -1569,6 +1569,20 @@
         <summary>Last ten finished</summary>
         <div id="test-activity-recent"></div>
       </details>
+      <div id="test-output-pane" class="hidden">
+        <div class="test-output-head">
+          <h5 id="test-output-title"></h5>
+          <button type="button" id="test-output-close">Close output</button>
+        </div>
+        <span id="test-output-header" class="hint-text"></span>
+        <div class="test-output-controls">
+          <label><input type="radio" name="test-output-stream" value="stdout" checked> stdout</label>
+          <label><input type="radio" name="test-output-stream" value="stderr"> stderr</label>
+          <label id="test-output-follow-wrap"><input type="checkbox" id="test-output-follow" checked> Follow</label>
+        </div>
+        <span id="test-output-status" class="hint-text"></span>
+        <pre id="test-output-text"></pre>
+      </div>
     </div>
   </div>
 

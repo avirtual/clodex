@@ -7059,3 +7059,19 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main { top: var(--rail-t
 #test-activity-dialog h5 { margin: 14px 0 6px; }
 #test-activity-recent-wrap { margin-top: 14px; }
 .test-activity-row { font-family: var(--font-mono); font-size: var(--fs-sm); padding: 2px 0; }
+.test-activity-row.openable { cursor: pointer; }
+.test-activity-row.openable:hover { text-decoration: underline; }
+#test-output-pane { margin-top: 14px; border-top: 1px solid var(--border-strong); padding-top: 8px; }
+#test-output-pane.hidden { display: none; }
+#test-output-pane .test-output-head { display: flex; align-items: center; justify-content: space-between; }
+#test-output-pane .test-output-controls { display: flex; gap: 12px; margin-bottom: 6px; }
+#test-output-text {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 360px;
+  overflow: auto;
+  margin: 0;
+  user-select: text;
+}
