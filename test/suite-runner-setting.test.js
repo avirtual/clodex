@@ -416,3 +416,52 @@ test('the runner state reports a stored boxImage under setting and effective', (
     remoteEnabled: false, status: 'pull-only', error: null,
   });
 });
+
+const SLOT_ROWS = [
+  ['absent', { enabled: true, isolation: 'user', work: null }, { enabled: true, isolation: 'user', work: null }],
+  ['1', { enabled: true, isolation: 'user', work: null, slots: 1 }, { enabled: true, isolation: 'user', work: null }],
+  ['3', { enabled: true, isolation: 'user', work: null, slots: 3 }, { enabled: true, isolation: 'user', work: null, slots: 3 }],
+  ['9', { enabled: true, isolation: 'user', work: null, slots: 9 }, { enabled: true, isolation: 'user', work: null, slots: 4 }],
+  ['0', { enabled: true, isolation: 'user', work: null, slots: 0 }, { enabled: true, isolation: 'user', work: null }],
+  ["the string '3'", { enabled: true, isolation: 'user', work: null, slots: '3' }, { enabled: true, isolation: 'user', work: null }],
+  ['2.5', { enabled: true, isolation: 'user', work: null, slots: 2.5 }, { enabled: true, isolation: 'user', work: null }],
+];
+
+for (const [label, raw, want] of SLOT_ROWS) {
+  test(`sanitiser slots ${label}`, () => {
+    assert.deepStrictEqual(sanitizeSuiteRunner(raw), want);
+  });
+}
+
+test('suiteRunnerOptions hands a stored slot count above 1 to the runner', () => {
+  assert.deepStrictEqual(suiteRunnerOptions({}, '/h', { platform: 'linux', setting: { enabled: true, isolation: 'user', work: '/w', slots: 3 } }), {
+    root: '/h', work: '/w', isolation: 'user', boxImage: null, limits: {}, slots: 3, forced: [],
+  });
+});
+
+test('startSuiteRunner passes the slot count to createSuiteRunner', () => {
+  const made = [];
+  const load = () => ({
+    createSuiteRunner: (o) => { made.push(o); return { start() {} }; },
+    noneIsolation: () => 'none-iso', userIsolation: () => 'user-iso', statePaths: (root) => ({ dir: `${root}/suite-runner` }),
+  });
+  const loadBox = () => ({ boxIsolation: () => 'box' });
+  startSuiteRunner({ root: '/r', work: '/w', isolation: 'none', limits: {}, forced: [], slots: 3 }, { log: { warn() {}, error() {} }, load, loadBox });
+  const { log, ...rest } = made[0];
+  assert.deepStrictEqual(rest, { root: '/r', work: '/w', isolation: 'none-iso', limits: {}, slots: 3, box: 'box' });
+});
+
+test('the runner form saves the slot count it shows, and keeps the stored one when the form has none', () => {
+  const { suiteRunnerRecordFromForm } = require('../renderer/lib/offer-view');
+  const shown = { setting: { enabled: true, isolation: 'user', work: null, slots: 3 }, forced: [] };
+  const form = { enabled: true, isolation: 'user', work: '', boxImage: '' };
+  assert.deepStrictEqual([
+    suiteRunnerRecordFromForm(shown, { ...form, slots: '2' }),
+    suiteRunnerRecordFromForm(shown, { ...form, slots: '1' }),
+    suiteRunnerRecordFromForm(shown, form),
+  ], [
+    { enabled: true, isolation: 'user', work: null, slots: 2 },
+    { enabled: true, isolation: 'user', work: null },
+    { enabled: true, isolation: 'user', work: null, slots: 3 },
+  ]);
+});

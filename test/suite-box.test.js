@@ -327,6 +327,13 @@ test('clear: a failed docker ps is never an empty list (R5)', async () => {
   assert.deepStrictEqual(flaky.calls.map((c) => c.args[0]), ['ps', 'rm', 'ps', 'ps', 'ps']);
 });
 
+test('a sweep that keeps a live job lists containers with their job label and removes only the others', async () => {
+  const listing = ['ps', '-a', '--filter', 'label=clodex.suite.runner=68ce9ee28045', '--format', '{{.ID}} {{.Label "clodex.suite.job"}}'];
+  const docker = stubDocker((args, n) => (args[0] === 'ps' ? { stdout: n === 1 ? 'c1 j-1\nc2 j-2\nc3 j-3\n' : 'c2 j-2\n' } : {}));
+  await adapter({ docker }).sweep(['j-2']);
+  assert.deepStrictEqual(docker.calls.map((c) => c.args), [listing, ['rm', '-f', 'c1', 'c3'], listing]);
+});
+
 test('sweep clears the runner label', async () => {
   const docker = stubDocker(() => ({ stdout: '' }));
   await adapter({ docker }).sweep();

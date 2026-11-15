@@ -692,6 +692,7 @@ function createSuiteRunner({
         }
         return deps;
       }
+      log(`suite-runner: ${job.id} waits for deps entry ${deps.key.slice(0, 12)} built by ${held.job}`);
       await held.done;
     }
   }
