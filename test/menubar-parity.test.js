@@ -105,7 +105,7 @@ function normalizeWeb(rows) {
 // ── Desktop harness. app-menus.js requires('electron') at module load AND uses
 // it while buildAppMenu runs, so the stub must be live for both; follows
 // test/app-menus-plugins.test.js's buildTemplateWith. ────────────────────────
-function desktopTemplate({ peers = [], boxes = [], pluginHost = null, helpCorpus = null, testBoxes } = {}) {
+function desktopTemplate({ peers = [], boxes = [], pluginHost = null, helpCorpus = null, testBoxes, refreshSuiteActivity = null, onMenu = null, onMenus = null } = {}) {
   let captured = null;
   const win = { webContents: { send: () => {} } };
   const stub = {
@@ -113,7 +113,7 @@ function desktopTemplate({ peers = [], boxes = [], pluginHost = null, helpCorpus
     // and the assertions here read the captured template, not the About panel.
     app: { getName: () => 'Clodex', getVersion: () => '0.0.0', setAboutPanelOptions: () => {} },
     BrowserWindow: { getFocusedWindow: () => win, getAllWindows: () => [win] },
-    Menu: { buildFromTemplate: (t) => { captured = t; return t; }, setApplicationMenu: () => {} },
+    Menu: { buildFromTemplate: (t) => { captured = t; if (onMenu) onMenu(t); return t; }, setApplicationMenu: () => {} },
     Tray: function Tray() {},
     dialog: {}, shell: {}, nativeImage: { createFromPath: () => ({ setTemplateImage() {} }) },
   };
@@ -137,6 +137,7 @@ function desktopTemplate({ peers = [], boxes = [], pluginHost = null, helpCorpus
       getPeerManager: () => ({ statuses: () => peers }),
       getSandboxManager: () => ({ list: () => boxes }),
       ...(testBoxes !== undefined ? { getSuiteActivity: () => testBoxes } : {}),
+      ...(refreshSuiteActivity ? { refreshSuiteActivity } : {}),
       getUpdateInfo: () => null, getUiSettings: nothing,
       getAgentLibrary: nothing, getSkillLibrary: nothing, getEnvScopes: () => null,
       getPromptLibrary: nothing, getTemplates: nothing, getExecLibrary: nothing,
@@ -144,6 +145,7 @@ function desktopTemplate({ peers = [], boxes = [], pluginHost = null, helpCorpus
       ...(helpCorpus ? { getHelpCorpus: () => helpCorpus } : {}),
     });
     menus.buildAppMenu();
+    if (onMenus) onMenus(menus);
     return captured || [];
   } finally {
     Module._load = origLoad;
@@ -375,12 +377,109 @@ test('desktop Window menu job rows read a clock time that does not change as tim
   process.env.TZ = 'UTC';
   t.after(() => { if (tz === undefined) delete process.env.TZ; else process.env.TZ = tz; });
   const startedAt = Date.UTC(2026, 10, 13, 10, 42, 40);
-  const running = { id: 'j1', team: 'avh', ticket: 't1579', kind: 'verify', origin: null, isolation: 'container', image: 'bbbbbbbbbbbb', definition: null, phase: 'run', queuedAt: startedAt - 1000, startedAt };
+  const running = { id: 'j1', team: 'avh', ticket: 't1579', kind: 'verify', origin: null, isolation: 'container', image: 'bbbbbbbbbbbb', definition: null, phase: 'run', queuedAt: startedAt - 1000, startedAt, runStartedAt: startedAt, lastOutputAt: startedAt + 5000 };
   const testBoxes = { enabled: true, snapshot: { at: startedAt, slots: { total: 1, inUse: 1 }, running: [running], waiting: [], recent: [], box: { state: 'ready', image: 'bbbbbbbbbbbb' } } };
   t.mock.timers.enable({ apis: ['Date'], now: startedAt + 5000 });
   const early = peersSection(desktopWindowRows({ testBoxes }), 'desktop early');
-  t.mock.timers.tick(7 * 60000);
+  t.mock.timers.tick(4 * 60000);
   const late = peersSection(desktopWindowRows({ testBoxes }), 'desktop late');
   assert.ok(early.includes('[avh · t1579 · verify · box · since 10:42]'), `ENTER: the running job row reads since 10:42: ${early.join(' | ')}`);
   assert.deepStrictEqual(late, early);
+});
+
+test('desktop Window menu rebuilds itself when a silent job crosses the quiet threshold, with one timer and none when idle', (t) => {
+  const tz = process.env.TZ;
+  process.env.TZ = 'UTC';
+  t.after(() => { if (tz === undefined) delete process.env.TZ; else process.env.TZ = tz; });
+  const now = Date.UTC(2026, 10, 13, 10, 42, 40);
+  const running = { id: 'j1', team: 'avh', ticket: 't1579', kind: 'verify', origin: null, isolation: 'container', image: 'bbbbbbbbbbbb', definition: null, phase: 'run', queuedAt: now - 601000, startedAt: now - 600000, runStartedAt: now - 600000, lastOutputAt: now - 241000 };
+  const live = { enabled: true, snapshot: { at: now, slots: { total: 1, inUse: 1 }, running: [running], waiting: [], recent: [], box: { state: 'ready', image: 'bbbbbbbbbbbb' } } };
+  const idle = { enabled: true, snapshot: { at: now, slots: { total: 1, inUse: 0 }, running: [], waiting: [], recent: [], box: { state: 'ready', image: 'bbbbbbbbbbbb' } } };
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now });
+  const builds = [];
+  const rows = (tpl) => peersSection(normalizeDesktop(desktopMenu(tpl, 'Window').submenu), 'desktop');
+  const holder = { ...live };
+  let menus = null;
+  desktopTemplate({ testBoxes: holder, onMenu: (tpl) => builds.push(rows(tpl)), onMenus: (m) => { menus = m; } });
+  assert.ok(menus && builds.length === 1, 'ENTER: the menu was built once');
+  assert.ok(builds[0].includes('[avh · t1579 · verify · box · since 10:32]'), `ENTER: four minutes of silence reads as a plain row: ${builds[0].join(' | ')}`);
+  menus.buildAppMenu();
+  t.mock.timers.tick(60000);
+  assert.strictEqual(builds.length, 3, 'one more minute with no runner event rebuilds the menu once, though it was built twice');
+  assert.ok(builds[2].includes('[avh · t1579 · verify · box · since 10:32 · quiet since 10:38]'), `the rebuilt row reads quiet: ${builds[2].join(' | ')}`);
+  t.mock.timers.tick(3600000);
+  assert.strictEqual(builds.length, 3, 'a job already quiet arms no further rebuild');
+  holder.snapshot = { ...live.snapshot, running: [{ ...running, lastOutputAt: Date.now() }] };
+  menus.buildAppMenu();
+  holder.snapshot = idle.snapshot;
+  menus.buildAppMenu();
+  t.mock.timers.tick(3600000);
+  assert.strictEqual(builds.length, 5, 'with no live job the pending timer is cleared and none fires');
+});
+
+test('desktop quiet timer refreshes the cached runner snapshot before it rebuilds, so a job still writing is not called quiet', (t) => {
+  const tz = process.env.TZ;
+  process.env.TZ = 'UTC';
+  t.after(() => { if (tz === undefined) delete process.env.TZ; else process.env.TZ = tz; });
+  const now = Date.UTC(2026, 10, 13, 10, 42, 40);
+  const running = { id: 'j1', team: 'avh', ticket: 't1579', kind: 'verify', origin: null, isolation: 'container', image: 'bbbbbbbbbbbb', definition: null, phase: 'run', queuedAt: now - 601000, startedAt: now - 600000, runStartedAt: now - 600000, lastOutputAt: now - 241000 };
+  const snapOf = (job, at = now) => ({ at, slots: { total: 1, inUse: 1 }, running: [job], waiting: [], recent: [], box: { state: 'ready', image: 'bbbbbbbbbbbb' } });
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now });
+  const rows = (tpl) => peersSection(normalizeDesktop(desktopMenu(tpl, 'Window').submenu), 'desktop');
+  const runCase = (fresh) => {
+    t.mock.timers.setTime(now);
+    const holder = { enabled: true, snapshot: snapOf(running) };
+    const builds = [];
+    let refreshes = 0;
+    let menus = null;
+    desktopTemplate({
+      testBoxes: holder,
+      refreshSuiteActivity: () => { refreshes += 1; holder.snapshot = snapOf(fresh(), Date.now()); menus.buildAppMenu(); },
+      onMenu: (tpl) => builds.push(rows(tpl)),
+      onMenus: (m) => { menus = m; },
+    });
+    assert.ok(builds.length === 1 && builds[0].includes('[avh · t1579 · verify · box · since 10:32]'), `ENTER: the cached row is plain: ${builds[0].join(' | ')}`);
+    t.mock.timers.tick(60000);
+    const out = { refreshes, last: builds[builds.length - 1], builds: builds.length };
+    holder.snapshot = { ...holder.snapshot, running: [] };
+    menus.buildAppMenu();
+    return out;
+  };
+  const writing = runCase(() => ({ ...running, lastOutputAt: Date.now() - 1000 }));
+  assert.deepStrictEqual([writing.refreshes, writing.builds], [1, 2]);
+  assert.ok(writing.last.includes('[avh · t1579 · verify · box · since 10:32]'), `a job that kept writing reads plain: ${writing.last.join(' | ')}`);
+  assert.ok(!writing.last.some((r) => r.includes('quiet')), 'no quiet text for a job still writing');
+  const stuck = runCase(() => running);
+  assert.deepStrictEqual([stuck.refreshes, stuck.builds], [1, 2]);
+  assert.ok(stuck.last.includes('[avh · t1579 · verify · box · since 10:32 · quiet since 10:38]'), `a job that stayed silent reads quiet: ${stuck.last.join(' | ')}`);
+});
+
+test('desktop: an unrelated rebuild after the clock jumps past the crossing refreshes the stale snapshot at once, and does not loop', (t) => {
+  const tz = process.env.TZ;
+  process.env.TZ = 'UTC';
+  t.after(() => { if (tz === undefined) delete process.env.TZ; else process.env.TZ = tz; });
+  const now = Date.UTC(2026, 10, 13, 10, 42, 40);
+  const running = { id: 'j1', team: 'avh', ticket: 't1579', kind: 'verify', origin: null, isolation: 'container', image: 'bbbbbbbbbbbb', definition: null, phase: 'run', queuedAt: now - 601000, startedAt: now - 600000, runStartedAt: now - 600000, lastOutputAt: now - 241000 };
+  const snapOf = (job, at) => ({ at, slots: { total: 1, inUse: 1 }, running: [job], waiting: [], recent: [], box: { state: 'ready', image: 'bbbbbbbbbbbb' } });
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now });
+  const holder = { enabled: true, snapshot: snapOf(running, now) };
+  const builds = [];
+  let refreshes = 0;
+  let menus = null;
+  desktopTemplate({
+    testBoxes: holder,
+    refreshSuiteActivity: () => { refreshes += 1; holder.snapshot = snapOf({ ...running, lastOutputAt: Date.now() - 1000 }, Date.now()); menus.buildAppMenu(); },
+    onMenu: (tpl) => builds.push(peersSection(normalizeDesktop(desktopMenu(tpl, 'Window').submenu), 'desktop')),
+    onMenus: (m) => { menus = m; },
+  });
+  assert.ok(builds.length === 1 && builds[0].includes('[avh · t1579 · verify · box · since 10:32]'), `ENTER: the cached row is plain: ${builds[0].join(' | ')}`);
+  t.mock.timers.setTime(now + 120000);
+  menus.buildAppMenu();
+  t.mock.timers.tick(0);
+  assert.strictEqual(refreshes, 1, 'the unrelated rebuild sees a crossing past the snapshot time and refreshes at once');
+  assert.strictEqual(builds.length, 3);
+  assert.ok(builds[2].includes('[avh · t1579 · verify · box · since 10:32]'), `the refreshed row, with fresh output, reads plain: ${builds[2].join(' | ')}`);
+  t.mock.timers.tick(0);
+  t.mock.timers.tick(0);
+  assert.deepStrictEqual([refreshes, builds.length], [1, 3], 'no rebuild loop follows');
 });

@@ -95,6 +95,7 @@ function activityJob(job, lastOutputAt = null) {
     definition: box && box.definitionHash ? String(box.definitionHash).slice(0, 12) : null,
     phase: PHASES[job.state] || null,
     queuedAt: job.queuedAt, startedAt: job.startedAt != null ? job.startedAt : null,
+    runStartedAt: job.runStartedAt != null ? job.runStartedAt : null,
     lastOutputAt,
   };
 }

@@ -11,7 +11,7 @@ const NO_CTX_ROOT = mkTmpRoot('testjobs-noctx-');
 
 const RUNNING = {
   id: 'j2', team: 'clodex', ticket: 't7', kind: 'verify', origin: 'laptop', isolation: 'container',
-  image: 'abc123def456', definition: null, phase: 'run', queuedAt: 1700000000000, startedAt: 1700000040000,
+  image: 'abc123def456', definition: null, phase: 'run', queuedAt: 1700000000000, startedAt: 1700000040000, runStartedAt: 1700000040000,
 };
 const WAITING = {
   id: 'j3', team: 'other', ticket: 't9', kind: 'hand', origin: null, isolation: 'native',
@@ -81,13 +81,39 @@ test('get testjobs prints the slot and box line, then running, waiting and recen
     assert.ok(lines.some((l) => l.startsWith('pass ') && l.includes('j0')), `ENTER: finished row missing:\n${stdout}`);
     assert.strictEqual(stdout, [
       'slots 1/1 in use, box image abc123def456',
-      'STATE   TEAM    TICKET  KIND        ISOLATION  IMAGE         AGE    PASS/FAIL',
-      'run     clodex  t7      verify      container  abc123def456  1m00s',
-      'queued  other   t9      hand        native     -             5s',
-      'pass    clodex  j0      post-merge  native     -             2m05s  812/0',
+      'STATE   TEAM    TICKET  KIND        ISOLATION  IMAGE         AGE    QUIET  PASS/FAIL',
+      'run     clodex  t7      verify      container  abc123def456  1m00s  -',
+      'queued  other   t9      hand        native     -             5s     -',
+      'pass    clodex  j0      post-merge  native     -             2m05s  -      812/0',
       '',
     ].join('\n'));
     assert.deepStrictEqual(seen, ['/api/resources', '/api/testjobs']);
+  });
+});
+
+test('get testjobs shows QUIET for a live row silent past the threshold and counts it in the head line', async () => {
+  const quiet = { ...RUNNING, id: 'j4', ticket: 't8', startedAt: 1700000100000 - 900000, runStartedAt: 1700000100000 - 890000, lastOutputAt: 1700000100000 - 400000 };
+  const normal = { ...RUNNING, lastOutputAt: 1700000100000 - 5000 };
+  const silentFromStart = { ...RUNNING, id: 'j5', ticket: 't6', startedAt: 1700000100000 - 400000, runStartedAt: 1700000100000 - 400000, lastOutputAt: null };
+  const longSetup = { ...RUNNING, id: 'j6', ticket: 't5', startedAt: 1700000100000 - 900000, runStartedAt: 1700000100000 - 30000, lastOutputAt: 1700000100000 - 900000 };
+  const snapshot = { ...SNAPSHOT, slots: { total: 4, inUse: 4 }, running: [quiet, normal, silentFromStart, longSetup], waiting: [], recent: [] };
+  await withNode({ ok: true, enabled: true, snapshot }, async (port) => {
+    const { code, stdout } = await cli(['get', 'testjobs'], port);
+    assert.strictEqual(code, 0);
+    const lines = stdout.split('\n');
+    assert.ok(lines.some((l) => l.includes('t8')), `ENTER: quiet row missing:\n${stdout}`);
+    assert.ok(lines.some((l) => l.includes('t7')), `ENTER: normal row missing:\n${stdout}`);
+    assert.ok(lines.some((l) => l.includes('t6')), `ENTER: silent-from-start row missing:\n${stdout}`);
+    assert.ok(lines.some((l) => l.includes('t5')), `ENTER: long-setup row missing:\n${stdout}`);
+    assert.strictEqual(stdout, [
+      'slots 4/4 in use, 2 quiet, box image abc123def456',
+      'STATE  TEAM    TICKET  KIND    ISOLATION  IMAGE         AGE     QUIET  PASS/FAIL',
+      'run    clodex  t8      verify  container  abc123def456  15m00s  6m40s',
+      'run    clodex  t7      verify  container  abc123def456  1m00s   -',
+      'run    clodex  t6      verify  container  abc123def456  6m40s   6m40s',
+      'run    clodex  t5      verify  container  abc123def456  15m00s  -',
+      '',
+    ].join('\n'));
   });
 });
 

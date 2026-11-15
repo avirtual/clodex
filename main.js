@@ -265,6 +265,7 @@ const {
   getPeerManager: () => (engine ? engine.getPeerManager() : null),
   getSandboxManager: () => (engine ? engine.getSandboxManager() : null),
   getSuiteActivity: () => (engine ? engine.suiteActivityNow() : null),
+  refreshSuiteActivity: () => (engine ? engine.refreshSuiteActivity() : undefined),
   getUpdateInfo: () => updateInfo,
   getUiSettings: () => uiSettings,
   getWorkspaces: () => workspaces,
