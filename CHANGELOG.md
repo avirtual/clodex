@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- `[agent:team runner gate:on]`: a team's test box result decides verify and post-merge, and the suite runs at home only when the box cannot answer.
+
 ## 5.185.0 — 2026-11-15
 
 - Test Box Activity: open a job to read its output while it runs or after it ends; `clodexctl logs testjob <id>` prints the same from the command line.
