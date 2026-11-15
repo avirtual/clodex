@@ -29,6 +29,7 @@ const CLEAR_WAIT_MS = 30000;
 const CLEAR_PAUSE_MS = 250;
 const CLEAR_PAUSE_MAX_MS = 2000;
 const BOX_LABEL = 'clodex.box';
+const JOB_LABEL = 'clodex.suite.job';
 const DOCKER_ARCH = { aarch64: 'arm64', x86_64: 'amd64' };
 const DEFAULT_TIMERS = { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (t) => clearTimeout(t) };
 
@@ -161,19 +162,30 @@ function boxIsolation({
   let counter = 0;
   let cached = null;
 
-  async function clear(label) {
+  function listArgs(label, keep) {
+    if (!keep.length) return ['ps', '-aq', '--filter', `label=${label}`];
+    return ['ps', '-a', '--filter', `label=${label}`, '--format', `{{.ID}} {{.Label "${JOB_LABEL}"}}`];
+  }
+
+  function listed(stdout, keep) {
+    const rows = String(stdout).split('\n').map((s) => s.trim()).filter(Boolean);
+    if (!keep.length) return rows;
+    return rows.map((row) => row.split(/\s+/)).filter(([, job]) => !keep.includes(job)).map(([id]) => id);
+  }
+
+  async function clear(label, keep = []) {
     const deadline = now() + CLEAR_WAIT_MS;
     let last = '';
     let strikes = 0;
     let pause = CLEAR_PAUSE_MS;
     for (;;) {
-      const r = await docker.call(['ps', '-aq', '--filter', `label=${label}`], { timeoutMs: CLEAR_MS });
+      const r = await docker.call(listArgs(label, keep), { timeoutMs: CLEAR_MS });
       if (!r.ok) {
         last = `docker ps failed: ${callError(r)}`;
         if (++strikes >= CLEAR_ROUNDS) break;
         continue;
       }
-      const ids = String(r.stdout).split('\n').map((s) => s.trim()).filter(Boolean);
+      const ids = listed(r.stdout, keep);
       if (!ids.length) return;
       last = ids.join(' ');
       await docker.call(['rm', '-f', ...ids], { timeoutMs: CLEAR_MS });
@@ -258,7 +270,7 @@ function boxIsolation({
       cached = { at: now(), answer };
       return answer;
     },
-    sweep: () => clear(`clodex.suite.runner=${runnerKey}`),
+    sweep: (keep = []) => clear(`clodex.suite.runner=${runnerKey}`, keep),
     env() { return { ...BOX_ENV }; },
     async prepare() {},
     spawn({ jobDir, argv, env: jobEnv, spawn, job }) {

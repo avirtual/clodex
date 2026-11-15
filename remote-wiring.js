@@ -148,6 +148,7 @@ function suiteRunnerOptions(env, root, { platform = process.platform, setting = 
     isolation: isolation === 'none' ? 'none' : 'user',
     boxImage: typeof boxImage === 'string' && /^sha256:[0-9a-f]{64}$/.test(boxImage) ? boxImage : null,
     limits: mb > 0 ? { packMaxBytes: Math.floor(mb * 1024 * 1024) } : {},
+    ...(Number.isInteger(s.slots) && s.slots > 1 ? { slots: s.slots } : {}),
     forced,
   };
 }

@@ -6417,6 +6417,7 @@ const prefsSuiteRunnerEnabled = document.getElementById('prefs-suite-runner-enab
 const prefsSuiteRunnerIsolation = document.getElementById('prefs-suite-runner-isolation');
 const prefsSuiteRunnerWork = document.getElementById('prefs-suite-runner-work');
 const prefsSuiteRunnerBoxImage = document.getElementById('prefs-suite-runner-boxImage');
+const prefsSuiteRunnerSlots = document.getElementById('prefs-suite-runner-slots');
 const prefsSuiteRunnerApply = document.getElementById('prefs-suite-runner-apply');
 const prefsSuiteRunnerStatus = document.getElementById('prefs-suite-runner-status');
 const prefsSuiteRunnerNoneNote = document.getElementById('prefs-suite-runner-none-note');
@@ -9612,6 +9613,7 @@ function renderSuiteRunnerPrefs(st) {
   prefsSuiteRunnerWork.placeholder = st.defaultWork || 'default for this platform';
   prefsSuiteRunnerBoxImage.value = forced.has('boxImage') ? (eff.boxImage || '') : (rec.boxImage || '');
   prefsSuiteRunnerBoxImage.disabled = forced.has('boxImage');
+  prefsSuiteRunnerSlots.value = String(rec.slots || 1);
   for (const k of ['enabled', 'isolation', 'work', 'boxImage']) {
     document.getElementById(`prefs-suite-runner-${k}-env`).classList.toggle('hidden', !forced.has(k));
   }
@@ -9635,6 +9637,7 @@ function suiteRunnerRecordToSave() {
     isolation: prefsSuiteRunnerIsolation.value,
     work: prefsSuiteRunnerWork.value,
     boxImage: prefsSuiteRunnerBoxImage.value,
+    slots: prefsSuiteRunnerSlots.value,
   });
 }
 

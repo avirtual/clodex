@@ -243,6 +243,7 @@ function noneIsolation({ user = os.userInfo().username, kill = process.kill.bind
   return {
     mode: 'none',
     user,
+    parallel: true,
     async probe() { return { mode: 'none' }; },
     async prepare() {},
     spawn({ cwd, argv, env, spawn }) {
@@ -372,11 +373,18 @@ function fileSha256({ file, bytes }, readChunk) {
   });
 }
 
+const MAX_SLOTS = 4;
+
+function slotCount(v) {
+  return Number.isInteger(v) ? Math.min(MAX_SLOTS, Math.max(1, v)) : 1;
+}
+
 function createSuiteRunner({
   root, oldRoot = null, work, isolation = userIsolation(), limits = {}, spawn = childProcess.spawn,
   now = Date.now, log = () => {}, timers = DEFAULT_TIMERS, platform = process.platform, arch = process.arch,
-  box = null, boxSweep = null, onActivity = null, activityMs = ACTIVITY_MS,
+  box = null, boxSweep = null, onActivity = null, activityMs = ACTIVITY_MS, slots = 1,
 }) {
+  const slotTotal = slotCount(slots);
   const repo = enclosingRepo(work);
   if (repo) throw new Error(`the work root is inside the git repository ${repo}; choose a work folder outside any repository`);
   const lim = { ...DEFAULT_LIMITS, ...limits };
@@ -407,8 +415,9 @@ function createSuiteRunner({
   const jobs = new Map();
   const waiters = new Set();
   let seq = 0;
-  let active = null;
-  let running = null;
+  const active = new Map();
+  const running = new Map();
+  const depsBuilds = new Map();
   let maintenance = null;
   let interval = null;
   let closed = false;
@@ -420,7 +429,7 @@ function createSuiteRunner({
   const holdFile = path.join(state.dir, 'box-hold.json');
   let boxHold = readJson(holdFile, null);
   let sweeping = null;
-  const sweepBox = box ? () => box.sweep() : boxSweep;
+  const sweepBox = box ? (keep) => box.sweep(keep) : boxSweep;
 
   const isBox = (job) => job.isolation === 'container';
   const namedBox = (job) => Boolean(job.identity && job.identity.box && job.identity.box.definitionHash);
@@ -442,6 +451,7 @@ function createSuiteRunner({
   const packFile = (id) => path.join(jobStore(id), 'pack');
   const save = (job) => writeJson(path.join(jobStore(job.id), 'job.json'), job);
   const anyLive = () => [...jobs.values()].some((j) => LIVE.has(j.state));
+  const unfinished = () => [...active.values()].filter((j) => j.state !== 'done');
 
   function queue() {
     return [...jobs.values()].filter((j) => j.state === 'queued')
@@ -504,9 +514,9 @@ function createSuiteRunner({
     log(`suite-runner: box cleanup held: ${why}`);
   }
 
-  function sweepOnce() {
+  function sweepOnce(keep = []) {
     if (!sweeping) {
-      sweeping = Promise.resolve().then(() => sweepBox()).then(() => null, (e) => e.message)
+      sweeping = Promise.resolve().then(() => sweepBox(keep)).then(() => null, (e) => e.message)
         .finally(() => { sweeping = null; });
     }
     return sweeping;
@@ -520,7 +530,7 @@ function createSuiteRunner({
   async function releaseHold() {
     const held = boxHold;
     if (!held || !sweepBox) return false;
-    const error = await sweepOnce();
+    const error = await sweepOnce(unfinished().filter(isBox).map((j) => j.id));
     if (boxHold !== held) return false;
     if (error != null) { setHold({ ...held, why: error }); return false; }
     clearHold(held);
@@ -617,6 +627,7 @@ function createSuiteRunner({
 
   async function finish(job, outcome, killing = null) {
     if (job.state === 'done') return;
+    releaseDeps(job);
     finishRecord(job, outcome);
     save(job);
     notify(job.id);
@@ -638,24 +649,60 @@ function createSuiteRunner({
     return answer;
   }
 
+  function startable(job) {
+    if (isBox(job)) return !boxHold;
+    return Boolean(isolation.parallel) || ![...active.values()].some((j) => !isBox(j));
+  }
+
   function pump() {
     if (recovering) { pumpAfterRecovery = true; return; }
-    if (closed || active || maintenance) return;
-    const next = queue().find((j) => !isBox(j) || !boxHold);
-    if (!next) return;
-    active = next.id;
+    if (closed || maintenance) return;
+    while (active.size < slotTotal) {
+      const next = queue().find(startable);
+      if (!next) return;
+      launch(next);
+    }
+  }
+
+  function launch(next) {
+    active.set(next.id, next);
     runJob(next)
       .catch(async (e) => {
         try { fs.appendFileSync(outFile(next.id, 'stderr'), `suite-runner: ${e.message}\n`); } catch {}
         await finish(next, { reason: 'setup-failed', exit: null });
       })
       .finally(() => {
-        active = null;
-        running = null;
+        active.delete(next.id);
+        running.delete(next.id);
         retain();
         if (!anyLive()) maintain().catch((e) => log(`suite-runner: maintenance failed: ${e.message}`));
         else pump();
       });
+  }
+
+  async function claimDeps(job, tree) {
+    for (;;) {
+      const deps = depsEntry(job, tree);
+      const held = depsBuilds.get(deps.entry);
+      if (!held) {
+        if (!deps.hit) {
+          let release;
+          const done = new Promise((resolve) => { release = resolve; });
+          depsBuilds.set(deps.entry, { job: job.id, done, release });
+        }
+        return deps;
+      }
+      log(`suite-runner: ${job.id} waits for deps entry ${deps.key.slice(0, 12)} built by ${held.job}`);
+      await held.done;
+    }
+  }
+
+  function releaseDeps(job) {
+    for (const [entry, b] of depsBuilds) {
+      if (b.job !== job.id) continue;
+      depsBuilds.delete(entry);
+      b.release();
+    }
   }
 
   function depsEntry(job, tree) {
@@ -733,7 +780,7 @@ function createSuiteRunner({
         return;
       }
       const state = { timedOut: false, stopped: null, killing: null };
-      running = { job, child, jobDir, state };
+      running.set(job.id, { job, child, jobDir, state });
       job.pid = child.pid || null;
       const timer = timers.setTimeout(() => { state.timedOut = true; killRunning(state, child, jobDir, job); }, ms);
       for (const s of ['stdout', 'stderr']) {
@@ -753,7 +800,7 @@ function createSuiteRunner({
         settled = true;
         timers.clearTimeout(timer);
         closeFds();
-        running = null;
+        running.delete(job.id);
         resolve({ code, signal, error, timedOut: state.timedOut, stopped: state.stopped, killing: state.killing });
       };
       child.on('error', (e) => done(null, null, e.message));
@@ -791,7 +838,8 @@ function createSuiteRunner({
         return finish(job, { reason: 'setup-failed', exit: null });
       }
     }
-    const deps = job.setup ? depsEntry(job, tree) : null;
+    const deps = job.setup ? await claimDeps(job, tree) : null;
+    if (job.stop) return finish(job, { reason: job.stop, exit: null });
     if (deps) {
       fs.mkdirSync(path.dirname(deps.entry), { recursive: true });
       fs.chmodSync(path.dirname(deps.entry), 0o711);
@@ -817,6 +865,7 @@ function createSuiteRunner({
       await isolation.seal(jobDir, deps.entry, job.setup.paths);
       writeJson(deps.marker, { createdAt: now(), usedAt: now() }, 0o600);
       touchCache(deps.rel);
+      releaseDeps(job);
       resetOutputs(job);
     }
     const runStartedAt = now();
@@ -833,6 +882,7 @@ function createSuiteRunner({
   function retain() {
     const done = [...jobs.values()].filter((j) => j.state === 'done').sort((a, b) => b.endedAt - a.endedAt);
     done.forEach((job, i) => {
+      if (active.has(job.id)) return;
       if (i >= lim.keepCount || now() - job.endedAt > lim.keepMs) {
         jobs.delete(job.id);
         forceRemove(jobStore(job.id));
@@ -858,14 +908,14 @@ function createSuiteRunner({
   }
 
   async function maintain() {
-    if (recovering || maintenance || anyLive()) return { ran: false };
+    if (recovering || maintenance || anyLive() || active.size) return { ran: false };
     maintenance = (async () => {
       const mirrors = path.join(work, 'mirrors');
       for (const name of (fs.existsSync(mirrors) ? fs.readdirSync(mirrors) : [])) {
-        if (anyLive()) return { ran: false };
+        if (anyLive() || active.size) return { ran: false };
         if (name.endsWith('.git')) await snapshot.gcMirror(path.join(mirrors, name));
       }
-      if (anyLive()) return { ran: false };
+      if (anyLive() || active.size) return { ran: false };
       const cache = readJson(cacheFile, {});
       const entries = cacheEntries().map((e) => ({ ...e, usedAt: cache[e.rel] || 0, bytes: e.paths.reduce((n, p) => n + bytesOf(p), 0) }));
       let total = entries.reduce((n, e) => n + e.bytes, 0);
@@ -898,7 +948,7 @@ function createSuiteRunner({
     return {
       ok: true, bootId, env, isolation: isoState, box: await boxState(),
       limits: { packMaxBytes: lim.packMaxBytes, chunkMax: lim.chunkMax, queueMax: lim.queueMax },
-      queue: { running: active, queued: queue().map((j) => j.id) },
+      queue: { running: active.size ? active.keys().next().value : null, queued: queue().map((j) => j.id) },
     };
   }
 
@@ -919,7 +969,7 @@ function createSuiteRunner({
     const done = all.filter((j) => j.state === 'done').sort((a, b) => b.endedAt - a.endedAt).slice(0, ACTIVITY_RECENT);
     return {
       at,
-      slots: { total: 1, inUse: live.length },
+      slots: { total: slotTotal, inUse: live.length },
       running: live.map((j) => activityJob(j, lastOutputOf(j.id))),
       waiting: [...queue(), ...uploading].map((j) => activityJob(j, lastOutputOf(j.id))),
       recent: done.map((j) => finishedJob(j, j.reason == null ? tailTotals(outFile(j.id, 'stdout')) : null, lastOutputOf(j.id))),
@@ -1097,9 +1147,10 @@ function createSuiteRunner({
       return;
     }
     job.stop = reason;
-    if (running && running.job === job) {
-      running.state.stopped = reason;
-      killRunning(running.state, running.child, running.jobDir, job);
+    const live = running.get(id);
+    if (live && live.job === job) {
+      live.state.stopped = reason;
+      killRunning(live.state, live.child, live.jobDir, job);
     }
   }
 
@@ -1116,8 +1167,7 @@ function createSuiteRunner({
       }
     }
     retain();
-    const boxActive = active && jobs.has(active) && isBox(jobs.get(active));
-    if (boxHold && !boxActive && !recovering) await releaseHold();
+    if (boxHold && !recovering) await releaseHold();
     if (!anyLive()) return maintain();
     pump();
     return { ran: false };

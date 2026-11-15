@@ -1021,7 +1021,7 @@ function fakeBox(opts = {}) {
   const box = {
     mode: 'container', user: 'box', node: 'node', detach: true,
     async probe() { return opts.probe ? opts.probe() : { state: 'ready', env: BOX_IDENTITY }; },
-    async sweep() { calls.push(['sweep']); if (opts.sweep) await opts.sweep(); },
+    async sweep(keep) { calls.push(['sweep']); if (opts.sweep) await opts.sweep(keep); },
     env() { return { ...BOX_FIXED_ENV }; },
     async prepare(jobDir, mirror, entry) { calls.push(['prepare', jobOf(jobDir), entry ? 'entry' : null]); },
     spawn({ jobDir, cwd, argv, env, spawn: sp, job }) {
@@ -1595,4 +1595,197 @@ test('readOutput reads a job stream by id: tail by default, whole characters, ex
   assert.deepStrictEqual(await runner.readOutput('nope'), { ok: false, status: 404, error: 'no such job' });
   assert.deepStrictEqual(await runner.readOutput('done-a', { stream: 'both' }), { ok: false, status: 400, error: 'bad stream' });
   assert.deepStrictEqual(await runner.output('done-a', { offset: 1, length: 4 }), { ok: true, total: 7, offset: 1, text: 'ébc' });
+});
+
+const slotsOf = async (runner) => {
+  const a = await runner.activity();
+  return { slots: a.slots, running: a.running.map((j) => j.id), waiting: a.waiting.map((j) => j.id) };
+};
+
+function holdingFixture(t, over = {}) {
+  const held = new Map();
+  const waiting = new Map();
+  const one = (id) => (held.has(id) ? Promise.resolve() : new Promise((resolve) => waiting.set(id, resolve)));
+  return fixture(t, {
+    ...over,
+    onSpawn: (c) => {
+      if (over.release && over.release(c)) { c.child.stdout.write('TOTALS: 1 pass, 0 fail, 1 tests\n'); c.child.finish(0); return; }
+      held.set(c.job, c.child);
+      if (waiting.has(c.job)) waiting.get(c.job)();
+    },
+  }).then((f) => ({ ...f, held, spawned: (ids) => Promise.all(ids.map(one)) }));
+}
+
+test('with two slots three queued jobs start two at once, the third when either ends, in queue order', async (t) => {
+  const f = await holdingFixture(t, { runnerOver: { slots: 2 } });
+  for (const id of ['s1', 's2', 's3']) assert.strictEqual((await f.upload(f.body(id))).state, 'queued');
+  await f.spawned(['s1', 's2']);
+  await drain();
+  assert.deepStrictEqual(await slotsOf(f.runner), { slots: { total: 2, inUse: 2 }, running: ['s1', 's2'], waiting: ['s3'] });
+  f.held.get('s2').finish(0);
+  await f.spawned(['s3']);
+  await drain();
+  assert.deepStrictEqual(await slotsOf(f.runner), { slots: { total: 2, inUse: 2 }, running: ['s1', 's3'], waiting: [] });
+  f.held.get('s1').finish(0);
+  f.held.get('s3').finish(0);
+  await waitState(f.runner, 's1', 'done');
+  await waitState(f.runner, 's3', 'done');
+  assert.deepStrictEqual(await slotsOf(f.runner), { slots: { total: 2, inUse: 0 }, running: [], waiting: [] });
+  assert.deepStrictEqual(f.calls.map((c) => c.job), ['s1', 's2', 's3']);
+});
+
+for (const [label, slots, total, started] of [
+  ['absent', undefined, 1, ['u1']],
+  ['1', 1, 1, ['u1']],
+  ["the string '2'", '2', 1, ['u1']],
+  ['2.5', 2.5, 1, ['u1']],
+  ['0', 0, 1, ['u1']],
+  ['9', 9, 4, ['u1', 'u2', 'u3']],
+]) {
+  test(`a slot count of ${label} runs ${total} at a time`, async (t) => {
+    const f = await holdingFixture(t, { runnerOver: slots === undefined ? {} : { slots } });
+    for (const id of ['u1', 'u2', 'u3']) assert.strictEqual((await f.upload(f.body(id))).state, 'queued');
+    await f.spawned(started);
+    await drain();
+    const snap = await slotsOf(f.runner);
+    assert.deepStrictEqual([snap.slots, snap.running, f.calls.map((c) => c.job)], [{ total, inUse: started.length }, started, started]);
+    for (const child of f.held.values()) child.finish(0);
+  });
+}
+
+test('a hold set while two box jobs run lets both finish with their own results, starts no box job until it clears, and does not block a native job', async (t) => {
+  const fb = fakeBox({ reap: (job) => { if (job.id === 'b1') throw new Error('box cleanup not confirmed: c0ffee'); } });
+  const f = await holdingFixture(t, { runnerOver: { box: fb.box, slots: 2 }, release: (c) => c.job === 'n1' || c.job === 'b3' });
+  await f.upload(f.body('b1', 'hand', { isolation: 'container' }));
+  assert.strictEqual((await f.runner.submit(f.body('b2', 'hand', { isolation: 'container' }))).state, 'queued');
+  await f.spawned(['b1', 'b2']);
+  assert.strictEqual((await f.runner.submit(f.body('b3', 'hand', { isolation: 'container' }))).state, 'queued');
+  assert.strictEqual((await f.runner.submit(f.body('n1'))).state, 'queued');
+  f.held.get('b1').stdout.write('TOTALS: 3 pass, 0 fail, 3 tests\n');
+  f.held.get('b1').finish(0);
+  const n1 = await waitState(f.runner, 'n1', 'done');
+  assert.deepStrictEqual([n1.reason, n1.exit], [null, { code: 0, signal: null }]);
+  assert.deepStrictEqual([(await f.runner.poll(['b2'])).jobs[0].state, (await f.runner.poll(['b3'])).jobs[0].state], ['running', 'queued']);
+  assert.strictEqual(fs.existsSync(path.join(f.root, 'suite-runner', 'box-hold.json')), true, 'ENTER: the failed reap holds the box');
+  f.held.get('b2').stdout.write('TOTALS: 1 pass, 2 fail, 3 tests\n');
+  f.held.get('b2').finish(1);
+  const b2 = await waitState(f.runner, 'b2', 'done');
+  await drain();
+  const b1 = (await f.runner.poll(['b1'])).jobs[0];
+  assert.deepStrictEqual([[b1.reason, b1.exit], [b2.reason, b2.exit]], [[null, { code: 0, signal: null }], [null, { code: 1, signal: null }]]);
+  assert.strictEqual((await f.runner.poll(['b3'])).jobs[0].state, 'queued');
+  await f.runner.tick();
+  const b3 = await waitState(f.runner, 'b3', 'done');
+  assert.deepStrictEqual([b3.reason, f.calls.map((c) => c.job)], [null, ['b1', 'b2', 'n1', 'b3']]);
+});
+
+test('a restart with two live jobs accounts for both as runner-restart, reaps each with its own adapter, then drains the queue', async (t) => {
+  const fb = fakeBox();
+  const native = [];
+  const f = await fixture(t, {
+    runnerOver: { box: fb.box },
+    wrap: (base) => ({ ...base, reap: (jobDir, ...rest) => { native.push(jobOf(jobDir)); return base.reap(jobDir, ...rest); } }),
+  });
+  await f.upload(f.body('warm'));
+  await waitState(f.runner, 'warm', 'done');
+  f.runner.close();
+  storeJob(f, 'cut-nat', 'running');
+  storeJob(f, 'cut-box', 'setup', { isolation: 'container', identity: BOX_IDENTITY });
+  storeJob(f, 'after', 'queued');
+  native.length = 0;
+  fb.calls.length = 0;
+  const runner = f.make({ box: fb.box, slots: 2 });
+  t.after(() => runner.close());
+  runner.start();
+  const after = await waitState(runner, 'after', 'done');
+  const states = (await runner.poll(['cut-nat', 'cut-box'])).jobs.map((j) => [j.id, j.state, j.reason]);
+  assert.deepStrictEqual(states, [['cut-nat', 'done', 'runner-restart'], ['cut-box', 'done', 'runner-restart']]);
+  assert.deepStrictEqual([after.reason, native, fb.calls.filter(([verb]) => verb === 'reap' || verb === 'sweep')], [null, ['cut-nat', 'after'], [['sweep'], ['reap', 'cut-box', 'cut-box']]]);
+});
+
+test('cancelling one of two live jobs kills only it and leaves the other running', async (t) => {
+  const f = await holdingFixture(t, { runnerOver: { slots: 2 } });
+  await f.upload(f.body('c1'));
+  await f.runner.submit(f.body('c2'));
+  await f.spawned(['c1', 'c2']);
+  await f.runner.cancel('c1');
+  assert.deepStrictEqual(f.kills, [[-f.held.get('c1').pid, 'SIGKILL']]);
+  f.held.get('c1').finish(null, 'SIGKILL');
+  const c1 = await waitState(f.runner, 'c1', 'done');
+  await drain();
+  assert.deepStrictEqual([c1.reason, (await f.runner.poll(['c2'])).jobs[0].state], ['cancelled', 'running']);
+  f.held.get('c2').finish(0);
+  assert.strictEqual((await waitState(f.runner, 'c2', 'done')).reason, null);
+});
+
+test('the release sweep after one of two box jobs ends keeps the live one\'s container and directory', async (t) => {
+  const keeps = [];
+  const fb = fakeBox({
+    reap: (job) => { if (job.id === 'b1') throw new Error('box cleanup not confirmed: c0ffee'); },
+    sweep: (keep) => { keeps.push(keep); },
+  });
+  const f = await holdingFixture(t, { runnerOver: { box: fb.box, slots: 2 } });
+  await f.upload(f.body('b1', 'hand', { isolation: 'container' }));
+  await f.runner.submit(f.body('b2', 'hand', { isolation: 'container' }));
+  await f.spawned(['b1', 'b2']);
+  f.held.get('b1').finish(0);
+  await waitState(f.runner, 'b1', 'done');
+  await drain();
+  const [b1Dir, b2Dir] = [jobPaths(f.work, 'b1').dir, jobPaths(f.work, 'b2').dir];
+  assert.deepStrictEqual([fs.existsSync(b1Dir), fs.existsSync(path.join(f.root, 'suite-runner', 'box-hold.json'))], [true, true], 'ENTER: the failed reap held b1');
+  await f.runner.tick();
+  assert.deepStrictEqual([keeps, fs.existsSync(b1Dir), fs.existsSync(b2Dir), (await f.runner.poll(['b2'])).jobs[0].state], [[[], ['b2']], false, true, 'running']);
+  f.held.get('b2').finish(0);
+  assert.strictEqual((await waitState(f.runner, 'b2', 'done')).reason, null);
+});
+
+test('an isolation that cannot run two native jobs keeps them one at a time while a box job runs beside them', async (t) => {
+  assert.deepStrictEqual([noneIsolation().parallel, 'parallel' in userIsolation()], [true, false]);
+  const fb = fakeBox();
+  const f = await holdingFixture(t, {
+    runnerOver: { box: fb.box, slots: 3 },
+    wrap: (base) => { const { parallel, ...serial } = base; return serial; },
+  });
+  await f.upload(f.body('n1'));
+  await f.runner.submit(f.body('n2'));
+  await f.runner.submit(f.body('bx', 'hand', { isolation: 'container' }));
+  await f.spawned(['n1', 'bx']);
+  await drain();
+  assert.deepStrictEqual(await slotsOf(f.runner), { slots: { total: 3, inUse: 2 }, running: ['n1', 'bx'], waiting: ['n2'] });
+  f.held.get('n1').finish(0);
+  await f.spawned(['n2']);
+  f.held.get('n2').finish(0);
+  f.held.get('bx').finish(0);
+  await waitState(f.runner, 'n2', 'done');
+  await waitState(f.runner, 'bx', 'done');
+  assert.deepStrictEqual(f.calls.map((c) => c.job), ['n1', 'bx', 'n2']);
+});
+
+test('two live jobs needing the same missing deps entry build it once: the second waits and then hits', async (t) => {
+  const setups = [];
+  let seen;
+  let blocked;
+  const first = new Promise((resolve) => { seen = resolve; });
+  const second = new Promise((resolve) => { blocked = resolve; });
+  const f = await fixture(t, {
+    runnerOver: { slots: 2, log: (m) => { if (m.includes('waits for deps entry')) blocked(); } },
+    onSpawn: (c) => {
+      if (c.cmd !== '/bin/sh') { c.child.finish(0); return; }
+      setups.push(c);
+      if (setups.length === 1) seen(); else blocked();
+    },
+  });
+  const setup = { run: 'npm ci', key: ['package.json'], paths: ['node_modules'], timeoutMs: 60000 };
+  await f.upload(f.body('d1', 'hand', { setup }));
+  await f.runner.submit(f.body('d2', 'hand', { setup }));
+  await first;
+  await second;
+  assert.strictEqual(setups.length, 1, 'one job builds the entry while the other waits');
+  const builder = setups[0].job;
+  const other = builder === 'd1' ? 'd2' : 'd1';
+  fs.mkdirSync(path.join(setups[0].opts.cwd, 'node_modules'));
+  fs.writeFileSync(path.join(setups[0].opts.cwd, 'node_modules', 'x.txt'), 'built\n');
+  setups[0].child.finish(0);
+  const [a, b] = [await waitState(f.runner, builder, 'done'), await waitState(f.runner, other, 'done')];
+  assert.deepStrictEqual([a.reason, b.reason, setups.length, f.calls.filter((c) => c.job === other).map((c) => c.cmd)], [null, null, 1, [process.execPath]]);
 });
