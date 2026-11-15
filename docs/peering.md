@@ -593,7 +593,7 @@ adapter, `boxIsolation` in suite-box.js, whose default image is the box image
 only jobs that name their image (below), and a job naming none is treated as
 on a runner with no box; native jobs
 are unchanged. A submit asks for it with `isolation: 'container'` (any other
-value is 400 `bad isolation`); the lead sends it for `gate:on` runs and for `gate:shadow` runs of a
+value is 400 `bad isolation`); the lead sends it only for `gate:shadow` runs of a
 team whose team.json has `testRunner.box: true`. Each exec of a box job is a
 fresh `docker run -i --rm --init --pull never` of the image as the engine's
 uid:gid, the job tree bind-mounted at `/job/tree`, labelled `clodex.suite=1`,

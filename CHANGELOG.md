@@ -14,7 +14,6 @@ blocks a release.
 ## Unreleased
 
 - A test box runner can run several jobs at once: set the slot count in the runner's settings (default 1).
-- `[agent:team runner gate:on]`: a team's test box result decides verify and post-merge, and the suite runs at home only when the box cannot answer.
 
 ## 5.185.0 — 2026-11-15
 

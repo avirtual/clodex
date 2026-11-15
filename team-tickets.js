@@ -19,10 +19,9 @@ const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const { idleClearAfterMs, IDLE_CLEAR_MIN_MS } = require('./assistant-sleep');
 const { localHalf, failingNames } = require('./suite-client');
-const { boxVerdict } = require('./suite-client');
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
-  DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_WIRE_PUSH: WIRE_PUSH,
+  DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS, TEST_RUNNER_WIRE_PUSH: WIRE_PUSH,
 } = require('./team-manifest');
 const {
   readTeamJson, teamTemplatePath, teamTemplateSave, mayGrantOf, ownTeamExecGrants, clampToGrantor, teamTemplateRemove, teamPromptSave, teamPromptRemove,
@@ -203,9 +202,6 @@ const TICKET_SUITE_LOCK_WAIT_MS = 20 * 60 * 1000;
 // The kill timer starts at spawn, so it must stay strictly greater than the lock wait or a queued run is reported killed;
 // the running margin must exceed scripts/run-tests.js `RUN_TIMEOUT_MS` so the runner names the hung file first.
 const TICKET_SUITE_TIMEOUT_MS = TICKET_SUITE_LOCK_WAIT_MS + 21 * 60 * 1000;
-
-const BOX_DECIDE_QUEUE_MS = 5 * 60 * 1000;
-const BOX_DECIDE_GUARD_SLACK_MS = 2 * 60 * 1000;
 
 // Keep both bounds: attempts alone let a retry into a busy merge chain stretch to hours,
 // a deadline alone lets a fast lock flap spin the timer hundreds of times.
@@ -2232,8 +2228,8 @@ function createTicketMethods(deps, shared) {
         const slowPass = suite.ran && suite.slowOnly;
         if ((!suite.ran || !suite.green) && !slowPass) {
           const why = suite.ran
-            ? `the suite FAILS on ${target} after the merge — ${suite.summary}${this._suiteWhere(suite)}\nFAILING: ${suite.failing || '(the runner reported no test names)'}`
-            : `the suite could not be RUN on ${target} after the merge${this._suiteWhere(suite)}: ${suite.error}`;
+            ? `the suite FAILS on ${target} after the merge — ${suite.summary}\nFAILING: ${suite.failing || '(the runner reported no test names)'}`
+            : `the suite could not be RUN on ${target} after the merge: ${suite.error}`;
 
           let kept;
           try {
@@ -2323,7 +2319,7 @@ function createTicketMethods(deps, shared) {
         const mergedTip = await gitWorktree.revParse(team.root, `${merged.sha}^2`).catch(() => null);
         const branchTip = await gitWorktree.revParse(team.root, branch).catch(() => null);
         this._notifyMergeLanded(team, ticketId, {
-          branch, target, sha: merged.sha, rounds, summary: `${suite.summary}${this._suiteWhere(suite)}`, changelog, unioned: merged.unioned, closeOut, mergedTip, branchTip,
+          branch, target, sha: merged.sha, rounds, summary: suite.summary, changelog, unioned: merged.unioned, closeOut, mergedTip, branchTip,
           slow: slowPass ? suite.slow.filter((n) => !mergeSlowOwned.includes(n)) : null,
           slowOwned: slowPass ? mergeSlowOwned : null,
         });
@@ -3214,26 +3210,13 @@ function createTicketMethods(deps, shared) {
       };
     },
 
-    _runnerDecideTally(team) {
-      const client = typeof deps.getSuiteClient === 'function' ? deps.getSuiteClient() : null;
-      if (!client || typeof client.decideTally !== 'function') return '';
-      let t;
-      try { t = client.decideTally({ team: team.name }); } catch { return ''; }
-      if (!t || !(t.box || t.home)) return '; gate runs: none yet';
-      const flat = (v) => String(v).replace(/[\x00-\x1f\x7f]+/g, ' ').slice(0, 60);
-      const why = (t.fallbacks || []).map((f) => `${flat(f.reason)} ${f.count}`).join(', ');
-      return `; gate runs: ${t.box} decided by the box, ${t.home} fell back to home${why ? ` (${why})` : ''}`;
-    },
-
     _runnerLabelTally(team, cur) {
-      if (cur.gate === 'on') return this._runnerDecideTally(team);
       const def = this._shadowBox(team);
       if (def === true) return '; box comparisons: none — the team has no box definition and the runner has no box image';
       return this._runnerTally(team, cur, null, def.definitionHash);
     },
 
     _runnerTally(team, cur, envKey, definitionHash = null) {
-      if (cur.gate === 'on') return this._runnerDecideTally(team);
       const flat = (v) => String(v == null ? '?' : v).replace(/[\x00-\x1f\x7f]+/g, ' ').slice(0, 120);
       const short = (v) => flat(String(v).replace(/^sha256:/, '').slice(0, 12));
       const t = this._runnerTallyData(team, envKey, definitionHash);
@@ -3264,16 +3247,16 @@ function createTicketMethods(deps, shared) {
           reply('error: set the peer, the hands mode and the gate mode in separate [agent:team runner] intents');
           return;
         }
-        if (!TEST_RUNNER_GATE.includes(intent.gate)) {
-          reply(`error: gate must be one of ${TEST_RUNNER_GATE.join(' | ')}, not "${intent.gate}"`);
+        if (intent.gate === 'on') {
+          reply('error: gate:on is not available yet — gate:shadow runs the loop\'s suites on the runner beside the local run, and [agent:team runner] shows how often they agree');
+          return;
+        }
+        if (intent.gate !== 'off' && intent.gate !== 'shadow') {
+          reply(`error: gate must be one of off | shadow, not "${intent.gate}"`);
           return;
         }
         if (!cur) {
           reply('error: no test runner is set — name one first with [agent:team runner <peer>]');
-          return;
-        }
-        if (intent.gate === 'on' && this._shadowBox(team) === true) {
-          reply('error: gate:on needs a box definition — only a container result can decide the gate; set one with [agent:team box set] first');
           return;
         }
         const m = deps.setTeamTestRunner(team.name, { gate: intent.gate });
@@ -6295,7 +6278,7 @@ function createTicketMethods(deps, shared) {
         let slowOwned = [];
         if (suite.ran && !suite.slowOnly && !suite.green) {
           log.info('ticket', `ticket ${ticketId}: verify suite red (${suite.summary}) — re-measuring once`);
-          this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: `ticket ${ticketId} verify: suite red (${suite.summary})${this._suiteWhere(suite)} — re-measuring` });
+          this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: `ticket ${ticketId} verify: suite red (${suite.summary}) — re-measuring` });
           this._stampVerifyPhase(team, ticketId, { phase: 'suite', since: Date.now(), run: 2 });
           const again = await this._runTicketSuite(team, ticket, null, runOpts);
           still = this._loadTicket(team, ticketId);
@@ -6372,7 +6355,7 @@ function createTicketMethods(deps, shared) {
           return;
         }
 
-        this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: `ticket ${ticketId} verify: suite green (${suite.summary})${this._suiteWhere(suite)} — spawning reviewer` });
+        this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: `ticket ${ticketId} verify: suite green (${suite.summary}) — spawning reviewer` });
         this._stampVerifyPhase(team, ticketId, { phase: 'reviewer', since: Date.now() });
         this._setLoopStep(team, ticketId, 'review');
         atStep = 'review';
@@ -6458,82 +6441,6 @@ function createTicketMethods(deps, shared) {
       }
     },
 
-    async _boxDecide(team, ticket, cwd, opts) {
-      const tr = team.testRunner;
-      const kind = opts && opts.merge ? 'post-merge' : 'verify';
-      const ret = { decided: false, fallback: null, out: null, client: null, wire: tr.wire === 'pull' ? 'pull' : WIRE_PUSH, kind };
-      const fall = (fallback, why) => {
-        log.warn('ticket', `ticket ${ticket.id}: ${kind} box run did not decide (${fallback}) — ${why}; running the suite here`);
-        return { ...ret, fallback };
-      };
-      const client = typeof deps.getSuiteClient === 'function' ? deps.getSuiteClient() : null;
-      if (!client || typeof client.run !== 'function') return fall('runner unreachable', 'no suite client on this node');
-      ret.client = client;
-      const def = this._shadowBox(team);
-      if (def === true) return fall('no box definition', 'the team has no box definition');
-      let via;
-      if (ret.wire === 'pull') {
-        const desk = this._runnerDesk();
-        if (!desk || !desk.attached(tr.peer)) return fall('runner unreachable', `runner ${tr.peer} dials in and is not attached`);
-        via = { peer: tr.peer, wire: 'pull' };
-      } else {
-        const peer = this._runnerPeerStatus(tr.peer);
-        if (!peer) return fall('runner unreachable', `runner ${tr.peer} is not a known peer`);
-        via = { peer: peer.id };
-      }
-      let jobId = null;
-      const job = Promise.resolve()
-        .then(() => client.run({
-          ...via, name: tr.peer, tree: cwd, kind, team: team.name, ticket: String(ticket.id), scope: 'full',
-          setup: tr.setup || null, env: tr.env || {}, route: 'gate:on', box: def,
-          queueBudgetMs: BOX_DECIDE_QUEUE_MS, budgetMs: TICKET_SUITE_TIMEOUT,
-          onJob: (j) => { if (j && j.jobId) jobId = j.jobId; },
-        }))
-        .catch((e) => ({ unknown: `client error: ${e && e.message ? e.message : e}`, res: null, record: null }));
-      const guardMs = Number.isFinite(deps.boxDecideGuardMs) ? deps.boxDecideGuardMs : TICKET_SUITE_TIMEOUT + BOX_DECIDE_GUARD_SLACK_MS;
-      let timer = null;
-      const LATE = {};
-      const guard = new Promise((resolve) => { timer = setTimeout(() => resolve(LATE), guardMs); });
-      let out = await Promise.race([job, guard]);
-      clearTimeout(timer);
-      let fallback;
-      if (out === LATE) {
-        out = { unknown: `no box result within ${guardMs}ms`, res: null, record: null };
-        fallback = 'run budget';
-      } else {
-        fallback = boxVerdict(out, def).fallback;
-      }
-      ret.out = out;
-      if (!fallback) return { ...ret, decided: true };
-      const id = jobId || (out.record && out.record.jobId) || null;
-      if (id && typeof client.cancel === 'function') {
-        try {
-          const c = await client.cancel(via.peer, id, ret.wire);
-          if (!c || !c.ok) log.warn('ticket', `ticket ${ticket.id}: cancel of box job ${id} did not confirm — ${(c && c.error) || 'no answer'}`);
-        } catch (e) {
-          log.warn('ticket', `ticket ${ticket.id}: cancel of box job ${id} failed — ${e && e.message ? e.message : e}`);
-        }
-      }
-      return fall(fallback, out.unknown || `box outcome ${(out.record && out.record.outcome) || 'unknown'}`);
-    },
-
-    _boxRow(team, ticket, box, local) {
-      if (!box.client || typeof box.client.decided !== 'function') return;
-      try {
-        box.client.decided({
-          team: team.name, kind: box.kind, ticket: String(ticket.id), wire: box.wire, box: box.out, local,
-          decidedBy: box.decided ? 'box' : 'home', fallback: box.decided ? null : box.fallback,
-        });
-      } catch (e) {
-        log.warn('ticket', `ticket ${ticket.id}: box decision row dropped — ${e && e.message ? e.message : e}`);
-      }
-    },
-
-    _suiteWhere(suite) {
-      if (!suite || !suite.decidedBy) return '';
-      return suite.decidedBy === 'box' ? ' (box)' : ` (home, box unavailable: ${suite.fallback})`;
-    },
-
     // The test lock stays pinned to team.root through CLODEX_TEST_LOCK_DIR, also under `runIn`: the runner's own default roots it at the
     // tree it runs in, a different mutex from the lead's, and the port-binding tests would deadlock.
     async _runTicketSuite(team, ticket, runIn = null, opts = {}) {
@@ -6596,14 +6503,11 @@ function createTicketMethods(deps, shared) {
       // child) stays uncovered; `headEnd` below reports whether HEAD moved.
       out.startedAt = new Date().toISOString();
       out.head = await gitWorktree.currentBranch(cwd).catch(() => null);
-      const gateRunner = team.testRunner;
-      const box = gateRunner && gateRunner.peer && gateRunner.gate === 'on' ? await this._boxDecide(team, ticket, cwd, opts) : null;
-      const boxed = box && box.decided ? box.out.res : null;
       const ledgerFile = typeof REGISTRY_DIR === 'string' && REGISTRY_DIR ? path.join(REGISTRY_DIR, 'logs', 'suite-runs.jsonl') : '';
       const ledgerId = require('crypto').randomUUID();
       const ledgerStart = Date.now();
 
-      const res = boxed ? { code: boxed.status, stdout: boxed.stdout, stderr: boxed.stderr } : await new Promise((resolve) => {
+      const res = await new Promise((resolve) => {
         let child;
         try {
           child = childProcess.spawn(process.execPath, [runner, '--reporter=dot'], {
@@ -6684,12 +6588,6 @@ function createTicketMethods(deps, shared) {
         } catch (e) {
           log.warn('ticket', `ticket ${ticket.id}: shadow comparison dropped — ${e && e.message ? e.message : e}`);
         }
-      }
-      if (box) {
-        out.decidedBy = box.decided ? 'box' : 'home';
-        out.fallback = box.decided ? null : box.fallback;
-        out.durationMs = boxed ? box.out.record.durationMs : Date.now() - ledgerStart;
-        this._boxRow(team, ticket, box, boxed ? null : localHalf({ ...res, durationMs: out.durationMs }));
       }
 
       const text = `${res.stdout || ''}\n${res.stderr || ''}`;

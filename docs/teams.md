@@ -967,9 +967,8 @@ sets through `_handleTeamRunner`, so its refusals and warnings are the verb's
 text; `hands` and `gate` are disabled until a peer is set, `gate:on` is not
 offered, and `setup`/`env` are shown as set in team.json, not edited.
 
-`[agent:team runner gate:off|shadow|on]` (lead only, a peer must be set) sets the
-gate mode; `gate:on` is refused while the team has no box definition
-(`[agent:team box set]`), since only a container result can decide. Under `gate:shadow` every
+`[agent:team runner gate:off|shadow]` (lead only, a peer must be set) sets the
+gate mode; `gate:on` is refused, not available yet. Under `gate:shadow` every
 `_runTicketSuite` call (verify, the verify re-measure, post-merge) snapshots the
 tree it is about to measure, submits it to the runner as kind `verify` or
 `post-merge` with the ticket id, and then runs the local suite exactly as with
@@ -980,31 +979,6 @@ are in. A post-merge job measures the merge commit in the root checkout. A
 remote result for a job superseded by a newer tree of the same ticket and kind
 is discarded and the stale job cancelled.
 
-Under `gate:on` the same `_runTicketSuite` calls (verify, its re-measure,
-post-merge) submit the tree to the runner first, always as a container job
-carrying the team's box definition, and wait for it; the home suite is not
-spawned meanwhile. The box result decides only when it is attested: the runner
-answered for the snapshot's tree hash, the stamped box definition hash equals
-the team's, isolation is `container`, the outcome is `pass` or `fail`, and the
-TOTALS counts are present with `tests > 0`. It then fills the same result object
-a home run does, plus `decidedBy: 'box'`. Anything else falls back: the box job
-is cancelled (the cancel call awaited, its failure logged and ignored), the
-home suite runs exactly as under `gate:off`, and its result carries
-`decidedBy: 'home'` and a `fallback` reason: `runner unreachable` (no client,
-unknown peer, a detached pull runner, the runner unreachable or refusing the
-token), `queue budget` (the job did not start within 5 min,
-`BOX_DECIDE_QUEUE_MS`), `run budget` (the 41 min client budget, the runner's
-kill, or no answer within that plus 2 min), `runner restart`, `tree mismatch`,
-`definition mismatch` (also an isolation mismatch), `no totals` (no TOTALS
-line, or zero tests) and `outcome unknown` (cancelled, refused, output
-unavailable, snapshot or upload failure), plus `no box definition` when the
-definition was cleared after the gate was set. A box result that arrives after
-the fallback began is ignored. Each run writes one compare row with
-`decidedBy` and `fallback` (docs/tests.md); bare `[agent:team runner]` counts
-them as `gate runs: N decided by the box, M fell back to home (<reason> <n>, …)`.
-The loop's suite notices (verify red and green, post-merge failure, MERGED)
-append `(box)` or `(home, box unavailable: <reason>)`.
-
 A runner can also be a node that dials this one (`wire: pull`, see
 docs/peering.md §2e): it has granted this node `run` in its box offer and
 claims suite calls from the suite desk instead of being called. `wire` is
@@ -1013,7 +987,7 @@ setting. `[agent:team runner <name>]` resolves the wire once, at set time, and
 stores it: a configured peer row means `push`; otherwise a name the suite desk
 has seen claim (attached now or earlier) means `pull`; a name that is both is
 `push`; neither is refused ("not a known peer and no node by that name has
-dialed in"). A pull runner is used for `gate:shadow` comparisons and `gate:on` runs only: naming
+dialed in"). A pull runner is used for `gate:shadow` comparisons only: naming
 one sets `hands` to `off`, `hands:full` and `hands:all` are refused for it, and
 `route()` keeps every hand run local whatever a hand-edited `hands` says, as
 does the channel host's runner lookup. Bare `[agent:team runner]` shows the

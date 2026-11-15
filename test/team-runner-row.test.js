@@ -49,7 +49,7 @@ test('t2266: the runner row with a peer shows the modes, reachability, tally and
   for (const f of ['runner-hands', 'runner-gate']) assert.strictEqual(v.field(f).disabled, false);
   for (const a of ['set-runner-hands', 'set-runner-gate']) assert.strictEqual(v.button(a).disabled, false);
   assert.deepStrictEqual(v.options('runner-hands'), ['off', 'full', 'all']);
-  assert.deepStrictEqual(v.options('runner-gate'), ['off', 'shadow', 'on']);
+  assert.deepStrictEqual(v.options('runner-gate'), ['off', 'shadow'], 'gate:on is not offered');
   assert.deepStrictEqual(v.hints, [
     ['state', 'reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; shadow comparisons: 1 agree, 2 disagree'],
     ['manifest-only', 'setup and env set in team.json — edit them there'],

@@ -1,7 +1,7 @@
 'use strict';
 
 const RUNNER_HANDS_OPTIONS = ['off', 'full', 'all'];
-const RUNNER_GATE_OPTIONS = ['off', 'shadow', 'on'];
+const RUNNER_GATE_OPTIONS = ['off', 'shadow'];
 const RUNNER_ACTS = { 'set-runner-peer': 'peer', 'set-runner-hands': 'hands', 'set-runner-gate': 'gate' };
 const RUNNER_FIELDS = { 'runner-peer': 'set-runner-peer', 'runner-hands': 'set-runner-hands', 'runner-gate': 'set-runner-gate' };
 
