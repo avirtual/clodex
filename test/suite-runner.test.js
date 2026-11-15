@@ -1420,18 +1420,32 @@ const BAD_BOX_ROWS = [
   ['a short hash', { isolation: 'container', box: { definitionHash: 'abc', rev: 1 } }, 'bad box.definitionHash'],
   ['an uppercase hash', { isolation: 'container', box: { definitionHash: 'A'.repeat(64), rev: 1 } }, 'bad box.definitionHash'],
   ['rev 0', { isolation: 'container', box: { definitionHash: HASH_A, rev: 0 } }, 'bad box.rev'],
-  ['a definition over 16 KiB', { isolation: 'container', box: { definitionHash: HASH_A, rev: 1, definition: 'x'.repeat(16385) } }, 'bad box.definition'],
+  ['a definition over 64 KiB', { isolation: 'container', box: { definitionHash: HASH_A, rev: 1, definition: 'x'.repeat(65537) } }, 'bad box.definition'],
 ];
 
 test('submit validates the named box before any Docker call', async (t) => {
   const lb = labelledBox();
   const f = await fixture(t, { runnerOver: { box: lb.box } });
-  assert.strictEqual((await f.runner.submit(f.body('ok', 'hand', { isolation: 'container', box: { definitionHash: HASH_A, rev: 1, definition: 'x'.repeat(16384) } }))).ok, true, 'ENTER: a 16 KiB definition is accepted');
+  assert.strictEqual((await f.runner.submit(f.body('ok', 'hand', { isolation: 'container', box: { definitionHash: HASH_A, rev: 1, definition: 'x'.repeat(65536) } }))).ok, true, 'ENTER: a 64 KiB definition is accepted');
   const before = lb.docker.calls.length;
   const got = [];
   for (const [name, extra] of BAD_BOX_ROWS) got.push([name, await f.runner.submit(f.body(`bad-${got.length}`, 'hand', extra))]);
   assert.deepStrictEqual(got, BAD_BOX_ROWS.map(([name, , error]) => [name, { ok: false, status: 400, error }]));
   assert.strictEqual(lb.docker.calls.length, before);
+});
+
+test('the runner accepts every box definition the team side can store', () => {
+  assert.strictEqual(require('../suite-runner').BOX_DEFINITION_MAX, 65536);
+  assert.strictEqual(require('../suite-runner').BOX_DEFINITION_MAX, require('../team-box').BOX_DEFINITION_MAX);
+});
+
+test('a submit body carrying a 64 KiB box definition fits under SUITE_SUBMIT_MAX', async (t) => {
+  const f = await fixture(t);
+  const { SUITE_SUBMIT_MAX } = require('../suite-dispatch');
+  assert.strictEqual(SUITE_SUBMIT_MAX, 262144);
+  const b = f.body('size', 'hand', { isolation: 'container', box: { definitionHash: HASH_A, rev: 1, definition: 'x'.repeat(65536) } });
+  assert.strictEqual(Buffer.byteLength(b.box.definition), 65536, 'ENTER: the definition is the size it names');
+  assert.ok(Buffer.byteLength(JSON.stringify(b)) < 262144, `submit body is ${Buffer.byteLength(JSON.stringify(b))} bytes`);
 });
 
 const { suiteRunnerOptions, startSuiteRunner } = require('../remote-wiring');

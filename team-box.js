@@ -4,10 +4,10 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { atomicWriteFileSync } = require('./fs-util');
-const { normalizeBootstrap, bootstrapScripts, bootstrapSha, BOOTSTRAP_SECRET_RE, BOOTSTRAP_SCRIPT_MAX, GHCR_REPO } = require('./sandbox');
+const { normalizeBootstrap, bootstrapScripts, bootstrapSha, BOOTSTRAP_SECRET_RE, GHCR_REPO } = require('./sandbox');
 
-const BOX_DEFINITION_MAX = BOOTSTRAP_SCRIPT_MAX;
-const BOX_DEFINITION_MAX_LINES = 400;
+const BOX_DEFINITION_MAX = 65536;
+const BOX_DEFINITION_MAX_LINES = 1000;
 const BOX_HISTORY_KEEP = 20;
 const BOX_SUBDIR = 'box';
 const BOX_FILE = 'Dockerfile';

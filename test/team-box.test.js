@@ -18,7 +18,9 @@ function mkTeam({ bootstrap = null, noBox = false } = {}) {
   const teamsDir = path.join(home, 'teams');
   const dir = path.join(teamsDir, 'clodex');
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const team = { name: 'clodex', root: '/proj', lead: 'lead', file: path.join(dir, 'team.json'), dir, roles: { lead: {}, hand: {} } };
+  const root = path.join(home, 'proj');
+  fs.mkdirSync(root);
+  const team = { name: 'clodex', root, lead: 'lead', file: path.join(dir, 'team.json'), dir, roles: { lead: {}, hand: {} } };
   fs.writeFileSync(team.file, '{"name":"clodex","root":"/proj","lead":"lead","roles":{"lead":{},"hand":{}}}\n');
   const box = { getConfig: () => ({ bootstrap }) };
   const manager = { get: (id) => (!noBox && id === 'team-clodex' ? box : null) };
@@ -41,7 +43,11 @@ function mkTeam({ bootstrap = null, noBox = false } = {}) {
     m._handleTeam(session, { type: 'team', sub: 'box', action, body });
     return injected[injected.length - 1];
   };
-  return { dir, lead, hand, fire, file: path.join(dir, 'box', 'Dockerfile'), meta: path.join(dir, 'box', 'box.json') };
+  const fireFile = (session, file, body = '') => {
+    m._handleTeam(session, { type: 'team', sub: 'box', action: 'set', file, body });
+    return injected[injected.length - 1];
+  };
+  return { home, root, dir, lead, hand, fire, fireFile, file: path.join(dir, 'box', 'Dockerfile'), meta: path.join(dir, 'box', 'box.json') };
 }
 
 const readMeta = (t) => JSON.parse(fs.readFileSync(t.meta, 'utf8'));
@@ -53,12 +59,14 @@ const REFUSED = [
   ['a secret inside a RUN heredoc', 'FROM node:25-bookworm\nRUN <<EOF\nset -e\nexport GH_TOKEN=abc\nEOF\n', /line 4 looks like a secret/],
   ['a secret mount', 'FROM node:25-bookworm\nRUN --mount=type=secret,id=npm npm ci\n', /line 2: secret and ssh mounts are refused/],
   ['# syntax=', '# syntax=docker/dockerfile:1\nFROM node:25-bookworm\n', /line 1: parser directives/],
-  ['16385 bytes', `FROM node:25-bookworm\n${'#'.repeat(16385 - 23)}\n`, /the definition is 16385 bytes; the cap is 16384/],
+  ['65537 bytes', `FROM node:25-bookworm\n${'#'.repeat(65537 - 23)}\n`, /^the definition is 65537 bytes; the cap is 65536$/],
+  ['1001 lines', `FROM node:25-bookworm\n${'RUN true\n'.repeat(1000)}`, /^the definition has 1001 lines; the cap is 1000$/],
 ];
 
 for (const [label, text, why] of REFUSED) {
   test(`validateBoxDefinition refuses: ${label}`, () => {
-    if (label === '16385 bytes') assert.strictEqual(Buffer.byteLength(text), 16385, 'ENTER: the row is the size it names');
+    if (label === '65537 bytes') assert.strictEqual(Buffer.byteLength(text), 65537, 'ENTER: the row is the size it names');
+    if (label === '1001 lines') assert.strictEqual(text.split('\n').length - 1, 1001, 'ENTER: the row is the length it names');
     const r = tb.validateBoxDefinition(text);
     assert.strictEqual(r.ok, false);
     assert.match(r.error, why);
@@ -195,4 +203,78 @@ test('box parses: set carries a greedy body, the bare form is show', () => {
   assert.deepStrictEqual(parseIntent('[agent:team box set] FROM x'), { type: 'team', sub: 'box', action: 'set', body: 'FROM x' });
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team box set] x')), 'greedy');
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:team box init]')), 'none');
+});
+
+test('box set file: parses bodiless; the body form stays greedy', () => {
+  const i = parseIntent('[agent:team box set file:ops/Dockerfile.box]');
+  assert.deepStrictEqual(i, { type: 'team', sub: 'box', action: 'set', file: 'ops/Dockerfile.box', body: '' });
+  assert.strictEqual(registry.bodyModeFor(i), 'none');
+  const b = parseIntent('[agent:team box set]\nFROM x\nRUN true');
+  assert.deepStrictEqual(b, { type: 'team', sub: 'box', action: 'set', body: 'FROM x\nRUN true' });
+  assert.strictEqual(registry.bodyModeFor(b), 'greedy');
+});
+
+test('box set file: stores the file with the hash the body form gives for the same text', () => {
+  const expected = require('node:crypto').createHash('sha256').update(GOOD, 'utf8').digest('hex');
+  const t = mkTeam();
+  fs.mkdirSync(path.join(t.root, 'ops'));
+  fs.writeFileSync(path.join(t.root, 'ops', 'Dockerfile.box'), GOOD);
+  assert.strictEqual(t.fireFile(t.lead, 'ops/Dockerfile.box'),
+    `[agent:team] box definition rev 1 · definition hash ${expected} — read ops/Dockerfile.box (${Buffer.byteLength(GOOD)} bytes), saved to ${t.file}; checked for form; not built`);
+  assert.strictEqual(fs.existsSync(t.file), true);
+  assert.strictEqual(fs.readFileSync(t.file, 'utf8'), GOOD);
+  assert.strictEqual(readMeta(t).definitionHash, expected);
+  const b = mkTeam();
+  assert.strictEqual(b.fire(b.lead, 'set', GOOD),
+    `[agent:team] box definition rev 1 · definition hash ${expected} — saved to ${b.file}; checked for form; not built`);
+  assert.strictEqual(readMeta(b).definitionHash, expected);
+});
+
+const FILE_REFUSALS = [
+  ['../ outside the root', (t) => ['../elsewhere/Dockerfile', ''], (t) => `file:../elsewhere/Dockerfile is outside the team root ${t.root}`],
+  ['an absolute path outside the root', (t) => [path.join(t.home, 'elsewhere', 'Dockerfile'), ''], (t) => `file:${path.join(t.home, 'elsewhere', 'Dockerfile')} is outside the team root ${t.root}`],
+  ['a symlink inside the root pointing outside', () => ['link.box', ''], (t) => `file:link.box resolves to ${fs.realpathSync(path.join(t.home, 'elsewhere', 'Dockerfile'))}, outside the team root ${fs.realpathSync(t.root)}`],
+  ['a missing file', () => ['ops/missing.box', ''], () => 'file:ops/missing.box does not exist'],
+  ['a directory', () => ['ops', ''], () => 'file:ops is a directory'],
+  ['a file over 64 KiB', () => ['ops/big.box', ''], () => 'file:ops/big.box is 65537 bytes; the cap is 65536'],
+  ['file: together with a body', () => ['ops/Dockerfile.box', 'FROM x\n'], () => 'box set takes file:ops/Dockerfile.box or a body, not both'],
+];
+
+for (const [label, args, why] of FILE_REFUSALS) {
+  test(`box set file: refuses ${label} and leaves the stored definition unchanged`, () => {
+    const t = mkTeam();
+    fs.mkdirSync(path.join(t.root, 'ops'));
+    fs.writeFileSync(path.join(t.root, 'ops', 'Dockerfile.box'), `${GOOD}RUN true\n`);
+    fs.writeFileSync(path.join(t.root, 'ops', 'big.box'), `FROM x\n${'#'.repeat(65537 - 8)}\n`);
+    assert.strictEqual(fs.statSync(path.join(t.root, 'ops', 'big.box')).size, 65537, 'ENTER: the big row is the size it names');
+    fs.mkdirSync(path.join(t.home, 'elsewhere'));
+    fs.writeFileSync(path.join(t.home, 'elsewhere', 'Dockerfile'), `${GOOD}RUN false\n`);
+    fs.symlinkSync(path.join(t.home, 'elsewhere', 'Dockerfile'), path.join(t.root, 'link.box'));
+    t.fire(t.lead, 'set', GOOD);
+    const before = readMeta(t);
+    assert.strictEqual(before.rev, 1);
+    const [file, body] = args(t);
+    assert.strictEqual(t.fireFile(t.lead, file, body), `[agent:team] error: ${why(t)} — the stored box definition is unchanged`);
+    const after = readMeta(t);
+    assert.deepStrictEqual([after.rev, after.definitionHash], [1, before.definitionHash]);
+    assert.strictEqual(fs.readFileSync(t.file, 'utf8'), GOOD);
+  });
+}
+
+const FETCH_LINE = (n) => `RUN curl -fL https://example.com/pkg-${String(n).padStart(3, '0')}.tgz -o /tmp/p.tgz && echo "${'ab'.repeat(32)}  /tmp/p.tgz" | sha256sum -c\n`;
+const BIG = `ARG CLODEX_BASE\nFROM \${CLODEX_BASE}\nUSER root\n${Array.from({ length: 223 }, (_, i) => FETCH_LINE(i)).join('')}RUN echo ${'x'.repeat(646)}\n`;
+
+test('a 36605-byte, 227-line definition is stored through the body form and through file:', () => {
+  assert.strictEqual(Buffer.byteLength(BIG), 36605, 'ENTER: the definition is the size it names');
+  assert.strictEqual(BIG.split('\n').length - 1, 227, 'ENTER: the definition is the length it names');
+  const expected = require('node:crypto').createHash('sha256').update(BIG, 'utf8').digest('hex');
+  const b = mkTeam();
+  assert.strictEqual(b.fire(b.lead, 'set', BIG),
+    `[agent:team] box definition rev 1 · definition hash ${expected} — saved to ${b.file}; checked for form; not built`);
+  assert.strictEqual(fs.readFileSync(b.file, 'utf8'), BIG);
+  const f = mkTeam();
+  fs.writeFileSync(path.join(f.root, 'Dockerfile.box'), BIG);
+  assert.strictEqual(f.fireFile(f.lead, 'Dockerfile.box'),
+    `[agent:team] box definition rev 1 · definition hash ${expected} — read Dockerfile.box (36605 bytes), saved to ${f.file}; checked for form; not built`);
+  assert.strictEqual(fs.readFileSync(f.file, 'utf8'), BIG);
 });

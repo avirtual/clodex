@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Fixed: a test box runner's job ledger records each job's outcome and test totals, and a client retries a failed read of a job's output instead of reporting it unavailable.
+- `[agent:team box set file:<path>]` reads a team's box Dockerfile from a file in the team root instead of the message body. A box definition may now be up to 64 KiB.
 
 ## 5.186.0 — 2026-11-15
 

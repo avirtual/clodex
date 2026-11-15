@@ -271,7 +271,8 @@ function parseTeam(cleaned) {
   if (sub === 'prompt-rm') return { type: 'team', sub, kind: positional[0] || null, stem: positional[1] || null, body: '' };
   if (sub === 'box') {
     const action = positional[0] || 'show';
-    return { type: 'team', sub, action, body: action === 'set' ? body : '' };
+    const fileM = action === 'set' ? argStr.match(/\bfile:(\S+)/) : null;
+    return { type: 'team', sub, action, ...(fileM ? { file: fileM[1] } : {}), body: action === 'set' ? body : '' };
   }
   if (sub === 'sandbox') {
     const refM = argStr.match(/\bref:(\S+)/);
@@ -316,7 +317,7 @@ const TEAM_ROLE_KV_KEYS = ['prompt', 'template', 'dispatch', 'cwd', 'model', 'ac
 
 function teamBodyMode(intent) {
   if (intent.sub === 'template-save' || intent.sub === 'prompt-save') return 'greedy';
-  if (intent.sub === 'box' && intent.action === 'set') return 'greedy';
+  if (intent.sub === 'box' && intent.action === 'set') return intent.file != null && !(intent.body || '').trim() ? 'none' : 'greedy';
   if (intent.sub === 'sandbox' && intent.action === 'bootstrap' && (intent.op === 'setup' || intent.op === 'start')) return 'greedy';
   if (intent.sub === 'role-add' || intent.sub === 'role-set') {
     const carriesKv = TEAM_ROLE_KV_KEYS.some((k) => intent[k] != null);

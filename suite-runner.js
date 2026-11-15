@@ -16,7 +16,7 @@ const KIND_ORDER = { 'post-merge': 0, verify: 1, hand: 2 };
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const SHA_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 const BOX_HASH_RE = /^[0-9a-f]{64}$/;
-const BOX_DEFINITION_MAX = 16384;
+const BOX_DEFINITION_MAX = 65536;
 const BOX_REFUSALS = { 'no-image': 'no-image', ambiguous: 'ambiguous-image' };
 const REF_RE = /^(?![-/.])(?!.*\.\.)(?!.*\/\/)[A-Za-z0-9._/-]{1,200}$/;
 const ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
@@ -1204,4 +1204,4 @@ function createSuiteRunner({
   return { info, activity, submit, putPack, commit, poll, output, readOutput, cancel, tick, start, close, busy: anyLive };
 }
 
-module.exports = { createSuiteRunner, noneIsolation, resolveFs, userIsolation, envIdentity, jobPaths, statePaths, jobPath, jobLang, DEFAULT_LIMITS };
+module.exports = { createSuiteRunner, noneIsolation, resolveFs, userIsolation, envIdentity, jobPaths, statePaths, jobPath, jobLang, DEFAULT_LIMITS, BOX_DEFINITION_MAX };

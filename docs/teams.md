@@ -839,10 +839,18 @@ build on the Clodex base with `ARG CLODEX_BASE` and `FROM ${CLODEX_BASE}`, as
 yet: it refuses a file with no `FROM`, `# syntax=` and `# escape=`, `COPY`/`ADD`
 without `--from=` (there is no build context: the definition is one file),
 secret and ssh mounts, secret-looking lines (in `RUN` heredocs too), and a file
-over 16384 bytes or 400 lines.
+over the cap. A box definition is at most 64 KiB and 1000 lines, on both the team
+and the runner; a runner older than this release refuses definitions over 16 KiB.
 
 - `[agent:team box set]` + the Dockerfile as body, closed by `[agent:end]`: a
   refused body leaves the stored file as it was.
+- `[agent:team box set file:<path>]`, no body: reads the Dockerfile from a file
+  and stores it exactly as the body form would (same form check, rev and
+  definition hash); the reply also names the file and its byte count. The path
+  is relative to the team root, or absolute inside it, and must still be inside
+  the root after symlinks resolve. Refused: a path outside the root, a missing
+  file, a directory, a file over 64 KiB, and `file:` together with a body; every
+  refusal leaves the stored file as it was.
 - `[agent:team box init]`: generates the first Dockerfile from the team sandbox
   bootstrap (`packages` and `setup`; `start` stays runtime-only). Refused when a
   definition exists (`box clear` first) or the team has no sandbox box config.
