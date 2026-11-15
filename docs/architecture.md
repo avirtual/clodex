@@ -385,6 +385,8 @@ bundle), whose packaged form is the Docker image under
   SCANNED_MODULES.
 - **suite-activity-view.js** — pure rows from the runner's `activity()` snapshot: `menuRows`
   (the Window menu Test Boxes section, desktop and browser) and `activityView` (the Test Box Activity dialog).
+- **renderer/lib/testjob-output.js** — the Test Box Activity output pane's pure half: `sanitizeOutput`, the capped
+  `createOutputBuffer` and the polling `createOutputFollower`.
 - **suite-runner.js** — runner-mode engine for remote suite jobs, plain methods
   served through `suite-dispatch.js` under `/api/suite/*` when remote-wiring builds it (`CLODEX_SUITE_RUNNER=1`). `createSuiteRunner({root, work, isolation,
   limits, spawn, now, log, timers, onActivity})` returns `info`, `activity`, `submit`, `putPack`,
