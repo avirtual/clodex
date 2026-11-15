@@ -829,6 +829,7 @@ function createRemoteWiring(deps) {
         suiteRunner: getSuiteRunner(),
         suiteRunnerError: () => suiteRunnerError,
         listTestjobs: suiteActivity,
+        readTestjobOutput: suiteOutput,
         suiteDesk: suiteDesk || null,
         suiteToken: process.env.CLODEX_SUITE_TOKEN || null,
         pagePath: path.join(__dirname, 'renderer', 'remote.html'),
@@ -1453,6 +1454,13 @@ function createRemoteWiring(deps) {
     return { enabled: suiteRunnerWanted(), snapshot: runner && typeof runner.activity === 'function' ? await runner.activity() : null };
   }
 
+  async function suiteOutput(id, opts = {}) {
+    const runner = closed ? null : suiteRunner;
+    if (!runner || typeof runner.readOutput !== 'function') return { ok: false, status: 501, error: 'the test runner is off' };
+    const { stream, offset, length } = opts || {};
+    return runner.readOutput(String(id), { stream, offset: offset == null ? null : offset, length });
+  }
+
   function suiteRunnerState() {
     const s = getUiSettings().get();
     const wanted = !!suiteRunnerOptions(process.env, REGISTRY_DIR, { setting: s.suiteRunner });
@@ -1500,7 +1508,7 @@ function createRemoteWiring(deps) {
 
   return {
     syncRemoteServer, refreshRemoteToken, shutdownRemoteServer, suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner,
-    suiteActivity, suiteActivityNow,
+    suiteActivity, suiteActivityNow, suiteOutput,
     getSuiteEngine:() => (closed ? null : getSuiteRunner()),
   };
 }

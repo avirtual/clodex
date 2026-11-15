@@ -85,7 +85,7 @@ function tailTotals(file) {
   }
 }
 
-function activityJob(job) {
+function activityJob(job, lastOutputAt = null) {
   const container = job.isolation === 'container';
   const box = container && job.identity && job.identity.box ? job.identity.box : null;
   return {
@@ -95,13 +95,14 @@ function activityJob(job) {
     definition: box && box.definitionHash ? String(box.definitionHash).slice(0, 12) : null,
     phase: PHASES[job.state] || null,
     queuedAt: job.queuedAt, startedAt: job.startedAt != null ? job.startedAt : null,
+    lastOutputAt,
   };
 }
 
-function finishedJob(job, totals) {
+function finishedJob(job, totals, lastOutputAt = null) {
   let outcome = job.reason;
   if (outcome == null) outcome = totals ? (totals.fail > 0 ? 'fail' : 'pass') : 'no-summary';
-  const { phase, ...row } = activityJob(job);
+  const { phase, ...row } = activityJob(job, lastOutputAt);
   return {
     ...row, outcome, pass: totals ? totals.pass : null, fail: totals ? totals.fail : null, endedAt: job.endedAt,
     waitMs: (job.startedAt != null ? job.startedAt : job.endedAt) - job.queuedAt,
@@ -204,7 +205,7 @@ function utf8Slice(buf) {
     const need = lead >= 0xf0 ? 4 : lead >= 0xe0 ? 3 : lead >= 0xc0 ? 2 : 1;
     if (end - back < need) end = back;
   }
-  return { skip: start, text: buf.subarray(start, end).toString('utf8') };
+  return { skip: start, end, text: buf.subarray(start, end).toString('utf8') };
 }
 
 function waitChild(child) {
@@ -427,6 +428,16 @@ function createSuiteRunner({
   const jobStore = (id) => path.join(storeDir, id);
   const jobWork = (id) => jobPaths(work, id).dir;
   const outFile = (id, stream) => path.join(jobStore(id), stream);
+  const lastOutputOf = (id) => {
+    let at = null;
+    for (const s of ['stdout', 'stderr']) {
+      try {
+        const m = fs.statSync(outFile(id, s)).mtimeMs;
+        if (at == null || m > at) at = m;
+      } catch {}
+    }
+    return at == null ? null : Math.floor(at);
+  };
   const packFile = (id) => path.join(jobStore(id), 'pack');
   const save = (job) => writeJson(path.join(jobStore(job.id), 'job.json'), job);
   const anyLive = () => [...jobs.values()].some((j) => LIVE.has(j.state));
@@ -908,9 +919,9 @@ function createSuiteRunner({
     return {
       at,
       slots: { total: 1, inUse: live.length },
-      running: live.map(activityJob),
-      waiting: [...queue(), ...uploading].map(activityJob),
-      recent: done.map((j) => finishedJob(j, j.reason == null ? tailTotals(outFile(j.id, 'stdout')) : null)),
+      running: live.map((j) => activityJob(j, lastOutputOf(j.id))),
+      waiting: [...queue(), ...uploading].map((j) => activityJob(j, lastOutputOf(j.id))),
+      recent: done.map((j) => finishedJob(j, j.reason == null ? tailTotals(outFile(j.id, 'stdout')) : null, lastOutputOf(j.id))),
       box: await boxLine(),
     };
   }
@@ -1044,15 +1055,36 @@ function createSuiteRunner({
     const job = jobs.get(id);
     if (!job) return fail(404, 'no such job');
     if (stream !== 'stdout' && stream !== 'stderr') return fail(400, 'bad stream');
+    const s = readSlice(id, stream, offset, length, false);
+    if (!s) return { ok: true, total: 0, offset: 0, text: '' };
+    return { ok: true, total: s.total, offset: s.offset, text: s.text };
+  }
+
+  function readSlice(id, stream, offset, length, tail) {
     let total = 0;
-    try { total = fs.statSync(outFile(id, stream)).size; } catch { return { ok: true, total: 0, offset: 0, text: '' }; }
-    const start = Math.max(0, Math.min(Number(offset) || 0, total));
-    const len = Math.max(0, Math.min(Number(length) || 0, lim.peekMax, total - start));
+    try { total = fs.statSync(outFile(id, stream)).size; } catch { return null; }
+    const cap = Math.max(0, Math.min(Number(length) || 0, lim.peekMax));
+    const start = tail ? Math.max(0, total - cap) : Math.max(0, Math.min(Number(offset) || 0, total));
+    const len = Math.min(cap, total - start);
     const buf = Buffer.alloc(len);
     const fd = fs.openSync(outFile(id, stream), 'r');
     try { fs.readSync(fd, buf, 0, len, start); } finally { fs.closeSync(fd); }
-    const { skip, text } = utf8Slice(buf);
-    return { ok: true, total, offset: start + skip, text };
+    const { skip, end, text } = utf8Slice(buf);
+    return { total, offset: start + skip, next: start + end, text };
+  }
+
+  async function readOutput(id, { stream = 'stdout', offset = null, length = lim.peekMax } = {}) {
+    const job = jobs.get(id);
+    if (!job) return fail(404, 'no such job');
+    if (stream !== 'stdout' && stream !== 'stderr') return fail(400, 'bad stream');
+    const s = readSlice(id, stream, offset, length, offset == null);
+    const head = {
+      ok: true, id, stream, phase: PHASES[job.state] || 'done', live: LIVE.has(job.state), at: now(),
+      queuedAt: job.queuedAt, startedAt: job.startedAt != null ? job.startedAt : null,
+      endedAt: job.endedAt != null ? job.endedAt : null, lastOutputAt: lastOutputOf(id),
+    };
+    if (!s) return { ...head, expired: job.state === 'done' && job.startedAt != null, total: 0, offset: 0, next: 0, text: '' };
+    return { ...head, expired: false, ...s };
   }
 
   async function stop(id, reason) {
@@ -1109,7 +1141,7 @@ function createSuiteRunner({
 
   recover().then(reconcile).catch((e) => log(`suite-runner: reconcile failed: ${e.message}`)).then(() => { recovering = false; if (pumpAfterRecovery) pump(); });
 
-  return { info, activity, submit, putPack, commit, poll, output, cancel, tick, start, close, busy: anyLive };
+  return { info, activity, submit, putPack, commit, poll, output, readOutput, cancel, tick, start, close, busy: anyLive };
 }
 
 module.exports = { createSuiteRunner, noneIsolation, resolveFs, userIsolation, envIdentity, jobPaths, statePaths, jobPath, jobLang, DEFAULT_LIMITS };
