@@ -1789,3 +1789,49 @@ test('two live jobs needing the same missing deps entry build it once: the secon
   const [a, b] = [await waitState(f.runner, builder, 'done'), await waitState(f.runner, other, 'done')];
   assert.deepStrictEqual([a.reason, b.reason, setups.length, f.calls.filter((c) => c.job === other).map((c) => c.cmd)], [null, null, 1, [process.execPath]]);
 });
+
+test('the ledger row of a finished job carries its outcome and totals, and activity agrees', async (t) => {
+  let big = null;
+  const f = await fixture(t, {
+    onSpawn: (c) => {
+      if (c.job === 'big') big = c.child;
+      else { c.child.stdout.write('no summary here\n'); c.child.finish(0); }
+    },
+  });
+  await f.upload(f.body('big'));
+  await waitState(f.runner, 'big', 'running');
+  assert.strictEqual((await f.upload(f.body('gone'))).state, 'queued');
+  await f.runner.cancel('gone');
+  big.stdout.write('noise line\n'.repeat(7000));
+  big.stdout.write('TOTALS: 3 pass, 1 fail, 4 tests\n');
+  big.finish(1);
+  await waitState(f.runner, 'big', 'done');
+  assert.strictEqual((await f.upload(f.body('quiet'))).state, 'queued');
+  await waitState(f.runner, 'quiet', 'done');
+  const rows = fs.readFileSync(path.join(f.root, 'suite-runner', 'ledger.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.strictEqual(rows.length, 3);
+  assert.ok(fs.statSync(path.join(f.root, 'suite-runner', 'jobs', 'big', 'stdout')).size > 64 * 1024, 'ENTER: the summary sits past 64 KiB of output');
+  assert.deepStrictEqual(rows.map(({ jobId, outcome, pass, fail, tests }) => ({ jobId, outcome, pass, fail, tests })), [
+    { jobId: 'gone', outcome: 'unknown', pass: null, fail: null, tests: null },
+    { jobId: 'big', outcome: 'fail', pass: 3, fail: 1, tests: 4 },
+    { jobId: 'quiet', outcome: 'no-summary', pass: null, fail: null, tests: null },
+  ]);
+  const recent = (await f.runner.activity()).recent.map(({ id, outcome, pass, fail }) => ({ id, outcome, pass, fail }));
+  assert.deepStrictEqual(recent.sort((a, b) => a.id.localeCompare(b.id)), [
+    { id: 'big', outcome: 'fail', pass: 3, fail: 1 },
+    { id: 'gone', outcome: 'cancelled', pass: null, fail: null },
+    { id: 'quiet', outcome: 'no-summary', pass: null, fail: null },
+  ]);
+});
+
+test('activity reads the totals of a job whose stored record predates outcomes from its stdout tail', async (t) => {
+  const f = await fixture(t, { onSpawn: () => {} });
+  f.runner.close();
+  const record = { jobId: 'old', outcome: null, reason: null, pass: null, fail: null, tests: null };
+  storeJob(f, 'old', 'done', { exit: { code: 1, signal: null }, queuedAt: 1000, startedAt: 2000, endedAt: 3000, record });
+  fs.writeFileSync(path.join(f.root, 'suite-runner', 'jobs', 'old', 'stdout'), 'TOTALS: 2 pass, 1 fail, 3 tests\n');
+  const runner = f.make();
+  t.after(() => runner.close());
+  const recent = (await runner.activity()).recent.map(({ id, outcome, pass, fail }) => ({ id, outcome, pass, fail }));
+  assert.deepStrictEqual(recent, [{ id: 'old', outcome: 'fail', pass: 2, fail: 1 }]);
+});

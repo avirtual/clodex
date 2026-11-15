@@ -10,6 +10,7 @@ const POLL_SLACK_MS = 10000;
 const RETRY_MS = 15000;
 const COMMIT_TIMEOUT_MS = 120000;
 const SLICE_BYTES = 256 * 1024;
+const SLICE_ATTEMPTS = 3;
 const MAX_RESUMES = 8;
 const DEFAULT_BUDGET_MS = 36 * 60 * 1000;
 const DEFAULT_RUN_MS = 21 * 60 * 1000;
@@ -145,14 +146,14 @@ function createSuiteClient({
     }
   }
 
-  async function ask(ctx, fn, progress) {
-    for (;;) {
+  async function ask(ctx, fn, progress, attempts = Infinity) {
+    for (let n = 1; ; n += 1) {
       const r = await once(ctx.peer, fn, ctx.wire);
       if (ctx.wire === 'pull' && r.status === 503 && r.body == null) { try { ctx.onDetach(); } catch {} }
       if (REFUSED.has(r.status)) throw Object.assign(new Error('runner refused the token'), { refused: true });
       if (!UNREACHABLE.has(r.status) || (r.body && r.body.code === 'box-unavailable')) return r;
       const left = deadlineOf(ctx) - now();
-      if (left <= 0) return { ...r, unreachable: true };
+      if (left <= 0 || n >= attempts) return { ...r, unreachable: true };
       progress(`waiting for runner ${ctx.peer}`);
       await sleep(Math.min(retryMs, left));
     }
@@ -262,12 +263,12 @@ function createSuiteClient({
     return { retry: 'upload' };
   }
 
-  async function readOutput(ctx, jobId, stream) {
+  async function readOutput(ctx, jobId, stream, progress) {
     let text = '';
     let offset = 0;
     for (;;) {
       const q = `stream=${stream}&offset=${offset}&length=${SLICE_BYTES}`;
-      const r = await once(ctx.peer, (c) => c.suiteAsk('GET', `/api/suite/jobs/${encodeURIComponent(jobId)}/output?${q}`), ctx.wire);
+      const r = await ask(ctx, (c) => c.suiteAsk('GET', `/api/suite/jobs/${encodeURIComponent(jobId)}/output?${q}`), progress, SLICE_ATTEMPTS);
       if (restarted(r)) return RESTARTED;
       if (!r.body || !r.body.ok) return null;
       text += r.body.text;
@@ -323,8 +324,8 @@ function createSuiteClient({
       if (job.state !== 'done') continue;
       if (job.reason === 'runner-restart') return { retry: 'runner-restart', job };
       if (job.queueMs != null) markStarted(ctx, job);
-      const stdout = await readOutput(ctx, jobId, 'stdout');
-      const stderr = stdout === RESTARTED ? RESTARTED : await readOutput(ctx, jobId, 'stderr');
+      const stdout = await readOutput(ctx, jobId, 'stdout', progress);
+      const stderr = stdout === RESTARTED ? RESTARTED : await readOutput(ctx, jobId, 'stderr', progress);
       if (stdout === RESTARTED || stderr === RESTARTED) return { retry: 'runner-restart', job };
       if (stdout == null || stderr == null) return { unknown: 'runner output unavailable', job };
       return { job, stdout, stderr, ...doneVerdict(ctx, job, stderr) };
