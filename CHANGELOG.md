@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A test box runner can run several jobs at once: set the slot count in the runner's settings (default 1).
+
 ## 5.185.0 — 2026-11-15
 
 - Test Box Activity: open a job to read its output while it runs or after it ends; `clodexctl logs testjob <id>` prints the same from the command line.

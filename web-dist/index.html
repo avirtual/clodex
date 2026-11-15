@@ -11614,6 +11614,11 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           </div>
           <p id="prefs-suite-runner-work-env" class="hint-text hidden">set by environment</p>
           <div class="prefs-row" style="margin-top: 6px;">
+            <span>Jobs at once</span>
+            <input type="number" id="prefs-suite-runner-slots" min="1" max="4" step="1" value="1" style="flex: none; width: 4em;">
+          </div>
+          <p class="hint-text">How many test jobs this machine runs side by side (1 to 4). Native jobs under a separate user account still run one at a time.</p>
+          <div class="prefs-row" style="margin-top: 6px;">
             <span>Box image</span>
             <input type="text" id="prefs-suite-runner-boxImage" placeholder="sha256:…" autocomplete="off" spellcheck="false" style="flex: 1;">
             <button id="prefs-suite-runner-apply" class="secondary" type="button" style="flex: none;">Apply</button>
@@ -31019,11 +31024,13 @@ Allow?`;
         const forced = new Set(shown && shown.forced || []);
         const pick = (k, v) => forced.has(k) ? stored[k] : v;
         const boxImage = pick("boxImage", form.boxImage.trim() || null);
+        const slots = form.slots == null ? stored.slots : Number(form.slots);
         return {
           enabled: pick("enabled", form.enabled),
           isolation: pick("isolation", form.isolation),
           work: pick("work", form.work.trim() || null),
-          ...boxImage ? { boxImage } : {}
+          ...boxImage ? { boxImage } : {},
+          ...Number.isInteger(slots) && slots > 1 ? { slots } : {}
         };
       }
       function claimLines(claims, now = Date.now()) {
@@ -59952,6 +59959,7 @@ Click for live activity`;
       var prefsSuiteRunnerIsolation = document.getElementById("prefs-suite-runner-isolation");
       var prefsSuiteRunnerWork = document.getElementById("prefs-suite-runner-work");
       var prefsSuiteRunnerBoxImage = document.getElementById("prefs-suite-runner-boxImage");
+      var prefsSuiteRunnerSlots = document.getElementById("prefs-suite-runner-slots");
       var prefsSuiteRunnerApply = document.getElementById("prefs-suite-runner-apply");
       var prefsSuiteRunnerStatus = document.getElementById("prefs-suite-runner-status");
       var prefsSuiteRunnerNoneNote = document.getElementById("prefs-suite-runner-none-note");
@@ -63190,6 +63198,7 @@ ${res.stderr}` : "");
         prefsSuiteRunnerWork.placeholder = st.defaultWork || "default for this platform";
         prefsSuiteRunnerBoxImage.value = forced.has("boxImage") ? eff.boxImage || "" : rec.boxImage || "";
         prefsSuiteRunnerBoxImage.disabled = forced.has("boxImage");
+        prefsSuiteRunnerSlots.value = String(rec.slots || 1);
         for (const k of ["enabled", "isolation", "work", "boxImage"]) {
           document.getElementById(`prefs-suite-runner-${k}-env`).classList.toggle("hidden", !forced.has(k));
         }
@@ -63217,7 +63226,8 @@ ${res.stderr}` : "");
           enabled: prefsSuiteRunnerEnabled.checked,
           isolation: prefsSuiteRunnerIsolation.value,
           work: prefsSuiteRunnerWork.value,
-          boxImage: prefsSuiteRunnerBoxImage.value
+          boxImage: prefsSuiteRunnerBoxImage.value,
+          slots: prefsSuiteRunnerSlots.value
         });
       }
       if (prefsSuiteRunnerBlock) {
