@@ -423,7 +423,7 @@ test('desktop quiet timer refreshes the cached runner snapshot before it rebuild
   t.after(() => { if (tz === undefined) delete process.env.TZ; else process.env.TZ = tz; });
   const now = Date.UTC(2026, 10, 13, 10, 42, 40);
   const running = { id: 'j1', team: 'avh', ticket: 't1579', kind: 'verify', origin: null, isolation: 'container', image: 'bbbbbbbbbbbb', definition: null, phase: 'run', queuedAt: now - 601000, startedAt: now - 600000, runStartedAt: now - 600000, lastOutputAt: now - 241000 };
-  const snapOf = (job) => ({ at: now, slots: { total: 1, inUse: 1 }, running: [job], waiting: [], recent: [], box: { state: 'ready', image: 'bbbbbbbbbbbb' } });
+  const snapOf = (job, at = now) => ({ at, slots: { total: 1, inUse: 1 }, running: [job], waiting: [], recent: [], box: { state: 'ready', image: 'bbbbbbbbbbbb' } });
   t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now });
   const rows = (tpl) => peersSection(normalizeDesktop(desktopMenu(tpl, 'Window').submenu), 'desktop');
   const runCase = (fresh) => {
@@ -434,7 +434,7 @@ test('desktop quiet timer refreshes the cached runner snapshot before it rebuild
     let menus = null;
     desktopTemplate({
       testBoxes: holder,
-      refreshSuiteActivity: () => { refreshes += 1; holder.snapshot = snapOf(fresh()); menus.buildAppMenu(); },
+      refreshSuiteActivity: () => { refreshes += 1; holder.snapshot = snapOf(fresh(), Date.now()); menus.buildAppMenu(); },
       onMenu: (tpl) => builds.push(rows(tpl)),
       onMenus: (m) => { menus = m; },
     });
@@ -452,4 +452,34 @@ test('desktop quiet timer refreshes the cached runner snapshot before it rebuild
   const stuck = runCase(() => running);
   assert.deepStrictEqual([stuck.refreshes, stuck.builds], [1, 2]);
   assert.ok(stuck.last.includes('[avh · t1579 · verify · box · since 10:32 · quiet since 10:38]'), `a job that stayed silent reads quiet: ${stuck.last.join(' | ')}`);
+});
+
+test('desktop: an unrelated rebuild after the clock jumps past the crossing refreshes the stale snapshot at once, and does not loop', (t) => {
+  const tz = process.env.TZ;
+  process.env.TZ = 'UTC';
+  t.after(() => { if (tz === undefined) delete process.env.TZ; else process.env.TZ = tz; });
+  const now = Date.UTC(2026, 10, 13, 10, 42, 40);
+  const running = { id: 'j1', team: 'avh', ticket: 't1579', kind: 'verify', origin: null, isolation: 'container', image: 'bbbbbbbbbbbb', definition: null, phase: 'run', queuedAt: now - 601000, startedAt: now - 600000, runStartedAt: now - 600000, lastOutputAt: now - 241000 };
+  const snapOf = (job, at) => ({ at, slots: { total: 1, inUse: 1 }, running: [job], waiting: [], recent: [], box: { state: 'ready', image: 'bbbbbbbbbbbb' } });
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now });
+  const holder = { enabled: true, snapshot: snapOf(running, now) };
+  const builds = [];
+  let refreshes = 0;
+  let menus = null;
+  desktopTemplate({
+    testBoxes: holder,
+    refreshSuiteActivity: () => { refreshes += 1; holder.snapshot = snapOf({ ...running, lastOutputAt: Date.now() - 1000 }, Date.now()); menus.buildAppMenu(); },
+    onMenu: (tpl) => builds.push(peersSection(normalizeDesktop(desktopMenu(tpl, 'Window').submenu), 'desktop')),
+    onMenus: (m) => { menus = m; },
+  });
+  assert.ok(builds.length === 1 && builds[0].includes('[avh · t1579 · verify · box · since 10:32]'), `ENTER: the cached row is plain: ${builds[0].join(' | ')}`);
+  t.mock.timers.setTime(now + 120000);
+  menus.buildAppMenu();
+  t.mock.timers.tick(0);
+  assert.strictEqual(refreshes, 1, 'the unrelated rebuild sees a crossing past the snapshot time and refreshes at once');
+  assert.strictEqual(builds.length, 3);
+  assert.ok(builds[2].includes('[avh · t1579 · verify · box · since 10:32]'), `the refreshed row, with fresh output, reads plain: ${builds[2].join(' | ')}`);
+  t.mock.timers.tick(0);
+  t.mock.timers.tick(0);
+  assert.deepStrictEqual([refreshes, builds.length], [1, 3], 'no rebuild loop follows');
 });

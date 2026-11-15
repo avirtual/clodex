@@ -1102,7 +1102,8 @@ function createAppMenus(deps) {
       const suiteState = typeof getSuiteActivity === 'function' ? getSuiteActivity() : null;
       const builtAt = Date.now();
       const testBoxRows = testBoxMenuRows(suiteState, builtAt, 'clock');
-      armQuietRefresh(testBoxQuietAt(suiteState, builtAt), builtAt);
+      const judgedAt = typeof refreshSuiteActivity === 'function' && suiteState && suiteState.snapshot && suiteState.snapshot.at != null ? suiteState.snapshot.at : builtAt;
+      armQuietRefresh(testBoxQuietAt(suiteState, judgedAt), builtAt);
       if (testBoxRows.length) wsMenu.submenu.push({ type: 'separator' });
       for (const row of testBoxRows) {
         if (row.kind === 'open') wsMenu.submenu.push({ label: row.label, click: () => sendToFocused('request-open-test-activity') });
