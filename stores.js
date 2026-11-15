@@ -36,10 +36,16 @@ const { sanitizeBoxOffer } = require('./box-offer');
 
 const SUITE_RUNNER_KEYS = ['enabled', 'isolation', 'work'];
 const BOX_IMAGE_RE = /^sha256:[0-9a-f]{64}$/;
+const SUITE_RUNNER_OPTIONAL = ['boxImage', 'slots'];
+const MAX_SUITE_SLOTS = 4;
+
+function suiteSlots(v) {
+  return Number.isInteger(v) ? Math.min(MAX_SUITE_SLOTS, Math.max(1, v)) : 1;
+}
 
 function sanitizeSuiteRunner(v) {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
-  const keys = Object.keys(v).filter((k) => k !== 'boxImage');
+  const keys = Object.keys(v).filter((k) => !SUITE_RUNNER_OPTIONAL.includes(k));
   if (keys.length !== SUITE_RUNNER_KEYS.length || !keys.every((k) => SUITE_RUNNER_KEYS.includes(k))) return null;
   if (v.boxImage != null && (typeof v.boxImage !== 'string' || !BOX_IMAGE_RE.test(v.boxImage))) return null;
   if (typeof v.enabled !== 'boolean') return null;
@@ -48,7 +54,8 @@ function sanitizeSuiteRunner(v) {
     if (typeof v.work !== 'string' || v.work.length > 1024 || !path.isAbsolute(v.work)) return null;
     if (v.work.split(/[\\/]/).includes('..')) return null;
   }
-  return { enabled: v.enabled, isolation: v.isolation, work: v.work, ...(v.boxImage ? { boxImage: v.boxImage } : {}) };
+  const slots = suiteSlots(v.slots);
+  return { enabled: v.enabled, isolation: v.isolation, work: v.work, ...(v.boxImage ? { boxImage: v.boxImage } : {}), ...(slots > 1 ? { slots } : {}) };
 }
 
 function execRowOf(name, obj) {

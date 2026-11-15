@@ -1021,7 +1021,7 @@ function fakeBox(opts = {}) {
   const box = {
     mode: 'container', user: 'box', node: 'node', detach: true,
     async probe() { return opts.probe ? opts.probe() : { state: 'ready', env: BOX_IDENTITY }; },
-    async sweep() { calls.push(['sweep']); if (opts.sweep) await opts.sweep(); },
+    async sweep(keep) { calls.push(['sweep']); if (opts.sweep) await opts.sweep(keep); },
     env() { return { ...BOX_FIXED_ENV }; },
     async prepare(jobDir, mirror, entry) { calls.push(['prepare', jobOf(jobDir), entry ? 'entry' : null]); },
     spawn({ jobDir, cwd, argv, env, spawn: sp, job }) {

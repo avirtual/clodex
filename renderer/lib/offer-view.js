@@ -130,11 +130,13 @@ function suiteRunnerRecordFromForm(shown, form) {
   const forced = new Set((shown && shown.forced) || []);
   const pick = (k, v) => (forced.has(k) ? stored[k] : v);
   const boxImage = pick('boxImage', form.boxImage.trim() || null);
+  const slots = form.slots == null ? stored.slots : Number(form.slots);
   return {
     enabled: pick('enabled', form.enabled),
     isolation: pick('isolation', form.isolation),
     work: pick('work', form.work.trim() || null),
     ...(boxImage ? { boxImage } : {}),
+    ...(Number.isInteger(slots) && slots > 1 ? { slots } : {}),
   };
 }
 
