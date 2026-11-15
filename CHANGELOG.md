@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.185.0 — 2026-11-15
+
 - Test Box Activity: open a job to read its output while it runs or after it ends; `clodexctl logs testjob <id>` prints the same from the command line.
 - Test box rows show how long a running job has been silent, so a stuck job is visible at a glance.
 
