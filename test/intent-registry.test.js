@@ -220,7 +220,10 @@ function parseIntentLegacy(rawLine) {
     if (sub === 'template-rm') return { type: 'team', sub, stem: positional[0] || null, body: '' };
     if (sub === 'prompt-save') return { type: 'team', sub, kind: positional[0] || null, stem: positional[1] || null, body };
     if (sub === 'prompt-rm') return { type: 'team', sub, kind: positional[0] || null, stem: positional[1] || null, body: '' };
-    if (sub === 'box') return { type: 'team', sub, action: positional[0] || 'show', body: (positional[0] || 'show') === 'set' ? body : '' };
+    if (sub === 'box') {
+      const fileM = positional[0] === 'set' ? argStr.match(/\bfile:(\S+)/) : null;
+      return { type: 'team', sub, action: positional[0] || 'show', ...(fileM ? { file: fileM[1] } : {}), body: (positional[0] || 'show') === 'set' ? body : '' };
+    }
     // t808's sandbox verb, mirrored here in the same commit as parseTeam's —
     // same lockstep rule as gather and the four file verbs above.
     if (sub === 'sandbox') {
@@ -473,7 +476,7 @@ const ADVERSARIAL = [
   '[agent:team sandbox status]', '[agent:team sandbox ref:release/1.2]', '[agent:team sandboxx]',
   '[agent:team sandbox port add 3000:3100 proto:http dev server]', '[agent:team sandbox port rm 3000]', '[agent:team sandbox port list]',
   '[agent:team sandbox bootstrap packages smbclient mariadb-server]', '[agent:team sandbox bootstrap setup] echo hi',
-  '[agent:team sandbox bootstrap show setup]', '[agent:team sandbox bootstrap clear]', '[agent:team sandbox restart]', '[agent:team box]', '[agent:team box set] FROM node:25', '[agent:team box init]', '[agent:team box show]', '[agent:team box clear]',
+  '[agent:team sandbox bootstrap show setup]', '[agent:team sandbox bootstrap clear]', '[agent:team sandbox restart]', '[agent:team box]', '[agent:team box set] FROM node:25', '[agent:team box set file:ops/Dockerfile.box]', '[agent:team box init]', '[agent:team box show]', '[agent:team box clear]',
   '[agent:team create shop root:/proj/shop]',
   '[agent:team create shop root:/proj/shop share-root:yes]', '[agent:team create share-root:no shop root:/proj/shop]',
   '[agent:team create shop root:/proj/shop done:report]',
@@ -1034,6 +1037,7 @@ test('bodyMode reproduces the legacy allow-set exactly, for every corpus intent'
     && (i.sub === 'role-add' || i.sub === 'role-set')
     && ['prompt', 'template', 'dispatch', 'cwd', 'model', 'account', 'effort', 'idleClear'].some((k) => i[k] != null)
     && !(i.body || '').trim())
+    || (i.type === 'team' && i.sub === 'box' && i.action === 'set' && i.file != null && !(i.body || '').trim())
     || (i.type === 'remind' && ['list', 'cancel'].includes(String(i.spec || '').split(/\s+/)[0]));
   let sawTerm = 0;
   for (const line of CORPUS) {

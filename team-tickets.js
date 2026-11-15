@@ -3433,6 +3433,25 @@ function createTicketMethods(deps, shared) {
       return { dir: dest, line: `team ${team.name} shipped into the box (teams/${team.name})` };
     },
 
+    _readBoxFile(team, rel, body) {
+      if (body.trim()) return { error: `box set takes file:${rel} or a body, not both` };
+      if (!team.root) return { error: 'this team has no root to read file: from' };
+      const root = path.resolve(team.root);
+      const inside = (base, p) => p === base || p.startsWith(base.endsWith(path.sep) ? base : base + path.sep);
+      const abs = path.resolve(root, rel);
+      if (!inside(root, abs)) return { error: `file:${rel} is outside the team root ${root}` };
+      let real;
+      let realRoot;
+      try { realRoot = fs.realpathSync(root); } catch { return { error: `the team root ${root} does not exist` }; }
+      try { real = fs.realpathSync(abs); } catch { return { error: `file:${rel} does not exist` }; }
+      if (!inside(realRoot, real)) return { error: `file:${rel} resolves to ${real}, outside the team root ${realRoot}` };
+      const st = fs.statSync(real);
+      if (!st.isFile()) return { error: `file:${rel} is ${st.isDirectory() ? 'a directory' : 'not a regular file'}` };
+      if (st.size > TEAM_FILE_BODY_MAX) return { error: `file:${rel} is ${st.size} bytes; the cap is ${TEAM_FILE_BODY_MAX}` };
+      const buf = fs.readFileSync(real);
+      return { text: buf.toString('utf8'), bytes: buf.length };
+    },
+
     _handleTeamBox(team, intent, session) {
       const action = intent.action || 'show';
       const seat = session ? session.name : null;
@@ -3446,9 +3465,17 @@ function createTicketMethods(deps, shared) {
           : 'no box definition to clear';
       }
       if (action === 'set') {
-        const r = teamBox.writeBox(teamDir, String(intent.body == null ? '' : intent.body), { seat });
+        let text = String(intent.body == null ? '' : intent.body);
+        let read = '';
+        if (intent.file != null) {
+          const got = this._readBoxFile(team, String(intent.file), text);
+          if (got.error) return `error: ${got.error} — the stored box definition is unchanged`;
+          text = got.text;
+          read = `read ${intent.file} (${got.bytes} bytes), `;
+        }
+        const r = teamBox.writeBox(teamDir, text, { seat });
         if (!r.ok) return `error: box definition refused, the stored one is unchanged: ${r.error}`;
-        return `${head(r)} — ${r.changed ? `saved to ${r.file}` : 'unchanged, nothing written'}; checked for form; not built`;
+        return `${head(r)} — ${read}${r.changed ? `saved to ${r.file}` : 'unchanged, nothing written'}; checked for form; not built`;
       }
       if (action === 'init') {
         if (teamBox.readBox(teamDir).definition != null) return 'error: this team already has a box definition — [agent:team box clear] first';
