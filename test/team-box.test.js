@@ -59,12 +59,14 @@ const REFUSED = [
   ['a secret inside a RUN heredoc', 'FROM node:25-bookworm\nRUN <<EOF\nset -e\nexport GH_TOKEN=abc\nEOF\n', /line 4 looks like a secret/],
   ['a secret mount', 'FROM node:25-bookworm\nRUN --mount=type=secret,id=npm npm ci\n', /line 2: secret and ssh mounts are refused/],
   ['# syntax=', '# syntax=docker/dockerfile:1\nFROM node:25-bookworm\n', /line 1: parser directives/],
-  ['16385 bytes', `FROM node:25-bookworm\n${'#'.repeat(16385 - 23)}\n`, /the definition is 16385 bytes; the cap is 16384/],
+  ['65537 bytes', `FROM node:25-bookworm\n${'#'.repeat(65537 - 23)}\n`, /^the definition is 65537 bytes; the cap is 65536$/],
+  ['1001 lines', `FROM node:25-bookworm\n${'RUN true\n'.repeat(1000)}`, /^the definition has 1001 lines; the cap is 1000$/],
 ];
 
 for (const [label, text, why] of REFUSED) {
   test(`validateBoxDefinition refuses: ${label}`, () => {
-    if (label === '16385 bytes') assert.strictEqual(Buffer.byteLength(text), 16385, 'ENTER: the row is the size it names');
+    if (label === '65537 bytes') assert.strictEqual(Buffer.byteLength(text), 65537, 'ENTER: the row is the size it names');
+    if (label === '1001 lines') assert.strictEqual(text.split('\n').length - 1, 1001, 'ENTER: the row is the length it names');
     const r = tb.validateBoxDefinition(text);
     assert.strictEqual(r.ok, false);
     assert.match(r.error, why);
@@ -258,3 +260,21 @@ for (const [label, args, why] of FILE_REFUSALS) {
     assert.strictEqual(fs.readFileSync(t.file, 'utf8'), GOOD);
   });
 }
+
+const FETCH_LINE = (n) => `RUN curl -fL https://example.com/pkg-${String(n).padStart(3, '0')}.tgz -o /tmp/p.tgz && echo "${'ab'.repeat(32)}  /tmp/p.tgz" | sha256sum -c\n`;
+const BIG = `ARG CLODEX_BASE\nFROM \${CLODEX_BASE}\nUSER root\n${Array.from({ length: 223 }, (_, i) => FETCH_LINE(i)).join('')}RUN echo ${'x'.repeat(646)}\n`;
+
+test('a 36605-byte, 227-line definition is stored through the body form and through file:', () => {
+  assert.strictEqual(Buffer.byteLength(BIG), 36605, 'ENTER: the definition is the size it names');
+  assert.strictEqual(BIG.split('\n').length - 1, 227, 'ENTER: the definition is the length it names');
+  const expected = require('node:crypto').createHash('sha256').update(BIG, 'utf8').digest('hex');
+  const b = mkTeam();
+  assert.strictEqual(b.fire(b.lead, 'set', BIG),
+    `[agent:team] box definition rev 1 · definition hash ${expected} — saved to ${b.file}; checked for form; not built`);
+  assert.strictEqual(fs.readFileSync(b.file, 'utf8'), BIG);
+  const f = mkTeam();
+  fs.writeFileSync(path.join(f.root, 'Dockerfile.box'), BIG);
+  assert.strictEqual(f.fireFile(f.lead, 'Dockerfile.box'),
+    `[agent:team] box definition rev 1 · definition hash ${expected} — read Dockerfile.box (36605 bytes), saved to ${f.file}; checked for form; not built`);
+  assert.strictEqual(fs.readFileSync(f.file, 'utf8'), BIG);
+});
