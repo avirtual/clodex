@@ -257,7 +257,7 @@ async function withNode(extra, fn) {
 
 const WALK_ID = {
   sessions: 'alice', peers: 'boxy', teams: 'alpha', tickets: 't7', sandboxes: 'boxy', agents: 'scout',
-  docs: 'how-to',
+  docs: 'how-to', testjobs: 'j1',
 };
 
 const WALK_QUERY = { worktrees: `?repo=${encodeURIComponent(FAKE_REPO)}` };
@@ -276,6 +276,7 @@ function subresourceFixture() {
         calls.push({ route: 'transcript', name, limit, since, after });
         return name === 'ghost' ? { ok: false, error: 'Session not found' } : TRANSCRIPT_OUT;
       },
+      readTestjobOutput: (id) => ({ ok: true, id, text: '' }),
       getAttachInfo: (name) => {
         calls.push({ route: 'attach', name });
         return name === 'ghost' ? { ok: false } : { ok: true, scrollback: Buffer.from('hi'), cols: 100, rows: 30 };
@@ -379,6 +380,7 @@ const SUB_WALK = {
   },
   'client-token': { put: { method: 'PUT', body: () => JSON.stringify({ token: 'k'.repeat(16) }) } },
   describe: { get: { method: 'GET' } },
+  output: { get: { method: 'GET' } },
 };
 
 const VERB_WALK = { list: 'GET', get: 'GET', delete: 'DELETE' };
@@ -436,9 +438,9 @@ test('RESOURCES: every (resource, verb) answers on a fully-injected node, and ev
     'peers.list', 'peers.get', 'teams.list', 'teams.get', 'tickets.list', 'tickets.get',
     'sandboxes.list', 'sandboxes.get', 'agents.list', 'agents.get',
     'docs.list', 'docs.get', 'worktrees.list', 'catalogs.get',
-    'node/logs.get', 'offers.list', 'testjobs.list',
+    'node/logs.get', 'offers.list', 'testjobs.list', 'testjobs/output.get',
   ], 'the walk must visit every shipped row — an empty or shortened walk passes vacuously');
-  assert.strictEqual(seen.length, 42, 'the walk entered 20 resource verbs, the sessions delete, and the 21 session subresource verbs');
+  assert.strictEqual(seen.length, 43, 'the walk entered 20 resource verbs, the sessions delete, the 21 session subresource verbs and testjobs output');
   assert.strictEqual(RESOURCES.length, 13, 'the walk covered fewer than the 13 shipped resources');
 });
 

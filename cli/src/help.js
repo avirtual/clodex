@@ -128,12 +128,14 @@ const VERB_REGISTRY = [
     usage: [
       'logs <name> [--tail N] [--since D] [--timestamps] [-f|--follow] [-o json|yaml]',
       'logs node [--tail N] [--since D] [-o json]',
+      'logs testjob <id> [--stderr] [--tail N] [-o json]',
     ],
-    args: [['name', 'session whose transcript to read (or the literal `node` for the engine\'s own log)']],
+    args: [['name', 'session whose transcript to read (or the literal `node` for the engine\'s own log, or `testjob <id>` for a test box job\'s output)']],
     flags: [
       ['--tail N', 'last N entries (default: the server\'s slice)'],
       ['--since D', 'only entries newer than a duration (30s|10m|2h|7d) or an ISO-8601 instant'],
       ['--timestamps', 'prefix each entry with its wall-clock time (a `-` where the entry carries none)'],
+      ['--stderr', 'logs testjob: read the job\'s stderr instead of its stdout'],
       ['-f, --follow', 'kubectl -f: print the tail, then stream new entries as each turn lands'],
     ],
     examples: [
@@ -141,9 +143,11 @@ const VERB_REGISTRY = [
       'clodexctl logs bob -f -o json | jq',
       'clodexctl logs bob --since 30m --timestamps',
       'clodexctl logs node --tail 200',
+      'clodexctl logs testjob j-4f2a --stderr --tail 50',
     ],
     notes: [
       '`logs node` prints the NODE\'s own engine log (not a session transcript), so a headless box can be checked without a shell on it. It takes no name, does not follow, and secret-shaped values are masked by the node before they reach the wire.',
+      '`logs testjob <id>` prints the tail of one test box job\'s stdout (or --stderr) once, as plain text: escape sequences and control characters are stripped. It does not follow; "output expired" means the job is known but its files are gone. Operator token only.',
       '--since bounds the INITIAL page only under -f; the stream that follows is unfiltered. It is also re-applied client-side, so an older node that ignores it still yields nothing older than the instant.',
       'follow subscribes to /api/events and refetches the delta on an activity for NAME. Ctrl-C exits 0 (it\'s a pager); non-TTY stdout is fine (pipe into grep).',
       '-o json = messages array one-shot; -o json with --follow = NDJSON (one object per entry).',
