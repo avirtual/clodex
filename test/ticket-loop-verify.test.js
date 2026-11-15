@@ -7012,3 +7012,215 @@ for (const row of GATE_SHAPES) {
     assert.strictEqual(r.failing, row.failing);
   });
 }
+
+const BOX_DEF = 'FROM node:24-bookworm\nRUN true\n';
+const BOX_HASH = require('../team-box').boxFingerprint(BOX_DEF);
+const BOX_TREE = 'a'.repeat(40);
+const BOX_SHA = 'b'.repeat(40);
+const BOX_ENV = (definitionHash = BOX_HASH) => ({
+  isolation: 'container', envKey: 'bk', platform: 'linux', arch: 'arm64', box: { imageId: `sha256:${'e'.repeat(64)}`, definitionHash },
+});
+const BOX_OUT = { green: 'TOTALS: 5 pass, 0 fail, 5 tests\n', red: ' ✖ box only (2ms)\nTOTALS: 4 pass, 1 fail, 5 tests\n', 'no totals': 'partial\n' };
+
+function boxRemote(mode, events) {
+  const doneJob = (id, over = {}) => ({
+    id, state: 'done', treeHash: BOX_TREE, env: BOX_ENV(), exit: { code: mode === 'green' ? 0 : 1, signal: null },
+    reason: null, queueMs: 0, setupMs: 0, runMs: 1, out: {}, ...over,
+  });
+  const jobFor = (id) => {
+    if (mode === 'queue budget') return { id, state: 'queued', treeHash: BOX_TREE };
+    if (mode === 'run budget') return { id, state: 'running', treeHash: BOX_TREE, env: BOX_ENV() };
+    if (mode === 'runner restart') return { id, state: 'gone' };
+    if (mode === 'tree mismatch') return doneJob(id, { treeHash: 'c'.repeat(40) });
+    if (mode === 'definition mismatch') return doneJob(id, { env: BOX_ENV('f'.repeat(64)) });
+    if (mode === 'runner killed') return doneJob(id, { reason: 'timeout' });
+    if (mode === 'cancelled') return doneJob(id, { reason: 'cancelled' });
+    if (mode === 'no totals') return doneJob(id, { exit: { code: 0, signal: null } });
+    return doneJob(id);
+  };
+  const conn = {
+    suiteAsk: async (method, p) => {
+      if (method === 'DELETE') { events.push('cancel'); return mode === 'unreachable' ? { status: 0, body: null } : { status: 200, body: { ok: true } }; }
+      if (mode === 'unreachable') return { status: 0, body: null };
+      if (p === '/api/suite/info') return { status: 200, body: { ok: true, limits: {}, env: { envKey: 'k' } } };
+      if (method === 'POST') { events.push('post'); return mode === 'refused' ? { status: 200, body: { ok: false, error: 'nope' } } : { status: 200, body: { ok: true, state: 'queued' } }; }
+      if (p.includes('/output?')) {
+        const text = p.includes('stream=stdout') ? (BOX_OUT[mode] || BOX_OUT.red) : '';
+        return { status: 200, body: { ok: true, text, offset: 0, total: Buffer.byteLength(text) } };
+      }
+      const id = decodeURIComponent(/ids=([^&]+)/.exec(p)[1]);
+      return { status: 200, body: { ok: true, jobs: [jobFor(id)] } };
+    },
+  };
+  const compareFile = pathReal.join(mkTmpRoot('clodex-box-'), 'suite-compare.jsonl');
+  let clock = 1_000_000;
+  const client = createShadowClient({
+    getPeerManager: () => ({ get: () => conn }),
+    compareFile,
+    snapshot: { snapshotTree: async () => ({ treeHash: BOX_TREE, head: BOX_SHA, headTree: BOX_TREE }), releaseSnapshot: () => {} },
+    sleep: async () => {},
+    now: () => { clock += 10_000; return clock; },
+  });
+  const rows = () => (fsReal.existsSync(compareFile)
+    ? fsReal.readFileSync(compareFile, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
+  return { client, rows };
+}
+
+const GATE_ON = { peer: 'runner-1', hands: 'off', gate: 'on' };
+
+function boxLoop(script, { suite = 'green', extraDeps = {} } = {}) {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const events = [];
+  const holder = { client: null };
+  const cp = require('node:child_process');
+  const f = mkLoop({ repo, suite, extraDeps: {
+    getSuiteClient: () => holder.client,
+    childProcess: { ...cp, spawn: (cmd, args, opts) => { events.push('spawn'); return cp.spawn(cmd, args, opts); } },
+    ...extraDeps,
+  } });
+  if (script) fsReal.writeFileSync(pathReal.join(repo.dir, 'wt', 'scripts', 'run-tests.js'), script);
+  f.m._runnerPeerStatus = (n) => (n === 'runner-1' ? { id: 'p1' } : null);
+  const dir = mkTmpRoot('clodex-box-team-');
+  require('../team-box').writeBox(dir, BOX_DEF);
+  const run = async (testRunner, client) => {
+    holder.client = client;
+    events.length = 0;
+    f.team.testRunner = testRunner;
+    f.team.dir = dir;
+    const out = await f.m._runTicketSuite(f.team, f.one());
+    return { ...out, startedAt: '<at>', durationMs: typeof out.durationMs, runnerPid: typeof out.runnerPid };
+  };
+  return { f, repo, events, holder, run };
+}
+
+const maskRow = (r) => ({ ...r, at: '<at>', ...(r.remote ? { remote: { ...r.remote, jobId: typeof r.remote.jobId } } : {}), ...(r.local ? { local: { ...r.local, durationMs: typeof r.local.durationMs } } : {}) });
+
+test('t2338: under gate:on a box pass and a box fail decide the result without a home spawn, and each writes one box row', async () => {
+  const b = boxLoop(SHADOW_LOCAL.red);
+  const cwd = pathReal.join(b.repo.dir, 'wt');
+  const base = { slowOnly: false, slow: [], cwd, error: null, runnerPid: 'object', startedAt: '<at>', decidedBy: 'box', fallback: null, durationMs: 'number' };
+  const head = (await b.run({ ...GATE_ON, gate: 'off' }, null));
+  const rows = [
+    ['green', { ...base, ran: true, green: true, code: 0, summary: '5/5 passing, 0 failing (exit 0)', failing: '', output: '' },
+      { outcome: 'pass', reason: null, pass: 5, fail: 0, tests: 5, failing: [], slow: [], jobId: 'string', queueMs: 0, runMs: 1 }],
+    ['red', { ...base, ran: true, green: false, code: 1, summary: '4/5 passing, 1 failing (exit 1)', failing: 'box only', output: `${BOX_OUT.red}\n` },
+      { outcome: 'fail', reason: null, pass: 4, fail: 1, tests: 5, failing: ['box only'], slow: [], jobId: 'string', queueMs: 0, runMs: 1 }],
+  ];
+  for (const [mode, want, remote] of rows) {
+    const r = boxRemote(mode, b.events);
+    const out = await b.run(GATE_ON, r.client);
+    assert.deepStrictEqual(out, { ...want, head: head.head, headEnd: head.headEnd }, mode);
+    assert.deepStrictEqual(b.events, ['post'], `${mode}: one box job, no home spawn`);
+    assert.deepStrictEqual(r.rows().map(maskRow), [{
+      at: '<at>', team: 'team', kind: 'verify', ticket: 't1', treeHash: BOX_TREE, sha: BOX_SHA, envKey: 'bk', wire: 'push',
+      localEnv: null, remoteEnv: { os: 'linux', arch: 'arm64', isolation: 'container', imageId: `sha256:${'e'.repeat(64)}`, definitionHash: BOX_HASH },
+      local: null, remote, agree: null, decidedBy: 'box', fallback: null,
+    }], mode);
+  }
+});
+
+const BOX_FALLBACKS = [
+  ['unreachable', 'runner unreachable', 'unknown', 'runner unreachable: status 0'],
+  ['queue budget', 'queue budget', 'timeout', 'the job did not start within the 300000ms queue budget (cancelled)'],
+  ['run budget', 'run budget', 'timeout', 'no result within the 2460000ms budget (cancelled)'],
+  ['runner killed', 'run budget', 'timeout', 'the suite did not finish within 1260000ms (killed)'],
+  ['refused', 'outcome unknown', 'unknown', 'runner refused the job: nope'],
+  ['cancelled', 'outcome unknown', 'unknown', 'cancelled on runner'],
+  ['no totals', 'no totals', 'no-summary', null],
+  ['tree mismatch', 'tree mismatch', 'unknown', 'runner answered for tree cccccccc, not aaaaaaaa'],
+  ['definition mismatch', 'definition mismatch', 'unknown', 'box mismatch: asked box 2d7c08e27395, runner ran image eeeeeeeeeeee'],
+  ['runner restart', 'runner restart', 'unknown', 'runner restarted'],
+];
+
+for (const [local, script] of [['green', SHADOW_LOCAL.green], ['red', SHADOW_LOCAL.red]]) {
+  test(`t2338: every box fallback cancels the box job, then runs the ${local} home suite once and returns its result with the reason`, async () => {
+    const b = boxLoop(script);
+    const off = await b.run({ ...GATE_ON, gate: 'off' }, null);
+    assert.deepStrictEqual(b.events, ['spawn'], 'ENTER: gate:off spawned the home suite once');
+    for (const [mode, reason, remoteOutcome, remoteReason] of BOX_FALLBACKS) {
+      const r = boxRemote(mode, b.events);
+      const out = await b.run(GATE_ON, r.client);
+      assert.deepStrictEqual(out, { ...off, decidedBy: 'home', fallback: reason, durationMs: 'number' }, mode);
+      assert.strictEqual(b.events.filter((e) => e === 'spawn').length, 1, `${mode}: one home spawn`);
+      assert.strictEqual(b.events[b.events.length - 1], 'spawn', `${mode}: the home spawn came last`);
+      assert.strictEqual(b.events[b.events.length - 2], 'cancel', `${mode}: the box job was cancelled right before the home spawn: ${b.events}`);
+      const got = r.rows();
+      assert.strictEqual(got.length, 1, mode);
+      assert.deepStrictEqual([got[0].decidedBy, got[0].fallback, got[0].local.outcome, got[0].remote.outcome, got[0].remote.reason],
+        ['home', reason, local === 'green' ? 'pass' : 'fail', remoteOutcome, remoteReason], mode);
+    }
+  });
+}
+
+test('t2338: a cancel that rejects still lets the home run proceed', async () => {
+  const b = boxLoop(SHADOW_LOCAL.green);
+  const off = await b.run({ ...GATE_ON, gate: 'off' }, null);
+  const r = boxRemote('queue budget', b.events);
+  const client = { ...r.client, cancel: async () => { b.events.push('rejected cancel'); throw new Error('socket hang up'); } };
+  const out = await b.run(GATE_ON, client);
+  assert.deepStrictEqual(out, { ...off, decidedBy: 'home', fallback: 'queue budget', durationMs: 'number' });
+  assert.deepStrictEqual(b.events.slice(-2), ['rejected cancel', 'spawn']);
+});
+
+for (const [local, script, late, lateGreen] of [['red', SHADOW_LOCAL.red, 'green', true], ['green', SHADOW_LOCAL.green, 'red', false]]) {
+  test(`t2338: a late box ${late} after the fallback began does not change a ${local} home result`, async () => {
+    const b = boxLoop(script, { extraDeps: { boxDecideGuardMs: 0 } });
+    const off = await b.run({ ...GATE_ON, gate: 'off' }, null);
+    const r = boxRemote(late, b.events);
+    let settle = null;
+    const jobs = [];
+    const client = {
+      ...r.client,
+      run: (o) => { o.onJob({ jobId: 'job-late', attempt: 1 }); return new Promise((res) => { settle = res; }).then(() => r.client.run(o)).then((x) => { jobs.push(x); return x; }); },
+      cancel: async (peer, id) => { b.events.push(`cancel ${peer} ${id}`); return { ok: true }; },
+    };
+    const out = await b.run(GATE_ON, client);
+    assert.deepStrictEqual(out, { ...off, decidedBy: 'home', fallback: 'run budget', durationMs: 'number' });
+    assert.deepStrictEqual(b.events, ['cancel p1 job-late', 'spawn']);
+    settle();
+    for (let i = 0; i < 200 && !jobs.length; i += 1) await new Promise((res) => setImmediate(res));
+    assert.strictEqual(jobs.length, 1, 'ENTER: the late box job finished');
+    assert.strictEqual(jobs[0].record.outcome === 'pass', lateGreen, 'ENTER: with the opposite outcome');
+    assert.deepStrictEqual(out.green, off.green);
+    const got = r.rows();
+    assert.deepStrictEqual(got.map((x) => [x.decidedBy, x.fallback, x.remote.reason]), [['home', 'run budget', 'no box result within 0ms']]);
+  });
+}
+
+test('t2338: a gate:on verify decided by a box pass spawns the reviewer with no home run and says (box)', async () => {
+  const b = boxLoop(null, { suite: 'red' });
+  b.holder.client = boxRemote('green', b.events).client;
+  b.f.team.testRunner = GATE_ON;
+  b.f.team.dir = mkTmpRoot('clodex-box-team-');
+  require('../team-box').writeBox(b.f.team.dir, BOX_DEF);
+  b.f.tstore.save(b.f.team.root, [{ ...b.f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  const notes = traceLoopRows(b.f);
+  await b.f.m._runTicketLoop(b.f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(b.f.created.length, 1, 'the reviewer was spawned');
+  assert.deepStrictEqual(b.events, ['post']);
+  assert.ok(notes.some((n) => n !== 'SPAWN' && n.body === 'ticket t1 verify: suite green (5/5 passing, 0 failing (exit 0)) (box) — spawning reviewer'), JSON.stringify(notes));
+});
+
+test('t2338: a gate:on verify decided by a box fail re-measures in the box and sends the box\'s failing names back, with no home run', async () => {
+  const b = boxLoop(null, { suite: 'green' });
+  const remote = boxRemote('red', b.events);
+  b.holder.client = remote.client;
+  b.f.team.testRunner = GATE_ON;
+  b.f.team.dir = mkTmpRoot('clodex-box-team-');
+  require('../team-box').writeBox(b.f.team.dir, BOX_DEF);
+  const real = b.f.m._rejectTicketFromLoop;
+  const texts = [];
+  b.f.m._rejectTicketFromLoop = (...args) => { texts.push(args[2]); return real.apply(b.f.m, args); };
+  b.f.tstore.save(b.f.team.root, [{ ...b.f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand' }]);
+  const notes = traceLoopRows(b.f);
+  await b.f.m._runTicketLoop(b.f.team, 't1');
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(texts.length, 1, 'ENTER: the loop reached the reject');
+  assert.match(texts[0], /FAILING \(run 2\): box only\nFAILING \(run 1\): box only/);
+  assert.strictEqual(b.f.created.length, 0, 'no reviewer');
+  assert.deepStrictEqual(b.events, ['post', 'post'], 'both runs went to the box');
+  assert.deepStrictEqual(remote.rows().map((r) => r.decidedBy), ['box', 'box']);
+  assert.ok(notes.some((n) => n !== 'SPAWN' && n.body === 'ticket t1 verify: suite red (4/5 passing, 1 failing (exit 1)) (box) — re-measuring'), JSON.stringify(notes));
+});

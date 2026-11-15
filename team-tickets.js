@@ -535,8 +535,6 @@ function createTicketMethods(deps, shared) {
   // Injectable so a test can reach the kill arm: a runner that never exits is SIGKILLed and escalates, never rejects.
   const TICKET_SUITE_TIMEOUT = Number.isFinite(deps.ticketSuiteTimeoutMs)
     ? deps.ticketSuiteTimeoutMs : TICKET_SUITE_TIMEOUT_MS;
-  const BOX_DECIDE_GUARD = Number.isFinite(deps.boxDecideGuardMs)
-    ? deps.boxDecideGuardMs : TICKET_SUITE_TIMEOUT + BOX_DECIDE_GUARD_SLACK_MS;
 
   return {
     // The three-marker filter is an identity read off the record, with no stat: a sweep keyed on a missing recorded path
@@ -6491,14 +6489,15 @@ function createTicketMethods(deps, shared) {
           onJob: (j) => { if (j && j.jobId) jobId = j.jobId; },
         }))
         .catch((e) => ({ unknown: `client error: ${e && e.message ? e.message : e}`, res: null, record: null }));
+      const guardMs = Number.isFinite(deps.boxDecideGuardMs) ? deps.boxDecideGuardMs : TICKET_SUITE_TIMEOUT + BOX_DECIDE_GUARD_SLACK_MS;
       let timer = null;
       const LATE = {};
-      const guard = new Promise((resolve) => { timer = setTimeout(() => resolve(LATE), BOX_DECIDE_GUARD); });
+      const guard = new Promise((resolve) => { timer = setTimeout(() => resolve(LATE), guardMs); });
       let out = await Promise.race([job, guard]);
       clearTimeout(timer);
       let fallback;
       if (out === LATE) {
-        out = { unknown: `no box result within ${BOX_DECIDE_GUARD}ms`, res: null, record: null };
+        out = { unknown: `no box result within ${guardMs}ms`, res: null, record: null };
         fallback = 'run budget';
       } else {
         fallback = boxVerdict(out, def).fallback;
