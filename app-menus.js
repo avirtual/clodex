@@ -19,7 +19,7 @@ const { app, BrowserWindow, Menu, Tray, dialog, shell, nativeImage } = require('
 const os = require('os');
 const fs = require('fs');
 const { categoryMenu } = require('./library-menu-shape');
-const { menuRows: testBoxMenuRows } = require('./suite-activity-view');
+const { menuRows: testBoxMenuRows, nextQuietAt: testBoxQuietAt } = require('./suite-activity-view');
 
 const CLODEX_REPO_URL = 'https://github.com/avirtual/clodex';
 const CLODEX_PLUGINS_REPO_URL = 'https://github.com/avirtual/clodex-plugins';
@@ -761,7 +761,20 @@ function createAppMenus(deps) {
     }));
   }
 
+  let quietRefreshTimer = null;
+  function armQuietRefresh(due, at) {
+    if (quietRefreshTimer) clearTimeout(quietRefreshTimer);
+    quietRefreshTimer = null;
+    if (due == null) return;
+    quietRefreshTimer = setTimeout(() => {
+      quietRefreshTimer = null;
+      refreshAppMenu();
+    }, Math.max(0, due - at));
+    if (typeof quietRefreshTimer.unref === 'function') quietRefreshTimer.unref();
+  }
+
   function buildAppMenu() {
+    armQuietRefresh(null, 0);
     const isMac = process.platform === 'darwin';
     // The stock About panel reads the .app bundle's Info.plist, so under `npm start`
     // (running inside Electron's own bundle) it reports Electron's version instead of
@@ -1085,7 +1098,10 @@ function createAppMenus(deps) {
         label: 'Manage Clodex Sandboxes…',
         click: () => sendToFocused('request-open-sandbox-dialog'),
       });
-      const testBoxRows = testBoxMenuRows(typeof getSuiteActivity === 'function' ? getSuiteActivity() : null, Date.now(), 'clock');
+      const suiteState = typeof getSuiteActivity === 'function' ? getSuiteActivity() : null;
+      const builtAt = Date.now();
+      const testBoxRows = testBoxMenuRows(suiteState, builtAt, 'clock');
+      armQuietRefresh(testBoxQuietAt(suiteState, builtAt), builtAt);
       if (testBoxRows.length) wsMenu.submenu.push({ type: 'separator' });
       for (const row of testBoxRows) {
         if (row.kind === 'open') wsMenu.submenu.push({ label: row.label, click: () => sendToFocused('request-open-test-activity') });

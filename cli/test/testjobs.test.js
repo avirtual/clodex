@@ -94,18 +94,21 @@ test('get testjobs prints the slot and box line, then running, waiting and recen
 test('get testjobs shows QUIET for a live row silent past the threshold and counts it in the head line', async () => {
   const quiet = { ...RUNNING, id: 'j4', ticket: 't8', startedAt: 1700000100000 - 900000, lastOutputAt: 1700000100000 - 400000 };
   const normal = { ...RUNNING, lastOutputAt: 1700000100000 - 5000 };
-  const snapshot = { ...SNAPSHOT, slots: { total: 2, inUse: 2 }, running: [quiet, normal], waiting: [], recent: [] };
+  const silentFromStart = { ...RUNNING, id: 'j5', ticket: 't6', startedAt: 1700000100000 - 400000, lastOutputAt: null };
+  const snapshot = { ...SNAPSHOT, slots: { total: 3, inUse: 3 }, running: [quiet, normal, silentFromStart], waiting: [], recent: [] };
   await withNode({ ok: true, enabled: true, snapshot }, async (port) => {
     const { code, stdout } = await cli(['get', 'testjobs'], port);
     assert.strictEqual(code, 0);
     const lines = stdout.split('\n');
     assert.ok(lines.some((l) => l.includes('t8')), `ENTER: quiet row missing:\n${stdout}`);
     assert.ok(lines.some((l) => l.includes('t7')), `ENTER: normal row missing:\n${stdout}`);
+    assert.ok(lines.some((l) => l.includes('t6')), `ENTER: silent-from-start row missing:\n${stdout}`);
     assert.strictEqual(stdout, [
-      'slots 2/2 in use, 1 quiet, box image abc123def456',
+      'slots 3/3 in use, 2 quiet, box image abc123def456',
       'STATE  TEAM    TICKET  KIND    ISOLATION  IMAGE         AGE     QUIET  PASS/FAIL',
       'run    clodex  t8      verify  container  abc123def456  15m00s  6m40s',
       'run    clodex  t7      verify  container  abc123def456  1m00s   -',
+      'run    clodex  t6      verify  container  abc123def456  6m40s   6m40s',
       '',
     ].join('\n'));
   });

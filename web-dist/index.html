@@ -13033,9 +13033,24 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         const d = new Date(Number(ts) || 0);
         return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
       }
+      function silentSince(job) {
+        if (job.phase !== "run" || job.startedAt == null) return null;
+        return job.lastOutputAt != null ? job.lastOutputAt : job.startedAt;
+      }
       function isQuiet(job, at) {
-        if (job.phase !== "run" || job.startedAt == null || job.lastOutputAt == null) return false;
-        return at - job.lastOutputAt > QUIET_MS;
+        const last = silentSince(job);
+        return last != null && at - last > QUIET_MS;
+      }
+      function nextQuietAt(state, at) {
+        const snap = state && state.enabled ? state.snapshot : null;
+        let next = null;
+        for (const job of snap ? snap.running : []) {
+          const last = silentSince(job);
+          if (last == null || isQuiet(job, at)) continue;
+          const due = last + QUIET_MS + 1;
+          if (next == null || due < next) next = due;
+        }
+        return next;
       }
       function liveLine(job, at, mode = "span") {
         const started = job.startedAt != null;
@@ -13043,10 +13058,10 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         const quiet = isQuiet(job, at);
         if (mode === "clock") {
           const verb2 = started ? job.phase === "setup" ? "setting up since" : "since" : job.phase === "upload" ? "uploading since" : "waiting since";
-          return `${jobHead(job)} \xB7 ${verb2} ${fmtClock(since)}${quiet ? ` \xB7 quiet since ${fmtClock(job.lastOutputAt)}` : ""}`;
+          return `${jobHead(job)} \xB7 ${verb2} ${fmtClock(since)}${quiet ? ` \xB7 quiet since ${fmtClock(silentSince(job))}` : ""}`;
         }
         const verb = started ? job.phase === "setup" ? "setting up" : "running" : job.phase === "upload" ? "uploading" : "waiting";
-        return `${jobHead(job)} \xB7 ${verb} ${fmtSpan(at - since)}${quiet ? ` \xB7 quiet ${fmtSpan(at - job.lastOutputAt)}` : ""}`;
+        return `${jobHead(job)} \xB7 ${verb} ${fmtSpan(at - since)}${quiet ? ` \xB7 quiet ${fmtSpan(at - silentSince(job))}` : ""}`;
       }
       function outcomeText(job) {
         if (job.pass != null) return `${job.outcome} (${job.pass} pass, ${job.fail} fail)`;
@@ -13094,7 +13109,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           recent: snap ? snap.recent.map(recentLine) : []
         };
       }
-      module.exports = { menuRows, activityView, fmtSpan, fmtClock, MENU_JOB_ROWS, QUIET_MS };
+      module.exports = { menuRows, activityView, nextQuietAt, fmtSpan, fmtClock, MENU_JOB_ROWS, QUIET_MS };
     }
   });
 
