@@ -455,6 +455,18 @@ function createSuiteClient({
     appendCompare({ at: iso(now()), team, kind, ticket, wire: 'pull', runner, skipped, agree: null });
   }
 
+  function decided({ team, kind, ticket, wire = 'push', box = null, local = null, decidedBy, fallback = null }) {
+    const rec = (box && box.record) || null;
+    const e = (rec && rec.env) || {};
+    appendCompare({
+      at: iso(now()), team, kind, ticket, treeHash: rec ? rec.treeHash : null, sha: rec ? rec.sha : null,
+      envKey: e.envKey || null, wire: wire === 'pull' ? 'pull' : 'push',
+      localEnv: local ? { os: platform, arch } : null,
+      remoteEnv: rec ? { os: e.platform || null, arch: e.arch || null, isolation: e.isolation || null, imageId: (e.box && e.box.imageId) || null, definitionHash: (e.box && e.box.definitionHash) || null } : null,
+      local, remote: box ? remoteHalf(box) : null, agree: null, decidedBy, fallback,
+    });
+  }
+
   function tally({ team, envKey = null, definitionHash = null }) {
     let text = '';
     try { text = compareFile ? fs.readFileSync(compareFile, 'utf8') : ''; } catch { text = ''; }
@@ -463,7 +475,7 @@ function createSuiteClient({
       if (!line.trim()) continue;
       try {
         const r = JSON.parse(line);
-        if (r && r.team === team) recs.push(r);
+        if (r && r.team === team && r.decidedBy == null) recs.push(r);
       } catch {}
     }
     const ofDef = (r) => !!(r.remoteEnv && r.remoteEnv.definitionHash === definitionHash);
@@ -495,7 +507,26 @@ function createSuiteClient({
     return out;
   }
 
-  return { reachable, run, cancel, shadow, shadowSkip, tally };
+  function decideTally({ team }) {
+    let text = '';
+    try { text = compareFile ? fs.readFileSync(compareFile, 'utf8') : ''; } catch { text = ''; }
+    const out = { box: 0, home: 0, fallbacks: [] };
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue;
+      let r;
+      try { r = JSON.parse(line); } catch { continue; }
+      if (!r || r.team !== team || r.decidedBy == null) continue;
+      if (r.decidedBy === 'box') { out.box += 1; continue; }
+      out.home += 1;
+      const reason = String(r.fallback || 'unknown');
+      const seen = out.fallbacks.find((f) => f.reason === reason);
+      if (seen) seen.count += 1; else out.fallbacks.push({ reason, count: 1 });
+    }
+    out.fallbacks.sort((a, b) => b.count - a.count || (a.reason < b.reason ? -1 : a.reason > b.reason ? 1 : 0));
+    return out;
+  }
+
+  return { reachable, run, cancel, shadow, shadowSkip, tally, decided, decideTally };
 }
 
 const MEASURED = new Set(['pass', 'fail']);
@@ -568,6 +599,33 @@ function remoteHalf(out) {
     failing: measured ? failingNames(out.res.stdout || '') : [], slow: measured ? slowNames(out.res.stdout || '') : [],
     jobId: rec.jobId || null, queueMs: rec.queueMs == null ? null : rec.queueMs, runMs: rec.runMs == null ? null : rec.runMs,
   };
+}
+
+const FALLBACK_OF = [
+  [/^(?:runner unreachable|no peer |runner refused the token)/, 'runner unreachable'],
+  [/did not start within the \d+ms queue budget/, 'queue budget'],
+  [/^no result within the \d+ms (?:run )?budget|^the suite did not finish within/, 'run budget'],
+  [/^runner restarted$/, 'runner restart'],
+  [/^runner answered for tree |^tree mismatch on runner/, 'tree mismatch'],
+  [/^box mismatch: |^runner has no box: /, 'definition mismatch'],
+];
+
+function boxVerdict(out, boxDef) {
+  if (!out) return { fallback: 'outcome unknown' };
+  const rec = out.record || {};
+  if (out.unknown) {
+    const hit = FALLBACK_OF.find(([re]) => re.test(String(out.unknown)));
+    return { fallback: hit ? hit[1] : 'outcome unknown' };
+  }
+  if (rec.outcome === 'no-summary') return { fallback: 'no totals' };
+  if (rec.outcome !== 'pass' && rec.outcome !== 'fail') return { fallback: 'outcome unknown' };
+  if (rec.pass == null || rec.fail == null || rec.tests == null || !(rec.tests > 0)) return { fallback: 'no totals' };
+  const e = rec.env || {};
+  if (e.isolation !== 'container' || !e.box || !boxDef || typeof boxDef.definitionHash !== 'string' || e.box.definitionHash !== boxDef.definitionHash) {
+    return { fallback: 'definition mismatch' };
+  }
+  if (!out.res || !rec.treeHash || out.res.treeHash !== rec.treeHash) return { fallback: 'tree mismatch' };
+  return { fallback: null };
 }
 
 function halvesAgree(a, b) {
@@ -711,4 +769,4 @@ function createChannelHost({
   };
 }
 
-module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, HAND_QUEUE_MS, HAND_RUN_MS };
+module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, boxVerdict, HAND_QUEUE_MS, HAND_RUN_MS };
