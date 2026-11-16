@@ -1631,7 +1631,7 @@ test('t655 r1: refreshSidebarMeta repaints the footer, closing the boot race', (
   const end = src.indexOf('\n}', at);
   const body = src.slice(at, end);
   assert.ok(!/\n(async )?function /.test(body.slice(1)), 'ENTER: the slice is one function');
-  assert.match(body, /refreshSidebarView\(\);/,
+  assert.match(body, /scheduleSidebarRelayout\(\);/,
     'ENTER: the existing repaint call is still here — this pin sits beside it');
   assert.match(body, /pluginBar\.renderFooterButtons\(\);/,
     'the footer must be repainted once sidebarMeta lands, or it keeps answering off a '

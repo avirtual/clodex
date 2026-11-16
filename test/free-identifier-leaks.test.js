@@ -356,6 +356,7 @@ const RENDERER_SCANNED_MODULES = [
   'renderer/lib/args-model.js',
   'renderer/lib/session-actions.js',
   'renderer/lib/archive-guard.js',
+  'renderer/lib/sidebar-hold.js',
   'renderer/lib/name-suggest.js',
   // The New Session name field's validity (t684). It paints the field and the
   // hint it is HANDED, so a reach for renderer.js's own `inputName` / `nameHint`

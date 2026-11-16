@@ -44,6 +44,7 @@ const { skillOffSetFor, applySkillAliases, deferredSkillDeny, skillDenyIsDeferre
 const { planNewSession, respawnFocusWindow } = require('./lib/focus-policy');
 const { anyOverlayOpen, dialogOverlayIds, performCloseChord } = require('./lib/chord-guard');
 const { guardedArchive } = require('./lib/archive-guard');
+const { createSidebarHold } = require('./lib/sidebar-hold');
 const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { envRowView, buildEnvRow } = require('./lib/env-row');
 const { envLockView, applyEnvLock, patchUnlessEnvLocked } = require('./lib/env-lock');
@@ -290,6 +291,13 @@ const toggleSidebarFold = (function initSidebarResize() {
 })();
 
 const sessionList = document.getElementById('session-list');
+const sidebarHold = createSidebarHold({ refresh: () => refreshSidebarView(), paint: () => paintSidebarRows() });
+sessionList.addEventListener('pointerenter', (e) => sidebarHold.pointerEnter(e.pointerType));
+sessionList.addEventListener('pointerleave', () => sidebarHold.pointerLeave());
+window.addEventListener('blur', () => sidebarHold.releaseAll());
+document.addEventListener('visibilitychange', () => { if (document.hidden) sidebarHold.releaseAll(); });
+document.addEventListener('pointerdown', () => sidebarHold.unhold('menu'), true);
+document.addEventListener('keydown', () => sidebarHold.unhold('menu'), true);
 const terminalContainer = document.getElementById('terminal-container');
 const emptyState = document.getElementById('empty-state');
 const dialogOverlay = document.getElementById('dialog-overlay');
@@ -1052,6 +1060,7 @@ function addSessionToSidebar(name, type, cwd, label, backend = null, team = null
 
   item.addEventListener('contextmenu', (e) => {
     e.preventDefault();
+    sidebarHold.hold('menu');
     window.api.showSessionContextMenu(name, cwd || '');
   });
 
@@ -1071,7 +1080,7 @@ function failRowOrStash(name, snap, error) {
     restartFailed.set(name, { ...snap, error, at: Date.now() });
   } else if (!sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`)) {
     addFailedSessionToSidebar({ ...snap, error });
-    refreshSidebarView();
+    scheduleSidebarRelayout();
   }
 }
 
@@ -1337,6 +1346,7 @@ function startRename(item, nameEl, sessionName) {
   input.className = 'rename-input';
   input.value = current;
   nameEl.replaceWith(input);
+  sidebarHold.hold('rename');
   input.focus();
   input.select();
 
@@ -1354,6 +1364,7 @@ function startRename(item, nameEl, sessionName) {
       startRename(item, newNameEl, sessionName);
     });
     input.replaceWith(newNameEl);
+    sidebarHold.unhold('rename');
     if (!wanted) return;
     const snap = { ...rowSnapshot(sessionName, item), label: null };
     const { type: snapType, effort: snapEffort, posture: snapPosture, backend: snapBackend } = snap;
@@ -1385,6 +1396,7 @@ function startRename(item, nameEl, sessionName) {
       streamSeatNames.delete(sessionName);
       seatViewMemory.delete(sessionName);
       rebuildLiveRow(res.name, snap, { type: res.type, cwd: res.cwd, backend: res.backend, team: res.team, noWire: res.noWire });
+      refreshSidebarView();
       switchSession(res.name);
       showToast(`${sessionName} renamed to ${res.name}, restarting`, { name: res.name });
     });
@@ -1407,7 +1419,7 @@ function removeSessionFromSidebar(name) {
   dropActivityFeeds(name);
   sidebarMeta.delete(name);
   closeSessionInfoIfShowing(name);
-  if (typeof refreshSidebarView === 'function') refreshSidebarView();
+  if (typeof scheduleSidebarRelayout === 'function') scheduleSidebarRelayout();
 }
 
 function updateSidebarActive() {
@@ -1547,6 +1559,7 @@ function compareRows(a, b) {
 }
 
 function refreshSidebarView() {
+  sidebarHold.settle();
   const firstPeer = sessionList.querySelector('[data-peer-ui]');
   const rows = [...sessionList.querySelectorAll('.session-item')].filter(
     (el) => !el.dataset.peerUi && !el.classList.contains('peer-item') && !el.classList.contains('session-child'));
@@ -1671,10 +1684,16 @@ function applyPrBadge(item) {
   chip.setAttribute('data-tip', `PR ${state}${meta.branch ? ` · ${meta.branch}` : ''}`);
 }
 
-let relayoutTimer = null;
 function scheduleSidebarRelayout() {
-  if (relayoutTimer) return;
-  relayoutTimer = setTimeout(() => { relayoutTimer = null; refreshSidebarView(); }, 250);
+  sidebarHold.schedule();
+}
+
+function paintSidebarRows() {
+  for (const el of sessionList.querySelectorAll('.session-item')) {
+    if (el.dataset.peerUi || el.classList.contains('peer-item') || el.classList.contains('session-child')) continue;
+    applyPrBadge(el);
+    pluginBar.applyRowBadges(el);
+  }
 }
 
 let statusBarRelayoutTimer = null;
@@ -1747,7 +1766,7 @@ async function refreshSidebarMeta({ includePr = true } = {}) {
     if (Array.isArray(live)) refreshSeatsMcp(live.map((s) => s.name));
     if (Array.isArray(live)) for (const s of live) { applyAccountChip(s.name, s.account || null); markSeatVoice(s.name, s.voice); markSeatEffort(s.name, s.effort); markSeatPosture(s.name, s.posture); applyTicketBadge(s.name, s.ticket || null); const row = sessionList.querySelector(`[data-name="${CSS.escape(s.name)}"]`); if (row && s.ephemeral === true) row.dataset.ephemeral = '1'; else if (row && s.ephemeral === false) delete row.dataset.ephemeral; if (s.clone) applyCloneChip(row, s.clone); }
   } catch {}
-  refreshSidebarView();
+  scheduleSidebarRelayout();
   // Which footer buttons show is answered off sidebarMeta, which does not exist
   // yet when loadPluginRenderers paints them — without a repaint here the boot
   // state SHOWS a button for a seat that lacks the plugin, and on a single-seat
@@ -4680,12 +4699,12 @@ window.api.onSessionExit((name, code, meta) => {
   }
   if (failedEntry) {
     addFailedSessionToSidebar(failedEntry);
-    refreshSidebarView();
+    scheduleSidebarRelayout();
     return;
   }
   if (exitedEntry) {
     addExitedSessionToSidebar({ ...exitedEntry, exitedAt: Date.now() });
-    refreshSidebarView();
+    scheduleSidebarRelayout();
   }
   // Deliberate exits (expected:true) and clean self-exits stay silent. AGENT-ONLY on
   // purpose: intent-spawned bash that fast-fails at code≠0 would otherwise storm toasts.
@@ -4756,7 +4775,7 @@ window.api.onSessionAttention((name, attn) => {
     delete el.dataset.attention;
     delete el.dataset.attentionMsg;
   }
-  if (el.dataset.ephemeral) refreshSidebarView();
+  if (el.dataset.ephemeral) scheduleSidebarRelayout();
   if (window.__CLODEX_WEB__) updateWindowTitle();
 });
 
