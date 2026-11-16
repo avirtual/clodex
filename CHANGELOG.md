@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Saving the Peers dialog no longer clears a peer's Relay mesh setting, re-enables a paused peer, or resets its inbox mode.
+
 ## 5.188.0 — 2026-11-16
 
 - Archiving a seat from the sidebar asks for confirmation, with a warning when the seat is working, holds an open ticket or leads a team, and the team feed says when a seat was archived by the operator.

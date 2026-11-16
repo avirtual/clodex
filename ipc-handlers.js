@@ -31,6 +31,7 @@ const gitWorktree = require('./git-worktree');
 const { NO_SUCH_METHOD, errorEnvelope, sanitizeGrants, isValidPluginId, PLUGIN_CAPABILITIES, seatHasPlugin } = require('./plugin-api');
 const { catalogRows, allowlistFromChecked, pruneForPlugins, rows: intentRows } = require('./intent-registry');
 const { feedSince } = require('./subagent-ring');
+const PEER_FLAG_KEYS = ['relayAllowed', 'disabled', 'inbox'];
 // Main-side on purpose: an imported token must never round-trip through the renderer.
 const peerImport = require('./peer-import');
 const { nextVisibleWithName, nextVisibleWithoutName } = require('./peer-visibility');
@@ -1408,7 +1409,16 @@ function registerIpcHandlers(deps) {
     // Read before the write: the revocation below needs the previous value.
     const prevTerminalReports = uiSettings.get().terminalReports;
     const { suiteRunner: _suiteRunner, boxOffer: _boxOffer, ...rest } =(partial && typeof partial === 'object') ? partial : {};
+    const prevPeerFlags = new Map((uiSettings.get().peers || []).filter(Boolean)
+      .map((p) => [String(p.id), PEER_FLAG_KEYS.map((k) => p[k])]));
     const next = uiSettings.set(rest);
+    for (const p of (next && next.peers) || []) {
+      const before = p && prevPeerFlags.get(String(p.id));
+      if (!before) continue;
+      PEER_FLAG_KEYS.forEach((k, i) => {
+        if (before[i] !== p[k]) log.info('peer', `settings:set ${p.id} ${k} ${before[i]} → ${p[k]}`);
+      });
+    }
     // No typeof guard: an unwired revocation must throw here, not silently
     // leave undrained reports unswept.
     syncTerminalReports(prevTerminalReports);

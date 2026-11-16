@@ -7515,6 +7515,8 @@ async function openPeersDialog() {
 
 function closePeersDialog() { peersOverlay.classList.add('hidden'); }
 
+const PEER_SAVE_CARRIED = { relayAllowed: true, disabled: true, inbox: 'claim' };
+
 document.getElementById('btn-peers-cancel').addEventListener('click', closePeersDialog);
 document.getElementById('btn-peers-save').addEventListener('click', async () => {
   const collected = collectPeers();
@@ -7530,7 +7532,17 @@ document.getElementById('btn-peers-save').addEventListener('click', async () => 
   const boxPeers = (fresh.peers || [])
     .filter((p) => p && boxIds.has(p.id))
     .map(({ hasToken, ...rest }) => rest);
-  await window.api.setSettings({ peers: [...collected.peers, ...boxPeers] });
+  const storedById = new Map((fresh.peers || []).filter(Boolean).map((p) => [String(p.id), p]));
+  const peers = collected.peers.map((peer) => {
+    const stored = storedById.get(String(peer.id));
+    if (!stored) return peer;
+    const out = { ...peer };
+    for (const [key, value] of Object.entries(PEER_SAVE_CARRIED)) {
+      if (stored[key] === value) out[key] = value;
+    }
+    return out;
+  });
+  await window.api.setSettings({ peers: [...peers, ...boxPeers] });
   closePeersDialog();
 });
 peersOverlay.addEventListener('mousedown', (e) => { if (e.target === peersOverlay) closePeersDialog(); });
