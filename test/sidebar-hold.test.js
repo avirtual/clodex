@@ -2,12 +2,14 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { createSidebarHold } = require('../renderer/lib/sidebar-hold');
+const { createSidebarHold, rowsToReveal } = require('../renderer/lib/sidebar-hold');
 
 function mk() {
   const state = { refreshes: 0, paints: 0, now: 0, timers: new Map(), seq: 0 };
+  const refresh = () => { hold.settle(); state.refreshes++; };
+  state.operatorRefresh = refresh;
   const hold = createSidebarHold({
-    refresh: () => { state.refreshes++; },
+    refresh,
     paint: () => { state.paints++; },
     setTimeoutFn: (fn, ms) => { const id = ++state.seq; state.timers.set(id, { fn, at: state.now + ms }); return id; },
     clearTimeoutFn: (id) => { state.timers.delete(id); },
@@ -74,7 +76,7 @@ test('an operator refresh while inside runs at once and clears the pending one',
   const { hold, state, advance } = mk();
   hold.pointerEnter('mouse');
   hold.schedule();
-  hold.refreshNow();
+  state.operatorRefresh();
   assert.strictEqual(state.refreshes, 1);
   hold.pointerLeave();
   advance(1000);
@@ -139,4 +141,28 @@ test('a touch pointer never engages the hold, so a tap cannot leave it stuck', (
   hold.schedule();
   advance(250);
   assert.strictEqual(state.refreshes, 1);
+});
+
+test('held relayouts paint once per debounce window, not once per event', () => {
+  const { hold, state, advance } = mk();
+  hold.pointerEnter('mouse');
+  hold.schedule();
+  hold.schedule();
+  hold.schedule();
+  advance(250);
+  assert.strictEqual(state.paints, 1);
+  assert.strictEqual(state.refreshes, 0);
+});
+
+const REVEAL_ROWS = [
+  { name: 'eph-attn', hidden: true, passes: true, collapsed: false },
+  { name: 'eph-quiet', hidden: true, passes: false, collapsed: false },
+  { name: 'in-collapsed-group', hidden: true, passes: true, collapsed: true },
+  { name: 'shown-now-failing', hidden: false, passes: false, collapsed: false },
+  { name: 'shown', hidden: false, passes: true, collapsed: false },
+];
+
+test('while held, only a hidden row that now passes and is not collapsed is revealed', () => {
+  const out = rowsToReveal(REVEAL_ROWS, { hidden: (r) => r.hidden, passes: (r) => r.passes, collapsed: (r) => r.collapsed });
+  assert.deepStrictEqual(out.map((r) => r.name), ['eph-attn']);
 });

@@ -13,20 +13,16 @@ function createSidebarHold({ refresh, paint = () => {}, setTimeoutFn = setTimeou
     pending = false;
   };
 
-  const defer = () => { pending = true; paint(); };
-
   const schedule = () => {
-    if (held()) { defer(); return; }
+    if (held()) pending = true;
     if (timer) return;
     timer = setTimeoutFn(() => {
       timer = null;
-      if (held()) { defer(); return; }
+      if (held()) { pending = true; paint(); return; }
       pending = false;
       refresh();
     }, delayMs);
   };
-
-  const refreshNow = () => { settle(); refresh(); };
 
   const releaseIfFree = () => {
     if (held() || !pending) return;
@@ -36,10 +32,8 @@ function createSidebarHold({ refresh, paint = () => {}, setTimeoutFn = setTimeou
 
   return {
     schedule,
-    refreshNow,
     settle,
     held,
-    pending: () => pending,
     pointerEnter(pointerType) { if (pointerType !== 'touch') pointer = true; },
     pointerLeave() { pointer = false; releaseIfFree(); },
     hold(key) { keys.add(key); },
@@ -48,4 +42,8 @@ function createSidebarHold({ refresh, paint = () => {}, setTimeoutFn = setTimeou
   };
 }
 
-module.exports = { createSidebarHold };
+function rowsToReveal(rows, { hidden, passes, collapsed }) {
+  return rows.filter((row) => hidden(row) && passes(row) && !collapsed(row));
+}
+
+module.exports = { createSidebarHold, rowsToReveal };

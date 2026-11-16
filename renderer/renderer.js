@@ -44,7 +44,7 @@ const { skillOffSetFor, applySkillAliases, deferredSkillDeny, skillDenyIsDeferre
 const { planNewSession, respawnFocusWindow } = require('./lib/focus-policy');
 const { anyOverlayOpen, dialogOverlayIds, performCloseChord } = require('./lib/chord-guard');
 const { guardedArchive } = require('./lib/archive-guard');
-const { createSidebarHold } = require('./lib/sidebar-hold');
+const { createSidebarHold, rowsToReveal } = require('./lib/sidebar-hold');
 const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { envRowView, buildEnvRow } = require('./lib/env-row');
 const { envLockView, applyEnvLock, patchUnlessEnvLocked } = require('./lib/env-lock');
@@ -1689,10 +1689,22 @@ function scheduleSidebarRelayout() {
 }
 
 function paintSidebarRows() {
-  for (const el of sessionList.querySelectorAll('.session-item')) {
-    if (el.dataset.peerUi || el.classList.contains('peer-item') || el.classList.contains('session-child')) continue;
+  const rows = [...sessionList.querySelectorAll('.session-item')].filter(
+    (el) => !el.dataset.peerUi && !el.classList.contains('peer-item') && !el.classList.contains('session-child'));
+  for (const el of rows) {
     applyPrBadge(el);
     pluginBar.applyRowBadges(el);
+  }
+  const reveal = rowsToReveal(rows, {
+    hidden: (el) => el.style.display === 'none',
+    passes: rowPasses,
+    collapsed: (el) => sidebarView.group !== 'none' && collapsedGroups.has(groupFor(el) || '(other)'),
+  });
+  for (const el of reveal) {
+    const children = [...sessionList.querySelectorAll(`.session-child[data-parent="${CSS.escape(el.dataset.name)}"]`)];
+    insertLocalSessionRow(el);
+    el.style.display = '';
+    for (const c of children) { insertLocalSessionRow(c); c.style.display = ''; }
   }
 }
 

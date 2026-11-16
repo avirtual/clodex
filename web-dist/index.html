@@ -30381,29 +30381,19 @@ ${body}`;
           }
           pending = false;
         };
-        const defer = () => {
-          pending = true;
-          paint();
-        };
         const schedule = () => {
-          if (held()) {
-            defer();
-            return;
-          }
+          if (held()) pending = true;
           if (timer) return;
           timer = setTimeoutFn(() => {
             timer = null;
             if (held()) {
-              defer();
+              pending = true;
+              paint();
               return;
             }
             pending = false;
             refresh();
           }, delayMs);
-        };
-        const refreshNow = () => {
-          settle();
-          refresh();
         };
         const releaseIfFree = () => {
           if (held() || !pending) return;
@@ -30412,10 +30402,8 @@ ${body}`;
         };
         return {
           schedule,
-          refreshNow,
           settle,
           held,
-          pending: () => pending,
           pointerEnter(pointerType) {
             if (pointerType !== "touch") pointer = true;
           },
@@ -30437,7 +30425,10 @@ ${body}`;
           }
         };
       }
-      module.exports = { createSidebarHold };
+      function rowsToReveal(rows, { hidden, passes, collapsed }) {
+        return rows.filter((row) => hidden(row) && passes(row) && !collapsed(row));
+      }
+      module.exports = { createSidebarHold, rowsToReveal };
     }
   });
 
@@ -53955,7 +53946,7 @@ ${detail}` });
       var { planNewSession, respawnFocusWindow } = require_focus_policy();
       var { anyOverlayOpen, dialogOverlayIds, performCloseChord } = require_chord_guard();
       var { guardedArchive } = require_archive_guard();
-      var { createSidebarHold } = require_sidebar_hold();
+      var { createSidebarHold, rowsToReveal } = require_sidebar_hold();
       var { parseEnvLines, formatEnvLines } = require_env_edit();
       var { envRowView, buildEnvRow } = require_env_row();
       var { envLockView, applyEnvLock, patchUnlessEnvLocked } = require_env_lock();
@@ -55586,10 +55577,26 @@ ${detail}` });
         sidebarHold.schedule();
       }
       function paintSidebarRows() {
-        for (const el of sessionList.querySelectorAll(".session-item")) {
-          if (el.dataset.peerUi || el.classList.contains("peer-item") || el.classList.contains("session-child")) continue;
+        const rows = [...sessionList.querySelectorAll(".session-item")].filter(
+          (el) => !el.dataset.peerUi && !el.classList.contains("peer-item") && !el.classList.contains("session-child")
+        );
+        for (const el of rows) {
           applyPrBadge(el);
           pluginBar.applyRowBadges(el);
+        }
+        const reveal = rowsToReveal(rows, {
+          hidden: (el) => el.style.display === "none",
+          passes: rowPasses,
+          collapsed: (el) => sidebarView.group !== "none" && collapsedGroups.has(groupFor(el) || "(other)")
+        });
+        for (const el of reveal) {
+          const children = [...sessionList.querySelectorAll(`.session-child[data-parent="${CSS.escape(el.dataset.name)}"]`)];
+          insertLocalSessionRow(el);
+          el.style.display = "";
+          for (const c of children) {
+            insertLocalSessionRow(c);
+            c.style.display = "";
+          }
         }
       }
       var statusBarRelayoutTimer = null;
