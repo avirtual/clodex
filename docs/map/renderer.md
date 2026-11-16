@@ -98,7 +98,7 @@ payloads are documented in `docs/renderer-events.md`.
 |---|---|---|---|---|
 | groupFor | the group key for a row under the current group mode (project/team, state, date, pr); null for none | reads `sidebarView`, `sidebarMeta` | projectLabel, stateOf, dateBucket | unpinned |
 | rowPasses | applies the status, activity-age and search filters to a row | reads `sidebarView`, `sidebarMeta` | stateOf | unpinned |
-| refreshSidebarView | the sidebar render loop: repaints row badges, hides filtered rows, re-orders local rows flat or under group headers | sidebar DOM, `collapsedGroups` | rowPasses, groupFor, makeGroupHeader, applyPrBadge | exited-seat-row.test.js plugin-host.test.js plugin-scope.test.js |
+| refreshSidebarView | the sidebar render loop: repaints row badges, hides filtered rows, re-orders local rows flat or under group headers | sidebar DOM, `collapsedGroups` | rowPasses, groupFor, makeGroupHeader, applyPrBadge | exited-seat-row.test.js plugin-host.test.js |
 | applyFixChip | marks an ad-hoc fix seat's row with `data-fixFor` and a fix chip | row dataset | none | deploy-visible.test.js seat-io-marker.test.js sidebar-account-chip.test.js |
 | scheduleSidebarRelayout | background relayout: the 250 ms debounce of `refreshSidebarView`, held by `sidebarHold` while the pointer, a rename or a row menu is on the list | `sidebarHold` | createSidebarHold | plugin-host.test.js seat-io-marker.test.js sidebar-account-chip.test.js |
 | makeGroupHeader | builds one collapsible group header; team groups get a right-click that opens the team roles popover | `collapsedGroups` | openTeamRolesPopover | unpinned |

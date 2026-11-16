@@ -225,6 +225,7 @@ test('a meta refresh requested during an in-flight one still runs', async () => 
     mergeMeta: (a, b) => ({ ...a, ...b }),
     applyAccountChip: noop, markSeatVoice: noop, markSeatEffort: noop, markSeatPosture: noop,
     refreshSidebarView: noop,
+    scheduleSidebarRelayout: noop,
     pluginBar: { renderFooterButtons: noop },
   };
   const names = Object.keys(env);
