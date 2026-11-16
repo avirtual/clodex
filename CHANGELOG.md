@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.188.0 — 2026-11-16
+
 - Archiving a seat from the sidebar asks for confirmation, with a warning when the seat is working, holds an open ticket or leads a team, and the team feed says when a seat was archived by the operator.
 - The sidebar no longer reorders sessions under the pointer: rows hold their positions while you hover the list, and the order catches up when the pointer leaves.
 
