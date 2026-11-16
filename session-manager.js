@@ -148,6 +148,7 @@ const {
   buildRelayEnvelope, buildTerminalDm, isRelayEnvelope, hopRule, relayVersionOk, isDoneTaskEnvelope, isSandboxEnvelope, peerOriginSuffix, isQualifiedSender,
 } = require('./relay-protocol');
 const { formatTeamBlock, matchSeatRole, formatRoster, formatCompositionDelta } = require('./team-manifest');
+const ARCHIVE_CAUSES = { sidebar: 'by the operator from the sidebar', shortcut: 'by the operator with the close shortcut' };
 const { SYSTEM_SENDERS, isReservedSenderName, reservedSenderError } = require('./system-senders');
 const { claimedRecordFault } = require('./peer-outbox');
 const { defuseSenderLines, defangTeammateTag, quoteBodyLines } = require('./review-gate');
@@ -4102,12 +4103,13 @@ function createSessionManager(deps) {
       return { ok: true, worktreeRemoved: false, error, path: worktree.path, live: wasLive };
     }
 
-    async archive(name) {
+    async archive(name, { via = null } = {}) {
       const s = this.sessions.get(name);
       if (!s) return;
       log.info('session', `archive ${name} pid=${this._procPid(s)}`);
       this.endHold(name);
-      this._notifyComposition(s, 'archived');
+      const cause = Object.hasOwn(ARCHIVE_CAUSES, via) ? ARCHIVE_CAUSES[via] : null;
+      this._notifyComposition(s, cause ? `archived ${cause}` : 'archived');
       getPersistence().setArchived(name, true);
       s._archived = true;
       if (s.stream) { s._streamStopping = true; s.stream.kill(); return; }

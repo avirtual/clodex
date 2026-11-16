@@ -663,7 +663,7 @@ test('the renderer defers the ghost row to session-exit when the live row is sti
 test('archiving or deleting a row by hand clears any failed-move stash first', () => {
   const src = fsReal.readFileSync(pathReal.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf-8');
   const bodyOfFn = (fname) => {
-    const fn = src.slice(src.indexOf(`async function ${fname}(name) {`));
+    const fn = src.slice(src.indexOf(`async function ${fname}(name`));
     const body = fn.slice(0, fn.indexOf('\n}\n') + 1);
     assert.ok(body.length > 0 && body.includes(fname), `ENTER: ${fname} was found and sliced`);
     return body;
