@@ -30363,6 +30363,84 @@ ${body}`;
     }
   });
 
+  // renderer/lib/sidebar-hold.js
+  var require_sidebar_hold = __commonJS({
+    "renderer/lib/sidebar-hold.js"(exports, module) {
+      "use strict";
+      function createSidebarHold({ refresh, paint = () => {
+      }, setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout, delayMs = 250 }) {
+        let timer = null;
+        let pending = false;
+        let pointer = false;
+        const keys = /* @__PURE__ */ new Set();
+        const held = () => pointer || keys.size > 0;
+        const settle = () => {
+          if (timer) {
+            clearTimeoutFn(timer);
+            timer = null;
+          }
+          pending = false;
+        };
+        const defer = () => {
+          pending = true;
+          paint();
+        };
+        const schedule = () => {
+          if (held()) {
+            defer();
+            return;
+          }
+          if (timer) return;
+          timer = setTimeoutFn(() => {
+            timer = null;
+            if (held()) {
+              defer();
+              return;
+            }
+            pending = false;
+            refresh();
+          }, delayMs);
+        };
+        const refreshNow = () => {
+          settle();
+          refresh();
+        };
+        const releaseIfFree = () => {
+          if (held() || !pending) return;
+          settle();
+          refresh();
+        };
+        return {
+          schedule,
+          refreshNow,
+          settle,
+          held,
+          pending: () => pending,
+          pointerEnter(pointerType) {
+            if (pointerType !== "touch") pointer = true;
+          },
+          pointerLeave() {
+            pointer = false;
+            releaseIfFree();
+          },
+          hold(key) {
+            keys.add(key);
+          },
+          unhold(key) {
+            keys.delete(key);
+            releaseIfFree();
+          },
+          releaseAll() {
+            pointer = false;
+            keys.clear();
+            releaseIfFree();
+          }
+        };
+      }
+      module.exports = { createSidebarHold };
+    }
+  });
+
   // renderer/lib/env-edit.js
   var require_env_edit = __commonJS({
     "renderer/lib/env-edit.js"(exports, module) {
@@ -53877,6 +53955,7 @@ ${detail}` });
       var { planNewSession, respawnFocusWindow } = require_focus_policy();
       var { anyOverlayOpen, dialogOverlayIds, performCloseChord } = require_chord_guard();
       var { guardedArchive } = require_archive_guard();
+      var { createSidebarHold } = require_sidebar_hold();
       var { parseEnvLines, formatEnvLines } = require_env_edit();
       var { envRowView, buildEnvRow } = require_env_row();
       var { envLockView, applyEnvLock, patchUnlessEnvLocked } = require_env_lock();
@@ -54164,6 +54243,15 @@ ${detail}` });
         return toggle;
       })();
       var sessionList = document.getElementById("session-list");
+      var sidebarHold = createSidebarHold({ refresh: () => refreshSidebarView(), paint: () => paintSidebarRows() });
+      sessionList.addEventListener("pointerenter", (e) => sidebarHold.pointerEnter(e.pointerType));
+      sessionList.addEventListener("pointerleave", () => sidebarHold.pointerLeave());
+      window.addEventListener("blur", () => sidebarHold.releaseAll());
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden) sidebarHold.releaseAll();
+      });
+      document.addEventListener("pointerdown", () => sidebarHold.unhold("menu"), true);
+      document.addEventListener("keydown", () => sidebarHold.unhold("menu"), true);
       var terminalContainer = document.getElementById("terminal-container");
       var emptyState = document.getElementById("empty-state");
       var dialogOverlay = document.getElementById("dialog-overlay");
@@ -54879,6 +54967,7 @@ ${detail}` });
         });
         item.addEventListener("contextmenu", (e) => {
           e.preventDefault();
+          sidebarHold.hold("menu");
           window.api.showSessionContextMenu(name, cwd || "");
         });
         insertLocalSessionRow(item);
@@ -54895,7 +54984,7 @@ ${detail}` });
           restartFailed.set(name, { ...snap, error, at: Date.now() });
         } else if (!sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`)) {
           addFailedSessionToSidebar({ ...snap, error });
-          refreshSidebarView();
+          scheduleSidebarRelayout();
         }
       }
       async function setArgsOrFailRow(name, snap, restart, args) {
@@ -55160,6 +55249,7 @@ ${detail}` });
         input.className = "rename-input";
         input.value = current;
         nameEl.replaceWith(input);
+        sidebarHold.hold("rename");
         input.focus();
         input.select();
         let done = false;
@@ -55176,6 +55266,7 @@ ${detail}` });
             startRename(item, newNameEl, sessionName);
           });
           input.replaceWith(newNameEl);
+          sidebarHold.unhold("rename");
           if (!wanted) return;
           const snap = { ...rowSnapshot(sessionName, item), label: null };
           const { type: snapType, effort: snapEffort, posture: snapPosture, backend: snapBackend } = snap;
@@ -55211,6 +55302,7 @@ ${detail}` });
             streamSeatNames.delete(sessionName);
             seatViewMemory.delete(sessionName);
             rebuildLiveRow(res.name, snap, { type: res.type, cwd: res.cwd, backend: res.backend, team: res.team, noWire: res.noWire });
+            refreshSidebarView();
             switchSession(res.name);
             showToast(`${sessionName} renamed to ${res.name}, restarting`, { name: res.name });
           });
@@ -55233,7 +55325,7 @@ ${detail}` });
         dropActivityFeeds(name);
         sidebarMeta.delete(name);
         closeSessionInfoIfShowing(name);
-        if (typeof refreshSidebarView === "function") refreshSidebarView();
+        if (typeof scheduleSidebarRelayout === "function") scheduleSidebarRelayout();
       }
       function updateSidebarActive() {
         for (const el of sessionList.querySelectorAll(".session-item")) {
@@ -55361,6 +55453,7 @@ ${detail}` });
         return vb - va;
       }
       function refreshSidebarView() {
+        sidebarHold.settle();
         const firstPeer = sessionList.querySelector("[data-peer-ui]");
         const rows = [...sessionList.querySelectorAll(".session-item")].filter(
           (el) => !el.dataset.peerUi && !el.classList.contains("peer-item") && !el.classList.contains("session-child")
@@ -55489,13 +55582,15 @@ ${detail}` });
         chip.textContent = meta.prNumber ? `#${meta.prNumber}` : state;
         chip.setAttribute("data-tip", `PR ${state}${meta.branch ? ` \xB7 ${meta.branch}` : ""}`);
       }
-      var relayoutTimer = null;
       function scheduleSidebarRelayout() {
-        if (relayoutTimer) return;
-        relayoutTimer = setTimeout(() => {
-          relayoutTimer = null;
-          refreshSidebarView();
-        }, 250);
+        sidebarHold.schedule();
+      }
+      function paintSidebarRows() {
+        for (const el of sessionList.querySelectorAll(".session-item")) {
+          if (el.dataset.peerUi || el.classList.contains("peer-item") || el.classList.contains("session-child")) continue;
+          applyPrBadge(el);
+          pluginBar.applyRowBadges(el);
+        }
       }
       var statusBarRelayoutTimer = null;
       function scheduleStatusBarRelayout() {
@@ -55585,7 +55680,7 @@ ${detail}` });
           }
         } catch {
         }
-        refreshSidebarView();
+        scheduleSidebarRelayout();
         pluginBar.renderFooterButtons();
       }
       function onViewControlChange() {
@@ -58444,12 +58539,12 @@ ${detail}` });
         }
         if (failedEntry) {
           addFailedSessionToSidebar(failedEntry);
-          refreshSidebarView();
+          scheduleSidebarRelayout();
           return;
         }
         if (exitedEntry) {
           addExitedSessionToSidebar({ ...exitedEntry, exitedAt: Date.now() });
-          refreshSidebarView();
+          scheduleSidebarRelayout();
         }
         if (meta && meta.agentType && !meta.expected && (code !== 0 || meta.signal)) {
           if (meta.missingTool) {
@@ -58507,7 +58602,7 @@ ${detail}` });
           delete el.dataset.attention;
           delete el.dataset.attentionMsg;
         }
-        if (el.dataset.ephemeral) refreshSidebarView();
+        if (el.dataset.ephemeral) scheduleSidebarRelayout();
         if (window.__CLODEX_WEB__) updateWindowTitle();
       });
       var peerStatuses = /* @__PURE__ */ new Map();
