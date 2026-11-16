@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Archiving a seat from the sidebar asks for confirmation, with a warning when the seat is working, holds an open ticket or leads a team, and the team feed says when a seat was archived by the operator.
+
 ## 5.187.0 — 2026-11-16
 
 - Fixed: a test box runner's job ledger records each job's outcome and test totals, and a client retries a failed read of a job's output instead of reporting it unavailable.

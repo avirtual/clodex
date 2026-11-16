@@ -30329,6 +30329,40 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
     }
   });
 
+  // renderer/lib/archive-guard.js
+  var require_archive_guard = __commonJS({
+    "renderer/lib/archive-guard.js"(exports, module) {
+      "use strict";
+      function archiveWarnings({ name, type, activity, attention, ticket, team, lead }) {
+        if (type === "bash") return [];
+        const warnings = [];
+        if (attention || activity && activity !== "idle") warnings.push("is working");
+        if (ticket) warnings.push(`holds ticket ${ticket}`);
+        if (team && lead && lead === name) warnings.push(`is the lead of team ${team}`);
+        return warnings;
+      }
+      function archiveConfirmText(row) {
+        const warnings = archiveWarnings(row);
+        const head = `Archive session "${row.name}"?`;
+        const body = "Its process stops; the session is archived, not deleted, and can be resumed from its sidebar row.";
+        return warnings.length ? `${head}
+
+Warning: ${row.name} ${warnings.join(" and ")}.
+
+${body}` : `${head}
+
+${body}`;
+      }
+      async function guardedArchive(row, { leadOf, confirm: confirm2, archive }) {
+        const lead = row.team && row.type !== "bash" ? await leadOf(row.team) : null;
+        if (!confirm2(archiveConfirmText({ ...row, lead }))) return false;
+        await archive(row.name);
+        return true;
+      }
+      module.exports = { archiveWarnings, archiveConfirmText, guardedArchive };
+    }
+  });
+
   // renderer/lib/env-edit.js
   var require_env_edit = __commonJS({
     "renderer/lib/env-edit.js"(exports, module) {
@@ -53842,6 +53876,7 @@ ${detail}` });
       var { skillOffSetFor, applySkillAliases, deferredSkillDeny, skillDenyIsDeferred, skillDenyKeepList, skillDenyForPeer } = require_skills_off();
       var { planNewSession, respawnFocusWindow } = require_focus_policy();
       var { anyOverlayOpen, dialogOverlayIds, performCloseChord } = require_chord_guard();
+      var { guardedArchive } = require_archive_guard();
       var { parseEnvLines, formatEnvLines } = require_env_edit();
       var { envRowView, buildEnvRow } = require_env_row();
       var { envLockView, applyEnvLock, patchUnlessEnvLocked } = require_env_lock();
@@ -54714,17 +54749,34 @@ ${detail}` });
         const { account, fixFor, ...snap } = rowSnapshot(name, item);
         return { ...snap, ...fixFor ? { fixFor } : {}, archivedAt: Date.now() };
       }
-      async function archiveSessionRow(name) {
+      async function archiveSessionRow(name, via = null) {
         movingFailed.delete(name);
         restartFailed.delete(name);
         const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
         if (!item) return;
         archivingSessions.set(name, archivedRowEntry(name, item));
-        const res = await window.api.archiveSession(name);
+        const res = await window.api.archiveSession(name, via ? { via } : void 0);
         if (!res || !res.ok) {
           archivingSessions.delete(name);
           showToast(`Archive failed: ${res && res.error || "unknown error"}`, { kind: "error", duration: 1e4, name });
         }
+      }
+      function requestArchiveRow(name, via) {
+        const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+        if (!item) return Promise.resolve(false);
+        const row = {
+          name,
+          type: item.dataset.type,
+          activity: item.dataset.activity || null,
+          attention: item.dataset.attention || null,
+          ticket: item.dataset.ticket || null,
+          team: item.dataset.team || null
+        };
+        return guardedArchive(row, {
+          leadOf: (team) => Promise.resolve(window.api.teamGet(team)).then((r) => r && r.ok && r.team && r.team.lead || null, () => null),
+          confirm: (text) => confirm(text),
+          archive: (n) => archiveSessionRow(n, via)
+        });
       }
       async function deleteSessionRow(name) {
         if (!await window.api.confirmKill(name)) return;
@@ -54803,7 +54855,7 @@ ${detail}` });
         });
         item.querySelector(".session-close").addEventListener("click", (e) => {
           e.stopPropagation();
-          archiveSessionRow(name);
+          requestArchiveRow(name, "sidebar");
         });
         const pendingEl = item.querySelector(".session-pending");
         if (pendingEl) {
@@ -59638,7 +59690,7 @@ Click for live activity`;
         }, {
           closeNewSessionDialog: closeDialog,
           hidePeerRow: (peer) => peerHideFromList(peer.id, peer.name),
-          archiveSession: archiveSessionRow
+          archiveSession: (name) => requestArchiveRow(name, "shortcut")
         });
       }
       document.addEventListener("keydown", (e) => {
