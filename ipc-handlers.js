@@ -31,7 +31,6 @@ const gitWorktree = require('./git-worktree');
 const { NO_SUCH_METHOD, errorEnvelope, sanitizeGrants, isValidPluginId, PLUGIN_CAPABILITIES, seatHasPlugin } = require('./plugin-api');
 const { catalogRows, allowlistFromChecked, pruneForPlugins, rows: intentRows } = require('./intent-registry');
 const { feedSince } = require('./subagent-ring');
-const PEER_FLAG_KEYS = ['relayAllowed', 'disabled', 'inbox'];
 // Main-side on purpose: an imported token must never round-trip through the renderer.
 const peerImport = require('./peer-import');
 const { nextVisibleWithName, nextVisibleWithoutName } = require('./peer-visibility');
@@ -84,6 +83,8 @@ function bytesBuffer(bytes) {
   if (bytes instanceof ArrayBuffer) return Buffer.from(bytes);
   return null;
 }
+
+const PEER_FLAG_KEYS = ['relayAllowed', 'disabled', 'inbox'];
 
 function registerIpcHandlers(deps) {
   const {

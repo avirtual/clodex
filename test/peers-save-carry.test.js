@@ -89,28 +89,47 @@ test('an edited row keeps its settings and a new row gets none', async () => {
   ]);
 });
 
-test('every key sanitizePeers can output is collected by the dialog, carried by Save, or listed here', () => {
+const PEER_KEYS = [
+  'az', 'deployFolder', 'disabled', 'gcloud', 'id', 'inbox', 'kubectl', 'label',
+  'relayAllowed', 'remotePort', 'sshHost', 'ssm', 'token', 'url',
+];
+
+test('every key sanitizePeers reads or outputs is collected by the dialog, carried by Save, or listed here', () => {
   const stores = openStores();
-  stores.uiSettings.set({ peers: [
+  const reads = new Set();
+  const spy = (rec) => new Proxy(rec, { get(t, k) { if (typeof k === 'string') reads.add(k); return t[k]; } });
+  const raw = [
     { ...GEN, deployFolder: '/opt/x' },
     { id: 'ssm', ssm: { target: 'i-1' } },
     { id: 'kube', kubectl: { target: 'pod/x' } },
     { id: 'gc', gcloud: { instance: 'vm-1' } },
     { id: 'az', az: { bastion: 'b', resourceGroup: 'rg', target: 't' } },
-  ] });
+    { id: 'tokenless', sshHost: 'bare.local' },
+  ];
+  stores.uiSettings.set({ peers: raw.map(spy) });
+  assert.ok(reads.has('relayAllowed'), 'ENTER: the proxied records reached sanitizePeers');
+  assert.deepStrictEqual([...reads].sort(), PEER_KEYS);
   const output = new Set();
   for (const p of stores.uiSettings.get().peers) for (const k of Object.keys(p)) output.add(k);
-  assert.deepStrictEqual([...output].sort(), [
-    'az', 'deployFolder', 'disabled', 'gcloud', 'id', 'inbox', 'kubectl', 'label',
-    'relayAllowed', 'remotePort', 'sshHost', 'ssm', 'token', 'url',
-  ]);
+  assert.deepStrictEqual([...output].sort(), PEER_KEYS);
   const dialogCollected = ['id', 'label', 'url', 'sshHost', 'ssm', 'kubectl', 'gcloud', 'az', 'remotePort', 'deployFolder', 'token'];
   const ctx = {};
   vm.createContext(ctx);
   vm.runInContext(carriedSrc(), ctx);
   const carried = vm.runInContext('Object.keys(PEER_SAVE_CARRIED)', ctx);
   const otherwiseKept = [];
-  assert.deepStrictEqual([...dialogCollected, ...carried, ...otherwiseKept].sort(), [...output].sort());
+  assert.deepStrictEqual([...dialogCollected, ...carried, ...otherwiseKept].sort(), PEER_KEYS);
+});
+
+test('settings:set logs exactly the keys the Peers dialog Save carries', () => {
+  const ipcSrc = fs.readFileSync(path.join(__dirname, '..', 'ipc-handlers.js'), 'utf8');
+  const start = ipcSrc.indexOf('const PEER_FLAG_KEYS = ');
+  assert.ok(start > 0, 'ENTER: PEER_FLAG_KEYS was located');
+  const ctx = {};
+  vm.createContext(ctx);
+  vm.runInContext(carriedSrc(), ctx);
+  vm.runInContext(ipcSrc.slice(start, ipcSrc.indexOf('\n', start) + 1), ctx);
+  assert.deepStrictEqual(JSON.parse(vm.runInContext('JSON.stringify([PEER_FLAG_KEYS, Object.keys(PEER_SAVE_CARRIED)])', ctx)), [['relayAllowed', 'disabled', 'inbox'], ['relayAllowed', 'disabled', 'inbox']]);
 });
 
 function settingsSetFixture() {
