@@ -43,6 +43,7 @@ const { prefsGate } = require('./lib/prefs-gate');
 const { skillOffSetFor, applySkillAliases, deferredSkillDeny, skillDenyIsDeferred, skillDenyKeepList, skillDenyForPeer } = require('../skills-off');
 const { planNewSession, respawnFocusWindow } = require('./lib/focus-policy');
 const { anyOverlayOpen, dialogOverlayIds, performCloseChord } = require('./lib/chord-guard');
+const { guardedArchive } = require('./lib/archive-guard');
 const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { envRowView, buildEnvRow } = require('./lib/env-row');
 const { envLockView, applyEnvLock, patchUnlessEnvLocked } = require('./lib/env-lock');
@@ -910,17 +911,32 @@ function archivedRowEntry(name, item) {
   const { account, fixFor, ...snap } = rowSnapshot(name, item);
   return { ...snap, ...(fixFor ? { fixFor } : {}), archivedAt: Date.now() };
 }
-async function archiveSessionRow(name) {
+async function archiveSessionRow(name, via = null) {
   movingFailed.delete(name);
   restartFailed.delete(name);
   const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
   if (!item) return;
   archivingSessions.set(name, archivedRowEntry(name, item));
-  const res = await window.api.archiveSession(name);
+  const res = await window.api.archiveSession(name, via ? { via } : undefined);
   if (!res || !res.ok) {
     archivingSessions.delete(name);
     showToast(`Archive failed: ${(res && res.error) || 'unknown error'}`, { kind: 'error', duration: 10000, name });
   }
+}
+
+function requestArchiveRow(name, via) {
+  const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
+  if (!item) return Promise.resolve(false);
+  const row = {
+    name, type: item.dataset.type, activity: item.dataset.activity || null,
+    attention: item.dataset.attention || null, ticket: item.dataset.ticket || null, team: item.dataset.team || null,
+  };
+  return guardedArchive(row, {
+    leadOf: (team) => Promise.resolve(window.api.teamGet(team))
+      .then((r) => (r && r.ok && r.team && r.team.lead) || null, () => null),
+    confirm: (text) => confirm(text),
+    archive: (n) => archiveSessionRow(n, via),
+  });
 }
 
 async function deleteSessionRow(name) {
@@ -1009,7 +1025,7 @@ function addSessionToSidebar(name, type, cwd, label, backend = null, team = null
 
   item.querySelector('.session-close').addEventListener('click', (e) => {
     e.stopPropagation();
-    archiveSessionRow(name);
+    requestArchiveRow(name, 'sidebar');
   });
 
   const pendingEl = item.querySelector('.session-pending');
@@ -6060,7 +6076,7 @@ function runCloseChord() {
   }, {
     closeNewSessionDialog: closeDialog,
     hidePeerRow: (peer) => peerHideFromList(peer.id, peer.name),
-    archiveSession: archiveSessionRow,
+    archiveSession: (name) => requestArchiveRow(name, 'shortcut'),
   });
 }
 

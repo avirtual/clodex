@@ -4221,6 +4221,35 @@ test('_notifyComposition (T34): an ephemeral reviewer seat delta reaches ONLY th
   assert.match(passive[0].b, /\[team team\] seat team-reviewer-1 archived \(role: reviewer\)/);
 });
 
+for (const [label, args, want] of [
+  ['operator from the sidebar', [{ via: 'sidebar' }], '[team team] seat team-dev archived by the operator from the sidebar (role: dev)'],
+  ['operator with the close shortcut', [{ via: 'shortcut' }], '[team team] seat team-dev archived by the operator with the close shortcut (role: dev)'],
+  ['ticket close-out (no cause passed)', [], '[team team] seat team-dev archived (role: dev)'],
+  ['an unknown cause', [{ via: 'bogus' }], '[team team] seat team-dev archived (role: dev)'],
+]) {
+  test(`archive feed line: ${label}`, async () => {
+    const { m } = mkPark({
+      ...teamDeps,
+      getPersistence: () => ({ list: () => [], get: () => null, setArchived: () => {} }),
+    });
+    m.sessions.set('lead', { name: 'lead', agentType: 'claude', cwd: '/proj/a' });
+    m.sessions.set('team-dev', { name: 'team-dev', agentType: 'claude', cwd: '/proj/b', stream: { kill() {} } });
+    const passive = [];
+    m._deliverPassive = (t, s, b) => passive.push({ t, s, b });
+    m._rebakeDigest = () => {};
+    await m.archive('team-dev', ...args);
+    assert.strictEqual(m.sessions.get('team-dev')._archived, true, 'ENTER: the archive ran');
+    assert.deepStrictEqual(passive.map((p) => [p.t, p.b]), [['lead', want]]);
+  });
+}
+
+test('ticket close-out archives pass no cause, so their feed line stays the plain one', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'team-tickets.js'), 'utf8');
+  const calls = src.match(/this\.archive\([^)]*\)/g) || [];
+  assert.ok(calls.length >= 4, 'ENTER: team-tickets still archives seats');
+  for (const c of calls) assert.doesNotMatch(c, /via/, c);
+});
+
 // Operator ruling (2026-08-12): a composition delta is LEAD-ONLY, whatever the
 // subject was. T34 restricted the fan for ephemeral subjects only, which keyed
 // on the wrong end of the delivery — a hand cannot act on the news that a dev

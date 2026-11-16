@@ -591,7 +591,12 @@ read by `drainPending`'s `born` stamp.
 
 **✕ / Cmd+W = archive, not delete** (reshaped v0.15.x, PR #1). Both stop the
 PTY but **keep** the record, stamped `archivedAt` (`manager.archive` →
-`persistence.setArchived`). The session-exit lands with the row queued in the
+`persistence.setArchived`). Both ask first: `requestArchiveRow` runs
+`guardedArchive` (renderer/lib/archive-guard.js), a `confirm()` that adds a
+warning when the seat is working, holds an open ticket or leads its team, and
+passes `via` (`sidebar` / `shortcut`) so the team feed line reads "archived by
+the operator …"; main-side archives (ticket close-out, retire, sleep) pass no
+`via` and never ask. The session-exit lands with the row queued in the
 renderer's `archivingSessions` map, so `onSessionExit` tears the live tab down
 and rebuilds it in place as a **dimmed archived row** (`.session-item.archived`,
 "archived — click to resume") — no app restart. Clicking it unarchives

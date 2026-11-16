@@ -1190,9 +1190,9 @@ function registerIpcHandlers(deps) {
     }
   });
 
-  handle('session:archive', async (_e, name) => {
+  handle('session:archive', async (_e, name, opts) => {
     if (!persistence.get(name)) return { ok: false, error: 'Session not found' };
-    await manager.archive(name);
+    await manager.archive(name, { via: opts && typeof opts.via === 'string' ? opts.via : null });
     return { ok: true };
   });
   handle('session:unarchive', (_e, name) => {
