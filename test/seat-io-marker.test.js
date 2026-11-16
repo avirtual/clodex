@@ -54,6 +54,7 @@ function mkRenderer(extra = {}) {
     classifySender,
     applyFixChip() {},
     scheduleSidebarRelayout() {},
+    sidebarHold: { hold() {}, unhold() {} },
     exitedLabel: () => 'exited',
     sessions: new Map(),
     accountOfRow: () => null,
@@ -538,7 +539,7 @@ test('a sidebar refresh pass applies the ticket listSessions reports to each row
     CSS: { escape: (s) => s },
     sessionList: { querySelector: (sel) => rows[(/data-name="([^"]*)"/.exec(sel) || [])[1]] || null },
     refreshSeatsMcp() {}, applyAccountChip() {}, markSeatVoice() {}, markSeatEffort() {}, markSeatPosture() {}, applyCloneChip() {},
-    refreshSidebarView() {}, pluginBar: { renderFooterButtons() {} },
+    refreshSidebarView() {}, scheduleSidebarRelayout() {}, pluginBar: { renderFooterButtons() {} },
   };
   const refresh = new Function(...Object.keys(env), `${fnSrc('applyTicketBadge')}\nreturn async ${fnSrc('refreshSidebarMeta')}`)(...Object.values(env));
   await refresh();

@@ -253,6 +253,7 @@ function mkRenderer({ api = {}, confirmAnswer = true } = {}) {
     addSessionToSidebar: rec('addSessionToSidebar'),
     switchSession: rec('switchSession'),
     refreshSidebarView: rec('refreshSidebarView'),
+    scheduleSidebarRelayout: rec('scheduleSidebarRelayout'),
     addArchivedSessionToSidebar: rec('addArchivedSessionToSidebar'),
     addFailedSessionToSidebar: (entry) => { calls.push(['addFailedSessionToSidebar', entry]); const node = mkNode(); node.className = 'session-item failed'; node.dataset.name = entry.name; rows.push(node); },
     mountRestoredSession: rec('mountRestoredSession'),

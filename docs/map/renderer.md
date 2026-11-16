@@ -81,7 +81,7 @@ payloads are documented in `docs/renderer-events.md`.
 | moveSessionToPeerWithDialog | registers a one-shot move closure and opens the peer session dialog in move mode | pending move closures, sidebar DOM | rowSnapshot, rebuildLiveRow, addArchivedSessionToSidebar | renderer-source-pins.test.js seat-io-marker.test.js session-move.test.js |
 | startRename | inline-edits a row's name and on commit calls `session:rename` and rebuilds the row under the new name | sidebar DOM, `sessions` | window.api.renameSession, rebuildLiveRow | seat-io-marker.test.js session-rename.test.js sidebar-account-chip.test.js |
 | startRename.finish | commit-or-cancel closure of the rename edit, run on Enter, Escape and blur | row name element | window.api.renameSession | unpinned |
-| removeSessionFromSidebar | removes a row and its `.session-child` rows, drops activity feeds and meta, then re-lays out | sidebar DOM, `sidebarMeta` | refreshSidebarView | unpinned |
+| removeSessionFromSidebar | removes a row and its `.session-child` rows, drops activity feeds and meta, then schedules a relayout | sidebar DOM, `sidebarMeta` | scheduleSidebarRelayout | unpinned |
 
 ### Invariants
 - `restartOrFailRow` takes its `rowSnapshot` before calling restart, because the kill-and-respawn wipes the row through `onSessionExit`.
@@ -98,11 +98,12 @@ payloads are documented in `docs/renderer-events.md`.
 |---|---|---|---|---|
 | groupFor | the group key for a row under the current group mode (project/team, state, date, pr); null for none | reads `sidebarView`, `sidebarMeta` | projectLabel, stateOf, dateBucket | unpinned |
 | rowPasses | applies the status, activity-age and search filters to a row | reads `sidebarView`, `sidebarMeta` | stateOf | unpinned |
-| refreshSidebarView | the sidebar render loop: repaints row badges, hides filtered rows, re-orders local rows flat or under group headers | sidebar DOM, `collapsedGroups` | rowPasses, groupFor, makeGroupHeader, applyPrBadge | exited-seat-row.test.js plugin-host.test.js plugin-scope.test.js |
+| refreshSidebarView | the sidebar render loop: repaints row badges, hides filtered rows, re-orders local rows flat or under group headers | sidebar DOM, `collapsedGroups` | rowPasses, groupFor, makeGroupHeader, applyPrBadge | exited-seat-row.test.js plugin-host.test.js |
 | applyFixChip | marks an ad-hoc fix seat's row with `data-fixFor` and a fix chip | row dataset | none | deploy-visible.test.js seat-io-marker.test.js sidebar-account-chip.test.js |
-| scheduleSidebarRelayout | 250 ms trailing debounce of `refreshSidebarView` | `relayoutTimer` | refreshSidebarView | plugin-host.test.js seat-io-marker.test.js sidebar-account-chip.test.js |
+| scheduleSidebarRelayout | background relayout: the 250 ms debounce of `refreshSidebarView`, held by `sidebarHold` while the pointer, a rename or a row menu is on the list | `sidebarHold` | sidebarHold.schedule | plugin-host.test.js seat-io-marker.test.js sidebar-account-chip.test.js |
+| paintSidebarRows | the held-relayout paint: repaints row badges and appends a hidden row that now passes the filter to the end of the local list, moving no other row | sidebar DOM | applyPrBadge, rowsToReveal, insertLocalSessionRow | unpinned |
 | makeGroupHeader | builds one collapsible group header; team groups get a right-click that opens the team roles popover | `collapsedGroups` | openTeamRolesPopover | unpinned |
-| refreshSidebarMeta | pulls per-session sidebar meta into the cache, re-marks chips, repaints the sidebar and plugin footer buttons | `sidebarMeta` | window.api.sidebarMeta, refreshSidebarView | plugin-dialog-snapshot.test.js plugin-git-branches-renderer.test.js plugin-scope.test.js |
+| refreshSidebarMeta | pulls per-session sidebar meta into the cache, re-marks chips, schedules a sidebar relayout and repaints plugin footer buttons | `sidebarMeta` | window.api.sidebarMeta, scheduleSidebarRelayout | plugin-dialog-snapshot.test.js plugin-git-branches-renderer.test.js plugin-scope.test.js |
 | onViewControlChange | rebuilds `sidebarView` from the filter controls, persists it via `workspace:setView` and repaints | `sidebarView` | window.api.setSidebarView, refreshSidebarView | unpinned |
 | initSidebarView | boots the filter state: loads the stored view, runs the one-time status migration, first meta refresh, 30 s timer | `sidebarView`, meta timer | refreshSidebarMeta, applyFilterFolded | exited-seat-row.test.js restore-fit.test.js |
 | webAttentionCount | counts rows needing attention for the web tab-title badge | reads sidebar DOM | none | unpinned |

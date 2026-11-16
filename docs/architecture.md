@@ -1805,6 +1805,7 @@ and are not, which is why the judgement worth testing is pushed down here.
   shortcuts silently fail in-tab.
 - **archive-guard.js** — the confirm text and `guardedArchive` every manual
   archive (row ✕, Cmd+W / Alt+W) goes through.
+- **sidebar-hold.js** — `createSidebarHold`: background sidebar relayouts are held while the pointer, a row rename or a row menu is on the list, and one refresh applies them on release.
 - **chord-guard.js** — what Cmd+W / Alt+W should do given which modals are open.
   It probes BOTH ways a modal exists here: by id for the ones `index.html`
   declares, and by class for the ones script builds at runtime (`promptText`'s
