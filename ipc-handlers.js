@@ -84,6 +84,8 @@ function bytesBuffer(bytes) {
   return null;
 }
 
+const PEER_FLAG_KEYS = ['relayAllowed', 'disabled', 'inbox'];
+
 function registerIpcHandlers(deps) {
   const {
     handle, on,
@@ -1408,7 +1410,16 @@ function registerIpcHandlers(deps) {
     // Read before the write: the revocation below needs the previous value.
     const prevTerminalReports = uiSettings.get().terminalReports;
     const { suiteRunner: _suiteRunner, boxOffer: _boxOffer, ...rest } =(partial && typeof partial === 'object') ? partial : {};
+    const prevPeerFlags = new Map((uiSettings.get().peers || []).filter(Boolean)
+      .map((p) => [String(p.id), PEER_FLAG_KEYS.map((k) => p[k])]));
     const next = uiSettings.set(rest);
+    for (const p of (next && next.peers) || []) {
+      const before = p && prevPeerFlags.get(String(p.id));
+      if (!before) continue;
+      PEER_FLAG_KEYS.forEach((k, i) => {
+        if (before[i] !== p[k]) log.info('peer', `settings:set ${p.id} ${k} ${before[i]} → ${p[k]}`);
+      });
+    }
     // No typeof guard: an unwired revocation must throw here, not silently
     // leave undrained reports unswept.
     syncTerminalReports(prevTerminalReports);
