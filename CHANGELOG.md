@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.188.1 — 2026-11-17
+
 - Saving the Peers dialog no longer clears a peer's Relay mesh setting, re-enables a paused peer, or resets its inbox mode.
 
 ## 5.188.0 — 2026-11-16
