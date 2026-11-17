@@ -115,7 +115,3 @@ The DEPLOY OK self-archive sends `session:context-action` `retired` BEFORE `arch
 ## _awakeAssistantRows
 
 An evicted victim needs no exclusion set: `archive` sets `s._archived` synchronously before its first await, and `_sleepNow` reaches `archive` without awaiting anything first, so the `s._archived` test already drops the victim before a second `makeAwakeRoom` counts rows.
-
-## preseedClaudeOnboarding
-
-Claude Code 2.1.326 reads its global config from `join(CLAUDE_CONFIG_DIR || homedir(), '.claude.json')` and asks a trust question at boot for every `--add-dir` whose realpath (or a trusted ancestor) has no `projects[...].hasTrustDialogAccepted`. It does not read a settings-file `trustedDirectories` key.

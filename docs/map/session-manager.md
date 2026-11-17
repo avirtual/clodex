@@ -11,7 +11,7 @@
 | `stripCodexStreamArgs` | `{args, dropped}`: a codex argv minus the flags app-server refuses (with their value, including the `--flag=value` form) | none (pure) | none | unpinned |
 | `spillAckLine` | the `[clodex] ... filed at <path>` notice for a prose spill, null for every other verb | none | none | spill-resolve-intent.test.js |
 | `nextIncarnation` | a process-life id `pid.base36time.seq` for a spawned session, compared by ticket replay | module `incarnationSeq` | none | session-manager.test.js agent-plugin-spawn.test.js wire-off.test.js stock-template-tool-floor.test.js |
-| `addDirArgs` | every directory an argv passes by `--add-dir` (variadic or `--add-dir=`) | none (pure) | none | session-manager.test.js |
+| `addDirArgs` | every directory an argv passes by `--add-dir` (variadic or `--add-dir=`) | none (pure) | none | unpinned |
 | `preseedClaudeOnboarding` | marks onboarding done and the cwd and every added dir (raw path and realpath) folder-trusted in the seat config dir's `.claude.json` so a first claude spawn does not stall on a prompt | `<CLAUDE_CONFIG_DIR or home>/.claude.json` | none | claude-onboarding-preseed.test.js |
 | `nearMissFormHint` | the "command goes AFTER the bracket" hint when a bounced line starts `[agent:term`, else empty | none | none | unpinned |
 
