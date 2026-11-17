@@ -1236,6 +1236,57 @@ test('t349: a seat blocked on a permission dialog is not redelivered to, and is 
   } finally { app.stop(); }
 });
 
+const BOOT_DIALOG_SCREEN = fs.readFileSync(path.join(__dirname, 'fixtures', 'boot-dialogs', 'added-folder-trust-2.1.326@120.screen.txt'), 'utf8').replace(/\n/g, '\r\n');
+const BOOT_DIALOG_PATH = '/private/tmp/claude-501/-Users-bogdan-projects-tmux-wb-wrap-ui-t2347-boot-trust/5f328d12-probe/scratchpad/probes/a326-untrusted/messages';
+const REPL_SCREEN = `\x1b[2J\x1b[H▗ ▗   ▖ ▖  Claude Code v2.1.326\r\n${'─'.repeat(100)}\r\n❯ \r\n${'─'.repeat(100)}\r\n  ? for shortcuts\r\n`;
+
+test('t2349: a respawned seat on a Claude Code boot dialog is written nothing, and its replay runs once the dialog clears', async () => {
+  const world = mkWorld();
+  await assigned(world);
+  const app2 = boot(world, { deps: { bootDrainSettleMs: 30, INJECT_BOOT_MAXWAIT: 60_000, InjectQueue: FastQueue } });
+  try {
+    const s = await app2.spawn('team-hand');
+    app2.emit('team-hand', '\x1b[?2004h');
+    assert.ok(s._bootDrainTimer, 'ENTER: the mode-2004 announcement armed the boot drain, so the dialog below has a write to stop');
+    app2.emit('team-hand', BOOT_DIALOG_SCREEN);
+    assert.deepStrictEqual(s.needsAttention && { kind: s.needsAttention.kind, source: s.needsAttention.source, path: s.needsAttention.path },
+      { kind: 'permission', source: 'screen', path: BOOT_DIALOG_PATH });
+    assert.strictEqual(app2.m._injectHoldReason(s), 'dialog');
+    assert.strictEqual(s._bootReadySeen, false, 'bracketed paste behind a boot dialog is not a ready prompt');
+    assert.strictEqual(s._bootDrainTimer, null, 'the armed boot drain is cancelled, so the replay cannot fire into the dialog');
+    assert.strictEqual(s._replayTicketsPending, true, 'ENTER: the replay is still owed');
+    app2.emit('team-hand', '\x1b[?2004h');
+    assert.strictEqual(s._bootDrainTimer, null, 'a repeated announcement while the dialog is up arms nothing');
+    assert.strictEqual(app2.seen('team-hand'), '', 'nothing was written into the dialog');
+
+    app2.emit('team-hand', REPL_SCREEN);
+    assert.strictEqual(s.needsAttention, null, 'the dialog left the screen, so the seat is no longer blocked');
+    const got = await settled(app2, 'team-hand');
+    assert.match(got, /BUILD THE WIDGET/, 'the replay runs once the dialog clears');
+    assert.match(got, /REPLAY/);
+  } finally { app2.stop(); }
+});
+
+test('t2349: a spec-undelivered escalation names the boot dialog when an operator keystroke cleared the attention but the dialog is still up', async () => {
+  const world = mkWorld();
+  const { app, s } = await dispatched(world);
+  try {
+    app.emit('team-hand', BOOT_DIALOG_SCREEN);
+    assert.strictEqual(s.needsAttention && s.needsAttention.source, 'screen', 'ENTER: the dialog was detected');
+    s.needsAttention = null;
+    const first = app.seen('team-hand');
+    const beforeLead = app.seen('lead');
+    fireConfirm(app, s);
+    const leadSaw = await settled(app, 'lead', /ESCALATED/);
+    const body = leadSaw.slice(beforeLead.length);
+    assert.match(body, /spec-undelivered/);
+    assert.ok(body.includes(`team-hand never started a turn after its spec was written: a Claude Code boot dialog is up in its terminal: ${BOOT_DIALOG_PATH}`), body);
+    assert.ok(body.includes('no redelivery was attempted, since it would be typed into the dialog'), body);
+    assert.strictEqual(app.seen('team-hand'), first, 'no redelivery was typed into the dialog');
+    assert.strictEqual(s._specUnconfirmed, null);
+  } finally { app.stop(); }
+});
+
 test('t349: a closed ticket is never redelivered to a silent seat', async () => {
   const world = mkWorld();
   const { app, s } = await dispatched(world);

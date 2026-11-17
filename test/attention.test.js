@@ -22,3 +22,54 @@ test('classifyNotification: unknown/malformed classifies as other (badge, no dm 
   assert.strictEqual(classifyNotification(null), 'other');
   assert.strictEqual(classifyNotification({ message: 42 }), 'other');
 });
+
+const fs = require('node:fs');
+const path = require('node:path');
+const { classifyBootScreen, bootDialogNote } = require('../attention');
+
+const screen = (rel) => fs.readFileSync(path.join(__dirname, 'fixtures', rel), 'utf8');
+
+const BOOT_ROWS = [
+  ['boot-dialogs/added-folder-trust-2.1.326@120', { kind: 'added-folder-trust', path: '/private/tmp/claude-501/-Users-bogdan-projects-tmux-wb-wrap-ui-t2347-boot-trust/5f328d12-probe/scratchpad/probes/a326-untrusted/messages' }],
+  ['split-states/trust@60', { kind: 'folder-trust', path: '/private/tmp/claude-501/-Users-bogdan-projects-tmux-wb-wrap-ui-t1122-spike-composer-anchored-live-strip-over/682adbd3-6bba-4cca-9ad8-d9e8ed7727db/scratchpad/cap/stream-60-5oObVl' }],
+  ['split-states/trust@100', { kind: 'folder-trust', path: '/private/tmp/claude-501/-Users-bogdan-projects-tmux-wb-wrap-ui-t1122-spike-composer-anchored-live-strip-over/682adbd3-6bba-4cca-9ad8-d9e8ed7727db/scratchpad/cap/stream-100-GUA391' }],
+  ['split-states/trust@200', { kind: 'folder-trust', path: '/private/tmp/claude-501/-Users-bogdan-projects-tmux-wb-wrap-ui-t1122-spike-composer-anchored-live-strip-over/682adbd3-6bba-4cca-9ad8-d9e8ed7727db/scratchpad/cap/stream-200-NBuqMk' }],
+  ['split-states/idle@100', null],
+  ['split-states/permission@100', null],
+];
+
+for (const [rel, expected] of BOOT_ROWS) {
+  test(`classifyBootScreen: ${rel} reads as ${expected ? expected.kind : 'no boot dialog'}`, () => {
+    assert.deepStrictEqual(classifyBootScreen(screen(`${rel}.screen.txt`)), expected);
+  });
+}
+
+const INLINE_BOOT_ROWS = [
+  ['title scrolled off: the path is read from the line above the body',
+    ' /home/bogdan/.clodex/messages\n This session hasn\'t worked here before. Is this a directory you created or one you trust?\n\n ❯ No, exit\n   Yes, add it\n\n Enter to confirm · Esc to cancel\n',
+    { kind: 'added-folder-trust', path: '/home/bogdan/.clodex/messages' }],
+  ['short window: the path moved to the Adding: footer',
+    '────────────────────\n ❯ No, exit\n   Yes, add it\n Enter to confirm · Esc to cancel\n Adding: /home/bogdan/.clodex/sessions/r1/messages\n',
+    { kind: 'added-folder-trust', path: '/home/bogdan/.clodex/sessions/r1/messages' }],
+  ['a transcript that quotes the dialog words, with the prompt box drawn below it',
+    '⏺ The CLI showed "Adding a new directory: /tmp/x" and "This session hasn\'t worked here before" with ❯ No, exit and Yes, add it.\n────────────────────────────────────────\n❯ \n────────────────────────────────────────\n  ? for shortcuts\n',
+    null],
+  ['the dialog answered: the welcome screen and prompt box rendered after it',
+    ' Adding a new directory:\n /tmp/x/messages\n This session hasn\'t worked here before.\n ❯ No, exit\n   Yes, add it\n Enter to confirm · Esc to cancel\n▗ ▗   ▖ ▖  Claude Code v2.1.326\n────────────────────────────────────────\n❯ Try "edit <filepath> to..."\n────────────────────────────────────────\n',
+    null],
+  ['an option label alone, with no dialog body or title',
+    '❯ No, exit\n  Yes, add it\n',
+    null],
+];
+
+for (const [label, text, expected] of INLINE_BOOT_ROWS) {
+  test(`classifyBootScreen: ${label}`, () => {
+    assert.deepStrictEqual(classifyBootScreen(text), expected);
+  });
+}
+
+test('bootDialogNote names the dialog and quotes its path when it has one', () => {
+  assert.strictEqual(bootDialogNote({ kind: 'added-folder-trust', path: '/home/bogdan/.clodex/messages' }),
+    'a Claude Code boot dialog is up in its terminal: /home/bogdan/.clodex/messages');
+  assert.strictEqual(bootDialogNote({ kind: 'folder-trust', path: null }), 'a Claude Code boot dialog is up in its terminal');
+});

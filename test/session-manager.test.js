@@ -25558,6 +25558,25 @@ test('t1908 inbox: one note per permission dialog on a ticket seat, none on a se
   }]);
 });
 
+test('t2349 inbox: a boot dialog seen on a ticket seat\'s screen is named with its path, once per dialog', () => {
+  const added = [];
+  const records = { 'team-hand-1': { name: 'team-hand-1', ticketId: 't1' } };
+  const f = mkTasks({
+    getPersistence: () => ({ list: () => Object.values(records), get: (n) => records[n] || null }),
+    getNotifications: () => ({ add: (rec) => { added.push(rec); return { id: 'nt', ...rec }; } }),
+  });
+  f.seat('lead');
+  const hand = f.seat('team-hand-1');
+  const attn = { kind: 'permission', source: 'screen', ts: 1000, path: '/home/bogdan/.clodex/messages', message: 'Claude Code boot dialog (added-folder-trust): /home/bogdan/.clodex/messages' };
+  f.m._setAttention(hand, attn);
+  f.m._setAttention(hand, null);
+  f.m._setAttention(hand, { ...attn });
+  assert.deepStrictEqual(added, [{
+    from: 'clodex', workspaceId: null,
+    body: 'Seat team-hand-1 (ticket t1) cannot start: a Claude Code boot dialog is up in its terminal: /home/bogdan/.clodex/messages. Answer it in that terminal; nothing is typed into it, and it holds the ticket until you do.',
+  }]);
+});
+
 test('the muse sse rule lives in mcp-plan museExpressible, not as a type literal in session-manager or ipc-handlers', () => {
   const fs = require('node:fs');
   const path = require('node:path');

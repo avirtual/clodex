@@ -888,6 +888,44 @@ test('t388: a target on a permission dialog RE-ARMS rather than reporting, and r
   } finally { app.stop(); }
 });
 
+const BOOT_DIALOG_SCREEN = fs.readFileSync(path.join(__dirname, 'fixtures', 'boot-dialogs', 'added-folder-trust-2.1.326@120.screen.txt'), 'utf8').replace(/\n/g, '\r\n');
+const BOOT_DIALOG_PATH = '/private/tmp/claude-501/-Users-bogdan-projects-tmux-wb-wrap-ui-t2347-boot-trust/5f328d12-probe/scratchpad/probes/a326-untrusted/messages';
+
+test('t2349: a target whose screen shows a Claude Code boot dialog RE-ARMS rather than bouncing', async () => {
+  const { app, target } = await swallowed();
+  try {
+    target.scrollback = BOOT_DIALOG_SCREEN;
+    app.m._scanBootScreen(target);
+    assert.strictEqual(target.needsAttention && target.needsAttention.source, 'screen', 'ENTER: the screen scan raised the attention');
+    const beforeSender = app.seen('sender');
+    clearTimeout(target._dmConfirmTimer);
+    target._dmConfirmTimer = null;
+    ripen(target);
+    app.m._checkDmConfirm(target);
+    assert.strictEqual(app.seen('sender'), beforeSender, 'no "has not started a turn" bounce while the dialog is up');
+    assert.strictEqual(target._dmUnconfirmed.length, 1, 'the latch is kept');
+    assert.ok(target._dmConfirmTimer, 'and re-armed');
+  } finally { app.stop(); }
+});
+
+test('t2349: an operator keystroke cleared the attention but the dialog is still up — the bounce names the boot dialog', async () => {
+  const { app, target } = await swallowed();
+  try {
+    target.scrollback = BOOT_DIALOG_SCREEN;
+    app.m._scanBootScreen(target);
+    assert.strictEqual(target.needsAttention && target.needsAttention.source, 'screen', 'ENTER: the screen scan raised the attention');
+    target.needsAttention = null;
+    const before = app.seen('sender');
+    ripen(target);
+    app.m._checkDmConfirm(target);
+    const notice = await settled(app, 'sender', /has not started a turn/);
+    const body = notice.slice(before.length);
+    assert.ok(body.includes(`target has not started a turn since — a Claude Code boot dialog is up in its terminal: ${BOOT_DIALOG_PATH}.`), body);
+    assert.doesNotMatch(body, /may have been swallowed/, 'the cause is known, so the swallow hedge is dropped');
+    assert.doesNotMatch(body, /false alarm/);
+  } finally { app.stop(); }
+});
+
 test('t388: a check with nothing outstanding reports nothing (the timer is not the signal)', async () => {
   const { app, target } = await swallowed();
   try {

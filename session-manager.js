@@ -6052,7 +6052,7 @@ function createSessionManager(deps) {
         if (attn.source === 'screen') {
           store.add({
             from: 'clodex', workspaceId: session.workspaceId || null,
-            body: `Seat ${session.name} (${ticketId ? `ticket ${ticketId}` : `spawned by ${owner.lead}`}) is not started: ${bootDialogNote(attn)}. `
+            body: `Seat ${session.name} (${ticketId ? `ticket ${ticketId}` : `spawned by ${owner.lead}`}) cannot start: ${bootDialogNote(attn)}. `
               + `Answer it in that terminal; nothing is typed into it, and ${ticketId ? 'it holds the ticket' : 'it waits'} until you do.`,
           });
           return;
