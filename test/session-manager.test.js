@@ -21712,7 +21712,7 @@ function mkStreamSeatManager({ persisted = {}, fakePty = null, team = null, hold
     buildIpcPrompt: () => '', writeClaudeDigestFile: () => false,
     teeBlindBackend: () => null,
     readEffectiveClaudeEnv: () => ({}),
-    mergeSessionEnv: () => { const { CLAUDE_CONFIG_DIR: _c, ...env } = process.env; return env; },
+    mergeSessionEnv: () => ({ ...process.env }),
     getEnvScopes: () => ({ all: () => ({ global: {}, workspaces: {} }) }),
     getUserDataPath: () => root,
     resolveTeam: () => team,
@@ -21871,6 +21871,9 @@ test('t1815: under the seat layout a claude seat gets --add-dir for its own reso
 
 function mkTrustSeedSeat(t) {
   const p = require('node:path');
+  const savedConfigDir = process.env.CLAUDE_CONFIG_DIR;
+  t.after(() => { if (savedConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = savedConfigDir; });
+  delete process.env.CLAUDE_CONFIG_DIR;
   const home = mkTmpRoot('clx-trust-home-');
   const ptyArgs = [];
   const fakePty = { pid: 8101, onData: () => {}, onExit: () => {}, write: () => {}, resize: () => {}, kill: () => {} };
