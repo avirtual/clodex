@@ -366,26 +366,49 @@ function nextIncarnation() {
   return `${process.pid}.${Date.now().toString(36)}.${++incarnationSeq}`;
 }
 
-function preseedClaudeOnboarding({ fs, path, homeDir, cwd }) {
+function addDirArgs(args) {
+  const out = [];
+  const list = Array.isArray(args) ? args : [];
+  for (let i = 0; i < list.length; i++) {
+    const a = list[i];
+    if (typeof a !== 'string') continue;
+    if (a.startsWith('--add-dir=')) {
+      if (a.length > 10) out.push(a.slice(10));
+    } else if (a === '--add-dir') {
+      while (i + 1 < list.length && typeof list[i + 1] === 'string' && !list[i + 1].startsWith('-')) out.push(list[++i]);
+    }
+  }
+  return out;
+}
+
+function preseedClaudeOnboarding({ fs, path, homeDir, configDir = null, cwd, addDirs = [] }) {
   try {
-    const p = path.join(homeDir, '.claude.json');
+    const p = path.join(configDir || homeDir, '.claude.json');
     let j = {};
     if (fs.existsSync(p)) {
       j = JSON.parse(fs.readFileSync(p, 'utf8'));
       if (!j || typeof j !== 'object' || Array.isArray(j)) return false;
     }
     const wantOnboarding = !j.hasCompletedOnboarding;
-    const trustKey = typeof cwd === 'string' && cwd ? cwd : null;
-    const wantTrust = !!trustKey
-      && ((j.projects || {})[trustKey] || {}).hasTrustDialogAccepted !== true;
-    if (!wantOnboarding && !wantTrust) return false;
+    const trustKeys = [];
+    if (typeof cwd === 'string' && cwd) trustKeys.push(cwd);
+    for (const d of Array.isArray(addDirs) ? addDirs : []) {
+      if (typeof d !== 'string' || !d) continue;
+      trustKeys.push(d);
+      let real = null;
+      try { real = fs.realpathSync(d); } catch {}
+      if (real && real !== d) trustKeys.push(real);
+    }
+    const untrusted = [...new Set(trustKeys)]
+      .filter((k) => ((j.projects || {})[k] || {}).hasTrustDialogAccepted !== true);
+    if (!wantOnboarding && !untrusted.length) return false;
     if (wantOnboarding) {
       j.hasCompletedOnboarding = true;
       if (!j.theme) j.theme = 'dark';
     }
-    if (wantTrust) {
-      j.projects = j.projects || {};
-      j.projects[trustKey] = { ...(j.projects[trustKey] || {}), hasTrustDialogAccepted: true };
+    if (untrusted.length) j.projects = j.projects || {};
+    for (const k of untrusted) {
+      j.projects[k] = { ...(j.projects[k] || {}), hasTrustDialogAccepted: true };
     }
     const tmp = `${p}.tmp-${process.pid}`;
     fs.writeFileSync(tmp, JSON.stringify(j, null, 2) + '\n', { mode: 0o600 });
@@ -1872,9 +1895,6 @@ function createSessionManager(deps) {
           cmd = adapterFor(type).cmd;
           const claudeCode = type === 'claude';
           const effortFlag = adapterFor(type).effort.apply === 'flag';
-          if (claudeCode && preseedClaudeOnboarding({ fs, path, homeDir: os.homedir(), cwd })) {
-            this._shadowLog({ type: 'claude-onboarding-preseeded', agent: name });
-          }
           const sysFile = resolveSystemPromptFile(systemPromptFile, Array.isArray(plugins) ? plugins : null, resolvedTeam);
           const spillVerbs = (backend || !claudeCode)
             ? []
@@ -2111,6 +2131,9 @@ function createSessionManager(deps) {
           ensureDir(runDirFor(REGISTRY_DIR, name));
           fs.writeFileSync(promptPath, clodentCatalog && clodentCatalog.instructions ? `${baked}\n\n${clodentCatalog.instructions}\n` : baked, { mode: 0o600 });
           args.push('--append-system-prompt-file', promptPath);
+          if (claudeCode && preseedClaudeOnboarding({ fs, path, homeDir: os.homedir(), configDir: mergedEnv.CLAUDE_CONFIG_DIR || null, cwd, addDirs: addDirArgs(args) })) {
+            this._shadowLog({ type: 'claude-onboarding-preseeded', agent: name });
+          }
           if (resumeId && adapterFor(type).account.defaultDir) {
             try { resumedTranscriptAt = fs.statSync(this._claudeTranscriptPath(cwd || process.env.HOME || os.homedir(), accountDir, resumeId, type)).mtimeMs; } catch {}
           }
