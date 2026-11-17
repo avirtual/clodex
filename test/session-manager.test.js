@@ -21625,6 +21625,7 @@ function mkStreamSeatManager({ persisted = {}, fakePty = null, team = null, hold
   const path = require('node:path');
   const { pathFor, runDirFor } = require('../clodex-paths');
   const root = mkTmpRoot('clx-stream-seat-');
+  const home = mkTmpRoot('clx-home-');
   const store = new Map(Object.entries(persisted).map(([k, v]) => [k, { name: k, ...v }]));
   const sessionIds = [];
   const spawns = [];
@@ -21637,7 +21638,7 @@ function mkStreamSeatManager({ persisted = {}, fakePty = null, team = null, hold
   const SessionManager = createSessionManager({
     knownSkillNames: () => [],
     REGISTRY_DIR: root,
-    fs, path, pathFor, runDirFor, os,
+    fs, path, pathFor, runDirFor, os: { ...os, homedir: () => home },
     PENDING_DIR: path.join(root, 'pending'),
     MSG_DIR: path.join(root, 'messages'),
     hasActivePending: require('../pending-store').hasActivePending,
@@ -21711,7 +21712,7 @@ function mkStreamSeatManager({ persisted = {}, fakePty = null, team = null, hold
     buildIpcPrompt: () => '', writeClaudeDigestFile: () => false,
     teeBlindBackend: () => null,
     readEffectiveClaudeEnv: () => ({}),
-    mergeSessionEnv: () => ({ ...process.env }),
+    mergeSessionEnv: () => { const { CLAUDE_CONFIG_DIR: _c, ...env } = process.env; return env; },
     getEnvScopes: () => ({ all: () => ({ global: {}, workspaces: {} }) }),
     getUserDataPath: () => root,
     resolveTeam: () => team,
