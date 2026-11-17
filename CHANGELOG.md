@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.188.2 — 2026-11-17
+
 - A new Claude terminal seat no longer stops at Claude Code 2.1.326's question about trusting an added directory: Clodex now marks the directories it adds as trusted, in the seat's own config directory.
 
 ## 5.188.1 — 2026-11-17
