@@ -127,3 +127,85 @@ test('no cwd passed: onboarding seeded, no projects key created', () => {
   assert.strictEqual(j.hasCompletedOnboarding, true);
   assert.strictEqual(j.projects, undefined);
 });
+
+test('cwd plus two added dirs: each gets the cwd\'s entry shape', () => {
+  const home = tmpHome();
+  const a = fs.realpathSync(tmpHome());
+  const b = fs.realpathSync(tmpHome());
+  assert.strictEqual(preseedClaudeOnboarding({ fs, path, homeDir: home, cwd: '/tmp/p1', addDirs: [a, b] }), true);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(home, '.claude.json'), 'utf8')), {
+    hasCompletedOnboarding: true,
+    theme: 'dark',
+    projects: {
+      '/tmp/p1': { hasTrustDialogAccepted: true },
+      [a]: { hasTrustDialogAccepted: true },
+      [b]: { hasTrustDialogAccepted: true },
+    },
+  });
+});
+
+test('a symlinked added dir is seeded under both its raw path and its realpath', () => {
+  const home = tmpHome();
+  const real = fs.realpathSync(tmpHome());
+  const link = path.join(fs.realpathSync(tmpHome()), 'messages-link');
+  fs.symlinkSync(real, link);
+  assert.strictEqual(preseedClaudeOnboarding({ fs, path, homeDir: home, addDirs: [link] }), true);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(home, '.claude.json'), 'utf8')), {
+    hasCompletedOnboarding: true,
+    theme: 'dark',
+    projects: {
+      [link]: { hasTrustDialogAccepted: true },
+      [real]: { hasTrustDialogAccepted: true },
+    },
+  });
+});
+
+test('a config dir set: its .claude.json is written and the home file is untouched', () => {
+  const home = tmpHome();
+  const configDir = tmpHome();
+  const homeFile = path.join(home, '.claude.json');
+  const orig = '{"hasCompletedOnboarding":true}';
+  fs.writeFileSync(homeFile, orig);
+  const dir = fs.realpathSync(tmpHome());
+  assert.strictEqual(preseedClaudeOnboarding({ fs, path, homeDir: home, configDir, cwd: '/tmp/p1', addDirs: [dir] }), true);
+  assert.strictEqual(fs.readFileSync(homeFile, 'utf8'), orig);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(path.join(configDir, '.claude.json'), 'utf8')), {
+    hasCompletedOnboarding: true,
+    theme: 'dark',
+    projects: {
+      '/tmp/p1': { hasTrustDialogAccepted: true },
+      [dir]: { hasTrustDialogAccepted: true },
+    },
+  });
+});
+
+test('an existing file keeps another project\'s entry intact beside the added dirs', () => {
+  const home = tmpHome();
+  const p = path.join(home, '.claude.json');
+  fs.writeFileSync(p, JSON.stringify({
+    hasCompletedOnboarding: true,
+    userID: 'u1',
+    projects: { '/tmp/other': { hasTrustDialogAccepted: true, allowedTools: ['x'] } },
+  }));
+  const dir = fs.realpathSync(tmpHome());
+  assert.strictEqual(preseedClaudeOnboarding({ fs, path, homeDir: home, cwd: '/tmp/p1', addDirs: [dir] }), true);
+  assert.deepStrictEqual(JSON.parse(fs.readFileSync(p, 'utf8')), {
+    hasCompletedOnboarding: true,
+    userID: 'u1',
+    projects: {
+      '/tmp/other': { hasTrustDialogAccepted: true, allowedTools: ['x'] },
+      '/tmp/p1': { hasTrustDialogAccepted: true },
+      [dir]: { hasTrustDialogAccepted: true },
+    },
+  });
+});
+
+test('cwd and added dirs all trusted already: no write, false', () => {
+  const home = tmpHome();
+  const p = path.join(home, '.claude.json');
+  const dir = fs.realpathSync(tmpHome());
+  const orig = JSON.stringify({ hasCompletedOnboarding: true, projects: { '/tmp/p1': { hasTrustDialogAccepted: true }, [dir]: { hasTrustDialogAccepted: true } } });
+  fs.writeFileSync(p, orig);
+  assert.strictEqual(preseedClaudeOnboarding({ fs, path, homeDir: home, cwd: '/tmp/p1', addDirs: [dir] }), false);
+  assert.strictEqual(fs.readFileSync(p, 'utf8'), orig);
+});

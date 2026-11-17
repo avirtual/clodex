@@ -839,7 +839,6 @@ exit 0
     }
 
     const settings = {
-      trustedDirectories: seatMsgDir ? [msgDir, seatMsgDir] : [msgDir],
       statusLine: { type: 'command', command: statusPath },
       voice: { enabled: false },
       voiceEnabled: false,

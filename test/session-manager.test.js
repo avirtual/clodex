@@ -21868,6 +21868,49 @@ test('t1815: under the seat layout a claude seat gets --add-dir for its own reso
   assert.strictEqual(fsReal.realpathSync(p.join(h.root, 'messages', 'st1')), fsReal.realpathSync(own));
 });
 
+function mkTrustSeedSeat(t) {
+  const p = require('node:path');
+  const home = mkTmpRoot('clx-trust-home-');
+  const ptyArgs = [];
+  const fakePty = { pid: 8101, onData: () => {}, onExit: () => {}, write: () => {}, resize: () => {}, kill: () => {} };
+  const h = mkStreamSeatManager({
+    extraDeps: {
+      os: { ...require('node:os'), homedir: () => home },
+      pty: { spawn: (cmd, args) => { ptyArgs.push(args); return fakePty; } },
+    },
+  });
+  t.after(() => h.stopAll());
+  fsReal.mkdirSync(p.join(h.root, 'sessions'), { recursive: true });
+  fsReal.writeFileSync(p.join(h.root, 'sessions', '.migrated'), '');
+  const seeded = () => JSON.parse(fsReal.readFileSync(p.join(home, '.claude.json'), 'utf8')).projects;
+  const addDirs = (args) => args.flatMap((a, i) => (a === '--add-dir' ? [args[i + 1]] : []));
+  return { h, ptyArgs, seeded, addDirs, cwd: require('node:os').tmpdir() };
+}
+
+test('t2348: every --add-dir a claude terminal seat is launched with has a seeded trust entry, under its path and its realpath', async (t) => {
+  const p = require('node:path');
+  const { h, ptyArgs, seeded, addDirs, cwd } = mkTrustSeedSeat(t);
+  await h.create('tt1', null, 'pty');
+  assert.strictEqual(ptyArgs.length, 1, 'ENTER: the seat spawned a pty');
+  const own = p.join(h.root, 'sessions', 'tt1', 'messages');
+  const dirs = addDirs(ptyArgs[0]);
+  assert.deepStrictEqual(dirs, [p.join(h.root, 'messages'), own], 'ENTER: the argv carries both messages dirs');
+  const keys = [cwd, ...dirs.flatMap((d) => [d, fsReal.realpathSync(d)])];
+  assert.deepStrictEqual(seeded(), Object.fromEntries(keys.map((k) => [k, { hasTrustDialogAccepted: true }])));
+});
+
+test('t2348: a review seat\'s task dir, appended as --add-dir by _handleTeamReview, is seeded trusted', async (t) => {
+  const p = require('node:path');
+  const { h, ptyArgs, seeded, addDirs, cwd } = mkTrustSeedSeat(t);
+  const taskDir = fsReal.realpathSync(mkTmpRoot('clx-trust-task-'));
+  await h.m.create('tr1', 'claude', cwd, ['--add-dir', taskDir], null, 'ws', null, false, null,
+    [], [], [], [], [], null, [], [], null, null, false, false, null, null, null, 'pty');
+  assert.strictEqual(ptyArgs.length, 1, 'ENTER: the seat spawned a pty');
+  assert.deepStrictEqual(addDirs(ptyArgs[0]), [taskDir, p.join(h.root, 'messages'), p.join(h.root, 'sessions', 'tr1', 'messages')],
+    'ENTER: the task dir rides the argv');
+  assert.deepStrictEqual(seeded()[taskDir], { hasTrustDialogAccepted: true });
+});
+
 test('stream seat (f): create(io:stream) builds the -p stream-json argv with a fresh --session-id, keeping --settings and the base-url route', async (t) => {
   const h = mkStreamSeatManager();
   t.after(() => h.stopAll());
