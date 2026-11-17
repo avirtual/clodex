@@ -96,12 +96,12 @@ test('t2238 a plain dm to a cold idle claude seat is still parked, not delivered
   assert.ok(injected.some((t) => t.startsWith('[agent:dm] parked for t (idle 2h with a cold cache — waking it re-bills its full context) as ppppp')), JSON.stringify(injected));
 });
 
-test('t2349 an urgent dm to a claude seat whose screen shows a Claude Code boot dialog is held with the dialog wording', async () => {
+test('t2349 an urgent dm to a claude seat whose screen shows a Claude Code boot dialog is parked with the dialog wording, not typed into the dialog', async () => {
   const screen = fs.readFileSync(path.join(__dirname, 'fixtures', 'boot-dialogs', 'added-folder-trust-2.1.326@120.screen.txt'), 'utf8');
   const { m, injected } = coldSeat('claude', { scrollback: screen });
   m._broadcast = () => {};
   m._scanBootScreen(m.sessions.get('t'));
   assert.strictEqual(m.sessions.get('t').needsAttention.source, 'screen', 'ENTER: the screen scan raised the attention');
   await m._handleIntent('a', { type: 'dm', target: 't', body: 'the question', urgent: true });
-  assert.deepStrictEqual(injected, ['[agent:dm] NOT delivered to t: blocked on a permission dialog — injecting now would answer the dialog. Nothing was kept. Resend after t is unblocked (a human has to answer the dialog).']);
+  assert.deepStrictEqual(injected, ["[agent:dm] parked for t (blocked on a permission dialog — injecting now would answer the dialog) as ppppp — it'll be delivered after the human answers the dialog."]);
 });
