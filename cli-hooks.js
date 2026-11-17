@@ -156,6 +156,8 @@ RESETEOF
 fi
 if [ "$SRC" = "compact" ]; then
   printf '%s\\n' '{"hook_event_name":"SessionStart","source":"compact"}' >> "${attnPath}" 2>/dev/null || true
+elif [ "$SRC" = "startup" ] || [ "$SRC" = "resume" ]; then
+  printf '{"hook_event_name":"SessionStart","source":"%s"}\\n' "$SRC" >> "${attnPath}" 2>/dev/null || true
 fi
 # compact belongs with startup/clear: all three are context resets, and the
 # promptcache branch above already treats compact as one. A compact keeps the

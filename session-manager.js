@@ -276,6 +276,8 @@ const { createMemoryLoad } = require('./memory-load');
 const { foldDraft, HOLD_MAX_MS: HINT_HOLD_MAX_MS } = require('./hint-arm');
 const { didGrow, parsePsRows, descendantPids } = require('./stall-evidence');
 const { seatHasPlugin } = require('./plugin-api');
+const { classifyBootScreen, bootDialogNote } = require('./attention');
+const BOOT_SCREEN_TAIL = 16 * 1024;
 const { readTeamJson } = require('./team-prompt-dir');
 const { ensureSeatLink, renameSeat, removeSeat, renameTargets, pathInUse } = require('./seat-layout');
 const { SEAT_KINDS, seatPathFor, legacySeatPathFor, claudeProjectSlug } = require('./clodex-paths');
@@ -2774,6 +2776,7 @@ function createSessionManager(deps) {
         readCtx();
       }
 
+      session._bootScreenWatch = !!ptyProc && !streamIo && runsClaudeHooks(agentType);
       if (ptyProc) ptyProc.onData((data) => {
         session._lastPtyDataAt = Date.now();
         if (typeof session._bootNudgeEcho === 'string') session._bootNudgeEcho = (session._bootNudgeEcho + data).slice(-BOOT_NUDGE_ECHO_CAP);
@@ -2784,8 +2787,12 @@ function createSessionManager(deps) {
         this._sendToSession(name, 'pty-data', name, data);
         if (getRemoteServer()) { try { getRemoteServer().pushOutput(name, data); } catch {} }
 
-        if (data.includes('\x1b[?2004')) {
-          session._pasteModeOn = pasteModeSignal(data, session._pasteModeOn);
+        if (data.includes('\x1b[?2004')) session._pasteModeOn = pasteModeSignal(data, session._pasteModeOn);
+        if (session._bootScreenWatch) {
+          session._bootScreenText = ((session._bootScreenText || '') + data).slice(-BOOT_SCREEN_TAIL);
+          this._scanBootScreen(session);
+        }
+        if (!session._bootDialog) {
           if (session._pasteModeOn && !session._bootReadySeen) {
             session._bootReadySeen = true;
             session._bootReadyAt = Date.now();
@@ -5881,6 +5888,7 @@ function createSessionManager(deps) {
       }
       if (s && state !== 'idle') s.lastMainStop = null;
       if (s && state !== 'idle') s._awaitingTurnSince = null;
+      if (s && state !== 'idle' && s._bootScreenWatch) { s._bootScreenWatch = false; s._bootDialog = null; s._bootScreenText = null; }
       if (s && state !== 'idle' && s._parkedEscalations && s._parkedEscalations.size) this._releaseDrainedEscalations(s);
       // A turn confirms the spec write only if it is attributed to this ticket in the transcript;
       // otherwise the latch stays armed and its deadline redelivers.
@@ -5956,7 +5964,7 @@ function createSessionManager(deps) {
 
     _routeAttnEntry(session, entry) {
       if (entry && entry.hook_event_name === 'PreCompact') this._onCompactStart(session, entry.trigger);
-      else if (entry && entry.hook_event_name === 'SessionStart') { if (entry.source === 'compact') this._onCompactEnd(session, 'done'); }
+      else if (entry && entry.hook_event_name === 'SessionStart') { if (entry.source === 'compact') this._onCompactEnd(session, 'done'); else this._onBootSessionStart(session); }
       else if (entry && entry.hook_event_name === 'PreToolUse') this._onStreamToolBoundary(session);
       else this._onAttention(session, entry || {});
     }
@@ -6044,6 +6052,14 @@ function createSessionManager(deps) {
         if (!store) return;
         session._permInboxTs = attn.ts;
         const pending = session.streamPermissions && owner ? [...session.streamPermissions.values()].filter((p) => p.ts === attn.ts).pop() : null;
+        if (attn.source === 'screen') {
+          store.add({
+            from: 'clodex', workspaceId: session.workspaceId || null,
+            body: `Seat ${session.name} (${ticketId ? `ticket ${ticketId}` : `spawned by ${owner.lead}`}) cannot start: ${bootDialogNote(attn)}. `
+              + `Answer it in that terminal; nothing is typed into it, and ${ticketId ? 'it holds the ticket' : 'it waits'} until you do.`,
+          });
+          return;
+        }
         store.add({
           from: 'clodex', workspaceId: session.workspaceId || null,
           body: (ticketId
@@ -6113,6 +6129,43 @@ function createSessionManager(deps) {
       if (session.needsAttention && session.needsAttention.kind === 'permission') return 'dialog';
       if (session.activityState === 'thinking') return 'busy';
       return null;
+    }
+
+    _bootDialogOf(session) {
+      if (!session || !session._bootScreenWatch || typeof session._bootScreenText !== 'string' || !session._bootScreenText) return null;
+      return classifyBootScreen(session._bootScreenText.replace(TERM_ESCAPE_RE, ''));
+    }
+
+    _onBootSessionStart(session) {
+      if (!session || !session._bootScreenWatch) return;
+      session._bootScreenText = '';
+      if (session._bootDialog) log.info('session', `${session.name}: SessionStart fired with a boot dialog hold up — releasing it`);
+      this._scanBootScreen(session);
+    }
+
+    _scanBootScreen(session) {
+      const dialog = this._bootDialogOf(session);
+      if (!dialog) {
+        if (!session._bootDialog) return;
+        session._bootDialog = null;
+        session._bootDialogTs = null;
+        log.info('session', `${session.name}: Claude Code boot dialog left the screen`);
+        if (session.needsAttention && session.needsAttention.source === 'screen') this._setAttention(session, null);
+        return;
+      }
+      if (!session._bootDialog) {
+        session._bootDialogTs = Date.now();
+        log.warn('session', `${session.name}: ${bootDialogNote(dialog)} (${dialog.kind}) — holding every write until it is answered`);
+      }
+      session._bootDialog = dialog;
+      session._bootReadySeen = false;
+      clearTimeout(session._bootDrainTimer);
+      session._bootDrainTimer = null;
+      if (session.needsAttention && session.needsAttention.kind === 'permission') return;
+      this._setAttention(session, {
+        kind: 'permission', source: 'screen', ts: session._bootDialogTs, path: dialog.path,
+        message: `Claude Code boot dialog (${dialog.kind})${dialog.path ? `: ${dialog.path}` : ''} — answer it in the seat terminal`,
+      });
     }
 
     _armInjectValve(session) {
@@ -6422,7 +6475,7 @@ function createSessionManager(deps) {
         const probe = session._bootNudgeProbe;
         const echoed = this._bootNudgeEchoed(session);
         const painting = Date.now() - (session._lastPtyDataAt || 0) < BOOT_NUDGE_QUIET_MS;
-        if (!echoed || painting || this._anyDraftOpen(session)) {
+        if (!echoed || painting || session._bootDialog || this._anyDraftOpen(session)) {
           if (Date.now() - wroteAt >= BOOT_NUDGE_MAXWAIT_MS) {
             this._clearSubmitNudge(session);
             if (probe && !painting) this._markInjectStuck(session, probe, wroteAt, false);
@@ -9006,7 +9059,8 @@ function createSessionManager(deps) {
       };
 
       const senders = [...new Set([...entries.map((e) => e.sender), ...overflow.map((r) => r.sender)])];
-      const stuckNote = !session._injectStuck ? ''
+      const bootDialog = this._bootDialogOf(session);
+      const stuckNote = bootDialog ? ` — ${bootDialogNote(bootDialog)}` : !session._injectStuck ? ''
         : ` — the seat's composer holds an unsubmitted unit; ${session._injectStuck.entered ? 'a submit nudge was sent and did not take' : 'no submit nudge could be sent'}`;
       log.warn('intent', `${total} dm${total === 1 ? '' : 's'} written to ${session.name} but no turn started after ${ageS}s — telling ${senders.join(', ')}; nothing re-sent${stuckNote}`);
       // Broadcast first and outside the per-sender loop: the notices travel by the channel whose
@@ -9041,9 +9095,11 @@ function createSessionManager(deps) {
           : ` ${total} messages were outstanding at that seat and concurrent writes overwrite one another's unsubmitted text, so which of them landed cannot be told from here.`;
         this._injectText(sender,
           `[agent:dm] ${noun} to ${session.name} ${verb} written into its terminal ${when} and ${session.name} `
-          + `has not started a turn since — ${hedge}${stuckNote}.${ambiguity} NOTHING was re-sent, and nothing will be. `
-          + `If it matters, resend it yourself: \`[agent:dm ${session.name} urgent] <message>\` lands immediately. `
-          + `(A seat that displayed the message and simply stayed idle looks the same from here, so this can be a false alarm.)`,
+          + `has not started a turn since — ${bootDialog ? bootDialogNote(bootDialog) : `${hedge}${stuckNote}`}.${ambiguity} NOTHING was re-sent, and nothing will be. `
+          + (bootDialog
+            ? 'The seat cannot start a turn until the operator answers that dialog; resend once it is answered.'
+            : `If it matters, resend it yourself: \`[agent:dm ${session.name} urgent] <message>\` lands immediately. `
+              + `(A seat that displayed the message and simply stayed idle looks the same from here, so this can be a false alarm.)`),
           { parkable: true });
       }
     }
@@ -9799,6 +9855,7 @@ function createSessionManager(deps) {
           maxWaitMs: INJECT_QUIET_MAXWAIT,
           lastHumanInputAt: () => session.lastUserInputTs || 0,
           hintHeld: () => { try { return !!(arm.holding && arm.holding(session.name)); } catch { return false; } },
+          blocked: () => !!session._bootDialog,
           // Dictation is its own input, not a lastUserInputTs stamp, which has other readers. A deferral that
           // cannot release wedges the seat, so absent evidence reads as not speaking.
           speaking: () => Date.now() - (session.lastVoiceRecordingTs || 0) < INJECT_SPEAKING_STALE_MS,

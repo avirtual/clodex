@@ -1,0 +1,141 @@
+{
+ "cli": "2.1.326",
+ "cols": 120,
+ "rows": 30,
+ "argv": "--add-dir <case>/messages",
+ "keys": "Down, Enter, then x",
+ "events": [
+  {
+   "t": 388,
+   "data": "\u001b7\u001b[r\u001b8\u001b[?25h"
+  },
+  {
+   "t": 397,
+   "data": "\u001b[?25l"
+  },
+  {
+   "t": 397,
+   "data": "\u001b[?2004h\u001b[?2031h\u001b[?1004h"
+  },
+  {
+   "t": 400,
+   "data": "\r\r\n\u001b[38;2;255;193;7m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\u001b[39m\r\r\n\u001b[2G\u001b[38;2;255;193;7m\u001b[1mAdding\u001b[9Ga\u001b[11Gnew\u001b[15Gdirectory:\u001b[22m\u001b[39m\r\r\n\r\r\n\u001b[2G\u001b[1m/private/tmp/claude-501/probe326/case/messages\u001b[22m\r\r\n\r\r\n\u001b[2GThis\u001b[7Gsession\u001b[15Ghasn't\u001b[22Gworked\u001b[29Ghere\u001b[34Gbefore.\u001b[42GIs\u001b[45Gthis\u001b[50Ga\u001b[52Gdirectory\u001b[62Gyou\u001b[66Gcreated\u001b[74Gor\u001b[77Gone\u001b[81Gyou\u001b[85Gtrust?\r\r\n\r\r\n\u001b[2GClaude\u001b[9GCode'll\u001b[17Gbe\u001b[20Gable\u001b[25Gto\u001b[28Gread,\u001b[34Gedit,\u001b[40Gand\u001b[44Gexecute\u001b[52Gfiles\u001b[58Ghere.\u001b[64GIts\u001b[68Gskills,\u001b[76Gcommands,\u001b[86Gand\u001b[90Gagents\u001b[97Gload\u001b[102Gand\u001b[106Gcan\u001b[110Grun\r\r\n\u001b[2Gcommands,\u001b[12Gand\u001b[16Gso\u001b[19Gcan\u001b[23Gthe\u001b[27Ggit\u001b[31Gsettings\u001b[40Gof\u001b[43Gits\u001b[47Grepository.\u001b[59GYour\u001b[64Ganswer\u001b[71Gholds\u001b[77Gfor\u001b[81Gthi"
+  },
+  {
+   "t": 400,
+   "data": "s\u001b[86Gsession.\u001b[95GStarting\u001b[104GClaude\u001b[111GCode\u001b[116Gin\r\r\n\u001b[2Gthis\u001b[7Gdirectory\u001b[17Gand\u001b[21Gtrusting\u001b[30Git\u001b[33Gthere\u001b[39Glasts,\u001b[46Gand\u001b[50Gcovers\u001b[57Gits\u001b[61Gwhole\u001b[67Grepository\u001b[78Gor\u001b[81Geverything\u001b[92Gbelow\u001b[98Git.\r\r\n\r\r\n\u001b[2G\u001b]8;id=zaxmda;https://code.claude.com/docs/en/security\u0007\u001b[38;2;153;153;153mSecurity guide\u001b[39m\u001b]8;;\u0007\r\r\n\r\r\n\u001b[4G\u001b[38;2;153;153;153mNo,\u001b[8Gexit\u001b[39m\r\r\n\u001b[4G\u001b[38;2;153;153;153mYes,\u001b[9Gadd\u001b[13Git\u001b[39m\r\r\n\r\r\n\u001b[2G\u001b[38;2;153;153;153mEnter\u001b[8Gto\u001b[11Gconfirm\u001b[19G·\u001b[21GEsc\u001b[25Gto\u001b[28Gcancel\u001b[39m\r\r\n"
+  },
+  {
+   "t": 401,
+   "data": "\u001b[>0q"
+  },
+  {
+   "t": 401,
+   "data": "\u001b[?u\u001b]7501;?\u0007"
+  },
+  {
+   "t": 401,
+   "data": "\u001b[c"
+  },
+  {
+   "t": 901,
+   "data": "\r\u001b[1C\u001b[4A\u001b[38;2;177;185;249m❯\u001b[4GNo, exit\r\u001b[3C\u001b[1B\u001b[39mYes, add it\r\r\n\r\n\r\n\u001b[1C\u001b[4A"
+  },
+  {
+   "t": 4036,
+   "mark": "down"
+  },
+  {
+   "t": 4038,
+   "data": "\u001b[1D\u001b[4B\r\u001b[1C\u001b[4A \u001b[4GNo, exit\r\u001b[1C\u001b[1B\u001b[38;2;177;185;249m❯\u001b[4GYes, add it\u001b[39m\r\r\n\r\n\r\n\u001b[1C\u001b[3A"
+  },
+  {
+   "t": 5622,
+   "mark": "enter"
+  },
+  {
+   "t": 5623,
+   "data": "\u001b[>4m\u001b[<u\u001b[?1004l\u001b[?2031l\u001b[?2004l"
+  },
+  {
+   "t": 5624,
+   "data": "\u001b[1D\u001b[3B\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G\u001b[1A\u001b[K\r\u001b[1B\u001b[K\r\u001b[1B\u001b[K\r\u001b[1B\u001b[K\r\u001b[1B\u001b[K\r\u001b[1B\u001b[K\r\u001b[1B\u001b[K\r\u001b[1B\u001b[K\r\u001b[1B\u001b[K\r\u001b[1B\u001b[K\r\u001b[1B\u001b[K\r\u001b[1B\u001b[K\r\u001b[1B\u001b[K\r\u001b[1B\u001b[K\r\u001b[1B\u001b[K\r\u001b[1B\u001b[K\r\u001b[1B\u001b[K\r\u001b[1B\u001b[K\r\u001b[17A"
+  },
+  {
+   "t": 5742,
+   "data": "\u001b[?2004h\u001b[?2031h\u001b[?1004h"
+  },
+  {
+   "t": 5748,
+   "data": "\u001b]0;✳ Claude Code\u0007"
+  },
+  {
+   "t": 5766,
+   "data": "\u001b[?1049h\u001b[2J\u001b[H\u001b[?1000h\u001b[?1002h\u001b[?1003h\u001b[?1006h\u001b[?25l\u001b[H\r\u001b[11C\u001b[1B\u001b[1mClaude Code\u001b[24G\u001b[22m\u001b[38;2;153;153;153mv2.1.326\r\u001b[11C\u001b[1BOpus 5.5 · API Usage Billing\r\u001b[11C\u001b[1B/private/tmp/claude-501/probe326/case/work\r\u001b[2B\u001b[38;2;215;119;87m▎\u001b[3G\u001b[39m\u001b[1mAuto mode is now Claude Code's default permission mode.\r\u001b[1B\u001b[22m\u001b[38;2;215;119;87m▎\u001b[3G\u001b[38;2;153;153;153mAuto mode lets Claude handle permission prompts automatically. Claude checks each tool call for risky actions and \r\u001b[1B\u001b[38;2;215;119;87m▎\u001b[3G\u001b[38;2;153;153;153mprompt injection before executing, runs the ones it assesses as lower-risk, and blocks the rest.\r\u001b[1B\u001b[38;2;215;119;87m▎\u001b[3G\u001b]8;id=awvmy8;https://code.claude.com/docs/en/permission-modes\u0007\u001b[38;2;153;153;153mhttps://code.claude.com/docs/en/permission-modes\u001b]8;;\u0007\r\u001b[100C\u001b[17B◐ medium · /effort\r\u001b[1B\u001b[38;2;136;136;136m─────────────────────────────────────────────────────────────�"
+  },
+  {
+   "t": 5766,
+   "data": "�──────────────────────────────────────────────────────────\r\u001b[1B\u001b[39m❯ \u001b[7m \r\u001b[1B\u001b[27m\u001b[38;2;136;136;136m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────\r\u001b[2C\u001b[1B\u001b[38;2;255;193;7m⏵⏵ auto mode on\u001b[39m\u001b[30;1H\u001b[28;3H"
+  },
+  {
+   "t": 5801,
+   "data": "\u001b[H\r\u001b[17C\u001b[29B\u001b[38;2;153;153;153m (shift+tab to cycle) · ← for agents\u001b[39m\u001b[30;1H\u001b[28;3H\u001b[>0q\u001b[c"
+  },
+  {
+   "t": 5936,
+   "data": "\u001b[H\r\u001b[1B\u001b[48;2;215;119;87m\u001b[38;2;0;0;0m▖ \u001b[49m\u001b[38;2;215;119;87m▖\r\u001b[1B\u001b[39m\u001b[48;2;215;119;87m  \r\u001b[1B\u001b[49m\u001b[38;2;215;119;87m▝▝\u001b[39m\u001b[30;1H\u001b[28;3H"
+  },
+  {
+   "t": 5968,
+   "data": "\u001b[?6n"
+  },
+  {
+   "t": 6136,
+   "data": "\u001b[H\r\u001b[1B   \r\u001b[1B\u001b[48;2;215;119;87m\u001b[38;2;0;0;0m▖ \u001b[49m\u001b[38;2;215;119;87m▖\r\u001b[1B\u001b[39m\u001b[48;2;215;119;87m  \u001b[49m\u001b[30;1H\u001b[28;3H"
+  },
+  {
+   "t": 6199,
+   "data": "\u001b[H\r\u001b[1B\u001b[48;2;215;119;87m\u001b[38;2;0;0;0m   ▖ \u001b[49m\u001b[38;2;215;119;87m▖\r\u001b[1B\u001b[39m\u001b[48;2;215;119;87m     \r\u001b[1B\u001b[49m\u001b[38;2;215;119;87m   ▝▝\u001b[39m\u001b[30;1H\u001b[28;3H"
+  },
+  {
+   "t": 6386,
+   "data": "\u001b[H\r\u001b[1B      \r\u001b[1B\u001b[48;2;215;119;87m\u001b[38;2;0;0;0m   ▖ \u001b[49m\u001b[38;2;215;119;87m▖\r\u001b[1B\u001b[39m\u001b[48;2;215;119;87m     \u001b[49m\u001b[30;1H\u001b[28;3H"
+  },
+  {
+   "t": 6449,
+   "data": "\u001b[H\r\u001b[1B\u001b[38;2;215;119;87m▗\u001b[48;2;215;119;87m\u001b[38;2;0;0;0m ▗   ▖ \u001b[49m\u001b[38;2;215;119;87m▖\r\u001b[1B\u001b[39m \u001b[48;2;215;119;87m       \r\u001b[1B\u001b[49m \u001b[38;2;215;119;87m▘▘   ▝▝\u001b[39m\u001b[30;1H\u001b[28;3H"
+  },
+  {
+   "t": 6572,
+   "data": "\u001b[H\r\u001b[1B         \r\u001b[1B\u001b[38;2;215;119;87m▗\u001b[48;2;215;119;87m\u001b[38;2;0;0;0m ▗   ▖ \u001b[49m\u001b[38;2;215;119;87m▖\r\u001b[1B\u001b[38;2;153;153;153m·\u001b[39m\u001b[48;2;215;119;87m       \u001b[49m\u001b[38;2;153;153;153m·\u001b[39m\u001b[30;1H\u001b[28;3H"
+  },
+  {
+   "t": 6633,
+   "data": "\u001b[H\r\u001b[3B\u001b[38;2;153;153;153m~\u001b[9G~\u001b[39m\u001b[30;1H\u001b[28;3H"
+  },
+  {
+   "t": 6694,
+   "data": "\u001b[H\r\u001b[1B\u001b[38;2;215;119;87m▗\u001b[48;2;215;119;87m\u001b[38;2;0;0;0m ▗   ▖ \u001b[49m\u001b[38;2;215;119;87m▖\r\u001b[1B\u001b[39m \u001b[48;2;215;119;87m       \u001b[49m \r\u001b[1B \u001b[38;2;215;119;87m▘▘   ▝▝\u001b[39m \u001b[30;1H\u001b[28;3H"
+  },
+  {
+   "t": 15627,
+   "mark": "type-x"
+  },
+  {
+   "t": 15629,
+   "data": "\u001b(B\u000f\u001b[?2004h\u001b[?1000h\u001b[?1002h\u001b[?1003h\u001b[?1006h"
+  },
+  {
+   "t": 15634,
+   "data": "\u001b[H\r\u001b[2C\u001b[27Bx\u001b[7m \r\u001b[38C\u001b[2B\u001b[27m\u001b[K\u001b[30;1H\u001b[28;4H"
+  },
+  {
+   "t": 15755,
+   "data": "\u001b[H\r\u001b[92C\u001b[25B\u001b[38;2;255;107;128mNot logged in · Run /login\u001b[39m\u001b[30;1H\u001b[28;4H"
+  },
+  {
+   "t": 19728,
+   "mark": "end"
+  }
+ ]
+}

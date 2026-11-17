@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A seat waiting on a Claude Code boot dialog now shows as blocked, messages to it are held instead of typed into the dialog, and an undelivered spec names the dialog as the cause.
+
 ## 5.188.2 — 2026-11-17
 
 - A new Claude terminal seat no longer stops at Claude Code 2.1.326's question about trusting an added directory: Clodex now marks the directories it adds as trusted, in the seat's own config directory.

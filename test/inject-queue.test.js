@@ -594,6 +594,55 @@ test('InjectQueue: boot cap forces the write through a seat that never signals r
   assert.deepStrictEqual(capFired, ['scope'], 'cap-fire surfaced for observability');
 });
 
+test('t2349 InjectQueue: while blocked holds nothing is written, far past the ready cap; once it clears the unit is written and submitted exactly once', async () => {
+  const writes = [];
+  const submitted = [];
+  let clock = 0;
+  let blocked = true;
+  let writesWhileBlocked = null;
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: () => 1,
+    quietMs: 0, maxWaitMs: 0, ctrlUSettleMs: 0,
+    lastHumanInputAt: () => 0,
+    isDead: () => false,
+    now: () => clock,
+    sleep: (ms) => {
+      clock += ms;
+      if (blocked && clock >= 600_000) { writesWhileBlocked = [...writes]; blocked = false; }
+      return Promise.resolve();
+    },
+    ready: () => false,
+    readyMaxWaitMs: 20_000,
+    readyPollMs: 250,
+    blocked: () => blocked,
+    onSubmitted: (t) => submitted.push(t),
+  });
+  await q.enqueue('scope');
+  assert.deepStrictEqual(writesWhileBlocked, [], 'not one byte while blocked, 580s past the 20s ready cap');
+  assert.deepStrictEqual(writes, ['\x15', 'scope', '\r'], 'written and submitted once after it cleared');
+  assert.deepStrictEqual(submitted, ['scope']);
+});
+
+test('t2349 InjectQueue: blocked raised between the paste and its Enter writes no Enter', async () => {
+  const writes = [];
+  const undelivered = [];
+  let blocked = false;
+  const q = new InjectQueue({
+    write: (bytes) => writes.push(bytes),
+    settleMsFor: () => 7,
+    quietMs: 0, maxWaitMs: 0, ctrlUSettleMs: 0,
+    lastHumanInputAt: () => 0,
+    isDead: () => false,
+    sleep: (ms) => { if (ms === 7) blocked = true; return Promise.resolve(); },
+    blocked: () => blocked,
+    onUndelivered: (t) => undelivered.push(t),
+  });
+  await q.enqueue('scope', { divert: () => false });
+  assert.deepStrictEqual(writes, ['\x15', 'scope'], 'the paste landed before the dialog drew; no Enter follows it');
+  assert.deepStrictEqual(undelivered, ['scope']);
+});
+
 test('InjectQueue: boot cap does NOT fire when the seat becomes ready in time', async () => {
   const capFired = [];
   let clock = 0;
