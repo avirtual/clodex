@@ -1,6 +1,7 @@
 const { nextTicketId, recordEvent, titleLine, ticketTitle, extractTaskDir, extractMustFix, scanVerdict, countMustFix, mustFixTitles, ticketStarted, ticketInFlight, branchSlug, appendReworkReason } = require('./tickets-store');
 const teamCost = require('./team-cost');
 const { defuseSenderLines } = require('./review-gate');
+const { bootDialogNote } = require('./attention');
 const { isReservedSenderName, reservedSenderError } = require('./system-senders');
 const { buildReviewScope, reviewBeginLine } = require('./ticket-review-scope');
 const { projectDirFor } = require('./clodex-paths');
@@ -4652,6 +4653,18 @@ function createTicketMethods(deps, shared) {
         this._escalateTicket(team, u.ticketId, step,
           `${session.name} never started a turn after ${wrote}, and the ticket no longer resolves to any live seat`,
           `the ${isRedirect ? 'rejection' : 'spec'} was injected once; no redelivery was attempted because there is nobody to deliver to`);
+        return;
+      }
+
+      const bootDialog = this._bootDialogOf(session);
+      if (bootDialog) {
+        session._specUnconfirmed = null;
+        log.error('intent', `${what} unconfirmed on ${session.name}: ${bootDialogNote(bootDialog)} — escalating`);
+        this._escalateTicket(team, u.ticketId, step,
+          `${session.name} never started a turn after ${wrote}: ${bootDialogNote(bootDialog)}`,
+          u.retried
+            ? `the ${isRedirect ? 'rejection' : 'spec'} was injected once and redelivered once after the confirmation window`
+            : `the ${isRedirect ? 'rejection' : 'spec'} was injected once; no redelivery was attempted, since it would be typed into the dialog`);
         return;
       }
 

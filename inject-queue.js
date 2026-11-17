@@ -64,7 +64,7 @@ class InjectQueue {
   // ready(): a BOOT gate, not a liveness gate — the caller latches it.
   // readyMaxWaitMs / maxWaitMs: caps so a seat that never signals ready, or an
   // operator who walked away mid-draft, cannot strand a delivery.
-  constructor({ write, settleMsFor, quietMs, maxWaitMs, lastHumanInputAt, isDead, now, sleep, onCapFire, ctrlUSettleMs, bracketedPaste, ready, readyMaxWaitMs, readyPollMs, onReadyCapFire, pasteMaxWaitMs, onPasteCapFire, hintHeld, speaking, onSubmitted, onWritten, onUndelivered, reviewGate, onDefanged }) {
+  constructor({ write, settleMsFor, quietMs, maxWaitMs, lastHumanInputAt, isDead, now, sleep, onCapFire, ctrlUSettleMs, bracketedPaste, ready, readyMaxWaitMs, readyPollMs, onReadyCapFire, pasteMaxWaitMs, onPasteCapFire, hintHeld, speaking, blocked, onSubmitted, onWritten, onUndelivered, reviewGate, onDefanged }) {
     this._write = write;
     this._onDefanged = typeof onDefanged === 'function' ? onDefanged : null;
     this._reviewGate = !!reviewGate;
@@ -77,6 +77,7 @@ class InjectQueue {
     this._lastHumanInputAt = lastHumanInputAt || (() => 0);
     this._hintHeld = hintHeld || (() => false);
     this._speaking = speaking || (() => false);
+    this._blocked = typeof blocked === 'function' ? blocked : (() => false);
     this._isDead = isDead || (() => false);
     this._now = now || Date.now;
     this._sleep = sleep || ((ms) => new Promise((r) => setTimeout(r, ms)));
@@ -112,6 +113,8 @@ class InjectQueue {
 
   // A throwing hold must not block delivery — the hint is optional, the message is not.
   _held() { try { return !!this._hintHeld(); } catch { return false; } }
+
+  _blockedNow() { try { return !!this._blocked(); } catch { return false; } }
 
   // Same swallow, same direction, and here the direction is load-bearing rather
   // than merely tidy: everything about this signal fails toward DELIVERING.
@@ -213,6 +216,12 @@ class InjectQueue {
       && (this._now() - (this._lastHumanInputAt() || 0) < this._quietMs || this._speakingNow())) {
       try { this._onCapFire(text); } catch {}
     }
+    if (this._blockedNow()) {
+      while (!this._isDead() && this._blockedNow()) await this._sleep(this._readyPollMs);
+      if (this._isDead()) { if (parkable) this._undelivered(text, meta); return; }
+      await this._waitQuiet();
+      if (this._isDead()) { if (parkable) this._undelivered(text, meta); return; }
+    }
     this._write('\x15');                               // clear-line key event
     await this._sleep(this._ctrlUSettleMs);
     if (this._isDead()) { if (parkable) this._undelivered(text, meta); return; }
@@ -233,7 +242,7 @@ class InjectQueue {
     this._write(out);
     const settleMs = this._settleMsFor(text);
     await this._sleep(settleMs);
-    if (this._isDead()) { if (parkable) this._undelivered(text, meta); return; }
+    if (this._isDead() || this._blockedNow()) { if (parkable) this._undelivered(text, meta); return; }
     this._write('\r');                                 // Enter — closes the unit
     if (this._onWritten) { try { this._onWritten(text, { bytes: Buffer.byteLength(out), bracketed, pasteOn, settleMs }); } catch {} }
     if (this._onSubmitted) { try { this._onSubmitted(text, { human }); } catch {} }

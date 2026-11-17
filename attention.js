@@ -35,4 +35,59 @@ function classifyNotification(entry) {
   return 'other';
 }
 
-module.exports = { classifyNotification };
+const BOOT_DIALOGS = [
+  { kind: 'added-folder-trust', option: 'Yes,addit', title: 'Addinganewdirectory:', body: "Thissessionhasn'tworkedherebefore", footer: 'Adding:' },
+  { kind: 'folder-trust', option: 'Yes,Itrustthisfolder', title: 'Accessingworkspace:', body: 'Quicksafetycheck', footer: null },
+];
+const BOOT_FRAME_MAX = 2000;
+const BOOT_TAIL_MAX = 600;
+const BOX_RULE_RE = /─{8}/;
+const PATH_TAIL_RE = /[~/][^─│╭╮╰╯❯]*$/;
+
+function pathAtEnd(seg) {
+  const m = PATH_TAIL_RE.exec(seg);
+  return m ? m[0] : null;
+}
+
+function bootDialogPath(d, frame, tail) {
+  const bodyAt = frame.lastIndexOf(d.body);
+  const titleAt = frame.lastIndexOf(d.title);
+  if (titleAt >= 0) {
+    const from = titleAt + d.title.length;
+    const to = bodyAt > from ? bodyAt : frame.length;
+    return pathAtEnd(frame.slice(from, to));
+  }
+  if (d.footer && tail.includes(d.footer)) {
+    const after = tail.slice(tail.lastIndexOf(d.footer) + d.footer.length);
+    const cut = after.indexOf('Entertoconfirm');
+    return pathAtEnd(cut >= 0 ? after.slice(0, cut) : after);
+  }
+  if (bodyAt >= 0) return pathAtEnd(frame.slice(Math.max(0, bodyAt - 400), bodyAt));
+  return null;
+}
+
+function classifyBootScreen(text) {
+  const s = String(text == null ? '' : text).replace(/\s+/g, '').replace(/’/g, "'");
+  let hit = null;
+  for (const d of BOOT_DIALOGS) {
+    const at = s.lastIndexOf(d.option);
+    if (at >= 0 && (!hit || at > hit.at)) hit = { d, at };
+  }
+  if (!hit) return null;
+  const { d, at } = hit;
+  const tail = s.slice(at + d.option.length);
+  if (tail.length > BOOT_TAIL_MAX || BOX_RULE_RE.test(tail)) return null;
+  const head = s.slice(Math.max(0, at - BOOT_FRAME_MAX), at);
+  const exitAt = head.lastIndexOf('No,exit');
+  if (exitAt < 0) return null;
+  const frame = head.slice(0, exitAt);
+  const framed = frame.includes(d.body) || frame.includes(d.title) || (!!d.footer && tail.includes(d.footer));
+  if (!framed) return null;
+  return { kind: d.kind, path: bootDialogPath(d, frame, tail) || null };
+}
+
+function bootDialogNote(dialog) {
+  return `a Claude Code boot dialog is up in its terminal${dialog && dialog.path ? `: ${dialog.path}` : ''}`;
+}
+
+module.exports = { classifyNotification, classifyBootScreen, bootDialogNote };
