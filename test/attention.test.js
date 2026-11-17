@@ -60,6 +60,12 @@ const INLINE_BOOT_ROWS = [
   ['an option label alone, with no dialog body or title',
     '❯ No, exit\n  Yes, add it\n',
     null],
+  ['a dialog that scrolled up under later output, with a ready prompt below it',
+    ' Adding a new directory:\n /tmp/x/messages\n This session hasn\'t worked here before.\n ❯ No, exit\n   Yes, add it\n Enter to confirm · Esc to cancel\n⏺ Bash(ls)\n  ⎿  README.md\n     package.json\n⏺ Two files.\n────────────────────────────────────────\n❯ \n────────────────────────────────────────\n',
+    null],
+  ['a transcript line quoting the dialog\'s words above a ready prompt',
+    '⏺ It asked "Adding a new directory: /tmp/x/messages — This session hasn\'t worked here before" and offered No, exit / Yes, add it.\n────────────────────────────────────────\n❯ \n────────────────────────────────────────\n',
+    null],
 ];
 
 for (const [label, text, expected] of INLINE_BOOT_ROWS) {
@@ -67,6 +73,21 @@ for (const [label, text, expected] of INLINE_BOOT_ROWS) {
     assert.deepStrictEqual(classifyBootScreen(text), expected);
   });
 }
+
+const ANSWERED = JSON.parse(screen('boot-dialogs/added-folder-trust-2.1.326-answered@120.events.json'));
+const TERM_ESCAPE_RE = /\x1b\[[0-9;?<>=]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|\x1b[=>78MDEc]/g;
+const streamUntil = (mark) => {
+  const at = ANSWERED.events.findIndex((e) => e.mark === mark);
+  assert.ok(at > 0, `ENTER: the capture carries the ${mark} mark`);
+  return ANSWERED.events.slice(0, at).filter((e) => e.data).map((e) => e.data).join('').replace(TERM_ESCAPE_RE, '');
+};
+
+test('classifyBootScreen on a captured 2.1.326 stream: hits while the dialog is up, misses once "Yes, add it" was chosen', () => {
+  assert.deepStrictEqual(classifyBootScreen(streamUntil('enter')), { kind: 'added-folder-trust', path: '/private/tmp/claude-501/probe326/case/messages' });
+  const answered = streamUntil('type-x');
+  assert.ok(answered.includes('Claude Codev2.1.326'), 'ENTER: the capture reached the REPL after the answer');
+  assert.strictEqual(classifyBootScreen(answered), null);
+});
 
 test('bootDialogNote names the dialog and quotes its path when it has one', () => {
   assert.strictEqual(bootDialogNote({ kind: 'added-folder-trust', path: '/home/bogdan/.clodex/messages' }),

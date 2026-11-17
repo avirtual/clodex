@@ -894,7 +894,7 @@ const BOOT_DIALOG_PATH = '/private/tmp/claude-501/-Users-bogdan-projects-tmux-wb
 test('t2349: a target whose screen shows a Claude Code boot dialog RE-ARMS rather than bouncing', async () => {
   const { app, target } = await swallowed();
   try {
-    target.scrollback = BOOT_DIALOG_SCREEN;
+    target._bootScreenWatch = true; target._bootScreenText = BOOT_DIALOG_SCREEN;
     app.m._scanBootScreen(target);
     assert.strictEqual(target.needsAttention && target.needsAttention.source, 'screen', 'ENTER: the screen scan raised the attention');
     const beforeSender = app.seen('sender');
@@ -911,7 +911,7 @@ test('t2349: a target whose screen shows a Claude Code boot dialog RE-ARMS rathe
 test('t2349: an operator keystroke cleared the attention but the dialog is still up — the bounce names the boot dialog', async () => {
   const { app, target } = await swallowed();
   try {
-    target.scrollback = BOOT_DIALOG_SCREEN;
+    target._bootScreenWatch = true; target._bootScreenText = BOOT_DIALOG_SCREEN;
     app.m._scanBootScreen(target);
     assert.strictEqual(target.needsAttention && target.needsAttention.source, 'screen', 'ENTER: the screen scan raised the attention');
     target.needsAttention = null;

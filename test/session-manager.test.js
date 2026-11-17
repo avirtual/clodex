@@ -16635,6 +16635,20 @@ test('t771: an OPEN DRAFT at fire time re-arms too, and the nudge waits for the 
   assert.deepStrictEqual(writes, [...DRAINED, '\r'], 'the next fire writes it');
 });
 
+test('t2349: a boot dialog up at fire time holds the submit nudge — no Enter into the dialog — and it fires once the dialog clears', async (t) => {
+  const p = mkNudgeProbe({ bootNudgeMs: 30 });
+  const { s, writes } = await drainOnlyMocked(t, p, 'nudge-dialog', (sess) => {
+    sess._bootDialog = { kind: 'added-folder-trust', path: '/home/bogdan/.clodex/messages' };
+  });
+  p.fireData(DRAIN_ECHO);
+  await tickFor(t, 300);
+  assert.deepStrictEqual(writes, DRAINED, 'not one Enter while the dialog is up');
+  assert.ok(s._bootNudgeTimer, 'and the nudge is still armed');
+  s._bootDialog = null;
+  await tickUntil(t, () => writes.length >= 4);
+  assert.deepStrictEqual(writes, [...DRAINED, '\r'], 'the next fire writes it');
+});
+
 test('t771: a seat that NEVER goes quiet gives up silently at bootNudgeMaxWaitMs', async (t) => {
   // The other end of the re-arm: an unbounded re-arm would nudge minutes later into
   // a seat that has plainly been alive the whole time. The cap is measured from the

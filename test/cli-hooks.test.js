@@ -564,17 +564,21 @@ function runSessionStart(REGISTRY_DIR, name, source) {
   return cp.execFileSync('bash', [pathFor(REGISTRY_DIR, name, 'hook')], { ...HOOK_SPAWN, input, encoding: 'utf-8' });
 }
 
-test('SessionStart: only a compact appends the compact-end line to the attention file', () => {
+test('SessionStart: a compact, a startup and a resume each append their line to the attention file; a clear appends nothing', () => {
   const REGISTRY_DIR = tmp();
   const h = mk(REGISTRY_DIR);
   fs.writeFileSync(path.join(REGISTRY_DIR, 't.jsonl'), '');
   h.setupClaudeHook('agentC');
   const attn = pathFor(REGISTRY_DIR, 'agentC', 'attn');
-  for (const source of ['startup', 'clear', 'resume']) runSessionStart(REGISTRY_DIR, 'agentC', source);
-  assert.strictEqual(fs.readFileSync(attn, 'utf-8'), '', 'non-compact sources append nothing');
-  runSessionStart(REGISTRY_DIR, 'agentC', 'compact');
+  runSessionStart(REGISTRY_DIR, 'agentC', 'clear');
+  assert.strictEqual(fs.readFileSync(attn, 'utf-8'), '', 'a clear appends nothing');
+  for (const source of ['startup', 'resume', 'compact']) runSessionStart(REGISTRY_DIR, 'agentC', source);
   const lines = fs.readFileSync(attn, 'utf-8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
-  assert.deepStrictEqual(lines, [{ hook_event_name: 'SessionStart', source: 'compact' }]);
+  assert.deepStrictEqual(lines, [
+    { hook_event_name: 'SessionStart', source: 'startup' },
+    { hook_event_name: 'SessionStart', source: 'resume' },
+    { hook_event_name: 'SessionStart', source: 'compact' },
+  ]);
 });
 
 test('SessionStart: every context reset serves the DIGEST, an ordinary resume serves the name file', () => {

@@ -2788,7 +2788,10 @@ function createSessionManager(deps) {
         if (getRemoteServer()) { try { getRemoteServer().pushOutput(name, data); } catch {} }
 
         if (data.includes('\x1b[?2004')) session._pasteModeOn = pasteModeSignal(data, session._pasteModeOn);
-        if (session._bootScreenWatch) this._scanBootScreen(session);
+        if (session._bootScreenWatch) {
+          session._bootScreenText = ((session._bootScreenText || '') + data).slice(-BOOT_SCREEN_TAIL);
+          this._scanBootScreen(session);
+        }
         if (!session._bootDialog) {
           if (session._pasteModeOn && !session._bootReadySeen) {
             session._bootReadySeen = true;
@@ -5885,7 +5888,7 @@ function createSessionManager(deps) {
       }
       if (s && state !== 'idle') s.lastMainStop = null;
       if (s && state !== 'idle') s._awaitingTurnSince = null;
-      if (s && state !== 'idle' && s._bootScreenWatch) { s._bootScreenWatch = false; s._bootDialog = null; }
+      if (s && state !== 'idle' && s._bootScreenWatch) { s._bootScreenWatch = false; s._bootDialog = null; s._bootScreenText = null; }
       if (s && state !== 'idle' && s._parkedEscalations && s._parkedEscalations.size) this._releaseDrainedEscalations(s);
       // A turn confirms the spec write only if it is attributed to this ticket in the transcript;
       // otherwise the latch stays armed and its deadline redelivers.
@@ -5961,7 +5964,7 @@ function createSessionManager(deps) {
 
     _routeAttnEntry(session, entry) {
       if (entry && entry.hook_event_name === 'PreCompact') this._onCompactStart(session, entry.trigger);
-      else if (entry && entry.hook_event_name === 'SessionStart') { if (entry.source === 'compact') this._onCompactEnd(session, 'done'); }
+      else if (entry && entry.hook_event_name === 'SessionStart') { if (entry.source === 'compact') this._onCompactEnd(session, 'done'); else this._onBootSessionStart(session); }
       else if (entry && entry.hook_event_name === 'PreToolUse') this._onStreamToolBoundary(session);
       else this._onAttention(session, entry || {});
     }
@@ -6129,9 +6132,15 @@ function createSessionManager(deps) {
     }
 
     _bootDialogOf(session) {
-      if (!session || session.io === 'stream' || !runsClaudeHooks(session.agentType)) return null;
-      if (typeof session.scrollback !== 'string' || !session.scrollback) return null;
-      return classifyBootScreen(session.scrollback.slice(-BOOT_SCREEN_TAIL).replace(TERM_ESCAPE_RE, ''));
+      if (!session || !session._bootScreenWatch || typeof session._bootScreenText !== 'string' || !session._bootScreenText) return null;
+      return classifyBootScreen(session._bootScreenText.replace(TERM_ESCAPE_RE, ''));
+    }
+
+    _onBootSessionStart(session) {
+      if (!session || !session._bootScreenWatch) return;
+      session._bootScreenText = '';
+      if (session._bootDialog) log.info('session', `${session.name}: SessionStart fired with a boot dialog hold up — releasing it`);
+      this._scanBootScreen(session);
     }
 
     _scanBootScreen(session) {

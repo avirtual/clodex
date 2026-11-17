@@ -1267,6 +1267,55 @@ test('t2349: a respawned seat on a Claude Code boot dialog is written nothing, a
   } finally { app2.stop(); }
 });
 
+const ANSWERED = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'boot-dialogs', 'added-folder-trust-2.1.326-answered@120.events.json'), 'utf8'));
+const chunksBetween = (from, to) => {
+  const a = from ? ANSWERED.events.findIndex((e) => e.mark === from) : -1;
+  const b = ANSWERED.events.findIndex((e) => e.mark === to);
+  assert.ok(b > a, `ENTER: the capture carries the ${to} mark`);
+  return ANSWERED.events.slice(a + 1, b).filter((e) => e.data).map((e) => e.data);
+};
+
+test('t2349: a captured 2.1.326 boot holds the replay while "Adding a new directory" is up and runs it once "Yes, add it" was chosen', async () => {
+  const world = mkWorld();
+  await assigned(world);
+  const app2 = boot(world, { deps: { bootDrainSettleMs: 30, INJECT_BOOT_MAXWAIT: 60_000, InjectQueue: FastQueue } });
+  try {
+    const s = await app2.spawn('team-hand');
+    for (const data of chunksBetween(null, 'enter')) app2.emit('team-hand', data);
+    assert.deepStrictEqual(s.needsAttention && { kind: s.needsAttention.kind, source: s.needsAttention.source, path: s.needsAttention.path },
+      { kind: 'permission', source: 'screen', path: '/private/tmp/claude-501/probe326/case/messages' });
+    assert.strictEqual(s._bootDrainTimer, null, 'the dialog\'s own mode-2004 announcement armed no drain');
+    assert.strictEqual(s._replayTicketsPending, true, 'ENTER: the replay is still owed');
+    assert.strictEqual(app2.seen('team-hand'), '', 'nothing was written into the dialog');
+
+    for (const data of chunksBetween('enter', 'type-x')) app2.emit('team-hand', data);
+    assert.strictEqual(s.needsAttention, null, 'the answered dialog no longer holds the seat');
+    const got = await settled(app2, 'team-hand');
+    assert.match(got, /BUILD THE WIDGET/, 'the replay runs after the answer');
+  } finally { app2.stop(); }
+});
+
+test('t2349: a hold whose screen text never stops matching is released by the CLI\'s SessionStart, and the replay then runs', async () => {
+  const world = mkWorld();
+  await assigned(world);
+  const app2 = boot(world, { deps: { bootDrainSettleMs: 30, INJECT_BOOT_MAXWAIT: 60_000, InjectQueue: FastQueue } });
+  try {
+    const s = await app2.spawn('team-hand');
+    app2.emit('team-hand', BOOT_DIALOG_SCREEN);
+    app2.emit('team-hand', '\x1b[?2004h\x1b[2K\x1b[1A\x1b[2K\x1b[G');
+    assert.strictEqual(s.needsAttention && s.needsAttention.source, 'screen', 'ENTER: the stale text still classifies as a dialog');
+    assert.strictEqual(app2.seen('team-hand'), '');
+    app2.m._routeAttnEntry(s, { hook_event_name: 'SessionStart', source: 'startup' });
+    assert.strictEqual(s._bootDialog, null, 'SessionStart released the hold');
+    assert.strictEqual(s.needsAttention, null);
+    app2.emit('team-hand', '\x1b[?2004h');
+    const got = await settled(app2, 'team-hand');
+    assert.match(got, /BUILD THE WIDGET/, 'the replay runs after the release');
+    app2.emit('team-hand', BOOT_DIALOG_SCREEN);
+    assert.strictEqual(s.needsAttention && s.needsAttention.source, 'screen', 'a dialog drawn after SessionStart still holds the seat');
+  } finally { app2.stop(); }
+});
+
 test('t2349: a spec-undelivered escalation names the boot dialog when an operator keystroke cleared the attention but the dialog is still up', async () => {
   const world = mkWorld();
   const { app, s } = await dispatched(world);
