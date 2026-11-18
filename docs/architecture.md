@@ -207,6 +207,12 @@ bundle), whose packaged form is the Docker image under
   `idleDecision` (the idle sweep's verdict), `pickMaxAwakeVictim`, and
   `briefPathFor`. SessionManager's `sleep`/`wake`/`_assistantSweep` and
   cli-hooks' `writeClaudeDigestFile` are its callers.
+- **idle-pause.js** — the idle question: `idleCandidates` (live sessions idle
+  past the threshold, each pausable or exempt with one reason), `shouldAsk`
+  (5 or more pausable, "Not now" memory) and `createIdlePauseAsker` (the
+  start-up and hourly check, the `idle-pause:ask`/`idle-pause:closed`
+  broadcasts, first answer wins). engine.js wires it to SessionManager's
+  `idlePauseSurvey`/`pauseIdle` and the ui-settings store.
 - **stream-seat.js** — the electron-free child-process owner behind a stream
   seat (`io: 'stream'`, `claude -p` over stream-json): spawns detached in its
   own process group, splits stdout into JSON lines with no length cap, writes

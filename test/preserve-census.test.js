@@ -230,6 +230,7 @@ const NOT_PRESERVED = {
   exitedAt: 'stamped only when the process has already exited on its own, so the seat is out of '
     + '`manager.sessions` and no restart seam runs against it; the next create() clears it anyway.',
   exitCode: 'written with exitedAt by setExited and cleared with it: same argument as exitedAt.',
+  archiveCause: 'written with archivedAt by setArchived and cleared with it: same argument as archivedAt.',
   exitSignal: 'written with exitedAt by setExited and cleared with it: same argument as exitedAt.',
   movedTo: 'written only by moveToPeer, in the same breath as setArchived(name, true) — so it rides '
     + 'archivedAt\'s argument exactly: no restart seam runs against an archived record. It is also the '
