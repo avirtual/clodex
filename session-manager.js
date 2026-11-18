@@ -148,7 +148,11 @@ const {
   buildRelayEnvelope, buildTerminalDm, isRelayEnvelope, hopRule, relayVersionOk, isDoneTaskEnvelope, isSandboxEnvelope, peerOriginSuffix, isQualifiedSender,
 } = require('./relay-protocol');
 const { formatTeamBlock, matchSeatRole, formatRoster, formatCompositionDelta } = require('./team-manifest');
-const ARCHIVE_CAUSES = { sidebar: 'by the operator from the sidebar', shortcut: 'by the operator with the close shortcut' };
+const ARCHIVE_CAUSES = {
+  sidebar: ' by the operator from the sidebar',
+  shortcut: ' by the operator with the close shortcut',
+  idle: (span) => `, paused after ${span} idle, at the operator's request`,
+};
 const { SYSTEM_SENDERS, isReservedSenderName, reservedSenderError } = require('./system-senders');
 const { claimedRecordFault } = require('./peer-outbox');
 const { defuseSenderLines, defangTeammateTag, quoteBodyLines } = require('./review-gate');
@@ -175,6 +179,7 @@ const { createTicketsStore, ticketTerminalReason } = require('./tickets-store');
 const { findRepoRoot } = require('./project-root');
 const { atomicWriteFileSync } = require('./fs-util');
 const { composeBrief, idleDecision, idleClearAfterMs, idleClearDecision, briefPathFor, clientTokenPathFor, pickMaxAwakeVictim, splitTurnText, BRIEF_TAIL, BRIEF_MAX_BYTES } = require('./assistant-sleep');
+const { idleCandidates } = require('./idle-pause');
 const { cachedMessages } = require('./transcript');
 const { isAgentType, adapterFor, accountEnvKey, runsClaudeHooks, streamFor: adapterStreamFor, hasBypass, hasReadOnlyCap, postureOf, resolveModelId, resolveEffort } = require('./cli-adapters');
 
@@ -4133,14 +4138,16 @@ function createSessionManager(deps) {
       return { ok: true, worktreeRemoved: false, error, path: worktree.path, live: wasLive };
     }
 
-    async archive(name, { via = null } = {}) {
+    async archive(name, { via = null, idle = null } = {}) {
       const s = this.sessions.get(name);
       if (!s) return;
       log.info('session', `archive ${name} pid=${this._procPid(s)}`);
       this.endHold(name);
-      const cause = Object.hasOwn(ARCHIVE_CAUSES, via) ? ARCHIVE_CAUSES[via] : null;
-      this._notifyComposition(s, cause ? `archived ${cause}` : 'archived');
-      getPersistence().setArchived(name, true);
+      const known = Object.hasOwn(ARCHIVE_CAUSES, via) ? ARCHIVE_CAUSES[via] : null;
+      const cause = typeof known === 'function' ? (idle ? known(idle) : null) : known;
+      this._notifyComposition(s, cause ? `archived${cause}` : 'archived');
+      if (cause && via === 'idle') getPersistence().setArchived(name, true, 'idle');
+      else getPersistence().setArchived(name, true);
       s._archived = true;
       if (s.stream) { s._streamStopping = true; s.stream.kill(); return; }
       const ptyPid = s.pty.pid;
@@ -4309,6 +4316,60 @@ function createSessionManager(deps) {
         return ticketsStore.read(team.root).some((t) => t && t.state === 'open' && t.assignee === s.name)
           || this._openTicketsFor(team, s.name).length > 0;
       } catch { return true; }
+    }
+
+    _idlePauseRow(s) {
+      const p = getPersistence();
+      const rec = p ? p.get(s.name) : null;
+      let team = null;
+      if (s.agentType) { try { team = this._teamOfOrNull(s); } catch { team = null; } }
+      return {
+        name: s.name,
+        type: s.agentType || s.type || 'bash',
+        archived: !!(s._archived || (rec && rec.archivedAt)),
+        exited: !!s._dead,
+        activityTs: s.activityTs || s.spawnedAt || 0,
+        operatorInputAt: s.lastUserInputTs || 0,
+        bash: !s.agentType,
+        assistant: !!(s._assistant || (rec && rec.class === 'assistant')),
+        lead: !!(team && team.lead === s.name),
+        working: !!(s.streamBusy || s.thinking || s.activityState === 'thinking'),
+        dialog: !!((s.streamPermissions && s.streamPermissions.size) || s._bootDialog || (s.needsAttention && s.needsAttention.kind === 'permission')),
+        pending: !!((s.outbox && s.outbox.length) || (s._injectQueue && s._injectQueue.length)
+          || (s._injectPtyQueue && s._injectPtyQueue.length) || hasActivePending(PENDING_DIR, s.name)),
+        inFlight: !!(s._reloadInFlight || s._postClearContinuation || s._compactPending || s._compactGuard || s._compactContinuation),
+        ticket: !!(s.agentType && this._idleClearTicketBound(s)),
+      };
+    }
+
+    idlePauseSurvey(now, thresholdMs) {
+      const rows = [];
+      for (const s of this.sessions.values()) if (!s.clone) rows.push(this._idlePauseRow(s));
+      return idleCandidates({ sessions: rows, now, thresholdMs });
+    }
+
+    async pauseIdle(names, { thresholdMs } = {}) {
+      let paused = 0;
+      let skipped = 0;
+      for (const name of names) {
+        const s = this.sessions.get(name);
+        const [verdict] = s && !s.clone ? idleCandidates({ sessions: [this._idlePauseRow(s)], now: Date.now(), thresholdMs }) : [];
+        if (!verdict || verdict.reason) {
+          log.info('session', `idle pause ${name} skipped: ${verdict ? verdict.reason : 'no longer idle'}`);
+          skipped++;
+          continue;
+        }
+        this._sendToSession(name, 'session:context-action', { action: 'retired', name, disposition: 'archive' });
+        try {
+          await this.archive(name, { via: 'idle', idle: verdict.idle });
+          paused++;
+        } catch (e) {
+          log.warn('session', `idle pause ${name} failed: ${e && e.message}`);
+          skipped++;
+        }
+      }
+      log.info('session', `idle pause: ${paused} paused, ${skipped} skipped`);
+      return { paused, skipped };
     }
 
     _idleClearTick(s, now) {

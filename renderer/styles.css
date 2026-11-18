@@ -2455,7 +2455,7 @@ body.drawer-dragging #drawer, body.drawer-dragging #work-row { transition: none;
 
 /* Dialog */
 
-#dialog-overlay, #prefs-overlay, #args-overlay, #peers-overlay, #peer-session-overlay, #sandbox-overlay, #discovery-overlay, #plugins-overlay, #setup-overlay {
+#dialog-overlay, #prefs-overlay, #args-overlay, #peers-overlay, #peer-session-overlay, #sandbox-overlay, #discovery-overlay, #plugins-overlay, #setup-overlay, #idle-pause-overlay {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.5);
@@ -2465,7 +2465,7 @@ body.drawer-dragging #drawer, body.drawer-dragging #work-row { transition: none;
   z-index: 100;
 }
 
-#dialog-overlay.hidden, #prefs-overlay.hidden, #args-overlay.hidden, #peers-overlay.hidden, #peer-session-overlay.hidden, #sandbox-overlay.hidden, #discovery-overlay.hidden, #plugins-overlay.hidden, #setup-overlay.hidden {
+#dialog-overlay.hidden, #prefs-overlay.hidden, #args-overlay.hidden, #peers-overlay.hidden, #peer-session-overlay.hidden, #sandbox-overlay.hidden, #discovery-overlay.hidden, #plugins-overlay.hidden, #setup-overlay.hidden, #idle-pause-overlay.hidden {
   display: none;
 }
 
@@ -2478,7 +2478,7 @@ body.drawer-dragging #drawer, body.drawer-dragging #work-row { transition: none;
 #setup-overlay { z-index: 150; }
 
 /* Discover Sessions dialog — a scrollable list of adoptable sessions. */
-#discovery-dialog, #setup-dialog {
+#discovery-dialog, #setup-dialog, #idle-pause-dialog {
   background: var(--sidebar-bg);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -2490,7 +2490,13 @@ body.drawer-dragging #drawer, body.drawer-dragging #work-row { transition: none;
   flex-direction: column;
   gap: 12px;
 }
-#discovery-dialog h3, #setup-dialog h3 { margin: 0; }
+#discovery-dialog h3, #setup-dialog h3, #idle-pause-dialog h3 { margin: 0; }
+.idle-pause-list { overflow-y: auto; max-height: 40vh; display: flex; flex-direction: column; gap: 2px; }
+.idle-pause-row { display: flex; align-items: center; gap: 10px; padding: 3px 4px; }
+.idle-pause-name { flex: 1; font-weight: 600; }
+.idle-pause-type, .idle-pause-idle, .idle-pause-reason { color: var(--text-tertiary); }
+#idle-pause-exempt-block summary { cursor: pointer; color: var(--text-tertiary); }
+#idle-pause-exempt-block.hidden { display: none; }
 #setup-dialog { width: 460px; }
 .discovery-list {
   flex: 1;
@@ -5876,11 +5882,11 @@ body.web-frontend #sidebar-header {
 .team-roles-add-toggle { border-color: var(--border-strong); border-radius: var(--radius-md); font-size: var(--fs-sm); padding: 5px var(--sp-2); }
 
 #dialog-overlay, #prefs-overlay, #args-overlay, #peers-overlay, #peer-session-overlay,
-#sandbox-overlay, #discovery-overlay, #plugins-overlay, #setup-overlay,
+#sandbox-overlay, #discovery-overlay, #plugins-overlay, #setup-overlay, #idle-pause-overlay,
 #prompt-editor, #agent-editor, #skill-editor, #exec-editor, #mcp-editor, .prompt-modal-overlay, .plugin-overlay {
   background: var(--scrim);
 }
-#dialog, #prefs-dialog, #peers-dialog, #plugins-dialog, #sandbox-dialog, #discovery-dialog,
+#dialog, #prefs-dialog, #peers-dialog, #plugins-dialog, #sandbox-dialog, #discovery-dialog, #idle-pause-dialog,
 #setup-dialog, .prompt-modal, .prompt-editor-box {
   background: var(--surface-overlay);
   border: 1px solid var(--border-strong);

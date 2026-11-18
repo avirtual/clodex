@@ -6397,6 +6397,90 @@ async function openDiscovery() {
 if (discoveryRefresh) discoveryRefresh.addEventListener('click', () => openDiscovery());
 if (discoveryClose) discoveryClose.addEventListener('click', () => closeDiscovery());
 if (discoveryOverlay) discoveryOverlay.addEventListener('mousedown', (e) => { if (e.target === discoveryOverlay) closeDiscovery(); });
+
+const idlePauseOverlay = document.getElementById('idle-pause-overlay');
+const idlePauseList = document.getElementById('idle-pause-list');
+const idlePauseGo = document.getElementById('idle-pause-go');
+let idlePauseShown = null;
+
+function idlePauseRowEl(row, selectable) {
+  const el = document.createElement(selectable ? 'label' : 'div');
+  el.className = 'idle-pause-row';
+  if (selectable) {
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = true;
+    box.dataset.name = row.name;
+    box.addEventListener('change', updateIdlePauseCount);
+    el.appendChild(box);
+  }
+  for (const [cls, text] of [['idle-pause-name', row.name], ['idle-pause-type', row.type], ['idle-pause-idle', `idle ${row.idle}`]]) {
+    const span = document.createElement('span');
+    span.className = cls;
+    span.textContent = text;
+    el.appendChild(span);
+  }
+  if (!selectable) {
+    const why = document.createElement('span');
+    why.className = 'idle-pause-reason';
+    why.textContent = row.reason;
+    el.appendChild(why);
+  }
+  return el;
+}
+
+function idlePauseTicked() {
+  return [...idlePauseList.querySelectorAll('input[type="checkbox"]')].filter((b) => b.checked).map((b) => b.dataset.name);
+}
+
+function updateIdlePauseCount() {
+  const n = idlePauseTicked().length;
+  idlePauseGo.textContent = `Pause ${n} session${n === 1 ? '' : 's'}`;
+  idlePauseGo.disabled = n === 0;
+}
+
+function showIdlePause(ask) {
+  if (!ask || !idlePauseOverlay) return;
+  idlePauseShown = ask;
+  const n = ask.pausable.length;
+  document.getElementById('idle-pause-title').textContent = `You have ${n} session${n === 1 ? '' : 's'} idle for more than ${ask.hours} hours`;
+  idlePauseList.replaceChildren(...ask.pausable.map((r) => idlePauseRowEl(r, true)));
+  const exempt = ask.exempt || [];
+  document.getElementById('idle-pause-exempt-block').classList.toggle('hidden', !exempt.length);
+  document.getElementById('idle-pause-exempt-summary').textContent = `${exempt.length} more idle, not paused`;
+  document.getElementById('idle-pause-exempt').replaceChildren(...exempt.map((r) => idlePauseRowEl(r, false)));
+  updateIdlePauseCount();
+  idlePauseOverlay.classList.remove('hidden');
+}
+
+function hideIdlePause() {
+  idlePauseShown = null;
+  if (idlePauseOverlay) idlePauseOverlay.classList.add('hidden');
+}
+
+async function answerIdlePause(pause) {
+  const ask = idlePauseShown;
+  if (!ask) return;
+  const reply = pause ? { pause: idlePauseTicked() } : { decline: true };
+  hideIdlePause();
+  let res = null;
+  try { res = await window.api.idlePauseAnswer(ask.id, reply); } catch { res = null; }
+  if (!res || res.ok !== true) {
+    showToast(`Idle sessions: ${(res && res.error) || 'the answer did not reach Clodex'}`, { kind: 'warn' });
+    return;
+  }
+  if (!pause) return;
+  const skipped = res.skipped ? `; ${res.skipped} skipped because ${res.skipped === 1 ? 'it is' : 'they are'} no longer idle` : '';
+  showToast(`Paused ${res.paused} session${res.paused === 1 ? '' : 's'}${skipped}`);
+}
+
+if (idlePauseOverlay) {
+  idlePauseGo.addEventListener('click', () => answerIdlePause(true));
+  document.getElementById('idle-pause-later').addEventListener('click', () => answerIdlePause(false));
+  window.api.onIdlePauseAsk((ask) => showIdlePause(ask));
+  window.api.onIdlePauseClosed((msg) => { if (idlePauseShown && msg && msg.id === idlePauseShown.id) hideIdlePause(); });
+  Promise.resolve(window.api.idlePauseCurrent()).then((ask) => { if (ask && !idlePauseShown) showIdlePause(ask); }, () => {});
+}
 window.api.onRequestOpenDiscovery(() => openDiscovery());
 const btnDiscover = document.getElementById('btn-discover');
 if (btnDiscover) btnDiscover.addEventListener('click', () => openDiscovery());
@@ -6431,6 +6515,7 @@ const prefsSpillMessages = document.getElementById('prefs-spill-messages');
 const prefsSpillProse = document.getElementById('prefs-spill-prose');
 const prefsDefaultMode = document.getElementById('prefs-default-mode');
 const prefsDiscoverOnStartup = document.getElementById('prefs-discover-on-startup');
+const prefsIdlePauseHours = document.getElementById('prefs-idle-pause-hours');
 const prefsToolsRow = document.getElementById('prefs-tools-row');
 const prefsToolsList = document.getElementById('prefs-tools-list');
 wireBulkToggles(prefsToolsRow, prefsToolsList);
@@ -9460,6 +9545,7 @@ async function openPrefs(group = null) {
   if (prefsSpillProse) prefsSpillProse.checked = s.spillProse !== false;
   if (prefsDefaultMode) prefsDefaultMode.value = defaultSessionMode(s);
   if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
+  if (prefsIdlePauseHours) prefsIdlePauseHours.value = String(s.idlePauseHours);
   restorePrefsGroups();
   if (group) for (const g of prefsGroups()) { if (g.dataset.group === group) g.open = true; }
   applyPrefsGate();
@@ -9579,6 +9665,7 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     ...(prefsSpillProse ? { spillProse: prefsSpillProse.checked } : {}),
     defaultSessionMode: prefsDefaultMode ? prefsDefaultMode.value : 'optimized',
     discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
+    ...(prefsIdlePauseHours && prefsIdlePauseHours.value.trim() ? { idlePauseHours: Number(prefsIdlePauseHours.value) } : {}),
     remoteEnabled: prefsRemoteEnabled.checked,
     ...(prefsRemoteBasePath
       ? patchUnlessEnvLocked(prefsEnvLocked, 'remoteBasePath', prefsRemoteBasePath.value)

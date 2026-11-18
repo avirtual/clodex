@@ -125,7 +125,7 @@ function registerIpcHandlers(deps) {
     accounts, moveAccountByModel,
     syncTerminalReports,
     getPluginHost, getPluginLoader, listAllTemplates, listAllPrompts, surfaceOfSender, secureTransportOfSender,
-    getHelpCorpus, SELF_LABEL, openRequests, revealSession,
+    getHelpCorpus, SELF_LABEL, openRequests, revealSession, idlePause,
   } = deps;
 
   function refreshMenusAfterWrite(channel, ...refreshers) {
@@ -1202,6 +1202,10 @@ function registerIpcHandlers(deps) {
     persistence.setArchived(name, false);
     return { ok: true };
   });
+  handle('idlePause:current', () => (idlePause ? idlePause.current() : null));
+  handle('idlePause:answer', (_e, id, reply) => (idlePause
+    ? idlePause.answer(id, reply && typeof reply === 'object' ? reply : null)
+    : { ok: false, error: 'idle sessions are not checked on this host' }));
   handle('session:files', (_e, name) => fetchSessionFiles(name));
   handle('file:peek', (_e, filePath, opts) => fetchFilePeek(filePath, opts && opts.raw === true ? { raw: true, offset: opts.offset, length: opts.length } : {}));
   handle('file:diff', (_e, name, filePath) => fetchFileDiff(name, filePath));
@@ -1375,6 +1379,7 @@ function registerIpcHandlers(deps) {
       spillProse: s.spillProse,
       defaultSessionMode: s.defaultSessionMode,
       discoverOnStartup: s.discoverOnStartup,
+      idlePauseHours: s.idlePauseHours,
       theme: s.theme,
       terminalWebgl: s.terminalWebgl,
       transcriptPane: s.transcriptPane,
