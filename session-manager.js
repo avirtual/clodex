@@ -4334,7 +4334,7 @@ function createSessionManager(deps) {
         assistant: !!(s._assistant || (rec && rec.class === 'assistant')),
         lead: !!(team && team.lead === s.name),
         working: !!(s.streamBusy || s.thinking || s.activityState === 'thinking'),
-        dialog: !!((s.streamPermissions && s.streamPermissions.size) || s._bootDialog),
+        dialog: !!((s.streamPermissions && s.streamPermissions.size) || s._bootDialog || (s.needsAttention && s.needsAttention.kind === 'permission')),
         pending: !!((s.outbox && s.outbox.length) || (s._injectQueue && s._injectQueue.length)
           || (s._injectPtyQueue && s._injectPtyQueue.length) || hasActivePending(PENDING_DIR, s.name)),
         inFlight: !!(s._reloadInFlight || s._postClearContinuation || s._compactPending || s._compactGuard || s._compactContinuation),
