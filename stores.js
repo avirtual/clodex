@@ -58,6 +58,20 @@ function sanitizeSuiteRunner(v) {
   return { enabled: v.enabled, isolation: v.isolation, work: v.work, ...(v.boxImage ? { boxImage: v.boxImage } : {}), ...(slots > 1 ? { slots } : {}) };
 }
 
+const IDLE_PAUSE_HOURS_DEFAULT = 48;
+const IDLE_PAUSE_HOURS_MAX = 24 * 365;
+const IDLE_PAUSE_DECLINED_MAX = 1000;
+
+function sanitizeIdlePauseHours(v) {
+  return Number.isInteger(v) && v >= 0 && v <= IDLE_PAUSE_HOURS_MAX ? v : IDLE_PAUSE_HOURS_DEFAULT;
+}
+
+function sanitizeIdlePauseDeclined(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v) || !Number.isFinite(v.at) || !Array.isArray(v.names)) return null;
+  const names = v.names.filter((n) => typeof n === 'string' && /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/.test(n));
+  return { at: v.at, names: names.slice(0, IDLE_PAUSE_DECLINED_MAX) };
+}
+
 function execRowOf(name, obj) {
   return {
     name,
@@ -182,6 +196,8 @@ const DEFAULT_UI_SETTINGS = {
   peerShellEnabled: false,
   boxOffer: null,
   suiteRunner: null,
+  idlePauseHours: IDLE_PAUSE_HOURS_DEFAULT,
+  idlePauseDeclined: null,
   peers: [],
   // Auto-reattach of peer tabs across app restarts: { [peerId]: [name, ...] }.
   // Kept OUTSIDE the peers array on purpose — the prefs dialog rebuilds that
@@ -796,12 +812,14 @@ function initStores(userDataPath, {
       else delete entry.worktree;
       this._save(all, name);
     },
-    setArchived(name, archived) {
+    setArchived(name, archived, cause = null) {
       const all = this._load();
       const entry = all.find(s => s.name === name);
       if (!entry) return;
       if (archived) entry.archivedAt = Date.now();
       else delete entry.archivedAt;
+      if (archived && cause) entry.archiveCause = cause;
+      else delete entry.archiveCause;
       this._save(all, name);
     },
     setExited(name, exit) {
@@ -1982,6 +2000,8 @@ function initStores(userDataPath, {
             : legacyShellGrant(raw?.peers),
           boxOffer: sanitizeBoxOffer(raw?.boxOffer),
           suiteRunner: sanitizeSuiteRunner(raw?.suiteRunner),
+          idlePauseHours: sanitizeIdlePauseHours(raw?.idlePauseHours),
+          idlePauseDeclined: sanitizeIdlePauseDeclined(raw?.idlePauseDeclined),
           peers,
           peerAttached: sanitizePeerAttached(raw?.peerAttached) ?? {},
           peerVisible: sanitizePeerVisible(raw?.peerVisible) ?? {},
@@ -2086,6 +2106,8 @@ function initStores(userDataPath, {
         suiteRunner: (partial && 'suiteRunner' in partial)
           ? (partial.suiteRunner === null ? null : (sanitizeSuiteRunner(partial.suiteRunner) ?? cur.suiteRunner))
           : cur.suiteRunner,
+        idlePauseHours: (partial && 'idlePauseHours' in partial) ? sanitizeIdlePauseHours(partial.idlePauseHours) : cur.idlePauseHours,
+        idlePauseDeclined: (partial && 'idlePauseDeclined' in partial) ? sanitizeIdlePauseDeclined(partial.idlePauseDeclined) : cur.idlePauseDeclined,
         peers: sanitizePeers(partial?.peers, cur.peers) ?? cur.peers,
         peerAttached: sanitizePeerAttached(partial?.peerAttached) ?? cur.peerAttached,
         peerVisible: sanitizePeerVisible(partial?.peerVisible) ?? cur.peerVisible,
@@ -2540,4 +2562,4 @@ function initStores(userDataPath, {
   };
 }
 
-module.exports = { initStores, sanitizeSandbox, sanitizeSuiteRunner, execRowOf, SETUP_CHOICES, MISFIRE_KINDS, MISFIRE_KEEP, MISFIRE_PRUNE_AT };
+module.exports = { initStores, sanitizeSandbox, sanitizeSuiteRunner, sanitizeIdlePauseHours, sanitizeIdlePauseDeclined, execRowOf, SETUP_CHOICES, MISFIRE_KINDS, MISFIRE_KEEP, MISFIRE_PRUNE_AT };

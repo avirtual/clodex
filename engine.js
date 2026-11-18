@@ -802,6 +802,7 @@ const { bodyModeFor, intentEnabledFor, intentEnabledForSeat, withoutPrivilegedIn
 const { isFilenameToken, parseAndValidate, clampReplyBody, DEFAULT_MAX_BYTES } = require('./exec-schema');
 const { parseRemindSpec } = require('./remind-schedule');
 const { createRemindScheduler, reminderText, reminderLibraryKinds } = require('./remind-scheduler');
+const { createIdlePauseAsker } = require('./idle-pause');
 const { mergeClaudeSystemPrompt, mergeCodexInstructions, mergeInstructionBodies, parseCtxFile } = require('./argv-merge');
 const { renderClaudeStatusScript, codexStatusLineArg, normalizeProxyBase, resolveProxyBase } = require('./statusline');
 const { jsonlToMarkdown, cachedMessages, sliceSince, jsonlToMessages, extractText } = require('./transcript');
@@ -2339,6 +2340,16 @@ const toolCache = createToolCache({ whichBin });
   });
   remindScheduler.start();
 
+  const idlePause = createIdlePauseAsker({
+    survey: (now, thresholdMs) => manager.idlePauseSurvey(now, thresholdMs),
+    pause: (names, opts) => manager.pauseIdle(names, opts),
+    getSettings: () => uiSettings.get(),
+    saveSettings: (partial) => uiSettings.set(partial),
+    broadcast: (ch, payload) => manager._broadcast(ch, payload),
+    log,
+  });
+  idlePause.start();
+
   log.info('app', `startup — Clodex ${appVersion} engine up (pid ${process.pid})`);
 
 
@@ -2494,6 +2505,7 @@ const toolCache = createToolCache({ whichBin });
     if (pluginUpdateWatch) { try { pluginUpdateWatch.stop(); } catch {} }
     try { proxyPoller.stop(); } catch {}
     try { if (remindScheduler) remindScheduler.stop(); } catch {}
+    try { idlePause.stop(); } catch {}
     try { shutdownRemoteServer(); } catch {}
     try { suiteDesk.close(); } catch {}
     if (remoteServer) { try { remoteServer.stop(); } catch {} remoteServer = null; }
@@ -2510,7 +2522,7 @@ const toolCache = createToolCache({ whichBin });
   }
 
   return {
-    manager, stores, openRequests, syncRemoteServer, syncPeerManager, restoreSessionsForWorkspace, shutdown,
+    manager, stores, openRequests, syncRemoteServer, syncPeerManager, restoreSessionsForWorkspace, shutdown, idlePause,
     reconcileCodexSwaps,
     knownSkillNames,
     refreshRemoteToken, suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner, suiteClaimStatus, suiteActivity, suiteActivityNow, refreshSuiteActivity, suiteOutput,

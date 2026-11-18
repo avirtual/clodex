@@ -4,6 +4,7 @@ const MODAL_OVERLAY_IDS = [
   'dialog-overlay',
   'peer-session-overlay',
   'discovery-overlay',
+  'idle-pause-overlay',
   'args-overlay',
   'prefs-overlay',
   'plugins-overlay',
