@@ -4224,7 +4224,9 @@ test('_notifyComposition (T34): an ephemeral reviewer seat delta reaches ONLY th
 for (const [label, args, want] of [
   ['operator from the sidebar', [{ via: 'sidebar' }], '[team team] seat team-dev archived by the operator from the sidebar (role: dev)'],
   ['operator with the close shortcut', [{ via: 'shortcut' }], '[team team] seat team-dev archived by the operator with the close shortcut (role: dev)'],
-  ['ticket close-out (no cause passed)', [], '[team team] seat team-dev archived (role: dev)'],
+  ['paused after an idle spell', [{ via: 'idle', idle: '3 days' }], "[team team] seat team-dev archived, paused after 3 days idle, at the operator's request (role: dev)"],
+  ['idle cause with no span', [{ via: 'idle' }], '[team team] seat team-dev archived (role: dev)'],
+  ['ticket close-out (no cause passed)', [],'[team team] seat team-dev archived (role: dev)'],
   ['an unknown cause', [{ via: 'bogus' }], '[team team] seat team-dev archived (role: dev)'],
 ]) {
   test(`archive feed line: ${label}`, async () => {
