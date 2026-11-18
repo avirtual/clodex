@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.189.0 — 2026-11-18
+
 - Clodex now asks before idle sessions pile up: when five or more sessions have been idle for more than 48 hours, it offers to pause them. A paused session's process stops, its conversation is kept, and it resumes from its sidebar row. The threshold is in Preferences; 0 turns the question off.
 
 ## 5.188.3 — 2026-11-17
