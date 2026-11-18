@@ -61,8 +61,9 @@ test('the survey reads each exempt signal off the live session', () => {
   const { m } = mkManager();
   m.sessions.get('a').streamPermissions = new Map([['x', {}]]);
   m.sessions.get('b')._compactPending = true;
-  m.sessions.set('sh', { name: 'sh', type: 'bash', cwd: '/nowhere', activityTs: Date.now() - 60 * H });
-  m.sessions.set('pty', { name: 'pty', type: 'claude', agentType: 'claude', cwd: '/nowhere', io: 'pty', needsAttention: { kind: 'permission', ts: 0 }, activityTs: Date.now() - 60 * H });
+  const old = Date.now() - 60 * H;
+  m.sessions.set('sh', { name: 'sh', type: 'bash', cwd: '/nowhere', activityTs: old });
+  m.sessions.set('pty', { name: 'pty', type: 'claude', agentType: 'claude', cwd: '/nowhere', io: 'pty', needsAttention: { kind: 'permission', ts: 0 }, activityTs: old });
   const out = m.idlePauseSurvey(Date.now(), 48 * H);
   assert.deepStrictEqual(out.map((r) => [r.name, r.reason]), [
     ['a', 'a dialog is open'], ['b', 'a reload or compact is in flight'], ['c', null], ['pty', 'a dialog is open'],
