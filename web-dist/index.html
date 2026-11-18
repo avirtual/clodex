@@ -3909,7 +3909,8 @@ body.drawer-dragging #work-row {
 #sandbox-overlay,
 #discovery-overlay,
 #plugins-overlay,
-#setup-overlay {
+#setup-overlay,
+#idle-pause-overlay {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.5);
@@ -3926,7 +3927,8 @@ body.drawer-dragging #work-row {
 #sandbox-overlay.hidden,
 #discovery-overlay.hidden,
 #plugins-overlay.hidden,
-#setup-overlay.hidden {
+#setup-overlay.hidden,
+#idle-pause-overlay.hidden {
   display: none;
 }
 #discovery-overlay {
@@ -3936,7 +3938,8 @@ body.drawer-dragging #work-row {
   z-index: 150;
 }
 #discovery-dialog,
-#setup-dialog {
+#setup-dialog,
+#idle-pause-dialog {
   background: var(--sidebar-bg);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -3949,8 +3952,38 @@ body.drawer-dragging #work-row {
   gap: 12px;
 }
 #discovery-dialog h3,
-#setup-dialog h3 {
+#setup-dialog h3,
+#idle-pause-dialog h3 {
   margin: 0;
+}
+.idle-pause-list {
+  overflow-y: auto;
+  max-height: 40vh;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.idle-pause-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 4px;
+}
+.idle-pause-name {
+  flex: 1;
+  font-weight: 600;
+}
+.idle-pause-type,
+.idle-pause-idle,
+.idle-pause-reason {
+  color: var(--text-tertiary);
+}
+#idle-pause-exempt-block summary {
+  cursor: pointer;
+  color: var(--text-tertiary);
+}
+#idle-pause-exempt-block.hidden {
+  display: none;
 }
 #setup-dialog {
   width: 460px;
@@ -8249,6 +8282,7 @@ body.web-frontend #sidebar-header {
 #discovery-overlay,
 #plugins-overlay,
 #setup-overlay,
+#idle-pause-overlay,
 #prompt-editor,
 #agent-editor,
 #skill-editor,
@@ -8264,6 +8298,7 @@ body.web-frontend #sidebar-header {
 #plugins-dialog,
 #sandbox-dialog,
 #discovery-dialog,
+#idle-pause-dialog,
 #setup-dialog,
 .prompt-modal,
 .prompt-editor-box {
@@ -11155,6 +11190,23 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
     </div>
   </div>
 
+  <div id="idle-pause-overlay" class="hidden">
+    <div id="idle-pause-dialog">
+      <h3 id="idle-pause-title"></h3>
+      <p class="hint-text">Pausing stops a session's process and keeps its conversation. It stays in the sidebar and resumes when you click it.</p>
+      <div id="idle-pause-list" class="idle-pause-list"></div>
+      <details id="idle-pause-exempt-block" class="hidden">
+        <summary id="idle-pause-exempt-summary"></summary>
+        <div id="idle-pause-exempt" class="idle-pause-list"></div>
+      </details>
+      <div class="dialog-actions">
+        <div style="flex: 1;"></div>
+        <button id="idle-pause-later" class="secondary" type="button">Not now</button>
+        <button id="idle-pause-go" type="button">Pause sessions</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Edit Args dialog -->
   <div id="args-overlay" class="hidden">
     <div id="args-dialog">
@@ -11688,6 +11740,13 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           <input type="checkbox" id="prefs-discover-on-startup">
           <span>Offer to adopt external sessions on startup</span>
         </label>
+        <h5 style="margin-top: 14px;">Idle sessions</h5>
+        <div class="prefs-row" style="margin-top: 4px;">
+          <span>Ask to pause sessions idle for more than</span>
+          <input type="number" id="prefs-idle-pause-hours" min="0" max="8760" step="1" value="48" style="flex: none; width: 5em;">
+          <span>hours</span>
+        </div>
+        <p class="hint-text">Clodex asks once five or more sessions have been idle that long. 0 turns the question off.</p>
       </details>
       <!-- No Plugins section here (T5/t109): neither the on/off choice nor a
            plugin's own settings belong in this dialog. Both live on the
@@ -12037,6 +12096,10 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "killSession", kind: "invoke", channel: "session:kill" },
         { name: "archiveSession", kind: "invoke", channel: "session:archive" },
         { name: "unarchiveSession", kind: "invoke", channel: "session:unarchive" },
+        { name: "idlePauseCurrent", kind: "invoke", channel: "idlePause:current" },
+        { name: "idlePauseAnswer", kind: "invoke", channel: "idlePause:answer" },
+        { name: "onIdlePauseAsk", kind: "on", channel: "idle-pause:ask" },
+        { name: "onIdlePauseClosed", kind: "on", channel: "idle-pause:closed" },
         { name: "flushPending", kind: "invoke", channel: "session:flushPending" },
         { name: "peekPending", kind: "invoke", channel: "session:peekPending" },
         { name: "retrySpawnSession", kind: "invoke", channel: "session:retrySpawn" },
@@ -30263,6 +30326,7 @@ ${lines[j].trimEnd()}` : ` ${lines[j].trim()}`;
         "dialog-overlay",
         "peer-session-overlay",
         "discovery-overlay",
+        "idle-pause-overlay",
         "args-overlay",
         "prefs-overlay",
         "plugins-overlay",
@@ -60049,6 +60113,91 @@ Click for live activity`;
       if (discoveryOverlay) discoveryOverlay.addEventListener("mousedown", (e) => {
         if (e.target === discoveryOverlay) closeDiscovery();
       });
+      var idlePauseOverlay = document.getElementById("idle-pause-overlay");
+      var idlePauseList = document.getElementById("idle-pause-list");
+      var idlePauseGo = document.getElementById("idle-pause-go");
+      var idlePauseShown = null;
+      function idlePauseRowEl(row, selectable) {
+        const el = document.createElement(selectable ? "label" : "div");
+        el.className = "idle-pause-row";
+        if (selectable) {
+          const box = document.createElement("input");
+          box.type = "checkbox";
+          box.checked = true;
+          box.dataset.name = row.name;
+          box.addEventListener("change", updateIdlePauseCount);
+          el.appendChild(box);
+        }
+        for (const [cls, text] of [["idle-pause-name", row.name], ["idle-pause-type", row.type], ["idle-pause-idle", `idle ${row.idle}`]]) {
+          const span = document.createElement("span");
+          span.className = cls;
+          span.textContent = text;
+          el.appendChild(span);
+        }
+        if (!selectable) {
+          const why = document.createElement("span");
+          why.className = "idle-pause-reason";
+          why.textContent = row.reason;
+          el.appendChild(why);
+        }
+        return el;
+      }
+      function idlePauseTicked() {
+        return [...idlePauseList.querySelectorAll('input[type="checkbox"]')].filter((b) => b.checked).map((b) => b.dataset.name);
+      }
+      function updateIdlePauseCount() {
+        const n = idlePauseTicked().length;
+        idlePauseGo.textContent = `Pause ${n} session${n === 1 ? "" : "s"}`;
+        idlePauseGo.disabled = n === 0;
+      }
+      function showIdlePause(ask) {
+        if (!ask || !idlePauseOverlay) return;
+        idlePauseShown = ask;
+        const n = ask.pausable.length;
+        document.getElementById("idle-pause-title").textContent = `You have ${n} session${n === 1 ? "" : "s"} idle for more than ${ask.hours} hours`;
+        idlePauseList.replaceChildren(...ask.pausable.map((r) => idlePauseRowEl(r, true)));
+        const exempt = ask.exempt || [];
+        document.getElementById("idle-pause-exempt-block").classList.toggle("hidden", !exempt.length);
+        document.getElementById("idle-pause-exempt-summary").textContent = `${exempt.length} more idle, not paused`;
+        document.getElementById("idle-pause-exempt").replaceChildren(...exempt.map((r) => idlePauseRowEl(r, false)));
+        updateIdlePauseCount();
+        idlePauseOverlay.classList.remove("hidden");
+      }
+      function hideIdlePause() {
+        idlePauseShown = null;
+        if (idlePauseOverlay) idlePauseOverlay.classList.add("hidden");
+      }
+      async function answerIdlePause(pause) {
+        const ask = idlePauseShown;
+        if (!ask) return;
+        const reply = pause ? { pause: idlePauseTicked() } : { decline: true };
+        hideIdlePause();
+        let res = null;
+        try {
+          res = await window.api.idlePauseAnswer(ask.id, reply);
+        } catch {
+          res = null;
+        }
+        if (!res || res.ok !== true) {
+          showToast(`Idle sessions: ${res && res.error || "the answer did not reach Clodex"}`, { kind: "warn" });
+          return;
+        }
+        if (!pause) return;
+        const skipped = res.skipped ? `; ${res.skipped} skipped because ${res.skipped === 1 ? "it is" : "they are"} no longer idle` : "";
+        showToast(`Paused ${res.paused} session${res.paused === 1 ? "" : "s"}${skipped}`);
+      }
+      if (idlePauseOverlay) {
+        idlePauseGo.addEventListener("click", () => answerIdlePause(true));
+        document.getElementById("idle-pause-later").addEventListener("click", () => answerIdlePause(false));
+        window.api.onIdlePauseAsk((ask) => showIdlePause(ask));
+        window.api.onIdlePauseClosed((msg) => {
+          if (idlePauseShown && msg && msg.id === idlePauseShown.id) hideIdlePause();
+        });
+        Promise.resolve(window.api.idlePauseCurrent()).then((ask) => {
+          if (ask && !idlePauseShown) showIdlePause(ask);
+        }, () => {
+        });
+      }
       window.api.onRequestOpenDiscovery(() => openDiscovery());
       var btnDiscover = document.getElementById("btn-discover");
       if (btnDiscover) btnDiscover.addEventListener("click", () => openDiscovery());
@@ -60081,6 +60230,7 @@ Click for live activity`;
       var prefsSpillProse = document.getElementById("prefs-spill-prose");
       var prefsDefaultMode = document.getElementById("prefs-default-mode");
       var prefsDiscoverOnStartup = document.getElementById("prefs-discover-on-startup");
+      var prefsIdlePauseHours = document.getElementById("prefs-idle-pause-hours");
       var prefsToolsRow = document.getElementById("prefs-tools-row");
       var prefsToolsList = document.getElementById("prefs-tools-list");
       wireBulkToggles(prefsToolsRow, prefsToolsList);
@@ -63164,6 +63314,7 @@ ${res.stderr}` : "");
         if (prefsSpillProse) prefsSpillProse.checked = s.spillProse !== false;
         if (prefsDefaultMode) prefsDefaultMode.value = defaultSessionMode(s);
         if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
+        if (prefsIdlePauseHours) prefsIdlePauseHours.value = String(s.idlePauseHours);
         restorePrefsGroups();
         if (group) for (const g of prefsGroups()) {
           if (g.dataset.group === group) g.open = true;
@@ -63290,6 +63441,7 @@ ${res.stderr}` : "");
           ...prefsSpillProse ? { spillProse: prefsSpillProse.checked } : {},
           defaultSessionMode: prefsDefaultMode ? prefsDefaultMode.value : "optimized",
           discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
+          ...prefsIdlePauseHours && prefsIdlePauseHours.value.trim() ? { idlePauseHours: Number(prefsIdlePauseHours.value) } : {},
           remoteEnabled: prefsRemoteEnabled.checked,
           ...prefsRemoteBasePath ? patchUnlessEnvLocked(prefsEnvLocked, "remoteBasePath", prefsRemoteBasePath.value) : {}
         });
