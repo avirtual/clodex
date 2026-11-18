@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Clodex now asks before idle sessions pile up: when five or more sessions have been idle for more than 48 hours, it offers to pause them. A paused session's process stops, its conversation is kept, and it resumes from its sidebar row. The threshold is in Preferences; 0 turns the question off.
+
 ## 5.188.3 — 2026-11-17
 
 - A seat waiting on a Claude Code boot dialog now shows as blocked, messages to it are held instead of typed into the dialog, and an undelivered spec names the dialog as the cause.

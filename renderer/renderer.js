@@ -6067,7 +6067,6 @@ const overlayProbes = { byId: overlayElementById, byClass: overlayElementsByClas
 const ESCAPE_CLOSES = [
   ['dialog-overlay', () => closeDialog()],
   ['discovery-overlay', () => closeDiscovery()],
-  ['idle-pause-overlay', () => closeIdlePause()],
   ['peers-overlay', () => closePeersDialog()],
   ['plugins-overlay', () => closePluginsDialog()],
   ['sandbox-overlay', () => closeSandboxDialog()],
@@ -6474,8 +6473,6 @@ async function answerIdlePause(pause) {
   const skipped = res.skipped ? `; ${res.skipped} skipped because ${res.skipped === 1 ? 'it is' : 'they are'} no longer idle` : '';
   showToast(`Paused ${res.paused} session${res.paused === 1 ? '' : 's'}${skipped}`);
 }
-
-function closeIdlePause() { answerIdlePause(false); }
 
 if (idlePauseOverlay) {
   idlePauseGo.addEventListener('click', () => answerIdlePause(true));
