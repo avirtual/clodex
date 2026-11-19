@@ -21,7 +21,7 @@ const { buildSkillPlugin, skillMd, parseSkillFrontmatter } = require('../skills-
 const RESUME = '6a1f0c2e-1111-4222-8333-944455556666';
 const WIRE_BASE = 'http://127.0.0.1:9/wire';
 
-function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entries = {}, probeClodentVersion = () => 'clodent 0.5.2\n', wire = false, library = null, streamSeat = null } = {}) {
+function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entries = {}, probeClodentVersion = () => 'clodent 0.5.2\n', wire = false, library = null, streamSeat = null, clodentToolList = null } = {}) {
   const root = mkTmpRoot('clodex-clodent-');
   const home = pathReal.join(root, 'home');
   fsReal.mkdirSync(home, { recursive: true });
@@ -84,7 +84,7 @@ function mkClodent({ proxyBase = 'http://127.0.0.1:7811', sysFile = null, entrie
     },
     crypto: require('node:crypto'),
     effectiveInjectedSkills: () => (library ? library.skills : []),
-    probeClodentVersion,
+    probeClodentVersion, clodentToolList,
     stripLevelOf: () => 0,
     getPersistence: () => ({ list: () => [], get: (n) => entries[n] || null, upsert: () => {}, setSessionId: () => {}, remove: (n) => { removals.push(n); } }),
     getUiSettings: () => ({ get: () => ({}) }),
@@ -625,6 +625,35 @@ test('clodent: an unticked WebFetch is a bare permissions.deny rule, WebSearch l
     const written = JSON.parse(fsReal.readFileSync(realHooks.setupClaudeHook(...f.hooks[0]), 'utf-8'));
     assert.deepStrictEqual(written.permissions.deny, ['WebFetch']);
   } finally { f.stop('seat'); }
+});
+
+test('clodent: an unticked tool only the installed clodent lists becomes a deny rule; a saved name it no longer lists is ignored', async () => {
+  const learned = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'WebSearch', 'WebFetch', 'Frobnicate'];
+  let asks = 0;
+  const f = mkClodent({ clodentToolList: async () => { asks++; return { source: 'clodent', reason: null, names: learned, tools: [] }; } });
+  try {
+    await f.create('seat', { disabledTools: ['Frobnicate', 'OldGone'] });
+    assert.strictEqual(f.hooks.length, 1, 'ENTER: one hook settings write');
+    assert.deepStrictEqual([asks, f.hooks[0][4], f.hooks[0][18]], [1, ['Frobnicate', 'OldGone'], learned]);
+    const realHooks = createCliHooks({
+      REGISTRY_DIR: mkTmpRoot('clodex-clodent-learned-deny-'),
+      memoryStore: { list: () => [] },
+      getUiSettings: () => ({ get: () => ({ statusline: { claude: [], claudeCommand: '' } }) }),
+      nodeInterp: process.execPath,
+    });
+    const written = JSON.parse(fsReal.readFileSync(realHooks.setupClaudeHook(...f.hooks[0]), 'utf-8'));
+    assert.deepStrictEqual(written.permissions.deny, ['Frobnicate']);
+  } finally { f.stop('seat'); }
+});
+
+test('claude: a claude seat never asks for the clodent tool list', async () => {
+  let asks = 0;
+  const f = mkClodent({ clodentToolList: async () => { asks++; return { names: ['Frobnicate'] }; } });
+  try {
+    await f.create('cl', { type: 'claude', disabledTools: ['Frobnicate'] });
+    assert.strictEqual(f.hooks.length, 1, 'ENTER: one hook settings write');
+    assert.deepStrictEqual([asks, f.hooks[0][18]], [0, null]);
+  } finally { f.stop('cl'); }
 });
 
 const CLODENT_LIBRARY = {
