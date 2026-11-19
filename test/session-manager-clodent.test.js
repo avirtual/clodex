@@ -611,6 +611,22 @@ test('clodent: disabled tools become exactly the permissions.deny rules in the w
   } finally { f.stop('seat'); }
 });
 
+test('clodent: an unticked WebFetch is a bare permissions.deny rule, WebSearch left on is absent', async () => {
+  const f = mkClodent();
+  try {
+    await f.create('seat', { disabledTools: ['WebFetch'] });
+    assert.strictEqual(f.hooks.length, 1, 'ENTER: one hook settings write');
+    const realHooks = createCliHooks({
+      REGISTRY_DIR: mkTmpRoot('clodex-clodent-web-deny-'),
+      memoryStore: { list: () => [] },
+      getUiSettings: () => ({ get: () => ({ statusline: { claude: [], claudeCommand: '' } }) }),
+      nodeInterp: process.execPath,
+    });
+    const written = JSON.parse(fsReal.readFileSync(realHooks.setupClaudeHook(...f.hooks[0]), 'utf-8'));
+    assert.deepStrictEqual(written.permissions.deny, ['WebFetch']);
+  } finally { f.stop('seat'); }
+});
+
 const CLODENT_LIBRARY = {
   skills: [
     { name: 'foo', content: '---\ndescription: Foo it.\n---\nDo foo.\n' },

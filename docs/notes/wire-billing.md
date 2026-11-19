@@ -15,3 +15,6 @@ The `PRICES_LONG_PROMPT` tier is per REQUEST: prompt tokens = input + cache_read
 Over the boundary every category bills at the long row for the whole request, not only the tokens past 100k.
 Nothing sums usage across requests before pricing today; any future aggregation must price each request before summing.
 A prefix matches only when the next character of the model id is not a digit: `claude-fable-5-2` is a string prefix of the dated 5.0 id `claude-fable-5-20260601`, and a plain longest-prefix walk prices that 5.0 traffic at the 5.2 row.
+
+## WEB_SEARCH_USD
+Anthropic bills server-side web search at $10 per 1,000 searches, counted in `usage.server_tool_use.web_search_requests`; `web_fetch_requests` has no per-call charge, only the tokens of the fetched content.

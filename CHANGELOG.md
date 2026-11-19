@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Clodent seats' WebSearch and WebFetch tools (clodent 0.9.0) can be turned off in the seat's tool list, and web searches made through the proxy are now included in cost totals at $0.01 each.
+
 ## 5.189.0 — 2026-11-18
 
 - Clodex now asks before idle sessions pile up: when five or more sessions have been idle for more than 48 hours, it offers to pause them. A paused session's process stops, its conversation is kept, and it resumes from its sidebar row. The threshold is in Preferences; 0 turns the question off.

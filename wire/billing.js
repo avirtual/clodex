@@ -60,6 +60,8 @@ const PRICES = {
   'claude-haiku-4':  { in: 1.0,  out: 5.0,  cache_write_5m: 1.25,  cache_write_1h: 2.0,  cache_read: 0.10 },
 };
 
+const WEB_SEARCH_USD = 0.01;
+
 // OpenAI side (codex routes), same longest-prefix matching on their axes:
 // no client cache writes (caching is server-side), cached input bills at
 // 10% of input. NOTE: codex traffic rides a ChatGPT plan and is never
@@ -226,7 +228,7 @@ function pyTruthy(v) {
 
 // Formatted per-request billing. count_tokens is NOT billed for tokens
 // (returns only an input count) — it spends request-rate-limit budget only.
-function billing(kind, { modelResolved = null, usageFinal = null, usageStart = null, countTokens = null } = {}) {
+function billing(kind, { modelResolved = null, usageFinal = null, usageStart = null, countTokens = null, serverToolUse = null } = {}) {
   if (kind === 'count_tokens') {
     const ct = countTokens || {};
     return { endpoint: 'count_tokens', billable: false,
@@ -237,6 +239,7 @@ function billing(kind, { modelResolved = null, usageFinal = null, usageStart = n
   const us = usageStart || {};
   const cc = (pyTruthy(uf.cache_creation) && uf.cache_creation)
     || (pyTruthy(us.cache_creation) && us.cache_creation) || {};
+  const stu = serverToolUse || getOr(uf, 'server_tool_use', us.server_tool_use) || {};
   const tokens = {
     input_tokens: norm(getOr(uf, 'input_tokens', us.input_tokens)),
     output_tokens: norm(uf.output_tokens),
@@ -249,6 +252,8 @@ function billing(kind, { modelResolved = null, usageFinal = null, usageStart = n
     service_tier: norm(us.service_tier),
     // fast mode (premium rates); final wins, absent => standard
     speed: norm(getOr(uf, 'speed', us.speed)),
+    web_search_requests: norm(stu.web_search_requests),
+    web_fetch_requests: norm(stu.web_fetch_requests),
   };
   let est = null;
   let unpriced = false;
@@ -284,6 +289,11 @@ function billing(kind, { modelResolved = null, usageFinal = null, usageStart = n
     // silent null that lets the totals report a confident under-count.
     unpriced = true;
     warnUnpriced(modelResolved, 'PRICES');
+  }
+  const searchUsd = round6((tokens.web_search_requests || 0) * WEB_SEARCH_USD);
+  if (searchUsd) {
+    est = round6((est || 0) + searchUsd);
+    basis += '; web search $0.01/request';
   }
   return { endpoint: 'messages', billable: true, model: modelResolved,
     tokens, est_usd: est, unpriced, price_basis: basis };
@@ -339,7 +349,7 @@ function newTotals() {
     // side-calls and subagent traffic excluded at the call site
     // (stop.is_turn). CLI retries dedupe for free — a failed request never
     // produces a terminal response.
-    turns: 0 };
+    turns: 0, web_search_requests: 0, web_fetch_requests: 0 };
 }
 
 function localIso() {
@@ -377,6 +387,8 @@ function bump(totals, bill, stop) {
     const w = (t.cache_write_5m_tokens || 0) + (t.cache_write_1h_tokens || 0);
     totals.cache_write_tokens += w || (t.cache_write_flat_tokens || 0);
     totals.est_usd = round6(totals.est_usd + (bill.est_usd || 0));
+    totals.web_search_requests = (totals.web_search_requests || 0) + (t.web_search_requests || 0);
+    totals.web_fetch_requests = (totals.web_fetch_requests || 0) + (t.web_fetch_requests || 0);
     if (bill.unpriced) {
       totals.unpriced_requests = (totals.unpriced_requests || 0) + 1;
       const m = bill.model;
@@ -412,6 +424,6 @@ class Ledger {
 }
 
 module.exports = {
-  PRICES, PRICES_OPENAI, PRICES_SPEED_FAST, PRICES_DATED, PRICES_LONG_PROMPT, LONG_PROMPT_TOKENS, priceFor, usd, round6,
+  PRICES, PRICES_OPENAI, PRICES_SPEED_FAST, PRICES_DATED, PRICES_LONG_PROMPT, LONG_PROMPT_TOKENS, WEB_SEARCH_USD, priceFor, usd, round6,
   billing, billingOpenai, newTotals, bump, Ledger,
 };

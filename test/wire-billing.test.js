@@ -700,3 +700,21 @@ test('priceFor: a dated claude-haiku-5 id takes the long-prompt tier on the same
   assert.equal(priceFor('claude-haiku-5-20261001', { promptTokens: 100001 }).in, 0.50);
   assert.equal(priceFor('claude-haiku-5-20261001', { promptTokens: 100000 }).in, 0.10);
 });
+
+test('web search: $0.01 per server_tool_use.web_search_requests on top of the token cost; fetches and absence add nothing', () => {
+  const base = { input_tokens: 100, output_tokens: 10 };
+  const bill = (usageFinal) => billing('messages', { modelResolved: 'claude-haiku-4-5', usageFinal });
+  assert.strictEqual(bill(base).est_usd, 0.00015, 'ENTER: the token-only cost');
+  const two = bill({ ...base, server_tool_use: { web_search_requests: 2 } });
+  assert.strictEqual(two.est_usd, 0.02015);
+  assert.strictEqual(two.tokens.web_search_requests, 2);
+  assert.strictEqual(bill({ ...base, server_tool_use: { web_search_requests: 0 } }).est_usd, 0.00015);
+  assert.strictEqual(bill(base).tokens.web_search_requests, null);
+  const fetches = bill({ ...base, server_tool_use: { web_fetch_requests: 3 } });
+  assert.strictEqual(fetches.est_usd, 0.00015, 'web_fetch_requests carries no per-call charge');
+  assert.strictEqual(fetches.tokens.web_fetch_requests, 3);
+  const totals = newTotals();
+  bump(totals, two, null);
+  bump(totals, fetches, null);
+  assert.deepStrictEqual([totals.est_usd, totals.web_search_requests, totals.web_fetch_requests], [0.0203, 2, 3]);
+});

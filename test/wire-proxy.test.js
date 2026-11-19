@@ -816,3 +816,57 @@ test('consumeMainToolUse: an id older than ten minutes is refused and the set is
   assert.strictEqual(proxy.consumeMainToolUse('lead', 'toolu_0'), false, 'the first id is evicted');
   assert.strictEqual(proxy.consumeMainToolUse('lead', 'toolu_256'), true);
 });
+
+const WEB_SEARCH_SSE = [
+  'event: message_start',
+  'data: {"type":"message_start","message":{"id":"msg_ws","model":"claude-haiku-4-5","usage":{"input_tokens":100,"server_tool_use":{"web_search_requests":0}}}}',
+  '',
+  'event: message_delta',
+  'data: {"type":"message_delta","delta":{},"usage":{"output_tokens":5,"server_tool_use":{"web_search_requests":1}}}',
+  '',
+  'event: message_delta',
+  'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":10,"server_tool_use":{"web_search_requests":2}}}',
+  '',
+  'event: message_stop',
+  'data: {"type":"message_stop"}',
+  '',
+  '',
+].join('\n');
+
+test('web search: a streamed response is charged its final cumulative count once, not once per delta', async (t) => {
+  const up = await startFakeUpstream(WEB_SEARCH_SSE);
+  t.after(() => up.server.close());
+  const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${up.port}` } });
+  await proxy.listen();
+  t.after(() => proxy.close());
+  const events = collect(proxy, ['turn.completed']);
+  await request(proxy.port, '/agent/tester/v1/messages', REQUEST_BODY);
+  assert.ok(await whenEvent(events, 'turn.completed'), 'ENTER: the receipt is finalized');
+  const tc = events['turn.completed'][0];
+  assert.strictEqual(tc.billing.tokens.web_search_requests, 2);
+  assert.strictEqual(tc.billing.est_usd, 0.02015);
+  assert.strictEqual(tc.sessionTotals.est_usd, 0.02015);
+  assert.strictEqual(tc.sessionTotals.web_search_requests, 2);
+});
+
+test('web search: a non-streamed messages response is charged its searches; web_fetch_requests adds nothing', async (t) => {
+  const server = http.createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ id: 'msg_j', usage: { input_tokens: 100, output_tokens: 10, server_tool_use: { web_search_requests: 2, web_fetch_requests: 3 } } }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const proxy = new WireProxy({ upstreams: { anthropic: `http://127.0.0.1:${server.address().port}` } });
+  await proxy.listen();
+  t.after(() => proxy.close());
+  const events = collect(proxy, ['turn.completed']);
+  await request(proxy.port, '/agent/tester/v1/messages', REQUEST_BODY);
+  assert.ok(await whenEvent(events, 'turn.completed'), 'ENTER: the receipt is finalized');
+  const tc = events['turn.completed'][0];
+  assert.deepStrictEqual([tc.billing.tokens.web_search_requests, tc.billing.tokens.web_fetch_requests], [2, 3]);
+  assert.strictEqual(tc.billing.est_usd, 0.02);
+  assert.deepStrictEqual([tc.sessionTotals.web_search_requests, tc.sessionTotals.web_fetch_requests], [2, 3]);
+});

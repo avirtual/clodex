@@ -59,6 +59,13 @@ test('DEFAULT_TOOL_DENY_FLOOR: derived from the allow list, which holds only rea
     'optimized must keep a minority of the catalog, or it is not a curated subset');
 });
 
+test('CLODENT_TOOLS: clodent 0.9.0 built-ins, each deniable and none in the default deny floor', () => {
+  const { CLODENT_TOOLS } = require('../catalogs');
+  assert.deepStrictEqual(CLODENT_TOOLS, ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'WebSearch', 'WebFetch']);
+  assert.deepStrictEqual(CLODENT_TOOLS.filter((t) => !CLAUDE_TOOLS.includes(t)), []);
+  assert.deepStrictEqual(CLODENT_TOOLS.filter((t) => DEFAULT_TOOL_DENY_FLOOR.includes(t)), []);
+});
+
 // Same shape for skills. Before t913 this floor did not exist and
 // getDefaultSkillDeny() returned [] when the `*` key was absent, which made the
 // Mode selector a literal no-op for the whole skills category on a fresh root.
