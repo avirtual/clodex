@@ -277,7 +277,7 @@ test('clodent: the Messages-API CLI row — Claude model aliases, Claude efforts
     readOnlyCap: { enforce: 'argv', args: ['--permission-mode', 'plan'], aliases: ['--read-only'], denylist: true, note: 'read-only (clodent plan mode: permission rules and a Bash path guard, not an OS sandbox)' },
     seatSettings: null,
     skills: null,
-    tools: ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob'],
+    tools: ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'WebSearch', 'WebFetch'],
     instructions: 'append-system-prompt-file',
     transcript: { reader: 'claude', link: 'hook' },
     caps: { park: false, transcript: true, warmth: false, claudeHooks: true },
