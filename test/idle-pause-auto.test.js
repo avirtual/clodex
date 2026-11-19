@@ -68,7 +68,7 @@ test('auto on: one pausable row is paused without asking; exempt rows are skippe
   const { asker, calls } = mkAsker({ rows, settings: { idlePauseHours: 24, idlePauseAuto: true, idlePauseDeclined: { at: NOW, names: ['lone'] } } });
   const res = await asker.check();
   assert.deepStrictEqual(res, { names: ['lone'] });
-  assert.deepStrictEqual(calls.paused, [[['lone'], { thresholdMs: 24 * H }], [['flaky'], { thresholdMs: 24 * H }]],
+  assert.deepStrictEqual(calls.paused, [[['flaky'], { thresholdMs: 24 * H }], [['lone'], { thresholdMs: 24 * H }]],
     'one row at a time, exempt rows never offered to pause');
   assert.deepStrictEqual(calls.broadcast, [['idle-pause:auto', { names: ['lone'], hours: 24 }]]);
   assert.strictEqual(calls.broadcast.some((b) => b[0] === 'idle-pause:ask'), false);

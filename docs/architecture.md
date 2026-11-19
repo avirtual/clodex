@@ -209,8 +209,8 @@ bundle), whose packaged form is the Docker image under
   cli-hooks' `writeClaudeDigestFile` are its callers.
 - **idle-pause.js** — the idle question: `idleCandidates` (live sessions idle
   past the threshold, each pausable or exempt with one reason), `shouldAsk`
-  (5 or more pausable, "Not now" memory) and `createIdlePauseAsker` (the
-  start-up and hourly check, the `idle-pause:ask`/`idle-pause:closed`
+  (5 or more pausable, "Not now" memory) and `createIdlePauseAsker` (the automatic mode,
+  start-up and hourly check, the `idle-pause:ask`/`idle-pause:closed`/`idle-pause:auto`
   broadcasts, first answer wins). engine.js wires it to SessionManager's
   `idlePauseSurvey`/`pauseIdle` and the ui-settings store.
 - **stream-seat.js** — the electron-free child-process owner behind a stream
