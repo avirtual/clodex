@@ -581,9 +581,9 @@ test('t1171: renderer gates the stream-transport controls on capsFor(type).strea
   assert.deepStrictEqual([...new Set(hits)], []);
 });
 
-test('toolsFor: clodent offers its six tools, claude the Claude catalog, codex and muse none', () => {
+test('toolsFor: clodent offers its eight tools, claude the Claude catalog, codex and muse none', () => {
   const { CLAUDE_TOOLS } = require('../catalogs');
-  assert.deepStrictEqual(toolsFor('clodent'), ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob']);
+  assert.deepStrictEqual(toolsFor('clodent'), ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'WebSearch', 'WebFetch']);
   assert.strictEqual(toolsFor('claude'), CLAUDE_TOOLS);
   assert.deepStrictEqual([toolsFor('codex'), toolsFor('muse'), toolsFor('bash')], [null, null, null]);
   assert.deepStrictEqual(toolsFor('clodent').filter((t) => !CLAUDE_TOOLS.includes(t)), [], 'every clodent tool passes the CLAUDE_TOOLS deny filter');

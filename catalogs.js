@@ -66,7 +66,7 @@ const OPTIMIZED_TOOLS = [
 
 const DEFAULT_TOOL_DENY_FLOOR = CLAUDE_TOOLS.filter((t) => !OPTIMIZED_TOOLS.includes(t));
 
-const CLODENT_TOOLS = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob'];
+const CLODENT_TOOLS = ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob', 'WebSearch', 'WebFetch'];
 
 // Known CLI-shipped built-in skills. Unlike tools, skills are normally
 // DISCOVERED from the transcript (skill_listing attachments) — but a skill
