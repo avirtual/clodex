@@ -886,7 +886,10 @@ class WireProxy extends EventEmitter {
               });
               this.billing.accumulate(bill, sessionKey, null);
             } else {
-              const bill = billing('messages', { modelResolved: model });
+              const bill = billing('messages', {
+                modelResolved: model,
+                serverToolUse: (parsed && parsed.usage && parsed.usage.server_tool_use) || null,
+              });
               const stop = { stop_reason: null, stop_details: null,
                 request_id: requestId, is_turn: false };
               this.billing.accumulate(bill, sessionKey, stop);
