@@ -29,7 +29,7 @@ const PINNED_NAMES = [
   // popover shows before the operator commits.
   'teamGather',
   'createSession', 'listSessions', 'reservedSessionNames', 'killSession', 'archiveSession',
-  'unarchiveSession', 'idlePauseCurrent', 'idlePauseAnswer', 'onIdlePauseAsk', 'onIdlePauseClosed', 'flushPending', 'peekPending',
+  'unarchiveSession', 'idlePauseCurrent', 'idlePauseAnswer', 'onIdlePauseAsk', 'onIdlePauseClosed', 'onIdlePauseAuto', 'flushPending', 'peekPending',
   'retrySpawnSession', 'forgetSession', 'resizeSession', 'setSessionLabel',
   'showSessionContextMenu', 'exportSessionMarkdown', 'listTemplates', 'saveTemplate',
   'saveTemplateByName', 'removeTemplate', 'saveTeamTemplate', 'removeTeamTemplate',

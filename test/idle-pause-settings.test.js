@@ -81,3 +81,33 @@ test('a session archived as idle carries archivedAt and the cause; unarchive cle
   assert.strictEqual('archivedAt' in persistence.get('a'), false);
   assert.strictEqual('archiveCause' in persistence.get('a'), false);
 });
+
+test('idlePauseAuto: absent is false, true survives a reload, junk is false', () => {
+  const { ui, dir } = mkStore();
+  assert.strictEqual(ui.get().idlePauseAuto, false);
+  ui.set({ idlePauseAuto: true });
+  assert.strictEqual(openStores(dir).uiSettings.get().idlePauseAuto, true);
+  ui.set({ discoverOnStartup: true });
+  assert.strictEqual(openStores(dir).uiSettings.get().idlePauseAuto, true, 'an unrelated save keeps it');
+  ui.set({ idlePauseAuto: 'yes' });
+  assert.strictEqual(openStores(dir).uiSettings.get().idlePauseAuto, false);
+});
+
+test('settings:get hands idlePauseAuto to the Preferences dialog', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'ipc-handlers.js'), 'utf8');
+  assert.match(src, /^ {6}idlePauseAuto: s\.idlePauseAuto === true,$/m);
+});
+
+test('keepRunning survives a store reload and an archive round trip; only the toggle clears it', () => {
+  const dir = mkTmpRoot('clodex-idle-pause-keep-');
+  const { persistence } = openStores(dir);
+  persistence.upsert({ name: 'a', type: 'claude', cwd: '/tmp' });
+  persistence.setKeepRunning('a', true);
+  persistence.setArchived('a', true, 'idle');
+  persistence.setArchived('a', false);
+  persistence.upsert({ name: 'a', type: 'claude', cwd: '/tmp', sessionId: 's1' });
+  const reloaded = openStores(dir).persistence;
+  assert.strictEqual(reloaded.get('a').keepRunning, true);
+  reloaded.setKeepRunning('a', false);
+  assert.strictEqual('keepRunning' in openStores(dir).persistence.get('a'), false);
+});

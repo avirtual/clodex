@@ -36,6 +36,7 @@ function archivedSnapshotFor({ manager, entry }) {
     archivedAt: entry.archivedAt,
     createdAt: entry.createdAt || null,
     movedTo: entry.movedTo || null,
+    ...(entry.archiveCause ? { archiveCause: entry.archiveCause } : {}),
   };
 }
 

@@ -198,6 +198,7 @@ const DEFAULT_UI_SETTINGS = {
   suiteRunner: null,
   idlePauseHours: IDLE_PAUSE_HOURS_DEFAULT,
   idlePauseDeclined: null,
+  idlePauseAuto: false,
   peers: [],
   // Auto-reattach of peer tabs across app restarts: { [peerId]: [name, ...] }.
   // Kept OUTSIDE the peers array on purpose — the prefs dialog rebuilds that
@@ -784,6 +785,14 @@ function initStores(userDataPath, {
       if (!entry) return;
       if (on) entry.keepWarmAlways = true;
       else delete entry.keepWarmAlways;
+      this._save(all, name);
+    },
+    setKeepRunning(name, on) {
+      const all = this._load();
+      const entry = all.find(s => s.name === name);
+      if (!entry) return;
+      if (on) entry.keepRunning = true;
+      else delete entry.keepRunning;
       this._save(all, name);
     },
     setLabel(name, label) {
@@ -2002,6 +2011,7 @@ function initStores(userDataPath, {
           suiteRunner: sanitizeSuiteRunner(raw?.suiteRunner),
           idlePauseHours: sanitizeIdlePauseHours(raw?.idlePauseHours),
           idlePauseDeclined: sanitizeIdlePauseDeclined(raw?.idlePauseDeclined),
+          idlePauseAuto: raw?.idlePauseAuto === true,
           peers,
           peerAttached: sanitizePeerAttached(raw?.peerAttached) ?? {},
           peerVisible: sanitizePeerVisible(raw?.peerVisible) ?? {},
@@ -2108,6 +2118,7 @@ function initStores(userDataPath, {
           : cur.suiteRunner,
         idlePauseHours: (partial && 'idlePauseHours' in partial) ? sanitizeIdlePauseHours(partial.idlePauseHours) : cur.idlePauseHours,
         idlePauseDeclined: (partial && 'idlePauseDeclined' in partial) ? sanitizeIdlePauseDeclined(partial.idlePauseDeclined) : cur.idlePauseDeclined,
+        idlePauseAuto: (partial && 'idlePauseAuto' in partial) ? partial.idlePauseAuto === true : cur.idlePauseAuto,
         peers: sanitizePeers(partial?.peers, cur.peers) ?? cur.peers,
         peerAttached: sanitizePeerAttached(partial?.peerAttached) ?? cur.peerAttached,
         peerVisible: sanitizePeerVisible(partial?.peerVisible) ?? cur.peerVisible,
