@@ -3,10 +3,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
-const os = require('node:os');
 const path = require('node:path');
 
 const { createClodentTools } = require('../clodent-tools');
+const { mkTmpRoot } = require('./lib/tmp-roots');
 const { registerIpcHandlers } = require('../ipc-handlers');
 const { createCliHooks } = require('../cli-hooks');
 const { toolListFor } = require('../renderer/lib/checklists');
@@ -19,7 +19,7 @@ const V091 = line({ v: 1, version: '0.9.1', tools: BUILTIN.map((n) => tool(n)) }
 
 function fakeClodent({ stdout = '', stderr = '', exit = 0, hang = false } = {}) {
   const timeoutMs = hang ? 150 : 5000;
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodent-list-tools-'));
+  const dir = mkTmpRoot('clodent-list-tools-');
   fs.writeFileSync(path.join(dir, 'out.txt'), stdout);
   fs.writeFileSync(path.join(dir, 'err.txt'), stderr);
   const bin = path.join(dir, 'clodent');
@@ -82,7 +82,7 @@ test('64 tools is accepted', async () => {
 });
 
 test('not on PATH: the built-in list, reason "not on PATH"', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodent-list-tools-empty-'));
+  const dir = mkTmpRoot('clodent-list-tools-empty-');
   const r = await createClodentTools({ env: { PATH: dir } }).list();
   assert.deepStrictEqual([r.source, r.reason, r.names], ['builtin', 'not on PATH', BUILTIN]);
 });
@@ -143,7 +143,7 @@ test('unticking the ninth tool writes its deny rule; a saved unticked name the l
   const collected = ['Frobnicate'];
   const saved = mergeLists(collected, unlistedOf(persisted, names));
   assert.deepStrictEqual(saved, ['Frobnicate', 'OldGone']);
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'clodent-list-tools-hooks-'));
+  const root = mkTmpRoot('clodent-list-tools-hooks-');
   const h = createCliHooks({
     REGISTRY_DIR: root,
     memoryStore: { list: () => [] },
