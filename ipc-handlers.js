@@ -125,7 +125,7 @@ function registerIpcHandlers(deps) {
     accounts, moveAccountByModel,
     syncTerminalReports,
     getPluginHost, getPluginLoader, listAllTemplates, listAllPrompts, surfaceOfSender, secureTransportOfSender,
-    getHelpCorpus, SELF_LABEL, openRequests, revealSession, idlePause,
+    getHelpCorpus, SELF_LABEL, openRequests, revealSession, idlePause, peekClodentTools,
   } = deps;
 
   function refreshMenusAfterWrite(channel, ...refreshers) {
@@ -1339,6 +1339,13 @@ function registerIpcHandlers(deps) {
   handle('session:restart', async (e, name, opts = {}) =>
     restartSession(name, opts, workspaceOfSender(e)));
 
+  const toolsByType = () => {
+    const out = Object.fromEntries(PLATFORMS.filter((t) => toolsFor(t)).map((t) => [t, toolsFor(t)]));
+    const learned = out.clodent && typeof peekClodentTools === 'function' ? peekClodentTools() : null;
+    if (learned) out.clodent = learned.names;
+    return out;
+  };
+
   handle('settings:get', () => {
     const s = uiSettings.get();
     return {
@@ -1346,7 +1353,7 @@ function registerIpcHandlers(deps) {
       claudeComponents: CLAUDE_SL_COMPONENTS,
       codexComponents: CODEX_SL_COMPONENTS,
       claudeTools: CLAUDE_TOOLS,
-      toolsByType: Object.fromEntries(PLATFORMS.filter((t) => toolsFor(t)).map((t) => [t, toolsFor(t)])),
+      toolsByType: toolsByType(),
       defaultToolDeny: agentDefaults.getDefaultDeny(),
       defaultSkillDeny: agentDefaults.getDefaultSkillDeny(),
       defaultBuiltinDeny: agentDefaults.getDefaultBuiltinDeny(),

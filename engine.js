@@ -18,6 +18,7 @@ const { safeGitArgsFor } = require('./git-safe');
 const { createSkillDelivery } = require('./skill-delivery');
 const { createSkillLister, skillAliases } = require('./muse-skills');
 const { adapterFor: adapterRowFor, streamFor, runsClaudeHooks } = require('./cli-adapters');
+const { createClodentTools } = require('./clodent-tools');
 const { KINDS: PROMPT_KINDS, badStem, teamPromptFile, teamJsonFile, readTeamJson } = require('./team-prompt-dir');
 const { planGather, applyGather } = require('./team-gather');
 const { vetFileWrite, PEEK_MAX_BYTES } = require('./file-edit');
@@ -1108,7 +1109,11 @@ const platformSkills = (adapter, opts) => {
   return skillLister.list(adapter, opts);
 };
 
+const clodentTools = createClodentTools({ log });
+const clodentToolList = () => clodentTools.list();
+const peekClodentTools = () => clodentTools.peek();
 const SessionManager = createSessionManager({
+    clodentToolList,
     AGENT_NAME_RE,
     COMPACT_CONTINUATION_DELAY,
     COMPACT_INFLIGHT_TIMEOUT,
@@ -2522,7 +2527,7 @@ const toolCache = createToolCache({ whichBin });
   }
 
   return {
-    manager, stores, openRequests, syncRemoteServer, syncPeerManager, restoreSessionsForWorkspace, shutdown, idlePause,
+    manager, stores, openRequests, syncRemoteServer, syncPeerManager, restoreSessionsForWorkspace, shutdown, idlePause, peekClodentTools,
     reconcileCodexSwaps,
     knownSkillNames,
     refreshRemoteToken, suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner, suiteClaimStatus, suiteActivity, suiteActivityNow, refreshSuiteActivity, suiteOutput,

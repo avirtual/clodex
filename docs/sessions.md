@@ -77,7 +77,9 @@ arg** (which is why restart paths must re-assert it; kill drops the entry).
   0.3.0 enforces `permissions.deny`/`ask` and applies the `sandbox` block as
   deny rules (README "Hosting clodent"), so the credential sandbox and the
   denies are permission rules and a Bash path guard, not an OS sandbox.
-  The seat editor's tool toggles offer `CLODENT_TOOLS` (`toolsFor('clodent')`)
+  The seat editor's tool toggles offer the list `clodent --list-tools` prints
+  (`createClodentTools` in clodent-tools.js; `CLODENT_TOOLS` when the
+  installed clodent predates 0.9.1 or its answer fails validation)
   and land as `permissions.deny` rules; its skill toggles pick which library
   and plugin skills `deliverSkills('clodent', …)` writes as SKILL.md files,
   listed as a `# Clodex skills` catalog (the codex shape) appended to
