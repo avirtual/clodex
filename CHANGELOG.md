@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.190.0 — 2026-11-20
+
 - Clodent seats' WebSearch and WebFetch tools (clodent 0.9.0) can be turned off in the seat's tool list, and web searches made through the proxy are now included in cost totals at $0.01 each.
 - A clodent seat's tool list now comes from the installed clodent (`clodent --list-tools`, clodent 0.9.1 or later), so new clodent tools show up without a Clodex release; older versions keep the built-in list.
 
