@@ -11194,7 +11194,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
     <div id="idle-pause-dialog">
       <div class="dialog-head">
         <h3 id="idle-pause-title"></h3>
-        <button type="button" class="dialog-close" aria-label="Not now" title="Not now">&times;</button>
+        <button type="button" class="dialog-close" aria-label="Close" title="Not now">&times;</button>
       </div>
       <p class="hint-text">Pausing stops a session's process and keeps its conversation. It stays in the sidebar and resumes when you click it.</p>
       <div id="idle-pause-list" class="idle-pause-list"></div>
@@ -59822,7 +59822,6 @@ Click for live activity`;
       var ESCAPE_CLOSES = [
         ["dialog-overlay", () => closeDialog()],
         ["discovery-overlay", () => closeDiscovery()],
-        ["idle-pause-overlay", () => closeIdlePause()],
         ["peers-overlay", () => closePeersDialog()],
         ["plugins-overlay", () => closePluginsDialog()],
         ["sandbox-overlay", () => closeSandboxDialog()],
@@ -59835,7 +59834,8 @@ Click for live activity`;
         ["skill-editor", () => closeSkillEditor()],
         ["exec-editor", () => closeExecEditor()],
         ["mcp-editor", () => closeMcpEditor()],
-        ["help-overlay", () => closeHelpPanel()]
+        ["help-overlay", () => closeHelpPanel()],
+        ["idle-pause-overlay", () => closeIdlePause()]
       ];
       document.addEventListener("keydown", (e) => {
         if (e.key !== "Escape") return;

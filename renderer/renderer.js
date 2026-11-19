@@ -6067,7 +6067,6 @@ const overlayProbes = { byId: overlayElementById, byClass: overlayElementsByClas
 const ESCAPE_CLOSES = [
   ['dialog-overlay', () => closeDialog()],
   ['discovery-overlay', () => closeDiscovery()],
-  ['idle-pause-overlay', () => closeIdlePause()],
   ['peers-overlay', () => closePeersDialog()],
   ['plugins-overlay', () => closePluginsDialog()],
   ['sandbox-overlay', () => closeSandboxDialog()],
@@ -6081,6 +6080,7 @@ const ESCAPE_CLOSES = [
   ['exec-editor', () => closeExecEditor()],
   ['mcp-editor', () => closeMcpEditor()],
   ['help-overlay', () => closeHelpPanel()],
+  ['idle-pause-overlay', () => closeIdlePause()],
 ];
 
 document.addEventListener('keydown', (e) => {
