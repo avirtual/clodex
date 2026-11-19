@@ -600,7 +600,8 @@ test('the create and Edit dialogs pick the tool checklist by seat type', () => {
   assert.ok(body('refreshNewSessionTools').includes('setClaudeToolsCache(toolListFor(dialogHostSettings, inputType.value));'));
   assert.ok(body('openArgsDialog').includes('setClaudeToolsCache(toolListFor(settings, res.type));'));
   const ipc = fs.readFileSync(path.join(__dirname, '..', 'ipc-handlers.js'), 'utf8');
-  assert.ok(ipc.includes('toolsByType: Object.fromEntries(PLATFORMS.filter((t) => toolsFor(t)).map((t) => [t, toolsFor(t)])),'));
+  assert.ok(ipc.includes('const out = Object.fromEntries(PLATFORMS.filter((t) => toolsFor(t)).map((t) => [t, toolsFor(t)]));'));
+  assert.ok(ipc.includes('toolsByType: toolsByType(),'));
 });
 
 test('toolListFor: the seat type picks its list from toolsByType, else the Claude list', () => {

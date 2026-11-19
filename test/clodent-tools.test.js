@@ -18,6 +18,7 @@ const line = (doc) => `${JSON.stringify(doc)}\n`;
 const V091 = line({ v: 1, version: '0.9.1', tools: BUILTIN.map((n) => tool(n)) });
 
 function fakeClodent({ stdout = '', stderr = '', exit = 0, hang = false } = {}) {
+  const timeoutMs = hang ? 150 : 5000;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'clodent-list-tools-'));
   fs.writeFileSync(path.join(dir, 'out.txt'), stdout);
   fs.writeFileSync(path.join(dir, 'err.txt'), stderr);
@@ -31,7 +32,7 @@ function fakeClodent({ stdout = '', stderr = '', exit = 0, hang = false } = {}) 
     `exit ${exit}`,
   ].join('\n'), { mode: 0o755 });
   const logs = [];
-  const tools = createClodentTools({ env: { PATH: dir }, log: { info: (tag, msg) => logs.push(`${tag}: ${msg}`) }, timeoutMs: 150 });
+  const tools = createClodentTools({ env: { PATH: dir }, log: { info: (tag, msg) => logs.push(`${tag}: ${msg}`) }, timeoutMs });
   const calls = () => { try { return fs.readFileSync(path.join(dir, 'calls'), 'utf-8').split('\n').filter(Boolean).length; } catch { return 0; } };
   return { dir, bin, tools, logs, calls };
 }
