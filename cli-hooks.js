@@ -82,7 +82,7 @@ function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp, 
     return !!digest;
   }
 
-  function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], wireBase = null, createdAt = null, extraDenyRules = [], stream = false, effort = null, protectCredentials = null, mcpSecretNames = [], mcpDenyRules = [], cwd = null, clodentHome = null, cacheTtl = null, messageCacheTtl = null) {
+  function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], wireBase = null, createdAt = null, extraDenyRules = [], stream = false, effort = null, protectCredentials = null, mcpSecretNames = [], mcpDenyRules = [], cwd = null, clodentHome = null, cacheTtl = null, messageCacheTtl = null, toolNames = null) {
     ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'run', fs });
     ensureDir(runDirFor(REGISTRY_DIR, name));
     const linkPath = pathFor(REGISTRY_DIR, name, 'transcript');
@@ -946,7 +946,7 @@ exit 0
     // Built-in subagents stay registered unless denied here. Tool names are
     // filtered against the catalog because a stale name makes the CLI warn
     // "matches no known tool" on every startup.
-    const toolSet = new Set(CLAUDE_TOOLS);
+    const toolSet = new Set([...CLAUDE_TOOLS, ...(Array.isArray(toolNames) ? toolNames : [])]);
     const guard = Array.isArray(protectCredentials)
       ? buildCredentialSandbox({
         registryDir: REGISTRY_DIR, list: protectCredentials, seatSocket: pathFor(REGISTRY_DIR, name, 'intentSocket'), inBox: runningInSandboxBox(process.env), mcpSecretNames, userDataPath: getUserDataPath ? getUserDataPath() : null, cwd, codexHome: process.env.CODEX_HOME, clodentHomes: [process.env.CLODENT_HOME, clodentHome],

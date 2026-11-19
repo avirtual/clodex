@@ -857,6 +857,7 @@ function createSessionManager(deps) {
   const spawnStreamSeat = deps.spawnStreamSeat || streamSeatLib.spawnStreamSeat;
   const probeClodentVersion = deps.probeClodentVersion
     || (() => childProcess.execFileSync(adapterFor('clodent').cmd, ['--version'], { timeout: 3000, encoding: 'utf-8' }));
+  const clodentToolList = deps.clodentToolList || null;
   const writeMcpConfig = deps.writeMcpConfig
     || ((n, servers) => require('./cli-hooks').createCliHooks({ REGISTRY_DIR, nodeInterp: process.execPath }).writeMcpConfig(n, servers));
   const writeMcpCatalog = deps.writeMcpCatalog
@@ -1992,7 +1993,8 @@ function createSessionManager(deps) {
             const idleClearMs = idleClearAfterMs(this._spawnIdleClear.get(name) || (existingEntry && existingEntry.idleClear));
             const ownMessageTtl = args.some((a) => typeof a === 'string' && (a === '--message-cache-ttl' || a.startsWith('--message-cache-ttl=')));
             const messageCacheTtl = longCache && idleClearsIo(io) && idleClearMs && idleClearMs <= SHORT_MESSAGE_CACHE_IDLE_MS && !ownMessageTtl ? '5m' : null;
-            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, skillsOff, wireBase, createdAt, Array.isArray(shellDeny) ? shellDeny : [], streamIo, effortFlag ? null : effortLevel, Array.isArray(protectCredentials) ? protectCredentials : null, mcpSecretNames, mcpSel ? mcpSel.applied.denyRules : [], cwd || null, mergedEnv.CLODENT_HOME || null, longCache ? '1h' : null, messageCacheTtl);
+            const clodentToolNames = type === 'clodent' && clodentToolList ? (await clodentToolList()).names : null;
+            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, skillsOff, wireBase, createdAt, Array.isArray(shellDeny) ? shellDeny : [], streamIo, effortFlag ? null : effortLevel, Array.isArray(protectCredentials) ? protectCredentials : null, mcpSecretNames, mcpSel ? mcpSel.applied.denyRules : [], cwd || null, mergedEnv.CLODENT_HOME || null, longCache ? '1h' : null, messageCacheTtl, clodentToolNames);
             args.push('--settings', settingsPath);
             hookInstalled = true;
             selectionDrain = true;

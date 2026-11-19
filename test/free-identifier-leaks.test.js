@@ -72,6 +72,7 @@ const SCANNED_MODULES = [
   'ipc-prompt.js',
   'stores.js',
   'catalogs.js',
+  'clodent-tools.js',
   'statusline.js',
   'intent-scanner.js',
   'host-stamp.js',

@@ -1217,6 +1217,9 @@ accept teardown removes.
 
 - **catalogs.js** — static shared constants (CLAUDE_TOOLS, THEME_KEYS,
   AGENT_NAME_RE, DEFAULT_WORKSPACE_ID, …).
+- **clodent-tools.js** — `createClodentTools`: asks the installed clodent for
+  its built-in tools (`clodent --list-tools`), cached per binary path, mtime and
+  size; falls back to `CLODENT_TOOLS` with a logged reason.
 - **doc-parse.js** — the Help window's markdown reader: `parseDoc(text)` →
   `{ blocks, headings, title }`, plus `slugify` (GitHub's rule, so the corpus's
   own `#anchor` links resolve), `plainText`, `sectionSlice`, `buildSearchIndex`
