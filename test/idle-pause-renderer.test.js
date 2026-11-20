@@ -60,7 +60,7 @@ function fakeEl(tag) {
   return el;
 }
 
-function mountIdleDialog() {
+function mountIdleDialog(pausable = [{ name: 'a', type: 'claude', idle: '2 days' }, { name: 'b', type: 'claude', idle: '3 days' }]) {
   const start = rendererSrc.indexOf('const idlePauseOverlay = ');
   const end = rendererSrc.indexOf('window.api.onRequestOpenDiscovery(', start);
   assert.ok(start > 0 && end > start, 'ENTER: the idle-pause dialog block is found');
@@ -82,9 +82,9 @@ function mountIdleDialog() {
   };
   const toasts = [];
   const showToast = (msg, opts) => toasts.push([msg, opts]);
-  const run = new Function('document', 'window', 'showToast', `${rendererSrc.slice(start, end)}\nreturn { closeIdlePause };`);
+  const run = new Function('document', 'window', 'showToast', `${rendererSrc.slice(start, end)}\nreturn { closeIdlePause, idlePauseMem };`);
   const api = run(document, window, showToast);
-  const ask = { id: 'idle-1', hours: 48, pausable: [{ name: 'a', type: 'claude', idle: '2 days' }, { name: 'b', type: 'claude', idle: '3 days' }], exempt: [] };
+  const ask = { id: 'idle-1', hours: 48, pausable, exempt: [] };
   handlers.ask(ask);
   const boxes = els.get('idle-pause-list').querySelectorAll();
   assert.deepStrictEqual(boxes.map((b) => b.dataset.name), ['a', 'b'], 'ENTER: two ticked rows rendered');
@@ -131,4 +131,46 @@ test('a row paused for idleness says so, live and after a restart', () => {
   const manager = { teamNameFor: () => null };
   assert.strictEqual(archivedSnapshotFor({ manager, entry: { name: 'a', archivedAt: 1, archiveCause: 'idle' } }).archiveCause, 'idle');
   assert.strictEqual('archiveCause' in archivedSnapshotFor({ manager, entry: { name: 'a', archivedAt: 1 } }), false);
+});
+
+test('memory figures: MB below 1024 MB with no decimals, GB with one', () => {
+  const { api } = mountIdleDialog();
+  const MB = 1024 * 1024;
+  assert.deepStrictEqual([290 * MB, 1023 * MB, 1024 * MB, 4300 * MB, 1.75 * 1024 * MB].map(api.idlePauseMem),
+    ['290 MB', '1023 MB', '1.0 GB', '4.2 GB', '1.8 GB']);
+});
+
+test('each row shows its memory; the "frees about" line follows the ticked boxes', () => {
+  const MB = 1024 * 1024;
+  const { els, boxes } = mountIdleDialog([
+    { name: 'a', type: 'claude', idle: '2 days', memBytes: 3000 * MB },
+    { name: 'b', type: 'claude', idle: '3 days', memBytes: 290 * MB },
+  ]);
+  const rowText = (i) => els.get('idle-pause-list').children[i].children.map((c) => c.textContent).filter(Boolean);
+  assert.deepStrictEqual(rowText(1), ['b', 'claude', 'idle 3 days', '290 MB']);
+  const frees = els.get('idle-pause-frees');
+  assert.strictEqual(frees.textContent, 'Pausing all of them frees about 3.2 GB.');
+  assert.strictEqual(frees.classList.contains('hidden'), false);
+  boxes[0].checked = false;
+  for (const fn of boxes[0].listeners.change) fn();
+  assert.strictEqual(frees.textContent, 'Pausing all of them frees about 290 MB.');
+  boxes[1].checked = false;
+  for (const fn of boxes[1].listeners.change) fn();
+  assert.strictEqual(frees.classList.contains('hidden'), true);
+});
+
+test('every figure null: no memory on the rows and the "frees about" line hidden', () => {
+  const { els } = mountIdleDialog([
+    { name: 'a', type: 'claude', idle: '2 days', memBytes: null },
+    { name: 'b', type: 'claude', idle: '3 days', memBytes: null },
+  ]);
+  assert.deepStrictEqual(els.get('idle-pause-list').children[0].children.map((c) => c.className), [undefined, 'idle-pause-name', 'idle-pause-type', 'idle-pause-idle']);
+  assert.strictEqual(els.get('idle-pause-frees').classList.contains('hidden'), true);
+  assert.ok(htmlSrc.includes('<p id="idle-pause-frees" class="hidden"></p>'));
+});
+
+test('idle-pause:auto with a known figure names the memory freed', () => {
+  const { handlers, toasts } = mountIdleDialog();
+  handlers.auto({ names: ['a', 'b', 'c', 'd', 'e', 'f'], hours: 48, memBytes: 1.7 * 1024 * 1024 * 1024 });
+  assert.deepStrictEqual(toasts, [['Paused 6 sessions idle for more than 48 hours, freeing about 1.7 GB. Click a paused row to resume it.', { duration: 15000 }]]);
 });

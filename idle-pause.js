@@ -43,7 +43,10 @@ function idleCandidates({ sessions, now, thresholdMs }) {
     const idleMs = now - idleSince(row);
     if (idleMs < thresholdMs) continue;
     const key = EXEMPT_ORDER.find((k) => row[k]);
-    out.push({ name: row.name, type: row.type, idleMs, idle: idleSpan(idleMs), reason: key ? EXEMPT_REASONS[key] : null });
+    out.push({
+      name: row.name, type: row.type, idleMs, idle: idleSpan(idleMs), reason: key ? EXEMPT_REASONS[key] : null,
+      ...(Number.isInteger(row.pid) ? { pid: row.pid } : {}),
+    });
   }
   return out.sort((a, b) => b.idleMs - a.idleMs || (a.name < b.name ? -1 : 1));
 }
@@ -56,22 +59,42 @@ function shouldAsk({ pausable, thresholdMs, declined, now }) {
   return pausable.filter((n) => !seen.has(n)).length >= IDLE_PAUSE_MIN_COUNT;
 }
 
-function createIdlePauseAsker({ survey, pause, keep, getSettings, saveSettings, broadcast, log = null, now = () => Date.now(), setTimer = setTimeout, clearTimer = clearTimeout }) {
+function sumMem(rows) {
+  const known = rows.filter((r) => r.memBytes != null);
+  return known.length ? known.reduce((t, r) => t + r.memBytes, 0) : null;
+}
+
+function createIdlePauseAsker({ survey, pause, keep, getSettings, saveSettings, broadcast, sample = () => new Map(), log = null, now = () => Date.now(), setTimer = setTimeout, clearTimer = clearTimeout }) {
   let open = null;
   let seq = 0;
   let timer = null;
   let stopped = false;
   let autoRun = null;
 
+  function withMemory(rows) {
+    let bytes = null;
+    try {
+      bytes = sample(rows.map((r) => r.pid).filter((p) => Number.isInteger(p)));
+    } catch (e) {
+      if (log) log.warn('session', `idle pause: memory sample failed: ${e && e.message}`);
+    }
+    return rows.map(({ pid, ...r }) => {
+      const b = bytes instanceof Map && Number.isInteger(pid) ? bytes.get(pid) : undefined;
+      return { ...r, memBytes: b > 0 ? b : null };
+    });
+  }
+
   async function autoPause(rows, hours, thresholdMs) {
+    const measured = withMemory(rows);
     const names = [];
-    for (const r of rows) {
+    const freed = [];
+    for (const r of measured) {
       const res = await pause([r.name], { thresholdMs });
-      if (res && res.paused > 0) names.push(r.name);
+      if (res && res.paused > 0) { names.push(r.name); freed.push(r); }
     }
     if (!names.length) return { names };
     if (log) log.info('session', `idle pause: paused ${names.length} sessions idle over ${hours}h automatically: ${names.join(', ')}`);
-    broadcast('idle-pause:auto', { names, hours });
+    broadcast('idle-pause:auto', { names, hours, memBytes: sumMem(freed) });
     return { names };
   }
 
@@ -91,7 +114,9 @@ function createIdlePauseAsker({ survey, pause, keep, getSettings, saveSettings, 
       return autoRun;
     }
     if (!shouldAsk({ pausable: pausable.map((r) => r.name), thresholdMs, declined: settings.idlePauseDeclined || null, now: at })) return null;
-    open = { id: `idle-${at}-${++seq}`, hours, thresholdMs, pausable, exempt: rows.filter((r) => r.reason) };
+    const measured = withMemory(rows);
+    const asked = measured.filter((r) => !r.reason);
+    open = { id: `idle-${at}-${++seq}`, hours, thresholdMs, pausable: asked, exempt: measured.filter((r) => r.reason), memBytesTotal: sumMem(asked) };
     if (log) log.info('session', `idle pause: asking about ${pausable.length} sessions idle over ${hours}h`);
     broadcast('idle-pause:ask', open);
     return open;

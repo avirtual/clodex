@@ -6404,6 +6404,11 @@ const idlePauseList = document.getElementById('idle-pause-list');
 const idlePauseGo = document.getElementById('idle-pause-go');
 let idlePauseShown = null;
 
+function idlePauseMem(bytes) {
+  const mb = bytes / (1024 * 1024);
+  return mb < 1024 ? `${Math.round(mb)} MB` : `${(mb / 1024).toFixed(1)} GB`;
+}
+
 function idlePauseRowEl(row, selectable) {
   const el = document.createElement(selectable ? 'label' : 'div');
   el.className = 'idle-pause-row';
@@ -6420,6 +6425,12 @@ function idlePauseRowEl(row, selectable) {
     span.className = cls;
     span.textContent = text;
     el.appendChild(span);
+  }
+  if (row.memBytes != null) {
+    const mem = document.createElement('span');
+    mem.className = 'idle-pause-mem';
+    mem.textContent = idlePauseMem(row.memBytes);
+    el.appendChild(mem);
   }
   if (!selectable) {
     const why = document.createElement('span');
@@ -6438,6 +6449,11 @@ function updateIdlePauseCount() {
   const n = idlePauseTicked().length;
   idlePauseGo.textContent = `Pause ${n} session${n === 1 ? '' : 's'}`;
   idlePauseGo.disabled = n === 0;
+  const ticked = new Set(idlePauseTicked());
+  const known = ((idlePauseShown && idlePauseShown.pausable) || []).filter((r) => ticked.has(r.name) && r.memBytes != null);
+  const frees = document.getElementById('idle-pause-frees');
+  frees.classList.toggle('hidden', !known.length);
+  frees.textContent = known.length ? `Pausing all of them frees about ${idlePauseMem(known.reduce((t, r) => t + r.memBytes, 0))}.` : '';
 }
 
 function showIdlePause(ask) {
@@ -6487,7 +6503,8 @@ if (idlePauseOverlay) {
   window.api.onIdlePauseClosed((msg) => { if (idlePauseShown && msg && msg.id === idlePauseShown.id) hideIdlePause(); });
   window.api.onIdlePauseAuto((msg) => {
     const n = msg && Array.isArray(msg.names) ? msg.names.length : 0;
-    if (n) showToast(`Paused ${n} session${n === 1 ? '' : 's'} idle for more than ${msg.hours} hours. Click a paused row to resume it.`, { duration: 15000 });
+    const freed = msg && msg.memBytes > 0 ? `, freeing about ${idlePauseMem(msg.memBytes)}` : '';
+    if (n) showToast(`Paused ${n} session${n === 1 ? '' : 's'} idle for more than ${msg.hours} hours${freed}. Click a paused row to resume it.`, { duration: 15000 });
   });
   Promise.resolve(window.api.idlePauseCurrent()).then((ask) => { if (ask && !idlePauseShown) showIdlePause(ask); }, () => {});
 }

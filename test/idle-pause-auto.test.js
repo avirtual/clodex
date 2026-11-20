@@ -9,12 +9,13 @@ const NOW = 1_800_000_000_000;
 
 const row = (name, extra = {}) => ({ name, type: 'claude', activityTs: NOW - 50 * H, operatorInputAt: 0, ...extra });
 
-function mkAsker({ rows, settings }) {
-  const calls = { broadcast: [], saved: [], paused: [], kept: [], surveyed: 0, logged: [] };
+function mkAsker({ rows, settings, sample }) {
+  const calls = { broadcast: [], saved: [], paused: [], kept: [], surveyed: 0, logged: [], order: [] };
   const asker = createIdlePauseAsker({
     survey: (now, thresholdMs) => { calls.surveyed++; return idleCandidates({ sessions: rows(), now, thresholdMs }); },
     pause: async (names, opts) => {
       calls.paused.push([names, opts]);
+      calls.order.push('pause');
       const ok = names.filter((n) => n !== 'flaky');
       return { paused: ok.length, skipped: names.length - ok.length };
     },
@@ -22,6 +23,7 @@ function mkAsker({ rows, settings }) {
     getSettings: () => settings,
     saveSettings: (p) => { calls.saved.push(p); Object.assign(settings, p); },
     broadcast: (ch, payload) => calls.broadcast.push([ch, payload]),
+    ...(sample ? { sample: (pids) => { calls.order.push('sample'); return sample(pids); } } : {}),
     log: { info: (tag, msg) => calls.logged.push([tag, msg]), warn() {} },
     now: () => NOW,
     setTimer: () => ({}),
@@ -70,7 +72,7 @@ test('auto on: one pausable row is paused without asking; exempt rows are skippe
   assert.deepStrictEqual(res, { names: ['lone'] });
   assert.deepStrictEqual(calls.paused, [[['flaky'], { thresholdMs: 24 * H }], [['lone'], { thresholdMs: 24 * H }]],
     'one row at a time, exempt rows never offered to pause');
-  assert.deepStrictEqual(calls.broadcast, [['idle-pause:auto', { names: ['lone'], hours: 24 }]]);
+  assert.deepStrictEqual(calls.broadcast, [['idle-pause:auto', { names: ['lone'], hours: 24, memBytes: null }]]);
   assert.strictEqual(calls.broadcast.some((b) => b[0] === 'idle-pause:ask'), false);
   assert.deepStrictEqual(calls.logged, [['session', 'idle pause: paused 1 sessions idle over 24h automatically: lone']]);
   assert.strictEqual(asker.current(), null);
@@ -107,4 +109,14 @@ test('an open question stays open when auto turns on, and its answer still works
   assert.deepStrictEqual(calls.paused, []);
   const res = await asker.answer(ask.id, { pause: ['a'] });
   assert.deepStrictEqual(res, { ok: true, paused: 1, skipped: 0 });
+});
+
+test('auto on: one sample before the pauses; the notice carries the bytes freed by the sessions actually paused', async () => {
+  const rows = () => [row('a', { pid: 11 }), row('flaky', { pid: 12 }), row('b', { pid: 13 }), row('kept', { keep: true, pid: 14 })];
+  const bytes = new Map([[11, 1000], [12, 5000], [13, 300], [14, 9000]]);
+  const { asker, calls } = mkAsker({ rows, settings: { idlePauseHours: 48, idlePauseAuto: true }, sample: () => bytes });
+  const res = await asker.check();
+  assert.deepStrictEqual(res, { names: ['a', 'b'] });
+  assert.deepStrictEqual(calls.order, ['sample', 'pause', 'pause', 'pause']);
+  assert.deepStrictEqual(calls.broadcast, [['idle-pause:auto', { names: ['a', 'b'], hours: 48, memBytes: 1300 }]]);
 });
