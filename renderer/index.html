@@ -936,7 +936,10 @@
 
   <div id="idle-pause-overlay" class="hidden">
     <div id="idle-pause-dialog">
-      <h3 id="idle-pause-title"></h3>
+      <div class="dialog-head">
+        <h3 id="idle-pause-title"></h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Not now">&times;</button>
+      </div>
       <p class="hint-text">Pausing stops a session's process and keeps its conversation. It stays in the sidebar and resumes when you click it.</p>
       <div id="idle-pause-list" class="idle-pause-list"></div>
       <details id="idle-pause-exempt-block" class="hidden">
@@ -946,6 +949,7 @@
       <div class="dialog-actions">
         <div style="flex: 1;"></div>
         <button id="idle-pause-later" class="secondary" type="button">Not now</button>
+        <button id="idle-pause-auto" class="secondary" type="button">Pause automatically from now on</button>
         <button id="idle-pause-go" type="button">Pause sessions</button>
       </div>
     </div>
@@ -1489,8 +1493,9 @@
           <span>Ask to pause sessions idle for more than</span>
           <input type="number" id="prefs-idle-pause-hours" min="0" max="8760" step="1" value="48" style="flex: none; width: 5em;">
           <span>hours</span>
+          <label class="prefs-check" style="margin: 0 0 0 12px;"><input type="checkbox" id="prefs-idle-pause-auto"><span>Pause them automatically</span></label>
         </div>
-        <p class="hint-text">Clodex asks once five or more sessions have been idle that long. 0 turns the question off.</p>
+        <p class="hint-text">Clodex asks once five or more sessions have been idle that long. With automatic pausing on, it pauses them without asking, however many there are. 0 turns both off.</p>
       </details>
       <!-- No Plugins section here (T5/t109): neither the on/off choice nor a
            plugin's own settings belong in this dialog. Both live on the

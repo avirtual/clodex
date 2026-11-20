@@ -11192,7 +11192,10 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
 
   <div id="idle-pause-overlay" class="hidden">
     <div id="idle-pause-dialog">
-      <h3 id="idle-pause-title"></h3>
+      <div class="dialog-head">
+        <h3 id="idle-pause-title"></h3>
+        <button type="button" class="dialog-close" aria-label="Close" title="Not now">&times;</button>
+      </div>
       <p class="hint-text">Pausing stops a session's process and keeps its conversation. It stays in the sidebar and resumes when you click it.</p>
       <div id="idle-pause-list" class="idle-pause-list"></div>
       <details id="idle-pause-exempt-block" class="hidden">
@@ -11202,6 +11205,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
       <div class="dialog-actions">
         <div style="flex: 1;"></div>
         <button id="idle-pause-later" class="secondary" type="button">Not now</button>
+        <button id="idle-pause-auto" class="secondary" type="button">Pause automatically from now on</button>
         <button id="idle-pause-go" type="button">Pause sessions</button>
       </div>
     </div>
@@ -11745,8 +11749,9 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           <span>Ask to pause sessions idle for more than</span>
           <input type="number" id="prefs-idle-pause-hours" min="0" max="8760" step="1" value="48" style="flex: none; width: 5em;">
           <span>hours</span>
+          <label class="prefs-check" style="margin: 0 0 0 12px;"><input type="checkbox" id="prefs-idle-pause-auto"><span>Pause them automatically</span></label>
         </div>
-        <p class="hint-text">Clodex asks once five or more sessions have been idle that long. 0 turns the question off.</p>
+        <p class="hint-text">Clodex asks once five or more sessions have been idle that long. With automatic pausing on, it pauses them without asking, however many there are. 0 turns both off.</p>
       </details>
       <!-- No Plugins section here (T5/t109): neither the on/off choice nor a
            plugin's own settings belong in this dialog. Both live on the
@@ -12100,6 +12105,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "idlePauseAnswer", kind: "invoke", channel: "idlePause:answer" },
         { name: "onIdlePauseAsk", kind: "on", channel: "idle-pause:ask" },
         { name: "onIdlePauseClosed", kind: "on", channel: "idle-pause:closed" },
+        { name: "onIdlePauseAuto", kind: "on", channel: "idle-pause:auto" },
         { name: "flushPending", kind: "invoke", channel: "session:flushPending" },
         { name: "peekPending", kind: "invoke", channel: "session:peekPending" },
         { name: "retrySpawnSession", kind: "invoke", channel: "session:retrySpawn" },
@@ -54728,7 +54734,7 @@ ${detail}` });
     <div class="session-info">
       <div class="session-name">${esc(displayName)}</div>
       <div class="session-meta">
-        <span class="session-archived-label">${entry.movedTo ? `moved to ${esc(entry.movedTo.peerLabel)} \u2014 click to resume a copy here` : "archived \u2014 click to resume"}</span>
+        <span class="session-archived-label">${entry.movedTo ? `moved to ${esc(entry.movedTo.peerLabel)} \u2014 click to resume a copy here` : entry.archiveCause === "idle" ? "paused after being idle \u2014 click to resume" : "archived \u2014 click to resume"}</span>
       </div>
     </div>
     <button class="session-close" data-tip="Delete archived session">&times;</button>
@@ -55207,7 +55213,7 @@ ${detail}` });
         const head = `Moving ${name} to ${held.peerLabel} \u2014 ${phase}`;
         held.toast.set(total ? `${head} ${MiB(bytes)}/${MiB(total)} MiB (${fileIndex}/${files})` : head);
       });
-      window.api.onSessionContextAction(({ action, name, type, cwd, error, backend, noWire, ephemeral, io, disposition, background, clone, peerId, peerLabel, envKeys, workspaceId, workspaceName }) => {
+      window.api.onSessionContextAction(({ action, name, type, cwd, error, backend, noWire, ephemeral, io, disposition, cause, background, clone, peerId, peerLabel, envKeys, workspaceId, workspaceName }) => {
         switch (action) {
           case "editArgs":
             openArgsDialog(name);
@@ -55269,7 +55275,7 @@ ${detail}` });
             if (disposition === "discard") break;
             const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
             if (!item) break;
-            archivingSessions.set(name, archivedRowEntry(name, item));
+            archivingSessions.set(name, { ...archivedRowEntry(name, item), ...cause === "idle" ? { archiveCause: "idle" } : {} });
             break;
           }
           case "export":
@@ -59828,7 +59834,8 @@ Click for live activity`;
         ["skill-editor", () => closeSkillEditor()],
         ["exec-editor", () => closeExecEditor()],
         ["mcp-editor", () => closeMcpEditor()],
-        ["help-overlay", () => closeHelpPanel()]
+        ["help-overlay", () => closeHelpPanel()],
+        ["idle-pause-overlay", () => closeIdlePause()]
       ];
       document.addEventListener("keydown", (e) => {
         if (e.key !== "Escape") return;
@@ -60167,10 +60174,13 @@ Click for live activity`;
         idlePauseShown = null;
         if (idlePauseOverlay) idlePauseOverlay.classList.add("hidden");
       }
-      async function answerIdlePause(pause) {
+      function closeIdlePause() {
+        return answerIdlePause(false);
+      }
+      async function answerIdlePause(pause, auto = false) {
         const ask = idlePauseShown;
         if (!ask) return;
-        const reply = pause ? { pause: idlePauseTicked() } : { decline: true };
+        const reply = pause ? { pause: idlePauseTicked(), ...auto ? { auto: true } : {} } : { decline: true };
         hideIdlePause();
         let res = null;
         try {
@@ -60188,10 +60198,15 @@ Click for live activity`;
       }
       if (idlePauseOverlay) {
         idlePauseGo.addEventListener("click", () => answerIdlePause(true));
-        document.getElementById("idle-pause-later").addEventListener("click", () => answerIdlePause(false));
+        document.getElementById("idle-pause-auto").addEventListener("click", () => answerIdlePause(true, true));
+        document.getElementById("idle-pause-later").addEventListener("click", () => closeIdlePause());
         window.api.onIdlePauseAsk((ask) => showIdlePause(ask));
         window.api.onIdlePauseClosed((msg) => {
           if (idlePauseShown && msg && msg.id === idlePauseShown.id) hideIdlePause();
+        });
+        window.api.onIdlePauseAuto((msg) => {
+          const n = msg && Array.isArray(msg.names) ? msg.names.length : 0;
+          if (n) showToast(`Paused ${n} session${n === 1 ? "" : "s"} idle for more than ${msg.hours} hours. Click a paused row to resume it.`, { duration: 15e3 });
         });
         Promise.resolve(window.api.idlePauseCurrent()).then((ask) => {
           if (ask && !idlePauseShown) showIdlePause(ask);
@@ -60231,6 +60246,7 @@ Click for live activity`;
       var prefsDefaultMode = document.getElementById("prefs-default-mode");
       var prefsDiscoverOnStartup = document.getElementById("prefs-discover-on-startup");
       var prefsIdlePauseHours = document.getElementById("prefs-idle-pause-hours");
+      var prefsIdlePauseAuto = document.getElementById("prefs-idle-pause-auto");
       var prefsToolsRow = document.getElementById("prefs-tools-row");
       var prefsToolsList = document.getElementById("prefs-tools-list");
       wireBulkToggles(prefsToolsRow, prefsToolsList);
@@ -63315,6 +63331,7 @@ ${res.stderr}` : "");
         if (prefsDefaultMode) prefsDefaultMode.value = defaultSessionMode(s);
         if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
         if (prefsIdlePauseHours) prefsIdlePauseHours.value = String(s.idlePauseHours);
+        if (prefsIdlePauseAuto) prefsIdlePauseAuto.checked = s.idlePauseAuto === true;
         restorePrefsGroups();
         if (group) for (const g of prefsGroups()) {
           if (g.dataset.group === group) g.open = true;
@@ -63442,6 +63459,7 @@ ${res.stderr}` : "");
           defaultSessionMode: prefsDefaultMode ? prefsDefaultMode.value : "optimized",
           discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
           ...prefsIdlePauseHours && prefsIdlePauseHours.value.trim() ? { idlePauseHours: Number(prefsIdlePauseHours.value) } : {},
+          ...prefsIdlePauseAuto ? { idlePauseAuto: prefsIdlePauseAuto.checked } : {},
           remoteEnabled: prefsRemoteEnabled.checked,
           ...prefsRemoteBasePath ? patchUnlessEnvLocked(prefsEnvLocked, "remoteBasePath", prefsRemoteBasePath.value) : {}
         });

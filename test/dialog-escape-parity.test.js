@@ -80,6 +80,7 @@ const KEYBOARD_ONLY = [
   { label: 'Exec editor', id: 'exec-editor', close: 'closeExecEditor' },
   { label: 'MCP editor', id: 'mcp-editor', close: 'closeMcpEditor' },
   { label: 'Help panel', id: 'help-overlay', close: 'closeHelpPanel' },
+  { label: 'Idle sessions', id: 'idle-pause-overlay', close: 'closeIdlePause' },
 ];
 
 // A second modal raised OVER one of the dialogs, one per route that reaches it.
