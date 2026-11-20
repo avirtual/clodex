@@ -44,8 +44,8 @@ test('pauseIdle re-checks each session and skips one that became busy', async ()
   }
   assert.deepStrictEqual(records.get('b'), { name: 'b', type: 'claude' });
   assert.deepStrictEqual(sent, [
-    ['a', 'session:context-action', { action: 'retired', name: 'a', disposition: 'archive', cause: 'idle' }],
-    ['c', 'session:context-action', { action: 'retired', name: 'c', disposition: 'archive', cause: 'idle' }],
+    ['a', 'session:context-action', { action: 'retired', name: 'a', disposition: 'archive' }],
+    ['c', 'session:context-action', { action: 'retired', name: 'c', disposition: 'archive' }],
   ]);
 });
 
@@ -69,21 +69,4 @@ test('the survey reads each exempt signal off the live session', () => {
     ['a', 'a dialog is open'], ['b', 'a reload or compact is in flight'], ['c', null], ['pty', 'a dialog is open'],
     ['sh', 'a shell session cannot be resumed'],
   ]);
-});
-
-test('a record marked keepRunning is exempt in the survey and in pauseIdle', async () => {
-  const { m, records } = mkManager();
-  records.get('b').keepRunning = true;
-  const out = m.idlePauseSurvey(Date.now(), 48 * H);
-  assert.deepStrictEqual(out.map((r) => [r.name, r.reason]), [['a', null], ['b', 'you chose to keep it running'], ['c', null]]);
-  const res = await m.pauseIdle(['b'], { thresholdMs: 48 * H });
-  assert.deepStrictEqual(res, { paused: 0, skipped: 1 });
-  assert.strictEqual('archivedAt' in records.get('b'), false);
-});
-
-test('keepRunning rides the restart seam', () => {
-  const upserts = [];
-  const { m } = mkPark({ getPersistence: () => ({ upsert: (e) => upserts.push(e) }) });
-  m._preserveAcrossRestart('a', { name: 'a', keepRunning: true }, []);
-  assert.deepStrictEqual(upserts, [{ name: 'a', keepRunning: true }]);
 });

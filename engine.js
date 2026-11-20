@@ -2348,7 +2348,6 @@ const toolCache = createToolCache({ whichBin });
   const idlePause = createIdlePauseAsker({
     survey: (now, thresholdMs) => manager.idlePauseSurvey(now, thresholdMs),
     pause: (names, opts) => manager.pauseIdle(names, opts),
-    keep: (names) => { for (const n of names) persistence.setKeepRunning(n, true); },
     getSettings: () => uiSettings.get(),
     saveSettings: (partial) => uiSettings.set(partial),
     broadcast: (ch, payload) => manager._broadcast(ch, payload),

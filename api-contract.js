@@ -89,7 +89,6 @@ const API_CONTRACT = [
   { name: 'idlePauseAnswer', kind: 'invoke', channel: 'idlePause:answer' },
   { name: 'onIdlePauseAsk', kind: 'on', channel: 'idle-pause:ask' },
   { name: 'onIdlePauseClosed', kind: 'on', channel: 'idle-pause:closed' },
-  { name: 'onIdlePauseAuto', kind: 'on', channel: 'idle-pause:auto' },
   { name: 'flushPending', kind: 'invoke', channel: 'session:flushPending' },
   { name: 'peekPending', kind: 'invoke', channel: 'session:peekPending' },
   { name: 'retrySpawnSession', kind: 'invoke', channel: 'session:retrySpawn' },

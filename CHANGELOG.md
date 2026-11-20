@@ -13,8 +13,6 @@ blocks a release.
 
 ## Unreleased
 
-- The idle-session question can now turn on automatic pausing: sessions idle past the limit are paused on their own, with a notice, and a row can be marked 'Keep running when idle'. Off unless you choose it; Escape in the question means Not now.
-
 ## 5.190.0 — 2026-11-20
 
 - Clodent seats' WebSearch and WebFetch tools (clodent 0.9.0) can be turned off in the seat's tool list, and web searches made through the proxy are now included in cost totals at $0.01 each.

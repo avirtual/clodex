@@ -430,7 +430,7 @@ function nearMissFormHint(text) {
 
 // Add a field only if no caller can regrow it and none re-asserts it after create(), else two writers own it; keepWarmAlways and holdUntil stay a pair.
 // An absent worktree pointer is the dangerous state: destroy() would drop the record and orphan the checkout.
-const ALWAYS_PRESERVE = ['sessionIds', 'retiredSessionIds', 'pluginGrants', 'grantable', 'wireLabel', 'ticketId', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested', 'voice', 'reviewerTemplate', 'class', 'sleep', 'template', 'cost', 'wakes', 'awokeAt', 'spawnedBy', 'idleClear', 'lastClear', 'keepRunning'];
+const ALWAYS_PRESERVE = ['sessionIds', 'retiredSessionIds', 'pluginGrants', 'grantable', 'wireLabel', 'ticketId', 'keepWarmAlways', 'holdUntil', 'worktree', 'autoCompact', 'digested', 'voice', 'reviewerTemplate', 'class', 'sleep', 'template', 'cost', 'wakes', 'awokeAt', 'spawnedBy', 'idleClear', 'lastClear'];
 
 const defaultKillPid = (pid, sig) => process.kill(pid, sig);
 
@@ -4334,7 +4334,6 @@ function createSessionManager(deps) {
         operatorInputAt: s.lastUserInputTs || 0,
         bash: !s.agentType,
         assistant: !!(s._assistant || (rec && rec.class === 'assistant')),
-        keep: !!(rec && rec.keepRunning),
         lead: !!(team && team.lead === s.name),
         working: !!(s.streamBusy || s.thinking || s.activityState === 'thinking'),
         dialog: !!((s.streamPermissions && s.streamPermissions.size) || s._bootDialog || (s.needsAttention && s.needsAttention.kind === 'permission')),
@@ -4362,7 +4361,7 @@ function createSessionManager(deps) {
           skipped++;
           continue;
         }
-        this._sendToSession(name, 'session:context-action', { action: 'retired', name, disposition: 'archive', cause: 'idle' });
+        this._sendToSession(name, 'session:context-action', { action: 'retired', name, disposition: 'archive' });
         try {
           await this.archive(name, { via: 'idle', idle: verdict.idle });
           paused++;
