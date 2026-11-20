@@ -36,7 +36,7 @@ function tmp() { return mkTmpRoot('clodex-t433-'); }
 function harness(t, { ephemeral = false, getThrows = false } = {}) {
   const root = tmp();
   // Three tmp trees leaked per run without this.
-  if (t) t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  if (t) t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   let record = { name: 'seat', type: 'claude', createdAt: 1, ...(ephemeral ? { ephemeral: true } : {}) };
   // create() reads the record itself (existingEntry) too, so a bare call count
   // could not tell one ctx-arm read from three. The arm is bracketed by two of
