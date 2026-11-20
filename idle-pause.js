@@ -11,6 +11,7 @@ const IDLE_PAUSE_CHECK_MS = HOUR_MS;
 const EXEMPT_REASONS = {
   bash: 'a shell session cannot be resumed',
   assistant: 'an assistant sleeps on its own',
+  keep: 'you chose to keep it running',
   lead: 'leads a team',
   working: 'working',
   dialog: 'a dialog is open',
@@ -18,7 +19,7 @@ const EXEMPT_REASONS = {
   inFlight: 'a reload or compact is in flight',
   ticket: 'holds an open ticket',
 };
-const EXEMPT_ORDER = ['bash', 'assistant', 'lead', 'working', 'dialog', 'pending', 'inFlight', 'ticket'];
+const EXEMPT_ORDER = ['bash', 'assistant', 'keep', 'lead', 'working', 'dialog', 'pending', 'inFlight', 'ticket'];
 
 function plural(n, unit) {
   return `${n} ${unit}${n === 1 ? '' : 's'}`;
@@ -55,14 +56,28 @@ function shouldAsk({ pausable, thresholdMs, declined, now }) {
   return pausable.filter((n) => !seen.has(n)).length >= IDLE_PAUSE_MIN_COUNT;
 }
 
-function createIdlePauseAsker({ survey, pause, getSettings, saveSettings, broadcast, log = null, now = () => Date.now(), setTimer = setTimeout, clearTimer = clearTimeout }) {
+function createIdlePauseAsker({ survey, pause, keep, getSettings, saveSettings, broadcast, log = null, now = () => Date.now(), setTimer = setTimeout, clearTimer = clearTimeout }) {
   let open = null;
   let seq = 0;
   let timer = null;
   let stopped = false;
+  let autoRun = null;
+
+  async function autoPause(rows, hours, thresholdMs) {
+    const names = [];
+    for (const r of rows) {
+      const res = await pause([r.name], { thresholdMs });
+      if (res && res.paused > 0) names.push(r.name);
+    }
+    if (!names.length) return { names };
+    if (log) log.info('session', `idle pause: paused ${names.length} sessions idle over ${hours}h automatically: ${names.join(', ')}`);
+    broadcast('idle-pause:auto', { names, hours });
+    return { names };
+  }
 
   function check() {
     if (open) return open;
+    if (autoRun) return autoRun;
     const settings = getSettings() || {};
     const hours = settings.idlePauseHours;
     const thresholdMs = hours * HOUR_MS;
@@ -70,6 +85,11 @@ function createIdlePauseAsker({ survey, pause, getSettings, saveSettings, broadc
     const at = now();
     const rows = survey(at, thresholdMs);
     const pausable = rows.filter((r) => !r.reason);
+    if (settings.idlePauseAuto === true) {
+      if (!pausable.length) return null;
+      autoRun = autoPause(pausable, hours, thresholdMs).finally(() => { autoRun = null; });
+      return autoRun;
+    }
     if (!shouldAsk({ pausable: pausable.map((r) => r.name), thresholdMs, declined: settings.idlePauseDeclined || null, now: at })) return null;
     open = { id: `idle-${at}-${++seq}`, hours, thresholdMs, pausable, exempt: rows.filter((r) => r.reason) };
     if (log) log.info('session', `idle pause: asking about ${pausable.length} sessions idle over ${hours}h`);
@@ -81,7 +101,8 @@ function createIdlePauseAsker({ survey, pause, getSettings, saveSettings, broadc
     if (stopped) return;
     timer = setTimer(() => {
       timer = null;
-      try { check(); } catch (e) { if (log) log.warn('session', `idle pause check failed: ${e && e.message}`); }
+      const fail = (e) => { if (log) log.warn('session', `idle pause check failed: ${e && e.message}`); };
+      try { Promise.resolve(check()).catch(fail); } catch (e) { fail(e); }
       schedule(IDLE_PAUSE_CHECK_MS);
     }, ms);
     if (timer && typeof timer.unref === 'function') timer.unref();
@@ -99,7 +120,12 @@ function createIdlePauseAsker({ survey, pause, getSettings, saveSettings, broadc
     }
     const chosen = offered.filter((n) => reply.pause.includes(n));
     const unticked = offered.filter((n) => !chosen.includes(n));
-    saveSettings({ idlePauseDeclined: unticked.length ? { at: now(), names: unticked } : null });
+    if (reply.auto === true) {
+      saveSettings({ idlePauseAuto: true, idlePauseDeclined: null });
+      if (unticked.length) await keep(unticked);
+    } else {
+      saveSettings({ idlePauseDeclined: unticked.length ? { at: now(), names: unticked } : null });
+    }
     const res = await pause(chosen, { thresholdMs: asked.thresholdMs });
     return { ok: true, paused: res.paused, skipped: res.skipped };
   }

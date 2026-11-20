@@ -751,7 +751,7 @@ function addArchivedSessionToSidebar(entry) {
       <div class="session-meta">
         <span class="session-archived-label">${entry.movedTo
           ? `moved to ${esc(entry.movedTo.peerLabel)} — click to resume a copy here`
-          : 'archived — click to resume'}</span>
+          : entry.archiveCause === 'idle' ? 'paused after being idle — click to resume' : 'archived — click to resume'}</span>
       </div>
     </div>
     <button class="session-close" data-tip="Delete archived session">&times;</button>
@@ -1245,7 +1245,7 @@ window.api.onSessionMoveProgress(({ name, phase, bytes, total, files, fileIndex 
     : head);
 });
 
-window.api.onSessionContextAction(({ action, name, type, cwd, error, backend, noWire, ephemeral, io, disposition, background, clone, peerId, peerLabel, envKeys, workspaceId, workspaceName }) => {
+window.api.onSessionContextAction(({ action, name, type, cwd, error, backend, noWire, ephemeral, io, disposition, cause, background, clone, peerId, peerLabel, envKeys, workspaceId, workspaceName }) => {
   switch (action) {
     case 'editArgs':
       openArgsDialog(name);
@@ -1310,7 +1310,7 @@ window.api.onSessionContextAction(({ action, name, type, cwd, error, backend, no
       if (disposition === 'discard') break;
       const item = sessionList.querySelector(`[data-name="${CSS.escape(name)}"]`);
       if (!item) break;
-      archivingSessions.set(name, archivedRowEntry(name, item));
+      archivingSessions.set(name, { ...archivedRowEntry(name, item), ...(cause === 'idle' ? { archiveCause: 'idle' } : {}) });
       break;
     }
     case 'export':
@@ -6080,6 +6080,7 @@ const ESCAPE_CLOSES = [
   ['exec-editor', () => closeExecEditor()],
   ['mcp-editor', () => closeMcpEditor()],
   ['help-overlay', () => closeHelpPanel()],
+  ['idle-pause-overlay', () => closeIdlePause()],
 ];
 
 document.addEventListener('keydown', (e) => {
@@ -6458,10 +6459,14 @@ function hideIdlePause() {
   if (idlePauseOverlay) idlePauseOverlay.classList.add('hidden');
 }
 
-async function answerIdlePause(pause) {
+function closeIdlePause() {
+  return answerIdlePause(false);
+}
+
+async function answerIdlePause(pause, auto = false) {
   const ask = idlePauseShown;
   if (!ask) return;
-  const reply = pause ? { pause: idlePauseTicked() } : { decline: true };
+  const reply = pause ? { pause: idlePauseTicked(), ...(auto ? { auto: true } : {}) } : { decline: true };
   hideIdlePause();
   let res = null;
   try { res = await window.api.idlePauseAnswer(ask.id, reply); } catch { res = null; }
@@ -6476,9 +6481,14 @@ async function answerIdlePause(pause) {
 
 if (idlePauseOverlay) {
   idlePauseGo.addEventListener('click', () => answerIdlePause(true));
-  document.getElementById('idle-pause-later').addEventListener('click', () => answerIdlePause(false));
+  document.getElementById('idle-pause-auto').addEventListener('click', () => answerIdlePause(true, true));
+  document.getElementById('idle-pause-later').addEventListener('click', () => closeIdlePause());
   window.api.onIdlePauseAsk((ask) => showIdlePause(ask));
   window.api.onIdlePauseClosed((msg) => { if (idlePauseShown && msg && msg.id === idlePauseShown.id) hideIdlePause(); });
+  window.api.onIdlePauseAuto((msg) => {
+    const n = msg && Array.isArray(msg.names) ? msg.names.length : 0;
+    if (n) showToast(`Paused ${n} session${n === 1 ? '' : 's'} idle for more than ${msg.hours} hours. Click a paused row to resume it.`, { duration: 15000 });
+  });
   Promise.resolve(window.api.idlePauseCurrent()).then((ask) => { if (ask && !idlePauseShown) showIdlePause(ask); }, () => {});
 }
 window.api.onRequestOpenDiscovery(() => openDiscovery());
@@ -6516,6 +6526,7 @@ const prefsSpillProse = document.getElementById('prefs-spill-prose');
 const prefsDefaultMode = document.getElementById('prefs-default-mode');
 const prefsDiscoverOnStartup = document.getElementById('prefs-discover-on-startup');
 const prefsIdlePauseHours = document.getElementById('prefs-idle-pause-hours');
+const prefsIdlePauseAuto = document.getElementById('prefs-idle-pause-auto');
 const prefsToolsRow = document.getElementById('prefs-tools-row');
 const prefsToolsList = document.getElementById('prefs-tools-list');
 wireBulkToggles(prefsToolsRow, prefsToolsList);
@@ -9546,6 +9557,7 @@ async function openPrefs(group = null) {
   if (prefsDefaultMode) prefsDefaultMode.value = defaultSessionMode(s);
   if (prefsDiscoverOnStartup) prefsDiscoverOnStartup.checked = !!s.discoverOnStartup;
   if (prefsIdlePauseHours) prefsIdlePauseHours.value = String(s.idlePauseHours);
+  if (prefsIdlePauseAuto) prefsIdlePauseAuto.checked = s.idlePauseAuto === true;
   restorePrefsGroups();
   if (group) for (const g of prefsGroups()) { if (g.dataset.group === group) g.open = true; }
   applyPrefsGate();
@@ -9666,6 +9678,7 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
     defaultSessionMode: prefsDefaultMode ? prefsDefaultMode.value : 'optimized',
     discoverOnStartup: prefsDiscoverOnStartup ? prefsDiscoverOnStartup.checked : false,
     ...(prefsIdlePauseHours && prefsIdlePauseHours.value.trim() ? { idlePauseHours: Number(prefsIdlePauseHours.value) } : {}),
+    ...(prefsIdlePauseAuto ? { idlePauseAuto: prefsIdlePauseAuto.checked } : {}),
     remoteEnabled: prefsRemoteEnabled.checked,
     ...(prefsRemoteBasePath
       ? patchUnlessEnvLocked(prefsEnvLocked, 'remoteBasePath', prefsRemoteBasePath.value)

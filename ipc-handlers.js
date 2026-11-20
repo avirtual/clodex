@@ -1387,6 +1387,7 @@ function registerIpcHandlers(deps) {
       defaultSessionMode: s.defaultSessionMode,
       discoverOnStartup: s.discoverOnStartup,
       idlePauseHours: s.idlePauseHours,
+      idlePauseAuto: s.idlePauseAuto === true,
       theme: s.theme,
       terminalWebgl: s.terminalWebgl,
       transcriptPane: s.transcriptPane,
@@ -2338,6 +2339,10 @@ function registerIpcHandlers(deps) {
         label: 'Restart Session',
         click: () => e.sender.send('session:context-action', { action: 'restart', name }),
       },
+      ...(isAgent ? [{
+        label: 'Keep running when idle', type: 'checkbox', checked: entry.keepRunning === true,
+        click: () => persistence.setKeepRunning(name, entry.keepRunning !== true),
+      }] : []),
       ...(isAgent ? [{
         label: 'Move Session…',
         click: () => e.sender.send('session:context-action', { action: 'move', name }),

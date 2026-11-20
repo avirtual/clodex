@@ -6,7 +6,7 @@ THIS is the push half. A browser frontend must receive each of these over WS
 exactly as the Electron renderer receives them over `ipcRenderer.on`.
 
 **Authoritative receiver list**: the `ipcRenderer.on(channel, …)` calls in
-`preload.js` (78 channels). This doc maps each to its emission point, its
+`preload.js` (79 channels). This doc maps each to its emission point, its
 payload shape (field NAMES, not full types), and the interception point a web
 host subscribes to.
 
@@ -93,6 +93,7 @@ Every live window; a web host fans to every connection.
 | `notifications:changed` | `payload` `{kind, id?, unread, note?}` — an operator-inbox mutation, from ANY surface including a phone over `/api/inbox`. Distinct from the `ipc-message` `{type:'notify'}` row above, which fires on ARRIVAL only: a note marked read off-box produces no `notify`, and without this the desktop badge keeps counting it | remote-wiring `watchInbox` (the notifications store's `onChange`) |
 | `idle-pause:ask` | `ask` `{id, hours, thresholdMs, pausable, exempt}` — the idle question; each row `{name, type, idleMs, idle, reason}` (`reason` null when pausable) | engine `createIdlePauseAsker` (idle-pause.js) |
 | `idle-pause:closed` | `{id}` — the question was answered in some window; the others drop the dialog | idle-pause.js `answer` |
+| `idle-pause:auto` | `{names, hours}` — an automatic pass (`idlePauseAuto` on) paused these sessions; the renderer shows a toast. Not sent when nothing was paused | idle-pause.js `createIdlePauseAsker` `check` |
 | `wire-quota` | `{accounts, latest}` (plan quota off the wire's `anthropic-ratelimit-unified-*` response headers; absolute `reset`, no baked countdown). `accounts` is one labelled snapshot per account the wire has seen, `default` first; `latest` is the last-seen account's alone | session-manager `_broadcastQuota` / the wire `response` consumer, both via `_quotaPayload` |
 | `session:move-progress` | `{name, phase, bytes, total, files, fileIndex}` — phases `begin` → `transcript` → `seat` → `commit`; `bytes`/`total` are BYTES across the whole shipment (monotonic, so a bar can read `bytes/total` directly), `files`/`fileIndex` the file count and the one in flight | session-manager `moveToPeer` |
 | `peer-disabled` | `id, on, label` | ipc-handlers (`peer:setDisabled`) |
