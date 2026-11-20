@@ -2494,9 +2494,10 @@ body.drawer-dragging #drawer, body.drawer-dragging #work-row { transition: none;
 .idle-pause-list { overflow-y: auto; max-height: 40vh; display: flex; flex-direction: column; gap: 2px; }
 .idle-pause-row { display: flex; align-items: center; gap: 10px; padding: 3px 4px; }
 .idle-pause-name { flex: 1; font-weight: 600; }
-.idle-pause-type, .idle-pause-idle, .idle-pause-reason { color: var(--text-tertiary); }
+.idle-pause-type, .idle-pause-idle, .idle-pause-mem, .idle-pause-reason { color: var(--text-tertiary); }
 #idle-pause-exempt-block summary { cursor: pointer; color: var(--text-tertiary); }
-#idle-pause-exempt-block.hidden { display: none; }
+#idle-pause-exempt-block.hidden, #idle-pause-frees.hidden { display: none; }
+#idle-pause-frees { margin: 0; }
 #setup-dialog { width: 460px; }
 .discovery-list {
   flex: 1;

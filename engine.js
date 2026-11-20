@@ -804,6 +804,7 @@ const { isFilenameToken, parseAndValidate, clampReplyBody, DEFAULT_MAX_BYTES } =
 const { parseRemindSpec } = require('./remind-schedule');
 const { createRemindScheduler, reminderText, reminderLibraryKinds } = require('./remind-scheduler');
 const { createIdlePauseAsker } = require('./idle-pause');
+const procMemory = require('./proc-memory');
 const { mergeClaudeSystemPrompt, mergeCodexInstructions, mergeInstructionBodies, parseCtxFile } = require('./argv-merge');
 const { renderClaudeStatusScript, codexStatusLineArg, normalizeProxyBase, resolveProxyBase } = require('./statusline');
 const { jsonlToMarkdown, cachedMessages, sliceSince, jsonlToMessages, extractText } = require('./transcript');
@@ -2352,6 +2353,7 @@ const toolCache = createToolCache({ whichBin });
     getSettings: () => uiSettings.get(),
     saveSettings: (partial) => uiSettings.set(partial),
     broadcast: (ch, payload) => manager._broadcast(ch, payload),
+    sample: (pids) => procMemory.sample(pids),
     log,
   });
   idlePause.start();

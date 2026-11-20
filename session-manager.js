@@ -4330,6 +4330,7 @@ function createSessionManager(deps) {
         type: s.agentType || s.type || 'bash',
         archived: !!(s._archived || (rec && rec.archivedAt)),
         exited: !!s._dead,
+        pid: this._procPid(s),
         activityTs: s.activityTs || s.spawnedAt || 0,
         operatorInputAt: s.lastUserInputTs || 0,
         bash: !s.agentType,

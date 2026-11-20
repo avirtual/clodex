@@ -48,6 +48,7 @@ const SCANNED_MODULES = [
   'dev-reload.js',
   'assistant-sleep.js',
   'idle-pause.js',
+  'proc-memory.js',
   'mcp-plan.js',
   'open-requests.js',
   'session-manager.js',

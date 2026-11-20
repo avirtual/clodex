@@ -213,6 +213,9 @@ bundle), whose packaged form is the Docker image under
   start-up and hourly check, the `idle-pause:ask`/`idle-pause:closed`/`idle-pause:auto`
   broadcasts, first answer wins). engine.js wires it to SessionManager's
   `idlePauseSurvey`/`pauseIdle` and the ui-settings store.
+- **proc-memory.js** — process-tree memory: `treeRssBytes` (pure, RSS summed
+  over each root pid and its descendants) and `sample` (one `ps` call for all
+  roots, empty Map on failure or win32). The idle question's `sample` dep.
 - **stream-seat.js** — the electron-free child-process owner behind a stream
   seat (`io: 'stream'`, `claude -p` over stream-json): spawns detached in its
   own process group, splits stdout into JSON lines with no length cap, writes

@@ -163,3 +163,55 @@ test('asker: threshold 0 never surveys', () => {
   assert.strictEqual(asker.check(), null);
   assert.strictEqual(surveyed, 0);
 });
+
+function memAsker({ rows, sample }) {
+  const calls = { broadcast: [], sampled: [] };
+  const asker = createIdlePauseAsker({
+    survey: (now, thresholdMs) => idleCandidates({ sessions: rows(), now, thresholdMs }),
+    pause: async () => ({ paused: 0, skipped: 0 }),
+    getSettings: () => ({ idlePauseHours: 48, idlePauseDeclined: null }),
+    saveSettings: () => {},
+    broadcast: (ch, payload) => calls.broadcast.push([ch, payload]),
+    sample: (pids) => { calls.sampled.push(pids); return sample(pids); },
+    now: () => NOW,
+    setTimer: () => ({}),
+    clearTimer: () => {},
+  });
+  return { asker, calls };
+}
+
+const pidRows = () => ['a', 'b', 'c', 'd', 'e', 'f'].map((n, i) => row(n, { pid: 100 + i }))
+  .concat([row('lead1', { lead: true, pid: 200 }), row('nopid')]);
+const MB = 1024 * 1024;
+
+test('asker: one sample per ask; memBytes on every row and memBytesTotal over the pausable ones', () => {
+  const bytes = new Map([[100, 300 * MB], [101, 200 * MB], [102, 0], [200, 50 * MB]]);
+  const { asker, calls } = memAsker({ rows: pidRows, sample: () => bytes });
+  const ask = asker.check();
+  assert.ok(ask, 'ENTER: asked');
+  assert.deepStrictEqual(calls.sampled, [[100, 101, 102, 103, 104, 105, 200]]);
+  assert.deepStrictEqual(ask.pausable.map((r) => [r.name, r.memBytes]), [
+    ['a', 314572800], ['b', 209715200], ['c', null], ['d', null], ['e', null], ['f', null], ['nopid', null],
+  ]);
+  assert.deepStrictEqual(ask.exempt.map((r) => [r.name, r.memBytes]), [['lead1', 52428800]]);
+  assert.strictEqual(ask.memBytesTotal, 524288000);
+  assert.strictEqual('pid' in ask.pausable[0], false);
+  asker.check();
+  assert.strictEqual(calls.sampled.length, 1, 'an open question is not re-sampled');
+});
+
+test('asker: no ask, no sample', () => {
+  const { asker, calls } = memAsker({ rows: () => [row('a', { pid: 1 })], sample: () => new Map() });
+  assert.strictEqual(asker.check(), null);
+  assert.deepStrictEqual(calls.sampled, []);
+});
+
+test('asker: a sample that throws or returns nothing still asks, with null figures', () => {
+  for (const sample of [() => { throw new Error('ps died'); }, () => new Map()]) {
+    const { asker } = memAsker({ rows: pidRows, sample });
+    const ask = asker.check();
+    assert.ok(ask, 'ENTER: asked');
+    assert.deepStrictEqual(ask.pausable.concat(ask.exempt).map((r) => r.memBytes), [null, null, null, null, null, null, null, null]);
+    assert.strictEqual(ask.memBytesTotal, null);
+  }
+});
