@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The idle-session question shows how much memory each idle session holds and how much pausing them frees.
+
 ## 5.191.0 — 2026-11-20
 
 - The idle-session question can now turn on automatic pausing: sessions idle past the limit are paused on their own, with a notice, and a row can be marked 'Keep running when idle'. Off unless you choose it; Escape in the question means Not now.

@@ -3975,6 +3975,7 @@ body.drawer-dragging #work-row {
 }
 .idle-pause-type,
 .idle-pause-idle,
+.idle-pause-mem,
 .idle-pause-reason {
   color: var(--text-tertiary);
 }
@@ -3982,8 +3983,12 @@ body.drawer-dragging #work-row {
   cursor: pointer;
   color: var(--text-tertiary);
 }
-#idle-pause-exempt-block.hidden {
+#idle-pause-exempt-block.hidden,
+#idle-pause-frees.hidden {
   display: none;
+}
+#idle-pause-frees {
+  margin: 0;
 }
 #setup-dialog {
   width: 460px;
@@ -11196,6 +11201,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         <h3 id="idle-pause-title"></h3>
         <button type="button" class="dialog-close" aria-label="Close" title="Not now">&times;</button>
       </div>
+      <p id="idle-pause-frees" class="hidden"></p>
       <p class="hint-text">Pausing stops a session's process and keeps its conversation. It stays in the sidebar and resumes when you click it.</p>
       <div id="idle-pause-list" class="idle-pause-list"></div>
       <details id="idle-pause-exempt-block" class="hidden">
@@ -60124,6 +60130,10 @@ Click for live activity`;
       var idlePauseList = document.getElementById("idle-pause-list");
       var idlePauseGo = document.getElementById("idle-pause-go");
       var idlePauseShown = null;
+      function idlePauseMem(bytes) {
+        const mb = bytes / (1024 * 1024);
+        return mb < 1024 ? `${Math.round(mb)} MB` : `${(mb / 1024).toFixed(1)} GB`;
+      }
       function idlePauseRowEl(row, selectable) {
         const el = document.createElement(selectable ? "label" : "div");
         el.className = "idle-pause-row";
@@ -60141,6 +60151,12 @@ Click for live activity`;
           span.textContent = text;
           el.appendChild(span);
         }
+        if (row.memBytes != null) {
+          const mem = document.createElement("span");
+          mem.className = "idle-pause-mem";
+          mem.textContent = idlePauseMem(row.memBytes);
+          el.appendChild(mem);
+        }
         if (!selectable) {
           const why = document.createElement("span");
           why.className = "idle-pause-reason";
@@ -60156,6 +60172,11 @@ Click for live activity`;
         const n = idlePauseTicked().length;
         idlePauseGo.textContent = `Pause ${n} session${n === 1 ? "" : "s"}`;
         idlePauseGo.disabled = n === 0;
+        const ticked = new Set(idlePauseTicked());
+        const known = (idlePauseShown && idlePauseShown.pausable || []).filter((r) => ticked.has(r.name) && r.memBytes != null);
+        const frees = document.getElementById("idle-pause-frees");
+        frees.classList.toggle("hidden", !known.length);
+        frees.textContent = known.length ? `Pausing all of them frees about ${idlePauseMem(known.reduce((t, r) => t + r.memBytes, 0))}.` : "";
       }
       function showIdlePause(ask) {
         if (!ask || !idlePauseOverlay) return;
@@ -60206,7 +60227,8 @@ Click for live activity`;
         });
         window.api.onIdlePauseAuto((msg) => {
           const n = msg && Array.isArray(msg.names) ? msg.names.length : 0;
-          if (n) showToast(`Paused ${n} session${n === 1 ? "" : "s"} idle for more than ${msg.hours} hours. Click a paused row to resume it.`, { duration: 15e3 });
+          const freed = msg && msg.memBytes > 0 ? `, freeing about ${idlePauseMem(msg.memBytes)}` : "";
+          if (n) showToast(`Paused ${n} session${n === 1 ? "" : "s"} idle for more than ${msg.hours} hours${freed}. Click a paused row to resume it.`, { duration: 15e3 });
         });
         Promise.resolve(window.api.idlePauseCurrent()).then((ask) => {
           if (ask && !idlePauseShown) showIdlePause(ask);
