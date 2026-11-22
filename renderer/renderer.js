@@ -6581,7 +6581,6 @@ const prefsSuiteRunnerSlots = document.getElementById('prefs-suite-runner-slots'
 const prefsSuiteRunnerBuildBoxes = document.getElementById('prefs-suite-runner-buildBoxes');
 const prefsSuiteRunnerShares = document.getElementById('prefs-suite-runner-shares');
 let prefsSuiteRunnerShareRows = null;
-const prefsSuiteRunnerApply = document.getElementById('prefs-suite-runner-apply');
 const prefsSuiteRunnerStatus = document.getElementById('prefs-suite-runner-status');
 const prefsSuiteRunnerNoneNote = document.getElementById('prefs-suite-runner-none-note');
 const prefsBoxOfferBlock = document.getElementById('prefs-box-offer-block');
@@ -6598,6 +6597,7 @@ const prefsBoxOfferSelf = document.getElementById('prefs-box-offer-self');
 const prefsBoxOfferFacts = document.getElementById('prefs-box-offer-facts');
 const prefsBoxOfferStatus = document.getElementById('prefs-box-offer-status');
 const prefsBoxOfferApply = document.getElementById('prefs-box-offer-apply');
+const prefsTestBoxesUnsaved = document.getElementById('prefs-test-boxes-unsaved');
 const prefsBoxOfferScope = document.getElementById('prefs-box-offer-scope');
 const prefsBoxOfferRunNote = document.getElementById('prefs-box-offer-run-note');
 const prefsBoxOfferClaims = document.getElementById('prefs-box-offer-claims');
@@ -9661,7 +9661,7 @@ function collectChecked(container) {
 
 document.getElementById('btn-prefs-cancel').addEventListener('click', closePrefs);
 prefsOverlay.addEventListener('mousedown', (e) => { if (e.target === prefsOverlay) closePrefs(); });
-document.getElementById('btn-prefs-save').addEventListener('click', async () => {
+async function writePrefsSettings() {
   const seatView = prefsSeatView ? seatViewSettings(prefsSeatView.value, transcriptPaneMode) : null;
   await window.api.setSettings({
     statusline: {
@@ -9720,8 +9720,21 @@ document.getElementById('btn-prefs-save').addEventListener('click', async () => 
   // The watchers read a cache, so without this the setting applies only at the
   // next window load — including the OFF direction.
   await refreshVoiceSubmitConfig();
+}
+
+async function savePrefs() {
+  await writePrefsSettings();
+  const refused = await applyTestBoxSettings();
+  if (refused.length) {
+    const group = refused[0].closest('details');
+    if (group) group.open = true;
+    refused[0].scrollIntoView({ block: 'nearest' });
+    return;
+  }
   closePrefs();
-});
+}
+
+document.getElementById('btn-prefs-save').addEventListener('click', savePrefs);
 
 // Applies ON CHANGE, not on Save, and deliberately does not ride the
 // setSettings batch above. `peer:setShellAllowed` is what re-derives the wterm
@@ -9777,9 +9790,23 @@ function suiteRunnerStatusText(st) {
 }
 
 let prefsSuiteRunnerShown = null;
+let prefsSuiteRunnerEdited = false;
+
+function syncTestBoxesUnsaved() {
+  if (!prefsTestBoxesUnsaved) return;
+  const names = [prefsSuiteRunnerEdited && 'Test runner', prefsBoxOfferEdited && 'Offer test boxes'].filter(Boolean);
+  prefsTestBoxesUnsaved.textContent = names.length ? `Unsaved changes in: ${names.join(', ')}` : '';
+  prefsTestBoxesUnsaved.classList.toggle('hidden', !names.length);
+}
+
+function markSuiteRunnerEdited() {
+  prefsSuiteRunnerEdited = true;
+  syncTestBoxesUnsaved();
+}
 
 function renderSuiteRunnerPrefs(st) {
   prefsSuiteRunnerShown = st;
+  prefsSuiteRunnerEdited = false;
   const rec = st.setting || { enabled: false, isolation: 'user', work: null };
   const eff = st.effective || {};
   const forced = new Set(st.forced || []);
@@ -9801,10 +9828,13 @@ function renderSuiteRunnerPrefs(st) {
   prefsSuiteRunnerNoneNote.classList.toggle('hidden', prefsSuiteRunnerIsolation.value !== 'none');
   prefsSuiteRunnerStatus.textContent = suiteRunnerStatusText(st);
   if (prefsBoxOfferShown) { prefsBoxOfferShown.runner = offerRunnerFrom(st); syncBoxOfferScope(); }
+  syncTestBoxesUnsaved();
 }
 
 async function refreshSuiteRunnerPrefs() {
   if (!prefsSuiteRunnerBlock) return;
+  prefsSuiteRunnerEdited = false;
+  syncTestBoxesUnsaved();
   let st = null;
   try { st = await window.api.suiteRunnerGet(); } catch { st = null; }
   if (!st || typeof st.status !== 'string') st = null;
@@ -9824,28 +9854,49 @@ function suiteRunnerRecordToSave() {
   });
 }
 
-if (prefsSuiteRunnerBlock) {
+async function saveSuiteRunnerBlock() {
+  let res = null;
+  try { res = await window.api.suiteRunnerSet(suiteRunnerRecordToSave()); } catch { res = null; }
+  if (!res || res.ok !== true) {
+    showToast(`Test runner not changed: ${(res && res.error) || 'the change failed'}`, { kind: 'warn' });
+    if (res && res.state) prefsSuiteRunnerStatus.textContent = suiteRunnerStatusText(res.state);
+    return false;
+  }
+  if (res.state) renderSuiteRunnerPrefs(res.state);
+  else { prefsSuiteRunnerEdited = false; syncTestBoxesUnsaved(); }
+  if (res.state && res.state.status === 'starting') {
+    setTimeout(() => { if (!prefsOverlay.classList.contains('hidden')) refreshSuiteRunnerPrefs(); }, 1500);
+  }
+  return true;
+}
+
+async function applyTestBoxSettings() {
+  const refused = [];
+  if (prefsSuiteRunnerEdited && !(await saveSuiteRunnerBlock())) refused.push(prefsSuiteRunnerBlock);
+  if (prefsBoxOfferEdited && !(await saveBoxOfferBlock())) refused.push(prefsBoxOfferBlock);
+  return refused;
+}
+
+function wireSuiteRunnerPrefs() {
+  prefsSuiteRunnerBlock.addEventListener('input', markSuiteRunnerEdited);
+  prefsSuiteRunnerBlock.addEventListener('change', markSuiteRunnerEdited);
+  if (prefsSuiteRunnerShares) {
+    prefsSuiteRunnerShares.addEventListener('click', (e) => { if (e.target && e.target.closest && e.target.closest('button')) markSuiteRunnerEdited(); });
+  }
   prefsSuiteRunnerIsolation.addEventListener('change', () => {
     prefsSuiteRunnerNoneNote.classList.toggle('hidden', prefsSuiteRunnerIsolation.value !== 'none');
   });
-  prefsSuiteRunnerApply.addEventListener('click', async () => {
-    let res = null;
-    try { res = await window.api.suiteRunnerSet(suiteRunnerRecordToSave()); } catch { res = null; }
-    if (!res || res.ok !== true) {
-      showToast(`Test runner not changed: ${(res && res.error) || 'the change failed'}`, { kind: 'warn' });
-    }
-    if (res && res.state) renderSuiteRunnerPrefs(res.state);
-    if (res && res.state && res.state.status === 'starting') {
-      setTimeout(() => { if (!prefsOverlay.classList.contains('hidden')) refreshSuiteRunnerPrefs(); }, 1500);
-    }
-  });
 }
+
+if (prefsSuiteRunnerBlock) wireSuiteRunnerPrefs();
+if (prefsBoxOfferApply) prefsBoxOfferApply.addEventListener('click', () => { applyTestBoxSettings(); });
 
 let prefsBoxOfferShown = null;
 let prefsBoxOfferEdited = false;
 
 function markBoxOfferEdited() {
   prefsBoxOfferEdited = true;
+  syncTestBoxesUnsaved();
 }
 
 function boxOfferWindowRow(w) {
@@ -9961,6 +10012,7 @@ function renderBoxOfferPrefs(st, { keepForm = false } = {}) {
   prefsBoxOfferStatus.textContent = offerStatusText(st);
   syncBoxOfferSchedule();
   for (const el of prefsBoxOfferBlock.querySelectorAll('input, select, button')) el.disabled = st.forced;
+  syncTestBoxesUnsaved();
 }
 
 function boxOfferKeepsForm(st) {
@@ -9977,6 +10029,38 @@ async function refreshBoxOfferPrefs() {
   if (!st || typeof st.forced !== 'boolean') st = null;
   prefsBoxOfferBlock.classList.toggle('hidden', !st);
   if (st) renderBoxOfferPrefs(st, { keepForm: boxOfferKeepsForm(st) });
+}
+
+async function saveBoxOfferBlock() {
+  const form = {
+    scope: prefsBoxOfferScope.value,
+    enabled: prefsBoxOfferEnabled.checked,
+    boxes: prefsBoxOfferBoxes.value,
+    availability: prefsBoxOfferAvailability.value,
+    schedule: readBoxOfferSchedule(),
+    peers: [...prefsBoxOfferPeers.querySelectorAll('input[data-peer]')].filter((b) => b.checked).map((b) => b.dataset.peer),
+  };
+  const problem = offerFormProblem(form);
+  if (problem) { showToast(`Offer test boxes not changed: ${problem}`, { kind: 'warn' }); return false; }
+  const rec = offerRecordFromForm(form);
+  let confirm;
+  if (rec.scope === 'run' && rec.enabled) {
+    const names = rec.peers.map((p) => p.name);
+    let runnerSt = null;
+    try { runnerSt = await window.api.suiteRunnerGet(); } catch { runnerSt = null; }
+    if (!window.confirm(offerRunConsentText(names, offerRunnerFrom(runnerSt)))) return false;
+    confirm = { peers: names };
+  }
+  let res = null;
+  try { res = await window.api.offerSet(rec, confirm); } catch { res = null; }
+  if (!res || res.ok !== true) {
+    showToast(`Offer test boxes not changed: ${(res && res.error) || 'the change failed'}`, { kind: 'warn' });
+    if (res && res.state) renderBoxOfferPrefs(res.state, { keepForm: true });
+    return false;
+  }
+  if (res.state) renderBoxOfferPrefs(res.state);
+  else { prefsBoxOfferEdited = false; syncTestBoxesUnsaved(); }
+  return true;
 }
 
 if (prefsBoxOfferBlock) {
@@ -10004,33 +10088,6 @@ if (prefsBoxOfferBlock) {
   prefsBoxOfferPeerAdd.addEventListener('click', addBoxOfferPeer);
   prefsBoxOfferPeerName.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); addBoxOfferPeer(); }
-  });
-  prefsBoxOfferApply.addEventListener('click', async () => {
-    const form = {
-      scope: prefsBoxOfferScope.value,
-      enabled: prefsBoxOfferEnabled.checked,
-      boxes: prefsBoxOfferBoxes.value,
-      availability: prefsBoxOfferAvailability.value,
-      schedule: readBoxOfferSchedule(),
-      peers: [...prefsBoxOfferPeers.querySelectorAll('input[data-peer]')].filter((b) => b.checked).map((b) => b.dataset.peer),
-    };
-    const problem = offerFormProblem(form);
-    if (problem) { showToast(`Box offer not changed: ${problem}`, { kind: 'warn' }); return; }
-    const rec = offerRecordFromForm(form);
-    let confirm;
-    if (rec.scope === 'run' && rec.enabled) {
-      const names = rec.peers.map((p) => p.name);
-      let runnerSt = null;
-      try { runnerSt = await window.api.suiteRunnerGet(); } catch { runnerSt = null; }
-      if (!window.confirm(offerRunConsentText(names, offerRunnerFrom(runnerSt)))) return;
-      confirm = { peers: names };
-    }
-    let res = null;
-    try { res = await window.api.offerSet(rec, confirm); } catch { res = null; }
-    if (!res || res.ok !== true) {
-      showToast(`Box offer not changed: ${(res && res.error) || 'the change failed'}`, { kind: 'warn' });
-    }
-    if (res && res.state) renderBoxOfferPrefs(res.state);
   });
   window.api.onOffersChanged(async () => {
     if (prefsOverlay.classList.contains('hidden') || !prefsBoxOfferShown) return;

@@ -1394,7 +1394,7 @@
         <summary><h4>Test boxes</h4><span class="prefs-group-sub">Run other nodes' test suites on this machine, and say who may</span></summary>
         <div id="prefs-suite-runner-block">
           <h5 style="margin-top: 14px;">Test runner</h5>
-          <p class="hint-text">Runs test suites that your peers send to this machine. Needs phone access on: peers reach the runner over the same wire. Applies when you press Apply, with no restart; refused while a job is running.</p>
+          <p class="hint-text">Runs test suites that your peers send to this machine. Needs phone access on: peers reach the runner over the same wire. Applies when you press Apply test box settings, or Save, with no restart; refused while a job is running.</p>
           <label class="prefs-check">
             <input type="checkbox" id="prefs-suite-runner-enabled">
             <span>Run tests for peers on this machine</span>
@@ -1422,7 +1422,6 @@
           <div class="prefs-row" style="margin-top: 6px;">
             <span>Box image</span>
             <input type="text" id="prefs-suite-runner-boxImage" placeholder="sha256:…" autocomplete="off" spellcheck="false" style="flex: 1;">
-            <button id="prefs-suite-runner-apply" class="secondary" type="button" style="flex: none;">Apply</button>
           </div>
           <p class="hint-text">Image id of a hand-built image; jobs that ask for a box run in a fresh container of it. Leave empty to run only native jobs.</p>
           <p id="prefs-suite-runner-boxImage-env" class="hint-text hidden">set by environment</p>
@@ -1430,7 +1429,7 @@
             <input type="checkbox" id="prefs-suite-runner-buildBoxes">
             <span>Build box images that teams ask for</span>
           </label>
-          <p class="hint-text">Lets every peer you allow to run jobs here run its Dockerfile build steps on this machine, with network access, and keeps the resulting image on disk. Off: a job whose image is missing is refused, as before.</p>
+          <p class="hint-text">Lets every peer you allow to run jobs here run its Dockerfile build steps on this machine, with network access, and keeps the resulting image on disk. Off: a job whose image is missing is refused, as before. Builds can pull any image your Docker login can.</p>
           <div class="prefs-row" style="margin-top: 6px;">
             <span>Shared folders</span>
           </div>
@@ -1440,7 +1439,7 @@
         </div>
         <div id="prefs-box-offer-block">
           <h5 style="margin-top: 14px;">Offer test boxes</h5>
-          <p class="hint-text">Tells the peers you tick below that this machine offers test boxes. Applies when you press Apply; peers see the change at their next hello.</p>
+          <p class="hint-text">Tells the peers you tick below that this machine offers test boxes. Applies when you press Apply test box settings, or Save; peers see the change at their next hello.</p>
           <label class="prefs-check">
             <input type="checkbox" id="prefs-box-offer-enabled">
             <span>Offer test boxes from this machine</span>
@@ -1475,8 +1474,11 @@
           <p id="prefs-box-offer-facts" class="hint-text"></p>
           <div class="prefs-row" style="margin-top: 6px;">
             <span id="prefs-box-offer-status" class="hint-text" style="flex: 1;"></span>
-            <button id="prefs-box-offer-apply" class="secondary" type="button" style="flex: none;">Apply</button>
           </div>
+        </div>
+        <div class="prefs-row" style="margin-top: 10px;">
+          <span id="prefs-test-boxes-unsaved" class="hint-text hidden" style="flex: 1;"></span>
+          <button id="prefs-box-offer-apply" class="secondary" type="button" style="flex: none; margin-left: auto;">Apply test box settings</button>
         </div>
       </details>
       <details class="prefs-group" data-group="discovery">
