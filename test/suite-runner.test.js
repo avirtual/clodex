@@ -1853,7 +1853,12 @@ test('activity reads the totals of a job whose stored record predates outcomes f
 async function sharesFixture(t, shares, { onSpawn } = {}) {
   const fb = fakeBox();
   const spawned = [];
-  const box = { ...fb.box, spawn(args) { spawned.push([args.job.id, args.argv[0], args.shares || null]); return fb.box.spawn(args); } };
+  const placed = [];
+  const box = { ...fb.box, spawn(args) {
+    spawned.push([args.job.id, args.argv[0], args.shares || null]);
+    if (args.argv[0] === 'node') for (const s of args.shares || []) placed.push([s.name, fs.existsSync(path.join(args.cwd, '.shares', s.name))]);
+    return fb.box.spawn(args);
+  } };
   const f = await fixture(t, { runnerOver: { box }, onSpawn });
   f.runner.close();
   const runner = f.make({ box, shares: shares(f) });
@@ -1865,7 +1870,7 @@ async function sharesFixture(t, shares, { onSpawn } = {}) {
     assert.strictEqual((await runner.putPack(b.id, 0, pack)).ok, true);
     return runner.commit(b.id, { bytes: pack.length, sha256: sha256(pack) });
   };
-  return { f, runner, upload, spawned };
+  return { f, runner, upload, spawned, placed };
 }
 
 test('t2363: a box job naming two shares runs the tests with both mounted and is stamped with them; setup runs without them', async (t) => {
@@ -1882,6 +1887,7 @@ test('t2363: a box job naming two shares runs the tests with both mounted and is
     ['sh-ok', '/bin/sh', null],
     ['sh-ok', 'node', [{ name: 'a', src: path.join(host, 'assets') }, { name: 'b', src: path.join(host, 'models') }]],
   ]);
+  assert.deepStrictEqual(s.placed, [['a', true], ['b', true]]);
   assert.deepStrictEqual(done.env.box, { imageId: BOX_IMAGE, shares: [{ name: 'a', version: 'v1' }, { name: 'b', version: '2026.11' }] });
 });
 

@@ -931,6 +931,7 @@ function createSuiteRunner({
         fs.appendFileSync(outFile(job.id, 'stderr'), `suite-runner: ${m.why}\n`);
         return finish(job, { reason: 'box-failed', exit: null });
       }
+      for (const { name } of m.mounts) fs.mkdirSync(path.join(tree, '.shares', name), { recursive: true });
       mounts = m.mounts.map(({ name, src }) => ({ name, src }));
       job.identity = { ...job.identity, box: { ...(job.identity.box || {}), shares: m.mounts.map(({ name, version }) => ({ name, version })) } };
       save(job);
