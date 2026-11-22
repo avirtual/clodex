@@ -23,7 +23,7 @@ const { localHalf, failingNames } = require('./suite-client');
 const { boxVerdict } = require('./suite-client');
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
-  DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_WIRE_PUSH: WIRE_PUSH,
+  DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_WIRE_PUSH: WIRE_PUSH, TEST_RUNNER_POOL_MAX,
 } = require('./team-manifest');
 const {
   readTeamJson, teamTemplatePath, teamTemplateSave, mayGrantOf, ownTeamExecGrants, clampToGrantor, teamTemplateRemove, teamPromptSave, teamPromptRemove,

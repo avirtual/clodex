@@ -201,7 +201,8 @@ const TEST_RUNNER_HANDS = ['off', 'full', 'all'];
 const TEST_RUNNER_GATE = ['off', 'shadow', 'on'];
 const TEST_RUNNER_WIRE_PUSH = 'push';
 const TEST_RUNNER_WIRE = [TEST_RUNNER_WIRE_PUSH, 'pull'];
-const TEST_RUNNER_KEYS = ['peer', 'hands', 'gate', 'wire', 'setup', 'env', 'box'];
+const TEST_RUNNER_KEYS = ['peer', 'hands', 'gate', 'wire', 'setup', 'env', 'box', 'pool'];
+const TEST_RUNNER_POOL_MAX = 8;
 const TEST_RUNNER_SETUP_KEYS = ['run', 'key', 'paths', 'timeoutMs'];
 const TEST_RUNNER_ENV_RE = /^[A-Z_][A-Z0-9_]*$/;
 const TEST_RUNNER_TIMEOUT_MIN_MS = 10 * 1000;
@@ -234,6 +235,20 @@ function normalizeRunnerEnv(e) {
   return Object.fromEntries(entries);
 }
 
+function normalizeRunnerPool(pool, first) {
+  if (!Array.isArray(pool) || !pool.length || pool.length > TEST_RUNNER_POOL_MAX - 1) return null;
+  const names = new Set([first]);
+  const out = [];
+  for (const row of pool) {
+    if (!isPlainObject(row) || Object.keys(row).some((k) => k !== 'peer' && k !== 'wire')) return null;
+    if (typeof row.peer !== 'string' || !NAME_RE.test(row.peer) || names.has(row.peer)) return null;
+    if (row.wire !== undefined && !TEST_RUNNER_WIRE.includes(row.wire)) return null;
+    names.add(row.peer);
+    out.push({ peer: row.peer, ...(row.wire !== undefined ? { wire: row.wire } : {}) });
+  }
+  return out;
+}
+
 function normalizeTestRunner(v) {
   if (!isPlainObject(v) || Object.keys(v).some((k) => !TEST_RUNNER_KEYS.includes(k))) return null;
   if (typeof v.peer !== 'string' || !NAME_RE.test(v.peer)) return null;
@@ -245,7 +260,8 @@ function normalizeTestRunner(v) {
   const setup = v.setup === undefined ? undefined : normalizeRunnerSetup(v.setup);
   const env = v.env === undefined ? undefined : normalizeRunnerEnv(v.env);
   if (setup === null || env === null) return null;
-  return { peer: v.peer, hands, gate, ...(v.wire !== undefined ? { wire: v.wire } : {}), ...(setup ? { setup } : {}), ...(env ? { env } : {}), ...(v.box !== undefined ? { box: v.box } : {}) };
+  const pool = v.pool === undefined ? null : normalizeRunnerPool(v.pool, v.peer);
+  return { peer: v.peer, hands, gate, ...(v.wire !== undefined ? { wire: v.wire } : {}), ...(setup ? { setup } : {}), ...(env ? { env } : {}), ...(v.box !== undefined ? { box: v.box } : {}), ...(pool ? { pool } : {}) };
 }
 
 function boxCpus(cpuMax, cpus) {
@@ -666,6 +682,12 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
       if (!warnedDrops.has(seen)) {
         warnedDrops.add(seen);
         console.warn(`team "${name}": testRunner is invalid and ignored as a whole — see docs/teams.md for its shape and limits (${file})`);
+      }
+    } else if (testRunner && m.testRunner.pool !== undefined && !testRunner.pool) {
+      const seen = `invalid|${file}|testRunner.pool`;
+      if (!warnedDrops.has(seen)) {
+        warnedDrops.add(seen);
+        console.warn(`team "${name}": testRunner.pool is invalid and ignored; ${testRunner.peer} stays the only runner (${file})`);
       }
     }
     const rosterState = readRoster(name, roles, lead);
@@ -1698,7 +1720,7 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
   function setTeamTestRunner(teamName, patch) {
     const team = loadManifest(teamName);
     if (patch !== null && (!isPlainObject(patch) || !Object.keys(patch).length
-      || Object.keys(patch).some((k) => !['peer', 'hands', 'gate', 'wire'].includes(k)))) {
+      || Object.keys(patch).some((k) => !['peer', 'hands', 'gate', 'wire', 'pool'].includes(k)))) {
       throw new Error(`testRunner patch must name peer, hands, gate or wire, or be null for off (${team.file})`);
     }
     const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
@@ -1706,7 +1728,9 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
       delete raw.testRunner;
     } else {
       const next = { ...(isPlainObject(raw.testRunner) ? raw.testRunner : {}), ...patch };
-      if (!normalizeTestRunner(next)) throw new Error(`testRunner would be invalid after this patch (${team.file})`);
+      if (next.pool === null) delete next.pool;
+      const norm = normalizeTestRunner(next);
+      if (!norm || (next.pool !== undefined && !norm.pool)) throw new Error(`testRunner would be invalid after this patch (${team.file})`);
       raw.testRunner = next;
     }
     atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
@@ -1891,6 +1915,6 @@ module.exports = {
   // Exported so the retired-field warn test iterates the REAL list — a copy in
   // the test would keep passing over a field added here and never warned about.
   ROLE_KEYS, CUT_ROLE_FIELDS, HONORED_CUT_FIELDS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, MANIFEST_VERSION,
-  ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH, normalizeTrunk, TRUNK_HEAD, DONE_VALUES, DEFAULT_DONE, normalizeDone, WORKTREES_VALUES, normalizeWorktrees, normalizeMaxHands, effectiveHandCap, normalizeTestRunner, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_WIRE, TEST_RUNNER_WIRE_PUSH,
+  ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH, normalizeTrunk, TRUNK_HEAD, DONE_VALUES, DEFAULT_DONE, normalizeDone, WORKTREES_VALUES, normalizeWorktrees, normalizeMaxHands, effectiveHandCap, normalizeTestRunner, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_WIRE, TEST_RUNNER_WIRE_PUSH, TEST_RUNNER_POOL_MAX,
   ROLE_RE, RESERVED_ROLE_KEYS, RESERVED_ROLE_PATCH_FIELDS, NAME_RE,
 };

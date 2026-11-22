@@ -23,6 +23,7 @@ const RETRY_TEXT = {
   incomplete: 'runner could not complete the pack',
 };
 
+const REPICKABLE = /^(?:runner unreachable|runner refused the (?:job|token)|runner has no box|no peer )/;
 const RESTARTED = Symbol('runner-restart');
 
 function restarted(r) {
@@ -80,8 +81,10 @@ function createSuiteClient({
     return fn(conn);
   }
 
-  async function reachable(peer, wire = 'push') {
-    const r = await once(peer, (c) => c.suiteAsk('GET', '/api/suite/info'), wire);
+  async function reachable(peer, wire = 'push', want = null) {
+    const q = want && want.definitionHash
+      ? `?definitionHash=${encodeURIComponent(want.definitionHash)}${Number.isInteger(want.rev) ? `&rev=${want.rev}` : ''}` : '';
+    const r = await once(peer, (c) => c.suiteAsk('GET', `/api/suite/info${q}`), wire);
     if (r.body && r.body.ok) return { ok: true, info: r.body };
     if (REFUSED.has(r.status)) return { ok: false, why: `runner refused the token (status ${r.status})` };
     return { ok: false, why: r.error || (r.body && r.body.error) || `status ${r.status}` };
@@ -104,7 +107,9 @@ function createSuiteClient({
       tree: typeof tree === 'string' && tree ? path.resolve(tree) : null, kind, scope, team, ticket, seat,
       jobId: null, attempt: 0, treeHash: null, sha: null, dirty: null, queuedAt: null, startedAt: null, env: null, started: false,
       t0: now(), budgetMs, queueBudgetMs, runBudgetMs, timeoutMs, onSubmitted, onDetach, shouldStop,
+      failFast: typeof opts.repick === 'function', submitted: false,
     };
+    let repick = typeof opts.repick === 'function' ? opts.repick : null;
     const progress = (line) => {
       log(line);
       try { onProgress(line); } catch {}
@@ -130,9 +135,25 @@ function createSuiteClient({
         try {
           out = await attemptJob(ctx, snap, job);
         } catch (e) {
-          if (ctx.jobId) await cancel(peer, ctx.jobId, ctx.wire);
-          return conclude(ctx, { unknown: e.refused ? 'runner refused the token' : `client error: ${e.message}` });
+          if (ctx.jobId) await cancel(ctx.peer, ctx.jobId, ctx.wire);
+          out = { unknown: e.refused ? 'runner refused the token' : `client error: ${e.message}`, thrown: true };
         }
+        if (repick && !ctx.submitted && REPICKABLE.test(out.unknown || '')) {
+          const pick = repick;
+          repick = null;
+          ctx.failFast = false;
+          const next = await Promise.resolve().then(() => pick(ctx.where)).catch(() => null);
+          if (next && next.peer) {
+            progress(`runner ${ctx.where}: ${out.unknown}; submitting to ${next.name || next.peer}`);
+            ctx.peer = next.peer;
+            ctx.wire = next.wire === 'pull' ? 'pull' : 'push';
+            ctx.where = next.name || next.peer;
+            ctx.t0 = now();
+            try { (opts.onRepick || (() => {}))({ peer: ctx.peer, wire: ctx.wire, name: ctx.where }); } catch {}
+            continue;
+          }
+        }
+        if (out.thrown) return conclude(ctx, { unknown: out.unknown });
         if (out.retry && !used.has(out.retry) && now() < deadlineOf(ctx)) {
           used.add(out.retry);
           if (out.retry === 'incomplete') full = true;
@@ -182,7 +203,7 @@ function createSuiteClient({
     ctx.attempt = attempt;
     try { onJob({ jobId, attempt }); } catch {}
     const jobPath = `/api/suite/jobs/${encodeURIComponent(jobId)}`;
-    const info = await ask(ctx, (c) => c.suiteAsk('GET', '/api/suite/info'), progress);
+    const info = await ask(ctx, (c) => c.suiteAsk('GET', '/api/suite/info'), progress, ctx.failFast ? 1 : Infinity);
     if (restarted(info)) return { retry: 'runner-restart' };
     if (info.unreachable || !info.body || !info.body.ok) return { unknown: `runner unreachable: ${info.error || (info.body && info.body.error) || `status ${info.status}`}` };
     const limits = info.body.limits || {};
@@ -203,10 +224,12 @@ function createSuiteClient({
     };
     ctx.queuedAt = now();
     if (ctx.shouldStop()) return { unknown: 'cancelled by the caller before submit' };
-    const sub = await ask(ctx, (c) => c.suiteAsk('POST', '/api/suite/jobs', body), progress);
+    const sub = await ask(ctx, (c) => c.suiteAsk('POST', '/api/suite/jobs', body), progress, ctx.failFast ? 1 : Infinity);
     if (sub.unreachable) return { unknown: 'runner unreachable' };
     if (restarted(sub)) return { retry: 'runner-restart' };
     if (!sub.body || !sub.body.ok) return { unknown: `runner refused the job: ${(sub.body && sub.body.error) || sub.error || `status ${sub.status}`}` };
+    ctx.submitted = true;
+    ctx.failFast = false;
     try { ctx.onSubmitted({ jobId, attempt }); } catch {}
     if (sub.body.state === 'awaiting-pack') {
       const sent = await upload(ctx, snap, jobPath, sub.body.have || [], limits, progress);
@@ -398,7 +421,7 @@ function createSuiteClient({
       return null;
     }
     const key = JSON.stringify([opts.team, opts.ticket, opts.kind]);
-    const me = { treeHash: snap.treeHash, peer: opts.peer, wire: opts.wire === 'pull' ? 'pull' : 'push', jobId: null, superseded: false, local: null, remote: null, settled: false, submitted: null, sawDetach: false, detached: false };
+    const me = { treeHash: snap.treeHash, peer: opts.peer, name: opts.name || opts.peer, wire: opts.wire === 'pull' ? 'pull' : 'push', jobId: null, superseded: false, local: null, remote: null, settled: false, submitted: null, sawDetach: false, detached: false };
     const prev = shadows.get(key);
     if (prev && prev.treeHash !== me.treeHash) {
       prev.superseded = true;
@@ -432,10 +455,11 @@ function createSuiteClient({
         local: me.local, remote,
         ...(notSent ? { skipped: 'not-sent', agree: null } : { agree: halvesAgree(me.local, remote) }),
         ...(!notSent && namesUnknown(me.local, remote) ? { names: 'unknown' } : {}),
+        ...(opts.pool ? { runner: me.name } : {}),
       });
     };
     Promise.resolve()
-      .then(() => run({ ...opts, snap, scope: 'full', onJob: ({ jobId }) => { me.jobId = jobId; me.sawDetach = false; }, onSubmitted: ({ jobId }) => { me.submitted = jobId; }, onDetach: () => { me.sawDetach = true; } }))
+      .then(() => run({ ...opts, snap, scope: 'full', onJob: ({ jobId }) => { me.jobId = jobId; me.sawDetach = false; }, onSubmitted: ({ jobId }) => { me.submitted = jobId; }, onDetach: () => { me.sawDetach = true; }, onRepick: (next) => { me.peer = next.peer; me.wire = next.wire; me.name = next.name; } }))
       .catch((e) => ({ unknown: `client error: ${e.message}`, res: null, record: null }))
       .then((out) => {
         me.remote = out;
@@ -456,7 +480,7 @@ function createSuiteClient({
     appendCompare({ at: iso(now()), team, kind, ticket, wire: 'pull', runner, skipped, agree: null });
   }
 
-  function decided({ team, kind, ticket, wire = 'push', box = null, local = null, decidedBy, fallback = null }) {
+  function decided({ team, kind, ticket, wire = 'push', box = null, local = null, decidedBy, fallback = null, runner = null }) {
     const rec = (box && box.record) || null;
     const e = (rec && rec.env) || {};
     appendCompare({
@@ -464,7 +488,7 @@ function createSuiteClient({
       envKey: e.envKey || null, wire: wire === 'pull' ? 'pull' : 'push',
       localEnv: local ? { os: platform, arch } : null,
       remoteEnv: rec ? { os: e.platform || null, arch: e.arch || null, isolation: e.isolation || null, imageId: (e.box && e.box.imageId) || null, definitionHash: (e.box && e.box.definitionHash) || null } : null,
-      local, remote: box ? remoteHalf(box) : null, agree: null, decidedBy, fallback,
+      local, remote: box ? remoteHalf(box) : null, agree: null, decidedBy, fallback, ...(runner ? { runner } : {}),
     });
   }
 
@@ -511,12 +535,18 @@ function createSuiteClient({
   function decideTally({ team }) {
     let text = '';
     try { text = compareFile ? fs.readFileSync(compareFile, 'utf8') : ''; } catch { text = ''; }
-    const out = { box: 0, home: 0, fallbacks: [] };
+    const out = { box: 0, home: 0, fallbacks: [], runners: [] };
     for (const line of text.split('\n')) {
       if (!line.trim()) continue;
       let r;
       try { r = JSON.parse(line); } catch { continue; }
       if (!r || r.team !== team || r.decidedBy == null) continue;
+      if (r.runner) {
+        const name = String(r.runner);
+        let row = out.runners.find((x) => x.runner === name);
+        if (!row) { row = { runner: name, box: 0, home: 0 }; out.runners.push(row); }
+        row[r.decidedBy === 'box' ? 'box' : 'home'] += 1;
+      }
       if (r.decidedBy === 'box') { out.box += 1; continue; }
       out.home += 1;
       const reason = String(r.fallback || 'unknown');
@@ -627,6 +657,35 @@ function boxVerdict(out, boxDef) {
   }
   if (!out.res || !rec.treeHash || out.res.treeHash !== rec.treeHash) return { fallback: 'tree mismatch' };
   return { fallback: null };
+}
+
+function runnerLoad(info) {
+  const s = (info && info.slots) || {};
+  const q = (info && info.queue) || {};
+  const total = Number.isInteger(s.total) && s.total > 0 ? s.total : 1;
+  const inUse = Number.isInteger(s.inUse) && s.inUse >= 0 ? s.inUse : q.running ? 1 : 0;
+  return { total, inUse, free: total - inUse, queue: Array.isArray(q.queued) ? q.queued.length : 0 };
+}
+
+function boxReadyFor(info, box) {
+  const b = info && info.box;
+  if (!b || b.state !== 'ready') return false;
+  const want = boxDefOf(box);
+  if (!want) return true;
+  const stamped = b.env && b.env.box;
+  return !!stamped && stamped.definitionHash === want.definitionHash;
+}
+
+function pickRunner(members, { box = false } = {}) {
+  let best = null;
+  members.forEach((m, i) => {
+    if (!m || !m.live || !m.info) return;
+    if ((box === true || boxDefOf(box)) && !boxReadyFor(m.info, box)) return;
+    const load = runnerLoad(m.info);
+    const better = !best || load.free > best.load.free || (load.free === best.load.free && load.queue < best.load.queue);
+    if (better) best = { m, i, load };
+  });
+  return best ? { member: best.m, index: best.i, load: best.load, chosen: true } : { member: members[0] || null, index: 0, load: null, chosen: false };
 }
 
 function halvesAgree(a, b) {
@@ -770,4 +829,4 @@ function createChannelHost({
   };
 }
 
-module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, boxVerdict, HAND_QUEUE_MS, HAND_RUN_MS };
+module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, boxVerdict, pickRunner, runnerLoad, HAND_QUEUE_MS, HAND_RUN_MS };
