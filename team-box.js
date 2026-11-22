@@ -197,10 +197,15 @@ function ancestryLine(meta, definition) {
   return `generated from bootstrap ${meta.fromBootstrap}; edited since: ${edited ? 'yes' : 'no'}`;
 }
 
-function buildLine(file, definition, version) {
+function baseArgOf(definition, version) {
   const declaresBase = logicalLines(normalizeDefinition(definition)).some((l) => BASE_ARG_RE.test(l.text));
+  return declaresBase ? `CLODEX_BASE=${GHCR_REPO}:${version}` : null;
+}
+
+function buildLine(file, definition, version) {
+  const base = baseArgOf(definition, version);
   const hash = boxFingerprint(definition);
-  return `docker build -t clodex-box:${hash.slice(0, 12)} --label clodex.box=${hash} ${declaresBase ? `--build-arg CLODEX_BASE=${GHCR_REPO}:${version} ` : ''}- < ${file}`;
+  return `docker build -t clodex-box:${hash.slice(0, 12)} --label clodex.box=${hash} ${base ? `--build-arg ${base} ` : ''}- < ${file}`;
 }
 
 function showBox(teamDir, { version = require('./package.json').version } = {}) {
@@ -223,6 +228,6 @@ function showBox(teamDir, { version = require('./package.json').version } = {}) 
 
 module.exports = {
   validateBoxDefinition, boxFingerprint, normalizeDefinition, definitionFromBootstrap, bootstrapAncestor,
-  readBox, writeBox, clearBox, showBox, ancestryLine,
+  readBox, writeBox, clearBox, showBox, ancestryLine, baseArgOf,
   BOX_DEFINITION_MAX, BOX_DEFINITION_MAX_LINES, BOX_HISTORY_KEEP, BOX_SUBDIR,
 };

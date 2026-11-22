@@ -14,6 +14,7 @@ const SLICE_ATTEMPTS = 3;
 const MAX_RESUMES = 8;
 const DEFAULT_BUDGET_MS = 36 * 60 * 1000;
 const DEFAULT_RUN_MS = 21 * 60 * 1000;
+const BUILD_BUDGET_MS = 25 * 60 * 1000;
 const SNAPSHOT_WAIT_MS = 2000;
 const UNREACHABLE = new Set([0, 429, 502, 503, 504]);
 const REFUSED = new Set([401, 403]);
@@ -100,13 +101,13 @@ function createSuiteClient({
       peer, tree, kind = 'hand', scope = 'full', team = null, ticket = null, seat = null,
       files = [], flags = {}, setup = null, env = {}, timeoutMs = null, budgetMs = DEFAULT_BUDGET_MS,
       onProgress = () => {}, onJob = () => {}, onSubmitted = () => {}, onDetach = () => {}, shouldStop = () => false,
-      queueBudgetMs = null, runBudgetMs = null, box = false, shares = [],
+      queueBudgetMs = null, runBudgetMs = null, box = false, shares = [], buildBudgetMs = BUILD_BUDGET_MS,
     } = opts;
     const ctx = {
       id: opts.runId || randomUUID(), peer, box: box === true || boxDefOf(box) != null, boxDef: boxDefOf(box), wire: opts.wire === 'pull' ? 'pull' : 'push', where: opts.name || peer, route: opts.route || null, override: opts.override || null,
       tree: typeof tree === 'string' && tree ? path.resolve(tree) : null, kind, scope, team, ticket, seat,
       jobId: null, attempt: 0, treeHash: null, sha: null, dirty: null, queuedAt: null, startedAt: null, env: null, started: false,
-      t0: now(), budgetMs, queueBudgetMs, runBudgetMs, timeoutMs, onSubmitted, onDetach, shouldStop,
+      t0: now(), budgetMs, queueBudgetMs, runBudgetMs, buildBudgetMs, buildSince: null, timeoutMs, onSubmitted, onDetach, shouldStop,
       failFast: typeof opts.repick === 'function', submitted: false,
       shares: box && Array.isArray(shares) ? shares.map(({ share, version }) => ({ share, version })) : [],
     };
@@ -182,6 +183,7 @@ function createSuiteClient({
   }
 
   function deadlineOf(ctx) {
+    if (ctx.buildSince != null) return ctx.buildSince + ctx.buildBudgetMs;
     let d = ctx.t0 + ctx.budgetMs;
     if (!ctx.started && ctx.queueBudgetMs != null) d = Math.min(d, ctx.t0 + ctx.queueBudgetMs);
     if (ctx.started && ctx.runBudgetMs != null) d = Math.min(d, ctx.startedAt + ctx.runBudgetMs);
@@ -189,6 +191,7 @@ function createSuiteClient({
   }
 
   function budgetText(ctx) {
+    if (ctx.buildSince != null) return `the box build did not finish within the ${ctx.buildBudgetMs}ms build budget (cancelled)`;
     if (!ctx.started && ctx.queueBudgetMs != null && ctx.queueBudgetMs < ctx.budgetMs) {
       return `the job did not start within the ${ctx.queueBudgetMs}ms queue budget (cancelled)`;
     }
@@ -346,6 +349,11 @@ function createSuiteClient({
       if (!job || job.state === 'gone') return { retry: 'runner-restart' };
       if (job.treeHash !== ctx.treeHash) return { unknown: `runner answered for tree ${String(job.treeHash).slice(0, 8)}, not ${ctx.treeHash.slice(0, 8)}` };
       if (job.env) ctx.env = job.env;
+      if (job.state === 'build' && ctx.buildSince == null) ctx.buildSince = now();
+      if (job.state !== 'build' && ctx.buildSince != null) {
+        ctx.buildSince = null;
+        ctx.t0 = now();
+      }
       if (job.state !== last) {
         last = job.state;
         progress(`runner ${ctx.peer}: job ${job.state}${job.position ? ` (#${job.position} in queue)` : ''}`);
@@ -363,6 +371,8 @@ function createSuiteClient({
   }
 
   function doneVerdict(ctx, job, stderr) {
+    const built = ctx.boxDef && job.reason === 'box-failed' ? /^suite-runner: box build: (.+)$/m.exec(String(stderr)) : null;
+    if (built) return { unknown: `box build on runner: ${built[1]}` };
     const ran = job.env && job.env.isolation != null ? String(job.env.isolation) : null;
     if ((ran === 'container') !== ctx.box) {
       return { unknown: `box mismatch: asked ${ctx.box ? 'container' : 'native'}, runner ran ${ran == null ? 'unstamped' : ran}` };
@@ -647,6 +657,7 @@ const FALLBACK_OF = [
   [/^runner answered for tree |^tree mismatch on runner/, 'tree mismatch'],
   [/^box mismatch: |^runner has no box: /, 'definition mismatch'],
   [/^runner has no share /, 'no share'],
+  [/^the box build did not finish within |^box build on runner: /, 'box build'],
 ];
 
 function boxVerdict(out, boxDef, shares = []) {
@@ -700,14 +711,27 @@ function boxReadyFor(info, box) {
   return !!stamped && stamped.definitionHash === want.definitionHash;
 }
 
+const BOX_TIER = { building: 1, 'can-build': 2 };
+
+function boxTier(info, box) {
+  if (boxReadyFor(info, box)) return 0;
+  const want = boxDefOf(box);
+  const b = info && info.box;
+  if (!want || !b || b.definitionHash !== want.definitionHash) return null;
+  return BOX_TIER[b.state] || null;
+}
+
 function pickRunner(members, { box = false, shares = [] } = {}) {
   let best = null;
+  const boxed = box === true || boxDefOf(box) != null;
   members.forEach((m, i) => {
     if (!m || !m.live || !m.info) return;
-    if ((box === true || boxDefOf(box)) && (!boxReadyFor(m.info, box) || missingShare(m.info, shares))) return;
+    const tier = boxed ? boxTier(m.info, box) : 0;
+    if (tier == null || (boxed && missingShare(m.info, shares))) return;
     const load = runnerLoad(m.info);
-    const better = !best || load.free > best.load.free || (load.free === best.load.free && load.queue < best.load.queue);
-    if (better) best = { m, i, load };
+    const better = !best || tier < best.tier
+      || (tier === best.tier && (load.free > best.load.free || (load.free === best.load.free && load.queue < best.load.queue)));
+    if (better) best = { m, i, load, tier };
   });
   return best ? { member: best.m, index: best.i, load: best.load, chosen: true } : { member: members[0] || null, index: 0, load: null, chosen: false };
 }
@@ -728,7 +752,7 @@ const FLAG_KEYS = ['CLODEX_TEST_LOCK', 'CLODEX_TEST_SLOW_ADVISORY'];
 function route({ team = null, kind = 'hand', scope = 'full', local = false } = {}) {
   const tr = team && team.testRunner;
   if (!tr || !tr.peer) return { where: 'local', why: 'no test runner' };
-  if (tr.wire === 'pull') return { where: 'local', why: 'wire:pull runs shadow comparisons only' };
+  if (tr.wire === 'pull') return { where: 'local', why: 'wire:pull serves the merge gate only (gate:shadow or gate:on)' };
   if (kind !== 'hand') return { where: 'local', why: `${kind} runs are not routed` };
   const hands = tr.hands || 'off';
   if (hands !== 'full' && hands !== 'all') return { where: 'local', why: `hands:${hands}` };
@@ -853,4 +877,4 @@ function createChannelHost({
   };
 }
 
-module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, boxVerdict, pickRunner, runnerLoad, HAND_QUEUE_MS, HAND_RUN_MS };
+module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, boxVerdict, pickRunner, runnerLoad, HAND_QUEUE_MS, HAND_RUN_MS, BUILD_BUDGET_MS };

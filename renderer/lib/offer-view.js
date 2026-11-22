@@ -132,6 +132,7 @@ function suiteRunnerRecordFromForm(shown, form) {
   const boxImage = pick('boxImage', form.boxImage.trim() || null);
   const slots = form.slots == null ? stored.slots : Number(form.slots);
   const shares = form.shares == null ? stored.shares : form.shares;
+  const buildBoxes = form.buildBoxes == null ? stored.buildBoxes === true : form.buildBoxes === true;
   return {
     enabled: pick('enabled', form.enabled),
     isolation: pick('isolation', form.isolation),
@@ -139,6 +140,7 @@ function suiteRunnerRecordFromForm(shown, form) {
     ...(boxImage ? { boxImage } : {}),
     ...(Number.isInteger(slots) && slots > 1 ? { slots } : {}),
     ...(Array.isArray(shares) && shares.length ? { shares } : {}),
+    ...(buildBoxes ? { buildBoxes: true } : {}),
   };
 }
 

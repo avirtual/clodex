@@ -8,10 +8,11 @@ const snapshot = require('./suite-snapshot');
 const { lastTotals } = require('./suite-client');
 const { git } = require('./git-worktree');
 const { resolveFs } = require('./resolve-fs');
+const { boxFingerprint } = require('./team-box');
 
 const fs = resolveFs();
 
-const LIVE = new Set(['awaiting-pack', 'queued', 'setup', 'running']);
+const LIVE = new Set(['awaiting-pack', 'queued', 'build', 'setup', 'running']);
 const KIND_ORDER = { 'post-merge': 0, verify: 1, hand: 2 };
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const SHA_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
@@ -63,10 +64,17 @@ const DEFAULT_LIMITS = {
 
 const DEFAULT_TIMERS = { setTimeout, clearTimeout, setInterval, clearInterval };
 
+const BUILD_TIMEOUT_MS = 20 * MIN;
+const BUILD_COOL_OFF_MS = 10 * MIN;
+const BUILDS_PER_DAY = 12;
+const BUILD_DISK_FLOOR = 10 * 1024 ** 3;
+const BUILD_TAIL_LINES = 20;
+const BUILD_TAIL_BYTES = 8 * 1024;
+
 const ACTIVITY_RECENT = 10;
 const ACTIVITY_MS = 1000;
 const TOTALS_TAIL = 64 * 1024;
-const PHASES = { 'awaiting-pack': 'upload', queued: 'queued', setup: 'setup', running: 'run' };
+const PHASES = { 'awaiting-pack': 'upload', queued: 'queued', build: 'build', setup: 'setup', running: 'run' };
 
 function shortImage(id) {
   return id ? String(id).replace(/^sha256:/, '').slice(0, 12) : null;
@@ -95,7 +103,7 @@ function activityJob(job, lastOutputAt = null) {
     id: job.id, team: job.team || null, ticket: job.ticket || null, kind: job.kind, origin: job.origin || null,
     isolation: container ? 'container' : 'native',
     image: box ? shortImage(box.imageId) : null,
-    definition: box && box.definitionHash ? String(box.definitionHash).slice(0, 12) : null,
+    definition: box && box.definitionHash ? String(box.definitionHash).slice(0, 12) : container && job.build ? String(job.build.definitionHash).slice(0, 12) : null,
     phase: PHASES[job.state] || null,
     queuedAt: job.queuedAt, startedAt: job.startedAt != null ? job.startedAt : null,
     runStartedAt: job.runStartedAt != null ? job.runStartedAt : null,
@@ -436,7 +444,7 @@ function slotCount(v) {
 function createSuiteRunner({
   root, oldRoot = null, work, isolation = userIsolation(), limits = {}, spawn = childProcess.spawn,
   now = Date.now, log = () => {}, timers = DEFAULT_TIMERS, platform = process.platform, arch = process.arch,
-  box = null, boxSweep = null, onActivity = null, activityMs = ACTIVITY_MS, slots = 1, shares = [],
+  box = null, boxSweep = null, onActivity = null, activityMs = ACTIVITY_MS, slots = 1, shares = [], buildBoxes = false,
 }) {
   const held = Array.isArray(shares) ? shares.map(({ name, path: at, version }) => ({ name, path: at, version })) : [];
   const slotTotal = slotCount(slots);
@@ -485,9 +493,18 @@ function createSuiteRunner({
   let boxHold = readJson(holdFile, null);
   let sweeping = null;
   const sweepBox = box ? (keep) => box.sweep(keep) : boxSweep;
+  const buildFile = path.join(state.dir, 'box-build.json');
+  const buildsFile = path.join(state.dir, 'box-builds.json');
+  const builtFile = path.join(state.dir, 'box-built.json');
+  const bootBuild = readJson(buildFile, null);
+  let buildHold = bootBuild && typeof bootBuild.token === 'string' ? { ...bootBuild, why: 'not swept since the runner started' } : null;
+  let building = null;
+  let buildSweeping = null;
+  const coolOff = new Map();
+  const builtIds = new Set();
 
   const isBox = (job) => job.isolation === 'container';
-  const namedBox = (job) => Boolean(job.identity && job.identity.box && job.identity.box.definitionHash);
+  const namedBox = (job) => Boolean((job.identity && job.identity.box && job.identity.box.definitionHash) || job.build);
   const isoOf = (job) => (isBox(job) ? box : isolation);
   const jobArg = (job) => (isBox(job) ? [job] : []);
   const jobStore = (id) => path.join(storeDir, id);
@@ -607,6 +624,195 @@ function createSuiteRunner({
     }
   }
 
+  function setBuildHold(next) {
+    buildHold = next;
+    if (next) writeJson(buildFile, { token: next.token, definitionHash: next.definitionHash || null, startedAt: next.startedAt || null, why: next.why }, 0o600);
+    else fs.rmSync(buildFile, { force: true });
+    changed();
+  }
+
+  function sweepBuild() {
+    if (!buildSweeping) {
+      const held = buildHold;
+      buildSweeping = Promise.resolve()
+        .then(() => {
+          if (!box || typeof box.endBuild !== 'function') throw new Error('no box is configured to confirm the build ended');
+          return box.endBuild({ token: held.token });
+        })
+        .then(() => { if (buildHold === held) setBuildHold(null); }, (e) => {
+          log(`suite-runner: build cleanup not confirmed: ${e.message}`);
+          if (buildHold === held) setBuildHold({ ...held, why: e.message });
+        })
+        .finally(() => { buildSweeping = null; });
+    }
+    return buildSweeping;
+  }
+
+  const originKey = (origin) => (typeof origin === 'string' && origin ? origin.slice(0, 64) : 'local');
+  const withBuilt = (env) => ({ ...env, box: { ...env.box, built: true } });
+
+  function buildLog() {
+    const rows = readJson(buildsFile, []);
+    return Array.isArray(rows) ? rows.filter((r) => r && Number.isFinite(r.at) && now() - r.at < DAY) : [];
+  }
+
+  function refusalNow(hash, origin) {
+    if (buildHold) return { why: `cleanup of build ${String(buildHold.token).slice(0, 8)} is not confirmed: ${buildHold.why}` };
+    const cool = coolOff.get(hash);
+    if (cool && now() < cool.until) return { why: cool.why, tail: cool.tail };
+    const key = originKey(origin);
+    const used = buildLog().filter((r) => r.origin === key).length;
+    if (used >= BUILDS_PER_DAY) return { why: `${used} box builds in the last 24 h for ${key}; the cap is ${BUILDS_PER_DAY}` };
+    return null;
+  }
+
+  async function buildRefusal(hash, origin) {
+    const now0 = refusalNow(hash, origin);
+    if (now0) return now0;
+    let room;
+    try { room = await box.freeBytes(); } catch { room = { bytes: null }; }
+    if (room.bytes == null) return { why: 'the free disk space could not be read' };
+    if (room.bytes < BUILD_DISK_FLOOR) {
+      return { why: `${(room.bytes / 1024 ** 3).toFixed(1)} GiB free on the ${room.where}; a build needs ${BUILD_DISK_FLOOR / 1024 ** 3} GiB` };
+    }
+    return null;
+  }
+
+  async function buildAnswer(want, origin, found) {
+    const hash12 = want.definitionHash.slice(0, 12);
+    if (building && building.hash === want.definitionHash) return { state: 'building', definitionHash: want.definitionHash, why: `building box ${hash12} on this runner` };
+    if (!buildBoxes) return found;
+    const refusal = await buildRefusal(want.definitionHash, origin);
+    if (refusal) return { ...found, why: `${found.why}; no build: ${refusal.why}` };
+    return { state: 'can-build', definitionHash: want.definitionHash, why: `no image for box ${hash12} on this runner; it builds one on the first job` };
+  }
+
+  function waitersOf(hash) {
+    return [...jobs.values()].filter((j) => j.build && j.build.definitionHash === hash && (j.state === 'queued' || j.state === 'build'));
+  }
+
+  function writeBuildFailure(job, why, tail = '') {
+    const text = `${tail ? `${tail}\n` : ''}suite-runner: box build: ${why}\n`;
+    try {
+      fs.appendFileSync(outFile(job.id, 'stderr'), text);
+      job.out.stderrBytes += Buffer.byteLength(text);
+    } catch (e) { log(`suite-runner: ${job.id}: ${e.message}`); }
+  }
+
+  function buildTail(job) {
+    for (const s of ['stderr', 'stdout']) {
+      const slice = readSlice(job.id, s, 0, BUILD_TAIL_BYTES, true);
+      const lines = slice ? slice.text.split('\n').map((l) => l.replace(/\s+$/, '')).filter(Boolean) : [];
+      if (lines.length) return lines.slice(-BUILD_TAIL_LINES).join('\n');
+    }
+    return '';
+  }
+
+  function adopt(hash, env, trigger) {
+    trigger.identity = env;
+    delete trigger.build;
+    save(trigger);
+    for (const w of waitersOf(hash)) {
+      w.identity = env;
+      delete w.build;
+      setState(w, 'queued');
+    }
+  }
+
+  async function failBuild(hash, { why, tail = '', cool = true }, trigger) {
+    if (cool) coolOff.set(hash, { until: now() + BUILD_COOL_OFF_MS, why, tail });
+    for (const w of waitersOf(hash)) {
+      if (w === trigger) continue;
+      writeBuildFailure(w, why, tail);
+      await finish(w, { reason: 'box-failed', exit: null });
+    }
+    writeBuildFailure(trigger, why);
+    await finish(trigger, { reason: trigger.stop || 'box-failed', exit: null });
+  }
+
+  function recordBuilt(imageId, definitionHash) {
+    builtIds.add(imageId);
+    const rows = readJson(builtFile, []);
+    writeJson(builtFile, [...(Array.isArray(rows) ? rows : []), { imageId, definitionHash, at: now() }], 0o600);
+  }
+
+  async function buildBox(job, jobDir) {
+    const hash = job.build.definitionHash;
+    const want = { definitionHash: hash, rev: job.build.rev };
+    const found = await boxState(want);
+    if (found.state === 'ready') { adopt(hash, found.env, job); return true; }
+    if (found.state !== 'no-image') { await failBuild(hash, { why: found.why, cool: false }, job); return false; }
+    const refusal = await buildRefusal(hash, job.origin);
+    if (refusal) { await failBuild(hash, { ...refusal, cool: false }, job); return false; }
+    if (job.stop) { await finish(job, { reason: job.stop, exit: null }); return false; }
+    const token = crypto.randomBytes(8).toString('hex');
+    const startedAt = now();
+    building.token = token;
+    writeJson(buildFile, { token, definitionHash: hash, startedAt }, 0o600);
+    writeJson(buildsFile, [...buildLog(), { at: startedAt, origin: originKey(job.origin), definitionHash: hash }]);
+    for (const w of waitersOf(hash)) if (w !== job && w.state === 'queued') setState(w, 'build');
+    const iidFile = path.join(jobDir, 'build', 'iid');
+    fs.mkdirSync(path.dirname(iidFile), { recursive: true });
+    const argv = box.buildArgv({ definition: job.build.definition, definitionHash: hash, token, iidFile });
+    let pid = null;
+    const r = await exec(job, jobDir, argv, BUILD_TIMEOUT_MS, null, {
+      start: () => {
+        const child = spawn(argv[0], argv.slice(1), { detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
+        pid = child.pid || null;
+        if (child.stdin) {
+          child.stdin.on('error', () => {});
+          child.stdin.end(job.build.definition);
+        }
+        return child;
+      },
+      kill: (child) => box.killBuild(child),
+    });
+    if (r.killing) await r.killing;
+    let why = null;
+    if (job.stop) why = job.stop === 'cancelled' ? 'the build was cancelled' : `the build was stopped: ${job.stop}`;
+    else if (r.timedOut) why = `the build did not finish within ${BUILD_TIMEOUT_MS} ms (killed)`;
+    else if (r.spawnFailed || r.error) why = `docker build did not run: ${r.error}`;
+    else if (r.code !== 0) why = `docker build exited ${r.code}`;
+    if (!why) {
+      let iid = '';
+      try { iid = fs.readFileSync(iidFile, 'utf8').trim(); } catch {}
+      const ready = await boxState(want);
+      if (!iid) why = 'docker build wrote no image id';
+      else if (ready.state !== 'ready') why = `the built image is not usable: ${ready.why}`;
+      else if (ready.env.box.imageId !== iid) why = `the built image ${shortImage(iid)} is not the image found for box ${hash.slice(0, 12)} (${shortImage(ready.env.box.imageId)})`;
+      else {
+        recordBuilt(iid, hash);
+        fs.rmSync(buildFile, { force: true });
+        adopt(hash, withBuilt(ready.env), job);
+        return true;
+      }
+    }
+    const tail = buildTail(job);
+    const last = tail ? tail.split('\n').pop() : '';
+    try {
+      await box.endBuild({ token, pid });
+      fs.rmSync(buildFile, { force: true });
+    } catch (e) {
+      log(`suite-runner: build cleanup not confirmed: ${e.message}`);
+      setBuildHold({ token, definitionHash: hash, startedAt, why: e.message });
+    }
+    await failBuild(hash, { why: last && !job.stop ? `${why}: ${last}` : why, tail, cool: !job.stop }, job);
+    return false;
+  }
+
+  function releaseBuild(job) {
+    if (!building || building.jobId !== job.id) return;
+    const { hash, token } = building;
+    building = null;
+    const rec = readJson(buildFile, null);
+    if (token && rec && rec.token === token && !buildHold) {
+      setBuildHold({ ...rec, why: 'the build ended without a confirmed cleanup' });
+      sweepBuild();
+    }
+    for (const w of waitersOf(hash)) if (w.state === 'build') setState(w, 'queued');
+    pump();
+  }
+
   function recover() {
     const reaps = [];
     const boxed = [];
@@ -621,7 +827,11 @@ function createSuiteRunner({
         finishRecord(job, { reason: 'box-unavailable', exit: null });
         save(job);
       }
-      if (job.state === 'setup' || job.state === 'running') {
+      if (job.state === 'build' && job.startedAt == null) {
+        finishRecord(job, { reason: 'runner-restart', exit: null });
+        save(job);
+      }
+      if (job.state === 'setup' || job.state === 'running' || job.state === 'build') {
         finishRecord(job, { reason: 'runner-restart', exit: null });
         save(job);
         if (isBox(job)) boxed.push(job);
@@ -629,6 +839,7 @@ function createSuiteRunner({
       }
     }
     if ((box && !box.labelsOnly) || boxed.length || boxHold) reaps.push(recoverBox(boxed).catch((e) => log(`suite-runner: box recovery failed: ${e.message}`)));
+    if (buildHold) reaps.push(sweepBuild());
     return Promise.all(reaps);
   }
 
@@ -699,14 +910,15 @@ function createSuiteRunner({
 
   function enqueue(job) {
     seq += 1;
-    setState(job, 'queued', { seq, committedAt: now() });
+    const joins = Boolean(job.build && building && building.token && building.hash === job.build.definitionHash);
+    setState(job, joins ? 'build' : 'queued', { seq, committedAt: now() });
     const answer = { ok: true, id: job.id, state: job.state, position: positionOf(job) };
     pump();
     return answer;
   }
 
   function startable(job) {
-    if (isBox(job)) return !boxHold;
+    if (isBox(job)) return !boxHold && !(job.build && building);
     return Boolean(isolation.parallel) || ![...active.values()].some((j) => !isBox(j));
   }
 
@@ -722,6 +934,7 @@ function createSuiteRunner({
 
   function launch(next) {
     active.set(next.id, next);
+    if (next.build) building = { hash: next.build.definitionHash, jobId: next.id, token: null };
     runJob(next)
       .catch(async (e) => {
         try { fs.appendFileSync(outFile(next.id, 'stderr'), `suite-runner: ${e.message}\n`); } catch {}
@@ -817,18 +1030,20 @@ function createSuiteRunner({
     return env;
   }
 
-  function killRunning(state, child, jobDir, job) {
+  function killRunning(state, child, jobDir, job, kill = null) {
     if (state.killing) return;
-    try { state.killing = Promise.resolve(isoOf(job).kill(child, jobDir, ...jobArg(job))).catch((e) => log(`suite-runner: kill failed: ${e.message}`)); } catch (e) { log(`suite-runner: kill failed: ${e.message}`); }
+    try { state.killing = Promise.resolve(kill ? kill(child) : isoOf(job).kill(child, jobDir, ...jobArg(job))).catch((e) => log(`suite-runner: kill failed: ${e.message}`)); } catch (e) { log(`suite-runner: kill failed: ${e.message}`); }
   }
 
-  function exec(job, jobDir, argv, ms, mounts = null) {
+  function exec(job, jobDir, argv, ms, mounts = null, launcher = null) {
     return new Promise((resolve) => {
       const fds = { stdout: fs.openSync(outFile(job.id, 'stdout'), 'a'), stderr: fs.openSync(outFile(job.id, 'stderr'), 'a') };
       const closeFds = () => { for (const fd of Object.values(fds)) { try { fs.closeSync(fd); } catch {} } };
+      const kill = launcher ? launcher.kill : null;
       let child;
       try {
-        child = isoOf(job).spawn({ jobDir, cwd: path.join(jobDir, 'tree'), argv, env: childEnv(job, jobDir), spawn, ...(isBox(job) ? { job } : {}), ...(mounts ? { shares: mounts } : {}) });
+        child = launcher ? launcher.start()
+          : isoOf(job).spawn({ jobDir, cwd: path.join(jobDir, 'tree'), argv, env: childEnv(job, jobDir), spawn, ...(isBox(job) ? { job } : {}), ...(mounts ? { shares: mounts } : {}) });
       } catch (e) {
         fs.writeSync(fds.stderr, `suite-runner: spawn failed: ${e.message}\n`);
         closeFds();
@@ -836,9 +1051,9 @@ function createSuiteRunner({
         return;
       }
       const state = { timedOut: false, stopped: null, killing: null };
-      running.set(job.id, { job, child, jobDir, state });
+      running.set(job.id, { job, child, jobDir, state, kill });
       job.pid = child.pid || null;
-      const timer = timers.setTimeout(() => { state.timedOut = true; killRunning(state, child, jobDir, job); }, ms);
+      const timer = timers.setTimeout(() => { state.timedOut = true; killRunning(state, child, jobDir, job, kill); }, ms);
       for (const s of ['stdout', 'stderr']) {
         if (!child[s]) continue;
         child[s].on('data', (chunk) => {
@@ -867,13 +1082,21 @@ function createSuiteRunner({
   async function runJob(job) {
     const isolation = isoOf(job);
     const startedAt = now();
-    setState(job, 'setup', { startedAt });
+    setState(job, job.build ? 'build' : 'setup', { startedAt });
     resetOutputs(job);
     const jobDir = jobWork(job.id);
     const tree = path.join(jobDir, 'tree');
     const mirror = snapshot.mirrorPath(work, job.repoKey);
     forceRemove(jobDir);
     for (const d of ['home', 'tmp']) fs.mkdirSync(path.join(jobDir, d), { recursive: true });
+    if (job.build) {
+      let built;
+      try { built = await buildBox(job, jobDir); } finally { releaseBuild(job); }
+      if (!built) return;
+      forceRemove(path.join(jobDir, 'build'));
+      resetOutputs(job);
+      setState(job, 'setup');
+    }
     touchCache(path.join('mirrors', `${job.repoKey}.git`));
     const built = await snapshot.materialize({
       mirror, dir: tree, snap: job.snap, treeHash: job.treeHash,
@@ -1008,15 +1231,19 @@ function createSuiteRunner({
     let found;
     try { found = await (want ? box.probe(want) : box.probe()); } catch (e) { return { state: 'unavailable', why: e.message }; }
     if (want && found && BOX_REFUSALS[found.state]) return { state: found.state, why: found.why };
-    return found && found.state === 'ready' ? { state: 'ready', env: found.env } : { state: 'unavailable', why: (found && found.why) || 'no answer' };
+    if (!found || found.state !== 'ready') return { state: 'unavailable', why: (found && found.why) || 'no answer' };
+    const e = found.env;
+    return { state: 'ready', env: e && e.box && builtIds.has(e.box.imageId) ? withBuilt(e) : e };
   }
 
-  async function info(want = null) {
+  async function info(want = null, { origin = null } = {}) {
     const env = await ensureIdentity();
     const named = want && BOX_HASH_RE.test(String(want.definitionHash)) && Number.isInteger(want.rev) && want.rev >= 1
       ? { definitionHash: want.definitionHash, rev: want.rev } : null;
+    let boxAnswer = await boxState(named);
+    if (named && boxAnswer && boxAnswer.state === 'no-image') boxAnswer = await buildAnswer(named, origin, boxAnswer);
     return {
-      ok: true, bootId, env, isolation: isoState, box: await boxState(named),
+      ok: true, bootId, env, isolation: isoState, box: boxAnswer,
       shares: held.map(({ name, version }) => ({ name, version })),
       limits: { packMaxBytes: lim.packMaxBytes, chunkMax: lim.chunkMax, queueMax: lim.queueMax },
       queue: { running: active.size ? active.keys().next().value : null, queued: queue().map((j) => j.id) },
@@ -1036,14 +1263,15 @@ function createSuiteRunner({
   async function activity() {
     const at = now();
     const all = [...jobs.values()];
-    const live = all.filter((j) => j.state === 'setup' || j.state === 'running').sort((a, b) => a.startedAt - b.startedAt);
+    const live = all.filter((j) => j.state === 'setup' || j.state === 'running' || (j.state === 'build' && active.has(j.id))).sort((a, b) => a.startedAt - b.startedAt);
     const uploading = all.filter((j) => j.state === 'awaiting-pack').sort((a, b) => a.queuedAt - b.queuedAt);
+    const onBuild = all.filter((j) => j.state === 'build' && !active.has(j.id)).sort((a, b) => a.seq - b.seq);
     const done = all.filter((j) => j.state === 'done').sort((a, b) => b.endedAt - a.endedAt).slice(0, ACTIVITY_RECENT);
     return {
       at,
       slots: { total: slotTotal, inUse: live.length },
       running: live.map((j) => activityJob(j, lastOutputOf(j.id))),
-      waiting: [...queue(), ...uploading].map((j) => activityJob(j, lastOutputOf(j.id))),
+      waiting: [...onBuild, ...queue(), ...uploading].map((j) => activityJob(j, lastOutputOf(j.id))),
       recent: done.map((j) => finishedJob(j, outFile(j.id, 'stdout'), lastOutputOf(j.id))),
       box: await boxLine(),
     };
@@ -1060,31 +1288,33 @@ function createSuiteRunner({
     }
     const boxed = body.isolation === 'container';
     let stamp;
+    let build = null;
     if (boxed) {
       const want = body.box ? { definitionHash: body.box.definitionHash, rev: body.box.rev } : null;
       if (!box || (!want && box.labelsOnly)) return fail(409, 'this runner has no box image configured');
+      const text = want && buildBoxes && typeof body.box.definition === 'string' ? body.box.definition : null;
+      if (text != null && boxFingerprint(text) !== want.definitionHash) return refuseBuild(body, origin, { why: 'definition text does not match its hash' });
+      const cool = text != null ? coolOff.get(want.definitionHash) : null;
+      if (cool && now() < cool.until) return refuseBuild(body, origin, cool);
       const b = await boxState(want);
-      if (BOX_REFUSALS[b.state]) return fail(409, b.why, { code: BOX_REFUSALS[b.state] });
-      if (b.state !== 'ready') return fail(503, `box unavailable: ${b.why}`, want ? { code: 'box-unavailable' } : undefined);
-      stamp = b.env;
+      if (text != null && b.state === 'no-image') {
+        const joins = building && building.hash === want.definitionHash;
+        const refusal = joins ? null : await buildRefusal(want.definitionHash, origin);
+        if (refusal) return refuseBuild(body, origin, refusal);
+        build = { ...want, definition: text };
+        stamp = null;
+      } else {
+        if (BOX_REFUSALS[b.state]) return fail(409, b.why, { code: BOX_REFUSALS[b.state] });
+        if (b.state !== 'ready') return fail(503, `box unavailable: ${b.why}`, want ? { code: 'box-unavailable' } : undefined);
+        stamp = b.env;
+      }
     } else {
       stamp = await ensureIdentity();
       if (isoState.mode === 'unavailable') return fail(503, `isolation unavailable: ${isoState.why}`);
     }
     const waiting = [...jobs.values()].filter((j) => j.state === 'awaiting-pack' || j.state === 'queued').length;
     if (waiting >= lim.queueMax) return fail(429, 'queue full');
-    const job = {
-      id: body.id, attempt: body.attempt || 1, repoKey: body.repoKey, kind: body.kind, scope: body.scope || null,
-      team: body.team || null, ticket: body.ticket || null, seat: body.seat || null,
-      snap: body.snap, indexTree: body.indexTree, treeHash: body.treeHash, sha: body.sha,
-      branch: body.branch || null, trunk: body.trunk || null, refs: body.refs || {},
-      files: body.files || [], flags: body.flags || {}, setup: body.setup || null, env: body.env || {},
-      timeoutMs: body.timeoutMs || null, state: 'awaiting-pack', reason: null, exit: null,
-      queuedAt: now(), lastSeen: now(), identity: stamp, out: { stdoutBytes: 0, stderrBytes: 0, truncated: false },
-      ...(boxed ? { isolation: 'container' } : {}),
-      ...(boxed && Array.isArray(body.shares) && body.shares.length ? { shares: body.shares.map(({ share, version }) => ({ share, version })) } : {}),
-      ...(typeof origin === 'string' && origin ? { origin: origin.slice(0, 64) } : {}),
-    };
+    const job = jobFrom(body, origin, stamp, build);
     jobs.set(job.id, job);
     fs.mkdirSync(jobStore(job.id), { recursive: true });
     fs.writeFileSync(packFile(job.id), '');
@@ -1099,6 +1329,35 @@ function createSuiteRunner({
     job.have = body.full ? [] : await snapshot.mirrorHave(mirror, (body.candidates || []).map(String));
     save(job);
     return { ok: true, id: job.id, state: job.state, have: job.have };
+  }
+
+  function refuseBuild(body, origin, { why, tail = '' }) {
+    const job = jobFrom(body, origin, null, null);
+    jobs.set(job.id, job);
+    fs.mkdirSync(jobStore(job.id), { recursive: true });
+    resetOutputs(job);
+    writeBuildFailure(job, why, tail);
+    finishRecord(job, { reason: 'box-failed', exit: null });
+    save(job);
+    notify(job.id);
+    return { ok: true, id: job.id, state: job.state, position: null };
+  }
+
+  function jobFrom(body, origin, stamp, build) {
+    const boxed = body.isolation === 'container';
+    return {
+      id: body.id, attempt: body.attempt || 1, repoKey: body.repoKey, kind: body.kind, scope: body.scope || null,
+      team: body.team || null, ticket: body.ticket || null, seat: body.seat || null,
+      snap: body.snap, indexTree: body.indexTree, treeHash: body.treeHash, sha: body.sha,
+      branch: body.branch || null, trunk: body.trunk || null, refs: body.refs || {},
+      files: body.files || [], flags: body.flags || {}, setup: body.setup || null, env: body.env || {},
+      timeoutMs: body.timeoutMs || null, state: 'awaiting-pack', reason: null, exit: null,
+      queuedAt: now(), lastSeen: now(), identity: stamp, out: { stdoutBytes: 0, stderrBytes: 0, truncated: false },
+      ...(boxed ? { isolation: 'container' } : {}),
+      ...(boxed && Array.isArray(body.shares) && body.shares.length ? { shares: body.shares.map(({ share, version }) => ({ share, version })) } : {}),
+      ...(typeof origin === 'string' && origin ? { origin: origin.slice(0, 64) } : {}),
+      ...(build ? { build } : {}),
+    };
   }
 
   async function keep(job, mirror) {
@@ -1214,7 +1473,7 @@ function createSuiteRunner({
   async function stop(id, reason) {
     const job = jobs.get(id);
     if (!job || job.state === 'done') return;
-    if (job.state === 'awaiting-pack' || job.state === 'queued') {
+    if (job.state === 'awaiting-pack' || job.state === 'queued' || (job.state === 'build' && !active.has(id))) {
       await finish(job, { reason, exit: null });
       forceRemove(packFile(id));
       return;
@@ -1223,7 +1482,7 @@ function createSuiteRunner({
     const live = running.get(id);
     if (live && live.job === job) {
       live.state.stopped = reason;
-      killRunning(live.state, live.child, live.jobDir, job);
+      killRunning(live.state, live.child, live.jobDir, job, live.kill);
     }
   }
 
@@ -1241,6 +1500,7 @@ function createSuiteRunner({
     }
     retain();
     if (boxHold && !recovering) await releaseHold();
+    if (buildHold && !building && !recovering) await sweepBuild();
     if (!anyLive()) return maintain();
     pump();
     return { ran: false };
@@ -1268,4 +1528,7 @@ function createSuiteRunner({
   return { info, activity, submit, putPack, commit, poll, output, readOutput, cancel, tick, start, close, busy: anyLive };
 }
 
-module.exports = { createSuiteRunner, noneIsolation, resolveFs, userIsolation, envIdentity, jobPaths, statePaths, jobPath, jobLang, DEFAULT_LIMITS, BOX_DEFINITION_MAX };
+module.exports = {
+  createSuiteRunner, noneIsolation, resolveFs, userIsolation, envIdentity, jobPaths, statePaths, jobPath, jobLang, DEFAULT_LIMITS, BOX_DEFINITION_MAX,
+  BUILD_TIMEOUT_MS, BUILD_COOL_OFF_MS, BUILDS_PER_DAY, BUILD_DISK_FLOOR,
+};

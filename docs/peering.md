@@ -655,7 +655,8 @@ A box job's tree is detached from the mirror (`detachTree`) before it runs.
 with `testRunner.box: true` and a box definition (`[agent:team box set]`)
 sends, beside `isolation: 'container'`, `box: {definitionHash, rev,
 definition}`: the sha256 of its Dockerfile text (the hash `[agent:team box
-show]` prints), its rev, and the text, which this runner does not read. A team
+show]` prints), its rev, and the text, which this runner reads only to build
+a missing image (**Building a missing image** below). A team
 with `box: true` and no definition, or a lead on an older version, sends no
 `box` key and runs in `boxImage` as before.
 
@@ -706,6 +707,74 @@ with `box: true` and no definition, or a lead on an older version, sends no
 - The label is the operator's assertion that the image serves that
   definition, not provenance: nothing checks that the image was built from the
   team's Dockerfile. The stamp records the actual image id each job ran in.
+
+**Building a missing image.** The `suiteRunner` record takes an optional
+`buildBoxes` (boolean, absent = false; any other value drops only that key),
+set by Preferences ▸ Test runner ▸ "Build box images that teams ask for" and
+written only through `suiteRunner:set`. Off, everything above holds byte for
+byte. On, a named box job that carries `box.definition` is handled so:
+
+- The runner hashes the text with `boxFingerprint` (team-box.js), the
+  lead's function. A mismatch is refused before any Docker call: the job row
+  is created already `done` with reason `box-failed` and stderr
+  `suite-runner: box build: definition text does not match its hash`.
+- No labelled image (`no-image`): instead of the 409 the job is accepted
+  unstamped, with the text kept in its record. A box job that hits a refusal
+  below gets the same kind of `done`/`box-failed` row, the reason on its
+  stderr as `suite-runner: box build: <why>`.
+- Admission: the build runs inside the first such job, through the usual
+  slot admission (no second pool, `MAX_SLOTS` unchanged), so it holds that
+  job's slot. One build at a time on a runner: a job that needs a build is
+  not started while any build runs. Jobs for the same hash that arrive
+  meanwhile wait on that build in state `build` (phase `build` in `poll`,
+  the output read and activity) and start no build of their own.
+- Before a build starts, and before a job is accepted for one: a build whose
+  termination is not confirmed refuses `cleanup of build <token8> is not
+  confirmed: <why>`; a hash whose build failed in the last 10 min
+  (`BUILD_COOL_OFF_MS`) gets that failure's tail and reason at once, with no
+  Docker call; 12 builds (`BUILDS_PER_DAY`) started in the rolling last 24 h for the
+  origin the request arrived on (the peer row or dialer, never the team name
+  in the job; stored in `box-builds.json` in the state dir) refuses `<n> box
+  builds in the last 24 h for <origin>; the cap is 12`; under 10 GiB free
+  (`BUILD_DISK_FLOOR`) on the Docker data root (`docker info
+  --format {{.DockerRootDir}}`), or on the work root when that path cannot be
+  read from the host (Docker Desktop), refuses `<x> GiB free on the <where>; a
+  build needs 10 GiB`.
+- The build line is fixed and assembled in suite-box.js `buildArgv`: `docker
+  build -t clodex-box:<hash12> --label clodex.box=<hash> --label
+  clodex.box.build=<token> [--build-arg CLODEX_BASE=ghcr.io/avirtual/clodex:<runner
+  version>] --iidfile <job dir>/build/iid -`, the Dockerfile on stdin and no
+  build context. No privileged, entitlement, host-network, secret or ssh flag
+  is ever passed; the `RUN` steps do get network access. The build's output
+  goes to the job's stdout/stderr files under the usual output cap and is
+  readable while it runs; a successful build resets them before the suite.
+- Time cap: 20 min (`BUILD_TIMEOUT_MS`).
+- Termination is confirmed. On a lead cancel, the time cap, or the boot
+  sweep of a build recorded in `box-build.json` (written before the client
+  starts), the runner kills the build client's process group, then confirms
+  that no process carries `clodex.box.build=<token>` on its command line
+  (`ps -ax`), that no container carries that label, and removes any image
+  carrying it (`docker image rm -f`), re-listing until none is left. Until
+  that confirmation succeeds the record stays, new builds are refused with the
+  reason above, and the tick retries it; suites, and box jobs whose image
+  exists, still run.
+- Outcome: a failure (non-zero exit, the time cap, no iidfile, or an image
+  `lookNamed` does not find by label for the daemon's OS and architecture,
+  or a different id from the iidfile) ends every waiting job `box-failed`
+  with the build tail (the last 20 lines) and `suite-runner: box build: <why>:
+  <last line>` on stderr, and starts the cool-off. A cancel ends the cancelled
+  job `cancelled` and the waiters `box-failed`, without a cool-off.
+- Ready: the waiting jobs are stamped with the found image as usual
+  (`box: {imageId, definitionHash, rev}`) plus `built: true`, which every job
+  that runs in an image this runner built in this process lifetime carries.
+  The ids of built images are appended to `box-built.json` in the state dir;
+  nothing is pruned.
+- `info` with a definition hash answers `building` (this runner is building
+  that hash), `can-build` (no image, builds on, every limit open), or the
+  `no-image` answer with `; no build: <why>` appended when a limit is closed.
+- A mutable `FROM` tag is the team's to pin (`FROM image@sha256:…`): two
+  runners can build different images from one definition, and so can one
+  runner on two days. The stamp's image id is what tells them apart.
 
 **The suite token.** `CLODEX_SUITE_TOKEN` is a second credential checked by
 `_authGate` only after the operator token fails. A request it admits is marked

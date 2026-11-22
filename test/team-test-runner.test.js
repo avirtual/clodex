@@ -142,7 +142,7 @@ test('setTeamTestRunner patches one key and leaves a hand-written setup and env 
   assert.deepStrictEqual(disk(file), { root, lead: 'lead', roles, version: 3 });
 });
 
-function mkVerbFixture({ manifestExtra = {}, peers = [], reach = null, compare = null, desk = null, shadow = null } = {}) {
+function mkVerbFixture({ manifestExtra = {}, peers = [], reach = null, boxFor = null, compare = null, desk = null, shadow = null } = {}) {
   const { home, root, file, tm } = mkHome(manifestExtra);
   const reachCalls = [];
   const deps = {
@@ -180,7 +180,7 @@ function mkVerbFixture({ manifestExtra = {}, peers = [], reach = null, compare =
     setTeamTestRunner: tm.setTeamTestRunner,
     getPeerManager: () => ({ statuses: () => peers }),
     getSuiteDesk: () => desk,
-    getSuiteClient: () => ({ reachable: async (id, wire) => { reachCalls.push(wire ? `${id}/${wire}` : id); return reach; }, ...(compare ? { tally: compareClient(home, compare).tally, decideTally: compareClient(home, compare).decideTally } : {}), ...(shadow ? { shadow } : {}) }),
+    getSuiteClient: () => ({ reachable: async (id, wire, want) => { reachCalls.push(wire ? `${id}/${wire}` : id); return want && boxFor ? { ...reach, info: { ...reach.info, box: boxFor(want) } } : reach; }, ...(compare ? { tally: compareClient(home, compare).tally, decideTally: compareClient(home, compare).decideTally } : {}), ...(shadow ? { shadow } : {}) }),
   };
   const SessionManager = createSessionManager(deps);
   const m = new SessionManager();
@@ -379,7 +379,7 @@ const mkDesk = (rows) => ({
   origins: () => rows,
 });
 const LAPTOP_UP = { origin: 'laptop', attached: true, lastClaim: Date.now() };
-const PULL_SET = '[agent:team] test runner of team set to laptop, wire pull, hands off — a runner that dials in runs shadow comparisons only (gate:shadow); '
+const PULL_SET = '[agent:team] test runner of team set to laptop, wire pull, hands off — a runner that dials in serves the merge gate only (gate:shadow or gate:on); '
   + 'attached, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab';
 
 test('t2303: naming a node that only dialed in stores wire pull with hands off', async () => {
@@ -406,9 +406,9 @@ test('t2303: hands:full and hands:all are refused for a pull runner and gate:on 
   const f = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'laptop', wire: 'pull', gate: 'shadow' } }, desk: mkDesk([LAPTOP_UP]), reach: INFO });
   const before = fs.readFileSync(f.file, 'utf8');
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner hands:full]'),
-    ['[agent:team] error: hands:full is refused for laptop: a runner that dials in (wire pull) runs shadow comparisons only']);
+    ['[agent:team] error: hands:full is refused for laptop: a runner that dials in (wire pull) serves the merge gate only (gate:shadow or gate:on)']);
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner hands:all]'),
-    ['[agent:team] error: hands:all is refused for laptop: a runner that dials in (wire pull) runs shadow comparisons only']);
+    ['[agent:team] error: hands:all is refused for laptop: a runner that dials in (wire pull) serves the merge gate only (gate:shadow or gate:on)']);
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner gate:on]'),
     ['[agent:team] error: gate:on needs a box definition — only a container result can decide the gate; set one with [agent:team box set] first']);
   assert.strictEqual(fs.readFileSync(f.file, 'utf8'), before);
@@ -625,6 +625,7 @@ test('t2319: a box:true team with a box definition submits its hash, rev and tex
 
 const LABEL_DEF = 'FROM node:25-bookworm\nRUN true\n';
 const LABEL_HASH = 'fa502f955d138e4a78faa0ef2c6525d18955f6e2d5dbeac135c8f9ab60ae884f';
+const LABEL_NO_IMAGE = { state: 'no-image', why: 'no image for box fa502f955d13 on this runner' };
 const labelCmp = (envKey, agree, imageId) => ({
   ...cmp(envKey, agree, [], []),
   localEnv: { os: 'darwin', arch: 'arm64' }, remoteEnv: { os: 'linux', arch: 'arm64', isolation: 'container', imageId, definitionHash: LABEL_HASH },
@@ -633,12 +634,21 @@ const LABEL_ROWS = [
   ['a configured box image', BOX_READY, false,
     [boxCmp('b0b0b0b0b0b0', false, 'container'), boxCmp('0123456789ab', true, 'none')],
     '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab, box ready linux/arm64 image eeeeeeeeeeee key b0b0b0b0b0b0; comparisons under env b0b0b0b0b0b0: 0 agree, 1 disagree (local darwin/arm64, runner linux/arm64 box)'],
-  ['a label-only runner and a team box definition', null, true,
+  ['a label-only runner and a team box definition', LABEL_NO_IMAGE, true,
     [labelCmp('c0c0c0c0c0c0', false, null), labelCmp('c1c1c1c1c1c1', true, null), boxCmp('0123456789ab', true, 'none')],
-    '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; comparisons under box definition fa502f955d13: 1 agree, 1 disagree (local darwin/arm64, runner linux/arm64 box)'],
-  ['a label-only runner, a team box definition and a stamped image', null, true,
+    '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab, box unavailable: no image for box fa502f955d13 on this runner; comparisons under box definition fa502f955d13: 1 agree, 1 disagree (local darwin/arm64, runner linux/arm64 box)'],
+  ['a label-only runner, a team box definition and a stamped image', LABEL_NO_IMAGE, true,
     [labelCmp('c0c0c0c0c0c0', false, null), labelCmp('c1c1c1c1c1c1', true, `sha256:${'d'.repeat(64)}`), boxCmp('0123456789ab', true, 'none')],
-    '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; comparisons under box definition fa502f955d13 image dddddddddddd: 1 agree, 1 disagree (local darwin/arm64, runner linux/arm64 box)'],
+    '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab, box unavailable: no image for box fa502f955d13 on this runner; comparisons under box definition fa502f955d13 image dddddddddddd: 1 agree, 1 disagree (local darwin/arm64, runner linux/arm64 box)'],
+  ['a label-only runner whose image for the team box definition is ready', BOX_READY, true,
+    [labelCmp('c0c0c0c0c0c0', false, null), labelCmp('c1c1c1c1c1c1', true, null), boxCmp('b0b0b0b0b0b0', true, 'container')],
+    '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab, box ready linux/arm64 image eeeeeeeeeeee key b0b0b0b0b0b0; comparisons under box definition fa502f955d13: 1 agree, 1 disagree (local darwin/arm64, runner linux/arm64 box)'],
+  ['a label-only runner building the team box definition', { state: 'building', definitionHash: LABEL_HASH, why: 'building box fa502f955d13 on this runner' }, true,
+    [labelCmp('c0c0c0c0c0c0', false, null), labelCmp('c1c1c1c1c1c1', true, null)],
+    '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab, box building: building box fa502f955d13 on this runner; comparisons under box definition fa502f955d13: 1 agree, 1 disagree (local darwin/arm64, runner linux/arm64 box)'],
+  ['a label-only runner that can build the team box definition', { state: 'can-build', definitionHash: LABEL_HASH, why: 'no image for box fa502f955d13 on this runner; it builds one on the first job' }, true,
+    [labelCmp('c0c0c0c0c0c0', false, null)],
+    '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab, box can-build: no image for box fa502f955d13 on this runner; it builds one on the first job; comparisons under box definition fa502f955d13: 0 agree, 1 disagree (local darwin/arm64, runner linux/arm64 box)'],
   ['a label-only runner and no team box definition', null, false,
     [boxCmp('0123456789ab', true, 'none')],
     '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; box comparisons: none — the team has no box definition and the runner has no box image'],
@@ -647,14 +657,32 @@ const LABEL_ROWS = [
 for (const [name, infoBox, withDef, compare, want] of LABEL_ROWS) {
   test(`t2328: [agent:team runner] for a box:true team with ${name}`, async () => {
     const f = mkVerbFixture({
-      manifestExtra: { testRunner: { peer: 'runner-1', hands: 'full', gate: 'shadow', box: true } }, peers: [SUITE_PEER], reach: INFO_BOX(infoBox), compare,
+      manifestExtra: { testRunner: { peer: 'runner-1', hands: 'full', gate: 'shadow', box: true } }, peers: [SUITE_PEER],
+      reach: INFO_BOX(withDef ? null : infoBox), boxFor: withDef ? (w) => (w.definitionHash === LABEL_HASH ? infoBox : null) : null, compare,
     });
     if (withDef) require('../team-box').writeBox(path.dirname(f.file), LABEL_DEF);
     assert.deepStrictEqual(await f.verb('lead', '[agent:team runner]'), [want]);
   });
 }
 
+test('t2364: a pooled box:true team keeps the box-definition tally and shows each member box state', async () => {
+  const f = mkVerbFixture({
+    manifestExtra: { testRunner: { peer: 'runner-1', hands: 'full', gate: 'shadow', box: true, pool: [{ peer: 'runner-3' }] } },
+    peers: [SUITE_PEER, { id: 'p4', label: 'runner-3', online: true, caps: ['peer', 'suite'] }],
+    reach: INFO_BOX(null), boxFor: (w) => (w.definitionHash === LABEL_HASH ? BOX_READY : null),
+    compare: [labelCmp('c0c0c0c0c0c0', false, null), labelCmp('c1c1c1c1c1c1', true, null), boxCmp('b0b0b0b0b0b0', true, 'container')],
+  });
+  require('../team-box').writeBox(path.dirname(f.file), LABEL_DEF);
+  const member = (name) => `${name}, wire push — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab, box ready linux/arm64 image eeeeeeeeeeee key b0b0b0b0b0b0, slots 1/1 in use`;
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner]'), [[
+    '[agent:team] test runner of team: 2 runners, hands full (hand runs use runner-1 only), gate shadow',
+    member('runner-1'),
+    member('runner-3'),
+    'comparisons under box definition fa502f955d13: 1 agree, 1 disagree (local darwin/arm64, runner linux/arm64 box)',
+  ].join('\n')]);
+});
+
 test('t2328: no runner line in the label table prints null or undefined', () => {
-  assert.strictEqual(LABEL_ROWS.length, 4, 'ENTER: all four rows are in the table');
+  assert.strictEqual(LABEL_ROWS.length, 7, 'ENTER: all seven rows are in the table');
   for (const [name, , , , want] of LABEL_ROWS) assert.doesNotMatch(want, /null|undefined/, name);
 });

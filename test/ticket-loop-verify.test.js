@@ -7029,6 +7029,8 @@ function boxRemote(mode, events) {
   });
   const jobFor = (id) => {
     if (mode === 'queue budget') return { id, state: 'queued', treeHash: BOX_TREE };
+    if (mode === 'build budget') return { id, state: 'build', treeHash: BOX_TREE };
+    if (mode === 'build failed') return doneJob(id, { env: null, reason: 'box-failed', exit: null });
     if (mode === 'run budget') return { id, state: 'running', treeHash: BOX_TREE, env: BOX_ENV() };
     if (mode === 'runner restart') return { id, state: 'gone' };
     if (mode === 'tree mismatch') return doneJob(id, { treeHash: 'c'.repeat(40) });
@@ -7045,7 +7047,7 @@ function boxRemote(mode, events) {
       if (p === '/api/suite/info') return { status: 200, body: { ok: true, limits: {}, env: { envKey: 'k' } } };
       if (method === 'POST') { events.push('post'); return mode === 'refused' ? { status: 200, body: { ok: false, error: 'nope' } } : { status: 200, body: { ok: true, state: 'queued' } }; }
       if (p.includes('/output?')) {
-        const text = p.includes('stream=stdout') ? (BOX_OUT[mode] || BOX_OUT.red) : '';
+        const text = p.includes('stream=stdout') ? (BOX_OUT[mode] || BOX_OUT.red) : mode === 'build failed' ? 'ERROR: boom\nsuite-runner: box build: docker build exited 1: ERROR: boom\n' : '';
         return { status: 200, body: { ok: true, text, offset: 0, total: Buffer.byteLength(text) } };
       }
       const id = decodeURIComponent(/ids=([^&]+)/.exec(p)[1]);
@@ -7131,6 +7133,8 @@ const BOX_FALLBACKS = [
   ['tree mismatch', 'tree mismatch', 'unknown', 'runner answered for tree cccccccc, not aaaaaaaa'],
   ['definition mismatch', 'definition mismatch', 'unknown', 'box mismatch: asked box 2d7c08e27395, runner ran image eeeeeeeeeeee'],
   ['runner restart', 'runner restart', 'unknown', 'runner restarted'],
+  ['build budget', 'box build', 'timeout', 'the box build did not finish within the 1500000ms build budget (cancelled)'],
+  ['build failed', 'box build', 'unknown', 'box build on runner: docker build exited 1: ERROR: boom'],
 ];
 
 for (const [local, script] of [['green', SHADOW_LOCAL.green], ['red', SHADOW_LOCAL.red]]) {

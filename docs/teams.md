@@ -1017,7 +1017,7 @@ token), `queue budget` (the job did not start within 5 min,
 `BOX_DECIDE_QUEUE_MS`), `run budget` (the 41 min client budget, the runner's
 kill, or no answer within that plus 2 min), `runner restart`, `tree mismatch`,
 `definition mismatch` (also an isolation mismatch), `no share` (the runner lacks a requested share at its version, or the stamped shares differ from the ask), `no totals` (no TOTALS
-line, or zero tests) and `outcome unknown` (cancelled, refused, output
+line, or zero tests), `box build` (the runner's build of a missing image failed or was refused, or did not finish within the lead's 25 min build budget, `BUILD_BUDGET_MS`) and `outcome unknown` (cancelled, refused, output
 unavailable, snapshot or upload failure), plus `no box definition` when the
 definition was cleared after the gate was set. A box result that arrives after
 the fallback began is ignored. Each run writes one compare row with
@@ -1025,6 +1025,16 @@ the fallback began is ignored. Each run writes one compare row with
 them as `gate runs: N decided by the box, M fell back to home (<reason> <n>, …)`.
 The loop's suite notices (verify red and green, post-merge failure, MERGED)
 append `(box)` or `(home, box unavailable: <reason>)`.
+
+A runner whose owner ticked "Build box images that teams ask for" builds a
+missing image itself from the definition text the job carries (docs/peering.md,
+**Building a missing image**). The lead sees the job in phase `build`: while it
+is there the queue budget does not run, a separate 25 min build budget does,
+and once the job leaves `build` the queue and run budgets start afresh. A
+failed or refused build reads as `unknown` (`box build on runner: <why>`) and
+falls back with `box build`, never as a red suite. For a team with `box: true`, bare `[agent:team runner]`
+asks each member about the team's definition and shows `box ready …`, `box
+building: …`, `box can-build: …` or `box unavailable: …` per member.
 
 A runner can also be a node that dials this one (`wire: pull`, see
 docs/peering.md §2e): it has granted this node `run` in its box offer and
@@ -1071,7 +1081,7 @@ the verify, its re-measure and post-merge) asks `pickRunner` (suite-client.js):
 among the members that are attached (pull) or online with the `suite`
 capability (push), whose info route answers within the usual request timeout,
 and, for a box job, whose info reports the box ready for the team's definition
-hash (the lead passes the hash on the info call), the one with the most free
+hash (the lead passes the hash on the info call) — or, when no member is ready, one whose info says `building` that hash, then one that says `can-build`, so a second member is not sent a duplicate build while one builds — the one with the most free
 slots (`slots.total - slots.inUse`; a runner that reports no slots reads as one
 slot, in use while a job runs), then the shortest queue, then manifest order. When
 none qualifies the first member is used exactly as with no pool. A chosen member
