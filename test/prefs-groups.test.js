@@ -38,7 +38,7 @@ const CONTROLS = [
   'prefs-remote-token', 'prefs-remote-token-save', 'prefs-remote-token-clear',
   'prefs-remote-token-state', 'prefs-peer-shell',
   'prefs-suite-runner-block', 'prefs-suite-runner-enabled', 'prefs-suite-runner-enabled-env',
-  'prefs-suite-runner-isolation', 'prefs-suite-runner-isolation-env', 'prefs-suite-runner-none-note',
+  'prefs-suite-runner-isolation', 'prefs-suite-runner-isolation-env', 'prefs-suite-runner-none-note', 'prefs-suite-runner-shares',
   'prefs-suite-runner-work', 'prefs-suite-runner-apply', 'prefs-suite-runner-work-env', 'prefs-suite-runner-status',
   'prefs-suite-runner-boxImage', 'prefs-suite-runner-boxImage-env', 'prefs-suite-runner-slots',
   'prefs-box-offer-block', 'prefs-box-offer-enabled', 'prefs-box-offer-boxes', 'prefs-box-offer-availability',
