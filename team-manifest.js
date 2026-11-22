@@ -201,7 +201,9 @@ const TEST_RUNNER_HANDS = ['off', 'full', 'all'];
 const TEST_RUNNER_GATE = ['off', 'shadow', 'on'];
 const TEST_RUNNER_WIRE_PUSH = 'push';
 const TEST_RUNNER_WIRE = [TEST_RUNNER_WIRE_PUSH, 'pull'];
-const TEST_RUNNER_KEYS = ['peer', 'hands', 'gate', 'wire', 'setup', 'env', 'box', 'pool'];
+const TEST_RUNNER_KEYS = ['peer', 'hands', 'gate', 'wire', 'setup', 'env', 'box', 'pool', 'shares'];
+const TEST_RUNNER_SHARES_MAX = 8;
+const TEST_RUNNER_SHARE_VERSION_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const TEST_RUNNER_POOL_MAX = 8;
 const TEST_RUNNER_SETUP_KEYS = ['run', 'key', 'paths', 'timeoutMs'];
 const TEST_RUNNER_ENV_RE = /^[A-Z_][A-Z0-9_]*$/;
@@ -249,6 +251,20 @@ function normalizeRunnerPool(pool, first) {
   return out;
 }
 
+function normalizeRunnerShares(rows) {
+  if (!Array.isArray(rows) || rows.length > TEST_RUNNER_SHARES_MAX) return null;
+  const names = new Set();
+  const out = [];
+  for (const row of rows) {
+    if (!isPlainObject(row) || Object.keys(row).some((k) => k !== 'share' && k !== 'version')) return null;
+    if (typeof row.share !== 'string' || !NAME_RE.test(row.share) || names.has(row.share)) return null;
+    if (typeof row.version !== 'string' || !TEST_RUNNER_SHARE_VERSION_RE.test(row.version)) return null;
+    names.add(row.share);
+    out.push({ share: row.share, version: row.version });
+  }
+  return out;
+}
+
 function normalizeTestRunner(v) {
   if (!isPlainObject(v) || Object.keys(v).some((k) => !TEST_RUNNER_KEYS.includes(k))) return null;
   if (typeof v.peer !== 'string' || !NAME_RE.test(v.peer)) return null;
@@ -259,9 +275,10 @@ function normalizeTestRunner(v) {
   if (v.box !== undefined && typeof v.box !== 'boolean') return null;
   const setup = v.setup === undefined ? undefined : normalizeRunnerSetup(v.setup);
   const env = v.env === undefined ? undefined : normalizeRunnerEnv(v.env);
-  if (setup === null || env === null) return null;
+  const shares = v.shares === undefined ? undefined : normalizeRunnerShares(v.shares);
+  if (setup === null || env === null || shares === null) return null;
   const pool = v.pool === undefined ? null : normalizeRunnerPool(v.pool, v.peer);
-  return { peer: v.peer, hands, gate, ...(v.wire !== undefined ? { wire: v.wire } : {}), ...(setup ? { setup } : {}), ...(env ? { env } : {}), ...(v.box !== undefined ? { box: v.box } : {}), ...(pool ? { pool } : {}) };
+  return { peer: v.peer, hands, gate, ...(v.wire !== undefined ? { wire: v.wire } : {}), ...(setup ? { setup } : {}), ...(env ? { env } : {}), ...(v.box !== undefined ? { box: v.box } : {}), ...(pool ? { pool } : {}), ...(shares ? { shares } : {}) };
 }
 
 function boxCpus(cpuMax, cpus) {

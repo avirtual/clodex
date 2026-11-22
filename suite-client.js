@@ -100,7 +100,7 @@ function createSuiteClient({
       peer, tree, kind = 'hand', scope = 'full', team = null, ticket = null, seat = null,
       files = [], flags = {}, setup = null, env = {}, timeoutMs = null, budgetMs = DEFAULT_BUDGET_MS,
       onProgress = () => {}, onJob = () => {}, onSubmitted = () => {}, onDetach = () => {}, shouldStop = () => false,
-      queueBudgetMs = null, runBudgetMs = null, box = false,
+      queueBudgetMs = null, runBudgetMs = null, box = false, shares = [],
     } = opts;
     const ctx = {
       id: opts.runId || randomUUID(), peer, box: box === true || boxDefOf(box) != null, boxDef: boxDefOf(box), wire: opts.wire === 'pull' ? 'pull' : 'push', where: opts.name || peer, route: opts.route || null, override: opts.override || null,
@@ -108,6 +108,7 @@ function createSuiteClient({
       jobId: null, attempt: 0, treeHash: null, sha: null, dirty: null, queuedAt: null, startedAt: null, env: null, started: false,
       t0: now(), budgetMs, queueBudgetMs, runBudgetMs, timeoutMs, onSubmitted, onDetach, shouldStop,
       failFast: typeof opts.repick === 'function', submitted: false,
+      shares: box && Array.isArray(shares) ? shares.map(({ share, version }) => ({ share, version })) : [],
     };
     let repick = typeof opts.repick === 'function' ? opts.repick : null;
     const progress = (line) => {
@@ -212,6 +213,11 @@ function createSuiteClient({
       ctx.env = null;
       return { unknown: `runner has no box: ${(boxInfo && boxInfo.why) || 'not configured'}` };
     }
+    const lacking = missingShare(info.body, ctx.shares);
+    if (lacking) {
+      ctx.env = null;
+      return { unknown: `runner has no share ${lacking.share}@${lacking.version}` };
+    }
     ctx.env = ctx.boxDef ? null : ctx.box ? boxInfo.env || null : info.body.env || null;
     const body = {
       id: jobId, attempt, repoKey: snap.repoKey, kind: ctx.kind, scope: ctx.scope,
@@ -221,6 +227,7 @@ function createSuiteClient({
       files, flags, env, setup, timeoutMs: ctx.timeoutMs, full,
       ...(ctx.box ? { isolation: 'container' } : {}),
       ...(ctx.boxDef ? { box: ctx.boxDef } : {}),
+      ...(ctx.shares.length ? { shares: ctx.shares } : {}),
     };
     ctx.queuedAt = now();
     if (ctx.shouldStop()) return { unknown: 'cancelled by the caller before submit' };
@@ -451,7 +458,7 @@ function createSuiteClient({
         at: iso(now()), team: opts.team, kind: opts.kind, ticket: opts.ticket, treeHash: snap.treeHash, sha: snap.head || null,
         envKey: e.envKey || null, wire: me.wire,
         localEnv: { os: platform, arch },
-        remoteEnv: { os: e.platform || null, arch: e.arch || null, isolation: e.isolation || null, imageId: (e.box && e.box.imageId) || null, definitionHash: (e.box && e.box.definitionHash) || null },
+        remoteEnv: { os: e.platform || null, arch: e.arch || null, isolation: e.isolation || null, imageId: (e.box && e.box.imageId) || null, definitionHash: (e.box && e.box.definitionHash) || null, ...(e.box && Array.isArray(e.box.shares) ? { shares: e.box.shares } : {}) },
         local: me.local, remote,
         ...(notSent ? { skipped: 'not-sent', agree: null } : { agree: halvesAgree(me.local, remote) }),
         ...(!notSent && namesUnknown(me.local, remote) ? { names: 'unknown' } : {}),
@@ -487,7 +494,7 @@ function createSuiteClient({
       at: iso(now()), team, kind, ticket, treeHash: rec ? rec.treeHash : null, sha: rec ? rec.sha : null,
       envKey: e.envKey || null, wire: wire === 'pull' ? 'pull' : 'push',
       localEnv: local ? { os: platform, arch } : null,
-      remoteEnv: rec ? { os: e.platform || null, arch: e.arch || null, isolation: e.isolation || null, imageId: (e.box && e.box.imageId) || null, definitionHash: (e.box && e.box.definitionHash) || null } : null,
+      remoteEnv: rec ? { os: e.platform || null, arch: e.arch || null, isolation: e.isolation || null, imageId: (e.box && e.box.imageId) || null, definitionHash: (e.box && e.box.definitionHash) || null, ...(e.box && Array.isArray(e.box.shares) ? { shares: e.box.shares } : {}) } : null,
       local, remote: box ? remoteHalf(box) : null, agree: null, decidedBy, fallback, ...(runner ? { runner } : {}),
     });
   }
@@ -639,9 +646,10 @@ const FALLBACK_OF = [
   [/^runner restarted$/, 'runner restart'],
   [/^runner answered for tree |^tree mismatch on runner/, 'tree mismatch'],
   [/^box mismatch: |^runner has no box: /, 'definition mismatch'],
+  [/^runner has no share /, 'no share'],
 ];
 
-function boxVerdict(out, boxDef) {
+function boxVerdict(out, boxDef, shares = []) {
   if (!out) return { fallback: 'outcome unknown' };
   const rec = out.record || {};
   if (out.unknown) {
@@ -655,8 +663,24 @@ function boxVerdict(out, boxDef) {
   if (e.isolation !== 'container' || !e.box || !boxDef || typeof boxDef.definitionHash !== 'string' || e.box.definitionHash !== boxDef.definitionHash) {
     return { fallback: 'definition mismatch' };
   }
+  if (!sharesMatch(e.box.shares, shares)) return { fallback: 'no share' };
   if (!out.res || !rec.treeHash || out.res.treeHash !== rec.treeHash) return { fallback: 'tree mismatch' };
   return { fallback: null };
+}
+
+function shareKeys(rows, nameKey) {
+  return (Array.isArray(rows) ? rows : []).map((r) => `${r && r[nameKey]}@${r && r.version}`).sort();
+}
+
+function sharesMatch(stamped, asked) {
+  const a = shareKeys(stamped, 'name');
+  const b = shareKeys(asked, 'share');
+  return a.length === b.length && a.every((k, i) => k === b[i]);
+}
+
+function missingShare(info, asked) {
+  const held = new Set(shareKeys(info && info.shares, 'name'));
+  return (Array.isArray(asked) ? asked : []).find((s) => !held.has(`${s.share}@${s.version}`)) || null;
 }
 
 function runnerLoad(info) {
@@ -676,11 +700,11 @@ function boxReadyFor(info, box) {
   return !!stamped && stamped.definitionHash === want.definitionHash;
 }
 
-function pickRunner(members, { box = false } = {}) {
+function pickRunner(members, { box = false, shares = [] } = {}) {
   let best = null;
   members.forEach((m, i) => {
     if (!m || !m.live || !m.info) return;
-    if ((box === true || boxDefOf(box)) && !boxReadyFor(m.info, box)) return;
+    if ((box === true || boxDefOf(box)) && (!boxReadyFor(m.info, box) || missingShare(m.info, shares))) return;
     const load = runnerLoad(m.info);
     const better = !best || load.free > best.load.free || (load.free === best.load.free && load.queue < best.load.queue);
     if (better) best = { m, i, load };

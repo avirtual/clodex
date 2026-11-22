@@ -10,6 +10,7 @@ const fs = resolveFs();
 
 const IMAGE_RE = /^sha256:[0-9a-f]{64}$/;
 const MOUNT_REL_RE = /^[A-Za-z0-9._@+/-]+$/;
+const SHARE_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
 const DEADMAN = 'mkdir -p "$HOME"; exec 3<&0; "$@" </dev/null & pid=$!; { cat <&3 >/dev/null; kill -KILL $$; } & wait $pid; exit $?';
 const BOX_ENV = {
   HOME: '/tmp/home',
@@ -100,7 +101,12 @@ function boxPlatform(identity) {
   return `linux/${identity.arch === 'x64' ? 'amd64' : identity.arch}`;
 }
 
-function runArgv({ image, runnerKey, n, uid, gid, jobDir, job, argv, env }) {
+function runArgv({ image, runnerKey, n, uid, gid, jobDir, job, argv, env, shares = [] }) {
+  const shareMounts = [];
+  for (const s of shares) {
+    if (!SHARE_NAME_RE.test(s.name) || String(s.src).includes(',')) throw new Error(`share not mountable: ${JSON.stringify(s.name)}`);
+    shareMounts.push('--mount', `type=bind,src=${s.src},dst=/job/tree/.shares/${s.name},readonly`);
+  }
   const rels = (job.setup && job.depsEntry) ? job.setup.paths : [];
   const mounts = [];
   for (const rel of rels) {
@@ -120,6 +126,7 @@ function runArgv({ image, runnerKey, n, uid, gid, jobDir, job, argv, env }) {
     '--network', 'bridge', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
     '--pids-limit', '4096', '--shm-size', '1g',
     '--mount', `type=bind,src=${path.join(jobDir, 'tree')},dst=/job/tree`,
+    ...shareMounts,
     ...mounts,
     ...envArgs,
     image,
@@ -273,10 +280,10 @@ function boxIsolation({
     sweep: (keep = []) => clear(`clodex.suite.runner=${runnerKey}`, keep),
     env() { return { ...BOX_ENV }; },
     async prepare() {},
-    spawn({ jobDir, argv, env: jobEnv, spawn, job }) {
+    spawn({ jobDir, argv, env: jobEnv, spawn, job, shares = [] }) {
       counter += 1;
       const stamped = job.identity && job.identity.box ? job.identity.box.imageId : null;
-      const full = runArgv({ image: stamped || image, runnerKey, n: counter, uid, gid, jobDir, job, argv, env: jobEnv });
+      const full = runArgv({ image: stamped || image, runnerKey, n: counter, uid, gid, jobDir, job, argv, env: jobEnv, shares });
       return spawn(full[0], full.slice(1), { detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
     },
     async kill(child, jobDir, job) {
