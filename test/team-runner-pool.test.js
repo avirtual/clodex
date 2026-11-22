@@ -381,3 +381,61 @@ test('t2362: the popover runner row shows the member count and the per-member li
   const single = buildRunnerField(doc, { ...info, members: undefined, poolLines: undefined });
   assert.strictEqual(single.childNodes.some((n) => n.dataset && n.dataset.runner === 'pool'), false);
 });
+
+test('t2363: team shares round-trip through team.json; a row with an extra key drops the whole setting', () => {
+  const input = { peer: 'a', gate: 'on', shares: [{ share: 'assets', version: 'v1' }, { share: 'models.3d', version: '2026.11' }] };
+  const want = { peer: 'a', hands: 'off', gate: 'on', shares: [{ share: 'assets', version: 'v1' }, { share: 'models.3d', version: '2026.11' }] };
+  assert.deepStrictEqual(normalizeTestRunner(input), want);
+  const { tm } = mkHome({ testRunner: input });
+  assert.deepStrictEqual(tm.loadManifest('team').testRunner, want);
+  assert.strictEqual(normalizeTestRunner({ peer: 'a', shares: [{ share: 'assets', version: 'v1', at: 'assets' }] }), null);
+  const { tm: tm2 } = mkHome({ testRunner: { peer: 'a', shares: [{ share: 'assets', version: 'v1', at: 'assets' }] } });
+  const { out: team } = quiet(() => tm2.loadManifest('team'));
+  assert.deepStrictEqual([team.testRunner, team.droppedFields.map((d) => [d.field, d.status])], [undefined, [['testRunner', 'invalid']]]);
+});
+
+const SHARE_ASK = [{ share: 'assets', version: 'v1' }];
+
+test('t2363: pickRunner skips a member without the share for a box job and keeps it for a native one', () => {
+  const rows = [
+    member('a', load(2, 0, 0, { box: box(DEF.definitionHash) })),
+    member('b', load(2, 1, 0, { box: box(DEF.definitionHash), shares: [{ name: 'assets', version: 'v1' }] })),
+    member('c', load(2, 0, 0, { box: box(DEF.definitionHash), shares: [{ name: 'assets', version: 'v0' }] })),
+  ];
+  assert.strictEqual(pickRunner(rows, { box: DEF, shares: SHARE_ASK }).member.peer, 'b');
+  assert.strictEqual(pickRunner(rows, { box: false, shares: SHARE_ASK }).member.peer, 'a');
+});
+
+test('t2363: boxVerdict passes stamped shares equal to the ask and falls back on a differing version', () => {
+  const { boxVerdict } = require('../suite-client');
+  const out = (shares) => ({
+    unknown: null, res: { treeHash: TREE },
+    record: { outcome: 'pass', pass: 5, fail: 0, tests: 5, treeHash: TREE, env: { isolation: 'container', box: { imageId: 'sha256:e', definitionHash: DEF.definitionHash, shares } } },
+  });
+  assert.deepStrictEqual(boxVerdict(out([{ name: 'assets', version: 'v1' }]), DEF, SHARE_ASK), { fallback: null });
+  assert.deepStrictEqual(boxVerdict(out([{ name: 'assets', version: 'v2' }]), DEF, SHARE_ASK), { fallback: 'no share' });
+});
+
+test('t2363: a single runner without the share ends unknown before submit, and under gate:on the home suite decides with no share', async () => {
+  const def = 'FROM node:24-bookworm\nRUN true\n';
+  const hash = require('../team-box').boxFingerprint(def);
+  const calls = [];
+  const conn = {
+    suiteAsk: async (method, p) => {
+      calls.push(`${method} ${p.split('?')[0]}`);
+      return { status: 200, body: { ok: true, limits: {}, env: { envKey: 'k' }, box: box(hash), shares: [{ name: 'assets', version: 'v0' }] } };
+    },
+  };
+  const { client, records } = clientOver({ p1: conn });
+  const direct = await client.run({ peer: 'p1', tree: '/w', kind: 'verify', box: { definitionHash: hash, rev: 1, definition: def }, shares: SHARE_ASK, budgetMs: 60000 });
+  assert.strictEqual(direct.unknown, 'runner has no share assets@v1');
+  const f = mkFixture({ manifestExtra: { testRunner: { peer: 'runner-1', hands: 'off', gate: 'on', shares: SHARE_ASK } }, peers: [R1], client });
+  const team = f.tm.loadManifest('team');
+  require('../team-box').writeBox(team.dir, def);
+  const ticket = { id: 't1' };
+  const decided = await f.m._boxDecide(team, ticket, '/w', {});
+  f.m._boxRow(team, ticket, decided, null);
+  assert.deepStrictEqual(calls, ['GET /api/suite/info', 'GET /api/suite/info'], 'no job was submitted');
+  const row = records().pop();
+  assert.deepStrictEqual([decided.decided, row.decidedBy, row.fallback], [false, 'home', 'no share']);
+});
