@@ -1426,6 +1426,11 @@
           </div>
           <p class="hint-text">Image id of a hand-built image; jobs that ask for a box run in a fresh container of it. Leave empty to run only native jobs.</p>
           <p id="prefs-suite-runner-boxImage-env" class="hint-text hidden">set by environment</p>
+          <div class="prefs-row" style="margin-top: 6px;">
+            <span>Shared folders</span>
+          </div>
+          <div id="prefs-suite-runner-shares"></div>
+          <p class="hint-text">A shared folder is readable, read-only, by test jobs from every peer you allow to run jobs here. Change the version whenever the folder's contents change: a job asks for a version, and this machine refuses one it does not hold.</p>
           <span id="prefs-suite-runner-status" class="hint-text" style="display: block; margin-top: 6px;"></span>
         </div>
         <div id="prefs-box-offer-block">

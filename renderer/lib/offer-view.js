@@ -131,12 +131,60 @@ function suiteRunnerRecordFromForm(shown, form) {
   const pick = (k, v) => (forced.has(k) ? stored[k] : v);
   const boxImage = pick('boxImage', form.boxImage.trim() || null);
   const slots = form.slots == null ? stored.slots : Number(form.slots);
+  const shares = form.shares == null ? stored.shares : form.shares;
   return {
     enabled: pick('enabled', form.enabled),
     isolation: pick('isolation', form.isolation),
     work: pick('work', form.work.trim() || null),
     ...(boxImage ? { boxImage } : {}),
     ...(Number.isInteger(slots) && slots > 1 ? { slots } : {}),
+    ...(Array.isArray(shares) && shares.length ? { shares } : {}),
+  };
+}
+
+const SHARE_FIELDS = [['name', 'name'], ['path', '/absolute/folder'], ['version', 'version']];
+
+function shareEditor(doc, host, rows = []) {
+  const list = doc.createElement('div');
+  const add = doc.createElement('button');
+  add.type = 'button';
+  add.className = 'secondary';
+  add.textContent = 'Add folder';
+  const entries = [];
+  function addRow(r = {}) {
+    const row = doc.createElement('div');
+    row.className = 'prefs-row prefs-suite-share';
+    const inputs = SHARE_FIELDS.map(([k, hint]) => {
+      const input = doc.createElement('input');
+      input.type = 'text';
+      input.placeholder = hint;
+      input.value = typeof r[k] === 'string' ? r[k] : '';
+      input.dataset.field = k;
+      input.setAttribute('autocomplete', 'off');
+      input.setAttribute('spellcheck', 'false');
+      row.appendChild(input);
+      return input;
+    });
+    const rm = doc.createElement('button');
+    rm.type = 'button';
+    rm.className = 'secondary';
+    rm.textContent = 'Remove';
+    const entry = { row, inputs };
+    rm.addEventListener('click', () => {
+      entries.splice(entries.indexOf(entry), 1);
+      row.remove();
+    });
+    row.appendChild(rm);
+    list.appendChild(row);
+    entries.push(entry);
+  }
+  add.addEventListener('click', () => addRow());
+  host.replaceChildren(list, add);
+  for (const r of Array.isArray(rows) ? rows : []) addRow(r);
+  return {
+    read: () => entries
+      .map(({ inputs: [name, at, version] }) => ({ name: name.value.trim(), path: at.value.trim(), version: version.value.trim() }))
+      .filter((r) => r.name || r.path || r.version),
   };
 }
 
@@ -173,5 +221,6 @@ module.exports = {
   offerRecordFromForm,
   offerStatusText,
   suiteRunnerRecordFromForm,
+  shareEditor,
   claimLines,
 };

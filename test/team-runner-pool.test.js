@@ -435,7 +435,8 @@ test('t2363: a single runner without the share ends unknown before submit, and u
   const ticket = { id: 't1' };
   const decided = await f.m._boxDecide(team, ticket, '/w', {});
   f.m._boxRow(team, ticket, decided, null);
-  assert.deepStrictEqual(calls, ['GET /api/suite/info', 'GET /api/suite/info'], 'no job was submitted');
+  assert.deepStrictEqual(calls.filter((c) => c.startsWith('POST')), [], 'no job was submitted');
+  assert.deepStrictEqual(calls.filter((c) => c === 'GET /api/suite/info').length, 2, 'ENTER: both runs asked info');
   const row = records().pop();
   assert.deepStrictEqual([decided.decided, row.decidedBy, row.fallback], [false, 'home', 'no share']);
 });

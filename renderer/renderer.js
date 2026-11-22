@@ -50,7 +50,7 @@ const { envRowView, buildEnvRow } = require('./lib/env-row');
 const { envLockView, applyEnvLock, patchUnlessEnvLocked } = require('./lib/env-lock');
 const { activityView: testActivityView } = require('../suite-activity-view');
 const { createOutputFollower } = require('./lib/testjob-output');
-const { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, offerRunnerFrom, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText, suiteRunnerRecordFromForm, claimLines: offerClaimLines } = require('./lib/offer-view');
+const { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, offerRunnerFrom, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText, suiteRunnerRecordFromForm, shareEditor: suiteShareEditor, claimLines: offerClaimLines } = require('./lib/offer-view');
 const { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require('./lib/account-select');
 const { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, keyTransportRefusal, modelOptions } = require('./lib/account-row');
 const { isToolInstallSession } = require('../tool-doctor');
@@ -6578,6 +6578,8 @@ const prefsSuiteRunnerIsolation = document.getElementById('prefs-suite-runner-is
 const prefsSuiteRunnerWork = document.getElementById('prefs-suite-runner-work');
 const prefsSuiteRunnerBoxImage = document.getElementById('prefs-suite-runner-boxImage');
 const prefsSuiteRunnerSlots = document.getElementById('prefs-suite-runner-slots');
+const prefsSuiteRunnerShares = document.getElementById('prefs-suite-runner-shares');
+let prefsSuiteRunnerShareRows = null;
 const prefsSuiteRunnerApply = document.getElementById('prefs-suite-runner-apply');
 const prefsSuiteRunnerStatus = document.getElementById('prefs-suite-runner-status');
 const prefsSuiteRunnerNoneNote = document.getElementById('prefs-suite-runner-none-note');
@@ -9790,6 +9792,7 @@ function renderSuiteRunnerPrefs(st) {
   prefsSuiteRunnerBoxImage.value = forced.has('boxImage') ? (eff.boxImage || '') : (rec.boxImage || '');
   prefsSuiteRunnerBoxImage.disabled = forced.has('boxImage');
   prefsSuiteRunnerSlots.value = String(rec.slots || 1);
+  prefsSuiteRunnerShareRows = prefsSuiteRunnerShares ? suiteShareEditor(document, prefsSuiteRunnerShares, rec.shares || []) : null;
   for (const k of ['enabled', 'isolation', 'work', 'boxImage']) {
     document.getElementById(`prefs-suite-runner-${k}-env`).classList.toggle('hidden', !forced.has(k));
   }
@@ -9814,6 +9817,7 @@ function suiteRunnerRecordToSave() {
     work: prefsSuiteRunnerWork.value,
     boxImage: prefsSuiteRunnerBoxImage.value,
     slots: prefsSuiteRunnerSlots.value,
+    ...(prefsSuiteRunnerShareRows ? { shares: prefsSuiteRunnerShareRows.read() } : {}),
   });
 }
 
