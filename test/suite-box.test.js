@@ -478,3 +478,19 @@ test('seal and reap walk an Electron archive as a file under the resolved fs', a
   assert.strictEqual(realFs.existsSync(jobDir), false);
   assert.deepStrictEqual(beneath, []);
 });
+
+test('t2363: runArgv binds each share read-only under /job/tree/.shares right after the tree mount', () => {
+  const argv = runArgv({
+    image: IMAGE, runnerKey: RUNNER_KEY, n: 1, uid: 501, gid: 20, jobDir: '/w/jobs/abcd1234', job: ARM_JOB,
+    argv: ['node', 'scripts/run-tests.js'], env: {},
+    shares: [{ name: 'a', src: '/srv/assets' }, { name: 'b', src: '/Volumes/big/models' }],
+  });
+  const at = argv.indexOf('type=bind,src=/w/jobs/abcd1234/tree,dst=/job/tree');
+  assert.ok(at > 0, 'ENTER: the tree mount is present');
+  assert.deepStrictEqual(argv.slice(at + 1, at + 5), [
+    '--mount', 'type=bind,src=/srv/assets,dst=/job/tree/.shares/a,readonly',
+    '--mount', 'type=bind,src=/Volumes/big/models,dst=/job/tree/.shares/b,readonly',
+  ]);
+  assert.throws(() => runArgv({ image: IMAGE, runnerKey: RUNNER_KEY, n: 1, uid: 501, gid: 20, jobDir: '/w/jobs/abcd1234', job: ARM_JOB, argv: ['true'], env: {}, shares: [{ name: 'a', src: '/srv/a,dst=/x' }] }),
+    /share not mountable: "a"/);
+});
