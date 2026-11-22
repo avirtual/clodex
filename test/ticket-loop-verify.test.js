@@ -7192,7 +7192,7 @@ test('t2366: a first build that spends the whole build budget, then queues and r
   };
   const out = await b.run(GATE_ON, client);
   assert.deepStrictEqual([out.decidedBy, out.fallback, out.green], ['box', null, true]);
-  assert.deepStrictEqual(b.events, []);
+  assert.deepStrictEqual(b.events, ['post']);
 });
 
 test('t2366: a guard that fires while the job is still in build falls back as box build, never as run budget', async () => {
