@@ -57,10 +57,10 @@ function harness({ runnerAnswer = null } = {}) {
     window: {
       api: {
         suiteRunnerSet: async (rec) => {
-          calls.push(['suiteRunnerSet', rec]);
+          calls.push(['suiteRunnerSet', structuredClone(rec)]);
           return runnerAnswer || { ok: true, state: { ...RUNNER, setting: rec } };
         },
-        offerSet: async (rec, confirm) => { calls.push(['offerSet', rec, confirm]); return { ok: true, state: offerState(rec) }; },
+        offerSet: async (rec, confirm) => { calls.push(['offerSet', structuredClone(rec), confirm]); return { ok: true, state: offerState(rec) }; },
       },
       confirm: () => true,
     },
