@@ -1294,6 +1294,8 @@ function createSuiteRunner({
       if (!box || (!want && box.labelsOnly)) return fail(409, 'this runner has no box image configured');
       const text = want && buildBoxes && typeof body.box.definition === 'string' ? body.box.definition : null;
       if (text != null && boxFingerprint(text) !== want.definitionHash) return refuseBuild(body, origin, { why: 'definition text does not match its hash' });
+      const cool = text != null ? coolOff.get(want.definitionHash) : null;
+      if (cool && now() < cool.until) return refuseBuild(body, origin, cool);
       const b = await boxState(want);
       if (text != null && b.state === 'no-image') {
         const joins = building && building.hash === want.definitionHash;

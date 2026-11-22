@@ -11687,6 +11687,11 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           </div>
           <p class="hint-text">Image id of a hand-built image; jobs that ask for a box run in a fresh container of it. Leave empty to run only native jobs.</p>
           <p id="prefs-suite-runner-boxImage-env" class="hint-text hidden">set by environment</p>
+          <label class="prefs-check">
+            <input type="checkbox" id="prefs-suite-runner-buildBoxes">
+            <span>Build box images that teams ask for</span>
+          </label>
+          <p class="hint-text">Lets every peer you allow to run jobs here run its Dockerfile build steps on this machine, with network access, and keeps the resulting image on disk. Off: a job whose image is missing is refused, as before.</p>
           <div class="prefs-row" style="margin-top: 6px;">
             <span>Shared folders</span>
           </div>
@@ -31210,13 +31215,15 @@ Allow?`;
         const boxImage = pick("boxImage", form.boxImage.trim() || null);
         const slots = form.slots == null ? stored.slots : Number(form.slots);
         const shares = form.shares == null ? stored.shares : form.shares;
+        const buildBoxes = form.buildBoxes == null ? stored.buildBoxes === true : form.buildBoxes === true;
         return {
           enabled: pick("enabled", form.enabled),
           isolation: pick("isolation", form.isolation),
           work: pick("work", form.work.trim() || null),
           ...boxImage ? { boxImage } : {},
           ...Number.isInteger(slots) && slots > 1 ? { slots } : {},
-          ...Array.isArray(shares) && shares.length ? { shares } : {}
+          ...Array.isArray(shares) && shares.length ? { shares } : {},
+          ...buildBoxes ? { buildBoxes: true } : {}
         };
       }
       var SHARE_FIELDS = [["name", "name"], ["path", "/absolute/folder"], ["version", "version"]];
@@ -60371,6 +60378,7 @@ Click for live activity`;
       var prefsSuiteRunnerWork = document.getElementById("prefs-suite-runner-work");
       var prefsSuiteRunnerBoxImage = document.getElementById("prefs-suite-runner-boxImage");
       var prefsSuiteRunnerSlots = document.getElementById("prefs-suite-runner-slots");
+      var prefsSuiteRunnerBuildBoxes = document.getElementById("prefs-suite-runner-buildBoxes");
       var prefsSuiteRunnerShares = document.getElementById("prefs-suite-runner-shares");
       var prefsSuiteRunnerShareRows = null;
       var prefsSuiteRunnerApply = document.getElementById("prefs-suite-runner-apply");
@@ -63627,6 +63635,7 @@ ${res.stderr}` : "");
         prefsSuiteRunnerBoxImage.value = forced.has("boxImage") ? eff.boxImage || "" : rec.boxImage || "";
         prefsSuiteRunnerBoxImage.disabled = forced.has("boxImage");
         prefsSuiteRunnerSlots.value = String(rec.slots || 1);
+        if (prefsSuiteRunnerBuildBoxes) prefsSuiteRunnerBuildBoxes.checked = rec.buildBoxes === true;
         prefsSuiteRunnerShareRows = prefsSuiteRunnerShares ? suiteShareEditor(document, prefsSuiteRunnerShares, rec.shares || []) : null;
         for (const k of ["enabled", "isolation", "work", "boxImage"]) {
           document.getElementById(`prefs-suite-runner-${k}-env`).classList.toggle("hidden", !forced.has(k));
@@ -63657,6 +63666,7 @@ ${res.stderr}` : "");
           work: prefsSuiteRunnerWork.value,
           boxImage: prefsSuiteRunnerBoxImage.value,
           slots: prefsSuiteRunnerSlots.value,
+          ...prefsSuiteRunnerBuildBoxes ? { buildBoxes: prefsSuiteRunnerBuildBoxes.checked } : {},
           ...prefsSuiteRunnerShareRows ? { shares: prefsSuiteRunnerShareRows.read() } : {}
         });
       }
