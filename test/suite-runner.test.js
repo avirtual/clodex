@@ -1849,3 +1849,101 @@ test('activity reads the totals of a job whose stored record predates outcomes f
   const recent = (await runner.activity()).recent.map(({ id, outcome, pass, fail }) => ({ id, outcome, pass, fail }));
   assert.deepStrictEqual(recent, [{ id: 'old', outcome: 'fail', pass: 2, fail: 1 }]);
 });
+
+async function sharesFixture(t, shares, { onSpawn } = {}) {
+  const fb = fakeBox();
+  const spawned = [];
+  const placed = [];
+  const box = { ...fb.box, spawn(args) {
+    spawned.push([args.job.id, args.argv[0], args.shares || null]);
+    if (args.argv[0] === 'node') for (const s of args.shares || []) placed.push([s.name, fs.existsSync(path.join(args.cwd, '.shares', s.name))]);
+    return fb.box.spawn(args);
+  } };
+  const f = await fixture(t, { runnerOver: { box }, onSpawn });
+  f.runner.close();
+  const runner = f.make({ box, shares: shares(f) });
+  t.after(() => runner.close());
+  const upload = async (b) => {
+    const r = await runner.submit(b);
+    if (r.state !== 'awaiting-pack') return r;
+    const pack = fs.readFileSync((await buildPack(f.snap, { have: r.have })).file);
+    assert.strictEqual((await runner.putPack(b.id, 0, pack)).ok, true);
+    return runner.commit(b.id, { bytes: pack.length, sha256: sha256(pack) });
+  };
+  return { f, runner, upload, spawned, placed };
+}
+
+test('t2363: a box job naming two shares runs the tests with both mounted and is stamped with them; setup runs without them', async (t) => {
+  const s = await sharesFixture(t, (f) => {
+    for (const d of ['assets', 'models']) fs.mkdirSync(path.join(f.root, 'host', d), { recursive: true });
+    return [{ name: 'a', path: path.join(f.root, 'host', 'assets'), version: 'v1' }, { name: 'b', path: path.join(f.root, 'host', 'models'), version: '2026.11' }];
+  });
+  const setup = { run: 'npm ci', key: ['package.json'], paths: ['node_modules'], timeoutMs: 60000 };
+  await s.upload(s.f.body('sh-ok', 'hand', { isolation: 'container', setup, shares: [{ share: 'a', version: 'v1' }, { share: 'b', version: '2026.11' }] }));
+  const done = await waitState(s.runner, 'sh-ok', 'done');
+  const host = fs.realpathSync(path.join(s.f.root, 'host'));
+  assert.deepStrictEqual([done.reason, done.exit], [null, { code: 0, signal: null }], 'ENTER: the job passed');
+  assert.deepStrictEqual(s.spawned, [
+    ['sh-ok', '/bin/sh', null],
+    ['sh-ok', 'node', [{ name: 'a', src: path.join(host, 'assets') }, { name: 'b', src: path.join(host, 'models') }]],
+  ]);
+  assert.deepStrictEqual(s.placed, [['a', true], ['b', true]]);
+  assert.deepStrictEqual(done.env.box, { imageId: BOX_IMAGE, shares: [{ name: 'a', version: 'v1' }, { name: 'b', version: '2026.11' }] });
+});
+
+test('t2363: a native job naming shares ignores them', async (t) => {
+  const s = await sharesFixture(t, () => []);
+  await s.upload(s.f.body('nat-sh', 'hand', { shares: [{ share: 'nope', version: 'v1' }] }));
+  const done = await waitState(s.runner, 'nat-sh', 'done');
+  assert.deepStrictEqual([done.reason, done.env.isolation, s.spawned], [null, 'none', []]);
+});
+
+const SHARE_REFUSALS = [
+  ['unknown name', (f) => [{ name: 'a', path: f.work, version: 'v1' }], [{ share: 'zz', version: 'v1' }], 'share zz: no share by that name on this runner'],
+  ['version mismatch', (f) => [{ name: 'a', path: path.join(f.root, 'host'), version: 'v1' }], [{ share: 'a', version: 'v2' }], 'share a: version v2 asked, this runner holds v1'],
+  ['missing path', (f) => [{ name: 'a', path: path.join(f.root, 'gone'), version: 'v1' }], [{ share: 'a', version: 'v1' }], 'share a: the folder is missing'],
+  ['file not directory', (f) => [{ name: 'a', path: path.join(f.root, 'host', 'file.txt'), version: 'v1' }], [{ share: 'a', version: 'v1' }], 'share a: the folder is not a directory'],
+  ['share equals work root (through a symlink)', (f) => [{ name: 'a', path: path.join(f.root, 'host', 'link'), version: 'v1' }], [{ share: 'a', version: 'v1' }], "share a: the folder overlaps the runner's work root"],
+  ['share contains work root', (f) => [{ name: 'a', path: f.root, version: 'v1' }], [{ share: 'a', version: 'v1' }], "share a: the folder overlaps the runner's work root"],
+  ['share inside state dir', (f) => [{ name: 'a', path: path.join(f.root, 'suite-runner', 'assets'), version: 'v1' }], [{ share: 'a', version: 'v1' }], "share a: the folder overlaps the runner's state dir"],
+  ['tree already has .shares', (f) => [{ name: 'a', path: path.join(f.root, 'host'), version: 'v1' }], [{ share: 'a', version: 'v1' }], 'share a: the tree already has a .shares entry'],
+];
+
+for (const [label, held, asked, why] of SHARE_REFUSALS) {
+  test(`t2363: a box job is refused before the test command — ${label}`, async (t) => {
+    const s = await sharesFixture(t, (f) => {
+      fs.mkdirSync(path.join(f.root, 'host'), { recursive: true });
+      fs.mkdirSync(path.join(f.root, 'suite-runner', 'assets'), { recursive: true });
+      fs.writeFileSync(path.join(f.root, 'host', 'file.txt'), 'x\n');
+      fs.symlinkSync(f.work, path.join(f.root, 'host', 'link'));
+      return held(f);
+    }, {
+      onSpawn: (c) => {
+        if (c.cmd === '/bin/sh') fs.mkdirSync(path.join(c.opts.cwd, '.shares'));
+        c.child.stdout.write('TOTALS: 1 pass, 0 fail, 1 tests\n');
+        c.child.finish(0);
+      },
+    });
+    const setup = label.startsWith('tree') ? { setup: { run: 'make shares', key: ['package.json'], paths: ['node_modules'], timeoutMs: 60000 } } : {};
+    await s.upload(s.f.body('sh-no', 'hand', { isolation: 'container', shares: asked, ...setup }));
+    const done = await waitState(s.runner, 'sh-no', 'done');
+    assert.deepStrictEqual([done.reason, done.exit], ['box-failed', null]);
+    assert.strictEqual((await s.runner.output('sh-no', { stream: 'stderr' })).text, `suite-runner: ${why}\n`);
+    assert.deepStrictEqual(s.spawned.filter(([, cmd]) => cmd === 'node'), []);
+    assert.strictEqual(done.env.box.shares, undefined);
+  });
+}
+
+test('t2363: info lists each share by name and version and never its path', async (t) => {
+  const s = await sharesFixture(t, (f) => [{ name: 'assets', path: path.join(f.root, 'host-assets-dir'), version: 'v3' }]);
+  const info = await s.runner.info();
+  assert.deepStrictEqual(info.shares, [{ name: 'assets', version: 'v3' }]);
+  assert.strictEqual(JSON.stringify(info).includes('host-assets-dir'), false);
+});
+
+test('t2363: submit refuses a malformed shares list', async (t) => {
+  const s = await sharesFixture(t, () => []);
+  for (const shares of [[{ share: 'a', version: 'v 1' }], [{ share: 'a', version: 'v1' }, { share: 'a', version: 'v2' }], [{ share: 'a', version: 'v1', path: '/x' }], 'a']) {
+    assert.deepStrictEqual(await s.runner.submit(s.f.body('bad-sh', 'hand', { isolation: 'container', shares })), { ok: false, status: 400, error: 'bad shares' });
+  }
+});

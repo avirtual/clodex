@@ -11687,6 +11687,11 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           </div>
           <p class="hint-text">Image id of a hand-built image; jobs that ask for a box run in a fresh container of it. Leave empty to run only native jobs.</p>
           <p id="prefs-suite-runner-boxImage-env" class="hint-text hidden">set by environment</p>
+          <div class="prefs-row" style="margin-top: 6px;">
+            <span>Shared folders</span>
+          </div>
+          <div id="prefs-suite-runner-shares"></div>
+          <p class="hint-text">A shared folder is readable, read-only, by test jobs from every peer you allow to run jobs here. Change the version whenever the folder's contents change: a job asks for a version, and this machine refuses one it does not hold.</p>
           <span id="prefs-suite-runner-status" class="hint-text" style="display: block; margin-top: 6px;"></span>
         </div>
         <div id="prefs-box-offer-block">
@@ -31204,12 +31209,56 @@ Allow?`;
         const pick = (k, v) => forced.has(k) ? stored[k] : v;
         const boxImage = pick("boxImage", form.boxImage.trim() || null);
         const slots = form.slots == null ? stored.slots : Number(form.slots);
+        const shares = form.shares == null ? stored.shares : form.shares;
         return {
           enabled: pick("enabled", form.enabled),
           isolation: pick("isolation", form.isolation),
           work: pick("work", form.work.trim() || null),
           ...boxImage ? { boxImage } : {},
-          ...Number.isInteger(slots) && slots > 1 ? { slots } : {}
+          ...Number.isInteger(slots) && slots > 1 ? { slots } : {},
+          ...Array.isArray(shares) && shares.length ? { shares } : {}
+        };
+      }
+      var SHARE_FIELDS = [["name", "name"], ["path", "/absolute/folder"], ["version", "version"]];
+      function shareEditor(doc, host, rows = []) {
+        const list = doc.createElement("div");
+        const add = doc.createElement("button");
+        add.type = "button";
+        add.className = "secondary";
+        add.textContent = "Add folder";
+        const entries = [];
+        function addRow(r = {}) {
+          const row = doc.createElement("div");
+          row.className = "prefs-row prefs-suite-share";
+          const inputs = SHARE_FIELDS.map(([k, hint]) => {
+            const input = doc.createElement("input");
+            input.type = "text";
+            input.placeholder = hint;
+            input.value = typeof r[k] === "string" ? r[k] : "";
+            input.dataset.field = k;
+            input.setAttribute("autocomplete", "off");
+            input.setAttribute("spellcheck", "false");
+            row.appendChild(input);
+            return input;
+          });
+          const rm = doc.createElement("button");
+          rm.type = "button";
+          rm.className = "secondary";
+          rm.textContent = "Remove";
+          const entry = { row, inputs };
+          rm.addEventListener("click", () => {
+            entries.splice(entries.indexOf(entry), 1);
+            row.remove();
+          });
+          row.appendChild(rm);
+          list.appendChild(row);
+          entries.push(entry);
+        }
+        add.addEventListener("click", () => addRow());
+        host.replaceChildren(list, add);
+        for (const r of Array.isArray(rows) ? rows : []) addRow(r);
+        return {
+          read: () => entries.map(({ inputs: [name, at, version] }) => ({ name: name.value.trim(), path: at.value.trim(), version: version.value.trim() })).filter((r) => r.name || r.path || r.version)
         };
       }
       function claimLines(claims, now = Date.now()) {
@@ -31243,6 +31292,7 @@ Allow?`;
         offerRecordFromForm,
         offerStatusText,
         suiteRunnerRecordFromForm,
+        shareEditor,
         claimLines
       };
     }
@@ -54046,7 +54096,7 @@ ${detail}` });
       var { envLockView, applyEnvLock, patchUnlessEnvLocked } = require_env_lock();
       var { activityView: testActivityView } = require_suite_activity_view();
       var { createOutputFollower } = require_testjob_output();
-      var { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, offerRunnerFrom, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText, suiteRunnerRecordFromForm, claimLines: offerClaimLines } = require_offer_view();
+      var { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, offerRunnerFrom, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText, suiteRunnerRecordFromForm, shareEditor: suiteShareEditor, claimLines: offerClaimLines } = require_offer_view();
       var { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require_account_select();
       var { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, keyTransportRefusal, modelOptions } = require_account_row();
       var { isToolInstallSession } = require_tool_doctor();
@@ -60321,6 +60371,8 @@ Click for live activity`;
       var prefsSuiteRunnerWork = document.getElementById("prefs-suite-runner-work");
       var prefsSuiteRunnerBoxImage = document.getElementById("prefs-suite-runner-boxImage");
       var prefsSuiteRunnerSlots = document.getElementById("prefs-suite-runner-slots");
+      var prefsSuiteRunnerShares = document.getElementById("prefs-suite-runner-shares");
+      var prefsSuiteRunnerShareRows = null;
       var prefsSuiteRunnerApply = document.getElementById("prefs-suite-runner-apply");
       var prefsSuiteRunnerStatus = document.getElementById("prefs-suite-runner-status");
       var prefsSuiteRunnerNoneNote = document.getElementById("prefs-suite-runner-none-note");
@@ -63575,6 +63627,7 @@ ${res.stderr}` : "");
         prefsSuiteRunnerBoxImage.value = forced.has("boxImage") ? eff.boxImage || "" : rec.boxImage || "";
         prefsSuiteRunnerBoxImage.disabled = forced.has("boxImage");
         prefsSuiteRunnerSlots.value = String(rec.slots || 1);
+        prefsSuiteRunnerShareRows = prefsSuiteRunnerShares ? suiteShareEditor(document, prefsSuiteRunnerShares, rec.shares || []) : null;
         for (const k of ["enabled", "isolation", "work", "boxImage"]) {
           document.getElementById(`prefs-suite-runner-${k}-env`).classList.toggle("hidden", !forced.has(k));
         }
@@ -63603,7 +63656,8 @@ ${res.stderr}` : "");
           isolation: prefsSuiteRunnerIsolation.value,
           work: prefsSuiteRunnerWork.value,
           boxImage: prefsSuiteRunnerBoxImage.value,
-          slots: prefsSuiteRunnerSlots.value
+          slots: prefsSuiteRunnerSlots.value,
+          ...prefsSuiteRunnerShareRows ? { shares: prefsSuiteRunnerShareRows.read() } : {}
         });
       }
       if (prefsSuiteRunnerBlock) {

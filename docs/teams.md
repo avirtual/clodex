@@ -937,6 +937,19 @@ never applied in part, the load warns once, and `team.droppedFields` carries
 `{ field: 'testRunner', status: 'invalid' }`. `setup`, `env` and `box` are edited in
 team.json only.
 
+`shares` (team.json only, like `setup`) lists at most 8 `{ "share": "<name>", "version": "<v>" }`
+rows: `share` follows the session-name grammar and is unique, `version` matches
+`^[A-Za-z0-9._-]{1,64}$`, and any other key (there is no destination field) is an
+invalid key, so the whole setting drops as above. A box job of the team asks the
+runner for each share by name and version; the runner binds the owner's folder
+read-only at `/job/tree/.shares/<name>` for the test command (not for setup).
+`.shares` at the tree root is reserved: a tree that tracks one, or whose setup
+creates one, is refused on the runner (`box-failed`). Native jobs ignore shares.
+Before submitting a box job the lead reads the runner's `info.shares` and ends
+the run `unknown: runner has no share <name>@<version>` when one is missing; a
+pool member lacking one is not eligible for a box job. The version is the
+runner owner's assertion: Clodex does not hash the folder.
+
 `box` is a boolean and reads `false` when absent; any other value drops the
 setting. `box: true` asks the runner for a container box on `gate:shadow` runs
 (hand routing stays native): for a team with no box definition the lead reads
@@ -1003,7 +1016,7 @@ unknown peer, a detached pull runner, the runner unreachable or refusing the
 token), `queue budget` (the job did not start within 5 min,
 `BOX_DECIDE_QUEUE_MS`), `run budget` (the 41 min client budget, the runner's
 kill, or no answer within that plus 2 min), `runner restart`, `tree mismatch`,
-`definition mismatch` (also an isolation mismatch), `no totals` (no TOTALS
+`definition mismatch` (also an isolation mismatch), `no share` (the runner lacks a requested share at its version, or the stamped shares differ from the ask), `no totals` (no TOTALS
 line, or zero tests) and `outcome unknown` (cancelled, refused, output
 unavailable, snapshot or upload failure), plus `no box definition` when the
 definition was cleared after the gate was set. A box result that arrives after

@@ -3203,7 +3203,7 @@ function createTicketMethods(deps, shared) {
         const r = await Promise.resolve().then(() => client.reachable(via.peer, via.wire, want)).catch(() => null);
         return { ...m, live: true, info: r && r.ok ? r.info : null };
       }));
-      const pick = pickRunner(rows, { box });
+      const pick = pickRunner(rows, { box, shares: tr.shares || [] });
       return pick.chosen ? { peer: pick.member.peer, wire: pick.member.wire } : null;
     },
 
@@ -6632,7 +6632,7 @@ function createTicketMethods(deps, shared) {
         }
         return await client.shadow({
           ...via, name: member.peer, tree: cwd, kind, team: team.name, ticket: String(ticket.id),
-          setup: tr.setup || null, env: tr.env || {}, route: 'gate:shadow', box,
+          setup: tr.setup || null, env: tr.env || {}, route: 'gate:shadow', box, ...(tr.shares ? { shares: tr.shares } : {}),
           queueBudgetMs: TICKET_SUITE_LOCK_WAIT_MS, budgetMs: TICKET_SUITE_TIMEOUT,
           ...(pooled ? { pool: true } : {}),
           ...(chosen ? { repick: this._runnerRepick(tr, box) } : {}),
@@ -6675,7 +6675,7 @@ function createTicketMethods(deps, shared) {
       const job = Promise.resolve()
         .then(() => client.run({
           ...via, name: member.peer, tree: cwd, kind, team: team.name, ticket: String(ticket.id), scope: 'full',
-          setup: tr.setup || null, env: tr.env || {}, route: 'gate:on', box: def,
+          setup: tr.setup || null, env: tr.env || {}, route: 'gate:on', box: def, ...(tr.shares ? { shares: tr.shares } : {}),
           queueBudgetMs: BOX_DECIDE_QUEUE_MS, budgetMs: TICKET_SUITE_TIMEOUT,
           onJob: (j) => { if (j && j.jobId) jobId = j.jobId; },
           ...(chosen ? {
@@ -6699,7 +6699,7 @@ function createTicketMethods(deps, shared) {
         out = { unknown: `no box result within ${guardMs}ms`, res: null, record: null };
         fallback = 'run budget';
       } else {
-        fallback = boxVerdict(out, def).fallback;
+        fallback = boxVerdict(out, def, tr.shares || []).fallback;
       }
       ret.out = out;
       if (!fallback) return { ...ret, decided: true };

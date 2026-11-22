@@ -36,11 +36,31 @@ const { sanitizeBoxOffer } = require('./box-offer');
 
 const SUITE_RUNNER_KEYS = ['enabled', 'isolation', 'work'];
 const BOX_IMAGE_RE = /^sha256:[0-9a-f]{64}$/;
-const SUITE_RUNNER_OPTIONAL = ['boxImage', 'slots'];
+const SUITE_RUNNER_OPTIONAL = ['boxImage', 'slots', 'shares'];
 const MAX_SUITE_SLOTS = 4;
+const MAX_SUITE_SHARES = 8;
+const SHARE_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
+const SHARE_VERSION_RE = /^[A-Za-z0-9._-]{1,64}$/;
 
 function suiteSlots(v) {
   return Number.isInteger(v) ? Math.min(MAX_SUITE_SLOTS, Math.max(1, v)) : 1;
+}
+
+function suiteShares(v) {
+  if (!Array.isArray(v) || !v.length || v.length > MAX_SUITE_SHARES) return null;
+  const names = new Set();
+  const out = [];
+  for (const row of v) {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) return null;
+    if (Object.keys(row).length !== 3 || !['name', 'path', 'version'].every((k) => k in row)) return null;
+    if (typeof row.name !== 'string' || !SHARE_NAME_RE.test(row.name) || names.has(row.name)) return null;
+    if (typeof row.version !== 'string' || !SHARE_VERSION_RE.test(row.version)) return null;
+    if (typeof row.path !== 'string' || row.path.length > 1024 || !path.isAbsolute(row.path) || row.path.includes('\0')) return null;
+    if (row.path.split(/[\\/]/).includes('..')) return null;
+    names.add(row.name);
+    out.push({ name: row.name, path: row.path, version: row.version });
+  }
+  return out;
 }
 
 function sanitizeSuiteRunner(v) {
@@ -55,7 +75,8 @@ function sanitizeSuiteRunner(v) {
     if (v.work.split(/[\\/]/).includes('..')) return null;
   }
   const slots = suiteSlots(v.slots);
-  return { enabled: v.enabled, isolation: v.isolation, work: v.work, ...(v.boxImage ? { boxImage: v.boxImage } : {}), ...(slots > 1 ? { slots } : {}) };
+  const shares = suiteShares(v.shares);
+  return { enabled: v.enabled, isolation: v.isolation, work: v.work, ...(v.boxImage ? { boxImage: v.boxImage } : {}), ...(slots > 1 ? { slots } : {}), ...(shares ? { shares } : {}) };
 }
 
 const IDLE_PAUSE_HOURS_DEFAULT = 48;

@@ -17,6 +17,9 @@ const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const SHA_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
 const BOX_HASH_RE = /^[0-9a-f]{64}$/;
 const BOX_DEFINITION_MAX = 65536;
+const SHARE_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
+const SHARE_VERSION_RE = /^[A-Za-z0-9._-]{1,64}$/;
+const SHARES_MAX = 8;
 const BOX_REFUSALS = { 'no-image': 'no-image', ambiguous: 'ambiguous-image' };
 const REF_RE = /^(?![-/.])(?!.*\.\.)(?!.*\/\/)[A-Za-z0-9._/-]{1,200}$/;
 const ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
@@ -367,7 +370,50 @@ function validateSubmit(b, limits) {
     if (!(Number.isInteger(x.rev) && x.rev >= 1)) return 'bad box.rev';
     if (x.definition != null && !(typeof x.definition === 'string' && Buffer.byteLength(x.definition) <= BOX_DEFINITION_MAX)) return 'bad box.definition';
   }
+  if (b.shares != null) {
+    if (!Array.isArray(b.shares) || b.shares.length > SHARES_MAX) return 'bad shares';
+    const seen = new Set();
+    for (const s of b.shares) {
+      if (!s || typeof s !== 'object' || Array.isArray(s) || Object.keys(s).some((k) => k !== 'share' && k !== 'version')) return 'bad shares';
+      if (typeof s.share !== 'string' || !SHARE_NAME_RE.test(s.share) || seen.has(s.share)) return 'bad shares';
+      if (typeof s.version !== 'string' || !SHARE_VERSION_RE.test(s.version)) return 'bad shares';
+      seen.add(s.share);
+    }
+  }
   return null;
+}
+
+function inside(child, parent) {
+  const rel = path.relative(parent, child);
+  return rel === '' || (!rel.startsWith(`..${path.sep}`) && rel !== '..' && !path.isAbsolute(rel));
+}
+
+function overlaps(a, b) {
+  return inside(a, b) || inside(b, a);
+}
+
+function realOrSelf(p) {
+  try { return fs.realpathSync(p); } catch { return path.resolve(p); }
+}
+
+function shareMounts(asked, held, { work, stateDir, tree }) {
+  const mounts = [];
+  for (const { share: name, version } of asked) {
+    const own = held.find((h) => h.name === name);
+    if (!own) return { why: `share ${name}: no share by that name on this runner` };
+    if (own.version !== version) return { why: `share ${name}: version ${version} asked, this runner holds ${own.version}` };
+    let src;
+    try { src = fs.realpathSync(own.path); } catch { return { why: `share ${name}: the folder is missing` }; }
+    if (!fs.statSync(src).isDirectory()) return { why: `share ${name}: the folder is not a directory` };
+    if (src.includes(',')) return { why: `share ${name}: the folder path contains a comma` };
+    if (overlaps(src, realOrSelf(work))) return { why: `share ${name}: the folder overlaps the runner's work root` };
+    if (overlaps(src, realOrSelf(stateDir))) return { why: `share ${name}: the folder overlaps the runner's state dir` };
+    mounts.push({ name, version: own.version, src });
+  }
+  let placed = false;
+  try { fs.lstatSync(path.join(tree, '.shares')); placed = true; } catch {}
+  if (placed) return { why: `share ${asked[0].share}: the tree already has a .shares entry` };
+  return { mounts };
 }
 
 function fileSha256({ file, bytes }, readChunk) {
@@ -390,8 +436,9 @@ function slotCount(v) {
 function createSuiteRunner({
   root, oldRoot = null, work, isolation = userIsolation(), limits = {}, spawn = childProcess.spawn,
   now = Date.now, log = () => {}, timers = DEFAULT_TIMERS, platform = process.platform, arch = process.arch,
-  box = null, boxSweep = null, onActivity = null, activityMs = ACTIVITY_MS, slots = 1,
+  box = null, boxSweep = null, onActivity = null, activityMs = ACTIVITY_MS, slots = 1, shares = [],
 }) {
+  const held = Array.isArray(shares) ? shares.map(({ name, path: at, version }) => ({ name, path: at, version })) : [];
   const slotTotal = slotCount(slots);
   const repo = enclosingRepo(work);
   if (repo) throw new Error(`the work root is inside the git repository ${repo}; choose a work folder outside any repository`);
@@ -775,13 +822,13 @@ function createSuiteRunner({
     try { state.killing = Promise.resolve(isoOf(job).kill(child, jobDir, ...jobArg(job))).catch((e) => log(`suite-runner: kill failed: ${e.message}`)); } catch (e) { log(`suite-runner: kill failed: ${e.message}`); }
   }
 
-  function exec(job, jobDir, argv, ms) {
+  function exec(job, jobDir, argv, ms, mounts = null) {
     return new Promise((resolve) => {
       const fds = { stdout: fs.openSync(outFile(job.id, 'stdout'), 'a'), stderr: fs.openSync(outFile(job.id, 'stderr'), 'a') };
       const closeFds = () => { for (const fd of Object.values(fds)) { try { fs.closeSync(fd); } catch {} } };
       let child;
       try {
-        child = isoOf(job).spawn({ jobDir, cwd: path.join(jobDir, 'tree'), argv, env: childEnv(job, jobDir), spawn, ...(isBox(job) ? { job } : {}) });
+        child = isoOf(job).spawn({ jobDir, cwd: path.join(jobDir, 'tree'), argv, env: childEnv(job, jobDir), spawn, ...(isBox(job) ? { job } : {}), ...(mounts ? { shares: mounts } : {}) });
       } catch (e) {
         fs.writeSync(fds.stderr, `suite-runner: spawn failed: ${e.message}\n`);
         closeFds();
@@ -877,10 +924,22 @@ function createSuiteRunner({
       releaseDeps(job);
       resetOutputs(job);
     }
+    let mounts = null;
+    if (isBox(job) && job.shares && job.shares.length) {
+      const m = shareMounts(job.shares, held, { work, stateDir: state.dir, tree });
+      if (m.why) {
+        fs.appendFileSync(outFile(job.id, 'stderr'), `suite-runner: ${m.why}\n`);
+        return finish(job, { reason: 'box-failed', exit: null });
+      }
+      for (const { name } of m.mounts) fs.mkdirSync(path.join(tree, '.shares', name), { recursive: true });
+      mounts = m.mounts.map(({ name, src }) => ({ name, src }));
+      job.identity = { ...job.identity, box: { ...(job.identity.box || {}), shares: m.mounts.map(({ name, version }) => ({ name, version })) } };
+      save(job);
+    }
     const runStartedAt = now();
     setState(job, 'running', { setupMs: runStartedAt - startedAt, runStartedAt });
     const ms = Math.min(job.timeoutMs || lim.timeoutMs, lim.maxTimeoutMs);
-    const r = await exec(job, jobDir, [isolation.node || process.execPath, ...TEST_ARGV, ...(job.files || [])], ms);
+    const r = await exec(job, jobDir, [isolation.node || process.execPath, ...TEST_ARGV, ...(job.files || [])], ms, mounts);
     job.runMs = now() - runStartedAt;
     const boxed = isolation.mode === 'container';
     if (boxed && r.spawnFailed && !job.stop) return finish(job, { reason: 'setup-failed', exit: null });
@@ -958,6 +1017,7 @@ function createSuiteRunner({
       ? { definitionHash: want.definitionHash, rev: want.rev } : null;
     return {
       ok: true, bootId, env, isolation: isoState, box: await boxState(named),
+      shares: held.map(({ name, version }) => ({ name, version })),
       limits: { packMaxBytes: lim.packMaxBytes, chunkMax: lim.chunkMax, queueMax: lim.queueMax },
       queue: { running: active.size ? active.keys().next().value : null, queued: queue().map((j) => j.id) },
       slots: { total: slotTotal, inUse: active.size },
@@ -1022,6 +1082,7 @@ function createSuiteRunner({
       timeoutMs: body.timeoutMs || null, state: 'awaiting-pack', reason: null, exit: null,
       queuedAt: now(), lastSeen: now(), identity: stamp, out: { stdoutBytes: 0, stderrBytes: 0, truncated: false },
       ...(boxed ? { isolation: 'container' } : {}),
+      ...(boxed && Array.isArray(body.shares) && body.shares.length ? { shares: body.shares.map(({ share, version }) => ({ share, version })) } : {}),
       ...(typeof origin === 'string' && origin ? { origin: origin.slice(0, 64) } : {}),
     };
     jobs.set(job.id, job);

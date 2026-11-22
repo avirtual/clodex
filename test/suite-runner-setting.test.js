@@ -465,3 +465,68 @@ test('the runner form saves the slot count it shows, and keeps the stored one wh
     { enabled: true, isolation: 'user', work: null, slots: 3 },
   ]);
 });
+
+const SHARED = { enabled: true, isolation: 'user', work: '/srv/suite-work', slots: 2, shares: [{ name: 'assets', path: '/srv/assets', version: 'v1' }, { name: 'models.3d', path: '/Volumes/big/models', version: '2026.11-a_b' }] };
+
+test('t2363: a valid shares list round-trips through the sanitiser', () => {
+  assert.deepStrictEqual(sanitizeSuiteRunner(SHARED), {
+    enabled: true, isolation: 'user', work: '/srv/suite-work', slots: 2,
+    shares: [{ name: 'assets', path: '/srv/assets', version: 'v1' }, { name: 'models.3d', path: '/Volumes/big/models', version: '2026.11-a_b' }],
+  });
+});
+
+const ROW = (i) => ({ name: `s${i}`, path: `/srv/s${i}`, version: 'v1' });
+const BAD_SHARES = [
+  ['a ninth row', Array.from({ length: 9 }, (_, i) => ROW(i))],
+  ['a duplicate name', [ROW(1), { ...ROW(2), name: 's1' }]],
+  ['a relative path', [{ name: 'a', path: 'srv/a', version: 'v1' }]],
+  ['a bad version', [{ name: 'a', path: '/srv/a', version: 'v 1' }]],
+];
+
+for (const [label, shares] of BAD_SHARES) {
+  test(`t2363: ${label} drops only shares`, () => {
+    assert.deepStrictEqual(sanitizeSuiteRunner({ enabled: true, isolation: 'user', work: '/srv/suite-work', slots: 2, shares }), { enabled: true, isolation: 'user', work: '/srv/suite-work', slots: 2 });
+  });
+}
+
+test('t2363: suiteRunner:set refuses a record whose shares would be dropped and keeps the stored one', () => {
+  const { set, store, calls } = ipcFixture({ initial: VALID });
+  const res = set({}, { ...VALID, shares: [{ name: 'a', path: 'rel', version: 'v1' }] });
+  assert.strictEqual(res.ok, false);
+  assert.match(res.error, /^invalid shared folders/);
+  assert.deepStrictEqual([store.suiteRunner, calls.reload], [VALID, 0]);
+  assert.strictEqual(set({}, { ...VALID, shares: [ROW(1)] }).ok, true, 'ENTER: a valid list is stored');
+  assert.deepStrictEqual(store.suiteRunner, { ...VALID, shares: [ROW(1)] });
+});
+
+test('t2363: suiteRunnerOptions hands the stored shares to the runner', () => {
+  assert.deepStrictEqual(suiteRunnerOptions({}, '/h', { platform: 'linux', setting: { enabled: true, isolation: 'none', work: '/w', shares: [ROW(1)] } }).shares, [ROW(1)]);
+});
+
+test('t2363: the share editor adds and removes rows, Apply sends the list, and the hint is present', () => {
+  const { suiteRunnerRecordFromForm, shareEditor } = require('../renderer/lib/offer-view');
+  const { fakeDocument } = require('./lib/fake-dom');
+  const doc = fakeDocument();
+  const host = doc.createElement('div');
+  const editor = shareEditor(doc, host, [{ name: 'assets', path: '/srv/assets', version: 'v1' }]);
+  const [list, add] = host.childNodes;
+  assert.strictEqual(add.textContent, 'Add folder');
+  add.listeners.click();
+  const [, fresh] = list.childNodes;
+  const [n, p, v] = fresh.childNodes;
+  n.value = 'models';
+  p.value = ' /srv/models ';
+  v.value = 'v2';
+  add.listeners.click();
+  const shown = { setting: { enabled: true, isolation: 'user', work: null, shares: [{ name: 'old', path: '/o', version: 'v0' }] }, forced: [] };
+  const form = { enabled: true, isolation: 'user', work: '', boxImage: '' };
+  assert.deepStrictEqual(suiteRunnerRecordFromForm(shown, { ...form, shares: editor.read() }), {
+    enabled: true, isolation: 'user', work: null,
+    shares: [{ name: 'assets', path: '/srv/assets', version: 'v1' }, { name: 'models', path: '/srv/models', version: 'v2' }],
+  });
+  list.childNodes[0].childNodes[3].listeners.click();
+  list.childNodes[0].childNodes[3].listeners.click();
+  assert.deepStrictEqual(suiteRunnerRecordFromForm(shown, { ...form, shares: editor.read() }), { enabled: true, isolation: 'user', work: null });
+  const html = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.html'), 'utf8');
+  assert.ok(html.includes("A shared folder is readable, read-only, by test jobs from every peer you allow to run jobs here. Change the version whenever the folder's contents change: a job asks for a version, and this machine refuses one it does not hold."));
+});
