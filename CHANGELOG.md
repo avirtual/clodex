@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - The idle-session question shows how much memory each idle session holds and how much pausing them frees.
+- A team can name several test runners (`[agent:team runner add <peer>]`). Each merge-gate test job goes to an attached runner with a free slot, so tickets verify in parallel across machines.
 
 ## 5.191.0 — 2026-11-20
 

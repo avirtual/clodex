@@ -952,12 +952,15 @@ function createSuiteRunner({
     return found && found.state === 'ready' ? { state: 'ready', env: found.env } : { state: 'unavailable', why: (found && found.why) || 'no answer' };
   }
 
-  async function info() {
+  async function info(want = null) {
     const env = await ensureIdentity();
+    const named = want && BOX_HASH_RE.test(String(want.definitionHash)) && Number.isInteger(want.rev) && want.rev >= 1
+      ? { definitionHash: want.definitionHash, rev: want.rev } : null;
     return {
-      ok: true, bootId, env, isolation: isoState, box: await boxState(),
+      ok: true, bootId, env, isolation: isoState, box: await boxState(named),
       limits: { packMaxBytes: lim.packMaxBytes, chunkMax: lim.chunkMax, queueMax: lim.queueMax },
       queue: { running: active.size ? active.keys().next().value : null, queued: queue().map((j) => j.id) },
+      slots: { total: slotTotal, inUse: active.size },
     };
   }
 

@@ -17,6 +17,13 @@ function runnerStateLine(info) {
   return `${wire}${info.reach == null ? 'checking reachability…' : info.reach}${tally}`;
 }
 
+function runnerPoolText(info) {
+  if (!info || !(info.members > 1)) return null;
+  const head = `${info.members} runners; a gate job goes to the attached one with the most free slots — [agent:team runner add <peer>] and [agent:team runner rm <peer>] edit the pool`;
+  const lines = Array.isArray(info.poolLines) ? info.poolLines : [];
+  return [head, ...lines].join('\n');
+}
+
 function runnerPatchFor(act, value) {
   const key = RUNNER_ACTS[act];
   if (!key) return null;
@@ -88,6 +95,16 @@ function buildRunnerField(document, info) {
   state.textContent = runnerStateLine(info);
   wrap.appendChild(state);
 
+  const poolText = runnerPoolText(info);
+  if (poolText) {
+    const pool = document.createElement('div');
+    pool.className = 'team-lead-hint';
+    pool.dataset.runner = 'pool';
+    pool.style.whiteSpace = 'pre-line';
+    pool.textContent = poolText;
+    wrap.appendChild(pool);
+  }
+
   if (info && (info.setup || info.env)) {
     const fixed = document.createElement('div');
     fixed.className = 'team-lead-hint';
@@ -101,6 +118,9 @@ function buildRunnerField(document, info) {
 function paintRunnerState(wrap, info) {
   const state = wrap && Array.from(wrap.childNodes).find((n) => n.dataset && n.dataset.runner === 'state');
   if (state) state.textContent = runnerStateLine(info);
+  const pool = wrap && Array.from(wrap.childNodes).find((n) => n.dataset && n.dataset.runner === 'pool');
+  const poolText = runnerPoolText(info);
+  if (pool && poolText) pool.textContent = poolText;
 }
 
-module.exports = { RUNNER_HANDS_OPTIONS, RUNNER_GATE_OPTIONS, RUNNER_FIELDS, runnerStateLine, runnerPatchFor, buildRunnerField, paintRunnerState };
+module.exports = { RUNNER_HANDS_OPTIONS, RUNNER_GATE_OPTIONS, RUNNER_FIELDS, runnerStateLine, runnerPoolText, runnerPatchFor, buildRunnerField, paintRunnerState };

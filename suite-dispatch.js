@@ -86,7 +86,7 @@ function checkBody(row, body, bytes) {
 function invoke(runner, route, msg, bytes, origin) {
   const { row, id, query } = route;
   switch (row.verb) {
-    case 'info': return runner.info();
+    case 'info': return query.get('definitionHash') ? runner.info({ definitionHash: query.get('definitionHash'), rev: Number(query.get('rev')) || undefined }) : runner.info();
     case 'poll': {
       const ids = String(query.get('ids') || '').split(',').filter(Boolean);
       const wait = Math.max(0, Number(query.get('wait')) || 0);

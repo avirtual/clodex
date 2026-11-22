@@ -576,7 +576,7 @@ an uncreatable work root), runner mode stays off and `startSuiteRunner` logs one
 The same text is the `reason` field of the 501 every `/api/suite/*` route
 answers, so `GET /api/suite/info` shows it without the log.
 
-- `GET /api/suite/info` → `{ok, bootId, env, isolation, limits:{packMaxBytes, chunkMax, queueMax}, queue}`.
+- `GET /api/suite/info[?definitionHash=<h>&rev=<n>]` → `{ok, bootId, env, isolation, box, limits:{packMaxBytes, chunkMax, queueMax}, queue, slots:{total, inUse}}`; with a valid definition hash and rev, `box` is the state of that named box rather than the configured image.
 - `POST /api/suite/jobs` (JSON, ≤ 256 KiB) → `{ok, id, state:'awaiting-pack', have}` or `{ok, id, state:'queued', position}`; idempotent on `id`, a different `treeHash` under the same id is 409.
 - `PUT /api/suite/jobs/<id>/pack` raw chunk ≤ 4 MiB with `Content-Range: bytes a-b/*` → `{ok, size}`; an offset that is not the current size → 409 `{have}`.
 - `POST /api/suite/jobs/<id>/commit` `{bytes, sha256}` → `{ok, state:'queued'}`; 400 on a size or hash mismatch; 409 `{incomplete:true}` when objects are missing.

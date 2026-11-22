@@ -1037,6 +1037,40 @@ runner that came back) writes the same row with `midJob: true` and the submitted
 instead of a compare pair. A cancel the lead sends while the runner is detached
 is lost; the runner's lease (`leaseMs`, 120 s without a poll) stops the job.
 
+A team can name several runners. `testRunner.pool` is an optional list of
+`{ peer, wire }` rows (`wire` optional, read as `push`) after the first member,
+which stays `peer`/`wire`; at most 8 members in all, names unique, each name
+checked as `peer` is. A malformed pool drops only `pool` (with a warning), never
+the setting. `[agent:team runner add <peer>]` (lead only) resolves the wire with
+the rule `[agent:team runner <peer>]` uses and refuses with its texts; adding the
+first member or a pool member again is refused by name. `[agent:team runner rm
+<peer>]` drops a pool row; removing the first member promotes the next pool row to
+`peer`/`wire` (`hands` set to `off` when it dials in); removing the only runner is
+refused and names `[agent:team runner off]`, which removes everything.
+`[agent:team runner <peer>]` still replaces the first member and leaves the pool
+alone; naming a pool member there is refused. Bare `[agent:team runner]` on a pool
+prints a head line, one line per member (name, wire, reach with its queue, and
+`slots <in use>/<total> in use` from the runner's info), then the tally; under
+`gate:on` the tally adds `per runner: <name> <n> box, <m> home`.
+
+With more than one member, every gate submit (`_shadowSubmit`, `_boxDecide`, so
+the verify, its re-measure and post-merge) asks `pickRunner` (suite-client.js):
+among the members that are attached (pull) or online with the `suite`
+capability (push), whose info route answers within the usual request timeout,
+and, for a box job, whose info reports the box ready for the team's definition
+hash (the lead passes the hash on the info call), the one with the most free
+slots (`slots.total - slots.inUse`; a runner that reports no slots reads as one
+slot, in use while a job runs), then the shortest queue, then manifest order. When
+none qualifies the first member is used exactly as with no pool. A chosen member
+is asked once, not waited on, until it accepts the job: if it answers unreachable,
+not attached or refusing before that, the job is picked again once without it
+(the first member when no other qualifies) and then waited on as usual; after the
+runner accepted the job there is no repick and today's fallback to the home suite
+applies. Compare rows of a pooled team carry `runner: <member>`, the member that
+ran the job, and a superseded job's cancel goes to that member. Hand routing is
+not pooled: `route()` and the channel host's runner lookup read the first member
+only, with the pull refusal above.
+
 Reading it: bare `[agent:team runner]` also shows the gate mode and, for the
 runner's current environment key (`envKey`, from its info route), how many
 comparisons agreed and disagreed and the test names that failed on one side

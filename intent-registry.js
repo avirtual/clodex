@@ -261,7 +261,7 @@ function parseTeam(cleaned) {
   if (sub === 'runner') {
     const handsM = argStr.match(/\bhands:(\S+)/);
     const gateM = argStr.match(/\bgate:(\S+)/);
-    return { type: 'team', sub, value: positional[0] || null, hands: handsM ? handsM[1] : null, gate: gateM ? gateM[1] : null, body: '' };
+    return { type: 'team', sub, value: positional[0] || null, hands: handsM ? handsM[1] : null, gate: gateM ? gateM[1] : null, ...(positional[0] === 'add' || positional[0] === 'rm' ? { target: positional[1] || null } : {}), body: '' };
   }
   if (sub === 'role-rename') return { type: 'team', sub, name: positional[0] || null, to: positional[1] || null, body: '' };
   if (sub === 'gather') return { type: 'team', sub, dry: positional[0] === 'dry', body: '' };

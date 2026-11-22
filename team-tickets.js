@@ -20,10 +20,10 @@ const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const { idleClearAfterMs, IDLE_CLEAR_MIN_MS } = require('./assistant-sleep');
 const { localHalf, failingNames } = require('./suite-client');
-const { boxVerdict } = require('./suite-client');
+const { boxVerdict, pickRunner, runnerLoad } = require('./suite-client');
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
-  DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_WIRE_PUSH: WIRE_PUSH,
+  DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_WIRE_PUSH: WIRE_PUSH, TEST_RUNNER_POOL_MAX,
 } = require('./team-manifest');
 const {
   readTeamJson, teamTemplatePath, teamTemplateSave, mayGrantOf, ownTeamExecGrants, clampToGrantor, teamTemplateRemove, teamPromptSave, teamPromptRemove,
@@ -3131,6 +3131,7 @@ function createTicketMethods(deps, shared) {
       const e = (r.info && r.info.env) || {};
       seen.envKey = typeof e.envKey === 'string' && e.envKey ? e.envKey : null;
       seen.reachable = true;
+      seen.info = r.info || null;
       const b = (r.info && r.info.box) || null;
       const be = (b && b.env) || {};
       seen.box = b;
@@ -3175,6 +3176,45 @@ function createTicketMethods(deps, shared) {
       return cur.wire === 'pull' ? this._runnerPullReach(cur.peer, seen) : this._runnerReach(this._runnerPeerStatus(cur.peer), seen);
     },
 
+    _runnerMembers(tr) {
+      if (!tr || !tr.peer) return [];
+      const pool = Array.isArray(tr.pool) ? tr.pool : [];
+      return [{ peer: tr.peer, wire: tr.wire || WIRE_PUSH }, ...pool.map((p) => ({ peer: p.peer, wire: p.wire || WIRE_PUSH }))];
+    },
+
+    _runnerVia(member) {
+      if (member.wire === 'pull') {
+        const desk = this._runnerDesk();
+        return { live: !!(desk && desk.attached(member.peer)), via: { peer: member.peer, wire: 'pull', name: member.peer } };
+      }
+      const peer = this._runnerPeerStatus(member.peer);
+      const live = !!(peer && peer.online && Array.isArray(peer.caps) && peer.caps.includes('suite'));
+      return { live, via: peer ? { peer: peer.id, wire: WIRE_PUSH, name: member.peer } : null };
+    },
+
+    async _pickGateRunner(tr, box, exclude = []) {
+      const members = this._runnerMembers(tr).filter((m) => !exclude.includes(m.peer));
+      const client = typeof deps.getSuiteClient === 'function' ? deps.getSuiteClient() : null;
+      if (!members.length || !client || typeof client.reachable !== 'function') return null;
+      const want = box && typeof box === 'object' ? box : null;
+      const rows = await Promise.all(members.map(async (m) => {
+        const { live, via } = this._runnerVia(m);
+        if (!live || !via) return { ...m, live: false, info: null };
+        const r = await Promise.resolve().then(() => client.reachable(via.peer, via.wire, want)).catch(() => null);
+        return { ...m, live: true, info: r && r.ok ? r.info : null };
+      }));
+      const pick = pickRunner(rows, { box });
+      return pick.chosen ? { peer: pick.member.peer, wire: pick.member.wire } : null;
+    },
+
+    _runnerRepick(tr, box) {
+      return async (failed) => {
+        const next = (await this._pickGateRunner(tr, box, [failed])) || this._runnerMembers(tr)[0];
+        const { via } = this._runnerVia(next);
+        return via;
+      };
+    },
+
     _runnerInvalid(team) {
       return (team.droppedFields || []).some((d) => d && d.field === 'testRunner' && d.status === 'invalid');
     },
@@ -3197,6 +3237,7 @@ function createTicketMethods(deps, shared) {
       return {
         peer: cur.peer, hands: cur.hands, gate: cur.gate || 'off', wire: cur.wire || WIRE_PUSH, invalid: false, setup: !!cur.setup, env: !!cur.env,
         tally: this._runnerTallyView(team, null),
+        ...(this._runnerMembers(cur).length > 1 ? { members: this._runnerMembers(cur).length } : {}),
       };
     },
 
@@ -3212,6 +3253,8 @@ function createTicketMethods(deps, shared) {
         online: pull ? seen.attached === true : !!(status && status.online),
         suite: pull ? seen.attached === true : !!(status && Array.isArray(status.caps) && status.caps.includes('suite')),
         reachable: seen.reachable === true, reach, tally: this._runnerTallyView(team, seen.envKey),
+        ...(this._runnerMembers(cur).length > 1
+          ? { members: this._runnerMembers(cur).length, poolLines: (await this._runnerPoolLines(cur)).map((p) => p.line) } : {}),
       };
     },
 
@@ -3223,7 +3266,8 @@ function createTicketMethods(deps, shared) {
       if (!t || !(t.box || t.home)) return '; gate runs: none yet';
       const flat = (v) => String(v).replace(/[\x00-\x1f\x7f]+/g, ' ').slice(0, 60);
       const why = (t.fallbacks || []).map((f) => `${flat(f.reason)} ${f.count}`).join(', ');
-      return `; gate runs: ${t.box} decided by the box, ${t.home} fell back to home${why ? ` (${why})` : ''}`;
+      const per = (t.runners || []).map((r) => `${flat(r.runner)} ${r.box} box, ${r.home} home`).join('; ');
+      return `; gate runs: ${t.box} decided by the box, ${t.home} fell back to home${why ? ` (${why})` : ''}${per ? `; per runner: ${per}` : ''}`;
     },
 
     _runnerLabelTally(team, cur) {
@@ -3256,6 +3300,89 @@ function createTicketMethods(deps, shared) {
         + (t.skipped ? `, ${t.skipped} skipped (tree not sent)` : '')
         + where
         + (one.length ? `; failed on one side only: ${one.join(', ')}${more}` : '');
+    },
+
+    async _runnerPoolLines(cur) {
+      return Promise.all(this._runnerMembers(cur).map(async (mbr) => {
+        const seen = {};
+        const reach = await this._runnerReachFor(mbr, seen);
+        const load = seen.reachable === true ? runnerLoad(seen.info) : null;
+        return { seen, line: `${mbr.peer}, wire ${mbr.wire} — ${reach}${load ? `, slots ${load.inUse}/${load.total} in use` : ''}` };
+      }));
+    },
+
+    async _runnerPoolText(team, cur) {
+      const probes = await this._runnerPoolLines(cur);
+      const lines = [`test runner of ${team.name}: ${probes.length} runners, hands ${cur.hands} (hand runs use ${cur.peer} only), gate ${cur.gate || 'off'}`];
+      for (const p of probes) lines.push(p.line);
+      const seen = probes[0].seen;
+      const tally = cur.box === true && seen.reachable === true && !seen.box ? this._runnerLabelTally(team, cur) : this._runnerTally(team, cur, cur.box === true ? seen.boxEnvKey : seen.envKey);
+      if (tally) lines.push(tally.replace(/^; /, ''));
+      return lines.join('\n');
+    },
+
+    async _handleRunnerPool(team, cur, op, name, reply) {
+      if (!cur) {
+        reply('error: no test runner is set — name one first with [agent:team runner <peer>]');
+        return;
+      }
+      if (!name) {
+        reply(`error: name the runner — [agent:team runner ${op} <peer>]`);
+        return;
+      }
+      if (!NODE_NAME_RE.test(name)) {
+        reply(`error: "${name}" is not a peer name`);
+        return;
+      }
+      const pool = Array.isArray(cur.pool) ? cur.pool : [];
+      if (op === 'rm') {
+        if (name === cur.peer) {
+          if (!pool.length) {
+            reply(`error: ${name} is the only test runner of ${team.name} — [agent:team runner off] removes it`);
+            return;
+          }
+          const [next, ...rest] = pool;
+          const wire = next.wire || WIRE_PUSH;
+          const m = deps.setTeamTestRunner(team.name, { peer: next.peer, wire, pool: rest.length ? rest : null, ...(wire === 'pull' ? { hands: 'off' } : {}) });
+          reply(`test runner ${name} removed from ${team.name}; ${m.testRunner.peer} is now the first runner, wire ${wire}, hands ${m.testRunner.hands} — ${this._runnerMembers(m.testRunner).length} left`);
+          return;
+        }
+        if (!pool.some((p) => p.peer === name)) {
+          reply(`error: ${name} is not a test runner of ${team.name}`);
+          return;
+        }
+        const rest = pool.filter((p) => p.peer !== name);
+        const m = deps.setTeamTestRunner(team.name, { pool: rest.length ? rest : null });
+        reply(`test runner ${name} removed from ${team.name} — ${this._runnerMembers(m.testRunner).length} left`);
+        return;
+      }
+      if (name === cur.peer) {
+        reply(`error: ${name} is already the first test runner of ${team.name}`);
+        return;
+      }
+      if (pool.some((p) => p.peer === name)) {
+        reply(`error: ${name} is already in the runner pool of ${team.name}`);
+        return;
+      }
+      if (pool.length + 1 >= TEST_RUNNER_POOL_MAX) {
+        reply(`error: ${team.name} already has ${TEST_RUNNER_POOL_MAX} test runners, the most a team can name`);
+        return;
+      }
+      const peer = this._runnerPeerStatus(name);
+      const pull = !peer && !!this._runnerDialedIn(name);
+      if (!peer && !pull) {
+        reply(`error: "${name}" is not a known peer and no node by that name has dialed in — add it as a peer first`);
+        return;
+      }
+      if (peer && peer.online && !(Array.isArray(peer.caps) && peer.caps.includes('suite'))) {
+        reply(`error: peer ${name} is online but does not advertise the suite capability — the runner node needs CLODEX_SUITE_RUNNER=1`);
+        return;
+      }
+      const wire = pull ? 'pull' : WIRE_PUSH;
+      const m = deps.setTeamTestRunner(team.name, { pool: [...pool, { peer: name, wire }] });
+      const reach = pull ? await this._runnerPullReach(name)
+        : !peer.online ? 'warning: the peer is offline, so its suite capability is unchecked' : await this._runnerReach(peer);
+      reply(`test runner ${name} added to ${team.name}, wire ${wire} — ${this._runnerMembers(m.testRunner).length} runners; ${reach}`);
     },
 
     async _handleTeamRunner(team, intent, reply) {
@@ -3308,6 +3435,10 @@ function createTicketMethods(deps, shared) {
           reply(`test runner of ${team.name}: off${bad ? ' (team.json testRunner is invalid and ignored)' : ''} — [agent:team runner <peer>] names one`);
           return;
         }
+        if (this._runnerMembers(cur).length > 1) {
+          reply(await this._runnerPoolText(team, cur));
+          return;
+        }
         const seen = {};
         const reach = await this._runnerReachFor(cur, seen);
         reply(`test runner of ${team.name}: ${cur.peer}, wire ${cur.wire || WIRE_PUSH}, hands ${cur.hands}, gate ${cur.gate || 'off'} — ${reach}${cur.box === true && seen.reachable === true && !seen.box ? this._runnerLabelTally(team, cur) : this._runnerTally(team, cur, cur.box === true ? seen.boxEnvKey : seen.envKey)}`);
@@ -3318,8 +3449,16 @@ function createTicketMethods(deps, shared) {
         reply(`test runner of ${team.name} removed`);
         return;
       }
+      if (intent.value === 'add' || intent.value === 'rm') {
+        await this._handleRunnerPool(team, cur, intent.value, intent.target, reply);
+        return;
+      }
       if (!NODE_NAME_RE.test(intent.value)) {
         reply(`error: "${intent.value}" is not a peer name`);
+        return;
+      }
+      if (cur && Array.isArray(cur.pool) && cur.pool.some((p) => p.peer === intent.value)) {
+        reply(`error: ${intent.value} is already in the runner pool of ${team.name} — [agent:team runner rm ${intent.value}] first`);
         return;
       }
       const peer = this._runnerPeerStatus(intent.value);
@@ -6473,24 +6612,30 @@ function createTicketMethods(deps, shared) {
       try {
         const client = typeof deps.getSuiteClient === 'function' ? deps.getSuiteClient() : null;
         if (!client || typeof client.shadow !== 'function') throw new Error('no suite client on this node');
+        const box = tr.box === true ? this._shadowBox(team) : false;
+        const pooled = this._runnerMembers(tr).length > 1;
+        const chosen = pooled ? await this._pickGateRunner(tr, box) : null;
+        const member = chosen || this._runnerMembers(tr)[0];
         let via;
-        if (tr.wire === 'pull') {
+        if (member.wire === 'pull') {
           const desk = this._runnerDesk();
-          if (!desk || !desk.attached(tr.peer)) {
-            log.warn('ticket', `ticket ${ticket.id}: ${kind} shadow run skipped — runner ${tr.peer} dials in and is not attached`);
-            if (typeof client.shadowSkip === 'function') client.shadowSkip({ team: team.name, kind, ticket: String(ticket.id), runner: tr.peer, skipped: 'detached' });
+          if (!desk || !desk.attached(member.peer)) {
+            log.warn('ticket', `ticket ${ticket.id}: ${kind} shadow run skipped — runner ${member.peer} dials in and is not attached`);
+            if (typeof client.shadowSkip === 'function') client.shadowSkip({ team: team.name, kind, ticket: String(ticket.id), runner: member.peer, skipped: 'detached' });
             return null;
           }
-          via = { peer: tr.peer, wire: 'pull' };
+          via = { peer: member.peer, wire: 'pull' };
         } else {
-          const peer = this._runnerPeerStatus(tr.peer);
-          if (!peer) throw new Error(`runner ${tr.peer} is not a known peer`);
+          const peer = this._runnerPeerStatus(member.peer);
+          if (!peer) throw new Error(`runner ${member.peer} is not a known peer`);
           via = { peer: peer.id };
         }
         return await client.shadow({
-          ...via, name: tr.peer, tree: cwd, kind, team: team.name, ticket: String(ticket.id),
-          setup: tr.setup || null, env: tr.env || {}, route: 'gate:shadow', box: tr.box === true ? this._shadowBox(team) : false,
+          ...via, name: member.peer, tree: cwd, kind, team: team.name, ticket: String(ticket.id),
+          setup: tr.setup || null, env: tr.env || {}, route: 'gate:shadow', box,
           queueBudgetMs: TICKET_SUITE_LOCK_WAIT_MS, budgetMs: TICKET_SUITE_TIMEOUT,
+          ...(pooled ? { pool: true } : {}),
+          ...(chosen ? { repick: this._runnerRepick(tr, box) } : {}),
         });
       } catch (e) {
         log.warn('ticket', `ticket ${ticket.id}: ${kind} shadow run not submitted — ${e && e.message ? e.message : e}`);
@@ -6511,23 +6656,36 @@ function createTicketMethods(deps, shared) {
       ret.client = client;
       const def = this._shadowBox(team);
       if (def === true) return fall('no box definition', 'the team has no box definition');
+      const pooled = this._runnerMembers(tr).length > 1;
+      const chosen = pooled ? await this._pickGateRunner(tr, def) : null;
+      const member = chosen || this._runnerMembers(tr)[0];
+      ret.wire = member.wire === 'pull' ? 'pull' : WIRE_PUSH;
+      if (pooled) ret.runner = member.peer;
       let via;
       if (ret.wire === 'pull') {
         const desk = this._runnerDesk();
-        if (!desk || !desk.attached(tr.peer)) return fall('runner unreachable', `runner ${tr.peer} dials in and is not attached`);
-        via = { peer: tr.peer, wire: 'pull' };
+        if (!desk || !desk.attached(member.peer)) return fall('runner unreachable', `runner ${member.peer} dials in and is not attached`);
+        via = { peer: member.peer, wire: 'pull' };
       } else {
-        const peer = this._runnerPeerStatus(tr.peer);
-        if (!peer) return fall('runner unreachable', `runner ${tr.peer} is not a known peer`);
+        const peer = this._runnerPeerStatus(member.peer);
+        if (!peer) return fall('runner unreachable', `runner ${member.peer} is not a known peer`);
         via = { peer: peer.id };
       }
       let jobId = null;
       const job = Promise.resolve()
         .then(() => client.run({
-          ...via, name: tr.peer, tree: cwd, kind, team: team.name, ticket: String(ticket.id), scope: 'full',
+          ...via, name: member.peer, tree: cwd, kind, team: team.name, ticket: String(ticket.id), scope: 'full',
           setup: tr.setup || null, env: tr.env || {}, route: 'gate:on', box: def,
           queueBudgetMs: BOX_DECIDE_QUEUE_MS, budgetMs: TICKET_SUITE_TIMEOUT,
           onJob: (j) => { if (j && j.jobId) jobId = j.jobId; },
+          ...(chosen ? {
+            repick: this._runnerRepick(tr, def),
+            onRepick: (next) => {
+              via = { peer: next.peer, ...(next.wire === 'pull' ? { wire: 'pull' } : {}) };
+              ret.wire = next.wire === 'pull' ? 'pull' : WIRE_PUSH;
+              ret.runner = next.name;
+            },
+          } : {}),
         }))
         .catch((e) => ({ unknown: `client error: ${e && e.message ? e.message : e}`, res: null, record: null }));
       const guardMs = Number.isFinite(deps.boxDecideGuardMs) ? deps.boxDecideGuardMs : TICKET_SUITE_TIMEOUT + BOX_DECIDE_GUARD_SLACK_MS;
@@ -6562,7 +6720,7 @@ function createTicketMethods(deps, shared) {
       try {
         box.client.decided({
           team: team.name, kind: box.kind, ticket: String(ticket.id), wire: box.wire, box: box.out, local,
-          decidedBy: box.decided ? 'box' : 'home', fallback: box.decided ? null : box.fallback,
+          decidedBy: box.decided ? 'box' : 'home', fallback: box.decided ? null : box.fallback, ...(box.runner ? { runner: box.runner } : {}),
         });
       } catch (e) {
         log.warn('ticket', `ticket ${ticket.id}: box decision row dropped — ${e && e.message ? e.message : e}`);

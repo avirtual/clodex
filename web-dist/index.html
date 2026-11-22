@@ -34713,7 +34713,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (sub === "runner") {
           const handsM = argStr.match(/\bhands:(\S+)/);
           const gateM = argStr.match(/\bgate:(\S+)/);
-          return { type: "team", sub, value: positional[0] || null, hands: handsM ? handsM[1] : null, gate: gateM ? gateM[1] : null, body: "" };
+          return { type: "team", sub, value: positional[0] || null, hands: handsM ? handsM[1] : null, gate: gateM ? gateM[1] : null, ...positional[0] === "add" || positional[0] === "rm" ? { target: positional[1] || null } : {}, body: "" };
         }
         if (sub === "role-rename") return { type: "team", sub, name: positional[0] || null, to: positional[1] || null, body: "" };
         if (sub === "gather") return { type: "team", sub, dry: positional[0] === "dry", body: "" };
@@ -48629,6 +48629,12 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         const wire = info.wire === "pull" ? "dials in (wire pull, shadow only): " : "";
         return `${wire}${info.reach == null ? "checking reachability\u2026" : info.reach}${tally}`;
       }
+      function runnerPoolText(info) {
+        if (!info || !(info.members > 1)) return null;
+        const head = `${info.members} runners; a gate job goes to the attached one with the most free slots \u2014 [agent:team runner add <peer>] and [agent:team runner rm <peer>] edit the pool`;
+        const lines = Array.isArray(info.poolLines) ? info.poolLines : [];
+        return [head, ...lines].join("\n");
+      }
       function runnerPatchFor(act, value) {
         const key = RUNNER_ACTS[act];
         if (!key) return null;
@@ -48693,6 +48699,15 @@ This starts a NEW conversation \u2014 the current session's history will be clea
         state.dataset.runner = info && info.invalid ? "invalid" : "state";
         state.textContent = runnerStateLine(info);
         wrap.appendChild(state);
+        const poolText = runnerPoolText(info);
+        if (poolText) {
+          const pool = document2.createElement("div");
+          pool.className = "team-lead-hint";
+          pool.dataset.runner = "pool";
+          pool.style.whiteSpace = "pre-line";
+          pool.textContent = poolText;
+          wrap.appendChild(pool);
+        }
         if (info && (info.setup || info.env)) {
           const fixed = document2.createElement("div");
           fixed.className = "team-lead-hint";
@@ -48705,8 +48720,11 @@ This starts a NEW conversation \u2014 the current session's history will be clea
       function paintRunnerState(wrap, info) {
         const state = wrap && Array.from(wrap.childNodes).find((n) => n.dataset && n.dataset.runner === "state");
         if (state) state.textContent = runnerStateLine(info);
+        const pool = wrap && Array.from(wrap.childNodes).find((n) => n.dataset && n.dataset.runner === "pool");
+        const poolText = runnerPoolText(info);
+        if (pool && poolText) pool.textContent = poolText;
       }
-      module.exports = { RUNNER_HANDS_OPTIONS, RUNNER_GATE_OPTIONS, RUNNER_FIELDS, runnerStateLine, runnerPatchFor, buildRunnerField, paintRunnerState };
+      module.exports = { RUNNER_HANDS_OPTIONS, RUNNER_GATE_OPTIONS, RUNNER_FIELDS, runnerStateLine, runnerPoolText, runnerPatchFor, buildRunnerField, paintRunnerState };
     }
   });
 
