@@ -20,7 +20,7 @@ const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const { idleClearAfterMs, IDLE_CLEAR_MIN_MS } = require('./assistant-sleep');
 const { localHalf, failingNames } = require('./suite-client');
-const { boxVerdict, pickRunner, runnerLoad } = require('./suite-client');
+const { boxVerdict, pickRunner, runnerLoad, BUILD_BUDGET_MS } = require('./suite-client');
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
   DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_WIRE_PUSH: WIRE_PUSH, TEST_RUNNER_POOL_MAX,
@@ -6681,12 +6681,14 @@ function createTicketMethods(deps, shared) {
         via = { peer: peer.id };
       }
       let jobId = null;
+      let phase = null;
       const job = Promise.resolve()
         .then(() => client.run({
           ...via, name: member.peer, tree: cwd, kind, team: team.name, ticket: String(ticket.id), scope: 'full',
           setup: tr.setup || null, env: tr.env || {}, route: 'gate:on', box: def, ...(tr.shares ? { shares: tr.shares } : {}),
           queueBudgetMs: BOX_DECIDE_QUEUE_MS, budgetMs: TICKET_SUITE_TIMEOUT,
           onJob: (j) => { if (j && j.jobId) jobId = j.jobId; },
+          onState: (s) => { phase = s; },
           ...(chosen ? {
             repick: this._runnerRepick(tr, def),
             onRepick: (next) => {
@@ -6697,14 +6699,20 @@ function createTicketMethods(deps, shared) {
           } : {}),
         }))
         .catch((e) => ({ unknown: `client error: ${e && e.message ? e.message : e}`, res: null, record: null }));
-      const guardMs = Number.isFinite(deps.boxDecideGuardMs) ? deps.boxDecideGuardMs : TICKET_SUITE_TIMEOUT + BOX_DECIDE_GUARD_SLACK_MS;
+      const buildable = def && typeof def.definition === 'string';
+      const guardMs = Number.isFinite(deps.boxDecideGuardMs) ? deps.boxDecideGuardMs
+        : TICKET_SUITE_TIMEOUT + BOX_DECIDE_GUARD_SLACK_MS + (buildable ? BOX_DECIDE_QUEUE_MS + BUILD_BUDGET_MS : 0);
+      const timers = deps.boxDecideTimers || { setTimeout, clearTimeout };
       let timer = null;
       const LATE = {};
-      const guard = new Promise((resolve) => { timer = setTimeout(() => resolve(LATE), guardMs); });
+      const guard = new Promise((resolve) => { timer = timers.setTimeout(() => resolve(LATE), guardMs); });
       let out = await Promise.race([job, guard]);
-      clearTimeout(timer);
+      timers.clearTimeout(timer);
       let fallback;
-      if (out === LATE) {
+      if (out === LATE && phase === 'build') {
+        out = { unknown: `the box build did not finish within ${guardMs}ms`, res: null, record: null };
+        fallback = 'box build';
+      } else if (out === LATE) {
         out = { unknown: `no box result within ${guardMs}ms`, res: null, record: null };
         fallback = 'run budget';
       } else {

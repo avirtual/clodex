@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - A test runner can build a team's box image itself (Preferences ▸ Test runner ▸ Build box images that teams ask for, off by default): the first job that needs a missing image triggers one build, and a failed build falls back to the team's own suite.
+- Automatic box builds: a first build no longer uses up the gate's wait for the result, jobs waiting on a build count against the runner's queue limit, and turning builds off stops queued ones.
 
 ## 5.192.0 — 2026-11-23
 

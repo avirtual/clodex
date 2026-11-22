@@ -727,7 +727,13 @@ byte. On, a named box job that carries `box.definition` is handled so:
   job's slot. One build at a time on a runner: a job that needs a build is
   not started while any build runs. Jobs for the same hash that arrive
   meanwhile wait on that build in state `build` (phase `build` in `poll`,
-  the output read and activity) and start no build of their own.
+  the output read and activity) and start no build of their own. Jobs in
+  state `build` count against `queueMax` at submit, with the usual `queue
+  full` refusal.
+- When a build is about to start on a runner whose builds are now off (a
+  queued job recovered after the setting was turned off), the job and its
+  waiters end `box-failed` with `builds are off on this runner`, without a
+  cool-off and with no Docker call.
 - Before a build starts, and before a job is accepted for one: a build whose
   termination is not confirmed refuses `cleanup of build <token8> is not
   confirmed: <why>`; a hash whose build failed in the last 10 min
@@ -745,7 +751,9 @@ byte. On, a named box job that carries `box.definition` is handled so:
   clodex.box.build=<token> [--build-arg CLODEX_BASE=ghcr.io/avirtual/clodex:<runner
   version>] --iidfile <job dir>/build/iid -`, the Dockerfile on stdin and no
   build context. No privileged, entitlement, host-network, secret or ssh flag
-  is ever passed; the `RUN` steps do get network access. The build's output
+  is ever passed; the `RUN` steps do get network access. The build runs with
+  the runner owner's Docker registry credentials, so a team's `FROM` can pull
+  any private image that owner can pull. The build's output
   goes to the job's stdout/stderr files under the usual output cap and is
   readable while it runs; a successful build resets them before the suite.
 - Time cap: 20 min (`BUILD_TIMEOUT_MS`).
@@ -753,7 +761,7 @@ byte. On, a named box job that carries `box.definition` is handled so:
   sweep of a build recorded in `box-build.json` (written before the client
   starts), the runner kills the build client's process group, then confirms
   that no process carries `clodex.box.build=<token>` on its command line
-  (`ps -ax`), that no container carries that label, and removes any image
+  (`ps -A -ww`), that no container carries that label, and removes any image
   carrying it (`docker image rm -f`), re-listing until none is left. Until
   that confirmation succeeds the record stays, new builds are refused with the
   reason above, and the tick retries it; suites, and box jobs whose image

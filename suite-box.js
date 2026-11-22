@@ -157,7 +157,7 @@ function buildArgv({ definition, definitionHash, token, iidFile, version }) {
 
 function listProcs() {
   return new Promise((resolve, reject) => {
-    childProcess.execFile('ps', ['-ax', '-o', 'pid=,command='], { maxBuffer: 16 * 1024 * 1024 }, (e, out) => {
+    childProcess.execFile('ps', ['-A', '-ww', '-o', 'pid=,args='], { maxBuffer: 16 * 1024 * 1024 }, (e, out) => {
       if (e) { reject(e); return; }
       resolve(String(out).split('\n').map((l) => /^\s*(\d+)\s+(.*)$/.exec(l)).filter(Boolean).map((m) => ({ pid: Number(m[1]), command: m[2] })));
     });
@@ -404,4 +404,4 @@ function boxIsolation({
   };
 }
 
-module.exports = { createDocker, boxIsolation, runArgv, buildArgv, boxIdentity, runnerKeyOf, BOX_ENV, DEADMAN, BUILD_LABEL };
+module.exports = { createDocker, boxIsolation, runArgv, buildArgv, boxIdentity, runnerKeyOf, listProcs, BOX_ENV, DEADMAN, BUILD_LABEL };
