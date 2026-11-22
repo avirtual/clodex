@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.192.0 — 2026-11-23
+
 - The idle-session question shows how much memory each idle session holds and how much pausing them frees.
 - A team can name several test runners (`[agent:team runner add <peer>]`). Each merge-gate test job goes to an attached runner with a free slot, so tickets verify in parallel across machines.
 - A test runner's owner can list named, versioned read-only folders (Preferences ▸ Test runner); a team's box jobs mount them at `.shares/<name>` by naming them in its runner setting, so large untracked test inputs need not be baked into the image or downloaded.
