@@ -150,6 +150,7 @@ function suiteRunnerOptions(env, root, { platform = process.platform, setting = 
     limits: mb > 0 ? { packMaxBytes: Math.floor(mb * 1024 * 1024) } : {},
     ...(Number.isInteger(s.slots) && s.slots > 1 ? { slots: s.slots } : {}),
     ...(Array.isArray(s.shares) && s.shares.length ? { shares: s.shares } : {}),
+    ...(s.buildBoxes === true ? { buildBoxes: true } : {}),
     forced,
   };
 }

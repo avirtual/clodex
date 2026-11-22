@@ -5,6 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const childProcess = require('child_process');
 const { resolveFs } = require('./resolve-fs');
+const { baseArgOf } = require('./team-box');
 
 const fs = resolveFs();
 
@@ -30,6 +31,9 @@ const CLEAR_WAIT_MS = 30000;
 const CLEAR_PAUSE_MS = 250;
 const CLEAR_PAUSE_MAX_MS = 2000;
 const BOX_LABEL = 'clodex.box';
+const BUILD_LABEL = 'clodex.box.build';
+const BUILD_TOKEN_RE = /^[0-9a-f]{16,64}$/;
+const BOX_HASH_RE = /^[0-9a-f]{64}$/;
 const JOB_LABEL = 'clodex.suite.job';
 const DOCKER_ARCH = { aarch64: 'arm64', x86_64: 'amd64' };
 const DEFAULT_TIMERS = { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (t) => clearTimeout(t) };
@@ -135,6 +139,31 @@ function runArgv({ image, runnerKey, n, uid, gid, jobDir, job, argv, env, shares
   ];
 }
 
+function buildArgv({ definition, definitionHash, token, iidFile, version }) {
+  if (!BOX_HASH_RE.test(String(definitionHash))) throw new Error('bad definition hash');
+  if (!BUILD_TOKEN_RE.test(String(token))) throw new Error('bad build token');
+  if (!path.isAbsolute(String(iidFile))) throw new Error('the iidfile path must be absolute');
+  const base = baseArgOf(definition, version);
+  return [
+    'docker', 'build',
+    '-t', `clodex-box:${definitionHash.slice(0, 12)}`,
+    '--label', `${BOX_LABEL}=${definitionHash}`,
+    '--label', `${BUILD_LABEL}=${token}`,
+    ...(base ? ['--build-arg', base] : []),
+    '--iidfile', iidFile,
+    '-',
+  ];
+}
+
+function listProcs() {
+  return new Promise((resolve, reject) => {
+    childProcess.execFile('ps', ['-ax', '-o', 'pid=,command='], { maxBuffer: 16 * 1024 * 1024 }, (e, out) => {
+      if (e) { reject(e); return; }
+      resolve(String(out).split('\n').map((l) => /^\s*(\d+)\s+(.*)$/.exec(l)).filter(Boolean).map((m) => ({ pid: Number(m[1]), command: m[2] })));
+    });
+  });
+}
+
 function boxIdentity({ imageId, arch, cpus, definitionHash = null, rev = null, env = process.env, platform = process.platform, hostArch = process.arch }) {
   const boxArch = arch === 'amd64' ? 'x64' : arch;
   let clodex = null;
@@ -164,6 +193,7 @@ function boxIsolation({
   image, work, stateDir, docker = createDocker(), kill = process.kill.bind(process),
   uid = process.getuid(), gid = process.getgid(), now = Date.now, env = process.env,
   platform = process.platform, arch = process.arch, timers = DEFAULT_TIMERS,
+  procs = listProcs, statfs = (dir) => fs.statfsSync(dir), version = require('./package.json').version,
 }) {
   const runnerKey = runnerKeyOf(stateDir);
   let counter = 0;
@@ -262,6 +292,57 @@ function boxIsolation({
     return { state: 'ready', env: boxIdentity({ imageId: [...fit][0], arch: d.arch, cpus: d.cpus, definitionHash, rev, env, platform, hostArch: arch }) };
   }
 
+  async function confirmNoClient(token, pid) {
+    if (pid > 0) { try { kill(-pid, 'SIGKILL'); } catch {} }
+    const mark = `${BUILD_LABEL}=${token}`;
+    const deadline = now() + CLEAR_WAIT_MS;
+    let pause = CLEAR_PAUSE_MS;
+    for (;;) {
+      let rows;
+      try { rows = await procs(); } catch (e) { throw new Error(`build cleanup not confirmed: the process list failed: ${e.message}`); }
+      const live = rows.filter((r) => String(r.command).includes(mark)).map((r) => r.pid);
+      if (!live.length) return;
+      for (const p of live) { try { kill(p, 'SIGKILL'); } catch {} }
+      const left = deadline - now();
+      if (left <= 0) throw new Error(`build cleanup not confirmed: the build client is still running (pid ${live.join(' ')})`);
+      await new Promise((resolve) => timers.setTimeout(resolve, Math.min(pause, left)));
+      pause = Math.min(pause * 2, CLEAR_PAUSE_MAX_MS);
+    }
+  }
+
+  async function removeBuiltImages(token) {
+    let last = '';
+    for (let round = 0; round < CLEAR_ROUNDS; round += 1) {
+      const ls = await docker.call(['image', 'ls', '-a', '-q', '--no-trunc', '--filter', `label=${BUILD_LABEL}=${token}`], { timeoutMs: PROBE_MS });
+      if (!ls.ok) { last = `docker image ls failed: ${callError(ls)}`; continue; }
+      const ids = [...new Set(String(ls.stdout).split('\n').map((s) => s.trim()).filter(Boolean))];
+      if (!ids.length) return;
+      last = ids.join(' ');
+      await docker.call(['image', 'rm', '-f', ...ids], { timeoutMs: CLEAR_MS });
+    }
+    throw new Error(`build cleanup not confirmed: images remain: ${last}`);
+  }
+
+  async function endBuild({ token, pid = null }) {
+    if (!BUILD_TOKEN_RE.test(String(token))) throw new Error('build cleanup not confirmed: bad build token');
+    await confirmNoClient(token, pid);
+    await clear(`${BUILD_LABEL}=${token}`);
+    await removeBuiltImages(token);
+  }
+
+  async function freeBytes() {
+    const d = await docker.call(['info', '--format', '{{.DockerRootDir}}'], { timeoutMs: PROBE_MS });
+    const dataRoot = d.ok ? firstLine(d.stdout) : '';
+    for (const [where, dir] of [['Docker data root', dataRoot], ['work root', work]]) {
+      if (!dir || !path.isAbsolute(dir)) continue;
+      try {
+        const s = statfs(dir);
+        return { bytes: Number(s.bavail) * Number(s.bsize), where: `${where} ${dir}` };
+      } catch {}
+    }
+    return { bytes: null, where: null };
+  }
+
   return {
     mode: 'container',
     user: 'box',
@@ -278,6 +359,12 @@ function boxIsolation({
       return answer;
     },
     sweep: (keep = []) => clear(`clodex.suite.runner=${runnerKey}`, keep),
+    buildArgv: (o) => buildArgv({ version, ...o }),
+    killBuild(child) {
+      if (child && child.pid > 0) { try { kill(-child.pid, 'SIGKILL'); } catch {} }
+    },
+    endBuild,
+    freeBytes,
     env() { return { ...BOX_ENV }; },
     async prepare() {},
     spawn({ jobDir, argv, env: jobEnv, spawn, job, shares = [] }) {
@@ -317,4 +404,4 @@ function boxIsolation({
   };
 }
 
-module.exports = { createDocker, boxIsolation, runArgv, boxIdentity, runnerKeyOf, BOX_ENV, DEADMAN };
+module.exports = { createDocker, boxIsolation, runArgv, buildArgv, boxIdentity, runnerKeyOf, BOX_ENV, DEADMAN, BUILD_LABEL };

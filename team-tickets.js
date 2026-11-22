@@ -3139,11 +3139,12 @@ function createTicketMethods(deps, shared) {
       const id12 = String((be.box && be.box.imageId) || '').replace(/^sha256:/, '').slice(0, 12);
       const box = !b ? '' : b.state === 'ready'
         ? `, box ready ${flat(be.platform)}/${flat(be.arch)} image ${flat(id12 || null)} key ${flat(be.envKey)}`
-        : `, box unavailable: ${flat(b.why)}`;
+        : b.state === 'building' || b.state === 'can-build' ? `, box ${b.state}: ${flat(b.why)}`
+          : `, box unavailable: ${flat(b.why)}`;
       return `queue ${queue}, env ${flat(e.runner)} ${flat(e.platform)}/${flat(e.arch)} node ${flat(e.node)} key ${flat(e.envKey)}${box}`;
     },
 
-    async _runnerPullReach(name, seen = {}) {
+    async _runnerPullReach(name, seen = {}, want = null) {
       const flat = (v) => String(v == null ? '?' : v).replace(/[\x00-\x1f\x7f]+/g, ' ').slice(0, 120);
       const dialed = this._runnerDialedIn(name);
       seen.attached = !!(dialed && dialed.attached);
@@ -3155,25 +3156,31 @@ function createTicketMethods(deps, shared) {
       }
       const client = typeof deps.getSuiteClient === 'function' ? deps.getSuiteClient() : null;
       if (!client) return 'attached; no suite client on this node';
-      const r = await client.reachable(name, 'pull');
+      const r = want ? await client.reachable(name, 'pull', want) : await client.reachable(name, 'pull');
       if (!r || !r.ok) return `attached, but its info route failed: ${flat(r && r.why)}`;
       return `attached, ${this._runnerInfoText(r, seen)}`;
     },
 
-    async _runnerReach(peer, seen = {}) {
+    async _runnerReach(peer, seen = {}, want = null) {
       const flat = (v) => String(v == null ? '?' : v).replace(/[\x00-\x1f\x7f]+/g, ' ').slice(0, 120);
       if (!peer) return 'not a known peer';
       if (!peer.online) return 'offline';
       if (!Array.isArray(peer.caps) || !peer.caps.includes('suite')) return 'online without the suite capability';
       const client = typeof deps.getSuiteClient === 'function' ? deps.getSuiteClient() : null;
       if (!client) return 'online with the suite capability; no suite client on this node';
-      const r = await client.reachable(peer.id);
+      const r = want ? await client.reachable(peer.id, WIRE_PUSH, want) : await client.reachable(peer.id);
       if (!r || !r.ok) return `online with the suite capability, but its info route failed: ${flat(r && r.why)}`;
       return `reachable, suite capability, ${this._runnerInfoText(r, seen)}`;
     },
 
-    _runnerReachFor(cur, seen = {}) {
-      return cur.wire === 'pull' ? this._runnerPullReach(cur.peer, seen) : this._runnerReach(this._runnerPeerStatus(cur.peer), seen);
+    _runnerReachFor(cur, seen = {}, want = null) {
+      return cur.wire === 'pull' ? this._runnerPullReach(cur.peer, seen, want) : this._runnerReach(this._runnerPeerStatus(cur.peer), seen, want);
+    },
+
+    _runnerWant(team, cur) {
+      if (!cur || cur.box !== true) return null;
+      const def = this._shadowBox(team);
+      return def === true ? null : { definitionHash: def.definitionHash, rev: def.rev };
     },
 
     _runnerMembers(tr) {
@@ -3302,17 +3309,17 @@ function createTicketMethods(deps, shared) {
         + (one.length ? `; failed on one side only: ${one.join(', ')}${more}` : '');
     },
 
-    async _runnerPoolLines(cur) {
+    async _runnerPoolLines(cur, want = null) {
       return Promise.all(this._runnerMembers(cur).map(async (mbr) => {
         const seen = {};
-        const reach = await this._runnerReachFor(mbr, seen);
+        const reach = await this._runnerReachFor(mbr, seen, want);
         const load = seen.reachable === true ? runnerLoad(seen.info) : null;
         return { seen, line: `${mbr.peer}, wire ${mbr.wire} — ${reach}${load ? `, slots ${load.inUse}/${load.total} in use` : ''}` };
       }));
     },
 
     async _runnerPoolText(team, cur) {
-      const probes = await this._runnerPoolLines(cur);
+      const probes = await this._runnerPoolLines(cur, this._runnerWant(team, cur));
       const lines = [`test runner of ${team.name}: ${probes.length} runners, hands ${cur.hands} (hand runs use ${cur.peer} only), gate ${cur.gate || 'off'}`];
       for (const p of probes) lines.push(p.line);
       const seen = probes[0].seen;
@@ -3422,7 +3429,7 @@ function createTicketMethods(deps, shared) {
           return;
         }
         if (cur.wire === 'pull' && intent.hands !== 'off') {
-          reply(`error: hands:${intent.hands} is refused for ${cur.peer}: a runner that dials in (wire pull) runs shadow comparisons only`);
+          reply(`error: hands:${intent.hands} is refused for ${cur.peer}: a runner that dials in (wire pull) serves the merge gate only (gate:shadow or gate:on)`);
           return;
         }
         const m = deps.setTeamTestRunner(team.name, { hands: intent.hands });
@@ -3440,7 +3447,7 @@ function createTicketMethods(deps, shared) {
           return;
         }
         const seen = {};
-        const reach = await this._runnerReachFor(cur, seen);
+        const reach = await this._runnerReachFor(cur, seen, this._runnerWant(team, cur));
         reply(`test runner of ${team.name}: ${cur.peer}, wire ${cur.wire || WIRE_PUSH}, hands ${cur.hands}, gate ${cur.gate || 'off'} — ${reach}${cur.box === true && seen.reachable === true && !seen.box ? this._runnerLabelTally(team, cur) : this._runnerTally(team, cur, cur.box === true ? seen.boxEnvKey : seen.envKey)}`);
         return;
       }
@@ -3465,7 +3472,7 @@ function createTicketMethods(deps, shared) {
       if (!peer && this._runnerDialedIn(intent.value)) {
         const m = deps.setTeamTestRunner(team.name, { peer: intent.value, wire: 'pull', hands: 'off' });
         const tr = m.testRunner;
-        reply(`test runner of ${team.name} set to ${tr.peer}, wire pull, hands ${tr.hands} — a runner that dials in runs shadow comparisons only (gate:shadow); ${await this._runnerPullReach(tr.peer)}`);
+        reply(`test runner of ${team.name} set to ${tr.peer}, wire pull, hands ${tr.hands} — a runner that dials in serves the merge gate only (gate:shadow or gate:on); ${await this._runnerPullReach(tr.peer)}`);
         return;
       }
       if (!peer) {

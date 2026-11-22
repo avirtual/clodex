@@ -37,8 +37,8 @@ const ROUTE_ROWS = [
   ['hands:full, own scope', { team: teamWith('full'), scope: 'own' }, { where: 'local', why: 'hands:full leaves own scope local' }],
   ['hands:all, full scope', { team: teamWith('all'), scope: 'full' }, { where: 'remote', peer: 'runner-1', why: 'hands:all' }],
   ['hands:all, own scope', { team: teamWith('all'), scope: 'own' }, { where: 'remote', peer: 'runner-1', why: 'hands:all' }],
-  ['wire:pull, hands:full', { team: pullTeam('full'), scope: 'full' }, { where: 'local', why: 'wire:pull runs shadow comparisons only' }],
-  ['wire:pull, hands:all', { team: pullTeam('all'), scope: 'full' }, { where: 'local', why: 'wire:pull runs shadow comparisons only' }],
+  ['wire:pull, hands:full', { team: pullTeam('full'), scope: 'full' }, { where: 'local', why: 'wire:pull serves the merge gate only (gate:shadow or gate:on)' }],
+  ['wire:pull, hands:all', { team: pullTeam('all'), scope: 'full' }, { where: 'local', why: 'wire:pull serves the merge gate only (gate:shadow or gate:on)' }],
 ];
 
 for (const [name, input, want] of ROUTE_ROWS) {
