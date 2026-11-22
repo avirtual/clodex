@@ -3319,11 +3319,12 @@ function createTicketMethods(deps, shared) {
     },
 
     async _runnerPoolText(team, cur) {
-      const probes = await this._runnerPoolLines(cur, this._runnerWant(team, cur));
+      const want = this._runnerWant(team, cur);
+      const probes = await this._runnerPoolLines(cur, want);
       const lines = [`test runner of ${team.name}: ${probes.length} runners, hands ${cur.hands} (hand runs use ${cur.peer} only), gate ${cur.gate || 'off'}`];
       for (const p of probes) lines.push(p.line);
       const seen = probes[0].seen;
-      const tally = cur.box === true && seen.reachable === true && !seen.box ? this._runnerLabelTally(team, cur) : this._runnerTally(team, cur, cur.box === true ? seen.boxEnvKey : seen.envKey);
+      const tally = cur.box === true && seen.reachable === true && (want || !seen.box) ? this._runnerLabelTally(team, cur) : this._runnerTally(team, cur, cur.box === true ? seen.boxEnvKey : seen.envKey);
       if (tally) lines.push(tally.replace(/^; /, ''));
       return lines.join('\n');
     },
@@ -3447,8 +3448,9 @@ function createTicketMethods(deps, shared) {
           return;
         }
         const seen = {};
-        const reach = await this._runnerReachFor(cur, seen, this._runnerWant(team, cur));
-        reply(`test runner of ${team.name}: ${cur.peer}, wire ${cur.wire || WIRE_PUSH}, hands ${cur.hands}, gate ${cur.gate || 'off'} — ${reach}${cur.box === true && seen.reachable === true && !seen.box ? this._runnerLabelTally(team, cur) : this._runnerTally(team, cur, cur.box === true ? seen.boxEnvKey : seen.envKey)}`);
+        const want = this._runnerWant(team, cur);
+        const reach = await this._runnerReachFor(cur, seen, want);
+        reply(`test runner of ${team.name}: ${cur.peer}, wire ${cur.wire || WIRE_PUSH}, hands ${cur.hands}, gate ${cur.gate || 'off'} — ${reach}${cur.box === true && seen.reachable === true && (want || !seen.box) ? this._runnerLabelTally(team, cur) : this._runnerTally(team, cur, cur.box === true ? seen.boxEnvKey : seen.envKey)}`);
         return;
       }
       if (intent.value === 'off') {
