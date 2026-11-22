@@ -7157,6 +7157,66 @@ for (const [local, script] of [['green', SHADOW_LOCAL.green], ['red', SHADOW_LOC
   });
 }
 
+function guardClock() {
+  let clock = 0;
+  const due = [];
+  const timers = {
+    setTimeout: (fn, ms) => { const h = { at: clock + ms, fn }; due.push(h); return h; },
+    clearTimeout: (h) => { const i = due.indexOf(h); if (i >= 0) due.splice(i, 1); },
+  };
+  const advance = (ms) => {
+    clock += ms;
+    for (const h of due.filter((x) => x.at <= clock)) { due.splice(due.indexOf(h), 1); h.fn(); }
+  };
+  return { timers, advance, due };
+}
+
+test('t2366: a first build that spends the whole build budget, then queues and runs within the run budget, is decided by the box', async () => {
+  const g = guardClock();
+  const b = boxLoop(SHADOW_LOCAL.red, { extraDeps: { ticketSuiteTimeoutMs: 2_460_000, boxDecideTimers: g.timers } });
+  const r = boxRemote('green', b.events);
+  const client = {
+    ...r.client,
+    run: (o) => {
+      assert.strictEqual(g.due.length, 1, 'ENTER: the guard timer is armed');
+      o.onJob({ jobId: 'job-b', attempt: 1 });
+      o.onState('queued');
+      g.advance(300_000);
+      o.onState('build');
+      g.advance(1_500_000);
+      o.onState('running');
+      g.advance(2_459_999);
+      assert.strictEqual(g.due.length, 1, 'the guard has not fired');
+      return r.client.run(o);
+    },
+  };
+  const out = await b.run(GATE_ON, client);
+  assert.deepStrictEqual([out.decidedBy, out.fallback, out.green], ['box', null, true]);
+  assert.deepStrictEqual(b.events, []);
+});
+
+test('t2366: a guard that fires while the job is still in build falls back as box build, never as run budget', async () => {
+  const g = guardClock();
+  const b = boxLoop(SHADOW_LOCAL.green, { extraDeps: { ticketSuiteTimeoutMs: 2_460_000, boxDecideTimers: g.timers } });
+  const off = await b.run({ ...GATE_ON, gate: 'off' }, null);
+  const r = boxRemote('build budget', b.events);
+  const client = {
+    ...r.client,
+    run: (o) => {
+      o.onJob({ jobId: 'job-b', attempt: 1 });
+      o.onState('build');
+      g.advance(4_379_999);
+      assert.strictEqual(g.due.length, 1, 'ENTER: the guard is still armed 1ms before it fires');
+      g.advance(1);
+      return new Promise(() => {});
+    },
+  };
+  const out = await b.run(GATE_ON, client);
+  assert.deepStrictEqual(out, { ...off, decidedBy: 'home', fallback: 'box build', durationMs: 'number' });
+  assert.deepStrictEqual(b.events, ['cancel', 'spawn']);
+  assert.deepStrictEqual(r.rows().map((x) => [x.decidedBy, x.fallback, x.remote.reason]), [['home', 'box build', 'the box build did not finish within 4380000ms']]);
+});
+
 test('t2338: a cancel that rejects still lets the home run proceed', async () => {
   const b = boxLoop(SHADOW_LOCAL.green);
   const off = await b.run({ ...GATE_ON, gate: 'off' }, null);

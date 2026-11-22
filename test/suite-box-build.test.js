@@ -12,7 +12,7 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 const { imagesDocker } = require('./lib/box-images');
 const { snapshotTree, releaseSnapshot, buildPack } = require('../suite-snapshot');
 const { createSuiteRunner, noneIsolation, jobPaths, statePaths } = require('../suite-runner');
-const { boxIsolation, buildArgv } = require('../suite-box');
+const { boxIsolation, buildArgv, listProcs } = require('../suite-box');
 const { boxFingerprint } = require('../team-box');
 const { pickRunner, createSuiteClient } = require('../suite-client');
 const { sanitizeSuiteRunner } = require('../stores');
@@ -35,7 +35,7 @@ const GIB = 1024 ** 3;
 const tokenOf = (c) => c.args.find((a) => a.startsWith('clodex.box.build=')).slice('clodex.box.build='.length);
 const iidOf = (c) => c.args[c.args.indexOf('--iidfile') + 1];
 
-async function fixture(t, { buildBoxes = true, slots = 1, freeBytes = 100 * GIB, procsFail = () => false, before = () => {} } = {}) {
+async function fixture(t, { buildBoxes = true, slots = 1, limits = {}, freeBytes = 100 * GIB, procsFail = () => false, before = () => {} } = {}) {
   const root = mkTmpRoot('suite-box-build-');
   const repo = path.join(root, 'near');
   fs.mkdirSync(repo);
@@ -121,10 +121,11 @@ async function fixture(t, { buildBoxes = true, slots = 1, freeBytes = 100 * GIB,
     return child;
   };
   before({ root, alive, images });
-  const runner = createSuiteRunner({
+  const make = (on) => createSuiteRunner({
     root, work, isolation: noneIsolation({ user: 'suite-test', kill: () => {} }), spawn, now: () => clock, timers,
-    platform: 'linux', arch: 'x64', box, buildBoxes, slots,
+    platform: 'linux', arch: 'x64', box, buildBoxes: on, slots, limits,
   });
+  let runner = make(buildBoxes);
   t.after(() => {
     runner.close();
     releaseSnapshot(snap);
@@ -154,7 +155,9 @@ async function fixture(t, { buildBoxes = true, slots = 1, freeBytes = 100 * GIB,
   };
   const stderr = async (id) => (await runner.output(id, { stream: 'stderr' })).text;
   return {
-    root, work, runner, calls, images, alive, kills, events, docker, pending, handlers, body, upload, builds, succeed, stderr,
+    root, work, calls, images, alive, kills, events, docker, pending, handlers, body, upload, builds, succeed, stderr, box,
+    get runner() { return runner; },
+    restart: ({ buildBoxes: on, close }) => { if (close) runner.close(); runner = make(on); return runner; },
     tick: (ms) => { clock += ms; },
     stateFile: (name) => path.join(statePaths(root).dir, name),
   };
@@ -309,7 +312,7 @@ for (const confirm of ['confirmed', 'not confirmed']) {
       const j1 = await waitState(f.runner, 'j1', 'done');
       const j2 = await waitState(f.runner, 'j2', 'done');
       assert.deepStrictEqual([j1.reason, j2.reason], [way === 'cancel' ? 'cancelled' : 'box-failed', 'box-failed']);
-      assert.deepStrictEqual(f.events.slice(0, 3), [`kill -${c.child.pid}`, `kill -${c.child.pid}`, 'procs']);
+      assert.deepStrictEqual(f.events.slice(0, 2), [`kill -${c.child.pid}`, 'procs']);
       const why = way === 'cancel' ? 'the build was cancelled' : 'the build did not finish within 1200000 ms (killed)';
       assert.strictEqual(await f.stderr('j2'), `suite-runner: box build: ${why}\n`);
       if (confirm === 'confirmed') {
@@ -463,4 +466,68 @@ test('t2364: Preferences carries the build checkbox with its hint, and Apply sen
   const form = { enabled: true, isolation: 'user', work: '', boxImage: '', slots: '1' };
   assert.deepStrictEqual(suiteRunnerRecordFromForm(shown, { ...form, buildBoxes: true }), { enabled: true, isolation: 'user', work: null, buildBoxes: true });
   assert.deepStrictEqual(suiteRunnerRecordFromForm(shown, { ...form, buildBoxes: false }), { enabled: true, isolation: 'user', work: null });
+});
+
+test('t2366: jobs waiting in build count against queueMax, and the next submit gets the queue-full answer', async (t) => {
+  const f = await fixture(t, { limits: { queueMax: 2 } });
+  const started = heldBuild(f);
+  await f.upload(f.body('j1', BUILD()));
+  await started;
+  await f.upload(f.body('j2', BUILD()));
+  assert.deepStrictEqual((await f.runner.poll(['j1', 'j2'])).jobs.map((j) => j.state), ['build', 'build']);
+  assert.deepStrictEqual(await f.runner.submit(f.body('j3', BUILD()), { origin: 'peer-a' }), { ok: false, status: 429, error: 'queue full' });
+});
+
+test('t2366: a queued build job that meets a runner reloaded with builds off ends box-failed with no docker build', async (t) => {
+  const f = await fixture(t);
+  const started = heldBuild(f);
+  await f.upload(f.body('j1', BUILD()));
+  const c = await started;
+  assert.strictEqual((await f.upload(f.body('j2', BUILD(DEF2)))).state, 'queued');
+  const old = f.runner;
+  old.close();
+  f.alive.delete(c.child.pid);
+  c.child.finish(1);
+  await until(async () => (await old.poll(['j1'])).jobs[0].state === 'done');
+  assert.strictEqual(f.builds().length, 1, 'ENTER: the first runner ran one build');
+  f.handlers.build = (b) => { f.alive.delete(b.child.pid); b.child.finish(1); };
+  const r = f.restart({ buildBoxes: false });
+  r.start();
+  const j2 = await waitState(r, 'j2', 'done');
+  assert.strictEqual(j2.reason, 'box-failed');
+  assert.strictEqual(await f.stderr('j2'), 'suite-runner: box build: builds are off on this runner\n');
+  assert.strictEqual(f.builds().length, 1);
+});
+
+test('t2366: a build that ends on its own reaches endBuild with no pid and no process-group kill follows', async (t) => {
+  const f = await fixture(t);
+  const ended = [];
+  const endBuild = f.box.endBuild;
+  f.box.endBuild = (o) => { ended.push(o); return endBuild(o); };
+  const started = heldBuild(f);
+  await f.upload(f.body('j1', BUILD()));
+  const c = await started;
+  f.alive.delete(c.child.pid);
+  c.child.finish(1);
+  assert.strictEqual((await waitState(f.runner, 'j1', 'done')).reason, 'box-failed');
+  assert.deepStrictEqual(ended, [{ token: tokenOf(c) }]);
+  assert.deepStrictEqual(f.kills, []);
+});
+
+test('t2366: listProcs asks ps for every process untruncated and finds a token at the end of a long line', async (t) => {
+  const cp = require('node:child_process');
+  const seen = [];
+  const long = `docker build -t clodex-box:x ${'--label clodex.x=y '.repeat(12)}--label clodex.box.build=${BOOT_TOKEN} -`;
+  assert.ok(long.length > 200, 'ENTER: the line is longer than 200 characters');
+  t.mock.method(cp, 'execFile', (cmd, args, opts, cb) => { seen.push([cmd, args]); cb(null, `    1 /sbin/launchd\n 4242 ${long}\n`); });
+  const rows = await listProcs();
+  assert.deepStrictEqual(seen, [['ps', ['-A', '-ww', '-o', 'pid=,args=']]]);
+  assert.deepStrictEqual(rows.filter((r) => r.command.includes(`clodex.box.build=${BOOT_TOKEN}`)), [{ pid: 4242, command: long }]);
+});
+
+test('t2366: the lead client reports each job state change to onState', async () => {
+  const l = leadClient([{ state: 'queued' }, { state: 'build' }, { state: 'build' }, DONE()]);
+  const seen = [];
+  const out = await l.client.run({ ...RUN, onState: (s) => seen.push(s) });
+  assert.deepStrictEqual([out.record.outcome, seen], ['pass', ['queued', 'build', 'done']]);
 });
