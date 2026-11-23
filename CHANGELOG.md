@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- clodent seats now get the split Conversation view with the message box, as Claude Code seats do; a reply is no longer shown twice.
+
 ## 5.195.0 — 2026-11-23
 
 - A dial-in test runner now opens a new connection for each claim and each answer instead of reusing an idle one, which under load could already have been closed by the lead. A failed request to a peer now logs whether it went out on a reused connection.
