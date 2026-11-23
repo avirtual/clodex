@@ -854,3 +854,140 @@ test('stream resume: a failed fresh respawn yields the failed row and never remo
     assert.deepStrictEqual(f.removals, []);
   } finally { f.stop('seat'); }
 });
+
+const { createJsonlWatcher } = require('../jsonl-watcher');
+const { readerFor } = require('../transcript-readers');
+
+const T_PROMPT = { type: 'user', message: { role: 'user', content: 'review it' } };
+const T_TOOL = (i) => ({ type: 'assistant', requestId: `r${i}`, message: { role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'tool_use', id: `t${i}`, name: 'Grep', input: {} }] } });
+const T_RESULT = (i) => ({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `t${i}`, content: 'ok' }] } });
+const T_MID_TEXT = { type: 'assistant', requestId: 'rm', message: { role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'text', text: 'looking further' }, { type: 'tool_use', id: 'tm', name: 'Grep', input: {} }] } };
+const T_REPLY = { type: 'assistant', requestId: 'rz', message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: 'done' }] } };
+const T_TAIL = { type: 'system', subtype: 'turn_duration' };
+const AUDIT_TURN = [T_PROMPT, T_TOOL(1), T_RESULT(1), T_TOOL(2), T_RESULT(2), T_TOOL(3), T_RESULT(3), T_TOOL(4), T_RESULT(4), T_TOOL(5), T_RESULT(5), T_TOOL(6), T_RESULT(6), T_TOOL(7), T_RESULT(7), T_REPLY, T_TAIL];
+
+async function clodentTurnRig({ type = 'clodent' } = {}) {
+  const f = mkClodent();
+  await f.create('seat', { type });
+  const s = f.m.sessions.get('seat');
+  const edges = [];
+  let at = null;
+  f.m._sendToSession = (name, ch, _n, state, notify) => { if (ch === 'session-activity') edges.push([at, state, notify]); };
+  const { JsonlWatcher } = createJsonlWatcher({ REGISTRY_DIR: f.root });
+  const w = new JsonlWatcher('seat', () => {}, () => {}, f.watchers[f.watchers.length - 1].onActivity, () => {}, () => {}, { reader: readerFor('claude') });
+  const target = pathReal.join(f.root, 'replay.jsonl');
+  fsReal.writeFileSync(target, '');
+  w._currentTarget = target;
+  w._fd = fsReal.openSync(target, 'r');
+  w._position = 0;
+  const step = (a, label) => {
+    at = label;
+    if (a.hook) f.m._routeAttnEntry(s, { turn_hook: a.hook });
+    else if (a.attn) f.m._routeAttnEntry(s, a.attn);
+    else { fsReal.appendFileSync(target, JSON.stringify(a.rec) + '\n'); w._readLines(); }
+    return s.activityState;
+  };
+  const replay = (recs, first = 1) => recs.forEach((rec, i) => step({ rec }, first + i));
+  const done = () => { fsReal.closeSync(w._fd); f.stop('seat'); };
+  return { f, s, edges, step, replay, done };
+}
+
+test('clodent turn hooks: create passes clodentTurns=true to setupClaudeHook for clodent and false for claude', async () => {
+  const f = mkClodent();
+  const { hooks } = await claudeAndClodent(f);
+  assert.deepStrictEqual([hooks[0][19], hooks[1][19]], [false, true]);
+});
+
+test('clodent turn hooks: the state after each hook event and transcript record', async () => {
+  const r = await clodentTurnRig();
+  try {
+    const rows = [
+      ['UserPromptSubmit', { hook: 'UserPromptSubmit' }, 'thinking'],
+      ['tool-only assistant record', { rec: T_TOOL(1) }, 'thinking'],
+      ['tool result', { rec: T_RESULT(1) }, 'thinking'],
+      ['text assistant record mid-turn', { rec: T_MID_TEXT }, 'thinking'],
+      ['tool result flushing the text', { rec: T_RESULT(9) }, 'thinking'],
+      ['Stop', { hook: 'Stop' }, 'idle'],
+      ['second turn UserPromptSubmit', { hook: 'UserPromptSubmit' }, 'thinking'],
+      ['second turn tool record', { rec: T_TOOL(2) }, 'thinking'],
+      ['second turn end_turn reply', { rec: T_REPLY }, 'thinking'],
+      ['second turn tail record', { rec: T_TAIL }, 'thinking'],
+      ['second turn Stop', { hook: 'Stop' }, 'idle'],
+      ['Stop without a prior UserPromptSubmit', { hook: 'Stop' }, 'idle'],
+      ['third turn UserPromptSubmit', { hook: 'UserPromptSubmit' }, 'thinking'],
+      ['SessionStart mid-turn', { hook: 'SessionStart' }, 'idle'],
+      ['tool record after the reset', { rec: T_TOOL(3) }, 'idle'],
+      ['PreCompact', { attn: { hook_event_name: 'PreCompact', trigger: 'manual' } }, 'idle'],
+      ['SessionStart(compact) attn line', { attn: { hook_event_name: 'SessionStart', source: 'compact' } }, 'idle'],
+      ['SessionStart(compact) turn line', { hook: 'SessionStart' }, 'idle'],
+      ['unknown turn_hook', { hook: 'Bogus' }, 'idle'],
+    ];
+    const got = rows.map(([label, a]) => [label, r.step(a, label)]);
+    assert.deepStrictEqual(got, rows.map(([label, , want]) => [label, want]));
+    assert.strictEqual(r.s.compacting, null);
+  } finally { r.done(); }
+});
+
+test('clodent turn hooks: the audit 17-record turn — two edges at its end without hooks, busy from UserPromptSubmit to Stop with them', async () => {
+  const bare = await clodentTurnRig();
+  try {
+    bare.replay(AUDIT_TURN);
+    assert.deepStrictEqual(bare.edges, [[16, 'thinking', false], [17, 'idle', true]]);
+  } finally { bare.done(); }
+
+  const r = await clodentTurnRig();
+  try {
+    r.step({ hook: 'UserPromptSubmit' }, 'UPS');
+    r.replay(AUDIT_TURN);
+    r.step({ hook: 'Stop' }, 'Stop');
+    assert.deepStrictEqual(r.edges, [['UPS', 'thinking', false], [17, 'idle', true]], 'first turn of a session: the end_turn edge closes it, Stop is then a no-op');
+    r.edges.length = 0;
+    r.step({ hook: 'UserPromptSubmit' }, 'UPS');
+    r.replay(AUDIT_TURN, 101);
+    r.step({ hook: 'Stop' }, 'Stop');
+    assert.deepStrictEqual(r.edges, [['UPS', 'thinking', false], ['Stop', 'idle', true]]);
+  } finally { r.done(); }
+});
+
+test('clodent turn hooks: a delivery to a busy clodent seat is held as busy and typed at Stop', async () => {
+  const r = await clodentTurnRig();
+  try {
+    const typed = [];
+    r.f.m._injectQueueFor = () => ({ enqueue: (t) => typed.push(t) });
+    r.step({ hook: 'UserPromptSubmit' }, 'UPS');
+    assert.strictEqual(r.f.m._injectHoldReason(r.s), 'busy');
+    r.f.m._injectText(r.s, 'hello');
+    r.replay([T_TOOL(1), T_RESULT(1), T_MID_TEXT, T_RESULT(2)]);
+    assert.deepStrictEqual([typed, r.s._injectQueue.length], [[], 1]);
+    r.step({ hook: 'Stop' }, 'Stop');
+    assert.deepStrictEqual(typed, ['hello']);
+    assert.strictEqual(r.f.m._injectHoldReason(r.s), null);
+  } finally { r.done(); }
+});
+
+test('clodent turn hooks: a session that never sees Stop is busy from UserPromptSubmit to the end_turn record, and with no hooks at all behaves as before', async () => {
+  const r = await clodentTurnRig();
+  try {
+    for (const turn of [1, 2]) {
+      r.step({ hook: 'UserPromptSubmit' }, `UPS${turn}`);
+      r.replay([T_PROMPT, T_TOOL(1), T_RESULT(1), T_MID_TEXT, T_RESULT(2), T_REPLY, T_TAIL], turn * 10);
+    }
+    assert.deepStrictEqual(r.edges, [['UPS1', 'thinking', false], [16, 'idle', true], ['UPS2', 'thinking', false], [26, 'idle', true]]);
+  } finally { r.done(); }
+
+  const bare = await clodentTurnRig();
+  try {
+    bare.replay([T_PROMPT, T_TOOL(1), T_RESULT(1), T_MID_TEXT, T_RESULT(2), T_REPLY, T_TAIL]);
+    assert.deepStrictEqual(bare.edges, [[4, 'thinking', false], [5, 'idle', false], [6, 'thinking', false], [7, 'idle', true]]);
+  } finally { bare.done(); }
+});
+
+test('clodent turn hooks: a claude seat ignores turn_hook lines and its transcript edges pass through', async () => {
+  const r = await clodentTurnRig({ type: 'claude' });
+  try {
+    r.step({ hook: 'UserPromptSubmit' }, 'UPS');
+    r.replay([T_TOOL(1), T_RESULT(1), T_MID_TEXT, T_RESULT(2)]);
+    r.step({ hook: 'Stop' }, 'Stop');
+    assert.deepStrictEqual(r.edges, [[3, 'thinking', false], [4, 'idle', false]]);
+  } finally { r.done(); }
+});

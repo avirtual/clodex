@@ -1994,7 +1994,7 @@ function createSessionManager(deps) {
             const ownMessageTtl = args.some((a) => typeof a === 'string' && (a === '--message-cache-ttl' || a.startsWith('--message-cache-ttl=')));
             const messageCacheTtl = longCache && idleClearsIo(io) && idleClearMs && idleClearMs <= SHORT_MESSAGE_CACHE_IDLE_MS && !ownMessageTtl ? '5m' : null;
             const clodentToolNames = type === 'clodent' && clodentToolList ? (await clodentToolList()).names : null;
-            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, skillsOff, wireBase, createdAt, Array.isArray(shellDeny) ? shellDeny : [], streamIo, effortFlag ? null : effortLevel, Array.isArray(protectCredentials) ? protectCredentials : null, mcpSecretNames, mcpSel ? mcpSel.applied.denyRules : [], cwd || null, mergedEnv.CLODENT_HOME || null, longCache ? '1h' : null, messageCacheTtl, clodentToolNames);
+            const settingsPath = setupClaudeHook(name, proxyBase, proxyAgent, denyBuiltins, disabledTools, skillsOff, wireBase, createdAt, Array.isArray(shellDeny) ? shellDeny : [], streamIo, effortFlag ? null : effortLevel, Array.isArray(protectCredentials) ? protectCredentials : null, mcpSecretNames, mcpSel ? mcpSel.applied.denyRules : [], cwd || null, mergedEnv.CLODENT_HOME || null, longCache ? '1h' : null, messageCacheTtl, clodentToolNames, type === 'clodent');
             args.push('--settings', settingsPath);
             hookInstalled = true;
             selectionDrain = true;
@@ -2604,7 +2604,7 @@ function createSessionManager(deps) {
           name,
           (text, touches, meta) => this._scanJsonlText(text, name, touches, meta),
           onSessionId,
-          (state, turnEnd) => this._emitActivity(name, state, state === 'idle' && !!turnEnd),
+          (state, turnEnd) => { if (this._transcriptActivityPasses(session, state, turnEnd)) this._emitActivity(name, state, state === 'idle' && !!turnEnd); },
           () => this._fireCompactContinuation(session),
           (touches) => this._noteFileTouches(session, touches),
           { reader: readerFor(adapterFor(agentType).transcript.reader) },
@@ -6028,10 +6028,33 @@ function createSessionManager(deps) {
     }
 
     _routeAttnEntry(session, entry) {
-      if (entry && entry.hook_event_name === 'PreCompact') this._onCompactStart(session, entry.trigger);
+      if (entry && typeof entry.turn_hook === 'string') this._onTurnHook(session, entry.turn_hook);
+      else if (entry && entry.hook_event_name === 'PreCompact') this._onCompactStart(session, entry.trigger);
       else if (entry && entry.hook_event_name === 'SessionStart') { if (entry.source === 'compact') this._onCompactEnd(session, 'done'); else this._onBootSessionStart(session); }
       else if (entry && entry.hook_event_name === 'PreToolUse') this._onStreamToolBoundary(session);
       else this._onAttention(session, entry || {});
+    }
+
+    _onTurnHook(session, ev) {
+      if (!session || session.agentType !== 'clodent') return;
+      if (ev === 'UserPromptSubmit') {
+        session._hookTurnOpen = true;
+        this._emitActivity(session.name, 'thinking', false);
+        return;
+      }
+      if (ev !== 'Stop' && ev !== 'SessionStart') return;
+      if (ev === 'Stop') session._hookStopSeen = true;
+      session._hookTurnOpen = false;
+      if ((session.activityState || 'idle') !== 'idle') this._emitActivity(session.name, 'idle', ev === 'Stop');
+    }
+
+    _transcriptActivityPasses(session, state, turnEnd) {
+      if (!session || session.agentType !== 'clodent') return true;
+      if (session._hookStopSeen) return false;
+      if (!session._hookTurnOpen) return true;
+      if (state !== 'idle' || !turnEnd) return false;
+      session._hookTurnOpen = false;
+      return true;
     }
 
     _onCompactStart(session, trigger) {

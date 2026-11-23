@@ -82,7 +82,7 @@ function createCliHooks({ REGISTRY_DIR, memoryStore, getUiSettings, nodeInterp, 
     return !!digest;
   }
 
-  function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], wireBase = null, createdAt = null, extraDenyRules = [], stream = false, effort = null, protectCredentials = null, mcpSecretNames = [], mcpDenyRules = [], cwd = null, clodentHome = null, cacheTtl = null, messageCacheTtl = null, toolNames = null) {
+  function setupClaudeHook(name, proxyBase = null, proxyAgent = null, denyBuiltins = [], disabledTools = [], disabledSkills = [], wireBase = null, createdAt = null, extraDenyRules = [], stream = false, effort = null, protectCredentials = null, mcpSecretNames = [], mcpDenyRules = [], cwd = null, clodentHome = null, cacheTtl = null, messageCacheTtl = null, toolNames = null, clodentTurns = false) {
     ensureSeatLink({ root: REGISTRY_DIR, name, kind: 'run', fs });
     ensureDir(runDirFor(REGISTRY_DIR, name));
     const linkPath = pathFor(REGISTRY_DIR, name, 'transcript');
@@ -840,6 +840,16 @@ exit 0
 `, { mode: 0o700 });
     }
 
+    const turnScriptPath = pathFor(REGISTRY_DIR, name, 'turnScript');
+    if (clodentTurns) {
+      fs.writeFileSync(turnScriptPath, `#!/bin/bash
+cat > /dev/null
+printf '{"turn_hook":"%s"}\\n' "$1" >> "${attnPath}" 2>/dev/null || true
+exit 0
+`, { mode: 0o700 });
+    }
+    const turnHook = (ev) => ({ type: 'command', command: `${turnScriptPath} ${ev}` });
+
     const settings = {
       statusLine: { type: 'command', command: statusPath },
       voice: { enabled: false },
@@ -850,8 +860,9 @@ exit 0
       hooks: {
         SessionStart: [{
           matcher: '',
-          hooks: [{ type: 'command', command: scriptPath }]
+          hooks: [{ type: 'command', command: scriptPath }, ...(clodentTurns ? [turnHook('SessionStart')] : [])]
         }],
+        ...(clodentTurns ? { Stop: [{ matcher: '', hooks: [turnHook('Stop')] }] } : {}),
         Notification: [{
           matcher: '',
           hooks: [{ type: 'command', command: attnScriptPath }]
@@ -871,6 +882,7 @@ exit 0
         UserPromptSubmit: [{
           matcher: '',
           hooks: [
+            ...(clodentTurns ? [turnHook('UserPromptSubmit')] : []),
             { type: 'command', command: ipcdeltaScriptPath },
             { type: 'command', command: ackScriptPath },
             { type: 'command', command: pendingScriptPath },
