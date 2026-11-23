@@ -106,8 +106,7 @@ test('engine.js starts one loop stall after the log exists and stops it in shutd
   assert.strictEqual(src.split('createLoopStall({ log })').length - 1, 1);
   assert.strictEqual(src.split('loopStall.start()').length - 1, 1);
   assert.strictEqual(src.split('loopStall.stop()').length - 1, 1);
-  const body = src.slice(src.indexOf('function createEngine('));
-  const shutdown = body.slice(body.indexOf('  function shutdown() {'), body.indexOf('\n  }\n', body.indexOf('  function shutdown() {')));
+  const shutdown = src.slice(src.indexOf('  function shutdown() {'), src.indexOf('\n  }\n', src.indexOf('  function shutdown() {')));
   assert.ok(shutdown.includes('try { loopStall.stop(); } catch {}'));
-  assert.ok(body.indexOf('loopStall.start()') < body.indexOf('  function shutdown() {'));
+  assert.ok(src.indexOf('loopStall.start()') < src.indexOf('  function shutdown() {'));
 });
