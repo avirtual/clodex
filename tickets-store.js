@@ -26,7 +26,7 @@ function createTicketsStore({ fs = require('fs'), path = require('path'), clodex
   function load(projectRoot) {
     try {
       const arr = JSON.parse(fs.readFileSync(ticketsPath(projectRoot), 'utf-8'));
-      return Array.isArray(arr) ? arr : [];
+      return Array.isArray(arr) ? normalizeBoard(arr) : [];
     } catch {
       return [];
     }
@@ -73,7 +73,7 @@ function createTicketsStore({ fs = require('fs'), path = require('path'), clodex
       return Object.freeze([]);
     }
     if (!Array.isArray(arr)) return Object.freeze([]);
-    deepFreeze(arr);
+    deepFreeze(normalizeBoard(arr));
     if (key) boardCache.set(file, { key, tickets: arr });
     return arr;
   }
@@ -287,6 +287,33 @@ function createTicketsStore({ fs = require('fs'), path = require('path'), clodex
 
 const ARCHIVE_MIN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const ARCHIVE_MAX_ROWS = 200;
+
+function suiteRun(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  if (v.decidedBy !== 'box' && v.decidedBy !== 'home') return null;
+  const str = (k) => (typeof v[k] === 'string' ? v[k] : null);
+  const word = (k) => (typeof v[k] === 'string' || Number.isFinite(v[k]) ? v[k] : null);
+  const t = v.totals;
+  const totals = t && typeof t === 'object' && ['pass', 'fail', 'tests'].every((k) => Number.isInteger(t[k]))
+    ? { pass: t.pass, fail: t.fail, tests: t.tests } : null;
+  return {
+    at: str('at'), decidedBy: v.decidedBy, outcome: str('outcome'), totals, treeHash: str('treeHash'), runner: str('runner'), jobId: str('jobId'),
+    definitionHash: str('definitionHash'), image: str('image'), fallback: str('fallback'), fallbackCode: word('fallbackCode'), fallbackClass: word('fallbackClass'),
+  };
+}
+
+function suiteProvenanceOf(ticket) {
+  const p = ticket && ticket.suiteProvenance;
+  if (!p || typeof p !== 'object' || Array.isArray(p)) return { verify: null, postMerge: null };
+  return { verify: suiteRun(p.verify), postMerge: suiteRun(p.postMerge) };
+}
+
+function normalizeBoard(arr) {
+  for (const t of arr) {
+    if (t && typeof t === 'object' && 'suiteProvenance' in t) t.suiteProvenance = suiteProvenanceOf(t);
+  }
+  return arr;
+}
 
 function idNumber(id) {
   const m = /^t(\d+)$/.exec(id);
@@ -682,4 +709,4 @@ function ticketTerminalReason(ticket) {
   return null;
 }
 
-module.exports = { createTicketsStore, archivable, ARCHIVE_MIN_AGE_MS, ARCHIVE_MAX_ROWS, appendReworkReason, nextTicketId, recordEvent, titleLine, ticketTitle, extractTaskDir, TASK_DIR_ABS_RE, TASK_DIR_REL_RE, extractMustFix, scanVerdict, countMustFix, mustFixTitles, ticketStarted, ticketInFlight, ticketTerminalReason, branchSlug, TICKETS_FILE };
+module.exports = { createTicketsStore, suiteProvenanceOf, archivable, ARCHIVE_MIN_AGE_MS, ARCHIVE_MAX_ROWS, appendReworkReason, nextTicketId, recordEvent, titleLine, ticketTitle, extractTaskDir, TASK_DIR_ABS_RE, TASK_DIR_REL_RE, extractMustFix, scanVerdict, countMustFix, mustFixTitles, ticketStarted, ticketInFlight, ticketTerminalReason, branchSlug, TICKETS_FILE };
