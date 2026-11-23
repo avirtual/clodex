@@ -39,7 +39,7 @@ function suiteClaimerFor({ getBoxOffer, getSuiteEngine, log, now = () => new Dat
   return (conn) => createSuiteClaimer({
     claim: (session) => conn.suiteDeskClaim(session),
     blob: (id, claim) => conn.suiteDeskBlob(id, claim),
-    reply: (id, claim, answer) => conn.suiteDeskReply(id, claim, answer),
+    reply: (id, claim, answer, timeoutMs) => conn.suiteDeskReply(id, claim, answer, timeoutMs),
     execute: (call) => suiteDispatch(getSuiteEngine(), { ...call, origin: conn.label }),
     grant: () => runGrant(getBoxOffer(), conn.label, now()),
     ready: () => peerCaps(conn).includes('suite-pull') && engineUp(getSuiteEngine),

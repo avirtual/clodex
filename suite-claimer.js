@@ -10,6 +10,13 @@ const REPLY_RESERVE_MS = 10000;
 const RETRY_MIN_MS = 1000;
 const RETRY_MAX_MS = 15000;
 const JOB_MEMORY = 256;
+const RESEND_MIN_MS = 500;
+const RESEND_MAX_MS = 2000;
+const RESEND_ATTEMPTS = 6;
+const RESEND_FLOOR_MS = 1000;
+const RESEND_MAX_HELD = 64;
+const RESEND_MAX_BYTES = 8 * 1024 * 1024;
+const RESENDABLE = new Set([502, 503, 504]);
 const OFFER_CLOSED = Object.freeze({ ok: false, error: 'offer closed' });
 
 function verbOf(call) {
@@ -70,6 +77,8 @@ function createSuiteClaimer({
   const general = { bound: concurrency, active: 0, queue: [] };
   const polls = { bound: pollConcurrency, active: 0, queue: [] };
   const jobs = new Set();
+  const pending = new Map();
+  let heldBytes = 0;
 
   function readGrant() {
     try {
@@ -140,8 +149,81 @@ function createSuiteClaimer({
     const wait = call.pollWait == null ? null : Math.max(0, Math.min(call.pollWait, Math.floor(left - REPLY_RESERVE_MS)));
     const out = await answerFor(wait == null ? call : { ...call, path: withWait(call.path, wait) }, bytes);
     if (stopped) return;
-    const sent = await reply(call.id, call.claim, { status: out.status, body: out.body });
-    if (!sent || sent.status !== 200) log(replyLine(call, sent));
+    const entry = { call, answer: { status: out.status, body: out.body }, attempts: 0, timer: null, bytes: 0, why: null };
+    const sent = await send(entry);
+    settleSend(entry, sent);
+  }
+
+  function factorOf() {
+    const r = Number(random());
+    return Number.isFinite(r) ? Math.min(1, Math.max(0.5, r)) : 1;
+  }
+
+  function whyOf(sent) {
+    return (sent && (sent.error || sent.status)) || 'no answer';
+  }
+
+  async function send(entry) {
+    entry.attempts += 1;
+    const timeoutMs = Math.max(RESEND_FLOOR_MS, Math.floor(entry.call.deadline - clock()));
+    try {
+      return await reply(entry.call.id, entry.call.claim, entry.answer, timeoutMs);
+    } catch (e) {
+      return { status: 0, body: null, error: e.message };
+    }
+  }
+
+  function release(entry) {
+    if (pending.get(entry.call.id) !== entry) return;
+    pending.delete(entry.call.id);
+    heldBytes -= entry.bytes;
+    if (entry.timer != null) timers.clearTimeout(entry.timer);
+    entry.timer = null;
+  }
+
+  function hold(entry) {
+    entry.bytes = Buffer.byteLength(JSON.stringify(entry.answer.body) || '');
+    pending.set(entry.call.id, entry);
+    heldBytes += entry.bytes;
+    while (pending.size > RESEND_MAX_HELD || heldBytes > RESEND_MAX_BYTES) {
+      const oldest = pending.values().next().value;
+      release(oldest);
+      oldest.dropped = true;
+      log(`call ${oldest.call.id}: reply not accepted (${oldest.why}) (resend dropped: too many pending)`);
+    }
+  }
+
+  function settleSend(entry, sent) {
+    if (stopped || entry.dropped) return;
+    const { call } = entry;
+    const status = sent && sent.status;
+    if (status === 200) {
+      release(entry);
+      if (entry.attempts > 1) log(`call ${call.id}: reply delivered on attempt ${entry.attempts}`);
+      return;
+    }
+    if (status && !RESENDABLE.has(status)) {
+      release(entry);
+      const settled = status === 410 && ((sent.body && sent.body.error) || sent.error) === 'call already settled';
+      log(settled && entry.attempts > 1 ? `call ${call.id}: reply delivered (confirmed on resend)` : replyLine(call, sent));
+      return;
+    }
+    entry.why = whyOf(sent);
+    const delay = Math.round(Math.min(RESEND_MIN_MS * 2 ** (entry.attempts - 1), RESEND_MAX_MS) * factorOf());
+    if (entry.attempts >= RESEND_ATTEMPTS || call.deadline - clock() - delay < RESEND_FLOOR_MS) {
+      release(entry);
+      log(`call ${call.id}: reply not accepted (${entry.why}) after ${entry.attempts} attempts`);
+      return;
+    }
+    if (entry.attempts === 1) {
+      log(`call ${call.id}: reply failed (${entry.why}), resending`);
+      hold(entry);
+      if (entry.dropped) return;
+    }
+    entry.timer = unref(timers.setTimeout(() => {
+      entry.timer = null;
+      send(entry).then((again) => settleSend(entry, again));
+    }, delay));
   }
 
   function run(call, pool) {
@@ -258,6 +340,7 @@ function createSuiteClaimer({
       for (const call of pool.queue) timers.clearTimeout(call.expiry);
       pool.queue.length = 0;
     }
+    for (const entry of [...pending.values()]) release(entry);
   }
 
   function status() {
@@ -265,6 +348,7 @@ function createSuiteClaimer({
       session, lastClaim, serving: served,
       active: general.active + polls.active,
       waiting: general.queue.length + polls.queue.length,
+      resending: pending.size,
     };
   }
 
