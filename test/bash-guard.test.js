@@ -257,13 +257,42 @@ function runUnticketed(script, command) {
   return r.stdout;
 }
 
-test('every seat, ticket or not, is refused a pattern kill and allowed a pid kill', () => {
+function runUnticketedAsync(script, command) {
+  const env = { ...process.env };
+  delete env.CLODEX_TICKET;
+  return new Promise((resolve, reject) => {
+    const child = cp.spawn('bash', [script], { env, stdio: ['pipe', 'pipe', 'ignore'] });
+    let stdout = '';
+    child.stdout.setEncoding('utf-8');
+    child.stdout.on('data', (d) => { stdout += d; });
+    child.on('error', reject);
+    child.on('close', (status) => resolve({ status, stdout }));
+    child.stdin.end(JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command } }));
+  });
+}
+
+async function poolMap(items, width, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const lane = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(width, items.length) }, lane));
+  return out;
+}
+
+test('every seat, ticket or not, is refused a pattern kill and allowed a pid kill', async () => {
   const script = guardScript();
   assert.ok(KILL_TABLE.some((r) => r.cmd === 'pkill -f "cat" -U 501 -x' && r.want === 'deny'));
   assert.ok(KILL_TABLE.filter((r) => r.want === 'deny').length >= 11);
 
-  for (const { cmd, want, reason } of KILL_TABLE) {
-    const out = runUnticketed(script, cmd);
+  const runs = await poolMap(KILL_TABLE, 8, (row) => runUnticketedAsync(script, row.cmd));
+  for (const [i, { cmd, want, reason }] of KILL_TABLE.entries()) {
+    assert.strictEqual(runs[i].status, 0, `exit 0 on: ${cmd}`);
+    const out = runs[i].stdout;
     if (want === 'pass') {
       assert.strictEqual(out, '', `must PASS: ${cmd}`);
       continue;
