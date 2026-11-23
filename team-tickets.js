@@ -23,7 +23,7 @@ const { localHalf, failingNames } = require('./suite-client');
 const { boxVerdict, fallbackOf, pickRunner, runnerLoad, BUILD_BUDGET_MS } = require('./suite-client');
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
-  DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_WIRE_PUSH: WIRE_PUSH, TEST_RUNNER_POOL_MAX,
+  DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_FALLBACK, TEST_RUNNER_WIRE_PUSH: WIRE_PUSH, TEST_RUNNER_POOL_MAX,
 } = require('./team-manifest');
 const {
   readTeamJson, teamTemplatePath, teamTemplateSave, mayGrantOf, ownTeamExecGrants, clampToGrantor, teamTemplateRemove, teamPromptSave, teamPromptRemove,
@@ -287,7 +287,17 @@ const HOLD_RECOVERY = {
   // re-commit against a failure its branch never caused.
   infra: (id) => `This is not something the branch can fix — the check could not RUN. `
     + `Once the cause is cleared, ${ticketCloseVerb(id)} <your report> re-runs the checks from here.`,
+  box: (id) => `The box did not decide and fallback:hold kept the home suite from running. `
+    + `Once the runner can decide, [agent:task verify ${id}] tries the box again.`,
 };
+const BOX_HOLD_NEXT = {
+  transient: (id) => `Try again with [agent:task verify ${id}] once the runner is back.`,
+  budget: (id) => `The run or queue limit was hit; try again with [agent:task verify ${id}] when the runner has room.`,
+};
+const boxHoldNext = (cls, id, reason) => (BOX_HOLD_NEXT[cls]
+  ? BOX_HOLD_NEXT[cls](id)
+  : `This will not clear by itself: fix the cause (${reason}), then [agent:task verify ${id}].`);
+const BOX_HOLD_STEP = 'verify: box';
 const holdRecoveryText = (cls, id) => (HOLD_RECOVERY[cls] || HOLD_RECOVERY.hand)(id);
 // Not shared with `_notifyHandOfHold` (second person, and the person is the message) or `_notifyMergeLanded`,
 // whose closing accept intent is inert only because prose precedes it on its line; ticket-auto-merge.test.js pins it.
@@ -3243,7 +3253,7 @@ function createTicketMethods(deps, shared) {
       const cur = team.testRunner || null;
       if (!cur) return { peer: null, hands: 'off', gate: 'off', wire: null, invalid: this._runnerInvalid(team), setup: false, env: false, tally: null };
       return {
-        peer: cur.peer, hands: cur.hands, gate: cur.gate || 'off', wire: cur.wire || WIRE_PUSH, invalid: false, setup: !!cur.setup, env: !!cur.env,
+        peer: cur.peer, hands: cur.hands, gate: cur.gate || 'off', wire: cur.wire || WIRE_PUSH, invalid: false, setup: !!cur.setup, env: !!cur.env, ...(cur.fallback === 'hold' ? { fallback: 'hold' } : {}),
         tally: this._runnerTallyView(team, null),
         ...(this._runnerMembers(cur).length > 1 ? { members: this._runnerMembers(cur).length } : {}),
       };
@@ -3323,7 +3333,7 @@ function createTicketMethods(deps, shared) {
     async _runnerPoolText(team, cur) {
       const want = this._runnerWant(team, cur);
       const probes = await this._runnerPoolLines(cur, want);
-      const lines = [`test runner of ${team.name}: ${probes.length} runners, hands ${cur.hands} (hand runs use ${cur.peer} only), gate ${cur.gate || 'off'}`];
+      const lines = [`test runner of ${team.name}: ${probes.length} runners, hands ${cur.hands} (hand runs use ${cur.peer} only), gate ${cur.gate || 'off'}${cur.fallback === 'hold' ? ', fallback hold' : ''}`];
       for (const p of probes) lines.push(p.line);
       const seen = probes[0].seen;
       const tally = cur.box === true && seen.reachable === true && (want || !seen.box) ? this._runnerLabelTally(team, cur) : this._runnerTally(team, cur, cur.box === true ? seen.boxEnvKey : seen.envKey);
@@ -3397,6 +3407,35 @@ function createTicketMethods(deps, shared) {
 
     async _handleTeamRunner(team, intent, reply) {
       const cur = team.testRunner || null;
+      const fb = intent.fallback != null ? intent.fallback : null;
+      if (fb != null) {
+        if (!TEST_RUNNER_FALLBACK.includes(fb)) {
+          reply(`error: fallback must be one of ${TEST_RUNNER_FALLBACK.join(' | ')}, not "${fb}"`);
+          return;
+        }
+        if (intent.value) {
+          reply('error: set the peer and the fallback in two separate [agent:team runner] intents');
+          return;
+        }
+        if (!cur) {
+          reply('error: no test runner is set — name one first with [agent:team runner <peer>]');
+          return;
+        }
+        if (fb === 'hold' && (intent.gate != null ? intent.gate : cur.gate) !== 'on') {
+          reply('error: fallback:hold needs gate:on');
+          return;
+        }
+      }
+      const released = (m) => {
+        if (!(cur && cur.fallback === 'hold') || (m.testRunner && m.testRunner.fallback === 'hold')) return '';
+        const n = this._reverifyBoxHeld(m);
+        return ` — re-verifying ${n} ticket${n === 1 ? '' : 's'} held at "${BOX_HOLD_STEP}"`;
+      };
+      if (fb != null && intent.gate == null && intent.hands == null) {
+        const m = deps.setTeamTestRunner(team.name, { fallback: fb });
+        reply(`test runner fallback of ${team.name} set to ${m.testRunner.fallback || 'home'}${released(m)}`);
+        return;
+      }
       if (intent.gate != null) {
         if (intent.value || intent.hands != null) {
           reply('error: set the peer, the hands mode and the gate mode in separate [agent:team runner] intents');
@@ -3414,8 +3453,10 @@ function createTicketMethods(deps, shared) {
           reply('error: gate:on needs a box definition — only a container result can decide the gate; set one with [agent:team box set] first');
           return;
         }
-        const m = deps.setTeamTestRunner(team.name, { gate: intent.gate });
-        reply(`test runner gate mode of ${team.name} set to ${m.testRunner.gate}`);
+        const reset = fb == null && intent.gate !== 'on' && cur.fallback === 'hold';
+        const m = deps.setTeamTestRunner(team.name, { gate: intent.gate, ...(fb != null ? { fallback: fb } : {}), ...(reset ? { fallback: 'home' } : {}) });
+        const said = fb != null ? `, fallback ${m.testRunner.fallback || 'home'}` : '';
+        reply(`test runner gate mode of ${team.name} set to ${m.testRunner.gate}${said}${reset ? ' — fallback reset to home (fallback:hold needs gate:on)' : ''}${released(m)}`);
         return;
       }
       if (intent.hands != null && intent.value) {
@@ -3435,8 +3476,8 @@ function createTicketMethods(deps, shared) {
           reply(`error: hands:${intent.hands} is refused for ${cur.peer}: a runner that dials in (wire pull) serves the merge gate only (gate:shadow or gate:on)`);
           return;
         }
-        const m = deps.setTeamTestRunner(team.name, { hands: intent.hands });
-        reply(`test runner hands mode of ${team.name} set to ${m.testRunner.hands}`);
+        const m = deps.setTeamTestRunner(team.name, { hands: intent.hands, ...(fb != null ? { fallback: fb } : {}) });
+        reply(`test runner hands mode of ${team.name} set to ${m.testRunner.hands}${fb != null ? `, fallback ${m.testRunner.fallback || 'home'}` : ''}${released(m)}`);
         return;
       }
       if (!intent.value) {
@@ -3452,7 +3493,7 @@ function createTicketMethods(deps, shared) {
         const seen = {};
         const want = this._runnerWant(team, cur);
         const reach = await this._runnerReachFor(cur, seen, want);
-        reply(`test runner of ${team.name}: ${cur.peer}, wire ${cur.wire || WIRE_PUSH}, hands ${cur.hands}, gate ${cur.gate || 'off'} — ${reach}${cur.box === true && seen.reachable === true && (want || !seen.box) ? this._runnerLabelTally(team, cur) : this._runnerTally(team, cur, cur.box === true ? seen.boxEnvKey : seen.envKey)}`);
+        reply(`test runner of ${team.name}: ${cur.peer}, wire ${cur.wire || WIRE_PUSH}, hands ${cur.hands}, gate ${cur.gate || 'off'}${cur.fallback === 'hold' ? ', fallback hold' : ''} — ${reach}${cur.box === true && seen.reachable === true && (want || !seen.box) ? this._runnerLabelTally(team, cur) : this._runnerTally(team, cur, cur.box === true ? seen.boxEnvKey : seen.envKey)}`);
         return;
       }
       if (intent.value === 'off') {
@@ -4105,6 +4146,7 @@ function createTicketMethods(deps, shared) {
             reply(`error: accept ${intent.id || ''} failed: ${e.message}`);
           }); break;
           case 'park': this._taskPark(session, team, intent, reply, ack); break;
+          case 'verify': this._taskVerify(session, team, intent, reply, ack); break;
           case 'list': this._taskList(session, team, intent, reply); break;
         }
       } catch (e) {
@@ -6481,6 +6523,17 @@ function createTicketMethods(deps, shared) {
         let suite = await this._runTicketSuite(team, ticket, null, runOpts);
         let still = this._loadTicket(team, ticketId);
         if (!current(still)) { this._reapRunner(ticketId, suite.runnerPid); return; }
+        if (suite.held) {
+          held = true;
+          this._stampSuiteProvenance(team, ticketId, 'verify', suite);
+          this._stampVerifyPhase(team, ticketId, null);
+          this._stampVerifyHold(team, ticketId, {
+            step: BOX_HOLD_STEP, at: Date.now(), evidence: `${suite.fallback}: ${suite.fallbackWhy || 'no reason given'}`,
+            recovery: 'box', code: suite.fallbackCode || null, class: suite.fallbackClass || null,
+          });
+          this._notifyBoxHold(team, ticketId, suite);
+          return;
+        }
         let firstRed = null;
         let remeasureError = null;
         let slowOwned = [];
@@ -6663,7 +6716,7 @@ function createTicketMethods(deps, shared) {
       const fall = (code, why) => {
         const f = fallbackOf(code);
         log.warn('ticket', `ticket ${ticket.id}: ${kind} box run did not decide (${f.fallback}) — ${why}; running the suite here`);
-        return { ...ret, ...f };
+        return { ...ret, ...f, why };
       };
       const client = typeof deps.getSuiteClient === 'function' ? deps.getSuiteClient() : null;
       if (!client || typeof client.run !== 'function') return fall('runner-unreachable', 'no suite client on this node');
@@ -6818,6 +6871,19 @@ function createTicketMethods(deps, shared) {
       out.head = await gitWorktree.currentBranch(cwd).catch(() => null);
       const gateRunner = team.testRunner;
       const box = gateRunner && gateRunner.peer && gateRunner.gate === 'on' ? await this._boxDecide(team, ticket, cwd, opts) : null;
+      if (box && !box.decided && !(opts && opts.merge) && gateRunner.fallback === 'hold') {
+        const rec = (box.out && box.out.record) || null;
+        const stamped = (rec && rec.env && rec.env.box) || {};
+        return Object.assign(out, {
+          held: true, decidedBy: null, fallback: box.fallback, fallbackCode: box.fallbackCode, fallbackClass: box.fallbackClass, fallbackWhy: box.why || null,
+          error: `the box did not decide (${box.fallback}): ${box.why || 'no reason given'}; not run on the home suite (fallback:hold)`,
+          box: {
+            runner: null, jobId: (rec && rec.jobId) || null, treeHash: (rec && rec.treeHash) || null,
+            definitionHash: stamped.definitionHash || null, image: stamped.imageId || null,
+            fallbackCode: box.fallbackCode ?? null, fallbackClass: box.fallbackClass ?? null,
+          },
+        });
+      }
       const boxed = box && box.decided ? box.out.res : null;
       const ledgerFile = typeof REGISTRY_DIR === 'string' && REGISTRY_DIR ? path.join(REGISTRY_DIR, 'logs', 'suite-runs.jsonl') : '';
       const ledgerId = require('crypto').randomUUID();
@@ -7231,6 +7297,71 @@ function createTicketMethods(deps, shared) {
       }
     },
 
+    _notifyBoxHold(team, ticketId, suite) {
+      try {
+        const tag = `[ticket ${ticketId} HELD]`;
+        const body = `${tag} the box did not decide (${suite.fallback}): ${defuseSenderLines(suite.fallbackWhy || 'no reason given')}. Not run on the home suite (fallback:hold).\n`
+          + boxHoldNext(suite.fallbackClass, ticketId, suite.fallback);
+        this._gatedDeliver(team.lead, 'ticket-loop', body, true, tag);
+        this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: `ticket ${ticketId} held: box did not decide (${suite.fallback})` });
+      } catch (e) {
+        log.error('ticket', `box hold notice for ${ticketId} did not reach the lead: ${e.message}`);
+      }
+    },
+
+    _releaseBoxHold(ticket) {
+      delete ticket.verifyHold;
+      delete ticket.verifyPhase;
+      ticket.suiteProvenance = { ...suiteProvenanceOf(ticket), verify: null };
+      ticket.lastActivityAt = Date.now();
+      ticket.nudgedAt = null;
+    },
+
+    _boxHeld(t) {
+      return !!t && t.state === 'done' && t.loopStep === 'verify' && !!t.verifyHold && t.verifyHold.step === BOX_HOLD_STEP;
+    },
+
+    _reverifyBoxHeld(team) {
+      let tickets;
+      try { tickets = ticketsStore.load(team.root); } catch { return 0; }
+      const own = this._ownRowFilter(team);
+      const ids = [];
+      for (const t of tickets) {
+        if (!own(t) || !this._boxHeld(t)) continue;
+        this._releaseBoxHold(t);
+        ids.push(t.id);
+      }
+      if (!ids.length) return 0;
+      ticketsStore.save(team.root, tickets);
+      for (const id of ids) {
+        log.info('intent', `verify re-entered for ${id}: the team no longer holds on an undecided box`);
+        this._runTicketLoop(team, id);
+      }
+      return ids.length;
+    },
+
+    _taskVerify(session, team, intent, reply, ack = reply) {
+      if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can re-verify a ticket`); return; }
+      if (!intent.id) { reply('error: verify needs a ticket id — [agent:task verify <id>]'); return; }
+      const tickets = ticketsStore.load(team.root);
+      const ticket = tickets.find((t) => t.id === intent.id);
+      if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}`); return; }
+      const foreign = this._foreignRowRefusal(team, ticket);
+      if (foreign) { reply(foreign); return; }
+      if (!this._boxHeld(ticket)) {
+        const state = ticket.state === 'done' && ticket.loopStep === 'verify'
+          ? (ticket.verifyHold ? `held at "${ticket.verifyHold.step}"` : 'already verifying')
+          : `${ticket.state}${ticket.loopStep ? ` at ${ticket.loopStep}` : ''}`;
+        reply(`error: ticket ${intent.id} is ${state} — only a ticket held at "${BOX_HOLD_STEP}" can be re-verified`);
+        return;
+      }
+      this._releaseBoxHold(ticket);
+      ticketsStore.save(team.root, tickets);
+      log.info('intent', `task verify ${ticket.id} by ${session.name}`);
+      ack(`ticket ${ticket.id} re-verifying (was held at "${BOX_HOLD_STEP}")`);
+      this._runTicketLoop(team, ticket.id);
+    },
+
     _stampVerifyHold(team, ticketId, hold) {
       try {
         const tickets = ticketsStore.load(team.root);
@@ -7332,6 +7463,13 @@ function createTicketMethods(deps, shared) {
     _suiteProvenance(suite) {
       const s = suite || {};
       const b = s.box || {};
+      if (s.held) {
+        return {
+          at: new Date().toISOString(), decidedBy: null, outcome: 'held', totals: null, treeHash: b.treeHash || null, runner: null, jobId: b.jobId || null,
+          definitionHash: b.definitionHash || null, image: b.image || null,
+          fallback: s.fallback || null, fallbackCode: s.fallbackCode ?? null, fallbackClass: s.fallbackClass ?? null,
+        };
+      }
       const home = s.decidedBy !== 'box';
       return {
         at: new Date().toISOString(), decidedBy: home ? 'home' : 'box', outcome: s.ran ? (s.green ? 'pass' : 'fail') : 'error',
