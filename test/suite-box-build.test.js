@@ -454,7 +454,7 @@ test('t2364: a failed build reads as unknown with the build reason, never as a r
 test('t2364: Preferences carries the build checkbox with its hint, and Apply sends the field', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.html'), 'utf8');
   assert.match(html, /<input type="checkbox" id="prefs-suite-runner-buildBoxes">\s*<span>Build box images that teams ask for<\/span>/);
-  assert.ok(html.includes('<p class="hint-text">Lets every peer you allow to run jobs here run its Dockerfile build steps on this machine, with network access, and keeps the resulting image on disk. Off: a job whose image is missing is refused, as before.</p>'));
+  assert.ok(html.includes('<p class="hint-text">Lets every peer you allow to run jobs here run its Dockerfile build steps on this machine, with network access, and keeps the resulting image on disk. Off: a job whose image is missing is refused, as before. Builds can pull any image your Docker login can.</p>'));
   const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'renderer.js'), 'utf8');
   assert.ok(src.includes("const prefsSuiteRunnerBuildBoxes = document.getElementById('prefs-suite-runner-buildBoxes');"));
   assert.ok(src.includes('buildBoxes: prefsSuiteRunnerBuildBoxes.checked'));

@@ -10152,6 +10152,9 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
 #prefs-box-offer-claims.hidden {
   display: none;
 }
+#prefs-test-boxes-unsaved.hidden {
+  display: none;
+}
 #test-activity-overlay {
   position: fixed;
   inset: 0;
@@ -11655,7 +11658,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         <summary><h4>Test boxes</h4><span class="prefs-group-sub">Run other nodes' test suites on this machine, and say who may</span></summary>
         <div id="prefs-suite-runner-block">
           <h5 style="margin-top: 14px;">Test runner</h5>
-          <p class="hint-text">Runs test suites that your peers send to this machine. Needs phone access on: peers reach the runner over the same wire. Applies when you press Apply, with no restart; refused while a job is running.</p>
+          <p class="hint-text">Runs test suites that your peers send to this machine. Needs phone access on: peers reach the runner over the same wire. Applies when you press Apply test box settings, or Save, with no restart; refused while a job is running.</p>
           <label class="prefs-check">
             <input type="checkbox" id="prefs-suite-runner-enabled">
             <span>Run tests for peers on this machine</span>
@@ -11683,7 +11686,6 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           <div class="prefs-row" style="margin-top: 6px;">
             <span>Box image</span>
             <input type="text" id="prefs-suite-runner-boxImage" placeholder="sha256:…" autocomplete="off" spellcheck="false" style="flex: 1;">
-            <button id="prefs-suite-runner-apply" class="secondary" type="button" style="flex: none;">Apply</button>
           </div>
           <p class="hint-text">Image id of a hand-built image; jobs that ask for a box run in a fresh container of it. Leave empty to run only native jobs.</p>
           <p id="prefs-suite-runner-boxImage-env" class="hint-text hidden">set by environment</p>
@@ -11691,7 +11693,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
             <input type="checkbox" id="prefs-suite-runner-buildBoxes">
             <span>Build box images that teams ask for</span>
           </label>
-          <p class="hint-text">Lets every peer you allow to run jobs here run its Dockerfile build steps on this machine, with network access, and keeps the resulting image on disk. Off: a job whose image is missing is refused, as before.</p>
+          <p class="hint-text">Lets every peer you allow to run jobs here run its Dockerfile build steps on this machine, with network access, and keeps the resulting image on disk. Off: a job whose image is missing is refused, as before. Builds can pull any image your Docker login can.</p>
           <div class="prefs-row" style="margin-top: 6px;">
             <span>Shared folders</span>
           </div>
@@ -11701,7 +11703,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         </div>
         <div id="prefs-box-offer-block">
           <h5 style="margin-top: 14px;">Offer test boxes</h5>
-          <p class="hint-text">Tells the peers you tick below that this machine offers test boxes. Applies when you press Apply; peers see the change at their next hello.</p>
+          <p class="hint-text">Tells the peers you tick below that this machine offers test boxes. Applies when you press Apply test box settings, or Save; peers see the change at their next hello.</p>
           <label class="prefs-check">
             <input type="checkbox" id="prefs-box-offer-enabled">
             <span>Offer test boxes from this machine</span>
@@ -11736,8 +11738,11 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
           <p id="prefs-box-offer-facts" class="hint-text"></p>
           <div class="prefs-row" style="margin-top: 6px;">
             <span id="prefs-box-offer-status" class="hint-text" style="flex: 1;"></span>
-            <button id="prefs-box-offer-apply" class="secondary" type="button" style="flex: none;">Apply</button>
           </div>
+        </div>
+        <div class="prefs-row" style="margin-top: 10px;">
+          <span id="prefs-test-boxes-unsaved" class="hint-text hidden" style="flex: 1;"></span>
+          <button id="prefs-box-offer-apply" class="secondary" type="button" style="flex: none; margin-left: auto;">Apply test box settings</button>
         </div>
       </details>
       <details class="prefs-group" data-group="discovery">
@@ -60381,7 +60386,6 @@ Click for live activity`;
       var prefsSuiteRunnerBuildBoxes = document.getElementById("prefs-suite-runner-buildBoxes");
       var prefsSuiteRunnerShares = document.getElementById("prefs-suite-runner-shares");
       var prefsSuiteRunnerShareRows = null;
-      var prefsSuiteRunnerApply = document.getElementById("prefs-suite-runner-apply");
       var prefsSuiteRunnerStatus = document.getElementById("prefs-suite-runner-status");
       var prefsSuiteRunnerNoneNote = document.getElementById("prefs-suite-runner-none-note");
       var prefsBoxOfferBlock = document.getElementById("prefs-box-offer-block");
@@ -60398,6 +60402,7 @@ Click for live activity`;
       var prefsBoxOfferFacts = document.getElementById("prefs-box-offer-facts");
       var prefsBoxOfferStatus = document.getElementById("prefs-box-offer-status");
       var prefsBoxOfferApply = document.getElementById("prefs-box-offer-apply");
+      var prefsTestBoxesUnsaved = document.getElementById("prefs-test-boxes-unsaved");
       var prefsBoxOfferScope = document.getElementById("prefs-box-offer-scope");
       var prefsBoxOfferRunNote = document.getElementById("prefs-box-offer-run-note");
       var prefsBoxOfferClaims = document.getElementById("prefs-box-offer-claims");
@@ -63522,7 +63527,7 @@ ${res.stderr}` : "");
       prefsOverlay.addEventListener("mousedown", (e) => {
         if (e.target === prefsOverlay) closePrefs();
       });
-      document.getElementById("btn-prefs-save").addEventListener("click", async () => {
+      async function writePrefsSettings() {
         const seatView = prefsSeatView ? seatViewSettings(prefsSeatView.value, transcriptPaneMode) : null;
         await window.api.setSettings({
           statusline: {
@@ -63577,8 +63582,19 @@ ${res.stderr}` : "");
         await window.api.setDefaultSkillDeny(collectPrefsSkillDefaults());
         await window.api.setDefaultBuiltinDeny(collectBuiltinChecklist(prefsAgentsList));
         await refreshVoiceSubmitConfig();
+      }
+      async function savePrefs() {
+        await writePrefsSettings();
+        const refused = await applyTestBoxSettings();
+        if (refused.length) {
+          const group = refused[0].closest("details");
+          if (group) group.open = true;
+          refused[0].scrollIntoView({ block: "nearest" });
+          return;
+        }
         closePrefs();
-      });
+      }
+      document.getElementById("btn-prefs-save").addEventListener("click", savePrefs);
       if (prefsPeerShell) {
         prefsPeerShell.addEventListener("change", async () => {
           const on = prefsPeerShell.checked;
@@ -63620,8 +63636,20 @@ ${res.stderr}` : "");
         return "Off.";
       }
       var prefsSuiteRunnerShown = null;
+      var prefsSuiteRunnerEdited = false;
+      function syncTestBoxesUnsaved() {
+        if (!prefsTestBoxesUnsaved) return;
+        const names = [prefsSuiteRunnerEdited && "Test runner", prefsBoxOfferEdited && "Offer test boxes"].filter(Boolean);
+        prefsTestBoxesUnsaved.textContent = names.length ? `Unsaved changes in: ${names.join(", ")}` : "";
+        prefsTestBoxesUnsaved.classList.toggle("hidden", !names.length);
+      }
+      function markSuiteRunnerEdited() {
+        prefsSuiteRunnerEdited = true;
+        syncTestBoxesUnsaved();
+      }
       function renderSuiteRunnerPrefs(st) {
         prefsSuiteRunnerShown = st;
+        prefsSuiteRunnerEdited = false;
         const rec = st.setting || { enabled: false, isolation: "user", work: null };
         const eff = st.effective || {};
         const forced = new Set(st.forced || []);
@@ -63646,9 +63674,12 @@ ${res.stderr}` : "");
           prefsBoxOfferShown.runner = offerRunnerFrom(st);
           syncBoxOfferScope();
         }
+        syncTestBoxesUnsaved();
       }
       async function refreshSuiteRunnerPrefs() {
         if (!prefsSuiteRunnerBlock) return;
+        prefsSuiteRunnerEdited = false;
+        syncTestBoxesUnsaved();
         let st = null;
         try {
           st = await window.api.suiteRunnerGet();
@@ -63670,32 +63701,57 @@ ${res.stderr}` : "");
           ...prefsSuiteRunnerShareRows ? { shares: prefsSuiteRunnerShareRows.read() } : {}
         });
       }
-      if (prefsSuiteRunnerBlock) {
+      async function saveSuiteRunnerBlock() {
+        let res = null;
+        try {
+          res = await window.api.suiteRunnerSet(suiteRunnerRecordToSave());
+        } catch {
+          res = null;
+        }
+        if (!res || res.ok !== true) {
+          showToast(`Test runner not changed: ${res && res.error || "the change failed"}`, { kind: "warn" });
+          if (res && res.state) prefsSuiteRunnerStatus.textContent = suiteRunnerStatusText(res.state);
+          return false;
+        }
+        if (res.state) renderSuiteRunnerPrefs(res.state);
+        else {
+          prefsSuiteRunnerEdited = false;
+          syncTestBoxesUnsaved();
+        }
+        if (res.state && res.state.status === "starting") {
+          setTimeout(() => {
+            if (!prefsOverlay.classList.contains("hidden")) refreshSuiteRunnerPrefs();
+          }, 1500);
+        }
+        return true;
+      }
+      async function applyTestBoxSettings() {
+        const refused = [];
+        if (prefsSuiteRunnerEdited && !await saveSuiteRunnerBlock()) refused.push(prefsSuiteRunnerBlock);
+        if (prefsBoxOfferEdited && !await saveBoxOfferBlock()) refused.push(prefsBoxOfferBlock);
+        return refused;
+      }
+      function wireSuiteRunnerPrefs() {
+        prefsSuiteRunnerBlock.addEventListener("input", markSuiteRunnerEdited);
+        prefsSuiteRunnerBlock.addEventListener("change", markSuiteRunnerEdited);
+        if (prefsSuiteRunnerShares) {
+          prefsSuiteRunnerShares.addEventListener("click", (e) => {
+            if (e.target && e.target.closest && e.target.closest("button")) markSuiteRunnerEdited();
+          });
+        }
         prefsSuiteRunnerIsolation.addEventListener("change", () => {
           prefsSuiteRunnerNoneNote.classList.toggle("hidden", prefsSuiteRunnerIsolation.value !== "none");
         });
-        prefsSuiteRunnerApply.addEventListener("click", async () => {
-          let res = null;
-          try {
-            res = await window.api.suiteRunnerSet(suiteRunnerRecordToSave());
-          } catch {
-            res = null;
-          }
-          if (!res || res.ok !== true) {
-            showToast(`Test runner not changed: ${res && res.error || "the change failed"}`, { kind: "warn" });
-          }
-          if (res && res.state) renderSuiteRunnerPrefs(res.state);
-          if (res && res.state && res.state.status === "starting") {
-            setTimeout(() => {
-              if (!prefsOverlay.classList.contains("hidden")) refreshSuiteRunnerPrefs();
-            }, 1500);
-          }
-        });
       }
+      if (prefsSuiteRunnerBlock) wireSuiteRunnerPrefs();
+      if (prefsBoxOfferApply) prefsBoxOfferApply.addEventListener("click", () => {
+        applyTestBoxSettings();
+      });
       var prefsBoxOfferShown = null;
       var prefsBoxOfferEdited = false;
       function markBoxOfferEdited() {
         prefsBoxOfferEdited = true;
+        syncTestBoxesUnsaved();
       }
       function boxOfferWindowRow(w) {
         const row = document.createElement("div");
@@ -63809,6 +63865,7 @@ ${res.stderr}` : "");
         prefsBoxOfferStatus.textContent = offerStatusText(st);
         syncBoxOfferSchedule();
         for (const el of prefsBoxOfferBlock.querySelectorAll("input, select, button")) el.disabled = st.forced;
+        syncTestBoxesUnsaved();
       }
       function boxOfferKeepsForm(st) {
         return prefsBoxOfferEdited && !!prefsBoxOfferShown && JSON.stringify(prefsBoxOfferShown.stored) === JSON.stringify(st.stored);
@@ -63827,6 +63884,51 @@ ${res.stderr}` : "");
         if (!st || typeof st.forced !== "boolean") st = null;
         prefsBoxOfferBlock.classList.toggle("hidden", !st);
         if (st) renderBoxOfferPrefs(st, { keepForm: boxOfferKeepsForm(st) });
+      }
+      async function saveBoxOfferBlock() {
+        const form = {
+          scope: prefsBoxOfferScope.value,
+          enabled: prefsBoxOfferEnabled.checked,
+          boxes: prefsBoxOfferBoxes.value,
+          availability: prefsBoxOfferAvailability.value,
+          schedule: readBoxOfferSchedule(),
+          peers: [...prefsBoxOfferPeers.querySelectorAll("input[data-peer]")].filter((b) => b.checked).map((b) => b.dataset.peer)
+        };
+        const problem = offerFormProblem(form);
+        if (problem) {
+          showToast(`Offer test boxes not changed: ${problem}`, { kind: "warn" });
+          return false;
+        }
+        const rec = offerRecordFromForm(form);
+        let confirm2;
+        if (rec.scope === "run" && rec.enabled) {
+          const names = rec.peers.map((p) => p.name);
+          let runnerSt = null;
+          try {
+            runnerSt = await window.api.suiteRunnerGet();
+          } catch {
+            runnerSt = null;
+          }
+          if (!window.confirm(offerRunConsentText(names, offerRunnerFrom(runnerSt)))) return false;
+          confirm2 = { peers: names };
+        }
+        let res = null;
+        try {
+          res = await window.api.offerSet(rec, confirm2);
+        } catch {
+          res = null;
+        }
+        if (!res || res.ok !== true) {
+          showToast(`Offer test boxes not changed: ${res && res.error || "the change failed"}`, { kind: "warn" });
+          if (res && res.state) renderBoxOfferPrefs(res.state, { keepForm: true });
+          return false;
+        }
+        if (res.state) renderBoxOfferPrefs(res.state);
+        else {
+          prefsBoxOfferEdited = false;
+          syncTestBoxesUnsaved();
+        }
+        return true;
       }
       if (prefsBoxOfferBlock) {
         prefsBoxOfferBlock.addEventListener("input", markBoxOfferEdited);
@@ -63859,44 +63961,6 @@ ${res.stderr}` : "");
             e.preventDefault();
             addBoxOfferPeer();
           }
-        });
-        prefsBoxOfferApply.addEventListener("click", async () => {
-          const form = {
-            scope: prefsBoxOfferScope.value,
-            enabled: prefsBoxOfferEnabled.checked,
-            boxes: prefsBoxOfferBoxes.value,
-            availability: prefsBoxOfferAvailability.value,
-            schedule: readBoxOfferSchedule(),
-            peers: [...prefsBoxOfferPeers.querySelectorAll("input[data-peer]")].filter((b) => b.checked).map((b) => b.dataset.peer)
-          };
-          const problem = offerFormProblem(form);
-          if (problem) {
-            showToast(`Box offer not changed: ${problem}`, { kind: "warn" });
-            return;
-          }
-          const rec = offerRecordFromForm(form);
-          let confirm2;
-          if (rec.scope === "run" && rec.enabled) {
-            const names = rec.peers.map((p) => p.name);
-            let runnerSt = null;
-            try {
-              runnerSt = await window.api.suiteRunnerGet();
-            } catch {
-              runnerSt = null;
-            }
-            if (!window.confirm(offerRunConsentText(names, offerRunnerFrom(runnerSt)))) return;
-            confirm2 = { peers: names };
-          }
-          let res = null;
-          try {
-            res = await window.api.offerSet(rec, confirm2);
-          } catch {
-            res = null;
-          }
-          if (!res || res.ok !== true) {
-            showToast(`Box offer not changed: ${res && res.error || "the change failed"}`, { kind: "warn" });
-          }
-          if (res && res.state) renderBoxOfferPrefs(res.state);
         });
         window.api.onOffersChanged(async () => {
           if (prefsOverlay.classList.contains("hidden") || !prefsBoxOfferShown) return;

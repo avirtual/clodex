@@ -56,6 +56,7 @@ function harness({ shown = null } = {}) {
     offerSelfLabelLine: () => '',
     ownFactsLine: () => '',
     offerStatusText: () => '',
+    syncTestBoxesUnsaved() {},
   };
   vm.createContext(ctx);
   vm.runInContext([

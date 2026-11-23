@@ -7039,6 +7039,9 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main { top: var(--rail-t
 #prefs-box-offer-block.hidden, #prefs-box-offer-schedule.hidden, #prefs-box-offer-schedule-add.hidden, #prefs-box-offer-run-note.hidden, #prefs-box-offer-claims.hidden {
   display: none;
 }
+#prefs-test-boxes-unsaved.hidden {
+  display: none;
+}
 
 #test-activity-overlay {
   position: fixed;
