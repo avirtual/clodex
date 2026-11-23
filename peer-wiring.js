@@ -138,6 +138,7 @@ function createPeerWiring(deps) {
         selfLabel: SELF_LABEL,
         ...offerPeerCallbacks({ getBoxOffer, getOfferFacts, offerDirectory, getSuiteEngine, onChange: () => manager._broadcast('offers-changed') }),
         suiteClaimer: suiteClaimerFor({ getBoxOffer, getSuiteEngine, log }),
+        log: (m) => log.warn('peer', m),
         // Hub-relay: the roster pushed to spoke `targetId` — agents on our OTHER
         // relayAllowed peers plus OUR OWN, all under the symmetric gate. Re-reads
         // settings, statuses and sessions per call, so a relayAllowed toggle lands
