@@ -328,15 +328,29 @@ claims only when the peer row's label has a run grant (`runGrant(...).serve`),
 the hello carries `suite-pull` and this node's engine exists; the engine is
 reached through remote-wiring's lazy `getSuiteEngine`, so runner mode works
 with remote access off. Each claim sends the claimer's `session`, minted once
-per connection. Only the claim fetch is serialised: claimed calls run
-concurrently, at most 4 at a time (`CLAIMER_CONCURRENCY`), and a `DELETE`
-(cancel) bypasses that bound, so it never waits behind a long poll. A call
-with a blob fetches it first (`suiteDeskBlob`, a raw GET capped at 4 MiB plus
-64 KiB). A call whose deadline (receipt time plus `ttlMs`) has passed is not
-executed. Everything else goes through `suiteDispatch` against the current
-engine, so a call outside the suite verb table is answered 404, and the answer
-is posted with `suiteDeskReply`. A reply the desk refuses is logged and
-dropped; the lead's own retry reissues the request.
+per connection. It also rings when the events stream opens. A failed claim
+(any answer without a calls list) is retried while the claimer runs and
+`ready()` holds: 1 s doubling to 15 s, each delay times a random factor in
+[0.5, 1], back to 1 s after a successful claim; a ring claims at once and
+drops the pending retry, and `stop()` clears it. Only the claim fetch is
+serialised: claimed calls run concurrently in two pools. A status poll
+(`GET /api/suite/jobs` with an `ids` parameter and a `wait` of decimal digits)
+runs in its own pool of 8 (`POLL_CONCURRENCY`); every other call runs in the
+general pool of 4 (`CLAIMER_CONCURRENCY`), and a `DELETE` (cancel) bypasses
+both, so it never waits behind a long poll. A call's deadline is its receipt
+time on the claimer's monotonic clock plus `ttlMs`. A queued call is dropped,
+with the `is past its deadline; not executed` line, the moment that deadline
+passes. When a status poll starts, its `wait` is rewritten to the remaining
+lifetime less `REPLY_RESERVE_MS` (10 s, kept for the reply's transport), at
+most the requested wait and at least 0. A call with a blob fetches it first
+(`suiteDeskBlob`, a raw GET capped at 4 MiB plus 64 KiB). A call whose
+deadline has passed is not executed. Everything else goes through
+`suiteDispatch` against the current engine, so a call outside the suite verb
+table is answered 404, and the answer is posted with `suiteDeskReply`. A reply
+the desk refuses is logged and dropped; the lead's own retry reissues the
+request. A 410 `call expired` logs `reply arrived after the call expired
+(<ms since receipt> ms)`, a 410 `call already settled` logs `reply not needed,
+call already settled`, and any other refusal `reply not accepted (<why>)`.
 
 - While the schedule is closed (`admit` false) a `POST /api/suite/jobs` is
   answered 503 `offer closed`; poll, output and cancel for existing jobs are
@@ -934,6 +948,11 @@ The runner's side is the claimer (§3, "Suite claims").
   commit and poll; a replaced submit, info or output read ends `unknown`.
 - A call is delivered once. A second claim never returns a call an earlier
   claim took.
+- **Log** (`suite-desk`, info). A call that expires unanswered logs
+  `call expired unanswered: <origin> <method> <path> (<pending|claimed>, <age> ms)`;
+  the path keeps query keys only, with `ids[<count>]` for `ids`. At most one
+  such line per origin per 5 s; the next one ends `+<suppressed>`. A replaced
+  session logs `runner session for <origin> replaced; settled <n> call(s)`.
 
 Routes take the operator token. They sit outside `/api/suite/`, so a
 suite-scoped token gets the scoped 403 on all three. Without a desk they
