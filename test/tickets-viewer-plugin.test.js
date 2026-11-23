@@ -2797,3 +2797,12 @@ test('tickets-viewer: `feed` is a read listed in manifest surfaces, and the plug
   assert.equal(manifest.surfaces.feed, 'any');
   assert.equal(manifest.enabledByDefault, true);
 });
+
+test('t2382: shape() carries a verify: box hold as its FALLBACK_CODES reason and leaves every other hold empty', () => {
+  const now = Date.now();
+  const held = (verifyHold) => ticket('h1', { assignee: 'hand', state: 'done', loopStep: 'verify', closedAt: now - HOUR, verifyHold });
+  const shape = (t) => viewerEngine._internals.shape(t, now, 30 * 60 * 1000).boxHold;
+  assert.equal(shape(held({ step: 'verify: box', at: 1, evidence: 'runner unreachable: misleading', recovery: 'box', code: 'no-share', class: 'deterministic' })), 'no share');
+  assert.equal(shape(held({ step: 'verify: diff', at: 1, evidence: 'e', recovery: 'infra' })), '');
+  assert.equal(shape(held(undefined)), '');
+});

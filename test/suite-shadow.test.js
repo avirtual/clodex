@@ -141,7 +141,7 @@ test('tally: old rows without the split fields are read without throwing and cou
   assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k1' }), {
     envKey: 'k1', agree: 1, disagree: 3, outcomeAgreed: 2, sameCounts: 1, skipped: 0, oneSided: [], platforms: null,
   });
-  assert.deepStrictEqual(client.decideTally({ team: 'tm' }), { box: 0, home: 0, fallbacks: [], runners: [] });
+  assert.deepStrictEqual(client.decideTally({ team: 'tm' }), { box: 0, home: 0, held: 0, fallbacks: [], holds: [], runners: [] });
 });
 
 const FAIL_LINE_ROWS = [
@@ -280,6 +280,33 @@ test('tally: counts agreements and one-sided failing names under one env key; an
     envKey: 'k1', agree: 1, disagree: 2, outcomeAgreed: 2, sameCounts: 0, skipped: 0, oneSided: [{ side: 'remote', name: 'net test', count: 2 }], platforms: null,
   });
   assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k2' }), { envKey: 'k2', agree: 0, disagree: 0, outcomeAgreed: 0, sameCounts: 0, skipped: 0, oneSided: [], platforms: null });
+});
+
+test('t2382: decided() writes a held row with decidedBy null, held true and the fallback code', () => {
+  const file = path.join(mkTmpRoot('suite-held-'), 'suite-compare.jsonl');
+  const client = createSuiteClient({ getPeerManager: () => null, compareFile: file });
+  client.decided({ team: 'tm', kind: 'verify', ticket: 't1', decidedBy: null, held: true, fallback: 'no share', fallbackCode: 'no-share' });
+  const [row] = fs.readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepStrictEqual([row.decidedBy, row.held, row.fallback, row.fallbackCode, row.agree], [null, true, 'no share', 'no-share', null]);
+});
+
+test('t2382: a held row is counted only as held — not as a box decision, a home fallback or an agree/disagree row', () => {
+  const held = { ...rec('k1', false, [], ['x']), kind: 'verify', decidedBy: null, held: true, fallback: 'no share', fallbackCode: 'no-share' };
+  const client = tallyFile([
+    rec('k1', true, [], []),
+    { team: 'tm', kind: 'verify', decidedBy: 'box', fallback: null },
+    held,
+    { team: 'tm', kind: 'verify', decidedBy: 'home', fallback: 'queue budget' },
+    { ...held, fallback: 'runner unreachable', fallbackCode: 'runner-unreachable' },
+    held,
+  ]);
+  assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k1' }), {
+    envKey: 'k1', agree: 1, disagree: 0, outcomeAgreed: 1, sameCounts: 1, skipped: 0, oneSided: [], platforms: null,
+  });
+  assert.deepStrictEqual(client.decideTally({ team: 'tm' }), {
+    box: 1, home: 1, held: 3, fallbacks: [{ reason: 'queue budget', count: 1 }],
+    holds: [{ reason: 'no share', count: 2 }, { reason: 'runner unreachable', count: 1 }], runners: [],
+  });
 });
 
 test('tally: a row whose failing names are unknown counts as agreement and contributes no one-sided names', () => {

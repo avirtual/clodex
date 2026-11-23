@@ -995,6 +995,25 @@ test('t1355: _taskListText names the verify phase of a done ticket the loop stil
   assert.strictEqual(row('t5'), 't5 [done] hand closed 1s ago — t5');
 });
 
+test('t2382: _taskListText names the reason of a box hold from its code on both row shapes, and leaves another hold as it was', () => {
+  const home = mkHome();
+  const proj = path.join(home, 'proj');
+  mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {}, hand: {} } });
+  const now = 10_000_000;
+  const d = (id, verifyHold) => ({ id, state: 'done', role: 'hand', title: id, openedAt: now - 60000, closedAt: now - 1000, loopStep: 'verify', verifyHold });
+  mkTicketRegistry(home, proj, [
+    d('t1', { step: 'verify: box', at: 1, evidence: 'runner unreachable: misleading text', recovery: 'box', code: 'no-share', class: 'deterministic' }),
+    d('t2', { step: 'verify: diff', at: 1, evidence: 'e', recovery: 'infra' }),
+  ]);
+  const team = { name: 'proj', root: proj, lead: 'lead' };
+  const m = new (createSessionManager({ fs, path, REGISTRY_DIR: home, knownSkillNames: () => [] }))();
+  const row = (filter, id) => m._taskListText(team, filter, now).split('\n').find((l) => l.startsWith(`${id} [done]`));
+  assert.strictEqual(row('open', 't1'), 't1 [done] held: box — no share hand closed 1s ago — t1');
+  assert.strictEqual(row('open', 't2'), 't2 [done] hand closed 1s ago — t2');
+  assert.strictEqual(row('done', 't1'), 't1 [done] held: box — no share hand 1m — t1');
+  assert.strictEqual(row('done', 't2'), 't2 [done] hand 1m — t2');
+});
+
 test('_taskListText answers the empty board with the same sentence the reply does', () => {
   const home = mkHome();
   const proj = path.join(home, 'proj');

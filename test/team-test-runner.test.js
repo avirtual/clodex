@@ -136,7 +136,7 @@ test('setTeamTestRunner patches one key and leaves a hand-written setup and env 
     },
   });
   assert.throws(() => tm.setTeamTestRunner('team', { hands: 'bogus' }), /testRunner would be invalid after this patch/);
-  assert.throws(() => tm.setTeamTestRunner('team', { env: {} }), /testRunner patch must name peer, hands, gate or wire/);
+  assert.throws(() => tm.setTeamTestRunner('team', { env: {} }), /testRunner patch must name peer, hands, gate, wire, pool or fallback, or be null for off \(/);
   assert.strictEqual(disk(file).testRunner.hands, 'full', 'a refused patch writes nothing');
   assert.strictEqual(tm.setTeamTestRunner('team', null).testRunner, undefined);
   assert.deepStrictEqual(disk(file), { root, lead: 'lead', roles, version: 3 });
@@ -328,6 +328,70 @@ test('t2338: [agent:team runner] under gate:on counts box-decided runs and home 
     '[agent:team] test runner of team: runner-1, wire push, hands full, gate on — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; gate runs: 3 decided by the box, 2 fell back to home (queue budget 1, runner unreachable 1)',
   ]);
 });
+
+const HELD_TALLY_ROWS = [
+  ['no holds', [],
+    '[agent:team] test runner of team: runner-1, wire push, hands full, gate on — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; gate runs: 3 decided by the box, 2 fell back to home (queue budget 1, runner unreachable 1)'],
+  ['2 holds of one reason', ['no share', 'no share'],
+    '[agent:team] test runner of team: runner-1, wire push, hands full, gate on — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; gate runs: 3 decided by the box, 2 fell back to home (queue budget 1, runner unreachable 1), 2 held (no share 2)'],
+  ['3 holds across two reasons', ['runner unreachable', 'no share', 'runner unreachable'],
+    '[agent:team] test runner of team: runner-1, wire push, hands full, gate on — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; gate runs: 3 decided by the box, 2 fell back to home (queue budget 1, runner unreachable 1), 3 held (runner unreachable 2, no share 1)'],
+];
+
+for (const [label, holds, line] of HELD_TALLY_ROWS) {
+  test(`t2382: [agent:team runner] tally with ${label} counts held rows apart from box and home rows`, async () => {
+    const on = (decidedBy, fallback) => ({ team: 'team', kind: 'verify', ticket: 't1', agree: null, decidedBy, fallback });
+    const held = (fallback) => ({ team: 'team', kind: 'verify', ticket: 't2', agree: null, decidedBy: null, held: true, fallback, envKey: '0123456789ab' });
+    const rows = [on('box', null), on('home', 'queue budget'), on('box', null), on('home', 'runner unreachable'), on('box', null), cmp('0123456789ab', true, [], [])];
+    holds.forEach((h, i) => rows.splice(1 + i * 2, 0, held(h)));
+    const f = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1', hands: 'full', gate: 'on' } }, peers: [SUITE_PEER], reach: INFO, compare: rows });
+    assert.deepStrictEqual(await f.verb('lead', '[agent:team runner]'), [line]);
+  });
+}
+
+test('t2382: [agent:team runner off] re-enters every ticket held at verify: box on the home suite and names how many; with none the reply is unchanged', async () => {
+  const f = mkVerbFixture({ manifestExtra: { testRunner: HOLD_ON } });
+  const root = f.tm.loadManifest('team').root;
+  const store = require('../tickets-store').createTicketsStore({ clodexHome: f.home });
+  const boxHold = { step: 'verify: box', at: 1, evidence: 'no share: x', recovery: 'box', code: 'no-share', class: 'deterministic' };
+  const row = (id, hold) => ({ id, state: 'done', loopStep: 'verify', title: id, spec: 's', assignee: 'hand', verifyHold: hold });
+  store.save(root, [row('t1', boxHold), row('t2', { step: 'verify: diff', at: 1, evidence: 'e', recovery: 'infra' }), row('t3', boxHold)]);
+  const loops = [];
+  f.m._runTicketLoop = (team, id) => { loops.push([team.testRunner || null, id]); };
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner off]'),
+    ['[agent:team] test runner of team removed — re-verifying 2 tickets held at "verify: box"']);
+  assert.deepStrictEqual(loops, [[null, 't1'], [null, 't3']]);
+  const after = store.load(root);
+  assert.deepStrictEqual(after.map((t) => [t.id, t.verifyHold ? t.verifyHold.step : null]), [['t1', null], ['t2', 'verify: diff'], ['t3', null]]);
+  assert.deepStrictEqual(after[0].events.map((e) => [e.kind, e.by, e.cause]), [['verify-release', 'ticket-loop', 'runner-off']]);
+  const g = mkVerbFixture({ manifestExtra: { testRunner: HOLD_ON } });
+  assert.deepStrictEqual(await g.verb('lead', '[agent:team runner off]'), ['[agent:team] test runner of team removed']);
+});
+
+const RELEASE_CAUSE_ROWS = [
+  ['task-verify', 'lead', (f) => f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'verify', id: 't1', who: null, body: '' })],
+  ['fallback-home', 'ticket-loop', (f) => f.verb('lead', '[agent:team runner fallback:home]')],
+  ['gate-off', 'ticket-loop', (f) => f.verb('lead', '[agent:team runner gate:shadow]')],
+  ['runner-off', 'ticket-loop', (f) => f.verb('lead', '[agent:team runner off]')],
+  ['task-done', 'lead', (f) => f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed' })],
+];
+
+for (const [cause, by, act] of RELEASE_CAUSE_ROWS) {
+  test(`t2382: _releaseBoxHold records a verify-release event with cause ${cause}`, async () => {
+    const f = mkVerbFixture({ manifestExtra: { testRunner: HOLD_ON } });
+    const root = f.tm.loadManifest('team').root;
+    const store = require('../tickets-store').createTicketsStore({ clodexHome: f.home });
+    const boxHold = { step: 'verify: box', at: 1, evidence: 'no share: x', recovery: 'box', code: 'no-share', class: 'deterministic' };
+    store.save(root, [{ id: 't1', state: 'done', loopStep: 'verify', title: 't1', spec: 's', assignee: 'hand', closedAt: 1, verifyHold: boxHold }]);
+    f.m._runTicketLoop = () => {};
+    await f.verb('lead', '[agent:team runner]');
+    await act(f);
+    const [t] = store.load(root);
+    assert.strictEqual(t.verifyHold, undefined, 'ENTER: the hold was released');
+    assert.deepStrictEqual((t.events || []).filter((e) => e.kind === 'verify-release').map((e) => ({ ...e, at: typeof e.at })),
+      [{ at: 'number', kind: 'verify-release', by, cause }]);
+  });
+}
 
 const cmp = (envKey, agree, localFailing, remoteFailing) => ({
   team: 'team', envKey, agree,
