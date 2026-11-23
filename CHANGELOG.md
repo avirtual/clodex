@@ -15,6 +15,7 @@ blocks a release.
 
 - A dial-in test runner now opens a new connection for each claim and each answer instead of reusing an idle one, which under load could already have been closed by the lead. A failed request to a peer now logs whether it went out on a reused connection.
 - Suite comparison rows now record outcome agreement, count agreement and failing-test agreement separately. A team whose runner deliberately runs more tests than its home suite can now see that both runs passed instead of a permanent `agree: false`.
+- Each ticket now records which suite decided its verify run and its post-merge run (box or home, the runner, the tree, and why the box did not decide when it did not). Nothing displays it yet.
 
 ## 5.194.0 — 2026-11-23
 
