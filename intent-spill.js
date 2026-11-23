@@ -219,7 +219,7 @@ function bounceHead(intent) {
   const label = String(verbKeyOf(intent) || intent.type).replace('.', ' ');
   const args = [intent.target, intent.id, intent.who, intent.spec]
     .filter((v) => typeof v === 'string' && v !== '');
-  for (const flag of ['urgent', 'park', 'start']) if (intent[flag] === true) args.push(flag);
+  for (const flag of ['urgent', 'park', 'start', 'home']) if (intent[flag] === true) args.push(flag);
   return { label, head: `[agent:${[label, ...args].join(' ')}]` };
 }
 

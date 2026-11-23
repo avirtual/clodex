@@ -498,7 +498,7 @@ function createSuiteClient({
     appendCompare({ at: iso(now()), team, kind, ticket, wire: 'pull', runner, skipped, ...NO_AGREEMENT });
   }
 
-  function decided({ team, kind, ticket, wire = 'push', box = null, local = null, decidedBy, held = false, fallback = null, fallbackCode = null, runner = null }) {
+  function decided({ team, kind, ticket, wire = 'push', box = null, local = null, decidedBy, held = false, bypass = false, fallback = null, fallbackCode = null, runner = null }) {
     const rec = (box && box.record) || null;
     const e = (rec && rec.env) || {};
     appendCompare({
@@ -506,7 +506,7 @@ function createSuiteClient({
       envKey: e.envKey || null, wire: wire === 'pull' ? 'pull' : 'push',
       localEnv: local ? { os: platform, arch } : null,
       remoteEnv: rec ? { os: e.platform || null, arch: e.arch || null, isolation: e.isolation || null, imageId: (e.box && e.box.imageId) || null, definitionHash: (e.box && e.box.definitionHash) || null, ...(e.box && Array.isArray(e.box.shares) ? { shares: e.box.shares } : {}) } : null,
-      local, remote: box ? remoteHalf(box) : null, ...NO_AGREEMENT, decidedBy, ...(held ? { held: true } : {}), fallback, ...(fallbackCode ? { fallbackCode } : {}), ...(runner ? { runner } : {}),
+      local, remote: box ? remoteHalf(box) : null, ...NO_AGREEMENT, decidedBy, ...(held ? { held: true } : {}), ...(bypass ? { bypass: true } : {}), fallback, ...(fallbackCode ? { fallbackCode } : {}), ...(runner ? { runner } : {}),
     });
   }
 
@@ -556,7 +556,7 @@ function createSuiteClient({
   function decideTally({ team }) {
     let text = '';
     try { text = compareFile ? fs.readFileSync(compareFile, 'utf8') : ''; } catch { text = ''; }
-    const out = { box: 0, home: 0, held: 0, fallbacks: [], holds: [], runners: [] };
+    const out = { box: 0, home: 0, held: 0, bypassed: 0, fallbacks: [], holds: [], runners: [] };
     const bump = (list, r) => {
       const reason = String(r.fallback || 'unknown');
       const seen = list.find((f) => f.reason === reason);
@@ -568,6 +568,7 @@ function createSuiteClient({
       try { r = JSON.parse(line); } catch { continue; }
       if (!r || r.team !== team) continue;
       if (r.held) { out.held += 1; bump(out.holds, r); continue; }
+      if (r.bypass) { out.bypassed += 1; continue; }
       if (r.decidedBy == null) continue;
       if (r.runner) {
         const name = String(r.runner);

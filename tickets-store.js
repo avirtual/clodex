@@ -296,10 +296,18 @@ function suiteRun(v) {
   const t = v.totals;
   const totals = t && typeof t === 'object' && ['pass', 'fail', 'tests'].every((k) => Number.isInteger(t[k]))
     ? { pass: t.pass, fail: t.fail, tests: t.tests } : null;
+  const bypass = v.decidedBy === 'home' ? bypassOf(v.bypass) : null;
   return {
     at: str('at'), decidedBy: v.decidedBy, outcome: str('outcome'), totals, treeHash: str('treeHash'), runner: str('runner'), jobId: str('jobId'),
     definitionHash: str('definitionHash'), image: str('image'), fallback: str('fallback'), fallbackCode: word('fallbackCode'), fallbackClass: word('fallbackClass'),
+    ...(bypass ? { bypass } : {}),
   };
+}
+
+function bypassOf(b) {
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return null;
+  if (!['by', 'reason', 'at', 'sha'].every((k) => typeof b[k] === 'string' && b[k])) return null;
+  return { by: b.by, reason: b.reason, at: b.at, sha: b.sha };
 }
 
 function suiteProvenanceOf(ticket) {

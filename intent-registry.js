@@ -197,6 +197,7 @@ function parseTask(cleaned) {
     const rest = argToks.filter((t) => !REVIEWER_TOKEN_RE.test(t));
     return { type: 'task', sub, id: rest[0] || null, who: null, reviewer, body: '' };
   }
+  if (sub === 'verify' && argToks[1] === 'home') return { type: 'task', sub, id: argToks[0] || null, who: null, home: true, body };
   if (sub === 'park' || sub === 'verify') return { type: 'task', sub, id: argToks[0] || null, who: null, body: '' };
   if (sub === 'done') {
     const tok = argToks[0] || null;
