@@ -431,7 +431,7 @@ function sectionHeader(line) {
     : null;
 }
 
-const MUSTFIX_PLACEHOLDER_WORDS = 'none(?:[ \\t—-]+[a-z]+){0,3}|n\\/a|nothing|empty';
+const MUSTFIX_PLACEHOLDER_WORDS = 'none(?![ \\t—-]+(?:but|except)\\b)(?:[ \\t—-]+[a-z]+){0,3}|n\\/a|nothing|empty|0|no must[- ]?fix(?:es)?';
 const MUSTFIX_BARE_PLACEHOLDER_RE = new RegExp(`^(?:${MUSTFIX_PLACEHOLDER_WORDS}|-+|—)\\.?$`, 'i');
 
 const FENCE_OPEN_RE = /^[ \t]{0,3}(`{3,}|~{3,})/;
@@ -454,13 +454,27 @@ function liveVerdictLines(text) {
     return { line, live: true, fenced: false, src };
   });
   const otherMustFix = entries.some((e) => e.live && !VERDICT_LINE_RE.test(e.line) && isMustFixHeader(e.line));
-  if (otherMustFix) return entries;
   return entries.flatMap((e) => {
-    if (!e.live || !VERDICT_LINE_RE.test(e.line)) return [e];
-    return e.line.replace(INLINE_SECTION_HEADER_RE, (m, _d, _k, off) => (off === 0 ? m : `\n${m}`)).split('\n')
-      .flatMap((piece) => (isMustFixHeader(piece) ? splitInlineItems(piece) : piece).split('\n'))
-      .map((piece) => ({ line: piece, live: true, fenced: false, src: e.src }));
+    if (!e.live) return [e];
+    const asPieces = (pieces) => pieces.map((piece) => ({ line: piece, live: true, fenced: false, src: e.src }));
+    if (VERDICT_LINE_RE.test(e.line)) {
+      if (otherMustFix) return [e];
+      return asPieces(unfoldInlineHeaders(e.line)
+        .flatMap((piece) => (isMustFixHeader(piece) ? splitInlineItems(piece) : piece).split('\n')));
+    }
+    return isMustFixHeader(e.line) ? asPieces(unfoldInlineHeaders(e.line)) : [e];
   });
+}
+
+const PLAIN_INLINE_HEADER_RE = /([ \t]+[—–|-]|[;.])[ \t]+(?=(?:MUST[-\s]?FIX|NITS?|CHECKED|VERDICT)[ \t]*:)/gi;
+const TRAILING_SEPARATOR_RE = /[ \t]*(?:[ \t][—–|-]|[;,|])?[ \t]*$/;
+
+function unfoldInlineHeaders(line) {
+  const pieces = line
+    .replace(INLINE_SECTION_HEADER_RE, (m, _d, _k, off) => (off === 0 ? m : `\n${m}`))
+    .replace(PLAIN_INLINE_HEADER_RE, (_m, sep) => `${sep}\n`)
+    .split('\n');
+  return pieces.map((p, i) => (i < pieces.length - 1 ? p.replace(TRAILING_SEPARATOR_RE, '') : p));
 }
 
 function splitInlineItems(piece) {
@@ -557,6 +571,17 @@ function stripEmphasis(line) {
   return s;
 }
 
+function stripSeparators(line) {
+  const s = line.replace(/[\s—–\-;,.:|]+$/, '');
+  return s || line;
+}
+
+function indentWidth(line) {
+  let w = 0;
+  for (const ch of /^[ \t]*/.exec(line)[0]) w = ch === '\t' ? w + 4 - (w % 4) : w + 1;
+  return w;
+}
+
 function mustFixItemLines(mustFixText) {
   if (mustFixText == null) return null;
   const text = String(mustFixText);
@@ -566,16 +591,19 @@ function mustFixItemLines(mustFixText) {
   // First-line-only is what keeps this from being a widening.
   const nonEmpty = lines.filter((l) => l.trim());
   // Only the tested line is normalized, so a `*` marker stays a marker below.
-  const firstLine = nonEmpty.length ? stripEmphasis(nonEmpty[0].trim()) : '';
+  const firstLine = nonEmpty.length ? stripSeparators(stripEmphasis(stripSeparators(nonEmpty[0].trim()))) : '';
   const re = nonEmpty.length > 1 ? MUSTFIX_PLACEHOLDER_WORD_RE : MUSTFIX_PLACEHOLDER_RE;
-  if (re.test(firstLine)) return null;
   const found = [];
   for (const line of lines) {
     if (THEMATIC_BREAK_RE.test(line)) continue;
     const m = MUSTFIX_ITEM_RE.exec(line);
     // CommonMark's tab stop, or raw counts make one tab shallower than two spaces
     // and pick the sub-bullets as the top level.
-    if (m) { let w = 0; for (const ch of m[1]) w = ch === '\t' ? w + 4 - (w % 4) : w + 1; found.push({ w, line }); }
+    if (m) found.push({ w: indentWidth(m[1]), line });
+  }
+  if (re.test(firstLine)) {
+    const lead = indentWidth(nonEmpty[0]);
+    if (!found.some((f) => f.w <= lead)) return null;
   }
   let top = Infinity;
   for (const f of found) if (f.w < top) top = f.w;

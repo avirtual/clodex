@@ -1226,9 +1226,7 @@ test('countMustFix: trailing punctuation outside the run is tolerated, leading d
     // closing run still means the run is UNBALANCED, which is what keeps a
     // half-wrapped line from becoming a placeholder.
     ['**(none)*', 1], ['*(none)**', 1], ['*(none)*_', 1], ['*(none)*`', 1],
-    // Other trailing punctuation is not in the class either — the tolerance is
-    // deliberately the narrow one, not "any punctuation".
-    ['*(none)*!', 1], ['*(none)*?', 1], ['*(none)*;', 1], ['*(none)*,', 1],
+    ['*(none)*!', 1], ['*(none)*?', 1], ['*(none)*;', 0], ['*(none)*,', 0],
 
     // The LEADING edge, anchored by design. A blockquote or list marker before
     // the wrapper is line decoration, not emphasis, and stripEmphasis does not
@@ -2007,4 +2005,17 @@ test('t906: a THROWING verdict-body write costs neither the dispatch nor the bri
   assert.match(body, /Sent straight to team-hand/, 'the brief still says the rework was dispatched');
   assert.match(body, /could NOT be saved/, 'and is honest that the verdict body is gone');
   assert.strictEqual(f.one('t1').reworkRound, 1, 'and the rejection landed');
+});
+
+test('a one-line ACCEPT verdict whose MUST-FIX reads "(none)" is announced with no must-fixes', async () => {
+  const f = mkVerdict();
+  openTicket(f, 'tasks/verdict-routing — fix the route');
+  const rec = spawnReviewer(f, 'scope', { ticketId: 't1' });
+
+  await f.m._handleReviewDone(f.m.sessions.get(rec.name),
+    '**VERDICT**: ACCEPT — **MUST-FIX**: (none) — **NITS**: (1) the helper is duplicated in two files');
+
+  assert.strictEqual(f.gated.length, 1, 'ENTER: the notification was sent');
+  assert.match(f.gated[0].body, /\[ticket t1 ACCEPT\] review round 1, no must-fixes\./);
+  assert.ok(!/1 must-fix/.test(f.gated[0].body), 'and not "1 must-fix"');
 });
