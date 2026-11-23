@@ -469,6 +469,20 @@ for (const [label, state, act, want] of HOME_BYPASS_END_ROWS) {
   });
 }
 
+test('t2384: homeBypass is removed by a task done that re-enters a non-box hold', async () => {
+  const f = mkVerbFixture({ manifestExtra: { testRunner: HOLD_ON } });
+  const root = f.tm.loadManifest('team').root;
+  const store = require('../tickets-store').createTicketsStore({ clodexHome: f.home });
+  store.save(root, [{ id: 't1', state: 'done', title: 't1', spec: 's', assignee: 'hand', loopStep: 'verify', closedAt: 1,
+    verifyHold: { step: 'verify: merge-check', at: 1, evidence: 'e', recovery: 'infra' }, homeBypass: BYPASS }]);
+  f.m._runTicketLoop = () => {};
+  await f.verb('lead', '[agent:team runner]');
+  await task('done', 'fixed')(f);
+  const [t] = store.load(root);
+  assert.strictEqual(t.report, 'fixed', 'ENTER: the done re-entered the hold');
+  assert.strictEqual(t.homeBypass, undefined);
+});
+
 const BYPASS_TALLY_ROWS = [
   ['0 bypassed', 0,
     '[agent:team] test runner of team: runner-1, wire push, hands full, gate on — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; gate runs: 3 decided by the box, 2 fell back to home (queue budget 1, runner unreachable 1)'],
