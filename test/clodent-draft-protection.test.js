@@ -12,7 +12,7 @@ const { mkTmpRoot } = require('./lib/tmp-roots');
 const T0 = 1_700_000_000_000;
 
 class NoSleepQueue extends InjectQueue {
-  constructor(opts) { super({ ...opts, sleep: () => Promise.resolve() }); }
+  constructor(opts) { super({ ...opts, sleep: (ms) => { mock.timers.tick(ms || 0); return Promise.resolve(); } }); }
 }
 
 function boot(type) {
