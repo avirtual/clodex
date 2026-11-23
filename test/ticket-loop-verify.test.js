@@ -7875,7 +7875,7 @@ test('t2384: a 500-character reason is accepted', async () => {
   assert.strictEqual(h.f.one().suiteProvenance.verify.bypass.reason, 'y'.repeat(500));
 });
 
-test('t2384: a home verify of a no-share hold runs the home suite once, never the box, spawns the reviewer and records the bypass', async () => {
+test('t2384: a home verify (_taskVerifyHome) of a no-share hold runs the home suite once, never the box, spawns the reviewer and records the bypass and its row (_bypassRow)', async () => {
   const h = bypassLoop();
   await h.hold();
   const sha = h.sha();
@@ -7908,7 +7908,7 @@ test('t2384: a home verify of a no-share hold runs the home suite once, never th
     [['home', true, 'no share', 'no-share', 'pass']]);
 });
 
-test('t2384: the authorisation is consumed before the suite spawns, and a second verify without a new intent goes to the box', async () => {
+test('t2384: the authorisation is consumed (_takeHomeBypass) before the suite spawns, and a second verify without a new intent goes to the box', async () => {
   const h = bypassLoop();
   await h.hold();
   const seen = [];
@@ -7924,7 +7924,7 @@ test('t2384: the authorisation is consumed before the suite spawns, and a second
   assert.strictEqual(h.f.one().verifyHold.step, 'verify: box', 'and is held again');
 });
 
-test('t2384: a commit that moved before the run is not used: the lead gets the line and the ticket takes the box path', async () => {
+test('t2384: a commit that moved before the run is not used: the lead gets the line (_notifyHomeBypassUnused) and the ticket takes the box path', async () => {
   const h = bypassLoop();
   await h.hold();
   const was = h.sha();

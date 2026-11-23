@@ -141,7 +141,7 @@ test('tally: old rows without the split fields are read without throwing and cou
   assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k1' }), {
     envKey: 'k1', agree: 1, disagree: 3, outcomeAgreed: 2, sameCounts: 1, skipped: 0, oneSided: [], platforms: null,
   });
-  assert.deepStrictEqual(client.decideTally({ team: 'tm' }), { box: 0, home: 0, held: 0, fallbacks: [], holds: [], runners: [] });
+  assert.deepStrictEqual(client.decideTally({ team: 'tm' }), { box: 0, home: 0, held: 0, bypassed: 0, fallbacks: [], holds: [], runners: [] });
 });
 
 const FAIL_LINE_ROWS = [
@@ -304,7 +304,7 @@ test('t2382: a held row is counted only as held — not as a box decision, a hom
     envKey: 'k1', agree: 1, disagree: 0, outcomeAgreed: 1, sameCounts: 0, skipped: 0, oneSided: [], platforms: null,
   });
   assert.deepStrictEqual(client.decideTally({ team: 'tm' }), {
-    box: 1, home: 1, held: 3, fallbacks: [{ reason: 'queue budget', count: 1 }],
+    box: 1, home: 1, held: 3, bypassed: 0, fallbacks: [{ reason: 'queue budget', count: 1 }],
     holds: [{ reason: 'no share', count: 2 }, { reason: 'runner unreachable', count: 1 }], runners: [],
   });
 });
