@@ -298,6 +298,7 @@ const boxHoldNext = (cls, id, reason) => (BOX_HOLD_NEXT[cls]
   ? BOX_HOLD_NEXT[cls](id)
   : `This will not clear by itself: fix the cause (${reason}), then [agent:task verify ${id}].`);
 const BOX_HOLD_STEP = 'verify: box';
+const verifyIsCurrent = (t, round) => !!t && t.loopStep === 'verify' && (Number(t.reworkRound) || 0) === round;
 const BOX_RETRY_DELAY_MIN = Object.freeze([1, 2, 4, 8, 15, 15]);
 const BOX_RETRY_MAX = BOX_RETRY_DELAY_MIN.length;
 const HOME_BYPASS_REASON_MAX = 500;
@@ -3465,6 +3466,7 @@ function createTicketMethods(deps, shared) {
         }
         const reset = fb == null && intent.gate !== 'on' && cur.fallback === 'hold';
         const m = deps.setTeamTestRunner(team.name, { gate: intent.gate, ...(fb != null ? { fallback: fb } : {}), ...(reset ? { fallback: 'home' } : {}) });
+        if (intent.gate !== 'on') this._cancelBoxRuns(team, 'gate-off', m);
         const said = fb != null ? `, fallback ${m.testRunner.fallback || 'home'}` : '';
         reply(`test runner gate mode of ${team.name} set to ${m.testRunner.gate}${said}${reset ? ' — fallback reset to home (fallback:hold needs gate:on)' : ''}${released(m)}`);
         return;
@@ -3508,6 +3510,7 @@ function createTicketMethods(deps, shared) {
       }
       if (intent.value === 'off') {
         const m = deps.setTeamTestRunner(team.name, null);
+        this._cancelBoxRuns(team, 'runner-off', m);
         const n = this._reverifyBoxHeld(m, 'runner-off');
         reply(`test runner of ${team.name} removed${n ? ` — re-verifying ${n} ticket${n === 1 ? '' : 's'} held at "${BOX_HOLD_STEP}"` : ''}`);
         return;
@@ -6412,9 +6415,9 @@ function createTicketMethods(deps, shared) {
       try {
         const ticket = this._loadTicket(team, ticketId, { boardOnly: true });
         if (!ticket || ticket.loopStep !== 'verify') return;
-        const round = ticket.reworkRound || 0;
+        const round = Number(ticket.reworkRound) || 0;
         const current = (t) => {
-          const ok = !!t && t.loopStep === 'verify' && (t.reworkRound || 0) === round;
+          const ok = verifyIsCurrent(t, round);
           if (!ok) superseded = true;
           return ok;
         };
@@ -6537,6 +6540,7 @@ function createTicketMethods(deps, shared) {
         this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: `ticket ${ticketId} verify: suite running on ${branch}` });
         let suite = await this._runTicketSuite(team, ticket, null, runOpts);
         let still = this._loadTicket(team, ticketId);
+        if (suite.cancelled) { superseded = true; return; }
         if (!current(still)) { this._reapRunner(ticketId, suite.runnerPid); return; }
         if (suite.held) {
           held = true;
@@ -6562,6 +6566,7 @@ function createTicketMethods(deps, shared) {
           this._stampVerifyPhase(team, ticketId, { phase: 'suite', since: Date.now(), run: 2 });
           const again = await this._runTicketSuite(team, ticket, null, runOpts);
           still = this._loadTicket(team, ticketId);
+          if (again.cancelled) { superseded = true; return; }
           if (!current(still)) { this._reapRunner(ticketId, again.runnerPid); return; }
           if (suite.decidedBy === 'box' && again.decidedBy !== 'box' && !again.bypass) {
             this._reapRunner(ticketId, again.runnerPid);
@@ -6769,12 +6774,41 @@ function createTicketMethods(deps, shared) {
       }
       let jobId = null;
       let phase = null;
+      let stopCause = null;
+      let stopNow = null;
+      let submittedId = null;
+      let cancelSent = false;
+      const stopped = new Promise((resolve) => { stopNow = resolve; });
+      const sendCancel = async () => {
+        if (!stopCause || !submittedId || cancelSent || typeof client.cancel !== 'function') return;
+        cancelSent = true;
+        const id = submittedId;
+        try {
+          const c = await client.cancel(via.peer, id, ret.wire);
+          if (!c || !c.ok) log.warn('ticket', `ticket ${ticket.id}: cancel of box job ${id} (${stopCause}) did not confirm — ${(c && c.error) || 'no answer'}`);
+        } catch (e) {
+          log.warn('ticket', `ticket ${ticket.id}: cancel of box job ${id} (${stopCause}) failed — ${e && e.message ? e.message : e}`);
+        }
+      };
+      const flightKey = kind === 'verify' ? `${team.root}\0${ticket.id}` : null;
+      const flight = flightKey ? {
+        root: team.root, team: team.name, id: ticket.id, round: Number(ticket.reworkRound) || 0,
+        stop: (cause) => { if (stopCause) return; stopCause = cause; stopNow(); },
+      } : null;
+      if (flight) {
+        if (!this._boxFlights) this._boxFlights = new Map();
+        const prior = this._boxFlights.get(flightKey);
+        if (prior) prior.stop('superseded');
+        this._boxFlights.set(flightKey, flight);
+      }
       const job = Promise.resolve()
         .then(() => client.run({
           ...via, name: member.peer, tree: cwd, kind, team: team.name, ticket: String(ticket.id), scope: 'full',
           setup: tr.setup || null, env: tr.env || {}, route: 'gate:on', box: def, ...(tr.shares ? { shares: tr.shares } : {}),
           queueBudgetMs: BOX_DECIDE_QUEUE_MS, budgetMs: TICKET_SUITE_TIMEOUT,
           onJob: (j) => { if (j && j.jobId) jobId = j.jobId; },
+          onSubmitted: (j) => { if (j && j.jobId) submittedId = j.jobId; if (stopCause) sendCancel(); },
+          shouldStop: () => !!stopCause,
           onState: (s) => { phase = s; },
           ...(chosen ? {
             repick: this._runnerRepick(tr, def),
@@ -6792,9 +6826,16 @@ function createTicketMethods(deps, shared) {
       const timers = deps.boxDecideTimers || { setTimeout, clearTimeout };
       let timer = null;
       const LATE = {};
+      const STOPPED = {};
       const guard = new Promise((resolve) => { timer = timers.setTimeout(() => resolve(LATE), guardMs); });
-      let out = await Promise.race([job, guard]);
+      let out = await Promise.race([job, guard, stopped.then(() => STOPPED)]);
       timers.clearTimeout(timer);
+      if (flight && this._boxFlights.get(flightKey) === flight) this._boxFlights.delete(flightKey);
+      if (out === STOPPED) {
+        log.info('ticket', `ticket ${ticket.id}: verify box job ${submittedId || jobId || '(not submitted)'} cancelled — ${stopCause}`);
+        await sendCancel();
+        return { ...ret, cancelled: stopCause, jobId: submittedId || jobId || null };
+      }
       let code;
       if (out === LATE && phase === 'build') {
         out = { unknown: `the box build did not finish within ${guardMs}ms`, res: null, record: null };
@@ -6957,6 +6998,9 @@ function createTicketMethods(deps, shared) {
       out.head = await gitWorktree.currentBranch(cwd).catch(() => null);
       const gateRunner = team.testRunner;
       const box = !home && gateRunner && gateRunner.peer && gateRunner.gate === 'on' ? await this._boxDecide(team, ticket, cwd, opts) : null;
+      if (box && box.cancelled) {
+        return Object.assign(out, { cancelled: box.cancelled, decidedBy: null, error: `the box run was cancelled (${box.cancelled})` });
+      }
       if (box && !box.decided && !(opts && opts.merge) && gateRunner.fallback === 'hold') {
         const rec = (box.out && box.out.record) || null;
         const stamped = (rec && rec.env && rec.env.box) || {};
@@ -7439,6 +7483,27 @@ function createTicketMethods(deps, shared) {
         this._runTicketLoop(team, id);
       }
       return ids.length;
+    },
+
+    _cancelBoxRuns(team, cause = null, next = null) {
+      if (!team || !this._boxFlights || !this._boxFlights.size) return 0;
+      let tickets = null;
+      const reenter = [];
+      let n = 0;
+      for (const flight of [...this._boxFlights.values()]) {
+        if (flight.root !== team.root || flight.team !== team.name) continue;
+        if (!tickets) { try { tickets = ticketsStore.load(team.root); } catch { return n; } }
+        const current = verifyIsCurrent(tickets.find((t) => t && t.id === flight.id), flight.round);
+        if (!cause && current) continue;
+        flight.stop(cause || 'not-current');
+        n += 1;
+        if (cause && current && next) reenter.push(flight.id);
+      }
+      for (const id of reenter) {
+        log.info('intent', `verify re-entered for ${id}: its box run was cancelled (${cause})`);
+        this._runTicketLoop(next, id);
+      }
+      return n;
     },
 
     _taskVerify(session, team, intent, reply, ack = reply) {
@@ -9197,6 +9262,7 @@ function createTicketMethods(deps, shared) {
     // Solo boards no-op: their live seats are every agent session in the repo, none
     // enrolled, so reconciling would hand specs to sessions that never opted in.
     _reconcileTickets(team) {
+      this._cancelBoxRuns(team);
       if (team && team.solo) return;
       const tickets = ticketsStore.load(team.root);
       const unstamped = tickets.filter((t) => t && typeof t === 'object' && !t.team);
