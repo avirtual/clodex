@@ -92,7 +92,7 @@ test('t2362: setTeamTestRunner refuses a pool patch that would be dropped and wr
   assert.deepStrictEqual(tm.setTeamTestRunner('team', { pool: null }).testRunner, { peer: 'a', hands: 'off', gate: 'off' });
 });
 
-function mkFixture({ manifestExtra = {}, peers = [], desk = null, client = {}, extraDeps = {} } = {}) {
+function mkFixture({ manifestExtra = {}, peers = [], desk = null, client = {} } = {}) {
   const { home, root, file, tm } = mkHome(manifestExtra);
   const deps = {
     knownSkillNames: () => [],
@@ -130,7 +130,6 @@ function mkFixture({ manifestExtra = {}, peers = [], desk = null, client = {}, e
     getPeerManager: () => ({ statuses: () => peers }),
     getSuiteDesk: () => desk,
     getSuiteClient: () => client,
-    ...extraDeps,
   };
   const SessionManager = createSessionManager(deps);
   const m = new SessionManager();
@@ -414,7 +413,7 @@ test('t2363: boxVerdict passes stamped shares equal to the ask and falls back on
     record: { outcome: 'pass', pass: 5, fail: 0, tests: 5, treeHash: TREE, env: { isolation: 'container', box: { imageId: 'sha256:e', definitionHash: DEF.definitionHash, shares } } },
   });
   assert.deepStrictEqual(boxVerdict(out([{ name: 'assets', version: 'v1' }]), DEF, SHARE_ASK), { fallback: null });
-  assert.deepStrictEqual(boxVerdict(out([{ name: 'assets', version: 'v2' }]), DEF, SHARE_ASK), { fallback: 'no share', fallbackCode: 'no-share', fallbackClass: 'deterministic' });
+  assert.deepStrictEqual(boxVerdict(out([{ name: 'assets', version: 'v2' }]), DEF, SHARE_ASK), { fallback: 'no share' });
 });
 
 test('t2363: a single runner without the share ends unknown before submit, and under gate:on the home suite decides with no share', async () => {
@@ -440,121 +439,4 @@ test('t2363: a single runner without the share ends unknown before submit, and u
   assert.deepStrictEqual(calls.filter((c) => c === 'GET /api/suite/info').length, 2, 'ENTER: both runs asked info');
   const row = records().pop();
   assert.deepStrictEqual([decided.decided, row.decidedBy, row.fallback], [false, 'home', 'no share']);
-});
-
-const { FALLBACK_CODES } = require('../suite-client');
-const BOX_TEXT = 'FROM node:24-bookworm\nRUN true\n';
-const BOX_HASH = require('../team-box').boxFingerprint(BOX_TEXT);
-const said = (text) => ({ verdict: { unknown: text, res: null, record: null } });
-const measured = ({ outcome = 'pass', tests = 5, isolation = 'container', shares, resTree = TREE } = {}) => ({ verdict: {
-  unknown: null, res: { treeHash: resTree },
-  record: { outcome, pass: tests, fail: 0, tests, treeHash: TREE, env: { isolation, box: { imageId: 'sha256:e', definitionHash: DEF.definitionHash, ...(shares ? { shares } : {}) } } },
-} });
-const PUSH_ON = { peer: 'runner-1', hands: 'off', gate: 'on' };
-
-const FALLBACK_ROWS = [
-  ['_boxDecide: no suite client', { decide: 'no client' }, 'runner unreachable', 'runner-unreachable', 'transient'],
-  ['_boxDecide: pull runner not attached', { decide: 'pull detached' }, 'runner unreachable', 'runner-unreachable', 'transient'],
-  ['_boxDecide: push runner not a known peer', { decide: 'unknown peer' }, 'runner unreachable', 'runner-unreachable', 'transient'],
-  ['_boxDecide: no box definition', { decide: 'no box' }, 'no box definition', 'no-box-definition', 'deterministic'],
-  ['_boxDecide: guard fired in phase build', { decide: 'late', phase: 'build' }, 'box build', 'box-build-budget', 'budget'],
-  ['_boxDecide: guard fired in phase running', { decide: 'late', phase: 'running' }, 'run budget', 'run-budget', 'budget'],
-  ['boxVerdict: no outcome', { verdict: null }, 'outcome unknown', 'outcome-unknown', 'unknown'],
-  ['runner unreachable: status 0', said('runner unreachable: status 0'), 'runner unreachable', 'runner-unreachable', 'transient'],
-  ['no peer p1', said('no peer p1'), 'runner unreachable', 'runner-unreachable', 'transient'],
-  ['runner refused the token', said('runner refused the token'), 'runner unreachable', 'runner-unreachable', 'transient'],
-  ['queue budget text', said('the job did not start within the 300000ms queue budget (cancelled)'), 'queue budget', 'queue-budget', 'budget'],
-  ['client budget text', said('no result within the 2460000ms budget (cancelled)'), 'run budget', 'run-budget', 'budget'],
-  ['client run budget text', said('no result within the 600000ms run budget (cancelled)'), 'run budget', 'run-budget', 'budget'],
-  ['runner killed the suite', said('the suite did not finish within 1260000ms (killed)'), 'run budget', 'run-budget', 'budget'],
-  ['runner restarted', said('runner restarted'), 'runner restart', 'runner-restart', 'transient'],
-  ['runner answered for another tree', said('runner answered for tree cccccccc, not aaaaaaaa'), 'tree mismatch', 'tree-mismatch', 'deterministic'],
-  ['runner reported a tree mismatch', said('tree mismatch on runner (aaaaaaaa ≠ cccccccc)'), 'tree mismatch', 'tree-mismatch', 'deterministic'],
-  ['box mismatch', said('box mismatch: asked container, runner ran native'), 'definition mismatch', 'definition-mismatch', 'deterministic'],
-  ['runner has no box', said('runner has no box: not configured'), 'definition mismatch', 'definition-mismatch', 'deterministic'],
-  ['runner has no share', said('runner has no share assets@v1'), 'no share', 'no-share', 'deterministic'],
-  ['client build budget text', said('the box build did not finish within the 1500000ms build budget (cancelled)'), 'box build', 'box-build-budget', 'budget'],
-  ['runner build limit', said('box build on runner: the build did not finish within 1200000 ms (killed): step 3/4'), 'box build', 'box-build-budget', 'budget'],
-  ['runner build cancelled', said('box build on runner: the build was cancelled'), 'box build', 'box-build-interrupted', 'transient'],
-  ['runner build stopped', said('box build on runner: the build was stopped: lease-expired'), 'box build', 'box-build-interrupted', 'transient'],
-  ['runner build failed', said('box build on runner: docker build exited 1: ERROR: boom'), 'box build', 'box-build-failed', 'deterministic'],
-  ['runner build refused by its cap', said('box build on runner: 3 box builds in the last 24 h for k; the cap is 3'), 'box build', 'box-build-failed', 'deterministic'],
-  ['runner refused the job', said('runner refused the job: nope'), 'outcome unknown', 'outcome-unknown', 'unknown'],
-  ['an unplaced runner reason', said('cancelled on runner'), 'outcome unknown', 'outcome-unknown', 'unknown'],
-  ['no-summary outcome', measured({ outcome: 'no-summary' }), 'no totals', 'no-totals', 'deterministic'],
-  ['timeout outcome without a reason', measured({ outcome: 'timeout' }), 'outcome unknown', 'outcome-unknown', 'unknown'],
-  ['zero tests', measured({ tests: 0 }), 'no totals', 'no-totals', 'deterministic'],
-  ['native isolation', measured({ isolation: 'native' }), 'definition mismatch', 'definition-mismatch', 'deterministic'],
-  ['stamped share differs', measured({ shares: [{ name: 'assets', version: 'v2' }] }), 'no share', 'no-share', 'deterministic'],
-  ['result tree differs', measured({ resTree: TREE2 }), 'tree mismatch', 'tree-mismatch', 'deterministic'],
-];
-
-async function decideFor(row) {
-  let fire = null;
-  const timers = { setTimeout: (fn) => { fire = fn; return 1; }, clearTimeout: () => {} };
-  const client = row.decide === 'no client' ? {} : {
-    run: (o) => { o.onState(row.phase); fire(); return new Promise(() => {}); },
-  };
-  const f = mkFixture({
-    manifestExtra: { testRunner: row.decide === 'pull detached' ? { ...PUSH_ON, wire: 'pull' } : PUSH_ON },
-    peers: row.decide === 'unknown peer' ? [] : [R1],
-    desk: { attached: () => false },
-    client,
-    extraDeps: { boxDecideTimers: timers },
-  });
-  const team = f.tm.loadManifest('team');
-  if (row.decide !== 'no box') require('../team-box').writeBox(team.dir, BOX_TEXT);
-  return f.m._boxDecide(team, { id: 't1' }, '/w', {});
-}
-
-test('t2378: every producing fallback condition yields its literal reason, code and class', async () => {
-  assert.strictEqual(FALLBACK_ROWS.length, 34);
-  for (const [name, input, reason, code, cls] of FALLBACK_ROWS) {
-    if (input.decide) {
-      const got = await decideFor(input);
-      assert.deepStrictEqual([got.decided, got.fallback, got.fallbackCode, got.fallbackClass], [false, reason, code, cls], name);
-    } else {
-      const { boxVerdict } = require('../suite-client');
-      assert.deepStrictEqual(boxVerdict(input.verdict, DEF, []), { fallback: reason, fallbackCode: code, fallbackClass: cls }, name);
-    }
-  }
-});
-
-test('t2378: every exported code is produced by a row, and every class is one of the four', () => {
-  const produced = new Set(FALLBACK_ROWS.map((r) => r[3]));
-  assert.deepStrictEqual(Object.keys(FALLBACK_CODES).filter((c) => !produced.has(c)), []);
-  assert.ok(Object.keys(FALLBACK_CODES).length > 0, 'ENTER: the table has codes');
-  for (const [code, row] of Object.entries(FALLBACK_CODES)) {
-    assert.ok(['transient', 'deterministic', 'budget', 'unknown'].includes(row.class), code);
-    assert.deepStrictEqual(Object.keys(row).sort(), ['class', 'reason'], code);
-  }
-  for (const [name, , reason, code, cls] of FALLBACK_ROWS) assert.deepStrictEqual(FALLBACK_CODES[code], { reason, class: cls }, name);
-});
-
-test('t2378: a box-decided _boxDecide result carries no fallback code or class, and its compare row has no fallbackCode', async () => {
-  const { client, records } = clientOver({});
-  const pass = {
-    unknown: null, res: { treeHash: TREE },
-    record: { outcome: 'pass', pass: 5, fail: 0, tests: 5, treeHash: TREE, env: { isolation: 'container', box: { imageId: 'sha256:e', definitionHash: BOX_HASH } } },
-  };
-  const f = mkFixture({ manifestExtra: { testRunner: PUSH_ON }, peers: [R1], client: { ...client, run: async () => pass } });
-  const team = f.tm.loadManifest('team');
-  require('../team-box').writeBox(team.dir, BOX_TEXT);
-  const got = await f.m._boxDecide(team, { id: 't1' }, '/w', {});
-  assert.strictEqual(got.decided, true, 'ENTER: the box decided');
-  assert.deepStrictEqual([got.fallback, 'fallbackCode' in got, 'fallbackClass' in got], [null, false, false]);
-  f.m._boxRow(team, { id: 't1' }, got, null);
-  const row = records().pop();
-  assert.deepStrictEqual([row.decidedBy, row.fallback, 'fallbackCode' in row], ['box', null, false]);
-});
-
-test('t2378: a fallen-back _boxDecide compare row carries fallbackCode beside the unchanged reason', async () => {
-  const { client, records } = clientOver({});
-  const f = mkFixture({ manifestExtra: { testRunner: PUSH_ON }, peers: [R1], client: { ...client, run: async () => ({ unknown: 'runner restarted', res: null, record: null }) } });
-  const team = f.tm.loadManifest('team');
-  require('../team-box').writeBox(team.dir, BOX_TEXT);
-  const got = await f.m._boxDecide(team, { id: 't1' }, '/w', {});
-  f.m._boxRow(team, { id: 't1' }, got, null);
-  const row = records().pop();
-  assert.deepStrictEqual([got.fallbackCode, got.fallbackClass, row.decidedBy, row.fallback, row.fallbackCode], ['runner-restart', 'transient', 'home', 'runner restart', 'runner-restart']);
 });

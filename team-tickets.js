@@ -20,7 +20,7 @@ const { trackedSessionIds: entrySessionIds } = require('./session-info');
 const { hostNotice } = require('./host-stamp');
 const { idleClearAfterMs, IDLE_CLEAR_MIN_MS } = require('./assistant-sleep');
 const { localHalf, failingNames } = require('./suite-client');
-const { boxVerdict, fallbackOf, pickRunner, runnerLoad, BUILD_BUDGET_MS } = require('./suite-client');
+const { boxVerdict, pickRunner, runnerLoad, BUILD_BUDGET_MS } = require('./suite-client');
 const {
   matchSeatRole, nameRole, defaultLeadSeat, ROLE_RE, RESERVED_ROLE_KEYS, STOCK_ROLE_DEFS,
   DEFAULT_ROLE_DISPATCH, TRUNK_HEAD, effectiveHandCap, DONE_VALUES, normalizeDone, NAME_RE: NODE_NAME_RE, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_WIRE_PUSH: WIRE_PUSH, TEST_RUNNER_POOL_MAX,
@@ -6657,16 +6657,15 @@ function createTicketMethods(deps, shared) {
       const tr = team.testRunner;
       const kind = opts && opts.merge ? 'post-merge' : 'verify';
       const ret = { decided: false, fallback: null, out: null, client: null, wire: tr.wire === 'pull' ? 'pull' : WIRE_PUSH, kind };
-      const fall = (code, why) => {
-        const f = fallbackOf(code);
-        log.warn('ticket', `ticket ${ticket.id}: ${kind} box run did not decide (${f.fallback}) — ${why}; running the suite here`);
-        return { ...ret, ...f };
+      const fall = (fallback, why) => {
+        log.warn('ticket', `ticket ${ticket.id}: ${kind} box run did not decide (${fallback}) — ${why}; running the suite here`);
+        return { ...ret, fallback };
       };
       const client = typeof deps.getSuiteClient === 'function' ? deps.getSuiteClient() : null;
-      if (!client || typeof client.run !== 'function') return fall('runner-unreachable', 'no suite client on this node');
+      if (!client || typeof client.run !== 'function') return fall('runner unreachable', 'no suite client on this node');
       ret.client = client;
       const def = this._shadowBox(team);
-      if (def === true) return fall('no-box-definition', 'the team has no box definition');
+      if (def === true) return fall('no box definition', 'the team has no box definition');
       const pooled = this._runnerMembers(tr).length > 1;
       const chosen = pooled ? await this._pickGateRunner(tr, def) : null;
       const member = chosen || this._runnerMembers(tr)[0];
@@ -6675,11 +6674,11 @@ function createTicketMethods(deps, shared) {
       let via;
       if (ret.wire === 'pull') {
         const desk = this._runnerDesk();
-        if (!desk || !desk.attached(member.peer)) return fall('runner-unreachable', `runner ${member.peer} dials in and is not attached`);
+        if (!desk || !desk.attached(member.peer)) return fall('runner unreachable', `runner ${member.peer} dials in and is not attached`);
         via = { peer: member.peer, wire: 'pull' };
       } else {
         const peer = this._runnerPeerStatus(member.peer);
-        if (!peer) return fall('runner-unreachable', `runner ${member.peer} is not a known peer`);
+        if (!peer) return fall('runner unreachable', `runner ${member.peer} is not a known peer`);
         via = { peer: peer.id };
       }
       let jobId = null;
@@ -6710,18 +6709,18 @@ function createTicketMethods(deps, shared) {
       const guard = new Promise((resolve) => { timer = timers.setTimeout(() => resolve(LATE), guardMs); });
       let out = await Promise.race([job, guard]);
       timers.clearTimeout(timer);
-      let code;
+      let fallback;
       if (out === LATE && phase === 'build') {
         out = { unknown: `the box build did not finish within ${guardMs}ms`, res: null, record: null };
-        code = 'box-build-budget';
+        fallback = 'box build';
       } else if (out === LATE) {
         out = { unknown: `no box result within ${guardMs}ms`, res: null, record: null };
-        code = 'run-budget';
+        fallback = 'run budget';
       } else {
-        code = boxVerdict(out, def, tr.shares || []).fallbackCode;
+        fallback = boxVerdict(out, def, tr.shares || []).fallback;
       }
       ret.out = out;
-      if (!code) return { ...ret, decided: true };
+      if (!fallback) return { ...ret, decided: true };
       const id = jobId || (out.record && out.record.jobId) || null;
       if (id && typeof client.cancel === 'function') {
         try {
@@ -6731,7 +6730,7 @@ function createTicketMethods(deps, shared) {
           log.warn('ticket', `ticket ${ticket.id}: cancel of box job ${id} failed — ${e && e.message ? e.message : e}`);
         }
       }
-      return fall(code, out.unknown || `box outcome ${(out.record && out.record.outcome) || 'unknown'}`);
+      return fall(fallback, out.unknown || `box outcome ${(out.record && out.record.outcome) || 'unknown'}`);
     },
 
     _boxRow(team, ticket, box, local) {
@@ -6739,7 +6738,7 @@ function createTicketMethods(deps, shared) {
       try {
         box.client.decided({
           team: team.name, kind: box.kind, ticket: String(ticket.id), wire: box.wire, box: box.out, local,
-          decidedBy: box.decided ? 'box' : 'home', fallback: box.decided ? null : box.fallback, fallbackCode: box.decided ? null : box.fallbackCode, ...(box.runner ? { runner: box.runner } : {}),
+          decidedBy: box.decided ? 'box' : 'home', fallback: box.decided ? null : box.fallback, ...(box.runner ? { runner: box.runner } : {}),
         });
       } catch (e) {
         log.warn('ticket', `ticket ${ticket.id}: box decision row dropped — ${e && e.message ? e.message : e}`);
@@ -6905,7 +6904,6 @@ function createTicketMethods(deps, shared) {
       if (box) {
         out.decidedBy = box.decided ? 'box' : 'home';
         out.fallback = box.decided ? null : box.fallback;
-        if (!box.decided) Object.assign(out, { fallbackCode: box.fallbackCode, fallbackClass: box.fallbackClass });
         out.durationMs = boxed ? box.out.record.durationMs : Date.now() - ledgerStart;
         this._boxRow(team, ticket, box, boxed ? null : localHalf({ ...res, durationMs: out.durationMs }));
       }

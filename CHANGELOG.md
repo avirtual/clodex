@@ -15,7 +15,6 @@ blocks a release.
 
 - A dial-in test runner now opens a new connection for each claim and each answer instead of reusing an idle one, which under load could already have been closed by the lead. A failed request to a peer now logs whether it went out on a reused connection.
 - Suite comparison rows now record outcome agreement, count agreement and failing-test agreement separately. A team whose runner deliberately runs more tests than its home suite can now see that both runs passed instead of a permanent `agree: false`.
-- When a team's box run falls back to the home suite, the result now records a machine-readable cause (`fallbackCode`, `fallbackClass`) beside the reason text. Nothing reads it yet.
 
 ## 5.194.0 — 2026-11-23
 

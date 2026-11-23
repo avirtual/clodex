@@ -7123,18 +7123,18 @@ test('t2338: under gate:on a box pass and a box fail decide the result without a
 });
 
 const BOX_FALLBACKS = [
-  ['unreachable', 'runner unreachable', 'runner-unreachable', 'transient', 'unknown', 'runner unreachable: status 0'],
-  ['queue budget', 'queue budget', 'queue-budget', 'budget', 'timeout', 'the job did not start within the 300000ms queue budget (cancelled)'],
-  ['run budget', 'run budget', 'run-budget', 'budget', 'timeout', 'no result within the 2460000ms budget (cancelled)'],
-  ['runner killed', 'run budget', 'run-budget', 'budget', 'timeout', 'the suite did not finish within 1260000ms (killed)'],
-  ['refused', 'outcome unknown', 'outcome-unknown', 'unknown', 'unknown', 'runner refused the job: nope'],
-  ['cancelled', 'outcome unknown', 'outcome-unknown', 'unknown', 'unknown', 'cancelled on runner'],
-  ['no totals', 'no totals', 'no-totals', 'deterministic', 'no-summary', null],
-  ['tree mismatch', 'tree mismatch', 'tree-mismatch', 'deterministic', 'unknown', 'runner answered for tree cccccccc, not aaaaaaaa'],
-  ['definition mismatch', 'definition mismatch', 'definition-mismatch', 'deterministic', 'unknown', 'box mismatch: asked box 2d7c08e27395, runner ran image eeeeeeeeeeee'],
-  ['runner restart', 'runner restart', 'runner-restart', 'transient', 'unknown', 'runner restarted'],
-  ['build budget', 'box build', 'box-build-budget', 'budget', 'timeout', 'the box build did not finish within the 1500000ms build budget (cancelled)'],
-  ['build failed', 'box build', 'box-build-failed', 'deterministic', 'unknown', 'box build on runner: docker build exited 1: ERROR: boom'],
+  ['unreachable', 'runner unreachable', 'unknown', 'runner unreachable: status 0'],
+  ['queue budget', 'queue budget', 'timeout', 'the job did not start within the 300000ms queue budget (cancelled)'],
+  ['run budget', 'run budget', 'timeout', 'no result within the 2460000ms budget (cancelled)'],
+  ['runner killed', 'run budget', 'timeout', 'the suite did not finish within 1260000ms (killed)'],
+  ['refused', 'outcome unknown', 'unknown', 'runner refused the job: nope'],
+  ['cancelled', 'outcome unknown', 'unknown', 'cancelled on runner'],
+  ['no totals', 'no totals', 'no-summary', null],
+  ['tree mismatch', 'tree mismatch', 'unknown', 'runner answered for tree cccccccc, not aaaaaaaa'],
+  ['definition mismatch', 'definition mismatch', 'unknown', 'box mismatch: asked box 2d7c08e27395, runner ran image eeeeeeeeeeee'],
+  ['runner restart', 'runner restart', 'unknown', 'runner restarted'],
+  ['build budget', 'box build', 'timeout', 'the box build did not finish within the 1500000ms build budget (cancelled)'],
+  ['build failed', 'box build', 'unknown', 'box build on runner: docker build exited 1: ERROR: boom'],
 ];
 
 for (const [local, script] of [['green', SHADOW_LOCAL.green], ['red', SHADOW_LOCAL.red]]) {
@@ -7142,17 +7142,17 @@ for (const [local, script] of [['green', SHADOW_LOCAL.green], ['red', SHADOW_LOC
     const b = boxLoop(script);
     const off = await b.run({ ...GATE_ON, gate: 'off' }, null);
     assert.deepStrictEqual(b.events, ['spawn'], 'ENTER: gate:off spawned the home suite once');
-    for (const [mode, reason, code, cls, remoteOutcome, remoteReason] of BOX_FALLBACKS) {
+    for (const [mode, reason, remoteOutcome, remoteReason] of BOX_FALLBACKS) {
       const r = boxRemote(mode, b.events);
       const out = await b.run(GATE_ON, r.client);
-      assert.deepStrictEqual(out, { ...off, decidedBy: 'home', fallback: reason, fallbackCode: code, fallbackClass: cls, durationMs: 'number' }, mode);
+      assert.deepStrictEqual(out, { ...off, decidedBy: 'home', fallback: reason, durationMs: 'number' }, mode);
       assert.strictEqual(b.events.filter((e) => e === 'spawn').length, 1, `${mode}: one home spawn`);
       assert.strictEqual(b.events[b.events.length - 1], 'spawn', `${mode}: the home spawn came last`);
       assert.strictEqual(b.events[b.events.length - 2], 'cancel', `${mode}: the box job was cancelled right before the home spawn: ${b.events}`);
       const got = r.rows();
       assert.strictEqual(got.length, 1, mode);
-      assert.deepStrictEqual([got[0].decidedBy, got[0].fallback, got[0].fallbackCode, got[0].local.outcome, got[0].remote.outcome, got[0].remote.reason],
-        ['home', reason, code, local === 'green' ? 'pass' : 'fail', remoteOutcome, remoteReason], mode);
+      assert.deepStrictEqual([got[0].decidedBy, got[0].fallback, got[0].local.outcome, got[0].remote.outcome, got[0].remote.reason],
+        ['home', reason, local === 'green' ? 'pass' : 'fail', remoteOutcome, remoteReason], mode);
     }
   });
 }
@@ -7212,7 +7212,7 @@ test('t2366: a guard that fires while the job is still in build falls back as bo
     },
   };
   const out = await b.run(GATE_ON, client);
-  assert.deepStrictEqual(out, { ...off, decidedBy: 'home', fallback: 'box build', fallbackCode: 'box-build-budget', fallbackClass: 'budget', durationMs: 'number' });
+  assert.deepStrictEqual(out, { ...off, decidedBy: 'home', fallback: 'box build', durationMs: 'number' });
   assert.deepStrictEqual(b.events, ['cancel', 'spawn']);
   assert.deepStrictEqual(r.rows().map((x) => [x.decidedBy, x.fallback, x.remote.reason]), [['home', 'box build', 'the box build did not finish within 4380000ms']]);
 });
@@ -7223,7 +7223,7 @@ test('t2338: a cancel that rejects still lets the home run proceed', async () =>
   const r = boxRemote('queue budget', b.events);
   const client = { ...r.client, cancel: async () => { b.events.push('rejected cancel'); throw new Error('socket hang up'); } };
   const out = await b.run(GATE_ON, client);
-  assert.deepStrictEqual(out, { ...off, decidedBy: 'home', fallback: 'queue budget', fallbackCode: 'queue-budget', fallbackClass: 'budget', durationMs: 'number' });
+  assert.deepStrictEqual(out, { ...off, decidedBy: 'home', fallback: 'queue budget', durationMs: 'number' });
   assert.deepStrictEqual(b.events.slice(-2), ['rejected cancel', 'spawn']);
 });
 
@@ -7240,7 +7240,7 @@ for (const [local, script, late, lateGreen] of [['red', SHADOW_LOCAL.red, 'green
       cancel: async (peer, id) => { b.events.push(`cancel ${peer} ${id}`); return { ok: true }; },
     };
     const out = await b.run(GATE_ON, client);
-    assert.deepStrictEqual(out, { ...off, decidedBy: 'home', fallback: 'run budget', fallbackCode: 'run-budget', fallbackClass: 'budget', durationMs: 'number' });
+    assert.deepStrictEqual(out, { ...off, decidedBy: 'home', fallback: 'run budget', durationMs: 'number' });
     assert.deepStrictEqual(b.events, ['cancel p1 job-late', 'spawn']);
     settle();
     for (let i = 0; i < 200 && !jobs.length; i += 1) await new Promise((res) => setImmediate(res));
