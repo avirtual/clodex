@@ -7465,12 +7465,12 @@ test('t2380: [agent:task verify] re-enters a box-held ticket once and passes on 
   delete h.p.b.f.m._boxDecide;
   h.verify('lead');
   h.verify('lead');
-  assert.strictEqual(h.loops.length, 1, 'a second intent in the same tick starts no second run');
+  assert.strictEqual(h.loops.length, 2, 'the seeded run and one re-verify: a second intent in the same tick starts no second run');
   assert.deepStrictEqual(h.replies, [
     'ticket t1 re-verifying (was held at "verify: box")',
     'error: ticket t1 is already verifying — only a ticket held at "verify: box" can be re-verified',
   ]);
-  await h.loops[0];
+  await h.loops[1];
   await new Promise((r) => setImmediate(r));
   const t = h.p.b.f.one();
   assert.strictEqual(t.verifyHold, undefined);

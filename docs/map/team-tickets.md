@@ -388,6 +388,11 @@
 | `_notifyLeadOfLoopRejection` | the lead's ridden summary of a delivered loop rejection, never the suite dump | lead pending store | _deliverRide | hold-recovery-single-source.test.js ticket-loop-verify.test.js lead-notice-ride.test.js |
 | `_taskRejectFollowUp` | a lead reject on a ticket already open for rework, sent as a follow-up into the running round | tickets.json lastActivityAt, rework reasons, reject event | _reworkSeatFor, _gatedDeliver, _seatReplacedClause | ticket-rework-reasons.test.js reviewer-round-end.test.js |
 | `_notifyHandOfHold` | best-effort urgent notice to the hand that its ticket is held at verify, with the hand recovery text | none | _ticketAssigneeSeat, holdRecoveryText, _gatedDeliver | hold-recovery-single-source.test.js ticket-loop-verify.test.js |
+| `_notifyBoxHold` | the lead's one notice per box hold, its last line chosen by the fallback class | none | boxHoldNext, _gatedDeliver | ticket-loop-verify.test.js |
+| `_releaseBoxHold` | clears a box hold on a ticket row in hand, resetting the verify provenance and the stall episode | the passed row | suiteProvenanceOf | ticket-loop-verify.test.js |
+| `_boxHeld` | true for a done ticket at verify held at `verify: box` | none | none | ticket-loop-verify.test.js |
+| `_reverifyBoxHeld` | releases and re-enters verify for every own ticket held at `verify: box`, returning the count | tickets.json verifyHold | _ownRowFilter, _boxHeld, _releaseBoxHold, _runTicketLoop | team-test-runner.test.js |
+| `_taskVerify` | lead verb that re-enters verify once for a ticket held at `verify: box`, refusing any other state | tickets.json verifyHold | _foreignRowRefusal, _boxHeld, _releaseBoxHold, _runTicketLoop | ticket-loop-verify.test.js |
 | `_stampVerifyHold` | re-load, set or clear the verify hold and its event, null being a no-op when absent | tickets.json verifyHold | recordEvent | hold-recovery-single-source.test.js ticket-loop-verify.test.js |
 | `_slowTestsOwned` | the slow test names that appear in files under the runner's TEST_ROOTS the branch changed since its merge base or recorded base | none | _slowTestsOwnedFrom, gitWorktree.mergeBase | ticket-loop-verify.test.js |
 | `_reapRunner` | kills an abandoned suite runner pid that is still alive, never this process | none | _killRunner | sigkill-pid-census.test.js |
