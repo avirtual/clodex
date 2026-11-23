@@ -1990,3 +1990,117 @@ test('a clodent slash command painted above the next prompt becomes one command-
     assert.deepStrictEqual(outputs, ['❯ /cost', '[clodent:cost] session total $0.0100 (1.0k in, 50 out, requests 1)']);
   } finally { m.view.dispose(); m.restore(); mock.timers.reset(); }
 });
+
+const CLODENT_STREAM = ['> explain a.js', '● Read /tmp/a.js', 'The file defines one', ''];
+const workingRow = (m) => m.pane.childNodes.find((n) => String(n.className).includes('tr-working'));
+const layoutOf = (m) => ({
+  mode: m.view.state().mode,
+  pane: !m.pane.hidden,
+  composer: !m.composerEl.hidden,
+  terminal: m.terminal.element.style.visibility === 'hidden' ? 'hidden' : m.wrapper.classList.contains('live-sheet') ? 'strip' : 'full',
+  working: workingRow(m) ? workingRow(m).childNodes[1].textContent : null,
+});
+
+async function clodentTurn(extra) {
+  const m = mountClodent(['> explain a.js', '', '', ''], 0, extra);
+  await settle();
+  m.tick(250);
+  m.write();
+  return m;
+}
+
+const SEAT_STATES = [
+  ['clodent busy mid-stream', 'clodent', 'thinking', CLODENT_STREAM, 2, { mode: 'split', pane: true, composer: true, terminal: 'hidden', working: 'Working' }],
+  ['clodent busy with an ask at the cursor', 'clodent', 'thinking', ['● Bash ls', '[clodent:permit Bash toolu_01] ls', 'Allow? [y/n] ', ''], 2, { mode: 'full', pane: false, composer: false, terminal: 'full', working: 'Working' }],
+  ['clodent not busy mid-stream (no hooks)', 'clodent', 'idle', CLODENT_STREAM, 2, { mode: 'full', pane: true, composer: false, terminal: 'strip', working: null }],
+  ['claude busy unanchored', 'claude', 'thinking', CLODENT_STREAM, 2, { mode: 'full', pane: true, composer: false, terminal: 'strip', working: 'Working' }],
+];
+
+for (const [name, platform, activity, rows, cursorY, want] of SEAT_STATES) {
+  test(`${name} lays out as ${want.terminal}`, async () => {
+    const m = await clodentTurn({ platform: () => platform });
+    try {
+      m.view.setTurnRunning(activity, 1000);
+      m.paint(rows, cursorY, false);
+      await settle();
+      m.tick(250);
+      m.write();
+      assert.deepStrictEqual(layoutOf(m), want);
+    } finally { m.view.dispose(); m.restore(); }
+  });
+}
+
+test('a clodent seat idle at its anchor goes straight to the pane alone when its turn starts, and back to split at the next prompt', async () => {
+  const m = mountClodent(CLODENT_IDLE, 1);
+  try {
+    await settle();
+    m.tick(250);
+    m.write();
+    assert.deepStrictEqual(layoutOf(m), { mode: 'split', pane: true, composer: true, terminal: 'hidden', working: null });
+    m.paint(['[clodent:cost] $0.0123 (1.2k in, 80 out)', '> explain a.js', '', ''], 2, false);
+    m.view.setTurnRunning('thinking', 1000);
+    assert.deepStrictEqual(layoutOf(m), { mode: 'split', pane: true, composer: true, terminal: 'hidden', working: 'Working' });
+    m.paint(['> explain a.js', 'The file defines one function.', '>', ''], 2, true);
+    m.view.setTurnRunning('idle', null);
+    assert.deepStrictEqual(layoutOf(m), { mode: 'split', pane: true, composer: true, terminal: 'hidden', working: null });
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('a clodent seat whose turn ends before its prompt is painted stops hiding the terminal', async () => {
+  const m = await clodentTurn();
+  try {
+    m.view.setTurnRunning('thinking', 1000);
+    m.paint(CLODENT_STREAM, 2, false);
+    m.tick(250);
+    m.write();
+    assert.strictEqual(layoutOf(m).terminal, 'hidden');
+    m.view.setTurnRunning('idle', null);
+    m.tick(50);
+    m.write();
+    assert.deepStrictEqual(layoutOf(m), { mode: 'full', pane: true, composer: false, terminal: 'strip', working: null });
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('the Screen toggle shows the raw terminal over a working clodent seat and hands back the pane', async () => {
+  const m = await clodentTurn();
+  try {
+    m.view.setTurnRunning('thinking', 1000);
+    m.paint(CLODENT_STREAM, 2, false);
+    m.tick(250);
+    m.write();
+    assert.strictEqual(layoutOf(m).terminal, 'hidden');
+    const screen = findByClass(m.pane.childNodes, 'transcript-terminal-btn');
+    screen.listeners.click();
+    assert.strictEqual(m.view.raw(), true);
+    assert.deepStrictEqual([m.view.state().mode, m.composerEl.hidden, m.terminal.element.style.visibility, m.wrapper.classList.contains('live-raw')], ['full', true, '', true]);
+    screen.listeners.click();
+    m.tick(250);
+    m.write();
+    await settle();
+    m.tick(250);
+    m.write();
+    assert.deepStrictEqual([m.view.raw(), layoutOf(m).terminal], [false, 'hidden']);
+  } finally { m.view.dispose(); m.restore(); }
+});
+
+test('a clodent draft wrapped onto a second row keeps split while the cursor is on the continuation row', async () => {
+  const m = mountClodent(['[clodent:session] 0000', '>', '', ''], 1);
+  try {
+    await settle();
+    m.tick(250);
+    m.write();
+    assert.strictEqual(m.view.state().mode, 'split');
+    const buf = m.terminal.buffer.active;
+    const getLine = buf.getLine;
+    buf.getLine = (i) => { const l = getLine(i); return l && i === 2 ? { ...l, isWrapped: true } : l; };
+    m.paint(['[clodent:session] 0000', '> fix the failing test in the live split', 'view please', ''], 2, false);
+    m.tick(250);
+    m.write();
+    assert.deepStrictEqual([m.view.state().mode, m.composerEl.hidden], ['split', false]);
+    buf.getLine = getLine;
+    m.write();
+    m.tick(50);
+    m.write();
+    assert.strictEqual(m.view.state().mode, 'full');
+  } finally { m.view.dispose(); m.restore(); }
+});

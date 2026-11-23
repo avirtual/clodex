@@ -1,6 +1,6 @@
 'use strict';
 
-const { SPLIT_SETTLE_MS, SPLIT_EXIT_MS, marksPrompt, measureSplit, sheetBand, initialSplitState, reduceSplit } = require('./lib/live-split');
+const { SPLIT_SETTLE_MS, SPLIT_EXIT_MS, marksPrompt, workingPane, measureSplit, sheetBand, initialSplitState, reduceSplit } = require('./lib/live-split');
 const { createTranscriptRows } = require('./transcript-rows');
 const { spinnerText } = require('./lib/working-row');
 const { readMenuRows } = require('./lib/menu-rows');
@@ -329,7 +329,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     }
     if (!measured || measured.mode !== 'split') return;
     const top = Math.min(state.top, measured.top);
-    if (isBusyScreen(rows, top)) {
+    if (measured.at < 0 || isBusyScreen(rows, top)) {
       delta.reset();
       dropPaint();
       return;
@@ -492,7 +492,8 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       const buf = terminal.buffer.active;
       if (available) {
         rows = screenRows();
-        measured = measureSplit(rows, buf.cursorY, terminal.cols, platform(), promptRow(buf));
+        const prompt = promptRow(buf);
+        measured = measureSplit(rows, buf.cursorY, terminal.cols, platform(), prompt, { wrapped: wrappedBelow(buf, prompt), working: turnRunning });
       }
     }
     const prev = state;
@@ -521,6 +522,13 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
 
   function promptRow(buf) {
     return promptMark && !promptMark.isDisposed ? promptMark.line - buf.baseY : -1;
+  }
+
+  function wrappedBelow(buf, prompt) {
+    let n = 0;
+    if (prompt < 0) return n;
+    for (let line = buf.getLine(buf.baseY + prompt + 1); line && line.isWrapped; line = buf.getLine(buf.baseY + prompt + n + 1)) n += 1;
+    return n;
   }
 
   const privateMode = (reset) => (params) => {
@@ -607,6 +615,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       working = turnRunning || activity === 'attention' ? { state: activity, since, text: turnRunning ? (working && working.text) || 'Working' : null } : null;
       transcriptRowsFor(document, paneEl, rowsCtx).setWorking(working);
       stickToBottom();
+      if (workingPane(platform())) evaluate();
     },
     setRaw: setRawView,
     raw: () => raw,

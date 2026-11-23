@@ -367,3 +367,25 @@ test('a clodent ask measured as Claude stays busy, and a Claude screen ignores a
   assert.deepStrictEqual(measureSplit(claude, 2, 40, 'claude', 0), measureSplit(claude, 2, 40, 'claude'));
   assert.deepStrictEqual(measureSplit(claude, 2, 40, 'claude'), { mode: 'split', top: 1, bottom: 3, at: 1 });
 });
+
+const WORKING = [
+  ['clodent busy mid-stream', 'clodent', true, ['> explain a.js', 'thinking…', '● Read /tmp/a.js', 'The file defines one', '', ''], 3, 0, 0, { mode: 'split', top: 6, bottom: 5, at: -1 }],
+  ['clodent busy with an ask', 'clodent', true, ['> run it', '● Bash ls', '[clodent:permit Bash toolu_01] ls', 'Allow? [y/n] ', '', ''], 3, 0, 0, { mode: 'full', top: -1, bottom: -1, busy: false }],
+  ['clodent idle with the anchor', 'clodent', false, ['[clodent:session] 0000', '>', '', '', '', ''], 1, 1, 0, { mode: 'split', top: 1, bottom: 2, at: 1 }],
+  ['clodent busy with the anchor', 'clodent', true, ['[clodent:session] 0000', '>', '', '', '', ''], 1, 1, 0, { mode: 'split', top: 1, bottom: 2, at: 1 }],
+  ['clodent idle without the anchor (startup)', 'clodent', false, ['clodent 0.10.0', '', '', '', '', ''], 1, -1, 0, { mode: 'full', top: -1, bottom: -1, busy: true }],
+  ['clodent not busy mid-stream (no hooks)', 'clodent', false, ['> explain a.js', 'thinking…', '● Read /tmp/a.js', 'The file defines one', '', ''], 3, 0, 0, { mode: 'full', top: -1, bottom: -1, busy: true }],
+  ['claude busy unanchored', 'claude', true, ['⏺ Working', '  Select model', '', '❯ 1. Opus'], 3, -1, 0, { mode: 'full', top: -1, bottom: -1, busy: true }],
+  ['codex busy unanchored', 'codex', true, ['• Working (3s • esc to interrupt)', '', '', ''], 0, -1, 0, { mode: 'full', top: -1, bottom: -1, busy: true }],
+  ['muse busy unanchored', 'muse', true, ['✻ Thinking… (3s · esc to interrupt)', '', '', ''], 0, -1, 0, { mode: 'full', top: -1, bottom: -1, busy: true }],
+  ['clodent draft wrapped onto a second row, cursor on it', 'clodent', false, ['[clodent:session] 0000', '> fix the failing test in the live split', 'view please', '', '', ''], 2, 1, 1, { mode: 'split', top: 1, bottom: 2, at: 1 }],
+  ['clodent draft wrapped, cursor on the marker row', 'clodent', false, ['[clodent:session] 0000', '> fix the failing test in the live split', 'view please', '', '', ''], 1, 1, 1, { mode: 'split', top: 1, bottom: 2, at: 1 }],
+  ['clodent wrapped draft with an unwrapped row beneath', 'clodent', false, ['[clodent:session] 0000', '> fix the failing test in the live split', 'view please', 'hello', '', ''], 2, 1, 1, { mode: 'full', top: -1, bottom: -1, busy: true }],
+  ['clodent cursor below the wrapped rows', 'clodent', false, ['[clodent:session] 0000', '> fix the failing test in the live split', 'view please', '', '', ''], 3, 1, 1, { mode: 'full', top: -1, bottom: -1, busy: true }],
+];
+
+for (const [name, platform, working, rows, cursorY, promptRow, wrapped, want] of WORKING) {
+  test(`${name}: ${want.mode}`, () => {
+    assert.deepStrictEqual(measureSplit(rows, cursorY, 40, platform, promptRow, { wrapped, working }), want);
+  });
+}
