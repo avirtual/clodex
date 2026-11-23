@@ -6554,6 +6554,7 @@ function createTicketMethods(deps, shared) {
         }
         let firstRed = null;
         let remeasureError = null;
+        let boxStands = null;
         let slowOwned = [];
         if (suite.ran && !suite.slowOnly && !suite.green && !suite.bypass) {
           log.info('ticket', `ticket ${ticketId}: verify suite red (${suite.summary}) — re-measuring once`);
@@ -6562,7 +6563,14 @@ function createTicketMethods(deps, shared) {
           const again = await this._runTicketSuite(team, ticket, null, runOpts);
           still = this._loadTicket(team, ticketId);
           if (!current(still)) { this._reapRunner(ticketId, again.runnerPid); return; }
-          if (again.ran) {
+          if (suite.decidedBy === 'box' && again.decidedBy !== 'box' && !again.bypass) {
+            this._reapRunner(ticketId, again.runnerPid);
+            if (!again.ran) remeasureError = again.error;
+            const reason = (FALLBACK_CODES[again.fallbackCode] || {}).reason || again.fallback || 'no box result';
+            boxStands = `re-measure did not decide on the box (${reason}); the first box result stands`
+              + (again.ran && again.green ? ' — home run was green and was not used' : '');
+            this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: `ticket ${ticketId} verify: ${boxStands}` });
+          } else if (again.ran) {
             firstRed = suite;
             suite = again;
             if (again.green || again.slowOnly) this._stampSuiteRemeasured(team, ticketId, firstRed);
@@ -6611,6 +6619,7 @@ function createTicketMethods(deps, shared) {
           const remeasureLine = remeasureError
             ? `\n\nA re-measure was attempted and could not run: ${defuseSenderLines(remeasureError)}`
             : '';
+          const standsLine = boxStands ? `\n\nThe ${boxStands}.` : '';
           const rejected = slowOwned.length
             ? this._rejectTicketFromLoop(team, ticketId,
               `the suite's slow gate tripped on your branch — ${defuseSenderLines(suite.summary)}, 0 failing\n\n`
@@ -6621,7 +6630,7 @@ function createTicketMethods(deps, shared) {
               + 'No reviewer was spawned: the suite is the gate.')
             : this._rejectTicketFromLoop(team, ticketId,
               `the test suite FAILS on your branch — ${defuseSenderLines(suite.summary)}\n\n`
-              + `${failingLines}${remeasureLine}\n\n`
+              + `${failingLines}${remeasureLine}${standsLine}\n\n`
               + `${evidence}\n\n`
               + 'Fix these and close the ticket again. No reviewer was spawned: a review of a '
               + 'red branch is wasted, and the suite is the gate.');
