@@ -298,6 +298,8 @@ const boxHoldNext = (cls, id, reason) => (BOX_HOLD_NEXT[cls]
   ? BOX_HOLD_NEXT[cls](id)
   : `This will not clear by itself: fix the cause (${reason}), then [agent:task verify ${id}].`);
 const BOX_HOLD_STEP = 'verify: box';
+const BOX_RETRY_DELAY_MIN = Object.freeze([1, 2, 4, 8, 15, 15]);
+const BOX_RETRY_MAX = BOX_RETRY_DELAY_MIN.length;
 const holdRecoveryText = (cls, id) => (HOLD_RECOVERY[cls] || HOLD_RECOVERY.hand)(id);
 // Not shared with `_notifyHandOfHold` (second person, and the person is the message) or `_notifyMergeLanded`,
 // whose closing accept intent is inert only because prose precedes it on its line; ticket-auto-merge.test.js pins it.
@@ -6291,7 +6293,7 @@ function createTicketMethods(deps, shared) {
         delete ticket.verifyPhase;
         // verifyHold is cleared here, in the same write that re-stamps the step: TICKET_SUITE_TIMEOUT_MS (20m lock wait + 21m = 41m) outlasts TICKET_STALL_MS (30m),
         // so a stale hold beside loopStep 'verify' fires the wrong alarm and lets a second reviewer spawn in ordinary operation.
-        delete ticket.verifyHold; delete ticket.boxHoldReason;
+        delete ticket.verifyHold; delete ticket.boxHoldReason; delete ticket.boxRetry;
         // Opening an in-flight phase is a new stall episode, so it spends a fresh nudge here: after `done` nothing else clears nudgedAt
         // (`_touchTicketActivity` skips any ticket that is not `open`).
         ticket.nudgedAt = null;
@@ -6378,6 +6380,7 @@ function createTicketMethods(deps, shared) {
       this._verifyLooped.add(`${team.root}\0${ticketId}`);
       let held = false;
       let superseded = false;
+      let retryKept = false;
       let ownPid = null;
       const fail = (step, evidence, tried, recovery) => {
         held = true;
@@ -6536,7 +6539,10 @@ function createTicketMethods(deps, shared) {
             step: BOX_HOLD_STEP, at: Date.now(), evidence: `${suite.fallback}: ${suite.fallbackWhy || 'no reason given'}`,
             recovery: 'box', code: suite.fallbackCode || null, class: suite.fallbackClass || null,
           });
-          this._notifyBoxHold(team, ticketId, suite);
+          retryKept = true;
+          const retry = this._boxRetryAfterHold(team, ticketId, suite);
+          if (retry === 'exhausted') this._notifyBoxRetryExhausted(team, ticketId, suite);
+          else if (retry !== 'quiet') this._notifyBoxHold(team, ticketId, suite);
           return;
         }
         let firstRed = null;
@@ -6632,6 +6638,7 @@ function createTicketMethods(deps, shared) {
           atStep === 'review' ? 'verify passed and the diff was written; the throw came at or after the review spawn' : 'no reviewer spawned', 'infra');
       } finally {
         if (!held && !superseded) this._stampVerifyHold(team, ticketId, null);
+        if (!retryKept && !superseded) this._stampBoxRetry(team, ticketId, null);
         if (ownPid) this._stampRunnerPid(team, ticketId, null, ownPid);
       }
     },
@@ -7320,6 +7327,7 @@ function createTicketMethods(deps, shared) {
     _releaseBoxHold(ticket, by, cause) {
       recordEvent(ticket, { kind: 'verify-release', by, cause });
       delete ticket.verifyHold; delete ticket.boxHoldReason;
+      if (cause !== 'auto-retry') delete ticket.boxRetry;
       delete ticket.verifyPhase;
       ticket.suiteProvenance = { ...suiteProvenanceOf(ticket), verify: null };
       ticket.lastActivityAt = Date.now();
@@ -7372,6 +7380,109 @@ function createTicketMethods(deps, shared) {
       log.info('intent', `task verify ${ticket.id} by ${session.name}`);
       ack(`ticket ${ticket.id} re-verifying (was held at "${BOX_HOLD_STEP}")`);
       this._runTicketLoop(team, ticket.id);
+    },
+
+    _boxRetryNow() { return Date.now(); },
+
+    _boxRetryRandom() { return Math.random(); },
+
+    _boxRetryDelayMs(attempt) {
+      const min = BOX_RETRY_DELAY_MIN[Math.min(Math.max(attempt, 1), BOX_RETRY_MAX) - 1];
+      const r = Number(this._boxRetryRandom());
+      const jitter = 0.8 + 0.4 * (Number.isFinite(r) ? Math.min(1, Math.max(0, r)) : 0.5);
+      return Math.round(min * 60000 * jitter);
+    },
+
+    _stampBoxRetry(team, ticketId, next) {
+      try {
+        const tickets = ticketsStore.load(team.root);
+        const rec = tickets.find((t) => t.id === ticketId);
+        if (!rec) return;
+        if (!next) { if (!('boxRetry' in rec)) return; delete rec.boxRetry; } else rec.boxRetry = next;
+        ticketsStore.save(team.root, tickets);
+      } catch (e) {
+        log.error('ticket', `box retry stamp for ${ticketId} failed: ${e.message}`);
+      }
+    },
+
+    _boxRetryAfterHold(team, ticketId, suite) {
+      const now = this._boxRetryNow();
+      let outcome = 'notice';
+      try {
+        const tickets = ticketsStore.load(team.root);
+        const rec = tickets.find((t) => t.id === ticketId);
+        if (!rec) return outcome;
+        const prior = rec.boxRetry && rec.boxRetry.inFlight ? rec.boxRetry : null;
+        const attempts = prior ? prior.attempts + 1 : 0;
+        const transient = suite.fallbackClass === 'transient';
+        if (transient && attempts < BOX_RETRY_MAX) {
+          rec.boxRetry = { attempts, nextAt: now + this._boxRetryDelayMs(attempts + 1), lastEndedAt: now, inFlight: false };
+          if (prior) outcome = 'quiet';
+        } else {
+          delete rec.boxRetry;
+          if (prior && transient) outcome = 'exhausted';
+        }
+        ticketsStore.save(team.root, tickets);
+      } catch (e) {
+        log.error('ticket', `box retry stamp for ${ticketId} failed: ${e.message}`);
+      }
+      return outcome;
+    },
+
+    _notifyBoxRetryExhausted(team, ticketId, suite) {
+      try {
+        const tag = `[ticket ${ticketId} HELD]`;
+        const body = `${tag} ${BOX_RETRY_MAX} automatic box retries did not decide (${suite.fallback}). Try again with [agent:task verify ${ticketId}].`;
+        this._gatedDeliver(team.lead, 'ticket-loop', body, true, tag);
+        this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: `ticket ${ticketId} held: ${BOX_RETRY_MAX} automatic box retries did not decide (${suite.fallback})` });
+      } catch (e) {
+        log.error('ticket', `box retry notice for ${ticketId} did not reach the lead: ${e.message}`);
+      }
+    },
+
+    _boxRetryPick(tickets, own, now) {
+      let best = null;
+      for (const t of tickets) {
+        if (!own(t) || !t.boxRetry) continue;
+        if (t.boxRetry.inFlight && t.state === 'done' && t.loopStep === 'verify') return null;
+        if (!this._boxHeld(t) || t.boxRetry.inFlight || now < t.boxRetry.nextAt) continue;
+        if (!best || t.boxRetry.lastEndedAt < best.boxRetry.lastEndedAt) best = t;
+      }
+      return best;
+    },
+
+    async _boxRetrySweep(team, now = this._boxRetryNow()) {
+      if (!team || team.solo) return null;
+      const tr = team.testRunner;
+      if (!tr || !tr.peer || tr.gate !== 'on' || tr.fallback !== 'hold') return null;
+      const own = this._ownRowFilter(team);
+      let tickets;
+      try { tickets = ticketsStore.load(team.root); } catch { return null; }
+      if (!this._boxRetryPick(tickets, own, now)) return null;
+      if (!this._boxRetryProbing) this._boxRetryProbing = new Set();
+      const key = `${team.root}\0${team.name}`;
+      if (this._boxRetryProbing.has(key)) return null;
+      this._boxRetryProbing.add(key);
+      let runner = null;
+      try {
+        const def = this._shadowBox(team);
+        if (def !== true) runner = await this._pickGateRunner(tr, def);
+      } catch (e) {
+        log.warn('ticket', `box retry readiness for ${team.name} failed: ${e && e.message ? e.message : e}`);
+      } finally {
+        this._boxRetryProbing.delete(key);
+      }
+      if (!runner) return null;
+      try { tickets = ticketsStore.load(team.root); } catch { return null; }
+      const t = this._boxRetryPick(tickets, own, now);
+      if (!t) return null;
+      const n = t.boxRetry.attempts + 1;
+      this._releaseBoxHold(t, 'ticket-loop', 'auto-retry');
+      t.boxRetry = { ...t.boxRetry, inFlight: true };
+      ticketsStore.save(team.root, tickets);
+      log.info('ticket', `auto box retry ${n}/${BOX_RETRY_MAX} for ${t.id} on runner ${runner.peer}`);
+      this._runTicketLoop(team, t.id);
+      return t.id;
     },
 
     _stampVerifyHold(team, ticketId, hold) {
@@ -8153,7 +8264,7 @@ function createTicketMethods(deps, shared) {
       // Reopening ends the loop's hold as accept does: a stale step would let a late verdict land on a ticket the lead sent back.
       delete ticket.loopStep;
       // A reopened ticket owes no check to the verify stamp; a surviving stamp alarms about an escalation on a ticket being worked.
-      delete ticket.verifyHold; delete ticket.boxHoldReason;
+      delete ticket.verifyHold; delete ticket.boxHoldReason; delete ticket.boxRetry;
       delete ticket.mergedNudgedAt;
       delete ticket.escalationUndelivered;
       delete ticket.mergeError;
@@ -8261,7 +8372,7 @@ function createTicketMethods(deps, shared) {
       const foreign = this._foreignRowRefusal(team, ticket);
       if (foreign) { reply(`${foreign}${this._spillRejectedPayload(session, 'task cancel', reason)}`); return; }
       if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open — cannot cancel${this._spillRejectedPayload(session, 'task cancel', reason)}`); return; }
-      ticket.state = 'cancelled';
+      ticket.state = 'cancelled'; delete ticket.boxRetry;
       ticket.closedAt = Date.now();
       ticket.closedBy = session.name;
       ticket.lastActivityAt = ticket.closedAt;
@@ -8440,7 +8551,7 @@ function createTicketMethods(deps, shared) {
       // done+loopStep arm and stamps a rework on merged, deleted work.
       delete ticket.loopStep;
       // The verify hold goes too: accepting overrules the check, and a surviving stamp keeps alarming on accepted work.
-      delete ticket.verifyHold; delete ticket.boxHoldReason;
+      delete ticket.verifyHold; delete ticket.boxHoldReason; delete ticket.boxRetry;
       // Clear mergeError only when closedOut and only if it still equals actedStamp: the gate is closedOut, not "invites another accept",
       // and a stamp that landed mid-accept is still true and must survive.
       if (closedOut && ticket.mergeError && String(ticket.mergeError) === actedStamp) delete ticket.mergeError;
@@ -8459,7 +8570,7 @@ function createTicketMethods(deps, shared) {
         if (note) row.acceptNote = note;
         row.lastActivityAt = ticket.lastActivityAt;
         delete row.loopStep;
-        delete row.verifyHold; delete row.boxHoldReason;
+        delete row.verifyHold; delete row.boxHoldReason; delete row.boxRetry;
         if (closedOut && row.mergeError && String(row.mergeError) === actedStamp) delete row.mergeError;
         // Clear on both copies: `fresh` saves on this path, the `ticket` snapshot on the else branch.
         if (closedOut) delete row.mergeWaiting;
@@ -8939,7 +9050,7 @@ function createTicketMethods(deps, shared) {
       // The stored step renders verbatim, on both row shapes.
       const mergeErrorMark = (t) => (t.mergeError ? ` !! MERGE FAILED: ${t.mergeError}` : '');
       const capMark = (t) => (t.parked && t.parkedBy === 'cap' ? ` (parked: cap ${t.parkedCap || '?'})` : '');
-      const boxHoldMark = (t) => (t.boxHoldReason ? ` held: box — ${t.boxHoldReason}` : '');
+      const boxHoldMark = (t) => (t.boxHoldReason ? ` held: box — ${t.boxHoldReason}${t.boxRetry ? ` (auto retry ${t.boxRetry.attempts + 1}/${BOX_RETRY_MAX})` : ''}` : '');
       const row = (t) =>
         `${t.id} [${t.state}${t.parked ? ' parked' : ''}]${reportMark(t)}${boxHoldMark(t)} ${shownFor(t)} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}${capMark(t)}${respecMark(t)}${mergeWaitingMark(t)}${mergeErrorMark(t)}`;
       const reportMark = (t) => (t.done === 'report' ? ' [report]' : '');
@@ -9054,6 +9165,7 @@ function createTicketMethods(deps, shared) {
           reconciledTeams.add(team.file);
           this._reconcileTickets(team);
           this._resumeOrphanedVerify(team);
+          sweeps.push(this._boxRetrySweep(team, now).catch((e) => log.error('ticket', `box retry sweep failed: ${e.message}`)));
           this._startCapParked(team, this.sessions.get(team.lead));
           try { this._flushDueRides(this.sessions.get(team.lead), now); } catch (e) { log.error('ticket', `ride backstop for ${team.lead} failed: ${e.message}`); }
         }
