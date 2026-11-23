@@ -539,7 +539,8 @@ test('t2363: the share editor adds and removes rows, Apply sends the list, and t
 
 function fakeRunner(opts) {
   const r = {
-    opts, active: 0, closed: false, onDrained: null, drains: [],
+    opts, active: 0, closed: false, onDrained: null, drains: [], fences: [],
+    fence(on) { r.fences.push(on); },
     start() {}, close() { r.closed = true; },
     busy: () => r.active > 0, activeCount: () => r.active,
     drain(done) {
@@ -631,4 +632,20 @@ test('an idle save reloads at once and is not pending', (t) => {
   assert.deepStrictEqual([res.ok, 'pending' in res, res.state.pending], [true, false, false]);
   assert.strictEqual(f.reloads(), 1);
   assert.strictEqual(f.wiring.getSuiteEngine().opts.slots, 2);
+});
+
+test('t2400: the restart fence reaches the live runner and a runner rebuilt while fenced; the restart hold follows busy()', (t) => {
+  const f = liveFixture(t, THREE);
+  assert.deepStrictEqual(f.wiring.suiteRestartJobs(), []);
+  f.runners[0].active = 1;
+  assert.deepStrictEqual(f.wiring.suiteRestartJobs(), [{ id: null, team: null }], 'busy with no snapshot yet still holds');
+  f.runners[0].active = 0;
+  f.wiring.fenceSuiteRunner(true);
+  assert.deepStrictEqual(f.runners[0].fences, [true]);
+  f.set({}, TWO);
+  assert.strictEqual(f.reloads(), 1, 'ENTER: the setting save rebuilt the runner');
+  assert.strictEqual(f.wiring.getSuiteEngine(), f.runners[1]);
+  assert.deepStrictEqual(f.runners[1].fences, [true], 'a runner started while the restart is armed starts fenced');
+  f.wiring.fenceSuiteRunner(false);
+  assert.deepStrictEqual(f.runners[1].fences, [true, false]);
 });

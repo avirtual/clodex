@@ -1536,7 +1536,7 @@ test('t170 an ENABLED intent spills nothing (the gate is the only entry point)',
 // (['reboot'] = granted; undefined/absent = the default, which excludes privileged).
 // The handler's own gate is the rate limit (lastRebootAt in a mutable uiSettings
 // fake); the relaunchApp seam is captured, never fired for real.
-function mkReboot({ intents = ['reboot'], lastRebootAt = 0, relaunchThrows = false, setThrows = false } = {}) {
+function mkReboot({ intents = ['reboot'], lastRebootAt = 0, relaunchThrows = false, setThrows = false, suiteRestartJobs } = {}) {
   const state = { lastRebootAt };
   const relaunches = [];
   const injected = [];
@@ -1553,6 +1553,7 @@ function mkReboot({ intents = ['reboot'], lastRebootAt = 0, relaunchThrows = fal
     // The seam now takes the requester's callbacks, so the fake keeps the OPTIONS
     // rather than a timestamp — the give-up path is only reachable through them.
     relaunchApp: (opts) => { if (relaunchThrows) throw new Error('relaunch boom'); relaunches.push(opts || {}); },
+    ...(suiteRestartJobs ? { suiteRestartJobs } : {}),
     log: { info: () => {}, error: () => {}, warn: () => {} },
   });
   m._injectText = (_s, text) => injected.push(text);
@@ -1570,6 +1571,17 @@ test('reboot: a seat granted the reboot intent → seam fires once, confirm inje
   assert.ok(state.lastRebootAt > 0, 'lastRebootAt stamped');
   const b = broadcasts.find((x) => x.type === 'reboot');
   assert.ok(b && /rebooting: overnight restart-window test/.test(b.body), 'ipc log carries reason');
+});
+
+test('t2400: reboot: the queued reply names the suite-runner jobs the restart waits on', async () => {
+  for (const [jobs, text] of [
+    [[{ id: 'j1', team: 'alpha' }], '[agent:reboot] reboot queued — restarting once every session and the keyboard are idle and 1 suite job this machine is running for other teams finishes; sessions resume on relaunch'],
+    [[{ id: 'j1', team: 'alpha' }, { id: 'j2', team: 'beta' }], '[agent:reboot] reboot queued — restarting once every session and the keyboard are idle and 2 suite jobs this machine is running for other teams finish; sessions resume on relaunch'],
+  ]) {
+    const { m, injected } = mkReboot({ suiteRestartJobs: () => jobs });
+    await m._handleIntent('a', { type: 'reboot', body: '' });
+    assert.strictEqual(injected[0], text);
+  }
 });
 
 // t282: the restart is DEFERRED by the host until every seat is idle, so it can

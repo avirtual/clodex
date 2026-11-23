@@ -13,6 +13,7 @@ const { boxFingerprint } = require('./team-box');
 const fs = resolveFs();
 
 const LIVE = new Set(['awaiting-pack', 'queued', 'build', 'setup', 'running']);
+const RESTARTING = 'runner is restarting';
 const KIND_ORDER = { 'post-merge': 0, verify: 1, hand: 2 };
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 const SHA_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
@@ -483,6 +484,7 @@ function createSuiteRunner({
   const depsBuilds = new Map();
   let maintenance = null;
   let onDrained = null;
+  let fenced = false;
   let interval = null;
   let closed = false;
   let activityTimer = null;
@@ -1252,7 +1254,7 @@ function createSuiteRunner({
       shares: held.map(({ name, version }) => ({ name, version })),
       limits: { packMaxBytes: lim.packMaxBytes, chunkMax: lim.chunkMax, queueMax: lim.queueMax },
       queue: { running: active.size ? active.keys().next().value : null, queued: queue().map((j) => j.id) },
-      slots: { total: slotTotal, inUse: onDrained ? slotTotal : active.size },
+      slots: { total: slotTotal, inUse: onDrained || fenced ? slotTotal : active.size },
     };
   }
 
@@ -1291,6 +1293,7 @@ function createSuiteRunner({
       existing.lastSeen = now();
       return { ok: true, id: existing.id, state: existing.state, position: positionOf(existing), have: existing.have || [] };
     }
+    if (fenced) return fail(409, RESTARTING, { code: 'runner-restarting' });
     const boxed = body.isolation === 'container';
     let stamp;
     let build = null;
@@ -1319,6 +1322,7 @@ function createSuiteRunner({
     }
     const waiting = [...jobs.values()].filter((j) => j.state === 'awaiting-pack' || j.state === 'queued' || j.state === 'build').length;
     if (waiting >= lim.queueMax) return fail(429, 'queue full');
+    if (fenced) return fail(409, RESTARTING, { code: 'runner-restarting' });
     const job = jobFrom(body, origin, stamp, build);
     jobs.set(job.id, job);
     fs.mkdirSync(jobStore(job.id), { recursive: true });
@@ -1530,6 +1534,12 @@ function createSuiteRunner({
     return active.size;
   }
 
+  function fence(on) {
+    fenced = !!on;
+    changed();
+    return fenced;
+  }
+
   function close() {
     closed = true;
     if (interval) timers.clearInterval(interval);
@@ -1541,7 +1551,7 @@ function createSuiteRunner({
 
   recover().then(reconcile).catch((e) => log(`suite-runner: reconcile failed: ${e.message}`)).then(() => { recovering = false; if (pumpAfterRecovery) pump(); });
 
-  return { info, activity, submit, putPack, commit, poll, output, readOutput, cancel, tick, start, close, drain, busy: anyLive, activeCount: () => active.size };
+  return { info, activity, submit, putPack, commit, poll, output, readOutput, cancel, tick, start, close, drain, fence, busy: anyLive, activeCount: () => active.size };
 }
 
 module.exports = {

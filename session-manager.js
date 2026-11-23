@@ -121,6 +121,7 @@ const { readEffectiveClaudeEnv, teeBlindBackend } = require('./claude-env');
 const { readerFor } = require('./transcript-readers');
 const { specFor: toolSpecFor } = require('./tool-doctor');
 const { scanIntentLines } = require('./intent-segments');
+const { suiteWaitClause } = require('./restart-waiter');
 const { deepMerge, bootstrapSeatConfig, museDataHome, findMuseTranscript, oldestMuseTranscript, findCodexRollout, museRegistryFor, linkTranscript } = require('./seat-config');
 const { activationSettings } = require('./muse-skills');
 const { seatImageFileName, seatImageHead } = require('./seat-images');
@@ -860,6 +861,7 @@ function createSessionManager(deps) {
     getWorkspaces, readCtxFor,
     getPluginHooks,
     getUserDataPath, openPath, notifyOS, setAppQuitting, relaunchApp, relaunchUnavailable,
+    suiteRestartJobs,
     restartSession,
   } = deps;
   const spawnStreamSeat = deps.spawnStreamSeat || streamSeatLib.spawnStreamSeat;
@@ -7493,7 +7495,9 @@ function createSessionManager(deps) {
       catch (e) { log.error('intent', `reboot: settings write failed (proceeding): ${e.message}`); }
       this._broadcast('ipc-message', { type: 'reboot', from: who, to: 'clodex', body: `rebooting${reason ? `: ${reason}` : ''}` });
       log.info('intent', `reboot by ${who}${reason ? `: ${reason}` : ''}`);
-      reply('reboot queued — restarting once every session and the keyboard are idle; sessions resume on relaunch');
+      let suiteJobs = 0;
+      try { suiteJobs = suiteRestartJobs ? (suiteRestartJobs() || []).length : 0; } catch {}
+      reply(`reboot queued — restarting once every session and the keyboard are idle${suiteWaitClause(suiteJobs)}; sessions resume on relaunch`);
       let relaunched = false;
       try {
         // Capture born and now here, not in the callback: the wait runs up to 30 minutes, and both ends of

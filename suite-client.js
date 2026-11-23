@@ -26,6 +26,7 @@ const RETRY_TEXT = {
 
 const REPICKABLE = /^(?:runner unreachable|runner refused the (?:job|token)|runner has no box|no peer )/;
 const RESTARTED = Symbol('runner-restart');
+const RESTARTING_REFUSAL = 'runner refused the job: runner is restarting';
 
 function restarted(r) {
   return !!(r && r.body && r.body.reason === 'runner-restart');
@@ -237,6 +238,7 @@ function createSuiteClient({
     const sub = await ask(ctx, (c) => c.suiteAsk('POST', '/api/suite/jobs', body), progress, ctx.failFast ? 1 : Infinity);
     if (sub.unreachable) return { unknown: 'runner unreachable' };
     if (restarted(sub)) return { retry: 'runner-restart' };
+    if (sub.body && sub.body.code === 'runner-restarting') return { unknown: RESTARTING_REFUSAL };
     if (!sub.body || !sub.body.ok) return { unknown: `runner refused the job: ${(sub.body && sub.body.error) || sub.error || `status ${sub.status}`}` };
     ctx.submitted = true;
     ctx.failFast = false;
@@ -687,6 +689,7 @@ const FALLBACK_OF = [
   [/did not start within the \d+ms queue budget/, 'queue-budget'],
   [/^no result within the \d+ms (?:run )?budget|^the suite did not finish within/, 'run-budget'],
   [/^runner restarted$/, 'runner-restart'],
+  [/^runner refused the job: runner is restarting$/, 'runner-restart'],
   [/^runner answered for tree |^tree mismatch on runner/, 'tree-mismatch'],
   [/^box mismatch: |^runner has no box: /, 'definition-mismatch'],
   [/^runner has no share /, 'no-share'],

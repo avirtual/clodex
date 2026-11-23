@@ -177,7 +177,8 @@ function restartClodex() {
   setTimeout(() => { app.relaunch(); app.quit(); }, 500);
 }
 
-const { classifyRestart, createIdleWaiter, giveUpBody } = require('./restart-waiter');
+const { classifyRestart, createIdleWaiter, giveUpBody, restartDetail, pendingDetail } = require('./restart-waiter');
+const suiteRestartJobs = () => (engine ? engine.suiteRestartJobs() : []);
 const idleWaiter = createIdleWaiter({
   getSessions: () => Array.from(manager.sessions.values()),
   now: () => Date.now(),
@@ -186,15 +187,17 @@ const idleWaiter = createIdleWaiter({
   restart: () => restartClodex(),
   lastInputAt: () => manager.lastOperatorInputAt(),
   inFlightRuns: () => manager.inFlightRestartHolds(),
+  suiteJobs: suiteRestartJobs,
+  fence: (on) => { if (engine) engine.fenceSuiteRunner(on); },
   log,
-  notify: (asked) => {
+  notify: (asked, why) => {
     try {
       if (Notification.isSupported()) new Notification({
         // "canceled" would be false on every render: this is the ONLY notify call
         // site and it is the cap's give-up. An operator cancel does not notify at
         // all — they pressed the button.
         title: 'Restart dropped',
-        body: giveUpBody(asked),
+        body: giveUpBody(asked, why),
       }).show();
     } catch {}
   },
@@ -209,7 +212,7 @@ async function confirmRestartClodex() {
       defaultId: 2,
       cancelId: 2,
       message: 'A restart is already pending.',
-      detail: 'Clodex will restart once every session and the keyboard are idle. Restart now anyway, cancel the pending restart, or keep waiting?',
+      detail: pendingDetail(suiteRestartJobs()),
     });
     if (response === 0) { idleWaiter.disarm(); restartClodex(); }
     // "Restart Now" above disarms silently — the pending request is fulfilled by
@@ -220,8 +223,9 @@ async function confirmRestartClodex() {
   }
 
   const { busy, idle } = classifyRestart(Array.from(manager.sessions.values()));
+  const jobs = suiteRestartJobs();
 
-  if (busy === 0) {
+  if (busy === 0 && !jobs.length) {
     const { response } = await dialog.showMessageBox({
       type: 'question',
       buttons: ['Restart', 'Cancel'],
@@ -244,9 +248,7 @@ async function confirmRestartClodex() {
     defaultId: 0,
     cancelId: 2,
     message: 'Restart Clodex?',
-    detail: `${busy} session${busy === 1 ? ' is' : 's are'} mid-turn`
-      + (idle ? `; ${idle} idle session${idle === 1 ? '' : 's'} will be restored cleanly` : '')
-      + '. Restart When Idle waits until work settles; Restart Now interrupts.',
+    detail: restartDetail({ busy, idle, jobs }),
   });
   if (response === 0) idleWaiter.arm();
   else if (response === 1) restartClodex();
@@ -632,6 +634,7 @@ app.whenReady().then(() => {
       refreshTrayMenu: (...a) => refreshTrayMenu(...a),
       scheduleTrayRefresh: (...a) => scheduleTrayRefresh(...a),
       restartHost: () => restartClodex(),
+      restartWaitsForSuite: true,
       electronChild: (script, extraArgs) => childSpawnSpec({
         execPath: process.execPath, isPackaged: app.isPackaged, appPath: app.getAppPath(),
         script, extraArgs, env: process.env,

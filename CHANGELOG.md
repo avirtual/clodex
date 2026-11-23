@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Test runners: restarting Clodex on a machine that is running another team's suite now waits for that suite to finish (up to 30 minutes) and accepts no new suite meanwhile; the restart dialog says when one is running.
+
 ## 5.197.0 — 2026-11-23
 
 - Internals tab, clodent seats: a tool call you interrupted is shown as interrupted, not as an error.

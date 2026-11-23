@@ -40,10 +40,57 @@ function classifyRestart(sessions) {
 // own restart was someone else's. The appended form is true in all three cases —
 // menu-only, agent-only, mixed. No duration for the same reason: a seat that
 // joined a wait in progress did not wait the full cap.
-function giveUpBody(names) {
+function giveUpBody(names, { suiteJobs = 0, sessionsBusy = true } = {}) {
   const asked = (Array.isArray(names) ? names : []).filter(Boolean);
-  const base = 'Sessions stayed busy — the pending restart was dropped. Try again when work settles.';
+  const n = Number.isInteger(suiteJobs) && suiteJobs > 0 ? suiteJobs : 0;
+  const jobs = `${n} suite job${n === 1 ? '' : 's'} this machine is running for other teams did not finish`;
+  const why = !n ? 'Sessions stayed busy' : sessionsBusy ? `Sessions stayed busy and ${jobs}` : jobs.charAt(0).toUpperCase() + jobs.slice(1);
+  const base = `${why} — the pending restart was dropped. Try again when work settles.`;
   return asked.length ? `${base} Requested by: ${asked.join(', ')}.` : base;
+}
+
+const TEAM_LABEL_MAX = 32;
+const SUITE_LINE_MAX = 160;
+
+function plainLabel(s, max) {
+  const t = String(s).replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return t.length > max ? `${t.slice(0, max - 1)}…` : t;
+}
+
+function suiteJobsLine(jobs) {
+  const list = Array.isArray(jobs) ? jobs.filter(Boolean) : [];
+  if (!list.length) return '';
+  const teams = [];
+  for (const j of list) {
+    const name = j.team == null ? '' : plainLabel(j.team, TEAM_LABEL_MAX);
+    if (name && !teams.includes(name)) teams.push(name);
+  }
+  const n = list.length;
+  const head = `${n} suite job${n === 1 ? '' : 's'} this machine is running for other teams ${n === 1 ? 'is' : 'are'} in flight`;
+  const line = teams.length ? `${head} (${teams.join(', ')}).` : `${head}.`;
+  return line.length > SUITE_LINE_MAX ? `${line.slice(0, SUITE_LINE_MAX - 1)}…` : line;
+}
+
+function suiteWaitClause(n) {
+  return n > 0 ? ` and ${n} suite job${n === 1 ? '' : 's'} this machine is running for other teams finish${n === 1 ? 'es' : ''}` : '';
+}
+
+function restartDetail({ busy = 0, idle = 0, jobs = [] } = {}) {
+  const line = suiteJobsLine(jobs);
+  const restored = idle ? `${idle} idle session${idle === 1 ? '' : 's'} will be restored cleanly` : '';
+  const seats = busy
+    ? `${busy} session${busy === 1 ? ' is' : 's are'} mid-turn${restored ? `; ${restored}` : ''}.`
+    : restored ? `${restored.charAt(0).toUpperCase()}${restored.slice(1)}.` : '';
+  const tail = line
+    ? 'Restart When Idle waits until work settles and the suite jobs finish; Restart Now interrupts and cuts the suite jobs.'
+    : 'Restart When Idle waits until work settles; Restart Now interrupts.';
+  if (!line) return `${seats} ${tail}`;
+  return [seats, line, tail].filter(Boolean).join('\n');
+}
+
+function pendingDetail(jobs) {
+  const n = Array.isArray(jobs) ? jobs.filter(Boolean).length : 0;
+  return `Clodex will restart once every session and the keyboard are idle${suiteWaitClause(n)}. Restart now anyway, cancel the pending restart, or keep waiting?`;
 }
 
 // A one-shot waiter that arms a poll loop and fires `restart` only once EVERY live
@@ -55,7 +102,7 @@ function giveUpBody(names) {
 // not restart the window (one waiter); disarm() cancels a pending wait.
 function createIdleWaiter({
   getSessions, now, setTimer, clearTimer, restart, notify, lastInputAt,
-  inFlightRuns = () => [], log = null,
+  inFlightRuns = () => [], suiteJobs = () => [], fence = null, log = null,
   pollMs = 2000, sustainMs = 10_000, capMs = 30 * 60_000, operatorQuietMs = sustainMs,
   runCapMs = 10 * 60_000,
 }) {
@@ -63,6 +110,7 @@ function createIdleWaiter({
   let armedAt = 0;       // when the wait began (drives the cap)
   let quietSince = null; // start of the current all-idle streak, or null if busy
   let heldOnRuns = '';
+  let fenced = false;
   // Who asked for this wait, and how to tell them it ended without a restart.
   // The agent path ([agent:reboot]) has no operator reading the give-up
   // notification, so a dropped wait it is never told about leaves a seat blocked
@@ -101,6 +149,20 @@ function createIdleWaiter({
     quietSince = null;
     if (abandoned) drainAbandoned('cancelled');
     else requests = [];
+    setFence(false);
+  }
+
+  function setFence(on) {
+    if (fenced === on) return;
+    fenced = on;
+    if (fence) { try { fence(on); } catch {} }
+  }
+
+  function liveSuiteJobs() {
+    try {
+      const jobs = suiteJobs();
+      return Array.isArray(jobs) ? jobs : [];
+    } catch { return []; }
   }
 
   function tick() {
@@ -111,11 +173,16 @@ function createIdleWaiter({
     if (t - armedAt >= capMs) {
       quietSince = null;
       const asked = requesterNames();
-      try { notify(asked); } catch {}
+      let held = [];
+      try { held = inFlightRuns() || []; } catch { held = []; }
+      const sessionsBusy = classifyRestart(getSessions()).busy > 0 || held.length > 0 || t - lastInputAt() < operatorQuietMs;
+      try { notify(asked, { suiteJobs: liveSuiteJobs().length, sessionsBusy }); } catch {}
       drainAbandoned('gave-up');
+      setFence(false);
       return;
     }
     const { busy } = classifyRestart(getSessions());
+    const suiteHold = liveSuiteJobs().length > 0;
     let runs = [];
     try { runs = inFlightRuns() || []; } catch { runs = []; }
     const runsPastCap = runs.length > 0 && t - armedAt >= runCapMs;
@@ -127,7 +194,7 @@ function createIdleWaiter({
         if (log) { try { log.info('app', `restart waiting on in-flight exec runs: ${key}`); } catch {} }
       }
     }
-    if (busy > 0 || runsHold || t - lastInputAt() < operatorQuietMs) {
+    if (busy > 0 || runsHold || suiteHold || t - lastInputAt() < operatorQuietMs) {
       quietSince = null; // any busy sample resets the sustained window
     } else {
       if (quietSince === null) quietSince = t; // streak begins now
@@ -162,6 +229,7 @@ function createIdleWaiter({
     armedAt = now();
     quietSince = null;
     heldOnRuns = '';
+    setFence(true);
     timer = setTimer(tick, pollMs);
     return true;
   }
@@ -169,4 +237,4 @@ function createIdleWaiter({
   return { arm, disarm, isArmed };
 }
 
-module.exports = { classifyRestart, createIdleWaiter, giveUpBody };
+module.exports = { classifyRestart, createIdleWaiter, giveUpBody, suiteJobsLine, restartDetail, pendingDetail, suiteWaitClause };
