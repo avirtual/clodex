@@ -498,7 +498,7 @@ function createSuiteClient({
     appendCompare({ at: iso(now()), team, kind, ticket, wire: 'pull', runner, skipped, ...NO_AGREEMENT });
   }
 
-  function decided({ team, kind, ticket, wire = 'push', box = null, local = null, decidedBy, fallback = null, runner = null }) {
+  function decided({ team, kind, ticket, wire = 'push', box = null, local = null, decidedBy, fallback = null, fallbackCode = null, runner = null }) {
     const rec = (box && box.record) || null;
     const e = (rec && rec.env) || {};
     appendCompare({
@@ -506,7 +506,7 @@ function createSuiteClient({
       envKey: e.envKey || null, wire: wire === 'pull' ? 'pull' : 'push',
       localEnv: local ? { os: platform, arch } : null,
       remoteEnv: rec ? { os: e.platform || null, arch: e.arch || null, isolation: e.isolation || null, imageId: (e.box && e.box.imageId) || null, definitionHash: (e.box && e.box.definitionHash) || null, ...(e.box && Array.isArray(e.box.shares) ? { shares: e.box.shares } : {}) } : null,
-      local, remote: box ? remoteHalf(box) : null, ...NO_AGREEMENT, decidedBy, fallback, ...(runner ? { runner } : {}),
+      local, remote: box ? remoteHalf(box) : null, ...NO_AGREEMENT, decidedBy, fallback, ...(fallbackCode ? { fallbackCode } : {}), ...(runner ? { runner } : {}),
     });
   }
 
@@ -653,33 +653,56 @@ function remoteHalf(out) {
   };
 }
 
+const FALLBACK_CODES = Object.freeze({
+  'runner-unreachable': Object.freeze({ reason: 'runner unreachable', class: 'transient' }),
+  'runner-restart': Object.freeze({ reason: 'runner restart', class: 'transient' }),
+  'no-box-definition': Object.freeze({ reason: 'no box definition', class: 'deterministic' }),
+  'definition-mismatch': Object.freeze({ reason: 'definition mismatch', class: 'deterministic' }),
+  'tree-mismatch': Object.freeze({ reason: 'tree mismatch', class: 'deterministic' }),
+  'no-share': Object.freeze({ reason: 'no share', class: 'deterministic' }),
+  'no-totals': Object.freeze({ reason: 'no totals', class: 'deterministic' }),
+  'queue-budget': Object.freeze({ reason: 'queue budget', class: 'budget' }),
+  'run-budget': Object.freeze({ reason: 'run budget', class: 'budget' }),
+  'box-build-budget': Object.freeze({ reason: 'box build', class: 'budget' }),
+  'box-build-failed': Object.freeze({ reason: 'box build', class: 'deterministic' }),
+  'box-build-interrupted': Object.freeze({ reason: 'box build', class: 'transient' }),
+  'outcome-unknown': Object.freeze({ reason: 'outcome unknown', class: 'unknown' }),
+});
+
+function fallbackOf(code) {
+  const row = FALLBACK_CODES[code];
+  return { fallback: row.reason, fallbackCode: code, fallbackClass: row.class };
+}
+
 const FALLBACK_OF = [
-  [/^(?:runner unreachable|no peer |runner refused the token)/, 'runner unreachable'],
-  [/did not start within the \d+ms queue budget/, 'queue budget'],
-  [/^no result within the \d+ms (?:run )?budget|^the suite did not finish within/, 'run budget'],
-  [/^runner restarted$/, 'runner restart'],
-  [/^runner answered for tree |^tree mismatch on runner/, 'tree mismatch'],
-  [/^box mismatch: |^runner has no box: /, 'definition mismatch'],
-  [/^runner has no share /, 'no share'],
-  [/^the box build did not finish within |^box build on runner: /, 'box build'],
+  [/^(?:runner unreachable|no peer |runner refused the token)/, 'runner-unreachable'],
+  [/did not start within the \d+ms queue budget/, 'queue-budget'],
+  [/^no result within the \d+ms (?:run )?budget|^the suite did not finish within/, 'run-budget'],
+  [/^runner restarted$/, 'runner-restart'],
+  [/^runner answered for tree |^tree mismatch on runner/, 'tree-mismatch'],
+  [/^box mismatch: |^runner has no box: /, 'definition-mismatch'],
+  [/^runner has no share /, 'no-share'],
+  [/^the box build did not finish within |^box build on runner: the build did not finish within /, 'box-build-budget'],
+  [/^box build on runner: the build was (?:cancelled$|stopped: )/, 'box-build-interrupted'],
+  [/^box build on runner: /, 'box-build-failed'],
 ];
 
 function boxVerdict(out, boxDef, shares = []) {
-  if (!out) return { fallback: 'outcome unknown' };
+  if (!out) return fallbackOf('outcome-unknown');
   const rec = out.record || {};
   if (out.unknown) {
     const hit = FALLBACK_OF.find(([re]) => re.test(String(out.unknown)));
-    return { fallback: hit ? hit[1] : 'outcome unknown' };
+    return fallbackOf(hit ? hit[1] : 'outcome-unknown');
   }
-  if (rec.outcome === 'no-summary') return { fallback: 'no totals' };
-  if (rec.outcome !== 'pass' && rec.outcome !== 'fail') return { fallback: 'outcome unknown' };
-  if (rec.pass == null || rec.fail == null || rec.tests == null || !(rec.tests > 0)) return { fallback: 'no totals' };
+  if (rec.outcome === 'no-summary') return fallbackOf('no-totals');
+  if (rec.outcome !== 'pass' && rec.outcome !== 'fail') return fallbackOf('outcome-unknown');
+  if (rec.pass == null || rec.fail == null || rec.tests == null || !(rec.tests > 0)) return fallbackOf('no-totals');
   const e = rec.env || {};
   if (e.isolation !== 'container' || !e.box || !boxDef || typeof boxDef.definitionHash !== 'string' || e.box.definitionHash !== boxDef.definitionHash) {
-    return { fallback: 'definition mismatch' };
+    return fallbackOf('definition-mismatch');
   }
-  if (!sharesMatch(e.box.shares, shares)) return { fallback: 'no share' };
-  if (!out.res || !rec.treeHash || out.res.treeHash !== rec.treeHash) return { fallback: 'tree mismatch' };
+  if (!sharesMatch(e.box.shares, shares)) return fallbackOf('no-share');
+  if (!out.res || !rec.treeHash || out.res.treeHash !== rec.treeHash) return fallbackOf('tree-mismatch');
   return { fallback: null };
 }
 
@@ -902,4 +925,4 @@ function createChannelHost({
   };
 }
 
-module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, agreement, boxVerdict, pickRunner, runnerLoad, HAND_QUEUE_MS, HAND_RUN_MS, BUILD_BUDGET_MS };
+module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, agreement, boxVerdict, fallbackOf, FALLBACK_CODES, pickRunner, runnerLoad, HAND_QUEUE_MS, HAND_RUN_MS, BUILD_BUDGET_MS };
