@@ -95,7 +95,7 @@ arg** (which is why restart paths must re-assert it; kill drops the entry).
   cleanup, the agent-plugin cleanup, the intent channel, the
   ctx/attn/delivered tail, the 2004h replay and inject gate, the memory
   digest and the pending count and drains beside claude, and passive and ride parks (`_deliverPassive`,
-  `_deliverRide`); the other parks and account moves stay Claude-only. A clodent permission ask
+  `_deliverRide`), the busy/typing park, the fire-time divert and operator flush (see messaging.md, "Draft and busy protections by seat type"); the hold-time park, `_parkBehindQueue` and account moves stay Claude-only. A clodent permission ask
   (`notification_type: "permission_prompt"`) classifies as `permission`; it
   is answered in the terminal (`seatPermission` answers stream seats only).
   A team role naming an `account` on a clodent template boots the seat with
