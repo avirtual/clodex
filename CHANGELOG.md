@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A reviewer's verdict written on a single line (`VERDICT: ACCEPT — MUST-FIX: (none) — NITS: …`) now merges. Before, the loop read "(none) —" as one must-fix and escalated the merge.
+
 ## 5.193.0 — 2026-11-23
 
 - A test runner can build a team's box image itself (Preferences ▸ Test runner ▸ Build box images that teams ask for, off by default): the first job that needs a missing image triggers one build, and a failed build falls back to the team's own suite.
