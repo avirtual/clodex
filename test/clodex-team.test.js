@@ -995,14 +995,14 @@ test('t1355: _taskListText names the verify phase of a done ticket the loop stil
   assert.strictEqual(row('t5'), 't5 [done] hand closed 1s ago — t5');
 });
 
-test('t2382: _taskListText names the reason of a box hold from its code on both row shapes, and leaves another hold as it was', () => {
+test('t2382: _taskListText names the stamped reason of a box hold on both row shapes, and leaves another hold as it was', () => {
   const home = mkHome();
   const proj = path.join(home, 'proj');
   mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {}, hand: {} } });
   const now = 10_000_000;
-  const d = (id, verifyHold) => ({ id, state: 'done', role: 'hand', title: id, openedAt: now - 60000, closedAt: now - 1000, loopStep: 'verify', verifyHold });
+  const d = (id, verifyHold, over = {}) => ({ id, state: 'done', role: 'hand', title: id, openedAt: now - 60000, closedAt: now - 1000, loopStep: 'verify', verifyHold, ...over });
   mkTicketRegistry(home, proj, [
-    d('t1', { step: 'verify: box', at: 1, evidence: 'runner unreachable: misleading text', recovery: 'box', code: 'no-share', class: 'deterministic' }),
+    d('t1', { step: 'verify: box', at: 1, evidence: 'runner unreachable: misleading text', recovery: 'box', code: 'no-share', class: 'deterministic' }, { boxHoldReason: 'no share' }),
     d('t2', { step: 'verify: diff', at: 1, evidence: 'e', recovery: 'infra' }),
   ]);
   const team = { name: 'proj', root: proj, lead: 'lead' };

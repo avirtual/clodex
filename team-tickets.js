@@ -6291,7 +6291,7 @@ function createTicketMethods(deps, shared) {
         delete ticket.verifyPhase;
         // verifyHold is cleared here, in the same write that re-stamps the step: TICKET_SUITE_TIMEOUT_MS (20m lock wait + 21m = 41m) outlasts TICKET_STALL_MS (30m),
         // so a stale hold beside loopStep 'verify' fires the wrong alarm and lets a second reviewer spawn in ordinary operation.
-        delete ticket.verifyHold;
+        delete ticket.verifyHold; delete ticket.boxHoldReason;
         // Opening an in-flight phase is a new stall episode, so it spends a fresh nudge here: after `done` nothing else clears nudgedAt
         // (`_touchTicketActivity` skips any ticket that is not `open`).
         ticket.nudgedAt = null;
@@ -7319,7 +7319,7 @@ function createTicketMethods(deps, shared) {
 
     _releaseBoxHold(ticket, by, cause) {
       recordEvent(ticket, { kind: 'verify-release', by, cause });
-      delete ticket.verifyHold;
+      delete ticket.verifyHold; delete ticket.boxHoldReason;
       delete ticket.verifyPhase;
       ticket.suiteProvenance = { ...suiteProvenanceOf(ticket), verify: null };
       ticket.lastActivityAt = Date.now();
@@ -7379,12 +7379,14 @@ function createTicketMethods(deps, shared) {
         const tickets = ticketsStore.load(team.root);
         const rec = tickets.find((t) => t.id === ticketId);
         if (!rec) return;
-        if (!hold) { if (!('verifyHold' in rec)) return; delete rec.verifyHold; }
+        if (!hold) { if (!('verifyHold' in rec)) return; delete rec.verifyHold; delete rec.boxHoldReason; }
         else {
           // Evidence is truncated: tickets.json is rewritten on every ticket write and runner or git error text is unbounded;
           // the escalation message keeps the full text.
           const ev = String(hold.evidence == null ? '' : hold.evidence);
           rec.verifyHold = { ...hold, evidence: ev.length > 400 ? `${ev.slice(0, 400)}…` : ev };
+          if (hold.step === BOX_HOLD_STEP) rec.boxHoldReason = (FALLBACK_CODES[hold.code] || { reason: 'unknown' }).reason;
+          else delete rec.boxHoldReason;
           // A new escalation starts a new stall episode; a leftover `nudgedAt` would put its first alarm on a rung it never climbed.
           rec.lastActivityAt = Date.now();
           rec.nudgedAt = null;
@@ -8151,7 +8153,7 @@ function createTicketMethods(deps, shared) {
       // Reopening ends the loop's hold as accept does: a stale step would let a late verdict land on a ticket the lead sent back.
       delete ticket.loopStep;
       // A reopened ticket owes no check to the verify stamp; a surviving stamp alarms about an escalation on a ticket being worked.
-      delete ticket.verifyHold;
+      delete ticket.verifyHold; delete ticket.boxHoldReason;
       delete ticket.mergedNudgedAt;
       delete ticket.escalationUndelivered;
       delete ticket.mergeError;
@@ -8438,7 +8440,7 @@ function createTicketMethods(deps, shared) {
       // done+loopStep arm and stamps a rework on merged, deleted work.
       delete ticket.loopStep;
       // The verify hold goes too: accepting overrules the check, and a surviving stamp keeps alarming on accepted work.
-      delete ticket.verifyHold;
+      delete ticket.verifyHold; delete ticket.boxHoldReason;
       // Clear mergeError only when closedOut and only if it still equals actedStamp: the gate is closedOut, not "invites another accept",
       // and a stamp that landed mid-accept is still true and must survive.
       if (closedOut && ticket.mergeError && String(ticket.mergeError) === actedStamp) delete ticket.mergeError;
@@ -8457,7 +8459,7 @@ function createTicketMethods(deps, shared) {
         if (note) row.acceptNote = note;
         row.lastActivityAt = ticket.lastActivityAt;
         delete row.loopStep;
-        delete row.verifyHold;
+        delete row.verifyHold; delete row.boxHoldReason;
         if (closedOut && row.mergeError && String(row.mergeError) === actedStamp) delete row.mergeError;
         // Clear on both copies: `fresh` saves on this path, the `ticket` snapshot on the else branch.
         if (closedOut) delete row.mergeWaiting;
@@ -8937,7 +8939,7 @@ function createTicketMethods(deps, shared) {
       // The stored step renders verbatim, on both row shapes.
       const mergeErrorMark = (t) => (t.mergeError ? ` !! MERGE FAILED: ${t.mergeError}` : '');
       const capMark = (t) => (t.parked && t.parkedBy === 'cap' ? ` (parked: cap ${t.parkedCap || '?'})` : '');
-      const boxHoldMark = (t) => (this._boxHeld(t) ? ` held: box — ${(FALLBACK_CODES[t.verifyHold.code] || { reason: 'unknown' }).reason}` : '');
+      const boxHoldMark = (t) => (t.boxHoldReason ? ` held: box — ${t.boxHoldReason}` : '');
       const row = (t) =>
         `${t.id} [${t.state}${t.parked ? ' parked' : ''}]${reportMark(t)}${boxHoldMark(t)} ${shownFor(t)} ${humanizeAge(now - (t.openedAt || now))} — ${t.title || '(untitled)'}${capMark(t)}${respecMark(t)}${mergeWaitingMark(t)}${mergeErrorMark(t)}`;
       const reportMark = (t) => (t.done === 'report' ? ' [report]' : '');

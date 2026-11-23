@@ -825,10 +825,3 @@ test('viewer readTeamLedger reads a real cost.jsonl, and a missing one is empty'
 
   fs.rmSync(dir, { recursive: true, force: true });
 });
-
-test('t2382: viewer BOX_HOLD_REASONS agrees with core FALLBACK_CODES reasons', () => {
-  const { FALLBACK_CODES } = require('../suite-client');
-  const want = Object.fromEntries(Object.entries(FALLBACK_CODES).map(([code, row]) => [code, row.reason]));
-  assert.ok(Object.keys(want).includes('no-share'), 'ENTER: core has the no-share code');
-  assert.deepStrictEqual({ ...viewer.BOX_HOLD_REASONS }, want);
-});

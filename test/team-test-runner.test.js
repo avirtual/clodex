@@ -368,30 +368,44 @@ test('t2382: [agent:team runner off] re-enters every ticket held at verify: box 
   assert.deepStrictEqual(await g.verb('lead', '[agent:team runner off]'), ['[agent:team] test runner of team removed']);
 });
 
-const RELEASE_CAUSE_ROWS = [
-  ['task-verify', 'lead', (f) => f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'verify', id: 't1', who: null, body: '' })],
-  ['fallback-home', 'ticket-loop', (f) => f.verb('lead', '[agent:team runner fallback:home]')],
-  ['gate-off', 'ticket-loop', (f) => f.verb('lead', '[agent:team runner gate:shadow]')],
-  ['runner-off', 'ticket-loop', (f) => f.verb('lead', '[agent:team runner off]')],
-  ['task-done', 'lead', (f) => f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed' })],
+const BOX_HOLD_END_ROWS = [
+  ['task-verify', 'lead', 'task-verify', (f) => f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'verify', id: 't1', who: null, body: '' }), [null, undefined]],
+  ['fallback-home', 'ticket-loop', 'fallback-home', (f) => f.verb('lead', '[agent:team runner fallback:home]'), [null, undefined]],
+  ['gate-off', 'ticket-loop', 'gate-off', (f) => f.verb('lead', '[agent:team runner gate:shadow]'), [null, undefined]],
+  ['runner-off', 'ticket-loop', 'runner-off', (f) => f.verb('lead', '[agent:team runner off]'), [null, undefined]],
+  ['task-done', 'lead', 'task-done', (f) => f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed' }), [null, undefined]],
+  ['a non-box hold replacing it', null, null, (f) => f.m._stampVerifyHold(f.tm.loadManifest('team'), 't1', { step: 'verify: diff', at: 2, evidence: 'e', recovery: 'infra' }), ['verify: diff', undefined]],
+  ['a cancel, refused on a held done ticket', null, null, (f) => f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub: 'cancel', id: 't1', who: null, body: 'drop it' }), ['verify: box', 'no share']],
 ];
 
-for (const [cause, by, act] of RELEASE_CAUSE_ROWS) {
-  test(`t2382: _releaseBoxHold records a verify-release event with cause ${cause}`, async () => {
+for (const [label, by, cause, act, [step, reason]] of BOX_HOLD_END_ROWS) {
+  test(`t2382: boxHoldReason is stamped with a verify: box hold and present exactly while it is held — ${label}`, async () => {
     const f = mkVerbFixture({ manifestExtra: { testRunner: HOLD_ON } });
     const root = f.tm.loadManifest('team').root;
     const store = require('../tickets-store').createTicketsStore({ clodexHome: f.home });
-    const boxHold = { step: 'verify: box', at: 1, evidence: 'no share: x', recovery: 'box', code: 'no-share', class: 'deterministic' };
-    store.save(root, [{ id: 't1', state: 'done', loopStep: 'verify', title: 't1', spec: 's', assignee: 'hand', closedAt: 1, verifyHold: boxHold }]);
+    store.save(root, [{ id: 't1', state: 'done', loopStep: 'verify', title: 't1', spec: 's', assignee: 'hand', closedAt: 1 }]);
+    f.m._stampVerifyHold(f.tm.loadManifest('team'), 't1', { step: 'verify: box', at: 1, evidence: 'no share: x', recovery: 'box', code: 'no-share', class: 'deterministic' });
+    assert.deepStrictEqual([store.load(root)[0].verifyHold.step, store.load(root)[0].boxHoldReason], ['verify: box', 'no share'], 'ENTER: held with its reason');
     f.m._runTicketLoop = () => {};
     await f.verb('lead', '[agent:team runner]');
     await act(f);
     const [t] = store.load(root);
-    assert.strictEqual(t.verifyHold, undefined, 'ENTER: the hold was released');
+    assert.deepStrictEqual([t.verifyHold ? t.verifyHold.step : null, t.boxHoldReason], [step, reason]);
     assert.deepStrictEqual((t.events || []).filter((e) => e.kind === 'verify-release').map((e) => ({ ...e, at: typeof e.at })),
-      [{ at: 'number', kind: 'verify-release', by, cause }]);
+      by ? [{ at: 'number', kind: 'verify-release', by, cause }] : []);
   });
 }
+
+test('t2382: boxHoldReason survives a store round trip beside its hold and is dropped from a ticket loaded without one', () => {
+  const f = mkVerbFixture({});
+  const root = f.tm.loadManifest('team').root;
+  const store = require('../tickets-store').createTicketsStore({ clodexHome: f.home });
+  const hold = { step: 'verify: box', at: 1, evidence: 'no share: x', recovery: 'box', code: 'no-share', class: 'deterministic' };
+  store.save(root, [{ id: 't1', state: 'done', verifyHold: hold, boxHoldReason: 'no share' }, { id: 't2', state: 'done', boxHoldReason: 'no share' }]);
+  for (const read of [store.load(root), store.read(root)]) {
+    assert.deepStrictEqual(read.map((t) => [t.id, t.boxHoldReason, 'boxHoldReason' in t]), [['t1', 'no share', true], ['t2', undefined, false]]);
+  }
+});
 
 const cmp = (envKey, agree, localFailing, remoteFailing) => ({
   team: 'team', envKey, agree,
