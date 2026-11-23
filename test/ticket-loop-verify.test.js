@@ -7561,3 +7561,12 @@ test('t2382: a fallback after the box job was submitted keeps its job id in suit
   assert.deepStrictEqual([pre.decidedBy, pre.fallbackCode], ['home', 'runner-unreachable'], 'ENTER: the run fell back before submit');
   assert.strictEqual(b.f.m._suiteProvenance(pre).jobId, null);
 });
+
+test('t2382: a held verify writes one compare row with decidedBy null, held true and the fallback code', async () => {
+  const p = provenanceLoop({ testRunner: GATE_HOLD, box: true });
+  p.b.f.m._runnerPeerStatus = () => null;
+  p.seed();
+  await p.loop();
+  assert.strictEqual(p.b.f.one().verifyHold.step, 'verify: box', 'ENTER: the ticket is held');
+  assert.deepStrictEqual(p.remote.rows().map((r) => [r.decidedBy, r.held, r.fallback, r.fallbackCode]), [[null, true, 'runner unreachable', 'runner-unreachable']]);
+});
