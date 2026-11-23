@@ -1006,3 +1006,35 @@ test('an intent line inside a thinking block never reaches the intent scanner or
   const records = thought([{ type: 'thinking', thinking: '[agent:dm lead] draft\n[agent:end]', signature: 's' }, { type: 'text', text: 'plain answer' }]);
   assert.deepStrictEqual(records.map((r) => [r.kind, r.text, 'segments' in r]), [['thinking', '[agent:dm lead] draft\n[agent:end]', false], ['assistant', 'plain answer', false]]);
 });
+
+const HOOK = '<hook-context event="SessionStart">\nYou are the clodex agent named rev.\n</hook-context>';
+const UPS = '<hook-context event="UserPromptSubmit">\nroster\n</hook-context>';
+
+test('a clodent user record led by hook-context blocks keeps the prompt behind them; other <-led text keeps today\'s treatment', () => {
+  const PROMPT = { id: 'u', kind: 'prompt', ts: null, turn: 1, text: 'fix the bug', source: 'typed' };
+  const rows = [
+    ['hook-context then prompt in one text block', `${HOOK}\nfix the bug`, [PROMPT]],
+    ['hook-context in its own text block', [{ type: 'text', text: HOOK }, { type: 'text', text: 'fix the bug' }], [PROMPT]],
+    ['two hook-context blocks with whitespace between', `${HOOK}\n\n${UPS}\nfix the bug`, [PROMPT]],
+    ['hook-context only', [{ type: 'text', text: HOOK }], []],
+    ['hook-context then a <command-name> echo', `${HOOK}\n<command-name>/cost</command-name>`, []],
+    ['a <-led text that is not hook-context', '<environment_context>cwd</environment_context>\nfix the bug', []],
+    ['a plain prompt', 'fix the bug', [PROMPT]],
+    ['hook-context then a ticket inbound', [{ type: 'text', text: HOOK }, { type: 'text', text: '[agent:from clodex-team] [ticket t2228 review] Review the diff' }],
+      [{ id: 'u', kind: 'inbound', ts: null, turn: 1, from: 'clodex-team', ticket: { id: 't2228', tag: 'review' }, text: '[ticket t2228 review] Review the diff' }]],
+  ];
+  assert.deepStrictEqual(
+    rows.map(([name, content]) => [name, recordsOf(rec({ type: 'user', uuid: 'u', message: { role: 'user', content } })).records]),
+    rows.map(([name, , want]) => [name, want]),
+  );
+});
+
+test('a clodent Bash failure whose result ends in [exit N] reads that exit code and counts the output above it', () => {
+  const { records } = recordsOf([
+    rec({ type: 'assistant', uuid: 'a', message: { content: [{ type: 'tool_use', id: 'b', name: 'Bash', input: { command: 'cat nope' } }] } }),
+    rec({ type: 'user', uuid: 'r', message: { content: [{ type: 'tool_result', tool_use_id: 'b', content: 'cat: nope: No such file\n[exit 1]', is_error: true }] }, toolUseResult: { name: 'Bash', isError: true, input: { command: 'cat nope' } } }),
+  ].join('\n'));
+  assert.deepStrictEqual(records, [
+    { id: 'b', kind: 'tool', ts: null, turn: 0, name: 'Bash', arg: 'cat nope', state: 'error', sum: { exit: 1, lines: 1, ...BASH_PLAIN, only: 'cat: nope: No such file' } },
+  ]);
+});

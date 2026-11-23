@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Conversation pane, clodent seats: the first prompt of a session and its ticket card are no longer dropped when the record begins with hook context; tool rows no longer print `null files`, and a `[exit N]` line is read as the exit code.
+
 ## 5.195.0 — 2026-11-23
 
 - A dial-in test runner now opens a new connection for each claim and each answer instead of reusing an idle one, which under load could already have been closed by the lead. A failed request to a peer now logs whether it went out on a reused connection.

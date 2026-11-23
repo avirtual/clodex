@@ -9,6 +9,7 @@ const { FILED_POINTER_RE } = require('./spill-grammar');
 const { DEFAULT_MAX_BYTES } = require('./exec-schema');
 const { sniffReader } = require('./transcript-readers');
 const { TURN_KINDS, isInternalRow } = require('./transcript-internal');
+const { splitFailure } = require('./bash-console');
 
 const RECORD_CAP = 400;
 const PROMPT_CAP = 4096;
@@ -26,7 +27,7 @@ const TEAMMATE_RE = /^Another Claude session sent a message:\s*<teammate-message
 const RUNTIME_RE = /^\[agent:([a-z-]+)\][ \t]*/;
 const CLIENT_TAG_RE = /^\(via ([a-z][a-z0-9-]{0,15})\)[ \t]*/;
 const ATTACHED_RE = /Message \((\d+) bytes\) attached: @(\S+)/;
-const EXIT_RE = /^Exit code (\d+)/;
+const HOOK_CONTEXT_RE = /^(?:\s*<hook-context event="[^"]*">[\s\S]*?<\/hook-context>)+\s*/;
 const DENIED_RE = /^(?:The user doesn't want to proceed with this tool use|Permission to use \S+ has been denied)/;
 const INTERRUPT_RE = /^\[Request interrupted by user[^\]]*\]/;
 const PASTE_RE = /<pasted_content id="([A-Za-z0-9]+)">\n?([\s\S]*?)<\/pasted_content(?: id="\1")?>/g;
@@ -181,10 +182,9 @@ function bashSum(tur, content, isError) {
   let exit = 0;
   let body = [obj.stdout, obj.stderr].filter((s) => typeof s === 'string' && s).join('\n');
   if (isError) {
-    const head = firstLine(content);
-    const m = EXIT_RE.exec(head);
-    exit = m ? Number(m[1]) : null;
-    body = String(content).split('\n').slice(1).join('\n');
+    const split = splitFailure(content);
+    exit = split.exitCode;
+    body = split.output;
   }
   const { lines, only } = outputSum(body);
   return {
@@ -238,7 +238,7 @@ function settle(rec, input, block, tur) {
   const toolError = content.startsWith('<tool_use_error>');
   if (isError || toolError) {
     rec.state = DENIED_RE.test(content) ? 'denied' : 'error';
-    if (rec.name === 'Bash' && EXIT_RE.test(content)) rec.sum = bashSum(tur, content, true);
+    if (rec.name === 'Bash' && splitFailure(content).exitCode != null) rec.sum = bashSum(tur, content, true);
     else rec.sum = { message: firstLine(content.replace(/<\/?tool_use_error>/g, '')) };
     return;
   }
@@ -273,7 +273,7 @@ function userRecords(rec, base, tools, spawned) {
     }
   }
   if (rec.isMeta || rec.isCompactSummary) return [];
-  let text = textOf(content).trim();
+  let text = textOf(content).trim().replace(HOOK_CONTEXT_RE, '');
   if (!text) return [];
   if (rec.origin && rec.origin.kind === 'task-notification') {
     const summary = tagBody(text, 'summary');

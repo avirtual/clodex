@@ -32,7 +32,7 @@ const path = require('node:path');
 
 const {
   CONSOLE_MAX_RECORDS, RECORD_MAX_BYTES, PULL_MAX_RECORDS, BG_MAX_BYTES, RECORD_NAME_RE,
-  stripAnsi, splitFailure, bgOutputPath, readBgOutput, normalizeRecord, readBashConsole,
+  EXIT_RE, stripAnsi, splitFailure, bgOutputPath, readBgOutput, normalizeRecord, readBashConsole,
 } = require('../bash-console');
 const { pathFor } = require('../clodex-paths');
 const { mkTmpRoot } = require('./lib/tmp-roots');
@@ -139,6 +139,22 @@ test('an error string with no Exit-code prefix keeps all its bytes', () => {
     { exitCode: null, output: 'something exploded' });
   assert.deepStrictEqual(splitFailure('Exit code 127\nnope: command not found'),
     { exitCode: 127, output: 'nope: command not found' });
+});
+
+test('EXIT_RE reads a leading Exit code N and a trailing [exit N] line, and not a line that merely says exit', () => {
+  const rows = [
+    ['Exit code 2', '2'],
+    ['[exit 2]', '2'],
+    ['[exit 0]', '0'],
+    ['the script calls exit when done', null],
+  ];
+  assert.deepStrictEqual(rows.map(([s]) => { const m = EXIT_RE.exec(s); return m ? (m[1] ?? m[2]) : null; }), rows.map(([, want]) => want));
+});
+
+test('a clodent failure ending in an [exit N] trailer splits into its code and the output above it', () => {
+  assert.deepStrictEqual(splitFailure('cat: nope: No such file\n[exit 1]'),
+    { exitCode: 1, output: 'cat: nope: No such file' });
+  assert.deepStrictEqual(splitFailure('Exit code 3\nboom'), { exitCode: 3, output: 'boom' });
 });
 
 test('an interrupted or timed-out failure is marked as such', () => {
