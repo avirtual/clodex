@@ -201,7 +201,8 @@ const TEST_RUNNER_HANDS = ['off', 'full', 'all'];
 const TEST_RUNNER_GATE = ['off', 'shadow', 'on'];
 const TEST_RUNNER_WIRE_PUSH = 'push';
 const TEST_RUNNER_WIRE = [TEST_RUNNER_WIRE_PUSH, 'pull'];
-const TEST_RUNNER_KEYS = ['peer', 'hands', 'gate', 'wire', 'setup', 'env', 'box', 'pool', 'shares'];
+const TEST_RUNNER_FALLBACK = ['home', 'hold'];
+const TEST_RUNNER_KEYS = ['peer', 'hands', 'gate', 'wire', 'setup', 'env', 'box', 'pool', 'shares', 'fallback'];
 const TEST_RUNNER_SHARES_MAX = 8;
 const TEST_RUNNER_SHARE_VERSION_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const TEST_RUNNER_POOL_MAX = 8;
@@ -278,7 +279,8 @@ function normalizeTestRunner(v) {
   const shares = v.shares === undefined ? undefined : normalizeRunnerShares(v.shares);
   if (setup === null || env === null || shares === null) return null;
   const pool = v.pool === undefined ? null : normalizeRunnerPool(v.pool, v.peer);
-  return { peer: v.peer, hands, gate, ...(v.wire !== undefined ? { wire: v.wire } : {}), ...(setup ? { setup } : {}), ...(env ? { env } : {}), ...(v.box !== undefined ? { box: v.box } : {}), ...(pool ? { pool } : {}), ...(shares ? { shares } : {}) };
+  const hold = v.fallback === 'hold' && gate === 'on';
+  return { peer: v.peer, hands, gate, ...(v.wire !== undefined ? { wire: v.wire } : {}), ...(setup ? { setup } : {}), ...(env ? { env } : {}), ...(v.box !== undefined ? { box: v.box } : {}), ...(pool ? { pool } : {}), ...(shares ? { shares } : {}), ...(hold ? { fallback: 'hold' } : {}) };
 }
 
 function boxCpus(cpuMax, cpus) {
@@ -705,6 +707,13 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
       if (!warnedDrops.has(seen)) {
         warnedDrops.add(seen);
         console.warn(`team "${name}": testRunner.pool is invalid and ignored; ${testRunner.peer} stays the only runner (${file})`);
+      }
+    }
+    if (testRunner && m.testRunner.fallback !== undefined && m.testRunner.fallback !== 'home' && !testRunner.fallback) {
+      const seen = `invalid|${file}|testRunner.fallback`;
+      if (!warnedDrops.has(seen)) {
+        warnedDrops.add(seen);
+        console.warn(`team "${name}": testRunner.fallback is invalid and ignored; an undecided box falls back to the home suite — it must be home or hold, and hold needs gate on (${file})`);
       }
     }
     const rosterState = readRoster(name, roles, lead);
@@ -1737,8 +1746,11 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
   function setTeamTestRunner(teamName, patch) {
     const team = loadManifest(teamName);
     if (patch !== null && (!isPlainObject(patch) || !Object.keys(patch).length
-      || Object.keys(patch).some((k) => !['peer', 'hands', 'gate', 'wire', 'pool'].includes(k)))) {
+      || Object.keys(patch).some((k) => !['peer', 'hands', 'gate', 'wire', 'pool', 'fallback'].includes(k)))) {
       throw new Error(`testRunner patch must name peer, hands, gate or wire, or be null for off (${team.file})`);
+    }
+    if (patch !== null && patch.fallback !== undefined && !TEST_RUNNER_FALLBACK.includes(patch.fallback)) {
+      throw new Error(`testRunner.fallback must be one of ${TEST_RUNNER_FALLBACK.join(' | ')} (${team.file})`);
     }
     const raw = JSON.parse(fs.readFileSync(team.file, 'utf-8'));
     if (patch === null) {
@@ -1746,8 +1758,9 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
     } else {
       const next = { ...(isPlainObject(raw.testRunner) ? raw.testRunner : {}), ...patch };
       if (next.pool === null) delete next.pool;
+      if (next.fallback === 'home') delete next.fallback;
       const norm = normalizeTestRunner(next);
-      if (!norm || (next.pool !== undefined && !norm.pool)) throw new Error(`testRunner would be invalid after this patch (${team.file})`);
+      if (!norm || (next.pool !== undefined && !norm.pool) || (next.fallback !== undefined && norm.fallback !== next.fallback)) throw new Error(`testRunner would be invalid after this patch (${team.file})`);
       raw.testRunner = next;
     }
     atomicWrite(team.file, JSON.stringify(migrateRoles(raw), null, 2));
@@ -1932,6 +1945,6 @@ module.exports = {
   // Exported so the retired-field warn test iterates the REAL list — a copy in
   // the test would keep passing over a field added here and never warned about.
   ROLE_KEYS, CUT_ROLE_FIELDS, HONORED_CUT_FIELDS, EDITABLE_ROLE_FIELDS, UNREACHABLE_ROLE_FIELDS, MANIFEST_VERSION,
-  ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH, normalizeTrunk, TRUNK_HEAD, DONE_VALUES, DEFAULT_DONE, normalizeDone, WORKTREES_VALUES, normalizeWorktrees, normalizeMaxHands, effectiveHandCap, normalizeTestRunner, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_WIRE, TEST_RUNNER_WIRE_PUSH, TEST_RUNNER_POOL_MAX,
+  ROLE_DISPATCH_VALUES, DEFAULT_ROLE_DISPATCH, normalizeTrunk, TRUNK_HEAD, DONE_VALUES, DEFAULT_DONE, normalizeDone, WORKTREES_VALUES, normalizeWorktrees, normalizeMaxHands, effectiveHandCap, normalizeTestRunner, TEST_RUNNER_HANDS, TEST_RUNNER_GATE, TEST_RUNNER_FALLBACK, TEST_RUNNER_WIRE, TEST_RUNNER_WIRE_PUSH, TEST_RUNNER_POOL_MAX,
   ROLE_RE, RESERVED_ROLE_KEYS, RESERVED_ROLE_PATCH_FIELDS, NAME_RE,
 };

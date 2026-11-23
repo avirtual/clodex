@@ -152,7 +152,7 @@ function looksLikeIntent(rawLine) {
 const KEY_FIELDS = ['sub', 'target', 'name', 'id', 'cmd', 'spec', 'who', 'to', 'filter', 'template', 'cwd', 'worktree', 'park', 'start', 'dup', 'reviewer', 'ms', 'label', 'raw', 'key',
   'ref', 'ctx', 'line', 'seat', 'choice', 'board', 'value', 'hands', 'gate', 'prompt', 'dispatch', 'model', 'account', 'effort',
   'idleClear', 'role', 'branch', 'mode', 'dry', 'stem', 'kind', 'action', 'op', 'proto', 'field', 'packages',
-  'root', 'lead', 'kit', 'done', 'shareRoot', 'shareRootError'];
+  'root', 'lead', 'kit', 'done', 'shareRoot', 'shareRootError', 'fallback'];
 
 function shadowIntentKey(agent, intent) {
   // urgent is part of the identity: a held dm RESENT with the flag inside the

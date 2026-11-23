@@ -290,7 +290,7 @@ const ARCHIVE_MAX_ROWS = 200;
 
 function suiteRun(v) {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
-  if (v.decidedBy !== 'box' && v.decidedBy !== 'home') return null;
+  if (v.decidedBy !== 'box' && v.decidedBy !== 'home' && !(v.decidedBy === null && v.outcome === 'held')) return null;
   const str = (k) => (typeof v[k] === 'string' ? v[k] : null);
   const word = (k) => (typeof v[k] === 'string' || Number.isFinite(v[k]) ? v[k] : null);
   const t = v.totals;
