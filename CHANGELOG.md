@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Internals tab, clodent seats: a tool call you interrupted is shown as interrupted, not as an error.
+
 ## 5.196.0 — 2026-11-23
 
 - Conversation pane, clodent seats: the first prompt of a session and its ticket card are no longer dropped when the record begins with hook context; tool rows no longer print `null files`, and a `[exit N]` line is read as the exit code.
