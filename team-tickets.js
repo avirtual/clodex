@@ -287,7 +287,7 @@ const HOLD_RECOVERY = {
   // re-commit against a failure its branch never caused.
   infra: (id) => `This is not something the branch can fix — the check could not RUN. `
     + `Once the cause is cleared, ${ticketCloseVerb(id)} <your report> re-runs the checks from here.`,
-  box: (id) => `The box did not decide and fallback:hold kept the home suite from running. `
+  box: (id) => `No box result decided this verify, and fallback:hold kept the home suite from running. `
     + `Once the runner can decide, [agent:task verify ${id}] tries the box again.`,
 };
 const BOX_HOLD_NEXT = {
@@ -6876,7 +6876,7 @@ function createTicketMethods(deps, shared) {
         const stamped = (rec && rec.env && rec.env.box) || {};
         return Object.assign(out, {
           held: true, decidedBy: null, fallback: box.fallback, fallbackCode: box.fallbackCode, fallbackClass: box.fallbackClass, fallbackWhy: box.why || null,
-          error: `the box did not decide (${box.fallback}): ${box.why || 'no reason given'}; not run on the home suite (fallback:hold)`,
+          error: `no box result (${box.fallback}): ${box.why || 'no reason given'}; not run on the home suite (fallback:hold)`,
           box: {
             runner: null, jobId: (rec && rec.jobId) || null, treeHash: (rec && rec.treeHash) || null,
             definitionHash: stamped.definitionHash || null, image: stamped.imageId || null,
@@ -7348,10 +7348,13 @@ function createTicketMethods(deps, shared) {
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}`); return; }
       const foreign = this._foreignRowRefusal(team, ticket);
       if (foreign) { reply(foreign); return; }
+      const atVerify = ticket.state === 'done' && ticket.loopStep === 'verify';
+      if (atVerify && ticket.verifyHold && !this._boxHeld(ticket)) {
+        reply(`error: ticket ${intent.id} is held at "${ticket.verifyHold.step}", not "${BOX_HOLD_STEP}". ${holdRecoveryText(ticket.verifyHold.recovery, intent.id)}`);
+        return;
+      }
       if (!this._boxHeld(ticket)) {
-        const state = ticket.state === 'done' && ticket.loopStep === 'verify'
-          ? (ticket.verifyHold ? `held at "${ticket.verifyHold.step}"` : 'already verifying')
-          : `${ticket.state}${ticket.loopStep ? ` at ${ticket.loopStep}` : ''}`;
+        const state = atVerify ? 'already verifying' : `${ticket.state}${ticket.loopStep ? ` at ${ticket.loopStep}` : ''}`;
         reply(`error: ticket ${intent.id} is ${state} — only a ticket held at "${BOX_HOLD_STEP}" can be re-verified`);
         return;
       }

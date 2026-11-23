@@ -751,7 +751,7 @@ test('t2380: the bare runner line names fallback hold only when it is set', asyn
   assert.strictEqual(b, a.replace('gate on — ', 'gate on, fallback hold — '));
 });
 
-test('t2380: setting fallback:home re-enters verify for every ticket held at verify: box, and leaves other holds alone', async () => {
+test('t2380: _reverifyBoxHeld — setting fallback:home re-enters verify for every ticket held at verify: box, and leaves other holds alone', async () => {
   const f = mkVerbFixture({ manifestExtra: { testRunner: HOLD_ON } });
   const root = f.tm.loadManifest('team').root;
   const store = require('../tickets-store').createTicketsStore({ clodexHome: f.home });

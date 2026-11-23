@@ -7394,7 +7394,7 @@ const HOLD_ROWS = [
 ];
 
 for (const [code, reason, cls, why, notice] of HOLD_ROWS) {
-  test(`t2380: under fallback:hold an undecided box (${code}) holds the verify at verify: box with no home run, no reviewer and one ${cls} notice`, async () => {
+  test(`t2380: under fallback:hold an undecided box (${code}) holds the verify at verify: box with no home run, no reviewer and one ${cls} notice from _notifyBoxHold`, async () => {
     const p = provenanceLoop({ testRunner: GATE_HOLD, box: true });
     p.b.f.m._boxDecide = undecided(code, why);
     p.seed();
@@ -7457,7 +7457,7 @@ function heldLoop() {
   return { p, loops, replies, verify };
 }
 
-test('t2380: [agent:task verify] re-enters a box-held ticket once and passes on a now-deciding box', async () => {
+test('t2380: [agent:task verify] (_releaseBoxHold) re-enters a box-held ticket once and passes on a now-deciding box', async () => {
   const h = heldLoop();
   h.p.seed();
   await h.p.loop();
@@ -7479,11 +7479,15 @@ test('t2380: [agent:task verify] re-enters a box-held ticket once and passes on 
   assert.deepStrictEqual(h.p.b.events, ['post'], 'the retry went to the box, not home');
 });
 
-test('t2380: [agent:task verify] is refused for a non-held ticket and for a non-lead, and a second failure holds again with a fresh notice', async () => {
+test('t2380: [agent:task verify] (_boxHeld) is refused for a non-held ticket and for a non-lead, and a second failure holds again with a fresh notice', async () => {
   const h = heldLoop();
   h.p.seed({ state: 'open', loopStep: null });
   h.verify('lead');
   assert.deepStrictEqual(h.replies.splice(0), ['error: ticket t1 is open — only a ticket held at "verify: box" can be re-verified']);
+  h.p.seed({ verifyHold: { step: 'verify: diff', at: 1, evidence: 'e', recovery: 'infra' } });
+  h.verify('lead');
+  assert.match(h.replies.splice(0)[0], /^error: ticket t1 is held at "verify: diff", not "verify: box"\. This is not something the branch can fix/);
+  assert.strictEqual(h.loops.length, 0, 'no run for another hold');
   h.p.seed();
   await h.p.loop();
   h.verify('team-hand');

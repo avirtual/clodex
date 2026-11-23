@@ -445,7 +445,7 @@ const ADVERSARIAL = [
   '[agent:task accept t1]', '[agent:task accept t1] note', '[agent:task accept]',
   '[agent:task list] trailing', '[agent:task foo]', '[agent:task]',
   '[agent:task added t1]',
-  '[agent:task park t1]', '[agent:task park t1] why', '[agent:task park]',
+  '[agent:task park t1]', '[agent:task verify t1]', '[agent:task park t1] why', '[agent:task park]',
   '[agent:task start]', '[agent:task start t1]', '[agent:task start t1] trailing',
   '[agent:task started t1]',
   '[agent:task add park] spec', '[agent:task add park hand] spec',
