@@ -5,6 +5,9 @@ const assert = require('node:assert');
 const http = require('http');
 const { PeerConnection, PeerManager } = require('../peer-client');
 
+const cleanups = [];
+test.afterEach(async () => { while (cleanups.length) await cleanups.pop()(); });
+
 const ticks = async (n = 5) => { for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r)); };
 
 async function serve(handler) {
@@ -14,11 +17,13 @@ async function serve(handler) {
   let connections = 0;
   server.on('connection', (s) => { connections += 1; sockets.add(s); s.on('close', () => sockets.delete(s)); });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const close = () => new Promise((r) => { for (const s of sockets) s.destroy(); server.close(() => r()); });
+  cleanups.push(close);
   return {
     url: `http://127.0.0.1:${server.address().port}`,
     connections: () => connections,
     open: () => sockets.size,
-    close: () => new Promise((r) => { for (const s of sockets) s.destroy(); server.close(r); }),
+    close,
   };
 }
 
@@ -29,6 +34,7 @@ function connect(url, extra = {}) {
     id: 'p-lead', label: 'lead', url, token: 'tok-secret', emit: () => {}, selfLabel: 'laptop',
     helloIntervalMs: 600000, log: (m) => logs.push(m), clock: () => t, ...extra,
   });
+  cleanups.push(async () => conn.stop());
   return { conn, logs, setTime: (v) => { t = v; } };
 }
 
@@ -59,8 +65,6 @@ test('claim, reply and blob each open their own connection', async () => {
   await ticks();
   const blob = await conn.suiteDeskBlob('c1', 'k1');
   assert.deepStrictEqual([r.status, blob.status, String(blob.bytes), srv.connections()], [200, 200, 'abc', 4]);
-  conn.stop();
-  await srv.close();
 });
 
 test('a keep-alive route still reuses its socket for back-to-back requests', async () => {
@@ -70,8 +74,6 @@ test('a keep-alive route still reuses its socket for back-to-back requests', asy
   await ticks();
   const second = await call(conn, 'GET', '/api/sessions');
   assert.deepStrictEqual([second.body, srv.connections()], [{ ok: true }, 1]);
-  conn.stop();
-  await srv.close();
 });
 
 test('a request on a socket the server has closed logs reused=true with its idle time, and settles once', async () => {
@@ -90,8 +92,6 @@ test('a request on a socket the server has closed logs reused=true with its idle
   await ticks();
   assert.deepStrictEqual([failed.calls(), failed.err.code, srv.connections()], [1, 'ECONNRESET', 1]);
   assert.deepStrictEqual(logs, ['lead: request failed: GET /api/sessions ECONNRESET reused=true idle=250 after=0 timeout=5000']);
-  conn.stop();
-  await srv.close();
 });
 
 test('a claim whose socket dies after the server acted on it fails once and is not replayed', async () => {
@@ -106,8 +106,6 @@ test('a claim whose socket dies after the server acted on it fails once and is n
   await ticks(10);
   assert.deepStrictEqual([out.status, out.error, resolved, effects], [0, 'socket hang up', 1, 1]);
   assert.deepStrictEqual(logs, ['lead: request failed: POST /api/suite-desk/claim ECONNRESET reused=false idle=- after=0 timeout=5000']);
-  conn.stop();
-  await srv.close();
 });
 
 test('a timeout logs the configured timeout and an after at or beyond it', async () => {
@@ -122,8 +120,6 @@ test('a timeout logs the configured timeout and an after at or beyond it', async
   const failed = await pending;
   assert.deepStrictEqual([failed.calls(), failed.err.message], [1, 'timeout']);
   assert.deepStrictEqual(logs, ['lead: request failed: GET /api/catalogs timeout reused=false idle=- after=7003 timeout=7000']);
-  conn.stop();
-  await srv.close();
 });
 
 test('the line names the route class only: no call id, claim token or query value', async () => {
@@ -137,8 +133,6 @@ test('the line names the route class only: no call id, claim token or query valu
     'lead: request failed: GET /api/peer/hello ECONNRESET reused=false idle=- after=0 timeout=5000',
   ]);
   for (const secret of ['call-zz9', 'claim-qq7', 's3cretq', 'tok-secret']) assert.ok(!logs.join('\n').includes(secret), secret);
-  conn.stop();
-  await srv.close();
 });
 
 test('five failures of one class inside 10 s print one line; the next carries +4 more', async () => {
@@ -151,7 +145,6 @@ test('five failures of one class inside 10 s print one line; the next carries +4
   setTime(11000);
   await conn.suiteDeskClaim('sess-00000001');
   assert.deepStrictEqual(logs.slice(1), ['lead: request failed: POST /api/suite-desk/claim ECONNREFUSED reused=false idle=- after=0 timeout=5000 +4 more']);
-  conn.stop();
 });
 
 test('PeerManager hands its log to each connection', () => {
@@ -177,7 +170,7 @@ test('stop destroys every agent, closing the pooled sockets', async () => {
   await ticks();
   assert.strictEqual(srv.open(), 2, 'ENTER: two pooled sockets are open');
   conn.stop();
-  while (srv.open()) await ticks(1);
+  for (let i = 0; i < 200 && srv.open(); i++) await ticks(1);
   assert.strictEqual(srv.open(), 0);
   await srv.close();
 });
