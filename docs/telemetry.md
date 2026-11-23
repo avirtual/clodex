@@ -350,6 +350,18 @@ content, unlike the main renderer). Settings: `proxyEnabled` (default on),
 are a proxy-side concept; the nearest in-repo trace is the supervisor's
 `WS_OMIT_DEFAULT=useremail` env default.
 
+## 8. Main-process stall line (loop-stall.js)
+
+Both hosts run `createLoopStall` from engine.js, always on: a 500 ms
+unref'd timer whose lateness is measured on a monotonic clock. A tick
+1000 ms or more late writes `[loop] main process blocked for <ms> ms
+(ended <ISO time>)` at warn level to clodex.log; over 60 s the wording is
+`blocked or suspended`, since a laptop waking from sleep leaves the same
+gap. At most one line per 10 s; stalls in between ride on the next line as
+` +<n> more, longest <ms> ms`. A peer's `socket hang up` or 5 s timeout
+against this host at the same moment means the main process could not
+answer, not that the network dropped it.
+
 ## Invariants (do not break)
 
 - Branch on the JSON body, not the HTTP status, for every action endpoint.

@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- The host now logs `main process blocked for N ms` when its main process could not run for over a second. A peer that reports hang-ups or timeouts from this machine can be matched against those lines.
+
 ## 5.193.0 — 2026-11-23
 
 - A test runner can build a team's box image itself (Preferences ▸ Test runner ▸ Build box images that teams ask for, off by default): the first job that needs a missing image triggers one build, and a failed build falls back to the team's own suite.
