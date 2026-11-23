@@ -708,6 +708,7 @@ function shape(t, now, stallMs, projectDir = null) {
     // wire what core keeps apart on disk.
     mergeWaiting: str(t.mergeWaiting),
     mergeError: str(t.mergeError),
+    boxHold: str(t.boxHoldReason),
     cost: ticketCost(t, projectDir),
   };
 }

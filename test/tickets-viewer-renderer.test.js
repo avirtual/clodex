@@ -218,7 +218,7 @@ function shaped(id, over = {}) {
     // Empty strings, matching what the engine emits for a ticket carrying
     // neither stamp — so the merge cases below are the only rows that differ
     // from an ordinary one, and an accidental mark elsewhere fails there.
-    mergeWaiting: '', mergeError: '', cost: null, ...over,
+    mergeWaiting: '', mergeError: '', boxHold: '', cost: null, ...over,
   };
   // Derived AFTER the overrides, mirroring the engine (`role || assignee`), so a
   // case that overrides `assignee` alone — the unassigned row, every pre-t295
@@ -2372,5 +2372,22 @@ test('project select: a poll tick while it has focus keeps the same node and foc
     } finally {
       delete global.document.activeElement;
     }
+  });
+});
+
+test('t2382: a ticket held at verify: box shows its reason on the board, and a row without one shows no hold mark', async () => {
+  await withDom({
+    projects: projectsRes([projectRow({ open: 0 })]),
+    board: boardRes({
+      recent: [
+        shaped('t8', { state: 'done', closedAt: Date.now() - HOUR, closedBy: 'hand', boxHold: 'no share' }),
+        shaped('t9', { state: 'done', closedAt: Date.now() - HOUR, closedBy: 'hand' }),
+      ],
+      counts: { ...boardRes().counts, done: 2 },
+    }),
+  }, ({ root }) => {
+    const text = textOf(root);
+    assert.deepStrictEqual(text.filter((s) => /^held: /.test(s)), ['held: box — no share']);
+    assert.deepStrictEqual(classesOf(root).filter((c) => c === 'tv-box-hold'), ['tv-box-hold']);
   });
 });

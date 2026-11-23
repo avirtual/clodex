@@ -2344,6 +2344,7 @@ test('tickets-viewer: `ticket` serves a record\'s own rounds[] plus verdictText 
         respecCount: 1,
         mergeWaiting: '',
         mergeError: '',
+        boxHold: '',
         cost: null,
         respecs: [{ at: 1699000000000, spec: 'the old spec' }],
         events: [],
@@ -2796,4 +2797,12 @@ test('tickets-viewer: `feed` is a read listed in manifest surfaces, and the plug
     fs.readFileSync(path.join(__dirname, '..', 'plugins', 'tickets-viewer', 'manifest.json'), 'utf8'));
   assert.equal(manifest.surfaces.feed, 'any');
   assert.equal(manifest.enabledByDefault, true);
+});
+
+test('t2382: shape() carries the stamped boxHoldReason and leaves a ticket without one empty', () => {
+  const now = Date.now();
+  const held = (over) => ticket('h1', { assignee: 'hand', state: 'done', loopStep: 'verify', closedAt: now - HOUR, ...over });
+  const shape = (t) => viewerEngine._internals.shape(t, now, 30 * 60 * 1000).boxHold;
+  assert.equal(shape(held({ boxHoldReason: 'no share' })), 'no share');
+  assert.equal(shape(held({})), '');
 });

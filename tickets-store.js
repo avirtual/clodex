@@ -311,6 +311,7 @@ function suiteProvenanceOf(ticket) {
 function normalizeBoard(arr) {
   for (const t of arr) {
     if (t && typeof t === 'object' && 'suiteProvenance' in t) t.suiteProvenance = suiteProvenanceOf(t);
+    if (t && !t.verifyHold && typeof t === 'object') delete t.boxHoldReason;
   }
   return arr;
 }

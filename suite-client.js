@@ -498,7 +498,7 @@ function createSuiteClient({
     appendCompare({ at: iso(now()), team, kind, ticket, wire: 'pull', runner, skipped, ...NO_AGREEMENT });
   }
 
-  function decided({ team, kind, ticket, wire = 'push', box = null, local = null, decidedBy, fallback = null, fallbackCode = null, runner = null }) {
+  function decided({ team, kind, ticket, wire = 'push', box = null, local = null, decidedBy, held = false, fallback = null, fallbackCode = null, runner = null }) {
     const rec = (box && box.record) || null;
     const e = (rec && rec.env) || {};
     appendCompare({
@@ -506,7 +506,7 @@ function createSuiteClient({
       envKey: e.envKey || null, wire: wire === 'pull' ? 'pull' : 'push',
       localEnv: local ? { os: platform, arch } : null,
       remoteEnv: rec ? { os: e.platform || null, arch: e.arch || null, isolation: e.isolation || null, imageId: (e.box && e.box.imageId) || null, definitionHash: (e.box && e.box.definitionHash) || null, ...(e.box && Array.isArray(e.box.shares) ? { shares: e.box.shares } : {}) } : null,
-      local, remote: box ? remoteHalf(box) : null, ...NO_AGREEMENT, decidedBy, fallback, ...(fallbackCode ? { fallbackCode } : {}), ...(runner ? { runner } : {}),
+      local, remote: box ? remoteHalf(box) : null, ...NO_AGREEMENT, decidedBy, ...(held ? { held: true } : {}), fallback, ...(fallbackCode ? { fallbackCode } : {}), ...(runner ? { runner } : {}),
     });
   }
 
@@ -518,7 +518,7 @@ function createSuiteClient({
       if (!line.trim()) continue;
       try {
         const r = JSON.parse(line);
-        if (r && r.team === team && r.decidedBy == null) recs.push(r);
+        if (r && r.team === team && r.decidedBy == null && !r.held) recs.push(r);
       } catch {}
     }
     const ofDef = (r) => !!(r.remoteEnv && r.remoteEnv.definitionHash === definitionHash);
@@ -556,12 +556,19 @@ function createSuiteClient({
   function decideTally({ team }) {
     let text = '';
     try { text = compareFile ? fs.readFileSync(compareFile, 'utf8') : ''; } catch { text = ''; }
-    const out = { box: 0, home: 0, fallbacks: [], runners: [] };
+    const out = { box: 0, home: 0, held: 0, fallbacks: [], holds: [], runners: [] };
+    const bump = (list, r) => {
+      const reason = String(r.fallback || 'unknown');
+      const seen = list.find((f) => f.reason === reason);
+      if (seen) seen.count += 1; else list.push({ reason, count: 1 });
+    };
     for (const line of text.split('\n')) {
       if (!line.trim()) continue;
       let r;
       try { r = JSON.parse(line); } catch { continue; }
-      if (!r || r.team !== team || r.decidedBy == null) continue;
+      if (!r || r.team !== team) continue;
+      if (r.held) { out.held += 1; bump(out.holds, r); continue; }
+      if (r.decidedBy == null) continue;
       if (r.runner) {
         const name = String(r.runner);
         let row = out.runners.find((x) => x.runner === name);
@@ -570,11 +577,11 @@ function createSuiteClient({
       }
       if (r.decidedBy === 'box') { out.box += 1; continue; }
       out.home += 1;
-      const reason = String(r.fallback || 'unknown');
-      const seen = out.fallbacks.find((f) => f.reason === reason);
-      if (seen) seen.count += 1; else out.fallbacks.push({ reason, count: 1 });
+      bump(out.fallbacks, r);
     }
-    out.fallbacks.sort((a, b) => b.count - a.count || (a.reason < b.reason ? -1 : a.reason > b.reason ? 1 : 0));
+    const order = (a, b) => b.count - a.count || (a.reason < b.reason ? -1 : a.reason > b.reason ? 1 : 0);
+    out.fallbacks.sort(order);
+    out.holds.sort(order);
     return out;
   }
 

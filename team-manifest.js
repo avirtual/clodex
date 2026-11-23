@@ -202,6 +202,7 @@ const TEST_RUNNER_GATE = ['off', 'shadow', 'on'];
 const TEST_RUNNER_WIRE_PUSH = 'push';
 const TEST_RUNNER_WIRE = [TEST_RUNNER_WIRE_PUSH, 'pull'];
 const TEST_RUNNER_FALLBACK = ['home', 'hold'];
+const TEST_RUNNER_PATCH_KEYS = ['peer', 'hands', 'gate', 'wire', 'pool', 'fallback'];
 const TEST_RUNNER_KEYS = ['peer', 'hands', 'gate', 'wire', 'setup', 'env', 'box', 'pool', 'shares', 'fallback'];
 const TEST_RUNNER_SHARES_MAX = 8;
 const TEST_RUNNER_SHARE_VERSION_RE = /^[A-Za-z0-9._-]{1,64}$/;
@@ -1746,8 +1747,8 @@ function createTeamManifest({ fs, clodexHome, log = null, now = () => Date.now()
   function setTeamTestRunner(teamName, patch) {
     const team = loadManifest(teamName);
     if (patch !== null && (!isPlainObject(patch) || !Object.keys(patch).length
-      || Object.keys(patch).some((k) => !['peer', 'hands', 'gate', 'wire', 'pool', 'fallback'].includes(k)))) {
-      throw new Error(`testRunner patch must name peer, hands, gate or wire, or be null for off (${team.file})`);
+      || Object.keys(patch).some((k) => !TEST_RUNNER_PATCH_KEYS.includes(k)))) {
+      throw new Error(`testRunner patch must name ${TEST_RUNNER_PATCH_KEYS.slice(0, -1).join(', ')} or ${TEST_RUNNER_PATCH_KEYS[TEST_RUNNER_PATCH_KEYS.length - 1]}, or be null for off (${team.file})`);
     }
     if (patch !== null && patch.fallback !== undefined && !TEST_RUNNER_FALLBACK.includes(patch.fallback)) {
       throw new Error(`testRunner.fallback must be one of ${TEST_RUNNER_FALLBACK.join(' | ')} (${team.file})`);

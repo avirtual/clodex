@@ -7528,3 +7528,45 @@ test('t2380: a ticket held at verify: box stays held across a restart and is not
   assert.strictEqual(h.loops.length, 1, 'no resume');
   assert.deepStrictEqual(h.p.b.f.one().verifyHold, before);
 });
+
+for (const [gate, line] of [
+  [GATE_HOLD, 'ticket t1: verify box run did not decide (runner unreachable) — runner runner-1 is not a known peer; the ticket is held (fallback:hold)'],
+  [GATE_ON, 'ticket t1: verify box run did not decide (runner unreachable) — runner runner-1 is not a known peer; running the suite here'],
+]) {
+  test(`t2382: _boxDecide's fall logs the exact line under fallback:${gate.fallback || 'home'}`, async () => {
+    const p = provenanceLoop({ testRunner: gate, box: true });
+    p.b.f.m._runnerPeerStatus = () => null;
+    p.seed();
+    await p.loop();
+    assert.deepStrictEqual(p.b.f.logs.filter((l) => l.level === 'warn' && /box run did not decide/.test(l.msg)).map((l) => l.msg), [line]);
+  });
+}
+
+test('t2382: a fallback after the box job was submitted keeps its job id in suiteProvenance; a pre-submit one stores null', async () => {
+  const b = boxLoop(null, { extraDeps: { boxDecideGuardMs: 0 } });
+  const r = boxRemote('green', b.events);
+  b.holder.client = {
+    ...r.client,
+    run: (o) => { o.onJob({ jobId: 'job-late', attempt: 1 }); return new Promise(() => {}); },
+    cancel: async () => ({ ok: true }),
+  };
+  b.f.team.testRunner = GATE_ON;
+  b.f.team.dir = mkTmpRoot('clodex-box-team-');
+  require('../team-box').writeBox(b.f.team.dir, BOX_DEF);
+  const late = await b.f.m._runTicketSuite(b.f.team, b.f.one());
+  assert.deepStrictEqual([late.decidedBy, late.fallbackCode], ['home', 'run-budget'], 'ENTER: the run fell back after submit');
+  assert.strictEqual(b.f.m._suiteProvenance(late).jobId, 'job-late');
+  b.f.m._runnerPeerStatus = () => null;
+  const pre = await b.f.m._runTicketSuite(b.f.team, b.f.one());
+  assert.deepStrictEqual([pre.decidedBy, pre.fallbackCode], ['home', 'runner-unreachable'], 'ENTER: the run fell back before submit');
+  assert.strictEqual(b.f.m._suiteProvenance(pre).jobId, null);
+});
+
+test('t2382: a held verify writes one compare row with decidedBy null, held true and the fallback code', async () => {
+  const p = provenanceLoop({ testRunner: GATE_HOLD, box: true });
+  p.b.f.m._runnerPeerStatus = () => null;
+  p.seed();
+  await p.loop();
+  assert.strictEqual(p.b.f.one().verifyHold.step, 'verify: box', 'ENTER: the ticket is held');
+  assert.deepStrictEqual(p.remote.rows().map((r) => [r.decidedBy, r.held, r.fallback, r.fallbackCode]), [[null, true, 'runner unreachable', 'runner-unreachable']]);
+});

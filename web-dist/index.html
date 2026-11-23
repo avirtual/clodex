@@ -16128,6 +16128,11 @@ Cancelled tickets are not counted as done.`)) return;
               flag.title = "The merge loop gave up at this step. This ticket needs the lead to merge by hand.";
               meta.appendChild(flag);
             }
+            if (t.boxHold) {
+              const flag = el("span", "tv-box-hold", `held: box \u2014 ${t.boxHold}`);
+              flag.title = "No box result decided this verify and fallback:hold kept the home suite from running. [agent:task verify] retries it.";
+              meta.appendChild(flag);
+            }
             const spend = costText(t.cost);
             if (spend) {
               const cell = el("span", t.cost && t.cost.live ? "tv-cost tv-cost-live" : "tv-cost", spend);
