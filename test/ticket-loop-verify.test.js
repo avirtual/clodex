@@ -6935,7 +6935,7 @@ test('t2303: an attached pull runner gets the shadow job over the desk; detached
   const [first, skip] = rows();
   assert.strictEqual(rows().length, 2);
   assert.deepStrictEqual({ ...skip, at: '<at>' }, {
-    at: '<at>', team: first.team, kind: 'verify', ticket: first.ticket, wire: 'pull', runner: 'laptop', skipped: 'detached', agree: null,
+    at: '<at>', team: first.team, kind: 'verify', ticket: first.ticket, wire: 'pull', runner: 'laptop', skipped: 'detached', agree: null, outcomeAgree: null, countsAgree: null, failingAgree: null,
   });
 });
 
@@ -7117,7 +7117,7 @@ test('t2338: under gate:on a box pass and a box fail decide the result without a
     assert.deepStrictEqual(r.rows().map(maskRow), [{
       at: '<at>', team: 'team', kind: 'verify', ticket: 't1', treeHash: BOX_TREE, sha: BOX_SHA, envKey: 'bk', wire: 'push',
       localEnv: null, remoteEnv: { os: 'linux', arch: 'arm64', isolation: 'container', imageId: `sha256:${'e'.repeat(64)}`, definitionHash: BOX_HASH },
-      local: null, remote, agree: null, decidedBy: 'box', fallback: null,
+      local: null, remote, agree: null, outcomeAgree: null, countsAgree: null, failingAgree: null, decidedBy: 'box', fallback: null,
     }], mode);
   }
 });

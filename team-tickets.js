@@ -3235,7 +3235,7 @@ function createTicketMethods(deps, shared) {
 
     _runnerTallyView(team, envKey) {
       const t = this._runnerTallyData(team, envKey);
-      return t && t.envKey && (t.agree || t.disagree) ? { envKey: t.envKey, agree: t.agree, disagree: t.disagree } : null;
+      return t && t.envKey && (t.agree || t.disagree) ? { envKey: t.envKey, agree: t.agree, disagree: t.disagree, outcomeAgreed: t.outcomeAgreed || 0, sameCounts: t.sameCounts || 0 } : null;
     },
 
     _runnerStored(team) {
@@ -3303,7 +3303,8 @@ function createTicketMethods(deps, shared) {
       const where = p && p.local && p.remote
         ? ` (local ${flat(p.local.os)}/${flat(p.local.arch)}, runner ${flat(p.remote.os)}/${flat(p.remote.arch)}${p.remote.isolation === 'container' ? ' box' : ''})`
         : '';
-      return `; comparisons under ${under}: ${t.agree} agree, ${t.disagree} disagree`
+      const runs = t.agree + t.disagree;
+      return `; comparisons under ${under}: ${runs} run${runs === 1 ? '' : 's'}, outcome agreed ${t.outcomeAgreed || 0}, same counts ${t.sameCounts || 0}`
         + (t.skipped ? `, ${t.skipped} skipped (tree not sent)` : '')
         + where
         + (one.length ? `; failed on one side only: ${one.join(', ')}${more}` : '');

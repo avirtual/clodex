@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const { mkTmpRoot } = require('./lib/tmp-roots');
-const { createSuiteClient, localHalf, failingNames } = require('../suite-client');
+const { createSuiteClient, localHalf, failingNames, agreement } = require('../suite-client');
 
 const TREE = 'a'.repeat(40);
 const TREE2 = 'd'.repeat(40);
@@ -65,23 +65,23 @@ const DARWIN = { os: 'darwin', arch: 'arm64' };
 const UNSTAMPED = { os: null, arch: null, isolation: null, imageId: null, definitionHash: null };
 const REMOTE = (over) => ({ outcome: 'pass', reason: null, pass: 5, fail: 0, tests: 5, failing: [], slow: [], jobId: 'run-1', queueMs: 3, runMs: 40, ...over });
 const LOCAL = (over) => ({ outcome: 'pass', pass: 5, fail: 0, tests: 5, failing: [], slow: [], durationMs: 70, ...over });
-const RECORD = (local, remote, agree) => ({
-  at: '1970-01-01T00:00:01.000Z', team: 'tm', kind: 'verify', ticket: 't1', treeHash: TREE, sha: HEAD, envKey: 'k1', wire: 'push', localEnv: DARWIN, remoteEnv: UNSTAMPED, local, remote, agree,
+const RECORD = (local, remote, [agree, outcomeAgree, countsAgree, failingAgree]) => ({
+  at: '1970-01-01T00:00:01.000Z', team: 'tm', kind: 'verify', ticket: 't1', treeHash: TREE, sha: HEAD, envKey: 'k1', wire: 'push', localEnv: DARWIN, remoteEnv: UNSTAMPED, local, remote, agree, outcomeAgree, countsAgree, failingAgree,
 });
 
 const RECORD_ROWS = [
   ['an agreeing pair', { stdout: GREEN }, { code: 0, stdout: GREEN },
-    RECORD(LOCAL(), REMOTE(), true)],
+    RECORD(LOCAL(), REMOTE(), [true, true, true, true])],
   ['a count mismatch', { stdout: COUNT_OFF }, { code: 0, stdout: GREEN },
-    RECORD(LOCAL(), REMOTE({ pass: 6, tests: 6 }), false)],
+    RECORD(LOCAL(), REMOTE({ pass: 6, tests: 6 }), [false, true, false, true])],
   ['a failing-name mismatch', { stdout: RED_B, code: 1 }, { code: 1, stdout: RED_A },
-    RECORD(LOCAL({ outcome: 'fail', pass: 4, fail: 1, failing: ['alpha'] }), REMOTE({ outcome: 'fail', pass: 4, fail: 1, failing: ['beta'] }), false)],
+    RECORD(LOCAL({ outcome: 'fail', pass: 4, fail: 1, failing: ['alpha'] }), REMOTE({ outcome: 'fail', pass: 4, fail: 1, failing: ['beta'] }), [false, true, true, false])],
   ['a remote unknown', { refuse: true }, { code: 0, stdout: GREEN },
-    RECORD(LOCAL(), REMOTE({ outcome: 'unknown', reason: 'runner refused the job: nope', pass: null, fail: null, tests: null, queueMs: null, runMs: null }), false)],
+    RECORD(LOCAL(), REMOTE({ outcome: 'unknown', reason: 'runner refused the job: nope', pass: null, fail: null, tests: null, queueMs: null, runMs: null }), [false, null, null, null])],
   ['three failures neither runner named', { stdout: 'TOTALS: 2 pass, 3 fail, 5 tests\n', code: 1 }, { code: 1, stdout: 'TOTALS: 2 pass, 3 fail, 5 tests\n' },
-    { ...RECORD(LOCAL({ outcome: 'fail', pass: 2, fail: 3 }), REMOTE({ outcome: 'fail', pass: 2, fail: 3 }), true), names: 'unknown' }],
+    { ...RECORD(LOCAL({ outcome: 'fail', pass: 2, fail: 3 }), REMOTE({ outcome: 'fail', pass: 2, fail: 3 }), [true, true, true, null]), names: 'unknown' }],
   ['one failure named locally and unnamed remotely', { stdout: 'TOTALS: 4 pass, 1 fail, 5 tests\n', code: 1 }, { code: 1, stdout: RED_A },
-    { ...RECORD(LOCAL({ outcome: 'fail', pass: 4, fail: 1, failing: ['alpha'] }), REMOTE({ outcome: 'fail', pass: 4, fail: 1 }), true), names: 'unknown' }],
+    { ...RECORD(LOCAL({ outcome: 'fail', pass: 4, fail: 1, failing: ['alpha'] }), REMOTE({ outcome: 'fail', pass: 4, fail: 1 }), [true, true, true, null]), names: 'unknown' }],
 ];
 
 for (const [name, remote, local, want] of RECORD_ROWS) {
@@ -95,6 +95,54 @@ for (const [name, remote, local, want] of RECORD_ROWS) {
     assert.deepStrictEqual(f.records(), [want]);
   });
 }
+
+const AGREEMENT_ROWS = [
+  ['pass 452/0/452 vs pass 426/0/426',
+    LOCAL({ pass: 452, fail: 0, tests: 452 }), REMOTE({ pass: 426, fail: 0, tests: 426 }),
+    { agree: false, outcomeAgree: true, countsAgree: false, failingAgree: true }],
+  ['pass vs fail with one failing name',
+    LOCAL(), REMOTE({ outcome: 'fail', pass: 4, fail: 1, failing: ['alpha'] }),
+    { agree: false, outcomeAgree: false, countsAgree: false, failingAgree: false }],
+  ['fail vs fail, same counts, same single failing name',
+    LOCAL({ outcome: 'fail', pass: 4, fail: 1, failing: ['alpha'] }), REMOTE({ outcome: 'fail', pass: 4, fail: 1, failing: ['alpha'] }),
+    { agree: true, outcomeAgree: true, countsAgree: true, failingAgree: true }],
+  ['fail vs fail, same counts, different failing names',
+    LOCAL({ outcome: 'fail', pass: 4, fail: 1, failing: ['alpha'] }), REMOTE({ outcome: 'fail', pass: 4, fail: 1, failing: ['beta'] }),
+    { agree: false, outcomeAgree: true, countsAgree: true, failingAgree: false }],
+  ['a local timeout with no totals vs a pass',
+    LOCAL({ outcome: 'timeout', pass: null, fail: null, tests: null }), REMOTE(),
+    { agree: false, outcomeAgree: null, countsAgree: null, failingAgree: null }],
+];
+
+for (const [name, local, remote, want] of AGREEMENT_ROWS) {
+  test(`agreement: ${name}`, () => {
+    const { agree, outcomeAgree, countsAgree, failingAgree } = agreement(local, remote);
+    assert.deepStrictEqual({ agree, outcomeAgree, countsAgree, failingAgree }, want);
+  });
+}
+
+test('shadow: a runner that runs more tests than home writes outcomeAgree true and countsAgree false beside agree false', async () => {
+  const { conn } = remoteConn({ stdout: 'TOTALS: 452 pass, 0 fail, 452 tests\n' });
+  const f = shadowClient(conn);
+  const h = await f.client.shadow(OPTS);
+  await turns();
+  h.local(localHalf({ code: 0, stdout: 'TOTALS: 426 pass, 0 fail, 426 tests\n', stderr: '', durationMs: 70 }));
+  const [row] = f.records();
+  assert.deepStrictEqual([row.agree, row.outcomeAgree, row.countsAgree, row.failingAgree], [false, true, false, true]);
+});
+
+test('tally: old rows without the split fields are read without throwing and counted from their halves', () => {
+  const client = tallyFile([
+    { team: 'tm', envKey: 'k1', agree: false, local: LOCAL({ pass: 452, tests: 452 }), remote: REMOTE({ pass: 426, tests: 426 }) },
+    { team: 'tm', envKey: 'k1', agree: true, local: LOCAL(), remote: REMOTE() },
+    { team: 'tm', envKey: 'k1', agree: false },
+    { team: 'tm', envKey: 'k1', agree: false, local: null, remote: 'garbled' },
+  ]);
+  assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k1' }), {
+    envKey: 'k1', agree: 1, disagree: 3, outcomeAgreed: 2, sameCounts: 1, skipped: 0, oneSided: [], platforms: null,
+  });
+  assert.deepStrictEqual(client.decideTally({ team: 'tm' }), { box: 0, home: 0, fallbacks: [], runners: [] });
+});
 
 const FAIL_LINE_ROWS = [
   [' ✖ alpha (1.5ms)', 'alpha'],
@@ -177,7 +225,7 @@ test('shadow: a remote half whose slow gate fired agrees with a local half carry
   assert.deepStrictEqual(f.records(), [RECORD(
     LOCAL({ outcome: 'fail', pass: 6, fail: 2, tests: 8, failing: ['alpha', 'beta'] }),
     REMOTE({ outcome: 'fail', pass: 6, fail: 2, tests: 8, failing: ['alpha', 'beta'], slow: ['gamma', 'delta', 'epsilon'] }),
-    true,
+    [true, true, true, true],
   )]);
 });
 
@@ -229,9 +277,9 @@ test('tally: counts agreements and one-sided failing names under one env key; an
     rec('k1', false, [], ['other team'], 'tm2'),
   ]);
   assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k1' }), {
-    envKey: 'k1', agree: 1, disagree: 2, skipped: 0, oneSided: [{ side: 'remote', name: 'net test', count: 2 }], platforms: null,
+    envKey: 'k1', agree: 1, disagree: 2, outcomeAgreed: 2, sameCounts: 0, skipped: 0, oneSided: [{ side: 'remote', name: 'net test', count: 2 }], platforms: null,
   });
-  assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k2' }), { envKey: 'k2', agree: 0, disagree: 0, skipped: 0, oneSided: [], platforms: null });
+  assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k2' }), { envKey: 'k2', agree: 0, disagree: 0, outcomeAgreed: 0, sameCounts: 0, skipped: 0, oneSided: [], platforms: null });
 });
 
 test('tally: a row whose failing names are unknown counts as agreement and contributes no one-sided names', () => {
@@ -240,7 +288,7 @@ test('tally: a row whose failing names are unknown counts as agreement and contr
     rec('k1', false, [], ['net test']),
   ]);
   assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k1' }), {
-    envKey: 'k1', agree: 1, disagree: 1, skipped: 0, oneSided: [{ side: 'remote', name: 'net test', count: 1 }], platforms: null,
+    envKey: 'k1', agree: 1, disagree: 1, outcomeAgreed: 0, sameCounts: 0, skipped: 0, oneSided: [{ side: 'remote', name: 'net test', count: 1 }], platforms: null,
   });
 });
 
@@ -251,10 +299,10 @@ test('t2303: a detached skip row is written as its own kind and is counted as ne
   client.shadowSkip({ team: 'tm', kind: 'post-merge', ticket: 't1', runner: 'laptop', skipped: 'detached' });
   const lines = fs.readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.deepStrictEqual(lines[1], {
-    at: '1970-01-01T00:00:01.000Z', team: 'tm', kind: 'post-merge', ticket: 't1', wire: 'pull', runner: 'laptop', skipped: 'detached', agree: null,
+    at: '1970-01-01T00:00:01.000Z', team: 'tm', kind: 'post-merge', ticket: 't1', wire: 'pull', runner: 'laptop', skipped: 'detached', agree: null, outcomeAgree: null, countsAgree: null, failingAgree: null,
   });
-  assert.deepStrictEqual(client.tally({ team: 'tm' }), { envKey: 'k1', agree: 1, disagree: 0, skipped: 0, oneSided: [], platforms: null });
-  assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k1' }), { envKey: 'k1', agree: 1, disagree: 0, skipped: 0, oneSided: [], platforms: null });
+  assert.deepStrictEqual(client.tally({ team: 'tm' }), { envKey: 'k1', agree: 1, disagree: 0, outcomeAgreed: 1, sameCounts: 0, skipped: 0, oneSided: [], platforms: null });
+  assert.deepStrictEqual(client.tally({ team: 'tm', envKey: 'k1' }), { envKey: 'k1', agree: 1, disagree: 0, outcomeAgreed: 1, sameCounts: 0, skipped: 0, oneSided: [], platforms: null });
 });
 
 test('t2310: a remote half whose tree could not be sent writes a not-sent skip row and is not counted as disagree, after a counted disagreement', async () => {
@@ -285,7 +333,7 @@ test('t2310: a remote half whose tree could not be sent writes a not-sent skip r
   await turns();
   first.local(localHalf({ code: 0, stdout: GREEN, stderr: '', durationMs: 70 }));
   assert.deepStrictEqual(f.records().map((r) => [r.agree, r.skipped]), [[false, undefined]], 'ENTER: a normal disagreement was written');
-  assert.deepStrictEqual(client.tally({ team: 'tm' }), { envKey: 'k1', agree: 0, disagree: 1, skipped: 0, oneSided: [{ side: 'remote', name: 'alpha', count: 1 }], platforms: { local: DARWIN, remote: UNSTAMPED } });
+  assert.deepStrictEqual(client.tally({ team: 'tm' }), { envKey: 'k1', agree: 0, disagree: 1, outcomeAgreed: 0, sameCounts: 0, skipped: 0, oneSided: [{ side: 'remote', name: 'alpha', count: 1 }], platforms: { local: DARWIN, remote: UNSTAMPED } });
   packing = true;
   const second = await client.shadow(OPTS);
   await turns();
@@ -296,9 +344,9 @@ test('t2310: a remote half whose tree could not be sent writes a not-sent skip r
   assert.deepStrictEqual(row, {
     team: 'tm', kind: 'verify', ticket: 't1', treeHash: TREE, sha: HEAD, envKey: 'k1', wire: 'push', localEnv: DARWIN, remoteEnv: UNSTAMPED, local: LOCAL(),
     remote: { outcome: 'unknown', reason: 'client error: git pack-objects failed: stdout maxBuffer length exceeded', pass: null, fail: null, tests: null, failing: [], slow: [], jobId: 'run-2', queueMs: null, runMs: null },
-    skipped: 'not-sent', agree: null,
+    skipped: 'not-sent', agree: null, outcomeAgree: null, countsAgree: null, failingAgree: null,
   });
-  assert.deepStrictEqual(client.tally({ team: 'tm' }), { envKey: 'k1', agree: 0, disagree: 1, skipped: 1, oneSided: [{ side: 'remote', name: 'alpha', count: 1 }], platforms: { local: DARWIN, remote: UNSTAMPED } });
+  assert.deepStrictEqual(client.tally({ team: 'tm' }), { envKey: 'k1', agree: 0, disagree: 1, outcomeAgreed: 0, sameCounts: 0, skipped: 1, oneSided: [{ side: 'remote', name: 'alpha', count: 1 }], platforms: { local: DARWIN, remote: UNSTAMPED } });
   over = true;
   const third = await client.shadow(OPTS);
   await turns();
@@ -350,7 +398,7 @@ function detachingConn(desk, { backAfter = Infinity } = {}) {
 }
 
 const PULL_OPTS = { peer: 'laptop', name: 'laptop', wire: 'pull', tree: '/w', kind: 'verify', team: 'tm', ticket: 't1', budgetMs: 60000 };
-const PULL_ROW = (remote, agree) => ({ team: 'tm', kind: 'verify', ticket: 't1', treeHash: TREE, sha: HEAD, envKey: 'k1', wire: 'pull', localEnv: DARWIN, remoteEnv: UNSTAMPED, local: LOCAL(), remote, agree });
+const PULL_ROW = (remote, [agree, outcomeAgree, countsAgree, failingAgree]) => ({ team: 'tm', kind: 'verify', ticket: 't1', treeHash: TREE, sha: HEAD, envKey: 'k1', wire: 'pull', localEnv: DARWIN, remoteEnv: UNSTAMPED, local: LOCAL(), remote, agree, outcomeAgree, countsAgree, failingAgree });
 
 test('t2304: a pull runner that detaches mid-job writes one skip row naming the job, after an attached run wrote a normal row; the tally counts no disagreement', async () => {
   const desk = { attached: true, conn: remoteConn().conn };
@@ -358,7 +406,7 @@ test('t2304: a pull runner that detaches mid-job writes one skip row naming the 
   const first = await f.client.shadow(PULL_OPTS);
   await turns();
   first.local(localHalf({ code: 0, stdout: GREEN, stderr: '', durationMs: 70 }));
-  assert.deepStrictEqual(f.records(), [PULL_ROW(REMOTE(), true)], 'ENTER: the attached runner wrote a normal row');
+  assert.deepStrictEqual(f.records(), [PULL_ROW(REMOTE(), [true, true, true, true])], 'ENTER: the attached runner wrote a normal row');
   const gone = detachingConn(desk);
   desk.conn = gone.conn;
   const second = await f.client.shadow(PULL_OPTS);
@@ -366,10 +414,10 @@ test('t2304: a pull runner that detaches mid-job writes one skip row naming the 
   second.local(localHalf({ code: 0, stdout: GREEN, stderr: '', durationMs: 70 }));
   assert.ok(gone.calls.includes('GET /api/suite/jobs -> 503'), gone.calls.join('\n'));
   assert.deepStrictEqual(f.records(), [
-    PULL_ROW(REMOTE(), true),
-    { team: 'tm', kind: 'verify', ticket: 't1', wire: 'pull', runner: 'laptop', skipped: 'detached', agree: null, midJob: true, jobId: 'run-2' },
+    PULL_ROW(REMOTE(), [true, true, true, true]),
+    { team: 'tm', kind: 'verify', ticket: 't1', wire: 'pull', runner: 'laptop', skipped: 'detached', agree: null, outcomeAgree: null, countsAgree: null, failingAgree: null, midJob: true, jobId: 'run-2' },
   ]);
-  assert.deepStrictEqual(f.client.tally({ team: 'tm' }), { envKey: 'k1', agree: 1, disagree: 0, skipped: 0, oneSided: [], platforms: { local: DARWIN, remote: UNSTAMPED } });
+  assert.deepStrictEqual(f.client.tally({ team: 'tm' }), { envKey: 'k1', agree: 1, disagree: 0, outcomeAgreed: 1, sameCounts: 1, skipped: 0, oneSided: [], platforms: { local: DARWIN, remote: UNSTAMPED } });
 });
 
 test('t2304: a pull runner that detaches past the 120 s lease and comes back with lease-expired before the deadline writes one skip row', async () => {
@@ -383,9 +431,9 @@ test('t2304: a pull runner that detaches past the 120 s lease and comes back wit
   assert.strictEqual(back.calls.filter((c) => c.endsWith('-> 503')).length, 9, back.calls.join('\n'));
   assert.ok(back.calls.includes('GET /api/suite/jobs -> lease-expired'), `ENTER: the reattached runner answered lease-expired\n${back.calls.join('\n')}`);
   assert.deepStrictEqual(f.records(), [
-    { team: 'tm', kind: 'verify', ticket: 't1', wire: 'pull', runner: 'laptop', skipped: 'detached', agree: null, midJob: true, jobId: 'run-1' },
+    { team: 'tm', kind: 'verify', ticket: 't1', wire: 'pull', runner: 'laptop', skipped: 'detached', agree: null, outcomeAgree: null, countsAgree: null, failingAgree: null, midJob: true, jobId: 'run-1' },
   ]);
-  assert.deepStrictEqual(f.client.tally({ team: 'tm' }), { envKey: null, agree: 0, disagree: 0, skipped: 0, oneSided: [], platforms: null });
+  assert.deepStrictEqual(f.client.tally({ team: 'tm' }), { envKey: null, agree: 0, disagree: 0, outcomeAgreed: 0, sameCounts: 0, skipped: 0, oneSided: [], platforms: null });
 });
 
 test('t2304: an attached pull runner whose own 503 (offer closed) outlasts the budget writes a normal unknown row, not a skip row', async () => {
@@ -403,7 +451,7 @@ test('t2304: an attached pull runner whose own 503 (offer closed) outlasts the b
   await turns(400);
   h.local(localHalf({ code: 0, stdout: GREEN, stderr: '', durationMs: 70 }));
   assert.ok(calls.length > 1, 'ENTER: the runner refused the submit with its own 503 more than once');
-  assert.deepStrictEqual(f.records(), [PULL_ROW(REMOTE({ outcome: 'unknown', reason: 'runner unreachable', pass: null, fail: null, tests: null, queueMs: null, runMs: null }), false)]);
+  assert.deepStrictEqual(f.records(), [PULL_ROW(REMOTE({ outcome: 'unknown', reason: 'runner unreachable', pass: null, fail: null, tests: null, queueMs: null, runMs: null }), [false, null, null, null])]);
 });
 
 test('t2304: an attached pull runner that answers unknown still writes a normal row', async () => {
@@ -412,7 +460,7 @@ test('t2304: an attached pull runner that answers unknown still writes a normal 
   const h = await f.client.shadow(PULL_OPTS);
   await turns();
   h.local(localHalf({ code: 0, stdout: GREEN, stderr: '', durationMs: 70 }));
-  assert.deepStrictEqual(f.records(), [PULL_ROW(REMOTE({ outcome: 'unknown', reason: 'runner refused the job: nope', pass: null, fail: null, tests: null, queueMs: null, runMs: null }), false)]);
+  assert.deepStrictEqual(f.records(), [PULL_ROW(REMOTE({ outcome: 'unknown', reason: 'runner refused the job: nope', pass: null, fail: null, tests: null, queueMs: null, runMs: null }), [false, null, null, null])]);
 });
 
 function runPair(conn, wire) {
@@ -550,9 +598,9 @@ for (const [name, box, stamp, want] of STAMP_ROWS) {
 }
 
 const BOX_REMOTE_ENV = { os: 'linux', arch: 'arm64', isolation: 'container', imageId: IMAGE, definitionHash: null };
-const BOX_ROW = (local, remote, agree) => ({
+const BOX_ROW = (local, remote, [agree, outcomeAgree, countsAgree, failingAgree]) => ({
   at: '1970-01-01T00:00:01.000Z', team: 'tm', kind: 'verify', ticket: 't1', treeHash: TREE, sha: HEAD, envKey: 'b0b0b0b0b0b0', wire: 'push',
-  localEnv: { os: 'darwin', arch: 'arm64' }, remoteEnv: BOX_REMOTE_ENV, local, remote, agree,
+  localEnv: { os: 'darwin', arch: 'arm64' }, remoteEnv: BOX_REMOTE_ENV, local, remote, agree, outcomeAgree, countsAgree, failingAgree,
 });
 
 test('t2312: a darwin/arm64 lead against a linux/arm64 box writes both platforms; the disagreement is counted and labelled', async () => {
@@ -561,9 +609,9 @@ test('t2312: a darwin/arm64 lead against a linux/arm64 box writes both platforms
   const h = await f.client.shadow({ ...OPTS, box: true });
   await turns();
   h.local(localHalf({ code: 0, stdout: GREEN, stderr: '', durationMs: 70 }));
-  assert.deepStrictEqual(f.records(), [BOX_ROW(LOCAL(), REMOTE({ outcome: 'fail', pass: 4, fail: 1, failing: ['alpha'] }), false)]);
+  assert.deepStrictEqual(f.records(), [BOX_ROW(LOCAL(), REMOTE({ outcome: 'fail', pass: 4, fail: 1, failing: ['alpha'] }), [false, false, false, false])]);
   assert.deepStrictEqual(f.client.tally({ team: 'tm' }), {
-    envKey: 'b0b0b0b0b0b0', agree: 0, disagree: 1, skipped: 0, oneSided: [{ side: 'remote', name: 'alpha', count: 1 }],
+    envKey: 'b0b0b0b0b0b0', agree: 0, disagree: 1, outcomeAgreed: 0, sameCounts: 0, skipped: 0, oneSided: [{ side: 'remote', name: 'alpha', count: 1 }],
     platforms: { local: { os: 'darwin', arch: 'arm64' }, remote: BOX_REMOTE_ENV },
   });
 });
@@ -574,9 +622,9 @@ test('t2312: a box-failed job reads unknown and counts as a disagreement, like a
   const h = await f.client.shadow({ ...OPTS, box: true });
   await turns();
   h.local(localHalf({ code: 0, stdout: GREEN, stderr: '', durationMs: 70 }));
-  assert.deepStrictEqual(f.records(), [BOX_ROW(LOCAL(), REMOTE({ outcome: 'unknown', reason: 'box-failed on runner', pass: null, fail: null, tests: null }), false)]);
+  assert.deepStrictEqual(f.records(), [BOX_ROW(LOCAL(), REMOTE({ outcome: 'unknown', reason: 'box-failed on runner', pass: null, fail: null, tests: null }), [false, null, null, null])]);
   assert.deepStrictEqual(f.client.tally({ team: 'tm' }), {
-    envKey: 'b0b0b0b0b0b0', agree: 0, disagree: 1, skipped: 0, oneSided: [], platforms: { local: { os: 'darwin', arch: 'arm64' }, remote: BOX_REMOTE_ENV },
+    envKey: 'b0b0b0b0b0b0', agree: 0, disagree: 1, outcomeAgreed: 0, sameCounts: 0, skipped: 0, oneSided: [], platforms: { local: { os: 'darwin', arch: 'arm64' }, remote: BOX_REMOTE_ENV },
   });
 });
 

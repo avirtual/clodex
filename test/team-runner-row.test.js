@@ -26,7 +26,7 @@ const NONE = { ok: true, peer: null, hands: 'off', gate: 'off', invalid: false, 
 const SET = {
   ok: true, peer: 'runner-1', hands: 'all', gate: 'shadow', invalid: false, setup: true, env: true, online: true, suite: true, reachable: true,
   reach: 'reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab',
-  tally: { envKey: '0123456789ab', agree: 1, disagree: 2 },
+  tally: { envKey: '0123456789ab', agree: 1, disagree: 2, outcomeAgreed: 3, sameCounts: 1 },
 };
 const INVALID = { ...NONE, invalid: true };
 
@@ -51,7 +51,7 @@ test('t2266: the runner row with a peer shows the modes, reachability, tally and
   assert.deepStrictEqual(v.options('runner-hands'), ['off', 'full', 'all']);
   assert.deepStrictEqual(v.options('runner-gate'), ['off', 'shadow', 'on']);
   assert.deepStrictEqual(v.hints, [
-    ['state', 'reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; shadow comparisons: 1 agree, 2 disagree'],
+    ['state', 'reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; shadow comparisons: 3 runs, outcome agreed 3, same counts 1'],
     ['manifest-only', 'setup and env set in team.json — edit them there'],
   ]);
 });
@@ -84,8 +84,8 @@ function slice(start, end) {
   return POPOVER.slice(a, b + end.length);
 }
 
-const STORED = { ok: true, peer: 'runner-1', hands: 'all', gate: 'shadow', invalid: false, setup: true, env: false, tally: { envKey: '0123456789ab', agree: 1, disagree: 2 } };
-const PROBED = { ok: true, online: true, suite: true, reachable: true, reach: SET.reach, tally: { envKey: '0123456789ab', agree: 1, disagree: 2 } };
+const STORED = { ok: true, peer: 'runner-1', hands: 'all', gate: 'shadow', invalid: false, setup: true, env: false, tally: { envKey: '0123456789ab', agree: 1, disagree: 2, outcomeAgreed: 3, sameCounts: 1 } };
+const PROBED = { ok: true, online: true, suite: true, reachable: true, reach: SET.reach, tally: { envKey: '0123456789ab', agree: 1, disagree: 2, outcomeAgreed: 3, sameCounts: 1 } };
 const tick = () => new Promise(setImmediate);
 
 function compileRefresh() {
@@ -126,10 +126,10 @@ test('t2266: the popover renders at once with the stored runner setting while th
   assert.strictEqual(r.fieldOf('runner-peer').value, 'runner-1');
   assert.strictEqual(r.fieldOf('runner-hands').value, 'all');
   assert.strictEqual(r.fieldOf('runner-gate').value, 'shadow');
-  assert.strictEqual(r.stateLine(), 'checking reachability…; shadow comparisons: 1 agree, 2 disagree');
+  assert.strictEqual(r.stateLine(), 'checking reachability…; shadow comparisons: 3 runs, outcome agreed 3, same counts 1');
   r.reaches[0](PROBED);
   await tick();
-  assert.strictEqual(r.stateLine(), `${SET.reach}; shadow comparisons: 1 agree, 2 disagree`);
+  assert.strictEqual(r.stateLine(), `${SET.reach}; shadow comparisons: 3 runs, outcome agreed 3, same counts 1`);
 });
 
 test('t2266: a reach probe that lands after a newer refresh, or after the popover closed, changes nothing', async () => {
@@ -139,17 +139,17 @@ test('t2266: a reach probe that lands after a newer refresh, or after the popove
   assert.strictEqual(r.reaches.length, 2, 'ENTER: two probes are out');
   r.reaches[0]({ ...PROBED, reach: 'stale answer' });
   await tick();
-  assert.strictEqual(r.stateLine(), 'checking reachability…; shadow comparisons: 1 agree, 2 disagree');
+  assert.strictEqual(r.stateLine(), 'checking reachability…; shadow comparisons: 3 runs, outcome agreed 3, same counts 1');
   r.reaches[1]({ ...PROBED, reach: 'offline', reachable: false });
   await tick();
-  assert.strictEqual(r.stateLine(), 'offline; shadow comparisons: 1 agree, 2 disagree', 'the current probe does paint the row');
+  assert.strictEqual(r.stateLine(), 'offline; shadow comparisons: 3 runs, outcome agreed 3, same counts 1', 'the current probe does paint the row');
 
   const closed = compileRefresh();
   await closed.refresh('team');
   closed.popover.dataset.name = '';
   closed.reaches[0](PROBED);
   await tick();
-  assert.strictEqual(closed.stateLine(), 'checking reachability…; shadow comparisons: 1 agree, 2 disagree');
+  assert.strictEqual(closed.stateLine(), 'checking reachability…; shadow comparisons: 3 runs, outcome agreed 3, same counts 1');
 });
 
 test('t2266: a runner set retires the reach probe in flight before it writes', () => {
@@ -162,9 +162,9 @@ test('t2266: a runner set retires the reach probe in flight before it writes', (
 
 test('t2266: paintRunnerState rewrites only the state line', () => {
   const v = view({ ...SET, reach: undefined });
-  assert.deepStrictEqual(v.hints[0], ['state', 'checking reachability…; shadow comparisons: 1 agree, 2 disagree']);
+  assert.deepStrictEqual(v.hints[0], ['state', 'checking reachability…; shadow comparisons: 3 runs, outcome agreed 3, same counts 1']);
   paintRunnerState(v.wrap, SET);
-  assert.strictEqual(textOf(v.wrap.childNodes.find((n) => n.dataset.runner === 'state')), `${SET.reach}; shadow comparisons: 1 agree, 2 disagree`);
+  assert.strictEqual(textOf(v.wrap.childNodes.find((n) => n.dataset.runner === 'state')), `${SET.reach}; shadow comparisons: 3 runs, outcome agreed 3, same counts 1`);
   assert.strictEqual(v.field('runner-peer').value, 'runner-1');
 });
 
