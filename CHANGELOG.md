@@ -16,6 +16,7 @@ blocks a release.
 - A reviewer's verdict written on a single line (`VERDICT: ACCEPT — MUST-FIX: (none) — NITS: …`) now merges. Before, the loop read "(none) —" as one must-fix and escalated the merge.
 - A dial-in test runner now resends an answer the lead's machine failed to receive, for as long as the lead is still waiting for it. Before, one dropped connection threw the answer away and the lead waited out the whole call.
 - The host now logs `main process blocked for N ms` when its main process could not run for over a second. A peer that reports hang-ups or timeouts from this machine can be matched against those lines.
+- A dial-in test runner that is still answering the lead's calls is no longer treated as detached when its claim requests fail for a while. Before, 45 seconds of failed claims during a long job made the lead discard that job's result.
 
 ## 5.193.0 — 2026-11-23
 
