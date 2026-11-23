@@ -211,28 +211,29 @@ function boot({ quietMs = 10, maxWait = 10_000 } = {}) {
   return { m, s, writes, q: m._injectQueueFor(s) };
 }
 
-test('wiring: a renderer reporting the recorder defers the seat’s pty writes', async () => {
+test('wiring: a renderer reporting the recorder defers the seat’s pty writes', async (t) => {
+  const clock = { t: 1_000_000 };
+  t.mock.method(Date, 'now', () => clock.t);
   const h = boot();
   // What ipc-handlers calls on `voice:recording`, by its real name.
   h.m.noteVoiceRecording('hand');
-  assert.ok(h.s.lastVoiceRecordingTs > 0,
+  assert.strictEqual(h.s.lastVoiceRecordingTs, clock.t,
     'ENTER: the stamp must actually have landed on the session, or nothing below is under test');
 
   const p = h.q.enqueue('a dm arriving mid-sentence');
   // He keeps speaking: the renderer resends on its poll, which is what holds
   // the deferral open. Level-triggered by design — main expires the stamp, so a
   // renderer that goes away releases the seat instead of wedging it.
-  //
-  // The interval is cleared in a FINALLY. A failing assertion jumps over a bare
-  // clearInterval, and the surviving timer then keeps node alive until the
-  // runner's timeout — which reports a HANG instead of naming the failed
-  // assertion, and is exactly what this file's own mutation check hit.
-  const poll = setInterval(() => h.m.noteVoiceRecording('hand'), 20);
-  try {
-    await settle(STALE_MS * 2);
-    assert.deepStrictEqual(h.writes, [], 'not one byte may reach the pty while he is still speaking');
-  } finally { clearInterval(poll); }
+  for (let i = 0; i < 8; i += 1) {
+    await settle(15);
+    clock.t += STALE_MS / 2;
+    h.m.noteVoiceRecording('hand');
+  }
+  assert.ok(clock.t - 1_000_000 > STALE_MS * 2,
+    'ENTER: the resends must span more than the stale window, or one stamp alone would explain the hold');
+  assert.deepStrictEqual(h.writes, [], 'not one byte may reach the pty while he is still speaking');
 
+  clock.t += STALE_MS;
   await p;
   assert.deepStrictEqual(h.writes, ['\x15', 'a dm arriving mid-sentence', '\r'],
     'and the message lands in full once he has finished');
