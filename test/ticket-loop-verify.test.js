@@ -7416,6 +7416,23 @@ for (const [code, reason, cls, why, notice] of HOLD_ROWS) {
   });
 }
 
+test('t2380: a hold through the real _boxDecide carries the fall why-text into the notice and the verifyHold evidence', async () => {
+  const p = provenanceLoop({ testRunner: GATE_HOLD, box: true });
+  p.b.f.m._runnerPeerStatus = () => null;
+  p.seed();
+  await p.loop();
+  const t = p.b.f.one();
+  assert.deepStrictEqual(p.b.events, [], 'no home suite was spawned');
+  assert.deepStrictEqual({ ...t.verifyHold, at: typeof t.verifyHold.at }, {
+    step: 'verify: box', at: 'number', evidence: 'runner unreachable: runner runner-1 is not a known peer',
+    recovery: 'box', code: 'runner-unreachable', class: 'transient',
+  });
+  assert.deepStrictEqual(heldNotes(p.b.f), [
+    '[ticket t1 HELD] the box did not decide (runner unreachable): runner runner-1 is not a known peer. Not run on the home suite (fallback:hold).\n'
+    + 'Try again with [agent:task verify t1] once the runner is back.',
+  ]);
+});
+
 test('t2380: the same undecided box under fallback:home runs the home suite and holds nothing', async () => {
   const p = provenanceLoop({ testRunner: GATE_ON, box: true });
   p.b.f.m._boxDecide = undecided('runner-unreachable', 'gone');
