@@ -61,10 +61,15 @@ test('claim, reply and blob each open their own connection', async () => {
   const b = await conn.suiteDeskClaim('sess-00000001');
   assert.deepStrictEqual([a.status, b.status, srv.connections()], [200, 200, 2]);
   await ticks();
-  const r = await conn.suiteDeskReply('c1', 'k1', { status: 200, body: {} });
+  const r1 = await conn.suiteDeskReply('c1', 'k1', { status: 200, body: {} });
   await ticks();
-  const blob = await conn.suiteDeskBlob('c1', 'k1');
-  assert.deepStrictEqual([r.status, blob.status, String(blob.bytes), srv.connections()], [200, 200, 'abc', 4]);
+  const r2 = await conn.suiteDeskReply('c1', 'k1', { status: 200, body: {} });
+  await ticks();
+  assert.deepStrictEqual([r1.status, r2.status, srv.connections()], [200, 200, 4]);
+  const blob1 = await conn.suiteDeskBlob('c1', 'k1');
+  await ticks();
+  const blob2 = await conn.suiteDeskBlob('c1', 'k1');
+  assert.deepStrictEqual([blob1.status, String(blob2.bytes), srv.connections()], [200, 'abc', 6]);
 });
 
 test('a keep-alive route still reuses its socket for back-to-back requests', async () => {
@@ -118,6 +123,7 @@ test('a timeout logs the configured timeout and an after at or beyond it', async
   setTime(1000 + 7003);
   for (const list of Object.values(conn._reqAgent.sockets)) for (const s of list) s.emit('timeout');
   const failed = await pending;
+  await ticks();
   assert.deepStrictEqual([failed.calls(), failed.err.message], [1, 'timeout']);
   assert.deepStrictEqual(logs, ['lead: request failed: GET /api/catalogs timeout reused=false idle=- after=7003 timeout=7000']);
 });
@@ -156,21 +162,43 @@ test('PeerManager hands its log to each connection', () => {
   mgr.sync([]);
 });
 
-test('stop destroys every agent, closing the pooled sockets', async () => {
+
+test('stop destroys every agent: pooled sockets close and an in-flight claim settles without a failure line', async () => {
+  let held = 0;
   const srv = await serve((req, res) => {
     req.resume();
     req.on('end', () => {
-      if (req.url.includes('/blob')) { res.writeHead(200, { 'Content-Type': 'application/octet-stream' }); res.end('x'); return; }
+      if (req.url === '/api/suite-desk/claim') { held += 1; return; }
       json(res, { ok: true });
     });
   });
-  const { conn } = connect(srv.url);
+  const { conn, logs } = connect(srv.url);
   await call(conn, 'GET', '/api/sessions');
   await conn.suiteAsk('GET', '/api/suite/jobs');
-  await ticks();
-  assert.strictEqual(srv.open(), 2, 'ENTER: two pooled sockets are open');
+  let claimed = null;
+  conn.suiteDeskClaim('sess-00000001').then((v) => { claimed = v; });
+  for (let i = 0; i < 200 && !held; i++) await ticks(1);
+  assert.deepStrictEqual([held, srv.open()], [1, 3], 'ENTER: two pooled sockets and one held claim are open');
   conn.stop();
-  for (let i = 0; i < 200 && srv.open(); i++) await ticks(1);
-  assert.strictEqual(srv.open(), 0);
+  for (let i = 0; i < 200 && (srv.open() || !claimed); i++) await ticks(1);
+  assert.deepStrictEqual([srv.open(), claimed && claimed.status, logs], [0, 0, []]);
+});
+
+test('a callback that throws on success is not called again', async () => {
+  const srv = await serve((req, res) => { req.resume(); req.on('end', () => json(res, { ok: true })); });
+  const { conn } = connect(srv.url);
+  let calls = 0;
+  conn._request('GET', '/api/sessions', null, () => { calls += 1; throw new Error('boom'); });
+  for (let i = 0; i < 200 && !calls; i++) await ticks(1);
+  await ticks();
+  assert.strictEqual(calls, 1);
+});
+
+test('a log function that throws does not stop the callback', async () => {
+  const srv = await serve(() => {});
+  const url = srv.url;
   await srv.close();
+  const { conn } = connect(url, { log: () => { throw new Error('log down'); } });
+  const out = await conn.suiteDeskClaim('sess-00000001');
+  assert.deepStrictEqual([out.status, out.error], [0, 'connect ECONNREFUSED 127.0.0.1:' + url.split(':').pop()]);
 });

@@ -61,6 +61,8 @@ const ROUTE_CLASSES = [
   '/api/import/begin', '/api/import/:id', '/api/import/:id/commit', '/api/import/:id/file/*',
   '/api/wterm-close/:id', '/api/wterm-input/:id', '/api/wterm-resize/:id',
   '/api/suite-desk/claim', '/api/suite-desk/calls/:id/reply', '/api/suite-desk/calls/:id/blob',
+  '/api/suite/info', '/api/suite/jobs', '/api/suite/jobs/:id', '/api/suite/jobs/:id/pack',
+  '/api/suite/jobs/:id/commit', '/api/suite/jobs/:id/output',
 ].map((cls) => ({ cls, re: new RegExp(`^${cls.replace(/:id/g, '[^/]+').replace(/\*$/, '.+')}$`) }));
 
 function routeClass(path) {
@@ -1172,11 +1174,15 @@ class PeerConnection {
       settled = true;
       cb(...args);
     };
+    const agent = req.agent;
     const fail = (e) => {
-      if (!settled && !(e && e.message === 'response too large')) {
-        this._logRequestFailure(method, path, e, { reused: req.reusedSocket === true, idle, after: this._clock() - startedAt, timeout });
-      }
+      const first = !settled;
       done(e);
+      const torndown = this._stopped || ![this._reqAgent, this._suiteAgent, this._deskAgent].includes(agent);
+      if (!first || torndown || (e && e.message === 'response too large')) return;
+      try {
+        this._logRequestFailure(method, path, e, { reused: req.reusedSocket === true, idle, after: this._clock() - startedAt, timeout });
+      } catch {}
     };
     return { done, fail };
   }
