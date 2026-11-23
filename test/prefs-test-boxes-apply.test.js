@@ -139,7 +139,7 @@ test('the Test boxes section has exactly one Apply button, and the Box image row
 
 test('the hints name the single Apply and Save, and the build hint names the Docker login', () => {
   const s = section();
-  assert.ok(s.includes('Applies when you press Apply test box settings, or Save, with no restart; refused while a job is running.'));
+  assert.ok(s.includes('Applies when you press Apply test box settings, or Save, with no restart; while test jobs run, the change is saved and applies when they finish.'));
   assert.ok(s.includes('Applies when you press Apply test box settings, or Save; peers see the change at their next hello.'));
   assert.ok(s.includes('Off: a job whose image is missing is refused, as before. Builds can pull any image your Docker login can.</p>'));
   const blockStart = s.indexOf('id="prefs-suite-runner-block"');
