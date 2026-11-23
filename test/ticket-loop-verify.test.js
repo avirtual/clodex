@@ -8263,6 +8263,7 @@ test('t2402: gate:off while the verify box job is running cancels it and re-ente
   assert.deepStrictEqual(l.b.events, ['spawn'], 'the re-entry ran the home suite once');
   assert.deepStrictEqual([t.verifyHold, t.boxRetry, t.suiteProvenance.verify.decidedBy], [undefined, undefined, 'home']);
   assert.strictEqual(t.loopStep, 'review', 'verify passed on to review');
+  assert.deepStrictEqual(l.f.esc(), [], 'the cancelled run escalated nothing');
   assert.deepStrictEqual(c.rows, []);
 });
 
@@ -8279,6 +8280,7 @@ test('t2402: runner off while the verify box job is queued cancels it and re-ent
   assert.deepStrictEqual(c.cancels, [['p1', 'job-1', 'push']]);
   assert.deepStrictEqual(l.b.events, ['spawn']);
   assert.deepStrictEqual([l.f.one().loopStep, l.f.one().suiteProvenance.verify.decidedBy], ['review', 'home']);
+  assert.deepStrictEqual(l.f.esc(), [], 'the cancelled run escalated nothing');
 });
 
 test('t2402: a verify box job that finishes normally sends no cancel, and a later board change finds nothing in flight', async () => {
