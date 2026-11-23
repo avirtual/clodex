@@ -65,7 +65,7 @@ function createSuiteDesk({
   function slot(origin) {
     let s = slots.get(origin);
     if (!s) {
-      s = { session: null, lastClaim: null, pending: [], claimed: new Map(), bytes: 0 };
+      s = { session: null, lastClaim: null, lastSeen: null, pending: [], claimed: new Map(), bytes: 0 };
       slots.set(origin, s);
     }
     return s;
@@ -75,7 +75,7 @@ function createSuiteDesk({
     let oldest = null;
     for (const [origin, s] of slots) {
       if (attached(origin) || s.pending.length || s.claimed.size) continue;
-      if (!oldest || s.lastClaim < slots.get(oldest).lastClaim) oldest = origin;
+      if (!oldest || s.lastSeen < slots.get(oldest).lastSeen) oldest = origin;
     }
     if (oldest == null) return false;
     slots.delete(oldest);
@@ -84,7 +84,11 @@ function createSuiteDesk({
 
   function attached(origin) {
     const s = slots.get(origin);
-    return !!(s && s.session && s.lastClaim != null && now() - s.lastClaim < presenceMs);
+    if (!s || !s.session) return false;
+    const t = now();
+    if (s.lastSeen != null && t - s.lastSeen < presenceMs) return true;
+    for (const call of s.claimed.values()) if (t < call.deadline) return true;
+    return false;
   }
 
   function tomb(id, reason) {
@@ -189,7 +193,7 @@ function createSuiteDesk({
     const s = slot(origin);
     const t = now();
     if (s.session && s.session !== session) {
-      if (s.lastClaim != null && t - s.lastClaim < presenceMs) {
+      if (attached(origin)) {
         return { status: 409, error: 'another runner session is attached for this origin' };
       }
       let n = 0;
@@ -198,6 +202,7 @@ function createSuiteDesk({
     }
     s.session = session;
     s.lastClaim = t;
+    s.lastSeen = t;
     const out = [];
     let bytes = 0;
     while (s.pending.length) {
@@ -228,6 +233,8 @@ function createSuiteDesk({
       return { status: 410, error: reason === 'expired' ? 'call expired' : 'call already settled' };
     }
     if (!call.claim || !sameToken(token, call.claim)) return { status: 409, error: 'wrong claim token' };
+    const s = slots.get(call.origin);
+    if (s && s.claimed.get(call.id) === call) s.lastSeen = now();
     if (now() >= call.deadline) {
       expire(call);
       return { status: 410, error: 'call expired' };
@@ -262,7 +269,7 @@ function createSuiteDesk({
   function origins() {
     return [...slots.entries()]
       .filter(([, s]) => s.lastClaim != null)
-      .map(([origin, s]) => ({ origin, attached: attached(origin), lastClaim: s.lastClaim }));
+      .map(([origin, s]) => ({ origin, attached: attached(origin), lastClaim: s.lastClaim, lastSeen: s.lastSeen }));
   }
 
   function close() {

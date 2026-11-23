@@ -229,7 +229,7 @@ test('origins lists claimers with their attachment; close settles everything', a
   const { desk, clock } = mkDesk();
   desk.claim('laptop', SESSION);
   const p = desk.conn('laptop').suiteAsk('GET', '/api/suite/info', null, 30000);
-  assert.deepStrictEqual(desk.origins(), [{ origin: 'laptop', attached: true, lastClaim: 1000 }]);
+  assert.deepStrictEqual(desk.origins(), [{ origin: 'laptop', attached: true, lastClaim: 1000, lastSeen: 1000 }]);
   desk.close();
   assert.deepStrictEqual(await p, { status: 0, body: null, error: 'suite desk closed' });
   assert.strictEqual(clock.armed(), 0);
@@ -315,4 +315,98 @@ test('a replaced runner session logs one line with the number of calls it settle
   clock.advance(46000);
   assert.strictEqual(desk.claim('laptop', OTHER).status, 200);
   assert.deepStrictEqual(logs, ['runner session for laptop replaced; settled 2 call(s)']);
+});
+
+const OK = { status: 200, body: { ok: true } };
+
+test('presence: replies with valid tokens keep a runner attached with no claim after t=0', async () => {
+  const { desk, clock } = mkDesk();
+  desk.claim('laptop', SESSION);
+  const c = desk.conn('laptop');
+  const a = c.suiteAsk('GET', '/api/suite/info', null, 120000);
+  const b = c.suiteAsk('GET', '/api/suite/info', null, 120000);
+  const [ca, cb] = desk.claim('laptop', SESSION).calls;
+  clock.advance(30000);
+  assert.deepStrictEqual(desk.reply(ca.id, ca.claim, OK), { status: 200 });
+  clock.advance(30000);
+  assert.deepStrictEqual(desk.reply(cb.id, cb.claim, OK), { status: 200 });
+  await Promise.all([a, b]);
+  clock.advance(10000);
+  assert.strictEqual(desk.attached('laptop'), true);
+  const late = settled(c.suiteAsk('GET', '/api/suite/info', null, 30000));
+  await tick();
+  assert.strictEqual(late(), null);
+  assert.deepStrictEqual(desk.retained('laptop'), { unsettled: 1, bytes: 0 });
+});
+
+test('presence: a claim alone lasts until 44 999 ms; at 45 000 ms the runner is detached', () => {
+  const { desk, clock } = mkDesk();
+  desk.claim('laptop', SESSION);
+  clock.advance(44999);
+  assert.strictEqual(desk.attached('laptop'), true);
+  clock.advance(1);
+  assert.strictEqual(desk.attached('laptop'), false);
+});
+
+test('presence: a reply with a wrong claim token refreshes nothing', () => {
+  const { desk, clock } = mkDesk();
+  desk.claim('laptop', SESSION);
+  desk.conn('laptop').suiteAsk('GET', '/api/suite/info', null, 41000);
+  const [call] = desk.claim('laptop', SESSION).calls;
+  clock.advance(40000);
+  assert.deepStrictEqual(desk.reply(call.id, 'f'.repeat(32), OK), { status: 409, error: 'wrong claim token' });
+  clock.advance(6000);
+  assert.deepStrictEqual(desk.retained('laptop'), { unsettled: 0, bytes: 0 });
+  assert.strictEqual(desk.attached('laptop'), false);
+});
+
+test('presence: an unexpired claimed call keeps the runner attached until it expires', async () => {
+  const { desk, clock } = mkDesk();
+  desk.claim('laptop', SESSION);
+  const p = desk.conn('laptop').suiteAsk('GET', '/api/suite/jobs?ids=j&wait=25000', null, 90000);
+  assert.strictEqual(desk.claim('laptop', SESSION).calls.length, 1);
+  clock.advance(60000);
+  assert.strictEqual(desk.attached('laptop'), true);
+  clock.advance(30000);
+  assert.deepStrictEqual(await p, { status: 0, body: null, error: 'runner did not answer in time' });
+  assert.strictEqual(desk.attached('laptop'), false);
+});
+
+test('presence: pending calls alone do not keep a runner attached', () => {
+  const { desk, clock } = mkDesk();
+  desk.claim('laptop', SESSION);
+  desk.conn('laptop').suiteAsk('GET', '/api/suite/info', null, 120000);
+  clock.advance(46000);
+  assert.deepStrictEqual(desk.retained('laptop'), { unsettled: 1, bytes: 0 });
+  assert.strictEqual(desk.attached('laptop'), false);
+});
+
+test('presence: a new session is 409 while the old one replied 10 s ago, and takes over 46 s after its last reply', async () => {
+  const logs = [];
+  const { desk, clock } = mkDesk({ log: (m) => logs.push(m) });
+  desk.claim('laptop', SESSION);
+  const c = desk.conn('laptop');
+  c.suiteAsk('GET', '/api/suite/info', null, 120000);
+  const [held] = desk.claim('laptop', SESSION).calls;
+  const p1 = c.suiteAsk('GET', '/api/suite/info', null, 120000);
+  const p2 = c.suiteAsk('GET', '/api/suite/info', null, 120000);
+  clock.advance(40000);
+  assert.deepStrictEqual(desk.reply(held.id, held.claim, OK), { status: 200 });
+  clock.advance(10000);
+  assert.deepStrictEqual(desk.claim('laptop', OTHER), { status: 409, error: 'another runner session is attached for this origin' });
+  clock.advance(36000);
+  assert.deepStrictEqual(desk.claim('laptop', OTHER), { status: 200, calls: [] });
+  const restart = { status: 404, body: { ok: false, error: 'runner session replaced', reason: 'runner-restart' }, error: null };
+  assert.deepStrictEqual([await p1, await p2], [restart, restart]);
+  assert.deepStrictEqual(logs, ['runner session for laptop replaced; settled 2 call(s)']);
+});
+
+test('presence: the listing row carries lastClaim and lastSeen separately', () => {
+  const { desk, clock } = mkDesk();
+  desk.claim('laptop', SESSION);
+  desk.conn('laptop').suiteAsk('GET', '/api/suite/info', null, 60000);
+  const [call] = desk.claim('laptop', SESSION).calls;
+  clock.advance(30000);
+  desk.reply(call.id, call.claim, OK);
+  assert.deepStrictEqual(desk.origins(), [{ origin: 'laptop', attached: true, lastClaim: 1000, lastSeen: 31000 }]);
 });
