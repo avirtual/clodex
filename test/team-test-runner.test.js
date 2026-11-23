@@ -440,6 +440,68 @@ const BOX_RETRY_LOAD_ROWS = [
   ['null', null, undefined],
 ];
 
+const BYPASS = { by: 'lead', reason: 'runner gone for a day', at: '2026-11-23T10:00:00.000Z', sha: 'a'.repeat(40) };
+const HOME_BYPASS_END_ROWS = [
+  ['task done', 'done', task('done', 'fixed'), undefined],
+  ['reject', 'done', task('reject', 'redo it'), undefined],
+  ['cancel', 'open', task('cancel', 'drop it'), undefined],
+  ['accept', 'done', task('accept', 'ok'), undefined],
+  ['task verify (another box-hold release)', 'done', task('verify'), undefined],
+  ['fallback-home (another box-hold release)', 'done', (f) => f.verb('lead', '[agent:team runner fallback:home]'), undefined],
+  ['runner-off (another box-hold release)', 'done', (f) => f.verb('lead', '[agent:team runner off]'), undefined],
+  ['nothing (control)', 'done', async () => {}, { by: 'lead', reason: 'runner gone for a day', at: '2026-11-23T10:00:00.000Z', sha: 'a'.repeat(40) }],
+];
+
+for (const [label, state, act, want] of HOME_BYPASS_END_ROWS) {
+  test(`t2384: homeBypass is removed by ${label}`, async () => {
+    const f = mkVerbFixture({ manifestExtra: { testRunner: HOLD_ON } });
+    const root = f.tm.loadManifest('team').root;
+    const store = require('../tickets-store').createTicketsStore({ clodexHome: f.home });
+    const held = state === 'done' ? { loopStep: 'verify', verifyHold: RETRY_HOLD, boxHoldReason: 'runner unreachable', closedAt: 1 } : {};
+    store.save(root, [{ id: 't1', state, title: 't1', spec: 's', assignee: 'hand', ...held, homeBypass: BYPASS }]);
+    assert.deepStrictEqual(store.load(root)[0].homeBypass, BYPASS, 'ENTER: the row carries homeBypass');
+    f.m._runTicketLoop = () => {};
+    await f.verb('lead', '[agent:team runner]');
+    await act(f);
+    const [t] = store.load(root);
+    if (label !== 'nothing (control)') assert.notDeepStrictEqual([t.state, t.loopStep, t.verifyHold, (t.events || []).length], [state, held.loopStep, held.verifyHold, 0], 'ENTER: the act changed the row');
+    assert.deepStrictEqual(t.homeBypass, want);
+  });
+}
+
+const BYPASS_TALLY_ROWS = [
+  ['0 bypassed', 0,
+    '[agent:team] test runner of team: runner-1, wire push, hands full, gate on — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; gate runs: 3 decided by the box, 2 fell back to home (queue budget 1, runner unreachable 1)'],
+  ['2 bypassed', 2,
+    '[agent:team] test runner of team: runner-1, wire push, hands full, gate on — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; gate runs: 3 decided by the box, 2 fell back to home (queue budget 1, runner unreachable 1), 2 bypassed'],
+];
+
+for (const [label, n, line] of BYPASS_TALLY_ROWS) {
+  test(`t2384: [agent:team runner] tally with ${label} counts home verifies apart from the home fallbacks`, async () => {
+    const on = (decidedBy, fallback) => ({ team: 'team', kind: 'verify', ticket: 't1', agree: null, decidedBy, fallback });
+    const bypassed = { team: 'team', kind: 'verify', ticket: 't2', agree: null, decidedBy: 'home', bypass: true, fallback: 'no share', fallbackCode: 'no-share' };
+    const rows = [on('box', null), on('home', 'queue budget'), on('box', null), on('home', 'runner unreachable'), on('box', null), cmp('0123456789ab', true, [], [])];
+    for (let i = 0; i < n; i++) rows.splice(1 + i * 2, 0, bypassed);
+    const f = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1', hands: 'full', gate: 'on' } }, peers: [SUITE_PEER], reach: INFO, compare: rows });
+    assert.deepStrictEqual(await f.verb('lead', '[agent:team runner]'), [line]);
+  });
+}
+
+test('t2384: a bypass record in suiteProvenance survives load only in its exact shape and only on a home-decided run', () => {
+  const f = mkVerbFixture({});
+  const root = f.tm.loadManifest('team').root;
+  const store = require('../tickets-store').createTicketsStore({ clodexHome: f.home });
+  const run = (over) => ({ at: 'x', decidedBy: 'home', outcome: 'pass', totals: null, treeHash: null, runner: null, jobId: null, definitionHash: null, image: null, fallback: 'no share', fallbackCode: 'no-share', fallbackClass: 'deterministic', ...over });
+  store.save(root, [
+    { id: 't1', state: 'done', suiteProvenance: { verify: run({ bypass: { ...BYPASS, extra: 1 } }), postMerge: null } },
+    { id: 't2', state: 'done', suiteProvenance: { verify: run({ bypass: { ...BYPASS, reason: 7 } }), postMerge: null } },
+    { id: 't3', state: 'done', suiteProvenance: { verify: run({ decidedBy: 'box', bypass: BYPASS }), postMerge: null } },
+  ]);
+  assert.deepStrictEqual(store.load(root).map((t) => t.suiteProvenance.verify.bypass), [
+    { by: 'lead', reason: 'runner gone for a day', at: '2026-11-23T10:00:00.000Z', sha: 'a'.repeat(40) }, undefined, undefined,
+  ]);
+});
+
 test('t2383: boxRetry is normalized on load and a malformed one is dropped', () => {
   const f = mkVerbFixture({});
   const root = f.tm.loadManifest('team').root;

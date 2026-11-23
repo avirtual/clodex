@@ -450,7 +450,7 @@ const CORE_ROWS = [
   { type: 'team-review', parse: parseTeamReview, bodyMode: GREEDY },
   { type: 'review-done', parse: parseReviewDone, bodyMode: GREEDY },
   { type: 'reboot', parse: parseReboot, bodyMode: NONE },
-  { type: 'task', parse: parseTask, bodyMode: (i) => (i.sub === 'add' || i.sub === 'done' || i.sub === 'reject' || i.sub === 'respec' || i.sub === 'cancel' || i.sub === 'accept' ? 'greedy' : 'none') },
+  { type: 'task', parse: parseTask, bodyMode: (i) => (i.sub === 'add' || i.sub === 'done' || i.sub === 'reject' || i.sub === 'respec' || i.sub === 'cancel' || i.sub === 'accept' || (i.sub === 'verify' && i.home) ? 'greedy' : 'none') },
   { type: 'permit', parse: parsePermit, bodyMode: NONE },
   { type: 'team-create', parse: parseTeamCreate, bodyMode: GREEDY },
   { type: 'team', parse: parseTeam, bodyMode: teamBodyMode },

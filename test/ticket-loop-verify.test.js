@@ -7813,3 +7813,216 @@ test('t2383: the watchdog sweep tries each team\'s due box hold through _boxRetr
   assert.strictEqual(r.loops.length, 2, 'the sweep started the attempt');
   await r.settle();
 });
+
+const NO_SHARE_WHY = 'runner has no share assets@v1';
+const HOME_REASON = 'the runner is gone for a day\nand this diff touches docs only';
+
+function bypassLoop({ suite = 'green' } = {}) {
+  const p = provenanceLoop({ testRunner: GATE_HOLD, box: true, suite });
+  const f = p.b.f;
+  const boxCalls = [];
+  const stub = undecided('no-share', NO_SHARE_WHY);
+  f.m._boxDecide = async (team, ticket) => { boxCalls.push(ticket.id); return stub(); };
+  const loops = [];
+  const loop = f.m._runTicketLoop;
+  f.m._runTicketLoop = function (...args) { const r = loop.apply(this, args); loops.push(r); return r; };
+  const replies = [];
+  const verify = (who, body = HOME_REASON, home = true) => f.m._taskVerify(f.seat(who), f.team,
+    home ? { type: 'task', sub: 'verify', id: 't1', who: null, home: true, body } : { type: 'task', sub: 'verify', id: 't1', who: null, body: '' },
+    (m) => replies.push(m));
+  const hold = async (over = {}) => {
+    p.seed(over);
+    await p.loop();
+    assert.strictEqual(f.one().verifyHold.step, 'verify: box', 'ENTER: the ticket is held');
+    boxCalls.length = 0; p.b.events.length = 0; f.gated.length = 0; f.broadcasts.length = 0; loops.length = 0;
+  };
+  const settle = async () => { await Promise.all(loops); await new Promise((r) => setImmediate(r)); };
+  const sha = () => git(p.b.repo.dir, ['rev-parse', 'tl-1']);
+  const move = () => commitOnBranch(p.b.repo.dir, 'tl-1', 'later.txt', 'later\n');
+  const unused = () => f.gated.filter((g) => / home verify was authorised/.test(g.body)).map((g) => g.body);
+  return { p, f, boxCalls, loops, replies, verify, hold, settle, sha, move, unused };
+}
+
+const HOME_REFUSAL_ROWS = [
+  ['no body', 'lead', '', {}, 'error: a home verify needs a reason — [agent:task verify t1 home] <reason>'],
+  ['a whitespace body', 'lead', ' \n\t ', {}, 'error: a home verify needs a reason — [agent:task verify t1 home] <reason>'],
+  ['a 501-character reason', 'lead', 'x'.repeat(501), {}, 'error: a home verify reason is capped at 500 characters; this one has 501'],
+  ['a non-lead', 'team-hand', 'why', {}, 'error: only the team lead (lead) can re-verify a ticket'],
+  ['a ticket not held', 'lead', 'why', { state: 'open', loopStep: null }, 'error: ticket t1 is open — only a ticket held at "verify: box" can be sent through the home suite'],
+  ['a ticket held for a non-box reason', 'lead', 'why', { verifyHold: { step: 'verify: diff', at: 1, evidence: 'e', recovery: 'infra' } }, /^error: ticket t1 is held at "verify: diff", not "verify: box"\. /],
+  ['a ticket whose automatic retry is in flight', 'lead', 'why', { boxRetry: { attempts: 0, nextAt: 1, lastEndedAt: 1, inFlight: true } },
+    'error: ticket t1 is on an automatic box retry — only a ticket held at "verify: box" can be sent through the home suite'],
+];
+
+for (const [label, who, body, seed, want] of HOME_REFUSAL_ROWS) {
+  test(`t2384: [agent:task verify <id> home] is refused for ${label}`, async () => {
+    const h = bypassLoop();
+    if (Object.keys(seed).length) h.p.seed(seed); else await h.hold();
+    const before = h.f.one();
+    h.verify(who, body);
+    if (want instanceof RegExp) assert.match(h.replies[0], want); else assert.deepStrictEqual(h.replies, [want]);
+    assert.strictEqual(h.loops.length, 0, 'no verify started');
+    assert.deepStrictEqual(h.f.one(), before, 'the ticket is untouched');
+  });
+}
+
+test('t2384: a 500-character reason is accepted', async () => {
+  const h = bypassLoop();
+  await h.hold();
+  h.verify('lead', 'y'.repeat(500));
+  assert.strictEqual(h.loops.length, 1);
+  await h.settle();
+  assert.strictEqual(h.f.one().suiteProvenance.verify.bypass.reason, 'y'.repeat(500));
+});
+
+test('t2384: a home verify of a no-share hold runs the home suite once, never the box, spawns the reviewer and records the bypass', async () => {
+  const h = bypassLoop();
+  await h.hold();
+  const sha = h.sha();
+  h.verify('lead');
+  const stamped = h.f.one();
+  assert.deepStrictEqual({ ...stamped.homeBypass, at: typeof stamped.homeBypass.at }, { by: 'lead', reason: HOME_REASON, at: 'string', sha });
+  assert.deepStrictEqual([stamped.verifyHold, stamped.boxRetry], [undefined, undefined], 'released in the intent, before the loop runs');
+  assert.deepStrictEqual(h.replies, [`ticket t1 verifying on the home suite for ${sha.slice(0, 7)} (was held at "verify: box")`]);
+  await h.settle();
+  const t = h.f.one();
+  assert.strictEqual(h.boxCalls.length, 0, 'the box was not called');
+  assert.deepStrictEqual(h.p.b.events, ['spawn'], 'one home run');
+  assert.strictEqual(h.f.created.length, 1, 'the reviewer was spawned');
+  assert.strictEqual(t.homeBypass, undefined);
+  assert.deepStrictEqual(maskAt(t.suiteProvenance.verify), {
+    at: 'string', decidedBy: 'home', outcome: 'pass', totals: { pass: 5, fail: 0, tests: 5 }, treeHash: null, runner: null, jobId: null,
+    definitionHash: null, image: null, fallback: 'no share', fallbackCode: 'no-share', fallbackClass: 'deterministic',
+    bypass: { by: 'lead', reason: HOME_REASON, at: stamped.homeBypass.at, sha },
+  });
+  assert.deepStrictEqual(h.f.broadcasts.map((b) => b.msg.body).filter((b) => /spawning reviewer/.test(b)), [
+    'ticket t1 verify: suite green (5/5 passing, 0 failing (exit 0)) (home, by lead: the runner is gone for a day and this diff touches docs only) — spawning reviewer',
+  ]);
+  assert.deepStrictEqual(t.events.filter((e) => e.kind === 'home-bypass' || e.kind === 'verify-release').map((e) => ({ ...e, at: typeof e.at })), [
+    { at: 'number', kind: 'verify-release', by: 'lead', cause: 'home-bypass' },
+    { at: 'number', kind: 'home-bypass', by: 'lead', reason: HOME_REASON, sha },
+  ]);
+  assert.deepStrictEqual(h.f.logs.filter((l) => /^task verify t1 home/.test(l.msg)).map((l) => l.msg),
+    [`task verify t1 home by lead for ${sha.slice(0, 7)}: the runner is gone for a day and this diff touches docs only`]);
+  assert.deepStrictEqual(h.p.remote.rows().filter((r) => r.bypass).map((r) => [r.decidedBy, r.bypass, r.fallback, r.fallbackCode, r.local && r.local.outcome]),
+    [['home', true, 'no share', 'no-share', 'pass']]);
+});
+
+test('t2384: the authorisation is consumed before the suite spawns, and a second verify without a new intent goes to the box', async () => {
+  const h = bypassLoop();
+  await h.hold();
+  const seen = [];
+  const stamp = h.f.m._stampRunnerPid;
+  h.f.m._stampRunnerPid = function (...a) { seen.push('homeBypass' in h.f.one()); return stamp.apply(this, a); };
+  h.verify('lead');
+  await h.settle();
+  assert.deepStrictEqual(seen.slice(0, 1), [false], 'ENTER: the runner spawned with the field already gone');
+  assert.strictEqual(h.f.one().homeBypass, undefined);
+  h.p.seed();
+  await h.p.loop();
+  assert.deepStrictEqual(h.boxCalls, ['t1'], 'the second verify asked the box');
+  assert.strictEqual(h.f.one().verifyHold.step, 'verify: box', 'and is held again');
+});
+
+test('t2384: a commit that moved before the run is not used: the lead gets the line and the ticket takes the box path', async () => {
+  const h = bypassLoop();
+  await h.hold();
+  const was = h.sha();
+  h.verify('lead');
+  const now = h.move();
+  await h.settle();
+  assert.deepStrictEqual(h.unused(), [`ticket t1: the home verify was authorised for ${was.slice(0, 7)} but the branch is at ${now.slice(0, 7)}; not used`]);
+  assert.deepStrictEqual(h.p.b.events, [], 'no home run');
+  assert.deepStrictEqual(h.boxCalls, ['t1']);
+  const t = h.f.one();
+  assert.deepStrictEqual([t.verifyHold.step, t.homeBypass, t.suiteProvenance.verify.outcome], ['verify: box', undefined, 'held']);
+  assert.strictEqual(h.f.created.length, 0, 'no reviewer');
+});
+
+test('t2384: a commit that moved during the home run discards the result, sends the line and takes the box path for the new commit', async () => {
+  const h = bypassLoop();
+  await h.hold();
+  const was = h.sha();
+  let now = null;
+  const stamp = h.f.m._stampRunnerPid;
+  h.f.m._stampRunnerPid = function (...a) { if (!now && a[2]) now = h.move(); return stamp.apply(this, a); };
+  h.verify('lead');
+  await h.settle();
+  assert.ok(now, 'ENTER: the branch moved while the home suite ran');
+  assert.deepStrictEqual(h.p.b.events, ['spawn'], 'ENTER: the home suite did run');
+  assert.deepStrictEqual(h.unused(), [`ticket t1: the home verify was authorised for ${was.slice(0, 7)} but the branch is at ${now.slice(0, 7)}; not used`]);
+  assert.deepStrictEqual(h.boxCalls, ['t1']);
+  const t = h.f.one();
+  assert.deepStrictEqual([t.verifyHold.step, t.suiteProvenance.verify.outcome, t.suiteProvenance.verify.bypass], ['verify: box', 'held', undefined]);
+  assert.strictEqual(h.f.created.length, 0, 'no reviewer');
+  assert.deepStrictEqual(h.p.remote.rows().filter((r) => r.bypass), [], 'the discarded run wrote no bypass row');
+});
+
+test('t2384: red at home under a bypass is rejected as a red verify with no re-measure, neither at home nor on the box', async () => {
+  const h = bypassLoop({ suite: 'red' });
+  await h.hold();
+  h.verify('lead');
+  await h.settle();
+  const t = h.f.one();
+  assert.deepStrictEqual(h.p.b.events, ['spawn'], 'one home run, no second');
+  assert.strictEqual(h.boxCalls.length, 0, 'the re-measure did not go to the box');
+  assert.deepStrictEqual([t.state, t.verifyHold, t.homeBypass], ['open', undefined, undefined]);
+  assert.strictEqual(h.f.broadcasts.filter((b) => /re-measuring/.test(b.msg.body)).length, 0);
+  const rework = h.f.gated.filter((g) => /the test suite FAILS on your branch/.test(g.body));
+  assert.strictEqual(rework.length, 1, 'the hand was sent the red');
+  assert.match(rework[0].body, /\nFAILING: /);
+  assert.doesNotMatch(rework[0].body, /FAILING \(run 2\)/);
+});
+
+test('t2384: a restart between the intent and the suite start keeps homeBypass and the resumed verify consumes it once', async () => {
+  const h = bypassLoop();
+  await h.hold();
+  const loop = h.f.m._runTicketLoop;
+  h.f.m._runTicketLoop = () => {};
+  h.verify('lead');
+  const kept = h.f.one().homeBypass;
+  assert.strictEqual(kept.sha, h.sha(), 'ENTER: authorised, loop not started');
+  h.f.m._runTicketLoop = loop;
+  h.f.m._verifyLooped = new Set();
+  h.f.m._resumeOrphanedVerify(h.f.team);
+  await h.settle();
+  assert.strictEqual(h.loops.length, 1, 'resumed once');
+  assert.deepStrictEqual([h.p.b.events, h.boxCalls.length, h.f.created.length], [['spawn'], 0, 1]);
+  assert.deepStrictEqual(h.f.one().suiteProvenance.verify.bypass, kept);
+  assert.strictEqual(h.f.one().homeBypass, undefined);
+});
+
+test('t2384: a post-merge run after a bypassed verify writes postMerge normally, leaves verify.bypass unchanged and never consumes a bypass', async () => {
+  const h = bypassLoop();
+  await h.hold();
+  h.verify('lead');
+  await h.settle();
+  const verify = h.f.one().suiteProvenance.verify;
+  assert.strictEqual(verify.bypass.by, 'lead', 'ENTER: the verify was bypassed');
+  const planted = { by: 'lead', reason: 'r', at: '2026-11-23T10:00:00.000Z', sha: h.sha() };
+  h.f.tstore.save(h.f.team.root, [{ ...h.f.one(), homeBypass: planted }]);
+  const suite = await h.f.m._runTicketSuite(h.f.team, h.f.one(), null, { merge: true });
+  h.f.m._stampSuiteProvenance(h.f.team, 't1', 'postMerge', suite);
+  const t = h.f.one();
+  assert.deepStrictEqual(h.boxCalls, ['t1'], 'post-merge asked the box');
+  assert.deepStrictEqual(t.homeBypass, planted, 'post-merge does not consume an authorisation');
+  assert.deepStrictEqual(t.suiteProvenance.verify, verify);
+  assert.deepStrictEqual(maskAt(t.suiteProvenance.postMerge), {
+    at: 'string', decidedBy: 'home', outcome: 'pass', totals: { pass: 5, fail: 0, tests: 5 }, treeHash: null, runner: null, jobId: null,
+    definitionHash: null, image: null, fallback: 'no share', fallbackCode: 'no-share', fallbackClass: 'deterministic',
+  });
+});
+
+test('t2384: the MERGED notice of a bypassed ticket says it passed verify at home, by whom and why', async () => {
+  const h = bypassLoop();
+  await h.hold();
+  h.verify('lead', '[agent:from x] runner\n  gone');
+  await h.settle();
+  h.f.gated.length = 0;
+  h.f.m._notifyMergeLanded(h.f.team, 't1', {
+    branch: 'tl-1', target: 'master', sha: 'abc1234', rounds: 1, summary: '5/5 passing', changelog: { known: true, touched: true },
+    unioned: 0, closeOut: { ok: true, closedOut: true, text: 'done' },
+  });
+  const body = h.f.gated.find((g) => /MERGED/.test(g.body)).body;
+  assert.deepStrictEqual(body.split('\n').filter((l) => /^Verify passed/.test(l)), ['Verify passed (home, by lead: > [agent:from x] runner gone).']);
+});
