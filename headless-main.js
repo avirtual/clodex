@@ -152,14 +152,16 @@ initLog();
 log.info('app', `startup — Clodex headless (pid ${process.pid}, dataDir ${userDataPath})`);
 
 function restartNow() {
-  log.info('app', 'restart requested — shutting down, exit 64 for supervisor relaunch');
+  let cut = 0;
+  try { cut = engine.suiteRestartJobs().length; } catch {}
+  log.info('app', restartNowLine(cut));
   if (webHost) { try { webHost.close(); } catch {} }
   try { engine.shutdown(); } catch {}
   releasePidLock();
   process.exit(64);
 }
 
-const { createHeadlessRestart } = require('./headless-restart');
+const { createHeadlessRestart, restartNowLine } = require('./headless-restart');
 const headlessRestart = createHeadlessRestart({
   env: process.env,
   log,
@@ -167,6 +169,8 @@ const headlessRestart = createHeadlessRestart({
   restart: restartNow,
   lastInputAt: () => engine.manager.lastOperatorInputAt(),
   inFlightRuns: () => engine.manager.inFlightRestartHolds(),
+  suiteJobs: () => engine.suiteRestartJobs(),
+  fence: (on) => engine.fenceSuiteRunner(on),
 });
 log.info('app', headlessRestart.supervised
   ? 'restart capability: supervised — [agent:reboot] will exit 64 once every session and the keyboard are idle'
@@ -197,6 +201,7 @@ const engine = createEngine({
     restartHost: restartNow,
     restartHostWhenIdle: headlessRestart.restartHostWhenIdle,
     restartUnavailable: headlessRestart.restartUnavailable,
+    restartWaitsForSuite: true,
     electronChild: null,
   },
 });

@@ -237,4 +237,143 @@ function createIdleWaiter({
   return { arm, disarm, isArmed };
 }
 
-module.exports = { classifyRestart, createIdleWaiter, giveUpBody, suiteJobsLine, restartDetail, pendingDetail, suiteWaitClause };
+const QUIT_CAP_MS = 30 * 60_000;
+
+function quitDialog(jobs) {
+  return {
+    kind: 'quit',
+    type: 'warning',
+    message: 'Clodex is running tests for another team',
+    detail: `${suiteJobsLine(jobs)}\nQuit When Finished waits for them (up to 30 minutes) and accepts no new suite meanwhile; Quit Now cuts them.`,
+    buttons: ['Quit When Finished', 'Quit Now', 'Cancel'],
+    defaultId: 0,
+    cancelId: 2,
+  };
+}
+
+function waitingQuitDialog(jobs) {
+  return {
+    kind: 'waiting',
+    type: 'warning',
+    message: 'Clodex will quit when the tests finish',
+    detail: `${suiteJobsLine(jobs)}\nQuit Now cuts them; Cancel Quit keeps Clodex running and accepts new suites again.`,
+    buttons: ['Quit Now', 'Keep Waiting', 'Cancel Quit'],
+    defaultId: 1,
+    cancelId: 1,
+  };
+}
+
+function quitGiveUpBody(n) {
+  const k = Number.isInteger(n) && n > 0 ? n : 0;
+  return `${k} suite job${k === 1 ? '' : 's'} this machine is running for other teams did not finish within 30 minutes — the quit was dropped. Quit again to choose.`;
+}
+
+function createQuitGuard({
+  suiteJobs = () => [], fence = null, quit, ask, notify, now, setTimer, clearTimer,
+  pollMs = 2000, capMs = QUIT_CAP_MS,
+}) {
+  let passing = false;
+  let waiting = false;
+  let asking = false;
+  let sealed = false;
+  let timer = null;
+  let armedAt = 0;
+  let applied = false;
+  const holds = new Set();
+
+  function apply() {
+    if (sealed) return;
+    const on = holds.size > 0;
+    if (on === applied) return;
+    applied = on;
+    if (fence) { try { fence(on); } catch {} }
+  }
+
+  function hold(key, on) {
+    if (on) holds.add(key); else holds.delete(key);
+    apply();
+  }
+
+  function live() {
+    try {
+      const jobs = suiteJobs();
+      return Array.isArray(jobs) ? jobs.filter(Boolean) : [];
+    } catch { return []; }
+  }
+
+  function stopWait() {
+    if (timer !== null) { clearTimer(timer); timer = null; }
+    waiting = false;
+  }
+
+  function proceed() {
+    stopWait();
+    passing = true;
+    quit();
+  }
+
+  function tick() {
+    timer = null;
+    if (!waiting) return;
+    const jobs = live();
+    if (!jobs.length) { proceed(); return; }
+    if (now() - armedAt >= capMs) {
+      stopWait();
+      hold('quit', false);
+      try { notify(jobs.length); } catch {}
+      return;
+    }
+    timer = setTimer(tick, pollMs);
+  }
+
+  function answer(kind, response) {
+    if (kind === 'quit') {
+      if (response === 0) {
+        if (waiting) return;
+        waiting = true;
+        armedAt = now();
+        hold('quit', true);
+        timer = setTimer(tick, pollMs);
+      } else if (response === 1) proceed();
+      else { stopWait(); hold('quit', false); }
+      return;
+    }
+    if (response === 0) proceed();
+    else if (response === 2) { stopWait(); hold('quit', false); }
+  }
+
+  function show(model) {
+    asking = true;
+    Promise.resolve()
+      .then(() => ask(model))
+      .then((r) => { asking = false; answer(model.kind, r && r.response); },
+        () => { asking = false; });
+  }
+
+  function beforeQuit(event) {
+    if (!passing) {
+      const jobs = live();
+      if (jobs.length) {
+        if (event && typeof event.preventDefault === 'function') event.preventDefault();
+        if (!asking) show(waiting ? waitingQuitDialog(jobs) : quitDialog(jobs));
+        return false;
+      }
+      stopWait();
+      passing = true;
+    }
+    sealed = true;
+    return true;
+  }
+
+  return {
+    beforeQuit,
+    passThrough: () => { passing = true; },
+    restartFence: (on) => hold('restart', on),
+    isWaiting: () => waiting,
+  };
+}
+
+module.exports = {
+  classifyRestart, createIdleWaiter, giveUpBody, suiteJobsLine, restartDetail, pendingDetail, suiteWaitClause,
+  createQuitGuard, quitDialog, waitingQuitDialog, quitGiveUpBody,
+};

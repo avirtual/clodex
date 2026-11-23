@@ -174,10 +174,11 @@ async function checkForUpdate(silent = true) {
 }
 
 function restartClodex() {
+  quitGuard.passThrough();
   setTimeout(() => { app.relaunch(); app.quit(); }, 500);
 }
 
-const { classifyRestart, createIdleWaiter, giveUpBody, restartDetail, pendingDetail } = require('./restart-waiter');
+const { classifyRestart, createIdleWaiter, giveUpBody, restartDetail, pendingDetail, createQuitGuard, quitGiveUpBody } = require('./restart-waiter');
 const suiteRestartJobs = () => (engine ? engine.suiteRestartJobs() : []);
 const idleWaiter = createIdleWaiter({
   getSessions: () => Array.from(manager.sessions.values()),
@@ -188,7 +189,7 @@ const idleWaiter = createIdleWaiter({
   lastInputAt: () => manager.lastOperatorInputAt(),
   inFlightRuns: () => manager.inFlightRestartHolds(),
   suiteJobs: suiteRestartJobs,
-  fence: (on) => { if (engine) engine.fenceSuiteRunner(on); },
+  fence: (on) => quitGuard.restartFence(on),
   log,
   notify: (asked, why) => {
     try {
@@ -201,6 +202,20 @@ const idleWaiter = createIdleWaiter({
       }).show();
     } catch {}
   },
+});
+const quitGuard = createQuitGuard({
+  suiteJobs: suiteRestartJobs,
+  fence: (on) => { if (engine) engine.fenceSuiteRunner(on); },
+  quit: () => app.quit(),
+  ask: (model) => dialog.showMessageBox(model),
+  notify: (n) => {
+    try {
+      if (Notification.isSupported()) new Notification({ title: 'Quit dropped', body: quitGiveUpBody(n) }).show();
+    } catch {}
+  },
+  now: () => Date.now(),
+  setTimer: (fn, ms) => setTimeout(fn, ms),
+  clearTimer: (h) => clearTimeout(h),
 });
 
 // "Running" here means MID-TURN, not merely alive: idle seats --resume cleanly.
@@ -787,7 +802,8 @@ app.on('window-all-closed', () => {
   }
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
+  if (!quitGuard.beforeQuit(event)) return;
   appQuitting = true;
   idleWaiter.disarm(); // T32: don't let a pending idle-wait poll outlive the app
   if (engine) engine.shutdown();
