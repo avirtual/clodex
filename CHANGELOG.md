@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A dial-in test runner now opens a new connection for each claim and each answer instead of reusing an idle one, which under load could already have been closed by the lead. A failed request to a peer now logs whether it went out on a reused connection.
+
 ## 5.194.0 — 2026-11-23
 
 - A reviewer's verdict written on a single line (`VERDICT: ACCEPT — MUST-FIX: (none) — NITS: …`) now merges. Before, the loop read "(none) —" as one must-fix and escalated the merge.
