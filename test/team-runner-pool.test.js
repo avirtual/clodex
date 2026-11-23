@@ -236,7 +236,7 @@ const member = (peer, info, live = true) => ({ peer, wire: 'push', live, info })
 const load = (total, inUse, queued, extra = {}) => ({ slots: { total, inUse }, queue: { running: inUse ? 'j' : null, queued: Array.from({ length: queued }, (_, i) => `q${i}`) }, ...extra });
 
 const PICK_ROWS = [
-  ['most free slots wins', [member('a', load(1, 0, 0)), member('b', load(4, 1, 0)), member('c', load(2, 0, 0))], false, 'b', true],
+  ['an idle runner wins, the larger idle one first', [member('a', load(1, 0, 0)), member('b', load(4, 1, 0)), member('c', load(2, 0, 0))], false, 'c', true],
   ['a tie on free slots goes to the shorter queue', [member('a', load(2, 1, 3)), member('b', load(1, 0, 1)), member('c', load(3, 2, 2))], false, 'b', true],
   ['a full tie goes to manifest order', [member('a', load(2, 1, 1)), member('b', load(2, 1, 1))], false, 'a', true],
   ['a detached member is skipped', [member('a', load(4, 0, 0), false), member('b', load(1, 0, 0))], false, 'b', true],
@@ -255,6 +255,28 @@ for (const [name, members, boxOpt, want, chosen] of PICK_ROWS) {
     const got = pickRunner(members, { box: boxOpt });
     assert.strictEqual(got.member.peer, want);
     assert.strictEqual(got.chosen, chosen);
+  });
+}
+
+const BUILDING_DEF = { state: 'building', definitionHash: DEF.definitionHash };
+
+const IDLE_ROWS = [
+  ['A 1/2 and B 0/1 go to the idle B', [member('a', load(2, 1, 0)), member('b', load(1, 0, 0))], false, 1],
+  ['A 0/2 and B 0/1 tie on in-use and go to the more free A', [member('a', load(2, 0, 0)), member('b', load(1, 0, 0))], false, 0],
+  ['A 2/2 and B 0/1 go to B', [member('a', load(2, 2, 0)), member('b', load(1, 0, 0))], false, 1],
+  ['A 2/2 queue 0 and B 1/1 queue 2 go to the shorter queue A', [member('a', load(2, 2, 0)), member('b', load(1, 1, 2))], false, 0],
+  ['A 2/2 queue 1 and B 1/1 queue 1 go to A by manifest order', [member('a', load(2, 2, 1)), member('b', load(1, 1, 1))], false, 0],
+  ['A 1/4 and B 0/1 go to the idle B', [member('a', load(4, 1, 0)), member('b', load(1, 0, 0))], false, 1],
+  ['A 3/4 and B 1/2 go to the less busy B', [member('a', load(4, 3, 0)), member('b', load(2, 1, 0))], false, 1],
+  ['a ready busy runner beats an idle building one',
+    [member('a', load(2, 0, 0, { box: BUILDING_DEF })), member('b', load(2, 1, 0, { box: box(DEF.definitionHash) }))], DEF, 1],
+  ['a fenced runner reporting 2/2 loses to a busy 1/2', [member('a', load(2, 2, 0)), member('b', load(2, 1, 0))], false, 1],
+];
+
+for (const [name, members, boxOpt, want] of IDLE_ROWS) {
+  test(`t2404: pickRunner — ${name}`, () => {
+    const got = pickRunner(members, { box: boxOpt });
+    assert.deepStrictEqual([got.index, got.chosen], [want, true]);
   });
 }
 

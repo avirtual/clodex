@@ -759,6 +759,14 @@ function boxTier(info, box) {
   return BOX_TIER[b.state] || null;
 }
 
+function loadBeats(load, best) {
+  const open = load.free > 0;
+  if (open !== best.free > 0) return open;
+  if (open && load.inUse !== best.inUse) return load.inUse < best.inUse;
+  if (load.free !== best.free) return load.free > best.free;
+  return load.queue < best.queue;
+}
+
 function pickRunner(members, { box = false, shares = [] } = {}) {
   let best = null;
   const boxed = box === true || boxDefOf(box) != null;
@@ -768,7 +776,7 @@ function pickRunner(members, { box = false, shares = [] } = {}) {
     if (tier == null || (boxed && missingShare(m.info, shares))) return;
     const load = runnerLoad(m.info);
     const better = !best || tier < best.tier
-      || (tier === best.tier && (load.free > best.load.free || (load.free === best.load.free && load.queue < best.load.queue)));
+      || (tier === best.tier && loadBeats(load, best.load));
     if (better) best = { m, i, load, tier };
   });
   return best ? { member: best.m, index: best.i, load: best.load, chosen: true } : { member: members[0] || null, index: 0, load: null, chosen: false };
