@@ -19,7 +19,8 @@ const DESK_LIMITS = Object.freeze({
   putMs: 120000,
   origins: 256,
 });
-const RUNNER_RESTART = Object.freeze({ ok: false, error: 'runner session replaced', reason: 'runner-restart' });
+const EXPIRY_LOG_MS = 5000;
+const RUNNER_RESTART =Object.freeze({ ok: false, error: 'runner session replaced', reason: 'runner-restart' });
 
 function answer(status, body, error = null) {
   return { status, body, error };
@@ -29,6 +30,13 @@ function plainObject(v) {
   if (v === null || typeof v !== 'object' || Array.isArray(v)) return false;
   const proto = Object.getPrototypeOf(v);
   return proto === Object.prototype || proto === null;
+}
+
+function redactPath(path) {
+  const q = path.indexOf('?');
+  if (q < 0) return path;
+  const keys = [...new URLSearchParams(path.slice(q + 1))].map(([k, v]) => (k === 'ids' ? `ids[${v.split(',').filter(Boolean).length}]` : k));
+  return `${path.slice(0, q)}?${keys.join('&')}`;
 }
 
 function sameToken(a, b) {
@@ -46,8 +54,10 @@ function createSuiteDesk({
   limits = {},
   presenceMs = PRESENCE_MS,
   randomHex = (n) => crypto.randomBytes(n).toString('hex'),
+  log = () => {},
 } = {}) {
   const lim = { ...DESK_LIMITS, ...limits };
+  const expiryLog = new Map();
   const slots = new Map();
   const calls = new Map();
   const tombs = new Map();
@@ -100,6 +110,25 @@ function createSuiteDesk({
     return true;
   }
 
+  function logExpiry(call, state) {
+    const t = now();
+    const seen = expiryLog.get(call.origin) || { at: null, suppressed: 0 };
+    expiryLog.set(call.origin, seen);
+    if (seen.at != null && t - seen.at < EXPIRY_LOG_MS) {
+      seen.suppressed += 1;
+      return;
+    }
+    const more = seen.suppressed ? ` +${seen.suppressed}` : '';
+    seen.at = t;
+    seen.suppressed = 0;
+    log(`call expired unanswered: ${call.origin} ${call.method} ${redactPath(call.path)} (${state}, ${t - call.born} ms)${more}`);
+  }
+
+  function expire(call) {
+    const state = call.claim ? 'claimed' : 'pending';
+    if (settle(call, answer(0, null, 'runner did not answer in time'), 'expired')) logExpiry(call, state);
+  }
+
   function freshId() {
     for (;;) {
       const id = randomHex(8);
@@ -120,9 +149,9 @@ function createSuiteDesk({
     return new Promise((resolve) => {
       const call = {
         id: freshId(), origin, method, path, headers, body, bodyBytes, blob,
-        deadline: now() + ms, claim: null, resolve, timer: null,
+        born: now(), deadline: now() + ms, claim: null, resolve, timer: null,
       };
-      call.timer = timers.setTimeout(() => settle(call, answer(0, null, 'runner did not answer in time'), 'expired'), ms);
+      call.timer = timers.setTimeout(() => expire(call), ms);
       if (call.timer && typeof call.timer.unref === 'function') call.timer.unref();
       calls.set(call.id, call);
       s.pending.push(call);
@@ -163,7 +192,9 @@ function createSuiteDesk({
       if (s.lastClaim != null && t - s.lastClaim < presenceMs) {
         return { status: 409, error: 'another runner session is attached for this origin' };
       }
-      for (const call of [...s.pending, ...s.claimed.values()]) settle(call, answer(404, { ...RUNNER_RESTART }), 'replaced');
+      let n = 0;
+      for (const call of [...s.pending, ...s.claimed.values()]) if (settle(call, answer(404, { ...RUNNER_RESTART }), 'replaced')) n += 1;
+      log(`runner session for ${origin} replaced; settled ${n} call(s)`);
     }
     s.session = session;
     s.lastClaim = t;
@@ -172,7 +203,7 @@ function createSuiteDesk({
     while (s.pending.length) {
       const call = s.pending[0];
       if (t >= call.deadline) {
-        settle(call, answer(0, null, 'runner did not answer in time'), 'expired');
+        expire(call);
         continue;
       }
       if (out.length && bytes + call.bodyBytes > lim.batchBytes) break;
@@ -198,7 +229,7 @@ function createSuiteDesk({
     }
     if (!call.claim || !sameToken(token, call.claim)) return { status: 409, error: 'wrong claim token' };
     if (now() >= call.deadline) {
-      settle(call, answer(0, null, 'runner did not answer in time'), 'expired');
+      expire(call);
       return { status: 410, error: 'call expired' };
     }
     return { call };
