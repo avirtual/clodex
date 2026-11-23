@@ -36876,7 +36876,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var CLODENT_ASK = /^Allow\? \[y\/n\]/u;
       var nothingBelow = (rows, i) => rows.slice(i + 1).every(isBlank);
       function isClodentPromptRow(rows, i, hint) {
-        return i === hint.promptRow && i === hint.cursorY && typeof rows[i] === "string" && CLODENT_PROMPT.test(rows[i]) && nothingBelow(rows, i);
+        const last = i + (hint.wrapped | 0);
+        return i === hint.promptRow && Number.isInteger(hint.cursorY) && hint.cursorY >= i && hint.cursorY <= last && typeof rows[i] === "string" && CLODENT_PROMPT.test(rows[i]) && nothingBelow(rows, last);
       }
       function isClodentAsk(rows, cursorY) {
         return Number.isInteger(cursorY) && typeof rows[cursorY] === "string" && CLODENT_ASK.test(rows[cursorY]) && nothingBelow(rows, cursorY);
@@ -36885,23 +36886,25 @@ ${m[2].replace(/^\r?\n/, "")}`;
         claude: { at: (rows, i, cols) => isRuleRow(rows[i], cols) && isComposerRow(rows[i + 1]), top: (rows, i) => i },
         muse: { at: (rows, i, cols) => isLabeledRuleRow(rows[i], cols) && isComposerRow(rows[i + 1]) && museStripIsIdle(rows, i, cols), top: (rows, i) => i },
         codex: { at: (rows, i) => isCodexComposerRow(rows, i), top: codexStripTop },
-        clodent: { at: (rows, i, cols, hint) => isClodentPromptRow(rows, i, hint), top: (rows, i) => i, marksPrompt: true, plainFull: isClodentAsk }
+        clodent: { at: (rows, i, cols, hint) => isClodentPromptRow(rows, i, hint), top: (rows, i) => i, marksPrompt: true, plainFull: isClodentAsk, workingPane: true }
       };
       var marksPrompt = (platform) => !!ANCHORS[platform] && !!ANCHORS[platform].marksPrompt;
-      function findAnchor(rows, cursorY, cols, platform = "claude", promptRow = -1) {
+      var workingPane = (platform) => !!ANCHORS[platform] && !!ANCHORS[platform].workingPane;
+      function findAnchor(rows, cursorY, cols, platform = "claude", promptRow = -1, wrapped = 0) {
         const anchor = ANCHORS[platform];
         if (!anchor || !Array.isArray(rows) || rows.length < 2) return -1;
         const start = Math.max(0, Math.min(rows.length - 1, Number.isInteger(cursorY) ? cursorY : rows.length - 1));
-        const hint = { cursorY, promptRow };
+        const hint = { cursorY, promptRow, wrapped };
         for (let i = start; i >= 0; i--) if (anchor.at(rows, i, cols, hint)) return i;
         for (let i = start + 1; i < rows.length - 1; i++) if (anchor.at(rows, i, cols, hint)) return i;
         return -1;
       }
-      function measureSplit(rows, cursorY, cols, platform = "claude", promptRow = -1) {
-        const at = findAnchor(rows, cursorY, cols, platform, promptRow);
+      function measureSplit(rows, cursorY, cols, platform = "claude", promptRow = -1, { wrapped = 0, working = false } = {}) {
+        const at = findAnchor(rows, cursorY, cols, platform, promptRow, wrapped);
         if (at < 0) {
           const anchor = ANCHORS[platform];
           const plain = !!anchor && !!anchor.plainFull && Array.isArray(rows) && anchor.plainFull(rows, cursorY);
+          if (!plain && working && workingPane(platform) && Array.isArray(rows)) return { mode: "split", top: rows.length, bottom: rows.length - 1, at: -1 };
           return { mode: "full", top: -1, bottom: -1, busy: !plain && Array.isArray(rows) && rows.some((r) => !isBlank(r)) };
         }
         const top = ANCHORS[platform].top(rows, at);
@@ -36965,6 +36968,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         isCodexComposerRow,
         findAnchor,
         marksPrompt,
+        workingPane,
         measureSplit,
         sheetBand,
         initialSplitState,
@@ -39119,7 +39123,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
   var require_live_split_view = __commonJS({
     "renderer/live-split-view.js"(exports, module) {
       "use strict";
-      var { SPLIT_SETTLE_MS, SPLIT_EXIT_MS, marksPrompt, measureSplit, sheetBand, initialSplitState, reduceSplit } = require_live_split();
+      var { SPLIT_SETTLE_MS, SPLIT_EXIT_MS, marksPrompt, workingPane, measureSplit, sheetBand, initialSplitState, reduceSplit } = require_live_split();
       var { createTranscriptRows } = require_transcript_rows();
       var { spinnerText } = require_working_row();
       var { readMenuRows } = require_menu_rows();
@@ -39430,7 +39434,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
           }
           if (!measured || measured.mode !== "split") return;
           const top = Math.min(state.top, measured.top);
-          if (isBusyScreen(rows, top)) {
+          if (measured.at < 0 || isBusyScreen(rows, top)) {
             delta.reset();
             dropPaint();
             return;
@@ -39580,7 +39584,8 @@ ${m[2].replace(/^\r?\n/, "")}`;
             const buf = terminal.buffer.active;
             if (available) {
               rows = screenRows();
-              measured = measureSplit(rows, buf.cursorY, terminal.cols, platform(), promptRow(buf));
+              const prompt2 = promptRow(buf);
+              measured = measureSplit(rows, buf.cursorY, terminal.cols, platform(), prompt2, { wrapped: wrappedBelow(buf, prompt2), working: turnRunning });
             }
           }
           const prev = state;
@@ -39607,6 +39612,12 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         function promptRow(buf) {
           return promptMark && !promptMark.isDisposed ? promptMark.line - buf.baseY : -1;
+        }
+        function wrappedBelow(buf, prompt2) {
+          let n = 0;
+          if (prompt2 < 0) return n;
+          for (let line = buf.getLine(buf.baseY + prompt2 + 1); line && line.isWrapped; line = buf.getLine(buf.baseY + prompt2 + n + 1)) n += 1;
+          return n;
         }
         const privateMode = (reset) => (params) => {
           const modes = Array.from(params || []);
@@ -39695,6 +39706,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             working = turnRunning || activity === "attention" ? { state: activity, since, text: turnRunning ? working && working.text || "Working" : null } : null;
             transcriptRowsFor(document, paneEl, rowsCtx).setWorking(working);
             stickToBottom();
+            if (workingPane(platform())) evaluate();
           },
           setRaw: setRawView,
           raw: () => raw,

@@ -62,7 +62,8 @@ const CLODENT_ASK = /^Allow\? \[y\/n\]/u;
 const nothingBelow = (rows, i) => rows.slice(i + 1).every(isBlank);
 
 function isClodentPromptRow(rows, i, hint) {
-  return i === hint.promptRow && i === hint.cursorY && typeof rows[i] === 'string' && CLODENT_PROMPT.test(rows[i]) && nothingBelow(rows, i);
+  const last = i + (hint.wrapped | 0);
+  return i === hint.promptRow && Number.isInteger(hint.cursorY) && hint.cursorY >= i && hint.cursorY <= last && typeof rows[i] === 'string' && CLODENT_PROMPT.test(rows[i]) && nothingBelow(rows, last);
 }
 
 function isClodentAsk(rows, cursorY) {
@@ -73,26 +74,28 @@ const ANCHORS = {
   claude: { at: (rows, i, cols) => isRuleRow(rows[i], cols) && isComposerRow(rows[i + 1]), top: (rows, i) => i },
   muse: { at: (rows, i, cols) => isLabeledRuleRow(rows[i], cols) && isComposerRow(rows[i + 1]) && museStripIsIdle(rows, i, cols), top: (rows, i) => i },
   codex: { at: (rows, i) => isCodexComposerRow(rows, i), top: codexStripTop },
-  clodent: { at: (rows, i, cols, hint) => isClodentPromptRow(rows, i, hint), top: (rows, i) => i, marksPrompt: true, plainFull: isClodentAsk },
+  clodent: { at: (rows, i, cols, hint) => isClodentPromptRow(rows, i, hint), top: (rows, i) => i, marksPrompt: true, plainFull: isClodentAsk, workingPane: true },
 };
 
 const marksPrompt = (platform) => !!ANCHORS[platform] && !!ANCHORS[platform].marksPrompt;
+const workingPane = (platform) => !!ANCHORS[platform] && !!ANCHORS[platform].workingPane;
 
-function findAnchor(rows, cursorY, cols, platform = 'claude', promptRow = -1) {
+function findAnchor(rows, cursorY, cols, platform = 'claude', promptRow = -1, wrapped = 0) {
   const anchor = ANCHORS[platform];
   if (!anchor || !Array.isArray(rows) || rows.length < 2) return -1;
   const start = Math.max(0, Math.min(rows.length - 1, Number.isInteger(cursorY) ? cursorY : rows.length - 1));
-  const hint = { cursorY, promptRow };
+  const hint = { cursorY, promptRow, wrapped };
   for (let i = start; i >= 0; i--) if (anchor.at(rows, i, cols, hint)) return i;
   for (let i = start + 1; i < rows.length - 1; i++) if (anchor.at(rows, i, cols, hint)) return i;
   return -1;
 }
 
-function measureSplit(rows, cursorY, cols, platform = 'claude', promptRow = -1) {
-  const at = findAnchor(rows, cursorY, cols, platform, promptRow);
+function measureSplit(rows, cursorY, cols, platform = 'claude', promptRow = -1, { wrapped = 0, working = false } = {}) {
+  const at = findAnchor(rows, cursorY, cols, platform, promptRow, wrapped);
   if (at < 0) {
     const anchor = ANCHORS[platform];
     const plain = !!anchor && !!anchor.plainFull && Array.isArray(rows) && anchor.plainFull(rows, cursorY);
+    if (!plain && working && workingPane(platform) && Array.isArray(rows)) return { mode: 'split', top: rows.length, bottom: rows.length - 1, at: -1 };
     return { mode: 'full', top: -1, bottom: -1, busy: !plain && Array.isArray(rows) && rows.some((r) => !isBlank(r)) };
   }
   const top = ANCHORS[platform].top(rows, at);
@@ -160,6 +163,7 @@ module.exports = {
   isCodexComposerRow,
   findAnchor,
   marksPrompt,
+  workingPane,
   measureSplit,
   sheetBand,
   initialSplitState,
