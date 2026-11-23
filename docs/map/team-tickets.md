@@ -8,7 +8,7 @@
 | `filterTemplateEnv` | the one allowlist filter for every agent-initiated template env, returning sessionEnv (or null) plus separate dropped and badType lists | none (reads REVIEWER_ENV_ALLOWLIST) | none | team-role-account.test.js reviewer-read-token-cap.test.js |
 | `ticketCloseVerb` | renders the ready-to-fire task done intent that dispatches, hold notices and the close line embed after a prose prefix | none | none | hold-recovery-single-source.test.js |
 | `holdRecoveryText` | the one renderer of who clears a held ticket and with which verb, picked by the verifyHold class (hand, spec or infra) | none | HOLD_RECOVERY.hand, HOLD_RECOVERY.spec, HOLD_RECOVERY.infra | hold-recovery-single-source.test.js ticket-loop-verify.test.js |
-| `verifyIsCurrent` | true while a ticket is still at verify in the rework round a verify run started on | none | none | ticket-loop-verify.test.js |
+| `verifyIsCurrent` | true while a ticket is still at verify in the rework round a verify run started on | none | none | unpinned |
 | `ticketCloseLine` | the CLOSE WITH dispatch line telling a hand only the task done intent closes a ticket, a dm does not | none | ticketCloseVerb | tickets-viewer-path-parity.test.js hold-recovery-single-source.test.js |
 | `ticketTaskDirLine` | the TASK DIR dispatch line for the seat that writes the artifact: fact clause plus the so-create-it imperative | none | taskDirRuleClause, taskDirRelative | tickets-viewer-path-parity.test.js review-verdict-ticket.test.js |
 
