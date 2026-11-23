@@ -7968,7 +7968,7 @@ test('t2384: red at home under a bypass is rejected as a red verify with no re-m
   assert.strictEqual(h.boxCalls.length, 0, 'the re-measure did not go to the box');
   assert.deepStrictEqual([t.state, t.verifyHold, t.homeBypass], ['open', undefined, undefined]);
   assert.strictEqual(h.f.broadcasts.filter((b) => /re-measuring/.test(b.msg.body)).length, 0);
-  const rework = h.f.gated.filter((g) => /the test suite FAILS on your branch/.test(g.body));
+  const rework = h.f.gated.filter((g) => g.target !== 'lead' && /the test suite FAILS on your branch/.test(g.body));
   assert.strictEqual(rework.length, 1, 'the hand was sent the red');
   assert.match(rework[0].body, /\nFAILING: /);
   assert.doesNotMatch(rework[0].body, /FAILING \(run 2\)/);

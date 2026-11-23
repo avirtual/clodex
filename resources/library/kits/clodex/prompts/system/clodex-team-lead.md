@@ -126,6 +126,7 @@ teammate.
   names the verb that sends it (`task start` or `task assign`).
 - `[agent:task cancel <id>]` + the reason — terminal.
 - `[agent:task verify <id>]` — retries the box for a ticket held at `verify: box`.
+- `[agent:task verify <id> home]` + the reason — runs that held ticket once on the home suite instead, for its current commit.
 - `[agent:task accept <id>]` — teardown after the merge: retire the seat,
   remove the worktree, delete the branch. On a green merge the loop runs it for
   you: `Closed out:` in the `[ticket MERGED]` notice means nothing is owed;
