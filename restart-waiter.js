@@ -53,7 +53,7 @@ const TEAM_LABEL_MAX = 32;
 const SUITE_LINE_MAX = 160;
 
 function plainLabel(s, max) {
-  const t = String(s).replace(/[\u0000-\u001f\u007f-\u009f  ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const t = String(s).replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/\s+/g, ' ').trim();
   return t.length > max ? `${t.slice(0, max - 1)}…` : t;
 }
 
