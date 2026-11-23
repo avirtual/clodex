@@ -6,7 +6,7 @@
 // refused, ssm supported-but-rotating).
 //
 // Everything runs through the REAL verbs against a scripted execFn (helm /
-// kubectl / aws / ssh are never really spawned) and an injected io.probeVersion
+// kubectl / aws / ssh are never really spawned) and injected io.probeVersion / io.probeActivity
 // (no transport is ever opened).
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -32,6 +32,7 @@ async function cli(argv, io = {}) {
   const code = await run(argv, {
     stdout: (s) => (stdout += s), stderr: (s) => (stderr += s),
     env: {},
+    probeActivity: async () => ({ ok: true, enabled: false, snapshot: null }),
     ...io,
   });
   return { code, stdout, stderr };
@@ -584,4 +585,57 @@ test('ssm: --tag is refused rather than silently ignored', async () => {
   assert.strictEqual(code, EXIT.USAGE);
   assert.match(stderr, /--tag does not apply to the ssm flavor — it installs from source/,
     'accepting a version flag the flavor cannot honor would let an operator believe they pinned a version that was never applied');
+});
+
+const shipped = async () => ({ app: 'clodex', version: U.helmPinnedTag() });
+const busyNode = (snapshot) => async () => ({ ok: true, enabled: true, snapshot });
+const TWO_JOBS = { running: [{ id: 'j1', team: 'other' }], waiting: [{ id: 'j2', team: 'third' }], recent: [{ id: 'j0' }] };
+
+test('suite jobs: a node running suite jobs for other teams refuses the upgrade before the flavor runs', async () => {
+  const rec = {};
+  const { code, stderr } = await cli(['upgrade', 'node', 'mynode'], {
+    contextsFile: tmpCtxFile(HELM_CTX()), execFn: fakeK8s(rec), probeVersion: reports('1.0.0'), probeHelm: shipped,
+    probeActivity: busyNode(TWO_JOBS),
+  });
+  assert.ok(!rec.helmArgs, 'helm upgrade must not run while jobs would be cut');
+  assert.strictEqual(code, EXIT.USAGE);
+  assert.ok(stderr.includes('upgrade refused: the node behind context "mynode" is running 2 suite jobs for other teams, and the upgrade would cut them. Re-run when they finish (`clodexctl get testjobs`), or pass --cut-jobs to upgrade now.'), stderr);
+});
+
+test('suite jobs: --cut-jobs upgrades a busy node and says how many it cuts', async () => {
+  const rec = {};
+  const { code, stdout } = await cli(['upgrade', 'node', 'mynode', '--cut-jobs'], {
+    contextsFile: tmpCtxFile(HELM_CTX()), execFn: fakeK8s(rec), probeVersion: reports('1.0.0'), probeHelm: shipped,
+    probeActivity: busyNode(TWO_JOBS),
+  });
+  assert.strictEqual(code, EXIT.OK);
+  assert.ok(rec.helmArgs, 'helm upgrade ran');
+  assert.ok(stdout.includes('  WARNING: cutting 2 suite jobs for other teams (--cut-jobs)\n'), stdout);
+});
+
+test('suite jobs: an unreachable node, or one without the route, is upgraded with one line saying activity was not read', async () => {
+  for (const probeActivity of [silent, async () => ({ ok: false, error: 'not found' })]) {
+    const rec = {};
+    const { code, stdout } = await cli(['upgrade', 'node', 'mynode'], {
+      contextsFile: tmpCtxFile(HELM_CTX()), execFn: fakeK8s(rec), probeVersion: reports('1.0.0'), probeHelm: shipped, probeActivity,
+    });
+    assert.strictEqual(code, EXIT.OK);
+    assert.ok(rec.helmArgs, 'helm upgrade ran');
+    const lines = stdout.split('\n').filter((l) => l.includes('could not read the node\'s suite activity'));
+    assert.strictEqual(lines.length, 1, stdout);
+    assert.doesNotMatch(lines[0], /fence/);
+  }
+});
+
+test('suite jobs: an idle runner and a disabled one both upgrade without a notice', async () => {
+  for (const snapshot of [{ running: [], waiting: [], recent: [{ id: 'j0' }] }, null]) {
+    const rec = {};
+    const { code, stdout } = await cli(['upgrade', 'node', 'mynode'], {
+      contextsFile: tmpCtxFile(HELM_CTX()), execFn: fakeK8s(rec), probeVersion: reports('1.0.0'), probeHelm: shipped,
+      probeActivity: busyNode(snapshot),
+    });
+    assert.strictEqual(code, EXIT.OK);
+    assert.ok(rec.helmArgs, 'helm upgrade ran');
+    assert.doesNotMatch(stdout, /suite/);
+  }
 });

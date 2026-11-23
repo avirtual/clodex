@@ -83,6 +83,42 @@ async function probeRunningVersion(entry, { spawnFn, execFn } = {}) {
   }
 }
 
+async function probeSuiteActivity(entry, { spawnFn, execFn } = {}) {
+  const t = await openTransport(entry, { spawnFn, execFn });
+  try {
+    const client = new WireClient(t.baseUrl, entry.token || null);
+    return await client.get('/api/testjobs', 'upgrade (activity probe)');
+  } finally {
+    try { t.close(); } catch {}
+  }
+}
+
+function suiteJobsOf(body) {
+  const snap = body && body.snapshot;
+  if (!snap || typeof snap !== 'object') return 0;
+  const n = (list) => (Array.isArray(list) ? list.length : 0);
+  return n(snap.running) + n(snap.waiting);
+}
+
+async function readSuiteJobs(entry, io) {
+  try {
+    const probe = io.probeActivity || probeSuiteActivity;
+    const body = await probe(entry, { spawnFn: io.spawnFn, execFn: io.execFn });
+    if (!body || typeof body !== 'object' || body.ok === false) return { jobs: null, error: 'no activity answer' };
+    return { jobs: suiteJobsOf(body), error: null };
+  } catch (e) {
+    return { jobs: null, error: e.message };
+  }
+}
+
+function suiteJobsPhrase(n) {
+  return `${n} suite job${n === 1 ? '' : 's'} for other teams`;
+}
+
+function runnerBusyLine(ctxName, n) {
+  return `upgrade refused: the node behind context "${ctxName}" is running ${suiteJobsPhrase(n)}, and the upgrade would cut them. Re-run when they finish (\`clodexctl get testjobs\`), or pass --cut-jobs to upgrade now.`;
+}
+
 async function upgradeVerb({ printer, flags, args, io = {} }) {
   const json = !!flags.json;
   const emit = (o) => printer.json(o);
@@ -147,6 +183,19 @@ async function upgradeVerb({ printer, flags, args, io = {} }) {
   }
   for (const r of plan.reverts) {
     if (json) emit({ type: 'reverts', text: r }); else printer.line(`  note: ${r}`);
+  }
+
+  if (!dryRun) {
+    const act = await readSuiteJobs(entry, io);
+    if (act.jobs == null) {
+      const text = `could not read the node's suite activity (${act.error}) — upgrading without checking for suite jobs it runs for other teams`;
+      if (json) emit({ type: 'warning', text }); else printer.line(`  WARNING: ${text}`);
+    } else if (act.jobs > 0 && !flags['cut-jobs']) {
+      throw new CliError(EXIT.USAGE, runnerBusyLine(ctxName, act.jobs));
+    } else if (act.jobs > 0) {
+      const text = `cutting ${suiteJobsPhrase(act.jobs)} (--cut-jobs)`;
+      if (json) emit({ type: 'warning', text }); else printer.line(`  WARNING: ${text}`);
+    }
   }
 
   if (!json) log(dryRun ? `dry-run — the ${flavor} deploy path would run:` : `upgrading via the ${flavor} deploy path…`);

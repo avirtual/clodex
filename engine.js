@@ -1927,7 +1927,7 @@ const { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer, suiteRunnerS
   getTunnelManager: () => tunnelManager,
   getWebTunnelManager: () => webTunnelManager,
   getSandboxManager: () => sandboxManager,
-  restartClodex: restartHost, restartUnavailable, restartSession, peerProxyView,
+  restartClodex: restartHost, restartClodexWhenIdle: restartHostWhenIdle, restartUnavailable, restartSession, peerProxyView,
   fetchProxyContext, fetchProxyReport, fetchProxyBust,
   fetchSessionFiles, fetchFilePeek, fetchFileDiff,
   readSessionArgs, applySessionArgs, CLAUDE_TOOLS,

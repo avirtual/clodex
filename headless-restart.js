@@ -55,14 +55,23 @@ function createHeadlessRestart({
   };
 }
 
+function cutClause(n) {
+  return `cutting ${n} suite job${n === 1 ? '' : 's'} this machine is running for other teams`;
+}
+
 function restartNowLine(cut) {
   const n = Number.isInteger(cut) && cut > 0 ? cut : 0;
   const base = 'restart requested — shutting down, exit 64 for supervisor relaunch';
-  return n ? `${base}; cutting ${n} suite job${n === 1 ? '' : 's'} this machine is running for other teams` : base;
+  return n ? `${base}; ${cutClause(n)}` : base;
+}
+
+function signalCutLine(sig, cut) {
+  const n = Number.isInteger(cut) && cut > 0 ? cut : 0;
+  return n ? `${sig} — ${cutClause(n)}` : '';
 }
 
 module.exports = {
-  restartNowLine,
+  restartNowLine, signalCutLine,
   SUPERVISED_ENV,
   UNSUPERVISED_REASON,
   supervisorDeclared,

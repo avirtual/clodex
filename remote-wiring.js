@@ -8,6 +8,7 @@ const { pathFor, projectDirFor } = require('./clodex-paths');
 const { SYSTEM_SENDERS, isReservedSenderName, reservedSenderError } = require('./system-senders');
 const { spillDirFor } = require('./intent-spill');
 const { durableMessageCopyOf } = require('./file-resolve');
+const { planRemoteRestart } = require('./restart-waiter');
 const { createTicketsStore } = require('./tickets-store');
 // Exec grants are LOCAL-ONLY — this pure leaf sanitizes them off the wire in both
 // directions (require-const, like pathFor above; no injected-seam needed).
@@ -194,7 +195,7 @@ function createRemoteWiring(deps) {
     claimOutbox, listOutboxOrigins,
     manager, proxyPoller, loadManifest, listTeams, gitWorktree,
     getPeerManager, getTunnelManager, getWebTunnelManager, getSandboxManager,
-    restartClodex, restartUnavailable, restartSession, peerProxyView,
+    restartClodex, restartClodexWhenIdle, restartUnavailable, restartSession, peerProxyView,
     readSessionArgs, applySessionArgs,
     readSkillCatalog, applySessionSkills,
     fetchProxyContext, fetchProxyReport, fetchProxyBust,
@@ -917,15 +918,20 @@ function createRemoteWiring(deps) {
           const turn = await armed;
           return turn ? { ok: true, turn } : { ok: true, queued: true };
         },
-        restartApp: () => {
+        restartApp: (opts) => {
           const why = restartUnavailable ? restartUnavailable() : null;
           if (why) {
             log.info('app', `restart requested remotely — refused: ${why}`);
-            return { ok: false, error: why };
+            return { status: 409, body: { ok: false, error: why } };
           }
-          log.info('app', 'restart requested remotely');
-          restartClodex();
-          return { ok: true };
+          return planRemoteRestart(opts, {
+            fence: fenceSuiteRunner,
+            fenced: () => suiteFenced,
+            jobs: suiteRestartJobs,
+            restart: () => restartClodex(),
+            restartWhenIdle: (o) => (restartClodexWhenIdle || restartClodex)(o),
+            log: (line) => log.info('app', line),
+          });
         },
         restartUnavailable: restartUnavailable || null,
         createSession: async (body = {}) => {

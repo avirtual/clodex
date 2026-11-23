@@ -604,8 +604,16 @@ if (!singleInstance) {
       if (w.isMinimized()) w.restore();
       w.show();
       w.focus();
+    } else {
+      openWindowIfNone();
     }
   });
+}
+
+function openWindowIfNone() {
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createWindow(DEFAULT_WORKSPACE_ID);
+  }
 }
 
 app.whenReady().then(() => {
@@ -775,11 +783,7 @@ app.whenReady().then(() => {
     createWindow(sortedWorkspaces[0].id);
   }
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow(DEFAULT_WORKSPACE_ID);
-    }
-  });
+  app.on('activate', openWindowIfNone);
 
   if (process.env.CLODEX_DEV && !app.isPackaged) {
     try {
@@ -795,11 +799,7 @@ app.whenReady().then(() => {
 
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    appQuitting = true;
-    if (engine) engine.shutdown();
-    app.quit();
-  }
+  if (process.platform !== 'darwin') app.quit();
 });
 
 app.on('before-quit', (event) => {

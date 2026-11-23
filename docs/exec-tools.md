@@ -293,13 +293,13 @@ the container — let one terminal deploy stamp `deploy.flavor` first, or do not
 list that context. An ssm re-deploy rotates the wire token.
 
 Every run is forced non-interactive: `deploy` gets `--force -o json` plus the
-record's locator, `upgrade` `-o json`, `restart node` `--ctx <ctx> --force -o json`,
+record's locator, `upgrade` `-o json`, `restart node` `--ctx <ctx> [--wait|--cut-jobs] --force -o json`,
 `undeploy` `--force --keep-ctx -o json`. Agent flags are a per-verb allowlist —
 deploy: `--branch --tag --image --set --param --subnets --security-group
 --assign-public-ip --persistent --use-bedrock --no-wirescope --force-conflicts
 --dry-run`; upgrade: `--tag --image --branch --set --subnets --security-group
---assign-public-ip --persistent --force --dry-run --force-conflicts`; restart:
-none; undeploy: `--keep-data --dry-run --wait`. Locator and credential flags
+--assign-public-ip --persistent --force --dry-run --force-conflicts --cut-jobs`; restart:
+`--wait --cut-jobs`; undeploy: `--keep-data --dry-run --wait`. Locator and credential flags
 (`--ssh --ssm --host --url --token --ctx --tunnel --region --profile --target
 --src --repo --env-file --import` …) are refused by name. `--image`, `--set` and
 `--param` are the widest knob: a granted seat chooses the image. `--dry-run` is
