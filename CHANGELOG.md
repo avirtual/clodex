@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+## 5.198.0 — 2026-11-24
+
 - Test runners: restarting Clodex on a machine that is running another team's suite now waits for that suite to finish (up to 30 minutes) and accepts no new suite meanwhile; the restart dialog says when one is running.
 - Test runners: quitting Clodex while it runs another team's suite now asks first and can wait for the suite to finish; a headless node's restart waits for it too.
 - Test runners: a suite goes to an idle runner before a busy one that still has a free slot, so two suites no longer share one machine while another sits idle.
