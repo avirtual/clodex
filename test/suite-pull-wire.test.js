@@ -27,6 +27,7 @@ const RING_MS = 15000;
 const ASK_MS = 15000;
 const RUN_BUDGET_MS = 40000;
 const RUN_MS = 50000;
+const SPAWN_MS = 15000;
 const IDENT = ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgSign=false', '-c', 'core.hooksPath=/dev/null', '-c', 'core.autocrlf=false'];
 
 function g(dir, ...args) {
@@ -49,7 +50,7 @@ async function waitFor(pred, what, ms = 4000) {
     if (pred()) return;
     await new Promise((r) => setTimeout(r, 5));
   }
-  throw new Error(`timed out waiting for ${what}`);
+  throw new Error(`timed out after ${ms} ms waiting for ${what}`);
 }
 
 function within(promise, ms, what) {
@@ -163,7 +164,7 @@ function startRunner(t, port, { offer = RUN_OFFER, engine = null, concurrency, d
     const n = rings.length;
     clearTimeout(conn._helloTimer);
     conn._helloLoop();
-    await waitFor(() => rings.length > n, 'a ring on the hello tick');
+    await waitFor(() => rings.length > n, 'a ring on the hello tick', RING_MS);
     await within(rings[rings.length - 1], RING_MS, 'the ring on the hello tick to settle');
   };
   const idle = () => within((async () => {
@@ -179,7 +180,7 @@ async function attach(t, lead, opts) {
   const r = startRunner(t, lead.port, opts);
   const before = lead.claims.length;
   r.conn.start();
-  await waitFor(() => lead.claims.length > before && r.conn._eventsReq, 'the first claim and the event stream');
+  await waitFor(() => lead.claims.length > before && r.conn._eventsReq, 'the first claim and the event stream', ASK_MS);
   return r;
 }
 
@@ -324,7 +325,7 @@ test('a cancel that arrives while a long poll holds the only slot is answered wi
   const sub = await lead.conn.suiteAsk('POST', '/api/suite/jobs', submitBody(s.snap, 'long-1'));
   assert.strictEqual(sub.body.state, 'awaiting-pack');
   const poll = lead.conn.suiteAsk('GET', '/api/suite/jobs?ids=long-1&wait=25000', null, 60000);
-  await waitFor(() => waiting === 1, 'the long poll in the engine');
+  await waitFor(() => waiting === 1, 'the long poll in the engine', ASK_MS);
   const cancel = await within(lead.conn.suiteAsk('DELETE', '/api/suite/jobs/long-1'), 3000, 'the cancel answer');
   const polled = await within(poll, 3000, 'the poll answer');
   assert.deepStrictEqual([cancel.status, polled.status, polled.body.jobs[0].state, polled.body.jobs[0].reason], [200, 200, 'done', 'cancelled']);
@@ -352,7 +353,7 @@ test('a reply lost after execution: the lead retries and the retry does not exec
     drop = true;
     const n = dropped.length;
     const first = issue();
-    await waitFor(() => dropped.length > n, 'the dropped reply');
+    await waitFor(() => dropped.length > n, 'the dropped reply', ASK_MS);
     lead.clock.advance(20001);
     const lost = await within(first, 3000, `${label}: the expired call`);
     const again = await within(issue(), 3000, `${label}: the retry`);
@@ -362,7 +363,7 @@ test('a reply lost after execution: the lead retries and the retry does not exec
   rows.push(['submit', ...await lostThenRetry('submit', () => lead.conn.suiteAsk('POST', '/api/suite/jobs', submitBody(s.snap, 'lost-1')))]);
   rows.push(['putPack', ...await lostThenRetry('putPack', () => lead.conn.suitePut('/api/suite/jobs/lost-1/pack', s.pack, { 'Content-Range': `bytes 0-${s.pack.length - 1}/*` }, 20000))]);
   rows.push(['commit', ...await lostThenRetry('commit', () => lead.conn.suiteAsk('POST', '/api/suite/jobs/lost-1/commit', { bytes: s.pack.length, sha256: s.sha256 }))]);
-  await waitFor(() => b.sp.count === 1, 'the job to run');
+  await waitFor(() => b.sp.count === 1, 'the job to spawn its test process (b.sp.count === 1)', SPAWN_MS);
   const sub2 = await lead.conn.suiteAsk('POST', '/api/suite/jobs', submitBody(s.snap, 'lost-2'));
   assert.strictEqual(sub2.body.state, 'awaiting-pack');
   rows.push(['cancel', ...await lostThenRetry('cancel', () => lead.conn.suiteAsk('DELETE', '/api/suite/jobs/lost-2'))]);
@@ -373,7 +374,7 @@ test('a reply lost after execution: the lead retries and the retry does not exec
     ['cancel', 0, 200, 200],
   ]);
   const one = await jobView(b.runner, 'lost-1');
-  await waitFor(() => b.sp.children.every((c) => c.ended), 'the run to end');
+  await waitFor(() => b.sp.children.every((c) => c.ended), 'every spawned test process to end', SPAWN_MS);
   const two = await jobView(b.runner, 'lost-2');
   assert.deepStrictEqual([
     fs.readdirSync(statePaths(path.join(root, 'b')).jobs).sort(), b.sp.count, one.treeHash, two.state, two.reason,
@@ -389,7 +390,7 @@ test('the link dropped mid-job and re-attached with the same session: the job co
   const r = await attach(t, lead, { engine: b.runner });
   const s = await snapOf(t, repo);
   await runJob(lead.conn, s, 'drop-1');
-  await waitFor(() => b.sp.count === 1, 'the job to run');
+  await waitFor(() => b.sp.count === 1, 'the job to spawn its test process (b.sp.count === 1)', SPAWN_MS);
   lead.lead.bell = false;
   lead.clock.advance(46000);
   const detached = await lead.conn.suiteAsk('GET', '/api/suite/info');
@@ -432,7 +433,7 @@ test('the schedule closes during a run: a new submit is refused and the running 
   const r = await attach(t, lead, { engine: b.runner, offer, date: new Date(2026, 0, 5, 12, 0) });
   const client = createSuiteClient({ getPeerManager: () => ({ get: () => lead.conn }), randomUUID: () => 'sched-1' });
   const running = client.run({ peer: 'pull:laptop', tree: repo, kind: 'verify', budgetMs: RUN_BUDGET_MS });
-  await waitFor(() => b.sp.count === 1, 'the job to run');
+  await waitFor(() => b.sp.count === 1, 'the job to spawn its test process (b.sp.count === 1)', SPAWN_MS);
   r.state.date = new Date(2026, 0, 5, 20, 0);
   const refused = await lead.conn.suiteAsk('POST', '/api/suite/jobs', { id: 'sched-2' });
   b.sp.release();
@@ -449,13 +450,13 @@ test('the grant revoked during a run cancels the job and stops the claims', asyn
   const r = await attach(t, lead, { engine: b.runner });
   const s = await snapOf(t, repo);
   await runJob(lead.conn, s, 'revoke-1');
-  await waitFor(() => b.sp.count === 1, 'the job to run');
+  await waitFor(() => b.sp.count === 1, 'the job to spawn its test process (b.sp.count === 1)', SPAWN_MS);
   assert.strictEqual((await jobView(b.runner, 'revoke-1')).state, 'running');
   r.state.offer = { ...RUN_OFFER, peers: [{ name: 'other' }] };
   const claims = lead.claims.length;
   await r.tick();
-  await waitFor(() => b.sp.children[0].killed, 'the kill');
-  await waitFor(() => r.claimer.status().active === 0, 'the claimer to settle');
+  await waitFor(() => b.sp.children[0].killed, 'the revoked job to kill its spawned test process', ASK_MS);
+  await waitFor(() => r.claimer.status().active === 0, 'the claimer to settle', ASK_MS);
   let view = await jobView(b.runner, 'revoke-1');
   for (let i = 0; i < 400 && view.state !== 'done'; i += 1) {
     await new Promise((res) => setTimeout(res, 5));
