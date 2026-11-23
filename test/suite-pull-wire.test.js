@@ -23,6 +23,10 @@ const OP_TOKEN = 'operator-token-pull-5c1d';
 const STDOUT = 'ran tree\nTOTALS: 3 pass, 0 fail, 3 tests\n';
 const RUN_OFFER = { scope: 'run', enabled: true, boxes: 1, availability: 'always', peers: [{ name: 'murmur' }] };
 const ENV = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_'))), GIT_AUTHOR_DATE: '2026-01-02T03:04:05Z', GIT_COMMITTER_DATE: '2026-01-02T03:04:05Z' };
+const RING_MS = 15000;
+const ASK_MS = 15000;
+const RUN_BUDGET_MS = 40000;
+const RUN_MS = 50000;
 const IDENT = ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgSign=false', '-c', 'core.hooksPath=/dev/null', '-c', 'core.autocrlf=false'];
 
 function g(dir, ...args) {
@@ -160,14 +164,14 @@ function startRunner(t, port, { offer = RUN_OFFER, engine = null, concurrency, d
     clearTimeout(conn._helloTimer);
     conn._helloLoop();
     await waitFor(() => rings.length > n, 'a ring on the hello tick');
-    await rings[rings.length - 1];
+    await within(rings[rings.length - 1], RING_MS, 'the ring on the hello tick to settle');
   };
-  const idle = async () => {
+  const idle = () => within((async () => {
     for (let n = -1; n !== rings.length;) {
       n = rings.length;
       await Promise.all(rings);
     }
-  };
+  })(), RING_MS, 'the claimer to go idle');
   return { conn, state, claimer, rings, tick, idle };
 }
 
@@ -196,11 +200,11 @@ async function snapOf(t, repo) {
 }
 
 async function runJob(conn, s, id) {
-  const sub = await conn.suiteAsk('POST', '/api/suite/jobs', submitBody(s.snap, id));
+  const sub = await within(conn.suiteAsk('POST', '/api/suite/jobs', submitBody(s.snap, id)), ASK_MS, `the submit of ${id}`);
   assert.strictEqual(sub.status, 200, `ENTER: submit of ${id} accepted: ${JSON.stringify(sub)}`);
-  const put = await conn.suitePut(`/api/suite/jobs/${id}/pack`, s.pack, { 'Content-Range': `bytes 0-${s.pack.length - 1}/*` });
+  const put = await within(conn.suitePut(`/api/suite/jobs/${id}/pack`, s.pack, { 'Content-Range': `bytes 0-${s.pack.length - 1}/*` }), ASK_MS, `the pack of ${id}`);
   assert.strictEqual(put.status, 200, `ENTER: pack of ${id} accepted: ${JSON.stringify(put)}`);
-  const commit = await conn.suiteAsk('POST', `/api/suite/jobs/${id}/commit`, { bytes: s.pack.length, sha256: s.sha256 });
+  const commit = await within(conn.suiteAsk('POST', `/api/suite/jobs/${id}/commit`, { bytes: s.pack.length, sha256: s.sha256 }), ASK_MS, `the commit of ${id}`);
   assert.strictEqual(commit.status, 200, `ENTER: commit of ${id} accepted: ${JSON.stringify(commit)}`);
 }
 
@@ -227,7 +231,7 @@ test('a job goes submit, pack, commit, poll to done and output through the desk,
   const lead = await startLead(t);
   await attach(t, lead, { engine: runner });
   const client = createSuiteClient({ getPeerManager: () => ({ get: () => lead.conn }), randomUUID: () => 'pull-0001' });
-  const out = await client.run({ peer: 'pull:laptop', tree: repo, kind: 'verify' });
+  const out = await within(client.run({ peer: 'pull:laptop', tree: repo, kind: 'verify', budgetMs: RUN_BUDGET_MS }), RUN_MS, 'the pull run to conclude');
   assert.strictEqual(out.unknown, null, `run unknown: ${out.unknown}`);
   assert.deepStrictEqual([out.res.status, out.res.jobId, out.res.stdout, out.record.outcome], [0, 'pull-0001', STDOUT, 'pass']);
   assert.deepStrictEqual(verbs(lead.claims), ['info', 'submit', 'putPack', 'commit', 'poll', 'output']);
@@ -427,12 +431,12 @@ test('the schedule closes during a run: a new submit is refused and the running 
   const lead = await startLead(t);
   const r = await attach(t, lead, { engine: b.runner, offer, date: new Date(2026, 0, 5, 12, 0) });
   const client = createSuiteClient({ getPeerManager: () => ({ get: () => lead.conn }), randomUUID: () => 'sched-1' });
-  const running = client.run({ peer: 'pull:laptop', tree: repo, kind: 'verify' });
+  const running = client.run({ peer: 'pull:laptop', tree: repo, kind: 'verify', budgetMs: RUN_BUDGET_MS });
   await waitFor(() => b.sp.count === 1, 'the job to run');
   r.state.date = new Date(2026, 0, 5, 20, 0);
   const refused = await lead.conn.suiteAsk('POST', '/api/suite/jobs', { id: 'sched-2' });
   b.sp.release();
-  const out = await running;
+  const out = await within(running, RUN_MS, 'the scheduled run to conclude');
   assert.deepStrictEqual([refused.status, refused.body, out.unknown, out.res && out.res.stdout, out.record.outcome], [503, { ok: false, error: 'offer closed' }, null, STDOUT, 'pass']);
 });
 
