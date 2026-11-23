@@ -7373,3 +7373,137 @@ test('t2379: a done after a reject clears both records before the new suite star
     postMerge: null,
   });
 });
+
+const GATE_HOLD = { ...GATE_ON, fallback: 'hold' };
+const undecided = (code, why) => async () => ({ decided: false, out: null, client: null, wire: 'push', kind: 'verify', ...require('../suite-client').fallbackOf(code), why });
+const heldNotes = (f) => f.gated.filter((g) => g.target === 'lead' && /^\[ticket t1 HELD\]/.test(g.body)).map((g) => g.body);
+
+const HOLD_ROWS = [
+  ['runner-unreachable', 'runner unreachable', 'transient', 'runner runner-1 is not a known peer',
+    '[ticket t1 HELD] the box did not decide (runner unreachable): runner runner-1 is not a known peer. Not run on the home suite (fallback:hold).\n'
+    + 'Try again with [agent:task verify t1] once the runner is back.'],
+  ['no-share', 'no share', 'deterministic', 'runner has no share assets@v1',
+    '[ticket t1 HELD] the box did not decide (no share): runner has no share assets@v1. Not run on the home suite (fallback:hold).\n'
+    + 'This will not clear by itself: fix the cause (no share), then [agent:task verify t1].'],
+  ['queue-budget', 'queue budget', 'budget', 'the job did not start within the 300000ms queue budget (cancelled)',
+    '[ticket t1 HELD] the box did not decide (queue budget): the job did not start within the 300000ms queue budget (cancelled). Not run on the home suite (fallback:hold).\n'
+    + 'The run or queue limit was hit; try again with [agent:task verify t1] when the runner has room.'],
+  ['outcome-unknown', 'outcome unknown', 'unknown', 'cancelled on runner',
+    '[ticket t1 HELD] the box did not decide (outcome unknown): cancelled on runner. Not run on the home suite (fallback:hold).\n'
+    + 'This will not clear by itself: fix the cause (outcome unknown), then [agent:task verify t1].'],
+];
+
+for (const [code, reason, cls, why, notice] of HOLD_ROWS) {
+  test(`t2380: under fallback:hold an undecided box (${code}) holds the verify at verify: box with no home run, no reviewer and one ${cls} notice`, async () => {
+    const p = provenanceLoop({ testRunner: GATE_HOLD, box: true });
+    p.b.f.m._boxDecide = undecided(code, why);
+    p.seed();
+    await p.loop();
+    const t = p.b.f.one();
+    assert.deepStrictEqual(p.b.events, [], 'no home suite was spawned');
+    assert.strictEqual(p.b.f.created.length, 0, 'no reviewer');
+    assert.deepStrictEqual([t.state, t.loopStep], ['done', 'verify']);
+    assert.deepStrictEqual({ ...t.verifyHold, at: typeof t.verifyHold.at }, {
+      step: 'verify: box', at: 'number', evidence: `${reason}: ${why}`, recovery: 'box', code, class: cls,
+    });
+    assert.deepStrictEqual(maskAt(t.suiteProvenance.verify), {
+      at: 'string', decidedBy: null, outcome: 'held', totals: null, treeHash: null, runner: null, jobId: null,
+      definitionHash: null, image: null, fallback: reason, fallbackCode: code, fallbackClass: cls,
+    });
+    assert.deepStrictEqual(heldNotes(p.b.f), [notice]);
+    assert.deepStrictEqual(p.b.f.gated.filter((g) => g.target !== 'lead'), [], 'the hand is not told to rework');
+    assert.strictEqual(p.b.f.esc().length, 0, 'no escalation beside the notice');
+  });
+}
+
+test('t2380: the same undecided box under fallback:home runs the home suite and holds nothing', async () => {
+  const p = provenanceLoop({ testRunner: GATE_ON, box: true });
+  p.b.f.m._boxDecide = undecided('runner-unreachable', 'gone');
+  p.seed();
+  await p.loop();
+  assert.deepStrictEqual(p.b.events, ['spawn']);
+  assert.strictEqual(p.b.f.created.length, 1, 'the reviewer was spawned');
+  assert.strictEqual(p.b.f.one().verifyHold, undefined);
+  assert.deepStrictEqual(heldNotes(p.b.f), []);
+});
+
+test('t2380: a post-merge run under fallback:hold with an undecided box still falls back to the home suite', async () => {
+  const p = provenanceLoop({ testRunner: GATE_HOLD, box: true });
+  p.b.f.m._boxDecide = undecided('runner-unreachable', 'gone');
+  const out = await p.b.f.m._runTicketSuite(p.b.f.team, p.b.f.one(), null, { merge: true });
+  assert.deepStrictEqual(p.b.events, ['spawn']);
+  assert.deepStrictEqual([out.held, out.ran, out.green, out.decidedBy, out.fallbackCode], [undefined, true, true, 'home', 'runner-unreachable']);
+});
+
+test('t2380: a box run that completes red under fallback:hold is rejected as today, never held', async () => {
+  const p = provenanceLoop({ testRunner: GATE_HOLD, box: true });
+  p.b.holder.client = boxRemote('red', p.b.events).client;
+  p.seed();
+  await p.loop();
+  const t = p.b.f.one();
+  assert.deepStrictEqual(p.b.events, ['post', 'post'], 'ENTER: both runs were decided by the box');
+  assert.deepStrictEqual([t.state, t.verifyHold], ['open', undefined]);
+  assert.deepStrictEqual(heldNotes(p.b.f), []);
+});
+
+function heldLoop() {
+  const p = provenanceLoop({ testRunner: GATE_HOLD, box: true });
+  p.b.f.m._boxDecide = undecided('runner-unreachable', 'gone');
+  const loops = [];
+  const loop = p.b.f.m._runTicketLoop;
+  p.b.f.m._runTicketLoop = function (...args) { const r = loop.apply(this, args); loops.push(r); return r; };
+  const replies = [];
+  const verify = (who) => p.b.f.m._taskVerify(p.b.f.seat(who), p.b.f.team, { type: 'task', sub: 'verify', id: 't1', who: null, body: '' }, (m) => replies.push(m));
+  return { p, loops, replies, verify };
+}
+
+test('t2380: [agent:task verify] re-enters a box-held ticket once and passes on a now-deciding box', async () => {
+  const h = heldLoop();
+  h.p.seed();
+  await h.p.loop();
+  assert.strictEqual(h.p.b.f.one().verifyHold.step, 'verify: box', 'ENTER: the ticket is held');
+  delete h.p.b.f.m._boxDecide;
+  h.verify('lead');
+  h.verify('lead');
+  assert.strictEqual(h.loops.length, 1, 'a second intent in the same tick starts no second run');
+  assert.deepStrictEqual(h.replies, [
+    'ticket t1 re-verifying (was held at "verify: box")',
+    'error: ticket t1 is already verifying — only a ticket held at "verify: box" can be re-verified',
+  ]);
+  await h.loops[0];
+  await new Promise((r) => setImmediate(r));
+  const t = h.p.b.f.one();
+  assert.strictEqual(t.verifyHold, undefined);
+  assert.strictEqual(t.suiteProvenance.verify.decidedBy, 'box');
+  assert.strictEqual(h.p.b.f.created.length, 1, 'the reviewer was spawned');
+  assert.deepStrictEqual(h.p.b.events, ['post'], 'the retry went to the box, not home');
+});
+
+test('t2380: [agent:task verify] is refused for a non-held ticket and for a non-lead, and a second failure holds again with a fresh notice', async () => {
+  const h = heldLoop();
+  h.p.seed({ state: 'open', loopStep: null });
+  h.verify('lead');
+  assert.deepStrictEqual(h.replies.splice(0), ['error: ticket t1 is open — only a ticket held at "verify: box" can be re-verified']);
+  h.p.seed();
+  await h.p.loop();
+  h.verify('team-hand');
+  assert.deepStrictEqual(h.replies.splice(0), ['error: only the team lead (lead) can re-verify a ticket']);
+  assert.strictEqual(h.loops.length, 1, 'ENTER: only the seeded loop ran');
+  h.verify('lead');
+  await h.loops[1];
+  assert.strictEqual(h.p.b.f.one().verifyHold.step, 'verify: box');
+  assert.strictEqual(heldNotes(h.p.b.f).length, 2, 'one notice per hold');
+  assert.deepStrictEqual(h.p.b.events, [], 'no home suite either time');
+});
+
+test('t2380: a ticket held at verify: box stays held across a restart and is not re-run', async () => {
+  const h = heldLoop();
+  h.p.seed();
+  await h.p.loop();
+  const before = h.p.b.f.one().verifyHold;
+  assert.strictEqual(before.step, 'verify: box', 'ENTER: the ticket is held');
+  h.p.b.f.m._verifyLooped = new Set();
+  h.p.b.f.m._resumeOrphanedVerify(h.p.b.f.team);
+  assert.strictEqual(h.loops.length, 1, 'no resume');
+  assert.deepStrictEqual(h.p.b.f.one().verifyHold, before);
+});

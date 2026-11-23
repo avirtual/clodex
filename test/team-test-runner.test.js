@@ -686,3 +686,83 @@ test('t2328: no runner line in the label table prints null or undefined', () => 
   assert.strictEqual(LABEL_ROWS.length, 7, 'ENTER: all seven rows are in the table');
   for (const [name, , , , want] of LABEL_ROWS) assert.doesNotMatch(want, /null|undefined/, name);
 });
+
+const HOLD_ON = { peer: 'runner-1', hands: 'off', gate: 'on', fallback: 'hold' };
+
+test('t2380: testRunner.fallback hold loads under gate:on; home, absent and an invalid value load as home without dropping the runner', () => {
+  assert.deepStrictEqual(normalizeTestRunner(HOLD_ON), { peer: 'runner-1', hands: 'off', gate: 'on', fallback: 'hold' });
+  const rows = [
+    ['home', { peer: 'runner-1', gate: 'on', fallback: 'home' }, 0],
+    ['absent', { peer: 'runner-1', gate: 'on' }, 0],
+    ['unknown value', { peer: 'runner-1', gate: 'on', fallback: 'later' }, 1],
+    ['hold under gate:shadow', { peer: 'runner-1', gate: 'shadow', fallback: 'hold' }, 1],
+  ];
+  for (const [name, input, warned] of rows) {
+    const warns = [];
+    const orig = console.warn;
+    console.warn = (...a) => warns.push(a.join(' '));
+    let team;
+    try { team = mkHome({ testRunner: input }).tm.loadManifest('team'); } finally { console.warn = orig; }
+    assert.deepStrictEqual(team.testRunner, { peer: 'runner-1', hands: 'off', gate: input.gate }, name);
+    assert.deepStrictEqual(team.droppedFields, [], name);
+    assert.strictEqual(warns.length, warned, name);
+    if (warned) assert.match(warns[0], /testRunner\.fallback is invalid and ignored; an undecided box falls back to the home suite/, name);
+  }
+  const { tm } = mkHome({ testRunner: HOLD_ON });
+  assert.deepStrictEqual(tm.loadManifest('team').testRunner, HOLD_ON);
+});
+
+test('t2380: setTeamTestRunner sets and clears fallback, refuses an unknown value and hold without gate:on, and writes nothing on a refusal', () => {
+  const { tm, file } = mkHome({ testRunner: { peer: 'runner-1', hands: 'off', gate: 'on' } });
+  assert.deepStrictEqual(tm.setTeamTestRunner('team', { fallback: 'hold' }).testRunner, HOLD_ON);
+  assert.deepStrictEqual(disk(file).testRunner, HOLD_ON);
+  assert.throws(() => tm.setTeamTestRunner('team', { fallback: 'later' }), /testRunner\.fallback must be one of home \| hold/);
+  assert.throws(() => tm.setTeamTestRunner('team', { gate: 'shadow' }), /testRunner would be invalid after this patch/);
+  assert.deepStrictEqual(disk(file).testRunner, HOLD_ON, 'a refused patch writes nothing');
+  assert.deepStrictEqual(tm.setTeamTestRunner('team', { gate: 'shadow', fallback: 'home' }).testRunner, { peer: 'runner-1', hands: 'off', gate: 'shadow' });
+  assert.deepStrictEqual(disk(file).testRunner, { peer: 'runner-1', hands: 'off', gate: 'shadow' });
+  assert.throws(() => tm.setTeamTestRunner('team', { fallback: 'hold' }), /testRunner would be invalid after this patch/);
+});
+
+test('t2380: [agent:team runner fallback:…] sets it alone or beside gate, refuses an unknown value and hold without gate:on, and gate:shadow resets hold', async () => {
+  const f = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1', hands: 'off', gate: 'shadow' } } });
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner fallback:later]'), ['[agent:team] error: fallback must be one of home | hold, not "later"']);
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner fallback:hold]'), ['[agent:team] error: fallback:hold needs gate:on']);
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner gate:off fallback:hold]'), ['[agent:team] error: fallback:hold needs gate:on']);
+  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-1', hands: 'off', gate: 'shadow' }, 'refusals write nothing');
+  f.m._shadowBox = () => ({ definitionHash: 'h' });
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner gate:on fallback:hold]'), ['[agent:team] test runner gate mode of team set to on, fallback hold']);
+  assert.deepStrictEqual(disk(f.file).testRunner, HOLD_ON);
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner fallback:home]'),
+    ['[agent:team] test runner fallback of team set to home — re-verifying 0 tickets held at "verify: box"']);
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner fallback:hold]'), ['[agent:team] test runner fallback of team set to hold']);
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner gate:shadow]'),
+    ['[agent:team] test runner gate mode of team set to shadow — fallback reset to home (fallback:hold needs gate:on) — re-verifying 0 tickets held at "verify: box"']);
+  assert.deepStrictEqual(disk(f.file).testRunner, { peer: 'runner-1', hands: 'off', gate: 'shadow' });
+});
+
+test('t2380: the bare runner line names fallback hold only when it is set', async () => {
+  const plain = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1', hands: 'full', gate: 'on' } }, peers: [SUITE_PEER], reach: INFO });
+  const held = mkVerbFixture({ manifestExtra: { testRunner: { peer: 'runner-1', hands: 'full', gate: 'on', fallback: 'hold' } }, peers: [SUITE_PEER], reach: INFO });
+  const [a] = await plain.verb('lead', '[agent:team runner]');
+  const [b] = await held.verb('lead', '[agent:team runner]');
+  assert.ok(a.startsWith('[agent:team] test runner of team: runner-1, wire push, hands full, gate on — '), `ENTER: ${a}`);
+  assert.doesNotMatch(a, /fallback/);
+  assert.strictEqual(b, a.replace('gate on — ', 'gate on, fallback hold — '));
+});
+
+test('t2380: setting fallback:home re-enters verify for every ticket held at verify: box, and leaves other holds alone', async () => {
+  const f = mkVerbFixture({ manifestExtra: { testRunner: HOLD_ON } });
+  const root = f.tm.loadManifest('team').root;
+  const store = require('../tickets-store').createTicketsStore({ clodexHome: f.home });
+  const boxHold = { step: 'verify: box', at: 1, evidence: 'runner unreachable: gone', recovery: 'box', code: 'runner-unreachable', class: 'transient' };
+  const row = (id, hold) => ({ id, state: 'done', loopStep: 'verify', title: id, spec: 's', assignee: 'hand', verifyHold: hold });
+  store.save(root, [row('t1', boxHold), row('t2', boxHold), row('t3', { step: 'verify: diff', at: 1, evidence: 'e', recovery: 'infra' })]);
+  const loops = [];
+  f.m._runTicketLoop = (team, id) => { loops.push([team.testRunner.fallback || 'home', id]); };
+  assert.deepStrictEqual(await f.verb('lead', '[agent:team runner fallback:home]'),
+    ['[agent:team] test runner fallback of team set to home — re-verifying 2 tickets held at "verify: box"']);
+  assert.deepStrictEqual(loops, [['home', 't1'], ['home', 't2']]);
+  const after = store.load(root);
+  assert.deepStrictEqual(after.map((t) => [t.id, t.verifyHold ? t.verifyHold.step : null]), [['t1', null], ['t2', null], ['t3', 'verify: diff']]);
+});
