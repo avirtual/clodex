@@ -1,15 +1,37 @@
 'use strict';
 
 const crypto = require('crypto');
+const { performance } = require('perf_hooks');
 const { suiteRoute } = require('./suite-dispatch');
 
 const CLAIMER_CONCURRENCY = 4;
+const POLL_CONCURRENCY = 8;
+const REPLY_RESERVE_MS = 10000;
+const RETRY_MIN_MS = 1000;
+const RETRY_MAX_MS = 15000;
 const JOB_MEMORY = 256;
 const OFFER_CLOSED = Object.freeze({ ok: false, error: 'offer closed' });
 
 function verbOf(call) {
   const route = suiteRoute(call);
   return route.row ? route.row.verb : null;
+}
+
+function pollWait(call) {
+  if (call.method !== 'GET') return null;
+  const route = suiteRoute(call);
+  if (!route.row || route.row.verb !== 'poll' || !route.query.has('ids')) return null;
+  const raw = route.query.get('wait');
+  if (raw == null || !/^\d+$/.test(raw)) return null;
+  const wait = Number(raw);
+  return Number.isSafeInteger(wait) ? wait : null;
+}
+
+function withWait(path, ms) {
+  const q = path.indexOf('?');
+  const query = new URLSearchParams(path.slice(q + 1));
+  query.set('wait', String(ms));
+  return `${path.slice(0, q)}?${query.toString()}`;
 }
 
 function wellFormed(c) {
@@ -19,14 +41,23 @@ function wellFormed(c) {
     && Number.isFinite(c.ttlMs);
 }
 
+function unref(h) {
+  if (h && typeof h.unref === 'function') h.unref();
+  return h;
+}
+
 function createSuiteClaimer({
   claim, blob, reply, execute,
   grant = () => ({ admit: true, serve: true }),
   ready = () => true,
   log = () => {},
   now = Date.now,
+  clock = () => performance.now(),
+  timers = { setTimeout, clearTimeout },
+  random = () => 0.5 + Math.random() / 2,
   session = crypto.randomBytes(16).toString('hex'),
   concurrency = CLAIMER_CONCURRENCY,
+  pollConcurrency = POLL_CONCURRENCY,
 } = {}) {
   let claiming = null;
   let again = false;
@@ -34,8 +65,10 @@ function createSuiteClaimer({
   let served = false;
   let lastClaim = null;
   let lastFailure = null;
-  let active = 0;
-  const waiting = [];
+  let retryTimer = null;
+  let retryMs = RETRY_MIN_MS;
+  const general = { bound: concurrency, active: 0, queue: [] };
+  const polls = { bound: pollConcurrency, active: 0, queue: [] };
   const jobs = new Set();
 
   function readGrant() {
@@ -81,6 +114,17 @@ function createSuiteClaimer({
     return out;
   }
 
+  function expired(call) {
+    log(`call ${call.id} (${call.method} ${call.path}) is past its deadline; not executed`);
+  }
+
+  function replyLine(call, sent) {
+    const why = sent && sent.status === 410 ? ((sent.body && sent.body.error) || sent.error) : null;
+    if (why === 'call expired') return `call ${call.id}: reply arrived after the call expired (${Math.round(clock() - call.arrived)} ms)`;
+    if (why === 'call already settled') return `call ${call.id}: reply not needed, call already settled`;
+    return `call ${call.id}: reply not accepted (${(sent && (sent.error || sent.status)) || 'no answer'})`;
+  }
+
   async function handle(call) {
     let bytes;
     if (call.blob) {
@@ -91,30 +135,48 @@ function createSuiteClaimer({
       }
       bytes = got.bytes;
     }
-    if (now() >= call.deadline) {
-      log(`call ${call.id} (${call.method} ${call.path}) is past its deadline; not executed`);
-      return;
-    }
-    const out = await answerFor(call, bytes);
+    const left = call.deadline - clock();
+    if (left <= 0) return expired(call);
+    const wait = call.pollWait == null ? null : Math.max(0, Math.min(call.pollWait, Math.floor(left - REPLY_RESERVE_MS)));
+    const out = await answerFor(wait == null ? call : { ...call, path: withWait(call.path, wait) }, bytes);
     if (stopped) return;
     const sent = await reply(call.id, call.claim, { status: out.status, body: out.body });
-    if (!sent || sent.status !== 200) log(`call ${call.id}: reply not accepted (${(sent && (sent.error || sent.status)) || 'no answer'})`);
+    if (!sent || sent.status !== 200) log(replyLine(call, sent));
   }
 
-  function run(call, slotted) {
-    if (slotted) active += 1;
+  function run(call, pool) {
+    if (pool) pool.active += 1;
     Promise.resolve()
       .then(() => handle(call))
       .catch((e) => log(`call ${call.id} failed: ${e.message}`))
       .finally(() => {
-        if (!slotted) return;
-        active -= 1;
-        pump();
+        if (!pool) return;
+        pool.active -= 1;
+        pump(pool);
       });
   }
 
-  function pump() {
-    while (!stopped && active < concurrency && waiting.length) run(waiting.shift(), true);
+  function pump(pool) {
+    while (!stopped && pool.active < pool.bound && pool.queue.length) {
+      const call = pool.queue.shift();
+      timers.clearTimeout(call.expiry);
+      call.expiry = null;
+      run(call, pool);
+    }
+  }
+
+  function enqueue(call, pool) {
+    const left = call.deadline - clock();
+    if (left <= 0) return expired(call);
+    call.expiry = unref(timers.setTimeout(() => {
+      call.expiry = null;
+      const at = pool.queue.indexOf(call);
+      if (at < 0) return;
+      pool.queue.splice(at, 1);
+      expired(call);
+    }, left));
+    pool.queue.push(call);
+    pump(pool);
   }
 
   function dispatch(raw, receivedAt) {
@@ -122,10 +184,27 @@ function createSuiteClaimer({
       log('claim returned a malformed call; skipped');
       return;
     }
-    const call = { ...raw, deadline: receivedAt + raw.ttlMs };
-    if (call.method === 'DELETE') return run(call, false);
-    waiting.push(call);
-    pump();
+    const call = { ...raw, arrived: receivedAt, deadline: receivedAt + raw.ttlMs, pollWait: pollWait(raw), expiry: null };
+    if (call.method === 'DELETE') return run(call, null);
+    enqueue(call, call.pollWait == null ? general : polls);
+  }
+
+  function clearRetry() {
+    if (retryTimer == null) return;
+    timers.clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+
+  function scheduleRetry() {
+    if (stopped || retryTimer != null || !ready()) return;
+    const r = Number(random());
+    const factor = Number.isFinite(r) ? Math.min(1, Math.max(0.5, r)) : 1;
+    const delay = Math.round(retryMs * factor);
+    retryMs = Math.min(retryMs * 2, RETRY_MAX_MS);
+    retryTimer = unref(timers.setTimeout(() => {
+      retryTimer = null;
+      ring();
+    }, delay));
   }
 
   async function loop() {
@@ -147,17 +226,21 @@ function createSuiteClaimer({
         const why = String((got && (got.error || got.status)) || 'no answer');
         if (why !== lastFailure) log(`claim failed (${why})`);
         lastFailure = why;
+        scheduleRetry();
         return;
       }
       lastFailure = null;
+      retryMs = RETRY_MIN_MS;
       lastClaim = now();
-      for (const c of calls) dispatch(c, lastClaim);
+      const receivedAt = clock();
+      for (const c of calls) dispatch(c, receivedAt);
       if (calls.length) again = true;
     } while (again && !stopped);
   }
 
   function ring() {
     if (stopped) return Promise.resolve();
+    clearRetry();
     if (claiming) {
       again = true;
       return claiming;
@@ -170,14 +253,22 @@ function createSuiteClaimer({
 
   function stop() {
     stopped = true;
-    waiting.length = 0;
+    clearRetry();
+    for (const pool of [general, polls]) {
+      for (const call of pool.queue) timers.clearTimeout(call.expiry);
+      pool.queue.length = 0;
+    }
   }
 
   function status() {
-    return { session, lastClaim, serving: served, active, waiting: waiting.length };
+    return {
+      session, lastClaim, serving: served,
+      active: general.active + polls.active,
+      waiting: general.queue.length + polls.queue.length,
+    };
   }
 
   return { ring, stop, status, session };
 }
 
-module.exports = { createSuiteClaimer, CLAIMER_CONCURRENCY };
+module.exports = { createSuiteClaimer, CLAIMER_CONCURRENCY, POLL_CONCURRENCY, REPLY_RESERVE_MS };

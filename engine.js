@@ -1912,7 +1912,7 @@ const runtimeProbe = createRuntimeProbe({
 const getBoxOffer = () => (envBoxOffer !== undefined ? envBoxOffer : uiSettings.get().boxOffer);
 const getOfferFacts = () => hostFacts({ osModule: os, platform: process.platform, arch: process.arch, runtime: runtimeProbe.current() });
 const { createSuiteDesk } = require('./suite-desk');
-const suiteDesk = createSuiteDesk({ notify: (origin) => { if (remoteServer) remoteServer.notifySuiteMail(origin); } });
+const suiteDesk = createSuiteDesk({ notify: (origin) => { if (remoteServer) remoteServer.notifySuiteMail(origin); }, log: (m) => log.info('suite-desk', m) });
 const { createRemoteWiring } = require('./remote-wiring');
 const { readRemoteEnvToken, writeRemoteEnvToken, hasRemoteEnvToken, resolveRemoteToken } = require('./remote-token');
 const { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer, suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner, suiteActivity, suiteActivityNow, refreshSuiteActivity, suiteOutput, getSuiteEngine } = createRemoteWiring({

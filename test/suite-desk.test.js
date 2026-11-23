@@ -269,3 +269,50 @@ test('origins are capped: a new one evicts the oldest idle detached origin, else
   assert.deepStrictEqual(desk.origins().map((o) => o.origin).sort(), ['b', 'c']);
   assert.deepStrictEqual(desk.claim('d', SESSION), { status: 429, error: 'suite desk tracks too many runners' });
 });
+
+test('an expired call logs one line naming origin, method, redacted path, state and age', () => {
+  const seen = [];
+  for (const [label, path, timeout, take, wait] of [
+    ['claimed poll', '/api/suite/jobs?ids=a,b&wait=25000', 35000, true, 35000],
+    ['pending info', '/api/suite/info', 5000, false, 20000],
+  ]) {
+    const logs = [];
+    const { desk, clock } = mkDesk({ log: (m) => logs.push(m) });
+    desk.claim('laptop', SESSION);
+    desk.conn('laptop').suiteAsk('GET', path, null, timeout);
+    if (take) assert.strictEqual(desk.claim('laptop', SESSION).calls.length, 1);
+    clock.advance(wait);
+    seen.push([label, logs]);
+  }
+  assert.deepStrictEqual(seen, [
+    ['claimed poll', ['call expired unanswered: laptop GET /api/suite/jobs?ids[2]&wait (claimed, 35000 ms)']],
+    ['pending info', ['call expired unanswered: laptop GET /api/suite/info (pending, 20000 ms)']],
+  ]);
+});
+
+test('ten expiries inside 5 s log one line, and the next line carries the suppressed count', () => {
+  const logs = [];
+  const { desk, clock } = mkDesk({ log: (m) => logs.push(m) });
+  desk.claim('laptop', SESSION);
+  for (let i = 0; i < 10; i++) desk.conn('laptop').suiteAsk('GET', '/api/suite/info');
+  clock.advance(20000);
+  assert.deepStrictEqual(logs, ['call expired unanswered: laptop GET /api/suite/info (pending, 20000 ms)']);
+  desk.conn('laptop').suiteAsk('GET', '/api/suite/info');
+  clock.advance(20000);
+  assert.deepStrictEqual(logs, [
+    'call expired unanswered: laptop GET /api/suite/info (pending, 20000 ms)',
+    'call expired unanswered: laptop GET /api/suite/info (pending, 20000 ms) +9',
+  ]);
+});
+
+test('a replaced runner session logs one line with the number of calls it settled', () => {
+  const logs = [];
+  const { desk, clock } = mkDesk({ log: (m) => logs.push(m) });
+  desk.claim('laptop', SESSION);
+  desk.conn('laptop').suiteAsk('GET', '/api/suite/info', null, 60000);
+  desk.conn('laptop').suiteAsk('GET', '/api/suite/info', null, 60000);
+  desk.claim('laptop', SESSION);
+  clock.advance(46000);
+  assert.strictEqual(desk.claim('laptop', OTHER).status, 200);
+  assert.deepStrictEqual(logs, ['runner session for laptop replaced; settled 2 call(s)']);
+});

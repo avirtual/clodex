@@ -445,6 +445,7 @@ class PeerConnection {
 // the hello cadence sees an offline dip, so neither the wasOffline nor the
 // identityChanged trigger fires. Backoff reset lives in onStable, not here.
         this._refreshSessions();
+        this._ringSuite();
       },
       onStable: () => { this._eventsBackoff = RECONNECT_MIN_MS; },
       onClose: () => {

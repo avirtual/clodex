@@ -473,6 +473,7 @@ test('a claimed call past its local deadline is not executed', async () => {
       reply: async (id, claim, answer) => { replied.push(answer.status); return { status: 200 }; },
       log: (m) => logs.push(m),
       now: () => t,
+      clock: () => t,
     });
     await claimer.ring();
     await waitFor(() => replied.length || logs.some((m) => m.includes('past its deadline')), 'the call to settle');
@@ -511,6 +512,7 @@ test('a claim that keeps failing the same way is logged once, and again after a 
     log: (m) => logs.push(m),
   });
   for (let i = 0; i < 5; i++) await claimer.ring();
+  claimer.stop();
   assert.deepStrictEqual(logs, ['claim failed (409)', 'claim failed (409)']);
 });
 
