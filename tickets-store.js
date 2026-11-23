@@ -312,8 +312,19 @@ function normalizeBoard(arr) {
   for (const t of arr) {
     if (t && typeof t === 'object' && 'suiteProvenance' in t) t.suiteProvenance = suiteProvenanceOf(t);
     if (t && !t.verifyHold && typeof t === 'object') delete t.boxHoldReason;
+    if (t && typeof t === 'object' && 'boxRetry' in t) {
+      const r = boxRetryOf(t.boxRetry);
+      if (r) t.boxRetry = r; else delete t.boxRetry;
+    }
   }
   return arr;
+}
+
+function boxRetryOf(v) {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const num = (x) => typeof x === 'number' && Number.isFinite(x);
+  if (!Number.isInteger(v.attempts) || v.attempts < 0 || !num(v.nextAt) || !num(v.lastEndedAt) || typeof v.inFlight !== 'boolean') return null;
+  return { attempts: v.attempts, nextAt: v.nextAt, lastEndedAt: v.lastEndedAt, inFlight: v.inFlight };
 }
 
 function idNumber(id) {

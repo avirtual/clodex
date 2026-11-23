@@ -397,6 +397,60 @@ for (const [label, by, cause, act, [step, reason]] of BOX_HOLD_END_ROWS) {
   });
 }
 
+const RETRY_HOLD = { step: 'verify: box', at: 1, evidence: 'runner unreachable: gone', recovery: 'box', code: 'runner-unreachable', class: 'transient' };
+const RETRY_STATE = { attempts: 1, nextAt: 2_000_000, lastEndedAt: 1_880_000, inFlight: false };
+const task = (sub, body = '') => (f) => f.m._handleTask(f.m.sessions.get('lead'), { type: 'task', sub, id: 't1', who: null, body });
+const BOX_RETRY_END_ROWS = [
+  ['task-verify', 'done', task('verify'), undefined],
+  ['task-done', 'done', task('done', 'fixed'), undefined],
+  ['fallback-home', 'done', (f) => f.verb('lead', '[agent:team runner fallback:home]'), undefined],
+  ['gate-off', 'done', (f) => f.verb('lead', '[agent:team runner gate:off]'), undefined],
+  ['runner-off', 'done', (f) => f.verb('lead', '[agent:team runner off]'), undefined],
+  ['accept', 'done', task('accept', 'ok'), undefined],
+  ['reject', 'done', task('reject', 'redo it'), undefined],
+  ['cancel', 'open', task('cancel', 'drop it'), undefined],
+  ['nothing (control)', 'done', async () => {}, RETRY_STATE],
+];
+
+for (const [label, state, act, want] of BOX_RETRY_END_ROWS) {
+  test(`t2383: boxRetry is removed when the hold ends by ${label}`, async () => {
+    const f = mkVerbFixture({ manifestExtra: { testRunner: HOLD_ON } });
+    const root = f.tm.loadManifest('team').root;
+    const store = require('../tickets-store').createTicketsStore({ clodexHome: f.home });
+    const held = state === 'done' ? { loopStep: 'verify', verifyHold: RETRY_HOLD, boxHoldReason: 'runner unreachable', closedAt: 1 } : {};
+    store.save(root, [{ id: 't1', state, title: 't1', spec: 's', assignee: 'hand', ...held, boxRetry: RETRY_STATE }]);
+    assert.deepStrictEqual(store.load(root)[0].boxRetry, RETRY_STATE, 'ENTER: the row carries boxRetry');
+    f.m._runTicketLoop = () => {};
+    await f.verb('lead', '[agent:team runner]');
+    await act(f);
+    const [t] = store.load(root);
+    if (label !== 'nothing (control)') assert.notDeepStrictEqual([t.state, t.loopStep, t.verifyHold, (t.events || []).length], [state, held.loopStep, held.verifyHold, 0], 'ENTER: the act changed the row');
+    assert.deepStrictEqual(t.boxRetry, want);
+  });
+}
+
+const BOX_RETRY_LOAD_ROWS = [
+  ['well formed', { attempts: 2, nextAt: 5, lastEndedAt: 4, inFlight: true }, { attempts: 2, nextAt: 5, lastEndedAt: 4, inFlight: true }],
+  ['extra keys', { attempts: 0, nextAt: 5, lastEndedAt: 4, inFlight: false, x: 1 }, { attempts: 0, nextAt: 5, lastEndedAt: 4, inFlight: false }],
+  ['negative attempts', { attempts: -1, nextAt: 5, lastEndedAt: 4, inFlight: false }, undefined],
+  ['string nextAt', { attempts: 0, nextAt: '5', lastEndedAt: 4, inFlight: false }, undefined],
+  ['missing lastEndedAt', { attempts: 0, nextAt: 5, inFlight: false }, undefined],
+  ['non-boolean inFlight', { attempts: 0, nextAt: 5, lastEndedAt: 4, inFlight: 1 }, undefined],
+  ['an array', [], undefined],
+  ['null', null, undefined],
+];
+
+test('t2383: boxRetry is normalized on load and a malformed one is dropped', () => {
+  const f = mkVerbFixture({});
+  const root = f.tm.loadManifest('team').root;
+  const store = require('../tickets-store').createTicketsStore({ clodexHome: f.home });
+  store.save(root, BOX_RETRY_LOAD_ROWS.map(([label, boxRetry]) => ({ id: label, state: 'done', boxRetry })));
+  for (const read of [store.load(root), store.read(root)]) {
+    assert.deepStrictEqual(read.map((t) => [t.id, t.boxRetry, 'boxRetry' in t]),
+      BOX_RETRY_LOAD_ROWS.map(([label, , want]) => [label, want, want !== undefined]));
+  }
+});
+
 test('t2382: boxHoldReason survives a store round trip beside its hold and is dropped from a ticket loaded without one', () => {
   const f = mkVerbFixture({});
   const root = f.tm.loadManifest('team').root;

@@ -19,6 +19,7 @@ blocks a release.
 - Each ticket now records which suite decided its verify run and its post-merge run (box or home, the runner, the tree, and why the box did not decide when it did not). Nothing displays it yet.
 - `[agent:team runner fallback:hold]`: under gate:on, a ticket whose box run cannot decide (runner away, no image, limit hit) is held instead of being verified on the home suite. `[agent:task verify <id>]` tries the box again. The default (`fallback:home`) is unchanged, and post-merge runs still fall back to home.
 - A ticket held by `fallback:hold` now shows its reason on the board and in `[agent:task list]`, is counted as held in `[agent:team runner]`, and is verified on the home suite if the team's runner is removed.
+- Under `fallback:hold`, a ticket held because the runner was unreachable, restarting or mid-build is verified on the box again automatically once the runner can take it (up to 6 tries, 1 to 15 minutes apart, one at a time per team). Other holds still wait for `[agent:task verify <id>]`.
 
 ## 5.194.0 — 2026-11-23
 

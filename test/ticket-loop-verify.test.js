@@ -7570,3 +7570,246 @@ test('t2382: a held verify writes one compare row with decidedBy null, held true
   assert.strictEqual(p.b.f.one().verifyHold.step, 'verify: box', 'ENTER: the ticket is held');
   assert.deepStrictEqual(p.remote.rows().map((r) => [r.decidedBy, r.held, r.fallback, r.fallbackCode]), [[null, true, 'runner unreachable', 'runner-unreachable']]);
 });
+
+const { fallbackOf } = require('../suite-client');
+const RETRY_READY = { box: { state: 'ready', env: { box: { definitionHash: BOX_HASH } } }, shares: [] };
+const T0 = 1_000_000;
+const retryAt = (attempts, nextAt, lastEndedAt, inFlight = false) => ({ attempts, nextAt, lastEndedAt, inFlight });
+const TRANSIENT_HOLD = { step: 'verify: box', at: 1, evidence: 'runner unreachable: gone', recovery: 'box', code: 'runner-unreachable', class: 'transient' };
+
+function retryLoop() {
+  const h = heldLoop();
+  const f = h.p.b.f;
+  const clock = { now: T0 };
+  f.m._boxRetryNow = () => clock.now;
+  f.m._boxRetryRandom = () => 0.5;
+  const peer = { id: 'p1', online: true, caps: ['suite'] };
+  f.m._runnerPeerStatus = (n) => (n === 'runner-1' ? peer : null);
+  const reach = { r: { ok: true, info: RETRY_READY } };
+  h.p.b.holder.client.reachable = async () => reach.r;
+  const sweep = () => f.m._boxRetrySweep(f.team, clock.now);
+  const settle = async () => { await Promise.all(h.loops); await new Promise((r) => setImmediate(r)); };
+  const hold = async () => { h.p.seed(); await h.p.loop(); };
+  return { ...h, f, clock, peer, reach, sweep, settle, hold };
+}
+
+const RETRY_CREATE_ROWS = [
+  ['runner-unreachable', retryAt(0, 1_060_000, 1_000_000)],
+  ['runner-restart', retryAt(0, 1_060_000, 1_000_000)],
+  ['box-build-interrupted', retryAt(0, 1_060_000, 1_000_000)],
+  ['no-share', undefined],
+  ['queue-budget', undefined],
+  ['outcome-unknown', undefined],
+];
+
+for (const [code, want] of RETRY_CREATE_ROWS) {
+  test(`t2383: a first hold at verify: box (${code}) ${want ? 'creates' : 'carries no'} boxRetry`, async () => {
+    const r = retryLoop();
+    r.f.m._boxDecide = undecided(code, 'why');
+    await r.hold();
+    assert.strictEqual(r.f.one().verifyHold.code, code, 'ENTER: held with this code');
+    assert.deepStrictEqual(r.f.one().boxRetry, want);
+    assert.strictEqual(heldNotes(r.f).length, 1, 'the lead is told once');
+  });
+}
+
+test('t2383: a held ticket that is not yet due is not tried', async () => {
+  const r = retryLoop();
+  await r.hold();
+  r.clock.now = 1_059_999;
+  assert.strictEqual(await r.sweep(), null);
+  assert.strictEqual(r.loops.length, 1);
+  assert.deepStrictEqual(r.f.one().boxRetry, retryAt(0, 1_060_000, 1_000_000));
+});
+
+const RETRY_NOT_READY_ROWS = [
+  ['the runner is not live', (r) => { r.peer.online = false; }],
+  ['the runner has no info', (r) => { r.reach.r = { ok: false, why: 'down' }; }],
+  ['a required share is missing', (r) => { r.f.team.testRunner = { ...GATE_HOLD, shares: [{ share: 'assets', version: 'v1' }] }; }],
+  ['the box is neither ready nor buildable', (r) => { r.reach.r = { ok: true, info: { box: { state: 'no-image', definitionHash: BOX_HASH }, shares: [] } }; }],
+];
+
+for (const [label, set] of RETRY_NOT_READY_ROWS) {
+  test(`t2383: a due ticket is not tried when ${label}, and keeps its attempts and nextAt`, async () => {
+    const r = retryLoop();
+    await r.hold();
+    set(r);
+    r.clock.now = 1_060_000;
+    assert.strictEqual(await r.sweep(), null);
+    assert.strictEqual(r.loops.length, 1);
+    assert.deepStrictEqual(r.f.one().boxRetry, retryAt(0, 1_060_000, 1_000_000));
+    assert.strictEqual(r.f.one().verifyHold.step, 'verify: box');
+  });
+}
+
+test('t2383: a due ticket on a runner that can build the box is tried once; a deciding box spawns the reviewer and drops boxRetry', async () => {
+  const r = retryLoop();
+  await r.hold();
+  r.reach.r = { ok: true, info: { box: { state: 'can-build', definitionHash: BOX_HASH }, shares: [] } };
+  delete r.f.m._boxDecide;
+  r.clock.now = 1_060_000;
+  assert.strictEqual(await r.sweep(), 't1');
+  assert.strictEqual(r.loops.length, 2);
+  await r.settle();
+  const t = r.f.one();
+  assert.deepStrictEqual([t.verifyHold, t.boxRetry, t.suiteProvenance.verify.decidedBy], [undefined, undefined, 'box']);
+  assert.strictEqual(r.f.created.length, 1, 'the reviewer was spawned');
+  assert.deepStrictEqual(t.events.filter((e) => e.kind === 'verify-release').map((e) => [e.by, e.cause]), [['ticket-loop', 'auto-retry']]);
+  assert.deepStrictEqual(r.f.logs.filter((l) => /^auto box retry/.test(l.msg)).map((l) => l.msg), ['auto box retry 1/6 for t1 on runner runner-1']);
+});
+
+const RETRY_DELAY_ROWS = [
+  [1, 0.5, 60_000],
+  [2, 0.5, 120_000],
+  [3, 0.5, 240_000],
+  [4, 0.5, 480_000],
+  [5, 0.5, 900_000],
+  [6, 0.5, 900_000],
+  [1, 0, 48_000],
+  [6, 1, 1_080_000],
+];
+
+for (const [attempt, rnd, delay] of RETRY_DELAY_ROWS) {
+  test(`t2383: the delay before attempt ${attempt} at random ${rnd} is ${delay}ms, counted from when the previous run ended`, () => {
+    const r = retryLoop();
+    r.f.m._boxRetryRandom = () => rnd;
+    const prior = attempt === 1 ? {} : { boxRetry: retryAt(attempt - 2, 1, 2, true) };
+    r.p.seed({ verifyHold: TRANSIENT_HOLD, ...prior });
+    r.clock.now = 5_000_000;
+    r.f.m._boxRetryAfterHold(r.f.team, 't1', fallbackOf('runner-unreachable'));
+    assert.deepStrictEqual(r.f.one().boxRetry, retryAt(attempt - 1, 5_000_000 + delay, 5_000_000));
+  });
+}
+
+test('t2383: of two due tickets on one team only the older hold starts, and the second starts only after the first ended', async () => {
+  const r = retryLoop();
+  const started = [];
+  r.f.m._runTicketLoop = (team, id) => { started.push(id); };
+  const base = { ...r.f.one(), state: 'done', loopStep: 'verify', verifyHold: TRANSIENT_HOLD, boxHoldReason: 'runner unreachable' };
+  r.f.tstore.save(r.f.team.root, [
+    { ...base, id: 't1', boxRetry: retryAt(0, 1_000_000, 900_000) },
+    { ...base, id: 't2', boxRetry: retryAt(0, 1_000_000, 800_000) },
+  ]);
+  assert.strictEqual(await r.sweep(), 't2');
+  assert.strictEqual(await r.sweep(), null);
+  assert.deepStrictEqual(started, ['t2']);
+  r.f.m._stampVerifyHold(r.f.team, 't2', TRANSIENT_HOLD);
+  r.f.m._boxRetryAfterHold(r.f.team, 't2', fallbackOf('runner-unreachable'));
+  assert.strictEqual(await r.sweep(), 't1');
+  assert.deepStrictEqual(started, ['t2', 't1']);
+});
+
+test('t2383: two sweeps in one tick start one run', async () => {
+  const r = retryLoop();
+  await r.hold();
+  r.clock.now = 1_060_000;
+  assert.deepStrictEqual(await Promise.all([r.sweep(), r.sweep()]), ['t1', null]);
+  assert.strictEqual(r.loops.length, 2);
+  await r.settle();
+});
+
+test('t2383: a sweep and a task verify in one tick start one run, in either order', async () => {
+  const a = retryLoop();
+  await a.hold();
+  a.clock.now = 1_060_000;
+  const pending = a.sweep();
+  a.verify('lead');
+  assert.strictEqual(await pending, null);
+  assert.strictEqual(a.loops.length, 2);
+  assert.deepStrictEqual(a.replies, ['ticket t1 re-verifying (was held at "verify: box")']);
+  await a.settle();
+  const b = retryLoop();
+  await b.hold();
+  b.clock.now = 1_060_000;
+  assert.strictEqual(await b.sweep(), 't1');
+  b.verify('lead');
+  assert.strictEqual(b.loops.length, 2);
+  assert.deepStrictEqual(b.replies, ['error: ticket t1 is already verifying — only a ticket held at "verify: box" can be re-verified']);
+  await b.settle();
+});
+
+test('t2383: six transient re-holds send one exhausted notice, drop boxRetry, and a seventh sweep does nothing', async () => {
+  const r = retryLoop();
+  await r.hold();
+  const seen = [];
+  for (let i = 1; i <= 6; i++) {
+    r.clock.now = r.f.one().boxRetry.nextAt;
+    assert.strictEqual(await r.sweep(), 't1', `ENTER: attempt ${i} started`);
+    await r.settle();
+    seen.push(r.f.one().boxRetry ? r.f.one().boxRetry.attempts : null);
+  }
+  assert.deepStrictEqual(seen, [1, 2, 3, 4, 5, null]);
+  assert.strictEqual(r.f.one().verifyHold.step, 'verify: box');
+  assert.deepStrictEqual(heldNotes(r.f).slice(1), [
+    '[ticket t1 HELD] 6 automatic box retries did not decide (runner unreachable). Try again with [agent:task verify t1].',
+  ]);
+  r.clock.now += 3_600_000;
+  assert.strictEqual(await r.sweep(), null);
+  assert.strictEqual(r.loops.length, 7);
+});
+
+test('t2383: a transient re-hold sends no second HELD notice; a no-share re-hold sends the deterministic notice and drops boxRetry', async () => {
+  const r = retryLoop();
+  await r.hold();
+  r.clock.now = 1_060_000;
+  await r.sweep();
+  await r.settle();
+  assert.deepStrictEqual(r.f.one().boxRetry, retryAt(1, 1_180_000, 1_060_000));
+  assert.strictEqual(heldNotes(r.f).length, 1);
+  r.f.m._boxDecide = undecided('no-share', 'runner has no share assets@v1');
+  r.clock.now = 1_180_000;
+  await r.sweep();
+  await r.settle();
+  assert.strictEqual(r.f.one().boxRetry, undefined);
+  assert.strictEqual(r.f.one().verifyHold.code, 'no-share');
+  assert.deepStrictEqual(heldNotes(r.f).slice(1), [
+    '[ticket t1 HELD] the box did not decide (no share): runner has no share assets@v1. Not run on the home suite (fallback:hold).\n'
+    + 'This will not clear by itself: fix the cause (no share), then [agent:task verify t1].',
+  ]);
+});
+
+test('t2383: a restart mid-attempt resumes the verify once and counts the attempt once', async () => {
+  const r = retryLoop();
+  await r.hold();
+  const loop = r.f.m._runTicketLoop;
+  r.f.m._runTicketLoop = () => {};
+  r.clock.now = 1_060_000;
+  assert.strictEqual(await r.sweep(), 't1');
+  const mid = r.f.one();
+  assert.deepStrictEqual([mid.verifyHold, mid.boxRetry], [undefined, retryAt(0, 1_060_000, 1_000_000, true)]);
+  r.f.m._runTicketLoop = loop;
+  r.f.m._verifyLooped = new Set();
+  r.clock.now = 1_070_000;
+  r.f.m._resumeOrphanedVerify(r.f.team);
+  assert.strictEqual(r.loops.length, 2, 'resumed once');
+  await r.settle();
+  assert.deepStrictEqual(r.f.one().boxRetry, retryAt(1, 1_190_000, 1_070_000));
+  assert.strictEqual(heldNotes(r.f).length, 1);
+});
+
+test('t2383: a ticket held with boxRetry keeps its attempts and nextAt across a restart and is not resumed', async () => {
+  const r = retryLoop();
+  r.p.seed({ verifyHold: TRANSIENT_HOLD, boxRetry: retryAt(2, 1_500_000, 1_260_000) });
+  r.f.m._verifyLooped = new Set();
+  r.f.m._resumeOrphanedVerify(r.f.team);
+  assert.strictEqual(r.loops.length, 0);
+  assert.deepStrictEqual(r.f.one().boxRetry, retryAt(2, 1_500_000, 1_260_000));
+  r.clock.now = 1_499_999;
+  assert.strictEqual(await r.sweep(), null);
+  r.clock.now = 1_500_000;
+  r.f.m._runTicketLoop = () => {};
+  assert.strictEqual(await r.sweep(), 't1');
+});
+
+test('t2383: the watchdog sweep tries each team\'s due box hold through _boxRetrySweep with its clock', async () => {
+  const r = retryLoop();
+  await r.hold();
+  const calls = [];
+  const real = r.f.m._boxRetrySweep;
+  r.f.m._boxRetrySweep = function (team, now) { calls.push([team.name, now]); return real.call(this, team, now); };
+  r.clock.now = 1_060_000;
+  await r.f.m._sweepTickets(1_060_000);
+  assert.deepStrictEqual(calls, [[r.f.team.name, 1_060_000]]);
+  assert.strictEqual(r.loops.length, 2, 'the sweep started the attempt');
+  await r.settle();
+});

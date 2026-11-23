@@ -1014,6 +1014,25 @@ test('t2382: _taskListText names the stamped reason of a box hold on both row sh
   assert.strictEqual(row('done', 't2'), 't2 [done] hand 1m — t2');
 });
 
+test('t2383: _taskListText appends the next automatic retry to a box hold that has one', () => {
+  const home = mkHome();
+  const proj = path.join(home, 'proj');
+  mkTeam(home, 'proj', proj, { lead: 'lead', roles: { lead: {}, hand: {} } });
+  const now = 10_000_000;
+  const hold = { step: 'verify: box', at: 1, evidence: 'gone', recovery: 'box', code: 'runner-unreachable', class: 'transient' };
+  const d = (id, over = {}) => ({ id, state: 'done', role: 'hand', title: id, openedAt: now - 60000, closedAt: now - 1000, loopStep: 'verify', verifyHold: hold, boxHoldReason: 'runner unreachable', ...over });
+  mkTicketRegistry(home, proj, [
+    d('t1', { boxRetry: { attempts: 2, nextAt: now + 1, lastEndedAt: now - 1, inFlight: false } }),
+    d('t2'),
+  ]);
+  const team = { name: 'proj', root: proj, lead: 'lead' };
+  const m = new (createSessionManager({ fs, path, REGISTRY_DIR: home, knownSkillNames: () => [] }))();
+  const row = (filter, id) => m._taskListText(team, filter, now).split('\n').find((l) => l.startsWith(`${id} [done]`));
+  assert.strictEqual(row('open', 't1'), 't1 [done] held: box — runner unreachable (auto retry 3/6) hand closed 1s ago — t1');
+  assert.strictEqual(row('open', 't2'), 't2 [done] held: box — runner unreachable hand closed 1s ago — t2');
+  assert.strictEqual(row('done', 't1'), 't1 [done] held: box — runner unreachable (auto retry 3/6) hand 1m — t1');
+});
+
 test('_taskListText answers the empty board with the same sentence the reply does', () => {
   const home = mkHome();
   const proj = path.join(home, 'proj');
