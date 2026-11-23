@@ -1334,6 +1334,7 @@ const SessionManager = createSessionManager({
   notifyOS,
   setAppQuitting,
   relaunchApp: restartHostWhenIdle,
+  suiteRestartJobs: () => (seams.restartWaitsForSuite ? suiteRestartJobs() : []),
   relaunchUnavailable: restartUnavailable,
   restartSession: (...a) => restartSession(...a),
   getPluginHooks: () => (pluginHost ? pluginHost.hooks : null),
@@ -1916,7 +1917,7 @@ const { createSuiteDesk } = require('./suite-desk');
 const suiteDesk = createSuiteDesk({ notify: (origin) => { if (remoteServer) remoteServer.notifySuiteMail(origin); }, log: (m) => log.info('suite-desk', m) });
 const { createRemoteWiring } = require('./remote-wiring');
 const { readRemoteEnvToken, writeRemoteEnvToken, hasRemoteEnvToken, resolveRemoteToken } = require('./remote-token');
-const { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer, suiteRunnerState, applySuiteRunner, suiteActivity, suiteActivityNow, refreshSuiteActivity, suiteOutput, getSuiteEngine } = createRemoteWiring({
+const { syncRemoteServer, refreshRemoteToken, shutdownRemoteServer, suiteRunnerState, applySuiteRunner, suiteActivity, suiteActivityNow, refreshSuiteActivity, suiteOutput, getSuiteEngine, fenceSuiteRunner, suiteRestartJobs } = createRemoteWiring({
   path, fs, os, log,
   DEFAULT_WORKSPACE_ID, AGENT_NAME_RE, REGISTRY_DIR, MSG_DIR, OUTBOX_DIR, SELF_LABEL,
   parseCtxFile, cachedMessages, sliceSince, jsonlToMessages, ensureDir, homeRelativize,
@@ -2539,6 +2540,7 @@ const toolCache = createToolCache({ whichBin });
     reconcileCodexSwaps,
     knownSkillNames,
     refreshRemoteToken, suiteRunnerState, applySuiteRunner, suiteClaimStatus, suiteActivity, suiteActivityNow, refreshSuiteActivity, suiteOutput,
+    fenceSuiteRunner, suiteRestartJobs,
     getBoxOffer, boxOfferForced: envBoxOffer !== undefined, readStoredBoxOffer, getOfferFacts, offerDirectory, dialers,
     readOfferFacts: () => runtimeProbe.refresh().then(() => getOfferFacts()),
     setRemoteToken: (token) => writeRemoteEnvToken(userDataPath, token),

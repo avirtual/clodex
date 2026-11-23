@@ -198,7 +198,7 @@ test('main.js: the give-up notification delegates its copy to the tested builder
   // dead value passes — so the copy lives in `giveUpBody` and is tested by being
   // CALLED (test/restart-waiter.test.js). What is source-only, and therefore
   // pinned here, is that main.js delegates to it and hands it the names.
-  assert.match(lit, /body:\s*giveUpBody\(\s*asked\s*\)/,
+  assert.match(lit, /body:\s*giveUpBody\(\s*asked\s*,\s*why\s*\)/,
     'ENTER: this is the give-up notification, and its copy comes from the tested builder — '
     + 'a body rebuilt inline here would escape the behavioural tests entirely');
 

@@ -1419,6 +1419,7 @@ function createRemoteWiring(deps) {
   let suiteRunnerError = null;
   let liveSetting = null;
   let drainPending = false;
+  let suiteFenced = false;
   function getSuiteRunner() {
     if (suiteRunner !== undefined) return suiteRunner;
     suiteRunner = null;
@@ -1429,8 +1430,27 @@ function createRemoteWiring(deps) {
     const started = startRunner(opts, { log, onActivity: () => refreshActivity() });
     suiteRunner = started.runner;
     suiteRunnerError = started.error;
+    if (suiteFenced && suiteRunner && typeof suiteRunner.fence === 'function') suiteRunner.fence(true);
     refreshActivity();
     return suiteRunner;
+  }
+
+  function fenceSuiteRunner(on) {
+    suiteFenced = !!on;
+    const runner = closed ? null : suiteRunner;
+    if (runner && typeof runner.fence === 'function') runner.fence(suiteFenced);
+    return suiteFenced;
+  }
+
+  function suiteRestartJobs() {
+    if (!suiteRunnerBusy()) return [];
+    const snap = activitySnap;
+    const jobs = snap ? [...(snap.running || []), ...(snap.waiting || [])] : [];
+    if (!jobs.length) {
+      refreshActivity();
+      return [{ id: null, team: null }];
+    }
+    return jobs.map((j) => ({ id: j.id, team: j.team || null }));
   }
 
   let activitySnap = null;
@@ -1542,7 +1562,7 @@ function createRemoteWiring(deps) {
 
   return {
     syncRemoteServer, refreshRemoteToken, shutdownRemoteServer, suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner, applySuiteRunner,
-    suiteActivity, suiteActivityNow, refreshSuiteActivity: refreshActivity, suiteOutput,
+    suiteActivity, suiteActivityNow, refreshSuiteActivity: refreshActivity, suiteOutput, fenceSuiteRunner, suiteRestartJobs,
     getSuiteEngine:() => (closed ? null : getSuiteRunner()),
   };
 }
