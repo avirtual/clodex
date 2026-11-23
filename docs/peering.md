@@ -380,6 +380,26 @@ logs `reply not needed, call already settled`, and any other refusal (404,
   `claiming` with `lastClaim`, `not-connected` or `runner-off`. Preferences ▸ Test boxes ▸
   Offer test boxes shows them as status lines.
 
+**Connections and the request-failure line.** The claim, blob and reply
+requests go through their own agent (`_deskAgent`: `keepAlive: false`,
+`maxSockets: 16`), so each opens a new connection and none is written to a
+socket that sat idle in a pool. On a machine under load the client's idle
+timer can fire late, and a request written to a socket the lead has already
+closed fails with `socket hang up`; replaying it is unsafe, because a reset
+before any response byte does not prove the lead did not act on it. Every
+other route keeps its keep-alive pool. Any request to a peer that fails in
+transport or times out (not an HTTP status) logs, at warn under `peer`,
+`<label>: request failed: <METHOD> <route class> <code or message>
+reused=<true|false> idle=<ms|-> after=<ms> timeout=<ms>`. The route class is
+the path matched against a fixed table with ids and the query removed
+(`other` when unlisted). `reused=true` means the request went out on a pooled
+socket; `idle` is how long that socket sat free before the request took it,
+and `-` when the socket was new. A `reused=true` failure with an `idle` near
+the lead's keep-alive timeout points at a stale socket; `reused=false` does
+not. At most one line per peer per route class per 10 s; the next one ends
+` +<n> more`. A request cut off by `stop()` or `repoint()` logs nothing. Nothing
+is retried.
+
 ### 2a. Web view + the wirescope forward (t30b, t443)
 
 Two hello fields advertise loopback services a consumer may FORWARD to, both

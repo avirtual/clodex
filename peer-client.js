@@ -50,6 +50,26 @@ const SUITE_REPLY_MAX_BYTES = 8 * 1024 * 1024;
 const IMPORT_TIMEOUT_MS = 120000;
 const OVERFLOW_LOG_INTERVAL_MS = 60000;
 const CLAIM_FAIL_LOG_INTERVAL_MS = 60000;
+const REQUEST_FAIL_LOG_INTERVAL_MS = 10000;
+const FREE_AT = Symbol('freeAt');
+const ROUTE_CLASSES = [
+  '/api/peer/hello', '/api/peer/offers', '/api/peer/roster', '/api/restart',
+  '/api/sessions', '/api/sessions/:id', '/api/sessions/:id/args', '/api/sessions/:id/skills',
+  '/api/sessions/:id/control', '/api/sessions/:id/input', '/api/sessions/:id/query',
+  '/api/sessions/:id/resize', '/api/sessions/:id/restart',
+  '/api/dm', '/api/dm/claim', '/api/inbox', '/api/inbox/read/:id', '/api/catalogs', '/api/resources',
+  '/api/import/begin', '/api/import/:id', '/api/import/:id/commit', '/api/import/:id/file/*',
+  '/api/wterm-close/:id', '/api/wterm-input/:id', '/api/wterm-resize/:id',
+  '/api/suite-desk/claim', '/api/suite-desk/calls/:id/reply', '/api/suite-desk/calls/:id/blob',
+  '/api/suite/info', '/api/suite/jobs', '/api/suite/jobs/:id', '/api/suite/jobs/:id/pack',
+  '/api/suite/jobs/:id/commit', '/api/suite/jobs/:id/output',
+].map((cls) => ({ cls, re: new RegExp(`^${cls.replace(/:id/g, '[^/]+').replace(/\*$/, '.+')}$`) }));
+
+function routeClass(path) {
+  const bare = String(path || '').split('?')[0];
+  const hit = ROUTE_CLASSES.find(({ re }) => re.test(bare));
+  return hit ? hit.cls : 'other';
+}
 
 // Comparable identity for the hello's webHost field, so identityChanged can
 // treat "appeared", "vanished" and "moved to another port" alike. null and a
@@ -123,8 +143,11 @@ function withoutAssistants(rows) {
 }
 
 class PeerConnection {
-  constructor({ id, label, url, token, emit, selfLabel, helloIntervalMs, computeRoster, computeOffers, onOffers, staleMs, timers, sseMaxBufferBytes, claimInbox, direct, suiteClaimer }) {
+  constructor({ id, label, url, token, emit, selfLabel, helloIntervalMs, computeRoster, computeOffers, onOffers, staleMs, timers, sseMaxBufferBytes, claimInbox, direct, suiteClaimer, log, clock }) {
     this.id = id;
+    this._log = typeof log === 'function' ? log : null;
+    this._clock = typeof clock === 'function' ? clock : Date.now;
+    this._failLog = new Map();
     this.label = label;
     this.url = url.replace(/\/+$/, '');
     // Operator auth token for a tokened remote wire.
@@ -160,10 +183,7 @@ class PeerConnection {
 // http.request for https.request without swapping the agent throws
 // ERR_INVALID_PROTOCOL and the peer never connects at all.
     this._secure = isSecureBase(this.url);
-    const Agent = this._secure ? https.Agent : http.Agent;
-    this._reqAgent = new Agent({ keepAlive: true, maxSockets: 8 });
-    this._sseAgent = new Agent({ keepAlive: false, maxSockets: Infinity });
-    this._suiteAgent = new Agent({ keepAlive: true, maxSockets: 2 });
+    this._buildAgents();
     this.online = false;
     this.needsUpgrade = false;
     this.hello = null;                // { host, version, caps, platform, srcDir }
@@ -196,6 +216,17 @@ class PeerConnection {
     this._suiteClaimer = typeof suiteClaimer === 'function' ? suiteClaimer(this) : null;
   }
 
+  _buildAgents() {
+    const Agent = this._secure ? https.Agent : http.Agent;
+    this._reqAgent = new Agent({ keepAlive: true, maxSockets: 8 });
+    this._sseAgent = new Agent({ keepAlive: false, maxSockets: Infinity });
+    this._suiteAgent = new Agent({ keepAlive: true, maxSockets: 2 });
+    this._deskAgent = new Agent({ keepAlive: false, maxSockets: 16 });
+    for (const agent of [this._reqAgent, this._suiteAgent, this._deskAgent]) {
+      agent.on('free', (socket) => { socket[FREE_AT] = this._clock(); });
+    }
+  }
+
   start() {
     this._stopped = false;
     this._helloLoop();
@@ -217,6 +248,7 @@ class PeerConnection {
     this._reqAgent.destroy();
     this._sseAgent.destroy();
     this._suiteAgent.destroy();
+    this._deskAgent.destroy();
     if (this._suiteClaimer) this._suiteClaimer.stop();
     this._setOnline(false);
   }
@@ -243,12 +275,10 @@ class PeerConnection {
     this._reqAgent.destroy();
     this._sseAgent.destroy();
     this._suiteAgent.destroy();
+    this._deskAgent.destroy();
     this.url = url.replace(/\/+$/, '');
     this._secure = isSecureBase(this.url);
-    const Agent = this._secure ? https.Agent : http.Agent;
-    this._reqAgent = new Agent({ keepAlive: true, maxSockets: 8 });
-    this._sseAgent = new Agent({ keepAlive: false, maxSockets: Infinity });
-    this._suiteAgent = new Agent({ keepAlive: true, maxSockets: 2 });
+    this._buildAgents();
     this._setOnline(false);
     this._helloLoop();
   }
@@ -874,7 +904,7 @@ class PeerConnection {
     return new Promise((resolve) => {
       this._request('POST', '/api/suite-desk/claim', { v: SUITE_DESK_V, origin: this._selfLabel, session }, (err, body, status) => {
         resolve(err ? { status: status || 0, body: null, error: err.message } : { status, body, error: null });
-      }, REQUEST_TIMEOUT_MS, SUITE_REPLY_MAX_BYTES);
+      }, REQUEST_TIMEOUT_MS, SUITE_REPLY_MAX_BYTES, this._deskAgent);
     });
   }
 
@@ -883,7 +913,7 @@ class PeerConnection {
     return new Promise((resolve) => {
       this._requestBytes(path, (err, bytes, status) => {
         resolve(err ? { status: status || 0, bytes: null, error: err.message } : { status, bytes, error: null });
-      }, IMPORT_TIMEOUT_MS, DESK_LIMITS.chunkMax + 64 * 1024, this._suiteAgent);
+      }, IMPORT_TIMEOUT_MS, DESK_LIMITS.chunkMax + 64 * 1024, this._deskAgent);
     });
   }
 
@@ -893,7 +923,7 @@ class PeerConnection {
     return new Promise((resolve) => {
       this._request('POST', `/api/suite-desk/calls/${encodeURIComponent(id)}/reply`, payload, (err, body, status) => {
         resolve(err ? { status: status || 0, body: null, error: err.message } : { status, body, error: null });
-      }, timeout);
+      }, timeout, REPLY_MAX_BYTES, this._deskAgent);
     });
   }
 
@@ -1131,6 +1161,44 @@ class PeerConnection {
     });
   }
 
+  _settleRequest(req, method, path, timeout, cb) {
+    const startedAt = this._clock();
+    let idle = null;
+    let settled = false;
+    req.once('socket', (socket) => {
+      const at = socket[FREE_AT];
+      idle = req.reusedSocket && Number.isFinite(at) ? Math.max(0, this._clock() - at) : null;
+    });
+    const done = (...args) => {
+      if (settled) return;
+      settled = true;
+      cb(...args);
+    };
+    const agent = req.agent;
+    const fail = (e) => {
+      const first = !settled;
+      done(e);
+      const torndown = this._stopped || ![this._reqAgent, this._suiteAgent, this._deskAgent].includes(agent);
+      if (!first || torndown || (e && e.message === 'response too large')) return;
+      try {
+        this._logRequestFailure(method, path, e, { reused: req.reusedSocket === true, idle, after: this._clock() - startedAt, timeout });
+      } catch {}
+    };
+    return { done, fail };
+  }
+
+  _logRequestFailure(method, path, e, { reused, idle, after, timeout }) {
+    if (!this._log) return;
+    const cls = routeClass(path);
+    const now = this._clock();
+    const prev = this._failLog.get(cls);
+    if (prev && now - prev.at < REQUEST_FAIL_LOG_INTERVAL_MS) { prev.more += 1; return; }
+    this._failLog.set(cls, { at: now, more: 0 });
+    const why = (e && (e.code || e.message)) || 'error';
+    const more = prev && prev.more ? ` +${prev.more} more` : '';
+    this._log(`${this.label}: request failed: ${method} ${cls} ${why} reused=${reused} idle=${idle == null ? '-' : idle} after=${after} timeout=${timeout}${more}`);
+  }
+
   _request(method, path, payload, cb, timeout = REQUEST_TIMEOUT_MS, maxBytes = REPLY_MAX_BYTES, agent = this._reqAgent) {
     let d;
     try { d = dialOptions(this.url, path); } catch (e) { return cb(e); }
@@ -1155,12 +1223,13 @@ class PeerConnection {
       });
       res.on('end', () => {
         if (tooLarge) return;
-        try { cb(null, JSON.parse(buf), res.statusCode); }
-        catch { cb(new Error('bad response'), null, res.statusCode); }
+        try { done(null, JSON.parse(buf), res.statusCode); }
+        catch { done(new Error('bad response'), null, res.statusCode); }
       });
     });
+    const { done, fail } = this._settleRequest(req, method, path, timeout, cb);
     req.on('timeout', () => req.destroy(new Error('timeout')));
-    req.on('error', (e) => cb(e));
+    req.on('error', fail);
     if (body) req.write(body);
     req.end();
   }
@@ -1191,12 +1260,13 @@ class PeerConnection {
       });
       res.on('end', () => {
         if (tooLarge) return;
-        try { cb(null, JSON.parse(buf), res.statusCode); }
-        catch { cb(new Error('bad response'), null, res.statusCode); }
+        try { done(null, JSON.parse(buf), res.statusCode); }
+        catch { done(new Error('bad response'), null, res.statusCode); }
       });
     });
+    const { done, fail } = this._settleRequest(req, method, path, timeout, cb);
     req.on('timeout', () => req.destroy(new Error('timeout')));
-    req.on('error', (e) => cb(e));
+    req.on('error', fail);
     if (body.length) req.write(body);
     req.end();
   }
@@ -1224,14 +1294,15 @@ class PeerConnection {
       res.on('end', () => {
         if (tooLarge) return;
         const raw = Buffer.concat(chunks);
-        if (res.statusCode === 200 && /^application\/octet-stream\b/i.test(String(res.headers['content-type'] || ''))) return cb(null, raw, 200);
+        if (res.statusCode === 200 && /^application\/octet-stream\b/i.test(String(res.headers['content-type'] || ''))) return done(null, raw, 200);
         let msg = null;
         try { msg = JSON.parse(raw.toString('utf8')); } catch {}
-        cb(new Error((msg && msg.error) || `status ${res.statusCode}`), null, res.statusCode);
+        done(new Error((msg && msg.error) || `status ${res.statusCode}`), null, res.statusCode);
       });
     });
+    const { done, fail } = this._settleRequest(req, 'GET', path, timeout, cb);
     req.on('timeout', () => req.destroy(new Error('timeout')));
-    req.on('error', (e) => cb(e));
+    req.on('error', fail);
     req.end();
   }
 
@@ -1337,7 +1408,8 @@ class PeerConnection {
 }
 
 class PeerManager {
-  constructor({ emit, selfLabel, computeRoster, computeOffers, onOffers, suiteClaimer }) {
+  constructor({ emit, selfLabel, computeRoster, computeOffers, onOffers, suiteClaimer, log }) {
+    this._log = typeof log === 'function' ? log : null;
     this._emit = emit;
     this._selfLabel = selfLabel || null; // our origin on the wire (DM federation)
     this._computeRoster = computeRoster || null;
@@ -1387,7 +1459,7 @@ class PeerManager {
     }
     for (const [id, w] of wanted) {
       if (!this._peers.has(id)) {
-        const conn = new PeerConnection({ ...w, emit: this._emit, selfLabel: this._selfLabel, computeRoster: this._computeRoster, computeOffers: this._computeOffers, onOffers: this._onOffers, suiteClaimer: this._suiteClaimer });
+        const conn = new PeerConnection({ ...w, emit: this._emit, selfLabel: this._selfLabel, computeRoster: this._computeRoster, computeOffers: this._computeOffers, onOffers: this._onOffers, suiteClaimer: this._suiteClaimer, log: this._log });
         conn._dest = w.dest;
         this._peers.set(id, conn);
         conn.start();
