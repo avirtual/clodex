@@ -334,3 +334,36 @@ test('the Codex upgrade prompt paints at the top: full and busy, and its sheet b
   assert.deepStrictEqual(measureSplit(rows, 9, cols, 'codex'), { mode: 'full', top: -1, bottom: -1, busy: true });
   assert.deepStrictEqual(sheetBand(rows, Math.floor(rows.length / 2)), { top: 0, bottom: 13 });
 });
+
+const CLODENT = [
+  ['idle, empty draft', ['[clodent:session] 0000', '>', '', '', '', ''], 1, 1, { mode: 'split', top: 1, bottom: 2, at: 1 }],
+  ['idle with a draft', ['[clodent:session] 0000', '> fix the failing test', '', '', '', ''], 1, 1, { mode: 'split', top: 1, bottom: 2, at: 1 }],
+  ['mid-turn streaming', ['> explain a.js', 'thinking…', '● Read /tmp/a.js', 'The file defines one', '', ''], 3, 0, { mode: 'full', top: -1, bottom: -1, busy: true }],
+  ['turn end: cost line then the prompt', ['> explain a.js', 'The file defines one function.', '[clodent:cost] $0.0123 (1.2k in, 80 out)', '>', '', ''], 3, 3, { mode: 'split', top: 3, bottom: 4, at: 3 }],
+  ['an ask on screen', ['> run it', '● Bash ls', '[clodent:permit Bash toolu_01] ls', 'Allow? [y/n]', '', ''], 3, 0, { mode: 'full', top: -1, bottom: -1, busy: false }],
+  ['an ask with a typed answer', ['> run it', '● Bash ls', '[clodent:permit Bash toolu_01] ls', 'Allow? [y/n] y', '', ''], 3, 0, { mode: 'full', top: -1, bottom: -1, busy: false }],
+  ['a quoted model line mid-turn', ['> quote it', 'He said:', '> to be or not to be', '', '', ''], 2, 0, { mode: 'full', top: -1, bottom: -1, busy: true }],
+  ['a quoted model line with no marker at all', ['He said:', '> to be or not to be', '', '', '', ''], 1, -1, { mode: 'full', top: -1, bottom: -1, busy: true }],
+  ['the marked prompt row with output painted beneath it', ['[clodent:session] 0000', '> hi', 'hello', '', '', ''], 1, 1, { mode: 'full', top: -1, bottom: -1, busy: true }],
+  ['the marked prompt row with the cursor elsewhere', ['[clodent:session] 0000', '> hi', '', '', '', ''], 2, 1, { mode: 'full', top: -1, bottom: -1, busy: true }],
+];
+
+for (const [name, rows, cursorY, promptRow, want] of CLODENT) {
+  test(`clodent ${name}: ${want.mode}`, () => {
+    assert.deepStrictEqual(measureSplit(rows, cursorY, 40, 'clodent', promptRow), want);
+  });
+}
+
+test('a quoted model line and an idle prompt render the same rows; only the paste-mode marker tells them apart', () => {
+  const rows = ['He said:', '> to be or not to be', '', '', '', ''];
+  assert.deepStrictEqual(measureSplit(rows, 1, 40, 'clodent', 1), { mode: 'split', top: 1, bottom: 2, at: 1 });
+  assert.deepStrictEqual(measureSplit(rows, 1, 40, 'clodent'), { mode: 'full', top: -1, bottom: -1, busy: true });
+});
+
+test('a clodent ask measured as Claude stays busy, and a Claude screen ignores a prompt marker', () => {
+  const ask = ['[clodent:permit Bash toolu_01] ls', 'Allow? [y/n]', '', ''];
+  assert.deepStrictEqual(measureSplit(ask, 1, 40, 'claude'), { mode: 'full', top: -1, bottom: -1, busy: true });
+  const claude = ['⏺ done', '─'.repeat(40), '❯ ', '─'.repeat(40)];
+  assert.deepStrictEqual(measureSplit(claude, 2, 40, 'claude', 0), measureSplit(claude, 2, 40, 'claude'));
+  assert.deepStrictEqual(measureSplit(claude, 2, 40, 'claude'), { mode: 'split', top: 1, bottom: 3, at: 1 });
+});
