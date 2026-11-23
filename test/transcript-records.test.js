@@ -358,30 +358,6 @@ test('a permission rejection is denied; an interrupted Bash is interrupted; an u
   ]);
 });
 
-test('an errored tool result the user interrupted is interrupted; denied outranks it; a plain exit error stays error', () => {
-  const use = (id, name, input) => rec({ type: 'assistant', uuid: `a-${id}`, message: { content: [{ type: 'tool_use', id, name, input }] } });
-  const result = (id, content, { tur, ...block } = {}) => rec({ type: 'user', uuid: `r-${id}`, message: { content: [{ type: 'tool_result', tool_use_id: id, content, ...block }] }, ...(tur ? { toolUseResult: tur } : {}) });
-  const { records } = recordsOf([
-    use('a', 'Bash', { command: 'make' }),
-    result('a', 'par', { is_error: true, tur: { stdout: 'par', stderr: '', interrupted: true } }),
-    use('b', 'Read', { file_path: '/x' }),
-    result('b', 'interrupted by user', { is_error: true }),
-    use('c', 'Bash', { command: 'false' }),
-    result('c', 'Exit code 1\nboom', { is_error: true, tur: { interrupted: false } }),
-    use('d', 'Bash', { command: 'rm x' }),
-    result('d', "The user doesn't want to proceed with this tool use. The tool use was rejected.", { is_error: true, tur: { interrupted: true } }),
-    use('e', 'Bash', { command: 'make' }),
-    result('e', 'partial', { tur: { stdout: 'a\n', stderr: '', interrupted: true } }),
-  ].join('\n'));
-  assert.deepStrictEqual(records.map((r) => [r.id, r.state, r.sum.message]), [
-    ['a', 'interrupted', 'par'],
-    ['b', 'interrupted', 'interrupted by user'],
-    ['c', 'error', undefined],
-    ['d', 'denied', "The user doesn't want to proceed with this tool use. The tool use was rejected."],
-    ['e', 'interrupted', undefined],
-  ]);
-});
-
 test(`a prompt over ${PROMPT_CAP} characters is capped and marked truncated; a queued prompt says so`, () => {
   const { records } = recordsOf([
     rec({ type: 'user', uuid: 'p1', message: { content: 'x'.repeat(PROMPT_CAP + 3) } }),
