@@ -49,7 +49,7 @@ const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { envRowView, buildEnvRow } = require('./lib/env-row');
 const { envLockView, applyEnvLock, patchUnlessEnvLocked } = require('./lib/env-lock');
 const { activityView: testActivityView } = require('../suite-activity-view');
-const { createOutputFollower } = require('./lib/testjob-output');
+const { createOutputFollower, autoOpenJob, createStreamChoice, streamInfo, streamLabel, otherStream } = require('./lib/testjob-output');
 const { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, offerRunnerFrom, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText, suiteRunnerRecordFromForm, shareEditor: suiteShareEditor, claimLines: offerClaimLines } = require('./lib/offer-view');
 const { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require('./lib/account-select');
 const { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, keyTransportRefusal, modelOptions } = require('./lib/account-row');
@@ -9281,21 +9281,70 @@ window.api.onRequestOpenSandboxDialog(() => openSandboxDialog());
 const testActivityOverlay = document.getElementById('test-activity-overlay');
 const TEST_ACTIVITY_POLL_MS = 3000;
 let testActivityTimer = null;
+let testActivitySnap = null;
+let testActivityAutoOpen = false;
 
 function testActivityRow(text, jobId = null) {
   const row = document.createElement('div');
   row.className = jobId ? 'test-activity-row openable' : 'test-activity-row';
-  row.textContent = text;
+  const label = document.createElement('span');
+  label.textContent = text;
+  row.appendChild(label);
   if (jobId) {
+    row.dataset.jobId = jobId;
     row.title = 'Show this job\'s output';
     row.addEventListener('click', () => openTestOutput(jobId, text));
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'test-activity-output';
+    button.textContent = 'Output';
+    button.addEventListener('click', (e) => { e.stopPropagation(); openTestOutput(jobId, text); });
+    row.appendChild(button);
   }
   return row;
 }
 
+function testActivityJobRows() {
+  return [...document.querySelectorAll('#test-activity-dialog .test-activity-row[data-job-id]')];
+}
+
+function markTestActivityRows() {
+  for (const row of testActivityJobRows()) {
+    const on = row.dataset.jobId === testOutputJob;
+    row.classList.toggle('selected', on);
+    if (on) row.setAttribute('aria-current', 'true');
+    else row.removeAttribute('aria-current');
+  }
+}
+
+function testActivityJob(id) {
+  const snap = testActivitySnap;
+  if (!snap || id == null) return null;
+  return [...(snap.running || []), ...(snap.waiting || []), ...(snap.recent || [])].find((j) => j.id === id) || null;
+}
+
 const testOutputPane = document.getElementById('test-output-pane');
 let testOutputFollower = null;
+const testOutputChoice = createStreamChoice();
 let testOutputJob = null;
+
+function testOutputContext() {
+  const job = testActivityJob(testOutputJob);
+  return {
+    lastOutputAt: streamInfo(job, testOutputChoice.stream).lastOutputAt,
+    otherBytes: streamInfo(job, otherStream(testOutputChoice.stream)).bytes,
+  };
+}
+
+function paintTestOutputStreams() {
+  const job = testActivityJob(testOutputJob);
+  for (const radio of testOutputPane.querySelectorAll('input[name="test-output-stream"]')) {
+    const stream = radio.value;
+    radio.checked = stream === testOutputChoice.stream;
+    const shown = stream === testOutputChoice.stream && testOutputFollower ? testOutputFollower.total : null;
+    document.getElementById(`test-output-label-${stream}`).textContent = streamLabel(stream, shown != null ? shown : streamInfo(job, stream).bytes);
+  }
+}
 
 function paintTestOutput(view) {
   document.getElementById('test-output-header').textContent = view.header;
@@ -9306,20 +9355,18 @@ function paintTestOutput(view) {
   pre.textContent = view.text;
   if (view.follow) pre.scrollTop = pre.scrollHeight;
   document.getElementById('test-output-follow-wrap').style.display = view.live ? '' : 'none';
-}
-
-function testOutputStream() {
-  const picked = testOutputPane.querySelector('input[name="test-output-stream"]:checked');
-  return picked ? picked.value : 'stdout';
+  paintTestOutputStreams();
 }
 
 function followTestOutput() {
   if (testOutputFollower) testOutputFollower.close();
   const id = testOutputJob;
-  const stream = testOutputStream();
+  const stream = testOutputChoice.stream;
   const follower = createOutputFollower({
     read: ({ offset, length }) => window.api.suiteRunnerOutput(id, { stream, offset, length }),
     onUpdate: (view) => { if (testOutputFollower === follower) paintTestOutput(view); },
+    stream,
+    context: testOutputContext,
   });
   testOutputFollower = follower;
   document.getElementById('test-output-text').textContent = '';
@@ -9329,40 +9376,72 @@ function followTestOutput() {
 
 function openTestOutput(id, title) {
   testOutputJob = id;
+  testOutputChoice.open(id, testActivityJob(id));
   document.getElementById('test-output-title').textContent = title;
   testOutputPane.classList.remove('hidden');
+  markTestActivityRows();
   followTestOutput();
+  paintTestOutputStreams();
+  testOutputPane.scrollIntoView({ block: 'nearest' });
 }
 
 function closeTestOutput() {
   if (testOutputFollower) testOutputFollower.close();
   testOutputFollower = null;
   testOutputJob = null;
+  testOutputChoice.close();
   testOutputPane.classList.add('hidden');
+  markTestActivityRows();
 }
 
 document.getElementById('test-output-close').addEventListener('click', closeTestOutput);
 for (const radio of testOutputPane.querySelectorAll('input[name="test-output-stream"]')) {
-  radio.addEventListener('change', () => { if (testOutputJob) followTestOutput(); });
+  radio.addEventListener('change', () => {
+    if (!testOutputJob || !radio.checked) return;
+    testOutputChoice.pick(radio.value);
+    followTestOutput();
+  });
 }
 document.getElementById('test-output-follow').addEventListener('change', (e) => {
   if (testOutputFollower) testOutputFollower.setFollow(e.target.checked);
 });
 
+function refreshOpenTestOutput() {
+  if (!testOutputJob) return;
+  if (testOutputFollower) testOutputFollower.refresh();
+  paintTestOutputStreams();
+}
+
 function paintTestActivity(state) {
   const view = testActivityView(state, Date.now());
   const snap = state && state.enabled ? state.snapshot : null;
+  testActivitySnap = snap;
   const runningIds = snap ? snap.running.map((j) => j.id) : [];
   const recentIds = snap ? snap.recent.map((j) => j.id) : [];
+  const titles = new Map([...runningIds.map((id, i) => [id, view.running[i]]), ...recentIds.map((id, i) => [id, view.recent[i]])]);
   document.getElementById('test-activity-summary').textContent = view.summary;
   const box = document.getElementById('test-activity-box');
   box.textContent = view.box || '';
   box.style.display = view.box ? '' : 'none';
+  const active = document.activeElement;
+  const refocus = active && active.classList && active.classList.contains('test-activity-output')
+    ? active.closest('.test-activity-row').dataset.jobId : null;
   const live = [...view.running.map((t, i) => testActivityRow(t, runningIds[i])), ...view.waiting.map((t) => testActivityRow(t))];
   document.getElementById('test-activity-live').replaceChildren(...(view.empty ? [testActivityRow(view.empty)] : live));
   document.getElementById('test-activity-recent').replaceChildren(...(view.recent.length
     ? view.recent.map((t, i) => testActivityRow(t, recentIds[i]))
     : [testActivityRow('None yet')]));
+  markTestActivityRows();
+  if (refocus) {
+    const row = testActivityJobRows().find((r) => r.dataset.jobId === refocus);
+    if (row) row.querySelector('.test-activity-output').focus();
+  }
+  refreshOpenTestOutput();
+  if (testActivityAutoOpen && snap) {
+    testActivityAutoOpen = false;
+    const id = testOutputJob ? null : autoOpenJob(snap);
+    if (id) openTestOutput(id, titles.get(id) || id);
+  }
 }
 
 async function refreshTestActivity() {
@@ -9374,12 +9453,15 @@ async function refreshTestActivity() {
 
 function openTestActivity() {
   testActivityOverlay.classList.remove('hidden');
+  testActivityAutoOpen = true;
   refreshTestActivity();
   if (!testActivityTimer) testActivityTimer = setInterval(refreshTestActivity, TEST_ACTIVITY_POLL_MS);
 }
 
 function closeTestActivity() {
   closeTestOutput();
+  testActivityAutoOpen = false;
+  testActivitySnap = null;
   testActivityOverlay.classList.add('hidden');
   if (testActivityTimer) clearInterval(testActivityTimer);
   testActivityTimer = null;

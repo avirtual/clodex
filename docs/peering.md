@@ -652,6 +652,7 @@ set), a buffer capped at 256 KiB characters that drops from the top under an
 pane polls every two seconds with one read in flight, doubles the delay on an
 error up to 30 s, restarts from zero under a marker when the file shrank below
 its offset, and stops when it closes or after the read that finds the job ended.
+Opening the dialog opens the pane by itself for the longest-running job, else the newest finished one ("Last ten finished" ships expanded, each job row has an `Output` button, the open row is marked and the pane scrolls into view); it opens on stdout unless stdout is empty and stderr is not, a choice made once per opened job and held until the operator picks the other stream. The stream switch shows each stream's size from the activity record's per-stream `streams: { stdout, stderr: { bytes, lastOutputAt } }` (beside the combined `lastOutputAt`), the header's last-output time is the shown stream's, and an empty stream whose sibling has bytes reads `no stdout yet; stderr has <size>`.
 
 The job's PATH is a fixed list (`jobPath`), never the node's own:
 `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`, with

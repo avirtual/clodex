@@ -1540,6 +1540,7 @@ test('activity lists the running box job, the waiting jobs in queue order, the l
   assert.strictEqual((await upload(f.body('q-def', 'verify', { isolation: 'container', box: { definitionHash: 'd'.repeat(64), rev: 2 }, team: 'kite', ticket: 't1581' }))).state, 'queued');
   clock = 600000;
   const jobsDir = path.join(f.root, 'suite-runner', 'jobs');
+  fs.appendFileSync(path.join(jobsDir, 'run-box', 'stderr'), 'x'.repeat(10));
   fs.utimesSync(path.join(jobsDir, 'run-box', 'stdout'), 640, 640);
   fs.utimesSync(path.join(jobsDir, 'run-box', 'stderr'), 650, 650);
   fs.utimesSync(path.join(jobsDir, 'old-pass', 'stdout'), 64, 64);
@@ -1550,16 +1551,22 @@ test('activity lists the running box job, the waiting jobs in queue order, the l
     at: 600000,
     slots: { total: 1, inUse: 1 },
     running: [
-      { id: 'run-box', team: 'avh', ticket: 't1579', kind: 'verify', origin: 'avh-laptop', isolation: 'container', image: 'bbbbbbbbbbbb', definition: null, phase: 'run', queuedAt: 200000, startedAt: 200000, runStartedAt: 200000, lastOutputAt: 650000 },
+      { id: 'run-box', team: 'avh', ticket: 't1579', kind: 'verify', origin: 'avh-laptop', isolation: 'container', image: 'bbbbbbbbbbbb', definition: null, phase: 'run', queuedAt: 200000, startedAt: 200000, runStartedAt: 200000, lastOutputAt: 650000,
+        streams: { stdout: { bytes: 0, lastOutputAt: 640000 }, stderr: { bytes: 10, lastOutputAt: 650000 } } },
     ],
     waiting: [
-      { id: 'q-def', team: 'kite', ticket: 't1581', kind: 'verify', origin: null, isolation: 'container', image: 'bbbbbbbbbbbb', definition: 'dddddddddddd', phase: 'queued', queuedAt: 220000, startedAt: null, runStartedAt: null, lastOutputAt: null },
-      { id: 'q-nat', team: 'avh', ticket: 't1580', kind: 'hand', origin: null, isolation: 'native', image: null, definition: null, phase: 'queued', queuedAt: 210000, startedAt: null, runStartedAt: null, lastOutputAt: null },
+      { id: 'q-def', team: 'kite', ticket: 't1581', kind: 'verify', origin: null, isolation: 'container', image: 'bbbbbbbbbbbb', definition: 'dddddddddddd', phase: 'queued', queuedAt: 220000, startedAt: null, runStartedAt: null, lastOutputAt: null,
+        streams: { stdout: { bytes: 0, lastOutputAt: null }, stderr: { bytes: 0, lastOutputAt: null } } },
+      { id: 'q-nat', team: 'avh', ticket: 't1580', kind: 'hand', origin: null, isolation: 'native', image: null, definition: null, phase: 'queued', queuedAt: 210000, startedAt: null, runStartedAt: null, lastOutputAt: null,
+        streams: { stdout: { bytes: 0, lastOutputAt: null }, stderr: { bytes: 0, lastOutputAt: null } } },
     ],
     recent: [
-      { id: 'old-cut', team: 'zed', ticket: 't9', kind: 'hand', origin: null, isolation: 'native', image: null, definition: null, queuedAt: 3000, startedAt: 5000, runStartedAt: null, lastOutputAt: null, outcome: 'runner-restart', pass: null, fail: null, endedAt: 100000, waitMs: 2000, runMs: 95000 },
-      { id: 'old-box', team: 'avh', ticket: 't1501', kind: 'hand', origin: null, isolation: 'container', image: 'bbbbbbbbbbbb', definition: null, queuedAt: 2000, startedAt: 70000, runStartedAt: null, lastOutputAt: null, outcome: 'box-failed', pass: null, fail: null, endedAt: 75000, waitMs: 68000, runMs: 5000 },
-      { id: 'old-pass', team: 'avh', ticket: 't1500', kind: 'verify', origin: 'murmur', isolation: 'native', image: null, definition: null, queuedAt: 1000, startedAt: 4000, runStartedAt: null, lastOutputAt: 64000, outcome: 'pass', pass: 5, fail: 0, endedAt: 64000, waitMs: 3000, runMs: 60000 },
+      { id: 'old-cut', team: 'zed', ticket: 't9', kind: 'hand', origin: null, isolation: 'native', image: null, definition: null, queuedAt: 3000, startedAt: 5000, runStartedAt: null, lastOutputAt: null,
+        streams: { stdout: { bytes: 0, lastOutputAt: null }, stderr: { bytes: 0, lastOutputAt: null } }, outcome: 'runner-restart', pass: null, fail: null, endedAt: 100000, waitMs: 2000, runMs: 95000 },
+      { id: 'old-box', team: 'avh', ticket: 't1501', kind: 'hand', origin: null, isolation: 'container', image: 'bbbbbbbbbbbb', definition: null, queuedAt: 2000, startedAt: 70000, runStartedAt: null, lastOutputAt: null,
+        streams: { stdout: { bytes: 0, lastOutputAt: null }, stderr: { bytes: 0, lastOutputAt: null } }, outcome: 'box-failed', pass: null, fail: null, endedAt: 75000, waitMs: 68000, runMs: 5000 },
+      { id: 'old-pass', team: 'avh', ticket: 't1500', kind: 'verify', origin: 'murmur', isolation: 'native', image: null, definition: null, queuedAt: 1000, startedAt: 4000, runStartedAt: null, lastOutputAt: 64000,
+        streams: { stdout: { bytes: 38, lastOutputAt: 64000 }, stderr: { bytes: 0, lastOutputAt: null } }, outcome: 'pass', pass: 5, fail: 0, endedAt: 64000, waitMs: 3000, runMs: 60000 },
     ],
     box: { state: 'ready', image: 'bbbbbbbbbbbb' },
   });

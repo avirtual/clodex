@@ -198,3 +198,85 @@ test('expired, no output yet, no output and an unknown job each say so', async (
     assert.strictEqual(view.status, want, name);
   }
 });
+
+const sized = (id, stdout, stderr, over = {}) => ({
+  id, startedAt: 10000, queuedAt: 5000, ...over,
+  streams: { stdout: { bytes: stdout, lastOutputAt: null }, stderr: { bytes: stderr, lastOutputAt: null } },
+});
+
+test('opening the activity view picks the longest-running job, else the newest finished one, else none', () => {
+  const rows = [
+    ['one running', { running: [sized('r1', 0, 0)], waiting: [], recent: [sized('d1', 5, 0, { endedAt: 9000 })] }, 'r1'],
+    ['two running, different start times', { running: [sized('late', 0, 0, { startedAt: 30000 }), sized('early', 0, 0, { startedAt: 20000 })], waiting: [], recent: [] }, 'early'],
+    ['none running, three finished', { running: [], waiting: [], recent: [sized('d-mid', 0, 0, { endedAt: 7000 }), sized('d-new', 0, 0, { endedAt: 9000 }), sized('d-old', 0, 0, { endedAt: 3000 })] }, 'd-new'],
+    ['no jobs', { running: [], waiting: [], recent: [] }, null],
+  ];
+  for (const [name, snap, want] of rows) assert.strictEqual(T.autoOpenJob(snap), want, name);
+});
+
+test('the pane opens on stdout unless stdout is empty and stderr is not', () => {
+  const rows = [
+    ['stdout 0, stderr 0', sized('j', 0, 0), 'stdout'],
+    ['stdout 0, stderr 10', sized('j', 0, 10), 'stderr'],
+    ['stdout 5, stderr 10', sized('j', 5, 10), 'stdout'],
+  ];
+  for (const [name, job, want] of rows) assert.strictEqual(T.createStreamChoice().open(job.id, job), want, name);
+});
+
+test('the stream is chosen when the pane opens for a job and holds until a pick or another job', () => {
+  const choice = T.createStreamChoice();
+  assert.strictEqual(choice.open('j1', sized('j1', 0, 10)), 'stderr', 'opened with stdout 0, stderr 10');
+  assert.strictEqual(choice.open('j1', sized('j1', 211, 5000)), 'stderr', 'refresh with stdout 211, stderr 5000');
+  assert.strictEqual(choice.stream, 'stderr');
+  assert.strictEqual(choice.pick('stdout'), 'stdout', 'operator picks stdout');
+  assert.strictEqual(choice.open('j1', sized('j1', 0, 10)), 'stdout', 'refresh after the pick');
+  assert.strictEqual(choice.stream, 'stdout');
+  assert.strictEqual(choice.open('j2', sized('j2', 0, 10)), 'stderr', 'pane opened for another job');
+  choice.close();
+  assert.strictEqual(choice.open('j2', sized('j2', 0, 10)), 'stderr', 'reopened after close');
+});
+
+test('the stream switch shows each stream size', () => {
+  const rows = [[0, 'stdout 0 B'], [6042, 'stdout 5.9 KB'], [748544, 'stdout 731 KB'], [null, 'stdout']];
+  for (const [bytes, want] of rows) assert.strictEqual(T.streamLabel('stdout', bytes), want, String(bytes));
+});
+
+test('an empty shown stream names the other stream and its size, never the bare no output yet', async () => {
+  const rows = [
+    ['stdout empty, stderr writing', 'stdout', { otherBytes: 748544 }, page({}), 'no stdout yet; stderr has 731 KB'],
+    ['stderr empty, stdout writing', 'stderr', { otherBytes: 6042 }, page({ stream: 'stderr' }), 'no stderr yet; stdout has 5.9 KB'],
+    ['finished, stdout empty', 'stdout', { otherBytes: 6042 }, page({ phase: 'done', live: false }), 'no stdout; stderr has 5.9 KB'],
+    ['both empty', 'stdout', { otherBytes: 0 }, page({}), 'no output yet'],
+  ];
+  for (const [name, stream, ctx, answer, want] of rows) {
+    const timers = fakeTimers();
+    let view = null;
+    const f = T.createOutputFollower({ read: async () => answer, onUpdate: (v) => { view = v; }, timers, stream, context: () => ctx });
+    f.start();
+    await timers.fire();
+    assert.strictEqual(view.status, want, name);
+  }
+});
+
+test('the pane header shows the last output time of the stream on screen', async () => {
+  const rows = [
+    ['stdout quiet, stderr fresh', { lastOutputAt: 40000 }, 'run · age 1m30s · last stdout 1m00s ago'],
+    ['stream never wrote', { lastOutputAt: null }, 'run · age 1m30s · no stdout'],
+    ['job not in the snapshot', {}, 'run · age 1m30s · last output 5s ago'],
+  ];
+  for (const [name, ctx, want] of rows) {
+    const timers = fakeTimers();
+    let view = null;
+    const f = T.createOutputFollower({ read: async () => page({}), onUpdate: (v) => { view = v; }, timers, stream: 'stdout', context: () => ctx });
+    f.start();
+    await timers.fire();
+    assert.strictEqual(view.header, want, name);
+  }
+});
+
+test('the finished section of the activity view ships expanded', () => {
+  const html = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'renderer', 'index.html'), 'utf8');
+  const tag = html.match(/<details id="test-activity-recent-wrap"[^>]*>/);
+  assert.ok(tag, 'ENTER: the finished section exists');
+  assert.match(tag[0], /\sopen[\s>]/);
+});
