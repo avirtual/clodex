@@ -563,6 +563,18 @@ finish, no queued job starts, submits still queue, `info` reports every slot in
 use), then reloads; queued jobs survive the reload, and uploads in flight are retried by the lead as a runner restart. Saving the live record
 again ends the drain without a reload.
 
+A desktop restart that waits (Restart When Idle in the menu, `[agent:reboot]`)
+also waits for this runner's live jobs: running, building, queued and
+awaiting-pack (`suiteRestartJobs` in remote-wiring.js, fed to the idle waiter).
+While the wait is armed the runner is fenced (`fence` in suite-runner.js):
+`info` reports every slot in use and a new submit is refused with 409
+`runner is restarting`, code `runner-restarting`, which the lead repicks around
+or classes as a transient `runner-restart`; polls, output, cancels, uploads and
+leases of admitted jobs keep working. The wait is bounded by the waiter's 30-minute
+cap, after which the restart is dropped with a notice and admission reopens; a
+cancel reopens it too, and nothing about the fence is persisted. `Restart Now`
+still cuts the job. A plain quit and the headless restart do not wait yet.
+
 `shares` is optional: at most 8 `{ name, path, version }` rows, `name` in the
 session-name grammar and unique, `path` absolute, `version` matching
 `^[A-Za-z0-9._-]{1,64}$`. An invalid list drops only `shares`;
