@@ -8140,11 +8140,12 @@ test('t2398: a box red whose re-measure fell back to a red home run is rejected 
 });
 
 function flightClient(state, { cancel = null } = {}) {
-  const t = { cancels: [], rows: [], ids: [], states: [] };
+  const t = { cancels: [], rows: [], ids: [], states: [], waiters: [] };
   t.client = {
     run: (o) => {
       const jobId = `job-${t.ids.length + 1}`;
       t.ids.push(jobId);
+      for (const w of t.waiters.filter(([n]) => t.ids.length >= n)) w[1]();
       o.onJob({ jobId, attempt: 1 });
       o.onSubmitted({ jobId, attempt: 1 });
       o.onState(state);
@@ -8154,7 +8155,7 @@ function flightClient(state, { cancel = null } = {}) {
     cancel: cancel || (async (peer, id, wire) => { t.cancels.push([peer, id, wire]); return { ok: true }; }),
     decided: (row) => { t.rows.push(row); },
   };
-  t.submitted = async (n) => { for (let i = 0; i < 500 && t.ids.length < n; i += 1) await new Promise((r) => setImmediate(r)); };
+  t.submitted = (n) => (t.ids.length >= n ? Promise.resolve() : new Promise((r) => t.waiters.push([n, r])));
   return t;
 }
 
@@ -8204,20 +8205,21 @@ for (const [state, fb, testRunner] of REJECT_ROWS) {
   });
 }
 
-test('t2402: task cancel while the verify box job is queued cancels job-1', async () => {
+test('t2402: task cancel on a ticket at verify is refused, so it sends no cancel and the box job stays in flight', async () => {
   const l = flightLoop(GATE_HOLD);
   const c = flightClient('queued');
   l.b.holder.client = c.client;
   l.seed();
   const run = l.f.m._runTicketLoop(l.f.team, 't1');
   await c.submitted(1);
-  l.f.m._taskCancel(l.f.seat('lead'), l.f.team, l.intent('cancel', 'not needed'), () => {});
+  const replies = [];
+  l.f.m._taskCancel(l.f.seat('lead'), l.f.team, l.intent('cancel', 'not needed'), (m) => replies.push(m));
+  assert.match(replies[0], /^error: ticket t1 is done, not open — cannot cancel/);
+  assert.deepStrictEqual(c.cancels, []);
+  assert.strictEqual(l.f.m._boxFlights.size, 1);
+  l.f.m._cancelBoxRuns(l.f.team, 'runner-off');
   await run;
-  assert.strictEqual(l.f.one().state, 'cancelled', 'ENTER: the ticket was cancelled');
   assert.deepStrictEqual(c.cancels, [['p1', 'job-1', 'push']]);
-  assert.deepStrictEqual(l.b.events, []);
-  assert.deepStrictEqual(c.rows, []);
-  assert.strictEqual(l.f.one().verifyHold, undefined);
 });
 
 test('t2402: a new task done on the next round cancels the old round\'s queued job-1 and submits its own job-2', async () => {
@@ -8259,8 +8261,8 @@ test('t2402: gate:off while the verify box job is running cancels it and re-ente
   assert.strictEqual(l.loops.length, 2, 'the cancelled run and one re-entry');
   assert.deepStrictEqual(c.cancels, [['p1', 'job-1', 'push']]);
   assert.deepStrictEqual(l.b.events, ['spawn'], 'the re-entry ran the home suite once');
-  assert.deepStrictEqual([t.verifyHold, t.boxRetry, t.suiteProvenance.verify.decidedBy], [undefined, undefined, null]);
-  assert.strictEqual(l.f.created.length, 1, 'the reviewer was spawned');
+  assert.deepStrictEqual([t.verifyHold, t.boxRetry, t.suiteProvenance.verify.decidedBy], [undefined, undefined, 'home']);
+  assert.strictEqual(t.loopStep, 'review', 'verify passed on to review');
   assert.deepStrictEqual(c.rows, []);
 });
 
@@ -8276,7 +8278,7 @@ test('t2402: runner off while the verify box job is queued cancels it and re-ent
   await Promise.all(l.loops);
   assert.deepStrictEqual(c.cancels, [['p1', 'job-1', 'push']]);
   assert.deepStrictEqual(l.b.events, ['spawn']);
-  assert.strictEqual(l.f.created.length, 1, 'the reviewer was spawned');
+  assert.deepStrictEqual([l.f.one().loopStep, l.f.one().suiteProvenance.verify.decidedBy], ['review', 'home']);
 });
 
 test('t2402: a verify box job that finishes normally sends no cancel, and a later board change finds nothing in flight', async () => {
@@ -8320,14 +8322,16 @@ test('t2402: a post-merge box run is not cancelled when the ticket changes under
   const cancels = [];
   let go = null;
   let called = false;
+  let seen = null;
+  const submitted = new Promise((res) => { seen = res; });
   const gate = new Promise((res) => { go = res; });
   l.b.holder.client = {
     ...r.client,
-    run: (o) => { called = true; o.onSubmitted({ jobId: 'merge-job', attempt: 1 }); return gate.then(() => r.client.run(o)); },
+    run: (o) => { called = true; seen(); o.onSubmitted({ jobId: 'merge-job', attempt: 1 }); return gate.then(() => r.client.run(o)); },
     cancel: async (...a) => { cancels.push(a); return { ok: true }; },
   };
   const running = l.f.m._runTicketSuite(l.f.team, l.f.one(), null, { merge: true });
-  for (let i = 0; i < 500 && !called; i += 1) await new Promise((res) => setImmediate(res));
+  await submitted;
   assert.ok(called, 'ENTER: the post-merge box job was submitted');
   l.f.tstore.save(l.f.team.root, [{ ...l.f.one(), state: 'open', reworkRound: 3 }]);
   l.f.m._reconcileTickets(l.f.team);
