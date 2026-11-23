@@ -4906,3 +4906,21 @@ test('a one-line ACCEPT verdict with a real must-fix still refuses', async () =>
   assert.match(esc[0].body, /the verdict is ACCEPT but its MUST-FIX body is not empty \(1 item\): 1\. the lock is never released/);
   assert.strictEqual(f.masterHead(), before, 'master did not move');
 });
+
+test('t2379: the post-merge run writes postMerge and leaves a box-decided verify record as it was', async () => {
+  const repo = mkRepo();
+  commitOnBranch(repo.dir, 'tl-1', 'work.txt', 'the work\n');
+  const verify = {
+    at: '2026-11-23T06:00:00.000Z', decidedBy: 'box', outcome: 'pass', totals: { pass: 5, fail: 0, tests: 5 }, treeHash: 'a'.repeat(40),
+    runner: 'runner-1', jobId: 'job-1', definitionHash: 'd'.repeat(64), image: `sha256:${'e'.repeat(64)}`, fallback: null, fallbackCode: null, fallbackClass: null,
+  };
+  const f = mkMerge({ repo, ticketOver: { suiteProvenance: { verify, postMerge: null } } });
+  await f.m._autoMergeTicket(f.team, 't1', LANDED, ACCEPT);
+  assert.strictEqual(f.landed().length, 1, 'ENTER: the merge landed');
+  const got = f.one().suiteProvenance;
+  assert.deepStrictEqual(got.verify, verify);
+  assert.deepStrictEqual({ ...got.postMerge, at: typeof got.postMerge.at }, {
+    at: 'string', decidedBy: 'home', outcome: 'pass', totals: { pass: 5, fail: 0, tests: 5 }, treeHash: null,
+    runner: null, jobId: null, definitionHash: null, image: null, fallback: null, fallbackCode: null, fallbackClass: null,
+  });
+});

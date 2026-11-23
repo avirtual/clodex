@@ -1,4 +1,4 @@
-const { nextTicketId, recordEvent, titleLine, ticketTitle, extractTaskDir, extractMustFix, scanVerdict, countMustFix, mustFixTitles, ticketStarted, ticketInFlight, branchSlug, appendReworkReason } = require('./tickets-store');
+const { nextTicketId, recordEvent, titleLine, ticketTitle, extractTaskDir, extractMustFix, scanVerdict, countMustFix, mustFixTitles, ticketStarted, ticketInFlight, branchSlug, appendReworkReason, suiteProvenanceOf } = require('./tickets-store');
 const teamCost = require('./team-cost');
 const { defuseSenderLines } = require('./review-gate');
 const { bootDialogNote } = require('./attention');
@@ -2227,6 +2227,7 @@ function createTicketMethods(deps, shared) {
         // question for the lead.
         this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: `ticket ${ticketId} post-merge suite running on ${target}` });
         const suite = await this._runTicketSuite(team, ticket, team.root, { merge: true });
+        this._stampSuiteProvenance(team, ticketId, 'postMerge', suite);
         const mergeSlowOwned = suite.ran && suite.slowOnly
           ? await this._slowTestsOwned(team, ticket, suite.slow, ownBase && ownBase.ok ? ownBase.sha : null)
           : [];
@@ -6239,6 +6240,7 @@ function createTicketMethods(deps, shared) {
         delete ticket.runnerPid;
         delete ticket.runnerOwner;
         ticket.loopStep = 'verify';
+        ticket.suiteProvenance = { verify: null, postMerge: null };
         delete ticket.verifyPhase;
         // verifyHold is cleared here, in the same write that re-stamps the step: TICKET_SUITE_TIMEOUT_MS (20m lock wait + 21m = 41m) outlasts TICKET_STALL_MS (30m),
         // so a stale hold beside loopStep 'verify' fires the wrong alarm and lets a second reviewer spawn in ordinary operation.
@@ -6498,6 +6500,7 @@ function createTicketMethods(deps, shared) {
             remeasureError = again.error;
           }
         }
+        this._stampSuiteProvenance(team, ticketId, 'verify', suite);
         if (suite.ran && suite.slowOnly) {
           slowOwned = await this._slowTestsOwned(team, still, suite.slow);
           still = this._loadTicket(team, ticketId);
@@ -6907,6 +6910,14 @@ function createTicketMethods(deps, shared) {
         out.fallback = box.decided ? null : box.fallback;
         if (!box.decided) Object.assign(out, { fallbackCode: box.fallbackCode, fallbackClass: box.fallbackClass });
         out.durationMs = boxed ? box.out.record.durationMs : Date.now() - ledgerStart;
+        const rec = (box.out && box.out.record) || null;
+        const stamped = (rec && rec.env && rec.env.box) || {};
+        out.box = {
+          runner: box.decided ? box.runner || (this._runnerMembers(gateRunner)[0] || {}).peer || null : null,
+          jobId: (rec && rec.jobId) || null, treeHash: (rec && rec.treeHash) || null,
+          definitionHash: stamped.definitionHash || null, image: stamped.imageId || null,
+          fallbackCode: box.decided ? null : box.fallbackCode ?? null, fallbackClass: box.decided ? null : box.fallbackClass ?? null,
+        };
         this._boxRow(team, ticket, box, boxed ? null : localHalf({ ...res, durationMs: out.durationMs }));
       }
 
@@ -6932,6 +6943,7 @@ function createTicketMethods(deps, shared) {
         return out;
       }
       const [, pass, failed, tests] = totals;
+      out.totals = { pass: Number(pass), fail: Number(failed), tests: Number(tests) };
       if (Number(tests) === 0) {
         out.error = `the runner executed ZERO tests (exit ${res.code}) — a run that verified nothing `
           + 'cannot stand in for a green suite';
@@ -7314,6 +7326,30 @@ function createTicketMethods(deps, shared) {
         ticketsStore.save(team.root, tickets);
       } catch (e) {
         log.error('ticket', `suite slow stamp for ${ticketId} failed: ${e.message}`);
+      }
+    },
+
+    _suiteProvenance(suite) {
+      const s = suite || {};
+      const b = s.box || {};
+      const home = s.decidedBy !== 'box';
+      return {
+        at: new Date().toISOString(), decidedBy: home ? 'home' : 'box', outcome: s.ran ? (s.green ? 'pass' : 'fail') : 'error',
+        totals: s.totals || null, treeHash: b.treeHash || null, runner: home ? null : b.runner || null, jobId: b.jobId || null,
+        definitionHash: b.definitionHash || null, image: b.image || null,
+        fallback: home ? s.fallback || null : null, fallbackCode: home ? b.fallbackCode ?? null : null, fallbackClass: home ? b.fallbackClass ?? null : null,
+      };
+    },
+
+    _stampSuiteProvenance(team, ticketId, which, suite) {
+      try {
+        const tickets = ticketsStore.load(team.root);
+        const rec = tickets.find((t) => t.id === ticketId);
+        if (!rec) return;
+        rec.suiteProvenance = { ...suiteProvenanceOf(rec), [which]: suite ? this._suiteProvenance(suite) : null };
+        ticketsStore.save(team.root, tickets);
+      } catch (e) {
+        log.error('ticket', `suite provenance stamp for ${ticketId} failed: ${e.message}`);
       }
     },
 

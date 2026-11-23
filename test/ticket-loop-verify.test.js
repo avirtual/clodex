@@ -7090,7 +7090,7 @@ function boxLoop(script, { suite = 'green', extraDeps = {} } = {}) {
     events.length = 0;
     f.team.testRunner = testRunner;
     f.team.dir = dir;
-    const out = await f.m._runTicketSuite(f.team, f.one());
+    const { box: _box, ...out } = await f.m._runTicketSuite(f.team, f.one());
     return { ...out, startedAt: '<at>', durationMs: typeof out.durationMs, runnerPid: typeof out.runnerPid };
   };
   return { f, repo, events, holder, run };
@@ -7104,9 +7104,9 @@ test('t2338: under gate:on a box pass and a box fail decide the result without a
   const base = { slowOnly: false, slow: [], cwd, error: null, runnerPid: 'object', startedAt: '<at>', decidedBy: 'box', fallback: null, durationMs: 'number' };
   const head = (await b.run({ ...GATE_ON, gate: 'off' }, null));
   const rows = [
-    ['green', { ...base, ran: true, green: true, code: 0, summary: '5/5 passing, 0 failing (exit 0)', failing: '', output: '' },
+    ['green', { ...base, ran: true, green: true, code: 0, summary: '5/5 passing, 0 failing (exit 0)', failing: '', output: '', totals: { pass: 5, fail: 0, tests: 5 } },
       { outcome: 'pass', reason: null, pass: 5, fail: 0, tests: 5, failing: [], slow: [], jobId: 'string', queueMs: 0, runMs: 1 }],
-    ['red', { ...base, ran: true, green: false, code: 1, summary: '4/5 passing, 1 failing (exit 1)', failing: 'box only', output: `${BOX_OUT.red}\n` },
+    ['red', { ...base, ran: true, green: false, code: 1, summary: '4/5 passing, 1 failing (exit 1)', failing: 'box only', output: `${BOX_OUT.red}\n`, totals: { pass: 4, fail: 1, tests: 5 } },
       { outcome: 'fail', reason: null, pass: 4, fail: 1, tests: 5, failing: ['box only'], slow: [], jobId: 'string', queueMs: 0, runMs: 1 }],
   ];
   for (const [mode, want, remote] of rows) {
@@ -7287,4 +7287,89 @@ test('t2338: a gate:on verify decided by a box fail re-measures in the box and s
   assert.deepStrictEqual(b.events, ['post', 'post'], 'both runs went to the box');
   assert.deepStrictEqual(remote.rows().map((r) => r.decidedBy), ['box', 'box']);
   assert.ok(notes.some((n) => n !== 'SPAWN' && n.body === 'ticket t1 verify: suite red (4/5 passing, 1 failing (exit 1)) (box) — re-measuring'), JSON.stringify(notes));
+});
+
+const HOME_RUN = (over = {}) => ({
+  at: 'string', decidedBy: 'home', outcome: 'pass', totals: { pass: 5, fail: 0, tests: 5 }, treeHash: null,
+  runner: null, jobId: null, definitionHash: null, image: null, fallback: null, fallbackCode: null, fallbackClass: null, ...over,
+});
+const maskAt = (run) => (run ? { ...run, at: typeof run.at } : run);
+
+function provenanceLoop({ testRunner = null, box = false, suite = 'green' } = {}) {
+  const b = boxLoop(null, { suite });
+  const remote = boxRemote('green', b.events);
+  b.holder.client = remote.client;
+  b.f.team.testRunner = testRunner;
+  b.f.team.dir = mkTmpRoot('clodex-box-team-');
+  if (box) require('../team-box').writeBox(b.f.team.dir, BOX_DEF);
+  const seed = (over = {}) => b.f.tstore.save(b.f.team.root, [{ ...b.f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand', ...over }]);
+  const loop = async () => { await b.f.m._runTicketLoop(b.f.team, 't1'); await new Promise((r) => setImmediate(r)); };
+  return { b, remote, seed, loop };
+}
+
+test('t2379: a box-decided verify records the whole box provenance on the ticket and leaves postMerge null', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-23T06:00:00.000Z') });
+  const p = provenanceLoop({ testRunner: GATE_ON, box: true, suite: 'red' });
+  p.seed();
+  await p.loop();
+  assert.deepStrictEqual(p.b.events, ['post'], 'ENTER: the box decided with no home run');
+  const jobId = p.remote.rows()[0].remote.jobId;
+  assert.strictEqual(typeof jobId, 'string', 'ENTER: the box row carries the job id');
+  assert.deepStrictEqual(p.b.f.one().suiteProvenance, {
+    verify: {
+      at: '2026-11-23T06:00:00.000Z', decidedBy: 'box', outcome: 'pass', totals: { pass: 5, fail: 0, tests: 5 }, treeHash: BOX_TREE,
+      runner: 'runner-1', jobId, definitionHash: BOX_HASH, image: `sha256:${'e'.repeat(64)}`, fallback: null, fallbackCode: null, fallbackClass: null,
+    },
+    postMerge: null,
+  });
+});
+
+for (const [name, extra, want] of [
+  ['fallback, fallbackCode and fallbackClass', { fallbackCode: 'ECONNREFUSED', fallbackClass: 'unreachable' }, { fallbackCode: 'ECONNREFUSED', fallbackClass: 'unreachable' }],
+  ['only fallback', {}, { fallbackCode: null, fallbackClass: null }],
+]) {
+  test(`t2379: a fallback verify whose result carries ${name} stores what it carries and nulls the rest`, async () => {
+    const p = provenanceLoop({ testRunner: GATE_ON, box: true });
+    p.b.f.m._boxDecide = async () => ({ decided: false, fallback: 'runner unreachable', out: null, client: null, wire: 'push', kind: 'verify', ...extra });
+    p.seed();
+    await p.loop();
+    assert.deepStrictEqual(p.b.events, ['spawn'], 'ENTER: the home suite decided');
+    const got = p.b.f.one().suiteProvenance;
+    assert.deepStrictEqual({ verify: maskAt(got.verify), postMerge: got.postMerge }, {
+      verify: HOME_RUN({ fallback: 'runner unreachable', ...want }), postMerge: null,
+    });
+  });
+}
+
+test('t2379: with the gate off a verify still records that home decided, with no fallback', async () => {
+  const p = provenanceLoop({ testRunner: { ...GATE_ON, gate: 'off' } });
+  p.seed();
+  await p.loop();
+  assert.deepStrictEqual(p.b.events, ['spawn'], 'ENTER: the home suite ran');
+  assert.deepStrictEqual(maskAt(p.b.f.one().suiteProvenance.verify), HOME_RUN());
+});
+
+test('t2379: a done after a reject clears both records before the new suite starts, then verify describes the new run', async () => {
+  const p = provenanceLoop({ testRunner: GATE_ON, box: true });
+  const stale = { ...HOME_RUN({ outcome: 'fail', totals: { pass: 4, fail: 1, tests: 5 } }), at: '2026-11-22T06:00:00.000Z' };
+  p.seed({ state: 'open', loopStep: null, reviewRound: 1, suiteProvenance: { verify: stale, postMerge: stale } });
+  const seen = [];
+  const run = p.b.f.m._runTicketSuite;
+  p.b.f.m._runTicketSuite = function (...args) { seen.push(p.b.f.one().suiteProvenance); return run.apply(this, args); };
+  const loops = [];
+  const loop = p.b.f.m._runTicketLoop;
+  p.b.f.m._runTicketLoop = function (...args) { const r = loop.apply(this, args); loops.push(r); return r; };
+  await p.b.f.m._taskDone(p.b.f.seat('team-hand'), p.b.f.team, { type: 'task', sub: 'done', id: 't1', who: null, body: 'fixed it' }, () => {});
+  assert.strictEqual(loops.length, 1, 'ENTER: the done started the loop');
+  await loops[0];
+  await new Promise((r) => setImmediate(r));
+  assert.deepStrictEqual(seen, [{ verify: null, postMerge: null }]);
+  const got = p.b.f.one().suiteProvenance;
+  assert.deepStrictEqual({ verify: { ...got.verify, at: typeof got.verify.at, jobId: typeof got.verify.jobId }, postMerge: got.postMerge }, {
+    verify: {
+      at: 'string', decidedBy: 'box', outcome: 'pass', totals: { pass: 5, fail: 0, tests: 5 }, treeHash: BOX_TREE,
+      runner: 'runner-1', jobId: 'string', definitionHash: BOX_HASH, image: `sha256:${'e'.repeat(64)}`, fallback: null, fallbackCode: null, fallbackClass: null,
+    },
+    postMerge: null,
+  });
 });
