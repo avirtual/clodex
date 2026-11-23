@@ -468,7 +468,7 @@ Write:
 | `patch session <name> [--arg X…] [--proxy URL] [--restart]` | `PATCH /api/sessions/:name/args` | |
 | `patch session <name> --subresource profile -f <file.yaml\|file.json> [--replace]` | `PATCH /api/sessions/:name/memory/profile?merge=1` | assistant seats; `.json` files go as JSON, anything else as `text/yaml`; `--replace` sends `merge=0` |
 | `delete session <name> --subresource profile` | `DELETE /api/sessions/:name/memory/profile` | deletes only the profile; no confirm |
-| `restart node [--force]` | `POST /api/restart` | relaunches the whole engine |
+| `restart node [--force] [--wait \| --cut-jobs]` | `POST /api/restart` | relaunches the whole engine; refused (409 `runner-busy`) while the node runs suite jobs for other teams unless `--wait` (`{wait:true}`) or `--cut-jobs` (`{cutJobs:true}`) |
 
 The resource word is **mandatory** on all five: `restart` alone carries both a
 session restart and a whole-engine relaunch, so a bare `restart <name>` is a

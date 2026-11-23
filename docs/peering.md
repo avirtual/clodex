@@ -208,7 +208,16 @@ box, not a session — and is what `clodexctl restart node` spells; the response
 is written before the restart fires, so a caller gets its 200 and then the
 socket dies, which is success, not a transport fault. It is destructive to
 every live seat on the box, so the CLI gates it behind `--force` in
-`-o json|yaml`/non-interactive mode. The per-session cousin,
+`-o json|yaml`/non-interactive mode. A node running suite jobs for other
+teams refuses a bodyless (or `{}`) restart: it raises the runner's admission
+fence, counts the jobs, and if any are live lifts the fence again and answers
+409 `{ ok:false, code:'runner-busy', jobs, error }`. The JSON body takes one of
+two booleans: `wait:true` arms the idle waiter (the one `[agent:reboot]` uses)
+and answers 202 `{ ok:true, waiting:true, jobs }`; `cutJobs:true` restarts now
+and logs the cut count. Both together is a 400. `clodexctl restart node`
+spells them `--wait` / `--cut-jobs`; `clodexctl upgrade` reads
+`GET /api/testjobs` first and refuses a busy node unless `--cut-jobs` (no
+fence on that path). The per-session cousin,
 `POST /api/sessions/:name/restart`, restarts one seat and rides the `create`
 cap instead; it wakes a sleeping assistant, and an assistant at its awake cap
 answers 503 with `retryAfterMs`.
@@ -583,8 +592,11 @@ Now` cuts the jobs, `Cancel` keeps the app running (`createQuitGuard` in
 restart-waiter.js). With no live job a quit is immediate, a restart already
 fired passes straight through, and a quit that proceeds leaves the fence up.
 A headless node's `[agent:reboot]` waits for the jobs and fences the same way
-and its reply names them; the forced restart (`/api/restart`) still cuts them
-and logs how many. A signal (SIGTERM/SIGINT) or a crash still cuts the job.
+and its reply names them; `/api/restart` refuses while they run unless the
+caller sends `wait` or `cutJobs` (see the node target above), and a cut is
+logged with its count. A signal (SIGTERM/SIGINT) or a crash still cuts the job;
+a headless signal logs how many. Closing the last window on Linux/Windows goes
+through the same quit guard as Quit.
 
 `shares` is optional: at most 8 `{ name, path, version }` rows, `name` in the
 session-name grammar and unique, `path` absolute, `version` matching
