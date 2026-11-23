@@ -1242,7 +1242,7 @@ test('a demonstrably EMPTY branch is exempt from the veto — there is no work t
   // The recorded fork point IS the branch tip, which is what makes the 0 count
   // evidence of an empty branch rather than of an already-merged one.
   const baseSha = execFileSync('git', ['-C', f.repoDir, 'rev-parse', 'landed'], { encoding: 'utf8' }).trim();
-  const wt = pathReal.join(osReal.tmpdir(), `clodex-t536-wt-${Date.now()}`);
+  const wt = pathReal.join(osReal.tmpdir(), `clodex-t536-wt-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
   execFileSync('git', ['-C', f.repoDir, 'worktree', 'add', '-q', wt, 'landed'], { encoding: 'utf8' });
   t.after(() => { try { fsReal.rmSync(wt, { recursive: true, force: true }); } catch {} });
   f.persistence.upsert({ name: 'team-hand-t1', cwd: wt, ephemeral: true, worktree: { path: wt, branch: 'landed', baseSha } });
