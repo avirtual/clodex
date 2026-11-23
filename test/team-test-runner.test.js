@@ -390,6 +390,7 @@ for (const [label, by, cause, act, [step, reason]] of BOX_HOLD_END_ROWS) {
     await f.verb('lead', '[agent:team runner]');
     await act(f);
     const [t] = store.load(root);
+    assert.strictEqual(JSON.parse(fs.readFileSync(store.ticketsPath(root), 'utf8'))[0].boxHoldReason, reason, 'the file the tickets viewer reads directly agrees');
     assert.deepStrictEqual([t.verifyHold ? t.verifyHold.step : null, t.boxHoldReason], [step, reason]);
     assert.deepStrictEqual((t.events || []).filter((e) => e.kind === 'verify-release').map((e) => ({ ...e, at: typeof e.at })),
       by ? [{ at: 'number', kind: 'verify-release', by, cause }] : []);
