@@ -326,11 +326,13 @@ test('a reply lost after execution: the lead retries and the retry does not exec
   const lead = await startLead(t);
   const r = await attach(t, lead, { engine: b.runner });
   const dropped = [];
+  const droppedIds = new Set();
   let drop = false;
   const realReply = r.conn.suiteDeskReply.bind(r.conn);
-  r.conn.suiteDeskReply = (id, claim, answer) => {
-    if (!drop) return realReply(id, claim, answer);
+  r.conn.suiteDeskReply = (id, claim, answer, timeoutMs) => {
+    if (!drop || droppedIds.has(id)) return realReply(id, claim, answer, timeoutMs);
     drop = false;
+    droppedIds.add(id);
     dropped.push(answer);
     return Promise.resolve({ status: 0, body: null, error: 'dropped' });
   };
