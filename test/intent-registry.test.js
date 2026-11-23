@@ -853,6 +853,15 @@ test('bodyMode is decided per PARSED intent: task add captures, task assign does
   assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:task list]')), 'none');
 });
 
+test('t2384: task verify <id> home parses with its body and is greedy; plain task verify keeps its bodyless shape', () => {
+  assert.deepStrictEqual(parseIntent('[agent:task verify t1 home] the runner is gone\nfor a day'),
+    { type: 'task', sub: 'verify', id: 't1', who: null, home: true, body: 'the runner is gone\nfor a day' });
+  assert.deepStrictEqual(parseIntent('[agent:task verify t1]'), { type: 'task', sub: 'verify', id: 't1', who: null, body: '' });
+  assert.deepStrictEqual(parseIntent('[agent:task verify t1] trailing'), { type: 'task', sub: 'verify', id: 't1', who: null, body: '' });
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:task verify t1 home] why')), 'greedy');
+  assert.strictEqual(registry.bodyModeFor(parseIntent('[agent:task verify t1]')), 'none');
+});
+
 test('bodyRunsToTurnEnd: only task done runs its body to the end of the turn', () => {
   assert.strictEqual(registry.bodyRunsToTurnEnd(parseIntent('[agent:task done t1] report')), true);
   assert.strictEqual(registry.bodyRunsToTurnEnd(parseIntent('[agent:task add bob] spec')), false);

@@ -300,6 +300,7 @@ const boxHoldNext = (cls, id, reason) => (BOX_HOLD_NEXT[cls]
 const BOX_HOLD_STEP = 'verify: box';
 const BOX_RETRY_DELAY_MIN = Object.freeze([1, 2, 4, 8, 15, 15]);
 const BOX_RETRY_MAX = BOX_RETRY_DELAY_MIN.length;
+const HOME_BYPASS_REASON_MAX = 500;
 const holdRecoveryText = (cls, id) => (HOLD_RECOVERY[cls] || HOLD_RECOVERY.hand)(id);
 // Not shared with `_notifyHandOfHold` (second person, and the person is the message) or `_notifyMergeLanded`,
 // whose closing accept intent is inert only because prose precedes it on its line; ticket-auto-merge.test.js pins it.
@@ -2397,7 +2398,10 @@ function createTicketMethods(deps, shared) {
           // Use diff --stat <sha>^1 <sha>, not show --stat, so the command does not depend on the lead's git config.
           // Wording stays apart from HOLD_RECOVERY's infra arm: hold-recovery-single-source.test.js reads a shared 5-gram as a copy.
           : `CHANGELOG.md: UNKNOWN — the probe did not answer (${oneLine((changelog && changelog.error) || 'no result')}). This is neither of the other two answers: run \`git -C ${team.root} diff --stat ${sha}^1 ${sha}\` before deciding, because a release shipped on the belief that an entry landed ships with no notes.`;
-        const stamp = (this._loadTicket(team, ticketId) || {}).suiteRemeasured;
+        const landed = this._loadTicket(team, ticketId) || {};
+        const stamp = landed.suiteRemeasured;
+        const verifyRun = suiteProvenanceOf(landed).verify;
+        const bypassed = verifyRun && verifyRun.bypass ? verifyRun : null;
         const closedOutOk = !!(closeOut && closeOut.ok && closeOut.closedOut);
         // A reopen gets its own arm: `Step owed:` names a verb `_taskAccept` refuses.
         const stepLine = closeOut && closeOut.reopened
@@ -2409,7 +2413,7 @@ function createTicketMethods(deps, shared) {
               + `The loop could not close it out: ${wideLine(closeOutDetail(ticketId, (closeOut && closeOut.text) || 'it did not run'))}`;
         const quiet = closedOutOk && !closeOut.already
           && !(mergedTip && branchTip && mergedTip !== branchTip)
-          && !(slow && slow.length) && !(slowOwned && slowOwned.length) && !unioned && !stamp
+          && !(slow && slow.length) && !(slowOwned && slowOwned.length) && !unioned && !stamp && !bypassed
           && measured && (changelog.touched === true || changelog.present === false);
         const body = quiet
           ? `[ticket ${ticketId} MERGED] ${branch} → ${into} as ${sha} — closed out (${closeOut.remote ? 'standing remote seat not retired' : 'seat retired'}, tree removed, branch deleted); ${rounds} review round(s); suite ${defuseSenderLines(oneLine(summary))}.`
@@ -2422,6 +2426,7 @@ function createTicketMethods(deps, shared) {
           stepLine,
           '',
           `Review rounds: ${rounds}. Suite on ${into} after the merge: ${defuseSenderLines(summary)}.`,
+          ...(bypassed ? [`Verify passed${this._suiteWhere(bypassed)}.`] : []),
           ...(slowOwned && slowOwned.length ? [`slow gate tripped by tests this diff touched (load-only, 0 failing; merge kept): ${defuseSenderLines(wideLine(slowOwned.join('; ')))}`] : []),
           ...(slow && slow.length ? [`slow gate tripped by tests outside this diff: ${defuseSenderLines(wideLine(slow.join('; ')))}`] : []),
           ...(unioned ? [`${unioned} conflicted with a bullet another ticket merged first; the loop kept BOTH (the earlier one above this ticket's). Read ## Unreleased once before the next release.`] : []),
@@ -3283,13 +3288,14 @@ function createTicketMethods(deps, shared) {
       if (!client || typeof client.decideTally !== 'function') return '';
       let t;
       try { t = client.decideTally({ team: team.name }); } catch { return ''; }
-      if (!t || !(t.box || t.home || t.held)) return '; gate runs: none yet';
+      if (!t || !(t.box || t.home || t.held || t.bypassed)) return '; gate runs: none yet';
       const flat = (v) => String(v).replace(/[\x00-\x1f\x7f]+/g, ' ').slice(0, 60);
       const why = (t.fallbacks || []).map((f) => `${flat(f.reason)} ${f.count}`).join(', ');
       const heldWhy = (t.holds || []).map((f) => `${flat(f.reason)} ${f.count}`).join(', ');
       const held = t.held ? `, ${t.held} held${heldWhy ? ` (${heldWhy})` : ''}` : '';
+      const bypassed = t.bypassed ? `, ${t.bypassed} bypassed` : '';
       const per = (t.runners || []).map((r) => `${flat(r.runner)} ${r.box} box, ${r.home} home`).join('; ');
-      return `; gate runs: ${t.box} decided by the box, ${t.home} fell back to home${why ? ` (${why})` : ''}${held}${per ? `; per runner: ${per}` : ''}`;
+      return `; gate runs: ${t.box} decided by the box, ${t.home} fell back to home${why ? ` (${why})` : ''}${held}${bypassed}${per ? `; per runner: ${per}` : ''}`;
     },
 
     _runnerLabelTally(team, cur) {
@@ -6284,6 +6290,7 @@ function createTicketMethods(deps, shared) {
       // a process dying between close and a later stamp would leave a done ticket nothing ever nudges.
       const loopEligible = ticket.done === 'report' ? true : !!(ticket.worktree && ticket.worktree.branch && ticket.worktree.baseSha);
       if (boxHeld) this._releaseBoxHold(ticket, session.name, 'task-done');
+      delete ticket.homeBypass;
       if (loopEligible) {
         if (ticket.runnerPid && ticket.runnerOwner === RUNNER_OWNER) this._reapRunner(ticket.id, ticket.runnerPid);
         delete ticket.runnerPid;
@@ -6548,7 +6555,7 @@ function createTicketMethods(deps, shared) {
         let firstRed = null;
         let remeasureError = null;
         let slowOwned = [];
-        if (suite.ran && !suite.slowOnly && !suite.green) {
+        if (suite.ran && !suite.slowOnly && !suite.green && !suite.bypass) {
           log.info('ticket', `ticket ${ticketId}: verify suite red (${suite.summary}) — re-measuring once`);
           this._broadcast('ipc-message', { type: 'task', from: 'ticket-loop', to: team.lead, body: `ticket ${ticketId} verify: suite red (${suite.summary})${this._suiteWhere(suite)} — re-measuring` });
           this._stampVerifyPhase(team, ticketId, { phase: 'suite', since: Date.now(), run: 2 });
@@ -6818,7 +6825,56 @@ function createTicketMethods(deps, shared) {
 
     _suiteWhere(suite) {
       if (!suite || !suite.decidedBy) return '';
+      if (suite.decidedBy === 'home' && suite.bypass) {
+        const flat = (v) => defuseSenderLines(String(v == null ? '' : v).replace(/\s+/g, ' ').trim());
+        return ` (home, by ${flat(suite.bypass.by)}: ${flat(suite.bypass.reason)})`;
+      }
       return suite.decidedBy === 'box' ? ' (box)' : ` (home, box unavailable: ${suite.fallback})`;
+    },
+
+    _takeHomeBypass(team, ticket) {
+      try {
+        const tickets = ticketsStore.load(team.root);
+        const rec = tickets.find((t) => t.id === ticket.id);
+        if (!rec || !('homeBypass' in rec)) return null;
+        const hb = rec.homeBypass;
+        const was = suiteProvenanceOf(rec).verify;
+        delete rec.homeBypass;
+        ticketsStore.save(team.root, tickets);
+        if (!hb || typeof hb !== 'object' || typeof hb.sha !== 'string' || !hb.sha) return null;
+        const held = was && was.outcome === 'held' ? was : {};
+        return {
+          bypass: { by: String(hb.by), reason: String(hb.reason), at: String(hb.at), sha: hb.sha },
+          fallback: held.fallback ?? null, fallbackCode: held.fallbackCode ?? null, fallbackClass: held.fallbackClass ?? null,
+        };
+      } catch (e) {
+        log.error('ticket', `home verify authorisation for ${ticket.id} could not be read: ${e.message}`);
+        return null;
+      }
+    },
+
+    _notifyHomeBypassUnused(team, ticketId, want, at) {
+      const line = `ticket ${ticketId}: the home verify was authorised for ${String(want).slice(0, 7)} but the branch is at ${at ? String(at).slice(0, 7) : 'an unresolved head'}; not used`;
+      log.info('ticket', line);
+      try {
+        this._gatedDeliver(team.lead, 'ticket-loop', line, false, `[ticket ${ticketId}]`);
+      } catch (e) {
+        log.error('ticket', `home verify notice for ${ticketId} did not reach the lead: ${e.message}`);
+      }
+    },
+
+    _bypassRow(team, ticket, home, local) {
+      const client = typeof deps.getSuiteClient === 'function' ? deps.getSuiteClient() : null;
+      if (!client || typeof client.decided !== 'function') return;
+      const tr = team.testRunner || {};
+      try {
+        client.decided({
+          team: team.name, kind: 'verify', ticket: String(ticket.id), wire: tr.wire === 'pull' ? 'pull' : WIRE_PUSH, box: null, local,
+          decidedBy: 'home', fallback: home.fallback, fallbackCode: home.fallbackCode, bypass: true,
+        });
+      } catch (e) {
+        log.warn('ticket', `ticket ${ticket.id}: home verify row dropped — ${e && e.message ? e.message : e}`);
+      }
     },
 
     // The test lock stays pinned to team.root through CLODEX_TEST_LOCK_DIR, also under `runIn`: the runner's own default roots it at the
@@ -6829,6 +6885,7 @@ function createTicketMethods(deps, shared) {
       // `runnerPid` is carried out because a SIGKILLed runner is a zombie that still answers kill(pid, 0) while its pid sits in the
       // lock dir; callers need it to tell our runner from a foreign holder.
       const out = { ran: false, green: false, slowOnly: false, slow: [], code: null, summary: '', failing: '', output: '', cwd, error: null, runnerPid: null, head: null, startedAt: null, headEnd: null };
+      const bypass = opts && opts.merge ? null : this._takeHomeBypass(team, ticket);
       if (!cwd) { out.error = 'the ticket has no worktree path to run in'; return out; }
 
       const runner = path.join(cwd, 'scripts', 'run-tests.js');
@@ -6878,13 +6935,19 @@ function createTicketMethods(deps, shared) {
         }
       }
 
-      const shadow = await this._shadowSubmit(team, ticket, cwd, opts);
+      let home = null;
+      if (bypass) {
+        const at = await gitWorktree.revParse(team.root, wt.branch).catch(() => null);
+        if (at === bypass.bypass.sha) home = bypass;
+        else this._notifyHomeBypassUnused(team, ticket.id, bypass.bypass.sha, at);
+      }
+      const shadow = home ? null : await this._shadowSubmit(team, ticket, cwd, opts);
       // Read before the run and never later: a sha newer than what ran sends a hand editing correct work. The lock wait (taken by the
       // child) stays uncovered; `headEnd` below reports whether HEAD moved.
       out.startedAt = new Date().toISOString();
       out.head = await gitWorktree.currentBranch(cwd).catch(() => null);
       const gateRunner = team.testRunner;
-      const box = gateRunner && gateRunner.peer && gateRunner.gate === 'on' ? await this._boxDecide(team, ticket, cwd, opts) : null;
+      const box = !home && gateRunner && gateRunner.peer && gateRunner.gate === 'on' ? await this._boxDecide(team, ticket, cwd, opts) : null;
       if (box && !box.decided && !(opts && opts.merge) && gateRunner.fallback === 'hold') {
         const rec = (box.out && box.out.record) || null;
         const stamped = (rec && rec.env && rec.env.box) || {};
@@ -7000,9 +7063,19 @@ function createTicketMethods(deps, shared) {
           fallbackCode: box.decided ? null : box.fallbackCode ?? null, fallbackClass: box.decided ? null : box.fallbackClass ?? null,
         };
         this._boxRow(team, ticket, box, boxed ? null : localHalf({ ...res, durationMs: out.durationMs }));
+      } else if (home) {
+        const after = await gitWorktree.revParse(team.root, wt.branch).catch(() => null);
+        if (after !== home.bypass.sha) {
+          this._notifyHomeBypassUnused(team, ticket.id, home.bypass.sha, after);
+          return this._runTicketSuite(team, ticket, runIn, opts);
+        }
+        Object.assign(out, { decidedBy: 'home', fallback: home.fallback, fallbackCode: home.fallbackCode, fallbackClass: home.fallbackClass, bypass: home.bypass });
+        out.durationMs = Date.now() - ledgerStart;
+        out.box = { runner: null, jobId: null, treeHash: null, definitionHash: null, image: null, fallbackCode: home.fallbackCode, fallbackClass: home.fallbackClass };
+        this._bypassRow(team, ticket, home, localHalf({ ...res, durationMs: out.durationMs }));
       }
 
-      const text = `${res.stdout || ''}\n${res.stderr || ''}`;
+      const text =`${res.stdout || ''}\n${res.stderr || ''}`;
       // Error and no-TOTALS arms carry the raw capture like the red arm: a crashed post-merge run reverts master just as a red one does.
       // Not hoisted above the green check: a passing ticket would hold a 64KB string for no reader.
       if (res.error) { out.error = res.error; out.output = text; return out; }
@@ -7160,6 +7233,7 @@ function createTicketMethods(deps, shared) {
         appendReworkReason(ticket, { round: ticket.reworkRound, by: 'ticket-loop', reason });
         delete ticket.loopStep;
         delete ticket.verifyPhase;
+        delete ticket.homeBypass;
         delete ticket.mergedNudgedAt;
         delete ticket.escalationUndelivered;
         delete ticket.mergeError;
@@ -7328,8 +7402,9 @@ function createTicketMethods(deps, shared) {
       recordEvent(ticket, { kind: 'verify-release', by, cause });
       delete ticket.verifyHold; delete ticket.boxHoldReason;
       if (cause !== 'auto-retry') delete ticket.boxRetry;
+      if (cause !== 'home-bypass') delete ticket.homeBypass;
       delete ticket.verifyPhase;
-      ticket.suiteProvenance = { ...suiteProvenanceOf(ticket), verify: null };
+      if (cause !== 'home-bypass') ticket.suiteProvenance = { ...suiteProvenanceOf(ticket), verify: null };
       ticket.lastActivityAt = Date.now();
       ticket.nudgedAt = null;
     },
@@ -7360,6 +7435,12 @@ function createTicketMethods(deps, shared) {
     _taskVerify(session, team, intent, reply, ack = reply) {
       if (team.lead !== session.name) { reply(`error: only the team lead (${team.lead}) can re-verify a ticket`); return; }
       if (!intent.id) { reply('error: verify needs a ticket id — [agent:task verify <id>]'); return; }
+      const reason = intent.home ? String(intent.body == null ? '' : intent.body).trim() : '';
+      if (intent.home && !reason) { reply(`error: a home verify needs a reason — [agent:task verify ${intent.id} home] <reason>`); return; }
+      if (reason.length > HOME_BYPASS_REASON_MAX) {
+        reply(`error: a home verify reason is capped at ${HOME_BYPASS_REASON_MAX} characters; this one has ${reason.length}`);
+        return;
+      }
       const tickets = ticketsStore.load(team.root);
       const ticket = tickets.find((t) => t.id === intent.id);
       if (!ticket) { reply(`error: no ticket ${intent.id} on ${team.name}`); return; }
@@ -7371,14 +7452,29 @@ function createTicketMethods(deps, shared) {
         return;
       }
       if (!this._boxHeld(ticket)) {
-        const state = atVerify ? 'already verifying' : `${ticket.state}${ticket.loopStep ? ` at ${ticket.loopStep}` : ''}`;
-        reply(`error: ticket ${intent.id} is ${state} — only a ticket held at "${BOX_HOLD_STEP}" can be re-verified`);
+        const auto = intent.home && atVerify && ticket.boxRetry && ticket.boxRetry.inFlight;
+        const state = auto ? 'on an automatic box retry' : atVerify ? 'already verifying' : `${ticket.state}${ticket.loopStep ? ` at ${ticket.loopStep}` : ''}`;
+        reply(`error: ticket ${intent.id} is ${state} — only a ticket held at "${BOX_HOLD_STEP}" can be ${intent.home ? 'sent through the home suite' : 're-verified'}`);
         return;
       }
+      if (intent.home) { this._taskVerifyHome(session, team, tickets, ticket, reason, reply, ack); return; }
       this._releaseBoxHold(ticket, session.name, 'task-verify');
       ticketsStore.save(team.root, tickets);
       log.info('intent', `task verify ${ticket.id} by ${session.name}`);
       ack(`ticket ${ticket.id} re-verifying (was held at "${BOX_HOLD_STEP}")`);
+      this._runTicketLoop(team, ticket.id);
+    },
+
+    _taskVerifyHome(session, team, tickets, ticket, reason, reply, ack) {
+      const branch = (ticket.worktree || {}).branch;
+      const sha = branch ? gitWorktree.revParseSync(team.root, branch) : null;
+      if (!sha) { reply(`error: ticket ${ticket.id}: the head of ${branch || 'its branch'} could not be resolved — no home verify authorised`); return; }
+      this._releaseBoxHold(ticket, session.name, 'home-bypass');
+      ticket.homeBypass = { by: session.name, reason, at: new Date().toISOString(), sha };
+      recordEvent(ticket, { kind: 'home-bypass', by: session.name, reason, sha });
+      ticketsStore.save(team.root, tickets);
+      log.info('intent', `task verify ${ticket.id} home by ${session.name} for ${sha.slice(0, 7)}: ${reason.replace(/\s+/g, ' ')}`);
+      ack(`ticket ${ticket.id} verifying on the home suite for ${sha.slice(0, 7)} (was held at "${BOX_HOLD_STEP}")`);
       this._runTicketLoop(team, ticket.id);
     },
 
@@ -7601,6 +7697,7 @@ function createTicketMethods(deps, shared) {
         totals: s.totals || null, treeHash: b.treeHash || null, runner: home ? null : b.runner || null, jobId: b.jobId || null,
         definitionHash: b.definitionHash || null, image: b.image || null,
         fallback: home ? s.fallback || null : null, fallbackCode: home ? b.fallbackCode ?? null : null, fallbackClass: home ? b.fallbackClass ?? null : null,
+        ...(home && s.bypass ? { bypass: { ...s.bypass } } : {}),
       };
     },
 
@@ -8264,7 +8361,7 @@ function createTicketMethods(deps, shared) {
       // Reopening ends the loop's hold as accept does: a stale step would let a late verdict land on a ticket the lead sent back.
       delete ticket.loopStep;
       // A reopened ticket owes no check to the verify stamp; a surviving stamp alarms about an escalation on a ticket being worked.
-      delete ticket.verifyHold; delete ticket.boxHoldReason; delete ticket.boxRetry;
+      delete ticket.verifyHold; delete ticket.boxHoldReason; delete ticket.boxRetry; delete ticket.homeBypass;
       delete ticket.mergedNudgedAt;
       delete ticket.escalationUndelivered;
       delete ticket.mergeError;
@@ -8372,7 +8469,7 @@ function createTicketMethods(deps, shared) {
       const foreign = this._foreignRowRefusal(team, ticket);
       if (foreign) { reply(`${foreign}${this._spillRejectedPayload(session, 'task cancel', reason)}`); return; }
       if (ticket.state !== 'open') { reply(`error: ticket ${intent.id} is ${ticket.state}, not open — cannot cancel${this._spillRejectedPayload(session, 'task cancel', reason)}`); return; }
-      ticket.state = 'cancelled'; delete ticket.boxRetry;
+      ticket.state = 'cancelled'; delete ticket.boxRetry; delete ticket.homeBypass;
       ticket.closedAt = Date.now();
       ticket.closedBy = session.name;
       ticket.lastActivityAt = ticket.closedAt;
@@ -8551,7 +8648,7 @@ function createTicketMethods(deps, shared) {
       // done+loopStep arm and stamps a rework on merged, deleted work.
       delete ticket.loopStep;
       // The verify hold goes too: accepting overrules the check, and a surviving stamp keeps alarming on accepted work.
-      delete ticket.verifyHold; delete ticket.boxHoldReason; delete ticket.boxRetry;
+      delete ticket.verifyHold; delete ticket.boxHoldReason; delete ticket.boxRetry; delete ticket.homeBypass;
       // Clear mergeError only when closedOut and only if it still equals actedStamp: the gate is closedOut, not "invites another accept",
       // and a stamp that landed mid-accept is still true and must survive.
       if (closedOut && ticket.mergeError && String(ticket.mergeError) === actedStamp) delete ticket.mergeError;
@@ -8570,7 +8667,7 @@ function createTicketMethods(deps, shared) {
         if (note) row.acceptNote = note;
         row.lastActivityAt = ticket.lastActivityAt;
         delete row.loopStep;
-        delete row.verifyHold; delete row.boxHoldReason; delete row.boxRetry;
+        delete row.verifyHold; delete row.boxHoldReason; delete row.boxRetry; delete row.homeBypass;
         if (closedOut && row.mergeError && String(row.mergeError) === actedStamp) delete row.mergeError;
         // Clear on both copies: `fresh` saves on this path, the `ticket` snapshot on the else branch.
         if (closedOut) delete row.mergeWaiting;

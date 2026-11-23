@@ -197,6 +197,7 @@ function parseTask(cleaned) {
     const rest = argToks.filter((t) => !REVIEWER_TOKEN_RE.test(t));
     return { type: 'task', sub, id: rest[0] || null, who: null, reviewer, body: '' };
   }
+  if (sub === 'verify' && argToks[1] === 'home') return { type: 'task', sub, id: argToks[0] || null, who: null, home: true, body };
   if (sub === 'park' || sub === 'verify') return { type: 'task', sub, id: argToks[0] || null, who: null, body: '' };
   if (sub === 'done') {
     const tok = argToks[0] || null;
@@ -449,7 +450,7 @@ const CORE_ROWS = [
   { type: 'team-review', parse: parseTeamReview, bodyMode: GREEDY },
   { type: 'review-done', parse: parseReviewDone, bodyMode: GREEDY },
   { type: 'reboot', parse: parseReboot, bodyMode: NONE },
-  { type: 'task', parse: parseTask, bodyMode: (i) => (i.sub === 'add' || i.sub === 'done' || i.sub === 'reject' || i.sub === 'respec' || i.sub === 'cancel' || i.sub === 'accept' ? 'greedy' : 'none') },
+  { type: 'task', parse: parseTask, bodyMode: (i) => (i.sub === 'add' || i.sub === 'done' || i.sub === 'reject' || i.sub === 'respec' || i.sub === 'cancel' || i.sub === 'accept' || (i.sub === 'verify' && i.home) ? 'greedy' : 'none') },
   { type: 'permit', parse: parsePermit, bodyMode: NONE },
   { type: 'team-create', parse: parseTeamCreate, bodyMode: GREEDY },
   { type: 'team', parse: parseTeam, bodyMode: teamBodyMode },
