@@ -1518,7 +1518,7 @@ function createRemoteWiring(deps) {
       return { pending: false, running: 0 };
     }
     const running = runner && typeof runner.drain === 'function' ? runner.drain(() => {
-      if (suiteRunner !== runner || !drainPending) return;
+      if (closed || suiteRunner !== runner || !drainPending) return;
       log.info('remote', 'test runner setting applied after drain');
       reloadSuiteRunner();
     }) : 0;

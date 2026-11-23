@@ -1667,7 +1667,7 @@ for (const [label, slots, total, started] of [
   });
 }
 
-test('a draining runner finishes its running job with its result, starts no queued job, queues a submit, reports no free slot, and calls back once', async (t) => {
+test('a draining runner finishes its running job with its result, starts no queued job, queues a submit, reports no free slot, calls back once, then resumes', async (t) => {
   const f = await holdingFixture(t, { runnerOver: { slots: 3 } });
   await f.upload(f.body('d1'));
   await f.spawned(['d1']);
@@ -1683,7 +1683,9 @@ test('a draining runner finishes its running job with its result, starts no queu
   const d1 = await waitState(f.runner, 'd1', 'done');
   await drain();
   assert.deepStrictEqual([d1.reason, d1.exit, drained], [null, { code: 1, signal: null }, 1]);
-  assert.deepStrictEqual((await f.runner.poll(['d2', 'd3'])).jobs.map((j) => j.state), ['queued', 'queued']);
+  await f.spawned(['d2', 'd3']);
+  for (const id of ['d2', 'd3']) f.held.get(id).finish(0);
+  await waitState(f.runner, 'd3', 'done');
 });
 
 test('ending a drain starts the queued job on the same runner', async (t) => {

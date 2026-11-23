@@ -948,6 +948,7 @@ function createSuiteRunner({
           const done = onDrained;
           onDrained = null;
           done();
+          pump();
         } else if (!anyLive()) maintain().catch((e) => log(`suite-runner: maintenance failed: ${e.message}`));
         else pump();
       });

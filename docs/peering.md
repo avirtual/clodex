@@ -510,7 +510,7 @@ shows them as "set by environment". A save applies without a restart
 hello caps follow). A save while jobs run is written at once and answered
 `pending: true` (`applySuiteRunner`): the runner drains (`drain` — running jobs
 finish, no queued job starts, submits still queue, `info` reports every slot in
-use), then reloads; queued jobs survive the reload. Saving the live record
+use), then reloads; queued jobs survive the reload, and uploads in flight are retried by the lead as a runner restart. Saving the live record
 again ends the drain without a reload.
 
 `shares` is optional: at most 8 `{ name, path, version }` rows, `name` in the
