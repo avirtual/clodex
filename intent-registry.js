@@ -171,7 +171,7 @@ function reviewerToken(argToks) {
 }
 
 function parseTask(cleaned) {
-  const m = cleaned.match(/^\[agent:task\s+(add|assign|start|done|reject|respec|cancel|accept|park|list)\b([^\]]*)\]\s*(.*)/s);
+  const m = cleaned.match(/^\[agent:task\s+(add|assign|start|done|reject|respec|cancel|accept|park|verify|list)\b([^\]]*)\]\s*(.*)/s);
   if (!m) return null;
   const sub = m[1];
   const argToks = m[2].trim().split(/\s+/).filter(Boolean);
@@ -197,7 +197,7 @@ function parseTask(cleaned) {
     const rest = argToks.filter((t) => !REVIEWER_TOKEN_RE.test(t));
     return { type: 'task', sub, id: rest[0] || null, who: null, reviewer, body: '' };
   }
-  if (sub === 'park') return { type: 'task', sub, id: argToks[0] || null, who: null, body: '' };
+  if (sub === 'park' || sub === 'verify') return { type: 'task', sub, id: argToks[0] || null, who: null, body: '' };
   if (sub === 'done') {
     const tok = argToks[0] || null;
     const at = tok ? tok.indexOf('@') : -1;
@@ -261,7 +261,8 @@ function parseTeam(cleaned) {
   if (sub === 'runner') {
     const handsM = argStr.match(/\bhands:(\S+)/);
     const gateM = argStr.match(/\bgate:(\S+)/);
-    return { type: 'team', sub, value: positional[0] || null, hands: handsM ? handsM[1] : null, gate: gateM ? gateM[1] : null, ...(positional[0] === 'add' || positional[0] === 'rm' ? { target: positional[1] || null } : {}), body: '' };
+    const fallbackM = argStr.match(/\bfallback:(\S+)/);
+    return { type: 'team', sub, value: positional[0] || null, hands: handsM ? handsM[1] : null, gate: gateM ? gateM[1] : null, ...(fallbackM ? { fallback: fallbackM[1] } : {}), ...(positional[0] === 'add' || positional[0] === 'rm' ? { target: positional[1] || null } : {}), body: '' };
   }
   if (sub === 'role-rename') return { type: 'team', sub, name: positional[0] || null, to: positional[1] || null, body: '' };
   if (sub === 'gather') return { type: 'team', sub, dry: positional[0] === 'dry', body: '' };
