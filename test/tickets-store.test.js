@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { createTicketsStore, nextTicketId, recordEvent, titleLine, ticketTitle, extractTaskDir, branchSlug, countMustFix, extractMustFix, scanVerdict, mustFixTitles } = require('../tickets-store');
+const { createTicketsStore, nextTicketId, recordEvent, titleLine, ticketTitle, extractTaskDir, branchSlug, countMustFix, extractMustFix, scanVerdict, mustFixTitles, suiteProvenanceOf } = require('../tickets-store');
 const { projectDirFor } = require('../clodex-paths');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 
@@ -646,4 +646,31 @@ test('a one-line REWORK verdict is still REWORK', () => {
   assert.strictEqual(scan.verdict, 'REWORK');
   assert.strictEqual(scan.ambiguous, false);
   assert.deepStrictEqual(scan.mustFixHeaders, [1]);
+});
+
+test('t2379: suiteProvenance survives a save and reload, and an absent or malformed one loads as null/null', () => {
+  const store = createTicketsStore({ clodexHome: tmpHome() });
+  const root = tmpRoot();
+  const verify = {
+    at: '2026-11-23T06:00:00.000Z', decidedBy: 'box', outcome: 'pass', totals: { pass: 5, fail: 0, tests: 5 }, treeHash: 'a'.repeat(40),
+    runner: 'runner-1', jobId: 'job-1', definitionHash: 'd'.repeat(64), image: 'sha256:e', fallback: null, fallbackCode: null, fallbackClass: null,
+  };
+  const postMerge = { ...verify, decidedBy: 'home', runner: null, jobId: null, image: null, definitionHash: null, fallback: 'runner unreachable', fallbackCode: 7, fallbackClass: 'unreachable' };
+  store.save(root, [
+    { id: 't1', suiteProvenance: { verify, postMerge } },
+    { id: 't2' },
+    { id: 't3', suiteProvenance: 'garbage' },
+    { id: 't4', suiteProvenance: { verify: { decidedBy: 'moon' }, postMerge: [1] } },
+  ]);
+  const loaded = store.load(root);
+  assert.deepStrictEqual(loaded.map((t) => t.id), ['t1', 't2', 't3', 't4'], 'ENTER: every row loaded');
+  assert.deepStrictEqual(loaded.map(suiteProvenanceOf), [
+    { verify, postMerge },
+    { verify: null, postMerge: null },
+    { verify: null, postMerge: null },
+    { verify: null, postMerge: null },
+  ]);
+  assert.deepStrictEqual(loaded[0].suiteProvenance, { verify, postMerge });
+  assert.deepStrictEqual(loaded[2].suiteProvenance, { verify: null, postMerge: null });
+  assert.deepStrictEqual(store.read(root)[3].suiteProvenance, { verify: null, postMerge: null });
 });
