@@ -674,3 +674,59 @@ test('t2401: a fired restart passes through with a live job and keeps the restar
   await flush();
   assert.deepStrictEqual({ asked: st.asked, fence: st.fence }, { asked: [], fence: [true] });
 });
+
+function remotePlan(opts, { jobs = [], fenced = false } = {}) {
+  const calls = [];
+  const logs = [];
+  const { planRemoteRestart } = require('../restart-waiter');
+  const plan = planRemoteRestart(opts, {
+    fence: (on) => calls.push(`fence:${on}`),
+    fenced: () => fenced,
+    jobs: () => { calls.push('count'); return jobs; },
+    restart: () => calls.push('restart'),
+    restartWhenIdle: (o) => calls.push(`whenIdle:${JSON.stringify(o)}`),
+    log: (line) => logs.push(line),
+  });
+  return { plan, calls, logs };
+}
+
+const TWO = [{ id: 'j1', team: 'other' }, { id: 'j2', team: 'third' }];
+const BUSY_TWO = 'Not restarted: 2 suite jobs this machine is running for other teams would be cut — send wait (clodexctl restart node --wait) to restart once they finish, or cutJobs (--cut-jobs) to cut them now.';
+
+test('t2407: /api/restart with no flags on a busy node answers 409 runner-busy with the count, never restarts, and lifts the fence it raised', () => {
+  const { plan, calls, logs } = remotePlan({}, { jobs: TWO });
+  assert.deepStrictEqual(plan, { status: 409, body: { ok: false, code: 'runner-busy', jobs: 2, error: BUSY_TWO } });
+  assert.deepStrictEqual(calls, ['fence:true', 'count', 'fence:false']);
+  assert.deepStrictEqual(logs, [`restart requested remotely — refused: ${BUSY_TWO}`]);
+});
+
+test('t2407: a busy refusal leaves a fence someone else raised in place', () => {
+  const { plan, calls } = remotePlan({}, { jobs: TWO, fenced: true });
+  assert.strictEqual(plan.status, 409);
+  assert.deepStrictEqual(calls, ['fence:true', 'count']);
+});
+
+test('t2407: /api/restart on an idle node restarts after the reply, fence left up', () => {
+  const { plan, calls, logs } = remotePlan({}, { jobs: [] });
+  assert.deepStrictEqual({ status: plan.status, body: plan.body }, { status: 200, body: { ok: true } });
+  assert.deepStrictEqual(calls, ['fence:true', 'count']);
+  plan.go();
+  assert.deepStrictEqual(calls, ['fence:true', 'count', 'restart']);
+  assert.deepStrictEqual(logs, ['restart requested remotely']);
+});
+
+test('t2407: wait reaches the idle waiter, not the immediate restart, and answers 202 with the job count', () => {
+  const { plan, calls, logs } = remotePlan({ wait: true }, { jobs: TWO });
+  assert.deepStrictEqual({ status: plan.status, body: plan.body }, { status: 202, body: { ok: true, waiting: true, jobs: 2 } });
+  plan.go();
+  assert.deepStrictEqual(calls, ['count', 'whenIdle:{}']);
+  assert.deepStrictEqual(logs, ['restart requested remotely — waiting for 2 suite jobs this machine is running for other teams']);
+});
+
+test('t2407: cutJobs restarts a busy node and logs the cut count', () => {
+  const { plan, calls, logs } = remotePlan({ cutJobs: true }, { jobs: TWO });
+  assert.deepStrictEqual({ status: plan.status, body: plan.body }, { status: 200, body: { ok: true } });
+  plan.go();
+  assert.deepStrictEqual(calls, ['fence:true', 'count', 'restart']);
+  assert.deepStrictEqual(logs, ['restart requested remotely; cutting 2 suite jobs this machine is running for other teams']);
+});

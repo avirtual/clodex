@@ -15,7 +15,7 @@ const path = require('node:path');
 const { createEngine } = require('./lib/engine-isolation');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const {
-  SUPERVISED_ENV, UNSUPERVISED_REASON, supervisorDeclared, createHeadlessRestart, restartNowLine,
+  SUPERVISED_ENV, UNSUPERVISED_REASON, supervisorDeclared, createHeadlessRestart, restartNowLine, signalCutLine,
 } = require('../headless-restart');
 
 const ROOT = path.join(__dirname, '..');
@@ -378,4 +378,20 @@ test('t2401: main.js routes before-quit through the quit guard first, and restar
   assert.match(src, /fence:\s*\(on\)\s*=>\s*quitGuard\.restartFence\(on\),/);
   assert.match(src, /ask:\s*\(model\)\s*=>\s*dialog\.showMessageBox\(model\),/);
   assert.match(src, /body:\s*quitGiveUpBody\(n\)/);
+});
+
+test('t2407: a SIGTERM/SIGINT names the suite jobs it cuts, and says nothing when there are none', () => {
+  assert.strictEqual(signalCutLine('SIGTERM', 0), '');
+  assert.strictEqual(signalCutLine('SIGTERM', 1), 'SIGTERM — cutting 1 suite job this machine is running for other teams');
+  assert.strictEqual(signalCutLine('SIGINT', 3), 'SIGINT — cutting 3 suite jobs this machine is running for other teams');
+  const src = seamNames('headless-main.js');
+  assert.match(src, /function terminate\(sig\) \{[\s\S]*?let cut = 0;\s*try \{ cut = engine\.suiteRestartJobs\(\)\.length; \} catch \{\}\s*if \(cut\) log\.info\('app', signalCutLine\(sig, cut\)\);[\s\S]*?engine\.shutdown\(\);/);
+});
+
+test('t2407: window-all-closed on non-darwin only asks to quit, so the quit guard decides before engine.shutdown runs', () => {
+  const src = seamNames('main.js');
+  const m = src.match(/app\.on\('window-all-closed', \(\) => \{([\s\S]*?)\n\}\);/);
+  assert.ok(m, 'ENTER: the window-all-closed handler is found');
+  assert.strictEqual(m[1].trim(), "if (process.platform !== 'darwin') app.quit();");
+  assert.match(src, /app\.on\('before-quit', \(event\) => \{\s*if \(!quitGuard\.beforeQuit\(event\)\) return;[\s\S]*?if \(engine\) engine\.shutdown\(\);\s*\}\);/);
 });

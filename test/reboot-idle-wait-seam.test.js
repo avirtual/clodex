@@ -50,7 +50,7 @@ function engineSeamTargets(seams) {
   assert.ok(rwDeps, 'the peer wiring was constructed');
   // relaunchApp is what [agent:reboot] calls; restartClodex is what the menu and
   // the remote restart button call.
-  return { agentPath: smDeps.relaunchApp, operatorPath: rwDeps.restartClodex };
+  return { agentPath: smDeps.relaunchApp, operatorPath: rwDeps.restartClodex, waitPath: rwDeps.restartClodexWhenIdle };
 }
 
 test('engine: the agent path and the operator path are DIFFERENT seams', () => {
@@ -220,4 +220,15 @@ test('main.js: the give-up notification delegates its copy to the tested builder
     'not "canceled" — this is the cap giving up, and an operator cancel never reaches notify at all, '
     + 'so that word would be false on every render');
   assert.match(t[1], /drop/i, 'it says what actually happened, in the body\'s own vocabulary');
+});
+
+test('t2407: the peer wiring gets the deferred seam for POST /api/restart wait, beside the immediate one', () => {
+  const calls = [];
+  const { operatorPath, waitPath } = engineSeamTargets({
+    restartHost: () => calls.push('immediate'),
+    restartHostWhenIdle: () => calls.push('deferred'),
+  });
+  waitPath();
+  operatorPath();
+  assert.deepStrictEqual(calls, ['deferred', 'immediate']);
 });

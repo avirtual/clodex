@@ -70,7 +70,8 @@ test('A2: the per-verb allowlist builds the exact argv and refuses the rest', ()
   for (const [args, want] of refused) assert.strictEqual(refusalOf(() => build('deploy', args, rec)), want, args);
   assert.deepStrictEqual(build('upgrade', '--tag v2 --force'), ['upgrade', 'node', 'ios', '--tag', 'v2', '--force', '-o', 'json']);
   assert.strictEqual(refusalFor('upgrade', '--param a'),
-    'refused: --param is not accepted by upgrade here (allowed: tag image branch set subnets security-group assign-public-ip persistent force dry-run force-conflicts)');
+    'refused: --param is not accepted by upgrade here (allowed: tag image branch set subnets security-group assign-public-ip persistent force dry-run force-conflicts cut-jobs)');
+  assert.deepStrictEqual(build('upgrade', '--cut-jobs'), ['upgrade', 'node', 'ios', '--cut-jobs', '-o', 'json']);
 });
 
 test('A3: the deploy locator comes from the record, one row per shape', () => {
@@ -110,7 +111,9 @@ test('A4: restart is restart node, forced', () => {
   assert.deepStrictEqual(build('restart', 'node'), ['--ctx', 'ios', 'restart', 'node', '--force', '-o', 'json']);
   assert.strictEqual(refusalFor('restart', 'session x'),
     'refused: restart here is `restart node` (args empty or "node"); restart session is in clodex-ctl-seats');
-  assert.strictEqual(refusalFor('restart', '--fresh'), 'refused: --fresh is not accepted by restart here (allowed: no flags)');
+  assert.strictEqual(refusalFor('restart', '--fresh'), 'refused: --fresh is not accepted by restart here (allowed: wait cut-jobs)');
+  assert.deepStrictEqual(build('restart', '--wait'), ['--ctx', 'ios', 'restart', 'node', '--wait', '--force', '-o', 'json']);
+  assert.deepStrictEqual(build('restart', 'node --cut-jobs'), ['--ctx', 'ios', 'restart', 'node', '--cut-jobs', '--force', '-o', 'json']);
 });
 
 test('A5: delete is delete session <name>, forced', () => {
