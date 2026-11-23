@@ -10,7 +10,7 @@ const { createSessionManager } = require('../session-manager');
 const { intentEnabled } = require('../intent-catalog');
 const registry = require('../intent-registry');
 const { mkTmpRoot } = require('./lib/tmp-roots');
-const { createSuiteClient, pickRunner } = require('../suite-client');
+const { createSuiteClient, pickRunner, boxVerdict } = require('../suite-client');
 const { buildRunnerField } = require('../renderer/lib/team-runner-row');
 const { fakeDocument, textOf } = require('./lib/fake-dom');
 
@@ -557,4 +557,40 @@ test('t2378: a fallen-back _boxDecide compare row carries fallbackCode beside th
   f.m._boxRow(team, { id: 't1' }, got, null);
   const row = records().pop();
   assert.deepStrictEqual([got.fallbackCode, got.fallbackClass, row.decidedBy, row.fallback, row.fallbackCode], ['runner-restart', 'transient', 'home', 'runner restart', 'runner-restart']);
+});
+
+function restartingRunner() {
+  const calls = [];
+  const conn = {
+    suiteAsk: async (method, p) => {
+      calls.push(`${method} ${p.split('?')[0]}`);
+      if (p.startsWith('/api/suite/info')) return { status: 200, body: { ok: true, limits: {}, env: { envKey: 'k' }, slots: { total: 1, inUse: 1 } } };
+      if (method === 'POST') return { status: 409, body: { ok: false, status: 409, error: 'runner is restarting', code: 'runner-restarting' } };
+      return { status: 200, body: { ok: true } };
+    },
+  };
+  return { conn, calls };
+}
+
+test('t2400: a submit refused by a runner that is restarting is repicked to another runner', async () => {
+  const a = restartingRunner();
+  const b = remote();
+  const { client } = clientOver({ pA: a.conn, pB: b.conn });
+  const asked = [];
+  const out = await client.run({
+    peer: 'pA', name: 'runner-a', tree: '/w', kind: 'verify', team: 'tm', ticket: 't1', budgetMs: 60000,
+    repick: async (failed) => { asked.push(failed); return { peer: 'pB', wire: 'push', name: 'runner-b' }; },
+  });
+  assert.deepStrictEqual(a.calls, ['GET /api/suite/info', 'POST /api/suite/jobs']);
+  assert.deepStrictEqual(asked, ['runner-a']);
+  assert.deepStrictEqual([out.record.outcome, out.record.where], ['pass', 'runner-b']);
+});
+
+test('t2400: with nowhere to repick, the restarting refusal is classed as a transient runner restart', async () => {
+  const a = restartingRunner();
+  const { client } = clientOver({ pA: a.conn });
+  const out = await client.run({ peer: 'pA', name: 'runner-a', tree: '/w', kind: 'verify', team: 'tm', ticket: 't1', budgetMs: 60000 });
+  assert.strictEqual(out.record.outcome, 'unknown', 'ENTER: the job never ran');
+  assert.deepStrictEqual(boxVerdict({ unknown: out.record.reason }), { fallback: 'runner restart', fallbackCode: 'runner-restart', fallbackClass: 'transient' });
+  assert.strictEqual(out.record.reason, 'runner refused the job: runner is restarting');
 });

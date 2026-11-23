@@ -178,6 +178,16 @@ test('main.js arms the idle waiter on the agent seam and restarts immediately on
     '"Restart Now" disarms silently and takes the restart itself');
 });
 
+test('t2400: main.js holds the restart on runner jobs, fences on arm, and takes the busy branch for runner jobs alone', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  assert.match(src, /suiteJobs:\s*suiteRestartJobs,/);
+  assert.match(src, /fence:\s*\(on\)\s*=>\s*\{\s*if \(engine\) engine\.fenceSuiteRunner\(on\);\s*\}/);
+  assert.match(src, /if \(busy === 0 && !jobs\.length\) \{/);
+  assert.match(src, /detail:\s*restartDetail\(\{ busy, idle, jobs \}\)/);
+  assert.match(src, /detail:\s*pendingDetail\(suiteRestartJobs\(\)\)/);
+  assert.match(src, /restartWaitsForSuite:\s*true,/);
+});
+
 test('main.js: the give-up notification delegates its copy to the tested builder', () => {
   // main.js requires electron and cannot be require()d, so anything asserted here
   // is a source pin — which is exactly why the COPY is not asserted here anymore.

@@ -2013,3 +2013,80 @@ test('t2363: submit refuses a malformed shares list', async (t) => {
     assert.deepStrictEqual(await s.runner.submit(s.f.body('bad-sh', 'hand', { isolation: 'container', shares })), { ok: false, status: 400, error: 'bad shares' });
   }
 });
+
+const REFUSED_RESTARTING = { ok: false, status: 409, error: 'runner is restarting', code: 'runner-restarting' };
+const slotsOf = async (runner) => { const s = (await runner.info()).slots; return [s.total, s.inUse]; };
+
+function waiterOver(runner, { suite = () => [] } = {}) {
+  const { createIdleWaiter } = require('../restart-waiter');
+  let t = 1_000_000;
+  let next = null;
+  const notes = [];
+  const waiter = createIdleWaiter({
+    getSessions: () => [{ name: 'a', agentType: 'claude', activityState: 'thinking' }],
+    now: () => t, setTimer: (fn) => { next = fn; return 1; }, clearTimer: () => { next = null; },
+    restart: () => notes.push('restart'), notify: (asked, why) => notes.push(['notify', why]), lastInputAt: () => 0,
+    suiteJobs: suite, fence: (on) => runner.fence(on),
+  });
+  const tickAt = (ms) => { t = 1_000_000 + ms; const fn = next; next = null; fn(); };
+  return { waiter, notes, tickAt };
+}
+
+test('t2400: a fenced runner shows no free slot and refuses a new job; admitted jobs still poll, read output and cancel', async (t) => {
+  let blocker = null;
+  const f = await fixture(t, {
+    runnerOver: { slots: 2 },
+    onSpawn: (c) => { if (c.job === 'blocker') { blocker = c.child; c.child.stdout.write('hello\n'); } else c.child.finish(0); },
+  });
+  await f.upload(f.body('blocker', 'hand'));
+  await waitState(f.runner, 'blocker', 'running');
+  const pending = await f.runner.submit(f.body('uploading', 'hand'));
+  assert.strictEqual(pending.state, 'awaiting-pack', 'ENTER: a second job is admitted and waiting on its pack');
+  assert.deepStrictEqual(await slotsOf(f.runner), [2, 1]);
+  f.runner.fence(true);
+  assert.deepStrictEqual(await slotsOf(f.runner), [2, 2]);
+  assert.deepStrictEqual(await f.runner.submit(f.body('newcomer', 'hand')), REFUSED_RESTARTING);
+  assert.strictEqual((await f.runner.submit(f.body('uploading', 'hand'))).ok, true, 'a resubmit of an admitted job is not a new admission');
+  assert.strictEqual((await f.runner.poll(['blocker'])).jobs[0].state, 'running');
+  assert.strictEqual((await f.runner.output('blocker', { stream: 'stdout' })).text, 'hello\n');
+  await f.runner.cancel('uploading');
+  assert.deepStrictEqual((await f.runner.poll(['uploading'])).jobs.map((j) => [j.state, j.reason]), [['done', 'cancelled']]);
+  assert.deepStrictEqual((await f.runner.poll(['newcomer'])).jobs.map((j) => j.state), ['gone']);
+  f.runner.fence(false);
+  assert.deepStrictEqual(await slotsOf(f.runner), [2, 1]);
+  assert.strictEqual((await f.runner.submit(f.body('after', 'hand'))).ok, true);
+  blocker.finish(0);
+  await waitState(f.runner, 'blocker', 'done');
+});
+
+test('t2400: arming the restart fences the runner before the first hold check, so a submit issued in the same tick is refused', async (t) => {
+  const f = await fixture(t, { runnerOver: { slots: 2 } });
+  const order = [];
+  const { waiter } = waiterOver({ fence: (on) => { order.push(`fence:${on}`); f.runner.fence(on); } }, { suite: () => { order.push('hold'); return []; } });
+  const racing = f.runner.submit(f.body('racing', 'hand'));
+  waiter.arm();
+  const after = f.runner.submit(f.body('after', 'hand'));
+  assert.deepStrictEqual([await racing, await after], [REFUSED_RESTARTING, REFUSED_RESTARTING]);
+  assert.deepStrictEqual(order, ['fence:true']);
+  waiter.disarm({ abandoned: true });
+});
+
+for (const [label, end] of [
+  ['the menu cancel', (w) => w.waiter.disarm({ abandoned: true })],
+  ['the give-up at the cap', (w) => w.tickAt(30 * 60_000)],
+  ['an abandoned agent reboot', (w) => w.waiter.disarm({ abandoned: true })],
+]) {
+  test(`t2400: ${label} reopens admission`, async (t) => {
+    const f = await fixture(t, { runnerOver: { slots: 2 } });
+    const w = waiterOver(f.runner);
+    const abandoned = [];
+    if (label.includes('agent')) w.waiter.arm({ requester: 'hand-9', onAbandon: (why) => abandoned.push(why) });
+    else w.waiter.arm();
+    assert.deepStrictEqual(await slotsOf(f.runner), [2, 2], 'ENTER: armed, the runner shows no free slot');
+    end(w);
+    assert.strictEqual(w.waiter.isArmed(), false);
+    assert.deepStrictEqual(await slotsOf(f.runner), [2, 0]);
+    assert.strictEqual((await f.runner.submit(f.body('reopened', 'hand'))).ok, true);
+    if (label.includes('agent')) assert.deepStrictEqual(abandoned, ['cancelled']);
+  });
+}

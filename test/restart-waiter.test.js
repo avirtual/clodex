@@ -4,7 +4,7 @@
 // pattern as remind-scheduler.test.js.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { classifyRestart, createIdleWaiter, giveUpBody } = require('../restart-waiter');
+const { classifyRestart, createIdleWaiter, giveUpBody, restartDetail, pendingDetail } = require('../restart-waiter');
 
 // --- classifyRestart -------------------------------------------------------
 
@@ -459,4 +459,89 @@ test('waiter: a run still in flight 10 minutes after arming no longer holds the 
   assert.deepStrictEqual(events, ['restart']);
   assert.strictEqual(logs.warn.length, 1);
   assert.match(logs.warn[0], /abandoning: hand-1 run #3 \(clodex-run-tests\)/);
+});
+
+function suiteGatedWaiter() {
+  let jobs = [];
+  const seen = [];
+  const fences = [];
+  const w = freshWaiter(1_000_000, {
+    suiteJobs: () => jobs,
+    fence: (on) => fences.push(on),
+    notify: (asked, why) => seen.push([asked, why, giveUpBody(asked, why)]),
+  });
+  w.setSessions(IDLE);
+  return { ...w, seen, fences, setJobs: (j) => { jobs = j; } };
+}
+
+test('t2400: a live suite-runner job holds an otherwise idle restart, and it fires once the job ends', () => {
+  const { waiter, clock, events, fences, setJobs } = suiteGatedWaiter();
+  setJobs([{ id: 'j1', team: 'alpha' }]);
+  waiter.arm();
+  clock.advance(25 * 60_000);
+  assert.deepStrictEqual(events, [], 'idle seats, quiet keyboard, one runner job live — no restart, even past the 10m exec-run ceiling');
+  setJobs([]);
+  clock.advance(12_000);
+  assert.deepStrictEqual(events, ['restart']);
+  assert.deepStrictEqual(fences, [true], 'a restart that fires keeps admission closed until the app goes');
+});
+
+test('t2400: at the 30m cap with a live runner job the restart is dropped, not forced, and the notice names the runner job', () => {
+  const { waiter, clock, events, seen, fences, setJobs } = suiteGatedWaiter();
+  setJobs([{ id: 'j1', team: 'alpha' }]);
+  waiter.arm({ requester: 'hand-7' });
+  clock.advance(31 * 60_000);
+  assert.deepStrictEqual(events, []);
+  assert.deepStrictEqual(seen, [[['hand-7'], { suiteJobs: 1, sessionsBusy: false },
+    '1 suite job this machine is running for other teams did not finish — the pending restart was dropped. Try again when work settles. Requested by: hand-7.']]);
+  assert.deepStrictEqual(fences, [true, false]);
+  assert.strictEqual(waiter.isArmed(), false);
+});
+
+test('t2400: busy seats and runner jobs at the cap are both named', () => {
+  assert.strictEqual(giveUpBody([], { suiteJobs: 2, sessionsBusy: true }),
+    'Sessions stayed busy and 2 suite jobs this machine is running for other teams did not finish — the pending restart was dropped. Try again when work settles.');
+  assert.strictEqual(giveUpBody([], { suiteJobs: 0, sessionsBusy: true }),
+    'Sessions stayed busy — the pending restart was dropped. Try again when work settles.');
+});
+
+test('t2400: arming closes the fence before the first hold check; cancelling reopens it', () => {
+  const order = [];
+  const { waiter, clock } = freshWaiter(1_000_000, {
+    suiteJobs: () => { order.push('hold'); return []; },
+    fence: (on) => order.push(`fence:${on}`),
+  });
+  waiter.arm();
+  clock.advance(2000);
+  waiter.disarm({ abandoned: true });
+  assert.deepStrictEqual(order, ['fence:true', 'hold', 'fence:false']);
+});
+
+test('t2400: restart dialog text for one runner job', () => {
+  assert.strictEqual(restartDetail({ busy: 0, idle: 2, jobs: [{ id: 'j1', team: 'alpha' }] }),
+    '2 idle sessions will be restored cleanly.\n'
+    + '1 suite job this machine is running for other teams is in flight (alpha).\n'
+    + 'Restart When Idle waits until work settles and the suite jobs finish; Restart Now interrupts and cuts the suite jobs.');
+  assert.strictEqual(pendingDetail([{ id: 'j1', team: 'alpha' }]),
+    'Clodex will restart once every session and the keyboard are idle and 1 suite job this machine is running for other teams finishes. Restart now anyway, cancel the pending restart, or keep waiting?');
+  assert.strictEqual(pendingDetail([]),
+    'Clodex will restart once every session and the keyboard are idle. Restart now anyway, cancel the pending restart, or keep waiting?');
+});
+
+test('t2400: restart dialog text for three runner jobs from two teams, one name with markup', () => {
+  const jobs = [{ id: 'j1', team: '<b>red</b>\nteam' }, { id: 'j2', team: 'blue' }, { id: 'j3', team: '<b>red</b>\nteam' }];
+  assert.strictEqual(restartDetail({ busy: 1, idle: 0, jobs }),
+    '1 session is mid-turn.\n'
+    + '3 suite jobs this machine is running for other teams are in flight (<b>red</b> team, blue).\n'
+    + 'Restart When Idle waits until work settles and the suite jobs finish; Restart Now interrupts and cuts the suite jobs.');
+});
+
+test('t2400: a 200-character team name is cut to a bounded label', () => {
+  const line = restartDetail({ busy: 0, idle: 0, jobs: [{ id: 'j1', team: 'x'.repeat(200) }, { id: 'j2', team: 'blue' }] }).split('\n')[0];
+  assert.strictEqual(line, `2 suite jobs this machine is running for other teams are in flight (${'x'.repeat(31)}…, blue).`);
+});
+
+test('t2400: with no runner jobs the busy dialog text is unchanged', () => {
+  assert.strictEqual(restartDetail({ busy: 2, idle: 1, jobs: [] }),
+    '2 sessions are mid-turn; 1 idle session will be restored cleanly. Restart When Idle waits until work settles; Restart Now interrupts.');
 });
