@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - Internals tab, clodent seats: a tool call you interrupted is shown as interrupted, not as an error.
+- Test runners: when a ticket's suite fails on the runner and the re-run cannot be decided there, the failure stands; a passing run on the lead's own machine no longer overrules it.
 
 ## 5.196.0 — 2026-11-23
 
