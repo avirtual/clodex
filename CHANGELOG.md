@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- A dial-in test runner now resends an answer the lead's machine failed to receive, for as long as the lead is still waiting for it. Before, one dropped connection threw the answer away and the lead waited out the whole call.
+
 ## 5.193.0 — 2026-11-23
 
 - A test runner can build a team's box image itself (Preferences ▸ Test runner ▸ Build box images that teams ask for, off by default): the first job that needs a missing image triggers one build, and a failed build falls back to the team's own suite.

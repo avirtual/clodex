@@ -43,7 +43,7 @@ function setup({ calls, answers = () => TIMEOUT, execute, pollConcurrency } = {}
       sends.push({ id, answer, timeoutMs });
       return answers(id, sends.filter((s) => s.id === id).length);
     },
-    execute: execute || (async (c) => { executed.push(c.id); return { status: 200, body: { ok: true, id: c.id } }; }),
+    execute: execute || (async (c) => { executed.push(c.path); return { status: 200, body: { ok: true, path: c.path } }; }),
     log: (m) => logs.push(m), clock: ft.clock, timers: ft.timers, random: () => 0.5,
     ...(pollConcurrency ? { pollConcurrency } : {}),
   });
@@ -60,10 +60,10 @@ test('two transport failures then 200: the same answer is sent three times, 250 
   await flush();
   await steps(s.ft, 1, 250);
   await steps(s.ft, 1, 500);
-  const answer = { status: 200, body: { ok: true, id: 'd1' } };
+  const answer = { status: 200, body: { ok: true, path: '/api/suite/jobs/d1' } };
   assert.deepStrictEqual(s.sends.map((x) => x.answer), [answer, answer, answer]);
   assert.deepStrictEqual(s.ft.delays, [250, 500]);
-  assert.deepStrictEqual(s.executed, ['d1']);
+  assert.deepStrictEqual(s.executed, ['/api/suite/jobs/d1']);
   assert.deepStrictEqual(s.logs, ['call d1: reply failed (socket hang up), resending', 'call d1: reply delivered on attempt 3']);
   assert.deepStrictEqual([s.claimer.status().resending, s.ft.armed.size], [0, 0]);
   s.claimer.stop();
@@ -131,7 +131,7 @@ test('a reply waiting for resend frees its poll slot for the next poll', async (
   const gates = [];
   const started = [];
   const execute = (c) => {
-    started.push(c.id);
+    started.push(c.path.slice(20, 22));
     return new Promise((resolve) => gates.push(() => resolve({ status: 200, body: { ok: true } })));
   };
   const s = setup({ calls: [poll('p1'), poll('p2'), poll('p3')], execute, pollConcurrency: 2, answers: (id) => (id === 'p1' ? HANG : OK) });
