@@ -795,11 +795,7 @@ app.whenReady().then(() => {
 
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    appQuitting = true;
-    if (engine) engine.shutdown();
-    app.quit();
-  }
+  if (process.platform !== 'darwin') app.quit();
 });
 
 app.on('before-quit', (event) => {

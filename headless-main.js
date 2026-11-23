@@ -161,7 +161,7 @@ function restartNow() {
   process.exit(64);
 }
 
-const { createHeadlessRestart, restartNowLine } = require('./headless-restart');
+const { createHeadlessRestart, restartNowLine, signalCutLine } = require('./headless-restart');
 const headlessRestart = createHeadlessRestart({
   env: process.env,
   log,
@@ -261,6 +261,9 @@ function terminate(sig) {
   if (terminating) return;
   terminating = true;
   log.info('app', `${sig} — engine.shutdown(), killing all sessions`);
+  let cut = 0;
+  try { cut = engine.suiteRestartJobs().length; } catch {}
+  if (cut) log.info('app', signalCutLine(sig, cut));
   if (webHost) { try { webHost.close(); } catch (e) { log.error('app', `web host close error: ${e && e.message}`); } }
   try { engine.shutdown(); } catch (e) { log.error('app', `shutdown error: ${e && e.message}`); }
   releasePidLock();

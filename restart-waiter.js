@@ -268,6 +268,35 @@ function quitGiveUpBody(n) {
   return `${k} suite job${k === 1 ? '' : 's'} this machine is running for other teams did not finish within 30 minutes — the quit was dropped. Quit again to choose.`;
 }
 
+function suiteJobsCount(n) {
+  return `${n} suite job${n === 1 ? '' : 's'} this machine is running for other teams`;
+}
+
+function runnerBusyError(n) {
+  return `Not restarted: ${suiteJobsCount(n)} would be cut — send wait (clodexctl restart node --wait) to restart once they finish, or cutJobs (--cut-jobs) to cut them now.`;
+}
+
+function planRemoteRestart(opts, { fence, fenced, jobs, restart, restartWhenIdle, log = () => {} }) {
+  const { wait = false, cutJobs = false } = opts || {};
+  const count = () => { try { const j = jobs(); return Array.isArray(j) ? j.filter(Boolean).length : 0; } catch { return 0; } };
+  if (wait) {
+    const n = count();
+    log(n ? `restart requested remotely — waiting for ${suiteJobsCount(n)}` : 'restart requested remotely — waiting for idle');
+    return { status: 202, body: { ok: true, waiting: true, jobs: n }, go: () => restartWhenIdle({}) };
+  }
+  const was = !!fenced();
+  fence(true);
+  const n = count();
+  if (n > 0 && !cutJobs) {
+    if (!was) fence(false);
+    const error = runnerBusyError(n);
+    log(`restart requested remotely — refused: ${error}`);
+    return { status: 409, body: { ok: false, code: 'runner-busy', jobs: n, error } };
+  }
+  log(n ? `restart requested remotely; cutting ${suiteJobsCount(n)}` : 'restart requested remotely');
+  return { status: 200, body: { ok: true }, go: restart };
+}
+
 function createQuitGuard({
   suiteJobs = () => [], fence = null, quit, ask, notify, now, setTimer, clearTimer,
   pollMs = 2000, capMs = QUIT_CAP_MS,
@@ -376,4 +405,5 @@ function createQuitGuard({
 module.exports = {
   classifyRestart, createIdleWaiter, giveUpBody, suiteJobsLine, restartDetail, pendingDetail, suiteWaitClause,
   createQuitGuard, quitDialog, waitingQuitDialog, quitGiveUpBody,
+  runnerBusyError, planRemoteRestart,
 };

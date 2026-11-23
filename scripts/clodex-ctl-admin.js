@@ -38,10 +38,10 @@ const VERB_TABLE = {
     ceilingMs: 40 * MIN,
     flags: {
       tag: V, image: V, branch: V, set: M, subnets: V, 'security-group': V, 'assign-public-ip': V,
-      persistent: V, force: B, 'dry-run': B, 'force-conflicts': B,
+      persistent: V, force: B, 'dry-run': B, 'force-conflicts': B, 'cut-jobs': B,
     },
   },
-  restart: { ceilingMs: 3 * MIN, flags: {} },
+  restart: { ceilingMs: 3 * MIN, flags: { wait: B, 'cut-jobs': B } },
   undeploy: { ceilingMs: 20 * MIN, flags: { 'keep-data': B, 'dry-run': B, wait: B } },
   delete: { ceilingMs: 3 * MIN, flags: {} },
 };
@@ -253,7 +253,7 @@ function buildArgv(verb, ctx, record, tokens) {
     if (!(positionals.length === 0 || (positionals.length === 1 && positionals[0] === 'node'))) {
       refuse('refused: restart here is `restart node` (args empty or "node"); restart session is in clodex-ctl-seats');
     }
-    return ['--ctx', ctx, 'restart', 'node', '--force', '-o', 'json'];
+    return ['--ctx', ctx, 'restart', 'node', ...flags, '--force', '-o', 'json'];
   }
   let name = null;
   const first = positionals[0] || '';

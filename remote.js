@@ -1483,9 +1483,21 @@ class RemoteServer {
       if (!this._restartApp) return this._json(res, 501, { ok: false, error: 'restart not available' });
       const why = this._restartUnavailable ? this._restartUnavailable() : null;
       if (why) return this._json(res, 409, { ok: false, error: why });
-      this._json(res, 200, { ok: true });
-      this._restartApp();
-      return;
+      return this._readBody(req, res, (body) => {
+        let msg = {};
+        if (body.trim()) {
+          if (!this._jsonBody(req, res)) return;
+          msg = parseJsonObject(body);
+          if (!msg) return this._json(res, 400, { ok: false, error: 'bad JSON' });
+        }
+        const wait = msg.wait === true;
+        const cutJobs = msg.cutJobs === true;
+        if (wait && cutJobs) return this._json(res, 400, { ok: false, error: 'wait and cutJobs cannot both be set' });
+        const plan = this._restartApp({ wait, cutJobs });
+        if (!plan || !plan.status) return this._json(res, 200, { ok: true });
+        this._json(res, plan.status, plan.body);
+        if (plan.go) plan.go();
+      });
     }
     // Bare {name,type,cwd} stays valid (compat); the whole parsed body is forwarded
     // unvalidated so the owner maps it and drops what never crosses.

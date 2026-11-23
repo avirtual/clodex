@@ -294,17 +294,20 @@ const VERB_REGISTRY = [
     summary: 'restart a session, or the whole node',
     usage: [
       'restart session <name> [--fresh] [-o json|yaml]',
-      'restart node [--force] [-o json|yaml]',
+      'restart node [--force] [--wait | --cut-jobs] [-o json|yaml]',
     ],
     args: [['resource', 'session | node — REQUIRED (a bare `restart <name>` is a usage error)'], ['name', 'session to restart (session form only)']],
     flags: [
       ['--fresh', 'session form: start a NEW conversation (default resumes the existing one)'],
       ['--force', 'node form: skip the confirm (REQUIRED with -o json|yaml)'],
+      ['--wait', 'node form: restart once the suite jobs it runs for other teams finish and sessions are idle'],
+      ['--cut-jobs', 'node form: restart now even if that cuts suite jobs it runs for other teams'],
     ],
     examples: ['clodexctl restart session bob', 'clodexctl restart session bob --fresh', 'clodexctl restart node --force'],
     notes: [
       'The resource word is mandatory — the two forms do very different things and a bare name would silently pick one.',
       'restart node relaunches the whole engine — every session respawns and the wire drops out from under every client. Confirms unless --force.',
+      'A node running suite jobs for other teams refuses a plain restart node with their count and exits non-zero: --wait restarts after they finish, --cut-jobs restarts now and cuts them. The two cannot be combined.',
     ],
   },
   {
@@ -450,9 +453,10 @@ const VERB_REGISTRY = [
   {
     name: 'upgrade', group: 'deploy',
     summary: 'move an EXISTING node to a new version (routes on how it was deployed)',
-    usage: 'upgrade node [ctx] [--tag T | --image URI] [--dry-run] [--force] [-o json|yaml]',
+    usage: 'upgrade node [ctx] [--tag T | --image URI] [--dry-run] [--force] [--cut-jobs] [-o json|yaml]',
     args: [['ctx', 'context to upgrade (else the current/--ctx context)']],
     flags: [
+      ['--cut-jobs', 'upgrade even while the node runs suite jobs for other teams (they are cut)'],
       ['--tag T', 'target version [helm/fargate] — beats the packaged pin AND a carried image.tag'],
       ['--image URI', 'full image reference, incl. a repo@sha256:… digest [helm/fargate]'],
       ['--force', 're-run even when already at the target; also repairs a node that is not answering [ssh/ssm]'],
@@ -466,6 +470,7 @@ const VERB_REGISTRY = [
       'clodexctl upgrade node clodex-node --image ghcr.io/you/clodex@sha256:abc…',
     ],
     notes: [
+      'Before the flavor\'s deploy runs, reads the node\'s GET /api/testjobs: a node running suite jobs for other teams is refused with their count unless --cut-jobs. Nothing stops new jobs arriving between that read and the upgrade. A node that cannot be reached, or does not serve the route, is upgraded anyway with one line saying its activity could not be read; --dry-run skips the read.',
       'Routes on the context\'s STORED deploy flavor, never on its transport — an ssh deploy and a remote `deploy node --docker` save byte-identical entries, so sniffing would be a guess. A context written before clodexctl recorded that (or by a NEWER clodexctl, with a flavor this build cannot route) is refused by name, saying to re-run the flavor\'s own deploy; every other verb keeps working with it.',
       'REFUSES TO CREATE: helm probes `helm status`, fargate `describe-stacks`, and the source-installed flavors treat a node that does not answer as unconfirmed (--force installs anyway). An upgrade against something that is not there is an error, not a silent install.',
       'Reports what it is moving FROM (the node\'s live `hello.version` — never a stored guess) and TO (the version this clodexctl SHIPS, read from the packaged chart/template, unless --tag/--image overrides), and no-ops when they are equal (--force re-runs).',

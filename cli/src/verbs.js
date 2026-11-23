@@ -942,13 +942,18 @@ async function patchSession({ client, ctx, printer, flags, args }) {
 }
 
 async function restartNode({ client, printer, flags, prompt = defaultPrompt }) {
+  if (flags.wait && flags['cut-jobs']) throw new CliError(EXIT.USAGE, 'restart node takes --wait or --cut-jobs, not both');
+  const body = {};
+  if (flags.wait) body.wait = true;
+  if (flags['cut-jobs']) body.cutJobs = true;
   if (!flags.force) {
     if (flags.json) throw new CliError(EXIT.USAGE, 'restart node needs --force in -o json|yaml/non-interactive mode');
     const ok = await prompt('restart the WHOLE engine? All sessions relaunch. [y/N]: ');
     if (!/^y(es)?$/i.test(String(ok).trim())) throw new CliError(EXIT.USAGE, 'aborted');
   }
-  const res = await client.post('/api/restart', 'restart node', {});
+  const res = await client.post('/api/restart', 'restart node', body);
   if (flags.json) printer.json(res);
+  else if (res && res.waiting) printer.line(`engine restart armed — waits for ${res.jobs || 0} suite job${res.jobs === 1 ? '' : 's'} and for idle sessions`);
   else printer.line('engine restart requested');
 }
 
