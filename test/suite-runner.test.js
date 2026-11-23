@@ -2036,19 +2036,21 @@ test('t2400: a fenced runner shows no free slot and refuses a new job; admitted 
   let blocker = null;
   const f = await fixture(t, {
     runnerOver: { slots: 2 },
-    onSpawn: (c) => { if (c.job === 'blocker') { blocker = c.child; c.child.stdout.write('hello\n'); } else c.child.finish(0); },
+    onSpawn: (c) => { if (c.job === 'blocker') blocker = c.child; else c.child.finish(0); },
   });
   await f.upload(f.body('blocker', 'hand'));
   await waitState(f.runner, 'blocker', 'running');
-  const pending = await f.runner.submit(f.body('uploading', 'hand'));
+  const pending = await f.runner.submit(f.body('uploading', 'hand', { full: true }));
   assert.strictEqual(pending.state, 'awaiting-pack', 'ENTER: a second job is admitted and waiting on its pack');
   assert.deepStrictEqual(await fenceSlots(f.runner), [2, 1]);
   f.runner.fence(true);
   assert.deepStrictEqual(await fenceSlots(f.runner), [2, 2]);
   assert.deepStrictEqual(await f.runner.submit(f.body('newcomer', 'hand')), REFUSED_RESTARTING);
-  assert.strictEqual((await f.runner.submit(f.body('uploading', 'hand'))).ok, true, 'a resubmit of an admitted job is not a new admission');
+  assert.strictEqual((await f.runner.submit(f.body('uploading', 'hand', { full: true }))).ok, true, 'a resubmit of an admitted job is not a new admission');
   assert.strictEqual((await f.runner.poll(['blocker'])).jobs[0].state, 'running');
-  assert.strictEqual((await f.runner.output('blocker', { stream: 'stdout' })).text, 'hello\n');
+  const read = await f.runner.readOutput('blocker', { stream: 'stdout' });
+  assert.deepStrictEqual([read.ok, read.id, read.live], [true, 'blocker', true]);
+  assert.deepStrictEqual(await f.runner.output('blocker', { stream: 'stdout' }), { ok: true, total: 0, offset: 0, text: '' });
   await f.runner.cancel('uploading');
   assert.deepStrictEqual((await f.runner.poll(['uploading'])).jobs.map((j) => [j.state, j.reason]), [['done', 'cancelled']]);
   assert.deepStrictEqual((await f.runner.poll(['newcomer'])).jobs.map((j) => j.state), ['gone']);
