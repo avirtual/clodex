@@ -344,10 +344,10 @@ test('slow gate: past the cap, when the run deadline skips every sample the summ
 });
 
 test('slow gate: past the cap, the slowest clear alone and the run passes', () => {
-  const rows = [['crowd a', 200], ['crowd b', 250], ['crowd m', 40]];
+  const rows = [['crowd a', 600], ['crowd b', 700], ['crowd m', 250]];
   const r = runRunner({
     files: { 'test/crowd.test.js': rows.map(([n, ms], i) => firstRunOnly(n, ms, `.crowd${i}`)).join('') },
-    slowMs: 30,
+    slowMs: 200,
     extraEnv: SMALL_CAP,
   });
   const stdout = stdoutOf(r);
