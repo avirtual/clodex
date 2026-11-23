@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- clodent seats now show as busy for the whole turn (from the CLI's prompt-submit and stop hooks), so the busy dot, the Working row and the delivery hold work as they do for Claude Code seats.
+
 ## 5.195.0 — 2026-11-23
 
 - A dial-in test runner now opens a new connection for each claim and each answer instead of reusing an idle one, which under load could already have been closed by the lead. A failed request to a peer now logs whether it went out on a reused connection.
