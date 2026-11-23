@@ -573,7 +573,18 @@ or classes as a transient `runner-restart`; polls, output, cancels, uploads and
 leases of admitted jobs keep working. The wait is bounded by the waiter's 30-minute
 cap, after which the restart is dropped with a notice and admission reopens; a
 cancel reopens it too, and nothing about the fence is persisted. `Restart Now`
-still cuts the job. A plain quit and the headless restart do not wait yet.
+still cuts the job.
+
+A desktop quit with a live runner job is stopped once and asks: `Quit When
+Finished` fences the runner the same way and quits when the jobs end (a second
+quit meanwhile offers `Quit Now`, `Keep Waiting`, `Cancel Quit`; at the same
+30-minute cap the quit is dropped with a notice and admission reopens), `Quit
+Now` cuts the jobs, `Cancel` keeps the app running (`createQuitGuard` in
+restart-waiter.js). With no live job a quit is immediate, a restart already
+fired passes straight through, and a quit that proceeds leaves the fence up.
+A headless node's `[agent:reboot]` waits for the jobs and fences the same way
+and its reply names them; the forced restart (`/api/restart`) still cuts them
+and logs how many. A signal (SIGTERM/SIGINT) or a crash still cuts the job.
 
 `shares` is optional: at most 8 `{ name, path, version }` rows, `name` in the
 session-name grammar and unique, `path` absolute, `version` matching

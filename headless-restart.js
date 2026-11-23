@@ -24,6 +24,8 @@ function createHeadlessRestart({
   restart,
   lastInputAt,
   inFlightRuns,
+  suiteJobs = () => [],
+  fence = null,
   now = () => Date.now(),
   setTimer = (fn, ms) => setTimeout(fn, ms),
   clearTimer = (h) => clearTimeout(h),
@@ -37,8 +39,10 @@ function createHeadlessRestart({
     restart,
     lastInputAt,
     inFlightRuns,
+    suiteJobs,
+    fence,
     log,
-    notify: (asked) => { try { log.warn('app', giveUpBody(asked)); } catch {} },
+    notify: (asked, why) => { try { log.warn('app', giveUpBody(asked, why)); } catch {} },
   });
   return {
     supervised,
@@ -51,7 +55,14 @@ function createHeadlessRestart({
   };
 }
 
+function restartNowLine(cut) {
+  const n = Number.isInteger(cut) && cut > 0 ? cut : 0;
+  const base = 'restart requested — shutting down, exit 64 for supervisor relaunch';
+  return n ? `${base}; cutting ${n} suite job${n === 1 ? '' : 's'} this machine is running for other teams` : base;
+}
+
 module.exports = {
+  restartNowLine,
   SUPERVISED_ENV,
   UNSUPERVISED_REASON,
   supervisorDeclared,

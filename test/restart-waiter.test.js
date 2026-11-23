@@ -4,7 +4,7 @@
 // pattern as remind-scheduler.test.js.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { classifyRestart, createIdleWaiter, giveUpBody, restartDetail, pendingDetail } = require('../restart-waiter');
+const { classifyRestart, createIdleWaiter, giveUpBody, restartDetail, pendingDetail, createQuitGuard, quitGiveUpBody } = require('../restart-waiter');
 
 // --- classifyRestart -------------------------------------------------------
 
@@ -544,4 +544,133 @@ test('t2400: a 200-character team name is cut to a bounded label', () => {
 test('t2400: with no runner jobs the busy dialog text is unchanged', () => {
   assert.strictEqual(restartDetail({ busy: 2, idle: 1, jobs: [] }),
     '2 sessions are mid-turn; 1 idle session will be restored cleanly. Restart When Idle waits until work settles; Restart Now interrupts.');
+});
+
+function quitHarness({ jobs = [], answers = [] } = {}) {
+  const clock = fakeClock(1_000_000);
+  const st = { jobs, fence: [], quits: 0, asked: [], notices: [], answers: [...answers] };
+  const guard = createQuitGuard({
+    suiteJobs: () => st.jobs,
+    fence: (on) => st.fence.push(on),
+    quit: () => { st.quits += 1; },
+    ask: (m) => { st.asked.push(m); return Promise.resolve({ response: st.answers.shift() }); },
+    notify: (n) => st.notices.push(quitGiveUpBody(n)),
+    now: clock.now,
+    setTimer: clock.setTimer,
+    clearTimer: clock.clearTimer,
+  });
+  const request = () => {
+    let prevented = false;
+    const ok = guard.beforeQuit({ preventDefault: () => { prevented = true; } });
+    return { ok, prevented };
+  };
+  return { clock, st, guard, request };
+}
+
+const flush = () => new Promise((r) => setImmediate(r));
+const ONE_JOB = [{ id: 'j1', team: 'alpha' }];
+
+test('t2401: a quit with no live runner job passes through with no dialog', async () => {
+  const { st, request } = quitHarness();
+  assert.deepStrictEqual(request(), { ok: true, prevented: false });
+  await flush();
+  assert.deepStrictEqual({ asked: st.asked, fence: st.fence, quits: st.quits }, { asked: [], fence: [], quits: 0 });
+});
+
+test('t2401: a quit with a live runner job is stopped and asks with three buttons in order', async () => {
+  const { st, request } = quitHarness({ jobs: ONE_JOB });
+  assert.deepStrictEqual(request(), { ok: false, prevented: true });
+  await flush();
+  assert.deepStrictEqual(st.asked, [{
+    kind: 'quit',
+    type: 'warning',
+    message: 'Clodex is running tests for another team',
+    detail: '1 suite job this machine is running for other teams is in flight (alpha).\nQuit When Finished waits for them (up to 30 minutes) and accepts no new suite meanwhile; Quit Now cuts them.',
+    buttons: ['Quit When Finished', 'Quit Now', 'Cancel'],
+    defaultId: 0,
+    cancelId: 2,
+  }]);
+});
+
+test('t2401: Quit When Finished fences, holds the quit while the job is live and quits when it ends; the fence stays up', async () => {
+  const { st, clock, guard, request } = quitHarness({ jobs: ONE_JOB, answers: [0] });
+  request();
+  await flush();
+  assert.deepStrictEqual(st.fence, [true]);
+  clock.advance(10 * 60_000);
+  assert.strictEqual(st.quits, 0);
+  st.jobs = [];
+  clock.advance(2000);
+  assert.strictEqual(st.quits, 1);
+  assert.deepStrictEqual(request(), { ok: true, prevented: false });
+  guard.restartFence(false);
+  assert.deepStrictEqual(st.fence, [true]);
+});
+
+test('t2401: a second quit request while waiting asks Quit Now / Keep Waiting / Cancel Quit', async () => {
+  const { st, request } = quitHarness({ jobs: ONE_JOB, answers: [0, 1] });
+  request();
+  await flush();
+  assert.deepStrictEqual(request(), { ok: false, prevented: true });
+  await flush();
+  assert.deepStrictEqual(st.asked[1], {
+    kind: 'waiting',
+    type: 'warning',
+    message: 'Clodex will quit when the tests finish',
+    detail: '1 suite job this machine is running for other teams is in flight (alpha).\nQuit Now cuts them; Cancel Quit keeps Clodex running and accepts new suites again.',
+    buttons: ['Quit Now', 'Keep Waiting', 'Cancel Quit'],
+    defaultId: 1,
+    cancelId: 1,
+  });
+  assert.deepStrictEqual({ fence: st.fence, quits: st.quits }, { fence: [true], quits: 0 });
+});
+
+test('t2401: at the 30-minute cap the quit is dropped, the fence lifted and a notice posted', async () => {
+  const { st, clock, guard } = quitHarness({ jobs: ONE_JOB, answers: [0] });
+  guard.beforeQuit({ preventDefault() {} });
+  await flush();
+  clock.advance(30 * 60_000 - 2000);
+  assert.deepStrictEqual(st.fence, [true]);
+  clock.advance(2000);
+  assert.deepStrictEqual({ fence: st.fence, quits: st.quits, notices: st.notices, waiting: guard.isWaiting() }, {
+    fence: [true, false],
+    quits: 0,
+    notices: ['1 suite job this machine is running for other teams did not finish within 30 minutes — the quit was dropped. Quit again to choose.'],
+    waiting: false,
+  });
+});
+
+test('t2401: Cancel leaves the app running, and Cancel Quit lifts the fence', async () => {
+  const first = quitHarness({ jobs: ONE_JOB, answers: [2] });
+  first.request();
+  await flush();
+  assert.deepStrictEqual({ fence: first.st.fence, quits: first.st.quits }, { fence: [], quits: 0 });
+
+  const second = quitHarness({ jobs: ONE_JOB, answers: [0, 2] });
+  second.request();
+  await flush();
+  second.request();
+  await flush();
+  second.st.jobs = [];
+  second.clock.advance(60_000);
+  assert.deepStrictEqual({ fence: second.st.fence, quits: second.st.quits }, { fence: [true, false], quits: 0 });
+});
+
+test('t2401: after Quit Now the next quit request passes through with the job still live', async () => {
+  const { st, request } = quitHarness({ jobs: ONE_JOB, answers: [1] });
+  request();
+  await flush();
+  assert.strictEqual(st.quits, 1);
+  assert.deepStrictEqual(request(), { ok: true, prevented: false });
+  assert.strictEqual(st.asked.length, 1);
+});
+
+test('t2401: a fired restart passes through with a live job and keeps the restart fence up', async () => {
+  const { st, guard, request } = quitHarness({ jobs: ONE_JOB });
+  guard.restartFence(true);
+  guard.passThrough();
+  assert.deepStrictEqual(request(), { ok: true, prevented: false });
+  guard.restartFence(false);
+  await flush();
+  assert.deepStrictEqual({ asked: st.asked, fence: st.fence }, { asked: [], fence: [true] });
 });

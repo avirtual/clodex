@@ -15,7 +15,7 @@ const path = require('node:path');
 const { createEngine } = require('./lib/engine-isolation');
 const { mkTmpRoot } = require('./lib/tmp-roots');
 const {
-  SUPERVISED_ENV, UNSUPERVISED_REASON, supervisorDeclared, createHeadlessRestart,
+  SUPERVISED_ENV, UNSUPERVISED_REASON, supervisorDeclared, createHeadlessRestart, restartNowLine,
 } = require('../headless-restart');
 
 const ROOT = path.join(__dirname, '..');
@@ -309,4 +309,73 @@ test('supervised headless: an in-flight exec run holds the exit until it ends', 
   runs = [];
   clock.advance(12_000);
   assert.deepStrictEqual(exits, [64]);
+});
+
+function suiteHeld() {
+  const clock = fakeClock(1_000_000);
+  const st = { jobs: [{ id: 'j1', team: 'alpha' }], fence: [], exits: [], warns: [] };
+  const hr = createHeadlessRestart({
+    env: { CLODEX_SUPERVISED: '1' },
+    log: { info() {}, error() {}, warn: (_t, m) => st.warns.push(m) },
+    getSessions: () => [],
+    restart: () => st.exits.push(64),
+    lastInputAt: () => 0,
+    inFlightRuns: () => [],
+    suiteJobs: () => st.jobs,
+    fence: (on) => st.fence.push(on),
+    now: clock.now,
+    setTimer: clock.setTimer,
+    clearTimer: clock.clearTimer,
+  });
+  return { clock, st, hr };
+}
+
+test('t2401: supervised headless: a live runner job holds the exit, which comes after it ends; the wait fences admission', () => {
+  const { clock, st, hr } = suiteHeld();
+  hr.restartHostWhenIdle({});
+  assert.deepStrictEqual(st.fence, [true]);
+  clock.advance(5 * 60_000);
+  assert.deepStrictEqual(st.exits, []);
+  st.jobs = [];
+  clock.advance(12_000);
+  assert.deepStrictEqual({ exits: st.exits, fence: st.fence }, { exits: [64], fence: [true] });
+});
+
+test('t2401: supervised headless: disarm and the give-up both lift the fence', () => {
+  const a = suiteHeld();
+  a.hr.restartHostWhenIdle({});
+  a.hr.disarm();
+  assert.deepStrictEqual(a.st.fence, [true, false]);
+
+  const b = suiteHeld();
+  b.hr.restartHostWhenIdle({});
+  b.clock.advance(30 * 60_000);
+  assert.deepStrictEqual({ exits: b.st.exits, fence: b.st.fence, warns: b.st.warns }, {
+    exits: [],
+    fence: [true, false],
+    warns: ['1 suite job this machine is running for other teams did not finish — the pending restart was dropped. Try again when work settles.'],
+  });
+});
+
+test('t2401: the forced headless restart names the suite jobs it cuts', () => {
+  assert.strictEqual(restartNowLine(0), 'restart requested — shutting down, exit 64 for supervisor relaunch');
+  assert.strictEqual(restartNowLine(1), 'restart requested — shutting down, exit 64 for supervisor relaunch; cutting 1 suite job this machine is running for other teams');
+  assert.strictEqual(restartNowLine(2), 'restart requested — shutting down, exit 64 for supervisor relaunch; cutting 2 suite jobs this machine is running for other teams');
+});
+
+test('t2401: headless-main.js feeds the waiter the runner jobs and fence, sets the reboot-reply seam, and logs the cut on restartNow', () => {
+  const src = seamNames('headless-main.js');
+  assert.match(src, /suiteJobs:\s*\(\)\s*=>\s*engine\.suiteRestartJobs\(\),/);
+  assert.match(src, /fence:\s*\(on\)\s*=>\s*engine\.fenceSuiteRunner\(on\),/);
+  assert.match(src, /restartWaitsForSuite:\s*true,/);
+  assert.match(src, /function restartNow\(\) \{\s*let cut = 0;\s*try \{ cut = engine\.suiteRestartJobs\(\)\.length; \} catch \{\}\s*log\.info\('app', restartNowLine\(cut\)\);/);
+});
+
+test('t2401: main.js routes before-quit through the quit guard first, and restarts pass it', () => {
+  const src = seamNames('main.js');
+  assert.match(src, /app\.on\('before-quit', \(event\) => \{\s*if \(!quitGuard\.beforeQuit\(event\)\) return;\s*appQuitting = true;\s*idleWaiter\.disarm\(\);/);
+  assert.match(src, /function restartClodex\(\) \{\s*quitGuard\.passThrough\(\);/);
+  assert.match(src, /fence:\s*quitGuard\.restartFence,/);
+  assert.match(src, /ask:\s*\(model\)\s*=>\s*dialog\.showMessageBox\(model\),/);
+  assert.match(src, /body:\s*quitGiveUpBody\(n\)/);
 });
