@@ -34,6 +34,7 @@ const { boxLabel } = require('./sandbox');
 const { materializeExecScripts, materializeSeatVerb } = require('./bin-materialize');
 const { loadHelpCorpus } = require('./help-corpus');
 const { mcpLeaks, mcpServerOf } = require('./mcp-plan');
+const { createLoopStall } = require('./loop-stall');
 // Module-level, not inside createEngine: sweepSpilledMessages is module-level and a
 // closure require would not be in scope there.
 const { allParkedTexts } = require('./pending-store');
@@ -2377,6 +2378,9 @@ const toolCache = createToolCache({ whichBin });
     }
   } catch { /* registry read failed — skip autostart */ }
 
+  const loopStall = createLoopStall({ log });
+  loopStall.start();
+
   let wsFails = 0;
   let wsNextAttempt = 0;
   const WS_WATCHDOG_INTERVAL = 10000;
@@ -2510,6 +2514,7 @@ const toolCache = createToolCache({ whichBin });
     try { log.info('app', 'shutdown — engine.shutdown(), killing all sessions'); } catch {}
     try { clearInterval(wsWatchdogTimer); } catch {}
     try { clearInterval(msgCleanupTimer); } catch {}
+    try { loopStall.stop(); } catch {}
     if (pluginUpdateWatch) { try { pluginUpdateWatch.stop(); } catch {} }
     try { proxyPoller.stop(); } catch {}
     try { if (remindScheduler) remindScheduler.stop(); } catch {}

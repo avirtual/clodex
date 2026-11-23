@@ -213,6 +213,11 @@ bundle), whose packaged form is the Docker image under
   start-up and hourly check, the `idle-pause:ask`/`idle-pause:closed`/`idle-pause:auto`
   broadcasts, first answer wins). engine.js wires it to SessionManager's
   `idlePauseSurvey`/`pauseIdle` and the ui-settings store.
+- **loop-stall.js** — `createLoopStall`: a repeating unref'd timer that
+  logs `main process blocked for <ms> ms` under the `loop` tag when a tick
+  fires a second or more late, rate-bound to one line per 10 s, with
+  `stats()`. engine.js starts it and stops it in `shutdown`; see
+  telemetry.md §8.
 - **proc-memory.js** — process-tree memory: `treeRssBytes` (pure, RSS summed
   over each root pid and its descendants) and `sample` (one `ps` call for all
   roots, empty Map on failure or win32). The idle question's `sample` dep.
