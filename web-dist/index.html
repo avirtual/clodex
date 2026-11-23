@@ -2174,7 +2174,8 @@ body {
 #peer-info-update.hidden {
   display: none;
 }
-#peer-info-relay-row.hidden {
+#peer-info-relay-row.hidden,
+#peer-info-share-row.hidden {
   display: none;
 }
 #popover-tools-list,
@@ -7098,6 +7099,18 @@ body:not(.sessions-restored) [data-peer-ui] {
 #peers-list .peer-row-cleartoken input {
   margin: 0;
 }
+#peers-list .peer-row-share {
+  flex: 0 0 100%;
+  margin-left: 116px;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+#peers-list .peer-row-share input {
+  margin: 0;
+}
 #peers-list .peer-row input.invalid {
   border-color: var(--error);
 }
@@ -10813,7 +10826,10 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
     <div id="peer-info-popover" class="hidden">
       <div class="popover-title"><span>Peer — <span id="peer-info-popover-name"></span></span><button type="button" class="popover-close" id="peer-info-popover-close" title="Close" aria-label="Close">&times;</button></div>
       <div id="peer-info-body" class="peer-info-body"></div>
-      <label id="peer-info-relay-row" class="peer-info-relay-row hidden" title="Let this peer's sessions see and DM sessions on your other relay-enabled peers, routed through this hub. Off by default.">
+      <label id="peer-info-share-row" class="peer-info-relay-row hidden" title="This peer's agents can see and message yours.">
+        <input type="checkbox" id="peer-info-share"> Share my agents with this peer
+      </label>
+      <label id="peer-info-relay-row" class="peer-info-relay-row hidden" title="Covers the agents of your other relay-enabled peers only: this peer's sessions can see and DM them, routed through this hub. Off by default.">
         <input type="checkbox" id="peer-info-relay"> Relay mesh — allow cross-peer see &amp; DM via this hub
       </label>
       <div class="popover-actions">
@@ -12388,6 +12404,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         { name: "peerForgetAttached", kind: "invoke", channel: "peer:forgetAttached" },
         { name: "peerSetDisabled", kind: "invoke", channel: "peer:setDisabled" },
         { name: "peerSetRelayAllowed", kind: "invoke", channel: "peer:setRelayAllowed" },
+        { name: "peerSetShareAgents", kind: "invoke", channel: "peer:setShareAgents" },
         { name: "peerSetShellAllowed", kind: "invoke", channel: "peer:setShellAllowed" },
         { name: "suiteRunnerGet", kind: "invoke", channel: "suiteRunner:get" },
         { name: "suiteRunnerSet", kind: "invoke", channel: "suiteRunner:set" },
@@ -51948,6 +51965,124 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
     }
   });
 
+  // relay-protocol.js
+  var require_relay_protocol = __commonJS({
+    "relay-protocol.js"(exports, module) {
+      "use strict";
+      var { isAgentType } = require_cli_adapters();
+      var RELAY_NAME_RE = /^(?!\.+$)[a-zA-Z0-9._-]{1,64}$/;
+      var RELAY_ROSTER_TTL_MS = 6e4;
+      var RELAY_ENVELOPE_V = 1;
+      var RELAY_MAX_HOPS = 1;
+      function relayVersionOk(rv) {
+        return rv === void 0 || rv === null || Number.isInteger(rv) && rv <= RELAY_ENVELOPE_V;
+      }
+      function isQualifiedSender(from) {
+        if (typeof from !== "string") return false;
+        const at = from.indexOf("@");
+        if (at < 0) return RELAY_NAME_RE.test(from);
+        const name = from.slice(0, at);
+        const origin = from.slice(at + 1);
+        return RELAY_NAME_RE.test(name) && RELAY_NAME_RE.test(origin);
+      }
+      function isRelayEnvelope(msg) {
+        return !!(msg && typeof msg === "object" && typeof msg.finalTarget === "string" && msg.finalTarget);
+      }
+      function buildRelayEnvelope({ to, finalTarget, from, origin, body, urgent }) {
+        return {
+          rv: RELAY_ENVELOPE_V,
+          to,
+          finalTarget,
+          from,
+          origin,
+          body,
+          urgent: !!urgent,
+          hops: RELAY_MAX_HOPS
+        };
+      }
+      function hopRule(hops) {
+        const h = Number.isInteger(hops) ? hops : 0;
+        if (h <= 0) return { relay: false, hops: 0 };
+        return { relay: true, hops: h - 1 };
+      }
+      function peerOriginSuffix(p, nameRe = RELAY_NAME_RE) {
+        if (!p) return null;
+        for (const v of [p.label, p.host, p.id]) {
+          if (v && nameRe.test(String(v))) return String(v);
+        }
+        return null;
+      }
+      function peerSharesAgents(peer) {
+        if (!peer) return false;
+        return typeof peer.shareAgents === "boolean" ? peer.shareAgents : !!peer.relayAllowed;
+      }
+      function computeRosterFor(targetId, statuses, relayAllowedIds, localSessions, selfLabel, sharingIds = relayAllowedIds) {
+        const allowed = relayAllowedIds instanceof Set ? relayAllowedIds : new Set(relayAllowedIds || []);
+        const sharing = sharingIds instanceof Set ? sharingIds : new Set(sharingIds || []);
+        const relays = allowed.has(String(targetId));
+        const shares = sharing.has(String(targetId));
+        if (!relays && !shares) return [];
+        const roster = [];
+        const seen = /* @__PURE__ */ new Set();
+        const admit = (sess, origin) => {
+          if (!sess || !isAgentType(sess.type) || sess.clone) return;
+          if (!RELAY_NAME_RE.test(String(sess.name || ""))) return;
+          const key = `${sess.name}@${origin}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+          roster.push({ name: sess.name, origin, type: sess.type });
+        };
+        for (const st of relays ? statuses || [] : []) {
+          if (!st || String(st.id) === String(targetId)) continue;
+          if (!st.online) continue;
+          if (!allowed.has(String(st.id))) continue;
+          const origin = peerOriginSuffix(st, RELAY_NAME_RE);
+          if (!origin) continue;
+          for (const sess of st.sessions || []) admit(sess, origin);
+        }
+        if (shares && selfLabel && RELAY_NAME_RE.test(String(selfLabel))) {
+          for (const sess of localSessions || []) admit(sess, String(selfLabel));
+        }
+        return roster;
+      }
+      function buildTerminalDm({ to, from, body, urgent }) {
+        return { to, from, body, urgent: !!urgent };
+      }
+      function isDoneTaskEnvelope(task) {
+        return !!task && typeof task === "object" && !Array.isArray(task) && task.kind === "done" && typeof task.id === "string" && /^t\d+$/.test(task.id);
+      }
+      var SANDBOX_RELAY_VERBS = ["port", "status", "bootstrap"];
+      var SANDBOX_RELAY_ARGS_MAX = 4096;
+      var SANDBOX_RELAY_BODY_MAX = 16384;
+      function sandboxBodyOk(task) {
+        if (task.body === void 0) return true;
+        return task.verb === "bootstrap" && typeof task.body === "string" && Buffer.byteLength(task.body, "utf8") <= SANDBOX_RELAY_BODY_MAX;
+      }
+      function isSandboxEnvelope(task) {
+        return !!task && typeof task === "object" && !Array.isArray(task) && task.kind === "sandbox" && SANDBOX_RELAY_VERBS.includes(task.verb) && typeof task.args === "string" && task.args.length <= SANDBOX_RELAY_ARGS_MAX && sandboxBodyOk(task);
+      }
+      module.exports = {
+        isDoneTaskEnvelope,
+        isSandboxEnvelope,
+        SANDBOX_RELAY_VERBS,
+        SANDBOX_RELAY_BODY_MAX,
+        RELAY_ENVELOPE_V,
+        RELAY_MAX_HOPS,
+        RELAY_ROSTER_TTL_MS,
+        RELAY_NAME_RE,
+        relayVersionOk,
+        isQualifiedSender,
+        isRelayEnvelope,
+        buildRelayEnvelope,
+        hopRule,
+        buildTerminalDm,
+        computeRosterFor,
+        peerSharesAgents,
+        peerOriginSuffix
+      };
+    }
+  });
+
   // renderer/lib/served-banner.js
   var require_served_banner = __commonJS({
     "renderer/lib/served-banner.js"(exports, module) {
@@ -52018,6 +52153,7 @@ Starts a fresh conversation so the CLI reloads tools, skills, and settings from 
       var { webViewAffordance } = require_peer_web_view();
       var { peerStateText, NEEDS_UPGRADE_TIP } = require_peer_state_text();
       var { isPeerExpanded, togglePeerExpanded } = require_peer_collapse();
+      var { peerSharesAgents } = require_relay_protocol();
       var { servedBannerView } = require_served_banner();
       var { placeAboveAnchor } = require_popover_place();
       var { classifySender } = require_sender_class();
@@ -53158,6 +53294,8 @@ ${detail}` });
         const peerInfoDisableBtn = document.getElementById("peer-info-disable");
         const peerInfoRelayRow = document.getElementById("peer-info-relay-row");
         const peerInfoRelayCheck = document.getElementById("peer-info-relay");
+        const peerInfoShareRow = document.getElementById("peer-info-share-row");
+        const peerInfoShareCheck = document.getElementById("peer-info-share");
         function closePeerInfoPopover() {
           peerInfoPopover.classList.add("hidden");
           peerInfoPopover.dataset.peerId = "";
@@ -53166,6 +53304,8 @@ ${detail}` });
           peerInfoDisableBtn.onclick = null;
           peerInfoRelayRow.classList.add("hidden");
           peerInfoRelayCheck.onchange = null;
+          peerInfoShareRow.classList.add("hidden");
+          peerInfoShareCheck.onchange = null;
         }
         function renderPeerOfferLine(id) {
           const st = peerStatuses.get(id);
@@ -53230,10 +53370,18 @@ ${detail}` });
           };
           peerInfoRelayRow.classList.add("hidden");
           peerInfoRelayCheck.onchange = null;
+          peerInfoShareRow.classList.add("hidden");
+          peerInfoShareCheck.onchange = null;
           window.api.getSettings().then((s) => {
             if (peerInfoPopover.classList.contains("hidden") || peerInfoPopover.dataset.peerId !== String(id)) return;
             const cfg = (s && s.peers || []).find((p) => String(p.id) === String(id));
             peerInfoRelayCheck.checked = !!(cfg && cfg.relayAllowed);
+            peerInfoShareCheck.checked = peerSharesAgents(cfg);
+            peerInfoShareRow.classList.remove("hidden");
+            peerInfoShareCheck.onchange = () => {
+              window.api.peerSetShareAgents(id, peerInfoShareCheck.checked).catch(() => {
+              });
+            };
             peerInfoRelayRow.classList.remove("hidden");
             peerInfoRelayCheck.onchange = () => {
               window.api.peerSetRelayAllowed(id, peerInfoRelayCheck.checked).catch(() => {
@@ -53279,7 +53427,8 @@ ${detail}` });
           peerDisplayHost,
           peerHideFromList,
           ensurePeerSessionVisible,
-          openPeerArgs
+          openPeerArgs,
+          openPeerInfoPopover
         };
       }
       module.exports = { initPeersUi };
@@ -61153,7 +61302,8 @@ Billing/cost history is preserved \u2014 only detailed request forensics are rem
     <label class="peer-row-advlabel">token</label>
     <input type="password" class="peer-row-token" autocomplete="off" spellcheck="false" title="Operator auth token for a tokened remote wire (CLODEX_REMOTE_TOKEN on the peer). Write-only: leave blank to keep the stored one." placeholder="${peer.hasToken ? "set \u2014 blank keeps" : "optional"}">
     ${peer.hasToken ? `<label class="peer-row-cleartoken" title="Delete the stored token on save"><input type="checkbox" class="peer-row-token-clear"> clear</label>` : ""}
-    ${folderReported ? `<span class="peer-row-folder-hint peer-status-dim">folder reported by the peer</span>` : ""}`;
+    ${folderReported ? `<span class="peer-row-folder-hint peer-status-dim">folder reported by the peer</span>` : ""}
+    ${peer.id ? "" : `<label class="peer-row-share" title="This peer's agents can see and message yours."><input type="checkbox" class="peer-row-share-check" checked> Share my agents with this peer</label>`}`;
         const status = document.createElement("div");
         status.className = "peer-row-status hidden";
         row.querySelector(".peer-row-remove").addEventListener("click", () => wrap.remove());
@@ -61520,6 +61670,8 @@ ${res.stderr}` : "");
           const typed = tokenInput ? tokenInput.value.trim() : "";
           if (typed) peer.token = typed;
           else if (clearBox && clearBox.checked) peer.token = "";
+          const shareBox = row.querySelector(".peer-row-share-check");
+          if (shareBox) peer.shareAgents = shareBox.checked;
           out.push(peer);
         }
         return { ok: true, peers: out };
@@ -61626,7 +61778,7 @@ ${res.stderr}` : "");
       function closePeersDialog() {
         peersOverlay.classList.add("hidden");
       }
-      var PEER_SAVE_CARRIED = { relayAllowed: true, disabled: true, inbox: "claim" };
+      var PEER_SAVE_CARRIED = { relayAllowed: true, shareAgents: [true, false], disabled: true, inbox: "claim" };
       document.getElementById("btn-peers-cancel").addEventListener("click", closePeersDialog);
       document.getElementById("btn-peers-save").addEventListener("click", async () => {
         const collected = collectPeers();
@@ -61643,7 +61795,7 @@ ${res.stderr}` : "");
           if (!stored) return peer;
           const out = { ...peer };
           for (const [key, value] of Object.entries(PEER_SAVE_CARRIED)) {
-            if (stored[key] === value) out[key] = value;
+            if ([].concat(value).includes(stored[key])) out[key] = stored[key];
           }
           return out;
         });

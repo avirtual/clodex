@@ -26,6 +26,7 @@ const { BOX_ID_RE, runningInSandboxBox } = require('./sandbox');
 const { SETUP_CHOICES, execRowOf, sanitizeSuiteRunner } = require('./stores');
 const { sanitizeBoxOffer, runConfirmed, offerEntry, NODE_NAME_RE } = require('./box-offer');
 const { offerRunnerFrom } = require('./renderer/lib/offer-view');
+const { peerSharesAgents } = require('./relay-protocol');
 const sessionDiscovery = require('./session-discovery');
 const gitWorktree = require('./git-worktree');
 const { NO_SUCH_METHOD, errorEnvelope, sanitizeGrants, isValidPluginId, PLUGIN_CAPABILITIES, seatHasPlugin } = require('./plugin-api');
@@ -84,7 +85,7 @@ function bytesBuffer(bytes) {
   return null;
 }
 
-const PEER_FLAG_KEYS = ['relayAllowed', 'disabled', 'inbox'];
+const PEER_FLAG_KEYS = ['relayAllowed', 'shareAgents', 'disabled', 'inbox'];
 
 function registerIpcHandlers(deps) {
   const {
@@ -1866,9 +1867,19 @@ function registerIpcHandlers(deps) {
     const peers = (uiSettings.get().peers || []).map((p) => ({ ...p }));
     const rec = peers.find((p) => String(p.id) === String(id));
     if (!rec) return { ok: false, error: 'no such peer' };
+    if (typeof rec.shareAgents !== 'boolean') rec.shareAgents = peerSharesAgents(rec);
     if (on) rec.relayAllowed = true; else delete rec.relayAllowed;
     uiSettings.set({ peers });
     log.info('peer', `${rec.label || id} relay ${on ? 'allowed' : 'disallowed'}`);
+    return { ok: true };
+  });
+  handle('peer:setShareAgents', (_e, id, on) => {
+    const peers = (uiSettings.get().peers || []).map((p) => ({ ...p }));
+    const rec = peers.find((p) => String(p.id) === String(id));
+    if (!rec) return { ok: false, error: 'no such peer' };
+    rec.shareAgents = !!on;
+    uiSettings.set({ peers });
+    log.info('peer', `${rec.label || id} agents ${on ? 'shared' : 'not shared'}`);
     return { ok: true };
   });
   // Box-wide grant with no peer id: the wire carries no caller identity. syncRemoteServer

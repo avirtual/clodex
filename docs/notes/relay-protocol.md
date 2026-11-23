@@ -2,13 +2,12 @@
 
 ## computeRosterFor
 
-The hub's OWN sessions are a roster source alongside its peers', and they ride
-the consent the operator already gave: the symmetric gate runs first and returns
-an empty roster unless the target spoke is itself `relayAllowed`. A spoke marked
-`relayAllowed` is already receiving agent names from the hub's mesh and already
-able to dm them through the hub, so publishing the hub's own names to that same
-spoke adds no exposure axis. An unmarked spoke gets nothing, exactly as before.
-There is deliberately no second flag and no per-session opt-out.
+The hub's OWN sessions are a roster source alongside its peers', gated by the
+target row's sharing tick (`peerSharesAgents`), not by relay: a node that dials
+a peer directly shares nothing relayed, so it must not need relay to be listed.
+A row without `shareAgents` follows its `relayAllowed`, which keeps every row
+written before the tick existed exactly as it was. There is no per-session
+opt-out.
 
 Two of the five gates do not reach the local rows, and neither is an oversight.
 Split-horizon cannot suppress them: it drops the target's own agents from what

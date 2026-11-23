@@ -133,26 +133,24 @@ function createPeerWiring(deps) {
     const s = getUiSettings().get();
     if (!getPeerManager()) {
       const { PeerManager } = require('./peer-client');
-      const { computeRosterFor } = require('./relay-protocol');
+      const { computeRosterFor, peerSharesAgents } = require('./relay-protocol');
       setPeerManager(new PeerManager({
         selfLabel: SELF_LABEL,
         ...offerPeerCallbacks({ getBoxOffer, getOfferFacts, offerDirectory, getSuiteEngine, onChange: () => manager._broadcast('offers-changed') }),
         suiteClaimer: suiteClaimerFor({ getBoxOffer, getSuiteEngine, log }),
         log: (m) => log.warn('peer', m),
         // Hub-relay: the roster pushed to spoke `targetId` — agents on our OTHER
-        // relayAllowed peers plus OUR OWN, all under the symmetric gate. Re-reads
-        // settings, statuses and sessions per call, so a relayAllowed toggle lands
-        // on the next hello tick. manager.list()'s scope: docs/notes/relay-protocol.md.
+        // relayAllowed peers, plus OUR OWN when its row shares them. Re-reads
+        // settings, statuses and sessions per call, so a toggle lands on the next
+        // hello tick. manager.list()'s scope: docs/notes/relay-protocol.md.
         computeRoster: (targetId) => {
-          const allowed = new Set(
-            (getUiSettings().get().peers || [])
-              .filter((p) => p && p.relayAllowed)
-              .map((p) => String(p.id)),
-          );
-          if (!allowed.has(String(targetId))) return [];
+          const peers = (getUiSettings().get().peers || []).filter(Boolean);
+          const allowed = new Set(peers.filter((p) => p.relayAllowed).map((p) => String(p.id)));
+          const sharing = new Set(peers.filter(peerSharesAgents).map((p) => String(p.id)));
+          if (!allowed.has(String(targetId)) && !sharing.has(String(targetId))) return [];
           let local = [];
           try { local = manager.list(); } catch { local = []; }
-          return computeRosterFor(targetId, getPeerManager().statuses(), allowed, local, SELF_LABEL);
+          return computeRosterFor(targetId, getPeerManager().statuses(), allowed, local, SELF_LABEL, sharing);
         },
         emit: (channel, ...args) => {
           // DM federation: claimed box→consumer messages are internal, not a

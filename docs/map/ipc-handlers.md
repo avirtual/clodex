@@ -355,7 +355,8 @@
 | `handle:peer:attachedNames` | the remembered attachments per peer | ui-settings peerAttached (read) | none | unpinned |
 | `handle:peer:forgetAttached` | forgets one remembered attachment | ui-settings peerAttached | forgetPeerAttached | unpinned |
 | `handle:peer:setDisabled` | pauses or resumes a peer without deleting its attachments | ui-settings peers | manager._broadcast, syncPeerManager | peer-disable.test.js peer-shell-grant.test.js |
-| `handle:peer:setRelayAllowed` | allows or disallows relaying through a peer | ui-settings peers | none | unpinned |
+| `handle:peer:setRelayAllowed` | allows or disallows relaying through a peer; first pins `shareAgents` on a row without it | ui-settings peers | peerSharesAgents | peers-save-carry.test.js |
+| `handle:peer:setShareAgents` | shares or withholds this node's own agents in the roster pushed to a peer | ui-settings peers | none | peers-save-carry.test.js |
 | `handle:peer:setShellAllowed` | the box-wide peer-terminal grant; revoking closes open far shells | ui-settings peerShellEnabled | manager._broadcast, syncRemoteServer | peer-shell-grant.test.js |
 | `handle:peer:visible` | which far seats are visible per peer | ui-settings peerVisible (read) | none | unpinned |
 | `handle:peer:setVisible` | sets or clears one peer's visible seat names (names validated) and broadcasts the map | ui-settings peerVisible | manager._broadcast | peer-disable.test.js |

@@ -7152,7 +7152,8 @@ function addPeerRow(peer, { expanded = false } = {}) {
     <label class="peer-row-advlabel">token</label>
     <input type="password" class="peer-row-token" autocomplete="off" spellcheck="false" title="Operator auth token for a tokened remote wire (CLODEX_REMOTE_TOKEN on the peer). Write-only: leave blank to keep the stored one." placeholder="${peer.hasToken ? 'set — blank keeps' : 'optional'}">
     ${peer.hasToken ? `<label class="peer-row-cleartoken" title="Delete the stored token on save"><input type="checkbox" class="peer-row-token-clear"> clear</label>` : ''}
-    ${folderReported ? `<span class="peer-row-folder-hint peer-status-dim">folder reported by the peer</span>` : ''}`;
+    ${folderReported ? `<span class="peer-row-folder-hint peer-status-dim">folder reported by the peer</span>` : ''}
+    ${peer.id ? '' : `<label class="peer-row-share" title="This peer's agents can see and message yours."><input type="checkbox" class="peer-row-share-check" checked> Share my agents with this peer</label>`}`;
   const status = document.createElement('div');
   status.className = 'peer-row-status hidden';
   row.querySelector('.peer-row-remove').addEventListener('click', () => wrap.remove());
@@ -7512,6 +7513,8 @@ function collectPeers() {
     const typed = tokenInput ? tokenInput.value.trim() : '';
     if (typed) peer.token = typed;
     else if (clearBox && clearBox.checked) peer.token = '';
+    const shareBox = row.querySelector('.peer-row-share-check');
+    if (shareBox) peer.shareAgents = shareBox.checked;
     out.push(peer);
   }
   return { ok: true, peers: out };
@@ -7631,7 +7634,7 @@ async function openPeersDialog() {
 
 function closePeersDialog() { peersOverlay.classList.add('hidden'); }
 
-const PEER_SAVE_CARRIED = { relayAllowed: true, disabled: true, inbox: 'claim' };
+const PEER_SAVE_CARRIED = { relayAllowed: true, shareAgents: [true, false], disabled: true, inbox: 'claim' };
 
 document.getElementById('btn-peers-cancel').addEventListener('click', closePeersDialog);
 document.getElementById('btn-peers-save').addEventListener('click', async () => {
@@ -7654,7 +7657,7 @@ document.getElementById('btn-peers-save').addEventListener('click', async () => 
     if (!stored) return peer;
     const out = { ...peer };
     for (const [key, value] of Object.entries(PEER_SAVE_CARRIED)) {
-      if (stored[key] === value) out[key] = value;
+      if ([].concat(value).includes(stored[key])) out[key] = stored[key];
     }
     return out;
   });

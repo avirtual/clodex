@@ -336,6 +336,7 @@ const API_CONTRACT = [
   { name: 'peerForgetAttached', kind: 'invoke', channel: 'peer:forgetAttached' },
   { name: 'peerSetDisabled', kind: 'invoke', channel: 'peer:setDisabled' },
   { name: 'peerSetRelayAllowed', kind: 'invoke', channel: 'peer:setRelayAllowed' },
+  { name: 'peerSetShareAgents', kind: 'invoke', channel: 'peer:setShareAgents' },
   { name: 'peerSetShellAllowed', kind: 'invoke', channel: 'peer:setShellAllowed' },
   { name: 'suiteRunnerGet', kind: 'invoke', channel: 'suiteRunner:get' },
   { name: 'suiteRunnerSet', kind: 'invoke', channel: 'suiteRunner:set' },

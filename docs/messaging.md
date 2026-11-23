@@ -456,6 +456,12 @@ A federated dm may carry `ref:<token>` on its head (`[agent:dm name@peer ref:t18
   lists ALL local agent sessions regardless of workspace (not just the
   sender's) — parity with that cross-workspace federated listing, and every
   listed name is a valid dm handle since the session map is globally keyed.
+  A dialed node also lists the dialer's own agents when the dialer's row for
+  it shares them (`shareAgents`, ticked "Share my agents with this peer";
+  `peerSharesAgents` falls back to `relayAllowed` on a row without the key),
+  and the dialer's other peers' agents only under relay on both rows (§4a).
+  Sharing controls visibility, not delivery: a peer that already knows an
+  agent's name and has exchanged a dm can message it either way.
 - Accepted asymmetries: a park on the mailbox leg sends the remote sender
   no notice; the claim endpoint is origin-unauthenticated (tunnel-trust,
   same posture as control acquisition).
@@ -482,7 +488,8 @@ distinct `relay` cap.
   agents X may reach on its OTHER allowed peers (`computeRosterFor`:
   split-horizon — never X's own — plus the **symmetric** `relayAllowed(X) &&
   relayAllowed(Y)` gate) **and its own local agents**, under the hub's
-  `SELF_LABEL`. The local rows ride the symmetric gate alone — the
+  `SELF_LABEL`. The local rows ride X's `shareAgents` tick instead (absent, it
+  follows `relayAllowed`) — the
   both-endpoints gate is about a third party Y and the hub is not one — and the
   agent-type filter (`isAgentType`: claude, codex, muse, clodent; no scratch clone) keeps bash sessions private. It **pushes** the result
   to X via `POST /api/peer/roster`
