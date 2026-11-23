@@ -2104,3 +2104,20 @@ test('a clodent draft wrapped onto a second row keeps split while the cursor is 
     assert.strictEqual(m.view.state().mode, 'full');
   } finally { m.view.dispose(); m.restore(); }
 });
+
+test('a slash command that starts a clodent turn does not turn the streamed reply into command output', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  const m = mountClodent(['[clodent:session] 0000', '>', '', '', '', ''], 1);
+  try {
+    await settle();
+    m.tick(250);
+    m.write();
+    m.view.composerSent('/review');
+    m.view.setTurnRunning('thinking', 1000);
+    m.paint(['[clodent:session] 0000', '> /review', '● Read /tmp/a.js', 'The file defines one', '', ''], 3, false);
+    mock.timers.tick(250);
+    assert.strictEqual(layoutOf(m).terminal, 'hidden');
+    const outputs = m.pane.childNodes.flatMap((turn) => turn.childNodes || []).filter((n) => /tr-output|tr-command/u.test(n.className));
+    assert.deepStrictEqual(outputs, []);
+  } finally { m.view.dispose(); m.restore(); mock.timers.reset(); }
+});
