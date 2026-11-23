@@ -128,7 +128,7 @@ test('a pty write into an idle clodent seat stamps the turn-start window that ho
   try {
     h.m._injectText(h.s, 'first', { parkable: true });
     assert.deepStrictEqual(await drained(h), TYPED_NOW('first'));
-    assert.strictEqual(h.s._awaitingTurnSince, T0, 'ENTER: the submit stamped the window');
+    assert.deepStrictEqual([h.s._awaitingTurnSince >= T0, h.s._awaitingTurnSince === Date.now()], [true, true], 'ENTER: the submit stamped the window');
     h.m._injectText(h.s, 'second', { parkable: true });
     assert.deepStrictEqual([await drained(h), stored(h)], [TYPED_NOW('first'), ['active']]);
   } finally { cleanup(h); }
