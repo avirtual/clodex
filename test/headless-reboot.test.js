@@ -395,3 +395,13 @@ test('t2407: window-all-closed on non-darwin only asks to quit, so the quit guar
   assert.strictEqual(m[1].trim(), "if (process.platform !== 'darwin') app.quit();");
   assert.match(src, /app\.on\('before-quit', \(event\) => \{\s*if \(!quitGuard\.beforeQuit\(event\)\) return;[\s\S]*?if \(engine\) engine\.shutdown\(\);\s*\}\);/);
 });
+
+test('t2407: a second launch with no window open reopens one the way activate does; with a window it only focuses', () => {
+  const src = seamNames('main.js');
+  const m = src.match(/app\.on\('second-instance', \(\) => \{([\s\S]*?)\n {2}\}\);/);
+  assert.ok(m, 'ENTER: the second-instance handler is found');
+  assert.match(m[1], /if \(wins\.length > 0\) \{\s*const w = wins\[0\];\s*if \(w\.isMinimized\(\)\) w\.restore\(\);\s*w\.show\(\);\s*w\.focus\(\);\s*\} else \{\s*openWindowIfNone\(\);\s*\}/);
+  assert.doesNotMatch(m[1], /createWindow/);
+  assert.match(src, /function openWindowIfNone\(\) \{\s*if \(BrowserWindow\.getAllWindows\(\)\.length === 0\) \{\s*createWindow\(DEFAULT_WORKSPACE_ID\);\s*\}\s*\}/);
+  assert.match(src, /app\.on\('activate', openWindowIfNone\);/);
+});

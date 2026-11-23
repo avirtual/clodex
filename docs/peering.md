@@ -596,7 +596,7 @@ and its reply names them; `/api/restart` refuses while they run unless the
 caller sends `wait` or `cutJobs` (see the node target above), and a cut is
 logged with its count. A signal (SIGTERM/SIGINT) or a crash still cuts the job;
 a headless signal logs how many. Closing the last window on Linux/Windows goes
-through the same quit guard as Quit.
+through the same quit guard as Quit; a cancelled quit leaves the app running with no window, and launching Clodex again reopens one.
 
 `shares` is optional: at most 8 `{ name, path, version }` rows, `name` in the
 session-name grammar and unique, `path` absolute, `version` matching
