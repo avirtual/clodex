@@ -249,7 +249,8 @@ function settle(rec, input, block, tur) {
   const isError = block.is_error === true;
   const toolError = content.startsWith('<tool_use_error>');
   if (isError || toolError) {
-    rec.state = DENIED_RE.test(content) ? 'denied' : 'error';
+    const interrupted = (tur && typeof tur === 'object' && tur.interrupted === true) || content.trim() === 'interrupted by user';
+    rec.state = DENIED_RE.test(content) ? 'denied' : interrupted ? 'interrupted' : 'error';
     if (rec.name === 'Bash' && splitFailure(content).exitCode != null) rec.sum = bashSum(tur, content, true);
     else rec.sum = { message: firstLine(content.replace(/<\/?tool_use_error>/g, '')) };
     return;
