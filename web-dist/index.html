@@ -36872,38 +36872,22 @@ ${m[2].replace(/^\r?\n/, "")}`;
         if (j >= rows.length) return true;
         return rows.slice(j + 1).filter((r) => !isBlank(r)).length <= 1;
       }
-      var CLODENT_PROMPT = /^>(?: |$)/u;
-      var CLODENT_ASK = /^Allow\? \[y\/n\]/u;
-      var nothingBelow = (rows, i) => rows.slice(i + 1).every(isBlank);
-      function isClodentPromptRow(rows, i, hint) {
-        return i === hint.promptRow && i === hint.cursorY && typeof rows[i] === "string" && CLODENT_PROMPT.test(rows[i]) && nothingBelow(rows, i);
-      }
-      function isClodentAsk(rows, cursorY) {
-        return Number.isInteger(cursorY) && typeof rows[cursorY] === "string" && CLODENT_ASK.test(rows[cursorY]) && nothingBelow(rows, cursorY);
-      }
       var ANCHORS = {
         claude: { at: (rows, i, cols) => isRuleRow(rows[i], cols) && isComposerRow(rows[i + 1]), top: (rows, i) => i },
         muse: { at: (rows, i, cols) => isLabeledRuleRow(rows[i], cols) && isComposerRow(rows[i + 1]) && museStripIsIdle(rows, i, cols), top: (rows, i) => i },
-        codex: { at: (rows, i) => isCodexComposerRow(rows, i), top: codexStripTop },
-        clodent: { at: (rows, i, cols, hint) => isClodentPromptRow(rows, i, hint), top: (rows, i) => i, marksPrompt: true, plainFull: isClodentAsk }
+        codex: { at: (rows, i) => isCodexComposerRow(rows, i), top: codexStripTop }
       };
-      var marksPrompt = (platform) => !!ANCHORS[platform] && !!ANCHORS[platform].marksPrompt;
-      function findAnchor(rows, cursorY, cols, platform = "claude", promptRow = -1) {
+      function findAnchor(rows, cursorY, cols, platform = "claude") {
         const anchor = ANCHORS[platform];
         if (!anchor || !Array.isArray(rows) || rows.length < 2) return -1;
         const start = Math.max(0, Math.min(rows.length - 1, Number.isInteger(cursorY) ? cursorY : rows.length - 1));
-        const hint = { cursorY, promptRow };
-        for (let i = start; i >= 0; i--) if (anchor.at(rows, i, cols, hint)) return i;
-        for (let i = start + 1; i < rows.length - 1; i++) if (anchor.at(rows, i, cols, hint)) return i;
+        for (let i = start; i >= 0; i--) if (anchor.at(rows, i, cols)) return i;
+        for (let i = start + 1; i < rows.length - 1; i++) if (anchor.at(rows, i, cols)) return i;
         return -1;
       }
-      function measureSplit(rows, cursorY, cols, platform = "claude", promptRow = -1) {
-        const at = findAnchor(rows, cursorY, cols, platform, promptRow);
-        if (at < 0) {
-          const anchor = ANCHORS[platform];
-          const plain = !!anchor && !!anchor.plainFull && Array.isArray(rows) && anchor.plainFull(rows, cursorY);
-          return { mode: "full", top: -1, bottom: -1, busy: !plain && Array.isArray(rows) && rows.some((r) => !isBlank(r)) };
-        }
+      function measureSplit(rows, cursorY, cols, platform = "claude") {
+        const at = findAnchor(rows, cursorY, cols, platform);
+        if (at < 0) return { mode: "full", top: -1, bottom: -1, busy: Array.isArray(rows) && rows.some((r) => !isBlank(r)) };
         const top = ANCHORS[platform].top(rows, at);
         let bottom = rows.length - 1;
         while (bottom > at + 1 && isBlank(rows[bottom])) bottom--;
@@ -36964,7 +36948,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
         isLabeledRuleRow,
         isCodexComposerRow,
         findAnchor,
-        marksPrompt,
         measureSplit,
         sheetBand,
         initialSplitState,
@@ -39119,7 +39102,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
   var require_live_split_view = __commonJS({
     "renderer/live-split-view.js"(exports, module) {
       "use strict";
-      var { SPLIT_SETTLE_MS, SPLIT_EXIT_MS, marksPrompt, measureSplit, sheetBand, initialSplitState, reduceSplit } = require_live_split();
+      var { SPLIT_SETTLE_MS, SPLIT_EXIT_MS, measureSplit, sheetBand, initialSplitState, reduceSplit } = require_live_split();
       var { createTranscriptRows } = require_transcript_rows();
       var { spinnerText } = require_working_row();
       var { readMenuRows } = require_menu_rows();
@@ -39131,7 +39114,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
       var UNREAD_REASONS = /* @__PURE__ */ new Set(["unavailable", "unreadable"]);
       var UNREAD_TEXT = "The transcript for this seat cannot be read (no transcript file yet, or its link is missing or broken).";
       var PAINT_TAG_MS = 1e4;
-      var PAINT_PLATFORMS = /* @__PURE__ */ new Set(["codex", "muse", "clodent"]);
+      var PAINT_PLATFORMS = /* @__PURE__ */ new Set(["codex", "muse"]);
       var views = /* @__PURE__ */ new WeakMap();
       var NOOP = () => {
       };
@@ -39316,7 +39299,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
         let pulling = false;
         let disposed = false;
         let cursorHidden = false;
-        let promptMark = null;
         let follow = true;
         let pinnedTop = null;
         let raw = false;
@@ -39580,7 +39562,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
             const buf = terminal.buffer.active;
             if (available) {
               rows = screenRows();
-              measured = measureSplit(rows, buf.cursorY, terminal.cols, platform(), promptRow(buf));
+              measured = measureSplit(rows, buf.cursorY, terminal.cols, platform());
             }
           }
           const prev = state;
@@ -39600,25 +39582,15 @@ ${m[2].replace(/^\r?\n/, "")}`;
             if (onChange) onChange(state);
           }
         }
-        function markPrompt(on) {
-          if (promptMark) promptMark.dispose();
-          promptMark = null;
-          if (on && marksPrompt(platform()) && typeof terminal.registerMarker === "function") promptMark = terminal.registerMarker(0) || null;
-        }
-        function promptRow(buf) {
-          return promptMark && !promptMark.isDisposed ? promptMark.line - buf.baseY : -1;
-        }
-        const privateMode = (reset) => (params) => {
-          const modes = Array.from(params || []);
-          if (modes.includes(25)) cursorHidden = reset;
-          if (modes.includes(2004)) markPrompt(!reset);
+        const cursorVisibility = (hidden) => (params) => {
+          if (Array.from(params || []).includes(25)) cursorHidden = hidden;
           return false;
         };
         const parser = terminal.parser;
         const subs = [
           ...parser ? [
-            parser.registerCsiHandler({ prefix: "?", final: "l" }, privateMode(true)),
-            parser.registerCsiHandler({ prefix: "?", final: "h" }, privateMode(false))
+            parser.registerCsiHandler({ prefix: "?", final: "l" }, cursorVisibility(true)),
+            parser.registerCsiHandler({ prefix: "?", final: "h" }, cursorVisibility(false))
           ] : [],
           terminal.onWriteParsed(() => {
             if (!cursorHidden) evaluate();
@@ -39713,7 +39685,6 @@ ${m[2].replace(/^\r?\n/, "")}`;
             clearTimeout(wakeTimer);
             clearTimeout(graceTimer);
             dropPaint();
-            markPrompt(false);
             for (const d of subs) {
               try {
                 d.dispose();

@@ -1,6 +1,6 @@
 'use strict';
 
-const { SPLIT_SETTLE_MS, SPLIT_EXIT_MS, marksPrompt, measureSplit, sheetBand, initialSplitState, reduceSplit } = require('./lib/live-split');
+const { SPLIT_SETTLE_MS, SPLIT_EXIT_MS, measureSplit, sheetBand, initialSplitState, reduceSplit } = require('./lib/live-split');
 const { createTranscriptRows } = require('./transcript-rows');
 const { spinnerText } = require('./lib/working-row');
 const { readMenuRows } = require('./lib/menu-rows');
@@ -13,7 +13,7 @@ const UNREAD_GRACE_MS = 15000;
 const UNREAD_REASONS = new Set(['unavailable', 'unreadable']);
 const UNREAD_TEXT = 'The transcript for this seat cannot be read (no transcript file yet, or its link is missing or broken).';
 const PAINT_TAG_MS = 10000;
-const PAINT_PLATFORMS = new Set(['codex', 'muse', 'clodent']);
+const PAINT_PLATFORMS = new Set(['codex', 'muse']);
 const views = new WeakMap();
 const NOOP = () => {};
 
@@ -209,7 +209,6 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
   let pulling = false;
   let disposed = false;
   let cursorHidden = false;
-  let promptMark = null;
   let follow = true;
   let pinnedTop = null;
   let raw = false;
@@ -492,7 +491,7 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       const buf = terminal.buffer.active;
       if (available) {
         rows = screenRows();
-        measured = measureSplit(rows, buf.cursorY, terminal.cols, platform(), promptRow(buf));
+        measured = measureSplit(rows, buf.cursorY, terminal.cols, platform());
       }
     }
     const prev = state;
@@ -513,27 +512,15 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
     }
   }
 
-  function markPrompt(on) {
-    if (promptMark) promptMark.dispose();
-    promptMark = null;
-    if (on && marksPrompt(platform()) && typeof terminal.registerMarker === 'function') promptMark = terminal.registerMarker(0) || null;
-  }
-
-  function promptRow(buf) {
-    return promptMark && !promptMark.isDisposed ? promptMark.line - buf.baseY : -1;
-  }
-
-  const privateMode = (reset) => (params) => {
-    const modes = Array.from(params || []);
-    if (modes.includes(25)) cursorHidden = reset;
-    if (modes.includes(2004)) markPrompt(!reset);
+  const cursorVisibility = (hidden) => (params) => {
+    if (Array.from(params || []).includes(25)) cursorHidden = hidden;
     return false;
   };
   const parser = terminal.parser;
   const subs = [
     ...(parser ? [
-      parser.registerCsiHandler({ prefix: '?', final: 'l' }, privateMode(true)),
-      parser.registerCsiHandler({ prefix: '?', final: 'h' }, privateMode(false)),
+      parser.registerCsiHandler({ prefix: '?', final: 'l' }, cursorVisibility(true)),
+      parser.registerCsiHandler({ prefix: '?', final: 'h' }, cursorVisibility(false)),
     ] : []),
     terminal.onWriteParsed(() => {
       if (!cursorHidden) evaluate();
@@ -625,7 +612,6 @@ function createLiveSplitView(terminal, wrapperEl, { isEligible, platform = () =>
       clearTimeout(wakeTimer);
       clearTimeout(graceTimer);
       dropPaint();
-      markPrompt(false);
       for (const d of subs) { try { d.dispose(); } catch {} }
       if (typeof unsubTranscript === 'function') unsubTranscript();
       if (ro) ro.disconnect();

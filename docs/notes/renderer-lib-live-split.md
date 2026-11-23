@@ -15,9 +15,3 @@ Muse Code 1.4.0 puts a label in the rule above its composer (`── Voice input
 
 ## museStripIsIdle
 Muse Code 1.4.0 keeps its input strip while a picker such as `/model` is open and draws the picker below the bottom rule, so more than the status row below that rule is not an idle prompt.
-
-## isClodentPromptRow
-clodent writes `\x1b[?2004h` immediately before every `> ` prompt and leaves paste mode on through the turn, and it streams model text unbuffered, so a quoted `> ` line mid-turn renders exactly like an idle prompt (bottom row, cursor on it, nothing below); only the row where the last `?2004h` was parsed (the view's prompt marker) tells them apart.
-
-## isClodentAsk
-While `Allow? [y/n] ` is on screen the ask is answerable only in the terminal and is not in the transcript, so `measureSplit` reports it unbusy and the view shows the plain full terminal rather than the sheet.
