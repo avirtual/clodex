@@ -275,7 +275,7 @@ test('clodent: the argv is the claude PTY argv apart from cmd and the MCP flags,
     const mcpPath = pathForReal(f.root, 'seat', 'mcpConfig');
     assert.ok(claude.args.includes('--mcp-config') && claude.args.includes('--strict-mcp-config'), `ENTER: the claude argv carries its MCP flags ${label}`);
     assert.deepStrictEqual(clodent.args, withoutMcp(claude.args, mcpPath), label);
-    const sansClock = (h) => h.filter((_, i) => i !== 7 && i !== 16);
+    const sansClock = (h) => h.filter((_, i) => i !== 7 && i !== 16 && i !== 19);
     assert.deepStrictEqual([hooks[0][16], hooks[1][16]], [null, '1h'], `only the standing clodent seat asks for the one-hour cache ${label}`);
     assert.deepStrictEqual([hooks[0][1], hooks[1][1]], ['http://127.0.0.1:7811', 'http://127.0.0.1:7811'], `both seats route through the proxy ${label}`);
     assert.deepStrictEqual(sansClock(hooks[1]), sansClock(hooks[0]), `the settings file is written from the same setupClaudeHook arguments ${label}`);
@@ -898,7 +898,7 @@ test('clodent turn hooks: create passes clodentTurns=true to setupClaudeHook for
   assert.deepStrictEqual([hooks[0][19], hooks[1][19]], [false, true]);
 });
 
-test('clodent turn hooks: the state after each hook event and transcript record', async () => {
+test('clodent turn hooks: _onTurnHook and _gateTranscriptActivity — the state after each hook event and transcript record', async () => {
   const r = await clodentTurnRig();
   try {
     const rows = [

@@ -2604,7 +2604,7 @@ function createSessionManager(deps) {
           name,
           (text, touches, meta) => this._scanJsonlText(text, name, touches, meta),
           onSessionId,
-          (state, turnEnd) => { if (this._transcriptActivityPasses(session, state, turnEnd)) this._emitActivity(name, state, state === 'idle' && !!turnEnd); },
+          this._gateTranscriptActivity(session, (state, turnEnd) => this._emitActivity(name, state, state === 'idle' && !!turnEnd)),
           () => this._fireCompactContinuation(session),
           (touches) => this._noteFileTouches(session, touches),
           { reader: readerFor(adapterFor(agentType).transcript.reader) },
@@ -6048,13 +6048,16 @@ function createSessionManager(deps) {
       if ((session.activityState || 'idle') !== 'idle') this._emitActivity(session.name, 'idle', ev === 'Stop');
     }
 
-    _transcriptActivityPasses(session, state, turnEnd) {
-      if (!session || session.agentType !== 'clodent') return true;
-      if (session._hookStopSeen) return false;
-      if (!session._hookTurnOpen) return true;
-      if (state !== 'idle' || !turnEnd) return false;
-      session._hookTurnOpen = false;
-      return true;
+    _gateTranscriptActivity(session, emit) {
+      if (!session || session.agentType !== 'clodent') return emit;
+      return (state, turnEnd) => {
+        if (session._hookStopSeen) return;
+        if (session._hookTurnOpen) {
+          if (state !== 'idle' || !turnEnd) return;
+          session._hookTurnOpen = false;
+        }
+        emit(state, turnEnd);
+      };
     }
 
     _onCompactStart(session, trigger) {
