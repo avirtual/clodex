@@ -1029,6 +1029,44 @@ test('a clodent user record led by hook-context blocks keeps the prompt behind t
   );
 });
 
+test('hook-context is dropped wherever it sits in a user record; the clodent interrupt marker block never reaches the card', () => {
+  const MARK = '[clodent: previous turn interrupted by the user]';
+  const t = (text) => ({ type: 'text', text });
+  const rows = [
+    ['prompt then SessionStart block', [t('fix the bug'), t(HOOK)], 'prompt', 'fix the bug'],
+    ['prompt then both hook blocks', [t('fix the bug'), t(HOOK), t(UPS)], 'prompt', 'fix the bug'],
+    ['prompt, interrupt marker, hook blocks', [t('fix the bug'), t(MARK), t(HOOK), t(UPS)], 'prompt', 'fix the bug'],
+    ['interrupt marker leading the prompt', [t(MARK), t('fix the bug')], 'prompt', 'fix the bug'],
+    ['hook block then prompt (old layout)', [t(HOOK), t('fix the bug')], 'prompt', 'fix the bug'],
+    ['hook element embedded mid-text', `fix the bug\n${UPS}\nthen ship it`, 'prompt', 'fix the bug\nthen ship it'],
+    ['hook element quoted inside a prompt is removed too', `explain this: ${UPS} please`, 'prompt', 'explain this: please'],
+    ['inbound with a trailing UserPromptSubmit block', [t('[agent:from rev] looks good'), t(UPS)], 'inbound', 'looks good'],
+    ['hook-only record', [t(HOOK), t(UPS)], null, null],
+    ['prose mentioning the tag without a complete element', 'why does <hook-context event="x"> show up?', 'prompt', 'why does <hook-context event="x"> show up?'],
+    ['the tag inside a code fence without a close', '```\n<hook-context event="SessionStart">\n```\nwhat is this', 'prompt', '```\n<hook-context event="SessionStart">\n```\nwhat is this'],
+  ];
+  const got = rows.map(([name, content]) => {
+    const records = recordsOf(rec({ type: 'user', uuid: 'u', message: { role: 'user', content } })).records;
+    return [name, records.length, records[0] ? records[0].kind : null, records[0] ? records[0].text : null];
+  });
+  assert.deepStrictEqual(got, rows.map(([name, , kind, text]) => [name, kind ? 1 : 0, kind, text]));
+});
+
+test('clodent 0.10.0 writes one tool_result per user record; each result settles its own tool from its own toolUseResult', () => {
+  const { records } = recordsOf([
+    rec({ type: 'assistant', uuid: 'a', message: { content: [
+      { type: 'tool_use', id: 'r1', name: 'Read', input: { file_path: '/a.js' } },
+      { type: 'tool_use', id: 'r2', name: 'Read', input: { file_path: '/b.js' } },
+    ] } }),
+    rec({ type: 'user', uuid: 'u1', message: { content: [{ type: 'tool_result', tool_use_id: 'r1', content: 'a' }] }, toolUseResult: { type: 'text', file: { filePath: '/a.js', startLine: 1, numLines: 10, totalLines: 10 } } }),
+    rec({ type: 'user', uuid: 'u2', message: { content: [{ type: 'tool_result', tool_use_id: 'r2', content: 'b' }] }, toolUseResult: { type: 'text', file: { filePath: '/b.js', startLine: 5, numLines: 20, totalLines: 300 } } }),
+  ].join('\n'));
+  assert.deepStrictEqual(records, [
+    { id: 'r1', kind: 'tool', ts: null, turn: 0, name: 'Read', arg: '/a.js', state: 'ok', sum: { file: '/a.js', from: 1, to: 10, total: 10 } },
+    { id: 'r2', kind: 'tool', ts: null, turn: 0, name: 'Read', arg: '/b.js', state: 'ok', sum: { file: '/b.js', from: 5, to: 24, total: 300 } },
+  ]);
+});
+
 test('a clodent Bash failure whose result ends in [exit N] reads that exit code and counts the output above it', () => {
   const { records } = recordsOf([
     rec({ type: 'assistant', uuid: 'a', message: { content: [{ type: 'tool_use', id: 'b', name: 'Bash', input: { command: 'cat nope' } }] } }),

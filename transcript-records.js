@@ -27,7 +27,8 @@ const TEAMMATE_RE = /^Another Claude session sent a message:\s*<teammate-message
 const RUNTIME_RE = /^\[agent:([a-z-]+)\][ \t]*/;
 const CLIENT_TAG_RE = /^\(via ([a-z][a-z0-9-]{0,15})\)[ \t]*/;
 const ATTACHED_RE = /Message \((\d+) bytes\) attached: @(\S+)/;
-const HOOK_CONTEXT_RE = /^(?:\s*<hook-context event="[^"]*">[\s\S]*?<\/hook-context>)+\s*/;
+const HOOK_CONTEXT_RE = /\s*<hook-context event="[^"]*">[\s\S]*?<\/hook-context>/g;
+const CLODENT_INTERRUPT = '[clodent: previous turn interrupted by the user]';
 const DENIED_RE = /^(?:The user doesn't want to proceed with this tool use|Permission to use \S+ has been denied)/;
 const INTERRUPT_RE = /^\[Request interrupted by user[^\]]*\]/;
 const PASTE_RE = /<pasted_content id="([A-Za-z0-9]+)">\n?([\s\S]*?)<\/pasted_content(?: id="\1")?>/g;
@@ -94,6 +95,17 @@ function textOf(content) {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
   return content.filter((b) => b && b.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n');
+}
+
+function promptTextOf(content) {
+  const blocks = typeof content === 'string' ? [content] : Array.isArray(content) ? content.filter((b) => b && b.type === 'text' && typeof b.text === 'string').map((b) => b.text) : [];
+  const kept = [];
+  for (const raw of blocks) {
+    const t = raw.replace(HOOK_CONTEXT_RE, '');
+    if ((t !== raw && !t.trim()) || t.trim() === CLODENT_INTERRUPT) continue;
+    kept.push(t);
+  }
+  return kept.join('\n').trim();
 }
 
 function imagesOf(content, text) {
@@ -273,7 +285,7 @@ function userRecords(rec, base, tools, spawned) {
     }
   }
   if (rec.isMeta || rec.isCompactSummary) return [];
-  let text = textOf(content).trim().replace(HOOK_CONTEXT_RE, '');
+  let text = promptTextOf(content);
   if (!text) return [];
   if (rec.origin && rec.origin.kind === 'task-notification') {
     const summary = tagBody(text, 'summary');

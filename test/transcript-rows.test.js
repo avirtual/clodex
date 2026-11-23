@@ -2264,3 +2264,51 @@ test('a clodent first turn whose record opens with SessionStart hook context fol
   assert.strictEqual(findCls(head, 'tr-sender-name')[0].textContent, 'clodex-team');
   assert.strictEqual(findCls(head, 'tr-turn-fold-stats')[0].textContent, '2m 19s · 1 tool · 1 injected');
 });
+
+test('a clodent 0.10.0 first turn writes the prompt first and its hook blocks after; the ticket card folds the turn and carries none of the hook text', () => {
+  const { recordsOf } = require('../transcript-records');
+  const line = (o) => JSON.stringify(o);
+  const { records } = recordsOf([
+    line({ parentUuid: null, type: 'user', message: { role: 'user', content: [
+      { type: 'text', text: '[agent:from clodex-team] [ticket t2390] Fix the pane' },
+      { type: 'text', text: '<hook-context event="SessionStart">\nYou are the clodex agent named rev.\n</hook-context>' },
+      { type: 'text', text: '<hook-context event="UserPromptSubmit">\nroster\n</hook-context>' },
+    ] }, uuid: 'u1', timestamp: '2026-11-23T10:59:15.758Z', version: '0.10.0', entrypoint: 'clodent' }),
+    line({ type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_1', name: 'Read', input: { file_path: '/r/a.js' } }] } }),
+    line({ type: 'user', uuid: 'r1', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'body' }] }, toolUseResult: { type: 'text', file: { filePath: '/r/a.js', startLine: 1, numLines: 3, totalLines: 3 } } }),
+    line({ type: 'assistant', uuid: 'a2', message: { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] } }),
+    line({ type: 'system', uuid: 's1', subtype: 'turn_duration', durationMs: 4000, messageCount: 4 }),
+  ].join('\n'));
+  assert.deepStrictEqual(records.filter((r) => r.kind === 'inbound').map((r) => [r.id, r.text]), [['u1', '[ticket t2390] Fix the pane']]);
+  const m = mount({ mode: 'conversation' });
+  m.render(records);
+  const turn = turnOf(m, 'u1');
+  assert.ok(turn, 'ENTER: the inbound drives its own turn');
+  const head = turn.childNodes[0];
+  assert.strictEqual(head.className, 'tr-row tr-turn-fold');
+  assert.strictEqual(findCls(head, 'tr-ticket-chip')[0].textContent, 't2390');
+  assert.ok(!/hook-context|roster|agent named/.test(JSON.stringify(records)), 'no hook text in any record');
+});
+
+test('clodent 0.10.0 toolUseResult fields reach the row summary for Read, Grep, Glob, Bash, Edit and Write', () => {
+  const { recordsOf } = require('../transcript-records');
+  const line = (o) => JSON.stringify(o);
+  const cases = [
+    ['Read', { file_path: '/a.js' }, { type: 'text', file: { filePath: '/a.js', startLine: 11, numLines: 30, totalLines: 428 } }, '11–40 of 428'],
+    ['Grep', { pattern: 'x' }, { mode: 'content', numFiles: 3, numLines: 14, truncated: false }, '14 lines in 3 files'],
+    ['Glob', { pattern: '*.js' }, { numFiles: 9, numLines: 9, truncated: true }, '9 files'],
+    ['Bash', { command: 'ls' }, { stdout: 'a\nb\nc', stderr: 'warn', interrupted: false }, '4 lines'],
+    ['Bash', { command: 'make' }, { stdout: 'a', stderr: '', interrupted: true }, 'interrupted'],
+    ['Edit', { file_path: '/a.js' }, { type: 'update', filePath: '/a.js', structuredPatch: [{ lines: [' k', '-old', '+new', '+more'] }] }, '+2 −1'],
+    ['Write', { file_path: '/n.js' }, { type: 'create', filePath: '/n.js', content: 'one\ntwo\nthree', structuredPatch: [] }, 'new · 3 lines'],
+    ['Write', { file_path: '/a.js' }, { type: 'update', filePath: '/a.js', structuredPatch: [{ lines: ['-a', '+b'] }] }, '+1 −1'],
+  ];
+  const got = cases.map(([name, input, tur], k) => {
+    const { records } = recordsOf([
+      line({ type: 'assistant', uuid: `a${k}`, message: { content: [{ type: 'tool_use', id: `t${k}`, name, input }] } }),
+      line({ type: 'user', uuid: `u${k}`, message: { content: [{ type: 'tool_result', tool_use_id: `t${k}`, content: 'x' }] }, toolUseResult: tur }),
+    ].join('\n'));
+    return [name, summaryParts(records[0]).map(([s]) => s).join('')];
+  });
+  assert.deepStrictEqual(got, cases.map(([name, , , want]) => [name, want]));
+});
