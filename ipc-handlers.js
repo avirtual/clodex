@@ -111,7 +111,7 @@ function registerIpcHandlers(deps) {
     readSkillCatalog, applySessionSkills, setUiTheme, sshRun,
     stripLevelOf, syncPeerManager, syncRemoteServer, updateApplies,
     setRemoteToken, hasRemoteToken, refreshRemoteToken, listSpeakVoices,
-    suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner, suiteClaimStatus, suiteActivity, suiteOutput,
+    suiteRunnerState, applySuiteRunner, suiteClaimStatus, suiteActivity, suiteOutput,
     getBoxOffer, boxOfferForced, readStoredBoxOffer, getOfferFacts, readOfferFacts, offerDirectory, dialers,
     wirescope, workspaceOfSender,
     sessionScopeCtx, renameWorkspaceScope,
@@ -1895,11 +1895,12 @@ function registerIpcHandlers(deps) {
         return { ok: false, error: 'invalid shared folders: each needs a unique name, an absolute folder and a version of letters, digits, dot, dash or underscore (at most 8)', state: suiteRunnerState() };
       }
       if (JSON.stringify(clean) === JSON.stringify(uiSettings.get().suiteRunner || null)) return { ok: true, state: suiteRunnerState() };
-      if (suiteRunnerBusy()) {
-        return { ok: false, error: 'a test job is running on this machine — change the test runner when it finishes', state: suiteRunnerState() };
-      }
       uiSettings.set({ suiteRunner: clean });
-      reloadSuiteRunner();
+      const applied = applySuiteRunner();
+      if (applied.pending) {
+        log.info('remote', `test runner setting saved, applies when ${applied.running} running job(s) finish`);
+        return { ok: true, pending: true, state: suiteRunnerState() };
+      }
       log.info('remote', `test runner setting ${clean && clean.enabled ? 'ON' : 'off'}`);
       return { ok: true, state: suiteRunnerState() };
     });
