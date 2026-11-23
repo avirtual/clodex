@@ -8138,3 +8138,203 @@ test('t2398: a box red whose re-measure fell back to a red home run is rejected 
   assert.ok(body[0].includes('The re-measure did not decide on the box (run budget); the first box result stands.'), body[0]);
   assert.strictEqual(t.suiteProvenance.verify.decidedBy, 'box');
 });
+
+function flightClient(state, { cancel = null } = {}) {
+  const t = { cancels: [], rows: [], ids: [], states: [] };
+  t.client = {
+    run: (o) => {
+      const jobId = `job-${t.ids.length + 1}`;
+      t.ids.push(jobId);
+      o.onJob({ jobId, attempt: 1 });
+      o.onSubmitted({ jobId, attempt: 1 });
+      o.onState(state);
+      t.states.push(o.shouldStop());
+      return new Promise(() => {});
+    },
+    cancel: cancel || (async (peer, id, wire) => { t.cancels.push([peer, id, wire]); return { ok: true }; }),
+    decided: (row) => { t.rows.push(row); },
+  };
+  t.submitted = async (n) => { for (let i = 0; i < 500 && t.ids.length < n; i += 1) await new Promise((r) => setImmediate(r)); };
+  return t;
+}
+
+function flightLoop(testRunner) {
+  const holder = { f: null };
+  const b = boxLoop(null, { extraDeps: {
+    boxDecideTimers: { setTimeout: () => null, clearTimeout: () => {} },
+    setTeamTestRunner: (name, patch) => ({ ...holder.f.team, testRunner: patch === null ? undefined : { ...holder.f.team.testRunner, ...patch } }),
+  } });
+  holder.f = b.f;
+  b.f.team.testRunner = testRunner;
+  b.f.team.dir = mkTmpRoot('clodex-box-team-');
+  require('../team-box').writeBox(b.f.team.dir, BOX_DEF);
+  const loops = [];
+  const loop = b.f.m._runTicketLoop;
+  b.f.m._runTicketLoop = function (...args) { const r = loop.apply(this, args); loops.push(r); return r; };
+  const seed = (over = {}) => b.f.tstore.save(b.f.team.root, [{ ...b.f.one(), state: 'done', loopStep: 'verify', report: 'r', reportedBy: 'team-hand', ...over }]);
+  const intent = (sub, body = 'redo it') => ({ type: 'task', sub, id: 't1', who: null, body });
+  return { b, f: b.f, loops, seed, intent };
+}
+
+const REJECT_ROWS = [
+  ['queued', 'fallback:home', GATE_ON],
+  ['running', 'fallback:home', GATE_ON],
+  ['queued', 'fallback:hold', GATE_HOLD],
+  ['running', 'fallback:hold', GATE_HOLD],
+];
+
+for (const [state, fb, testRunner] of REJECT_ROWS) {
+  test(`t2402: a reject while the verify box job is ${state} (${fb}) cancels job-1 once, runs no home suite, stamps no hold and writes no box row`, async () => {
+    const l = flightLoop(testRunner);
+    const c = flightClient(state);
+    l.b.holder.client = c.client;
+    l.seed({ boxRetry: { attempts: 1, nextAt: 0, lastEndedAt: 0, inFlight: true } });
+    const run = l.f.m._runTicketLoop(l.f.team, 't1');
+    await c.submitted(1);
+    assert.deepStrictEqual(c.ids, ['job-1'], 'ENTER: the box job was submitted');
+    l.f.m._taskReject(l.f.seat('lead'), l.f.team, l.intent('reject'), () => {});
+    await run;
+    const t = l.f.one();
+    assert.deepStrictEqual(c.cancels, [['p1', 'job-1', 'push']]);
+    assert.deepStrictEqual(l.b.events, [], 'no home suite');
+    assert.deepStrictEqual([t.state, t.verifyHold, t.boxRetry], ['open', undefined, undefined]);
+    assert.deepStrictEqual(c.rows, [], 'no box decision row');
+    assert.strictEqual(l.f.created.length, 0, 'no reviewer');
+    assert.strictEqual(l.f.m._boxFlights.size, 0);
+  });
+}
+
+test('t2402: task cancel while the verify box job is queued cancels job-1', async () => {
+  const l = flightLoop(GATE_HOLD);
+  const c = flightClient('queued');
+  l.b.holder.client = c.client;
+  l.seed();
+  const run = l.f.m._runTicketLoop(l.f.team, 't1');
+  await c.submitted(1);
+  l.f.m._taskCancel(l.f.seat('lead'), l.f.team, l.intent('cancel', 'not needed'), () => {});
+  await run;
+  assert.strictEqual(l.f.one().state, 'cancelled', 'ENTER: the ticket was cancelled');
+  assert.deepStrictEqual(c.cancels, [['p1', 'job-1', 'push']]);
+  assert.deepStrictEqual(l.b.events, []);
+  assert.deepStrictEqual(c.rows, []);
+  assert.strictEqual(l.f.one().verifyHold, undefined);
+});
+
+test('t2402: a new task done on the next round cancels the old round\'s queued job-1 and submits its own job-2', async () => {
+  const l = flightLoop(GATE_HOLD);
+  const c = flightClient('queued');
+  l.b.holder.client = c.client;
+  l.seed();
+  const first = l.f.m._runTicketLoop(l.f.team, 't1');
+  await c.submitted(1);
+  const t = l.f.one();
+  delete t.loopStep;
+  l.f.tstore.save(l.f.team.root, [{ ...t, state: 'open', reworkRound: 1 }]);
+  assert.deepStrictEqual(c.cancels, [], 'ENTER: a board write alone sends no cancel');
+  l.f.m._taskDone(l.f.seat('team-hand'), l.f.team, l.intent('done', 'round two'), () => {});
+  await first;
+  await c.submitted(2);
+  assert.deepStrictEqual(c.cancels, [['p1', 'job-1', 'push']]);
+  assert.deepStrictEqual(c.ids, ['job-1', 'job-2']);
+  assert.deepStrictEqual(c.states, [false, false], 'job-2 was not stopped by job-1\'s cancel');
+  assert.deepStrictEqual([l.f.one().loopStep, l.f.one().reworkRound, l.f.one().verifyHold], ['verify', 1, undefined]);
+  l.f.m._cancelBoxRuns(l.f.team, 'runner-off');
+  await Promise.all(l.loops);
+  assert.deepStrictEqual(c.cancels.map((x) => x[1]), ['job-1', 'job-2']);
+});
+
+test('t2402: gate:off while the verify box job is running cancels it and re-enters verify on the home suite', async () => {
+  const l = flightLoop(GATE_HOLD);
+  const c = flightClient('running');
+  l.b.holder.client = c.client;
+  l.seed({ boxRetry: { attempts: 1, nextAt: 0, lastEndedAt: 0, inFlight: true } });
+  l.f.m._runTicketLoop(l.f.team, 't1');
+  await c.submitted(1);
+  const replies = [];
+  await l.f.m._handleTeamRunner(l.f.team, { gate: 'off' }, (m) => replies.push(m));
+  assert.match(replies[0], /gate mode of team set to off/, 'ENTER: the gate verb ran');
+  await Promise.all(l.loops);
+  await Promise.all(l.loops);
+  const t = l.f.one();
+  assert.strictEqual(l.loops.length, 2, 'the cancelled run and one re-entry');
+  assert.deepStrictEqual(c.cancels, [['p1', 'job-1', 'push']]);
+  assert.deepStrictEqual(l.b.events, ['spawn'], 'the re-entry ran the home suite once');
+  assert.deepStrictEqual([t.verifyHold, t.boxRetry, t.suiteProvenance.verify.decidedBy], [undefined, undefined, null]);
+  assert.strictEqual(l.f.created.length, 1, 'the reviewer was spawned');
+  assert.deepStrictEqual(c.rows, []);
+});
+
+test('t2402: runner off while the verify box job is queued cancels it and re-enters verify on the home suite', async () => {
+  const l = flightLoop(GATE_ON);
+  const c = flightClient('queued');
+  l.b.holder.client = c.client;
+  l.seed();
+  l.f.m._runTicketLoop(l.f.team, 't1');
+  await c.submitted(1);
+  await l.f.m._handleTeamRunner(l.f.team, { value: 'off' }, () => {});
+  await Promise.all(l.loops);
+  await Promise.all(l.loops);
+  assert.deepStrictEqual(c.cancels, [['p1', 'job-1', 'push']]);
+  assert.deepStrictEqual(l.b.events, ['spawn']);
+  assert.strictEqual(l.f.created.length, 1, 'the reviewer was spawned');
+});
+
+test('t2402: a verify box job that finishes normally sends no cancel, and a later board change finds nothing in flight', async () => {
+  const l = flightLoop(GATE_ON);
+  const r = boxRemote('green', l.b.events);
+  const cancels = [];
+  l.b.holder.client = { ...r.client, cancel: async (...a) => { cancels.push(a); return { ok: true }; } };
+  l.seed();
+  await l.f.m._runTicketLoop(l.f.team, 't1');
+  assert.deepStrictEqual(l.b.events, ['post'], 'ENTER: the box decided');
+  assert.strictEqual(l.f.one().loopStep, 'review');
+  l.f.m._reconcileTickets(l.f.team);
+  assert.deepStrictEqual(cancels, []);
+  assert.strictEqual(l.f.m._boxFlights.size, 0);
+});
+
+test('t2402: a cancel that fails at the transport is logged once and the verify still ends as not-current', async () => {
+  const l = flightLoop(GATE_HOLD);
+  const tried = [];
+  const c = flightClient('queued', { cancel: async (peer, id) => { tried.push(id); throw new Error('runner unreachable'); } });
+  l.b.holder.client = c.client;
+  l.seed();
+  const run = l.f.m._runTicketLoop(l.f.team, 't1');
+  await c.submitted(1);
+  l.f.m._taskReject(l.f.seat('lead'), l.f.team, l.intent('reject'), () => {});
+  await run;
+  assert.deepStrictEqual(tried, ['job-1']);
+  assert.deepStrictEqual(l.f.logs.filter((x) => /cancel of box job/.test(x.msg)).map((x) => [x.level, x.msg]), [
+    ['warn', 'ticket t1: cancel of box job job-1 (not-current) failed — runner unreachable'],
+  ]);
+  const t = l.f.one();
+  assert.deepStrictEqual([t.state, t.verifyHold], ['open', undefined]);
+  assert.deepStrictEqual(l.b.events, []);
+  assert.deepStrictEqual(c.rows, []);
+  assert.strictEqual(l.f.esc().length, 0, 'no escalation');
+});
+
+test('t2402: a post-merge box run is not cancelled when the ticket changes underneath it', async () => {
+  const l = flightLoop(GATE_ON);
+  const r = boxRemote('green', l.b.events);
+  const cancels = [];
+  let go = null;
+  let called = false;
+  const gate = new Promise((res) => { go = res; });
+  l.b.holder.client = {
+    ...r.client,
+    run: (o) => { called = true; o.onSubmitted({ jobId: 'merge-job', attempt: 1 }); return gate.then(() => r.client.run(o)); },
+    cancel: async (...a) => { cancels.push(a); return { ok: true }; },
+  };
+  const running = l.f.m._runTicketSuite(l.f.team, l.f.one(), null, { merge: true });
+  for (let i = 0; i < 500 && !called; i += 1) await new Promise((res) => setImmediate(res));
+  assert.ok(called, 'ENTER: the post-merge box job was submitted');
+  l.f.tstore.save(l.f.team.root, [{ ...l.f.one(), state: 'open', reworkRound: 3 }]);
+  l.f.m._reconcileTickets(l.f.team);
+  l.f.m._cancelBoxRuns(l.f.team, 'gate-off');
+  go();
+  const out = await running;
+  assert.deepStrictEqual([out.decidedBy, out.cancelled, out.green], ['box', undefined, true]);
+  assert.deepStrictEqual(cancels, []);
+  assert.deepStrictEqual(l.b.events, ['post']);
+});
