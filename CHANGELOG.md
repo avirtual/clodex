@@ -14,6 +14,7 @@ blocks a release.
 ## Unreleased
 
 - A reviewer's verdict written on a single line (`VERDICT: ACCEPT — MUST-FIX: (none) — NITS: …`) now merges. Before, the loop read "(none) —" as one must-fix and escalated the merge.
+- A dial-in test runner now resends an answer the lead's machine failed to receive, for as long as the lead is still waiting for it. Before, one dropped connection threw the answer away and the lead waited out the whole call.
 
 ## 5.193.0 — 2026-11-23
 

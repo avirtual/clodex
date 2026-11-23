@@ -887,12 +887,13 @@ class PeerConnection {
     });
   }
 
-  suiteDeskReply(id, claim, answer) {
+  suiteDeskReply(id, claim, answer, timeoutMs) {
     const payload = { v: SUITE_DESK_V, claim, status: answer && answer.status, body: answer && answer.body };
+    const timeout = Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.min(timeoutMs, IMPORT_TIMEOUT_MS) : IMPORT_TIMEOUT_MS;
     return new Promise((resolve) => {
       this._request('POST', `/api/suite-desk/calls/${encodeURIComponent(id)}/reply`, payload, (err, body, status) => {
         resolve(err ? { status: status || 0, body: null, error: err.message } : { status, body, error: null });
-      }, IMPORT_TIMEOUT_MS);
+      }, timeout);
     });
   }
 

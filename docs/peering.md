@@ -346,11 +346,27 @@ most the requested wait and at least 0. A call with a blob fetches it first
 (`suiteDeskBlob`, a raw GET capped at 4 MiB plus 64 KiB). A call whose
 deadline has passed is not executed. Everything else goes through
 `suiteDispatch` against the current engine, so a call outside the suite verb
-table is answered 404, and the answer is posted with `suiteDeskReply`. A reply
-the desk refuses is logged and dropped; the lead's own retry reissues the
-request. A 410 `call expired` logs `reply arrived after the call expired
-(<ms since receipt> ms)`, a 410 `call already settled` logs `reply not needed,
-call already settled`, and any other refusal `reply not accepted (<why>)`.
+table is answered 404, and the answer is posted with `suiteDeskReply`. Each
+reply request times out at the call's remaining lifetime (at least 1 s, at
+most the 120 s default). A reply the desk refuses is logged and dropped; the
+lead's own retry reissues the request. A 410 `call expired` logs `reply arrived
+after the call expired (<ms since receipt> ms)`, a 410 `call already settled`
+logs `reply not needed, call already settled`, and any other refusal (404,
+409, 400, any other 4xx) `reply not accepted (<why>)`.
+
+- **Resend.** A reply that fails in transport (status 0: hang-up, timeout,
+  refused) or answers 502, 503 or 504 is kept in memory and the same answer is
+  sent again; the call is never executed twice. Delays are 500 ms, 1 s, then
+  2 s, each times the claim retry's random factor in [0.5, 1]. It stops after
+  6 attempts in all, when a resend would leave under 1 s of the call's
+  lifetime, or at `stop()`, which clears every resend timer. A waiting resend
+  holds no pool slot. At most 64 replies (8 MiB of bodies) are held; past
+  either bound the oldest is dropped. `status().resending` counts them.
+- Log lines: `call <id>: reply failed (<why>), resending` on the first
+  failure; `reply delivered on attempt <n>`; `reply delivered (confirmed on
+  resend)` when a resend answers 410 `call already settled`; `reply not
+  accepted (<why>) after <n> attempts` on giving up; `reply not accepted
+  (<why>) (resend dropped: too many pending)` past a bound.
 
 - While the schedule is closed (`admit` false) a `POST /api/suite/jobs` is
   answered 503 `offer closed`; poll, output and cancel for existing jobs are

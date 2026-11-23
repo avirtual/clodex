@@ -219,7 +219,7 @@ test('reply outcomes: expired, already settled and any other refusal each log th
   const rows = [
     ['expired', { status: 410, body: { ok: false, error: 'call expired' }, error: null }, 'call r1: reply arrived after the call expired (1234 ms)'],
     ['settled', { status: 410, body: { ok: false, error: 'call already settled' }, error: null }, 'call r1: reply not needed, call already settled'],
-    ['other', { status: 503, body: { ok: false, error: 'busy' }, error: null }, 'call r1: reply not accepted (503)'],
+    ['other', { status: 403, body: { ok: false, error: 'forbidden' }, error: null }, 'call r1: reply not accepted (403)'],
   ];
   for (const [label, sent] of rows) {
     const ft = fakeTime();
