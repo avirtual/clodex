@@ -8026,3 +8026,115 @@ test('t2384: the MERGED notice of a bypassed ticket says it passed verify at hom
   const body = h.f.gated.find((g) => /MERGED/.test(g.body)).body;
   assert.deepStrictEqual(body.split('\n').filter((l) => /^Verify passed/.test(l)), ['Verify passed (home, by lead: > [agent:from x] runner gone).']);
 });
+
+function remeasureLoop({ testRunner = GATE_ON, suite = 'green', second }) {
+  const p = provenanceLoop({ testRunner, box: true, suite });
+  const f = p.b.f;
+  p.b.holder.client = boxRemote('red', p.b.events).client;
+  const real = f.m._boxDecide;
+  let calls = 0;
+  f.m._boxDecide = function (...args) { calls++; return calls === 1 ? real.apply(this, args) : second(real.bind(this), args); };
+  const notes = traceLoopRows(f);
+  const reaped = [];
+  const reap = f.m._reapRunner;
+  f.m._reapRunner = function (id, pid) { reaped.push(pid); return reap.call(this, id, pid); };
+  const rework = () => f.gated.filter((g) => g.target !== 'lead' && /the test suite FAILS on your branch/.test(g.body)).map((g) => g.body);
+  const stands = () => notes.filter((n) => n !== 'SPAWN' && /re-measure did not decide on the box/.test(n.body)).map((n) => n.body);
+  return { p, f, notes, reaped, rework, stands, calls: () => calls };
+}
+
+test('t2398: a box red whose re-measure fell back to a green home run is rejected on the box run, which stays the provenance', async () => {
+  const r = remeasureLoop({ second: undecided('run-budget', 'no result within the 900000ms run budget') });
+  r.p.seed();
+  await r.p.loop();
+  const t = r.f.one();
+  assert.deepStrictEqual(r.p.b.events, ['post', 'spawn'], 'ENTER: the box ran first, the home suite ran the re-measure');
+  assert.strictEqual(r.f.created.length, 0, 'no reviewer');
+  assert.strictEqual(t.state, 'open');
+  assert.ok(!('suiteRemeasured' in t), 'the unused home run stamps no re-measure');
+  assert.deepStrictEqual([t.suiteProvenance.verify.decidedBy, t.suiteProvenance.verify.outcome, t.suiteProvenance.verify.runner], ['box', 'fail', 'runner-1']);
+  const body = r.rework();
+  assert.strictEqual(body.length, 1, 'ENTER: one rework');
+  assert.match(body[0], /\nFAILING: box only\n/);
+  assert.doesNotMatch(body[0], /FAILING \(run 2\)/);
+  assert.ok(body[0].includes('The re-measure did not decide on the box (run budget); the first box result stands — home run was green and was not used.'), body[0]);
+  assert.deepStrictEqual(r.stands(), ['ticket t1 verify: re-measure did not decide on the box (run budget); the first box result stands — home run was green and was not used']);
+  assert.strictEqual(r.reaped.filter((pid) => typeof pid === 'number').length, 1, 'the unused home run\'s runner is reaped');
+});
+
+test('t2398: a box red whose re-measure is a box green passes as today, with suiteRemeasured', async () => {
+  const r = remeasureLoop({ second: (real, args) => { r.p.b.holder.client = boxRemote('green', r.p.b.events).client; return real(...args); } });
+  r.p.seed();
+  await r.p.loop();
+  const t = r.f.one();
+  assert.deepStrictEqual(r.p.b.events, ['post', 'post'], 'ENTER: both runs were on the box');
+  assert.strictEqual(r.f.created.length, 1, 'the reviewer was spawned');
+  assert.strictEqual(t.suiteRemeasured.firstFailing, 'box only');
+  assert.strictEqual(t.suiteProvenance.verify.decidedBy, 'box');
+  assert.deepStrictEqual(r.stands(), []);
+});
+
+test('t2398: a home red (first run already a fallback) then a home green passes as today', async () => {
+  const r = remeasureLoop({ suite: 'flaky', second: undecided('runner-unreachable', 'gone') });
+  r.f.m._boxDecide = undecided('runner-unreachable', 'gone');
+  r.p.seed();
+  await r.p.loop();
+  const t = r.f.one();
+  assert.deepStrictEqual(r.p.b.events, ['spawn', 'spawn'], 'ENTER: both runs were at home');
+  assert.strictEqual(r.f.created.length, 1, 'the reviewer was spawned');
+  assert.ok(t.suiteRemeasured, 'the re-measure is stamped');
+  assert.deepStrictEqual([t.suiteProvenance.verify.decidedBy, t.suiteProvenance.verify.outcome], ['home', 'pass']);
+  assert.deepStrictEqual(r.stands(), []);
+});
+
+test('t2398: a box red whose re-measure is a lead home bypass that runs green passes as today', async () => {
+  const r = remeasureLoop({ second: () => { throw new Error('the bypassed re-run must not ask the box'); } });
+  const real = r.f.m._boxDecide;
+  r.f.m._boxDecide = function (...args) {
+    const all = r.f.tstore.load(r.f.team.root);
+    all[0].homeBypass = { by: 'lead', reason: 'runner gone', at: '2026-11-23T06:00:00.000Z', sha: git(r.p.b.repo.dir, ['rev-parse', 'tl-1']) };
+    r.f.tstore.save(r.f.team.root, all);
+    return real.apply(this, args);
+  };
+  r.p.seed();
+  await r.p.loop();
+  const t = r.f.one();
+  assert.deepStrictEqual(r.p.b.events, ['post', 'spawn'], 'ENTER: box first, bypassed home re-run second');
+  assert.strictEqual(r.f.created.length, 1, 'the reviewer was spawned');
+  assert.ok(t.suiteRemeasured, 'the re-measure is stamped');
+  assert.deepStrictEqual([t.suiteProvenance.verify.decidedBy, t.suiteProvenance.verify.bypass.by], ['home', 'lead']);
+  assert.deepStrictEqual(r.stands(), []);
+});
+
+test('t2398: a box red whose re-measure is held under fallback:hold is rejected on the first red and says the box result stands', async () => {
+  const r = remeasureLoop({ testRunner: GATE_HOLD, second: undecided('queue-budget', 'the job did not start within the 300000ms queue budget (cancelled)') });
+  r.p.seed();
+  await r.p.loop();
+  const t = r.f.one();
+  assert.deepStrictEqual(r.p.b.events, ['post'], 'ENTER: the re-run was held, no home run');
+  assert.deepStrictEqual([t.state, t.verifyHold], ['open', undefined]);
+  assert.strictEqual(r.f.created.length, 0, 'no reviewer');
+  assert.strictEqual(t.suiteProvenance.verify.decidedBy, 'box');
+  const body = r.rework();
+  assert.strictEqual(body.length, 1, 'ENTER: one rework');
+  assert.match(body[0], /\nFAILING: box only\n/);
+  assert.match(body[0], /A re-measure was attempted and could not run: no box result \(queue budget\)/);
+  assert.ok(body[0].includes('The re-measure did not decide on the box (queue budget); the first box result stands.'), body[0]);
+  assert.deepStrictEqual(r.stands(), ['ticket t1 verify: re-measure did not decide on the box (queue budget); the first box result stands']);
+});
+
+test('t2398: a box red whose re-measure fell back to a red home run is rejected with the box run\'s failing names only', async () => {
+  const r = remeasureLoop({ suite: 'red', second: undecided('run-budget', 'no result within the 900000ms run budget') });
+  r.p.seed();
+  await r.p.loop();
+  const t = r.f.one();
+  assert.deepStrictEqual(r.p.b.events, ['post', 'spawn'], 'ENTER: the home suite ran the re-measure');
+  assert.strictEqual(t.state, 'open');
+  assert.strictEqual(r.f.created.length, 0, 'no reviewer');
+  const body = r.rework();
+  assert.strictEqual(body.length, 1, 'ENTER: one rework');
+  assert.match(body[0], /\nFAILING: box only\n/);
+  assert.doesNotMatch(body[0], /the thing that broke/);
+  assert.ok(body[0].includes('The re-measure did not decide on the box (run budget); the first box result stands.'), body[0]);
+  assert.strictEqual(t.suiteProvenance.verify.decidedBy, 'box');
+});
