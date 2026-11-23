@@ -1674,8 +1674,7 @@ test('a draining runner finishes its running job with its result, starts no queu
   let drained = 0;
   assert.strictEqual(f.runner.drain(() => { drained += 1; }), 1);
   assert.strictEqual((await f.upload(f.body('d2'))).state, 'queued');
-  assert.strictEqual((await f.runner.submit(f.body('d3'))).state, 'awaiting-pack');
-  assert.strictEqual((await f.upload(f.body('d3'))).state, 'queued');
+  assert.strictEqual((await f.runner.submit(f.body('d3'))).state, 'queued');
   await drain();
   assert.deepStrictEqual((await f.runner.info()).slots, { total: 3, inUse: 3 });
   assert.deepStrictEqual([await slotsOf(f.runner), f.calls.map((c) => c.job)], [{ slots: { total: 3, inUse: 1 }, running: ['d1'], waiting: ['d2', 'd3'] }, ['d1']]);

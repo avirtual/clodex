@@ -620,7 +620,7 @@ test('switching the runner off while a job runs lets it finish, then the runner 
   const f = liveFixture(t, THREE);
   f.runners[0].active = 1;
   assert.strictEqual(f.set({}, null).pending, true);
-  assert.deepStrictEqual([f.runners[0].closed, f.wiring.suiteRunnerState().status], [false, 'running']);
+  assert.deepStrictEqual([f.runners[0].closed, f.wiring.getSuiteEngine() === f.runners[0], f.wiring.suiteRunnerState().pending], [false, true, true]);
   f.runners[0].finishOne();
   assert.deepStrictEqual([f.runners[0].closed, f.wiring.getSuiteEngine(), f.wiring.suiteRunnerState().status], [true, null, 'off']);
 });
