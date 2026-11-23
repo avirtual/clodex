@@ -1667,6 +1667,71 @@ for (const [label, slots, total, started] of [
   });
 }
 
+test('a draining runner finishes its running job with its result, starts no queued job, queues a submit, reports no free slot, and calls back once', async (t) => {
+  const f = await holdingFixture(t, { runnerOver: { slots: 3 } });
+  await f.upload(f.body('d1'));
+  await f.spawned(['d1']);
+  let drained = 0;
+  assert.strictEqual(f.runner.drain(() => { drained += 1; }), 1);
+  assert.strictEqual((await f.upload(f.body('d2'))).state, 'queued');
+  assert.strictEqual((await f.runner.submit(f.body('d3'))).state, 'awaiting-pack');
+  assert.strictEqual((await f.upload(f.body('d3'))).state, 'queued');
+  await drain();
+  assert.deepStrictEqual((await f.runner.info()).slots, { total: 3, inUse: 3 });
+  assert.deepStrictEqual([await slotsOf(f.runner), f.calls.map((c) => c.job)], [{ slots: { total: 3, inUse: 1 }, running: ['d1'], waiting: ['d2', 'd3'] }, ['d1']]);
+  f.held.get('d1').stdout.write('TOTALS: 2 pass, 1 fail, 3 tests\n');
+  f.held.get('d1').finish(1);
+  const d1 = await waitState(f.runner, 'd1', 'done');
+  await drain();
+  assert.deepStrictEqual([d1.reason, d1.exit, drained], [null, { code: 1, signal: null }, 1]);
+  assert.deepStrictEqual((await f.runner.poll(['d2', 'd3'])).jobs.map((j) => j.state), ['queued', 'queued']);
+});
+
+test('ending a drain starts the queued job on the same runner', async (t) => {
+  const f = await holdingFixture(t, { runnerOver: { slots: 2 } });
+  await f.upload(f.body('e1'));
+  await f.spawned(['e1']);
+  let drained = 0;
+  f.runner.drain(() => { drained += 1; });
+  assert.strictEqual((await f.upload(f.body('e2'))).state, 'queued');
+  f.runner.drain(null);
+  await f.spawned(['e2']);
+  assert.deepStrictEqual((await f.runner.info()).slots, { total: 2, inUse: 2 });
+  f.held.get('e1').finish(0);
+  f.held.get('e2').finish(0);
+  await waitState(f.runner, 'e2', 'done');
+  assert.strictEqual(drained, 0);
+});
+
+test('a drained runner reloaded with slots lowered from 3 to 2 keeps its queue and runs at most 2 at once', async (t) => {
+  const f = await holdingFixture(t, { runnerOver: { slots: 3 } });
+  for (const id of ['r1', 'r2', 'r3']) await f.upload(f.body(id));
+  await f.spawned(['r1', 'r2', 'r3']);
+  let next = null;
+  const reloaded = new Promise((resolve) => {
+    assert.strictEqual(f.runner.drain(() => {
+      f.runner.close();
+      next = f.make({ slots: 2 });
+      next.start();
+      resolve();
+    }), 3);
+  });
+  t.after(() => { if (next) next.close(); });
+  for (const id of ['q1', 'q2', 'q3']) assert.strictEqual((await f.upload(f.body(id))).state, 'queued');
+  for (const id of ['r1', 'r2', 'r3']) f.held.get(id).finish(0);
+  await reloaded;
+  await f.spawned(['q1', 'q2']);
+  await drain();
+  assert.deepStrictEqual(await slotsOf(next), { slots: { total: 2, inUse: 2 }, running: ['q1', 'q2'], waiting: ['q3'] });
+  f.held.get('q1').finish(0);
+  await f.spawned(['q3']);
+  await drain();
+  assert.deepStrictEqual(await slotsOf(next), { slots: { total: 2, inUse: 2 }, running: ['q2', 'q3'], waiting: [] });
+  f.held.get('q2').finish(0);
+  f.held.get('q3').finish(0);
+  await waitState(next, 'q3', 'done');
+});
+
 test('a hold set while two box jobs run lets both finish with their own results, starts no box job until it clears, and does not block a native job', async (t) => {
   const fb = fakeBox({ reap: (job) => { if (job.id === 'b1') throw new Error('box cleanup not confirmed: c0ffee'); } });
   const f = await holdingFixture(t, { runnerOver: { box: fb.box, slots: 2 }, release: (c) => c.job === 'n1' || c.job === 'b3' });

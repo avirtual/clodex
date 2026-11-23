@@ -96,9 +96,9 @@ test('set stores a valid record, keeps it across an invalid set, and clears on n
   assert.strictEqual(openStores(dir).uiSettings.get().suiteRunner, null);
 });
 
-function ipcFixture({ busy = false, initial = null } = {}) {
+function ipcFixture({ busy = false, initial = null, ...over } = {}) {
   const handlers = new Map();
-  const store = { suiteRunner: initial, terminalReports: 'on' };
+  const store = over.store || { suiteRunner: initial, terminalReports: 'on' };
   const calls = { reload: 0, set: [] };
   const { registerIpcHandlers } = require('../ipc-handlers');
   const deps = {
@@ -109,11 +109,15 @@ function ipcFixture({ busy = false, initial = null } = {}) {
       get: () => store,
       set: (patch) => { calls.set.push(patch); Object.assign(store, patch); return store; },
     },
-    suiteRunnerState: () => ({ setting: store.suiteRunner, forced: [], remoteEnabled: true, status: 'off', error: null }),
-    suiteRunnerBusy: () => busy,
-    reloadSuiteRunner: () => { calls.reload += 1; },
+    suiteRunnerState: () => ({ setting: store.suiteRunner, forced: [], remoteEnabled: true, status: 'off', error: null, pending: busy }),
+    applySuiteRunner: () => {
+      if (busy) return { pending: true, running: 1 };
+      calls.reload += 1;
+      return { pending: false, running: 0 };
+    },
     wirescope: { autoStartWanted: () => false, stop() {} },
     log: { info() {}, warn() {}, error() {} },
+    ...(over.deps || {}),
   };
   const stub = () => () => {};
   registerIpcHandlers(new Proxy(deps, {
@@ -145,13 +149,14 @@ test('suiteRunner:set rejects an invalid record and leaves the stored one', () =
   assert.strictEqual(calls.reload, 0);
 });
 
-test('suiteRunner:set refuses while a job runs and leaves the stored one', () => {
+test('suiteRunner:set while a job runs stores the record and answers pending', () => {
   const { set, store, calls } = ipcFixture({ initial: VALID, busy: true });
-  const res = set({}, { enabled: false, isolation: 'user', work: null });
-  assert.strictEqual(res.ok, false);
-  assert.match(res.error, /a test job is running/);
-  assert.deepStrictEqual(store.suiteRunner, VALID);
-  assert.deepStrictEqual(calls.set, []);
+  const off = { enabled: false, isolation: 'user', work: null };
+  const res = set({}, off);
+  assert.deepStrictEqual({ ok: res.ok, pending: res.pending }, { ok: true, pending: true });
+  assert.strictEqual(res.state.pending, true);
+  assert.deepStrictEqual(store.suiteRunner, off);
+  assert.deepStrictEqual(calls.set, [{ suiteRunner: off }]);
   assert.strictEqual(calls.reload, 0);
 });
 
@@ -213,7 +218,7 @@ test('no module but ipc-handlers writes the test runner setting', () => {
 
 const SUITE_ENV = ['CLODEX_SUITE_RUNNER', 'CLODEX_SUITE_ISOLATION', 'CLODEX_SUITE_WORK', 'CLODEX_SUITE_BOX_IMAGE', 'CLODEX_DATA_DIR', 'CLODEX_REMOTE_ENABLE'];
 
-function wiringFixture(t, settings) {
+function wiringFixture(t, settings, over = {}) {
   const saved = Object.fromEntries(SUITE_ENV.map((k) => [k, process.env[k]]));
   for (const k of SUITE_ENV) delete process.env[k];
   const tmp = mkTmpRoot('suite-setting-wiring-');
@@ -254,6 +259,7 @@ function wiringFixture(t, settings) {
     getRemoteServer: () => srv, setRemoteServer: (v) => { srv = v; }, setRemoteError: () => {},
     readRemoteEnvToken: () => null, resolveRemoteToken: (a, b) => a || b || null,
     appVersion: '9.9.9', isPackaged: () => false,
+    ...over,
   });
   t.after(() => {
     wiring.shutdownRemoteServer();
@@ -284,7 +290,7 @@ test('saving the setting rebuilds the wire with the new runner, no restart', asy
   assert.deepStrictEqual(wiring.suiteRunnerState(), {
     setting: { enabled: true, isolation: 'none', work: path.join(tmp, 'work') },
     forced: [], effective: { isolation: 'none', work: path.join(tmp, 'work'), boxImage: null }, defaultWork: platformDefault(tmp),
-    remoteEnabled: true, status: 'running', error: null,
+    remoteEnabled: true, status: 'running', error: null, pending: false, runningJobs: 0,
   });
   assert.strictEqual(wiring.suiteRunnerBusy(), false);
 
@@ -302,7 +308,7 @@ test('a stored runner on a node with remote access off is pull-only, then runnin
   const state = (status) => ({
     setting: { enabled: true, isolation: 'none', work: null },
     forced: [], effective: { isolation: 'none', work: platformDefault(tmp), boxImage: null }, defaultWork: platformDefault(tmp),
-    remoteEnabled: false, status, error: null,
+    remoteEnabled: false, status, error: null, pending: false, runningJobs: 0,
   });
   assert.deepStrictEqual(wiring.suiteRunnerState(), state('pull-only'));
   assert.ok(wiring.getSuiteEngine(), 'the engine is built with remote access off');
@@ -320,7 +326,7 @@ test('a field forced by env reports the value in effect, not the stored one', as
   assert.deepStrictEqual(wiring.suiteRunnerState(), {
     setting: { enabled: true, isolation: 'user', work: null },
     forced: ['isolation', 'work', 'boxImage'], effective: { isolation: 'none', work: '/x', boxImage: IMG }, defaultWork: platformDefault(tmp),
-    remoteEnabled: true, status: 'starting', error: null,
+    remoteEnabled: true, status: 'starting', error: null, pending: false, runningJobs: 0,
   });
 });
 
@@ -413,7 +419,7 @@ test('the runner state reports a stored boxImage under setting and effective', (
   assert.deepStrictEqual(wiring.suiteRunnerState(), {
     setting: { enabled: true, isolation: 'none', work: null, boxImage: IMG },
     forced: [], effective: { isolation: 'none', work: platformDefault(tmp), boxImage: IMG }, defaultWork: platformDefault(tmp),
-    remoteEnabled: false, status: 'pull-only', error: null,
+    remoteEnabled: false, status: 'pull-only', error: null, pending: false, runningJobs: 0,
   });
 });
 
@@ -529,4 +535,100 @@ test('t2363: the share editor adds and removes rows, Apply sends the list, and t
   assert.deepStrictEqual(suiteRunnerRecordFromForm(shown, { ...form, shares: editor.read() }), { enabled: true, isolation: 'user', work: null });
   const html = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.html'), 'utf8');
   assert.ok(html.includes("A shared folder is readable, read-only, by test jobs from every peer you allow to run jobs here. Change the version whenever the folder's contents change: a job asks for a version, and this machine refuses one it does not hold."));
+});
+
+function fakeRunner(opts) {
+  const r = {
+    opts, active: 0, closed: false, onDrained: null, drains: [],
+    start() {}, close() { r.closed = true; },
+    busy: () => r.active > 0, activeCount: () => r.active,
+    drain(done) {
+      r.drains.push(typeof done === 'function' ? 'hold' : 'release');
+      if (typeof done !== 'function') { r.onDrained = null; return r.active; }
+      if (!r.active) return 0;
+      r.onDrained = done;
+      return r.active;
+    },
+    finishOne() {
+      r.active -= 1;
+      if (!r.active && r.onDrained) { const done = r.onDrained; r.onDrained = null; done(); }
+    },
+  };
+  return r;
+}
+
+function liveFixture(t, initial) {
+  const settings = { remoteEnabled: false, remotePort: 0, peers: [], suiteRunner: initial };
+  const runners = [];
+  const lines = [];
+  const log = { info: (tag, m) => lines.push([tag, m]), warn() {}, error() {} };
+  const startRunner = (opts) => { const r = fakeRunner(opts); runners.push(r); return { runner: r, error: null }; };
+  const { wiring } = wiringFixture(t, settings, { startRunner, log });
+  const ipc = ipcFixture({ store: settings, deps: { suiteRunnerState: wiring.suiteRunnerState, applySuiteRunner: wiring.applySuiteRunner, log } });
+  const first = wiring.getSuiteEngine();
+  assert.strictEqual(first, runners[0], 'ENTER: the live runner came from the seam');
+  return { wiring, set: ipc.set, settings, runners, lines, reloads: () => runners.filter((r) => r.closed).length };
+}
+
+const THREE = { enabled: true, isolation: 'none', work: '/srv/suite-work', slots: 3 };
+const TWO = { enabled: true, isolation: 'none', work: '/srv/suite-work', slots: 2 };
+
+test('a save with a job running is stored, drains the runner, and reloads once when the job ends', (t) => {
+  const f = liveFixture(t, THREE);
+  f.runners[0].active = 1;
+  const res = f.set({}, TWO);
+  assert.deepStrictEqual({ ok: res.ok, pending: res.pending }, { ok: true, pending: true });
+  assert.deepStrictEqual([res.state.pending, res.state.runningJobs, res.state.setting], [true, 1, TWO]);
+  assert.deepStrictEqual(f.settings.suiteRunner, TWO);
+  assert.deepStrictEqual([f.runners[0].closed, f.runners[0].drains, f.reloads()], [false, ['hold'], 0]);
+  f.runners[0].finishOne();
+  assert.strictEqual(f.reloads(), 1);
+  assert.strictEqual(f.wiring.suiteRunnerState().pending, false);
+  assert.strictEqual(f.wiring.getSuiteEngine().opts.slots, 2);
+  assert.deepStrictEqual(f.lines.filter(([, m]) => m.startsWith('test runner setting')), [
+    ['remote', 'test runner setting saved, applies when 1 running job(s) finish'],
+    ['remote', 'test runner setting applied after drain'],
+  ]);
+});
+
+test('a second save while pending replaces the first, and saving the live record ends the drain without a reload', (t) => {
+  const f = liveFixture(t, THREE);
+  f.runners[0].active = 1;
+  f.set({}, TWO);
+  const other = { ...TWO, slots: 4 };
+  assert.strictEqual(f.set({}, other).pending, true);
+  assert.deepStrictEqual(f.settings.suiteRunner, other);
+  const back = f.set({}, THREE);
+  assert.deepStrictEqual([back.ok, back.pending, back.state.pending], [true, undefined, false]);
+  assert.deepStrictEqual(f.runners[0].drains, ['hold', 'hold', 'release']);
+  f.runners[0].finishOne();
+  assert.strictEqual(f.reloads(), 0);
+  assert.strictEqual(f.wiring.getSuiteEngine(), f.runners[0]);
+});
+
+test('a second save while pending is the record applied after the drain', (t) => {
+  const f = liveFixture(t, THREE);
+  f.runners[0].active = 1;
+  f.set({}, TWO);
+  f.set({}, { ...TWO, slots: 4 });
+  f.runners[0].finishOne();
+  assert.strictEqual(f.reloads(), 1);
+  assert.strictEqual(f.wiring.getSuiteEngine().opts.slots, 4);
+});
+
+test('switching the runner off while a job runs lets it finish, then the runner is off', (t) => {
+  const f = liveFixture(t, THREE);
+  f.runners[0].active = 1;
+  assert.strictEqual(f.set({}, null).pending, true);
+  assert.deepStrictEqual([f.runners[0].closed, f.wiring.suiteRunnerState().status], [false, 'running']);
+  f.runners[0].finishOne();
+  assert.deepStrictEqual([f.runners[0].closed, f.wiring.getSuiteEngine(), f.wiring.suiteRunnerState().status], [true, null, 'off']);
+});
+
+test('an idle save reloads at once and is not pending', (t) => {
+  const f = liveFixture(t, THREE);
+  const res = f.set({}, TWO);
+  assert.deepStrictEqual([res.ok, 'pending' in res, res.state.pending], [true, false, false]);
+  assert.strictEqual(f.reloads(), 1);
+  assert.strictEqual(f.wiring.getSuiteEngine().opts.slots, 2);
 });
