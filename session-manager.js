@@ -183,6 +183,14 @@ const { idleCandidates } = require('./idle-pause');
 const { cachedMessages } = require('./transcript');
 const { isAgentType, adapterFor, accountEnvKey, runsClaudeHooks, streamFor: adapterStreamFor, hasBypass, hasReadOnlyCap, postureOf, resolveModelId, resolveEffort } = require('./cli-adapters');
 
+function drainsParkedMail(type) {
+  return runsClaudeHooks(type);
+}
+
+function reportsTurnStart(type) {
+  return runsClaudeHooks(type);
+}
+
 function streamCodecCtx(type, extraArgs) {
   const a = adapterFor(type);
   const argv = Array.isArray(extraArgs) ? extraArgs : [];
@@ -9774,7 +9782,7 @@ function createSessionManager(deps) {
     }
 
     _maybeParkDelivery(target, finalText, key = null) {
-      if (!target || target.agentType !== 'claude' || target._dead) return false;
+      if (!target || !drainsParkedMail(target.agentType) || target._dead) return false;
       const typing = Date.now() - (target.lastUserInputTs || 0) < INJECT_QUIET_MS;
       const busy = target.activityState === 'thinking';
       if (!typing && !busy) return false;
@@ -9836,7 +9844,7 @@ function createSessionManager(deps) {
 
     flushPending(name) {
       const target = this.sessions.get(name);
-      if (!target || target.agentType !== 'claude' || target._dead) {
+      if (!target || !drainsParkedMail(target.agentType) || target._dead) {
         return { ok: false, reason: 'no-such-agent' };
       }
       const hold = this._injectHoldReason(target);
@@ -9908,13 +9916,13 @@ function createSessionManager(deps) {
     }
 
     _turnStartPending(session) {
-      if (!session || session.agentType !== 'claude' || session.io === 'stream') return false;
+      if (!session || !reportsTurnStart(session.agentType) || session.io === 'stream') return false;
       const since = session._awaitingTurnSince;
       return typeof since === 'number' && Date.now() - since < TURN_START_WINDOW_MS;
     }
 
     _parkDivertFor(session, id = null, key = null) {
-      if (!session || session.agentType !== 'claude') return null;
+      if (!session || !drainsParkedMail(session.agentType)) return null;
       return (text) => {
         if (session._dead) return false;
         const churn = this._turnStartPending(session);
@@ -10114,7 +10122,7 @@ function createSessionManager(deps) {
 
     _injectTextPassive(session, text) {
       if (!session || session._dead || session.clone) return;
-      if (session.agentType !== 'claude') {
+      if (!drainsParkedMail(session.agentType)) {
         this._injectText(session, text, { parkable: true });
         return;
       }
