@@ -12,7 +12,8 @@ function runnerStateLine(info) {
       ? 'invalid: the testRunner in team.json is invalid and ignored — fix it there, or remove it to set a peer here'
       : 'none: hand and gate suites run on this machine';
   }
-  const tally = info.tally ? `; shadow comparisons: ${info.tally.agree} agree, ${info.tally.disagree} disagree` : '';
+  const runs = info.tally ? (info.tally.agree || 0) + (info.tally.disagree || 0) : 0;
+  const tally = info.tally ? `; shadow comparisons: ${runs} run${runs === 1 ? '' : 's'}, outcome agreed ${info.tally.outcomeAgreed || 0}, same counts ${info.tally.sameCounts || 0}` : '';
   const wire = info.wire === 'pull' ? 'dials in (wire pull, shadow only): ' : '';
   return `${wire}${info.reach == null ? 'checking reachability…' : info.reach}${tally}`;
 }

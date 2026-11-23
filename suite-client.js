@@ -457,7 +457,7 @@ function createSuiteClient({
       if (me.detached) {
         appendCompare({
           at: iso(now()), team: opts.team, kind: opts.kind, ticket: opts.ticket, wire: 'pull', runner: me.peer,
-          skipped: 'detached', agree: null, midJob: true, jobId: me.submitted,
+          skipped: 'detached', ...NO_AGREEMENT, midJob: true, jobId: me.submitted,
         });
         return;
       }
@@ -471,7 +471,7 @@ function createSuiteClient({
         localEnv: { os: platform, arch },
         remoteEnv: { os: e.platform || null, arch: e.arch || null, isolation: e.isolation || null, imageId: (e.box && e.box.imageId) || null, definitionHash: (e.box && e.box.definitionHash) || null, ...(e.box && Array.isArray(e.box.shares) ? { shares: e.box.shares } : {}) },
         local: me.local, remote,
-        ...(notSent ? { skipped: 'not-sent', agree: null } : { agree: halvesAgree(me.local, remote) }),
+        ...(notSent ? { skipped: 'not-sent', ...NO_AGREEMENT } : agreement(me.local, remote)),
         ...(!notSent && namesUnknown(me.local, remote) ? { names: 'unknown' } : {}),
         ...(opts.pool ? { runner: me.name } : {}),
       });
@@ -495,7 +495,7 @@ function createSuiteClient({
   }
 
   function shadowSkip({ team, kind, ticket, runner, skipped }) {
-    appendCompare({ at: iso(now()), team, kind, ticket, wire: 'pull', runner, skipped, agree: null });
+    appendCompare({ at: iso(now()), team, kind, ticket, wire: 'pull', runner, skipped, ...NO_AGREEMENT });
   }
 
   function decided({ team, kind, ticket, wire = 'push', box = null, local = null, decidedBy, fallback = null, runner = null }) {
@@ -506,7 +506,7 @@ function createSuiteClient({
       envKey: e.envKey || null, wire: wire === 'pull' ? 'pull' : 'push',
       localEnv: local ? { os: platform, arch } : null,
       remoteEnv: rec ? { os: e.platform || null, arch: e.arch || null, isolation: e.isolation || null, imageId: (e.box && e.box.imageId) || null, definitionHash: (e.box && e.box.definitionHash) || null, ...(e.box && Array.isArray(e.box.shares) ? { shares: e.box.shares } : {}) } : null,
-      local, remote: box ? remoteHalf(box) : null, agree: null, decidedBy, fallback, ...(runner ? { runner } : {}),
+      local, remote: box ? remoteHalf(box) : null, ...NO_AGREEMENT, decidedBy, fallback, ...(runner ? { runner } : {}),
     });
   }
 
@@ -527,7 +527,7 @@ function createSuiteClient({
     const counted = definitionHash ? ofDef : (r) => !!key && r.envKey === key;
     const newest = [...recs].reverse().find(counted);
     const platforms = newest && newest.localEnv && newest.remoteEnv ? { local: newest.localEnv, remote: newest.remoteEnv } : null;
-    const out = { envKey: key, agree: 0, disagree: 0, skipped: 0, oneSided: [], platforms };
+    const out = { envKey: key, agree: 0, disagree: 0, outcomeAgreed: 0, sameCounts: 0, skipped: 0, oneSided: [], platforms };
     if (!newest) return out;
     const counts = new Map();
     const bump = (side, name) => {
@@ -540,6 +540,9 @@ function createSuiteClient({
       if (!counted(r)) continue;
       if (r.skipped) { out.skipped += 1; continue; }
       if (r.agree === true) out.agree += 1; else out.disagree += 1;
+      const split = 'outcomeAgree' in r ? r : agreement(r.local, r.remote);
+      if (split.outcomeAgree === true) out.outcomeAgreed += 1;
+      if (split.countsAgree === true) out.sameCounts += 1;
       if (!r.local || !r.remote || !MEASURED.has(r.local.outcome) || !MEASURED.has(r.remote.outcome) || r.names === 'unknown') continue;
       const mine = new Set(r.local.failing || []);
       const theirs = new Set(r.remote.failing || []);
@@ -741,9 +744,30 @@ function halvesAgree(a, b) {
   if (a.outcome === 'unknown' || b.outcome === 'unknown') return false;
   if (a.outcome !== b.outcome || a.pass !== b.pass || a.fail !== b.fail || a.tests !== b.tests) return false;
   if (namesUnknown(a, b)) return true;
-  const x = new Set(a.failing);
-  const y = new Set(b.failing);
+  return sameNames(a.failing, b.failing);
+}
+
+function sameNames(a, b) {
+  const x = new Set(a || []);
+  const y = new Set(b || []);
   return x.size === y.size && [...x].every((n) => y.has(n));
+}
+
+const NO_AGREEMENT = { agree: null, outcomeAgree: null, countsAgree: null, failingAgree: null };
+
+function agreement(a, b) {
+  const half = (h) => (h && typeof h === 'object' ? h : {});
+  const x = half(a);
+  const y = half(b);
+  const outcomeKnown = (h) => MEASURED.has(h.outcome);
+  const totals = (h) => h.pass != null && h.fail != null && h.tests != null;
+  const namesKnown = (h) => outcomeKnown(h) && !(h.fail > 0 && !(h.failing || []).length);
+  return {
+    agree: halvesAgree(x, y),
+    outcomeAgree: outcomeKnown(x) && outcomeKnown(y) ? x.outcome === y.outcome : null,
+    countsAgree: totals(x) && totals(y) ? x.pass === y.pass && x.fail === y.fail && x.tests === y.tests : null,
+    failingAgree: namesKnown(x) && namesKnown(y) ? sameNames(x.failing, y.failing) : null,
+  };
 }
 
 const HAND_QUEUE_MS = 15 * 60 * 1000;
@@ -878,4 +902,4 @@ function createChannelHost({
   };
 }
 
-module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, boxVerdict, pickRunner, runnerLoad, HAND_QUEUE_MS, HAND_RUN_MS, BUILD_BUDGET_MS };
+module.exports = { createSuiteClient, createChannelHost, route, lastTotals, localHalf, failingNames, agreement, boxVerdict, pickRunner, runnerLoad, HAND_QUEUE_MS, HAND_RUN_MS, BUILD_BUDGET_MS };

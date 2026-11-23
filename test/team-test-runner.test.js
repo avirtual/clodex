@@ -347,7 +347,7 @@ test('t2264: [agent:team runner] under gate:shadow shows the tally for the curre
   });
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner]'),
     ['[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab'
-      + '; comparisons under env 0123456789ab: 1 agree, 2 disagree; failed on one side only: net binds (remote only, 2x)']);
+      + '; comparisons under env 0123456789ab: 3 runs, outcome agreed 1, same counts 0; failed on one side only: net binds (remote only, 2x)']);
 });
 
 test('t2310: [agent:team runner] counts a not-sent row as skipped, not as disagree', async () => {
@@ -361,7 +361,7 @@ test('t2310: [agent:team runner] counts a not-sent row as skipped, not as disagr
   });
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner]'),
     ['[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab'
-      + '; comparisons under env 0123456789ab: 1 agree, 1 disagree, 1 skipped (tree not sent); failed on one side only: net binds (remote only, 1x)']);
+      + '; comparisons under env 0123456789ab: 2 runs, outcome agreed 1, same counts 0, 1 skipped (tree not sent); failed on one side only: net binds (remote only, 1x)']);
 });
 
 test('t2264: a new env key starts a new tally', async () => {
@@ -371,7 +371,7 @@ test('t2264: a new env key starts a new tally', async () => {
   });
   assert.deepStrictEqual(await f.verb('lead', '[agent:team runner]'),
     ['[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab'
-      + '; comparisons under env 0123456789ab: 0 agree, 0 disagree']);
+      + '; comparisons under env 0123456789ab: 0 runs, outcome agreed 0, same counts 0']);
 });
 
 const mkDesk = (rows) => ({
@@ -471,12 +471,12 @@ test('t2266: team:runner with a peer on hands:all and gate:shadow returns the st
   });
   assert.deepStrictEqual(await f.read(), {
     ok: true, peer: 'runner-1', hands: 'all', gate: 'shadow', wire: 'push', invalid: false, setup: true, env: true,
-    tally: { envKey: '0123456789ab', agree: 1, disagree: 2 },
+    tally: { envKey: '0123456789ab', agree: 1, disagree: 2, outcomeAgreed: 1, sameCounts: 0 },
   });
   assert.deepStrictEqual(f.reachCalls, [], 'the stored read asks the runner nothing');
   assert.deepStrictEqual(await f.probe(), {
     ok: true, wire: 'push', attached: null, online: true, suite: true, reachable: true, reach: REACH_TEXT,
-    tally: { envKey: '0123456789ab', agree: 1, disagree: 2 },
+    tally: { envKey: '0123456789ab', agree: 1, disagree: 2, outcomeAgreed: 1, sameCounts: 0 },
   });
   assert.deepStrictEqual(f.reachCalls, ['p1']);
 });
@@ -580,11 +580,11 @@ const RUNNER_HEAD = '[agent:team] test runner of team: runner-1, wire push, hand
 
 const BOX_INFO_ROWS = [
   ['box ready, team asks for a box: the box key\'s tally with both platforms', true, BOX_READY,
-    `${RUNNER_HEAD}, box ready linux/arm64 image eeeeeeeeeeee key b0b0b0b0b0b0; comparisons under env b0b0b0b0b0b0: 0 agree, 1 disagree (local darwin/arm64, runner linux/arm64 box)`],
+    `${RUNNER_HEAD}, box ready linux/arm64 image eeeeeeeeeeee key b0b0b0b0b0b0; comparisons under env b0b0b0b0b0b0: 1 run, outcome agreed 1, same counts 0 (local darwin/arm64, runner linux/arm64 box)`],
   ['box ready, native team: the native key\'s tally', undefined, BOX_READY,
-    `${RUNNER_HEAD}, box ready linux/arm64 image eeeeeeeeeeee key b0b0b0b0b0b0; comparisons under env 0123456789ab: 2 agree, 0 disagree (local darwin/arm64, runner linux/arm64)`],
+    `${RUNNER_HEAD}, box ready linux/arm64 image eeeeeeeeeeee key b0b0b0b0b0b0; comparisons under env 0123456789ab: 2 runs, outcome agreed 2, same counts 0 (local darwin/arm64, runner linux/arm64)`],
   ['box unavailable', true, { state: 'unavailable', why: 'docker daemon not reachable: refused' },
-    `${RUNNER_HEAD}, box unavailable: docker daemon not reachable: refused; comparisons under env 0123456789ab: 2 agree, 0 disagree (local darwin/arm64, runner linux/arm64)`],
+    `${RUNNER_HEAD}, box unavailable: docker daemon not reachable: refused; comparisons under env 0123456789ab: 2 runs, outcome agreed 2, same counts 0 (local darwin/arm64, runner linux/arm64)`],
 ];
 
 for (const [name, box, infoBox, want] of BOX_INFO_ROWS) {
@@ -633,22 +633,22 @@ const labelCmp = (envKey, agree, imageId) => ({
 const LABEL_ROWS = [
   ['a configured box image', BOX_READY, false,
     [boxCmp('b0b0b0b0b0b0', false, 'container'), boxCmp('0123456789ab', true, 'none')],
-    '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab, box ready linux/arm64 image eeeeeeeeeeee key b0b0b0b0b0b0; comparisons under env b0b0b0b0b0b0: 0 agree, 1 disagree (local darwin/arm64, runner linux/arm64 box)'],
+    '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab, box ready linux/arm64 image eeeeeeeeeeee key b0b0b0b0b0b0; comparisons under env b0b0b0b0b0b0: 1 run, outcome agreed 1, same counts 0 (local darwin/arm64, runner linux/arm64 box)'],
   ['a label-only runner and a team box definition', LABEL_NO_IMAGE, true,
     [labelCmp('c0c0c0c0c0c0', false, null), labelCmp('c1c1c1c1c1c1', true, null), boxCmp('0123456789ab', true, 'none')],
-    '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab, box unavailable: no image for box fa502f955d13 on this runner; comparisons under box definition fa502f955d13: 1 agree, 1 disagree (local darwin/arm64, runner linux/arm64 box)'],
+    '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab, box unavailable: no image for box fa502f955d13 on this runner; comparisons under box definition fa502f955d13: 2 runs, outcome agreed 2, same counts 0 (local darwin/arm64, runner linux/arm64 box)'],
   ['a label-only runner, a team box definition and a stamped image', LABEL_NO_IMAGE, true,
     [labelCmp('c0c0c0c0c0c0', false, null), labelCmp('c1c1c1c1c1c1', true, `sha256:${'d'.repeat(64)}`), boxCmp('0123456789ab', true, 'none')],
-    '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab, box unavailable: no image for box fa502f955d13 on this runner; comparisons under box definition fa502f955d13 image dddddddddddd: 1 agree, 1 disagree (local darwin/arm64, runner linux/arm64 box)'],
+    '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab, box unavailable: no image for box fa502f955d13 on this runner; comparisons under box definition fa502f955d13 image dddddddddddd: 2 runs, outcome agreed 2, same counts 0 (local darwin/arm64, runner linux/arm64 box)'],
   ['a label-only runner whose image for the team box definition is ready', BOX_READY, true,
     [labelCmp('c0c0c0c0c0c0', false, null), labelCmp('c1c1c1c1c1c1', true, null), boxCmp('b0b0b0b0b0b0', true, 'container')],
-    '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab, box ready linux/arm64 image eeeeeeeeeeee key b0b0b0b0b0b0; comparisons under box definition fa502f955d13: 1 agree, 1 disagree (local darwin/arm64, runner linux/arm64 box)'],
+    '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab, box ready linux/arm64 image eeeeeeeeeeee key b0b0b0b0b0b0; comparisons under box definition fa502f955d13: 2 runs, outcome agreed 2, same counts 0 (local darwin/arm64, runner linux/arm64 box)'],
   ['a label-only runner building the team box definition', { state: 'building', definitionHash: LABEL_HASH, why: 'building box fa502f955d13 on this runner' }, true,
     [labelCmp('c0c0c0c0c0c0', false, null), labelCmp('c1c1c1c1c1c1', true, null)],
-    '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab, box building: building box fa502f955d13 on this runner; comparisons under box definition fa502f955d13: 1 agree, 1 disagree (local darwin/arm64, runner linux/arm64 box)'],
+    '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab, box building: building box fa502f955d13 on this runner; comparisons under box definition fa502f955d13: 2 runs, outcome agreed 2, same counts 0 (local darwin/arm64, runner linux/arm64 box)'],
   ['a label-only runner that can build the team box definition', { state: 'can-build', definitionHash: LABEL_HASH, why: 'no image for box fa502f955d13 on this runner; it builds one on the first job' }, true,
     [labelCmp('c0c0c0c0c0c0', false, null)],
-    '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab, box can-build: no image for box fa502f955d13 on this runner; it builds one on the first job; comparisons under box definition fa502f955d13: 0 agree, 1 disagree (local darwin/arm64, runner linux/arm64 box)'],
+    '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab, box can-build: no image for box fa502f955d13 on this runner; it builds one on the first job; comparisons under box definition fa502f955d13: 1 run, outcome agreed 1, same counts 0 (local darwin/arm64, runner linux/arm64 box)'],
   ['a label-only runner and no team box definition', null, false,
     [boxCmp('0123456789ab', true, 'none')],
     '[agent:team] test runner of team: runner-1, wire push, hands full, gate shadow — reachable, suite capability, queue 3, env box-1 linux/arm64 node v22.11.0 key 0123456789ab; box comparisons: none — the team has no box definition and the runner has no box image'],
@@ -678,7 +678,7 @@ test('t2364: a pooled box:true team keeps the box-definition tally and shows eac
     '[agent:team] test runner of team: 2 runners, hands full (hand runs use runner-1 only), gate shadow',
     member('runner-1'),
     member('runner-3'),
-    'comparisons under box definition fa502f955d13: 1 agree, 1 disagree (local darwin/arm64, runner linux/arm64 box)',
+    'comparisons under box definition fa502f955d13: 2 runs, outcome agreed 2, same counts 0 (local darwin/arm64, runner linux/arm64 box)',
   ].join('\n')]);
 });
 
