@@ -226,6 +226,20 @@ records the transcript-literal `messages/<seat>/` path; `list()`, `filePeek` and
 the delivery parks instead of splicing into the draft. Opt-in at conversational
 call sites only; self-intents are never parkable.
 
+Which seat types get which protection is decided by two predicates in
+session-manager.js, so a new seat type is added in one place:
+
+| protection | predicate | claude | clodent | codex, muse |
+|---|---|---|---|---|
+| busy/typing park (`_maybeParkDelivery`), park-at-fire divert (`_parkDivertFor`), operator flush (`flushPending`), passive notice park (`_injectTextPassive`) | `drainsParkedMail` | yes | yes | no |
+| turn-start window (`_turnStartPending`) | `reportsTurnStart` | yes | yes | no |
+| submit nudge (`_armSubmitNudge`) | `agentType === 'claude'` | yes | no | no |
+
+clodent's draft protection reads the same typed and dictated draft stamps as
+Claude's. The submit nudge stays Claude-only: clodent echoes
+a pasted unit as `[pasted text, N lines]`, not the `[Pasted text #N]`
+placeholder the echo check reads.
+
 Two independent readings of "a draft is open", because the two kinds of draft
 reach Clodex by different routes and neither predicate can see the other's:
 
