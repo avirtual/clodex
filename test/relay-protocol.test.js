@@ -8,7 +8,7 @@ const assert = require('node:assert');
 const {
   RELAY_ENVELOPE_V, RELAY_MAX_HOPS,
   relayVersionOk, isQualifiedSender, isRelayEnvelope,
-  buildRelayEnvelope, hopRule, buildTerminalDm, computeRosterFor, peerOriginSuffix,
+  buildRelayEnvelope, hopRule, buildTerminalDm, computeRosterFor, peerOriginSuffix, peerSharesAgents,
 } = require('../relay-protocol');
 
 test('constants are the committed values', () => {
@@ -285,4 +285,37 @@ test('computeRosterFor: a scratch clone is not advertised, as local who skips it
   ];
   assert.deepStrictEqual(computeRosterFor('dk', [], new Set(['dk']), local, 'hub'),
     [{ name: 'lead', origin: 'hub', type: 'claude' }]);
+});
+
+test('computeRosterFor: sharing gates the hub\'s own agents, relay gates the other peers\'', () => {
+  const statuses = [
+    { id: 'dk', label: 'docker', online: true, caps: ['dm'], sessions: [{ name: 'd1', type: 'claude' }] },
+    { id: 'rl', label: 'remote-linux', online: true, caps: ['dm'], sessions: [{ name: 'worker', type: 'claude' }] },
+  ];
+  const local = [{ name: 'lead', type: 'claude' }];
+  const OWN = { name: 'lead', origin: 'hub', type: 'claude' };
+  const OTHER = { name: 'worker', origin: 'remote-linux', type: 'claude' };
+  const rows = [
+    { share: true, relay: false, expected: [OWN] },
+    { share: false, relay: true, expected: [OTHER] },
+    { share: false, relay: false, expected: [] },
+    { share: true, relay: true, expected: [OTHER, OWN] },
+  ];
+  for (const { share, relay, expected } of rows) {
+    const allowed = new Set(relay ? ['dk', 'rl'] : ['rl']);
+    const sharing = new Set(share ? ['dk'] : []);
+    const roster = computeRosterFor('dk', statuses, allowed, local, 'hub', sharing);
+    for (const row of expected) {
+      assert.ok(roster.some((r) => r.name === row.name), `ENTER: share=${share} relay=${relay} lists ${row.name}`);
+    }
+    assert.deepStrictEqual(roster, expected, `share=${share} relay=${relay}`);
+  }
+});
+
+test('peerSharesAgents: an explicit boolean wins, an absent key follows relayAllowed', () => {
+  assert.strictEqual(peerSharesAgents({ id: 'a' }), false);
+  assert.strictEqual(peerSharesAgents({ id: 'a', relayAllowed: true }), true);
+  assert.strictEqual(peerSharesAgents({ id: 'a', relayAllowed: true, shareAgents: false }), false);
+  assert.strictEqual(peerSharesAgents({ id: 'a', shareAgents: true }), true);
+  assert.strictEqual(peerSharesAgents(null), false);
 });

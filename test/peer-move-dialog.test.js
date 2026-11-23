@@ -127,6 +127,7 @@ function mkPeersUi({ moveSessionToPeer = async () => ({ ok: true }), api: apiOve
     openPeerSessionDialog: (...a) => withDom(() => ui.openPeerSessionDialog(...a)),
     closePeerSessionDialog: (...a) => withDom(() => ui.closePeerSessionDialog(...a)),
     typeToTakeControl: (...a) => withDom(() => ui.typeToTakeControl(...a)),
+    openPeerInfoPopover: (...a) => withDom(() => ui.openPeerInfoPopover(...a)),
   }, byId, shape, doc, withDom, install, calls, toasts, handlers, sessions, peerStatuses, sessionList };
 }
 
@@ -456,4 +457,19 @@ test('the Move to Peer menu item sends the session env KEY names and never the e
   assert.deepStrictEqual(payload.envKeys, ['GITHUB_TOKEN']);
   assert.strictEqual('env' in payload, false);
   assert.doesNotMatch(JSON.stringify(payload), /ghp_secret/);
+});
+
+test('the peer popover shows the share tick at its effective value and writes it through peerSetShareAgents', async () => {
+  const peers = [{ id: 'p1', label: 'laptop', sshHost: 'laptop.local', relayAllowed: true }];
+  const { ui, byId, calls, peerStatuses, install } = mkPeersUi({ api: { getSettings: async () => ({ peers }) } });
+  peerStatuses.set('p1', { id: 'p1', label: 'laptop', online: true, version: '0.0.0', caps: [] });
+  ui.openPeerInfoPopover('p1', byId('anchor'));
+  await settle();
+  const share = byId('peer-info-share');
+  assert.strictEqual(byId('peer-info-share-row').classList.contains('hidden'), false, 'ENTER: the share row was revealed');
+  assert.strictEqual(share.checked, true, 'a row without the key follows its relay tick');
+  share.checked = false;
+  const restore = install();
+  try { share.onchange(); } finally { restore(); }
+  assert.deepStrictEqual(calls.filter((c) => c.fn === 'peerSetShareAgents').map((c) => c.args), [['p1', false]]);
 });

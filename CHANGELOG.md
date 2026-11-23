@@ -13,6 +13,8 @@ blocks a release.
 
 ## Unreleased
 
+- Peers: a peer you add now has its own tick, 'Share my agents with this peer', so the peer's agents can see yours in `who` without enabling relay. Relay now covers only the agents of your other peers. Existing peers keep their current behaviour.
+
 ## 5.198.0 — 2026-11-24
 
 - Test runners: restarting Clodex on a machine that is running another team's suite now waits for that suite to finish (up to 30 minutes) and accepts no new suite meanwhile; the restart dialog says when one is running.

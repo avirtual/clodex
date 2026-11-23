@@ -534,7 +534,10 @@
     <div id="peer-info-popover" class="hidden">
       <div class="popover-title"><span>Peer — <span id="peer-info-popover-name"></span></span><button type="button" class="popover-close" id="peer-info-popover-close" title="Close" aria-label="Close">&times;</button></div>
       <div id="peer-info-body" class="peer-info-body"></div>
-      <label id="peer-info-relay-row" class="peer-info-relay-row hidden" title="Let this peer's sessions see and DM sessions on your other relay-enabled peers, routed through this hub. Off by default.">
+      <label id="peer-info-share-row" class="peer-info-relay-row hidden" title="This peer's agents can see and message yours.">
+        <input type="checkbox" id="peer-info-share"> Share my agents with this peer
+      </label>
+      <label id="peer-info-relay-row" class="peer-info-relay-row hidden" title="Covers the agents of your other relay-enabled peers only: this peer's sessions can see and DM them, routed through this hub. Off by default.">
         <input type="checkbox" id="peer-info-relay"> Relay mesh — allow cross-peer see &amp; DM via this hub
       </label>
       <div class="popover-actions">

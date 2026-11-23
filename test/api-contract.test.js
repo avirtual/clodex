@@ -82,7 +82,7 @@ const PINNED_NAMES = [
   // takes context NAMES — no token value crosses this surface, which is why both
   // halves are IPC calls rather than a dialog that imports rows itself.
   'peerImportPreview', 'peerImportApply',
-  'peerAttachedNames', 'peerForgetAttached', 'peerSetDisabled', 'peerSetRelayAllowed',
+  'peerAttachedNames', 'peerForgetAttached', 'peerSetDisabled', 'peerSetRelayAllowed', 'peerSetShareAgents',
   // The peer-terminal grant (t219). UNGATED, unlike the peer:wterm* channels
   // below: this writes a setting on THIS box, it does not open a shell.
   'peerSetShellAllowed',
@@ -255,8 +255,8 @@ test('no duplicate names and no duplicate channels', () => {
   assert.equal(new Set(channels).size, channels.length, 'channels are unique');
 });
 
-test('contract covers exactly the pinned 370-method surface', () => {
-  assert.equal(PINNED_NAMES.length, 370, 'pinned list is the full 370-method surface');
+test('contract covers exactly the pinned 371-method surface', () => {
+  assert.equal(PINNED_NAMES.length, 371, 'pinned list is the full 371-method surface');
   const contractNames = new Set(API_CONTRACT.map((r) => r.name));
   const pinned = new Set(PINNED_NAMES);
   const missing = [...pinned].filter((n) => !contractNames.has(n));
@@ -280,7 +280,7 @@ test('preload builds exactly the pinned window.api surface by looping the table'
     delete require.cache[require.resolve('../preload.js')];
     require('../preload.js');
     const generated = Object.keys(global.window.api);
-    assert.equal(generated.length, 370, 'window.api has exactly 370 methods');
+    assert.equal(generated.length, 371, 'window.api has exactly 371 methods');
     assert.deepEqual(new Set(generated), new Set(PINNED_NAMES), 'generated surface === pinned surface');
     for (const name of generated) {
       assert.equal(typeof global.window.api[name], 'function', `${name} is a function`);

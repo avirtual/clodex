@@ -1677,7 +1677,7 @@ html, body {
 #peer-info-update.hidden { display: none; }
 /* Relay-mesh toggle: hidden until the config read resolves (and for a peer whose
    settings we can't read), toggled via .hidden in peers-ui. */
-#peer-info-relay-row.hidden { display: none; }
+#peer-info-relay-row.hidden, #peer-info-share-row.hidden { display: none; }
 
 /* Lay the (short, single-word) tool/skill checklists out in two columns so the
    popover stays wide-and-short instead of a tall scroll. */
@@ -5207,6 +5207,8 @@ body:not(.sessions-restored) [data-peer-ui] { display: none; }
 #peers-list .peer-row-token { flex: 0 0 150px; }
 #peers-list .peer-row-cleartoken { flex: none; font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 4px; cursor: pointer; }
 #peers-list .peer-row-cleartoken input { margin: 0; }
+#peers-list .peer-row-share { flex: 0 0 100%; margin-left: 116px; font-size: 11px; display: flex; align-items: center; gap: 4px; cursor: pointer; }
+#peers-list .peer-row-share input { margin: 0; }
 #peers-list .peer-row input.invalid { border-color: var(--error); }
 /* "folder reported by the box" — a dim note on its own full-width line under the
    override inputs, shown only when the pre-fill came from the peer's live

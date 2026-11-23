@@ -134,3 +134,20 @@ test('peer-wiring: a throwing session list degrades to no local rows, not a dead
     assert.deepStrictEqual(captured.opts.computeRoster('ios'), []);
   });
 });
+
+test('peer-wiring: a sharing row learns the hub\'s own names without relay, and only those', () => {
+  withStubbedPeerClient((captured) => {
+    const statuses = [{ id: 'rl', label: 'remote-linux', online: true, caps: ['dm'], sessions: [{ name: 'worker', type: 'claude' }] }];
+    const peers = [
+      { id: 'ios', label: 'ios', url: 'http://ios', shareAgents: true },
+      { id: 'rl', label: 'remote-linux', url: 'http://rl', relayAllowed: true },
+      { id: 'muted', label: 'muted', url: 'http://muted', relayAllowed: true, shareAgents: false },
+    ];
+    const { computeRoster } = makeWiring(captured, { peers, sessions: SESSIONS, statuses });
+    assert.deepStrictEqual(computeRoster('ios'), [
+      { name: 'clodex', origin: 'hub', type: 'claude' },
+      { name: 'Codex', origin: 'hub', type: 'codex' },
+    ]);
+    assert.deepStrictEqual(computeRoster('muted'), [{ name: 'worker', origin: 'remote-linux', type: 'claude' }]);
+  });
+});

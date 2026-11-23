@@ -9,6 +9,7 @@ const { wireBulkToggles } = require('./lib/checklists');
 const { webViewAffordance } = require('./lib/peer-web-view');
 const { peerStateText, NEEDS_UPGRADE_TIP } = require('./lib/peer-state-text');
 const { isPeerExpanded, togglePeerExpanded } = require('./lib/peer-collapse');
+const { peerSharesAgents } = require('../relay-protocol');
 const { servedBannerView } = require('./lib/served-banner');
 const { placeAboveAnchor } = require('./lib/popover-place');
 const { classifySender } = require('./lib/sender-class');
@@ -1279,6 +1280,8 @@ function initPeersUi({
   const peerInfoDisableBtn = document.getElementById('peer-info-disable');
   const peerInfoRelayRow = document.getElementById('peer-info-relay-row');
   const peerInfoRelayCheck = document.getElementById('peer-info-relay');
+  const peerInfoShareRow = document.getElementById('peer-info-share-row');
+  const peerInfoShareCheck = document.getElementById('peer-info-share');
 
   function closePeerInfoPopover() {
     peerInfoPopover.classList.add('hidden');
@@ -1288,6 +1291,8 @@ function initPeersUi({
     peerInfoDisableBtn.onclick = null;
     peerInfoRelayRow.classList.add('hidden');
     peerInfoRelayCheck.onchange = null;
+    peerInfoShareRow.classList.add('hidden');
+    peerInfoShareCheck.onchange = null;
   }
 
   function renderPeerOfferLine(id) {
@@ -1349,10 +1354,17 @@ function initPeersUi({
     // it from config, not from peerStatuses.
     peerInfoRelayRow.classList.add('hidden');
     peerInfoRelayCheck.onchange = null;
+    peerInfoShareRow.classList.add('hidden');
+    peerInfoShareCheck.onchange = null;
     window.api.getSettings().then((s) => {
       if (peerInfoPopover.classList.contains('hidden') || peerInfoPopover.dataset.peerId !== String(id)) return;
       const cfg = ((s && s.peers) || []).find((p) => String(p.id) === String(id));
       peerInfoRelayCheck.checked = !!(cfg && cfg.relayAllowed);
+      peerInfoShareCheck.checked = peerSharesAgents(cfg);
+      peerInfoShareRow.classList.remove('hidden');
+      peerInfoShareCheck.onchange = () => {
+        window.api.peerSetShareAgents(id, peerInfoShareCheck.checked).catch(() => {});
+      };
       peerInfoRelayRow.classList.remove('hidden');
       peerInfoRelayCheck.onchange = () => {
         window.api.peerSetRelayAllowed(id, peerInfoRelayCheck.checked).catch(() => {});
@@ -1391,7 +1403,7 @@ function initPeersUi({
   return {
     typeToTakeControl, renderPeerBar, forgetControlMirror,
     openPeerSession, openPeerSessionDialog, closePeerSessionDialog, peerDisplayHost, peerHideFromList,
-    ensurePeerSessionVisible, openPeerArgs,
+    ensurePeerSessionVisible, openPeerArgs, openPeerInfoPopover,
   };
 }
 

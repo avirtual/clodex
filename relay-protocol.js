@@ -127,22 +127,28 @@ function peerOriginSuffix(p, nameRe = RELAY_NAME_RE) {
   return null;
 }
 
+function peerSharesAgents(peer) {
+  if (!peer) return false;
+  return typeof peer.shareAgents === 'boolean' ? peer.shareAgents : !!peer.relayAllowed;
+}
+
 // Compute the relay roster the HUB pushes to one spoke `targetId` — the agents
 // it may reach on the hub's OTHER peers and on the HUB ITSELF. Pure: takes the
 // hub's peer statuses (PeerManager.statuses() shape: {id,label,online,caps,
-// sessions}), the relayAllowed peer ids, the hub's own sessions and own label.
+// sessions}), the relayAllowed and sharing peer ids, the hub's own sessions and label.
 // Gates below; docs/notes/relay-protocol.md says which reach the local rows.
-//   * symmetric gate — the target must itself be relayAllowed, else it's not in
-//     the mesh at all → empty roster.
 //   * split-horizon — never advertise the target's own agents back to it.
-//   * both-endpoints gate — only include peer Y where Y is relayAllowed too.
+//   * both-endpoints gate — peer Y only when the target and Y are relayAllowed.
 //   * liveness — only online peers.
 //   * type filter — agent types only, no scratch clone; bash can't process
 //     intents and a bash session is private, so it never reaches a spoke's roster.
 // Returns [{name, origin, type}]. Dedup guards a duplicate name on one origin.
-function computeRosterFor(targetId, statuses, relayAllowedIds, localSessions, selfLabel) {
+function computeRosterFor(targetId, statuses, relayAllowedIds, localSessions, selfLabel, sharingIds = relayAllowedIds) {
   const allowed = relayAllowedIds instanceof Set ? relayAllowedIds : new Set(relayAllowedIds || []);
-  if (!allowed.has(String(targetId))) return [];
+  const sharing = sharingIds instanceof Set ? sharingIds : new Set(sharingIds || []);
+  const relays = allowed.has(String(targetId));
+  const shares = sharing.has(String(targetId));
+  if (!relays && !shares) return [];
   const roster = [];
   const seen = new Set();
   const admit = (sess, origin) => {
@@ -153,7 +159,7 @@ function computeRosterFor(targetId, statuses, relayAllowedIds, localSessions, se
     seen.add(key);
     roster.push({ name: sess.name, origin, type: sess.type });
   };
-  for (const st of (statuses || [])) {
+  for (const st of (relays ? (statuses || []) : [])) {
     if (!st || String(st.id) === String(targetId)) continue;   // split-horizon
     if (!st.online) continue;                                   // liveness
     if (!allowed.has(String(st.id))) continue;                 // both-endpoints gate
@@ -161,7 +167,7 @@ function computeRosterFor(targetId, statuses, relayAllowedIds, localSessions, se
     if (!origin) continue;
     for (const sess of (st.sessions || [])) admit(sess, origin);
   }
-  if (selfLabel && RELAY_NAME_RE.test(String(selfLabel))) {
+  if (shares && selfLabel && RELAY_NAME_RE.test(String(selfLabel))) {
     for (const sess of (localSessions || [])) admit(sess, String(selfLabel));
   }
   return roster;
@@ -217,5 +223,6 @@ module.exports = {
   hopRule,
   buildTerminalDm,
   computeRosterFor,
+  peerSharesAgents,
   peerOriginSuffix,
 };

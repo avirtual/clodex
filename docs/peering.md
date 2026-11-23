@@ -1196,6 +1196,12 @@ anything else leaves it running.
 - Hub-relay (messaging.md §4a): spokes never dial each other; a spoke→spoke DM
   is relayed through the hub, reusing the outbox+claim legs. Opt-in per peer
   (`relayAllowed`, default OFF, symmetric both-ends gate); distinct `relay` cap;
+  the hub's own agents ride a separate per-peer tick, `shareAgents` ("Share my
+  agents with this peer", on for a newly added peer; a row without the key
+  follows `relayAllowed`), so a dialed node lists the dialer's own agents
+  without relay and its other peers' agents only under relay on both rows.
+  Sharing controls visibility, not delivery: a peer that already knows an
+  agent's name and has exchanged a dm can message it either way;
   `from`'s local part is sacred, but the hub restamps its origin suffix to its
   own label for the source spoke on the terminal leg; that leg also strips relay
   fields (loop-prevention) and `RELAY_MAX_HOPS=1` is the belt.

@@ -55,7 +55,7 @@ function dialogFor(stores, boxIds, collected) {
 
 const GEN = {
   id: 'gen-1', label: 'desktop', url: null, sshHost: 'desk.local', remotePort: 7900, deployFolder: null,
-  disabled: true, relayAllowed: true, inbox: 'claim', token: 'gen-secret',
+  disabled: true, relayAllowed: true, shareAgents: false, inbox: 'claim', token: 'gen-secret',
 };
 const PLAIN = { id: 'plain-1', label: 'work', url: null, sshHost: 'work.local', remotePort: 7901, deployFolder: '/opt/c' };
 const BOX = {
@@ -91,7 +91,7 @@ test('an edited row keeps its settings and a new row gets none', async () => {
 
 const PEER_KEYS = [
   'az', 'deployFolder', 'disabled', 'gcloud', 'id', 'inbox', 'kubectl', 'label',
-  'relayAllowed', 'remotePort', 'sshHost', 'ssm', 'token', 'url',
+  'relayAllowed', 'remotePort', 'shareAgents', 'sshHost', 'ssm', 'token', 'url',
 ];
 
 test('every key sanitizePeers reads or outputs is collected by the dialog, carried by Save, or listed here', () => {
@@ -129,7 +129,7 @@ test('settings:set logs exactly the keys the Peers dialog Save carries', () => {
   vm.createContext(ctx);
   vm.runInContext(carriedSrc(), ctx);
   vm.runInContext(ipcSrc.slice(start, ipcSrc.indexOf('\n', start) + 1), ctx);
-  assert.deepStrictEqual(JSON.parse(vm.runInContext('JSON.stringify([PEER_FLAG_KEYS, Object.keys(PEER_SAVE_CARRIED)])', ctx)), [['relayAllowed', 'disabled', 'inbox'], ['relayAllowed', 'disabled', 'inbox']]);
+  assert.deepStrictEqual(JSON.parse(vm.runInContext('JSON.stringify([PEER_FLAG_KEYS, Object.keys(PEER_SAVE_CARRIED)])', ctx)), [['relayAllowed', 'shareAgents', 'disabled', 'inbox'], ['relayAllowed', 'shareAgents', 'disabled', 'inbox']]);
 });
 
 function settingsSetFixture() {
@@ -154,7 +154,7 @@ function settingsSetFixture() {
   }));
   const set = handlers.get('settings:set');
   assert.strictEqual(typeof set, 'function', 'ENTER: settings:set is registered');
-  return { stores, set, peerLines: () => lines.filter((l) => l.startsWith('[peer] ')) };
+  return { stores, set, handlers, peerLines: () => lines.filter((l) => l.startsWith('[peer] ')) };
 }
 
 test('settings:set logs one [peer] line per changed flag and none on an unchanged write', () => {
@@ -171,4 +171,85 @@ test('settings:set logs one [peer] line per changed flag and none on an unchange
     '[peer] settings:set plain-1 relayAllowed undefined → true',
   ]);
   for (const l of peerLines()) assert.doesNotMatch(l, /secret/);
+});
+
+test('a new row saves its share tick explicitly, off as well as on', async () => {
+  const stores = openStores();
+  stores.uiSettings.set({ peers: [PLAIN] });
+  const on = { id: 'new-on', label: 'on', sshHost: 'on.local', remotePort: 7900, shareAgents: true };
+  const off = { id: 'new-off', label: 'off', sshHost: 'off.local', remotePort: 7900, shareAgents: false };
+  await dialogFor(stores, [], [collectedOf(PLAIN), on, off])();
+  assert.deepStrictEqual(stores.uiSettings.get().peers, [
+    PLAIN,
+    { id: 'new-on', label: 'on', url: null, sshHost: 'on.local', remotePort: 7900, deployFolder: null, shareAgents: true },
+    { id: 'new-off', label: 'off', url: null, sshHost: 'off.local', remotePort: 7900, deployFolder: null, shareAgents: false },
+  ]);
+});
+
+test('peer:setRelayAllowed pins the prior share value on a row without the key, and leaves an explicit one', () => {
+  const { stores, handlers } = settingsSetFixture();
+  const relayed = { id: 'r-1', label: 'r', url: null, sshHost: 'r.local', remotePort: 7900, deployFolder: null, relayAllowed: true };
+  const keyed = { ...PLAIN, shareAgents: false };
+  stores.uiSettings.set({ peers: [relayed, PLAIN, keyed] });
+  const setRelay = handlers.get('peer:setRelayAllowed');
+  setRelay({}, 'r-1', false);
+  setRelay({}, 'plain-1', true);
+  assert.deepStrictEqual(stores.uiSettings.get().peers.slice(0, 2), [
+    { id: 'r-1', label: 'r', url: null, sshHost: 'r.local', remotePort: 7900, deployFolder: null, shareAgents: true },
+    { ...PLAIN, url: null, relayAllowed: true, shareAgents: false },
+  ]);
+  stores.uiSettings.set({ peers: [keyed] });
+  setRelay({}, 'plain-1', true);
+  assert.deepStrictEqual(stores.uiSettings.get().peers, [{ ...keyed, url: null, relayAllowed: true }]);
+});
+
+test('peer:setShareAgents writes the key as a boolean and leaves relay alone', () => {
+  const { stores, handlers } = settingsSetFixture();
+  stores.uiSettings.set({ peers: [GEN] });
+  const setShare = handlers.get('peer:setShareAgents');
+  assert.deepStrictEqual(setShare({}, 'gen-1', true), { ok: true });
+  assert.deepStrictEqual(stores.uiSettings.get().peers, [{ ...GEN, shareAgents: true }]);
+  setShare({}, 'gen-1', false);
+  assert.deepStrictEqual(stores.uiSettings.get().peers, [GEN]);
+  assert.deepStrictEqual(setShare({}, 'nope', true), { ok: false, error: 'no such peer' });
+});
+
+function collectPeersWith(row) {
+  const start = src.indexOf('function collectPeers() {');
+  assert.ok(start > 0, 'ENTER: collectPeers was located');
+  const ctx = {
+    peersListBox: { querySelectorAll: () => [row] },
+    classifyPeerDest: () => ({ kind: 'ssh', sshHost: 'fresh.local' }),
+    peerRowDest: () => 'fresh.local',
+    validatePeerRowInputs: () => ({ ok: true, port: 7900, folder: null }),
+    PEER_CLOUD_UI: {},
+  };
+  vm.createContext(ctx);
+  vm.runInContext(src.slice(start, src.indexOf('\n}\n', start) + 2), ctx);
+  return vm.runInContext('collectPeers()', ctx);
+}
+
+function fakeRow(fields) {
+  return { dataset: { peerId: 'new-1' }, querySelector: (sel) => fields[sel] || null };
+}
+
+test('the dialog collects the new-row share tick, and an existing row carries none', () => {
+  const label = { value: 'fresh' };
+  for (const checked of [true, false]) {
+    const got = collectPeersWith(fakeRow({ '.peer-row-label': label, '.peer-row-share-check': { checked } }));
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(got)), {
+      ok: true, peers: [{ id: 'new-1', label: 'fresh', sshHost: 'fresh.local', remotePort: 7900, shareAgents: checked }],
+    });
+  }
+  const existing = collectPeersWith(fakeRow({ '.peer-row-label': label }));
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(existing)), {
+    ok: true, peers: [{ id: 'new-1', label: 'fresh', sshHost: 'fresh.local', remotePort: 7900 }],
+  });
+});
+
+test('only a new row draws the share tick, and it starts ticked', () => {
+  const line = src.split('\n').find((l) => l.includes('peer-row-share-check'));
+  assert.ok(line, 'ENTER: the add-peer template draws a share tick');
+  assert.match(line, /\$\{peer\.id \? '' : `<label class="peer-row-share"/);
+  assert.match(line, /class="peer-row-share-check" checked>/);
 });
