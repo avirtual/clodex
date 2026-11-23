@@ -49,7 +49,7 @@ const { parseEnvLines, formatEnvLines } = require('./lib/env-edit');
 const { envRowView, buildEnvRow } = require('./lib/env-row');
 const { envLockView, applyEnvLock, patchUnlessEnvLocked } = require('./lib/env-lock');
 const { activityView: testActivityView } = require('../suite-activity-view');
-const { createOutputFollower, autoOpenJob, chooseStream, streamInfo, streamLabel, otherStream } = require('./lib/testjob-output');
+const { createOutputFollower, autoOpenJob, createStreamChoice, streamInfo, streamLabel, otherStream } = require('./lib/testjob-output');
 const { DAY_LETTERS: OFFER_DAY_LETTERS, PEER_NOTE: OFFER_PEER_NOTE, RUN_PEER_NOTE: OFFER_RUN_PEER_NOTE, runIsolationLine: offerRunIsolationLine, runConsentText: offerRunConsentText, offerRunnerFrom, ownFactsLine, peerChoices: offerPeerChoices, peerNameToAdd: offerPeerNameToAdd, selfLabelLine: offerSelfLabelLine, offerFormProblem, offerRecordFromForm, offerStatusText, suiteRunnerRecordFromForm, shareEditor: suiteShareEditor, claimLines: offerClaimLines } = require('./lib/offer-view');
 const { accountFromEnv, envWithAccount, accountOptions, loginSeat, abbrevHome, DEFAULT_LABEL: ACCOUNT_DEFAULT, ENV_KEY: ACCOUNT_ENV_KEY } = require('./lib/account-select');
 const { accountRowView, buildAccountRow, buildKeyPrompt, keyFieldVisible, keyTransportRefusal, modelOptions } = require('./lib/account-row');
@@ -9325,15 +9325,14 @@ function testActivityJob(id) {
 
 const testOutputPane = document.getElementById('test-output-pane');
 let testOutputFollower = null;
+const testOutputChoice = createStreamChoice();
 let testOutputJob = null;
-let testOutputStreamName = 'stdout';
-let testOutputManual = null;
 
 function testOutputContext() {
   const job = testActivityJob(testOutputJob);
   return {
-    lastOutputAt: streamInfo(job, testOutputStreamName).lastOutputAt,
-    otherBytes: streamInfo(job, otherStream(testOutputStreamName)).bytes,
+    lastOutputAt: streamInfo(job, testOutputChoice.stream).lastOutputAt,
+    otherBytes: streamInfo(job, otherStream(testOutputChoice.stream)).bytes,
   };
 }
 
@@ -9341,8 +9340,8 @@ function paintTestOutputStreams() {
   const job = testActivityJob(testOutputJob);
   for (const radio of testOutputPane.querySelectorAll('input[name="test-output-stream"]')) {
     const stream = radio.value;
-    radio.checked = stream === testOutputStreamName;
-    const shown = stream === testOutputStreamName && testOutputFollower ? testOutputFollower.total : null;
+    radio.checked = stream === testOutputChoice.stream;
+    const shown = stream === testOutputChoice.stream && testOutputFollower ? testOutputFollower.total : null;
     document.getElementById(`test-output-label-${stream}`).textContent = streamLabel(stream, shown != null ? shown : streamInfo(job, stream).bytes);
   }
 }
@@ -9362,7 +9361,7 @@ function paintTestOutput(view) {
 function followTestOutput() {
   if (testOutputFollower) testOutputFollower.close();
   const id = testOutputJob;
-  const stream = testOutputStreamName;
+  const stream = testOutputChoice.stream;
   const follower = createOutputFollower({
     read: ({ offset, length }) => window.api.suiteRunnerOutput(id, { stream, offset, length }),
     onUpdate: (view) => { if (testOutputFollower === follower) paintTestOutput(view); },
@@ -9376,9 +9375,8 @@ function followTestOutput() {
 }
 
 function openTestOutput(id, title) {
-  if (id !== testOutputJob) testOutputManual = null;
   testOutputJob = id;
-  testOutputStreamName = chooseStream(testActivityJob(id), testOutputManual);
+  testOutputChoice.open(id, testActivityJob(id));
   document.getElementById('test-output-title').textContent = title;
   testOutputPane.classList.remove('hidden');
   markTestActivityRows();
@@ -9391,8 +9389,7 @@ function closeTestOutput() {
   if (testOutputFollower) testOutputFollower.close();
   testOutputFollower = null;
   testOutputJob = null;
-  testOutputManual = null;
-  testOutputStreamName = 'stdout';
+  testOutputChoice.close();
   testOutputPane.classList.add('hidden');
   markTestActivityRows();
 }
@@ -9401,8 +9398,7 @@ document.getElementById('test-output-close').addEventListener('click', closeTest
 for (const radio of testOutputPane.querySelectorAll('input[name="test-output-stream"]')) {
   radio.addEventListener('change', () => {
     if (!testOutputJob || !radio.checked) return;
-    testOutputManual = radio.value;
-    testOutputStreamName = radio.value;
+    testOutputChoice.pick(radio.value);
     followTestOutput();
   });
 }
@@ -9412,14 +9408,7 @@ document.getElementById('test-output-follow').addEventListener('change', (e) => 
 
 function refreshOpenTestOutput() {
   if (!testOutputJob) return;
-  const job = testActivityJob(testOutputJob);
-  const stream = job ? chooseStream(job, testOutputManual) : testOutputStreamName;
-  if (stream !== testOutputStreamName) {
-    testOutputStreamName = stream;
-    followTestOutput();
-  } else if (testOutputFollower) {
-    testOutputFollower.refresh();
-  }
+  if (testOutputFollower) testOutputFollower.refresh();
   paintTestOutputStreams();
 }
 

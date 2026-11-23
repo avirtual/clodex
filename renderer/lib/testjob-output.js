@@ -114,9 +114,31 @@ function streamInfo(job, stream) {
   return s ? { bytes: s.bytes, lastOutputAt: s.lastOutputAt } : { bytes: null, lastOutputAt: undefined };
 }
 
-function chooseStream(job, manual = null) {
-  if (manual === 'stdout' || manual === 'stderr') return manual;
+function chooseStream(job) {
   return streamInfo(job, 'stdout').bytes === 0 && streamInfo(job, 'stderr').bytes > 0 ? 'stderr' : 'stdout';
+}
+
+function createStreamChoice() {
+  let id = null;
+  let stream = 'stdout';
+  return {
+    open(jobId, job) {
+      if (jobId !== id) {
+        id = jobId;
+        stream = chooseStream(job);
+      }
+      return stream;
+    },
+    pick(picked) {
+      if (picked === 'stdout' || picked === 'stderr') stream = picked;
+      return stream;
+    },
+    close() {
+      id = null;
+      stream = 'stdout';
+    },
+    get stream() { return stream; },
+  };
 }
 
 function streamLabel(stream, bytes) {
@@ -226,7 +248,7 @@ function createOutputFollower({
 
 module.exports = {
   sanitizeOutput, createOutputBuffer, createOutputFollower, headerText, statusText,
-  autoOpenJob, chooseStream, streamInfo, streamLabel, otherStream,
+  autoOpenJob, chooseStream, createStreamChoice, streamInfo, streamLabel, otherStream,
   PANE_CAP_CHARS, READ_BYTES, POLL_MS, MAX_BACKOFF_MS, DROPPED_LINE, RESET_LINE,
   EXPIRED_TEXT, EMPTY_TEXT, NONE_TEXT, UNKNOWN_TEXT,
 };

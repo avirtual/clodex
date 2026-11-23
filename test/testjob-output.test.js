@@ -214,16 +214,26 @@ test('opening the activity view picks the longest-running job, else the newest f
   for (const [name, snap, want] of rows) assert.strictEqual(T.autoOpenJob(snap), want, name);
 });
 
-test('the pane opens on stdout unless stdout is empty and stderr is not; a manual pick holds', () => {
+test('the pane opens on stdout unless stdout is empty and stderr is not', () => {
   const rows = [
     ['stdout 0, stderr 0', sized('j', 0, 0), 'stdout'],
     ['stdout 0, stderr 10', sized('j', 0, 10), 'stderr'],
     ['stdout 5, stderr 10', sized('j', 5, 10), 'stdout'],
   ];
-  for (const [name, job, want] of rows) assert.strictEqual(T.chooseStream(job), want, name);
-  assert.strictEqual(T.chooseStream(sized('j', 0, 10), 'stderr'), 'stderr', 'ENTER: the operator picked stderr');
-  assert.strictEqual(T.chooseStream(sized('j', 5, 10)), 'stdout', 'ENTER: the refresh without a pick moves to stdout');
-  assert.strictEqual(T.chooseStream(sized('j', 5, 10), 'stderr'), 'stderr', 'the pick survives stdout gaining bytes');
+  for (const [name, job, want] of rows) assert.strictEqual(T.createStreamChoice().open(job.id, job), want, name);
+});
+
+test('the stream is chosen when the pane opens for a job and holds until a pick or another job', () => {
+  const choice = T.createStreamChoice();
+  assert.strictEqual(choice.open('j1', sized('j1', 0, 10)), 'stderr', 'opened with stdout 0, stderr 10');
+  assert.strictEqual(choice.open('j1', sized('j1', 211, 5000)), 'stderr', 'refresh with stdout 211, stderr 5000');
+  assert.strictEqual(choice.stream, 'stderr');
+  assert.strictEqual(choice.pick('stdout'), 'stdout', 'operator picks stdout');
+  assert.strictEqual(choice.open('j1', sized('j1', 0, 10)), 'stdout', 'refresh after the pick');
+  assert.strictEqual(choice.stream, 'stdout');
+  assert.strictEqual(choice.open('j2', sized('j2', 0, 10)), 'stderr', 'pane opened for another job');
+  choice.close();
+  assert.strictEqual(choice.open('j2', sized('j2', 0, 10)), 'stderr', 'reopened after close');
 });
 
 test('the stream switch shows each stream size', () => {
