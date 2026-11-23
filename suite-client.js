@@ -100,14 +100,14 @@ function createSuiteClient({
     const {
       peer, tree, kind = 'hand', scope = 'full', team = null, ticket = null, seat = null,
       files = [], flags = {}, setup = null, env = {}, timeoutMs = null, budgetMs = DEFAULT_BUDGET_MS,
-      onProgress = () => {}, onJob = () => {}, onSubmitted = () => {}, onDetach = () => {}, shouldStop = () => false,
+      onProgress = () => {}, onJob = () => {}, onSubmitted = () => {}, onDetach = () => {}, onState = () => {}, shouldStop = () => false,
       queueBudgetMs = null, runBudgetMs = null, box = false, shares = [], buildBudgetMs = BUILD_BUDGET_MS,
     } = opts;
     const ctx = {
       id: opts.runId || randomUUID(), peer, box: box === true || boxDefOf(box) != null, boxDef: boxDefOf(box), wire: opts.wire === 'pull' ? 'pull' : 'push', where: opts.name || peer, route: opts.route || null, override: opts.override || null,
       tree: typeof tree === 'string' && tree ? path.resolve(tree) : null, kind, scope, team, ticket, seat,
       jobId: null, attempt: 0, treeHash: null, sha: null, dirty: null, queuedAt: null, startedAt: null, env: null, started: false,
-      t0: now(), budgetMs, queueBudgetMs, runBudgetMs, buildBudgetMs, buildSince: null, timeoutMs, onSubmitted, onDetach, shouldStop,
+      t0: now(), budgetMs, queueBudgetMs, runBudgetMs, buildBudgetMs, buildSince: null, timeoutMs, onSubmitted, onDetach, onState, shouldStop,
       failFast: typeof opts.repick === 'function', submitted: false,
       shares: box && Array.isArray(shares) ? shares.map(({ share, version }) => ({ share, version })) : [],
     };
@@ -356,6 +356,7 @@ function createSuiteClient({
       }
       if (job.state !== last) {
         last = job.state;
+        try { ctx.onState(job.state); } catch {}
         progress(`runner ${ctx.peer}: job ${job.state}${job.position ? ` (#${job.position} in queue)` : ''}`);
       }
       if (job.state === 'setup' || job.state === 'running') markStarted(ctx, job);

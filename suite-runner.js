@@ -738,6 +738,7 @@ function createSuiteRunner({
 
   async function buildBox(job, jobDir) {
     const hash = job.build.definitionHash;
+    if (!buildBoxes) { await failBuild(hash, { why: 'builds are off on this runner', cool: false }, job); return false; }
     const want = { definitionHash: hash, rev: job.build.rev };
     const found = await boxState(want);
     if (found.state === 'ready') { adopt(hash, found.env, job); return true; }
@@ -754,11 +755,9 @@ function createSuiteRunner({
     const iidFile = path.join(jobDir, 'build', 'iid');
     fs.mkdirSync(path.dirname(iidFile), { recursive: true });
     const argv = box.buildArgv({ definition: job.build.definition, definitionHash: hash, token, iidFile });
-    let pid = null;
     const r = await exec(job, jobDir, argv, BUILD_TIMEOUT_MS, null, {
       start: () => {
         const child = spawn(argv[0], argv.slice(1), { detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
-        pid = child.pid || null;
         if (child.stdin) {
           child.stdin.on('error', () => {});
           child.stdin.end(job.build.definition);
@@ -790,7 +789,7 @@ function createSuiteRunner({
     const tail = buildTail(job);
     const last = tail ? tail.split('\n').pop() : '';
     try {
-      await box.endBuild({ token, pid });
+      await box.endBuild({ token });
       fs.rmSync(buildFile, { force: true });
     } catch (e) {
       log(`suite-runner: build cleanup not confirmed: ${e.message}`);
@@ -1312,7 +1311,7 @@ function createSuiteRunner({
       stamp = await ensureIdentity();
       if (isoState.mode === 'unavailable') return fail(503, `isolation unavailable: ${isoState.why}`);
     }
-    const waiting = [...jobs.values()].filter((j) => j.state === 'awaiting-pack' || j.state === 'queued').length;
+    const waiting = [...jobs.values()].filter((j) => j.state === 'awaiting-pack' || j.state === 'queued' || j.state === 'build').length;
     if (waiting >= lim.queueMax) return fail(429, 'queue full');
     const job = jobFrom(body, origin, stamp, build);
     jobs.set(job.id, job);

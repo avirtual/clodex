@@ -1030,7 +1030,7 @@ A runner whose owner ticked "Build box images that teams ask for" builds a
 missing image itself from the definition text the job carries (docs/peering.md,
 **Building a missing image**). The lead sees the job in phase `build`: while it
 is there the queue budget does not run, a separate 25 min build budget does,
-and once the job leaves `build` the queue and run budgets start afresh. A
+and once the job leaves `build` the queue and run budgets start afresh; the gate's own outer guard adds the queue and build budgets for a team with a definition, so it does not cut a first build's run short, and a guard that fires while the job is still in `build` falls back with `box build`. A
 failed or refused build reads as `unknown` (`box build on runner: <why>`) and
 falls back with `box build`, never as a red suite. For a team with `box: true`, bare `[agent:team runner]`
 asks each member about the team's definition and shows `box ready …`, `box
