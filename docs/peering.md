@@ -969,10 +969,18 @@ The runner's side is the claimer (§3, "Suite claims").
   detached one holding no calls, or is 429 when there is none.
 - **Attachment.** Each claim carries the claimer's `session` id
   (`[A-Za-z0-9_-]{8,128}`, minted once per runner instance). An origin is
-  attached for `presenceMs` (45 s, provisional) after its last claim. A claim
-  from another session while the current one is attached is 409. A new session
-  replacing a lapsed one fails every pending and claimed call of that origin
-  with 404 `{reason:'runner-restart'}`. suite-client resubmits on it for pack,
+  attached for `presenceMs` (45 s, provisional) after its last sign of life
+  (`lastSeen`), and for as long as its current session holds a claimed call
+  whose deadline has not passed. A sign of life is a successful claim, or a
+  blob fetch or reply that presents the right claim token for a call the
+  current session holds, whatever that request's outcome; a wrong or unknown
+  token, or a call already settled or expired, refreshes nothing. Pending
+  calls do not count. `lastClaim` stays the time of the last successful
+  claim; `origins()` lists both, and origin eviction orders by `lastSeen`.
+  A claim from another session while the current one is attached is 409. A
+  new session replacing a lapsed one fails every pending call of that origin,
+  and any claimed call past its deadline not yet expired, with 404
+  `{reason:'runner-restart'}`. suite-client resubmits on it for pack,
   commit and poll; a replaced submit, info or output read ends `unknown`.
 - A call is delivered once. A second claim never returns a call an earlier
   claim took.

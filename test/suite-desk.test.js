@@ -207,22 +207,25 @@ test('L2: a claim from another session while one is attached is 409', () => {
   assert.ok(SESSION_RE.test(SESSION) && SESSION_RE.test(OTHER));
 });
 
-test('L2: a session replacing a lapsed one fails the old pending and claimed calls as runner-restart', async () => {
+test('L2: a session replacing a lapsed one fails the old pending calls as runner-restart once its claimed call has expired', async () => {
   const { desk, clock } = mkDesk({ presenceMs: 10000 });
   desk.claim('laptop', SESSION);
   const c = desk.conn('laptop');
-  const claimedP = c.suitePut('/api/suite/jobs/j/pack', Buffer.alloc(8), {}, 60000);
+  const claimedP = c.suitePut('/api/suite/jobs/j/pack', Buffer.alloc(8), {}, 20000);
   const [old] = desk.claim('laptop', SESSION).calls;
   const pendingP = c.suiteAsk('GET', '/api/suite/jobs?ids=j&wait=25000', null, 60000);
   assert.deepStrictEqual(desk.retained('laptop'), { unsettled: 2, bytes: 8 });
-  clock.advance(10000);
+  clock.advance(19999);
+  assert.strictEqual(desk.attached('laptop'), true, 'ENTER: the unexpired claimed call holds the lapsed session');
+  assert.strictEqual(desk.claim('laptop', OTHER).status, 409);
+  clock.advance(1);
   assert.strictEqual(desk.attached('laptop'), false);
   assert.deepStrictEqual(desk.claim('laptop', OTHER), { status: 200, calls: [] });
   const restart = { status: 404, body: { ok: false, error: 'runner session replaced', reason: 'runner-restart' }, error: null };
-  assert.deepStrictEqual(await claimedP, restart);
+  assert.deepStrictEqual(await claimedP, { status: 0, body: null, error: 'runner did not answer in time' });
   assert.deepStrictEqual(await pendingP, restart);
   assert.deepStrictEqual(desk.retained('laptop'), { unsettled: 0, bytes: 0 });
-  assert.deepStrictEqual(desk.reply(old.id, old.claim, { status: 200, body: { ok: true } }), { status: 410, error: 'call already settled' });
+  assert.deepStrictEqual(desk.reply(old.id, old.claim, { status: 200, body: { ok: true } }), { status: 410, error: 'call expired' });
 });
 
 test('origins lists claimers with their attachment; close settles everything', async () => {
@@ -311,7 +314,6 @@ test('a replaced runner session logs one line with the number of calls it settle
   desk.claim('laptop', SESSION);
   desk.conn('laptop').suiteAsk('GET', '/api/suite/info', null, 60000);
   desk.conn('laptop').suiteAsk('GET', '/api/suite/info', null, 60000);
-  desk.claim('laptop', SESSION);
   clock.advance(46000);
   assert.strictEqual(desk.claim('laptop', OTHER).status, 200);
   assert.deepStrictEqual(logs, ['runner session for laptop replaced; settled 2 call(s)']);
