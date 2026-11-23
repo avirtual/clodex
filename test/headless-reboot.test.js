@@ -375,7 +375,7 @@ test('t2401: main.js routes before-quit through the quit guard first, and restar
   const src = seamNames('main.js');
   assert.match(src, /app\.on\('before-quit', \(event\) => \{\s*if \(!quitGuard\.beforeQuit\(event\)\) return;\s*appQuitting = true;\s*idleWaiter\.disarm\(\);/);
   assert.match(src, /function restartClodex\(\) \{\s*quitGuard\.passThrough\(\);/);
-  assert.match(src, /fence:\s*quitGuard\.restartFence,/);
+  assert.match(src, /fence:\s*\(on\)\s*=>\s*quitGuard\.restartFence\(on\),/);
   assert.match(src, /ask:\s*\(model\)\s*=>\s*dialog\.showMessageBox\(model\),/);
   assert.match(src, /body:\s*quitGiveUpBody\(n\)/);
 });

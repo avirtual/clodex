@@ -180,6 +180,29 @@ function restartClodex() {
 
 const { classifyRestart, createIdleWaiter, giveUpBody, restartDetail, pendingDetail, createQuitGuard, quitGiveUpBody } = require('./restart-waiter');
 const suiteRestartJobs = () => (engine ? engine.suiteRestartJobs() : []);
+const idleWaiter = createIdleWaiter({
+  getSessions: () => Array.from(manager.sessions.values()),
+  now: () => Date.now(),
+  setTimer: (fn, ms) => setTimeout(fn, ms),
+  clearTimer: (h) => clearTimeout(h),
+  restart: () => restartClodex(),
+  lastInputAt: () => manager.lastOperatorInputAt(),
+  inFlightRuns: () => manager.inFlightRestartHolds(),
+  suiteJobs: suiteRestartJobs,
+  fence: (on) => quitGuard.restartFence(on),
+  log,
+  notify: (asked, why) => {
+    try {
+      if (Notification.isSupported()) new Notification({
+        // "canceled" would be false on every render: this is the ONLY notify call
+        // site and it is the cap's give-up. An operator cancel does not notify at
+        // all — they pressed the button.
+        title: 'Restart dropped',
+        body: giveUpBody(asked, why),
+      }).show();
+    } catch {}
+  },
+});
 const quitGuard = createQuitGuard({
   suiteJobs: suiteRestartJobs,
   fence: (on) => { if (engine) engine.fenceSuiteRunner(on); },
@@ -193,29 +216,6 @@ const quitGuard = createQuitGuard({
   now: () => Date.now(),
   setTimer: (fn, ms) => setTimeout(fn, ms),
   clearTimer: (h) => clearTimeout(h),
-});
-const idleWaiter = createIdleWaiter({
-  getSessions: () => Array.from(manager.sessions.values()),
-  now: () => Date.now(),
-  setTimer: (fn, ms) => setTimeout(fn, ms),
-  clearTimer: (h) => clearTimeout(h),
-  restart: () => restartClodex(),
-  lastInputAt: () => manager.lastOperatorInputAt(),
-  inFlightRuns: () => manager.inFlightRestartHolds(),
-  suiteJobs: suiteRestartJobs,
-  fence: quitGuard.restartFence,
-  log,
-  notify: (asked, why) => {
-    try {
-      if (Notification.isSupported()) new Notification({
-        // "canceled" would be false on every render: this is the ONLY notify call
-        // site and it is the cap's give-up. An operator cancel does not notify at
-        // all — they pressed the button.
-        title: 'Restart dropped',
-        body: giveUpBody(asked, why),
-      }).show();
-    } catch {}
-  },
 });
 
 // "Running" here means MID-TURN, not merely alive: idle seats --resume cleanly.
