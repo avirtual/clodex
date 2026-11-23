@@ -1019,9 +1019,9 @@ kill, or no answer within that plus 2 min), `runner restart`, `tree mismatch`,
 `definition mismatch` (also an isolation mismatch), `no share` (the runner lacks a requested share at its version, or the stamped shares differ from the ask), `no totals` (no TOTALS
 line, or zero tests), `box build` (the runner's build of a missing image failed or was refused, or did not finish within the lead's 25 min build budget, `BUILD_BUDGET_MS`) and `outcome unknown` (cancelled, refused, output
 unavailable, snapshot or upload failure), plus `no box definition` when the
-definition was cleared after the gate was set. A box result that arrives after
+definition was cleared after the gate was set. Beside the reason the result carries `fallbackCode` and `fallbackClass` (`transient`, `deterministic`, `budget` or `unknown`) from `FALLBACK_CODES` in suite-client.js; `box build` splits into `box-build-budget`, `box-build-failed` and `box-build-interrupted` (the runner reports the build cancelled or stopped). A box result that arrives after
 the fallback began is ignored. Each run writes one compare row with
-`decidedBy` and `fallback` (docs/tests.md); bare `[agent:team runner]` counts
+`decidedBy`, `fallback` and, on a fallback, `fallbackCode` (docs/tests.md); bare `[agent:team runner]` counts
 them as `gate runs: N decided by the box, M fell back to home (<reason> <n>, …)`.
 The loop's suite notices (verify red and green, post-merge failure, MERGED)
 append `(box)` or `(home, box unavailable: <reason>)`.
