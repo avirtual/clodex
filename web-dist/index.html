@@ -11658,7 +11658,7 @@ body:not(.web-frontend):has(#sidebar[data-folded="1"]) #main {
         <summary><h4>Test boxes</h4><span class="prefs-group-sub">Run other nodes' test suites on this machine, and say who may</span></summary>
         <div id="prefs-suite-runner-block">
           <h5 style="margin-top: 14px;">Test runner</h5>
-          <p class="hint-text">Runs test suites that your peers send to this machine. Needs phone access on: peers reach the runner over the same wire. Applies when you press Apply test box settings, or Save, with no restart; refused while a job is running.</p>
+          <p class="hint-text">Runs test suites that your peers send to this machine. Needs phone access on: peers reach the runner over the same wire. Applies when you press Apply test box settings, or Save, with no restart; while test jobs run, the change is saved and applies when they finish.</p>
           <label class="prefs-check">
             <input type="checkbox" id="prefs-suite-runner-enabled">
             <span>Run tests for peers on this machine</span>
@@ -63627,6 +63627,7 @@ ${res.stderr}` : "");
         });
       }
       function suiteRunnerStatusText(st) {
+        if (st.pending) return `Saved. Applies when the running test jobs finish (${st.runningJobs} running).`;
         if (st.status === "running") {
           return st.remoteEnabled ? "Running \u2014 peers can send test suites here." : "Running \u2014 phone access is off: only leads this machine dials can send test suites here.";
         }

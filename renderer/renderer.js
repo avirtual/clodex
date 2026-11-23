@@ -9780,6 +9780,7 @@ if (prefsPeerShell) {
 }
 
 function suiteRunnerStatusText(st) {
+  if (st.pending) return `Saved. Applies when the running test jobs finish (${st.runningJobs} running).`;
   if (st.status === 'running') {
     return st.remoteEnabled ? 'Running — peers can send test suites here.' : 'Running — phone access is off: only leads this machine dials can send test suites here.';
   }

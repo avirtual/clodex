@@ -216,6 +216,7 @@ function createRemoteWiring(deps) {
     suiteDesk,
     thumbnail,
     onSuiteActivity = () => {},
+    startRunner = startSuiteRunner,
   } = deps;
   const thumbPage = createThumbnailer(thumbnail, log);
 
@@ -1416,12 +1417,16 @@ function createRemoteWiring(deps) {
 
   let suiteRunner;
   let suiteRunnerError = null;
+  let liveSetting = null;
+  let drainPending = false;
   function getSuiteRunner() {
     if (suiteRunner !== undefined) return suiteRunner;
     suiteRunner = null;
-    const opts = suiteRunnerOptions(process.env, REGISTRY_DIR, { setting: getUiSettings().get().suiteRunner });
+    const setting = getUiSettings().get().suiteRunner;
+    liveSetting = JSON.stringify(setting || null);
+    const opts = suiteRunnerOptions(process.env, REGISTRY_DIR, { setting });
     if (!opts) return null;
-    const started = startSuiteRunner(opts, { log, onActivity: () => refreshActivity() });
+    const started = startRunner(opts, { log, onActivity: () => refreshActivity() });
     suiteRunner = started.runner;
     suiteRunnerError = started.error;
     refreshActivity();
@@ -1484,6 +1489,8 @@ function createRemoteWiring(deps) {
       remoteEnabled: remoteOn,
       status,
       error: status === 'failed' ? suiteRunnerError : null,
+      pending: drainPending,
+      runningJobs: suiteRunner && typeof suiteRunner.activeCount === 'function' ? suiteRunner.activeCount() : 0,
     };
   }
 
@@ -1496,8 +1503,32 @@ function createRemoteWiring(deps) {
     if (suiteRunner) suiteRunner.close();
     suiteRunner = undefined;
     suiteRunnerError = null;
+    drainPending = false;
     dropActivity();
     refreshRemoteToken();
+  }
+
+  function applySuiteRunner() {
+    if (closed) return { pending: false, running: 0 };
+    const runner = suiteRunner;
+    if (drainPending && JSON.stringify(getUiSettings().get().suiteRunner || null) === liveSetting) {
+      drainPending = false;
+      runner.drain(null);
+      refreshActivity();
+      return { pending: false, running: 0 };
+    }
+    const running = runner && typeof runner.drain === 'function' ? runner.drain(() => {
+      if (closed || suiteRunner !== runner || !drainPending) return;
+      log.info('remote', 'test runner setting applied after drain');
+      reloadSuiteRunner();
+    }) : 0;
+    if (running) {
+      drainPending = true;
+      refreshActivity();
+      return { pending: true, running };
+    }
+    reloadSuiteRunner();
+    return { pending: false, running: 0 };
   }
 
   function shutdownRemoteServer() {
@@ -1510,7 +1541,7 @@ function createRemoteWiring(deps) {
   }
 
   return {
-    syncRemoteServer, refreshRemoteToken, shutdownRemoteServer, suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner,
+    syncRemoteServer, refreshRemoteToken, shutdownRemoteServer, suiteRunnerState, suiteRunnerBusy, reloadSuiteRunner, applySuiteRunner,
     suiteActivity, suiteActivityNow, refreshSuiteActivity: refreshActivity, suiteOutput,
     getSuiteEngine:() => (closed ? null : getSuiteRunner()),
   };

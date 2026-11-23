@@ -521,7 +521,11 @@ image id forces it to none); `suiteRunnerOptions` returns the forced fields as `
 the image as `boxImage` (null when unset) and the UI
 shows them as "set by environment". A save applies without a restart
 (`reloadSuiteRunner` closes the old engine and rebuilds the remote server, so
-hello caps follow) and is refused while a job is live (`busy()`).
+hello caps follow). A save while jobs run is written at once and answered
+`pending: true` (`applySuiteRunner`): the runner drains (`drain` — running jobs
+finish, no queued job starts, submits still queue, `info` reports every slot in
+use), then reloads; queued jobs survive the reload, and uploads in flight are retried by the lead as a runner restart. Saving the live record
+again ends the drain without a reload.
 
 `shares` is optional: at most 8 `{ name, path, version }` rows, `name` in the
 session-name grammar and unique, `path` absolute, `version` matching

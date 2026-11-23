@@ -17,6 +17,7 @@ blocks a release.
 - Preferences ▸ Test boxes now has a single Apply for the test runner and the offer, and Save applies them too. Before, each block had its own Apply, and the runner's sat beside the image field, so the runner setting was easy to lose.
 - Automatic box builds: a first build no longer uses up the gate's wait for the result, jobs waiting on a build count against the runner's queue limit, and turning builds off stops queued ones.
 - A dial-in test runner now retries by itself after a failed claim, runs status polls in their own pool so several long jobs no longer starve submits and each other, and never holds a poll past the time the lead waits for it. The lead logs when a runner's call expires unanswered.
+- A test runner's settings can now be changed while it is running jobs. The change is saved at once; the runner finishes its running jobs, starts no new ones meanwhile, and then applies it. Before, the change was refused until the runner was idle, which a busy runner never was.
 
 ## 5.192.0 — 2026-11-23
 

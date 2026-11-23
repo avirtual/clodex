@@ -482,6 +482,7 @@ function createSuiteRunner({
   const running = new Map();
   const depsBuilds = new Map();
   let maintenance = null;
+  let onDrained = null;
   let interval = null;
   let closed = false;
   let activityTimer = null;
@@ -923,7 +924,7 @@ function createSuiteRunner({
 
   function pump() {
     if (recovering) { pumpAfterRecovery = true; return; }
-    if (closed || maintenance) return;
+    if (closed || maintenance || onDrained) return;
     while (active.size < slotTotal) {
       const next = queue().find(startable);
       if (!next) return;
@@ -943,7 +944,12 @@ function createSuiteRunner({
         active.delete(next.id);
         running.delete(next.id);
         retain();
-        if (!anyLive()) maintain().catch((e) => log(`suite-runner: maintenance failed: ${e.message}`));
+        if (onDrained && !active.size) {
+          const done = onDrained;
+          onDrained = null;
+          done();
+          pump();
+        } else if (!anyLive()) maintain().catch((e) => log(`suite-runner: maintenance failed: ${e.message}`));
         else pump();
       });
   }
@@ -1246,7 +1252,7 @@ function createSuiteRunner({
       shares: held.map(({ name, version }) => ({ name, version })),
       limits: { packMaxBytes: lim.packMaxBytes, chunkMax: lim.chunkMax, queueMax: lim.queueMax },
       queue: { running: active.size ? active.keys().next().value : null, queued: queue().map((j) => j.id) },
-      slots: { total: slotTotal, inUse: active.size },
+      slots: { total: slotTotal, inUse: onDrained ? slotTotal : active.size },
     };
   }
 
@@ -1513,6 +1519,17 @@ function createSuiteRunner({
     pump();
   }
 
+  function drain(done) {
+    if (typeof done !== 'function') {
+      onDrained = null;
+      pump();
+      return active.size;
+    }
+    if (closed || !active.size) return 0;
+    onDrained = done;
+    return active.size;
+  }
+
   function close() {
     closed = true;
     if (interval) timers.clearInterval(interval);
@@ -1524,7 +1541,7 @@ function createSuiteRunner({
 
   recover().then(reconcile).catch((e) => log(`suite-runner: reconcile failed: ${e.message}`)).then(() => { recovering = false; if (pumpAfterRecovery) pump(); });
 
-  return { info, activity, submit, putPack, commit, poll, output, readOutput, cancel, tick, start, close, busy: anyLive };
+  return { info, activity, submit, putPack, commit, poll, output, readOutput, cancel, tick, start, close, drain, busy: anyLive, activeCount: () => active.size };
 }
 
 module.exports = {

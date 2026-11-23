@@ -41,7 +41,7 @@ function el(extra = {}) {
 const RUNNER = { status: 'off', setting: { enabled: false, isolation: 'user', work: null }, effective: {}, forced: [] };
 const OFFER = { scope: 'discovery', enabled: false, boxes: 1, availability: 'always', peers: [{ name: 'murmur' }] };
 const offerState = (stored) => ({ self: 'workbox', stored, effective: stored, forced: false, warning: null, facts: null, peers: [{ name: 'murmur', from: 'peer' }], runner: null, claims: [] });
-const BUSY = 'a test job is running on this machine — change the test runner when it finishes';
+const REFUSED = 'invalid test runner setting';
 
 function harness({ runnerAnswer = null } = {}) {
   const calls = [];
@@ -139,7 +139,7 @@ test('the Test boxes section has exactly one Apply button, and the Box image row
 
 test('the hints name the single Apply and Save, and the build hint names the Docker login', () => {
   const s = section();
-  assert.ok(s.includes('Applies when you press Apply test box settings, or Save, with no restart; refused while a job is running.'));
+  assert.ok(s.includes('Applies when you press Apply test box settings, or Save, with no restart; while test jobs run, the change is saved and applies when they finish.'));
   assert.ok(s.includes('Applies when you press Apply test box settings, or Save; peers see the change at their next hello.'));
   assert.ok(s.includes('Off: a job whose image is missing is refused, as before. Builds can pull any image your Docker login can.</p>'));
   const blockStart = s.indexOf('id="prefs-suite-runner-block"');
@@ -176,14 +176,14 @@ test('both edited: the runner is saved first, then the offer', async () => {
 });
 
 test('a refused runner still lets the offer save, and keeps its form and unsaved mark', async () => {
-  const h = harness({ runnerAnswer: { ok: false, error: BUSY, state: RUNNER } });
+  const h = harness({ runnerAnswer: { ok: false, error: REFUSED, state: RUNNER } });
   h.tickRunner();
   h.tickOffer();
   const refused = await h.ui.apply();
   assert.deepStrictEqual(h.calls.map((c) => c[0]), ['suiteRunnerSet', 'offerSet']);
   assert.strictEqual(refused.length, 1);
   assert.strictEqual(h.toasts.length, 1);
-  assert.ok(h.toasts[0].includes(BUSY), h.toasts[0]);
+  assert.ok(h.toasts[0].includes(REFUSED), h.toasts[0]);
   assert.ok(h.toasts[0].startsWith('Test runner'), h.toasts[0]);
   assert.strictEqual(h.ctx.prefsSuiteRunnerEnabled.checked, true);
   assert.strictEqual(h.unsaved(), 'Unsaved changes in: Test runner');
@@ -205,7 +205,7 @@ test('Save with the runner edited applies it once and closes', async () => {
 });
 
 test('Save with a refused runner writes the settings, stays open and shows the runner block', async () => {
-  const h = harness({ runnerAnswer: { ok: false, error: BUSY, state: RUNNER } });
+  const h = harness({ runnerAnswer: { ok: false, error: REFUSED, state: RUNNER } });
   h.tickRunner();
   await h.ui.save();
   assert.deepStrictEqual(h.calls.map((c) => c[0]), ['setSettings', 'suiteRunnerSet']);
@@ -226,4 +226,26 @@ test('Apply, then Save with no further edit, sends nothing twice', async () => {
   await h.ui.apply();
   await h.ui.save();
   assert.deepStrictEqual(h.calls.map((c) => c[0]), ['suiteRunnerSet', 'offerSet', 'setSettings', 'closePrefs']);
+});
+
+const PENDING = { ...RUNNER, status: 'running', remoteEnabled: true, setting: { ...RUNNER_ON, slots: 2 }, pending: true, runningJobs: 2 };
+const PENDING_LINE = 'Saved. Applies when the running test jobs finish (2 running).';
+
+test('a deferred save shows the pending line, clears the unsaved mark and keeps the saved record in the form', async () => {
+  const h = harness({ runnerAnswer: { ok: true, pending: true, state: PENDING } });
+  h.tickRunner();
+  assert.strictEqual(h.unsaved(), 'Unsaved changes in: Test runner', 'ENTER: the block was edited');
+  const refused = await h.ui.apply();
+  assert.deepStrictEqual([refused.length, h.toasts], [0, []]);
+  assert.strictEqual(h.ctx.prefsSuiteRunnerStatus.textContent, PENDING_LINE);
+  assert.strictEqual(h.unsaved(), null);
+  assert.deepStrictEqual([h.ctx.prefsSuiteRunnerEnabled.checked, h.ctx.prefsSuiteRunnerSlots.value], [true, '2']);
+});
+
+test('opening Preferences with a change pending shows the pending line', async () => {
+  const h = harness();
+  h.ctx.window.api.suiteRunnerGet = async () => PENDING;
+  assert.notStrictEqual(h.ctx.prefsSuiteRunnerStatus.textContent, PENDING_LINE, 'ENTER: the line starts as the idle one');
+  await h.ctx.refreshSuiteRunnerPrefs();
+  assert.strictEqual(h.ctx.prefsSuiteRunnerStatus.textContent, PENDING_LINE);
 });
