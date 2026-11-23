@@ -18,6 +18,7 @@ blocks a release.
 - clodent seats now show as busy for the whole turn (from the CLI's prompt-submit and stop hooks), so the busy dot, the Working row and the delivery hold work as they do for Claude Code seats.
 - Conversation pane, clodent seats: hook context is ignored wherever it appears in a message, so ticket cards and inbound messages no longer show it (needed for clodent 0.10.0, which writes the prompt first).
 - clodent seats: while the agent is working, the Conversation view shows the conversation alone, so streamed text no longer appears twice.
+- A message delivered to a clodent seat while you are typing there now waits, as it does for Claude Code seats, instead of clearing your draft.
 
 ## 5.195.0 — 2026-11-23
 

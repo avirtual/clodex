@@ -387,6 +387,22 @@ a timed kind the same stamp) and returns the existing id with `duplicate: true`;
 for a relative `in` the earlier row is kept, so it fires at its own time.
 An offline seat with no parked-mail drain (a Codex or Muse PTY record: `caps.park` false, not `io: 'stream'`) gets `'deferred'`: nothing is parked and `_fireRecord` keeps the row with a retry `RETRY_MS` (60s) later, as it does for a one-shot whose deliver returned `'error'` or threw.
 
+### Draft and busy protections by seat type
+
+Which seat types get which protection is decided by two predicates in
+session-manager.js, so a new seat type is added in one place:
+
+| protection | predicate | claude | clodent | codex, muse |
+|---|---|---|---|---|
+| busy/typing park (`_maybeParkDelivery`), park-at-fire divert (`_parkDivertFor`), operator flush (`flushPending`), passive notice park (`_injectTextPassive`) | `drainsParkedMail` | yes | yes | no |
+| turn-start window (`_turnStartPending`) | `reportsTurnStart` | yes | yes | no |
+| submit nudge (`_armSubmitNudge`) | `agentType === 'claude'` | yes | no | no |
+
+clodent's draft protection reads the same typed and dictated draft stamps as
+Claude's. The submit nudge stays Claude-only: clodent echoes a pasted unit as
+`[pasted text, N lines]`, not the `[Pasted text #N]` placeholder the echo check
+reads.
+
 ## 4. DM federation (`name@origin`)
 
 The tunnel is one-way — the consumer dials the box, never the reverse — so
