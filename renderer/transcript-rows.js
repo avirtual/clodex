@@ -372,6 +372,7 @@ function bytesText(n) {
 }
 
 function countText(n, one, many) {
+  if (n == null) return '';
   return `${n} ${n === 1 ? one : many}`;
 }
 
@@ -417,9 +418,9 @@ function summaryParts(rec) {
     case 'Bash': return bashParts(s);
     case 'Edit':
     case 'MultiEdit': return diffParts(s.add, s.del);
-    case 'Write': return s.created ? [[`new · ${countText(s.add, 'line', 'lines')}`, '']] : diffParts(s.add, s.del);
+    case 'Write': return s.created ? [[['new', countText(s.add, 'line', 'lines')].filter(Boolean).join(' · '), '']] : diffParts(s.add, s.del);
     case 'Read': return s.from == null ? [] : [[`${s.from}–${s.to} of ${s.total}`, '']];
-    case 'Grep': return [[s.lines == null ? countText(s.files, 'file', 'files') : `${countText(s.lines, 'line', 'lines')} in ${countText(s.files, 'file', 'files')}`, '']];
+    case 'Grep': return [[s.lines == null || s.files == null ? countText(s.files, 'file', 'files') || countText(s.lines, 'line', 'lines') : `${countText(s.lines, 'line', 'lines')} in ${countText(s.files, 'file', 'files')}`, '']];
     case 'Glob': return [[countText(s.files, 'file', 'files'), '']];
     case 'WebFetch': return [[[s.code, s.bytes != null ? bytesText(s.bytes) : null].filter((x) => x != null).join(' · '), '']];
     case 'WebSearch': return [[countText(s.results, 'result', 'results'), '']];
@@ -1436,4 +1437,4 @@ function createTranscriptRows(doc, paneEl, ctx = {}) {
   return { render, setWorking, setMode, repaint };
 }
 
-module.exports = { OUTPUT_LINE_CAP, summaryParts, footerOf, attachedReplies, createTranscriptRows, spillCache };
+module.exports = { OUTPUT_LINE_CAP, countText, summaryParts, footerOf, attachedReplies, createTranscriptRows, spillCache };

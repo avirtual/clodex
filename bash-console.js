@@ -29,7 +29,7 @@ function stripAnsi(s) {
   return String(s == null ? '' : s).replace(ANSI_RE, '');
 }
 
-const EXIT_RE = /^Exit code (\d+)\n?/;
+const EXIT_RE = /^Exit code (\d+)\n?|(?:^|\n)\[exit (\d+)\]\s*$/;
 const BG_TASK_ID_RE = /^[a-z0-9]{1,32}$/;
 const BG_EXIT_RE = /\n*\[exited with code (-?\d+)\]\n*$/;
 
@@ -37,7 +37,7 @@ function splitFailure(error) {
   const raw = String(error == null ? '' : error);
   const m = EXIT_RE.exec(raw);
   if (!m) return { exitCode: null, output: raw };
-  return { exitCode: Number(m[1]), output: raw.slice(m[0].length) };
+  return { exitCode: Number(m[1] ?? m[2]), output: raw.slice(0, m.index) + raw.slice(m.index + m[0].length) };
 }
 
 function bgOutputPath(scratchpadDir, taskId) {
@@ -208,6 +208,7 @@ module.exports = {
   PULL_MAX_RECORDS,
   BG_MAX_BYTES,
   RECORD_NAME_RE,
+  EXIT_RE,
   stripAnsi,
   splitFailure,
   bgOutputPath,

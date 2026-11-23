@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert');
-const { summaryParts, footerOf, createTranscriptRows } = require('../renderer/transcript-rows');
+const { countText, summaryParts, footerOf, createTranscriptRows } = require('../renderer/transcript-rows');
 const { fakeDocument } = require('./lib/fake-dom');
 
 function mount(ctx = {}) {
@@ -100,6 +100,30 @@ test('tool summaries read as the design table says', () => {
   assert.deepStrictEqual(rows.map(([r]) => text(summaryParts(r))), rows.map(([, want]) => want));
   assert.deepStrictEqual(summaryParts({ kind: 'tool', name: 'Edit', state: 'ok', sum: { add: 1, del: 2 } }), [['+1', 'tr-add'], [' ', ''], ['−2', 'tr-del']]);
   assert.deepStrictEqual(summaryParts(bash({ exit: 1, lines: 4 }, 'error')), [['exit 1 · 4 lines', 'tr-err']]);
+});
+
+test('countText prints nothing for a null or missing count and a singular only for exactly 1', () => {
+  const rows = [[null, ''], [undefined, ''], [0, '0 files'], [1, '1 file'], [3, '3 files']];
+  assert.deepStrictEqual(rows.map(([n]) => countText(n, 'file', 'files')), rows.map(([, want]) => want));
+});
+
+test('every summary that counts a field the record lacks prints no null: Grep, Glob, WebSearch, Write, Bash and the default', () => {
+  const tool = (name, sum, state = 'ok') => ({ kind: 'tool', name, state, sum });
+  const rows = [
+    [tool('Grep', { files: null, lines: null }), ''],
+    [tool('Grep', { files: 2, lines: null }), '2 files'],
+    [tool('Grep', { files: null, lines: 5 }), '5 lines'],
+    [tool('Grep', {}), ''],
+    [tool('Glob', { files: null, truncated: false }), ''],
+    [tool('Glob', {}), ''],
+    [tool('WebSearch', {}), ''],
+    [tool('Write', { file: 'a', created: true, add: null, del: 0 }), 'new'],
+    [tool('Write', { file: 'a', created: true, add: 1, del: 0 }), 'new · 1 line'],
+    [bash({ lines: null }), 'no output'],
+    [bash({ exit: 2, lines: null }, 'error'), 'exit 2'],
+    [tool('Mystery', { lines: null }), ''],
+  ];
+  assert.deepStrictEqual(rows.map(([r]) => text(summaryParts(r))), rows.map(([, want]) => want));
 });
 
 test('a turn with a turn-end gets a footer of duration, tool count, errors and files changed; a live turn gets none', () => {
@@ -2214,4 +2238,29 @@ test('a folded dm turn shows its trailing thinking row collapsed between the fol
   on = false;
   m.rows.repaint();
   assert.deepStrictEqual(shown(turnOf(m, 'm1')), ['tr-row tr-turn-fold', END]);
+});
+
+test('a clodent first turn whose record opens with SessionStart hook context folds under its ticket card in Conversation mode', () => {
+  const { recordsOf } = require('../transcript-records');
+  const line = (o) => JSON.stringify(o);
+  const { records } = recordsOf([
+    line({ parentUuid: null, isSidechain: false, type: 'user', message: { role: 'user', content: [
+      { type: 'text', text: '<hook-context event="SessionStart">\nYou are the clodex agent named rev.\n</hook-context>' },
+      { type: 'text', text: '[agent:from clodex-team] [ticket t2228 review] Review the diff' },
+    ] }, uuid: 'u1', timestamp: '2026-11-10T10:59:15.758Z', version: '0.7.0', entrypoint: 'clodent', userType: 'external' }),
+    line({ type: 'assistant', uuid: 'a1', message: { role: 'assistant', content: [{ type: 'thinking', thinking: '', signature: 's' }, { type: 'tool_use', id: 'toolu_1', name: 'Read', input: { file_path: '/r/review.diff' } }] } }),
+    line({ type: 'user', uuid: 'r1', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'diff body', is_error: false }] }, toolUseResult: { name: 'Read', isError: false, input: { file_path: '/r/review.diff' } } }),
+    line({ type: 'assistant', uuid: 'a2', message: { role: 'assistant', content: [{ type: 'text', text: 'Looks fine.' }] } }),
+    line({ type: 'system', uuid: 's1', subtype: 'turn_duration', durationMs: 139471, messageCount: 16 }),
+  ].join('\n'));
+  assert.deepStrictEqual(records.filter((r) => r.kind === 'inbound').map((r) => [r.id, r.turn, r.ticket]), [['u1', 1, { id: 't2228', tag: 'review' }]]);
+  const m = mount({ mode: 'conversation' });
+  m.render(records);
+  const turn = turnOf(m, 'u1');
+  assert.ok(turn, 'ENTER: the inbound drives its own turn');
+  const head = turn.childNodes[0];
+  assert.strictEqual(head.className, 'tr-row tr-turn-fold');
+  assert.strictEqual(findCls(head, 'tr-ticket-chip')[0].textContent, 't2228 review');
+  assert.strictEqual(findCls(head, 'tr-sender-name')[0].textContent, 'clodex-team');
+  assert.strictEqual(findCls(head, 'tr-turn-fold-stats')[0].textContent, '2m 19s · 1 tool · 1 injected');
 });

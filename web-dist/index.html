@@ -37699,6 +37699,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         return `${(n / (1024 * 1024)).toFixed(1)} MB`;
       }
       function countText(n, one, many) {
+        if (n == null) return "";
         return `${n} ${n === 1 ? one : many}`;
       }
       function tokensText(n) {
@@ -37741,11 +37742,11 @@ ${m[2].replace(/^\r?\n/, "")}`;
           case "MultiEdit":
             return diffParts(s.add, s.del);
           case "Write":
-            return s.created ? [[`new \xB7 ${countText(s.add, "line", "lines")}`, ""]] : diffParts(s.add, s.del);
+            return s.created ? [[["new", countText(s.add, "line", "lines")].filter(Boolean).join(" \xB7 "), ""]] : diffParts(s.add, s.del);
           case "Read":
             return s.from == null ? [] : [[`${s.from}\u2013${s.to} of ${s.total}`, ""]];
           case "Grep":
-            return [[s.lines == null ? countText(s.files, "file", "files") : `${countText(s.lines, "line", "lines")} in ${countText(s.files, "file", "files")}`, ""]];
+            return [[s.lines == null || s.files == null ? countText(s.files, "file", "files") || countText(s.lines, "line", "lines") : `${countText(s.lines, "line", "lines")} in ${countText(s.files, "file", "files")}`, ""]];
           case "Glob":
             return [[countText(s.files, "file", "files"), ""]];
           case "WebFetch":
@@ -38710,7 +38711,7 @@ ${m[2].replace(/^\r?\n/, "")}`;
         }
         return { render, setWorking, setMode, repaint };
       }
-      module.exports = { OUTPUT_LINE_CAP, summaryParts, footerOf, attachedReplies, createTranscriptRows, spillCache };
+      module.exports = { OUTPUT_LINE_CAP, countText, summaryParts, footerOf, attachedReplies, createTranscriptRows, spillCache };
     }
   });
 
