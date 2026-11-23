@@ -97,7 +97,7 @@ function tailTotals(file) {
   }
 }
 
-function activityJob(job, lastOutputAt = null) {
+function activityJob(job, lastOutputAt = null, streams = null) {
   const container = job.isolation === 'container';
   const box = container && job.identity && job.identity.box ? job.identity.box : null;
   return {
@@ -109,6 +109,7 @@ function activityJob(job, lastOutputAt = null) {
     queuedAt: job.queuedAt, startedAt: job.startedAt != null ? job.startedAt : null,
     runStartedAt: job.runStartedAt != null ? job.runStartedAt : null,
     lastOutputAt,
+    streams,
   };
 }
 
@@ -119,11 +120,11 @@ function resultOf(totals, exit) {
   };
 }
 
-function finishedJob(job, stdoutFile, lastOutputAt = null) {
+function finishedJob(job, stdoutFile, lastOutputAt = null, streams = null) {
   const rec = job.record;
   const result = job.reason != null ? { outcome: job.reason, pass: null, fail: null }
     : rec && rec.outcome != null ? rec : resultOf(tailTotals(stdoutFile), job.exit);
-  const { phase, ...row } = activityJob(job, lastOutputAt);
+  const { phase, ...row } = activityJob(job, lastOutputAt, streams);
   return {
     ...row, outcome: result.outcome, pass: result.pass, fail: result.fail, endedAt: job.endedAt,
     waitMs: (job.startedAt != null ? job.startedAt : job.endedAt) - job.queuedAt,
@@ -523,6 +524,19 @@ function createSuiteRunner({
     }
     return at == null ? null : Math.floor(at);
   };
+  const streamOf = (id, s) => {
+    try {
+      const st = fs.statSync(outFile(id, s));
+      return { bytes: st.size, lastOutputAt: Math.floor(st.mtimeMs) };
+    } catch { return { bytes: 0, lastOutputAt: null }; }
+  };
+  const streamsOf = (id) => ({ stdout: streamOf(id, 'stdout'), stderr: streamOf(id, 'stderr') });
+  const latestOf = (streams) => {
+    const ats = [streams.stdout.lastOutputAt, streams.stderr.lastOutputAt].filter((at) => at != null);
+    return ats.length ? Math.max(...ats) : null;
+  };
+  const activityRow = (j) => { const streams = streamsOf(j.id); return activityJob(j, latestOf(streams), streams); };
+  const finishedRow = (j) => { const streams = streamsOf(j.id); return finishedJob(j, outFile(j.id, 'stdout'), latestOf(streams), streams); };
   const packFile = (id) => path.join(jobStore(id), 'pack');
   const save = (job) => writeJson(path.join(jobStore(job.id), 'job.json'), job);
   const anyLive = () => [...jobs.values()].some((j) => LIVE.has(j.state));
@@ -1277,9 +1291,9 @@ function createSuiteRunner({
     return {
       at,
       slots: { total: slotTotal, inUse: live.length },
-      running: live.map((j) => activityJob(j, lastOutputOf(j.id))),
-      waiting: [...onBuild, ...queue(), ...uploading].map((j) => activityJob(j, lastOutputOf(j.id))),
-      recent: done.map((j) => finishedJob(j, outFile(j.id, 'stdout'), lastOutputOf(j.id))),
+      running: live.map(activityRow),
+      waiting: [...onBuild, ...queue(), ...uploading].map(activityRow),
+      recent: done.map(finishedRow),
       box: await boxLine(),
     };
   }

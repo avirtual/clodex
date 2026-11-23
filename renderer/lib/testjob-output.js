@@ -1,6 +1,7 @@
 'use strict';
 
 const { fmtSpan } = require('../../suite-activity-view');
+const { fmtBytes } = require('./format');
 
 const PANE_CAP_CHARS = 256 * 1024;
 const READ_BYTES = 256 * 1024;
@@ -71,25 +72,61 @@ function createOutputBuffer({ cap = PANE_CAP_CHARS } = {}) {
   return { append, reset: () => mark(RESET_LINE), markDropped: () => { dropped = true; }, render, get dropped() { return dropped; }, get length() { return text.length; } };
 }
 
-function statusText(r) {
+const otherStream = (stream) => (stream === 'stderr' ? 'stdout' : 'stderr');
+
+function statusText(r, { stream = null, otherBytes = null } = {}) {
   if (!r) return '';
   if (r.unknown) return UNKNOWN_TEXT;
   if (r.expired) return EXPIRED_TEXT;
+  if (r.total === 0 && stream && otherBytes > 0) {
+    return `no ${stream}${r.live ? ' yet' : ''}; ${otherStream(stream)} has ${fmtBytes(otherBytes)}`;
+  }
   if (r.total === 0) return r.live ? EMPTY_TEXT : NONE_TEXT;
   return '';
 }
 
-function headerText(r) {
+function headerText(r, { stream = null, lastOutputAt } = {}) {
   if (!r || !r.ok) return '';
   const since = r.startedAt != null ? r.startedAt : r.queuedAt;
   const end = r.endedAt != null ? r.endedAt : r.at;
-  const last = r.lastOutputAt == null ? 'no output' : `last output ${fmtSpan(r.at - r.lastOutputAt)} ago`;
+  const perStream = stream && lastOutputAt !== undefined;
+  const at = perStream ? lastOutputAt : r.lastOutputAt;
+  const what = perStream ? stream : 'output';
+  const last = at == null ? `no ${what}` : `last ${what} ${fmtSpan(r.at - at)} ago`;
   return `${r.phase} · age ${fmtSpan(end - since)} · ${last}`;
+}
+
+function startOf(job) {
+  return job.startedAt != null ? job.startedAt : job.queuedAt;
+}
+
+function autoOpenJob(snapshot) {
+  if (!snapshot) return null;
+  const running = Array.isArray(snapshot.running) ? snapshot.running : [];
+  if (running.length) return running.reduce((a, b) => (startOf(b) < startOf(a) ? b : a)).id;
+  const recent = Array.isArray(snapshot.recent) ? snapshot.recent : [];
+  if (recent.length) return recent.reduce((a, b) => (b.endedAt > a.endedAt ? b : a)).id;
+  return null;
+}
+
+function streamInfo(job, stream) {
+  const s = job && job.streams && job.streams[stream];
+  return s ? { bytes: s.bytes, lastOutputAt: s.lastOutputAt } : { bytes: null, lastOutputAt: undefined };
+}
+
+function chooseStream(job, manual = null) {
+  if (manual === 'stdout' || manual === 'stderr') return manual;
+  return streamInfo(job, 'stdout').bytes === 0 && streamInfo(job, 'stderr').bytes > 0 ? 'stderr' : 'stdout';
+}
+
+function streamLabel(stream, bytes) {
+  return bytes == null ? stream : `${stream} ${fmtBytes(bytes)}`;
 }
 
 function createOutputFollower({
   read, onUpdate = () => {}, timers = { setTimeout, clearTimeout },
   pollMs = POLL_MS, maxBackoffMs = MAX_BACKOFF_MS, cap = PANE_CAP_CHARS, readBytes = READ_BYTES,
+  stream = null, context = () => ({}),
 } = {}) {
   const buffer = createOutputBuffer({ cap });
   let offset = null;
@@ -103,8 +140,11 @@ function createOutputFollower({
   let error = null;
 
   function emit() {
+    const ctx = context() || {};
     onUpdate({
-      text: buffer.render(), header: headerText(last), status: error || statusText(last),
+      text: buffer.render(),
+      header: headerText(last, { stream, lastOutputAt: ctx.lastOutputAt }),
+      status: error || statusText(last, { stream, otherBytes: ctx.otherBytes }),
       live: !!(last && last.live) && !stopped, follow, stopped,
     });
   }
@@ -178,13 +218,15 @@ function createOutputFollower({
   }
 
   return {
-    start: () => schedule(0), setFollow, close, buffer,
+    start: () => schedule(0), setFollow, close, buffer, refresh: () => { if (!closed) emit(); },
+    get total() { return last && last.ok ? last.total : null; },
     get inFlight() { return inFlight; }, get pending() { return timer != null; }, get delay() { return delay; },
   };
 }
 
 module.exports = {
   sanitizeOutput, createOutputBuffer, createOutputFollower, headerText, statusText,
+  autoOpenJob, chooseStream, streamInfo, streamLabel, otherStream,
   PANE_CAP_CHARS, READ_BYTES, POLL_MS, MAX_BACKOFF_MS, DROPPED_LINE, RESET_LINE,
   EXPIRED_TEXT, EMPTY_TEXT, NONE_TEXT, UNKNOWN_TEXT,
 };

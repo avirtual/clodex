@@ -1612,7 +1612,7 @@
       <span id="test-activity-box" class="hint-text"></span>
       <h5>Running and waiting</h5>
       <div id="test-activity-live"></div>
-      <details id="test-activity-recent-wrap">
+      <details id="test-activity-recent-wrap" open>
         <summary>Last ten finished</summary>
         <div id="test-activity-recent"></div>
       </details>
@@ -1623,8 +1623,8 @@
         </div>
         <span id="test-output-header" class="hint-text"></span>
         <div class="test-output-controls">
-          <label><input type="radio" name="test-output-stream" value="stdout" checked> stdout</label>
-          <label><input type="radio" name="test-output-stream" value="stderr"> stderr</label>
+          <label><input type="radio" name="test-output-stream" value="stdout" checked> <span id="test-output-label-stdout">stdout</span></label>
+          <label><input type="radio" name="test-output-stream" value="stderr"> <span id="test-output-label-stderr">stderr</span></label>
           <label id="test-output-follow-wrap"><input type="checkbox" id="test-output-follow" checked> Follow</label>
         </div>
         <span id="test-output-status" class="hint-text"></span>
